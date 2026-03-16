@@ -32,6 +32,7 @@ import { useProjectHasInternetAccess } from "../project/settings/has-internet-ac
 import { shouldOpenProjectsNavShortcut } from "./projects-nav-shortcut";
 import { useBookmarkedProjects } from "./use-bookmarked-projects";
 import { normalizeProjectStateForDisplay } from "./host-operational";
+import { projectImageUrl } from "./image";
 
 const PROJECT_NAME_STYLE: CSS = {
   whiteSpace: "nowrap",
@@ -179,7 +180,7 @@ function ProjectTab({ project_id }: ProjectTabProps) {
   }
 
   function renderAvatar() {
-    const avatar = project?.get("avatar_image_tiny");
+    const avatar = projectImageUrl(project?.get("avatar_image_tiny"));
     const color = project?.get("color");
 
     if (avatar) {
@@ -191,7 +192,7 @@ function ProjectTab({ project_id }: ProjectTabProps) {
             border: color ? `2px solid ${color}` : undefined,
           }}
           shape="circle"
-          icon={<img src={project.get("avatar_image_tiny")} />}
+          icon={<img src={avatar} />}
           size={20}
         />
       );
@@ -370,7 +371,7 @@ export function ProjectsNav(props: ProjectsNavProps) {
       title,
       label: title,
       color: project?.get?.("color"),
-      avatar: project?.get?.("avatar_image_tiny"),
+      avatar: projectImageUrl(project?.get?.("avatar_image_tiny")),
     };
   }
 

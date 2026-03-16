@@ -13,6 +13,7 @@ import { isUUID } from "./util";
 import isCollaborator from "@cocalc/server/projects/is-collaborator";
 import getAccountId from "lib/account/get-account";
 import { getProjectAvatarTiny } from "./project-avatar-image";
+import { blobImageUrl } from "./blob-image-url";
 
 export default async function getPublicPaths(
   project_id: string,
@@ -41,7 +42,7 @@ export default async function getPublicPaths(
   const avatar_image_tiny = await getProjectAvatarTiny(project_id);
   if (avatar_image_tiny) {
     for (const x of v) {
-      x.avatar_image_tiny = avatar_image_tiny;
+      x.avatar_image_tiny = blobImageUrl(avatar_image_tiny);
     }
   }
   return v;

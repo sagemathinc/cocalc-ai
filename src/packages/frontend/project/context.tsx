@@ -8,6 +8,7 @@ import {
   createContext,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -223,7 +224,7 @@ export function useProjectContextProvider({
     workspaces.records,
   ]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const currentSelectionKey =
       workspaces.selection.kind === "workspace"
         ? `workspace:${workspaces.selection.workspace_id}`
@@ -277,15 +278,16 @@ export function useProjectContextProvider({
       ) {
         return;
       }
-      if (current_path_abs && !selectionChanged) {
-        workspaces.setSelection(
-          selectionForPath(workspaces.records, current_path_abs),
-        );
-        return;
-      }
       const fallbackPath = getFallbackPath();
       if (fallbackPath) {
         openFallbackPath(fallbackPath);
+        return;
+      }
+      if (current_path_abs && !selectionChanged) {
+        if (workspaces.loading) return;
+        workspaces.setSelection(
+          selectionForPath(workspaces.records, current_path_abs),
+        );
         return;
       }
       void actions.open_directory(current.root_path, false, true);
@@ -313,6 +315,7 @@ export function useProjectContextProvider({
       !selectionChanged &&
       !previousActivePathClosed
     ) {
+      if (workspaces.loading) return;
       workspaces.setSelection(selectionForPath(workspaces.records, activePath));
       return;
     }
@@ -330,6 +333,7 @@ export function useProjectContextProvider({
     current_path_abs,
     open_files_order,
     workspaces.current,
+    workspaces.loading,
     workspaces.matchesPath,
     workspaces.records,
     workspaces.selection,

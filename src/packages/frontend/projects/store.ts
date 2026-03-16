@@ -477,30 +477,6 @@ export class ProjectsStore extends Store<ProjectsState> {
     );
   }
 
-  // cache for 15s
-  private projectAvatarImageCache = new LRU<string, string | undefined>({
-    ttl: 1000 * 15,
-    max: 1000,
-  });
-  public async getProjectAvatarImage(
-    project_id: string,
-  ): Promise<string | undefined> {
-    if (this.projectAvatarImageCache.has(project_id)) {
-      return this.projectAvatarImageCache.get(project_id);
-    }
-    const { query } = await webapp_client.async_query({
-      query: {
-        project_avatar_images: {
-          project_id,
-          avatar_image_full: null,
-        },
-      },
-    });
-    const img = query.project_avatar_images?.avatar_image_full;
-    this.projectAvatarImageCache.set(project_id, img);
-    return img;
-  }
-
   clearOpenAICache() {
     aiEnabledCache.clear();
   }

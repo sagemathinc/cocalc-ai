@@ -24,6 +24,7 @@ import { Icon, TimeAgo } from "@cocalc/frontend/components";
 import { trunc } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 import { useBookmarkedProjects } from "./use-bookmarked-projects";
+import { projectImageUrl } from "./image";
 
 const DROPDOWN_WIDTH = 100; // Width reserved for dropdown button + buffer
 
@@ -77,7 +78,7 @@ function DraggableProjectButton({
       style={buttonStyle}
       icon={
         project.avatar_image_tiny ? (
-          <Avatar src={project.avatar_image_tiny} size={20} />
+          <Avatar src={projectImageUrl(project.avatar_image_tiny)} size={20} />
         ) : (
           <Icon name="star-filled" style={{ color: COLORS.STAR }} />
         )
@@ -132,7 +133,7 @@ export function StarredProjectsBar() {
           description: project.get("description") ?? "",
           last_edited: project.get("last_edited"),
           state: project.get("state"),
-          avatar_image_tiny: project.get("avatar_image_tiny"),
+          avatar_image_tiny: projectImageUrl(project.get("avatar_image_tiny")),
           users: project.get("users"),
           color: project.get("color"),
         };
@@ -378,7 +379,10 @@ export function StarredProjectsBar() {
           }}
         >
           {project.avatar_image_tiny ? (
-            <Avatar src={project.avatar_image_tiny} size={20} />
+            <Avatar
+              src={projectImageUrl(project.avatar_image_tiny)}
+              size={20}
+            />
           ) : (
             <Icon name="star-filled" style={{ color: COLORS.STAR }} />
           )}{" "}

@@ -32,7 +32,7 @@ export default function Project({
   description,
   name,
   customize,
-  avatar_image_full,
+  avatar_image_tiny,
   redirect,
 }) {
   const router = useRouter();
@@ -51,9 +51,9 @@ export default function Project({
     <Customize value={customize}>
       <Layout title={title}>
         <h1>
-          {avatar_image_full && (
+          {avatar_image_tiny && (
             <Avatar
-              icon={<img src={avatar_image_full} />}
+              icon={<img src={avatar_image_tiny} />}
               size={160}
               shape="square"
               style={{ float: "right" }}

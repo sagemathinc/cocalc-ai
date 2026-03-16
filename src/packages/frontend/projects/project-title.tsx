@@ -7,6 +7,7 @@ import { Avatar } from "antd";
 import { React, redux, useRedux } from "@cocalc/frontend/app-framework";
 import { html_to_text } from "../misc";
 import * as misc from "@cocalc/util/misc";
+import { projectImageUrl } from "./image";
 
 interface Props {
   project_id: string;
@@ -25,12 +26,13 @@ export const ProjectTitle: React.FC<Props> = ({
 }: Props) => {
   const title = useRedux(["projects", "project_map", project_id, "title"]);
 
-  const avatar = useRedux([
+  const avatarBlob = useRedux([
     "projects",
     "project_map",
     project_id,
     "avatar_image_tiny",
   ]);
+  const avatar = projectImageUrl(avatarBlob);
 
   function onClick(e): void {
     if (noClick) return;

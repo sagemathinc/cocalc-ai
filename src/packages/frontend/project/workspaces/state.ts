@@ -12,6 +12,7 @@ import {
   hasWorkspaceStoreState,
   normalizeWorkspaceSelection,
   openWorkspaceStore,
+  pathMatchesWorkspace,
   pathMatchesWorkspaceRoot,
   readWorkspaceOrderFromStore,
   readStoredWorkspaceRecords,
@@ -37,7 +38,9 @@ import type {
 } from "./types";
 import {
   loadSessionSelection,
+  loadSessionWorkspaceRecord,
   persistSessionSelection,
+  persistSessionWorkspaceRecord,
   WORKSPACE_SELECTION_EVENT,
 } from "./selection-runtime";
 
@@ -95,20 +98,22 @@ export function useProjectWorkspaces(
   const [selection, setSelectionState] = useState<WorkspaceSelection>(() =>
     loadSessionSelection(project_id),
   );
+  const [cachedWorkspaceRecord, setCachedWorkspaceRecord] =
+    useState<WorkspaceRecord | null>(() =>
+      loadSessionWorkspaceRecord(project_id),
+    );
   const storeRef = useRef<Awaited<
     ReturnType<typeof openWorkspaceStore>
   > | null>(null);
   const recordsRef = useRef(records);
+  recordsRef.current = records;
 
   useEffect(() => {
-    recordsRef.current = records;
-  }, [records]);
-
-  useEffect(() => {
+    if (loading) return;
     const nextSelection = readSelectionForProject(project_id, records);
     if (sameSelection(selection, nextSelection)) return;
     setSelectionState(nextSelection);
-  }, [project_id, records, selection]);
+  }, [loading, project_id, records, selection]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -146,8 +151,37 @@ export function useProjectWorkspaces(
       setLoading(false);
       setRecords([]);
       setSelectionState(loadSessionSelection(project_id));
+      setCachedWorkspaceRecord(loadSessionWorkspaceRecord(project_id));
     }
   }, [account_id, project_id, canPersist]);
+
+  useEffect(() => {
+    if (selection.kind !== "workspace") {
+      if (cachedWorkspaceRecord != null) {
+        setCachedWorkspaceRecord(null);
+        persistSessionWorkspaceRecord(project_id, null);
+      }
+      return;
+    }
+    const actual =
+      records.find(
+        (record) => record.workspace_id === selection.workspace_id,
+      ) ?? null;
+    if (actual != null) {
+      if (
+        cachedWorkspaceRecord?.workspace_id !== actual.workspace_id ||
+        cachedWorkspaceRecord.updated_at !== actual.updated_at
+      ) {
+        setCachedWorkspaceRecord(actual);
+        persistSessionWorkspaceRecord(project_id, actual);
+      }
+      return;
+    }
+    if (!loading && cachedWorkspaceRecord != null) {
+      setCachedWorkspaceRecord(null);
+      persistSessionWorkspaceRecord(project_id, null);
+    }
+  }, [project_id, selection, records, loading, cachedWorkspaceRecord]);
 
   useEffect(() => {
     if (!canPersist) return;
@@ -246,22 +280,27 @@ export function useProjectWorkspaces(
 
   const current = useMemo(() => {
     if (selection.kind !== "workspace") return null;
-    return (
+    const actual =
       records.find(
         (record) => record.workspace_id === selection.workspace_id,
-      ) ?? null
-    );
-  }, [records, selection]);
+      ) ?? null;
+    if (actual != null) return actual;
+    if (
+      loading &&
+      cachedWorkspaceRecord?.workspace_id === selection.workspace_id
+    ) {
+      return cachedWorkspaceRecord;
+    }
+    return null;
+  }, [records, selection, loading, cachedWorkspaceRecord]);
 
   const setSelection = useCallback(
     (next: WorkspaceSelection) => {
       const normalized = normalizeWorkspaceSelection(next, recordsRef.current);
-      const changed = !sameSelection(selection, normalized);
-      if (
-        changed &&
-        normalized.kind === "workspace" &&
-        normalized.workspace_id.trim()
-      ) {
+      if (sameSelection(selection, normalized)) {
+        return;
+      }
+      if (normalized.kind === "workspace" && normalized.workspace_id.trim()) {
         const updated =
           storeRef.current != null
             ? touchStoredWorkspaceRecord(
@@ -448,14 +487,18 @@ export function useProjectWorkspaces(
   );
 
   const matchesPath = useCallback(
-    (path: string) => selectionMatchesPath(selection, records, path),
-    [selection, records],
+    (path: string) => {
+      if (selection.kind === "workspace" && current != null) {
+        return pathMatchesWorkspace(current, path);
+      }
+      return selectionMatchesPath(selection, records, path);
+    },
+    [selection, records, current],
   );
 
   const filterPaths = useCallback(
-    (paths: readonly string[]) =>
-      paths.filter((path) => selectionMatchesPath(selection, records, path)),
-    [selection, records],
+    (paths: readonly string[]) => paths.filter((path) => matchesPath(path)),
+    [matchesPath],
   );
 
   return {

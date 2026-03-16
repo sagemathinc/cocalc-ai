@@ -19,6 +19,7 @@ import {
   Typography,
 } from "antd";
 import { useEffect, useMemo, useState } from "react";
+import { pathMatchesWorkspace } from "@cocalc/conat/workspaces";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import {
   type AgentSessionRecord,
@@ -36,12 +37,20 @@ import {
   SortableList,
 } from "@cocalc/frontend/components/sortable-list";
 import { useProjectContext } from "@cocalc/frontend/project/context";
+import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
+import useProjectInfo from "@cocalc/frontend/project/info/use-project-info";
+import useProjectInfoHistory from "@cocalc/frontend/project/info/use-project-info-history";
+import {
+  summarizeWorkspaceProcesses,
+  type WorkspaceProcessSummary,
+} from "@cocalc/frontend/project/workspaces/process-summary";
 import {
   ensureWorkspaceChatDirectory,
   ensureWorkspaceChatPath,
 } from "@cocalc/frontend/project/workspaces/runtime";
 import { pathMatchesRoot } from "@cocalc/frontend/project/workspaces/state";
 import { path_split, tab_to_path } from "@cocalc/util/misc";
+import { COLORS } from "@cocalc/util/theme";
 import type {
   WorkspaceCreateInput,
   WorkspaceRecord,
@@ -97,11 +106,154 @@ type WorkspaceOpenFileActivity = {
   other: number;
 };
 
+function workspaceOpenFileActivityLabel(
+  activity: WorkspaceOpenFileActivity,
+): string | null {
+  const parts: string[] = [];
+  if (activity.terminals > 0) {
+    parts.push(
+      activity.terminals === 1
+        ? "1 terminal active"
+        : `${activity.terminals} terminals active`,
+    );
+  }
+  if (activity.notebooks > 0) {
+    parts.push(
+      activity.notebooks === 1
+        ? "1 notebook busy"
+        : `${activity.notebooks} notebooks busy`,
+    );
+  }
+  if (activity.other > 0) {
+    parts.push(
+      activity.other === 1 ? "1 active file" : `${activity.other} active files`,
+    );
+  }
+  return parts.length > 0 ? parts.join(" · ") : null;
+}
+
 function iconFor(record?: WorkspaceRecord | null): IconName {
   return (record?.theme.icon?.trim() as IconName | undefined) || DEFAULT_ICON;
 }
 
 const WORKSPACE_MEDIA_SIZE = 64;
+const PROCESS_PANEL_BG = COLORS.GRAY_LLL;
+
+function sparklinePoints(
+  values: number[],
+  width = 120,
+  height = 28,
+): string | null {
+  if (values.length < 2) return null;
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const dx = width / (values.length - 1);
+  const y = (value: number) => {
+    if (max === min) return height / 2;
+    return height - ((value - min) / (max - min)) * (height - 4) - 2;
+  };
+  return values
+    .map((value, i) => `${(i * dx).toFixed(2)},${y(value).toFixed(2)}`)
+    .join(" ");
+}
+
+function formatMemoryMiB(memRss: number): string {
+  if (!Number.isFinite(memRss) || memRss <= 0) return "0 MiB";
+  if (memRss >= 1024) {
+    return `${(memRss / 1024).toFixed(memRss >= 10 * 1024 ? 0 : 1)} GiB`;
+  }
+  return `${Math.round(memRss)} MiB`;
+}
+
+function WorkspaceProcessSparkline({
+  cpuValues,
+  memValues,
+  cpuColor,
+  memColor,
+  cpuLabel,
+  memLabel,
+}: {
+  cpuValues: number[];
+  memValues: number[];
+  cpuColor: string;
+  memColor: string;
+  cpuLabel: string;
+  memLabel: string;
+}): React.JSX.Element | null {
+  const cpuPoints = sparklinePoints(cpuValues, 96, 20);
+  const memPoints = sparklinePoints(memValues, 96, 20);
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 8,
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          gap: 10,
+          fontSize: 11,
+          color: COLORS.GRAY_D,
+          flexWrap: "wrap",
+        }}
+      >
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+          <span
+            style={{
+              width: 8,
+              height: 2,
+              background: cpuColor,
+              borderRadius: 999,
+            }}
+          />
+          {cpuLabel}
+        </span>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+          <span
+            style={{
+              width: 8,
+              height: 2,
+              background: memColor,
+              borderRadius: 999,
+            }}
+          />
+          {memLabel}
+        </span>
+      </div>
+      {cpuPoints || memPoints ? (
+        <svg
+          width="96"
+          height="20"
+          viewBox="0 0 96 20"
+          preserveAspectRatio="none"
+          style={{ flex: "0 0 auto" }}
+        >
+          {memPoints ? (
+            <polyline
+              fill="none"
+              stroke={memColor}
+              strokeWidth="1.5"
+              points={memPoints}
+              strokeLinecap="round"
+            />
+          ) : null}
+          {cpuPoints ? (
+            <polyline
+              fill="none"
+              stroke={cpuColor}
+              strokeWidth="1.5"
+              points={cpuPoints}
+              strokeLinecap="round"
+            />
+          ) : null}
+        </svg>
+      ) : null}
+    </div>
+  );
+}
 
 function selectionValue(selection: WorkspaceSelection): string {
   switch (selection.kind) {
@@ -282,7 +434,7 @@ function getWorkspaceOpenFileActivity(
   let other = 0;
 
   for (const path of openFilesOrder) {
-    if (!pathMatchesRoot(path, record.root_path)) continue;
+    if (!pathMatchesWorkspace(record, path)) continue;
     const hasActivity = !!openFiles?.getIn?.([path, "has_activity"]);
     if (!hasActivity) continue;
     if (path.endsWith(".term")) {
@@ -307,6 +459,12 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
   const activePath = useMemo(
     () => tab_to_path(active_project_tab ?? ""),
     [active_project_tab],
+  );
+  const { info } = useProjectInfo({ project_id });
+  const { history } = useProjectInfoHistory({ project_id, minutes: 30 });
+  const homeDirectory = useMemo(
+    () => getProjectHomeDirectory(project_id),
+    [project_id],
   );
   const [editing, setEditing] = useState<EditorDraft | null>(null);
   const [saving, setSaving] = useState(false);
@@ -453,6 +611,9 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
         workspace_id: record.workspace_id,
       });
       await ensureWorkspaceChatDirectory({ project_id, chat_path });
+      if (record.chat_path !== chat_path) {
+        workspaces.updateWorkspace(record.workspace_id, { chat_path });
+      }
       workspaces.setSelection({
         kind: "workspace",
         workspace_id: record.workspace_id,
@@ -482,6 +643,12 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
       openFilesOrder,
       openFiles,
     );
+    const fileActivityLabel = workspaceOpenFileActivityLabel(fileActivity);
+    const processSummary: WorkspaceProcessSummary | null =
+      processSummaryByWorkspaceId.get(record.workspace_id) ?? null;
+    const hasProcessSummary =
+      processSummary != null &&
+      (processSummary.processCount > 0 || processSummary.cpuTrend.length >= 2);
     return (
       <Card
         key={record.workspace_id}
@@ -592,32 +759,36 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
                 </Typography.Text>
               </Space>
             ) : null}
-            {fileActivity.terminals > 0 ||
-            fileActivity.notebooks > 0 ||
-            fileActivity.other > 0 ? (
-              <Space size={8} wrap style={{ marginTop: 8 }}>
-                {fileActivity.terminals > 0 ? (
-                  <Tag color="orange">
-                    {fileActivity.terminals === 1
-                      ? "Terminal active"
-                      : `${fileActivity.terminals} terminals active`}
-                  </Tag>
-                ) : null}
-                {fileActivity.notebooks > 0 ? (
-                  <Tag color="gold">
-                    {fileActivity.notebooks === 1
-                      ? "Notebook busy"
-                      : `${fileActivity.notebooks} notebooks busy`}
-                  </Tag>
-                ) : null}
-                {fileActivity.other > 0 ? (
-                  <Tag color="blue">
-                    {fileActivity.other === 1
-                      ? "File activity"
-                      : `${fileActivity.other} active files`}
-                  </Tag>
-                ) : null}
-              </Space>
+            {fileActivityLabel ? (
+              <Typography.Text
+                type="secondary"
+                style={{
+                  display: "block",
+                  marginTop: 8,
+                  fontSize: 12,
+                }}
+              >
+                {fileActivityLabel}
+              </Typography.Text>
+            ) : null}
+            {hasProcessSummary ? (
+              <div
+                style={{
+                  marginTop: 6,
+                  padding: "4px 6px",
+                  borderRadius: 8,
+                  background: PROCESS_PANEL_BG,
+                }}
+              >
+                <WorkspaceProcessSparkline
+                  cpuValues={processSummary.cpuTrend}
+                  memValues={processSummary.memTrend}
+                  cpuColor={record.theme.color ?? COLORS.BLUE_D}
+                  memColor={record.theme.accent_color ?? COLORS.ANTD_GREEN_D}
+                  cpuLabel={`CPU ${Math.round(processSummary.cpuPct)}%`}
+                  memLabel={`RAM ${formatMemoryMiB(processSummary.memRss)}`}
+                />
+              </div>
             ) : null}
             <Space size={10} wrap style={{ marginTop: 8 }}>
               <Button
@@ -697,6 +868,21 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
     }
     return grouped;
   }, [now, workspaces.records]);
+  const processSummaryByWorkspaceId = useMemo(
+    () =>
+      new Map(
+        workspaces.records.map((record) => [
+          record.workspace_id,
+          summarizeWorkspaceProcesses({
+            record,
+            info,
+            history,
+            homeDirectory,
+          }),
+        ]),
+      ),
+    [history, homeDirectory, info, workspaces.records],
+  );
   const canUseActiveChat =
     editing != null &&
     activeChatPath != null &&

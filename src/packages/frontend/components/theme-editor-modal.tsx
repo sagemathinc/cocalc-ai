@@ -24,6 +24,16 @@ interface ThemeEditorModalProps {
   extraBeforeTheme?: React.ReactNode;
   extraAfterTheme?: React.ReactNode;
   recentImageChoices?: ThemeImageChoice[];
+  showIcon?: boolean;
+  showDescription?: boolean;
+  showAccentColor?: boolean;
+  previewImageUrl?: string;
+  renderImageInput?: (args: {
+    projectId?: string;
+    value: ThemeEditorDraft | null;
+    onChange: (patch: Partial<ThemeEditorDraft>) => void;
+    recentImageChoices: ThemeImageChoice[];
+  }) => React.ReactNode;
 }
 
 export function ThemeEditorModal({
@@ -40,10 +50,15 @@ export function ThemeEditorModal({
   extraBeforeTheme,
   extraAfterTheme,
   recentImageChoices = [],
+  showIcon = true,
+  showDescription = true,
+  showAccentColor = true,
+  previewImageUrl,
+  renderImageInput,
 }: ThemeEditorModalProps): React.JSX.Element {
   const imageUrl = useMemo(
-    () => blobImageUrl(value?.image_blob),
-    [value?.image_blob],
+    () => previewImageUrl ?? blobImageUrl(value?.image_blob),
+    [previewImageUrl, value?.image_blob],
   );
   const iconName = useMemo(
     () => (value?.icon?.trim() || defaultIcon) as IconName,
@@ -140,35 +155,39 @@ export function ThemeEditorModal({
             onChange={(e) => onChange({ title: e.target.value })}
           />
         </div>
-        <div>
-          <Typography.Text strong>Description</Typography.Text>
-          <Input.TextArea
-            autoSize={{ minRows: 1, maxRows: 4 }}
-            value={value?.description ?? ""}
-            onChange={(e) => onChange({ description: e.target.value })}
-          />
-        </div>
+        {showDescription ? (
+          <div>
+            <Typography.Text strong>Description</Typography.Text>
+            <Input.TextArea
+              autoSize={{ minRows: 1, maxRows: 4 }}
+              value={value?.description ?? ""}
+              onChange={(e) => onChange({ description: e.target.value })}
+            />
+          </div>
+        ) : null}
         <div>
           <div>
             <div
               style={{
                 display: "grid",
-                gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+                gridTemplateColumns: `repeat(${(showIcon ? 1 : 0) + 1 + (showAccentColor ? 1 : 0)}, minmax(0, 1fr))`,
                 gap: 12,
                 alignItems: "start",
               }}
             >
-              <div style={{ minWidth: 0 }}>
-                <Typography.Text strong>Icon</Typography.Text>
-                <div style={{ marginTop: 8 }}>
-                  <IconPickerInput
-                    value={value?.icon ?? ""}
-                    onChange={(icon) => onChange({ icon: icon ?? "" })}
-                    modalTitle="Select Theme Icon"
-                    placeholder="Select an icon"
-                  />
+              {showIcon ? (
+                <div style={{ minWidth: 0 }}>
+                  <Typography.Text strong>Icon</Typography.Text>
+                  <div style={{ marginTop: 8 }}>
+                    <IconPickerInput
+                      value={value?.icon ?? ""}
+                      onChange={(icon) => onChange({ icon: icon ?? "" })}
+                      modalTitle="Select Theme Icon"
+                      placeholder="Select an icon"
+                    />
+                  </div>
                 </div>
-              </div>
+              ) : null}
               <div style={{ minWidth: 0, margin: "0 auto" }}>
                 <Typography.Text strong>Color</Typography.Text>
                 <div
@@ -203,51 +222,62 @@ export function ThemeEditorModal({
                   ) : null}
                 </div>
               </div>
-              <div style={{ minWidth: 0 }}>
-                <Typography.Text strong>Accent color</Typography.Text>
-                <div
-                  style={{
-                    marginTop: 8,
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 8,
-                    minHeight: 32,
-                  }}
-                >
+              {showAccentColor ? (
+                <div style={{ minWidth: 0 }}>
+                  <Typography.Text strong>Accent color</Typography.Text>
                   <div
                     style={{
-                      width: 22,
-                      height: 22,
-                      borderRadius: "50%",
-                      background: value?.accent_color ?? "#f5f5f5",
-                      border: "1px solid #d9d9d9",
+                      marginTop: 8,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 8,
+                      minHeight: 32,
                     }}
-                  />
-                  <ColorButton
-                    onChange={(color) => onChange({ accent_color: color })}
-                    title="Select accent color"
-                  />
-                  {value?.accent_color ? (
-                    <Button
-                      size="small"
-                      onClick={() => onChange({ accent_color: null })}
-                    >
-                      Clear
-                    </Button>
-                  ) : null}
+                  >
+                    <div
+                      style={{
+                        width: 22,
+                        height: 22,
+                        borderRadius: "50%",
+                        background: value?.accent_color ?? "#f5f5f5",
+                        border: "1px solid #d9d9d9",
+                      }}
+                    />
+                    <ColorButton
+                      onChange={(color) => onChange({ accent_color: color })}
+                      title="Select accent color"
+                    />
+                    {value?.accent_color ? (
+                      <Button
+                        size="small"
+                        onClick={() => onChange({ accent_color: null })}
+                      >
+                        Clear
+                      </Button>
+                    ) : null}
+                  </div>
                 </div>
-              </div>
+              ) : null}
             </div>
           </div>
         </div>
-        <ThemeImageInput
-          projectId={projectId}
-          value={value?.image_blob}
-          onChange={(image_blob) => onChange({ image_blob })}
-          recentImageChoices={uniqueImages}
-          modalTitle="Edit Theme Image"
-          uploadText="Click or drag theme image"
-        />
+        {renderImageInput ? (
+          renderImageInput({
+            projectId,
+            value,
+            onChange,
+            recentImageChoices: uniqueImages,
+          })
+        ) : (
+          <ThemeImageInput
+            projectId={projectId}
+            value={value?.image_blob}
+            onChange={(image_blob) => onChange({ image_blob })}
+            recentImageChoices={uniqueImages}
+            modalTitle="Edit Theme Image"
+            uploadText="Click or drag theme image"
+          />
+        )}
         {extraAfterTheme}
       </Space>
     </Modal>
