@@ -3153,6 +3153,38 @@ export async function recoverOrphanedAcpTurns(
   return recovered;
 }
 
+export async function recoverDetachedWorkerStartupState(
+  client: ConatClient,
+  opts: {
+    workerContext?: DetachedWorkerContext | null;
+    restartReason?: string;
+  } = {},
+): Promise<void> {
+  const workerContext = opts.workerContext ?? null;
+  const restartReason = opts.restartReason ?? "worker restart";
+  if (workerContext) {
+    await recoverOrphanedAcpTurns(client, {
+      liveOwnerIds: liveWorkerOwnerIds(workerContext.host_id),
+      interruptedNotice: WORKER_INTERRUPTED_NOTICE,
+      recoveryReason: "ACP worker stopped unexpectedly",
+    });
+    return;
+  }
+
+  // Local Lite detached workers do not have a host-managed worker registry.
+  // On startup, rely on lease-based orphan recovery only. Blindly interrupting
+  // every running job here turns benign worker start races into visible
+  // failures: a replacement worker can start while another worker is still
+  // claiming or beginning a turn, and marking all running jobs interrupted
+  // will kill that in-flight turn even though it is not actually orphaned.
+  //
+  // We still accept a restartReason option so callers/tests can report the
+  // intended recovery reason consistently elsewhere, but we intentionally do
+  // not apply it as a blanket job-state rewrite here.
+  void restartReason;
+  await recoverOrphanedAcpTurns(client);
+}
+
 function initializeAcpRuntime(client: ConatClient): void {
   // IMPORTANT: initialize sqlite with the same path used by the embedding
   // process before any ACP queue/lease tables are touched. Otherwise ACP can
@@ -3256,16 +3288,10 @@ export async function runDetachedAcpQueueWorker(
       poll_ms: ACP_WORKER_POLL_MS,
       idle_exit_ms: idleExitMs,
     });
-    if (workerContext) {
-      await recoverOrphanedAcpTurns(client, {
-        liveOwnerIds: liveWorkerOwnerIds(workerContext.host_id),
-        interruptedNotice: WORKER_INTERRUPTED_NOTICE,
-        recoveryReason: "ACP worker stopped unexpectedly",
-      });
-    } else {
-      await recoverOrphanedAcpTurns(client);
-      markRunningAcpJobsInterrupted(restartReason);
-    }
+    await recoverDetachedWorkerStartupState(client, {
+      workerContext,
+      restartReason,
+    });
     let idleSince = 0;
     let lastRecoveryAt = Date.now();
     while (true) {
