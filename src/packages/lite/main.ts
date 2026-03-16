@@ -39,6 +39,7 @@ import { connectionInfoPath } from "./connection-info";
 import { secureRandomString } from "@cocalc/backend/misc";
 import { allowUnauthenticatedConat, createLiteConatAuth } from "./conat-auth";
 import { isLoopbackHost } from "@cocalc/backend/network/policy";
+import { preflightRepairLiteSqliteFiles } from "./sqlite-preflight";
 
 const logger = getLogger("lite:main");
 
@@ -104,6 +105,7 @@ export async function main(opts?: {
   logger.debug("main");
   enableMemoryUseLogger();
   process.chdir(process.env.HOME ?? "");
+  preflightRepairLiteSqliteFiles();
   initBugCounter();
 
   const AUTH_TOKEN = await getAuthToken();
