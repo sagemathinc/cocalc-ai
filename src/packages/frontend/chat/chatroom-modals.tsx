@@ -18,6 +18,10 @@ import {
   useState,
 } from "@cocalc/frontend/app-framework";
 import { ThemeEditorModal } from "@cocalc/frontend/components";
+import {
+  defaultWorkingDirectoryForChat,
+  useWorkspaceChatWorkingDirectory,
+} from "@cocalc/frontend/project/workspaces/chat-defaults";
 import { COLORS } from "@cocalc/util/theme";
 import { HelpIcon } from "@cocalc/frontend/components/help-icon";
 import { useFrameContext } from "@cocalc/frontend/frame-editors/frame-tree/frame-context";
@@ -82,6 +86,7 @@ export function ChatRoomModals({
 }: ChatRoomModalsProps) {
   const defaultSessionMode = getDefaultCodexSessionMode();
   const { project_id } = useFrameContext();
+  const workspaceWorkingDirectory = useWorkspaceChatWorkingDirectory(path);
   const [renamingThread, setRenamingThread] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState<string>("");
   const [renameColor, setRenameColor] = useState<string | undefined>(undefined);
@@ -95,7 +100,7 @@ export function ChatRoomModals({
   >({
     model: DEFAULT_CODEX_MODEL,
     sessionMode: defaultSessionMode,
-    workingDirectory: defaultWorkingDir(path),
+    workingDirectory: defaultWorkingDir(path, workspaceWorkingDirectory),
   });
   const [exportRequest, setExportRequest] = useState<ExportRequest | null>(
     null,
@@ -150,7 +155,8 @@ export function ChatRoomModals({
         ...savedConfig,
         model: currentModel,
         workingDirectory:
-          savedConfig.workingDirectory?.trim() || defaultWorkingDir(path),
+          savedConfig.workingDirectory?.trim() ||
+          defaultWorkingDir(path, workspaceWorkingDirectory),
         sessionMode:
           normalizeSessionMode(savedConfig as CodexThreadConfig) ??
           defaultSessionMode,
@@ -160,7 +166,7 @@ export function ChatRoomModals({
         }),
       });
     },
-    [actions, path, defaultSessionMode],
+    [actions, path, defaultSessionMode, workspaceWorkingDirectory],
   );
 
   const closeRenameModal = () => {
@@ -174,7 +180,7 @@ export function ChatRoomModals({
     setRenameCodexConfig({
       model: DEFAULT_CODEX_MODEL,
       sessionMode: defaultSessionMode,
-      workingDirectory: defaultWorkingDir(path),
+      workingDirectory: defaultWorkingDir(path, workspaceWorkingDirectory),
       reasoning: getReasoningForModel({ modelValue: DEFAULT_CODEX_MODEL }),
     });
   };
@@ -211,7 +217,8 @@ export function ChatRoomModals({
         sessionMode,
         allowWrite: sessionMode !== "read-only",
         workingDirectory:
-          renameCodexConfig.workingDirectory?.trim() || defaultWorkingDir(path),
+          renameCodexConfig.workingDirectory?.trim() ||
+          defaultWorkingDir(path, workspaceWorkingDirectory),
         sessionId: renameCodexConfig.sessionId?.trim(),
       });
     } else {
@@ -627,7 +634,10 @@ export function ChatRoomModals({
                     </div>
                     <Input
                       value={renameCodexConfig.workingDirectory ?? ""}
-                      placeholder={defaultWorkingDir(path)}
+                      placeholder={defaultWorkingDir(
+                        path,
+                        workspaceWorkingDirectory,
+                      )}
                       onChange={(e) =>
                         setRenameCodexConfig((prev) => ({
                           ...prev,
@@ -735,11 +745,11 @@ function normalizeSessionMode(
   return undefined;
 }
 
-function defaultWorkingDir(chatPath: string): string {
-  if (!chatPath) return ".";
-  const i = chatPath.lastIndexOf("/");
-  if (i <= 0) return ".";
-  return chatPath.slice(0, i);
+function defaultWorkingDir(
+  chatPath: string,
+  workspaceWorkingDirectory?: string,
+): string {
+  return defaultWorkingDirectoryForChat(chatPath, workspaceWorkingDirectory);
 }
 
 function buildChatExportPath(
