@@ -358,6 +358,19 @@ export function resolveRenderedMessageValue({
   return rowValue;
 }
 
+function getLatestCodexActivityAtMs(
+  events: any[] | null | undefined,
+): number | undefined {
+  if (!Array.isArray(events)) return undefined;
+  for (let i = events.length - 1; i >= 0; i -= 1) {
+    const time = (events[i] as any)?.time;
+    if (typeof time === "number" && Number.isFinite(time)) {
+      return time;
+    }
+  }
+  return undefined;
+}
+
 export default function Message({
   index,
   actions,
@@ -702,6 +715,10 @@ export default function Message({
     }
     return getBestResponseText(codexBodyLog.events as any);
   }, [codexBodyLog.events, effectiveGenerating]);
+  const lastCodexActivityAtMs = useMemo(
+    () => getLatestCodexActivityAtMs(codexBodyLog.events),
+    [codexBodyLog.events],
+  );
   const renderedMessageValue = useMemo(
     () =>
       resolveRenderedMessageValue({
@@ -1332,6 +1349,7 @@ export default function Message({
           show={showCodexActivity}
           generating={effectiveGenerating}
           durationLabel={durationLabel}
+          lastActivityAtMs={lastCodexActivityAtMs}
           fontSize={font_size}
           project_id={project_id}
           path={path}

@@ -3,13 +3,14 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Badge, Button, Drawer } from "antd";
+import { Badge, Button, Drawer, Tooltip } from "antd";
 import {
   useEffect,
   useMemo,
   useRef,
   useState,
 } from "@cocalc/frontend/app-framework";
+import { TimeAgo } from "@cocalc/frontend/components";
 import type { InlineCodeLink } from "@cocalc/chat";
 import { COLORS } from "@cocalc/util/theme";
 import CodexLogPanel from "./codex-log-panel";
@@ -45,10 +46,43 @@ type LogRefs = {
   subject?: string;
 };
 
+export const STALE_ACTIVITY_MS = 2 * 60 * 1000;
+
+function formatTimestampTitle(ms: number): string {
+  return new Date(ms).toLocaleString();
+}
+
+export function describeLastActivity({
+  generating,
+  lastActivityAtMs,
+  now = Date.now(),
+}: {
+  generating: boolean;
+  lastActivityAtMs?: number;
+  now?: number;
+}): { label?: string; ageMs?: number; stale: boolean } {
+  if (!generating) {
+    return { label: undefined, ageMs: undefined, stale: false };
+  }
+  if (
+    typeof lastActivityAtMs !== "number" ||
+    !Number.isFinite(lastActivityAtMs)
+  ) {
+    return { label: "Awaiting activity", ageMs: undefined, stale: false };
+  }
+  const ageMs = Math.max(0, now - lastActivityAtMs);
+  return {
+    label: `Last activity ${formatElapsed(ageMs)} ago`,
+    ageMs,
+    stale: ageMs >= STALE_ACTIVITY_MS,
+  };
+}
+
 interface AgentMessageStatusProps {
   show: boolean;
   generating: boolean;
   durationLabel: string;
+  lastActivityAtMs?: number;
   fontSize?: number;
   project_id?: string;
   path?: string;
@@ -66,6 +100,7 @@ export function AgentMessageStatus({
   show,
   generating,
   durationLabel,
+  lastActivityAtMs,
   fontSize,
   project_id,
   path,
@@ -96,6 +131,33 @@ export function AgentMessageStatus({
     if (!Number.isFinite(date) || date <= 0) return durationLabel;
     return formatElapsed(Date.now() - date);
   }, [date, durationLabel, generating, tick]);
+  const lastActivityInfo = useMemo(
+    () =>
+      describeLastActivity({
+        generating,
+        lastActivityAtMs,
+        now: Date.now(),
+      }),
+    [generating, lastActivityAtMs, tick],
+  );
+  const lastActivityColor = lastActivityInfo.stale
+    ? COLORS.ORANGE_WARN
+    : COLORS.GRAY_D;
+  const liveStatusTitle = useMemo(() => {
+    const parts: string[] = [];
+    if (Number.isFinite(date) && date > 0) {
+      parts.push(`Running since: ${formatTimestampTitle(date)}`);
+    }
+    if (
+      typeof lastActivityAtMs === "number" &&
+      Number.isFinite(lastActivityAtMs)
+    ) {
+      parts.push(`Last activity: ${formatTimestampTitle(lastActivityAtMs)}`);
+    } else if (generating) {
+      parts.push("Last activity: awaiting first event");
+    }
+    return parts.join("\n");
+  }, [date, lastActivityAtMs, generating]);
   const setActivitySize = (size: number) => {
     setActivitySize0(size);
     try {
@@ -227,11 +289,31 @@ export function AgentMessageStatus({
         <Button
           size="small"
           onClick={() => setShowDrawer(true)}
-          title="View Codex activity log"
+          title={liveStatusTitle || "View Codex activity log"}
         >
           {generating ? "Working" : `Worked for\n${liveDurationLabel}`}
         </Button>
         {generating ? <span style={{ color: COLORS.GRAY_D }}>Live</span> : null}
+        {generating && lastActivityInfo.label ? (
+          <Tooltip
+            title={
+              typeof lastActivityAtMs === "number" &&
+              Number.isFinite(lastActivityAtMs) ? (
+                <span>
+                  Last backend activity{" "}
+                  <TimeAgo date={new Date(lastActivityAtMs)} /> at{" "}
+                  {formatTimestampTitle(lastActivityAtMs)}
+                </span>
+              ) : (
+                "The turn is running, but no Codex activity event has arrived yet."
+              )
+            }
+          >
+            <span style={{ color: lastActivityColor, fontSize: 12 }}>
+              {lastActivityInfo.label}
+            </span>
+          </Tooltip>
+        ) : null}
       </div>
 
       <Drawer
