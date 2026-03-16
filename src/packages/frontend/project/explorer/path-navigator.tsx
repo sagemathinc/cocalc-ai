@@ -234,13 +234,10 @@ export const PathNavigator: React.FC<Props> = React.memo(
 
     const normalizePathForNav = (path: string): string => {
       const normalized = path.replace(/^\/+/, "");
-      const isTrashPath =
-        normalized === ".trash" || normalized.startsWith(".trash/");
       if (
         path.startsWith(".") ||
         isBackupsPath(path) ||
-        isSnapshotsPath(path) ||
-        isTrashPath
+        isSnapshotsPath(path)
       ) {
         return normalized;
       }

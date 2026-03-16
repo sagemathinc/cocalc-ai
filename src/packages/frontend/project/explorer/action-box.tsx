@@ -38,12 +38,6 @@ import RenameFile from "./rename-file";
 import { SNAPSHOTS } from "@cocalc/util/consts/snapshots";
 import { BACKUPS } from "@cocalc/util/consts/backups";
 
-export function isTrashListingPath(path?: string): boolean {
-  if (path == null) return false;
-  const normalized = path.replace(/^\/+/, "");
-  return normalized === ".trash" || normalized.startsWith(".trash/");
-}
-
 export const PRE_STYLE = {
   marginBottom: "15px",
   maxHeight: "80px",
@@ -136,21 +130,6 @@ export function ActionBox({
     clear();
   }
 
-  function render_delete_warning() {
-    if (isTrashListingPath(current_path)) {
-      return (
-        <Col sm={5}>
-          <Alert bsStyle="danger">
-            <h4>
-              <Icon name="exclamation-triangle" /> Notice
-            </h4>
-            <p>Your files have already been moved to the trash.</p>
-          </Alert>
-        </Col>
-      );
-    }
-  }
-
   function render_delete() {
     const { size } = checked_files;
     return (
@@ -159,7 +138,6 @@ export function ActionBox({
           <Col sm={5} style={{ color: COLORS.GRAY_M }}>
             {render_selected_files_list()}
           </Col>
-          {render_delete_warning()}
         </Row>
         <Row style={{ marginBottom: "10px" }}>
           <Col sm={12}>
@@ -194,11 +172,7 @@ export function ActionBox({
           <Col sm={12}>
             <Space>
               <AntdButton onClick={cancel_action}>Cancel</AntdButton>
-              <AntdButton
-                danger
-                onClick={delete_click}
-                disabled={isTrashListingPath(current_path)}
-              >
+              <AntdButton danger onClick={delete_click}>
                 <Icon name="trash" /> Delete {size} {misc.plural(size, "Item")}
               </AntdButton>
             </Space>

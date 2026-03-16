@@ -8,7 +8,7 @@ declare let window, document;
 
 import { callback } from "awaiting";
 import { List, Map, fromJS, Set as immutableSet } from "immutable";
-import { isEqual, throttle } from "lodash";
+import { throttle } from "lodash";
 import { basename, dirname, join } from "path";
 import { defineMessage } from "react-intl";
 import type { IconName } from "@cocalc/frontend/components/icon";
@@ -633,17 +633,10 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     return getProjectHomeDirectory(this.project_id);
   };
 
-  // Snapshots/backups/trash currently use virtual listing paths that are not
+  // Snapshots/backups currently use virtual listing paths that are not
   // absolute filesystem paths. Keep those untouched until Ticket 11.
   private isVirtualListingPath = (path: string): boolean => {
-    return (
-      isSnapshotsPath(path) ||
-      isBackupsPath(path) ||
-      path === ".trash" ||
-      path.startsWith(".trash/") ||
-      path === "/.trash" ||
-      path.startsWith("/.trash/")
-    );
+    return isSnapshotsPath(path) || isBackupsPath(path);
   };
 
   private toAbsoluteCurrentPath = (path: string): string => {
@@ -2559,9 +2552,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     }
     const id = misc.uuid();
     let mesg;
-    if (isEqual(paths, [".trash"])) {
-      mesg = "the trash";
-    } else if (paths.length === 1) {
+    if (paths.length === 1) {
       mesg = `${paths[0]}`;
     } else {
       mesg = `${paths.length} files`;
