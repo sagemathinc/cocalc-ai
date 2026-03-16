@@ -275,9 +275,21 @@ export function AgentMessageStatus({
 
   if (!show) return null;
 
+  const openActivity = () => setShowDrawer(true);
+
   return (
     <>
       <div
+        role="button"
+        tabIndex={0}
+        onClick={openActivity}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            openActivity();
+          }
+        }}
+        title={liveStatusTitle || "View Codex activity log"}
         style={{
           display: "inline-flex",
           alignItems: "center",
@@ -289,6 +301,7 @@ export function AgentMessageStatus({
           background: COLORS.GRAY_LLL,
           border: `1px solid ${COLORS.GRAY_LL}`,
           lineHeight: 1.2,
+          cursor: "pointer",
         }}
       >
         {generating ? (
@@ -328,21 +341,15 @@ export function AgentMessageStatus({
             </span>
           </Tooltip>
         ) : null}
-        <Button
-          size="small"
-          type="text"
-          onClick={() => setShowDrawer(true)}
-          title={liveStatusTitle || "View Codex activity log"}
+        <span
           style={{
-            padding: 0,
-            height: "auto",
             color: COLORS.GRAY_D,
             fontSize: 12,
             textDecoration: "underline",
           }}
         >
           Activity
-        </Button>
+        </span>
       </div>
 
       <Drawer

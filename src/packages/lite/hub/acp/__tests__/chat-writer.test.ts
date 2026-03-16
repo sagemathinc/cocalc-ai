@@ -845,7 +845,7 @@ describe("ChatStreamWriter", () => {
     );
   });
 
-  it("uses interrupted text when summary arrives", async () => {
+  it("uses interrupted text when no final summary text exists", async () => {
     const { syncdb, sets } = makeFakeSyncDB();
     const writer: any = new ChatStreamWriter({
       metadata: baseMetadata,
@@ -873,7 +873,7 @@ describe("ChatStreamWriter", () => {
     (writer as any).dispose?.(true);
   });
 
-  it("keeps interrupted text when late payloads arrive", async () => {
+  it("keeps the final summary text when interrupt lands during completion", async () => {
     const { syncdb, sets } = makeFakeSyncDB();
     const writer: any = new ChatStreamWriter({
       metadata: baseMetadata,
@@ -899,9 +899,8 @@ describe("ChatStreamWriter", () => {
     } as AcpStreamMessage);
     await flush(writer);
 
-    expect((writer as any).content).toContain("Please fix X");
-    expect((writer as any).content).not.toContain("late streamed text");
-    expect((writer as any).content).not.toContain("late final response");
+    expect((writer as any).content).not.toContain("Please fix X");
+    expect((writer as any).content).toContain("late final response");
     const final = sets[sets.length - 1];
     expect(final.generating).toBe(false);
     expect((final as any).acp_interrupted).toBe(true);

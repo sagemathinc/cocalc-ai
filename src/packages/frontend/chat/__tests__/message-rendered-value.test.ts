@@ -2,6 +2,7 @@
 
 import {
   ACP_THINKING_PLACEHOLDER,
+  resolveEffectiveGenerating,
   resolveRenderedMessageValue,
   shouldSuppressAcpPlaceholderBody,
 } from "../message";
@@ -63,5 +64,23 @@ describe("resolveRenderedMessageValue", () => {
         showCodexActivity: false,
       }),
     ).toBe(false);
+  });
+
+  it("treats interrupted Codex rows as no longer generating", () => {
+    expect(
+      resolveEffectiveGenerating({
+        isCodexThread: true,
+        generating: true,
+        acpInterrupted: true,
+      }),
+    ).toBe(false);
+
+    expect(
+      resolveEffectiveGenerating({
+        isCodexThread: true,
+        generating: true,
+        acpInterrupted: false,
+      }),
+    ).toBe(true);
   });
 });

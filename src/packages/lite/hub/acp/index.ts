@@ -1303,6 +1303,7 @@ export class ChatStreamWriter {
   private finishedBy?: "summary" | "error" | "interrupt";
   private approverAccountId: string;
   private interruptedMessage?: string;
+  private contentBeforeInterrupt?: string;
   private interruptNotified = false;
   private disposeTimer?: NodeJS.Timeout;
   private disposePromise?: Promise<void>;
@@ -1888,11 +1889,44 @@ export class ChatStreamWriter {
     }
     if (payload.type === "summary") {
       if (this.interruptNotified) {
-        if (
-          (!this.content || this.content.trim().length === 0) &&
-          this.interruptedMessage
-        ) {
-          this.content = this.interruptedMessage;
+        const latestSummary = getLatestSummaryText(this.events);
+        const hasSummary =
+          typeof latestSummary === "string" && latestSummary.trim().length > 0;
+        const summaryText =
+          (hasSummary ? latestSummary : undefined) ??
+          (typeof payload.finalResponse === "string" &&
+          payload.finalResponse.trim().length > 0
+            ? payload.finalResponse
+            : undefined);
+        const latestMessage = getLatestMessageText(this.events);
+        const latestNonInterruptMessage =
+          typeof latestMessage === "string" &&
+          latestMessage.trim().length > 0 &&
+          latestMessage !== this.interruptedMessage
+            ? latestMessage
+            : undefined;
+        const preservedContent =
+          typeof this.contentBeforeInterrupt === "string" &&
+          this.contentBeforeInterrupt.trim().length > 0
+            ? this.contentBeforeInterrupt
+            : undefined;
+        const currentNonInterruptContent =
+          typeof this.content === "string" &&
+          this.content.trim().length > 0 &&
+          this.content !== this.interruptedMessage
+            ? this.content
+            : undefined;
+        const candidate =
+          summaryText ??
+          latestNonInterruptMessage ??
+          currentNonInterruptContent ??
+          preservedContent ??
+          this.interruptedMessage;
+        if (candidate) {
+          this.content = stripLoopContractForDisplay(
+            candidate,
+            this.metadata.loop_config?.enabled === true,
+          );
         }
         this.finishedBy = "interrupt";
       } else {
@@ -2482,8 +2516,17 @@ export class ChatStreamWriter {
   notifyInterrupted(text: string): void {
     if (this.interruptNotified) return;
     this.interruptNotified = true;
+    if (
+      this.contentBeforeInterrupt == null &&
+      typeof this.content === "string" &&
+      this.content.trim().length > 0
+    ) {
+      this.contentBeforeInterrupt = this.content;
+    }
     this.interruptedMessage = text;
-    this.content = text;
+    if (!this.content || this.content.trim().length === 0) {
+      this.content = text;
+    }
     this.finishedBy = "interrupt";
     this.setThreadState("interrupted");
     this.addLocalEvent({
@@ -2702,6 +2745,7 @@ export class ChatStreamWriter {
     this.lastErrorText = null;
     this.interruptNotified = false;
     this.interruptedMessage = undefined;
+    this.contentBeforeInterrupt = undefined;
     this.setThreadState("running");
   }
 

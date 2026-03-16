@@ -373,6 +373,20 @@ export function shouldSuppressAcpPlaceholderBody({
   );
 }
 
+export function resolveEffectiveGenerating({
+  isCodexThread,
+  generating,
+  acpInterrupted,
+}: {
+  isCodexThread: boolean;
+  generating?: boolean;
+  acpInterrupted: boolean;
+}): boolean {
+  if (!isCodexThread) return generating === true;
+  if (acpInterrupted) return false;
+  return generating === true;
+}
+
 function getLatestCodexActivityAtMs(
   events: any[] | null | undefined,
 ): number | undefined {
@@ -520,13 +534,17 @@ export default function Message({
   // Thread identity/model now comes from thread_config metadata.
   const isCodexThread =
     typeof isLLMThread === "string" && isCodexModelName(isLLMThread);
+  const acpInterrupted = useMemo(
+    () => field<boolean>(message, "acp_interrupted") === true,
+    [message],
+  );
   const effectiveGenerating = useMemo(() => {
-    if (!isCodexThread) return generating === true;
-    // Assistant rows: rely on persisted chat-row generating flag only.
-    // This avoids stale thread-state "running" entries keeping completed turns
-    // visually live after reconnect/refresh.
-    return generating === true;
-  }, [generating, isCodexThread]);
+    return resolveEffectiveGenerating({
+      isCodexThread,
+      generating,
+      acpInterrupted,
+    });
+  }, [acpInterrupted, generating, isCodexThread]);
   const showDeleteButton = showEditButton && !effectiveGenerating;
 
   useEffect(() => {
@@ -617,16 +635,8 @@ export default function Message({
 
   const latestThreadInterrupted = useMemo(() => {
     if (!latestThreadMessage) return false;
-    return (
-      field<boolean>(latestThreadMessage, "acp_interrupted") === true &&
-      field<boolean>(latestThreadMessage, "generating") !== true
-    );
+    return field<boolean>(latestThreadMessage, "acp_interrupted") === true;
   }, [latestThreadMessage]);
-
-  const acpInterrupted = useMemo(
-    () => field<boolean>(message, "acp_interrupted") === true,
-    [message],
-  );
 
   useEffect(() => {
     if (!actions?.store) return;
