@@ -35,6 +35,8 @@ type DebugClient = {
       };
     };
   };
+  on?: (event: string, listener: () => void) => void;
+  off?: (event: string, listener: () => void) => void;
 };
 
 export interface FrontendBuildCheckStatus {
@@ -50,6 +52,8 @@ let started = false;
 let lastStatus: FrontendBuildCheckStatus | undefined;
 let activeClient: DebugClient | undefined;
 let dismissedMismatchSignature: string | undefined;
+let pollTimer: number | undefined;
+let stopChecks: (() => void) | undefined;
 
 function shortRevision(rev: string): string {
   return rev.length > 12 ? rev.slice(0, 12) : rev;
@@ -224,6 +228,19 @@ export function resetDebugBuildCheckBannerState(): void {
   banner?.remove();
 }
 
+export function resetDebugBuildCheckStateForTests(): void {
+  stopChecks?.();
+  stopChecks = undefined;
+  if (pollTimer != null) {
+    window.clearInterval(pollTimer);
+    pollTimer = undefined;
+  }
+  started = false;
+  lastStatus = undefined;
+  activeClient = undefined;
+  resetDebugBuildCheckBannerState();
+}
+
 function updateDebugNamespace(): void {
   if (window.cc == null) {
     return;
@@ -311,9 +328,23 @@ export function initDebugBuildCheck(client: DebugClient): void {
     if (document.visibilityState === "hidden") {
       return;
     }
-    void checkFrontendBuildFingerprint(client);
+    void checkFrontendBuildFingerprint(activeClient ?? client);
   };
+  const onFocus = () => runCheck();
+  const onVisibilityChange = () => {
+    if (document.visibilityState === "visible") {
+      runCheck();
+    }
+  };
+  const onConnected = () => runCheck();
   runCheck();
-  window.setInterval(runCheck, POLL_MS);
-  window.addEventListener("focus", runCheck);
+  pollTimer = window.setInterval(runCheck, POLL_MS);
+  window.addEventListener("focus", onFocus);
+  window.addEventListener("visibilitychange", onVisibilityChange);
+  client.on?.("connected", onConnected);
+  stopChecks = () => {
+    window.removeEventListener("focus", onFocus);
+    window.removeEventListener("visibilitychange", onVisibilityChange);
+    client.off?.("connected", onConnected);
+  };
 }
