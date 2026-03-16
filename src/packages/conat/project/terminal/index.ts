@@ -8,7 +8,7 @@ import {
   type ServerSocket,
 } from "@cocalc/conat/socket";
 import { getLogger } from "@cocalc/conat/client";
-import { ThrottleString } from "@cocalc/util/throttle";
+import { createAdaptiveTerminalOutputThrottle } from "@cocalc/util/throttle";
 import { delay } from "awaiting";
 import {
   createPtyWritable,
@@ -25,6 +25,14 @@ const MAX_MSGS_PER_SECOND = parseInt(
 
 const MAX_HISTORY_LENGTH = parseInt(
   process.env.COCALC_TERMINAL_MAX_HISTORY_LENGTH ?? "1000000",
+);
+
+const OUTPUT_HIGH_WATER_BYTES = parseInt(
+  process.env.COCALC_TERMINAL_OUTPUT_HIGH_WATER_BYTES ?? "262144",
+);
+
+const OUTPUT_LOW_WATER_BYTES = parseInt(
+  process.env.COCALC_TERMINAL_OUTPUT_LOW_WATER_BYTES ?? "65536",
 );
 
 const DEFAULT_SIZE_WAIT = 2000;
@@ -285,6 +293,9 @@ export function terminalServer({
     };
     let pty: any = null;
     let wpty: Writable | null = null;
+    let outputThrottle: ReturnType<
+      typeof createAdaptiveTerminalOutputThrottle
+    > | null = null;
     const buffer: PendingMessage[] = [];
     const setPty = (p) => {
       pty = p;
@@ -375,7 +386,11 @@ export function terminalServer({
 
     const removeListeners = () => {
       if (pty == null) return;
-      pty.removeListener("data", sendToClient);
+      if (outputThrottle != null) {
+        pty.removeListener("data", outputThrottle.write);
+        outputThrottle.close();
+        outputThrottle = null;
+      }
       pty.removeListener("get-size", getClientSize);
       pty.removeListener("broadcast", broadcast);
       pty.emit("broadcast", "leave");
@@ -387,6 +402,7 @@ export function terminalServer({
       const { cmd } = data;
       switch (cmd) {
         case "destroy":
+          removeListeners();
           pty?.destroy();
           if (sessionId) {
             delete sessions[sessionId];
@@ -492,11 +508,28 @@ export function terminalServer({
             await postHook?.({ command, args, options, pty });
           }
 
-          const throttle = new ThrottleString(MAX_MSGS_PER_SECOND);
-          throttle.on("data", sendToClient);
-          pty.on("data", throttle.write);
+          outputThrottle = createAdaptiveTerminalOutputThrottle({
+            messagesPerSecond: MAX_MSGS_PER_SECOND,
+            highWaterBytes: OUTPUT_HIGH_WATER_BYTES,
+            lowWaterBytes: OUTPUT_LOW_WATER_BYTES,
+            publish: sendToClient,
+            pause:
+              typeof pty?.pause === "function"
+                ? () => {
+                    pty.pause();
+                  }
+                : undefined,
+            resume:
+              typeof pty?.resume === "function"
+                ? () => {
+                    pty.resume();
+                  }
+                : undefined,
+          });
+          pty.on("data", outputThrottle.write);
 
           pty.once("exit", async () => {
+            removeListeners();
             setPty(null);
             if (sessionId) {
               delete sessions[sessionId];

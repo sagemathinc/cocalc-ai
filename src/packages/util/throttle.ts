@@ -52,12 +52,15 @@ export class ThrottleString extends EventEmitter {
   };
 
   flush = () => {
-    if (this.buf.length > 0) {
-      this.emit("data", this.buf);
-    }
+    const data = this.buf;
     this.buf = "";
     this.last = Date.now();
+    if (data.length > 0) {
+      this.emit("data", data);
+    }
   };
+
+  bufferedLength = () => this.buf.length;
 }
 
 // Throttle a list of objects, where push them into an array to add more to our buffer.
@@ -107,10 +110,74 @@ export class Throttle<T> extends EventEmitter {
   };
 
   flush = () => {
-    if (this.buf.length > 0) {
-      this.emit("data", this.buf);
-    }
+    const data = this.buf;
     this.buf = [];
     this.last = Date.now();
+    if (data.length > 0) {
+      this.emit("data", data);
+    }
+  };
+}
+
+export function createAdaptiveTerminalOutputThrottle({
+  messagesPerSecond = DEFAULT_MESSAGES_PER_SECOND,
+  highWaterBytes,
+  lowWaterBytes,
+  publish,
+  pause,
+  resume,
+}: {
+  messagesPerSecond?: number;
+  highWaterBytes: number;
+  lowWaterBytes: number;
+  publish: (data: string) => void;
+  pause?: () => void;
+  resume?: () => void;
+}) {
+  if (lowWaterBytes > highWaterBytes) {
+    throw new Error("lowWaterBytes must be <= highWaterBytes");
+  }
+  const throttle = new ThrottleString(messagesPerSecond);
+  let paused = false;
+
+  const maybePause = () => {
+    if (paused || throttle.bufferedLength() < highWaterBytes) {
+      return;
+    }
+    pause?.();
+    paused = true;
+  };
+
+  const maybeResume = () => {
+    if (!paused || throttle.bufferedLength() > lowWaterBytes) {
+      return;
+    }
+    resume?.();
+    paused = false;
+  };
+
+  throttle.on("data", (data: string) => {
+    publish(data);
+    maybeResume();
+  });
+
+  return {
+    write(data: string) {
+      throttle.write(data);
+      maybePause();
+    },
+    close() {
+      throttle.close();
+      if (paused) {
+        resume?.();
+        paused = false;
+      }
+    },
+    bufferedLength() {
+      return throttle.bufferedLength();
+    },
+    isPaused() {
+      return paused;
+    },
   };
 }

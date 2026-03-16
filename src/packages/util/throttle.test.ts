@@ -1,4 +1,8 @@
-import { ThrottleString, Throttle } from "./throttle";
+import {
+  createAdaptiveTerminalOutputThrottle,
+  ThrottleString,
+  Throttle,
+} from "./throttle";
 import { delay } from "awaiting";
 
 describe("a throttled string", () => {
@@ -108,5 +112,58 @@ describe("a throttled list of objects", () => {
     } finally {
       global.setTimeout = originalSetTimeout;
     }
+  });
+});
+
+describe("adaptive terminal output throttle", () => {
+  it("pauses when buffered output crosses the high-water mark and resumes after a flush", async () => {
+    const events: string[] = [];
+    const throttle = createAdaptiveTerminalOutputThrottle({
+      messagesPerSecond: 10,
+      highWaterBytes: 5,
+      lowWaterBytes: 2,
+      publish: (data) => {
+        events.push(`data:${data}`);
+      },
+      pause: () => {
+        events.push("pause");
+      },
+      resume: () => {
+        events.push("resume");
+      },
+    });
+
+    throttle.write("abc");
+    expect(events).toEqual([]);
+    expect(throttle.isPaused()).toBe(false);
+
+    throttle.write("def");
+    expect(events).toEqual(["pause"]);
+    expect(throttle.isPaused()).toBe(true);
+
+    await delay(120);
+    expect(events).toEqual(["pause", "data:abcdef", "resume"]);
+    expect(throttle.isPaused()).toBe(false);
+  });
+
+  it("resumes on close if it paused the pty", () => {
+    const events: string[] = [];
+    const throttle = createAdaptiveTerminalOutputThrottle({
+      messagesPerSecond: 10,
+      highWaterBytes: 5,
+      lowWaterBytes: 2,
+      publish: () => {},
+      pause: () => {
+        events.push("pause");
+      },
+      resume: () => {
+        events.push("resume");
+      },
+    });
+
+    throttle.write("abcdef");
+    expect(events).toEqual(["pause"]);
+    throttle.close();
+    expect(events).toEqual(["pause", "resume"]);
   });
 });

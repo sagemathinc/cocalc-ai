@@ -12,7 +12,7 @@ import {
 } from "@cocalc/conat/service/terminal";
 import { project_id } from "@cocalc/project/data";
 import { throttle } from "lodash";
-import { ThrottleString } from "@cocalc/util/throttle";
+import { createAdaptiveTerminalOutputThrottle } from "@cocalc/util/throttle";
 import { join } from "path";
 import type { CreateTerminalOptions } from "@cocalc/conat/project/api/editor";
 import { delay } from "awaiting";
@@ -61,6 +61,14 @@ const MAX_BYTES_PER_SECOND = parseInt(
 // we are supporting for users.
 const MAX_MSGS_PER_SECOND = parseInt(
   process.env.COCALC_TERMINAL_MAX_MSGS_PER_SECOND ?? "20",
+);
+
+const OUTPUT_HIGH_WATER_BYTES = parseInt(
+  process.env.COCALC_TERMINAL_OUTPUT_HIGH_WATER_BYTES ?? "262144",
+);
+
+const OUTPUT_LOW_WATER_BYTES = parseInt(
+  process.env.COCALC_TERMINAL_OUTPUT_LOW_WATER_BYTES ?? "65536",
 );
 
 type State = "running" | "off" | "closed";
@@ -267,13 +275,25 @@ export class Session {
 
     // use slighlty less than MAX_MSGS_PER_SECOND to avoid reject
     // due to being *slightly* off.
-    const throttle = new ThrottleString(MAX_MSGS_PER_SECOND - 3);
-    throttle.on("data", (data: string) => {
-      this.stream?.publish(data);
+    const throttle = createAdaptiveTerminalOutputThrottle({
+      messagesPerSecond: MAX_MSGS_PER_SECOND - 3,
+      highWaterBytes: OUTPUT_HIGH_WATER_BYTES,
+      lowWaterBytes: OUTPUT_LOW_WATER_BYTES,
+      publish: (data: string) => {
+        this.stream?.publish(data);
+      },
+      pause: () => {
+        this.pty?.pause();
+      },
+      resume: () => {
+        this.pty?.resume();
+      },
     });
-    this.pty.onData(throttle.write);
+    const outputListener = this.pty.onData(throttle.write);
 
     this.pty.onExit(() => {
+      outputListener.dispose();
+      throttle.close();
       this.stream?.publish(EXIT_MESSAGE);
       this.state = "off";
       if (this.pid != null) {
