@@ -62,6 +62,9 @@ export function useStarredFilesManager(
 
       // Wait until account is authenticated
       const account_id = await waitForPersistAccountId();
+      if (!isMounted) {
+        return;
+      }
       try {
         conatBookmarks = await initializeConatBookmarks(account_id);
       } finally {

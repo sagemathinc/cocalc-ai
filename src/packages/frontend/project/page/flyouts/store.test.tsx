@@ -3,6 +3,7 @@ import { act, render, screen, waitFor } from "@testing-library/react";
 import { useStarredFilesManager } from "./store";
 import { redux } from "@cocalc/frontend/app-framework";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import { waitForPersistAccountId } from "@cocalc/frontend/project/explorer/persist-account-id";
 
 jest.mock("@cocalc/frontend/app-framework", () => ({
   redux: {
@@ -16,6 +17,10 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
       dkv: jest.fn(),
     },
   },
+}));
+
+jest.mock("@cocalc/frontend/project/explorer/persist-account-id", () => ({
+  waitForPersistAccountId: jest.fn(),
 }));
 
 class FakeBookmarks extends EventEmitter {
@@ -47,6 +52,7 @@ function TestComponent({
 describe("useStarredFilesManager", () => {
   const getStoreMock = redux.getStore as jest.Mock;
   const dkvMock = webapp_client.conat_client.dkv as jest.Mock;
+  const waitForPersistAccountIdMock = waitForPersistAccountId as jest.Mock;
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -54,6 +60,7 @@ describe("useStarredFilesManager", () => {
       async_wait: async () => {},
       get_account_id: () => "account-1",
     });
+    waitForPersistAccountIdMock.mockResolvedValue("account-1");
   });
 
   it("drops the old project listener when switching projects", async () => {
@@ -84,5 +91,24 @@ describe("useStarredFilesManager", () => {
       bookmarks.emit("change", { key: "project-2", value: ["gamma.md"] });
     });
     expect(screen.getByTestId("starred").textContent).toBe("gamma.md");
+  });
+
+  it("does not initialize bookmarks after unmounting before auth resolves", async () => {
+    let resolveAccountId!: (value: string) => void;
+    waitForPersistAccountIdMock.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveAccountId = resolve;
+      }),
+    );
+
+    const { unmount } = render(<TestComponent project_id="project-1" />);
+    unmount();
+
+    await act(async () => {
+      resolveAccountId("account-1");
+      await Promise.resolve();
+    });
+
+    expect(dkvMock).not.toHaveBeenCalled();
   });
 });
