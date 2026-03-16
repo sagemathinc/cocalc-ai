@@ -1,0 +1,32 @@
+{
+  "name": "seeded-jupyter-smoke",
+  "steps": [
+    {
+      "name": "wait body",
+      "action": {
+        "name": "wait_for_selector",
+        "selector": "body",
+        "state": "visible",
+        "timeout_ms": 15000
+      }
+    },
+    {
+      "name": "assert notebook path",
+      "assert": "return window.location.href.includes('.ipynb');",
+      "retries": 2,
+      "recovery": "reload"
+    },
+    {
+      "name": "assert seeded notebook tab is visible",
+      "assert": "return document.body.innerText.includes('scratch.ipynb');",
+      "retries": 2,
+      "recovery": "reload"
+    },
+    {
+      "name": "assert jupyter chrome is visible",
+      "assert": "return document.querySelector('[data-cocalc-jupyter-minimap-wrapper=\"1\"]') != null;",
+      "retries": 2,
+      "recovery": "reload"
+    }
+  ]
+}

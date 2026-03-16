@@ -1,0 +1,26 @@
+{
+  "name": "seeded-files-smoke",
+  "steps": [
+    {
+      "name": "wait body",
+      "action": {
+        "name": "wait_for_selector",
+        "selector": "body",
+        "state": "visible",
+        "timeout_ms": 15000
+      }
+    },
+    {
+      "name": "assert readme path",
+      "assert": "return window.location.href.includes('README.md');",
+      "retries": 2,
+      "recovery": "reload"
+    },
+    {
+      "name": "assert seeded text",
+      "assert": "return document.body.innerText.includes('Bug-hunt file fixture');",
+      "retries": 2,
+      "recovery": "reload"
+    }
+  ]
+}

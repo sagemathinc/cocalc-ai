@@ -12,6 +12,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { execSync } from "node:child_process";
 import { getFrontendSourceFingerprintSync } from "./frontend-build-fingerprint";
 
 describe("getFrontendSourceFingerprintSync", () => {
@@ -66,6 +67,37 @@ describe("getFrontendSourceFingerprintSync", () => {
 
       expect(info.available).toBe(false);
       expect(info.reason).toBe("no repo roots found");
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("respects a single configured source root when git ls-files is available", () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "frontend-fingerprint-git-"));
+    try {
+      execSync("git init -q", { cwd: repoRoot, stdio: "ignore" });
+      const frontendRoot = join(repoRoot, "src", "packages", "frontend");
+      const docsRoot = join(repoRoot, "docs");
+      mkdirSync(frontendRoot, { recursive: true });
+      mkdirSync(docsRoot, { recursive: true });
+
+      const watched = join(frontendRoot, "entry.tsx");
+      const unrelated = join(docsRoot, "notes.md");
+      writeFileSync(watched, "export const watched = true;\n");
+      writeFileSync(unrelated, "updated docs\n");
+
+      utimesSync(watched, 1, 10);
+      utimesSync(unrelated, 1, 20);
+
+      const info = getFrontendSourceFingerprintSync({
+        repoRoot,
+        sourceRoots: [frontendRoot],
+        now: new Date("2026-03-15T12:00:00.000Z"),
+      });
+
+      expect(info.available).toBe(true);
+      expect(info.latest_path).toBe("src/packages/frontend/entry.tsx");
+      expect(info.watched_roots).toEqual(["src/packages/frontend"]);
     } finally {
       rmSync(repoRoot, { recursive: true, force: true });
     }
