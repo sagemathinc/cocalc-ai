@@ -1312,6 +1312,92 @@ Directory import:
 
 This feature should be framed as a generic `Import from public CoCalc URL` capability that can work with public viewer mode now and cached/share-style public publishing later.
 
+Concrete milestone checklist:
+
+### Milestone 1: Security/contract freeze
+
+1. finalize the public-viewer security boundary:
+   - dedicated public origin/subdomain,
+   - no CoCalc auth/cookies/tokens,
+   - no project API or RTC access,
+   - strict CSP and static safety headers.
+2. finalize the MVP-supported file types:
+   - `.md`
+   - `.ipynb`
+   - `.slides`
+   - `.board`
+3. finalize route precedence:
+   - `index.html`
+   - `index.json`
+   - supported file rendering
+   - raw-download fallback
+   - no implicit directory crawling by default.
+4. finalize the allowed-host/canonical-URL rules for later public import.
+
+### Milestone 2: Schema and backend MVP
+
+1. add the app-spec/integration fields for `cocalc-public-viewer`,
+2. implement and validate the `index.json` schema,
+3. add project-host support for:
+   - serving the viewer bundle,
+   - resolving file and directory requests,
+   - manifest-aware route behavior,
+   - raw file fallback,
+   - safe static response headers.
+4. add basic logging/diagnostics for public-viewer requests and failures.
+
+### Milestone 3: Viewer bundle MVP
+
+1. build the read-only public viewer bundle,
+2. wire in the existing read-only renderers from TimeTravel/share paths where possible,
+3. verify end-to-end rendering for:
+   - markdown
+   - notebooks
+   - slides
+   - whiteboards
+4. verify unsupported files behave predictably:
+   - raw download/open,
+   - or omitted from manifest-driven listing.
+
+### Milestone 4: Import from public CoCalc URL
+
+1. add the authenticated import entrypoint in the main CoCalc app,
+2. support a public-viewer button:
+   - `Copy to my project`
+   - `Open in CoCalc`
+3. add destination project picker + optional destination path + confirmation step,
+4. implement canonical-URL validation and block arbitrary remote fetch/import,
+5. add structured directory import using:
+   - manifest endpoint and/or
+   - archive download endpoint,
+6. add preview/size checks before executing the copy.
+
+### Milestone 5: Codex-assisted publishing
+
+1. add `Have Codex help publish this directory of files`,
+2. launch Codex with:
+   - directory path,
+   - public-viewer context,
+   - manifest/index rules,
+   - supported file types,
+   - read-only/public constraints,
+3. make the prompt product-owned and curated,
+4. test and refine it against realistic scenarios until it is reliable:
+   - directory of notebooks,
+   - mixed notebook/slides/markdown course site,
+   - raw-download fallback cases,
+   - custom `index.html` generation.
+
+### Milestone 6: Validation and rollout
+
+1. perform a focused XSS/origin-isolation audit,
+2. test CDN/static caching behavior,
+3. test large-file/range-request behavior,
+4. run repeatable renderer smoke tests for the MVP file types,
+5. run repeatable public-import tests,
+6. run repeatable Codex publishing tests,
+7. expose first as an opt-in alpha feature before broader rollout.
+
 ## 14.2 Activity-Driven Static Refresh Jobs
 
 Support optional static refresh commands so generated/static artifacts can be kept fresh without wasting compute.
