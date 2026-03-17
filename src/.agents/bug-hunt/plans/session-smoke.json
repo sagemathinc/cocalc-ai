@@ -12,7 +12,7 @@
     },
     {
       "name": "assert route",
-      "assert": "return /\\/project-home|\\/files/.test(window.location.pathname);",
+      "assert": "return /^\\/projects\\/[0-9a-f-]+\\/(project-home|files)\\/?$/.test(window.location.pathname);",
       "retries": 1,
       "recovery": "reload"
     },
