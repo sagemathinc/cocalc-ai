@@ -2,10 +2,10 @@
   "name": "files-shell-smoke",
   "steps": [
     {
-      "name": "wait body",
+      "name": "wait project page",
       "action": {
         "name": "wait_for_selector",
-        "selector": "body",
+        "selector": "[data-cocalc-project-page]",
         "state": "visible",
         "timeout_ms": 15000
       }
