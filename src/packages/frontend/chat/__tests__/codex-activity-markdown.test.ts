@@ -1,4 +1,8 @@
-import { codexEventsToMarkdown, parsePathLineTarget } from "../codex-activity";
+import {
+  codexActivityToMarkdown,
+  codexEventsToMarkdown,
+  parsePathLineTarget,
+} from "../codex-activity";
 
 describe("codexEventsToMarkdown", () => {
   it("formats file paths as inline code (not markdown links)", () => {
@@ -174,5 +178,27 @@ describe("parsePathLineTarget", () => {
       path: "/tmp/workspaces.py",
       line: 7,
     });
+  });
+});
+
+describe("codexActivityToMarkdown", () => {
+  it("wraps exported activity in a markdown document with status", () => {
+    const markdown = codexActivityToMarkdown(
+      [
+        {
+          type: "event",
+          seq: 1,
+          event: {
+            type: "thinking",
+            text: "Inspecting the workspace state.",
+          },
+        },
+      ] as any,
+      { generating: false, durationLabel: "0:23" },
+    );
+
+    expect(markdown).toContain("## Codex Activity");
+    expect(markdown).toContain("*Status:* Worked for 0:23");
+    expect(markdown).toContain("- Reasoning: Inspecting the workspace state.");
   });
 });

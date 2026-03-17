@@ -5,6 +5,7 @@ import * as immutable from "immutable";
 import { ChatPanel } from "../chatroom";
 
 const persistExternalSideChatSelectedThreadKey = jest.fn();
+const renderChatRoomThreadPanel = jest.fn((_props: any) => null);
 
 jest.mock("@cocalc/frontend/feature", () => ({
   IS_MOBILE: false,
@@ -114,7 +115,7 @@ jest.mock("../chatroom-thread-actions", () => ({
 }));
 
 jest.mock("../chatroom-thread-panel", () => ({
-  ChatRoomThreadPanel: () => null,
+  ChatRoomThreadPanel: (props: any) => renderChatRoomThreadPanel(props),
   getDefaultNewThreadSetup: () => ({
     codexConfig: {
       workingDirectory: "/",
@@ -143,9 +144,13 @@ jest.mock("../combined-composer-target", () => {
 describe("ChatPanel external side chat persistence", () => {
   beforeEach(() => {
     persistExternalSideChatSelectedThreadKey.mockClear();
+    renderChatRoomThreadPanel.mockClear();
   });
 
-  function renderPanel(desc?: Record<string, unknown>) {
+  function renderPanel(
+    desc?: Record<string, unknown>,
+    opts?: { isVisible?: boolean; tabIsVisible?: boolean },
+  ) {
     const actions = {
       getCodexConfig: jest.fn(),
       getThreadMetadata: jest.fn(),
@@ -166,6 +171,8 @@ describe("ChatPanel external side chat persistence", () => {
         threadIndex={undefined}
         docVersion={0}
         desc={desc as any}
+        isVisible={opts?.isVisible}
+        tabIsVisible={opts?.tabIsVisible}
       />,
     );
   }
@@ -186,5 +193,17 @@ describe("ChatPanel external side chat persistence", () => {
     renderPanel();
 
     expect(persistExternalSideChatSelectedThreadKey).not.toHaveBeenCalled();
+  });
+
+  it("disables thread-search shortcuts when the backing tab is hidden", () => {
+    renderPanel(undefined, {
+      isVisible: false,
+      tabIsVisible: false,
+    });
+
+    expect(renderChatRoomThreadPanel).toHaveBeenCalled();
+    expect(renderChatRoomThreadPanel.mock.lastCall?.[0]?.shortcutEnabled).toBe(
+      false,
+    );
   });
 });

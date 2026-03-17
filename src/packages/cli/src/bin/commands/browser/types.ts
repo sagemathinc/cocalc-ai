@@ -245,6 +245,18 @@ export type BrowserCommandDeps = {
     title?: string;
     host_id?: string | null;
   }>;
+  resolveProjectConatClient: (
+    ctx: BrowserCommandContext,
+    projectIdentifier?: string,
+    cwd?: string,
+  ) => Promise<{
+    project: {
+      project_id: string;
+      title: string;
+      host_id: string | null;
+    };
+    client: unknown;
+  }>;
   createBrowserSessionClient: (opts: {
     account_id: string;
     browser_id: string;

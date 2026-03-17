@@ -3,6 +3,7 @@ import {
   applyNewThreadSetupPatch,
   resolveActiveThreadSearchMatchDate,
   resolveCompactThreadBadgeAppearance,
+  resolveThreadSearchHighlightQuery,
 } from "../chatroom-thread-panel";
 import immutable from "immutable";
 import { COLORS } from "@cocalc/util/theme";
@@ -98,5 +99,25 @@ describe("resolveActiveThreadSearchMatchDate", () => {
         threadSearchMatches: ["111", "222"],
       }),
     ).toBe("222");
+  });
+});
+
+describe("resolveThreadSearchHighlightQuery", () => {
+  it("clears highlights when the find UI is closed", () => {
+    expect(
+      resolveThreadSearchHighlightQuery({
+        threadSearchOpen: false,
+        threadSearchQuery: "hello",
+      }),
+    ).toBe("");
+  });
+
+  it("keeps highlights active while the find UI is open", () => {
+    expect(
+      resolveThreadSearchHighlightQuery({
+        threadSearchOpen: true,
+        threadSearchQuery: "hello",
+      }),
+    ).toBe("hello");
   });
 });

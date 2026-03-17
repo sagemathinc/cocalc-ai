@@ -30,7 +30,6 @@ import type express from "express";
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import * as path from "node:path";
-import { userInfo } from "node:os";
 import httpProxy from "http-proxy-3";
 import { getLogger } from "@cocalc/project/logger";
 import { project_id } from "@cocalc/project/data";
@@ -53,6 +52,7 @@ import {
   type AppProxyExposureMode,
 } from "@cocalc/backend/auth/app-proxy";
 import listen from "@cocalc/backend/misc/async-server-listen";
+import { resolveProxyListenPort } from "./config";
 
 const logger = getLogger("project:servers:proxy");
 const STATIC_CACHE_CONTROL_DEFAULT = "public, max-age=300";
@@ -178,15 +178,7 @@ export async function startProxyServer({
   port,
   host = process.env.COCALC_PROXY_HOST ?? "127.0.0.1",
 }: StartOptions = {}) {
-  if (!port) {
-    if (process.env.COCALC_PROXY_PORT) {
-      port = parseInt(process.env.COCALC_PROXY_PORT);
-    } else if (userInfo().username == "root") {
-      port = 80;
-    } else {
-      port = 8080;
-    }
-  }
+  port = resolveProxyListenPort(port);
 
   logger.debug("startProxyServer", { base_url, port, host });
   const { proxy, getTarget } = createProxyResolver({

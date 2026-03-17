@@ -18,4 +18,23 @@ describe("CodexActivity close button", () => {
 
     expect(screen.getAllByLabelText("Hide log")).toHaveLength(1);
   });
+
+  it("does not change hook order when activity entries appear later", () => {
+    const { rerender } = render(<CodexActivity expanded events={[]} />);
+
+    rerender(
+      <CodexActivity
+        expanded
+        events={[
+          {
+            type: "event",
+            seq: 1,
+            event: { type: "thinking", text: "working" },
+          },
+        ]}
+      />,
+    );
+
+    expect(screen.getAllByLabelText("Hide log")).toHaveLength(1);
+  });
 });

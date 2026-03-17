@@ -12,19 +12,24 @@ import { tmpdir } from "node:os";
 import { join } from "path";
 import { randomId } from "@cocalc/conat/names";
 
+const isLinux = process.platform === "linux";
+const describeIfLinux = isLinux ? describe : describe.skip;
+
 let tmp;
 beforeAll(async () => {
+  if (!isLinux) return;
   await before();
   tmp = await mkdtemp(join(tmpdir(), `cocalc-${randomId()}0`));
 });
 afterAll(async () => {
+  if (!isLinux) return;
   await after();
   try {
     await rm(tmp, { force: true, recursive: true });
   } catch {}
 });
 
-describe("basic core of the async path watch functionality", () => {
+describeIfLinux("basic core of the async path watch functionality", () => {
   let fs;
   it("creates sandboxed filesystem", () => {
     fs = new SandboxedFilesystem(tmp);

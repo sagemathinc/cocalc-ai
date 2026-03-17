@@ -145,6 +145,15 @@ jest.mock("@cocalc/frontend/project/page/url-transform", () => ({
   default: () => (value: string) => value,
 }));
 
+jest.mock("@cocalc/frontend/project/context", () => ({
+  useProjectContext: () => ({
+    workspaces: {
+      records: [],
+      resolveWorkspaceForPath: () => null,
+    },
+  }),
+}));
+
 jest.mock("./agent-chat-font-size", () => ({
   useAgentChatFontSize: () => ({
     fontSize: 13,
