@@ -1316,6 +1316,7 @@ export class ChatStreamWriter {
   private usage: AcpStreamUsage | null = null;
   private content = "";
   private lastCommittedThreadId: string | null = null;
+  private lastCommittedStartedAtMs: number | null = null;
   private lastCommittedUsageJson = "null";
   private lastCommittedInterrupted = false;
   private lastCommittedGenerating: boolean | undefined;
@@ -1796,6 +1797,10 @@ export class ChatStreamWriter {
         content: ":robot: Thinking...",
         generating: true,
         acp_account_id: this.approverAccountId,
+        acp_started_at_ms:
+          Number(this.metadata.started_at_ms) > 0
+            ? Number(this.metadata.started_at_ms)
+            : undefined,
         acp_log_store: this.logStoreName,
         acp_log_key: this.logKey,
         acp_log_subject: this.logSubject,
@@ -1818,6 +1823,7 @@ export class ChatStreamWriter {
     if (arr.length > 0) {
       this.prevHistory = arr.slice(1);
     }
+    this.primeCommittedStateFromRow(current);
     const queued = listAcpPayloads(this.metadata);
     for (const payload of queued) {
       this.processPayload(payload, { persist: false });
@@ -1884,11 +1890,13 @@ export class ChatStreamWriter {
     }
     if (payload.type === "status") {
       this.setThreadState(payload.state === "running" ? "running" : "queued");
+      this.commitNow(true);
       return;
     }
     if ((payload as any).type === "usage") {
       // Live usage updates from Codex; stash for commit and don't treat as a user-visible event.
       this.usage = (payload as any).usage ?? null;
+      this.commitNow(true);
       return;
     }
     this.events = appendStreamMessage(this.events, payload);
@@ -1908,6 +1916,7 @@ export class ChatStreamWriter {
         // Use the merged text so we preserve the full streamed body.
         this.content = mergedText ?? text;
       }
+      this.commitNow(true);
       return;
     }
     if (payload.type === "summary") {
@@ -2056,6 +2065,10 @@ export class ChatStreamWriter {
       acp_log_key: this.logKey,
       acp_log_subject: this.logSubject,
       acp_thread_id: this.threadId,
+      acp_started_at_ms:
+        Number(this.metadata.started_at_ms) > 0
+          ? Number(this.metadata.started_at_ms)
+          : undefined,
       acp_usage: this.usage,
       acp_account_id: this.approverAccountId,
       message_id: this.metadata.message_id,
@@ -2093,6 +2106,10 @@ export class ChatStreamWriter {
       acp_log_key: this.logKey,
       acp_log_subject: this.logSubject,
       acp_thread_id: this.threadId,
+      acp_started_at_ms:
+        Number(this.metadata.started_at_ms) > 0
+          ? Number(this.metadata.started_at_ms)
+          : undefined,
       acp_usage: this.usage,
       acp_account_id: this.approverAccountId,
       message_id: this.metadata.message_id,
@@ -2116,11 +2133,42 @@ export class ChatStreamWriter {
     }
   }
 
+  private normalizeStartedAtMs(value: unknown): number | null {
+    const num =
+      typeof value === "number"
+        ? value
+        : typeof value === "string"
+          ? Number(value)
+          : NaN;
+    return Number.isFinite(num) && num > 0 ? num : null;
+  }
+
+  private primeCommittedStateFromRow(row: any): void {
+    if (row == null) return;
+    this.lastCommittedThreadId =
+      this.recordField<string>(row, "acp_thread_id") ?? null;
+    this.lastCommittedStartedAtMs = this.normalizeStartedAtMs(
+      this.recordField<number | string>(row, "acp_started_at_ms"),
+    );
+    try {
+      this.lastCommittedUsageJson = JSON.stringify(
+        this.recordField<any>(row, "acp_usage") ?? null,
+      );
+    } catch {
+      this.lastCommittedUsageJson = "null";
+    }
+    this.lastCommittedInterrupted =
+      this.recordField<boolean>(row, "acp_interrupted") === true;
+    this.lastCommittedGenerating = this.recordField<boolean>(row, "generating");
+  }
+
   private hasMetadataDelta(generating: boolean): boolean {
     const usageChanged =
       this.lastCommittedUsageJson !== this.usageFingerprint();
+    const startedAtMs = this.normalizeStartedAtMs(this.metadata.started_at_ms);
     return (
       this.lastCommittedThreadId !== this.threadId ||
+      this.lastCommittedStartedAtMs !== startedAtMs ||
       this.lastCommittedInterrupted !== this.interruptNotified ||
       this.lastCommittedGenerating !== generating ||
       // During active runs we keep row churn minimal and stream live detail
@@ -2141,6 +2189,9 @@ export class ChatStreamWriter {
 
   private markCommitted(generating: boolean): void {
     this.lastCommittedThreadId = this.threadId;
+    this.lastCommittedStartedAtMs = this.normalizeStartedAtMs(
+      this.metadata.started_at_ms,
+    );
     this.lastCommittedUsageJson = this.usageFingerprint();
     this.lastCommittedInterrupted = this.interruptNotified;
     this.lastCommittedGenerating = generating;
@@ -3859,9 +3910,18 @@ async function executeAcpRequest({
   if (!conatClient) {
     throw Error("conat client must be initialized");
   }
-  const chatWriter = request.chat
+  const chatContext = request.chat
+    ? {
+        ...request.chat,
+        started_at_ms:
+          Number(request.chat.started_at_ms) > 0
+            ? Number(request.chat.started_at_ms)
+            : startedAt,
+      }
+    : undefined;
+  const chatWriter = chatContext
     ? new ChatStreamWriter({
-        metadata: request.chat,
+        metadata: chatContext,
         client: conatClient,
         approverAccountId: request.account_id,
         sessionKey: request.session_id,

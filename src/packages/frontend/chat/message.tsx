@@ -552,6 +552,17 @@ export default function Message({
     () => field<string>(message, "acp_interrupted_text"),
     [message],
   );
+  const acpStartedAtMs = useMemo(() => {
+    const value = field<number | string>(message, "acp_started_at_ms");
+    if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+      return value;
+    }
+    if (typeof value === "string") {
+      const parsed = Number(value);
+      if (Number.isFinite(parsed) && parsed > 0) return parsed;
+    }
+    return undefined;
+  }, [message]);
   const effectiveGenerating = useMemo(() => {
     return resolveEffectiveGenerating({
       isCodexThread,
@@ -569,8 +580,8 @@ export default function Message({
   }, [isEditing, message]);
 
   useEffect(() => {
-    if (effectiveGenerating && date > 0) {
-      const start = date;
+    const start = acpStartedAtMs ?? date;
+    if (effectiveGenerating && start > 0) {
       const update = () => {
         setElapsedMs(Date.now() - start);
       };
@@ -580,7 +591,7 @@ export default function Message({
     } else {
       setElapsedMs(0);
     }
-  }, [effectiveGenerating, date]);
+  }, [effectiveGenerating, acpStartedAtMs, date]);
 
   const elapsedLabel = useMemo(() => {
     if (!elapsedMs || elapsedMs < 0) return "";
@@ -849,7 +860,7 @@ export default function Message({
   const durationLabel = effectiveGenerating
     ? elapsedLabel
     : formatTurnDuration({
-        startMs: date,
+        startMs: acpStartedAtMs ?? date,
         history: historyEntries,
       });
 
@@ -1412,6 +1423,7 @@ export default function Message({
           generating={effectiveGenerating}
           durationLabel={durationLabel}
           lastActivityAtMs={lastCodexActivityAtMs}
+          startedAtMs={acpStartedAtMs}
           fontSize={font_size}
           project_id={project_id}
           path={path}

@@ -57,6 +57,7 @@ type RecordedSet = {
   content?: string;
   history?: unknown;
   acp_account_id?: string;
+  acp_started_at_ms?: number;
   acp_log_store?: string;
   acp_log_key?: string;
   acp_log_subject?: string;
@@ -106,6 +107,7 @@ const baseMetadata: AcpChatContext = {
   path: "chat",
   message_date: "123",
   sender_id: "u",
+  started_at_ms: 1234,
   message_id: "msg-0",
   thread_id: "thread-0",
 } as any;
@@ -223,16 +225,65 @@ describe("ChatStreamWriter", () => {
 
     const placeholder = sets.find((row: any) => row.message_id === "msg-0");
     expect(placeholder?.acp_account_id).toBe("u");
+    expect(placeholder?.acp_started_at_ms).toBe(1234);
     expect(placeholder?.acp_log_store).toBeTruthy();
     expect(placeholder?.acp_log_key).toBeTruthy();
     expect(placeholder?.acp_log_subject).toBeTruthy();
     (writer as any).dispose?.(true);
   });
 
+  it("updates an existing queued placeholder with actual ACP start time", async () => {
+    const { syncdb, sets, setCurrent } = makeFakeSyncDB();
+    setCurrent({
+      event: "chat",
+      sender_id: "u",
+      date: "123",
+      message_id: "msg-0",
+      thread_id: "thread-0",
+      generating: true,
+      history: [
+        { author_id: "u", content: ":robot: Thinking...", date: "123" },
+      ],
+      get(key: string) {
+        return (this as any)[key];
+      },
+    });
+    const writer: any = new ChatStreamWriter({
+      metadata: baseMetadata,
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      syncdbOverride: syncdb as any,
+      logStoreFactory: () =>
+        ({
+          set: async () => {},
+        }) as any,
+    });
+    await writer.waitUntilReady();
+
+    await (writer as any).handle({
+      type: "event",
+      event: { type: "message", text: "still working" } as any,
+      seq: 0,
+    } as AcpStreamMessage);
+
+    const startedAtUpdate = sets.find(
+      (row: any) =>
+        row.message_id === "msg-0" &&
+        row.generating === true &&
+        row.acp_started_at_ms === 1234,
+    );
+    expect(startedAtUpdate).toBeTruthy();
+    (writer as any).dispose?.(true);
+  });
+
   it("does not durably rewrite chat rows for streaming events", async () => {
     const { syncdb, setCurrent, getCommits, getSaves } = makeFakeSyncDB();
     setCurrent({
-      get: (key: string) => (key === "generating" ? true : undefined),
+      get: (key: string) => {
+        if (key === "generating") return true;
+        if (key === "acp_started_at_ms") return 1234;
+        return undefined;
+      },
     });
     const writer: any = new ChatStreamWriter({
       metadata: baseMetadata,
