@@ -129,6 +129,21 @@ export function getDefaultNewThreadSetup(): NewThreadSetup {
 export const DEFAULT_NEW_THREAD_SETUP: NewThreadSetup =
   getDefaultNewThreadSetup();
 
+export function resolveActiveThreadSearchMatchDate({
+  threadSearchOpen,
+  matchCount,
+  normalizedCursor,
+  threadSearchMatches,
+}: {
+  threadSearchOpen: boolean;
+  matchCount: number;
+  normalizedCursor: number;
+  threadSearchMatches: string[];
+}): string | undefined {
+  if (!threadSearchOpen || !matchCount) return undefined;
+  return threadSearchMatches[normalizedCursor];
+}
+
 export function resolveCompactThreadBadgeAppearance({
   thread,
   acpState,
@@ -322,8 +337,14 @@ export function ChatRoomThreadPanel({
     return c >= 0 ? c : c + matchCount;
   }, [threadSearchCursor, matchCount]);
   const activeSearchMatchDate = useMemo(
-    () => (matchCount ? threadSearchMatches[normalizedCursor] : undefined),
-    [matchCount, normalizedCursor, threadSearchMatches],
+    () =>
+      resolveActiveThreadSearchMatchDate({
+        threadSearchOpen,
+        matchCount,
+        normalizedCursor,
+        threadSearchMatches,
+      }),
+    [matchCount, normalizedCursor, threadSearchMatches, threadSearchOpen],
   );
   const archivedMatchCount = archivedSearchHits.length;
   const archivedLoadedOffset = selectedThreadId

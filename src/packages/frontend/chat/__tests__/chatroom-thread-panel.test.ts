@@ -1,6 +1,7 @@
 import {
   DEFAULT_NEW_THREAD_SETUP,
   applyNewThreadSetupPatch,
+  resolveActiveThreadSearchMatchDate,
   resolveCompactThreadBadgeAppearance,
 } from "../chatroom-thread-panel";
 import immutable from "immutable";
@@ -73,5 +74,29 @@ describe("resolveCompactThreadBadgeAppearance", () => {
       badgeColor: COLORS.BLUE,
       badgeSize: 18,
     });
+  });
+});
+
+describe("resolveActiveThreadSearchMatchDate", () => {
+  it("clears the active match when the find UI is closed", () => {
+    expect(
+      resolveActiveThreadSearchMatchDate({
+        threadSearchOpen: false,
+        matchCount: 2,
+        normalizedCursor: 1,
+        threadSearchMatches: ["111", "222"],
+      }),
+    ).toBeUndefined();
+  });
+
+  it("returns the current match when the find UI is open", () => {
+    expect(
+      resolveActiveThreadSearchMatchDate({
+        threadSearchOpen: true,
+        matchCount: 2,
+        normalizedCursor: 1,
+        threadSearchMatches: ["111", "222"],
+      }),
+    ).toBe("222");
   });
 });
