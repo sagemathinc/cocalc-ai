@@ -1,10 +1,14 @@
 # App Server and Extensible Secure Project Proxies (A1.4)
 
-Status: active implementation spec; partially completed as of March 5, 2026.
+Status: active implementation spec; materially further along as of March 17, 2026.
 
-TODO:
+Recent product note (March 17, 2026):
 
-- [ ] "Install with codex" is NOT robust yet. This is a separate problem though involving how the AI floating assistant panel works, and is out of scope of this plan.
+1. `Install with Codex` from the Apps UI is now good enough for real use on tested templates.
+2. New navigator threads created by install/audit handoff now get explicit titles instead of inheriting the full prompt body.
+3. When a template has curated install recipes, the prompt builder now biases Codex toward those recipes instead of anchoring on a generic one-line command.
+4. The built-in JupyterLab template now steers Codex to the tested Ubuntu `apt + pip` path, and that flow has been verified on fresh Launchpad projects.
+5. Remaining work is broader curated-template coverage, more install verification across images/templates, and snapshot/result-polish around the install flow.
 
 ## 1. Purpose
 
@@ -34,6 +38,7 @@ This should replace ad hoc per-app special cases over time.
 9. The main user-facing app surface now uses `Apps` / `Managed Applications`, with duplicate launcher UI removed from `+New`, the `+New` flyout, and the old top-row launcher area.
 10. Detection is split in the main UI between running HTTP-app discovery and installed-template discovery.
 11. The Apps page now has real operational controls: filter/search, bulk start/stop, row-local startup failures, and a direct `Audit with Codex` action.
+12. `Install with Codex` is implemented from the Apps UI, with preset-aware prompts, explicit new-thread titles, and stronger preference for curated install recipes when available.
 
 ### Partial
 
@@ -46,7 +51,7 @@ This should replace ad hoc per-app special cases over time.
 ### Not Done
 
 1. Finalized static-mode smoke matrix (lite + launchpad, large-file/static cache cases).
-2. "Install with agent" flow from app presets/management UI.
+2. Broader install coverage and post-install polish for `Install with Codex` across more templates/images.
 3. Broader template catalog and stronger embed/open integration polish.
 
 ## 2. Product Goals
@@ -515,13 +520,14 @@ Suggested catalog shape:
         "strategy": "curated",
         "recipes": [
           {
-            "id": "ubuntu-apt",
+            "id": "ubuntu-apt-plus-pip",
             "match": { "os_family": ["debian", "ubuntu"] },
             "commands": [
               "apt-get update",
-              "apt-get install -y jupyterlab jupyter"
+              "apt-get install -y jupyter jupyter-notebook jupyter-server python3-jupyterlab-server python3-ipykernel python3-pip",
+              "python3 -m pip install --break-system-packages --ignore-installed jupyterlab"
             ],
-            "notes": "Preferred on maintained Ubuntu launchpad images."
+            "notes": "Preferred on maintained Ubuntu launchpad images because Ubuntu 24.04 does not ship a top-level jupyterlab apt package."
           }
         ]
       },
@@ -529,9 +535,9 @@ Suggested catalog shape:
         "preset_id": "jupyterlab"
       },
       "verify": {
-        "commands": ["jupyter lab --version"]
+        "commands": ["jupyter lab --version", "python3 -m jupyterlab --version"]
       },
-      "agent_prompt_seed": "Install JupyterLab systemwide if possible, snapshot first, then verify the launch command."
+      "agent_prompt_seed": "On the usual Ubuntu launchpad image, skip apt package discovery for jupyterlab itself and use the tested apt-plus-pip recipe directly unless the runtime is already installed."
     }
   ]
 }
@@ -567,8 +573,8 @@ Install strategy plan:
 3. Explicitly mark unsupported install methods in prompts and metadata:
    - no `snap` in launchpad/podman environments.
 4. Before agent-driven install:
-   - create a filesystem snapshot,
-   - record the snapshot name in the result message and logs.
+   - if the UI/user opted into a snapshot, create it before opening Codex,
+   - include the created snapshot name in the prompt/result rather than asking Codex to improvise snapshot handling.
 5. After install:
    - run the template verify commands,
    - then offer to instantiate the app spec.
@@ -1176,7 +1182,7 @@ Existing components to reuse where possible:
 1. complete CLI surface (`detect`, `audit`, `expose`, `unexpose`, `logs`)
 2. agent-ready workflows and prompts for app lifecycle
 3. end-to-end tests for agent-driven startup/exposure/recovery
-4. add UI handoff actions for "install this server/app with agent" (preset-aware prompts)
+4. expand and polish the existing `Install with Codex` / `Audit with Codex` UI handoff actions
 
 ### Phase 3: UI Expansion (after backend confidence) (Status: not started)
 
@@ -1227,7 +1233,7 @@ Existing components to reuse where possible:
 14. `[done]` Split detection into running-HTTP discovery vs installed-template discovery.
 15. `[done]` Add filter/search plus bulk actions (`start all`, `stop all`, later selection-based actions).
 16. `[done]` Move startup errors/logs/actions to the corresponding app row/card instead of global top-of-page alerts.
-17. `[todo]` Add "Install with agent" from app presets and app rows (with suggested install prompts and post-install verification/start).
+17. `[partial]` Add "Install with Codex" from app presets and app rows (implemented with template-aware prompts and explicit thread titles; broader template coverage, snapshot polish, and post-install automation are still pending).
 18. `[todo]` Add SSH port-forward fallback in CLI + UI for non-proxy-compatible apps.
 19. `[todo]` Audit managed-app XSS exposure specifically for CoCalc credentials/session material (cookie stripping, project-host session scope, private same-origin app behavior, static HTML assumptions).
 20. `[partial]` Add app portability workflows:
