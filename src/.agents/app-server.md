@@ -1161,6 +1161,89 @@ integration:
   auto_refresh_s: 0
 ```
 
+Manifest/index format:
+
+To make this predictable for users, agents, and later import flows, the public viewer should support a machine-readable manifest alongside optional custom HTML.
+
+Recommended rule:
+
+1. `index.json` is the structured/public manifest format,
+2. `index.html` is an optional custom landing page,
+3. agents should target `index.json` first because it is deterministic and easier to validate,
+4. users may optionally add a custom `index.html` for richer branding/presentation.
+
+Suggested manifest shape:
+
+```json
+{
+  "version": 1,
+  "kind": "cocalc-public-viewer-index",
+  "title": "Course Notes",
+  "description": "Lectures, notebooks, and slides for Spring 2026.",
+  "theme": {
+    "layout": "cards",
+    "accent_color": "#1f5aa6"
+  },
+  "entries": [
+    {
+      "path": "week1/intro.ipynb",
+      "title": "Week 1: Introduction",
+      "description": "Notebook used in the first lecture.",
+      "type": "notebook",
+      "render": "viewer",
+      "order": 10,
+      "tags": ["week1", "lecture"]
+    },
+    {
+      "path": "slides/week1.slides",
+      "title": "Week 1 Slides",
+      "type": "slides",
+      "render": "viewer",
+      "order": 20
+    },
+    {
+      "path": "data/reference.pdf",
+      "title": "Reference PDF",
+      "type": "file",
+      "render": "raw",
+      "order": 30
+    }
+  ]
+}
+```
+
+Manifest semantics:
+
+1. `path` is relative to the configured static root,
+2. `type` is advisory metadata for UI/icon/render hints,
+3. `render` is explicit:
+   - `viewer` for supported read-only rendering,
+   - `raw` for direct download/open,
+   - `hidden` for manifest-known but not listed content,
+4. `order` controls stable presentation order,
+5. `title` and `description` allow agents/users to curate the public presentation without renaming files on disk,
+6. `tags` and theme metadata give a lightweight structured surface for richer generated indexes later.
+
+Route rules:
+
+1. If a directory contains `index.html`, serve it as the human landing page.
+2. If a directory contains `index.json`, the viewer bundle can render a generated listing/page from it.
+3. If both exist:
+   - `index.html` is the default human-facing route,
+   - `index.json` remains available for machine-readable access and import/preview workflows.
+4. For file requests:
+   - supported types with `render=viewer` open in the public viewer,
+   - `render=raw` uses direct/raw file serving,
+   - unsupported types should never fail ambiguously; they should either fall back to raw download or be omitted from the listing.
+5. Directory auto-enumeration should be off by default unless explicitly enabled by policy/spec; the safer default is manifest/index-driven presentation.
+
+Why this matters:
+
+1. users get a clear, customizable published surface,
+2. agents get a deterministic target they can generate and maintain,
+3. import/copy flows can reuse the same manifest for preview and structured directory transfer,
+4. admins get a more auditable surface than ad hoc directory crawling.
+
 Suggested MVP:
 
 1. begin with `.md`, `.ipynb`, `.slides`, and `.board`,
