@@ -29,6 +29,8 @@ import { Dropzone, BlobUpload } from "@cocalc/frontend/file-upload";
 import { Cursors, CursorsType } from "@cocalc/frontend/jupyter/cursors";
 import Fragment, { FragmentId } from "@cocalc/frontend/misc/fragment-id";
 import { useProjectHasInternetAccess } from "@cocalc/frontend/project/settings/has-internet-access-hook";
+import { effectiveImmutableEditorSettings } from "@cocalc/frontend/project/workspaces/editor-theme";
+import { useWorkspaceRecordForPath } from "@cocalc/frontend/project/workspaces/use-workspace-record";
 import { len, trunc, trunc_middle } from "@cocalc/util/misc";
 import { Complete, Item } from "./complete";
 import { useMentionableUsers } from "./mentionable-users";
@@ -174,19 +176,27 @@ export function MarkdownInput(props: Props) {
   const internalDivRef = useRef<HTMLDivElement | null>(null);
   const editorHostRef = divRef ?? internalDivRef;
   const editor_settings = useRedux(["account", "editor_settings"]);
+  const workspaceRecord = useWorkspaceRecordForPath(project_id, path);
+  const effectiveEditorSettings = useMemo(
+    () => effectiveImmutableEditorSettings(editor_settings, workspaceRecord),
+    [editor_settings, workspaceRecord],
+  );
   const options = useMemo(() => {
     return {
       indentUnit: 2,
       indentWithTabs: false,
-      autoCloseBrackets: editor_settings.get("auto_close_brackets", false),
-      lineWrapping: editor_settings.get("line_wrapping", true),
-      lineNumbers: editor_settings.get("line_numbers", false),
-      matchBrackets: editor_settings.get("match_brackets", false),
-      styleActiveLine: editor_settings.get("style_active_line", true),
-      theme: editor_settings.get("theme", "default"),
+      autoCloseBrackets: effectiveEditorSettings.get(
+        "auto_close_brackets",
+        false,
+      ),
+      lineWrapping: effectiveEditorSettings.get("line_wrapping", true),
+      lineNumbers: effectiveEditorSettings.get("line_numbers", false),
+      matchBrackets: effectiveEditorSettings.get("match_brackets", false),
+      styleActiveLine: effectiveEditorSettings.get("style_active_line", true),
+      theme: effectiveEditorSettings.get("theme", "default"),
       ...cmOptions,
     };
-  }, [editor_settings, cmOptions]);
+  }, [effectiveEditorSettings, cmOptions]);
 
   const defaultFontSize = useTypedRedux("account", "font_size");
   const externalUndo = resolveUndoHandler({ mode: undoMode, handler: onUndo });

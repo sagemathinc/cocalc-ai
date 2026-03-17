@@ -43,6 +43,10 @@ import {
   persistSessionWorkspaceRecord,
   WORKSPACE_SELECTION_EVENT,
 } from "./selection-runtime";
+import {
+  clearRuntimeWorkspaceRecords,
+  setRuntimeWorkspaceRecords,
+} from "./records-runtime";
 
 function readSelectionForProject(
   project_id: string,
@@ -150,10 +154,18 @@ export function useProjectWorkspaces(
       storeRef.current = null;
       setLoading(false);
       setRecords([]);
+      clearRuntimeWorkspaceRecords(project_id);
       setSelectionState(loadSessionSelection(project_id));
       setCachedWorkspaceRecord(loadSessionWorkspaceRecord(project_id));
     }
   }, [account_id, project_id, canPersist]);
+
+  useEffect(() => {
+    setRuntimeWorkspaceRecords(project_id, records);
+    return () => {
+      clearRuntimeWorkspaceRecords(project_id);
+    };
+  }, [project_id, records]);
 
   useEffect(() => {
     if (selection.kind !== "workspace") {
