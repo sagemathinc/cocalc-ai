@@ -337,6 +337,22 @@ export type BootstrapScripts = {
   };
 };
 
+export function resolveBootstrapImageSizeGb({
+  providerId,
+  isSelfHost,
+  diskGb,
+}: {
+  providerId?: string;
+  isSelfHost: boolean;
+  diskGb?: number;
+}): string {
+  if (isSelfHost || providerId === "lambda") {
+    return "auto";
+  }
+  const parsed = Number(diskGb ?? 100);
+  return String(Math.max(20, Number.isFinite(parsed) ? parsed : 100));
+}
+
 export async function buildBootstrapScripts(
   row: ProjectHostRow,
   opts: {
@@ -493,9 +509,11 @@ export async function buildBootstrapScripts(
   const provider = providerId ? getServerProvider(providerId) : undefined;
   const dataDiskDevices =
     provider?.getBootstrapDataDiskDevices?.(spec, storageMode) ?? "";
-  const imageSizeGb = isSelfHost
-    ? "auto"
-    : String(Math.max(20, Number(spec.disk_gb ?? 100)));
+  const imageSizeGb = resolveBootstrapImageSizeGb({
+    providerId,
+    isSelfHost,
+    diskGb: spec.disk_gb,
+  });
   const onPremPortRaw = process.env.COCALC_PROJECT_HOST_PORT ?? "";
   const onPremPort = Number.isFinite(Number.parseInt(onPremPortRaw, 10))
     ? Number.parseInt(onPremPortRaw, 10)
