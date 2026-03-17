@@ -26,6 +26,7 @@ import {
 } from "@cocalc/frontend/chat/agent-session-index";
 import {
   Icon,
+  SelectorInput,
   ThemeEditorModal,
   TimeAgo,
   type IconName,
@@ -44,6 +45,7 @@ import {
   summarizeWorkspaceProcesses,
   type WorkspaceProcessSummary,
 } from "@cocalc/frontend/project/workspaces/process-summary";
+import { theme_desc as terminalThemeDesc } from "@cocalc/frontend/frame-editors/terminal-editor/theme-data";
 import {
   ensureWorkspaceChatDirectory,
   ensureWorkspaceChatPath,
@@ -90,8 +92,17 @@ type EditorDraft = {
   theme: ThemeEditorDraft;
   pinned: boolean;
   strong_theme: boolean;
+  terminal_theme: string | null;
   chat_path: string | null;
 };
+
+const WORKSPACE_TERMINAL_THEME_OPTIONS = [
+  { value: "", display: "Use account default" },
+  ...Object.entries(terminalThemeDesc).map(([value, display]) => ({
+    value,
+    display: `${display}`,
+  })),
+];
 
 type WorkspaceActivityState =
   | {
@@ -402,6 +413,7 @@ function makeDraft(
       ),
       pinned: false,
       strong_theme: false,
+      terminal_theme: null,
       chat_path: null,
     };
   }
@@ -411,6 +423,10 @@ function makeDraft(
     theme: themeDraftFromTheme(record.theme),
     pinned: record.pinned,
     strong_theme: record.strong_theme === true,
+    terminal_theme:
+      typeof record.terminal_theme === "string" && record.terminal_theme.trim()
+        ? record.terminal_theme.trim()
+        : null,
     chat_path: record.chat_path ?? null,
   };
 }
@@ -795,6 +811,7 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
           theme: themeFromDraft(values.theme),
           pinned: values.pinned,
           strong_theme: values.strong_theme,
+          terminal_theme: values.terminal_theme,
           chat_path: values.chat_path,
         });
       } else {
@@ -803,6 +820,7 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
           ...themeFromDraft(values.theme),
           pinned: values.pinned,
           strong_theme: values.strong_theme,
+          terminal_theme: values.terminal_theme,
           chat_path: values.chat_path,
           source: "manual",
         } satisfies WorkspaceCreateInput);
@@ -1489,6 +1507,26 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
                   onChange={(pinned) => patchEditing({ pinned })}
                 />
               </div>
+            </div>
+            <div>
+              <Typography.Text strong>Terminal theme override</Typography.Text>
+              <div style={{ marginTop: 8 }}>
+                <SelectorInput
+                  style={{ width: "100%" }}
+                  selected={editing?.terminal_theme ?? ""}
+                  options={WORKSPACE_TERMINAL_THEME_OPTIONS}
+                  on_change={(terminal_theme) =>
+                    patchEditing({
+                      terminal_theme: `${terminal_theme ?? ""}`.trim() || null,
+                    })
+                  }
+                  showSearch={true}
+                />
+              </div>
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                Overrides the account terminal theme while you are working in
+                this workspace.
+              </Typography.Text>
             </div>
             <div>
               <Typography.Text strong>Stronger theme mode</Typography.Text>

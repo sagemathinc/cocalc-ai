@@ -44,6 +44,11 @@ Implemented:
   - current-workspace filtering in Agents
   - workspace `Float` entrypoint
   - floating agent view scoped to the workspace by default
+  - polished floating agent dock:
+    - real drag/title bar
+    - cleaner header and controls
+    - better resize affordances
+    - workspace-safe thread search inside the floating dock
 - thread/chat appearance uses the shared appearance flow:
   - separate `Appearance` and `Behavior`
   - accent color
@@ -77,6 +82,8 @@ Implemented:
     - stronger page/frame accents
   - Still worth exploring:
     - per-workspace terminal/editor theme overrides
+      - account defaults would remain the fallback
+      - workspace overrides would be the stronger, high-signal context cue
     - chatroom-level theme overrides that follow the workspace
 - [x] Thread/chat appearance is now mostly unified with workspaces/projects.
   - Implemented:
@@ -87,6 +94,12 @@ Implemented:
   - Still worth polishing:
     - broader chatroom-level theme inheritance
     - any UI cleanup found during dogfooding
+- [x] Floating agent panel polish.
+  - Implemented:
+    - clearer window chrome and drag affordance
+    - cleaner controls and workspace context display
+    - wider resize affordances
+    - floating thread search that no longer steals focus or clips awkwardly
 - [x] bug: it is not possible to drag-to-order tabs within a workspace
   - fixed by reordering the visible subset and projecting that back to the global tab order
 - [x] bug: if I close a tab, cocalc switches to the next tab and focuses it, even if that is in a completely different workspace. Instead it should stick to the current workspace.

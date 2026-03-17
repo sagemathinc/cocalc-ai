@@ -1933,8 +1933,9 @@ export class BaseEditorActions<
   public _get_terminal(
     id: string,
     parent: HTMLElement,
+    terminalThemeOverride?: string | null,
   ): undefined | Terminal<CodeEditorState> {
-    return this.terminals.get_terminal(id, parent);
+    return this.terminals.get_terminal(id, parent, terminalThemeOverride);
   }
 
   set_terminal_cwd(id: string, cwd: string): void {
