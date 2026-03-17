@@ -267,16 +267,26 @@ export async function chooseBrowserSession({
   activeOnly?: boolean;
 }): Promise<BrowserSessionInfo> {
   let sessions: BrowserSessionInfo[] | undefined;
+  let sessionsError: unknown;
+  let sessionsLoaded = false;
+  const canDirectFallback = (hint: string | undefined): boolean =>
+    !!hint && isLikelyExactBrowserId(hint) && !activeOnly && !requireDiscovery;
   const getSessions = async (): Promise<BrowserSessionInfo[]> => {
-    if (sessions) return sessions;
-    sessions = (await ctx.hub.system.listBrowserSessions({
-      include_stale: !activeOnly,
-    })) as BrowserSessionInfo[];
-    sessions = (sessions ?? []).filter((s) => (activeOnly ? !s.stale : true));
-    sessions = sessions.filter((s) =>
-      sessionMatchesProject(s, sessionProjectId),
-    );
-    return sessions;
+    if (sessionsLoaded) return sessions ?? [];
+    sessionsLoaded = true;
+    try {
+      sessions = (await ctx.hub.system.listBrowserSessions({
+        include_stale: !activeOnly,
+      })) as BrowserSessionInfo[];
+      sessions = (sessions ?? []).filter((s) => (activeOnly ? !s.stale : true));
+      sessions = sessions.filter((s) =>
+        sessionMatchesProject(s, sessionProjectId),
+      );
+      return sessions;
+    } catch (err) {
+      sessionsError = err;
+      throw err;
+    }
   };
 
   const remapSpawnedSessionByHint = async (
@@ -339,6 +349,9 @@ export async function chooseBrowserSession({
       if (remapped) return remapped;
       throw new Error(`browser session '${explicitHint}' is stale/inactive`);
     } catch (err) {
+      if (sessionsError && canDirectFallback(explicitHint)) {
+        return directBrowserSessionInfo(explicitHint);
+      }
       const remapped = await remapSpawnedSessionByHint(explicitHint);
       if (remapped) return remapped;
       const msg =
@@ -359,7 +372,15 @@ export async function chooseBrowserSession({
   ) {
     return directBrowserSessionInfo(savedHint);
   }
-  const resolvedSessions = await getSessions();
+  let resolvedSessions: BrowserSessionInfo[];
+  try {
+    resolvedSessions = await getSessions();
+  } catch (err) {
+    if (savedHint && sessionsError && canDirectFallback(savedHint)) {
+      return directBrowserSessionInfo(savedHint);
+    }
+    throw err;
+  }
   if (savedHint) {
     try {
       const saved = resolveBrowserSession(resolvedSessions, savedHint);
@@ -367,6 +388,9 @@ export async function chooseBrowserSession({
         return saved;
       }
     } catch {
+      if (sessionsError && canDirectFallback(savedHint)) {
+        return directBrowserSessionInfo(savedHint);
+      }
       const remapped = await remapSpawnedSessionByHint(savedHint);
       if (remapped) return remapped;
     }
