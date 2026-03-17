@@ -60,23 +60,9 @@ function joinStreamText(previousText: string, nextText: string): string {
   return `${left}${separator}${right}`;
 }
 
-function streamJoinSeparator(
-  previousText: string,
-  nextText: string,
-): "" | " " | "\n\n" {
-  if (needsMarkdownParagraphBreak(previousText, nextText)) return "\n\n";
+function streamJoinSeparator(previousText: string, nextText: string): "" | " " {
   if (needsTextBoundarySpace(previousText, nextText)) return " ";
   return "";
-}
-
-function needsMarkdownParagraphBreak(
-  previousText: string,
-  nextText: string,
-): boolean {
-  if (/\s$/.test(previousText) || /^\s/.test(nextText)) return false;
-  const left = previousText.replace(/\s+$/, "");
-  const right = nextText.replace(/^\s+/, "");
-  return left.endsWith("**") && right.startsWith("**");
 }
 
 function needsTextBoundarySpace(
@@ -87,6 +73,9 @@ function needsTextBoundarySpace(
   const left = previousText.replace(/\s+$/, "");
   const right = nextText.replace(/^\s+/, "");
   if (!left || !right) return false;
+  if (left.endsWith("**") && right.startsWith("**")) {
+    return true;
+  }
   const leftLast = left[left.length - 1];
   const rightFirst = right[0];
   if (/[.!?;:]/.test(leftLast) && /[A-Za-z0-9`"'([{]/.test(rightFirst)) {
@@ -165,30 +154,46 @@ export function getLatestEventLineText(
 }
 
 export function getAgentMessageTexts(events: AcpStreamMessage[]): string[] {
-  const messages: string[] = [];
+  const messages: Array<{ text: string; hasDelta: boolean }> = [];
   for (const evt of events ?? []) {
     if (evt?.type !== "event" || evt.event?.type !== "message") continue;
     const text = evt.event.text;
     if (typeof text !== "string" || text.trim().length === 0) continue;
     const last = messages[messages.length - 1];
-    if (last === text) continue;
-    const progressive = mergeProgressiveMessageText(last, text);
-    if (typeof progressive === "string") {
-      messages[messages.length - 1] = progressive;
+    if (last?.text === text) {
+      last.hasDelta = last.hasDelta || evt.event.delta === true;
       continue;
     }
-    messages.push(text);
+    const progressive = mergeProgressiveMessageText(last?.text, text, {
+      previousHasDelta: last?.hasDelta === true,
+      nextIsDelta: evt.event.delta === true,
+    });
+    if (typeof progressive === "string") {
+      messages[messages.length - 1] = {
+        text: progressive,
+        hasDelta: (last?.hasDelta ?? false) || evt.event.delta === true,
+      };
+      continue;
+    }
+    messages.push({ text, hasDelta: evt.event.delta === true });
   }
-  return messages;
+  return messages.map(({ text }) => text);
 }
 
 function mergeProgressiveMessageText(
   previous: string | undefined,
   next: string | undefined,
+  opts?: {
+    previousHasDelta?: boolean;
+    nextIsDelta?: boolean;
+  },
 ): string | undefined {
   const prev = typeof previous === "string" ? previous : "";
   const cur = typeof next === "string" ? next : "";
   if (!prev || !cur) return undefined;
+  if (opts?.nextIsDelta) {
+    return mergeResponseText(prev, cur);
+  }
   if (cur.startsWith(prev)) return cur;
   if (prev.startsWith(cur)) return prev;
   if (prev.endsWith(cur)) return prev;
@@ -199,6 +204,9 @@ function mergeProgressiveMessageText(
   if (normalizedPrev.startsWith(normalizedCur)) return prev;
   if (normalizedPrev === normalizedCur) {
     return cur.length >= prev.length ? cur : prev;
+  }
+  if (opts?.previousHasDelta) {
+    return mergeResponseText(prev, cur);
   }
   return undefined;
 }

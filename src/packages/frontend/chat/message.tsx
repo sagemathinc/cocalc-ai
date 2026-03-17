@@ -532,6 +532,7 @@ export default function Message({
   const [isHovered, setIsHovered] = useState<boolean>(false);
   const [showTouchActions, setShowTouchActions] = useState<boolean>(false);
   const [showZenMessage, setShowZenMessage] = useState<boolean>(false);
+  const [interruptRequested, setInterruptRequested] = useState<boolean>(false);
   const [openActivityDrawerToken, setOpenActivityDrawerToken] = useState<
     number | undefined
   >(undefined);
@@ -599,6 +600,12 @@ export default function Message({
       setElapsedMs(0);
     }
   }, [effectiveGenerating, acpStartedAtMs, date]);
+
+  useEffect(() => {
+    if (!effectiveGenerating || acpInterrupted) {
+      setInterruptRequested(false);
+    }
+  }, [effectiveGenerating, acpInterrupted, date]);
 
   const elapsedLabel = useMemo(() => {
     if (!elapsedMs || elapsedMs < 0) return "";
@@ -1542,7 +1549,11 @@ export default function Message({
     if (!effectiveGenerating || actions == null) {
       return null;
     }
-    const interruptLabel = isCodexThread ? "Interrupt" : "Stop Generating";
+    const interruptLabel = isCodexThread
+      ? interruptRequested
+        ? "Interrupting..."
+        : "Interrupt"
+      : "Stop Generating";
     const interruptIcon = isCodexThread ? "bolt" : "square";
     return (
       <div
@@ -1569,11 +1580,22 @@ export default function Message({
         <Button
           size="small"
           style={{ color: COLORS.GRAY_M }}
-          onClick={() => {
-            actions?.languageModelStopGenerating(new Date(date), {
-              threadId: sessionIdForInterrupt,
-              senderId: field<string>(message, "sender_id"),
-            });
+          disabled={interruptRequested}
+          loading={interruptRequested}
+          onClick={async () => {
+            if (interruptRequested) return;
+            setInterruptRequested(true);
+            const ok = await actions?.languageModelStopGenerating(
+              new Date(date),
+              {
+                threadId: sessionIdForInterrupt,
+                senderId: field<string>(message, "sender_id"),
+              },
+            );
+            if (!ok) {
+              setInterruptRequested(false);
+              antdMessage.error("Failed to interrupt Codex turn.");
+            }
           }}
         >
           <Icon name={interruptIcon} /> {interruptLabel}

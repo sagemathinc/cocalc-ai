@@ -28,6 +28,58 @@ describe("SyncFsWatchStore", () => {
     store.close();
   });
 
+  it("short-circuits structured diffs when the raw file hash matches", async () => {
+    const store = new SyncFsWatchStore();
+    store.setContent("same.chat", '{"a":1}\n');
+    const codec = {
+      fromString: jest.fn(() => {
+        throw new Error("codec should not be used for exact-hash no-op");
+      }),
+      makePatch: jest.fn(),
+    } as any;
+
+    const result = await store.handleExternalChange(
+      "same.chat",
+      async () => '{"a":1}\n',
+      false,
+      codec,
+    );
+
+    expect(result.patch).toBeUndefined();
+    expect(codec.fromString).not.toHaveBeenCalled();
+    expect(store.getDebugStats()).toMatchObject({
+      exactHashNoops: 1,
+      emptyPatchNoops: 0,
+    });
+    store.close();
+  });
+
+  it("suppresses empty structured patches but still refreshes the stored snapshot", async () => {
+    const store = new SyncFsWatchStore();
+    store.setContent("noop.chat", '{"a":1}\n');
+    const current = '{"a":1} \n';
+    const codec = {
+      fromString: jest.fn((text: string) => ({ text })),
+      makePatch: jest.fn(() => [1, []]),
+    } as any;
+
+    const result = await store.handleExternalChange(
+      "noop.chat",
+      async () => current,
+      false,
+      codec,
+    );
+
+    expect(result.patch).toBeUndefined();
+    expect(result.content).toBe(current);
+    expect(store.get("noop.chat")?.content).toBe(current);
+    expect(store.getDebugStats()).toMatchObject({
+      exactHashNoops: 0,
+      emptyPatchNoops: 1,
+    });
+    store.close();
+  });
+
   it("persists fs heads with heads and lastSeq", () => {
     const dbPath = tmpNameSync({ prefix: "sync-fs-heads-", postfix: ".db" });
     const store1 = new SyncFsWatchStore(dbPath);
