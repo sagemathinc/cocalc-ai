@@ -61,6 +61,7 @@ describe("submitNavigatorPromptToCurrentThread", () => {
     const ok = await submitNavigatorPromptToCurrentThread({
       project_id: "00000000-1000-4000-8000-000000000000",
       prompt: "Help me fix this error",
+      title: "Install JupyterLab",
       tag: "intent:test",
       forceCodex: true,
       openFloating: true,
@@ -75,6 +76,7 @@ describe("submitNavigatorPromptToCurrentThread", () => {
     const queued = takeQueuedNavigatorPromptIntents();
     expect(queued).toHaveLength(1);
     expect(queued[0].prompt).toBe("Help me fix this error");
+    expect(queued[0].title).toBe("Install JupyterLab");
     expect(queued[0].tag).toBe("intent:test");
     expect(queued[0].codexConfig).toEqual({
       sessionMode: "full-access",
@@ -82,6 +84,7 @@ describe("submitNavigatorPromptToCurrentThread", () => {
       workingDirectory: "/home/wstein",
     });
     expect(mockOpenFloating).toHaveBeenCalledTimes(1);
+    expect(mockOpenFloating.mock.calls[0][1].title).toBe("Install JupyterLab");
   });
 
   it("keeps queued intents even when localStorage is unavailable", () => {
@@ -103,12 +106,14 @@ describe("submitNavigatorPromptToCurrentThread", () => {
     try {
       const intent = createNavigatorPromptIntent({
         prompt: "Help me fix this error",
+        title: "Install JupyterLab",
         tag: "intent:test",
       });
       queueNavigatorPromptIntent(intent);
       const queued = takeQueuedNavigatorPromptIntents();
       expect(queued).toHaveLength(1);
       expect(queued[0].prompt).toBe("Help me fix this error");
+      expect(queued[0].title).toBe("Install JupyterLab");
       expect(queued[0].tag).toBe("intent:test");
     } finally {
       getSpy.mockRestore();

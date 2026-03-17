@@ -25,9 +25,9 @@ export const BUILTIN_APP_TEMPLATE_CATALOG: AppTemplateCatalogV1 = {
         strategy: "curated",
         command:
           "apt-get update && apt-get install -y jupyter jupyter-notebook jupyter-server python3-jupyterlab-server python3-ipykernel python3-pip && python3 -m pip install --break-system-packages --ignore-installed jupyterlab",
-        hint: "On CoCalc's usual Ubuntu/root images, installing JupyterLab with apt is more reliable than pip and avoids system-package policy errors.",
+        hint: "On CoCalc's usual Ubuntu/root images, do not try to apt-install a top-level jupyterlab package. Install the distro Jupyter stack first, then layer the JupyterLab Python package with pip.",
         agent_prompt:
-          "Install JupyterLab in the current project so the managed JupyterLab app can start. On maintained Ubuntu launchpad images, first install the distro Jupyter server/notebook packages, then layer the JupyterLab Python package with pip using --break-system-packages --ignore-installed if the lab subcommand is still missing. Verify the resulting 'jupyter lab --version' and explain any caveats.",
+          "Install JupyterLab in the current project so the managed JupyterLab app can start. On maintained Ubuntu launchpad images, do not spend time searching for a top-level jupyterlab apt package. Install the distro Jupyter server/notebook packages, then layer the JupyterLab Python package with pip using --break-system-packages --ignore-installed. Verify the resulting 'jupyter lab --version' and explain any caveats.",
         recipes: [
           {
             id: "ubuntu-apt-plus-pip",
@@ -58,7 +58,7 @@ export const BUILTIN_APP_TEMPLATE_CATALOG: AppTemplateCatalogV1 = {
         commands: ["jupyter lab --version", "python3 -m jupyterlab --version"],
       },
       agent_prompt_seed:
-        "Install JupyterLab systemwide if possible, prefer the tested Ubuntu apt-plus-pip recipe on launchpad images, and verify the launch command after installation.",
+        "On the usual Ubuntu launchpad image, skip apt package discovery for jupyterlab itself and use the tested apt-plus-pip recipe directly unless the runtime is already installed.",
     },
     {
       id: "code-server",

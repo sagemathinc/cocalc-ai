@@ -331,6 +331,10 @@ function makeInstallSnapshotName(templateId: string): string {
   return `pre-install-${safeId || "app"}-${formatSnapshotNameTimestamp()}`;
 }
 
+function buildInstallWithCodexThreadTitle(preset: AppServerPreset): string {
+  return `Install ${preset.title}`;
+}
+
 function buildInstallWithCodexPrompt(opts: {
   projectId: string;
   preset: AppServerPreset;
@@ -355,7 +359,7 @@ function buildInstallWithCodexPrompt(opts: {
     "- The project usually runs inside a podman container.",
     "- The user is typically root inside the container.",
     "- Prefer systemwide installation when practical.",
-    "- apt-get is usually the right first choice on maintained Ubuntu images, but detect the actual distro before assuming Debian/Ubuntu.",
+    "- When a curated distro recipe is provided, prefer that exact recipe over exploratory package searching.",
     "- snap is not supported here and should not be used.",
   );
   if (opts.snapshotName) {
@@ -392,7 +396,7 @@ function buildInstallWithCodexPrompt(opts: {
   if (preset.installHint) {
     lines.push("", `Install hint: ${preset.installHint}`);
   }
-  if (preset.installCommand) {
+  if (preset.installCommand && !preset.installRecipes?.length) {
     lines.push(
       "",
       "Suggested starting command:",
@@ -442,7 +446,7 @@ function buildInstallWithCodexPrompt(opts: {
     "",
     "Requirements:",
     "1. Inspect the environment briefly and choose an appropriate install path.",
-    "2. Try the curated install recipe(s) first when they match the environment before inventing a different path.",
+    "2. If a curated recipe matches the environment, use that recipe directly before package-searching or inventing an alternative path.",
     "3. Avoid unnecessary reinstalls if the runtime is already present.",
     "4. Install systemwide when practical for this project environment.",
     "5. Do not spend time debugging CoCalc CLI auth, browser automation, or unrelated control-plane issues unless the install strictly depends on them.",
@@ -1009,30 +1013,36 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
   async function sendAgentPrompt(
     prompt: string,
     tag: string,
-    codexConfig?: {
-      sessionMode?: "read-only" | "workspace-write" | "full-access";
-      allowWrite?: boolean;
-      workingDirectory?: string;
+    opts?: {
+      title?: string;
+      codexConfig?: {
+        sessionMode?: "read-only" | "workspace-write" | "full-access";
+        allowWrite?: boolean;
+        workingDirectory?: string;
+      };
     },
   ) {
     const text = `${prompt ?? ""}`.trim();
+    const title = `${opts?.title ?? ""}`.trim() || undefined;
     if (!text) return;
     try {
       setSubmittingToAgent(true);
       const sent = await submitNavigatorPromptToCurrentThread({
         project_id,
         prompt: text,
+        title,
         tag,
         forceCodex: true,
         openFloating: true,
-        codexConfig,
+        codexConfig: opts?.codexConfig,
       });
       if (!sent) {
         dispatchNavigatorPromptIntent({
           prompt: text,
+          title,
           tag,
           forceCodex: true,
-          codexConfig,
+          codexConfig: opts?.codexConfig,
         });
       }
     } finally {
@@ -1069,9 +1079,12 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
         snapshotName: createdSnapshotName,
       });
       await sendAgentPrompt(prompt, "intent:app-server-install", {
-        sessionMode: "full-access",
-        allowWrite: true,
-        workingDirectory: homeDirectory,
+        title: buildInstallWithCodexThreadTitle(installWithCodexTarget.preset),
+        codexConfig: {
+          sessionMode: "full-access",
+          allowWrite: true,
+          workingDirectory: homeDirectory,
+        },
       });
       setInstallWithCodexTarget(null);
     } catch (err) {
@@ -1459,7 +1472,12 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
       setError(undefined);
       const next = await api.apps.auditAppPublicReadiness(id);
       setAudit(next);
-      await sendAgentPrompt(next.agent_prompt, "intent:app-server-audit");
+      const auditTitle = specById[id]?.title
+        ? `Audit ${specById[id]?.title}`
+        : "Audit App Public Readiness";
+      await sendAgentPrompt(next.agent_prompt, "intent:app-server-audit", {
+        title: auditTitle,
+      });
     } catch (err) {
       setError(normalizeError(err));
     } finally {
@@ -2904,6 +2922,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                 void sendAgentPrompt(
                   audit.agent_prompt,
                   "intent:app-server-audit",
+                  { title: "Audit App Public Readiness" },
                 )
               }
             >
