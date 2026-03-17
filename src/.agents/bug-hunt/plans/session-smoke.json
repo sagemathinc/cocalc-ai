@@ -19,6 +19,10 @@
     {
       "name": "assert non-empty title",
       "assert": "return document.title && document.title.length > 0;"
+    },
+    {
+      "name": "assert project navigation shell is visible",
+      "assert": "const body = document.body.innerText; return body.includes('Files') && body.includes('New');"
     }
   ]
 }
