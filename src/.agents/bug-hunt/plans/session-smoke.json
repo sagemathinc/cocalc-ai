@@ -29,6 +29,10 @@
       "assert": "const root = document.querySelector('[data-cocalc-project-page]'); const value = root?.getAttribute('data-cocalc-project-page') ?? ''; return /^[0-9a-f-]{36}$/.test(value);"
     },
     {
+      "name": "assert project page root matches the route project id",
+      "assert": "const match = window.location.pathname.match(/^\\/projects\\/([0-9a-f-]+)\\//); const root = document.querySelector('[data-cocalc-project-page]'); const value = root?.getAttribute('data-cocalc-project-page') ?? ''; return match != null && value === match[1];"
+    },
+    {
       "name": "assert project navigation shell is visible",
       "assert": "const body = document.body.innerText; return body.includes('Files') && body.includes('New');"
     }
