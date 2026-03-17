@@ -287,6 +287,9 @@ Public exposure is explicit and reversible.
 1. Allow serving static paths from project via project-host.
 2. Respect safe path constraints.
 3. Optional aggressive caching headers for CDN cost control.
+4. Public CoCalc-document viewer mode must run on a dedicated public origin/subdomain, not the same origin as authenticated CoCalc.
+5. In public viewer mode, do not forward CoCalc cookies/tokens or expose authenticated project APIs.
+6. Public viewer renderers must be read-only and work from file content alone, with no RTC/backend dependency.
 
 ## 8. Wake-on-Demand Design
 
@@ -1093,7 +1096,80 @@ Requirements:
 5. optional public mode with CDN edge caching.
 6. support "static-only app" without process launch (directory served directly by project-host).
 
-## 14.1 Activity-Driven Static Refresh Jobs
+## 14.1 Proposed CoCalc Public Viewer Mode
+
+This is a second static-serving mode aimed at CoCalc-native documents rather than generic HTML trees.
+
+Core idea:
+
+1. serve live files directly from a project path with no copy-to-bucket/publish step,
+2. ship a prebuilt public CoCalc viewer bundle to the browser,
+3. let the browser render supported CoCalc file types read-only from the raw file contents.
+
+This is complementary to globally cached publishing/share-server workflows:
+
+1. public viewer mode optimizes for immediacy and self-hosting,
+2. cached/share workflows optimize for durable public distribution and heavier edge caching.
+
+Important implementation constraint:
+
+1. the renderer path must be able to work without authenticated CoCalc API access or RTC,
+2. that is realistic because TimeTravel already renders static historical versions client-side, and the current share server already proves this for several document types,
+3. slides and whiteboards should be among the easier early targets because there is already precedent for read-only rendering.
+
+Requirements:
+
+1. serve live project files directly from disk so a newly saved file is immediately visible at the public URL,
+2. use a dedicated public origin/subdomain with no shared authenticated browser state,
+3. provide a prebuilt public viewer bundle that contains only the read-only rendering path needed for supported document types,
+4. never expose authenticated project APIs, collaboration state, or CoCalc credentials to the public viewer,
+5. keep rendering strictly read-only; no editing, no RTC, no authenticated actions,
+6. support the first useful set of file types:
+   - `.md`
+   - `.ipynb`
+   - `.slides`
+   - `.board`
+   - later `.chat` if the read-only renderer path is clean enough
+7. allow optional lightweight freshness features later:
+   - polling,
+   - `ETag` / `Last-Modified`,
+   - or explicit browser auto-refresh
+8. continue to allow normal CDN caching/Cloudflare caching in front of the public origin.
+
+Security boundary:
+
+1. separate origin/subdomain from the authenticated CoCalc app is mandatory,
+2. strip/ignore CoCalc cookies and auth tokens entirely,
+3. use a strict CSP and safe static response headers,
+4. treat file contents as untrusted input and keep document sanitization strong,
+5. prefer a narrower public-viewer bundle over the full authenticated CoCalc app when possible.
+
+Possible app-spec shape:
+
+```yaml
+kind: static
+id: public-course-notes
+title: Public Course Notes
+static:
+  root: /home/user/project/public
+  index: index.html
+  cache_control: public,max-age=300
+integration:
+  mode: cocalc-public-viewer
+  file_types: [".md", ".ipynb", ".slides", ".board"]
+  viewer_bundle: /opt/cocalc/share/public-viewer/index.html
+  auto_refresh_s: 0
+```
+
+Suggested MVP:
+
+1. begin with `.md`, `.ipynb`, `.slides`, and `.board`,
+2. make the route/file lookup rules simple and explicit,
+3. do not attempt live collaboration,
+4. add optional polling-based freshness only after the basic read-only viewer is solid,
+5. document clearly that this is immediate live-public viewing, not the same thing as durable exported publishing.
+
+## 14.2 Activity-Driven Static Refresh Jobs
 
 Support optional static refresh commands so generated/static artifacts can be kept fresh without wasting compute.
 
@@ -1118,7 +1194,7 @@ Not yet implemented:
 1. Running refresh in a dedicated sandbox-ephemeral container mode (current implementation runs in the project runtime).
 2. Advanced policies (e.g., periodic windows with traffic thresholds, queued warm/cold precompute strategies).
 
-## 14.2 Cost and Policy Guardrails
+## 14.3 Cost and Policy Guardrails
 
 Guardrails should be host-aware and practical, not generic.
 
