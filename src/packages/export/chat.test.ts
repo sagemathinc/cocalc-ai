@@ -277,4 +277,97 @@ describe("chat export", () => {
       }
     }
   });
+
+  it("keeps exporting when a blob fetch fails and records a warning", async () => {
+    const tmp = await mkdtemp("cocalc-export-chat-missing-blob-");
+    const chatPath = path.join(tmp, "sample.chat");
+    const threadId = "thread-missing-blob";
+    const blobRef = "/blobs/missing?uuid=22222222-2222-4222-8222-222222222222";
+    let server: Server | undefined;
+    try {
+      server = createServer((req, res) => {
+        if (
+          req.url?.startsWith(
+            "/blobs/missing?uuid=22222222-2222-4222-8222-222222222222",
+          )
+        ) {
+          res.statusCode = 404;
+          res.end("missing");
+          return;
+        }
+        res.statusCode = 404;
+        res.end("missing");
+      });
+      await new Promise<void>((resolve) =>
+        server!.listen(0, "127.0.0.1", () => resolve()),
+      );
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        throw new Error("failed to bind blob server");
+      }
+      const baseUrl = `http://127.0.0.1:${address.port}`;
+
+      await writeJsonl(chatPath, [
+        buildThreadRecord({
+          thread_id: threadId,
+          root_message_id: "missing-root",
+          created_by: "user-1",
+        }),
+        makeThreadConfig({ threadId, name: "Missing Blob Thread" }),
+        buildChatMessageRecordV2({
+          sender_id: "user-1",
+          date: "2026-03-01T00:00:00.000Z",
+          prevHistory: [],
+          content: `missing image\n\n![](${blobRef})`,
+          generating: false,
+          message_id: "missing-root",
+          thread_id: threadId,
+        }),
+      ]);
+
+      const bundle = await collectChatExport({
+        chatPath,
+        scope: "current-thread",
+        threadId,
+        includeBlobs: true,
+        blobBaseUrl: baseUrl,
+      });
+
+      expect(bundle.assets).toBeUndefined();
+      expect((bundle.manifest as any).warning_count).toBe(1);
+      expect((bundle.manifest as any)?.entrypoints?.warnings).toBe(
+        "warnings.json",
+      );
+
+      const transcript = `${bundle.files.find((file) => file.path === `threads/${threadId}/transcript.md`)?.content ?? ""}`;
+      expect(transcript).toContain(blobRef);
+
+      const threadData = JSON.parse(
+        `${bundle.files.find((file) => file.path === `threads/${threadId}/thread.json`)?.content ?? "{}"}`,
+      );
+      expect(threadData.warnings).toHaveLength(1);
+      expect(threadData.warnings[0]).toMatchObject({
+        code: "blob_fetch_failed",
+        thread_id: threadId,
+        original_ref: blobRef,
+      });
+
+      const warnings = JSON.parse(
+        `${bundle.files.find((file) => file.path === "warnings.json")?.content ?? "[]"}`,
+      );
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]).toMatchObject({
+        code: "blob_fetch_failed",
+        thread_id: threadId,
+        original_ref: blobRef,
+      });
+      expect(warnings[0].message).toContain("HTTP 404");
+    } finally {
+      if (server) {
+        await new Promise<void>((resolve, reject) =>
+          server!.close((err) => (err ? reject(err) : resolve())),
+        );
+      }
+    }
+  });
 });

@@ -163,6 +163,7 @@ Examples:
             thread_count: (bundle.manifest as any)?.thread_count ?? 0,
             message_count: (bundle.manifest as any)?.message_count ?? 0,
             asset_count: (bundle.manifest as any)?.asset_count ?? 0,
+            warning_count: (bundle.manifest as any)?.warning_count ?? 0,
             bytes: zip.byteLength,
           });
         } catch (error) {

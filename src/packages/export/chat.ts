@@ -112,6 +112,15 @@ export interface ChatExportThreadData {
   transcript_path: string;
   messages_path: string;
   asset_refs?: ChatExportAssetIndexEntry[];
+  warnings?: ChatExportWarning[];
+}
+
+export interface ChatExportWarning {
+  code: "blob_fetch_failed";
+  thread_id: string;
+  original_ref: string;
+  fetch_url: string;
+  message: string;
 }
 
 type ChatRow = any;
@@ -149,6 +158,7 @@ type ThreadAggregate = {
   firstMessageAt?: string;
   lastMessageAt?: string;
   assetRefs: ChatExportAssetIndexEntry[];
+  warnings: ChatExportWarning[];
 };
 
 type BlobReference = {
@@ -209,6 +219,7 @@ export async function collectChatExport(
       archived: false,
       pinned: false,
       assetRefs: [],
+      warnings: [],
     });
   }
 
@@ -241,13 +252,14 @@ export async function collectChatExport(
       : undefined;
   }
 
-  const assetIndex = options.includeBlobs
+  const assetResult = options.includeBlobs
     ? await collectChatAssets({
         threads,
         blobBaseUrl: normalizeString(options.blobBaseUrl),
         blobBearerToken: normalizeString(options.blobBearerToken),
       })
-    : [];
+    : { assetIndex: [], warnings: [] };
+  const { assetIndex, warnings } = assetResult;
 
   const sortedAggregates = sortThreads(Array.from(threads.values()));
   const senderDirectory = buildSenderDirectory(sortedAggregates);
@@ -308,6 +320,7 @@ export async function collectChatExport(
       transcript_path: transcriptPath,
       messages_path: messagesPath,
       asset_refs: aggregate.assetRefs.length ? aggregate.assetRefs : undefined,
+      warnings: aggregate.warnings.length ? aggregate.warnings : undefined,
     };
     threadIndex.push({
       thread_id: aggregate.threadId,
@@ -357,6 +370,13 @@ export async function collectChatExport(
       contentType: "application/json; charset=utf-8",
     });
   }
+  if (warnings.length) {
+    files.push({
+      path: "warnings.json",
+      content: `${JSON.stringify(warnings, null, 2)}\n`,
+      contentType: "application/json; charset=utf-8",
+    });
+  }
 
   return {
     rootDir: defaultChatExportRootDir(options.chatPath),
@@ -371,6 +391,7 @@ export async function collectChatExport(
         canonical_data: ["threads/<thread_id>/messages.jsonl"],
         derived_views: ["threads/<thread_id>/transcript.md"],
         assets_index: assetIndex.length ? "assets/index.json" : undefined,
+        warnings: warnings.length ? "warnings.json" : undefined,
       },
       agent_hints: {
         local_first: true,
@@ -396,6 +417,7 @@ export async function collectChatExport(
         0,
       ),
       asset_count: assetIndex.length,
+      warning_count: warnings.length,
     }),
     files,
     assets: assetIndex.length
@@ -424,6 +446,9 @@ export async function collectChatExport(
 }
 
 function renderChatExportReadme(includeBlobs: boolean): string {
+  const warningLine = includeBlobs
+    ? "- If `warnings.json` exists, some blob fetches failed and those references were left unchanged.\n"
+    : "";
   return `# Chat Export
 
 This archive is designed for both people and agents.
@@ -440,6 +465,7 @@ Important properties:
 - Selected threads include archived/offloaded chat messages.
 - Codex activity/thinking logs are intentionally excluded.
 - Blob references are ${includeBlobs ? "copied into `assets/` and rewritten to local paths." : "left as external references because blobs were not included."}
+${warningLine}
 
 Recommended agent workflow:
 
@@ -587,13 +613,17 @@ async function collectChatAssets({
   threads: Map<string, ThreadAggregate>;
   blobBaseUrl?: string;
   blobBearerToken?: string;
-}): Promise<ChatExportAssetIndexEntry[]> {
+}): Promise<{
+  assetIndex: ChatExportAssetIndexEntry[];
+  warnings: ChatExportWarning[];
+}> {
   assetContentByPath.clear();
   const assetByOriginal = new Map<string, ChatExportAssetIndexEntry>();
   const assetByPath = new Map<
     string,
     { path: string; sha256: string; contentType?: string }
   >();
+  const warnings: ChatExportWarning[] = [];
   for (const aggregate of threads.values()) {
     const discovered = new Map<string, BlobReference>();
     const registerBlobRefs = (content?: string) => {
@@ -613,7 +643,21 @@ async function collectChatAssets({
     )) {
       let entry = assetByOriginal.get(ref.originalRef);
       if (!entry) {
-        const fetched = await fetchBlobAsset(ref, blobBearerToken);
+        let fetched;
+        try {
+          fetched = await fetchBlobAsset(ref, blobBearerToken);
+        } catch (err) {
+          const warning: ChatExportWarning = {
+            code: "blob_fetch_failed",
+            thread_id: aggregate.threadId,
+            original_ref: ref.originalRef,
+            fetch_url: ref.fetchUrl,
+            message: `${err}`,
+          };
+          warnings.push(warning);
+          aggregate.warnings.push(warning);
+          continue;
+        }
         const stored = assetByPath.get(fetched.path);
         if (!stored) {
           assetByPath.set(fetched.path, {
@@ -635,9 +679,12 @@ async function collectChatAssets({
     }
     aggregate.assetRefs = threadAssets;
   }
-  return Array.from(assetByOriginal.values()).sort((a, b) =>
-    a.originalRef.localeCompare(b.originalRef),
-  );
+  return {
+    assetIndex: Array.from(assetByOriginal.values()).sort((a, b) =>
+      a.originalRef.localeCompare(b.originalRef),
+    ),
+    warnings,
+  };
 }
 
 function rewriteBlobRefs(
