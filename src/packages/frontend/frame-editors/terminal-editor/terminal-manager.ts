@@ -87,7 +87,11 @@ export class TerminalManager<T extends CodeEditorState = CodeEditorState> {
     return number;
   }
 
-  get_terminal(id: string, parent: HTMLElement): undefined | Terminal<T> {
+  get_terminal(
+    id: string,
+    parent: HTMLElement,
+    terminalThemeOverride?: string | null,
+  ): undefined | Terminal<T> {
     if (this.actions == null) {
       return undefined;
     }
@@ -95,6 +99,7 @@ export class TerminalManager<T extends CodeEditorState = CodeEditorState> {
 
     if (this.terminals[id] != null) {
       parent.appendChild(this.terminals[id].element);
+      this.terminals[id].set_terminal_theme_override(terminalThemeOverride);
     } else {
       let command: string | undefined = undefined;
       let args: string[] | undefined = undefined;
@@ -109,6 +114,8 @@ export class TerminalManager<T extends CodeEditorState = CodeEditorState> {
         parent,
         command,
         args,
+        undefined,
+        terminalThemeOverride,
       );
       this.terminals[id].connect();
     }

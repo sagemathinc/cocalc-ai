@@ -40,6 +40,8 @@ export type WorkspaceRecord = {
   theme: WorkspaceTheme;
   pinned: boolean;
   strong_theme?: boolean;
+  editor_theme?: string | null;
+  terminal_theme?: string | null;
   last_used_at: number | null;
   last_active_path: string | null;
   chat_path: string | null;
@@ -65,6 +67,8 @@ export type WorkspaceCreateInput = {
   image_blob?: string | null;
   pinned?: boolean;
   strong_theme?: boolean;
+  editor_theme?: string | null;
+  terminal_theme?: string | null;
   chat_path?: string | null;
   notice_thread_id?: string | null;
   notice?: Partial<WorkspaceNotice> | null;
@@ -77,6 +81,8 @@ export type WorkspaceUpdatePatch = Partial<{
   theme: Partial<WorkspaceTheme>;
   pinned: boolean;
   strong_theme: boolean;
+  editor_theme: string | null;
+  terminal_theme: string | null;
   chat_path: string | null;
   notice_thread_id: string | null;
   notice: Partial<WorkspaceNotice> | null;
@@ -217,6 +223,14 @@ export function normalizeWorkspaceRecord(
     },
     pinned: record.pinned === true,
     strong_theme: record.strong_theme === true,
+    editor_theme:
+      typeof record.editor_theme === "string" && record.editor_theme.trim()
+        ? record.editor_theme.trim()
+        : null,
+    terminal_theme:
+      typeof record.terminal_theme === "string" && record.terminal_theme.trim()
+        ? record.terminal_theme.trim()
+        : null,
     last_used_at:
       typeof record.last_used_at === "number" &&
       Number.isFinite(record.last_used_at)
@@ -602,6 +616,14 @@ export function createWorkspaceRecord({
     },
     pinned: input.pinned === true,
     strong_theme: input.strong_theme === true,
+    editor_theme:
+      typeof input.editor_theme === "string" && input.editor_theme.trim()
+        ? input.editor_theme.trim()
+        : null,
+    terminal_theme:
+      typeof input.terminal_theme === "string" && input.terminal_theme.trim()
+        ? input.terminal_theme.trim()
+        : null,
     last_used_at: now,
     last_active_path:
       typeof input.last_active_path === "string" &&
@@ -669,6 +691,14 @@ export function updateWorkspaceRecords(
         },
         pinned: patch.pinned ?? record.pinned,
         strong_theme: patch.strong_theme ?? record.strong_theme,
+        editor_theme:
+          patch.editor_theme === undefined
+            ? record.editor_theme
+            : patch.editor_theme,
+        terminal_theme:
+          patch.terminal_theme === undefined
+            ? record.terminal_theme
+            : patch.terminal_theme,
         chat_path: patch.chat_path ?? record.chat_path,
         notice_thread_id:
           patch.notice_thread_id === undefined
