@@ -224,7 +224,7 @@ describe("CodexAppServerAgent", () => {
     expect(streamPayloads).toEqual(
       expect.arrayContaining([
         { type: "status", state: "queued" },
-        { type: "status", state: "init" },
+        { type: "status", state: "init", threadId: "thr-shared-1" },
         { type: "status", state: "running" },
         {
           type: "event",

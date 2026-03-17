@@ -1917,6 +1917,10 @@ export class ChatStreamWriter {
       }
     }
     if (payload.type === "status") {
+      if (payload.threadId != null) {
+        this.threadId = payload.threadId;
+        this.registerThreadKey(payload.threadId);
+      }
       this.setThreadState(payload.state === "running" ? "running" : "queued");
       this.commitNow(true);
       return;

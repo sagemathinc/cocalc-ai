@@ -247,7 +247,11 @@ export type AcpStreamEvent =
     };
 
 export type AcpStreamPayload =
-  | { type: "status"; state: "init" | "queued" | "running" }
+  | {
+      type: "status";
+      state: "init" | "queued" | "running";
+      threadId?: string | null;
+    }
   | {
       type: "event";
       event: AcpStreamEvent;

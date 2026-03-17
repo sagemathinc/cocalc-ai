@@ -88,6 +88,12 @@ const THREAD_CONFIG_EVENT = "chat-thread-config";
 const warnedMissingThreadIds = new Set<string>();
 let lastGeneratedChatMessageMs = 0;
 
+export function shouldOptimisticallyStopGeneratingLocally(opts?: {
+  threadId?: string;
+}): boolean {
+  return `${opts?.threadId ?? ""}`.trim().length === 0;
+}
+
 function nextChatMessageDate(actions: ChatActions): Date {
   let candidate = Math.max(
     webapp_client.server_time().valueOf(),
@@ -2168,6 +2174,13 @@ export class ChatActions extends Actions<ChatState> {
     },
   ) => {
     if (this.syncdb == null) return;
+    if (!shouldOptimisticallyStopGeneratingLocally(options)) {
+      void this.requestCodexInterrupt({
+        threadId: options!.threadId!,
+        messageDate: date,
+      });
+      return;
+    }
     const targetSenderId =
       options?.senderId ?? senderId(this.getMessageByDate(date));
     if (!targetSenderId) return;
@@ -2179,12 +2192,6 @@ export class ChatActions extends Actions<ChatState> {
     });
     this.syncdb.commit();
     void this.saveSyncdb();
-    if (options?.threadId) {
-      void this.requestCodexInterrupt({
-        threadId: options.threadId,
-        messageDate: date,
-      });
-    }
   };
 
   private async requestCodexInterrupt({

@@ -881,6 +881,36 @@ describe("ChatStreamWriter", () => {
     (writer as any).dispose?.(true);
   });
 
+  it("registers live thread ids from status payloads", async () => {
+    const { syncdb, sets } = makeFakeSyncDB();
+    const writer: any = new ChatStreamWriter({
+      metadata: baseMetadata,
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      syncdbOverride: syncdb as any,
+      logStoreFactory: () =>
+        ({
+          set: async () => {},
+        }) as any,
+    });
+
+    await (writer as any).handle({
+      type: "status",
+      state: "init",
+      threadId: "thread-live-1",
+      seq: 0,
+    } as AcpStreamMessage);
+    await flush(writer);
+
+    expect((writer as any).getKnownThreadIds()).toContain("thread-live-1");
+    const metadataUpdate = sets.find(
+      (row: any) =>
+        row.message_id === "msg-0" && row.acp_thread_id === "thread-live-1",
+    );
+    expect(metadataUpdate).toBeTruthy();
+    (writer as any).dispose?.(true);
+  });
+
   it("replaces an existing writer for the same chat key", async () => {
     const { syncdb: syncdb1 } = makeFakeSyncDB();
     const { syncdb: syncdb2, sets } = makeFakeSyncDB();
