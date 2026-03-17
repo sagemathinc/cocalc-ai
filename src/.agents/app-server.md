@@ -1169,6 +1169,37 @@ Suggested MVP:
 4. add optional polling-based freshness only after the basic read-only viewer is solid,
 5. document clearly that this is immediate live-public viewing, not the same thing as durable exported publishing.
 
+Authenticated import/copy flow:
+
+One important product goal for public viewer mode should be making it easy for a signed-in user to copy a public file or directory into their own project.
+
+Design shape:
+
+1. the public viewer may show a `Copy to my project` / `Open in CoCalc` action,
+2. that action should open the authenticated CoCalc app in a new tab/window with the public viewer URL encoded as input,
+3. the authenticated CoCalc side should then show:
+   - a warning/confirmation step,
+   - destination project picker,
+   - optional destination path,
+   - a preview of what will be copied when possible,
+4. the actual copy should happen only after explicit user confirmation on the authenticated side.
+
+Security/product constraints:
+
+1. treat this as an authenticated import flow, not a capability of the unauthenticated viewer itself,
+2. do not allow arbitrary remote-URL fetch/import; only accept canonical CoCalc public-viewer/share URLs on allowed hosts,
+3. parse the source URL into a structured CoCalc public source descriptor rather than blindly fetching raw user input,
+4. keep normal CSRF protections and explicit confirmation semantics on the authenticated import step,
+5. this should not require or expose auth to the public viewer page.
+
+Directory import:
+
+1. do not recursively scrape HTML listings,
+2. provide a machine-readable manifest endpoint and/or archive download endpoint for public directories,
+3. use that structured representation for preview, size checks, and import execution.
+
+This feature should be framed as a generic `Import from public CoCalc URL` capability that can work with public viewer mode now and cached/share-style public publishing later.
+
 ## 14.2 Activity-Driven Static Refresh Jobs
 
 Support optional static refresh commands so generated/static artifacts can be kept fresh without wasting compute.
