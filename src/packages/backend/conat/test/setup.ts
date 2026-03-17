@@ -9,6 +9,7 @@ import getLogger from "@cocalc/backend/logger";
 import { setConatClient } from "@cocalc/conat/client";
 import { server as createPersistServer } from "@cocalc/backend/conat/persist";
 import { syncFiles } from "@cocalc/conat/persist/context";
+import { createServer as createHttpServer } from "node:http";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "path";
@@ -33,12 +34,34 @@ export async function initConatServer(
   options: Partial<Options> = {},
 ): Promise<ConatServer> {
   logger.debug("init");
-  if (!options?.port) {
-    const port = await getPort();
+  let port = options.port;
+  if (!port) {
+    port = await getPort();
     options = { ...options, port };
   }
+  const httpServer = createHttpServer();
+  await new Promise<void>((resolve, reject) => {
+    httpServer.once("error", reject);
+    httpServer.listen(port, "127.0.0.1", () => {
+      httpServer.removeListener("error", reject);
+      resolve();
+    });
+  });
 
-  const server = createConatServer(options);
+  const server = createConatServer({ ...options, port, httpServer });
+  const close = server.close.bind(server);
+  server.close = async () => {
+    await close();
+    await new Promise<void>((resolve, reject) => {
+      httpServer.close((err?: Error) => {
+        if (err != null) {
+          reject(err);
+        } else {
+          resolve();
+        }
+      });
+    });
+  };
   if (server.clusterName == "default") {
     defaultCluster.push(server);
   }

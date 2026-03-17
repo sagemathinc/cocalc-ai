@@ -90,7 +90,7 @@ export interface DetectedAppPort {
   managed: boolean;
   managed_app_ids: string[];
   proxy_url: string;
-  source: "ss" | "procfs";
+  source: "ss" | "lsof" | "procfs";
 }
 
 export interface InstalledAppTemplate {
