@@ -53,6 +53,10 @@
       "assert": "return document.querySelector('[data-cocalc-file-tab-strip] [role=\"tablist\"]') != null;"
     },
     {
+      "name": "assert exactly one tablist lives inside the file tab strip",
+      "assert": "return document.querySelectorAll('[data-cocalc-file-tab-strip] [role=\"tablist\"]').length === 1;"
+    },
+    {
       "name": "assert project navigation shell is visible",
       "assert": "const body = document.body.innerText; return body.includes('Files') && body.includes('New');"
     }
