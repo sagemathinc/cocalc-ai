@@ -58,6 +58,7 @@ import {
   buildThreadStateRecord,
   computeChatIntegrityReport,
   deriveAcpLogRefs,
+  threadStateRecordKey,
   threadConfigRecordKey,
   type ChatThreadAutomationConfig,
   type ChatThreadAutomationState,
@@ -127,6 +128,7 @@ import {
   listPendingAcpInterrupts,
   markAcpInterruptError,
   markAcpInterruptHandled,
+  markAcpInterruptsHandledForThread,
 } from "../sqlite/acp-interrupts";
 import {
   getAcpWorker,
@@ -229,6 +231,14 @@ const ACP_SYNCDB_SAVE_SLOW_MS = envNumber(
 const ACP_LOG_PERSIST_SLOW_MS = envNumber(
   "COCALC_ACP_LOG_PERSIST_SLOW_MS",
   150,
+);
+const ACP_PATCHFLOW_COMMIT_TARGET = envNumber(
+  "COCALC_ACP_PATCHFLOW_COMMIT_TARGET",
+  6,
+);
+const ACP_PATCHFLOW_COMMIT_CEILING = envNumber(
+  "COCALC_ACP_PATCHFLOW_COMMIT_CEILING",
+  10,
 );
 const ACP_BLOB_MATERIALIZE_SLOW_MS = envNumber(
   "COCALC_ACP_BLOB_MATERIALIZE_SLOW_MS",
@@ -484,6 +494,34 @@ function preferredThreadConfigRow(
     }
   }
   return best;
+}
+
+function preferredThreadStateRow(
+  syncdb: SyncDB,
+  threadId: string,
+): Record<string, unknown> | undefined {
+  const canonical = threadStateRecordKey(threadId);
+  const direct = (syncdb as any)?.get_one?.(canonical);
+  if (direct != null) {
+    return typeof direct?.toJS === "function" ? direct.toJS() : direct;
+  }
+  const rows = syncdbRowsMatching(syncdb, {
+    event: THREAD_STATE_EVENT,
+    thread_id: threadId,
+  });
+  if (rows.length === 0) return undefined;
+  return rows.slice().sort((a, b) => {
+    const aUpdated = Date.parse(
+      `${syncdbField<string>(a, "updated_at") ?? ""}`,
+    );
+    const bUpdated = Date.parse(
+      `${syncdbField<string>(b, "updated_at") ?? ""}`,
+    );
+    return (
+      (Number.isFinite(bUpdated) ? bUpdated : 0) -
+      (Number.isFinite(aUpdated) ? aUpdated : 0)
+    );
+  })[0];
 }
 
 function replaceThreadScopedRow(
@@ -1283,6 +1321,43 @@ function logWriterCounts(
   });
 }
 
+function syncdbVersionCount(syncdb: unknown): number | undefined {
+  const versions = (syncdb as any)?.versions;
+  if (typeof versions !== "function") return undefined;
+  try {
+    const value = versions.call(syncdb);
+    return Array.isArray(value) ? value.length : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function logSyncdbPatchflowDelta({
+  syncdb,
+  before,
+  phase,
+  extra,
+}: {
+  syncdb: unknown;
+  before?: number;
+  phase: string;
+  extra?: Record<string, unknown>;
+}): void {
+  const after = syncdbVersionCount(syncdb);
+  if (after == null) return;
+  const payload = {
+    phase,
+    versions: after,
+    delta: before == null ? undefined : after - before,
+    ...extra,
+  };
+  if (before != null && after - before > ACP_PATCHFLOW_COMMIT_CEILING) {
+    logger.warn("acp chat patchflow delta exceeded ceiling", payload);
+  } else {
+    logger.debug("acp chat patchflow delta", payload);
+  }
+}
+
 function chatKey(metadata: AcpChatContext): string {
   return `${metadata.project_id}:${metadata.path}:${metadata.message_date}`;
 }
@@ -1363,6 +1438,9 @@ export class ChatStreamWriter {
   private readonly timeTravelOps = new Set<Promise<void>>();
   private timeTravelDisposePromise?: Promise<void>;
   private leaseFinalized = false;
+  private patchflowVersionBaseline?: number;
+  private patchflowVersionLatest?: number;
+  private patchflowVersionPeak?: number;
   private heartbeatLease = throttle(
     () => {
       this.touchLease();
@@ -1588,6 +1666,15 @@ export class ChatStreamWriter {
       return;
     }
     try {
+      const current = preferredThreadStateRow(this.syncdb, threadId);
+      if (
+        current != null &&
+        this.recordField<string>(current, "state") === state &&
+        (this.recordField<string>(current, "active_message_id") ?? null) ===
+          (this.metadata.message_id ?? null)
+      ) {
+        return;
+      }
       replaceThreadScopedRow(
         this.syncdb,
         THREAD_STATE_EVENT,
@@ -1602,6 +1689,7 @@ export class ChatStreamWriter {
       );
       this.syncdb.commit();
       this.markIntegrityDirty(`thread-state:${state}`);
+      this.observePatchflowVersions(`thread-state:${state}`);
     } catch (err) {
       logger.debug("failed to update chat thread state", {
         chatKey: this.chatKey,
@@ -1815,6 +1903,7 @@ export class ChatStreamWriter {
         throw err;
       }
     }
+    this.observePatchflowVersions("init:ready");
     let current = this.findChatRow();
     if (current == null) {
       // Create a placeholder chat row so backend-owned updates don’t race with a missing record.
@@ -1844,6 +1933,7 @@ export class ChatStreamWriter {
       db.set(placeholder);
       db.commit();
       this.markIntegrityDirty("init-placeholder");
+      this.observePatchflowVersions("init:placeholder");
       current = this.findChatRow();
     }
     const history = this.recordField(current, "history");
@@ -1860,6 +1950,7 @@ export class ChatStreamWriter {
     this.setThreadState("running");
     try {
       await db.save();
+      this.observePatchflowVersions("init:save");
     } catch (err) {
       logger.warn("chat syncdb save failed during init", err);
     }
@@ -1917,7 +2008,10 @@ export class ChatStreamWriter {
       }
     }
     if (payload.type === "status") {
-      this.setThreadState(payload.state === "running" ? "running" : "queued");
+      if (payload.threadId != null) {
+        this.threadId = payload.threadId;
+        this.registerThreadKey(payload.threadId);
+      }
       this.commitNow(true);
       return;
     }
@@ -2171,6 +2265,55 @@ export class ChatStreamWriter {
     return Number.isFinite(num) && num > 0 ? num : null;
   }
 
+  private observePatchflowVersions(
+    phase: string,
+    extra?: Record<string, unknown>,
+  ): number | undefined {
+    const count = syncdbVersionCount(this.syncdb);
+    if (count == null) return undefined;
+    if (this.patchflowVersionBaseline == null) {
+      this.patchflowVersionBaseline = count;
+    }
+    this.patchflowVersionLatest = count;
+    this.patchflowVersionPeak = Math.max(
+      this.patchflowVersionPeak ?? count,
+      count,
+    );
+    const delta = count - this.patchflowVersionBaseline;
+    const payload = {
+      chatKey: this.chatKey,
+      path: this.metadata.path,
+      message_id: this.metadata.message_id,
+      phase,
+      versions: count,
+      delta,
+      target: ACP_PATCHFLOW_COMMIT_TARGET,
+      ceiling: ACP_PATCHFLOW_COMMIT_CEILING,
+      ...extra,
+    };
+    if (delta > ACP_PATCHFLOW_COMMIT_CEILING) {
+      logger.warn("acp chat patchflow budget exceeded", payload);
+    } else {
+      logger.debug("acp chat patchflow versions", payload);
+    }
+    return count;
+  }
+
+  private patchflowBudgetSnapshot() {
+    if (this.patchflowVersionBaseline == null) return undefined;
+    const latest = this.patchflowVersionLatest ?? this.patchflowVersionBaseline;
+    const peak = this.patchflowVersionPeak ?? latest;
+    return {
+      baselineVersions: this.patchflowVersionBaseline,
+      latestVersions: latest,
+      peakVersions: peak,
+      deltaVersions: latest - this.patchflowVersionBaseline,
+      peakDeltaVersions: peak - this.patchflowVersionBaseline,
+      target: ACP_PATCHFLOW_COMMIT_TARGET,
+      ceiling: ACP_PATCHFLOW_COMMIT_CEILING,
+    };
+  }
+
   private primeCommittedStateFromRow(row: any): void {
     if (row == null) return;
     this.lastCommittedThreadId =
@@ -2223,6 +2366,39 @@ export class ChatStreamWriter {
     this.lastCommittedUsageJson = this.usageFingerprint();
     this.lastCommittedInterrupted = this.interruptNotified;
     this.lastCommittedGenerating = generating;
+  }
+
+  private terminalRowAlreadyPersisted(): boolean {
+    if (!this.syncdb) return false;
+    const current = this.findChatRow();
+    if (current == null) return false;
+    const generating = this.recordField<boolean>(current, "generating");
+    if (generating !== false) return false;
+    const history = this.historyToArray(this.recordField(current, "history"));
+    const currentContent = history[0]?.content ?? "";
+    const currentThreadId =
+      this.recordField<string>(current, "acp_thread_id") ?? null;
+    const currentStartedAtMs = this.normalizeStartedAtMs(
+      this.recordField<number | string>(current, "acp_started_at_ms"),
+    );
+    const currentInterrupted =
+      this.recordField<boolean>(current, "acp_interrupted") === true;
+    let currentUsageJson = "null";
+    try {
+      currentUsageJson = JSON.stringify(
+        this.recordField<any>(current, "acp_usage") ?? null,
+      );
+    } catch {
+      currentUsageJson = "null";
+    }
+    return (
+      currentContent === (this.content ?? "") &&
+      currentThreadId === this.threadId &&
+      currentStartedAtMs ===
+        this.normalizeStartedAtMs(this.metadata.started_at_ms) &&
+      currentInterrupted === this.interruptNotified &&
+      currentUsageJson === this.usageFingerprint()
+    );
   }
 
   private resolveInlineCodeLinks(): InlineCodeLink[] | undefined {
@@ -2284,6 +2460,11 @@ export class ChatStreamWriter {
         const saveStarted = performance.now();
         try {
           await this.syncdb.save();
+          this.observePatchflowVersions("chat-save", {
+            reason,
+            generating,
+            fullContent,
+          });
           const saveDurationMs = performance.now() - saveStarted;
           if (saveDurationMs >= ACP_SYNCDB_SAVE_SLOW_MS) {
             logger.warn("chat syncdb save slow", {
@@ -2354,6 +2535,11 @@ export class ChatStreamWriter {
       this.markIntegrityDirty(
         `chat-commit:${reason}:${fullContent ? "full" : "meta"}`,
       );
+      this.observePatchflowVersions("chat-commit", {
+        reason,
+        generating,
+        fullContent,
+      });
     } catch (err) {
       logger.warn("chat syncdb commit failed", {
         chatKey: this.chatKey,
@@ -2483,7 +2669,9 @@ export class ChatStreamWriter {
       this.finalizeLease("aborted", reason);
     }
 
-    this.commitNow(false, "dispose");
+    if (!this.finished || !this.terminalRowAlreadyPersisted()) {
+      this.commitNow(false, "dispose");
+    }
     this.commit.flush();
     this.closed = true;
     this.startTimeTravelDispose();
@@ -2717,6 +2905,7 @@ export class ChatStreamWriter {
               pendingOps: this.timeTravelOps.size,
               disposePending: this.timeTravelDisposePromise != null,
             },
+      patchflow: this.patchflowBudgetSnapshot(),
     };
   }
 
@@ -2799,7 +2988,9 @@ export class ChatStreamWriter {
       });
       this.syncdb.commit();
       this.markIntegrityDirty("thread-config");
+      this.observePatchflowVersions("thread-config");
       await this.syncdb.save();
+      this.observePatchflowVersions("thread-config:save");
     } catch (err) {
       logger.debug("patchThreadConfig failed", err);
     }
@@ -4381,6 +4572,7 @@ async function persistQueuedUserMessageProjection({
     project_id,
     path,
     fn: async (syncdb) => {
+      const versionCountBefore = syncdbVersionCount(syncdb);
       const waitingInLine = threadHasRunningState(syncdb, thread_id);
       const projectedMessageState = queued
         ? waitingInLine
@@ -4437,6 +4629,19 @@ async function persistQueuedUserMessageProjection({
 
       syncdb.commit();
       await syncdb.save();
+      logSyncdbPatchflowDelta({
+        syncdb,
+        before: versionCountBefore,
+        phase: "queued-user-projection",
+        extra: {
+          project_id,
+          path,
+          thread_id,
+          user_message_id,
+          queued,
+          projectedMessageState,
+        },
+      });
       return projectedMessageState;
     },
   });
@@ -5099,6 +5304,7 @@ async function prepareQueuedUserMessageForExecution({
     project_id,
     path,
     fn: async (syncdb) => {
+      const versionCountBefore = syncdbVersionCount(syncdb);
       const current = findChatRowByMessageId(syncdb, user_message_id);
       if (current != null) {
         const rowDate =
@@ -5131,6 +5337,17 @@ async function prepareQueuedUserMessageForExecution({
           syncdb.set(update);
           syncdb.commit();
           await syncdb.save();
+          logSyncdbPatchflowDelta({
+            syncdb,
+            before: versionCountBefore,
+            phase: "queued-user-prepare",
+            extra: {
+              project_id,
+              path,
+              thread_id,
+              user_message_id,
+            },
+          });
         }
       }
     },
@@ -5869,6 +6086,13 @@ async function handleInterruptRequest(
       candidateIds,
     })
   ) {
+    if (project_id && path && threadId) {
+      markAcpInterruptsHandledForThread({
+        project_id,
+        path,
+        thread_id: threadId,
+      });
+    }
     return;
   }
   if (!project_id || !path || !threadId) {

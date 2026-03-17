@@ -1919,6 +1919,7 @@ function ChatRoomInner({
   const useEditor = useEditorRedux<ChatState>({ project_id, path });
   // subscribe to syncdbReady to force re-render when sync attaches
   useEditor("syncdbReady");
+  useEditor("readStateVersion");
   return (
     <ChatPanel
       actions={actions}

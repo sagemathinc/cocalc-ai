@@ -208,6 +208,7 @@ export type AcpStreamEvent =
   | {
       type: "message";
       text: string;
+      delta?: boolean;
     }
   | {
       type: "diff";
@@ -247,7 +248,11 @@ export type AcpStreamEvent =
     };
 
 export type AcpStreamPayload =
-  | { type: "status"; state: "init" | "queued" | "running" }
+  | {
+      type: "status";
+      state: "init" | "queued" | "running";
+      threadId?: string | null;
+    }
   | {
       type: "event";
       event: AcpStreamEvent;
