@@ -23,6 +23,8 @@ import {
 import { AvailableFeatures } from "@cocalc/frontend/project_configuration";
 import { is_different } from "@cocalc/util/misc";
 import { isChatPath } from "@cocalc/frontend/chat/paths";
+import { effectiveImmutableEditorSettings } from "@cocalc/frontend/project/workspaces/editor-theme";
+import { useWorkspaceRecordForPath } from "@cocalc/frontend/project/workspaces/use-workspace-record";
 import { chat } from "../generic/chat";
 import { FrameDndProvider } from "./dnd/frame-dnd-provider";
 import FormatError from "./format-error";
@@ -76,6 +78,11 @@ const FrameTreeEditor: React.FC<FrameTreeEditorProps> = React.memo(
 
     const editor_settings = useTypedRedux("account", "editor_settings");
     const terminal = useTypedRedux("account", "terminal");
+    const workspaceRecord = useWorkspaceRecordForPath(project_id, path);
+    const effectiveEditorSettings =
+      editor_settings == null
+        ? editor_settings
+        : effectiveImmutableEditorSettings(editor_settings, workspaceRecord);
 
     const has_unsaved_changes: boolean = useRedux(name, "has_unsaved_changes");
     const has_uncommitted_changes: boolean = useRedux(
@@ -155,7 +162,7 @@ const FrameTreeEditor: React.FC<FrameTreeEditorProps> = React.memo(
               has_unsaved_changes={has_unsaved_changes}
               has_uncommitted_changes={has_uncommitted_changes}
               is_saving={is_saving}
-              editor_settings={editor_settings}
+              editor_settings={effectiveEditorSettings}
               terminal={terminal}
               settings={settings}
               status={status}

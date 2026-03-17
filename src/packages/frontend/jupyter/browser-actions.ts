@@ -81,6 +81,11 @@ import { lite } from "@cocalc/frontend/lite";
 import { type WatchIterator } from "@cocalc/conat/files/watch";
 import { DiffMatchPatch, decompressPatch } from "@cocalc/util/dmp";
 import { mark_open_phase } from "@cocalc/frontend/project/open-file";
+import { effectivePlainEditorSettings } from "@cocalc/frontend/project/workspaces/editor-theme";
+import {
+  resolveRuntimeWorkspaceForPath,
+  WORKSPACE_RECORDS_EVENT,
+} from "@cocalc/frontend/project/workspaces/records-runtime";
 import * as cell_utils from "@cocalc/jupyter/util/cell-utils";
 import { IPynbImporter } from "@cocalc/jupyter/ipynb/import-from-ipynb";
 import { decideInitialWatchSource } from "./watch-policy";
@@ -112,6 +117,7 @@ export class JupyterActions extends JupyterActions0 {
   private optimisticFastOpenApplied: boolean = false;
   private runDebugCounter: number = 0;
   private runDebugMode: "off" | "on" | "json" | undefined;
+  private workspaceRecordsChange?: EventListener;
 
   private resolveRunDebugMode = (): "off" | "on" | "json" => {
     try {
@@ -408,6 +414,21 @@ export class JupyterActions extends JupyterActions0 {
       account_store.on("change", this.account_change);
       this.account_change_editor_settings =
         account_store.get("editor_settings");
+      this.workspaceRecordsChange = ((event: Event) => {
+        const detail = (
+          event as CustomEvent<{
+            project_id?: string;
+          }>
+        ).detail;
+        if (`${detail?.project_id ?? ""}` !== this.project_id) {
+          return;
+        }
+        this.set_cm_options();
+      }) as EventListener;
+      window.addEventListener(
+        WORKSPACE_RECORDS_EVENT,
+        this.workspaceRecordsChange,
+      );
     }
   }
 
@@ -542,6 +563,12 @@ export class JupyterActions extends JupyterActions0 {
   public async close(): Promise<void> {
     try {
       if (this.isClosed()) return;
+      if (window != null && this.workspaceRecordsChange != null) {
+        window.removeEventListener(
+          WORKSPACE_RECORDS_EVENT,
+          this.workspaceRecordsChange,
+        );
+      }
       this.jupyterClient?.close();
       this.jupyterClient = undefined;
       super.close();
@@ -1082,7 +1109,14 @@ export class JupyterActions extends JupyterActions0 {
     if (account == null) return;
     const immutable_editor_settings = account.get("editor_settings");
     if (immutable_editor_settings == null) return;
-    const editor_settings = immutable_editor_settings.toJS();
+    const workspaceRecord = resolveRuntimeWorkspaceForPath(
+      this.project_id,
+      this.path,
+    );
+    const editor_settings = effectivePlainEditorSettings(
+      immutable_editor_settings.toJS(),
+      workspaceRecord,
+    );
     const line_numbers =
       this.get_local_storage("line_numbers") ??
       immutable_editor_settings.get("jupyter_line_numbers") ??
