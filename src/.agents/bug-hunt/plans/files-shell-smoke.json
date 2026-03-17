@@ -41,6 +41,10 @@
       "assert": "const match = window.location.pathname.match(/^\\/projects\\/([0-9a-f-]+)\\//); const strip = document.querySelector('[data-cocalc-file-tab-strip]'); const value = strip?.getAttribute('data-cocalc-file-tab-strip') ?? ''; return match != null && value === match[1];"
     },
     {
+      "name": "assert file tab strip is inside the project page root",
+      "assert": "const root = document.querySelector('[data-cocalc-project-page]'); const strip = document.querySelector('[data-cocalc-file-tab-strip]'); return root != null && strip != null && root.contains(strip);"
+    },
+    {
       "name": "assert project navigation shell is visible",
       "assert": "const body = document.body.innerText; return body.includes('Files') && body.includes('New');"
     }
