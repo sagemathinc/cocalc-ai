@@ -23,6 +23,10 @@
     {
       "name": "assert exactly one project page root is mounted",
       "assert": "return document.querySelectorAll('[data-cocalc-project-page]').length === 1;"
+    },
+    {
+      "name": "assert project page root carries a project id",
+      "assert": "const root = document.querySelector('[data-cocalc-project-page]'); const value = root?.getAttribute('data-cocalc-project-page') ?? ''; return /^[0-9a-f-]{36}$/.test(value);"
     }
   ]
 }
