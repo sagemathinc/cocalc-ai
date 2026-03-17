@@ -37,6 +37,10 @@
       "assert": "return document.querySelectorAll('[data-cocalc-file-tab-strip]').length === 1;"
     },
     {
+      "name": "assert file tab strip matches the route project id",
+      "assert": "const match = window.location.pathname.match(/^\\/projects\\/([0-9a-f-]+)\\//); const strip = document.querySelector('[data-cocalc-file-tab-strip]'); const value = strip?.getAttribute('data-cocalc-file-tab-strip') ?? ''; return match != null && value === match[1];"
+    },
+    {
       "name": "assert project navigation shell is visible",
       "assert": "const body = document.body.innerText; return body.includes('Files') && body.includes('New');"
     }
