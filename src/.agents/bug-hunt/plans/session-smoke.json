@@ -17,8 +17,8 @@
       "recovery": "reload"
     },
     {
-      "name": "assert non-empty title",
-      "assert": "return document.title && document.title.length > 0;"
+      "name": "assert CoCalc title is visible",
+      "assert": "return typeof document.title === 'string' && document.title.includes('CoCalc');"
     },
     {
       "name": "assert project navigation shell is visible",
