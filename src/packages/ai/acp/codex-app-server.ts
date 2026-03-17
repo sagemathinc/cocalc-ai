@@ -860,7 +860,11 @@ export class CodexAppServerAgent implements AcpAgent {
       setRunningKey(actualThreadId);
       this.sessions.set(actualThreadId, { sessionId: actualThreadId, cwd });
 
-      await stream({ type: "status", state: "init" });
+      await stream({
+        type: "status",
+        state: "init",
+        threadId: actualThreadId,
+      });
 
       const turnStart = await client.request("turn/start", {
         threadId: actualThreadId,
@@ -1028,7 +1032,7 @@ export class CodexAppServerAgent implements AcpAgent {
               finalResponse += delta;
               await stream({
                 type: "event",
-                event: { type: "message", text: delta },
+                event: { type: "message", text: delta, delta: true },
               });
             }
             break;

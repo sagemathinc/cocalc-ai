@@ -11,6 +11,7 @@ import {
   listPendingAcpInterrupts,
   markAcpInterruptError,
   markAcpInterruptHandled,
+  markAcpInterruptsHandledForThread,
 } from "../../sqlite/acp-interrupts";
 
 beforeAll(() => {
@@ -52,6 +53,36 @@ describe("acp interrupt queue", () => {
     expect(decodeAcpInterruptChat(pending[0])?.thread_id).toBe("thread-1");
   });
 
+  it("deduplicates repeated pending interrupts for the same thread", () => {
+    const first = enqueueAcpInterrupt({
+      project_id: "00000000-1000-4000-8000-000000000000",
+      path: "/tmp/acp.chat",
+      thread_id: "thread-1",
+      candidate_ids: ["thread-1"],
+      chat: {
+        project_id: "00000000-1000-4000-8000-000000000000",
+        path: "/tmp/acp.chat",
+        thread_id: "thread-1",
+        message_date: "2026-03-08T00:00:00.000Z",
+        sender_id: "00000000-1000-4000-8000-000000000001",
+      },
+    });
+    const second = enqueueAcpInterrupt({
+      project_id: "00000000-1000-4000-8000-000000000000",
+      path: "/tmp/acp.chat",
+      thread_id: "thread-1",
+      candidate_ids: ["session-1"],
+    });
+
+    const pending = listPendingAcpInterrupts();
+    expect(pending).toHaveLength(1);
+    expect(second.id).toBe(first.id);
+    expect(decodeAcpInterruptCandidateIds(pending[0])).toEqual([
+      "thread-1",
+      "session-1",
+    ]);
+  });
+
   it("transitions pending rows to handled or error", () => {
     const handled = enqueueAcpInterrupt({
       project_id: "00000000-1000-4000-8000-000000000000",
@@ -72,5 +103,30 @@ describe("acp interrupt queue", () => {
     });
     const pending = listPendingAcpInterrupts();
     expect(pending.map((row) => row.id)).toEqual([]);
+  });
+
+  it("can clear all pending interrupts for one thread after a direct interrupt succeeds", () => {
+    enqueueAcpInterrupt({
+      project_id: "00000000-1000-4000-8000-000000000000",
+      path: "/tmp/acp.chat",
+      thread_id: "thread-4",
+      candidate_ids: ["thread-4"],
+    });
+    enqueueAcpInterrupt({
+      project_id: "00000000-1000-4000-8000-000000000000",
+      path: "/tmp/acp.chat",
+      thread_id: "thread-5",
+      candidate_ids: ["thread-5"],
+    });
+
+    markAcpInterruptsHandledForThread({
+      project_id: "00000000-1000-4000-8000-000000000000",
+      path: "/tmp/acp.chat",
+      thread_id: "thread-4",
+    });
+
+    const pending = listPendingAcpInterrupts();
+    expect(pending).toHaveLength(1);
+    expect(pending[0].thread_id).toBe("thread-5");
   });
 });

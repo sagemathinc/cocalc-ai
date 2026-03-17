@@ -742,9 +742,17 @@ export class SandboxedFilesystem {
     };
   }
 
-  private toSandboxRelativePath(absPath: string, basePath: string): string {
-    if (absPath == basePath) {
+  private toSandboxRelativePath(
+    absPath: string,
+    basePath: string,
+    compareBasePath: string = basePath,
+  ): string {
+    if (absPath == compareBasePath || absPath == basePath) {
       return basePath == this.path ? "" : "/";
+    }
+    if (absPath.startsWith(compareBasePath + "/")) {
+      const rel = absPath.slice(compareBasePath.length + 1);
+      return basePath == this.path ? rel : `/${rel}`;
     }
     if (!absPath.startsWith(basePath + "/")) {
       return absPath;
@@ -794,17 +802,27 @@ export class SandboxedFilesystem {
     pathInSandbox,
     sandboxBasePath,
     absoluteScratchAlias,
+    compareBasePath,
   }: {
     pathInSandbox: string;
     sandboxBasePath: string;
     absoluteScratchAlias: boolean;
+    compareBasePath?: string;
   }): string => {
-    const rel = this.toSandboxRelativePath(pathInSandbox, sandboxBasePath);
+    const rel = this.toSandboxRelativePath(
+      pathInSandbox,
+      sandboxBasePath,
+      compareBasePath,
+    );
     if (sandboxBasePath === this.path) {
+      const basePath = compareBasePath ?? sandboxBasePath;
       if (rel === "") {
-        return this.path;
+        return basePath;
       }
-      return join(this.path, rel);
+      if (rel.startsWith("/")) {
+        return rel;
+      }
+      return join(basePath, rel);
     }
     if (absoluteScratchAlias) {
       if (rel === "" || rel === "/") {
@@ -822,13 +840,19 @@ export class SandboxedFilesystem {
     sandboxBasePath,
     absoluteHomeAlias,
     absoluteScratchAlias,
+    compareBasePath,
   }: {
     pathInSandbox: string;
     sandboxBasePath: string;
     absoluteHomeAlias: boolean;
     absoluteScratchAlias: boolean;
+    compareBasePath?: string;
   }): string => {
-    const rel = this.toSandboxRelativePath(pathInSandbox, sandboxBasePath);
+    const rel = this.toSandboxRelativePath(
+      pathInSandbox,
+      sandboxBasePath,
+      compareBasePath,
+    );
     if (absoluteHomeAlias) {
       if (rel === "") {
         return HOME_ROOT;
@@ -871,6 +895,7 @@ export class SandboxedFilesystem {
           pathInSandbox: canonicalInSandbox,
           sandboxBasePath,
           absoluteScratchAlias,
+          compareBasePath: compareBase ?? sandboxBasePath,
         });
       } catch (err: any) {
         if (err?.code !== "ENOENT" && err?.code !== "ENOTDIR") {
@@ -883,6 +908,7 @@ export class SandboxedFilesystem {
           pathInSandbox,
           sandboxBasePath,
           absoluteScratchAlias,
+          compareBasePath: compareBase ?? sandboxBasePath,
         });
       }
       suffix.unshift(basename(candidate));
@@ -920,6 +946,7 @@ export class SandboxedFilesystem {
           sandboxBasePath,
           absoluteHomeAlias,
           absoluteScratchAlias,
+          compareBasePath: compareBase ?? sandboxBasePath,
         });
       } catch (err: any) {
         if (err?.code !== "ENOENT" && err?.code !== "ENOTDIR") {
@@ -933,6 +960,7 @@ export class SandboxedFilesystem {
           sandboxBasePath,
           absoluteHomeAlias,
           absoluteScratchAlias,
+          compareBasePath: compareBase ?? sandboxBasePath,
         });
       }
       suffix.unshift(basename(candidate));
@@ -1922,7 +1950,7 @@ export class SandboxedFilesystem {
         // error behavior) while using openat2 hardening for recursive removal.
         try {
           openAt2Target.root.rm(openAt2Target.rel, recursive, force);
-          void globalSyncFsService.recordLocalDelete(absPath);
+          void this.notifySyncFsLocalDelete(inputPath);
           return;
         } catch (err) {
           const { code } = this.parseOpenAt2Error(err);
@@ -1933,7 +1961,7 @@ export class SandboxedFilesystem {
       }
       await this.preflightExistingSource(inputPath, absPath);
       await rm(absPath, options);
-      void globalSyncFsService.recordLocalDelete(absPath);
+      void this.notifySyncFsLocalDelete(inputPath);
     };
     await Promise.all(v.map((absPath, i) => f(paths[i], absPath)));
   };
@@ -2019,7 +2047,7 @@ export class SandboxedFilesystem {
     if (openAt2Target != null) {
       try {
         openAt2Target.root.unlink(openAt2Target.rel);
-        void globalSyncFsService.recordLocalDelete(abs);
+        void this.notifySyncFsLocalDelete(path);
         return;
       } catch (err) {
         this.throwOpenAt2PathError(path, err);
@@ -2027,7 +2055,7 @@ export class SandboxedFilesystem {
     }
     await this.preflightExistingSource(path, abs);
     await unlink(abs);
-    void globalSyncFsService.recordLocalDelete(abs);
+    void this.notifySyncFsLocalDelete(path);
   };
 
   utimes = async (
@@ -2237,7 +2265,7 @@ export class SandboxedFilesystem {
         this.lastOnDiskHash.set(`${p}-${sha1(patched)}`, true);
       }
       if (saveLast) {
-        globalSyncFsService.recordLocalWrite(p, patched, true);
+        void this.notifySyncFsLocalWrite(path, patched);
       }
       return;
     }
@@ -2275,7 +2303,7 @@ export class SandboxedFilesystem {
         } catch {}
       }
       if (saveLast === true && typeof data === "string") {
-        globalSyncFsService.recordLocalWrite(p, data, true);
+        void this.notifySyncFsLocalWrite(path, data);
       }
       return;
     }
@@ -2325,7 +2353,7 @@ export class SandboxedFilesystem {
       }
     }
     if (saveLast === true && typeof data === "string") {
-      globalSyncFsService.recordLocalWrite(p, data, true);
+      void this.notifySyncFsLocalWrite(path, data);
     }
   };
 
@@ -2406,6 +2434,23 @@ export class SandboxedFilesystem {
       history_epoch: info?.history_epoch,
       doctype: info?.doctype,
     });
+  };
+
+  private notifySyncFsLocalWrite = async (
+    path: string,
+    content: string,
+  ): Promise<void> => {
+    try {
+      const watchPath = await this.canonicalSyncFsPath(path);
+      globalSyncFsService.recordLocalWrite(watchPath, content, true);
+    } catch {}
+  };
+
+  private notifySyncFsLocalDelete = async (path: string): Promise<void> => {
+    try {
+      const watchPath = await this.canonicalSyncFsPath(path);
+      await globalSyncFsService.recordLocalDelete(watchPath);
+    } catch {}
   };
 }
 

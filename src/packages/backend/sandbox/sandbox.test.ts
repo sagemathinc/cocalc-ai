@@ -2,6 +2,7 @@ import { SandboxedFilesystem } from "@cocalc/backend/sandbox";
 import {
   mkdtemp,
   mkdir,
+  realpath,
   rm,
   readFile,
   stat,
@@ -127,7 +128,7 @@ describeIfLinux("baseline mutator parity behavior", () => {
   });
 });
 
-describeIfLinux("sync-fs watch identity canonicalization", () => {
+describe("sync-fs watch identity canonicalization", () => {
   let home;
   let fs;
 
@@ -142,7 +143,7 @@ describeIfLinux("sync-fs watch identity canonicalization", () => {
     await symlink("real", join(home, "link"));
 
     expect(await (fs as any).canonicalSyncFsPath("link/tracked.txt")).toBe(
-      join(home, "real", "tracked.txt"),
+      await realpath(join(home, "real", "tracked.txt")),
     );
     expect(
       await (fs as any).canonicalSyncIdentityPath("link/tracked.txt"),
@@ -154,11 +155,29 @@ describeIfLinux("sync-fs watch identity canonicalization", () => {
     await symlink("real-dir", join(home, "link-dir"));
 
     expect(await (fs as any).canonicalSyncFsPath("link-dir/new.txt")).toBe(
-      join(home, "real-dir", "new.txt"),
+      join(await realpath(join(home, "real-dir")), "new.txt"),
     );
     expect(
       await (fs as any).canonicalSyncIdentityPath("link-dir/new.txt"),
     ).toBe("real-dir/new.txt");
+  });
+
+  it("keeps sandbox-visible identities when the sandbox base realpath changes", async () => {
+    await writeFile(join(home, "base.txt"), "x");
+    const canonicalHome = await realpath(home);
+    const canonicalFile = await realpath(join(home, "base.txt"));
+
+    expect(await (fs as any).canonicalSyncFsPath("base.txt")).toBe(
+      canonicalFile,
+    );
+    expect(await (fs as any).canonicalSyncIdentityPath("base.txt")).toBe(
+      "base.txt",
+    );
+
+    if (canonicalHome !== home) {
+      expect(canonicalFile.startsWith(canonicalHome + "/")).toBe(true);
+      expect(canonicalFile.startsWith(home + "/")).toBe(false);
+    }
   });
 });
 

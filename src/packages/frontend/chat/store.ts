@@ -22,6 +22,8 @@ export interface ChatState {
   add_collab: boolean;
   // timestamp when syncdb was attached (to trigger rerenders)
   syncdbReady?: number;
+  // timestamp when project-scoped read-state changes (to trigger rerenders)
+  readStateVersion?: number;
   acpState: ImmutableMap<
     string, // key = ms since epoch as **string**
     string // e.g.,    "queue" | "sending" | "sent" | "running" | "not-sent"
@@ -40,6 +42,7 @@ export function getInitialState() {
     saved_position: undefined,
     add_collab: false,
     syncdbReady: undefined,
+    readStateVersion: undefined,
     acpState: ImmutableMap<string, string>(),
   };
 }

@@ -476,6 +476,36 @@ describe("SyncFsService", () => {
     svc.close();
   }, 10_000);
 
+  it("does not publish an empty structured init patch", async () => {
+    const path = join(dir, "empty-init.chat");
+    writeFileSync(path, '{"a":1}\n');
+
+    const svc = new SyncFsService();
+    const fake = new FakeAStream([]);
+    (svc as any).getPatchWriter = async () => fake;
+    (svc as any).store.handleExternalChange = async () => ({
+      patch: [1, []],
+      content: '{"a":1}\n',
+      hash: "same",
+      deleted: false,
+    });
+
+    await (svc as any).initPath(path, {
+      project_id: "p-empty",
+      syncPath: "empty-init.chat",
+      doctype: {
+        type: "chat-immer",
+        patch_format: 1,
+        opts: {
+          primary_keys: ["event", "sender_id", "date"],
+        },
+      },
+    });
+
+    expect(fake.messages.length).toBe(0);
+    svc.close();
+  }, 10_000);
+
   it("rebuilds local baseline from stream history before diffing", async () => {
     const path = join(dir, "history.txt");
     writeFileSync(path, "stream-value");

@@ -15,16 +15,17 @@ function textEvent(
   type: "thinking" | "message",
   text: string,
   seq: number,
+  opts?: { delta?: boolean },
 ): AcpStreamMessage {
   return {
     type: "event",
-    event: { type, text } as any,
+    event: { type, text, ...(opts?.delta ? { delta: true } : {}) } as any,
     seq,
   } as AcpStreamMessage;
 }
 
 describe("appendStreamMessage", () => {
-  test("adds paragraph break between adjacent markdown bold blocks", () => {
+  test("adds a separating space between adjacent markdown bold blocks", () => {
     const events = [textEvent("thinking", "**First block**", 1)];
     const merged = appendStreamMessage(
       events,
@@ -33,7 +34,7 @@ describe("appendStreamMessage", () => {
 
     expect(merged).toHaveLength(1);
     expect((merged[0] as any).event.text).toBe(
-      "**First block**\n\n**Second block**",
+      "**First block** **Second block**",
     );
   });
 
@@ -129,6 +130,22 @@ describe("response text helpers", () => {
     expect(getLiveResponseMarkdown(events)).toBe("I'm testing");
   });
 
+  test("merges interleaved streamed message deltas into one live paragraph", () => {
+    const events: AcpStreamMessage[] = [
+      textEvent("message", "Live Codex output", 1, { delta: true }),
+      textEvent("thinking", "thinking chunk", 2),
+      textEvent("message", " reaches the chat UI", 3, { delta: true }),
+      textEvent("thinking", "another reasoning chunk", 4),
+      textEvent("message", " through the log.", 5, { delta: true }),
+    ];
+    expect(getAgentMessageTexts(events)).toEqual([
+      "Live Codex output reaches the chat UI through the log.",
+    ]);
+    expect(getLiveResponseMarkdown(events)).toBe(
+      "Live Codex output reaches the chat UI through the log.",
+    );
+  });
+
   test("replaces earlier agent text that differs only by transient code-span spacing", () => {
     const events: AcpStreamMessage[] = [
       textEvent(
@@ -145,7 +162,9 @@ describe("response text helpers", () => {
     expect(getAgentMessageTexts(events)).toEqual([
       "I’m running `sleep 20` in `bash` exactly as requested.",
     ]);
-    expect(getInterruptedResponseMarkdown(events, "Conversation interrupted.")).toBe(
+    expect(
+      getInterruptedResponseMarkdown(events, "Conversation interrupted."),
+    ).toBe(
       "I’m running `sleep 20` in `bash` exactly as requested.\n\nConversation interrupted.",
     );
   });
