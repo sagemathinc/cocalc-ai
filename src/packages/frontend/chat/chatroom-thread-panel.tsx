@@ -147,6 +147,16 @@ export function resolveActiveThreadSearchMatchDate({
   return threadSearchMatches[normalizedCursor];
 }
 
+export function resolveThreadSearchHighlightQuery({
+  threadSearchOpen,
+  threadSearchQuery,
+}: {
+  threadSearchOpen: boolean;
+  threadSearchQuery: string;
+}): string {
+  return threadSearchOpen ? threadSearchQuery : "";
+}
+
 export function resolveCompactThreadBadgeAppearance({
   thread,
   acpState,
@@ -351,6 +361,14 @@ export function ChatRoomThreadPanel({
         threadSearchMatches,
       }),
     [matchCount, normalizedCursor, threadSearchMatches, threadSearchOpen],
+  );
+  const threadSearchHighlightQuery = useMemo(
+    () =>
+      resolveThreadSearchHighlightQuery({
+        threadSearchOpen,
+        threadSearchQuery,
+      }),
+    [threadSearchOpen, threadSearchQuery],
   );
   const archivedMatchCount = archivedSearchHits.length;
   const archivedLoadedOffset = selectedThreadId
@@ -1793,7 +1811,7 @@ export function ChatRoomThreadPanel({
         composerFocused={composerFocused}
         searchJumpDate={activeSearchMatchDate}
         searchJumpToken={threadSearchJumpToken}
-        searchQuery={threadSearchQuery}
+        searchQuery={threadSearchHighlightQuery}
         onAtTopStateChange={setThreadNearTop}
         activityJumpDate={activityJumpDate}
         activityJumpToken={activityJumpToken}
