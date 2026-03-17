@@ -208,6 +208,7 @@ export type AcpStreamEvent =
   | {
       type: "message";
       text: string;
+      delta?: boolean;
     }
   | {
       type: "diff";

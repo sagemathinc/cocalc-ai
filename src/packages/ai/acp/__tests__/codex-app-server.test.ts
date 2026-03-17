@@ -252,7 +252,7 @@ describe("CodexAppServerAgent", () => {
         },
         {
           type: "event",
-          event: { type: "message", text: "Hello" },
+          event: { type: "message", text: "Hello", delta: true },
         },
         {
           type: "usage",

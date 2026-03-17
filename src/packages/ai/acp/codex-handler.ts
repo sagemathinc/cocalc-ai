@@ -179,7 +179,7 @@ export class CodexClientHandler implements TerminalClient {
           this.lastResponse += text;
           await this.stream({
             type: "event",
-            event: { type: "message", text },
+            event: { type: "message", text, delta: true },
           });
         }
         break;

@@ -1030,7 +1030,7 @@ export class CodexAppServerAgent implements AcpAgent {
               finalResponse += delta;
               await stream({
                 type: "event",
-                event: { type: "message", text: delta },
+                event: { type: "message", text: delta, delta: true },
               });
             }
             break;
