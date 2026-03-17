@@ -162,6 +162,7 @@ describe("sendChat identity fields", () => {
       },
       threadAppearance: {
         color: "#123456",
+        accentColor: "#abcdef",
         icon: "rocket",
         image: "https://example.com/thread.png",
       },
@@ -183,6 +184,7 @@ describe("sendChat identity fields", () => {
     expect(cfgSet).toBeTruthy();
     expect(cfgSet.name).toBe("Configured thread");
     expect(cfgSet.thread_color).toBe("#123456");
+    expect(cfgSet.thread_accent_color).toBe("#abcdef");
     expect(cfgSet.thread_icon).toBe("rocket");
     expect(cfgSet.thread_image).toBe("https://example.com/thread.png");
     expect(cfgSet.agent_kind).toBe("acp");
@@ -214,6 +216,7 @@ describe("sendChat identity fields", () => {
       },
       threadAppearance: {
         color: "#123456",
+        accentColor: "#abcdef",
         icon: "robot",
         image: "https://example.com/thread.png",
       },
@@ -231,6 +234,7 @@ describe("sendChat identity fields", () => {
     expect(cfgSet).toBeTruthy();
     expect(cfgSet.name).toBe("Automation thread");
     expect(cfgSet.thread_color).toBe("#123456");
+    expect(cfgSet.thread_accent_color).toBe("#abcdef");
     expect(cfgSet.thread_icon).toBe("robot");
     expect(cfgSet.thread_image).toBe("https://example.com/thread.png");
     expect(cfgSet.agent_kind).toBe("acp");
@@ -391,6 +395,7 @@ describe("thread-config by thread_id", () => {
           thread_id: threadId,
           name: "  Thread Name  ",
           thread_color: "#ff9800",
+          thread_accent_color: "#fff3e0",
           thread_icon: "thumbs-up",
           thread_image: "https://example.com/x.png",
           pin: "true",
@@ -404,6 +409,7 @@ describe("thread-config by thread_id", () => {
     const meta = actions.getThreadMetadata("not-a-date-key", { threadId });
     expect(meta.name).toBe("Thread Name");
     expect(meta.thread_color).toBe("#ff9800");
+    expect(meta.thread_accent_color).toBe("#fff3e0");
     expect(meta.thread_icon).toBe("thumbs-up");
     expect(meta.thread_image).toBe("https://example.com/x.png");
     expect(meta.pin).toBe(true);
@@ -509,6 +515,7 @@ describe("thread-config by thread_id", () => {
     expect(
       actions.setThreadAppearance(threadId, {
         color: "#ff9800",
+        accentColor: "#fff3e0",
         icon: "thumbs-up",
         image: "https://example.com/img.png",
       }),
@@ -528,6 +535,7 @@ describe("thread-config by thread_id", () => {
         row?.thread_id === threadId &&
         row?.pin === true,
     );
+    expect(appearance?.thread_accent_color).toBe("#fff3e0");
     expect(appearance?.thread_icon).toBe("thumbs-up");
     expect(appearance?.thread_image).toBe("https://example.com/img.png");
     expect(pin).toBeTruthy();
@@ -749,6 +757,7 @@ describe("deleteThread identity targeting", () => {
       thread_id: "thread-source-1",
       name: "Original chat",
       thread_color: "#123456",
+      thread_accent_color: "#abcdef",
       thread_icon: "rocket",
       agent_kind: "acp",
       agent_mode: "interactive",
@@ -797,6 +806,7 @@ describe("deleteThread identity targeting", () => {
     expect(cfgRow.date).toBe(CHAT_THREAD_META_ROW_DATE);
     expect(cfgRow.name).toBe("Forked chat");
     expect(cfgRow.thread_color).toBe("#123456");
+    expect(cfgRow.thread_accent_color).toBe("#abcdef");
     expect(cfgRow.thread_icon).toBe("rocket");
     expect(cfgRow.agent_kind).toBe("acp");
     expect(cfgRow.agent_mode).toBe("interactive");

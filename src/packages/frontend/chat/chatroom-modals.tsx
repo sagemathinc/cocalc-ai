@@ -41,13 +41,14 @@ import { ThreadImageUpload } from "./thread-image-upload";
 import type { ChatExportOpenRequest, ChatExportScope } from "./export-types";
 
 export interface ChatRoomModalHandlers {
-  openRenameModal: (
+  openAppearanceModal: (
     threadKey: string,
     currentLabel: string,
     useCurrentLabel: boolean,
     currentColor?: string,
     currentIcon?: string,
   ) => void;
+  openBehaviorModal: (threadKey: string) => void;
   openExportModal: (opts?: ChatExportOpenRequest) => void;
   openForkModal: (threadKey: string, label: string, isAI: boolean) => void;
 }
@@ -61,7 +62,7 @@ interface ChatRoomModalsProps {
   onHandlers?: (handlers: ChatRoomModalHandlers) => void;
 }
 
-type ThreadAgentMode = "codex" | "human" | "model";
+type ThreadAgentMode = "codex" | "human";
 const DEFAULT_CODEX_MODEL =
   DEFAULT_CODEX_MODELS[0]?.name ?? DEFAULT_CODEX_MODEL_NAME;
 const MODE_OPTIONS: { value: CodexSessionMode; label: string }[] = [
@@ -87,14 +88,18 @@ export function ChatRoomModals({
   const defaultSessionMode = getDefaultCodexSessionMode();
   const { project_id } = useFrameContext();
   const workspaceWorkingDirectory = useWorkspaceChatWorkingDirectory(path);
-  const [renamingThread, setRenamingThread] = useState<string | null>(null);
+  const [editingThread, setEditingThread] = useState<string | null>(null);
+  const [appearanceOpen, setAppearanceOpen] = useState<boolean>(false);
+  const [behaviorOpen, setBehaviorOpen] = useState<boolean>(false);
   const [renameValue, setRenameValue] = useState<string>("");
   const [renameColor, setRenameColor] = useState<string | undefined>(undefined);
+  const [renameAccentColor, setRenameAccentColor] = useState<
+    string | undefined
+  >(undefined);
   const [renameIcon, setRenameIcon] = useState<IconName | undefined>(undefined);
   const [renameImage, setRenameImage] = useState<string>("");
   const [renameAgentMode, setRenameAgentMode] =
     useState<ThreadAgentMode>("codex");
-  const [renameModel, setRenameModel] = useState<string>(DEFAULT_CODEX_MODEL);
   const [renameCodexConfig, setRenameCodexConfig] = useState<
     Partial<CodexThreadConfig>
   >({
@@ -117,11 +122,10 @@ export function ChatRoomModals({
     isAI: boolean;
   } | null>(null);
   const [forkName, setForkName] = useState<string>("");
-  const openRenameModal = useCallback(
+  const loadThreadSettings = useCallback(
     (
       threadKey: string,
-      currentLabel: string,
-      _useCurrentLabel: boolean,
+      currentLabel = "",
       currentColor?: string,
       currentIcon?: string,
     ) => {
@@ -133,15 +137,13 @@ export function ChatRoomModals({
       let agentMode: ThreadAgentMode = "human";
       if (metadata?.agent_kind === "acp" || metadata?.acp_config != null) {
         agentMode = "codex";
-      } else if (metadata?.agent_kind === "llm") {
-        // "Other model" is currently hidden from UI for shipping focus.
-        agentMode = "human";
       }
-      setRenamingThread(threadKey);
+      setEditingThread(threadKey);
       setRenameValue(metadata?.name?.trim() || currentLabel || "");
       setRenameColor(
         metadata?.thread_color?.trim() || currentColor?.trim() || undefined,
       );
+      setRenameAccentColor(metadata?.thread_accent_color?.trim() || undefined);
       setRenameIcon(
         (metadata?.thread_icon?.trim() as IconName) ||
           (currentIcon as IconName) ||
@@ -149,7 +151,6 @@ export function ChatRoomModals({
       );
       setRenameImage(metadata?.thread_image?.trim() || "");
       setRenameAgentMode(agentMode);
-      setRenameModel(currentModel);
       const savedConfig = metadata?.acp_config ?? {};
       setRenameCodexConfig({
         ...savedConfig,
@@ -169,14 +170,40 @@ export function ChatRoomModals({
     [actions, path, defaultSessionMode, workspaceWorkingDirectory],
   );
 
-  const closeRenameModal = () => {
-    setRenamingThread(null);
+  const openAppearanceModal = useCallback(
+    (
+      threadKey: string,
+      currentLabel: string,
+      _useCurrentLabel: boolean,
+      currentColor?: string,
+      currentIcon?: string,
+    ) => {
+      loadThreadSettings(threadKey, currentLabel, currentColor, currentIcon);
+      setBehaviorOpen(false);
+      setAppearanceOpen(true);
+    },
+    [loadThreadSettings],
+  );
+
+  const openBehaviorModal = useCallback(
+    (threadKey: string) => {
+      loadThreadSettings(threadKey);
+      setAppearanceOpen(false);
+      setBehaviorOpen(true);
+    },
+    [loadThreadSettings],
+  );
+
+  const closeEditingModals = () => {
+    setEditingThread(null);
+    setAppearanceOpen(false);
+    setBehaviorOpen(false);
     setRenameValue("");
     setRenameColor(undefined);
+    setRenameAccentColor(undefined);
     setRenameIcon(undefined);
     setRenameImage("");
     setRenameAgentMode("codex");
-    setRenameModel(DEFAULT_CODEX_MODEL);
     setRenameCodexConfig({
       model: DEFAULT_CODEX_MODEL,
       sessionMode: defaultSessionMode,
@@ -185,29 +212,36 @@ export function ChatRoomModals({
     });
   };
 
-  const handleRenameSave = () => {
-    if (!renamingThread) return;
+  const handleAppearanceSave = () => {
+    if (!editingThread) return;
     if (actions?.setThreadAppearance == null) {
-      antdMessage.error("Chat settings are not available.");
+      antdMessage.error("Chat appearance is not available.");
       return;
     }
-    const success = actions.setThreadAppearance(renamingThread, {
+    const success = actions.setThreadAppearance(editingThread, {
       name: renameValue.trim(),
       color: renameColor,
+      accentColor: renameAccentColor,
       icon: renameIcon,
       image: renameImage.trim(),
     });
     if (!success) {
-      antdMessage.error("Unable to save chat settings.");
+      antdMessage.error("Unable to save chat appearance.");
       return;
     }
+    antdMessage.success("Appearance saved.");
+    closeEditingModals();
+  };
+
+  const handleBehaviorSave = () => {
+    if (!editingThread) return;
     if (renameAgentMode === "human") {
-      actions.setThreadAgentMode?.(renamingThread, "none");
+      actions.setThreadAgentMode?.(editingThread, "none");
     } else if (renameAgentMode === "codex") {
       const model = renameCodexConfig.model?.trim() || DEFAULT_CODEX_MODEL;
       const sessionMode: CodexSessionMode =
         normalizeSessionMode(renameCodexConfig) ?? defaultSessionMode;
-      actions.setCodexConfig?.(renamingThread, {
+      actions.setCodexConfig?.(editingThread, {
         ...renameCodexConfig,
         model,
         reasoning: getReasoningForModel({
@@ -221,15 +255,9 @@ export function ChatRoomModals({
           defaultWorkingDir(path, workspaceWorkingDirectory),
         sessionId: renameCodexConfig.sessionId?.trim(),
       });
-    } else {
-      if (renameModel.trim()) {
-        actions.setThreadModel?.(renamingThread, renameModel.trim() as any);
-      } else {
-        actions.setThreadAgentMode?.(renamingThread, "none");
-      }
     }
-    antdMessage.success("Settings saved.");
-    closeRenameModal();
+    antdMessage.success("Behavior saved.");
+    closeEditingModals();
   };
 
   const openExportModal = useCallback(
@@ -339,8 +367,13 @@ export function ChatRoomModals({
   };
 
   const handlers = useMemo(
-    () => ({ openRenameModal, openExportModal, openForkModal }),
-    [openRenameModal, openExportModal, openForkModal],
+    () => ({
+      openAppearanceModal,
+      openBehaviorModal,
+      openExportModal,
+      openForkModal,
+    }),
+    [openAppearanceModal, openBehaviorModal, openExportModal, openForkModal],
   );
 
   useEffect(() => {
@@ -488,13 +521,13 @@ export function ChatRoomModals({
         </Space>
       </Modal>
       <ThemeEditorModal
-        open={renamingThread != null}
-        title="Settings"
+        open={appearanceOpen}
+        title="Edit Thread Appearance"
         value={{
           title: renameValue,
           description: "",
           color: renameColor ?? null,
-          accent_color: null,
+          accent_color: renameAccentColor ?? null,
           icon: renameIcon ?? "",
           image_blob: renameImage,
         }}
@@ -503,6 +536,9 @@ export function ChatRoomModals({
           if (patch.color !== undefined) {
             setRenameColor(patch.color ?? undefined);
           }
+          if (patch.accent_color !== undefined) {
+            setRenameAccentColor(patch.accent_color ?? undefined);
+          }
           if (patch.icon != null) {
             setRenameIcon(patch.icon ? (patch.icon as IconName) : undefined);
           }
@@ -510,12 +546,16 @@ export function ChatRoomModals({
             setRenameImage(patch.image_blob);
           }
         }}
-        onCancel={closeRenameModal}
-        onSave={handleRenameSave}
+        onCancel={closeEditingModals}
+        onSave={handleAppearanceSave}
         defaultIcon="comment"
         showDescription={false}
-        showAccentColor={false}
         previewImageUrl={renameImage}
+        extraBeforeTheme={
+          <span style={{ color: COLORS.GRAY_D }}>
+            Customize this thread appearance.
+          </span>
+        }
         renderImageInput={() => (
           <div>
             <Input
@@ -543,145 +583,130 @@ export function ChatRoomModals({
             />
           </div>
         )}
-        extraAfterTheme={
-          <Space orientation="vertical" size={12} style={{ width: "100%" }}>
-            <div>
-              <div style={{ marginBottom: 4, color: COLORS.GRAY_D }}>
-                Chat behavior
-              </div>
-              <Select
-                value={renameAgentMode}
-                style={{ width: "100%" }}
-                onChange={(value) =>
-                  setRenameAgentMode(value as ThreadAgentMode)
-                }
-                options={[
-                  { value: "codex", label: "Codex (agent)" },
-                  { value: "human", label: "Human only" },
-                ]}
-              />
+      />
+      <Modal
+        title="Edit Thread Behavior"
+        open={behaviorOpen}
+        onCancel={closeEditingModals}
+        onOk={handleBehaviorSave}
+        destroyOnHidden
+      >
+        <Space direction="vertical" size={12} style={{ width: "100%" }}>
+          <div>
+            <div style={{ marginBottom: 4, color: COLORS.GRAY_D }}>
+              Chat behavior
             </div>
-            {renameAgentMode === "codex" && (
-              <div style={{ width: "100%" }}>
-                <Space
-                  orientation="vertical"
-                  size={10}
-                  style={{ width: "100%" }}
-                >
-                  <div>
-                    <div style={{ marginBottom: 4, color: COLORS.GRAY_D }}>
-                      Codex model
-                    </div>
-                    <Select
-                      value={renameCodexConfig.model ?? DEFAULT_CODEX_MODEL}
-                      style={{ width: "100%" }}
-                      options={codexModelOptions}
-                      showSearch
-                      optionFilterProp="label"
-                      onChange={(value) => {
-                        const model = String(value);
-                        setRenameModel(model);
-                        setRenameCodexConfig((prev) => ({
-                          ...prev,
-                          model,
-                          reasoning: getReasoningForModel({
-                            modelValue: model,
-                            desired: prev.reasoning,
-                          }),
-                        }));
-                      }}
-                    />
-                  </div>
-                  <div>
-                    <div style={{ marginBottom: 4, color: COLORS.GRAY_D }}>
-                      Reasoning
-                    </div>
-                    <Select
-                      allowClear
-                      value={renameCodexConfig.reasoning}
-                      style={{ width: "100%" }}
-                      options={reasoningOptions}
-                      onChange={(value) =>
-                        setRenameCodexConfig((prev) => ({
-                          ...prev,
-                          reasoning: value as CodexReasoningId,
-                        }))
-                      }
-                    />
-                  </div>
-                  <div>
-                    <div style={{ marginBottom: 4, color: COLORS.GRAY_D }}>
-                      Execution mode
-                    </div>
-                    <Select
-                      value={
-                        normalizeSessionMode(renameCodexConfig) ??
-                        defaultSessionMode
-                      }
-                      style={{ width: "100%" }}
-                      options={MODE_OPTIONS}
-                      onChange={(value) =>
-                        setRenameCodexConfig((prev) => ({
-                          ...prev,
-                          sessionMode: value as CodexSessionMode,
-                        }))
-                      }
-                    />
-                  </div>
-                  <div>
-                    <div style={{ marginBottom: 4, color: COLORS.GRAY_D }}>
-                      Working directory
-                    </div>
-                    <Input
-                      value={renameCodexConfig.workingDirectory ?? ""}
-                      placeholder={defaultWorkingDir(
-                        path,
-                        workspaceWorkingDirectory,
-                      )}
-                      onChange={(e) =>
-                        setRenameCodexConfig((prev) => ({
-                          ...prev,
-                          workingDirectory: e.target.value,
-                        }))
-                      }
-                    />
-                  </div>
-                  <div>
-                    <div style={{ marginBottom: 4, color: COLORS.GRAY_D }}>
-                      Session ID
-                    </div>
-                    <Input
-                      value={renameCodexConfig.sessionId ?? ""}
-                      placeholder="Optional"
-                      onChange={(e) =>
-                        setRenameCodexConfig((prev) => ({
-                          ...prev,
-                          sessionId: e.target.value,
-                        }))
-                      }
-                    />
-                  </div>
-                </Space>
-              </div>
-            )}
-            {renameAgentMode === "model" && (
+            <Select
+              value={renameAgentMode}
+              style={{ width: "100%" }}
+              onChange={(value) => setRenameAgentMode(value as ThreadAgentMode)}
+              options={[
+                { value: "codex", label: "Codex (agent)" },
+                { value: "human", label: "Human only" },
+              ]}
+            />
+          </div>
+          {renameAgentMode === "codex" ? (
+            <Space direction="vertical" size={10} style={{ width: "100%" }}>
               <div>
                 <div style={{ marginBottom: 4, color: COLORS.GRAY_D }}>
-                  Default model
+                  Codex model
                 </div>
-                <Input
-                  placeholder="e.g. gpt-4o"
-                  value={renameModel}
-                  onChange={(e) => setRenameModel(e.target.value)}
+                <Select
+                  value={renameCodexConfig.model ?? DEFAULT_CODEX_MODEL}
+                  style={{ width: "100%" }}
+                  options={codexModelOptions}
+                  showSearch
+                  optionFilterProp="label"
+                  onChange={(value) => {
+                    const model = String(value);
+                    setRenameCodexConfig((prev) => ({
+                      ...prev,
+                      model,
+                      reasoning: getReasoningForModel({
+                        modelValue: model,
+                        desired: prev.reasoning,
+                      }),
+                    }));
+                  }}
                 />
               </div>
-            )}
-            <div style={{ color: COLORS.GRAY_D, fontSize: 12 }}>
-              All settings here can be changed later.
-            </div>
-          </Space>
-        }
-      />
+              <div>
+                <div style={{ marginBottom: 4, color: COLORS.GRAY_D }}>
+                  Reasoning
+                </div>
+                <Select
+                  allowClear
+                  value={renameCodexConfig.reasoning}
+                  style={{ width: "100%" }}
+                  options={reasoningOptions}
+                  onChange={(value) =>
+                    setRenameCodexConfig((prev) => ({
+                      ...prev,
+                      reasoning: value as CodexReasoningId,
+                    }))
+                  }
+                />
+              </div>
+              <div>
+                <div style={{ marginBottom: 4, color: COLORS.GRAY_D }}>
+                  Execution mode
+                </div>
+                <Select
+                  value={
+                    normalizeSessionMode(renameCodexConfig) ??
+                    defaultSessionMode
+                  }
+                  style={{ width: "100%" }}
+                  options={MODE_OPTIONS}
+                  onChange={(value) =>
+                    setRenameCodexConfig((prev) => ({
+                      ...prev,
+                      sessionMode: value as CodexSessionMode,
+                    }))
+                  }
+                />
+              </div>
+              <div>
+                <div style={{ marginBottom: 4, color: COLORS.GRAY_D }}>
+                  Working directory
+                </div>
+                <Input
+                  value={renameCodexConfig.workingDirectory ?? ""}
+                  placeholder={defaultWorkingDir(
+                    path,
+                    workspaceWorkingDirectory,
+                  )}
+                  onChange={(e) =>
+                    setRenameCodexConfig((prev) => ({
+                      ...prev,
+                      workingDirectory: e.target.value,
+                    }))
+                  }
+                />
+              </div>
+              <div>
+                <div style={{ marginBottom: 4, color: COLORS.GRAY_D }}>
+                  Session ID
+                </div>
+                <Input
+                  value={renameCodexConfig.sessionId ?? ""}
+                  placeholder="Optional"
+                  onChange={(e) =>
+                    setRenameCodexConfig((prev) => ({
+                      ...prev,
+                      sessionId: e.target.value,
+                    }))
+                  }
+                />
+              </div>
+            </Space>
+          ) : null}
+          <div style={{ color: COLORS.GRAY_D, fontSize: 12 }}>
+            All behavior settings here can be changed later.
+          </div>
+        </Space>
+      </Modal>
       <Modal
         title="Fork chat"
         open={forkThread != null}

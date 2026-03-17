@@ -122,6 +122,7 @@ export interface NewThreadAgentOptions {
 
 export interface NewThreadAppearanceOptions {
   color?: string;
+  accentColor?: string;
   icon?: string;
   image?: string;
 }
@@ -130,6 +131,7 @@ export interface ThreadMetadataSnapshot {
   thread_date?: string;
   name?: string;
   thread_color?: string;
+  thread_accent_color?: string;
   thread_icon?: string;
   thread_image?: string;
   archived_chat_rows?: number;
@@ -198,10 +200,14 @@ function buildNewThreadConfig({
     threadConfigPatch.name = trimmedName;
   }
   const threadColor = threadAppearance?.color?.trim();
+  const threadAccentColor = threadAppearance?.accentColor?.trim();
   const threadIcon = threadAppearance?.icon?.trim();
   const threadImage = threadAppearance?.image?.trim();
   if (threadColor) {
     threadConfigPatch.thread_color = threadColor;
+  }
+  if (threadAccentColor) {
+    threadConfigPatch.thread_accent_color = threadAccentColor;
   }
   if (threadIcon) {
     threadConfigPatch.thread_icon = threadIcon;
@@ -1091,7 +1097,13 @@ export class ChatActions extends Actions<ChatState> {
 
   setThreadAppearance = (
     threadKey: string,
-    opts: { name?: string; color?: string; icon?: string; image?: string },
+    opts: {
+      name?: string;
+      color?: string;
+      accentColor?: string;
+      icon?: string;
+      image?: string;
+    },
   ): boolean => {
     if (this.syncdb == null) {
       return false;
@@ -1104,6 +1116,10 @@ export class ChatActions extends Actions<ChatState> {
     if ("color" in opts) {
       const trimmed = (opts.color ?? "").trim();
       configPatch.thread_color = trimmed || null;
+    }
+    if ("accentColor" in opts) {
+      const trimmed = (opts.accentColor ?? "").trim();
+      configPatch.thread_accent_color = trimmed || null;
     }
     if ("icon" in opts) {
       const trimmed = (opts.icon ?? "").trim();
@@ -1350,7 +1366,12 @@ export class ChatActions extends Actions<ChatState> {
       return undefined;
     };
     const readString = (
-      key: "name" | "thread_color" | "thread_icon" | "thread_image",
+      key:
+        | "name"
+        | "thread_color"
+        | "thread_accent_color"
+        | "thread_icon"
+        | "thread_image",
     ): string | undefined => {
       const fromCfg = field<string>(cfg, key);
       if (typeof fromCfg === "string" && fromCfg.trim()) {
@@ -1394,6 +1415,7 @@ export class ChatActions extends Actions<ChatState> {
       thread_date: this.getThreadRootDateIso(normalizedThreadId),
       name: readString("name"),
       thread_color: readString("thread_color"),
+      thread_accent_color: readString("thread_accent_color"),
       thread_icon: readString("thread_icon"),
       thread_image: readString("thread_image"),
       archived_chat_rows: parseCount(field<any>(cfg, "archived_chat_rows")),
@@ -2102,6 +2124,7 @@ export class ChatActions extends Actions<ChatState> {
     const configPatch: Record<string, unknown> = {
       name: title,
       thread_color: sourceMetadata.thread_color ?? null,
+      thread_accent_color: sourceMetadata.thread_accent_color ?? null,
       thread_icon: sourceMetadata.thread_icon ?? null,
       thread_image: sourceMetadata.thread_image ?? null,
       agent_kind:

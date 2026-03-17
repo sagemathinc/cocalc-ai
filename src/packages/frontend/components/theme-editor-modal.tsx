@@ -132,11 +132,13 @@ export function ThemeEditorModal({
               <Typography.Text strong>
                 {value?.title?.trim() || "Untitled"}
               </Typography.Text>
-              <div>
-                <Typography.Text type="secondary">
-                  {value?.description?.trim() || "No description"}
-                </Typography.Text>
-              </div>
+              {showDescription ? (
+                <div>
+                  <Typography.Text type="secondary">
+                    {value?.description?.trim() || "No description"}
+                  </Typography.Text>
+                </div>
+              ) : null}
               <Space size={6} wrap style={{ marginTop: 8 }}>
                 {value?.color ? <Tag color={value.color}>Primary</Tag> : null}
                 {value?.accent_color ? (
