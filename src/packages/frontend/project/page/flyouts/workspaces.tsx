@@ -89,6 +89,7 @@ type EditorDraft = {
   root_path: string;
   theme: ThemeEditorDraft;
   pinned: boolean;
+  strong_theme: boolean;
   chat_path: string | null;
 };
 
@@ -400,6 +401,7 @@ function makeDraft(
         fallbackPath ? defaultWorkspaceTitle(fallbackPath) : "",
       ),
       pinned: false,
+      strong_theme: false,
       chat_path: null,
     };
   }
@@ -408,6 +410,7 @@ function makeDraft(
     root_path: record.root_path,
     theme: themeDraftFromTheme(record.theme),
     pinned: record.pinned,
+    strong_theme: record.strong_theme === true,
     chat_path: record.chat_path ?? null,
   };
 }
@@ -791,6 +794,7 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
           root_path: values.root_path,
           theme: themeFromDraft(values.theme),
           pinned: values.pinned,
+          strong_theme: values.strong_theme,
           chat_path: values.chat_path,
         });
       } else {
@@ -798,6 +802,7 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
           root_path: values.root_path,
           ...themeFromDraft(values.theme),
           pinned: values.pinned,
+          strong_theme: values.strong_theme,
           chat_path: values.chat_path,
           source: "manual",
         } satisfies WorkspaceCreateInput);
@@ -1484,6 +1489,19 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
                   onChange={(pinned) => patchEditing({ pinned })}
                 />
               </div>
+            </div>
+            <div>
+              <Typography.Text strong>Stronger theme mode</Typography.Text>
+              <div style={{ marginTop: 8 }}>
+                <Switch
+                  checked={editing?.strong_theme ?? false}
+                  onChange={(strong_theme) => patchEditing({ strong_theme })}
+                />
+              </div>
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                Adds stronger workspace-colored chrome so it is easier to tell
+                where you are.
+              </Typography.Text>
             </div>
             {editing?.workspace_id ? (
               <Popconfirm

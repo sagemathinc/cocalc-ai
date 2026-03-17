@@ -12,6 +12,11 @@ import { existsSync, unlinkSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { join, resolve as resolvePath } from "node:path";
 import type { BrowserScreenshotMetadata } from "@cocalc/conat/service/browser-session";
+import {
+  coerceWorkspaceSelection,
+  openWorkspaceStore,
+  readStoredWorkspaceRecords,
+} from "@cocalc/conat/workspaces";
 import { isValidUUID } from "@cocalc/util/misc";
 import { durationToMs } from "../../core/utils";
 import {
@@ -82,6 +87,7 @@ import { registerBrowserHarnessCommands } from "./browser/register-harness-comma
 import { registerBrowserInspectCommands } from "./browser/register-inspect-commands";
 import { registerBrowserObservabilityCommands } from "./browser/register-observability-commands";
 import { registerBrowserSessionCommands } from "./browser/register-session-commands";
+import { summarizeBrowserWorkspaceState } from "./browser/workspace-state";
 import type {
   BrowserActionRegisterUtils,
   BrowserCommandDeps,
@@ -408,6 +414,118 @@ export function registerBrowserCommand(
             ...sessionTargetContext(ctx, sessionInfo, row.project_id),
           }));
         });
+      },
+    );
+
+  browser
+    .command("workspace-state [project]")
+    .description(
+      "summarize the selected workspace, workspace records, and open files for a target browser session",
+    )
+    .option(
+      "--project-id <id>",
+      "project id (overrides [project]); defaults to COCALC_PROJECT_ID when set",
+    )
+    .option(
+      "--browser <id>",
+      "browser id (or unique prefix); defaults to COCALC_BROWSER_ID when set",
+    )
+    .option(
+      "--session-project-id <id>",
+      "prefer browser sessions with this active/open project id",
+    )
+    .option("--active-only", "only target active (non-stale) sessions")
+    .option(
+      "--posture <dev|prod>",
+      "browser automation posture; default is dev on loopback targets, prod otherwise",
+    )
+    .option("--policy-file <path>", "JSON file with browser exec policy")
+    .option("--allow-raw-exec", "allow raw browser exec")
+    .action(
+      async (
+        project: string | undefined,
+        opts: {
+          projectId?: string;
+          browser?: string;
+          sessionProjectId?: string;
+          activeOnly?: boolean;
+          posture?: string;
+          policyFile?: string;
+          allowRawExec?: boolean;
+        },
+        command: Command,
+      ) => {
+        await deps.withContext(
+          command,
+          "browser workspace-state",
+          async (ctx) => {
+            const profileSelection = loadProfileSelection(deps, command);
+            const browserHint = browserHintFromOption(opts.browser);
+            const sessionInfo = await chooseBrowserSession({
+              ctx,
+              browserHint,
+              fallbackBrowserId: profileSelection.browser_id,
+              sessionProjectId:
+                `${opts.sessionProjectId ?? opts.projectId ?? project ?? process.env.COCALC_PROJECT_ID ?? ""}`.trim() ||
+                undefined,
+              activeOnly: !!opts.activeOnly,
+            });
+            const project_id = await resolveTargetProjectId({
+              deps,
+              ctx,
+              project,
+              projectId: opts.projectId,
+              sessionInfo,
+            });
+            const browserClient = deps.createBrowserSessionClient({
+              account_id: ctx.accountId,
+              browser_id: sessionInfo.browser_id,
+              client: ctx.remote.client,
+            });
+            const { posture, policy } = await resolveBrowserPolicyAndPosture({
+              posture: opts.posture,
+              policyFile: opts.policyFile,
+              allowRawExec: opts.allowRawExec,
+              apiBaseUrl: ctx.apiBaseUrl,
+            });
+            const selectionResponse = await browserClient.exec({
+              project_id,
+              code: "return api.workspaces.getSelection();",
+              posture,
+              policy,
+            });
+            const selection = coerceWorkspaceSelection(
+              selectionResponse?.result as any,
+            );
+            const files = (await browserClient.listOpenFiles()).filter(
+              (row) => row.project_id === project_id,
+            );
+            const { client } = await deps.resolveProjectConatClient(
+              ctx,
+              project_id,
+            );
+            const store = await openWorkspaceStore({
+              client: client as any,
+              project_id,
+              account_id: ctx.accountId,
+            });
+            try {
+              const records = readStoredWorkspaceRecords(store);
+              return {
+                browser_id: sessionInfo.browser_id,
+                project_id,
+                ...summarizeBrowserWorkspaceState({
+                  records,
+                  selection,
+                  openFiles: files,
+                }),
+                ...sessionTargetContext(ctx, sessionInfo, project_id),
+              };
+            } finally {
+              store.close();
+            }
+          },
+        );
       },
     );
 

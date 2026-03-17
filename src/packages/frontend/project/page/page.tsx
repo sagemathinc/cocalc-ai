@@ -66,6 +66,7 @@ import {
   hostLabel,
 } from "@cocalc/frontend/projects/host-operational";
 import MoveProject from "@cocalc/frontend/project/settings/move-project";
+import { workspaceStrongThemeChrome } from "../workspaces/strong-theme";
 import type { MoveLroState } from "@cocalc/frontend/project/move-ops";
 import MoveInProgress from "./move-in-progress";
 import {
@@ -154,6 +155,9 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
   );
   const [oldFlyoutWidth, setOldFlyoutWidth] = useState(flyoutWidth);
   const { pageWidthPx } = useAppContext();
+  const workspaceChrome = workspaceStrongThemeChrome(
+    projectCtx.workspaces.current,
+  );
 
   const narrowerPX = useMemo(() => {
     return hideActionButtons ? homePageButtonWidth : 0;
@@ -496,9 +500,16 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
               marginBottom: TOGGLE_ACTIVITY_BAR_TOGGLE_BUTTON_SPACE,
               left: "0px",
               zIndex: 1000,
-              outline: `1px solid ${COLORS.GRAY_L}`,
+              outline: `1px solid ${
+                workspaceChrome?.activityBarBorder ?? COLORS.GRAY_L
+              }`,
               borderRadius: "0 3px 0 0 ",
-              backgroundColor: COLORS.GRAY_LLL,
+              background: workspaceChrome?.activityBarBackground,
+              backgroundColor:
+                workspaceChrome == null ? COLORS.GRAY_LLL : undefined,
+              boxShadow: workspaceChrome
+                ? `inset -2px 0 0 ${workspaceChrome.activityBarBorder}`
+                : undefined,
             }}
             onClick={() => {
               track("action-bar", { action: "show" });
@@ -516,12 +527,26 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
             flex: "0 0 auto",
             display: "flex",
             flexDirection: "column",
-            background: FIXED_TABS_BG_COLOR,
+            background:
+              workspaceChrome?.activityBarBackground ?? FIXED_TABS_BG_COLOR,
             borderRadius: "0",
+            position: "relative",
             borderTop: FIX_BORDERS.borderTop,
             borderRight: flyout == null ? FIX_BORDERS.borderRight : undefined,
           }}
         >
+          {workspaceChrome != null ? (
+            <div
+              style={{
+                position: "absolute",
+                inset: 0,
+                pointerEvents: "none",
+                zIndex: 1,
+                boxSizing: "border-box",
+                borderRight: `2px solid ${workspaceChrome.activityBarBorder}`,
+              }}
+            />
+          ) : null}
           <VerticalFixedTabs setHomePageButtonWidth={setHomePageButtonWidth} />
         </div>
       );
@@ -629,11 +654,26 @@ You can wait for this host to become available again, or move this project to an
         {...{ [PROJECT_PAGE_ATTRIBUTE]: project_id }}
         style={{
           ...PAGE_STYLE,
+          position: "relative",
           borderLeft: project_color
             ? `2.5px solid ${project_color}`
             : undefined,
         }}
       >
+        {workspaceChrome != null ? (
+          <div
+            style={{
+              position: "absolute",
+              inset: 0,
+              pointerEvents: "none",
+              zIndex: 1,
+              boxSizing: "border-box",
+              borderTop: workspaceChrome.frameTopBorder,
+              borderRight: workspaceChrome.frameRightBorder,
+              borderBottom: workspaceChrome.frameBottomBorder,
+            }}
+          />
+        ) : null}
         <StudentPayUpgrade project_id={project_id} />
         <DiskSpaceWarning project_id={project_id} />
         <RamWarning project_id={project_id} />

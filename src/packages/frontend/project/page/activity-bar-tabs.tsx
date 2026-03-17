@@ -37,6 +37,10 @@ import { lite } from "@cocalc/frontend/lite";
 import SettingsButton from "@cocalc/frontend/account/settings-button";
 import { RemoteSshButton, SshButton } from "@cocalc/frontend/ssh";
 import SshUpgradeButton from "@cocalc/frontend/ssh/ssh-upgrade-button";
+import {
+  type WorkspaceStrongThemeChrome,
+  workspaceStrongThemeChrome,
+} from "../workspaces/strong-theme";
 
 const INDICATOR_STYLE: React.CSSProperties = {
   overflow: "hidden",
@@ -126,6 +130,7 @@ export function VerticalFixedTabs({
   const breakPoint = useRef<number>(0);
   const refCondensed = useRef<boolean>(false);
   const [condensed, setCondensed] = useState(false);
+  const workspaceChrome = workspaceStrongThemeChrome(workspaces.current);
 
   const calcCondensed = throttle(
     () => {
@@ -279,7 +284,10 @@ export function VerticalFixedTabs({
             track("action-bar", { action: "hide" });
             actions?.toggleActionButtons();
           }}
-          style={{ marginBottom: TOGGLE_ACTIVITY_BAR_TOGGLE_BUTTON_SPACE }}
+          style={{
+            marginBottom: TOGGLE_ACTIVITY_BAR_TOGGLE_BUTTON_SPACE,
+            background: workspaceChrome?.activityBarBackground,
+          }}
         >
           <Icon name="vertical-right-outlined" />
         </Button>
@@ -294,6 +302,7 @@ export function VerticalFixedTabs({
         display: "flex",
         flexDirection: "column",
         height: "100%",
+        paddingTop: workspaceChrome ? "0.25px" : undefined,
         // this gives users on small screens a chance  to get to the bottom of the tabs.
         // also, the scrollbar is intentionally only active in condensed mode, to avoid it to show up briefly.
         overflowY: condensed ? "auto" : "hidden",
@@ -305,13 +314,21 @@ export function VerticalFixedTabs({
       {/* moves the layout selector to the bottom */}
       <div ref={gap} style={{ flex: 1 }}></div>
       {/* moves hide switch to the bottom */}
-      <LayoutSelector actBar={actBar} />
+      <LayoutSelector actBar={actBar} workspaceChrome={workspaceChrome} />
       {renderToggleActivityBar()}
     </div>
   );
 }
 
-function LayoutSelector({ actBar }) {
+type LayoutSelectorProps = {
+  actBar: string;
+  workspaceChrome: WorkspaceStrongThemeChrome | null;
+};
+
+function LayoutSelector({
+  actBar,
+  workspaceChrome,
+}: Readonly<LayoutSelectorProps>) {
   const intl = useIntl();
   const [open, setOpen] = useState(false);
   const { showActBarLabels } = useAppContext();
@@ -404,7 +421,19 @@ function LayoutSelector({ actBar }) {
           icon={<Icon name="layout" />}
           block
           style={{
-            ...(open ? { backgroundColor: COLORS.GRAY_LL } : {}),
+            ...(workspaceChrome
+              ? {
+                  background: workspaceChrome.activityBarBackground,
+                  boxShadow: `inset 0 -2px 0 ${workspaceChrome.activityBarBorder}`,
+                }
+              : undefined),
+            ...(open
+              ? workspaceChrome
+                ? {
+                    boxShadow: `inset 0 -2px 0 ${workspaceChrome.activityBarBorder}, inset 0 0 0 1px ${workspaceChrome.activityBarBorder}`,
+                  }
+                : { backgroundColor: COLORS.GRAY_LL }
+              : undefined),
           }}
           type="text"
         />

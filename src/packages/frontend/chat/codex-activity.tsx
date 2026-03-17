@@ -13,6 +13,7 @@ import {
 } from "@cocalc/frontend/app-framework";
 import { alert_message } from "@cocalc/frontend/alerts";
 import { TimeAgo } from "@cocalc/frontend/components";
+import CopyButton from "@cocalc/frontend/components/copy-button";
 import StatefulVirtuoso from "@cocalc/frontend/components/stateful-virtuoso";
 import { IS_TOUCH } from "@cocalc/frontend/feature";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
@@ -165,6 +166,11 @@ export const CodexActivity: React.FC<CodexActivityProps> = ({
     }
   }, [persistKey, generating]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const activityMarkdown = useMemo(
+    () => codexActivityToMarkdown(events ?? [], { generating, durationLabel }),
+    [durationLabel, events, generating],
+  );
+
   if (!entries.length) return null;
 
   const baseFontSize = fontSize ?? 13;
@@ -240,6 +246,9 @@ export const CodexActivity: React.FC<CodexActivityProps> = ({
           Bottom
         </Button>
       ) : null}
+      <Tooltip title="Copy activity as markdown">
+        <CopyButton markdown value={activityMarkdown} size="small" noText />
+      </Tooltip>
       {onDeleteEvents ? (
         <Popconfirm
           title="Delete this activity log?"
@@ -1489,6 +1498,28 @@ export function codexEventsToMarkdown(events: AcpLogStreamMessage[]): string {
     }
   }
   return lines.join("\n\n");
+}
+
+export function codexActivityToMarkdown(
+  events: AcpLogStreamMessage[],
+  options?: { generating?: boolean; durationLabel?: string },
+): string {
+  const body = codexEventsToMarkdown(events);
+  const sections = ["## Codex Activity"];
+  const durationLabel = options?.durationLabel?.trim();
+  if (options?.generating === true) {
+    sections.push(
+      durationLabel
+        ? `*Status:* Working... ${durationLabel}`
+        : "*Status:* Working...",
+    );
+  } else if (durationLabel) {
+    sections.push(`*Status:* Worked for ${durationLabel}`);
+  }
+  if (body) {
+    sections.push(body);
+  }
+  return sections.join("\n\n").trim();
 }
 
 function formatPathMarkdown(path: string, line?: number): string {
