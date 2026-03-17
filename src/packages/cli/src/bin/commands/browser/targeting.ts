@@ -26,6 +26,18 @@ function isLikelyExactBrowserId(value: string): boolean {
   return /^[A-Za-z0-9_-]{8,}$/.test(value);
 }
 
+function normalizeBoolean(value: unknown): boolean {
+  const normalized = `${value ?? ""}`.trim().toLowerCase();
+  return ["1", "true", "yes", "on"].includes(normalized);
+}
+
+function isCliAgentMode(): boolean {
+  return (
+    normalizeBoolean(process.env.COCALC_CLI_AGENT_MODE) ||
+    normalizeBoolean(process.env.COCALC_AGENT_MODE)
+  );
+}
+
 function directBrowserSessionInfo(browser_id: string): BrowserSessionInfo {
   const now = new Date().toISOString();
   return {
@@ -148,6 +160,11 @@ export async function resolveTargetProjectId({
       await deps.resolveProject(ctx, sessionInfo.open_projects[0].project_id)
     ).project_id;
   }
+  if (isCliAgentMode()) {
+    throw new Error(
+      "project is required under agent auth; pass --project-id or set COCALC_PROJECT_ID",
+    );
+  }
   throw new Error(
     "project is required; pass --project-id, --project, or focus a project tab in the target browser session",
   );
@@ -266,17 +283,31 @@ export async function chooseBrowserSession({
   sessionProjectId?: string;
   activeOnly?: boolean;
 }): Promise<BrowserSessionInfo> {
+  const agentMode = isCliAgentMode();
   let sessions: BrowserSessionInfo[] | undefined;
+  let sessionsError: unknown;
+  let sessionsLoaded = false;
+  const canDirectFallback = (hint: string | undefined): boolean =>
+    !!hint &&
+    isLikelyExactBrowserId(hint) &&
+    !activeOnly &&
+    (!requireDiscovery || agentMode);
   const getSessions = async (): Promise<BrowserSessionInfo[]> => {
-    if (sessions) return sessions;
-    sessions = (await ctx.hub.system.listBrowserSessions({
-      include_stale: !activeOnly,
-    })) as BrowserSessionInfo[];
-    sessions = (sessions ?? []).filter((s) => (activeOnly ? !s.stale : true));
-    sessions = sessions.filter((s) =>
-      sessionMatchesProject(s, sessionProjectId),
-    );
-    return sessions;
+    if (sessionsLoaded) return sessions ?? [];
+    sessionsLoaded = true;
+    try {
+      sessions = (await ctx.hub.system.listBrowserSessions({
+        include_stale: !activeOnly,
+      })) as BrowserSessionInfo[];
+      sessions = (sessions ?? []).filter((s) => (activeOnly ? !s.stale : true));
+      sessions = sessions.filter((s) =>
+        sessionMatchesProject(s, sessionProjectId),
+      );
+      return sessions;
+    } catch (err) {
+      sessionsError = err;
+      throw err;
+    }
   };
 
   const remapSpawnedSessionByHint = async (
@@ -319,13 +350,18 @@ export async function chooseBrowserSession({
   const explicitHint = normalizeBrowserId(browserHint);
   if (
     explicitHint &&
-    !requireDiscovery &&
+    (!requireDiscovery || agentMode) &&
     isLikelyExactBrowserId(explicitHint) &&
     !activeOnly &&
     !`${sessionProjectId ?? ""}`.trim() &&
     !resolveSpawnStateByBrowserId(explicitHint)
   ) {
     return directBrowserSessionInfo(explicitHint);
+  }
+  if (agentMode && !explicitHint && !normalizeBrowserId(fallbackBrowserId)) {
+    throw new Error(
+      "browser session discovery is unavailable under agent auth; pass --browser <id> or set COCALC_BROWSER_ID",
+    );
   }
   if (explicitHint) {
     try {
@@ -339,6 +375,9 @@ export async function chooseBrowserSession({
       if (remapped) return remapped;
       throw new Error(`browser session '${explicitHint}' is stale/inactive`);
     } catch (err) {
+      if (sessionsError && canDirectFallback(explicitHint)) {
+        return directBrowserSessionInfo(explicitHint);
+      }
       const remapped = await remapSpawnedSessionByHint(explicitHint);
       if (remapped) return remapped;
       const msg =
@@ -352,14 +391,22 @@ export async function chooseBrowserSession({
   const savedHint = normalizeBrowserId(fallbackBrowserId);
   if (
     savedHint &&
-    !requireDiscovery &&
+    (!requireDiscovery || agentMode) &&
     !activeOnly &&
     !`${sessionProjectId ?? ""}`.trim() &&
     !resolveSpawnStateByBrowserId(savedHint)
   ) {
     return directBrowserSessionInfo(savedHint);
   }
-  const resolvedSessions = await getSessions();
+  let resolvedSessions: BrowserSessionInfo[];
+  try {
+    resolvedSessions = await getSessions();
+  } catch (err) {
+    if (savedHint && sessionsError && canDirectFallback(savedHint)) {
+      return directBrowserSessionInfo(savedHint);
+    }
+    throw err;
+  }
   if (savedHint) {
     try {
       const saved = resolveBrowserSession(resolvedSessions, savedHint);
@@ -367,6 +414,9 @@ export async function chooseBrowserSession({
         return saved;
       }
     } catch {
+      if (sessionsError && canDirectFallback(savedHint)) {
+        return directBrowserSessionInfo(savedHint);
+      }
       const remapped = await remapSpawnedSessionByHint(savedHint);
       if (remapped) return remapped;
     }

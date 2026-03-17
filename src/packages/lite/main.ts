@@ -7,6 +7,7 @@ PORT=30000 pnpm app
 import startProjectServices from "@cocalc/project/conat";
 import { cleanup } from "@cocalc/project/project-setup";
 import { existsSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   init as createConatServer,
   type ConatServer,
@@ -73,6 +74,13 @@ function restoreEnv(env: Record<string, string>) {
   }
 }
 
+function resolveLiteCliBin(): string | undefined {
+  const configured = `${process.env.COCALC_CLI_BIN ?? ""}`.trim();
+  if (configured) return configured;
+  const candidate = join(__dirname, "../../cli/dist/bin/cocalc.js");
+  return existsSync(candidate) ? candidate : undefined;
+}
+
 function persistConatPassword(password: string): void {
   if (!password) return;
   try {
@@ -108,7 +116,7 @@ export async function main(opts?: {
 
   const AUTH_TOKEN = await getAuthToken();
   const AGENT_TOKEN = await getAgentToken();
-  const CLI_BIN = `${process.env.COCALC_CLI_BIN ?? ""}`.trim();
+  const CLI_BIN = resolveLiteCliBin();
   const preservedEnv = captureEnv(PRESERVED_COCALC_ENV_KEYS);
   if (AGENT_TOKEN) {
     process.env.COCALC_AGENT_TOKEN = AGENT_TOKEN;

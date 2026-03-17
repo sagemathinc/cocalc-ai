@@ -74,9 +74,9 @@ function getCoCalcRuntimeGuidanceHeader(cliCommand: string): string {
     "- COCALC_API_URL",
     "- COCALC_BEARER_TOKEN",
     "Typical safe pattern:",
-    `1) Inspect API: ${cliCommand} browser exec-api`,
-    `2) Execute in browser: ${cliCommand} browser exec --file <script.js>`,
-    "(`COCALC_BROWSER_ID` is used automatically when set.)",
+    `1) Inspect API: ${cliCommand} browser exec-api --browser \"$COCALC_BROWSER_ID\"`,
+    `2) Execute in browser: ${cliCommand} browser exec --project-id \"$COCALC_PROJECT_ID\" --browser \"$COCALC_BROWSER_ID\" --file <script.js>`,
+    "Under agent auth, pass exact browser/project targets to avoid blocked session discovery.",
     "[/CoCalc runtime capabilities]",
   ].join("\n");
 }
