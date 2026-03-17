@@ -45,6 +45,10 @@
       "assert": "const root = document.querySelector('[data-cocalc-project-page]'); const strip = document.querySelector('[data-cocalc-file-tab-strip]'); return root != null && strip != null && root.contains(strip);"
     },
     {
+      "name": "assert project page root and file tab strip agree on project id",
+      "assert": "const root = document.querySelector('[data-cocalc-project-page]'); const strip = document.querySelector('[data-cocalc-file-tab-strip]'); const rootValue = root?.getAttribute('data-cocalc-project-page') ?? ''; const stripValue = strip?.getAttribute('data-cocalc-file-tab-strip') ?? ''; return rootValue !== '' && rootValue === stripValue;"
+    },
+    {
       "name": "assert project navigation shell is visible",
       "assert": "const body = document.body.innerText; return body.includes('Files') && body.includes('New');"
     }
