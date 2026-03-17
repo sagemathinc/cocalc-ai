@@ -49,7 +49,10 @@ import { COMBINED_FEED_KEY, useThreadSections } from "./threads";
 import { ChatDocProvider, useChatDoc } from "./doc-context";
 import { useChatComposerDraft } from "./use-chat-composer-draft";
 import * as immutable from "immutable";
-import { useChatThreadSelection } from "./thread-selection";
+import {
+  resetThreadSelectionForNewChat,
+  useChatThreadSelection,
+} from "./thread-selection";
 import { dateValue, field } from "./access";
 import { useCodexPaymentSource } from "./use-codex-payment-source";
 import {
@@ -1394,8 +1397,11 @@ export function ChatPanel({
     delete_local_storage(combinedComposerTargetStorage);
     setComposerTargetKey(null);
     void clearComposerDraft(0);
-    setAllowAutoSelectThread(false);
-    setSelectedThreadKey(null);
+    resetThreadSelectionForNewChat({
+      actions,
+      setAllowAutoSelectThread,
+      setSelectedThreadKey,
+    });
     setNewThreadSetup(defaultNewThreadSetup);
   }
 

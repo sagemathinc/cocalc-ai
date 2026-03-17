@@ -19,6 +19,20 @@ interface ThreadSelectionOptions {
   preferLatestThread?: boolean;
 }
 
+export function resetThreadSelectionForNewChat({
+  actions,
+  setAllowAutoSelectThread,
+  setSelectedThreadKey,
+}: {
+  actions: Pick<ChatActions, "setFragment">;
+  setAllowAutoSelectThread: (value: boolean) => void;
+  setSelectedThreadKey: (value: string | null) => void;
+}) {
+  setAllowAutoSelectThread(false);
+  actions.setFragment();
+  setSelectedThreadKey(null);
+}
+
 export function useChatThreadSelection({
   actions,
   threads,

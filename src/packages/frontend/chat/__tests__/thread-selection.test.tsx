@@ -1,10 +1,32 @@
 /** @jest-environment jsdom */
 
 import { act, render } from "@testing-library/react";
-import { useChatThreadSelection } from "../thread-selection";
+import {
+  resetThreadSelectionForNewChat,
+  useChatThreadSelection,
+} from "../thread-selection";
 import { COMBINED_FEED_KEY, type ThreadMeta } from "../threads";
 
 describe("useChatThreadSelection", () => {
+  it("clears the selected message fragment when starting a new chat", () => {
+    const calls: string[] = [];
+    resetThreadSelectionForNewChat({
+      actions: {
+        setFragment: () => {
+          calls.push("clear-fragment");
+        },
+      } as any,
+      setAllowAutoSelectThread: (value) => {
+        calls.push(`allow:${value}`);
+      },
+      setSelectedThreadKey: (value) => {
+        calls.push(`thread:${value}`);
+      },
+    });
+
+    expect(calls).toEqual(["allow:false", "clear-fragment", "thread:null"]);
+  });
+
   it("preserves an explicit requested thread key while thread metadata is temporarily empty", () => {
     const actions = {
       clearAllFilters: jest.fn(),

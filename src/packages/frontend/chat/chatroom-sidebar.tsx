@@ -25,6 +25,7 @@ import { isCodexModelName } from "@cocalc/util/ai/codex";
 import { dateValue, field } from "./access";
 import type { ChatActions } from "./actions";
 import { ThreadBadge } from "./thread-badge";
+import { resetThreadSelectionForNewChat } from "./thread-selection";
 import type { ThreadMeta, ThreadSectionWithUnread } from "./threads";
 import type { ChatExportOpenRequest } from "./export-types";
 import type * as immutable from "immutable";
@@ -634,8 +635,11 @@ export function ChatRoomSidebarContent({
               block
               type={!selectedThreadKey ? "primary" : "default"}
               onClick={() => {
-                setAllowAutoSelectThread(false);
-                setSelectedThreadKey(null);
+                resetThreadSelectionForNewChat({
+                  actions,
+                  setAllowAutoSelectThread,
+                  setSelectedThreadKey,
+                });
               }}
             >
               New Chat
