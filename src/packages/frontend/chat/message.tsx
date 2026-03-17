@@ -396,6 +396,13 @@ function getLatestCodexActivityAtMs(
   return undefined;
 }
 
+export function getFocusMessageButtonStyle(): CSSProperties {
+  return {
+    color: COLORS.GRAY_M,
+    fontSize: "12px",
+  };
+}
+
 export default function Message({
   index,
   actions,
@@ -1279,7 +1286,7 @@ export default function Message({
         <Button
           size="small"
           type="text"
-          style={{ color: COLORS.GRAY_M, fontSize: "12px", marginTop: "-4px" }}
+          style={getFocusMessageButtonStyle()}
           onClick={() => setShowZenMessage(true)}
         >
           <Icon name="expand-arrows" />
