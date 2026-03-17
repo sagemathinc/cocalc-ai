@@ -41,6 +41,7 @@ export default function SideChat({
   const useEditor = useEditorRedux<ChatState>({ project_id, path });
   // subscribe to syncdbReady to force re-render when sync attaches
   useEditor("syncdbReady");
+  useEditor("readStateVersion");
 
   if (!actions) {
     return <Loading theme="medium" />;

@@ -11,10 +11,13 @@ import {
 import { TextDecoder } from "node:util";
 import { getBackendWatcherDebugStats } from "@cocalc/backend/watcher-debug";
 
-beforeAll(before);
-
 const isLinux = process.platform === "linux";
 const describeIfLinux = isLinux ? describe : describe.skip;
+
+beforeAll(async () => {
+  if (!isLinux) return;
+  await before();
+});
 
 function expectRelativeOrAbsoluteRealpath(pathValue: string, expected: string) {
   expect(
@@ -47,7 +50,7 @@ async function waitForSandboxWatchers(
   expect(sandboxWatchersActive()).toBe(expected);
 }
 
-describe("use all the standard api functions of fs", () => {
+describeIfLinux("use all the standard api functions of fs", () => {
   let server;
   it("creates the simple fileserver service", async () => {
     server = await createPathFileserver();
@@ -532,6 +535,7 @@ describeIfLinux("SECURITY CHECKS: dangerous symlinks can't be followed", () => {
 });
 
 afterAll(async () => {
+  if (!isLinux) return;
   await after();
   await cleanupFileservers();
 });
