@@ -18,6 +18,7 @@ This is not a general user-facing CLI. It exists to support repeated QA and over
 
 - Repo skill copy: `src/.skills/cocalc-bug-hunter/SKILL.md`
 - Workflow/spec: `src/.agents/bug-hunter.md`
+- Exploratory QA scenarios: `src/.agents/bug-hunt/scenario-catalog.md`
 - Generated artifacts and ledger: `src/.agents/bug-hunt/`
 
 Note: the active runtime skill still lives in `~/.codex/skills/cocalc-bug-hunter/`; the repo copy is the reviewed source of truth for changes.
