@@ -1252,6 +1252,35 @@ Suggested MVP:
 4. add optional polling-based freshness only after the basic read-only viewer is solid,
 5. document clearly that this is immediate live-public viewing, not the same thing as durable exported publishing.
 
+Agent-assisted publishing flow:
+
+This should also have an explicit Codex-assisted workflow, analogous to `Install with Codex` for app templates.
+
+Product shape:
+
+1. add a button such as `Have Codex help publish this directory of files`,
+2. the action should launch a Codex turn with the directory path, current public-viewer/static-app context, and the manifest/index conventions,
+3. Codex should be able to:
+   - inspect the directory,
+   - decide what should be public,
+   - generate or refine `index.json`,
+   - optionally generate a nicer `index.html`,
+   - explain the result and any limitations,
+4. the working directory and prompt should be curated so the flow is deterministic enough for normal users, not just experts.
+
+Prompt quality requirement:
+
+1. treat this like `Install with Codex`:
+   - use a product-owned prompt,
+   - refine it until the flow is reliable,
+   - keep testing it against realistic publishing scenarios,
+2. the prompt should explicitly mention:
+   - supported file types,
+   - manifest/index rules,
+   - raw-download fallback behavior,
+   - read-only/no-RTC constraint,
+   - any relevant path or static-root assumptions.
+
 Authenticated import/copy flow:
 
 One important product goal for public viewer mode should be making it easy for a signed-in user to copy a public file or directory into their own project.
@@ -1433,6 +1462,7 @@ Existing components to reuse where possible:
    - frontend download/upload/"copy to another project" UX still pending.
 
 21. `[todo]` Add scoped per-app metrics in project-host and surface them in CLI/UI.
+22. `[todo]` Add `Have Codex help publish this directory of files` for public viewer/static mode, backed by a curated product-owned prompt and repeated testing until the publishing flow is reliable.
 
 ## 19.1 Next Execution Order
 
