@@ -58,6 +58,7 @@ import {
   buildThreadStateRecord,
   computeChatIntegrityReport,
   deriveAcpLogRefs,
+  threadStateRecordKey,
   threadConfigRecordKey,
   type ChatThreadAutomationConfig,
   type ChatThreadAutomationState,
@@ -493,6 +494,34 @@ function preferredThreadConfigRow(
     }
   }
   return best;
+}
+
+function preferredThreadStateRow(
+  syncdb: SyncDB,
+  threadId: string,
+): Record<string, unknown> | undefined {
+  const canonical = threadStateRecordKey(threadId);
+  const direct = (syncdb as any)?.get_one?.(canonical);
+  if (direct != null) {
+    return typeof direct?.toJS === "function" ? direct.toJS() : direct;
+  }
+  const rows = syncdbRowsMatching(syncdb, {
+    event: THREAD_STATE_EVENT,
+    thread_id: threadId,
+  });
+  if (rows.length === 0) return undefined;
+  return rows.slice().sort((a, b) => {
+    const aUpdated = Date.parse(
+      `${syncdbField<string>(a, "updated_at") ?? ""}`,
+    );
+    const bUpdated = Date.parse(
+      `${syncdbField<string>(b, "updated_at") ?? ""}`,
+    );
+    return (
+      (Number.isFinite(bUpdated) ? bUpdated : 0) -
+      (Number.isFinite(aUpdated) ? aUpdated : 0)
+    );
+  })[0];
 }
 
 function replaceThreadScopedRow(
@@ -1637,6 +1666,15 @@ export class ChatStreamWriter {
       return;
     }
     try {
+      const current = preferredThreadStateRow(this.syncdb, threadId);
+      if (
+        current != null &&
+        this.recordField<string>(current, "state") === state &&
+        (this.recordField<string>(current, "active_message_id") ?? null) ===
+          (this.metadata.message_id ?? null)
+      ) {
+        return;
+      }
       replaceThreadScopedRow(
         this.syncdb,
         THREAD_STATE_EVENT,
@@ -1974,7 +2012,6 @@ export class ChatStreamWriter {
         this.threadId = payload.threadId;
         this.registerThreadKey(payload.threadId);
       }
-      this.setThreadState(payload.state === "running" ? "running" : "queued");
       this.commitNow(true);
       return;
     }

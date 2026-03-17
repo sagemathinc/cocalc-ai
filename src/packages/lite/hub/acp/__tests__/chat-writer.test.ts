@@ -614,8 +614,8 @@ describe("ChatStreamWriter", () => {
 
     const final = sets[sets.length - 1];
     expect(final.generating).toBe(false);
-    expect(commits).toBeGreaterThan(1);
-    expect(saves).toBeGreaterThan(1);
+    expect(commits).toBeGreaterThanOrEqual(1);
+    expect(saves).toBeGreaterThanOrEqual(1);
     (writer as any).dispose?.(true);
   });
 
@@ -1004,7 +1004,7 @@ describe("ChatStreamWriter", () => {
   });
 
   it("registers live thread ids from status payloads", async () => {
-    const { syncdb, sets } = makeFakeSyncDB();
+    const { syncdb, sets, getVersions } = makeFakeSyncDB();
     const writer: any = new ChatStreamWriter({
       metadata: baseMetadata,
       client: makeFakeClient(),
@@ -1015,6 +1015,8 @@ describe("ChatStreamWriter", () => {
           set: async () => {},
         }) as any,
     });
+    await writer.waitUntilReady();
+    const versionsBefore = getVersions();
 
     await (writer as any).handle({
       type: "status",
@@ -1025,11 +1027,47 @@ describe("ChatStreamWriter", () => {
     await flush(writer);
 
     expect((writer as any).getKnownThreadIds()).toContain("thread-live-1");
+    expect(getVersions() - versionsBefore).toBe(2);
     const metadataUpdate = sets.find(
       (row: any) =>
         row.message_id === "msg-0" && row.acp_thread_id === "thread-live-1",
     );
     expect(metadataUpdate).toBeTruthy();
+    (writer as any).dispose?.(true);
+  });
+
+  it("does not rewrite thread-state for duplicate live running status", async () => {
+    const { syncdb, getVersions } = makeFakeSyncDB();
+    const writer: any = new ChatStreamWriter({
+      metadata: baseMetadata,
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      syncdbOverride: syncdb as any,
+      logStoreFactory: () =>
+        ({
+          set: async () => {},
+        }) as any,
+    });
+    await writer.waitUntilReady();
+
+    await writer.handle({
+      type: "status",
+      state: "running",
+      threadId: "thread-live-1",
+      seq: 0,
+    } as AcpStreamMessage);
+    await flush(writer);
+    const versionsAfterFirst = getVersions();
+
+    await writer.handle({
+      type: "status",
+      state: "running",
+      threadId: "thread-live-1",
+      seq: 1,
+    } as AcpStreamMessage);
+    await flush(writer);
+
+    expect(getVersions()).toBe(versionsAfterFirst);
     (writer as any).dispose?.(true);
   });
 
