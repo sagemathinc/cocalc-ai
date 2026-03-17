@@ -358,7 +358,6 @@ export const CodexActivity: React.FC<CodexActivityProps> = ({
             />
           ))
         )}
-        {renderCloseButton({ position: "absolute", right: 6, bottom: 6 })}
       </Space>
     </div>
   );
