@@ -68,30 +68,72 @@ function makeFakeSyncDB() {
   const sets: RecordedSet[] = [];
   let commits = 0;
   let saves = 0;
-  let current: any;
+  let versions = 0;
+  const rows: any[] = [];
+  const rowKey = (value: any): string | undefined => {
+    if (!value || typeof value !== "object") return undefined;
+    if (value.event === "chat" && value.message_id) {
+      return `chat:${value.message_id}`;
+    }
+    if (value.event && value.thread_id) {
+      return `${value.event}:${value.thread_id}`;
+    }
+    if (value.event && value.date && value.sender_id) {
+      return `${value.event}:${value.date}:${value.sender_id}`;
+    }
+    return undefined;
+  };
+  const matchWhere = (row: any, where: Record<string, unknown>): boolean =>
+    Object.entries(where).every(([key, value]) => row?.[key] === value);
   const syncdb: any = {
     metadata: baseMetadata,
     isReady: () => true,
-    get_one: () => current,
+    get_one: (where?: Record<string, unknown>) => {
+      if (!where) return rows[rows.length - 1];
+      for (let i = rows.length - 1; i >= 0; i -= 1) {
+        if (matchWhere(rows[i], where)) return rows[i];
+      }
+      return undefined;
+    },
+    get: (where?: Record<string, unknown>) => {
+      if (!where) return rows.slice();
+      return rows.filter((row) => matchWhere(row, where));
+    },
     set: (val: any) => {
       sets.push(val);
-      current = { ...(current ?? {}), ...val };
+      const key = rowKey(val);
+      if (!key) {
+        rows.push({ ...val });
+        return;
+      }
+      const index = rows.findIndex((row) => rowKey(row) === key);
+      if (index >= 0) {
+        rows[index] = { ...rows[index], ...val };
+      } else {
+        rows.push({ ...val });
+      }
     },
     commit: () => {
       commits += 1;
+      versions += 1;
     },
     save: async () => {
       saves += 1;
     },
     close: async () => {},
+    versions: () => Array.from({ length: versions }, (_, i) => `v${i}`),
   };
   return {
     syncdb,
     sets,
     getCommits: () => commits,
     getSaves: () => saves,
+    getVersions: () => versions,
     setCurrent: (val: any) => {
-      current = val;
+      rows.length = 0;
+      if (val != null) {
+        rows.push(val);
+      }
     },
   };
 }
@@ -311,6 +353,59 @@ describe("ChatStreamWriter", () => {
     (writer as any).dispose?.(true);
   });
 
+  it("keeps the writer-side patchflow version budget bounded", async () => {
+    const { syncdb, getVersions } = makeFakeSyncDB();
+    const writer: any = new ChatStreamWriter({
+      metadata: baseMetadata,
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      syncdbOverride: syncdb as any,
+      logStoreFactory: () =>
+        ({
+          set: async () => {},
+        }) as any,
+    });
+    await writer.waitUntilReady();
+    const baseline = getVersions();
+
+    await writer.handle({
+      type: "status",
+      state: "init",
+      threadId: "thread-live-1",
+      seq: 0,
+    } as AcpStreamMessage);
+    await writer.handle({
+      type: "event",
+      event: { type: "message", text: "hello" } as any,
+      seq: 1,
+    } as AcpStreamMessage);
+    await writer.handle({
+      type: "event",
+      event: { type: "message", text: "hello again" } as any,
+      seq: 2,
+    } as AcpStreamMessage);
+    await writer.handle({
+      type: "summary",
+      finalResponse: "done",
+      seq: 3,
+    } as AcpStreamMessage);
+    await flush(writer);
+
+    const snapshot = writer.watchdogSnapshot().patchflow;
+    expect(snapshot).toEqual(
+      expect.objectContaining({
+        deltaVersions: expect.any(Number),
+        peakDeltaVersions: expect.any(Number),
+        target: 6,
+        ceiling: 10,
+      }),
+    );
+    expect(snapshot.deltaVersions).toBeLessThanOrEqual(10);
+    expect(snapshot.peakDeltaVersions).toBeLessThanOrEqual(10);
+    expect(getVersions() - baseline).toBeLessThanOrEqual(10);
+    (writer as any).dispose?.(true);
+  });
+
   it("waits for the terminal syncdb save before resolving summary handling", async () => {
     const { syncdb, setCurrent } = makeFakeSyncDB();
     setCurrent({
@@ -400,6 +495,33 @@ describe("ChatStreamWriter", () => {
     releaseSave?.();
     await pending;
     expect(disposed).toBe(true);
+  });
+
+  it("does not write a duplicate terminal assistant patch during dispose", async () => {
+    const { syncdb, getVersions } = makeFakeSyncDB();
+    const writer: any = new ChatStreamWriter({
+      metadata: baseMetadata,
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      syncdbOverride: syncdb as any,
+      logStoreFactory: () =>
+        ({
+          set: async () => {},
+        }) as any,
+    });
+
+    await writer.handle({
+      type: "summary",
+      finalResponse: "done",
+      seq: 0,
+    } as AcpStreamMessage);
+    await flush(writer);
+
+    const versionsAfterSummary = getVersions();
+    writer.dispose(true);
+    await writer.waitUntilDisposed();
+
+    expect(getVersions()).toBe(versionsAfterSummary);
   });
 
   it("stamps activity log refs from thread_id and message_id", async () => {
