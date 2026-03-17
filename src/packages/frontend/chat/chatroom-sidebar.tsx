@@ -226,13 +226,14 @@ interface ChatRoomSidebarContentProps {
   threadSections: ThreadSectionWithUnread[];
   archivedThreads: ThreadMeta[];
   combinedThread?: ThreadMeta;
-  openRenameModal: (
+  openAppearanceModal: (
     threadKey: string,
     plainLabel: string,
     hasCustomName: boolean,
     threadColor?: string,
     threadIcon?: string,
   ) => void;
+  openBehaviorModal: (threadKey: string) => void;
   openGitBrowser: (threadKey: string) => void;
   openExportModal: (opts?: ChatExportOpenRequest) => void;
   openForkModal: (threadKey: string, label: string, isAI: boolean) => void;
@@ -251,7 +252,8 @@ export function ChatRoomSidebarContent({
   threadSections,
   archivedThreads,
   combinedThread,
-  openRenameModal,
+  openAppearanceModal,
+  openBehaviorModal,
   openGitBrowser,
   openExportModal,
   openForkModal,
@@ -297,10 +299,8 @@ export function ChatRoomSidebarContent({
       : [];
     return {
       items: [
-        {
-          key: "rename",
-          label: "Settings",
-        },
+        { key: "appearance", label: "Appearance..." },
+        { key: "behavior", label: "Behavior..." },
         {
           key: isPinned ? "unpin" : "pin",
           label: isPinned ? "Unpin chat" : "Pin chat",
@@ -331,14 +331,16 @@ export function ChatRoomSidebarContent({
         },
       ],
       onClick: ({ key }) => {
-        if (key === "rename") {
-          openRenameModal(
+        if (key === "appearance") {
+          openAppearanceModal(
             threadKey,
             plainLabel,
             hasCustomName,
             threadColor,
             threadIcon,
           );
+        } else if (key === "behavior") {
+          openBehaviorModal(threadKey);
         } else if (key === "pin" || key === "unpin") {
           if (!actions?.setThreadPin) {
             antdMessage.error("Pinning chats is not available.");
@@ -404,11 +406,13 @@ export function ChatRoomSidebarContent({
       isAI,
       isPinned,
       threadColor,
+      threadAccentColor,
       threadIcon,
       threadImage,
       hasCustomAppearance,
     } = thread;
     const plainLabel = stripHtml(displayLabel);
+    const themeLineColor = threadColor ?? threadAccentColor;
     const isHovered = hoveredThread === key;
     const isMenuOpen = openThreadMenuKey === key;
     const allowMenu = key !== combinedThread?.key;
@@ -442,6 +446,10 @@ export function ChatRoomSidebarContent({
             width: "100%",
             position: "relative",
             paddingLeft: "15px",
+            boxShadow: themeLineColor
+              ? `inset 3px 0 0 ${themeLineColor}`
+              : undefined,
+            borderRadius: themeLineColor ? 6 : undefined,
           }}
           onMouseEnter={() => setHoveredThread(key)}
           onMouseLeave={() =>
@@ -452,6 +460,7 @@ export function ChatRoomSidebarContent({
             <ThreadBadge
               icon={threadIcon}
               color={threadColor}
+              accentColor={thread.threadAccentColor}
               image={threadImage}
               size={22}
             />

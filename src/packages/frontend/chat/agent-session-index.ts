@@ -34,6 +34,7 @@ export interface AgentSessionRecord {
   model?: string;
   reasoning?: string;
   thread_color?: string;
+  thread_accent_color?: string;
   thread_icon?: string;
   thread_image?: string;
   thread_pin?: boolean;

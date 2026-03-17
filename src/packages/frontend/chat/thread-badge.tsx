@@ -12,6 +12,7 @@ import { COLORS } from "@cocalc/util/theme";
 interface ThreadBadgeProps {
   icon?: string;
   color?: string;
+  accentColor?: string;
   image?: string;
   size?: number;
   fallbackIcon?: IconName;
@@ -21,6 +22,7 @@ interface ThreadBadgeProps {
 export function ThreadBadge({
   icon,
   color,
+  accentColor,
   image,
   size = 22,
   fallbackIcon,
@@ -34,7 +36,7 @@ export function ThreadBadge({
           width: size,
           height: size,
           borderRadius: "50%",
-          border: `1px solid ${COLORS.GRAY_L}`,
+          border: `2px solid ${color ?? COLORS.GRAY_L}`,
           overflow: "hidden",
           display: "inline-flex",
           alignItems: "center",
@@ -56,15 +58,17 @@ export function ThreadBadge({
       </span>
     );
   }
-  const hasCustom = Boolean(icon || color);
+  const hasCustom = Boolean(icon || color || accentColor);
   const resolvedIcon =
     (icon as IconName) ??
     fallbackIcon ??
     (hasCustom ? ("dot-circle" as IconName) : undefined);
   if (!resolvedIcon) return null;
-  const background = color ?? (hasCustom ? COLORS.GRAY_L0 : "transparent");
-  const border = color ? "none" : `1px solid ${COLORS.GRAY_L}`;
-  const iconColor = color ? avatar_fontcolor(background) : COLORS.GRAY_M;
+  const background =
+    accentColor ?? color ?? (hasCustom ? COLORS.GRAY_L0 : "transparent");
+  const border = color ? `2px solid ${color}` : `1px solid ${COLORS.GRAY_L}`;
+  const iconColor =
+    color ?? (accentColor ? avatar_fontcolor(background) : COLORS.GRAY_M);
   const fontSize = Math.round(size * 0.6);
 
   return (

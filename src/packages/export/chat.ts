@@ -89,6 +89,7 @@ export interface ChatExportThreadData {
   archived: boolean;
   pinned: boolean;
   thread_color?: string;
+  thread_accent_color?: string;
   thread_icon?: string;
   thread_image?: string;
   agent_kind?: string;
@@ -279,6 +280,9 @@ export async function collectChatExport(
       archived: aggregate.archived,
       pinned: aggregate.pinned,
       thread_color: normalizeString(aggregate.config?.thread_color),
+      thread_accent_color: normalizeString(
+        aggregate.config?.thread_accent_color,
+      ),
       thread_icon: normalizeString(aggregate.config?.thread_icon),
       thread_image: rewriteMaybeBlobRef(
         normalizeString(aggregate.config?.thread_image),

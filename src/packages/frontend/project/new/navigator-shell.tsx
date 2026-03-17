@@ -270,6 +270,10 @@ function buildSessionRecord({
       typeof threadMetadata?.thread_color === "string"
         ? threadMetadata.thread_color
         : undefined,
+    thread_accent_color:
+      typeof threadMetadata?.thread_accent_color === "string"
+        ? threadMetadata.thread_accent_color
+        : undefined,
     thread_icon:
       typeof threadMetadata?.thread_icon === "string"
         ? threadMetadata.thread_icon
@@ -334,6 +338,9 @@ export function NavigatorShell({
   const [settingsColor, setSettingsColor] = useState<string | undefined>(
     undefined,
   );
+  const [settingsAccentColor, setSettingsAccentColor] = useState<
+    string | undefined
+  >(undefined);
   const [settingsIcon, setSettingsIcon] = useState<string | undefined>(
     undefined,
   );
@@ -852,6 +859,11 @@ export function NavigatorShell({
         ? selectedThreadMetadata.thread_color
         : undefined,
     );
+    setSettingsAccentColor(
+      typeof selectedThreadMetadata?.thread_accent_color === "string"
+        ? selectedThreadMetadata.thread_accent_color
+        : undefined,
+    );
     setSettingsIcon(
       typeof selectedThreadMetadata?.thread_icon === "string"
         ? selectedThreadMetadata.thread_icon
@@ -872,14 +884,15 @@ export function NavigatorShell({
       const ok = actions.setThreadAppearance(selectedThreadKey, {
         name: settingsName,
         color: settingsColor,
+        accentColor: settingsAccentColor,
         icon: settingsIcon,
         image: settingsImage,
       });
       if (!ok) {
-        antdMessage.error("Unable to save thread settings.");
+        antdMessage.error("Unable to save thread appearance.");
         return;
       }
-      antdMessage.success("Thread settings saved.");
+      antdMessage.success("Thread appearance saved.");
       setSettingsOpen(false);
     } finally {
       setSettingsSaving(false);
@@ -933,7 +946,7 @@ export function NavigatorShell({
       { key: "new", label: "New Thread" },
       {
         key: "settings",
-        label: "Thread Settings...",
+        label: "Thread Appearance...",
         disabled: !selectedThreadKey,
       },
       { type: "divider" },
@@ -1079,12 +1092,12 @@ export function NavigatorShell({
       </Space>
       <ThemeEditorModal
         open={settingsOpen}
-        title="Thread Settings"
+        title="Edit Thread Appearance"
         value={{
           title: settingsName,
           description: "",
           color: settingsColor ?? null,
-          accent_color: null,
+          accent_color: settingsAccentColor ?? null,
           icon: settingsIcon ?? "",
           image_blob: settingsImage,
         }}
@@ -1092,6 +1105,9 @@ export function NavigatorShell({
           if (patch.title != null) setSettingsName(patch.title);
           if (patch.color !== undefined) {
             setSettingsColor(patch.color ?? undefined);
+          }
+          if (patch.accent_color !== undefined) {
+            setSettingsAccentColor(patch.accent_color ?? undefined);
           }
           if (patch.icon != null) {
             setSettingsIcon(patch.icon || undefined);
@@ -1105,7 +1121,6 @@ export function NavigatorShell({
         confirmLoading={settingsSaving}
         defaultIcon="comment"
         showDescription={false}
-        showAccentColor={false}
         previewImageUrl={settingsImage}
         extraBeforeTheme={
           <Typography.Text type="secondary">

@@ -127,9 +127,11 @@ export function ChatRoomComposer({
       : undefined;
   const threadLabel = selectedThread?.displayLabel ?? selectedThread?.label;
   const threadColor = selectedThread?.threadColor;
+  const threadAccentColor = selectedThread?.threadAccentColor;
   const threadIcon = selectedThread?.threadIcon;
   const threadImage = selectedThread?.threadImage;
   const hasCustomAppearance = selectedThread?.hasCustomAppearance ?? false;
+  const themeLineColor = threadColor ?? threadAccentColor;
   const contextThread = useMemo(() => {
     if (combinedFeedSelected) {
       if (!targetValue) return undefined;
@@ -517,11 +519,16 @@ export function ChatRoomComposer({
               color: "#666",
               fontSize: "12px",
               marginBottom: 6,
+              borderLeft: themeLineColor
+                ? `3px solid ${themeLineColor}`
+                : undefined,
+              paddingLeft: themeLineColor ? 8 : 0,
             }}
           >
             <ThreadBadge
               icon={threadIcon}
               color={threadColor}
+              accentColor={threadAccentColor}
               image={threadImage}
               size={18}
             />

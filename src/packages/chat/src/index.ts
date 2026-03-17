@@ -269,6 +269,7 @@ export interface ChatThreadConfigRecord {
   thread_id: string;
   name?: string;
   thread_color?: string;
+  thread_accent_color?: string;
   thread_icon?: string;
   thread_image?: string;
   pin?: boolean;
@@ -296,6 +297,7 @@ export interface BuildThreadConfigRecordOptions {
   date?: Date | string;
   name?: string;
   thread_color?: string;
+  thread_accent_color?: string;
   thread_icon?: string;
   thread_image?: string;
   pin?: boolean;
@@ -326,6 +328,7 @@ export function buildThreadConfigRecord(
     thread_id: key.thread_id,
     name: options.name,
     thread_color: options.thread_color,
+    thread_accent_color: options.thread_accent_color,
     thread_icon: options.thread_icon,
     thread_image: options.thread_image,
     pin: options.pin,

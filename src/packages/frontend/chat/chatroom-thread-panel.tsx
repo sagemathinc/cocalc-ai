@@ -1026,6 +1026,8 @@ export function ChatRoomThreadPanel({
   const compactThreadIcon = threadMeta?.threadIcon;
   const compactThreadImage = threadMeta?.threadImage;
   const compactThreadHasAppearance = threadMeta?.hasCustomAppearance ?? false;
+  const compactThreadThemeLineColor =
+    threadMeta?.threadColor ?? threadMeta?.threadAccentColor;
   const {
     badgeColor: compactThreadBadgeColor,
     badgeSize: compactThreadBadgeSize,
@@ -1104,12 +1106,17 @@ export function ChatRoomThreadPanel({
             display: "flex",
             alignItems: "center",
             gap: "8px",
+            borderLeft: compactThreadThemeLineColor
+              ? `3px solid ${compactThreadThemeLineColor}`
+              : undefined,
+            paddingLeft: compactThreadThemeLineColor ? 10 : 12,
           }}
         >
           {compactThreadHasAppearance && (
             <ThreadBadge
               icon={compactThreadIcon}
               color={compactThreadBadgeColor}
+              accentColor={threadMeta?.threadAccentColor}
               image={compactThreadImage}
               size={compactThreadBadgeSize}
             />

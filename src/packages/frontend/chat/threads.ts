@@ -39,6 +39,7 @@ export type ThreadMeta = ThreadListItem & {
   displayLabel: string;
   hasCustomName: boolean;
   threadColor?: string;
+  threadAccentColor?: string;
   threadIcon?: string;
   threadImage?: string;
   hasCustomAppearance: boolean;
@@ -276,10 +277,11 @@ export function useThreadSections({
       const storedName = threadMeta?.name;
       const hasCustomName = !!storedName;
       const threadColor = threadMeta?.thread_color;
+      const threadAccentColor = threadMeta?.thread_accent_color;
       const threadIcon = threadMeta?.thread_icon;
       const threadImage = threadMeta?.thread_image;
       const hasCustomAppearance = Boolean(
-        threadColor || threadIcon || threadImage,
+        threadColor || threadAccentColor || threadIcon || threadImage,
       );
       const automationConfig = threadMeta?.automation_config;
       const isAutomation = !!(
@@ -322,6 +324,7 @@ export function useThreadSections({
         displayLabel,
         hasCustomName,
         threadColor,
+        threadAccentColor,
         threadIcon,
         threadImage,
         hasCustomAppearance,

@@ -320,6 +320,8 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
       entrypoint: workspaceTarget ? "file" : "global",
       working_directory: workspaceTarget?.workspace.root_path,
       thread_color: workspaceTarget?.workspace.theme.color ?? undefined,
+      thread_accent_color:
+        workspaceTarget?.workspace.theme.accent_color ?? undefined,
       thread_icon: workspaceTarget?.workspace.theme.icon ?? undefined,
       thread_image: workspaceTarget?.workspace.theme.image_blob ?? undefined,
     };
@@ -406,12 +408,12 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
       noNotification: true,
       threadAgent:
         !replyThreadId && opts.forceCodex !== false
-            ? {
-                mode: "codex",
-                model,
-                codexConfig: threadAgentCodexConfig,
-              }
-            : undefined,
+          ? {
+              mode: "codex",
+              model,
+              codexConfig: threadAgentCodexConfig,
+            }
+          : undefined,
     });
     if (!timeStamp) {
       return queueFallbackIntent();

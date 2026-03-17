@@ -894,6 +894,10 @@ export function ChatPanel({
           typeof thread.threadColor === "string"
             ? thread.threadColor
             : undefined,
+        thread_accent_color:
+          typeof thread.threadAccentColor === "string"
+            ? thread.threadAccentColor
+            : undefined,
         thread_icon:
           typeof thread.threadIcon === "string" ? thread.threadIcon : undefined,
         thread_image:
@@ -1829,10 +1833,13 @@ export function ChatPanel({
             threadSections={threadSections}
             archivedThreads={archivedThreads}
             combinedThread={combinedThread}
-            openRenameModal={
-              modalHandlers?.openRenameModal ??
+            openAppearanceModal={
+              modalHandlers?.openAppearanceModal ??
               ((_threadKey, _label, _useCurrentLabel, _color, _icon) =>
                 undefined)
+            }
+            openBehaviorModal={
+              modalHandlers?.openBehaviorModal ?? (() => undefined)
             }
             openGitBrowser={openGitBrowserForThread}
             openExportModal={

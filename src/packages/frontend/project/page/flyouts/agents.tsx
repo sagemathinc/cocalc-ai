@@ -999,6 +999,8 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
     const image = record.thread_image?.trim() || undefined;
     const icon = record.thread_icon?.trim() || undefined;
     const color = record.thread_color?.trim() || undefined;
+    const accentColor = record.thread_accent_color?.trim() || undefined;
+    const themeLineColor = color ?? accentColor;
     const title = normalizedTitle(record);
     const metaLine = recordMetaLine(record);
     const updatedAt = record.updated_at ?? record.created_at;
@@ -1063,12 +1065,17 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
               alignItems: "flex-start",
               gap: 8,
               marginBottom: 6,
+              borderLeft: themeLineColor
+                ? `3px solid ${themeLineColor}`
+                : undefined,
+              paddingLeft: themeLineColor ? 8 : 0,
             }}
           >
             <ThreadBadge
               image={showCornerImage ? undefined : image}
               icon={icon}
               color={color}
+              accentColor={accentColor}
               fallbackIcon="comment"
               size={isFlyout ? 36 : 32}
               style={{ marginTop: 1 }}
