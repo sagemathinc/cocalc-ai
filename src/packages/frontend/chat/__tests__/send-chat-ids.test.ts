@@ -17,6 +17,7 @@ function makeActions(messages: Map<string, any> = new Map()): any {
     get_one: jest.fn().mockReturnValue(undefined),
     delete: jest.fn(),
     save: jest.fn(),
+    save_to_disk: jest.fn(),
   };
   actions.syncdb = syncdb;
   actions.store = {
@@ -367,6 +368,28 @@ describe("sendChat identity fields", () => {
     const newMessage = actions.syncdb.set.mock.calls[0]?.[0];
     expect(newMessage?.thread_id).toBeTruthy();
     expect(newMessage?.parent_message_id).toBeUndefined();
+  });
+});
+
+describe("chat autosave", () => {
+  it("ignores empty initial SyncDoc change payloads", () => {
+    const actions = makeActions();
+    actions.save_to_disk = jest.fn();
+
+    actions.autosave([]);
+    actions.autosave(new Set());
+    actions.autosave(undefined);
+
+    expect(actions.save_to_disk).not.toHaveBeenCalled();
+  });
+
+  it("saves on non-empty change payloads", () => {
+    const actions = makeActions();
+    actions.save_to_disk = jest.fn();
+
+    actions.autosave([{ op: "set" }]);
+
+    expect(actions.save_to_disk).toHaveBeenCalledTimes(1);
   });
 });
 

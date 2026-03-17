@@ -47,6 +47,28 @@ export interface ExternalChange {
   deleted: boolean;
 }
 
+export function hasNonEmptyPatch(patch: unknown): boolean {
+  if (patch == null) return false;
+  if (
+    Array.isArray(patch) &&
+    patch.length === 2 &&
+    typeof patch[0] === "number" &&
+    Array.isArray(patch[1])
+  ) {
+    return patch[1].length > 0;
+  }
+  if (Array.isArray(patch) || typeof (patch as any).length === "number") {
+    return Number((patch as any).length) > 0;
+  }
+  if (typeof (patch as any).size === "number") {
+    return Number((patch as any).size) > 0;
+  }
+  if (typeof (patch as any).byteLength === "number") {
+    return Number((patch as any).byteLength) > 0;
+  }
+  return true;
+}
+
 export interface FsHead {
   string_id: string;
   time: string; // PatchId
@@ -235,7 +257,7 @@ export class SyncFsWatchStore {
         this.setContent(path, nextStr);
         if (deleted) this.markDeleted(path);
         return {
-          patch,
+          patch: hasNonEmptyPatch(patch) ? patch : undefined,
           content: nextStr,
           hash: this.sha(nextStr),
           deleted: false,
@@ -260,7 +282,12 @@ export class SyncFsWatchStore {
 
     this.setContent(path, current);
     if (deleted) this.markDeleted(path);
-    return { patch, content: current, hash: currentHash, deleted: false };
+    return {
+      patch: hasNonEmptyPatch(patch) ? patch : undefined,
+      content: current,
+      hash: currentHash,
+      deleted: false,
+    };
   }
 
   private sha(content: string): string {

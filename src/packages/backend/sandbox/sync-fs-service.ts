@@ -3,7 +3,11 @@ import { readFile, stat } from "node:fs/promises";
 import { EventEmitter } from "events";
 import { dirname } from "path";
 import { createHash } from "node:crypto";
-import { SyncFsWatchStore, type ExternalChange } from "./sync-fs-watch";
+import {
+  SyncFsWatchStore,
+  hasNonEmptyPatch,
+  type ExternalChange,
+} from "./sync-fs-watch";
 import { AStream } from "@cocalc/conat/sync/astream";
 import { patchesStreamName } from "@cocalc/conat/sync/synctable-stream";
 import { conat } from "@cocalc/backend/conat/conat";
@@ -577,7 +581,7 @@ export class SyncFsService extends EventEmitter {
         false,
         codec,
       );
-      if (change.patch) {
+      if (hasNonEmptyPatch(change.patch)) {
         const payload: ExternalChange = { ...change, deleted: false };
         await this.appendPatch({ ...meta, string_id }, "change", payload);
       }
@@ -816,7 +820,7 @@ export class SyncFsService extends EventEmitter {
             false,
             codec,
           );
-          if (!change.deleted && change.patch == null) {
+          if (!change.deleted && !hasNonEmptyPatch(change.patch)) {
             return;
           }
           this.emitEvent({ path, type: "change", change });

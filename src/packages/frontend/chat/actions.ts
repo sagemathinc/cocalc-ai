@@ -98,6 +98,26 @@ export function shouldOptimisticallyStopGeneratingLocally(opts?: {
   return `${opts?.threadId ?? ""}`.trim().length === 0;
 }
 
+function getChangeCount(changes: unknown): number {
+  if (changes == null) {
+    return 0;
+  }
+  if (Array.isArray(changes) || typeof (changes as any).length === "number") {
+    return Math.max(0, Number((changes as any).length) || 0);
+  }
+  if (typeof (changes as any).size === "number") {
+    return Math.max(0, Number((changes as any).size) || 0);
+  }
+  if (typeof (changes as any)[Symbol.iterator] === "function") {
+    let count = 0;
+    for (const _ of changes as Iterable<unknown>) {
+      count += 1;
+    }
+    return count;
+  }
+  return 1;
+}
+
 function nextChatMessageDate(actions: ChatActions): Date {
   let candidate = Math.max(
     webapp_client.server_time().valueOf(),
@@ -1062,10 +1082,21 @@ export class ChatActions extends Actions<ChatState> {
     await this.syncdb.save_to_disk();
   };
 
-  private autosave = debounce(this.save_to_disk, AUTOSAVE_INTERVAL, {
-    leading: true,
-    trailing: true,
-  });
+  private autosave = debounce(
+    (changes?: unknown): void => {
+      // SyncDoc emits an initial empty change event after the ready replay.
+      // Saving on that no-op creates a fresh timetravel revision on every reload.
+      if (getChangeCount(changes) === 0) {
+        return;
+      }
+      void this.save_to_disk();
+    },
+    AUTOSAVE_INTERVAL,
+    {
+      leading: true,
+      trailing: true,
+    },
+  );
 
   // returns number of deleted messages
   // threadKey = thread_id (UUID or migrated legacy-thread-*)
