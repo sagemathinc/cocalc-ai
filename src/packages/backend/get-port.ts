@@ -3,7 +3,7 @@ import { createServer } from "http";
 export default async function getPort(): Promise<number> {
   const port = await new Promise((resolve, reject) => {
     const server = createServer();
-    server.listen(0, "127.0.0.1", () => {
+    server.listen(0, () => {
       const address = server.address();
       if (typeof address === "object" && address !== null) {
         const port = address.port;
