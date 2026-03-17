@@ -90,6 +90,10 @@ export class SyncFsWatchStore {
   private db: Database;
   private dbPath: string;
   private cleanupDb: boolean;
+  private stats = {
+    exactHashNoops: 0,
+    emptyPatchNoops: 0,
+  };
 
   constructor(dbPath?: string) {
     this.dbPath = dbPath ?? tmpNameSync({ prefix: "sync-fs-", postfix: ".db" });
@@ -176,6 +180,10 @@ export class SyncFsWatchStore {
     };
   }
 
+  getDebugStats(): { exactHashNoops: number; emptyPatchNoops: number } {
+    return { ...this.stats };
+  }
+
   setContent(path: string, content: string): void {
     const hash = this.sha(content);
     const now = Date.now();
@@ -236,40 +244,33 @@ export class SyncFsWatchStore {
     const currentHash = this.sha(current);
     const prev = this.get(path);
 
+    if (prev && prev.hash === currentHash && !prev.deleted && !deleted) {
+      this.stats.exactHashNoops += 1;
+      return { content: current, hash: currentHash, deleted: false };
+    }
+
     // Structured documents (patch_format != 0)
     if (codec) {
       try {
         const baseDoc = codec.fromString(prev?.content ?? "");
         const nextDoc = codec.fromString(current);
-        // Fast no-op check if hashes match and docs compare equal.
-        const equal =
-          prev &&
-          prev.hash === currentHash &&
-          !prev.deleted &&
-          typeof (baseDoc as any).isEqual === "function"
-            ? (baseDoc as any).isEqual(nextDoc)
-            : false;
-        if (equal && !deleted) {
-          return { content: prev!.content, hash: currentHash, deleted: false };
-        }
-        const nextStr = codec.toString(nextDoc);
         const patch = codec.makePatch(baseDoc, nextDoc);
-        this.setContent(path, nextStr);
+        const nonEmptyPatch = hasNonEmptyPatch(patch);
+        this.setContent(path, current);
         if (deleted) this.markDeleted(path);
+        if (!nonEmptyPatch) {
+          this.stats.emptyPatchNoops += 1;
+          return { content: current, hash: currentHash, deleted: false };
+        }
         return {
-          patch: hasNonEmptyPatch(patch) ? patch : undefined,
-          content: nextStr,
-          hash: this.sha(nextStr),
+          patch,
+          content: current,
+          hash: currentHash,
           deleted: false,
         };
       } catch {
         // Fall back to string diff below on codec failure.
       }
-    }
-
-    // Plain string path (or codec failure fallback)
-    if (prev && prev.hash === currentHash && !prev.deleted && !deleted) {
-      return { content: current, hash: currentHash, deleted: false };
     }
 
     const base = prev?.content ?? "";
@@ -282,8 +283,16 @@ export class SyncFsWatchStore {
 
     this.setContent(path, current);
     if (deleted) this.markDeleted(path);
+    if (!hasNonEmptyPatch(patch)) {
+      this.stats.emptyPatchNoops += 1;
+      return {
+        content: current,
+        hash: currentHash,
+        deleted: false,
+      };
+    }
     return {
-      patch: hasNonEmptyPatch(patch) ? patch : undefined,
+      patch,
       content: current,
       hash: currentHash,
       deleted: false,

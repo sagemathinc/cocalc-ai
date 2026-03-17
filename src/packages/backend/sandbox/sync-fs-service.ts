@@ -156,6 +156,8 @@ export function getSyncFsDebugStats({
         pathReleases: 0,
         stalePrunes: 0,
         capEvictions: 0,
+        exactHashNoops: 0,
+        emptyPatchNoops: 0,
       },
       releasesByReasonTop: [] as Array<{ reason: string; count: number }>,
       activePathsTop: [] as Array<{
@@ -201,6 +203,8 @@ export function getSyncFsDebugStats({
     pathReleases: 0,
     stalePrunes: 0,
     capEvictions: 0,
+    exactHashNoops: 0,
+    emptyPatchNoops: 0,
   };
   for (const service of services) {
     const stats = service.getDebugStats({ topN });
@@ -224,6 +228,8 @@ export function getSyncFsDebugStats({
     counters.pathReleases += stats.counters.pathReleases;
     counters.stalePrunes += stats.counters.stalePrunes;
     counters.capEvictions += stats.counters.capEvictions;
+    counters.exactHashNoops += stats.counters.exactHashNoops;
+    counters.emptyPatchNoops += stats.counters.emptyPatchNoops;
     for (const item of stats.releasesByReasonTop) {
       reasonCounts.set(
         item.reason,
@@ -1102,7 +1108,10 @@ export class SyncFsService extends EventEmitter {
       pruneIntervalMs: this.pruneIntervalMs,
       maxActivePaths: this.maxActivePaths,
       maxActivePathsObserved: this.maxActivePathsObserved,
-      counters: { ...this.counters },
+      counters: {
+        ...this.counters,
+        ...this.store.getDebugStats(),
+      },
       releasesByReasonTop: Object.entries(this.releasesByReason)
         .sort((a, b) => b[1] - a[1])
         .slice(0, top)
