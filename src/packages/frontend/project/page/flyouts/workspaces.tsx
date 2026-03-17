@@ -67,6 +67,7 @@ import {
 const DEFAULT_ICON = "cube";
 const DAY_MS = 24 * 60 * 60 * 1000;
 const WORKSPACE_ACTIVITY_VIEWED_KEY = "project-workspaces-activity-viewed-v1";
+const WORKSPACE_ACTIVITY_RUNNING_KEY = "project-workspaces-activity-running-v1";
 
 type WorkspaceSectionKey = "pinned" | "today" | "last7" | "older";
 
@@ -146,6 +147,8 @@ type WorkspaceSummaryRow = {
   timestamp?: string | number | null;
   tooltip?: React.ReactNode;
   dismissNotice?: boolean;
+  icon?: IconName;
+  filled?: boolean;
 };
 
 function sparklinePoints(
@@ -222,11 +225,12 @@ function buildWorkspaceSummaryRow(opts: {
         </div>
       ),
       dismissNotice: true,
+      icon: "info-circle",
     };
   }
   if (activity != null) {
     return {
-      label: activity.label,
+      label: activity.kind === "done" ? "Ready for review" : activity.label,
       color:
         activity.kind === "running"
           ? COLORS.BLUE_D
@@ -234,7 +238,17 @@ function buildWorkspaceSummaryRow(opts: {
             ? COLORS.ANTD_RED_WARN
             : COLORS.ANTD_GREEN_D,
       timestamp: activity.updatedAt,
-      tooltip: activity.label,
+      tooltip:
+        activity.kind === "done"
+          ? "All Codex turns done. Open this workspace to review."
+          : activity.label,
+      icon:
+        activity.kind === "done"
+          ? "check-circle"
+          : activity.kind === "failed"
+            ? "warning"
+            : undefined,
+      filled: activity.kind === "done",
     };
   }
   if (fileActivityLabel != null) {
@@ -521,6 +535,35 @@ function persistViewedActivity(
   }
 }
 
+function loadRunningActivity(project_id: string): Record<string, number> {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = window.localStorage.getItem(
+      `${WORKSPACE_ACTIVITY_RUNNING_KEY}:${project_id}`,
+    );
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed != null && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function persistRunningActivity(
+  project_id: string,
+  running: Record<string, number>,
+): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(
+      `${WORKSPACE_ACTIVITY_RUNNING_KEY}:${project_id}`,
+      JSON.stringify(running),
+    );
+  } catch {
+    // best effort only
+  }
+}
+
 function dateMs(value?: string): number {
   if (!value) return 0;
   const ms = new Date(value).valueOf();
@@ -531,6 +574,7 @@ function getWorkspaceActivityState(
   record: WorkspaceRecord,
   sessions: AgentSessionRecord[],
   viewedAt: number,
+  runningSeenAt: number,
 ): WorkspaceActivityState {
   const chatPath = `${record.chat_path ?? ""}`.trim();
   if (!chatPath) return undefined;
@@ -556,7 +600,11 @@ function getWorkspaceActivityState(
       updatedAt: latest.updated_at,
     };
   }
-  if (dateMs(latest.updated_at) > viewedAt) {
+  if (
+    runningSeenAt > viewedAt &&
+    dateMs(latest.updated_at) >= runningSeenAt &&
+    dateMs(latest.updated_at) > viewedAt
+  ) {
     return {
       kind: "done",
       label: "Codex done",
@@ -617,6 +665,9 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
   const [viewedActivity, setViewedActivity] = useState<Record<string, number>>(
     () => loadViewedActivity(project_id),
   );
+  const [runningActivity, setRunningActivity] = useState<
+    Record<string, number>
+  >(() => loadRunningActivity(project_id));
   const isFlyout = layout === "flyout";
   const now = Date.now();
 
@@ -666,6 +717,36 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
       return next;
     });
   }, [project_id, workspaces.selection]);
+
+  useEffect(() => {
+    setRunningActivity((current) => {
+      let changed = false;
+      const next = { ...current };
+      for (const record of workspaces.records) {
+        const chatPath = `${record.chat_path ?? ""}`.trim();
+        if (!chatPath) continue;
+        const latestRunning = agentSessions
+          .filter(
+            (session) =>
+              session.chat_path === chatPath && session.status === "running",
+          )
+          .reduce(
+            (best, session) => Math.max(best, dateMs(session.updated_at)),
+            0,
+          );
+        if (
+          latestRunning > 0 &&
+          latestRunning > (next[record.workspace_id] ?? 0)
+        ) {
+          next[record.workspace_id] = latestRunning;
+          changed = true;
+        }
+      }
+      if (!changed) return current;
+      persistRunningActivity(project_id, next);
+      return next;
+    });
+  }, [agentSessions, project_id, workspaces.records]);
 
   function openCreate(): void {
     const draft = makeDraft(null, defaultRootPath);
@@ -818,6 +899,7 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
       record,
       agentSessions,
       viewedActivity[record.workspace_id] ?? 0,
+      runningActivity[record.workspace_id] ?? 0,
     );
     const fileActivity = getWorkspaceOpenFileActivity(
       record,
@@ -981,24 +1063,35 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
                       display: "inline-flex",
                       alignItems: "center",
                       gap: 6,
-                      color: summaryRow.color,
-                      background:
-                        record.notice != null
+                      color: summaryRow.filled ? "#fff" : summaryRow.color,
+                      background: summaryRow.filled
+                        ? summaryRow.color
+                        : record.notice != null
                           ? `${summaryRow.color}14`
                           : undefined,
                       borderRadius: 999,
-                      padding: record.notice != null ? "2px 8px" : 0,
+                      padding:
+                        summaryRow.filled || record.notice != null
+                          ? "2px 8px"
+                          : 0,
                     }}
                   >
-                    <span
-                      style={{
-                        width: 8,
-                        height: 8,
-                        borderRadius: 999,
-                        background: summaryRow.color,
-                        flex: "0 0 auto",
-                      }}
-                    />
+                    {summaryRow.icon ? (
+                      <Icon
+                        name={summaryRow.icon}
+                        style={{ flex: "0 0 auto", color: "inherit" }}
+                      />
+                    ) : (
+                      <span
+                        style={{
+                          width: 8,
+                          height: 8,
+                          borderRadius: 999,
+                          background: summaryRow.color,
+                          flex: "0 0 auto",
+                        }}
+                      />
+                    )}
                     <span
                       style={{
                         minWidth: 0,
