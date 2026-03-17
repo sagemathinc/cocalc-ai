@@ -13,6 +13,10 @@ import {
 } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import {
+  normalizeStaticIntegration,
+  type AppStaticIntegrationSpec,
+} from "./public-viewer";
 
 const SPEC_EXT = ".json";
 const APP_ID_RE = /^[a-z0-9](?:[a-z0-9._-]{0,63})$/i;
@@ -76,6 +80,7 @@ export interface AppStaticSpec {
     websocket: false;
     readiness_timeout_s: number;
   };
+  integration?: AppStaticIntegrationSpec;
   wake: {
     enabled: false;
     keep_warm_s: number;
@@ -323,6 +328,7 @@ function normalizeStaticSpec(input: Record<string, any>): AppStaticSpec {
           "spec.proxy.readiness_timeout_s",
         ) ?? 45,
     },
+    integration: normalizeStaticIntegration(input.integration),
     wake: {
       enabled: false,
       keep_warm_s: 0,
