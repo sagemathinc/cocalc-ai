@@ -14,6 +14,24 @@ import type { Document } from "../generic/types";
 
 // Thin wrapper around patchflow's immutable db document to preserve the legacy API names.
 export class DBDocument extends PFDbDocument implements Document {
+  constructor(
+    primaryKeys: Set<string>,
+    stringCols: Set<string>,
+    records?: unknown,
+    everything?: unknown,
+    indexes?: unknown,
+    changeTracker?: unknown,
+  ) {
+    super(
+      primaryKeys,
+      stringCols,
+      records as any,
+      everything as any,
+      indexes as any,
+      changeTracker as any,
+    );
+  }
+
   private wrap(doc: PFDbDocument): DBDocument {
     if (doc instanceof DBDocument) {
       return doc;
