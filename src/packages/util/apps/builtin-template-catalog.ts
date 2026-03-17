@@ -23,21 +23,24 @@ export const BUILTIN_APP_TEMPLATE_CATALOG: AppTemplateCatalogV1 = {
       },
       install: {
         strategy: "curated",
-        command: "apt-get update && apt-get install -y jupyterlab jupyter",
+        command:
+          "apt-get update && apt-get install -y jupyter jupyter-notebook jupyter-server python3-jupyterlab-server python3-ipykernel python3-pip && python3 -m pip install --break-system-packages --ignore-installed jupyterlab",
         hint: "On CoCalc's usual Ubuntu/root images, installing JupyterLab with apt is more reliable than pip and avoids system-package policy errors.",
         agent_prompt:
-          "Install JupyterLab in the current project so the managed JupyterLab app can start. Use the safest practical approach for this Linux environment, verify the resulting 'jupyter lab --version', and explain any caveats.",
+          "Install JupyterLab in the current project so the managed JupyterLab app can start. On maintained Ubuntu launchpad images, first install the distro Jupyter server/notebook packages, then layer the JupyterLab Python package with pip using --break-system-packages --ignore-installed if the lab subcommand is still missing. Verify the resulting 'jupyter lab --version' and explain any caveats.",
         recipes: [
           {
-            id: "ubuntu-apt",
+            id: "ubuntu-apt-plus-pip",
             match: {
               os_family: ["debian", "ubuntu"],
             },
             commands: [
               "apt-get update",
-              "apt-get install -y jupyterlab jupyter",
+              "apt-get install -y jupyter jupyter-notebook jupyter-server python3-jupyterlab-server python3-ipykernel python3-pip",
+              "python3 -m pip install --break-system-packages --ignore-installed jupyterlab",
             ],
-            notes: "Preferred on maintained Ubuntu launchpad images.",
+            notes:
+              "Ubuntu 24.04 does not ship a top-level jupyterlab apt package, so install the distro Jupyter server stack first, then layer the JupyterLab application with pip.",
           },
         ],
       },
@@ -52,10 +55,10 @@ export const BUILTIN_APP_TEMPLATE_CATALOG: AppTemplateCatalogV1 = {
           'base_url="${APP_BASE_URL/\\/proxy\\//\\/port\\/}"; jupyter lab --allow-root --port-retries=0 --no-browser --NotebookApp.token= --NotebookApp.password= --ServerApp.disable_check_xsrf=True --NotebookApp.allow_remote_access=True --NotebookApp.mathjax_url=/cdn/mathjax/MathJax.js --NotebookApp.base_url="${base_url}" --ServerApp.base_url="${base_url}" --ip=${HOST:-127.0.0.1} --port=${PORT}',
       },
       verify: {
-        commands: ["jupyter lab --version"],
+        commands: ["jupyter lab --version", "python3 -m jupyterlab --version"],
       },
       agent_prompt_seed:
-        "Install JupyterLab systemwide if possible, snapshot first, then verify the launch command.",
+        "Install JupyterLab systemwide if possible, prefer the tested Ubuntu apt-plus-pip recipe on launchpad images, and verify the launch command after installation.",
     },
     {
       id: "code-server",
