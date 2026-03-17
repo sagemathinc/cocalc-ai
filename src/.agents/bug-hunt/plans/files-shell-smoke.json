@@ -21,6 +21,10 @@
       "assert": "return typeof document.title === 'string' && document.title.includes('CoCalc') && !document.title.includes('Loading');"
     },
     {
+      "name": "assert exactly one project page root is mounted",
+      "assert": "return document.querySelectorAll('[data-cocalc-project-page]').length === 1;"
+    },
+    {
       "name": "assert project navigation shell is visible",
       "assert": "const body = document.body.innerText; return body.includes('Files') && body.includes('New');"
     }
