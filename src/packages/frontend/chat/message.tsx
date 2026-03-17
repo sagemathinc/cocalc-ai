@@ -42,7 +42,7 @@ import { isCodexModelName } from "@cocalc/util/ai/codex";
 import {
   deriveAcpLogRefs,
   getBestResponseText,
-  getLatestEventLineText,
+  getLiveResponseMarkdown,
   type InlineCodeLink,
 } from "@cocalc/chat";
 import { ChatActions } from "./actions";
@@ -732,7 +732,7 @@ export default function Message({
       return undefined;
     }
     if (effectiveGenerating) {
-      return getLatestEventLineText(codexBodyLog.events as any);
+      return getLiveResponseMarkdown(codexBodyLog.events as any);
     }
     return getBestResponseText(codexBodyLog.events as any);
   }, [codexBodyLog.events, effectiveGenerating]);

@@ -1782,6 +1782,7 @@ export class ChatStreamWriter {
         prevHistory: [],
         content: ":robot: Thinking...",
         generating: true,
+        acp_account_id: this.approverAccountId,
         acp_log_store: this.logStoreName,
         acp_log_key: this.logKey,
         acp_log_subject: this.logSubject,
@@ -1797,11 +1798,6 @@ export class ChatStreamWriter {
       db.set(placeholder);
       db.commit();
       this.markIntegrityDirty("init-placeholder");
-      try {
-        await db.save();
-      } catch (err) {
-        logger.warn("chat syncdb save failed during init", err);
-      }
       current = this.findChatRow();
     }
     const history = this.recordField(current, "history");
@@ -1815,6 +1811,11 @@ export class ChatStreamWriter {
     }
     this.clearParentMessageAcpState();
     this.setThreadState("running");
+    try {
+      await db.save();
+    } catch (err) {
+      logger.warn("chat syncdb save failed during init", err);
+    }
   }
 
   private historyToArray(value: any): MessageHistory[] {
@@ -1841,11 +1842,10 @@ export class ChatStreamWriter {
     this.processPayload(message, { persist: true });
     const isLastMessage =
       message.type === "summary" || message.type === "error" || this.finished;
-    this.commit(!isLastMessage);
     if (isLastMessage) {
-      // Ensure the final "generating: false" state hits SyncDB immediately,
-      // even if the throttle window is large.
-      this.commit.flush();
+      // Live turn output is rendered from the ACP log/DKV path. Reserve
+      // durable .chat writes for terminal state so patchflow history stays
+      // bounded regardless of streamed word count.
       await this.ensureTerminalChatCommitApplied(
         message.type === "error" ? "error" : "summary",
       );
@@ -2445,7 +2445,6 @@ export class ChatStreamWriter {
         time: Date.now(),
       };
       this.processPayload(message, { persist: true });
-      this.commit(true);
     })();
   }
 

@@ -56,6 +56,11 @@ type RecordedSet = {
   generating?: boolean;
   content?: string;
   history?: unknown;
+  acp_account_id?: string;
+  acp_log_store?: string;
+  acp_log_key?: string;
+  acp_log_subject?: string;
+  message_id?: string;
 };
 
 function makeFakeSyncDB() {
@@ -82,8 +87,8 @@ function makeFakeSyncDB() {
   return {
     syncdb,
     sets,
-    commits,
-    saves,
+    getCommits: () => commits,
+    getSaves: () => saves,
     setCurrent: (val: any) => {
       current = val;
     },
@@ -202,6 +207,59 @@ describe("ChatStreamWriter", () => {
     (writer as any).dispose?.(true);
   });
 
+  it("stamps ACP activity markers on the startup placeholder row", async () => {
+    const { syncdb, sets } = makeFakeSyncDB();
+    const writer: any = new ChatStreamWriter({
+      metadata: baseMetadata,
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      syncdbOverride: syncdb as any,
+      logStoreFactory: () =>
+        ({
+          set: async () => {},
+        }) as any,
+    });
+    await writer.waitUntilReady();
+
+    const placeholder = sets.find((row: any) => row.message_id === "msg-0");
+    expect(placeholder?.acp_account_id).toBe("u");
+    expect(placeholder?.acp_log_store).toBeTruthy();
+    expect(placeholder?.acp_log_key).toBeTruthy();
+    expect(placeholder?.acp_log_subject).toBeTruthy();
+    (writer as any).dispose?.(true);
+  });
+
+  it("does not durably rewrite chat rows for streaming events", async () => {
+    const { syncdb, setCurrent, getCommits, getSaves } = makeFakeSyncDB();
+    setCurrent({
+      get: (key: string) => (key === "generating" ? true : undefined),
+    });
+    const writer: any = new ChatStreamWriter({
+      metadata: baseMetadata,
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      syncdbOverride: syncdb as any,
+      logStoreFactory: () =>
+        ({
+          set: async () => {},
+        }) as any,
+    });
+    await writer.waitUntilReady();
+    const commitsBefore = getCommits();
+    const savesBefore = getSaves();
+
+    await writer.handle({
+      type: "event",
+      event: { type: "message", text: "streamed text" } as any,
+      seq: 0,
+    } as AcpStreamMessage);
+    await flush(writer);
+
+    expect(getCommits()).toBe(commitsBefore);
+    expect(getSaves()).toBe(savesBefore);
+    (writer as any).dispose?.(true);
+  });
+
   it("waits for the terminal syncdb save before resolving summary handling", async () => {
     const { syncdb, setCurrent } = makeFakeSyncDB();
     setCurrent({
@@ -254,6 +312,7 @@ describe("ChatStreamWriter", () => {
     setCurrent({
       get: (key: string) => (key === "generating" ? true : undefined),
     });
+    let holdSave = false;
     let releaseSave: (() => void) | undefined;
     const saveGate = new Promise<void>((resolve) => {
       releaseSave = resolve;
@@ -261,7 +320,9 @@ describe("ChatStreamWriter", () => {
     let saves = 0;
     syncdb.save = async () => {
       saves += 1;
-      await saveGate;
+      if (holdSave) {
+        await saveGate;
+      }
     };
     const writer: any = new ChatStreamWriter({
       metadata: baseMetadata,
@@ -274,6 +335,7 @@ describe("ChatStreamWriter", () => {
         }) as any,
     });
     await writer.waitUntilReady();
+    holdSave = true;
     writer.dispose(true);
     let disposed = false;
     const pending = writer.waitUntilDisposed().then(() => {
@@ -673,7 +735,7 @@ describe("ChatStreamWriter", () => {
     (writer as any).dispose?.(true);
   });
 
-  it("addLocalEvent writes an in-flight commit", async () => {
+  it("addLocalEvent keeps chat-row writes deferred until terminal state", async () => {
     const { syncdb, sets } = makeFakeSyncDB();
     const writer: any = new ChatStreamWriter({
       metadata: baseMetadata,
@@ -685,6 +747,8 @@ describe("ChatStreamWriter", () => {
           set: async () => {},
         }) as any,
     });
+    await writer.waitUntilReady();
+    const setCountBefore = sets.length;
     (writer as any).addLocalEvent({
       type: "message",
       text: "local",
@@ -692,10 +756,7 @@ describe("ChatStreamWriter", () => {
     (writer as any).commit.flush();
     await delay(0);
 
-    expect(sets.length).toBeGreaterThan(0);
-    const last = sets[sets.length - 1];
-    expect(last.generating).toBe(true);
-    expect(last.history).toBeUndefined();
+    expect(sets.length).toBe(setCountBefore);
     (writer as any).dispose?.(true);
   });
 

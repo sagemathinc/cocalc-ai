@@ -2,7 +2,9 @@ import type { AcpStreamMessage } from "@cocalc/conat/ai/acp/types";
 
 import {
   appendStreamMessage,
+  getAgentMessageTexts,
   getBestResponseText,
+  getLiveResponseMarkdown,
   getLatestEventLineText,
   getLatestMessageText,
   getLatestSummaryText,
@@ -104,5 +106,51 @@ describe("response text helpers", () => {
       textEvent("message", "latest line", 3),
     ];
     expect(getLatestEventLineText(events)).toBe("latest line");
+  });
+
+  test("returns all distinct agent message blocks in order", () => {
+    const events: AcpStreamMessage[] = [
+      textEvent("message", "first", 1),
+      textEvent("message", "first", 2),
+      textEvent("thinking", "reasoning", 3),
+      textEvent("message", "second", 4),
+    ];
+    expect(getAgentMessageTexts(events)).toEqual(["first", "second"]);
+  });
+
+  test("builds live markdown from agent messages plus streamed summary", () => {
+    const events: AcpStreamMessage[] = [
+      textEvent("message", "first", 1),
+      textEvent("thinking", "reasoning", 2),
+      textEvent("message", "second", 3),
+      {
+        type: "summary",
+        finalResponse: "final summary",
+        seq: 4,
+      } as AcpStreamMessage,
+    ];
+    expect(getLiveResponseMarkdown(events)).toBe(
+      "first\n\nsecond\n\nfinal summary",
+    );
+  });
+
+  test("does not duplicate the summary when it matches the latest agent block", () => {
+    const events: AcpStreamMessage[] = [
+      textEvent("message", "final summary", 1),
+      {
+        type: "summary",
+        finalResponse: "final summary",
+        seq: 2,
+      } as AcpStreamMessage,
+    ];
+    expect(getLiveResponseMarkdown(events)).toBe("final summary");
+  });
+
+  test("falls back to the latest text event before the first agent message", () => {
+    const events: AcpStreamMessage[] = [
+      textEvent("thinking", "reasoning 1", 1),
+      textEvent("thinking", "reasoning 2", 2),
+    ];
+    expect(getLiveResponseMarkdown(events)).toBe("reasoning 2");
   });
 });
