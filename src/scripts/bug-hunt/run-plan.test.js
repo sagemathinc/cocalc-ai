@@ -6,6 +6,7 @@ const {
   buildHarnessArgs,
   createArtifactDirName,
   listAvailablePlans,
+  mergePlanRuntimeOptions,
   parseArgs,
   planNameFromPath,
   resolvePlanFile,
@@ -80,9 +81,22 @@ test("listAvailablePlans returns checked-in plan names", () => {
   );
   assert.ok(plans.some((plan) => plan.name === "seeded-chat-smoke"));
   assert.ok(plans.some((plan) => plan.name === "seeded-files-smoke"));
+  assert.ok(plans.some((plan) => plan.name === "seeded-jupyter-edit-smoke"));
   assert.ok(plans.some((plan) => plan.name === "seeded-jupyter-smoke"));
   assert.ok(plans.some((plan) => plan.name === "seeded-tasks-smoke"));
   assert.ok(plans.some((plan) => plan.name === "session-smoke"));
+});
+
+test("mergePlanRuntimeOptions enables raw exec when a plan opts in", () => {
+  assert.equal(
+    mergePlanRuntimeOptions({ allowRawExec: false }, { allow_raw_exec: true })
+      .allowRawExec,
+    true,
+  );
+  assert.equal(
+    mergePlanRuntimeOptions({ allowRawExec: false }, {}).allowRawExec,
+    false,
+  );
 });
 
 test("planNameFromPath strips json suffix", () => {
@@ -105,7 +119,7 @@ test("createArtifactDirName includes context and plan names", () => {
   );
 });
 
-test("buildHarnessArgs pins the selected browser and report dir", () => {
+test("buildHarnessArgs targets the selected browser and report dir", () => {
   const args = buildHarnessArgs(
     {
       dryRun: true,
@@ -138,7 +152,6 @@ test("buildHarnessArgs pins the selected browser and report dir", () => {
     "project-1",
     "--report-dir",
     "/tmp/report",
-    "--active-only",
     "--dry-run",
     "--default-retries",
     "2",

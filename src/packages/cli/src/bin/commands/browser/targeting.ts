@@ -350,6 +350,14 @@ export async function chooseBrowserSession({
   const explicitHint = normalizeBrowserId(browserHint);
   if (
     explicitHint &&
+    agentMode &&
+    isLikelyExactBrowserId(explicitHint) &&
+    !resolveSpawnStateByBrowserId(explicitHint)
+  ) {
+    return directBrowserSessionInfo(explicitHint);
+  }
+  if (
+    explicitHint &&
     (!requireDiscovery || agentMode) &&
     isLikelyExactBrowserId(explicitHint) &&
     !activeOnly &&
