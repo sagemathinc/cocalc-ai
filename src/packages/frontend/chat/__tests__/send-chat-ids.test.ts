@@ -20,6 +20,7 @@ function makeActions(messages: Map<string, any> = new Map()): any {
   };
   actions.syncdb = syncdb;
   actions.store = {
+    setState: jest.fn(),
     get: (key: string) =>
       key === "project_id" ? "proj-1" : key === "path" ? "x.chat" : undefined,
   };
@@ -1227,7 +1228,7 @@ describe("deleteMessage rewiring", () => {
 });
 
 describe("markThreadRead with UUID keys", () => {
-  it("updates read marker on the UUID-thread root row", () => {
+  it("stores read watermarks outside patchflow for UUID-thread roots", () => {
     const threadId = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
     const d1 = new Date("2026-02-21T21:00:00.000Z");
     const d2 = new Date("2026-02-21T21:01:00.000Z");
@@ -1257,29 +1258,30 @@ describe("markThreadRead with UUID keys", () => {
       ],
     ]);
     const actions = makeActions(messages);
-    actions.syncdb.get_one.mockImplementation((where: any) => {
-      if (
-        where?.event === "chat-thread-config" &&
-        where?.thread_id === threadId
-      ) {
-        return {
-          event: "chat-thread-config",
-          sender_id: "__thread_config__",
-          date: d1.toISOString(),
-          thread_id: threadId,
-        };
-      }
-      return undefined;
-    });
-    const ok = actions.markThreadRead(threadId, 7);
+    const markChatThreadRead = jest.fn();
+    actions.projectReadStateKey = "proj-1:00000000-1000-4000-8000-000000000001";
+    actions.projectReadState = {
+      markChatThreadRead,
+      getChatThread: jest.fn().mockReturnValue({ m: "reply", t: d2 }),
+    };
+    const ok = actions.markThreadRead(threadId, 2);
     expect(ok).toBe(true);
-    expect(actions.syncdb.commit).toHaveBeenCalled();
-    const row = actions.syncdb.set.mock.calls
-      .map((x) => x[0])
-      .find(
-        (x: any) =>
-          x?.event === "chat-thread-config" && x?.thread_id === threadId,
-      );
-    expect(row?.["read-00000000-1000-4000-8000-000000000001"]).toBe(7);
+    expect(actions.syncdb.commit).not.toHaveBeenCalled();
+    expect(actions.syncdb.set).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: "chat-thread-config",
+        thread_id: threadId,
+      }),
+    );
+    expect(markChatThreadRead).toHaveBeenCalledWith("x.chat", threadId, {
+      message_id: "reply",
+      at: d2,
+    });
+    expect(
+      actions.getThreadReadCount(
+        threadId,
+        "00000000-1000-4000-8000-000000000001",
+      ),
+    ).toBe(2);
   });
 });

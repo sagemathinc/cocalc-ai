@@ -67,6 +67,10 @@ import {
 } from "./utils";
 import type { AcpChatContext, AcpLoopConfig } from "@cocalc/conat/ai/acp/types";
 import {
+  openProjectReadState,
+  type ProjectReadStateStore,
+} from "@cocalc/conat/project/read-state";
+import {
   field,
   historyArray,
   dateValue,
@@ -329,6 +333,14 @@ export class ChatActions extends Actions<ChatState> {
   // Shared message cache for this actions instance; used by both React and actions.
   public messageCache?: ChatMessageCache;
   private chatStoreRegistrationAttempted: Set<string> = new Set();
+  private projectReadState?: ProjectReadStateStore;
+  private projectReadStateKey?: string;
+  private projectReadStateInit?: Promise<ProjectReadStateStore | undefined>;
+  private projectReadStateCleanup?: () => void;
+  private pendingThreadReads: Map<
+    string,
+    { count: number; messageId: string; at: Date }
+  > = new Map();
 
   set_syncdb = (
     syncdb: ImmerDB,
@@ -349,6 +361,7 @@ export class ChatActions extends Actions<ChatState> {
     // save periodically to disk
     this.syncdb.on("change", this.autosave);
     this.ensureChatStoreRegistered();
+    this.ensureProjectReadState();
   };
 
   private ensureChatStoreRegistered = (): void => {
@@ -455,7 +468,122 @@ export class ChatActions extends Actions<ChatState> {
     this.messageCache = undefined;
     this.syncdb?.removeListener("change", this.autosave);
     this.syncdb = undefined;
+    this.clearProjectReadState();
   }
+
+  private touchReadStateVersion = (): void => {
+    this.store?.setState({ readStateVersion: Date.now() });
+  };
+
+  private clearProjectReadState = (): void => {
+    this.projectReadStateCleanup?.();
+    this.projectReadStateCleanup = undefined;
+    this.projectReadState?.close();
+    this.projectReadState = undefined;
+    this.projectReadStateKey = undefined;
+    this.projectReadStateInit = undefined;
+    this.pendingThreadReads.clear();
+  };
+
+  private flushPendingThreadReads = (
+    store: ProjectReadStateStore,
+    path: string,
+  ): void => {
+    if (this.pendingThreadReads.size === 0) {
+      return;
+    }
+    for (const [threadId, pending] of this.pendingThreadReads.entries()) {
+      store.markChatThreadRead(path, threadId, {
+        message_id: pending.messageId,
+        at: pending.at,
+      });
+    }
+    this.pendingThreadReads.clear();
+    this.touchReadStateVersion();
+  };
+
+  private ensureProjectReadState = (): ProjectReadStateStore | undefined => {
+    const project_id = this.store?.get("project_id");
+    const path = this.store?.get("path");
+    const accountStore =
+      this.redux?.getStore?.("account") ?? redux.getStore("account");
+    const account_id = accountStore?.get_account_id?.();
+    if (!project_id || !path || !account_id) {
+      return undefined;
+    }
+    const key = `${project_id}:${account_id}`;
+    if (this.projectReadStateKey === key && this.projectReadState != null) {
+      return this.projectReadState;
+    }
+    if (this.projectReadStateKey === key && this.projectReadStateInit != null) {
+      return undefined;
+    }
+    if (this.projectReadStateKey !== key) {
+      this.clearProjectReadState();
+      this.projectReadStateKey = key;
+    }
+    this.projectReadStateInit = openProjectReadState({
+      account_id,
+      project_id,
+      client: webapp_client.conat_client.conat(),
+    })
+      .then((store) => {
+        if (this.projectReadStateKey !== key) {
+          store.close();
+          return undefined;
+        }
+        this.projectReadState = store;
+        this.projectReadStateInit = undefined;
+        this.projectReadStateCleanup = store.onChange(() => {
+          this.touchReadStateVersion();
+        });
+        this.flushPendingThreadReads(store, path);
+        this.touchReadStateVersion();
+        return store;
+      })
+      .catch((err) => {
+        if (this.projectReadStateKey === key) {
+          this.projectReadStateInit = undefined;
+        }
+        console.warn("chat read-state init failed", {
+          project_id,
+          path,
+          err: `${err}`,
+        });
+        return undefined;
+      });
+    return undefined;
+  };
+
+  private resolveReadWatermark = (
+    threadKey: string,
+    count: number,
+  ):
+    | { threadId: string; messageId: string; at: Date; count: number }
+    | undefined => {
+    const threadId = this.normalizeThreadId(threadKey);
+    if (!threadId) {
+      return undefined;
+    }
+    const threadMessages = this.getMessagesInThread(threadId) ?? [];
+    if (threadMessages.length === 0) {
+      return undefined;
+    }
+    const clamped = Math.max(
+      0,
+      Math.min(Math.floor(count), threadMessages.length),
+    );
+    if (clamped <= 0) {
+      return undefined;
+    }
+    const message = threadMessages[clamped - 1];
+    const messageId = `${(message as any)?.message_id ?? ""}`.trim();
+    if (!messageId) {
+      return undefined;
+    }
+    const at = dateValue(message) ?? new Date();
+    return { threadId, messageId, at, count: clamped };
+  };
 
   // Initialize the state of the store from the contents of the syncdb.
   init_from_syncdb = (): void => {
@@ -1175,25 +1303,34 @@ export class ChatActions extends Actions<ChatState> {
   markThreadRead = (
     threadKey: string,
     count: number,
-    commit = true,
+    _commit = true,
   ): boolean => {
-    if (this.syncdb == null) {
+    if (!Number.isFinite(count)) {
       return false;
     }
-    const state = this.syncdb.get_state?.();
-    if (state != null && state !== "ready") {
+    const path = this.store?.get("path");
+    if (!path) {
       return false;
     }
-    const account_id = this.redux.getStore("account").get_account_id();
-    if (!account_id || !Number.isFinite(count)) {
+    const watermark = this.resolveReadWatermark(threadKey, count);
+    if (!watermark) {
       return false;
     }
-    const readKey = `read-${account_id}`;
-    const updated = this.setThreadConfigRecord(threadKey, { [readKey]: count });
-    if (commit) {
-      this.syncdb.commit();
+    const store = this.ensureProjectReadState();
+    if (store != null) {
+      store.markChatThreadRead(path, watermark.threadId, {
+        message_id: watermark.messageId,
+        at: watermark.at,
+      });
+    } else {
+      this.pendingThreadReads.set(watermark.threadId, {
+        count: watermark.count,
+        messageId: watermark.messageId,
+        at: watermark.at,
+      });
     }
-    return updated;
+    this.touchReadStateVersion();
+    return true;
   };
 
   private normalizeThreadId = (
@@ -1506,8 +1643,28 @@ export class ChatActions extends Actions<ChatState> {
   getThreadReadCount = (threadKey: string, accountId?: string): number => {
     const account_id = `${accountId ?? ""}`.trim();
     if (!account_id) return 0;
-    const readKey = `read-${account_id}`;
     const threadId = this.normalizeThreadId(threadKey);
+    if (!threadId) return 0;
+    const pending = this.pendingThreadReads.get(threadId);
+    if (pending != null) {
+      return pending.count;
+    }
+    const path = this.store?.get("path");
+    const store = this.ensureProjectReadState();
+    const messageId = path
+      ? store?.getChatThread(path, threadId)?.m
+      : undefined;
+    if (messageId) {
+      const threadMessages = this.getMessagesInThread(threadId) ?? [];
+      const index = threadMessages.findIndex(
+        (message) =>
+          `${(message as any)?.message_id ?? ""}`.trim() === messageId,
+      );
+      if (index >= 0) {
+        return index + 1;
+      }
+    }
+    const readKey = `read-${account_id}`;
     const cfgRow = this.getThreadConfigRecordById(threadId);
     const cfg =
       cfgRow && typeof cfgRow.toJS === "function" ? cfgRow.toJS() : cfgRow;
