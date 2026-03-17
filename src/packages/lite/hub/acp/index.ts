@@ -149,6 +149,18 @@ import { getConfiguredCodexBackend } from "./codex-backend";
 // How often to persist in-flight ACP metadata (thread state/usage/flags).
 // Message body content is persisted at terminal commits only.
 const COMMIT_INTERVAL = 2_000;
+// Coalesce high-frequency live ACP output so we do not publish one network
+// message per streamed word/chunk. A 100ms cadence still feels realtime.
+const ACP_LOG_PUBLISH_FLUSH_MS = envNumber(
+  "COCALC_ACP_LOG_PUBLISH_FLUSH_MS",
+  100,
+);
+// Persist incremental ACP log state to AKV on a slightly slower cadence than
+// pubsub. This keeps reload/reconnect fast without writing AKV on every token.
+const ACP_LOG_PERSIST_FLUSH_MS = envNumber(
+  "COCALC_ACP_LOG_PERSIST_FLUSH_MS",
+  250,
+);
 const LEASE_HEARTBEAT_INTERVAL = 2_000;
 const TERMINAL_CHAT_VERIFY_DELAYS_MS = [0, 100, 250, 500, 1_000] as const;
 const MESSAGE_ID_LOOKUP_WARN_ROWS = 2_000;
@@ -1337,6 +1349,7 @@ export class ChatStreamWriter {
   private logStoreName: string;
   private logKey: string;
   private logSubject: string;
+  private readonly pendingPublishedLogEvents: AcpStreamMessage[] = [];
   private client: ConatClient;
   private timeTravel?: AgentTimeTravelRecorder;
   private integritySnapshot: ChatIntegritySnapshot = {
@@ -1382,8 +1395,23 @@ export class ChatStreamWriter {
         });
       }
     },
-    1000,
-    { leading: true, trailing: true },
+    ACP_LOG_PERSIST_FLUSH_MS,
+    { leading: false, trailing: true },
+  );
+  private flushPublishedLog = throttle(
+    () => {
+      if (this.closed || this.pendingPublishedLogEvents.length === 0) return;
+      const batch = this.pendingPublishedLogEvents.splice(
+        0,
+        this.pendingPublishedLogEvents.length,
+      );
+      const payload = batch.length === 1 ? batch[0] : batch;
+      void this.client
+        .publish(this.logSubject, payload)
+        .catch((err) => logger.debug("publish log failed", err));
+    },
+    ACP_LOG_PUBLISH_FLUSH_MS,
+    { leading: false, trailing: true },
   );
 
   // Read a field from a syncdb record that may be either an Immutable.js map
@@ -2477,6 +2505,12 @@ export class ChatStreamWriter {
     } catch {
       // ignore
     }
+    try {
+      this.flushPublishedLog.flush();
+    } catch {
+      // ignore
+    }
+    this.flushPublishedLog.cancel();
     void this.persistLog();
     this.disposePromise = (async () => {
       try {
@@ -2719,9 +2753,11 @@ export class ChatStreamWriter {
 
   private publishLog(event: AcpStreamMessage): void {
     if (this.closed) return;
-    void this.client
-      .publish(this.logSubject, event)
-      .catch((err) => logger.debug("publish log failed", err));
+    this.pendingPublishedLogEvents.push(event);
+    this.flushPublishedLog();
+    if (event.type === "summary" || event.type === "error") {
+      this.flushPublishedLog.flush();
+    }
   }
 
   private async persistLog(): Promise<void> {

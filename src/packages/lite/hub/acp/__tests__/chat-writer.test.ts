@@ -577,6 +577,7 @@ describe("ChatStreamWriter", () => {
     };
     await (writer as any).handle(payload);
     (writer as any).persistLogProgress.flush();
+    (writer as any).flushPublishedLog.flush();
     await (writer as any).handle({
       type: "summary",
       finalResponse: "done",
@@ -586,6 +587,48 @@ describe("ChatStreamWriter", () => {
     expect(publish).toHaveBeenCalled();
     expect(logSet).toHaveBeenCalled();
     (writer as any).dispose?.(true);
+  });
+
+  it("coalesces live log publishes into short backend batches", async () => {
+    jest.useFakeTimers();
+    const publish = jest.fn().mockResolvedValue(undefined);
+    const { syncdb } = makeFakeSyncDB();
+    const writer: any = new ChatStreamWriter({
+      metadata: baseMetadata,
+      client: { publish } as any,
+      approverAccountId: "u",
+      syncdbOverride: syncdb as any,
+      logStoreFactory: () =>
+        ({
+          set: async () => {},
+        }) as any,
+    });
+
+    await (writer as any).handle({
+      type: "event",
+      event: { type: "message", text: "Hel" } as any,
+      seq: 0,
+    } as AcpStreamMessage);
+    await (writer as any).handle({
+      type: "event",
+      event: { type: "message", text: "lo" } as any,
+      seq: 1,
+    } as AcpStreamMessage);
+
+    expect(publish).not.toHaveBeenCalled();
+
+    await jest.advanceTimersByTimeAsync(120);
+
+    expect(publish).toHaveBeenCalledTimes(1);
+    expect(publish).toHaveBeenCalledWith(
+      "project.p.acp-log.thread-0.msg-0",
+      expect.arrayContaining([
+        expect.objectContaining({ seq: 0, type: "event" }),
+        expect.objectContaining({ seq: 1, type: "event" }),
+      ]),
+    );
+    (writer as any).dispose?.(true);
+    jest.useRealTimers();
   });
 
   it("persists durable timestamps on published log events", async () => {
@@ -610,10 +653,12 @@ describe("ChatStreamWriter", () => {
     } as AcpStreamMessage);
 
     (writer as any).persistLogProgress.flush();
+    (writer as any).flushPublishedLog.flush();
     await flush(writer);
 
     const published = publish.mock.calls[0]?.[1];
-    expect(typeof published?.time).toBe("number");
+    const publishedEvents = Array.isArray(published) ? published : [published];
+    expect(typeof publishedEvents?.[0]?.time).toBe("number");
 
     const persistedEvents = logSet.mock.calls[0]?.[1];
     expect(Array.isArray(persistedEvents)).toBe(true);

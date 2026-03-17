@@ -49,14 +49,22 @@ class FakeSubscription {
   }
 }
 
-function TestComponent({ generating }: { generating: boolean }) {
+function TestComponent({
+  generating,
+  logKey = "log-key",
+  logSubject = "subject-1",
+}: {
+  generating: boolean;
+  logKey?: string;
+  logSubject?: string;
+}) {
   const { events } = useCodexLog({
     enabled: true,
     generating,
     projectId: "project-1",
     logStore: "acp-log",
-    logKey: "log-key",
-    logSubject: "subject-1",
+    logKey,
+    logSubject,
   });
   return (
     <div data-testid="latest-event">
@@ -127,10 +135,16 @@ describe("useCodexLog", () => {
       },
     });
 
-    render(<TestComponent generating={true} />);
+    render(
+      <TestComponent
+        generating={true}
+        logKey="log-key-batch"
+        logSubject="subject-batch"
+      />,
+    );
 
     await waitFor(() => {
-      expect(subscribe).toHaveBeenCalledWith("subject-1");
+      expect(subscribe).toHaveBeenCalledWith("subject-batch");
     });
 
     subscription.push({
@@ -150,6 +164,47 @@ describe("useCodexLog", () => {
     expect(screen.getByTestId("latest-event").textContent).toBe("");
 
     await act(async () => {
+      await jest.advanceTimersByTimeAsync(150);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("latest-event").textContent).toBe("Hello");
+    });
+  });
+
+  it("accepts backend-published batches of log events", async () => {
+    jest.useFakeTimers();
+    const subscription = new FakeSubscription();
+    const subscribe = jest.fn().mockResolvedValue(subscription);
+    const get = jest.fn().mockResolvedValue([]);
+    conatMock.mockReturnValue({
+      subscribe,
+      sync: {
+        akv: () => ({ get }),
+      },
+    });
+
+    render(<TestComponent generating={true} />);
+
+    await waitFor(() => {
+      expect(subscribe).toHaveBeenCalledWith("subject-1");
+    });
+
+    subscription.push([
+      {
+        type: "event",
+        seq: 1,
+        event: { type: "message", text: "Hel" },
+      },
+      {
+        type: "event",
+        seq: 2,
+        event: { type: "message", text: "lo" },
+      },
+    ]);
+
+    await act(async () => {
+      await Promise.resolve();
       await jest.advanceTimersByTimeAsync(150);
     });
 
