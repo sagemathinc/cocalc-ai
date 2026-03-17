@@ -1,12 +1,4 @@
-import {
-  Alert,
-  Button,
-  Select,
-  Space,
-  Switch,
-  Tooltip,
-  Typography,
-} from "antd";
+import { Alert, Button, Select, Space, Switch, Tooltip } from "antd";
 import {
   useCallback,
   useEffect,
@@ -55,6 +47,7 @@ import {
   type AgentDockOpenDetail,
 } from "./agent-dock-state";
 import { useAgentChatFontSize } from "./agent-chat-font-size";
+import { COLORS } from "@cocalc/util/theme";
 
 const AGENT_DOCK_CHAT_INSTANCE_KEY = "project-agent-dock";
 const DEFAULT_POSITION = { x: 24, y: 84 };
@@ -62,6 +55,13 @@ const DEFAULT_DOCK_SIZE = { width: 560, height: 520 };
 const MIN_DOCK_WIDTH = 380;
 const MIN_DOCK_HEIGHT = 320;
 const DOCK_SESSION_LABEL_MAX = 42;
+const DOCK_HEADER_HEIGHT = 92;
+const DOCK_HEADER_BG = COLORS.GRAY_LLL;
+const DOCK_BORDER_COLOR = COLORS.GRAY_L;
+const DOCK_SUBTEXT_COLOR = COLORS.GRAY_D;
+const DOCK_RESIZE_MARK_COLOR = COLORS.GRAY;
+
+type DockResizeMode = "horizontal" | "vertical" | "both";
 
 interface AgentDockProps {
   project_id: string;
@@ -73,6 +73,21 @@ function ellipsizeLabel(value: string, max = DOCK_SESSION_LABEL_MAX): string {
   if (!text) return "Agent session";
   if (text.length <= max) return text;
   return `${text.slice(0, Math.max(1, max - 1))}...`;
+}
+
+function dockOwnsOtherInputFocus(
+  dockRoot: HTMLElement | null,
+  composerRoot: ParentNode | null,
+): boolean {
+  if (typeof document === "undefined" || !dockRoot) return false;
+  const active = document.activeElement as HTMLElement | null;
+  if (!active || active === document.body) return false;
+  if (!dockRoot.contains(active)) return false;
+  if (composerRoot instanceof Node && composerRoot.contains(active))
+    return false;
+  return !!active.closest(
+    'input, textarea, select, [contenteditable="true"], [role="textbox"], .cm-editor',
+  );
 }
 
 export function AgentDock({ project_id, is_active }: AgentDockProps) {
@@ -101,6 +116,7 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
     startY: number;
     startWidth: number;
     startHeight: number;
+    mode: DockResizeMode;
   } | null>(null);
   const {
     fontSize,
@@ -357,20 +373,26 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
       if (!resizeState) return;
       const maxWidth = Math.max(MIN_DOCK_WIDTH, window.innerWidth - 24);
       const maxHeight = Math.max(MIN_DOCK_HEIGHT, window.innerHeight - 48);
-      const width = Math.max(
-        MIN_DOCK_WIDTH,
-        Math.min(
-          maxWidth,
-          resizeState.startWidth + (evt.clientX - resizeState.startX),
-        ),
-      );
-      const height = Math.max(
-        MIN_DOCK_HEIGHT,
-        Math.min(
-          maxHeight,
-          resizeState.startHeight + (evt.clientY - resizeState.startY),
-        ),
-      );
+      const width =
+        resizeState.mode === "vertical"
+          ? resizeState.startWidth
+          : Math.max(
+              MIN_DOCK_WIDTH,
+              Math.min(
+                maxWidth,
+                resizeState.startWidth + (evt.clientX - resizeState.startX),
+              ),
+            );
+      const height =
+        resizeState.mode === "horizontal"
+          ? resizeState.startHeight
+          : Math.max(
+              MIN_DOCK_HEIGHT,
+              Math.min(
+                maxHeight,
+                resizeState.startHeight + (evt.clientY - resizeState.startY),
+              ),
+            );
       setDockSize({
         width: Math.round(width),
         height: Math.round(height),
@@ -398,7 +420,7 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
   }, []);
 
   const startResize = useCallback(
-    (evt: ReactMouseEvent<HTMLDivElement>) => {
+    (mode: DockResizeMode) => (evt: ReactMouseEvent<HTMLDivElement>) => {
       if (IS_MOBILE) return;
       evt.preventDefault();
       evt.stopPropagation();
@@ -407,6 +429,7 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
         startY: evt.clientY,
         startWidth: dockSize.width,
         startHeight: dockSize.height,
+        mode,
       };
       setIsResizing(true);
     },
@@ -425,6 +448,7 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
   const handleComposerReady = useCallback(
     (control: ChatInputControl | null, root: ParentNode | null): void => {
       if (!session) return;
+      if (dockOwnsOtherInputFocus(nodeRef.current, root)) return;
       refocusChatComposerInput(root ?? nodeRef.current, control ?? undefined);
     },
     [session],
@@ -475,7 +499,7 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
         : sessions;
     return visibleSessions.map((record) => ({
       value: record.session_id,
-      label: `${ellipsizeLabel(record.title || "Agent session")} (project root)`,
+      label: ellipsizeLabel(record.title || "Agent session"),
     }));
   }, [scopedWorkspaceId, sessions, workspaceOnly, workspaces]);
 
@@ -493,6 +517,12 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
   const height = IS_MOBILE
     ? Math.max(MIN_DOCK_HEIGHT, Math.round(viewport.height * 0.72))
     : dockSize.height;
+  const workspaceColor =
+    scopedWorkspace?.theme.color ??
+    scopedWorkspace?.theme.accent_color ??
+    COLORS.BLUE_D;
+  const workspaceLabel = scopedWorkspace?.theme.title?.trim() || "Workspace";
+  const sessionTitle = ellipsizeLabel(session.title || "Agent session", 54);
 
   return (
     <div
@@ -518,11 +548,11 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
             maxWidth: "calc(100vw - 24px)",
             height,
             minHeight: MIN_DOCK_HEIGHT,
-            borderRadius: 10,
-            border: "1px solid #d9d9d9",
+            borderRadius: 12,
+            border: `1px solid ${DOCK_BORDER_COLOR}`,
             background: "white",
-            boxShadow: "0 8px 24px rgba(0,0,0,0.18)",
-            overflow: "hidden",
+            boxShadow: "0 18px 48px rgba(0,0,0,0.22)",
+            overflow: "visible",
             display: "flex",
             flexDirection: "column",
             pointerEvents: "auto",
@@ -532,10 +562,11 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
           <div
             className="cc-agent-dock-handle"
             style={{
-              padding: "8px 10px",
-              borderBottom: "1px solid #f0f0f0",
-              background: "#fafafa",
+              padding: "10px 12px 8px 12px",
+              borderBottom: `1px solid ${COLORS.GRAY_LL}`,
+              background: DOCK_HEADER_BG,
               cursor: "move",
+              userSelect: "none",
             }}
           >
             <div
@@ -544,7 +575,90 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
                 display: "flex",
                 alignItems: "center",
                 gap: 8,
-                flexWrap: "nowrap",
+                justifyContent: "space-between",
+              }}
+            >
+              <div
+                style={{
+                  minWidth: 0,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 10,
+                  flex: "1 1 auto",
+                }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    width: 22,
+                    color: DOCK_SUBTEXT_COLOR,
+                    flexShrink: 0,
+                  }}
+                >
+                  <Icon name="bars" />
+                </div>
+                <div style={{ minWidth: 0, flex: "1 1 auto" }}>
+                  <div
+                    style={{
+                      fontSize: 13,
+                      fontWeight: 600,
+                      color: COLORS.GRAY_D,
+                      whiteSpace: "nowrap",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                    }}
+                  >
+                    Floating Agent Chat
+                  </div>
+                  <div
+                    style={{
+                      marginTop: 2,
+                      fontSize: 12,
+                      color: DOCK_SUBTEXT_COLOR,
+                      whiteSpace: "nowrap",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                    }}
+                  >
+                    {sessionTitle}
+                    {scopedWorkspace
+                      ? ` • ${workspaceLabel}`
+                      : " • Project-wide"}
+                  </div>
+                </div>
+              </div>
+              <Space size={4} wrap={false} style={{ flexShrink: 0 }}>
+                <Tooltip title="Open chat file in the main project page">
+                  <Button
+                    size="small"
+                    type="text"
+                    icon={<Icon name="external-link" />}
+                    onClick={() =>
+                      projectActions?.open_file({
+                        path: session.chat_path,
+                        foreground: true,
+                      })
+                    }
+                  />
+                </Tooltip>
+                <Tooltip title="Close floating chat">
+                  <Button
+                    size="small"
+                    type="text"
+                    icon={<Icon name="times" />}
+                    onClick={() => setSession(null)}
+                  />
+                </Tooltip>
+              </Space>
+            </div>
+            <div
+              style={{
+                marginTop: 10,
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
               }}
             >
               <Select
@@ -564,7 +678,7 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
                 }}
               />
               <Space
-                size={[4, 4]}
+                size={2}
                 wrap={false}
                 style={{ flexShrink: 0, whiteSpace: "nowrap" }}
               >
@@ -579,11 +693,16 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
                   </Button>
                 </Tooltip>
                 <Tooltip title={`Agent chat font size: ${fontSize}px`}>
-                  <span
-                    style={{ minWidth: 24, textAlign: "center", fontSize: 12 }}
+                  <div
+                    style={{
+                      minWidth: 28,
+                      textAlign: "center",
+                      fontSize: 12,
+                      color: DOCK_SUBTEXT_COLOR,
+                    }}
                   >
-                    {fontSize}
-                  </span>
+                    {fontSize}px
+                  </div>
                 </Tooltip>
                 <Tooltip title="Increase chat font size">
                   <Button
@@ -595,54 +714,35 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
                     <Icon name="plus" />
                   </Button>
                 </Tooltip>
-                <Button
-                  size="small"
-                  type="link"
-                  style={{ paddingLeft: 0, whiteSpace: "nowrap" }}
-                  onClick={() =>
-                    projectActions?.open_file({
-                      path: session.chat_path,
-                      foreground: true,
-                    })
-                  }
-                >
-                  Open Chat File
-                </Button>
-                <Button
-                  size="small"
-                  type="text"
-                  onClick={() => setSession(null)}
-                >
-                  <Icon name="times" />
-                </Button>
               </Space>
             </div>
             {scopedWorkspace ? (
               <div
                 style={{
-                  marginTop: 6,
+                  marginTop: 8,
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "space-between",
                   gap: 8,
                 }}
               >
-                <Typography.Text
-                  type="secondary"
+                <div
                   style={{
                     minWidth: 0,
                     whiteSpace: "nowrap",
                     overflow: "hidden",
                     textOverflow: "ellipsis",
                     fontSize: 12,
+                    color: workspaceColor,
+                    fontWeight: 600,
                   }}
                 >
-                  Workspace: {scopedWorkspace.theme.title}
-                </Typography.Text>
+                  Workspace scope: {workspaceLabel}
+                </div>
                 <Space size={6} align="center" style={{ flexShrink: 0 }}>
-                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  <div style={{ fontSize: 12, color: DOCK_SUBTEXT_COLOR }}>
                     Only this workspace
-                  </Typography.Text>
+                  </div>
                   <Switch
                     size="small"
                     checked={workspaceOnly}
@@ -678,19 +778,54 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
             )}
           </div>
           {!IS_MOBILE ? (
-            <div
-              onMouseDown={startResize}
-              style={{
-                position: "absolute",
-                right: 0,
-                bottom: 0,
-                width: 18,
-                height: 18,
-                cursor: "nwse-resize",
-                background:
-                  "linear-gradient(135deg, transparent 48%, #bbb 48%, #bbb 52%, transparent 52%)",
-              }}
-            />
+            <>
+              <div
+                onMouseDown={startResize("horizontal")}
+                style={{
+                  position: "absolute",
+                  top: DOCK_HEADER_HEIGHT,
+                  right: 0,
+                  width: 10,
+                  bottom: 20,
+                  cursor: "ew-resize",
+                }}
+              />
+              <div
+                onMouseDown={startResize("vertical")}
+                style={{
+                  position: "absolute",
+                  left: 20,
+                  right: 20,
+                  bottom: 0,
+                  height: 10,
+                  cursor: "ns-resize",
+                }}
+              />
+              <div
+                onMouseDown={startResize("both")}
+                style={{
+                  position: "absolute",
+                  right: 0,
+                  bottom: 0,
+                  width: 22,
+                  height: 22,
+                  cursor: "nwse-resize",
+                  display: "flex",
+                  alignItems: "flex-end",
+                  justifyContent: "flex-end",
+                  padding: 4,
+                }}
+              >
+                <div
+                  style={{
+                    width: 12,
+                    height: 12,
+                    opacity: 0.7,
+                    background: `linear-gradient(135deg, transparent 35%, ${DOCK_RESIZE_MARK_COLOR} 35%, ${DOCK_RESIZE_MARK_COLOR} 43%, transparent 43%, transparent 57%, ${DOCK_RESIZE_MARK_COLOR} 57%, ${DOCK_RESIZE_MARK_COLOR} 65%, transparent 65%)`,
+                  }}
+                />
+              </div>
+            </>
           ) : null}
         </div>
       </Draggable>

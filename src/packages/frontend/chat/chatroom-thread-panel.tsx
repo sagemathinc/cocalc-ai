@@ -1190,7 +1190,7 @@ export function ChatRoomThreadPanel({
             border: "1px solid #ddd",
             borderRadius: 8,
             boxShadow: "0 2px 10px rgba(0,0,0,0.12)",
-            width: "min(90vw, 560px)",
+            width: "min(90vw, 350px)",
           }}
         >
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
