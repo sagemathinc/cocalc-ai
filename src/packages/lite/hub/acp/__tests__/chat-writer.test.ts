@@ -928,9 +928,131 @@ describe("ChatStreamWriter", () => {
     await flush(writer);
 
     expect((writer as any).content).toContain("Please fix X");
-    const final = sets[sets.length - 1];
+    const final = [...sets]
+      .reverse()
+      .find((row: any) => row.message_id === baseMetadata.message_id) as any;
     expect(final.generating).toBe(false);
-    expect((final as any).acp_interrupted).toBe(true);
+    expect(final.acp_interrupted).toBe(true);
+    (writer as any).dispose?.(true);
+  });
+
+  it("persists interrupted content immediately when a running turn is interrupted", async () => {
+    const { syncdb, sets } = makeFakeSyncDB();
+    const writer: any = new ChatStreamWriter({
+      metadata: baseMetadata,
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      syncdbOverride: syncdb as any,
+      logStoreFactory: () =>
+        ({
+          set: async () => {},
+        }) as any,
+    });
+
+    await (writer as any).handle({
+      type: "event",
+      event: {
+        type: "message",
+        text: "First paragraph.",
+      } as any,
+      seq: 0,
+    } as AcpStreamMessage);
+    await (writer as any).handle({
+      type: "event",
+      event: {
+        type: "message",
+        text: "Second paragraph.",
+      } as any,
+      seq: 1,
+    } as AcpStreamMessage);
+    (writer as any).notifyInterrupted("Conversation interrupted.");
+    await flush(writer);
+
+    const final = sets[sets.length - 1] as any;
+    expect(final.generating).toBe(false);
+    expect(final.acp_interrupted).toBe(true);
+    expect(final.history?.[0]?.content ?? "").toContain("First paragraph.");
+    expect(final.history?.[0]?.content ?? "").toContain("Second paragraph.");
+    expect(final.history?.[0]?.content ?? "").toContain(
+      "Conversation interrupted.",
+    );
+    (writer as any).dispose?.(true);
+  });
+
+  it("keeps streamed output and appends the interrupt notice when no final summary arrives", async () => {
+    const { syncdb } = makeFakeSyncDB();
+    const writer: any = new ChatStreamWriter({
+      metadata: baseMetadata,
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      syncdbOverride: syncdb as any,
+      logStoreFactory: () =>
+        ({
+          set: async () => {},
+        }) as any,
+    });
+
+    await (writer as any).handle({
+      type: "event",
+      event: {
+        type: "message",
+        text: "I'm still working through this.",
+      } as any,
+      seq: 0,
+    } as AcpStreamMessage);
+    (writer as any).notifyInterrupted("Conversation interrupted.");
+    await (writer as any).handle({
+      type: "summary",
+      finalResponse: "",
+      seq: 1,
+    } as AcpStreamMessage);
+    await flush(writer);
+
+    expect((writer as any).content).toContain(
+      "I'm still working through this.",
+    );
+    expect((writer as any).content).toContain("Conversation interrupted.");
+    (writer as any).dispose?.(true);
+  });
+
+  it("persists interrupted content from normalized streamed message chunks", async () => {
+    const { syncdb, sets } = makeFakeSyncDB();
+    const writer: any = new ChatStreamWriter({
+      metadata: baseMetadata,
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      syncdbOverride: syncdb as any,
+      logStoreFactory: () =>
+        ({
+          set: async () => {},
+        }) as any,
+    });
+
+    for (const [seq, text] of [
+      [0, "I"],
+      [1, "'m"],
+      [2, " going"],
+      [3, " to"],
+      [4, " wait"],
+      [5, " here."],
+    ] as const) {
+      await (writer as any).handle({
+        type: "event",
+        event: {
+          type: "message",
+          text,
+        } as any,
+        seq,
+      } as AcpStreamMessage);
+    }
+    (writer as any).notifyInterrupted("Conversation interrupted.");
+    await flush(writer);
+
+    const final = sets[sets.length - 1] as any;
+    expect(final.generating).toBe(false);
+    expect(final.history?.[0]?.content).toBe(
+      "I'm going to wait here.\n\nConversation interrupted.",
+    );
     (writer as any).dispose?.(true);
   });
 
@@ -960,11 +1082,13 @@ describe("ChatStreamWriter", () => {
     } as AcpStreamMessage);
     await flush(writer);
 
-    expect((writer as any).content).not.toContain("Please fix X");
     expect((writer as any).content).toContain("late final response");
-    const final = sets[sets.length - 1];
+    expect((writer as any).content).toContain("Please fix X");
+    const final = [...sets]
+      .reverse()
+      .find((row: any) => row.message_id === baseMetadata.message_id) as any;
     expect(final.generating).toBe(false);
-    expect((final as any).acp_interrupted).toBe(true);
+    expect(final.acp_interrupted).toBe(true);
     (writer as any).dispose?.(true);
   });
 

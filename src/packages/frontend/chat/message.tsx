@@ -42,6 +42,7 @@ import { isCodexModelName } from "@cocalc/util/ai/codex";
 import {
   deriveAcpLogRefs,
   getBestResponseText,
+  getInterruptedResponseMarkdown,
   getLiveResponseMarkdown,
   type InlineCodeLink,
 } from "@cocalc/chat";
@@ -344,15 +345,28 @@ export function resolveRenderedMessageValue({
   rowValue,
   logValue,
   generating,
+  interrupted,
 }: {
   rowValue: string;
   logValue?: string;
   generating: boolean;
+  interrupted?: boolean;
 }): string {
+  const trimmedRow = rowValue.trim();
+  if (
+    interrupted &&
+    trimmedRow.length > 0 &&
+    trimmedRow !== ACP_THINKING_PLACEHOLDER
+  ) {
+    return rowValue;
+  }
   if (
     typeof logValue === "string" &&
     logValue.trim().length > 0 &&
-    (generating || rowValue.trim().length === 0)
+    (interrupted ||
+      generating ||
+      trimmedRow.length === 0 ||
+      trimmedRow === ACP_THINKING_PLACEHOLDER)
   ) {
     return logValue;
   }
@@ -532,6 +546,10 @@ export default function Message({
     typeof isLLMThread === "string" && isCodexModelName(isLLMThread);
   const acpInterrupted = useMemo(
     () => field<boolean>(message, "acp_interrupted") === true,
+    [message],
+  );
+  const acpInterruptedText = useMemo(
+    () => field<string>(message, "acp_interrupted_text"),
     [message],
   );
   const effectiveGenerating = useMemo(() => {
@@ -714,8 +732,15 @@ export default function Message({
   const loadLogBody = useMemo(() => {
     if (!showCodexActivity || !project_id) return false;
     if (effectiveGenerating) return true;
+    if (acpInterrupted) return true;
     return rowMessageValue.trim().length === 0;
-  }, [showCodexActivity, project_id, effectiveGenerating, rowMessageValue]);
+  }, [
+    showCodexActivity,
+    project_id,
+    effectiveGenerating,
+    acpInterrupted,
+    rowMessageValue,
+  ]);
   const codexBodyLog = useCodexLog({
     projectId: project_id,
     logStore,
@@ -734,8 +759,19 @@ export default function Message({
     if (effectiveGenerating) {
       return getLiveResponseMarkdown(codexBodyLog.events as any);
     }
+    if (acpInterrupted) {
+      return getInterruptedResponseMarkdown(
+        codexBodyLog.events as any,
+        acpInterruptedText,
+      );
+    }
     return getBestResponseText(codexBodyLog.events as any);
-  }, [codexBodyLog.events, effectiveGenerating]);
+  }, [
+    acpInterrupted,
+    acpInterruptedText,
+    codexBodyLog.events,
+    effectiveGenerating,
+  ]);
   const lastCodexActivityAtMs = useMemo(
     () => getLatestCodexActivityAtMs(codexBodyLog.events),
     [codexBodyLog.events],
@@ -746,8 +782,9 @@ export default function Message({
         rowValue: rowMessageValue,
         logValue: codexBodyValue,
         generating: effectiveGenerating,
+        interrupted: acpInterrupted,
       }),
-    [codexBodyValue, effectiveGenerating, rowMessageValue],
+    [acpInterrupted, codexBodyValue, effectiveGenerating, rowMessageValue],
   );
   const renderedMessageMarkdown = useMemo(
     () =>

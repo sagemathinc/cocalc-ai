@@ -170,10 +170,45 @@ export function getAgentMessageTexts(events: AcpStreamMessage[]): string[] {
     if (evt?.type !== "event" || evt.event?.type !== "message") continue;
     const text = evt.event.text;
     if (typeof text !== "string" || text.trim().length === 0) continue;
-    if (messages[messages.length - 1] === text) continue;
+    const last = messages[messages.length - 1];
+    if (last === text) continue;
+    const progressive = mergeProgressiveMessageText(last, text);
+    if (typeof progressive === "string") {
+      messages[messages.length - 1] = progressive;
+      continue;
+    }
     messages.push(text);
   }
   return messages;
+}
+
+function mergeProgressiveMessageText(
+  previous: string | undefined,
+  next: string | undefined,
+): string | undefined {
+  const prev = typeof previous === "string" ? previous : "";
+  const cur = typeof next === "string" ? next : "";
+  if (!prev || !cur) return undefined;
+  if (cur.startsWith(prev)) return cur;
+  if (prev.startsWith(cur)) return prev;
+  if (prev.endsWith(cur)) return prev;
+  const normalizedPrev = normalizeProgressiveCompareText(prev);
+  const normalizedCur = normalizeProgressiveCompareText(cur);
+  if (!normalizedPrev || !normalizedCur) return undefined;
+  if (normalizedCur.startsWith(normalizedPrev)) return cur;
+  if (normalizedPrev.startsWith(normalizedCur)) return prev;
+  if (normalizedPrev === normalizedCur) {
+    return cur.length >= prev.length ? cur : prev;
+  }
+  return undefined;
+}
+
+function normalizeProgressiveCompareText(text: string): string {
+  return text
+    .replace(/`\s+/g, "`")
+    .replace(/\s+`/g, "`")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 // During a running turn the main chat row should be rendered from the live ACP
@@ -185,7 +220,11 @@ export function getLiveResponseMarkdown(
   const blocks = getAgentMessageTexts(events);
   const summary = getLatestSummaryText(events);
   if (typeof summary === "string" && summary.trim().length > 0) {
-    if (blocks[blocks.length - 1] !== summary) {
+    const last = blocks[blocks.length - 1];
+    const progressiveSummary = mergeProgressiveMessageText(last, summary);
+    if (typeof progressiveSummary === "string") {
+      blocks[blocks.length - 1] = progressiveSummary;
+    } else if (blocks[blocks.length - 1] !== summary) {
       blocks.push(summary);
     }
   }
@@ -193,6 +232,19 @@ export function getLiveResponseMarkdown(
     return blocks.join("\n\n");
   }
   return getLatestEventLineText(events);
+}
+
+export function getInterruptedResponseMarkdown(
+  events: AcpStreamMessage[],
+  interruptedText?: string,
+): string | undefined {
+  const base =
+    getLiveResponseMarkdown(events) ?? getBestResponseText(events) ?? "";
+  const content = `${base}`.trim();
+  const suffix = `${interruptedText ?? "Conversation interrupted."}`.trim();
+  if (!content) return suffix || undefined;
+  if (!suffix || content.includes(suffix)) return content;
+  return `${content}\n\n${suffix}`;
 }
 
 export function getBestResponseText(

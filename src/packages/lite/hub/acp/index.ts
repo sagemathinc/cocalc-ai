@@ -67,6 +67,8 @@ import { acquireChatSyncDB, releaseChatSyncDB } from "@cocalc/chat/server";
 import {
   appendStreamMessage,
   extractEventText,
+  getInterruptedResponseMarkdown,
+  getLiveResponseMarkdown,
   getLatestMessageText,
   getLatestSummaryText,
 } from "@cocalc/chat";
@@ -322,6 +324,17 @@ function envNumber(name: string, fallback: number): number {
 
 function roundMs(value: number): number {
   return Math.round(value * 10) / 10;
+}
+
+function appendInterruptedNoticeToContent(
+  content: string | undefined,
+  interruptedText: string | undefined,
+): string | undefined {
+  const base = `${content ?? ""}`.trim();
+  const suffix = `${interruptedText ?? INTERRUPT_STATUS_TEXT}`.trim();
+  if (!base) return suffix || undefined;
+  if (!suffix || base.includes(suffix)) return base;
+  return `${base}\n\n${suffix}`;
 }
 
 function formatQueuedDelay(ms: number): string {
@@ -1899,6 +1912,7 @@ export class ChatStreamWriter {
     }
     if (payload.type === "summary") {
       if (this.interruptNotified) {
+        const liveResponse = getLiveResponseMarkdown(this.events);
         const latestSummary = getLatestSummaryText(this.events);
         const hasSummary =
           typeof latestSummary === "string" && latestSummary.trim().length > 0;
@@ -1920,6 +1934,12 @@ export class ChatStreamWriter {
           this.contentBeforeInterrupt.trim().length > 0
             ? this.contentBeforeInterrupt
             : undefined;
+        const liveNonInterruptContent =
+          typeof liveResponse === "string" &&
+          liveResponse.trim().length > 0 &&
+          liveResponse !== this.interruptedMessage
+            ? liveResponse
+            : undefined;
         const currentNonInterruptContent =
           typeof this.content === "string" &&
           this.content.trim().length > 0 &&
@@ -1927,16 +1947,21 @@ export class ChatStreamWriter {
             ? this.content
             : undefined;
         const candidate =
+          liveNonInterruptContent ??
           summaryText ??
           latestNonInterruptMessage ??
           currentNonInterruptContent ??
           preservedContent ??
           this.interruptedMessage;
         if (candidate) {
-          this.content = stripLoopContractForDisplay(
-            candidate,
-            this.metadata.loop_config?.enabled === true,
-          );
+          this.content =
+            appendInterruptedNoticeToContent(
+              stripLoopContractForDisplay(
+                candidate,
+                this.metadata.loop_config?.enabled === true,
+              ),
+              this.interruptedMessage,
+            ) ?? candidate;
         }
         this.finishedBy = "interrupt";
       } else {
@@ -2536,12 +2561,14 @@ export class ChatStreamWriter {
     if (!this.content || this.content.trim().length === 0) {
       this.content = text;
     }
+    this.content =
+      appendInterruptedNoticeToContent(
+        getInterruptedResponseMarkdown(this.events, text) ?? this.content,
+        text,
+      ) ?? text;
     this.finishedBy = "interrupt";
     this.setThreadState("interrupted");
-    this.addLocalEvent({
-      type: "message",
-      text,
-    });
+    this.commitNow(false, "throttled");
   }
 
   getKnownThreadIds(): string[] {
