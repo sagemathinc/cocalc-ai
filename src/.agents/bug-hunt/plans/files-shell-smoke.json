@@ -1,0 +1,28 @@
+{
+  "name": "files-shell-smoke",
+  "steps": [
+    {
+      "name": "wait body",
+      "action": {
+        "name": "wait_for_selector",
+        "selector": "body",
+        "state": "visible",
+        "timeout_ms": 15000
+      }
+    },
+    {
+      "name": "assert files route",
+      "assert": "return /^\\/projects\\/[0-9a-f-]+\\/files\\/?$/.test(window.location.pathname);",
+      "retries": 1,
+      "recovery": "reload"
+    },
+    {
+      "name": "assert settled CoCalc title is visible",
+      "assert": "return typeof document.title === 'string' && document.title.includes('CoCalc') && !document.title.includes('Loading');"
+    },
+    {
+      "name": "assert project navigation shell is visible",
+      "assert": "const body = document.body.innerText; return body.includes('Files') && body.includes('New');"
+    }
+  ]
+}
