@@ -70,6 +70,47 @@ export function enqueueAcpInterrupt({
   ensureInit();
   const db = getDatabase();
   const now = Date.now();
+  const normalizedCandidateIds = [
+    ...new Set(
+      (candidate_ids ?? []).filter(
+        (id) => typeof id === "string" && id.trim().length > 0,
+      ),
+    ),
+  ];
+  const existing = db
+    .prepare(
+      `SELECT * FROM ${TABLE}
+       WHERE project_id = ?
+         AND path = ?
+         AND thread_id = ?
+         AND state = 'pending'
+       ORDER BY created_at ASC
+       LIMIT 1`,
+    )
+    .get(project_id, path, thread_id) as AcpInterruptRow | undefined;
+  if (existing) {
+    const mergedCandidateIds = [
+      ...new Set([
+        ...decodeAcpInterruptCandidateIds(existing),
+        ...normalizedCandidateIds,
+      ]),
+    ];
+    db.prepare(
+      `UPDATE ${TABLE}
+          SET candidate_ids_json = ?,
+              chat_json = ?,
+              updated_at = ?
+        WHERE id = ?`,
+    ).run(
+      JSON.stringify(mergedCandidateIds),
+      JSON.stringify(chat ?? decodeAcpInterruptChat(existing) ?? {}),
+      now,
+      existing.id,
+    );
+    return db
+      .prepare(`SELECT * FROM ${TABLE} WHERE id = ?`)
+      .get(existing.id) as AcpInterruptRow;
+  }
   const id = randomUUID();
   db.prepare(
     `INSERT INTO ${TABLE}
@@ -80,11 +121,7 @@ export function enqueueAcpInterrupt({
     project_id,
     path,
     thread_id,
-    JSON.stringify(
-      (candidate_ids ?? []).filter(
-        (id) => typeof id === "string" && id.trim().length > 0,
-      ),
-    ),
+    JSON.stringify(normalizedCandidateIds),
     JSON.stringify(chat ?? {}),
     now,
     now,
@@ -120,6 +157,31 @@ export function markAcpInterruptHandled({ id }: { id: string }): void {
       WHERE id = ?
         AND state = 'pending'`,
   ).run(now, now, id);
+}
+
+export function markAcpInterruptsHandledForThread({
+  project_id,
+  path,
+  thread_id,
+}: {
+  project_id: string;
+  path: string;
+  thread_id: string;
+}): void {
+  ensureInit();
+  const db = getDatabase();
+  const now = Date.now();
+  db.prepare(
+    `UPDATE ${TABLE}
+      SET state = 'handled',
+          updated_at = ?,
+          handled_at = ?,
+          error = NULL
+      WHERE project_id = ?
+        AND path = ?
+        AND thread_id = ?
+        AND state = 'pending'`,
+  ).run(now, now, project_id, path, thread_id);
 }
 
 export function markAcpInterruptError({

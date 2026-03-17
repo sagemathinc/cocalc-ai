@@ -2166,24 +2166,23 @@ export class ChatActions extends Actions<ChatState> {
     return newThreadId;
   };
 
-  languageModelStopGenerating = (
+  languageModelStopGenerating = async (
     date: Date,
     options?: {
       threadId?: string;
       senderId?: string;
     },
-  ) => {
-    if (this.syncdb == null) return;
+  ): Promise<boolean> => {
+    if (this.syncdb == null) return false;
     if (!shouldOptimisticallyStopGeneratingLocally(options)) {
-      void this.requestCodexInterrupt({
+      return await this.requestCodexInterrupt({
         threadId: options!.threadId!,
         messageDate: date,
       });
-      return;
     }
     const targetSenderId =
       options?.senderId ?? senderId(this.getMessageByDate(date));
-    if (!targetSenderId) return;
+    if (!targetSenderId) return false;
     this.setSyncdb({
       event: "chat",
       date: toISOString(date),
@@ -2192,6 +2191,7 @@ export class ChatActions extends Actions<ChatState> {
     });
     this.syncdb.commit();
     void this.saveSyncdb();
+    return true;
   };
 
   private async requestCodexInterrupt({
@@ -2200,15 +2200,15 @@ export class ChatActions extends Actions<ChatState> {
   }: {
     threadId: string;
     messageDate: Date;
-  }): Promise<void> {
-    if (!threadId || !this.store) return;
+  }): Promise<boolean> {
+    if (!threadId || !this.store) return false;
     const project_id = this.store.get("project_id");
     const path = this.store.get("path");
-    if (!project_id || !path) return;
+    if (!project_id || !path) return false;
     const sender_id = this.redux.getStore("account").get_account_id();
-    if (!sender_id) return;
+    if (!sender_id) return false;
     const message_date = toISOString(messageDate);
-    if (!message_date) return;
+    if (!message_date) return false;
     const chat: AcpChatContext = {
       project_id,
       path,
@@ -2221,8 +2221,10 @@ export class ChatActions extends Actions<ChatState> {
         threadId,
         chat,
       });
+      return true;
     } catch (err) {
       console.warn("failed to interrupt codex turn", err);
+      return false;
     }
   }
 

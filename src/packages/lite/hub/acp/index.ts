@@ -127,6 +127,7 @@ import {
   listPendingAcpInterrupts,
   markAcpInterruptError,
   markAcpInterruptHandled,
+  markAcpInterruptsHandledForThread,
 } from "../sqlite/acp-interrupts";
 import {
   getAcpWorker,
@@ -5873,6 +5874,13 @@ async function handleInterruptRequest(
       candidateIds,
     })
   ) {
+    if (project_id && path && threadId) {
+      markAcpInterruptsHandledForThread({
+        project_id,
+        path,
+        thread_id: threadId,
+      });
+    }
     return;
   }
   if (!project_id || !path || !threadId) {
