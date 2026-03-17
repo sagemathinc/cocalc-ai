@@ -3,11 +3,11 @@ import LRUCache from "lru-cache";
 import { appendStreamMessage } from "@cocalc/chat";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 
-// Backend throttles AKV persistence in lite/hub/acp.ts via lodash.throttle
-// with {leading:true, trailing:true, wait:1000}. We delay the initial AKV
-// fetch to let the first batch land, so mid-turn openings still see early
-// events. If the throttle changes, update this constant too.
-const LOG_PERSIST_THROTTLE_MS = 1000;
+// Backend batches live ACP log pubsub at 100ms and AKV persistence at 250ms in
+// lite/hub/acp.ts. We delay the initial AKV fetch to let the first persisted
+// batch land, so mid-turn openings still see early events. If the backend
+// cadence changes, update this constant too.
+const LOG_PERSIST_THROTTLE_MS = 250;
 const LIVE_LOG_FLUSH_MS = 100;
 const RECENT_LOG_CACHE_SIZE = 5;
 
@@ -48,6 +48,13 @@ function getEventTime(evt: any): number | undefined {
   return typeof value === "number" && Number.isFinite(value)
     ? value
     : undefined;
+}
+
+function normalizeIncomingLogPayload(payload: any): any[] {
+  if (Array.isArray(payload)) {
+    return payload.filter(Boolean);
+  }
+  return payload ? [payload] : [];
 }
 
 /**
@@ -216,15 +223,18 @@ export function useCodexLog({
         sub = await cn.subscribe(logSubject);
         for await (const mesg of sub) {
           if (stopped) break;
-          const evt = mesg?.data;
-          //console.log("sub got ", evt);
-          if (!evt) continue;
-          const withTime =
-            getEventTime(evt) == null ? { ...evt, time: Date.now() } : evt;
-          liveBufferRef.current.push(withTime);
-          scheduleBufferedFlush(
-            withTime.type === "summary" || withTime.type === "error",
-          );
+          const payload = normalizeIncomingLogPayload(mesg?.data);
+          if (payload.length === 0) continue;
+          let immediate = false;
+          for (const evt of payload) {
+            const withTime =
+              getEventTime(evt) == null ? { ...evt, time: Date.now() } : evt;
+            liveBufferRef.current.push(withTime);
+            if (withTime.type === "summary" || withTime.type === "error") {
+              immediate = true;
+            }
+          }
+          scheduleBufferedFlush(immediate);
         }
       } catch (err) {
         console.warn("live log subscribe failed", err);

@@ -57,6 +57,7 @@ type RecordedSet = {
   content?: string;
   history?: unknown;
   acp_account_id?: string;
+  acp_started_at_ms?: number;
   acp_log_store?: string;
   acp_log_key?: string;
   acp_log_subject?: string;
@@ -106,6 +107,7 @@ const baseMetadata: AcpChatContext = {
   path: "chat",
   message_date: "123",
   sender_id: "u",
+  started_at_ms: 1234,
   message_id: "msg-0",
   thread_id: "thread-0",
 } as any;
@@ -223,16 +225,65 @@ describe("ChatStreamWriter", () => {
 
     const placeholder = sets.find((row: any) => row.message_id === "msg-0");
     expect(placeholder?.acp_account_id).toBe("u");
+    expect(placeholder?.acp_started_at_ms).toBe(1234);
     expect(placeholder?.acp_log_store).toBeTruthy();
     expect(placeholder?.acp_log_key).toBeTruthy();
     expect(placeholder?.acp_log_subject).toBeTruthy();
     (writer as any).dispose?.(true);
   });
 
+  it("updates an existing queued placeholder with actual ACP start time", async () => {
+    const { syncdb, sets, setCurrent } = makeFakeSyncDB();
+    setCurrent({
+      event: "chat",
+      sender_id: "u",
+      date: "123",
+      message_id: "msg-0",
+      thread_id: "thread-0",
+      generating: true,
+      history: [
+        { author_id: "u", content: ":robot: Thinking...", date: "123" },
+      ],
+      get(key: string) {
+        return (this as any)[key];
+      },
+    });
+    const writer: any = new ChatStreamWriter({
+      metadata: baseMetadata,
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      syncdbOverride: syncdb as any,
+      logStoreFactory: () =>
+        ({
+          set: async () => {},
+        }) as any,
+    });
+    await writer.waitUntilReady();
+
+    await (writer as any).handle({
+      type: "event",
+      event: { type: "message", text: "still working" } as any,
+      seq: 0,
+    } as AcpStreamMessage);
+
+    const startedAtUpdate = sets.find(
+      (row: any) =>
+        row.message_id === "msg-0" &&
+        row.generating === true &&
+        row.acp_started_at_ms === 1234,
+    );
+    expect(startedAtUpdate).toBeTruthy();
+    (writer as any).dispose?.(true);
+  });
+
   it("does not durably rewrite chat rows for streaming events", async () => {
     const { syncdb, setCurrent, getCommits, getSaves } = makeFakeSyncDB();
     setCurrent({
-      get: (key: string) => (key === "generating" ? true : undefined),
+      get: (key: string) => {
+        if (key === "generating") return true;
+        if (key === "acp_started_at_ms") return 1234;
+        return undefined;
+      },
     });
     const writer: any = new ChatStreamWriter({
       metadata: baseMetadata,
@@ -526,6 +577,7 @@ describe("ChatStreamWriter", () => {
     };
     await (writer as any).handle(payload);
     (writer as any).persistLogProgress.flush();
+    (writer as any).flushPublishedLog.flush();
     await (writer as any).handle({
       type: "summary",
       finalResponse: "done",
@@ -535,6 +587,48 @@ describe("ChatStreamWriter", () => {
     expect(publish).toHaveBeenCalled();
     expect(logSet).toHaveBeenCalled();
     (writer as any).dispose?.(true);
+  });
+
+  it("coalesces live log publishes into short backend batches", async () => {
+    jest.useFakeTimers();
+    const publish = jest.fn().mockResolvedValue(undefined);
+    const { syncdb } = makeFakeSyncDB();
+    const writer: any = new ChatStreamWriter({
+      metadata: baseMetadata,
+      client: { publish } as any,
+      approverAccountId: "u",
+      syncdbOverride: syncdb as any,
+      logStoreFactory: () =>
+        ({
+          set: async () => {},
+        }) as any,
+    });
+
+    await (writer as any).handle({
+      type: "event",
+      event: { type: "message", text: "Hel" } as any,
+      seq: 0,
+    } as AcpStreamMessage);
+    await (writer as any).handle({
+      type: "event",
+      event: { type: "message", text: "lo" } as any,
+      seq: 1,
+    } as AcpStreamMessage);
+
+    expect(publish).not.toHaveBeenCalled();
+
+    await jest.advanceTimersByTimeAsync(120);
+
+    expect(publish).toHaveBeenCalledTimes(1);
+    expect(publish).toHaveBeenCalledWith(
+      "project.p.acp-log.thread-0.msg-0",
+      expect.arrayContaining([
+        expect.objectContaining({ seq: 0, type: "event" }),
+        expect.objectContaining({ seq: 1, type: "event" }),
+      ]),
+    );
+    (writer as any).dispose?.(true);
+    jest.useRealTimers();
   });
 
   it("persists durable timestamps on published log events", async () => {
@@ -559,10 +653,12 @@ describe("ChatStreamWriter", () => {
     } as AcpStreamMessage);
 
     (writer as any).persistLogProgress.flush();
+    (writer as any).flushPublishedLog.flush();
     await flush(writer);
 
     const published = publish.mock.calls[0]?.[1];
-    expect(typeof published?.time).toBe("number");
+    const publishedEvents = Array.isArray(published) ? published : [published];
+    expect(typeof publishedEvents?.[0]?.time).toBe("number");
 
     const persistedEvents = logSet.mock.calls[0]?.[1];
     expect(Array.isArray(persistedEvents)).toBe(true);
@@ -928,9 +1024,131 @@ describe("ChatStreamWriter", () => {
     await flush(writer);
 
     expect((writer as any).content).toContain("Please fix X");
-    const final = sets[sets.length - 1];
+    const final = [...sets]
+      .reverse()
+      .find((row: any) => row.message_id === baseMetadata.message_id) as any;
     expect(final.generating).toBe(false);
-    expect((final as any).acp_interrupted).toBe(true);
+    expect(final.acp_interrupted).toBe(true);
+    (writer as any).dispose?.(true);
+  });
+
+  it("persists interrupted content immediately when a running turn is interrupted", async () => {
+    const { syncdb, sets } = makeFakeSyncDB();
+    const writer: any = new ChatStreamWriter({
+      metadata: baseMetadata,
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      syncdbOverride: syncdb as any,
+      logStoreFactory: () =>
+        ({
+          set: async () => {},
+        }) as any,
+    });
+
+    await (writer as any).handle({
+      type: "event",
+      event: {
+        type: "message",
+        text: "First paragraph.",
+      } as any,
+      seq: 0,
+    } as AcpStreamMessage);
+    await (writer as any).handle({
+      type: "event",
+      event: {
+        type: "message",
+        text: "Second paragraph.",
+      } as any,
+      seq: 1,
+    } as AcpStreamMessage);
+    (writer as any).notifyInterrupted("Conversation interrupted.");
+    await flush(writer);
+
+    const final = sets[sets.length - 1] as any;
+    expect(final.generating).toBe(false);
+    expect(final.acp_interrupted).toBe(true);
+    expect(final.history?.[0]?.content ?? "").toContain("First paragraph.");
+    expect(final.history?.[0]?.content ?? "").toContain("Second paragraph.");
+    expect(final.history?.[0]?.content ?? "").toContain(
+      "Conversation interrupted.",
+    );
+    (writer as any).dispose?.(true);
+  });
+
+  it("keeps streamed output and appends the interrupt notice when no final summary arrives", async () => {
+    const { syncdb } = makeFakeSyncDB();
+    const writer: any = new ChatStreamWriter({
+      metadata: baseMetadata,
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      syncdbOverride: syncdb as any,
+      logStoreFactory: () =>
+        ({
+          set: async () => {},
+        }) as any,
+    });
+
+    await (writer as any).handle({
+      type: "event",
+      event: {
+        type: "message",
+        text: "I'm still working through this.",
+      } as any,
+      seq: 0,
+    } as AcpStreamMessage);
+    (writer as any).notifyInterrupted("Conversation interrupted.");
+    await (writer as any).handle({
+      type: "summary",
+      finalResponse: "",
+      seq: 1,
+    } as AcpStreamMessage);
+    await flush(writer);
+
+    expect((writer as any).content).toContain(
+      "I'm still working through this.",
+    );
+    expect((writer as any).content).toContain("Conversation interrupted.");
+    (writer as any).dispose?.(true);
+  });
+
+  it("persists interrupted content from normalized streamed message chunks", async () => {
+    const { syncdb, sets } = makeFakeSyncDB();
+    const writer: any = new ChatStreamWriter({
+      metadata: baseMetadata,
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      syncdbOverride: syncdb as any,
+      logStoreFactory: () =>
+        ({
+          set: async () => {},
+        }) as any,
+    });
+
+    for (const [seq, text] of [
+      [0, "I"],
+      [1, "'m"],
+      [2, " going"],
+      [3, " to"],
+      [4, " wait"],
+      [5, " here."],
+    ] as const) {
+      await (writer as any).handle({
+        type: "event",
+        event: {
+          type: "message",
+          text,
+        } as any,
+        seq,
+      } as AcpStreamMessage);
+    }
+    (writer as any).notifyInterrupted("Conversation interrupted.");
+    await flush(writer);
+
+    const final = sets[sets.length - 1] as any;
+    expect(final.generating).toBe(false);
+    expect(final.history?.[0]?.content).toBe(
+      "I'm going to wait here.\n\nConversation interrupted.",
+    );
     (writer as any).dispose?.(true);
   });
 
@@ -960,11 +1178,13 @@ describe("ChatStreamWriter", () => {
     } as AcpStreamMessage);
     await flush(writer);
 
-    expect((writer as any).content).not.toContain("Please fix X");
     expect((writer as any).content).toContain("late final response");
-    const final = sets[sets.length - 1];
+    expect((writer as any).content).toContain("Please fix X");
+    const final = [...sets]
+      .reverse()
+      .find((row: any) => row.message_id === baseMetadata.message_id) as any;
     expect(final.generating).toBe(false);
-    expect((final as any).acp_interrupted).toBe(true);
+    expect(final.acp_interrupted).toBe(true);
     (writer as any).dispose?.(true);
   });
 

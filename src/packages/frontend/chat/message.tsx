@@ -42,6 +42,7 @@ import { isCodexModelName } from "@cocalc/util/ai/codex";
 import {
   deriveAcpLogRefs,
   getBestResponseText,
+  getInterruptedResponseMarkdown,
   getLiveResponseMarkdown,
   type InlineCodeLink,
 } from "@cocalc/chat";
@@ -344,15 +345,28 @@ export function resolveRenderedMessageValue({
   rowValue,
   logValue,
   generating,
+  interrupted,
 }: {
   rowValue: string;
   logValue?: string;
   generating: boolean;
+  interrupted?: boolean;
 }): string {
+  const trimmedRow = rowValue.trim();
+  if (
+    interrupted &&
+    trimmedRow.length > 0 &&
+    trimmedRow !== ACP_THINKING_PLACEHOLDER
+  ) {
+    return rowValue;
+  }
   if (
     typeof logValue === "string" &&
     logValue.trim().length > 0 &&
-    (generating || rowValue.trim().length === 0)
+    (interrupted ||
+      generating ||
+      trimmedRow.length === 0 ||
+      trimmedRow === ACP_THINKING_PLACEHOLDER)
   ) {
     return logValue;
   }
@@ -541,6 +555,21 @@ export default function Message({
     () => field<boolean>(message, "acp_interrupted") === true,
     [message],
   );
+  const acpInterruptedText = useMemo(
+    () => field<string>(message, "acp_interrupted_text"),
+    [message],
+  );
+  const acpStartedAtMs = useMemo(() => {
+    const value = field<number | string>(message, "acp_started_at_ms");
+    if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+      return value;
+    }
+    if (typeof value === "string") {
+      const parsed = Number(value);
+      if (Number.isFinite(parsed) && parsed > 0) return parsed;
+    }
+    return undefined;
+  }, [message]);
   const effectiveGenerating = useMemo(() => {
     return resolveEffectiveGenerating({
       isCodexThread,
@@ -558,8 +587,8 @@ export default function Message({
   }, [isEditing, message]);
 
   useEffect(() => {
-    if (effectiveGenerating && date > 0) {
-      const start = date;
+    const start = acpStartedAtMs ?? date;
+    if (effectiveGenerating && start > 0) {
       const update = () => {
         setElapsedMs(Date.now() - start);
       };
@@ -569,7 +598,7 @@ export default function Message({
     } else {
       setElapsedMs(0);
     }
-  }, [effectiveGenerating, date]);
+  }, [effectiveGenerating, acpStartedAtMs, date]);
 
   const elapsedLabel = useMemo(() => {
     if (!elapsedMs || elapsedMs < 0) return "";
@@ -721,8 +750,15 @@ export default function Message({
   const loadLogBody = useMemo(() => {
     if (!showCodexActivity || !project_id) return false;
     if (effectiveGenerating) return true;
+    if (acpInterrupted) return true;
     return rowMessageValue.trim().length === 0;
-  }, [showCodexActivity, project_id, effectiveGenerating, rowMessageValue]);
+  }, [
+    showCodexActivity,
+    project_id,
+    effectiveGenerating,
+    acpInterrupted,
+    rowMessageValue,
+  ]);
   const codexBodyLog = useCodexLog({
     projectId: project_id,
     logStore,
@@ -741,8 +777,19 @@ export default function Message({
     if (effectiveGenerating) {
       return getLiveResponseMarkdown(codexBodyLog.events as any);
     }
+    if (acpInterrupted) {
+      return getInterruptedResponseMarkdown(
+        codexBodyLog.events as any,
+        acpInterruptedText,
+      );
+    }
     return getBestResponseText(codexBodyLog.events as any);
-  }, [codexBodyLog.events, effectiveGenerating]);
+  }, [
+    acpInterrupted,
+    acpInterruptedText,
+    codexBodyLog.events,
+    effectiveGenerating,
+  ]);
   const lastCodexActivityAtMs = useMemo(
     () => getLatestCodexActivityAtMs(codexBodyLog.events),
     [codexBodyLog.events],
@@ -753,8 +800,9 @@ export default function Message({
         rowValue: rowMessageValue,
         logValue: codexBodyValue,
         generating: effectiveGenerating,
+        interrupted: acpInterrupted,
       }),
-    [codexBodyValue, effectiveGenerating, rowMessageValue],
+    [acpInterrupted, codexBodyValue, effectiveGenerating, rowMessageValue],
   );
   const renderedMessageMarkdown = useMemo(
     () =>
@@ -819,7 +867,7 @@ export default function Message({
   const durationLabel = effectiveGenerating
     ? elapsedLabel
     : formatTurnDuration({
-        startMs: date,
+        startMs: acpStartedAtMs ?? date,
         history: historyEntries,
       });
 
@@ -1382,6 +1430,7 @@ export default function Message({
           generating={effectiveGenerating}
           durationLabel={durationLabel}
           lastActivityAtMs={lastCodexActivityAtMs}
+          startedAtMs={acpStartedAtMs}
           fontSize={font_size}
           project_id={project_id}
           path={path}

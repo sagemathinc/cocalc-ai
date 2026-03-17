@@ -120,6 +120,7 @@ export interface ChatMessage {
   acp_log_turn?: string | null;
   acp_log_subject?: string | null;
   acp_thread_id?: string | null;
+  acp_started_at_ms?: number;
   acp_usage?: any;
   acp_config?: CodexThreadConfig;
   acp_account_id?: string;
@@ -161,6 +162,7 @@ export interface BuildChatMessageOptions {
   acp_log_key?: string | null;
   acp_log_subject?: string | null;
   acp_thread_id?: string | null;
+  acp_started_at_ms?: number;
   acp_usage?: any;
   historyAuthorId?: string;
   historyEntryDate?: string;
@@ -195,6 +197,7 @@ export function buildChatMessage(
     acp_log_key: options.acp_log_key,
     acp_log_subject: options.acp_log_subject,
     acp_thread_id: options.acp_thread_id,
+    acp_started_at_ms: options.acp_started_at_ms,
     acp_usage: options.acp_usage,
     acp_account_id: options.acp_account_id,
     message_id: options.message_id,

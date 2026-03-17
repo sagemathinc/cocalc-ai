@@ -2,10 +2,18 @@
 
 import {
   describeLastActivity,
+  resolveLiveRunStartMs,
   STALE_ACTIVITY_MS,
 } from "../agent-message-status";
 
 describe("describeLastActivity", () => {
+  it("prefers the ACP start time over the row date for live timing", () => {
+    expect(resolveLiveRunStartMs({ startedAtMs: 5000, date: 1000 })).toBe(5000);
+    expect(resolveLiveRunStartMs({ startedAtMs: undefined, date: 1000 })).toBe(
+      1000,
+    );
+  });
+
   it("returns no label when not generating", () => {
     expect(
       describeLastActivity({

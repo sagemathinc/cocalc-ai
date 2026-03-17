@@ -67,6 +67,8 @@ import { acquireChatSyncDB, releaseChatSyncDB } from "@cocalc/chat/server";
 import {
   appendStreamMessage,
   extractEventText,
+  getInterruptedResponseMarkdown,
+  getLiveResponseMarkdown,
   getLatestMessageText,
   getLatestSummaryText,
 } from "@cocalc/chat";
@@ -147,6 +149,18 @@ import { getConfiguredCodexBackend } from "./codex-backend";
 // How often to persist in-flight ACP metadata (thread state/usage/flags).
 // Message body content is persisted at terminal commits only.
 const COMMIT_INTERVAL = 2_000;
+// Coalesce high-frequency live ACP output so we do not publish one network
+// message per streamed word/chunk. A 100ms cadence still feels realtime.
+const ACP_LOG_PUBLISH_FLUSH_MS = envNumber(
+  "COCALC_ACP_LOG_PUBLISH_FLUSH_MS",
+  100,
+);
+// Persist incremental ACP log state to AKV on a slightly slower cadence than
+// pubsub. This keeps reload/reconnect fast without writing AKV on every token.
+const ACP_LOG_PERSIST_FLUSH_MS = envNumber(
+  "COCALC_ACP_LOG_PERSIST_FLUSH_MS",
+  250,
+);
 const LEASE_HEARTBEAT_INTERVAL = 2_000;
 const TERMINAL_CHAT_VERIFY_DELAYS_MS = [0, 100, 250, 500, 1_000] as const;
 const MESSAGE_ID_LOOKUP_WARN_ROWS = 2_000;
@@ -322,6 +336,17 @@ function envNumber(name: string, fallback: number): number {
 
 function roundMs(value: number): number {
   return Math.round(value * 10) / 10;
+}
+
+function appendInterruptedNoticeToContent(
+  content: string | undefined,
+  interruptedText: string | undefined,
+): string | undefined {
+  const base = `${content ?? ""}`.trim();
+  const suffix = `${interruptedText ?? INTERRUPT_STATUS_TEXT}`.trim();
+  if (!base) return suffix || undefined;
+  if (!suffix || base.includes(suffix)) return base;
+  return `${base}\n\n${suffix}`;
 }
 
 function formatQueuedDelay(ms: number): string {
@@ -1303,6 +1328,7 @@ export class ChatStreamWriter {
   private usage: AcpStreamUsage | null = null;
   private content = "";
   private lastCommittedThreadId: string | null = null;
+  private lastCommittedStartedAtMs: number | null = null;
   private lastCommittedUsageJson = "null";
   private lastCommittedInterrupted = false;
   private lastCommittedGenerating: boolean | undefined;
@@ -1323,6 +1349,7 @@ export class ChatStreamWriter {
   private logStoreName: string;
   private logKey: string;
   private logSubject: string;
+  private readonly pendingPublishedLogEvents: AcpStreamMessage[] = [];
   private client: ConatClient;
   private timeTravel?: AgentTimeTravelRecorder;
   private integritySnapshot: ChatIntegritySnapshot = {
@@ -1368,8 +1395,23 @@ export class ChatStreamWriter {
         });
       }
     },
-    1000,
-    { leading: true, trailing: true },
+    ACP_LOG_PERSIST_FLUSH_MS,
+    { leading: false, trailing: true },
+  );
+  private flushPublishedLog = throttle(
+    () => {
+      if (this.closed || this.pendingPublishedLogEvents.length === 0) return;
+      const batch = this.pendingPublishedLogEvents.splice(
+        0,
+        this.pendingPublishedLogEvents.length,
+      );
+      const payload = batch.length === 1 ? batch[0] : batch;
+      void this.client
+        .publish(this.logSubject, payload)
+        .catch((err) => logger.debug("publish log failed", err));
+    },
+    ACP_LOG_PUBLISH_FLUSH_MS,
+    { leading: false, trailing: true },
   );
 
   // Read a field from a syncdb record that may be either an Immutable.js map
@@ -1783,6 +1825,10 @@ export class ChatStreamWriter {
         content: ":robot: Thinking...",
         generating: true,
         acp_account_id: this.approverAccountId,
+        acp_started_at_ms:
+          Number(this.metadata.started_at_ms) > 0
+            ? Number(this.metadata.started_at_ms)
+            : undefined,
         acp_log_store: this.logStoreName,
         acp_log_key: this.logKey,
         acp_log_subject: this.logSubject,
@@ -1805,6 +1851,7 @@ export class ChatStreamWriter {
     if (arr.length > 0) {
       this.prevHistory = arr.slice(1);
     }
+    this.primeCommittedStateFromRow(current);
     const queued = listAcpPayloads(this.metadata);
     for (const payload of queued) {
       this.processPayload(payload, { persist: false });
@@ -1871,11 +1918,13 @@ export class ChatStreamWriter {
     }
     if (payload.type === "status") {
       this.setThreadState(payload.state === "running" ? "running" : "queued");
+      this.commitNow(true);
       return;
     }
     if ((payload as any).type === "usage") {
       // Live usage updates from Codex; stash for commit and don't treat as a user-visible event.
       this.usage = (payload as any).usage ?? null;
+      this.commitNow(true);
       return;
     }
     this.events = appendStreamMessage(this.events, payload);
@@ -1895,10 +1944,12 @@ export class ChatStreamWriter {
         // Use the merged text so we preserve the full streamed body.
         this.content = mergedText ?? text;
       }
+      this.commitNow(true);
       return;
     }
     if (payload.type === "summary") {
       if (this.interruptNotified) {
+        const liveResponse = getLiveResponseMarkdown(this.events);
         const latestSummary = getLatestSummaryText(this.events);
         const hasSummary =
           typeof latestSummary === "string" && latestSummary.trim().length > 0;
@@ -1920,6 +1971,12 @@ export class ChatStreamWriter {
           this.contentBeforeInterrupt.trim().length > 0
             ? this.contentBeforeInterrupt
             : undefined;
+        const liveNonInterruptContent =
+          typeof liveResponse === "string" &&
+          liveResponse.trim().length > 0 &&
+          liveResponse !== this.interruptedMessage
+            ? liveResponse
+            : undefined;
         const currentNonInterruptContent =
           typeof this.content === "string" &&
           this.content.trim().length > 0 &&
@@ -1927,16 +1984,21 @@ export class ChatStreamWriter {
             ? this.content
             : undefined;
         const candidate =
+          liveNonInterruptContent ??
           summaryText ??
           latestNonInterruptMessage ??
           currentNonInterruptContent ??
           preservedContent ??
           this.interruptedMessage;
         if (candidate) {
-          this.content = stripLoopContractForDisplay(
-            candidate,
-            this.metadata.loop_config?.enabled === true,
-          );
+          this.content =
+            appendInterruptedNoticeToContent(
+              stripLoopContractForDisplay(
+                candidate,
+                this.metadata.loop_config?.enabled === true,
+              ),
+              this.interruptedMessage,
+            ) ?? candidate;
         }
         this.finishedBy = "interrupt";
       } else {
@@ -2031,6 +2093,10 @@ export class ChatStreamWriter {
       acp_log_key: this.logKey,
       acp_log_subject: this.logSubject,
       acp_thread_id: this.threadId,
+      acp_started_at_ms:
+        Number(this.metadata.started_at_ms) > 0
+          ? Number(this.metadata.started_at_ms)
+          : undefined,
       acp_usage: this.usage,
       acp_account_id: this.approverAccountId,
       message_id: this.metadata.message_id,
@@ -2068,6 +2134,10 @@ export class ChatStreamWriter {
       acp_log_key: this.logKey,
       acp_log_subject: this.logSubject,
       acp_thread_id: this.threadId,
+      acp_started_at_ms:
+        Number(this.metadata.started_at_ms) > 0
+          ? Number(this.metadata.started_at_ms)
+          : undefined,
       acp_usage: this.usage,
       acp_account_id: this.approverAccountId,
       message_id: this.metadata.message_id,
@@ -2091,11 +2161,42 @@ export class ChatStreamWriter {
     }
   }
 
+  private normalizeStartedAtMs(value: unknown): number | null {
+    const num =
+      typeof value === "number"
+        ? value
+        : typeof value === "string"
+          ? Number(value)
+          : NaN;
+    return Number.isFinite(num) && num > 0 ? num : null;
+  }
+
+  private primeCommittedStateFromRow(row: any): void {
+    if (row == null) return;
+    this.lastCommittedThreadId =
+      this.recordField<string>(row, "acp_thread_id") ?? null;
+    this.lastCommittedStartedAtMs = this.normalizeStartedAtMs(
+      this.recordField<number | string>(row, "acp_started_at_ms"),
+    );
+    try {
+      this.lastCommittedUsageJson = JSON.stringify(
+        this.recordField<any>(row, "acp_usage") ?? null,
+      );
+    } catch {
+      this.lastCommittedUsageJson = "null";
+    }
+    this.lastCommittedInterrupted =
+      this.recordField<boolean>(row, "acp_interrupted") === true;
+    this.lastCommittedGenerating = this.recordField<boolean>(row, "generating");
+  }
+
   private hasMetadataDelta(generating: boolean): boolean {
     const usageChanged =
       this.lastCommittedUsageJson !== this.usageFingerprint();
+    const startedAtMs = this.normalizeStartedAtMs(this.metadata.started_at_ms);
     return (
       this.lastCommittedThreadId !== this.threadId ||
+      this.lastCommittedStartedAtMs !== startedAtMs ||
       this.lastCommittedInterrupted !== this.interruptNotified ||
       this.lastCommittedGenerating !== generating ||
       // During active runs we keep row churn minimal and stream live detail
@@ -2116,6 +2217,9 @@ export class ChatStreamWriter {
 
   private markCommitted(generating: boolean): void {
     this.lastCommittedThreadId = this.threadId;
+    this.lastCommittedStartedAtMs = this.normalizeStartedAtMs(
+      this.metadata.started_at_ms,
+    );
     this.lastCommittedUsageJson = this.usageFingerprint();
     this.lastCommittedInterrupted = this.interruptNotified;
     this.lastCommittedGenerating = generating;
@@ -2401,6 +2505,12 @@ export class ChatStreamWriter {
     } catch {
       // ignore
     }
+    try {
+      this.flushPublishedLog.flush();
+    } catch {
+      // ignore
+    }
+    this.flushPublishedLog.cancel();
     void this.persistLog();
     this.disposePromise = (async () => {
       try {
@@ -2536,12 +2646,14 @@ export class ChatStreamWriter {
     if (!this.content || this.content.trim().length === 0) {
       this.content = text;
     }
+    this.content =
+      appendInterruptedNoticeToContent(
+        getInterruptedResponseMarkdown(this.events, text) ?? this.content,
+        text,
+      ) ?? text;
     this.finishedBy = "interrupt";
     this.setThreadState("interrupted");
-    this.addLocalEvent({
-      type: "message",
-      text,
-    });
+    this.commitNow(false, "throttled");
   }
 
   getKnownThreadIds(): string[] {
@@ -2641,9 +2753,11 @@ export class ChatStreamWriter {
 
   private publishLog(event: AcpStreamMessage): void {
     if (this.closed) return;
-    void this.client
-      .publish(this.logSubject, event)
-      .catch((err) => logger.debug("publish log failed", err));
+    this.pendingPublishedLogEvents.push(event);
+    this.flushPublishedLog();
+    if (event.type === "summary" || event.type === "error") {
+      this.flushPublishedLog.flush();
+    }
   }
 
   private async persistLog(): Promise<void> {
@@ -3832,9 +3946,18 @@ async function executeAcpRequest({
   if (!conatClient) {
     throw Error("conat client must be initialized");
   }
-  const chatWriter = request.chat
+  const chatContext = request.chat
+    ? {
+        ...request.chat,
+        started_at_ms:
+          Number(request.chat.started_at_ms) > 0
+            ? Number(request.chat.started_at_ms)
+            : startedAt,
+      }
+    : undefined;
+  const chatWriter = chatContext
     ? new ChatStreamWriter({
-        metadata: request.chat,
+        metadata: chatContext,
         client: conatClient,
         approverAccountId: request.account_id,
         sessionKey: request.session_id,

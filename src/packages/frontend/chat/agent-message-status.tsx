@@ -53,6 +53,18 @@ function formatTimestampTitle(ms: number): string {
   return new Date(ms).toLocaleString();
 }
 
+export function resolveLiveRunStartMs({
+  startedAtMs,
+  date,
+}: {
+  startedAtMs?: number;
+  date: number;
+}): number {
+  return typeof startedAtMs === "number" && Number.isFinite(startedAtMs)
+    ? startedAtMs
+    : date;
+}
+
 export function describeLastActivity({
   generating,
   lastActivityAtMs,
@@ -84,6 +96,7 @@ interface AgentMessageStatusProps {
   generating: boolean;
   durationLabel: string;
   lastActivityAtMs?: number;
+  startedAtMs?: number;
   fontSize?: number;
   project_id?: string;
   path?: string;
@@ -102,6 +115,7 @@ export function AgentMessageStatus({
   generating,
   durationLabel,
   lastActivityAtMs,
+  startedAtMs,
   fontSize,
   project_id,
   path,
@@ -127,11 +141,12 @@ export function AgentMessageStatus({
   const restoringRef = useRef(false);
   const [contentVersion, setContentVersion] = useState(0);
   const [tick, setTick] = useState(0);
+  const runStartMs = resolveLiveRunStartMs({ startedAtMs, date });
   const liveDurationLabel = useMemo(() => {
     if (!generating) return durationLabel;
-    if (!Number.isFinite(date) || date <= 0) return durationLabel;
-    return formatElapsed(Date.now() - date);
-  }, [date, durationLabel, generating, tick]);
+    if (!Number.isFinite(runStartMs) || runStartMs <= 0) return durationLabel;
+    return formatElapsed(Date.now() - runStartMs);
+  }, [runStartMs, durationLabel, generating, tick]);
   const lastActivityInfo = useMemo(
     () =>
       describeLastActivity({
@@ -146,8 +161,8 @@ export function AgentMessageStatus({
     : COLORS.GRAY_D;
   const liveStatusTitle = useMemo(() => {
     const parts: string[] = [];
-    if (Number.isFinite(date) && date > 0) {
-      parts.push(`Running since: ${formatTimestampTitle(date)}`);
+    if (Number.isFinite(runStartMs) && runStartMs > 0) {
+      parts.push(`Running since: ${formatTimestampTitle(runStartMs)}`);
     }
     if (
       typeof lastActivityAtMs === "number" &&
@@ -158,7 +173,7 @@ export function AgentMessageStatus({
       parts.push("Last activity: awaiting first event");
     }
     return parts.join("\n");
-  }, [date, lastActivityAtMs, generating]);
+  }, [runStartMs, lastActivityAtMs, generating]);
   const setActivitySize = (size: number) => {
     setActivitySize0(size);
     try {

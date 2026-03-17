@@ -14,6 +14,7 @@ describe("resolveRenderedMessageValue", () => {
         rowValue: "row text",
         logValue: "log text",
         generating: false,
+        interrupted: false,
       }),
     ).toBe("row text");
   });
@@ -24,6 +25,7 @@ describe("resolveRenderedMessageValue", () => {
         rowValue: "row text",
         logValue: "live log text",
         generating: true,
+        interrupted: false,
       }),
     ).toBe("live log text");
   });
@@ -34,8 +36,20 @@ describe("resolveRenderedMessageValue", () => {
         rowValue: "",
         logValue: "log fallback",
         generating: false,
+        interrupted: false,
       }),
     ).toBe("log fallback");
+  });
+
+  it("uses log content when the durable row is still the ACP placeholder", () => {
+    expect(
+      resolveRenderedMessageValue({
+        rowValue: ACP_THINKING_PLACEHOLDER,
+        logValue: "partial live output",
+        generating: false,
+        interrupted: false,
+      }),
+    ).toBe("partial live output");
   });
 
   it("falls back to row when log text is empty", () => {
@@ -44,8 +58,31 @@ describe("resolveRenderedMessageValue", () => {
         rowValue: "row text",
         logValue: "   ",
         generating: true,
+        interrupted: false,
       }),
     ).toBe("row text");
+  });
+
+  it("prefers log content for interrupted Codex rows", () => {
+    expect(
+      resolveRenderedMessageValue({
+        rowValue: ACP_THINKING_PLACEHOLDER,
+        logValue: "full live output\n\nConversation interrupted.",
+        generating: false,
+        interrupted: true,
+      }),
+    ).toBe("full live output\n\nConversation interrupted.");
+  });
+
+  it("prefers durable interrupted row content once it is available", () => {
+    expect(
+      resolveRenderedMessageValue({
+        rowValue: "Paragraph one.\n\nConversation interrupted.",
+        logValue: "older log content",
+        generating: false,
+        interrupted: true,
+      }),
+    ).toBe("Paragraph one.\n\nConversation interrupted.");
   });
 
   it("suppresses the ACP placeholder body while Codex is still starting", () => {

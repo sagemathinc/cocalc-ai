@@ -4,6 +4,7 @@ import {
   appendStreamMessage,
   getAgentMessageTexts,
   getBestResponseText,
+  getInterruptedResponseMarkdown,
   getLiveResponseMarkdown,
   getLatestEventLineText,
   getLatestMessageText,
@@ -118,6 +119,37 @@ describe("response text helpers", () => {
     expect(getAgentMessageTexts(events)).toEqual(["first", "second"]);
   });
 
+  test("replaces progressive partial agent messages instead of duplicating them", () => {
+    const events: AcpStreamMessage[] = [
+      textEvent("message", "I", 1),
+      textEvent("message", "I'm", 2),
+      textEvent("message", "I'm testing", 3),
+    ];
+    expect(getAgentMessageTexts(events)).toEqual(["I'm testing"]);
+    expect(getLiveResponseMarkdown(events)).toBe("I'm testing");
+  });
+
+  test("replaces earlier agent text that differs only by transient code-span spacing", () => {
+    const events: AcpStreamMessage[] = [
+      textEvent(
+        "message",
+        "I’m running ` sleep 20` in ` bash` exactly as requested.",
+        1,
+      ),
+      textEvent(
+        "message",
+        "I’m running `sleep 20` in `bash` exactly as requested.",
+        2,
+      ),
+    ];
+    expect(getAgentMessageTexts(events)).toEqual([
+      "I’m running `sleep 20` in `bash` exactly as requested.",
+    ]);
+    expect(getInterruptedResponseMarkdown(events, "Conversation interrupted.")).toBe(
+      "I’m running `sleep 20` in `bash` exactly as requested.\n\nConversation interrupted.",
+    );
+  });
+
   test("builds live markdown from agent messages plus streamed summary", () => {
     const events: AcpStreamMessage[] = [
       textEvent("message", "first", 1),
@@ -131,6 +163,20 @@ describe("response text helpers", () => {
     ];
     expect(getLiveResponseMarkdown(events)).toBe(
       "first\n\nsecond\n\nfinal summary",
+    );
+  });
+
+  test("replaces a partial live agent block when the streamed summary extends it", () => {
+    const events: AcpStreamMessage[] = [
+      textEvent("message", "I", 1),
+      {
+        type: "summary",
+        finalResponse: "I'm checking the code path now.",
+        seq: 2,
+      } as AcpStreamMessage,
+    ];
+    expect(getLiveResponseMarkdown(events)).toBe(
+      "I'm checking the code path now.",
     );
   });
 
@@ -152,5 +198,17 @@ describe("response text helpers", () => {
       textEvent("thinking", "reasoning 2", 2),
     ];
     expect(getLiveResponseMarkdown(events)).toBe("reasoning 2");
+  });
+
+  test("builds interrupted markdown from all agent blocks plus the notice", () => {
+    const events: AcpStreamMessage[] = [
+      textEvent("message", "First paragraph.", 1),
+      textEvent("message", "Second paragraph.", 2),
+    ];
+    expect(
+      getInterruptedResponseMarkdown(events, "Conversation interrupted."),
+    ).toBe(
+      "First paragraph.\n\nSecond paragraph.\n\nConversation interrupted.",
+    );
   });
 });
