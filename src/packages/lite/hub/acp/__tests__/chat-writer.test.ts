@@ -1027,12 +1027,15 @@ describe("ChatStreamWriter", () => {
     await flush(writer);
 
     expect((writer as any).getKnownThreadIds()).toContain("thread-live-1");
-    expect(getVersions() - versionsBefore).toBe(2);
+    expect(getVersions() - versionsBefore).toBe(1);
     const metadataUpdate = sets.find(
       (row: any) =>
         row.message_id === "msg-0" && row.acp_thread_id === "thread-live-1",
     );
     expect(metadataUpdate).toBeTruthy();
+    expect(
+      sets.find((row: any) => row.event === "chat-thread-config"),
+    ).toBeUndefined();
     (writer as any).dispose?.(true);
   });
 

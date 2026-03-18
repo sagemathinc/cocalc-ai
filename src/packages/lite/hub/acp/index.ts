@@ -1561,35 +1561,6 @@ export class ChatStreamWriter {
     return threadId || undefined;
   }
 
-  private clearParentMessageAcpState(): void {
-    if (!this.syncdb) return;
-    const parentMessageId =
-      `${(this.metadata as any).parent_message_id ?? ""}`.trim();
-    if (!parentMessageId) return;
-    const current = findChatRowByMessageId(this.syncdb, parentMessageId);
-    if (current == null) return;
-    const rowDate =
-      normalizeIsoDateString(syncdbField<string>(current, "date")) ?? undefined;
-    const rowSender = syncdbField<string>(current, "sender_id");
-    if (!rowDate || !rowSender) return;
-    const update: Record<string, unknown> = {
-      event: "chat",
-      date: rowDate,
-      sender_id: rowSender,
-      message_id: parentMessageId,
-      thread_id:
-        syncdbField<string>(current, "thread_id") ?? this.metadata.thread_id,
-      acp_state: null,
-    };
-    const parentOfParent = syncdbField<string>(current, "parent_message_id");
-    if (parentOfParent) {
-      update.parent_message_id = parentOfParent;
-    }
-    this.syncdb.set(update);
-    this.syncdb.commit();
-    this.markIntegrityDirty("clear-parent-acp-state");
-  }
-
   private markIntegrityDirty(reason: string): void {
     this.integritySnapshot.dirty = true;
     this.integritySnapshot.dirtySinceMs = Date.now();
@@ -1946,7 +1917,6 @@ export class ChatStreamWriter {
     for (const payload of queued) {
       this.processPayload(payload, { persist: false });
     }
-    this.clearParentMessageAcpState();
     this.setThreadState("running");
     try {
       await db.save();
@@ -2927,7 +2897,6 @@ export class ChatStreamWriter {
       });
     }
     this.heartbeatLease();
-    void this.persistSessionId(key);
   }
 
   private getLogStore(): AKV<AcpStreamMessage[]> {
@@ -2996,7 +2965,7 @@ export class ChatStreamWriter {
     }
   }
 
-  private async persistSessionId(sessionId: string): Promise<void> {
+  public async persistSessionId(sessionId: string): Promise<void> {
     await this.ready;
     if (this.closed || !this.syncdb) return;
     const threadId = this.resolvedThreadId();
@@ -4579,33 +4548,8 @@ async function persistQueuedUserMessageProjection({
           ? "queued"
           : "running"
         : null;
-      const current = findChatRowByMessageId(syncdb, user_message_id);
-      if (current != null) {
-        const rowDate =
-          normalizeIsoDateString(syncdbField<string>(current, "date")) ??
-          undefined;
-        const rowSender = syncdbField<string>(current, "sender_id");
-        if (rowDate && rowSender) {
-          const update: Record<string, unknown> = {
-            event: "chat",
-            date: rowDate,
-            sender_id: rowSender,
-            message_id: user_message_id,
-            thread_id: syncdbField<string>(current, "thread_id") ?? thread_id,
-            acp_state: projectedMessageState,
-          };
-          const parentMessageId = syncdbField<string>(
-            current,
-            "parent_message_id",
-          );
-          if (parentMessageId) {
-            update.parent_message_id = parentMessageId;
-          }
-          syncdb.set(update);
-        }
-      }
-
-      if (!waitingInLine) {
+      let touched = false;
+      if (waitingInLine) {
         const nextQueued = queued
           ? user_message_id
           : listQueuedAcpJobsForThread({
@@ -4625,23 +4569,26 @@ async function persistQueuedUserMessageProjection({
             schema_version: THREAD_STATE_SCHEMA_VERSION,
           }),
         );
+        touched = true;
       }
 
-      syncdb.commit();
-      await syncdb.save();
-      logSyncdbPatchflowDelta({
-        syncdb,
-        before: versionCountBefore,
-        phase: "queued-user-projection",
-        extra: {
-          project_id,
-          path,
-          thread_id,
-          user_message_id,
-          queued,
-          projectedMessageState,
-        },
-      });
+      if (touched) {
+        syncdb.commit();
+        await syncdb.save();
+        logSyncdbPatchflowDelta({
+          syncdb,
+          before: versionCountBefore,
+          phase: "queued-user-projection",
+          extra: {
+            project_id,
+            path,
+            thread_id,
+            user_message_id,
+            queued,
+            projectedMessageState,
+          },
+        });
+      }
       return projectedMessageState;
     },
   });
@@ -5317,37 +5264,39 @@ async function prepareQueuedUserMessageForExecution({
             threadId: thread_id,
             excludeMessageId: user_message_id,
           });
-          const update: Record<string, unknown> = {
-            event: "chat",
-            date: rowDate,
-            sender_id: rowSender,
-            message_id: user_message_id,
-            thread_id: syncdbField<string>(current, "thread_id") ?? thread_id,
-            acp_state: null,
-          };
           const currentParentMessageId = syncdbField<string>(
             current,
             "parent_message_id",
           );
           const effectiveParentMessageId =
             latestParentMessageId ?? currentParentMessageId;
-          if (effectiveParentMessageId) {
-            update.parent_message_id = effectiveParentMessageId;
+          if (
+            effectiveParentMessageId &&
+            effectiveParentMessageId !== currentParentMessageId
+          ) {
+            const update: Record<string, unknown> = {
+              event: "chat",
+              date: rowDate,
+              sender_id: rowSender,
+              message_id: user_message_id,
+              thread_id: syncdbField<string>(current, "thread_id") ?? thread_id,
+              parent_message_id: effectiveParentMessageId,
+            };
+            syncdb.set(update);
+            syncdb.commit();
+            await syncdb.save();
+            logSyncdbPatchflowDelta({
+              syncdb,
+              before: versionCountBefore,
+              phase: "queued-user-prepare",
+              extra: {
+                project_id,
+                path,
+                thread_id,
+                user_message_id,
+              },
+            });
           }
-          syncdb.set(update);
-          syncdb.commit();
-          await syncdb.save();
-          logSyncdbPatchflowDelta({
-            syncdb,
-            before: versionCountBefore,
-            phase: "queued-user-prepare",
-            extra: {
-              project_id,
-              path,
-              thread_id,
-              user_message_id,
-            },
-          });
         }
       }
     },
