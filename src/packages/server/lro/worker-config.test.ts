@@ -43,6 +43,20 @@ describe("parallel ops worker config", () => {
         return { rows: rows.has(key) ? [rows.get(key)] : [] };
       }
 
+      if (
+        sql.includes("SELECT worker_kind, scope_type, scope_id, limit_value") &&
+        sql.includes("scope_id = ANY($3::text[])")
+      ) {
+        return {
+          rows: (params?.[2] ?? [])
+            .map(
+              (scope_id: string) =>
+                rows.get(`${params?.[0]}:${params?.[1]}:${scope_id}`) ?? null,
+            )
+            .filter(Boolean),
+        };
+      }
+
       if (sql.includes("INSERT INTO parallel_ops_limits")) {
         const row: StoredOverride = {
           worker_kind: params?.[0],
@@ -184,5 +198,31 @@ describe("parallel ops worker config", () => {
         scope_id: "host-123",
       }),
     ).resolves.toEqual({ value: 10, source: "default" });
+  });
+
+  it("resolves multiple per-project-host limits in one query", async () => {
+    const { getEffectiveParallelOpsLimits, setParallelOpsLimitOverride } =
+      await import("./worker-config");
+
+    await setParallelOpsLimitOverride({
+      worker_kind: "project-move-source-host",
+      scope_type: "project_host",
+      scope_id: "host-b",
+      limit_value: 3,
+    });
+
+    await expect(
+      getEffectiveParallelOpsLimits({
+        worker_kind: "project-move-source-host",
+        default_limit: 1,
+        scope_type: "project_host",
+        scope_ids: ["host-a", "host-b"],
+      }),
+    ).resolves.toEqual(
+      new Map([
+        ["host-a", { value: 1, source: "default" }],
+        ["host-b", { value: 3, source: "db-override" }],
+      ]),
+    );
   });
 });

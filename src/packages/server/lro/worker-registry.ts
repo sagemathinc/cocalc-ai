@@ -46,10 +46,48 @@ export const parallelOpsWorkerRegistry: ParallelOpsWorkerRegistration[] = [
     dynamic_limit_supported: true,
     lro_kinds: ["project-move"],
     lease_ms: 120_000,
+    notes: [
+      "This is the global project-move admission cap.",
+      "Per-source-host and per-destination-host move limits are reported separately.",
+    ],
     getLimitSnapshot: () => ({
       default_limit: 1,
       configured_limit: 1,
       effective_limit: 1,
+      config_source: "constant",
+    }),
+  },
+  {
+    worker_kind: "project-move-source-host",
+    category: "lro",
+    scope_model: "per-project-host",
+    dynamic_limit_supported: true,
+    lease_ms: 120_000,
+    notes: [
+      "This reports source-host involvement in project-move admission.",
+      "running_count and queued_count here count moves by source host, not separate worker processes.",
+    ],
+    getLimitSnapshot: () => ({
+      default_limit: 1,
+      configured_limit: null,
+      effective_limit: null,
+      config_source: "constant",
+    }),
+  },
+  {
+    worker_kind: "project-move-destination-host",
+    category: "lro",
+    scope_model: "per-project-host",
+    dynamic_limit_supported: true,
+    lease_ms: 120_000,
+    notes: [
+      "This reports destination-host involvement in project-move admission.",
+      "Queued moves without a selected destination are tracked under the 'unassigned' breakdown key.",
+    ],
+    getLimitSnapshot: () => ({
+      default_limit: 1,
+      configured_limit: null,
+      effective_limit: null,
       config_source: "constant",
     }),
   },

@@ -4,6 +4,7 @@ import {
   parallelOpsWorkerRegistryByKind,
 } from "./worker-registry";
 import {
+  summarizeMoveRoleWorkerStatus,
   summarizeCloudVmWorkStatus,
   summarizeHostLocalBackupStatus,
   summarizeLroWorkerStatus,
@@ -184,6 +185,102 @@ describe("summarizeHostLocalBackupStatus", () => {
     ]);
     expect(status.notes).toContain(
       "1 recent running project-hosts did not answer backup execution status requests.",
+    );
+  });
+});
+
+describe("summarizeMoveRoleWorkerStatus", () => {
+  it("reports source-host move admission usage and stale owners", () => {
+    const worker = parallelOpsWorkerRegistryByKind.get(
+      "project-move-source-host",
+    );
+    expect(worker).toBeDefined();
+    const nowMs = Date.parse("2026-03-18T20:00:00.000Z");
+    const status = summarizeMoveRoleWorkerStatus({
+      worker: worker!,
+      role: "source",
+      nowMs,
+      limitByHost: new Map([
+        ["host-a", { value: 1, source: "default" as const }],
+        ["host-b", { value: 2, source: "db-override" as const }],
+      ]),
+      rows: [
+        {
+          status: "queued",
+          owner_id: null,
+          heartbeat_at: null,
+          created_at: new Date("2026-03-18T19:58:00.000Z"),
+          source_host_id: "host-a",
+          dest_host_id: "host-c",
+        },
+        {
+          status: "running",
+          owner_id: "worker-a",
+          heartbeat_at: new Date("2026-03-18T19:59:30.000Z"),
+          created_at: new Date("2026-03-18T19:57:00.000Z"),
+          source_host_id: "host-b",
+          dest_host_id: "host-d",
+        },
+        {
+          status: "running",
+          owner_id: "worker-b",
+          heartbeat_at: new Date("2026-03-18T19:57:00.000Z"),
+          created_at: new Date("2026-03-18T19:56:00.000Z"),
+          source_host_id: "host-b",
+          dest_host_id: "host-e",
+        },
+      ],
+    });
+
+    expect(status.queued_count).toBe(1);
+    expect(status.running_count).toBe(2);
+    expect(status.stale_running_count).toBe(1);
+    expect(status.worker_instances).toBe(2);
+    expect(status.config_source).toBe("db-override");
+    expect(status.breakdown).toEqual([
+      { key: "host-a", queued_count: 1, running_count: 0, limit: 1 },
+      { key: "host-b", queued_count: 0, running_count: 2, limit: 2 },
+    ]);
+  });
+
+  it("tracks queued destination-less moves under an unassigned bucket", () => {
+    const worker = parallelOpsWorkerRegistryByKind.get(
+      "project-move-destination-host",
+    );
+    expect(worker).toBeDefined();
+    const status = summarizeMoveRoleWorkerStatus({
+      worker: worker!,
+      role: "destination",
+      nowMs: Date.parse("2026-03-18T20:00:00.000Z"),
+      limitByHost: new Map([
+        ["host-b", { value: 1, source: "default" as const }],
+      ]),
+      rows: [
+        {
+          status: "queued",
+          owner_id: null,
+          heartbeat_at: null,
+          created_at: new Date("2026-03-18T19:59:00.000Z"),
+          source_host_id: "host-a",
+          dest_host_id: null,
+        },
+        {
+          status: "running",
+          owner_id: "worker-a",
+          heartbeat_at: new Date("2026-03-18T19:59:40.000Z"),
+          created_at: new Date("2026-03-18T19:58:00.000Z"),
+          source_host_id: "host-c",
+          dest_host_id: "host-b",
+        },
+      ],
+    });
+
+    expect(status.breakdown).toEqual([
+      { key: "host-b", queued_count: 0, running_count: 1, limit: 1 },
+      { key: "unassigned", queued_count: 1, running_count: 0, limit: null },
+    ]);
+    expect(status.notes).toContain(
+      "Queued moves without a selected destination are tracked under the 'unassigned' breakdown key.",
     );
   });
 });

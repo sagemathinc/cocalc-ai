@@ -1,23 +1,41 @@
 import { randomUUID } from "node:crypto";
 import getLogger from "@cocalc/backend/logger";
+import getPool from "@cocalc/database/pool";
 import type { LroSummary } from "@cocalc/conat/hub/api/lro";
 import {
-  claimLroOps,
+  ensureLroSchema,
   getLro,
   touchLro,
   updateLro,
 } from "@cocalc/server/lro/lro-db";
-import { getEffectiveParallelOpsLimit } from "@cocalc/server/lro/worker-config";
+import {
+  getEffectiveParallelOpsLimit,
+  getEffectiveParallelOpsLimits,
+} from "@cocalc/server/lro/worker-config";
+import { getParallelOpsWorkerRegistration } from "@cocalc/server/lro/worker-registry";
 import { publishLroEvent, publishLroSummary } from "@cocalc/server/lro/stream";
+import {
+  DEFAULT_R2_REGION,
+  mapCloudRegionToR2Region,
+  parseR2Region,
+} from "@cocalc/util/consts";
 import {
   MOVE_CANCELED_CODE,
   moveProjectToHost,
   type MoveProjectProgressUpdate,
 } from "./move";
+import {
+  computeAvailableMoveHostSlots,
+  selectMoveClaimCandidates,
+  type MoveActiveDestinationHost,
+} from "./move-admission";
 
 const logger = getLogger("server:projects:move-worker");
+const pool = () => getPool();
 
 const MOVE_LRO_KIND = "project-move";
+const MOVE_SOURCE_HOST_WORKER_KIND = "project-move-source-host";
+const MOVE_DESTINATION_HOST_WORKER_KIND = "project-move-destination-host";
 const OWNER_TYPE = "hub" as const;
 const LEASE_MS = 120_000;
 const HEARTBEAT_MS = 15_000;
@@ -47,6 +65,17 @@ const progressRanges: Record<string, { start: number; end: number }> = {
 
 let running = false;
 let inFlight = 0;
+
+type MoveTopologyRow = {
+  source_host_id: string | null;
+  dest_host_id: string | null;
+};
+
+type MoveClaimCandidateRecord = LroSummary & {
+  source_host_id: string | null;
+  dest_host_id: string | null;
+  project_region: string | null;
+};
 
 function publishSummary(summary: LroSummary) {
   return publishLroSummary({
@@ -311,6 +340,238 @@ async function markMoveOpFailedFromWorker({
   }
 }
 
+async function listFreshRunningMoveTopologyRows({
+  lease_ms,
+}: {
+  lease_ms: number;
+}): Promise<MoveTopologyRow[]> {
+  const { rows } = await pool().query<MoveTopologyRow>(
+    `
+      SELECT
+        COALESCE(NULLIF(l.input->>'source_host_id', ''), p.host_id::text) AS source_host_id,
+        NULLIF(l.input->>'dest_host_id', '') AS dest_host_id
+      FROM long_running_operations l
+      JOIN projects p ON p.project_id = l.scope_id::uuid
+      WHERE l.kind = $1
+        AND l.dismissed_at IS NULL
+        AND l.status = 'running'
+        AND l.heartbeat_at IS NOT NULL
+        AND l.heartbeat_at >= now() - ($2::text || ' milliseconds')::interval
+    `,
+    [MOVE_LRO_KIND, lease_ms],
+  );
+  return rows;
+}
+
+async function listActiveMoveDestinationHosts(): Promise<
+  MoveActiveDestinationHost[]
+> {
+  const { rows } = await pool().query<{ id: string; region: string | null }>(
+    `
+      SELECT id, region
+      FROM project_hosts
+      WHERE status = 'running'
+        AND deleted IS NULL
+        AND last_seen > now() - interval '2 minutes'
+      ORDER BY id
+    `,
+  );
+  return rows.map(({ id, region }) => ({
+    host_id: id,
+    project_region: mapCloudRegionToR2Region(region),
+  }));
+}
+
+async function claimMoveLroOps({
+  owner_type,
+  owner_id,
+  limit,
+  lease_ms = LEASE_MS,
+}: {
+  owner_type: "hub";
+  owner_id: string;
+  limit: number;
+  lease_ms?: number;
+}): Promise<LroSummary[]> {
+  if (limit <= 0) return [];
+  const [runningRows, activeDestinationHosts] = await Promise.all([
+    listFreshRunningMoveTopologyRows({ lease_ms }),
+    listActiveMoveDestinationHosts(),
+  ]);
+  const sourceRunningCounts = new Map<string, number>();
+  const destRunningCounts = new Map<string, number>();
+  for (const row of runningRows) {
+    if (row.source_host_id) {
+      sourceRunningCounts.set(
+        row.source_host_id,
+        (sourceRunningCounts.get(row.source_host_id) ?? 0) + 1,
+      );
+    }
+    if (row.dest_host_id) {
+      destRunningCounts.set(
+        row.dest_host_id,
+        (destRunningCounts.get(row.dest_host_id) ?? 0) + 1,
+      );
+    }
+  }
+
+  await ensureLroSchema();
+  const client = await pool().connect();
+  try {
+    await client.query("BEGIN");
+    const { rows } = await client.query<MoveClaimCandidateRecord>(
+      `
+        SELECT
+          l.*,
+          COALESCE(NULLIF(l.input->>'source_host_id', ''), p.host_id::text) AS source_host_id,
+          NULLIF(l.input->>'dest_host_id', '') AS dest_host_id,
+          p.region AS project_region
+        FROM long_running_operations l
+        JOIN projects p ON p.project_id = l.scope_id::uuid
+        WHERE l.kind = $1
+          AND (
+            l.status = 'queued'
+            OR (
+              l.status = 'running'
+              AND (l.heartbeat_at IS NULL OR l.heartbeat_at < now() - ($2::text || ' milliseconds')::interval)
+            )
+          )
+        ORDER BY
+          CASE WHEN l.status = 'queued' THEN 0 ELSE 1 END,
+          l.updated_at
+        FOR UPDATE OF l SKIP LOCKED
+        LIMIT $3
+      `,
+      [MOVE_LRO_KIND, lease_ms, Math.max(limit * 8, 50)],
+    );
+    if (rows.length === 0) {
+      await client.query("ROLLBACK");
+      return [];
+    }
+
+    const sourceHostIds = Array.from(
+      new Set(
+        rows
+          .map(({ source_host_id }) => source_host_id)
+          .filter(Boolean) as string[],
+      ),
+    );
+    const destHostIds = Array.from(
+      new Set([
+        ...rows.map(({ dest_host_id }) => dest_host_id).filter(Boolean),
+        ...activeDestinationHosts.map(({ host_id }) => host_id),
+      ] as string[]),
+    );
+    const sourceRegistration = getParallelOpsWorkerRegistration(
+      MOVE_SOURCE_HOST_WORKER_KIND,
+    );
+    const destRegistration = getParallelOpsWorkerRegistration(
+      MOVE_DESTINATION_HOST_WORKER_KIND,
+    );
+    const defaultSourceLimit =
+      sourceRegistration?.getLimitSnapshot().default_limit ?? 1;
+    const defaultDestLimit =
+      destRegistration?.getLimitSnapshot().default_limit ?? 1;
+    const [sourceLimits, destLimits] = await Promise.all([
+      getEffectiveParallelOpsLimits({
+        worker_kind: MOVE_SOURCE_HOST_WORKER_KIND,
+        default_limit: defaultSourceLimit,
+        scope_type: "project_host",
+        scope_ids: sourceHostIds,
+      }),
+      getEffectiveParallelOpsLimits({
+        worker_kind: MOVE_DESTINATION_HOST_WORKER_KIND,
+        default_limit: defaultDestLimit,
+        scope_type: "project_host",
+        scope_ids: destHostIds,
+      }),
+    ]);
+    const sourceLimitByHost = new Map(
+      sourceHostIds.map((host_id) => [
+        host_id,
+        sourceLimits.get(host_id)?.value ?? defaultSourceLimit,
+      ]),
+    );
+    const destLimitByHost = new Map(
+      destHostIds.map((host_id) => [
+        host_id,
+        destLimits.get(host_id)?.value ?? defaultDestLimit,
+      ]),
+    );
+    const selected = selectMoveClaimCandidates({
+      candidates: rows.map(
+        ({ op_id, source_host_id, dest_host_id, project_region }) => ({
+          op_id,
+          source_host_id,
+          dest_host_id,
+          project_region: parseR2Region(project_region) ?? DEFAULT_R2_REGION,
+        }),
+      ),
+      sourceAvailableByHost: computeAvailableMoveHostSlots({
+        runningCounts: sourceRunningCounts,
+        limitByHost: sourceLimitByHost,
+      }),
+      destAvailableByHost: computeAvailableMoveHostSlots({
+        runningCounts: destRunningCounts,
+        limitByHost: destLimitByHost,
+      }),
+      activeDestinationHosts,
+      limit,
+    });
+    if (selected.length === 0) {
+      await client.query("ROLLBACK");
+      return [];
+    }
+
+    const claimed: LroSummary[] = [];
+    for (const selection of selected) {
+      const updated = await client.query<LroSummary>(
+        `
+          UPDATE long_running_operations
+          SET owner_type = $2,
+              owner_id = $3,
+              heartbeat_at = now(),
+              status = CASE WHEN status = 'queued' THEN 'running' ELSE status END,
+              started_at = COALESCE(started_at, now()),
+              attempt = attempt + 1,
+              updated_at = now(),
+              input = jsonb_set(
+                jsonb_set(
+                  COALESCE(input, '{}'::jsonb),
+                  '{source_host_id}',
+                  to_jsonb($4::text),
+                  true
+                ),
+                '{dest_host_id}',
+                to_jsonb($5::text),
+                true
+              )
+          WHERE op_id = $1
+          RETURNING *
+        `,
+        [
+          selection.op_id,
+          owner_type,
+          owner_id,
+          selection.source_host_id,
+          selection.dest_host_id,
+        ],
+      );
+      if (updated.rows[0]) {
+        claimed.push(updated.rows[0]);
+      }
+    }
+
+    await client.query("COMMIT");
+    return claimed;
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 export function startMoveLroWorker({
   intervalMs = TICK_MS,
   maxParallel,
@@ -342,8 +603,7 @@ export function startMoveLroWorker({
     if (inFlight >= effectiveMaxParallel) return;
     let ops: LroSummary[] = [];
     try {
-      ops = await claimLroOps({
-        kind: MOVE_LRO_KIND,
+      ops = await claimMoveLroOps({
         owner_type: OWNER_TYPE,
         owner_id: WORKER_ID,
         limit: Math.max(1, effectiveMaxParallel - inFlight),

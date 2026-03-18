@@ -7,8 +7,12 @@ import {
   type ParallelOpsWorkerRegistration,
   parallelOpsLroKindToWorkerKind,
   parallelOpsWorkerRegistry,
+  parallelOpsWorkerRegistryByKind,
 } from "./worker-registry";
-import { getEffectiveParallelOpsLimit } from "./worker-config";
+import {
+  getEffectiveParallelOpsLimit,
+  getEffectiveParallelOpsLimits,
+} from "./worker-config";
 import {
   listHostLocalBackupStatuses,
   type HostLocalBackupStatusRow,
@@ -31,6 +35,18 @@ type CloudVmWorkStatusRow = {
   created_at: Date;
   payload: { provider?: string } | null;
 };
+
+type MoveTopologyStatusRow = {
+  status: string;
+  owner_id: string | null;
+  heartbeat_at: Date | null;
+  created_at: Date;
+  source_host_id: string | null;
+  dest_host_id: string | null;
+};
+
+const MOVE_SOURCE_HOST_WORKER_KIND = "project-move-source-host";
+const MOVE_DESTINATION_HOST_WORKER_KIND = "project-move-destination-host";
 
 export interface ParallelOpsWorkerOwnerStatus {
   owner_id: string;
@@ -276,6 +292,138 @@ export function summarizeHostLocalBackupStatus({
   return status;
 }
 
+export function summarizeMoveRoleWorkerStatus({
+  worker,
+  rows,
+  role,
+  nowMs,
+  limit,
+  limitByHost,
+}: {
+  worker: ParallelOpsWorkerRegistration;
+  rows: MoveTopologyStatusRow[];
+  role: "source" | "destination";
+  nowMs: number;
+  limit?: ParallelOpsLimitSnapshot;
+  limitByHost: Map<
+    string,
+    { value: number; source: "default" | "db-override" }
+  >;
+}): ParallelOpsWorkerStatus {
+  const status = baseStatusForWorker(
+    worker,
+    limit ?? worker.getLimitSnapshot(),
+  );
+  const staleCutoffMs =
+    worker.lease_ms != null
+      ? nowMs - worker.lease_ms
+      : Number.NEGATIVE_INFINITY;
+  let oldestQueuedMs: number | null = null;
+  const owners = new Map<string, ParallelOpsWorkerOwnerStatus>();
+  const breakdown = new Map<string, ParallelOpsWorkerBreakdownStatus>();
+  let hasDbOverride = false;
+  let hasUnknownHost = false;
+  let hasUnassignedDestination = false;
+
+  for (const row of rows) {
+    const host_id =
+      role === "source"
+        ? row.source_host_id
+        : (row.dest_host_id ?? (row.status === "queued" ? "unassigned" : null));
+    if (!host_id) {
+      hasUnknownHost = true;
+      continue;
+    }
+    if (host_id === "unassigned") {
+      hasUnassignedDestination = true;
+    }
+    const entry = breakdown.get(host_id) ?? {
+      key: host_id,
+      queued_count: 0,
+      running_count: 0,
+    };
+    if (row.status === "queued") {
+      status.queued_count += 1;
+      entry.queued_count += 1;
+      const ageMs = Math.max(0, nowMs - row.created_at.getTime());
+      oldestQueuedMs =
+        oldestQueuedMs == null ? ageMs : Math.max(oldestQueuedMs, ageMs);
+    } else if (row.status === "running") {
+      status.running_count += 1;
+      entry.running_count += 1;
+      const stale =
+        row.heartbeat_at == null || row.heartbeat_at.getTime() < staleCutoffMs;
+      if (stale) {
+        status.stale_running_count = (status.stale_running_count ?? 0) + 1;
+      }
+      if (row.owner_id) {
+        const owner = owners.get(row.owner_id) ?? {
+          owner_id: row.owner_id,
+          active_count: 0,
+          stale_count: 0,
+        };
+        owner.active_count += 1;
+        if (stale) {
+          owner.stale_count += 1;
+        }
+        owners.set(row.owner_id, owner);
+      }
+    }
+    breakdown.set(host_id, entry);
+  }
+
+  status.oldest_queued_ms = oldestQueuedMs;
+  status.owners = Array.from(owners.values()).sort((a, b) =>
+    a.owner_id.localeCompare(b.owner_id),
+  );
+  status.worker_instances = status.owners.length;
+  status.breakdown = Array.from(breakdown.values())
+    .map((entry) => {
+      if (entry.key === "unassigned") {
+        return { ...entry, limit: null };
+      }
+      const limitEntry = limitByHost.get(entry.key);
+      if (limitEntry?.source === "db-override") {
+        hasDbOverride = true;
+      }
+      return {
+        ...entry,
+        limit: limitEntry?.value ?? null,
+      };
+    })
+    .sort((a, b) => a.key.localeCompare(b.key));
+
+  const uniqueLimits = Array.from(
+    new Set(
+      status.breakdown
+        .map(({ limit }) => limit)
+        .filter((limit) => limit != null),
+    ),
+  );
+  if (uniqueLimits.length === 1) {
+    status.configured_limit = uniqueLimits[0] ?? null;
+    status.effective_limit = uniqueLimits[0] ?? null;
+  } else if (uniqueLimits.length > 1) {
+    status.configured_limit = null;
+    status.effective_limit = null;
+    status.notes.push("Hosts currently report mixed move-admission limits.");
+  }
+  if (hasDbOverride) {
+    status.config_source = "db-override";
+  }
+  if (hasUnassignedDestination) {
+    status.notes.push(
+      "Queued moves without a selected destination are tracked under the 'unassigned' breakdown key.",
+    );
+  }
+  if (hasUnknownHost) {
+    status.notes.push(
+      "Some move ops are missing host metadata for this role and were excluded from the host breakdown.",
+    );
+  }
+  return status;
+}
+
 async function listRelevantLroRows(): Promise<LroStatusRow[]> {
   const lroKinds = Array.from(parallelOpsLroKindToWorkerKind.keys());
   if (lroKinds.length === 0) return [];
@@ -303,13 +451,34 @@ async function listRelevantCloudVmWorkRows(): Promise<CloudVmWorkStatusRow[]> {
   return rows;
 }
 
+async function listRelevantMoveRows(): Promise<MoveTopologyStatusRow[]> {
+  const { rows } = await pool().query<MoveTopologyStatusRow>(
+    `
+      SELECT
+        l.status,
+        l.owner_id,
+        l.heartbeat_at,
+        l.created_at,
+        COALESCE(NULLIF(l.input->>'source_host_id', ''), p.host_id::text) AS source_host_id,
+        NULLIF(l.input->>'dest_host_id', '') AS dest_host_id
+      FROM long_running_operations l
+      JOIN projects p ON p.project_id = l.scope_id::uuid
+      WHERE l.kind = 'project-move'
+        AND l.dismissed_at IS NULL
+        AND l.status IN ('queued', 'running')
+    `,
+  );
+  return rows;
+}
+
 export async function getParallelOpsStatus(): Promise<
   ParallelOpsWorkerStatus[]
 > {
   const nowMs = Date.now();
-  const [lroRows, cloudRows, hostLocalBackup, limitEntries] = await Promise.all(
-    [
+  const [lroRows, moveRows, cloudRows, hostLocalBackup, limitEntries] =
+    await Promise.all([
       listRelevantLroRows(),
+      listRelevantMoveRows(),
       listRelevantCloudVmWorkRows(),
       listHostLocalBackupStatuses(),
       Promise.all(
@@ -321,8 +490,7 @@ export async function getParallelOpsStatus(): Promise<
             ],
         ),
       ),
-    ] as const,
-  );
+    ] as const);
   const limitMap = new Map<string, ParallelOpsLimitSnapshot>(limitEntries);
   const lroRowsByWorker = new Map<string, LroStatusRow[]>();
   for (const row of lroRows) {
@@ -332,6 +500,41 @@ export async function getParallelOpsStatus(): Promise<
     rows.push(row);
     lroRowsByWorker.set(workerKind, rows);
   }
+  const moveSourceWorker = parallelOpsWorkerRegistryByKind.get(
+    MOVE_SOURCE_HOST_WORKER_KIND,
+  );
+  const moveDestinationWorker = parallelOpsWorkerRegistryByKind.get(
+    MOVE_DESTINATION_HOST_WORKER_KIND,
+  );
+  const moveSourceHostIds = Array.from(
+    new Set(
+      moveRows
+        .map(({ source_host_id }) => source_host_id)
+        .filter(Boolean) as string[],
+    ),
+  );
+  const moveDestinationHostIds = Array.from(
+    new Set(
+      moveRows
+        .map(({ dest_host_id }) => dest_host_id)
+        .filter(Boolean) as string[],
+    ),
+  );
+  const [moveSourceLimits, moveDestinationLimits] = await Promise.all([
+    getEffectiveParallelOpsLimits({
+      worker_kind: MOVE_SOURCE_HOST_WORKER_KIND,
+      default_limit: moveSourceWorker?.getLimitSnapshot().default_limit ?? 1,
+      scope_type: "project_host",
+      scope_ids: moveSourceHostIds,
+    }),
+    getEffectiveParallelOpsLimits({
+      worker_kind: MOVE_DESTINATION_HOST_WORKER_KIND,
+      default_limit:
+        moveDestinationWorker?.getLimitSnapshot().default_limit ?? 1,
+      scope_type: "project_host",
+      scope_ids: moveDestinationHostIds,
+    }),
+  ]);
 
   return parallelOpsWorkerRegistry.map((worker) => {
     if (worker.category === "cloud-work") {
@@ -347,6 +550,26 @@ export async function getParallelOpsStatus(): Promise<
         worker,
         rows: hostLocalBackup.rows,
         unreachable_hosts: hostLocalBackup.unreachable_hosts,
+      });
+    }
+    if (worker.worker_kind === MOVE_SOURCE_HOST_WORKER_KIND) {
+      return summarizeMoveRoleWorkerStatus({
+        worker,
+        rows: moveRows,
+        role: "source",
+        nowMs,
+        limit: limitMap.get(worker.worker_kind),
+        limitByHost: moveSourceLimits,
+      });
+    }
+    if (worker.worker_kind === MOVE_DESTINATION_HOST_WORKER_KIND) {
+      return summarizeMoveRoleWorkerStatus({
+        worker,
+        rows: moveRows,
+        role: "destination",
+        nowMs,
+        limit: limitMap.get(worker.worker_kind),
+        limitByHost: moveDestinationLimits,
       });
     }
     return summarizeLroWorkerStatus({
