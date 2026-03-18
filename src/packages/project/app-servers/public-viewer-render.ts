@@ -3,6 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { existsSync, readFileSync } from "node:fs";
 import * as path from "node:path";
 
 import type { AppStaticPublicViewerIntegrationSpec } from "./public-viewer";
@@ -10,6 +11,11 @@ import type { AppStaticPublicViewerIntegrationSpec } from "./public-viewer";
 export interface PublicViewerRenderedFile {
   html: string;
   contentType: string;
+}
+
+interface PublicViewerBundleAssets {
+  scripts: string[];
+  styles: string[];
 }
 
 function escapeHtml(value: string): string {
@@ -23,6 +29,48 @@ function escapeHtml(value: string): string {
 
 function escapeAttribute(value: string): string {
   return escapeHtml(value).replace(/`/g, "&#96;");
+}
+
+function resolveStaticAssetRoots(): string[] {
+  const candidates = [
+    process.env.COCALC_STATIC_PATH,
+    process.env.COCALC_BUNDLE_DIR
+      ? path.join(process.env.COCALC_BUNDLE_DIR, "static")
+      : undefined,
+    path.resolve(__dirname, "../../../../static/dist"),
+    path.resolve(process.cwd(), "packages/static/dist"),
+    path.resolve(process.cwd(), "src/packages/static/dist"),
+  ].filter((value): value is string => typeof value === "string" && !!value);
+  return [...new Set(candidates)];
+}
+
+function normalizeAssetHref(href: string): string {
+  if (/^(https?:)?\/\//.test(href) || href.startsWith("/")) {
+    return href;
+  }
+  return `/static/${href.replace(/^\.?\//, "")}`;
+}
+
+function parseBundleAssets(html: string): PublicViewerBundleAssets {
+  const scripts = Array.from(
+    html.matchAll(/<script[^>]+src="([^"]+)"[^>]*><\/script>/g),
+    (match) => normalizeAssetHref(match[1]),
+  );
+  const styles = Array.from(
+    html.matchAll(/<link[^>]+href="([^"]+)"[^>]*rel="stylesheet"[^>]*>/g),
+    (match) => normalizeAssetHref(match[1]),
+  );
+  return { scripts, styles };
+}
+
+function resolvePublicViewerBundleAssets():
+  | PublicViewerBundleAssets
+  | undefined {
+  for (const root of resolveStaticAssetRoots()) {
+    const htmlPath = path.join(root, "public-viewer.html");
+    if (!existsSync(htmlPath)) continue;
+    return parseBundleAssets(readFileSync(htmlPath, "utf8"));
+  }
 }
 
 function renderInlineMarkdown(line: string): string {
@@ -409,6 +457,59 @@ function buildHtmlDocument({
 </html>`;
 }
 
+function buildBundleShellDocument({
+  title,
+  sourcePath,
+  rawHref,
+  assets,
+  autoRefreshS,
+}: {
+  title: string;
+  sourcePath: string;
+  rawHref: string;
+  assets: PublicViewerBundleAssets;
+  autoRefreshS?: number;
+}): string {
+  const refresh =
+    autoRefreshS && autoRefreshS > 0
+      ? `<meta http-equiv="refresh" content="${Math.floor(autoRefreshS)}" />`
+      : "";
+  const config = escapeHtml(
+    JSON.stringify({
+      path: sourcePath,
+      rawUrl: rawHref,
+      title,
+    }),
+  );
+  const styleTags = assets.styles
+    .map((href) => `<link rel="stylesheet" href="${escapeAttribute(href)}" />`)
+    .join("\n");
+  const scriptTags = assets.scripts
+    .map(
+      (src) =>
+        `<script defer src="${escapeAttribute(src)}" crossorigin="anonymous"></script>`,
+    )
+    .join("\n");
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>${escapeHtml(title)}</title>
+  ${refresh}
+  ${styleTags}
+</head>
+<body>
+  <div id="cocalc-crash-container"></div>
+  <div id="cocalc-load-container"></div>
+  <div id="cocalc-scripts-container"></div>
+  <div id="cocalc-webapp-container"></div>
+  <script type="application/json" id="cocalc-public-viewer-config">${config}</script>
+  ${scriptTags}
+</body>
+</html>`;
+}
+
 export function renderPublicViewerFile({
   relativePath,
   content,
@@ -422,6 +523,20 @@ export function renderPublicViewerFile({
 }): PublicViewerRenderedFile | undefined {
   const ext = path.posix.extname(relativePath).toLowerCase();
   const title = path.posix.basename(relativePath) || "CoCalc Public Viewer";
+  const assets = resolvePublicViewerBundleAssets();
+  if (assets?.scripts.length) {
+    return {
+      contentType: "text/html; charset=utf-8",
+      html: buildBundleShellDocument({
+        title,
+        sourcePath: relativePath,
+        rawHref,
+        assets,
+        autoRefreshS: integration.auto_refresh_s,
+      }),
+    };
+  }
+
   let body: string;
 
   switch (ext) {

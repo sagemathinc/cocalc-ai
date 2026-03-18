@@ -27,4 +27,15 @@ export default function appLoaderPlugin(
       chunks: ["load", "embed"],
     }),
   );
+
+  registerPlugin(
+    "HTML -- generates the public-viewer.html file",
+    new rspack.HtmlRspackPlugin({
+      title,
+      filename: "public-viewer.html",
+      template: resolve(__dirname, "../app.html"),
+      hash: PRODMODE,
+      chunks: ["load", "public-viewer"],
+    }),
+  );
 }
