@@ -31,6 +31,7 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
       }
       return undefined;
     },
+    getActions: () => undefined,
     getProjectActions: () => undefined,
   },
 }));
@@ -114,9 +115,11 @@ describe("submitNavigatorPromptToCurrentThread", () => {
       ],
     ]);
     const sendChat = jest.fn(() => new Date().toISOString());
+    const createEmptyThread = jest.fn(() => "thread-new");
     const actions = {
       syncdb: { get_state: () => "ready" },
       messageCache: { getThreadIndex: () => threadIndex },
+      createEmptyThread,
       sendChat,
       store: {
         get: (key: string) =>
@@ -140,18 +143,21 @@ describe("submitNavigatorPromptToCurrentThread", () => {
     });
 
     expect(ok).toBe(true);
-    expect(sendChat).toHaveBeenCalledWith(
+    expect(createEmptyThread).toHaveBeenCalledWith(
       expect.objectContaining({
-        input: "Write a proof",
         name: "Write a proof",
-        reply_thread_id: undefined,
         threadAgent: expect.objectContaining({
           mode: "codex",
           model: "gpt-5.4-mini",
-          codexConfig: expect.objectContaining({
-            model: "gpt-5.4-mini",
-          }),
         }),
+      }),
+    );
+    expect(sendChat).toHaveBeenCalledWith(
+      expect.objectContaining({
+        input: "Write a proof",
+        name: undefined,
+        reply_thread_id: "thread-new",
+        threadAgent: undefined,
       }),
     );
     expect(mockOpenFloating).toHaveBeenCalledWith(

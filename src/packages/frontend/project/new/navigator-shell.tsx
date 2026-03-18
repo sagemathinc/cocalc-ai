@@ -736,6 +736,23 @@ export function NavigatorShell({
         model,
         workingDirectory: homeDirectory,
       };
+      let createdThreadKey: string | undefined;
+      if (intent.createNewThread === true) {
+        createdThreadKey = actions.createEmptyThread?.({
+          name: messageThreadTitle,
+          threadAgent: isCodex
+            ? {
+                mode: "codex",
+                model,
+                codexConfig: nextCodexConfig,
+              }
+            : undefined,
+        });
+        if (!createdThreadKey) {
+          return false;
+        }
+        replyThreadId = createdThreadKey;
+      }
       if (resolvedThreadKey && isCodex && intent.codexConfig) {
         actions.setThreadAgentMode?.(
           resolvedThreadKey,
@@ -745,7 +762,7 @@ export function NavigatorShell({
       }
       const timeStamp = actions.sendChat({
         input,
-        name: messageThreadTitle,
+        name: intent.createNewThread === true ? undefined : messageThreadTitle,
         reply_thread_id: replyThreadId,
         tag: intent.tag ?? "intent:navigator",
         noNotification: true,
@@ -765,7 +782,9 @@ export function NavigatorShell({
       if (resolvedThreadKey && resolvedThreadKey !== selectedThreadKey) {
         setSelectedThreadKey(resolvedThreadKey);
       }
-      if (!replyThreadId) {
+      if (createdThreadKey) {
+        setSelectedThreadKey(createdThreadKey);
+      } else if (!replyThreadId) {
         const latest = latestThreadKey(actions);
         if (latest) {
           setSelectedThreadKey(latest);

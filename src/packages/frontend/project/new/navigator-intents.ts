@@ -438,7 +438,31 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
       workingDirectory: session.working_directory,
       ...(opts.codexConfig ?? {}),
     };
-    if (replyThreadKey) {
+    const newThreadAgent =
+      opts.forceCodex !== false
+        ? {
+            mode: "codex" as const,
+            model,
+            codexConfig: threadAgentCodexConfig,
+          }
+        : undefined;
+    if (opts.createNewThread === true) {
+      const createdThreadKey = actions.createEmptyThread?.({
+        name: messageThreadTitle,
+        threadAgent: newThreadAgent,
+        threadAppearance: {
+          color: session.thread_color,
+          icon: session.thread_icon,
+          image: session.thread_image,
+        },
+      });
+      if (!createdThreadKey) {
+        return queueFallbackIntent();
+      }
+      replyThreadKey = createdThreadKey;
+      replyThreadId = createdThreadKey;
+    }
+    if (replyThreadKey && opts.createNewThread !== true) {
       const rootReady = await waitForThreadReady({
         actions,
         threadKey: replyThreadKey,
@@ -456,17 +480,13 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
     }
     const timeStamp = actions.sendChat({
       input,
-      name: messageThreadTitle,
+      name: opts.createNewThread === true ? undefined : messageThreadTitle,
       reply_thread_id: replyThreadId,
       tag: opts.tag ?? "intent:navigator",
       noNotification: true,
       threadAgent:
         !replyThreadId && opts.forceCodex !== false
-          ? {
-              mode: "codex",
-              model,
-              codexConfig: threadAgentCodexConfig,
-            }
+          ? newThreadAgent
           : undefined,
     });
     if (!timeStamp) {
@@ -485,6 +505,10 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
     if (opts.openFloating !== false) {
       openFloatingAgentSession(project_id, {
         ...session,
+        session_id:
+          opts.createNewThread === true && nextThreadKey
+            ? nextThreadKey
+            : session.session_id,
         title: messageThreadTitle ?? session.title,
         thread_key: nextThreadKey || session.thread_key,
         updated_at: new Date().toISOString(),
