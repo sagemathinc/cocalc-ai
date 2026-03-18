@@ -2031,7 +2031,7 @@ export class JupyterActions extends JupyterActions0 {
   private getOutputHandler = (
     cell,
     runId?: string,
-    opts: { persistFinal?: boolean } = {},
+    opts: { persistFinal?: boolean; onFirstWrite?: () => void } = {},
   ) => {
     const handler = new OutputHandler({ cell });
     const persistFinal = opts.persistFinal ?? true;
@@ -2072,6 +2072,7 @@ export class JupyterActions extends JupyterActions0 {
     handler.on("change", (save?: boolean) => {
       if (!wroteFirstChange) {
         wroteFirstChange = true;
+        opts.onFirstWrite?.();
         this.runDebug("runCells.output.first_write", {
           runId,
           id: cell.id,
@@ -2267,6 +2268,7 @@ export class JupyterActions extends JupyterActions0 {
     let cellsPrepared = 0;
     let runnerStartedAt: number | null = null;
     let firstChunkAt: number | null = null;
+    let firstWriteAt: number | null = null;
     let totalChunks = 0;
     let totalMesgs = 0;
     let runError: string | undefined;
@@ -2389,6 +2391,11 @@ export class JupyterActions extends JupyterActions0 {
         cell.kernel = kernel;
         const created = this.getOutputHandler(cell, runId, {
           persistFinal: false,
+          onFirstWrite: () => {
+            if (firstWriteAt == null) {
+              firstWriteAt = Date.now();
+            }
+          },
         });
         handlers.set(id, created);
         this.runDebug("runCells.handler.open", {
@@ -2562,6 +2569,12 @@ export class JupyterActions extends JupyterActions0 {
           firstChunkAt == null
             ? null
             : Math.max(0, firstChunkAt - runStartedAt),
+        toFirstWriteMs:
+          firstWriteAt == null
+            ? null
+            : Math.max(0, firstWriteAt - runStartedAt),
+        waitForAck: false,
+        nominalExtraRttsBeforeFirstOutput: 0,
         runnerDurationMs:
           runnerStartedAt == null
             ? null

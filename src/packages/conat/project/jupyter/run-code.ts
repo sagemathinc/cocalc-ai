@@ -356,6 +356,8 @@ async function handleRequest({
   let summaryError: string | undefined;
   let firstClientBatchFastLane = false;
   let socketClosedDuringRun = false;
+  let firstClientWriteAt: number | null = null;
+  let firstLivePublishAt: number | null = null;
   const liveRunPath = canonicalJupyterLiveRunPath(path);
   const liveRunSubject = jupyterLiveRunSubject({
     project_id,
@@ -397,6 +399,9 @@ async function handleRequest({
     if (mesgs.length == 0) {
       return;
     }
+    if (firstLivePublishAt == null) {
+      firstLivePublishAt = Date.now();
+    }
     const batch: JupyterLiveRunBatch = {
       path: liveRunPath,
       run_id,
@@ -431,6 +436,9 @@ async function handleRequest({
       return;
     }
     try {
+      if (firstClientWriteAt == null) {
+        firstClientWriteAt = Date.now();
+      }
       socket.write(coalescedMesgs);
       if (opts?.fastLane) {
         firstClientBatchFastLane = true;
@@ -613,6 +621,14 @@ async function handleRequest({
       duration_ms: Date.now() - startedAt,
       first_message_ms:
         firstMesgAt == null ? null : Math.max(0, firstMesgAt - startedAt),
+      first_client_write_ms:
+        firstClientWriteAt == null
+          ? null
+          : Math.max(0, firstClientWriteAt - startedAt),
+      first_live_publish_ms:
+        firstLivePublishAt == null
+          ? null
+          : Math.max(0, firstLivePublishAt - startedAt),
       total_messages: totalMesgs,
       total_batches: totalBatches,
       more_output_buffered: moreOutputBuffered,
