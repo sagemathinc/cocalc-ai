@@ -4,6 +4,7 @@ const mockListSessions = jest.fn();
 const mockGetChatActions = jest.fn();
 const mockInitChat = jest.fn();
 const mockOpenFloating = jest.fn();
+const mockEnsureWorkspaceChatForPath = jest.fn();
 
 jest.mock("@cocalc/frontend/chat/agent-session-index", () => ({
   listAgentSessionsForProject: (...args: any[]) => mockListSessions(...args),
@@ -16,6 +17,11 @@ jest.mock("@cocalc/frontend/chat/register", () => ({
 
 jest.mock("@cocalc/frontend/project/page/agent-dock-state", () => ({
   openFloatingAgentSession: (...args: any[]) => mockOpenFloating(...args),
+}));
+
+jest.mock("@cocalc/frontend/project/workspaces/runtime", () => ({
+  ensureWorkspaceChatForPath: (...args: any[]) =>
+    mockEnsureWorkspaceChatForPath(...args),
 }));
 
 jest.mock("@cocalc/frontend/app-framework", () => ({
@@ -52,6 +58,7 @@ describe("submitNavigatorPromptToCurrentThread", () => {
     jest.clearAllMocks();
     window.localStorage.clear();
     takeQueuedNavigatorPromptIntents();
+    mockEnsureWorkspaceChatForPath.mockResolvedValue(null);
   });
 
   it("queues fallback intent and opens floating session when chat actions are unavailable", async () => {
@@ -167,6 +174,113 @@ describe("submitNavigatorPromptToCurrentThread", () => {
       expect.objectContaining({
         thread_key: "thread-new",
         title: "Write a proof",
+      }),
+    );
+  });
+
+  it("reuses the stored preferred thread for a workspace chat path", async () => {
+    const workspaceChatPath =
+      "/home/wstein/.local/share/cocalc/workspaces/acct/ws-1.chat";
+    const preferredThreadKey = "1700000000000";
+    mockEnsureWorkspaceChatForPath.mockResolvedValue({
+      chat_path: workspaceChatPath,
+      assigned: false,
+      workspace: {
+        workspace_id: "ws-1",
+        root_path: "/home/wstein/project/repo",
+        theme: {
+          title: "repo",
+          color: null,
+          accent_color: null,
+          icon: null,
+          image_blob: null,
+        },
+      },
+    });
+    window.localStorage.setItem(
+      `cocalc:navigator:selected-thread:chat:${encodeURIComponent(
+        workspaceChatPath,
+      )}`,
+      preferredThreadKey,
+    );
+    mockListSessions.mockResolvedValue([
+      {
+        session_id: "workspace-ws-1",
+        project_id: "00000000-1000-4000-8000-000000000000",
+        account_id: "00000000-1000-4000-8000-000000000001",
+        chat_path: workspaceChatPath,
+        thread_key: "thread-other",
+        title: "Old workspace thread",
+        created_at: "2026-03-18T00:00:00.000Z",
+        updated_at: "2026-03-18T00:00:00.000Z",
+        status: "active",
+        entrypoint: "file",
+      },
+      {
+        session_id: "workspace-ws-1-preferred",
+        project_id: "00000000-1000-4000-8000-000000000000",
+        account_id: "00000000-1000-4000-8000-000000000001",
+        chat_path: workspaceChatPath,
+        thread_key: preferredThreadKey,
+        title: "Workspace agent",
+        created_at: "2026-03-18T00:01:00.000Z",
+        updated_at: "2026-03-18T00:01:00.000Z",
+        status: "active",
+        entrypoint: "file",
+      },
+    ]);
+    const sendChat = jest.fn(() => new Date().toISOString());
+    const actions = {
+      syncdb: { get_state: () => "ready" },
+      messageCache: {
+        getThreadIndex: () =>
+          new Map([
+            [
+              preferredThreadKey,
+              {
+                key: preferredThreadKey,
+                newestTime: Date.now(),
+                rootMessage: { thread_id: "thread-workspace" },
+              },
+            ],
+          ]),
+      },
+      sendChat,
+      getMessageByDate: jest.fn(() => ({
+        message_id: "root-1",
+        thread_id: "thread-workspace",
+      })),
+      store: {
+        get: (key: string) =>
+          key === "selectedThreadKey" ? preferredThreadKey : undefined,
+      },
+      getThreadMetadata: jest.fn(() => ({ name: "Workspace agent" })),
+    };
+    mockGetChatActions.mockReturnValue(actions);
+    mockInitChat.mockReturnValue(actions);
+
+    const ok = await submitNavigatorPromptToCurrentThread({
+      project_id: "00000000-1000-4000-8000-000000000000",
+      path: "/home/wstein/project/repo/a.md",
+      prompt: "Rewrite this proof",
+      visiblePrompt: "Rewrite this proof",
+      title: "Rewrite this proof",
+      forceCodex: true,
+      openFloating: true,
+      codexConfig: { model: "gpt-5.4-mini" },
+    });
+
+    expect(ok).toBe(true);
+    expect(sendChat).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reply_thread_id: "thread-workspace",
+      }),
+    );
+    expect(mockOpenFloating).toHaveBeenCalledWith(
+      "00000000-1000-4000-8000-000000000000",
+      expect.objectContaining({
+        thread_key: preferredThreadKey,
+        chat_path: workspaceChatPath,
       }),
     );
   });

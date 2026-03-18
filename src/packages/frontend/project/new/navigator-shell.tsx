@@ -350,7 +350,7 @@ export function NavigatorShell({
   const lastIndexedValueRef = useRef<string>("");
   const pendingNewThreadDefaultsRef = useRef<boolean>(false);
   const preferredThreadKeyRef = useRef<string | undefined>(
-    loadNavigatorSelectedThreadKey(project_id),
+    loadNavigatorSelectedThreadKey(project_id, navigatorPath),
   );
   const {
     fontSize,
@@ -459,16 +459,23 @@ export function NavigatorShell({
   }, [actions]);
 
   useEffect(() => {
-    saveNavigatorSelectedThreadKey(selectedThreadKey ?? undefined);
-  }, [selectedThreadKey]);
+    saveNavigatorSelectedThreadKey(
+      selectedThreadKey ?? undefined,
+      navigatorPath,
+    );
+  }, [navigatorPath, selectedThreadKey]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
     const onThreadRequested = (evt: Event) => {
-      const threadKey =
-        (
-          evt as CustomEvent<{ threadKey?: string }>
-        ).detail?.threadKey?.trim() || null;
+      const detail = (
+        evt as CustomEvent<{ threadKey?: string; chatPath?: string }>
+      ).detail;
+      const requestedChatPath = `${detail?.chatPath ?? ""}`.trim();
+      if (requestedChatPath && requestedChatPath !== navigatorPath) {
+        return;
+      }
+      const threadKey = `${detail?.threadKey ?? ""}`.trim() || null;
       if (!threadKey) {
         preferredThreadKeyRef.current = undefined;
         return;
@@ -683,7 +690,10 @@ export function NavigatorShell({
         return true;
       }
       const input = `${intent.visiblePrompt ?? ""}`.trim() || basePrompt;
-      const storedThreadKey = loadNavigatorSelectedThreadKey(project_id);
+      const storedThreadKey = loadNavigatorSelectedThreadKey(
+        project_id,
+        navigatorPath,
+      );
       const resolvedThreadKey =
         intent.createNewThread === true
           ? null

@@ -318,10 +318,9 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
       workspaceTarget?.chat_path ?? resolveNavigatorChatPath(project_id);
 
     const preferExistingThread = opts.createNewThread !== true;
-    const preferredThreadKey =
-      preferExistingThread && !workspaceTarget
-        ? loadNavigatorSelectedThreadKey(project_id)
-        : undefined;
+    const preferredThreadKey = preferExistingThread
+      ? loadNavigatorSelectedThreadKey(project_id, targetChatPath)
+      : undefined;
     const sessions = await listAgentSessionsForProject({ project_id });
     const indexedSession = preferExistingThread
       ? pickNavigatorSession({
@@ -507,8 +506,8 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
           actions,
           fallbackThreadKey: `${actions.store?.get?.("selectedThreadKey") ?? ""}`,
         });
-    if (nextThreadKey && !workspaceTarget) {
-      saveNavigatorSelectedThreadKey(nextThreadKey);
+    if (nextThreadKey) {
+      saveNavigatorSelectedThreadKey(nextThreadKey, targetChatPath);
     }
     if (opts.openFloating !== false) {
       openFloatingAgentSession(project_id, {
@@ -548,8 +547,12 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
           project_id,
           account_id: `${redux.getStore("account")?.get?.("account_id") ?? ""}`,
           chat_path: resolveNavigatorChatPath(project_id),
-          thread_key:
-            `${loadNavigatorSelectedThreadKey(project_id) ?? ""}`.trim(),
+          thread_key: `${
+            loadNavigatorSelectedThreadKey(
+              project_id,
+              resolveNavigatorChatPath(project_id),
+            ) ?? ""
+          }`.trim(),
           title: requestedTitle ?? "Navigator",
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
