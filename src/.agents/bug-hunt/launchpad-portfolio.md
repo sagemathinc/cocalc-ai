@@ -86,6 +86,33 @@ pnpm -C src bug-hunt:launchpad-queue -- \
 
 If you rerun the same `--queue-dir`, previously successful jobs are skipped and only unfinished or failed jobs are attempted again.
 
+The same queue runner can also drive the dedicated data-mobility workflows:
+
+```sh
+pnpm -C src bug-hunt:launchpad-queue -- \
+  --workflow move \
+  --provider gcp \
+  --failure-policy stop \
+  --json
+```
+
+```sh
+pnpm -C src bug-hunt:launchpad-queue -- \
+  --workflow copy-path \
+  --src-host host-a \
+  --dest-host host-b \
+  --dry-run \
+  --json
+```
+
+```sh
+pnpm -C src bug-hunt:launchpad-queue -- \
+  --workflow backup-snapshot \
+  --host host-a \
+  --dry-run \
+  --json
+```
+
 Dedicated data-mobility wrappers:
 
 ```sh

@@ -5,6 +5,10 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const { executeLaunchpadCanary } = require("./launchpad-canary.js");
+const { executeCopyPathWorkflow } = require("./launchpad-copy-path.js");
+const {
+  executeBackupSnapshotWorkflow,
+} = require("./launchpad-backup-snapshot.js");
 
 const ROOT = path.resolve(__dirname, "..", "..");
 const DEFAULT_QUEUE_ROOT = path.join(
@@ -21,13 +25,20 @@ const SUPPORTED_SCENARIOS = new Set([
   "apps",
   "apps-static",
 ]);
+const SUPPORTED_WORKFLOWS = new Set([
+  "canary",
+  "move",
+  "copy-path",
+  "backup-snapshot",
+]);
+const DEFAULT_WORKFLOW_TIMEOUT = "15m";
 
 function usageAndExit(message, code = 1) {
   if (message) {
     console.error(message);
   }
   console.error(
-    "Usage: launchpad-queue.js [--queue-file <path> | --provider <id>...] [--scenario <name>...] [--queue-dir <path> | --queue-root <path>] [--failure-policy <stop|continue>] [--dry-run] [--json]",
+    "Usage: launchpad-queue.js [--queue-file <path> | --provider <id>...] [--workflow <canary|move|copy-path|backup-snapshot>] [--scenario <name>...] [--project <id>] [--host <host>] [--src-project <id>] [--dest-project <id>] [--src-host <host>] [--dest-host <host>] [--timeout <duration>] [--queue-dir <path> | --queue-root <path>] [--failure-policy <stop|continue>] [--dry-run] [--json]",
   );
   process.exit(code);
 }
@@ -55,9 +66,17 @@ function parseArgs(argv) {
     normalizedArgv.shift();
   }
   const options = {
+    workflow: "canary",
     queueFile: "",
     providers: [],
     scenarios: [],
+    project: "",
+    host: "",
+    srcProject: "",
+    destProject: "",
+    srcHost: "",
+    destHost: "",
+    timeout: DEFAULT_WORKFLOW_TIMEOUT,
     queueRoot: DEFAULT_QUEUE_ROOT,
     queueDir: "",
     preset: "",
@@ -87,6 +106,10 @@ function parseArgs(argv) {
       options.queueFile = path.resolve(
         normalizedArgv[++i] || usageAndExit("--queue-file requires a path"),
       );
+    } else if (arg === "--workflow") {
+      options.workflow =
+        `${normalizedArgv[++i] || ""}`.trim().toLowerCase() ||
+        usageAndExit("--workflow requires a value");
     } else if (arg === "--provider") {
       pushCsvValues(
         options.providers,
@@ -97,6 +120,34 @@ function parseArgs(argv) {
         options.scenarios,
         normalizedArgv[++i] || usageAndExit("--scenario requires a value"),
       );
+    } else if (arg === "--project") {
+      options.project =
+        `${normalizedArgv[++i] || ""}`.trim() ||
+        usageAndExit("--project requires a value");
+    } else if (arg === "--host") {
+      options.host =
+        `${normalizedArgv[++i] || ""}`.trim() ||
+        usageAndExit("--host requires a value");
+    } else if (arg === "--src-project") {
+      options.srcProject =
+        `${normalizedArgv[++i] || ""}`.trim() ||
+        usageAndExit("--src-project requires a value");
+    } else if (arg === "--dest-project") {
+      options.destProject =
+        `${normalizedArgv[++i] || ""}`.trim() ||
+        usageAndExit("--dest-project requires a value");
+    } else if (arg === "--src-host") {
+      options.srcHost =
+        `${normalizedArgv[++i] || ""}`.trim() ||
+        usageAndExit("--src-host requires a value");
+    } else if (arg === "--dest-host") {
+      options.destHost =
+        `${normalizedArgv[++i] || ""}`.trim() ||
+        usageAndExit("--dest-host requires a value");
+    } else if (arg === "--timeout") {
+      options.timeout =
+        `${normalizedArgv[++i] || ""}`.trim() ||
+        usageAndExit("--timeout requires a value");
     } else if (arg === "--queue-root") {
       options.queueRoot = path.resolve(
         normalizedArgv[++i] || usageAndExit("--queue-root requires a path"),
@@ -184,12 +235,18 @@ function parseArgs(argv) {
     }
   }
 
+  options.workflow = `${options.workflow}`.trim().toLowerCase();
   options.providers = Array.from(
     new Set(options.providers.map((value) => `${value}`.trim().toLowerCase())),
   );
   options.scenarios = Array.from(
     new Set(options.scenarios.map((value) => `${value}`.trim().toLowerCase())),
   );
+  if (!SUPPORTED_WORKFLOWS.has(options.workflow)) {
+    usageAndExit(
+      `--workflow must be one of ${Array.from(SUPPORTED_WORKFLOWS).join(", ")}`,
+    );
+  }
   if (!["stop", "continue"].includes(options.failurePolicy)) {
     usageAndExit("--failure-policy must be stop or continue");
   }
@@ -234,33 +291,103 @@ function createQueueDir(now = Date.now(), queueRoot = DEFAULT_QUEUE_ROOT) {
   );
 }
 
+function normalizeWorkflow(value) {
+  return `${value ?? "canary"}`.trim().toLowerCase() || "canary";
+}
+
 function normalizeJob(job, defaults = {}) {
-  const provider = `${job.provider ?? defaults.provider ?? ""}`
-    .trim()
-    .toLowerCase();
-  const scenario = `${job.scenario ?? defaults.scenario ?? "persistence"}`
-    .trim()
-    .toLowerCase();
-  if (!SUPPORTED_PROVIDERS.has(provider)) {
+  const workflow = normalizeWorkflow(job.workflow ?? defaults.workflow);
+  if (!SUPPORTED_WORKFLOWS.has(workflow)) {
     throw new Error(
-      `unsupported provider '${provider}' (expected: ${Array.from(SUPPORTED_PROVIDERS).join(", ")})`,
+      `unsupported workflow '${workflow}' (expected: ${Array.from(SUPPORTED_WORKFLOWS).join(", ")})`,
     );
   }
-  if (!SUPPORTED_SCENARIOS.has(scenario)) {
-    throw new Error(
-      `unsupported scenario '${scenario}' (expected: ${Array.from(SUPPORTED_SCENARIOS).join(", ")})`,
-    );
-  }
-  return {
-    provider,
-    scenario,
+
+  const base = {
+    workflow,
     preset: `${job.preset ?? defaults.preset ?? ""}`.trim(),
-    accountId: `${job.account_id ?? defaults.account_id ?? ""}`.trim(),
-    apiUrl: `${job.api_url ?? defaults.api_url ?? ""}`.trim(),
+    accountId:
+      `${job.account_id ?? job.accountId ?? defaults.account_id ?? defaults.accountId ?? ""}`.trim(),
+    apiUrl:
+      `${job.api_url ?? job.apiUrl ?? defaults.api_url ?? defaults.apiUrl ?? ""}`.trim(),
+  };
+
+  if (workflow === "canary" || workflow === "move") {
+    const provider = `${job.provider ?? defaults.provider ?? ""}`
+      .trim()
+      .toLowerCase();
+    const scenario = (
+      workflow === "move"
+        ? "move"
+        : `${job.scenario ?? defaults.scenario ?? "persistence"}`
+    )
+      .trim()
+      .toLowerCase();
+    if (!SUPPORTED_PROVIDERS.has(provider)) {
+      throw new Error(
+        `unsupported provider '${provider}' (expected: ${Array.from(SUPPORTED_PROVIDERS).join(", ")})`,
+      );
+    }
+    if (!SUPPORTED_SCENARIOS.has(scenario)) {
+      throw new Error(
+        `unsupported scenario '${scenario}' (expected: ${Array.from(SUPPORTED_SCENARIOS).join(", ")})`,
+      );
+    }
+    return {
+      ...base,
+      provider,
+      scenario,
+    };
+  }
+
+  if (workflow === "copy-path") {
+    return {
+      ...base,
+      timeout:
+        `${job.timeout ?? defaults.timeout ?? DEFAULT_WORKFLOW_TIMEOUT}`.trim(),
+      srcProject:
+        `${job.src_project ?? job.srcProject ?? defaults.src_project ?? defaults.srcProject ?? ""}`.trim(),
+      destProject:
+        `${job.dest_project ?? job.destProject ?? defaults.dest_project ?? defaults.destProject ?? ""}`.trim(),
+      srcHost:
+        `${job.src_host ?? job.srcHost ?? defaults.src_host ?? defaults.srcHost ?? ""}`.trim(),
+      destHost:
+        `${job.dest_host ?? job.destHost ?? defaults.dest_host ?? defaults.destHost ?? ""}`.trim(),
+    };
+  }
+
+  return {
+    ...base,
+    timeout:
+      `${job.timeout ?? defaults.timeout ?? DEFAULT_WORKFLOW_TIMEOUT}`.trim(),
+    project: `${job.project ?? defaults.project ?? ""}`.trim(),
+    host: `${job.host ?? defaults.host ?? ""}`.trim(),
   };
 }
 
 function jobSignature(job) {
+  if (job.workflow === "copy-path") {
+    return [
+      "copy-path",
+      job.srcProject || "(auto-src-project)",
+      job.destProject || "(auto-dest-project)",
+      job.srcHost || "(auto-src-host)",
+      job.destHost || "(auto-dest-host)",
+      job.timeout || DEFAULT_WORKFLOW_TIMEOUT,
+      job.accountId || "(auto)",
+      job.apiUrl || "(auto)",
+    ].join("|");
+  }
+  if (job.workflow === "backup-snapshot") {
+    return [
+      "backup-snapshot",
+      job.project || "(auto-project)",
+      job.host || "(auto-host)",
+      job.timeout || DEFAULT_WORKFLOW_TIMEOUT,
+      job.accountId || "(auto)",
+      job.apiUrl || "(auto)",
+    ].join("|");
+  }
   return [
     job.provider,
     job.scenario,
@@ -278,15 +405,43 @@ function buildQueueJobs(options) {
     for (const job of queue.jobs ?? []) {
       jobs.push(normalizeJob(job, defaults));
     }
+  } else if (options.workflow === "copy-path") {
+    jobs.push(
+      normalizeJob({
+        workflow: "copy-path",
+        srcProject: options.srcProject,
+        destProject: options.destProject,
+        srcHost: options.srcHost,
+        destHost: options.destHost,
+        timeout: options.timeout,
+        account_id: options.accountId,
+        api_url: options.apiUrl,
+      }),
+    );
+  } else if (options.workflow === "backup-snapshot") {
+    jobs.push(
+      normalizeJob({
+        workflow: "backup-snapshot",
+        project: options.project,
+        host: options.host,
+        timeout: options.timeout,
+        account_id: options.accountId,
+        api_url: options.apiUrl,
+      }),
+    );
   } else {
     const providers = options.providers.length ? options.providers : ["gcp"];
-    const scenarios = options.scenarios.length
-      ? options.scenarios
-      : ["persistence"];
+    const scenarios =
+      options.workflow === "move"
+        ? ["move"]
+        : options.scenarios.length
+          ? options.scenarios
+          : ["persistence"];
     for (const provider of providers) {
       for (const scenario of scenarios) {
         jobs.push(
           normalizeJob({
+            workflow: options.workflow,
             provider,
             scenario,
             preset: options.preset,
@@ -336,8 +491,57 @@ function shouldSkipCompletedJob(job, previousSummary) {
   return undefined;
 }
 
+function describeJob(job) {
+  if (job.workflow === "copy-path") {
+    return "copy-path";
+  }
+  if (job.workflow === "backup-snapshot") {
+    return "backup-snapshot";
+  }
+  return `${job.provider}/${job.scenario}`;
+}
+
+function createJobDir(queueDir, index, job) {
+  const label =
+    job.workflow === "copy-path"
+      ? `${sanitizeSegment(job.workflow)}-${sanitizeSegment(job.srcProject || job.srcHost || "src")}-${sanitizeSegment(job.destProject || job.destHost || "dest")}`
+      : job.workflow === "backup-snapshot"
+        ? `${sanitizeSegment(job.workflow)}-${sanitizeSegment(job.project || job.host || "project")}`
+        : `${sanitizeSegment(job.provider)}-${sanitizeSegment(job.scenario)}`;
+  return path.join(
+    queueDir,
+    "jobs",
+    `${String(index + 1).padStart(2, "0")}-${label}`,
+  );
+}
+
+function populateJobEntry(entry, job) {
+  entry.workflow = job.workflow;
+  if (job.workflow === "copy-path") {
+    entry.src_project_id = job.srcProject;
+    entry.dest_project_id = job.destProject;
+    entry.src_host = job.srcHost;
+    entry.dest_host = job.destHost;
+    entry.timeout = job.timeout;
+    return;
+  }
+  if (job.workflow === "backup-snapshot") {
+    entry.project_id = job.project;
+    entry.host = job.host;
+    entry.timeout = job.timeout;
+    return;
+  }
+  entry.provider = job.provider;
+  entry.scenario = job.scenario;
+  entry.preset = job.preset;
+}
+
 async function executeLaunchpadQueue(options, now = Date.now(), deps = {}) {
   const executeCanary = deps.executeLaunchpadCanary || executeLaunchpadCanary;
+  const executeCopyPath =
+    deps.executeCopyPathWorkflow || executeCopyPathWorkflow;
+  const executeBackupSnapshot =
+    deps.executeBackupSnapshotWorkflow || executeBackupSnapshotWorkflow;
   const queueDir = options.queueDir || createQueueDir(now, options.queueRoot);
   fs.mkdirSync(queueDir, { recursive: true });
   const previousSummary = readJsonIfExists(
@@ -362,78 +566,146 @@ async function executeLaunchpadQueue(options, now = Date.now(), deps = {}) {
 
   for (const [index, job] of jobs.entries()) {
     const signature = jobSignature(job);
-    const jobDir = path.join(
-      queueDir,
-      "jobs",
-      `${String(index + 1).padStart(2, "0")}-${sanitizeSegment(job.provider)}-${sanitizeSegment(job.scenario)}`,
-    );
+    const jobDir = createJobDir(queueDir, index, job);
     const skipped = shouldSkipCompletedJob(job, previousSummary);
     const entry = {
       signature,
-      provider: job.provider,
-      scenario: job.scenario,
-      preset: job.preset,
       status: "",
       job_dir: jobDir,
     };
+    populateJobEntry(entry, job);
 
     if (skipped) {
       entry.status = "skipped";
       entry.reason = "existing success";
-      entry.previous_run_dir = skipped.canary_run_dir;
+      entry.previous_run_dir =
+        skipped.run_dir ||
+        skipped.workflow_run_dir ||
+        skipped.canary_run_dir ||
+        "";
       payload.jobs.push(entry);
       writeJson(path.join(jobDir, "job-result.json"), entry);
       continue;
     }
 
-    const canaryPayload = await executeCanary(
-      {
-        providers: [job.provider],
-        scenarios: [job.scenario],
-        preset: job.preset,
-        accountId: job.accountId,
-        apiUrl: job.apiUrl,
-        runRoot: path.join(jobDir, "runs"),
-        failurePolicy: "stop",
-        executionMode: options.executionMode,
-        cleanupOnSuccess: options.cleanupOnSuccess,
-        verifyBackup: options.verifyBackup,
-        verifyTerminal: options.verifyTerminal,
-        verifyProxy: options.verifyProxy,
-        verifyProviderStatus: options.verifyProviderStatus,
-        printDebugHints: options.printDebugHints,
-        skipApiCheck: options.skipApiCheck,
-        skipLocalPostgresEnv: options.skipLocalPostgresEnv,
-        hostReadySeconds: options.hostReadySeconds,
-        hostStoppedSeconds: options.hostStoppedSeconds,
-        projectReadySeconds: options.projectReadySeconds,
-        backupReadySeconds: options.backupReadySeconds,
-        dryRun: options.dryRun,
-        json: true,
-      },
-      now + index,
-    );
+    if (job.workflow === "copy-path") {
+      const workflowPayload = await executeCopyPath(
+        {
+          srcProject: job.srcProject,
+          destProject: job.destProject,
+          srcHost: job.srcHost,
+          destHost: job.destHost,
+          apiUrl: job.apiUrl,
+          accountId: job.accountId,
+          timeout: job.timeout,
+          runRoot: path.join(jobDir, "runs"),
+          cleanupOnSuccess: options.cleanupOnSuccess,
+          dryRun: options.dryRun,
+          json: true,
+        },
+        now + index,
+        {
+          skipLocalPostgresEnv: options.skipLocalPostgresEnv,
+        },
+      );
+      entry.run_dir = workflowPayload.run_dir;
+      entry.workflow_run_dir = workflowPayload.run_dir;
+      entry.summary_file = workflowPayload.summary_file;
+      entry.ledger_file = workflowPayload.ledger_file;
+      entry.status = workflowPayload.ok ? "ok" : "failed";
+      entry.result = {
+        ok: workflowPayload.ok,
+        error: workflowPayload.error,
+        step_count: Array.isArray(workflowPayload.steps)
+          ? workflowPayload.steps.length
+          : 0,
+      };
+    } else if (job.workflow === "backup-snapshot") {
+      const workflowPayload = await executeBackupSnapshot(
+        {
+          project: job.project,
+          host: job.host,
+          apiUrl: job.apiUrl,
+          accountId: job.accountId,
+          timeout: job.timeout,
+          runRoot: path.join(jobDir, "runs"),
+          cleanupOnSuccess: options.cleanupOnSuccess,
+          dryRun: options.dryRun,
+          json: true,
+        },
+        now + index,
+        {
+          skipLocalPostgresEnv: options.skipLocalPostgresEnv,
+        },
+      );
+      entry.run_dir = workflowPayload.run_dir;
+      entry.workflow_run_dir = workflowPayload.run_dir;
+      entry.summary_file = workflowPayload.summary_file;
+      entry.ledger_file = workflowPayload.ledger_file;
+      entry.status = workflowPayload.ok ? "ok" : "failed";
+      entry.result = {
+        ok: workflowPayload.ok,
+        error: workflowPayload.error,
+        step_count: Array.isArray(workflowPayload.steps)
+          ? workflowPayload.steps.length
+          : 0,
+      };
+    } else {
+      const canaryPayload = await executeCanary(
+        {
+          providers: [job.provider],
+          scenarios: [job.scenario],
+          preset: job.preset,
+          accountId: job.accountId,
+          apiUrl: job.apiUrl,
+          runRoot: path.join(jobDir, "runs"),
+          failurePolicy: "stop",
+          executionMode: options.executionMode,
+          cleanupOnSuccess: options.cleanupOnSuccess,
+          verifyBackup: options.verifyBackup,
+          verifyTerminal: options.verifyTerminal,
+          verifyProxy: options.verifyProxy,
+          verifyProviderStatus: options.verifyProviderStatus,
+          printDebugHints: options.printDebugHints,
+          skipApiCheck: options.skipApiCheck,
+          skipLocalPostgresEnv: options.skipLocalPostgresEnv,
+          hostReadySeconds: options.hostReadySeconds,
+          hostStoppedSeconds: options.hostStoppedSeconds,
+          projectReadySeconds: options.projectReadySeconds,
+          backupReadySeconds: options.backupReadySeconds,
+          dryRun: options.dryRun,
+          json: true,
+        },
+        now + index,
+      );
 
-    entry.canary_run_dir = canaryPayload.run_dir;
-    entry.canary_summary_file = canaryPayload.summary_file;
-    entry.canary_ledger_file = canaryPayload.ledger_file;
-    entry.status = canaryPayload.runs.every((run) => run.ok) ? "ok" : "failed";
-    entry.result = {
-      stopped_early: canaryPayload.stopped_early,
-      stop_reason: canaryPayload.stop_reason,
-      runs: canaryPayload.runs.map((run) => ({
-        provider: run.provider,
-        scenario: run.scenario,
-        status: run.status,
-        error: run.error,
-      })),
-    };
+      entry.run_dir = canaryPayload.run_dir;
+      entry.canary_run_dir = canaryPayload.run_dir;
+      entry.summary_file = canaryPayload.summary_file;
+      entry.canary_summary_file = canaryPayload.summary_file;
+      entry.ledger_file = canaryPayload.ledger_file;
+      entry.canary_ledger_file = canaryPayload.ledger_file;
+      entry.status = canaryPayload.runs.every((run) => run.ok)
+        ? "ok"
+        : "failed";
+      entry.result = {
+        stopped_early: canaryPayload.stopped_early,
+        stop_reason: canaryPayload.stop_reason,
+        runs: canaryPayload.runs.map((run) => ({
+          provider: run.provider,
+          scenario: run.scenario,
+          status: run.status,
+          error: run.error,
+        })),
+      };
+    }
+
     payload.jobs.push(entry);
     writeJson(path.join(jobDir, "job-result.json"), entry);
 
     if (entry.status === "failed" && options.failurePolicy === "stop") {
       payload.stopped_early = true;
-      payload.stop_reason = `${job.provider}/${job.scenario} failed`;
+      payload.stop_reason = `${describeJob(job)} failed`;
       break;
     }
   }
@@ -454,7 +726,7 @@ function formatHumanResult(payload) {
   ];
   for (const job of payload.jobs) {
     lines.push(
-      `- ${job.provider}/${job.scenario} ${job.status}${job.reason ? ` (${job.reason})` : ""}`,
+      `- ${describeJob(job)} ${job.status}${job.reason ? ` (${job.reason})` : ""}`,
     );
   }
   if (payload.stopped_early) {
