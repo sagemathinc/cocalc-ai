@@ -302,7 +302,7 @@ async function listFreshRunningBackupCountsByHost({
     `
       SELECT p.host_id::text AS host_id, COUNT(*) AS count
       FROM long_running_operations l
-      JOIN projects p ON p.project_id::text = l.scope_id
+      JOIN projects p ON p.project_id = l.scope_id::uuid
       WHERE l.kind = $1
         AND l.dismissed_at IS NULL
         AND l.status = 'running'
@@ -347,7 +347,7 @@ async function claimBackupLroOps({
       `
         SELECT l.*, p.host_id::text AS host_id
         FROM long_running_operations l
-        LEFT JOIN projects p ON p.project_id::text = l.scope_id
+        LEFT JOIN projects p ON p.project_id = l.scope_id::uuid
         WHERE l.kind = $1
           AND (
             l.status = 'queued'
