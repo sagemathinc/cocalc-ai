@@ -260,6 +260,10 @@ export function registerProjectJupyterCommands(
               firstBatchAt == null
                 ? null
                 : Math.max(0, firstBatchAt - startedAt),
+            first_batch_before_ack:
+              ackAt == null || firstBatchAt == null
+                ? null
+                : firstBatchAt < ackAt,
             ack_to_first_batch_ms:
               ackAt == null || firstBatchAt == null
                 ? null

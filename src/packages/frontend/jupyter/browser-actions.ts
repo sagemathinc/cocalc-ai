@@ -2580,6 +2580,8 @@ export class JupyterActions extends JupyterActions0 {
           ackAt == null || firstChunkAt == null
             ? null
             : Math.max(0, firstChunkAt - ackAt),
+        firstChunkBeforeAck:
+          ackAt == null || firstChunkAt == null ? null : firstChunkAt < ackAt,
         toFirstWriteMs:
           firstWriteAt == null
             ? null
