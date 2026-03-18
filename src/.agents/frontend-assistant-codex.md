@@ -20,6 +20,8 @@ are now stable enough to support user-facing assistant workflows.
    Codex/agent affordance once parity is reached.
 5. Fast assistant flows should be able to use `gpt-5.4-mini`; deeper coding
    flows can still opt into larger Codex models.
+6. Live sync/RTC document state is the source of truth. Assistant flows should
+   not depend on saving files to disk before work begins.
 
 ## Current State
 
@@ -81,11 +83,21 @@ Existing foundation:
 
 Target semantics:
 
-1. Save dirty documents on a best-effort basis before dispatch.
-2. Prefer open-document/browser-aware mutation paths when possible.
-3. Queue into the visible Codex/Navigator timeline by default, with explicit
+1. Always operate on the in-memory sync version of the target document when a
+   live document API exists.
+2. Do not rely on filesystem state or pre-dispatch saves as the primary source
+   of truth. If the browser has unsaved edits, the agent should still work on
+   the current sync state.
+3. Prefer backend live-document APIs and sync-aware mutations over on-disk file
+   edits.
+4. For document types that do not yet have adequate live mutation APIs, add
+   backend/CLI support instead of falling back to stale filesystem reads.
+5. Long-running agent work must remain robust across browser refreshes or
+   disconnects. The user should be able to refresh and continue seeing live
+   updates driven by the same underlying sync document state.
+6. Queue into the visible Codex/Navigator timeline by default, with explicit
    immediate-send override only when needed.
-4. Return direct edits/applies for normal success paths.
+7. Return direct edits/applies for normal success paths.
 
 ## Execution Waves
 
@@ -107,6 +119,8 @@ Done when:
 
 - Notebook, LaTeX, Rmd/Qmd, formatter, and related fix flows all land in a
   visible Codex timeline and apply fixes directly when safe.
+- Notebook repairs and edits happen through live sync state, so unsaved changes,
+  browser refreshes, and long-running agent work remain coherent.
 
 ### Wave 2: Replace the title-bar Assistant
 
@@ -158,8 +172,10 @@ Done when:
 
 ## Immediate Next Slice
 
-1. Land `gpt-5.4-mini` support in the Codex model registry and Lite planner.
-2. Migrate the Help Me Fix family to the same Codex routing used by notebook
+1. Migrate the Help Me Fix family to the same Codex routing used by notebook
    `Fix with Agent`.
+2. Define the live-document mutation contract for assistant flows: chat, tasks,
+   Jupyter, and other sync-backed documents must be edited through backend/CLI
+   APIs instead of disk.
 3. Replace the title-bar `AI Assistant` button with a Codex-first launcher once
    Wave 1 is stable enough to reuse its intent routing.
