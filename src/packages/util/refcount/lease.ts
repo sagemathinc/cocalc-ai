@@ -14,6 +14,7 @@
 export class RefcountLeaseManager<K> {
   private readonly delayMs: number;
   private readonly disposer: (key: K) => Promise<void>;
+  private closed = false;
   private counts = new Map<K, number>();
   private timers = new Map<K, NodeJS.Timeout>();
   private locks = new Map<K, Promise<void>>();
@@ -27,6 +28,9 @@ export class RefcountLeaseManager<K> {
    * Acquire a lease on key. Returns an async release function.
    */
   async acquire(key: K): Promise<() => Promise<void>> {
+    if (this.closed) {
+      throw new Error("lease manager is closed");
+    }
     await this.withLock(key, async () => {
       // Cancel any pending disposal.
       const pending = this.timers.get(key);
@@ -67,6 +71,17 @@ export class RefcountLeaseManager<K> {
 
   getCount(key: K): number {
     return this.counts.get(key) ?? 0;
+  }
+
+  async close(): Promise<void> {
+    this.closed = true;
+    for (const timer of this.timers.values()) {
+      clearTimeout(timer);
+    }
+    this.timers.clear();
+    this.counts.clear();
+    await Promise.allSettled(this.locks.values());
+    this.locks.clear();
   }
 
   private async withLock<T>(key: K, fn: () => Promise<T>): Promise<T> {
