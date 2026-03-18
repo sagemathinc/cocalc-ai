@@ -4,6 +4,7 @@
  */
 
 import type { CSSProperties } from "react";
+import { COLORS } from "@cocalc/util/theme";
 import {
   SLATE_CODE_BLOCK_PALETTES,
   type SlateCodeBlockPalette,
@@ -66,23 +67,29 @@ export function slateCodeBlockPalette(
 export function slateCodeBlockThemeVars(
   editorTheme?: string | null,
 ): SlateCodeBlockThemeVars {
+  const theme = `${editorTheme ?? ""}`.trim();
   const palette = slateCodeBlockPalette(editorTheme);
   const surfaceMix = palette.mode === "dark" ? 0.14 : 0.05;
   const subtleMix = palette.mode === "dark" ? 0.1 : 0.025;
   const borderMix = palette.mode === "dark" ? 0.24 : 0.12;
   const inlineCodeMix = palette.mode === "dark" ? 0.2 : 0.07;
-  const linkColor = palette.definition || palette.keyword;
+  const neutralLinkChipMix = palette.mode === "dark" ? 0.09 : 0.035;
+  const neutralLinkChipBorderMix = palette.mode === "dark" ? 0.2 : 0.12;
+  const linkColor =
+    theme === "" || theme === "default"
+      ? COLORS.ANTD_LINK_BLUE
+      : palette.keyword || palette.definition;
   return {
     "--cocalc-slate-link": linkColor,
     "--cocalc-slate-link-chip-bg": mix(
       palette.background,
-      linkColor,
-      subtleMix,
+      palette.foreground,
+      neutralLinkChipMix,
     ),
     "--cocalc-slate-link-chip-border": mix(
       palette.background,
-      linkColor,
-      borderMix,
+      palette.foreground,
+      neutralLinkChipBorderMix,
     ),
     "--cocalc-slate-inline-code-bg": mix(
       palette.background,
@@ -100,6 +107,7 @@ export function slateCodeBlockThemeVars(
       palette.comment,
       subtleMix,
     ),
+    "--cocalc-slate-blockquote-fg": palette.foreground,
     "--cocalc-slate-blockquote-border": mix(
       palette.background,
       linkColor,
