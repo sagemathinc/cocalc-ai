@@ -687,7 +687,7 @@ export async function startMasterRegistration({
         return await removeHostSshAuthorizedKey(public_key);
       },
       async getBackupExecutionStatus() {
-        return getBackupExecutionStatus();
+        return await getBackupExecutionStatus();
       },
     },
   });

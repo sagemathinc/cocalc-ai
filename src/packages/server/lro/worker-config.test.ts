@@ -134,4 +134,55 @@ describe("parallel ops worker config", () => {
       }),
     ).resolves.toEqual({ value: 10, source: "default" });
   });
+
+  it("applies and clears a per-project-host override", async () => {
+    const {
+      clearParallelOpsLimitCache,
+      clearParallelOpsLimitOverride,
+      getEffectiveParallelOpsLimit,
+      setParallelOpsLimitOverride,
+    } = await import("./worker-config");
+
+    clearParallelOpsLimitCache();
+    await expect(
+      setParallelOpsLimitOverride({
+        worker_kind: "project-host-backup-execution",
+        scope_type: "project_host",
+        scope_id: "host-123",
+        limit_value: 14,
+        updated_by: "62bb9ea3-41df-4539-bd42-d14dfe80a7e0",
+        note: "raise host-local slots",
+      }),
+    ).resolves.toMatchObject({
+      worker_kind: "project-host-backup-execution",
+      scope_type: "project_host",
+      scope_id: "host-123",
+      limit_value: 14,
+      enabled: true,
+    });
+
+    await expect(
+      getEffectiveParallelOpsLimit({
+        worker_kind: "project-host-backup-execution",
+        default_limit: 10,
+        scope_type: "project_host",
+        scope_id: "host-123",
+      }),
+    ).resolves.toEqual({ value: 14, source: "db-override" });
+
+    await clearParallelOpsLimitOverride({
+      worker_kind: "project-host-backup-execution",
+      scope_type: "project_host",
+      scope_id: "host-123",
+    });
+
+    await expect(
+      getEffectiveParallelOpsLimit({
+        worker_kind: "project-host-backup-execution",
+        default_limit: 10,
+        scope_type: "project_host",
+        scope_id: "host-123",
+      }),
+    ).resolves.toEqual({ value: 10, source: "default" });
+  });
 });

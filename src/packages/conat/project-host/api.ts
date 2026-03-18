@@ -49,6 +49,7 @@ export interface HostBackupExecutionStatus {
   in_flight: number;
   queued: number;
   project_lock_count: number;
+  config_source?: "env-legacy" | "db-override";
 }
 
 export interface HostControlApi {

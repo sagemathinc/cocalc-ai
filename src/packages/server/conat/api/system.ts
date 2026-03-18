@@ -51,6 +51,7 @@ import type { ConnectionStats } from "@cocalc/conat/core/types";
 import { getParallelOpsStatus as getParallelOpsStatus0 } from "@cocalc/server/lro/worker-status";
 import {
   clearParallelOpsLimitOverride,
+  getEffectiveParallelOpsLimit,
   setParallelOpsLimitOverride,
   type ParallelOpsLimitScopeType,
 } from "@cocalc/server/lro/worker-config";
@@ -73,6 +74,54 @@ export async function getParallelOpsStatus({
     throw Error("must be an admin");
   }
   return await getParallelOpsStatus0();
+}
+
+export async function getProjectHostParallelOpsLimit({
+  account_id,
+  host_id,
+  worker_kind,
+}: {
+  account_id?: string;
+  host_id?: string;
+  worker_kind: string;
+}) {
+  const worker = getParallelOpsWorkerRegistration(worker_kind);
+  if (!worker) {
+    throw Error(`unknown worker_kind '${worker_kind}'`);
+  }
+  if (worker.scope_model !== "per-project-host") {
+    throw Error(
+      `worker '${worker_kind}' does not use per-project-host limit resolution`,
+    );
+  }
+  const effectiveHostId = `${host_id ?? ""}`.trim();
+  if (!effectiveHostId) {
+    if (!account_id || !(await isAdmin(account_id))) {
+      throw Error("must be a host or an admin");
+    }
+    throw Error("host_id is required");
+  }
+  const base = worker.getLimitSnapshot();
+  const default_limit = base.default_limit ?? base.effective_limit;
+  if (default_limit == null) {
+    throw Error(`worker '${worker_kind}' does not define a default limit`);
+  }
+  const { value, source } = await getEffectiveParallelOpsLimit({
+    worker_kind,
+    default_limit,
+    scope_type: "project_host",
+    scope_id: effectiveHostId,
+  });
+  return {
+    worker_kind,
+    scope_type: "project_host" as const,
+    scope_id: effectiveHostId,
+    default_limit,
+    configured_limit: source === "db-override" ? value : null,
+    effective_limit: value,
+    config_source:
+      source === "db-override" ? "db-override" : base.config_source,
+  };
 }
 
 function validateParallelOpsScopeType(
@@ -119,7 +168,22 @@ export async function setParallelOpsLimit({
   if (!worker.dynamic_limit_supported) {
     throw Error(`dynamic limits are not supported for '${worker_kind}'`);
   }
-  if (normalizedScopeType !== "global" || worker.scope_model !== "global") {
+  if (worker.scope_model === "global") {
+    if (normalizedScopeType !== "global") {
+      throw Error(
+        `scope_type '${normalizedScopeType}' is not implemented for '${worker_kind}'`,
+      );
+    }
+  } else if (worker.scope_model === "per-project-host") {
+    if (normalizedScopeType !== "project_host") {
+      throw Error(
+        `scope_type '${normalizedScopeType}' is not implemented for '${worker_kind}'`,
+      );
+    }
+    if (!`${scope_id ?? ""}`.trim()) {
+      throw Error(`scope_id is required for '${worker_kind}'`);
+    }
+  } else {
     throw Error(
       `non-global limit overrides are not implemented for '${worker_kind}'`,
     );
@@ -157,7 +221,22 @@ export async function clearParallelOpsLimit({
   if (!worker.dynamic_limit_supported) {
     throw Error(`dynamic limits are not supported for '${worker_kind}'`);
   }
-  if (normalizedScopeType !== "global" || worker.scope_model !== "global") {
+  if (worker.scope_model === "global") {
+    if (normalizedScopeType !== "global") {
+      throw Error(
+        `scope_type '${normalizedScopeType}' is not implemented for '${worker_kind}'`,
+      );
+    }
+  } else if (worker.scope_model === "per-project-host") {
+    if (normalizedScopeType !== "project_host") {
+      throw Error(
+        `scope_type '${normalizedScopeType}' is not implemented for '${worker_kind}'`,
+      );
+    }
+    if (!`${scope_id ?? ""}`.trim()) {
+      throw Error(`scope_id is required for '${worker_kind}'`);
+    }
+  } else {
     throw Error(
       `non-global limit overrides are not implemented for '${worker_kind}'`,
     );

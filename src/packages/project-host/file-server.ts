@@ -85,16 +85,16 @@ import { touchProjectLastEdited } from "./last-edited";
 import { getRootfsMountpoint } from "@cocalc/project-runner/run/rootfs";
 import { createProjectSandboxFilesystem } from "./file-server-sandbox-policy";
 import { resetClonedProjectState } from "./clone-state";
+import {
+  getBackupExecutionLimit,
+  getCachedBackupExecutionLimit,
+} from "./backup-execution-limit";
 
 type SshTarget = { type: "project"; project_id: string };
 
 const logger = getLogger("project-host:file-server");
 const RESTORE_STAGING_ROOT = ".restore-staging";
 const MAX_TEXT_PREVIEW_BYTES = 10 * 1024 * 1024;
-const BACKUP_MAX_PARALLEL = Math.max(
-  1,
-  Math.min(100, envToInt("COCALC_PROJECT_HOST_BACKUP_MAX_PARALLEL", 10)),
-);
 const SSH_WAKE_TIMEOUT_MS = Math.max(
   5_000,
   envToInt("COCALC_PROJECT_HOST_SSH_WAKE_TIMEOUT_MS", 120_000),
@@ -197,7 +197,12 @@ async function ensureProjectSshWake(
 }
 
 async function acquireBackupSlot(): Promise<void> {
-  if (backupInFlight < BACKUP_MAX_PARALLEL) {
+  const { max_parallel } = await getBackupExecutionLimit();
+  while (backupWaiters.length > 0 && backupInFlight < max_parallel) {
+    backupInFlight += 1;
+    backupWaiters.shift()?.();
+  }
+  if (backupInFlight < max_parallel) {
     backupInFlight += 1;
     return;
   }
@@ -211,18 +216,21 @@ async function acquireBackupSlot(): Promise<void> {
 
 function releaseBackupSlot() {
   backupInFlight = Math.max(0, backupInFlight - 1);
-  const next = backupWaiters.shift();
-  if (next) {
-    next();
+  const { max_parallel } = getCachedBackupExecutionLimit();
+  while (backupWaiters.length > 0 && backupInFlight < max_parallel) {
+    backupInFlight += 1;
+    backupWaiters.shift()?.();
   }
 }
 
-export function getBackupExecutionStatus() {
+export async function getBackupExecutionStatus() {
+  const { max_parallel, config_source } = await getBackupExecutionLimit();
   return {
-    max_parallel: BACKUP_MAX_PARALLEL,
+    max_parallel,
     in_flight: backupInFlight,
     queued: backupWaiters.length,
     project_lock_count: backupProjectTails.size,
+    config_source,
   };
 }
 
@@ -286,7 +294,7 @@ async function withBackupParallelLimit<T>({
         op,
         in_flight: backupInFlight,
         queued: backupWaiters.length,
-        max_parallel: BACKUP_MAX_PARALLEL,
+        max_parallel: getCachedBackupExecutionLimit().max_parallel,
       });
       try {
         return await run();
@@ -297,7 +305,7 @@ async function withBackupParallelLimit<T>({
           op,
           in_flight: backupInFlight,
           queued: backupWaiters.length,
-          max_parallel: BACKUP_MAX_PARALLEL,
+          max_parallel: getCachedBackupExecutionLimit().max_parallel,
         });
       }
     },

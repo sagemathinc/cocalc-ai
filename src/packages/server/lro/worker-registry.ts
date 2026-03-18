@@ -123,7 +123,7 @@ export const parallelOpsWorkerRegistry: ParallelOpsWorkerRegistration[] = [
     worker_kind: "project-host-backup-execution",
     category: "host-local",
     scope_model: "per-project-host",
-    dynamic_limit_supported: false,
+    dynamic_limit_supported: true,
     notes: [
       "This reports host-local backup slot usage on reachable project-hosts.",
       "running_count is the number of backup slots in use, and queued_count is the number of host-local waiters.",
