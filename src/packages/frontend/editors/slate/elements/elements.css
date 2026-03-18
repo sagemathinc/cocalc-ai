@@ -40,6 +40,7 @@ don't have to compensate for it using negative margins.
     var(--cocalc-slate-blockquote-border, rgba(0, 0, 0, 0.14));
   border-radius: 0 10px 10px 0;
   background: var(--cocalc-slate-blockquote-bg, rgba(0, 0, 0, 0.03));
+  color: var(--cocalc-slate-blockquote-fg, inherit);
 }
 
 .cocalc-slate-render blockquote > :first-child {

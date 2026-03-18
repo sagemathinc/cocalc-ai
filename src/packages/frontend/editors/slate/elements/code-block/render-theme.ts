@@ -4,6 +4,7 @@
  */
 
 import type { CSSProperties } from "react";
+import { COLORS } from "@cocalc/util/theme";
 import {
   SLATE_CODE_BLOCK_PALETTES,
   type SlateCodeBlockPalette,
@@ -12,6 +13,10 @@ import {
 export type SlateCodeBlockThemeVars = CSSProperties & {
   [key: `--${string}`]: string;
 };
+
+// Keep markdown theming constrained to inline/block code unless we
+// explicitly opt back into broader surface theming.
+const SLATE_RENDER_THEME_CODE_ONLY = true;
 
 function parseColor(
   color: string,
@@ -66,23 +71,57 @@ export function slateCodeBlockPalette(
 export function slateCodeBlockThemeVars(
   editorTheme?: string | null,
 ): SlateCodeBlockThemeVars {
+  const theme = `${editorTheme ?? ""}`.trim();
   const palette = slateCodeBlockPalette(editorTheme);
-  const surfaceMix = palette.mode === "dark" ? 0.14 : 0.05;
-  const subtleMix = palette.mode === "dark" ? 0.1 : 0.025;
   const borderMix = palette.mode === "dark" ? 0.24 : 0.12;
   const inlineCodeMix = palette.mode === "dark" ? 0.2 : 0.07;
-  const linkColor = palette.definition || palette.keyword;
+  const codeVars: SlateCodeBlockThemeVars = {
+    "--cocalc-slate-link": COLORS.ANTD_LINK_BLUE,
+    "--cocalc-slate-inline-code-bg": mix(
+      palette.background,
+      palette.foreground,
+      inlineCodeMix,
+    ),
+    "--cocalc-slate-inline-code-fg": palette.foreground,
+    "--cocalc-slate-inline-code-border": mix(
+      palette.background,
+      palette.foreground,
+      borderMix,
+    ),
+    "--cocalc-slate-code-bg": palette.background,
+    "--cocalc-slate-code-fg": palette.foreground,
+    "--cocalc-slate-code-border": palette.border,
+    "--cocalc-slate-code-comment": palette.comment,
+    "--cocalc-slate-code-keyword": palette.keyword,
+    "--cocalc-slate-code-string": palette.string,
+    "--cocalc-slate-code-number": palette.number,
+    "--cocalc-slate-code-definition": palette.definition,
+  };
+
+  if (SLATE_RENDER_THEME_CODE_ONLY) {
+    return codeVars;
+  }
+
+  const surfaceMix = palette.mode === "dark" ? 0.14 : 0.05;
+  const subtleMix = palette.mode === "dark" ? 0.1 : 0.025;
+  const neutralLinkChipMix = palette.mode === "dark" ? 0.09 : 0.035;
+  const neutralLinkChipBorderMix = palette.mode === "dark" ? 0.2 : 0.12;
+  const linkColor =
+    theme === "" || theme === "default"
+      ? COLORS.ANTD_LINK_BLUE
+      : palette.keyword || palette.definition;
   return {
+    ...codeVars,
     "--cocalc-slate-link": linkColor,
     "--cocalc-slate-link-chip-bg": mix(
       palette.background,
-      linkColor,
-      subtleMix,
+      palette.foreground,
+      neutralLinkChipMix,
     ),
     "--cocalc-slate-link-chip-border": mix(
       palette.background,
-      linkColor,
-      borderMix,
+      palette.foreground,
+      neutralLinkChipBorderMix,
     ),
     "--cocalc-slate-inline-code-bg": mix(
       palette.background,
@@ -100,6 +139,7 @@ export function slateCodeBlockThemeVars(
       palette.comment,
       subtleMix,
     ),
+    "--cocalc-slate-blockquote-fg": palette.foreground,
     "--cocalc-slate-blockquote-border": mix(
       palette.background,
       linkColor,
@@ -116,13 +156,5 @@ export function slateCodeBlockThemeVars(
       surfaceMix,
     ),
     "--cocalc-slate-table-header-fg": palette.foreground,
-    "--cocalc-slate-code-bg": palette.background,
-    "--cocalc-slate-code-fg": palette.foreground,
-    "--cocalc-slate-code-border": palette.border,
-    "--cocalc-slate-code-comment": palette.comment,
-    "--cocalc-slate-code-keyword": palette.keyword,
-    "--cocalc-slate-code-string": palette.string,
-    "--cocalc-slate-code-number": palette.number,
-    "--cocalc-slate-code-definition": palette.definition,
   };
 }
