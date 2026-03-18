@@ -4216,18 +4216,18 @@ async function runMoveSmokeScenarioViaCli({
     await runStep("start_and_seed_workspace", async () => {
       if (!workspaceId) throw new Error("missing workspace id");
       await runCli(cli, [
-        "workspace",
+        "project",
         "start",
-        "--workspace",
+        "--project",
         workspaceId,
         "--wait",
       ]);
       await runCli(
         cli,
         [
-          "workspace",
+          "project",
           "exec",
-          "--workspace",
+          "--project",
           workspaceId,
           "--timeout",
           "45",
@@ -4251,9 +4251,9 @@ async function runMoveSmokeScenarioViaCli({
       await runCli(
         cli,
         [
-          "workspace",
+          "project",
           "move",
-          "--workspace",
+          "--project",
           workspaceId,
           "--host",
           destHostId,
@@ -4267,9 +4267,9 @@ async function runMoveSmokeScenarioViaCli({
       if (!workspaceId) throw new Error("missing workspace id");
       if (!destHostId) throw new Error("missing destination host id");
       const row = await runCli<{ host_id?: string | null }>(cli, [
-        "workspace",
+        "project",
         "get",
-        "--workspace",
+        "--project",
         workspaceId,
       ]);
       const host_id = `${row?.host_id ?? ""}`.trim();
@@ -4284,7 +4284,7 @@ async function runMoveSmokeScenarioViaCli({
       if (!workspaceId) throw new Error("missing workspace id");
       await runCli(
         cli,
-        ["workspace", "start", "--workspace", workspaceId, "--wait"],
+        ["project", "start", "--project", workspaceId, "--wait"],
         { timeoutSeconds: 120, commandTimeoutMs: 240_000 },
       );
       await waitForProjectFileValueViaCli({
@@ -4344,7 +4344,7 @@ async function runMoveSmokeScenarioViaCli({
         if (!workspaceId) throw new Error("missing workspace id");
         await runCli<{ op_id?: string }>(
           cli,
-          ["workspace", "backup", "create", "--workspace", workspaceId],
+          ["project", "backup", "create", "--project", workspaceId],
           { timeoutSeconds: 90, commandTimeoutMs: 180_000 },
         );
         const backup = await waitForBackupIndexedViaCli({
@@ -4363,9 +4363,9 @@ async function runMoveSmokeScenarioViaCli({
         if (workspaceId) {
           try {
             await runCli(cli, [
-              "workspace",
+              "project",
               "delete",
-              "--workspace",
+              "--project",
               workspaceId,
               "--hard",
               "--purge-backups-now",
@@ -4374,9 +4374,9 @@ async function runMoveSmokeScenarioViaCli({
             ]);
           } catch {
             await runCli(cli, [
-              "workspace",
+              "project",
               "delete",
-              "--workspace",
+              "--project",
               workspaceId,
             ]);
           }
