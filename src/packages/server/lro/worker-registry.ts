@@ -57,7 +57,7 @@ export const parallelOpsWorkerRegistry: ParallelOpsWorkerRegistration[] = [
     worker_kind: "project-restore",
     category: "lro",
     scope_model: "global",
-    dynamic_limit_supported: false,
+    dynamic_limit_supported: true,
     lro_kinds: ["project-restore"],
     lease_ms: 120_000,
     getLimitSnapshot: () => ({
@@ -71,7 +71,7 @@ export const parallelOpsWorkerRegistry: ParallelOpsWorkerRegistration[] = [
     worker_kind: "project-hard-delete",
     category: "lro",
     scope_model: "global",
-    dynamic_limit_supported: false,
+    dynamic_limit_supported: true,
     lro_kinds: ["project-hard-delete"],
     lease_ms: 120_000,
     getLimitSnapshot: () => ({
@@ -85,7 +85,7 @@ export const parallelOpsWorkerRegistry: ParallelOpsWorkerRegistration[] = [
     worker_kind: "copy-path-between-projects",
     category: "lro",
     scope_model: "global",
-    dynamic_limit_supported: false,
+    dynamic_limit_supported: true,
     lro_kinds: ["copy-path-between-projects"],
     lease_ms: 120_000,
     getLimitSnapshot: () => ({
@@ -123,7 +123,7 @@ export const parallelOpsWorkerRegistry: ParallelOpsWorkerRegistration[] = [
     worker_kind: "host-ops",
     category: "lro",
     scope_model: "global",
-    dynamic_limit_supported: false,
+    dynamic_limit_supported: true,
     lro_kinds: [...HOST_OP_LRO_KINDS],
     lease_ms: 120_000,
     getLimitSnapshot: () => ({
