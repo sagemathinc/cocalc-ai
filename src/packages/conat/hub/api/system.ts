@@ -10,6 +10,7 @@ export const system = {
   getCustomize: noAuth,
   ping: noAuth,
   terminate: authFirst,
+  getParallelOpsStatus: authFirst,
   userTracking: authFirst,
   logClientError: authFirst,
   webappError: authFirst,
@@ -145,6 +146,38 @@ export interface ProjectAppPublicPolicy {
   warnings: string[];
 }
 
+export interface ParallelOpsWorkerOwnerStatus {
+  owner_id: string;
+  active_count: number;
+  stale_count: number;
+}
+
+export interface ParallelOpsWorkerBreakdownStatus {
+  key: string;
+  queued_count: number;
+  running_count: number;
+}
+
+export interface ParallelOpsWorkerStatus {
+  worker_kind: string;
+  category: "lro" | "cloud-work";
+  scope_model: "global" | "per-provider" | "per-project-host";
+  dynamic_limit_supported: boolean;
+  default_limit: number | null;
+  configured_limit: number | null;
+  effective_limit: number | null;
+  config_source: "constant" | "env-legacy" | "db-override";
+  extra_limits?: Record<string, number>;
+  queued_count: number;
+  running_count: number;
+  stale_running_count: number | null;
+  oldest_queued_ms: number | null;
+  worker_instances: number;
+  owners: ParallelOpsWorkerOwnerStatus[];
+  breakdown: ParallelOpsWorkerBreakdownStatus[];
+  notes: string[];
+}
+
 export interface ReserveProjectAppPublicSubdomainResult {
   hostname: string;
   label: string;
@@ -177,6 +210,10 @@ export interface System {
   //   - only admin can do this.
   //   - useful for development
   terminate: (service: "database" | "api") => Promise<void>;
+
+  getParallelOpsStatus: (opts?: {
+    account_id?: string;
+  }) => Promise<ParallelOpsWorkerStatus[]>;
 
   userTracking: (opts: {
     event: string;

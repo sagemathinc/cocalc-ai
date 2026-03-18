@@ -48,6 +48,7 @@ import {
 import { conat } from "@cocalc/backend/conat";
 import { sysApiMany } from "@cocalc/conat/core/sys";
 import type { ConnectionStats } from "@cocalc/conat/core/types";
+import { getParallelOpsStatus as getParallelOpsStatus0 } from "@cocalc/server/lro/worker-status";
 
 const logger = getLogger("server:conat:api:system");
 
@@ -56,6 +57,17 @@ export function ping() {
 }
 
 export async function terminate() {}
+
+export async function getParallelOpsStatus({
+  account_id,
+}: {
+  account_id?: string;
+}) {
+  if (!account_id || !(await isAdmin(account_id))) {
+    throw Error("must be an admin");
+  }
+  return await getParallelOpsStatus0();
+}
 
 export async function userTracking({
   event,
