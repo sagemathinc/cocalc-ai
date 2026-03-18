@@ -107,6 +107,35 @@ describe("create very simple mocked jupyter runner and test evaluating code", ()
     ]);
   });
 
+  it("reports the run ack without waiting for it", async () => {
+    const seen: any[] = [];
+    let ack: any | undefined;
+    const iter = await client.run(cells, {
+      waitForAck: false,
+      run_id: "ack-test-run",
+      onAck: (value) => {
+        ack = value;
+      },
+    });
+    for await (const output of iter) {
+      seen.push(...output);
+    }
+    await wait({
+      until: () => ack != null,
+      timeout: 5_000,
+      interval: 25,
+      desc: "run ack callback",
+    });
+    expect(ack).toMatchObject({
+      run_id: "ack-test-run",
+    });
+    expect(typeof ack.server_received_at_ms).toBe("number");
+    expect(withoutRunId(seen)).toEqual([
+      { path, id: "0" },
+      { cells, id: "0" },
+    ]);
+  });
+
   const count = 100;
   it(`run ${count} evaluations to ensure that the speed is reasonable (and also everything is kept properly ordered, etc.)`, async () => {
     const start = Date.now();

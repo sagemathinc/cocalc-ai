@@ -177,12 +177,18 @@ export function registerProjectJupyterCommands(
               });
               return await rl.question(prompt);
             },
+            onAck: () => {
+              if (ackAt == null) {
+                ackAt = Date.now();
+              }
+            },
           });
 
           let batchCount = 0;
           let messageCount = 0;
           let errorCount = 0;
           let moreOutputCount = 0;
+          let ackAt: number | null = null;
           let firstBatchAt: number | null = null;
           let firstMessageAt: number | null = null;
           const lifecycleCounts: Record<string, number> = {};
@@ -249,10 +255,15 @@ export function registerProjectJupyterCommands(
             more_output_count: moreOutputCount,
             lifecycle_counts: lifecycleCounts,
             duration_ms: Date.now() - startedAt,
+            to_ack_ms: ackAt == null ? null : Math.max(0, ackAt - startedAt),
             to_first_batch_ms:
               firstBatchAt == null
                 ? null
                 : Math.max(0, firstBatchAt - startedAt),
+            ack_to_first_batch_ms:
+              ackAt == null || firstBatchAt == null
+                ? null
+                : Math.max(0, firstBatchAt - ackAt),
             to_first_message_ms:
               firstMessageAt == null
                 ? null

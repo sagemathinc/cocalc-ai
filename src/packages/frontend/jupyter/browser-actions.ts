@@ -2266,6 +2266,7 @@ export class JupyterActions extends JupyterActions0 {
     this.rememberIgnoredLiveRunId(runId);
     const runStartedAt = Date.now();
     let cellsPrepared = 0;
+    let ackAt: number | null = null;
     let runnerStartedAt: number | null = null;
     let firstChunkAt: number | null = null;
     let firstWriteAt: number | null = null;
@@ -2364,6 +2365,11 @@ export class JupyterActions extends JupyterActions0 {
         limit,
         run_id: runId,
         waitForAck: false,
+        onAck: () => {
+          if (ackAt == null) {
+            ackAt = Date.now();
+          }
+        },
       });
       runnerStartedAt = Date.now();
       this.runDebug("runCells.runner.start", {
@@ -2569,6 +2575,11 @@ export class JupyterActions extends JupyterActions0 {
           firstChunkAt == null
             ? null
             : Math.max(0, firstChunkAt - runStartedAt),
+        toAckMs: ackAt == null ? null : Math.max(0, ackAt - runStartedAt),
+        ackToFirstChunkMs:
+          ackAt == null || firstChunkAt == null
+            ? null
+            : Math.max(0, firstChunkAt - ackAt),
         toFirstWriteMs:
           firstWriteAt == null
             ? null

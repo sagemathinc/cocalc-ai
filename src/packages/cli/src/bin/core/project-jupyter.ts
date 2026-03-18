@@ -4,6 +4,7 @@ import { isAbsolute, resolve as resolvePath } from "node:path";
 import { syncdb as openSyncDb } from "@cocalc/conat/sync-doc/syncdb";
 import {
   jupyterClient,
+  type JupyterRunAck,
   type OutputMessage,
 } from "@cocalc/conat/project/jupyter/run-code";
 import { syncdbPath } from "@cocalc/util/jupyter/names";
@@ -419,6 +420,7 @@ export function createProjectJupyterOps<Ctx, Project extends ProjectIdentity>(
     noHalt,
     limit,
     stdin,
+    onAck,
     cwd,
   }: {
     ctx: Ctx;
@@ -434,6 +436,7 @@ export function createProjectJupyterOps<Ctx, Project extends ProjectIdentity>(
       prompt: string;
       password?: boolean;
     }) => Promise<string>;
+    onAck?: (ack: JupyterRunAck) => void;
     cwd?: string;
   }): Promise<ProjectJupyterRunSession> {
     const normalizedPath = normalizeNotebookPath(path);
@@ -467,6 +470,7 @@ export function createProjectJupyterOps<Ctx, Project extends ProjectIdentity>(
           limit,
           run_id,
           waitForAck: false,
+          onAck,
         },
       );
       return {

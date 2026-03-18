@@ -80,6 +80,11 @@ export interface OutputMessage {
   more_output?: boolean;
 }
 
+export interface JupyterRunAck {
+  run_id: string;
+  server_received_at_ms: number;
+}
+
 export type LifecycleMessageType =
   | "run_start"
   | "run_done"
@@ -275,7 +280,10 @@ export function jupyterServer({
         const run_id =
           typeof data.run_id == "string" ? data.run_id : nextRunId();
         try {
-          mesg.respondSync(null);
+          mesg.respondSync({
+            run_id,
+            server_received_at_ms: Date.now(),
+          } satisfies JupyterRunAck);
           if (moreOutput[path] == null) {
             moreOutput[path] = {};
           }
@@ -709,6 +717,7 @@ export class JupyterClient {
       limit?: number;
       run_id?: string;
       waitForAck?: boolean;
+      onAck?: (ack: JupyterRunAck) => void;
     } = {},
   ) => {
     const effectiveRunId = opts.run_id ?? nextRunId();
@@ -746,7 +755,7 @@ export class JupyterClient {
     const cells1 = cells.map(({ id, input }) => {
       return { id, input };
     });
-    const { waitForAck = true, ...requestOpts0 } = opts;
+    const { waitForAck = true, onAck, ...requestOpts0 } = opts;
     const requestOpts = {
       ...requestOpts0,
       run_id: effectiveRunId,
@@ -756,6 +765,12 @@ export class JupyterClient {
       ...requestOpts,
       path: this.path,
       cells: cells1,
+    });
+    void request.then((resp) => {
+      const data = resp?.data;
+      if (data != null && typeof data === "object") {
+        onAck?.(data as JupyterRunAck);
+      }
     });
     if (waitForAck) {
       return request.then(() => iter);
