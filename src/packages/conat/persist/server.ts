@@ -273,6 +273,10 @@ export function server({
           mesg.respondSync(server.id);
         } else if (request.cmd == "getAll") {
           log("getAll", { subject: socket.subject, request });
+          if (request.changefeed && !changefeed) {
+            changefeed = true;
+            startChangefeed({ socket, stream, messagesThresh });
+          }
           // getAll uses requestMany which responds with all matching messages,
           // so no call to mesg.respond here.
           getAll({ stream, mesg, request, messagesThresh });

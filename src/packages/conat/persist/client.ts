@@ -63,6 +63,7 @@ interface GetAllOpts {
   end_seq?: number;
   timeout?: number;
   maxWait?: number;
+  changefeed?: boolean;
 }
 
 const logger = getLogger("persist:client");
@@ -140,6 +141,8 @@ class PersistStreamClient extends EventEmitter {
   private changefeeds: any[] = [];
   private state: "ready" | "closed" = "ready";
   private lastSeq?: number;
+  private changefeedDesired = false;
+  private changefeedActive = false;
   private reconnecting = false;
   private gettingMissed = false;
   private changesWhenGettingMissed: ChangefeedEvent[] = [];
@@ -186,9 +189,10 @@ class PersistStreamClient extends EventEmitter {
         await getPersistServerId({ client: this.client, subject }),
     });
     logger.debug("init", this.storage.path, "connecting to ", subject);
+    this.changefeedActive = false;
     this.socket.write({
       storage: this.storage,
-      changefeed: this.changefeeds.length > 0,
+      changefeed: this.changefeedDesired || this.changefeeds.length > 0,
     });
     this.socket.once("ready", this.onSocketReady);
 
@@ -266,23 +270,13 @@ class PersistStreamClient extends EventEmitter {
             if (this.changefeeds.length == 0 || this.state != "ready") {
               return true;
             }
-            const resp = await this.socket.request(null, {
-              headers: {
-                cmd: "changefeed",
-              },
-              timeout: DEFAULT_RECOVERY_TIMEOUT,
-            });
-            if (resp.headers?.error) {
-              throw new ConatError(`${resp.headers?.error}`, {
-                code: resp.headers?.code as string | number,
-              });
-            }
             if (this.changefeeds.length == 0 || this.state != "ready") {
               return true;
             }
             const updates = await this.getAll({
               start_seq: this.lastSeq,
               timeout: DEFAULT_RECOVERY_TIMEOUT,
+              changefeed: true,
             });
             this.changefeedEmit(updates);
             recovered = true;
@@ -424,25 +418,41 @@ class PersistStreamClient extends EventEmitter {
   // in the stream **exactly once and in order**, even if there
   // are disconnects, failovers, etc.  Dealing with dropped messages,
   // duplicates, etc., is NOT the responsibility of clients.
-  changefeed = async (): Promise<Changefeed> => {
+  changefeed = async ({
+    activateRemote = true,
+  }: {
+    activateRemote?: boolean;
+  } = {}): Promise<Changefeed> => {
     stats.changefeedCalls += 1;
-    // activate changefeed mode (so server publishes updates -- this is idempotent)
-    const resp = await this.socket.request(null, {
-      headers: {
-        cmd: "changefeed",
-      },
-    });
-    if (resp.headers?.error) {
-      throw new ConatError(`${resp.headers?.error}`, {
-        code: resp.headers?.code as string | number,
-      });
-    }
     // an iterator over any updates that are published.
     const iter = new EventIterator<ChangefeedEvent>(this, "changefeed", {
       map: (args) => args[0],
     });
     this.changefeeds.push(iter);
-    return iter;
+    this.changefeedDesired = true;
+    try {
+      if (activateRemote && !this.changefeedActive) {
+        const resp = await this.socket.request(null, {
+          headers: {
+            cmd: "changefeed",
+          },
+        });
+        if (resp.headers?.error) {
+          throw new ConatError(`${resp.headers?.error}`, {
+            code: resp.headers?.code as string | number,
+          });
+        }
+        this.changefeedActive = true;
+      }
+      return iter;
+    } catch (err) {
+      const i = this.changefeeds.indexOf(iter);
+      if (i >= 0) {
+        this.changefeeds.splice(i, 1);
+      }
+      iter.close();
+      throw err;
+    }
   };
 
   set = async ({
@@ -578,10 +588,19 @@ class PersistStreamClient extends EventEmitter {
     end_seq,
     timeout,
     maxWait,
+    changefeed,
   }: GetAllOpts = {}): AsyncGenerator<StoredMessage[], void, unknown> {
     if (this.isClosed()) {
       // done
       return;
+    }
+    if (changefeed) {
+      if (this.changefeeds.length == 0) {
+        throw Error(
+          "getAll with changefeed=true requires an existing local changefeed iterator",
+        );
+      }
+      this.changefeedDesired = true;
     }
     const sub = await this.socket.requestMany(null, {
       headers: {
@@ -589,6 +608,7 @@ class PersistStreamClient extends EventEmitter {
         start_seq,
         end_seq,
         timeout,
+        changefeed,
       } as any,
       timeout,
       maxWait,
@@ -643,6 +663,9 @@ class PersistStreamClient extends EventEmitter {
       }
       if (this.isClosed()) {
         throw Error("closed");
+      }
+      if (opts.changefeed) {
+        this.changefeedActive = true;
       }
       return messages;
     } catch (err) {

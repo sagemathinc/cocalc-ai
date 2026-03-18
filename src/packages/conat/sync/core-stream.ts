@@ -402,20 +402,26 @@ export class CoreStream<T = any> extends EventEmitter {
           if (this.changefeed == null) {
             this.emitInitPhase("persist_changefeed_start", {
               attempt,
+              piggybacked_on_get_all: true,
             });
-            this.changefeed = await this.persistClient.changefeed();
+            this.changefeed = await this.persistClient.changefeed({
+              activateRemote: false,
+            });
             this.emitInitPhase("persist_changefeed_done", {
               attempt,
+              piggybacked_on_get_all: true,
             });
           }
           // console.log("get persistent stream", { start_seq }, this.storage);
           this.emitInitPhase("persist_get_all_start", {
             attempt,
             start_seq,
+            changefeed: true,
           });
           messages = await this.persistClient.getAll({
             start_seq,
             timeout: DEFAULT_GET_ALL_TIMEOUT,
+            changefeed: true,
           });
           let bytes = 0;
           for (const mesg of messages) {
@@ -686,7 +692,9 @@ export class CoreStream<T = any> extends EventEmitter {
     while (!this.isClosed()) {
       try {
         if (this.changefeed == null) {
-          this.changefeed = await this.persistClient.changefeed();
+          this.changefeed = await this.persistClient.changefeed({
+            activateRemote: false,
+          });
           if (this.isClosed()) {
             return;
           }
