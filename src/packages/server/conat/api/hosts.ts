@@ -1945,7 +1945,6 @@ export async function createHost({
   const membership = await loadMembership(owner);
   requireCreateHosts(membership.entitlements);
   const id = randomUUID();
-  const now = new Date();
   const machineCloud = normalizeProviderId(machine?.cloud);
   const isSelfHost = machineCloud === "self-host";
   const initialStatus = machineCloud && !isSelfHost ? "starting" : "off";
@@ -2037,7 +2036,7 @@ export async function createHost({
         ...(bootstrapChannel ? { bootstrap_channel: bootstrapChannel } : {}),
         ...(bootstrapVersion ? { bootstrap_version: bootstrapVersion } : {}),
       },
-      now,
+      null,
     ],
   );
   if (machineCloud && !isSelfHost) {

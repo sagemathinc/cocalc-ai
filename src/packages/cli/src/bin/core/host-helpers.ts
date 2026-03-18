@@ -26,6 +26,7 @@ const HOST_CREATE_FAILED_STATUSES = new Set(["error", "deprovisioned"]);
 type HostLike = {
   id: string;
   status?: string | null;
+  last_seen?: string | null;
   last_action_error?: string | null;
   last_error?: string | null;
   public_ip?: string | null;
@@ -233,7 +234,8 @@ export function createHostHelpers<Ctx, Host extends HostLike>(
       }
       lastHost = host;
       const status = `${host.status ?? ""}`.trim().toLowerCase();
-      if (HOST_CREATE_READY_STATUSES.has(status)) {
+      const hasHeartbeat = `${host.last_seen ?? ""}`.trim() !== "";
+      if (HOST_CREATE_READY_STATUSES.has(status) && hasHeartbeat) {
         return { host, timedOut: false };
       }
       if (HOST_CREATE_FAILED_STATUSES.has(status)) {
