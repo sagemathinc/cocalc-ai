@@ -5,8 +5,10 @@ const os = require("node:os");
 const path = require("node:path");
 
 const {
+  buildFailureCleanupPlan,
   buildRunMatrix,
   buildWaitProfile,
+  cleanupFailedSmokeRun,
   executeLaunchpadCanary,
   parseArgs,
   resolveApiUrl,
@@ -147,6 +149,124 @@ test("executeLaunchpadCanary writes a dry-run summary and ledger", async () => {
   assert.equal(payload.stopped_early, false);
   assert.ok(fs.existsSync(path.join(payload.run_dir, "run-summary.json")));
   assert.ok(fs.existsSync(path.join(payload.run_dir, "run-ledger.json")));
+});
+
+test("buildFailureCleanupPlan deduplicates cleanup ids from failure payloads", () => {
+  const plan = buildFailureCleanupPlan({
+    project_id: "project-1",
+    project_ids: ["project-1", "project-2"],
+    host_id: "host-1",
+    host_ids: ["host-1"],
+    cleanup: {
+      host_ids: ["host-2", "host-1"],
+      workspaces: [
+        { workspace_id: "project-2" },
+        { workspace_id: "project-3" },
+      ],
+    },
+  });
+  assert.deepEqual(plan.projectIds, ["project-1", "project-2", "project-3"]);
+  assert.deepEqual(plan.hostIds, ["host-1", "host-2"]);
+});
+
+test("cleanupFailedSmokeRun deletes projects before hosts", async () => {
+  const calls = [];
+  const cleanup = await cleanupFailedSmokeRun({
+    smokeResult: {
+      project_id: "project-1",
+      host_ids: ["host-1", "host-2"],
+    },
+    apiUrl: "http://127.0.0.1:9102",
+    accountId: "00000000-1000-4000-8000-000000000001",
+    cliRunner: async (_ctx, args) => {
+      calls.push(args);
+      return { ok: true };
+    },
+  });
+  assert.equal(cleanup.ok, true);
+  assert.deepEqual(calls, [
+    [
+      "project",
+      "delete",
+      "--project",
+      "project-1",
+      "--hard",
+      "--purge-backups-now",
+      "--wait",
+      "-y",
+    ],
+    ["host", "delete", "--skip-backups", "--wait", "host-1"],
+    ["host", "delete", "--skip-backups", "--wait", "host-2"],
+  ]);
+});
+
+test("executeLaunchpadCanary runs failure cleanup when a smoke run returns cleanup metadata", async () => {
+  const tmp = fs.mkdtempSync(
+    path.join(os.tmpdir(), "cocalc-launchpad-canary-cleanup-"),
+  );
+  const cleanupCalls = [];
+  const payload = await executeLaunchpadCanary(
+    {
+      providers: ["gcp"],
+      scenarios: ["move"],
+      preset: "",
+      accountId: "00000000-1000-4000-8000-000000000001",
+      apiUrl: "http://127.0.0.1:9102",
+      runRoot: tmp,
+      failurePolicy: "stop",
+      executionMode: "cli",
+      cleanupOnSuccess: true,
+      verifyBackup: true,
+      verifyTerminal: true,
+      verifyProxy: true,
+      verifyProviderStatus: false,
+      printDebugHints: true,
+      listPresets: false,
+      skipApiCheck: false,
+      dryRun: false,
+      json: true,
+    },
+    Date.UTC(2026, 2, 18, 8, 30, 0),
+    {
+      smokeRunner: {
+        async listProjectHostSmokePresets({ provider }) {
+          return [{ id: `${provider}-cpu`, label: `${provider} cpu` }];
+        },
+        async runProjectHostPersistenceSmokePreset() {
+          return {
+            ok: false,
+            project_id: "project-1",
+            host_ids: ["host-1", "host-2"],
+            cleanup: {
+              host_ids: ["host-2"],
+              workspaces: [{ workspace_id: "project-1" }],
+            },
+          };
+        },
+      },
+      async checkApiReachable() {},
+      async runCliJson(_ctx, args) {
+        cleanupCalls.push(args);
+        return { ok: true };
+      },
+    },
+  );
+  assert.equal(payload.runs[0].status, "failed");
+  assert.equal(payload.runs[0].failure_cleanup.ok, true);
+  assert.deepEqual(cleanupCalls, [
+    [
+      "project",
+      "delete",
+      "--project",
+      "project-1",
+      "--hard",
+      "--purge-backups-now",
+      "--wait",
+      "-y",
+    ],
+    ["host", "delete", "--skip-backups", "--wait", "host-1"],
+    ["host", "delete", "--skip-backups", "--wait", "host-2"],
+  ]);
 });
 
 test("summarizeRun reports ok and failed counts", () => {

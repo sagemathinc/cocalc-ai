@@ -6,9 +6,8 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 
-const { resolveApiUrl } = require("./launchpad-canary.js");
-
 const ROOT = path.resolve(__dirname, "..", "..");
+const DEFAULT_HUB_DAEMON_ENV = path.join(ROOT, ".local", "hub-daemon.env");
 const DEFAULT_LOCAL_POSTGRES_ENV = path.join(
   ROOT,
   "data",
@@ -24,6 +23,17 @@ const DEFAULT_CONAT_PASSWORD = path.join(
   "secrets",
   "conat-password",
 );
+
+function normalizeApiUrl(raw) {
+  const value = `${raw ?? ""}`.trim();
+  if (!value) {
+    throw new Error("empty api url");
+  }
+  if (value.startsWith("http://") || value.startsWith("https://")) {
+    return value.replace(/\/+$/, "");
+  }
+  return `http://${value.replace(/\/+$/, "")}`;
+}
 
 function readShellEnvFile(file) {
   if (!file || !fs.existsSync(file)) {
@@ -50,6 +60,24 @@ function readShellEnvFile(file) {
     env[key] = value;
   }
   return env;
+}
+
+function resolveApiUrl(options = {}) {
+  if (`${options.apiUrl ?? ""}`.trim()) {
+    return normalizeApiUrl(options.apiUrl);
+  }
+  const daemonEnv = readShellEnvFile(DEFAULT_HUB_DAEMON_ENV);
+  if (`${daemonEnv.HUB_PORT ?? ""}`.trim()) {
+    return `http://127.0.0.1:${`${daemonEnv.HUB_PORT}`.trim()}`;
+  }
+  const ambient =
+    process.env.COCALC_API_URL ||
+    process.env.SMOKE_API_URL ||
+    process.env.BASE_URL;
+  if (ambient) {
+    return normalizeApiUrl(ambient);
+  }
+  return "http://127.0.0.1:9100";
 }
 
 function applyLocalPostgresEnv(envFile = DEFAULT_LOCAL_POSTGRES_ENV) {
@@ -190,6 +218,7 @@ module.exports = {
   applyLocalPostgresEnv,
   createRunDir,
   readShellEnvFile,
+  resolveApiUrl,
   resolveCliPath,
   resolveHubPassword,
   runCliJson,

@@ -6,6 +6,8 @@ const http = require("node:http");
 const https = require("node:https");
 const path = require("node:path");
 
+const { runCliJson } = require("./launchpad-cli-helpers.js");
+
 const ROOT = path.resolve(__dirname, "..", "..");
 const DEFAULT_RUN_ROOT = path.join(
   ROOT,
@@ -378,6 +380,117 @@ function writeJson(file, value) {
   fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`);
 }
 
+function uniqueStrings(values) {
+  return Array.from(
+    new Set(
+      (values ?? []).map((value) => `${value ?? ""}`.trim()).filter(Boolean),
+    ),
+  );
+}
+
+function buildFailureCleanupPlan(smokeResult) {
+  return {
+    projectIds: uniqueStrings([
+      ...(smokeResult?.project_ids ?? []),
+      smokeResult?.project_id,
+      ...((smokeResult?.cleanup?.workspaces ?? []).map(
+        (workspace) => workspace?.workspace_id,
+      ) ?? []),
+    ]),
+    hostIds: uniqueStrings([
+      ...(smokeResult?.host_ids ?? []),
+      smokeResult?.host_id,
+      ...(smokeResult?.cleanup?.host_ids ?? []),
+    ]),
+  };
+}
+
+function isAlreadyGoneError(err) {
+  const message = `${err?.message ?? err ?? ""}`;
+  return /not found|does not exist|unknown project|unknown host/i.test(message);
+}
+
+async function cleanupFailedSmokeRun({
+  smokeResult,
+  apiUrl,
+  accountId,
+  cliRunner = runCliJson,
+}) {
+  const plan = buildFailureCleanupPlan(smokeResult);
+  const result = {
+    attempted: false,
+    ok: true,
+    project_results: [],
+    host_results: [],
+  };
+  if (!plan.projectIds.length && !plan.hostIds.length) {
+    return result;
+  }
+  result.attempted = true;
+
+  for (const projectId of plan.projectIds) {
+    try {
+      await cliRunner(
+        {
+          apiUrl,
+          accountId,
+        },
+        [
+          "project",
+          "delete",
+          "--project",
+          projectId,
+          "--hard",
+          "--purge-backups-now",
+          "--wait",
+          "-y",
+        ],
+      );
+      result.project_results.push({ project_id: projectId, status: "deleted" });
+    } catch (err) {
+      if (isAlreadyGoneError(err)) {
+        result.project_results.push({
+          project_id: projectId,
+          status: "already-gone",
+        });
+        continue;
+      }
+      result.ok = false;
+      result.project_results.push({
+        project_id: projectId,
+        status: "failed",
+        error: err instanceof Error ? err.message : `${err}`,
+      });
+    }
+  }
+
+  for (const hostId of plan.hostIds) {
+    try {
+      await cliRunner(
+        {
+          apiUrl,
+          accountId,
+        },
+        ["host", "delete", "--skip-backups", "--wait", hostId],
+      );
+      result.host_results.push({ host_id: hostId, status: "deleted" });
+    } catch (err) {
+      if (isAlreadyGoneError(err)) {
+        result.host_results.push({ host_id: hostId, status: "already-gone" });
+        continue;
+      }
+      result.ok = false;
+      result.host_results.push({
+        host_id: hostId,
+        status: "failed",
+        error: err instanceof Error ? err.message : `${err}`,
+      });
+    }
+  }
+
+  return result;
+}
+
 function summarizeRun(result) {
   return {
     run_dir: result.run_dir,
@@ -502,6 +615,7 @@ async function executeLaunchpadCanary(options, now = Date.now(), deps = {}) {
     applyLocalPostgresEnv();
   }
   const smokeRunner = deps.smokeRunner || resolveSmokeRunner();
+  const cliRunner = deps.runCliJson || runCliJson;
   const apiUrl = resolveApiUrl(options);
   if (!options.skipApiCheck) {
     const apiCheck = deps.checkApiReachable || checkApiReachable;
@@ -602,6 +716,14 @@ async function executeLaunchpadCanary(options, now = Date.now(), deps = {}) {
       entry.ok = !!smokeResult.ok;
       entry.status = smokeResult.ok ? "ok" : "failed";
       entry.result = smokeResult;
+      if (!smokeResult.ok && options.cleanupOnSuccess) {
+        entry.failure_cleanup = await cleanupFailedSmokeRun({
+          smokeResult,
+          apiUrl,
+          accountId: options.accountId || undefined,
+          cliRunner,
+        });
+      }
     } catch (err) {
       entry.ok = false;
       entry.status = "failed";
@@ -669,6 +791,8 @@ async function main(argv = process.argv.slice(2), now = Date.now()) {
 module.exports = {
   buildRunMatrix,
   buildWaitProfile,
+  buildFailureCleanupPlan,
+  cleanupFailedSmokeRun,
   checkApiReachable,
   createRunDir,
   executeLaunchpadCanary,
