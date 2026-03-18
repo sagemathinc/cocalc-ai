@@ -27,6 +27,39 @@ don't have to compensate for it using negative margins.
   margin-bottom: 1em;
 }
 
+.cocalc-slate-render a {
+  color: var(--cocalc-slate-link, inherit);
+  text-decoration-color: var(--cocalc-slate-link, currentColor);
+  text-underline-offset: 0.12em;
+}
+
+.cocalc-slate-render blockquote {
+  margin: 0 0 1em;
+  padding: 0.45em 0.9em;
+  border-left: 4px solid
+    var(--cocalc-slate-blockquote-border, rgba(0, 0, 0, 0.14));
+  border-radius: 0 10px 10px 0;
+  background: var(--cocalc-slate-blockquote-bg, rgba(0, 0, 0, 0.03));
+}
+
+.cocalc-slate-render blockquote > :first-child {
+  margin-top: 0;
+}
+
+.cocalc-slate-render blockquote > :last-child {
+  margin-bottom: 0;
+}
+
+.cocalc-slate-render table th,
+.cocalc-slate-render table td {
+  border-bottom: 1px solid var(--cocalc-slate-table-border, rgba(0, 0, 0, 0.12));
+}
+
+.cocalc-slate-render table th {
+  background: var(--cocalc-slate-table-header-bg, rgba(0, 0, 0, 0.03));
+  color: var(--cocalc-slate-table-header-fg, inherit);
+}
+
 /* Prism-style token colors for code blocks. */
 .cocalc-slate-code-block {
   font-family: Menlo, Consolas, "Liberation Mono", "Courier New", monospace;

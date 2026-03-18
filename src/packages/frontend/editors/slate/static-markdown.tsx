@@ -87,7 +87,7 @@ export default function StaticMarkdown({
           ...slateCodeBlockThemeVars(editorTheme),
           ...style,
         }}
-        className={className}
+        className={["cocalc-slate-render", className].filter(Boolean).join(" ")}
       >
         {editor.children.map((element, n) => {
           return <RenderElement key={n} element={element} />;
