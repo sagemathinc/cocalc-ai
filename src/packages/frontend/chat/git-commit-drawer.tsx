@@ -19,6 +19,7 @@ import {
 } from "antd";
 import MarkdownInput from "@cocalc/frontend/editors/markdown-input/multimode";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
+import { useEffectiveEditorThemeForPath } from "@cocalc/frontend/project/workspaces/use-effective-editor-theme";
 import { memo, type ComponentProps } from "react";
 import {
   useCallback,
@@ -801,6 +802,7 @@ export const DiffBlock = memo(function DiffBlock({
   lines,
   languageHint,
   fontSize,
+  editorTheme,
   comments,
   showResolvedComments,
   commentEnabled,
@@ -814,6 +816,7 @@ export const DiffBlock = memo(function DiffBlock({
   lines: string[];
   languageHint: string;
   fontSize: number;
+  editorTheme?: string | null;
   comments: GitReviewCommentV2[];
   showResolvedComments: boolean;
   commentEnabled: boolean;
@@ -1117,6 +1120,7 @@ export const DiffBlock = memo(function DiffBlock({
                             fontFamily: commentFontFamily,
                             lineHeight: 1.5,
                           }}
+                          editorTheme={editorTheme}
                         />
                       )}
                       <div
@@ -1280,6 +1284,7 @@ export function GitCommitDrawer({
   onOpenActivityLog,
 }: GitCommitDrawerProps) {
   const accountId = useTypedRedux("account", "account_id");
+  const editorTheme = useEffectiveEditorThemeForPath(projectId, sourcePath);
   const [drawerSize, setDrawerSize] = useState<number>(readDrawerSize);
   const [contextLines, setContextLines] = useState<number>(
     DEFAULT_CONTEXT_LINES,
@@ -2916,6 +2921,7 @@ export function GitCommitDrawer({
                   <StaticMarkdown
                     value={reviewNote}
                     style={{ fontSize: Math.max(13, fontSize) }}
+                    editorTheme={editorTheme}
                   />
                 ) : (
                   <Typography.Text type="secondary" style={{ fontSize: 12 }}>
@@ -3181,6 +3187,7 @@ export function GitCommitDrawer({
                                 fontSize: Math.max(13, fontSize),
                                 lineHeight: 1.55,
                               }}
+                              editorTheme={editorTheme}
                             />
                           ) : null}
                         </div>
@@ -3241,6 +3248,7 @@ export function GitCommitDrawer({
                       lines={file.lines}
                       languageHint={languageHint}
                       fontSize={fontSize}
+                      editorTheme={editorTheme}
                       comments={fileComments}
                       showResolvedComments={showResolvedComments}
                       commentEnabled={!isHeadSelected}

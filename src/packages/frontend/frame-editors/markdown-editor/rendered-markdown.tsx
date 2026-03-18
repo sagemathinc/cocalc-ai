@@ -14,6 +14,7 @@
 
 import { delay } from "awaiting";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
+import { useEffectiveEditorThemeForPath } from "@cocalc/frontend/project/workspaces/use-effective-editor-theme";
 import { is_different } from "@cocalc/util/misc";
 import { debounce } from "lodash";
 import { React, CSS } from "../../app-framework";
@@ -63,6 +64,7 @@ export const RenderedMarkdown: React.FC<Props> = React.memo((props: Props) => {
   } = props;
 
   const fileContext = useFileContext();
+  const editorTheme = useEffectiveEditorThemeForPath(project_id, path);
 
   const scroll = React.useRef<HTMLDivElement>(null as any);
 
@@ -141,7 +143,7 @@ export const RenderedMarkdown: React.FC<Props> = React.memo((props: Props) => {
               reloadImages: reload_images,
             }}
           >
-            <StaticMarkdown value={value} />
+            <StaticMarkdown value={value} editorTheme={editorTheme} />
           </FileContext.Provider>
         </div>
       </div>
