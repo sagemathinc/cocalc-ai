@@ -54,6 +54,7 @@ import { clearProjectHostConatAuthCaches } from "../conat-auth";
 import { rehydrateAcpAutomationsForProject } from "@cocalc/lite/hub/acp";
 
 const logger = getLogger("project-host:hub:projects");
+export const PROJECT_RUNNER_RPC_TIMEOUT_MS = 60 * 60 * 1000;
 const MB = 1_000_000;
 const DEFAULT_PID_LIMIT = 4096;
 const MAX_BACKUPS_PER_PROJECT = 50;
