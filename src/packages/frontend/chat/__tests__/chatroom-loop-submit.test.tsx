@@ -4,6 +4,8 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import * as immutable from "immutable";
 import { ChatPanel } from "../chatroom";
 
+let currentAcpState = immutable.Map();
+
 jest.mock("@cocalc/frontend/feature", () => ({
   IS_MOBILE: false,
 }));
@@ -14,7 +16,7 @@ jest.mock("@cocalc/frontend/app-framework", () => {
     ...actual,
     useEditorRedux: () => (key: string) => {
       if (key === "activity") return undefined;
-      if (key === "acpState") return immutable.Map();
+      if (key === "acpState") return currentAcpState;
       return undefined;
     },
     useTypedRedux: (...args: any[]) => {
@@ -39,11 +41,22 @@ const selectedThread = {
   isArchived: false,
 };
 
+const archivedThread = {
+  ...selectedThread,
+  key: "archived-ai-thread",
+  label: "Archived AI Thread",
+  displayLabel: "Archived AI Thread",
+  isArchived: true,
+};
+
+let currentThreads = [selectedThread];
+let currentArchivedThreads: any[] = [];
+
 jest.mock("../threads", () => ({
   COMBINED_FEED_KEY: "__COMBINED_FEED__",
   useThreadSections: () => ({
-    threads: [selectedThread],
-    archivedThreads: [],
+    threads: currentThreads,
+    archivedThreads: currentArchivedThreads,
     combinedThread: undefined,
     threadSections: [],
   }),
@@ -141,8 +154,11 @@ jest.mock("../chatroom-thread-panel", () => ({
   }),
 }));
 
+const upsertAgentSessionRecord = jest.fn(() => Promise.resolve());
+
 jest.mock("../agent-session-index", () => ({
-  upsertAgentSessionRecord: jest.fn(() => Promise.resolve()),
+  upsertAgentSessionRecord: (record: any) =>
+    (upsertAgentSessionRecord as any)(record),
 }));
 
 jest.mock("../external-side-chat-selection", () => ({
@@ -162,6 +178,10 @@ describe("ChatPanel loop submit behavior", () => {
     setInput.mockClear();
     clearInput.mockClear();
     clearComposerDraft.mockClear();
+    upsertAgentSessionRecord.mockClear();
+    currentThreads = [selectedThread];
+    currentArchivedThreads = [];
+    currentAcpState = immutable.Map();
   });
 
   it("turns loop off after a successful send even if thread metadata still has loop enabled", async () => {
@@ -248,5 +268,51 @@ describe("ChatPanel loop submit behavior", () => {
     );
     expect(actions.setThreadLoopConfig).toHaveBeenCalledWith("t1", null);
     expect(actions.setThreadLoopState).toHaveBeenCalledWith("t1", null);
+  });
+
+  it("indexes archived ai threads as archived even if their acp state is still running", async () => {
+    currentArchivedThreads = [archivedThread];
+    currentAcpState = immutable.Map({
+      "thread:archived-ai-thread": "running",
+    });
+
+    const actions = {
+      sendChat: jest.fn(() => Date.now()),
+      getThreadMetadata: jest.fn(() => ({
+        agent_kind: "acp",
+        acp_config: { model: "gpt-5.4", sessionMode: "workspace-write" },
+      })),
+      getMessagesInThread: jest.fn(() => []),
+      deleteDraft: jest.fn(),
+      getThreadLoopConfig: jest.fn(),
+      getThreadLoopState: jest.fn(),
+      frameTreeActions: undefined,
+      frameId: undefined,
+      languageModelStopGenerating: jest.fn(),
+      getCodexConfig: jest.fn(() => ({
+        model: "gpt-5.4",
+        sessionMode: "workspace-write",
+      })),
+    } as any;
+
+    render(
+      <ChatPanel
+        actions={actions}
+        project_id="project-1"
+        path="chat/test.chat"
+        messages={new Map()}
+        threadIndex={undefined}
+        docVersion={0}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(upsertAgentSessionRecord).toHaveBeenCalledWith(
+        expect.objectContaining({
+          thread_key: "archived-ai-thread",
+          status: "archived",
+        }),
+      ),
+    );
   });
 });
