@@ -86,6 +86,27 @@ pnpm -C src bug-hunt:launchpad-queue -- \
 
 If you rerun the same `--queue-dir`, previously successful jobs are skipped and only unfinished or failed jobs are attempted again.
 
+Dedicated data-mobility wrappers:
+
+```sh
+pnpm -C src bug-hunt:launchpad-move -- --provider gcp --dry-run --json
+```
+
+```sh
+pnpm -C src bug-hunt:launchpad-copy-path -- \
+  --src-host host-a \
+  --dest-host host-b \
+  --dry-run \
+  --json
+```
+
+```sh
+pnpm -C src bug-hunt:launchpad-backup-snapshot -- \
+  --host host-a \
+  --dry-run \
+  --json
+```
+
 ## Next Expansion
 
 Once the basic canary is trustworthy, expand one scenario family at a time:

@@ -31,6 +31,9 @@ Note: the active runtime skill still lives in `~/.codex/skills/cocalc-bug-hunter
 - `pnpm -C src bug-hunt:extract -- --fresh`
 - `pnpm -C src bug-hunt:attach -- --mode lite --json`
 - `pnpm -C src bug-hunt:launchpad-canary -- --provider gcp --list-presets --json`
+- `pnpm -C src bug-hunt:launchpad-move -- --provider gcp --dry-run --json`
+- `pnpm -C src bug-hunt:launchpad-copy-path -- --dry-run --json`
+- `pnpm -C src bug-hunt:launchpad-backup-snapshot -- --dry-run --json`
 - `pnpm -C src bug-hunt:launchpad-queue -- --provider gcp --provider lambda --scenario persistence --json`
 - `pnpm -C src bug-hunt:run-plan -- --list-plans`
 - `pnpm -C src bug-hunt:queue-from-tasks -- --tasks /path/to/wstein.tasks --fresh --dry-run --json`
