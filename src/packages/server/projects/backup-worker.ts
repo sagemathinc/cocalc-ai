@@ -5,10 +5,15 @@ import type { LroSummary } from "@cocalc/conat/hub/api/lro";
 import { claimLroOps, touchLro, updateLro } from "@cocalc/server/lro/lro-db";
 import { publishLroEvent, publishLroSummary } from "@cocalc/conat/lro/stream";
 import { getProjectFileServerClient } from "@cocalc/server/conat/file-server-client";
+import { withTimeout } from "@cocalc/util/async-utils";
+import {
+  BACKUP_LRO_KIND,
+  BACKUP_TIMEOUT_MS,
+  isBackupOpTimedOut,
+} from "./backup-lro";
 
 const logger = getLogger("server:projects:backup-worker");
 
-const BACKUP_LRO_KIND = "project-backup";
 const OWNER_TYPE = "hub" as const;
 const LEASE_MS = 120_000;
 const HEARTBEAT_MS = 15_000;
@@ -18,7 +23,6 @@ const MAX_PARALLEL = Math.max(
   Math.min(100, envToInt("COCALC_BACKUP_LRO_MAX_PARALLEL", 10)),
 );
 const MAX_BACKUPS_PER_PROJECT = 30;
-const BACKUP_TIMEOUT_MS = 6 * 60 * 60 * 1000;
 
 const WORKER_ID = randomUUID();
 
@@ -105,6 +109,18 @@ async function handleBackupOp(op: LroSummary): Promise<void> {
     return;
   }
 
+  if (isBackupOpTimedOut(op)) {
+    const updated = await updateLro({
+      op_id,
+      status: "failed",
+      error: `backup op exceeded timeout of ${BACKUP_TIMEOUT_MS}ms before execution`,
+    });
+    if (updated) {
+      await publishSummarySafe(updated, "timed-out-before-start");
+    }
+    return;
+  }
+
   logger.info("backup op start", { op_id, project_id });
 
   const heartbeat = setInterval(() => {
@@ -168,16 +184,21 @@ async function handleBackupOp(op: LroSummary): Promise<void> {
       detail: { tags },
     });
 
-    const client = await getProjectFileServerClient({
-      project_id,
-      timeout: BACKUP_TIMEOUT_MS,
-    });
-    const backup = await client.createBackup({
-      project_id,
-      limit: MAX_BACKUPS_PER_PROJECT,
-      tags,
-      lro: { op_id, scope_type: op.scope_type, scope_id: op.scope_id },
-    });
+    const backup = await withTimeout(
+      (async () => {
+        const client = await getProjectFileServerClient({
+          project_id,
+          timeout: BACKUP_TIMEOUT_MS,
+        });
+        return await client.createBackup({
+          project_id,
+          limit: MAX_BACKUPS_PER_PROJECT,
+          tags,
+          lro: { op_id, scope_type: op.scope_type, scope_id: op.scope_id },
+        });
+      })(),
+      BACKUP_TIMEOUT_MS,
+    );
     const duration_ms = Date.now() - started;
     const backup_time =
       backup.time instanceof Date
