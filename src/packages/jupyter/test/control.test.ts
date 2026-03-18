@@ -6,7 +6,7 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { restoreKernelFromIpynb } from "../control";
+import { MulticellOutputHandler, restoreKernelFromIpynb } from "../control";
 
 describe("restoreKernelFromIpynb", () => {
   function createActions(kernel: string | null = null) {
@@ -124,5 +124,34 @@ describe("restoreKernelFromIpynb", () => {
 
     expect(restored).toBe(false);
     expect(actions.syncdb.set).not.toHaveBeenCalled();
+  });
+});
+
+describe("MulticellOutputHandler", () => {
+  it("keeps fallback output local until terminal flush", () => {
+    const actions = {
+      set_runtime_cell_state: jest.fn(),
+      _set: jest.fn(),
+      processOutput: jest.fn(),
+    };
+    const handler = new MulticellOutputHandler(
+      { a: { id: "a" } } as any,
+      actions,
+    );
+
+    handler.process({
+      id: "a",
+      content: { execution_state: "busy" },
+    });
+    handler.process({
+      id: "a",
+      msg_type: "stream",
+      content: { name: "stdout", text: "x\n" },
+    });
+    handler.done();
+
+    expect(actions._set).toHaveBeenCalled();
+    expect(actions._set.mock.calls[0][1]).toBe(false);
+    expect(actions._set.mock.calls.at(-1)?.[1]).toBe(true);
   });
 });

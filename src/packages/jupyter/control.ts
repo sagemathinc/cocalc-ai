@@ -227,9 +227,11 @@ export async function run({ path, cells, noHalt, socket, run_id }: RunOptions) {
 
 const BACKEND_OUTPUT_FPS = 8;
 
-class MulticellOutputHandler {
+export class MulticellOutputHandler {
   private id: string | null = null;
   private handler: OutputHandler | null = null;
+  private flush?: () => void;
+  private writeFinal?: () => void;
 
   constructor(
     private cells: RunOptions["cells"],
@@ -242,11 +244,14 @@ class MulticellOutputHandler {
       let cell = this.cells[mesg.id] ?? { id: mesg.id };
       this.handler?.done();
       this.handler = new OutputHandler({ cell });
+      const writeCell = (save: boolean) => {
+        const { id, state, output, start, end, exec_count } = cell;
+        this.actions.set_runtime_cell_state(id, { state, start, end });
+        this.actions._set({ type: "cell", id, output, exec_count }, save);
+      };
       const f = throttle(
         () => {
-          const { id, state, output, start, end, exec_count } = cell;
-          this.actions.set_runtime_cell_state(id, { state, start, end });
-          this.actions._set({ type: "cell", id, output, exec_count }, true);
+          writeCell(false);
         },
         1000 / BACKEND_OUTPUT_FPS,
         {
@@ -254,15 +259,24 @@ class MulticellOutputHandler {
           trailing: true,
         },
       );
+      this.flush = () => f.flush();
+      this.writeFinal = () => writeCell(true);
       this.handler.on("change", f);
+      this.handler.on("done", () => {
+        this.flush?.();
+        this.writeFinal?.();
+      });
       this.handler.on("process", this.actions.processOutput);
     }
     this.handler!.process(mesg);
   };
 
   done = () => {
+    this.flush?.();
     this.handler?.done();
     this.handler = null;
+    this.flush = undefined;
+    this.writeFinal = undefined;
   };
 }
 
