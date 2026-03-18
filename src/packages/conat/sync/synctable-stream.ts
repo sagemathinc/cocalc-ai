@@ -17,6 +17,7 @@ import { EventEmitter } from "events";
 import { dstream, DStream } from "./dstream";
 import { fromJS, Map } from "immutable";
 import type { Configuration } from "@cocalc/conat/sync/core-stream";
+import type { CoreStreamInitPhaseReporter } from "@cocalc/conat/sync/core-stream";
 import type { Client } from "@cocalc/conat/core/client";
 import type { Headers } from "@cocalc/conat/core/client";
 
@@ -49,6 +50,7 @@ export class SyncTableStream extends EventEmitter {
   private noAutosave?: boolean;
   private ephemeral?: boolean;
   private writeHeaders?: Headers;
+  private initPhaseReporter?: CoreStreamInitPhaseReporter;
 
   constructor({
     query,
@@ -61,6 +63,7 @@ export class SyncTableStream extends EventEmitter {
     noInventory,
     ephemeral,
     noAutosave,
+    initPhaseReporter,
   }: {
     query;
     client: Client;
@@ -72,6 +75,7 @@ export class SyncTableStream extends EventEmitter {
     noInventory?: boolean;
     ephemeral?: boolean;
     noAutosave?: boolean;
+    initPhaseReporter?: CoreStreamInitPhaseReporter;
   }) {
     super();
     this.client = client;
@@ -82,6 +86,7 @@ export class SyncTableStream extends EventEmitter {
     this.getHook = immutable ? fromJS : (x) => x;
     this.config = config;
     this.start_seq = start_seq;
+    this.initPhaseReporter = initPhaseReporter;
     const table = keys(query)[0];
     this.table = table;
     if (table != "patches") {
@@ -114,6 +119,7 @@ export class SyncTableStream extends EventEmitter {
       noInventory: this.noInventory,
       ephemeral: this.ephemeral,
       noAutosave: this.noAutosave,
+      initPhaseReporter: this.initPhaseReporter,
     });
     this.dstream.on("change", (mesg) => {
       this.handle(mesg, true);

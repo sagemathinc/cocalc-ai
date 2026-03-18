@@ -295,7 +295,7 @@ export class SyncDoc extends EventEmitter {
   private readonly openStartedAtMs: number = Date.now();
 
   private emitOpenPhase = (
-    phase: SyncDocOpenPhase,
+    phase: SyncDocOpenPhase | string,
     details?: { [key: string]: string | number | boolean | undefined },
   ): void => {
     const payload = {
@@ -307,6 +307,15 @@ export class SyncDoc extends EventEmitter {
       ...(details ?? {}),
     };
     this.emit("open-phase", payload);
+  };
+
+  private makeConatInitPhaseReporter = (prefix: string) => {
+    return (
+      phase: string,
+      details?: { [key: string]: string | number | boolean | undefined },
+    ) => {
+      this.emitOpenPhase(`${prefix}.${phase}`, details);
+    };
   };
 
   // The isDeleted flag is set to true if the file existed and then
@@ -999,6 +1008,8 @@ export class SyncDoc extends EventEmitter {
         start_seq: this.last_seq,
         ephemeral,
         noAutosave: this.noAutosave,
+        initPhaseReporter:
+          this.makeConatInitPhaseReporter("patches_corestream"),
       });
 
       if (this.last_seq) {
@@ -1019,6 +1030,8 @@ export class SyncDoc extends EventEmitter {
             desc: { path: this.syncPath },
             ephemeral,
             noAutosave: this.noAutosave,
+            initPhaseReporter:
+              this.makeConatInitPhaseReporter("patches_corestream"),
           });
 
           // also find the correct last_seq:
@@ -1067,6 +1080,9 @@ export class SyncDoc extends EventEmitter {
         desc: { path: this.syncPath },
         ephemeral,
         noAutosave: this.noAutosave,
+        initPhaseReporter: this.makeConatInitPhaseReporter(
+          "syncstring_corestream",
+        ),
       });
     } else if (this.useConat && query.ipywidgets) {
       synctable = await this.client.synctable_conat(query, {

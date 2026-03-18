@@ -90,7 +90,10 @@ import { DiffMatchPatch, decompressPatch } from "@cocalc/util/dmp";
 import { mark_open_phase } from "@cocalc/frontend/project/open-file";
 import * as cell_utils from "@cocalc/jupyter/util/cell-utils";
 import { IPynbImporter } from "@cocalc/jupyter/ipynb/import-from-ipynb";
-import { decideInitialWatchSource } from "./watch-policy";
+import {
+  decideInitialWatchSource,
+  refineInitialWatchSourceDecision,
+} from "./watch-policy";
 import { classifyRunStreamMessage } from "./run-protocol";
 
 const dmpFileWatcher = new DiffMatchPatch({
@@ -112,6 +115,12 @@ type LiveRunRenderContext = {
     alreadyDone?: boolean,
   ) => void;
 };
+
+interface DiskIpynbRead {
+  bytes: number;
+  text: string;
+  ipynb?: any;
+}
 
 // local cache: map project_id (string) -> kernels (immutable)
 let jupyter_kernels = Map<string, Kernels>();
@@ -3062,20 +3071,50 @@ export class JupyterActions extends JupyterActions0 {
     return await api.getConnectionFile({ path: this.path });
   };
 
-  // load the ipynb version of this notebook from disk
-  loadFromDisk = async () => {
-    this.runDebug("ipynb.load.start");
-    const fs = this.syncdb.fs;
-    const content = Buffer.from(await fs.readFile(this.path));
+  private readIpynbFromDisk = async (): Promise<DiskIpynbRead> => {
+    const content = Buffer.from(await this.syncdb.fs.readFile(this.path));
+    const text = content.toString();
     if (content.length == 0) {
+      return { bytes: 0, text };
+    }
+    return {
+      bytes: content.length,
+      text,
+      ipynb: JSON.parse(text),
+    };
+  };
+
+  private diskContentMatchesRtc = async (): Promise<{
+    matches: boolean;
+    diskRead: DiskIpynbRead;
+  }> => {
+    const diskRead = await this.readIpynbFromDisk();
+    if (diskRead.bytes == 0) {
+      return { matches: false, diskRead };
+    }
+    const rtcText = JSON.stringify(await this.toIpynb(), undefined, 2);
+    return {
+      matches: diskRead.text === rtcText,
+      diskRead,
+    };
+  };
+
+  // load the ipynb version of this notebook from disk
+  loadFromDisk = async ({
+    diskRead,
+  }: {
+    diskRead?: DiskIpynbRead;
+  } = {}) => {
+    this.runDebug("ipynb.load.start");
+    const read = diskRead ?? (await this.readIpynbFromDisk());
+    if (read.bytes == 0) {
       // support empty file to make creating new easy
       this.runDebug("ipynb.load.empty");
       return;
     }
-    const ipynb = JSON.parse(content.toString());
-    await this.setToIpynb(ipynb);
+    await this.setToIpynb(read.ipynb);
     this.hasUnsavedChanges = false;
-    this.runDebug("ipynb.load.done", { bytes: content.length });
+    this.runDebug("ipynb.load.done", { bytes: read.bytes });
     // good time to refresh status
     await this.refreshKernelStatus();
   };
@@ -3101,7 +3140,12 @@ export class JupyterActions extends JupyterActions0 {
   private watchLoadFromDisk = async ({
     patch,
     patchSeq,
-  }: { patch?; patchSeq?: number } = {}) => {
+    diskRead,
+  }: {
+    patch?;
+    patchSeq?: number;
+    diskRead?: DiskIpynbRead;
+  } = {}) => {
     this.runDebug("watch.load.start", () => ({
       patchSeq,
       expectedPatchSeq: this.expectedPatchSeq,
@@ -3140,7 +3184,7 @@ export class JupyterActions extends JupyterActions0 {
     if (!usedPatch) {
       // full load
       try {
-        await this.loadFromDisk();
+        await this.loadFromDisk({ diskRead });
         this.isIpynbDeleted = false;
         this.runDebug("watch.load.full.done", { patchSeq });
       } catch {
@@ -3200,11 +3244,30 @@ export class JupyterActions extends JupyterActions0 {
         ? rtcLastChangedMsAtReady
         : this.getRtcLastChangedMs();
     const diskMtimeMs = await this.getDiskMtimeMs();
-    const decision = decideInitialWatchSource({
+    let decision = decideInitialWatchSource({
       hasRtcCells,
       rtcLastChangedMs,
       diskMtimeMs,
     });
+    let preloadedDiskRead: DiskIpynbRead | undefined = undefined;
+    if (decision.reason === "disk_newer_than_rtc") {
+      try {
+        const { matches, diskRead } = await this.diskContentMatchesRtc();
+        preloadedDiskRead = diskRead;
+        decision = refineInitialWatchSourceDecision({
+          decision,
+          diskContentMatchesRtc: matches,
+        });
+        this.runDebug("watch.initial_load.disk_compare", {
+          matched: matches,
+          bytes: diskRead.bytes,
+        });
+      } catch (err) {
+        this.runDebug("watch.initial_load.disk_compare.failed", {
+          err: `${err}`,
+        });
+      }
+    }
     this.runDebug("watch.initial_load.decision", {
       hasRtcCells,
       rtcLastChangedMs,
@@ -3224,7 +3287,7 @@ export class JupyterActions extends JupyterActions0 {
         async () => {
           if (this.isClosed()) return true;
           try {
-            await this.watchLoadFromDisk();
+            await this.watchLoadFromDisk({ diskRead: preloadedDiskRead });
             this.runDebug("watch.initial_load.done");
             this.noteOpenInitPhase("initial_load_done", {
               mode: "disk",

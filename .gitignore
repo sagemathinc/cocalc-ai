@@ -226,3 +226,5 @@ src/.agents/bug-hunt/*
 !src/.agents/bug-hunt/plans/
 !src/.agents/bug-hunt/plans/**
 wstein.tasks
+log.md
+log.txt
