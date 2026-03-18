@@ -89,6 +89,7 @@ import {
   getBackupExecutionLimit,
   getCachedBackupExecutionLimit,
 } from "./backup-execution-limit";
+import { isMissingRusticRepositoryError } from "./backup-index-errors";
 
 type SshTarget = { type: "project"; project_id: string };
 
@@ -1154,6 +1155,10 @@ async function syncBackupIndexCache(
     try {
       remote = await listBackupIndexSnapshots(project_id);
     } catch (err) {
+      if (isMissingRusticRepositoryError(err)) {
+        logger.debug("backup index repo not initialized yet", { project_id });
+        return manifest;
+      }
       logger.warn("backup index snapshot listing failed", { project_id, err });
       return manifest;
     }
