@@ -205,6 +205,8 @@ export function useProjectContextProvider({
   const previousWorkspaceSelectionRef = useRef<string>("all");
   const previousActivePathRef = useRef<string>("");
   const previousOpenFilesOrderRef = useRef<string[]>([]);
+  const workspaceRestorePendingRef = useRef<boolean>(false);
+  const workspaceRestoreStableMatchesRef = useRef<number>(0);
 
   useEffect(() => {
     const activePath = tab_to_path(active_project_tab ?? "");
@@ -233,14 +235,41 @@ export function useProjectContextProvider({
       previousWorkspaceSelectionRef.current !== currentSelectionKey;
     previousWorkspaceSelectionRef.current = currentSelectionKey;
 
+    if (selectionChanged) {
+      workspaceRestorePendingRef.current =
+        workspaces.selection.kind === "workspace";
+      workspaceRestoreStableMatchesRef.current = 0;
+    }
+
     if (!actions) return;
-    if (workspaces.selection.kind !== "workspace") return;
+    if (workspaces.selection.kind !== "workspace") {
+      workspaceRestorePendingRef.current = false;
+      workspaceRestoreStableMatchesRef.current = 0;
+      return;
+    }
     const current = workspaces.current;
     if (!current) return;
     const orderedPaths: string[] =
       open_files_order?.toJS?.() ?? open_files_order ?? [];
     const previousActivePath = previousActivePathRef.current;
     const previousOpenPaths = previousOpenFilesOrderRef.current;
+    const orderStable =
+      orderedPaths.length === previousOpenPaths.length &&
+      orderedPaths.every((path, index) => path === previousOpenPaths[index]);
+    const confirmWorkspaceRestore = () => {
+      if (!workspaceRestorePendingRef.current) return true;
+      if (!orderStable) {
+        workspaceRestoreStableMatchesRef.current = 0;
+        return false;
+      }
+      workspaceRestoreStableMatchesRef.current += 1;
+      if (workspaceRestoreStableMatchesRef.current < 2) {
+        return false;
+      }
+      workspaceRestorePendingRef.current = false;
+      workspaceRestoreStableMatchesRef.current = 0;
+      return true;
+    };
     const getFallbackPath = () => {
       if (
         current.last_active_path &&
@@ -257,6 +286,7 @@ export function useProjectContextProvider({
       });
     };
     const openFallbackPath = (path: string) => {
+      workspaceRestoreStableMatchesRef.current = 0;
       if (orderedPaths.includes(path)) {
         actions.set_active_tab(path_to_tab(path), { change_history: false });
       } else {
@@ -271,18 +301,31 @@ export function useProjectContextProvider({
 
     if (active_project_tab && !active_project_tab.startsWith("editor-")) {
       if (active_project_tab !== "files") return;
+      if (current_path_abs === "/") {
+        void actions.open_directory(current.root_path, false, true);
+        return;
+      }
       if (
         current_path_abs &&
         pathMatchesRoot(current_path_abs, current.root_path) &&
         !selectionChanged
       ) {
+        if (!confirmWorkspaceRestore()) {
+          return;
+        }
+        return;
+      }
+      if (workspaceRestorePendingRef.current && getFallbackPath()) {
+        openFallbackPath(getFallbackPath()!);
         return;
       }
       if (current_path_abs && !selectionChanged) {
         if (workspaces.loading) return;
-        workspaces.setSelection(
-          selectionForPath(workspaces.records, current_path_abs),
+        const nextSelection = selectionForPath(
+          workspaces.records,
+          current_path_abs,
         );
+        workspaces.setSelection(nextSelection);
         return;
       }
       void actions.open_directory(current.root_path, false, true);
@@ -298,10 +341,18 @@ export function useProjectContextProvider({
       previousOpenPaths.includes(previousActivePath) &&
       !orderedPaths.includes(previousActivePath);
     if (activePath && workspaces.matchesPath(activePath) && activePathIsOpen) {
+      if (!confirmWorkspaceRestore()) {
+        return;
+      }
       return;
     }
     if (activePath && workspaces.matchesPath(activePath) && !activePathIsOpen) {
       openFallbackPath(activePath);
+      return;
+    }
+    const fallbackPath = getFallbackPath();
+    if (workspaceRestorePendingRef.current && fallbackPath) {
+      openFallbackPath(fallbackPath);
       return;
     }
     if (
@@ -311,10 +362,10 @@ export function useProjectContextProvider({
       !previousActivePathClosed
     ) {
       if (workspaces.loading) return;
-      workspaces.setSelection(selectionForPath(workspaces.records, activePath));
+      const nextSelection = selectionForPath(workspaces.records, activePath);
+      workspaces.setSelection(nextSelection);
       return;
     }
-    const fallbackPath = getFallbackPath();
 
     if (fallbackPath) {
       openFallbackPath(fallbackPath);

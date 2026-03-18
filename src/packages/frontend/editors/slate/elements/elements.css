@@ -16,10 +16,10 @@ inside of lists. Also, eliminating this paragraph margin means we
 don't have to compensate for it using negative margins.
 */
 
-.cocalc-slate-tight-list  > li > p {
+.cocalc-slate-tight-list > li > p {
   margin-bottom: 0em;
 }
-.cocalc-slate-nontight-list > li >  p {
+.cocalc-slate-nontight-list > li > p {
   margin-bottom: 0em;
 }
 
@@ -27,13 +27,47 @@ don't have to compensate for it using negative margins.
   margin-bottom: 1em;
 }
 
+.cocalc-slate-render a {
+  color: var(--cocalc-slate-link, inherit);
+  text-decoration-color: var(--cocalc-slate-link, currentColor);
+  text-underline-offset: 0.12em;
+}
+
+.cocalc-slate-render blockquote {
+  margin: 0 0 1em;
+  padding: 0.45em 0.9em;
+  border-left: 4px solid
+    var(--cocalc-slate-blockquote-border, rgba(0, 0, 0, 0.14));
+  border-radius: 0 10px 10px 0;
+  background: var(--cocalc-slate-blockquote-bg, rgba(0, 0, 0, 0.03));
+}
+
+.cocalc-slate-render blockquote > :first-child {
+  margin-top: 0;
+}
+
+.cocalc-slate-render blockquote > :last-child {
+  margin-bottom: 0;
+}
+
+.cocalc-slate-render table th,
+.cocalc-slate-render table td {
+  border-bottom: 1px solid var(--cocalc-slate-table-border, rgba(0, 0, 0, 0.12));
+}
+
+.cocalc-slate-render table th {
+  background: var(--cocalc-slate-table-header-bg, rgba(0, 0, 0, 0.03));
+  color: var(--cocalc-slate-table-header-fg, inherit);
+}
+
 /* Prism-style token colors for code blocks. */
 .cocalc-slate-code-block {
   font-family: Menlo, Consolas, "Liberation Mono", "Courier New", monospace;
   font-size: 14px;
   line-height: 1.5;
-  background: #fff;
-  border: 1px solid rgb(192, 192, 192);
+  background: var(--cocalc-slate-code-bg, #fff);
+  color: var(--cocalc-slate-code-fg, #24292e);
+  border: 1px solid var(--cocalc-slate-code-border, rgb(192, 192, 192));
   border-radius: 5px;
   padding: 6px 12px;
   margin-bottom: 10px;
@@ -50,11 +84,12 @@ don't have to compensate for it using negative margins.
 .cocalc-slate-code-block .token.prolog,
 .cocalc-slate-code-block .token.doctype,
 .cocalc-slate-code-block .token.cdata {
-  color: #6a737d;
+  color: var(--cocalc-slate-code-comment, #6a737d);
 }
 
 .cocalc-slate-code-block .token.punctuation {
-  color: #999;
+  color: var(--cocalc-slate-code-comment, #999);
+  opacity: 0.8;
 }
 
 .cocalc-slate-code-block .token.property,
@@ -64,7 +99,7 @@ don't have to compensate for it using negative margins.
 .cocalc-slate-code-block .token.constant,
 .cocalc-slate-code-block .token.symbol,
 .cocalc-slate-code-block .token.deleted {
-  color: #905;
+  color: var(--cocalc-slate-code-number, #905);
 }
 
 .cocalc-slate-code-block .token.selector,
@@ -73,7 +108,7 @@ don't have to compensate for it using negative margins.
 .cocalc-slate-code-block .token.char,
 .cocalc-slate-code-block .token.builtin,
 .cocalc-slate-code-block .token.inserted {
-  color: #690;
+  color: var(--cocalc-slate-code-string, #690);
 }
 
 .cocalc-slate-code-block .token.operator,
@@ -82,18 +117,18 @@ don't have to compensate for it using negative margins.
 .cocalc-slate-code-block .token.atrule,
 .cocalc-slate-code-block .token.attr-value,
 .cocalc-slate-code-block .token.keyword {
-  color: #07a;
+  color: var(--cocalc-slate-code-keyword, #07a);
 }
 
 .cocalc-slate-code-block .token.function,
 .cocalc-slate-code-block .token.class-name {
-  color: #dd4a68;
+  color: var(--cocalc-slate-code-definition, #dd4a68);
 }
 
 .cocalc-slate-code-block .token.regex,
 .cocalc-slate-code-block .token.important,
 .cocalc-slate-code-block .token.variable {
-  color: #e90;
+  color: var(--cocalc-slate-code-number, #e90);
 }
 
 .cocalc-slate-code-block .token.bold {

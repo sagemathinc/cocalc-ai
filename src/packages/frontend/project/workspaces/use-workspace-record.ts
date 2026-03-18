@@ -3,25 +3,50 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { useMemo } from "react";
-import { useProjectContext } from "@cocalc/frontend/project/context";
+import { useEffect, useMemo, useState } from "react";
 import type { WorkspaceRecord } from "./types";
-import { resolveRuntimeWorkspaceForPath } from "./records-runtime";
+import {
+  resolveRuntimeWorkspaceForPath,
+  WORKSPACE_RECORDS_EVENT,
+} from "./records-runtime";
 
 export function useWorkspaceRecordForPath(
   project_id?: string,
   path?: string | null,
 ): WorkspaceRecord | null {
-  const context = useProjectContext();
+  const normalizedProjectId = `${project_id ?? ""}`.trim();
+  const normalizedPath = `${path ?? ""}`.trim();
+  const [version, setVersion] = useState(0);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onChange = (event: Event) => {
+      const detail = (
+        event as CustomEvent<{
+          project_id?: string;
+        }>
+      ).detail;
+      if (
+        normalizedProjectId &&
+        `${detail?.project_id ?? ""}` !== normalizedProjectId
+      ) {
+        return;
+      }
+      setVersion((current) => current + 1);
+    };
+    window.addEventListener(WORKSPACE_RECORDS_EVENT, onChange as EventListener);
+    return () => {
+      window.removeEventListener(
+        WORKSPACE_RECORDS_EVENT,
+        onChange as EventListener,
+      );
+    };
+  }, [normalizedProjectId]);
+
   return useMemo(() => {
-    const normalizedProjectId = `${project_id ?? ""}`.trim();
-    const normalizedPath = `${path ?? ""}`.trim();
     if (!normalizedProjectId || !normalizedPath) {
       return null;
     }
-    if (context.project_id === normalizedProjectId) {
-      return context.workspaces.resolveWorkspaceForPath(normalizedPath);
-    }
     return resolveRuntimeWorkspaceForPath(normalizedProjectId, normalizedPath);
-  }, [context.project_id, context.workspaces, path, project_id]);
+  }, [normalizedProjectId, normalizedPath, version]);
 }

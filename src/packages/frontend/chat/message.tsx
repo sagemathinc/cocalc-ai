@@ -31,6 +31,7 @@ import { Gap, Icon, TimeAgo, Tip } from "@cocalc/frontend/components";
 import CopyButton from "@cocalc/frontend/components/copy-button";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import { IS_TOUCH } from "@cocalc/frontend/feature";
+import { useEffectiveEditorThemeForPath } from "@cocalc/frontend/project/workspaces/use-effective-editor-theme";
 import { modelToName } from "@cocalc/frontend/frame-editors/llm/llm-selector";
 import { labels } from "@cocalc/frontend/i18n";
 import { CancelText } from "@cocalc/frontend/i18n/components";
@@ -445,6 +446,7 @@ export default function Message({
   onOverlayOpenChange,
 }: Props) {
   const intl = useIntl();
+  const editorTheme = useEffectiveEditorThemeForPath(project_id, path);
 
   const showAISummarize = redux
     .getStore("projects")
@@ -1474,6 +1476,7 @@ export default function Message({
               style={MARKDOWN_STYLE}
               value={value}
               className={message_class}
+              editorTheme={editorTheme}
               highlightQuery={searchHighlight}
               inlineCodeLinks={
                 Array.isArray(inlineCodeLinks) ? inlineCodeLinks : undefined
@@ -1518,6 +1521,7 @@ export default function Message({
             <StaticMarkdown
               style={{ fontSize: `${font_size ?? 14}px` }}
               value={value}
+              editorTheme={editorTheme}
               highlightQuery={searchHighlight}
               inlineCodeLinks={
                 Array.isArray(inlineCodeLinks) ? inlineCodeLinks : undefined

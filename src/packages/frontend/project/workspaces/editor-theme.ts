@@ -18,6 +18,31 @@ export function workspaceEditorTheme(
   return normalizeWorkspaceEditorTheme(record?.editor_theme);
 }
 
+function accountEditorTheme(
+  editorSettings?: {
+    get?: (key: string, notSetValue?: any) => any;
+    theme?: string | null;
+  } | null,
+): string | null {
+  if (editorSettings == null) {
+    return null;
+  }
+  if (typeof editorSettings.get === "function") {
+    return normalizeWorkspaceEditorTheme(editorSettings.get("theme"));
+  }
+  return normalizeWorkspaceEditorTheme(editorSettings.theme);
+}
+
+export function effectiveEditorThemeName(
+  editorSettings?: {
+    get?: (key: string, notSetValue?: any) => any;
+    theme?: string | null;
+  } | null,
+  record?: Pick<WorkspaceRecord, "editor_theme"> | null,
+): string | null {
+  return workspaceEditorTheme(record) ?? accountEditorTheme(editorSettings);
+}
+
 export function effectiveImmutableEditorSettings<
   T extends
     | {
@@ -30,7 +55,7 @@ export function effectiveImmutableEditorSettings<
   if (editorSettings == null) {
     return editorSettings;
   }
-  const theme = workspaceEditorTheme(record);
+  const theme = effectiveEditorThemeName(editorSettings, record);
   if (!theme || editorSettings.get("theme") === theme) {
     return editorSettings;
   }
@@ -41,7 +66,7 @@ export function effectivePlainEditorSettings<T extends { theme?: string }>(
   editorSettings: T,
   record?: Pick<WorkspaceRecord, "editor_theme"> | null,
 ): T {
-  const theme = workspaceEditorTheme(record);
+  const theme = effectiveEditorThemeName(editorSettings, record);
   if (!theme || editorSettings.theme === theme) {
     return editorSettings;
   }

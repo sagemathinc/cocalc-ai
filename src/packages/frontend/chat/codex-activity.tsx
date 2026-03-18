@@ -18,6 +18,7 @@ import StatefulVirtuoso from "@cocalc/frontend/components/stateful-virtuoso";
 import { IS_TOUCH } from "@cocalc/frontend/feature";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
+import { useEffectiveEditorThemeForPath } from "@cocalc/frontend/project/workspaces/use-effective-editor-theme";
 import type { LineDiffResult } from "@cocalc/util/line-diff";
 import { containingPath, plural } from "@cocalc/util/misc";
 import { isAbsolutePath, normalizeAbsolutePath } from "@cocalc/util/path-model";
@@ -142,6 +143,10 @@ export const CodexActivity: React.FC<CodexActivityProps> = ({
   const resolvedBasePath = useMemo(
     () => detectBasePath(basePath, entries, chatPath),
     [basePath, entries, chatPath],
+  );
+  const editorTheme = useEffectiveEditorThemeForPath(
+    projectId,
+    chatPath ?? resolvedBasePath,
   );
   const [expanded, setExpanded] = useState<boolean>(() => {
     if (persistKey) {
@@ -363,6 +368,7 @@ export const CodexActivity: React.FC<CodexActivityProps> = ({
               fontSize={baseFontSize}
               projectId={projectId}
               basePath={resolvedBasePath}
+              editorTheme={editorTheme}
               inlineCodeLinks={inlineCodeLinks}
             />
           ))
@@ -377,12 +383,14 @@ function ActivityRow({
   fontSize,
   projectId,
   basePath,
+  editorTheme,
   inlineCodeLinks,
 }: {
   entry: ActivityEntry;
   fontSize: number;
   projectId?: string;
   basePath?: string;
+  editorTheme?: string | null;
   inlineCodeLinks?: InlineCodeLink[];
 }) {
   const secondarySize = Math.max(11, fontSize - 2);
@@ -396,6 +404,7 @@ function ActivityRow({
             <StaticMarkdown
               value={entry.text}
               style={{ fontSize, marginTop: 4 }}
+              editorTheme={editorTheme}
               inlineCodeLinks={inlineCodeLinks}
               inlineCodeProjectRoot={basePath}
             />
@@ -421,6 +430,7 @@ function ActivityRow({
             <StaticMarkdown
               value={entry.text}
               style={{ fontSize, marginTop: 4 }}
+              editorTheme={editorTheme}
               inlineCodeLinks={inlineCodeLinks}
               inlineCodeProjectRoot={basePath}
             />
@@ -455,7 +465,13 @@ function ActivityRow({
         </div>
       );
     case "terminal":
-      return <TerminalRow entry={entry} fontSize={fontSize} />;
+      return (
+        <TerminalRow
+          entry={entry}
+          fontSize={fontSize}
+          editorTheme={editorTheme}
+        />
+      );
     case "file":
       return (
         <FileRow
@@ -463,6 +479,7 @@ function ActivityRow({
           fontSize={fontSize}
           projectId={projectId}
           basePath={basePath}
+          editorTheme={editorTheme}
         />
       );
     case "status":
@@ -1060,9 +1077,11 @@ function detectBasePath(
 export function TerminalRow({
   entry,
   fontSize,
+  editorTheme,
 }: {
   entry: Extract<ActivityEntry, { kind: "terminal" }>;
   fontSize: number;
+  editorTheme?: string | null;
 }) {
   const commandLine = formatCommand(entry.command, entry.args);
   const status = formatTerminalStatus(entry);
@@ -1103,7 +1122,11 @@ export function TerminalRow({
           </Tag>
         ) : null}
       </Space>
-      <StaticMarkdown value={markdown} style={{ fontSize, marginTop: 0 }} />
+      <StaticMarkdown
+        value={markdown}
+        style={{ fontSize, marginTop: 0 }}
+        editorTheme={editorTheme}
+      />
       {emptyOutputLabel ? (
         <Text
           type="secondary"
@@ -1141,11 +1164,13 @@ function FileRow({
   fontSize,
   projectId,
   basePath,
+  editorTheme,
 }: {
   entry: Extract<ActivityEntry, { kind: "file" }>;
   fontSize: number;
   projectId?: string;
   basePath?: string;
+  editorTheme?: string | null;
 }) {
   const [showCommand, setShowCommand] = useState(false);
   const isRead = entry.operation === "read";
@@ -1218,6 +1243,7 @@ function FileRow({
         <StaticMarkdown
           value={toFencedCodeBlock(`$ ${commandLine}`, "sh")}
           style={{ fontSize, marginTop: 2 }}
+          editorTheme={editorTheme}
         />
       ) : null}
     </div>
