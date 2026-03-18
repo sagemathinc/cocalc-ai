@@ -14,8 +14,11 @@ import { EventIterator } from "@cocalc/util/event-iterator";
 import { getLogger } from "@cocalc/conat/client";
 import { Throttle } from "@cocalc/util/throttle";
 import {
+  jupyterLiveRunKey,
+  openJupyterLiveRunStore,
   jupyterLiveRunSubject,
   type JupyterLiveRunBatch,
+  type JupyterLiveRunSnapshot,
 } from "@cocalc/conat/project/jupyter/live-run";
 const MAX_MSGS_PER_SECOND = parseInt(
   process.env.COCALC_JUPYTER_MAX_MSGS_PER_SECOND ?? "20",
@@ -29,6 +32,7 @@ const SOCKET_KEEP_ALIVE_TIMEOUT = parsePositiveInt(
   10_000,
 );
 const logger = getLogger("conat:project:jupyter:run-code");
+const LIVE_RUN_REPLAY_GRACE_MS = 60_000;
 
 function getSubject({ project_id }: { project_id: string }) {
   return `jupyter.project-${project_id}.0`;
@@ -141,6 +145,23 @@ function isCoalescableStreamMessage(mesg: OutputMessage | undefined): boolean {
   return true;
 }
 
+function cloneOutputMessage(mesg: OutputMessage): OutputMessage {
+  const content =
+    mesg.content != null && typeof mesg.content === "object"
+      ? { ...mesg.content }
+      : mesg.content;
+  const metadata =
+    mesg.metadata != null && typeof mesg.metadata === "object"
+      ? { ...mesg.metadata }
+      : mesg.metadata;
+  return {
+    ...mesg,
+    content,
+    metadata,
+    buffers: Array.isArray(mesg.buffers) ? [...mesg.buffers] : mesg.buffers,
+  };
+}
+
 function appendOutputMessage(
   output: OutputMessage[],
   mesg: OutputMessage,
@@ -156,7 +177,7 @@ function appendOutputMessage(
     prev.content.text += mesg.content.text;
     return false;
   }
-  output.push(mesg);
+  output.push(cloneOutputMessage(mesg));
   return true;
 }
 
@@ -330,12 +351,22 @@ async function handleRequest({
   let summaryError: string | undefined;
   let firstClientBatchFastLane = false;
   const liveRunSubject = jupyterLiveRunSubject({ project_id, path });
+  const liveRunStore = await openJupyterLiveRunStore({ client, project_id });
+  const liveRunKey = jupyterLiveRunKey({ path, run_id });
   const runner = await run({ path, cells, noHalt, socket, run_id });
   const output: OutputMessage[] = [];
   let outputVisibleCount = 0;
+  let batchSeq = 0;
+  let liveRunSnapshot: JupyterLiveRunSnapshot = {
+    path,
+    run_id,
+    batches: [],
+    updated_at_ms: Date.now(),
+  };
   for (const cell of cells) {
     moreOutput[cell.id] = [];
   }
+  liveRunStore.set(liveRunKey, liveRunSnapshot);
   logger.debug(
     `handleRequest to evaluate ${cells.length} cells with limit=${limit} for path=${path}`,
   );
@@ -344,6 +375,14 @@ async function handleRequest({
   let unhandledClientWriteError: any = undefined;
   let writeQueue: Promise<void> = Promise.resolve();
   let livePublishQueue: Promise<void> = Promise.resolve();
+  const writeLiveRunSnapshot = (opts?: { done?: boolean }) => {
+    liveRunSnapshot = {
+      ...liveRunSnapshot,
+      updated_at_ms: Date.now(),
+      done: opts?.done ?? liveRunSnapshot.done,
+    };
+    liveRunStore.set(liveRunKey, liveRunSnapshot);
+  };
   const publishLiveBatch = (mesgs: OutputMessage[]) => {
     if (mesgs.length == 0) {
       return;
@@ -351,9 +390,18 @@ async function handleRequest({
     const batch: JupyterLiveRunBatch = {
       path,
       run_id,
+      seq: ++batchSeq,
+      id: `${run_id}:${batchSeq}`,
       mesgs,
       sent_at_ms: Date.now(),
     };
+    liveRunSnapshot = {
+      ...liveRunSnapshot,
+      batches: [...liveRunSnapshot.batches, batch],
+      updated_at_ms: batch.sent_at_ms,
+      done: false,
+    };
+    liveRunStore.set(liveRunKey, liveRunSnapshot);
     livePublishQueue = livePublishQueue.then(async () => {
       await client.publish(liveRunSubject, batch);
     });
@@ -511,19 +559,26 @@ async function handleRequest({
     // no errors happened, so close up and flush and
     // remaining data immediately:
     handler?.done();
-    if (socket.state != "closed") {
-      throttle.flush();
-      await writeQueue;
-    }
+    throttle.flush();
+    await writeQueue;
     await livePublishQueue;
+    writeLiveRunSnapshot({ done: true });
     if (socket.state != "closed") {
       socket.write(null);
     }
   } catch (err) {
     summaryError = `${err}`;
+    writeLiveRunSnapshot({ done: true });
     throw err;
   } finally {
     throttle.close();
+    setTimeout(() => {
+      try {
+        liveRunStore.delete(liveRunKey);
+      } catch {
+        // ignore cleanup failures for ephemeral replay state
+      }
+    }, LIVE_RUN_REPLAY_GRACE_MS);
     logger.debug("run summary", {
       run_id,
       path,

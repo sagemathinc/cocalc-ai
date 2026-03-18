@@ -67,8 +67,10 @@ import {
   type InputCell,
 } from "@cocalc/conat/project/jupyter/run-code";
 import {
+  openJupyterLiveRunStore,
   jupyterLiveRunSubject,
   type JupyterLiveRunBatch,
+  type JupyterLiveRunSnapshot,
 } from "@cocalc/conat/project/jupyter/live-run";
 import { OutputHandler } from "@cocalc/jupyter/execute/output-handler";
 import { throttle } from "lodash";
@@ -128,7 +130,15 @@ export class JupyterActions extends JupyterActions0 {
   private runDebugCounter: number = 0;
   private runDebugMode: "off" | "on" | "json" | undefined;
   private liveRunSub?: any;
+  private liveRunStore?: {
+    getAll: () => Record<string, JupyterLiveRunSnapshot>;
+    close?: () => void;
+  };
   private liveRunContexts = new globalThis.Map<string, LiveRunRenderContext>();
+  private liveRunSeenBatchIds = new globalThis.Map<string, Set<string>>();
+  private liveRunSeenSeq = new globalThis.Map<string, number>();
+  private liveRunReplayPending = false;
+  private liveRunReplayBuffer: JupyterLiveRunBatch[] = [];
   private ignoredLiveRunIds = new globalThis.Map<string, number>();
 
   private resolveRunDebugMode = (): "off" | "on" | "json" => {
@@ -258,6 +268,8 @@ export class JupyterActions extends JupyterActions0 {
       ctx.finalizeHandler(id, reason);
     }
     this.liveRunContexts.delete(runId);
+    this.liveRunSeenBatchIds.delete(runId);
+    this.liveRunSeenSeq.delete(runId);
   };
 
   private createLiveRunContext = (
@@ -270,6 +282,10 @@ export class JupyterActions extends JupyterActions0 {
       const existing = handlers.get(id);
       if (existing != null) {
         return existing;
+      }
+      if (opts.source === "remote") {
+        this.reset_more_output(id);
+        this._set({ type: "cell", id, output: null, exec_count: null }, false);
       }
       let cell = this.store.getIn(["cells", id])?.toJS();
       if (cell == null) {
@@ -312,7 +328,10 @@ export class JupyterActions extends JupyterActions0 {
     return { handlers, finalizedCells, getHandlerForId, finalizeHandler };
   };
 
-  private processSharedLiveRunBatch = (batch: JupyterLiveRunBatch): void => {
+  private processSharedLiveRunBatch = (
+    batch: JupyterLiveRunBatch,
+    source: "live" | "replay" | "buffered-live" = "live",
+  ): void => {
     if (this.isClosed()) {
       return;
     }
@@ -323,10 +342,62 @@ export class JupyterActions extends JupyterActions0 {
     if (!runId || this.shouldIgnoreLiveRunId(runId)) {
       return;
     }
+    const batchId = `${batch?.id ?? ""}`.trim();
+    if (batchId) {
+      let seenBatchIds = this.liveRunSeenBatchIds.get(runId);
+      if (seenBatchIds == null) {
+        seenBatchIds = new Set<string>();
+        this.liveRunSeenBatchIds.set(runId, seenBatchIds);
+      }
+      if (seenBatchIds.has(batchId)) {
+        this.runDebug("liveRun.batch.skip.duplicate_id", {
+          runId,
+          source,
+          batchId,
+          seq: batch?.seq,
+          mesgs: (batch?.mesgs ?? []).length,
+        });
+        return;
+      }
+      seenBatchIds.add(batchId);
+      if (seenBatchIds.size > 2048) {
+        const first = seenBatchIds.values().next().value;
+        if (first != null) {
+          seenBatchIds.delete(first);
+        }
+      }
+    }
+    const batchSeq =
+      typeof batch?.seq === "number"
+        ? batch.seq
+        : Number.parseInt(`${batch?.seq ?? ""}`, 10);
+    if (Number.isFinite(batchSeq)) {
+      const prev = this.liveRunSeenSeq.get(runId) ?? 0;
+      if (batchSeq <= prev) {
+        this.runDebug("liveRun.batch.skip.duplicate_seq", {
+          runId,
+          source,
+          batchId,
+          seq: batchSeq,
+          prevSeq: prev,
+          mesgs: (batch?.mesgs ?? []).length,
+        });
+        return;
+      }
+      this.liveRunSeenSeq.set(runId, batchSeq);
+    }
     const mesgs = Array.isArray(batch?.mesgs) ? batch.mesgs : [];
     if (mesgs.length == 0) {
       return;
     }
+    this.runDebug("liveRun.batch.process", {
+      runId,
+      source,
+      batchId,
+      seq: batchSeq,
+      mesgs: mesgs.length,
+      firstMesg: this.summarizeMesg(mesgs[0]),
+    });
     let ctx = this.liveRunContexts.get(runId);
     if (ctx == null) {
       ctx = this.createLiveRunContext(runId, {
@@ -375,6 +446,45 @@ export class JupyterActions extends JupyterActions0 {
     }
   };
 
+  private replaySharedLiveRuns = async (): Promise<void> => {
+    if (this.isClosed()) {
+      return;
+    }
+    if (this.liveRunStore == null) {
+      this.liveRunStore = await openJupyterLiveRunStore({
+        client: webapp_client.conat_client,
+        project_id: this.project_id,
+      });
+    }
+    if (this.isClosed()) {
+      return;
+    }
+    const snapshots = Object.values(this.liveRunStore.getAll())
+      .filter(
+        (snapshot) =>
+          snapshot?.path === this.syncdbPath &&
+          snapshot?.done !== true &&
+          typeof snapshot?.run_id === "string" &&
+          Array.isArray(snapshot?.batches),
+      )
+      .sort((a, b) => a.updated_at_ms - b.updated_at_ms);
+    for (const snapshot of snapshots) {
+      const batches = [...snapshot.batches].sort(
+        (a, b) =>
+          Number.parseInt(`${a.seq ?? 0}`, 10) -
+          Number.parseInt(`${b.seq ?? 0}`, 10),
+      );
+      this.runDebug("liveRun.replay.snapshot", {
+        runId: snapshot.run_id,
+        batches: batches.length,
+        updatedAt: snapshot.updated_at_ms,
+      });
+      for (const batch of batches) {
+        this.processSharedLiveRunBatch(batch, "replay");
+      }
+    }
+  };
+
   private ensureLiveRunSubscription = async (): Promise<void> => {
     if (this.liveRunSub != null || this.isClosed()) {
       return;
@@ -389,18 +499,48 @@ export class JupyterActions extends JupyterActions0 {
       return;
     }
     this.liveRunSub = sub;
+    this.liveRunReplayPending = true;
+    this.liveRunReplayBuffer = [];
     (async () => {
       for await (const mesg of sub) {
         if (this.isClosed() || this.liveRunSub !== sub) {
           break;
         }
-        this.processSharedLiveRunBatch(mesg.data as JupyterLiveRunBatch);
+        const batch = mesg.data as JupyterLiveRunBatch;
+        if (this.liveRunReplayPending) {
+          this.runDebug("liveRun.batch.buffer", {
+            runId: batch?.run_id,
+            batchId: batch?.id,
+            seq: batch?.seq,
+            mesgs: (batch?.mesgs ?? []).length,
+          });
+          this.liveRunReplayBuffer.push(batch);
+          continue;
+        }
+        this.processSharedLiveRunBatch(batch, "live");
       }
     })().catch((err) => {
       if (!this.isClosed()) {
         console.warn("failed to consume jupyter live run stream", err);
       }
     });
+    try {
+      await this.replaySharedLiveRuns();
+    } catch (err) {
+      if (!this.isClosed()) {
+        console.warn("failed to replay jupyter live runs", err);
+      }
+    } finally {
+      this.liveRunReplayPending = false;
+      const buffered = this.liveRunReplayBuffer;
+      this.liveRunReplayBuffer = [];
+      this.runDebug("liveRun.batch.buffer.flush", {
+        count: buffered.length,
+      });
+      for (const batch of buffered) {
+        this.processSharedLiveRunBatch(batch, "buffered-live");
+      }
+    }
   };
 
   private startOptimisticIpynbFastOpen = (): void => {
@@ -736,7 +876,13 @@ export class JupyterActions extends JupyterActions0 {
       if (this.isClosed()) return;
       this.liveRunSub?.close?.();
       this.liveRunSub = undefined;
+      this.liveRunStore?.close?.();
+      this.liveRunStore = undefined;
       this.liveRunContexts.clear();
+      this.liveRunSeenBatchIds.clear();
+      this.liveRunSeenSeq.clear();
+      this.liveRunReplayPending = false;
+      this.liveRunReplayBuffer = [];
       this.ignoredLiveRunIds.clear();
       this.jupyterClient?.close();
       this.jupyterClient = undefined;

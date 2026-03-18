@@ -17,6 +17,7 @@ import {
   jupyterClient,
   jupyterServer,
 } from "@cocalc/conat/project/jupyter/run-code";
+import { openJupyterLiveRunStore } from "@cocalc/conat/project/jupyter/live-run";
 import { uuid } from "@cocalc/util/misc";
 
 // it's really 100+, but tests fails if less than this.
@@ -380,6 +381,101 @@ describe("fallback keeps full notebook output after disconnect", () => {
   });
 });
 
+describe("disconnect still flushes final live replay batches", () => {
+  let client1, client2;
+  it("create two clients", async () => {
+    client1 = connect();
+    client2 = connect();
+  });
+
+  const path = "disconnect-flush.ipynb";
+  const project_id = uuid();
+  let server;
+  let produced = 0;
+
+  it("create jupyter code run server", () => {
+    async function run({ cells }) {
+      async function* runner() {
+        for (const { id } of cells) {
+          for (let i = 0; i < 50; i++) {
+            produced += 1;
+            yield {
+              id,
+              msg_type: "stream",
+              content: { name: "stdout", text: `${i}\n` },
+            };
+            await delay(5);
+          }
+        }
+      }
+      return runner();
+    }
+
+    server = jupyterServer({
+      client: client1,
+      project_id,
+      run,
+      outputHandler: () => ({
+        process() {},
+        done() {},
+      }),
+      getKernelStatus,
+    });
+  });
+
+  let client;
+  it("publishes the final output and lifecycle after disconnect", async () => {
+    const run_id = "disconnect-flush-1";
+    client = jupyterClient({
+      path,
+      project_id,
+      client: client2,
+    });
+
+    await client.run([{ id: "cell-a", input: "x" }], {
+      run_id,
+      waitForAck: false,
+    });
+    await wait({ until: () => produced >= 20 });
+    client.close();
+
+    const store = await openJupyterLiveRunStore({
+      client: client1,
+      project_id,
+    });
+    await wait({
+      until: () => {
+        const snapshot = Object.values(store.getAll()).find(
+          (x) => x.path === path && x.run_id === run_id,
+        );
+        return snapshot?.done === true;
+      },
+    });
+
+    const snapshot = Object.values(store.getAll()).find(
+      (x) => x.path === path && x.run_id === run_id,
+    );
+    expect(snapshot).toBeDefined();
+    const mesgs = (snapshot?.batches ?? []).flatMap((batch) => batch.mesgs);
+    const text = mesgs
+      .filter((mesg) => mesg.msg_type === "stream")
+      .map((mesg) => mesg.content?.text ?? "")
+      .join("");
+    const numbers = text
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean)
+      .map((x) => parseInt(x, 10));
+    expect(numbers).toEqual(Array.from({ length: 50 }, (_, i) => i));
+    expect(snapshot?.done).toBe(true);
+  });
+
+  it("cleans up", () => {
+    server.close();
+    client.close();
+  });
+});
+
 describe("coalesces adjacent stream messages before applying limit", () => {
   let client1, client2;
   it("create two clients", async () => {
@@ -443,6 +539,44 @@ describe("coalesces adjacent stream messages before applying limit", () => {
     expect(allText).toContain("0 ");
     expect(allText).toContain("199 ");
     expect(outputs.some((x) => x.more_output)).toBe(false);
+  });
+
+  it("stored live-run snapshot does not duplicate earlier stream chunks", async () => {
+    const path2 = "coalesce-replay.ipynb";
+    const run_id = "coalesce-replay-1";
+    const client = jupyterClient({
+      path: path2,
+      project_id,
+      client: client2,
+    });
+    const iter = await client.run([{ id: "cell-a", input: "x" }], {
+      run_id,
+      waitForAck: false,
+    });
+    for await (const _batch of iter) {
+      // wait for completion
+    }
+    const store = await openJupyterLiveRunStore({
+      client: client1,
+      project_id,
+    });
+    const snapshot = Object.values(store.getAll()).find(
+      (x) => x.path === path2 && x.run_id === run_id,
+    );
+    expect(snapshot).toBeDefined();
+    const text = (snapshot?.batches ?? [])
+      .flatMap((batch) => batch.mesgs)
+      .filter((mesg) => mesg.msg_type === "stream")
+      .map((mesg) => mesg.content?.text ?? "")
+      .join("");
+    const numbers = text
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean)
+      .map((x) => parseInt(x, 10));
+    expect(numbers.length).toBeGreaterThan(0);
+    expect(numbers).toEqual(Array.from({ length: 200 }, (_, i) => i));
+    client.close();
   });
 
   it("cleans up", () => {
