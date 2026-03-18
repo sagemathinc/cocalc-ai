@@ -250,6 +250,7 @@ export default function LanguageModelTitleBarButton({
   const contextRef = useRef<any>(null);
   const submitRef = useRef<any>(null);
   const inputRef = useRef<HTMLElement>(null);
+  const submittingRef = useRef(false);
 
   // Use a dedicated key for the Codex-only assistant so older generic/legacy
   // model picks do not override the new default assistant model.
@@ -399,19 +400,28 @@ export default function LanguageModelTitleBarButton({
   };
 
   const doIt = async () => {
+    if (querying || submittingRef.current) {
+      return;
+    }
+    submittingRef.current = true;
     setShowPreview(false);
     const options = getQueryLLMOptions();
     if (options == null) {
+      submittingRef.current = false;
       return;
     }
 
     // Add prompt to history
     addPrompt(command);
 
-    await queryLLM(options);
     setShowDialog(false);
     setError("");
-    actions.focus();
+    try {
+      await queryLLM(options);
+      actions.focus();
+    } finally {
+      submittingRef.current = false;
+    }
   };
 
   function getQueryLLMOptions(): Options | null {
@@ -639,7 +649,7 @@ export default function LanguageModelTitleBarButton({
             disabled={querying || (!tag && !command.trim()) || !message}
             type="primary"
             size="large"
-            onClick={doIt}
+            onClick={() => void doIt()}
           >
             <Icon name={querying ? "spinner" : "paper-plane"} spin={querying} />{" "}
             {btnTxt} (shift+enter)
@@ -664,6 +674,7 @@ export default function LanguageModelTitleBarButton({
               ref={inputRef}
               allowClear
               autoFocus
+              disabled={querying}
               style={{ flex: 1 }}
               placeholder={"What should Codex do..."}
               value={command}
@@ -678,7 +689,9 @@ export default function LanguageModelTitleBarButton({
               }}
               onPressEnter={(e) => {
                 if (e.shiftKey) {
-                  doIt();
+                  e.preventDefault();
+                  e.stopPropagation();
+                  void doIt();
                 }
               }}
               autoSize={{ minRows: 2, maxRows: 10 }}

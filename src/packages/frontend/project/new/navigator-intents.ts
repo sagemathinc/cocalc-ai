@@ -452,6 +452,7 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
             codexConfig: threadAgentCodexConfig,
           }
         : undefined;
+    let createdThreadNow = false;
     if (opts.createNewThread === true) {
       const createdThreadKey = actions.createEmptyThread?.({
         name: messageThreadTitle,
@@ -467,8 +468,26 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
       }
       replyThreadKey = createdThreadKey;
       replyThreadId = createdThreadKey;
+      createdThreadNow = true;
     }
-    if (replyThreadKey && opts.createNewThread !== true) {
+    if (!replyThreadKey && workspaceTarget) {
+      const createdThreadKey = actions.createEmptyThread?.({
+        name: messageThreadTitle,
+        threadAgent: newThreadAgent,
+        threadAppearance: {
+          color: session.thread_color,
+          icon: session.thread_icon,
+          image: session.thread_image,
+        },
+      });
+      if (createdThreadKey) {
+        replyThreadKey = createdThreadKey;
+        replyThreadId = createdThreadKey;
+        createdThreadNow = true;
+        saveNavigatorSelectedThreadKey(createdThreadKey, targetChatPath);
+      }
+    }
+    if (replyThreadKey && opts.createNewThread !== true && !createdThreadNow) {
       const rootReady = await waitForThreadReady({
         actions,
         threadKey: replyThreadKey,

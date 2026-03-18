@@ -285,6 +285,70 @@ describe("submitNavigatorPromptToCurrentThread", () => {
     );
   });
 
+  it("creates and remembers a workspace thread before the first assistant send", async () => {
+    const workspaceChatPath =
+      "/home/wstein/.local/share/cocalc/workspaces/acct/ws-2.chat";
+    mockEnsureWorkspaceChatForPath.mockResolvedValue({
+      chat_path: workspaceChatPath,
+      assigned: false,
+      workspace: {
+        workspace_id: "ws-2",
+        root_path: "/home/wstein/project/notes",
+        theme: {
+          title: "notes",
+          color: null,
+          accent_color: null,
+          icon: null,
+          image_blob: null,
+        },
+      },
+    });
+    mockListSessions.mockResolvedValue([]);
+    const sendChat = jest.fn(() => new Date().toISOString());
+    const createEmptyThread = jest.fn(() => "thread-first");
+    const actions = {
+      syncdb: { get_state: () => "ready" },
+      messageCache: { getThreadIndex: () => new Map() },
+      sendChat,
+      createEmptyThread,
+      store: {
+        get: () => undefined,
+      },
+    };
+    mockGetChatActions.mockReturnValue(actions);
+    mockInitChat.mockReturnValue(actions);
+
+    const ok = await submitNavigatorPromptToCurrentThread({
+      project_id: "00000000-1000-4000-8000-000000000000",
+      path: "/home/wstein/project/notes/a.md",
+      prompt: "Start tracking this workspace work",
+      visiblePrompt: "Start tracking this workspace work",
+      title: "Start tracking this workspace work",
+      forceCodex: true,
+      openFloating: true,
+      codexConfig: { model: "gpt-5.4-mini" },
+    });
+
+    expect(ok).toBe(true);
+    expect(createEmptyThread).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "Start tracking this workspace work",
+      }),
+    );
+    expect(sendChat).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reply_thread_id: "thread-first",
+      }),
+    );
+    expect(
+      window.localStorage.getItem(
+        `cocalc:navigator:selected-thread:chat:${encodeURIComponent(
+          workspaceChatPath,
+        )}`,
+      ),
+    ).toBe("thread-first");
+  });
+
   it("keeps queued intents even when localStorage is unavailable", () => {
     const getSpy = jest
       .spyOn(Storage.prototype, "getItem")
