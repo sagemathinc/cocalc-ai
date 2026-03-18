@@ -67,6 +67,7 @@ import {
   type InputCell,
 } from "@cocalc/conat/project/jupyter/run-code";
 import {
+  canonicalJupyterLiveRunPath,
   openJupyterLiveRunStore,
   jupyterLiveRunSubject,
   type JupyterLiveRunBatch,
@@ -122,6 +123,7 @@ export class JupyterActions extends JupyterActions0 {
   private account_change_editor_settings: any;
   private update_keyboard_shortcuts: any;
   public syncdbPath: string;
+  public liveRunPath: string;
   private lastCursorMoveTime: number = 0;
   public jupyterEditorActions?;
   private hasUnsavedChanges: boolean = false;
@@ -140,6 +142,8 @@ export class JupyterActions extends JupyterActions0 {
   private liveRunReplayPending = false;
   private liveRunReplayBuffer: JupyterLiveRunBatch[] = [];
   private ignoredLiveRunIds = new globalThis.Map<string, number>();
+  private liveRunReplayPoll?: ReturnType<typeof setInterval>;
+  private completedLiveRunIds = new globalThis.Map<string, number>();
 
   private resolveRunDebugMode = (): "off" | "on" | "json" => {
     try {
@@ -256,6 +260,22 @@ export class JupyterActions extends JupyterActions0 {
     return true;
   };
 
+  private rememberCompletedLiveRunId = (runId: string) => {
+    this.completedLiveRunIds.set(runId, Date.now() + 30_000);
+  };
+
+  private hasCompletedLiveRunId = (runId: string): boolean => {
+    const until = this.completedLiveRunIds.get(runId);
+    if (until == null) {
+      return false;
+    }
+    if (until < Date.now()) {
+      this.completedLiveRunIds.delete(runId);
+      return false;
+    }
+    return true;
+  };
+
   private closeLiveRunContext = (
     runId: string,
     reason: "cell_done" | "run_done" | "stream_end",
@@ -267,6 +287,7 @@ export class JupyterActions extends JupyterActions0 {
     for (const id of Array.from(ctx.handlers.keys())) {
       ctx.finalizeHandler(id, reason);
     }
+    this.rememberCompletedLiveRunId(runId);
     this.liveRunContexts.delete(runId);
     this.liveRunSeenBatchIds.delete(runId);
     this.liveRunSeenSeq.delete(runId);
@@ -335,7 +356,7 @@ export class JupyterActions extends JupyterActions0 {
     if (this.isClosed()) {
       return;
     }
-    if (batch?.path !== this.syncdbPath) {
+    if (batch?.path !== this.liveRunPath) {
       return;
     }
     const runId = `${batch?.run_id ?? ""}`.trim();
@@ -462,8 +483,9 @@ export class JupyterActions extends JupyterActions0 {
     const snapshots = Object.values(this.liveRunStore.getAll())
       .filter(
         (snapshot) =>
-          snapshot?.path === this.syncdbPath &&
+          snapshot?.path === this.liveRunPath &&
           snapshot?.done !== true &&
+          !this.hasCompletedLiveRunId(`${snapshot?.run_id ?? ""}`) &&
           typeof snapshot?.run_id === "string" &&
           Array.isArray(snapshot?.batches),
       )
@@ -491,7 +513,7 @@ export class JupyterActions extends JupyterActions0 {
     }
     const subject = jupyterLiveRunSubject({
       project_id: this.project_id,
-      path: this.syncdbPath,
+      path: this.liveRunPath,
     });
     const sub = await webapp_client.conat_client.conat().subscribe(subject);
     if (this.isClosed()) {
@@ -541,6 +563,23 @@ export class JupyterActions extends JupyterActions0 {
         this.processSharedLiveRunBatch(batch, "buffered-live");
       }
     }
+    this.ensureLiveRunReplayPolling();
+  };
+
+  private ensureLiveRunReplayPolling = (): void => {
+    if (this.liveRunReplayPoll != null || this.isClosed()) {
+      return;
+    }
+    this.liveRunReplayPoll = setInterval(() => {
+      if (this.isClosed() || this.liveRunReplayPending) {
+        return;
+      }
+      void this.replaySharedLiveRuns().catch((err) => {
+        if (!this.isClosed()) {
+          console.warn("failed to poll jupyter live runs", err);
+        }
+      });
+    }, 500);
   };
 
   private startOptimisticIpynbFastOpen = (): void => {
@@ -623,6 +662,7 @@ export class JupyterActions extends JupyterActions0 {
 
   protected init2(): void {
     this.syncdbPath = syncdbPath(this.path);
+    this.liveRunPath = canonicalJupyterLiveRunPath(this.path);
     this.setState({
       toolbar: !this.get_local_storage("hide_toolbar"),
       cell_toolbar: this.get_local_storage("cell_toolbar"),
@@ -876,6 +916,10 @@ export class JupyterActions extends JupyterActions0 {
       if (this.isClosed()) return;
       this.liveRunSub?.close?.();
       this.liveRunSub = undefined;
+      if (this.liveRunReplayPoll != null) {
+        clearInterval(this.liveRunReplayPoll);
+        this.liveRunReplayPoll = undefined;
+      }
       this.liveRunStore?.close?.();
       this.liveRunStore = undefined;
       this.liveRunContexts.clear();
@@ -884,6 +928,7 @@ export class JupyterActions extends JupyterActions0 {
       this.liveRunReplayPending = false;
       this.liveRunReplayBuffer = [];
       this.ignoredLiveRunIds.clear();
+      this.completedLiveRunIds.clear();
       this.jupyterClient?.close();
       this.jupyterClient = undefined;
       super.close();

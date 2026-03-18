@@ -14,6 +14,7 @@ import { EventIterator } from "@cocalc/util/event-iterator";
 import { getLogger } from "@cocalc/conat/client";
 import { Throttle } from "@cocalc/util/throttle";
 import {
+  canonicalJupyterLiveRunPath,
   jupyterLiveRunKey,
   openJupyterLiveRunStore,
   jupyterLiveRunSubject,
@@ -355,15 +356,19 @@ async function handleRequest({
   let summaryError: string | undefined;
   let firstClientBatchFastLane = false;
   let socketClosedDuringRun = false;
-  const liveRunSubject = jupyterLiveRunSubject({ project_id, path });
+  const liveRunPath = canonicalJupyterLiveRunPath(path);
+  const liveRunSubject = jupyterLiveRunSubject({
+    project_id,
+    path: liveRunPath,
+  });
   const liveRunStore = await openJupyterLiveRunStore({ client, project_id });
-  const liveRunKey = jupyterLiveRunKey({ path, run_id });
+  const liveRunKey = jupyterLiveRunKey({ path: liveRunPath, run_id });
   const runner = await run({ path, cells, noHalt, socket, run_id });
   const output: OutputMessage[] = [];
   let outputVisibleCount = 0;
   let batchSeq = 0;
   let liveRunSnapshot: JupyterLiveRunSnapshot = {
-    path,
+    path: liveRunPath,
     run_id,
     batches: [],
     updated_at_ms: Date.now(),
@@ -393,7 +398,7 @@ async function handleRequest({
       return;
     }
     const batch: JupyterLiveRunBatch = {
-      path,
+      path: liveRunPath,
       run_id,
       seq: ++batchSeq,
       id: `${run_id}:${batchSeq}`,
