@@ -220,6 +220,13 @@ async function handleBackupOp(op: LroSummary): Promise<void> {
     });
 
     const started = Date.now();
+    const backupRunning = await updateLro({
+      op_id,
+      progress_summary: { phase: "backup" },
+    });
+    if (backupRunning) {
+      await publishSummarySafe(backupRunning, "set-backup-phase");
+    }
     progress({
       step: "backup",
       message: "creating backup snapshot",
