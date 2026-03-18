@@ -4,6 +4,7 @@ import { envToInt } from "@cocalc/backend/misc/env-to-number";
 import type { LroSummary } from "@cocalc/conat/hub/api/lro";
 import getPool from "@cocalc/database/pool";
 import { getEffectiveParallelOpsLimit } from "@cocalc/server/lro/worker-config";
+import { getParallelOpsWorkerRegistration } from "@cocalc/server/lro/worker-registry";
 import {
   ensureLroSchema,
   touchLro,
@@ -25,7 +26,10 @@ import {
   assertBackupTargetHostAvailable,
   watchBackupTargetHostAvailability,
 } from "./backup-target-health";
-import { listHostLocalBackupStatuses } from "./backup-host-status";
+import {
+  listActiveProjectHosts,
+  listHostLocalBackupStatuses,
+} from "./backup-host-status";
 
 const logger = getLogger("server:projects:backup-worker");
 const pool = () => getPool();
@@ -39,6 +43,7 @@ const DEFAULT_MAX_PARALLEL = Math.max(
   Math.min(100, envToInt("COCALC_BACKUP_LRO_MAX_PARALLEL", 10)),
 );
 const MAX_BACKUPS_PER_PROJECT = 30;
+const HOST_LOCAL_BACKUP_WORKER_KIND = "project-host-backup-execution";
 
 const WORKER_ID = randomUUID();
 
@@ -331,9 +336,42 @@ async function claimBackupLroOps({
 }): Promise<LroSummary[]> {
   if (limit <= 0) return [];
   const hostStatuses = await listHostLocalBackupStatuses();
+  const freshRunningCounts = await listFreshRunningBackupCountsByHost({
+    lease_ms,
+  });
+  const fallbackMaxParallelByHost = new Map<string, number>();
+  if (hostStatuses.unreachable_hosts > 0 || hostStatuses.rows.length === 0) {
+    const hostRegistration = getParallelOpsWorkerRegistration(
+      HOST_LOCAL_BACKUP_WORKER_KIND,
+    );
+    const defaultHostLimit =
+      hostRegistration?.getLimitSnapshot().default_limit ??
+      DEFAULT_MAX_PARALLEL;
+    const reportedHostIds = new Set(
+      hostStatuses.rows.map(({ host_id }) => host_id),
+    );
+    for (const { id } of await listActiveProjectHosts()) {
+      if (reportedHostIds.has(id)) continue;
+      const { value } = await getEffectiveParallelOpsLimit({
+        worker_kind: HOST_LOCAL_BACKUP_WORKER_KIND,
+        default_limit: defaultHostLimit,
+        scope_type: "project_host",
+        scope_id: id,
+      });
+      fallbackMaxParallelByHost.set(id, value);
+    }
+    if (fallbackMaxParallelByHost.size > 0) {
+      logger.warn("backup admission falling back to configured host limits", {
+        reachable_hosts: hostStatuses.rows.length,
+        unreachable_hosts: hostStatuses.unreachable_hosts,
+        fallback_hosts: Array.from(fallbackMaxParallelByHost.keys()),
+      });
+    }
+  }
   const availableByHost = computeHostAvailableBackupSlots({
     hostStatuses: hostStatuses.rows,
-    freshRunningCounts: await listFreshRunningBackupCountsByHost({ lease_ms }),
+    freshRunningCounts,
+    fallbackMaxParallelByHost,
   });
   if (!Array.from(availableByHost.values()).some((slots) => slots > 0)) {
     return [];

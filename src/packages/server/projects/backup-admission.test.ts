@@ -32,6 +32,28 @@ describe("backup admission helpers", () => {
     expect(available.get("host-b")).toBe(1);
   });
 
+  it("falls back to configured host limits when host-local status is unavailable", () => {
+    const available = computeHostAvailableBackupSlots({
+      hostStatuses: [
+        {
+          host_id: "host-a",
+          max_parallel: 10,
+          in_flight: 3,
+          queued: 0,
+          project_lock_count: 2,
+        },
+      ],
+      freshRunningCounts: new Map([
+        ["host-a", 4],
+        ["host-b", 2],
+      ]),
+      fallbackMaxParallelByHost: new Map([["host-b", 6]]),
+    });
+
+    expect(available.get("host-a")).toBe(6);
+    expect(available.get("host-b")).toBe(4);
+  });
+
   it("selects queued candidates without oversubscribing any host", () => {
     const selected = selectBackupClaimCandidateIds({
       candidates: [
