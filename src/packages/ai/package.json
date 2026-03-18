@@ -45,7 +45,7 @@
     "@cocalc/sync": "workspace:*",
     "@cocalc/util": "workspace:*",
     "@langchain/anthropic": "^1.1.0",
-    "@langchain/core": "^1.0.6",
+    "@langchain/core": "^1.1.8",
     "@langchain/google-genai": "^1.0.3",
     "@langchain/mistralai": "^1.0.0",
     "@langchain/ollama": "^1.0.1",
