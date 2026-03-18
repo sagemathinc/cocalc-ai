@@ -21,6 +21,10 @@ import {
   BACKUP_TIMEOUT_MS,
   isBackupOpTimedOut,
 } from "./backup-lro";
+import {
+  assertBackupTargetHostAvailable,
+  watchBackupTargetHostAvailability,
+} from "./backup-target-health";
 import { listHostLocalBackupStatuses } from "./backup-host-status";
 
 const logger = getLogger("server:projects:backup-worker");
@@ -137,7 +141,16 @@ async function handleBackupOp(op: LroSummary): Promise<void> {
     return;
   }
 
-  logger.info("backup op start", { op_id, project_id });
+  const target = await assertBackupTargetHostAvailable({
+    project_id,
+    phase: "validate",
+  });
+
+  logger.info("backup op start", {
+    op_id,
+    project_id,
+    host_id: target.host_id,
+  });
 
   const heartbeat = setInterval(() => {
     touchLro({ op_id, owner_type: OWNER_TYPE, owner_id: WORKER_ID }).catch(
@@ -145,6 +158,14 @@ async function handleBackupOp(op: LroSummary): Promise<void> {
     );
   }, HEARTBEAT_MS);
   heartbeat.unref?.();
+  const hostWatch = watchBackupTargetHostAvailability({
+    project_id,
+    phase: "backup",
+    pollMs: HEARTBEAT_MS,
+  });
+  const hostWatchFailure = new Promise<never>((_resolve, reject) => {
+    hostWatch.promise.catch(reject);
+  });
 
   let lastProgressKey: string | null = null;
   const progress = (update: {
@@ -200,21 +221,24 @@ async function handleBackupOp(op: LroSummary): Promise<void> {
       detail: { tags },
     });
 
-    const backup = await withTimeout(
-      (async () => {
-        const client = await getProjectFileServerClient({
-          project_id,
-          timeout: BACKUP_TIMEOUT_MS,
-        });
-        return await client.createBackup({
-          project_id,
-          limit: MAX_BACKUPS_PER_PROJECT,
-          tags,
-          lro: { op_id, scope_type: op.scope_type, scope_id: op.scope_id },
-        });
-      })(),
-      BACKUP_TIMEOUT_MS,
-    );
+    const backup = await Promise.race([
+      withTimeout(
+        (async () => {
+          const client = await getProjectFileServerClient({
+            project_id,
+            timeout: BACKUP_TIMEOUT_MS,
+          });
+          return await client.createBackup({
+            project_id,
+            limit: MAX_BACKUPS_PER_PROJECT,
+            tags,
+            lro: { op_id, scope_type: op.scope_type, scope_id: op.scope_id },
+          });
+        })(),
+        BACKUP_TIMEOUT_MS,
+      ),
+      hostWatchFailure,
+    ]);
     const duration_ms = Date.now() - started;
     const backup_time =
       backup.time instanceof Date
@@ -260,6 +284,7 @@ async function handleBackupOp(op: LroSummary): Promise<void> {
     }
     progress({ step: "done", message: "failed" });
   } finally {
+    hostWatch.stop();
     clearInterval(heartbeat);
     logger.info("backup op cleanup", { op_id });
   }
