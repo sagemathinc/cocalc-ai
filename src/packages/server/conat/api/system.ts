@@ -49,6 +49,12 @@ import { conat } from "@cocalc/backend/conat";
 import { sysApiMany } from "@cocalc/conat/core/sys";
 import type { ConnectionStats } from "@cocalc/conat/core/types";
 import { getParallelOpsStatus as getParallelOpsStatus0 } from "@cocalc/server/lro/worker-status";
+import {
+  clearParallelOpsLimitOverride,
+  setParallelOpsLimitOverride,
+  type ParallelOpsLimitScopeType,
+} from "@cocalc/server/lro/worker-config";
+import { getParallelOpsWorkerRegistration } from "@cocalc/server/lro/worker-registry";
 
 const logger = getLogger("server:conat:api:system");
 
@@ -67,6 +73,100 @@ export async function getParallelOpsStatus({
     throw Error("must be an admin");
   }
   return await getParallelOpsStatus0();
+}
+
+function validateParallelOpsScopeType(
+  scope_type: string | undefined,
+): ParallelOpsLimitScopeType {
+  const normalized = `${scope_type ?? "global"}`.trim();
+  if (
+    normalized === "global" ||
+    normalized === "provider" ||
+    normalized === "project_host"
+  ) {
+    return normalized;
+  }
+  throw Error(`invalid scope_type '${scope_type}'`);
+}
+
+async function assertAdmin(account_id?: string): Promise<void> {
+  if (!account_id || !(await isAdmin(account_id))) {
+    throw Error("must be an admin");
+  }
+}
+
+export async function setParallelOpsLimit({
+  account_id,
+  worker_kind,
+  scope_type,
+  scope_id,
+  limit_value,
+  note,
+}: {
+  account_id?: string;
+  worker_kind: string;
+  scope_type?: string;
+  scope_id?: string;
+  limit_value: number;
+  note?: string;
+}) {
+  await assertAdmin(account_id);
+  const worker = getParallelOpsWorkerRegistration(worker_kind);
+  if (!worker) {
+    throw Error(`unknown worker_kind '${worker_kind}'`);
+  }
+  const normalizedScopeType = validateParallelOpsScopeType(scope_type);
+  if (!worker.dynamic_limit_supported) {
+    throw Error(`dynamic limits are not supported for '${worker_kind}'`);
+  }
+  if (normalizedScopeType !== "global" || worker.scope_model !== "global") {
+    throw Error(
+      `non-global limit overrides are not implemented for '${worker_kind}'`,
+    );
+  }
+  if (!Number.isInteger(limit_value) || limit_value < 1) {
+    throw Error("limit_value must be a positive integer");
+  }
+  return await setParallelOpsLimitOverride({
+    worker_kind,
+    scope_type: normalizedScopeType,
+    scope_id,
+    limit_value,
+    updated_by: account_id,
+    note,
+  });
+}
+
+export async function clearParallelOpsLimit({
+  account_id,
+  worker_kind,
+  scope_type,
+  scope_id,
+}: {
+  account_id?: string;
+  worker_kind: string;
+  scope_type?: string;
+  scope_id?: string;
+}) {
+  await assertAdmin(account_id);
+  const worker = getParallelOpsWorkerRegistration(worker_kind);
+  if (!worker) {
+    throw Error(`unknown worker_kind '${worker_kind}'`);
+  }
+  const normalizedScopeType = validateParallelOpsScopeType(scope_type);
+  if (!worker.dynamic_limit_supported) {
+    throw Error(`dynamic limits are not supported for '${worker_kind}'`);
+  }
+  if (normalizedScopeType !== "global" || worker.scope_model !== "global") {
+    throw Error(
+      `non-global limit overrides are not implemented for '${worker_kind}'`,
+    );
+  }
+  await clearParallelOpsLimitOverride({
+    worker_kind,
+    scope_type: normalizedScopeType,
+    scope_id,
+  });
 }
 
 export async function userTracking({

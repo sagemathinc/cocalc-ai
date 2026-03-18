@@ -11,6 +11,8 @@ export const system = {
   ping: noAuth,
   terminate: authFirst,
   getParallelOpsStatus: authFirst,
+  setParallelOpsLimit: authFirst,
+  clearParallelOpsLimit: authFirst,
   userTracking: authFirst,
   logClientError: authFirst,
   webappError: authFirst,
@@ -178,6 +180,17 @@ export interface ParallelOpsWorkerStatus {
   notes: string[];
 }
 
+export interface ParallelOpsLimitOverride {
+  worker_kind: string;
+  scope_type: "global" | "provider" | "project_host";
+  scope_id: string;
+  limit_value: number;
+  enabled: boolean;
+  updated_at: Date;
+  updated_by: string | null;
+  note: string | null;
+}
+
 export interface ReserveProjectAppPublicSubdomainResult {
   hostname: string;
   label: string;
@@ -214,6 +227,22 @@ export interface System {
   getParallelOpsStatus: (opts?: {
     account_id?: string;
   }) => Promise<ParallelOpsWorkerStatus[]>;
+
+  setParallelOpsLimit: (opts: {
+    account_id?: string;
+    worker_kind: string;
+    scope_type?: "global" | "provider" | "project_host";
+    scope_id?: string;
+    limit_value: number;
+    note?: string;
+  }) => Promise<ParallelOpsLimitOverride>;
+
+  clearParallelOpsLimit: (opts: {
+    account_id?: string;
+    worker_kind: string;
+    scope_type?: "global" | "provider" | "project_host";
+    scope_id?: string;
+  }) => Promise<void>;
 
   userTracking: (opts: {
     event: string;

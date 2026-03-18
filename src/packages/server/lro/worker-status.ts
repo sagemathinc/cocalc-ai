@@ -7,8 +7,8 @@ import {
   type ParallelOpsWorkerRegistration,
   parallelOpsLroKindToWorkerKind,
   parallelOpsWorkerRegistry,
-  parallelOpsWorkerRegistryByKind,
 } from "./worker-registry";
+import { getEffectiveParallelOpsLimit } from "./worker-config";
 
 const pool = () => getPool();
 
@@ -85,17 +85,41 @@ function baseStatusForWorker(
   };
 }
 
+async function resolveLimitSnapshot(
+  worker: ParallelOpsWorkerRegistration,
+): Promise<ParallelOpsLimitSnapshot> {
+  const base = worker.getLimitSnapshot();
+  if (base.effective_limit == null || worker.scope_model !== "global") {
+    return base;
+  }
+  const { value, source } = await getEffectiveParallelOpsLimit({
+    worker_kind: worker.worker_kind,
+    default_limit: base.effective_limit,
+  });
+  return {
+    ...base,
+    configured_limit: value,
+    effective_limit: value,
+    config_source:
+      source === "db-override" ? "db-override" : base.config_source,
+  };
+}
+
 export function summarizeLroWorkerStatus({
   worker,
   rows,
   nowMs,
+  limit,
 }: {
   worker: ParallelOpsWorkerRegistration;
   rows: LroStatusRow[];
   nowMs: number;
+  limit?: ParallelOpsLimitSnapshot;
 }): ParallelOpsWorkerStatus {
-  const limit = worker.getLimitSnapshot();
-  const status = baseStatusForWorker(worker, limit);
+  const status = baseStatusForWorker(
+    worker,
+    limit ?? worker.getLimitSnapshot(),
+  );
   const staleCutoffMs =
     worker.lease_ms != null
       ? nowMs - worker.lease_ms
@@ -142,13 +166,17 @@ export function summarizeCloudVmWorkStatus({
   worker,
   rows,
   nowMs,
+  limit,
 }: {
   worker: ParallelOpsWorkerRegistration;
   rows: CloudVmWorkStatusRow[];
   nowMs: number;
+  limit?: ParallelOpsLimitSnapshot;
 }): ParallelOpsWorkerStatus {
-  const limit = worker.getLimitSnapshot();
-  const status = baseStatusForWorker(worker, limit);
+  const status = baseStatusForWorker(
+    worker,
+    limit ?? worker.getLimitSnapshot(),
+  );
   status.stale_running_count = null;
   status.notes.push(
     "Cloud VM work does not currently expose lease reclaim or stale-running semantics.",
@@ -228,10 +256,20 @@ export async function getParallelOpsStatus(): Promise<
   ParallelOpsWorkerStatus[]
 > {
   const nowMs = Date.now();
-  const [lroRows, cloudRows] = await Promise.all([
+  const [lroRows, cloudRows, limitEntries] = await Promise.all([
     listRelevantLroRows(),
     listRelevantCloudVmWorkRows(),
-  ]);
+    Promise.all(
+      parallelOpsWorkerRegistry.map(
+        async (worker) =>
+          [worker.worker_kind, await resolveLimitSnapshot(worker)] as [
+            string,
+            ParallelOpsLimitSnapshot,
+          ],
+      ),
+    ),
+  ] as const);
+  const limitMap = new Map<string, ParallelOpsLimitSnapshot>(limitEntries);
   const lroRowsByWorker = new Map<string, LroStatusRow[]>();
   for (const row of lroRows) {
     const workerKind = parallelOpsLroKindToWorkerKind.get(row.kind);
@@ -247,16 +285,14 @@ export async function getParallelOpsStatus(): Promise<
         worker,
         rows: cloudRows,
         nowMs,
+        limit: limitMap.get(worker.worker_kind),
       });
     }
     return summarizeLroWorkerStatus({
       worker,
       rows: lroRowsByWorker.get(worker.worker_kind) ?? [],
       nowMs,
+      limit: limitMap.get(worker.worker_kind),
     });
   });
-}
-
-export function getParallelOpsWorkerRegistration(worker_kind: string) {
-  return parallelOpsWorkerRegistryByKind.get(worker_kind);
 }

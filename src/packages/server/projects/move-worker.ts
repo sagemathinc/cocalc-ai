@@ -7,6 +7,7 @@ import {
   touchLro,
   updateLro,
 } from "@cocalc/server/lro/lro-db";
+import { getEffectiveParallelOpsLimit } from "@cocalc/server/lro/worker-config";
 import { publishLroEvent, publishLroSummary } from "@cocalc/server/lro/stream";
 import {
   MOVE_CANCELED_CODE,
@@ -21,7 +22,7 @@ const OWNER_TYPE = "hub" as const;
 const LEASE_MS = 120_000;
 const HEARTBEAT_MS = 15_000;
 const TICK_MS = 5_000;
-const MAX_PARALLEL = 1;
+const DEFAULT_MAX_PARALLEL = 1;
 
 const WORKER_ID = randomUUID();
 
@@ -312,21 +313,40 @@ async function markMoveOpFailedFromWorker({
 
 export function startMoveLroWorker({
   intervalMs = TICK_MS,
-  maxParallel = MAX_PARALLEL,
+  maxParallel,
+}: {
+  intervalMs?: number;
+  maxParallel?: number;
 } = {}) {
   if (running) return () => undefined;
   running = true;
-  logger.info("starting move LRO worker", { worker_id: WORKER_ID });
+  logger.info("starting move LRO worker", {
+    worker_id: WORKER_ID,
+    max_parallel: maxParallel ?? "dynamic",
+  });
 
   const tick = async () => {
-    if (inFlight >= maxParallel) return;
+    let effectiveMaxParallel = maxParallel;
+    if (effectiveMaxParallel == null) {
+      try {
+        const { value } = await getEffectiveParallelOpsLimit({
+          worker_kind: MOVE_LRO_KIND,
+          default_limit: DEFAULT_MAX_PARALLEL,
+        });
+        effectiveMaxParallel = value;
+      } catch (err) {
+        logger.warn("move op limit lookup failed", { err });
+        return;
+      }
+    }
+    if (inFlight >= effectiveMaxParallel) return;
     let ops: LroSummary[] = [];
     try {
       ops = await claimLroOps({
         kind: MOVE_LRO_KIND,
         owner_type: OWNER_TYPE,
         owner_id: WORKER_ID,
-        limit: Math.max(1, maxParallel - inFlight),
+        limit: Math.max(1, effectiveMaxParallel - inFlight),
         lease_ms: LEASE_MS,
       });
     } catch (err) {

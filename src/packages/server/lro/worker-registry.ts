@@ -5,7 +5,7 @@ export type ParallelOpsScopeModel =
   | "global"
   | "per-provider"
   | "per-project-host";
-export type ParallelOpsConfigSource = "constant" | "env-legacy";
+export type ParallelOpsConfigSource = "constant" | "env-legacy" | "db-override";
 
 export interface ParallelOpsLimitSnapshot {
   default_limit: number | null;
@@ -43,7 +43,7 @@ export const parallelOpsWorkerRegistry: ParallelOpsWorkerRegistration[] = [
     worker_kind: "project-move",
     category: "lro",
     scope_model: "global",
-    dynamic_limit_supported: false,
+    dynamic_limit_supported: true,
     lro_kinds: ["project-move"],
     lease_ms: 120_000,
     getLimitSnapshot: () => ({
@@ -99,7 +99,7 @@ export const parallelOpsWorkerRegistry: ParallelOpsWorkerRegistration[] = [
     worker_kind: "project-backup",
     category: "lro",
     scope_model: "global",
-    dynamic_limit_supported: false,
+    dynamic_limit_supported: true,
     lro_kinds: ["project-backup"],
     lease_ms: 120_000,
     notes: [
@@ -166,3 +166,7 @@ export const parallelOpsLroKindToWorkerKind = new Map<string, string>(
     (entry.lro_kinds ?? []).map((kind) => [kind, entry.worker_kind] as const),
   ),
 );
+
+export function getParallelOpsWorkerRegistration(worker_kind: string) {
+  return parallelOpsWorkerRegistryByKind.get(worker_kind);
+}
