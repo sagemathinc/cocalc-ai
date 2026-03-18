@@ -79,7 +79,9 @@ describe("static public viewer mode", () => {
       wake: { enabled: false, keep_warm_s: 0, startup_timeout_s: 0 },
     });
 
-    expect(normalized.kind).toBe("static");
+    if (normalized.kind !== "static") {
+      throw new Error("expected a static app spec");
+    }
     expect(normalized.integration).toEqual({
       mode: "cocalc-public-viewer",
       file_types: [".md", ".ipynb", ".slides", ".board"],
