@@ -418,6 +418,21 @@ async function resolveStaticRoot(
   project_id: string,
   root: string,
 ): Promise<string | undefined> {
+  const normalized = root.replace(/\\/g, "/").trim();
+  const allowRoot =
+    normalized !== "" &&
+    (!path.posix.isAbsolute(normalized) ||
+      normalized === "/root" ||
+      normalized.startsWith("/root/") ||
+      normalized === "/scratch" ||
+      normalized.startsWith("/scratch/"));
+  if (!allowRoot) {
+    logger.warn("rejected static app root outside project writable areas", {
+      project_id,
+      root,
+    });
+    return;
+  }
   try {
     return await resolveProjectContainerPath(project_id, root);
   } catch (err) {

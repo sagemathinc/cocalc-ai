@@ -16,6 +16,22 @@ interface PublicViewerConfig {
   autoRefreshS?: number;
 }
 
+function normalizeAndValidateRawUrl(rawUrl: string): string {
+  const parsed = new URL(rawUrl, window.location.origin);
+  if (!/^https?:$/i.test(parsed.protocol)) {
+    throw new Error("public viewer source must use http or https");
+  }
+  const currentHost = window.location.hostname;
+  const sameHost =
+    parsed.hostname === currentHost ||
+    parsed.hostname.endsWith(`.${currentHost}`);
+  const sameOrigin = parsed.origin === window.location.origin;
+  if (!sameOrigin && !sameHost) {
+    throw new Error("public viewer source host is not allowed");
+  }
+  return parsed.toString();
+}
+
 function parseConfig(): PublicViewerConfig {
   const element = document.getElementById("cocalc-public-viewer-config");
   if (element != null) {
@@ -30,6 +46,7 @@ function parseConfig(): PublicViewerConfig {
     ) {
       throw new Error("public viewer config is invalid");
     }
+    parsed.rawUrl = normalizeAndValidateRawUrl(parsed.rawUrl);
     return parsed;
   }
   const params = new URLSearchParams(window.location.search);
@@ -43,7 +60,7 @@ function parseConfig(): PublicViewerConfig {
   }
   return {
     path,
-    rawUrl,
+    rawUrl: normalizeAndValidateRawUrl(rawUrl),
     title,
     autoRefreshS:
       Number.isFinite(autoRefreshS) && autoRefreshS > 0
