@@ -224,6 +224,7 @@ src/.agents/bug-hunt/queues/
 src/.agents/bug-hunt/runs/
 src/.agents/bug-hunt/*
 !src/.agents/bug-hunt/scenario-catalog.md
+!src/.agents/bug-hunt/launchpad-portfolio.md
 !src/.agents/bug-hunt/plans/
 !src/.agents/bug-hunt/plans/**
 wstein.tasks
