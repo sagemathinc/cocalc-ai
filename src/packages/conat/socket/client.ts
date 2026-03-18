@@ -28,11 +28,13 @@ export class ConatSocketClient extends ConatSocketBase {
   private alive?: KeepAlive;
   private serverId?: string;
   private loadBalancer?: (subject: string) => Promise<string>;
+  private lifecycleReporter?: ConatSocketOptions["lifecycleReporter"];
   private requestRetryInFlight = false;
 
   constructor(opts: ConatSocketOptions) {
     super(opts);
     this.loadBalancer = opts.loadBalancer;
+    this.lifecycleReporter = opts.lifecycleReporter;
     // logger.silly("creating a client socket connecting to ", this.subject);
     this.initTCP();
     this.on("ready", () => {
@@ -135,6 +137,7 @@ export class ConatSocketClient extends ConatSocketBase {
 
   private getServerId = async () => {
     let id;
+    this.lifecycleReporter?.("get_server_id_start");
     if (this.loadBalancer != null) {
       logger.debug("getting server id from load balancer");
       id = await this.loadBalancer(this.subject);
@@ -147,6 +150,7 @@ export class ConatSocketClient extends ConatSocketBase {
       ({ id } = resp.data);
     }
     this.serverId = id;
+    this.lifecycleReporter?.("get_server_id_done", { server_id: id });
   };
 
   protected async run() {
@@ -161,9 +165,11 @@ export class ConatSocketClient extends ConatSocketBase {
       await this.getServerId();
 
       //  logger.silly("run: getting subscription");
+      this.lifecycleReporter?.("subscribe_start");
       const sub = await this.client.subscribe(
         `${this.subject}.client.${this.id}`,
       );
+      this.lifecycleReporter?.("subscribe_done");
       // @ts-ignore
       if (this.state == "closed") {
         sub.close();
@@ -180,7 +186,9 @@ export class ConatSocketClient extends ConatSocketBase {
           }
           try {
             // logger.silly("sending connect command to server", this.subject);
+            this.lifecycleReporter?.("connect_command_start");
             resp = await this.sendCommandToServer("connect");
+            this.lifecycleReporter?.("connect_command_done");
             this.alive?.recv();
             return true;
           } catch (err) {
@@ -195,6 +203,7 @@ export class ConatSocketClient extends ConatSocketBase {
         throw Error("failed to connect");
       }
       this.setState("ready");
+      this.lifecycleReporter?.("ready");
       this.initKeepAlive();
       for await (const mesg of this.sub) {
         this.alive?.recv();

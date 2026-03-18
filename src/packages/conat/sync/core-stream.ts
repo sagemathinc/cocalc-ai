@@ -99,10 +99,22 @@ export interface ChangeEvent<T> {
 export type CoreStreamInitPhase =
   | "init_start"
   | "persist_client_created"
+  | "persist_socket_connect_start"
+  | "persist_socket_get_server_id_start"
+  | "persist_socket_get_server_id_done"
+  | "persist_socket_subscribe_start"
+  | "persist_socket_subscribe_done"
+  | "persist_socket_connect_command_start"
+  | "persist_socket_connect_command_done"
+  | "persist_socket_ready"
   | "persist_changefeed_start"
   | "persist_changefeed_done"
   | "persist_get_all_start"
   | "persist_get_all_done"
+  | "persist_request_many_start"
+  | "persist_request_many_subscribed"
+  | "persist_request_many_first_chunk"
+  | "persist_request_many_done"
   | "persist_config_start"
   | "persist_config_done"
   | "dkv_allow_msg_ttl_config_start"
@@ -194,7 +206,8 @@ export function getCoreStreamDebugStats() {
 export class CoreStream<T = any> extends EventEmitter {
   public readonly name: string;
 
-  private configOptions?: Partial<Configuration>;
+  private pendingConfigOptions?: Partial<Configuration>;
+  private currentConfig?: Configuration;
   private _start_seq?: number;
 
   // don't do "this.raw=" or "this.messages=" anywhere in this class
@@ -253,7 +266,7 @@ export class CoreStream<T = any> extends EventEmitter {
       sync,
     };
     this._start_seq = start_seq;
-    this.configOptions = config;
+    this.pendingConfigOptions = config;
     this.initPhaseReporter = initPhaseReporter;
     return new Proxy(this, {
       get(target, prop) {
@@ -266,7 +279,8 @@ export class CoreStream<T = any> extends EventEmitter {
 
   private initialized = false;
   private hasPendingConfigChanges = () =>
-    this.configOptions != null && Object.keys(this.configOptions).length > 0;
+    this.pendingConfigOptions != null &&
+    Object.keys(this.pendingConfigOptions).length > 0;
 
   private emitInitPhase = (
     phase: CoreStreamInitPhase,
@@ -297,6 +311,9 @@ export class CoreStream<T = any> extends EventEmitter {
       user: this.user,
       storage: this.storage,
       service: this.service,
+      initReporter: (phase, details) => {
+        this.emitInitPhase(phase as CoreStreamInitPhase, details);
+      },
     });
     this.emitInitPhase("persist_client_created");
     this.persistClient.on("error", (err) => {
@@ -310,7 +327,7 @@ export class CoreStream<T = any> extends EventEmitter {
       includeConfig: !this.hasPendingConfigChanges(),
     });
     if (!this.hasPendingConfigChanges() && bootstrapConfig != null) {
-      this.configOptions = bootstrapConfig;
+      this.currentConfig = bootstrapConfig;
     }
 
     if (this.hasPendingConfigChanges()) {
@@ -321,7 +338,8 @@ export class CoreStream<T = any> extends EventEmitter {
           }
           try {
             this.emitInitPhase("persist_config_start");
-            this.configOptions = await this.config(this.configOptions);
+            this.currentConfig = await this.config(this.pendingConfigOptions);
+            this.pendingConfigOptions = undefined;
             this.emitInitPhase("persist_config_done");
             return true;
           } catch (err) {
@@ -355,7 +373,8 @@ export class CoreStream<T = any> extends EventEmitter {
     if (this.storage == null) {
       throw Error("bug -- storage must be set");
     }
-    return await this.persistClient.config({ config });
+    this.currentConfig = await this.persistClient.config({ config });
+    return this.currentConfig;
   };
 
   private isClosed = () => {

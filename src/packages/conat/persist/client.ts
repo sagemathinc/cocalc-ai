@@ -67,6 +67,11 @@ interface GetAllOpts {
   includeConfig?: boolean;
 }
 
+type PersistClientInitReporter = (
+  phase: string,
+  details?: { [key: string]: string | number | boolean | undefined },
+) => void;
+
 const logger = getLogger("persist:client");
 
 export type ChangefeedEvent = (SetOperation | DeleteOperation)[];
@@ -152,16 +157,19 @@ class PersistStreamClient extends EventEmitter {
   private reconnectAttempt = 0;
   private recoveryPromise?: Promise<void>;
   private readonly storageKey: string;
+  private readonly initReporter?: PersistClientInitReporter;
 
   constructor(
     private client: Client,
     private storage: StorageOptions,
     private user: User,
     private service = SERVICE,
+    initReporter?: PersistClientInitReporter,
   ) {
     super();
     this.setMaxListeners(100);
     this.storageKey = storage.path;
+    this.initReporter = initReporter;
     stats.created += 1;
     stats.active += 1;
     bumpCounterByStorage(activeByStorage, this.storageKey, 1);
@@ -169,6 +177,13 @@ class PersistStreamClient extends EventEmitter {
     logger.debug("constructor", this.storage);
     this.init();
   }
+
+  private emitInitPhase = (
+    phase: string,
+    details?: { [key: string]: string | number | boolean | undefined },
+  ) => {
+    this.initReporter?.(phase, details);
+  };
 
   private init = () => {
     if (this.client.state == "closed") {
@@ -183,11 +198,15 @@ class PersistStreamClient extends EventEmitter {
     stats.initCalls += 1;
     bumpCounterByStorage(initByStorage, this.storageKey, 1);
     const subject = persistSubject({ ...this.user, service: this.service });
+    this.emitInitPhase("persist_socket_connect_start", { subject });
     this.socket = this.client.socket.connect(subject, {
       desc: `persist: ${this.storage.path}`,
       reconnection: false,
       loadBalancer: async (subject: string) =>
         await getPersistServerId({ client: this.client, subject }),
+      lifecycleReporter: (phase, details) => {
+        this.emitInitPhase(`persist_socket_${phase}`, details);
+      },
     });
     logger.debug("init", this.storage.path, "connecting to ", subject);
     this.changefeedActive = false;
@@ -231,6 +250,7 @@ class PersistStreamClient extends EventEmitter {
   };
 
   private onSocketReady = () => {
+    this.emitInitPhase("persist_socket_ready");
     this.scheduleStableReconnectReset();
     if (this.reconnecting) {
       void this.getMissed();
@@ -600,7 +620,13 @@ class PersistStreamClient extends EventEmitter {
       }
       this.changefeedDesired = true;
     }
-    return await this.socket.requestMany(null, {
+    this.emitInitPhase("persist_request_many_start", {
+      start_seq,
+      end_seq,
+      changefeed,
+      include_config: includeConfig,
+    });
+    const sub = await this.socket.requestMany(null, {
       headers: {
         cmd: "getAll",
         start_seq,
@@ -612,6 +638,13 @@ class PersistStreamClient extends EventEmitter {
       timeout,
       maxWait,
     });
+    this.emitInitPhase("persist_request_many_subscribed", {
+      start_seq,
+      end_seq,
+      changefeed,
+      include_config: includeConfig,
+    });
+    return sub;
   };
 
   // returns async iterator over arrays of stored messages.
@@ -641,6 +674,9 @@ class PersistStreamClient extends EventEmitter {
       return;
     }
     let seq = 0; // next expected seq number for the sub (not the data)
+    let firstChunk = true;
+    let chunks = 0;
+    let totalMessages = 0;
     for await (const { data, headers } of sub) {
       if (headers?.error) {
         throw new ConatError(`${headers.error}`, {
@@ -648,6 +684,10 @@ class PersistStreamClient extends EventEmitter {
         });
       }
       if (data == null || this.socket.state == "closed") {
+        this.emitInitPhase("persist_request_many_done", {
+          chunks,
+          messages: totalMessages,
+        });
         // done
         return;
       }
@@ -660,6 +700,15 @@ class PersistStreamClient extends EventEmitter {
         );
       } else {
         seq = headers?.seq + 1;
+      }
+      chunks += 1;
+      totalMessages += data.length;
+      if (firstChunk) {
+        firstChunk = false;
+        this.emitInitPhase("persist_request_many_first_chunk", {
+          seq: headers?.seq,
+          chunk_messages: data.length,
+        });
       }
       yield data;
     }
@@ -716,6 +765,8 @@ class PersistStreamClient extends EventEmitter {
         throw Error("closed");
       }
       let seq = 0;
+      let firstChunk = true;
+      let chunks = 0;
       for await (const { data, headers } of sub) {
         if (headers?.error) {
           throw new ConatError(`${headers.error}`, {
@@ -737,6 +788,15 @@ class PersistStreamClient extends EventEmitter {
           );
         }
         seq = headers.seq + 1;
+        chunks += 1;
+        if (firstChunk) {
+          firstChunk = false;
+          this.emitInitPhase("persist_request_many_first_chunk", {
+            seq: headers.seq,
+            chunk_messages: data.length,
+            received_config: config != null,
+          });
+        }
         messages = messages.concat(data);
       }
       if (this.isClosed()) {
@@ -745,6 +805,11 @@ class PersistStreamClient extends EventEmitter {
       if (opts.changefeed) {
         this.changefeedActive = true;
       }
+      this.emitInitPhase("persist_request_many_done", {
+        chunks,
+        messages: messages.length,
+        received_config: config != null,
+      });
       return { messages, config };
     } catch (err) {
       stats.getAllErrors += 1;
@@ -827,6 +892,7 @@ interface Options {
   storage: StorageOptions;
   noCache?: boolean;
   service?: string;
+  initReporter?: PersistClientInitReporter;
 }
 
 export const stream = refCacheSync<Options, PersistStreamClient>({
@@ -834,10 +900,22 @@ export const stream = refCacheSync<Options, PersistStreamClient>({
   createKey: ({ user, storage, client, service = SERVICE }: Options) => {
     return JSON.stringify([user, storage, client.id, service]);
   },
-  createObject: ({ client, user, storage, service = SERVICE }: Options) => {
+  createObject: ({
+    client,
+    user,
+    storage,
+    service = SERVICE,
+    initReporter,
+  }: Options) => {
     // avoid wasting server resources, etc., by always checking permissions client side first
     assertHasWritePermission({ user, storage, service });
-    return new PersistStreamClient(client, storage, user, service);
+    return new PersistStreamClient(
+      client,
+      storage,
+      user,
+      service,
+      initReporter,
+    );
   },
 });
 
