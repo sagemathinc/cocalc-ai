@@ -381,6 +381,99 @@ describe("fallback keeps full notebook output after disconnect", () => {
   });
 });
 
+describe("mirror output handler keeps final notebook state without disconnect", () => {
+  let client1, client2;
+  it("create two clients", async () => {
+    client1 = connect();
+    client2 = connect();
+  });
+
+  const path = "mirror-final.ipynb";
+  const project_id = uuid();
+  let server;
+  let handler: any = null;
+
+  it("create jupyter code run server with mirrored backend output", () => {
+    async function run({ cells }) {
+      async function* runner() {
+        for (const { id } of cells) {
+          yield {
+            id,
+            msg_type: "stream",
+            content: { name: "stdout", text: "0\n" },
+          };
+          await delay(5);
+          yield {
+            id,
+            msg_type: "stream",
+            content: { name: "stdout", text: "1\n" },
+          };
+          await delay(5);
+        }
+      }
+      return runner();
+    }
+
+    class OutputHandler {
+      messages: any[] = [];
+      process = (mesg: any) => {
+        this.messages.push(mesg);
+      };
+      done = () => {
+        this.messages.push({ done: true });
+      };
+    }
+
+    function outputHandler({ path: path0 }) {
+      if (path0 != path) {
+        throw Error(`path must be ${path}`);
+      }
+      handler = new OutputHandler();
+      return handler;
+    }
+
+    server = jupyterServer({
+      client: client1,
+      project_id,
+      run,
+      outputHandler,
+      mirrorOutputHandler: true,
+      getKernelStatus,
+    });
+  });
+
+  let client;
+  it("mirrors final output to backend handler even while client stays connected", async () => {
+    client = jupyterClient({
+      path,
+      project_id,
+      client: client2,
+    });
+    const iter = await client.run([{ id: "cell-a", input: "x" }]);
+    for await (const _batch of iter) {
+      // wait for completion
+    }
+    expect(withoutRunId(handler.messages)).toEqual([
+      {
+        id: "cell-a",
+        content: { name: "stdout", text: "0\n" },
+        msg_type: "stream",
+      },
+      {
+        id: "cell-a",
+        content: { name: "stdout", text: "1\n" },
+        msg_type: "stream",
+      },
+      { done: true },
+    ]);
+  });
+
+  it("cleans up", () => {
+    server.close();
+    client.close();
+  });
+});
+
 describe("disconnect still flushes final live replay batches", () => {
   let client1, client2;
   it("create two clients", async () => {

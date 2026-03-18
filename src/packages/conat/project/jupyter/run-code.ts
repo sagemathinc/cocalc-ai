@@ -228,12 +228,14 @@ export function jupyterServer({
   // as a fallback in case the client that initiated running cells is
   // disconnected, so output won't be lost.
   outputHandler,
+  mirrorOutputHandler = false,
   getKernelStatus,
 }: {
   client: ConatClient;
   project_id: string;
   run: JupyterCodeRunner;
   outputHandler?: CreateOutputHandler;
+  mirrorOutputHandler?: boolean;
   getKernelStatus: (opts: { path: string }) => Promise<{
     backend_state:
       | "failed"
@@ -291,6 +293,7 @@ export function jupyterServer({
             socket,
             run,
             outputHandler,
+            mirrorOutputHandler,
             path,
             cells,
             noHalt,
@@ -333,6 +336,7 @@ async function handleRequest({
   socket,
   run,
   outputHandler,
+  mirrorOutputHandler,
   path,
   cells,
   noHalt,
@@ -350,6 +354,7 @@ async function handleRequest({
   let moreOutputBuffered = 0;
   let summaryError: string | undefined;
   let firstClientBatchFastLane = false;
+  let socketClosedDuringRun = false;
   const liveRunSubject = jupyterLiveRunSubject({ project_id, path });
   const liveRunStore = await openJupyterLiveRunStore({ client, project_id });
   const liveRunKey = jupyterLiveRunKey({ path, run_id });
@@ -499,8 +504,46 @@ async function handleRequest({
   };
 
   try {
-    let handler: OutputHandler | null = null;
-    let process: ((mesg: OutputMessage) => void) | null = null;
+    let backendHandler: OutputHandler | null = null;
+    let outputProcess: ((mesg: OutputMessage) => void) | null = null;
+    const ensureHandler = () => {
+      if (backendHandler != null && outputProcess != null) {
+        return;
+      }
+      if (outputHandler == null) {
+        throw Error("no output handler available");
+      }
+      backendHandler = outputHandler({ path, cells });
+      if (backendHandler == null) {
+        throw Error("bug -- outputHandler must return a handler");
+      }
+      outputProcess = (mesg) => {
+        if (backendHandler == null) return;
+        const lifecycle = getLifecycleType(mesg);
+        if (lifecycle != null) {
+          if (lifecycle == "cell_start" && typeof mesg.id == "string") {
+            backendHandler.process({
+              id: mesg.id,
+              content: { execution_state: "busy" },
+            });
+          } else if (lifecycle == "cell_done" && typeof mesg.id == "string") {
+            backendHandler.process({ id: mesg.id, done: true });
+          }
+          fallbackProcessed += 1;
+          return;
+        }
+        if (typeof mesg.id != "string") {
+          fallbackProcessed += 1;
+          return;
+        }
+        backendHandler.process(mesg);
+        fallbackProcessed += 1;
+      };
+    };
+
+    if (mirrorOutputHandler && outputHandler != null) {
+      ensureHandler();
+    }
 
     for await (const mesg0 of runner) {
       const mesg = normalizeOutputMessage(mesg0, run_id);
@@ -509,56 +552,34 @@ async function handleRequest({
         firstMesgAt = Date.now();
       }
       if (socket.state == "closed") {
+        socketClosedDuringRun = true;
         // client socket has closed -- the backend server must take over!
-        if (handler == null || process == null) {
+        if (backendHandler == null || outputProcess == null) {
           fallbackActivated = true;
           logger.debug("socket closed -- server must handle output");
-          if (outputHandler == null) {
-            throw Error("no output handler available");
-          }
-          handler = outputHandler({ path, cells });
-          if (handler == null) {
-            throw Error("bug -- outputHandler must return a handler");
-          }
-          process = (mesg) => {
-            if (handler == null) return;
-            const lifecycle = getLifecycleType(mesg);
-            if (lifecycle != null) {
-              if (lifecycle == "cell_start" && typeof mesg.id == "string") {
-                handler.process({
-                  id: mesg.id,
-                  content: { execution_state: "busy" },
-                });
-              } else if (
-                lifecycle == "cell_done" &&
-                typeof mesg.id == "string"
-              ) {
-                handler.process({ id: mesg.id, done: true });
-              }
-              fallbackProcessed += 1;
-              return;
-            }
-            if (typeof mesg.id != "string") {
-              fallbackProcessed += 1;
-              return;
-            }
-            handler.process(mesg);
-            fallbackProcessed += 1;
-          };
-
+          ensureHandler();
           fallbackReplayed += output.length;
           for (const prev of output) {
-            process(prev);
+            outputProcess!(prev);
           }
           output.length = 0;
         }
-        process(mesg);
+      }
+      const activeProcess = outputProcess as
+        | ((mesg: OutputMessage) => void)
+        | null;
+      if (
+        activeProcess != null &&
+        (mirrorOutputHandler || socket.state == "closed")
+      ) {
+        activeProcess(mesg);
       }
       await handleVisibleMesg(mesg);
     }
     // no errors happened, so close up and flush and
     // remaining data immediately:
-    handler?.done();
+    const activeHandler = backendHandler as OutputHandler | null;
+    activeHandler?.done();
     throttle.flush();
     await writeQueue;
     await livePublishQueue;
@@ -591,7 +612,7 @@ async function handleRequest({
       total_batches: totalBatches,
       more_output_buffered: moreOutputBuffered,
       first_batch_fast_lane: firstClientBatchFastLane,
-      fallback_activated: fallbackActivated,
+      fallback_activated: fallbackActivated || socketClosedDuringRun,
       fallback_replayed: fallbackReplayed,
       fallback_processed: fallbackProcessed,
       enobufs,

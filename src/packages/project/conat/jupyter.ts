@@ -31,6 +31,7 @@ export function init(opts?) {
     ...getIdentity(opts),
     run,
     outputHandler,
+    mirrorOutputHandler: true,
     getKernelStatus,
   });
 }

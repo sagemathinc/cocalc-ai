@@ -2342,7 +2342,9 @@ export class JupyterActions extends JupyterActions0 {
           cell = { id };
         }
         cell.kernel = kernel;
-        const created = this.getOutputHandler(cell, runId);
+        const created = this.getOutputHandler(cell, runId, {
+          persistFinal: false,
+        });
         handlers.set(id, created);
         this.runDebug("runCells.handler.open", {
           runId,
