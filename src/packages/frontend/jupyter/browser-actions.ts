@@ -66,6 +66,10 @@ import {
   type JupyterClient,
   type InputCell,
 } from "@cocalc/conat/project/jupyter/run-code";
+import {
+  jupyterLiveRunSubject,
+  type JupyterLiveRunBatch,
+} from "@cocalc/conat/project/jupyter/live-run";
 import { OutputHandler } from "@cocalc/jupyter/execute/output-handler";
 import { throttle } from "lodash";
 import {
@@ -95,6 +99,17 @@ const OUTPUT_FPS = 29;
 const DEFAULT_OUTPUT_MESSAGE_LIMIT = 500;
 const WATCH_RECREATE_WAIT = 3000;
 
+type LiveRunRenderContext = {
+  handlers: globalThis.Map<string, OutputHandler>;
+  finalizedCells: Set<string>;
+  getHandlerForId: (id: string) => OutputHandler;
+  finalizeHandler: (
+    id: string,
+    reason: "cell_done" | "run_done" | "stream_end",
+    alreadyDone?: boolean,
+  ) => void;
+};
+
 // local cache: map project_id (string) -> kernels (immutable)
 let jupyter_kernels = Map<string, Kernels>();
 
@@ -112,6 +127,9 @@ export class JupyterActions extends JupyterActions0 {
   private optimisticFastOpenApplied: boolean = false;
   private runDebugCounter: number = 0;
   private runDebugMode: "off" | "on" | "json" | undefined;
+  private liveRunSub?: any;
+  private liveRunContexts = new globalThis.Map<string, LiveRunRenderContext>();
+  private ignoredLiveRunIds = new globalThis.Map<string, number>();
 
   private resolveRunDebugMode = (): "off" | "on" | "json" => {
     try {
@@ -210,6 +228,179 @@ export class JupyterActions extends JupyterActions0 {
           ? Object.keys(patch).slice(0, 8)
           : undefined,
     };
+  };
+
+  private rememberIgnoredLiveRunId = (runId: string) => {
+    this.ignoredLiveRunIds.set(runId, Date.now() + 30_000);
+  };
+
+  private shouldIgnoreLiveRunId = (runId: string): boolean => {
+    const until = this.ignoredLiveRunIds.get(runId);
+    if (until == null) {
+      return false;
+    }
+    if (until < Date.now()) {
+      this.ignoredLiveRunIds.delete(runId);
+      return false;
+    }
+    return true;
+  };
+
+  private closeLiveRunContext = (
+    runId: string,
+    reason: "cell_done" | "run_done" | "stream_end",
+  ) => {
+    const ctx = this.liveRunContexts.get(runId);
+    if (ctx == null) {
+      return;
+    }
+    for (const id of Array.from(ctx.handlers.keys())) {
+      ctx.finalizeHandler(id, reason);
+    }
+    this.liveRunContexts.delete(runId);
+  };
+
+  private createLiveRunContext = (
+    runId: string,
+    opts: { persistFinal: boolean; source: "local" | "remote" },
+  ): LiveRunRenderContext => {
+    const handlers = new globalThis.Map<string, OutputHandler>();
+    const finalizedCells = new Set<string>();
+    const getHandlerForId = (id: string): OutputHandler => {
+      const existing = handlers.get(id);
+      if (existing != null) {
+        return existing;
+      }
+      let cell = this.store.getIn(["cells", id])?.toJS();
+      if (cell == null) {
+        cell = { id };
+      }
+      const created = this.getOutputHandler(cell, runId, {
+        persistFinal: opts.persistFinal,
+      });
+      handlers.set(id, created);
+      this.runDebug("liveRun.handler.open", {
+        runId,
+        id,
+        source: opts.source,
+        persistFinal: opts.persistFinal,
+      });
+      return created;
+    };
+    const finalizeHandler = (
+      id: string,
+      reason: "cell_done" | "run_done" | "stream_end",
+      alreadyDone = false,
+    ) => {
+      finalizedCells.add(id);
+      const existing = handlers.get(id);
+      if (existing == null) {
+        return;
+      }
+      handlers.delete(id);
+      if (!alreadyDone) {
+        existing.done();
+      }
+      this.runDebug("liveRun.handler.finalize", {
+        runId,
+        id,
+        reason,
+        source: opts.source,
+        remainingHandlers: handlers.size,
+      });
+    };
+    return { handlers, finalizedCells, getHandlerForId, finalizeHandler };
+  };
+
+  private processSharedLiveRunBatch = (batch: JupyterLiveRunBatch): void => {
+    if (this.isClosed()) {
+      return;
+    }
+    if (batch?.path !== this.syncdbPath) {
+      return;
+    }
+    const runId = `${batch?.run_id ?? ""}`.trim();
+    if (!runId || this.shouldIgnoreLiveRunId(runId)) {
+      return;
+    }
+    const mesgs = Array.isArray(batch?.mesgs) ? batch.mesgs : [];
+    if (mesgs.length == 0) {
+      return;
+    }
+    let ctx = this.liveRunContexts.get(runId);
+    if (ctx == null) {
+      ctx = this.createLiveRunContext(runId, {
+        persistFinal: false,
+        source: "remote",
+      });
+      this.liveRunContexts.set(runId, ctx);
+    }
+    let sawRunDone = false;
+    for (const mesg of mesgs) {
+      const decision = classifyRunStreamMessage({
+        message: mesg,
+        activeRunId: runId,
+        finalizedCells: ctx.finalizedCells,
+      });
+      if (
+        decision.kind == "drop_stale_run_id" ||
+        decision.kind == "drop_missing_id" ||
+        decision.kind == "drop_after_finalize"
+      ) {
+        continue;
+      }
+      if (decision.kind == "lifecycle") {
+        if (decision.lifecycle == "run_start") {
+          continue;
+        }
+        if (decision.lifecycle == "run_done") {
+          sawRunDone = true;
+          continue;
+        }
+        if (decision.id == null) {
+          continue;
+        }
+        const handler = ctx.getHandlerForId(decision.id);
+        handler.process(mesg);
+        if (decision.lifecycle == "cell_done") {
+          ctx.finalizeHandler(decision.id, "cell_done", true);
+        }
+        continue;
+      }
+      const handler = ctx.getHandlerForId(decision.id);
+      handler.process(mesg);
+    }
+    if (sawRunDone) {
+      this.closeLiveRunContext(runId, "run_done");
+    }
+  };
+
+  private ensureLiveRunSubscription = async (): Promise<void> => {
+    if (this.liveRunSub != null || this.isClosed()) {
+      return;
+    }
+    const subject = jupyterLiveRunSubject({
+      project_id: this.project_id,
+      path: this.syncdbPath,
+    });
+    const sub = await webapp_client.conat_client.conat().subscribe(subject);
+    if (this.isClosed()) {
+      sub.close();
+      return;
+    }
+    this.liveRunSub = sub;
+    (async () => {
+      for await (const mesg of sub) {
+        if (this.isClosed() || this.liveRunSub !== sub) {
+          break;
+        }
+        this.processSharedLiveRunBatch(mesg.data as JupyterLiveRunBatch);
+      }
+    })().catch((err) => {
+      if (!this.isClosed()) {
+        console.warn("failed to consume jupyter live run stream", err);
+      }
+    });
   };
 
   private startOptimisticIpynbFastOpen = (): void => {
@@ -371,6 +562,7 @@ export class JupyterActions extends JupyterActions0 {
       // metadata-only patch, which would otherwise make RTC appear spuriously
       // "newer than disk" at open time.
       this.watchIpynb(rtcLastChangedMsAtReady);
+      void this.ensureLiveRunSubscription();
 
       this.set_runtime_user_state({ id: 0, time: Date.now() });
 
@@ -542,6 +734,10 @@ export class JupyterActions extends JupyterActions0 {
   public async close(): Promise<void> {
     try {
       if (this.isClosed()) return;
+      this.liveRunSub?.close?.();
+      this.liveRunSub = undefined;
+      this.liveRunContexts.clear();
+      this.ignoredLiveRunIds.clear();
       this.jupyterClient?.close();
       this.jupyterClient = undefined;
       super.close();
@@ -1641,8 +1837,13 @@ export class JupyterActions extends JupyterActions0 {
     await api.stop(this.syncdbPath);
   };
 
-  private getOutputHandler = (cell, runId?: string) => {
+  private getOutputHandler = (
+    cell,
+    runId?: string,
+    opts: { persistFinal?: boolean } = {},
+  ) => {
     const handler = new OutputHandler({ cell });
+    const persistFinal = opts.persistFinal ?? true;
 
     // Under heavy output we throttle updates, but on "done" we force an
     // immediate flush to avoid leaving the cell in a stale running state.
@@ -1683,20 +1884,21 @@ export class JupyterActions extends JupyterActions0 {
         this.runDebug("runCells.output.first_write", {
           runId,
           id: cell.id,
-          save: !!save,
+          save: !!save && persistFinal,
         });
-        writeCell(!!save);
+        writeCell(!!save && persistFinal);
         return;
       }
       writeCellThrottled();
     });
     handler.on("done", () => {
       writeCellThrottled.flush();
-      writeCell(true);
+      writeCell(persistFinal);
       this.runDebug("runCells.handler.done.flush", {
         runId,
         id: cell.id,
         state: cell.state,
+        persistFinal,
       });
     });
     return handler;
@@ -1869,6 +2071,7 @@ export class JupyterActions extends JupyterActions0 {
     opts: { noHalt?: boolean; limit?: number } = {},
   ) => {
     const runId = `${Date.now().toString(36)}-${++this.runDebugCounter}`;
+    this.rememberIgnoredLiveRunId(runId);
     const runStartedAt = Date.now();
     let cellsPrepared = 0;
     let runnerStartedAt: number | null = null;
@@ -2147,6 +2350,7 @@ export class JupyterActions extends JupyterActions0 {
         this.set_error(err);
       }
     } finally {
+      this.rememberIgnoredLiveRunId(runId);
       if (this.isClosed()) return;
       this.runningNow = false;
       this.runDebug("runCells.finally", {

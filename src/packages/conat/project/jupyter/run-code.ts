@@ -13,6 +13,10 @@ import {
 import { EventIterator } from "@cocalc/util/event-iterator";
 import { getLogger } from "@cocalc/conat/client";
 import { Throttle } from "@cocalc/util/throttle";
+import {
+  jupyterLiveRunSubject,
+  type JupyterLiveRunBatch,
+} from "@cocalc/conat/project/jupyter/live-run";
 const MAX_MSGS_PER_SECOND = parseInt(
   process.env.COCALC_JUPYTER_MAX_MSGS_PER_SECOND ?? "20",
 );
@@ -260,6 +264,8 @@ export function jupyterServer({
             socket_id: socket.id,
           });
           await handleRequest({
+            client,
+            project_id,
             run_id,
             socket,
             run,
@@ -300,6 +306,8 @@ export function jupyterServer({
 }
 
 async function handleRequest({
+  client,
+  project_id,
   run_id,
   socket,
   run,
@@ -321,6 +329,7 @@ async function handleRequest({
   let moreOutputBuffered = 0;
   let summaryError: string | undefined;
   let firstClientBatchFastLane = false;
+  const liveRunSubject = jupyterLiveRunSubject({ project_id, path });
   const runner = await run({ path, cells, noHalt, socket, run_id });
   const output: OutputMessage[] = [];
   let outputVisibleCount = 0;
@@ -334,6 +343,22 @@ async function handleRequest({
   const throttle = new Throttle<OutputMessage>(MAX_MSGS_PER_SECOND);
   let unhandledClientWriteError: any = undefined;
   let writeQueue: Promise<void> = Promise.resolve();
+  let livePublishQueue: Promise<void> = Promise.resolve();
+  const publishLiveBatch = (mesgs: OutputMessage[]) => {
+    if (mesgs.length == 0) {
+      return;
+    }
+    const batch: JupyterLiveRunBatch = {
+      path,
+      run_id,
+      mesgs,
+      sent_at_ms: Date.now(),
+    };
+    livePublishQueue = livePublishQueue.then(async () => {
+      await client.publish(liveRunSubject, batch);
+    });
+    return livePublishQueue;
+  };
   const writeBatchToClient = async (
     mesgs: OutputMessage[],
     opts?: { fastLane?: boolean },
@@ -343,6 +368,7 @@ async function handleRequest({
     }
     totalBatches += 1;
     const coalescedMesgs = coalesceOutputBatch(mesgs);
+    void publishLiveBatch(coalescedMesgs);
     try {
       socket.write(coalescedMesgs);
       if (opts?.fastLane) {
@@ -504,6 +530,9 @@ async function handleRequest({
     if (socket.state != "closed") {
       throttle.flush();
       await writeQueue;
+    }
+    await livePublishQueue;
+    if (socket.state != "closed") {
       socket.write(null);
     }
   } catch (err) {
