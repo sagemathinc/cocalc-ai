@@ -131,7 +131,8 @@ describe("submitNavigatorPromptToCurrentThread", () => {
 
     const ok = await submitNavigatorPromptToCurrentThread({
       project_id: "00000000-1000-4000-8000-000000000000",
-      prompt: "Write a proof",
+      prompt: "Handle this request with hidden metadata",
+      visiblePrompt: "Write a proof",
       title: "Write a proof",
       tag: "intent:editor-assistant",
       forceCodex: true,
@@ -155,6 +156,7 @@ describe("submitNavigatorPromptToCurrentThread", () => {
     expect(sendChat).toHaveBeenCalledWith(
       expect.objectContaining({
         input: "Write a proof",
+        acp_prompt: "Handle this request with hidden metadata",
         name: undefined,
         reply_thread_id: "thread-new",
         threadAgent: undefined,

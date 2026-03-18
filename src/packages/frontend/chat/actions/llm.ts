@@ -105,13 +105,15 @@ export async function processLLM({
   }
 
   let input = stripMentions(inputRaw);
+  const acpPromptOverride = `${(message as any)?.acp_prompt ?? ""}`.trim();
 
   // ACP agent branch
   if (typeof model === "string" && isCodexModelName(model)) {
+    const acpBaseInput = acpPromptOverride || input;
     const acpInput =
       effectiveAcpSendMode === "immediate"
-        ? `${ACP_IMMEDIATE_MODE_PREFIX}\n\n${input}`
-        : input;
+        ? `${ACP_IMMEDIATE_MODE_PREFIX}\n\n${acpBaseInput}`
+        : acpBaseInput;
     await processAcpLLM({
       actions,
       message,

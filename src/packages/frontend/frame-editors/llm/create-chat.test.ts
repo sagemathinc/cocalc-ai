@@ -45,6 +45,7 @@ describe("createChat", () => {
       expect.objectContaining({
         project_id: "project-1",
         path: "/tmp/test.py",
+        visiblePrompt: "Explain this",
         title: "Explain this",
         tag: "intent:editor-assistant",
         forceCodex: true,
@@ -79,6 +80,7 @@ describe("createChat", () => {
 
     expect(dispatchNavigatorPromptIntent).toHaveBeenCalledWith(
       expect.objectContaining({
+        visiblePrompt: "List large files",
         title: "List large files",
         tag: "intent:terminal-assistant",
         forceCodex: true,

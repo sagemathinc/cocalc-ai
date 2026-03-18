@@ -682,7 +682,7 @@ export function NavigatorShell({
         removeQueuedNavigatorPromptIntent(intent.id);
         return true;
       }
-      const input = basePrompt;
+      const input = `${intent.visiblePrompt ?? ""}`.trim() || basePrompt;
       const storedThreadKey = loadNavigatorSelectedThreadKey(project_id);
       const resolvedThreadKey =
         intent.createNewThread === true
@@ -762,6 +762,7 @@ export function NavigatorShell({
       }
       const timeStamp = actions.sendChat({
         input,
+        acp_prompt: basePrompt,
         name: intent.createNewThread === true ? undefined : messageThreadTitle,
         reply_thread_id: replyThreadId,
         tag: intent.tag ?? "intent:navigator",

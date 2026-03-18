@@ -497,11 +497,21 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
                 ?.workspace_id === scopedWorkspaceId,
           )
         : sessions;
-    return visibleSessions.map((record) => ({
+    const options = visibleSessions.map((record) => ({
       value: record.session_id,
       label: ellipsizeLabel(record.title || "Agent session"),
     }));
-  }, [scopedWorkspaceId, sessions, workspaceOnly, workspaces]);
+    if (
+      session?.session_id &&
+      !options.some((option) => option.value === session.session_id)
+    ) {
+      options.unshift({
+        value: session.session_id,
+        label: ellipsizeLabel(session.title || "Agent session"),
+      });
+    }
+    return options;
+  }, [scopedWorkspaceId, session, sessions, workspaceOnly, workspaces]);
 
   const keyboardBoundaryProps = useKeyboardBoundary<HTMLDivElement>({
     boundary: "dock",

@@ -29,7 +29,14 @@ jest.mock("antd", () => {
       {children}
     </button>
   );
-  const Select = ({ children }: any) => <div>{children}</div>;
+  const Select = ({ value, options = [] }: any) => {
+    const selected = options.find((option: any) => option?.value === value);
+    return (
+      <div data-testid="agent-dock-session-select">
+        {selected?.label ?? value ?? ""}
+      </div>
+    );
+  };
   const Space = ({ children }: any) => <div>{children}</div>;
 
   return {
@@ -231,6 +238,14 @@ describe("AgentDock keyboard suppression", () => {
       expect(document.activeElement).toBe(
         screen.getByTestId("agent-dock-composer"),
       ),
+    );
+  });
+
+  it("shows the current session title even before the watcher publishes options", async () => {
+    await openDock("thread-1");
+
+    expect(screen.getByTestId("agent-dock-session-select").textContent).toBe(
+      "Agent session",
     );
   });
 

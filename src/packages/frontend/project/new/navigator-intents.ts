@@ -25,6 +25,7 @@ export interface NavigatorSubmitPromptDetail {
   id: string;
   createdAt: string;
   prompt: string;
+  visiblePrompt?: string;
   title?: string;
   tag?: string;
   forceCodex?: boolean;
@@ -245,6 +246,7 @@ export function removeQueuedNavigatorPromptIntent(id: string): void {
 
 export function createNavigatorPromptIntent(opts: {
   prompt: string;
+  visiblePrompt?: string;
   title?: string;
   tag?: string;
   forceCodex?: boolean;
@@ -255,6 +257,7 @@ export function createNavigatorPromptIntent(opts: {
     id: uuid(),
     createdAt: new Date().toISOString(),
     prompt: opts.prompt,
+    visiblePrompt: `${opts.visiblePrompt ?? ""}`.trim() || undefined,
     title: normalizeOptionalTitle(opts.title),
     tag: opts.tag,
     forceCodex: opts.forceCodex ?? true,
@@ -265,6 +268,7 @@ export function createNavigatorPromptIntent(opts: {
 
 export function dispatchNavigatorPromptIntent(opts: {
   prompt: string;
+  visiblePrompt?: string;
   title?: string;
   tag?: string;
   forceCodex?: boolean;
@@ -284,6 +288,7 @@ export function dispatchNavigatorPromptIntent(opts: {
 export async function submitNavigatorPromptToCurrentThread(opts: {
   project_id: string;
   prompt: string;
+  visiblePrompt?: string;
   title?: string;
   tag?: string;
   forceCodex?: boolean;
@@ -295,9 +300,10 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
   try {
     const project_id = `${opts.project_id ?? ""}`.trim();
     const basePrompt = `${opts.prompt ?? ""}`.trim();
+    const visiblePrompt = `${opts.visiblePrompt ?? ""}`.trim() || undefined;
     const requestedTitle = normalizeOptionalTitle(opts.title);
     if (!project_id || !basePrompt) return false;
-    const input = basePrompt;
+    const input = visiblePrompt ?? basePrompt;
     const account_id =
       `${redux.getStore("account")?.get?.("account_id") ?? ""}`.trim();
     const workspaceTarget =
@@ -354,7 +360,8 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
         return false;
       }
       dispatchNavigatorPromptIntent({
-        prompt: input,
+        prompt: basePrompt,
+        visiblePrompt,
         title: requestedTitle,
         tag: opts.tag ?? "intent:navigator",
         forceCodex: opts.forceCodex ?? true,
@@ -480,6 +487,7 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
     }
     const timeStamp = actions.sendChat({
       input,
+      acp_prompt: basePrompt,
       name: opts.createNewThread === true ? undefined : messageThreadTitle,
       reply_thread_id: replyThreadId,
       tag: opts.tag ?? "intent:navigator",
@@ -523,10 +531,12 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
     try {
       const project_id = `${opts.project_id ?? ""}`.trim();
       const input = `${opts.prompt ?? ""}`.trim();
+      const visiblePrompt = `${opts.visiblePrompt ?? ""}`.trim() || undefined;
       const requestedTitle = normalizeOptionalTitle(opts.title);
       if (!project_id || !input) return false;
       dispatchNavigatorPromptIntent({
         prompt: input,
+        visiblePrompt,
         title: requestedTitle,
         tag: opts.tag ?? "intent:navigator",
         forceCodex: opts.forceCodex ?? true,

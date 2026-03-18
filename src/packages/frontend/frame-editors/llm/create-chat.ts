@@ -3,7 +3,6 @@ import {
   DEFAULT_CODEX_MODELS,
   isCodexModelName,
 } from "@cocalc/util/ai/codex";
-import { backtickSequence } from "@cocalc/frontend/markdown/util";
 import {
   dispatchNavigatorPromptIntent,
   submitNavigatorPromptToCurrentThread,
@@ -55,6 +54,7 @@ export default async function createChat({
   const frameType = actions._get_frame_type(frameId);
   const { model } = options;
 
+  const visiblePrompt = createAssistantVisiblePrompt(options.command);
   const { message } = await createChatMessage(actions, frameId, options, input);
   const codexModel = resolveAssistantCodexModel(model);
   const prompt = createNavigatorAssistantPrompt({
@@ -73,6 +73,7 @@ export default async function createChat({
     project_id: actions.project_id,
     path: actions.path,
     prompt,
+    visiblePrompt,
     title,
     tag: intent,
     forceCodex: true,
@@ -83,6 +84,7 @@ export default async function createChat({
   if (!sent) {
     dispatchNavigatorPromptIntent({
       prompt,
+      visiblePrompt,
       title,
       tag: intent,
       forceCodex: true,
@@ -96,6 +98,11 @@ function createAssistantThreadTitle(command?: string): string | undefined {
   const trimmed = `${command ?? ""}`.trim();
   if (!trimmed) return;
   return trimmed.length <= 80 ? trimmed : `${trimmed.slice(0, 77).trim()}...`;
+}
+
+function createAssistantVisiblePrompt(command?: string): string {
+  const trimmed = `${command ?? ""}`.trim();
+  return trimmed || "Help with this document";
 }
 
 export async function createChatMessage(
@@ -116,40 +123,41 @@ export async function createChatMessage(
     context = "";
     codegen = false;
   }
-  let input = sanitizeInput(actions, frameId, options, context);
+  const input = sanitizeInput(actions, frameId, options, context);
 
   // Truncate input (also this MUST lazy import):
   const { truncateMessage } = await import("@cocalc/frontend/misc/llm");
   const maxTokens = Math.max(2048, getAssistantMaxTokens(model) - 1000); // reserve output and routing metadata
   const inputOriginalLen = input.length;
-  input = truncateMessage(input, maxTokens);
-  const inputTruncatedLen = input.length;
-
-  const delim = backtickSequence(input);
-  const head = `Codex: ${capitalize(command)}:\n`;
-  let message = "";
-  if (frameType != "terminal") {
-    message += `I am writing in the file ${
-      actions.path
-    } ${actions.languageModelExtraFileInfo(codegen)}.`;
-    if (input.trim()) {
-      message += ` The file includes the following ${
-        codegen ? "code" : "content"
-      }:\n`;
-      message += `
-${delim}${actions.languageModelGetLanguage()}
-${input.trim()}
-${delim}
-${codegen && input.trim() ? "Show the new version." : ""}`;
-    }
-  } else {
-    message += "I am using the bash Ubuntu Linux terminal in CoCalc.";
-  }
-  if (message.includes("<details")) {
-    message = `${head}\n\n${message}`;
-  } else {
-    message = `${head}\n\n<details><summary>Context</summary>\n\n${message}\n\n</details>`;
-  }
+  const truncatedInput = truncateMessage(input, maxTokens);
+  const inputTruncatedLen = truncatedInput.length;
+  const request = createAssistantVisiblePrompt(command);
+  const message = [
+    `Codex: ${capitalize(command)}.`,
+    `User request: ${request}`,
+    frameType === "terminal"
+      ? "Use the current CoCalc terminal context as the live source of truth."
+      : "Inspect the current document through CoCalc live document APIs before editing.",
+    "Treat the live in-memory sync state as authoritative whenever it is available.",
+    "Do not assume the filesystem copy is current.",
+    "Use the metadata below only to locate the target, not as a substitute for reading live content.",
+    "```json",
+    JSON.stringify(
+      {
+        source:
+          frameType === "terminal" ? "terminal-assistant" : "editor-assistant",
+        frame_type: frameType,
+        path: actions.path,
+        language: actions.languageModelGetLanguage(),
+        extra_file_info: actions.languageModelExtraFileInfo(codegen),
+        context_chars: inputOriginalLen,
+        truncated_context_chars: inputTruncatedLen,
+      },
+      null,
+      2,
+    ),
+    "```",
+  ].join("\n\n");
   return { message, inputOriginalLen, inputTruncatedLen };
 }
 
@@ -194,14 +202,13 @@ function createNavigatorAssistantPrompt({
   };
   return [
     "Handle this CoCalc assistant request as a Codex agent.",
+    `Visible user request: ${createAssistantVisiblePrompt(options.command)}`,
     "Treat the live in-memory sync version of the current document as the source of truth whenever a live document API exists.",
     "Do not assume the filesystem copy is current.",
     "Apply edits directly when safe, run checks as needed, and summarize exactly what changed.",
-    "<details><summary>Intent metadata</summary>",
     "```json",
     JSON.stringify(metadata, null, 2),
     "```",
-    "</details>",
     message,
   ].join("\n\n");
 }
