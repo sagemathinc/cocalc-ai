@@ -385,8 +385,9 @@ async function claimBackupLroOps({
       `
         SELECT l.*, p.host_id::text AS host_id
         FROM long_running_operations l
-        LEFT JOIN projects p ON p.project_id = l.scope_id::uuid
+        JOIN projects p ON p.project_id = l.scope_id::uuid
         WHERE l.kind = $1
+          AND p.host_id IS NOT NULL
           AND (
             l.status = 'queued'
             OR (
