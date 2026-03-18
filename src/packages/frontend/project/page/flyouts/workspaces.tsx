@@ -45,6 +45,7 @@ import {
   summarizeWorkspaceProcesses,
   type WorkspaceProcessSummary,
 } from "@cocalc/frontend/project/workspaces/process-summary";
+import { getWorkspaceActivationTarget } from "@cocalc/frontend/project/workspaces/activation-target";
 import { EDITOR_COLOR_SCHEMES } from "@cocalc/util/db-schema/accounts";
 import { theme_desc as terminalThemeDesc } from "@cocalc/frontend/frame-editors/terminal-editor/theme-data";
 import {
@@ -52,7 +53,7 @@ import {
   ensureWorkspaceChatPath,
 } from "@cocalc/frontend/project/workspaces/runtime";
 import { pathMatchesRoot } from "@cocalc/frontend/project/workspaces/state";
-import { path_split, tab_to_path } from "@cocalc/util/misc";
+import { path_split, path_to_tab, tab_to_path } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 import type {
   WorkspaceCreateInput,
@@ -719,6 +720,29 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
     workspaces.setSelection(next);
   }
 
+  async function activateWorkspace(record: WorkspaceRecord): Promise<void> {
+    const nextSelection = {
+      kind: "workspace",
+      workspace_id: record.workspace_id,
+    } satisfies WorkspaceSelection;
+    select(nextSelection);
+    if (!actions) return;
+    const target = getWorkspaceActivationTarget({
+      record,
+      activePath: activePath ?? "",
+      openFilesOrder,
+      resolveWorkspaceForPath: workspaces.resolveWorkspaceForPath,
+    });
+    if (target.kind === "file") {
+      actions.set_active_tab(path_to_tab(target.path), {
+        change_history: true,
+      });
+    } else {
+      await actions.open_directory(target.path, true, true);
+    }
+    select(nextSelection);
+  }
+
   useEffect(() => {
     let closed = false;
     let unsubscribe: (() => void) | undefined;
@@ -977,12 +1001,7 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
           cursor: "pointer",
         }}
         bodyStyle={{ padding: isFlyout ? 10 : 12 }}
-        onClick={() =>
-          select({
-            kind: "workspace",
-            workspace_id: record.workspace_id,
-          })
-        }
+        onClick={() => void activateWorkspace(record)}
       >
         <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
           {imageUrl ? (
