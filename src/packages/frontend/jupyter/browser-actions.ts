@@ -129,6 +129,10 @@ export class JupyterActions extends JupyterActions0 {
   private hasUnsavedChanges: boolean = false;
   private optimisticFastOpenToken: number = 0;
   private optimisticFastOpenApplied: boolean = false;
+  private openInitStartedAt?: number;
+  private openInitMarks: Record<string, number> = {};
+  private openInitSummaryLogged = false;
+  private openInitFirstVisibleLogged = false;
   private runDebugCounter: number = 0;
   private runDebugMode: "off" | "on" | "json" | undefined;
   private liveRunSub?: any;
@@ -242,6 +246,80 @@ export class JupyterActions extends JupyterActions0 {
           ? Object.keys(patch).slice(0, 8)
           : undefined,
     };
+  };
+
+  public noteOpenInitStart = (data: Record<string, any> = {}): void => {
+    if (this.openInitStartedAt == null) {
+      this.openInitStartedAt = Date.now();
+      this.openInitMarks = { open_start: 0 };
+      this.openInitSummaryLogged = false;
+      this.openInitFirstVisibleLogged = false;
+    }
+    this.runDebug("open.init.start", data);
+  };
+
+  public noteOpenInitPhase = (
+    phase: string,
+    data: Record<string, any> = {},
+  ): void => {
+    if (this.openInitStartedAt == null) {
+      this.noteOpenInitStart();
+    }
+    const elapsedMs = Math.max(
+      0,
+      Date.now() - (this.openInitStartedAt as number),
+    );
+    this.openInitMarks[phase] = elapsedMs;
+    this.runDebug(`open.${phase}`, {
+      elapsedMs,
+      ...data,
+    });
+  };
+
+  private handleSyncdbOpenPhase = (payload: {
+    phase?: string;
+    elapsed_ms?: number;
+    [key: string]: any;
+  }): void => {
+    const phase =
+      typeof payload?.phase === "string" && payload.phase.length > 0
+        ? payload.phase
+        : undefined;
+    if (phase == null) {
+      return;
+    }
+    this.runDebug("open.syncdoc_phase", payload);
+    this.noteOpenInitPhase(`syncdoc.${phase}`, payload);
+  };
+
+  private maybeLogOpenInitSummary = (reason: string): void => {
+    if (this.openInitSummaryLogged || this.openInitStartedAt == null) {
+      return;
+    }
+    this.openInitSummaryLogged = true;
+    this.runDebug("open.summary", {
+      reason,
+      marks: { ...this.openInitMarks },
+      totalMs: Math.max(0, Date.now() - this.openInitStartedAt),
+    });
+  };
+
+  private maybeLogFirstVisibleCell = (source: string): void => {
+    if (this.openInitFirstVisibleLogged) {
+      return;
+    }
+    const cellCount =
+      this.store?.get("cell_list")?.size ??
+      (this.syncdb?.get_one?.({ type: "cell" }) != null ? 1 : 0);
+    if (!cellCount) {
+      return;
+    }
+    this.openInitFirstVisibleLogged = true;
+    this.noteOpenInitPhase("first_cell_visible", {
+      source,
+      cellCount,
+    });
+    this.maybeLogOpenInitSummary(`first_cell_visible:${source}`);
   };
 
   private rememberIgnoredLiveRunId = (runId: string) => {
@@ -646,6 +724,11 @@ export class JupyterActions extends JupyterActions0 {
         this.jupyterEditorActions?.setState?.({ is_loaded: true });
         this.store.emit("cell-list-recompute");
         this.optimisticFastOpenApplied = true;
+        this.noteOpenInitPhase("optimistic_ready", {
+          bytes: content.length,
+          cells: cell_list.size,
+        });
+        this.maybeLogFirstVisibleCell("optimistic");
 
         mark_open_phase(this.project_id, this.path, "optimistic_ready", {
           bytes: content.length,
@@ -661,6 +744,7 @@ export class JupyterActions extends JupyterActions0 {
   };
 
   protected init2(): void {
+    this.noteOpenInitPhase("init2.start");
     this.syncdbPath = syncdbPath(this.path);
     this.liveRunPath = canonicalJupyterLiveRunPath(this.path);
     this.setState({
@@ -688,6 +772,7 @@ export class JupyterActions extends JupyterActions0 {
     this.set_save_status = debounce(f, 1000, { leading: true, trailing: true });
     this.syncdb.on("metadata-change", this.set_save_status);
     this.syncdb.on("connected", this.set_save_status);
+    this.syncdb.on("open-phase", this.handleSyncdbOpenPhase);
 
     // Also maintain read_only state.
     this.syncdb.on("metadata-change", this.sync_read_only);
@@ -716,6 +801,9 @@ export class JupyterActions extends JupyterActions0 {
     this.nbgrader_actions = new NBGraderActions(this, this.redux);
 
     const handleSyncdbReady = () => {
+      this.noteOpenInitPhase("sync_ready", {
+        source: "syncdb",
+      });
       mark_open_phase(this.project_id, this.path, "sync_ready", {
         source: "syncdb",
       });
@@ -791,6 +879,7 @@ export class JupyterActions extends JupyterActions0 {
         return;
       }
       if (this.syncdb.get_one({ type: "cell" }) != null) {
+        this.maybeLogFirstVisibleCell("syncdb");
         this.redux
           ?.getProjectActions(this.project_id)
           .log_opened_time(this.path);
@@ -960,6 +1049,7 @@ export class JupyterActions extends JupyterActions0 {
     this.redux
       ?.getStore("account")
       ?.removeListener("change", this.account_change);
+    this.syncdb?.removeListener("open-phase", this.handleSyncdbOpenPhase);
   }
 
   private syncdb_cursor_activity = (): void => {
@@ -3098,6 +3188,7 @@ export class JupyterActions extends JupyterActions0 {
   };
 
   watchIpynb = async (rtcLastChangedMsAtReady?: number) => {
+    this.noteOpenInitPhase("watch_start");
     this.runDebug("watch.start");
     const done = () => this.isClosed();
     if (done()) return;
@@ -3121,6 +3212,13 @@ export class JupyterActions extends JupyterActions0 {
       loadFromDisk: decision.loadFromDisk,
       reason: decision.reason,
     });
+    this.noteOpenInitPhase("initial_source_decision", {
+      hasRtcCells,
+      rtcLastChangedMs,
+      diskMtimeMs,
+      loadFromDisk: decision.loadFromDisk,
+      reason: decision.reason,
+    });
     if (decision.loadFromDisk) {
       await until(
         async () => {
@@ -3128,6 +3226,11 @@ export class JupyterActions extends JupyterActions0 {
           try {
             await this.watchLoadFromDisk();
             this.runDebug("watch.initial_load.done");
+            this.noteOpenInitPhase("initial_load_done", {
+              mode: "disk",
+              reason: decision.reason,
+            });
+            this.maybeLogFirstVisibleCell("disk_load");
             return true;
           } catch (err) {
             this.runDebug("watch.initial_load.failed", { err: `${err}` });
@@ -3144,6 +3247,10 @@ export class JupyterActions extends JupyterActions0 {
         rtcLastChangedMs,
         diskMtimeMs,
       });
+      this.noteOpenInitPhase("initial_load_skipped", {
+        reason: decision.reason,
+      });
+      this.maybeLogFirstVisibleCell("rtc");
     }
     if (done()) return;
     // if no kernel, let use select one:
@@ -3168,6 +3275,8 @@ export class JupyterActions extends JupyterActions0 {
             patch: true,
           });
           this.runDebug("watch.stream.opened");
+          this.noteOpenInitPhase("watch_stream_opened");
+          this.maybeLogOpenInitSummary("watch_stream_opened");
           this.expectedPatchSeq = 0;
           for await (const { event, ignore, patch, patchSeq } of this
             .fileWatcher) {
