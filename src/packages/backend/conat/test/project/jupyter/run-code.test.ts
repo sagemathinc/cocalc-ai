@@ -295,7 +295,7 @@ describe("create mocked jupyter runner that does failover to backend output mana
   });
 });
 
-describe("fallback replay applies output limit correctly after disconnect", () => {
+describe("fallback keeps full notebook output after disconnect", () => {
   let client1, client2;
   it("create two clients", async () => {
     client1 = connect();
@@ -350,7 +350,7 @@ describe("fallback replay applies output limit correctly after disconnect", () =
   });
 
   let client;
-  it("disconnect after limit is exceeded, then replay through fallback", async () => {
+  it("disconnect after limit is exceeded, then fallback still keeps full output", async () => {
     client = jupyterClient({
       path,
       project_id,
@@ -370,7 +370,7 @@ describe("fallback replay applies output limit correctly after disconnect", () =
 
     const messages = withoutRunId(handler.messages);
     expect(messages).toContainEqual({ id: "cell-a", output: 0 });
-    expect(messages).toContainEqual({ id: "cell-a", more_output: true });
+    expect(messages).toContainEqual({ id: "cell-a", output: 39 });
     expect(messages).toContainEqual({ done: true });
   });
 

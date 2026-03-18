@@ -369,6 +369,9 @@ async function handleRequest({
     totalBatches += 1;
     const coalescedMesgs = coalesceOutputBatch(mesgs);
     void publishLiveBatch(coalescedMesgs);
+    if (socket.state == "closed") {
+      return;
+    }
     try {
       socket.write(coalescedMesgs);
       if (opts?.fastLane) {
@@ -400,12 +403,56 @@ async function handleRequest({
   throttle.on("data", (mesgs) => {
     void enqueueWriteBatch(mesgs);
   });
+  const handleVisibleMesg = async (mesg: OutputMessage) => {
+    if (socket.state != "closed" && unhandledClientWriteError) {
+      throw unhandledClientWriteError;
+    }
+    const wasAppended = appendOutputMessage(output, mesg);
+    if (isLifecycleMessage(mesg)) {
+      const lifecycle = getLifecycleType(mesg);
+      if (lifecycle == "cell_done" || lifecycle == "run_done") {
+        // Keep completion lifecycle in the same throttled stream as output
+        // so done events cannot overtake buffered output.
+        throttle.write(mesg);
+        return;
+      }
+      await enqueueWriteBatch([mesg], { fastLane: totalBatches == 0 });
+      return;
+    }
+    if (wasAppended) {
+      outputVisibleCount += 1;
+    }
+    if (typeof mesg.id != "string") {
+      return;
+    }
+    if (limit == null || outputVisibleCount < limit) {
+      if (totalBatches == 0) {
+        // Fast-lane the very first output batch for lower latency.
+        // We keep existing throttling for all subsequent output.
+        await enqueueWriteBatch([mesg], { fastLane: true });
+      } else {
+        throttle.write(mesg);
+      }
+    } else {
+      if (outputVisibleCount == limit) {
+        throttle.write({
+          id: mesg.id,
+          run_id,
+          more_output: true,
+        });
+        moreOutput[mesg.id] = [];
+      }
+      if (moreOutput[mesg.id] == null) {
+        moreOutput[mesg.id] = [];
+      }
+      appendOutputMessage(moreOutput[mesg.id], mesg);
+      moreOutputBuffered += 1;
+    }
+  };
 
   try {
     let handler: OutputHandler | null = null;
     let process: ((mesg: OutputMessage) => void) | null = null;
-    let fallbackOutputCount = 0;
-    let fallbackMoreOutputMode = false;
 
     for await (const mesg0 of runner) {
       const mesg = normalizeOutputMessage(mesg0, run_id);
@@ -447,25 +494,7 @@ async function handleRequest({
               fallbackProcessed += 1;
               return;
             }
-            // Replay must enforce the output limit based on how many messages
-            // we have replayed so far, not the final size of the pre-close
-            // output buffer.
-            const replayedCount = fallbackOutputCount + 1;
-            if (limit == null || replayedCount < limit) {
-              handler.process(mesg);
-            } else {
-              if (!fallbackMoreOutputMode) {
-                handler.process({ id: mesg.id, more_output: true });
-                moreOutput[mesg.id] = [];
-                fallbackMoreOutputMode = true;
-              }
-              if (moreOutput[mesg.id] == null) {
-                moreOutput[mesg.id] = [];
-              }
-              appendOutputMessage(moreOutput[mesg.id], mesg);
-              moreOutputBuffered += 1;
-            }
-            fallbackOutputCount += 1;
+            handler.process(mesg);
             fallbackProcessed += 1;
           };
 
@@ -476,53 +505,8 @@ async function handleRequest({
           output.length = 0;
         }
         process(mesg);
-      } else {
-        if (unhandledClientWriteError) {
-          throw unhandledClientWriteError;
-        }
-        const wasAppended = appendOutputMessage(output, mesg);
-        if (isLifecycleMessage(mesg)) {
-          const lifecycle = getLifecycleType(mesg);
-          if (lifecycle == "cell_done" || lifecycle == "run_done") {
-            // Keep completion lifecycle in the same throttled stream as output
-            // so done events cannot overtake buffered output.
-            throttle.write(mesg);
-            continue;
-          }
-          await enqueueWriteBatch([mesg], { fastLane: totalBatches == 0 });
-          continue;
-        }
-        if (wasAppended) {
-          outputVisibleCount += 1;
-        }
-        if (typeof mesg.id != "string") {
-          continue;
-        }
-        if (limit == null || outputVisibleCount < limit) {
-          if (totalBatches == 0) {
-            // Fast-lane the very first output batch for lower latency.
-            // We keep existing throttling for all subsequent output.
-            await enqueueWriteBatch([mesg], { fastLane: true });
-          } else {
-            throttle.write(mesg);
-          }
-        } else {
-          if (outputVisibleCount == limit) {
-            throttle.write({
-              id: mesg.id,
-              run_id,
-              more_output: true,
-            });
-            moreOutput[mesg.id] = [];
-          }
-          if (moreOutput[mesg.id] == null) {
-            moreOutput[mesg.id] = [];
-          }
-          // save the more output
-          appendOutputMessage(moreOutput[mesg.id], mesg);
-          moreOutputBuffered += 1;
-        }
       }
+      await handleVisibleMesg(mesg);
     }
     // no errors happened, so close up and flush and
     // remaining data immediately:
