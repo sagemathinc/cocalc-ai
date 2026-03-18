@@ -25,6 +25,7 @@ import {
   type AppSpecRecord,
   upsertAppSpec as upsertAppSpecRaw,
 } from "./specs";
+import type { AppStaticIntegrationSpec } from "./public-viewer";
 import {
   appIdForRunningServicePort,
   clearRunningServicePort,
@@ -166,6 +167,7 @@ export type AppProxyTarget =
       root: string;
       index?: string;
       cache_control?: string;
+      integration?: AppStaticIntegrationSpec;
       rewritePath: string;
     };
 
@@ -1159,6 +1161,7 @@ export async function resolveAppProxyTarget({
         root: staticSpec.static.root,
         index: staticSpec.static.index,
         cache_control: staticSpec.static.cache_control,
+        integration: staticSpec.integration,
         rewritePath: finalPath,
       };
     }

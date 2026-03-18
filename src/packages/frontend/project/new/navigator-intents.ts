@@ -25,9 +25,15 @@ export interface NavigatorSubmitPromptDetail {
   id: string;
   createdAt: string;
   prompt: string;
+  title?: string;
   tag?: string;
   forceCodex?: boolean;
   codexConfig?: Partial<CodexThreadConfig>;
+}
+
+function normalizeOptionalTitle(value?: string): string | undefined {
+  const title = `${value ?? ""}`.trim();
+  return title || undefined;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -238,6 +244,7 @@ export function removeQueuedNavigatorPromptIntent(id: string): void {
 
 export function createNavigatorPromptIntent(opts: {
   prompt: string;
+  title?: string;
   tag?: string;
   forceCodex?: boolean;
   codexConfig?: Partial<CodexThreadConfig>;
@@ -246,6 +253,7 @@ export function createNavigatorPromptIntent(opts: {
     id: uuid(),
     createdAt: new Date().toISOString(),
     prompt: opts.prompt,
+    title: normalizeOptionalTitle(opts.title),
     tag: opts.tag,
     forceCodex: opts.forceCodex ?? true,
     codexConfig: opts.codexConfig,
@@ -254,6 +262,7 @@ export function createNavigatorPromptIntent(opts: {
 
 export function dispatchNavigatorPromptIntent(opts: {
   prompt: string;
+  title?: string;
   tag?: string;
   forceCodex?: boolean;
   codexConfig?: Partial<CodexThreadConfig>;
@@ -271,6 +280,7 @@ export function dispatchNavigatorPromptIntent(opts: {
 export async function submitNavigatorPromptToCurrentThread(opts: {
   project_id: string;
   prompt: string;
+  title?: string;
   tag?: string;
   forceCodex?: boolean;
   codexConfig?: Partial<CodexThreadConfig>;
@@ -280,6 +290,7 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
   try {
     const project_id = `${opts.project_id ?? ""}`.trim();
     const basePrompt = `${opts.prompt ?? ""}`.trim();
+    const requestedTitle = normalizeOptionalTitle(opts.title);
     if (!project_id || !basePrompt) return false;
     const input = basePrompt;
     const account_id =
@@ -332,6 +343,7 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
       }
       dispatchNavigatorPromptIntent({
         prompt: input,
+        title: requestedTitle,
         tag: opts.tag ?? "intent:navigator",
         forceCodex: opts.forceCodex ?? true,
         codexConfig: opts.codexConfig,
@@ -339,6 +351,8 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
       if (opts.openFloating !== false) {
         openFloatingAgentSession(project_id, {
           ...(indexedSession ?? fallbackSession),
+          title:
+            requestedTitle ?? indexedSession?.title ?? fallbackSession.title,
           thread_key:
             `${preferredThreadKey ?? session.thread_key ?? ""}`.trim() ||
             session.thread_key,
@@ -374,6 +388,18 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
 
     let replyThreadKey = resolvedThreadKey;
     let replyThreadId = resolveThreadIdFromIndex(actions, replyThreadKey);
+    const existingThreadTitle =
+      replyThreadKey && replyThreadId
+        ? normalizeOptionalTitle(
+            actions.getThreadMetadata?.(replyThreadKey, {
+              threadId: replyThreadId,
+            })?.name,
+          )
+        : undefined;
+    const messageThreadTitle =
+      requestedTitle && (!replyThreadId || !existingThreadTitle)
+        ? requestedTitle
+        : undefined;
     const model =
       typeof session.model === "string" && session.model.trim().length > 0
         ? session.model.trim()
@@ -403,6 +429,7 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
     }
     const timeStamp = actions.sendChat({
       input,
+      name: messageThreadTitle,
       reply_thread_id: replyThreadId,
       tag: opts.tag ?? "intent:navigator",
       noNotification: true,
@@ -428,6 +455,7 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
     if (opts.openFloating !== false) {
       openFloatingAgentSession(project_id, {
         ...session,
+        title: messageThreadTitle ?? session.title,
         thread_key: nextThreadKey || session.thread_key,
         updated_at: new Date().toISOString(),
         status: "active",
@@ -441,9 +469,11 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
     try {
       const project_id = `${opts.project_id ?? ""}`.trim();
       const input = `${opts.prompt ?? ""}`.trim();
+      const requestedTitle = normalizeOptionalTitle(opts.title);
       if (!project_id || !input) return false;
       dispatchNavigatorPromptIntent({
         prompt: input,
+        title: requestedTitle,
         tag: opts.tag ?? "intent:navigator",
         forceCodex: opts.forceCodex ?? true,
       });
@@ -455,7 +485,7 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
           chat_path: resolveNavigatorChatPath(project_id),
           thread_key:
             `${loadNavigatorSelectedThreadKey(project_id) ?? ""}`.trim(),
-          title: "Navigator",
+          title: requestedTitle ?? "Navigator",
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
           status: "active",

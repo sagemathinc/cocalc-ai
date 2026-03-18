@@ -694,6 +694,19 @@ export function NavigatorShell({
         // thread instead of dropping the prompt.
         replyThreadId = undefined;
       }
+      const requestedTitle = `${intent.title ?? ""}`.trim();
+      const existingThreadTitle =
+        resolvedThreadKey && replyThreadId
+          ? `${
+              actions.getThreadMetadata(resolvedThreadKey, {
+                threadId: replyThreadId,
+              })?.name ?? ""
+            }`.trim() || undefined
+          : undefined;
+      const messageThreadTitle =
+        requestedTitle && (!replyThreadId || !existingThreadTitle)
+          ? requestedTitle
+          : undefined;
       const isCodex = intent.forceCodex !== false;
       const launchAcpConfig = resolveSelectedAcpConfig({
         actions,
@@ -719,6 +732,7 @@ export function NavigatorShell({
       }
       const timeStamp = actions.sendChat({
         input,
+        name: messageThreadTitle,
         reply_thread_id: replyThreadId,
         tag: intent.tag ?? "intent:navigator",
         noNotification: true,
