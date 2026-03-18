@@ -1,9 +1,4 @@
-import { conat } from "@cocalc/backend/conat";
 import getPool from "@cocalc/database/pool";
-import {
-  createHostControlClient,
-  type HostBackupExecutionStatus,
-} from "@cocalc/conat/project-host/api";
 import {
   type ParallelOpsConfigSource,
   type ParallelOpsLimitSnapshot,
@@ -14,6 +9,10 @@ import {
   parallelOpsWorkerRegistry,
 } from "./worker-registry";
 import { getEffectiveParallelOpsLimit } from "./worker-config";
+import {
+  listHostLocalBackupStatuses,
+  type HostLocalBackupStatusRow,
+} from "@cocalc/server/projects/backup-host-status";
 
 const pool = () => getPool();
 
@@ -31,14 +30,6 @@ type CloudVmWorkStatusRow = {
   locked_at: Date | null;
   created_at: Date;
   payload: { provider?: string } | null;
-};
-
-type ActiveProjectHostRow = {
-  id: string;
-};
-
-type HostLocalBackupStatusRow = HostBackupExecutionStatus & {
-  host_id: string;
 };
 
 export interface ParallelOpsWorkerOwnerStatus {
@@ -310,57 +301,6 @@ async function listRelevantCloudVmWorkRows(): Promise<CloudVmWorkStatusRow[]> {
     `,
   );
   return rows;
-}
-
-async function listActiveProjectHosts(): Promise<ActiveProjectHostRow[]> {
-  const { rows } = await pool().query<ActiveProjectHostRow>(
-    `
-      SELECT id
-      FROM project_hosts
-      WHERE deleted IS NULL
-        AND status = 'running'
-        AND last_seen IS NOT NULL
-        AND last_seen > now() - interval '10 minutes'
-      ORDER BY id
-    `,
-  );
-  return rows;
-}
-
-async function listHostLocalBackupStatuses(): Promise<{
-  rows: HostLocalBackupStatusRow[];
-  unreachable_hosts: number;
-}> {
-  const hosts = await listActiveProjectHosts();
-  if (hosts.length === 0) {
-    return { rows: [], unreachable_hosts: 0 };
-  }
-  let client;
-  try {
-    client = await conat();
-  } catch {
-    return { rows: [], unreachable_hosts: hosts.length };
-  }
-  const results = await Promise.allSettled(
-    hosts.map(async ({ id }) => ({
-      host_id: id,
-      ...(await createHostControlClient({
-        host_id: id,
-        client,
-        timeout: 5_000,
-      }).getBackupExecutionStatus()),
-    })),
-  );
-  const rows: HostLocalBackupStatusRow[] = [];
-  let unreachable_hosts = 0;
-  for (const result of results) {
-    if (result.status === "fulfilled") {
-      rows.push(result.value);
-    } else {
-      unreachable_hosts += 1;
-    }
-  }
-  return { rows, unreachable_hosts };
 }
 
 export async function getParallelOpsStatus(): Promise<
