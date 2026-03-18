@@ -79,7 +79,6 @@ export default async function createChat({
     forceCodex: true,
     codexConfig: { model: codexModel },
     openFloating: true,
-    createNewThread: true,
   });
   if (!sent) {
     dispatchNavigatorPromptIntent({
@@ -88,7 +87,6 @@ export default async function createChat({
       title,
       tag: intent,
       forceCodex: true,
-      createNewThread: true,
       codexConfig: { model: codexModel },
     });
   }

@@ -50,7 +50,6 @@ describe("createChat", () => {
         tag: "intent:editor-assistant",
         forceCodex: true,
         openFloating: true,
-        createNewThread: true,
         codexConfig: { model: "gpt-5.4-mini" },
       }),
     );
@@ -84,7 +83,6 @@ describe("createChat", () => {
         title: "List large files",
         tag: "intent:terminal-assistant",
         forceCodex: true,
-        createNewThread: true,
         codexConfig: { model: "gpt-5.4-mini" },
       }),
     );
