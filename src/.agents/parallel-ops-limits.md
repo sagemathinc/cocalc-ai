@@ -503,6 +503,38 @@ Acceptance:
 - many independent host pairs can move in parallel
 - one hot host cannot be involved in multiple conflicting moves
 
+## Phase 6: Use the New Status APIs to Burn Down Real Operational Bugs
+
+Goal: use the new visibility and control APIs to detect and fix as many real
+parallel-ops bugs as possible without losing focus on the main architecture
+plan.
+
+This phase is intentionally bug-hunt oriented. Once the status APIs exist, they
+should immediately start surfacing real broken states, wedged workers, and bad
+limits. We should treat that as a core deliverable of this work.
+
+Priority list:
+
+1. Make backup ops fail promptly when their target host is gone, in `error`,
+   or otherwise unreachable, instead of continuing to heartbeat forever and
+   consuming backup capacity.
+2. Detect and clean up duplicate active backup ops for the same project when
+   they should have been deduped or canceled.
+3. Detect workers that are still heartbeating broken work even though the
+   underlying host/project state has already become terminal.
+4. Detect queue starvation caused by one class of stuck op occupying too much
+   shared capacity.
+5. Use the status API to identify limits that are obviously too low or too
+   high in practice, then feed those findings back into phases 2-5.
+
+Acceptance:
+
+- the status APIs are actively used to find and fix real production-facing
+  Launchpad bugs
+- at least the known wedged-backup case is fixed
+- the system is better at failing broken work fast instead of silently burning
+  capacity
+
 ## Testing and Validation
 
 ### Unit / Integration
@@ -591,6 +623,7 @@ Implement this in order:
 4. host-aware backup admission
 5. host-local backup runtime controls
 6. move topology-aware limits
+7. use the status APIs to burn down real operational bugs
 
 That ordering gives operational visibility early, fixes the worst global caps
 next, and avoids trying to redesign every worker at once.
