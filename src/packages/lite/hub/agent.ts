@@ -22,6 +22,7 @@ import type {
 } from "@cocalc/conat/hub/api/agent";
 import { conat } from "@cocalc/conat/client";
 import { project_id as LOCAL_PROJECT_ID } from "@cocalc/project/data";
+import { isCodexModelName } from "@cocalc/util/ai/codex";
 import {
   callRemoteHub,
   hasRemote,
@@ -102,11 +103,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function getPlannerCodexModel(explicit?: string): string {
-  if (
-    typeof explicit === "string" &&
-    explicit.trim() &&
-    explicit.includes("codex")
-  ) {
+  if (typeof explicit === "string" && isCodexModelName(explicit.trim())) {
     return explicit.trim();
   }
   const settings = getLiteServerSettings();
@@ -114,10 +111,10 @@ function getPlannerCodexModel(explicit?: string): string {
     typeof settings?.default_llm === "string" && settings.default_llm.trim()
       ? settings.default_llm.trim()
       : "";
-  if (configured.includes("codex")) {
+  if (isCodexModelName(configured)) {
     return configured;
   }
-  return "gpt-5.1-codex-mini";
+  return "gpt-5.4-mini";
 }
 
 let plannerCodexAgent: Promise<CodexExecAgent> | undefined;
