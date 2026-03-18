@@ -191,7 +191,7 @@ describe("static public viewer mode", () => {
       );
       expect(page.body).toContain("Course Notes");
       expect(page.body).toContain("Read Me");
-      expect(page.body).toContain("viewer planned");
+      expect(page.body).toContain("viewer page");
       expect(page.body).toContain("Open manifest JSON");
 
       const manifest = await httpGet(
@@ -211,8 +211,20 @@ describe("static public viewer mode", () => {
         },
       );
       expect(markdown.statusCode).toBe(200);
-      expect(markdown.headers["content-type"]).toContain("text/markdown");
-      expect(markdown.body).toContain("# Hello public viewer");
+      expect(markdown.headers["content-type"]).toContain("text/html");
+      expect(markdown.body).toContain("Hello public viewer");
+      expect(markdown.body).toContain("Open raw file");
+      expect(markdown.body).toContain("Source:");
+
+      const markdownRaw = await httpGet(
+        `http://127.0.0.1:${proxyPort}/${project_id}/apps/${id}/docs/readme.md?raw=1`,
+        {
+          [PROJECT_PROXY_AUTH_HEADER]: secretToken,
+        },
+      );
+      expect(markdownRaw.statusCode).toBe(200);
+      expect(markdownRaw.headers["content-type"]).toContain("text/markdown");
+      expect(markdownRaw.body).toContain("# Hello public viewer");
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
       await deleteApp(id);
