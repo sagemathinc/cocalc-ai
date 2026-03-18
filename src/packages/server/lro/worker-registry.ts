@@ -1,6 +1,6 @@
 import { envToInt } from "@cocalc/backend/misc/env-to-number";
 
-export type ParallelOpsWorkerCategory = "lro" | "cloud-work";
+export type ParallelOpsWorkerCategory = "lro" | "cloud-work" | "host-local";
 export type ParallelOpsScopeModel =
   | "global"
   | "per-provider"
@@ -118,6 +118,22 @@ export const parallelOpsWorkerRegistry: ParallelOpsWorkerRegistration[] = [
         config_source: "env-legacy",
       };
     },
+  },
+  {
+    worker_kind: "project-host-backup-execution",
+    category: "host-local",
+    scope_model: "per-project-host",
+    dynamic_limit_supported: false,
+    notes: [
+      "This reports host-local backup slot usage on reachable project-hosts.",
+      "running_count is the number of backup slots in use, and queued_count is the number of host-local waiters.",
+    ],
+    getLimitSnapshot: () => ({
+      default_limit: 10,
+      configured_limit: null,
+      effective_limit: null,
+      config_source: "env-legacy",
+    }),
   },
   {
     worker_kind: "host-ops",

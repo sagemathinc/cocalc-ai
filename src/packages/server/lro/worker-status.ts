@@ -1,4 +1,9 @@
+import { conat } from "@cocalc/backend/conat";
 import getPool from "@cocalc/database/pool";
+import {
+  createHostControlClient,
+  type HostBackupExecutionStatus,
+} from "@cocalc/conat/project-host/api";
 import {
   type ParallelOpsConfigSource,
   type ParallelOpsLimitSnapshot,
@@ -28,6 +33,14 @@ type CloudVmWorkStatusRow = {
   payload: { provider?: string } | null;
 };
 
+type ActiveProjectHostRow = {
+  id: string;
+};
+
+type HostLocalBackupStatusRow = HostBackupExecutionStatus & {
+  host_id: string;
+};
+
 export interface ParallelOpsWorkerOwnerStatus {
   owner_id: string;
   active_count: number;
@@ -38,6 +51,8 @@ export interface ParallelOpsWorkerBreakdownStatus {
   key: string;
   queued_count: number;
   running_count: number;
+  limit?: number | null;
+  extra?: Record<string, number>;
 }
 
 export interface ParallelOpsWorkerStatus {
@@ -225,6 +240,51 @@ export function summarizeCloudVmWorkStatus({
   return status;
 }
 
+export function summarizeHostLocalBackupStatus({
+  worker,
+  rows,
+  unreachable_hosts,
+}: {
+  worker: ParallelOpsWorkerRegistration;
+  rows: HostLocalBackupStatusRow[];
+  unreachable_hosts: number;
+}): ParallelOpsWorkerStatus {
+  const status = baseStatusForWorker(worker, worker.getLimitSnapshot());
+  status.stale_running_count = null;
+  status.worker_instances = rows.length;
+  status.running_count = rows.reduce((sum, row) => sum + row.in_flight, 0);
+  status.queued_count = rows.reduce((sum, row) => sum + row.queued, 0);
+  status.breakdown = rows
+    .map((row) => ({
+      key: row.host_id,
+      queued_count: row.queued,
+      running_count: row.in_flight,
+      limit: row.max_parallel,
+      extra: {
+        project_lock_count: row.project_lock_count,
+      },
+    }))
+    .sort((a, b) => a.key.localeCompare(b.key));
+
+  const uniqueLimits = Array.from(new Set(rows.map((row) => row.max_parallel)));
+  if (uniqueLimits.length === 1) {
+    status.configured_limit = uniqueLimits[0];
+    status.effective_limit = uniqueLimits[0];
+  } else if (uniqueLimits.length > 1) {
+    status.configured_limit = null;
+    status.effective_limit = null;
+    status.notes.push(
+      "Reachable project-hosts currently report mixed backup slot limits.",
+    );
+  }
+  if (unreachable_hosts > 0) {
+    status.notes.push(
+      `${unreachable_hosts} recent running project-hosts did not answer backup execution status requests.`,
+    );
+  }
+  return status;
+}
+
 async function listRelevantLroRows(): Promise<LroStatusRow[]> {
   const lroKinds = Array.from(parallelOpsLroKindToWorkerKind.keys());
   if (lroKinds.length === 0) return [];
@@ -252,23 +312,77 @@ async function listRelevantCloudVmWorkRows(): Promise<CloudVmWorkStatusRow[]> {
   return rows;
 }
 
+async function listActiveProjectHosts(): Promise<ActiveProjectHostRow[]> {
+  const { rows } = await pool().query<ActiveProjectHostRow>(
+    `
+      SELECT id
+      FROM project_hosts
+      WHERE deleted IS NULL
+        AND status = 'running'
+        AND last_seen IS NOT NULL
+        AND last_seen > now() - interval '10 minutes'
+      ORDER BY id
+    `,
+  );
+  return rows;
+}
+
+async function listHostLocalBackupStatuses(): Promise<{
+  rows: HostLocalBackupStatusRow[];
+  unreachable_hosts: number;
+}> {
+  const hosts = await listActiveProjectHosts();
+  if (hosts.length === 0) {
+    return { rows: [], unreachable_hosts: 0 };
+  }
+  let client;
+  try {
+    client = await conat();
+  } catch {
+    return { rows: [], unreachable_hosts: hosts.length };
+  }
+  const results = await Promise.allSettled(
+    hosts.map(async ({ id }) => ({
+      host_id: id,
+      ...(await createHostControlClient({
+        host_id: id,
+        client,
+        timeout: 5_000,
+      }).getBackupExecutionStatus()),
+    })),
+  );
+  const rows: HostLocalBackupStatusRow[] = [];
+  let unreachable_hosts = 0;
+  for (const result of results) {
+    if (result.status === "fulfilled") {
+      rows.push(result.value);
+    } else {
+      unreachable_hosts += 1;
+    }
+  }
+  return { rows, unreachable_hosts };
+}
+
 export async function getParallelOpsStatus(): Promise<
   ParallelOpsWorkerStatus[]
 > {
   const nowMs = Date.now();
-  const [lroRows, cloudRows, limitEntries] = await Promise.all([
-    listRelevantLroRows(),
-    listRelevantCloudVmWorkRows(),
-    Promise.all(
-      parallelOpsWorkerRegistry.map(
-        async (worker) =>
-          [worker.worker_kind, await resolveLimitSnapshot(worker)] as [
-            string,
-            ParallelOpsLimitSnapshot,
-          ],
+  const [lroRows, cloudRows, hostLocalBackup, limitEntries] = await Promise.all(
+    [
+      listRelevantLroRows(),
+      listRelevantCloudVmWorkRows(),
+      listHostLocalBackupStatuses(),
+      Promise.all(
+        parallelOpsWorkerRegistry.map(
+          async (worker) =>
+            [worker.worker_kind, await resolveLimitSnapshot(worker)] as [
+              string,
+              ParallelOpsLimitSnapshot,
+            ],
+        ),
       ),
-    ),
-  ] as const);
+    ] as const,
+  );
   const limitMap = new Map<string, ParallelOpsLimitSnapshot>(limitEntries);
   const lroRowsByWorker = new Map<string, LroStatusRow[]>();
   for (const row of lroRows) {
@@ -286,6 +400,13 @@ export async function getParallelOpsStatus(): Promise<
         rows: cloudRows,
         nowMs,
         limit: limitMap.get(worker.worker_kind),
+      });
+    }
+    if (worker.category === "host-local") {
+      return summarizeHostLocalBackupStatus({
+        worker,
+        rows: hostLocalBackup.rows,
+        unreachable_hosts: hostLocalBackup.unreachable_hosts,
       });
     }
     return summarizeLroWorkerStatus({

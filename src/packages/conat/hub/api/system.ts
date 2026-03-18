@@ -158,11 +158,13 @@ export interface ParallelOpsWorkerBreakdownStatus {
   key: string;
   queued_count: number;
   running_count: number;
+  limit?: number | null;
+  extra?: Record<string, number>;
 }
 
 export interface ParallelOpsWorkerStatus {
   worker_kind: string;
-  category: "lro" | "cloud-work";
+  category: "lro" | "cloud-work" | "host-local";
   scope_model: "global" | "per-provider" | "per-project-host";
   dynamic_limit_supported: boolean;
   default_limit: number | null;

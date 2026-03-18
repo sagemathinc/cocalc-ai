@@ -217,6 +217,15 @@ function releaseBackupSlot() {
   }
 }
 
+export function getBackupExecutionStatus() {
+  return {
+    max_parallel: BACKUP_MAX_PARALLEL,
+    in_flight: backupInFlight,
+    queued: backupWaiters.length,
+    project_lock_count: backupProjectTails.size,
+  };
+}
+
 async function withBackupProjectLock<T>({
   project_id,
   op,

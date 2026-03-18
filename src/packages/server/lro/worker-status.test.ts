@@ -5,6 +5,7 @@ import {
 } from "./worker-registry";
 import {
   summarizeCloudVmWorkStatus,
+  summarizeHostLocalBackupStatus,
   summarizeLroWorkerStatus,
 } from "./worker-status";
 
@@ -129,5 +130,60 @@ describe("summarizeCloudVmWorkStatus", () => {
       { key: "gcp", queued_count: 1, running_count: 1 },
       { key: "nebius", queued_count: 1, running_count: 0 },
     ]);
+  });
+});
+
+describe("summarizeHostLocalBackupStatus", () => {
+  it("aggregates per-host backup slot usage and waiters", () => {
+    const worker = parallelOpsWorkerRegistryByKind.get(
+      "project-host-backup-execution",
+    );
+    expect(worker).toBeDefined();
+    const status = summarizeHostLocalBackupStatus({
+      worker: worker!,
+      unreachable_hosts: 1,
+      rows: [
+        {
+          host_id: "host-a",
+          max_parallel: 10,
+          in_flight: 3,
+          queued: 2,
+          project_lock_count: 4,
+        },
+        {
+          host_id: "host-b",
+          max_parallel: 10,
+          in_flight: 1,
+          queued: 0,
+          project_lock_count: 1,
+        },
+      ],
+    });
+
+    expect(status.category).toBe("host-local");
+    expect(status.queued_count).toBe(2);
+    expect(status.running_count).toBe(4);
+    expect(status.stale_running_count).toBeNull();
+    expect(status.worker_instances).toBe(2);
+    expect(status.effective_limit).toBe(10);
+    expect(status.breakdown).toEqual([
+      {
+        key: "host-a",
+        queued_count: 2,
+        running_count: 3,
+        limit: 10,
+        extra: { project_lock_count: 4 },
+      },
+      {
+        key: "host-b",
+        queued_count: 0,
+        running_count: 1,
+        limit: 10,
+        extra: { project_lock_count: 1 },
+      },
+    ]);
+    expect(status.notes).toContain(
+      "1 recent running project-hosts did not answer backup execution status requests.",
+    );
   });
 });
