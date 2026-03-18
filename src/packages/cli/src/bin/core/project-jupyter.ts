@@ -1,7 +1,13 @@
+import { once } from "node:events";
+import { isAbsolute, resolve as resolvePath } from "node:path";
+
+import { syncdb as openSyncDb } from "@cocalc/conat/sync-doc/syncdb";
 import {
   jupyterClient,
   type OutputMessage,
 } from "@cocalc/conat/project/jupyter/run-code";
+import { syncdbPath } from "@cocalc/util/jupyter/names";
+import { RefcountLeaseManager } from "@cocalc/util/refcount/lease";
 
 type ProjectIdentity = {
   project_id: string;
@@ -18,6 +24,13 @@ type ProjectJupyterOpsDeps<Ctx, Project extends ProjectIdentity> = {
     project: Project;
     client: any;
   }>;
+};
+
+type LiveJupyterSessionEntry<Project extends ProjectIdentity> = {
+  project: Project;
+  path: string;
+  client: any;
+  syncdb: any;
 };
 
 export type NotebookCellInfo = {
@@ -52,6 +65,16 @@ type NotebookCellSelector = {
   allCode?: boolean;
 };
 
+const JUPYTER_SYNCDB_OPTIONS = {
+  change_throttle: 25,
+  patch_interval: 25,
+  primary_keys: ["type", "id"],
+  string_cols: ["input"],
+  cursors: true,
+  persistent: true,
+  noSaveToDisk: true,
+};
+
 function normalizeNotebookSource(source: unknown): string {
   if (typeof source === "string") {
     return source;
@@ -64,18 +87,27 @@ function normalizeNotebookSource(source: unknown): string {
   return `${source ?? ""}`;
 }
 
+function normalizeNotebookPath(path: string): string {
+  const trimmed = `${path ?? ""}`.trim();
+  if (!trimmed) {
+    throw new Error("notebook path is required");
+  }
+  if (isAbsolute(trimmed)) {
+    return resolvePath(trimmed);
+  }
+  return resolvePath(process.env.HOME?.trim() || process.cwd(), trimmed);
+}
+
 function summarizePreview(input: string): string {
   const collapsed = input.replace(/\s+/g, " ").trim();
   if (!collapsed) return "";
   return collapsed.length > 120 ? `${collapsed.slice(0, 117)}...` : collapsed;
 }
 
-export function parseNotebookCells(content: string): NotebookCellInfo[] {
-  const parsed = JSON.parse(content) as { cells?: any[] };
-  const cells = Array.isArray(parsed?.cells) ? parsed.cells : [];
-  return cells.map((cell, index) => {
+function mapNotebookCells(rawCells: any[]): NotebookCellInfo[] {
+  return rawCells.map((cell, index) => {
     const rawId = typeof cell?.id === "string" ? cell.id.trim() : "";
-    const input = normalizeNotebookSource(cell?.source);
+    const input = normalizeNotebookSource(cell?.input ?? cell?.source);
     return {
       id: rawId || `__missing_cell_id__:${index}`,
       index,
@@ -87,6 +119,57 @@ export function parseNotebookCells(content: string): NotebookCellInfo[] {
       generated_id: rawId === "",
     };
   });
+}
+
+export function parseNotebookCells(content: string): NotebookCellInfo[] {
+  const parsed = JSON.parse(content) as { cells?: any[] };
+  const cells = Array.isArray(parsed?.cells) ? parsed.cells : [];
+  return mapNotebookCells(cells);
+}
+
+function toPlainValue(value: any): any {
+  if (value?.toJS instanceof Function) {
+    return value.toJS();
+  }
+  return value;
+}
+
+export function mapSyncDbNotebookCells(rows: any[]): NotebookCellInfo[] {
+  return rows
+    .map((row) => toPlainValue(row))
+    .filter((row) => row?.type === "cell")
+    .sort((left, right) => {
+      const leftPos =
+        typeof left?.pos === "number" && Number.isFinite(left.pos)
+          ? left.pos
+          : Number.MAX_SAFE_INTEGER;
+      const rightPos =
+        typeof right?.pos === "number" && Number.isFinite(right.pos)
+          ? right.pos
+          : Number.MAX_SAFE_INTEGER;
+      if (leftPos !== rightPos) {
+        return leftPos - rightPos;
+      }
+      return `${left?.id ?? ""}`.localeCompare(`${right?.id ?? ""}`);
+    })
+    .map((row, index) => {
+      const rawId = typeof row?.id === "string" ? row.id.trim() : "";
+      const input = normalizeNotebookSource(row?.input);
+      return {
+        id: rawId || `__missing_cell_id__:${index}`,
+        index,
+        cell_type: typeof row?.cell_type === "string" ? row.cell_type : "code",
+        input,
+        preview: summarizePreview(input),
+        line_count: input === "" ? 0 : input.split("\n").length,
+        generated_id: rawId === "",
+      };
+    });
+}
+
+function getLiveNotebookCells(syncdb: any): NotebookCellInfo[] {
+  const rows = toPlainValue(syncdb.get({ type: "cell" })) ?? [];
+  return mapSyncDbNotebookCells(Array.isArray(rows) ? rows : []);
 }
 
 export function selectNotebookCells(
@@ -148,47 +231,155 @@ export function selectNotebookCells(
   return ordered;
 }
 
-async function readNotebookCells<Ctx, Project extends ProjectIdentity>({
-  deps,
-  ctx,
-  projectIdentifier,
-  path,
-  cwd,
-}: {
-  deps: ProjectJupyterOpsDeps<Ctx, Project>;
-  ctx: Ctx;
-  projectIdentifier?: string;
-  path: string;
-  cwd?: string;
-}): Promise<{
-  project: Project;
-  client: any;
-  cells: NotebookCellInfo[];
-}> {
-  const normalizedPath = `${path ?? ""}`.trim();
-  if (!normalizedPath) {
-    throw new Error("--path is required");
-  }
-  const { project, client } = await deps.resolveProjectConatClient(
-    ctx,
-    projectIdentifier,
-    cwd,
-  );
-  const content = String(
-    await client
-      .fs({ project_id: project.project_id })
-      .readFile(normalizedPath, "utf8"),
-  );
-  return {
-    project,
-    client,
-    cells: parseNotebookCells(content),
-  };
-}
-
 export function createProjectJupyterOps<Ctx, Project extends ProjectIdentity>(
   deps: ProjectJupyterOpsDeps<Ctx, Project>,
 ) {
+  let closed = false;
+  const sessionPromises = new Map<
+    string,
+    Promise<LiveJupyterSessionEntry<Project>>
+  >();
+  const sessionLeases = new RefcountLeaseManager<string>({
+    delayMs: 30_000,
+    disposer: async (key) => {
+      const entryPromise = sessionPromises.get(key);
+      sessionPromises.delete(key);
+      if (!entryPromise) return;
+      try {
+        const entry = await entryPromise;
+        await entry.syncdb.close();
+      } catch {
+        // ignore cleanup failures
+      }
+    },
+  });
+
+  async function acquireProjectJupyterSession0({
+    ctx,
+    projectIdentifier,
+    path,
+    cwd,
+  }: {
+    ctx: Ctx;
+    projectIdentifier?: string;
+    path: string;
+    cwd?: string;
+  }): Promise<
+    LiveJupyterSessionEntry<Project> & {
+      release: () => Promise<void>;
+    }
+  > {
+    if (closed) {
+      throw new Error("project jupyter ops are closed");
+    }
+    const normalizedPath = normalizeNotebookPath(path);
+    const { project, client } = await deps.resolveProjectConatClient(
+      ctx,
+      projectIdentifier,
+      cwd,
+    );
+    const key = JSON.stringify({
+      project_id: project.project_id,
+      path: normalizedPath,
+    });
+    const release = await sessionLeases.acquire(key);
+    try {
+      let entryPromise = sessionPromises.get(key);
+      if (!entryPromise) {
+        const created = (async () => {
+          const syncdb = openSyncDb({
+            ...JUPYTER_SYNCDB_OPTIONS,
+            project_id: project.project_id,
+            path: syncdbPath(normalizedPath),
+            client,
+          });
+          if (syncdb.get_state() === "init") {
+            await once(syncdb, "ready");
+          }
+          if (syncdb.isClosed?.()) {
+            throw new Error(
+              `failed to open notebook sync session for ${normalizedPath}`,
+            );
+          }
+          return {
+            project,
+            path: normalizedPath,
+            client,
+            syncdb,
+          };
+        })();
+        sessionPromises.set(key, created);
+        entryPromise = created;
+        try {
+          await created;
+        } catch (error) {
+          if (sessionPromises.get(key) === created) {
+            sessionPromises.delete(key);
+          }
+          throw error;
+        }
+      }
+      const entry = await entryPromise;
+      return {
+        ...entry,
+        release,
+      };
+    } catch (error) {
+      await release();
+      throw error;
+    }
+  }
+
+  async function close(): Promise<void> {
+    if (closed) {
+      return;
+    }
+    closed = true;
+    const pending = Array.from(sessionPromises.values());
+    sessionPromises.clear();
+    await Promise.allSettled(
+      pending.map(async (entryPromise) => {
+        const entry = await entryPromise;
+        await entry.syncdb.close();
+      }),
+    );
+    await sessionLeases.close();
+  }
+
+  async function readNotebookCells({
+    ctx,
+    projectIdentifier,
+    path,
+    cwd,
+  }: {
+    ctx: Ctx;
+    projectIdentifier?: string;
+    path: string;
+    cwd?: string;
+  }): Promise<{
+    project: Project;
+    client: any;
+    cells: NotebookCellInfo[];
+  }> {
+    const normalizedPath = normalizeNotebookPath(path);
+    const { project, client, syncdb, release } =
+      await acquireProjectJupyterSession0({
+        ctx,
+        projectIdentifier,
+        path: normalizedPath,
+        cwd,
+      });
+    try {
+      return {
+        project,
+        client,
+        cells: getLiveNotebookCells(syncdb),
+      };
+    } finally {
+      await release();
+    }
+  }
+
   async function projectJupyterCellsData({
     ctx,
     projectIdentifier,
@@ -202,9 +393,8 @@ export function createProjectJupyterOps<Ctx, Project extends ProjectIdentity>(
     codeOnly?: boolean;
     cwd?: string;
   }): Promise<ProjectJupyterCellsResult> {
-    const normalizedPath = `${path ?? ""}`.trim();
+    const normalizedPath = normalizeNotebookPath(path);
     const { project, cells } = await readNotebookCells({
-      deps,
       ctx,
       projectIdentifier,
       path: normalizedPath,
@@ -246,49 +436,58 @@ export function createProjectJupyterOps<Ctx, Project extends ProjectIdentity>(
     }) => Promise<string>;
     cwd?: string;
   }): Promise<ProjectJupyterRunSession> {
-    const normalizedPath = `${path ?? ""}`.trim();
-    const { project, client, cells } = await readNotebookCells({
-      deps,
-      ctx,
-      projectIdentifier,
-      path: normalizedPath,
-      cwd,
-    });
-    const selected = selectNotebookCells(cells, {
-      cellIds,
-      cellIndices,
-      allCode,
-    });
-    const runClient = jupyterClient({
-      path: normalizedPath,
-      project_id: project.project_id,
-      client,
-      stdin,
-    });
-    const run_id = `cli-${Date.now().toString(36)}-${Math.random()
-      .toString(36)
-      .slice(2, 8)}`;
-    const iter = await runClient.run(
-      selected.map(({ id, input }) => ({ id, input })),
-      {
-        noHalt,
-        limit,
+    const normalizedPath = normalizeNotebookPath(path);
+    const { project, client, syncdb, release } =
+      await acquireProjectJupyterSession0({
+        ctx,
+        projectIdentifier,
+        path: normalizedPath,
+        cwd,
+      });
+    try {
+      const cells = getLiveNotebookCells(syncdb);
+      const selected = selectNotebookCells(cells, {
+        cellIds,
+        cellIndices,
+        allCode,
+      });
+      const runClient = jupyterClient({
+        path: normalizedPath,
+        project_id: project.project_id,
+        client,
+        stdin,
+      });
+      const run_id = `cli-${Date.now().toString(36)}-${Math.random()
+        .toString(36)
+        .slice(2, 8)}`;
+      const iter = await runClient.run(
+        selected.map(({ id, input }) => ({ id, input })),
+        {
+          noHalt,
+          limit,
+          run_id,
+          waitForAck: false,
+        },
+      );
+      return {
+        project_id: project.project_id,
+        project_title: project.title,
+        path: normalizedPath,
         run_id,
-        waitForAck: false,
-      },
-    );
-    return {
-      project_id: project.project_id,
-      project_title: project.title,
-      path: normalizedPath,
-      run_id,
-      cells: selected,
-      iter,
-      close: () => runClient.close(),
-    };
+        cells: selected,
+        iter,
+        close: () => {
+          runClient.close();
+          return void release();
+        },
+      };
+    } catch (error) {
+      await release();
+      throw error;
+    }
   }
-
   return {
+    close,
     projectJupyterCellsData,
     projectJupyterRunSession,
   };

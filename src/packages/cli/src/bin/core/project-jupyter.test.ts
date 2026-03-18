@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { parseNotebookCells, selectNotebookCells } from "./project-jupyter";
+import {
+  mapSyncDbNotebookCells,
+  parseNotebookCells,
+  selectNotebookCells,
+} from "./project-jupyter";
 
 test("parseNotebookCells preserves explicit ids and marks missing ids", () => {
   const cells = parseNotebookCells(
@@ -56,5 +60,26 @@ test("selectNotebookCells rejects non-code selections", () => {
   assert.throws(
     () => selectNotebookCells(cells, { cellIds: ["m1"] }),
     /selected cells must be code cells/,
+  );
+});
+
+test("mapSyncDbNotebookCells orders by live notebook position", () => {
+  const cells = mapSyncDbNotebookCells([
+    { type: "cell", id: "c2", pos: 2, input: "b = 2" },
+    { type: "cell", id: "m1", pos: 0, cell_type: "markdown", input: "# Title" },
+    { type: "cell", id: "c1", pos: 1, input: "a = 1" },
+  ]);
+
+  assert.deepEqual(
+    cells.map((cell) => ({
+      id: cell.id,
+      index: cell.index,
+      cell_type: cell.cell_type,
+    })),
+    [
+      { id: "m1", index: 0, cell_type: "markdown" },
+      { id: "c1", index: 1, cell_type: "code" },
+      { id: "c2", index: 2, cell_type: "code" },
+    ],
   );
 });
