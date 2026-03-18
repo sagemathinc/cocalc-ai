@@ -12,6 +12,7 @@ Implemented:
 - `All tabs`, per-workspace, and `Unscoped` views
 - longest-prefix path membership
 - explicit follow-through when opening files or navigating directories outside the current workspace
+- stable refresh restore for selected workspaces and their visible tabs
 - remembering the last open tab per workspace
 - closing tabs within the current workspace
 - drag-to-order tabs within a selected workspace
@@ -40,6 +41,14 @@ Implemented:
   - workspace colors on file tabs
   - mirrored tab activity on workspace cards
   - optional stronger workspace theme mode with tinted chrome
+- per-workspace terminal theme overrides
+- per-workspace editor theme overrides
+- rendered markdown / Slate surfaces now pick up subtle theme cues from the effective editor theme:
+  - code blocks
+  - inline code
+  - link chips
+  - blockquotes
+  - tables
 - workspace-aware agent integration:
   - current-workspace filtering in Agents
   - workspace `Float` entrypoint
@@ -80,11 +89,12 @@ Implemented:
     - opt-in switch per workspace
     - tinted activity bar chrome
     - stronger page/frame accents
+    - per-workspace terminal theme overrides
+    - per-workspace editor theme overrides
+    - subtle rendered markdown theming from the effective editor theme
   - Still worth exploring:
-    - per-workspace terminal/editor theme overrides
-      - account defaults would remain the fallback
-      - workspace overrides would be the stronger, high-signal context cue
-    - chatroom-level theme overrides that follow the workspace
+    - broader chatroom-level theme overrides that follow the workspace
+    - whether any surfaces should use a stronger full-background editor-derived rendering mode
 - [x] Thread/chat appearance is now mostly unified with workspaces/projects.
   - Implemented:
     - shared appearance editor flow
