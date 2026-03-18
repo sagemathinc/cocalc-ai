@@ -1,0 +1,43 @@
+{
+  "name": "seeded-jupyter-edit-smoke",
+  "allow_raw_exec": true,
+  "steps": [
+    {
+      "name": "wait jupyter chrome",
+      "action": {
+        "name": "wait_for_selector",
+        "selector": "[data-cocalc-jupyter-minimap-wrapper=\"1\"]",
+        "state": "visible",
+        "timeout_ms": 15000
+      }
+    },
+    {
+      "name": "assert notebook path",
+      "assert": "return window.location.href.includes('.ipynb');",
+      "retries": 2,
+      "recovery": "reload"
+    },
+    {
+      "name": "focus notebook editor",
+      "action": {
+        "name": "click",
+        "selector": "textarea"
+      }
+    },
+    {
+      "name": "type into notebook cell",
+      "action": {
+        "name": "type",
+        "selector": "textarea",
+        "text": "X"
+      }
+    },
+    {
+      "name": "assert notebook cell text changed",
+      "assert": {
+        "file": "scripts/bug-hunt/probes/jupyter/assert-cell-edited.js"
+      },
+      "retries": 2
+    }
+  ]
+}

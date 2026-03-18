@@ -10,6 +10,43 @@ async function sleep(ms: number) {
   return await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+type SelfHostCommandRow = {
+  action: string;
+  state: string;
+  result: any;
+  error: string | null;
+};
+
+type SelfHostCommandOutcome =
+  | { kind: "success"; result: any }
+  | { kind: "promote-delete"; result: any }
+  | { kind: "error"; error: string }
+  | { kind: "wait" };
+
+export function resolveSelfHostCommandOutcome(
+  row: SelfHostCommandRow,
+): SelfHostCommandOutcome {
+  if (row.state === "done") {
+    return { kind: "success", result: row.result ?? {} };
+  }
+  if (row.state === "error") {
+    return {
+      kind: "error",
+      error: row.error ?? "self-host command failed",
+    };
+  }
+  // Delete is destructive and can terminate the connector before it posts the
+  // final ack. Once the connector has fetched the command, treat it as
+  // accepted so host deprovision doesn't falsely fail on a timeout.
+  if (row.action === "delete" && row.state === "sent") {
+    return {
+      kind: "promote-delete",
+      result: row.result ?? { accepted: true, action: "delete" },
+    };
+  }
+  return { kind: "wait" };
+}
+
 export async function enqueueSelfHostCommand(opts: {
   connector_id: string;
   action:
@@ -54,12 +91,8 @@ export async function waitForSelfHostCommand(
   const pollMs = opts.pollMs ?? DEFAULT_POLL_MS;
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const { rows } = await pool().query<{
-      state: string;
-      result: any;
-      error: string | null;
-    }>(
-      `SELECT state, result, error
+    const { rows } = await pool().query<SelfHostCommandRow>(
+      `SELECT action, state, result, error
        FROM self_host_commands
        WHERE command_id=$1`,
       [commandId],
@@ -68,11 +101,24 @@ export async function waitForSelfHostCommand(
     if (!row) {
       throw new Error("self-host command not found");
     }
-    if (row.state === "done") {
-      return row.result ?? {};
+    const outcome = resolveSelfHostCommandOutcome(row);
+    if (outcome.kind === "success") {
+      return outcome.result;
     }
-    if (row.state === "error") {
-      throw new Error(row.error ?? "self-host command failed");
+    if (outcome.kind === "error") {
+      throw new Error(outcome.error);
+    }
+    if (outcome.kind === "promote-delete") {
+      await pool().query(
+        `UPDATE self_host_commands
+         SET state='done',
+             result=COALESCE(result, $2::jsonb),
+             error=NULL,
+             updated=NOW()
+         WHERE command_id=$1 AND state='sent'`,
+        [commandId, outcome.result],
+      );
+      return outcome.result;
     }
     await sleep(pollMs);
   }

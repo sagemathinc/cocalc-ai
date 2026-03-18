@@ -1,5 +1,5 @@
 {
-  "name": "session-smoke",
+  "name": "files-shell-smoke",
   "steps": [
     {
       "name": "wait project page",
@@ -11,13 +11,13 @@
       }
     },
     {
-      "name": "assert route",
-      "assert": "return /^\\/projects\\/[0-9a-f-]+\\/(project-home|files)\\/?$/.test(window.location.pathname);",
+      "name": "assert files route",
+      "assert": "return /^\\/projects\\/[0-9a-f-]+\\/files\\/?$/.test(window.location.pathname);",
       "retries": 1,
       "recovery": "reload"
     },
     {
-      "name": "assert CoCalc title is visible",
+      "name": "assert settled CoCalc title is visible",
       "assert": "return typeof document.title === 'string' && document.title.includes('CoCalc') && !document.title.includes('Loading');"
     },
     {

@@ -1,0 +1,32 @@
+{
+  "name": "project-home-shell-smoke",
+  "steps": [
+    {
+      "name": "wait project page",
+      "action": {
+        "name": "wait_for_selector",
+        "selector": "[data-cocalc-project-page]",
+        "state": "visible",
+        "timeout_ms": 15000
+      }
+    },
+    {
+      "name": "assert project-home route",
+      "assert": "return /^\\/projects\\/[0-9a-f-]+\\/project-home\\/?$/.test(window.location.pathname);",
+      "retries": 1,
+      "recovery": "reload"
+    },
+    {
+      "name": "assert settled CoCalc title is visible",
+      "assert": "return typeof document.title === 'string' && document.title.includes('CoCalc') && !document.title.includes('Loading');"
+    },
+    {
+      "name": "assert exactly one project page root is mounted",
+      "assert": "return document.querySelectorAll('[data-cocalc-project-page]').length === 1;"
+    },
+    {
+      "name": "assert project page root carries a project id",
+      "assert": "const root = document.querySelector('[data-cocalc-project-page]'); const value = root?.getAttribute('data-cocalc-project-page') ?? ''; return /^[0-9a-f-]{36}$/.test(value);"
+    }
+  ]
+}

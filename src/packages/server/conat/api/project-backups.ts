@@ -11,6 +11,7 @@ import { publishLroEvent, publishLroSummary } from "@cocalc/conat/lro/stream";
 import { lroStreamName } from "@cocalc/conat/lro/names";
 import { SERVICE as PERSIST_SERVICE } from "@cocalc/conat/persist/util";
 import { getProjectFileServerClient } from "@cocalc/server/conat/file-server-client";
+import { backupLroDedupeKey } from "@cocalc/server/projects/backup-lro";
 
 // just *some* limit to avoid bugs/abuse
 
@@ -97,6 +98,7 @@ export async function createBackup(
     routing: "hub",
     input: { project_id, tags },
     status: "queued",
+    dedupe_key: backupLroDedupeKey(project_id),
   });
   await publishQueuedLroSafe({
     op,

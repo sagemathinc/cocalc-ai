@@ -21,6 +21,12 @@
       "assert": "return document.body.innerText.includes('Bug-hunt file fixture');",
       "retries": 2,
       "recovery": "reload"
+    },
+    {
+      "name": "assert split markdown editor is visible",
+      "assert": "const body = document.body.innerText; return body.includes('Editable Text') && body.includes('# Bug-hunt file fixture');",
+      "retries": 2,
+      "recovery": "reload"
     }
   ]
 }

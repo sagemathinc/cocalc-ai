@@ -48,7 +48,7 @@
     "events": "3.3.0",
     "expect": "^26.6.2",
     "he": "^1.2.0",
-    "immutable": "^4.3.0",
+    "immutable": "^4.3.8",
     "jsonfile": "^6.1.0",
     "lodash": "^4.17.21",
     "lru-cache": "^7.18.3",

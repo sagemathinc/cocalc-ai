@@ -23,8 +23,14 @@
       "recovery": "reload"
     },
     {
-      "name": "assert chat composer is available",
-      "assert": "return document.querySelector('textarea') != null;",
+      "name": "assert empty chat setup is available",
+      "assert": "const body = document.body.innerText; return body.includes('New chat setup') && body.includes('Create chat') && body.includes('No chats yet.');",
+      "retries": 2,
+      "recovery": "reload"
+    },
+    {
+      "name": "assert default codex setup values are visible",
+      "assert": "const body = document.body.innerText; return body.includes('Codex (agent)') && body.includes('Workspace write');",
       "retries": 2,
       "recovery": "reload"
     }
