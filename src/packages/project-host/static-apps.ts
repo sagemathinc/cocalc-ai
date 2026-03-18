@@ -18,7 +18,7 @@ import {
   PublicViewerManifest,
   PublicViewerManifestEntry,
 } from "./public-viewer";
-import { getMountPoint } from "./file-server";
+import { resolveProjectContainerPath } from "./file-server";
 import type { AppRequestMatch } from "./app-public-access";
 
 const logger = getLogger("project-host:static-apps");
@@ -414,28 +414,20 @@ function buildPublicFileHeaders(
   };
 }
 
-function projectMountRoot(project_id: string): string | undefined {
-  try {
-    return path.join(getMountPoint(), `project-${project_id}`);
-  } catch {
-    return;
-  }
-}
-
-function resolveStaticRoot(
+async function resolveStaticRoot(
   project_id: string,
   root: string,
-): string | undefined {
-  const projectRoot = projectMountRoot(project_id);
-  if (!projectRoot) return;
-  const candidate = path.resolve(projectRoot, root);
-  if (
-    candidate !== projectRoot &&
-    !candidate.startsWith(`${projectRoot}${path.sep}`)
-  ) {
+): Promise<string | undefined> {
+  try {
+    return await resolveProjectContainerPath(project_id, root);
+  } catch (err) {
+    logger.debug("failed to resolve static app root", {
+      project_id,
+      root,
+      err: `${err}`,
+    });
     return;
   }
-  return candidate;
 }
 
 async function resolveStaticPath({
@@ -635,7 +627,7 @@ export async function maybeHandleStaticAppRequest({
     res.end("Static app root is not configured\n");
     return true;
   }
-  const root = resolveStaticRoot(project_id, rootRel);
+  const root = await resolveStaticRoot(project_id, rootRel);
   if (!root) {
     res.writeHead(500, { "Content-Type": "text/plain; charset=utf-8" });
     res.end("Static app root is invalid\n");

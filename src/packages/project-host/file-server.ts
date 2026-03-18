@@ -737,6 +737,19 @@ export function configureProjectHostAcpContainerFileIO(): void {
   });
 }
 
+export async function resolveProjectContainerPath(
+  project_id: string,
+  containerPath: string,
+): Promise<string> {
+  const fs = createProjectSandboxFilesystem({
+    project_id,
+    home: projectMountpoint(project_id),
+    rootfs: getRootfsMountpoint(project_id),
+    scratch: getScratchMountpoint(project_id),
+  });
+  return await fs.safeAbsPath(containerPath);
+}
+
 async function mount({
   project_id,
   scratch,
