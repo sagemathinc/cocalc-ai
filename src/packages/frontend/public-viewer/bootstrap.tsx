@@ -13,22 +13,43 @@ interface PublicViewerConfig {
   path: string;
   rawUrl: string;
   title?: string;
+  autoRefreshS?: number;
 }
 
 function parseConfig(): PublicViewerConfig {
   const element = document.getElementById("cocalc-public-viewer-config");
-  if (element == null) {
-    throw new Error("public viewer config element not found");
+  if (element != null) {
+    const raw = element.textContent?.trim();
+    if (!raw) {
+      throw new Error("public viewer config is empty");
+    }
+    const parsed = JSON.parse(raw);
+    if (
+      typeof parsed?.path !== "string" ||
+      typeof parsed?.rawUrl !== "string"
+    ) {
+      throw new Error("public viewer config is invalid");
+    }
+    return parsed;
   }
-  const raw = element.textContent?.trim();
-  if (!raw) {
-    throw new Error("public viewer config is empty");
+  const params = new URLSearchParams(window.location.search);
+  const rawUrl =
+    params.get("source")?.trim() || params.get("rawUrl")?.trim() || "";
+  const path = params.get("path")?.trim() || rawUrl || "Untitled";
+  const title = params.get("title")?.trim() || undefined;
+  const autoRefreshS = Number(params.get("refresh") ?? "");
+  if (!rawUrl) {
+    throw new Error("public viewer query config is invalid");
   }
-  const parsed = JSON.parse(raw);
-  if (typeof parsed?.path !== "string" || typeof parsed?.rawUrl !== "string") {
-    throw new Error("public viewer config is invalid");
-  }
-  return parsed;
+  return {
+    path,
+    rawUrl,
+    title,
+    autoRefreshS:
+      Number.isFinite(autoRefreshS) && autoRefreshS > 0
+        ? autoRefreshS
+        : undefined,
+  };
 }
 
 function PublicViewerApp({
@@ -46,29 +67,40 @@ function PublicViewerApp({
     setLoading(true);
     setError(undefined);
     setContent(undefined);
-    void fetch(config.rawUrl, { credentials: "omit" })
-      .then(async (response) => {
+    const load = async () => {
+      try {
+        const response = await fetch(config.rawUrl, {
+          credentials: "same-origin",
+        });
         if (!response.ok) {
           throw new Error(`Unable to load ${config.path} (${response.status})`);
         }
-        return await response.text();
-      })
-      .then((next) => {
+        const next = await response.text();
         if (cancelled) return;
+        setError(undefined);
         setContent(next);
-      })
-      .catch((err) => {
+      } catch (err) {
         if (cancelled) return;
         setError(`${err}`);
-      })
-      .finally(() => {
+      } finally {
         if (cancelled) return;
         setLoading(false);
-      });
+      }
+    };
+    void load();
+    const refreshTimer =
+      (config.autoRefreshS ?? 0) > 0
+        ? window.setInterval(() => {
+            void load();
+          }, config.autoRefreshS! * 1000)
+        : undefined;
     return () => {
       cancelled = true;
+      if (refreshTimer != null) {
+        window.clearInterval(refreshTimer);
+      }
     };
-  }, [config.path, config.rawUrl, config.title]);
+  }, [config.autoRefreshS, config.path, config.rawUrl, config.title]);
 
   return (
     <div
