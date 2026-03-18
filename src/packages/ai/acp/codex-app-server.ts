@@ -24,6 +24,12 @@ const REQUEST_TIMEOUT_MS = Math.max(
   5_000,
   Number(process.env.COCALC_CODEX_APP_SERVER_TIMEOUT_MS ?? 90_000),
 );
+const TURN_NOTIFICATION_IDLE_TIMEOUT_MS = Math.max(
+  REQUEST_TIMEOUT_MS,
+  Number(
+    process.env.COCALC_CODEX_APP_SERVER_NOTIFICATION_TIMEOUT_MS ?? 30 * 60_000,
+  ),
+);
 
 const IMMEDIATE_SEND_GUIDANCE = [
   "[CoCalc immediate-send behavior]",
@@ -1124,7 +1130,7 @@ export class CodexAppServerAgent implements AcpAgent {
               return params?.turn?.id === turnId;
             }
             return params?.turnId === turnId;
-          });
+          }, TURN_NOTIFICATION_IDLE_TIMEOUT_MS);
           if (notification.method === "turn/completed") {
             const status =
               `${notification.params?.turn?.status ?? ""}`.toLowerCase();

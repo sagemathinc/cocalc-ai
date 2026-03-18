@@ -69,6 +69,29 @@ describe("appendStreamMessage", () => {
     expect(merged).toHaveLength(1);
     expect((merged[0] as any).event.text).toBe("commit. I found a follow-up");
   });
+
+  test("inserts a paragraph break between large app-server chunks", () => {
+    const events = [
+      textEvent(
+        "message",
+        "I traced the app-server path through the live activity renderer and confirmed the chunks are arriving as separate agent deltas.",
+        1,
+      ),
+    ];
+    const merged = appendStreamMessage(
+      events,
+      textEvent(
+        "message",
+        "The main chat row should preserve this as a new paragraph instead of collapsing everything into one long block of text.",
+        2,
+      ),
+    );
+
+    expect(merged).toHaveLength(1);
+    expect((merged[0] as any).event.text).toBe(
+      "I traced the app-server path through the live activity renderer and confirmed the chunks are arriving as separate agent deltas.\n\nThe main chat row should preserve this as a new paragraph instead of collapsing everything into one long block of text.",
+    );
+  });
 });
 
 describe("response text helpers", () => {
@@ -143,6 +166,30 @@ describe("response text helpers", () => {
     ]);
     expect(getLiveResponseMarkdown(events)).toBe(
       "Live Codex output reaches the chat UI through the log.",
+    );
+  });
+
+  test("keeps large interleaved app-server deltas as separate paragraphs", () => {
+    const events: AcpStreamMessage[] = [
+      textEvent(
+        "message",
+        "I traced the app-server path through the live activity renderer and confirmed the chunks are arriving as separate agent deltas.",
+        1,
+        { delta: true },
+      ),
+      textEvent("thinking", "reasoning chunk", 2),
+      textEvent(
+        "message",
+        "The main chat row should preserve this as a new paragraph instead of collapsing everything into one long block of text.",
+        3,
+        { delta: true },
+      ),
+    ];
+    expect(getAgentMessageTexts(events)).toEqual([
+      "I traced the app-server path through the live activity renderer and confirmed the chunks are arriving as separate agent deltas.\n\nThe main chat row should preserve this as a new paragraph instead of collapsing everything into one long block of text.",
+    ]);
+    expect(getLiveResponseMarkdown(events)).toBe(
+      "I traced the app-server path through the live activity renderer and confirmed the chunks are arriving as separate agent deltas.\n\nThe main chat row should preserve this as a new paragraph instead of collapsing everything into one long block of text.",
     );
   });
 
