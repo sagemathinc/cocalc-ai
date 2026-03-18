@@ -251,7 +251,9 @@ export default function LanguageModelTitleBarButton({
   const submitRef = useRef<any>(null);
   const inputRef = useRef<HTMLElement>(null);
 
-  const modelLsKey = `AI-CODEX-MODEL:${project_id}`;
+  // Use a dedicated key for the Codex-only assistant so older generic/legacy
+  // model picks do not override the new default assistant model.
+  const modelLsKey = `AI-CODEX-ASSISTANT-MODEL:v1:${project_id}`;
   const [model, setModelState] = useState<string>(() =>
     resolveAssistantCodexModel(
       LS.get(modelLsKey) ?? DEFAULT_ASSISTANT_CODEX_MODEL,

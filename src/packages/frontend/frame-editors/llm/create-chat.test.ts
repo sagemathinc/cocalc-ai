@@ -45,9 +45,11 @@ describe("createChat", () => {
       expect.objectContaining({
         project_id: "project-1",
         path: "/tmp/test.py",
+        title: "Explain this",
         tag: "intent:editor-assistant",
         forceCodex: true,
         openFloating: true,
+        createNewThread: true,
         codexConfig: { model: "gpt-5.4-mini" },
       }),
     );
@@ -77,8 +79,10 @@ describe("createChat", () => {
 
     expect(dispatchNavigatorPromptIntent).toHaveBeenCalledWith(
       expect.objectContaining({
+        title: "List large files",
         tag: "intent:terminal-assistant",
         forceCodex: true,
+        createNewThread: true,
         codexConfig: { model: "gpt-5.4-mini" },
       }),
     );

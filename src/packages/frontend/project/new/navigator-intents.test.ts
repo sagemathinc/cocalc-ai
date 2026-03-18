@@ -87,6 +87,82 @@ describe("submitNavigatorPromptToCurrentThread", () => {
     expect(mockOpenFloating.mock.calls[0][1].title).toBe("Install JupyterLab");
   });
 
+  it("creates a fresh Codex thread with the requested model when asked", async () => {
+    mockListSessions.mockResolvedValue([
+      {
+        session_id: "session-1",
+        project_id: "00000000-1000-4000-8000-000000000000",
+        account_id: "00000000-1000-4000-8000-000000000001",
+        chat_path: "/home/wstein/.local/share/cocalc/navigator.chat",
+        thread_key: "thread-existing",
+        title: "Existing Human Thread",
+        created_at: "2026-03-18T00:00:00.000Z",
+        updated_at: "2026-03-18T00:00:00.000Z",
+        status: "active",
+        entrypoint: "global",
+        model: "gpt-5.4",
+      },
+    ]);
+    const threadIndex = new Map([
+      [
+        "thread-new",
+        {
+          key: "thread-new",
+          newestTime: Date.now(),
+          rootMessage: { thread_id: "thread-new" },
+        },
+      ],
+    ]);
+    const sendChat = jest.fn(() => new Date().toISOString());
+    const actions = {
+      syncdb: { get_state: () => "ready" },
+      messageCache: { getThreadIndex: () => threadIndex },
+      sendChat,
+      store: {
+        get: (key: string) =>
+          key === "selectedThreadKey" ? "thread-new" : undefined,
+      },
+    };
+    mockGetChatActions.mockReturnValue(actions);
+    mockInitChat.mockReturnValue(actions);
+
+    const ok = await submitNavigatorPromptToCurrentThread({
+      project_id: "00000000-1000-4000-8000-000000000000",
+      prompt: "Write a proof",
+      title: "Write a proof",
+      tag: "intent:editor-assistant",
+      forceCodex: true,
+      openFloating: true,
+      createNewThread: true,
+      codexConfig: {
+        model: "gpt-5.4-mini",
+      },
+    });
+
+    expect(ok).toBe(true);
+    expect(sendChat).toHaveBeenCalledWith(
+      expect.objectContaining({
+        input: "Write a proof",
+        name: "Write a proof",
+        reply_thread_id: undefined,
+        threadAgent: expect.objectContaining({
+          mode: "codex",
+          model: "gpt-5.4-mini",
+          codexConfig: expect.objectContaining({
+            model: "gpt-5.4-mini",
+          }),
+        }),
+      }),
+    );
+    expect(mockOpenFloating).toHaveBeenCalledWith(
+      "00000000-1000-4000-8000-000000000000",
+      expect.objectContaining({
+        thread_key: "thread-new",
+        title: "Write a proof",
+      }),
+    );
+  });
+
   it("keeps queued intents even when localStorage is unavailable", () => {
     const getSpy = jest
       .spyOn(Storage.prototype, "getItem")

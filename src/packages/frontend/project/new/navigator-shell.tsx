@@ -684,11 +684,17 @@ export function NavigatorShell({
       }
       const input = basePrompt;
       const storedThreadKey = loadNavigatorSelectedThreadKey(project_id);
-      const resolvedThreadKey = chooseNonArchivedThreadKey(
-        actions,
-        selectedThreadKey ?? storedThreadKey ?? undefined,
-      );
-      let replyThreadId = resolveReplyThreadId(actions, resolvedThreadKey);
+      const resolvedThreadKey =
+        intent.createNewThread === true
+          ? null
+          : chooseNonArchivedThreadKey(
+              actions,
+              selectedThreadKey ?? storedThreadKey ?? undefined,
+            );
+      let replyThreadId =
+        intent.createNewThread === true
+          ? undefined
+          : resolveReplyThreadId(actions, resolvedThreadKey);
       if (resolvedThreadKey && !replyThreadId) {
         // If we cannot confidently resolve thread identity yet, open a new
         // thread instead of dropping the prompt.
@@ -713,10 +719,17 @@ export function NavigatorShell({
         selectedThreadKey,
         selectedRootMessage,
       });
-      const model =
-        typeof launchAcpConfig?.model === "string"
-          ? launchAcpConfig.model
+      const requestedModel =
+        typeof intent.codexConfig?.model === "string" &&
+        intent.codexConfig.model.trim().length > 0
+          ? intent.codexConfig.model.trim()
           : undefined;
+      const selectedModel =
+        typeof launchAcpConfig?.model === "string" &&
+        launchAcpConfig.model.trim().length > 0
+          ? launchAcpConfig.model.trim()
+          : undefined;
+      const model = requestedModel ?? selectedModel;
       const nextCodexConfig = {
         ...launchAcpConfig,
         ...(intent.codexConfig ?? {}),
@@ -753,9 +766,9 @@ export function NavigatorShell({
         setSelectedThreadKey(resolvedThreadKey);
       }
       if (!replyThreadId) {
-        const threadTime = new Date(timeStamp).valueOf();
-        if (Number.isFinite(threadTime)) {
-          setSelectedThreadKey(`${threadTime}`);
+        const latest = latestThreadKey(actions);
+        if (latest) {
+          setSelectedThreadKey(latest);
         }
       }
       setTimeout(() => actions.scrollToIndex?.(Number.MAX_SAFE_INTEGER), 100);

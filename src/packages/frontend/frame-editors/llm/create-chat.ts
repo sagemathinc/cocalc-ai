@@ -64,6 +64,7 @@ export default async function createChat({
     options,
     codexModel,
   });
+  const title = createAssistantThreadTitle(options.command);
   const intent =
     frameType === "terminal"
       ? "intent:terminal-assistant"
@@ -72,19 +73,29 @@ export default async function createChat({
     project_id: actions.project_id,
     path: actions.path,
     prompt,
+    title,
     tag: intent,
     forceCodex: true,
     codexConfig: { model: codexModel },
     openFloating: true,
+    createNewThread: true,
   });
   if (!sent) {
     dispatchNavigatorPromptIntent({
       prompt,
+      title,
       tag: intent,
       forceCodex: true,
+      createNewThread: true,
       codexConfig: { model: codexModel },
     });
   }
+}
+
+function createAssistantThreadTitle(command?: string): string | undefined {
+  const trimmed = `${command ?? ""}`.trim();
+  if (!trimmed) return;
+  return trimmed.length <= 80 ? trimmed : `${trimmed.slice(0, 77).trim()}...`;
 }
 
 export async function createChatMessage(
