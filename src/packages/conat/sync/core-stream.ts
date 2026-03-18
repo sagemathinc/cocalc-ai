@@ -265,6 +265,9 @@ export class CoreStream<T = any> extends EventEmitter {
   }
 
   private initialized = false;
+  private hasPendingConfigChanges = () =>
+    this.configOptions != null && Object.keys(this.configOptions).length > 0;
+
   private emitInitPhase = (
     phase: CoreStreamInitPhase,
     details?: { [key: string]: string | number | boolean | undefined },
@@ -301,31 +304,37 @@ export class CoreStream<T = any> extends EventEmitter {
         console.log(`WARNING: persistent stream issue -- ${err}`);
       }
     });
-    await this.getAllFromPersist({
+    const bootstrapConfig = await this.getAllFromPersist({
       start_seq: this._start_seq,
       noEmit: true,
+      includeConfig: !this.hasPendingConfigChanges(),
     });
+    if (!this.hasPendingConfigChanges() && bootstrapConfig != null) {
+      this.configOptions = bootstrapConfig;
+    }
 
-    await until(
-      async () => {
-        if (this.client == null) {
-          return true;
-        }
-        try {
-          this.emitInitPhase("persist_config_start");
-          this.configOptions = await this.config(this.configOptions);
-          this.emitInitPhase("persist_config_done");
-          return true;
-        } catch (err) {
-          if (err.code == 403) {
-            // fatal permission error
-            throw err;
+    if (this.hasPendingConfigChanges()) {
+      await until(
+        async () => {
+          if (this.client == null) {
+            return true;
           }
-        }
-        return false;
-      },
-      { start: 750 },
-    );
+          try {
+            this.emitInitPhase("persist_config_start");
+            this.configOptions = await this.config(this.configOptions);
+            this.emitInitPhase("persist_config_done");
+            return true;
+          } catch (err) {
+            if (err.code == 403) {
+              // fatal permission error
+              throw err;
+            }
+          }
+          return false;
+        },
+        { start: 750 },
+      );
+    }
     this.emitInitPhase("listen_started");
     void this.listen();
     this.emitInitPhase("init_done");
@@ -384,12 +393,18 @@ export class CoreStream<T = any> extends EventEmitter {
   private getAllFromPersist = async ({
     start_seq = 0,
     noEmit,
-  }: { start_seq?: number; noEmit?: boolean } = {}) => {
+    includeConfig,
+  }: {
+    start_seq?: number;
+    noEmit?: boolean;
+    includeConfig?: boolean;
+  } = {}): Promise<Configuration | undefined> => {
     if (this.storage == null) {
       throw Error("bug -- storage must be set");
     }
     stats.syncFromPersistRuns += 1;
     let attempt = 0;
+    let currentConfig: Configuration | undefined;
     await until(
       async () => {
         attempt += 1;
@@ -417,12 +432,23 @@ export class CoreStream<T = any> extends EventEmitter {
             attempt,
             start_seq,
             changefeed: true,
+            include_config: includeConfig,
           });
-          messages = await this.persistClient.getAll({
-            start_seq,
-            timeout: DEFAULT_GET_ALL_TIMEOUT,
-            changefeed: true,
-          });
+          if (includeConfig) {
+            const result = await this.persistClient.getAllWithInfo({
+              start_seq,
+              timeout: DEFAULT_GET_ALL_TIMEOUT,
+              changefeed: true,
+            });
+            messages = result.messages;
+            currentConfig = result.config;
+          } else {
+            messages = await this.persistClient.getAll({
+              start_seq,
+              timeout: DEFAULT_GET_ALL_TIMEOUT,
+              changefeed: true,
+            });
+          }
           let bytes = 0;
           for (const mesg of messages) {
             bytes += mesg.raw?.length ?? 0;
@@ -432,6 +458,7 @@ export class CoreStream<T = any> extends EventEmitter {
             start_seq,
             messages: messages.length,
             bytes,
+            received_config: currentConfig != null,
           });
         } catch (err) {
           if (this.isClosed()) {
@@ -480,6 +507,7 @@ export class CoreStream<T = any> extends EventEmitter {
         decay: GET_ALL_RETRY_DECAY,
       },
     );
+    return currentConfig;
   };
 
   private processPersistentMessages = (

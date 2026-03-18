@@ -64,6 +64,7 @@ interface GetAllOpts {
   timeout?: number;
   maxWait?: number;
   changefeed?: boolean;
+  includeConfig?: boolean;
 }
 
 const logger = getLogger("persist:client");
@@ -580,19 +581,16 @@ class PersistStreamClient extends EventEmitter {
     return resp;
   };
 
-  // returns async iterator over arrays of stored messages.
-  // It's must safer to use getAll below, but less memory
-  // efficient.
-  async *getAllIter({
+  private requestGetAll = async ({
     start_seq,
     end_seq,
     timeout,
     maxWait,
     changefeed,
-  }: GetAllOpts = {}): AsyncGenerator<StoredMessage[], void, unknown> {
+    includeConfig,
+  }: GetAllOpts = {}) => {
     if (this.isClosed()) {
-      // done
-      return;
+      throw Error("closed");
     }
     if (changefeed) {
       if (this.changefeeds.length == 0) {
@@ -602,16 +600,41 @@ class PersistStreamClient extends EventEmitter {
       }
       this.changefeedDesired = true;
     }
-    const sub = await this.socket.requestMany(null, {
+    return await this.socket.requestMany(null, {
       headers: {
         cmd: "getAll",
         start_seq,
         end_seq,
         timeout,
         changefeed,
+        includeConfig,
       } as any,
       timeout,
       maxWait,
+    });
+  };
+
+  // returns async iterator over arrays of stored messages.
+  // It's must safer to use getAll below, but less memory
+  // efficient.
+  async *getAllIter({
+    start_seq,
+    end_seq,
+    timeout,
+    maxWait,
+    changefeed,
+    includeConfig,
+  }: GetAllOpts = {}): AsyncGenerator<StoredMessage[], void, unknown> {
+    if (this.isClosed()) {
+      return;
+    }
+    const sub = await this.requestGetAll({
+      start_seq,
+      end_seq,
+      timeout,
+      maxWait,
+      changefeed,
+      includeConfig,
     });
     if (this.isClosed()) {
       // done with this
@@ -668,6 +691,61 @@ class PersistStreamClient extends EventEmitter {
         this.changefeedActive = true;
       }
       return messages;
+    } catch (err) {
+      stats.getAllErrors += 1;
+      const code = (err as any)?.code;
+      if (code === 503) {
+        stats.getAllCode503 += 1;
+      } else if (code === 408) {
+        stats.getAllCode408 += 1;
+      }
+      throw err;
+    }
+  };
+
+  getAllWithInfo = async (
+    opts: GetAllOpts = {},
+  ): Promise<{ messages: StoredMessage[]; config?: Configuration }> => {
+    stats.getAllCalls += 1;
+    bumpCounterByStorage(getAllByStorage, this.storageKey, 1);
+    try {
+      let messages: StoredMessage[] = [];
+      let config: Configuration | undefined;
+      const sub = await this.requestGetAll({ ...opts, includeConfig: true });
+      if (this.isClosed()) {
+        throw Error("closed");
+      }
+      let seq = 0;
+      for await (const { data, headers } of sub) {
+        if (headers?.error) {
+          throw new ConatError(`${headers.error}`, {
+            code: headers.code as string | number,
+          });
+        }
+        if (headers?.config != null && config == null) {
+          config = headers.config as unknown as Configuration;
+        }
+        if (data == null || this.socket.state == "closed") {
+          break;
+        }
+        if (typeof headers?.seq != "number" || headers?.seq != seq) {
+          throw new ConatError(
+            `data dropped, probably due to load -- please try again; expected seq=${seq}, but got ${headers?.seq}`,
+            {
+              code: 503,
+            },
+          );
+        }
+        seq = headers.seq + 1;
+        messages = messages.concat(data);
+      }
+      if (this.isClosed()) {
+        throw Error("closed");
+      }
+      if (opts.changefeed) {
+        this.changefeedActive = true;
+      }
+      return { messages, config };
     } catch (err) {
       stats.getAllErrors += 1;
       const code = (err as any)?.code;

@@ -305,8 +305,18 @@ export function server({
 
 async function getAll({ stream, mesg, request, messagesThresh }) {
   let seq = 0;
+  let sentConfig = false;
+  const config = request.includeConfig ? stream.config() : undefined;
   const respond = (error?, messages?: StoredMessage[]) => {
-    mesg.respondSync(messages, { headers: { error, seq, code: error?.code } });
+    mesg.respondSync(messages, {
+      headers: {
+        error,
+        seq,
+        code: error?.code,
+        config: !sentConfig ? config : undefined,
+      },
+    });
+    sentConfig = true;
     seq += 1;
   };
 
