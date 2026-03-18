@@ -73,6 +73,19 @@ pnpm -C src bug-hunt:launchpad-canary -- \
   --json
 ```
 
+Queueing several jobs and avoiding repeated successful runs:
+
+```sh
+pnpm -C src bug-hunt:launchpad-queue -- \
+  --provider gcp \
+  --provider lambda \
+  --scenario persistence \
+  --failure-policy continue \
+  --json
+```
+
+If you rerun the same `--queue-dir`, previously successful jobs are skipped and only unfinished or failed jobs are attempted again.
+
 ## Next Expansion
 
 Once the basic canary is trustworthy, expand one scenario family at a time:

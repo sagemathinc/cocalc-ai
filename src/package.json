@@ -30,6 +30,7 @@
     "bug-hunt:diff-since-snapshot": "node ./scripts/bug-hunt/diff-since-snapshot.js",
     "bug-hunt:extract": "node ./scripts/bug-hunt/extract-open-bugs.js",
     "bug-hunt:launchpad-canary": "node ./scripts/bug-hunt/launchpad-canary.js",
+    "bug-hunt:launchpad-queue": "node ./scripts/bug-hunt/launchpad-queue.js",
     "bug-hunt:note": "node ./scripts/bug-hunt/note.js",
     "bug-hunt:preflight": "node ./scripts/bug-hunt/preflight.js",
     "bug-hunt:run-batch": "node ./scripts/bug-hunt/run-batch.js",
