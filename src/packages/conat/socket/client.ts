@@ -166,9 +166,7 @@ export class ConatSocketClient extends ConatSocketBase {
 
       //  logger.silly("run: getting subscription");
       this.lifecycleReporter?.("subscribe_start");
-      const sub = await this.client.subscribe(
-        `${this.subject}.client.${this.id}`,
-      );
+      const sub = this.client.subscribeSync(`${this.subject}.client.${this.id}`);
       this.lifecycleReporter?.("subscribe_done");
       // @ts-ignore
       if (this.state == "closed") {
