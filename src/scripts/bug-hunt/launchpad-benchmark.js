@@ -134,10 +134,14 @@ function parseArgs(argv) {
   }
 
   if (!WORKFLOWS.has(options.workflow)) {
-    usageAndExit(`--workflow must be one of ${Array.from(WORKFLOWS).join(", ")}`);
+    usageAndExit(
+      `--workflow must be one of ${Array.from(WORKFLOWS).join(", ")}`,
+    );
   }
   if (!WORKLOADS.has(options.workload)) {
-    usageAndExit(`--workload must be one of ${Array.from(WORKLOADS).join(", ")}`);
+    usageAndExit(
+      `--workload must be one of ${Array.from(WORKLOADS).join(", ")}`,
+    );
   }
   if (options.workflow === "backup" && options.srcProject) {
     usageAndExit("--src-project is not used with --workflow backup");
@@ -202,8 +206,8 @@ function buildWorkloadSpec(workload, now = Date.now()) {
     inspectBash: [
       "set -euo pipefail",
       "jupyter --version || true",
-      "du -sb \"$HOME/.local\" 2>/dev/null || true",
-      "find \"$HOME/.local\" -type f 2>/dev/null | wc -l || true",
+      'du -sb "$HOME/.local" 2>/dev/null || true',
+      'find "$HOME/.local" -type f 2>/dev/null | wc -l || true',
       `sha256sum ${shellQuote(markerPath)}`,
     ].join("\n"),
     verifyPaths: [markerPath],
@@ -216,23 +220,28 @@ function makeStep(name, startedAt, data = {}) {
     name,
     started_at: startedAt,
     finished_at: finishedAt,
-    elapsed_ms:
-      new Date(finishedAt).getTime() - new Date(startedAt).getTime(),
+    elapsed_ms: new Date(finishedAt).getTime() - new Date(startedAt).getTime(),
     ...data,
   };
 }
 
 function runProjectExec(cliBase, projectId, bash, timeoutSeconds) {
-  return runCliJson(cliBase, [
-    "project",
-    "exec",
-    "--project",
-    projectId,
-    "--bash",
-    "--timeout",
-    `${timeoutSeconds}`,
-    bash,
-  ]);
+  return runCliJson(
+    {
+      ...cliBase,
+      rpcTimeout: `${timeoutSeconds}s`,
+    },
+    [
+      "project",
+      "exec",
+      "--project",
+      projectId,
+      "--bash",
+      "--timeout",
+      `${timeoutSeconds}`,
+      bash,
+    ],
+  );
 }
 
 function verifyProjectPaths(cliBase, projectId, paths) {
@@ -279,6 +288,7 @@ async function executeLaunchpadBenchmark(options, now = Date.now(), deps = {}) {
     apiUrl: options.apiUrl,
     accountId: options.accountId,
     timeout: options.timeout,
+    rpcTimeout: options.timeout,
   };
 
   const pushStep = (name, data) => {
@@ -289,7 +299,9 @@ async function executeLaunchpadBenchmark(options, now = Date.now(), deps = {}) {
     const stepStartedAt = new Date().toISOString();
     try {
       const value = await fn();
-      result.steps.push(makeStep(name, stepStartedAt, { status: "ok", ...data }));
+      result.steps.push(
+        makeStep(name, stepStartedAt, { status: "ok", ...data }),
+      );
       return value;
     } catch (err) {
       result.steps.push(
@@ -451,7 +463,12 @@ async function executeLaunchpadBenchmark(options, now = Date.now(), deps = {}) {
       writeJson(path.join(runDir, "prepare-workload.json"), prep);
 
       const inspect = await timeStep("inspect_workload", async () =>
-        runProjectExec(cliBase, result.src_project_id, workload.inspectBash, 600),
+        runProjectExec(
+          cliBase,
+          result.src_project_id,
+          workload.inspectBash,
+          600,
+        ),
       );
       writeJson(path.join(runDir, "inspect-workload.json"), inspect);
 
@@ -535,7 +552,12 @@ async function executeLaunchpadBenchmark(options, now = Date.now(), deps = {}) {
       writeJson(path.join(runDir, "prepare-workload.json"), prep);
 
       const inspect = await timeStep("inspect_workload", async () =>
-        runProjectExec(cliBase, result.src_project_id, workload.inspectBash, 600),
+        runProjectExec(
+          cliBase,
+          result.src_project_id,
+          workload.inspectBash,
+          600,
+        ),
       );
       writeJson(path.join(runDir, "inspect-workload.json"), inspect);
 
@@ -555,7 +577,9 @@ async function executeLaunchpadBenchmark(options, now = Date.now(), deps = {}) {
         ]),
       );
       result.copy_op_id = copy.op_id ?? null;
-      verifyProjectPaths(cliBase, result.dest_project_id, [workload.markerPath]);
+      verifyProjectPaths(cliBase, result.dest_project_id, [
+        workload.markerPath,
+      ]);
       result.ok = true;
     }
   } finally {
