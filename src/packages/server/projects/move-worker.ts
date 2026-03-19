@@ -77,6 +77,24 @@ type MoveClaimCandidateRecord = LroSummary & {
   project_region: string | null;
 };
 
+export function createNonOverlappingAsyncRunner(
+  run: () => Promise<void>,
+): () => Promise<boolean> {
+  let active: Promise<void> | undefined;
+  return async () => {
+    if (active) return false;
+    active = (async () => {
+      try {
+        await run();
+      } finally {
+        active = undefined;
+      }
+    })();
+    await active;
+    return true;
+  };
+}
+
 function publishSummary(summary: LroSummary) {
   return publishLroSummary({
     scope_type: summary.scope_type,
@@ -586,7 +604,7 @@ export function startMoveLroWorker({
     max_parallel: maxParallel ?? "dynamic",
   });
 
-  const tick = async () => {
+  const tick = createNonOverlappingAsyncRunner(async () => {
     let effectiveMaxParallel = maxParallel;
     if (effectiveMaxParallel == null) {
       try {
@@ -625,7 +643,7 @@ export function startMoveLroWorker({
           inFlight = Math.max(0, inFlight - 1);
         });
     }
-  };
+  });
 
   const timer = setInterval(() => {
     void tick();
