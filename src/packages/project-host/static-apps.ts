@@ -27,6 +27,29 @@ const PUBLIC_WEB_BASE_URL_CACHE = new TTL<string, string | null>({
   max: 1,
   ttl: 30_000,
 });
+const MAX_STATIC_MEMORY_FILE_BYTES = 32 * 1024 * 1024;
+const MAX_PUBLIC_VIEWER_RENDERABLE_FILE_BYTES = 16 * 1024 * 1024;
+const MAX_PUBLIC_VIEWER_MANIFEST_BYTES = 1 * 1024 * 1024;
+
+/*
+Security and abuse-control invariants for host-side static serving:
+
+1. Never serve by raw host path after resolving static.root.
+   We first resolve static.root through the per-project sandbox, then create a
+   second read-only sandbox rooted at that directory. Every stat/read for the
+   request must go through that sub-sandbox. This is what keeps symlinks and
+   path tricks inside the published subtree instead of merely inside the wider
+   project mount.
+
+2. Do not "optimize" this back to express.static/createReadStream on host
+   paths unless the sandbox layer grows a verified streaming API. A direct host
+   stream is exactly how symlink escapes get reintroduced.
+
+3. Because we currently read through the sandbox API instead of verified
+   streaming, every in-memory read must be size bounded. Oversized manifests or
+   viewer payloads must fail closed with 413 instead of letting a user turn the
+   project-host into a large sparse-file reader.
+*/
 
 interface StaticResolvedPath {
   relativePath: string;
@@ -415,6 +438,41 @@ function buildPublicFileHeaders(
   };
 }
 
+function writeFileTooLarge(
+  res: http.ServerResponse,
+  {
+    maxBytes,
+    extraHeaders,
+  }: {
+    maxBytes: number;
+    extraHeaders?: Record<string, string>;
+  },
+): void {
+  res.writeHead(413, {
+    "Content-Type": "text/plain; charset=utf-8",
+    ...(extraHeaders ?? {}),
+  });
+  res.end(`File exceeds maximum supported size of ${maxBytes} bytes\n`);
+}
+
+function getStaticReadLimit({
+  integration,
+  relativePath,
+}: {
+  integration: AppStaticIntegrationSpec | undefined;
+  relativePath: string;
+}): number {
+  if (
+    integration?.mode === COCALC_PUBLIC_VIEWER_MODE &&
+    isPublicViewerRenderablePath(relativePath, {
+      file_types: integration.file_types,
+    })
+  ) {
+    return MAX_PUBLIC_VIEWER_RENDERABLE_FILE_BYTES;
+  }
+  return MAX_STATIC_MEMORY_FILE_BYTES;
+}
+
 async function resolveStaticRoot(
   project_id: string,
   root: string,
@@ -516,6 +574,7 @@ async function writeResolvedStaticFile({
   resolved,
   cacheControl,
   extraHeaders,
+  maxBytes,
 }: {
   req: http.IncomingMessage;
   res: http.ServerResponse;
@@ -523,10 +582,19 @@ async function writeResolvedStaticFile({
   resolved: StaticResolvedFile;
   cacheControl?: string;
   extraHeaders?: Record<string, string>;
+  maxBytes?: number;
 }): Promise<void> {
   const { fsPath, stat: info } = resolved;
   const ext = path.extname(fsPath).toLowerCase();
   const contentType = MIME_BY_EXT[ext] ?? "application/octet-stream";
+  const maxFileBytes = maxBytes ?? MAX_STATIC_MEMORY_FILE_BYTES;
+  if (Number(info.size) > maxFileBytes) {
+    writeFileTooLarge(res, {
+      maxBytes: maxFileBytes,
+      extraHeaders,
+    });
+    return;
+  }
   const rangeHeader = req.headers.range;
   let start = 0;
   let end = info.size - 1;
@@ -704,6 +772,10 @@ export async function maybeHandleStaticAppRequest({
       },
       cacheControl: match.spec.static?.cache_control,
       extraHeaders: fileHeaders,
+      maxBytes: getStaticReadLimit({
+        integration,
+        relativePath: pathInfo.relativePath,
+      }),
     });
     return true;
   }
@@ -750,6 +822,10 @@ export async function maybeHandleStaticAppRequest({
       resolved: indexFile,
       cacheControl: match.spec.static?.cache_control,
       extraHeaders: fileHeaders,
+      maxBytes: getStaticReadLimit({
+        integration,
+        relativePath: indexRelativePath,
+      }),
     });
     return true;
   }
@@ -769,6 +845,13 @@ export async function maybeHandleStaticAppRequest({
   });
   if (!manifestFile) {
     writeNotFound(res, extraHtmlHeaders);
+    return true;
+  }
+  if (Number(manifestFile.stat.size) > MAX_PUBLIC_VIEWER_MANIFEST_BYTES) {
+    writeFileTooLarge(res, {
+      maxBytes: MAX_PUBLIC_VIEWER_MANIFEST_BYTES,
+      extraHeaders: extraHtmlHeaders,
+    });
     return true;
   }
 
