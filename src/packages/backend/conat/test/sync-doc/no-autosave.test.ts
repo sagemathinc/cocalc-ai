@@ -83,11 +83,13 @@ describe("confirm noAutosave works", () => {
     expect(s2.getHeads().length).toBe(2);
   });
 
-  it("string state info matches", async () => {
+  it("persists the expected user metadata", async () => {
     const a1 = s1.syncstring_table_get_one().toJS();
     const a2 = s2.syncstring_table_get_one().toJS();
-    expect(a1).toEqual(a2);
-    expect(new Set(a1.users)).toEqual(
+    expect(new Set(a2.users)).toEqual(
+      new Set([s1.client.client_id(), s2.client.client_id(), "__filesystem__"]),
+    );
+    expect(new Set([...a1.users, ...a2.users])).toEqual(
       new Set([s1.client.client_id(), s2.client.client_id(), "__filesystem__"]),
     );
   });

@@ -13,6 +13,9 @@ import type {
   DeleteOperation,
   StoredMessage,
   PartialInventory,
+  StreamCheckpoints,
+  CheckpointUpdate,
+  StreamCheckpoint,
 } from "./storage";
 export { StoredMessage, StorageOptions };
 import { persistSubject, SERVICE, type User } from "./util";
@@ -22,6 +25,7 @@ import { EventEmitter } from "events";
 import { getLogger } from "@cocalc/conat/client";
 import { until } from "@cocalc/util/async-utils";
 import { getPersistServerId } from "./load-balancer";
+import type { JSONValue } from "@cocalc/util/types";
 
 let DEFAULT_RECONNECT_DELAY = 1500;
 let DEFAULT_RECONNECT_DELAY_MAX = 30_000;
@@ -60,11 +64,14 @@ export function setDefaultRecoveryTimeout(timeout: number) {
 
 interface GetAllOpts {
   start_seq?: number;
+  start_checkpoint?: string;
   end_seq?: number;
   timeout?: number;
   maxWait?: number;
   changefeed?: boolean;
   includeConfig?: boolean;
+  includeMetadata?: boolean;
+  includeCheckpoints?: boolean;
 }
 
 type PersistClientInitReporter = (
@@ -76,6 +83,23 @@ const logger = getLogger("persist:client");
 
 export type ChangefeedEvent = (SetOperation | DeleteOperation)[];
 export type Changefeed = EventIterator<ChangefeedEvent>;
+
+export interface GetAllInfo<
+  TMetadata extends JSONValue = JSONValue,
+  TCheckpointData extends JSONValue = JSONValue,
+> {
+  messages: StoredMessage[];
+  config?: Configuration;
+  metadata?: TMetadata;
+  checkpoints?: Record<
+    string,
+    {
+      seq: number;
+      time: number;
+      data?: TCheckpointData;
+    }
+  >;
+}
 
 type CounterByStorage = Map<string, number>;
 
@@ -481,6 +505,7 @@ class PersistStreamClient extends EventEmitter {
     ttl,
     previousSeq,
     msgID,
+    checkpoint,
     messageData,
     timeout,
   }: SetOptions & { timeout?: number }): Promise<{
@@ -498,6 +523,7 @@ class PersistStreamClient extends EventEmitter {
           ttl,
           previousSeq,
           msgID,
+          checkpoint,
           timeout,
         },
         timeout,
@@ -569,6 +595,100 @@ class PersistStreamClient extends EventEmitter {
     );
   };
 
+  getMetadata = async ({
+    timeout,
+  }: {
+    timeout?: number;
+  } = {}): Promise<JSONValue | undefined> => {
+    return this.checkForError(
+      await this.socket.request(null, {
+        headers: {
+          cmd: "metadata",
+          timeout,
+        } as any,
+        timeout,
+      }),
+    );
+  };
+
+  setMetadata = async (
+    metadata?: JSONValue,
+    { timeout }: { timeout?: number } = {},
+  ): Promise<JSONValue | undefined> => {
+    return this.checkForError(
+      await this.socket.request(metadata ?? null, {
+        headers: {
+          cmd: "setMetadata",
+          timeout,
+        } as any,
+        timeout,
+      }),
+    );
+  };
+
+  patchMetadata = async (
+    delta: JSONValue,
+    { timeout }: { timeout?: number } = {},
+  ): Promise<JSONValue | undefined> => {
+    return this.checkForError(
+      await this.socket.request(delta, {
+        headers: {
+          cmd: "patchMetadata",
+          timeout,
+        } as any,
+        timeout,
+      }),
+    );
+  };
+
+  getCheckpoints = async ({
+    timeout,
+  }: {
+    timeout?: number;
+  } = {}): Promise<StreamCheckpoints> => {
+    return this.checkForError(
+      await this.socket.request(null, {
+        headers: {
+          cmd: "checkpoints",
+          timeout,
+        } as any,
+        timeout,
+      }),
+    );
+  };
+
+  setCheckpoint = async (
+    checkpoint: CheckpointUpdate,
+    { timeout }: { timeout?: number } = {},
+  ): Promise<StreamCheckpoint> => {
+    return this.checkForError(
+      await this.socket.request(checkpoint, {
+        headers: {
+          cmd: "setCheckpoint",
+          timeout,
+        } as any,
+        timeout,
+      }),
+    );
+  };
+
+  deleteCheckpoint = async (
+    name: string,
+    { timeout }: { timeout?: number } = {},
+  ): Promise<void> => {
+    this.checkForError(
+      await this.socket.request(null, {
+        headers: {
+          cmd: "deleteCheckpoint",
+          name,
+          timeout,
+        } as any,
+        timeout,
+      }),
+      true,
+    );
+  };
+
   inventory = async (timeout?): Promise<PartialInventory> => {
     return this.checkForError(
       await this.socket.request(null, {
@@ -603,11 +723,14 @@ class PersistStreamClient extends EventEmitter {
 
   private requestGetAll = async ({
     start_seq,
+    start_checkpoint,
     end_seq,
     timeout,
     maxWait,
     changefeed,
     includeConfig,
+    includeMetadata,
+    includeCheckpoints,
   }: GetAllOpts = {}) => {
     if (this.isClosed()) {
       throw Error("closed");
@@ -622,27 +745,36 @@ class PersistStreamClient extends EventEmitter {
     }
     this.emitInitPhase("persist_request_many_start", {
       start_seq,
+      start_checkpoint,
       end_seq,
       changefeed,
       include_config: includeConfig,
+      include_metadata: includeMetadata,
+      include_checkpoints: includeCheckpoints,
     });
     const sub = await this.socket.requestMany(null, {
       headers: {
         cmd: "getAll",
         start_seq,
+        start_checkpoint,
         end_seq,
         timeout,
         changefeed,
         includeConfig,
+        includeMetadata,
+        includeCheckpoints,
       } as any,
       timeout,
       maxWait,
     });
     this.emitInitPhase("persist_request_many_subscribed", {
       start_seq,
+      start_checkpoint,
       end_seq,
       changefeed,
       include_config: includeConfig,
+      include_metadata: includeMetadata,
+      include_checkpoints: includeCheckpoints,
     });
     return sub;
   };
@@ -652,22 +784,28 @@ class PersistStreamClient extends EventEmitter {
   // efficient.
   async *getAllIter({
     start_seq,
+    start_checkpoint,
     end_seq,
     timeout,
     maxWait,
     changefeed,
     includeConfig,
+    includeMetadata,
+    includeCheckpoints,
   }: GetAllOpts = {}): AsyncGenerator<StoredMessage[], void, unknown> {
     if (this.isClosed()) {
       return;
     }
     const sub = await this.requestGetAll({
       start_seq,
+      start_checkpoint,
       end_seq,
       timeout,
       maxWait,
       changefeed,
       includeConfig,
+      includeMetadata,
+      includeCheckpoints,
     });
     if (this.isClosed()) {
       // done with this
@@ -752,15 +890,20 @@ class PersistStreamClient extends EventEmitter {
     }
   };
 
-  getAllWithInfo = async (
-    opts: GetAllOpts = {},
-  ): Promise<{ messages: StoredMessage[]; config?: Configuration }> => {
+  getAllWithInfo = async (opts: GetAllOpts = {}): Promise<GetAllInfo> => {
     stats.getAllCalls += 1;
     bumpCounterByStorage(getAllByStorage, this.storageKey, 1);
     try {
       let messages: StoredMessage[] = [];
       let config: Configuration | undefined;
-      const sub = await this.requestGetAll({ ...opts, includeConfig: true });
+      let metadata: JSONValue | undefined;
+      let checkpoints: StreamCheckpoints | undefined;
+      const sub = await this.requestGetAll({
+        ...opts,
+        includeConfig: true,
+        includeMetadata: true,
+        includeCheckpoints: true,
+      });
       if (this.isClosed()) {
         throw Error("closed");
       }
@@ -775,6 +918,12 @@ class PersistStreamClient extends EventEmitter {
         }
         if (headers?.config != null && config == null) {
           config = headers.config as unknown as Configuration;
+        }
+        if (headers?.metadata !== undefined && metadata === undefined) {
+          metadata = headers.metadata as JSONValue;
+        }
+        if (headers?.checkpoints !== undefined && checkpoints === undefined) {
+          checkpoints = headers.checkpoints as unknown as StreamCheckpoints;
         }
         if (data == null || this.socket.state == "closed") {
           break;
@@ -795,6 +944,8 @@ class PersistStreamClient extends EventEmitter {
             seq: headers.seq,
             chunk_messages: data.length,
             received_config: config != null,
+            received_metadata: metadata !== undefined,
+            received_checkpoints: checkpoints != null,
           });
         }
         messages = messages.concat(data);
@@ -809,8 +960,10 @@ class PersistStreamClient extends EventEmitter {
         chunks,
         messages: messages.length,
         received_config: config != null,
+        received_metadata: metadata !== undefined,
+        received_checkpoints: checkpoints != null,
       });
-      return { messages, config };
+      return { messages, config, metadata, checkpoints };
     } catch (err) {
       stats.getAllErrors += 1;
       const code = (err as any)?.code;
@@ -881,6 +1034,7 @@ export interface SetOptions {
   ttl?: number;
   previousSeq?: number;
   msgID?: string;
+  checkpoint?: CheckpointUpdate;
   timeout?: number;
 }
 

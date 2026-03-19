@@ -708,6 +708,13 @@ function makeCommentId(): string {
   return `gitc-${Date.now().toString(36)}-${rand}`;
 }
 
+export function diffLineNumberColumnWidth(maxLine: number): string {
+  const safeMaxLine = Math.max(0, Math.floor(maxLine || 0));
+  const digits = Math.max(1, `${safeMaxLine}`.length);
+  const chars = Math.max(3, digits);
+  return `calc(${chars}ch + 12px)`;
+}
+
 function isEditableEventTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
   if (target.isContentEditable) return true;
@@ -839,8 +846,7 @@ export const DiffBlock = memo(function DiffBlock({
         typeof meta.newLineNumber === "number" ? meta.newLineNumber : 0;
       return Math.max(max, oldVal, newVal);
     }, 0);
-    const digits = Math.max(1, `${Math.floor(maxLine)}`.length);
-    return Math.max(36, digits * 8 + 12);
+    return diffLineNumberColumnWidth(maxLine);
   }, [lineMetas]);
   const highlightedByLine = useMemo(
     () => highlightPrismLines(lineMetas, languageHint),

@@ -43,6 +43,7 @@ export interface SyncTableOptions {
   limits?: Partial<KVLimits> | Partial<FilteredStreamLimitOptions>;
   desc?: any;
   start_seq?: number;
+  start_checkpoint?: string;
   noInventory?: boolean;
   ephemeral?: boolean;
   noAutosave?: boolean;

@@ -39,6 +39,9 @@ import type {
   DeleteOperation,
   StoredMessage,
   Configuration,
+  StreamCheckpoints,
+  CheckpointUpdate,
+  StreamCheckpoint,
 } from "@cocalc/conat/persist/storage";
 import type { Changefeed } from "@cocalc/conat/persist/client";
 export type { Configuration };
@@ -48,11 +51,13 @@ import {
   type PersistStreamClient,
   stream as persist,
   type SetOptions,
+  type GetAllInfo,
 } from "@cocalc/conat/persist/client";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import { until } from "@cocalc/util/async-utils";
 import { type PartialInventory } from "@cocalc/conat/persist/storage";
 import { getLogger } from "@cocalc/conat/client";
+import type { JSONValue } from "@cocalc/util/types";
 
 const logger = getLogger("sync:core-stream");
 
@@ -144,6 +149,8 @@ export interface CoreStreamOptions {
   config?: Partial<Configuration>;
   // only load historic messages starting at the given seq number.
   start_seq?: number;
+  // optionally start bootstrap from the seq stored in this named checkpoint.
+  start_checkpoint?: string;
 
   ephemeral?: boolean;
   sync?: boolean;
@@ -208,7 +215,10 @@ export class CoreStream<T = any> extends EventEmitter {
 
   private pendingConfigOptions?: Partial<Configuration>;
   private currentConfig?: Configuration;
+  private currentMetadata?: JSONValue;
+  private currentCheckpoints?: StreamCheckpoints;
   private _start_seq?: number;
+  private _start_checkpoint?: string;
 
   // don't do "this.raw=" or "this.messages=" anywhere in this class
   // because dstream directly references the public raw/messages.
@@ -243,6 +253,7 @@ export class CoreStream<T = any> extends EventEmitter {
     host_id,
     config,
     start_seq,
+    start_checkpoint,
     ephemeral = false,
     sync,
     client,
@@ -266,6 +277,7 @@ export class CoreStream<T = any> extends EventEmitter {
       sync,
     };
     this._start_seq = start_seq;
+    this._start_checkpoint = start_checkpoint;
     this.pendingConfigOptions = config;
     this.initPhaseReporter = initPhaseReporter;
     return new Proxy(this, {
@@ -321,14 +333,17 @@ export class CoreStream<T = any> extends EventEmitter {
         console.log(`WARNING: persistent stream issue -- ${err}`);
       }
     });
-    const bootstrapConfig = await this.getAllFromPersist({
+    const bootstrap = await this.getAllFromPersist({
       start_seq: this._start_seq,
+      start_checkpoint: this._start_checkpoint,
       noEmit: true,
       includeConfig: !this.hasPendingConfigChanges(),
     });
-    if (!this.hasPendingConfigChanges() && bootstrapConfig != null) {
-      this.currentConfig = bootstrapConfig;
+    if (!this.hasPendingConfigChanges() && bootstrap.config != null) {
+      this.currentConfig = bootstrap.config;
     }
+    this.currentMetadata = bootstrap.metadata;
+    this.currentCheckpoints = bootstrap.checkpoints;
 
     if (this.hasPendingConfigChanges()) {
       await until(
@@ -377,6 +392,54 @@ export class CoreStream<T = any> extends EventEmitter {
     return this.currentConfig;
   };
 
+  getMetadata = (): JSONValue | undefined => {
+    return this.currentMetadata;
+  };
+
+  setMetadata = async (
+    metadata?: JSONValue,
+  ): Promise<JSONValue | undefined> => {
+    this.currentMetadata = await this.persistClient.setMetadata(metadata);
+    return this.currentMetadata;
+  };
+
+  patchMetadata = async (delta: JSONValue): Promise<JSONValue | undefined> => {
+    this.currentMetadata = await this.persistClient.patchMetadata(delta);
+    return this.currentMetadata;
+  };
+
+  getCheckpoints = (): StreamCheckpoints => {
+    return { ...(this.currentCheckpoints ?? {}) };
+  };
+
+  getCheckpoint = (name: string) => {
+    return this.currentCheckpoints?.[name];
+  };
+
+  setCheckpoint = async (
+    checkpoint: CheckpointUpdate,
+  ): Promise<StreamCheckpoint> => {
+    const value = await this.persistClient.setCheckpoint(checkpoint);
+    this.currentCheckpoints = {
+      ...(this.currentCheckpoints ?? {}),
+      [checkpoint.name]: {
+        seq: value.seq,
+        time: value.time,
+        data: value.data,
+      },
+    };
+    return value;
+  };
+
+  deleteCheckpoint = async (name: string): Promise<void> => {
+    await this.persistClient.deleteCheckpoint(name);
+    if (this.currentCheckpoints != null) {
+      const next = { ...this.currentCheckpoints };
+      delete next[name];
+      this.currentCheckpoints = next;
+    }
+  };
+
   private isClosed = () => {
     return this.client === undefined;
   };
@@ -411,19 +474,21 @@ export class CoreStream<T = any> extends EventEmitter {
   // or (3) there is a fatal failure, e.g., lack of permissions.
   private getAllFromPersist = async ({
     start_seq = 0,
+    start_checkpoint,
     noEmit,
     includeConfig,
   }: {
     start_seq?: number;
+    start_checkpoint?: string;
     noEmit?: boolean;
     includeConfig?: boolean;
-  } = {}): Promise<Configuration | undefined> => {
+  } = {}): Promise<Pick<GetAllInfo, "config" | "metadata" | "checkpoints">> => {
     if (this.storage == null) {
       throw Error("bug -- storage must be set");
     }
     stats.syncFromPersistRuns += 1;
     let attempt = 0;
-    let currentConfig: Configuration | undefined;
+    let bootstrap: Pick<GetAllInfo, "config" | "metadata" | "checkpoints"> = {};
     await until(
       async () => {
         attempt += 1;
@@ -450,20 +515,27 @@ export class CoreStream<T = any> extends EventEmitter {
           this.emitInitPhase("persist_get_all_start", {
             attempt,
             start_seq,
+            start_checkpoint,
             changefeed: true,
             include_config: includeConfig,
           });
           if (includeConfig) {
             const result = await this.persistClient.getAllWithInfo({
               start_seq,
+              start_checkpoint,
               timeout: DEFAULT_GET_ALL_TIMEOUT,
               changefeed: true,
             });
             messages = result.messages;
-            currentConfig = result.config;
+            bootstrap = {
+              config: result.config,
+              metadata: result.metadata,
+              checkpoints: result.checkpoints,
+            };
           } else {
             messages = await this.persistClient.getAll({
               start_seq,
+              start_checkpoint,
               timeout: DEFAULT_GET_ALL_TIMEOUT,
               changefeed: true,
             });
@@ -475,9 +547,12 @@ export class CoreStream<T = any> extends EventEmitter {
           this.emitInitPhase("persist_get_all_done", {
             attempt,
             start_seq,
+            start_checkpoint,
             messages: messages.length,
             bytes,
-            received_config: currentConfig != null,
+            received_config: bootstrap.config != null,
+            received_metadata: bootstrap.metadata !== undefined,
+            received_checkpoints: bootstrap.checkpoints != null,
           });
         } catch (err) {
           if (this.isClosed()) {
@@ -526,7 +601,7 @@ export class CoreStream<T = any> extends EventEmitter {
         decay: GET_ALL_RETRY_DECAY,
       },
     );
-    return currentConfig;
+    return bootstrap;
   };
 
   private processPersistentMessages = (
@@ -810,6 +885,7 @@ export class CoreStream<T = any> extends EventEmitter {
       messageData: md,
       previousSeq: options?.previousSeq,
       msgID: options?.msgID,
+      checkpoint: options?.checkpoint,
       ttl: options?.ttl,
       timeout: options?.timeout,
     });
@@ -858,6 +934,7 @@ export class CoreStream<T = any> extends EventEmitter {
         messageData: md,
         previousSeq: options?.previousSeq,
         msgID: options?.msgID,
+        checkpoint: options?.checkpoint,
         ttl: options?.ttl,
       });
     }
@@ -1206,6 +1283,7 @@ export interface PublishOptions {
   // is set on this persistent stream, then
   // this message will be deleted after the given amount of time (in ms).
   ttl?: number;
+  checkpoint?: CheckpointUpdate;
   timeout?: number;
 }
 

@@ -35,6 +35,7 @@ describe("basic watching of file on disk happens automatically", () => {
     });
     await once(s, "ready");
     expect(s.to_str()).toEqual("init");
+    expect(s.has_unsaved_changes()).toBe(false);
   });
 
   it("change file on disk and it automatically updates with no explicit call needed", async () => {
@@ -84,6 +85,7 @@ describe("has unsaved changes", () => {
     });
     await once(s1, "ready");
     // definitely has unsaved changes, since it doesn't even exist
+    await wait({ until: () => s1.has_unsaved_changes() === true });
     expect(s1.has_unsaved_changes()).toBe(true);
 
     s2 = client2.sync.string({
@@ -96,6 +98,7 @@ describe("has unsaved changes", () => {
     expect(s1.to_str()).toBe("");
     expect(s2.to_str()).toBe("");
     expect(s1 === s2).toBe(false);
+    await wait({ until: () => s2.has_unsaved_changes() === true });
     expect(s2.has_unsaved_changes()).toBe(true);
   });
 

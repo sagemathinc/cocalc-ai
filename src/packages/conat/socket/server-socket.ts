@@ -21,6 +21,7 @@ export class ServerSocket extends EventEmitter {
   private conatSocket: ConatSocketServer;
   public readonly id: string;
   public lastPing = Date.now();
+  public connectWaitForInterestMs = 0;
 
   private queuedWrites: { data: any; headers?: Headers }[] = [];
   public readonly clientSubject: string;

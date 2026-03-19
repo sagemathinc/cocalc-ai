@@ -208,6 +208,7 @@ export function server({
               encoding: mesg.encoding,
               headers: request.headers,
               msgID: request.msgID,
+              checkpoint: request.checkpoint,
             }),
           );
         } else if (request.cmd == "setMany") {
@@ -222,6 +223,7 @@ export function server({
             previousSeq,
             ttl,
             msgID,
+            checkpoint,
             messageData,
           } of mesg.data as SetOptions[]) {
             try {
@@ -232,6 +234,7 @@ export function server({
                   ttl,
                   headers: messageData.headers,
                   msgID,
+                  checkpoint,
                   raw: messageData.raw,
                   encoding: messageData.encoding,
                 }),
@@ -245,6 +248,19 @@ export function server({
           mesg.respondSync(stream.delete(request));
         } else if (request.cmd == "config") {
           mesg.respondSync(stream.config(request.config));
+        } else if (request.cmd == "metadata") {
+          mesg.respondSync(stream.getMetadata());
+        } else if (request.cmd == "setMetadata") {
+          mesg.respondSync(stream.setMetadata(mesg.data));
+        } else if (request.cmd == "patchMetadata") {
+          mesg.respondSync(stream.patchMetadata(mesg.data));
+        } else if (request.cmd == "checkpoints") {
+          mesg.respondSync(stream.getCheckpoints());
+        } else if (request.cmd == "setCheckpoint") {
+          mesg.respondSync(stream.setCheckpoint(mesg.data));
+        } else if (request.cmd == "deleteCheckpoint") {
+          stream.deleteCheckpoint(request.name);
+          mesg.respondSync(null);
         } else if (request.cmd == "inventory") {
           mesg.respondSync(stream.inventory());
         } else if (request.cmd == "get") {
@@ -306,7 +322,23 @@ export function server({
 async function getAll({ stream, mesg, request, messagesThresh }) {
   let seq = 0;
   let sentConfig = false;
+  let sentMetadata = false;
+  let sentCheckpoints = false;
   const config = request.includeConfig ? stream.config() : undefined;
+  const metadata = request.includeMetadata ? stream.getMetadata() : undefined;
+  const checkpoints = request.includeCheckpoints
+    ? stream.getCheckpoints()
+    : undefined;
+  const checkpointSeq =
+    request.start_checkpoint != null
+      ? stream.getCheckpoint(request.start_checkpoint)?.seq
+      : undefined;
+  const startSeq =
+    request.start_seq == null
+      ? checkpointSeq
+      : checkpointSeq == null
+        ? request.start_seq
+        : Math.max(request.start_seq, checkpointSeq);
   const respond = (error?, messages?: StoredMessage[]) => {
     mesg.respondSync(messages, {
       headers: {
@@ -314,9 +346,13 @@ async function getAll({ stream, mesg, request, messagesThresh }) {
         seq,
         code: error?.code,
         config: !sentConfig ? config : undefined,
+        metadata: !sentMetadata ? metadata : undefined,
+        checkpoints: !sentCheckpoints ? checkpoints : undefined,
       },
     });
     sentConfig = true;
+    sentMetadata = true;
+    sentCheckpoints = true;
     seq += 1;
   };
 
@@ -324,7 +360,7 @@ async function getAll({ stream, mesg, request, messagesThresh }) {
     const messages: StoredMessage[] = [];
     let size = 0;
     for (const message of stream.getAll({
-      start_seq: request.start_seq,
+      start_seq: startSeq,
       end_seq: request.end_seq,
     })) {
       messages.push(message);
