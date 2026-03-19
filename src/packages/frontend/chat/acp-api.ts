@@ -268,6 +268,10 @@ export async function processAcpLLM({
   };
 
   const sessionKey = effectiveSessionId ?? thread_id;
+  const ensureChatStatePersisted = async (): Promise<void> => {
+    if (typeof syncdb?.save !== "function") return;
+    await syncdb.save();
+  };
   const promptForRunWithLoop =
     loopConfig?.enabled === true
       ? maybeDecorateLoopPrompt({
@@ -304,6 +308,7 @@ export async function processAcpLLM({
   });
   let acknowledged = false;
   try {
+    await ensureChatStatePersisted();
     let lastError: unknown;
     for (let attempt = 1; attempt <= ACP_ACK_MAX_ATTEMPTS; attempt += 1) {
       acknowledged = false;

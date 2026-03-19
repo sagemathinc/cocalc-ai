@@ -34,6 +34,7 @@ function buildNotebookErrorPrompt(opts: {
   const parts = [
     "Investigate and fix this Jupyter notebook error.",
     `Notebook path: ${opts.path}`,
+    "Treat the live in-memory notebook state as the source of truth, even if the file on disk is stale.",
     "Explain the root cause briefly, propose a fix, and apply changes when possible. Ask before installing or upgrading packages and before destructive actions.",
     "Traceback:",
     "```text",
@@ -61,7 +62,6 @@ export default function LLMError({ style, traceback, input }: Props) {
     setRouting(true);
     setRoutingError("");
     try {
-      await Promise.resolve(frameActions?.save?.(true));
       const sent = await submitNavigatorPromptToCurrentThread({
         project_id,
         path,

@@ -19,6 +19,7 @@ import {
   Input,
   Popover,
   Radio,
+  Select,
   Space,
   Tooltip,
 } from "antd";
@@ -26,18 +27,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { defineMessage, useIntl } from "react-intl";
 import { useDebouncedCallback } from "use-debounce";
 
-import { useLanguageModelSetting } from "@cocalc/frontend/account/useLanguageModelSetting";
 import { Button as BSButton } from "@cocalc/frontend/antd-bootstrap";
-import {
-  CSS,
-  redux,
-  useAsyncEffect,
-  useTypedRedux,
-} from "@cocalc/frontend/app-framework";
+import { CSS, useAsyncEffect } from "@cocalc/frontend/app-framework";
 import {
   Icon,
   IconName,
-  LLMNameLink,
   Paragraph,
   Text,
   Title,
@@ -46,20 +40,24 @@ import {
 import AIAvatar from "@cocalc/frontend/components/ai-avatar";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import { IntlMessage, labels } from "@cocalc/frontend/i18n";
-import { LLMCostEstimation } from "@cocalc/frontend/misc/llm-cost-estimation";
 import * as LS from "@cocalc/frontend/misc/local-storage-typed";
 import track from "@cocalc/frontend/user-tracking";
-import { LanguageModel, getMaxTokens } from "@cocalc/util/db-schema/llm-utils";
+import { DEFAULT_CODEX_MODELS } from "@cocalc/util/ai/codex";
 import { capitalize } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 import { isChatPath } from "@cocalc/frontend/chat/paths";
 import { BaseEditorActions as Actions } from "../base-editor/actions-base";
 import { AI_ASSIST_TAG } from "./consts";
 import Context from "./context";
-import { Options, createChatMessage } from "./create-chat";
+import {
+  DEFAULT_ASSISTANT_CODEX_MODEL,
+  Options,
+  createChatMessage,
+  getAssistantMaxTokens,
+  resolveAssistantCodexModel,
+} from "./create-chat";
 import { useLLMHistory } from "./use-llm-history";
 import { LLMHistorySelector } from "./llm-history-selector";
-import LLMSelector, { modelToName } from "./llm-selector";
 import TitleBarButtonTour from "./llm-assistant-tour";
 
 import type { Scope } from "./types";
@@ -228,7 +226,6 @@ export default function LanguageModelTitleBarButton({
 }: Props) {
   const noContext = isChatPath(path);
   const intl = useIntl();
-  const is_cocalc_com = useTypedRedux("customize", "is_cocalc_com");
   const [error, setError] = useState<string>("");
   const [command, setCommandVal] = useState<string>("");
   const frameType = actions._get_frame_type(id);
@@ -241,7 +238,6 @@ export default function LanguageModelTitleBarButton({
   const [scope, setScope] = useState<Scope>(() =>
     showDialog ? getScope(id, actions) : "all",
   );
-  const [tokens, setTokens] = useState<number>(0);
   const [description, setDescription] = useState<string>(
     showOptions ? "" : getCustomDescription(frameType),
   );
@@ -254,9 +250,23 @@ export default function LanguageModelTitleBarButton({
   const contextRef = useRef<any>(null);
   const submitRef = useRef<any>(null);
   const inputRef = useRef<HTMLElement>(null);
+  const submittingRef = useRef(false);
 
-  const [model, setModel] = useLanguageModelSetting(project_id);
+  // Use a dedicated key for the Codex-only assistant so older generic/legacy
+  // model picks do not override the new default assistant model.
+  const modelLsKey = `AI-CODEX-ASSISTANT-MODEL:v1:${project_id}`;
+  const [model, setModelState] = useState<string>(() =>
+    resolveAssistantCodexModel(
+      LS.get(modelLsKey) ?? DEFAULT_ASSISTANT_CODEX_MODEL,
+    ),
+  );
   const { prompts: historyPrompts, addPrompt } = useLLMHistory("general");
+
+  function setModel(model: string) {
+    const next = resolveAssistantCodexModel(model);
+    setModelState(next);
+    LS.set(modelLsKey, next);
+  }
 
   function setPreset(preset: Preset) {
     setTag(preset.tag);
@@ -286,6 +296,7 @@ export default function LanguageModelTitleBarButton({
     if (showDialog) {
       setScope(getScope(id, actions));
       restoreCommand();
+      setModel(LS.get(modelLsKey) ?? DEFAULT_ASSISTANT_CODEX_MODEL);
       setTimeout(() => inputRef.current?.focus(), 10);
     }
   }, [showDialog]);
@@ -327,7 +338,6 @@ export default function LanguageModelTitleBarButton({
         });
 
       setMessage(message);
-      setTokens(tokens);
 
       if (tokens == 0 && message == "") {
         setTruncated(null);
@@ -345,7 +355,7 @@ export default function LanguageModelTitleBarButton({
       );
       setTruncatedReason(
         `Input truncated from ${inputOriginalLen} to ${inputTruncatedLen} characters.${
-          getMaxTokens(model) < 5000 // cutoff between GPT 3.5 and GPT 4
+          getAssistantMaxTokens(model) < 5000
             ? "  Try using a different model with a bigger context size."
             : ""
         }`,
@@ -368,7 +378,7 @@ export default function LanguageModelTitleBarButton({
   // END OF HOOKS
 
   if (
-    !redux
+    !actions.redux
       .getStore("projects")
       .hasLanguageModelEnabled(project_id, AI_ASSIST_TAG)
   ) {
@@ -390,19 +400,28 @@ export default function LanguageModelTitleBarButton({
   };
 
   const doIt = async () => {
+    if (querying || submittingRef.current) {
+      return;
+    }
+    submittingRef.current = true;
     setShowPreview(false);
     const options = getQueryLLMOptions();
     if (options == null) {
+      submittingRef.current = false;
       return;
     }
 
     // Add prompt to history
     addPrompt(command);
 
-    await queryLLM(options);
     setShowDialog(false);
     setError("");
-    actions.focus();
+    try {
+      await queryLLM(options);
+      actions.focus();
+    } finally {
+      submittingRef.current = false;
+    }
   };
 
   function getQueryLLMOptions(): Options | null {
@@ -450,11 +469,23 @@ export default function LanguageModelTitleBarButton({
         <Title level={4}>
           <AIAvatar size={22} /> {intl.formatMessage(labels.assistant)}
         </Title>
-        Select model:{" "}
-        <LLMSelector
-          project_id={project_id}
-          model={model}
-          setModel={setModel}
+        Select Codex model:{" "}
+        <Select
+          value={model}
+          onChange={setModel}
+          style={{ minWidth: 260 }}
+          popupMatchSelectWidth={false}
+          options={DEFAULT_CODEX_MODELS.map((model) => ({
+            value: model.name,
+            label: (
+              <div>
+                <Text strong>{model.name}</Text>
+                {model.description ? (
+                  <Text type="secondary"> - {model.description}</Text>
+                ) : undefined}
+              </div>
+            ),
+          }))}
         />
       </div>
     );
@@ -532,7 +563,7 @@ export default function LanguageModelTitleBarButton({
               </div>
             )
           ) : undefined}
-          {modelToName(model)} will see:
+          {model} will see:
           <Radio.Group
             size="small"
             style={{ margin: "0 10px" }}
@@ -555,17 +586,8 @@ export default function LanguageModelTitleBarButton({
     );
   }
 
-  function renderCostEstimation() {
-    if (!is_cocalc_com || tokens === 0) return;
-    return (
-      <div style={{ textAlign: "center" }}>
-        <LLMCostEstimation model={model} tokens={tokens} type="secondary" />
-      </div>
-    );
-  }
-
   function renderSubmit() {
-    const btnTxt = `Ask ${modelToName(model)}`;
+    const btnTxt = "Send to Codex";
     return (
       <Paragraph style={{ textAlign: "center" }} ref={submitRef}>
         <Space size="middle">
@@ -590,7 +612,7 @@ export default function LanguageModelTitleBarButton({
                 >
                   <Icon name="times" />
                 </Button>
-                This will be sent to the language model
+                This will be sent to Codex
               </div>
             }
             open={showPreview && visible && showDialog}
@@ -627,7 +649,7 @@ export default function LanguageModelTitleBarButton({
             disabled={querying || (!tag && !command.trim()) || !message}
             type="primary"
             size="large"
-            onClick={doIt}
+            onClick={() => void doIt()}
           >
             <Icon name={querying ? "spinner" : "paper-plane"} spin={querying} />{" "}
             {btnTxt} (shift+enter)
@@ -643,10 +665,7 @@ export default function LanguageModelTitleBarButton({
         orientation="vertical"
         style={{ width: "800px", maxWidth: "50vw" }}
       >
-        <Paragraph>
-          Describe what you want the language model{" "}
-          <LLMNameLink model={model} /> to do. Be specific!
-        </Paragraph>
+        <Paragraph>Describe what you want Codex to do. Be specific.</Paragraph>
         <Paragraph ref={describeRef}>
           <Space.Compact
             style={{ width: "100%", display: "flex", alignItems: "stretch" }}
@@ -655,8 +674,9 @@ export default function LanguageModelTitleBarButton({
               ref={inputRef}
               allowClear
               autoFocus
+              disabled={querying}
               style={{ flex: 1 }}
-              placeholder={"What should the language model do..."}
+              placeholder={"What should Codex do..."}
               value={command}
               onChange={(e) => {
                 setCommand(e.target.value);
@@ -669,7 +689,9 @@ export default function LanguageModelTitleBarButton({
               }}
               onPressEnter={(e) => {
                 if (e.shiftKey) {
-                  doIt();
+                  e.preventDefault();
+                  e.stopPropagation();
+                  void doIt();
                 }
               }}
               autoSize={{ minRows: 2, maxRows: 10 }}
@@ -686,12 +708,12 @@ export default function LanguageModelTitleBarButton({
         {renderShowOptions()}
         {!isChatPath(path) && (
           <Paragraph type="secondary">
-            {description} The output will appear in the side chat, so your file
-            isn't directly modified.
+            {description} Codex will continue the work in the floating agent
+            chat and can apply edits directly when safe.
           </Paragraph>
         )}
         {renderSubmit()}
-        {error ? <Alert type="error" title={error} /> : renderCostEstimation()}
+        {error ? <Alert type="error" title={error} /> : undefined}
       </Space>
     );
   }
@@ -754,7 +776,7 @@ async function updateMessage({
   actions: Actions;
   id: string;
   context: string;
-  model: LanguageModel;
+  model: string;
   options: Options | null;
 }): Promise<{
   message: string;
@@ -776,10 +798,9 @@ async function updateMessage({
     await createChatMessage(actions, id, options, context);
 
   // compute the number of tokens (this MUST be a lazy import):
-  const { getMaxTokens, numTokensUpperBound } =
-    await import("@cocalc/frontend/misc/llm");
+  const { numTokensUpperBound } = await import("@cocalc/frontend/misc/llm");
 
-  const tokens = numTokensUpperBound(message, getMaxTokens(model));
+  const tokens = numTokensUpperBound(message, getAssistantMaxTokens(model));
   return { message, tokens, inputOriginalLen, inputTruncatedLen };
 }
 

@@ -58,7 +58,7 @@ export default function HelpMeFix({
   size,
   prioritize,
 }: Props) {
-  const { redux, project_id, path, actions: frameActions } = useFrameContext();
+  const { redux, project_id, path } = useFrameContext();
   const [gettingHelp, setGettingHelp] = useState<boolean>(false);
   const [errorGettingHelp, setErrorGettingHelp] = useState<string>("");
   const projectsStore: ProjectsStore = redux.getStore("projects");
@@ -161,7 +161,6 @@ export default function HelpMeFix({
     setGettingHelp(true);
     setErrorGettingHelp("");
     try {
-      await Promise.resolve(frameActions?.save?.(true));
       const inputText = createMessageMode(mode, true);
       const tagSuffix = mode === "hint" ? "hint" : "solution";
       const sourceTag = `help-me-fix-${tagSuffix}${tag ? `:${tag}` : ""}`;

@@ -1,5 +1,6 @@
 import { projectSubject } from "@cocalc/conat/names";
 import type { DKV, DKVOptions } from "@cocalc/conat/sync/dkv";
+import { JUPYTER_SYNCDB_EXTENSIONS } from "@cocalc/util/jupyter/names";
 
 export const JUPYTER_LIVE_RUN_SERVICE = "jupyter-live-run";
 export const JUPYTER_LIVE_RUN_STORE = "jupyter-live-run-v1";
@@ -45,6 +46,20 @@ export type JupyterLiveRunSnapshot = {
   done?: boolean;
 };
 
+export function canonicalJupyterLiveRunPath(path: string): string {
+  const suffix = `.${JUPYTER_SYNCDB_EXTENSIONS}`;
+  if (!path.endsWith(suffix)) {
+    return path;
+  }
+  const slash = path.lastIndexOf("/");
+  const dir = slash === -1 ? "" : path.slice(0, slash + 1);
+  const tail = slash === -1 ? path : path.slice(slash + 1);
+  if (!tail.startsWith(".")) {
+    return path;
+  }
+  return `${dir}${tail.slice(1, tail.length - suffix.length)}`;
+}
+
 export function jupyterLiveRunSubject(opts: {
   project_id: string;
   path: string;
@@ -52,7 +67,7 @@ export function jupyterLiveRunSubject(opts: {
   return projectSubject({
     project_id: opts.project_id,
     service: JUPYTER_LIVE_RUN_SERVICE,
-    path: opts.path,
+    path: canonicalJupyterLiveRunPath(opts.path),
   });
 }
 
@@ -60,7 +75,7 @@ export function jupyterLiveRunKey(opts: {
   path: string;
   run_id: string;
 }): string {
-  return `${opts.path}\n${opts.run_id}`;
+  return `${canonicalJupyterLiveRunPath(opts.path)}\n${opts.run_id}`;
 }
 
 export async function openJupyterLiveRunStore(opts: {
@@ -69,23 +84,45 @@ export async function openJupyterLiveRunStore(opts: {
 }): Promise<DKV<JupyterLiveRunSnapshot>> {
   const cacheKey = opts.project_id;
   let store = liveRunStoreCache.get(cacheKey);
+  if (store != null) {
+    try {
+      const existing = await store;
+      if (!(existing as any)?.isClosed?.()) {
+        return existing;
+      }
+    } catch {
+      // recreate below
+    }
+    liveRunStoreCache.delete(cacheKey);
+    store = undefined;
+  }
   if (store == null) {
     const openFrontend = opts.client.dkv;
     const openCore = opts.client.sync?.dkv;
     if (openFrontend == null && openCore == null) {
       throw Error("client does not support dkv()");
     }
-    store =
-      openFrontend?.<JupyterLiveRunSnapshot>({
-        project_id: opts.project_id,
-        name: JUPYTER_LIVE_RUN_STORE,
-        ephemeral: true,
-      }) ??
-      openCore!<JupyterLiveRunSnapshot>({
-        project_id: opts.project_id,
-        name: JUPYTER_LIVE_RUN_STORE,
-        ephemeral: true,
-      });
+    store = (async () => {
+      const opened =
+        (await openFrontend?.<JupyterLiveRunSnapshot>({
+          project_id: opts.project_id,
+          name: JUPYTER_LIVE_RUN_STORE,
+          ephemeral: true,
+        })) ??
+        (await openCore!<JupyterLiveRunSnapshot>({
+          project_id: opts.project_id,
+          name: JUPYTER_LIVE_RUN_STORE,
+          ephemeral: true,
+        }));
+      const close = opened.close?.bind(opened);
+      if (close != null) {
+        opened.close = () => {
+          liveRunStoreCache.delete(cacheKey);
+          close();
+        };
+      }
+      return opened;
+    })();
     liveRunStoreCache.set(cacheKey, store);
   }
   return await store;

@@ -17,8 +17,13 @@ import {
   jupyterClient,
   jupyterServer,
 } from "@cocalc/conat/project/jupyter/run-code";
-import { openJupyterLiveRunStore } from "@cocalc/conat/project/jupyter/live-run";
+import {
+  jupyterLiveRunKey,
+  jupyterLiveRunSubject,
+  openJupyterLiveRunStore,
+} from "@cocalc/conat/project/jupyter/live-run";
 import { uuid } from "@cocalc/util/misc";
+import { syncdbPath } from "@cocalc/util/jupyter/names";
 
 // it's really 100+, but tests fails if less than this.
 const MIN_EVALS_PER_SECOND = 10;
@@ -670,6 +675,34 @@ describe("coalesces adjacent stream messages before applying limit", () => {
     expect(numbers.length).toBeGreaterThan(0);
     expect(numbers).toEqual(Array.from({ length: 200 }, (_, i) => i));
     client.close();
+  });
+
+  it("canonicalizes live-run keys and subjects for syncdb callers", async () => {
+    const ipynb = "coalesce-path.ipynb";
+    const run_id = "coalesce-path-1";
+    const sync = syncdbPath(ipynb);
+    expect(
+      jupyterLiveRunKey({
+        path: sync,
+        run_id,
+      }),
+    ).toBe(
+      jupyterLiveRunKey({
+        path: ipynb,
+        run_id,
+      }),
+    );
+    expect(
+      jupyterLiveRunSubject({
+        project_id,
+        path: sync,
+      }),
+    ).toBe(
+      jupyterLiveRunSubject({
+        project_id,
+        path: ipynb,
+      }),
+    );
   });
 
   it("cleans up", () => {

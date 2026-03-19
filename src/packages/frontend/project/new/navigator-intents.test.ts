@@ -4,6 +4,7 @@ const mockListSessions = jest.fn();
 const mockGetChatActions = jest.fn();
 const mockInitChat = jest.fn();
 const mockOpenFloating = jest.fn();
+const mockEnsureWorkspaceChatForPath = jest.fn();
 
 jest.mock("@cocalc/frontend/chat/agent-session-index", () => ({
   listAgentSessionsForProject: (...args: any[]) => mockListSessions(...args),
@@ -16,6 +17,11 @@ jest.mock("@cocalc/frontend/chat/register", () => ({
 
 jest.mock("@cocalc/frontend/project/page/agent-dock-state", () => ({
   openFloatingAgentSession: (...args: any[]) => mockOpenFloating(...args),
+}));
+
+jest.mock("@cocalc/frontend/project/workspaces/runtime", () => ({
+  ensureWorkspaceChatForPath: (...args: any[]) =>
+    mockEnsureWorkspaceChatForPath(...args),
 }));
 
 jest.mock("@cocalc/frontend/app-framework", () => ({
@@ -31,6 +37,7 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
       }
       return undefined;
     },
+    getActions: () => undefined,
     getProjectActions: () => undefined,
   },
 }));
@@ -51,6 +58,7 @@ describe("submitNavigatorPromptToCurrentThread", () => {
     jest.clearAllMocks();
     window.localStorage.clear();
     takeQueuedNavigatorPromptIntents();
+    mockEnsureWorkspaceChatForPath.mockResolvedValue(null);
   });
 
   it("queues fallback intent and opens floating session when chat actions are unavailable", async () => {
@@ -85,6 +93,260 @@ describe("submitNavigatorPromptToCurrentThread", () => {
     });
     expect(mockOpenFloating).toHaveBeenCalledTimes(1);
     expect(mockOpenFloating.mock.calls[0][1].title).toBe("Install JupyterLab");
+  });
+
+  it("creates a fresh Codex thread with the requested model when asked", async () => {
+    mockListSessions.mockResolvedValue([
+      {
+        session_id: "session-1",
+        project_id: "00000000-1000-4000-8000-000000000000",
+        account_id: "00000000-1000-4000-8000-000000000001",
+        chat_path: "/home/wstein/.local/share/cocalc/navigator.chat",
+        thread_key: "thread-existing",
+        title: "Existing Human Thread",
+        created_at: "2026-03-18T00:00:00.000Z",
+        updated_at: "2026-03-18T00:00:00.000Z",
+        status: "active",
+        entrypoint: "global",
+        model: "gpt-5.4",
+      },
+    ]);
+    const threadIndex = new Map([
+      [
+        "thread-new",
+        {
+          key: "thread-new",
+          newestTime: Date.now(),
+          rootMessage: { thread_id: "thread-new" },
+        },
+      ],
+    ]);
+    const sendChat = jest.fn(() => new Date().toISOString());
+    const createEmptyThread = jest.fn(() => "thread-new");
+    const actions = {
+      syncdb: { get_state: () => "ready" },
+      messageCache: { getThreadIndex: () => threadIndex },
+      createEmptyThread,
+      sendChat,
+      store: {
+        get: (key: string) =>
+          key === "selectedThreadKey" ? "thread-new" : undefined,
+      },
+    };
+    mockGetChatActions.mockReturnValue(actions);
+    mockInitChat.mockReturnValue(actions);
+
+    const ok = await submitNavigatorPromptToCurrentThread({
+      project_id: "00000000-1000-4000-8000-000000000000",
+      prompt: "Handle this request with hidden metadata",
+      visiblePrompt: "Write a proof",
+      title: "Write a proof",
+      tag: "intent:editor-assistant",
+      forceCodex: true,
+      openFloating: true,
+      createNewThread: true,
+      codexConfig: {
+        model: "gpt-5.4-mini",
+      },
+    });
+
+    expect(ok).toBe(true);
+    expect(createEmptyThread).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "Write a proof",
+        threadAgent: expect.objectContaining({
+          mode: "codex",
+          model: "gpt-5.4-mini",
+        }),
+      }),
+    );
+    expect(sendChat).toHaveBeenCalledWith(
+      expect.objectContaining({
+        input: "Write a proof",
+        acp_prompt: "Handle this request with hidden metadata",
+        name: undefined,
+        reply_thread_id: "thread-new",
+        threadAgent: undefined,
+      }),
+    );
+    expect(mockOpenFloating).toHaveBeenCalledWith(
+      "00000000-1000-4000-8000-000000000000",
+      expect.objectContaining({
+        thread_key: "thread-new",
+        title: "Write a proof",
+      }),
+    );
+  });
+
+  it("reuses the stored preferred thread for a workspace chat path", async () => {
+    const workspaceChatPath =
+      "/home/wstein/.local/share/cocalc/workspaces/acct/ws-1.chat";
+    const preferredThreadKey = "1700000000000";
+    mockEnsureWorkspaceChatForPath.mockResolvedValue({
+      chat_path: workspaceChatPath,
+      assigned: false,
+      workspace: {
+        workspace_id: "ws-1",
+        root_path: "/home/wstein/project/repo",
+        theme: {
+          title: "repo",
+          color: null,
+          accent_color: null,
+          icon: null,
+          image_blob: null,
+        },
+      },
+    });
+    window.localStorage.setItem(
+      `cocalc:navigator:selected-thread:chat:${encodeURIComponent(
+        workspaceChatPath,
+      )}`,
+      preferredThreadKey,
+    );
+    mockListSessions.mockResolvedValue([
+      {
+        session_id: "workspace-ws-1",
+        project_id: "00000000-1000-4000-8000-000000000000",
+        account_id: "00000000-1000-4000-8000-000000000001",
+        chat_path: workspaceChatPath,
+        thread_key: "thread-other",
+        title: "Old workspace thread",
+        created_at: "2026-03-18T00:00:00.000Z",
+        updated_at: "2026-03-18T00:00:00.000Z",
+        status: "active",
+        entrypoint: "file",
+      },
+      {
+        session_id: "workspace-ws-1-preferred",
+        project_id: "00000000-1000-4000-8000-000000000000",
+        account_id: "00000000-1000-4000-8000-000000000001",
+        chat_path: workspaceChatPath,
+        thread_key: preferredThreadKey,
+        title: "Workspace agent",
+        created_at: "2026-03-18T00:01:00.000Z",
+        updated_at: "2026-03-18T00:01:00.000Z",
+        status: "active",
+        entrypoint: "file",
+      },
+    ]);
+    const sendChat = jest.fn(() => new Date().toISOString());
+    const actions = {
+      syncdb: { get_state: () => "ready" },
+      messageCache: {
+        getThreadIndex: () =>
+          new Map([
+            [
+              preferredThreadKey,
+              {
+                key: preferredThreadKey,
+                newestTime: Date.now(),
+                rootMessage: { thread_id: "thread-workspace" },
+              },
+            ],
+          ]),
+      },
+      sendChat,
+      getMessageByDate: jest.fn(() => ({
+        message_id: "root-1",
+        thread_id: "thread-workspace",
+      })),
+      store: {
+        get: (key: string) =>
+          key === "selectedThreadKey" ? preferredThreadKey : undefined,
+      },
+      getThreadMetadata: jest.fn(() => ({ name: "Workspace agent" })),
+    };
+    mockGetChatActions.mockReturnValue(actions);
+    mockInitChat.mockReturnValue(actions);
+
+    const ok = await submitNavigatorPromptToCurrentThread({
+      project_id: "00000000-1000-4000-8000-000000000000",
+      path: "/home/wstein/project/repo/a.md",
+      prompt: "Rewrite this proof",
+      visiblePrompt: "Rewrite this proof",
+      title: "Rewrite this proof",
+      forceCodex: true,
+      openFloating: true,
+      codexConfig: { model: "gpt-5.4-mini" },
+    });
+
+    expect(ok).toBe(true);
+    expect(sendChat).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reply_thread_id: "thread-workspace",
+      }),
+    );
+    expect(mockOpenFloating).toHaveBeenCalledWith(
+      "00000000-1000-4000-8000-000000000000",
+      expect.objectContaining({
+        thread_key: preferredThreadKey,
+        chat_path: workspaceChatPath,
+      }),
+    );
+  });
+
+  it("creates and remembers a workspace thread before the first assistant send", async () => {
+    const workspaceChatPath =
+      "/home/wstein/.local/share/cocalc/workspaces/acct/ws-2.chat";
+    mockEnsureWorkspaceChatForPath.mockResolvedValue({
+      chat_path: workspaceChatPath,
+      assigned: false,
+      workspace: {
+        workspace_id: "ws-2",
+        root_path: "/home/wstein/project/notes",
+        theme: {
+          title: "notes",
+          color: null,
+          accent_color: null,
+          icon: null,
+          image_blob: null,
+        },
+      },
+    });
+    mockListSessions.mockResolvedValue([]);
+    const sendChat = jest.fn(() => new Date().toISOString());
+    const createEmptyThread = jest.fn(() => "thread-first");
+    const actions = {
+      syncdb: { get_state: () => "ready" },
+      messageCache: { getThreadIndex: () => new Map() },
+      sendChat,
+      createEmptyThread,
+      store: {
+        get: () => undefined,
+      },
+    };
+    mockGetChatActions.mockReturnValue(actions);
+    mockInitChat.mockReturnValue(actions);
+
+    const ok = await submitNavigatorPromptToCurrentThread({
+      project_id: "00000000-1000-4000-8000-000000000000",
+      path: "/home/wstein/project/notes/a.md",
+      prompt: "Start tracking this workspace work",
+      visiblePrompt: "Start tracking this workspace work",
+      title: "Start tracking this workspace work",
+      forceCodex: true,
+      openFloating: true,
+      codexConfig: { model: "gpt-5.4-mini" },
+    });
+
+    expect(ok).toBe(true);
+    expect(createEmptyThread).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "Start tracking this workspace work",
+      }),
+    );
+    expect(sendChat).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reply_thread_id: "thread-first",
+      }),
+    );
+    expect(
+      window.localStorage.getItem(
+        `cocalc:navigator:selected-thread:chat:${encodeURIComponent(
+          workspaceChatPath,
+        )}`,
+      ),
+    ).toBe("thread-first");
   });
 
   it("keeps queued intents even when localStorage is unavailable", () => {

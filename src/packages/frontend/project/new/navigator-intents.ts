@@ -25,10 +25,12 @@ export interface NavigatorSubmitPromptDetail {
   id: string;
   createdAt: string;
   prompt: string;
+  visiblePrompt?: string;
   title?: string;
   tag?: string;
   forceCodex?: boolean;
   codexConfig?: Partial<CodexThreadConfig>;
+  createNewThread?: boolean;
 }
 
 function normalizeOptionalTitle(value?: string): string | undefined {
@@ -244,28 +246,34 @@ export function removeQueuedNavigatorPromptIntent(id: string): void {
 
 export function createNavigatorPromptIntent(opts: {
   prompt: string;
+  visiblePrompt?: string;
   title?: string;
   tag?: string;
   forceCodex?: boolean;
   codexConfig?: Partial<CodexThreadConfig>;
+  createNewThread?: boolean;
 }): NavigatorSubmitPromptDetail {
   return {
     id: uuid(),
     createdAt: new Date().toISOString(),
     prompt: opts.prompt,
+    visiblePrompt: `${opts.visiblePrompt ?? ""}`.trim() || undefined,
     title: normalizeOptionalTitle(opts.title),
     tag: opts.tag,
     forceCodex: opts.forceCodex ?? true,
     codexConfig: opts.codexConfig,
+    createNewThread: opts.createNewThread ?? false,
   };
 }
 
 export function dispatchNavigatorPromptIntent(opts: {
   prompt: string;
+  visiblePrompt?: string;
   title?: string;
   tag?: string;
   forceCodex?: boolean;
   codexConfig?: Partial<CodexThreadConfig>;
+  createNewThread?: boolean;
 }): NavigatorSubmitPromptDetail {
   const intent = createNavigatorPromptIntent(opts);
   queueNavigatorPromptIntent(intent);
@@ -280,19 +288,22 @@ export function dispatchNavigatorPromptIntent(opts: {
 export async function submitNavigatorPromptToCurrentThread(opts: {
   project_id: string;
   prompt: string;
+  visiblePrompt?: string;
   title?: string;
   tag?: string;
   forceCodex?: boolean;
   codexConfig?: Partial<CodexThreadConfig>;
   openFloating?: boolean;
   path?: string;
+  createNewThread?: boolean;
 }): Promise<boolean> {
   try {
     const project_id = `${opts.project_id ?? ""}`.trim();
     const basePrompt = `${opts.prompt ?? ""}`.trim();
+    const visiblePrompt = `${opts.visiblePrompt ?? ""}`.trim() || undefined;
     const requestedTitle = normalizeOptionalTitle(opts.title);
     if (!project_id || !basePrompt) return false;
-    const input = basePrompt;
+    const input = visiblePrompt ?? basePrompt;
     const account_id =
       `${redux.getStore("account")?.get?.("account_id") ?? ""}`.trim();
     const workspaceTarget =
@@ -306,15 +317,18 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
     const targetChatPath =
       workspaceTarget?.chat_path ?? resolveNavigatorChatPath(project_id);
 
-    const preferredThreadKey = workspaceTarget
-      ? undefined
-      : loadNavigatorSelectedThreadKey(project_id);
+    const preferExistingThread = opts.createNewThread !== true;
+    const preferredThreadKey = preferExistingThread
+      ? loadNavigatorSelectedThreadKey(project_id, targetChatPath)
+      : undefined;
     const sessions = await listAgentSessionsForProject({ project_id });
-    const indexedSession = pickNavigatorSession({
-      records: sessions,
-      preferredThreadKey,
-      chatPath: targetChatPath,
-    });
+    const indexedSession = preferExistingThread
+      ? pickNavigatorSession({
+          records: sessions,
+          preferredThreadKey,
+          chatPath: targetChatPath,
+        })
+      : undefined;
     const fallbackSession: AgentSessionRecord = {
       session_id:
         workspaceTarget?.workspace.workspace_id != null
@@ -336,17 +350,22 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
       thread_icon: workspaceTarget?.workspace.theme.icon ?? undefined,
       thread_image: workspaceTarget?.workspace.theme.image_blob ?? undefined,
     };
-    const session = indexedSession ?? fallbackSession;
+    const session =
+      opts.createNewThread === true
+        ? fallbackSession
+        : (indexedSession ?? fallbackSession);
     const queueFallbackIntent = (): boolean => {
       if (workspaceTarget) {
         return false;
       }
       dispatchNavigatorPromptIntent({
-        prompt: input,
+        prompt: basePrompt,
+        visiblePrompt,
         title: requestedTitle,
         tag: opts.tag ?? "intent:navigator",
         forceCodex: opts.forceCodex ?? true,
         codexConfig: opts.codexConfig,
+        createNewThread: opts.createNewThread ?? false,
       });
       if (opts.openFloating !== false) {
         openFloatingAgentSession(project_id, {
@@ -367,7 +386,9 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
     await ensureNavigatorChatDirectory(project_id, session.chat_path);
 
     const threadKey =
-      `${preferredThreadKey ?? session.thread_key ?? ""}`.trim();
+      opts.createNewThread === true
+        ? ""
+        : `${preferredThreadKey ?? session.thread_key ?? ""}`.trim();
 
     const instanceKey = "navigator-intent-dispatch";
     const actions =
@@ -380,14 +401,20 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
       timeoutMs: NAVIGATOR_SYNC_READY_TIMEOUT_MS,
     });
     if (!ready) return queueFallbackIntent();
-    const resolvedThreadKey = chooseThreadKeyFromIndex({
-      actions,
-      preferredThreadKey,
-      fallbackThreadKey: threadKey,
-    });
+    const resolvedThreadKey =
+      opts.createNewThread === true
+        ? ""
+        : chooseThreadKeyFromIndex({
+            actions,
+            preferredThreadKey,
+            fallbackThreadKey: threadKey,
+          });
 
     let replyThreadKey = resolvedThreadKey;
-    let replyThreadId = resolveThreadIdFromIndex(actions, replyThreadKey);
+    let replyThreadId =
+      opts.createNewThread === true
+        ? undefined
+        : resolveThreadIdFromIndex(actions, replyThreadKey);
     const existingThreadTitle =
       replyThreadKey && replyThreadId
         ? normalizeOptionalTitle(
@@ -400,10 +427,16 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
       requestedTitle && (!replyThreadId || !existingThreadTitle)
         ? requestedTitle
         : undefined;
-    const model =
+    const requestedModel =
+      typeof opts.codexConfig?.model === "string" &&
+      opts.codexConfig.model.trim().length > 0
+        ? opts.codexConfig.model.trim()
+        : undefined;
+    const sessionModel =
       typeof session.model === "string" && session.model.trim().length > 0
         ? session.model.trim()
         : undefined;
+    const model = requestedModel ?? sessionModel;
     const threadAgentCodexConfig = {
       model,
       reasoning: session.reasoning as any,
@@ -411,7 +444,50 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
       workingDirectory: session.working_directory,
       ...(opts.codexConfig ?? {}),
     };
-    if (replyThreadKey) {
+    const newThreadAgent =
+      opts.forceCodex !== false
+        ? {
+            mode: "codex" as const,
+            model,
+            codexConfig: threadAgentCodexConfig,
+          }
+        : undefined;
+    let createdThreadNow = false;
+    if (opts.createNewThread === true) {
+      const createdThreadKey = actions.createEmptyThread?.({
+        name: messageThreadTitle,
+        threadAgent: newThreadAgent,
+        threadAppearance: {
+          color: session.thread_color,
+          icon: session.thread_icon,
+          image: session.thread_image,
+        },
+      });
+      if (!createdThreadKey) {
+        return queueFallbackIntent();
+      }
+      replyThreadKey = createdThreadKey;
+      replyThreadId = createdThreadKey;
+      createdThreadNow = true;
+    }
+    if (!replyThreadKey && workspaceTarget) {
+      const createdThreadKey = actions.createEmptyThread?.({
+        name: messageThreadTitle,
+        threadAgent: newThreadAgent,
+        threadAppearance: {
+          color: session.thread_color,
+          icon: session.thread_icon,
+          image: session.thread_image,
+        },
+      });
+      if (createdThreadKey) {
+        replyThreadKey = createdThreadKey;
+        replyThreadId = createdThreadKey;
+        createdThreadNow = true;
+        saveNavigatorSelectedThreadKey(createdThreadKey, targetChatPath);
+      }
+    }
+    if (replyThreadKey && opts.createNewThread !== true && !createdThreadNow) {
       const rootReady = await waitForThreadReady({
         actions,
         threadKey: replyThreadKey,
@@ -429,32 +505,36 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
     }
     const timeStamp = actions.sendChat({
       input,
-      name: messageThreadTitle,
+      acp_prompt: basePrompt,
+      name: opts.createNewThread === true ? undefined : messageThreadTitle,
       reply_thread_id: replyThreadId,
       tag: opts.tag ?? "intent:navigator",
       noNotification: true,
       threadAgent:
         !replyThreadId && opts.forceCodex !== false
-          ? {
-              mode: "codex",
-              model,
-              codexConfig: threadAgentCodexConfig,
-            }
+          ? newThreadAgent
           : undefined,
     });
     if (!timeStamp) {
       return queueFallbackIntent();
     }
 
-    const nextThreadKey =
-      replyThreadKey ||
-      (typeof timeStamp === "string" ? `${new Date(timeStamp).valueOf()}` : "");
-    if (nextThreadKey && !workspaceTarget) {
-      saveNavigatorSelectedThreadKey(nextThreadKey);
+    const nextThreadKey = replyThreadKey
+      ? replyThreadKey
+      : chooseThreadKeyFromIndex({
+          actions,
+          fallbackThreadKey: `${actions.store?.get?.("selectedThreadKey") ?? ""}`,
+        });
+    if (nextThreadKey) {
+      saveNavigatorSelectedThreadKey(nextThreadKey, targetChatPath);
     }
     if (opts.openFloating !== false) {
       openFloatingAgentSession(project_id, {
         ...session,
+        session_id:
+          opts.createNewThread === true && nextThreadKey
+            ? nextThreadKey
+            : session.session_id,
         title: messageThreadTitle ?? session.title,
         thread_key: nextThreadKey || session.thread_key,
         updated_at: new Date().toISOString(),
@@ -469,13 +549,16 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
     try {
       const project_id = `${opts.project_id ?? ""}`.trim();
       const input = `${opts.prompt ?? ""}`.trim();
+      const visiblePrompt = `${opts.visiblePrompt ?? ""}`.trim() || undefined;
       const requestedTitle = normalizeOptionalTitle(opts.title);
       if (!project_id || !input) return false;
       dispatchNavigatorPromptIntent({
         prompt: input,
+        visiblePrompt,
         title: requestedTitle,
         tag: opts.tag ?? "intent:navigator",
         forceCodex: opts.forceCodex ?? true,
+        createNewThread: opts.createNewThread ?? false,
       });
       if (opts.openFloating !== false) {
         openFloatingAgentSession(project_id, {
@@ -483,8 +566,12 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
           project_id,
           account_id: `${redux.getStore("account")?.get?.("account_id") ?? ""}`,
           chat_path: resolveNavigatorChatPath(project_id),
-          thread_key:
-            `${loadNavigatorSelectedThreadKey(project_id) ?? ""}`.trim(),
+          thread_key: `${
+            loadNavigatorSelectedThreadKey(
+              project_id,
+              resolveNavigatorChatPath(project_id),
+            ) ?? ""
+          }`.trim(),
           title: requestedTitle ?? "Navigator",
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),

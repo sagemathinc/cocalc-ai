@@ -213,6 +213,8 @@ export function createNavigatorIntentMessage({
   };
   return [
     "Handle this CoCalc help-me-fix request as an agent.",
+    "Treat the live in-memory sync version of the document as the source of truth.",
+    "Do not rely on the filesystem copy being current; use live document APIs when available.",
     "Apply edits directly when safe, run checks as needed, and summarize exactly what changed.",
     "<details><summary>Intent metadata</summary>",
     "```json",

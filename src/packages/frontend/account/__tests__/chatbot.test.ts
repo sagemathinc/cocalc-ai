@@ -7,6 +7,7 @@ describe("codex chatbot identity", () => {
     expect(isChatBot("gpt-5.1-codex-mini")).toBe(true);
     expect(isChatBot("gpt-5.3-codex")).toBe(true);
     expect(isChatBot("gpt-5.4")).toBe(true);
+    expect(isChatBot("gpt-5.4-mini")).toBe(true);
     expect(isChatBot("gpt-5.3-codex-spark")).toBe(true);
   });
 
@@ -16,6 +17,7 @@ describe("codex chatbot identity", () => {
     );
     expect(chatBotName("gpt-5.3-codex")).toBe("Codex Agent (gpt-5.3-codex)");
     expect(chatBotName("gpt-5.4")).toBe("Codex Agent (gpt-5.4)");
+    expect(chatBotName("gpt-5.4-mini")).toBe("Codex Agent (gpt-5.4-mini)");
     expect(chatBotName("gpt-5.3-codex-spark")).toBe(
       "Codex Agent (gpt-5.3-codex-spark)",
     );

@@ -664,7 +664,7 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
       actions?.open_file({ path: record.chat_path });
       return;
     }
-    saveNavigatorSelectedThreadKey(record.thread_key);
+    saveNavigatorSelectedThreadKey(record.thread_key, record.chat_path);
     actions?.set_active_tab("home");
   }
 
@@ -690,7 +690,7 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
   }
 
   function openAutomation(record: AcpAutomationRecord): void {
-    saveNavigatorSelectedThreadKey(record.thread_id);
+    saveNavigatorSelectedThreadKey(record.thread_id, record.path);
     actions?.open_file({ path: record.path });
   }
 
