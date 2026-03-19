@@ -6,6 +6,7 @@
 import { useEffect, useState } from "react";
 import type { JSX } from "react";
 import { createRoot } from "react-dom/client";
+import { resource_links } from "@cocalc/frontend/misc/resource-links";
 import { COLORS } from "@cocalc/util/theme";
 import PublicViewerFileContents from "./file-contents";
 
@@ -193,6 +194,22 @@ export function init(): void {
   if (container == null) {
     throw new Error("there must be a div with id cocalc-webapp-container");
   }
+  ensureViewerStyles();
   const config = parseConfig();
   createRoot(container).render(<PublicViewerApp config={config} />);
+}
+
+function ensureViewerStyles(): void {
+  const origin = window.location.origin;
+  for (const { href } of resource_links(origin)) {
+    if (!href.includes("/cdn/katex")) continue;
+    if (document.querySelector(`link[data-cocalc-public-viewer="${href}"]`)) {
+      continue;
+    }
+    const link = document.createElement("link");
+    link.rel = "stylesheet";
+    link.href = href;
+    link.setAttribute("data-cocalc-public-viewer", href);
+    document.head.appendChild(link);
+  }
 }

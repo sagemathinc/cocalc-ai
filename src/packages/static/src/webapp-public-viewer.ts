@@ -4,6 +4,7 @@
  */
 
 import "./webapp-libraries";
+import "@cocalc/frontend/editors/slate/elements/elements.css";
 import { init } from "@cocalc/frontend/public-viewer/bootstrap";
 import { startedUp } from "./webapp-error";
 
