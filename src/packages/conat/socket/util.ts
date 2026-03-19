@@ -63,6 +63,17 @@ export interface SocketConfiguration {
   // socket servers with the same subject). This is used
   // by the persist server.
   loadBalancer?: (subject: string) => Promise<string>;
+  lifecycleReporter?: (
+    phase:
+      | "get_server_id_start"
+      | "get_server_id_done"
+      | "subscribe_start"
+      | "subscribe_done"
+      | "connect_command_start"
+      | "connect_command_done"
+      | "ready",
+    details?: { [key: string]: string | number | boolean | undefined },
+  ) => void;
 }
 
 export interface ConatSocketOptions extends SocketConfiguration {

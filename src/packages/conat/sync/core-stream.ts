@@ -96,6 +96,37 @@ export interface ChangeEvent<T> {
   msgID?: string;
 }
 
+export type CoreStreamInitPhase =
+  | "init_start"
+  | "persist_client_created"
+  | "persist_socket_connect_start"
+  | "persist_socket_get_server_id_start"
+  | "persist_socket_get_server_id_done"
+  | "persist_socket_subscribe_start"
+  | "persist_socket_subscribe_done"
+  | "persist_socket_connect_command_start"
+  | "persist_socket_connect_command_done"
+  | "persist_socket_ready"
+  | "persist_changefeed_start"
+  | "persist_changefeed_done"
+  | "persist_get_all_start"
+  | "persist_get_all_done"
+  | "persist_request_many_start"
+  | "persist_request_many_subscribed"
+  | "persist_request_many_first_chunk"
+  | "persist_request_many_done"
+  | "persist_config_start"
+  | "persist_config_done"
+  | "dkv_allow_msg_ttl_config_start"
+  | "dkv_allow_msg_ttl_config_done"
+  | "listen_started"
+  | "init_done";
+
+export type CoreStreamInitPhaseReporter = (
+  phase: CoreStreamInitPhase,
+  details?: { [key: string]: string | number | boolean | undefined },
+) => void;
+
 const HEADER_PREFIX = "CN-";
 
 export const COCALC_TOMBSTONE_HEADER = `${HEADER_PREFIX}Tombstone`;
@@ -127,6 +158,8 @@ export interface CoreStreamOptions {
   // for sharing cluster state date, where the servers are ephemeral and
   // there is one for each node.
   service?: string;
+
+  initPhaseReporter?: CoreStreamInitPhaseReporter;
 }
 
 export interface User {
@@ -173,7 +206,8 @@ export function getCoreStreamDebugStats() {
 export class CoreStream<T = any> extends EventEmitter {
   public readonly name: string;
 
-  private configOptions?: Partial<Configuration>;
+  private pendingConfigOptions?: Partial<Configuration>;
+  private currentConfig?: Configuration;
   private _start_seq?: number;
 
   // don't do "this.raw=" or "this.messages=" anywhere in this class
@@ -199,6 +233,8 @@ export class CoreStream<T = any> extends EventEmitter {
   private persistClient: PersistStreamClient;
   private changefeed?: Changefeed;
   private service?: string;
+  private initPhaseReporter?: CoreStreamInitPhaseReporter;
+  private initStartedAtMs?: number;
 
   constructor({
     name,
@@ -211,6 +247,7 @@ export class CoreStream<T = any> extends EventEmitter {
     sync,
     client,
     service,
+    initPhaseReporter,
   }: CoreStreamOptions) {
     super();
     logger.debug("constructor", name);
@@ -229,7 +266,8 @@ export class CoreStream<T = any> extends EventEmitter {
       sync,
     };
     this._start_seq = start_seq;
-    this.configOptions = config;
+    this.pendingConfigOptions = config;
+    this.initPhaseReporter = initPhaseReporter;
     return new Proxy(this, {
       get(target, prop) {
         return typeof prop == "string" && isNumericString(prop)
@@ -240,11 +278,31 @@ export class CoreStream<T = any> extends EventEmitter {
   }
 
   private initialized = false;
+  private hasPendingConfigChanges = () =>
+    this.pendingConfigOptions != null &&
+    Object.keys(this.pendingConfigOptions).length > 0;
+
+  private emitInitPhase = (
+    phase: CoreStreamInitPhase,
+    details?: { [key: string]: string | number | boolean | undefined },
+  ) => {
+    this.initPhaseReporter?.(phase, {
+      name: this.name,
+      component_elapsed_ms:
+        this.initStartedAtMs == null
+          ? undefined
+          : Math.max(0, Date.now() - this.initStartedAtMs),
+      ...(details ?? {}),
+    });
+  };
+
   init = async () => {
     if (this.initialized) {
       throw Error("init can only be called once");
     }
     this.initialized = true;
+    this.initStartedAtMs = Date.now();
+    this.emitInitPhase("init_start");
     if (this.client == null) {
       this.client = await conat();
     }
@@ -253,36 +311,51 @@ export class CoreStream<T = any> extends EventEmitter {
       user: this.user,
       storage: this.storage,
       service: this.service,
+      initReporter: (phase, details) => {
+        this.emitInitPhase(phase as CoreStreamInitPhase, details);
+      },
     });
+    this.emitInitPhase("persist_client_created");
     this.persistClient.on("error", (err) => {
       if (!process.env.COCALC_TEST_MODE) {
         console.log(`WARNING: persistent stream issue -- ${err}`);
       }
     });
-    await this.getAllFromPersist({
+    const bootstrapConfig = await this.getAllFromPersist({
       start_seq: this._start_seq,
       noEmit: true,
+      includeConfig: !this.hasPendingConfigChanges(),
     });
+    if (!this.hasPendingConfigChanges() && bootstrapConfig != null) {
+      this.currentConfig = bootstrapConfig;
+    }
 
-    await until(
-      async () => {
-        if (this.client == null) {
-          return true;
-        }
-        try {
-          this.configOptions = await this.config(this.configOptions);
-          return true;
-        } catch (err) {
-          if (err.code == 403) {
-            // fatal permission error
-            throw err;
+    if (this.hasPendingConfigChanges()) {
+      await until(
+        async () => {
+          if (this.client == null) {
+            return true;
           }
-        }
-        return false;
-      },
-      { start: 750 },
-    );
+          try {
+            this.emitInitPhase("persist_config_start");
+            this.currentConfig = await this.config(this.pendingConfigOptions);
+            this.pendingConfigOptions = undefined;
+            this.emitInitPhase("persist_config_done");
+            return true;
+          } catch (err) {
+            if (err.code == 403) {
+              // fatal permission error
+              throw err;
+            }
+          }
+          return false;
+        },
+        { start: 750 },
+      );
+    }
+    this.emitInitPhase("listen_started");
     void this.listen();
+    this.emitInitPhase("init_done");
   };
 
   debugStats = () => {
@@ -300,7 +373,8 @@ export class CoreStream<T = any> extends EventEmitter {
     if (this.storage == null) {
       throw Error("bug -- storage must be set");
     }
-    return await this.persistClient.config({ config });
+    this.currentConfig = await this.persistClient.config({ config });
+    return this.currentConfig;
   };
 
   private isClosed = () => {
@@ -338,13 +412,21 @@ export class CoreStream<T = any> extends EventEmitter {
   private getAllFromPersist = async ({
     start_seq = 0,
     noEmit,
-  }: { start_seq?: number; noEmit?: boolean } = {}) => {
+    includeConfig,
+  }: {
+    start_seq?: number;
+    noEmit?: boolean;
+    includeConfig?: boolean;
+  } = {}): Promise<Configuration | undefined> => {
     if (this.storage == null) {
       throw Error("bug -- storage must be set");
     }
     stats.syncFromPersistRuns += 1;
+    let attempt = 0;
+    let currentConfig: Configuration | undefined;
     await until(
       async () => {
+        attempt += 1;
         let messages: StoredMessage[] = [];
         let changes: (SetOperation | DeleteOperation | StoredMessage)[] = [];
         try {
@@ -352,12 +434,50 @@ export class CoreStream<T = any> extends EventEmitter {
             return true;
           }
           if (this.changefeed == null) {
-            this.changefeed = await this.persistClient.changefeed();
+            this.emitInitPhase("persist_changefeed_start", {
+              attempt,
+              piggybacked_on_get_all: true,
+            });
+            this.changefeed = await this.persistClient.changefeed({
+              activateRemote: false,
+            });
+            this.emitInitPhase("persist_changefeed_done", {
+              attempt,
+              piggybacked_on_get_all: true,
+            });
           }
           // console.log("get persistent stream", { start_seq }, this.storage);
-          messages = await this.persistClient.getAll({
+          this.emitInitPhase("persist_get_all_start", {
+            attempt,
             start_seq,
-            timeout: DEFAULT_GET_ALL_TIMEOUT,
+            changefeed: true,
+            include_config: includeConfig,
+          });
+          if (includeConfig) {
+            const result = await this.persistClient.getAllWithInfo({
+              start_seq,
+              timeout: DEFAULT_GET_ALL_TIMEOUT,
+              changefeed: true,
+            });
+            messages = result.messages;
+            currentConfig = result.config;
+          } else {
+            messages = await this.persistClient.getAll({
+              start_seq,
+              timeout: DEFAULT_GET_ALL_TIMEOUT,
+              changefeed: true,
+            });
+          }
+          let bytes = 0;
+          for (const mesg of messages) {
+            bytes += mesg.raw?.length ?? 0;
+          }
+          this.emitInitPhase("persist_get_all_done", {
+            attempt,
+            start_seq,
+            messages: messages.length,
+            bytes,
+            received_config: currentConfig != null,
           });
         } catch (err) {
           if (this.isClosed()) {
@@ -406,6 +526,7 @@ export class CoreStream<T = any> extends EventEmitter {
         decay: GET_ALL_RETRY_DECAY,
       },
     );
+    return currentConfig;
   };
 
   private processPersistentMessages = (
@@ -618,7 +739,9 @@ export class CoreStream<T = any> extends EventEmitter {
     while (!this.isClosed()) {
       try {
         if (this.changefeed == null) {
-          this.changefeed = await this.persistClient.changefeed();
+          this.changefeed = await this.persistClient.changefeed({
+            activateRemote: false,
+          });
           if (this.isClosed()) {
             return;
           }

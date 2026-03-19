@@ -18,6 +18,7 @@ import { wait } from "@cocalc/util/async-wait";
 import { fromJS, Map } from "immutable";
 import type { JSONValue } from "@cocalc/util/types";
 import type { Configuration } from "@cocalc/conat/sync/core-stream";
+import type { CoreStreamInitPhaseReporter } from "@cocalc/conat/sync/core-stream";
 
 export class SyncTableKV extends EventEmitter {
   public readonly table;
@@ -34,6 +35,7 @@ export class SyncTableKV extends EventEmitter {
   private desc?: JSONValue;
   private ephemeral?: boolean;
   private noAutosave?: boolean;
+  private initPhaseReporter?: CoreStreamInitPhaseReporter;
 
   constructor({
     query,
@@ -46,6 +48,7 @@ export class SyncTableKV extends EventEmitter {
     desc,
     ephemeral,
     noAutosave,
+    initPhaseReporter,
   }: {
     query;
     client: Client;
@@ -57,6 +60,7 @@ export class SyncTableKV extends EventEmitter {
     desc?: JSONValue;
     ephemeral?: boolean;
     noAutosave?: boolean;
+    initPhaseReporter?: CoreStreamInitPhaseReporter;
   }) {
     super();
     this.setMaxListeners(1000);
@@ -68,6 +72,7 @@ export class SyncTableKV extends EventEmitter {
     this.desc = desc;
     this.ephemeral = ephemeral;
     this.noAutosave = noAutosave;
+    this.initPhaseReporter = initPhaseReporter;
     this.table = keys(query)[0];
     if (query[this.table][0].string_id && query[this.table][0].project_id) {
       this.project_id = query[this.table][0].project_id;
@@ -131,6 +136,7 @@ export class SyncTableKV extends EventEmitter {
         desc: this.desc,
         ephemeral: this.ephemeral,
         noAutosave: this.noAutosave,
+        initPhaseReporter: this.initPhaseReporter,
       });
     } else {
       this.dkv = await createDko({
@@ -142,6 +148,7 @@ export class SyncTableKV extends EventEmitter {
         desc: this.desc,
         ephemeral: this.ephemeral,
         noAutosave: this.noAutosave,
+        initPhaseReporter: this.initPhaseReporter,
       });
     }
     // For some reason this one line confuses typescript and breaks building one

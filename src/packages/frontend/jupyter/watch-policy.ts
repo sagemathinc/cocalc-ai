@@ -2,6 +2,7 @@ export type InitialWatchSourceReason =
   | "rtc_empty"
   | "rtc_timestamp_missing"
   | "disk_newer_than_rtc"
+  | "disk_newer_but_content_equal"
   | "rtc_newer_or_equal"
   | "disk_mtime_unavailable";
 
@@ -64,4 +65,20 @@ export function shouldInitialWatchLoadFromDisk(params: {
   diskMtimeMs?: number;
 }): boolean {
   return decideInitialWatchSource(params).loadFromDisk;
+}
+
+export function refineInitialWatchSourceDecision({
+  decision,
+  diskContentMatchesRtc,
+}: {
+  decision: InitialWatchSourceDecision;
+  diskContentMatchesRtc: boolean;
+}): InitialWatchSourceDecision {
+  if (decision.reason === "disk_newer_than_rtc" && diskContentMatchesRtc) {
+    return {
+      loadFromDisk: false,
+      reason: "disk_newer_but_content_equal",
+    };
+  }
+  return decision;
 }

@@ -229,3 +229,5 @@ src/.agents/bug-hunt/*
 !src/.agents/bug-hunt/plans/**
 src/.agents/parallel-ops-live/
 wstein.tasks
+log.md
+log.txt

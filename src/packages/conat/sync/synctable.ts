@@ -5,6 +5,7 @@ import { type KVLimits } from "./limits";
 import { type FilteredStreamLimitOptions } from "./limits";
 import jsonStableStringify from "json-stable-stringify";
 import { type Client } from "@cocalc/conat/core/client";
+import type { CoreStreamInitPhaseReporter } from "./core-stream";
 
 export type ConatSyncTable = SyncTableStream | SyncTableKV;
 
@@ -19,6 +20,7 @@ export type ConatSyncTableFunction = (
     throttleChanges?: number;
     // for tables specific to a project, e.g., syncstrings in a project
     project_id?: string;
+    initPhaseReporter?: CoreStreamInitPhaseReporter;
   },
 ) => Promise<ConatSyncTable>;
 
@@ -44,12 +46,15 @@ export interface SyncTableOptions {
   noInventory?: boolean;
   ephemeral?: boolean;
   noAutosave?: boolean;
+  initPhaseReporter?: CoreStreamInitPhaseReporter;
 }
 
 export const createSyncTable = refCache<SyncTableOptions, ConatSyncTable>({
   name: "synctable",
-  createKey: (opts: SyncTableOptions) =>
-    jsonStableStringify({ ...opts, client: opts.client?.id })!,
+  createKey: (opts: SyncTableOptions) => {
+    const { initPhaseReporter: _initPhaseReporter, ...rest } = opts;
+    return jsonStableStringify({ ...rest, client: opts.client?.id })!;
+  },
   createObject: async (options: SyncTableOptions & { client: Client }) => {
     let t;
     if (options.stream) {

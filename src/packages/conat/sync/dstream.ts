@@ -16,6 +16,7 @@ See the guide for dkv, since it's very similar, especially for use in a browser.
 import { EventEmitter } from "events";
 import {
   CoreStream,
+  type CoreStreamInitPhaseReporter,
   type RawMsg,
   type ChangeEvent,
   type PublishOptions,
@@ -65,6 +66,8 @@ export interface DStreamOptions {
   noInventory?: boolean;
 
   service?: string;
+
+  initPhaseReporter?: CoreStreamInitPhaseReporter;
 }
 
 export class DStream<T = any> extends EventEmitter {

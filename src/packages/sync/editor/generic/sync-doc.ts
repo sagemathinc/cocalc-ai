@@ -82,7 +82,27 @@ const BACKEND_FS_WATCH_DISABLED_EXTENSIONS = new Set(["chat", "sage-chat"]);
 
 export type State = "init" | "ready" | "closed";
 export type DataServer = "project" | "database";
-export type SyncDocOpenPhase = "open_start" | "sync_ready";
+export type SyncDocOpenPhase =
+  | "open_start"
+  | "canonicalize_identity_start"
+  | "canonicalize_identity_done"
+  | "syncstring_table_start"
+  | "syncstring_table_done"
+  | "backend_fs_watch_start"
+  | "backend_fs_watch_done"
+  | "backend_fs_reconcile_start"
+  | "backend_fs_reconcile_done"
+  | "patchflow_init_start"
+  | "patchflow_init_done"
+  | "patches_table_start"
+  | "patches_table_done"
+  | "patchflow_session_start"
+  | "patchflow_session_done"
+  | "cursor_presence_start"
+  | "cursor_presence_done"
+  | "cursors_start"
+  | "cursors_done"
+  | "sync_ready";
 
 export interface SyncOpts0 {
   project_id: string;
@@ -275,7 +295,7 @@ export class SyncDoc extends EventEmitter {
   private readonly openStartedAtMs: number = Date.now();
 
   private emitOpenPhase = (
-    phase: SyncDocOpenPhase,
+    phase: SyncDocOpenPhase | string,
     details?: { [key: string]: string | number | boolean | undefined },
   ): void => {
     const payload = {
@@ -287,6 +307,15 @@ export class SyncDoc extends EventEmitter {
       ...(details ?? {}),
     };
     this.emit("open-phase", payload);
+  };
+
+  private makeConatInitPhaseReporter = (prefix: string) => {
+    return (
+      phase: string,
+      details?: { [key: string]: string | number | boolean | undefined },
+    ) => {
+      this.emitOpenPhase(`${prefix}.${phase}`, details);
+    };
   };
 
   // The isDeleted flag is set to true if the file existed and then
@@ -979,6 +1008,8 @@ export class SyncDoc extends EventEmitter {
         start_seq: this.last_seq,
         ephemeral,
         noAutosave: this.noAutosave,
+        initPhaseReporter:
+          this.makeConatInitPhaseReporter("patches_corestream"),
       });
 
       if (this.last_seq) {
@@ -999,6 +1030,8 @@ export class SyncDoc extends EventEmitter {
             desc: { path: this.syncPath },
             ephemeral,
             noAutosave: this.noAutosave,
+            initPhaseReporter:
+              this.makeConatInitPhaseReporter("patches_corestream"),
           });
 
           // also find the correct last_seq:
@@ -1047,6 +1080,9 @@ export class SyncDoc extends EventEmitter {
         desc: { path: this.syncPath },
         ephemeral,
         noAutosave: this.noAutosave,
+        initPhaseReporter: this.makeConatInitPhaseReporter(
+          "syncstring_corestream",
+        ),
       });
     } else if (this.useConat && query.ipywidgets) {
       synctable = await this.client.synctable_conat(query, {
@@ -1167,14 +1203,37 @@ export class SyncDoc extends EventEmitter {
     // Ensure we load syncstring metadata (including last_snapshot/last_seq)
     // before opening the patches table, so we don't fetch the entire history
     // when a snapshot is available.
+    this.emitOpenPhase("canonicalize_identity_start");
     await this.canonicalizeFsIdentity();
+    this.emitOpenPhase("canonicalize_identity_done");
+    this.emitOpenPhase("syncstring_table_start");
     await this.init_syncstring_table();
+    this.emitOpenPhase("syncstring_table_done");
+    if (this.cursors) {
+      void this.getCursorPresenceAdapter().catch((err) => {
+        this.dbg("getCursorPresenceAdapter")(
+          `prewarm failed: ${err?.message ?? err}`,
+        );
+      });
+    }
     // Prime backend sync-fs reconciliation first so the patch stream reflects
     // current on-disk content before we load it into this client session.
+    this.emitOpenPhase("backend_fs_watch_start");
     await this.startBackendFsWatch();
+    this.emitOpenPhase("backend_fs_watch_done");
+    this.emitOpenPhase("backend_fs_reconcile_start");
     await this.reconcileBackendFsState();
+    this.emitOpenPhase("backend_fs_reconcile_done");
+    this.emitOpenPhase("patchflow_init_start");
     await this.init_patchflow();
-    await Promise.all([this.init_cursors()]);
+    this.emitOpenPhase("patchflow_init_done");
+    if (this.cursors) {
+      this.emitOpenPhase("cursors_start");
+      await Promise.all([this.init_cursors()]);
+      this.emitOpenPhase("cursors_done");
+    } else {
+      await Promise.all([this.init_cursors()]);
+    }
     this.assert_not_closed(
       "initAll -- successful init patchflow, cursors, and ipywidgets",
     );
@@ -1269,8 +1328,10 @@ export class SyncDoc extends EventEmitter {
     dbg();
 
     dbg("opening the table...");
+    this.emitOpenPhase("patches_table_start");
     const query = { patches: [this.patch_table_query(this.last_snapshot)] };
     this.patches_table = await this.synctable(query, [], this.patch_interval);
+    this.emitOpenPhase("patches_table_done");
     this.assert_not_closed("init_patchflow -- after making synctable");
     this.applyPatchWriteHeaders();
 
@@ -1288,7 +1349,9 @@ export class SyncDoc extends EventEmitter {
       update_has_unsaved_changes();
     });
 
+    this.emitOpenPhase("patchflow_session_start");
     await this.initPatchflowSession();
+    this.emitOpenPhase("patchflow_session_done");
 
     // Ensure doc/last are initialized even if listeners run before ready state.
     if (this.patchflowReady() && this.patchflowSession != null) {
@@ -1310,13 +1373,14 @@ export class SyncDoc extends EventEmitter {
     const dbg = this.dbg("initPatchflowSession");
     this.patchflowCodec = this.buildPatchflowCodec();
     this.patchflowStore = this.createPatchflowStore();
+    const presenceAdapter = await this.getCursorPresenceAdapter();
     this.patchflowSession = new PatchflowSession({
       codec: this.patchflowCodec,
       patchStore: this.patchflowStore,
       clock: () => this.client?.server_time().valueOf() ?? Date.now(),
       userId: this.my_user_id ?? 1,
       docId: this.string_id,
-      presenceAdapter: await this.createCursorPresenceAdapter(),
+      presenceAdapter,
     });
     if (this.cursors) {
       this.patchflowSession.on("cursors", this.handlePatchflowCursors);
@@ -1346,6 +1410,20 @@ export class SyncDoc extends EventEmitter {
 
     this.emit("patchflow-ready");
   });
+
+  private getCursorPresenceAdapter = reuseInFlight(
+    async (): Promise<PatchflowPresenceAdapter | undefined> => {
+      if (!this.cursors) {
+        return;
+      }
+      this.emitOpenPhase("cursor_presence_start");
+      try {
+        return await this.createCursorPresenceAdapter();
+      } finally {
+        this.emitOpenPhase("cursor_presence_done");
+      }
+    },
+  );
 
   init_ipywidgets = reuseInFlight(async () => {
     if (this.ipywidgets_state != null) {

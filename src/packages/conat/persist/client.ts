@@ -63,7 +63,14 @@ interface GetAllOpts {
   end_seq?: number;
   timeout?: number;
   maxWait?: number;
+  changefeed?: boolean;
+  includeConfig?: boolean;
 }
+
+type PersistClientInitReporter = (
+  phase: string,
+  details?: { [key: string]: string | number | boolean | undefined },
+) => void;
 
 const logger = getLogger("persist:client");
 
@@ -140,6 +147,8 @@ class PersistStreamClient extends EventEmitter {
   private changefeeds: any[] = [];
   private state: "ready" | "closed" = "ready";
   private lastSeq?: number;
+  private changefeedDesired = false;
+  private changefeedActive = false;
   private reconnecting = false;
   private gettingMissed = false;
   private changesWhenGettingMissed: ChangefeedEvent[] = [];
@@ -148,16 +157,19 @@ class PersistStreamClient extends EventEmitter {
   private reconnectAttempt = 0;
   private recoveryPromise?: Promise<void>;
   private readonly storageKey: string;
+  private readonly initReporter?: PersistClientInitReporter;
 
   constructor(
     private client: Client,
     private storage: StorageOptions,
     private user: User,
     private service = SERVICE,
+    initReporter?: PersistClientInitReporter,
   ) {
     super();
     this.setMaxListeners(100);
     this.storageKey = storage.path;
+    this.initReporter = initReporter;
     stats.created += 1;
     stats.active += 1;
     bumpCounterByStorage(activeByStorage, this.storageKey, 1);
@@ -165,6 +177,13 @@ class PersistStreamClient extends EventEmitter {
     logger.debug("constructor", this.storage);
     this.init();
   }
+
+  private emitInitPhase = (
+    phase: string,
+    details?: { [key: string]: string | number | boolean | undefined },
+  ) => {
+    this.initReporter?.(phase, details);
+  };
 
   private init = () => {
     if (this.client.state == "closed") {
@@ -179,16 +198,21 @@ class PersistStreamClient extends EventEmitter {
     stats.initCalls += 1;
     bumpCounterByStorage(initByStorage, this.storageKey, 1);
     const subject = persistSubject({ ...this.user, service: this.service });
+    this.emitInitPhase("persist_socket_connect_start", { subject });
     this.socket = this.client.socket.connect(subject, {
       desc: `persist: ${this.storage.path}`,
       reconnection: false,
       loadBalancer: async (subject: string) =>
         await getPersistServerId({ client: this.client, subject }),
+      lifecycleReporter: (phase, details) => {
+        this.emitInitPhase(`persist_socket_${phase}`, details);
+      },
     });
     logger.debug("init", this.storage.path, "connecting to ", subject);
+    this.changefeedActive = false;
     this.socket.write({
       storage: this.storage,
-      changefeed: this.changefeeds.length > 0,
+      changefeed: this.changefeedDesired || this.changefeeds.length > 0,
     });
     this.socket.once("ready", this.onSocketReady);
 
@@ -226,6 +250,7 @@ class PersistStreamClient extends EventEmitter {
   };
 
   private onSocketReady = () => {
+    this.emitInitPhase("persist_socket_ready");
     this.scheduleStableReconnectReset();
     if (this.reconnecting) {
       void this.getMissed();
@@ -266,23 +291,13 @@ class PersistStreamClient extends EventEmitter {
             if (this.changefeeds.length == 0 || this.state != "ready") {
               return true;
             }
-            const resp = await this.socket.request(null, {
-              headers: {
-                cmd: "changefeed",
-              },
-              timeout: DEFAULT_RECOVERY_TIMEOUT,
-            });
-            if (resp.headers?.error) {
-              throw new ConatError(`${resp.headers?.error}`, {
-                code: resp.headers?.code as string | number,
-              });
-            }
             if (this.changefeeds.length == 0 || this.state != "ready") {
               return true;
             }
             const updates = await this.getAll({
               start_seq: this.lastSeq,
               timeout: DEFAULT_RECOVERY_TIMEOUT,
+              changefeed: true,
             });
             this.changefeedEmit(updates);
             recovered = true;
@@ -424,25 +439,41 @@ class PersistStreamClient extends EventEmitter {
   // in the stream **exactly once and in order**, even if there
   // are disconnects, failovers, etc.  Dealing with dropped messages,
   // duplicates, etc., is NOT the responsibility of clients.
-  changefeed = async (): Promise<Changefeed> => {
+  changefeed = async ({
+    activateRemote = true,
+  }: {
+    activateRemote?: boolean;
+  } = {}): Promise<Changefeed> => {
     stats.changefeedCalls += 1;
-    // activate changefeed mode (so server publishes updates -- this is idempotent)
-    const resp = await this.socket.request(null, {
-      headers: {
-        cmd: "changefeed",
-      },
-    });
-    if (resp.headers?.error) {
-      throw new ConatError(`${resp.headers?.error}`, {
-        code: resp.headers?.code as string | number,
-      });
-    }
     // an iterator over any updates that are published.
     const iter = new EventIterator<ChangefeedEvent>(this, "changefeed", {
       map: (args) => args[0],
     });
     this.changefeeds.push(iter);
-    return iter;
+    this.changefeedDesired = true;
+    try {
+      if (activateRemote && !this.changefeedActive) {
+        const resp = await this.socket.request(null, {
+          headers: {
+            cmd: "changefeed",
+          },
+        });
+        if (resp.headers?.error) {
+          throw new ConatError(`${resp.headers?.error}`, {
+            code: resp.headers?.code as string | number,
+          });
+        }
+        this.changefeedActive = true;
+      }
+      return iter;
+    } catch (err) {
+      const i = this.changefeeds.indexOf(iter);
+      if (i >= 0) {
+        this.changefeeds.splice(i, 1);
+      }
+      iter.close();
+      throw err;
+    }
   };
 
   set = async ({
@@ -570,6 +601,52 @@ class PersistStreamClient extends EventEmitter {
     return resp;
   };
 
+  private requestGetAll = async ({
+    start_seq,
+    end_seq,
+    timeout,
+    maxWait,
+    changefeed,
+    includeConfig,
+  }: GetAllOpts = {}) => {
+    if (this.isClosed()) {
+      throw Error("closed");
+    }
+    if (changefeed) {
+      if (this.changefeeds.length == 0) {
+        throw Error(
+          "getAll with changefeed=true requires an existing local changefeed iterator",
+        );
+      }
+      this.changefeedDesired = true;
+    }
+    this.emitInitPhase("persist_request_many_start", {
+      start_seq,
+      end_seq,
+      changefeed,
+      include_config: includeConfig,
+    });
+    const sub = await this.socket.requestMany(null, {
+      headers: {
+        cmd: "getAll",
+        start_seq,
+        end_seq,
+        timeout,
+        changefeed,
+        includeConfig,
+      } as any,
+      timeout,
+      maxWait,
+    });
+    this.emitInitPhase("persist_request_many_subscribed", {
+      start_seq,
+      end_seq,
+      changefeed,
+      include_config: includeConfig,
+    });
+    return sub;
+  };
+
   // returns async iterator over arrays of stored messages.
   // It's must safer to use getAll below, but less memory
   // efficient.
@@ -578,26 +655,28 @@ class PersistStreamClient extends EventEmitter {
     end_seq,
     timeout,
     maxWait,
+    changefeed,
+    includeConfig,
   }: GetAllOpts = {}): AsyncGenerator<StoredMessage[], void, unknown> {
     if (this.isClosed()) {
-      // done
       return;
     }
-    const sub = await this.socket.requestMany(null, {
-      headers: {
-        cmd: "getAll",
-        start_seq,
-        end_seq,
-        timeout,
-      } as any,
+    const sub = await this.requestGetAll({
+      start_seq,
+      end_seq,
       timeout,
       maxWait,
+      changefeed,
+      includeConfig,
     });
     if (this.isClosed()) {
       // done with this
       return;
     }
     let seq = 0; // next expected seq number for the sub (not the data)
+    let firstChunk = true;
+    let chunks = 0;
+    let totalMessages = 0;
     for await (const { data, headers } of sub) {
       if (headers?.error) {
         throw new ConatError(`${headers.error}`, {
@@ -605,6 +684,10 @@ class PersistStreamClient extends EventEmitter {
         });
       }
       if (data == null || this.socket.state == "closed") {
+        this.emitInitPhase("persist_request_many_done", {
+          chunks,
+          messages: totalMessages,
+        });
         // done
         return;
       }
@@ -617,6 +700,15 @@ class PersistStreamClient extends EventEmitter {
         );
       } else {
         seq = headers?.seq + 1;
+      }
+      chunks += 1;
+      totalMessages += data.length;
+      if (firstChunk) {
+        firstChunk = false;
+        this.emitInitPhase("persist_request_many_first_chunk", {
+          seq: headers?.seq,
+          chunk_messages: data.length,
+        });
       }
       yield data;
     }
@@ -644,7 +736,81 @@ class PersistStreamClient extends EventEmitter {
       if (this.isClosed()) {
         throw Error("closed");
       }
+      if (opts.changefeed) {
+        this.changefeedActive = true;
+      }
       return messages;
+    } catch (err) {
+      stats.getAllErrors += 1;
+      const code = (err as any)?.code;
+      if (code === 503) {
+        stats.getAllCode503 += 1;
+      } else if (code === 408) {
+        stats.getAllCode408 += 1;
+      }
+      throw err;
+    }
+  };
+
+  getAllWithInfo = async (
+    opts: GetAllOpts = {},
+  ): Promise<{ messages: StoredMessage[]; config?: Configuration }> => {
+    stats.getAllCalls += 1;
+    bumpCounterByStorage(getAllByStorage, this.storageKey, 1);
+    try {
+      let messages: StoredMessage[] = [];
+      let config: Configuration | undefined;
+      const sub = await this.requestGetAll({ ...opts, includeConfig: true });
+      if (this.isClosed()) {
+        throw Error("closed");
+      }
+      let seq = 0;
+      let firstChunk = true;
+      let chunks = 0;
+      for await (const { data, headers } of sub) {
+        if (headers?.error) {
+          throw new ConatError(`${headers.error}`, {
+            code: headers.code as string | number,
+          });
+        }
+        if (headers?.config != null && config == null) {
+          config = headers.config as unknown as Configuration;
+        }
+        if (data == null || this.socket.state == "closed") {
+          break;
+        }
+        if (typeof headers?.seq != "number" || headers?.seq != seq) {
+          throw new ConatError(
+            `data dropped, probably due to load -- please try again; expected seq=${seq}, but got ${headers?.seq}`,
+            {
+              code: 503,
+            },
+          );
+        }
+        seq = headers.seq + 1;
+        chunks += 1;
+        if (firstChunk) {
+          firstChunk = false;
+          this.emitInitPhase("persist_request_many_first_chunk", {
+            seq: headers.seq,
+            chunk_messages: data.length,
+            received_config: config != null,
+          });
+        }
+        messages = messages.concat(data);
+      }
+      if (this.isClosed()) {
+        throw Error("closed");
+      }
+      if (opts.changefeed) {
+        this.changefeedActive = true;
+      }
+      this.emitInitPhase("persist_request_many_done", {
+        chunks,
+        messages: messages.length,
+        received_config: config != null,
+      });
+      return { messages, config };
     } catch (err) {
       stats.getAllErrors += 1;
       const code = (err as any)?.code;
@@ -726,6 +892,7 @@ interface Options {
   storage: StorageOptions;
   noCache?: boolean;
   service?: string;
+  initReporter?: PersistClientInitReporter;
 }
 
 export const stream = refCacheSync<Options, PersistStreamClient>({
@@ -733,10 +900,22 @@ export const stream = refCacheSync<Options, PersistStreamClient>({
   createKey: ({ user, storage, client, service = SERVICE }: Options) => {
     return JSON.stringify([user, storage, client.id, service]);
   },
-  createObject: ({ client, user, storage, service = SERVICE }: Options) => {
+  createObject: ({
+    client,
+    user,
+    storage,
+    service = SERVICE,
+    initReporter,
+  }: Options) => {
     // avoid wasting server resources, etc., by always checking permissions client side first
     assertHasWritePermission({ user, storage, service });
-    return new PersistStreamClient(client, storage, user, service);
+    return new PersistStreamClient(
+      client,
+      storage,
+      user,
+      service,
+      initReporter,
+    );
   },
 });
 

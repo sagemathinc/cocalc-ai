@@ -77,6 +77,32 @@ export function getId(ids: string[], subject: string) {
   return id;
 }
 
+// This is intentionally bounded.  We want to collapse repeated lookups during
+// one bootstrap burst, including slower remote opens, without pinning a client
+// to a persist server for the lifetime of the client if the persist service
+// restarts.
+export const PERSIST_SERVER_ID_CACHE_TTL_MS = 15000;
+
+type CacheEntry = {
+  promise: Promise<string>;
+  expiresAt: number;
+};
+
+const persistServerIdCache = new WeakMap<Client, Map<string, CacheEntry>>();
+
+function getPersistServerIdCache(client: Client) {
+  let cache = persistServerIdCache.get(client);
+  if (cache != null) {
+    return cache;
+  }
+  const newCache = new Map<string, CacheEntry>();
+  const clear = () => newCache.clear();
+  client.on("disconnected", clear);
+  client.on("closed", clear);
+  persistServerIdCache.set(client, newCache);
+  return newCache;
+}
+
 export async function getPersistServerId({
   client,
   subject,
@@ -87,6 +113,30 @@ export async function getPersistServerId({
   // take only first two segments of subject, since it could have a bunch more
   // that we better ignore (e.g., from the client)
   const s = subject.split(".").slice(0, 2).join(".") + ".id";
-  const resp = await client.request(s, null);
-  return resp.data;
+  const cache = getPersistServerIdCache(client);
+  const now = Date.now();
+  let entry = cache.get(s);
+  if (
+    entry != null &&
+    (entry.expiresAt === Number.POSITIVE_INFINITY || entry.expiresAt > now)
+  ) {
+    return await entry.promise;
+  }
+  entry = {
+    expiresAt: Number.POSITIVE_INFINITY,
+    promise: client
+      .request(s, null)
+      .then((resp) => {
+        entry!.expiresAt = Date.now() + PERSIST_SERVER_ID_CACHE_TTL_MS;
+        return resp.data as string;
+      })
+      .catch((err) => {
+        if (cache.get(s) === entry) {
+          cache.delete(s);
+        }
+        throw err;
+      }),
+  };
+  cache.set(s, entry);
+  return await entry.promise;
 }

@@ -273,6 +273,10 @@ export function server({
           mesg.respondSync(server.id);
         } else if (request.cmd == "getAll") {
           log("getAll", { subject: socket.subject, request });
+          if (request.changefeed && !changefeed) {
+            changefeed = true;
+            startChangefeed({ socket, stream, messagesThresh });
+          }
           // getAll uses requestMany which responds with all matching messages,
           // so no call to mesg.respond here.
           getAll({ stream, mesg, request, messagesThresh });
@@ -301,8 +305,18 @@ export function server({
 
 async function getAll({ stream, mesg, request, messagesThresh }) {
   let seq = 0;
+  let sentConfig = false;
+  const config = request.includeConfig ? stream.config() : undefined;
   const respond = (error?, messages?: StoredMessage[]) => {
-    mesg.respondSync(messages, { headers: { error, seq, code: error?.code } });
+    mesg.respondSync(messages, {
+      headers: {
+        error,
+        seq,
+        code: error?.code,
+        config: !sentConfig ? config : undefined,
+      },
+    });
+    sentConfig = true;
     seq += 1;
   };
 
