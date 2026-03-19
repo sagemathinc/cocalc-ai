@@ -23,6 +23,7 @@ import type {
   HostSoftwareArtifact,
   HostSoftwareAvailableVersion,
 } from "@cocalc/conat/hub/api/hosts";
+import type { ParallelOpsWorkerStatus } from "@cocalc/conat/hub/api/system";
 import type { HostLogEntry } from "../hooks/use-host-log";
 import { isHostOpActive, type HostLroState } from "../hooks/use-host-ops";
 import {
@@ -40,6 +41,7 @@ import { getProviderDescriptor, isKnownProvider } from "../providers/registry";
 import { getHostOpPhase, HostOpProgress } from "./host-op-progress";
 import { UpgradeConfirmContent } from "./upgrade-confirmation";
 import { HostBootstrapProgress } from "./host-bootstrap-progress";
+import { HostParallelOpsPanel } from "./host-parallel-ops-panel";
 import { HostProjectStatus } from "./host-project-status";
 import { HostProjectsBrowser } from "./host-projects-browser";
 
@@ -80,6 +82,22 @@ type HostDrawerViewModel = {
     onSetup: (host: Host) => void;
     onRemove: (host: Host) => void;
     onForceDeprovision: (host: Host) => void;
+  };
+  parallelOps?: {
+    status: ParallelOpsWorkerStatus[];
+    loading?: boolean;
+    savingKey?: string;
+    setLimit: (opts: {
+      worker_kind: string;
+      scope_type?: "global" | "provider" | "project_host";
+      scope_id?: string;
+      limit_value: number;
+    }) => void | Promise<void>;
+    clearLimit: (opts: {
+      worker_kind: string;
+      scope_type?: "global" | "provider" | "project_host";
+      scope_id?: string;
+    }) => void | Promise<void>;
   };
 };
 
@@ -311,6 +329,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
     loadingLog,
     softwareVersions,
     selfHost,
+    parallelOps,
   } = vm;
   const isSelfHost = host?.machine?.cloud === "self-host";
   const readPositive = (value: unknown) => {
@@ -559,6 +578,16 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
               Browse projects
             </Button>
           </Space>
+          {parallelOps ? (
+            <HostParallelOpsPanel
+              host_id={host.id}
+              status={parallelOps.status}
+              loading={parallelOps.loading}
+              savingKey={parallelOps.savingKey}
+              onSetLimit={parallelOps.setLimit}
+              onClearLimit={parallelOps.clearLimit}
+            />
+          ) : null}
           {(host.version ||
             host.project_bundle_version ||
             host.tools_version ||

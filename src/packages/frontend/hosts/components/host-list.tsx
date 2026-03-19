@@ -22,6 +22,7 @@ import { SyncOutlined } from "@ant-design/icons";
 import { React } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components/icon";
 import type { Host, HostCatalog } from "@cocalc/conat/hub/api/hosts";
+import type { ParallelOpsWorkerStatus } from "@cocalc/conat/hub/api/system";
 import { HostCard } from "./host-card";
 import {
   STATUS_COLOR,
@@ -46,6 +47,7 @@ import {
 } from "./host-confirm";
 import { isHostOpActive } from "../hooks/use-host-ops";
 import { UpgradeConfirmContent } from "./upgrade-confirmation";
+import { HostParallelOpsSummary } from "./host-parallel-ops-summary";
 import { search_match, search_split } from "@cocalc/util/misc";
 import type {
   HostListViewMode,
@@ -237,6 +239,24 @@ type HostListViewModel = {
   autoResort: boolean;
   setAutoResort: (value: boolean) => void;
   providerCapabilities?: HostCatalog["provider_capabilities"];
+  parallelOps?: {
+    status: ParallelOpsWorkerStatus[];
+    loading?: boolean;
+    error?: string;
+    savingKey?: string;
+    refresh: () => void | Promise<void>;
+    setLimit: (opts: {
+      worker_kind: string;
+      scope_type?: "global" | "provider" | "project_host";
+      scope_id?: string;
+      limit_value: number;
+    }) => void | Promise<void>;
+    clearLimit: (opts: {
+      worker_kind: string;
+      scope_type?: "global" | "provider" | "project_host";
+      scope_id?: string;
+    }) => void | Promise<void>;
+  };
 };
 
 export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
@@ -275,6 +295,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
     autoResort,
     setAutoResort,
     providerCapabilities,
+    parallelOps,
   } = vm;
 
   const [selectedRowKeys, setSelectedRowKeys] = React.useState<string[]>([]);
@@ -1240,6 +1261,17 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
     <div>
       {header}
       {filterNotice}
+      {isAdmin && showAdmin && parallelOps ? (
+        <HostParallelOpsSummary
+          status={parallelOps.status}
+          loading={parallelOps.loading}
+          error={parallelOps.error}
+          savingKey={parallelOps.savingKey}
+          onRefresh={parallelOps.refresh}
+          onSetLimit={parallelOps.setLimit}
+          onClearLimit={parallelOps.clearLimit}
+        />
+      ) : null}
       {bulkActions}
       {viewMode === "list" ? (
         <Table

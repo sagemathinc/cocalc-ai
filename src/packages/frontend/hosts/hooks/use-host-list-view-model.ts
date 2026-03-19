@@ -8,6 +8,7 @@ import type {
   HostDrainOptions,
 } from "../types";
 import type { HostCatalog } from "@cocalc/conat/hub/api/hosts";
+import type { ParallelOpsWorkerStatus } from "@cocalc/conat/hub/api/system";
 import type { HostLroState } from "./use-host-ops";
 
 type UseHostListViewModelArgs = {
@@ -50,6 +51,24 @@ type UseHostListViewModelArgs = {
   autoResort: boolean;
   setAutoResort: (value: boolean) => void;
   providerCapabilities?: HostCatalog["provider_capabilities"];
+  parallelOps?: {
+    status: ParallelOpsWorkerStatus[];
+    loading?: boolean;
+    error?: string;
+    savingKey?: string;
+    refresh: () => void | Promise<void>;
+    setLimit: (opts: {
+      worker_kind: string;
+      scope_type?: "global" | "provider" | "project_host";
+      scope_id?: string;
+      limit_value: number;
+    }) => void | Promise<void>;
+    clearLimit: (opts: {
+      worker_kind: string;
+      scope_type?: "global" | "provider" | "project_host";
+      scope_id?: string;
+    }) => void | Promise<void>;
+  };
 };
 
 export const useHostListViewModel = ({
@@ -85,6 +104,7 @@ export const useHostListViewModel = ({
   autoResort,
   setAutoResort,
   providerCapabilities,
+  parallelOps,
 }: UseHostListViewModelArgs) => {
   return {
     hosts,
@@ -119,5 +139,6 @@ export const useHostListViewModel = ({
     autoResort,
     setAutoResort,
     providerCapabilities,
+    parallelOps,
   };
 };

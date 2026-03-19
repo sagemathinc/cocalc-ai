@@ -3,6 +3,7 @@ import type {
   HostSoftwareArtifact,
   HostSoftwareAvailableVersion,
 } from "@cocalc/conat/hub/api/hosts";
+import type { ParallelOpsWorkerStatus } from "@cocalc/conat/hub/api/system";
 import type { HostLogEntry } from "./use-host-log";
 import type { HostLroState } from "./use-host-ops";
 
@@ -46,6 +47,22 @@ type UseHostDrawerViewModelArgs = {
     onRemove: (host: Host) => void;
     onForceDeprovision: (host: Host) => void;
   };
+  parallelOps?: {
+    status: ParallelOpsWorkerStatus[];
+    loading?: boolean;
+    savingKey?: string;
+    setLimit: (opts: {
+      worker_kind: string;
+      scope_type?: "global" | "provider" | "project_host";
+      scope_id?: string;
+      limit_value: number;
+    }) => void | Promise<void>;
+    clearLimit: (opts: {
+      worker_kind: string;
+      scope_type?: "global" | "provider" | "project_host";
+      scope_id?: string;
+    }) => void | Promise<void>;
+  };
 };
 
 export const useHostDrawerViewModel = ({
@@ -63,6 +80,7 @@ export const useHostDrawerViewModel = ({
   loadingLog,
   softwareVersions,
   selfHost,
+  parallelOps,
 }: UseHostDrawerViewModelArgs) => {
   return {
     open,
@@ -79,5 +97,6 @@ export const useHostDrawerViewModel = ({
     loadingLog,
     softwareVersions,
     selfHost,
+    parallelOps,
   };
 };

@@ -19,6 +19,7 @@ import { useHostOps } from "./use-host-ops";
 import { useHostProviders } from "./use-host-providers";
 import { useHostSelection } from "./use-host-selection";
 import { useHostSoftwareVersions } from "./use-host-software-versions";
+import { useParallelOps } from "./use-parallel-ops";
 import { formatHostUpgradeFailureMessage } from "./host-upgrade-errors";
 import { buildRegionGroupOptions } from "../utils/normalize-catalog";
 import {
@@ -196,6 +197,9 @@ export const useHostsPageViewModel = () => {
   const flags = useHostFeatureFlags();
   const [showAdmin, setShowAdmin] = React.useState(false);
   const [showDeleted, setShowDeleted] = React.useState(false);
+  const parallelOps = useParallelOps(hub, {
+    enabled: isAdmin && showAdmin,
+  });
 
   const [fastPoll, setFastPoll] = React.useState(false);
   const [setupOpen, setSetupOpen] = React.useState(false);
@@ -898,6 +902,7 @@ export const useHostsPageViewModel = () => {
     setAutoResort,
     providerCapabilities:
       catalog?.provider_capabilities ?? selfHostCatalog?.provider_capabilities,
+    parallelOps,
   });
   const hostDrawerVm = useHostDrawerViewModel({
     open: drawerOpen,
@@ -923,6 +928,7 @@ export const useHostsPageViewModel = () => {
       onRemove: openRemove,
       onForceDeprovision: (host: Host) => forceDeprovision(host.id),
     },
+    parallelOps,
   });
 
   const { catalog: editCatalog, catalogError: editCatalogError } =
