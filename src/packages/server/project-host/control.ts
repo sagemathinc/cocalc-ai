@@ -12,6 +12,7 @@ const log = getLogger("server:project-host:control");
 const START_PROJECT_TIMEOUT_MS = 60 * 60 * 1000;
 const STOP_PROJECT_TIMEOUT_MS = 30 * 1000;
 const RECENT_RUNNING_STATE_MS = 60 * 1000;
+const RECENT_STARTING_STATE_MS = 5 * 60 * 1000;
 const startProjectInFlight = new Map<string, Promise<void>>();
 
 type HostPlacement = {
@@ -51,6 +52,56 @@ async function getProjectStateSnapshot(
     log.debug("getProjectStateSnapshot failed", { project_id, err: `${err}` });
     return {};
   }
+}
+
+async function hasActiveProjectStartLro(project_id: string): Promise<boolean> {
+  const { rows } = await pool().query<{ exists: boolean }>(
+    `
+      SELECT EXISTS(
+        SELECT 1
+        FROM long_running_operations
+        WHERE kind = 'project-start'
+          AND scope_type = 'project'
+          AND scope_id = $1
+          AND dismissed_at IS NULL
+          AND status IN ('queued', 'running')
+      ) AS exists
+    `,
+    [project_id],
+  );
+  return !!rows[0]?.exists;
+}
+
+export function shouldSkipStartForSnapshot({
+  state,
+  timeMs,
+  hasActiveStartLro,
+  nowMs = Date.now(),
+}: {
+  state?: string;
+  timeMs?: number;
+  hasActiveStartLro: boolean;
+  nowMs?: number;
+}): { skip: boolean; reason?: string } {
+  if (state === "starting") {
+    if (hasActiveStartLro) {
+      return { skip: true, reason: "active-start-lro" };
+    }
+    const isRecent =
+      timeMs != null && nowMs - timeMs <= RECENT_STARTING_STATE_MS;
+    if (isRecent) {
+      return { skip: true, reason: "recent-starting-state" };
+    }
+    return { skip: false };
+  }
+  if (state === "running") {
+    const isRecent =
+      timeMs != null && nowMs - timeMs <= RECENT_RUNNING_STATE_MS;
+    if (isRecent) {
+      return { skip: true, reason: "recent-running-state" };
+    }
+  }
+  return { skip: false };
 }
 
 export async function loadProject(project_id: string): Promise<ProjectMeta> {
@@ -229,29 +280,38 @@ export async function startProjectOnHost(
   }
   const task = (async () => {
     const snapshot = await getProjectStateSnapshot(project_id);
-    if (snapshot.state === "starting") {
-      log.debug(
-        "startProjectOnHost skipping duplicate start for starting project",
-        {
-          project_id,
-        },
-      );
+    const activeStartLro =
+      snapshot.state === "starting"
+        ? await hasActiveProjectStartLro(project_id)
+        : false;
+    const startDecision = shouldSkipStartForSnapshot({
+      state: snapshot.state,
+      timeMs: snapshot.timeMs,
+      hasActiveStartLro: activeStartLro,
+    });
+    if (startDecision.skip) {
+      log.debug("startProjectOnHost skipping duplicate start", {
+        project_id,
+        state: snapshot.state,
+        state_time: snapshot.timeMs,
+        reason: startDecision.reason,
+      });
       return;
     }
+    if (snapshot.state === "starting") {
+      log.warn("startProjectOnHost recovering stale starting state", {
+        project_id,
+        state_time: snapshot.timeMs,
+      });
+    }
     if (snapshot.state === "running") {
-      const isRecent =
-        snapshot.timeMs != null &&
-        Date.now() - snapshot.timeMs <= RECENT_RUNNING_STATE_MS;
-      if (isRecent) {
-        log.debug(
-          "startProjectOnHost skipping duplicate start for recently running project",
-          {
-            project_id,
-            state_time: snapshot.timeMs,
-          },
-        );
-        return;
-      }
+      log.debug(
+        "startProjectOnHost proceeding despite stale running state snapshot",
+        {
+          project_id,
+          state_time: snapshot.timeMs,
+        },
+      );
     }
 
     const placement = await ensurePlacement(project_id);

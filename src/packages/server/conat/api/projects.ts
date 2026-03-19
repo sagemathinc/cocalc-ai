@@ -33,6 +33,7 @@ import {
   makeOfflineMoveConfirmationPayload,
   offlineMoveConfirmationError,
 } from "@cocalc/server/projects/offline-move-confirmation";
+import type { LroSummary } from "@cocalc/conat/hub/api/lro";
 import { assertCollab } from "./util";
 import type {
   ChatStoreDeleteResult,
@@ -179,6 +180,30 @@ import { db } from "@cocalc/database";
 import { callback2 } from "@cocalc/util/async-utils";
 
 const log = getLogger("server:conat:api:projects");
+
+function publishStartLroSummaryBestEffort({
+  scope_type,
+  scope_id,
+  summary,
+  context,
+}: {
+  scope_type: LroSummary["scope_type"];
+  scope_id: string;
+  summary: LroSummary;
+  context: string;
+}): void {
+  void publishLroSummary({
+    scope_type,
+    scope_id,
+    summary,
+  }).catch((err) => {
+    log.warn(`${context}: unable to publish LRO summary`, {
+      op_id: summary.op_id,
+      scope_id,
+      err,
+    });
+  });
+}
 
 function normalizeLogTail(lines?: number): number {
   const n = Number(lines ?? 200);
@@ -409,19 +434,12 @@ export async function start({
     input: { project_id },
     status: "queued",
   });
-  try {
-    await publishLroSummary({
-      scope_type: op.scope_type,
-      scope_id: op.scope_id,
-      summary: op,
-    });
-  } catch (err) {
-    log.warn("start: unable to publish initial LRO summary", {
-      op_id: op.op_id,
-      project_id,
-      err,
-    });
-  }
+  publishStartLroSummaryBestEffort({
+    scope_type: op.scope_type,
+    scope_id: op.scope_id,
+    summary: op,
+    context: "start: initial",
+  });
   publishLroEvent({
     scope_type: op.scope_type,
     scope_id: op.scope_id,
@@ -457,19 +475,12 @@ export async function start({
       error: null,
     });
     if (running) {
-      try {
-        await publishLroSummary({
-          scope_type: running.scope_type,
-          scope_id: running.scope_id,
-          summary: running,
-        });
-      } catch (err) {
-        log.warn("start: unable to publish running LRO summary", {
-          op_id: op.op_id,
-          project_id,
-          err,
-        });
-      }
+      publishStartLroSummaryBestEffort({
+        scope_type: running.scope_type,
+        scope_id: running.scope_id,
+        summary: running,
+        context: "start: running",
+      });
     }
     try {
       await project.start({ lro_op_id: op.op_id, account_id });
@@ -490,19 +501,12 @@ export async function start({
         error: null,
       });
       if (updated) {
-        try {
-          await publishLroSummary({
-            scope_type: updated.scope_type,
-            scope_id: updated.scope_id,
-            summary: updated,
-          });
-        } catch (err) {
-          log.warn("start: unable to publish succeeded LRO summary", {
-            op_id: op.op_id,
-            project_id,
-            err,
-          });
-        }
+        publishStartLroSummaryBestEffort({
+          scope_type: updated.scope_type,
+          scope_id: updated.scope_id,
+          summary: updated,
+          context: "start: succeeded",
+        });
       }
     } catch (err) {
       const updated = await updateLro({
@@ -511,19 +515,12 @@ export async function start({
         error: `${err}`,
       });
       if (updated) {
-        try {
-          await publishLroSummary({
-            scope_type: updated.scope_type,
-            scope_id: updated.scope_id,
-            summary: updated,
-          });
-        } catch (publishErr) {
-          log.warn("start: unable to publish failed LRO summary", {
-            op_id: op.op_id,
-            project_id,
-            err: publishErr,
-          });
-        }
+        publishStartLroSummaryBestEffort({
+          scope_type: updated.scope_type,
+          scope_id: updated.scope_id,
+          summary: updated,
+          context: "start: failed",
+        });
       }
       throw err;
     }
