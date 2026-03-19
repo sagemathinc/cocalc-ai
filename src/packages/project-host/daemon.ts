@@ -203,6 +203,26 @@ function ensureNotAlreadyRunning(pidPath: string): void {
   fs.rmSync(pidPath, { force: true });
 }
 
+function getPositiveIntEnv(name: string, fallback: number): number {
+  const raw = Number(process.env[name]);
+  return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : fallback;
+}
+
+function sleepMs(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function waitForExit(pid: number, timeoutMs: number, pollMs: number): boolean {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!isRunning(pid)) {
+      return true;
+    }
+    sleepMs(pollMs);
+  }
+  return !isRunning(pid);
+}
+
 function resolveExec(root: string): { command: string; args: string[] } {
   const command =
     process.env.COCALC_PROJECT_HOST_DAEMON_EXEC ?? process.execPath;
@@ -271,9 +291,29 @@ export function stopDaemon(index = 0): void {
     fs.rmSync(pidPath, { force: true });
     throw new Error(`No running process for pid ${pid}; removed ${pidPath}`);
   }
+  const stopTimeoutMs = getPositiveIntEnv(
+    "COCALC_PROJECT_HOST_DAEMON_STOP_TIMEOUT_MS",
+    15_000,
+  );
+  const killTimeoutMs = getPositiveIntEnv(
+    "COCALC_PROJECT_HOST_DAEMON_KILL_TIMEOUT_MS",
+    5_000,
+  );
+  const pollMs = getPositiveIntEnv(
+    "COCALC_PROJECT_HOST_DAEMON_STOP_POLL_MS",
+    100,
+  );
   process.kill(pid, "SIGTERM");
+  if (!waitForExit(pid, stopTimeoutMs, pollMs)) {
+    process.kill(pid, "SIGKILL");
+    if (!waitForExit(pid, killTimeoutMs, pollMs)) {
+      throw new Error(`project-host pid ${pid} did not exit after SIGKILL`);
+    }
+    console.log(`Sent SIGKILL to project-host (pid ${pid}).`);
+  } else {
+    console.log(`Sent SIGTERM to project-host (pid ${pid}).`);
+  }
   fs.rmSync(pidPath, { force: true });
-  console.log(`Sent SIGTERM to project-host (pid ${pid}).`);
 }
 
 export function handleDaemonCli(argv: string[]): boolean {
