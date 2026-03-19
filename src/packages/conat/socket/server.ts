@@ -3,6 +3,7 @@ import {
   PING_PONG_INTERVAL,
   type Command,
   SOCKET_HEADER_CMD,
+  SOCKET_HEADER_CONNECT_ATTEMPT,
   clientSubject,
   serverStatusSubject,
 } from "./util";
@@ -116,9 +117,11 @@ export class ConatSocketServer extends ConatSocketBase {
       // in a cluster, it's critical that the other side is visible
       // before we start sending messages, since otherwise first
       // message is likely to be dropped if client is on another node.
+      const waitStart = Date.now();
       try {
         await this.client.waitForInterest(socket.clientSubject);
       } catch {}
+      socket.connectWaitForInterestMs = Date.now() - waitStart;
       if (this.state == ("closed" as any)) {
         return;
       }
@@ -214,9 +217,14 @@ export class ConatSocketServer extends ConatSocketBase {
       delete this.sockets[id];
       mesg.respondSync("closed");
     } else if (cmd == "connect") {
-      // very important that connected is successfully delivered, so do not use respondSync.
-      // Using respond waits for interest.
-      mesg.respond("connected", { noThrow: true });
+      this.client.publishSync(socket.clientSubject, null, {
+        headers: {
+          [SOCKET_HEADER_CMD]: "connected",
+          [SOCKET_HEADER_CONNECT_ATTEMPT]:
+            mesg.headers?.[SOCKET_HEADER_CONNECT_ATTEMPT],
+          waitForClientInterestMs: socket.connectWaitForInterestMs,
+        },
+      });
     } else {
       mesg.respondSync({ error: `unknown command - '${cmd}'` });
     }
