@@ -113,11 +113,15 @@ async function submitAssistantRequest(
   await expect(page.locator(".cc-agent-dock-handle")).toBeVisible({
     timeout: 45_000,
   });
+  await expectPromptVisible(page, prompt);
+  await expectWorkspaceOnlyOn(page);
+  return await waitForSelectedThreadKey(page);
+}
+
+async function expectPromptVisible(page: Page, prompt: string): Promise<void> {
   await expect(page.getByText(prompt, { exact: true }).first()).toBeVisible({
     timeout: 45_000,
   });
-  await expectWorkspaceOnlyOn(page);
-  return await waitForSelectedThreadKey(page);
 }
 
 test("title-bar assistant in notebooks reuses one workspace agent thread", async ({
@@ -153,4 +157,21 @@ test("title-bar assistant in notebooks reuses one workspace agent thread", async
   const secondThreadKey = await submitAssistantRequest(page, secondPrompt);
 
   expect(secondThreadKey).toBe(firstThreadKey);
+  await expectPromptVisible(page, firstPrompt);
+  await expectPromptVisible(page, secondPrompt);
+
+  await openNotebookPage(
+    page,
+    notebookUrl({ base_url, auth_token, path_ipynb: notebookA }),
+    60_000,
+  );
+
+  const thirdPrompt =
+    "Please add a markdown cell that says Notebook Harness Three.";
+  const thirdThreadKey = await submitAssistantRequest(page, thirdPrompt);
+
+  expect(thirdThreadKey).toBe(firstThreadKey);
+  await expectPromptVisible(page, firstPrompt);
+  await expectPromptVisible(page, secondPrompt);
+  await expectPromptVisible(page, thirdPrompt);
 });

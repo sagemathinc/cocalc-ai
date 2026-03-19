@@ -156,10 +156,14 @@ async function submitAssistantRequest(
   await expect(page.locator(".cc-agent-dock-handle")).toBeVisible({
     timeout: 45_000,
   });
+  await expectPromptVisible(page, prompt);
+  return { threadKey: await waitForSelectedThreadKey(page) };
+}
+
+async function expectPromptVisible(page: Page, prompt: string): Promise<void> {
   await expect(page.getByText(prompt, { exact: true }).first()).toBeVisible({
     timeout: 45_000,
   });
-  return { threadKey: await waitForSelectedThreadKey(page) };
 }
 
 test("title-bar assistant reuses one workspace agent thread across files", async ({
@@ -186,4 +190,16 @@ test("title-bar assistant reuses one workspace agent thread across files", async
   const second = await submitAssistantRequest(page, secondPrompt);
 
   expect(second.threadKey).toBe(first.threadKey);
+  await expectPromptVisible(page, firstPrompt);
+  await expectPromptVisible(page, secondPrompt);
+
+  await openMarkdownFile(page, fileUrl({ base_url, auth_token, path: pathA }));
+
+  const thirdPrompt = "Please rewrite the first paragraph in a shorter style.";
+  const third = await submitAssistantRequest(page, thirdPrompt);
+
+  expect(third.threadKey).toBe(first.threadKey);
+  await expectPromptVisible(page, firstPrompt);
+  await expectPromptVisible(page, secondPrompt);
+  await expectPromptVisible(page, thirdPrompt);
 });
