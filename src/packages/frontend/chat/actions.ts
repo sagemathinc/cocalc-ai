@@ -2399,15 +2399,19 @@ export class ChatActions extends Actions<ChatState> {
     const project_id = this.store.get("project_id");
     const path = this.store.get("path");
     if (!project_id || !path) return false;
-    const sender_id = this.redux.getStore("account").get_account_id();
+    const targetMessage = this.getMessageByDate(messageDate);
+    const sender_id = senderId(targetMessage);
     if (!sender_id) return false;
     const message_date = toISOString(messageDate);
     if (!message_date) return false;
+    const message_id = field<string>(targetMessage, "message_id");
     const chat: AcpChatContext = {
       project_id,
       path,
       sender_id,
       message_date,
+      message_id: message_id || undefined,
+      thread_id: threadId,
     };
     try {
       await webapp_client.conat_client.interruptAcp({

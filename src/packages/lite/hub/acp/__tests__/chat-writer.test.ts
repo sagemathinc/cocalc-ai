@@ -9,7 +9,12 @@ import type {
 } from "@cocalc/conat/ai/acp/types";
 import type { Client as ConatClient } from "@cocalc/conat/core/client";
 import { CHAT_THREAD_META_ROW_DATE, threadConfigSenderId } from "@cocalc/chat";
-import { ChatStreamWriter, recoverOrphanedAcpTurns } from "../index";
+import {
+  ChatStreamWriter,
+  recoverCurrentWorkerStuckAcpTurns,
+  recoverOrphanedAcpTurns,
+  repairInterruptedAcpTurn,
+} from "../index";
 import * as queue from "../../sqlite/acp-queue";
 import * as turns from "../../sqlite/acp-turns";
 import * as chatServer from "@cocalc/chat/server";
@@ -2003,5 +2008,150 @@ describe("recoverOrphanedAcpTurns", () => {
       model: "gpt-5.3-codex",
       sessionId: "session-keep",
     });
+  });
+});
+
+describe("repairInterruptedAcpTurn", () => {
+  it("repairs a stale running chat thread with no live backend turn", async () => {
+    const { syncdb, setCurrent } = makeFakeSyncDB();
+    setCurrent({
+      event: "chat",
+      date: "2026-03-19T20:00:00.000Z",
+      sender_id: "codex-agent",
+      message_id: "msg-interrupt-1",
+      thread_id: "thread-interrupt-1",
+      generating: true,
+      history: [
+        {
+          author_id: "codex-agent",
+          content: "partial answer",
+          date: "2026-03-19T20:00:00.000Z",
+        },
+      ],
+    });
+    syncdb.set({
+      event: "chat-thread-state",
+      sender_id: "system",
+      date: "2026-03-19T20:00:00.001Z",
+      thread_id: "thread-interrupt-1",
+      state: "running",
+      active_message_id: "msg-interrupt-1",
+    });
+    (chatServer.acquireChatSyncDB as any).mockResolvedValue(syncdb);
+
+    const repaired = await repairInterruptedAcpTurn({
+      client: makeFakeClient() as any,
+      turn: {
+        project_id: "p",
+        path: "chat",
+        message_date: "2026-03-19T20:00:00.000Z",
+        sender_id: "codex-agent",
+        message_id: "msg-interrupt-1",
+        thread_id: "thread-interrupt-1",
+      },
+      interruptedNotice: "Conversation interrupted.",
+      interruptedReasonId: "interrupt",
+      recoveryReason: "Conversation interrupted.",
+    });
+
+    const finalChat = syncdb.get_one({
+      event: "chat",
+      message_id: "msg-interrupt-1",
+    });
+    const finalThreadState = syncdb.get_one({
+      event: "chat-thread-state",
+      thread_id: "thread-interrupt-1",
+    });
+    expect(repaired).toBe(true);
+    expect(finalChat?.generating).toBe(false);
+    expect(finalChat?.acp_interrupted).toBe(true);
+    expect(finalThreadState?.state).toBe("interrupted");
+  });
+});
+
+describe("recoverCurrentWorkerStuckAcpTurns", () => {
+  it("repairs a running lease owned by the current worker when no live writer remains", async () => {
+    const { syncdb, sets, setCurrent } = makeFakeSyncDB();
+    (chatServer.acquireChatSyncDB as any).mockResolvedValue(syncdb);
+    const metadata = {
+      ...baseMetadata,
+      message_date: "2026-03-19T20:10:00.000Z",
+      sender_id: "codex-agent",
+      message_id: "msg-stuck-1",
+      thread_id: "thread-stuck-1",
+    } as any;
+    const writer: any = new ChatStreamWriter({
+      metadata,
+      client: makeFakeClient() as any,
+      approverAccountId: "acct-1",
+      syncdbOverride: syncdb,
+    });
+    await writer.waitUntilReady();
+    const ownerInstanceId = (turns.startAcpTurnLease as any).mock.calls[0][0]
+      .owner_instance_id;
+    writer.dispose?.(true);
+
+    setCurrent({
+      event: "chat",
+      date: metadata.message_date,
+      sender_id: metadata.sender_id,
+      message_id: metadata.message_id,
+      thread_id: metadata.thread_id,
+      generating: true,
+      history: [
+        {
+          author_id: "codex-agent",
+          content: "still running",
+          date: metadata.message_date,
+        },
+      ],
+    });
+    syncdb.set({
+      event: "chat-thread-state",
+      sender_id: "system",
+      date: "2026-03-19T20:10:00.001Z",
+      thread_id: metadata.thread_id,
+      state: "running",
+      active_message_id: metadata.message_id,
+    });
+    (turns.finalizeAcpTurnLease as any).mockReset();
+    (turns.listRunningAcpTurnLeases as any).mockReturnValue([
+      {
+        project_id: "p",
+        path: "chat",
+        message_date: metadata.message_date,
+        sender_id: metadata.sender_id,
+        message_id: metadata.message_id,
+        thread_id: metadata.thread_id,
+        owner_instance_id: ownerInstanceId,
+        heartbeat_at: 0,
+        started_at: 0,
+      },
+    ]);
+
+    const recovered = await recoverCurrentWorkerStuckAcpTurns(
+      makeFakeClient() as any,
+      { graceMs: 0 },
+    );
+
+    expect(recovered).toBe(1);
+    expect(
+      sets.find(
+        (row: any) =>
+          row.event === "chat-thread-state" &&
+          row.thread_id === metadata.thread_id &&
+          row.state === "interrupted",
+      ),
+    ).toBeTruthy();
+    expect((turns.finalizeAcpTurnLease as any).mock.calls).toEqual(
+      expect.arrayContaining([
+        [
+          expect.objectContaining({
+            state: "aborted",
+            reason: "backend lost live Codex turn",
+          }),
+        ],
+      ]),
+    );
   });
 });
