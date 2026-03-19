@@ -24,7 +24,8 @@ function normalizeAndValidateRawUrl(rawUrl: string): string {
   const currentHost = window.location.hostname;
   const sameHost =
     parsed.hostname === currentHost ||
-    parsed.hostname.endsWith(`.${currentHost}`);
+    parsed.hostname.endsWith(`.${currentHost}`) ||
+    parsed.hostname.endsWith(`-${currentHost}`);
   const sameOrigin = parsed.origin === window.location.origin;
   if (!sameOrigin && !sameHost) {
     throw new Error("public viewer source host is not allowed");
