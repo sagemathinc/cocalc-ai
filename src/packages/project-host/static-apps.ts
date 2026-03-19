@@ -6,6 +6,7 @@
 import type http from "node:http";
 import path from "node:path";
 import type { Stats } from "node:fs";
+import { finished } from "node:stream/promises";
 import TTL from "@isaacs/ttlcache";
 import getLogger from "@cocalc/backend/logger";
 import { SandboxedFilesystem } from "@cocalc/backend/sandbox";
@@ -27,7 +28,6 @@ const PUBLIC_WEB_BASE_URL_CACHE = new TTL<string, string | null>({
   max: 1,
   ttl: 30_000,
 });
-const MAX_STATIC_MEMORY_FILE_BYTES = 32 * 1024 * 1024;
 const MAX_PUBLIC_VIEWER_RENDERABLE_FILE_BYTES = 16 * 1024 * 1024;
 const MAX_PUBLIC_VIEWER_MANIFEST_BYTES = 1 * 1024 * 1024;
 
@@ -41,14 +41,15 @@ Security and abuse-control invariants for host-side static serving:
    path tricks inside the published subtree instead of merely inside the wider
    project mount.
 
-2. Do not "optimize" this back to express.static/createReadStream on host
-   paths unless the sandbox layer grows a verified streaming API. A direct host
-   stream is exactly how symlink escapes get reintroduced.
+2. Non-renderable static files may stream, but only through a sandbox API that
+   opens and verifies the file descriptor first. Do not fall back to raw host
+   path streaming. A direct host stream is exactly how symlink escapes get
+   reintroduced.
 
-3. Because we currently read through the sandbox API instead of verified
-   streaming, every in-memory read must be size bounded. Oversized manifests or
-   viewer payloads must fail closed with 413 instead of letting a user turn the
-   project-host into a large sparse-file reader.
+3. Anything we intentionally parse/render in memory must still be size
+   bounded. Oversized manifests or viewer payloads must fail closed with 413
+   instead of letting a user turn the project-host into a large sparse-file
+   reader.
 */
 
 interface StaticResolvedPath {
@@ -461,7 +462,7 @@ function getStaticReadLimit({
 }: {
   integration: AppStaticIntegrationSpec | undefined;
   relativePath: string;
-}): number {
+}): number | undefined {
   if (
     integration?.mode === COCALC_PUBLIC_VIEWER_MODE &&
     isPublicViewerRenderablePath(relativePath, {
@@ -470,7 +471,7 @@ function getStaticReadLimit({
   ) {
     return MAX_PUBLIC_VIEWER_RENDERABLE_FILE_BYTES;
   }
-  return MAX_STATIC_MEMORY_FILE_BYTES;
+  return;
 }
 
 async function resolveStaticRoot(
@@ -587,10 +588,9 @@ async function writeResolvedStaticFile({
   const { fsPath, stat: info } = resolved;
   const ext = path.extname(fsPath).toLowerCase();
   const contentType = MIME_BY_EXT[ext] ?? "application/octet-stream";
-  const maxFileBytes = maxBytes ?? MAX_STATIC_MEMORY_FILE_BYTES;
-  if (Number(info.size) > maxFileBytes) {
+  if (maxBytes != null && Number(info.size) > maxBytes) {
     writeFileTooLarge(res, {
-      maxBytes: maxFileBytes,
+      maxBytes,
       extraHeaders,
     });
     return;
@@ -638,14 +638,24 @@ async function writeResolvedStaticFile({
     res.end();
     return;
   }
-  try {
-    const body = (await fs.readFile(fsPath)) as Buffer;
-    res.end(body.subarray(start, end + 1));
-  } catch (err) {
-    logger.warn("static file read error", { err: `${err}`, fsPath });
-    if (!res.writableEnded) {
-      res.end();
+  const stream = await fs.createReadStream(fsPath, { start, end });
+  stream.on("error", (err) => {
+    logger.warn("static file stream error", { err: `${err}`, fsPath });
+    if (!res.headersSent) {
+      res.writeHead(500, {
+        "Content-Type": "text/plain; charset=utf-8",
+        ...(extraHeaders ?? {}),
+      });
     }
+    if (!res.writableEnded) {
+      res.end("Static file read failed\n");
+    }
+  });
+  stream.pipe(res);
+  try {
+    await finished(stream);
+  } catch {
+    // handled above
   }
 }
 

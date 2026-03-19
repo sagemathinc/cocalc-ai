@@ -2,6 +2,7 @@ import type http from "node:http";
 import { mkdtemp, mkdir, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Writable } from "node:stream";
 
 import type { AppRequestMatch } from "./app-public-access";
 import { createProjectSandboxFilesystem } from "./file-server-sandbox-policy";
@@ -15,11 +16,20 @@ jest.mock("./file-server", () => ({
 const { maybeHandleStaticAppRequest } =
   require("./static-apps") as typeof import("./static-apps");
 
-class MockResponse {
+class MockResponse extends Writable {
   public statusCode = 200;
   public headers: Record<string, string | number> = {};
   public body = Buffer.alloc(0);
-  public writableEnded = false;
+
+  _write(
+    chunk: string | Buffer,
+    _encoding: BufferEncoding,
+    callback: (error?: Error | null) => void,
+  ) {
+    const next = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    this.body = Buffer.concat([this.body, next]);
+    callback();
+  }
 
   writeHead(statusCode: number, headers?: Record<string, string | number>) {
     this.statusCode = statusCode;
@@ -29,9 +39,10 @@ class MockResponse {
 
   end(chunk?: string | Buffer) {
     if (chunk != null) {
-      this.body = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      const next = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      this.body = Buffer.concat([this.body, next]);
     }
-    this.writableEnded = true;
+    super.end();
     return this;
   }
 }
