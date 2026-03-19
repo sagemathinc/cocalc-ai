@@ -36,6 +36,7 @@ import { getProviderDescriptor, isKnownProvider } from "../providers/registry";
 import type { HostLroState } from "../hooks/use-host-ops";
 import { getHostOpPhase, HostOpProgress } from "./host-op-progress";
 import { HostBackupStatus } from "./host-backup-status";
+import { HostBootstrapProgress } from "./host-bootstrap-progress";
 import { HostProjectStatus } from "./host-project-status";
 import {
   confirmBulkHostDeprovision,
@@ -726,6 +727,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
               )}
             </Space>
             <HostOpProgress op={op} compact />
+            <HostBootstrapProgress host={host} compact />
             <HostProjectStatus host={host} compact />
             <HostBackupStatus host={host} compact />
           </Space>

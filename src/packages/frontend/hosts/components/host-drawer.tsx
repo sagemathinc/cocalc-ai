@@ -39,6 +39,7 @@ import {
 import { getProviderDescriptor, isKnownProvider } from "../providers/registry";
 import { getHostOpPhase, HostOpProgress } from "./host-op-progress";
 import { UpgradeConfirmContent } from "./upgrade-confirmation";
+import { HostBootstrapProgress } from "./host-bootstrap-progress";
 import { HostProjectStatus } from "./host-project-status";
 import { HostProjectsBrowser } from "./host-projects-browser";
 
@@ -498,6 +499,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
           {!showUpgradeProgress && (
             <Space orientation="vertical" size="small">
               <HostOpProgress op={activeOp} />
+              <HostBootstrapProgress host={host} />
               {canCancelBackups && (
                 <Popconfirm
                   title="Cancel backups for this host?"
