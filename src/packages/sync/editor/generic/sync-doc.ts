@@ -259,7 +259,7 @@ export class SyncDoc extends EventEmitter {
 
   private state: State = "init";
 
-  private syncstring_table: SyncTable;
+  private syncstring_table?: SyncTable;
   public patches_table: SyncTable;
   private syncMetadata: Map<string, any> = Map();
 
@@ -408,7 +408,6 @@ export class SyncDoc extends EventEmitter {
 
     this.setMaxListeners(100);
     this.emitOpenPhase("open_start");
-    void this.init_syncstring_table;
 
     this.init();
     // This makes it possible for other parts of the app to react to
@@ -812,14 +811,37 @@ export class SyncDoc extends EventEmitter {
     return patch.userId ?? 0;
   };
 
-  private syncstring_table_get_one = (): Map<string, any> => {
+  private getDocumentMetadataState = (): Map<string, any> => {
     if (this.syncstring_table != null) {
       const t = this.syncstring_table.get_one();
       if (t != null) {
         return t;
       }
     }
+    const dstream = (this.patches_table as any)?.dstream;
+    if (
+      typeof dstream?.getMetadata === "function" &&
+      typeof dstream?.getCheckpoint === "function"
+    ) {
+      const rawMetadata = dstream.getMetadata();
+      const metadata =
+        rawMetadata != null &&
+        typeof rawMetadata === "object" &&
+        !Array.isArray(rawMetadata)
+          ? (rawMetadata as PatchDocMetadataV1)
+          : undefined;
+      const checkpoint = dstream.getCheckpoint(
+        LATEST_SNAPSHOT_CHECKPOINT,
+      ) as { seq: number; data?: { patchId?: string } } | undefined;
+      this.setSyncMetadataState({ metadata, checkpoint });
+    }
     return this.syncMetadata ?? Map();
+  };
+
+  // Compatibility shim for older tests and callers that still probe the
+  // legacy syncstring state directly.
+  private syncstring_table_get_one = (): Map<string, any> => {
+    return this.getDocumentMetadataState();
   };
 
   private normalizedUsers = (users?: string[]): string[] => {
@@ -896,7 +918,7 @@ export class SyncDoc extends EventEmitter {
       if (idx === -1) {
         this.users.push(client_id);
         idx = this.users.length - 1;
-        await this.set_syncstring_table({ users: this.users });
+        await this.setDocumentMetadata({ users: this.users });
       }
       this.my_user_id = Math.max(1, idx);
     } else {
@@ -905,7 +927,7 @@ export class SyncDoc extends EventEmitter {
 
     if (metadata == null || metadata.users == null) {
       dbg("initializing patch metadata for new document");
-      await this.set_syncstring_table({
+      await this.setDocumentMetadata({
         users: this.users,
         snapshot_interval: this.snapshot_interval,
         settings: this.settings,
@@ -1300,14 +1322,13 @@ export class SyncDoc extends EventEmitter {
     this.assert_not_closed(
       "initAll -- before init patchflow, cursors, ipywidgets",
     );
-    // Ensure we load syncstring metadata (including last_snapshot/last_seq)
-    // before opening the patches table, so we don't fetch the entire history
-    // when a snapshot is available.
     this.emitOpenPhase("canonicalize_identity_start");
     await this.canonicalizeFsIdentity();
     this.emitOpenPhase("canonicalize_identity_done");
     this.emitOpenPhase("syncstring_table_start");
-    // Syncstring has been replaced by patch-stream metadata/checkpoints.
+    if (!this.useConat) {
+      await this.init_syncstring_table();
+    }
     this.emitOpenPhase("syncstring_table_done");
     if (this.cursors) {
       void this.getCursorPresenceAdapter().catch((err) => {
@@ -1401,7 +1422,7 @@ export class SyncDoc extends EventEmitter {
       wall: null,
       // compressed format patch as a JSON *string*
       patch: null,
-      // integer id of user (maps to syncstring table)
+      // integer id of user (maps to the metadata.users array)
       user_id: null,
       // (optional) a snapshot at this point in time
       snapshot: null,
@@ -1417,8 +1438,7 @@ export class SyncDoc extends EventEmitter {
   };
 
   private setLastSnapshot(last_snapshot?: PatchId) {
-    // only set last_snapshot here, so we can keep it in sync with the syncstring table
-    // and also be certain about the data type (being PatchId string or undefined).
+    // Keep the cached latest-snapshot patch id normalized in one place.
     this.last_snapshot = last_snapshot;
   }
 
@@ -1429,11 +1449,15 @@ export class SyncDoc extends EventEmitter {
 
     dbg("opening the table...");
     this.emitOpenPhase("patches_table_start");
-    const query = { patches: [this.patch_table_query()] };
+    const query = {
+      patches: [this.patch_table_query(this.useConat ? undefined : this.last_snapshot)],
+    };
     this.patches_table = await this.synctable(query, [], this.patch_interval);
     this.emitOpenPhase("patches_table_done");
     this.assert_not_closed("init_patchflow -- after making synctable");
-    await this.loadPatchBootstrap();
+    if (this.useConat) {
+      await this.loadPatchBootstrap();
+    }
     this.applyPatchWriteHeaders();
 
     const update_has_unsaved_changes = debounce(
@@ -1680,7 +1704,7 @@ export class SyncDoc extends EventEmitter {
    */
   set_settings = async (obj): Promise<void> => {
     this.assert_is_ready("set_settings");
-    await this.set_syncstring_table({
+    await this.setDocumentMetadata({
       settings: obj,
     });
   };
@@ -1692,7 +1716,7 @@ export class SyncDoc extends EventEmitter {
   // get settings object
   get_settings = (): Map<string, any> => {
     this.assert_is_ready("get_settings");
-    return this.syncstring_table_get_one().get("settings", Map());
+    return this.getDocumentMetadataState().get("settings", Map());
   };
 
   /*
@@ -2278,7 +2302,7 @@ export class SyncDoc extends EventEmitter {
   };
 
   set_snapshot_interval = async (n: number): Promise<void> => {
-    await this.set_syncstring_table({
+    await this.setDocumentMetadata({
       snapshot_interval: n,
     });
   };
@@ -2308,7 +2332,6 @@ export class SyncDoc extends EventEmitter {
   };
 
   private handle_syncstring_update_new_document = async (): Promise<void> => {
-    // Brand new document
     this.emit("load-time-estimate", { type: "new", time: 1 });
     this.setLastSnapshot();
     this.last_seq = undefined;
@@ -2316,10 +2339,6 @@ export class SyncDoc extends EventEmitter {
       schema.SCHEMA.syncstrings.user_query?.get?.fields.snapshot_interval ??
       DEFAULT_SNAPSHOT_INTERVAL;
 
-    // Brand new syncstring
-    // TODO: worry about race condition with everybody making themselves
-    // have user_id 0... and also setting doctype.
-    // Reserve slot 0 for filesystem-originated patches; first user starts at 1.
     this.my_user_id = 1;
     this.users = [FILESYSTEM_CLIENT_ID, this.client.client_id()];
     const obj = {
@@ -2331,8 +2350,8 @@ export class SyncDoc extends EventEmitter {
       doctype: JSON.stringify(this.doctype),
       last_active: this.client.server_time(),
     };
-    this.syncstring_table.set(obj);
-    await this.syncstring_table.save();
+    this.syncstring_table?.set(obj);
+    await this.syncstring_table?.save();
     this.settings = Map();
     this.history_epoch = undefined;
     this.applyPatchWriteHeaders();
@@ -2373,13 +2392,10 @@ export class SyncDoc extends EventEmitter {
     if (this.state === "closed") {
       return;
     }
-    // Existing document.
 
     if (this.path == null) {
-      // We just opened the file -- emit a load time estimate.
       this.emit("load-time-estimate", { type: "ready", time: 1 });
     }
-    // TODO: handle doctype change here (?)
     this.setLastSnapshot(x.last_snapshot);
     this.last_seq = x.last_seq;
     this.snapshot_interval = x.snapshot_interval ?? DEFAULT_SNAPSHOT_INTERVAL;
@@ -2427,21 +2443,19 @@ export class SyncDoc extends EventEmitter {
     }
 
     if (this.client != null) {
-      // Ensure that this client is in the list of clients and uses a non-reserved slot.
       const client_id: string = this.client_id();
       let idx = this.users.indexOf(client_id);
       if (idx === -1) {
         this.users.push(client_id);
         idx = this.users.length - 1;
-        await this.set_syncstring_table({ users: this.users });
+        await this.setDocumentMetadata({ users: this.users });
       } else if (
         idx === FILESYSTEM_USER_ID &&
         this.users[idx] !== FILESYSTEM_CLIENT_ID
       ) {
-        // Slot 0 is reserved for filesystem patches; if we collide, append a new slot.
         this.users.push(client_id);
         idx = this.users.length - 1;
-        await this.set_syncstring_table({ users: this.users });
+        await this.setDocumentMetadata({ users: this.users });
       }
       this.my_user_id = Math.max(1, idx);
     }
@@ -3009,9 +3023,9 @@ export class SyncDoc extends EventEmitter {
      document to a simple JSON-able object. */
   export_history = (options: HistoryExportOptions = {}): HistoryEntry[] => {
     this.assert_is_ready("export_history");
-    const info = this.syncstring_table_get_one();
+    const info = this.getDocumentMetadataState();
     if (info == null || !info.has("users")) {
-      throw Error("syncstring table must be defined and users initialized");
+      throw Error("document metadata must define users");
     }
     const account_ids: string[] = info.get("users").toJS();
     const patches = this.requirePatchflowSession().history({
@@ -3052,8 +3066,8 @@ export class SyncDoc extends EventEmitter {
     0,
   );
 
-  private set_syncstring_table = async (obj, save = true) => {
-    const value0 = this.syncstring_table_get_one();
+  private setDocumentMetadata = async (obj, save = true) => {
+    const value0 = this.getDocumentMetadataState();
     const value = mergeDeep(value0, fromJS(obj));
     if (value0.equals(value)) {
       return;
@@ -3067,6 +3081,12 @@ export class SyncDoc extends EventEmitter {
     this.settings = value.get("settings", Map());
     this.history_epoch = this.metadataHistoryEpoch(this.settings);
     this.applyPatchWriteHeaders();
+
+    if (save && this.syncstring_table != null) {
+      this.syncstring_table.set(value);
+      await this.syncstring_table.save();
+      return;
+    }
 
     if (save && this.patches_table != null) {
       const dstream = this.dstream();

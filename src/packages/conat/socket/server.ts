@@ -190,7 +190,7 @@ export class ConatSocketServer extends ConatSocketBase {
     }
   };
 
-  handleCommandFromClient = ({
+  handleCommandFromClient = async ({
     socket,
     cmd,
     mesg,
@@ -217,13 +217,15 @@ export class ConatSocketServer extends ConatSocketBase {
       delete this.sockets[id];
       mesg.respondSync("closed");
     } else if (cmd == "connect") {
-      this.client.publishSync(socket.clientSubject, null, {
+      await this.client.publish(socket.clientSubject, null, {
         headers: {
           [SOCKET_HEADER_CMD]: "connected",
           [SOCKET_HEADER_CONNECT_ATTEMPT]:
             mesg.headers?.[SOCKET_HEADER_CONNECT_ATTEMPT],
           waitForClientInterestMs: socket.connectWaitForInterestMs,
         },
+        waitForInterest: true,
+        noThrow: true,
       });
     } else {
       mesg.respondSync({ error: `unknown command - '${cmd}'` });
