@@ -20,6 +20,7 @@ import type { Configuration } from "@cocalc/conat/sync/core-stream";
 import type { CoreStreamInitPhaseReporter } from "@cocalc/conat/sync/core-stream";
 import type { Client } from "@cocalc/conat/core/client";
 import type { Headers } from "@cocalc/conat/core/client";
+import type { CheckpointUpdate } from "@cocalc/conat/persist/storage";
 
 export type State = "disconnected" | "connected" | "closed";
 
@@ -46,6 +47,7 @@ export class SyncTableStream extends EventEmitter {
   private getHook: Function;
   private config?: Partial<Configuration>;
   private start_seq?: number;
+  private start_checkpoint?: string;
   private noInventory?: boolean;
   private noAutosave?: boolean;
   private ephemeral?: boolean;
@@ -60,6 +62,7 @@ export class SyncTableStream extends EventEmitter {
     immutable,
     config,
     start_seq,
+    start_checkpoint,
     noInventory,
     ephemeral,
     noAutosave,
@@ -72,6 +75,7 @@ export class SyncTableStream extends EventEmitter {
     immutable?: boolean;
     config?: Partial<Configuration>;
     start_seq?: number;
+    start_checkpoint?: string;
     noInventory?: boolean;
     ephemeral?: boolean;
     noAutosave?: boolean;
@@ -86,6 +90,7 @@ export class SyncTableStream extends EventEmitter {
     this.getHook = immutable ? fromJS : (x) => x;
     this.config = config;
     this.start_seq = start_seq;
+    this.start_checkpoint = start_checkpoint;
     this.initPhaseReporter = initPhaseReporter;
     const table = keys(query)[0];
     this.table = table;
@@ -116,6 +121,7 @@ export class SyncTableStream extends EventEmitter {
       config: this.config,
       desc: { path: this.path },
       start_seq: this.start_seq,
+      start_checkpoint: this.start_checkpoint,
       noInventory: this.noInventory,
       ephemeral: this.ephemeral,
       noAutosave: this.noAutosave,
@@ -159,11 +165,13 @@ export class SyncTableStream extends EventEmitter {
       obj = obj.toJS();
     }
     const headers = obj?.__headers ?? this.writeHeaders;
+    const checkpoint = obj?.__checkpoint as CheckpointUpdate | undefined;
     // console.log("set", obj);
     // delete string_id since it is redundant info
     const key = this.primaryString(obj);
-    const { string_id, __headers, ...obj2 } = obj;
+    const { string_id, __headers, __checkpoint, ...obj2 } = obj;
     void __headers;
+    void __checkpoint;
     if (this.data[key] != null) {
       throw Error(
         `object with key ${key} was already written to the stream -- written data cannot be modified`,
@@ -174,7 +182,10 @@ export class SyncTableStream extends EventEmitter {
     if (this.dstream == null) {
       throw Error("closed");
     }
-    this.dstream.publish(obj2, headers != null ? { headers } : undefined);
+    this.dstream.publish(obj2, {
+      ...(headers != null ? { headers } : {}),
+      ...(checkpoint != null ? { checkpoint } : {}),
+    });
   };
 
   private handle = (obj, changeEvent: boolean) => {

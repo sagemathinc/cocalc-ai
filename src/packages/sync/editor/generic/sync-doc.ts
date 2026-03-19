@@ -212,6 +212,16 @@ export function patchesHaveFullHistoryFromPatches(
   return (first.parents?.length ?? 0) === 0;
 }
 
+const PATCH_DOC_METADATA_VERSION = 1;
+const LATEST_SNAPSHOT_CHECKPOINT = "latest_snapshot";
+
+interface PatchDocMetadataV1 {
+  version: 1;
+  users?: string[];
+  snapshot_interval?: number;
+  settings?: JSONValue;
+}
+
 export class SyncDoc extends EventEmitter {
   static events = new EventEmitter();
   static lite = false;
@@ -251,6 +261,7 @@ export class SyncDoc extends EventEmitter {
 
   private syncstring_table: SyncTable;
   public patches_table: SyncTable;
+  private syncMetadata: Map<string, any> = Map();
 
   public ipywidgets_state?: IpywidgetsState;
 
@@ -397,6 +408,7 @@ export class SyncDoc extends EventEmitter {
 
     this.setMaxListeners(100);
     this.emitOpenPhase("open_start");
+    void this.init_syncstring_table;
 
     this.init();
     // This makes it possible for other parts of the app to react to
@@ -801,15 +813,108 @@ export class SyncDoc extends EventEmitter {
   };
 
   private syncstring_table_get_one = (): Map<string, any> => {
-    if (this.syncstring_table == null) {
-      throw Error("syncstring_table must be defined");
+    if (this.syncstring_table != null) {
+      const t = this.syncstring_table.get_one();
+      if (t != null) {
+        return t;
+      }
     }
-    const t = this.syncstring_table.get_one();
-    if (t == null) {
-      // project has not initialized it yet.
-      return Map();
+    return this.syncMetadata ?? Map();
+  };
+
+  private normalizedUsers = (users?: string[]): string[] => {
+    const normalized = [FILESYSTEM_CLIENT_ID];
+    for (const user of users ?? []) {
+      if (user == null || user === FILESYSTEM_CLIENT_ID) {
+        continue;
+      }
+      if (!normalized.includes(user)) {
+        normalized.push(user);
+      }
     }
-    return t;
+    return normalized;
+  };
+
+  private patchDocMetadataFromState = (): PatchDocMetadataV1 => {
+    return {
+      version: PATCH_DOC_METADATA_VERSION,
+      users: this.normalizedUsers(this.users),
+      snapshot_interval: this.snapshot_interval,
+      settings: this.settings?.toJS?.() ?? this.settings,
+    };
+  };
+
+  private setSyncMetadataState = ({
+    metadata,
+    checkpoint,
+  }: {
+    metadata?: PatchDocMetadataV1;
+    checkpoint?: { seq: number; data?: { patchId?: string } };
+  }): void => {
+    this.syncMetadata = fromJS({
+      string_id: this.string_id,
+      project_id: this.project_id,
+      path: this.syncPath,
+      users: metadata?.users,
+      snapshot_interval: metadata?.snapshot_interval,
+      settings: metadata?.settings ?? {},
+      last_snapshot: checkpoint?.data?.patchId,
+      last_seq: checkpoint?.seq,
+    });
+  };
+
+  private loadPatchBootstrap = async (): Promise<void> => {
+    const dbg = this.dbg("loadPatchBootstrap");
+    const dstream = this.dstream();
+    const rawMetadata = dstream.getMetadata();
+    const metadata =
+      rawMetadata != null &&
+      typeof rawMetadata === "object" &&
+      !Array.isArray(rawMetadata)
+        ? (rawMetadata as PatchDocMetadataV1)
+        : undefined;
+    const checkpoint = dstream.getCheckpoint?.(LATEST_SNAPSHOT_CHECKPOINT) as
+      | { seq: number; data?: { patchId?: string } }
+      | undefined;
+
+    this.setLastSnapshot(
+      typeof checkpoint?.data?.patchId === "string"
+        ? checkpoint.data.patchId
+        : undefined,
+    );
+    this.last_seq = checkpoint?.seq;
+    this.snapshot_interval =
+      metadata?.snapshot_interval ?? DEFAULT_SNAPSHOT_INTERVAL;
+    this.settings = fromJS(metadata?.settings ?? {}) as Map<string, any>;
+    this.history_epoch = this.metadataHistoryEpoch(this.settings);
+    this.users = this.normalizedUsers(metadata?.users);
+    this.setSyncMetadataState({ metadata, checkpoint });
+
+    if (this.client != null) {
+      const client_id = this.client_id();
+      let idx = this.users.indexOf(client_id);
+      if (idx === -1) {
+        this.users.push(client_id);
+        idx = this.users.length - 1;
+        await this.set_syncstring_table({ users: this.users });
+      }
+      this.my_user_id = Math.max(1, idx);
+    } else {
+      this.my_user_id = 1;
+    }
+
+    if (metadata == null || metadata.users == null) {
+      dbg("initializing patch metadata for new document");
+      await this.set_syncstring_table({
+        users: this.users,
+        snapshot_interval: this.snapshot_interval,
+        settings: this.settings,
+      });
+    }
+
+    this.applyPatchWriteHeaders();
+    this.emit("metadata-change");
+    this.emit("settings-change", this.settings);
   };
 
   /* List of patch ids of the versions of this string in the sync
@@ -997,6 +1102,7 @@ export class SyncDoc extends EventEmitter {
       }
     }
     if (this.useConat && query.patches) {
+      const start_checkpoint = LATEST_SNAPSHOT_CHECKPOINT;
       synctable = await this.client.synctable_conat(query, {
         obj: {
           project_id: this.project_id,
@@ -1005,20 +1111,18 @@ export class SyncDoc extends EventEmitter {
         stream: true,
         atomic: true,
         desc: { path: this.syncPath },
-        start_seq: this.last_seq,
+        start_checkpoint,
         ephemeral,
         noAutosave: this.noAutosave,
         initPhaseReporter:
           this.makeConatInitPhaseReporter("patches_corestream"),
       });
 
-      if (this.last_seq) {
-        // any possibility last_seq is wrong?
+      // If the checkpoint is stale or otherwise wrong, fall back to a full load.
+      const checkpoint = synctable.dstream.getCheckpoint?.(start_checkpoint);
+      if (checkpoint != null) {
         if (!isCompletePatchStream(synctable.dstream)) {
-          // we load everything and fix it.  This happened
-          // for data moving to conat when the seq numbers changed.
           console.log("updating invalid timetravel -- ", this.path);
-
           synctable.close();
           synctable = await this.client.synctable_conat(query, {
             obj: {
@@ -1033,38 +1137,34 @@ export class SyncDoc extends EventEmitter {
             initPhaseReporter:
               this.makeConatInitPhaseReporter("patches_corestream"),
           });
-
-          // also find the correct last_seq:
+          let repaired = false;
           let n = synctable.dstream.length - 1;
           for (; n >= 0; n--) {
             const x = synctable.dstream[n];
             if (x?.is_snapshot) {
               const time = x.time;
-              // find the seq number with time
               let m = n - 1;
-              let last_seq = 0;
+              let last_seq = synctable.dstream.seq(n) ?? 0;
               while (m >= 1) {
                 if (synctable.dstream[m].time == time) {
-                  last_seq = synctable.dstream.seq(m);
+                  last_seq = synctable.dstream.seq(m) ?? last_seq;
                   break;
                 }
                 m -= 1;
               }
-              this.last_seq = last_seq;
-              await this.set_syncstring_table({
-                last_snapshot: time,
-                last_seq,
+              await synctable.dstream.setCheckpoint({
+                name: LATEST_SNAPSHOT_CHECKPOINT,
+                seq: last_seq,
+                data: { patchId: time },
               });
-              this.setLastSnapshot(time);
+              repaired = true;
               break;
             }
           }
-          if (n == -1) {
-            // no snapshot?  should never happen, but just in case.
-            delete this.last_seq;
-            await this.set_syncstring_table({
-              last_seq: undefined,
-            });
+          if (!repaired) {
+            await synctable.dstream.deleteCheckpoint(
+              LATEST_SNAPSHOT_CHECKPOINT,
+            );
           }
         }
       }
@@ -1207,7 +1307,7 @@ export class SyncDoc extends EventEmitter {
     await this.canonicalizeFsIdentity();
     this.emitOpenPhase("canonicalize_identity_done");
     this.emitOpenPhase("syncstring_table_start");
-    await this.init_syncstring_table();
+    // Syncstring has been replaced by patch-stream metadata/checkpoints.
     this.emitOpenPhase("syncstring_table_done");
     if (this.cursors) {
       void this.getCursorPresenceAdapter().catch((err) => {
@@ -1329,10 +1429,11 @@ export class SyncDoc extends EventEmitter {
 
     dbg("opening the table...");
     this.emitOpenPhase("patches_table_start");
-    const query = { patches: [this.patch_table_query(this.last_snapshot)] };
+    const query = { patches: [this.patch_table_query()] };
     this.patches_table = await this.synctable(query, [], this.patch_interval);
     this.emitOpenPhase("patches_table_done");
     this.assert_not_closed("init_patchflow -- after making synctable");
+    await this.loadPatchBootstrap();
     this.applyPatchWriteHeaders();
 
     const update_has_unsaved_changes = debounce(
@@ -1740,6 +1841,11 @@ export class SyncDoc extends EventEmitter {
       snapshot,
       user_id,
       seq_info,
+      __checkpoint: {
+        name: LATEST_SNAPSHOT_CHECKPOINT,
+        seq: seq_info.seq,
+        data: { patchId: time },
+      },
     };
     this.patches_table.set(obj);
     await this.patches_table.save();
@@ -1748,12 +1854,15 @@ export class SyncDoc extends EventEmitter {
     }
 
     const last_seq = seq_info.seq;
-    await this.set_syncstring_table({
-      last_snapshot: time,
-      last_seq,
-    });
     this.setLastSnapshot(time);
     this.last_seq = last_seq;
+    this.setSyncMetadataState({
+      metadata: this.patchDocMetadataFromState(),
+      checkpoint: {
+        seq: last_seq,
+        data: { patchId: time },
+      },
+    });
   });
 
   // Have a snapshot every this.snapshot_interval patches, except
@@ -2172,7 +2281,6 @@ export class SyncDoc extends EventEmitter {
     await this.set_syncstring_table({
       snapshot_interval: n,
     });
-    await this.syncstring_table.save();
   };
 
   get_last_save_to_disk_time = (): Date => {
@@ -2901,7 +3009,7 @@ export class SyncDoc extends EventEmitter {
      document to a simple JSON-able object. */
   export_history = (options: HistoryExportOptions = {}): HistoryEntry[] => {
     this.assert_is_ready("export_history");
-    const info = this.syncstring_table.get_one();
+    const info = this.syncstring_table_get_one();
     if (info == null || !info.has("users")) {
       throw Error("syncstring table must be defined and users initialized");
     }
@@ -2950,9 +3058,28 @@ export class SyncDoc extends EventEmitter {
     if (value0.equals(value)) {
       return;
     }
-    this.syncstring_table.set(value);
-    if (save) {
-      await this.syncstring_table.save();
+    this.syncMetadata = value;
+    this.setLastSnapshot(value.get("last_snapshot") ?? undefined);
+    this.last_seq = value.get("last_seq") ?? undefined;
+    this.users = this.normalizedUsers(value.get("users")?.toJS?.());
+    this.snapshot_interval =
+      value.get("snapshot_interval") ?? DEFAULT_SNAPSHOT_INTERVAL;
+    this.settings = value.get("settings", Map());
+    this.history_epoch = this.metadataHistoryEpoch(this.settings);
+    this.applyPatchWriteHeaders();
+
+    if (save && this.patches_table != null) {
+      const dstream = this.dstream();
+      await dstream.setMetadata(this.patchDocMetadataFromState());
+      if (this.last_snapshot != null && this.last_seq != null) {
+        await dstream.setCheckpoint({
+          name: LATEST_SNAPSHOT_CHECKPOINT,
+          seq: this.last_seq,
+          data: { patchId: this.last_snapshot },
+        });
+      } else {
+        await dstream.deleteCheckpoint(LATEST_SNAPSHOT_CHECKPOINT);
+      }
     }
   };
 

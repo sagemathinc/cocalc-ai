@@ -63,6 +63,62 @@ describe("persist bootstrap", () => {
     cf.close();
   });
 
+  it("returns metadata and checkpoints from the same bootstrap request", async () => {
+    s1.close();
+    client.close();
+    client = connect();
+    s1 = stream({
+      client,
+      user: { hub_id: "x" },
+      storage: { path: `hub/bootstrap-meta-${Math.random()}` },
+    });
+    await s1.setMetadata({
+      version: 1,
+      users: ["filesystem", "client-x"],
+    });
+    await s1.set({
+      messageData: messageData("old"),
+    });
+    await s1.set({
+      messageData: messageData("base"),
+    });
+    await s1.set({
+      messageData: messageData("snapshot"),
+      checkpoint: {
+        name: "latest_snapshot",
+        seq: 2,
+        data: { patchId: "patch-2" },
+      },
+    });
+    expect(await s1.getMetadata()).toEqual({
+      version: 1,
+      users: ["filesystem", "client-x"],
+    });
+    expect(await s1.getCheckpoints()).toEqual({
+      latest_snapshot: {
+        seq: 2,
+        time: expect.any(Number),
+        data: { patchId: "patch-2" },
+      },
+    });
+
+    const { messages, metadata, checkpoints } = await s1.getAllWithInfo({
+      start_checkpoint: "latest_snapshot",
+    });
+    expect(messages.map((x) => x.seq)).toEqual([2, 3]);
+    expect(metadata).toEqual({
+      version: 1,
+      users: ["filesystem", "client-x"],
+    });
+    expect(checkpoints).toEqual({
+      latest_snapshot: {
+        seq: 2,
+        time: expect.any(Number),
+        data: { patchId: "patch-2" },
+      },
+    });
+  });
+
   it("does not issue a redundant config request after bootstrap returns config", async () => {
     s1.close();
     client.close();
@@ -78,6 +134,51 @@ describe("persist bootstrap", () => {
     await core.init();
     expect(phases).toContain("persist_get_all_done");
     expect(phases).not.toContain("persist_config_start");
+    core.close();
+  });
+
+  it("bootstraps core stream metadata and checkpoints with a checkpoint start", async () => {
+    s1.close();
+    client.close();
+    client = connect();
+    const name = `bootstrap-core-meta-${Math.random()}`;
+    s1 = stream({
+      client,
+      user: { hub_id: "x" },
+      storage: { path: `hub/${name}` },
+    });
+    await s1.setMetadata({ users: ["filesystem", "client-x"] });
+    await s1.set({
+      messageData: messageData("old"),
+    });
+    await s1.set({
+      messageData: messageData("base"),
+    });
+    await s1.set({
+      messageData: messageData("snapshot"),
+      checkpoint: {
+        name: "latest_snapshot",
+        seq: 2,
+        data: { patchId: "patch-2" },
+      },
+    });
+    await s1.set({
+      messageData: messageData("new"),
+    });
+
+    const core = new CoreStream<string>({
+      client,
+      name,
+      start_checkpoint: "latest_snapshot",
+    });
+    await core.init();
+    expect(core.getMetadata()).toEqual({ users: ["filesystem", "client-x"] });
+    expect(core.getCheckpoint("latest_snapshot")).toEqual({
+      seq: 2,
+      time: expect.any(Number),
+      data: { patchId: "patch-2" },
+    });
+    expect(core.getAll()).toEqual(["base", "snapshot", "new"]);
     core.close();
   });
 

@@ -294,6 +294,8 @@ For phase 1, use Option A:
 
 That keeps the surface small.
 
+USER: yes, definitely option A.
+
 ## Changefeed Behavior
 
 If metadata/checkpoints become authoritative, clients must be able to observe
@@ -314,6 +316,8 @@ type StreamEvent =
 
 Phase 1 can start with bootstrap-only support if we keep usage narrow, but
 longer term authoritative metadata requires live updates too.
+
+USER: yes, we will definitely need this, and we also need to be sure that updates aren't missed.  We must always assume messages sometimes get dropped.
 
 ## File-by-File Plan
 
@@ -396,6 +400,8 @@ Changes:
 
 It is acceptable if only DStream uses checkpoints in phase 1.
 
+USER: I also don't know of any reason to need any of this metadata for dkv.
+
 ### SyncDoc / Patchflow Application Layer
 
 File:
@@ -472,6 +478,8 @@ collapse phases 2-4 aggressively:
 - delete syncstring code after validation
 
 This is the preferred end state.
+
+USER: strongly agreed. 
 
 ## Minimum Vertical Slice
 
