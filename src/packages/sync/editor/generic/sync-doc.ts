@@ -294,6 +294,9 @@ export class SyncDoc extends EventEmitter {
   private persistent: boolean = false;
 
   private last_has_unsaved_changes?: boolean = undefined;
+  private localEditsSinceDiskBaseline = false;
+  private diskMissingOnLoad = false;
+  private diskBaselineRequestId = 0;
 
   private ephemeral: boolean = false;
 
@@ -339,6 +342,18 @@ export class SyncDoc extends EventEmitter {
       this.isDeleted = true;
       this.emit("deleted");
     }
+  };
+
+  private markLocalUnsavedChange = (): void => {
+    if (this.state !== "ready") {
+      return;
+    }
+    this.localEditsSinceDiskBaseline = true;
+  };
+
+  private emitUserChange = (): void => {
+    this.markLocalUnsavedChange();
+    this.emit("user-change");
   };
 
   constructor(opts: SyncOpts) {
@@ -397,7 +412,7 @@ export class SyncDoc extends EventEmitter {
     }
     this._from_str = opts.from_str;
 
-    // Initialize to time when we create the syncstring, so we don't
+    // Initialize to creation time, so we don't
     // see our own cursor when we refresh the browser (before we move
     // to update this).
     this.cursor_last_time = this.client?.server_time();
@@ -625,6 +640,7 @@ export class SyncDoc extends EventEmitter {
     }
     if (exit_undo_mode) this.exit_undo_mode();
     // console.log(`sync-doc.set_doc("${doc.to_str()}")`);
+    this.markLocalUnsavedChange();
     this.doc = doc;
 
     // debounced, so don't immediately alert, in case there are many
@@ -666,6 +682,7 @@ export class SyncDoc extends EventEmitter {
   // Set this doc from its string representation.
   from_str = (value: string): void => {
     // console.log(`sync-doc.from_str("${value}")`);
+    this.markLocalUnsavedChange();
     this.doc = this._from_str(value);
   };
 
@@ -740,7 +757,7 @@ export class SyncDoc extends EventEmitter {
     this.doc = next;
     this.last = next;
     if (!this.documentsEqual(prev, next)) {
-      this.emit("user-change");
+      this.emitUserChange();
       this.emit_change();
     }
     return next;
@@ -755,7 +772,7 @@ export class SyncDoc extends EventEmitter {
     this.doc = next;
     this.last = next;
     if (!this.documentsEqual(prev, next)) {
-      this.emit("user-change");
+      this.emitUserChange();
       this.emit_change();
     }
     return next;
@@ -830,9 +847,9 @@ export class SyncDoc extends EventEmitter {
         !Array.isArray(rawMetadata)
           ? (rawMetadata as PatchDocMetadataV1)
           : undefined;
-      const checkpoint = dstream.getCheckpoint(
-        LATEST_SNAPSHOT_CHECKPOINT,
-      ) as { seq: number; data?: { patchId?: string } } | undefined;
+      const checkpoint = dstream.getCheckpoint(LATEST_SNAPSHOT_CHECKPOINT) as
+        | { seq: number; data?: { patchId?: string } }
+        | undefined;
       this.setSyncMetadataState({ metadata, checkpoint });
     }
     return this.syncMetadata ?? Map();
@@ -1325,11 +1342,11 @@ export class SyncDoc extends EventEmitter {
     this.emitOpenPhase("canonicalize_identity_start");
     await this.canonicalizeFsIdentity();
     this.emitOpenPhase("canonicalize_identity_done");
-    this.emitOpenPhase("syncstring_table_start");
     if (!this.useConat) {
+      this.emitOpenPhase("syncstring_table_start");
       await this.init_syncstring_table();
+      this.emitOpenPhase("syncstring_table_done");
     }
-    this.emitOpenPhase("syncstring_table_done");
     if (this.cursors) {
       void this.getCursorPresenceAdapter().catch((err) => {
         this.dbg("getCursorPresenceAdapter")(
@@ -1345,6 +1362,7 @@ export class SyncDoc extends EventEmitter {
     this.emitOpenPhase("backend_fs_reconcile_start");
     await this.reconcileBackendFsState();
     this.emitOpenPhase("backend_fs_reconcile_done");
+    void this.refreshInitialDiskBaseline();
     this.emitOpenPhase("patchflow_init_start");
     await this.init_patchflow();
     this.emitOpenPhase("patchflow_init_done");
@@ -1450,7 +1468,9 @@ export class SyncDoc extends EventEmitter {
     dbg("opening the table...");
     this.emitOpenPhase("patches_table_start");
     const query = {
-      patches: [this.patch_table_query(this.useConat ? undefined : this.last_snapshot)],
+      patches: [
+        this.patch_table_query(this.useConat ? undefined : this.last_snapshot),
+      ],
     };
     this.patches_table = await this.synctable(query, [], this.patch_interval);
     this.emitOpenPhase("patches_table_done");
@@ -1750,7 +1770,7 @@ export class SyncDoc extends EventEmitter {
     // Compute any patches.
     while (!this.doc.is_equal(this.last)) {
       dbg("something to save");
-      this.emit("user-change");
+      this.emitUserChange();
       if (!this.commit()) {
         // Could not commit (e.g., patchflow not ready)
         break;
@@ -2638,6 +2658,46 @@ export class SyncDoc extends EventEmitter {
     return this.hasUnsavedChanges();
   };
 
+  private refreshInitialDiskBaseline = async (): Promise<void> => {
+    const requestId = ++this.diskBaselineRequestId;
+    try {
+      const exists = await this.fs.exists(this.path);
+      if (this.isClosed() || requestId !== this.diskBaselineRequestId) {
+        return;
+      }
+      if (!exists) {
+        this.valueOnDisk = undefined;
+        this.diskMissingOnLoad = true;
+        this.update_has_unsaved_changes();
+        return;
+      }
+      this.diskMissingOnLoad = false;
+      const rawValueOnDisk = await this.fs.readFile(this.path, "utf8");
+      const valueOnDisk =
+        typeof rawValueOnDisk === "string"
+          ? rawValueOnDisk
+          : rawValueOnDisk.toString("utf8");
+      if (this.isClosed() || requestId !== this.diskBaselineRequestId) {
+        return;
+      }
+      this.valueOnDisk = valueOnDisk;
+      this.update_has_unsaved_changes();
+    } catch (err) {
+      if (this.isClosed() || requestId !== this.diskBaselineRequestId) {
+        return;
+      }
+      const code =
+        typeof err === "object" && err != null && "code" in err
+          ? (err as any).code
+          : undefined;
+      if (code === "ENOENT") {
+        this.valueOnDisk = undefined;
+        this.diskMissingOnLoad = true;
+        this.update_has_unsaved_changes();
+      }
+    }
+  };
+
   // Returns hash of last version that we saved to disk or undefined
   // if we haven't saved yet.
   // NOTE: this does not take into account saving by another client
@@ -2860,7 +2920,7 @@ export class SyncDoc extends EventEmitter {
     if (emitChangeImmediately) {
       this.emit_change();
     }
-    this.emit("user-change");
+    this.emitUserChange();
     // Ensure save loops don't spin while the async commit runs.
     this.last = next;
     try {
@@ -2920,6 +2980,13 @@ export class SyncDoc extends EventEmitter {
   private valueOnDisk: string | undefined = undefined;
 
   private hasUnsavedChanges = (): boolean => {
+    if (this.valueOnDisk == null) {
+      return (
+        this.diskMissingOnLoad ||
+        this.localEditsSinceDiskBaseline ||
+        this.isDeleted
+      );
+    }
     return this.valueOnDisk != this.to_str() || this.isDeleted;
   };
 
@@ -2996,7 +3063,10 @@ export class SyncDoc extends EventEmitter {
       throw err;
     }
     if (this.isClosed()) return;
+    this.diskBaselineRequestId += 1;
     this.isDeleted = false;
+    this.diskMissingOnLoad = false;
+    this.localEditsSinceDiskBaseline = false;
     this.valueOnDisk = value;
     this.emit("save-to-disk");
   };

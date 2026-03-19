@@ -1,4 +1,25 @@
-# Patch Stream Metadata Plan
+# (done) Patch Stream Metadata Plan
+
+## Status
+
+Done on `lite4`.
+
+Implemented:
+
+- patch-stream bootstrap now returns metadata and checkpoints
+- sync-doc bootstraps from the patch stream instead of opening `syncstring`
+- latest snapshot is tracked as a stream checkpoint
+- document metadata is stored in the patch stream
+- notebook open no longer pays the old second durable-store startup cost
+
+Validated:
+
+- focused backend/sync tests
+- manual notebook open testing
+- remote Launchpad measurement showing notebook `sync_ready` around `375ms`
+
+`syncstring` is no longer on the document-open critical path for the Conat
+path targeted by this plan.
 
 ## Goal
 
