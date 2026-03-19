@@ -73,6 +73,69 @@ async function ensureWorkspace(rootPath: string, title: string): Promise<any> {
   return payload?.data?.result?.workspace;
 }
 
+async function seedSelectedWorkspace(
+  page: Page,
+  workspace: {
+    workspace_id: string;
+    root_path: string;
+    title?: string;
+    description?: string;
+    color?: string | null;
+    accent_color?: string | null;
+    icon?: string | null;
+    image_blob?: string | null;
+    pinned?: boolean;
+    last_used_at?: number | null;
+    last_active_path?: string | null;
+    chat_path?: string | null;
+    notice_thread_id?: string | null;
+    notice?: any;
+    source?: string | null;
+    updated_at?: number;
+  },
+): Promise<void> {
+  await page.addInitScript(
+    ({ projectId, record }) => {
+      sessionStorage.setItem(
+        `project-workspace-selection:${projectId}`,
+        JSON.stringify({
+          kind: "workspace",
+          workspace_id: record.workspace_id,
+        }),
+      );
+      sessionStorage.setItem(
+        `project-workspace-record:${projectId}`,
+        JSON.stringify(record),
+      );
+    },
+    {
+      projectId: project_id,
+      record: {
+        workspace_id: workspace.workspace_id,
+        project_id,
+        root_path: workspace.root_path,
+        theme: {
+          title: `${workspace.title ?? ""}`.trim() || workspace.workspace_id,
+          description: `${workspace.description ?? ""}`,
+          color: workspace.color ?? null,
+          accent_color: workspace.accent_color ?? null,
+          icon: workspace.icon ?? null,
+          image_blob: workspace.image_blob ?? null,
+        },
+        pinned: workspace.pinned ?? false,
+        last_used_at: workspace.last_used_at ?? null,
+        last_active_path: workspace.last_active_path ?? null,
+        chat_path: workspace.chat_path ?? null,
+        notice_thread_id: workspace.notice_thread_id ?? null,
+        notice: workspace.notice ?? null,
+        source: (workspace.source as any) ?? "manual",
+        created_at: Date.now(),
+        updated_at: workspace.updated_at ?? Date.now(),
+      },
+    },
+  );
+}
+
 async function writeFixture(path: string, content: string): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, content, "utf8");
@@ -111,6 +174,14 @@ async function openMarkdownFile(page: Page, url: string): Promise<void> {
   await expect(assistantButton(page)).toBeVisible({ timeout: 60_000 });
 }
 
+async function reloadMarkdownFile(page: Page): Promise<void> {
+  await page.reload({
+    waitUntil: "domcontentloaded",
+    timeout: 60_000,
+  });
+  await expect(assistantButton(page)).toBeVisible({ timeout: 60_000 });
+}
+
 async function waitForSelectedThreadKey(page: Page): Promise<string> {
   await expect
     .poll(
@@ -137,6 +208,7 @@ async function waitForSelectedThreadKey(page: Page): Promise<string> {
 async function submitAssistantRequest(
   page: Page,
   prompt: string,
+  workspaceLabel: string,
 ): Promise<{
   threadKey: string;
 }> {
@@ -157,6 +229,7 @@ async function submitAssistantRequest(
     timeout: 45_000,
   });
   await expectPromptVisible(page, prompt);
+  await expectWorkspaceScope(page, workspaceLabel);
   return { threadKey: await waitForSelectedThreadKey(page) };
 }
 
@@ -164,6 +237,25 @@ async function expectPromptVisible(page: Page, prompt: string): Promise<void> {
   await expect(page.getByText(prompt, { exact: true }).first()).toBeVisible({
     timeout: 45_000,
   });
+}
+
+async function expectWorkspaceScope(
+  page: Page,
+  workspaceLabel: string,
+): Promise<void> {
+  const dock = page.locator("[data-selected-thread-key]").first();
+  await expect(
+    dock.getByText(`Workspace scope: ${workspaceLabel}`),
+  ).toBeVisible({
+    timeout: 20_000,
+  });
+  await expect
+    .poll(
+      async () =>
+        (await dock.locator(".ant-switch").first().getAttribute("class")) ?? "",
+      { timeout: 20_000 },
+    )
+    .toContain("ant-switch-checked");
 }
 
 test("title-bar assistant reuses one workspace agent thread across files", async ({
@@ -175,28 +267,41 @@ test("title-bar assistant reuses one workspace agent thread across files", async
   const pathB = join(workspaceRoot, "assistant-agent-b.md");
   await writeFixture(pathA, "# Golden Harness A\n\nhello from a\n");
   await writeFixture(pathB, "# Golden Harness B\n\nhello from b\n");
-  await ensureWorkspace(workspaceRoot, workspaceSuffix);
+  const workspace = await ensureWorkspace(workspaceRoot, workspaceSuffix);
+  await seedSelectedWorkspace(page, workspace);
 
   const { base_url, auth_token } = await resolveBaseUrl();
   await openMarkdownFile(page, fileUrl({ base_url, auth_token, path: pathA }));
 
   const firstPrompt = "Please add a heading that says Golden Harness One.";
-  const first = await submitAssistantRequest(page, firstPrompt);
+  const first = await submitAssistantRequest(
+    page,
+    firstPrompt,
+    workspaceSuffix,
+  );
 
   await openMarkdownFile(page, fileUrl({ base_url, auth_token, path: pathB }));
 
   const secondPrompt =
     "Please add a final sentence that says Golden Harness Two.";
-  const second = await submitAssistantRequest(page, secondPrompt);
+  const second = await submitAssistantRequest(
+    page,
+    secondPrompt,
+    workspaceSuffix,
+  );
 
   expect(second.threadKey).toBe(first.threadKey);
   await expectPromptVisible(page, firstPrompt);
   await expectPromptVisible(page, secondPrompt);
 
-  await openMarkdownFile(page, fileUrl({ base_url, auth_token, path: pathA }));
+  await reloadMarkdownFile(page);
 
   const thirdPrompt = "Please rewrite the first paragraph in a shorter style.";
-  const third = await submitAssistantRequest(page, thirdPrompt);
+  const third = await submitAssistantRequest(
+    page,
+    thirdPrompt,
+    workspaceSuffix,
+  );
 
   expect(third.threadKey).toBe(first.threadKey);
   await expectPromptVisible(page, firstPrompt);

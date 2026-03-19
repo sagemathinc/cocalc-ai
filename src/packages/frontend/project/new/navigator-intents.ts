@@ -6,14 +6,22 @@ import type { CodexThreadConfig } from "@cocalc/chat";
 import { lite } from "@cocalc/frontend/lite";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 import { openFloatingAgentSession } from "@cocalc/frontend/project/page/agent-dock-state";
-import { ensureWorkspaceChatForPath } from "@cocalc/frontend/project/workspaces/runtime";
+import {
+  ensureWorkspaceChatForPath,
+  ensureWorkspaceChatPath,
+} from "@cocalc/frontend/project/workspaces/runtime";
+import {
+  loadSessionSelection,
+  loadSessionWorkspaceRecord,
+} from "@cocalc/frontend/project/workspaces/selection-runtime";
 import {
   loadNavigatorSelectedThreadKey,
   saveNavigatorSelectedThreadKey,
 } from "./navigator-state";
 import { uuid } from "@cocalc/util/misc";
 import { normalizeAbsolutePath } from "@cocalc/util/path-model";
-import { path_split } from "@cocalc/util/misc";
+import { path_split, tab_to_path } from "@cocalc/util/misc";
+import { pathMatchesWorkspaceRoot } from "@cocalc/conat/workspaces";
 
 const NAVIGATOR_INTENT_QUEUE_KEY = "cocalc:navigator:intent-queue";
 export const NAVIGATOR_SUBMIT_PROMPT_EVENT = "cocalc:navigator:submit-prompt";
@@ -174,19 +182,80 @@ async function resolveWorkspaceTarget(opts: {
   account_id: string;
   path?: string;
 }): Promise<Awaited<ReturnType<typeof ensureWorkspaceChatForPath>>> {
-  const path = `${opts.path ?? ""}`.trim();
-  if (!path || !opts.account_id) return null;
+  const absolutePaths = resolveWorkspaceTargetPaths(opts.project_id, opts.path);
+  if (absolutePaths.length === 0) return null;
   const deadline = Date.now() + NAVIGATOR_WORKSPACE_RESOLVE_TIMEOUT_MS;
   while (true) {
-    const target = await ensureWorkspaceChatForPath({
-      project_id: opts.project_id,
-      account_id: opts.account_id,
-      path,
-    });
-    if (target) return target;
+    const selection = loadSessionSelection(opts.project_id);
+    const selectedWorkspace = loadSessionWorkspaceRecord(opts.project_id);
+    const account_id =
+      `${opts.account_id || redux.getStore("account")?.get?.("account_id") || ""}`.trim();
+    if (account_id) {
+      for (const absolutePath of absolutePaths) {
+        const target = await ensureWorkspaceChatForPath({
+          project_id: opts.project_id,
+          account_id,
+          path: absolutePath,
+        });
+        if (target) return target;
+      }
+    }
+    if (
+      selection.kind === "workspace" &&
+      selectedWorkspace?.workspace_id === selection.workspace_id &&
+      absolutePaths.some((path) =>
+        pathMatchesWorkspaceRoot(path, selectedWorkspace.root_path),
+      )
+    ) {
+      const chat_path = `${selectedWorkspace.chat_path ?? ""}`.trim();
+      if (chat_path) {
+        return {
+          workspace: selectedWorkspace,
+          chat_path,
+          assigned: false,
+        };
+      }
+      if (!account_id) {
+        if (Date.now() >= deadline) return null;
+        await sleep(NAVIGATOR_WORKSPACE_RESOLVE_POLL_MS);
+        continue;
+      }
+      const resolved = await ensureWorkspaceChatPath({
+        project_id: opts.project_id,
+        account_id,
+        workspace_id: selectedWorkspace.workspace_id,
+      });
+      return {
+        workspace: resolved.workspace,
+        chat_path: resolved.chat_path,
+        assigned: resolved.assigned,
+      };
+    }
     if (Date.now() >= deadline) return null;
     await sleep(NAVIGATOR_WORKSPACE_RESOLVE_POLL_MS);
   }
+}
+
+function resolveWorkspaceTargetPaths(
+  project_id: string,
+  preferredPath?: string,
+): string[] {
+  const homeDirectory = getProjectHomeDirectory(project_id);
+  const projectStore = redux.getProjectStore(project_id);
+  const candidates = [
+    `${preferredPath ?? ""}`.trim(),
+    `${tab_to_path(`${projectStore?.get?.("active_project_tab") ?? ""}`) ?? ""}`.trim(),
+    `${projectStore?.get?.("current_path_abs") ?? ""}`.trim(),
+  ].filter(Boolean);
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const path of candidates) {
+    const absolutePath = normalizeAbsolutePath(path, homeDirectory);
+    if (seen.has(absolutePath)) continue;
+    seen.add(absolutePath);
+    result.push(absolutePath);
+  }
+  return result;
 }
 
 function isMacLikeClient(): boolean {

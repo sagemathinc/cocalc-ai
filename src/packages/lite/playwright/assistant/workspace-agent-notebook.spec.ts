@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 
 import { expect, test, type Locator, type Page } from "@playwright/test";
+import { project_id } from "@cocalc/project/data";
 import {
   codeCell,
   ensureNotebook,
@@ -44,6 +45,69 @@ async function ensureWorkspace(rootPath: string, title: string): Promise<any> {
     return existing;
   `);
   return payload?.data?.result?.workspace;
+}
+
+async function seedSelectedWorkspace(
+  page: Page,
+  workspace: {
+    workspace_id: string;
+    root_path: string;
+    title?: string;
+    description?: string;
+    color?: string | null;
+    accent_color?: string | null;
+    icon?: string | null;
+    image_blob?: string | null;
+    pinned?: boolean;
+    last_used_at?: number | null;
+    last_active_path?: string | null;
+    chat_path?: string | null;
+    notice_thread_id?: string | null;
+    notice?: any;
+    source?: string | null;
+    updated_at?: number;
+  },
+): Promise<void> {
+  await page.addInitScript(
+    ({ projectId, record }) => {
+      sessionStorage.setItem(
+        `project-workspace-selection:${projectId}`,
+        JSON.stringify({
+          kind: "workspace",
+          workspace_id: record.workspace_id,
+        }),
+      );
+      sessionStorage.setItem(
+        `project-workspace-record:${projectId}`,
+        JSON.stringify(record),
+      );
+    },
+    {
+      projectId: project_id,
+      record: {
+        workspace_id: workspace.workspace_id,
+        project_id,
+        root_path: workspace.root_path,
+        theme: {
+          title: `${workspace.title ?? ""}`.trim() || workspace.workspace_id,
+          description: `${workspace.description ?? ""}`,
+          color: workspace.color ?? null,
+          accent_color: workspace.accent_color ?? null,
+          icon: workspace.icon ?? null,
+          image_blob: workspace.image_blob ?? null,
+        },
+        pinned: workspace.pinned ?? false,
+        last_used_at: workspace.last_used_at ?? null,
+        last_active_path: workspace.last_active_path ?? null,
+        chat_path: workspace.chat_path ?? null,
+        notice_thread_id: workspace.notice_thread_id ?? null,
+        notice: workspace.notice ?? null,
+        source: (workspace.source as any) ?? "manual",
+        created_at: Date.now(),
+        updated_at: workspace.updated_at ?? Date.now(),
+      },
+    },
+  );
 }
 
 function assistantButton(page: Page): Locator {
@@ -95,9 +159,36 @@ async function expectWorkspaceOnlyOn(page: Page): Promise<void> {
     .toContain("ant-switch-checked");
 }
 
+async function expectWorkspaceScope(
+  page: Page,
+  workspaceLabel: string,
+): Promise<void> {
+  const dock = page.locator("[data-selected-thread-key]").first();
+  await expect(
+    dock.getByText(`Workspace scope: ${workspaceLabel}`),
+  ).toBeVisible({
+    timeout: 20_000,
+  });
+}
+
+async function reloadNotebookPage(page: Page): Promise<void> {
+  await page.reload({
+    waitUntil: "domcontentloaded",
+    timeout: 60_000,
+  });
+  await page.waitForSelector('[cocalc-test="jupyter-cell"]', {
+    timeout: 60_000,
+  });
+  await page.waitForSelector('[cocalc-test="cell-input"] .CodeMirror', {
+    timeout: 60_000,
+  });
+  await page.waitForTimeout(8_000);
+}
+
 async function submitAssistantRequest(
   page: Page,
   prompt: string,
+  workspaceLabel: string,
 ): Promise<string> {
   await openAssistant(page);
   const composer = page.locator(
@@ -115,6 +206,7 @@ async function submitAssistantRequest(
   });
   await expectPromptVisible(page, prompt);
   await expectWorkspaceOnlyOn(page);
+  await expectWorkspaceScope(page, workspaceLabel);
   return await waitForSelectedThreadKey(page);
 }
 
@@ -133,7 +225,8 @@ test("title-bar assistant in notebooks reuses one workspace agent thread", async
   const notebookB = join(workspaceRoot, "assistant-b.ipynb");
   await ensureNotebook(notebookA, [codeCell("x = 1\nx")]);
   await ensureNotebook(notebookB, [codeCell("y = 2\ny")]);
-  await ensureWorkspace(workspaceRoot, workspaceSuffix);
+  const workspace = await ensureWorkspace(workspaceRoot, workspaceSuffix);
+  await seedSelectedWorkspace(page, workspace);
 
   const { base_url, auth_token } = await resolveBaseUrl();
   await openNotebookPage(
@@ -144,7 +237,11 @@ test("title-bar assistant in notebooks reuses one workspace agent thread", async
 
   const firstPrompt =
     "Please add a markdown cell that says Notebook Harness One.";
-  const firstThreadKey = await submitAssistantRequest(page, firstPrompt);
+  const firstThreadKey = await submitAssistantRequest(
+    page,
+    firstPrompt,
+    workspaceSuffix,
+  );
 
   await openNotebookPage(
     page,
@@ -154,21 +251,25 @@ test("title-bar assistant in notebooks reuses one workspace agent thread", async
 
   const secondPrompt =
     "Please add a markdown cell that says Notebook Harness Two.";
-  const secondThreadKey = await submitAssistantRequest(page, secondPrompt);
+  const secondThreadKey = await submitAssistantRequest(
+    page,
+    secondPrompt,
+    workspaceSuffix,
+  );
 
   expect(secondThreadKey).toBe(firstThreadKey);
   await expectPromptVisible(page, firstPrompt);
   await expectPromptVisible(page, secondPrompt);
 
-  await openNotebookPage(
-    page,
-    notebookUrl({ base_url, auth_token, path_ipynb: notebookA }),
-    60_000,
-  );
+  await reloadNotebookPage(page);
 
   const thirdPrompt =
     "Please add a markdown cell that says Notebook Harness Three.";
-  const thirdThreadKey = await submitAssistantRequest(page, thirdPrompt);
+  const thirdThreadKey = await submitAssistantRequest(
+    page,
+    thirdPrompt,
+    workspaceSuffix,
+  );
 
   expect(thirdThreadKey).toBe(firstThreadKey);
   await expectPromptVisible(page, firstPrompt);

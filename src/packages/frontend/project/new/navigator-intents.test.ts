@@ -5,6 +5,9 @@ const mockGetChatActions = jest.fn();
 const mockInitChat = jest.fn();
 const mockOpenFloating = jest.fn();
 const mockEnsureWorkspaceChatForPath = jest.fn();
+const mockEnsureWorkspaceChatPath = jest.fn();
+let mockAccountId = "00000000-1000-4000-8000-000000000001";
+let mockProjectStoreState: Record<string, any> = {};
 
 jest.mock("@cocalc/frontend/chat/agent-session-index", () => ({
   listAgentSessionsForProject: (...args: any[]) => mockListSessions(...args),
@@ -22,6 +25,8 @@ jest.mock("@cocalc/frontend/project/page/agent-dock-state", () => ({
 jest.mock("@cocalc/frontend/project/workspaces/runtime", () => ({
   ensureWorkspaceChatForPath: (...args: any[]) =>
     mockEnsureWorkspaceChatForPath(...args),
+  ensureWorkspaceChatPath: (...args: any[]) =>
+    mockEnsureWorkspaceChatPath(...args),
 }));
 
 jest.mock("@cocalc/frontend/app-framework", () => ({
@@ -30,13 +35,14 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
       if (name === "account") {
         return {
           get: (key: string) =>
-            key === "account_id"
-              ? "00000000-1000-4000-8000-000000000001"
-              : undefined,
+            key === "account_id" ? mockAccountId : undefined,
         };
       }
       return undefined;
     },
+    getProjectStore: () => ({
+      get: (key: string) => mockProjectStoreState[key],
+    }),
     getActions: () => undefined,
     getProjectActions: () => undefined,
   },
@@ -52,13 +58,21 @@ import {
   submitNavigatorPromptToCurrentThread,
   takeQueuedNavigatorPromptIntents,
 } from "./navigator-intents";
+import {
+  persistSessionSelection,
+  persistSessionWorkspaceRecord,
+} from "@cocalc/frontend/project/workspaces/selection-runtime";
 
 describe("submitNavigatorPromptToCurrentThread", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockAccountId = "00000000-1000-4000-8000-000000000001";
+    mockProjectStoreState = {};
     window.localStorage.clear();
+    window.sessionStorage.clear();
     takeQueuedNavigatorPromptIntents();
     mockEnsureWorkspaceChatForPath.mockResolvedValue(null);
+    mockEnsureWorkspaceChatPath.mockResolvedValue(null);
   });
 
   it("queues fallback intent and opens floating session when chat actions are unavailable", async () => {
@@ -518,6 +532,243 @@ describe("submitNavigatorPromptToCurrentThread", () => {
       }),
       expect.objectContaining({
         workspaceId: "ws-retry",
+        workspaceOnly: true,
+      }),
+    );
+  });
+
+  it("falls back to the selected workspace record when the path resolver is stale", async () => {
+    const projectId = "00000000-1000-4000-8000-000000000000";
+    const workspaceChatPath =
+      "/home/wstein/.local/share/cocalc/workspaces/acct/ws-selected.chat";
+    persistSessionSelection(projectId, {
+      kind: "workspace",
+      workspace_id: "ws-selected",
+    });
+    persistSessionWorkspaceRecord(projectId, {
+      workspace_id: "ws-selected",
+      project_id: projectId,
+      root_path: "/home/wstein/project/selected",
+      theme: {
+        title: "selected",
+        description: "",
+        color: null,
+        accent_color: null,
+        icon: null,
+        image_blob: null,
+      },
+      pinned: false,
+      created_at: 1,
+      last_used_at: null,
+      last_active_path: null,
+      chat_path: null,
+      notice_thread_id: null,
+      notice: null,
+      source: "manual",
+      updated_at: 1,
+    } as any);
+    mockEnsureWorkspaceChatForPath.mockResolvedValue(null);
+    mockEnsureWorkspaceChatPath.mockResolvedValue({
+      chat_path: workspaceChatPath,
+      assigned: false,
+      workspace: {
+        workspace_id: "ws-selected",
+        root_path: "/home/wstein/project/selected",
+        theme: {
+          title: "selected",
+          color: null,
+          accent_color: null,
+          icon: null,
+          image_blob: null,
+        },
+      },
+    });
+    mockListSessions.mockResolvedValue([]);
+    const sendChat = jest.fn(() => new Date().toISOString());
+    const createEmptyThread = jest.fn(() => "thread-selected");
+    const actions = {
+      syncdb: { get_state: () => "ready" },
+      messageCache: { getThreadIndex: () => new Map() },
+      sendChat,
+      createEmptyThread,
+      store: {
+        get: () => undefined,
+      },
+    };
+    mockGetChatActions.mockReturnValue(actions);
+    mockInitChat.mockReturnValue(actions);
+
+    const ok = await submitNavigatorPromptToCurrentThread({
+      project_id: projectId,
+      path: "/home/wstein/project/selected/a.ipynb",
+      prompt: "Use the selected workspace fallback",
+      visiblePrompt: "Use the selected workspace fallback",
+      title: "Use the selected workspace fallback",
+      forceCodex: true,
+      openFloating: true,
+      codexConfig: { model: "gpt-5.4-mini" },
+    });
+
+    expect(ok).toBe(true);
+    expect(mockEnsureWorkspaceChatPath).toHaveBeenCalledWith({
+      project_id: projectId,
+      account_id: "00000000-1000-4000-8000-000000000001",
+      workspace_id: "ws-selected",
+    });
+    expect(mockOpenFloating).toHaveBeenCalledWith(
+      projectId,
+      expect.objectContaining({
+        chat_path: workspaceChatPath,
+        thread_key: "thread-selected",
+      }),
+      expect.objectContaining({
+        workspaceId: "ws-selected",
+        workspaceOnly: true,
+      }),
+    );
+  });
+
+  it("uses the selected workspace chat path while account state is still loading", async () => {
+    const projectId = "00000000-1000-4000-8000-000000000000";
+    const workspaceChatPath =
+      "/home/wstein/.local/share/cocalc/workspaces/acct/ws-late-account.chat";
+    mockAccountId = "";
+    persistSessionSelection(projectId, {
+      kind: "workspace",
+      workspace_id: "ws-late-account",
+    });
+    persistSessionWorkspaceRecord(projectId, {
+      workspace_id: "ws-late-account",
+      project_id: projectId,
+      root_path: "/home/wstein/project/late-account",
+      theme: {
+        title: "late-account",
+        description: "",
+        color: null,
+        accent_color: null,
+        icon: null,
+        image_blob: null,
+      },
+      pinned: false,
+      created_at: 1,
+      last_used_at: null,
+      last_active_path: null,
+      chat_path: workspaceChatPath,
+      notice_thread_id: null,
+      notice: null,
+      source: "manual",
+      updated_at: 1,
+    } as any);
+    mockEnsureWorkspaceChatForPath.mockResolvedValue(null);
+    mockListSessions.mockResolvedValue([]);
+    const sendChat = jest.fn(() => new Date().toISOString());
+    const createEmptyThread = jest.fn(() => "thread-late-account");
+    const actions = {
+      syncdb: { get_state: () => "ready" },
+      messageCache: { getThreadIndex: () => new Map() },
+      sendChat,
+      createEmptyThread,
+      store: {
+        get: () => undefined,
+      },
+    };
+    mockGetChatActions.mockReturnValue(actions);
+    mockInitChat.mockReturnValue(actions);
+
+    const ok = await submitNavigatorPromptToCurrentThread({
+      project_id: projectId,
+      path: "/home/wstein/project/late-account/a.md",
+      prompt: "Stay in the selected workspace while account state loads",
+      visiblePrompt: "Stay in the selected workspace while account state loads",
+      title: "Stay in the selected workspace while account state loads",
+      forceCodex: true,
+      openFloating: true,
+      codexConfig: { model: "gpt-5.4-mini" },
+    });
+
+    expect(ok).toBe(true);
+    expect(mockEnsureWorkspaceChatPath).not.toHaveBeenCalled();
+    expect(mockOpenFloating).toHaveBeenCalledWith(
+      projectId,
+      expect.objectContaining({
+        chat_path: workspaceChatPath,
+        thread_key: "thread-late-account",
+      }),
+      expect.objectContaining({
+        workspaceId: "ws-late-account",
+        workspaceOnly: true,
+      }),
+    );
+  });
+
+  it("falls back to the active project tab path when the caller path is missing", async () => {
+    const projectId = "00000000-1000-4000-8000-000000000000";
+    const workspaceChatPath =
+      "/home/wstein/.local/share/cocalc/workspaces/acct/ws-active-tab.chat";
+    mockProjectStoreState = {
+      active_project_tab: "editor-/home/wstein/project/active-tab/a.md",
+      current_path_abs: "/home/wstein/project/active-tab",
+    };
+    mockEnsureWorkspaceChatForPath.mockImplementation(async ({ path }) => {
+      if (path === "/home/wstein/project/active-tab/a.md") {
+        return {
+          chat_path: workspaceChatPath,
+          assigned: false,
+          workspace: {
+            workspace_id: "ws-active-tab",
+            root_path: "/home/wstein/project/active-tab",
+            theme: {
+              title: "active-tab",
+              color: null,
+              accent_color: null,
+              icon: null,
+              image_blob: null,
+            },
+          },
+        };
+      }
+      return null;
+    });
+    mockListSessions.mockResolvedValue([]);
+    const sendChat = jest.fn(() => new Date().toISOString());
+    const createEmptyThread = jest.fn(() => "thread-active-tab");
+    const actions = {
+      syncdb: { get_state: () => "ready" },
+      messageCache: { getThreadIndex: () => new Map() },
+      sendChat,
+      createEmptyThread,
+      store: {
+        get: () => undefined,
+      },
+    };
+    mockGetChatActions.mockReturnValue(actions);
+    mockInitChat.mockReturnValue(actions);
+
+    const ok = await submitNavigatorPromptToCurrentThread({
+      project_id: projectId,
+      path: "",
+      prompt: "Use the active tab path",
+      visiblePrompt: "Use the active tab path",
+      title: "Use the active tab path",
+      forceCodex: true,
+      openFloating: true,
+      codexConfig: { model: "gpt-5.4-mini" },
+    });
+
+    expect(ok).toBe(true);
+    expect(mockEnsureWorkspaceChatForPath).toHaveBeenCalledWith({
+      project_id: projectId,
+      account_id: "00000000-1000-4000-8000-000000000001",
+      path: "/home/wstein/project/active-tab/a.md",
+    });
+    expect(mockOpenFloating).toHaveBeenCalledWith(
+      projectId,
+      expect.objectContaining({
+        chat_path: workspaceChatPath,
+        thread_key: "thread-active-tab",
+      }),
+      expect.objectContaining({
+        workspaceId: "ws-active-tab",
         workspaceOnly: true,
       }),
     );
