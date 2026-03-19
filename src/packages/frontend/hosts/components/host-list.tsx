@@ -1261,7 +1261,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
     <div>
       {header}
       {filterNotice}
-      {isAdmin && showAdmin && parallelOps ? (
+      {isAdmin && parallelOps ? (
         <HostParallelOpsSummary
           status={parallelOps.status}
           loading={parallelOps.loading}

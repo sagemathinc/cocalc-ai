@@ -198,7 +198,7 @@ export const useHostsPageViewModel = () => {
   const [showAdmin, setShowAdmin] = React.useState(false);
   const [showDeleted, setShowDeleted] = React.useState(false);
   const parallelOps = useParallelOps(hub, {
-    enabled: isAdmin && showAdmin,
+    enabled: isAdmin,
   });
 
   const [fastPoll, setFastPoll] = React.useState(false);
