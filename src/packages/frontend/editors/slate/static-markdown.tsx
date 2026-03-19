@@ -13,6 +13,7 @@ import { CSSProperties, useEffect, useState } from "react";
 import type { InlineCodeLink } from "@cocalc/chat";
 import "./elements/init-ssr";
 import { getStaticRender } from "./elements/register";
+import { slateCodeBlockThemeVars } from "./elements/code-block/render-theme";
 import Leaf from "./leaf";
 import { markdown_to_slate as markdownToSlate } from "./markdown-to-slate";
 import { ChangeContext } from "./use-change";
@@ -21,6 +22,7 @@ interface Props {
   value: string;
   style?: CSSProperties;
   className?: string;
+  editorTheme?: string | null;
   inlineCodeLinks?: InlineCodeLink[];
   inlineCodeProjectRoot?: string;
   highlightQuery?: string;
@@ -32,6 +34,7 @@ export default function StaticMarkdown({
   value,
   style,
   className,
+  editorTheme,
   inlineCodeLinks,
   inlineCodeProjectRoot,
   highlightQuery,
@@ -78,7 +81,14 @@ export default function StaticMarkdown({
         },
       }}
     >
-      <div style={{ width: "100%", ...style }} className={className}>
+      <div
+        style={{
+          width: "100%",
+          ...slateCodeBlockThemeVars(editorTheme),
+          ...style,
+        }}
+        className={["cocalc-slate-render", className].filter(Boolean).join(" ")}
+      >
         {editor.children.map((element, n) => {
           return <RenderElement key={n} element={element} />;
         })}

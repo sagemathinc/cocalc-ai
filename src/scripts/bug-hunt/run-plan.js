@@ -59,7 +59,7 @@ function parseArgs(argv) {
     logsOnFail: "",
     networkOnFail: "",
     screenshotOnFail: true,
-    pinTarget: true,
+    pinTarget: false,
     allowRawExec: false,
     note: createDefaultNoteOptions(),
   };
@@ -295,7 +295,6 @@ function buildHarnessArgs(options, context, planFile, reportDir) {
     context.project_id,
     "--report-dir",
     reportDir,
-    "--active-only",
   ];
   if (options.dryRun) args.push("--dry-run");
   if (options.defaultRetries) {
@@ -319,13 +318,22 @@ function buildHarnessArgs(options, context, planFile, reportDir) {
   if (!options.screenshotOnFail) {
     args.push("--no-screenshot-on-fail");
   }
-  if (!options.pinTarget) {
+  if (options.pinTarget) {
+    args.push("--pin-target");
+  } else {
     args.push("--no-pin-target");
   }
   if (options.allowRawExec) {
     args.push("--allow-raw-exec");
   }
   return args;
+}
+
+function mergePlanRuntimeOptions(options, planConfig) {
+  return {
+    ...options,
+    allowRawExec: !!options.allowRawExec || planConfig?.allow_raw_exec === true,
+  };
 }
 
 function runSeedIfRequested(context, options, artifactDir) {
@@ -382,6 +390,7 @@ function main(argv = process.argv.slice(2)) {
   if (!fs.existsSync(planFile)) {
     throw new Error(`plan file not found: ${planFile}`);
   }
+  const planConfig = readJson(planFile, "bug-hunt plan");
   const planName = planNameFromPath(planFile);
   const artifactDir =
     options.reportDir ||
@@ -393,7 +402,13 @@ function main(argv = process.argv.slice(2)) {
   writeJson(path.join(artifactDir, "context.json"), context);
 
   const seedResult = runSeedIfRequested(context, options, artifactDir);
-  const harnessArgs = buildHarnessArgs(options, context, planFile, artifactDir);
+  const effectiveOptions = mergePlanRuntimeOptions(options, planConfig);
+  const harnessArgs = buildHarnessArgs(
+    effectiveOptions,
+    context,
+    planFile,
+    artifactDir,
+  );
   const harnessResult = runCliJson(context, harnessArgs);
   writeJson(path.join(artifactDir, "harness-result.json"), harnessResult);
 
@@ -451,6 +466,7 @@ module.exports = {
   resolvePlanFile,
   resolveSeedTypes,
   sanitizeSegment,
+  mergePlanRuntimeOptions,
 };
 
 if (require.main === module) {

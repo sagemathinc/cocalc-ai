@@ -12,6 +12,7 @@ Implemented:
 - `All tabs`, per-workspace, and `Unscoped` views
 - longest-prefix path membership
 - explicit follow-through when opening files or navigating directories outside the current workspace
+- stable refresh restore for selected workspaces and their visible tabs
 - remembering the last open tab per workspace
 - closing tabs within the current workspace
 - drag-to-order tabs within a selected workspace
@@ -23,7 +24,7 @@ Implemented:
 - shared theme editor modal, now reused for:
   - workspaces
   - projects
-- thread/chat settings are only partially unified so far
+  - threads/chats
 - canonical chat per workspace, including binding an existing chat
 - backend and CLI workspace APIs:
   - `cocalc workspaces ...`
@@ -32,13 +33,38 @@ Implemented:
 - card-level workspace notices
 - workspace card status for canonical chat:
   - `Codex running`
-  - `Codex done`
+  - `Ready for review`
   - `Codex error`
 - stronger theme cues:
   - larger card media
   - image/icon in the activity bar
   - workspace colors on file tabs
   - mirrored tab activity on workspace cards
+  - optional stronger workspace theme mode with tinted chrome
+- per-workspace terminal theme overrides
+- per-workspace editor theme overrides
+- rendered markdown / Slate surfaces now pick up subtle theme cues from the effective editor theme:
+  - code blocks
+  - inline code
+  - link chips
+  - blockquotes
+  - tables
+- workspace-aware agent integration:
+  - current-workspace filtering in Agents
+  - workspace `Float` entrypoint
+  - floating agent view scoped to the workspace by default
+  - polished floating agent dock:
+    - real drag/title bar
+    - cleaner header and controls
+    - better resize affordances
+    - workspace-safe thread search inside the floating dock
+- thread/chat appearance uses the shared appearance flow:
+  - separate `Appearance` and `Behavior`
+  - accent color
+  - shared icon/image/color editing
+- live browser workspace inspection:
+  - hardened exact-target browser exec under agent auth
+  - `cocalc browser workspace-state`
 
 ### Remaining Bugs / TODO
 
@@ -47,29 +73,43 @@ Implemented:
     - canonical chat status on cards
     - mirrored tab activity on cards
     - workspace process summaries on cards
-  - Still worth improving:
-    - stronger notion of "all Codex work is done and ready for review"
-- [x] Extend `cocalc-cli` / backend APIs for workspaces.
+    - `Ready for review` when all Codex work in a workspace is done
+- [x] Extend `cocalc-cli` / backend/browser APIs for workspaces.
   - Implemented:
     - `cocalc workspaces ...`
     - `api.workspaces ...`
     - backend message and notice support
+  - first-cut live browser workspace inspection for Codex via `cocalc browser workspace-state`
+  - improved exact-target guidance for browser exec under agent auth
   - Still worth improving:
-    - richer inspection/debug output for live workspace UI state
-    - reliable Codex/browser-session access to live workspace state from Lite, including fixing current `system.listBrowserSessions` permission/408 failures
-    - end-to-end smoke tests showing the CLI/API/browser pieces work together for Codex
-- [ ] Theming: add an optional stronger workspace theme mode so it is harder to get confused about where you are.
-  - Ideas worth exploring:
-    - stronger page/frame borders
-    - activity bar or chrome accents
-    - per-workspace terminal/editor theme overrides
-    - chatroom-level theme overrides that follow the workspace
-- [ ] Thread/chat appearance is only partially unified with workspaces/projects.
-  - The shared theme modal is reused in code, but the live UI still differs.
-  - Missing parity includes:
+    - ongoing end-to-end smoke tests for Codex/browser/workspace workflows
+    - any remaining stale-browser-id or refresh edge cases found while dogfooding
+- [x] Theming: add an optional stronger workspace theme mode so it is harder to get confused about where you are.
+  - Implemented first cut:
+    - opt-in switch per workspace
+    - tinted activity bar chrome
+    - stronger page/frame accents
+    - per-workspace terminal theme overrides
+    - per-workspace editor theme overrides
+    - subtle rendered markdown theming from the effective editor theme
+  - Still worth exploring:
+    - broader chatroom-level theme overrides that follow the workspace
+    - whether any surfaces should use a stronger full-background editor-derived rendering mode
+- [x] Thread/chat appearance is now mostly unified with workspaces/projects.
+  - Implemented:
+    - shared appearance editor flow
+    - separate `Appearance` and `Behavior`
     - accent color
-    - the same clean separation between appearance and non-appearance settings
-    - the same overall appearance-editing flow as projects/workspaces
+    - stronger thread color cues in thread lists/headers/cards
+  - Still worth polishing:
+    - broader chatroom-level theme inheritance
+    - any UI cleanup found during dogfooding
+- [x] Floating agent panel polish.
+  - Implemented:
+    - clearer window chrome and drag affordance
+    - cleaner controls and workspace context display
+    - wider resize affordances
+    - floating thread search that no longer steals focus or clips awkwardly
 - [x] bug: it is not possible to drag-to-order tabs within a workspace
   - fixed by reordering the visible subset and projecting that back to the global tab order
 - [x] bug: if I close a tab, cocalc switches to the next tab and focuses it, even if that is in a completely different workspace. Instead it should stick to the current workspace.
@@ -85,7 +125,7 @@ Implemented:
   - [x] Files -- done
   - [x] Agents -- restricted to agents whose chat is in the workspace
   - [x] Tabs -- done
-- [ ] Instead of making the Processes page workspace-aware, surface process activity directly on workspace cards.
+- [~] Instead of making the Processes page workspace-aware, surface process activity directly on workspace cards.
   - A workspace card should summarize processes associated to files/terminals/notebooks in that workspace.
   - The most useful first cut is CPU/memory at a glance for each workspace.
   - First cut is done on the cards now.

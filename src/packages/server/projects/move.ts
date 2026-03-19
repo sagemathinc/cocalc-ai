@@ -1,6 +1,7 @@
 import getPool from "@cocalc/database/pool";
 import getLogger from "@cocalc/backend/logger";
 import { conat } from "@cocalc/backend/conat";
+import type { LroSummary } from "@cocalc/conat/hub/api/lro";
 import {
   DEFAULT_R2_REGION,
   mapCloudRegionToR2Region,
@@ -25,6 +26,7 @@ const log = getLogger("server:projects:move");
 const MAX_BACKUPS_PER_PROJECT = 30;
 const BACKUP_TIMEOUT_MS = 6 * 60 * 60 * 1000;
 const MOVE_STOP_PROJECT_TIMEOUT_MS = 3 * 60 * 1000;
+const MOVE_START_DEST_TIMEOUT_MS = 5 * 60 * 1000;
 
 export const MOVE_CANCELED_CODE = "move-canceled";
 
@@ -257,6 +259,20 @@ async function createFinalBackup({
       ? backup.time.toISOString()
       : new Date(backup.time as any).toISOString();
   return { id: backup.id, time: backupTime };
+}
+
+async function loadProjectPlacementState(project_id: string): Promise<{
+  host_id?: string | null;
+  project_state?: string | null;
+}> {
+  const { rows } = await getPool().query<{
+    host_id: string | null;
+    project_state: string | null;
+  }>(
+    "SELECT host_id, state->>'state' AS project_state FROM projects WHERE project_id=$1",
+    [project_id],
+  );
+  return rows[0] ?? {};
 }
 
 export async function moveProjectToHost(
@@ -519,21 +535,57 @@ export async function moveProjectToHost(
           project_id: context.project_id,
           wait: false,
         });
-        const summary = await waitForLroCompletion({
-          op_id: startOp.op_id,
-          scope_type: startOp.scope_type,
-          scope_id: startOp.scope_id,
-          client: conat(),
-          onProgress: (event) => {
-            progress({
-              step: "start-dest",
-              message: event.message ?? event.phase ?? "starting destination",
-              detail: event.detail,
-              progress: event.progress,
-            });
-          },
-        });
-        if (summary.status !== "succeeded") {
+        let summary: LroSummary | undefined;
+        try {
+          summary = await waitForLroCompletion({
+            op_id: startOp.op_id,
+            scope_type: startOp.scope_type,
+            scope_id: startOp.scope_id,
+            client: conat(),
+            timeout_ms: MOVE_START_DEST_TIMEOUT_MS,
+            onProgress: (event) => {
+              progress({
+                step: "start-dest",
+                message: event.message ?? event.phase ?? "starting destination",
+                detail: event.detail,
+                progress: event.progress,
+              });
+            },
+          });
+        } catch (err) {
+          const snapshot = await loadProjectPlacementState(context.project_id);
+          const runningOnDestination =
+            snapshot.host_id === context.dest_host_id &&
+            snapshot.project_state === "running";
+          if (!runningOnDestination) {
+            throw new Error(
+              `destination start wait failed: ${err} (host_id=${snapshot.host_id ?? "unknown"}, state=${snapshot.project_state ?? "unknown"})`,
+            );
+          }
+          progress({
+            step: "start-dest",
+            message:
+              "destination workspace reported running after start wait failure",
+            detail: {
+              dest_host_id: context.dest_host_id,
+              timeout_ms: MOVE_START_DEST_TIMEOUT_MS,
+              host_id: snapshot.host_id,
+              state: snapshot.project_state,
+              error: `${err}`,
+            },
+          });
+          log.warn(
+            "moveProjectToHost destination start wait failed after project reached running",
+            {
+              project_id: context.project_id,
+              dest_host_id: context.dest_host_id,
+              timeout_ms: MOVE_START_DEST_TIMEOUT_MS,
+              snapshot,
+              err,
+            },
+          );
+        }
+        if (summary && summary.status !== "succeeded") {
           const reason = summary.error ?? summary.status;
           throw new Error(`destination start failed: ${reason}`);
         }

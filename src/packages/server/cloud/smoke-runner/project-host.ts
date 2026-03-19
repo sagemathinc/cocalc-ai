@@ -111,6 +111,7 @@ import { normalizeProviderId, type ProviderId } from "@cocalc/cloud";
 import { getProviderContext } from "@cocalc/server/cloud/provider-context";
 import admins from "@cocalc/server/accounts/admins";
 import { getLro } from "@cocalc/server/lro/lro-db";
+import { buildMoveSmokeHostNames } from "./host-names";
 
 const logger = getLogger("server:cloud:smoke-runner:project-host");
 const execFile = promisify(execFileCb);
@@ -558,6 +559,7 @@ type CliHostRow = {
 
 type CliWorkspaceRow = {
   workspace_id?: string;
+  project_id?: string;
   title?: string;
   host_id?: string | null;
   last_edited?: string | null;
@@ -601,7 +603,7 @@ async function findWorkspaceByTitleViaCli({
   title: string;
   host_id?: string;
 }): Promise<string | undefined> {
-  const args = ["workspace", "list", "--prefix", title, "--limit", "5000"];
+  const args = ["project", "list", "--prefix", title, "--limit", "5000"];
   if (host_id) {
     args.push("--host", host_id);
   }
@@ -611,7 +613,7 @@ async function findWorkspaceByTitleViaCli({
   const sorted = [...exact].sort((a, b) =>
     String(b.last_edited ?? "").localeCompare(String(a.last_edited ?? "")),
   );
-  const id = `${sorted[0]?.workspace_id ?? ""}`.trim();
+  const id = `${sorted[0]?.project_id ?? sorted[0]?.workspace_id ?? ""}`.trim();
   return id || undefined;
 }
 
@@ -624,7 +626,7 @@ async function listWorkspaceIdsByTitleViaCli({
   title: string;
   host_id?: string;
 }): Promise<string[]> {
-  const args = ["workspace", "list", "--prefix", title, "--limit", "5000"];
+  const args = ["project", "list", "--prefix", title, "--limit", "5000"];
   if (host_id) {
     args.push("--host", host_id);
   }
@@ -632,7 +634,7 @@ async function listWorkspaceIdsByTitleViaCli({
   const ids = new Set<string>();
   for (const row of rows) {
     if (`${row?.title ?? ""}`.trim() !== title) continue;
-    const id = `${row?.workspace_id ?? ""}`.trim();
+    const id = `${row?.project_id ?? row?.workspace_id ?? ""}`.trim();
     if (id) ids.add(id);
   }
   return [...ids];
@@ -653,14 +655,14 @@ async function createWorkspaceViaCliWithRetry({
   const maxAttempts = Math.max(3, Math.min(10, wait.attempts));
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
-      const workspace = await runCli<{ workspace_id?: string }>(
+      const project = await runCli<{ project_id?: string }>(
         cli,
-        ["workspace", "create", title, ...(host_id ? ["--host", host_id] : [])],
+        ["project", "create", title, ...(host_id ? ["--host", host_id] : [])],
         { timeoutSeconds: 90, commandTimeoutMs: 180_000 },
       );
-      const project_id = `${workspace.workspace_id ?? ""}`.trim();
+      const project_id = `${project.project_id ?? ""}`.trim();
       if (!project_id) {
-        throw new Error("workspace create did not return workspace_id");
+        throw new Error("project create did not return project_id");
       }
       return project_id;
     } catch (err) {
@@ -768,9 +770,9 @@ async function prepareSmokeStaticContentViaCli({
   }>(
     cli,
     [
-      "workspace",
+      "project",
       "exec",
-      "--workspace",
+      "--project",
       workspace_id,
       "--timeout",
       "60",
@@ -1318,10 +1320,10 @@ async function waitForBackupIndexedViaCli({
     const indexedBackups = await runCli<
       Array<{ backup_id?: string; time?: string | Date | null }>
     >(cli, [
-      "workspace",
+      "project",
       "backup",
       "list",
-      "--workspace",
+      "--project",
       project_id,
       "--indexed-only",
       "--limit",
@@ -1340,10 +1342,10 @@ async function waitForBackupIndexedViaCli({
     const backups = await runCli<
       Array<{ backup_id?: string; time?: string | Date | null }>
     >(cli, [
-      "workspace",
+      "project",
       "backup",
       "list",
-      "--workspace",
+      "--project",
       project_id,
       "--limit",
       "100",
@@ -1382,7 +1384,7 @@ async function waitForProjectFileValueViaCli({
     try {
       const out = await runCli<{ content?: string }>(
         cli,
-        ["workspace", "file", "cat", "--workspace", project_id, path],
+        ["project", "file", "cat", path, "--project", project_id],
         { timeoutSeconds: 45, commandTimeoutMs: 120_000 },
       );
       const value = String(out?.content ?? "").replace(/\r?\n$/, "");
@@ -1419,9 +1421,9 @@ async function runWorkspaceExecSmokeViaCli({
       }>(
         cli,
         [
-          "workspace",
+          "project",
           "exec",
-          "--workspace",
+          "--project",
           project_id,
           "--timeout",
           "45",
@@ -1529,32 +1531,32 @@ async function runProxySmokeViaCli({
   ].join("\n");
 
   try {
-    await runCli(
-      cli,
-      [
-        "workspace",
-        "exec",
-        "--workspace",
-        project_id,
-        "--timeout",
-        "90",
+      await runCli(
+        cli,
+        [
+          "project",
+          "exec",
+          "--project",
+          project_id,
+          "--timeout",
+          "90",
         "--bash",
         startScript,
       ],
       { timeoutSeconds: 120, commandTimeoutMs: 180_000 },
     );
 
-    await waitForCondition(async () => {
-      await runCli(
-        cli,
-        [
-          "workspace",
-          "proxy",
-          "curl",
-          "--workspace",
-          project_id,
-          "--host",
-          host_id,
+      await waitForCondition(async () => {
+        await runCli(
+          cli,
+          [
+            "project",
+            "proxy",
+            "curl",
+            "--project",
+            project_id,
+            "--host",
+            host_id,
           "--port",
           String(proxy_port),
           "--expect",
@@ -1571,7 +1573,7 @@ async function runProxySmokeViaCli({
         "issue-http-token",
         "--host",
         host_id,
-        "--workspace",
+        "--project",
         project_id,
         "--ttl",
         "300",
@@ -1587,10 +1589,10 @@ async function runProxySmokeViaCli({
       const response = await runCli<{ status?: number; body_preview?: string }>(
         cli,
         [
-          "workspace",
+          "project",
           "proxy",
           "curl",
-          "--workspace",
+          "--project",
           project_id,
           "--host",
           host_id,
@@ -1624,9 +1626,9 @@ async function runProxySmokeViaCli({
       const logDump = await runCli<{ stdout?: string }>(
         cli,
         [
-          "workspace",
+          "project",
           "exec",
-          "--workspace",
+          "--project",
           project_id,
           "--timeout",
           "30",
@@ -1660,9 +1662,9 @@ async function runProxySmokeViaCli({
       await runCli(
         cli,
         [
-          "workspace",
+          "project",
           "exec",
-          "--workspace",
+          "--project",
           project_id,
           "--timeout",
           "30",
@@ -2738,14 +2740,14 @@ async function runSmokeStepsViaCli({
         attempt += 1
       ) {
         try {
-          const workspace = await runCli<{ workspace_id?: string }>(
+          const project = await runCli<{ project_id?: string }>(
             cli,
-            ["workspace", "create", workspaceTitle, "--host", host_id],
+            ["project", "create", workspaceTitle, "--host", host_id],
             { timeoutSeconds: 90, commandTimeoutMs: 180_000 },
           );
-          project_id = `${workspace.workspace_id ?? ""}`.trim();
+          project_id = `${project.project_id ?? ""}`.trim();
           if (!project_id) {
-            throw new Error("workspace create did not return workspace_id");
+            throw new Error("project create did not return project_id");
           }
           lastErr = undefined;
           break;
@@ -2805,14 +2807,14 @@ async function runSmokeStepsViaCli({
         attempt <= Math.max(3, Math.min(12, waitProjectReady.attempts));
         attempt += 1
       ) {
-        try {
-          await runCli(cli, [
-            "workspace",
-            "start",
-            "--workspace",
-            project_id,
-            "--wait",
-          ]);
+          try {
+            await runCli(cli, [
+              "project",
+              "start",
+              "--project",
+              project_id,
+              "--wait",
+            ]);
           lastErr = undefined;
           break;
         } catch (err) {
@@ -2847,9 +2849,9 @@ async function runSmokeStepsViaCli({
           await runCli(
             cli,
             [
-              "workspace",
+              "project",
               "exec",
-              "--workspace",
+              "--project",
               project_id,
               "--timeout",
               "45",
@@ -2894,7 +2896,7 @@ async function runSmokeStepsViaCli({
         if (!project_id) throw new Error("missing project_id");
         await runCli<{ op_id?: string }>(
           cli,
-          ["workspace", "backup", "create", "--workspace", project_id],
+          ["project", "backup", "create", "--project", project_id],
           { timeoutSeconds: 90, commandTimeoutMs: 180_000 },
         );
       });
@@ -2929,10 +2931,10 @@ async function runSmokeStepsViaCli({
           return;
         }
         const children = await runCli<Array<{ name?: string }>>(cli, [
-          "workspace",
+          "project",
           "backup",
           "files",
-          "--workspace",
+          "--project",
           project_id,
           "--backup-id",
           backup.id,
@@ -3038,7 +3040,7 @@ async function runSmokeStepsViaCli({
           try {
             await runCli(
               cli,
-              ["workspace", "start", "--workspace", project_id, "--wait"],
+              ["project", "start", "--project", project_id, "--wait"],
               { timeoutSeconds: 90, commandTimeoutMs: 180_000 },
             );
             lastErr = undefined;
@@ -3096,9 +3098,9 @@ async function runSmokeStepsViaCli({
         for (const workspaceId of workspaceIds) {
           try {
             await runCli(cli, [
-              "workspace",
+              "project",
               "delete",
-              "--workspace",
+              "--project",
               workspaceId,
               "--hard",
               "--purge-backups-now",
@@ -3114,9 +3116,9 @@ async function runSmokeStepsViaCli({
               },
             );
             await runCli(cli, [
-              "workspace",
+              "project",
               "delete",
-              "--workspace",
+              "--project",
               workspaceId,
             ]);
           }
@@ -4125,8 +4127,8 @@ async function runMoveSmokeScenarioViaCli({
 
     const baseHostName =
       `${createSpec?.name ?? "smoke-move"}`.trim() || "smoke-move";
-    const sourceHostName = `${baseHostName}-src`.slice(0, 63);
-    const destHostName = `${baseHostName}-dst`.slice(0, 63);
+    const { sourceHostName, destHostName } =
+      buildMoveSmokeHostNames(baseHostName);
     const sourceSpec = { ...createSpec, name: sourceHostName };
     const destSpec = { ...createSpec, name: destHostName };
 
@@ -4215,18 +4217,18 @@ async function runMoveSmokeScenarioViaCli({
     await runStep("start_and_seed_workspace", async () => {
       if (!workspaceId) throw new Error("missing workspace id");
       await runCli(cli, [
-        "workspace",
+        "project",
         "start",
-        "--workspace",
+        "--project",
         workspaceId,
         "--wait",
       ]);
       await runCli(
         cli,
         [
-          "workspace",
+          "project",
           "exec",
-          "--workspace",
+          "--project",
           workspaceId,
           "--timeout",
           "45",
@@ -4250,9 +4252,9 @@ async function runMoveSmokeScenarioViaCli({
       await runCli(
         cli,
         [
-          "workspace",
+          "project",
           "move",
-          "--workspace",
+          "--project",
           workspaceId,
           "--host",
           destHostId,
@@ -4266,9 +4268,9 @@ async function runMoveSmokeScenarioViaCli({
       if (!workspaceId) throw new Error("missing workspace id");
       if (!destHostId) throw new Error("missing destination host id");
       const row = await runCli<{ host_id?: string | null }>(cli, [
-        "workspace",
+        "project",
         "get",
-        "--workspace",
+        "--project",
         workspaceId,
       ]);
       const host_id = `${row?.host_id ?? ""}`.trim();
@@ -4283,7 +4285,7 @@ async function runMoveSmokeScenarioViaCli({
       if (!workspaceId) throw new Error("missing workspace id");
       await runCli(
         cli,
-        ["workspace", "start", "--workspace", workspaceId, "--wait"],
+        ["project", "start", "--project", workspaceId, "--wait"],
         { timeoutSeconds: 120, commandTimeoutMs: 240_000 },
       );
       await waitForProjectFileValueViaCli({
@@ -4343,7 +4345,7 @@ async function runMoveSmokeScenarioViaCli({
         if (!workspaceId) throw new Error("missing workspace id");
         await runCli<{ op_id?: string }>(
           cli,
-          ["workspace", "backup", "create", "--workspace", workspaceId],
+          ["project", "backup", "create", "--project", workspaceId],
           { timeoutSeconds: 90, commandTimeoutMs: 180_000 },
         );
         const backup = await waitForBackupIndexedViaCli({
@@ -4362,9 +4364,9 @@ async function runMoveSmokeScenarioViaCli({
         if (workspaceId) {
           try {
             await runCli(cli, [
-              "workspace",
+              "project",
               "delete",
-              "--workspace",
+              "--project",
               workspaceId,
               "--hard",
               "--purge-backups-now",
@@ -4373,9 +4375,9 @@ async function runMoveSmokeScenarioViaCli({
             ]);
           } catch {
             await runCli(cli, [
-              "workspace",
+              "project",
               "delete",
-              "--workspace",
+              "--project",
               workspaceId,
             ]);
           }

@@ -15,6 +15,9 @@ const CODE_STYLE = {
   margin: 0,
   fontSize: "85%",
   borderRadius: "6px",
+  backgroundColor: "var(--cocalc-slate-inline-code-bg, rgba(0, 0, 0, 0.04))",
+  color: "var(--cocalc-slate-inline-code-fg, inherit)",
+  border: "1px solid var(--cocalc-slate-inline-code-border, transparent)",
 } as CSSProperties;
 
 const Leaf: React.FC<RenderLeafProps> = React.memo(

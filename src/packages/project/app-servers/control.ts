@@ -8,7 +8,6 @@ import { spawn } from "node:child_process";
 import net from "node:net";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { userInfo } from "node:os";
 import { delay } from "awaiting";
 import basePath from "@cocalc/backend/base-path";
 import { conat } from "@cocalc/conat/client";
@@ -26,6 +25,7 @@ import {
   type AppSpecRecord,
   upsertAppSpec as upsertAppSpecRaw,
 } from "./specs";
+import type { AppStaticIntegrationSpec } from "./public-viewer";
 import {
   appIdForRunningServicePort,
   clearRunningServicePort,
@@ -43,7 +43,9 @@ import {
   listAppMetrics as listAppMetricsState,
   recordAppWake,
 } from "./metrics";
+import { parseLsofListenOutput, parseSsOutput } from "./listen-parsers";
 import { listAppTemplates as listAppTemplatesFromCatalog } from "./template-catalog";
+import { resolveProxyListenPort } from "../servers/proxy/config";
 export { listAppTemplatesFromCatalog as listAppTemplates };
 
 const logger = getLogger("app-servers:control");
@@ -110,7 +112,7 @@ export interface DetectedAppPort {
   managed: boolean;
   managed_app_ids: string[];
   proxy_url: string;
-  source: "ss" | "procfs";
+  source: "ss" | "lsof" | "procfs";
 }
 
 export interface InstalledAppTemplate {
@@ -165,6 +167,7 @@ export type AppProxyTarget =
       root: string;
       index?: string;
       cache_control?: string;
+      integration?: AppStaticIntegrationSpec;
       rewritePath: string;
     };
 
@@ -192,27 +195,6 @@ function appendLimited(
   }
   const keep = prev.subarray(prev.length - (maxBytes - chunk.length));
   return Buffer.concat([keep, chunk], maxBytes);
-}
-
-function parseSsOutput(raw: string): Array<{ host: string; port: number }> {
-  const out: Array<{ host: string; port: number }> = [];
-  for (const line of raw.split(/\r?\n/)) {
-    const text = line.trim();
-    if (!text) continue;
-    const cols = text.split(/\s+/);
-    if (cols.length < 4) continue;
-    const local = cols[3];
-    const m = local.match(/^(.*):(\d+)$/);
-    if (!m) continue;
-    let host = m[1] ?? "";
-    if (host.startsWith("[") && host.endsWith("]")) {
-      host = host.slice(1, -1);
-    }
-    const port = Number(m[2]);
-    if (!Number.isInteger(port) || port <= 0) continue;
-    out.push({ host: host || "0.0.0.0", port });
-  }
-  return out;
 }
 
 function decodeIpv4Hex(hex: string): string {
@@ -281,10 +263,42 @@ async function detectListeningPorts(): Promise<DetectedAppPort[]> {
       resolve(parseSsOutput(Buffer.concat(chunks).toString("utf8")));
     });
   });
-  const source: "ss" | "procfs" = fromSs ? "ss" : "procfs";
-  const sockets = fromSs ?? [
-    ...(await parseProcTcp("/proc/net/tcp", "tcp")),
-    ...(await parseProcTcp("/proc/net/tcp6", "tcp6")),
+  const fromLsof =
+    fromSs == null
+      ? await new Promise<Array<{ host: string; port: number }> | undefined>(
+          (resolve) => {
+            const child = spawn(
+              "lsof",
+              ["-nP", "-iTCP", "-sTCP:LISTEN", "-Fn"],
+              {
+                stdio: ["ignore", "pipe", "ignore"],
+              },
+            );
+            const chunks: Buffer[] = [];
+            child.stdout?.on("data", (c: Buffer) => chunks.push(c));
+            child.once("error", () => resolve(undefined));
+            child.once("close", (code) => {
+              if (code !== 0) return resolve(undefined);
+              resolve(
+                parseLsofListenOutput(Buffer.concat(chunks).toString("utf8")),
+              );
+            });
+          },
+        )
+      : undefined;
+  const source: "ss" | "lsof" | "procfs" = fromSs
+    ? "ss"
+    : fromLsof
+      ? "lsof"
+      : "procfs";
+  const sockets = [
+    ...(fromSs ?? fromLsof ?? []),
+    ...(fromSs == null && fromLsof == null
+      ? [
+          ...(await parseProcTcp("/proc/net/tcp", "tcp")),
+          ...(await parseProcTcp("/proc/net/tcp6", "tcp6")),
+        ]
+      : []),
   ];
   const byPort = new Map<number, Set<string>>();
   for (const { host, port } of sockets) {
@@ -300,10 +314,11 @@ async function detectListeningPorts(): Promise<DetectedAppPort[]> {
     managedByPort.get(row.port)!.push(row.id);
   }
   const ignoredPorts = new Set<number>();
-  // Keep this in sync with project/servers/proxy/proxy.ts:startProxyServer().
-  const proxyPort =
-    Number(process.env.COCALC_PROXY_PORT ?? 0) ||
-    (userInfo().username === "root" ? 80 : 8080);
+  const proxyPort = resolveProxyListenPort(
+    process.env.COCALC_PROXY_PORT == null
+      ? undefined
+      : Number(process.env.COCALC_PROXY_PORT),
+  );
   if (Number.isInteger(proxyPort) && proxyPort > 0) ignoredPorts.add(proxyPort);
   const hubPort = Number(process.env.HUB_PORT ?? 0);
   if (Number.isInteger(hubPort) && hubPort > 0) ignoredPorts.add(hubPort);
@@ -846,8 +861,8 @@ export async function startApp(
   const exposure = await getAppExposureState(spec.id);
   const publicMode = opts?.publicMode ?? exposure?.mode === "public";
   const preferredPort = opts?.preferredPort ?? spec.network.port;
-  const port = await getPort({ port: preferredPort });
   const host = spec.network.listen_host || "127.0.0.1";
+  const port = await getPort({ port: preferredPort, host });
   const localUrl = getProxyUrl(port);
   const appBaseUrl = publicMode ? "/" : localUrl;
   const cmd = spec.command.exec;
@@ -1146,6 +1161,7 @@ export async function resolveAppProxyTarget({
         root: staticSpec.static.root,
         index: staticSpec.static.index,
         cache_control: staticSpec.static.cache_control,
+        integration: staticSpec.integration,
         rewritePath: finalPath,
       };
     }

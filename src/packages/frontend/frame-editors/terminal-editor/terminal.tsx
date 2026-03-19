@@ -17,6 +17,8 @@ import {
   useRef,
 } from "@cocalc/frontend/app-framework";
 import { useStudentProjectFunctionality } from "@cocalc/frontend/course";
+import { useProjectContext } from "@cocalc/frontend/project/context";
+import { effectiveTerminalColorScheme } from "@cocalc/frontend/project/workspaces/terminal-theme";
 import { Terminal } from "./connected-terminal";
 import { background_color } from "./themes";
 import useResizeObserver from "use-resize-observer";
@@ -46,12 +48,18 @@ const COMMAND_STYLE = {
 } as CSS;
 
 export const TerminalFrame: React.FC<Props> = React.memo((props: Props) => {
+  const { workspaces } = useProjectContext();
   const terminalRef = useRef<Terminal | undefined>(undefined);
   const terminalDOMRef = useRef<any>(null);
   const resize = useResizeObserver({ ref: terminalDOMRef });
   const isMountedRef = useIsMountedRef();
   const student_project_functionality = useStudentProjectFunctionality(
     props.project_id,
+  );
+  const workspaceRecord = workspaces.resolveWorkspaceForPath(props.path);
+  const terminalColorScheme = effectiveTerminalColorScheme(
+    props.terminal,
+    workspaceRecord,
   );
 
   useEffect(() => {
@@ -83,6 +91,12 @@ export const TerminalFrame: React.FC<Props> = React.memo((props: Props) => {
   }, [props.is_current]);
 
   useEffect(() => {
+    terminalRef.current?.set_terminal_theme_override(
+      workspaceRecord?.terminal_theme,
+    );
+  }, [workspaceRecord?.terminal_theme]);
+
+  useEffect(() => {
     measureSize();
   }, [props.resize, resize]);
 
@@ -100,7 +114,11 @@ export const TerminalFrame: React.FC<Props> = React.memo((props: Props) => {
       // happens, e.g., when terminals are disabled.
       return;
     }
-    terminalRef.current = props.actions._get_terminal(props.id, node);
+    terminalRef.current = props.actions._get_terminal(
+      props.id,
+      node,
+      workspaceRecord?.terminal_theme,
+    );
     if (terminalRef.current == null) return; // should be impossible.
     terminalRef.current.is_visible = true;
     set_font_size();
@@ -182,7 +200,7 @@ export const TerminalFrame: React.FC<Props> = React.memo((props: Props) => {
     );
   }
 
-  const backgroundColor = background_color(props.terminal?.get("color_scheme"));
+  const backgroundColor = background_color(terminalColorScheme);
   /* 4px padding is consistent with CodeMirror */
 
   return (

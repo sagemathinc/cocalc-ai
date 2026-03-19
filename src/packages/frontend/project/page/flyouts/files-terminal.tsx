@@ -22,7 +22,9 @@ import { DEFAULT_TERM_ENV } from "@cocalc/frontend/frame-editors/code-editor/con
 import { Terminal } from "@cocalc/frontend/frame-editors/terminal-editor/connected-terminal";
 import { ConnectedTerminalInterface } from "@cocalc/frontend/frame-editors/terminal-editor/connected-terminal-interface";
 import { background_color } from "@cocalc/frontend/frame-editors/terminal-editor/themes";
+import { useProjectContext } from "@cocalc/frontend/project/context";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
+import { effectiveTerminalColorScheme } from "@cocalc/frontend/project/workspaces/terminal-theme";
 import { escapeBashChangeDirPath } from "@cocalc/util/jupyter-api/chdir-commands";
 import { sha1 } from "@cocalc/util/misc";
 import { BACKUPS } from "@cocalc/util/consts/backups";
@@ -79,6 +81,7 @@ export function TerminalFlyout({
   browsingPath,
   onNavigate,
 }: TerminalFlyoutProps) {
+  const { workspaces } = useProjectContext();
   const actions = useActions({ project_id });
   const currentPathRef = useRef<string>(browsingPath);
   const account_id = useTypedRedux("account", "account_id");
@@ -94,6 +97,11 @@ export function TerminalFlyout({
   const syncRef = useRef<boolean>(sync);
   const onNavigateRef = useRef(onNavigate);
   const homePath = getProjectHomeDirectory(project_id);
+  const workspaceRecord = workspaces.resolveWorkspaceForPath(browsingPath);
+  const terminalColorScheme = effectiveTerminalColorScheme(
+    terminal,
+    workspaceRecord,
+  );
 
   useEffect(() => {
     currentPathRef.current = browsingPath;
@@ -106,6 +114,12 @@ export function TerminalFlyout({
   useEffect(() => {
     onNavigateRef.current = onNavigate;
   }, [onNavigate]);
+
+  useEffect(() => {
+    terminalRef.current?.set_terminal_theme_override(
+      workspaceRecord?.terminal_theme,
+    );
+  }, [workspaceRecord?.terminal_theme]);
 
   // Design decision:
   // One terminal per project, one for each user, and persistent across flyout open/close.
@@ -196,6 +210,7 @@ export function TerminalFlyout({
       undefined,
       undefined,
       "", // cwd=home directory, we'll send cd commands later
+      workspaceRecord?.terminal_theme,
     );
     newTerminal.connect();
     return newTerminal;
@@ -324,7 +339,7 @@ export function TerminalFlyout({
     }
   }
 
-  const backgroundColor = background_color(terminal.get("color_scheme"));
+  const backgroundColor = background_color(terminalColorScheme);
 
   return (
     <div

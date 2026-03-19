@@ -54,6 +54,7 @@ import { clearProjectHostConatAuthCaches } from "../conat-auth";
 import { rehydrateAcpAutomationsForProject } from "@cocalc/lite/hub/acp";
 
 const logger = getLogger("project-host:hub:projects");
+export const PROJECT_RUNNER_RPC_TIMEOUT_MS = 60 * 60 * 1000;
 const MB = 1_000_000;
 const DEFAULT_PID_LIMIT = 4096;
 const MAX_BACKUPS_PER_PROJECT = 50;
@@ -422,7 +423,6 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
       opts: { authorized_keys, run_quota, image },
       state: "starting",
     });
-    await rehydrateAcpAutomations(project_id, "start: pre-start");
     try {
       await applyPendingCopies({ project_id });
       const status = await runnerApi.start({
@@ -442,6 +442,8 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
         http_port: (status as any)?.http_port,
         ssh_port: (status as any)?.ssh_port,
       });
+      // During move/restore the destination project root may not exist until
+      // runnerApi.start has created or restored it, so ACP rehydrate must wait.
       await rehydrateAcpAutomations(project_id, "start: post-start");
       await refreshAuthorizedKeys(project_id, authorized_keys);
     } catch (err) {

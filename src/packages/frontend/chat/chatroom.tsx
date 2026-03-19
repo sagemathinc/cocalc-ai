@@ -251,6 +251,8 @@ export interface ChatPanelProps {
   variant?: "default" | "compact";
   hideSidebar?: boolean;
   onFocus?: () => void;
+  isVisible?: boolean;
+  tabIsVisible?: boolean;
   onComposerReady?: (
     control: ChatInputControl | null,
     root: ParentNode | null,
@@ -288,6 +290,8 @@ export function ChatPanel({
   variant = "default",
   hideSidebar = false,
   onFocus,
+  isVisible = true,
+  tabIsVisible = true,
   onComposerReady,
 }: ChatPanelProps) {
   const useEditor = useEditorRedux<ChatState>({ project_id, path });
@@ -831,7 +835,7 @@ export function ChatPanel({
       return [];
     }
     const records: AgentSessionRecord[] = [];
-    for (const thread of threads) {
+    for (const thread of [...threads, ...archivedThreads]) {
       if (!thread.isAI) continue;
       const threadId = normalizeThreadKey(thread.key);
       const metadata = actions.getThreadMetadata?.(thread.key, {
@@ -911,7 +915,15 @@ export function ChatPanel({
       });
     }
     return records;
-  }, [account_id, acpState, actions, path, project_id, threads]);
+  }, [
+    account_id,
+    acpState,
+    actions,
+    archivedThreads,
+    path,
+    project_id,
+    threads,
+  ]);
 
   useEffect(() => {
     if (!agentSessionRecords.length) return;
@@ -1749,6 +1761,7 @@ export function ChatPanel({
         hideChatTypeSelector={hideChatTypeSelector}
         activityJumpDate={activityJumpDate}
         activityJumpToken={activityJumpToken}
+        shortcutEnabled={isVisible && tabIsVisible}
       />
       {loopBanner}
       {automationBanner}
@@ -1907,6 +1920,8 @@ function ChatRoomInner({
   font_size,
   desc,
   onFocus,
+  is_visible,
+  tab_is_visible,
 }: EditorComponentProps) {
   const { messages, threadIndex, version } = useChatDoc();
   const useEditor = useEditorRedux<ChatState>({ project_id, path });
@@ -1925,6 +1940,8 @@ function ChatRoomInner({
       desc={desc}
       variant="default"
       onFocus={onFocus}
+      isVisible={is_visible}
+      tabIsVisible={tab_is_visible}
     />
   );
 }

@@ -302,9 +302,9 @@ function canInstallWithCodex(preset: AppServerPreset | undefined): boolean {
   if (preset.installStrategy === "none") return false;
   return Boolean(
     preset.installAgentPrompt ||
-      preset.installCommand ||
-      preset.installRecipes?.length ||
-      preset.agentPromptSeed,
+    preset.installCommand ||
+    preset.installRecipes?.length ||
+    preset.agentPromptSeed,
   );
 }
 
@@ -331,6 +331,10 @@ function makeInstallSnapshotName(templateId: string): string {
   return `pre-install-${safeId || "app"}-${formatSnapshotNameTimestamp()}`;
 }
 
+function buildInstallWithCodexThreadTitle(preset: AppServerPreset): string {
+  return `Install ${preset.title}`;
+}
+
 function buildInstallWithCodexPrompt(opts: {
   projectId: string;
   preset: AppServerPreset;
@@ -355,7 +359,7 @@ function buildInstallWithCodexPrompt(opts: {
     "- The project usually runs inside a podman container.",
     "- The user is typically root inside the container.",
     "- Prefer systemwide installation when practical.",
-    "- apt-get is usually the right first choice on maintained Ubuntu images, but detect the actual distro before assuming Debian/Ubuntu.",
+    "- When a curated distro recipe is provided, prefer that exact recipe over exploratory package searching.",
     "- snap is not supported here and should not be used.",
   );
   if (opts.snapshotName) {
@@ -367,13 +371,9 @@ function buildInstallWithCodexPrompt(opts: {
   } else {
     lines.push(
       "",
-      "Before making changes, create a project snapshot if possible and report the snapshot name you used.",
-      "",
-      "Suggested command:",
-      toFencedCodeBlock(
-        `cocalc project snapshot create --project=${shellQuoteCliArg(opts.projectId)} --name=${shellQuoteCliArg(makeInstallSnapshotName(preset.id))}`,
-        "sh",
-      ),
+      "No project snapshot name was provided with this install request.",
+      "Do not spend time debugging CoCalc CLI authentication from inside the container just to create a snapshot.",
+      "If a snapshot is already known, mention it. Otherwise proceed carefully and clearly state that no snapshot was created automatically.",
     );
   }
   lines.push(
@@ -396,7 +396,7 @@ function buildInstallWithCodexPrompt(opts: {
   if (preset.installHint) {
     lines.push("", `Install hint: ${preset.installHint}`);
   }
-  if (preset.installCommand) {
+  if (preset.installCommand && !preset.installRecipes?.length) {
     lines.push(
       "",
       "Suggested starting command:",
@@ -404,7 +404,10 @@ function buildInstallWithCodexPrompt(opts: {
     );
   }
   if (preset.installRecipes?.length) {
-    lines.push("", "Curated install recipes:");
+    lines.push(
+      "",
+      "Curated install recipes (try these before improvising a different install path):",
+    );
     for (const recipe of preset.installRecipes) {
       const match: string[] = [];
       if (recipe.match?.os_family?.length) {
@@ -415,8 +418,8 @@ function buildInstallWithCodexPrompt(opts: {
       }
       lines.push(
         `- ${recipe.id}${match.length ? ` (${match.join("; ")})` : ""}`,
-        ...recipe.commands.map((command) => `  ${command}`),
       );
+      lines.push(toFencedCodeBlock(recipe.commands.join("\n"), "sh"));
       if (recipe.notes) {
         lines.push(`  Notes: ${recipe.notes}`);
       }
@@ -443,11 +446,13 @@ function buildInstallWithCodexPrompt(opts: {
     "",
     "Requirements:",
     "1. Inspect the environment briefly and choose an appropriate install path.",
-    "2. Avoid unnecessary reinstalls if the runtime is already present.",
-    "3. Install systemwide when practical for this project environment.",
-    "4. Verify the relevant commands work after installation.",
-    "5. If install succeeds, mention how to start or retry the managed app.",
-    "6. In the final summary, report the snapshot name, exact commands used, and any rollback guidance.",
+    "2. If a curated recipe matches the environment, use that recipe directly before package-searching or inventing an alternative path.",
+    "3. Avoid unnecessary reinstalls if the runtime is already present.",
+    "4. Install systemwide when practical for this project environment.",
+    "5. Do not spend time debugging CoCalc CLI auth, browser automation, or unrelated control-plane issues unless the install strictly depends on them.",
+    "6. Verify the relevant commands work after installation.",
+    "7. If install succeeds, mention how to start or retry the managed app and use the provided managed app launch command for any short probe.",
+    "8. In the final summary, report the snapshot name if one exists, exact commands used, and any rollback guidance.",
   );
   return lines.join("\n");
 }
@@ -1008,30 +1013,36 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
   async function sendAgentPrompt(
     prompt: string,
     tag: string,
-    codexConfig?: {
-      sessionMode?: "read-only" | "workspace-write" | "full-access";
-      allowWrite?: boolean;
-      workingDirectory?: string;
+    opts?: {
+      title?: string;
+      codexConfig?: {
+        sessionMode?: "read-only" | "workspace-write" | "full-access";
+        allowWrite?: boolean;
+        workingDirectory?: string;
+      };
     },
   ) {
     const text = `${prompt ?? ""}`.trim();
+    const title = `${opts?.title ?? ""}`.trim() || undefined;
     if (!text) return;
     try {
       setSubmittingToAgent(true);
       const sent = await submitNavigatorPromptToCurrentThread({
         project_id,
         prompt: text,
+        title,
         tag,
         forceCodex: true,
         openFloating: true,
-        codexConfig,
+        codexConfig: opts?.codexConfig,
       });
       if (!sent) {
         dispatchNavigatorPromptIntent({
           prompt: text,
+          title,
           tag,
           forceCodex: true,
-          codexConfig,
+          codexConfig: opts?.codexConfig,
         });
       }
     } finally {
@@ -1052,7 +1063,8 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
       let createdSnapshotName: string | undefined;
       if (installWithCodexSnapshot) {
         createdSnapshotName =
-          snapshotName || makeInstallSnapshotName(installWithCodexTarget.preset.id);
+          snapshotName ||
+          makeInstallSnapshotName(installWithCodexTarget.preset.id);
         await webapp_client.conat_client.hub.projects.createSnapshot({
           project_id,
           name: createdSnapshotName,
@@ -1067,9 +1079,12 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
         snapshotName: createdSnapshotName,
       });
       await sendAgentPrompt(prompt, "intent:app-server-install", {
-        sessionMode: "full-access",
-        allowWrite: true,
-        workingDirectory: homeDirectory,
+        title: buildInstallWithCodexThreadTitle(installWithCodexTarget.preset),
+        codexConfig: {
+          sessionMode: "full-access",
+          allowWrite: true,
+          workingDirectory: homeDirectory,
+        },
       });
       setInstallWithCodexTarget(null);
     } catch (err) {
@@ -1457,7 +1472,12 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
       setError(undefined);
       const next = await api.apps.auditAppPublicReadiness(id);
       setAudit(next);
-      await sendAgentPrompt(next.agent_prompt, "intent:app-server-audit");
+      const auditTitle = specById[id]?.title
+        ? `Audit ${specById[id]?.title}`
+        : "Audit App Public Readiness";
+      await sendAgentPrompt(next.agent_prompt, "intent:app-server-audit", {
+        title: auditTitle,
+      });
     } catch (err) {
       setError(normalizeError(err));
     } finally {
@@ -2014,7 +2034,9 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                               action: "create",
                             })
                           }
-                          loading={submittingToAgent || installWithCodexLaunching}
+                          loading={
+                            submittingToAgent || installWithCodexLaunching
+                          }
                         >
                           Install with Codex
                         </Button>
@@ -2804,12 +2826,15 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                                     id: row.id,
                                     title: row.title || row.id,
                                   },
-                                  templateDetails: startupFailure.templateDetails,
+                                  templateDetails:
+                                    startupFailure.templateDetails,
                                   appId: row.id,
                                   action: startupFailure.action,
                                 })
                               }
-                              loading={submittingToAgent || installWithCodexLaunching}
+                              loading={
+                                submittingToAgent || installWithCodexLaunching
+                              }
                             >
                               Install with Codex
                             </Button>
@@ -2897,6 +2922,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                 void sendAgentPrompt(
                   audit.agent_prompt,
                   "intent:app-server-audit",
+                  { title: "Audit App Public Readiness" },
                 )
               }
             >

@@ -26,10 +26,25 @@ const HOST_CREATE_FAILED_STATUSES = new Set(["error", "deprovisioned"]);
 type HostLike = {
   id: string;
   status?: string | null;
+  last_seen?: string | null;
   last_action_error?: string | null;
   last_error?: string | null;
   public_ip?: string | null;
   machine?: Record<string, any> | null;
+  bootstrap?: {
+    status?: string | null;
+    updated_at?: string | null;
+    message?: string | null;
+  } | null;
+};
+
+export type HostCreateProgress<Host extends HostLike> = {
+  host: Host;
+  status: string;
+  hasHeartbeat: boolean;
+  bootstrapStatus?: string;
+  bootstrapMessage?: string;
+  bootstrapUpdatedAt?: string;
 };
 
 type HostHelpersDeps<Ctx, Host extends HostLike> = {
@@ -215,13 +230,16 @@ export function createHostHelpers<Ctx, Host extends HostLike>(
     {
       timeoutMs,
       pollMs,
+      onProgress,
     }: {
       timeoutMs: number;
       pollMs: number;
+      onProgress?: (progress: HostCreateProgress<Host>) => void;
     },
   ): Promise<{ host: Host; timedOut: boolean }> {
     const started = Date.now();
     let lastHost: Host | undefined;
+    let lastProgressKey = "";
     while (Date.now() - started <= timeoutMs) {
       const hosts = await listHosts(ctx, {
         include_deleted: true,
@@ -233,7 +251,32 @@ export function createHostHelpers<Ctx, Host extends HostLike>(
       }
       lastHost = host;
       const status = `${host.status ?? ""}`.trim().toLowerCase();
-      if (HOST_CREATE_READY_STATUSES.has(status)) {
+      const hasHeartbeat = `${host.last_seen ?? ""}`.trim() !== "";
+      const bootstrapStatus =
+        `${host.bootstrap?.status ?? ""}`.trim() || undefined;
+      const bootstrapMessage =
+        `${host.bootstrap?.message ?? ""}`.trim() || undefined;
+      const bootstrapUpdatedAt =
+        `${host.bootstrap?.updated_at ?? ""}`.trim() || undefined;
+      const progressKey = JSON.stringify({
+        status,
+        hasHeartbeat,
+        bootstrapStatus,
+        bootstrapMessage,
+        bootstrapUpdatedAt,
+      });
+      if (progressKey !== lastProgressKey) {
+        lastProgressKey = progressKey;
+        onProgress?.({
+          host,
+          status,
+          hasHeartbeat,
+          bootstrapStatus,
+          bootstrapMessage,
+          bootstrapUpdatedAt,
+        });
+      }
+      if (HOST_CREATE_READY_STATUSES.has(status) && hasHeartbeat) {
         return { host, timedOut: false };
       }
       if (HOST_CREATE_FAILED_STATUSES.has(status)) {

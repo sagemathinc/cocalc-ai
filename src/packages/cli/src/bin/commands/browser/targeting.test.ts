@@ -108,6 +108,33 @@ test("chooseBrowserSession uses direct exact browser id in agent mode even when 
   }
 });
 
+test("chooseBrowserSession uses direct exact browser id in agent mode even with project and active filters", async () => {
+  const prev = process.env.COCALC_CLI_AGENT_MODE;
+  process.env.COCALC_CLI_AGENT_MODE = "1";
+  try {
+    const ctx = makeContext(async () => {
+      throw new Error("listBrowserSessions should not be called");
+    });
+
+    const session = await chooseBrowserSession({
+      ctx,
+      browserHint: "wZbV6ZDCkk",
+      requireDiscovery: true,
+      sessionProjectId: "00000000-1000-4000-8000-000000000000",
+      activeOnly: true,
+    });
+
+    assert.equal(session.browser_id, "wZbV6ZDCkk");
+    assert.equal(session.stale, false);
+  } finally {
+    if (prev == null) {
+      delete process.env.COCALC_CLI_AGENT_MODE;
+    } else {
+      process.env.COCALC_CLI_AGENT_MODE = prev;
+    }
+  }
+});
+
 test("chooseBrowserSession fails fast in agent mode when no direct browser id is available", async () => {
   const prev = process.env.COCALC_CLI_AGENT_MODE;
   process.env.COCALC_CLI_AGENT_MODE = "1";

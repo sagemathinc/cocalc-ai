@@ -1,7 +1,10 @@
 /** @jest-environment jsdom */
 
 import { render, screen } from "@testing-library/react";
-import { shouldOpenThreadSearchShortcut } from "../chatroom-thread-panel-shortcuts";
+import {
+  chatPanelOwnsThreadSearchShortcut,
+  shouldOpenThreadSearchShortcut,
+} from "../chatroom-thread-panel-shortcuts";
 
 function defineEventTarget(event: KeyboardEvent, target: EventTarget) {
   Object.defineProperty(event, "target", {
@@ -69,5 +72,56 @@ describe("chatroom thread panel shortcuts", () => {
     defineEventTarget(event, target);
 
     expect(shouldOpenThreadSearchShortcut(event, false)).toBe(true);
+  });
+
+  it("does not open thread search when the chat panel is not visible", () => {
+    render(
+      <div>
+        <div data-testid="plain" tabIndex={0}>
+          chat
+        </div>
+      </div>,
+    );
+
+    const target = screen.getByTestId("plain");
+    const event = new KeyboardEvent("keydown", {
+      bubbles: true,
+      ctrlKey: true,
+      key: "f",
+    });
+    defineEventTarget(event, target);
+
+    expect(shouldOpenThreadSearchShortcut(event, false, false)).toBe(false);
+  });
+
+  it("only lets the owning chat panel react to the shortcut", () => {
+    render(
+      <div>
+        <div data-testid="chat-a">
+          <button data-testid="button-a" type="button">
+            a
+          </button>
+        </div>
+        <div data-testid="chat-b">
+          <button data-testid="button-b" type="button">
+            b
+          </button>
+        </div>
+      </div>,
+    );
+
+    const chatA = screen.getByTestId("chat-a");
+    const chatB = screen.getByTestId("chat-b");
+    const buttonA = screen.getByTestId("button-a");
+    buttonA.focus();
+    const event = new KeyboardEvent("keydown", {
+      bubbles: true,
+      ctrlKey: true,
+      key: "f",
+    });
+    defineEventTarget(event, buttonA);
+
+    expect(chatPanelOwnsThreadSearchShortcut(chatA, event)).toBe(true);
+    expect(chatPanelOwnsThreadSearchShortcut(chatB, event)).toBe(false);
   });
 });

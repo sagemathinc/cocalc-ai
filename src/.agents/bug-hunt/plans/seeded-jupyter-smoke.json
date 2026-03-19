@@ -27,6 +27,12 @@
       "assert": "return document.querySelector('[data-cocalc-jupyter-minimap-wrapper=\"1\"]') != null;",
       "retries": 2,
       "recovery": "reload"
+    },
+    {
+      "name": "assert seeded notebook code is visible",
+      "assert": "const body = document.body.innerText; return body.includes('# bug-hunt fixture') && body.includes('2 + 3');",
+      "retries": 2,
+      "recovery": "reload"
     }
   ]
 }

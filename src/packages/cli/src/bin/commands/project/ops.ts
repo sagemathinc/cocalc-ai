@@ -8,10 +8,23 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { Command } from "commander";
 
+import type { LroStatus } from "../../core/lro";
 import type { ProjectCommandDeps } from "../project";
 
 type SyncKeyInfo = any;
 type ProjectRuntimeLogRow = any;
+
+export function getMovePlacementFallbackTimeoutMs(
+  summary: Pick<LroStatus, "status" | "timedOut">,
+  timeoutMs: number,
+): number {
+  if (summary.timedOut) {
+    return timeoutMs;
+  }
+  // An explicit failed/canceled move can still leave placement eventually
+  // updated, but waiting the full command timeout here wedges automation.
+  return Math.min(timeoutMs, 10_000);
+}
 
 export function registerProjectOpsCommands(
   project: Command,
@@ -538,7 +551,10 @@ export function registerProjectOpsCommands(
             ws.project_id,
             host.id,
             {
-              timeoutMs: ctx.timeoutMs,
+              timeoutMs: getMovePlacementFallbackTimeoutMs(
+                summary,
+                ctx.timeoutMs,
+              ),
               pollMs: ctx.pollMs,
             },
           );

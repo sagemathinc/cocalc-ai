@@ -136,6 +136,8 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
   private command?: string;
   private args?: string[];
   private workingDir?: string;
+  private terminalThemeOverride: string | null = null;
+  private appliedTerminalTheme: string | null = null;
 
   private fitAddon: FitAddon;
   private webLinksAddon: WebLinksAddon;
@@ -154,6 +156,7 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
     command?: string,
     args?: string[],
     workingDir?: string,
+    terminalThemeOverride?: string | null,
   ) {
     this.actions = actions;
     this.account_store = redux.getStore("account");
@@ -167,6 +170,11 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
     this.command = normalizeTerminalCommand(command);
     this.args = normalizeTerminalArgs(args);
     this.workingDir = workingDir;
+    this.terminalThemeOverride =
+      typeof terminalThemeOverride === "string" &&
+      terminalThemeOverride.trim().length > 0
+        ? terminalThemeOverride.trim()
+        : null;
     this.rendererType = "canvas";
     const cmd = this.command ? "-" + replace_all(this.command, "/", "-") : "";
     // This is the one and only place number is used.
@@ -306,6 +314,18 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
     return { rendererType, scrollback, fontFamily };
   };
 
+  set_terminal_theme_override(theme?: string | null): void {
+    const nextTheme =
+      typeof theme === "string" && theme.trim().length > 0
+        ? theme.trim()
+        : null;
+    if (nextTheme === this.terminalThemeOverride) {
+      return;
+    }
+    this.terminalThemeOverride = nextTheme;
+    this.update_settings();
+  }
+
   private assert_not_closed = (): void => {
     if (this.isClosed()) {
       throw Error("BUG -- Terminal is closed.");
@@ -368,16 +388,21 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
   private update_settings = (): void => {
     this.assert_not_closed();
     const settings = this.account_store.get("terminal");
-    if (settings == null || this.terminal_settings.equals(settings)) {
+    if (settings == null) {
+      return;
+    }
+    const effectiveTheme =
+      this.terminalThemeOverride ?? settings.get("color_scheme") ?? "default";
+    if (
+      this.terminal_settings.equals(settings) &&
+      this.appliedTerminalTheme === effectiveTheme
+    ) {
       // no changes or not yet loaded
       return;
     }
 
-    if (
-      settings.get("color_scheme") !==
-      this.terminal_settings.get("color_scheme")
-    ) {
-      setTheme(this.terminal, settings.get("color_scheme"));
+    if (this.appliedTerminalTheme !== effectiveTheme) {
+      setTheme(this.terminal, effectiveTheme);
     }
 
     // TODO -- make configurable by user (actually
@@ -392,6 +417,7 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
     }
 
     this.terminal_settings = settings;
+    this.appliedTerminalTheme = effectiveTheme;
   };
 
   private ptyExited = false;

@@ -61,7 +61,10 @@ import { Icon } from "@cocalc/frontend/components";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { useAnyChatOverlayOpen } from "./drawer-overlay-state";
 import { resolveThreadStatusDot } from "./chatroom-sidebar";
-import { shouldOpenThreadSearchShortcut } from "./chatroom-thread-panel-shortcuts";
+import {
+  chatPanelOwnsThreadSearchShortcut,
+  shouldOpenThreadSearchShortcut,
+} from "./chatroom-thread-panel-shortcuts";
 import {
   AutomationConfigFields,
   buildAutomationDraft,
@@ -144,6 +147,16 @@ export function resolveActiveThreadSearchMatchDate({
   return threadSearchMatches[normalizedCursor];
 }
 
+export function resolveThreadSearchHighlightQuery({
+  threadSearchOpen,
+  threadSearchQuery,
+}: {
+  threadSearchOpen: boolean;
+  threadSearchQuery: string;
+}): string {
+  return threadSearchOpen ? threadSearchQuery : "";
+}
+
 export function resolveCompactThreadBadgeAppearance({
   thread,
   acpState,
@@ -216,6 +229,7 @@ interface ChatRoomThreadPanelProps {
   hideChatTypeSelector?: boolean;
   activityJumpDate?: string;
   activityJumpToken?: number;
+  shortcutEnabled?: boolean;
 }
 
 export function ChatRoomThreadPanel({
@@ -248,6 +262,7 @@ export function ChatRoomThreadPanel({
   hideChatTypeSelector = false,
   activityJumpDate,
   activityJumpToken,
+  shortcutEnabled = true,
 }: ChatRoomThreadPanelProps) {
   const defaultSessionMode = getDefaultCodexSessionMode();
   const [threadSearchOpen, setThreadSearchOpen] = useState(false);
@@ -291,6 +306,7 @@ export function ChatRoomThreadPanel({
   const [maintenanceDeleteDays, setMaintenanceDeleteDays] = useState("30");
   const [threadNearTop, setThreadNearTop] = useState(false);
   const anyOverlayOpen = useAnyChatOverlayOpen();
+  const panelRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<any>(null);
   const selectedThreadId = useMemo(
     () => normalizeThreadKey(selectedThreadKey),
@@ -345,6 +361,14 @@ export function ChatRoomThreadPanel({
         threadSearchMatches,
       }),
     [matchCount, normalizedCursor, threadSearchMatches, threadSearchOpen],
+  );
+  const threadSearchHighlightQuery = useMemo(
+    () =>
+      resolveThreadSearchHighlightQuery({
+        threadSearchOpen,
+        threadSearchQuery,
+      }),
+    [threadSearchOpen, threadSearchQuery],
   );
   const archivedMatchCount = archivedSearchHits.length;
   const archivedLoadedOffset = selectedThreadId
@@ -681,7 +705,12 @@ export function ChatRoomThreadPanel({
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (!shouldOpenThreadSearchShortcut(event, anyOverlayOpen)) return;
+      if (
+        !shouldOpenThreadSearchShortcut(event, anyOverlayOpen, shortcutEnabled)
+      ) {
+        return;
+      }
+      if (!chatPanelOwnsThreadSearchShortcut(panelRef.current, event)) return;
       event.preventDefault();
       setThreadSearchOpen(true);
       setTimeout(() => {
@@ -690,7 +719,7 @@ export function ChatRoomThreadPanel({
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [anyOverlayOpen]);
+  }, [anyOverlayOpen, shortcutEnabled]);
 
   const onSearchInputChange = (value: string) => {
     setThreadSearchInput(value);
@@ -738,6 +767,7 @@ export function ChatRoomThreadPanel({
     const automationEnabled = automationDraft.enabled === true;
     return (
       <div
+        ref={panelRef}
         className="smc-vfill"
         style={{
           ...CHAT_LOG_STYLE,
@@ -1063,6 +1093,7 @@ export function ChatRoomThreadPanel({
 
   return (
     <div
+      ref={panelRef}
       className="smc-vfill"
       style={{
         ...CHAT_LOG_STYLE,
@@ -1190,7 +1221,7 @@ export function ChatRoomThreadPanel({
             border: "1px solid #ddd",
             borderRadius: 8,
             boxShadow: "0 2px 10px rgba(0,0,0,0.12)",
-            width: "min(90vw, 560px)",
+            width: "min(90vw, 350px)",
           }}
         >
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -1780,7 +1811,7 @@ export function ChatRoomThreadPanel({
         composerFocused={composerFocused}
         searchJumpDate={activeSearchMatchDate}
         searchJumpToken={threadSearchJumpToken}
-        searchQuery={threadSearchQuery}
+        searchQuery={threadSearchHighlightQuery}
         onAtTopStateChange={setThreadNearTop}
         activityJumpDate={activityJumpDate}
         activityJumpToken={activityJumpToken}

@@ -32,7 +32,16 @@ jest.mock("antd", () => {
   );
   const Dropdown = ({ children }: any) => children;
   const Empty = ({ description }: any) => <div>{description}</div>;
+  const Popconfirm = ({ children }: any) => children;
   const Space = ({ children }: any) => <div>{children}</div>;
+  const Switch = ({ checked, onChange, ...props }: any) => (
+    <button
+      type="button"
+      aria-pressed={checked === true}
+      onClick={() => onChange?.(!(checked === true))}
+      {...props}
+    />
+  );
   const Tag = ({ children }: any) => <span>{children}</span>;
   Tag.CheckableTag = ({ children, onChange }: any) => (
     <button type="button" onClick={() => onChange?.(true)}>
@@ -47,7 +56,9 @@ jest.mock("antd", () => {
     Button,
     Dropdown,
     Empty,
+    Popconfirm,
     Space,
+    Switch,
     Tag,
     Tooltip: Div,
     Typography: { Text },

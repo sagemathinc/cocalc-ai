@@ -27,6 +27,7 @@ import { getProviderDescriptor, isKnownProvider } from "../providers/registry";
 import { isHostOpActive, type HostLroState } from "../hooks/use-host-ops";
 import { getHostOpPhase, HostOpProgress } from "./host-op-progress";
 import { HostBackupStatus } from "./host-backup-status";
+import { HostBootstrapProgress } from "./host-bootstrap-progress";
 import { HostProjectStatus } from "./host-project-status";
 import {
   confirmHostDeprovision,
@@ -308,6 +309,7 @@ export const HostCard: React.FC<HostCardProps> = ({
           </Tooltip>
         )}
         <HostOpProgress op={hostOp} compact />
+        <HostBootstrapProgress host={host} />
         <HostProjectStatus host={host} fontSize={14} />
         <HostBackupStatus host={host} />
         <Typography.Text>

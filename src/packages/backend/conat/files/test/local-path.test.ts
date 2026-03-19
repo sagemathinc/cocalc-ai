@@ -11,10 +11,12 @@ import {
 import { TextDecoder } from "node:util";
 import { getBackendWatcherDebugStats } from "@cocalc/backend/watcher-debug";
 
-beforeAll(before);
-
 const isLinux = process.platform === "linux";
 const describeIfLinux = isLinux ? describe : describe.skip;
+
+beforeAll(async () => {
+  await before();
+});
 
 function expectRelativeOrAbsoluteRealpath(pathValue: string, expected: string) {
   expect(

@@ -2263,6 +2263,7 @@ const browserCommandDeps = {
   selectedProfileName,
   globalsFrom,
   resolveProject,
+  resolveProjectConatClient,
   createBrowserSessionClient,
 } satisfies BrowserCommandDeps;
 

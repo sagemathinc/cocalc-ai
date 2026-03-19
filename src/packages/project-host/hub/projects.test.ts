@@ -1,0 +1,99 @@
+import { hubApi } from "@cocalc/lite/hub/api";
+
+const rehydrateAcpAutomationsForProject = jest.fn();
+const applyPendingCopies = jest.fn();
+const upsertProject = jest.fn();
+const getProject = jest.fn();
+const getOrCreateProjectLocalSecretToken = jest.fn();
+const reportProjectStateToMaster = jest.fn();
+const writeManagedAuthorizedKeys = jest.fn();
+
+jest.mock("@cocalc/lite/hub/api", () => ({ hubApi: { projects: {} as any } }));
+jest.mock("@cocalc/backend/data", () => ({
+  account_id: "test-account-id",
+  data: "/tmp",
+}));
+jest.mock("@cocalc/backend/logger", () => {
+  const factory = () => ({
+    debug: jest.fn(),
+    info: jest.fn(),
+    warn: jest.fn(),
+    error: jest.fn(),
+  });
+  return {
+    __esModule: true,
+    default: factory,
+    getLogger: factory,
+  };
+});
+jest.mock("@cocalc/project-proxy/ssh-server", () => ({
+  secretsPath: () => "/tmp",
+}));
+jest.mock("@cocalc/file-server/btrfs/subvolume-snapshots", () => ({
+  getGeneration: jest.fn(),
+}));
+jest.mock("node:fs/promises", () => ({
+  readFile: jest.fn(async () => ""),
+}));
+jest.mock("../sqlite/projects", () => ({
+  getProject: (...args: any[]) => getProject(...args),
+  getOrCreateProjectLocalSecretToken: (...args: any[]) =>
+    getOrCreateProjectLocalSecretToken(...args),
+  upsertProject: (...args: any[]) => upsertProject(...args),
+}));
+jest.mock("../master-status", () => ({
+  reportProjectStateToMaster: (...args: any[]) =>
+    reportProjectStateToMaster(...args),
+}));
+jest.mock("../file-server", () => ({
+  writeManagedAuthorizedKeys: (...args: any[]) =>
+    writeManagedAuthorizedKeys(...args),
+  getVolume: jest.fn(),
+  ensureVolume: jest.fn(),
+  getMountPoint: jest.fn(() => "/mnt/cocalc"),
+}));
+jest.mock("../pending-copies", () => ({
+  applyPendingCopies: (...args: any[]) => applyPendingCopies(...args),
+}));
+jest.mock("@cocalc/lite/hub/acp", () => ({
+  rehydrateAcpAutomationsForProject: (...args: any[]) =>
+    rehydrateAcpAutomationsForProject(...args),
+}));
+
+describe("project host start ACP rehydrate ordering", () => {
+  const project_id = "3f5d0b28-cf69-4c78-9b0a-ea747bc7acb3";
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    (hubApi.projects as any) = {};
+    getProject.mockReturnValue({ image: "ubuntu2404", run_quota: undefined });
+    getOrCreateProjectLocalSecretToken.mockReturnValue("secret");
+    applyPendingCopies.mockResolvedValue(undefined);
+    writeManagedAuthorizedKeys.mockResolvedValue(undefined);
+  });
+
+  it("does not rehydrate ACP automations before runner start on start()", async () => {
+    const order: string[] = [];
+    const runnerApi = {
+      start: jest.fn(async () => {
+        order.push("runner:start");
+        return { state: "running", http_port: 1234, ssh_port: 2222 };
+      }),
+      stop: jest.fn(),
+    } as any;
+    applyPendingCopies.mockImplementation(async () => {
+      order.push("applyPendingCopies");
+    });
+    rehydrateAcpAutomationsForProject.mockImplementation(async () => {
+      order.push("rehydrate");
+    });
+
+    const { wireProjectsApi } = await import("./projects");
+    wireProjectsApi(runnerApi);
+
+    await hubApi.projects.start({ project_id });
+
+    expect(order).toEqual(["applyPendingCopies", "runner:start", "rehydrate"]);
+    expect(rehydrateAcpAutomationsForProject).toHaveBeenCalledTimes(1);
+  });
+});
