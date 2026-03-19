@@ -98,7 +98,12 @@ export function resolveThreadIdFromIndex(
 
 function hasThreadRootIdentity(actions: any, threadKey?: string): boolean {
   const key = `${threadKey ?? ""}`.trim();
-  if (!key || !/^\d+$/.test(key)) return false;
+  if (!key) return false;
+  const fromIndex = resolveThreadIdFromIndex(actions, key);
+  if (typeof fromIndex === "string" && fromIndex.length > 0) {
+    return true;
+  }
+  if (!/^\d+$/.test(key)) return false;
   const root = actions?.getMessageByDate?.(Number(key));
   if (!root) return false;
   const messageId = getField(root, "message_id");

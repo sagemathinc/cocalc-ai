@@ -285,6 +285,94 @@ describe("submitNavigatorPromptToCurrentThread", () => {
     );
   });
 
+  it("reuses a UUID workspace thread key instead of falling back to a new thread", async () => {
+    const workspaceChatPath =
+      "/home/wstein/.local/share/cocalc/workspaces/acct/ws-uuid.chat";
+    const preferredThreadKey = "6759283d-106b-4d23-8632-a4a3a5a3615d";
+    const preferredThreadId = "thread-workspace-uuid";
+    mockEnsureWorkspaceChatForPath.mockResolvedValue({
+      chat_path: workspaceChatPath,
+      assigned: false,
+      workspace: {
+        workspace_id: "ws-uuid",
+        root_path: "/home/wstein/project/assistant",
+        theme: {
+          title: "assistant",
+          color: null,
+          accent_color: null,
+          icon: null,
+          image_blob: null,
+        },
+      },
+    });
+    window.localStorage.setItem(
+      `cocalc:navigator:selected-thread:chat:${encodeURIComponent(
+        workspaceChatPath,
+      )}`,
+      preferredThreadKey,
+    );
+    mockListSessions.mockResolvedValue([
+      {
+        session_id: "workspace-ws-uuid",
+        project_id: "00000000-1000-4000-8000-000000000000",
+        account_id: "00000000-1000-4000-8000-000000000001",
+        chat_path: workspaceChatPath,
+        thread_key: preferredThreadKey,
+        title: "Workspace agent",
+        created_at: "2026-03-18T00:00:00.000Z",
+        updated_at: "2026-03-18T00:00:00.000Z",
+        status: "active",
+        entrypoint: "file",
+      },
+    ]);
+    const sendChat = jest.fn(() => new Date().toISOString());
+    const createEmptyThread = jest.fn(() => "thread-should-not-be-created");
+    const actions = {
+      syncdb: { get_state: () => "ready" },
+      messageCache: {
+        getThreadIndex: () =>
+          new Map([
+            [
+              preferredThreadKey,
+              {
+                key: preferredThreadKey,
+                newestTime: Date.now(),
+                rootMessage: { thread_id: preferredThreadId },
+              },
+            ],
+          ]),
+      },
+      sendChat,
+      createEmptyThread,
+      store: {
+        get: (key: string) =>
+          key === "selectedThreadKey" ? preferredThreadKey : undefined,
+      },
+      getThreadMetadata: jest.fn(() => ({ name: "Workspace agent" })),
+    };
+    mockGetChatActions.mockReturnValue(actions);
+    mockInitChat.mockReturnValue(actions);
+
+    const ok = await submitNavigatorPromptToCurrentThread({
+      project_id: "00000000-1000-4000-8000-000000000000",
+      path: "/home/wstein/project/assistant/b.md",
+      prompt: "Add a final sentence",
+      visiblePrompt: "Add a final sentence",
+      title: "Add a final sentence",
+      forceCodex: true,
+      openFloating: true,
+      codexConfig: { model: "gpt-5.4-mini" },
+    });
+
+    expect(ok).toBe(true);
+    expect(createEmptyThread).not.toHaveBeenCalled();
+    expect(sendChat).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reply_thread_id: preferredThreadId,
+      }),
+    );
+  });
+
   it("creates and remembers a workspace thread before the first assistant send", async () => {
     const workspaceChatPath =
       "/home/wstein/.local/share/cocalc/workspaces/acct/ws-2.chat";

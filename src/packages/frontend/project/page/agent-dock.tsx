@@ -558,6 +558,9 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
       >
         <div
           ref={nodeRef}
+          data-selected-thread-key={session.thread_key ?? undefined}
+          data-selected-thread-title={session.title ?? undefined}
+          data-selected-session-id={session.session_id ?? undefined}
           style={{
             position: "absolute",
             width,
