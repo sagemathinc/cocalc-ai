@@ -1,4 +1,5 @@
 import {
+  normalizeProjectWorkspaceSelection,
   pathMatchesRoot,
   resolveWorkspaceForPath,
   selectionForPath,
@@ -110,6 +111,20 @@ describe("project workspaces path matching", () => {
     });
     expect(selectionForPath(records, "/repo/b/file.ts")).toEqual({
       kind: "unscoped",
+    });
+  });
+
+  it("preserves a cached selected workspace while records are still catching up", () => {
+    const cached = record("/repo/a", "a");
+    expect(
+      normalizeProjectWorkspaceSelection(
+        { kind: "workspace", workspace_id: "a" },
+        [],
+        cached,
+      ),
+    ).toEqual({
+      kind: "workspace",
+      workspace_id: "a",
     });
   });
 });

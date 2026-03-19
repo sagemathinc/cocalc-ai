@@ -41,6 +41,7 @@ import { useProjectContext } from "@cocalc/frontend/project/context";
 import getAnchorTagComponent from "@cocalc/frontend/project/page/anchor-tag-component";
 import getUrlTransform from "@cocalc/frontend/project/page/url-transform";
 import type { ProjectActions } from "@cocalc/frontend/project_actions";
+import { loadSessionWorkspaceRecord } from "@cocalc/frontend/project/workspaces/selection-runtime";
 import {
   AGENT_DOCK_CLOSE_EVENT,
   AGENT_DOCK_OPEN_EVENT,
@@ -490,9 +491,14 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
     return (
       workspaces.records.find(
         (record) => record.workspace_id === scopedWorkspaceId,
-      ) ?? null
+      ) ??
+      (() => {
+        const cached = loadSessionWorkspaceRecord(project_id);
+        if (cached?.workspace_id !== scopedWorkspaceId) return null;
+        return cached;
+      })()
     );
-  }, [scopedWorkspaceId, workspaces.records]);
+  }, [project_id, scopedWorkspaceId, workspaces.records]);
 
   const sessionOptions = useMemo(() => {
     const visibleSessions =

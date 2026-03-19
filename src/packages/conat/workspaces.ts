@@ -397,14 +397,6 @@ export function resolveWorkspaceForPath(
   path: string,
 ): WorkspaceRecord | null {
   const normalizedPath = normalizeWorkspacePath(path);
-  for (const record of records) {
-    if (
-      pathMatchesWorkspace(record, normalizedPath) &&
-      !pathMatchesWorkspaceRoot(normalizedPath, record.root_path)
-    ) {
-      return record;
-    }
-  }
   let best: WorkspaceRecord | null = null;
   for (const record of records) {
     if (!pathMatchesWorkspace(record, normalizedPath)) continue;
