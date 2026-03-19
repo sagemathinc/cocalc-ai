@@ -87,7 +87,7 @@ function PublicViewerApp({
     const load = async () => {
       try {
         const response = await fetch(config.rawUrl, {
-          credentials: "same-origin",
+          credentials: "include",
         });
         if (!response.ok) {
           throw new Error(`Unable to load ${config.path} (${response.status})`);

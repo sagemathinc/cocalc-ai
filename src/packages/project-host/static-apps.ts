@@ -427,16 +427,30 @@ function buildPublicViewerHeaders(
   return headers;
 }
 
-function buildPublicFileHeaders(
-  exposureMode: "private" | "public",
-): Record<string, string> {
-  if (exposureMode !== "public") {
-    return {};
-  }
-  return {
-    "Access-Control-Allow-Origin": "*",
+async function buildPublicFileHeaders({
+  req,
+  exposureMode,
+}: {
+  req: http.IncomingMessage;
+  exposureMode: "private" | "public";
+}): Promise<Record<string, string>> {
+  const headers: Record<string, string> = {
     "Cross-Origin-Resource-Policy": "cross-origin",
   };
+  const requestOrigin = `${req.headers.origin ?? ""}`.trim();
+  const publicWebBaseUrl = requestOrigin
+    ? await getPublicWebBaseUrl(req)
+    : undefined;
+  if (requestOrigin && publicWebBaseUrl && requestOrigin === publicWebBaseUrl) {
+    headers["Access-Control-Allow-Origin"] = requestOrigin;
+    headers["Access-Control-Allow-Credentials"] = "true";
+    headers["Vary"] = "Origin";
+    return headers;
+  }
+  if (exposureMode === "public") {
+    headers["Access-Control-Allow-Origin"] = "*";
+  }
+  return headers;
 }
 
 function writeFileTooLarge(
@@ -738,7 +752,7 @@ export async function maybeHandleStaticAppRequest({
       : undefined;
   const fileHeaders =
     integration?.mode === COCALC_PUBLIC_VIEWER_MODE
-      ? buildPublicFileHeaders(exposureMode)
+      ? await buildPublicFileHeaders({ req, exposureMode })
       : undefined;
 
   const pathInfo = await resolveStaticPath({

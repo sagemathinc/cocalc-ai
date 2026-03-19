@@ -190,4 +190,63 @@ describe("static app serving", () => {
       "File exceeds maximum supported size",
     );
   });
+
+  it("allows the central viewer origin to fetch private raw files with credentials", async () => {
+    const base = await mkdtemp(join(tmpdir(), "cocalc-static-apps-"));
+    const home = join(base, "home");
+    const rootfs = join(base, "rootfs");
+    const scratch = join(base, "scratch");
+    await mkdir(join(home, "public"), { recursive: true });
+    await mkdir(rootfs, { recursive: true });
+    await mkdir(scratch, { recursive: true });
+    await writeFile(join(home, "public", "a.md"), "# Hello\n");
+
+    currentProjectFs = createProjectSandboxFilesystem({
+      project_id,
+      home,
+      rootfs,
+      scratch,
+    });
+    const previous = process.env.COCALC_PUBLIC_WEB_URL;
+    process.env.COCALC_PUBLIC_WEB_URL = "https://dev.cocalc.ai";
+
+    try {
+      const req = makeRequest("/a.md?raw=1");
+      req.headers.origin = "https://dev.cocalc.ai";
+      const res = new MockResponse();
+      const handled = await maybeHandleStaticAppRequest({
+        req,
+        res: res as unknown as http.ServerResponse,
+        project_id,
+        match: {
+          ...makeMatch("/root/public", "/a.md?raw=1"),
+          spec: {
+            id: "site",
+            kind: "static",
+            static: { root: "/root/public" },
+            integration: {
+              mode: "cocalc-public-viewer",
+              manifest: "index.json",
+              directory_listing: "manifest-only",
+              file_types: [".md", ".ipynb", ".slides", ".board"],
+            },
+          },
+        },
+      });
+
+      expect(handled).toBe(true);
+      expect(res.statusCode).toBe(200);
+      expect(res.headers["Access-Control-Allow-Origin"]).toBe(
+        "https://dev.cocalc.ai",
+      );
+      expect(res.headers["Access-Control-Allow-Credentials"]).toBe("true");
+      expect(res.headers["Vary"]).toBe("Origin");
+    } finally {
+      if (previous == null) {
+        delete process.env.COCALC_PUBLIC_WEB_URL;
+      } else {
+        process.env.COCALC_PUBLIC_WEB_URL = previous;
+      }
+    }
+  });
 });
