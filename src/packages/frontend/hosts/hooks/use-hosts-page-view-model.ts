@@ -40,10 +40,12 @@ const HOSTS_VIEW_MODE_STORAGE_KEY = "cocalc:hosts:viewMode";
 const HOSTS_SORT_FIELD_STORAGE_KEY = "cocalc:hosts:sortField";
 const HOSTS_SORT_DIRECTION_STORAGE_KEY = "cocalc:hosts:sortDirection";
 const HOSTS_AUTO_RESORT_STORAGE_KEY = "cocalc:hosts:autoResort";
+const HOSTS_PARALLEL_LIMITS_STORAGE_KEY = "cocalc:hosts:parallelLimits";
 const DEFAULT_HOSTS_VIEW_MODE: HostListViewMode = "grid";
 const DEFAULT_SORT_FIELD: HostSortField = "name";
 const DEFAULT_SORT_DIRECTION: HostSortDirection = "asc";
 const DEFAULT_AUTO_RESORT = false;
+const DEFAULT_SHOW_PARALLEL_LIMITS = false;
 const HOST_UPGRADE_RECOVERY_WINDOW_MS = 2 * 60 * 1000;
 
 function normalizeUpgradeBaseUrl(base_url?: string): string | null {
@@ -190,6 +192,26 @@ function persistHostAutoResort(value: boolean) {
   );
 }
 
+function readShowParallelLimits(): boolean {
+  if (typeof window === "undefined") {
+    return DEFAULT_SHOW_PARALLEL_LIMITS;
+  }
+  const raw = window.localStorage.getItem(HOSTS_PARALLEL_LIMITS_STORAGE_KEY);
+  if (raw === "true") return true;
+  if (raw === "false") return false;
+  return DEFAULT_SHOW_PARALLEL_LIMITS;
+}
+
+function persistShowParallelLimits(value: boolean) {
+  if (typeof window === "undefined") {
+    return;
+  }
+  window.localStorage.setItem(
+    HOSTS_PARALLEL_LIMITS_STORAGE_KEY,
+    value ? "true" : "false",
+  );
+}
+
 export const useHostsPageViewModel = () => {
   const hub = webapp_client.conat_client.hub;
   const [form] = Form.useForm();
@@ -197,9 +219,16 @@ export const useHostsPageViewModel = () => {
   const flags = useHostFeatureFlags();
   const [showAdmin, setShowAdmin] = React.useState(false);
   const [showDeleted, setShowDeleted] = React.useState(false);
+  const [showParallelLimits, setShowParallelLimits] = React.useState(
+    readShowParallelLimits,
+  );
   const parallelOps = useParallelOps(hub, {
-    enabled: isAdmin,
+    enabled: isAdmin && showParallelLimits,
   });
+
+  React.useEffect(() => {
+    persistShowParallelLimits(showParallelLimits);
+  }, [showParallelLimits]);
 
   const [fastPoll, setFastPoll] = React.useState(false);
   const [setupOpen, setSetupOpen] = React.useState(false);
@@ -892,6 +921,8 @@ export const useHostsPageViewModel = () => {
     isAdmin,
     showAdmin,
     setShowAdmin,
+    showParallelLimits,
+    setShowParallelLimits,
     showDeleted,
     setShowDeleted,
     sortField,
@@ -902,7 +933,7 @@ export const useHostsPageViewModel = () => {
     setAutoResort,
     providerCapabilities:
       catalog?.provider_capabilities ?? selfHostCatalog?.provider_capabilities,
-    parallelOps,
+    parallelOps: showParallelLimits ? parallelOps : undefined,
   });
   const hostDrawerVm = useHostDrawerViewModel({
     open: drawerOpen,
@@ -928,7 +959,7 @@ export const useHostsPageViewModel = () => {
       onRemove: openRemove,
       onForceDeprovision: (host: Host) => forceDeprovision(host.id),
     },
-    parallelOps,
+    parallelOps: showParallelLimits ? parallelOps : undefined,
   });
 
   const { catalog: editCatalog, catalogError: editCatalogError } =

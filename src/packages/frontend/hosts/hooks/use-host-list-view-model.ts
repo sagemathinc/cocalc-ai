@@ -42,6 +42,8 @@ type UseHostListViewModelArgs = {
   isAdmin: boolean;
   showAdmin: boolean;
   setShowAdmin: (value: boolean) => void;
+  showParallelLimits: boolean;
+  setShowParallelLimits: (value: boolean) => void;
   showDeleted: boolean;
   setShowDeleted: (value: boolean) => void;
   sortField: HostSortField;
@@ -95,6 +97,8 @@ export const useHostListViewModel = ({
   isAdmin,
   showAdmin,
   setShowAdmin,
+  showParallelLimits,
+  setShowParallelLimits,
   showDeleted,
   setShowDeleted,
   sortField,
@@ -130,6 +134,8 @@ export const useHostListViewModel = ({
     isAdmin,
     showAdmin,
     setShowAdmin,
+    showParallelLimits,
+    setShowParallelLimits,
     showDeleted,
     setShowDeleted,
     sortField,

@@ -25,14 +25,14 @@ type LroStatusRow = {
   status: string;
   owner_id: string | null;
   heartbeat_at: Date | null;
-  created_at: Date;
+  created_at: Date | null;
 };
 
 type CloudVmWorkStatusRow = {
   state: string;
   locked_by: string | null;
   locked_at: Date | null;
-  created_at: Date;
+  created_at: Date | null;
   payload: { provider?: string } | null;
 };
 
@@ -40,13 +40,19 @@ type MoveTopologyStatusRow = {
   status: string;
   owner_id: string | null;
   heartbeat_at: Date | null;
-  created_at: Date;
+  created_at: Date | null;
   source_host_id: string | null;
   dest_host_id: string | null;
 };
 
 const MOVE_SOURCE_HOST_WORKER_KIND = "project-move-source-host";
 const MOVE_DESTINATION_HOST_WORKER_KIND = "project-move-destination-host";
+
+function getDateMs(value?: Date | null): number | null {
+  if (value == null) return null;
+  const ms = value.getTime();
+  return Number.isFinite(ms) ? ms : null;
+}
 
 export interface ParallelOpsWorkerOwnerStatus {
   owner_id: string;
@@ -159,9 +165,12 @@ export function summarizeLroWorkerStatus({
   for (const row of rows) {
     if (row.status === "queued") {
       status.queued_count += 1;
-      const ageMs = Math.max(0, nowMs - row.created_at.getTime());
-      oldestQueuedMs =
-        oldestQueuedMs == null ? ageMs : Math.max(oldestQueuedMs, ageMs);
+      const createdAtMs = getDateMs(row.created_at);
+      if (createdAtMs != null) {
+        const ageMs = Math.max(0, nowMs - createdAtMs);
+        oldestQueuedMs =
+          oldestQueuedMs == null ? ageMs : Math.max(oldestQueuedMs, ageMs);
+      }
       continue;
     }
     if (row.status !== "running") continue;
@@ -234,9 +243,12 @@ export function summarizeCloudVmWorkStatus({
     if (row.state === "queued") {
       status.queued_count += 1;
       entry.queued_count += 1;
-      const ageMs = Math.max(0, nowMs - row.created_at.getTime());
-      oldestQueuedMs =
-        oldestQueuedMs == null ? ageMs : Math.max(oldestQueuedMs, ageMs);
+      const createdAtMs = getDateMs(row.created_at);
+      if (createdAtMs != null) {
+        const ageMs = Math.max(0, nowMs - createdAtMs);
+        oldestQueuedMs =
+          oldestQueuedMs == null ? ageMs : Math.max(oldestQueuedMs, ageMs);
+      }
     } else if (row.state === "in_progress") {
       status.running_count += 1;
       entry.running_count += 1;
@@ -384,9 +396,12 @@ export function summarizeMoveRoleWorkerStatus({
     if (row.status === "queued") {
       status.queued_count += 1;
       entry.queued_count += 1;
-      const ageMs = Math.max(0, nowMs - row.created_at.getTime());
-      oldestQueuedMs =
-        oldestQueuedMs == null ? ageMs : Math.max(oldestQueuedMs, ageMs);
+      const createdAtMs = getDateMs(row.created_at);
+      if (createdAtMs != null) {
+        const ageMs = Math.max(0, nowMs - createdAtMs);
+        oldestQueuedMs =
+          oldestQueuedMs == null ? ageMs : Math.max(oldestQueuedMs, ageMs);
+      }
     } else if (row.status === "running") {
       status.running_count += 1;
       entry.running_count += 1;

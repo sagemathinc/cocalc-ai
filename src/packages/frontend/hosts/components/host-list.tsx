@@ -230,6 +230,8 @@ type HostListViewModel = {
   isAdmin: boolean;
   showAdmin: boolean;
   setShowAdmin: (value: boolean) => void;
+  showParallelLimits: boolean;
+  setShowParallelLimits: (value: boolean) => void;
   showDeleted: boolean;
   setShowDeleted: (value: boolean) => void;
   sortField: HostSortField;
@@ -286,6 +288,8 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
     isAdmin,
     showAdmin,
     setShowAdmin,
+    showParallelLimits,
+    setShowParallelLimits,
     showDeleted,
     setShowDeleted,
     sortField,
@@ -1151,6 +1155,18 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
             <Space size="small" align="center" wrap>
               <Switch
                 size="small"
+                checked={showParallelLimits}
+                onChange={setShowParallelLimits}
+              />
+              <Typography.Text style={{ whiteSpace: "nowrap" }}>
+                Parallel Limits
+              </Typography.Text>
+            </Space>
+          )}
+          {isAdmin && (
+            <Space size="small" align="center" wrap>
+              <Switch
+                size="small"
                 checked={showAdmin}
                 onChange={setShowAdmin}
               />
@@ -1261,7 +1277,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
     <div>
       {header}
       {filterNotice}
-      {isAdmin && parallelOps ? (
+      {isAdmin && showParallelLimits && parallelOps ? (
         <HostParallelOpsSummary
           status={parallelOps.status}
           loading={parallelOps.loading}
