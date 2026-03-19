@@ -461,6 +461,9 @@ def ensure_bootstrap_paths(cfg: BootstrapConfig) -> None:
         cfg.project_bundle.root,
         cfg.tools_bundle.root,
     ]
+    runtime_paths = [path for path in runtime_paths if Path(path).exists()]
+    if not runtime_paths:
+        return
     if os.geteuid() == 0:
         run_best_effort(
             cfg,
@@ -1674,6 +1677,7 @@ def main(argv: list[str]) -> int:
     log_line(cfg, "bootstrap: starting python bootstrap")
     log_line(cfg, f"bootstrap: user={cfg.bootstrap_user} home={cfg.bootstrap_home} root={cfg.bootstrap_root}")
     try:
+        ensure_runtime_user(cfg)
         ensure_bootstrap_paths(cfg)
         if only:
             log_line(cfg, f"bootstrap: running subset {sorted(only)}")
@@ -1695,7 +1699,6 @@ def main(argv: list[str]) -> int:
         install_gpu_support(cfg)
         configure_chrony(cfg)
         enable_userns(cfg)
-        ensure_runtime_user(cfg)
         ensure_subuids(cfg)
         enable_linger(cfg)
         prepare_dirs(cfg)
