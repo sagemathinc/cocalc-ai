@@ -157,3 +157,126 @@ describe("chat-style syncdb without backend fs watch still loads existing disk s
     expect(disk).toContain('"message_id":"msg-1"');
   });
 });
+
+describe("chat-style syncdb preserves prior live rows when a second client opens", () => {
+  const project_id = uuid();
+  const path = "live.chat";
+  const primary_keys = [
+    "date",
+    "sender_id",
+    "event",
+    "message_id",
+    "thread_id",
+  ];
+  const string_cols = ["input"];
+  const thread_id = "thread-live-1";
+  const userDate = "2026-03-19T12:00:00.000Z";
+  const assistantDate = "2026-03-19T12:00:01.000Z";
+  let client1;
+  let client2;
+  let s1;
+  let s2;
+
+  it("opens the first chat client", async () => {
+    client1 = connect();
+    s1 = client1.sync.db({
+      project_id,
+      path,
+      service: server.service,
+      primary_keys,
+      string_cols,
+      firstReadLockTimeout: 1,
+    });
+    await once(s1, "ready");
+  });
+
+  it("writes a user chat row without saving to disk", async () => {
+    s1.set({
+      event: "chat",
+      sender_id: "user-1",
+      date: userDate,
+      message_id: "msg-user-1",
+      thread_id,
+      history: [
+        {
+          author_id: "user-1",
+          content: "hello from client 1",
+          date: userDate,
+        },
+      ],
+    });
+    s1.commit();
+    await s1.save();
+    expect(
+      s1.get_one({
+        event: "chat",
+        sender_id: "user-1",
+        date: userDate,
+      }),
+    ).toBeTruthy();
+  });
+
+  it("opens a second client and still sees the user row", async () => {
+    client2 = connect();
+    s2 = client2.sync.db({
+      project_id,
+      path,
+      service: server.service,
+      primary_keys,
+      string_cols,
+      firstReadLockTimeout: 1,
+    });
+    await once(s2, "ready");
+    expect(
+      s2.get_one({
+        event: "chat",
+        sender_id: "user-1",
+        date: userDate,
+      }),
+    ).toBeTruthy();
+  });
+
+  it("writes an assistant row from client 2 without deleting the user row", async () => {
+    s2.set({
+      event: "chat",
+      sender_id: "assistant-1",
+      date: assistantDate,
+      message_id: "msg-assistant-1",
+      thread_id,
+      parent_message_id: "msg-user-1",
+      history: [
+        {
+          author_id: "assistant-1",
+          content: "reply from client 2",
+          date: assistantDate,
+        },
+      ],
+    });
+    s2.commit();
+    await s2.save();
+
+    await wait({
+      until: () =>
+        s1.get_one({
+          event: "chat",
+          sender_id: "assistant-1",
+          date: assistantDate,
+        }) != null,
+    });
+
+    expect(
+      s1.get_one({
+        event: "chat",
+        sender_id: "user-1",
+        date: userDate,
+      }),
+    ).toBeTruthy();
+    expect(
+      s1.get_one({
+        event: "chat",
+        sender_id: "assistant-1",
+        date: assistantDate,
+      }),
+    ).toBeTruthy();
+  });
+});

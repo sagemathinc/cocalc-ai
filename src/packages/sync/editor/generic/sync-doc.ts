@@ -1169,11 +1169,18 @@ export class SyncDoc extends EventEmitter {
     // when a snapshot is available.
     await this.canonicalizeFsIdentity();
     await this.init_syncstring_table();
-    // Prime backend sync-fs reconciliation first so the patch stream reflects
-    // current on-disk content before we load it into this client session.
-    await this.startBackendFsWatch();
-    await this.reconcileBackendFsState();
+    const useBackendFsWatch = this.shouldUseBackendFsWatch();
+    // For watched doctypes, prime sync-fs reconciliation first so the patch
+    // stream reflects current on-disk content before we load it into this
+    // client session.
+    if (useBackendFsWatch) {
+      await this.startBackendFsWatch();
+      await this.reconcileBackendFsState();
+    }
     await this.init_patchflow();
+    if (!useBackendFsWatch) {
+      await this.seedNoWatchDocFromDiskIfEmpty();
+    }
     await Promise.all([this.init_cursors()]);
     this.assert_not_closed(
       "initAll -- successful init patchflow, cursors, and ipywidgets",
@@ -2590,6 +2597,55 @@ export class SyncDoc extends EventEmitter {
       this.dbg("syncFsReconcile")(`failed: ${err?.message ?? err}`);
     }
   });
+
+  private seedNoWatchDocFromDiskIfEmpty = reuseInFlight(
+    async (): Promise<void> => {
+      if (
+        this.isClosed() ||
+        this.opts.noSaveToDisk ||
+        this.shouldUseBackendFsWatch()
+      ) {
+        return;
+      }
+      const hasLiveHistory =
+        (this.patchflowVersions()?.length ?? 0) > 0 ||
+        ((this.doc as any)?.to_str?.() ?? "").length > 0;
+      if (hasLiveHistory) {
+        return;
+      }
+      let diskValue: string;
+      try {
+        diskValue = (await this.fs.readFile(this.path, "utf8")) as string;
+      } catch (err: any) {
+        if (err?.code === "ENOENT" || err?.code === "ENOTDIR") {
+          this.valueOnDisk = "";
+          return;
+        }
+        this.dbg("seedNoWatchDocFromDiskIfEmpty")(
+          `failed to read disk state: ${err?.message ?? err}`,
+        );
+        return;
+      }
+      this.valueOnDisk = diskValue;
+      this.isDeleted = false;
+      if (!diskValue) {
+        return;
+      }
+      const current = this.patchflowSession?.getDocument() as
+        | Document
+        | undefined;
+      const diskDoc = this._from_str(diskValue);
+      if (current != null && this.documentsEqual(current, diskDoc)) {
+        this.last = this.doc = current;
+        return;
+      }
+      this.doc = diskDoc;
+      this.last = current ?? diskDoc;
+      if (this.commit({ file: true, allowDuplicate: true })) {
+        await this.patches_table.save();
+      }
+    },
+  );
 
   private markPatchflowFullHistory = (): void => {
     if (!this.patchflowReady() || this.patchflowSession == null) return;
