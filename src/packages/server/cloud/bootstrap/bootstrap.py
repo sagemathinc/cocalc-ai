@@ -82,6 +82,7 @@ class BootstrapConfig:
     tools_bundle: BundleSpec
     cloudflared: CloudflaredSpec
     conat_url: str | None
+    status_url: str | None
     bootstrap_token: str | None
     ca_cert_path: str | None
     bootstrap_done_paths: list[str]
@@ -182,6 +183,7 @@ def load_config(path: str) -> BootstrapConfig:
             creds_json=cloudflared.get("credsJson") or cloudflared.get("creds_json"),
         ),
         conat_url=raw.get("conat_url"),
+        status_url=raw.get("status_url"),
         bootstrap_token=raw.get("bootstrap_token"),
         ca_cert_path=raw.get("ca_cert_path"),
         bootstrap_done_paths=[str(p) for p in _ensure_list(raw.get("bootstrap_done_paths"), "bootstrap_done_paths")],
@@ -960,6 +962,41 @@ def upsert_env(path: str, key: str, value: str) -> None:
     Path(path).write_text("\n".join(new_lines) + "\n", encoding="utf-8")
 
 
+def report_bootstrap_status(
+    cfg: BootstrapConfig,
+    status: str,
+    message: str | None = None,
+) -> None:
+    if not cfg.status_url or not cfg.bootstrap_token:
+        return
+    payload: dict[str, Any] = {"status": status}
+    if message:
+        payload["message"] = message
+    headers = {
+        "Authorization": f"Bearer {cfg.bootstrap_token}",
+        "User-Agent": "cocalc-bootstrap/1.0 (status)",
+        "Content-Type": "application/json",
+        "Accept": "application/json,text/plain,*/*",
+    }
+    context = None
+    if cfg.ca_cert_path:
+        try:
+            context = ssl.create_default_context(cafile=cfg.ca_cert_path)
+        except Exception:
+            context = None
+    try:
+        request = urllib.request.Request(
+            cfg.status_url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers=headers,
+            method="POST",
+        )
+        with urllib.request.urlopen(request, context=context, timeout=10):
+            return
+    except Exception as err:
+        log_line(cfg, f"bootstrap: status update failed ({err})")
+
+
 def setup_master_conat_token(cfg: BootstrapConfig) -> None:
     if not cfg.conat_url or not cfg.bootstrap_token:
         return
@@ -1677,6 +1714,7 @@ def main(argv: list[str]) -> int:
     log_line(cfg, "bootstrap: starting python bootstrap")
     log_line(cfg, f"bootstrap: user={cfg.bootstrap_user} home={cfg.bootstrap_home} root={cfg.bootstrap_root}")
     try:
+        report_bootstrap_status(cfg, "running", "Preparing bootstrap environment")
         ensure_runtime_user(cfg)
         ensure_bootstrap_paths(cfg)
         if only:
@@ -1695,7 +1733,9 @@ def main(argv: list[str]) -> int:
         ensure_platform(cfg)
         image_size_gb = compute_image_size(cfg)
         disable_unattended(cfg)
+        report_bootstrap_status(cfg, "running", "Installing Ubuntu packages")
         apt_update_install(cfg)
+        report_bootstrap_status(cfg, "running", "Configuring storage and containers")
         install_gpu_support(cfg)
         configure_chrony(cfg)
         enable_userns(cfg)
@@ -1709,9 +1749,11 @@ def main(argv: list[str]) -> int:
         configure_podman(cfg)
         write_env(cfg, image_size_gb)
         setup_master_conat_token(cfg)
+        report_bootstrap_status(cfg, "running", "Downloading CoCalc software bundles")
         extract_bundle(cfg, cfg.project_host_bundle)
         extract_bundle(cfg, cfg.project_bundle)
         extract_bundle(cfg, cfg.tools_bundle)
+        report_bootstrap_status(cfg, "running", "Installing runtime tools")
         install_node(cfg)
         write_wrapper(cfg)
         write_helpers(cfg)
@@ -1719,7 +1761,9 @@ def main(argv: list[str]) -> int:
         verify_runtime_sudoers(cfg)
         configure_cloudflared(cfg)
         configure_autostart(cfg)
+        report_bootstrap_status(cfg, "running", "Starting project-host services")
         start_project_host(cfg)
+        report_bootstrap_status(cfg, "running", "Finalizing bootstrap")
         reenable_unattended(cfg)
         touch_paths(cfg.bootstrap_done_paths)
         log_line(cfg, "bootstrap: completed successfully")

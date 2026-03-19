@@ -30,6 +30,42 @@ export type HostCommandDeps = {
   resolveProject: any;
 };
 
+function formatHostCreateProgressLine(update: {
+  host: { id: string };
+  status: string;
+  hasHeartbeat: boolean;
+  bootstrapStatus?: string;
+  bootstrapMessage?: string;
+}): string {
+  const parts = [
+    `host ${update.host.id}`,
+    `status=${update.status || "unknown"}`,
+    `heartbeat=${update.hasHeartbeat ? "ready" : "pending"}`,
+  ];
+  if (update.bootstrapStatus) {
+    parts.push(`bootstrap=${update.bootstrapStatus}`);
+  }
+  let line = parts.join(" ");
+  if (update.bootstrapMessage) {
+    line += `: ${update.bootstrapMessage}`;
+  }
+  return line;
+}
+
+function formatBootstrapTimeoutDetail(host: {
+  bootstrap?: {
+    status?: string | null;
+    message?: string | null;
+  } | null;
+}): string {
+  const bootstrapStatus = `${host.bootstrap?.status ?? ""}`.trim();
+  const bootstrapMessage = `${host.bootstrap?.message ?? ""}`.trim();
+  if (!bootstrapStatus && !bootstrapMessage) {
+    return "";
+  }
+  return ` bootstrap=${bootstrapStatus || "unknown"}${bootstrapMessage ? ` bootstrap_message=${JSON.stringify(bootstrapMessage)}` : ""}`;
+}
+
 export function registerHostCommand(
   program: Command,
   deps: HostCommandDeps,
@@ -169,6 +205,7 @@ export function registerHostCommand(
           version: h.version ?? null,
           project_bundle_version: h.project_bundle_version ?? null,
           tools_version: h.tools_version ?? null,
+          bootstrap: h.bootstrap ?? null,
         };
       });
     });
@@ -603,13 +640,23 @@ export function registerHostCommand(
             };
           }
 
+          let lastProgressLine = "";
           const waited = await waitForHostCreateReady(ctx, created.id, {
             timeoutMs: ctx.timeoutMs,
             pollMs: ctx.pollMs,
+            onProgress:
+              ctx.globals.json || ctx.globals.output === "json"
+                ? undefined
+                : (update) => {
+                    const line = formatHostCreateProgressLine(update);
+                    if (line === lastProgressLine) return;
+                    lastProgressLine = line;
+                    process.stderr.write(`${line}\n`);
+                  },
           });
           if (waited.timedOut) {
             throw new Error(
-              `host create timed out after ${ctx.timeoutMs}ms (host_id=${created.id}, last_status=${waited.host.status ?? "unknown"})`,
+              `host create timed out after ${ctx.timeoutMs}ms (host_id=${created.id}, last_status=${waited.host.status ?? "unknown"}${formatBootstrapTimeoutDetail(waited.host)})`,
             );
           }
 
