@@ -878,6 +878,7 @@ export function registerHostCommand(
               status: "queued",
             };
           }
+          const waitStarted = Date.now();
           const summary = await waitForLro(ctx, op.op_id, {
             timeoutMs: ctx.timeoutMs,
             pollMs: ctx.pollMs,
@@ -892,11 +893,26 @@ export function registerHostCommand(
               `host restart failed: status=${summary.status} error=${summary.error ?? "unknown"}`,
             );
           }
+          const progressReporter = createHostProgressReporter(ctx);
+          const waited = await waitForHostCreateReady(ctx, h.id, {
+            timeoutMs: Math.max(
+              ctx.pollMs,
+              ctx.timeoutMs - (Date.now() - waitStarted),
+            ),
+            pollMs: ctx.pollMs,
+            onProgress: progressReporter,
+          });
+          if (waited.timedOut) {
+            throw new Error(
+              `host restart timed out after ${ctx.timeoutMs}ms (op=${op.op_id}, last_status=${waited.host.status ?? "unknown"}${formatBootstrapTimeoutDetail(waited.host)})`,
+            );
+          }
           return {
-            host_id: h.id,
+            host_id: waited.host.id,
             op_id: op.op_id,
             mode,
             status: summary.status,
+            waited: true,
           };
         });
       },
