@@ -13,7 +13,7 @@ import { setMasterStatusClient } from "./master-status";
 import { setSshpiperdPublicKey } from "./ssh/host-keys";
 import { ensureSshpiperdKey } from "./ssh/sshpiperd-key";
 import { updateAuthorizedKeys, updateProjectUsers } from "./hub/projects";
-import { deleteVolume } from "./file-server";
+import { deleteVolume, getBackupExecutionStatus } from "./file-server";
 import { getSoftwareVersions } from "./software";
 import { upgradeSoftware } from "./upgrade";
 import { executeCode } from "@cocalc/backend/execute-code";
@@ -685,6 +685,9 @@ export async function startMasterRegistration({
       },
       async removeHostSshAuthorizedKey({ public_key }) {
         return await removeHostSshAuthorizedKey(public_key);
+      },
+      async getBackupExecutionStatus() {
+        return await getBackupExecutionStatus();
       },
     },
   });

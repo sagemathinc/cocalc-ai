@@ -44,7 +44,7 @@ import { APP_PROXY_EXPOSURE_HEADER } from "@cocalc/backend/auth/app-proxy";
 import { attachProjectProxy } from "@cocalc/project-proxy/proxy";
 import { init as initChangefeeds } from "@cocalc/lite/hub/changefeeds";
 import { hubApi, init as initHubApi } from "@cocalc/lite/hub/api";
-import { wireProjectsApi } from "./hub/projects";
+import { PROJECT_RUNNER_RPC_TIMEOUT_MS, wireProjectsApi } from "./hub/projects";
 import { wireSystemApi } from "./hub/system";
 import { startMasterRegistration } from "./master";
 import { startReconciler } from "./reconcile";
@@ -483,6 +483,7 @@ export async function main(
     client: conatClient,
     subject: `project-runner.${runnerId}`,
     waitForInterest: false,
+    timeout: PROJECT_RUNNER_RPC_TIMEOUT_MS,
   });
   wireProjectsApi(runnerApi);
 

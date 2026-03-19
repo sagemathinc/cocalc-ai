@@ -101,4 +101,47 @@ describe("cloud vm worker loop", () => {
     const { rows } = await getPool().query("SELECT state FROM cloud_vm_work");
     expect(rows.every((r) => r.state === "done")).toBe(true);
   });
+
+  it("supports provider-specific cap overrides", async () => {
+    for (let i = 0; i < 6; i++) {
+      await enqueueCloudVmWork({
+        vm_id: `vm-${i}`,
+        action: "start",
+        payload: { provider: i < 3 ? "gcp" : "hyperstack" },
+      });
+    }
+
+    const perProvider = new Map<string, number>();
+    let maxGcp = 0;
+    let maxHyperstack = 0;
+
+    const handlers = {
+      start: async (row) => {
+        const provider = (row.payload?.provider as string) ?? "default";
+        perProvider.set(provider, (perProvider.get(provider) ?? 0) + 1);
+        maxGcp = Math.max(maxGcp, perProvider.get("gcp") ?? 0);
+        maxHyperstack = Math.max(
+          maxHyperstack,
+          perProvider.get("hyperstack") ?? 0,
+        );
+        await delay(50);
+        perProvider.set(provider, (perProvider.get(provider) ?? 1) - 1);
+      },
+    };
+
+    const processed = await processCloudVmWorkOnce({
+      worker_id: "worker-provider-caps",
+      handlers,
+      max_concurrency: 3,
+      max_per_provider: 3,
+      max_per_provider_by_provider: new Map([
+        ["gcp", 1],
+        ["hyperstack", 2],
+      ]),
+    });
+
+    expect(processed).toBe(6);
+    expect(maxGcp).toBeLessThanOrEqual(1);
+    expect(maxHyperstack).toBeLessThanOrEqual(2);
+  });
 });

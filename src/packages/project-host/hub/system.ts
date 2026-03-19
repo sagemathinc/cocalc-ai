@@ -29,6 +29,14 @@ async function forwardSystem(
 }
 
 export function wireSystemApi(): void {
+  hubApi.system.getProjectHostParallelOpsLimit = async (opts?: {
+    account_id?: string;
+    host_id?: string;
+    worker_kind: string;
+  }) => {
+    return await forwardSystem("system.getProjectHostParallelOpsLimit", [opts]);
+  };
+
   hubApi.system.getCustomize = async (fields?: string[]) => {
     return await forwardSystem("system.getCustomize", [fields]);
   };

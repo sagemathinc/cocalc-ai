@@ -881,6 +881,7 @@ cat <<EOF_COCALC_BOOTSTRAP_CONFIG > "$BOOTSTRAP_DIR/bootstrap-config.json"
   },
   "cloudflared": ${cloudflaredJson},
   "conat_url": "$CONAT_URL",
+  "status_url": "$STATUS_URL",
   "bootstrap_token": "$BOOTSTRAP_TOKEN",
   "ca_cert_path": "$BOOTSTRAP_CACERT_PATH",
   "parallel": true,
@@ -939,9 +940,9 @@ if [ "$BOOTSTRAP_ALREADY_DONE" = "1" ]; then
   exit 0
 fi
 
-report_status "running"
+report_status "running" "Preparing bootstrap environment"
 python3 "$BOOTSTRAP_DIR/bootstrap.py" --config "$BOOTSTRAP_DIR/bootstrap-config.json"
-report_status "done"
+report_status "done" "Bootstrap completed"
 cat <<'EOF_COCALC_DEPROVISION' > "$BOOTSTRAP_ROOT/bin/deprovision.sh"
 #!/usr/bin/env bash
 set -euo pipefail

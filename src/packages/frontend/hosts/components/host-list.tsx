@@ -22,6 +22,7 @@ import { SyncOutlined } from "@ant-design/icons";
 import { React } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components/icon";
 import type { Host, HostCatalog } from "@cocalc/conat/hub/api/hosts";
+import type { ParallelOpsWorkerStatus } from "@cocalc/conat/hub/api/system";
 import { HostCard } from "./host-card";
 import {
   STATUS_COLOR,
@@ -36,6 +37,7 @@ import { getProviderDescriptor, isKnownProvider } from "../providers/registry";
 import type { HostLroState } from "../hooks/use-host-ops";
 import { getHostOpPhase, HostOpProgress } from "./host-op-progress";
 import { HostBackupStatus } from "./host-backup-status";
+import { HostBootstrapProgress } from "./host-bootstrap-progress";
 import { HostProjectStatus } from "./host-project-status";
 import {
   confirmBulkHostDeprovision,
@@ -45,6 +47,7 @@ import {
 } from "./host-confirm";
 import { isHostOpActive } from "../hooks/use-host-ops";
 import { UpgradeConfirmContent } from "./upgrade-confirmation";
+import { HostParallelOpsSummary } from "./host-parallel-ops-summary";
 import { search_match, search_split } from "@cocalc/util/misc";
 import type {
   HostListViewMode,
@@ -227,6 +230,8 @@ type HostListViewModel = {
   isAdmin: boolean;
   showAdmin: boolean;
   setShowAdmin: (value: boolean) => void;
+  showParallelLimits: boolean;
+  setShowParallelLimits: (value: boolean) => void;
   showDeleted: boolean;
   setShowDeleted: (value: boolean) => void;
   sortField: HostSortField;
@@ -236,6 +241,24 @@ type HostListViewModel = {
   autoResort: boolean;
   setAutoResort: (value: boolean) => void;
   providerCapabilities?: HostCatalog["provider_capabilities"];
+  parallelOps?: {
+    status: ParallelOpsWorkerStatus[];
+    loading?: boolean;
+    error?: string;
+    savingKey?: string;
+    refresh: () => void | Promise<void>;
+    setLimit: (opts: {
+      worker_kind: string;
+      scope_type?: "global" | "provider" | "project_host";
+      scope_id?: string;
+      limit_value: number;
+    }) => void | Promise<void>;
+    clearLimit: (opts: {
+      worker_kind: string;
+      scope_type?: "global" | "provider" | "project_host";
+      scope_id?: string;
+    }) => void | Promise<void>;
+  };
 };
 
 export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
@@ -265,6 +288,8 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
     isAdmin,
     showAdmin,
     setShowAdmin,
+    showParallelLimits,
+    setShowParallelLimits,
     showDeleted,
     setShowDeleted,
     sortField,
@@ -274,6 +299,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
     autoResort,
     setAutoResort,
     providerCapabilities,
+    parallelOps,
   } = vm;
 
   const [selectedRowKeys, setSelectedRowKeys] = React.useState<string[]>([]);
@@ -726,6 +752,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
               )}
             </Space>
             <HostOpProgress op={op} compact />
+            <HostBootstrapProgress host={host} compact />
             <HostProjectStatus host={host} compact />
             <HostBackupStatus host={host} compact />
           </Space>
@@ -1128,6 +1155,18 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
             <Space size="small" align="center" wrap>
               <Switch
                 size="small"
+                checked={showParallelLimits}
+                onChange={setShowParallelLimits}
+              />
+              <Typography.Text style={{ whiteSpace: "nowrap" }}>
+                Parallel Limits
+              </Typography.Text>
+            </Space>
+          )}
+          {isAdmin && (
+            <Space size="small" align="center" wrap>
+              <Switch
+                size="small"
                 checked={showAdmin}
                 onChange={setShowAdmin}
               />
@@ -1238,6 +1277,17 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
     <div>
       {header}
       {filterNotice}
+      {isAdmin && showParallelLimits && parallelOps ? (
+        <HostParallelOpsSummary
+          status={parallelOps.status}
+          loading={parallelOps.loading}
+          error={parallelOps.error}
+          savingKey={parallelOps.savingKey}
+          onRefresh={parallelOps.refresh}
+          onSetLimit={parallelOps.setLimit}
+          onClearLimit={parallelOps.clearLimit}
+        />
+      ) : null}
       {bulkActions}
       {viewMode === "list" ? (
         <Table

@@ -140,6 +140,12 @@ export interface HostBackupStatus {
   provisioned_needs_backup: number;
 }
 
+export interface HostBootstrapStatus {
+  status?: string;
+  updated_at?: string;
+  message?: string;
+}
+
 export interface HostProjectRow {
   project_id: string;
   title: string;
@@ -197,6 +203,7 @@ export interface Host {
   provider_observed_at?: string;
   deleted?: string;
   backup_status?: HostBackupStatus;
+  bootstrap?: HostBootstrapStatus;
 }
 
 export interface HostConnectionInfo {
