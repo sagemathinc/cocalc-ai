@@ -19,6 +19,8 @@ const NAVIGATOR_INTENT_QUEUE_KEY = "cocalc:navigator:intent-queue";
 export const NAVIGATOR_SUBMIT_PROMPT_EVENT = "cocalc:navigator:submit-prompt";
 const NAVIGATOR_SYNC_READY_TIMEOUT_MS = 12_000;
 const NAVIGATOR_THREAD_IDENTITY_TIMEOUT_MS = 15_000;
+const NAVIGATOR_WORKSPACE_RESOLVE_TIMEOUT_MS = 5_000;
+const NAVIGATOR_WORKSPACE_RESOLVE_POLL_MS = 150;
 let navigatorIntentQueueMemory: NavigatorSubmitPromptDetail[] = [];
 
 export interface NavigatorSubmitPromptDetail {
@@ -167,6 +169,26 @@ function sanitizeAccountId(accountId: string): string {
   return accountId.replace(/[^a-zA-Z0-9_.-]/g, "-");
 }
 
+async function resolveWorkspaceTarget(opts: {
+  project_id: string;
+  account_id: string;
+  path?: string;
+}): Promise<Awaited<ReturnType<typeof ensureWorkspaceChatForPath>>> {
+  const path = `${opts.path ?? ""}`.trim();
+  if (!path || !opts.account_id) return null;
+  const deadline = Date.now() + NAVIGATOR_WORKSPACE_RESOLVE_TIMEOUT_MS;
+  while (true) {
+    const target = await ensureWorkspaceChatForPath({
+      project_id: opts.project_id,
+      account_id: opts.account_id,
+      path,
+    });
+    if (target) return target;
+    if (Date.now() >= deadline) return null;
+    await sleep(NAVIGATOR_WORKSPACE_RESOLVE_POLL_MS);
+  }
+}
+
 function isMacLikeClient(): boolean {
   if (typeof navigator === "undefined") return false;
   const platform = `${navigator.platform ?? ""}`.toLowerCase();
@@ -311,14 +333,11 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
     const input = visiblePrompt ?? basePrompt;
     const account_id =
       `${redux.getStore("account")?.get?.("account_id") ?? ""}`.trim();
-    const workspaceTarget =
-      opts.path && account_id
-        ? await ensureWorkspaceChatForPath({
-            project_id,
-            account_id,
-            path: opts.path,
-          })
-        : null;
+    const workspaceTarget = await resolveWorkspaceTarget({
+      project_id,
+      account_id,
+      path: opts.path,
+    });
     const targetChatPath =
       workspaceTarget?.chat_path ?? resolveNavigatorChatPath(project_id);
 
@@ -373,16 +392,23 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
         createNewThread: opts.createNewThread ?? false,
       });
       if (opts.openFloating !== false) {
-        openFloatingAgentSession(project_id, {
-          ...(indexedSession ?? fallbackSession),
-          title:
-            requestedTitle ?? indexedSession?.title ?? fallbackSession.title,
-          thread_key:
-            `${preferredThreadKey ?? session.thread_key ?? ""}`.trim() ||
-            session.thread_key,
-          updated_at: new Date().toISOString(),
-          status: "active",
-        });
+        openFloatingAgentSession(
+          project_id,
+          {
+            ...(indexedSession ?? fallbackSession),
+            title:
+              requestedTitle ?? indexedSession?.title ?? fallbackSession.title,
+            thread_key:
+              `${preferredThreadKey ?? session.thread_key ?? ""}`.trim() ||
+              session.thread_key,
+            updated_at: new Date().toISOString(),
+            status: "active",
+          },
+          {
+            workspaceId: null,
+            workspaceOnly: false,
+          },
+        );
       }
       return true;
     };
@@ -534,17 +560,24 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
       saveNavigatorSelectedThreadKey(nextThreadKey, targetChatPath);
     }
     if (opts.openFloating !== false) {
-      openFloatingAgentSession(project_id, {
-        ...session,
-        session_id:
-          opts.createNewThread === true && nextThreadKey
-            ? nextThreadKey
-            : session.session_id,
-        title: messageThreadTitle ?? session.title,
-        thread_key: nextThreadKey || session.thread_key,
-        updated_at: new Date().toISOString(),
-        status: "active",
-      });
+      openFloatingAgentSession(
+        project_id,
+        {
+          ...session,
+          session_id:
+            opts.createNewThread === true && nextThreadKey
+              ? nextThreadKey
+              : session.session_id,
+          title: messageThreadTitle ?? session.title,
+          thread_key: nextThreadKey || session.thread_key,
+          updated_at: new Date().toISOString(),
+          status: "active",
+        },
+        {
+          workspaceId: workspaceTarget?.workspace.workspace_id ?? null,
+          workspaceOnly: workspaceTarget != null,
+        },
+      );
     }
     setTimeout(() => {
       actions.scrollToIndex?.(Number.MAX_SAFE_INTEGER);
@@ -566,23 +599,30 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
         createNewThread: opts.createNewThread ?? false,
       });
       if (opts.openFloating !== false) {
-        openFloatingAgentSession(project_id, {
-          session_id: `navigator-${project_id}`,
+        openFloatingAgentSession(
           project_id,
-          account_id: `${redux.getStore("account")?.get?.("account_id") ?? ""}`,
-          chat_path: resolveNavigatorChatPath(project_id),
-          thread_key: `${
-            loadNavigatorSelectedThreadKey(
-              project_id,
-              resolveNavigatorChatPath(project_id),
-            ) ?? ""
-          }`.trim(),
-          title: requestedTitle ?? "Navigator",
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-          status: "active",
-          entrypoint: "global",
-        });
+          {
+            session_id: `navigator-${project_id}`,
+            project_id,
+            account_id: `${redux.getStore("account")?.get?.("account_id") ?? ""}`,
+            chat_path: resolveNavigatorChatPath(project_id),
+            thread_key: `${
+              loadNavigatorSelectedThreadKey(
+                project_id,
+                resolveNavigatorChatPath(project_id),
+              ) ?? ""
+            }`.trim(),
+            title: requestedTitle ?? "Navigator",
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            status: "active",
+            entrypoint: "global",
+          },
+          {
+            workspaceId: null,
+            workspaceOnly: false,
+          },
+        );
       }
       return true;
     } catch {

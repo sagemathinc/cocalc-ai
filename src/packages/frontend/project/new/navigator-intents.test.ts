@@ -175,6 +175,10 @@ describe("submitNavigatorPromptToCurrentThread", () => {
         thread_key: "thread-new",
         title: "Write a proof",
       }),
+      expect.objectContaining({
+        workspaceId: null,
+        workspaceOnly: false,
+      }),
     );
   });
 
@@ -281,6 +285,10 @@ describe("submitNavigatorPromptToCurrentThread", () => {
       expect.objectContaining({
         thread_key: preferredThreadKey,
         chat_path: workspaceChatPath,
+      }),
+      expect.objectContaining({
+        workspaceId: "ws-1",
+        workspaceOnly: true,
       }),
     );
   });
@@ -435,6 +443,84 @@ describe("submitNavigatorPromptToCurrentThread", () => {
         )}`,
       ),
     ).toBe("thread-first");
+    expect(mockOpenFloating).toHaveBeenCalledWith(
+      "00000000-1000-4000-8000-000000000000",
+      expect.objectContaining({
+        thread_key: "thread-first",
+      }),
+      expect.objectContaining({
+        workspaceId: "ws-2",
+        workspaceOnly: true,
+      }),
+    );
+  });
+
+  it("retries workspace chat resolution before falling back to the global navigator chat", async () => {
+    const workspaceChatPath =
+      "/home/wstein/.local/share/cocalc/workspaces/acct/ws-retry.chat";
+    mockEnsureWorkspaceChatForPath
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({
+        chat_path: workspaceChatPath,
+        assigned: false,
+        workspace: {
+          workspace_id: "ws-retry",
+          root_path: "/home/wstein/project/retry",
+          theme: {
+            title: "retry",
+            color: null,
+            accent_color: null,
+            icon: null,
+            image_blob: null,
+          },
+        },
+      });
+    mockListSessions.mockResolvedValue([]);
+    const sendChat = jest.fn(() => new Date().toISOString());
+    const createEmptyThread = jest.fn(() => "thread-retry");
+    const actions = {
+      syncdb: { get_state: () => "ready" },
+      messageCache: { getThreadIndex: () => new Map() },
+      sendChat,
+      createEmptyThread,
+      store: {
+        get: () => undefined,
+      },
+    };
+    mockGetChatActions.mockReturnValue(actions);
+    mockInitChat.mockReturnValue(actions);
+
+    const ok = await submitNavigatorPromptToCurrentThread({
+      project_id: "00000000-1000-4000-8000-000000000000",
+      path: "/home/wstein/project/retry/a.ipynb",
+      prompt: "Use the workspace thread after retry",
+      visiblePrompt: "Retry workspace routing",
+      title: "Retry workspace routing",
+      forceCodex: true,
+      openFloating: true,
+      codexConfig: { model: "gpt-5.4-mini" },
+    });
+
+    expect(ok).toBe(true);
+    expect(mockEnsureWorkspaceChatForPath).toHaveBeenCalledTimes(2);
+    expect(createEmptyThread).toHaveBeenCalled();
+    expect(sendChat).toHaveBeenCalledWith(
+      expect.objectContaining({
+        input: "Retry workspace routing",
+        reply_thread_id: "thread-retry",
+      }),
+    );
+    expect(mockOpenFloating).toHaveBeenCalledWith(
+      "00000000-1000-4000-8000-000000000000",
+      expect.objectContaining({
+        chat_path: workspaceChatPath,
+        thread_key: "thread-retry",
+      }),
+      expect.objectContaining({
+        workspaceId: "ws-retry",
+        workspaceOnly: true,
+      }),
+    );
   });
 
   it("keeps queued intents even when localStorage is unavailable", () => {
