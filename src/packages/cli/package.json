@@ -41,6 +41,10 @@
       "types": "./dist/api/text.d.ts",
       "default": "./dist/api/text.js"
     },
+    "./api/jupyter": {
+      "types": "./dist/api/jupyter.d.ts",
+      "default": "./dist/api/jupyter.js"
+    },
     "./api/timetravel": {
       "types": "./dist/api/timetravel.d.ts",
       "default": "./dist/api/timetravel.js"

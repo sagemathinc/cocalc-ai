@@ -835,7 +835,7 @@ export function ChatPanel({
       return [];
     }
     const records: AgentSessionRecord[] = [];
-    for (const thread of threads) {
+    for (const thread of [...threads, ...archivedThreads]) {
       if (!thread.isAI) continue;
       const threadId = normalizeThreadKey(thread.key);
       const metadata = actions.getThreadMetadata?.(thread.key, {
@@ -915,7 +915,15 @@ export function ChatPanel({
       });
     }
     return records;
-  }, [account_id, acpState, actions, path, project_id, threads]);
+  }, [
+    account_id,
+    acpState,
+    actions,
+    archivedThreads,
+    path,
+    project_id,
+    threads,
+  ]);
 
   useEffect(() => {
     if (!agentSessionRecords.length) return;

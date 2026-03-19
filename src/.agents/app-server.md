@@ -1,10 +1,14 @@
 # App Server and Extensible Secure Project Proxies (A1.4)
 
-Status: active implementation spec; partially completed as of March 5, 2026.
+Status: active implementation spec; materially further along as of March 17, 2026.
 
-TODO:
+Recent product note (March 17, 2026):
 
-- [ ] "Install with codex" is NOT robust yet. This is a separate problem though involving how the AI floating assistant panel works, and is out of scope of this plan.
+1. `Install with Codex` from the Apps UI is now good enough for real use on tested templates.
+2. New navigator threads created by install/audit handoff now get explicit titles instead of inheriting the full prompt body.
+3. When a template has curated install recipes, the prompt builder now biases Codex toward those recipes instead of anchoring on a generic one-line command.
+4. The built-in JupyterLab template now steers Codex to the tested Ubuntu `apt + pip` path, and that flow has been verified on fresh Launchpad projects.
+5. Remaining work is broader curated-template coverage, more install verification across images/templates, and snapshot/result-polish around the install flow.
 
 ## 1. Purpose
 
@@ -34,6 +38,7 @@ This should replace ad hoc per-app special cases over time.
 9. The main user-facing app surface now uses `Apps` / `Managed Applications`, with duplicate launcher UI removed from `+New`, the `+New` flyout, and the old top-row launcher area.
 10. Detection is split in the main UI between running HTTP-app discovery and installed-template discovery.
 11. The Apps page now has real operational controls: filter/search, bulk start/stop, row-local startup failures, and a direct `Audit with Codex` action.
+12. `Install with Codex` is implemented from the Apps UI, with preset-aware prompts, explicit new-thread titles, and stronger preference for curated install recipes when available.
 
 ### Partial
 
@@ -46,7 +51,7 @@ This should replace ad hoc per-app special cases over time.
 ### Not Done
 
 1. Finalized static-mode smoke matrix (lite + launchpad, large-file/static cache cases).
-2. "Install with agent" flow from app presets/management UI.
+2. Broader install coverage and post-install polish for `Install with Codex` across more templates/images.
 3. Broader template catalog and stronger embed/open integration polish.
 
 ## 2. Product Goals
@@ -282,6 +287,9 @@ Public exposure is explicit and reversible.
 1. Allow serving static paths from project via project-host.
 2. Respect safe path constraints.
 3. Optional aggressive caching headers for CDN cost control.
+4. Public CoCalc-document viewer mode must run on a dedicated public origin/subdomain, not the same origin as authenticated CoCalc.
+5. In public viewer mode, do not forward CoCalc cookies/tokens or expose authenticated project APIs.
+6. Public viewer renderers must be read-only and work from file content alone, with no RTC/backend dependency.
 
 ## 8. Wake-on-Demand Design
 
@@ -515,13 +523,14 @@ Suggested catalog shape:
         "strategy": "curated",
         "recipes": [
           {
-            "id": "ubuntu-apt",
+            "id": "ubuntu-apt-plus-pip",
             "match": { "os_family": ["debian", "ubuntu"] },
             "commands": [
               "apt-get update",
-              "apt-get install -y jupyterlab jupyter"
+              "apt-get install -y jupyter jupyter-notebook jupyter-server python3-jupyterlab-server python3-ipykernel python3-pip",
+              "python3 -m pip install --break-system-packages --ignore-installed jupyterlab"
             ],
-            "notes": "Preferred on maintained Ubuntu launchpad images."
+            "notes": "Preferred on maintained Ubuntu launchpad images because Ubuntu 24.04 does not ship a top-level jupyterlab apt package."
           }
         ]
       },
@@ -529,9 +538,9 @@ Suggested catalog shape:
         "preset_id": "jupyterlab"
       },
       "verify": {
-        "commands": ["jupyter lab --version"]
+        "commands": ["jupyter lab --version", "python3 -m jupyterlab --version"]
       },
-      "agent_prompt_seed": "Install JupyterLab systemwide if possible, snapshot first, then verify the launch command."
+      "agent_prompt_seed": "On the usual Ubuntu launchpad image, skip apt package discovery for jupyterlab itself and use the tested apt-plus-pip recipe directly unless the runtime is already installed."
     }
   ]
 }
@@ -567,8 +576,8 @@ Install strategy plan:
 3. Explicitly mark unsupported install methods in prompts and metadata:
    - no `snap` in launchpad/podman environments.
 4. Before agent-driven install:
-   - create a filesystem snapshot,
-   - record the snapshot name in the result message and logs.
+   - if the UI/user opted into a snapshot, create it before opening Codex,
+   - include the created snapshot name in the prompt/result rather than asking Codex to improvise snapshot handling.
 5. After install:
    - run the template verify commands,
    - then offer to instantiate the app spec.
@@ -1087,7 +1096,309 @@ Requirements:
 5. optional public mode with CDN edge caching.
 6. support "static-only app" without process launch (directory served directly by project-host).
 
-## 14.1 Activity-Driven Static Refresh Jobs
+## 14.1 Proposed CoCalc Public Viewer Mode
+
+This is a second static-serving mode aimed at CoCalc-native documents rather than generic HTML trees.
+
+Core idea:
+
+1. serve live files directly from a project path with no copy-to-bucket/publish step,
+2. ship a prebuilt public CoCalc viewer bundle to the browser,
+3. let the browser render supported CoCalc file types read-only from the raw file contents.
+
+This is complementary to globally cached publishing/share-server workflows:
+
+1. public viewer mode optimizes for immediacy and self-hosting,
+2. cached/share workflows optimize for durable public distribution and heavier edge caching.
+
+Important implementation constraint:
+
+1. the renderer path must be able to work without authenticated CoCalc API access or RTC,
+2. that is realistic because TimeTravel already renders static historical versions client-side, and the current share server already proves this for several document types,
+3. slides and whiteboards should be among the easier early targets because there is already precedent for read-only rendering.
+
+Requirements:
+
+1. serve live project files directly from disk so a newly saved file is immediately visible at the public URL,
+2. use a dedicated public origin/subdomain with no shared authenticated browser state,
+3. provide a prebuilt public viewer bundle that contains only the read-only rendering path needed for supported document types,
+4. never expose authenticated project APIs, collaboration state, or CoCalc credentials to the public viewer,
+5. keep rendering strictly read-only; no editing, no RTC, no authenticated actions,
+6. support the first useful set of file types:
+   - `.md`
+   - `.ipynb`
+   - `.slides`
+   - `.board`
+   - later `.chat` if the read-only renderer path is clean enough
+7. allow optional lightweight freshness features later:
+   - polling,
+   - `ETag` / `Last-Modified`,
+   - or explicit browser auto-refresh
+8. continue to allow normal CDN caching/Cloudflare caching in front of the public origin.
+
+Security boundary:
+
+1. separate origin/subdomain from the authenticated CoCalc app is mandatory,
+2. strip/ignore CoCalc cookies and auth tokens entirely,
+3. use a strict CSP and safe static response headers,
+4. treat file contents as untrusted input and keep document sanitization strong,
+5. prefer a narrower public-viewer bundle over the full authenticated CoCalc app when possible.
+
+Possible app-spec shape:
+
+```yaml
+kind: static
+id: public-course-notes
+title: Public Course Notes
+static:
+  root: /home/user/project/public
+  index: index.html
+  cache_control: public,max-age=300
+integration:
+  mode: cocalc-public-viewer
+  file_types: [".md", ".ipynb", ".slides", ".board"]
+  viewer_bundle: /opt/cocalc/share/public-viewer/index.html
+  auto_refresh_s: 0
+```
+
+Manifest/index format:
+
+To make this predictable for users, agents, and later import flows, the public viewer should support a machine-readable manifest alongside optional custom HTML.
+
+Recommended rule:
+
+1. `index.json` is the structured/public manifest format,
+2. `index.html` is an optional custom landing page,
+3. agents should target `index.json` first because it is deterministic and easier to validate,
+4. users may optionally add a custom `index.html` for richer branding/presentation.
+
+Suggested manifest shape:
+
+```json
+{
+  "version": 1,
+  "kind": "cocalc-public-viewer-index",
+  "title": "Course Notes",
+  "description": "Lectures, notebooks, and slides for Spring 2026.",
+  "theme": {
+    "layout": "cards",
+    "accent_color": "#1f5aa6"
+  },
+  "entries": [
+    {
+      "path": "week1/intro.ipynb",
+      "title": "Week 1: Introduction",
+      "description": "Notebook used in the first lecture.",
+      "type": "notebook",
+      "render": "viewer",
+      "order": 10,
+      "tags": ["week1", "lecture"]
+    },
+    {
+      "path": "slides/week1.slides",
+      "title": "Week 1 Slides",
+      "type": "slides",
+      "render": "viewer",
+      "order": 20
+    },
+    {
+      "path": "data/reference.pdf",
+      "title": "Reference PDF",
+      "type": "file",
+      "render": "raw",
+      "order": 30
+    }
+  ]
+}
+```
+
+Manifest semantics:
+
+1. `path` is relative to the configured static root,
+2. `type` is advisory metadata for UI/icon/render hints,
+3. `render` is explicit:
+   - `viewer` for supported read-only rendering,
+   - `raw` for direct download/open,
+   - `hidden` for manifest-known but not listed content,
+4. `order` controls stable presentation order,
+5. `title` and `description` allow agents/users to curate the public presentation without renaming files on disk,
+6. `tags` and theme metadata give a lightweight structured surface for richer generated indexes later.
+
+Route rules:
+
+1. If a directory contains `index.html`, serve it as the human landing page.
+2. If a directory contains `index.json`, the viewer bundle can render a generated listing/page from it.
+3. If both exist:
+   - `index.html` is the default human-facing route,
+   - `index.json` remains available for machine-readable access and import/preview workflows.
+4. For file requests:
+   - supported types with `render=viewer` open in the public viewer,
+   - `render=raw` uses direct/raw file serving,
+   - unsupported types should never fail ambiguously; they should either fall back to raw download or be omitted from the listing.
+5. Directory auto-enumeration should be off by default unless explicitly enabled by policy/spec; the safer default is manifest/index-driven presentation.
+
+Why this matters:
+
+1. users get a clear, customizable published surface,
+2. agents get a deterministic target they can generate and maintain,
+3. import/copy flows can reuse the same manifest for preview and structured directory transfer,
+4. admins get a more auditable surface than ad hoc directory crawling.
+
+Suggested MVP:
+
+1. begin with `.md`, `.ipynb`, `.slides`, and `.board`,
+2. make the route/file lookup rules simple and explicit,
+3. do not attempt live collaboration,
+4. add optional polling-based freshness only after the basic read-only viewer is solid,
+5. document clearly that this is immediate live-public viewing, not the same thing as durable exported publishing.
+
+Agent-assisted publishing flow:
+
+This should also have an explicit Codex-assisted workflow, analogous to `Install with Codex` for app templates.
+
+Product shape:
+
+1. add a button such as `Have Codex help publish this directory of files`,
+2. the action should launch a Codex turn with the directory path, current public-viewer/static-app context, and the manifest/index conventions,
+3. Codex should be able to:
+   - inspect the directory,
+   - decide what should be public,
+   - generate or refine `index.json`,
+   - optionally generate a nicer `index.html`,
+   - explain the result and any limitations,
+4. the working directory and prompt should be curated so the flow is deterministic enough for normal users, not just experts.
+
+Prompt quality requirement:
+
+1. treat this like `Install with Codex`:
+   - use a product-owned prompt,
+   - refine it until the flow is reliable,
+   - keep testing it against realistic publishing scenarios,
+2. the prompt should explicitly mention:
+   - supported file types,
+   - manifest/index rules,
+   - raw-download fallback behavior,
+   - read-only/no-RTC constraint,
+   - any relevant path or static-root assumptions.
+
+Authenticated import/copy flow:
+
+One important product goal for public viewer mode should be making it easy for a signed-in user to copy a public file or directory into their own project.
+
+Design shape:
+
+1. the public viewer may show a `Copy to my project` / `Open in CoCalc` action,
+2. that action should open the authenticated CoCalc app in a new tab/window with the public viewer URL encoded as input,
+3. the authenticated CoCalc side should then show:
+   - a warning/confirmation step,
+   - destination project picker,
+   - optional destination path,
+   - a preview of what will be copied when possible,
+4. the actual copy should happen only after explicit user confirmation on the authenticated side.
+
+Security/product constraints:
+
+1. treat this as an authenticated import flow, not a capability of the unauthenticated viewer itself,
+2. do not allow arbitrary remote-URL fetch/import; only accept canonical CoCalc public-viewer/share URLs on allowed hosts,
+3. parse the source URL into a structured CoCalc public source descriptor rather than blindly fetching raw user input,
+4. keep normal CSRF protections and explicit confirmation semantics on the authenticated import step,
+5. this should not require or expose auth to the public viewer page.
+
+Directory import:
+
+1. do not recursively scrape HTML listings,
+2. provide a machine-readable manifest endpoint and/or archive download endpoint for public directories,
+3. use that structured representation for preview, size checks, and import execution.
+
+This feature should be framed as a generic `Import from public CoCalc URL` capability that can work with public viewer mode now and cached/share-style public publishing later.
+
+Concrete milestone checklist:
+
+### Milestone 1: Security/contract freeze
+
+1. finalize the public-viewer security boundary:
+   - dedicated public origin/subdomain,
+   - no CoCalc auth/cookies/tokens,
+   - no project API or RTC access,
+   - strict CSP and static safety headers.
+2. finalize the MVP-supported file types:
+   - `.md`
+   - `.ipynb`
+   - `.slides`
+   - `.board`
+3. finalize route precedence:
+   - `index.html`
+   - `index.json`
+   - supported file rendering
+   - raw-download fallback
+   - no implicit directory crawling by default.
+4. finalize the allowed-host/canonical-URL rules for later public import.
+
+### Milestone 2: Schema and backend MVP
+
+1. add the app-spec/integration fields for `cocalc-public-viewer`,
+2. implement and validate the `index.json` schema,
+3. add project-host support for:
+   - serving the viewer bundle,
+   - resolving file and directory requests,
+   - manifest-aware route behavior,
+   - raw file fallback,
+   - safe static response headers.
+4. add basic logging/diagnostics for public-viewer requests and failures.
+
+### Milestone 3: Viewer bundle MVP
+
+1. build the read-only public viewer bundle,
+2. wire in the existing read-only renderers from TimeTravel/share paths where possible,
+3. verify end-to-end rendering for:
+   - markdown
+   - notebooks
+   - slides
+   - whiteboards
+4. verify unsupported files behave predictably:
+   - raw download/open,
+   - or omitted from manifest-driven listing.
+
+### Milestone 4: Import from public CoCalc URL
+
+1. add the authenticated import entrypoint in the main CoCalc app,
+2. support a public-viewer button:
+   - `Copy to my project`
+   - `Open in CoCalc`
+3. add destination project picker + optional destination path + confirmation step,
+4. implement canonical-URL validation and block arbitrary remote fetch/import,
+5. add structured directory import using:
+   - manifest endpoint and/or
+   - archive download endpoint,
+6. add preview/size checks before executing the copy.
+
+### Milestone 5: Codex-assisted publishing
+
+1. add `Have Codex help publish this directory of files`,
+2. launch Codex with:
+   - directory path,
+   - public-viewer context,
+   - manifest/index rules,
+   - supported file types,
+   - read-only/public constraints,
+3. make the prompt product-owned and curated,
+4. test and refine it against realistic scenarios until it is reliable:
+   - directory of notebooks,
+   - mixed notebook/slides/markdown course site,
+   - raw-download fallback cases,
+   - custom `index.html` generation.
+
+### Milestone 6: Validation and rollout
+
+1. perform a focused XSS/origin-isolation audit,
+2. test CDN/static caching behavior,
+3. test large-file/range-request behavior,
+4. run repeatable renderer smoke tests for the MVP file types,
+5. run repeatable public-import tests,
+6. run repeatable Codex publishing tests,
+7. expose first as an opt-in alpha feature before broader rollout.
+
+## 14.2 Activity-Driven Static Refresh Jobs
 
 Support optional static refresh commands so generated/static artifacts can be kept fresh without wasting compute.
 
@@ -1112,7 +1423,7 @@ Not yet implemented:
 1. Running refresh in a dedicated sandbox-ephemeral container mode (current implementation runs in the project runtime).
 2. Advanced policies (e.g., periodic windows with traffic thresholds, queued warm/cold precompute strategies).
 
-## 14.2 Cost and Policy Guardrails
+## 14.3 Cost and Policy Guardrails
 
 Guardrails should be host-aware and practical, not generic.
 
@@ -1176,7 +1487,7 @@ Existing components to reuse where possible:
 1. complete CLI surface (`detect`, `audit`, `expose`, `unexpose`, `logs`)
 2. agent-ready workflows and prompts for app lifecycle
 3. end-to-end tests for agent-driven startup/exposure/recovery
-4. add UI handoff actions for "install this server/app with agent" (preset-aware prompts)
+4. expand and polish the existing `Install with Codex` / `Audit with Codex` UI handoff actions
 
 ### Phase 3: UI Expansion (after backend confidence) (Status: not started)
 
@@ -1227,7 +1538,7 @@ Existing components to reuse where possible:
 14. `[done]` Split detection into running-HTTP discovery vs installed-template discovery.
 15. `[done]` Add filter/search plus bulk actions (`start all`, `stop all`, later selection-based actions).
 16. `[done]` Move startup errors/logs/actions to the corresponding app row/card instead of global top-of-page alerts.
-17. `[todo]` Add "Install with agent" from app presets and app rows (with suggested install prompts and post-install verification/start).
+17. `[partial]` Add "Install with Codex" from app presets and app rows (implemented with template-aware prompts and explicit thread titles; broader template coverage, snapshot polish, and post-install automation are still pending).
 18. `[todo]` Add SSH port-forward fallback in CLI + UI for non-proxy-compatible apps.
 19. `[todo]` Audit managed-app XSS exposure specifically for CoCalc credentials/session material (cookie stripping, project-host session scope, private same-origin app behavior, static HTML assumptions).
 20. `[partial]` Add app portability workflows:
@@ -1237,6 +1548,7 @@ Existing components to reuse where possible:
    - frontend download/upload/"copy to another project" UX still pending.
 
 21. `[todo]` Add scoped per-app metrics in project-host and surface them in CLI/UI.
+22. `[todo]` Add `Have Codex help publish this directory of files` for public viewer/static mode, backed by a curated product-owned prompt and repeated testing until the publishing flow is reliable.
 
 ## 19.1 Next Execution Order
 

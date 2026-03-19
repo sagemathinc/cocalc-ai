@@ -28,7 +28,7 @@ This proxy gets typically exposed externally via the proxy in
 import * as http from "node:http";
 import type express from "express";
 import { createReadStream } from "node:fs";
-import { stat } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import * as path from "node:path";
 import httpProxy from "http-proxy-3";
 import { getLogger } from "@cocalc/project/logger";
@@ -53,6 +53,13 @@ import {
 } from "@cocalc/backend/auth/app-proxy";
 import listen from "@cocalc/backend/misc/async-server-listen";
 import { resolveProxyListenPort } from "./config";
+import {
+  COCALC_PUBLIC_VIEWER_MODE,
+  parsePublicViewerManifest,
+  type AppStaticIntegrationSpec,
+  type PublicViewerManifest,
+  type PublicViewerManifestEntry,
+} from "../../app-servers/public-viewer";
 
 const logger = getLogger("project:servers:proxy");
 const STATIC_CACHE_CONTROL_DEFAULT = "public, max-age=300";
@@ -60,10 +67,14 @@ const STATIC_CACHE_CONTROL_DEFAULT = "public, max-age=300";
 const MIME_BY_EXT: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
   ".htm": "text/html; charset=utf-8",
+  ".md": "text/markdown; charset=utf-8",
   ".css": "text/css; charset=utf-8",
   ".js": "application/javascript; charset=utf-8",
   ".mjs": "application/javascript; charset=utf-8",
   ".json": "application/json; charset=utf-8",
+  ".ipynb": "application/json; charset=utf-8",
+  ".slides": "application/json; charset=utf-8",
+  ".board": "application/json; charset=utf-8",
   ".txt": "text/plain; charset=utf-8",
   ".svg": "image/svg+xml",
   ".png": "image/png",
@@ -79,6 +90,13 @@ const MIME_BY_EXT: Record<string, string> = {
 type StaticResolvedFile = {
   absolutePath: string;
   stat: { size: number; mtimeMs: number };
+};
+
+type StaticResolvedPath = {
+  rootAbs: string;
+  relativePath: string;
+  absolutePath: string;
+  stat?: Awaited<ReturnType<typeof stat>>;
 };
 
 type AppMetricsContext = {
@@ -353,6 +371,75 @@ function createProxyResolver({
   const proxyPattern = buildPattern(base, "proxy");
   const portPattern = buildPattern(base, "port");
 
+  const resolveStaticPath = async ({
+    root,
+    requestPath,
+  }: {
+    root: string;
+    requestPath: string;
+  }): Promise<StaticResolvedPath | undefined> => {
+    const rootAbs = path.resolve(root);
+    const parsed = new URL(requestPath, "http://project.local");
+    let relative = decodeURIComponent(parsed.pathname || "/");
+    if (!relative.startsWith("/")) {
+      relative = `/${relative}`;
+    }
+    const wanted = relative === "/" ? "" : relative.slice(1);
+    const candidate = path.resolve(rootAbs, wanted);
+    if (
+      !(candidate === rootAbs || candidate.startsWith(`${rootAbs}${path.sep}`))
+    ) {
+      return;
+    }
+
+    let info: StaticResolvedPath["stat"] | undefined;
+    try {
+      info = await stat(candidate);
+    } catch {
+      info = undefined;
+    }
+
+    return {
+      rootAbs,
+      relativePath: relative,
+      absolutePath: candidate,
+      stat: info,
+    };
+  };
+
+  const resolveStaticChildFile = async ({
+    rootAbs,
+    directory,
+    child,
+  }: {
+    rootAbs: string;
+    directory: string;
+    child: string;
+  }): Promise<StaticResolvedFile | undefined> => {
+    const candidate = path.resolve(directory, child.replace(/^\/+/, ""));
+    if (
+      !(candidate === rootAbs || candidate.startsWith(`${rootAbs}${path.sep}`))
+    ) {
+      return;
+    }
+    let info: StaticResolvedPath["stat"] | undefined;
+    try {
+      info = await stat(candidate);
+    } catch {
+      info = undefined;
+    }
+    if (!info?.isFile()) {
+      return;
+    }
+    return {
+      absolutePath: candidate,
+      stat: {
+        size: Number(info.size),
+        mtimeMs: Number(info.mtimeMs),
+      },
+    };
+  };
+
   const resolveStaticFile = async ({
     root,
     index,
@@ -362,42 +449,18 @@ function createProxyResolver({
     index?: string;
     requestPath: string;
   }): Promise<StaticResolvedFile | undefined> => {
-    const rootAbs = path.resolve(root);
-    const parsed = new URL(requestPath, "http://project.local");
-    let relative = decodeURIComponent(parsed.pathname || "/");
-    if (!relative.startsWith("/")) {
-      relative = `/${relative}`;
-    }
-    const wanted = relative === "/" ? "" : relative.slice(1);
-    let candidate = path.resolve(rootAbs, wanted);
-    if (
-      !(candidate === rootAbs || candidate.startsWith(`${rootAbs}${path.sep}`))
-    ) {
+    const resolvedPath = await resolveStaticPath({ root, requestPath });
+    if (!resolvedPath) {
       return;
     }
-
-    let info;
-    try {
-      info = await stat(candidate);
-    } catch {
-      info = undefined;
-    }
+    const { rootAbs, absolutePath, stat: info } = resolvedPath;
 
     if (info?.isDirectory()) {
-      const indexName = (index || "index.html").replace(/^\/+/, "");
-      candidate = path.resolve(candidate, indexName);
-      if (
-        !(
-          candidate === rootAbs || candidate.startsWith(`${rootAbs}${path.sep}`)
-        )
-      ) {
-        return;
-      }
-      try {
-        info = await stat(candidate);
-      } catch {
-        info = undefined;
-      }
+      return await resolveStaticChildFile({
+        rootAbs,
+        directory: absolutePath,
+        child: index || "index.html",
+      });
     }
 
     if (!info?.isFile()) {
@@ -405,35 +468,258 @@ function createProxyResolver({
     }
 
     return {
-      absolutePath: candidate,
+      absolutePath,
       stat: {
-        size: info.size,
-        mtimeMs: info.mtimeMs,
+        size: Number(info.size),
+        mtimeMs: Number(info.mtimeMs),
       },
     };
   };
 
-  const writeStaticResponse = async ({
+  function escapeHtml(value: string): string {
+    return value
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  function encodeUrlPath(relativePath: string): string {
+    return relativePath
+      .split("/")
+      .map((segment) => encodeURIComponent(segment))
+      .join("/");
+  }
+
+  function relativeUrlFromDirectory(
+    directoryRelativePath: string,
+    targetPath: string,
+  ): string {
+    const currentDir = directoryRelativePath
+      .replace(/^\/+/, "")
+      .replace(/\/+$/, "");
+    const rel = path.posix.relative(currentDir, targetPath);
+    const normalized =
+      rel && rel !== "" ? rel : path.posix.basename(targetPath);
+    return encodeUrlPath(normalized);
+  }
+
+  function sortPublicViewerEntries(
+    left: PublicViewerManifestEntry,
+    right: PublicViewerManifestEntry,
+  ): number {
+    const leftOrder = left.order ?? Number.MAX_SAFE_INTEGER;
+    const rightOrder = right.order ?? Number.MAX_SAFE_INTEGER;
+    if (leftOrder !== rightOrder) return leftOrder - rightOrder;
+    const leftTitle = `${left.title ?? left.path}`.toLowerCase();
+    const rightTitle = `${right.title ?? right.path}`.toLowerCase();
+    return leftTitle.localeCompare(rightTitle);
+  }
+
+  function renderPublicViewerManifestPage({
+    manifest,
+    manifestPath,
+    directoryRelativePath,
+  }: {
+    manifest: PublicViewerManifest;
+    manifestPath: string;
+    directoryRelativePath: string;
+  }): string {
+    const title = manifest.title || "CoCalc Public Viewer";
+    const description =
+      manifest.description ||
+      "Read-only manifest-driven listing for CoCalc public files.";
+    const accent = manifest.theme?.accent_color || "#1f5aa6";
+    const entries = [...manifest.entries]
+      .filter((entry) => entry.render !== "hidden")
+      .sort(sortPublicViewerEntries)
+      .map((entry) => {
+        const href = relativeUrlFromDirectory(
+          directoryRelativePath,
+          entry.path,
+        );
+        const tags = (entry.tags ?? [])
+          .map((tag) => `<span class="tag">${escapeHtml(`${tag}`)}</span>`)
+          .join("");
+        const mode = entry.render === "viewer" ? "viewer planned" : "raw file";
+        return `<li class="entry">
+  <a class="entry-link" href="${escapeHtml(href)}">
+    <span class="entry-title">${escapeHtml(entry.title || entry.path)}</span>
+    <span class="entry-meta">${escapeHtml(entry.type || "file")} · ${escapeHtml(mode)}</span>
+  </a>
+  ${
+    entry.description
+      ? `<p class="entry-description">${escapeHtml(entry.description)}</p>`
+      : ""
+  }
+  <div class="entry-footer">
+    <code>${escapeHtml(entry.path)}</code>
+    <span class="tags">${tags}</span>
+  </div>
+</li>`;
+      })
+      .join("\n");
+    return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>${escapeHtml(title)}</title>
+  <meta name="description" content="${escapeHtml(description)}" />
+  <style>
+    :root {
+      --accent: ${escapeHtml(accent)};
+      --accent-soft: color-mix(in srgb, var(--accent) 14%, white);
+      --border: #d5dce8;
+      --text: #142235;
+      --muted: #5c6c82;
+      --surface: #f7f9fc;
+      --card: #ffffff;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(circle at top, rgba(31,90,166,0.10), transparent 30%),
+        linear-gradient(180deg, #fbfcfe 0%, #eef3f9 100%);
+    }
+    main {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 48px 24px 64px;
+    }
+    header {
+      margin-bottom: 28px;
+    }
+    h1 {
+      margin: 0 0 12px;
+      font-size: clamp(2rem, 4vw, 3rem);
+      line-height: 1.02;
+    }
+    .description {
+      margin: 0;
+      color: var(--muted);
+      font-size: 1.05rem;
+      max-width: 58rem;
+    }
+    .manifest-link {
+      display: inline-flex;
+      margin-top: 16px;
+      color: var(--accent);
+      text-decoration: none;
+      font-weight: 600;
+    }
+    ul {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      display: grid;
+      gap: 14px;
+    }
+    .entry {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 18px 20px;
+      box-shadow: 0 12px 30px rgba(20,34,53,0.06);
+    }
+    .entry-link {
+      color: inherit;
+      text-decoration: none;
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      align-items: baseline;
+    }
+    .entry-title {
+      font-size: 1.1rem;
+      font-weight: 700;
+    }
+    .entry-meta {
+      color: var(--muted);
+      font-size: 0.95rem;
+      text-transform: lowercase;
+      white-space: nowrap;
+    }
+    .entry-description {
+      margin: 10px 0 0;
+      color: var(--muted);
+    }
+    .entry-footer {
+      margin-top: 12px;
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    code {
+      padding: 4px 8px;
+      border-radius: 999px;
+      background: var(--surface);
+      color: var(--accent);
+    }
+    .tags {
+      display: inline-flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .tag {
+      border-radius: 999px;
+      padding: 4px 10px;
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-size: 0.85rem;
+      font-weight: 600;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>${escapeHtml(title)}</h1>
+      <p class="description">${escapeHtml(description)}</p>
+      <a class="manifest-link" href="${escapeHtml(relativeUrlFromDirectory(directoryRelativePath, manifestPath))}">Open manifest JSON</a>
+    </header>
+    <ul>
+${entries}
+    </ul>
+  </main>
+</body>
+</html>`;
+  }
+
+  function buildPublicViewerHeaders(
+    exposureMode: AppProxyExposureMode,
+  ): Record<string, string> {
+    const headers: Record<string, string> = {
+      "X-Content-Type-Options": "nosniff",
+      "Referrer-Policy": "no-referrer",
+    };
+    if (exposureMode === "public") {
+      headers["Content-Security-Policy"] =
+        "default-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'; frame-ancestors 'none'; img-src 'self' data: blob:; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self'";
+      headers["Cross-Origin-Resource-Policy"] = "same-origin";
+      headers["Cross-Origin-Opener-Policy"] = "same-origin";
+    }
+    return headers;
+  }
+
+  const writeResolvedStaticFile = async ({
     req,
     res,
-    root,
-    index,
+    resolved,
     cache_control,
-    requestPath,
+    extraHeaders,
   }: {
     req: http.IncomingMessage;
     res: http.ServerResponse;
-    root: string;
-    index?: string;
+    resolved: StaticResolvedFile;
     cache_control?: string;
-    requestPath: string;
+    extraHeaders?: Record<string, string>;
   }) => {
-    const resolved = await resolveStaticFile({ root, index, requestPath });
-    if (!resolved) {
-      res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
-      res.end("Not found\n");
-      return;
-    }
     const { absolutePath, stat: info } = resolved;
     const ext = path.extname(absolutePath).toLowerCase();
     const contentType = MIME_BY_EXT[ext] ?? "application/octet-stream";
@@ -473,6 +759,7 @@ function createProxyResolver({
       "Accept-Ranges": "bytes",
       "Last-Modified": new Date(info.mtimeMs).toUTCString(),
       "Content-Length": contentLength,
+      ...(extraHeaders ?? {}),
     };
     if (partial) {
       headers["Content-Range"] = `bytes ${start}-${end}/${info.size}`;
@@ -490,6 +777,204 @@ function createProxyResolver({
       }
     });
     stream.pipe(res);
+  };
+
+  const writeStaticHtmlResponse = ({
+    req,
+    res,
+    html,
+    cache_control,
+    mtimeMs,
+    extraHeaders,
+  }: {
+    req: http.IncomingMessage;
+    res: http.ServerResponse;
+    html: string;
+    cache_control?: string;
+    mtimeMs?: number;
+    extraHeaders?: Record<string, string>;
+  }) => {
+    const body = Buffer.from(html, "utf8");
+    const headers: Record<string, string | number> = {
+      "Content-Type": "text/html; charset=utf-8",
+      "Cache-Control": cache_control || STATIC_CACHE_CONTROL_DEFAULT,
+      "Content-Length": body.byteLength,
+      ...(extraHeaders ?? {}),
+    };
+    if (mtimeMs != null) {
+      headers["Last-Modified"] = new Date(mtimeMs).toUTCString();
+    }
+    res.writeHead(200, headers);
+    if (req.method === "HEAD") {
+      res.end();
+      return;
+    }
+    res.end(body);
+  };
+
+  const writePublicViewerResponse = async ({
+    req,
+    res,
+    root,
+    index,
+    cache_control,
+    requestPath,
+    integration,
+    exposureMode,
+  }: {
+    req: http.IncomingMessage;
+    res: http.ServerResponse;
+    root: string;
+    index?: string;
+    cache_control?: string;
+    requestPath: string;
+    integration: AppStaticIntegrationSpec;
+    exposureMode: AppProxyExposureMode;
+  }) => {
+    const extraHeaders = buildPublicViewerHeaders(exposureMode);
+    const pathInfo = await resolveStaticPath({ root, requestPath });
+    if (!pathInfo) {
+      res.writeHead(404, {
+        "Content-Type": "text/plain; charset=utf-8",
+        ...extraHeaders,
+      });
+      res.end("Not found\n");
+      return;
+    }
+    if (pathInfo.stat?.isFile()) {
+      await writeResolvedStaticFile({
+        req,
+        res,
+        resolved: {
+          absolutePath: pathInfo.absolutePath,
+          stat: {
+            size: Number(pathInfo.stat.size),
+            mtimeMs: Number(pathInfo.stat.mtimeMs),
+          },
+        },
+        cache_control,
+        extraHeaders,
+      });
+      return;
+    }
+    if (!pathInfo.stat?.isDirectory()) {
+      res.writeHead(404, {
+        "Content-Type": "text/plain; charset=utf-8",
+        ...extraHeaders,
+      });
+      res.end("Not found\n");
+      return;
+    }
+    const indexFile = await resolveStaticChildFile({
+      rootAbs: pathInfo.rootAbs,
+      directory: pathInfo.absolutePath,
+      child: index || "index.html",
+    });
+    if (indexFile) {
+      await writeResolvedStaticFile({
+        req,
+        res,
+        resolved: indexFile,
+        cache_control,
+        extraHeaders,
+      });
+      return;
+    }
+    if (
+      integration.mode !== COCALC_PUBLIC_VIEWER_MODE ||
+      integration.directory_listing !== "manifest-only"
+    ) {
+      res.writeHead(404, {
+        "Content-Type": "text/plain; charset=utf-8",
+        ...extraHeaders,
+      });
+      res.end("Not found\n");
+      return;
+    }
+    const manifestFile = await resolveStaticChildFile({
+      rootAbs: pathInfo.rootAbs,
+      directory: pathInfo.absolutePath,
+      child: integration.manifest,
+    });
+    if (!manifestFile) {
+      res.writeHead(404, {
+        "Content-Type": "text/plain; charset=utf-8",
+        ...extraHeaders,
+      });
+      res.end("Not found\n");
+      return;
+    }
+    try {
+      const manifestRaw = await readFile(manifestFile.absolutePath, "utf8");
+      const manifest = parsePublicViewerManifest(manifestRaw, {
+        file_types: integration.file_types,
+      });
+      const html = renderPublicViewerManifestPage({
+        manifest,
+        manifestPath: integration.manifest,
+        directoryRelativePath: pathInfo.relativePath,
+      });
+      writeStaticHtmlResponse({
+        req,
+        res,
+        html,
+        cache_control,
+        mtimeMs: manifestFile.stat.mtimeMs,
+        extraHeaders,
+      });
+    } catch (err) {
+      logger.warn("public viewer manifest error", {
+        err: `${err}`,
+        manifest: manifestFile.absolutePath,
+        requestPath,
+      });
+      res.writeHead(500, {
+        "Content-Type": "text/plain; charset=utf-8",
+        ...extraHeaders,
+      });
+      res.end("Invalid public viewer manifest\n");
+    }
+  };
+
+  const writeStaticResponse = async ({
+    req,
+    res,
+    root,
+    index,
+    cache_control,
+    requestPath,
+    integration,
+    exposureMode,
+  }: {
+    req: http.IncomingMessage;
+    res: http.ServerResponse;
+    root: string;
+    index?: string;
+    cache_control?: string;
+    requestPath: string;
+    integration?: AppStaticIntegrationSpec;
+    exposureMode: AppProxyExposureMode;
+  }) => {
+    if (integration?.mode === COCALC_PUBLIC_VIEWER_MODE) {
+      await writePublicViewerResponse({
+        req,
+        res,
+        root,
+        index,
+        cache_control,
+        requestPath,
+        integration,
+        exposureMode,
+      });
+      return;
+    }
+    const resolved = await resolveStaticFile({ root, index, requestPath });
+    if (!resolved) {
+      res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end("Not found\n");
+      return;
+    }
+    await writeResolvedStaticFile({ req, res, resolved, cache_control });
   };
 
   async function getTarget(
@@ -557,6 +1042,8 @@ function createProxyResolver({
           index: appTarget.index,
           cache_control: appTarget.cache_control,
           requestPath: appTarget.rewritePath,
+          integration: appTarget.integration,
+          exposureMode: getExposureMode(req),
         });
         return undefined;
       }

@@ -36,5 +36,9 @@
     "@nebius/js-sdk": "^0.1.22",
     "awaiting": "^3.0.0",
     "axios": "^1.13.5"
+  },
+  "devDependencies": {
+    "@types/jest": "^30.0.0",
+    "@types/node": "^22.10.10"
   }
 }

@@ -1,5 +1,15 @@
 # Codex Output Rewrite Plan
 
+## Status
+
+DONE except for:
+
+- final Phase 8 budget enforcement / end-to-end automated commit-budget checks
+- the last small patchflow trim from roughly `7` simple-turn commits toward the original `<= 6` target
+- explicit automated coverage for reload-during-run, reload-after-completion, and loop/schedule paths
+
+The architectural rewrite itself is complete: live Codex output is now DKV/ACP-log driven, `.chat` patchflow churn is bounded instead of per-token, and interrupt/reload/live-output behavior is substantially hardened.
+
 ## Problem
 
 Current ACP/Codex chat output mixes two very different concerns:
@@ -348,4 +358,3 @@ The rewrite should be explicit:
 - live turn rendering becomes intentionally DKV-driven
 
 That is the point of the change.
-

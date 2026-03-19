@@ -14,6 +14,7 @@ import { registerProjectOpsCommands } from "./project/ops";
 import { registerProjectBasicCommands } from "./project/basic";
 import { registerProjectAppCommands } from "./project/app";
 import { registerProjectChatCommands } from "./project/chat";
+import { registerProjectJupyterCommands } from "./project/jupyter";
 
 export type ProjectCommandDeps = {
   withContext: any;
@@ -108,6 +109,8 @@ export type ProjectCommandDeps = {
   buildCookieHeader: any;
   PROJECT_HOST_HTTP_AUTH_QUERY_PARAM: string;
   resolveProjectProjectApi: any;
+  projectJupyterCellsData: any;
+  projectJupyterRunSession: any;
 };
 
 export function registerProjectCommand(
@@ -121,6 +124,7 @@ export function registerProjectCommand(
   registerProjectSyncCommands(project, deps);
   registerProjectCodexCommands(project, deps);
   registerProjectChatCommands(project, deps);
+  registerProjectJupyterCommands(project, deps);
   registerProjectCollabCommands(project, deps);
   registerProjectFileCommands(project, deps);
   registerProjectLifecycleCommands(project, deps);

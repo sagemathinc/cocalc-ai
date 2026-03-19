@@ -76,6 +76,7 @@ import {
 import { createProjectFileOps } from "./core/project-file";
 import { createProjectCodexOps } from "./core/project-codex";
 import { createProjectChatOps } from "./core/project-chat";
+import { createProjectJupyterOps } from "./core/project-jupyter";
 import { createProjectSyncOps as createProjectSyncOps } from "./core/project-sync";
 import { createProjectTasksOps } from "./core/project-tasks";
 import {
@@ -1595,6 +1596,11 @@ const {
   resolveProjectConatClient,
 });
 
+const { projectJupyterCellsData, projectJupyterRunSession } =
+  createProjectJupyterOps<CommandContext, ProjectRow>({
+    resolveProjectConatClient,
+  });
+
 const {
   expandUserPath,
   normalizeSyncKeyBasePath,
@@ -2104,6 +2110,8 @@ const projectCommandDeps = {
   projectChatLoopSetData,
   projectChatLoopClearData,
   projectChatAutomationData,
+  projectJupyterCellsData,
+  projectJupyterRunSession,
   normalizeUserSearchName,
   resolveAccountByIdentifier,
   serializeInviteRow,

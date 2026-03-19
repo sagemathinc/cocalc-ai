@@ -13,6 +13,13 @@ import {
 import { EventIterator } from "@cocalc/util/event-iterator";
 import { getLogger } from "@cocalc/conat/client";
 import { Throttle } from "@cocalc/util/throttle";
+import {
+  jupyterLiveRunKey,
+  openJupyterLiveRunStore,
+  jupyterLiveRunSubject,
+  type JupyterLiveRunBatch,
+  type JupyterLiveRunSnapshot,
+} from "@cocalc/conat/project/jupyter/live-run";
 const MAX_MSGS_PER_SECOND = parseInt(
   process.env.COCALC_JUPYTER_MAX_MSGS_PER_SECOND ?? "20",
 );
@@ -25,6 +32,7 @@ const SOCKET_KEEP_ALIVE_TIMEOUT = parsePositiveInt(
   10_000,
 );
 const logger = getLogger("conat:project:jupyter:run-code");
+const LIVE_RUN_REPLAY_GRACE_MS = 60_000;
 
 function getSubject({ project_id }: { project_id: string }) {
   return `jupyter.project-${project_id}.0`;
@@ -137,6 +145,23 @@ function isCoalescableStreamMessage(mesg: OutputMessage | undefined): boolean {
   return true;
 }
 
+function cloneOutputMessage(mesg: OutputMessage): OutputMessage {
+  const content =
+    mesg.content != null && typeof mesg.content === "object"
+      ? { ...mesg.content }
+      : mesg.content;
+  const metadata =
+    mesg.metadata != null && typeof mesg.metadata === "object"
+      ? { ...mesg.metadata }
+      : mesg.metadata;
+  return {
+    ...mesg,
+    content,
+    metadata,
+    buffers: Array.isArray(mesg.buffers) ? [...mesg.buffers] : mesg.buffers,
+  };
+}
+
 function appendOutputMessage(
   output: OutputMessage[],
   mesg: OutputMessage,
@@ -152,7 +177,7 @@ function appendOutputMessage(
     prev.content.text += mesg.content.text;
     return false;
   }
-  output.push(mesg);
+  output.push(cloneOutputMessage(mesg));
   return true;
 }
 
@@ -203,12 +228,14 @@ export function jupyterServer({
   // as a fallback in case the client that initiated running cells is
   // disconnected, so output won't be lost.
   outputHandler,
+  mirrorOutputHandler = false,
   getKernelStatus,
 }: {
   client: ConatClient;
   project_id: string;
   run: JupyterCodeRunner;
   outputHandler?: CreateOutputHandler;
+  mirrorOutputHandler?: boolean;
   getKernelStatus: (opts: { path: string }) => Promise<{
     backend_state:
       | "failed"
@@ -260,10 +287,13 @@ export function jupyterServer({
             socket_id: socket.id,
           });
           await handleRequest({
+            client,
+            project_id,
             run_id,
             socket,
             run,
             outputHandler,
+            mirrorOutputHandler,
             path,
             cells,
             noHalt,
@@ -300,10 +330,13 @@ export function jupyterServer({
 }
 
 async function handleRequest({
+  client,
+  project_id,
   run_id,
   socket,
   run,
   outputHandler,
+  mirrorOutputHandler,
   path,
   cells,
   noHalt,
@@ -321,12 +354,24 @@ async function handleRequest({
   let moreOutputBuffered = 0;
   let summaryError: string | undefined;
   let firstClientBatchFastLane = false;
+  let socketClosedDuringRun = false;
+  const liveRunSubject = jupyterLiveRunSubject({ project_id, path });
+  const liveRunStore = await openJupyterLiveRunStore({ client, project_id });
+  const liveRunKey = jupyterLiveRunKey({ path, run_id });
   const runner = await run({ path, cells, noHalt, socket, run_id });
   const output: OutputMessage[] = [];
   let outputVisibleCount = 0;
+  let batchSeq = 0;
+  let liveRunSnapshot: JupyterLiveRunSnapshot = {
+    path,
+    run_id,
+    batches: [],
+    updated_at_ms: Date.now(),
+  };
   for (const cell of cells) {
     moreOutput[cell.id] = [];
   }
+  liveRunStore.set(liveRunKey, liveRunSnapshot);
   logger.debug(
     `handleRequest to evaluate ${cells.length} cells with limit=${limit} for path=${path}`,
   );
@@ -334,6 +379,39 @@ async function handleRequest({
   const throttle = new Throttle<OutputMessage>(MAX_MSGS_PER_SECOND);
   let unhandledClientWriteError: any = undefined;
   let writeQueue: Promise<void> = Promise.resolve();
+  let livePublishQueue: Promise<void> = Promise.resolve();
+  const writeLiveRunSnapshot = (opts?: { done?: boolean }) => {
+    liveRunSnapshot = {
+      ...liveRunSnapshot,
+      updated_at_ms: Date.now(),
+      done: opts?.done ?? liveRunSnapshot.done,
+    };
+    liveRunStore.set(liveRunKey, liveRunSnapshot);
+  };
+  const publishLiveBatch = (mesgs: OutputMessage[]) => {
+    if (mesgs.length == 0) {
+      return;
+    }
+    const batch: JupyterLiveRunBatch = {
+      path,
+      run_id,
+      seq: ++batchSeq,
+      id: `${run_id}:${batchSeq}`,
+      mesgs,
+      sent_at_ms: Date.now(),
+    };
+    liveRunSnapshot = {
+      ...liveRunSnapshot,
+      batches: [...liveRunSnapshot.batches, batch],
+      updated_at_ms: batch.sent_at_ms,
+      done: false,
+    };
+    liveRunStore.set(liveRunKey, liveRunSnapshot);
+    livePublishQueue = livePublishQueue.then(async () => {
+      await client.publish(liveRunSubject, batch);
+    });
+    return livePublishQueue;
+  };
   const writeBatchToClient = async (
     mesgs: OutputMessage[],
     opts?: { fastLane?: boolean },
@@ -343,6 +421,10 @@ async function handleRequest({
     }
     totalBatches += 1;
     const coalescedMesgs = coalesceOutputBatch(mesgs);
+    void publishLiveBatch(coalescedMesgs);
+    if (socket.state == "closed") {
+      return;
+    }
     try {
       socket.write(coalescedMesgs);
       if (opts?.fastLane) {
@@ -374,12 +456,94 @@ async function handleRequest({
   throttle.on("data", (mesgs) => {
     void enqueueWriteBatch(mesgs);
   });
+  const handleVisibleMesg = async (mesg: OutputMessage) => {
+    if (socket.state != "closed" && unhandledClientWriteError) {
+      throw unhandledClientWriteError;
+    }
+    const wasAppended = appendOutputMessage(output, mesg);
+    if (isLifecycleMessage(mesg)) {
+      const lifecycle = getLifecycleType(mesg);
+      if (lifecycle == "cell_done" || lifecycle == "run_done") {
+        // Keep completion lifecycle in the same throttled stream as output
+        // so done events cannot overtake buffered output.
+        throttle.write(mesg);
+        return;
+      }
+      await enqueueWriteBatch([mesg], { fastLane: totalBatches == 0 });
+      return;
+    }
+    if (wasAppended) {
+      outputVisibleCount += 1;
+    }
+    if (typeof mesg.id != "string") {
+      return;
+    }
+    if (limit == null || outputVisibleCount < limit) {
+      if (totalBatches == 0) {
+        // Fast-lane the very first output batch for lower latency.
+        // We keep existing throttling for all subsequent output.
+        await enqueueWriteBatch([mesg], { fastLane: true });
+      } else {
+        throttle.write(mesg);
+      }
+    } else {
+      if (outputVisibleCount == limit) {
+        throttle.write({
+          id: mesg.id,
+          run_id,
+          more_output: true,
+        });
+        moreOutput[mesg.id] = [];
+      }
+      if (moreOutput[mesg.id] == null) {
+        moreOutput[mesg.id] = [];
+      }
+      appendOutputMessage(moreOutput[mesg.id], mesg);
+      moreOutputBuffered += 1;
+    }
+  };
 
   try {
-    let handler: OutputHandler | null = null;
-    let process: ((mesg: OutputMessage) => void) | null = null;
-    let fallbackOutputCount = 0;
-    let fallbackMoreOutputMode = false;
+    let backendHandler: OutputHandler | null = null;
+    let outputProcess: ((mesg: OutputMessage) => void) | null = null;
+    const ensureHandler = () => {
+      if (backendHandler != null && outputProcess != null) {
+        return;
+      }
+      if (outputHandler == null) {
+        throw Error("no output handler available");
+      }
+      backendHandler = outputHandler({ path, cells });
+      if (backendHandler == null) {
+        throw Error("bug -- outputHandler must return a handler");
+      }
+      outputProcess = (mesg) => {
+        if (backendHandler == null) return;
+        const lifecycle = getLifecycleType(mesg);
+        if (lifecycle != null) {
+          if (lifecycle == "cell_start" && typeof mesg.id == "string") {
+            backendHandler.process({
+              id: mesg.id,
+              content: { execution_state: "busy" },
+            });
+          } else if (lifecycle == "cell_done" && typeof mesg.id == "string") {
+            backendHandler.process({ id: mesg.id, done: true });
+          }
+          fallbackProcessed += 1;
+          return;
+        }
+        if (typeof mesg.id != "string") {
+          fallbackProcessed += 1;
+          return;
+        }
+        backendHandler.process(mesg);
+        fallbackProcessed += 1;
+      };
+    };
+
+    if (mirrorOutputHandler && outputHandler != null) {
+      ensureHandler();
+    }
 
     for await (const mesg0 of runner) {
       const mesg = normalizeOutputMessage(mesg0, run_id);
@@ -388,129 +552,54 @@ async function handleRequest({
         firstMesgAt = Date.now();
       }
       if (socket.state == "closed") {
+        socketClosedDuringRun = true;
         // client socket has closed -- the backend server must take over!
-        if (handler == null || process == null) {
+        if (backendHandler == null || outputProcess == null) {
           fallbackActivated = true;
           logger.debug("socket closed -- server must handle output");
-          if (outputHandler == null) {
-            throw Error("no output handler available");
-          }
-          handler = outputHandler({ path, cells });
-          if (handler == null) {
-            throw Error("bug -- outputHandler must return a handler");
-          }
-          process = (mesg) => {
-            if (handler == null) return;
-            const lifecycle = getLifecycleType(mesg);
-            if (lifecycle != null) {
-              if (lifecycle == "cell_start" && typeof mesg.id == "string") {
-                handler.process({
-                  id: mesg.id,
-                  content: { execution_state: "busy" },
-                });
-              } else if (
-                lifecycle == "cell_done" &&
-                typeof mesg.id == "string"
-              ) {
-                handler.process({ id: mesg.id, done: true });
-              }
-              fallbackProcessed += 1;
-              return;
-            }
-            if (typeof mesg.id != "string") {
-              fallbackProcessed += 1;
-              return;
-            }
-            // Replay must enforce the output limit based on how many messages
-            // we have replayed so far, not the final size of the pre-close
-            // output buffer.
-            const replayedCount = fallbackOutputCount + 1;
-            if (limit == null || replayedCount < limit) {
-              handler.process(mesg);
-            } else {
-              if (!fallbackMoreOutputMode) {
-                handler.process({ id: mesg.id, more_output: true });
-                moreOutput[mesg.id] = [];
-                fallbackMoreOutputMode = true;
-              }
-              if (moreOutput[mesg.id] == null) {
-                moreOutput[mesg.id] = [];
-              }
-              appendOutputMessage(moreOutput[mesg.id], mesg);
-              moreOutputBuffered += 1;
-            }
-            fallbackOutputCount += 1;
-            fallbackProcessed += 1;
-          };
-
+          ensureHandler();
           fallbackReplayed += output.length;
           for (const prev of output) {
-            process(prev);
+            outputProcess!(prev);
           }
           output.length = 0;
         }
-        process(mesg);
-      } else {
-        if (unhandledClientWriteError) {
-          throw unhandledClientWriteError;
-        }
-        const wasAppended = appendOutputMessage(output, mesg);
-        if (isLifecycleMessage(mesg)) {
-          const lifecycle = getLifecycleType(mesg);
-          if (lifecycle == "cell_done" || lifecycle == "run_done") {
-            // Keep completion lifecycle in the same throttled stream as output
-            // so done events cannot overtake buffered output.
-            throttle.write(mesg);
-            continue;
-          }
-          await enqueueWriteBatch([mesg], { fastLane: totalBatches == 0 });
-          continue;
-        }
-        if (wasAppended) {
-          outputVisibleCount += 1;
-        }
-        if (typeof mesg.id != "string") {
-          continue;
-        }
-        if (limit == null || outputVisibleCount < limit) {
-          if (totalBatches == 0) {
-            // Fast-lane the very first output batch for lower latency.
-            // We keep existing throttling for all subsequent output.
-            await enqueueWriteBatch([mesg], { fastLane: true });
-          } else {
-            throttle.write(mesg);
-          }
-        } else {
-          if (outputVisibleCount == limit) {
-            throttle.write({
-              id: mesg.id,
-              run_id,
-              more_output: true,
-            });
-            moreOutput[mesg.id] = [];
-          }
-          if (moreOutput[mesg.id] == null) {
-            moreOutput[mesg.id] = [];
-          }
-          // save the more output
-          appendOutputMessage(moreOutput[mesg.id], mesg);
-          moreOutputBuffered += 1;
-        }
       }
+      const activeProcess = outputProcess as
+        | ((mesg: OutputMessage) => void)
+        | null;
+      if (
+        activeProcess != null &&
+        (mirrorOutputHandler || socket.state == "closed")
+      ) {
+        activeProcess(mesg);
+      }
+      await handleVisibleMesg(mesg);
     }
     // no errors happened, so close up and flush and
     // remaining data immediately:
-    handler?.done();
+    const activeHandler = backendHandler as OutputHandler | null;
+    activeHandler?.done();
+    throttle.flush();
+    await writeQueue;
+    await livePublishQueue;
+    writeLiveRunSnapshot({ done: true });
     if (socket.state != "closed") {
-      throttle.flush();
-      await writeQueue;
       socket.write(null);
     }
   } catch (err) {
     summaryError = `${err}`;
+    writeLiveRunSnapshot({ done: true });
     throw err;
   } finally {
     throttle.close();
+    setTimeout(() => {
+      try {
+        liveRunStore.delete(liveRunKey);
+      } catch {
+        // ignore cleanup failures for ephemeral replay state
+      }
+    }, LIVE_RUN_REPLAY_GRACE_MS);
     logger.debug("run summary", {
       run_id,
       path,
@@ -523,7 +612,7 @@ async function handleRequest({
       total_batches: totalBatches,
       more_output_buffered: moreOutputBuffered,
       first_batch_fast_lane: firstClientBatchFastLane,
-      fallback_activated: fallbackActivated,
+      fallback_activated: fallbackActivated || socketClosedDuringRun,
       fallback_replayed: fallbackReplayed,
       fallback_processed: fallbackProcessed,
       enobufs,

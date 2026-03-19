@@ -60,9 +60,27 @@ function joinStreamText(previousText: string, nextText: string): string {
   return `${left}${separator}${right}`;
 }
 
-function streamJoinSeparator(previousText: string, nextText: string): "" | " " {
+function streamJoinSeparator(
+  previousText: string,
+  nextText: string,
+): "" | " " | "\n\n" {
+  if (needsTextBoundaryParagraph(previousText, nextText)) return "\n\n";
   if (needsTextBoundarySpace(previousText, nextText)) return " ";
   return "";
+}
+
+function needsTextBoundaryParagraph(
+  previousText: string,
+  nextText: string,
+): boolean {
+  if (/\s$/.test(previousText) || /^\s/.test(nextText)) return false;
+  const left = previousText.replace(/\s+$/, "");
+  const right = nextText.replace(/^\s+/, "");
+  if (!left || !right) return false;
+  if (left.length < 60 || right.length < 30) return false;
+  if (!/[.!?]$/.test(left)) return false;
+  if (!/^(?:[#>*-]|\d+\.|[A-Z`])/.test(right)) return false;
+  return true;
 }
 
 function needsTextBoundarySpace(
