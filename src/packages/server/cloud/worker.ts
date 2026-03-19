@@ -14,6 +14,10 @@ import {
 import { logCloudVmEvent } from "./db";
 import getPool from "@cocalc/database/pool";
 import { enqueueCloudVmWorkOnce } from "./db";
+import {
+  getEffectiveParallelOpsLimit,
+  getEffectiveParallelOpsLimits,
+} from "@cocalc/server/lro/worker-config";
 
 const logger = getLogger("server:cloud:worker");
 const pool = () => getPool();
@@ -31,6 +35,7 @@ export async function processCloudVmWorkOnce(opts: {
   handlers: CloudVmWorkHandlers;
   max_concurrency?: number;
   max_per_provider?: number;
+  max_per_provider_by_provider?: Map<string, number>;
 }) {
   const maxConcurrency = opts.max_concurrency ?? DEFAULT_MAX_CONCURRENCY;
   const maxPerProvider = opts.max_per_provider ?? DEFAULT_PER_PROVIDER;
@@ -39,6 +44,8 @@ export async function processCloudVmWorkOnce(opts: {
   const pending: CloudVmWorkRow[] = [];
   const inFlight = new Set<Promise<void>>();
   const providerCounts = new Map<string, number>();
+  const providerLimitFor = (provider: string) =>
+    opts.max_per_provider_by_provider?.get(provider) ?? maxPerProvider;
 
   const runRow = async (row: CloudVmWorkRow) => {
     const handler = opts.handlers[row.action];
@@ -88,7 +95,7 @@ export async function processCloudVmWorkOnce(opts: {
     while (inFlight.size < maxConcurrency && pending.length) {
       const idx = pending.findIndex((row) => {
         const provider = (row.payload?.provider as string) ?? "default";
-        return (providerCounts.get(provider) ?? 0) < maxPerProvider;
+        return (providerCounts.get(provider) ?? 0) < providerLimitFor(provider);
       });
       if (idx === -1) break;
       const row = pending.splice(idx, 1)[0];
@@ -155,6 +162,21 @@ export async function enqueueMissingRuntimeRefresh(opts: { limit?: number }) {
   return rows.length;
 }
 
+async function listActiveCloudVmProviders(): Promise<string[]> {
+  const { rows } = await pool().query<{ provider: string | null }>(
+    `
+      SELECT DISTINCT NULLIF(payload->>'provider', '') AS provider
+      FROM cloud_vm_work
+      WHERE state IN ('queued', 'in_progress')
+    `,
+  );
+  return Array.from(
+    new Set(
+      rows.map(({ provider }) => `${provider ?? ""}`.trim()).filter(Boolean),
+    ),
+  );
+}
+
 export function startCloudVmWorker(opts: {
   worker_id: string;
   handlers: CloudVmWorkHandlers;
@@ -171,12 +193,35 @@ export function startCloudVmWorker(opts: {
   const tick = async () => {
     if (stopped) return;
     try {
+      const maxConcurrencyDefault =
+        opts.max_concurrency ?? DEFAULT_MAX_CONCURRENCY;
+      const maxPerProviderDefault =
+        opts.max_per_provider ?? DEFAULT_PER_PROVIDER;
+      const [{ value: maxConcurrency }, providers] = await Promise.all([
+        getEffectiveParallelOpsLimit({
+          worker_kind: "cloud-vm-work",
+          default_limit: maxConcurrencyDefault,
+        }),
+        listActiveCloudVmProviders(),
+      ]);
+      const providerLimitRows = await getEffectiveParallelOpsLimits({
+        worker_kind: "cloud-vm-work",
+        default_limit: maxPerProviderDefault,
+        scope_type: "provider",
+        scope_ids: providers,
+      });
       await processCloudVmWorkOnce({
         worker_id: opts.worker_id,
         limit: opts.limit ?? 5,
         handlers: opts.handlers,
-        max_concurrency: opts.max_concurrency ?? DEFAULT_MAX_CONCURRENCY,
-        max_per_provider: opts.max_per_provider ?? DEFAULT_PER_PROVIDER,
+        max_concurrency: maxConcurrency,
+        max_per_provider: maxPerProviderDefault,
+        max_per_provider_by_provider: new Map(
+          Array.from(providerLimitRows.entries()).map(([provider, entry]) => [
+            provider,
+            entry.value,
+          ]),
+        ),
       });
       if (Date.now() - lastRefreshScan >= refreshScanIntervalMs) {
         lastRefreshScan = Date.now();

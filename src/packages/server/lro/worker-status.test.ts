@@ -97,6 +97,10 @@ describe("summarizeCloudVmWorkStatus", () => {
     const status = summarizeCloudVmWorkStatus({
       worker: worker!,
       nowMs,
+      providerLimits: new Map([
+        ["gcp", { value: 4, source: "db-override" as const }],
+        ["nebius", { value: 10, source: "default" as const }],
+      ]),
       rows: [
         {
           state: "queued",
@@ -127,9 +131,10 @@ describe("summarizeCloudVmWorkStatus", () => {
     expect(status.stale_running_count).toBeNull();
     expect(status.oldest_queued_ms).toBe(120000);
     expect(status.worker_instances).toBe(1);
+    expect(status.config_source).toBe("db-override");
     expect(status.breakdown).toEqual([
-      { key: "gcp", queued_count: 1, running_count: 1 },
-      { key: "nebius", queued_count: 1, running_count: 0 },
+      { key: "gcp", queued_count: 1, running_count: 1, limit: 4 },
+      { key: "nebius", queued_count: 1, running_count: 0, limit: 10 },
     ]);
   });
 });

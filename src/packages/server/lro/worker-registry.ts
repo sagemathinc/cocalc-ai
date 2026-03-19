@@ -191,9 +191,10 @@ export const parallelOpsWorkerRegistry: ParallelOpsWorkerRegistration[] = [
     worker_kind: "cloud-vm-work",
     category: "cloud-work",
     scope_model: "per-provider",
-    dynamic_limit_supported: false,
+    dynamic_limit_supported: true,
     notes: [
-      "This reports the current cloud VM work queue caps, which are not stored in the LRO table.",
+      "This reports the current cloud VM work queue caps.",
+      "The global worker limit and per-provider caps can both be overridden live.",
     ],
     getLimitSnapshot: () => ({
       default_limit: 10,

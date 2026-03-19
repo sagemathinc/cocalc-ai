@@ -183,6 +183,18 @@ export async function setParallelOpsLimit({
     if (!`${scope_id ?? ""}`.trim()) {
       throw Error(`scope_id is required for '${worker_kind}'`);
     }
+  } else if (worker.scope_model === "per-provider") {
+    if (
+      normalizedScopeType !== "global" &&
+      normalizedScopeType !== "provider"
+    ) {
+      throw Error(
+        `scope_type '${normalizedScopeType}' is not implemented for '${worker_kind}'`,
+      );
+    }
+    if (normalizedScopeType === "provider" && !`${scope_id ?? ""}`.trim()) {
+      throw Error(`scope_id is required for '${worker_kind}'`);
+    }
   } else {
     throw Error(
       `non-global limit overrides are not implemented for '${worker_kind}'`,
@@ -234,6 +246,18 @@ export async function clearParallelOpsLimit({
       );
     }
     if (!`${scope_id ?? ""}`.trim()) {
+      throw Error(`scope_id is required for '${worker_kind}'`);
+    }
+  } else if (worker.scope_model === "per-provider") {
+    if (
+      normalizedScopeType !== "global" &&
+      normalizedScopeType !== "provider"
+    ) {
+      throw Error(
+        `scope_type '${normalizedScopeType}' is not implemented for '${worker_kind}'`,
+      );
+    }
+    if (normalizedScopeType === "provider" && !`${scope_id ?? ""}`.trim()) {
       throw Error(`scope_id is required for '${worker_kind}'`);
     }
   } else {

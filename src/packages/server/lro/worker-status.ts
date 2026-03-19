@@ -111,7 +111,13 @@ async function resolveLimitSnapshot(
   worker: ParallelOpsWorkerRegistration,
 ): Promise<ParallelOpsLimitSnapshot> {
   const base = worker.getLimitSnapshot();
-  if (base.effective_limit == null || worker.scope_model !== "global") {
+  if (base.effective_limit == null) {
+    return base;
+  }
+  if (
+    worker.scope_model !== "global" &&
+    worker.scope_model !== "per-provider"
+  ) {
     return base;
   }
   const { value, source } = await getEffectiveParallelOpsLimit({
@@ -120,7 +126,8 @@ async function resolveLimitSnapshot(
   });
   return {
     ...base,
-    configured_limit: value,
+    configured_limit:
+      source === "db-override" ? value : (base.configured_limit ?? null),
     effective_limit: value,
     config_source:
       source === "db-override" ? "db-override" : base.config_source,
@@ -189,11 +196,16 @@ export function summarizeCloudVmWorkStatus({
   rows,
   nowMs,
   limit,
+  providerLimits,
 }: {
   worker: ParallelOpsWorkerRegistration;
   rows: CloudVmWorkStatusRow[];
   nowMs: number;
   limit?: ParallelOpsLimitSnapshot;
+  providerLimits: Map<
+    string,
+    { value: number; source: "default" | "db-override" }
+  >;
 }): ParallelOpsWorkerStatus {
   const status = baseStatusForWorker(
     worker,
@@ -206,6 +218,11 @@ export function summarizeCloudVmWorkStatus({
   let oldestQueuedMs: number | null = null;
   const owners = new Map<string, ParallelOpsWorkerOwnerStatus>();
   const breakdown = new Map<string, ParallelOpsWorkerBreakdownStatus>();
+  const defaultProviderLimit =
+    limit?.extra_limits?.per_provider_limit ??
+    worker.getLimitSnapshot().extra_limits?.per_provider_limit ??
+    null;
+  let hasProviderOverride = false;
 
   for (const row of rows) {
     const provider = `${row.payload?.provider ?? "unknown"}`;
@@ -241,9 +258,31 @@ export function summarizeCloudVmWorkStatus({
     a.owner_id.localeCompare(b.owner_id),
   );
   status.worker_instances = status.owners.length;
-  status.breakdown = Array.from(breakdown.values()).sort((a, b) =>
-    a.key.localeCompare(b.key),
+  status.breakdown = Array.from(breakdown.values())
+    .map((entry) => {
+      const limitEntry = providerLimits.get(entry.key);
+      if (limitEntry?.source === "db-override") {
+        hasProviderOverride = true;
+      }
+      return {
+        ...entry,
+        limit: limitEntry?.value ?? defaultProviderLimit,
+      };
+    })
+    .sort((a, b) => a.key.localeCompare(b.key));
+  const uniqueLimits = Array.from(
+    new Set(
+      status.breakdown
+        .map(({ limit }) => limit)
+        .filter((entry) => entry != null),
+    ),
   );
+  if (uniqueLimits.length > 1) {
+    status.notes.push("Providers currently report mixed cloud VM work limits.");
+  }
+  if (hasProviderOverride) {
+    status.config_source = "db-override";
+  }
   return status;
 }
 
@@ -506,6 +545,14 @@ export async function getParallelOpsStatus(): Promise<
   const moveDestinationWorker = parallelOpsWorkerRegistryByKind.get(
     MOVE_DESTINATION_HOST_WORKER_KIND,
   );
+  const cloudWorker = parallelOpsWorkerRegistryByKind.get("cloud-vm-work");
+  const cloudProviderIds = Array.from(
+    new Set(
+      cloudRows
+        .map((row) => `${row.payload?.provider ?? "unknown"}`)
+        .filter((provider) => provider !== "unknown"),
+    ),
+  );
   const moveSourceHostIds = Array.from(
     new Set(
       moveRows
@@ -520,21 +567,30 @@ export async function getParallelOpsStatus(): Promise<
         .filter(Boolean) as string[],
     ),
   );
-  const [moveSourceLimits, moveDestinationLimits] = await Promise.all([
-    getEffectiveParallelOpsLimits({
-      worker_kind: MOVE_SOURCE_HOST_WORKER_KIND,
-      default_limit: moveSourceWorker?.getLimitSnapshot().default_limit ?? 1,
-      scope_type: "project_host",
-      scope_ids: moveSourceHostIds,
-    }),
-    getEffectiveParallelOpsLimits({
-      worker_kind: MOVE_DESTINATION_HOST_WORKER_KIND,
-      default_limit:
-        moveDestinationWorker?.getLimitSnapshot().default_limit ?? 1,
-      scope_type: "project_host",
-      scope_ids: moveDestinationHostIds,
-    }),
-  ]);
+  const [cloudProviderLimits, sourceHostLimits, destinationHostLimits] =
+    await Promise.all([
+      getEffectiveParallelOpsLimits({
+        worker_kind: "cloud-vm-work",
+        default_limit:
+          cloudWorker?.getLimitSnapshot().extra_limits?.per_provider_limit ??
+          10,
+        scope_type: "provider",
+        scope_ids: cloudProviderIds,
+      }),
+      getEffectiveParallelOpsLimits({
+        worker_kind: MOVE_SOURCE_HOST_WORKER_KIND,
+        default_limit: moveSourceWorker?.getLimitSnapshot().default_limit ?? 1,
+        scope_type: "project_host",
+        scope_ids: moveSourceHostIds,
+      }),
+      getEffectiveParallelOpsLimits({
+        worker_kind: MOVE_DESTINATION_HOST_WORKER_KIND,
+        default_limit:
+          moveDestinationWorker?.getLimitSnapshot().default_limit ?? 1,
+        scope_type: "project_host",
+        scope_ids: moveDestinationHostIds,
+      }),
+    ]);
 
   return parallelOpsWorkerRegistry.map((worker) => {
     if (worker.category === "cloud-work") {
@@ -543,6 +599,7 @@ export async function getParallelOpsStatus(): Promise<
         rows: cloudRows,
         nowMs,
         limit: limitMap.get(worker.worker_kind),
+        providerLimits: cloudProviderLimits,
       });
     }
     if (worker.category === "host-local") {
@@ -559,7 +616,7 @@ export async function getParallelOpsStatus(): Promise<
         role: "source",
         nowMs,
         limit: limitMap.get(worker.worker_kind),
-        limitByHost: moveSourceLimits,
+        limitByHost: sourceHostLimits,
       });
     }
     if (worker.worker_kind === MOVE_DESTINATION_HOST_WORKER_KIND) {
@@ -569,7 +626,7 @@ export async function getParallelOpsStatus(): Promise<
         role: "destination",
         nowMs,
         limit: limitMap.get(worker.worker_kind),
-        limitByHost: moveDestinationLimits,
+        limitByHost: destinationHostLimits,
       });
     }
     return summarizeLroWorkerStatus({
