@@ -1354,19 +1354,23 @@ export class SyncDoc extends EventEmitter {
         );
       });
     }
-    // Prime backend sync-fs reconciliation first so the patch stream reflects
-    // current on-disk content before we load it into this client session.
-    this.emitOpenPhase("backend_fs_watch_start");
-    await this.startBackendFsWatch();
-    this.emitOpenPhase("backend_fs_watch_done");
-    this.emitOpenPhase("backend_fs_reconcile_start");
-    await this.reconcileBackendFsState();
-    this.emitOpenPhase("backend_fs_reconcile_done");
+    const useBackendFsWatch = this.shouldUseBackendFsWatch();
+    // For watched doctypes, let backend sync-fs prime patchflow before we open
+    // the client session. No-watch doctypes such as chats must open patchflow
+    // first so existing live rows remain authoritative over stale disk state.
+    if (useBackendFsWatch) {
+      this.emitOpenPhase("backend_fs_watch_start");
+      await this.startBackendFsWatch();
+      this.emitOpenPhase("backend_fs_watch_done");
+      this.emitOpenPhase("backend_fs_reconcile_start");
+      await this.reconcileBackendFsState();
+      this.emitOpenPhase("backend_fs_reconcile_done");
+    }
     void this.refreshInitialDiskBaseline();
     this.emitOpenPhase("patchflow_init_start");
     await this.init_patchflow();
     this.emitOpenPhase("patchflow_init_done");
-    if (!this.shouldUseBackendFsWatch()) {
+    if (!useBackendFsWatch) {
       await this.seedNoWatchDocFromDiskIfEmpty();
     }
     if (this.cursors) {
