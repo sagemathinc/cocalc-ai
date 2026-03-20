@@ -855,6 +855,111 @@ describe("rapid rerun drops stale run output by run_id", () => {
   });
 });
 
+describe("direct iterator is not blocked on live replay publish", () => {
+  let client1, client2;
+  it("create two clients", async () => {
+    client1 = connect();
+    client2 = connect();
+  });
+
+  const path = "live-replay-stall.ipynb";
+  const project_id = uuid();
+  let server;
+  let nullWrites = 0;
+
+  it("create jupyter code run server", () => {
+    async function run({ cells, run_id }) {
+      async function* runner() {
+        yield { msg_type: "run_start", lifecycle: "run_start", run_id };
+        for (const { id } of cells) {
+          yield { id, msg_type: "cell_start", lifecycle: "cell_start", run_id };
+          yield {
+            id,
+            msg_type: "stream",
+            content: { name: "stdout", text: "hello" },
+          };
+          yield { id, msg_type: "cell_done", lifecycle: "cell_done", run_id };
+        }
+        yield { msg_type: "run_done", lifecycle: "run_done", run_id };
+      }
+      return runner();
+    }
+
+    server = jupyterServer({
+      client: client1,
+      project_id,
+      run,
+      outputHandler: () => ({
+        process() {},
+        done() {},
+      }),
+      getKernelStatus,
+    });
+    server.once("connection", (socket) => {
+      const origWrite = socket.write.bind(socket);
+      socket.write = (data, opts) => {
+        if (data == null) {
+          nullWrites += 1;
+        }
+        return origWrite(data, opts);
+      };
+    });
+  });
+
+  let client;
+  it("ends the direct iterator even if live replay publish hangs", async () => {
+    const blockedSubject = jupyterLiveRunSubject({ project_id, path });
+    const origPublish = client1.publish.bind(client1);
+    client1.publish = (async (subject, data, opts) => {
+      if (subject === blockedSubject) {
+        return await new Promise<void>(() => {});
+      }
+      return await origPublish(subject, data, opts);
+    }) as any;
+
+    client = jupyterClient({
+      path,
+      project_id,
+      client: client2,
+    });
+    try {
+      const outputs: any[] = [];
+      const iter = await client.run([{ id: "cell-a", input: "x" }], {
+        run_id: "live-replay-stall-1",
+      });
+      const completed = await Promise.race([
+        (async () => {
+          for await (const batch of iter) {
+            outputs.push(...batch);
+          }
+          return true;
+        })(),
+        delay(500).then(() => false),
+      ]);
+      expect(nullWrites).toBe(1);
+      expect(completed).toBe(true);
+      const lifecycle = outputs
+        .map((x) => x.lifecycle ?? x.msg_type)
+        .filter((x) => typeof x === "string");
+      expect(lifecycle).toEqual(
+        expect.arrayContaining([
+          "run_start",
+          "cell_start",
+          "cell_done",
+          "run_done",
+        ]),
+      );
+    } finally {
+      client1.publish = origPublish;
+    }
+  });
+
+  it("cleans up", () => {
+    server.close();
+    client.close();
+  });
+});
+
 describe("lifecycle messages are explicit and survive limit/disconnect flows", () => {
   let client1, client2;
   it("create two clients", async () => {
