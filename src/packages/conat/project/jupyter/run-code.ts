@@ -603,11 +603,17 @@ async function handleRequest({
     activeHandler?.done();
     throttle.flush();
     await writeQueue;
-    await livePublishQueue;
     writeLiveRunSnapshot({ done: true });
     if (socket.state != "closed") {
       socket.write(null);
     }
+    void livePublishQueue.catch((err) => {
+      logger.debug("live replay publish failed after direct completion", {
+        run_id,
+        path,
+        error: `${err}`,
+      });
+    });
   } catch (err) {
     summaryError = `${err}`;
     writeLiveRunSnapshot({ done: true });

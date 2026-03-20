@@ -106,6 +106,7 @@ export interface JupyterStoreState {
   // only known to this client, goes away on browser refresh, and is used
   // only visually for the user to see.
   pendingCells: Set<string>;
+  runCellOverlays?: Map<string, Map<string, any>>;
 
   stdin?: { id: string; prompt: string; password?: boolean };
 }
@@ -118,6 +119,7 @@ export const initial_jupyter_store_state: {
   widgetModelIdState: Map(),
   cell_list: List(),
   cells: Map(),
+  runCellOverlays: Map(),
 };
 
 export class JupyterStore extends Store<JupyterStoreState> {

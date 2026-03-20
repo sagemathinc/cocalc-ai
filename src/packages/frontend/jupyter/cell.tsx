@@ -63,6 +63,7 @@ interface Props {
   isDragging?: boolean;
   isPending?: boolean;
   name?: string;
+  runOverlay?: Map<string, any>;
 }
 
 function shouldLogRenderAudit(): boolean {
@@ -116,6 +117,7 @@ function getRenderChangeReasons(props: Props, nextProps: Props): string[] {
   if (nextProps.read_only !== props.read_only) reasons.push("read_only");
   if (nextProps.isDragging !== props.isDragging) reasons.push("isDragging");
   if (nextProps.isPending !== props.isPending) reasons.push("isPending");
+  if (nextProps.runOverlay !== props.runOverlay) reasons.push("runOverlay");
   return reasons;
 }
 
@@ -149,7 +151,8 @@ function areEqual(props: Props, nextProps: Props): boolean {
     (nextProps.dragHandle == null) !== (props.dragHandle == null) ||
     nextProps.read_only !== props.read_only ||
     nextProps.isDragging !== props.isDragging ||
-    nextProps.isPending !== props.isPending;
+    nextProps.isPending !== props.isPending ||
+    nextProps.runOverlay !== props.runOverlay;
 
   if (changed && shouldLogRenderAudit()) {
     const id = nextProps.id ?? nextProps.cell?.get?.("id") ?? "unknown";
@@ -205,6 +208,7 @@ export const Cell: React.FC<Props> = React.memo((props: Props) => {
         setShowAICellGen={setShowAICellGen}
         dragHandle={props.dragHandle}
         isPending={props.isPending}
+        runOverlay={props.runOverlay}
       />
     );
   }
@@ -230,6 +234,7 @@ export const Cell: React.FC<Props> = React.memo((props: Props) => {
         llmTools={props.llmTools}
         isDragging={props.isDragging}
         stdin={props.stdin}
+        runOverlay={props.runOverlay}
       />
     );
   }
