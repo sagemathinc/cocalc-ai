@@ -98,6 +98,7 @@ export interface ProjectStoreState {
   start_lro?: immutable.Map<string, any>;
   move_lro?: immutable.Map<string, any>;
   open_snapshot_schedule?: boolean;
+  open_restore_snapshot?: boolean;
   open_backup_schedule?: boolean;
   open_create_snapshot?: boolean;
   open_create_backup?: boolean;
@@ -320,6 +321,7 @@ export class ProjectStore extends Store<ProjectStoreState> {
       copy_ops: undefined,
       start_lro: undefined,
       move_lro: undefined,
+      open_restore_snapshot: false,
       checked_files: immutable.Set(),
       file_listing_scroll_top: undefined,
       active_file_sort: {

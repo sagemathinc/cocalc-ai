@@ -1,10 +1,14 @@
 import { randomUUID } from "node:crypto";
 import getLogger from "@cocalc/backend/logger";
 import type { LroSummary } from "@cocalc/conat/hub/api/lro";
+import { PROJECT_IMAGE_PATH } from "@cocalc/util/db-schema/defaults";
+import type { SnapshotRestoreMode } from "@cocalc/conat/files/file-server";
 import { getEffectiveParallelOpsLimit } from "@cocalc/server/lro/worker-config";
 import { claimLroOps, touchLro, updateLro } from "@cocalc/server/lro/lro-db";
 import { publishLroEvent, publishLroSummary } from "@cocalc/conat/lro/stream";
 import { getProjectFileServerClient } from "@cocalc/server/conat/file-server-client";
+import { getProject } from "@cocalc/server/projects/control";
+import getPool from "@cocalc/database/pool";
 
 const logger = getLogger("server:projects:restore-worker");
 
@@ -20,7 +24,10 @@ const WORKER_ID = randomUUID();
 
 const progressSteps: Record<string, number> = {
   validate: 5,
+  stop: 15,
+  snapshot: 30,
   restore: 80,
+  start: 90,
   done: 100,
 };
 
@@ -77,19 +84,65 @@ function progressEvent({
   });
 }
 
+function defaultSafetySnapshotName(snapshot: string): string {
+  return `restore-safety-${snapshot}-${new Date().toISOString()}`;
+}
+
+async function getSnapshotRestoreImage({
+  client,
+  project_id,
+  snapshot,
+  mode,
+}: {
+  client: Awaited<ReturnType<typeof getProjectFileServerClient>>;
+  project_id: string;
+  snapshot: string;
+  mode: SnapshotRestoreMode;
+}): Promise<string | undefined> {
+  if (mode === "home") return;
+  try {
+    const preview = await client.getSnapshotFileText({
+      project_id,
+      snapshot,
+      path: `${PROJECT_IMAGE_PATH}/current-image.txt`,
+      max_bytes: 4096,
+    });
+    const image = preview.content.trim();
+    return image.length > 0 ? image : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function setProjectRestoreImage({
+  project_id,
+  image,
+}: {
+  project_id: string;
+  image?: string;
+}): Promise<void> {
+  if (!image) return;
+  await getPool().query(
+    "UPDATE projects SET rootfs_image=$1 WHERE project_id=$2",
+    [image, project_id],
+  );
+}
+
 async function handleRestoreOp(op: LroSummary): Promise<void> {
   const { op_id } = op;
   const input = op.input ?? {};
   const project_id = input.project_id;
   const backup_id = input.id;
+  const restoreType = input.restore_type;
+  const snapshot = input.snapshot;
   const path = input.path;
   const dest = input.dest;
 
-  if (!project_id || !backup_id) {
+  if (!project_id || (!backup_id && !snapshot)) {
     const updated = await updateLro({
       op_id,
       status: "failed",
-      error: "restore op missing project_id or backup id",
+      error: "restore op missing project_id and restore target",
     });
     await publishSummarySafe(updated, {
       op_id,
@@ -152,27 +205,104 @@ async function handleRestoreOp(op: LroSummary): Promise<void> {
     progress({
       step: "validate",
       message: "starting restore",
-      detail: { project_id, backup_id },
+      detail: {
+        project_id,
+        restore_type: restoreType ?? (snapshot ? "snapshot" : "backup"),
+        backup_id,
+        snapshot,
+      },
     });
 
     const started = Date.now();
-    progress({
-      step: "restore",
-      message: "restoring backup",
-      detail: { backup_id, path, dest },
-    });
-
     const client = await getProjectFileServerClient({
       project_id,
       timeout: RESTORE_TIMEOUT_MS,
     });
-    await client.restoreBackup({
-      project_id,
-      id: backup_id,
-      path,
-      dest,
-      lro: { op_id, scope_type: op.scope_type, scope_id: op.scope_id },
-    });
+    let result: Record<string, unknown>;
+    if (restoreType === "snapshot" || snapshot) {
+      if (!snapshot) {
+        throw new Error("snapshot restore op missing snapshot name");
+      }
+      const mode = (input.mode ?? "both") as SnapshotRestoreMode;
+      if (!["both", "home", "rootfs"].includes(mode)) {
+        throw new Error(`invalid snapshot restore mode: ${mode}`);
+      }
+      const safetySnapshotName =
+        input.safety_snapshot_name ?? defaultSafetySnapshotName(snapshot);
+      const restoreImage = await getSnapshotRestoreImage({
+        client,
+        project_id,
+        snapshot,
+        mode,
+      });
+      const project = getProject(project_id);
+
+      progress({
+        step: "stop",
+        message: "stopping project",
+        detail: { project_id },
+      });
+      await project.stop();
+
+      progress({
+        step: "snapshot",
+        message: "creating safety snapshot",
+        detail: { safety_snapshot_name: safetySnapshotName },
+      });
+      await client.createSnapshot({
+        project_id,
+        name: safetySnapshotName,
+      });
+
+      progress({
+        step: "restore",
+        message: "restoring snapshot",
+        detail: { snapshot, mode },
+      });
+      await client.restoreSnapshot({
+        project_id,
+        snapshot,
+        mode,
+        safety_snapshot_name: safetySnapshotName,
+        lro: { op_id, scope_type: op.scope_type, scope_id: op.scope_id },
+      });
+      await setProjectRestoreImage({ project_id, image: restoreImage });
+
+      progress({
+        step: "start",
+        message: "starting project",
+        detail: { project_id },
+      });
+      await project.start({ lro_op_id: op_id });
+      result = {
+        restore_type: "snapshot",
+        snapshot,
+        mode,
+        safety_snapshot_name: safetySnapshotName,
+      };
+    } else {
+      if (!backup_id) {
+        throw new Error("backup restore op missing backup id");
+      }
+      progress({
+        step: "restore",
+        message: "restoring backup",
+        detail: { backup_id, path, dest },
+      });
+      await client.restoreBackup({
+        project_id,
+        id: backup_id,
+        path,
+        dest,
+        lro: { op_id, scope_type: op.scope_type, scope_id: op.scope_id },
+      });
+      result = {
+        restore_type: "backup",
+        id: backup_id,
+        path,
+        dest,
+      };
+    }
     const duration_ms = Date.now() - started;
 
     logger.info("restore op done", {
@@ -185,12 +315,10 @@ async function handleRestoreOp(op: LroSummary): Promise<void> {
     const updated = await updateLro({
       op_id,
       status: "succeeded",
-      result: { id: backup_id, path, dest, duration_ms },
+      result: { ...result, duration_ms },
       progress_summary: {
         phase: "done",
-        id: backup_id,
-        path,
-        dest,
+        ...result,
         duration_ms,
       },
       error: null,
@@ -202,7 +330,7 @@ async function handleRestoreOp(op: LroSummary): Promise<void> {
     progress({
       step: "done",
       message: "restore complete",
-      detail: { backup_id, path, dest, duration_ms },
+      detail: { ...result, duration_ms },
     });
   } catch (err) {
     logger.warn("restore op failed", { op_id, err: `${err}` });

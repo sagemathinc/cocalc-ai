@@ -50,6 +50,7 @@ export interface Sync {
 }
 
 export type RestoreMode = "none" | "auto" | "required";
+export type SnapshotRestoreMode = "home" | "rootfs" | "both";
 
 export interface RestoreStagingHandle {
   project_id: string;
@@ -256,6 +257,13 @@ export interface Fileserver {
     path: string;
     max_bytes?: number;
   }) => Promise<FileTextPreview>;
+  restoreSnapshot: (opts: {
+    project_id: string;
+    snapshot: string;
+    mode?: SnapshotRestoreMode;
+    safety_snapshot_name?: string;
+    lro?: LroRef;
+  }) => Promise<void>;
 }
 
 export interface SnapshotUsage {

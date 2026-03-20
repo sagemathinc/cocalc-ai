@@ -2,6 +2,7 @@
 // This allows users to browse and generally use the filesystem of any project,
 // without having to run that project.
 
+import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
 import {
   chmod,
@@ -22,6 +23,7 @@ import {
   type LroRef,
   type RestoreMode,
   type RestoreStagingHandle,
+  type SnapshotRestoreMode,
   type SnapshotUsage,
   type Sync,
 } from "@cocalc/conat/files/file-server";
@@ -52,6 +54,7 @@ import {
 import { isBtrfsSubvolume } from "@cocalc/file-server/btrfs/subvolume";
 import { exists } from "@cocalc/backend/misc/async-utils-node";
 import { type SnapshotCounts } from "@cocalc/util/db-schema/projects";
+import { PROJECT_IMAGE_PATH } from "@cocalc/util/db-schema/defaults";
 import { init as initSshServer } from "@cocalc/project-proxy/ssh-server";
 import { type MutagenSyncSession } from "@cocalc/conat/project/mutagen/types";
 import { fsServer, DEFAULT_FILE_SERVICE } from "@cocalc/conat/files/fs";
@@ -90,11 +93,14 @@ import {
   getCachedBackupExecutionLimit,
 } from "./backup-execution-limit";
 import { isMissingRusticRepositoryError } from "./backup-index-errors";
+import { btrfs, sudo } from "@cocalc/file-server/btrfs/util";
+import { subvolume } from "@cocalc/file-server/btrfs/subvolume";
 
 type SshTarget = { type: "project"; project_id: string };
 
 const logger = getLogger("project-host:file-server");
 const RESTORE_STAGING_ROOT = ".restore-staging";
+const SNAPSHOT_RESTORE_STAGING_ROOT = ".snapshot-restore-staging";
 const MAX_TEXT_PREVIEW_BYTES = 10 * 1024 * 1024;
 const SSH_WAKE_TIMEOUT_MS = Math.max(
   5_000,
@@ -345,6 +351,162 @@ function projectIdFromSubject(subject: string): string {
     throw Error("not a valid project id");
   }
   return project_id;
+}
+
+function snapshotRestoreRoot(): string {
+  return join(resolveProjectMountRoot(), SNAPSHOT_RESTORE_STAGING_ROOT);
+}
+
+async function ensureSnapshotRestoreRoot(): Promise<string> {
+  const root = snapshotRestoreRoot();
+  await sudo({ command: "mkdir", args: ["-p", root] });
+  return root;
+}
+
+async function exactSyncDirectory({
+  src,
+  dest,
+}: {
+  src?: string;
+  dest: string;
+}): Promise<void> {
+  await sudo({ command: "mkdir", args: ["-p", dirname(dest)] });
+  if (!src || !(await exists(src))) {
+    await sudo({ command: "rm", args: ["-rf", dest] });
+    return;
+  }
+  await sudo({ command: "mkdir", args: ["-p", dest] });
+  await sudo({
+    command: "rsync",
+    args: ["-aHAX", "--numeric-ids", "--delete", `${src}/`, `${dest}/`],
+  });
+}
+
+async function removeDirectoryTree(pathToRemove?: string): Promise<void> {
+  if (!pathToRemove || !(await exists(pathToRemove))) return;
+  await sudo({ command: "rm", args: ["-rf", pathToRemove] });
+}
+
+async function deleteSubvolumeTree(pathToDelete?: string): Promise<void> {
+  if (!pathToDelete || !(await exists(pathToDelete))) return;
+  const root = resolveProjectMountRoot();
+  if (!isSubPath(root, pathToDelete)) {
+    throw new Error(
+      `refusing to delete subvolume outside mount root: ${pathToDelete}`,
+    );
+  }
+  const rel = path.relative(root, pathToDelete);
+  const tmp = await subvolume({ filesystem: fs!, name: rel, noCache: true });
+  const snapshots = await tmp.snapshots.readdir().catch(() => []);
+  for (const snapshot of snapshots) {
+    await tmp.snapshots.delete(snapshot);
+  }
+  await btrfs({
+    args: ["subvolume", "delete", pathToDelete],
+    err_on_exit: true,
+    verbose: false,
+  });
+}
+
+async function createSnapshotRestoreClone({
+  project_id,
+  snapshot,
+}: {
+  project_id: string;
+  snapshot: string;
+}): Promise<{ path: string }> {
+  if (fs == null) {
+    throw Error("file server not initialized");
+  }
+  const vol = await getVolume(project_id);
+  if (!(await vol.snapshots.exists(snapshot))) {
+    throw new Error(`snapshot does not exist: ${snapshot}`);
+  }
+  const stagingRoot = await ensureSnapshotRestoreRoot();
+  const stagedPath = join(
+    stagingRoot,
+    `${volName(project_id)}.snapshot-restore.${randomUUID()}`,
+  );
+  const snapshotPath = join(vol.path, vol.snapshots.path(snapshot));
+  await btrfs({
+    args: ["subvolume", "snapshot", snapshotPath, stagedPath],
+    err_on_exit: true,
+    verbose: false,
+  });
+  const { size } = await vol.quota.get();
+  if (size) {
+    const rel = path.relative(resolveProjectMountRoot(), stagedPath);
+    const stagedSubvolume = await subvolume({
+      filesystem: fs,
+      name: rel,
+      noCache: true,
+    });
+    await stagedSubvolume.quota.set(size);
+  }
+  return { path: stagedPath };
+}
+
+async function swapProjectHome({
+  project_id,
+  replacementPath,
+}: {
+  project_id: string;
+  replacementPath: string;
+}): Promise<{ oldHomePath: string }> {
+  const home = projectMountpoint(project_id);
+  if (!(await exists(home))) {
+    throw new Error(`project home does not exist: ${home}`);
+  }
+  const stagingRoot = await ensureSnapshotRestoreRoot();
+  const oldHomePath = join(
+    stagingRoot,
+    `${volName(project_id)}.restore-old.${randomUUID()}`,
+  );
+  await sudo({ command: "mv", args: [home, oldHomePath] });
+  await sudo({ command: "mv", args: [replacementPath, home] });
+  return { oldHomePath };
+}
+
+async function rollbackProjectHomeSwap({
+  project_id,
+  oldHomePath,
+}: {
+  project_id: string;
+  oldHomePath: string;
+}): Promise<void> {
+  const home = projectMountpoint(project_id);
+  if (await exists(home)) {
+    const failedHomePath = join(
+      snapshotRestoreRoot(),
+      `${volName(project_id)}.restore-failed.${randomUUID()}`,
+    );
+    await sudo({ command: "mv", args: [home, failedHomePath] });
+    await deleteSubvolumeTree(failedHomePath).catch(() => {});
+  }
+  if (await exists(oldHomePath)) {
+    await sudo({ command: "mv", args: [oldHomePath, home] });
+  }
+}
+
+async function moveSnapshotIntoCurrentHome({
+  project_id,
+  snapshot,
+  fromHome,
+}: {
+  project_id: string;
+  snapshot: string;
+  fromHome: string;
+}): Promise<void> {
+  const home = projectMountpoint(project_id);
+  const src = join(fromHome, ".snapshots", snapshot);
+  if (!(await exists(src))) return;
+  const destDir = join(home, ".snapshots");
+  const dest = join(destDir, snapshot);
+  await sudo({ command: "mkdir", args: ["-p", destDir] });
+  if (await exists(dest)) {
+    throw new Error(`snapshot already exists after restore: ${snapshot}`);
+  }
+  await sudo({ command: "mv", args: [src, dest] });
 }
 
 export async function getVolume(project_id: string) {
@@ -965,6 +1127,103 @@ async function allSnapshotUsage({
 }): Promise<SnapshotUsage[]> {
   const vol = await getVolume(project_id);
   return await vol.snapshots.allUsage();
+}
+
+async function restoreSnapshot({
+  project_id,
+  snapshot,
+  mode = "both",
+  safety_snapshot_name,
+  lro: _lro,
+}: {
+  project_id: string;
+  snapshot: string;
+  mode?: SnapshotRestoreMode;
+  safety_snapshot_name?: string;
+  lro?: LroRef;
+}): Promise<void> {
+  if (!["both", "home", "rootfs"].includes(mode)) {
+    throw new Error(`invalid snapshot restore mode: ${mode}`);
+  }
+  const home = projectMountpoint(project_id);
+  const rootfsPath = join(home, PROJECT_IMAGE_PATH);
+  const staged = await createSnapshotRestoreClone({ project_id, snapshot });
+  const stagedRootfsPath = join(staged.path, PROJECT_IMAGE_PATH);
+  let cleanupStagedClone = true;
+  let oldHomePath: string | undefined;
+  let preservedRootfsPath: string | undefined;
+  try {
+    if (mode === "rootfs") {
+      preservedRootfsPath = await mkdtemp(
+        join(
+          await ensureSnapshotRestoreRoot(),
+          `${volName(project_id)}.rootfs-`,
+        ),
+      );
+      await exactSyncDirectory({ src: rootfsPath, dest: preservedRootfsPath });
+      try {
+        await exactSyncDirectory({ src: stagedRootfsPath, dest: rootfsPath });
+      } catch (err) {
+        await exactSyncDirectory({
+          src: preservedRootfsPath,
+          dest: rootfsPath,
+        }).catch(() => {});
+        throw err;
+      }
+      void touchProjectLastEdited(project_id, "restore-snapshot");
+      return;
+    }
+
+    if (mode === "home") {
+      preservedRootfsPath = await mkdtemp(
+        join(
+          await ensureSnapshotRestoreRoot(),
+          `${volName(project_id)}.rootfs-`,
+        ),
+      );
+      await exactSyncDirectory({ src: rootfsPath, dest: preservedRootfsPath });
+    }
+
+    ({ oldHomePath } = await swapProjectHome({
+      project_id,
+      replacementPath: staged.path,
+    }));
+    cleanupStagedClone = false;
+
+    try {
+      if (mode === "home") {
+        await exactSyncDirectory({
+          src: preservedRootfsPath,
+          dest: join(projectMountpoint(project_id), PROJECT_IMAGE_PATH),
+        });
+      }
+      if (oldHomePath && safety_snapshot_name) {
+        await moveSnapshotIntoCurrentHome({
+          project_id,
+          snapshot: safety_snapshot_name,
+          fromHome: oldHomePath,
+        });
+      }
+    } catch (err) {
+      if (oldHomePath) {
+        await rollbackProjectHomeSwap({
+          project_id,
+          oldHomePath,
+        }).catch(() => {});
+      }
+      throw err;
+    }
+  } finally {
+    if (cleanupStagedClone) {
+      await deleteSubvolumeTree(staged.path).catch(() => {});
+    }
+    await removeDirectoryTree(preservedRootfsPath).catch(() => {});
+  }
+
+  if (oldHomePath) {
+    await deleteSubvolumeTree(oldHomePath);
+  }
+  void touchProjectLastEdited(project_id, "restore-snapshot");
 }
 
 function createLroRusticReporter(
@@ -2124,6 +2383,7 @@ export async function initFileServer({
     updateSnapshots,
     allSnapshotUsage,
     getSnapshotFileText: reuseInFlight(getSnapshotFileText),
+    restoreSnapshot: reuseInFlight(restoreSnapshot),
     // file sync
     createSync,
     getAllSyncs,

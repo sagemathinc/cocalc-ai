@@ -191,6 +191,7 @@ env vars) to avoid discovery calls that may require broader hub permissions.
 - `project codex auth api-key delete`
 - `project snapshot create`
 - `project snapshot list`
+- `project snapshot restore`
 - `host resolve-connection`
 - `host issue-http-token`
 - `admin search`

@@ -243,6 +243,84 @@ export function registerProjectLifecycleCommands(
       });
     });
 
+  snapshot
+    .command("restore")
+    .description(
+      "fully restore a project from a snapshot (defaults to context)",
+    )
+    .option("-w, --project <project>", "project id or name")
+    .requiredOption("--snapshot <name>", "snapshot name")
+    .option("--mode <mode>", "what to restore: both, home, or rootfs", "both")
+    .option(
+      "--safety-snapshot-name <name>",
+      "name for the automatic pre-restore safety snapshot",
+    )
+    .option("--wait", "wait for completion")
+    .action(
+      async (
+        opts: {
+          project?: string;
+          snapshot: string;
+          mode?: string;
+          safetySnapshotName?: string;
+          wait?: boolean;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "project snapshot restore", async (ctx) => {
+          const mode = `${opts.mode ?? "both"}`.trim() as
+            | "both"
+            | "home"
+            | "rootfs";
+          if (!["both", "home", "rootfs"].includes(mode)) {
+            throw new Error(`invalid snapshot restore mode: ${opts.mode}`);
+          }
+          const ws = await resolveProjectFromArgOrContext(ctx, opts.project);
+          const op = await ctx.hub.projects.restoreSnapshot({
+            project_id: ws.project_id,
+            snapshot: opts.snapshot,
+            mode,
+            safety_snapshot_name: opts.safetySnapshotName,
+          });
+          if (!opts.wait) {
+            return {
+              project_id: ws.project_id,
+              snapshot: opts.snapshot,
+              mode,
+              safety_snapshot_name: opts.safetySnapshotName ?? "(auto)",
+              op_id: op.op_id,
+              status: "queued",
+            };
+          }
+          const summary = await waitForLro(ctx, op.op_id, {
+            timeoutMs: ctx.timeoutMs,
+            pollMs: ctx.pollMs,
+          });
+          if (summary.timedOut) {
+            throw new Error(
+              `snapshot restore timed out (op=${op.op_id}, last_status=${summary.status})`,
+            );
+          }
+          if (summary.status !== "succeeded") {
+            throw new Error(
+              `snapshot restore failed: status=${summary.status} error=${summary.error ?? "unknown"}`,
+            );
+          }
+          return {
+            project_id: ws.project_id,
+            snapshot: opts.snapshot,
+            mode,
+            safety_snapshot_name:
+              summary.result?.safety_snapshot_name ??
+              opts.safetySnapshotName ??
+              "(auto)",
+            op_id: op.op_id,
+            status: summary.status,
+          };
+        });
+      },
+    );
+
   const proxy = project
     .command("proxy")
     .description("project proxy operations");

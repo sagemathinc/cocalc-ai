@@ -6,9 +6,11 @@ const path = require("node:path");
 
 const {
   buildQueueJobs,
+  chooseBaselineProviderHostSpec,
   executeLaunchpadQueue,
   jobSignature,
   parseArgs,
+  pickPreferredProviderRegion,
   summarizeQueue,
 } = require("./launchpad-queue.js");
 
@@ -85,6 +87,7 @@ test("buildQueueJobs supports copy-path workflow jobs", () => {
   assert.deepEqual(jobs[0], {
     workflow: "copy-path",
     preset: "",
+    provider: "",
     accountId: "",
     apiUrl: "",
     timeout: "20m",
@@ -113,6 +116,7 @@ test("buildQueueJobs defaults copy-path hosts to the provider host when none are
   assert.deepEqual(jobs[0], {
     workflow: "copy-path",
     preset: "",
+    provider: "gcp",
     accountId: "",
     apiUrl: "",
     timeout: "15m",
@@ -139,11 +143,68 @@ test("buildQueueJobs defaults backup-snapshot to the provider host when no host 
   assert.deepEqual(jobs[0], {
     workflow: "backup-snapshot",
     preset: "",
+    provider: "gcp",
     accountId: "",
     apiUrl: "",
     timeout: "15m",
     project: "",
     host: "gcp",
+  });
+});
+
+test("pickPreferredProviderRegion prefers a US region for nebius", () => {
+  const region = pickPreferredProviderRegion("nebius", [
+    { name: "eu-north1" },
+    { name: "us-central1" },
+  ]);
+  assert.equal(region, "us-central1");
+});
+
+test("chooseBaselineProviderHostSpec selects a nebius CPU host in the preferred region", () => {
+  const spec = chooseBaselineProviderHostSpec("nebius", {
+    entries: [
+      {
+        kind: "regions",
+        scope: "global",
+        payload: [{ name: "eu-north1" }, { name: "us-central1" }],
+      },
+      {
+        kind: "instance_types",
+        scope: "global",
+        payload: [
+          {
+            name: "8vcpu-32gb",
+            vcpus: 8,
+            memory_gib: 32,
+            gpus: 0,
+            platform: "cpu-d3",
+          },
+          {
+            name: "4vcpu-16gb",
+            vcpus: 4,
+            memory_gib: 16,
+            gpus: 0,
+            platform: "cpu-d3",
+          },
+          {
+            name: "1gpu-8vcpu-32gb",
+            vcpus: 8,
+            memory_gib: 32,
+            gpus: 1,
+            platform: "gpu-l40s-d",
+          },
+        ],
+      },
+    ],
+  });
+  assert.deepEqual(spec, {
+    provider: "nebius",
+    region: "us-central1",
+    size: "4vcpu-16gb",
+    machineType: "4vcpu-16gb",
+    diskGb: 100,
+    diskType: "ssd_io_m3",
+    machineJson: { metadata: { platform: "cpu-d3" } },
   });
 });
 
