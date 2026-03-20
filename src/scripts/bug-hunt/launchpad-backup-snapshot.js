@@ -143,6 +143,7 @@ async function executeBackupSnapshotWorkflow(
     apiUrl: options.apiUrl,
     accountId: options.accountId,
     timeout: options.timeout,
+    rpcTimeout: options.timeout,
   };
 
   try {
