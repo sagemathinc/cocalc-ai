@@ -6,8 +6,10 @@
 import {
   Button,
   Card,
+  Checkbox,
   Empty,
   Input,
+  Modal,
   Popover,
   Popconfirm,
   Space,
@@ -126,6 +128,64 @@ type WorkspaceOpenFileActivity = {
   notebooks: number;
   other: number;
 };
+
+type WorkspaceBulkSelectionInput = {
+  workspaceIds: string[];
+  selectedIds: string[];
+  anchorId: string | null;
+  clickedId: string;
+  nextChecked: boolean;
+  shiftKey: boolean;
+};
+
+type WorkspaceBulkSelectionResult = {
+  selectedIds: string[];
+  anchorId: string;
+};
+
+export function applyWorkspaceBulkSelection({
+  workspaceIds,
+  selectedIds,
+  anchorId,
+  clickedId,
+  nextChecked,
+  shiftKey,
+}: WorkspaceBulkSelectionInput): WorkspaceBulkSelectionResult {
+  const orderedIds = workspaceIds.filter((id) => id.trim() !== "");
+  const current = new Set(selectedIds);
+  const clickedIndex = orderedIds.indexOf(clickedId);
+  const anchorIndex = anchorId == null ? -1 : orderedIds.indexOf(anchorId);
+
+  if (clickedIndex === -1) {
+    return {
+      selectedIds: orderedIds.filter((id) => current.has(id)),
+      anchorId: anchorId ?? clickedId,
+    };
+  }
+
+  if (shiftKey && anchorIndex !== -1) {
+    const [start, end] =
+      anchorIndex < clickedIndex
+        ? [anchorIndex, clickedIndex]
+        : [clickedIndex, anchorIndex];
+    for (const id of orderedIds.slice(start, end + 1)) {
+      if (nextChecked) {
+        current.add(id);
+      } else {
+        current.delete(id);
+      }
+    }
+  } else if (nextChecked) {
+    current.add(clickedId);
+  } else {
+    current.delete(clickedId);
+  }
+
+  return {
+    selectedIds: orderedIds.filter((id) => current.has(id)),
+    anchorId: clickedId,
+  };
+}
 
 function workspaceOpenFileActivityLabel(
   activity: WorkspaceOpenFileActivity,
@@ -636,6 +696,9 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
   const [openingChatId, setOpeningChatId] = useState<string | null>(null);
   const [error, setError] = useState<string>("");
   const [agentSessions, setAgentSessions] = useState<AgentSessionRecord[]>([]);
+  const [manageOpen, setManageOpen] = useState(false);
+  const [managedWorkspaceIds, setManagedWorkspaceIds] = useState<string[]>([]);
+  const [manageAnchorId, setManageAnchorId] = useState<string | null>(null);
   const isFlyout = layout === "flyout";
   const now = Date.now();
 
@@ -743,6 +806,13 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
     setError("");
   }
 
+  function openManage(): void {
+    setManagedWorkspaceIds([]);
+    setManageAnchorId(null);
+    setManageOpen(true);
+    setError("");
+  }
+
   function openEdit(record: WorkspaceRecord): void {
     setEditing(makeDraft(record));
     setError("");
@@ -758,6 +828,23 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
         ? { ...current, theme: { ...current.theme, ...themePatch } }
         : current,
     );
+  }
+
+  function toggleManagedWorkspace(
+    workspaceId: string,
+    nextChecked: boolean,
+    shiftKey: boolean,
+  ): void {
+    const next = applyWorkspaceBulkSelection({
+      workspaceIds: workspaces.records.map(({ workspace_id }) => workspace_id),
+      selectedIds: managedWorkspaceIds,
+      anchorId: manageAnchorId,
+      clickedId: workspaceId,
+      nextChecked,
+      shiftKey,
+    });
+    setManagedWorkspaceIds(next.selectedIds);
+    setManageAnchorId(next.anchorId);
   }
 
   async function onSave(): Promise<void> {
@@ -812,6 +899,24 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
     try {
       workspaces.deleteWorkspace(editing.workspace_id);
       setEditing(null);
+    } catch (err) {
+      setError(`${err}`);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function deleteManagedWorkspaces(): Promise<void> {
+    if (managedWorkspaceIds.length === 0) return;
+    setSaving(true);
+    setError("");
+    try {
+      for (const workspaceId of managedWorkspaceIds) {
+        workspaces.deleteWorkspace(workspaceId);
+      }
+      setManageOpen(false);
+      setManagedWorkspaceIds([]);
+      setManageAnchorId(null);
     } catch (err) {
       setError(`${err}`);
     } finally {
@@ -1327,6 +1432,9 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
               New workspace
             </Button>
           </Tooltip>
+          {workspaces.records.length > 0 ? (
+            <Button onClick={openManage}>Manage</Button>
+          ) : null}
         </Space>
         {workspaces.loading ? (
           <div style={{ padding: "24px 0", textAlign: "center" }}>
@@ -1537,6 +1645,135 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
           </Space>
         }
       />
+      <Modal
+        open={manageOpen}
+        title="Manage Workspaces"
+        onCancel={() => {
+          setManageOpen(false);
+          setManagedWorkspaceIds([]);
+          setManageAnchorId(null);
+        }}
+        destroyOnClose
+        footer={
+          <Space>
+            <Button
+              onClick={() => {
+                setManageOpen(false);
+                setManagedWorkspaceIds([]);
+                setManageAnchorId(null);
+              }}
+            >
+              Close
+            </Button>
+            <Button
+              onClick={() =>
+                setManagedWorkspaceIds(
+                  workspaces.records.map(({ workspace_id }) => workspace_id),
+                )
+              }
+            >
+              Select all
+            </Button>
+            <Button
+              onClick={() => {
+                setManagedWorkspaceIds([]);
+                setManageAnchorId(null);
+              }}
+            >
+              Clear
+            </Button>
+            <Popconfirm
+              title={`Delete ${managedWorkspaceIds.length} workspace${managedWorkspaceIds.length === 1 ? "" : "s"}?`}
+              description="This removes the saved workspace entries from this project."
+              okButtonProps={{ danger: true }}
+              onConfirm={() => void deleteManagedWorkspaces()}
+              disabled={managedWorkspaceIds.length === 0}
+            >
+              <Button
+                type="primary"
+                danger
+                disabled={managedWorkspaceIds.length === 0}
+                loading={saving}
+              >
+                Delete
+              </Button>
+            </Popconfirm>
+          </Space>
+        }
+      >
+        <Space direction="vertical" style={{ width: "100%" }} size={12}>
+          <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
+            Select one or more workspaces to delete. Shift-click selects a
+            range.
+          </Typography.Paragraph>
+          <Typography.Text type="secondary">
+            Selected: {managedWorkspaceIds.length} of{" "}
+            {workspaces.records.length}
+          </Typography.Text>
+          <div
+            style={{
+              maxHeight: 420,
+              overflow: "auto",
+              border: `1px solid ${COLORS.GRAY_L}`,
+              borderRadius: 8,
+            }}
+          >
+            <Space direction="vertical" size={0} style={{ width: "100%" }}>
+              {workspaces.records.map((record) => {
+                const checked = managedWorkspaceIds.includes(
+                  record.workspace_id,
+                );
+                return (
+                  <div
+                    key={record.workspace_id}
+                    onClick={(e) =>
+                      toggleManagedWorkspace(
+                        record.workspace_id,
+                        !checked,
+                        e.shiftKey,
+                      )
+                    }
+                    style={{
+                      display: "flex",
+                      alignItems: "flex-start",
+                      gap: 10,
+                      padding: "10px 12px",
+                      cursor: "pointer",
+                      background: checked ? COLORS.BLUE_LL : undefined,
+                      borderBottom: `1px solid ${COLORS.GRAY_LL}`,
+                    }}
+                  >
+                    <Checkbox
+                      checked={checked}
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={(e) =>
+                        toggleManagedWorkspace(
+                          record.workspace_id,
+                          e.target.checked,
+                          Boolean(e.nativeEvent.shiftKey),
+                        )
+                      }
+                    />
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                      <Typography.Text strong>
+                        {record.theme.title}
+                      </Typography.Text>
+                      <div>
+                        <Typography.Text
+                          type="secondary"
+                          style={{ fontSize: 12 }}
+                        >
+                          {record.root_path}
+                        </Typography.Text>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </Space>
+          </div>
+        </Space>
+      </Modal>
     </div>
   );
 
