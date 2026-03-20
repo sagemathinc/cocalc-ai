@@ -8,7 +8,6 @@ import getLogger from "@cocalc/backend/logger";
 import isAdmin from "@cocalc/server/accounts/is-admin";
 export * from "@cocalc/server/projects/collaborators";
 import { type CopyOptions } from "@cocalc/conat/files/fs";
-import { client as filesystemClient } from "@cocalc/conat/files/file-server";
 export * from "@cocalc/server/conat/api/project-snapshots";
 export * from "@cocalc/server/conat/api/project-backups";
 import getPool from "@cocalc/database/pool";
@@ -42,6 +41,7 @@ import {
 } from "@cocalc/server/projects/offline-move-confirmation";
 import type { LroSummary } from "@cocalc/conat/hub/api/lro";
 import { assertCollab } from "./util";
+import { getProjectFileServerClient } from "@cocalc/server/conat/file-server-client";
 import type {
   ChatStoreDeleteResult,
   ChatStoreScope,
@@ -348,9 +348,7 @@ export async function getDiskQuota({
   project_id: string;
 }): Promise<{ used: number; size: number }> {
   await assertCollab({ account_id, project_id });
-  // Route directly to the project-host that owns this project so quota reflects
-  // the correct btrfs volume.
-  const client = filesystemClient({ project_id });
+  const client = await getProjectFileServerClient({ project_id });
   return await client.getQuota({ project_id });
 }
 
