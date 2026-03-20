@@ -488,6 +488,17 @@ export function getScratchMountpoint(project_id: string): string {
   return join(getMountPoint(), scratchVolName(project_id));
 }
 
+export function getProjectSandboxFilesystem(
+  project_id: string,
+): SandboxedFilesystem {
+  return createProjectSandboxFilesystem({
+    project_id,
+    home: projectMountpoint(project_id),
+    rootfs: getRootfsMountpoint(project_id),
+    scratch: getScratchMountpoint(project_id),
+  });
+}
+
 function isSubPath(parent: string, child: string): boolean {
   const rel = path.relative(parent, child);
   return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
@@ -753,6 +764,14 @@ export function configureProjectHostAcpContainerFileIO(): void {
       }
     },
   });
+}
+
+export async function resolveProjectContainerPath(
+  project_id: string,
+  containerPath: string,
+): Promise<string> {
+  const fs = getProjectSandboxFilesystem(project_id);
+  return await fs.safeAbsPath(containerPath);
 }
 
 async function mount({

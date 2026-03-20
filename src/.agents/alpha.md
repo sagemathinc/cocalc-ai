@@ -16,9 +16,9 @@ Goals:
 Start alpha testing by the end of first week of March 2026:
 
 - https://alpha.cocalc.ai will be made live with a registration token
-- Launchpad available: https://software.cocalc.ai/software/cocalc-launchpad/index.html 
-- Cocalc-Plus available: https://software.cocalc.ai/software/cocalc-plus/index.html 
-- CoCalc-CLI available: https://software.cocalc.ai/software/cocalc/index.html 
+- Launchpad available: https://software.cocalc.ai/software/cocalc-launchpad/index.html
+- Cocalc-Plus available: https://software.cocalc.ai/software/cocalc-plus/index.html
+- CoCalc-CLI available: https://software.cocalc.ai/software/cocalc/index.html
 - All AI functionality via codex.
 - Blog Post
 - Video
@@ -502,19 +502,19 @@ Done when:
 
 The table below is the current inventory of production assistant/LLM entry points in `src/packages/frontend`, classified by intent, required context, and permission profile.
 
-| Entry point | Current code path | Intent type | Context requirements | Permission profile | Target Codex adapter |
-| --- | --- | --- | --- | --- | --- |
-| Editor title bar "AI Assistant" command (code/markdown/latex/rmd/qmd/csv/html/slides/jupyter/task/terminal/chat/whiteboard) | `frame-editors/frame-tree/commands/generic-commands.tsx` -> `frame-editors/llm/llm-assistant-button.tsx` -> `frame-editors/llm/create-chat.ts` | explain/fix/review/edit | active file path, language, selected scope (selection/cell/page/all), terminal/editor type | read file context + write chat thread | `intent:editor-assistant` (terminal path specialized as `intent:terminal-assistant`) |
-| Help Me Fix button family (formatter, latex errors/gutters, Rmd/Qmd build logs, Jupyter error panel) | `frame-editors/llm/help-me-fix.tsx`, `frame-editors/llm/help-me-fix-utils.ts`, consumers in `frame-editors/...` and `jupyter/llm/error.tsx` | fix-error | error text, optional line, truncated source context, language/file metadata | read file/error context + write chat thread | `intent:error-fix` |
-| Jupyter "Fix with Agent" (new route) | `jupyter/llm/error.tsx` -> `project/new/navigator-intents.ts` -> `project/new/navigator-shell.tsx` | fix-error | traceback, cell input, notebook path | read notebook context + write navigator thread | `intent:notebook-error` (already routed) |
-| Jupyter per-cell AI tool (Ask/Explain/Bugfix/Modify/Improve/Document/Translate/Proofread/Formulize/Translate text) | `jupyter/llm/cell-tool.tsx` | explain/fix/edit/translate/document | current cell input, optional output, optional surrounding cells, kernel/language | read notebook context + write chat thread | `intent:jupyter-cell-assistant` |
-| Jupyter "Generate cell using AI" | `jupyter/insert-cell/ai-cell-generator.tsx` | generate/edit | user prompt, insertion position, neighboring cells, kernel/language | read notebook + write notebook cells | `intent:jupyter-generate-cell` |
-| "AI Generate Document" modal/button (home page, +New, title bar) | `project/page/home-page/ai-generate-document.tsx` (+ call sites in `project/new/*`, `frame-editors/frame-tree/title-bar.tsx`) | generate-document | prompt, target extension, optional page size/kernel | write new file/notebook + open tab (+ optional run/build follow-up) | `intent:document-generate` |
-| AI formula generator (CodeMirror + Slate integration) | `codemirror/extensions/ai-formula.tsx`, `codemirror/extensions/edit-selection.ts`, `editors/slate/format/insert-ai-formula.ts` | generate-formula/edit | selected text or free-form formula prompt, mode (`tex`/`md`) | write current editor selection | `intent:formula-generate` |
-| Chat "Summarize thread" action | `chat/llm-msg-summarize.tsx` -> `chat/actions.ts::summarizeThread` | summarize | thread message history, participant names | read thread + write chat message | `intent:chat-summarize` |
-| Chat "Regenerate" action | `chat/llm-msg-regenerate.tsx` -> `chat/actions.ts::regenerateLLMResponse` -> `chat/actions/llm.ts` | regenerate/edit | target message + ancestor thread history | write assistant reply in thread | `intent:chat-regenerate` |
-| Chat @mentions / model-driven turns (`@chatgpt`, `@codex`, thread model) | `chat/actions/llm.ts`, `chat/actions.ts` | ask/explain/fix/edit (free-form) | chat thread history, mention/model selector | write chat reply (Codex path may execute tools based on session mode) | `intent:chat-turn` |
-| Hosts "AI Assist" recommendations | `hosts/components/host-ai-assist.tsx` -> `hosts/hooks/use-host-ai.ts` | recommend/plan | host catalog summary, budget, preferred region group | no filesystem write; can apply recommendations to host form state | `intent:host-recommendation` |
+| Entry point                                                                                                                 | Current code path                                                                                                                              | Intent type                         | Context requirements                                                                       | Permission profile                                                    | Target Codex adapter                                                                 |
+| --------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------ | --------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| Editor title bar "AI Assistant" command (code/markdown/latex/rmd/qmd/csv/html/slides/jupyter/task/terminal/chat/whiteboard) | `frame-editors/frame-tree/commands/generic-commands.tsx` -> `frame-editors/llm/llm-assistant-button.tsx` -> `frame-editors/llm/create-chat.ts` | explain/fix/review/edit             | active file path, language, selected scope (selection/cell/page/all), terminal/editor type | read file context + write chat thread                                 | `intent:editor-assistant` (terminal path specialized as `intent:terminal-assistant`) |
+| Help Me Fix button family (formatter, latex errors/gutters, Rmd/Qmd build logs, Jupyter error panel)                        | `frame-editors/llm/help-me-fix.tsx`, `frame-editors/llm/help-me-fix-utils.ts`, consumers in `frame-editors/...` and `jupyter/llm/error.tsx`    | fix-error                           | error text, optional line, truncated source context, language/file metadata                | read file/error context + write chat thread                           | `intent:error-fix`                                                                   |
+| Jupyter "Fix with Agent" (new route)                                                                                        | `jupyter/llm/error.tsx` -> `project/new/navigator-intents.ts` -> `project/new/navigator-shell.tsx`                                             | fix-error                           | traceback, cell input, notebook path                                                       | read notebook context + write navigator thread                        | `intent:notebook-error` (already routed)                                             |
+| Jupyter per-cell AI tool (Ask/Explain/Bugfix/Modify/Improve/Document/Translate/Proofread/Formulize/Translate text)          | `jupyter/llm/cell-tool.tsx`                                                                                                                    | explain/fix/edit/translate/document | current cell input, optional output, optional surrounding cells, kernel/language           | read notebook context + write chat thread                             | `intent:jupyter-cell-assistant`                                                      |
+| Jupyter "Generate cell using AI"                                                                                            | `jupyter/insert-cell/ai-cell-generator.tsx`                                                                                                    | generate/edit                       | user prompt, insertion position, neighboring cells, kernel/language                        | read notebook + write notebook cells                                  | `intent:jupyter-generate-cell`                                                       |
+| "AI Generate Document" modal/button (home page, +New, title bar)                                                            | `project/page/home-page/ai-generate-document.tsx` (+ call sites in `project/new/*`, `frame-editors/frame-tree/title-bar.tsx`)                  | generate-document                   | prompt, target extension, optional page size/kernel                                        | write new file/notebook + open tab (+ optional run/build follow-up)   | `intent:document-generate`                                                           |
+| AI formula generator (CodeMirror + Slate integration)                                                                       | `codemirror/extensions/ai-formula.tsx`, `codemirror/extensions/edit-selection.ts`, `editors/slate/format/insert-ai-formula.ts`                 | generate-formula/edit               | selected text or free-form formula prompt, mode (`tex`/`md`)                               | write current editor selection                                        | `intent:formula-generate`                                                            |
+| Chat "Summarize thread" action                                                                                              | `chat/llm-msg-summarize.tsx` -> `chat/actions.ts::summarizeThread`                                                                             | summarize                           | thread message history, participant names                                                  | read thread + write chat message                                      | `intent:chat-summarize`                                                              |
+| Chat "Regenerate" action                                                                                                    | `chat/llm-msg-regenerate.tsx` -> `chat/actions.ts::regenerateLLMResponse` -> `chat/actions/llm.ts`                                             | regenerate/edit                     | target message + ancestor thread history                                                   | write assistant reply in thread                                       | `intent:chat-regenerate`                                                             |
+| Chat @mentions / model-driven turns (`@chatgpt`, `@codex`, thread model)                                                    | `chat/actions/llm.ts`, `chat/actions.ts`                                                                                                       | ask/explain/fix/edit (free-form)    | chat thread history, mention/model selector                                                | write chat reply (Codex path may execute tools based on session mode) | `intent:chat-turn`                                                                   |
+| Hosts "AI Assist" recommendations                                                                                           | `hosts/components/host-ai-assist.tsx` -> `hosts/hooks/use-host-ai.ts`                                                                          | recommend/plan                      | host catalog summary, budget, preferred region group                                       | no filesystem write; can apply recommendations to host form state     | `intent:host-recommendation`                                                         |
 
 ##### P3.1b Grouped classification
 
@@ -579,15 +579,22 @@ Done when:
 - Successful intents should apply edits directly when safe.
 - Agent responses should include what changed and where, not just prose.
 
-3. Preflight consistency
+3. Live document consistency
 
-- Before dispatch, attempt to save dirty source documents (best-effort).
-- Include document identity + timestamp/hash hints in context for conflict awareness.
+- Treat live sync/RTC document state as the source of truth.
+- Do not rely on saving dirty documents to disk before dispatch.
+- When a live backend/CLI document API exists, operate on that in-memory sync
+  state directly.
+- For document types without adequate live mutation APIs yet, add them instead
+  of falling back to stale filesystem reads.
+- Include document identity + revision/timestamp/hash hints in context for
+  conflict awareness.
 
 4. Apply path preference
 
 - Prefer browser/RTC-aware edits (via CoCalc CLI browser exec) when target docs are open.
-- Fallback to project file edits + open/focus target file if RTC route is unavailable.
+- Prefer backend live-document APIs over browser-only edits when they exist.
+- Fallback to project file edits only when no live document path exists yet.
 - Avoid silent divergence between on-disk and in-memory state.
 
 5. Safety + audit

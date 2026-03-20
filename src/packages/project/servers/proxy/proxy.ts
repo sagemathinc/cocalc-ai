@@ -55,11 +55,13 @@ import listen from "@cocalc/backend/misc/async-server-listen";
 import { resolveProxyListenPort } from "./config";
 import {
   COCALC_PUBLIC_VIEWER_MODE,
+  isPublicViewerRenderablePath,
   parsePublicViewerManifest,
   type AppStaticIntegrationSpec,
   type PublicViewerManifest,
   type PublicViewerManifestEntry,
 } from "../../app-servers/public-viewer";
+import { renderPublicViewerFile } from "../../app-servers/public-viewer-render";
 
 const logger = getLogger("project:servers:proxy");
 const STATIC_CACHE_CONTROL_DEFAULT = "public, max-age=300";
@@ -505,6 +507,23 @@ function createProxyResolver({
     return encodeUrlPath(normalized);
   }
 
+  function appendViewerRawQuery(href: string): string {
+    return href.includes("?") ? `${href}&raw=1` : `${href}?raw=1`;
+  }
+
+  function isViewerRawRequest(req: http.IncomingMessage): boolean {
+    const requestUrl = req.url ?? "/";
+    try {
+      const url = new URL(requestUrl, "http://127.0.0.1");
+      return (
+        url.searchParams.get("raw") === "1" ||
+        url.searchParams.get("render") === "raw"
+      );
+    } catch {
+      return false;
+    }
+  }
+
   function sortPublicViewerEntries(
     left: PublicViewerManifestEntry,
     right: PublicViewerManifestEntry,
@@ -521,10 +540,12 @@ function createProxyResolver({
     manifest,
     manifestPath,
     directoryRelativePath,
+    integration,
   }: {
     manifest: PublicViewerManifest;
     manifestPath: string;
     directoryRelativePath: string;
+    integration: AppStaticIntegrationSpec;
   }): string {
     const title = manifest.title || "CoCalc Public Viewer";
     const description =
@@ -535,14 +556,21 @@ function createProxyResolver({
       .filter((entry) => entry.render !== "hidden")
       .sort(sortPublicViewerEntries)
       .map((entry) => {
-        const href = relativeUrlFromDirectory(
+        const baseHref = relativeUrlFromDirectory(
           directoryRelativePath,
           entry.path,
         );
+        const href =
+          entry.render === "raw" &&
+          isPublicViewerRenderablePath(entry.path, {
+            file_types: integration.file_types,
+          })
+            ? appendViewerRawQuery(baseHref)
+            : baseHref;
         const tags = (entry.tags ?? [])
           .map((tag) => `<span class="tag">${escapeHtml(`${tag}`)}</span>`)
           .join("");
-        const mode = entry.render === "viewer" ? "viewer planned" : "raw file";
+        const mode = entry.render === "viewer" ? "viewer page" : "raw file";
         return `<li class="entry">
   <a class="entry-link" href="${escapeHtml(href)}">
     <span class="entry-title">${escapeHtml(entry.title || entry.path)}</span>
@@ -700,7 +728,7 @@ ${entries}
     };
     if (exposureMode === "public") {
       headers["Content-Security-Policy"] =
-        "default-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'; frame-ancestors 'none'; img-src 'self' data: blob:; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self'";
+        "default-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'; frame-ancestors 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https: http:; font-src 'self' data:; media-src 'self' data: blob: https: http:; connect-src 'self'";
       headers["Cross-Origin-Resource-Policy"] = "same-origin";
       headers["Cross-Origin-Opener-Policy"] = "same-origin";
     }
@@ -842,6 +870,48 @@ ${entries}
       return;
     }
     if (pathInfo.stat?.isFile()) {
+      const relativePath = pathInfo.relativePath;
+      const shouldRenderViewer =
+        isPublicViewerRenderablePath(relativePath, {
+          file_types: integration.file_types,
+        }) && !isViewerRawRequest(req);
+      if (shouldRenderViewer) {
+        try {
+          const content = await readFile(pathInfo.absolutePath, "utf8");
+          const rendered = renderPublicViewerFile({
+            relativePath,
+            content,
+            rawHref: "?raw=1",
+            integration,
+          });
+          if (rendered != null) {
+            writeStaticHtmlResponse({
+              req,
+              res,
+              html: rendered.html,
+              cache_control,
+              mtimeMs: Number(pathInfo.stat.mtimeMs),
+              extraHeaders: {
+                ...extraHeaders,
+                "Content-Type": rendered.contentType,
+              },
+            });
+            return;
+          }
+        } catch (err) {
+          logger.warn("public viewer render error", {
+            err: `${err}`,
+            requestPath,
+            absolutePath: pathInfo.absolutePath,
+          });
+          res.writeHead(500, {
+            "Content-Type": "text/plain; charset=utf-8",
+            ...extraHeaders,
+          });
+          res.end("Unable to render public viewer file\n");
+          return;
+        }
+      }
       await writeResolvedStaticFile({
         req,
         res,
@@ -913,6 +983,7 @@ ${entries}
         manifest,
         manifestPath: integration.manifest,
         directoryRelativePath: pathInfo.relativePath,
+        integration,
       });
       writeStaticHtmlResponse({
         req,

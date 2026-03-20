@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import {
   DiffBlock,
+  diffLineNumberColumnWidth,
   getCommitReviewIndicatorState,
   MarkdownHistoryInput,
   buildGitShowArgs,
@@ -183,6 +184,13 @@ describe("git commit drawer merge commit formatting", () => {
     } finally {
       (DiffBlock as any).type = originalType;
     }
+  });
+
+  it("sizes diff line number gutters using ch units for wide line numbers", () => {
+    expect(diffLineNumberColumnWidth(0)).toBe("calc(3ch + 12px)");
+    expect(diffLineNumberColumnWidth(99)).toBe("calc(3ch + 12px)");
+    expect(diffLineNumberColumnWidth(1000)).toBe("calc(4ch + 12px)");
+    expect(diffLineNumberColumnWidth(12345)).toBe("calc(5ch + 12px)");
   });
 
   it("matches git review scroll keys without modifiers", () => {

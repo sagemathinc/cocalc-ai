@@ -14,6 +14,7 @@ import { EventIterator } from "@cocalc/util/event-iterator";
 import { getLogger } from "@cocalc/conat/client";
 import { Throttle } from "@cocalc/util/throttle";
 import {
+  canonicalJupyterLiveRunPath,
   jupyterLiveRunKey,
   openJupyterLiveRunStore,
   jupyterLiveRunSubject,
@@ -77,6 +78,11 @@ export interface OutputMessage {
   msg_type?: string;
   done?: boolean;
   more_output?: boolean;
+}
+
+export interface JupyterRunAck {
+  run_id: string;
+  server_received_at_ms: number;
 }
 
 export type LifecycleMessageType =
@@ -274,7 +280,10 @@ export function jupyterServer({
         const run_id =
           typeof data.run_id == "string" ? data.run_id : nextRunId();
         try {
-          mesg.respondSync(null);
+          mesg.respondSync({
+            run_id,
+            server_received_at_ms: Date.now(),
+          } satisfies JupyterRunAck);
           if (moreOutput[path] == null) {
             moreOutput[path] = {};
           }
@@ -355,15 +364,21 @@ async function handleRequest({
   let summaryError: string | undefined;
   let firstClientBatchFastLane = false;
   let socketClosedDuringRun = false;
-  const liveRunSubject = jupyterLiveRunSubject({ project_id, path });
+  let firstClientWriteAt: number | null = null;
+  let firstLivePublishAt: number | null = null;
+  const liveRunPath = canonicalJupyterLiveRunPath(path);
+  const liveRunSubject = jupyterLiveRunSubject({
+    project_id,
+    path: liveRunPath,
+  });
   const liveRunStore = await openJupyterLiveRunStore({ client, project_id });
-  const liveRunKey = jupyterLiveRunKey({ path, run_id });
+  const liveRunKey = jupyterLiveRunKey({ path: liveRunPath, run_id });
   const runner = await run({ path, cells, noHalt, socket, run_id });
   const output: OutputMessage[] = [];
   let outputVisibleCount = 0;
   let batchSeq = 0;
   let liveRunSnapshot: JupyterLiveRunSnapshot = {
-    path,
+    path: liveRunPath,
     run_id,
     batches: [],
     updated_at_ms: Date.now(),
@@ -392,8 +407,11 @@ async function handleRequest({
     if (mesgs.length == 0) {
       return;
     }
+    if (firstLivePublishAt == null) {
+      firstLivePublishAt = Date.now();
+    }
     const batch: JupyterLiveRunBatch = {
-      path,
+      path: liveRunPath,
       run_id,
       seq: ++batchSeq,
       id: `${run_id}:${batchSeq}`,
@@ -426,6 +444,9 @@ async function handleRequest({
       return;
     }
     try {
+      if (firstClientWriteAt == null) {
+        firstClientWriteAt = Date.now();
+      }
       socket.write(coalescedMesgs);
       if (opts?.fastLane) {
         firstClientBatchFastLane = true;
@@ -608,6 +629,14 @@ async function handleRequest({
       duration_ms: Date.now() - startedAt,
       first_message_ms:
         firstMesgAt == null ? null : Math.max(0, firstMesgAt - startedAt),
+      first_client_write_ms:
+        firstClientWriteAt == null
+          ? null
+          : Math.max(0, firstClientWriteAt - startedAt),
+      first_live_publish_ms:
+        firstLivePublishAt == null
+          ? null
+          : Math.max(0, firstLivePublishAt - startedAt),
       total_messages: totalMesgs,
       total_batches: totalBatches,
       more_output_buffered: moreOutputBuffered,
@@ -688,6 +717,7 @@ export class JupyterClient {
       limit?: number;
       run_id?: string;
       waitForAck?: boolean;
+      onAck?: (ack: JupyterRunAck) => void;
     } = {},
   ) => {
     const effectiveRunId = opts.run_id ?? nextRunId();
@@ -725,7 +755,7 @@ export class JupyterClient {
     const cells1 = cells.map(({ id, input }) => {
       return { id, input };
     });
-    const { waitForAck = true, ...requestOpts0 } = opts;
+    const { waitForAck = true, onAck, ...requestOpts0 } = opts;
     const requestOpts = {
       ...requestOpts0,
       run_id: effectiveRunId,
@@ -735,6 +765,12 @@ export class JupyterClient {
       ...requestOpts,
       path: this.path,
       cells: cells1,
+    });
+    void request.then((resp) => {
+      const data = resp?.data;
+      if (data != null && typeof data === "object") {
+        onAck?.(data as JupyterRunAck);
+      }
     });
     if (waitForAck) {
       return request.then(() => iter);

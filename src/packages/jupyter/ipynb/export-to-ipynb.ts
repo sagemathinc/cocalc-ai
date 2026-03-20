@@ -54,7 +54,7 @@ export interface IPynbCell {
   cell_type: CellType;
   source?: string[];
   metadata?: Metadata;
-  execution_count?: number;
+  execution_count?: number | null;
   outputs?: OutputMessage[];
 }
 
@@ -126,9 +126,8 @@ function cell_to_ipynb(id: string, opts: Options) {
     metadata.scrolled = true;
   }
 
-  const exec_count = cell.exec_count ?? 0;
   if (obj.cell_type === "code") {
-    obj.execution_count = exec_count;
+    obj.execution_count = cell.exec_count ?? null;
   }
 
   processSlides(obj, cell.slide);
@@ -144,7 +143,7 @@ function cell_to_ipynb(id: string, opts: Options) {
   if (output != null) {
     obj.outputs = ipynbOutputs({
       output,
-      exec_count,
+      exec_count: cell.exec_count ?? null,
       more_output: opts.more_output?.[id],
       blob_store: opts.blob_store,
     });
@@ -235,7 +234,7 @@ function ipynbOutputs({
   blob_store,
 }: {
   output: { [n: string]: OutputMessage };
-  exec_count: number;
+  exec_count: number | null;
   more_output?: OutputMessage[];
   blob_store?: BlobStore;
 }) {
@@ -295,7 +294,7 @@ function objArrayLength(objArray) {
 
 function processOutputN(
   output_n: OutputMessage,
-  exec_count: number,
+  exec_count: number | null,
   blob_store?: BlobStore,
 ) {
   if (output_n == null) {
@@ -338,7 +337,11 @@ function processOutputN(
     if (output_n.metadata == null) {
       output_n.metadata = {};
     }
-    output_n.execution_count = exec_count;
+    if (exec_count != null) {
+      output_n.execution_count = exec_count;
+    } else {
+      delete output_n.execution_count;
+    }
   } else if (output_n.name != null) {
     output_n.output_type = "stream";
     if (output_n.name === "input") {

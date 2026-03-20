@@ -8,6 +8,7 @@ import { ConatSocketBase } from "./base";
 import { type TCP, createTCP } from "./tcp";
 import {
   SOCKET_HEADER_CMD,
+  SOCKET_HEADER_CONNECT_ATTEMPT,
   DEFAULT_COMMAND_TIMEOUT,
   type ConatSocketOptions,
   serverStatusSubject,
@@ -15,7 +16,7 @@ import {
 import { EventIterator } from "@cocalc/util/event-iterator";
 import { keepAlive, KeepAlive } from "./keepalive";
 import { getLogger } from "@cocalc/conat/client";
-import { until } from "@cocalc/util/async-utils";
+import { once } from "@cocalc/util/async-utils";
 
 const logger = getLogger("socket:client");
 
@@ -28,11 +29,18 @@ export class ConatSocketClient extends ConatSocketBase {
   private alive?: KeepAlive;
   private serverId?: string;
   private loadBalancer?: (subject: string) => Promise<string>;
+  private lifecycleReporter?: ConatSocketOptions["lifecycleReporter"];
+  private nextConnectAttemptId = 0;
+  private connectAttempts = new Map<
+    number,
+    { started_at: number; publish_ms?: number }
+  >();
   private requestRetryInFlight = false;
 
   constructor(opts: ConatSocketOptions) {
     super(opts);
     this.loadBalancer = opts.loadBalancer;
+    this.lifecycleReporter = opts.lifecycleReporter;
     // logger.silly("creating a client socket connecting to ", this.subject);
     this.initTCP();
     this.on("ready", () => {
@@ -109,7 +117,7 @@ export class ConatSocketClient extends ConatSocketBase {
   };
 
   private sendCommandToServer = async (
-    cmd: "close" | "ping" | "connect",
+    cmd: "close" | "ping",
     timeout = DEFAULT_COMMAND_TIMEOUT,
   ) => {
     const headers = {
@@ -117,11 +125,9 @@ export class ConatSocketClient extends ConatSocketBase {
       id: this.id,
     };
     const subject = this.serverSubject();
-    // logger.silly("sendCommandToServer", { cmd, timeout, subject });
     const resp = await this.client.request(subject, null, {
       headers,
       timeout,
-      waitForInterest: cmd == "connect", // connect is exactly when other side might not be visible yet.
     });
 
     const value = resp.data;
@@ -133,8 +139,99 @@ export class ConatSocketClient extends ConatSocketBase {
     }
   };
 
+  private sendConnectCommand = () => {
+    const attempt = ++this.nextConnectAttemptId;
+    const started_at = Date.now();
+    this.client.publishSync(this.serverSubject(), null, {
+      headers: {
+        [SOCKET_HEADER_CMD]: "connect",
+        [SOCKET_HEADER_CONNECT_ATTEMPT]: attempt,
+        id: this.id,
+      },
+    });
+    this.connectAttempts.set(attempt, {
+      started_at,
+      publish_ms: Date.now() - started_at,
+    });
+  };
+
+  private handleConnected = (mesg) => {
+    const rawAttempt = mesg.headers?.[SOCKET_HEADER_CONNECT_ATTEMPT];
+    const attempt =
+      typeof rawAttempt == "number"
+        ? rawAttempt
+        : typeof rawAttempt == "string"
+          ? Number(rawAttempt)
+          : undefined;
+    const connectAttempt =
+      attempt != null && !Number.isNaN(attempt)
+        ? this.connectAttempts.get(attempt)
+        : undefined;
+    const waitForClientInterestMs =
+      typeof mesg.headers?.waitForClientInterestMs == "number"
+        ? mesg.headers.waitForClientInterestMs
+        : undefined;
+    const details = {
+      publish_ms: connectAttempt?.publish_ms,
+      response_wait_ms:
+        connectAttempt == null
+          ? undefined
+          : Date.now() - connectAttempt.started_at,
+      wait_for_client_interest_ms: waitForClientInterestMs,
+    };
+    this.connectAttempts.clear();
+    if (this.state == "ready") {
+      return;
+    }
+    this.setState("ready");
+    this.lifecycleReporter?.("connect_command_done", details);
+    this.lifecycleReporter?.("ready");
+    this.initKeepAlive();
+  };
+
+  private processMessages = async () => {
+    for await (const mesg of this.sub!) {
+      this.alive?.recv();
+      const cmd = mesg.headers?.[SOCKET_HEADER_CMD];
+      if (cmd == "connected") {
+        this.handleConnected(mesg);
+      } else if (cmd == "socket") {
+        this.tcp?.send.handleRequest(mesg);
+      } else if (cmd == "close") {
+        this.close();
+        return;
+      } else if (cmd == "ping") {
+        // logger.silly("responding to ping from server", this.id);
+        mesg.respondSync(null);
+      } else if (mesg.isRequest()) {
+        // logger.silly("client got request");
+        this.emit("request", mesg);
+      } else {
+        // logger.silly("client got data"); //, { data: mesg.data });
+        this.tcp?.recv.process(mesg);
+      }
+    }
+  };
+
+  private waitForConnected = async () => {
+    this.connectAttempts.clear();
+    let timeout = 500;
+    while (this.state != "closed" && this.state != "ready") {
+      this.lifecycleReporter?.("connect_command_start");
+      this.sendConnectCommand();
+      try {
+        await once(this, "ready", timeout);
+        return;
+      } catch {
+        // Retry until the ready event arrives or the socket closes.
+      }
+      timeout = Math.min(10_000, Math.round(timeout * 1.3));
+    }
+  };
+
   private getServerId = async () => {
     let id;
+    this.lifecycleReporter?.("get_server_id_start");
     if (this.loadBalancer != null) {
       logger.debug("getting server id from load balancer");
       id = await this.loadBalancer(this.subject);
@@ -147,6 +244,7 @@ export class ConatSocketClient extends ConatSocketBase {
       ({ id } = resp.data);
     }
     this.serverId = id;
+    this.lifecycleReporter?.("get_server_id_done", { server_id: id });
   };
 
   protected async run() {
@@ -161,9 +259,11 @@ export class ConatSocketClient extends ConatSocketBase {
       await this.getServerId();
 
       //  logger.silly("run: getting subscription");
-      const sub = await this.client.subscribe(
+      this.lifecycleReporter?.("subscribe_start");
+      const sub = this.client.subscribeSync(
         `${this.subject}.client.${this.id}`,
       );
+      this.lifecycleReporter?.("subscribe_done");
       // @ts-ignore
       if (this.state == "closed") {
         sub.close();
@@ -171,53 +271,13 @@ export class ConatSocketClient extends ConatSocketBase {
       }
       // the disconnect function does this.sub.close()
       this.sub = sub;
-      let resp: any = undefined;
-      await until(
-        async () => {
-          if (this.state == "closed") {
-            //  logger.silly("closed -- giving up on connecting");
-            return true;
-          }
-          try {
-            // logger.silly("sending connect command to server", this.subject);
-            resp = await this.sendCommandToServer("connect");
-            this.alive?.recv();
-            return true;
-          } catch (err) {
-            // logger.silly("failed to connect", this.subject, err);
-          }
-          return false;
-        },
-        { start: 500, decay: 1.3, max: 10000 },
-      );
+      const processMessages = this.processMessages();
+      await this.waitForConnected();
 
-      if (resp != "connected") {
+      if (this.state != "ready") {
         throw Error("failed to connect");
       }
-      this.setState("ready");
-      this.initKeepAlive();
-      for await (const mesg of this.sub) {
-        this.alive?.recv();
-        const cmd = mesg.headers?.[SOCKET_HEADER_CMD];
-        //if (cmd) {
-        // logger.silly("client got cmd", cmd);
-        //}
-        if (cmd == "socket") {
-          this.tcp?.send.handleRequest(mesg);
-        } else if (cmd == "close") {
-          this.close();
-          return;
-        } else if (cmd == "ping") {
-          // logger.silly("responding to ping from server", this.id);
-          mesg.respondSync(null);
-        } else if (mesg.isRequest()) {
-          // logger.silly("client got request");
-          this.emit("request", mesg);
-        } else {
-          // logger.silly("client got data"); //, { data: mesg.data });
-          this.tcp?.recv.process(mesg);
-        }
-      }
+      await processMessages;
     } catch (err) {
       // logger.silly("socket connect failed", err);
       this.disconnect();
@@ -347,6 +407,7 @@ export class ConatSocketClient extends ConatSocketBase {
     if (this.state == "closed") {
       return;
     }
+    this.connectAttempts.clear();
     this.sub?.close();
     if (this.tcp != null) {
       this.client.removeListener(

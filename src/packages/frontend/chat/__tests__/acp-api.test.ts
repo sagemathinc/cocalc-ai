@@ -133,6 +133,80 @@ describe("processAcpLLM", () => {
     expect(acpState.get("message:user-msg-45")).toBe("queue");
   });
 
+  it("waits for syncdb save acknowledgement before starting ACP", async () => {
+    jest.spyOn(Date, "now").mockReturnValue(4600);
+    let resolveSave: (() => void) | undefined;
+    const savePromise = new Promise<void>((resolve) => {
+      resolveSave = resolve;
+    });
+    mockStreamAcp.mockResolvedValue(queuedAckStream("running"));
+
+    const acpState = new FakeAcpState();
+    const store: any = {
+      get: (key: string) => {
+        if (key === "project_id") return "proj";
+        if (key === "path") return "x.chat";
+        if (key === "acpState") return acpState;
+        return undefined;
+      },
+      setState: jest.fn(),
+    };
+
+    const actions: any = {
+      syncdb: {
+        save: jest.fn(() => savePromise),
+      },
+      store,
+      chatStreams: new Set<string>(),
+      getAllMessages: () =>
+        new Map<string, any>([
+          [
+            "4600",
+            {
+              date: new Date(4600),
+              message_id: "root-msg-46",
+              thread_id: "thread-46",
+            },
+          ],
+        ]),
+      getThreadMetadata: jest.fn(() => undefined),
+      getMessagesInThread: jest.fn(() => []),
+      getCodexConfig: jest.fn(() => undefined),
+      sendReply: jest.fn(),
+    };
+
+    const message: any = {
+      event: "chat",
+      sender_id: "user-1",
+      date: new Date(4600),
+      message_id: "user-msg-46",
+      thread_id: "thread-46",
+      history: [
+        {
+          author_id: "user-1",
+          content: "persist first",
+          date: new Date(4600).toISOString(),
+        },
+      ],
+    };
+
+    const pending = processAcpLLM({
+      message,
+      model: "codex-agent",
+      input: "persist first",
+      actions,
+    });
+
+    await Promise.resolve();
+    expect(actions.syncdb.save).toHaveBeenCalledTimes(1);
+    expect(mockStreamAcp).not.toHaveBeenCalled();
+
+    resolveSave?.();
+    await pending;
+
+    expect(mockStreamAcp).toHaveBeenCalledTimes(1);
+  });
+
   it("chooses a unique assistant message timestamp", async () => {
     jest.spyOn(Date, "now").mockReturnValue(1000);
     jest.spyOn(global, "setTimeout").mockImplementation(((fn: any) => {
@@ -205,6 +279,9 @@ describe("processAcpLLM", () => {
     expect(arg.chat.message_id).not.toBe("user-msg-1");
     expect(arg.chat.thread_id).toBe("thread-1");
     expect(arg.chat.parent_message_id).toBe("user-msg-1");
+    expect(arg.chat.user_message_date).toBe(new Date(1000).toISOString());
+    expect(arg.chat.user_message_content).toBe("run codex");
+    expect(arg.chat.user_parent_message_id).toBeUndefined();
     expect(arg.chat.reply_to_message_id).toBeUndefined();
     expect(arg.session_id).toBe("thread-1");
   });

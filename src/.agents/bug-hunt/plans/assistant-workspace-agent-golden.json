@@ -1,0 +1,156 @@
+{
+  "name": "assistant-workspace-agent-golden",
+  "default_retries": 1,
+  "default_recovery": "reload",
+  "default_timeout_ms": 30000,
+  "capture": {
+    "screenshot_on_fail": true,
+    "logs_on_fail": 200,
+    "network_on_fail": 200,
+    "network_include_decoded": true
+  },
+  "before_all": [
+    {
+      "name": "wait initial body",
+      "action": {
+        "name": "wait_for_selector",
+        "selector": "body",
+        "state": "visible",
+        "timeout_ms": 30000,
+        "poll_ms": 120
+      }
+    },
+    {
+      "name": "open assistant fixture file",
+      "action": {
+        "name": "navigate",
+        "url": "http://localhost:7003/projects/00000000-1000-4000-8000-000000000000/files/home/wstein/scratch/cocalc-lite3-lite-daemon/assistant/assistant-agent-golden.md"
+      }
+    },
+    {
+      "name": "wait assistant fixture url",
+      "action": {
+        "name": "wait_for_url",
+        "includes": "/assistant/assistant-agent-golden.md",
+        "timeout_ms": 30000,
+        "poll_ms": 120
+      }
+    },
+    {
+      "name": "wait fixture body",
+      "action": {
+        "name": "wait_for_selector",
+        "selector": "body",
+        "state": "visible",
+        "timeout_ms": 15000,
+        "poll_ms": 120
+      }
+    }
+  ],
+  "steps": [
+    {
+      "name": "wait title-bar assistant avatar",
+      "action": {
+        "name": "wait_for_selector",
+        "selector": "button svg[viewBox='0 0 48 48']",
+        "state": "visible",
+        "timeout_ms": 15000,
+        "poll_ms": 120
+      }
+    },
+    {
+      "name": "open assistant dialog first time",
+      "exec": "(() => { const button = [...document.querySelectorAll('button')].find((x) => x.querySelector('svg[viewBox=\"0 0 48 48\"]') && !String(x.className || '').includes('ant-btn-text ant-btn-color-default ant-btn-variant-text ant-btn-sm')) ?? [...document.querySelectorAll('button')].find((x) => x.querySelector('svg[viewBox=\"0 0 48 48\"]')); if (!button) throw new Error('Title-bar assistant button not found'); button.click(); return { clicked: true, className: String(button.className || '') }; })();"
+    },
+    {
+      "name": "wait assistant composer first time",
+      "action": {
+        "name": "wait_for_selector",
+        "selector": "textarea[placeholder*='What should Codex do']",
+        "state": "visible",
+        "timeout_ms": 15000,
+        "poll_ms": 120
+      }
+    },
+    {
+      "name": "type first assistant request",
+      "action": {
+        "name": "type",
+        "selector": "textarea[placeholder*='What should Codex do']",
+        "text": "Please add a heading that says Golden Harness One.",
+        "clear": true
+      }
+    },
+    {
+      "name": "submit first assistant request",
+      "exec": "(() => { const button = [...document.querySelectorAll('button')].find((x) => (x.textContent || '').includes('Send to Codex')); if (!button) throw new Error('Send to Codex button not found'); button.click(); return { clicked: true }; })();"
+    },
+    {
+      "name": "wait floating dock after first request",
+      "action": {
+        "name": "wait_for_selector",
+        "selector": ".cc-agent-dock-handle",
+        "state": "visible",
+        "timeout_ms": 30000,
+        "poll_ms": 120
+      }
+    },
+    {
+      "name": "capture first selected thread key",
+      "exec": "window.__assistantGolden = window.__assistantGolden || {}; const root = document.querySelector('[data-selectedThreadKey]'); const key = root?.getAttribute('data-selectedThreadKey') || ''; window.__assistantGolden.firstThreadKey = key; return { key, promptVisible: (document.body.innerText || '').includes('Please add a heading that says Golden Harness One.') };"
+    },
+    {
+      "name": "first thread key stored and first prompt visible",
+      "assert": {
+        "code": "const key = window.__assistantGolden?.firstThreadKey || ''; const body = document.body.innerText || ''; return !!key && body.includes('Please add a heading that says Golden Harness One.');",
+        "truthy": true
+      }
+    },
+    {
+      "name": "assistant dialog closes after first submit",
+      "assert": {
+        "code": "return document.querySelector(\"textarea[placeholder*='What should Codex do']\") == null;",
+        "truthy": true
+      }
+    },
+    {
+      "name": "open assistant dialog second time",
+      "exec": "(() => { const button = [...document.querySelectorAll('button')].find((x) => x.querySelector('svg[viewBox=\"0 0 48 48\"]') && !String(x.className || '').includes('ant-btn-text ant-btn-color-default ant-btn-variant-text ant-btn-sm')); if (!button) throw new Error('Title-bar assistant button not found on second open'); button.click(); return { clicked: true }; })();"
+    },
+    {
+      "name": "wait assistant composer second time",
+      "action": {
+        "name": "wait_for_selector",
+        "selector": "textarea[placeholder*='What should Codex do']",
+        "state": "visible",
+        "timeout_ms": 15000,
+        "poll_ms": 120
+      }
+    },
+    {
+      "name": "type second assistant request",
+      "action": {
+        "name": "type",
+        "selector": "textarea[placeholder*='What should Codex do']",
+        "text": "Please add a final sentence that says Golden Harness Two.",
+        "clear": true
+      }
+    },
+    {
+      "name": "submit second assistant request",
+      "exec": "(() => { const button = [...document.querySelectorAll('button')].find((x) => (x.textContent || '').includes('Send to Codex')); if (!button) throw new Error('Send to Codex button not found on second submit'); button.click(); return { clicked: true }; })();"
+    },
+    {
+      "name": "capture second selected thread key",
+      "exec": "window.__assistantGolden = window.__assistantGolden || {}; window.__assistantGolden.secondThreadKey = document.querySelector('[data-selectedThreadKey]')?.getAttribute('data-selectedThreadKey') || ''; return { first: window.__assistantGolden.firstThreadKey || '', second: window.__assistantGolden.secondThreadKey || '' };"
+    },
+    {
+      "name": "second request reuses first thread key",
+      "assert": {
+        "code": "const first = window.__assistantGolden?.firstThreadKey || ''; const second = window.__assistantGolden?.secondThreadKey || ''; const body = document.body.innerText || ''; return !!first && first === second && body.includes('Please add a final sentence that says Golden Harness Two.');",
+        "truthy": true
+      },
+      "timeout_ms": 30000
+    }
+  ]
+}

@@ -60,6 +60,7 @@ import {
   JUPYTER_RUNTIME_NBCONVERT_KEY,
   JUPYTER_RUNTIME_SETTINGS_KEY,
   JUPYTER_RUNTIME_USER_KEY,
+  normalizeJupyterRuntimeCellState,
   openJupyterRuntimeState,
   type JupyterRuntimeCellState,
   type JupyterRuntimeLimits,
@@ -143,6 +144,7 @@ export class JupyterActions extends Actions<JupyterStoreState> {
   private runtimeState?: JupyterRuntimeState;
   private runtimeStateInitStarted = false;
   private pendingRuntimeRecords: Map<string, object> = new Map();
+  private pendingDeletedRuntimeRecords: Set<string> = new Set();
   private labels?: {
     math: { [label: string]: { tag: string; id: string } };
     fig: { [label: string]: { tag: string; id: string } };
@@ -267,9 +269,11 @@ export class JupyterActions extends Actions<JupyterStoreState> {
       return;
     }
     if (!change?.key) {
+      this.reconcileAllPendingRuntimeRecords();
       this.applyRuntimeStateSnapshot();
       return;
     }
+    this.reconcilePendingRuntimeRecord(change.key);
     if (isJupyterRuntimeCellKey(change.key)) {
       this.applyRuntimeCellToStore(jupyterRuntimeCellIdFromKey(change.key));
       return;
@@ -291,8 +295,11 @@ export class JupyterActions extends Actions<JupyterStoreState> {
   };
 
   private getRuntimeRecord<T extends object>(key: string): T | undefined {
+    if (this.pendingDeletedRuntimeRecords.has(key)) {
+      return;
+    }
     const value =
-      this.runtimeState?.get(key) ?? this.pendingRuntimeRecords.get(key);
+      this.pendingRuntimeRecords.get(key) ?? this.runtimeState?.get(key);
     if (value == null || typeof value !== "object") {
       return;
     }
@@ -300,19 +307,19 @@ export class JupyterActions extends Actions<JupyterStoreState> {
   }
 
   private setRuntimeRecordValue = (key: string, value: object): void => {
+    this.pendingDeletedRuntimeRecords.delete(key);
+    this.pendingRuntimeRecords.set(key, value);
     if (this.runtimeState != null) {
       this.runtimeState.set(key, value);
-      this.pendingRuntimeRecords.delete(key);
-    } else {
-      this.pendingRuntimeRecords.set(key, value);
     }
   };
 
   private deleteRuntimeRecord = (key: string): void => {
+    this.pendingRuntimeRecords.delete(key);
+    this.pendingDeletedRuntimeRecords.add(key);
     if (this.runtimeState != null) {
       this.runtimeState.delete(key);
     }
-    this.pendingRuntimeRecords.delete(key);
   };
 
   private patchRuntimeRecord = (key: string, patch: object): void => {
@@ -350,8 +357,8 @@ export class JupyterActions extends Actions<JupyterStoreState> {
     if (!id) {
       return;
     }
-    return this.getRuntimeRecord<JupyterRuntimeCellState>(
-      jupyterRuntimeCellKey(id),
+    return normalizeJupyterRuntimeCellState(
+      this.getRuntimeRecord<JupyterRuntimeCellState>(jupyterRuntimeCellKey(id)),
     );
   };
 
@@ -423,7 +430,45 @@ export class JupyterActions extends Actions<JupyterStoreState> {
     for (const [key, value] of this.pendingRuntimeRecords.entries()) {
       this.runtimeState.set(key, value);
     }
-    this.pendingRuntimeRecords.clear();
+    for (const key of this.pendingDeletedRuntimeRecords) {
+      this.runtimeState.delete(key);
+    }
+  };
+
+  private reconcilePendingRuntimeRecord = (key: string) => {
+    if (this.pendingDeletedRuntimeRecords.has(key)) {
+      if (this.runtimeState?.get(key) == null) {
+        this.pendingDeletedRuntimeRecords.delete(key);
+      }
+      return;
+    }
+    if (!this.pendingRuntimeRecords.has(key)) {
+      return;
+    }
+    const remote = isJupyterRuntimeCellKey(key)
+      ? normalizeJupyterRuntimeCellState(
+          this.runtimeState?.get(key) as JupyterRuntimeCellState | undefined,
+        )
+      : this.runtimeState?.get(key);
+    const pending = isJupyterRuntimeCellKey(key)
+      ? normalizeJupyterRuntimeCellState(
+          this.pendingRuntimeRecords.get(key) as
+            | JupyterRuntimeCellState
+            | undefined,
+        )
+      : this.pendingRuntimeRecords.get(key);
+    if (misc.is_equal(remote, pending)) {
+      this.pendingRuntimeRecords.delete(key);
+    }
+  };
+
+  private reconcileAllPendingRuntimeRecords = () => {
+    for (const key of this.pendingDeletedRuntimeRecords) {
+      this.reconcilePendingRuntimeRecord(key);
+    }
+    for (const key of this.pendingRuntimeRecords.keys()) {
+      this.reconcilePendingRuntimeRecord(key);
+    }
   };
 
   private clear_all_runtime_cell_state = () => {
@@ -437,6 +482,11 @@ export class JupyterActions extends Actions<JupyterStoreState> {
     for (const key of [...this.pendingRuntimeRecords.keys()]) {
       if (key.startsWith(JUPYTER_RUNTIME_CELL_KEY_PREFIX)) {
         this.pendingRuntimeRecords.delete(key);
+      }
+    }
+    for (const key of [...this.pendingDeletedRuntimeRecords]) {
+      if (key.startsWith(JUPYTER_RUNTIME_CELL_KEY_PREFIX)) {
+        this.pendingDeletedRuntimeRecords.delete(key);
       }
     }
   };

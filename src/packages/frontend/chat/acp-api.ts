@@ -268,6 +268,10 @@ export async function processAcpLLM({
   };
 
   const sessionKey = effectiveSessionId ?? thread_id;
+  const ensureChatStatePersisted = async (): Promise<void> => {
+    if (typeof syncdb?.save !== "function") return;
+    await syncdb.save();
+  };
   const promptForRunWithLoop =
     loopConfig?.enabled === true
       ? maybeDecorateLoopPrompt({
@@ -289,6 +293,9 @@ export async function processAcpLLM({
     project_id,
     path,
     sender_id,
+    user_message_date: messageDate.toISOString(),
+    user_message_content: message.history?.[0]?.content,
+    user_parent_message_id: (message as any)?.parent_message_id,
     api_url:
       typeof window !== "undefined"
         ? `${window.location.protocol}//${window.location.host}`
@@ -304,6 +311,7 @@ export async function processAcpLLM({
   });
   let acknowledged = false;
   try {
+    await ensureChatStatePersisted();
     let lastError: unknown;
     for (let attempt = 1; attempt <= ACP_ACK_MAX_ATTEMPTS; attempt += 1) {
       acknowledged = false;
@@ -644,6 +652,9 @@ function buildChatMetadata({
   project_id,
   path,
   sender_id,
+  user_message_date,
+  user_message_content,
+  user_parent_message_id,
   api_url,
   browser_id,
   messageDate,
@@ -657,6 +668,9 @@ function buildChatMetadata({
   project_id?: string;
   path?: string;
   sender_id: string;
+  user_message_date?: string;
+  user_message_content?: string;
+  user_parent_message_id?: string;
   api_url?: string;
   browser_id?: string;
   messageDate: Date;
@@ -680,6 +694,9 @@ function buildChatMetadata({
     project_id,
     path,
     sender_id,
+    user_message_date,
+    user_message_content,
+    user_parent_message_id,
     api_url,
     browser_id,
     message_date: messageDate.toISOString(),

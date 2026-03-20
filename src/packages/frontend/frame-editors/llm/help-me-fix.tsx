@@ -22,6 +22,14 @@ import {
   createNavigatorIntentMessage,
 } from "./help-me-fix-utils";
 
+const DEFAULT_HELP_ME_FIX_AGENT_MODEL = "gpt-5.4-mini";
+
+function getVisibleHelpPrompt(mode: "solution" | "hint"): string {
+  return mode === "hint"
+    ? "Diagnose this problem and give me a hint."
+    : "Diagnose this problem and fix it.";
+}
+
 // Re-export getHelp for backward compatibility
 export { getHelp } from "./help-me-fix-utils";
 
@@ -58,7 +66,7 @@ export default function HelpMeFix({
   size,
   prioritize,
 }: Props) {
-  const { redux, project_id, path, actions: frameActions } = useFrameContext();
+  const { redux, project_id, path } = useFrameContext();
   const [gettingHelp, setGettingHelp] = useState<boolean>(false);
   const [errorGettingHelp, setErrorGettingHelp] = useState<string>("");
   const projectsStore: ProjectsStore = redux.getStore("projects");
@@ -161,7 +169,6 @@ export default function HelpMeFix({
     setGettingHelp(true);
     setErrorGettingHelp("");
     try {
-      await Promise.resolve(frameActions?.save?.(true));
       const inputText = createMessageMode(mode, true);
       const tagSuffix = mode === "hint" ? "hint" : "solution";
       const sourceTag = `help-me-fix-${tagSuffix}${tag ? `:${tag}` : ""}`;
@@ -177,15 +184,21 @@ export default function HelpMeFix({
         project_id,
         path,
         prompt,
+        visiblePrompt: getVisibleHelpPrompt(mode),
+        title: mode === "hint" ? "Get debugging hint" : "Fix problem",
         tag: `intent:error-fix:${tagSuffix}`,
         forceCodex: true,
         openFloating: true,
+        codexConfig: { model: DEFAULT_HELP_ME_FIX_AGENT_MODEL },
       });
       if (!sent) {
         dispatchNavigatorPromptIntent({
           prompt,
+          visiblePrompt: getVisibleHelpPrompt(mode),
+          title: mode === "hint" ? "Get debugging hint" : "Fix problem",
           tag: `intent:error-fix:${tagSuffix}`,
           forceCodex: true,
+          codexConfig: { model: DEFAULT_HELP_ME_FIX_AGENT_MODEL },
         });
       }
     } catch (err) {

@@ -86,6 +86,8 @@ import {
   ensureProjectHostAcpWorkerRunning,
   startProjectHostAcpWorkerSupervisor,
 } from "./hub/acp/worker-manager";
+import { matchAppRequest } from "./app-public-access";
+import { maybeHandleStaticAppRequest } from "./static-apps";
 
 const logger = getLogger("project-host:main");
 
@@ -425,6 +427,22 @@ export async function main(
         req.headers.host = publicAppHost;
       }
       delete req.headers[PUBLIC_APP_HOST_HEADER];
+      if (res) {
+        const match = await matchAppRequest({
+          project_id,
+          url: req.url,
+        });
+        if (
+          await maybeHandleStaticAppRequest({
+            req,
+            res,
+            project_id,
+            match,
+          })
+        ) {
+          return { handled: true };
+        }
+      }
       const projectRow = getProject(project_id);
       if (
         projectRow?.state !== "running" ||

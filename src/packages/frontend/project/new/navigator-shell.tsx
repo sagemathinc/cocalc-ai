@@ -350,7 +350,7 @@ export function NavigatorShell({
   const lastIndexedValueRef = useRef<string>("");
   const pendingNewThreadDefaultsRef = useRef<boolean>(false);
   const preferredThreadKeyRef = useRef<string | undefined>(
-    loadNavigatorSelectedThreadKey(project_id),
+    loadNavigatorSelectedThreadKey(project_id, navigatorPath),
   );
   const {
     fontSize,
@@ -459,16 +459,23 @@ export function NavigatorShell({
   }, [actions]);
 
   useEffect(() => {
-    saveNavigatorSelectedThreadKey(selectedThreadKey ?? undefined);
-  }, [selectedThreadKey]);
+    saveNavigatorSelectedThreadKey(
+      selectedThreadKey ?? undefined,
+      navigatorPath,
+    );
+  }, [navigatorPath, selectedThreadKey]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
     const onThreadRequested = (evt: Event) => {
-      const threadKey =
-        (
-          evt as CustomEvent<{ threadKey?: string }>
-        ).detail?.threadKey?.trim() || null;
+      const detail = (
+        evt as CustomEvent<{ threadKey?: string; chatPath?: string }>
+      ).detail;
+      const requestedChatPath = `${detail?.chatPath ?? ""}`.trim();
+      if (requestedChatPath && requestedChatPath !== navigatorPath) {
+        return;
+      }
+      const threadKey = `${detail?.threadKey ?? ""}`.trim() || null;
       if (!threadKey) {
         preferredThreadKeyRef.current = undefined;
         return;
@@ -682,13 +689,22 @@ export function NavigatorShell({
         removeQueuedNavigatorPromptIntent(intent.id);
         return true;
       }
-      const input = basePrompt;
-      const storedThreadKey = loadNavigatorSelectedThreadKey(project_id);
-      const resolvedThreadKey = chooseNonArchivedThreadKey(
-        actions,
-        selectedThreadKey ?? storedThreadKey ?? undefined,
+      const input = `${intent.visiblePrompt ?? ""}`.trim() || basePrompt;
+      const storedThreadKey = loadNavigatorSelectedThreadKey(
+        project_id,
+        navigatorPath,
       );
-      let replyThreadId = resolveReplyThreadId(actions, resolvedThreadKey);
+      const resolvedThreadKey =
+        intent.createNewThread === true
+          ? null
+          : chooseNonArchivedThreadKey(
+              actions,
+              selectedThreadKey ?? storedThreadKey ?? undefined,
+            );
+      let replyThreadId =
+        intent.createNewThread === true
+          ? undefined
+          : resolveReplyThreadId(actions, resolvedThreadKey);
       if (resolvedThreadKey && !replyThreadId) {
         // If we cannot confidently resolve thread identity yet, open a new
         // thread instead of dropping the prompt.
@@ -713,16 +729,40 @@ export function NavigatorShell({
         selectedThreadKey,
         selectedRootMessage,
       });
-      const model =
-        typeof launchAcpConfig?.model === "string"
-          ? launchAcpConfig.model
+      const requestedModel =
+        typeof intent.codexConfig?.model === "string" &&
+        intent.codexConfig.model.trim().length > 0
+          ? intent.codexConfig.model.trim()
           : undefined;
+      const selectedModel =
+        typeof launchAcpConfig?.model === "string" &&
+        launchAcpConfig.model.trim().length > 0
+          ? launchAcpConfig.model.trim()
+          : undefined;
+      const model = requestedModel ?? selectedModel;
       const nextCodexConfig = {
         ...launchAcpConfig,
         ...(intent.codexConfig ?? {}),
         model,
         workingDirectory: homeDirectory,
       };
+      let createdThreadKey: string | undefined;
+      if (intent.createNewThread === true) {
+        createdThreadKey = actions.createEmptyThread?.({
+          name: messageThreadTitle,
+          threadAgent: isCodex
+            ? {
+                mode: "codex",
+                model,
+                codexConfig: nextCodexConfig,
+              }
+            : undefined,
+        });
+        if (!createdThreadKey) {
+          return false;
+        }
+        replyThreadId = createdThreadKey;
+      }
       if (resolvedThreadKey && isCodex && intent.codexConfig) {
         actions.setThreadAgentMode?.(
           resolvedThreadKey,
@@ -732,7 +772,8 @@ export function NavigatorShell({
       }
       const timeStamp = actions.sendChat({
         input,
-        name: messageThreadTitle,
+        acp_prompt: basePrompt,
+        name: intent.createNewThread === true ? undefined : messageThreadTitle,
         reply_thread_id: replyThreadId,
         tag: intent.tag ?? "intent:navigator",
         noNotification: true,
@@ -752,10 +793,12 @@ export function NavigatorShell({
       if (resolvedThreadKey && resolvedThreadKey !== selectedThreadKey) {
         setSelectedThreadKey(resolvedThreadKey);
       }
-      if (!replyThreadId) {
-        const threadTime = new Date(timeStamp).valueOf();
-        if (Number.isFinite(threadTime)) {
-          setSelectedThreadKey(`${threadTime}`);
+      if (createdThreadKey) {
+        setSelectedThreadKey(createdThreadKey);
+      } else if (!replyThreadId) {
+        const latest = latestThreadKey(actions);
+        if (latest) {
+          setSelectedThreadKey(latest);
         }
       }
       setTimeout(() => actions.scrollToIndex?.(Number.MAX_SAFE_INTEGER), 100);

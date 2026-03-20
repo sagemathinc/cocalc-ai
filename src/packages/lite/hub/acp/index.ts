@@ -202,6 +202,8 @@ const automationStores = new Map<string, Promise<DKV<AcpAutomationRecord>>>();
 const INTERRUPT_STATUS_TEXT = "Conversation interrupted.";
 const RESTART_INTERRUPTED_NOTICE =
   "**Conversation interrupted because the backend server restarted.**";
+const STALE_TURN_INTERRUPTED_NOTICE =
+  "**Conversation interrupted because the backend lost the live Codex turn.**";
 const THREAD_CONFIG_EVENT = "chat-thread-config";
 const THREAD_STATE_EVENT = "chat-thread-state";
 const THREAD_STATE_SCHEMA_VERSION = 2;
@@ -262,6 +264,10 @@ const ACP_WORKER_STALE_MS = envNumber("COCALC_ACP_WORKER_STALE_MS", 15_000);
 const ACP_ORPHAN_RECOVERY_POLL_MS = envNumber(
   "COCALC_ACP_ORPHAN_RECOVERY_POLL_MS",
   5_000,
+);
+const ACP_CURRENT_WORKER_TURN_RECOVERY_GRACE_MS = envNumber(
+  "COCALC_ACP_CURRENT_WORKER_TURN_RECOVERY_GRACE_MS",
+  10_000,
 );
 // Detached workers establish acp_jobs state slightly before ChatStreamWriter
 // creates the matching acp_turns lease. If a worker dies in that narrow
@@ -3207,6 +3213,416 @@ function appendRestartNotice(historyValue: any): MessageHistory[] {
   ];
 }
 
+function findLatestGeneratingChatRow(
+  syncdb: SyncDB,
+  threadId: string,
+): Record<string, unknown> | undefined {
+  const rows = syncdbRowsMatching(syncdb, {
+    event: "chat",
+    thread_id: threadId,
+  }).filter((row) => syncdbField<boolean>(row, "generating") === true);
+  if (rows.length === 0) return undefined;
+  return rows.slice().sort((a, b) => {
+    const aDate = Date.parse(`${syncdbField<string>(a, "date") ?? ""}`);
+    const bDate = Date.parse(`${syncdbField<string>(b, "date") ?? ""}`);
+    return (
+      (Number.isFinite(bDate) ? bDate : 0) -
+      (Number.isFinite(aDate) ? aDate : 0)
+    );
+  })[0];
+}
+
+function hasLiveChatWriterForTurn(turn: {
+  project_id: string;
+  path: string;
+  message_date: string;
+  thread_id?: string | null;
+  session_id?: string | null;
+}): boolean {
+  if (
+    chatWritersByChatKey.has(
+      chatKey({
+        project_id: turn.project_id,
+        path: turn.path,
+        message_date: turn.message_date,
+        sender_id: "",
+      }),
+    )
+  ) {
+    return true;
+  }
+  const ids = new Set<string>();
+  const threadId = `${turn.thread_id ?? ""}`.trim();
+  const sessionId = `${turn.session_id ?? ""}`.trim();
+  if (threadId) ids.add(threadId);
+  if (sessionId) ids.add(sessionId);
+  for (const id of ids) {
+    if (chatWritersByThreadId.has(id)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function runningTurnMatchesTarget(
+  row: {
+    project_id: string;
+    path: string;
+    message_date?: string | null;
+    message_id?: string | null;
+    thread_id?: string | null;
+  },
+  target: {
+    project_id: string;
+    path: string;
+    message_date?: string | null;
+    message_id?: string | null;
+    thread_id?: string | null;
+  },
+): boolean {
+  if (row.project_id !== target.project_id || row.path !== target.path) {
+    return false;
+  }
+  const targetMessageId = `${target.message_id ?? ""}`.trim();
+  if (targetMessageId && `${row.message_id ?? ""}`.trim() === targetMessageId) {
+    return true;
+  }
+  const targetMessageDate = `${target.message_date ?? ""}`.trim();
+  if (
+    targetMessageDate &&
+    `${row.message_date ?? ""}`.trim() === targetMessageDate
+  ) {
+    return true;
+  }
+  const targetThreadId = `${target.thread_id ?? ""}`.trim();
+  if (targetThreadId && `${row.thread_id ?? ""}`.trim() === targetThreadId) {
+    return true;
+  }
+  return false;
+}
+
+export async function repairInterruptedAcpTurn({
+  client,
+  turn,
+  interruptedNotice = INTERRUPT_STATUS_TEXT,
+  interruptedReasonId = "interrupt",
+  recoveryReason = INTERRUPT_STATUS_TEXT,
+}: {
+  client: ConatClient;
+  turn: {
+    project_id: string;
+    path: string;
+    message_date?: string | null;
+    sender_id?: string | null;
+    message_id?: string | null;
+    thread_id?: string | null;
+    owner_instance_id?: string | null;
+  };
+  interruptedNotice?: string;
+  interruptedReasonId?: string;
+  recoveryReason?: string;
+}): Promise<boolean> {
+  const project_id = `${turn.project_id ?? ""}`.trim();
+  const path = `${turn.path ?? ""}`.trim();
+  if (!project_id || !path) return false;
+  const message_date = `${turn.message_date ?? ""}`.trim();
+  const sender_id = `${turn.sender_id ?? "openai-codex-agent"}`.trim();
+  const message_id = `${turn.message_id ?? ""}`.trim();
+  const thread_id = `${turn.thread_id ?? ""}`.trim();
+
+  if (message_date) {
+    try {
+      clearAcpPayloads({
+        project_id,
+        path,
+        message_date,
+        sender_id,
+        message_id: message_id || undefined,
+        thread_id: thread_id || undefined,
+      } as any);
+    } catch (err) {
+      logger.debug("failed clearing acp queue during stuck-turn repair", {
+        project_id,
+        path,
+        message_date,
+        err,
+      });
+    }
+  }
+
+  let repairedChat = false;
+  await withChatSyncDB({
+    client,
+    project_id,
+    path,
+    fn: async (syncdb) => {
+      const current =
+        findRecoverableChatRow(syncdb as any, {
+          message_date,
+          sender_id,
+          message_id: message_id || undefined,
+        }) ??
+        (thread_id
+          ? findLatestGeneratingChatRow(syncdb, thread_id)
+          : undefined);
+      const currentThreadId =
+        `${syncdbField<string>(current, "thread_id") ?? thread_id}`.trim() ||
+        undefined;
+      const currentMessageId =
+        `${syncdbField<string>(current, "message_id") ?? message_id}`.trim() ||
+        undefined;
+      const currentState = currentThreadId
+        ? syncdbField<string>(
+            preferredThreadStateRow(syncdb, currentThreadId),
+            "state",
+          )
+        : undefined;
+      const generating = syncdbField<boolean>(current, "generating") === true;
+      const interrupted =
+        syncdbField<boolean>(current, "acp_interrupted") === true;
+      let touched = false;
+
+      if (
+        current != null &&
+        (generating || !interrupted || currentState === "running")
+      ) {
+        const history = appendRestartNotice(syncdbField(current, "history"));
+        const patchedHistory =
+          interruptedNotice === RESTART_INTERRUPTED_NOTICE
+            ? history
+            : (() => {
+                const currentHistory = historyToArray(
+                  syncdbField(current, "history"),
+                );
+                if (currentHistory.length === 0) {
+                  return [];
+                }
+                const first = currentHistory[0] as MessageHistory;
+                const content =
+                  typeof first?.content === "string"
+                    ? first.content
+                    : `${(first as any)?.content ?? ""}`;
+                if (/conversation interrupted/i.test(content)) {
+                  return currentHistory;
+                }
+                const sep = content.trim().length > 0 ? "\n\n" : "";
+                return [
+                  {
+                    ...first,
+                    content: `${content}${sep}${interruptedNotice}`,
+                  },
+                  ...currentHistory.slice(1),
+                ];
+              })();
+        const rowDate =
+          normalizeIsoDateString(syncdbField<string>(current, "date")) ??
+          normalizeIsoDateString(message_date) ??
+          message_date;
+        const rowSender =
+          syncdbField<string>(current, "sender_id") ?? sender_id;
+        const update: any = {
+          event: "chat",
+          date: rowDate,
+          sender_id: rowSender,
+          generating: false,
+          acp_interrupted: true,
+          acp_interrupted_reason: interruptedReasonId,
+          acp_interrupted_text: interruptedNotice,
+        };
+        if (currentMessageId) {
+          update.message_id = currentMessageId;
+        }
+        if (currentThreadId) {
+          update.thread_id = currentThreadId;
+        }
+        const parentMessageId = syncdbField<string>(
+          current,
+          "parent_message_id",
+        );
+        if (parentMessageId) {
+          update.parent_message_id = parentMessageId;
+        }
+        if (patchedHistory.length > 0) {
+          update.history = patchedHistory;
+        }
+        syncdb.set(update);
+        touched = true;
+      }
+
+      if (currentThreadId) {
+        replaceThreadScopedRow(
+          syncdb,
+          THREAD_STATE_EVENT,
+          currentThreadId,
+          buildThreadStateRecord({
+            thread_id: currentThreadId,
+            state: "interrupted",
+            active_message_id: currentMessageId,
+            updated_at: new Date().toISOString(),
+            schema_version: THREAD_STATE_SCHEMA_VERSION,
+          }),
+        );
+        touched = true;
+        const cfgRow = preferredThreadConfigRow(syncdb, currentThreadId);
+        const rawLoopCfg = syncdbField<any>(cfgRow, "loop_config");
+        const loopCfg =
+          rawLoopCfg && typeof rawLoopCfg.toJS === "function"
+            ? rawLoopCfg.toJS()
+            : rawLoopCfg;
+        const rawLoopState = syncdbField<any>(cfgRow, "loop_state");
+        const loopStateCurrent =
+          rawLoopState && typeof rawLoopState.toJS === "function"
+            ? rawLoopState.toJS()
+            : rawLoopState;
+        if (
+          loopCfg?.enabled === true &&
+          loopStateCurrent &&
+          loopStateCurrent.status !== "stopped"
+        ) {
+          const cfgObj =
+            cfgRow && typeof cfgRow.toJS === "function"
+              ? cfgRow.toJS()
+              : (cfgRow ?? {});
+          replaceThreadScopedRow(syncdb, THREAD_CONFIG_EVENT, currentThreadId, {
+            ...cfgObj,
+            ...threadConfigMetadataPatch({
+              thread_id: currentThreadId,
+              updated_at: new Date().toISOString(),
+              updated_by: "__system__",
+            }),
+            loop_config: null,
+            loop_state: {
+              ...loopStateCurrent,
+              status: "stopped",
+              stop_reason:
+                interruptedReasonId === "interrupt"
+                  ? "user_stopped"
+                  : "backend_error",
+              next_prompt: undefined,
+              updated_at_ms: Date.now(),
+            },
+          });
+        }
+      }
+
+      if (touched) {
+        syncdb.commit();
+        await syncdb.save();
+        repairedChat = true;
+      }
+    },
+  });
+
+  let repairedBackend = false;
+  for (const row of listRunningAcpJobs()) {
+    if (
+      runningTurnMatchesTarget(row, {
+        project_id,
+        path,
+        message_date: message_date || undefined,
+        message_id: message_id || undefined,
+        thread_id: thread_id || undefined,
+      })
+    ) {
+      setAcpJobState({
+        op_id: row.op_id,
+        state: "interrupted",
+        error: recoveryReason,
+        worker_id: row.worker_id ?? turn.owner_instance_id ?? undefined,
+      });
+      repairedBackend = true;
+    }
+  }
+
+  for (const row of listRunningAcpTurnLeases()) {
+    if (
+      runningTurnMatchesTarget(row, {
+        project_id,
+        path,
+        message_date: message_date || undefined,
+        message_id: message_id || undefined,
+        thread_id: thread_id || undefined,
+      })
+    ) {
+      finalizeAcpTurnLease({
+        key: {
+          project_id: row.project_id,
+          path: row.path,
+          message_date: row.message_date,
+        },
+        state: "aborted",
+        reason: recoveryReason,
+        owner_instance_id:
+          turn.owner_instance_id ?? row.owner_instance_id ?? undefined,
+      });
+      repairedBackend = true;
+    }
+  }
+
+  return repairedChat || repairedBackend;
+}
+
+async function turnNeedsInterruptedRepair({
+  client,
+  turn,
+}: {
+  client: ConatClient;
+  turn: {
+    project_id: string;
+    path: string;
+    message_date?: string | null;
+    sender_id?: string | null;
+    message_id?: string | null;
+    thread_id?: string | null;
+  };
+}): Promise<boolean> {
+  const project_id = `${turn.project_id ?? ""}`.trim();
+  const path = `${turn.path ?? ""}`.trim();
+  const thread_id = `${turn.thread_id ?? ""}`.trim();
+  const target = {
+    project_id,
+    path,
+    message_date: `${turn.message_date ?? ""}`.trim() || undefined,
+    message_id: `${turn.message_id ?? ""}`.trim() || undefined,
+    thread_id: thread_id || undefined,
+  };
+  if (
+    listRunningAcpJobs().some((row) => runningTurnMatchesTarget(row, target)) ||
+    listRunningAcpTurnLeases().some((row) =>
+      runningTurnMatchesTarget(row, target),
+    )
+  ) {
+    return true;
+  }
+  if (!thread_id) {
+    return false;
+  }
+  let needsRepair = false;
+  await withChatSyncDB({
+    client,
+    project_id,
+    path,
+    fn: async (syncdb) => {
+      const state = syncdbField<string>(
+        preferredThreadStateRow(syncdb, thread_id),
+        "state",
+      );
+      if (state === "running") {
+        needsRepair = true;
+        return;
+      }
+      const current =
+        findRecoverableChatRow(syncdb as any, {
+          message_date: `${turn.message_date ?? ""}`.trim(),
+          sender_id: `${turn.sender_id ?? "openai-codex-agent"}`.trim(),
+          message_id: `${turn.message_id ?? ""}`.trim() || undefined,
+        }) ?? findLatestGeneratingChatRow(syncdb, thread_id);
+      needsRepair = syncdbField<boolean>(current, "generating") === true;
+    },
+  });
+  return needsRepair;
+}
+
 export async function recoverOrphanedAcpTurns(
   client: ConatClient,
   opts: {
@@ -3245,6 +3661,25 @@ export async function recoverOrphanedAcpTurns(
   });
   let recovered = 0;
   for (const turn of running) {
+    try {
+      if (
+        await repairInterruptedAcpTurn({
+          client,
+          turn,
+          interruptedNotice,
+          interruptedReasonId,
+          recoveryReason,
+        })
+      ) {
+        recovered += 1;
+        continue;
+      }
+    } catch (err) {
+      logger.warn("failed to repair orphaned acp turn via shared path", {
+        turn,
+        err,
+      });
+    }
     const context: AcpChatContext = {
       project_id: turn.project_id,
       path: turn.path,
@@ -3507,6 +3942,61 @@ export async function recoverOrphanedRunningAcpJobsWithoutLease(
   return recovered;
 }
 
+export async function recoverCurrentWorkerStuckAcpTurns(
+  client: ConatClient,
+  opts: {
+    recoveryReason?: string;
+    interruptedNotice?: string;
+    graceMs?: number;
+  } = {},
+): Promise<number> {
+  const recoveryReason = opts.recoveryReason ?? "backend lost live Codex turn";
+  const interruptedNotice =
+    opts.interruptedNotice ?? STALE_TURN_INTERRUPTED_NOTICE;
+  const graceMs = opts.graceMs ?? ACP_CURRENT_WORKER_TURN_RECOVERY_GRACE_MS;
+  const now = Date.now();
+  let recovered = 0;
+  for (const turn of listRunningAcpTurnLeases()) {
+    if (turn.owner_instance_id !== ACP_INSTANCE_ID) continue;
+    if (hasLiveChatWriterForTurn(turn)) continue;
+    const heartbeatAt = Number(turn.heartbeat_at ?? 0);
+    const startedAt = Number(turn.started_at ?? 0);
+    const referenceAt =
+      Number.isFinite(heartbeatAt) && heartbeatAt > 0
+        ? heartbeatAt
+        : Number.isFinite(startedAt) && startedAt > 0
+          ? startedAt
+          : 0;
+    if (referenceAt > 0 && now - referenceAt < graceMs) continue;
+    try {
+      if (
+        await repairInterruptedAcpTurn({
+          client,
+          turn,
+          interruptedNotice,
+          interruptedReasonId: "backend_error",
+          recoveryReason,
+        })
+      ) {
+        recovered += 1;
+      }
+    } catch (err) {
+      logger.warn("failed recovering current-worker stuck acp turn", {
+        turn,
+        err,
+      });
+    }
+  }
+  if (recovered > 0) {
+    logger.warn("recovered current-worker stuck acp turns", {
+      instance: ACP_INSTANCE_ID,
+      recovered,
+      grace_ms: graceMs,
+    });
+  }
+  return recovered;
+}
+
 export function shouldStopDetachedWorkerForIdle({
   hasWork,
   idleSince,
@@ -3683,6 +4173,9 @@ export async function runDetachedAcpQueueWorker(
             recoveryReason: "ACP worker stopped unexpectedly",
           });
         }
+        await recoverCurrentWorkerStuckAcpTurns(client, {
+          recoveryReason: "backend lost live Codex turn",
+        });
         await recoverOrphanedRunningAcpJobsWithoutLease({
           recoveryReason:
             workerContext != null
@@ -3981,6 +4474,11 @@ function resolveCodexApiUrl({
     const port = `${process.env.HUB_PORT ?? process.env.PORT ?? "9100"}`.trim();
     return `http://host.containers.internal:${port || "9100"}`;
   }
+
+  const browserLocal = normalizeApiUrl(browserOrigin, {
+    rewriteLoopbackHost: false,
+  });
+  if (browserLocal) return browserLocal;
 
   const explicitLocal = normalizeApiUrl(explicit, {
     rewriteLoopbackHost: false,
@@ -6043,6 +6541,58 @@ async function handleInterruptRequest(
       });
     }
     return;
+  }
+  if (
+    conatClient &&
+    request.chat &&
+    project_id &&
+    path &&
+    (threadId || `${request.chat.message_id ?? ""}`.trim())
+  ) {
+    try {
+      const repaired = await turnNeedsInterruptedRepair({
+        client: conatClient,
+        turn: {
+          project_id,
+          path,
+          message_date: request.chat.message_date,
+          sender_id: request.chat.sender_id,
+          message_id: request.chat.message_id,
+          thread_id: threadId || request.chat.thread_id,
+        },
+      });
+      if (
+        repaired &&
+        (await repairInterruptedAcpTurn({
+          client: conatClient,
+          turn: {
+            project_id,
+            path,
+            message_date: request.chat.message_date,
+            sender_id: request.chat.sender_id,
+            message_id: request.chat.message_id,
+            thread_id: threadId || request.chat.thread_id,
+          },
+          interruptedNotice: INTERRUPT_STATUS_TEXT,
+          interruptedReasonId: "interrupt",
+          recoveryReason: INTERRUPT_STATUS_TEXT,
+        }))
+      ) {
+        markAcpInterruptsHandledForThread({
+          project_id,
+          path,
+          thread_id: threadId,
+        });
+        return;
+      }
+    } catch (err) {
+      logger.warn("failed to repair stuck chat turn during interrupt", {
+        project_id,
+        path,
+        threadId,
+        err,
+      });
+    }
   }
   if (!project_id || !path || !threadId) {
     throw Error("unable to interrupt codex session");

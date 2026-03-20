@@ -8,22 +8,36 @@ import { join } from "node:path";
 import TTL from "@isaacs/ttlcache";
 import getLogger from "@cocalc/backend/logger";
 import { getMountPoint } from "./file-server";
+import type { AppStaticIntegrationSpec } from "./public-viewer";
 
 const logger = getLogger("project-host:app-public-access");
 export const APP_PUBLIC_TOKEN_QUERY_PARAM = "cocalc_app_token";
 const SUPPORT_FILES = new Set(["runtime-state.json", "metrics-state.json"]);
 
-interface AppSpec {
+export interface AppSpec {
   id: string;
   kind: "service" | "static";
-  proxy?: { base_path?: string };
+  proxy?: { base_path?: string; strip_prefix?: boolean };
+  static?: {
+    root?: string;
+    index?: string;
+    cache_control?: string;
+  };
+  integration?: AppStaticIntegrationSpec;
 }
 
-interface AppExposureState {
+export interface AppExposureState {
   mode?: "private" | "public";
   auth_front?: "none" | "token";
   token?: string;
   expires_at_ms?: number;
+}
+
+export interface AppRequestMatch {
+  spec: AppSpec;
+  localPath: string;
+  requestPath: string;
+  exposure?: AppExposureState;
 }
 
 const CACHE_TTL_MS = 1000;
@@ -114,6 +128,64 @@ async function getAppData(project_id: string): Promise<{
   return value;
 }
 
+function isExposureLive(
+  exposure: AppExposureState | undefined,
+  now = Date.now(),
+): boolean {
+  if (!exposure || exposure.mode !== "public") {
+    return false;
+  }
+  if (
+    Number.isFinite(Number(exposure.expires_at_ms)) &&
+    Number(exposure.expires_at_ms) <= now
+  ) {
+    return false;
+  }
+  return true;
+}
+
+export async function matchAppRequest({
+  project_id,
+  url,
+}: {
+  project_id: string;
+  url?: string;
+}): Promise<AppRequestMatch | undefined> {
+  if (!url) return;
+  const parsed = new URL(url, "http://project-host.local");
+  const projectPrefix = normalizePrefix(`/${project_id}`);
+  const pathname = parsed.pathname;
+  if (
+    !(pathname === projectPrefix || pathname.startsWith(`${projectPrefix}/`))
+  ) {
+    return;
+  }
+  const localPath = normalizePrefix(
+    pathname.slice(projectPrefix.length) || "/",
+  );
+  const { specs, exposures } = await getAppData(project_id);
+  for (const spec of specs) {
+    const basePath = normalizePrefix(spec.proxy?.base_path ?? "/");
+    if (!(localPath === basePath || localPath.startsWith(`${basePath}/`))) {
+      continue;
+    }
+    const suffix =
+      localPath.length > basePath.length
+        ? localPath.slice(basePath.length)
+        : "";
+    const requestPath =
+      spec.proxy?.strip_prefix === false
+        ? `${localPath}${parsed.search ?? ""}`
+        : `${suffix || "/"}${parsed.search ?? ""}`;
+    return {
+      spec,
+      localPath,
+      requestPath,
+      exposure: exposures[spec.id],
+    };
+  }
+}
+
 export function invalidatePublicAppCache(project_id?: string): void {
   if (project_id) {
     cache.delete(project_id);
@@ -141,36 +213,28 @@ export async function authorizePublicAppPath({
   const localPath = normalizePrefix(
     pathname.slice(projectPrefix.length) || "/",
   );
-  const { specs, exposures } = await getAppData(project_id);
-  const now = Date.now();
-  for (const spec of specs) {
-    const basePath = normalizePrefix(spec.proxy?.base_path ?? "/");
-    if (!(localPath === basePath || localPath.startsWith(`${basePath}/`))) {
-      continue;
-    }
-    const exposure = exposures[spec.id];
-    if (!exposure || exposure.mode !== "public") {
-      return false;
-    }
-    if (
-      Number.isFinite(Number(exposure.expires_at_ms)) &&
-      Number(exposure.expires_at_ms) <= now
-    ) {
-      return false;
-    }
-    if (exposure.auth_front === "token") {
-      const token =
-        `${parsed.searchParams.get(APP_PUBLIC_TOKEN_QUERY_PARAM) ?? ""}`.trim();
-      if (!token || !exposure.token || token !== exposure.token) {
-        return false;
-      }
-    }
-    logger.debug("authorizePublicAppPath: allowed", {
-      project_id,
-      app_id: spec.id,
-      localPath,
-    });
-    return true;
+  const match = await matchAppRequest({ project_id, url });
+  if (match == null) {
+    return false;
   }
-  return false;
+  const exposure = match.exposure;
+  if (exposure == null || !isExposureLive(exposure)) {
+    return false;
+  }
+  if (match.localPath !== localPath) {
+    return false;
+  }
+  if (exposure.auth_front === "token") {
+    const token =
+      `${parsed.searchParams.get(APP_PUBLIC_TOKEN_QUERY_PARAM) ?? ""}`.trim();
+    if (!token || !exposure.token || token !== exposure.token) {
+      return false;
+    }
+  }
+  logger.debug("authorizePublicAppPath: allowed", {
+    project_id,
+    app_id: match.spec.id,
+    localPath,
+  });
+  return true;
 }

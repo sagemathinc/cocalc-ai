@@ -220,6 +220,18 @@ export function inferPublicViewerEntryType(entryPath: string): string {
   }
 }
 
+export function isPublicViewerRenderablePath(
+  entryPath: string,
+  opts?: { file_types?: string[] },
+): boolean {
+  const fileTypes = new Set(
+    normalizePublicViewerFileTypes(opts?.file_types).map((ext) =>
+      ext.toLowerCase(),
+    ),
+  );
+  return fileTypes.has(path.posix.extname(entryPath).toLowerCase());
+}
+
 function normalizePublicViewerRenderMode(
   input: unknown,
   entryPath: string,

@@ -12,6 +12,10 @@ import {
   submitNavigatorPromptToCurrentThread,
 } from "@cocalc/frontend/project/new/navigator-intents";
 
+const DEFAULT_FIX_WITH_AGENT_MODEL = "gpt-5.4-mini";
+const NOTEBOOK_FIX_VISIBLE_PROMPT =
+  "Investigate and fix this Jupyter notebook error.";
+
 interface Props {
   style?: CSSProperties;
   input: string;
@@ -34,6 +38,7 @@ function buildNotebookErrorPrompt(opts: {
   const parts = [
     "Investigate and fix this Jupyter notebook error.",
     `Notebook path: ${opts.path}`,
+    "Treat the live in-memory notebook state as the source of truth, even if the file on disk is stale.",
     "Explain the root cause briefly, propose a fix, and apply changes when possible. Ask before installing or upgrading packages and before destructive actions.",
     "Traceback:",
     "```text",
@@ -61,20 +66,25 @@ export default function LLMError({ style, traceback, input }: Props) {
     setRouting(true);
     setRoutingError("");
     try {
-      await Promise.resolve(frameActions?.save?.(true));
       const sent = await submitNavigatorPromptToCurrentThread({
         project_id,
         path,
         prompt: intentPrompt,
+        visiblePrompt: NOTEBOOK_FIX_VISIBLE_PROMPT,
+        title: "Fix notebook error",
         tag: "intent:notebook-error",
         forceCodex: true,
         openFloating: true,
+        codexConfig: { model: DEFAULT_FIX_WITH_AGENT_MODEL },
       });
       if (!sent) {
         dispatchNavigatorPromptIntent({
           prompt: intentPrompt,
+          visiblePrompt: NOTEBOOK_FIX_VISIBLE_PROMPT,
+          title: "Fix notebook error",
           tag: "intent:notebook-error",
           forceCodex: true,
+          codexConfig: { model: DEFAULT_FIX_WITH_AGENT_MODEL },
         });
       }
     } catch (err) {

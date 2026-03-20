@@ -36,10 +36,12 @@ import {
   takeQueuedNavigatorPromptIntents,
   type NavigatorSubmitPromptDetail,
 } from "@cocalc/frontend/project/new/navigator-intents";
+import { saveNavigatorSelectedThreadKey } from "@cocalc/frontend/project/new/navigator-state";
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import getAnchorTagComponent from "@cocalc/frontend/project/page/anchor-tag-component";
 import getUrlTransform from "@cocalc/frontend/project/page/url-transform";
 import type { ProjectActions } from "@cocalc/frontend/project_actions";
+import { loadSessionWorkspaceRecord } from "@cocalc/frontend/project/workspaces/selection-runtime";
 import {
   AGENT_DOCK_CLOSE_EVENT,
   AGENT_DOCK_OPEN_EVENT,
@@ -158,9 +160,18 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
 
   useEffect(() => {
     if (!session) return;
-    const updated = sessions.find(
-      (item) => item.session_id === session.session_id,
-    );
+    const updated =
+      sessions.find((item) => item.session_id === session.session_id) ??
+      (() => {
+        const chatPath = `${session.chat_path ?? ""}`.trim();
+        const threadKey = `${session.thread_key ?? ""}`.trim();
+        if (!chatPath || !threadKey) return undefined;
+        return sessions.find(
+          (item) =>
+            `${item.chat_path ?? ""}`.trim() === chatPath &&
+            `${item.thread_key ?? ""}`.trim() === threadKey,
+        );
+      })();
     if (updated) {
       setSession(updated);
     }
@@ -257,6 +268,11 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
     }, 0);
     return () => clearTimeout(timer);
   }, [chatActions, session?.thread_key]);
+
+  useEffect(() => {
+    if (!session?.chat_path || !session?.thread_key) return;
+    saveNavigatorSelectedThreadKey(session.thread_key, session.chat_path);
+  }, [session?.chat_path, session?.thread_key]);
 
   useEffect(() => {
     if (!chatActions || !session) return;
@@ -484,9 +500,14 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
     return (
       workspaces.records.find(
         (record) => record.workspace_id === scopedWorkspaceId,
-      ) ?? null
+      ) ??
+      (() => {
+        const cached = loadSessionWorkspaceRecord(project_id);
+        if (cached?.workspace_id !== scopedWorkspaceId) return null;
+        return cached;
+      })()
     );
-  }, [scopedWorkspaceId, workspaces.records]);
+  }, [project_id, scopedWorkspaceId, workspaces.records]);
 
   const sessionOptions = useMemo(() => {
     const visibleSessions =
@@ -497,11 +518,21 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
                 ?.workspace_id === scopedWorkspaceId,
           )
         : sessions;
-    return visibleSessions.map((record) => ({
+    const options = visibleSessions.map((record) => ({
       value: record.session_id,
       label: ellipsizeLabel(record.title || "Agent session"),
     }));
-  }, [scopedWorkspaceId, sessions, workspaceOnly, workspaces]);
+    if (
+      session?.session_id &&
+      !options.some((option) => option.value === session.session_id)
+    ) {
+      options.unshift({
+        value: session.session_id,
+        label: ellipsizeLabel(session.title || "Agent session"),
+      });
+    }
+    return options;
+  }, [scopedWorkspaceId, session, sessions, workspaceOnly, workspaces]);
 
   const keyboardBoundaryProps = useKeyboardBoundary<HTMLDivElement>({
     boundary: "dock",
@@ -542,6 +573,9 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
       >
         <div
           ref={nodeRef}
+          data-selected-thread-key={session.thread_key ?? undefined}
+          data-selected-thread-title={session.title ?? undefined}
+          data-selected-session-id={session.session_id ?? undefined}
           style={{
             position: "absolute",
             width,

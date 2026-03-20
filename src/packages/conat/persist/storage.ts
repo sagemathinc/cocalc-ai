@@ -97,6 +97,21 @@ export interface PartialInventory {
   seq: number;
 }
 
+export interface StreamCheckpoint {
+  seq: number;
+  time: number;
+  data?: JSONValue;
+}
+
+export type StreamCheckpoints = Record<string, StreamCheckpoint>;
+
+export interface CheckpointUpdate {
+  name: string;
+  seq?: number;
+  time?: number;
+  data?: JSONValue;
+}
+
 export interface Configuration {
   // How many messages may be in a Stream, oldest messages will be removed
   // if the Stream exceeds this size. -1 for unlimited.
@@ -339,10 +354,37 @@ export class PersistentStream extends EventEmitter {
       )
       .run();
     this.db
+      .prepare(
+        `
+         CREATE TABLE IF NOT EXISTS stream_metadata (
+          id INTEGER PRIMARY KEY CHECK(id = 1),
+          metadata_json TEXT,
+          revision INTEGER NOT NULL DEFAULT 0
+        )`,
+      )
+      .run();
+    this.db
+      .prepare(
+        `
+         CREATE TABLE IF NOT EXISTS stream_checkpoints (
+          name TEXT PRIMARY KEY,
+          seq INTEGER NOT NULL,
+          time INTEGER NOT NULL,
+          data_json TEXT,
+          revision INTEGER NOT NULL DEFAULT 0
+        )`,
+      )
+      .run();
+    this.db
       .prepare("CREATE INDEX IF NOT EXISTS idx_messages_key ON messages(key)")
       .run();
     this.db
       .prepare("CREATE INDEX IF NOT EXISTS idx_messages_time ON messages(time)")
+      .run();
+    this.db
+      .prepare(
+        "CREATE INDEX IF NOT EXISTS idx_stream_checkpoints_seq ON stream_checkpoints(seq)",
+      )
       .run();
 
     this.conf = this.config();
@@ -436,6 +478,7 @@ export class PersistentStream extends EventEmitter {
     ttl,
     previousSeq,
     msgID,
+    checkpoint,
   }: {
     encoding: DataEncoding;
     raw: Buffer;
@@ -447,6 +490,7 @@ export class PersistentStream extends EventEmitter {
     // is deduplicated. Use this to prevent accidentally writing twice, e.g.,
     // due to not getting a response back from the server.
     msgID?: string;
+    checkpoint?: CheckpointUpdate;
   }): { seq: number; time: number } => {
     if (previousSeq === null) {
       previousSeq = undefined;
@@ -484,7 +528,7 @@ export class PersistentStream extends EventEmitter {
       if (key !== undefined) {
         this.db.prepare("DELETE FROM messages WHERE key = ?").run(key);
       }
-      return this.db
+      const row = this.db
         .prepare(
           "INSERT INTO messages(time, compress, encoding, raw, headers, key, size, ttl) VALUES (?, ?, ?, ?, ?, ?, ?, ?)  RETURNING seq",
         )
@@ -498,6 +542,16 @@ export class PersistentStream extends EventEmitter {
           size,
           ttl ?? null,
         );
+      if (checkpoint != null) {
+        const seq = Number((row as any).seq);
+        this.writeCheckpoint({
+          name: checkpoint.name,
+          seq: checkpoint.seq ?? seq,
+          time: checkpoint.time ?? time,
+          data: checkpoint.data,
+        });
+      }
+      return row;
     });
     const seq = Number((row as any).seq);
     // lastInsertRowid - is a bigint from sqlite, but we won't hit that limit
@@ -605,31 +659,41 @@ export class PersistentStream extends EventEmitter {
   }): { seqs: number[] } => {
     let seqs: number[] = [];
     if (all) {
-      seqs = this.db
-        .prepare("SELECT seq FROM messages")
-        .all()
-        .map((row: any) => row.seq);
-      this.db.prepare("DELETE FROM messages").run();
+      this.runTransaction(() => {
+        seqs = this.db
+          .prepare("SELECT seq FROM messages")
+          .all()
+          .map((row: any) => row.seq);
+        this.db.prepare("DELETE FROM messages").run();
+        this.db.prepare("DELETE FROM stream_checkpoints").run();
+      });
       this.vacuum();
     } else if (last_seq) {
-      seqs = this.db
-        .prepare("SELECT seq FROM messages WHERE seq<=?")
-        .all(last_seq)
-        .map((row: any) => row.seq);
-      this.db.prepare("DELETE FROM messages WHERE seq<=?").run(last_seq);
+      this.runTransaction(() => {
+        seqs = this.db
+          .prepare("SELECT seq FROM messages WHERE seq<=?")
+          .all(last_seq)
+          .map((row: any) => row.seq);
+        this.db.prepare("DELETE FROM messages WHERE seq<=?").run(last_seq);
+        this.deleteCheckpointsInSeqs(seqs);
+      });
       this.vacuum();
     } else if (seq) {
-      seqs = this.db
-        .prepare("SELECT seq FROM messages WHERE seq=?")
-        .all(seq)
-        .map((row: any) => row.seq);
-      this.db.prepare("DELETE FROM messages WHERE seq=?").run(seq);
+      this.runTransaction(() => {
+        seqs = this.db
+          .prepare("SELECT seq FROM messages WHERE seq=?")
+          .all(seq)
+          .map((row: any) => row.seq);
+        this.db.prepare("DELETE FROM messages WHERE seq=?").run(seq);
+        this.deleteCheckpointsInSeqs(seqs);
+      });
     } else if (seqs0) {
       const statement = this.db.prepare("DELETE FROM messages WHERE seq=?");
       this.runTransaction(() => {
         for (const s of seqs0) {
           statement.run(s);
         }
+        this.deleteCheckpointsInSeqs(seqs0);
       });
       seqs = seqs0;
     }
@@ -757,9 +821,160 @@ export class PersistentStream extends EventEmitter {
     return full as Configuration;
   };
 
+  getMetadata = (): JSONValue | undefined => {
+    const row = this.db
+      .prepare(
+        "SELECT metadata_json FROM stream_metadata WHERE id = 1 AND metadata_json IS NOT NULL",
+      )
+      .get() as { metadata_json?: string } | undefined;
+    if (row?.metadata_json == null) {
+      return undefined;
+    }
+    return JSON.parse(row.metadata_json);
+  };
+
+  setMetadata = (metadata?: JSONValue): JSONValue | undefined => {
+    this.runTransaction(() => {
+      if (metadata === undefined) {
+        this.db.prepare("DELETE FROM stream_metadata WHERE id = 1").run();
+      } else {
+        this.db
+          .prepare(
+            `
+            INSERT INTO stream_metadata(id, metadata_json, revision)
+            VALUES (1, ?, 1)
+            ON CONFLICT(id) DO UPDATE SET
+              metadata_json=excluded.metadata_json,
+              revision=stream_metadata.revision + 1
+          `,
+          )
+          .run(JSON.stringify(metadata));
+      }
+    });
+    this.throttledBackup();
+    return metadata;
+  };
+
+  patchMetadata = (delta: JSONValue): JSONValue | undefined => {
+    const current = this.getMetadata();
+    let next: JSONValue;
+    if (isPlainRecord(current) && isPlainRecord(delta)) {
+      next = { ...current, ...delta };
+    } else {
+      next = delta;
+    }
+    return this.setMetadata(next);
+  };
+
+  getCheckpoints = (): StreamCheckpoints => {
+    const checkpoints: StreamCheckpoints = {};
+    for (const row of this.db
+      .prepare(
+        "SELECT name, seq, time, data_json FROM stream_checkpoints ORDER BY name",
+      )
+      .iterate() as Iterable<{
+      name: string;
+      seq: number;
+      time: number;
+      data_json?: string | null;
+    }>) {
+      checkpoints[row.name] = {
+        seq: row.seq,
+        time: row.time,
+        data:
+          row.data_json == null || row.data_json === ""
+            ? undefined
+            : JSON.parse(row.data_json),
+      };
+    }
+    return checkpoints;
+  };
+
+  getCheckpoint = (name: string): StreamCheckpoint | undefined => {
+    const row = this.db
+      .prepare(
+        "SELECT seq, time, data_json FROM stream_checkpoints WHERE name = ?",
+      )
+      .get(name) as
+      | { seq: number; time: number; data_json?: string | null }
+      | undefined;
+    if (row == null) {
+      return undefined;
+    }
+    return {
+      seq: row.seq,
+      time: row.time,
+      data:
+        row.data_json == null || row.data_json === ""
+          ? undefined
+          : JSON.parse(row.data_json),
+    };
+  };
+
+  setCheckpoint = ({
+    name,
+    seq,
+    time,
+    data,
+  }: CheckpointUpdate): StreamCheckpoint => {
+    if (seq == null) {
+      throw Error("setCheckpoint requires seq");
+    }
+    if (time == null) {
+      time = Date.now();
+    }
+    this.runTransaction(() => {
+      this.writeCheckpoint({ name, seq, time, data });
+    });
+    this.throttledBackup();
+    return { seq, time, data };
+  };
+
+  deleteCheckpoint = (name: string): void => {
+    this.db.prepare("DELETE FROM stream_checkpoints WHERE name = ?").run(name);
+    this.throttledBackup();
+  };
+
+  private writeCheckpoint = ({
+    name,
+    seq,
+    time,
+    data,
+  }: {
+    name: string;
+    seq: number;
+    time: number;
+    data?: JSONValue;
+  }): void => {
+    this.db
+      .prepare(
+        `
+        INSERT INTO stream_checkpoints(name, seq, time, data_json, revision)
+        VALUES (?, ?, ?, ?, 1)
+        ON CONFLICT(name) DO UPDATE SET
+          seq=excluded.seq,
+          time=excluded.time,
+          data_json=excluded.data_json,
+          revision=stream_checkpoints.revision + 1
+      `,
+      )
+      .run(name, seq, time, data === undefined ? null : JSON.stringify(data));
+  };
+
+  private deleteCheckpointsInSeqs = (seqs: number[]): void => {
+    if (seqs.length == 0) {
+      return;
+    }
+    const placeholders = seqs.map(() => "?").join(", ");
+    this.db
+      .prepare(`DELETE FROM stream_checkpoints WHERE seq IN (${placeholders})`)
+      .run(...seqs);
+  };
+
   private emitDelete = (rows) => {
     if (rows.length > 0) {
       const seqs = rows.map((row: { seq: number }) => row.seq);
+      this.deleteCheckpointsInSeqs(seqs);
       this.emit("change", { op: "delete", seqs });
       this.throttledBackup();
     }
@@ -969,4 +1184,10 @@ function age(path: string) {
   } catch {
     return 0;
   }
+}
+
+function isPlainRecord(
+  value: JSONValue | undefined,
+): value is { [key: string]: JSONValue } {
+  return value != null && typeof value === "object" && !Array.isArray(value);
 }

@@ -7,6 +7,7 @@ const CONFIG_KEY_PREFIX = "cocalc:navigator:acp-config";
 const TARGET_PROJECT_KEY = "cocalc:navigator:target-project-id";
 const THREAD_KEY_GLOBAL = "cocalc:navigator:selected-thread";
 const THREAD_KEY_PREFIX = "cocalc:navigator:selected-thread";
+const THREAD_KEY_CHAT_PREFIX = "cocalc:navigator:selected-thread:chat";
 export const NAVIGATOR_SELECTED_THREAD_EVENT =
   "cocalc:navigator:selected-thread-change";
 
@@ -26,6 +27,10 @@ function projectConfigKey(projectId: string): string {
 
 function projectThreadKey(projectId: string): string {
   return `${THREAD_KEY_PREFIX}:${projectId}`;
+}
+
+function chatThreadKey(chatPath: string): string {
+  return `${THREAD_KEY_CHAT_PREFIX}:${encodeURIComponent(chatPath)}`;
 }
 
 export function loadNavigatorSessionId(projectId: string): string {
@@ -108,8 +113,16 @@ export function clearNavigatorTargetProjectId(): void {
 
 export function loadNavigatorSelectedThreadKey(
   projectId: string,
+  chatPath?: string,
 ): string | undefined {
   try {
+    const normalizedChatPath = `${chatPath ?? ""}`.trim();
+    if (normalizedChatPath) {
+      const chatValue = localStorage.getItem(chatThreadKey(normalizedChatPath));
+      if (chatValue?.trim()) {
+        return chatValue.trim();
+      }
+    }
     const globalValue = localStorage.getItem(THREAD_KEY_GLOBAL);
     if (globalValue?.trim()) {
       return globalValue.trim();
@@ -123,9 +136,20 @@ export function loadNavigatorSelectedThreadKey(
   return undefined;
 }
 
-export function saveNavigatorSelectedThreadKey(value?: string): void {
+export function saveNavigatorSelectedThreadKey(
+  value?: string,
+  chatPath?: string,
+): void {
   const next = value?.trim() ?? "";
+  const normalizedChatPath = `${chatPath ?? ""}`.trim();
   try {
+    if (normalizedChatPath) {
+      if (next) {
+        localStorage.setItem(chatThreadKey(normalizedChatPath), next);
+      } else {
+        localStorage.removeItem(chatThreadKey(normalizedChatPath));
+      }
+    }
     if (next) {
       localStorage.setItem(THREAD_KEY_GLOBAL, next);
     } else {
@@ -137,7 +161,10 @@ export function saveNavigatorSelectedThreadKey(value?: string): void {
     ) {
       window.dispatchEvent(
         new CustomEvent(NAVIGATOR_SELECTED_THREAD_EVENT, {
-          detail: { threadKey: next || undefined },
+          detail: {
+            threadKey: next || undefined,
+            chatPath: normalizedChatPath || undefined,
+          },
         }),
       );
     }

@@ -45,6 +45,18 @@ export interface JupyterRuntimeCellState {
   end?: number | null;
 }
 
+export function normalizeJupyterRuntimeCellState(
+  runtimeCell: JupyterRuntimeCellState | undefined,
+): JupyterRuntimeCellState | undefined {
+  if (runtimeCell == null) {
+    return;
+  }
+  if (runtimeCell.end == null || runtimeCell.state === "done") {
+    return runtimeCell;
+  }
+  return { ...runtimeCell, state: "done" };
+}
+
 export interface JupyterRuntimeShape {
   settings?: JupyterRuntimeSettings;
   nbconvert?: JupyterRuntimeNbconvert;

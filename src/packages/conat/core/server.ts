@@ -639,11 +639,16 @@ export class ConatServer extends EventEmitter {
     subject: string;
     data: any;
     from: any;
-  }): Promise<number> => {
+  }): Promise<{
+    count: number;
+    auth_ms: number;
+    route_ms: number;
+  }> => {
     if (!isValidSubjectWithoutWildcards(subject)) {
       throw Error("invalid subject");
     }
 
+    const authStart = Date.now();
     if (!(await this.isAllowed({ user: from, subject, type: "pub" }))) {
       const message = `permission denied publishing to '${subject}' from ${JSON.stringify(
         from,
@@ -655,6 +660,8 @@ export class ConatServer extends EventEmitter {
         code: 403,
       });
     }
+    const auth_ms = Date.now() - authStart;
+    const routeStart = Date.now();
 
     // note -- position 6 of data is special cluster delivery data, to avoid
     // a message bouncing back and forth in case the interest stream
@@ -662,7 +669,11 @@ export class ConatServer extends EventEmitter {
     // to deliver the message.
     const targets = data[6];
     if (targets != null) {
-      return this.deliver({ subject, data, targets });
+      return {
+        count: this.deliver({ subject, data, targets }),
+        auth_ms,
+        route_ms: Date.now() - routeStart,
+      };
     }
 
     if (!this.cluster) {
@@ -687,7 +698,7 @@ export class ConatServer extends EventEmitter {
           }
         }
       }
-      return count;
+      return { count, auth_ms, route_ms: Date.now() - routeStart };
     }
 
     // More complicated cluster case, where we have to consider the
@@ -771,7 +782,7 @@ export class ConatServer extends EventEmitter {
     //       }
     //     }
 
-    return count;
+    return { count, auth_ms, route_ms: Date.now() - routeStart };
   };
 
   ///////////////////////////////////////
@@ -944,6 +955,7 @@ export class ConatServer extends EventEmitter {
     );
 
     socket.on("publish", async ([subject, ...data], respond) => {
+      const handlerStart = Date.now();
       if (data?.[2]) {
         // done
         this.stats[socket.id].send.messages += 1;
@@ -953,8 +965,17 @@ export class ConatServer extends EventEmitter {
       // this.log(JSON.stringify(this.stats));
 
       try {
-        const count = await this.publish({ subject, data, from: user });
-        respond?.({ count });
+        const { count, auth_ms, route_ms } = await this.publish({
+          subject,
+          data,
+          from: user,
+        });
+        respond?.({
+          count,
+          serverAuthMs: auth_ms,
+          serverRouteMs: route_ms,
+          serverHandlerMs: Date.now() - handlerStart,
+        });
       } catch (err) {
         // console.log(this.id, "ERROR", err);
         if (err.code == 403) {

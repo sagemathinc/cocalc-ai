@@ -17,8 +17,13 @@ import {
   jupyterClient,
   jupyterServer,
 } from "@cocalc/conat/project/jupyter/run-code";
-import { openJupyterLiveRunStore } from "@cocalc/conat/project/jupyter/live-run";
+import {
+  jupyterLiveRunKey,
+  jupyterLiveRunSubject,
+  openJupyterLiveRunStore,
+} from "@cocalc/conat/project/jupyter/live-run";
 import { uuid } from "@cocalc/util/misc";
+import { syncdbPath } from "@cocalc/util/jupyter/names";
 
 // it's really 100+, but tests fails if less than this.
 const MIN_EVALS_PER_SECOND = 10;
@@ -100,6 +105,85 @@ describe("create very simple mocked jupyter runner and test evaluating code", ()
       { path, id: "0" },
       { cells, id: "0" },
     ]);
+  });
+
+  it("reports the run ack without waiting for it", async () => {
+    const seen: any[] = [];
+    let ack: any | undefined;
+    const iter = await client.run(cells, {
+      waitForAck: false,
+      run_id: "ack-test-run",
+      onAck: (value) => {
+        ack = value;
+      },
+    });
+    for await (const output of iter) {
+      seen.push(...output);
+    }
+    await wait({
+      until: () => ack != null,
+      timeout: 5_000,
+      interval: 25,
+      desc: "run ack callback",
+    });
+    expect(ack).toMatchObject({
+      run_id: "ack-test-run",
+    });
+    expect(typeof ack.server_received_at_ms).toBe("number");
+    expect(withoutRunId(seen)).toEqual([
+      { path, id: "0" },
+      { cells, id: "0" },
+    ]);
+  });
+
+  it("does not materially block the first batch on the delayed ack", async () => {
+    const delayedRawClient = connect();
+    let ackAt: number | null = null;
+    let firstBatchAt: number | null = null;
+    server.once("connection", (socket) => {
+      const origWrite = socket.write.bind(socket);
+      socket.write = (data, opts) => {
+        setTimeout(() => {
+          origWrite(data, opts);
+        }, 50);
+      };
+    });
+    const delayedClient = jupyterClient({
+      path,
+      project_id,
+      client: delayedRawClient,
+    });
+    const origRequest = delayedClient.socket.request.bind(delayedClient.socket);
+    delayedClient.socket.request = async (data, options) => {
+      await delay(50);
+      const resp = await origRequest(data, options);
+      await delay(50);
+      return resp;
+    };
+    try {
+      const iter = await delayedClient.run(cells, {
+        waitForAck: false,
+        run_id: "rtt-shim-run",
+        onAck: () => {
+          ackAt = Date.now();
+        },
+      });
+      for await (const _output of iter) {
+        if (firstBatchAt == null) {
+          firstBatchAt = Date.now();
+        }
+      }
+      expect(firstBatchAt).not.toBeNull();
+      expect(ackAt).not.toBeNull();
+      // The event loop can schedule the ack callback and first output batch a
+      // few milliseconds apart in either order. What we actually need here is
+      // that the first visible batch is not blocked behind the delayed ack by
+      // an extra RTT.
+      expect(firstBatchAt!).toBeLessThanOrEqual(ackAt! + 20);
+    } finally {
+      delayedClient.close();
+      delayedRawClient.close();
+    }
   });
 
   const count = 100;
@@ -670,6 +754,34 @@ describe("coalesces adjacent stream messages before applying limit", () => {
     expect(numbers.length).toBeGreaterThan(0);
     expect(numbers).toEqual(Array.from({ length: 200 }, (_, i) => i));
     client.close();
+  });
+
+  it("canonicalizes live-run keys and subjects for syncdb callers", async () => {
+    const ipynb = "coalesce-path.ipynb";
+    const run_id = "coalesce-path-1";
+    const sync = syncdbPath(ipynb);
+    expect(
+      jupyterLiveRunKey({
+        path: sync,
+        run_id,
+      }),
+    ).toBe(
+      jupyterLiveRunKey({
+        path: ipynb,
+        run_id,
+      }),
+    );
+    expect(
+      jupyterLiveRunSubject({
+        project_id,
+        path: sync,
+      }),
+    ).toBe(
+      jupyterLiveRunSubject({
+        project_id,
+        path: ipynb,
+      }),
+    );
   });
 
   it("cleans up", () => {

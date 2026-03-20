@@ -72,6 +72,9 @@ export async function getHelp({
 
   try {
     const tagSuffix = isHint ? "hint" : "solution";
+    const visiblePrompt = isHint
+      ? "Diagnose this problem and give me a hint."
+      : "Diagnose this problem and fix it.";
     const intentPrompt = createNavigatorIntentMessage({
       message: messageText,
       project_id,
@@ -84,6 +87,8 @@ export async function getHelp({
       project_id,
       path,
       prompt: intentPrompt,
+      visiblePrompt,
+      title: isHint ? "Get debugging hint" : "Fix problem",
       tag: `intent:error-fix:${tagSuffix}`,
       forceCodex: true,
       openFloating: true,
@@ -91,6 +96,8 @@ export async function getHelp({
     if (!sent) {
       dispatchNavigatorPromptIntent({
         prompt: intentPrompt,
+        visiblePrompt,
+        title: isHint ? "Get debugging hint" : "Fix problem",
         tag: `intent:error-fix:${tagSuffix}`,
         forceCodex: true,
       });
@@ -213,6 +220,8 @@ export function createNavigatorIntentMessage({
   };
   return [
     "Handle this CoCalc help-me-fix request as an agent.",
+    "Treat the live in-memory sync version of the document as the source of truth.",
+    "Do not rely on the filesystem copy being current; use live document APIs when available.",
     "Apply edits directly when safe, run checks as needed, and summarize exactly what changed.",
     "<details><summary>Intent metadata</summary>",
     "```json",
