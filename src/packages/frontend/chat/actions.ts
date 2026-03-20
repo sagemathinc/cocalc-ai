@@ -1718,6 +1718,10 @@ export class ChatActions extends Actions<ChatState> {
     return 0;
   };
 
+  isProjectReadStateReady = (): boolean => {
+    return this.ensureProjectReadState() != null;
+  };
+
   listThreadConfigRows = (): any[] => {
     const syncState = this.syncdb?.get_state?.();
     if (this.syncdb != null && (syncState == null || syncState === "ready")) {
