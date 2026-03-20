@@ -419,11 +419,13 @@ function buildQueueJobs(options) {
       }),
     );
   } else if (options.workflow === "backup-snapshot") {
+    const autoHost =
+      `${options.host ?? ""}`.trim() || `${options.providers[0] ?? ""}`.trim();
     jobs.push(
       normalizeJob({
         workflow: "backup-snapshot",
         project: options.project,
-        host: options.host,
+        host: autoHost,
         timeout: options.timeout,
         account_id: options.accountId,
         api_url: options.apiUrl,

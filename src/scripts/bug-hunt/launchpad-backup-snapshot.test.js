@@ -28,7 +28,9 @@ test("parseArgs accepts backup/snapshot workflow options", () => {
 test("buildSentinel creates snapshot and restore paths", () => {
   const sentinel = buildSentinel(Date.UTC(2026, 2, 18, 6, 20, 0));
   assert.match(sentinel.snapshotName, /bug-hunt-snapshot/);
+  assert.match(sentinel.livePath, /^\.bug-hunt-backup-/);
   assert.match(sentinel.restoredPath, /bug-hunt-backup-restored/);
+  assert.equal(sentinel.restoredPath.startsWith("/"), false);
 });
 
 test("executeBackupSnapshotWorkflow writes a dry-run summary", async () => {
