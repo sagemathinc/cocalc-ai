@@ -80,8 +80,13 @@ export function registerProjectJupyterCommands(
   project: Command,
   deps: ProjectCommandDeps,
 ): void {
-  const { withContext, projectJupyterCellsData, projectJupyterRunSession } =
-    deps;
+  const {
+    withContext,
+    projectJupyterCellsData,
+    projectJupyterRunSession,
+    projectJupyterLiveRunSession,
+    durationToMs,
+  } = deps;
 
   const jupyter = project
     .command("jupyter")
@@ -282,6 +287,128 @@ export function registerProjectJupyterCommands(
               }`,
             );
           }
+          if (opts.jsonl) {
+            return null;
+          }
+          if (wantsJsonSummary) {
+            return summary;
+          }
+          return null;
+        });
+      },
+    );
+
+  jupyter
+    .command("live")
+    .description(
+      "attach to the latest live Jupyter run for a notebook and stream current output",
+    )
+    .requiredOption("--path <path>", "notebook path inside the project")
+    .option("-w, --project <project>", "project id or name")
+    .option("--run-id <id>", "specific run id to follow")
+    .option("--timeout <duration>", "max time to wait/follow (default: 30s)")
+    .option("--poll-ms <n>", "poll interval for live run snapshots", "200")
+    .option("--no-follow", "replay current snapshot only; do not wait for more")
+    .option("--jsonl", "emit raw Jupyter output messages as JSONL")
+    .action(
+      async (
+        opts: {
+          path: string;
+          project?: string;
+          runId?: string;
+          timeout?: string;
+          pollMs?: string;
+          follow?: boolean;
+          jsonl?: boolean;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "project jupyter live", async (ctx) => {
+          const startedAt = Date.now();
+          const wantsJsonSummary =
+            ctx.globals.json || ctx.globals.output === "json";
+          const waitMs =
+            opts.timeout == null || `${opts.timeout}`.trim() === ""
+              ? 30_000
+              : durationToMs(opts.timeout, 30_000);
+          const pollMs =
+            opts.pollMs == null || `${opts.pollMs}`.trim() === ""
+              ? 200
+              : (() => {
+                  const parsed = Number(opts.pollMs);
+                  if (!Number.isInteger(parsed) || parsed <= 0) {
+                    throw new Error("--poll-ms must be a positive integer");
+                  }
+                  return parsed;
+                })();
+          const session = await projectJupyterLiveRunSession({
+            ctx,
+            projectIdentifier: opts.project,
+            path: normalizePath(opts.path),
+            runId: opts.runId,
+            follow: opts.follow !== false,
+            waitMs,
+            pollMs,
+          });
+          let batchCount = 0;
+          let messageCount = 0;
+          let errorCount = 0;
+          let moreOutputCount = 0;
+          const lifecycleCounts: Record<string, number> = {};
+
+          try {
+            for await (const batch of session.iter) {
+              batchCount += 1;
+              for (const mesg of batch) {
+                messageCount += 1;
+                if (mesg.more_output) {
+                  moreOutputCount += 1;
+                }
+                if (mesg.msg_type === "error") {
+                  errorCount += 1;
+                }
+                if (
+                  mesg.lifecycle != null &&
+                  typeof mesg.lifecycle === "string"
+                ) {
+                  lifecycleCounts[mesg.lifecycle] =
+                    (lifecycleCounts[mesg.lifecycle] ?? 0) + 1;
+                }
+                if (opts.jsonl) {
+                  process.stdout.write(`${JSON.stringify(mesg)}\n`);
+                  continue;
+                }
+                if (wantsJsonSummary) {
+                  continue;
+                }
+                const human = humanTextForOutputMessage(mesg);
+                if (human?.stream) {
+                  process.stdout.write(human.stream);
+                }
+                if (human?.error) {
+                  process.stderr.write(human.error);
+                }
+              }
+            }
+          } finally {
+            session.close();
+          }
+
+          const summary = {
+            project_id: session.project_id,
+            project_title: session.project_title,
+            path: session.path,
+            run_id: session.getRunId(),
+            batch_count: batchCount,
+            message_count: messageCount,
+            error_count: errorCount,
+            more_output_count: moreOutputCount,
+            lifecycle_counts: lifecycleCounts,
+            duration_ms: Date.now() - startedAt,
+            follow: opts.follow !== false,
+            wait_ms: waitMs,
+            poll_ms: pollMs,
+          };
           if (opts.jsonl) {
             return null;
           }

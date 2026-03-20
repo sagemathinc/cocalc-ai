@@ -111,6 +111,7 @@ export type ProjectCommandDeps = {
   resolveProjectProjectApi: any;
   projectJupyterCellsData: any;
   projectJupyterRunSession: any;
+  projectJupyterLiveRunSession: any;
 };
 
 export function registerProjectCommand(
