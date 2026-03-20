@@ -147,6 +147,7 @@ async function executeCopyPathWorkflow(options, now = Date.now(), deps = {}) {
     apiUrl: options.apiUrl,
     accountId: options.accountId,
     timeout: options.timeout,
+    rpcTimeout: options.timeout,
   };
 
   try {
