@@ -95,6 +95,58 @@ test("buildQueueJobs supports copy-path workflow jobs", () => {
   });
 });
 
+test("buildQueueJobs defaults copy-path hosts to the provider host when none are given", () => {
+  const jobs = buildQueueJobs({
+    workflow: "copy-path",
+    queueFile: "",
+    providers: ["gcp"],
+    scenarios: [],
+    srcProject: "",
+    destProject: "",
+    srcHost: "",
+    destHost: "",
+    timeout: "15m",
+    accountId: "",
+    apiUrl: "",
+  });
+  assert.equal(jobs.length, 1);
+  assert.deepEqual(jobs[0], {
+    workflow: "copy-path",
+    preset: "",
+    accountId: "",
+    apiUrl: "",
+    timeout: "15m",
+    srcProject: "",
+    destProject: "",
+    srcHost: "gcp",
+    destHost: "gcp",
+  });
+});
+
+test("buildQueueJobs defaults backup-snapshot to the provider host when no host is given", () => {
+  const jobs = buildQueueJobs({
+    workflow: "backup-snapshot",
+    queueFile: "",
+    providers: ["gcp"],
+    scenarios: [],
+    project: "",
+    host: "",
+    timeout: "15m",
+    accountId: "",
+    apiUrl: "",
+  });
+  assert.equal(jobs.length, 1);
+  assert.deepEqual(jobs[0], {
+    workflow: "backup-snapshot",
+    preset: "",
+    accountId: "",
+    apiUrl: "",
+    timeout: "15m",
+    project: "",
+    host: "gcp",
+  });
+});
+
 test("executeLaunchpadQueue skips existing successful canary jobs on rerun", async () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "cocalc-launchpad-queue-"));
   let calls = 0;

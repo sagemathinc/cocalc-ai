@@ -100,8 +100,8 @@ function buildSentinel(now = Date.now()) {
   const suffix = stamp.replace(/[:.]/g, "-");
   return {
     payload: `${payload}\n`,
-    livePath: `/tmp/bug-hunt-backup-${suffix}.txt`,
-    restoredPath: `/tmp/bug-hunt-backup-restored-${suffix}.txt`,
+    livePath: `.bug-hunt-backup-${suffix}.txt`,
+    restoredPath: `.bug-hunt-backup-restored-${suffix}.txt`,
     snapshotName: `bug-hunt-snapshot-${suffix}`,
   };
 }
@@ -143,6 +143,7 @@ async function executeBackupSnapshotWorkflow(
     apiUrl: options.apiUrl,
     accountId: options.accountId,
     timeout: options.timeout,
+    rpcTimeout: options.timeout,
   };
 
   try {

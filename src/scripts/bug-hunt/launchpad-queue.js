@@ -406,24 +406,28 @@ function buildQueueJobs(options) {
       jobs.push(normalizeJob(job, defaults));
     }
   } else if (options.workflow === "copy-path") {
+    const autoHost =
+      `${options.providers[0] ?? ""}`.trim() || `${options.host ?? ""}`.trim();
     jobs.push(
       normalizeJob({
         workflow: "copy-path",
         srcProject: options.srcProject,
         destProject: options.destProject,
-        srcHost: options.srcHost,
-        destHost: options.destHost,
+        srcHost: `${options.srcHost ?? ""}`.trim() || autoHost,
+        destHost: `${options.destHost ?? ""}`.trim() || autoHost,
         timeout: options.timeout,
         account_id: options.accountId,
         api_url: options.apiUrl,
       }),
     );
   } else if (options.workflow === "backup-snapshot") {
+    const autoHost =
+      `${options.host ?? ""}`.trim() || `${options.providers[0] ?? ""}`.trim();
     jobs.push(
       normalizeJob({
         workflow: "backup-snapshot",
         project: options.project,
-        host: options.host,
+        host: autoHost,
         timeout: options.timeout,
         account_id: options.accountId,
         api_url: options.apiUrl,

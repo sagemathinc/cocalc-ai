@@ -30,9 +30,11 @@ test("parseArgs accepts copy-path workflow options", () => {
 
 test("buildSentinel creates distinct copy paths", () => {
   const sentinel = buildSentinel(Date.UTC(2026, 2, 18, 6, 0, 0));
+  assert.match(sentinel.srcPath, /^\.bug-hunt-copy-path-/);
   assert.match(sentinel.srcPath, /bug-hunt-copy-path/);
   assert.match(sentinel.destPath, /bug-hunt-copy-path-dest/);
   assert.notEqual(sentinel.srcPath, sentinel.destPath);
+  assert.equal(sentinel.destPath.startsWith("/"), false);
 });
 
 test("executeCopyPathWorkflow writes a dry-run summary", async () => {
@@ -60,4 +62,57 @@ test("executeCopyPathWorkflow writes a dry-run summary", async () => {
   assert.equal(payload.steps[0].status, "planned");
   assert.ok(fs.existsSync(path.join(payload.run_dir, "run-summary.json")));
   assert.ok(fs.existsSync(path.join(payload.run_dir, "run-ledger.json")));
+});
+
+test("executeCopyPathWorkflow passes rpcTimeout to live cli calls", async () => {
+  const tmp = fs.mkdtempSync(
+    path.join(os.tmpdir(), "cocalc-copy-path-rpc-timeout-"),
+  );
+  const now = Date.UTC(2026, 2, 20, 7, 45, 0);
+  const sentinel = buildSentinel(now);
+  const cliCalls = [];
+  const payload = await executeCopyPathWorkflow(
+    {
+      srcProject: "",
+      destProject: "",
+      srcHost: "host-a",
+      destHost: "host-b",
+      apiUrl: "http://127.0.0.1:9102",
+      accountId: "",
+      timeout: "11m",
+      runRoot: tmp,
+      cleanupOnSuccess: false,
+      dryRun: false,
+      json: true,
+    },
+    now,
+    {
+      skipLocalPostgresEnv: true,
+      runCliJson(base, args) {
+        cliCalls.push({ base, args });
+        const command = args.slice(0, 3).join(" ");
+        if (args[0] === "project" && args[1] === "create") {
+          return {
+            project_id:
+              args[2] === "Bug Hunt Copy Src" ? "src-project" : "dest-project",
+          };
+        }
+        if (command === "project file put") {
+          return {};
+        }
+        if (command === "project copy-path --src-project") {
+          return { op_id: "copy-op" };
+        }
+        if (command === "project file cat") {
+          return { content: sentinel.payload };
+        }
+        throw new Error(`unexpected cli call: ${args.join(" ")}`);
+      },
+    },
+  );
+  assert.equal(payload.ok, true);
+  assert.ok(cliCalls.length > 0);
+  for (const call of cliCalls) {
+    assert.equal(call.base.rpcTimeout, "11m");
+  }
 });
