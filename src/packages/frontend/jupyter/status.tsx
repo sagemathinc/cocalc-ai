@@ -83,6 +83,9 @@ const BACKEND_STATE_HUMAN = {
   running: "Running",
 } as const;
 
+const DISPLAY_BUSY_DELAY_MS = 350;
+const DISPLAY_BUSY_MIN_MS = 1000;
+
 const KERNEL_DRAWER_WIDTH_STORAGE_KEY = "cocalc:jupyter:kernelDrawerWidth";
 const MIN_KERNEL_DRAWER_WIDTH = 360;
 const MAX_KERNEL_DRAWER_WIDTH = 960;
@@ -176,9 +179,74 @@ export function Kernel({
     name,
     "kernel_state",
   ]);
+  const [displayKernelState, setDisplayKernelState] = React.useState<
+    undefined | KernelState
+  >(kernel_state);
+  const displayedBusySinceRef = React.useRef<number | null>(null);
+  const pendingBusyTimerRef = React.useRef<
+    ReturnType<typeof setTimeout> | undefined
+  >(undefined);
+  const pendingIdleTimerRef = React.useRef<
+    ReturnType<typeof setTimeout> | undefined
+  >(undefined);
+
+  useEffect(() => {
+    return () => {
+      if (pendingBusyTimerRef.current != null) {
+        clearTimeout(pendingBusyTimerRef.current);
+      }
+      if (pendingIdleTimerRef.current != null) {
+        clearTimeout(pendingIdleTimerRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (pendingBusyTimerRef.current != null) {
+      clearTimeout(pendingBusyTimerRef.current);
+      pendingBusyTimerRef.current = undefined;
+    }
+    if (pendingIdleTimerRef.current != null) {
+      clearTimeout(pendingIdleTimerRef.current);
+      pendingIdleTimerRef.current = undefined;
+    }
+    if (backend_state !== "running") {
+      displayedBusySinceRef.current = null;
+      setDisplayKernelState(kernel_state);
+      return;
+    }
+    if (kernel_state === "busy") {
+      if (displayKernelState === "busy") {
+        return;
+      }
+      pendingBusyTimerRef.current = setTimeout(() => {
+        displayedBusySinceRef.current = Date.now();
+        setDisplayKernelState("busy");
+        pendingBusyTimerRef.current = undefined;
+      }, DISPLAY_BUSY_DELAY_MS);
+      return;
+    }
+    if (displayKernelState !== "busy") {
+      displayedBusySinceRef.current = null;
+      setDisplayKernelState(kernel_state);
+      return;
+    }
+    const elapsed =
+      displayedBusySinceRef.current == null
+        ? DISPLAY_BUSY_MIN_MS
+        : Date.now() - displayedBusySinceRef.current;
+    const remaining = Math.max(0, DISPLAY_BUSY_MIN_MS - elapsed);
+    pendingIdleTimerRef.current = setTimeout(() => {
+      displayedBusySinceRef.current = null;
+      setDisplayKernelState(kernel_state);
+      pendingIdleTimerRef.current = undefined;
+    }, remaining);
+  }, [backend_state, kernel_state, displayKernelState]);
 
   const backendIsStarting =
     backend_state === "starting" || backend_state === "spawning";
+  const displayKernelStateValue =
+    backend_state === "running" ? displayKernelState : kernel_state;
   const haltTooltip = intl.formatMessage({
     id: "jupyter.status.halt_idle_tooltip",
     defaultMessage:
@@ -315,7 +383,7 @@ export function Kernel({
         spin = true;
         break;
       case "running":
-        switch (kernel_state) {
+        switch (displayKernelStateValue) {
           case "busy":
             name = "circle";
             color = "#5cb85c";
@@ -407,7 +475,7 @@ export function Kernel({
     }
 
     if (backend_state === "running") {
-      switch (kernel_state) {
+      switch (displayKernelStateValue) {
         case "busy":
           return (
             <>
@@ -467,7 +535,7 @@ export function Kernel({
       });
     }
     if (backend_state === "running") {
-      switch (kernel_state) {
+      switch (displayKernelStateValue) {
         case "busy":
           return "Busy";
         case "idle":
