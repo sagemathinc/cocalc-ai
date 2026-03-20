@@ -115,7 +115,7 @@ export async function initHttpServer({ AUTH_TOKEN }): Promise<{
     console.log(JSON.stringify(info, undefined, 2));
   }
   console.log("\n" + "*".repeat(60));
-  initProjectProxy({ app, httpServer });
+  initProjectProxyWebsocket({ httpServer });
   return { httpServer, app, port: actualPort, isHttps, hostname };
 }
 
@@ -174,6 +174,8 @@ export async function initApp({ app, conatClient, AUTH_TOKEN, isHttps }) {
     }
     next();
   });
+
+  initProjectProxyHttp({ app });
 
   app.get("*", (req, res) => {
     if (req.url.endsWith("__webpack_hmr")) return;
@@ -241,15 +243,16 @@ function toPrefixRelative(rawUrl: string, target: string): string {
   return `${"../".repeat(depth)}${target}`;
 }
 
-function initProjectProxy({
-  app,
-  httpServer,
-}: {
-  app: Application;
-  httpServer: AnyServer;
-}) {
+function initProjectProxyHttp({ app }: { app: Application }) {
   attachProxyServer({
     app,
+    base_url: project_id,
+    host: "localhost",
+  });
+}
+
+function initProjectProxyWebsocket({ httpServer }: { httpServer: AnyServer }) {
+  attachProxyServer({
     httpServer,
     base_url: project_id,
     host: "localhost",
