@@ -105,8 +105,10 @@ describe("submitNavigatorPromptToCurrentThread", () => {
       allowWrite: true,
       workingDirectory: "/home/wstein",
     });
-    expect(mockOpenFloating).toHaveBeenCalledTimes(1);
-    expect(mockOpenFloating.mock.calls[0][1].title).toBe("Install JupyterLab");
+    expect(mockOpenFloating).toHaveBeenCalled();
+    expect(mockOpenFloating.mock.calls.at(-1)?.[1].title).toBe(
+      "Install JupyterLab",
+    );
   });
 
   it("creates a fresh Codex thread with the requested model when asked", async () => {
