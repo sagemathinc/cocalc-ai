@@ -147,6 +147,7 @@ export class EventIterator<
     if (this.#idle) {
       // NOTE: this same code is in next in case when we can't use refresh
       this.#idleTimer = setTimeout(this.end.bind(this), this.#idle);
+      this.#idleTimer.unref?.();
     }
     this.#push = this.push.bind(this);
     const maxListeners = this.emitter.getMaxListeners();
@@ -174,6 +175,10 @@ export class EventIterator<
     const maxListeners = this.emitter.getMaxListeners();
     if (maxListeners !== 0) {
       this.emitter.setMaxListeners(maxListeners - 1);
+    }
+    if (this.#idleTimer) {
+      clearTimeout(this.#idleTimer);
+      this.#idleTimer = undefined;
     }
     this.onEnd?.(this);
   }
@@ -212,6 +217,7 @@ export class EventIterator<
         } else {
           clearTimeout(this.#idleTimer);
           this.#idleTimer = setTimeout(this.end.bind(this), this.#idle);
+          this.#idleTimer.unref?.();
         }
       }
 
@@ -235,6 +241,7 @@ export class EventIterator<
           this.end();
           resolve(this.next());
         }, this.#idle);
+        idleTimer.unref?.();
       }
 
       // Once it has received at least one value, we will clear the timer (if defined),
@@ -249,6 +256,9 @@ export class EventIterator<
       this.emitter.once(this.event, handleEvent);
       this.resolveNext = () => {
         this.emitter.removeListener(this.event, handleEvent);
+        if (idleTimer) {
+          clearTimeout(idleTimer);
+        }
         resolve({ done: true, value: undefined });
       };
     });

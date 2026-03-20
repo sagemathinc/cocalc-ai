@@ -234,7 +234,6 @@ import {
 export { ConatError, headerToError };
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import { once, until } from "@cocalc/util/async-utils";
-import { delay } from "awaiting";
 import { getLogger } from "@cocalc/conat/client";
 import { refCacheSync } from "@cocalc/util/refcache";
 import jsonStableStringify from "json-stable-stringify";
@@ -299,6 +298,7 @@ export const DEFAULT_SOCKETIO_CLIENT_OPTIONS = {
 
   // nodejs specific for project processes in some settings
   rejectUnauthorized: false,
+  autoUnref: true,
 
   reconnection: true,
   reconnectionDelay: process.env.COCALC_TEST_MODE ? 50 : 500,
@@ -555,6 +555,9 @@ export class Client extends EventEmitter {
     subject: string,
   ) => { address?: string; client?: Client } | undefined;
   private routedClients: { [address: string]: Client } = {};
+  private scheduledSyncSubscriptionsTimer?: ReturnType<typeof setTimeout>;
+  private statsLoopTimer?: ReturnType<typeof setTimeout>;
+  private statsLoopResolve?: () => void;
 
   constructor(options: ClientOptions) {
     super();
@@ -612,7 +615,17 @@ export class Client extends EventEmitter {
         this.initInbox();
       }
       this.emit("info", info);
-      setTimeout(this.syncSubscriptions, firstTime ? 3000 : 0);
+      if (this.scheduledSyncSubscriptionsTimer != null) {
+        clearTimeout(this.scheduledSyncSubscriptionsTimer);
+      }
+      this.scheduledSyncSubscriptionsTimer = setTimeout(
+        () => {
+          this.scheduledSyncSubscriptionsTimer = undefined;
+          void this.syncSubscriptions();
+        },
+        firstTime ? 3000 : 0,
+      );
+      this.scheduledSyncSubscriptionsTimer.unref?.();
     });
     this.conn.on("permission", ({ message, type, subject }) => {
       logger.debug(message);
@@ -685,7 +698,8 @@ export class Client extends EventEmitter {
     }
     this.disconnectAllSockets();
     // @ts-ignore
-    setTimeout(() => this.conn.io.disconnect(), 1);
+    const timer = setTimeout(() => this.conn.io.disconnect(), 1);
+    timer.unref?.();
   };
 
   connect = () => {
@@ -721,23 +735,35 @@ export class Client extends EventEmitter {
     },
   );
 
+  private waitForStatsLoopTick = async (ms: number) => {
+    const delayMs = Math.max(0, ms);
+    await new Promise<void>((resolve) => {
+      this.statsLoopResolve = () => {
+        this.statsLoopResolve = undefined;
+        resolve();
+      };
+      this.statsLoopTimer = setTimeout(() => {
+        this.statsLoopTimer = undefined;
+        this.statsLoopResolve?.();
+      }, delayMs);
+      this.statsLoopTimer.unref?.();
+    });
+  };
+
   private statsLoop = async () => {
-    await until(
-      async () => {
+    while (!this.isClosed()) {
+      try {
+        await this.waitUntilConnected();
         if (this.isClosed()) {
-          return true;
+          return;
         }
-        try {
-          await this.waitUntilConnected();
-          if (this.isClosed()) {
-            return true;
-          }
-          this.conn.emit("stats", { recv0: this.stats.recv0 });
-        } catch {}
-        return false;
-      },
-      { start: STATS_LOOP, max: STATS_LOOP },
-    );
+        this.conn.emit("stats", { recv0: this.stats.recv0 });
+      } catch {}
+      if (this.isClosed()) {
+        return;
+      }
+      await this.waitForStatsLoopTick(STATS_LOOP);
+    }
   };
 
   interest = async (subject: string): Promise<boolean> => {
@@ -892,6 +918,16 @@ export class Client extends EventEmitter {
     if (this.isClosed()) {
       return;
     }
+    if (this.scheduledSyncSubscriptionsTimer != null) {
+      clearTimeout(this.scheduledSyncSubscriptionsTimer);
+      this.scheduledSyncSubscriptionsTimer = undefined;
+    }
+    if (this.statsLoopTimer != null) {
+      clearTimeout(this.statsLoopTimer);
+      this.statsLoopTimer = undefined;
+    }
+    this.statsLoopResolve?.();
+    delete this.statsLoopResolve;
     for (const addr in this.routedClients) {
       try {
         this.routedClients[addr]?.close();
@@ -1378,8 +1414,8 @@ export class Client extends EventEmitter {
         subject,
         mesg,
         {
-        ...opts,
-        confirm: true,
+          ...opts,
+          confirm: true,
         },
       );
       await promise;
@@ -1992,6 +2028,8 @@ class SubscriptionEmitter extends EventEmitter {
   private closeWhenOffCalled?: boolean;
   private subject: string;
   public refCount: number = 1;
+  private dropOldTimer?: ReturnType<typeof setTimeout>;
+  private dropOldSleepResolve?: () => void;
 
   constructor({ client, subject, closeWhenOffCalled }) {
     super();
@@ -2008,6 +2046,12 @@ class SubscriptionEmitter extends EventEmitter {
     if (this.client == null || (!force && this.refCount > 0)) {
       return;
     }
+    if (this.dropOldTimer != null) {
+      clearTimeout(this.dropOldTimer);
+      this.dropOldTimer = undefined;
+    }
+    this.dropOldSleepResolve?.();
+    this.dropOldSleepResolve = undefined;
     this.emit("closed");
     this.client.conn.removeListener(this.subject, this.handle);
     // @ts-ignore
@@ -2167,6 +2211,24 @@ class SubscriptionEmitter extends EventEmitter {
     }
   };
 
+  private sleepDropOld = (ms: number) =>
+    new Promise<void>((resolve) => {
+      this.dropOldSleepResolve = () => {
+        if (this.dropOldTimer != null) {
+          clearTimeout(this.dropOldTimer);
+          this.dropOldTimer = undefined;
+        }
+        this.dropOldSleepResolve = undefined;
+        resolve();
+      };
+      this.dropOldTimer = setTimeout(() => {
+        this.dropOldTimer = undefined;
+        this.dropOldSleepResolve = undefined;
+        resolve();
+      }, ms);
+      this.dropOldTimer.unref?.();
+    });
+
   dropOldLoop = async () => {
     while (this.incoming != null) {
       const cutoff = Date.now() - MAX_CHUNK_TIME;
@@ -2196,7 +2258,7 @@ class SubscriptionEmitter extends EventEmitter {
           delete this.incoming[id];
         }
       }
-      await delay(MAX_CHUNK_TIME / 2);
+      await this.sleepDropOld(MAX_CHUNK_TIME / 2);
     }
   };
 }

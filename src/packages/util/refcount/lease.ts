@@ -64,6 +64,7 @@ export class RefcountLeaseManager<K> {
             }
           });
         }, this.delayMs);
+        timer.unref?.();
         this.timers.set(key, timer);
       });
     };

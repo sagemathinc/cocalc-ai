@@ -1,4 +1,3 @@
-import { delay } from "awaiting";
 import { type Role } from "./util";
 
 export function keepAlive(opts: {
@@ -13,6 +12,8 @@ export function keepAlive(opts: {
 export class KeepAlive {
   private last: number = Date.now();
   private state: "ready" | "closed" = "ready";
+  private sleepTimer?: ReturnType<typeof setTimeout>;
+  private sleepResolve?: () => void;
 
   constructor(
     private ping: () => Promise<any>,
@@ -39,8 +40,23 @@ export class KeepAlive {
       if (this.state == ("closed" as any)) {
         return;
       }
-      await delay(this.keepAlive - (Date.now() - this.last));
+      await this.sleep(this.keepAlive - (Date.now() - this.last));
     }
+  };
+
+  private sleep = async (ms: number) => {
+    const delayMs = Math.max(0, ms);
+    await new Promise<void>((resolve) => {
+      this.sleepResolve = () => {
+        this.sleepResolve = undefined;
+        resolve();
+      };
+      this.sleepTimer = setTimeout(() => {
+        this.sleepTimer = undefined;
+        this.sleepResolve?.();
+      }, delayMs);
+      this.sleepTimer.unref?.();
+    });
   };
 
   // call this when any data is received, which defers having to waste resources on
@@ -51,6 +67,12 @@ export class KeepAlive {
 
   close = () => {
     this.state = "closed";
+    if (this.sleepTimer != null) {
+      clearTimeout(this.sleepTimer);
+      this.sleepTimer = undefined;
+    }
+    this.sleepResolve?.();
+    delete this.sleepResolve;
     // @ts-ignore
     delete this.last;
     // @ts-ignore

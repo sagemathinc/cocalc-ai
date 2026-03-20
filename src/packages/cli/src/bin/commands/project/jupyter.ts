@@ -307,7 +307,7 @@ export function registerProjectJupyterCommands(
             }
           } finally {
             rl?.close();
-            session.close();
+            await session.close();
           }
 
           const summary = {
@@ -463,7 +463,7 @@ export function registerProjectJupyterCommands(
               }
             }
           } finally {
-            session.close();
+            await session.close();
           }
 
           const summary = {
