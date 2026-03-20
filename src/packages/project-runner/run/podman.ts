@@ -32,7 +32,10 @@ import { getCoCalcMounts, COCALC_SRC } from "./mounts";
 import { fileServerClient, setQuota } from "./filesystem";
 import { type RestoreMode } from "@cocalc/conat/files/file-server";
 import { dirname, join, relative, isAbsolute } from "node:path";
-import { mount as mountRootFs, unmount as unmountRootFs } from "./rootfs";
+import {
+  mount as mountRootFs,
+  unmountAll as unmountAllRootFs,
+} from "./rootfs";
 import { type ProjectState } from "@cocalc/conat/project/runner/state";
 import { type Configuration } from "@cocalc/conat/project/runner/types";
 import { DEFAULT_PROJECT_IMAGE } from "@cocalc/util/db-schema/defaults";
@@ -1062,7 +1065,10 @@ export async function stop({
             timeout: STOP_RM_TIMEOUT_S,
           });
         }
-        await unmountRootFs(project_id);
+        // A fully stopped project must release every overlay lease. Otherwise
+        // a stale merged mount can survive a snapshot restore and mask the
+        // restored upperdir on the next start.
+        await unmountAllRootFs(project_id);
       } else {
         logger.debug("stop: container not found; skipping rm/unmount", {
           project_id,

@@ -72,33 +72,41 @@ export function getPaths({ home, image, project_id }): {
 // sandboxExec sidecars) can share the same overlay mount safely.
 const leases = new RefcountLeaseManager<string>({
   delayMs: UNMOUNT_DELAY_MS,
-  disposer: async (project_id: string) => {
-    const mountpoint = getMergedPath(project_id);
-    try {
-      await executeCode({
-        verbose: true,
-        err_on_exit: true,
-        command: "sudo",
-        args: ["-n", STORAGE_WRAPPER, "umount-overlay-project", mountpoint],
-      });
-    } catch (err) {
-      const e = `${err}`;
-      if (e.includes("not mounted") || e.includes("no mount point")) {
-        return;
-      }
-      logger.warn("unmount failed", { project_id, error: e });
-    }
-  },
+  disposer: disposeMount,
 });
 // Track release functions for each active lease so unmount can drop one ref.
-const leaseReleases: Map<string, Array<() => Promise<void>>> = new Map();
+const leaseReleases: Map<
+  string,
+  Array<(opts?: { immediate?: boolean }) => Promise<void>>
+> = new Map();
 
-function addRelease(project_id: string, release: () => Promise<void>) {
+function addRelease(
+  project_id: string,
+  release: (opts?: { immediate?: boolean }) => Promise<void>,
+) {
   const arr = leaseReleases.get(project_id);
   if (arr) {
     arr.push(release);
   } else {
     leaseReleases.set(project_id, [release]);
+  }
+}
+
+async function disposeMount(project_id: string): Promise<void> {
+  const mountpoint = getMergedPath(project_id);
+  try {
+    await executeCode({
+      verbose: true,
+      err_on_exit: true,
+      command: "sudo",
+      args: ["-n", STORAGE_WRAPPER, "umount-overlay-project", mountpoint],
+    });
+  } catch (err) {
+    const e = `${err}`;
+    if (e.includes("not mounted") || e.includes("no mount point")) {
+      return;
+    }
+    logger.warn("unmount failed", { project_id, error: e });
   }
 }
 
@@ -237,14 +245,28 @@ export async function mount({
   }
 }
 
-export async function unmount(project_id: string) {
+export async function unmount(
+  project_id: string,
+  opts?: { immediate?: boolean },
+) {
   const arr = leaseReleases.get(project_id);
   const release = arr?.pop();
   if (release == null) return;
   if (arr?.length === 0) {
     leaseReleases.delete(project_id);
   }
-  await release();
+  await release(opts);
+}
+
+export async function unmountAll(project_id: string): Promise<void> {
+  const releases = leaseReleases.get(project_id) ?? [];
+  leaseReleases.delete(project_id);
+  for (const release of releases.reverse()) {
+    await release({ immediate: true });
+  }
+  if (await isMounted({ project_id })) {
+    await disposeMount(project_id);
+  }
 }
 
 async function mountOverlayFs({ upperdir, workdir, merged, lowerdir }) {
