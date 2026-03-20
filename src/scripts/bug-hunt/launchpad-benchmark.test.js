@@ -55,14 +55,17 @@ test("buildWorkloadSpec describes the random workload", () => {
   const spec = buildWorkloadSpec("random-4g", Date.UTC(2026, 2, 19, 1, 0, 0));
   assert.match(spec.prepareBash, /dd if=\/dev\/urandom/);
   assert.match(spec.payloadPath, /random-4g\.bin/);
+  assert.equal(spec.restoreSourcePath, spec.payloadPath);
+  assert.match(
+    spec.restoreTargetPath,
+    /^bug-hunt-restore-target-.*\/random-4g\.bin$/,
+  );
+  assert.equal(spec.restoreTargetShellPath, spec.restoreTargetPath);
   assert.equal(spec.verifyPaths.length, 2);
 });
 
 test("buildWorkloadSpec describes the apt workload", () => {
-  const spec = buildWorkloadSpec(
-    "apt-jupyter",
-    Date.UTC(2026, 2, 19, 1, 0, 0),
-  );
+  const spec = buildWorkloadSpec("apt-jupyter", Date.UTC(2026, 2, 19, 1, 0, 0));
   assert.match(spec.prepareBash, /apt-get install -y jupyter/);
   assert.equal(spec.payloadPath, undefined);
   assert.equal(spec.verifyPaths.length, 1);

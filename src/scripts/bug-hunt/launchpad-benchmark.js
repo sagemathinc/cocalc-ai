@@ -191,10 +191,10 @@ function buildWorkloadSpec(workload, now = Date.now()) {
     null,
     2,
   );
-  const benchmarkDir = `$HOME/bug-hunt-benchmark-${stamp}`;
+  const benchmarkDir = `bug-hunt-benchmark-${stamp}`;
   const markerPath = `${benchmarkDir}/marker.json`;
-  const restoreSourcePath = benchmarkDir.replace(/^\$HOME\//, "");
-  const restoreTargetPath = `$HOME/bug-hunt-restore-target-${stamp}`;
+  const restoreTargetPath = `bug-hunt-restore-target-${stamp}`;
+  const restoreTargetShellPath = restoreTargetPath;
   if (workload === "random-4g") {
     const payloadPath = `${benchmarkDir}/random-4g.bin`;
     return {
@@ -203,8 +203,9 @@ function buildWorkloadSpec(workload, now = Date.now()) {
       markerPath,
       markerPayload: `${markerPayload}\n`,
       payloadPath,
-      restoreSourcePath,
-      restoreTargetPath,
+      restoreSourcePath: payloadPath,
+      restoreTargetPath: `${restoreTargetPath}/random-4g.bin`,
+      restoreTargetShellPath: `${restoreTargetShellPath}/random-4g.bin`,
       prepareBash: [
         "set -euo pipefail",
         `mkdir -p ${shellQuote(benchmarkDir)}`,
@@ -229,8 +230,9 @@ function buildWorkloadSpec(workload, now = Date.now()) {
     benchmarkDir,
     markerPath,
     markerPayload: `${markerPayload}\n`,
-    restoreSourcePath,
+    restoreSourcePath: benchmarkDir,
     restoreTargetPath,
+    restoreTargetShellPath,
     prepareBash: [
       "set -euo pipefail",
       "export DEBIAN_FRONTEND=noninteractive",
@@ -265,7 +267,7 @@ function makeStep(name, startedAt, data = {}) {
 }
 
 function runProjectExec(cliBase, projectId, bash, timeoutSeconds) {
-  return runCliJson(
+  const result = runCliJson(
     {
       ...cliBase,
       rpcTimeout: `${timeoutSeconds}s`,
@@ -281,15 +283,17 @@ function runProjectExec(cliBase, projectId, bash, timeoutSeconds) {
       bash,
     ],
   );
+  if ((result?.exit_code ?? 0) !== 0) {
+    const stderr = `${result?.stderr ?? ""}`.trim();
+    const stdout = `${result?.stdout ?? ""}`.trim();
+    const detail = stderr || stdout || `exit_code=${result?.exit_code}`;
+    throw new Error(`project exec failed: ${detail}`);
+  }
+  return result;
 }
 
 function getProject(cliBase, projectId, runner = runCliJson) {
-  return runner(cliBase, [
-    "project",
-    "get",
-    "--project",
-    projectId,
-  ]);
+  return runner(cliBase, ["project", "get", "--project", projectId]);
 }
 
 async function ensureProjectRunning(cliBase, projectId, runner = runCliJson) {
@@ -448,14 +452,14 @@ function inspectHostRusticCache(cliBase, hostId) {
     hostId,
     [
       "set -euo pipefail",
-      "sudo -u cocalc-host -H python3 -c \"import json,pathlib,subprocess; "
-        + "import os; os.chdir(pathlib.Path.home()); "
-        + "root=pathlib.Path.home()/'.cache'/'rustic'; "
-        + "root_exists=root.exists(); "
-        + "entry_paths=[p for p in sorted(root.iterdir()) if p.is_dir() and p.name != 'CACHEDIR.TAG'] if root_exists else []; "
-        + "entries=[p.name for p in entry_paths]; "
-        + "total_bytes=sum(int(subprocess.check_output(['du','-sb', str(p)], text=True).split()[0]) for p in entry_paths); "
-        + "print(json.dumps({'root': str(root), 'exists': root_exists, 'entry_count': len(entries), 'entries': entries[:20], 'total_bytes': total_bytes}))\"",
+      'sudo -u cocalc-host -H python3 -c "import json,pathlib,subprocess; ' +
+        "import os; os.chdir(pathlib.Path.home()); " +
+        "root=pathlib.Path.home()/'.cache'/'rustic'; " +
+        "root_exists=root.exists(); " +
+        "entry_paths=[p for p in sorted(root.iterdir()) if p.is_dir() and p.name != 'CACHEDIR.TAG'] if root_exists else []; " +
+        "entries=[p.name for p in entry_paths]; " +
+        "total_bytes=sum(int(subprocess.check_output(['du','-sb', str(p)], text=True).split()[0]) for p in entry_paths); " +
+        "print(json.dumps({'root': str(root), 'exists': root_exists, 'entry_count': len(entries), 'entries': entries[:20], 'total_bytes': total_bytes}))\"",
     ].join("\n"),
   );
   return JSON.parse(stdout || "{}");
@@ -467,7 +471,7 @@ function clearHostRusticCache(cliBase, hostId) {
     hostId,
     [
       "set -euo pipefail",
-      "sudo -u cocalc-host -H bash -lc 'cd \"$HOME\" && mkdir -p \"$HOME/.cache/rustic\" && find \"$HOME/.cache/rustic\" -mindepth 1 -maxdepth 1 -exec rm -rf {} +'",
+      'sudo -u cocalc-host -H bash -lc \'cd "$HOME" && mkdir -p "$HOME/.cache/rustic" && find "$HOME/.cache/rustic" -mindepth 1 -maxdepth 1 -exec rm -rf {} +\'',
     ].join("\n"),
   );
 }
@@ -795,7 +799,11 @@ async function executeLaunchpadBenchmark(options, now = Date.now(), deps = {}) {
         const created = await timeStep(
           "create_src_project",
           () => {
-            const args = ["project", "create", "Bug Hunt Benchmark Restore Src"];
+            const args = [
+              "project",
+              "create",
+              "Bug Hunt Benchmark Restore Src",
+            ];
             if (options.srcHost) {
               args.push("--host", options.srcHost);
             }
@@ -866,15 +874,19 @@ async function executeLaunchpadBenchmark(options, now = Date.now(), deps = {}) {
           "inspect_dest_cache_before_restore",
           () => inspectHostRusticCache(cliBase, destHostId),
         );
-        writeJson(path.join(runDir, "dest-cache-before-restore.json"), beforeCache);
+        writeJson(
+          path.join(runDir, "dest-cache-before-restore.json"),
+          beforeCache,
+        );
       }
 
       if (destHostId && options.cacheMode === "cold") {
         await timeStep("clear_dest_rustic_cache", () => {
           clearHostRusticCache(cliBase, destHostId);
         });
-        const afterClear = await timeStep("inspect_dest_cache_after_clear", () =>
-          inspectHostRusticCache(cliBase, destHostId),
+        const afterClear = await timeStep(
+          "inspect_dest_cache_after_clear",
+          () => inspectHostRusticCache(cliBase, destHostId),
         );
         writeJson(path.join(runDir, "dest-cache-after-clear.json"), afterClear);
       }
@@ -885,8 +897,10 @@ async function executeLaunchpadBenchmark(options, now = Date.now(), deps = {}) {
           result.dest_project_id,
           [
             "set -euo pipefail",
-            `rm -rf ${shellQuote(workload.restoreTargetPath)}`,
-            `mkdir -p ${shellQuote(workload.restoreTargetPath)}`,
+            `rm -rf ${shellQuote(workload.restoreTargetShellPath)}`,
+            workload.payloadPath
+              ? `mkdir -p ${shellQuote(path.posix.dirname(workload.restoreTargetShellPath))}`
+              : `mkdir -p ${shellQuote(workload.restoreTargetShellPath)}`,
           ].join("\n"),
           300,
         ),
@@ -913,7 +927,7 @@ async function executeLaunchpadBenchmark(options, now = Date.now(), deps = {}) {
           runProjectExec(
             cliBase,
             result.dest_project_id,
-            `rm -rf ${shellQuote(`${workload.restoreTargetPath}-warmup`)}`,
+            `rm -rf ${shellQuote(`${workload.restoreTargetShellPath}-warmup`)}`,
             300,
           ),
         );
@@ -948,35 +962,47 @@ async function executeLaunchpadBenchmark(options, now = Date.now(), deps = {}) {
       result.restore_op_id = restored.op_id ?? null;
 
       if (destHostId) {
-        const afterRestore = await timeStep("inspect_dest_cache_after_restore", () =>
-          inspectHostRusticCache(cliBase, destHostId),
+        const afterRestore = await timeStep(
+          "inspect_dest_cache_after_restore",
+          () => inspectHostRusticCache(cliBase, destHostId),
         );
-        writeJson(path.join(runDir, "dest-cache-after-restore.json"), afterRestore);
+        writeJson(
+          path.join(runDir, "dest-cache-after-restore.json"),
+          afterRestore,
+        );
       }
 
-      const restoreVerifyPaths = workload.verifyPaths.map((filePath) =>
-        filePath.replace(workload.benchmarkDir, workload.restoreTargetPath),
-      );
+      const restoreVerifyPaths = workload.payloadPath
+        ? [workload.restoreTargetShellPath]
+        : workload.verifyPaths.map((filePath) =>
+            filePath.replace(
+              workload.benchmarkDir,
+              workload.restoreTargetShellPath,
+            ),
+          );
       verifyProjectPaths(cliBase, result.dest_project_id, restoreVerifyPaths);
 
-      const restoredInspect = await timeStep("inspect_restored_workload", async () =>
-        runProjectExec(
-          cliBase,
-          result.dest_project_id,
-          [
-            "set -euo pipefail",
-            `stat -c 'restore_marker_bytes=%s' ${shellQuote(restoreVerifyPaths[0])}`,
-            workload.payloadPath
-              ? `stat -c 'restore_payload_bytes=%s' ${shellQuote(
-                  workload.payloadPath.replace(
-                    workload.benchmarkDir,
-                    workload.restoreTargetPath,
-                  ),
-                )}`
-              : 'du -sb "$HOME/.local" 2>/dev/null || true',
-          ].join("\n"),
-          600,
-        ),
+      const restoredInspect = await timeStep(
+        "inspect_restored_workload",
+        async () =>
+          runProjectExec(
+            cliBase,
+            result.dest_project_id,
+            [
+              "set -euo pipefail",
+              workload.payloadPath
+                ? `stat -c 'restore_payload_bytes=%s' ${shellQuote(
+                    restoreVerifyPaths[0],
+                  )}`
+                : `stat -c 'restore_marker_bytes=%s' ${shellQuote(
+                    restoreVerifyPaths[0],
+                  )}`,
+              workload.payloadPath
+                ? `sha256sum ${shellQuote(restoreVerifyPaths[0])}`
+                : 'du -sb "$HOME/.local" 2>/dev/null || true',
+            ].join("\n"),
+            600,
+          ),
       );
       writeJson(
         path.join(runDir, "inspect-restored-workload.json"),
@@ -991,7 +1017,7 @@ async function executeLaunchpadBenchmark(options, now = Date.now(), deps = {}) {
       result.ok = true;
     }
   } finally {
-    if (options.cleanupOnSuccess && !options.dryRun) {
+    if (options.cleanupOnSuccess && !options.dryRun && result.ok === true) {
       for (const projectId of createdProjects.reverse()) {
         try {
           runCli(cliBase, [
