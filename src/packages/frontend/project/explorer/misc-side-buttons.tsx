@@ -81,6 +81,14 @@ export function MiscSideButtons() {
       },
     },
     {
+      key: "snapshots-restore",
+      label: "Restore Snapshot",
+      onClick: () => {
+        actions?.open_directory(SNAPSHOTS);
+        actions?.setState({ open_restore_snapshot: true });
+      },
+    },
+    {
       key: "snapshots-config",
       label: "Configure Snapshots",
       onClick: () => {

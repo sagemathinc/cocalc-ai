@@ -806,6 +806,16 @@ export function FilesHeader({
                             actions?.setState({ open_create_snapshot: true });
                           },
                         },
+                        {
+                          key: "snapshots-restore",
+                          label: "Restore Snapshot",
+                          onClick: () => {
+                            onNavigate(SNAPSHOTS);
+                            actions?.setState({
+                              open_restore_snapshot: true,
+                            });
+                          },
+                        },
                         { type: "divider" },
                         {
                           key: "backups-open",
