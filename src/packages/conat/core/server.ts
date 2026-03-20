@@ -63,6 +63,13 @@ import {
   Interest,
   hashInterest,
 } from "./cluster";
+
+function unrefDelay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    (timer as any).unref?.();
+  });
+}
 import { type ConatSocketServer } from "@cocalc/conat/socket";
 import { throttle } from "lodash";
 import { getLogger } from "@cocalc/conat/client";
@@ -185,6 +192,7 @@ export interface Options {
 type State = "init" | "ready" | "closed";
 
 export class ConatServer extends EventEmitter {
+  private static readonly testInstances = new Set<ConatServer>();
   public readonly io;
   public readonly id: string;
 
@@ -217,6 +225,9 @@ export class ConatServer extends EventEmitter {
 
   constructor(options: Options) {
     super();
+    if (process.env.COCALC_TEST_MODE) {
+      ConatServer.testInstances.add(this);
+    }
     const {
       httpServer,
       port = 3000,
@@ -379,8 +390,10 @@ export class ConatServer extends EventEmitter {
     this.clusterPersistServer?.close();
     delete this.clusterPersistServer;
 
-    await delay(100);
-    await this.io.close();
+    await unrefDelay(100);
+    await new Promise<void>((resolve) => {
+      this.io.close(() => resolve());
+    });
     for (const prop of ["interest", "subscriptions", "sockets", "services"]) {
       delete this[prop];
     }
@@ -390,6 +403,22 @@ export class ConatServer extends EventEmitter {
     this.stats = {};
     this.sockets = {};
     this.authFailuresByAddress.clear();
+    ConatServer.testInstances.delete(this);
+  };
+
+  static closeAllForTests = async (): Promise<void> => {
+    if (!process.env.COCALC_TEST_MODE) {
+      return;
+    }
+    await Promise.all(
+      Array.from(ConatServer.testInstances).map(async (server) => {
+        try {
+          await server.close();
+        } catch {
+          // best-effort test cleanup only
+        }
+      }),
+    );
   };
 
   private info = (): ServerInfo => {
