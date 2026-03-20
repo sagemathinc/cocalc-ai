@@ -61,6 +61,7 @@ export type ProjectJupyterRunSession = {
   project_title: string;
   path: string;
   run_id: string;
+  ack: JupyterRunAck | null;
   cells: NotebookCellInfo[];
   iter: AsyncIterable<OutputMessage[]>;
   close: () => void;
@@ -494,6 +495,7 @@ export function createProjectJupyterOps<Ctx, Project extends ProjectIdentity>(
     limit,
     stdin,
     onAck,
+    waitForAck = false,
     cwd,
   }: {
     ctx: Ctx;
@@ -510,6 +512,7 @@ export function createProjectJupyterOps<Ctx, Project extends ProjectIdentity>(
       password?: boolean;
     }) => Promise<string>;
     onAck?: (ack: JupyterRunAck) => void;
+    waitForAck?: boolean;
     cwd?: string;
   }): Promise<ProjectJupyterRunSession> {
     const normalizedPath = normalizeNotebookPath(path);
@@ -536,14 +539,18 @@ export function createProjectJupyterOps<Ctx, Project extends ProjectIdentity>(
       const run_id = `cli-${Date.now().toString(36)}-${Math.random()
         .toString(36)
         .slice(2, 8)}`;
+      let ack: JupyterRunAck | null = null;
       const iter = await runClient.run(
         selected.map(({ id, input }) => ({ id, input })),
         {
           noHalt,
           limit,
           run_id,
-          waitForAck: false,
-          onAck,
+          waitForAck,
+          onAck: (nextAck) => {
+            ack = nextAck;
+            onAck?.(nextAck);
+          },
         },
       );
       return {
@@ -551,6 +558,7 @@ export function createProjectJupyterOps<Ctx, Project extends ProjectIdentity>(
         project_title: project.title,
         path: normalizedPath,
         run_id,
+        ack,
         cells: selected,
         iter,
         close: () => {

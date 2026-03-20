@@ -167,6 +167,10 @@ export function registerProjectJupyterCommands(
       [],
     )
     .option("--all-code", "run all code cells in notebook order")
+    .option(
+      "--detach",
+      "start the run, wait for the backend ack, then exit without following output",
+    )
     .option("--no-halt", "continue after a cell emits an error")
     .option("--allow-errors", "exit zero even if Jupyter emits error output")
     .option("--jsonl", "emit raw Jupyter output messages as JSONL")
@@ -179,6 +183,7 @@ export function registerProjectJupyterCommands(
           cellId?: string[];
           cellIndex?: number[];
           allCode?: boolean;
+          detach?: boolean;
           noHalt?: boolean;
           allowErrors?: boolean;
           jsonl?: boolean;
@@ -202,6 +207,7 @@ export function registerProjectJupyterCommands(
                   return parsed;
                 })();
           let rl: ReturnType<typeof createInterface> | undefined;
+          let ackAt: number | null = null;
           const session = await projectJupyterRunSession({
             ctx,
             projectIdentifier: opts.project,
@@ -211,6 +217,7 @@ export function registerProjectJupyterCommands(
             allCode: opts.allCode,
             noHalt: opts.noHalt,
             limit,
+            waitForAck: opts.detach === true,
             stdin: async ({ prompt }) => {
               if (!process.stdin.isTTY) {
                 throw new Error(
@@ -234,12 +241,27 @@ export function registerProjectJupyterCommands(
           let messageCount = 0;
           let errorCount = 0;
           let moreOutputCount = 0;
-          let ackAt: number | null = null;
           let firstBatchAt: number | null = null;
           let firstMessageAt: number | null = null;
           const lifecycleCounts: Record<string, number> = {};
 
           try {
+            if (opts.detach === true) {
+              return {
+                project_id: session.project_id,
+                project_title: session.project_title,
+                path: session.path,
+                run_id: session.run_id,
+                detached: true,
+                ack: session.ack,
+                cells: session.cells.map((cell) => ({
+                  id: cell.id,
+                  index: cell.index,
+                  cell_type: cell.cell_type,
+                  preview: cell.preview,
+                })),
+              };
+            }
             for await (const batch of iterateWithDeadline<OutputMessage[]>(
               session.iter,
               deadlineAt,
