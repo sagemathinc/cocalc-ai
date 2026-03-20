@@ -78,6 +78,13 @@ function makeActions(messages: Map<string, any> = new Map()): any {
   return actions;
 }
 
+function bindRealDeleteDraft(actions: any): void {
+  actions.deleteDraft = new (ChatActions as any)(
+    "proj-1",
+    "x.chat",
+  ).deleteDraft.bind(actions);
+}
+
 describe("sendChat identity fields", () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -480,6 +487,38 @@ describe("thread-config by thread_id", () => {
     expect(actions.syncdb.delete).not.toHaveBeenCalled();
     expect(actions.syncdb.set).not.toHaveBeenCalled();
     expect(actions.syncdb.commit).not.toHaveBeenCalled();
+  });
+
+  it("does not delete drafts before syncdb is ready", () => {
+    const actions = makeActions();
+    bindRealDeleteDraft(actions);
+    actions.syncdb.get_state = () => "loading";
+    actions.syncdb.delete.mockImplementation(() => {
+      throw Error("must be ready -- delete");
+    });
+
+    expect(() => {
+      actions.deleteDraft(0);
+    }).not.toThrow();
+
+    expect(actions.syncdb.delete).not.toHaveBeenCalled();
+    expect(actions.syncdb.commit).not.toHaveBeenCalled();
+  });
+
+  it("does not crash sendChat while syncdb is still loading", async () => {
+    const actions = makeActions();
+    bindRealDeleteDraft(actions);
+    actions.syncdb.get_state = () => "loading";
+    actions.syncdb.delete.mockImplementation(() => {
+      throw Error("must be ready -- delete");
+    });
+
+    expect(() => {
+      actions.sendChat({ input: "hello after restart" });
+    }).not.toThrow();
+
+    await Promise.resolve();
+    expect(actions.syncdb.delete).not.toHaveBeenCalled();
   });
 
   it("updates thread-config by UUID thread key with a canonical thread row key", () => {
