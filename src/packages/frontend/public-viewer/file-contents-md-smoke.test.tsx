@@ -1,12 +1,11 @@
 import { render, screen } from "@testing-library/react";
-import PublicViewerFileContents from "./file-contents";
+import PublicViewerMarkdownRenderer from "./renderers/markdown";
 
 test("renders simple markdown content", async () => {
   render(
-    <PublicViewerFileContents
+    <PublicViewerMarkdownRenderer
       content={"# Hello\n\nThis is a test."}
-      path={"/a.md"}
-      rawUrl={"https://example.com/a.md?raw=1"}
+      fileContext={{ noSanitize: false }}
     />,
   );
   expect(await screen.findByText("Hello")).toBeTruthy();

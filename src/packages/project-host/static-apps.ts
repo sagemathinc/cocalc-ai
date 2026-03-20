@@ -15,6 +15,7 @@ import {
   COCALC_PUBLIC_VIEWER_MODE,
   isPublicViewerRenderablePath,
   parsePublicViewerManifest,
+  publicViewerHtmlForPath,
   AppStaticIntegrationSpec,
   PublicViewerManifest,
   PublicViewerManifestEntry,
@@ -204,11 +205,13 @@ async function buildViewerRedirectUrl({
   sourcePath,
   title,
   autoRefreshS,
+  viewerBundle,
 }: {
   req: http.IncomingMessage;
   sourcePath: string;
   title: string;
   autoRefreshS?: number;
+  viewerBundle?: string;
 }): Promise<string> {
   const requestOrigin = buildRequestOrigin(req);
   const requestUrl = new URL(
@@ -220,7 +223,9 @@ async function buildViewerRedirectUrl({
   if (!publicWebBaseUrl) {
     throw new Error("unable to determine public web base url");
   }
-  const viewer = new URL(`${publicWebBaseUrl}/static/public-viewer.html`);
+  const viewer = new URL(
+    `${publicWebBaseUrl}/static/${publicViewerHtmlForPath(sourcePath, viewerBundle)}`,
+  );
   viewer.searchParams.set("source", requestUrl.toString());
   viewer.searchParams.set("path", sourcePath);
   viewer.searchParams.set("title", title);
@@ -778,6 +783,7 @@ export async function maybeHandleStaticAppRequest({
         title:
           path.posix.basename(pathInfo.relativePath) || "CoCalc Public Viewer",
         autoRefreshS: integration.auto_refresh_s,
+        viewerBundle: integration.viewer_bundle,
       });
       res.writeHead(302, {
         Location: location,
@@ -831,6 +837,7 @@ export async function maybeHandleStaticAppRequest({
         sourcePath: indexRelativePath,
         title: path.posix.basename(indexRelativePath) || "CoCalc Public Viewer",
         autoRefreshS: integration.auto_refresh_s,
+        viewerBundle: integration.viewer_bundle,
       });
       res.writeHead(302, {
         Location: location,

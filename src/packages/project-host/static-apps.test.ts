@@ -6,6 +6,7 @@ import { Writable } from "node:stream";
 
 import type { AppRequestMatch } from "./app-public-access";
 import { createProjectSandboxFilesystem } from "./file-server-sandbox-policy";
+import { publicViewerHtmlForPath } from "./public-viewer";
 
 let currentProjectFs;
 
@@ -75,6 +76,16 @@ describe("static app serving", () => {
 
   beforeEach(() => {
     currentProjectFs = undefined;
+  });
+
+  it("uses a smaller dedicated viewer page for markdown and notebooks", () => {
+    expect(publicViewerHtmlForPath("a.md")).toBe("public-viewer-md.html");
+    expect(publicViewerHtmlForPath("notes/a.ipynb")).toBe(
+      "public-viewer-ipynb.html",
+    );
+    expect(publicViewerHtmlForPath("slides/a.slides")).toBe(
+      "public-viewer.html",
+    );
   });
 
   it("serves files inside the configured root", async () => {

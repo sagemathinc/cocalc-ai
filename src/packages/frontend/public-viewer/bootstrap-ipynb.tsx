@@ -4,16 +4,19 @@
  */
 
 import type { JSX } from "react";
-import PublicViewerFileContents from "./file-contents";
+import PublicViewerIpynbRenderer from "./renderers/ipynb";
+import { buildViewerFileContext } from "./viewer-file-context";
 import { mountPublicViewer } from "./shared";
 
 export function init(): void {
   mountPublicViewer(
     ({ config, content }): JSX.Element => (
-      <PublicViewerFileContents
+      <PublicViewerIpynbRenderer
         content={content}
-        path={config.path}
-        rawUrl={config.rawUrl}
+        fileContext={buildViewerFileContext({
+          path: config.path,
+          rawUrl: config.rawUrl,
+        })}
         style={{
           background: "#fff",
           padding: "24px",

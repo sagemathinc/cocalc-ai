@@ -1,12 +1,11 @@
 import { render, screen } from "@testing-library/react";
-import PublicViewerFileContents from "./file-contents";
+import PublicViewerMarkdownRenderer from "./renderers/markdown";
 
 test("renders markdown with inline math", async () => {
   render(
-    <PublicViewerFileContents
+    <PublicViewerMarkdownRenderer
       content={"# Hello World\n\n- foo\n- bar\n- $x^3+5$"}
-      path={"/a.md"}
-      rawUrl={"https://example.com/a.md?raw=1"}
+      fileContext={{ noSanitize: false }}
     />,
   );
   expect(await screen.findByText("Hello World")).toBeTruthy();

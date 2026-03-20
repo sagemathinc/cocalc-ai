@@ -16,6 +16,10 @@ export const PUBLIC_VIEWER_DEFAULT_MANIFEST = "index.json" as const;
 export const PUBLIC_VIEWER_DEFAULT_DIRECTORY_LISTING = "manifest-only" as const;
 export const PUBLIC_VIEWER_MANIFEST_KIND =
   "cocalc-public-viewer-index" as const;
+export const PUBLIC_VIEWER_HTML_BY_EXT: Record<string, string> = {
+  ".md": "public-viewer-md.html",
+  ".ipynb": "public-viewer-ipynb.html",
+};
 
 export type PublicViewerDirectoryListingPolicy =
   typeof PUBLIC_VIEWER_DEFAULT_DIRECTORY_LISTING;
@@ -142,6 +146,28 @@ export function isPublicViewerRenderablePath(
     ),
   );
   return fileTypes.has(path.posix.extname(entryPath).toLowerCase());
+}
+
+export function publicViewerHtmlForPath(
+  entryPath: string,
+  viewer_bundle?: string,
+): string {
+  const override = `${viewer_bundle ?? ""}`.trim();
+  if (override) {
+    const normalized = override.endsWith(".html")
+      ? override
+      : `${override}.html`;
+    if (!/^[a-z0-9-]+\.html$/i.test(normalized)) {
+      throw new Error(
+        "public viewer bundle override must be a simple html name",
+      );
+    }
+    return normalized;
+  }
+  return (
+    PUBLIC_VIEWER_HTML_BY_EXT[path.posix.extname(entryPath).toLowerCase()] ??
+    "public-viewer.html"
+  );
 }
 
 function inferPublicViewerEntryType(entryPath: string): string {
