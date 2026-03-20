@@ -9,6 +9,9 @@ Recent product note (March 17, 2026):
 3. When a template has curated install recipes, the prompt builder now biases Codex toward those recipes instead of anchoring on a generic one-line command.
 4. The built-in JupyterLab template now steers Codex to the tested Ubuntu `apt + pip` path, and that flow has been verified on fresh Launchpad projects.
 5. Remaining work is broader curated-template coverage, more install verification across images/templates, and snapshot/result-polish around the install flow.
+6. Public Viewer Mode now has a real central frontend bundle plus host-side static serving from `project-host`, so public markdown and notebook viewing works end-to-end without requiring the project daemon to stay running.
+7. Public Viewer is still launchpad/project-host first. Lite-mode parity for static/public-viewer serving is still pending and should be treated as a distinct workstream.
+8. Public Viewer is still pre-hardening: dedicated public-origin isolation, CSP/cookie/session review, import/copy flows, and full slides/whiteboard parity remain before broad release.
 
 ## 1. Purpose
 
@@ -47,12 +50,14 @@ This should replace ad hoc per-app special cases over time.
 3. The Apps page is coherent enough for real use now, but still needs visual/product polish, broader template coverage, and better advanced workflow presentation.
 4. Static refresh jobs are implemented in an activity-driven first slice (run on first/stale hit with timeout + logs), but sandbox-ephemeral execution mode and richer scheduling policies are still pending.
 5. App portability is partially implemented/planned: project clone should already carry app specs because they live in the project filesystem, and explicit CLI export/import/clone flows are being added; dedicated frontend download/upload UX is still pending.
+6. Public Viewer works for markdown and notebooks with the real frontend viewer bundle, but Lite parity, slides/whiteboard parity, authenticated import/copy, and release-hardening are still pending.
 
 ### Not Done
 
 1. Finalized static-mode smoke matrix (lite + launchpad, large-file/static cache cases).
 2. Broader install coverage and post-install polish for `Install with Codex` across more templates/images.
 3. Broader template catalog and stronger embed/open integration polish.
+4. Dedicated agent/docs/skill guidance for apps/public-viewer workflows.
 
 ## 2. Product Goals
 
@@ -1549,6 +1554,19 @@ Existing components to reuse where possible:
 
 21. `[todo]` Add scoped per-app metrics in project-host and surface them in CLI/UI.
 22. `[todo]` Add `Have Codex help publish this directory of files` for public viewer/static mode, backed by a curated product-owned prompt and repeated testing until the publishing flow is reliable.
+23. `[todo]` Implement Lite parity for static/public-viewer apps so a single-user Lite deployment can proxy and publish apps without depending on Launchpad-only `project-host` assumptions.
+24. `[partial]` Finish Public Viewer release hardening:
+   - dedicated public origin/subdomain,
+   - stricter CSP/cookie/session isolation,
+   - cache-header audit,
+   - authenticated `Import from public CoCalc URL` / `Copy to my project`,
+   - full slides/whiteboard viewer parity.
+25. `[todo]` Polish Apps UI and preset presentation:
+   - better theming/visual treatment for templates and apps,
+   - theme-aware default colors/images,
+   - cleaner presentation of advanced workflows.
+26. `[todo]` Expand the curated template catalog substantially and keep template/recipe growth data-first.
+27. `[todo]` Add explicit docs and/or a dedicated agent skill so agents know how to use apps for install, lifecycle, expose/audit, and public publishing workflows.
 
 ## 19.1 Next Execution Order
 
@@ -1603,6 +1621,42 @@ These improve the product substantially, but do not need to block first public r
 5. iframe/embed polish and better "open in full tab" fallback behavior.
 6. frontend import/export/"copy to another project" workflows for app configs.
 7. scoped per-app metrics and simple usage/history UI.
+8. dedicated agent/docs/skill support for app workflows.
+
+## 19.2.1 Agreed Next Workstreams
+
+The clearest remaining workstreams after the current backend/public-viewer progress are:
+
+1. Lite parity for apps/static/public-viewer.
+   - The product should not be treated as Launchpad-only.
+   - Single-user Lite deployments on remote machines also benefit from proxying JupyterLab, VS Code, and similar services.
+   - Static/public-viewer support should work there too, not only through the current `project-host` path.
+
+2. Public Viewer release hardening.
+   - The current implementation is good enough to prove product value and renderer quality.
+   - Before broad public rollout, move it to the intended dedicated public origin/subdomain with stricter isolation and a cache-policy audit.
+   - Finish the authenticated `Import from public CoCalc URL` / `Copy to my project` flow.
+
+3. Public Viewer completion.
+   - Markdown and notebooks are in good shape.
+   - Slides and whiteboards should get the same high-quality renderer path and end-to-end validation.
+   - The Codex-assisted `publish this directory` workflow still needs implementation and repeated testing until reliable.
+
+4. Apps UI/product polish.
+   - The Apps page is functional but still visibly POC-level.
+   - Improve theming and card presentation for templates and apps.
+   - Default template visuals should come from theme-aware metadata such as colors/images rather than plain generic rows/cards.
+
+5. Template catalog expansion.
+   - This remains one of the highest-leverage product improvements.
+   - Use data-first catalog growth and Codex-assisted iteration to add many more well-tested templates and install recipes.
+
+6. Agent guidance.
+   - Add docs and/or a dedicated skill so agents know how to:
+     - install software via app templates,
+     - manage lifecycle,
+     - expose/audit apps safely,
+     - and publish public-viewer directories.
 
 ## 19.3 MVP Metrics Plan
 

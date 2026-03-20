@@ -4,16 +4,19 @@
  */
 
 import type { JSX } from "react";
-import PublicViewerFileContents from "./file-contents";
+import PublicViewerMarkdownRenderer from "./renderers/markdown";
+import { buildViewerFileContext } from "./viewer-file-context";
 import { mountPublicViewer } from "./shared";
 
 export function init(): void {
   mountPublicViewer(
     ({ config, content }): JSX.Element => (
-      <PublicViewerFileContents
+      <PublicViewerMarkdownRenderer
         content={content}
-        path={config.path}
-        rawUrl={config.rawUrl}
+        fileContext={buildViewerFileContext({
+          path: config.path,
+          rawUrl: config.rawUrl,
+        })}
         style={{
           background: "#fff",
           padding: "24px",

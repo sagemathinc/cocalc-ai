@@ -3,6 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { Suspense, lazy } from "react";
 import type { CSSProperties, JSX } from "react";
 import {
   codemirrorMode,
@@ -13,16 +14,15 @@ import {
   isMarkdown,
   isVideo,
 } from "@cocalc/frontend/file-extensions";
-import Slides from "@cocalc/frontend/frame-editors/slides-editor/share";
-import Whiteboard from "@cocalc/frontend/frame-editors/whiteboard-editor/share/index";
-import JupyterNotebook from "@cocalc/frontend/jupyter/nbviewer/nbviewer";
-import { CodeMirrorStatic } from "@cocalc/frontend/jupyter/codemirror-static";
-import {
-  FileContext,
-  type IFileContext,
-} from "@cocalc/frontend/lib/file-context";
-import Markdown from "@cocalc/frontend/editors/slate/static-markdown";
+import type { IFileContext } from "@cocalc/frontend/lib/file-context";
 import { filename_extension } from "@cocalc/util/misc";
+import { buildViewerFileContext } from "./viewer-file-context";
+
+const MarkdownRenderer = lazy(() => import("./renderers/markdown"));
+const CodeMirrorRenderer = lazy(() => import("./renderers/codemirror"));
+const IpynbRenderer = lazy(() => import("./renderers/ipynb"));
+const BoardRenderer = lazy(() => import("./renderers/board"));
+const SlidesRenderer = lazy(() => import("./renderers/slides"));
 
 export interface PublicViewerFileContentsProps {
   content?: string;
@@ -32,33 +32,6 @@ export interface PublicViewerFileContentsProps {
   fontSize?: number;
   lineNumbers?: boolean;
   style?: CSSProperties;
-}
-
-function OpenRawFile({
-  rawUrl,
-  label,
-}: {
-  rawUrl: string;
-  label: string;
-}): JSX.Element {
-  return (
-    <h2 style={{ textAlign: "center", margin: "32px 0" }}>
-      <a href={rawUrl} rel="noreferrer noopener">
-        {label}
-      </a>
-    </h2>
-  );
-}
-
-function withFileContext(
-  child: JSX.Element,
-  fileContext?: IFileContext,
-): JSX.Element {
-  return (
-    <FileContext.Provider value={fileContext ?? {}}>
-      {child}
-    </FileContext.Provider>
-  );
 }
 
 export default function PublicViewerFileContents({
@@ -71,6 +44,11 @@ export default function PublicViewerFileContents({
   style,
 }: PublicViewerFileContentsProps): JSX.Element {
   const ext = filename_extension(path).toLowerCase();
+  const resolvedFileContext = buildViewerFileContext({
+    path,
+    rawUrl,
+    fileContext,
+  });
 
   if (isImage(ext)) {
     return <img src={rawUrl} style={{ maxWidth: "100%", ...style }} />;
@@ -116,18 +94,26 @@ export default function PublicViewerFileContents({
 
   if (isCodemirror(ext)) {
     return (
-      <CodeMirrorStatic
-        value={content}
-        font_size={fontSize}
-        options={{ lineNumbers, mode: codemirrorMode(ext) }}
-      />
+      <Suspense fallback={<LoadingRenderer />}>
+        <CodeMirrorRenderer
+          content={content}
+          fontSize={fontSize}
+          lineNumbers={lineNumbers}
+          mode={codemirrorMode(ext)}
+        />
+      </Suspense>
     );
   }
 
   if (isMarkdown(ext)) {
-    return withFileContext(
-      <Markdown value={content} style={style} />,
-      fileContext,
+    return (
+      <Suspense fallback={<LoadingRenderer />}>
+        <MarkdownRenderer
+          content={content}
+          style={style}
+          fileContext={resolvedFileContext}
+        />
+      </Suspense>
     );
   }
 
@@ -142,19 +128,52 @@ export default function PublicViewerFileContents({
   }
 
   if (ext === "ipynb") {
-    return withFileContext(
-      <JupyterNotebook content={content} style={style} />,
-      fileContext,
+    return (
+      <Suspense fallback={<LoadingRenderer />}>
+        <IpynbRenderer
+          content={content}
+          style={style}
+          fileContext={resolvedFileContext}
+        />
+      </Suspense>
     );
   }
 
   if (ext === "board") {
-    return withFileContext(<Whiteboard content={content} />, fileContext);
+    return (
+      <Suspense fallback={<LoadingRenderer />}>
+        <BoardRenderer content={content} fileContext={resolvedFileContext} />
+      </Suspense>
+    );
   }
 
   if (ext === "slides") {
-    return withFileContext(<Slides content={content} />, fileContext);
+    return (
+      <Suspense fallback={<LoadingRenderer />}>
+        <SlidesRenderer content={content} fileContext={resolvedFileContext} />
+      </Suspense>
+    );
   }
 
   return <pre style={style}>{content}</pre>;
+}
+
+function OpenRawFile({
+  rawUrl,
+  label,
+}: {
+  rawUrl: string;
+  label: string;
+}): JSX.Element {
+  return (
+    <h2 style={{ textAlign: "center", margin: "32px 0" }}>
+      <a href={rawUrl} rel="noreferrer noopener">
+        {label}
+      </a>
+    </h2>
+  );
+}
+
+function LoadingRenderer(): JSX.Element {
+  return <div style={{ color: "#666" }}>Loading renderer...</div>;
 }

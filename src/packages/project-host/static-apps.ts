@@ -5,20 +5,22 @@
 
 import type http from "node:http";
 import path from "node:path";
-import { createReadStream } from "node:fs";
-import { readFile, stat } from "node:fs/promises";
+import type { Stats } from "node:fs";
+import { finished } from "node:stream/promises";
 import TTL from "@isaacs/ttlcache";
 import getLogger from "@cocalc/backend/logger";
+import { SandboxedFilesystem } from "@cocalc/backend/sandbox";
 import { hubApi } from "@cocalc/lite/hub/api";
 import {
   COCALC_PUBLIC_VIEWER_MODE,
   isPublicViewerRenderablePath,
   parsePublicViewerManifest,
+  publicViewerHtmlForPath,
   AppStaticIntegrationSpec,
   PublicViewerManifest,
   PublicViewerManifestEntry,
 } from "./public-viewer";
-import { resolveProjectContainerPath } from "./file-server";
+import { getProjectSandboxFilesystem } from "./file-server";
 import type { AppRequestMatch } from "./app-public-access";
 
 const logger = getLogger("project-host:static-apps");
@@ -27,20 +29,44 @@ const PUBLIC_WEB_BASE_URL_CACHE = new TTL<string, string | null>({
   max: 1,
   ttl: 30_000,
 });
+const MAX_PUBLIC_VIEWER_RENDERABLE_FILE_BYTES = 16 * 1024 * 1024;
+const MAX_PUBLIC_VIEWER_MANIFEST_BYTES = 1 * 1024 * 1024;
+
+/*
+Security and abuse-control invariants for host-side static serving:
+
+1. Never serve by raw host path after resolving static.root.
+   We first resolve static.root through the per-project sandbox, then create a
+   second read-only sandbox rooted at that directory. Every stat/read for the
+   request must go through that sub-sandbox. This is what keeps symlinks and
+   path tricks inside the published subtree instead of merely inside the wider
+   project mount.
+
+2. Non-renderable static files may stream, but only through a sandbox API that
+   opens and verifies the file descriptor first. Do not fall back to raw host
+   path streaming. A direct host stream is exactly how symlink escapes get
+   reintroduced.
+
+3. Anything we intentionally parse/render in memory must still be size
+   bounded. Oversized manifests or viewer payloads must fail closed with 413
+   instead of letting a user turn the project-host into a large sparse-file
+   reader.
+*/
 
 interface StaticResolvedPath {
-  rootAbs: string;
   relativePath: string;
-  absolutePath: string;
-  stat?: Awaited<ReturnType<typeof stat>>;
+  fsPath: string;
+  stat?: Stats;
 }
 
 interface StaticResolvedFile {
-  absolutePath: string;
-  stat: {
-    size: number;
-    mtimeMs: number;
-  };
+  fsPath: string;
+  stat: Stats;
+}
+
+interface StaticRootContext {
+  containerPath: string;
+  fs: SandboxedFilesystem;
 }
 
 const MIME_BY_EXT: Record<string, string> = {
@@ -179,11 +205,13 @@ async function buildViewerRedirectUrl({
   sourcePath,
   title,
   autoRefreshS,
+  viewerBundle,
 }: {
   req: http.IncomingMessage;
   sourcePath: string;
   title: string;
   autoRefreshS?: number;
+  viewerBundle?: string;
 }): Promise<string> {
   const requestOrigin = buildRequestOrigin(req);
   const requestUrl = new URL(
@@ -195,7 +223,9 @@ async function buildViewerRedirectUrl({
   if (!publicWebBaseUrl) {
     throw new Error("unable to determine public web base url");
   }
-  const viewer = new URL(`${publicWebBaseUrl}/static/public-viewer.html`);
+  const viewer = new URL(
+    `${publicWebBaseUrl}/static/${publicViewerHtmlForPath(sourcePath, viewerBundle)}`,
+  );
   viewer.searchParams.set("source", requestUrl.toString());
   viewer.searchParams.set("path", sourcePath);
   viewer.searchParams.set("title", title);
@@ -402,22 +432,71 @@ function buildPublicViewerHeaders(
   return headers;
 }
 
-function buildPublicFileHeaders(
-  exposureMode: "private" | "public",
-): Record<string, string> {
-  if (exposureMode !== "public") {
-    return {};
-  }
-  return {
-    "Access-Control-Allow-Origin": "*",
+async function buildPublicFileHeaders({
+  req,
+  exposureMode,
+}: {
+  req: http.IncomingMessage;
+  exposureMode: "private" | "public";
+}): Promise<Record<string, string>> {
+  const headers: Record<string, string> = {
     "Cross-Origin-Resource-Policy": "cross-origin",
   };
+  const requestOrigin = `${req.headers.origin ?? ""}`.trim();
+  const publicWebBaseUrl = requestOrigin
+    ? await getPublicWebBaseUrl(req)
+    : undefined;
+  if (requestOrigin && publicWebBaseUrl && requestOrigin === publicWebBaseUrl) {
+    headers["Access-Control-Allow-Origin"] = requestOrigin;
+    headers["Access-Control-Allow-Credentials"] = "true";
+    headers["Vary"] = "Origin";
+    return headers;
+  }
+  if (exposureMode === "public") {
+    headers["Access-Control-Allow-Origin"] = "*";
+  }
+  return headers;
+}
+
+function writeFileTooLarge(
+  res: http.ServerResponse,
+  {
+    maxBytes,
+    extraHeaders,
+  }: {
+    maxBytes: number;
+    extraHeaders?: Record<string, string>;
+  },
+): void {
+  res.writeHead(413, {
+    "Content-Type": "text/plain; charset=utf-8",
+    ...(extraHeaders ?? {}),
+  });
+  res.end(`File exceeds maximum supported size of ${maxBytes} bytes\n`);
+}
+
+function getStaticReadLimit({
+  integration,
+  relativePath,
+}: {
+  integration: AppStaticIntegrationSpec | undefined;
+  relativePath: string;
+}): number | undefined {
+  if (
+    integration?.mode === COCALC_PUBLIC_VIEWER_MODE &&
+    isPublicViewerRenderablePath(relativePath, {
+      file_types: integration.file_types,
+    })
+  ) {
+    return MAX_PUBLIC_VIEWER_RENDERABLE_FILE_BYTES;
+  }
+  return;
 }
 
 async function resolveStaticRoot(
   project_id: string,
   root: string,
-): Promise<string | undefined> {
+): Promise<StaticRootContext | undefined> {
   const normalized = root.replace(/\\/g, "/").trim();
   const allowRoot =
     normalized !== "" &&
@@ -434,7 +513,12 @@ async function resolveStaticRoot(
     return;
   }
   try {
-    return await resolveProjectContainerPath(project_id, root);
+    const projectFs = getProjectSandboxFilesystem(project_id);
+    const rootAbs = await projectFs.safeAbsPath(root);
+    return {
+      containerPath: root,
+      fs: new SandboxedFilesystem(rootAbs, { readonly: true }),
+    };
   } catch (err) {
     logger.debug("failed to resolve static app root", {
       project_id,
@@ -446,57 +530,51 @@ async function resolveStaticRoot(
 }
 
 async function resolveStaticPath({
-  root,
+  fs,
   requestPath,
 }: {
-  root: string;
+  fs: SandboxedFilesystem;
   requestPath: string;
 }): Promise<StaticResolvedPath | undefined> {
-  const rootAbs = path.resolve(root);
-  const parsed = new URL(requestPath, "http://project-host.local");
-  let relative = decodeURIComponent(parsed.pathname || "/");
-  if (!relative.startsWith("/")) {
-    relative = `/${relative}`;
-  }
-  const wanted = relative === "/" ? "" : relative.slice(1);
-  const candidate = path.resolve(rootAbs, wanted);
-  if (
-    !(candidate === rootAbs || candidate.startsWith(`${rootAbs}${path.sep}`))
-  ) {
+  let relativePath = "/";
+  let fsPath = ".";
+  try {
+    const parsed = new URL(requestPath, "http://project-host.local");
+    const decoded = decodeURIComponent(parsed.pathname || "/");
+    const normalized = path.posix.normalize(
+      decoded.startsWith("/") ? decoded : `/${decoded}`,
+    );
+    relativePath = normalized.startsWith("/") ? normalized : `/${normalized}`;
+    fsPath = relativePath === "/" ? "." : relativePath.slice(1);
+  } catch {
     return;
   }
-  let info: StaticResolvedPath["stat"] | undefined;
+  let info: Stats | undefined;
   try {
-    info = await stat(candidate);
+    info = await fs.stat(fsPath);
   } catch {
     info = undefined;
   }
   return {
-    rootAbs,
-    relativePath: relative,
-    absolutePath: candidate,
+    relativePath,
+    fsPath,
     stat: info,
   };
 }
 
 async function resolveStaticChildFile({
-  rootAbs,
+  fs,
   directory,
   child,
 }: {
-  rootAbs: string;
+  fs: SandboxedFilesystem;
   directory: string;
   child: string;
 }): Promise<StaticResolvedFile | undefined> {
-  const candidate = path.resolve(directory, child.replace(/^\/+/, ""));
-  if (
-    !(candidate === rootAbs || candidate.startsWith(`${rootAbs}${path.sep}`))
-  ) {
-    return;
-  }
-  let info: Awaited<ReturnType<typeof stat>> | undefined;
+  const candidate = path.posix.join(directory === "." ? "" : directory, child);
+  let info: Stats | undefined;
   try {
-    info = await stat(candidate);
+    info = await fs.stat(candidate);
   } catch {
     info = undefined;
   }
@@ -504,27 +582,38 @@ async function resolveStaticChildFile({
     return;
   }
   return {
-    absolutePath: candidate,
-    stat: { size: Number(info.size), mtimeMs: Number(info.mtimeMs) },
+    fsPath: candidate,
+    stat: info,
   };
 }
 
 async function writeResolvedStaticFile({
   req,
   res,
+  fs,
   resolved,
   cacheControl,
   extraHeaders,
+  maxBytes,
 }: {
   req: http.IncomingMessage;
   res: http.ServerResponse;
+  fs: SandboxedFilesystem;
   resolved: StaticResolvedFile;
   cacheControl?: string;
   extraHeaders?: Record<string, string>;
+  maxBytes?: number;
 }): Promise<void> {
-  const { absolutePath, stat: info } = resolved;
-  const ext = path.extname(absolutePath).toLowerCase();
+  const { fsPath, stat: info } = resolved;
+  const ext = path.extname(fsPath).toLowerCase();
   const contentType = MIME_BY_EXT[ext] ?? "application/octet-stream";
+  if (maxBytes != null && Number(info.size) > maxBytes) {
+    writeFileTooLarge(res, {
+      maxBytes,
+      extraHeaders,
+    });
+    return;
+  }
   const rangeHeader = req.headers.range;
   let start = 0;
   let end = info.size - 1;
@@ -568,14 +657,25 @@ async function writeResolvedStaticFile({
     res.end();
     return;
   }
-  const stream = createReadStream(absolutePath, { start, end });
+  const stream = await fs.createReadStream(fsPath, { start, end });
   stream.on("error", (err) => {
-    logger.warn("static file stream error", { err: `${err}`, absolutePath });
+    logger.warn("static file stream error", { err: `${err}`, fsPath });
+    if (!res.headersSent) {
+      res.writeHead(500, {
+        "Content-Type": "text/plain; charset=utf-8",
+        ...(extraHeaders ?? {}),
+      });
+    }
     if (!res.writableEnded) {
-      res.end();
+      res.end("Static file read failed\n");
     }
   });
   stream.pipe(res);
+  try {
+    await finished(stream);
+  } catch {
+    // handled above
+  }
 }
 
 function writeStaticHtmlResponse({
@@ -642,8 +742,8 @@ export async function maybeHandleStaticAppRequest({
     res.end("Static app root is not configured\n");
     return true;
   }
-  const root = await resolveStaticRoot(project_id, rootRel);
-  if (!root) {
+  const rootContext = await resolveStaticRoot(project_id, rootRel);
+  if (!rootContext) {
     res.writeHead(500, { "Content-Type": "text/plain; charset=utf-8" });
     res.end("Static app root is invalid\n");
     return true;
@@ -657,11 +757,11 @@ export async function maybeHandleStaticAppRequest({
       : undefined;
   const fileHeaders =
     integration?.mode === COCALC_PUBLIC_VIEWER_MODE
-      ? buildPublicFileHeaders(exposureMode)
+      ? await buildPublicFileHeaders({ req, exposureMode })
       : undefined;
 
   const pathInfo = await resolveStaticPath({
-    root,
+    fs: rootContext.fs,
     requestPath: match.requestPath,
   });
   if (!pathInfo) {
@@ -683,6 +783,7 @@ export async function maybeHandleStaticAppRequest({
         title:
           path.posix.basename(pathInfo.relativePath) || "CoCalc Public Viewer",
         autoRefreshS: integration.auto_refresh_s,
+        viewerBundle: integration.viewer_bundle,
       });
       res.writeHead(302, {
         Location: location,
@@ -694,15 +795,17 @@ export async function maybeHandleStaticAppRequest({
     await writeResolvedStaticFile({
       req,
       res,
+      fs: rootContext.fs,
       resolved: {
-        absolutePath: pathInfo.absolutePath,
-        stat: {
-          size: Number(pathInfo.stat.size),
-          mtimeMs: Number(pathInfo.stat.mtimeMs),
-        },
+        fsPath: pathInfo.fsPath,
+        stat: pathInfo.stat,
       },
       cacheControl: match.spec.static?.cache_control,
       extraHeaders: fileHeaders,
+      maxBytes: getStaticReadLimit({
+        integration,
+        relativePath: pathInfo.relativePath,
+      }),
     });
     return true;
   }
@@ -713,8 +816,8 @@ export async function maybeHandleStaticAppRequest({
   }
 
   const indexFile = await resolveStaticChildFile({
-    rootAbs: pathInfo.rootAbs,
-    directory: pathInfo.absolutePath,
+    fs: rootContext.fs,
+    directory: pathInfo.fsPath,
     child: match.spec.static?.index ?? "index.html",
   });
   if (indexFile) {
@@ -734,6 +837,7 @@ export async function maybeHandleStaticAppRequest({
         sourcePath: indexRelativePath,
         title: path.posix.basename(indexRelativePath) || "CoCalc Public Viewer",
         autoRefreshS: integration.auto_refresh_s,
+        viewerBundle: integration.viewer_bundle,
       });
       res.writeHead(302, {
         Location: location,
@@ -745,9 +849,14 @@ export async function maybeHandleStaticAppRequest({
     await writeResolvedStaticFile({
       req,
       res,
+      fs: rootContext.fs,
       resolved: indexFile,
       cacheControl: match.spec.static?.cache_control,
       extraHeaders: fileHeaders,
+      maxBytes: getStaticReadLimit({
+        integration,
+        relativePath: indexRelativePath,
+      }),
     });
     return true;
   }
@@ -761,17 +870,27 @@ export async function maybeHandleStaticAppRequest({
   }
 
   const manifestFile = await resolveStaticChildFile({
-    rootAbs: pathInfo.rootAbs,
-    directory: pathInfo.absolutePath,
+    fs: rootContext.fs,
+    directory: pathInfo.fsPath,
     child: integration.manifest,
   });
   if (!manifestFile) {
     writeNotFound(res, extraHtmlHeaders);
     return true;
   }
+  if (Number(manifestFile.stat.size) > MAX_PUBLIC_VIEWER_MANIFEST_BYTES) {
+    writeFileTooLarge(res, {
+      maxBytes: MAX_PUBLIC_VIEWER_MANIFEST_BYTES,
+      extraHeaders: extraHtmlHeaders,
+    });
+    return true;
+  }
 
   try {
-    const manifestRaw = await readFile(manifestFile.absolutePath, "utf8");
+    const manifestRaw = (await rootContext.fs.readFile(
+      manifestFile.fsPath,
+      "utf8",
+    )) as string;
     const manifest = parsePublicViewerManifest(manifestRaw, {
       file_types: integration.file_types,
     });
@@ -792,7 +911,7 @@ export async function maybeHandleStaticAppRequest({
   } catch (err) {
     logger.warn("public viewer manifest error", {
       err: `${err}`,
-      manifest: manifestFile.absolutePath,
+      manifest: path.posix.join(rootContext.containerPath, manifestFile.fsPath),
       requestPath: match.requestPath,
     });
     res.writeHead(500, {

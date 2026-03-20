@@ -219,6 +219,18 @@ export default function getConfig({ middleware }: Options = {}): Configuration {
         ]),
         dependOn: "load",
       },
+      "public-viewer-md": {
+        import: insertHotMiddlewareUrl([
+          resolve("dist-ts/src/webapp-public-viewer-markdown.js"),
+        ]),
+        dependOn: "load",
+      },
+      "public-viewer-ipynb": {
+        import: insertHotMiddlewareUrl([
+          resolve("dist-ts/src/webapp-public-viewer-ipynb.js"),
+        ]),
+        dependOn: "load",
+      },
     },
     /* Why chunkhash below, rather than contenthash? This says contenthash is a special
      thing for css and other text files only (??):
