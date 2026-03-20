@@ -145,6 +145,27 @@ function isViewerRawRequest(req: Request): boolean {
   }
 }
 
+function hasTrailingSlash(req: Request): boolean {
+  const requestUrl = req.originalUrl || req.url || "/";
+  try {
+    const url = new URL(requestUrl, "http://127.0.0.1");
+    return url.pathname.endsWith("/");
+  } catch {
+    return requestUrl.split("?")[0]?.endsWith("/") ?? false;
+  }
+}
+
+function trailingSlashRedirectLocation(req: Request): string {
+  const requestUrl = req.originalUrl || req.url || "/";
+  try {
+    const url = new URL(requestUrl, "http://127.0.0.1");
+    return `${url.pathname}/${url.search ?? ""}`;
+  } catch {
+    const [pathname, search = ""] = requestUrl.split("?", 2);
+    return `${pathname}/${search !== "" ? `?${search}` : ""}`;
+  }
+}
+
 function publicViewerHtmlForPath(entryPath: string): string {
   switch (path.posix.extname(entryPath).toLowerCase()) {
     case ".md":
@@ -421,6 +442,11 @@ export async function maybeHandleLiteStaticAppRequest({
 
   if (!resolvedStat.isDirectory()) {
     res.status(404).type("text/plain").send("Not found\n");
+    return true;
+  }
+
+  if (!hasTrailingSlash(req)) {
+    res.redirect(trailingSlashRedirectLocation(req));
     return true;
   }
 

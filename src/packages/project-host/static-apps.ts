@@ -136,6 +136,27 @@ function isViewerRawRequest(req: http.IncomingMessage): boolean {
   }
 }
 
+function hasTrailingSlash(req: http.IncomingMessage): boolean {
+  const requestUrl = req.url ?? "/";
+  try {
+    const url = new URL(requestUrl, "http://127.0.0.1");
+    return url.pathname.endsWith("/");
+  } catch {
+    return requestUrl.split("?")[0]?.endsWith("/") ?? false;
+  }
+}
+
+function trailingSlashRedirectLocation(req: http.IncomingMessage): string {
+  const requestUrl = req.url ?? "/";
+  try {
+    const url = new URL(requestUrl, "http://127.0.0.1");
+    return `${url.pathname}/${url.search ?? ""}`;
+  } catch {
+    const [pathname, search = ""] = requestUrl.split("?", 2);
+    return `${pathname}/${search !== "" ? `?${search}` : ""}`;
+  }
+}
+
 function sortPublicViewerEntries(
   left: PublicViewerManifestEntry,
   right: PublicViewerManifestEntry,
@@ -812,6 +833,15 @@ export async function maybeHandleStaticAppRequest({
 
   if (!pathInfo.stat?.isDirectory()) {
     writeNotFound(res, extraHtmlHeaders);
+    return true;
+  }
+
+  if (!hasTrailingSlash(req)) {
+    res.writeHead(302, {
+      Location: trailingSlashRedirectLocation(req),
+      "Cache-Control": "no-store",
+    });
+    res.end();
     return true;
   }
 
