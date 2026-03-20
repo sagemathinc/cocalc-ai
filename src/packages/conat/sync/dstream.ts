@@ -16,10 +16,16 @@ See the guide for dkv, since it's very similar, especially for use in a browser.
 import { EventEmitter } from "events";
 import {
   CoreStream,
+  type CoreStreamInitPhaseReporter,
   type RawMsg,
   type ChangeEvent,
   type PublishOptions,
+  type Configuration,
 } from "./core-stream";
+import type {
+  CheckpointUpdate,
+  StreamCheckpoints,
+} from "@cocalc/conat/persist/storage";
 import { randomId } from "@cocalc/conat/names";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import { isNumericString } from "@cocalc/util/misc";
@@ -31,7 +37,6 @@ import {
 } from "@cocalc/conat/core/client";
 import jsonStableStringify from "json-stable-stringify";
 import type { JSONValue } from "@cocalc/util/types";
-import { Configuration } from "./core-stream";
 import { conat } from "@cocalc/conat/client";
 import { delay, map as awaitMap } from "awaiting";
 import { asyncThrottle, until } from "@cocalc/util/async-utils";
@@ -54,6 +59,7 @@ export interface DStreamOptions {
   config?: Partial<Configuration>;
   // only load historic messages starting at the given seq number.
   start_seq?: number;
+  start_checkpoint?: string;
   desc?: JSONValue;
 
   client?: Client;
@@ -65,6 +71,8 @@ export interface DStreamOptions {
   noInventory?: boolean;
 
   service?: string;
+
+  initPhaseReporter?: CoreStreamInitPhaseReporter;
 }
 
 export class DStream<T = any> extends EventEmitter {
@@ -222,6 +230,36 @@ export class DStream<T = any> extends EventEmitter {
       seqs.push(parseInt(seq));
     }
     return seqs;
+  };
+
+  getMetadata = (): JSONValue | undefined => {
+    return this.stream.getMetadata();
+  };
+
+  setMetadata = async (
+    metadata?: JSONValue,
+  ): Promise<JSONValue | undefined> => {
+    return await this.stream.setMetadata(metadata);
+  };
+
+  patchMetadata = async (delta: JSONValue): Promise<JSONValue | undefined> => {
+    return await this.stream.patchMetadata(delta);
+  };
+
+  getCheckpoints = (): StreamCheckpoints => {
+    return this.stream.getCheckpoints();
+  };
+
+  getCheckpoint = (name: string) => {
+    return this.stream.getCheckpoint(name);
+  };
+
+  setCheckpoint = async (checkpoint: CheckpointUpdate) => {
+    return await this.stream.setCheckpoint(checkpoint);
+  };
+
+  deleteCheckpoint = async (name: string): Promise<void> => {
+    await this.stream.deleteCheckpoint(name);
   };
 
   time = (n: number): Date | undefined => {

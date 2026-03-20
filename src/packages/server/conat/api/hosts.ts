@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import type {
   Host,
   HostBackupStatus,
+  HostBootstrapStatus,
   HostConnectionInfo,
   HostDrainResult,
   HostMachine,
@@ -269,6 +270,21 @@ function parseRow(
   const metadata = row.metadata ?? {};
   const software = metadata.software ?? {};
   const machine: HostMachine | undefined = metadata.machine;
+  const rawBootstrap = metadata.bootstrap;
+  const bootstrap: HostBootstrapStatus | undefined =
+    rawBootstrap && typeof rawBootstrap === "object"
+      ? {
+          ...(typeof rawBootstrap.status === "string"
+            ? { status: rawBootstrap.status }
+            : {}),
+          ...(typeof rawBootstrap.updated_at === "string"
+            ? { updated_at: rawBootstrap.updated_at }
+            : {}),
+          ...(typeof rawBootstrap.message === "string"
+            ? { message: rawBootstrap.message }
+            : {}),
+        }
+      : undefined;
   const rawStatus = String(row.status ?? "");
   const normalizedStatus =
     rawStatus === "active" ? "running" : rawStatus || "off";
@@ -307,6 +323,7 @@ function parseRow(
     provider_observed_at: metadata.runtime?.observed_at,
     deleted: row.deleted ? new Date(row.deleted).toISOString() : undefined,
     backup_status: opts.backup_status,
+    bootstrap,
   };
 }
 
@@ -2033,6 +2050,15 @@ export async function createHost({
         size,
         gpu: gpuEnabled,
         machine: normalizedMachine,
+        ...(machineCloud && !isSelfHost
+          ? {
+              bootstrap: {
+                status: "queued",
+                updated_at: new Date().toISOString(),
+                message: "Waiting for cloud host bootstrap",
+              },
+            }
+          : {}),
         ...(bootstrapChannel ? { bootstrap_channel: bootstrapChannel } : {}),
         ...(bootstrapVersion ? { bootstrap_version: bootstrapVersion } : {}),
       },
@@ -2215,6 +2241,13 @@ export async function startHostInternal({
   if (nextMetadata?.bootstrap) {
     // bootstrap should be idempotent and we bootstrap on EVERY start
     delete nextMetadata.bootstrap;
+  }
+  if (machineCloud && machineCloud !== "self-host") {
+    nextMetadata.bootstrap = {
+      status: "queued",
+      updated_at: new Date().toISOString(),
+      message: "Waiting for cloud host bootstrap",
+    };
   }
   logStatusUpdate(id, "starting", "api");
   await pool().query(

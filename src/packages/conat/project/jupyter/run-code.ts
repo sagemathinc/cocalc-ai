@@ -80,6 +80,11 @@ export interface OutputMessage {
   more_output?: boolean;
 }
 
+export interface JupyterRunAck {
+  run_id: string;
+  server_received_at_ms: number;
+}
+
 export type LifecycleMessageType =
   | "run_start"
   | "run_done"
@@ -275,7 +280,10 @@ export function jupyterServer({
         const run_id =
           typeof data.run_id == "string" ? data.run_id : nextRunId();
         try {
-          mesg.respondSync(null);
+          mesg.respondSync({
+            run_id,
+            server_received_at_ms: Date.now(),
+          } satisfies JupyterRunAck);
           if (moreOutput[path] == null) {
             moreOutput[path] = {};
           }
@@ -356,6 +364,8 @@ async function handleRequest({
   let summaryError: string | undefined;
   let firstClientBatchFastLane = false;
   let socketClosedDuringRun = false;
+  let firstClientWriteAt: number | null = null;
+  let firstLivePublishAt: number | null = null;
   const liveRunPath = canonicalJupyterLiveRunPath(path);
   const liveRunSubject = jupyterLiveRunSubject({
     project_id,
@@ -397,6 +407,9 @@ async function handleRequest({
     if (mesgs.length == 0) {
       return;
     }
+    if (firstLivePublishAt == null) {
+      firstLivePublishAt = Date.now();
+    }
     const batch: JupyterLiveRunBatch = {
       path: liveRunPath,
       run_id,
@@ -431,6 +444,9 @@ async function handleRequest({
       return;
     }
     try {
+      if (firstClientWriteAt == null) {
+        firstClientWriteAt = Date.now();
+      }
       socket.write(coalescedMesgs);
       if (opts?.fastLane) {
         firstClientBatchFastLane = true;
@@ -613,6 +629,14 @@ async function handleRequest({
       duration_ms: Date.now() - startedAt,
       first_message_ms:
         firstMesgAt == null ? null : Math.max(0, firstMesgAt - startedAt),
+      first_client_write_ms:
+        firstClientWriteAt == null
+          ? null
+          : Math.max(0, firstClientWriteAt - startedAt),
+      first_live_publish_ms:
+        firstLivePublishAt == null
+          ? null
+          : Math.max(0, firstLivePublishAt - startedAt),
       total_messages: totalMesgs,
       total_batches: totalBatches,
       more_output_buffered: moreOutputBuffered,
@@ -693,6 +717,7 @@ export class JupyterClient {
       limit?: number;
       run_id?: string;
       waitForAck?: boolean;
+      onAck?: (ack: JupyterRunAck) => void;
     } = {},
   ) => {
     const effectiveRunId = opts.run_id ?? nextRunId();
@@ -730,7 +755,7 @@ export class JupyterClient {
     const cells1 = cells.map(({ id, input }) => {
       return { id, input };
     });
-    const { waitForAck = true, ...requestOpts0 } = opts;
+    const { waitForAck = true, onAck, ...requestOpts0 } = opts;
     const requestOpts = {
       ...requestOpts0,
       run_id: effectiveRunId,
@@ -740,6 +765,12 @@ export class JupyterClient {
       ...requestOpts,
       path: this.path,
       cells: cells1,
+    });
+    void request.then((resp) => {
+      const data = resp?.data;
+      if (data != null && typeof data === "object") {
+        onAck?.(data as JupyterRunAck);
+      }
     });
     if (waitForAck) {
       return request.then(() => iter);

@@ -431,6 +431,18 @@ async function initStatic(router) {
       }),
     );
     router.use(
+      "/static/embed.html",
+      express.static(join(staticPath, "embed.html"), {
+        setHeaders: cacheShortTerm,
+      }),
+    );
+    router.use(
+      "/static/public-viewer.html",
+      express.static(join(staticPath, "public-viewer.html"), {
+        setHeaders: cacheShortTerm,
+      }),
+    );
+    router.use(
       "/static",
       express.static(staticPath, { setHeaders: cacheLongTerm }),
     );

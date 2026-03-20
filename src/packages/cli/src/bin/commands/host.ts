@@ -30,6 +30,57 @@ export type HostCommandDeps = {
   resolveProject: any;
 };
 
+function formatHostCreateProgressLine(update: {
+  host: { id: string };
+  status: string;
+  hasHeartbeat: boolean;
+  bootstrapStatus?: string;
+  bootstrapMessage?: string;
+}): string {
+  const parts = [
+    `host ${update.host.id}`,
+    `status=${update.status || "unknown"}`,
+    `heartbeat=${update.hasHeartbeat ? "ready" : "pending"}`,
+  ];
+  if (update.bootstrapStatus) {
+    parts.push(`bootstrap=${update.bootstrapStatus}`);
+  }
+  let line = parts.join(" ");
+  if (update.bootstrapMessage) {
+    line += `: ${update.bootstrapMessage}`;
+  }
+  return line;
+}
+
+function formatBootstrapTimeoutDetail(host: {
+  bootstrap?: {
+    status?: string | null;
+    message?: string | null;
+  } | null;
+}): string {
+  const bootstrapStatus = `${host.bootstrap?.status ?? ""}`.trim();
+  const bootstrapMessage = `${host.bootstrap?.message ?? ""}`.trim();
+  if (!bootstrapStatus && !bootstrapMessage) {
+    return "";
+  }
+  return ` bootstrap=${bootstrapStatus || "unknown"}${bootstrapMessage ? ` bootstrap_message=${JSON.stringify(bootstrapMessage)}` : ""}`;
+}
+
+function createHostProgressReporter(ctx: {
+  globals: { json?: boolean; output?: string };
+}) {
+  if (ctx.globals.json || ctx.globals.output === "json") {
+    return undefined;
+  }
+  let lastProgressLine = "";
+  return (update: Parameters<typeof formatHostCreateProgressLine>[0]) => {
+    const line = formatHostCreateProgressLine(update);
+    if (line === lastProgressLine) return;
+    lastProgressLine = line;
+    process.stderr.write(`${line}\n`);
+  };
+}
+
 export function registerHostCommand(
   program: Command,
   deps: HostCommandDeps,
@@ -169,6 +220,7 @@ export function registerHostCommand(
           version: h.version ?? null,
           project_bundle_version: h.project_bundle_version ?? null,
           tools_version: h.tools_version ?? null,
+          bootstrap: h.bootstrap ?? null,
         };
       });
     });
@@ -603,13 +655,15 @@ export function registerHostCommand(
             };
           }
 
+          const progressReporter = createHostProgressReporter(ctx);
           const waited = await waitForHostCreateReady(ctx, created.id, {
             timeoutMs: ctx.timeoutMs,
             pollMs: ctx.pollMs,
+            onProgress: progressReporter,
           });
           if (waited.timedOut) {
             throw new Error(
-              `host create timed out after ${ctx.timeoutMs}ms (host_id=${created.id}, last_status=${waited.host.status ?? "unknown"})`,
+              `host create timed out after ${ctx.timeoutMs}ms (host_id=${created.id}, last_status=${waited.host.status ?? "unknown"}${formatBootstrapTimeoutDetail(waited.host)})`,
             );
           }
 
@@ -705,6 +759,7 @@ export function registerHostCommand(
               status: "queued",
             };
           }
+          const waitStarted = Date.now();
           const summary = await waitForLro(ctx, op.op_id, {
             timeoutMs: ctx.timeoutMs,
             pollMs: ctx.pollMs,
@@ -719,10 +774,25 @@ export function registerHostCommand(
               `host start failed: status=${summary.status} error=${summary.error ?? "unknown"}`,
             );
           }
+          const progressReporter = createHostProgressReporter(ctx);
+          const waited = await waitForHostCreateReady(ctx, h.id, {
+            timeoutMs: Math.max(
+              ctx.pollMs,
+              ctx.timeoutMs - (Date.now() - waitStarted),
+            ),
+            pollMs: ctx.pollMs,
+            onProgress: progressReporter,
+          });
+          if (waited.timedOut) {
+            throw new Error(
+              `host start timed out after ${ctx.timeoutMs}ms (op=${op.op_id}, last_status=${waited.host.status ?? "unknown"}${formatBootstrapTimeoutDetail(waited.host)})`,
+            );
+          }
           return {
-            host_id: h.id,
+            host_id: waited.host.id,
             op_id: op.op_id,
             status: summary.status,
+            waited: true,
           };
         });
       },
@@ -808,6 +878,7 @@ export function registerHostCommand(
               status: "queued",
             };
           }
+          const waitStarted = Date.now();
           const summary = await waitForLro(ctx, op.op_id, {
             timeoutMs: ctx.timeoutMs,
             pollMs: ctx.pollMs,
@@ -822,11 +893,26 @@ export function registerHostCommand(
               `host restart failed: status=${summary.status} error=${summary.error ?? "unknown"}`,
             );
           }
+          const progressReporter = createHostProgressReporter(ctx);
+          const waited = await waitForHostCreateReady(ctx, h.id, {
+            timeoutMs: Math.max(
+              ctx.pollMs,
+              ctx.timeoutMs - (Date.now() - waitStarted),
+            ),
+            pollMs: ctx.pollMs,
+            onProgress: progressReporter,
+          });
+          if (waited.timedOut) {
+            throw new Error(
+              `host restart timed out after ${ctx.timeoutMs}ms (op=${op.op_id}, last_status=${waited.host.status ?? "unknown"}${formatBootstrapTimeoutDetail(waited.host)})`,
+            );
+          }
           return {
-            host_id: h.id,
+            host_id: waited.host.id,
             op_id: op.op_id,
             mode,
             status: summary.status,
+            waited: true,
           };
         });
       },

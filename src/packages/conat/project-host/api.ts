@@ -44,6 +44,14 @@ export interface HostSshAuthorizedKeysResponse {
   keys: string[];
 }
 
+export interface HostBackupExecutionStatus {
+  max_parallel: number;
+  in_flight: number;
+  queued: number;
+  project_lock_count: number;
+  config_source?: "env-legacy" | "db-override";
+}
+
 export interface HostControlApi {
   createProject: (
     opts: HostCreateProjectRequest,
@@ -84,6 +92,7 @@ export interface HostControlApi {
   removeHostSshAuthorizedKey: (opts: {
     public_key: string;
   }) => Promise<HostSshAuthorizedKeysResponse & { removed: boolean }>;
+  getBackupExecutionStatus: () => Promise<HostBackupExecutionStatus>;
   // Later: updateProject to adjust title/users/etc.
 }
 

@@ -1,5 +1,6 @@
 import {
   decideInitialWatchSource,
+  refineInitialWatchSourceDecision,
   shouldInitialWatchLoadFromDisk,
 } from "../watch-policy";
 
@@ -66,6 +67,21 @@ describe("jupyter ipynb watch initial-load policy", () => {
     ).toEqual({
       loadFromDisk: false,
       reason: "disk_mtime_unavailable",
+    });
+  });
+
+  it("keeps RTC when disk is newer but content matches", () => {
+    expect(
+      refineInitialWatchSourceDecision({
+        decision: {
+          loadFromDisk: true,
+          reason: "disk_newer_than_rtc",
+        },
+        diskContentMatchesRtc: true,
+      }),
+    ).toEqual({
+      loadFromDisk: false,
+      reason: "disk_newer_but_content_equal",
     });
   });
 });

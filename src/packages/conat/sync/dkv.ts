@@ -70,6 +70,8 @@ In the browser console:
 import { EventEmitter } from "events";
 import {
   CoreStream,
+  type CoreStreamInitPhase,
+  type CoreStreamInitPhaseReporter,
   type Configuration,
   type ChangeEvent,
 } from "./core-stream";
@@ -134,6 +136,8 @@ export interface DKVOptions {
   noCache?: boolean;
   noInventory?: boolean;
   service?: string;
+
+  initPhaseReporter?: CoreStreamInitPhaseReporter;
 }
 
 export class DKV<T = any> extends EventEmitter {
@@ -170,6 +174,7 @@ export class DKV<T = any> extends EventEmitter {
       ephemeral,
       sync,
       service,
+      initPhaseReporter,
     } = opts;
     this.name = name;
     this.desc = desc;
@@ -185,6 +190,7 @@ export class DKV<T = any> extends EventEmitter {
       ephemeral,
       sync,
       service,
+      initPhaseReporter,
     });
 
     return new Proxy(this, {
@@ -213,6 +219,16 @@ export class DKV<T = any> extends EventEmitter {
   }
 
   private initialized = false;
+  private emitInitPhase = (
+    phase: CoreStreamInitPhase,
+    details?: { [key: string]: string | number | boolean | undefined },
+  ) => {
+    this.opts.initPhaseReporter?.(phase, {
+      name: this.name,
+      ...(details ?? {}),
+    });
+  };
+
   init = async () => {
     if (this.initialized) {
       throw Error("init can only be called once");
@@ -224,7 +240,9 @@ export class DKV<T = any> extends EventEmitter {
     this.kv.on("change", this.handleRemoteChange);
     await this.kv.init();
     // allow_msg_ttl is used for deleting tombstones so MUST be enabled for dkv.
+    this.emitInitPhase("dkv_allow_msg_ttl_config_start");
     await this.kv.config({ allow_msg_ttl: true });
+    this.emitInitPhase("dkv_allow_msg_ttl_config_done");
     this.emit("connected");
   };
 

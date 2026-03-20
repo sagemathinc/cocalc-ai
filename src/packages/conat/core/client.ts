@@ -1374,12 +1374,24 @@ export class Client extends EventEmitter {
       }
       await this.waitUntilSignedIn();
       const start = Date.now();
-      const { bytes, getCount, promise } = this._publish(subject, mesg, {
+      const { bytes, getCount, getServerTiming, promise } = this._publish(
+        subject,
+        mesg,
+        {
         ...opts,
         confirm: true,
-      });
+        },
+      );
       await promise;
       let count = getCount?.()!;
+      const serverTiming = getServerTiming?.();
+      opts.phaseReporter?.("publish_done", {
+        elapsed_ms: Date.now() - start,
+        count,
+        server_auth_ms: serverTiming?.server_auth_ms,
+        server_route_ms: serverTiming?.server_route_ms,
+        server_handler_ms: serverTiming?.server_handler_ms,
+      });
 
       if (
         opts.waitForInterest &&
@@ -1389,8 +1401,12 @@ export class Client extends EventEmitter {
         (opts.timeout == null || Date.now() - start <= opts.timeout)
       ) {
         let timeout = opts.timeout ?? DEFAULT_WAIT_FOR_INTEREST_TIMEOUT;
+        const waitStart = Date.now();
         await this.waitForInterest(subject, {
           timeout: timeout ? timeout - (Date.now() - start) : undefined,
+        });
+        opts.phaseReporter?.("publish_wait_for_interest_done", {
+          elapsed_ms: Date.now() - waitStart,
         });
         if (this.isClosed()) {
           return { bytes, count };
@@ -1403,13 +1419,26 @@ export class Client extends EventEmitter {
           // i.e., will fail anyways due to network latency
           return { bytes, count };
         }
-        const { getCount, promise } = this._publish(subject, mesg, {
-          ...opts,
-          timeout,
-          confirm: true,
-        });
+        const { getCount, getServerTiming, promise } = this._publish(
+          subject,
+          mesg,
+          {
+            ...opts,
+            timeout,
+            confirm: true,
+          },
+        );
+        const retryStart = Date.now();
         await promise;
         count = getCount?.()!;
+        const retryServerTiming = getServerTiming?.();
+        opts.phaseReporter?.("publish_retry_done", {
+          elapsed_ms: Date.now() - retryStart,
+          count,
+          server_auth_ms: retryServerTiming?.server_auth_ms,
+          server_route_ms: retryServerTiming?.server_route_ms,
+          server_handler_ms: retryServerTiming?.server_handler_ms,
+        });
       }
       return { bytes, count };
     } catch (err) {
@@ -1431,6 +1460,7 @@ export class Client extends EventEmitter {
       confirm,
       timeout = DEFAULT_PUBLISH_TIMEOUT,
       noThrow,
+      phaseReporter: _phaseReporter,
     }: PublishOptions & { confirm?: boolean } = {},
   ) => {
     if (this.isClosed()) {
@@ -1457,6 +1487,13 @@ export class Client extends EventEmitter {
     let id = randomId();
     const promises: any[] = [];
     let count = 0;
+    let serverTiming:
+      | {
+          server_auth_ms?: number;
+          server_route_ms?: number;
+          server_handler_ms?: number;
+        }
+      | undefined;
     for (let i = 0; i < raw.length; i += chunkSize) {
       // !!FOR TESTING ONLY!!
       //       if (Math.random() <= 0.01) {
@@ -1517,6 +1554,20 @@ export class Client extends EventEmitter {
           try {
             const response = await f();
             count = Math.max(count, response.count ?? 0);
+            serverTiming = {
+              server_auth_ms:
+                typeof response?.serverAuthMs == "number"
+                  ? response.serverAuthMs
+                  : undefined,
+              server_route_ms:
+                typeof response?.serverRouteMs == "number"
+                  ? response.serverRouteMs
+                  : undefined,
+              server_handler_ms:
+                typeof response?.serverHandlerMs == "number"
+                  ? response.serverHandlerMs
+                  : undefined,
+            };
           } catch (err) {
             if (!noThrow) {
               throw err;
@@ -1533,6 +1584,7 @@ export class Client extends EventEmitter {
       return {
         bytes: raw.length,
         getCount: () => count,
+        getServerTiming: () => serverTiming,
         promise: Promise.all(promises),
       };
     }
@@ -1547,6 +1599,7 @@ export class Client extends EventEmitter {
     {
       timeout = DEFAULT_REQUEST_TIMEOUT,
       ignoreErrorHeader,
+      phaseReporter,
       ...options
     }: PublishOptions & { ignoreErrorHeader?: boolean } = {},
   ): Promise<Message> => {
@@ -1572,6 +1625,7 @@ export class Client extends EventEmitter {
     const opts = {
       ...options,
       timeout,
+      phaseReporter,
       headers: { ...options?.headers, [REPLY_HEADER]: inboxSubject },
     };
     const { count } = await this.publish(subject, mesg, opts);
@@ -1582,8 +1636,12 @@ export class Client extends EventEmitter {
         code: 503,
       });
     }
+    const responseWaitStart = Date.now();
     for await (const resp of sub) {
       sub.stop();
+      phaseReporter?.("response_received", {
+        elapsed_ms: Date.now() - responseWaitStart,
+      });
       if (!ignoreErrorHeader && resp.headers?.error) {
         throw headerToError(resp.headers);
       }
@@ -1848,6 +1906,15 @@ interface PublishOptions {
   // to ensure there is interest; however, it's not important to know
   // if there was an error sending or that sending worked.
   noThrow?: boolean;
+
+  phaseReporter?: (
+    phase:
+      | "publish_done"
+      | "publish_wait_for_interest_done"
+      | "publish_retry_done"
+      | "response_received",
+    details?: { [key: string]: number | boolean | undefined },
+  ) => void;
 }
 
 interface RequestManyOptions extends PublishOptions {

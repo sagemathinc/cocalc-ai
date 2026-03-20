@@ -1,0 +1,26 @@
+/*
+ *  This file is part of CoCalc: Copyright © 2026 Sagemath, Inc.
+ *  License: MS-RSL – see LICENSE.md for details
+ */
+
+import type { JSX } from "react";
+import PublicViewerFileContents from "./file-contents";
+import { mountPublicViewer } from "./shared";
+
+export function init(): void {
+  mountPublicViewer(
+    ({ config, content }): JSX.Element => (
+      <PublicViewerFileContents
+        content={content}
+        path={config.path}
+        rawUrl={config.rawUrl}
+        style={{
+          background: "#fff",
+          padding: "24px",
+          borderRadius: "12px",
+          boxShadow: "0 1px 4px rgba(15, 23, 42, 0.08)",
+        }}
+      />
+    ),
+  );
+}

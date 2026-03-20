@@ -107,6 +107,81 @@ describe("create very simple mocked jupyter runner and test evaluating code", ()
     ]);
   });
 
+  it("reports the run ack without waiting for it", async () => {
+    const seen: any[] = [];
+    let ack: any | undefined;
+    const iter = await client.run(cells, {
+      waitForAck: false,
+      run_id: "ack-test-run",
+      onAck: (value) => {
+        ack = value;
+      },
+    });
+    for await (const output of iter) {
+      seen.push(...output);
+    }
+    await wait({
+      until: () => ack != null,
+      timeout: 5_000,
+      interval: 25,
+      desc: "run ack callback",
+    });
+    expect(ack).toMatchObject({
+      run_id: "ack-test-run",
+    });
+    expect(typeof ack.server_received_at_ms).toBe("number");
+    expect(withoutRunId(seen)).toEqual([
+      { path, id: "0" },
+      { cells, id: "0" },
+    ]);
+  });
+
+  it("can receive the first batch before the delayed ack", async () => {
+    const delayedRawClient = connect();
+    let ackAt: number | null = null;
+    let firstBatchAt: number | null = null;
+    server.once("connection", (socket) => {
+      const origWrite = socket.write.bind(socket);
+      socket.write = (data, opts) => {
+        setTimeout(() => {
+          origWrite(data, opts);
+        }, 50);
+      };
+    });
+    const delayedClient = jupyterClient({
+      path,
+      project_id,
+      client: delayedRawClient,
+    });
+    const origRequest = delayedClient.socket.request.bind(delayedClient.socket);
+    delayedClient.socket.request = async (data, options) => {
+      await delay(50);
+      const resp = await origRequest(data, options);
+      await delay(50);
+      return resp;
+    };
+    try {
+      const iter = await delayedClient.run(cells, {
+        waitForAck: false,
+        run_id: "rtt-shim-run",
+        onAck: () => {
+          ackAt = Date.now();
+        },
+      });
+      for await (const _output of iter) {
+        if (firstBatchAt == null) {
+          firstBatchAt = Date.now();
+        }
+      }
+      expect(firstBatchAt).not.toBeNull();
+      expect(ackAt).not.toBeNull();
+      expect(firstBatchAt!).toBeLessThanOrEqual(ackAt!);
+    } finally {
+      delayedClient.close();
+      delayedRawClient.close();
+    }
+  });
+
   const count = 100;
   it(`run ${count} evaluations to ensure that the speed is reasonable (and also everything is kept properly ordered, etc.)`, async () => {
     const start = Date.now();

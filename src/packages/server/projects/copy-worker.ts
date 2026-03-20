@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import getLogger from "@cocalc/backend/logger";
 import type { LroSummary } from "@cocalc/conat/hub/api/lro";
+import { getEffectiveParallelOpsLimit } from "@cocalc/server/lro/worker-config";
 import {
   claimLroOps,
   getLro,
@@ -18,7 +19,7 @@ const OWNER_TYPE = "hub" as const;
 const LEASE_MS = 120_000;
 const HEARTBEAT_MS = 15_000;
 const TICK_MS = 5_000;
-const MAX_PARALLEL = 2;
+const DEFAULT_MAX_PARALLEL = 2;
 
 const WORKER_ID = randomUUID();
 
@@ -272,15 +273,34 @@ async function handleCopyOp(op: LroSummary): Promise<void> {
 
 export function startCopyLroWorker({
   intervalMs = TICK_MS,
-  maxParallel = MAX_PARALLEL,
+  maxParallel,
+}: {
+  intervalMs?: number;
+  maxParallel?: number;
 } = {}) {
   if (running) return () => undefined;
   running = true;
-  logger.info("starting copy LRO worker", { worker_id: WORKER_ID });
+  logger.info("starting copy LRO worker", {
+    worker_id: WORKER_ID,
+    max_parallel: maxParallel ?? "dynamic",
+  });
 
   const tick = async () => {
-    if (inFlight >= maxParallel) return;
-    const limit = Math.max(1, maxParallel - inFlight);
+    let effectiveMaxParallel = maxParallel;
+    if (effectiveMaxParallel == null) {
+      try {
+        const { value } = await getEffectiveParallelOpsLimit({
+          worker_kind: COPY_LRO_KIND,
+          default_limit: DEFAULT_MAX_PARALLEL,
+        });
+        effectiveMaxParallel = value;
+      } catch (err) {
+        logger.warn("copy op limit lookup failed", { err });
+        return;
+      }
+    }
+    if (inFlight >= effectiveMaxParallel) return;
+    const limit = Math.max(1, effectiveMaxParallel - inFlight);
     let ops: LroSummary[] = [];
     try {
       ops = await claimLroOps({

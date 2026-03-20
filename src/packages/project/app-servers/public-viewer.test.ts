@@ -42,14 +42,24 @@ async function httpGet(
 describe("static public viewer mode", () => {
   const originalHome = process.env.HOME;
   const originalSecretPath = process.env.COCALC_SECRET_TOKEN;
+  const originalStaticPath = process.env.COCALC_STATIC_PATH;
   const testHome = mkdtempSync(join(tmpdir(), "cocalc-public-viewer-"));
+  const testStatic = mkdtempSync(
+    join(tmpdir(), "cocalc-public-viewer-static-"),
+  );
   const secretPath = join(testHome, "secret-token");
   const secretValue = "public-viewer-secret-token";
 
   beforeAll(() => {
     process.env.HOME = testHome;
     process.env.COCALC_SECRET_TOKEN = secretPath;
+    process.env.COCALC_STATIC_PATH = testStatic;
     writeFileSync(secretPath, secretValue, "utf8");
+    writeFileSync(
+      join(testStatic, "public-viewer.html"),
+      '<!doctype html><html><head><script defer src="load-test.js"></script><script defer src="public-viewer-test.js"></script></head><body><div id="cocalc-webapp-container"></div></body></html>\n',
+      "utf8",
+    );
   });
 
   afterAll(() => {
@@ -57,7 +67,10 @@ describe("static public viewer mode", () => {
     else process.env.HOME = originalHome;
     if (originalSecretPath == null) delete process.env.COCALC_SECRET_TOKEN;
     else process.env.COCALC_SECRET_TOKEN = originalSecretPath;
+    if (originalStaticPath == null) delete process.env.COCALC_STATIC_PATH;
+    else process.env.COCALC_STATIC_PATH = originalStaticPath;
     rmSync(testHome, { recursive: true, force: true });
+    rmSync(testStatic, { recursive: true, force: true });
   });
 
   test("normalizes public viewer integration defaults and exposes them for routing", async () => {
@@ -191,7 +204,7 @@ describe("static public viewer mode", () => {
       );
       expect(page.body).toContain("Course Notes");
       expect(page.body).toContain("Read Me");
-      expect(page.body).toContain("viewer planned");
+      expect(page.body).toContain("viewer page");
       expect(page.body).toContain("Open manifest JSON");
 
       const manifest = await httpGet(
@@ -211,8 +224,24 @@ describe("static public viewer mode", () => {
         },
       );
       expect(markdown.statusCode).toBe(200);
-      expect(markdown.headers["content-type"]).toContain("text/markdown");
-      expect(markdown.body).toContain("# Hello public viewer");
+      expect(markdown.headers["content-type"]).toContain("text/html");
+      expect(markdown.body).toContain("cocalc-public-viewer-config");
+      expect(markdown.body).toContain(
+        "{&quot;path&quot;:&quot;/docs/readme.md&quot;",
+      );
+      expect(markdown.body).toContain("&quot;rawUrl&quot;:&quot;?raw=1&quot;");
+      expect(markdown.body).toContain("/static/load-test.js");
+      expect(markdown.body).toContain("/static/public-viewer-test.js");
+
+      const markdownRaw = await httpGet(
+        `http://127.0.0.1:${proxyPort}/${project_id}/apps/${id}/docs/readme.md?raw=1`,
+        {
+          [PROJECT_PROXY_AUTH_HEADER]: secretToken,
+        },
+      );
+      expect(markdownRaw.statusCode).toBe(200);
+      expect(markdownRaw.headers["content-type"]).toContain("text/markdown");
+      expect(markdownRaw.body).toContain("# Hello public viewer");
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
       await deleteApp(id);

@@ -150,6 +150,7 @@ function runCliJson(
     hubPassword,
     accountId,
     timeout = "15m",
+    rpcTimeout = "",
     cliPath,
     cwd = ROOT,
     env = process.env,
@@ -164,6 +165,9 @@ function runCliJson(
     "--timeout",
     timeout,
   ];
+  if (`${rpcTimeout ?? ""}`.trim()) {
+    fullArgs.push("--rpc-timeout", `${rpcTimeout}`.trim());
+  }
   const password = resolveHubPassword(hubPassword);
   if (password) {
     fullArgs.push("--hub-password", password);

@@ -89,6 +89,14 @@ export function startedUp() {
   }
 }
 
+export function finishedLoading() {
+  const load = document.getElementById("cocalc-load-container");
+  if (load != null) {
+    load.innerHTML = "";
+    load.remove();
+  }
+}
+
 function isWhitelisted({ error }): boolean {
   try {
     const stack = `${error?.stack ?? error}`;

@@ -5,7 +5,8 @@
 
 import type { ButtonProps } from "antd";
 import { Button } from "antd";
-import { CSSProperties, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
+import type { CSSProperties } from "react";
 import { useIntl } from "react-intl";
 
 import {
@@ -30,6 +31,9 @@ interface Props {
   type?: "default"; // only used to turn off color in case of dark mode right now
 }
 
+const CONNECTING_INDICATOR_DELAY_MS = 2000;
+const READ_ONLY_INDICATOR_DELAY_MS = 2000;
+
 export function SaveButton({
   has_unsaved_changes,
   has_uncommitted_changes,
@@ -45,19 +49,43 @@ export function SaveButton({
   type,
 }: Props) {
   const intl = useIntl();
+  const [showConnecting, setShowConnecting] = useState(false);
+  const [showReadOnly, setShowReadOnly] = useState(false);
+
+  useEffect(() => {
+    if (!is_connecting) {
+      setShowConnecting(false);
+      return;
+    }
+    const timer = globalThis.setTimeout(() => {
+      setShowConnecting(true);
+    }, CONNECTING_INDICATOR_DELAY_MS);
+    return () => globalThis.clearTimeout(timer);
+  }, [is_connecting]);
+
+  useEffect(() => {
+    if (!read_only) {
+      setShowReadOnly(false);
+      return;
+    }
+    const timer = globalThis.setTimeout(() => {
+      setShowReadOnly(true);
+    }, READ_ONLY_INDICATOR_DELAY_MS);
+    return () => globalThis.clearTimeout(timer);
+  }, [read_only]);
 
   const label = useMemo(() => {
-    if (!no_labels || read_only || is_connecting) {
-      if (is_connecting) {
+    if (!no_labels || showReadOnly || showConnecting) {
+      if (showConnecting) {
         return intl.formatMessage(labels.frame_editors_title_bar_connecting);
       }
       return intl.formatMessage(labels.frame_editors_title_bar_save_label, {
-        type: read_only ? "read_only" : "save",
+        type: showReadOnly ? "read_only" : "save",
       });
     } else {
       return null;
     }
-  }, [no_labels, read_only, is_connecting]);
+  }, [intl, no_labels, showConnecting, showReadOnly]);
 
   const disabled = useMemo(
     () => !has_unsaved_changes || !!read_only,
@@ -66,8 +94,8 @@ export function SaveButton({
 
   const icon = useMemo(
     () =>
-      is_connecting ? "spinner" : is_saving ? "arrow-circle-o-left" : "save",
-    [is_connecting, is_saving],
+      showConnecting ? "spinner" : is_saving ? "arrow-circle-o-left" : "save",
+    [showConnecting, is_saving],
   );
 
   function renderLabel() {
@@ -95,7 +123,7 @@ export function SaveButton({
     >
       <Icon
         name={icon}
-        spin={!!is_connecting || !!is_saving}
+        spin={!!showConnecting || !!is_saving}
         style={{ display: "inline-block" }}
       />
       {renderLabel()}

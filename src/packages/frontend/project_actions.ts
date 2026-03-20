@@ -118,6 +118,7 @@ import {
 } from "@cocalc/util/consts/snapshots";
 import { getSearch } from "@cocalc/frontend/project/explorer/config";
 import dust from "@cocalc/frontend/project/disk-usage/dust";
+import { withProjectHostBase } from "@cocalc/frontend/project/host-url";
 import { EditorLoadError } from "./file-editors-error";
 import { lite } from "@cocalc/frontend/lite";
 import { normalizeAbsolutePath } from "@cocalc/util/path-model";
@@ -3084,6 +3085,29 @@ export class ProjectActions extends Actions<ProjectStoreState> {
         break;
 
       case "apps":
+        if (segments.length > 1 && segments[1]) {
+          try {
+            const rawUrl =
+              withProjectHostBase(
+                this.project_id,
+                `/apps/${segments.slice(1).join("/")}`,
+              ) ?? `/apps/${segments.slice(1).join("/")}`;
+            const authedUrl =
+              await webapp_client.conat_client.addProjectHostAuthToUrl({
+                project_id: this.project_id,
+                url: rawUrl,
+              });
+            if (typeof window !== "undefined") {
+              window.location.assign(authedUrl);
+              return;
+            }
+          } catch (err) {
+            console.warn("project/load_target: failed app handoff", err);
+          }
+        }
+        this.set_active_tab("servers", { change_history: change_history });
+        break;
+
       case "servers":
         this.set_active_tab("servers", { change_history: change_history });
         break;

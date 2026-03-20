@@ -8,6 +8,51 @@ import { Command } from "commander";
 
 import type { ProjectCommandDeps } from "../project";
 
+export function getProjectExecTimeoutSeconds(argv = process.argv): number {
+  const timeout = extractProjectExecTimeout(argv);
+  if (timeout != null && Number.isFinite(timeout) && timeout > 0) {
+    return timeout;
+  }
+  return 60;
+}
+
+function extractProjectExecTimeout(argv: string[]): number | null {
+  const start = findProjectExecArgs(argv);
+  if (start === -1) {
+    return null;
+  }
+  for (let i = start; i < argv.length; i += 1) {
+    const token = argv[i];
+    if (token === "--") {
+      break;
+    }
+    if (!token.startsWith("-")) {
+      break;
+    }
+    if (token === "--timeout") {
+      const value = Number(argv[i + 1] ?? "");
+      return Number.isFinite(value) ? value : null;
+    }
+    if (token.startsWith("--timeout=")) {
+      const value = Number(token.slice("--timeout=".length));
+      return Number.isFinite(value) ? value : null;
+    }
+    if (token === "--project" || token === "-w" || token === "--path") {
+      i += 1;
+    }
+  }
+  return null;
+}
+
+function findProjectExecArgs(argv: string[]): number {
+  for (let i = 0; i < argv.length - 1; i += 1) {
+    if (argv[i] === "project" && argv[i + 1] === "exec") {
+      return i + 2;
+    }
+  }
+  return -1;
+}
+
 export function registerProjectBasicCommands(
   project: Command,
   deps: ProjectCommandDeps,
@@ -459,7 +504,10 @@ export function registerProjectBasicCommands(
             throw new Error("command is required");
           }
           const ws = await resolveProjectFromArgOrContext(ctx, opts.project);
-          const timeout = Number(opts.timeout ?? "60");
+          const timeout =
+            opts.timeout != null && Number(opts.timeout) !== 60
+              ? Number(opts.timeout)
+              : getProjectExecTimeoutSeconds();
           const [first, ...rest] = execArgs;
           const execOpts = opts.bash
             ? {

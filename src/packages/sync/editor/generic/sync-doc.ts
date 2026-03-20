@@ -82,7 +82,27 @@ const BACKEND_FS_WATCH_DISABLED_EXTENSIONS = new Set(["chat", "sage-chat"]);
 
 export type State = "init" | "ready" | "closed";
 export type DataServer = "project" | "database";
-export type SyncDocOpenPhase = "open_start" | "sync_ready";
+export type SyncDocOpenPhase =
+  | "open_start"
+  | "canonicalize_identity_start"
+  | "canonicalize_identity_done"
+  | "syncstring_table_start"
+  | "syncstring_table_done"
+  | "backend_fs_watch_start"
+  | "backend_fs_watch_done"
+  | "backend_fs_reconcile_start"
+  | "backend_fs_reconcile_done"
+  | "patchflow_init_start"
+  | "patchflow_init_done"
+  | "patches_table_start"
+  | "patches_table_done"
+  | "patchflow_session_start"
+  | "patchflow_session_done"
+  | "cursor_presence_start"
+  | "cursor_presence_done"
+  | "cursors_start"
+  | "cursors_done"
+  | "sync_ready";
 
 export interface SyncOpts0 {
   project_id: string;
@@ -192,6 +212,16 @@ export function patchesHaveFullHistoryFromPatches(
   return (first.parents?.length ?? 0) === 0;
 }
 
+const PATCH_DOC_METADATA_VERSION = 1;
+const LATEST_SNAPSHOT_CHECKPOINT = "latest_snapshot";
+
+interface PatchDocMetadataV1 {
+  version: 1;
+  users?: string[];
+  snapshot_interval?: number;
+  settings?: JSONValue;
+}
+
 export class SyncDoc extends EventEmitter {
   static events = new EventEmitter();
   static lite = false;
@@ -229,8 +259,9 @@ export class SyncDoc extends EventEmitter {
 
   private state: State = "init";
 
-  private syncstring_table: SyncTable;
+  private syncstring_table?: SyncTable;
   public patches_table: SyncTable;
+  private syncMetadata: Map<string, any> = Map();
 
   public ipywidgets_state?: IpywidgetsState;
 
@@ -263,6 +294,9 @@ export class SyncDoc extends EventEmitter {
   private persistent: boolean = false;
 
   private last_has_unsaved_changes?: boolean = undefined;
+  private localEditsSinceDiskBaseline = false;
+  private diskMissingOnLoad = false;
+  private diskBaselineRequestId = 0;
 
   private ephemeral: boolean = false;
 
@@ -275,7 +309,7 @@ export class SyncDoc extends EventEmitter {
   private readonly openStartedAtMs: number = Date.now();
 
   private emitOpenPhase = (
-    phase: SyncDocOpenPhase,
+    phase: SyncDocOpenPhase | string,
     details?: { [key: string]: string | number | boolean | undefined },
   ): void => {
     const payload = {
@@ -289,6 +323,15 @@ export class SyncDoc extends EventEmitter {
     this.emit("open-phase", payload);
   };
 
+  private makeConatInitPhaseReporter = (prefix: string) => {
+    return (
+      phase: string,
+      details?: { [key: string]: string | number | boolean | undefined },
+    ) => {
+      this.emitOpenPhase(`${prefix}.${phase}`, details);
+    };
+  };
+
   // The isDeleted flag is set to true if the file existed and then
   // was actively deleted after the session started. It would
   // then only be set back to false if the file appears again.
@@ -299,6 +342,18 @@ export class SyncDoc extends EventEmitter {
       this.isDeleted = true;
       this.emit("deleted");
     }
+  };
+
+  private markLocalUnsavedChange = (): void => {
+    if (this.state !== "ready") {
+      return;
+    }
+    this.localEditsSinceDiskBaseline = true;
+  };
+
+  private emitUserChange = (): void => {
+    this.markLocalUnsavedChange();
+    this.emit("user-change");
   };
 
   constructor(opts: SyncOpts) {
@@ -357,7 +412,7 @@ export class SyncDoc extends EventEmitter {
     }
     this._from_str = opts.from_str;
 
-    // Initialize to time when we create the syncstring, so we don't
+    // Initialize to creation time, so we don't
     // see our own cursor when we refresh the browser (before we move
     // to update this).
     this.cursor_last_time = this.client?.server_time();
@@ -585,6 +640,7 @@ export class SyncDoc extends EventEmitter {
     }
     if (exit_undo_mode) this.exit_undo_mode();
     // console.log(`sync-doc.set_doc("${doc.to_str()}")`);
+    this.markLocalUnsavedChange();
     this.doc = doc;
 
     // debounced, so don't immediately alert, in case there are many
@@ -626,6 +682,7 @@ export class SyncDoc extends EventEmitter {
   // Set this doc from its string representation.
   from_str = (value: string): void => {
     // console.log(`sync-doc.from_str("${value}")`);
+    this.markLocalUnsavedChange();
     this.doc = this._from_str(value);
   };
 
@@ -700,7 +757,7 @@ export class SyncDoc extends EventEmitter {
     this.doc = next;
     this.last = next;
     if (!this.documentsEqual(prev, next)) {
-      this.emit("user-change");
+      this.emitUserChange();
       this.emit_change();
     }
     return next;
@@ -715,7 +772,7 @@ export class SyncDoc extends EventEmitter {
     this.doc = next;
     this.last = next;
     if (!this.documentsEqual(prev, next)) {
-      this.emit("user-change");
+      this.emitUserChange();
       this.emit_change();
     }
     return next;
@@ -771,16 +828,132 @@ export class SyncDoc extends EventEmitter {
     return patch.userId ?? 0;
   };
 
+  private getDocumentMetadataState = (): Map<string, any> => {
+    if (this.syncstring_table != null) {
+      const t = this.syncstring_table.get_one();
+      if (t != null) {
+        return t;
+      }
+    }
+    const dstream = (this.patches_table as any)?.dstream;
+    if (
+      typeof dstream?.getMetadata === "function" &&
+      typeof dstream?.getCheckpoint === "function"
+    ) {
+      const rawMetadata = dstream.getMetadata();
+      const metadata =
+        rawMetadata != null &&
+        typeof rawMetadata === "object" &&
+        !Array.isArray(rawMetadata)
+          ? (rawMetadata as PatchDocMetadataV1)
+          : undefined;
+      const checkpoint = dstream.getCheckpoint(LATEST_SNAPSHOT_CHECKPOINT) as
+        | { seq: number; data?: { patchId?: string } }
+        | undefined;
+      this.setSyncMetadataState({ metadata, checkpoint });
+    }
+    return this.syncMetadata ?? Map();
+  };
+
+  // Compatibility shim for older tests and callers that still probe the
+  // legacy syncstring state directly.
   private syncstring_table_get_one = (): Map<string, any> => {
-    if (this.syncstring_table == null) {
-      throw Error("syncstring_table must be defined");
+    return this.getDocumentMetadataState();
+  };
+
+  private normalizedUsers = (users?: string[]): string[] => {
+    const normalized = [FILESYSTEM_CLIENT_ID];
+    for (const user of users ?? []) {
+      if (user == null || user === FILESYSTEM_CLIENT_ID) {
+        continue;
+      }
+      if (!normalized.includes(user)) {
+        normalized.push(user);
+      }
     }
-    const t = this.syncstring_table.get_one();
-    if (t == null) {
-      // project has not initialized it yet.
-      return Map();
+    return normalized;
+  };
+
+  private patchDocMetadataFromState = (): PatchDocMetadataV1 => {
+    return {
+      version: PATCH_DOC_METADATA_VERSION,
+      users: this.normalizedUsers(this.users),
+      snapshot_interval: this.snapshot_interval,
+      settings: this.settings?.toJS?.() ?? this.settings,
+    };
+  };
+
+  private setSyncMetadataState = ({
+    metadata,
+    checkpoint,
+  }: {
+    metadata?: PatchDocMetadataV1;
+    checkpoint?: { seq: number; data?: { patchId?: string } };
+  }): void => {
+    this.syncMetadata = fromJS({
+      string_id: this.string_id,
+      project_id: this.project_id,
+      path: this.syncPath,
+      users: metadata?.users,
+      snapshot_interval: metadata?.snapshot_interval,
+      settings: metadata?.settings ?? {},
+      last_snapshot: checkpoint?.data?.patchId,
+      last_seq: checkpoint?.seq,
+    });
+  };
+
+  private loadPatchBootstrap = async (): Promise<void> => {
+    const dbg = this.dbg("loadPatchBootstrap");
+    const dstream = this.dstream();
+    const rawMetadata = dstream.getMetadata();
+    const metadata =
+      rawMetadata != null &&
+      typeof rawMetadata === "object" &&
+      !Array.isArray(rawMetadata)
+        ? (rawMetadata as PatchDocMetadataV1)
+        : undefined;
+    const checkpoint = dstream.getCheckpoint?.(LATEST_SNAPSHOT_CHECKPOINT) as
+      | { seq: number; data?: { patchId?: string } }
+      | undefined;
+
+    this.setLastSnapshot(
+      typeof checkpoint?.data?.patchId === "string"
+        ? checkpoint.data.patchId
+        : undefined,
+    );
+    this.last_seq = checkpoint?.seq;
+    this.snapshot_interval =
+      metadata?.snapshot_interval ?? DEFAULT_SNAPSHOT_INTERVAL;
+    this.settings = fromJS(metadata?.settings ?? {}) as Map<string, any>;
+    this.history_epoch = this.metadataHistoryEpoch(this.settings);
+    this.users = this.normalizedUsers(metadata?.users);
+    this.setSyncMetadataState({ metadata, checkpoint });
+
+    if (this.client != null) {
+      const client_id = this.client_id();
+      let idx = this.users.indexOf(client_id);
+      if (idx === -1) {
+        this.users.push(client_id);
+        idx = this.users.length - 1;
+        await this.setDocumentMetadata({ users: this.users });
+      }
+      this.my_user_id = Math.max(1, idx);
+    } else {
+      this.my_user_id = 1;
     }
-    return t;
+
+    if (metadata == null || metadata.users == null) {
+      dbg("initializing patch metadata for new document");
+      await this.setDocumentMetadata({
+        users: this.users,
+        snapshot_interval: this.snapshot_interval,
+        settings: this.settings,
+      });
+    }
+
+    this.applyPatchWriteHeaders();
+    this.emit("metadata-change");
+    this.emit("settings-change", this.settings);
   };
 
   /* List of patch ids of the versions of this string in the sync
@@ -968,6 +1141,7 @@ export class SyncDoc extends EventEmitter {
       }
     }
     if (this.useConat && query.patches) {
+      const start_checkpoint = LATEST_SNAPSHOT_CHECKPOINT;
       synctable = await this.client.synctable_conat(query, {
         obj: {
           project_id: this.project_id,
@@ -976,18 +1150,18 @@ export class SyncDoc extends EventEmitter {
         stream: true,
         atomic: true,
         desc: { path: this.syncPath },
-        start_seq: this.last_seq,
+        start_checkpoint,
         ephemeral,
         noAutosave: this.noAutosave,
+        initPhaseReporter:
+          this.makeConatInitPhaseReporter("patches_corestream"),
       });
 
-      if (this.last_seq) {
-        // any possibility last_seq is wrong?
+      // If the checkpoint is stale or otherwise wrong, fall back to a full load.
+      const checkpoint = synctable.dstream.getCheckpoint?.(start_checkpoint);
+      if (checkpoint != null) {
         if (!isCompletePatchStream(synctable.dstream)) {
-          // we load everything and fix it.  This happened
-          // for data moving to conat when the seq numbers changed.
           console.log("updating invalid timetravel -- ", this.path);
-
           synctable.close();
           synctable = await this.client.synctable_conat(query, {
             obj: {
@@ -999,39 +1173,37 @@ export class SyncDoc extends EventEmitter {
             desc: { path: this.syncPath },
             ephemeral,
             noAutosave: this.noAutosave,
+            initPhaseReporter:
+              this.makeConatInitPhaseReporter("patches_corestream"),
           });
-
-          // also find the correct last_seq:
+          let repaired = false;
           let n = synctable.dstream.length - 1;
           for (; n >= 0; n--) {
             const x = synctable.dstream[n];
             if (x?.is_snapshot) {
               const time = x.time;
-              // find the seq number with time
               let m = n - 1;
-              let last_seq = 0;
+              let last_seq = synctable.dstream.seq(n) ?? 0;
               while (m >= 1) {
                 if (synctable.dstream[m].time == time) {
-                  last_seq = synctable.dstream.seq(m);
+                  last_seq = synctable.dstream.seq(m) ?? last_seq;
                   break;
                 }
                 m -= 1;
               }
-              this.last_seq = last_seq;
-              await this.set_syncstring_table({
-                last_snapshot: time,
-                last_seq,
+              await synctable.dstream.setCheckpoint({
+                name: LATEST_SNAPSHOT_CHECKPOINT,
+                seq: last_seq,
+                data: { patchId: time },
               });
-              this.setLastSnapshot(time);
+              repaired = true;
               break;
             }
           }
-          if (n == -1) {
-            // no snapshot?  should never happen, but just in case.
-            delete this.last_seq;
-            await this.set_syncstring_table({
-              last_seq: undefined,
-            });
+          if (!repaired) {
+            await synctable.dstream.deleteCheckpoint(
+              LATEST_SNAPSHOT_CHECKPOINT,
+            );
           }
         }
       }
@@ -1047,6 +1219,9 @@ export class SyncDoc extends EventEmitter {
         desc: { path: this.syncPath },
         ephemeral,
         noAutosave: this.noAutosave,
+        initPhaseReporter: this.makeConatInitPhaseReporter(
+          "syncstring_corestream",
+        ),
       });
     } else if (this.useConat && query.ipywidgets) {
       synctable = await this.client.synctable_conat(query, {
@@ -1164,24 +1339,43 @@ export class SyncDoc extends EventEmitter {
     this.assert_not_closed(
       "initAll -- before init patchflow, cursors, ipywidgets",
     );
-    // Ensure we load syncstring metadata (including last_snapshot/last_seq)
-    // before opening the patches table, so we don't fetch the entire history
-    // when a snapshot is available.
+    this.emitOpenPhase("canonicalize_identity_start");
     await this.canonicalizeFsIdentity();
-    await this.init_syncstring_table();
-    const useBackendFsWatch = this.shouldUseBackendFsWatch();
-    // For watched doctypes, prime sync-fs reconciliation first so the patch
-    // stream reflects current on-disk content before we load it into this
-    // client session.
-    if (useBackendFsWatch) {
-      await this.startBackendFsWatch();
-      await this.reconcileBackendFsState();
+    this.emitOpenPhase("canonicalize_identity_done");
+    if (!this.useConat) {
+      this.emitOpenPhase("syncstring_table_start");
+      await this.init_syncstring_table();
+      this.emitOpenPhase("syncstring_table_done");
     }
+    if (this.cursors) {
+      void this.getCursorPresenceAdapter().catch((err) => {
+        this.dbg("getCursorPresenceAdapter")(
+          `prewarm failed: ${err?.message ?? err}`,
+        );
+      });
+    }
+    // Prime backend sync-fs reconciliation first so the patch stream reflects
+    // current on-disk content before we load it into this client session.
+    this.emitOpenPhase("backend_fs_watch_start");
+    await this.startBackendFsWatch();
+    this.emitOpenPhase("backend_fs_watch_done");
+    this.emitOpenPhase("backend_fs_reconcile_start");
+    await this.reconcileBackendFsState();
+    this.emitOpenPhase("backend_fs_reconcile_done");
+    void this.refreshInitialDiskBaseline();
+    this.emitOpenPhase("patchflow_init_start");
     await this.init_patchflow();
-    if (!useBackendFsWatch) {
+    this.emitOpenPhase("patchflow_init_done");
+    if (!this.shouldUseBackendFsWatch()) {
       await this.seedNoWatchDocFromDiskIfEmpty();
     }
-    await Promise.all([this.init_cursors()]);
+    if (this.cursors) {
+      this.emitOpenPhase("cursors_start");
+      await Promise.all([this.init_cursors()]);
+      this.emitOpenPhase("cursors_done");
+    } else {
+      await Promise.all([this.init_cursors()]);
+    }
     this.assert_not_closed(
       "initAll -- successful init patchflow, cursors, and ipywidgets",
     );
@@ -1249,7 +1443,7 @@ export class SyncDoc extends EventEmitter {
       wall: null,
       // compressed format patch as a JSON *string*
       patch: null,
-      // integer id of user (maps to syncstring table)
+      // integer id of user (maps to the metadata.users array)
       user_id: null,
       // (optional) a snapshot at this point in time
       snapshot: null,
@@ -1265,8 +1459,7 @@ export class SyncDoc extends EventEmitter {
   };
 
   private setLastSnapshot(last_snapshot?: PatchId) {
-    // only set last_snapshot here, so we can keep it in sync with the syncstring table
-    // and also be certain about the data type (being PatchId string or undefined).
+    // Keep the cached latest-snapshot patch id normalized in one place.
     this.last_snapshot = last_snapshot;
   }
 
@@ -1276,9 +1469,18 @@ export class SyncDoc extends EventEmitter {
     dbg();
 
     dbg("opening the table...");
-    const query = { patches: [this.patch_table_query(this.last_snapshot)] };
+    this.emitOpenPhase("patches_table_start");
+    const query = {
+      patches: [
+        this.patch_table_query(this.useConat ? undefined : this.last_snapshot),
+      ],
+    };
     this.patches_table = await this.synctable(query, [], this.patch_interval);
+    this.emitOpenPhase("patches_table_done");
     this.assert_not_closed("init_patchflow -- after making synctable");
+    if (this.useConat) {
+      await this.loadPatchBootstrap();
+    }
     this.applyPatchWriteHeaders();
 
     const update_has_unsaved_changes = debounce(
@@ -1295,7 +1497,9 @@ export class SyncDoc extends EventEmitter {
       update_has_unsaved_changes();
     });
 
+    this.emitOpenPhase("patchflow_session_start");
     await this.initPatchflowSession();
+    this.emitOpenPhase("patchflow_session_done");
 
     // Ensure doc/last are initialized even if listeners run before ready state.
     if (this.patchflowReady() && this.patchflowSession != null) {
@@ -1317,13 +1521,14 @@ export class SyncDoc extends EventEmitter {
     const dbg = this.dbg("initPatchflowSession");
     this.patchflowCodec = this.buildPatchflowCodec();
     this.patchflowStore = this.createPatchflowStore();
+    const presenceAdapter = await this.getCursorPresenceAdapter();
     this.patchflowSession = new PatchflowSession({
       codec: this.patchflowCodec,
       patchStore: this.patchflowStore,
       clock: () => this.client?.server_time().valueOf() ?? Date.now(),
       userId: this.my_user_id ?? 1,
       docId: this.string_id,
-      presenceAdapter: await this.createCursorPresenceAdapter(),
+      presenceAdapter,
     });
     if (this.cursors) {
       this.patchflowSession.on("cursors", this.handlePatchflowCursors);
@@ -1353,6 +1558,20 @@ export class SyncDoc extends EventEmitter {
 
     this.emit("patchflow-ready");
   });
+
+  private getCursorPresenceAdapter = reuseInFlight(
+    async (): Promise<PatchflowPresenceAdapter | undefined> => {
+      if (!this.cursors) {
+        return;
+      }
+      this.emitOpenPhase("cursor_presence_start");
+      try {
+        return await this.createCursorPresenceAdapter();
+      } finally {
+        this.emitOpenPhase("cursor_presence_done");
+      }
+    },
+  );
 
   init_ipywidgets = reuseInFlight(async () => {
     if (this.ipywidgets_state != null) {
@@ -1508,7 +1727,7 @@ export class SyncDoc extends EventEmitter {
    */
   set_settings = async (obj): Promise<void> => {
     this.assert_is_ready("set_settings");
-    await this.set_syncstring_table({
+    await this.setDocumentMetadata({
       settings: obj,
     });
   };
@@ -1520,7 +1739,7 @@ export class SyncDoc extends EventEmitter {
   // get settings object
   get_settings = (): Map<string, any> => {
     this.assert_is_ready("get_settings");
-    return this.syncstring_table_get_one().get("settings", Map());
+    return this.getDocumentMetadataState().get("settings", Map());
   };
 
   /*
@@ -1554,7 +1773,7 @@ export class SyncDoc extends EventEmitter {
     // Compute any patches.
     while (!this.doc.is_equal(this.last)) {
       dbg("something to save");
-      this.emit("user-change");
+      this.emitUserChange();
       if (!this.commit()) {
         // Could not commit (e.g., patchflow not ready)
         break;
@@ -1669,6 +1888,11 @@ export class SyncDoc extends EventEmitter {
       snapshot,
       user_id,
       seq_info,
+      __checkpoint: {
+        name: LATEST_SNAPSHOT_CHECKPOINT,
+        seq: seq_info.seq,
+        data: { patchId: time },
+      },
     };
     this.patches_table.set(obj);
     await this.patches_table.save();
@@ -1677,12 +1901,15 @@ export class SyncDoc extends EventEmitter {
     }
 
     const last_seq = seq_info.seq;
-    await this.set_syncstring_table({
-      last_snapshot: time,
-      last_seq,
-    });
     this.setLastSnapshot(time);
     this.last_seq = last_seq;
+    this.setSyncMetadataState({
+      metadata: this.patchDocMetadataFromState(),
+      checkpoint: {
+        seq: last_seq,
+        data: { patchId: time },
+      },
+    });
   });
 
   // Have a snapshot every this.snapshot_interval patches, except
@@ -2098,10 +2325,9 @@ export class SyncDoc extends EventEmitter {
   };
 
   set_snapshot_interval = async (n: number): Promise<void> => {
-    await this.set_syncstring_table({
+    await this.setDocumentMetadata({
       snapshot_interval: n,
     });
-    await this.syncstring_table.save();
   };
 
   get_last_save_to_disk_time = (): Date => {
@@ -2129,7 +2355,6 @@ export class SyncDoc extends EventEmitter {
   };
 
   private handle_syncstring_update_new_document = async (): Promise<void> => {
-    // Brand new document
     this.emit("load-time-estimate", { type: "new", time: 1 });
     this.setLastSnapshot();
     this.last_seq = undefined;
@@ -2137,10 +2362,6 @@ export class SyncDoc extends EventEmitter {
       schema.SCHEMA.syncstrings.user_query?.get?.fields.snapshot_interval ??
       DEFAULT_SNAPSHOT_INTERVAL;
 
-    // Brand new syncstring
-    // TODO: worry about race condition with everybody making themselves
-    // have user_id 0... and also setting doctype.
-    // Reserve slot 0 for filesystem-originated patches; first user starts at 1.
     this.my_user_id = 1;
     this.users = [FILESYSTEM_CLIENT_ID, this.client.client_id()];
     const obj = {
@@ -2152,8 +2373,8 @@ export class SyncDoc extends EventEmitter {
       doctype: JSON.stringify(this.doctype),
       last_active: this.client.server_time(),
     };
-    this.syncstring_table.set(obj);
-    await this.syncstring_table.save();
+    this.syncstring_table?.set(obj);
+    await this.syncstring_table?.save();
     this.settings = Map();
     this.history_epoch = undefined;
     this.applyPatchWriteHeaders();
@@ -2194,13 +2415,10 @@ export class SyncDoc extends EventEmitter {
     if (this.state === "closed") {
       return;
     }
-    // Existing document.
 
     if (this.path == null) {
-      // We just opened the file -- emit a load time estimate.
       this.emit("load-time-estimate", { type: "ready", time: 1 });
     }
-    // TODO: handle doctype change here (?)
     this.setLastSnapshot(x.last_snapshot);
     this.last_seq = x.last_seq;
     this.snapshot_interval = x.snapshot_interval ?? DEFAULT_SNAPSHOT_INTERVAL;
@@ -2248,21 +2466,19 @@ export class SyncDoc extends EventEmitter {
     }
 
     if (this.client != null) {
-      // Ensure that this client is in the list of clients and uses a non-reserved slot.
       const client_id: string = this.client_id();
       let idx = this.users.indexOf(client_id);
       if (idx === -1) {
         this.users.push(client_id);
         idx = this.users.length - 1;
-        await this.set_syncstring_table({ users: this.users });
+        await this.setDocumentMetadata({ users: this.users });
       } else if (
         idx === FILESYSTEM_USER_ID &&
         this.users[idx] !== FILESYSTEM_CLIENT_ID
       ) {
-        // Slot 0 is reserved for filesystem patches; if we collide, append a new slot.
         this.users.push(client_id);
         idx = this.users.length - 1;
-        await this.set_syncstring_table({ users: this.users });
+        await this.setDocumentMetadata({ users: this.users });
       }
       this.my_user_id = Math.max(1, idx);
     }
@@ -2443,6 +2659,46 @@ export class SyncDoc extends EventEmitter {
       return;
     }
     return this.hasUnsavedChanges();
+  };
+
+  private refreshInitialDiskBaseline = async (): Promise<void> => {
+    const requestId = ++this.diskBaselineRequestId;
+    try {
+      const exists = await this.fs.exists(this.path);
+      if (this.isClosed() || requestId !== this.diskBaselineRequestId) {
+        return;
+      }
+      if (!exists) {
+        this.valueOnDisk = undefined;
+        this.diskMissingOnLoad = true;
+        this.update_has_unsaved_changes();
+        return;
+      }
+      this.diskMissingOnLoad = false;
+      const rawValueOnDisk = await this.fs.readFile(this.path, "utf8");
+      const valueOnDisk =
+        typeof rawValueOnDisk === "string"
+          ? rawValueOnDisk
+          : rawValueOnDisk.toString("utf8");
+      if (this.isClosed() || requestId !== this.diskBaselineRequestId) {
+        return;
+      }
+      this.valueOnDisk = valueOnDisk;
+      this.update_has_unsaved_changes();
+    } catch (err) {
+      if (this.isClosed() || requestId !== this.diskBaselineRequestId) {
+        return;
+      }
+      const code =
+        typeof err === "object" && err != null && "code" in err
+          ? (err as any).code
+          : undefined;
+      if (code === "ENOENT") {
+        this.valueOnDisk = undefined;
+        this.diskMissingOnLoad = true;
+        this.update_has_unsaved_changes();
+      }
+    }
   };
 
   // Returns hash of last version that we saved to disk or undefined
@@ -2716,7 +2972,7 @@ export class SyncDoc extends EventEmitter {
     if (emitChangeImmediately) {
       this.emit_change();
     }
-    this.emit("user-change");
+    this.emitUserChange();
     // Ensure save loops don't spin while the async commit runs.
     this.last = next;
     try {
@@ -2776,6 +3032,13 @@ export class SyncDoc extends EventEmitter {
   private valueOnDisk: string | undefined = undefined;
 
   private hasUnsavedChanges = (): boolean => {
+    if (this.valueOnDisk == null) {
+      return (
+        this.diskMissingOnLoad ||
+        this.localEditsSinceDiskBaseline ||
+        this.isDeleted
+      );
+    }
     return this.valueOnDisk != this.to_str() || this.isDeleted;
   };
 
@@ -2852,7 +3115,10 @@ export class SyncDoc extends EventEmitter {
       throw err;
     }
     if (this.isClosed()) return;
+    this.diskBaselineRequestId += 1;
     this.isDeleted = false;
+    this.diskMissingOnLoad = false;
+    this.localEditsSinceDiskBaseline = false;
     this.valueOnDisk = value;
     this.emit("save-to-disk");
   };
@@ -2879,9 +3145,9 @@ export class SyncDoc extends EventEmitter {
      document to a simple JSON-able object. */
   export_history = (options: HistoryExportOptions = {}): HistoryEntry[] => {
     this.assert_is_ready("export_history");
-    const info = this.syncstring_table.get_one();
+    const info = this.getDocumentMetadataState();
     if (info == null || !info.has("users")) {
-      throw Error("syncstring table must be defined and users initialized");
+      throw Error("document metadata must define users");
     }
     const account_ids: string[] = info.get("users").toJS();
     const patches = this.requirePatchflowSession().history({
@@ -2922,15 +3188,40 @@ export class SyncDoc extends EventEmitter {
     0,
   );
 
-  private set_syncstring_table = async (obj, save = true) => {
-    const value0 = this.syncstring_table_get_one();
+  private setDocumentMetadata = async (obj, save = true) => {
+    const value0 = this.getDocumentMetadataState();
     const value = mergeDeep(value0, fromJS(obj));
     if (value0.equals(value)) {
       return;
     }
-    this.syncstring_table.set(value);
-    if (save) {
+    this.syncMetadata = value;
+    this.setLastSnapshot(value.get("last_snapshot") ?? undefined);
+    this.last_seq = value.get("last_seq") ?? undefined;
+    this.users = this.normalizedUsers(value.get("users")?.toJS?.());
+    this.snapshot_interval =
+      value.get("snapshot_interval") ?? DEFAULT_SNAPSHOT_INTERVAL;
+    this.settings = value.get("settings", Map());
+    this.history_epoch = this.metadataHistoryEpoch(this.settings);
+    this.applyPatchWriteHeaders();
+
+    if (save && this.syncstring_table != null) {
+      this.syncstring_table.set(value);
       await this.syncstring_table.save();
+      return;
+    }
+
+    if (save && this.patches_table != null) {
+      const dstream = this.dstream();
+      await dstream.setMetadata(this.patchDocMetadataFromState());
+      if (this.last_snapshot != null && this.last_seq != null) {
+        await dstream.setCheckpoint({
+          name: LATEST_SNAPSHOT_CHECKPOINT,
+          seq: this.last_seq,
+          data: { patchId: this.last_snapshot },
+        });
+      } else {
+        await dstream.deleteCheckpoint(LATEST_SNAPSHOT_CHECKPOINT);
+      }
     }
   };
 

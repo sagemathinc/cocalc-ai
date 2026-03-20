@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import getLogger from "@cocalc/backend/logger";
 import type { LroSummary } from "@cocalc/conat/hub/api/lro";
+import { getEffectiveParallelOpsLimit } from "@cocalc/server/lro/worker-config";
 import { claimLroOps, touchLro, updateLro } from "@cocalc/server/lro/lro-db";
 import { publishLroEvent, publishLroSummary } from "@cocalc/conat/lro/stream";
 import { getProjectFileServerClient } from "@cocalc/server/conat/file-server-client";
@@ -12,7 +13,7 @@ const OWNER_TYPE = "hub" as const;
 const LEASE_MS = 120_000;
 const HEARTBEAT_MS = 15_000;
 const TICK_MS = 5_000;
-const MAX_PARALLEL = 1;
+const DEFAULT_MAX_PARALLEL = 1;
 const RESTORE_TIMEOUT_MS = 6 * 60 * 60 * 1000;
 
 const WORKER_ID = randomUUID();
@@ -223,21 +224,40 @@ async function handleRestoreOp(op: LroSummary): Promise<void> {
 
 export function startRestoreLroWorker({
   intervalMs = TICK_MS,
-  maxParallel = MAX_PARALLEL,
+  maxParallel,
+}: {
+  intervalMs?: number;
+  maxParallel?: number;
 } = {}) {
   if (running) return () => undefined;
   running = true;
-  logger.info("starting restore LRO worker", { worker_id: WORKER_ID });
+  logger.info("starting restore LRO worker", {
+    worker_id: WORKER_ID,
+    max_parallel: maxParallel ?? "dynamic",
+  });
 
   const tick = async () => {
-    if (inFlight >= maxParallel) return;
+    let effectiveMaxParallel = maxParallel;
+    if (effectiveMaxParallel == null) {
+      try {
+        const { value } = await getEffectiveParallelOpsLimit({
+          worker_kind: RESTORE_LRO_KIND,
+          default_limit: DEFAULT_MAX_PARALLEL,
+        });
+        effectiveMaxParallel = value;
+      } catch (err) {
+        logger.warn("restore op limit lookup failed", { err });
+        return;
+      }
+    }
+    if (inFlight >= effectiveMaxParallel) return;
     let ops: LroSummary[] = [];
     try {
       ops = await claimLroOps({
         kind: RESTORE_LRO_KIND,
         owner_type: OWNER_TYPE,
         owner_id: WORKER_ID,
-        limit: Math.max(1, maxParallel - inFlight),
+        limit: Math.max(1, effectiveMaxParallel - inFlight),
         lease_ms: LEASE_MS,
       });
     } catch (err) {

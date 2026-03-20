@@ -142,6 +142,7 @@ export function registerProjectJupyterCommands(
         command: Command,
       ) => {
         await withContext(command, "project jupyter run", async (ctx) => {
+          const startedAt = Date.now();
           const wantsJsonSummary =
             ctx.globals.json || ctx.globals.output === "json";
           const limit =
@@ -176,18 +177,32 @@ export function registerProjectJupyterCommands(
               });
               return await rl.question(prompt);
             },
+            onAck: () => {
+              if (ackAt == null) {
+                ackAt = Date.now();
+              }
+            },
           });
 
           let batchCount = 0;
           let messageCount = 0;
           let errorCount = 0;
           let moreOutputCount = 0;
+          let ackAt: number | null = null;
+          let firstBatchAt: number | null = null;
+          let firstMessageAt: number | null = null;
           const lifecycleCounts: Record<string, number> = {};
 
           try {
             for await (const batch of session.iter) {
+              if (firstBatchAt == null) {
+                firstBatchAt = Date.now();
+              }
               batchCount += 1;
               for (const mesg of batch) {
+                if (firstMessageAt == null) {
+                  firstMessageAt = Date.now();
+                }
                 messageCount += 1;
                 if (mesg.more_output) {
                   moreOutputCount += 1;
@@ -239,6 +254,26 @@ export function registerProjectJupyterCommands(
             error_count: errorCount,
             more_output_count: moreOutputCount,
             lifecycle_counts: lifecycleCounts,
+            duration_ms: Date.now() - startedAt,
+            to_ack_ms: ackAt == null ? null : Math.max(0, ackAt - startedAt),
+            to_first_batch_ms:
+              firstBatchAt == null
+                ? null
+                : Math.max(0, firstBatchAt - startedAt),
+            first_batch_before_ack:
+              ackAt == null || firstBatchAt == null
+                ? null
+                : firstBatchAt < ackAt,
+            ack_to_first_batch_ms:
+              ackAt == null || firstBatchAt == null
+                ? null
+                : Math.max(0, firstBatchAt - ackAt),
+            to_first_message_ms:
+              firstMessageAt == null
+                ? null
+                : Math.max(0, firstMessageAt - startedAt),
+            wait_for_ack: false,
+            nominal_extra_rtts_before_first_output: 0,
           };
           if (errorCount > 0 && opts.allowErrors !== true) {
             throw new Error(

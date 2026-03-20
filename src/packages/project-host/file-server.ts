@@ -85,16 +85,17 @@ import { touchProjectLastEdited } from "./last-edited";
 import { getRootfsMountpoint } from "@cocalc/project-runner/run/rootfs";
 import { createProjectSandboxFilesystem } from "./file-server-sandbox-policy";
 import { resetClonedProjectState } from "./clone-state";
+import {
+  getBackupExecutionLimit,
+  getCachedBackupExecutionLimit,
+} from "./backup-execution-limit";
+import { isMissingRusticRepositoryError } from "./backup-index-errors";
 
 type SshTarget = { type: "project"; project_id: string };
 
 const logger = getLogger("project-host:file-server");
 const RESTORE_STAGING_ROOT = ".restore-staging";
 const MAX_TEXT_PREVIEW_BYTES = 10 * 1024 * 1024;
-const BACKUP_MAX_PARALLEL = Math.max(
-  1,
-  Math.min(100, envToInt("COCALC_PROJECT_HOST_BACKUP_MAX_PARALLEL", 10)),
-);
 const SSH_WAKE_TIMEOUT_MS = Math.max(
   5_000,
   envToInt("COCALC_PROJECT_HOST_SSH_WAKE_TIMEOUT_MS", 120_000),
@@ -197,7 +198,12 @@ async function ensureProjectSshWake(
 }
 
 async function acquireBackupSlot(): Promise<void> {
-  if (backupInFlight < BACKUP_MAX_PARALLEL) {
+  const { max_parallel } = await getBackupExecutionLimit();
+  while (backupWaiters.length > 0 && backupInFlight < max_parallel) {
+    backupInFlight += 1;
+    backupWaiters.shift()?.();
+  }
+  if (backupInFlight < max_parallel) {
     backupInFlight += 1;
     return;
   }
@@ -211,10 +217,22 @@ async function acquireBackupSlot(): Promise<void> {
 
 function releaseBackupSlot() {
   backupInFlight = Math.max(0, backupInFlight - 1);
-  const next = backupWaiters.shift();
-  if (next) {
-    next();
+  const { max_parallel } = getCachedBackupExecutionLimit();
+  while (backupWaiters.length > 0 && backupInFlight < max_parallel) {
+    backupInFlight += 1;
+    backupWaiters.shift()?.();
   }
+}
+
+export async function getBackupExecutionStatus() {
+  const { max_parallel, config_source } = await getBackupExecutionLimit();
+  return {
+    max_parallel,
+    in_flight: backupInFlight,
+    queued: backupWaiters.length,
+    project_lock_count: backupProjectTails.size,
+    config_source,
+  };
 }
 
 async function withBackupProjectLock<T>({
@@ -277,7 +295,7 @@ async function withBackupParallelLimit<T>({
         op,
         in_flight: backupInFlight,
         queued: backupWaiters.length,
-        max_parallel: BACKUP_MAX_PARALLEL,
+        max_parallel: getCachedBackupExecutionLimit().max_parallel,
       });
       try {
         return await run();
@@ -288,7 +306,7 @@ async function withBackupParallelLimit<T>({
           op,
           in_flight: backupInFlight,
           queued: backupWaiters.length,
-          max_parallel: BACKUP_MAX_PARALLEL,
+          max_parallel: getCachedBackupExecutionLimit().max_parallel,
         });
       }
     },
@@ -468,6 +486,17 @@ function projectMountpoint(project_id: string): string {
 
 export function getScratchMountpoint(project_id: string): string {
   return join(getMountPoint(), scratchVolName(project_id));
+}
+
+export function getProjectSandboxFilesystem(
+  project_id: string,
+): SandboxedFilesystem {
+  return createProjectSandboxFilesystem({
+    project_id,
+    home: projectMountpoint(project_id),
+    rootfs: getRootfsMountpoint(project_id),
+    scratch: getScratchMountpoint(project_id),
+  });
 }
 
 function isSubPath(parent: string, child: string): boolean {
@@ -735,6 +764,14 @@ export function configureProjectHostAcpContainerFileIO(): void {
       }
     },
   });
+}
+
+export async function resolveProjectContainerPath(
+  project_id: string,
+  containerPath: string,
+): Promise<string> {
+  const fs = getProjectSandboxFilesystem(project_id);
+  return await fs.safeAbsPath(containerPath);
 }
 
 async function mount({
@@ -1137,6 +1174,10 @@ async function syncBackupIndexCache(
     try {
       remote = await listBackupIndexSnapshots(project_id);
     } catch (err) {
+      if (isMissingRusticRepositoryError(err)) {
+        logger.debug("backup index repo not initialized yet", { project_id });
+        return manifest;
+      }
       logger.warn("backup index snapshot listing failed", { project_id, err });
       return manifest;
     }

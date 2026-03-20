@@ -58,6 +58,7 @@ import {
 } from "node:fs/promises";
 import {
   close as closeFdCallback,
+  type ReadStream,
   readFile as readFileFdCallback,
   writeFile as writeFileFdCallback,
 } from "node:fs";
@@ -1738,6 +1739,31 @@ export class SandboxedFilesystem {
     } finally {
       await handle.close();
     }
+  };
+
+  createReadStream = async (
+    path: string,
+    options: {
+      start?: number;
+      end?: number;
+    } = {},
+  ): Promise<ReadStream> => {
+    const { handle } = await this.openVerifiedHandle({
+      path,
+      flags: constants.O_RDONLY,
+    });
+    const stream = handle.createReadStream({
+      start: options.start,
+      end: options.end,
+      autoClose: true,
+    });
+    stream.once("close", () => {
+      void handle.close().catch(() => {});
+    });
+    stream.once("error", () => {
+      void handle.close().catch(() => {});
+    });
+    return stream;
   };
 
   lockFile = async (path: string, lock?: number) => {

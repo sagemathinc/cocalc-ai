@@ -16,7 +16,7 @@ import { sandboxExec } from "@cocalc/project-runner/run/sandbox-exec";
 import { initCodexProjectRunner } from "./codex/codex-project";
 import { initCodexSiteKeyGovernor } from "./codex/codex-site-metering";
 import { configureProjectHostAcpContainerFileIO } from "./file-server";
-import { wireProjectsApi } from "./hub/projects";
+import { PROJECT_RUNNER_RPC_TIMEOUT_MS, wireProjectsApi } from "./hub/projects";
 import { getProjectHostMasterConatToken } from "./master-conat-token";
 import { setMasterConatClient } from "./master-status";
 import { initSqlite } from "./sqlite/init";
@@ -143,6 +143,7 @@ export async function main(): Promise<void> {
       client,
       subject: `project-runner.${runnerId}`,
       waitForInterest: false,
+      timeout: PROJECT_RUNNER_RPC_TIMEOUT_MS,
     }),
   );
   initProjectRunnerFilesystem({ client });

@@ -111,6 +111,7 @@ import { normalizeProviderId, type ProviderId } from "@cocalc/cloud";
 import { getProviderContext } from "@cocalc/server/cloud/provider-context";
 import admins from "@cocalc/server/accounts/admins";
 import { getLro } from "@cocalc/server/lro/lro-db";
+import { buildMoveSmokeHostNames } from "./host-names";
 
 const logger = getLogger("server:cloud:smoke-runner:project-host");
 const execFile = promisify(execFileCb);
@@ -4126,8 +4127,8 @@ async function runMoveSmokeScenarioViaCli({
 
     const baseHostName =
       `${createSpec?.name ?? "smoke-move"}`.trim() || "smoke-move";
-    const sourceHostName = `${baseHostName}-src`.slice(0, 63);
-    const destHostName = `${baseHostName}-dst`.slice(0, 63);
+    const { sourceHostName, destHostName } =
+      buildMoveSmokeHostNames(baseHostName);
     const sourceSpec = { ...createSpec, name: sourceHostName };
     const destSpec = { ...createSpec, name: destHostName };
 
