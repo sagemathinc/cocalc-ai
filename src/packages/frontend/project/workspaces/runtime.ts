@@ -17,6 +17,7 @@ import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { path_split } from "@cocalc/util/misc";
 import { normalizeAbsolutePath } from "@cocalc/util/path-model";
 import { getProjectHomeDirectory } from "../home-directory";
+import { resolveRuntimeWorkspaceForPath } from "./records-runtime";
 
 function isMacLikeClient(): boolean {
   if (typeof navigator === "undefined") return false;
@@ -65,6 +66,8 @@ export async function resolveStoredWorkspaceForPath(opts: {
     opts.path,
     getProjectHomeDirectory(opts.project_id),
   );
+  const runtime = resolveRuntimeWorkspaceForPath(opts.project_id, absolutePath);
+  if (runtime) return runtime;
   const records = await readStoredWorkspaceRecords(opts);
   return resolveWorkspaceForPath(records, absolutePath);
 }

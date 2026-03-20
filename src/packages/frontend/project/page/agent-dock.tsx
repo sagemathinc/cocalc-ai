@@ -41,6 +41,7 @@ import { useProjectContext } from "@cocalc/frontend/project/context";
 import getAnchorTagComponent from "@cocalc/frontend/project/page/anchor-tag-component";
 import getUrlTransform from "@cocalc/frontend/project/page/url-transform";
 import type { ProjectActions } from "@cocalc/frontend/project_actions";
+import { loadSessionWorkspaceRecord } from "@cocalc/frontend/project/workspaces/selection-runtime";
 import {
   AGENT_DOCK_CLOSE_EVENT,
   AGENT_DOCK_OPEN_EVENT,
@@ -159,9 +160,18 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
 
   useEffect(() => {
     if (!session) return;
-    const updated = sessions.find(
-      (item) => item.session_id === session.session_id,
-    );
+    const updated =
+      sessions.find((item) => item.session_id === session.session_id) ??
+      (() => {
+        const chatPath = `${session.chat_path ?? ""}`.trim();
+        const threadKey = `${session.thread_key ?? ""}`.trim();
+        if (!chatPath || !threadKey) return undefined;
+        return sessions.find(
+          (item) =>
+            `${item.chat_path ?? ""}`.trim() === chatPath &&
+            `${item.thread_key ?? ""}`.trim() === threadKey,
+        );
+      })();
     if (updated) {
       setSession(updated);
     }
@@ -490,9 +500,14 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
     return (
       workspaces.records.find(
         (record) => record.workspace_id === scopedWorkspaceId,
-      ) ?? null
+      ) ??
+      (() => {
+        const cached = loadSessionWorkspaceRecord(project_id);
+        if (cached?.workspace_id !== scopedWorkspaceId) return null;
+        return cached;
+      })()
     );
-  }, [scopedWorkspaceId, workspaces.records]);
+  }, [project_id, scopedWorkspaceId, workspaces.records]);
 
   const sessionOptions = useMemo(() => {
     const visibleSessions =
@@ -558,6 +573,9 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
       >
         <div
           ref={nodeRef}
+          data-selected-thread-key={session.thread_key ?? undefined}
+          data-selected-thread-title={session.title ?? undefined}
+          data-selected-session-id={session.session_id ?? undefined}
           style={{
             position: "absolute",
             width,

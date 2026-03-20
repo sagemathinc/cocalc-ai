@@ -48,11 +48,35 @@ import {
   setRuntimeWorkspaceRecords,
 } from "./records-runtime";
 
+export function normalizeProjectWorkspaceSelection(
+  selection: WorkspaceSelection | undefined | null,
+  records: WorkspaceRecord[],
+  cachedWorkspaceRecord?: WorkspaceRecord | null,
+): WorkspaceSelection {
+  const normalized = normalizeWorkspaceSelection(selection, records);
+  if (normalized.kind === "workspace") return normalized;
+  if (
+    selection?.kind === "workspace" &&
+    cachedWorkspaceRecord?.workspace_id === selection.workspace_id
+  ) {
+    return {
+      kind: "workspace",
+      workspace_id: cachedWorkspaceRecord.workspace_id,
+    };
+  }
+  return normalized;
+}
+
 function readSelectionForProject(
   project_id: string,
   records: WorkspaceRecord[],
+  cachedWorkspaceRecord?: WorkspaceRecord | null,
 ): WorkspaceSelection {
-  return normalizeWorkspaceSelection(loadSessionSelection(project_id), records);
+  return normalizeProjectWorkspaceSelection(
+    loadSessionSelection(project_id),
+    records,
+    cachedWorkspaceRecord,
+  );
 }
 
 export function pathMatchesRoot(path: string, root_path: string): boolean {
@@ -106,6 +130,8 @@ export function useProjectWorkspaces(
     useState<WorkspaceRecord | null>(() =>
       loadSessionWorkspaceRecord(project_id),
     );
+  const cachedWorkspaceRecordRef = useRef(cachedWorkspaceRecord);
+  cachedWorkspaceRecordRef.current = cachedWorkspaceRecord;
   const storeRef = useRef<Awaited<
     ReturnType<typeof openWorkspaceStore>
   > | null>(null);
@@ -114,7 +140,11 @@ export function useProjectWorkspaces(
 
   useEffect(() => {
     if (loading) return;
-    const nextSelection = readSelectionForProject(project_id, records);
+    const nextSelection = readSelectionForProject(
+      project_id,
+      records,
+      cachedWorkspaceRecordRef.current,
+    );
     if (sameSelection(selection, nextSelection)) return;
     setSelectionState(nextSelection);
   }, [loading, project_id, records, selection]);
@@ -129,10 +159,23 @@ export function useProjectWorkspaces(
         }>
       ).detail;
       if (`${detail?.project_id ?? ""}` !== project_id) return;
-      const nextSelection = normalizeWorkspaceSelection(
+      const nextCachedWorkspaceRecord =
+        detail?.selection?.kind === "workspace"
+          ? loadSessionWorkspaceRecord(project_id)
+          : null;
+      const nextSelection = normalizeProjectWorkspaceSelection(
         detail?.selection,
         recordsRef.current,
+        nextCachedWorkspaceRecord ?? cachedWorkspaceRecordRef.current,
       );
+      if (
+        detail?.selection?.kind === "workspace" &&
+        nextCachedWorkspaceRecord?.workspace_id ===
+          detail.selection.workspace_id
+      ) {
+        setCachedWorkspaceRecord(nextCachedWorkspaceRecord);
+        persistSessionWorkspaceRecord(project_id, nextCachedWorkspaceRecord);
+      }
       setSelectionState(nextSelection);
       persistSessionSelection(project_id, nextSelection);
     };
@@ -189,7 +232,11 @@ export function useProjectWorkspaces(
       }
       return;
     }
-    if (!loading && cachedWorkspaceRecord != null) {
+    if (
+      !loading &&
+      cachedWorkspaceRecord != null &&
+      cachedWorkspaceRecord.workspace_id !== selection.workspace_id
+    ) {
       setCachedWorkspaceRecord(null);
       persistSessionWorkspaceRecord(project_id, null);
     }
@@ -222,6 +269,7 @@ export function useProjectWorkspaces(
         const storeSelection = readSelectionForProject(
           project_id,
           storeRecords,
+          cachedWorkspaceRecordRef.current,
         );
         const hasStoreState = hasWorkspaceStoreState(store);
 
@@ -248,6 +296,7 @@ export function useProjectWorkspaces(
           const nextSelection = readSelectionForProject(
             project_id,
             nextRecords,
+            cachedWorkspaceRecordRef.current,
           );
           setRecords(nextRecords);
           setOrderState(nextOrder);
@@ -297,18 +346,41 @@ export function useProjectWorkspaces(
         (record) => record.workspace_id === selection.workspace_id,
       ) ?? null;
     if (actual != null) return actual;
-    if (
-      loading &&
-      cachedWorkspaceRecord?.workspace_id === selection.workspace_id
-    ) {
+    if (cachedWorkspaceRecord?.workspace_id === selection.workspace_id) {
       return cachedWorkspaceRecord;
     }
     return null;
-  }, [records, selection, loading, cachedWorkspaceRecord]);
+  }, [records, selection, cachedWorkspaceRecord]);
 
   const setSelection = useCallback(
     (next: WorkspaceSelection) => {
-      const normalized = normalizeWorkspaceSelection(next, recordsRef.current);
+      const sessionWorkspaceRecord = loadSessionWorkspaceRecord(project_id);
+      const effectiveCachedWorkspaceRecord =
+        cachedWorkspaceRecordRef.current ?? sessionWorkspaceRecord;
+      const normalizedNext = normalizeProjectWorkspaceSelection(
+        next,
+        recordsRef.current,
+        effectiveCachedWorkspaceRecord,
+      );
+      const sessionSelection = loadSessionSelection(project_id);
+      const cachedWorkspaceId =
+        `${effectiveCachedWorkspaceRecord?.workspace_id ?? ""}`.trim();
+      const shouldPreserveCachedWorkspace =
+        normalizedNext.kind !== "workspace" &&
+        !!cachedWorkspaceId &&
+        ((selection.kind === "workspace" &&
+          selection.workspace_id === cachedWorkspaceId) ||
+          (sessionSelection.kind === "workspace" &&
+            sessionSelection.workspace_id === cachedWorkspaceId)) &&
+        !recordsRef.current.some(
+          (record) => record.workspace_id === cachedWorkspaceId,
+        );
+      const normalized = shouldPreserveCachedWorkspace
+        ? {
+            kind: "workspace" as const,
+            workspace_id: cachedWorkspaceId,
+          }
+        : normalizedNext;
       if (sameSelection(selection, normalized)) {
         return;
       }
@@ -406,12 +478,23 @@ export function useProjectWorkspaces(
           : order;
       setRecords(nextRecords);
       setOrderState(nextOrder);
-      const nextSelection =
-        selection.kind === "workspace" &&
-        selection.workspace_id === workspace_id &&
-        !nextRecords.some((r) => r.workspace_id === workspace_id)
-          ? ({ kind: "all" } as WorkspaceSelection)
-          : selection;
+      const nextSelection = (() => {
+        const effectiveCachedWorkspaceId = `${
+          (
+            cachedWorkspaceRecordRef.current ??
+            loadSessionWorkspaceRecord(project_id)
+          )?.workspace_id ?? ""
+        }`.trim();
+        if (
+          selection.kind === "workspace" &&
+          selection.workspace_id === workspace_id &&
+          !nextRecords.some((r) => r.workspace_id === workspace_id) &&
+          effectiveCachedWorkspaceId !== workspace_id
+        ) {
+          return { kind: "all" } as WorkspaceSelection;
+        }
+        return selection;
+      })();
       setSelectionState(nextSelection);
       persistSessionSelection(project_id, nextSelection);
       if (storeRef.current == null) {

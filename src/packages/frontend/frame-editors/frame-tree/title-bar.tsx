@@ -639,7 +639,11 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
         type={props.type}
         showDialog={showAIDialogs[where]}
         setShowDialog={(value: boolean) => {
-          setShowAIDialogs((prev) => ({ ...prev, [where]: value }));
+          setShowAIDialogs((prev) =>
+            value
+              ? { ...prev, [where]: true }
+              : { main: false, popover: false },
+          );
         }}
         project_id={props.project_id}
         buttonRef={getTourRef("chatgpt")}

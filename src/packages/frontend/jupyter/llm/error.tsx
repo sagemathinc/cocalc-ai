@@ -12,6 +12,8 @@ import {
   submitNavigatorPromptToCurrentThread,
 } from "@cocalc/frontend/project/new/navigator-intents";
 
+const DEFAULT_FIX_WITH_AGENT_MODEL = "gpt-5.4-mini";
+
 interface Props {
   style?: CSSProperties;
   input: string;
@@ -69,12 +71,14 @@ export default function LLMError({ style, traceback, input }: Props) {
         tag: "intent:notebook-error",
         forceCodex: true,
         openFloating: true,
+        codexConfig: { model: DEFAULT_FIX_WITH_AGENT_MODEL },
       });
       if (!sent) {
         dispatchNavigatorPromptIntent({
           prompt: intentPrompt,
           tag: "intent:notebook-error",
           forceCodex: true,
+          codexConfig: { model: DEFAULT_FIX_WITH_AGENT_MODEL },
         });
       }
     } catch (err) {

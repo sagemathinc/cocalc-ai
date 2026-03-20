@@ -22,6 +22,8 @@ import {
   createNavigatorIntentMessage,
 } from "./help-me-fix-utils";
 
+const DEFAULT_HELP_ME_FIX_AGENT_MODEL = "gpt-5.4-mini";
+
 // Re-export getHelp for backward compatibility
 export { getHelp } from "./help-me-fix-utils";
 
@@ -179,12 +181,14 @@ export default function HelpMeFix({
         tag: `intent:error-fix:${tagSuffix}`,
         forceCodex: true,
         openFloating: true,
+        codexConfig: { model: DEFAULT_HELP_ME_FIX_AGENT_MODEL },
       });
       if (!sent) {
         dispatchNavigatorPromptIntent({
           prompt,
           tag: `intent:error-fix:${tagSuffix}`,
           forceCodex: true,
+          codexConfig: { model: DEFAULT_HELP_ME_FIX_AGENT_MODEL },
         });
       }
     } catch (err) {
