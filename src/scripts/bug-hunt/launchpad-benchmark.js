@@ -223,6 +223,14 @@ function buildWorkloadSpec(workload, now = Date.now()) {
         "df -B1 . | tail -n +2",
       ].join("\n"),
       verifyPaths: [markerPath, payloadPath],
+      restoreVerifyPaths: [`${restoreTargetShellPath}/random-4g.bin`],
+      inspectRestoredBash: [
+        "set -euo pipefail",
+        `stat -c 'restore_payload_bytes=%s' ${shellQuote(
+          `${restoreTargetShellPath}/random-4g.bin`,
+        )}`,
+        `sha256sum ${shellQuote(`${restoreTargetShellPath}/random-4g.bin`)}`,
+      ].join("\n"),
     };
   }
   return {
@@ -230,9 +238,9 @@ function buildWorkloadSpec(workload, now = Date.now()) {
     benchmarkDir,
     markerPath,
     markerPayload: `${markerPayload}\n`,
-    restoreSourcePath: benchmarkDir,
-    restoreTargetPath,
-    restoreTargetShellPath,
+    restoreSourcePath: ".local",
+    restoreTargetPath: `${restoreTargetPath}/.local`,
+    restoreTargetShellPath: `${restoreTargetShellPath}/.local`,
     prepareBash: [
       "set -euo pipefail",
       "export DEBIAN_FRONTEND=noninteractive",
@@ -252,6 +260,12 @@ function buildWorkloadSpec(workload, now = Date.now()) {
       `sha256sum ${shellQuote(markerPath)}`,
     ].join("\n"),
     verifyPaths: [markerPath],
+    restoreVerifyPaths: [`${restoreTargetShellPath}/.local`],
+    inspectRestoredBash: [
+      "set -euo pipefail",
+      `du -sb ${shellQuote(`${restoreTargetShellPath}/.local`)} 2>/dev/null || true`,
+      `find ${shellQuote(`${restoreTargetShellPath}/.local`)} -type f 2>/dev/null | wc -l || true`,
+    ].join("\n"),
   };
 }
 
@@ -972,14 +986,7 @@ async function executeLaunchpadBenchmark(options, now = Date.now(), deps = {}) {
         );
       }
 
-      const restoreVerifyPaths = workload.payloadPath
-        ? [workload.restoreTargetShellPath]
-        : workload.verifyPaths.map((filePath) =>
-            filePath.replace(
-              workload.benchmarkDir,
-              workload.restoreTargetShellPath,
-            ),
-          );
+      const restoreVerifyPaths = workload.restoreVerifyPaths;
       verifyProjectPaths(cliBase, result.dest_project_id, restoreVerifyPaths);
 
       const restoredInspect = await timeStep(
@@ -988,19 +995,7 @@ async function executeLaunchpadBenchmark(options, now = Date.now(), deps = {}) {
           runProjectExec(
             cliBase,
             result.dest_project_id,
-            [
-              "set -euo pipefail",
-              workload.payloadPath
-                ? `stat -c 'restore_payload_bytes=%s' ${shellQuote(
-                    restoreVerifyPaths[0],
-                  )}`
-                : `stat -c 'restore_marker_bytes=%s' ${shellQuote(
-                    restoreVerifyPaths[0],
-                  )}`,
-              workload.payloadPath
-                ? `sha256sum ${shellQuote(restoreVerifyPaths[0])}`
-                : 'du -sb "$HOME/.local" 2>/dev/null || true',
-            ].join("\n"),
+            workload.inspectRestoredBash,
             600,
           ),
       );
