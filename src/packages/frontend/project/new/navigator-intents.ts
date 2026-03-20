@@ -381,6 +381,181 @@ export function dispatchNavigatorPromptIntent(opts: {
   return intent;
 }
 
+export async function stageNavigatorPromptInWorkspaceChat(opts: {
+  project_id: string;
+  prompt: string;
+  visiblePrompt?: string;
+  title?: string;
+  tag?: string;
+  forceCodex?: boolean;
+  codexConfig?: Partial<CodexThreadConfig>;
+  path?: string;
+}): Promise<boolean> {
+  try {
+    const project_id = `${opts.project_id ?? ""}`.trim();
+    const basePrompt = `${opts.prompt ?? ""}`.trim();
+    const visiblePrompt = `${opts.visiblePrompt ?? ""}`.trim() || undefined;
+    const requestedTitle = normalizeOptionalTitle(opts.title);
+    const requestedModel =
+      typeof opts.codexConfig?.model === "string" &&
+      opts.codexConfig.model.trim().length > 0
+        ? opts.codexConfig.model.trim()
+        : undefined;
+    if (!project_id || !basePrompt) return false;
+
+    const account_id =
+      `${redux.getStore("account")?.get?.("account_id") ?? ""}`.trim();
+    const workspaceTarget = await resolveWorkspaceTarget({
+      project_id,
+      account_id,
+      path: opts.path,
+    });
+    if (!workspaceTarget?.chat_path) return false;
+
+    const targetChatPath = workspaceTarget.chat_path;
+    const preferredThreadKey = loadNavigatorSelectedThreadKey(
+      project_id,
+      targetChatPath,
+    );
+    const sessions = await listAgentSessionsForProject({ project_id });
+    const indexedSession = pickNavigatorSession({
+      records: sessions,
+      preferredThreadKey,
+      chatPath: targetChatPath,
+    });
+    const session: AgentSessionRecord = indexedSession ?? {
+      session_id: `workspace-${workspaceTarget.workspace.workspace_id}`,
+      project_id,
+      account_id,
+      chat_path: targetChatPath,
+      thread_key: `${preferredThreadKey ?? ""}`.trim(),
+      title: workspaceTarget.workspace.theme.title?.trim() || "Navigator",
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      status: "active",
+      entrypoint: "file",
+      model: requestedModel,
+      working_directory: workspaceTarget.workspace.root_path,
+      thread_color: workspaceTarget.workspace.theme.color ?? undefined,
+      thread_accent_color:
+        workspaceTarget.workspace.theme.accent_color ?? undefined,
+      thread_icon: workspaceTarget.workspace.theme.icon ?? undefined,
+      thread_image: workspaceTarget.workspace.theme.image_blob ?? undefined,
+    };
+
+    await ensureNavigatorChatDirectory(project_id, targetChatPath);
+    await redux
+      .getProjectActions(project_id)
+      ?.open_file?.({ path: targetChatPath, foreground: true });
+
+    const instanceKey = "navigator-intent-stage";
+    const actions =
+      getChatActions(project_id, targetChatPath, { instanceKey }) ??
+      initChat(project_id, targetChatPath, { instanceKey });
+    if (!actions) return false;
+
+    const ready = await waitForThreadReady({
+      actions,
+      timeoutMs: NAVIGATOR_SYNC_READY_TIMEOUT_MS,
+    });
+    if (!ready) return false;
+
+    const resolvedThreadKey = chooseThreadKeyFromIndex({
+      actions,
+      preferredThreadKey,
+      fallbackThreadKey: `${session.thread_key ?? ""}`.trim(),
+    });
+    let replyThreadKey = resolvedThreadKey;
+    let replyThreadId = resolveThreadIdFromIndex(actions, replyThreadKey);
+    const existingThreadTitle =
+      replyThreadKey && replyThreadId
+        ? normalizeOptionalTitle(
+            actions.getThreadMetadata?.(replyThreadKey, {
+              threadId: replyThreadId,
+            })?.name,
+          )
+        : undefined;
+    const messageThreadTitle =
+      requestedTitle && (!replyThreadId || !existingThreadTitle)
+        ? requestedTitle
+        : undefined;
+    const sessionModel =
+      typeof session.model === "string" && session.model.trim().length > 0
+        ? session.model.trim()
+        : undefined;
+    const model = requestedModel ?? sessionModel;
+    const threadAgentCodexConfig = {
+      model,
+      reasoning: session.reasoning as any,
+      sessionMode: session.mode as any,
+      workingDirectory: session.working_directory,
+      ...(opts.codexConfig ?? {}),
+    };
+    const newThreadAgent =
+      opts.forceCodex !== false
+        ? {
+            mode: "codex" as const,
+            model,
+            codexConfig: threadAgentCodexConfig,
+          }
+        : undefined;
+
+    let createdThreadNow = false;
+    if (!replyThreadKey) {
+      const createdThreadKey = actions.createEmptyThread?.({
+        name: messageThreadTitle,
+        threadAgent: newThreadAgent,
+        threadAppearance: {
+          color: session.thread_color,
+          icon: session.thread_icon,
+          image: session.thread_image,
+        },
+      });
+      if (!createdThreadKey) return false;
+      replyThreadKey = createdThreadKey;
+      replyThreadId = createdThreadKey;
+      createdThreadNow = true;
+    } else if (opts.forceCodex !== false) {
+      actions.setThreadAgentMode?.(
+        replyThreadKey,
+        "codex",
+        threadAgentCodexConfig,
+      );
+    }
+
+    const timeStamp = actions.sendChat({
+      input: visiblePrompt ?? basePrompt,
+      acp_prompt: basePrompt,
+      name: createdThreadNow ? undefined : messageThreadTitle,
+      reply_thread_id: replyThreadId,
+      tag: opts.tag ?? "intent:navigator",
+      noNotification: true,
+      skipModelDispatch: true,
+      threadAgent: !replyThreadId ? newThreadAgent : undefined,
+    });
+    if (!timeStamp) return false;
+
+    const nextThreadKey = replyThreadKey
+      ? replyThreadKey
+      : chooseThreadKeyFromIndex({
+          actions,
+          fallbackThreadKey: `${actions.store?.get?.("selectedThreadKey") ?? ""}`,
+        });
+    if (nextThreadKey) {
+      saveNavigatorSelectedThreadKey(nextThreadKey, targetChatPath);
+    }
+    if (typeof actions.syncdb?.save === "function") {
+      await actions.syncdb.save();
+    }
+    setTimeout(() => {
+      actions.scrollToIndex?.(Number.MAX_SAFE_INTEGER);
+    }, 50);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function submitNavigatorPromptToCurrentThread(opts: {
   project_id: string;
   prompt: string;

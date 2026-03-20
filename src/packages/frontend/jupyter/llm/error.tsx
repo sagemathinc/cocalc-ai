@@ -7,10 +7,7 @@ import { CSSProperties, useMemo, useState } from "react";
 
 import { useFrameContext } from "@cocalc/frontend/frame-editors/frame-tree/frame-context";
 import HelpMeFix from "@cocalc/frontend/frame-editors/llm/help-me-fix";
-import {
-  dispatchNavigatorPromptIntent,
-  submitNavigatorPromptToCurrentThread,
-} from "@cocalc/frontend/project/new/navigator-intents";
+import { stageNavigatorPromptInWorkspaceChat } from "@cocalc/frontend/project/new/navigator-intents";
 
 const DEFAULT_FIX_WITH_AGENT_MODEL = "gpt-5.4-mini";
 const NOTEBOOK_FIX_VISIBLE_PROMPT =
@@ -66,7 +63,7 @@ export default function LLMError({ style, traceback, input }: Props) {
     setRouting(true);
     setRoutingError("");
     try {
-      const sent = await submitNavigatorPromptToCurrentThread({
+      const staged = await stageNavigatorPromptInWorkspaceChat({
         project_id,
         path,
         prompt: intentPrompt,
@@ -74,18 +71,10 @@ export default function LLMError({ style, traceback, input }: Props) {
         title: "Fix notebook error",
         tag: "intent:notebook-error",
         forceCodex: true,
-        openFloating: true,
         codexConfig: { model: DEFAULT_FIX_WITH_AGENT_MODEL },
       });
-      if (!sent) {
-        dispatchNavigatorPromptIntent({
-          prompt: intentPrompt,
-          visiblePrompt: NOTEBOOK_FIX_VISIBLE_PROMPT,
-          title: "Fix notebook error",
-          tag: "intent:notebook-error",
-          forceCodex: true,
-          codexConfig: { model: DEFAULT_FIX_WITH_AGENT_MODEL },
-        });
+      if (!staged) {
+        throw new Error("Unable to stage the notebook repair request.");
       }
     } catch (err) {
       setRoutingError(`${err}`);
@@ -105,7 +94,7 @@ export default function LLMError({ style, traceback, input }: Props) {
           Fix with Agent
         </Button>
         <Typography.Text type="secondary">
-          Sends this notebook error to the Navigator Codex session.
+          Opens the workspace chat and stages this notebook error for Codex.
         </Typography.Text>
       </Space>
       <HelpMeFix

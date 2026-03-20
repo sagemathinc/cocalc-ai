@@ -96,7 +96,7 @@ async function createWorkspaceFromCurrentDirectory(
   await page.locator("[role='tab']").first().click();
 }
 
-test("Fix with Agent opens floating navigator and sends prompt in-place", async ({
+test("Fix with Agent opens workspace chat and stages the prompt", async ({
   page,
 }, testInfo) => {
   const acpMode = await resolveAcpMode();
@@ -140,34 +140,24 @@ test("Fix with Agent opens floating navigator and sends prompt in-place", async 
   const clickStarted = Date.now();
   await fixButton.click();
 
-  await expect(page.locator(".cc-agent-dock-handle")).toBeVisible({
+  await expect(page).toHaveURL(/\.chat/, {
     timeout: 12_000,
   });
   expect(Date.now() - clickStarted).toBeLessThan(12_000);
-  await expect(page).toHaveURL(/\/projects\/[^/]+\/files\//);
-  const dock = page.locator("[data-selected-thread-key]").first();
   await expect(
-    dock.getByText(/Codex Agent \(gpt-5\.4-mini\)/).first(),
+    page.getByText("Investigate and fix this Jupyter notebook error.").first(),
   ).toBeVisible({
-    timeout: 20_000,
+    timeout: 12_000,
   });
   await expect(
-    dock.getByText(`Workspace scope: ${workspaceSuffix}`),
+    page.getByText("Fix notebook error").first(),
   ).toBeVisible({
-    timeout: 20_000,
+    timeout: 12_000,
   });
-  await expect
-    .poll(
-      async () =>
-        (await dock.locator(".ant-switch").first().getAttribute("class")) ?? "",
-      { timeout: 20_000 },
-    )
-    .toContain("ant-switch-checked");
-  await expect
-    .poll(
-      async () =>
-        (await dock.getAttribute("data-selected-thread-key"))?.trim() ?? "",
-      { timeout: 20_000 },
-    )
-    .not.toBe("");
+  await expect(
+    page.getByText("Ask Codex...").first(),
+  ).toBeVisible({
+    timeout: 12_000,
+  });
+  await expect(page.locator(".cc-agent-dock-handle")).toHaveCount(0);
 });
