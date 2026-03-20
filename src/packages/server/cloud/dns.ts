@@ -1,5 +1,6 @@
 import getLogger from "@cocalc/backend/logger";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
+import { resolvePublicViewerDns } from "@cocalc/util/public-viewer-origin";
 
 // Default TTL is ignored by Cloudflare when proxied.
 const TTL = 120;
@@ -12,6 +13,24 @@ async function getConfig(): Promise<{ token?: string; dns?: string }> {
     project_hosts_cloudflare_tunnel_api_token: token,
   } = await getServerSettings();
   return { token, dns };
+}
+
+function normalizeHostname(value: unknown): string | undefined {
+  const raw = `${value ?? ""}`.trim();
+  if (!raw) return undefined;
+  let host = raw;
+  if (host.startsWith("http://") || host.startsWith("https://")) {
+    try {
+      host = new URL(host).host;
+    } catch {
+      host = host.replace(/^https?:\/\//, "");
+    }
+  }
+  host = host.split("/")[0];
+  if (host.includes(":")) {
+    host = host.split(":")[0];
+  }
+  return host.toLowerCase() || undefined;
 }
 
 export async function hasDns(): Promise<boolean> {
@@ -361,6 +380,33 @@ export async function ensureAppSubdomainDns(opts: {
     }
   }
   return { record_id: record_id! };
+}
+
+export async function ensurePublicViewerDns(): Promise<
+  { hostname: string; target_hostname: string; record_id: string } | undefined
+> {
+  const settings = await getServerSettings();
+  const zone = `${settings.project_hosts_dns ?? ""}`.trim().toLowerCase();
+  const hostname = normalizeHostname(
+    resolvePublicViewerDns({
+      publicViewerDns: settings.public_viewer_dns as string | undefined,
+      dns: settings.dns as string | undefined,
+    }) ?? "",
+  );
+  const target_hostname = normalizeHostname(settings.dns);
+  if (!zone || !hostname || !target_hostname || hostname === target_hostname) {
+    return undefined;
+  }
+  if (!(hostname === zone || hostname.endsWith(`.${zone}`))) {
+    throw new Error(
+      `Public Viewer Domain '${hostname}' must end with '${zone}' for Cloudflare DNS automation.`,
+    );
+  }
+  const { record_id } = await ensureAppSubdomainDns({
+    hostname,
+    target_hostname,
+  });
+  return { hostname, target_hostname, record_id };
 }
 
 export async function getCnameTargetForHostname(

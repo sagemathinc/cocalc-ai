@@ -2,6 +2,8 @@ let fetchMock: jest.Mock;
 let mockedSettings: {
   project_hosts_dns: string;
   project_hosts_cloudflare_tunnel_api_token: string;
+  dns?: string;
+  public_viewer_dns?: string;
 };
 
 jest.mock("@cocalc/database/settings/server-settings", () => ({
@@ -32,6 +34,8 @@ describe("cloud dns", () => {
     mockedSettings = {
       project_hosts_dns: "example.com",
       project_hosts_cloudflare_tunnel_api_token: "token",
+      dns: "https://dev.example.com",
+      public_viewer_dns: "",
     };
     fetchMock = jest.fn(async (input: any, init?: RequestInit) => {
       const url = String(input);
@@ -191,5 +195,33 @@ describe("cloud dns", () => {
     await expect(deleteHostDns({ record_id: "record-1" })).resolves.toBe(
       undefined,
     );
+  });
+
+  it("ensures a proxied cname for the public viewer domain", async () => {
+    mockedSettings = {
+      project_hosts_dns: "example.com",
+      project_hosts_cloudflare_tunnel_api_token: "token",
+      dns: "https://dev.example.com",
+      public_viewer_dns: "",
+    };
+
+    const { ensurePublicViewerDns } = await import("./dns");
+    const result = await ensurePublicViewerDns();
+
+    expect(result).toEqual({
+      hostname: "dev-raw.example.com",
+      target_hostname: "dev.example.com",
+      record_id: "record-1",
+    });
+
+    const addCall = fetchMock.mock.calls.find(
+      ([url, init]) =>
+        String(url).includes("/dns_records") && init?.method === "POST",
+    );
+    const record = addCall?.[1]?.body ? JSON.parse(addCall[1].body) : undefined;
+    expect(record.type).toBe("CNAME");
+    expect(record.name).toBe("dev-raw.example.com");
+    expect(record.content).toBe("dev.example.com");
+    expect(record.proxied).toBe(true);
   });
 });

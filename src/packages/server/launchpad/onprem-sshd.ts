@@ -25,6 +25,7 @@ import {
   hasHubCloudflareTunnel,
   type CloudflareTunnel,
 } from "@cocalc/server/cloud/cloudflare-tunnel";
+import { ensurePublicViewerDns } from "@cocalc/server/cloud/dns";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 
 const logger = getLogger("launchpad:local:sshd");
@@ -1081,6 +1082,14 @@ export async function maybeStartLaunchpadOnPremServices(): Promise<void> {
   const state = await startSshd();
   await startRestServer();
   const tunnel = await startCloudflared();
+  try {
+    const publicViewerDns = await ensurePublicViewerDns();
+    if (publicViewerDns) {
+      logger.info("public viewer dns ensured", publicViewerDns);
+    }
+  } catch (err) {
+    logger.warn("public viewer dns ensure failed", { err: `${err}` });
+  }
   if (!tunnel) {
     const status = await getLaunchpadCloudflaredStatus();
     if (status.enabled) {
