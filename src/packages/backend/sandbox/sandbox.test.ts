@@ -424,9 +424,11 @@ describeIfLinux("patch write support", () => {
 
 describeIfLinux("unsafe mode sandbox", () => {
   let fs;
+  let home;
   it("creates and reads file", async () => {
-    await mkdir(join(tempDir, "test-unsafe"));
-    fs = new SandboxedFilesystem(join(tempDir, "test-unsafe"), {
+    home = join(tempDir, "test-unsafe");
+    await mkdir(home);
+    fs = new SandboxedFilesystem(home, {
       unsafeMode: true,
     });
     expect(fs.unsafeMode).toBe(true);
@@ -447,6 +449,16 @@ describeIfLinux("unsafe mode sandbox", () => {
 
   it("can **UNSAFELY** read the symlink content via the api", async () => {
     expect(await fs.readFile("danger", "utf8")).toBe("s3cr3t");
+  });
+
+  it("preserves absolute project-home paths for sync identities", async () => {
+    await fs.writeFile("widgets.ipynb", "{}");
+    const syncPath = join(home, ".widgets.ipynb.sage-jupyter2");
+    await writeFile(syncPath, "");
+    expect(await (fs as any).canonicalSyncIdentityPath(syncPath)).toBe(
+      syncPath,
+    );
+    expect(await (fs as any).canonicalSyncFsPath(syncPath)).toBe(syncPath);
   });
 });
 

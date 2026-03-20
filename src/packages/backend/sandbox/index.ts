@@ -691,6 +691,7 @@ export class SandboxedFilesystem {
     sandboxBasePath: string;
     absoluteHomeAlias: boolean;
     absoluteScratchAlias: boolean;
+    preserveAbsoluteProjectPath: boolean;
   }> {
     const resolvedInput = resolve("/", path);
     const isAbsoluteInput = path.startsWith("/");
@@ -714,6 +715,20 @@ export class SandboxedFilesystem {
         sandboxBasePath: this.path,
         absoluteHomeAlias: isAbsoluteHomeAlias,
         absoluteScratchAlias: false,
+        preserveAbsoluteProjectPath: false,
+      };
+    }
+
+    if (
+      this.unsafeMode &&
+      (resolvedInput === this.path || resolvedInput.startsWith(`${this.path}/`))
+    ) {
+      return {
+        pathInSandbox: resolvedInput,
+        sandboxBasePath: this.path,
+        absoluteHomeAlias: false,
+        absoluteScratchAlias: false,
+        preserveAbsoluteProjectPath: true,
       };
     }
 
@@ -729,6 +744,7 @@ export class SandboxedFilesystem {
         sandboxBasePath: scratchBase,
         absoluteHomeAlias: false,
         absoluteScratchAlias: true,
+        preserveAbsoluteProjectPath: false,
       };
     }
 
@@ -740,6 +756,7 @@ export class SandboxedFilesystem {
       sandboxBasePath: rootBase,
       absoluteHomeAlias: false,
       absoluteScratchAlias: false,
+      preserveAbsoluteProjectPath: false,
     };
   }
 
@@ -841,12 +858,14 @@ export class SandboxedFilesystem {
     sandboxBasePath,
     absoluteHomeAlias,
     absoluteScratchAlias,
+    preserveAbsoluteProjectPath,
     compareBasePath,
   }: {
     pathInSandbox: string;
     sandboxBasePath: string;
     absoluteHomeAlias: boolean;
     absoluteScratchAlias: boolean;
+    preserveAbsoluteProjectPath: boolean;
     compareBasePath?: string;
   }): string => {
     const rel = this.toSandboxRelativePath(
@@ -854,6 +873,13 @@ export class SandboxedFilesystem {
       sandboxBasePath,
       compareBasePath,
     );
+    if (preserveAbsoluteProjectPath) {
+      const basePath = compareBasePath ?? sandboxBasePath;
+      if (rel === "") {
+        return basePath;
+      }
+      return rel.startsWith("/") ? rel : join(basePath, rel);
+    }
     if (absoluteHomeAlias) {
       if (rel === "") {
         return HOME_ROOT;
@@ -872,8 +898,13 @@ export class SandboxedFilesystem {
   };
 
   canonicalSyncFsPath = async (path: string): Promise<string> => {
-    const { pathInSandbox, sandboxBasePath, absoluteScratchAlias } =
-      await this.resolvePathInSandbox(path);
+    const {
+      pathInSandbox,
+      sandboxBasePath,
+      absoluteScratchAlias,
+      preserveAbsoluteProjectPath: _preserveAbsoluteProjectPath,
+    } = await this.resolvePathInSandbox(path);
+    void _preserveAbsoluteProjectPath;
     const compareBase = this.unsafeMode
       ? undefined
       : await this.resolveSandboxBasePathForComparison(sandboxBasePath);
@@ -923,6 +954,7 @@ export class SandboxedFilesystem {
       sandboxBasePath,
       absoluteHomeAlias,
       absoluteScratchAlias,
+      preserveAbsoluteProjectPath,
     } = await this.resolvePathInSandbox(path);
     const compareBase = this.unsafeMode
       ? undefined
@@ -947,6 +979,7 @@ export class SandboxedFilesystem {
           sandboxBasePath,
           absoluteHomeAlias,
           absoluteScratchAlias,
+          preserveAbsoluteProjectPath,
           compareBasePath: compareBase ?? sandboxBasePath,
         });
       } catch (err: any) {
@@ -961,6 +994,7 @@ export class SandboxedFilesystem {
           sandboxBasePath,
           absoluteHomeAlias,
           absoluteScratchAlias,
+          preserveAbsoluteProjectPath,
           compareBasePath: compareBase ?? sandboxBasePath,
         });
       }
