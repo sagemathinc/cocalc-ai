@@ -76,6 +76,46 @@ function humanTextForOutputMessage(mesg: OutputMessage): {
   }
 }
 
+async function* iterateWithDeadline<T>(
+  iterable: AsyncIterable<T>,
+  deadlineAt: number,
+  timeoutMessage: string,
+): AsyncIterable<T> {
+  const iterator = iterable[Symbol.asyncIterator]();
+  try {
+    for (;;) {
+      const remainingMs = deadlineAt - Date.now();
+      if (!(remainingMs > 0)) {
+        throw new Error(timeoutMessage);
+      }
+      let timer: NodeJS.Timeout | undefined;
+      try {
+        const result = await Promise.race([
+          iterator.next(),
+          new Promise<IteratorResult<T>>((_, reject) => {
+            timer = setTimeout(
+              () => reject(new Error(timeoutMessage)),
+              remainingMs,
+            );
+          }),
+        ]);
+        if (result.done) {
+          return;
+        }
+        yield result.value;
+      } finally {
+        if (timer != null) {
+          clearTimeout(timer);
+        }
+      }
+    }
+  } finally {
+    if (iterator.return instanceof Function) {
+      await iterator.return();
+    }
+  }
+}
+
 export function registerProjectJupyterCommands(
   project: Command,
   deps: ProjectCommandDeps,
@@ -148,6 +188,7 @@ export function registerProjectJupyterCommands(
       ) => {
         await withContext(command, "project jupyter run", async (ctx) => {
           const startedAt = Date.now();
+          const deadlineAt = startedAt + ctx.timeoutMs;
           const wantsJsonSummary =
             ctx.globals.json || ctx.globals.output === "json";
           const limit =
@@ -199,7 +240,11 @@ export function registerProjectJupyterCommands(
           const lifecycleCounts: Record<string, number> = {};
 
           try {
-            for await (const batch of session.iter) {
+            for await (const batch of iterateWithDeadline<OutputMessage[]>(
+              session.iter,
+              deadlineAt,
+              `timed out streaming Jupyter run after ${ctx.timeoutMs}ms`,
+            )) {
               if (firstBatchAt == null) {
                 firstBatchAt = Date.now();
               }
@@ -341,6 +386,7 @@ export function registerProjectJupyterCommands(
                   }
                   return parsed;
                 })();
+          const deadlineAt = startedAt + waitMs;
           const session = await projectJupyterLiveRunSession({
             ctx,
             projectIdentifier: opts.project,
@@ -357,7 +403,11 @@ export function registerProjectJupyterCommands(
           const lifecycleCounts: Record<string, number> = {};
 
           try {
-            for await (const batch of session.iter) {
+            for await (const batch of iterateWithDeadline<OutputMessage[]>(
+              session.iter,
+              deadlineAt,
+              `timed out streaming live Jupyter run after ${waitMs}ms`,
+            )) {
               batchCount += 1;
               for (const mesg of batch) {
                 messageCount += 1;
