@@ -69,13 +69,6 @@ async function readChatJsonLines(path: string): Promise<ChatJsonLine[]> {
     .map((line) => JSON.parse(line));
 }
 
-function chatPathFromPageUrl(url: string): string {
-  const match = url.match(/\/files\/(.+?\.chat)(?:[#?].*)?$/);
-  if (!match) return "";
-  const decoded = decodeURIComponent(match[1]);
-  return decoded.startsWith("/") ? decoded : `/${decoded}`;
-}
-
 async function createWorkspaceFromCurrentDirectory(
   page: Page,
   workspaceRoot: string,
@@ -158,10 +151,19 @@ test("Fix with Agent opens workspace chat and submits in place", async ({
   const clickStarted = Date.now();
   await fixButton.click();
 
-  await expect(page).toHaveURL(/\.chat/, {
+  await expect(page).toHaveURL(new RegExp("error\\.ipynb"), {
     timeout: 12_000,
   });
-  const chatPath = chatPathFromPageUrl(page.url());
+  await expect
+    .poll(
+      async () =>
+        `${(await selectedWorkspaceState(page)).record?.chat_path ?? ""}`.trim(),
+      { timeout: 12_000 },
+    )
+    .not.toBe("");
+  const chatPath = await selectedWorkspaceState(page).then((selected) =>
+    `${selected.record?.chat_path ?? ""}`.trim(),
+  );
   expect(chatPath).not.toBe("");
   expect(Date.now() - clickStarted).toBeLessThan(12_000);
   await expect(
@@ -178,7 +180,12 @@ test("Fix with Agent opens workspace chat and submits in place", async ({
   await expect
     .poll(
       async () => {
-        const rows = await readChatJsonLines(chatPath);
+        let rows: ChatJsonLine[] = [];
+        try {
+          rows = await readChatJsonLines(chatPath);
+        } catch (err: any) {
+          if (err?.code !== "ENOENT") throw err;
+        }
         const userRow = rows.find(
           (row) =>
             row?.event === "chat" &&

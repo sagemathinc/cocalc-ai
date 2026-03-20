@@ -867,10 +867,7 @@ describe("submitNavigatorPromptToCurrentThread", () => {
     });
 
     expect(ok).toBe(true);
-    expect(mockOpenFile).toHaveBeenCalledWith({
-      path: workspaceChatPath,
-      foreground: true,
-    });
+    expect(mockOpenFile).not.toHaveBeenCalled();
     expect(createEmptyThread).toHaveBeenCalledWith(
       expect.objectContaining({
         name: "Fix notebook error",

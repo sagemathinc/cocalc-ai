@@ -449,10 +449,6 @@ async function writeNavigatorPromptInWorkspaceChat(
     };
 
     await ensureNavigatorChatDirectory(project_id, targetChatPath);
-    await redux
-      .getProjectActions(project_id)
-      ?.open_file?.({ path: targetChatPath, foreground: true });
-
     const instanceKey = "navigator-intent-stage";
     const actions =
       getChatActions(project_id, targetChatPath, { instanceKey }) ??
