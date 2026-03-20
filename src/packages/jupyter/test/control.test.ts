@@ -6,7 +6,12 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { MulticellOutputHandler, restoreKernelFromIpynb } from "../control";
+import { SandboxedFilesystem } from "@cocalc/backend/sandbox";
+import {
+  createJupyterSyncFilesystem,
+  MulticellOutputHandler,
+  restoreKernelFromIpynb,
+} from "../control";
 
 describe("restoreKernelFromIpynb", () => {
   function createActions(kernel: string | null = null) {
@@ -192,5 +197,48 @@ describe("MulticellOutputHandler", () => {
       true,
     );
     expect(actions._set.mock.calls.at(-1)?.[1]).toBe(true);
+  });
+});
+
+describe("createJupyterSyncFilesystem", () => {
+  it("preserves absolute sync identities for project-home files in unsafe mode", async () => {
+    const home = await mkdtemp(join(tmpdir(), "jupyter-control-home-"));
+    try {
+      const fs = new SandboxedFilesystem(home, { unsafeMode: true });
+      const wrapped = createJupyterSyncFilesystem(fs);
+      const syncPath = join(home, ".widgets.ipynb.sage-jupyter2");
+      await writeFile(syncPath, "{}");
+
+      expect(await wrapped.readFile(syncPath, "utf8")).toBe("{}");
+      expect(await wrapped.canonicalSyncIdentityPath?.(syncPath)).toBe(
+        syncPath,
+      );
+      expect(await wrapped.canonicalSyncFsPath?.(syncPath)).toBe(syncPath);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it("supports absolute notebook paths outside the project home in unsafe mode", async () => {
+    const home = await mkdtemp(join(tmpdir(), "jupyter-control-home-"));
+    const outside = await mkdtemp(join(tmpdir(), "jupyter-control-outside-"));
+    try {
+      const fs = new SandboxedFilesystem(home, { unsafeMode: true });
+      const wrapped = createJupyterSyncFilesystem(fs);
+      const notebookPath = join(outside, "test.ipynb");
+      const syncPath = join(outside, ".test.ipynb.sage-jupyter2");
+      await writeFile(notebookPath, "{}");
+      await writeFile(syncPath, "[]");
+
+      expect(await wrapped.readFile(notebookPath, "utf8")).toBe("{}");
+      expect(await wrapped.readFile(syncPath, "utf8")).toBe("[]");
+      expect(await wrapped.canonicalSyncIdentityPath?.(syncPath)).toBe(
+        syncPath,
+      );
+      expect(await wrapped.canonicalSyncFsPath?.(syncPath)).toBe(syncPath);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+      await rm(outside, { recursive: true, force: true });
+    }
   });
 });
