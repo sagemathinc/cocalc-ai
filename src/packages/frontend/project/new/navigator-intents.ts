@@ -467,6 +467,9 @@ export async function stageNavigatorPromptInWorkspaceChat(opts: {
     });
     let replyThreadKey = resolvedThreadKey;
     let replyThreadId = resolveThreadIdFromIndex(actions, replyThreadKey);
+    if (replyThreadKey && !replyThreadId) {
+      replyThreadKey = "";
+    }
     const existingThreadTitle =
       replyThreadKey && replyThreadId
         ? normalizeOptionalTitle(

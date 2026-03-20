@@ -885,4 +885,78 @@ describe("submitNavigatorPromptToCurrentThread", () => {
     expect(save).toHaveBeenCalled();
     expect(mockOpenFloating).not.toHaveBeenCalled();
   });
+
+  it("ignores phantom thread keys when staging a workspace prompt", async () => {
+    const workspaceChatPath =
+      "/home/wstein/.local/share/cocalc/workspaces/acct/ws-stage-phantom.chat";
+    mockEnsureWorkspaceChatForPath.mockResolvedValue({
+      chat_path: workspaceChatPath,
+      assigned: false,
+      workspace: {
+        workspace_id: "ws-stage-phantom",
+        root_path: "/home/wstein/project/stage-phantom",
+        theme: {
+          title: "stage-phantom",
+          color: null,
+          accent_color: null,
+          icon: null,
+          image_blob: null,
+        },
+      },
+    });
+    mockListSessions.mockResolvedValue([]);
+    const save = jest.fn().mockResolvedValue(undefined);
+    const sendChat = jest.fn(() => new Date().toISOString());
+    const createEmptyThread = jest.fn(() => "thread-stage-real");
+    const setThreadAgentMode = jest.fn();
+    const actions = {
+      syncdb: { get_state: () => "ready", save },
+      messageCache: {
+        getThreadIndex: () =>
+          new Map([
+            [
+              "thread-stage-phantom",
+              {
+                key: "thread-stage-phantom",
+                newestTime: Date.now(),
+                rootMessage: {},
+              },
+            ],
+          ]),
+      },
+      sendChat,
+      createEmptyThread,
+      setThreadAgentMode,
+      store: {
+        get: (key: string) =>
+          key === "selectedThreadKey" ? "thread-stage-phantom" : undefined,
+      },
+    };
+    mockGetChatActions.mockReturnValue(actions);
+    mockInitChat.mockReturnValue(actions);
+
+    const ok = await stageNavigatorPromptInWorkspaceChat({
+      project_id: "00000000-1000-4000-8000-000000000000",
+      path: "/home/wstein/project/stage-phantom/a.ipynb",
+      prompt: "Detailed hidden notebook repair prompt",
+      visiblePrompt: "Investigate and fix this Jupyter notebook error.",
+      title: "Fix notebook error",
+      forceCodex: true,
+      codexConfig: { model: "gpt-5.4-mini" },
+    });
+
+    expect(ok).toBe(true);
+    expect(setThreadAgentMode).not.toHaveBeenCalled();
+    expect(createEmptyThread).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "Fix notebook error",
+      }),
+    );
+    expect(sendChat).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reply_thread_id: "thread-stage-real",
+        skipModelDispatch: true,
+      }),
+    );
+  });
 });
