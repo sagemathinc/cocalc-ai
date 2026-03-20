@@ -31,6 +31,7 @@ import { getCustomizePayload } from "./hub/settings";
 import { getOrCreateSelfSigned } from "./tls";
 import { attachProxyServer } from "@cocalc/project/servers/proxy/proxy";
 import { assertLocalBindOrInsecure } from "@cocalc/backend/network/policy";
+import { maybeHandleLiteStaticAppRequest } from "./static-apps";
 
 const logger = getLogger("lite:static");
 
@@ -166,6 +167,13 @@ export async function initApp({ app, conatClient, AUTH_TOKEN, isHttps }) {
   initBlobUpload(app, conatClient);
   initBlobDownload(app, conatClient);
   initUpload(app);
+
+  app.use(async (req, res, next) => {
+    if (await maybeHandleLiteStaticAppRequest({ req, res })) {
+      return;
+    }
+    next();
+  });
 
   app.get("*", (req, res) => {
     if (req.url.endsWith("__webpack_hmr")) return;
