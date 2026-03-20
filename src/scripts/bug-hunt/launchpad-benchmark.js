@@ -66,6 +66,7 @@ function parseArgs(argv) {
     cleanupOnSuccess: true,
     dryRun: false,
     json: false,
+    verifyRestoredStart: false,
   };
   for (let i = 0; i < normalizedArgv.length; i += 1) {
     const arg = normalizedArgv[i];
@@ -134,6 +135,8 @@ function parseArgs(argv) {
       options.dryRun = true;
     } else if (arg === "--json") {
       options.json = true;
+    } else if (arg === "--verify-restored-start") {
+      options.verifyRestoredStart = true;
     } else if (arg === "--help" || arg === "-h") {
       usageAndExit(undefined, 0);
     } else {
@@ -188,16 +191,23 @@ function buildWorkloadSpec(workload, now = Date.now()) {
     null,
     2,
   );
-  const markerPath = `/tmp/bug-hunt-benchmark-marker-${stamp}.json`;
+  const benchmarkDir = `$HOME/bug-hunt-benchmark-${stamp}`;
+  const markerPath = `${benchmarkDir}/marker.json`;
+  const restoreSourcePath = benchmarkDir.replace(/^\$HOME\//, "");
+  const restoreTargetPath = `$HOME/bug-hunt-restore-target-${stamp}`;
   if (workload === "random-4g") {
-    const payloadPath = `/tmp/bug-hunt-random-4g-${stamp}.bin`;
+    const payloadPath = `${benchmarkDir}/random-4g.bin`;
     return {
       workload,
+      benchmarkDir,
       markerPath,
       markerPayload: `${markerPayload}\n`,
       payloadPath,
+      restoreSourcePath,
+      restoreTargetPath,
       prepareBash: [
         "set -euo pipefail",
+        `mkdir -p ${shellQuote(benchmarkDir)}`,
         `cat > ${shellQuote(markerPath)} <<'EOF'`,
         markerPayload,
         "EOF",
@@ -216,11 +226,15 @@ function buildWorkloadSpec(workload, now = Date.now()) {
   }
   return {
     workload,
+    benchmarkDir,
     markerPath,
     markerPayload: `${markerPayload}\n`,
+    restoreSourcePath,
+    restoreTargetPath,
     prepareBash: [
       "set -euo pipefail",
       "export DEBIAN_FRONTEND=noninteractive",
+      `mkdir -p ${shellQuote(benchmarkDir)}`,
       `cat > ${shellQuote(markerPath)} <<'EOF'`,
       markerPayload,
       "EOF",
@@ -318,6 +332,78 @@ function selectLatestBackupId(backups) {
     throw new Error("backup list did not return a usable backup id");
   }
   return backupId;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForRestorableBackupId(
+  cliBase,
+  projectId,
+  wait = { attempts: 20, intervalMs: 3000 },
+) {
+  let lastIndexed = [];
+  let lastDirect = [];
+  for (let attempt = 1; attempt <= wait.attempts; attempt += 1) {
+    const direct = runCliJson(cliBase, [
+      "project",
+      "backup",
+      "list",
+      "--project",
+      projectId,
+      "--limit",
+      "100",
+    ]);
+    if (Array.isArray(direct) && direct.length > 0) {
+      const candidateId = selectLatestBackupId(direct);
+      try {
+        runCliJson(cliBase, [
+          "project",
+          "backup",
+          "files",
+          "--project",
+          projectId,
+          "--backup-id",
+          candidateId,
+        ]);
+      } catch (_err) {
+        if (attempt < wait.attempts) {
+          await sleep(wait.intervalMs);
+          continue;
+        }
+        throw new Error(
+          `backup ${candidateId} appeared in direct listing but never became readable`,
+        );
+      }
+      return {
+        id: candidateId,
+        source: "direct",
+        direct,
+        indexed: lastIndexed,
+      };
+    }
+    lastDirect = Array.isArray(direct) ? direct : [];
+
+    const indexed = runCliJson(cliBase, [
+      "project",
+      "backup",
+      "list",
+      "--project",
+      projectId,
+      "--indexed-only",
+      "--limit",
+      "100",
+    ]);
+    lastIndexed = Array.isArray(indexed) ? indexed : [];
+
+    if (attempt < wait.attempts) {
+      await sleep(wait.intervalMs);
+    }
+  }
+  throw new Error(
+    `backup never appeared in direct listing (indexed backups=${lastIndexed.length}, direct backups=${lastDirect.length})`,
+  );
 }
 
 function runHostSsh(cliBase, hostId, bash, timeoutSeconds = 900) {
@@ -759,41 +845,26 @@ async function executeLaunchpadBenchmark(options, now = Date.now(), deps = {}) {
       );
       result.backup_op_id = backup.op_id ?? null;
 
-      const backups = await timeStep("list_indexed_backups", () =>
-        runCli(cliBase, [
-          "project",
-          "backup",
-          "list",
-          "--project",
-          result.src_project_id,
-          "--indexed-only",
-        ]),
+      const backupSelection = await timeStep("select_restorable_backup", () =>
+        waitForRestorableBackupId(cliBase, result.src_project_id),
       );
-      writeJson(path.join(runDir, "indexed-backups.json"), backups);
-      result.backup_id = selectLatestBackupId(backups);
+      writeJson(
+        path.join(runDir, "indexed-backups.json"),
+        backupSelection.indexed ?? [],
+      );
+      writeJson(
+        path.join(runDir, "direct-backups.json"),
+        backupSelection.direct ?? [],
+      );
+      result.backup_id = backupSelection.id;
+      result.backup_id_source = backupSelection.source;
 
-      if (!options.destProject) {
-        const created = await timeStep(
-          "create_dest_project",
-          () => {
-            const args = ["project", "create", "Bug Hunt Benchmark Restore Dest"];
-            if (options.destHost) {
-              args.push("--host", options.destHost);
-            }
-            return runCli(cliBase, args);
-          },
-          { host: options.destHost || null },
-        );
-        result.dest_project_id = `${created.project_id ?? ""}`.trim();
-        createdProjects.push(result.dest_project_id);
-      } else {
-        result.dest_project_id = options.destProject;
-      }
-
-      const destHostId = options.destHost || null;
+      result.dest_project_id = options.destProject || result.src_project_id;
+      const destHostId = options.destHost || options.srcHost || null;
       if (destHostId) {
-        const beforeCache = await timeStep("inspect_dest_cache_before_restore", () =>
-          inspectHostRusticCache(cliBase, destHostId),
+        const beforeCache = await timeStep(
+          "inspect_dest_cache_before_restore",
+          () => inspectHostRusticCache(cliBase, destHostId),
         );
         writeJson(path.join(runDir, "dest-cache-before-restore.json"), beforeCache);
       }
@@ -808,35 +879,43 @@ async function executeLaunchpadBenchmark(options, now = Date.now(), deps = {}) {
         writeJson(path.join(runDir, "dest-cache-after-clear.json"), afterClear);
       }
 
+      await timeStep("prepare_restore_target", async () =>
+        runProjectExec(
+          cliBase,
+          result.dest_project_id,
+          [
+            "set -euo pipefail",
+            `rm -rf ${shellQuote(workload.restoreTargetPath)}`,
+            `mkdir -p ${shellQuote(workload.restoreTargetPath)}`,
+          ].join("\n"),
+          300,
+        ),
+      );
+
       if (options.cacheMode === "warm") {
-        const warmupCreated = await timeStep(
-          "create_warmup_dest_project",
-          () => {
-            const args = [
-              "project",
-              "create",
-              "Bug Hunt Benchmark Restore Warmup",
-            ];
-            if (options.destHost) {
-              args.push("--host", options.destHost);
-            }
-            return runCli(cliBase, args);
-          },
-          { host: options.destHost || null },
-        );
-        const warmupProjectId = `${warmupCreated.project_id ?? ""}`.trim();
-        createdProjects.push(warmupProjectId);
         await timeStep("warmup_restore", () =>
           runCli(cliBase, [
             "project",
             "backup",
             "restore",
             "--project",
-            warmupProjectId,
+            result.dest_project_id,
             "--backup-id",
             result.backup_id,
+            "--path",
+            workload.restoreSourcePath,
+            "--dest",
+            `${workload.restoreTargetPath}-warmup`,
             "--wait",
           ]),
+        );
+        await timeStep("cleanup_warmup_restore_target", async () =>
+          runProjectExec(
+            cliBase,
+            result.dest_project_id,
+            `rm -rf ${shellQuote(`${workload.restoreTargetPath}-warmup`)}`,
+            300,
+          ),
         );
         if (destHostId) {
           const afterWarmup = await timeStep(
@@ -859,6 +938,10 @@ async function executeLaunchpadBenchmark(options, now = Date.now(), deps = {}) {
           result.dest_project_id,
           "--backup-id",
           result.backup_id,
+          "--path",
+          workload.restoreSourcePath,
+          "--dest",
+          workload.restoreTargetPath,
           "--wait",
         ]),
       );
@@ -871,20 +954,40 @@ async function executeLaunchpadBenchmark(options, now = Date.now(), deps = {}) {
         writeJson(path.join(runDir, "dest-cache-after-restore.json"), afterRestore);
       }
 
-      await timeStep("start_restored_project", () =>
-        ensureProjectRunning(cliBase, result.dest_project_id),
+      const restoreVerifyPaths = workload.verifyPaths.map((filePath) =>
+        filePath.replace(workload.benchmarkDir, workload.restoreTargetPath),
       );
-      verifyProjectPaths(cliBase, result.dest_project_id, workload.verifyPaths);
+      verifyProjectPaths(cliBase, result.dest_project_id, restoreVerifyPaths);
 
       const restoredInspect = await timeStep("inspect_restored_workload", async () =>
         runProjectExec(
           cliBase,
           result.dest_project_id,
-          workload.inspectBash,
+          [
+            "set -euo pipefail",
+            `stat -c 'restore_marker_bytes=%s' ${shellQuote(restoreVerifyPaths[0])}`,
+            workload.payloadPath
+              ? `stat -c 'restore_payload_bytes=%s' ${shellQuote(
+                  workload.payloadPath.replace(
+                    workload.benchmarkDir,
+                    workload.restoreTargetPath,
+                  ),
+                )}`
+              : 'du -sb "$HOME/.local" 2>/dev/null || true',
+          ].join("\n"),
           600,
         ),
       );
-      writeJson(path.join(runDir, "inspect-restored-workload.json"), restoredInspect);
+      writeJson(
+        path.join(runDir, "inspect-restored-workload.json"),
+        restoredInspect,
+      );
+
+      if (options.verifyRestoredStart) {
+        await timeStep("start_restored_project", () =>
+          ensureProjectRunning(cliBase, result.dest_project_id),
+        );
+      }
       result.ok = true;
     }
   } finally {

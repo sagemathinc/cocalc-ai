@@ -54,7 +54,7 @@ test("parseArgs accepts restore benchmark options", () => {
 test("buildWorkloadSpec describes the random workload", () => {
   const spec = buildWorkloadSpec("random-4g", Date.UTC(2026, 2, 19, 1, 0, 0));
   assert.match(spec.prepareBash, /dd if=\/dev\/urandom/);
-  assert.match(spec.payloadPath, /bug-hunt-random-4g/);
+  assert.match(spec.payloadPath, /random-4g\.bin/);
   assert.equal(spec.verifyPaths.length, 2);
 });
 
