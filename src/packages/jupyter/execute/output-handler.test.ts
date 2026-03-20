@@ -40,6 +40,34 @@ describe("OutputHandler", () => {
     expect(cell.output?.["0"]?.text).toBe("hello");
   });
 
+  it("records execution_count from execute_reply with an empty payload array", () => {
+    const cell: any = { id: "alpha" };
+    const handler = new OutputHandler({ cell });
+
+    handler.process({
+      msg_type: "execute_reply",
+      content: { execution_count: 7, payload: [] },
+    } as any);
+    handler.done();
+
+    expect(cell.exec_count).toBe(7);
+    expect(cell.output).toBeNull();
+  });
+
+  it("records exec_count from execute_reply with an empty payload array", () => {
+    const cell: any = { id: "alpha" };
+    const handler = new OutputHandler({ cell });
+
+    handler.process({
+      msg_type: "execute_reply",
+      content: { exec_count: 8, payload: [] },
+    } as any);
+    handler.done();
+
+    expect(cell.exec_count).toBe(8);
+    expect(cell.output).toBeNull();
+  });
+
   it("does not reset start time on repeated busy/start messages", () => {
     const cell: any = { id: "alpha" };
     const handler = new OutputHandler({ cell });

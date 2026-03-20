@@ -7,7 +7,6 @@
 React component that describes the output of a cell
 */
 
-import { Alert } from "antd";
 import type { Map as ImmutableMap } from "immutable";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { LLMTools } from "@cocalc/jupyter/types";
@@ -244,21 +243,16 @@ function ControlColumn({ actions, cell, id }) {
   const output = cell.get("output");
   if (output != null) {
     for (const [, x] of output) {
-      try {
-        if (x.has("exec_count")) {
-          exec_count = x.get("exec_count");
-          break;
-        }
-      } catch (err) {
-        return (
-          <Alert
-            style={{ margin: "5px" }}
-            title="Malformed Output"
-            description={`Notebook contains malformed output, i.e., the ipynb file is corrupt -- ${err}`}
-            type="error"
-            showIcon
-          />
-        );
+      if (
+        x == null ||
+        typeof x.has !== "function" ||
+        typeof x.get !== "function"
+      ) {
+        continue;
+      }
+      if (x.has("exec_count")) {
+        exec_count = x.get("exec_count");
+        break;
       }
     }
   }
