@@ -14,6 +14,7 @@ import type { client as projectRunnerClient } from "@cocalc/conat/project/runner
 import {
   DEFAULT_PROJECT_IMAGE,
   DEFAULT_COMPUTE_IMAGE,
+  PROJECT_IMAGE_PATH,
 } from "@cocalc/util/db-schema/defaults";
 import getLogger from "@cocalc/backend/logger";
 import { reportProjectStateToMaster } from "../master-status";
@@ -33,6 +34,7 @@ import {
   client as fileServerClient,
   type RestoreMode,
   type RestoreStagingHandle,
+  type SnapshotRestoreMode,
 } from "@cocalc/conat/files/file-server";
 import { SERVICE as PERSIST_SERVICE } from "@cocalc/conat/persist/util";
 import { publishLroEvent, publishLroSummary } from "@cocalc/conat/lro/stream";
@@ -498,6 +500,182 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
     }
   }
 
+  async function restoreSnapshot({
+    project_id,
+    snapshot,
+    mode = "both",
+    safety_snapshot_name,
+  }: {
+    project_id: string;
+    snapshot: string;
+    mode?: SnapshotRestoreMode;
+    safety_snapshot_name?: string;
+  }): Promise<{
+    op_id: string;
+    scope_type: "project";
+    scope_id: string;
+    service: string;
+    stream_name: string;
+  }> {
+    if (!isValidUUID(project_id)) {
+      throw Error("invalid project_id");
+    }
+    if (!snapshot?.trim()) {
+      throw Error("snapshot is required");
+    }
+    if (!["both", "home", "rootfs"].includes(mode)) {
+      throw Error(`invalid snapshot restore mode: ${mode}`);
+    }
+    const safetySnapshotName =
+      safety_snapshot_name ?? defaultSafetySnapshotName(snapshot);
+    if (snapshot === safetySnapshotName) {
+      throw Error("snapshot and safety snapshot name must differ");
+    }
+
+    const op_id = uuid();
+    const now = new Date();
+    const baseSummary: LroSummary = {
+      op_id,
+      kind: "project-restore",
+      scope_type: "project",
+      scope_id: project_id,
+      status: "running",
+      created_by: account_id ?? null,
+      owner_type: "hub",
+      owner_id: null,
+      routing: "hub",
+      input: {
+        project_id,
+        restore_type: "snapshot",
+        snapshot,
+        mode,
+        safety_snapshot_name: safetySnapshotName,
+      },
+      result: {},
+      error: null,
+      progress_summary: { phase: "validate" },
+      attempt: 0,
+      heartbeat_at: null,
+      created_at: now,
+      started_at: now,
+      finished_at: null,
+      dismissed_at: null,
+      dismissed_by: null,
+      updated_at: now,
+      expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      dedupe_key: null,
+      parent_id: null,
+    };
+
+    const publishProgress = (
+      phase: string,
+      progress: number,
+      message: string,
+    ) =>
+      publishLroEvent({
+        scope_type: "project",
+        scope_id: project_id,
+        op_id,
+        event: {
+          type: "progress",
+          ts: Date.now(),
+          phase,
+          message,
+          progress,
+        },
+      }).catch(() => {});
+
+    void publishProgress("queued", 0, "queued");
+
+    void (async () => {
+      const started = Date.now();
+      const restoreImage = await getSnapshotRestoreImage({
+        project_id,
+        snapshot,
+        mode,
+      });
+      void publishLroSummaryWithRetry({
+        scope_type: "project",
+        scope_id: project_id,
+        summary: baseSummary,
+        context: "snapshot-restore-running",
+      });
+      try {
+        void publishProgress("stop", 15, "stopping project");
+        await stop({ project_id });
+        void publishProgress("snapshot", 30, "creating safety snapshot");
+        await fileServer(project_id).createSnapshot({
+          project_id,
+          name: safetySnapshotName,
+        });
+        void publishProgress("restore", 70, "restoring snapshot");
+        await fileServer(project_id).restoreSnapshot({
+          project_id,
+          snapshot,
+          mode,
+          safety_snapshot_name: safetySnapshotName,
+          lro: { op_id, scope_type: "project", scope_id: project_id },
+        });
+        void publishProgress("start", 85, "starting project");
+        await start({
+          project_id,
+          image: restoreImage,
+          lro_op_id: op_id,
+        });
+        const duration_ms = Date.now() - started;
+        const finished = new Date();
+        await publishLroSummaryWithRetry({
+          scope_type: "project",
+          scope_id: project_id,
+          summary: {
+            ...baseSummary,
+            status: "succeeded",
+            result: {
+              restore_type: "snapshot",
+              snapshot,
+              mode,
+              safety_snapshot_name: safetySnapshotName,
+              duration_ms,
+            },
+            progress_summary: {
+              phase: "done",
+              snapshot,
+              mode,
+              safety_snapshot_name: safetySnapshotName,
+              duration_ms,
+            },
+            finished_at: finished,
+            updated_at: finished,
+          },
+          context: "snapshot-restore-succeeded",
+        });
+      } catch (err) {
+        const finished = new Date();
+        await publishLroSummaryWithRetry({
+          scope_type: "project",
+          scope_id: project_id,
+          summary: {
+            ...baseSummary,
+            status: "failed",
+            error: `${err}`,
+            progress_summary: { phase: "failed" },
+            finished_at: finished,
+            updated_at: finished,
+          },
+          context: "snapshot-restore-failed",
+        });
+      }
+    })();
+
+    return {
+      op_id,
+      scope_type: "project",
+      scope_id: project_id,
+      service: PERSIST_SERVICE,
+      stream_name: lroStreamName(op_id),
+    };
+  }
+
   async function codexDeviceAuthStart({
     account_id,
     project_id,
@@ -627,6 +805,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
   hubApi.projects.deleteBackup = deleteBackup;
   hubApi.projects.updateBackups = updateBackups;
   hubApi.projects.restoreBackup = restoreBackup;
+  hubApi.projects.restoreSnapshot = restoreSnapshot;
   hubApi.projects.beginRestoreStaging = beginRestoreStaging;
   hubApi.projects.ensureRestoreStaging = ensureRestoreStaging;
   hubApi.projects.finalizeRestoreStaging = finalizeRestoreStaging;
@@ -1110,4 +1289,32 @@ export async function getBackupFiles({
 
 export async function getBackupQuota() {
   return { limit: MAX_BACKUPS_PER_PROJECT };
+}
+
+function defaultSafetySnapshotName(snapshot: string): string {
+  return `restore-safety-${snapshot}-${new Date().toISOString()}`;
+}
+
+async function getSnapshotRestoreImage({
+  project_id,
+  snapshot,
+  mode,
+}: {
+  project_id: string;
+  snapshot: string;
+  mode: SnapshotRestoreMode;
+}): Promise<string | undefined> {
+  if (mode === "home") return;
+  try {
+    const preview = await fileServer(project_id).getSnapshotFileText({
+      project_id,
+      snapshot,
+      path: join(PROJECT_IMAGE_PATH, "current-image.txt"),
+      max_bytes: 4096,
+    });
+    const image = preview.content.trim();
+    return image.length > 0 ? image : undefined;
+  } catch {
+    return undefined;
+  }
 }

@@ -7,6 +7,7 @@ import {
   type SnapshotUsage,
   type RestoreMode,
   type RestoreStagingHandle,
+  type SnapshotRestoreMode,
 } from "@cocalc/conat/files/file-server";
 import type {
   ExecuteCodeOptions,
@@ -286,6 +287,7 @@ export const projects = {
 
   createSnapshot: authFirstRequireAccount,
   deleteSnapshot: authFirstRequireAccount,
+  restoreSnapshot: authFirstRequireAccount,
   updateSnapshots: authFirstRequireAccount,
   getSnapshotQuota: authFirstRequireAccount,
   allSnapshotUsage: authFirstRequireAccount,
@@ -636,6 +638,20 @@ export interface Projects {
     project_id: string;
     name?: string;
   }) => Promise<void>;
+
+  restoreSnapshot: (opts: {
+    account_id?: string;
+    project_id: string;
+    snapshot: string;
+    mode?: SnapshotRestoreMode;
+    safety_snapshot_name?: string;
+  }) => Promise<{
+    op_id: string;
+    scope_type: "project";
+    scope_id: string;
+    service: string;
+    stream_name: string;
+  }>;
 
   deleteSnapshot: (opts: {
     account_id?: string;
