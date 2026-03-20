@@ -30,9 +30,11 @@ test("parseArgs accepts copy-path workflow options", () => {
 
 test("buildSentinel creates distinct copy paths", () => {
   const sentinel = buildSentinel(Date.UTC(2026, 2, 18, 6, 0, 0));
+  assert.match(sentinel.srcPath, /^\.bug-hunt-copy-path-/);
   assert.match(sentinel.srcPath, /bug-hunt-copy-path/);
   assert.match(sentinel.destPath, /bug-hunt-copy-path-dest/);
   assert.notEqual(sentinel.srcPath, sentinel.destPath);
+  assert.equal(sentinel.destPath.startsWith("/"), false);
 });
 
 test("executeCopyPathWorkflow writes a dry-run summary", async () => {

@@ -109,8 +109,8 @@ function buildSentinel(now = Date.now()) {
   );
   return {
     payload: `${payload}\n`,
-    srcPath: `/tmp/bug-hunt-copy-path-${stamp.replace(/[:.]/g, "-")}.txt`,
-    destPath: `/tmp/bug-hunt-copy-path-dest-${stamp.replace(/[:.]/g, "-")}.txt`,
+    srcPath: `.bug-hunt-copy-path-${stamp.replace(/[:.]/g, "-")}.txt`,
+    destPath: `.bug-hunt-copy-path-dest-${stamp.replace(/[:.]/g, "-")}.txt`,
   };
 }
 
