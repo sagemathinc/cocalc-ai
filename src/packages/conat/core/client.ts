@@ -298,7 +298,6 @@ export const DEFAULT_SOCKETIO_CLIENT_OPTIONS = {
 
   // nodejs specific for project processes in some settings
   rejectUnauthorized: false,
-  autoUnref: true,
 
   reconnection: true,
   reconnectionDelay: process.env.COCALC_TEST_MODE ? 50 : 500,
