@@ -99,9 +99,6 @@ function needsTextBoundarySpace(
   if (/[.!?;:]/.test(leftLast) && /[A-Za-z0-9`"'([{]/.test(rightFirst)) {
     return true;
   }
-  if (/[a-z0-9]/.test(leftLast) && /[A-Z]/.test(rightFirst)) {
-    return true;
-  }
   if (/[)\]}`"'*]/.test(leftLast) && /[A-Za-z0-9`(]/.test(rightFirst)) {
     return true;
   }

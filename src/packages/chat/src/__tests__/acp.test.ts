@@ -46,6 +46,14 @@ describe("appendStreamMessage", () => {
     expect((merged[0] as any).event.text).toBe("hello");
   });
 
+  test("does not insert spaces inside camel-case product names", () => {
+    const events = [textEvent("message", "Co", 1)];
+    const merged = appendStreamMessage(events, textEvent("message", "Calc", 2));
+
+    expect(merged).toHaveLength(1);
+    expect((merged[0] as any).event.text).toBe("CoCalc");
+  });
+
   test("keeps existing whitespace boundaries intact", () => {
     const events = [textEvent("thinking", "**First block** ", 1)];
     const merged = appendStreamMessage(
@@ -167,6 +175,16 @@ describe("response text helpers", () => {
     expect(getLiveResponseMarkdown(events)).toBe(
       "Live Codex output reaches the chat UI through the log.",
     );
+  });
+
+  test("keeps camel-case product names intact across interleaved deltas", () => {
+    const events: AcpStreamMessage[] = [
+      textEvent("message", "Co", 1, { delta: true }),
+      textEvent("thinking", "reasoning chunk", 2),
+      textEvent("message", "Calc", 3, { delta: true }),
+    ];
+    expect(getAgentMessageTexts(events)).toEqual(["CoCalc"]);
+    expect(getLiveResponseMarkdown(events)).toBe("CoCalc");
   });
 
   test("keeps large interleaved app-server deltas as separate paragraphs", () => {

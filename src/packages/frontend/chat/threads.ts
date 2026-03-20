@@ -271,6 +271,9 @@ export function useThreadSections({
   }, [rawThreads, configThreads]);
 
   const threads = React.useMemo<ThreadMeta[]>(() => {
+    const readStateReady = accountId
+      ? (actions?.isProjectReadStateReady?.() ?? false)
+      : false;
     return allThreads.map((thread) => {
       const rootMessage = thread.rootMessage;
       const threadMeta = actions?.getThreadMetadata?.(thread.key);
@@ -295,10 +298,16 @@ export function useThreadSections({
       const displayLabel = storedName || thread.label;
       const isPinned = threadMeta?.pin ?? false;
       const isArchived = threadMeta?.archived ?? false;
-      const readCount = accountId
-        ? Math.max(0, actions?.getThreadReadCount?.(thread.key, accountId) ?? 0)
+      const readCount =
+        accountId && readStateReady
+          ? Math.max(
+              0,
+              actions?.getThreadReadCount?.(thread.key, accountId) ?? 0,
+            )
+          : 0;
+      const unreadCount = readStateReady
+        ? Math.max(thread.messageCount - readCount, 0)
         : 0;
-      const unreadCount = Math.max(thread.messageCount - readCount, 0);
       const metadataIsAI =
         threadMeta?.agent_kind === "acp" ||
         threadMeta?.agent_kind === "llm" ||

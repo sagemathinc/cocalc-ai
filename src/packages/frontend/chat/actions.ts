@@ -1069,6 +1069,9 @@ export class ChatActions extends Actions<ChatState> {
     sender_id: string | undefined = undefined,
   ) => {
     if (!this.syncdb) return;
+    if (this.syncdb.get_state?.() !== "ready") {
+      return;
+    }
     sender_id = sender_id ?? this.redux.getStore("account").get_account_id();
     this.syncdb.delete({
       event: "draft",
@@ -1716,6 +1719,10 @@ export class ChatActions extends Actions<ChatState> {
       return parsedCfg;
     }
     return 0;
+  };
+
+  isProjectReadStateReady = (): boolean => {
+    return this.ensureProjectReadState() != null;
   };
 
   listThreadConfigRows = (): any[] => {

@@ -24,6 +24,8 @@ function workspace(overrides: Partial<WorkspaceRecord>): WorkspaceRecord {
     chat_path: null,
     notice_thread_id: null,
     notice: null,
+    activity_viewed_at: null,
+    activity_running_at: null,
     created_at: now,
     updated_at: now,
     source: "manual",
