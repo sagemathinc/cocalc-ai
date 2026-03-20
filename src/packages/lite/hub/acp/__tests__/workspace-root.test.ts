@@ -12,16 +12,25 @@ describe("resolveWorkspaceRoot", () => {
       process.env.COCALC_ACP_EXECUTOR = "container";
     });
 
-    it("builds container workspace with project id and relative dir", () => {
-      const root = resolveWorkspaceRoot({ workingDirectory: "sub" } as any);
-      expect(root).toBe("/root/sub");
-    });
-
-    it("respects absolute container working dir", () => {
+    it("uses the provided container working dir verbatim", () => {
       const root = resolveWorkspaceRoot({
         workingDirectory: "/root/custom",
       } as any);
       expect(root).toBe("/root/custom");
+    });
+
+    it("preserves scratch roots instead of rebasing them under /root", () => {
+      const root = resolveWorkspaceRoot({
+        workingDirectory: "/scratch/demo",
+      } as any);
+      expect(root).toBe("/scratch/demo");
+    });
+
+    it("does not rewrite unexpected container paths either", () => {
+      const root = resolveWorkspaceRoot({
+        workingDirectory: "sub",
+      } as any);
+      expect(root).toBe("sub");
     });
 
     it("falls back to project root when unset", () => {

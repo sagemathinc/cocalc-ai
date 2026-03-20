@@ -19,20 +19,11 @@ export function resolveWorkspaceRoot(
 ): string {
   const requested = config?.workingDirectory;
   if (preferContainerExecutor()) {
-    // Container path: always anchor to /root inside the project. Ignore
-    // absolute paths outside /root to avoid leaking host paths from the
-    // caller; treat them as relative segments under /root instead.
-    const base = `/root`;
-    if (!requested) return base;
-    // Normalize and strip any leading slashes; also drop leading ../ segments.
-    const withoutLeadingSlash = requested.replace(/^\/+/, "");
-    const noParentSegments = withoutLeadingSlash.replace(/^(\.\.\/)+/, "");
-    if (!noParentSegments) return base;
-    // If the caller passed an absolute path under /root, respect it as-is.
-    if (requested.startsWith(base)) {
-      return path.posix.normalize(requested);
-    }
-    return path.posix.normalize(path.posix.join(base, noParentSegments));
+    // In launchpad/project-host mode Codex now runs fully inside the project
+    // container, so the provided workingDirectory is already an in-project
+    // absolute path. Do not reinterpret or rewrite it here; only fall back to
+    // /root when nothing was provided.
+    return requested || "/root";
   }
   // Lite/local mode: respect absolute working dir; otherwise resolve from HOME.
   const home = process.env.HOME ?? process.cwd();
