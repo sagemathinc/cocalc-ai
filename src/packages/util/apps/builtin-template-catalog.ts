@@ -9,7 +9,7 @@ export const BUILTIN_APP_TEMPLATE_CATALOG: AppTemplateCatalogV1 = {
   version: 1,
   kind: "cocalc-app-template-catalog",
   source: "builtin",
-  published_at: "2026-03-09T00:00:00.000Z",
+  published_at: "2026-03-20T00:00:00.000Z",
   templates: [
     {
       id: "jupyterlab",
@@ -149,6 +149,376 @@ export const BUILTIN_APP_TEMPLATE_CATALOG: AppTemplateCatalogV1 = {
         service_open_mode: "proxy",
         command:
           "rserver --server-daemonize=0 --auth-none=1 --auth-encrypt-password=0 --www-port=${PORT} --www-root-path=${APP_BASE_URL} --auth-minimum-user-id=0",
+      },
+    },
+    {
+      id: "streamlit",
+      title: "Streamlit",
+      category: "python-web",
+      priority: 78,
+      homepage: "https://streamlit.io/",
+      description: "Interactive Python dashboards and data apps.",
+      detect: {
+        commands: ["python3 -m streamlit version"],
+      },
+      install: {
+        strategy: "curated",
+        command:
+          "apt-get update && apt-get install -y python3-pip && python3 -m pip install --break-system-packages --ignore-installed streamlit",
+        hint: "Installs Streamlit systemwide in the project and uses a small bootstrap app.py if the project does not already have one.",
+        agent_prompt:
+          "Install Streamlit in the current project so the managed Streamlit app can start. Use python3 -m pip with --break-system-packages --ignore-installed after ensuring python3-pip is installed, verify the runtime with 'python3 -m streamlit version', and mention that the managed template bootstraps app.py if missing.",
+        recipes: [
+          {
+            id: "ubuntu-pip-streamlit",
+            match: { os_family: ["debian", "ubuntu"] },
+            commands: [
+              "apt-get update",
+              "apt-get install -y python3-pip",
+              "python3 -m pip install --break-system-packages --ignore-installed streamlit",
+            ],
+            notes:
+              "The managed Streamlit template can create a default app.py automatically if the project is empty.",
+          },
+        ],
+      },
+      preset: {
+        id: "streamlit",
+        title: "Streamlit",
+        kind: "service",
+        preferred_port: "6010",
+        service_open_mode: "proxy",
+        command: `app=\${APP_START_FILE:-app.py}; if [ ! -f "$app" ]; then cat > "$app" <<'PY'
+import streamlit as st
+
+st.set_page_config(page_title="Streamlit on CoCalc")
+st.title("Streamlit on CoCalc")
+st.write("Edit app.py to replace this demo.")
+st.line_chart({"demo": [1, 3, 2, 4]})
+PY
+fi
+exec python3 -m streamlit run "$app" --server.address="\${HOST:-127.0.0.1}" --server.port="\${PORT}" --server.headless=true --server.baseUrlPath="\${APP_BASE_URL#/}" --browser.gatherUsageStats=false`,
+      },
+      verify: {
+        commands: ["python3 -m streamlit version"],
+      },
+      agent_prompt_seed:
+        "Prefer the direct python3-pip install path for Streamlit, and do not overcomplicate the bootstrap: the managed app template will create app.py if needed.",
+    },
+    {
+      id: "fastapi",
+      title: "FastAPI",
+      category: "python-web",
+      priority: 74,
+      homepage: "https://fastapi.tiangolo.com/",
+      description: "Fast Python APIs served with Uvicorn.",
+      detect: {
+        commands: [
+          `python3 -c "import fastapi, uvicorn; print(fastapi.__version__)"`,
+        ],
+      },
+      install: {
+        strategy: "curated",
+        command:
+          "apt-get update && apt-get install -y python3-pip && python3 -m pip install --break-system-packages --ignore-installed fastapi uvicorn[standard]",
+        hint: "Installs FastAPI plus Uvicorn and bootstraps main.py if the project does not already have one.",
+        agent_prompt:
+          "Install FastAPI and uvicorn in the current project so the managed FastAPI app can start. Use python3 -m pip with --break-system-packages --ignore-installed after ensuring python3-pip is installed, verify imports for both fastapi and uvicorn, and mention that the managed template bootstraps main.py if missing.",
+        recipes: [
+          {
+            id: "ubuntu-pip-fastapi",
+            match: { os_family: ["debian", "ubuntu"] },
+            commands: [
+              "apt-get update",
+              "apt-get install -y python3-pip",
+              "python3 -m pip install --break-system-packages --ignore-installed fastapi uvicorn[standard]",
+            ],
+            notes:
+              "The managed FastAPI template expects main:app by default and will create main.py automatically if it is missing.",
+          },
+        ],
+      },
+      preset: {
+        id: "fastapi",
+        title: "FastAPI",
+        kind: "service",
+        preferred_port: "6011",
+        service_open_mode: "proxy",
+        health_path: "/",
+        command: `app=\${APP_START_FILE:-main.py}; if [ ! -f "$app" ]; then cat > "$app" <<'PY'
+from fastapi import FastAPI
+
+app = FastAPI(title="FastAPI on CoCalc")
+
+
+@app.get("/")
+def root():
+    return {"ok": True, "message": "Edit main.py to replace this demo."}
+PY
+fi
+exec python3 -m uvicorn "\${APP_MODULE:-main:app}" --host "\${HOST:-127.0.0.1}" --port "\${PORT}" --proxy-headers --forwarded-allow-ips='*'`,
+      },
+      verify: {
+        commands: [
+          `python3 -c "import fastapi, uvicorn; print(fastapi.__version__)"`,
+        ],
+      },
+    },
+    {
+      id: "flask",
+      title: "Flask",
+      category: "python-web",
+      priority: 72,
+      homepage: "https://flask.palletsprojects.com/",
+      description: "Minimal Python web apps and APIs.",
+      detect: {
+        commands: [`python3 -c "import flask; print(flask.__version__)"`],
+      },
+      install: {
+        strategy: "curated",
+        command:
+          "apt-get update && apt-get install -y python3-pip && python3 -m pip install --break-system-packages --ignore-installed flask",
+        hint: "Installs Flask and bootstraps app.py if the project does not already have one.",
+        agent_prompt:
+          "Install Flask in the current project so the managed Flask app can start. Use python3 -m pip with --break-system-packages --ignore-installed after ensuring python3-pip is installed, verify the runtime with a Python import/version check, and mention that the managed template bootstraps app.py if missing.",
+        recipes: [
+          {
+            id: "ubuntu-pip-flask",
+            match: { os_family: ["debian", "ubuntu"] },
+            commands: [
+              "apt-get update",
+              "apt-get install -y python3-pip",
+              "python3 -m pip install --break-system-packages --ignore-installed flask",
+            ],
+          },
+        ],
+      },
+      preset: {
+        id: "flask",
+        title: "Flask",
+        kind: "service",
+        preferred_port: "6012",
+        service_open_mode: "proxy",
+        command: `app=\${APP_START_FILE:-app.py}; if [ ! -f "$app" ]; then cat > "$app" <<'PY'
+from flask import Flask
+
+app = Flask(__name__)
+
+
+@app.get("/")
+def index():
+    return "<h1>Flask on CoCalc</h1><p>Edit app.py to replace this demo.</p>"
+PY
+fi
+export FLASK_APP="\${FLASK_APP:-$app}"
+export FLASK_DEBUG=0
+exec python3 -m flask run --host="\${HOST:-127.0.0.1}" --port="\${PORT}"`,
+      },
+      verify: {
+        commands: [`python3 -c "import flask; print(flask.__version__)"`],
+      },
+    },
+    {
+      id: "gradio",
+      title: "Gradio",
+      category: "python-web",
+      priority: 70,
+      homepage: "https://www.gradio.app/",
+      description: "Quick browser UIs for Python functions and ML demos.",
+      detect: {
+        commands: [`python3 -c "import gradio; print(gradio.__version__)"`],
+      },
+      install: {
+        strategy: "curated",
+        command:
+          "apt-get update && apt-get install -y python3-pip && python3 -m pip install --break-system-packages --ignore-installed gradio",
+        hint: "Installs Gradio and bootstraps app.py if the project does not already have one.",
+        agent_prompt:
+          "Install Gradio in the current project so the managed Gradio app can start. Use python3 -m pip with --break-system-packages --ignore-installed after ensuring python3-pip is installed, verify the runtime with a Python import/version check, and mention that the managed template bootstraps app.py if missing.",
+        recipes: [
+          {
+            id: "ubuntu-pip-gradio",
+            match: { os_family: ["debian", "ubuntu"] },
+            commands: [
+              "apt-get update",
+              "apt-get install -y python3-pip",
+              "python3 -m pip install --break-system-packages --ignore-installed gradio",
+            ],
+          },
+        ],
+      },
+      preset: {
+        id: "gradio",
+        title: "Gradio",
+        kind: "service",
+        preferred_port: "6013",
+        service_open_mode: "proxy",
+        command: `app=\${APP_START_FILE:-app.py}; if [ ! -f "$app" ]; then cat > "$app" <<'PY'
+import os
+import gradio as gr
+
+
+def greet(name: str) -> str:
+    return f"Hello, {name or 'world'}!"
+
+
+demo = gr.Interface(
+    fn=greet,
+    inputs="text",
+    outputs="text",
+    title="Gradio on CoCalc",
+    description="Edit app.py to replace this demo.",
+)
+
+
+if __name__ == "__main__":
+    demo.launch(
+        server_name=os.environ.get("HOST", "127.0.0.1"),
+        server_port=int(os.environ["PORT"]),
+        share=False,
+        root_path=os.environ.get("APP_BASE_URL", "/"),
+    )
+PY
+fi
+exec python3 "$app"`,
+      },
+      verify: {
+        commands: [`python3 -c "import gradio; print(gradio.__version__)"`],
+      },
+    },
+    {
+      id: "dash",
+      title: "Dash",
+      category: "python-web",
+      priority: 68,
+      homepage: "https://dash.plotly.com/",
+      description: "Interactive analytic dashboards with Plotly Dash.",
+      detect: {
+        commands: [`python3 -c "import dash; print(dash.__version__)"`],
+      },
+      install: {
+        strategy: "curated",
+        command:
+          "apt-get update && apt-get install -y python3-pip && python3 -m pip install --break-system-packages --ignore-installed dash",
+        hint: "Installs Dash and bootstraps app.py if the project does not already have one.",
+        agent_prompt:
+          "Install Plotly Dash in the current project so the managed Dash app can start. Use python3 -m pip with --break-system-packages --ignore-installed after ensuring python3-pip is installed, verify the runtime with a Python import/version check, and mention that the managed template bootstraps app.py if missing.",
+        recipes: [
+          {
+            id: "ubuntu-pip-dash",
+            match: { os_family: ["debian", "ubuntu"] },
+            commands: [
+              "apt-get update",
+              "apt-get install -y python3-pip",
+              "python3 -m pip install --break-system-packages --ignore-installed dash",
+            ],
+          },
+        ],
+      },
+      preset: {
+        id: "dash",
+        title: "Dash",
+        kind: "service",
+        preferred_port: "6014",
+        service_open_mode: "proxy",
+        command: `app=\${APP_START_FILE:-app.py}; if [ ! -f "$app" ]; then cat > "$app" <<'PY'
+import os
+from dash import Dash, dcc, html
+
+
+base = os.environ.get("APP_BASE_URL", "/")
+if not base.endswith("/"):
+    base = f"{base}/"
+
+app = Dash(
+    __name__,
+    requests_pathname_prefix=base,
+    routes_pathname_prefix=base,
+)
+server = app.server
+app.layout = html.Div(
+    [
+        html.H1("Dash on CoCalc"),
+        html.P("Edit app.py to replace this demo."),
+        dcc.Graph(
+            figure={
+                "data": [{"x": [1, 2, 3], "y": [1, 4, 2], "type": "line"}],
+                "layout": {"margin": {"l": 30, "r": 10, "t": 30, "b": 30}},
+            }
+        ),
+    ],
+    style={"maxWidth": "960px", "margin": "0 auto"},
+)
+
+
+if __name__ == "__main__":
+    app.run(host=os.environ.get("HOST", "127.0.0.1"), port=int(os.environ["PORT"]), debug=False)
+PY
+fi
+exec python3 "$app"`,
+      },
+      verify: {
+        commands: [`python3 -c "import dash; print(dash.__version__)"`],
+      },
+    },
+    {
+      id: "mkdocs",
+      title: "MkDocs",
+      category: "docs",
+      priority: 60,
+      homepage: "https://www.mkdocs.org/",
+      description:
+        "Documentation sites from Markdown, served live in the browser.",
+      detect: {
+        commands: ["python3 -m mkdocs --version"],
+      },
+      install: {
+        strategy: "curated",
+        command:
+          "apt-get update && apt-get install -y python3-pip && python3 -m pip install --break-system-packages --ignore-installed mkdocs mkdocs-material",
+        hint: "Installs MkDocs plus the Material theme and bootstraps mkdocs.yml and docs/index.md if the project does not already have them.",
+        agent_prompt:
+          "Install MkDocs in the current project so the managed MkDocs app can start. Use python3 -m pip with --break-system-packages --ignore-installed after ensuring python3-pip is installed, verify the runtime with 'python3 -m mkdocs --version', and mention that the managed template bootstraps mkdocs.yml and docs/index.md if missing.",
+        recipes: [
+          {
+            id: "ubuntu-pip-mkdocs",
+            match: { os_family: ["debian", "ubuntu"] },
+            commands: [
+              "apt-get update",
+              "apt-get install -y python3-pip",
+              "python3 -m pip install --break-system-packages --ignore-installed mkdocs mkdocs-material",
+            ],
+          },
+        ],
+      },
+      preset: {
+        id: "mkdocs",
+        title: "MkDocs",
+        kind: "service",
+        preferred_port: "6015",
+        service_open_mode: "proxy",
+        command: `if [ ! -f mkdocs.yml ]; then
+  mkdir -p docs
+  cat > mkdocs.yml <<'YML'
+site_name: CoCalc MkDocs Site
+theme:
+  name: material
+nav:
+  - Home: index.md
+YML
+fi
+if [ ! -f docs/index.md ]; then
+  mkdir -p docs
+  cat > docs/index.md <<'MD'
+# MkDocs on CoCalc
+
+Edit docs/index.md to replace this demo.
+MD
+fi
+exec python3 -m mkdocs serve --dev-addr "\${HOST:-127.0.0.1}:\${PORT}"`,
+      },
+      verify: {
+        commands: ["python3 -m mkdocs --version"],
       },
     },
     {
