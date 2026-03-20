@@ -1531,32 +1531,32 @@ async function runProxySmokeViaCli({
   ].join("\n");
 
   try {
-      await runCli(
-        cli,
-        [
-          "project",
-          "exec",
-          "--project",
-          project_id,
-          "--timeout",
-          "90",
+    await runCli(
+      cli,
+      [
+        "project",
+        "exec",
+        "--project",
+        project_id,
+        "--timeout",
+        "90",
         "--bash",
         startScript,
       ],
       { timeoutSeconds: 120, commandTimeoutMs: 180_000 },
     );
 
-      await waitForCondition(async () => {
-        await runCli(
-          cli,
-          [
-            "project",
-            "proxy",
-            "curl",
-            "--project",
-            project_id,
-            "--host",
-            host_id,
+    await waitForCondition(async () => {
+      await runCli(
+        cli,
+        [
+          "project",
+          "proxy",
+          "curl",
+          "--project",
+          project_id,
+          "--host",
+          host_id,
           "--port",
           String(proxy_port),
           "--expect",
@@ -2807,14 +2807,14 @@ async function runSmokeStepsViaCli({
         attempt <= Math.max(3, Math.min(12, waitProjectReady.attempts));
         attempt += 1
       ) {
-          try {
-            await runCli(cli, [
-              "project",
-              "start",
-              "--project",
-              project_id,
-              "--wait",
-            ]);
+        try {
+          await runCli(cli, [
+            "project",
+            "start",
+            "--project",
+            project_id,
+            "--wait",
+          ]);
           lastErr = undefined;
           break;
         } catch (err) {
@@ -3115,12 +3115,7 @@ async function runSmokeStepsViaCli({
                 err: getErrorMessage(hardErr),
               },
             );
-            await runCli(cli, [
-              "project",
-              "delete",
-              "--project",
-              workspaceId,
-            ]);
+            await runCli(cli, ["project", "delete", "--project", workspaceId]);
           }
         }
         if (cleanup_host ?? createdHost) {
@@ -4374,12 +4369,7 @@ async function runMoveSmokeScenarioViaCli({
               "--wait",
             ]);
           } catch {
-            await runCli(cli, [
-              "project",
-              "delete",
-              "--project",
-              workspaceId,
-            ]);
+            await runCli(cli, ["project", "delete", "--project", workspaceId]);
           }
         }
         for (const hostId of cleanupHostIds) {
@@ -5146,7 +5136,9 @@ async function buildPresetForNebius(): Promise<SmokePreset | undefined> {
       "instance_types",
       "global",
     ) ?? [];
-  const region = regions[0]?.name;
+  const region =
+    regions.find((entry) => entry.name === "us-central1")?.name ??
+    regions[0]?.name;
   if (!region || !instanceTypes.length) return undefined;
 
   const primary =

@@ -4,6 +4,10 @@
 const fs = require("node:fs");
 const path = require("node:path");
 
+const {
+  applyLocalPostgresEnv,
+  runCliJson,
+} = require("./launchpad-cli-helpers.js");
 const { executeLaunchpadCanary } = require("./launchpad-canary.js");
 const { executeCopyPathWorkflow } = require("./launchpad-copy-path.js");
 const {
@@ -32,6 +36,66 @@ const SUPPORTED_WORKFLOWS = new Set([
   "backup-snapshot",
 ]);
 const DEFAULT_WORKFLOW_TIMEOUT = "15m";
+const PROVIDER_BASELINE_DISK_GB = 100;
+
+function pickPreferredProviderRegion(provider, regions) {
+  if (!Array.isArray(regions) || !regions.length) return undefined;
+  if (provider === "nebius") {
+    return (
+      regions.find((entry) => `${entry?.name ?? ""}` === "us-central1")?.name ??
+      regions[0]?.name
+    );
+  }
+  return regions[0]?.name;
+}
+
+function chooseBaselineProviderHostSpec(provider, catalog) {
+  if (provider !== "nebius") {
+    return undefined;
+  }
+  const entries = Array.isArray(catalog?.entries) ? catalog.entries : [];
+  const regions =
+    entries.find(
+      (entry) => entry?.kind === "regions" && entry?.scope === "global",
+    )?.payload ?? [];
+  const instanceTypes =
+    entries.find(
+      (entry) => entry?.kind === "instance_types" && entry?.scope === "global",
+    )?.payload ?? [];
+  const region = pickPreferredProviderRegion(provider, regions);
+  const cpuTypes = instanceTypes.filter((entry) => (entry?.gpus ?? 0) === 0);
+  const preferredCpuTypes = cpuTypes.filter(
+    (entry) => `${entry?.platform ?? ""}` === "cpu-d3",
+  );
+  const sortedTypes = [
+    ...(preferredCpuTypes.length ? preferredCpuTypes : cpuTypes),
+  ].sort((left, right) => {
+    const vcpuDiff =
+      (left?.vcpus ?? Number.POSITIVE_INFINITY) -
+      (right?.vcpus ?? Number.POSITIVE_INFINITY);
+    if (vcpuDiff !== 0) return vcpuDiff;
+    return (
+      (left?.memory_gib ?? Number.POSITIVE_INFINITY) -
+      (right?.memory_gib ?? Number.POSITIVE_INFINITY)
+    );
+  });
+  const selectedType = sortedTypes[0];
+  const type = selectedType?.name;
+  if (!region || !type) {
+    return undefined;
+  }
+  return {
+    provider,
+    region,
+    size: type,
+    machineType: type,
+    diskGb: PROVIDER_BASELINE_DISK_GB,
+    diskType: "ssd_io_m3",
+    machineJson: `${selectedType?.platform ?? ""}`.trim()
+      ? { metadata: { platform: selectedType.platform } }
+      : undefined,
+  };
+}
 
 function usageAndExit(message, code = 1) {
   if (message) {
@@ -343,6 +407,9 @@ function normalizeJob(job, defaults = {}) {
   if (workflow === "copy-path") {
     return {
       ...base,
+      provider: `${job.provider ?? defaults.provider ?? ""}`
+        .trim()
+        .toLowerCase(),
       timeout:
         `${job.timeout ?? defaults.timeout ?? DEFAULT_WORKFLOW_TIMEOUT}`.trim(),
       srcProject:
@@ -358,6 +425,7 @@ function normalizeJob(job, defaults = {}) {
 
   return {
     ...base,
+    provider: `${job.provider ?? defaults.provider ?? ""}`.trim().toLowerCase(),
     timeout:
       `${job.timeout ?? defaults.timeout ?? DEFAULT_WORKFLOW_TIMEOUT}`.trim(),
     project: `${job.project ?? defaults.project ?? ""}`.trim(),
@@ -411,6 +479,7 @@ function buildQueueJobs(options) {
     jobs.push(
       normalizeJob({
         workflow: "copy-path",
+        provider: `${options.providers[0] ?? ""}`.trim().toLowerCase(),
         srcProject: options.srcProject,
         destProject: options.destProject,
         srcHost: `${options.srcHost ?? ""}`.trim() || autoHost,
@@ -426,6 +495,7 @@ function buildQueueJobs(options) {
     jobs.push(
       normalizeJob({
         workflow: "backup-snapshot",
+        provider: `${options.providers[0] ?? ""}`.trim().toLowerCase(),
         project: options.project,
         host: autoHost,
         timeout: options.timeout,
@@ -522,6 +592,7 @@ function createJobDir(queueDir, index, job) {
 function populateJobEntry(entry, job) {
   entry.workflow = job.workflow;
   if (job.workflow === "copy-path") {
+    entry.provider = job.provider;
     entry.src_project_id = job.srcProject;
     entry.dest_project_id = job.destProject;
     entry.src_host = job.srcHost;
@@ -530,6 +601,7 @@ function populateJobEntry(entry, job) {
     return;
   }
   if (job.workflow === "backup-snapshot") {
+    entry.provider = job.provider;
     entry.project_id = job.project;
     entry.host = job.host;
     entry.timeout = job.timeout;
@@ -540,12 +612,97 @@ function populateJobEntry(entry, job) {
   entry.preset = job.preset;
 }
 
+async function ensureProviderWorkflowHost(
+  provider,
+  requestedHost,
+  cliBase,
+  cache,
+  deps = {},
+) {
+  const runCli = deps.runCliJson || runCliJson;
+  const desired = `${requestedHost ?? ""}`.trim() || provider;
+  const cacheKey = `${provider}|${desired}`;
+  if (cache.has(cacheKey)) {
+    return cache.get(cacheKey);
+  }
+
+  try {
+    const host = runCli(cliBase, ["host", "get", desired]);
+    const status = `${host.status ?? ""}`.trim().toLowerCase();
+    const canReuse =
+      status === "running" ||
+      (desired !== provider &&
+        status !== "deprovisioned" &&
+        status !== "deleted");
+    if (!canReuse) {
+      throw new Error(
+        `host '${desired}' exists but is not reusable (${status})`,
+      );
+    }
+    const resolved = {
+      hostId: `${host.host_id ?? ""}`.trim() || desired,
+      hostName: `${host.name ?? ""}`.trim() || desired,
+      created: false,
+    };
+    cache.set(cacheKey, resolved);
+    return resolved;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : `${err}`;
+    if (!/not found/i.test(message) && !/not reusable/i.test(message)) {
+      throw err;
+    }
+  }
+
+  const catalog = runCli(cliBase, ["host", "catalog", "--provider", provider]);
+  const spec = chooseBaselineProviderHostSpec(provider, catalog);
+  if (!spec) {
+    throw new Error(
+      `no automatic baseline host spec is available for provider '${provider}'`,
+    );
+  }
+  const createdName = `bug-hunt-${provider}-${Date.now()}`;
+  const args = [
+    "host",
+    "create",
+    createdName,
+    "--provider",
+    spec.provider,
+    "--region",
+    spec.region,
+    "--size",
+    spec.size,
+    "--machine-type",
+    spec.machineType,
+    "--disk-gb",
+    `${spec.diskGb}`,
+    "--wait",
+  ];
+  if (`${spec.diskType ?? ""}`.trim()) {
+    args.push("--disk-type", spec.diskType);
+  }
+  if (spec.machineJson) {
+    args.push("--machine-json", JSON.stringify(spec.machineJson));
+  }
+  const created = runCli(cliBase, args);
+  const resolved = {
+    hostId: `${created.host_id ?? ""}`.trim() || createdName,
+    hostName: `${created.name ?? ""}`.trim() || createdName,
+    created: true,
+  };
+  cache.set(cacheKey, resolved);
+  return resolved;
+}
+
 async function executeLaunchpadQueue(options, now = Date.now(), deps = {}) {
   const executeCanary = deps.executeLaunchpadCanary || executeLaunchpadCanary;
   const executeCopyPath =
     deps.executeCopyPathWorkflow || executeCopyPathWorkflow;
   const executeBackupSnapshot =
     deps.executeBackupSnapshotWorkflow || executeBackupSnapshotWorkflow;
+  const runCli = deps.runCliJson || runCliJson;
+  if (!options.skipLocalPostgresEnv) {
+    applyLocalPostgresEnv();
+  }
   const queueDir = options.queueDir || createQueueDir(now, options.queueRoot);
   fs.mkdirSync(queueDir, { recursive: true });
   const previousSummary = readJsonIfExists(
@@ -592,116 +749,183 @@ async function executeLaunchpadQueue(options, now = Date.now(), deps = {}) {
       continue;
     }
 
-    if (job.workflow === "copy-path") {
-      const workflowPayload = await executeCopyPath(
-        {
-          srcProject: job.srcProject,
-          destProject: job.destProject,
-          srcHost: job.srcHost,
-          destHost: job.destHost,
-          apiUrl: job.apiUrl,
-          accountId: job.accountId,
-          timeout: job.timeout,
-          runRoot: path.join(jobDir, "runs"),
-          cleanupOnSuccess: options.cleanupOnSuccess,
-          dryRun: options.dryRun,
-          json: true,
-        },
-        now + index,
-        {
-          skipLocalPostgresEnv: options.skipLocalPostgresEnv,
-        },
-      );
-      entry.run_dir = workflowPayload.run_dir;
-      entry.workflow_run_dir = workflowPayload.run_dir;
-      entry.summary_file = workflowPayload.summary_file;
-      entry.ledger_file = workflowPayload.ledger_file;
-      entry.status = workflowPayload.ok ? "ok" : "failed";
-      entry.result = {
-        ok: workflowPayload.ok,
-        error: workflowPayload.error,
-        step_count: Array.isArray(workflowPayload.steps)
-          ? workflowPayload.steps.length
-          : 0,
-      };
-    } else if (job.workflow === "backup-snapshot") {
-      const workflowPayload = await executeBackupSnapshot(
-        {
-          project: job.project,
-          host: job.host,
-          apiUrl: job.apiUrl,
-          accountId: job.accountId,
-          timeout: job.timeout,
-          runRoot: path.join(jobDir, "runs"),
-          cleanupOnSuccess: options.cleanupOnSuccess,
-          dryRun: options.dryRun,
-          json: true,
-        },
-        now + index,
-        {
-          skipLocalPostgresEnv: options.skipLocalPostgresEnv,
-        },
-      );
-      entry.run_dir = workflowPayload.run_dir;
-      entry.workflow_run_dir = workflowPayload.run_dir;
-      entry.summary_file = workflowPayload.summary_file;
-      entry.ledger_file = workflowPayload.ledger_file;
-      entry.status = workflowPayload.ok ? "ok" : "failed";
-      entry.result = {
-        ok: workflowPayload.ok,
-        error: workflowPayload.error,
-        step_count: Array.isArray(workflowPayload.steps)
-          ? workflowPayload.steps.length
-          : 0,
-      };
-    } else {
-      const canaryPayload = await executeCanary(
-        {
-          providers: [job.provider],
-          scenarios: [job.scenario],
-          preset: job.preset,
-          accountId: job.accountId,
-          apiUrl: job.apiUrl,
-          runRoot: path.join(jobDir, "runs"),
-          failurePolicy: "stop",
-          executionMode: options.executionMode,
-          cleanupOnSuccess: options.cleanupOnSuccess,
-          verifyBackup: options.verifyBackup,
-          verifyTerminal: options.verifyTerminal,
-          verifyProxy: options.verifyProxy,
-          verifyProviderStatus: options.verifyProviderStatus,
-          printDebugHints: options.printDebugHints,
-          skipApiCheck: options.skipApiCheck,
-          skipLocalPostgresEnv: options.skipLocalPostgresEnv,
-          hostReadySeconds: options.hostReadySeconds,
-          hostStoppedSeconds: options.hostStoppedSeconds,
-          projectReadySeconds: options.projectReadySeconds,
-          backupReadySeconds: options.backupReadySeconds,
-          dryRun: options.dryRun,
-          json: true,
-        },
-        now + index,
-      );
+    const cliBase = {
+      apiUrl: job.apiUrl,
+      accountId: job.accountId,
+      timeout: job.timeout,
+      rpcTimeout: job.timeout,
+    };
+    const createdHosts = [];
+    const hostCache = new Map();
 
-      entry.run_dir = canaryPayload.run_dir;
-      entry.canary_run_dir = canaryPayload.run_dir;
-      entry.summary_file = canaryPayload.summary_file;
-      entry.canary_summary_file = canaryPayload.summary_file;
-      entry.ledger_file = canaryPayload.ledger_file;
-      entry.canary_ledger_file = canaryPayload.ledger_file;
-      entry.status = canaryPayload.runs.every((run) => run.ok)
-        ? "ok"
-        : "failed";
-      entry.result = {
-        stopped_early: canaryPayload.stopped_early,
-        stop_reason: canaryPayload.stop_reason,
-        runs: canaryPayload.runs.map((run) => ({
-          provider: run.provider,
-          scenario: run.scenario,
-          status: run.status,
-          error: run.error,
-        })),
-      };
+    try {
+      if (job.workflow === "copy-path") {
+        let srcHost = job.srcHost;
+        let destHost = job.destHost;
+        if (job.provider) {
+          const srcResolved = await ensureProviderWorkflowHost(
+            job.provider,
+            srcHost,
+            cliBase,
+            hostCache,
+            { runCliJson: runCli },
+          );
+          srcHost = srcResolved.hostId;
+          if (srcResolved.created) {
+            createdHosts.push(srcResolved.hostId);
+          }
+          const destResolved = await ensureProviderWorkflowHost(
+            job.provider,
+            destHost,
+            cliBase,
+            hostCache,
+            { runCliJson: runCli },
+          );
+          destHost = destResolved.hostId;
+          if (destResolved.created) {
+            createdHosts.push(destResolved.hostId);
+          }
+        }
+        const workflowPayload = await executeCopyPath(
+          {
+            srcProject: job.srcProject,
+            destProject: job.destProject,
+            srcHost,
+            destHost,
+            apiUrl: job.apiUrl,
+            accountId: job.accountId,
+            timeout: job.timeout,
+            runRoot: path.join(jobDir, "runs"),
+            cleanupOnSuccess: options.cleanupOnSuccess,
+            dryRun: options.dryRun,
+            json: true,
+          },
+          now + index,
+          {
+            skipLocalPostgresEnv: options.skipLocalPostgresEnv,
+          },
+        );
+        entry.run_dir = workflowPayload.run_dir;
+        entry.workflow_run_dir = workflowPayload.run_dir;
+        entry.summary_file = workflowPayload.summary_file;
+        entry.ledger_file = workflowPayload.ledger_file;
+        entry.status = workflowPayload.ok ? "ok" : "failed";
+        entry.result = {
+          ok: workflowPayload.ok,
+          error: workflowPayload.error,
+          step_count: Array.isArray(workflowPayload.steps)
+            ? workflowPayload.steps.length
+            : 0,
+        };
+      } else if (job.workflow === "backup-snapshot") {
+        let host = job.host;
+        if (job.provider) {
+          const resolved = await ensureProviderWorkflowHost(
+            job.provider,
+            host,
+            cliBase,
+            hostCache,
+            { runCliJson: runCli },
+          );
+          host = resolved.hostId;
+          if (resolved.created) {
+            createdHosts.push(resolved.hostId);
+          }
+        }
+        const workflowPayload = await executeBackupSnapshot(
+          {
+            project: job.project,
+            host,
+            apiUrl: job.apiUrl,
+            accountId: job.accountId,
+            timeout: job.timeout,
+            runRoot: path.join(jobDir, "runs"),
+            cleanupOnSuccess: options.cleanupOnSuccess,
+            dryRun: options.dryRun,
+            json: true,
+          },
+          now + index,
+          {
+            skipLocalPostgresEnv: options.skipLocalPostgresEnv,
+          },
+        );
+        entry.run_dir = workflowPayload.run_dir;
+        entry.workflow_run_dir = workflowPayload.run_dir;
+        entry.summary_file = workflowPayload.summary_file;
+        entry.ledger_file = workflowPayload.ledger_file;
+        entry.status = workflowPayload.ok ? "ok" : "failed";
+        entry.result = {
+          ok: workflowPayload.ok,
+          error: workflowPayload.error,
+          step_count: Array.isArray(workflowPayload.steps)
+            ? workflowPayload.steps.length
+            : 0,
+        };
+      } else {
+        const canaryPayload = await executeCanary(
+          {
+            providers: [job.provider],
+            scenarios: [job.scenario],
+            preset: job.preset,
+            accountId: job.accountId,
+            apiUrl: job.apiUrl,
+            runRoot: path.join(jobDir, "runs"),
+            failurePolicy: "stop",
+            executionMode: options.executionMode,
+            cleanupOnSuccess: options.cleanupOnSuccess,
+            verifyBackup: options.verifyBackup,
+            verifyTerminal: options.verifyTerminal,
+            verifyProxy: options.verifyProxy,
+            verifyProviderStatus: options.verifyProviderStatus,
+            printDebugHints: options.printDebugHints,
+            skipApiCheck: options.skipApiCheck,
+            skipLocalPostgresEnv: options.skipLocalPostgresEnv,
+            hostReadySeconds: options.hostReadySeconds,
+            hostStoppedSeconds: options.hostStoppedSeconds,
+            projectReadySeconds: options.projectReadySeconds,
+            backupReadySeconds: options.backupReadySeconds,
+            dryRun: options.dryRun,
+            json: true,
+          },
+          now + index,
+        );
+
+        entry.run_dir = canaryPayload.run_dir;
+        entry.canary_run_dir = canaryPayload.run_dir;
+        entry.summary_file = canaryPayload.summary_file;
+        entry.canary_summary_file = canaryPayload.summary_file;
+        entry.ledger_file = canaryPayload.ledger_file;
+        entry.canary_ledger_file = canaryPayload.ledger_file;
+        entry.status = canaryPayload.runs.every((run) => run.ok)
+          ? "ok"
+          : "failed";
+        entry.result = {
+          stopped_early: canaryPayload.stopped_early,
+          stop_reason: canaryPayload.stop_reason,
+          runs: canaryPayload.runs.map((run) => ({
+            provider: run.provider,
+            scenario: run.scenario,
+            status: run.status,
+            error: run.error,
+          })),
+        };
+      }
+    } finally {
+      if (options.cleanupOnSuccess && entry.status === "ok") {
+        for (const hostId of Array.from(new Set(createdHosts))) {
+          try {
+            runCli(cliBase, [
+              "host",
+              "delete",
+              "--skip-backups",
+              "--wait",
+              hostId,
+            ]);
+          } catch {
+            // Keep the primary workflow result authoritative; cleanup is best-effort.
+          }
+        }
+      }
     }
 
     payload.jobs.push(entry);
@@ -752,10 +976,12 @@ async function main(argv = process.argv.slice(2), now = Date.now()) {
 
 module.exports = {
   buildQueueJobs,
+  chooseBaselineProviderHostSpec,
   executeLaunchpadQueue,
   formatHumanResult,
   jobSignature,
   parseArgs,
+  pickPreferredProviderRegion,
   summarizeQueue,
 };
 
