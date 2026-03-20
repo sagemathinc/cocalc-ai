@@ -23,7 +23,10 @@ import type {
   ExecuteCodeOptions,
   ExecuteCodeOutput,
 } from "@cocalc/util/types/execute-code";
-import { parsePublicViewerImportUrl } from "@cocalc/util/public-viewer-import";
+import {
+  extractProjectIdFromPublicViewerRawUrl,
+  parsePublicViewerImportUrl,
+} from "@cocalc/util/public-viewer-import";
 import {
   isAllowedPublicViewerSourceHost,
   resolvePublicViewerDns,
@@ -51,6 +54,8 @@ import type {
   ChatStoreArchivedRow,
   ChatStoreSearchHit,
   ImportPublicUrlResult,
+  ImportPublicPathResult,
+  PublicPathInspectionResult,
   ProjectCopyRow,
   ProjectRuntimeLog,
   WorkspaceSshConnectionInfo,
@@ -172,19 +177,27 @@ function normalizeImportTargetPath(path?: string): string {
   return normalized;
 }
 
-export async function importPublicUrl({
-  account_id,
-  project_id,
-  public_url,
-  path,
-}: {
-  account_id?: string;
-  project_id: string;
-  public_url: string;
-  path?: string;
-}): Promise<ImportPublicUrlResult> {
-  await assertCollab({ account_id, project_id });
+async function getProjectHostId(project_id: string): Promise<string> {
+  const { rows } = await getPool().query<{ host_id: string | null }>(
+    "SELECT host_id FROM projects WHERE project_id=$1",
+    [project_id],
+  );
+  const host_id = rows[0]?.host_id ?? undefined;
+  if (!host_id) {
+    throw new Error("workspace has no assigned host");
+  }
+  return host_id;
+}
 
+async function resolvePublicImportSource({
+  public_url,
+}: {
+  public_url: string;
+}): Promise<{
+  parsed: ReturnType<typeof parsePublicViewerImportUrl>;
+  source_project_id: string;
+  host_id: string;
+}> {
   const parsed = parsePublicViewerImportUrl(public_url);
   const settings = await getServerSettings();
   const viewerDns = resolvePublicViewerDns({
@@ -211,6 +224,29 @@ export async function importPublicUrl({
   ) {
     throw new Error("public import source host is not allowed");
   }
+  const source_project_id = extractProjectIdFromPublicViewerRawUrl(
+    parsed.rawUrl,
+  );
+  if (!source_project_id) {
+    throw new Error("unable to determine source project for public import");
+  }
+  const host_id = await getProjectHostId(source_project_id);
+  return { parsed, source_project_id, host_id };
+}
+
+export async function importPublicUrl({
+  account_id,
+  project_id,
+  public_url,
+  path,
+}: {
+  account_id?: string;
+  project_id: string;
+  public_url: string;
+  path?: string;
+}): Promise<ImportPublicUrlResult> {
+  await assertCollab({ account_id, project_id });
+  const { parsed } = await resolvePublicImportSource({ public_url });
 
   const response = await fetch(parsed.rawUrl, {
     signal: AbortSignal.timeout(30_000),
@@ -241,6 +277,86 @@ export async function importPublicUrl({
     path: destPath,
     bytes: buffer.byteLength,
     source_url: parsed.rawUrl,
+  };
+}
+
+export async function inspectPublicPath({
+  account_id,
+  public_url,
+}: {
+  account_id?: string;
+  public_url: string;
+}): Promise<PublicPathInspectionResult> {
+  const { parsed, source_project_id, host_id } =
+    await resolvePublicImportSource({
+      public_url,
+    });
+  const client = createHostControlClient({
+    host_id,
+    client: conatWithProjectRouting(),
+  });
+  const inspection = await client.inspectStaticAppPath({
+    project_id: source_project_id,
+    url: parsed.rawUrl,
+  });
+  if (
+    !(inspection.exposure_mode === "public" && inspection.public_access_granted)
+  ) {
+    await assertCollab({ account_id, project_id: source_project_id });
+  }
+  return {
+    source_project_id,
+    host_id,
+    app_id: inspection.app_id,
+    static_root: inspection.static_root,
+    exposure_mode: inspection.exposure_mode,
+    auth_front: inspection.auth_front,
+    public_access_granted: inspection.public_access_granted,
+    requested: inspection.requested,
+    containing_directory: inspection.containing_directory,
+  };
+}
+
+export async function importPublicPath({
+  account_id,
+  project_id,
+  public_url,
+  mode,
+  path,
+}: {
+  account_id?: string;
+  project_id: string;
+  public_url: string;
+  mode: "file" | "directory";
+  path?: string;
+}): Promise<ImportPublicPathResult> {
+  await assertCollab({ account_id, project_id });
+  const inspection = await inspectPublicPath({ account_id, public_url });
+  const source =
+    mode === "directory"
+      ? inspection.containing_directory
+      : inspection.requested;
+  const suggestedName =
+    basename(source.relative_path) || basename(inspection.static_root);
+  const destPath = normalizeImportTargetPath(path || suggestedName);
+  const op = await copyPathBetweenProjects({
+    account_id,
+    src: {
+      project_id: inspection.source_project_id,
+      path: source.container_path,
+    },
+    dest: {
+      project_id,
+      path: destPath,
+    },
+  });
+  return {
+    ...op,
+    project_id,
+    path: destPath,
+    source_project_id: inspection.source_project_id,
+    source_path: source.container_path,
+    mode,
   };
 }
 

@@ -19,6 +19,7 @@ import { upgradeSoftware } from "./upgrade";
 import { executeCode } from "@cocalc/backend/execute-code";
 import { deleteProjectLocal } from "./sqlite/projects";
 import { setProjectHostAuthPublicKey } from "./auth-public-key";
+import { matchAppRequest } from "./app-public-access";
 import { connect as connectToConat } from "@cocalc/conat/core/client";
 import { inboxPrefix } from "@cocalc/conat/names";
 import {
@@ -30,6 +31,7 @@ import {
 } from "./master-conat-token";
 import { assertSecureUrlOrLocal } from "@cocalc/backend/network/policy";
 import { isValidUUID } from "@cocalc/util/misc";
+import { inspectStaticAppRequest } from "./static-apps";
 
 const logger = getLogger("project-host:master");
 
@@ -688,6 +690,18 @@ export async function startMasterRegistration({
       },
       async getBackupExecutionStatus() {
         return await getBackupExecutionStatus();
+      },
+      async inspectStaticAppPath({ project_id, url }) {
+        const match = await matchAppRequest({ project_id, url });
+        const inspection = await inspectStaticAppRequest({
+          project_id,
+          match,
+          url,
+        });
+        if (!inspection) {
+          throw new Error("static app path not found");
+        }
+        return inspection;
       },
     },
   });

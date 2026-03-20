@@ -11,6 +11,7 @@ import TTL from "@isaacs/ttlcache";
 import getLogger from "@cocalc/backend/logger";
 import { SandboxedFilesystem } from "@cocalc/backend/sandbox";
 import { hubApi } from "@cocalc/lite/hub/api";
+import type { HostStaticAppPathInspection } from "@cocalc/conat/project-host/api";
 import {
   normalizeOriginUrl,
   resolvePublicViewerDns,
@@ -25,7 +26,10 @@ import {
   PublicViewerManifestEntry,
 } from "./public-viewer";
 import { getProjectSandboxFilesystem } from "./file-server";
-import type { AppRequestMatch } from "./app-public-access";
+import {
+  authorizePublicAppPath,
+  type AppRequestMatch,
+} from "./app-public-access";
 
 const logger = getLogger("project-host:static-apps");
 const STATIC_CACHE_CONTROL_DEFAULT = "public, max-age=60";
@@ -104,6 +108,45 @@ function escapeHtml(value: string): string {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
+}
+
+async function summarizeDirectoryBytes({
+  fs,
+  fsPath,
+}: {
+  fs: SandboxedFilesystem;
+  fsPath: string;
+}): Promise<{ bytes?: number; truncated?: boolean }> {
+  try {
+    const result = await fs.dust(fsPath, {
+      options: ["-j"],
+      timeout: 30_000,
+      maxSize: 512 * 1024,
+    });
+    const parsed = JSON.parse(Buffer.from(result.stdout).toString("utf8"));
+    return {
+      bytes:
+        typeof parsed?.size === "number" && Number.isFinite(parsed.size)
+          ? parsed.size
+          : undefined,
+      truncated: result.truncated === true,
+    };
+  } catch {
+    return {};
+  }
+}
+
+function containerPathForRelativePath({
+  containerRoot,
+  relativePath,
+}: {
+  containerRoot: string;
+  relativePath: string;
+}): string {
+  if (relativePath === "/") {
+    return containerRoot;
+  }
+  return path.posix.join(containerRoot, relativePath.replace(/^\/+/, ""));
 }
 
 function encodeUrlPath(relativePath: string): string {
@@ -610,6 +653,82 @@ async function resolveStaticChildFile({
   return {
     fsPath: candidate,
     stat: info,
+  };
+}
+
+export async function inspectStaticAppRequest({
+  project_id,
+  match,
+  url,
+}: {
+  project_id: string;
+  match: AppRequestMatch | undefined;
+  url: string;
+}): Promise<HostStaticAppPathInspection | undefined> {
+  if (match?.spec.kind !== "static") {
+    return;
+  }
+  const rootRel = `${match.spec.static?.root ?? ""}`.trim();
+  if (!rootRel) {
+    return;
+  }
+  const rootContext = await resolveStaticRoot(project_id, rootRel);
+  if (!rootContext) {
+    return;
+  }
+  const pathInfo = await resolveStaticPath({
+    fs: rootContext.fs,
+    requestPath: match.requestPath,
+  });
+  if (!pathInfo?.stat?.isFile() && !pathInfo?.stat?.isDirectory()) {
+    return;
+  }
+  const requestedKind = pathInfo.stat.isDirectory() ? "directory" : "file";
+  const containingRelativePath =
+    requestedKind === "directory"
+      ? pathInfo.relativePath
+      : path.posix.dirname(pathInfo.relativePath);
+  const containingFsPath =
+    requestedKind === "directory"
+      ? pathInfo.fsPath
+      : path.posix.dirname(pathInfo.fsPath);
+  const requestedSize =
+    requestedKind === "directory"
+      ? await summarizeDirectoryBytes({
+          fs: rootContext.fs,
+          fsPath: pathInfo.fsPath,
+        })
+      : { bytes: pathInfo.stat.size };
+  const containingDirectorySize = await summarizeDirectoryBytes({
+    fs: rootContext.fs,
+    fsPath: containingFsPath,
+  });
+  return {
+    project_id,
+    app_id: match.spec.id,
+    static_root: rootContext.containerPath,
+    exposure_mode: match.exposure?.mode === "public" ? "public" : "private",
+    auth_front: match.exposure?.auth_front,
+    public_access_granted: await authorizePublicAppPath({ project_id, url }),
+    requested: {
+      kind: requestedKind,
+      relative_path: pathInfo.relativePath,
+      container_path: containerPathForRelativePath({
+        containerRoot: rootContext.containerPath,
+        relativePath: pathInfo.relativePath,
+      }),
+      bytes: requestedSize.bytes,
+      truncated: requestedSize.truncated,
+    },
+    containing_directory: {
+      relative_path: containingRelativePath,
+      container_path: containerPathForRelativePath({
+        containerRoot: rootContext.containerPath,
+        relativePath: containingRelativePath,
+      }),
+      bytes: containingDirectorySize.bytes,
+      truncated: containingDirectorySize.truncated,
+    },
   };
 }
 

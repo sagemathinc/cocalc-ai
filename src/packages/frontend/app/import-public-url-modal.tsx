@@ -4,15 +4,21 @@
  */
 
 import { useEffect, useMemo, useState } from "react";
-import { Alert, Button, Input, Modal, Space } from "antd";
+import { Alert, Button, Input, Modal, Radio, Space } from "antd";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { QueryParams } from "@cocalc/frontend/misc/query-params";
 import { SelectProject } from "@cocalc/frontend/projects/select-project";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { parsePublicViewerImportUrl } from "@cocalc/util/public-viewer-import";
+import { human_readable_size } from "@cocalc/util/misc";
+import type {
+  ImportPublicPathResult,
+  PublicPathInspectionResult,
+} from "@cocalc/conat/hub/api/projects";
 
 const IMPORT_PUBLIC_URL_PARAM = "import-public-url";
+const LARGE_DIRECTORY_WARNING_BYTES = 250 * 1024 * 1024;
 
 function getImportPublicUrlFromLocation(): string | undefined {
   return QueryParams.get(IMPORT_PUBLIC_URL_PARAM)?.trim() || undefined;
@@ -20,6 +26,11 @@ function getImportPublicUrlFromLocation(): string | undefined {
 
 function defaultTargetPath(path: string): string {
   return path.replace(/^\/+/, "") || "imported-file";
+}
+
+function basename(path: string): string {
+  const parts = `${path ?? ""}`.split("/").filter(Boolean);
+  return parts.at(-1) ?? "";
 }
 
 function encodeProjectPath(path: string): string {
@@ -45,11 +56,13 @@ export function ImportPublicUrlModal() {
   const [targetPath, setTargetPath] = useState<string>("");
   const [error, setError] = useState<string>();
   const [importing, setImporting] = useState(false);
-  const [result, setResult] = useState<{
-    project_id: string;
-    path: string;
-    bytes: number;
-  }>();
+  const [inspection, setInspection] = useState<{
+    loading: boolean;
+    value?: PublicPathInspectionResult;
+    error?: string;
+  }>({ loading: false });
+  const [importMode, setImportMode] = useState<"file" | "directory">("file");
+  const [result, setResult] = useState<ImportPublicPathResult>();
 
   useEffect(() => {
     const refresh = () => setImportUrl(getImportPublicUrlFromLocation());
@@ -73,8 +86,61 @@ export function ImportPublicUrlModal() {
     setError(undefined);
     setResult(undefined);
     setImporting(false);
-    setTargetPath(parsed.value ? defaultTargetPath(parsed.value.path) : "");
+    setInspection({ loading: false });
   }, [importUrl, parsed.value?.path]);
+
+  useEffect(() => {
+    if (!importUrl || !parsed.value) {
+      setInspection({ loading: false });
+      return;
+    }
+    let cancelled = false;
+    setInspection({ loading: true });
+    void (async () => {
+      try {
+        const value =
+          await webapp_client.conat_client.hub.projects.inspectPublicPath({
+            public_url: importUrl,
+          });
+        if (cancelled) return;
+        setInspection({ loading: false, value });
+        setImportMode(
+          value.requested.kind === "directory" ? "directory" : "file",
+        );
+      } catch (err) {
+        if (cancelled) return;
+        setInspection({ loading: false, error: `${err}` });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [importUrl, parsed.value]);
+
+  const defaultPathForMode = useMemo(() => {
+    if (!parsed.value) {
+      return "";
+    }
+    if (!inspection.value) {
+      return defaultTargetPath(parsed.value.path);
+    }
+    if (importMode === "directory") {
+      const source =
+        inspection.value.requested.kind === "directory"
+          ? inspection.value.requested
+          : inspection.value.containing_directory;
+      return (
+        basename(source.relative_path) ||
+        basename(inspection.value.static_root) ||
+        "imported-folder"
+      );
+    }
+    return defaultTargetPath(parsed.value.path);
+  }, [parsed.value, inspection.value, importMode]);
+
+  useEffect(() => {
+    setTargetPath(defaultPathForMode);
+  }, [defaultPathForMode]);
 
   const close = () => {
     QueryParams.remove(IMPORT_PUBLIC_URL_PARAM);
@@ -85,16 +151,26 @@ export function ImportPublicUrlModal() {
   };
 
   async function onImport() {
-    if (!importUrl || !projectId || !targetPath.trim()) {
+    if (
+      !importUrl ||
+      !projectId ||
+      !targetPath.trim() ||
+      !inspection.value ||
+      inspection.loading
+    ) {
       return;
     }
     setImporting(true);
     setError(undefined);
     try {
       const next =
-        await webapp_client.conat_client.hub.projects.importPublicUrl({
+        await webapp_client.conat_client.hub.projects.importPublicPath({
           project_id: projectId,
           public_url: importUrl,
+          mode:
+            inspection.value.requested.kind === "directory"
+              ? "directory"
+              : importMode,
           path: targetPath.trim(),
         });
       setResult(next);
@@ -113,6 +189,20 @@ export function ImportPublicUrlModal() {
     projectId != null
       ? (projectMap?.getIn([projectId, "title"]) as string | undefined)
       : undefined;
+  const canCopyDirectory = inspection.value?.requested.kind === "file";
+  const selectedSource =
+    importMode === "directory" && inspection.value
+      ? canCopyDirectory
+        ? inspection.value.containing_directory
+        : inspection.value.requested
+      : inspection.value?.requested;
+  const selectedLabel =
+    importMode === "directory" ? "containing folder" : "file";
+  const selectedSize = selectedSource?.bytes;
+  const sizeDescription =
+    selectedSize != null
+      ? human_readable_size(selectedSize)
+      : "size unavailable";
 
   return (
     <Modal
@@ -125,19 +215,27 @@ export function ImportPublicUrlModal() {
               href={importedFileHref(result.project_id, result.path)}
               rel="noreferrer noopener"
             >
-              <Button type="primary">Open imported file</Button>
+              <Button type="primary">Open destination</Button>
             </a>
           </Space>
         ) : (
           <Space>
             <Button onClick={close}>Cancel</Button>
             <Button
-              disabled={!projectId || !targetPath.trim() || !!parsed.error}
+              disabled={
+                !projectId ||
+                !targetPath.trim() ||
+                !!parsed.error ||
+                !!inspection.error ||
+                inspection.loading
+              }
               loading={importing}
               onClick={onImport}
               type="primary"
             >
-              Copy to my project
+              {importMode === "directory"
+                ? "Copy folder to my project"
+                : "Copy to my project"}
             </Button>
           </Space>
         )
@@ -160,6 +258,49 @@ export function ImportPublicUrlModal() {
             showIcon
             type="info"
           />
+          {inspection.error ? (
+            <Alert message={inspection.error} showIcon type="error" />
+          ) : undefined}
+          {inspection.value ? (
+            <div>
+              <div style={{ fontWeight: 600, marginBottom: "8px" }}>
+                What to copy
+              </div>
+              <Radio.Group
+                disabled={
+                  importing ||
+                  !!result ||
+                  inspection.value.requested.kind === "directory"
+                }
+                onChange={(e) => setImportMode(e.target.value)}
+                value={
+                  inspection.value.requested.kind === "directory"
+                    ? "directory"
+                    : importMode
+                }
+              >
+                <Space direction="vertical">
+                  <Radio value="file">
+                    Copy this file
+                    {inspection.value.requested.bytes != null
+                      ? ` (${human_readable_size(inspection.value.requested.bytes)})`
+                      : ""}
+                  </Radio>
+                  {canCopyDirectory ? (
+                    <Radio value="directory">
+                      Copy containing folder
+                      {inspection.value.containing_directory.bytes != null
+                        ? ` (${human_readable_size(inspection.value.containing_directory.bytes)})`
+                        : ""}
+                    </Radio>
+                  ) : undefined}
+                </Space>
+              </Radio.Group>
+            </div>
+          ) : undefined}
+          {inspection.loading ? (
+            <Alert message="Inspecting public path..." showIcon type="info" />
+          ) : undefined}
           <div>
             <div style={{ fontWeight: 600, marginBottom: "8px" }}>
               Target project
@@ -180,17 +321,45 @@ export function ImportPublicUrlModal() {
               value={targetPath}
             />
           </div>
+          {inspection.value && selectedSource ? (
+            <Alert
+              message={`Ready to copy ${selectedLabel}`}
+              description={
+                <>
+                  Source <code>{selectedSource.container_path}</code>,{" "}
+                  {sizeDescription}.
+                  {selectedSource.truncated
+                    ? " Size estimate may be incomplete."
+                    : ""}
+                </>
+              }
+              showIcon
+              type="info"
+            />
+          ) : undefined}
+          {inspection.value &&
+          importMode === "directory" &&
+          (inspection.value.containing_directory.bytes ?? 0) >=
+            LARGE_DIRECTORY_WARNING_BYTES ? (
+            <Alert
+              message="Large folder copy"
+              description="This can take a while. Large directory copies run as a background operation, especially when the source and destination are on different hosts."
+              showIcon
+              type="warning"
+            />
+          ) : undefined}
           {error ? <Alert message={error} showIcon type="error" /> : undefined}
           {result ? (
             <Alert
               description={
                 <>
-                  Imported <code>{result.path}</code> to{" "}
-                  <strong>{projectTitle || result.project_id}</strong> (
-                  {result.bytes.toLocaleString()} bytes).
+                  Started copying <code>{result.source_path}</code> to{" "}
+                  <strong>{projectTitle || result.project_id}</strong> as{" "}
+                  <code>{result.path}</code>. This runs as a background
+                  operation.
                 </>
               }
-              message="Import complete"
+              message="Copy started"
               showIcon
               type="success"
             />

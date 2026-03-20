@@ -52,6 +52,28 @@ export interface HostBackupExecutionStatus {
   config_source?: "env-legacy" | "db-override";
 }
 
+export interface HostStaticAppPathInspection {
+  project_id: string;
+  app_id: string;
+  static_root: string;
+  exposure_mode: "private" | "public";
+  auth_front?: "none" | "token";
+  public_access_granted: boolean;
+  requested: {
+    kind: "file" | "directory";
+    relative_path: string;
+    container_path: string;
+    bytes?: number;
+    truncated?: boolean;
+  };
+  containing_directory: {
+    relative_path: string;
+    container_path: string;
+    bytes?: number;
+    truncated?: boolean;
+  };
+}
+
 export interface HostControlApi {
   createProject: (
     opts: HostCreateProjectRequest,
@@ -93,6 +115,10 @@ export interface HostControlApi {
     public_key: string;
   }) => Promise<HostSshAuthorizedKeysResponse & { removed: boolean }>;
   getBackupExecutionStatus: () => Promise<HostBackupExecutionStatus>;
+  inspectStaticAppPath: (opts: {
+    project_id: string;
+    url: string;
+  }) => Promise<HostStaticAppPathInspection>;
   // Later: updateProject to adjust title/users/etc.
 }
 

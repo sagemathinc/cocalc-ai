@@ -66,6 +66,42 @@ export interface ImportPublicUrlResult {
   source_url: string;
 }
 
+export interface PublicPathInspectionResult {
+  source_project_id: string;
+  host_id: string;
+  app_id: string;
+  static_root: string;
+  exposure_mode: "private" | "public";
+  auth_front?: "none" | "token";
+  public_access_granted: boolean;
+  requested: {
+    kind: "file" | "directory";
+    relative_path: string;
+    container_path: string;
+    bytes?: number;
+    truncated?: boolean;
+  };
+  containing_directory: {
+    relative_path: string;
+    container_path: string;
+    bytes?: number;
+    truncated?: boolean;
+  };
+}
+
+export interface ImportPublicPathResult {
+  project_id: string;
+  path: string;
+  source_project_id: string;
+  source_path: string;
+  mode: "file" | "directory";
+  op_id: string;
+  scope_type: "project";
+  scope_id: string;
+  service: string;
+  stream_name: string;
+}
+
 // "cloudflare-access-tcp" is kept temporarily for compatibility with older
 // servers/clients. The route is a Cloudflare-published SSH/TCP endpoint; it
 // may still use the `cloudflared access ssh` client shim, but it is not
@@ -247,7 +283,9 @@ export interface ChatStoreDeleteResult {
 export const projects = {
   createProject: authFirstRequireAccount,
   copyPathBetweenProjects: authFirstRequireAccount,
+  inspectPublicPath: authFirstRequireAccount,
   importPublicUrl: authFirstRequireAccount,
+  importPublicPath: authFirstRequireAccount,
   listPendingCopies: authFirstRequireAccount,
   cancelPendingCopy: authFirstRequireAccount,
   removeCollaborator: authFirstRequireAccount,
@@ -349,12 +387,25 @@ export interface Projects {
     stream_name: string;
   }>;
 
+  inspectPublicPath: (opts: {
+    account_id?: string;
+    public_url: string;
+  }) => Promise<PublicPathInspectionResult>;
+
   importPublicUrl: (opts: {
     account_id?: string;
     project_id: string;
     public_url: string;
     path?: string;
   }) => Promise<ImportPublicUrlResult>;
+
+  importPublicPath: (opts: {
+    account_id?: string;
+    project_id: string;
+    public_url: string;
+    mode: "file" | "directory";
+    path?: string;
+  }) => Promise<ImportPublicPathResult>;
 
   listPendingCopies: (opts: {
     account_id?: string;

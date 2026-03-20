@@ -3,6 +3,8 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { isValidUUID } from "@cocalc/util/misc";
+
 function basename(path: string): string {
   const parts = path.split("/").filter(Boolean);
   return parts.at(-1) ?? path;
@@ -48,4 +50,17 @@ export function parsePublicViewerImportUrl(
     path: queryPath || parsed.pathname || "/download",
     title,
   };
+}
+
+export function extractProjectIdFromPublicViewerRawUrl(
+  rawUrl: string,
+): string | undefined {
+  const parsed = new URL(rawUrl);
+  const segments = parsed.pathname.split("/").filter(Boolean);
+  if (isValidUUID(segments[0] ?? "")) {
+    return segments[0];
+  }
+  if (segments[0] === "projects" && isValidUUID(segments[1] ?? "")) {
+    return segments[1];
+  }
 }

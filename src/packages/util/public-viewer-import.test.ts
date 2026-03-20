@@ -1,4 +1,7 @@
-import { parsePublicViewerImportUrl } from "./public-viewer-import";
+import {
+  extractProjectIdFromPublicViewerRawUrl,
+  parsePublicViewerImportUrl,
+} from "./public-viewer-import";
 
 describe("parsePublicViewerImportUrl", () => {
   it("extracts the raw source from a public viewer page URL", () => {
@@ -26,5 +29,13 @@ describe("parsePublicViewerImportUrl", () => {
       path: "/p/apps/demo/a.md",
       title: undefined,
     });
+  });
+
+  it("extracts the source project id from launchpad-style raw app URLs", () => {
+    expect(
+      extractProjectIdFromPublicViewerRawUrl(
+        "https://host-1-dev.example.com/00000000-1000-4000-8000-000000000000/apps/demo/a.ipynb?raw=1",
+      ),
+    ).toBe("00000000-1000-4000-8000-000000000000");
   });
 });
