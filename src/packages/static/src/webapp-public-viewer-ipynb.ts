@@ -4,7 +4,8 @@
  */
 
 import { init } from "@cocalc/frontend/public-viewer/bootstrap-ipynb";
-import { startedUp } from "./webapp-error";
+import { finishedLoading, startedUp } from "./webapp-error";
 
+finishedLoading();
 init();
 startedUp();

@@ -5,7 +5,8 @@
 
 import "@cocalc/frontend/editors/slate/elements/elements.css";
 import { init } from "@cocalc/frontend/public-viewer/bootstrap-markdown";
-import { startedUp } from "./webapp-error";
+import { finishedLoading, startedUp } from "./webapp-error";
 
+finishedLoading();
 init();
 startedUp();
