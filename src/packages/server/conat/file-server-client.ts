@@ -2,7 +2,16 @@ import {
   client as fileServerClient,
   type Fileserver,
 } from "@cocalc/conat/files/file-server";
+import type { Client } from "@cocalc/conat/core/client";
+import { conatWithProjectRouting } from "./route-client";
 import { materializeProjectHost } from "./route-project";
+
+let routedClient: Client | undefined;
+
+function getRoutedClient(): Client {
+  routedClient ??= conatWithProjectRouting();
+  return routedClient;
+}
 
 export async function ensureProjectFileServerRoute(
   project_id: string,
@@ -26,5 +35,9 @@ export async function getProjectFileServerClient({
   if (ensure_route) {
     await ensureProjectFileServerRoute(project_id);
   }
-  return fileServerClient({ project_id, timeout });
+  return fileServerClient({
+    client: getRoutedClient(),
+    project_id,
+    timeout,
+  });
 }

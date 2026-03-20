@@ -2,11 +2,18 @@ export {};
 
 let materializeProjectHostMock: jest.Mock;
 let fileServerClientMock: jest.Mock;
+let conatWithProjectRoutingMock: jest.Mock;
 
 jest.mock("./route-project", () => ({
   __esModule: true,
   materializeProjectHost: (...args: any[]) =>
     materializeProjectHostMock(...args),
+}));
+
+jest.mock("./route-client", () => ({
+  __esModule: true,
+  conatWithProjectRouting: (...args: any[]) =>
+    conatWithProjectRoutingMock(...args),
 }));
 
 jest.mock("@cocalc/conat/files/file-server", () => ({
@@ -18,6 +25,7 @@ describe("conat/file-server-client", () => {
   beforeEach(() => {
     jest.resetModules();
     materializeProjectHostMock = jest.fn(async () => "https://host");
+    conatWithProjectRoutingMock = jest.fn(() => ({ id: "routed-client" }));
     fileServerClientMock = jest.fn(() => ({ createBackup: jest.fn() }));
   });
 
@@ -32,6 +40,7 @@ describe("conat/file-server-client", () => {
       "11111111-1111-1111-1111-111111111111",
     );
     expect(fileServerClientMock).toHaveBeenCalledWith({
+      client: { id: "routed-client" },
       project_id: "11111111-1111-1111-1111-111111111111",
       timeout: 1234,
     });
@@ -61,6 +70,7 @@ describe("conat/file-server-client", () => {
 
     expect(materializeProjectHostMock).not.toHaveBeenCalled();
     expect(fileServerClientMock).toHaveBeenCalledWith({
+      client: { id: "routed-client" },
       project_id: "33333333-3333-3333-3333-333333333333",
       timeout: undefined,
     });
