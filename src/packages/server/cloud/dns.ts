@@ -393,9 +393,18 @@ export async function ensurePublicViewerDns(): Promise<
       dns: settings.dns as string | undefined,
     }) ?? "",
   );
-  const target_hostname = normalizeHostname(settings.dns);
+  let target_hostname = normalizeHostname(settings.dns);
   if (!zone || !hostname || !target_hostname || hostname === target_hostname) {
     return undefined;
+  }
+  // If the main site hostname is itself fronted by a Cloudflare tunnel, point the
+  // dedicated public-viewer hostname directly at the tunnel target instead of at
+  // the main hostname. That matches how Cloudflare normally models tunnel-backed
+  // hostnames and avoids creating a proxied CNAME that just points at another
+  // proxied hostname.
+  const tunnelTarget = await getCnameTargetForHostname(target_hostname);
+  if (tunnelTarget?.endsWith(".cfargotunnel.com")) {
+    target_hostname = tunnelTarget;
   }
   const { record_id } = await ensureAppSubdomainDns({
     hostname,

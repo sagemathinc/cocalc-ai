@@ -225,6 +225,60 @@ describe("cloud dns", () => {
     expect(record.proxied).toBe(true);
   });
 
+  it("points the public viewer hostname directly at the tunnel target", async () => {
+    mockedSettings = {
+      project_hosts_dns: "example.com",
+      project_hosts_cloudflare_tunnel_api_token: "token",
+      dns: "https://dev.example.com",
+      public_viewer_dns: "dev-raw.example.com",
+    };
+
+    fetchMock.mockImplementation(async (input: any, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/zones?")) {
+        return responseWith([{ name: "example.com", id: "zone-1" }]);
+      }
+      if (init?.method === "GET" && url.includes("/dns_records?")) {
+        if (url.includes("name=dev.example.com")) {
+          return responseWith([
+            {
+              id: "record-site",
+              name: "dev.example.com",
+              type: "CNAME",
+              content: "62a1de15-deb4-448f-a5d8-480debc959fb.cfargotunnel.com",
+            },
+          ]);
+        }
+        if (url.includes("name=dev-raw.example.com")) {
+          return responseWith([]);
+        }
+      }
+      if (init?.method === "POST" && url.includes("/dns_records")) {
+        return responseWith({ id: "record-raw" });
+      }
+      return responseWith({});
+    });
+    (global as any).fetch = fetchMock;
+
+    const { ensurePublicViewerDns } = await import("./dns");
+    const result = await ensurePublicViewerDns();
+
+    expect(result).toEqual({
+      hostname: "dev-raw.example.com",
+      target_hostname: "62a1de15-deb4-448f-a5d8-480debc959fb.cfargotunnel.com",
+      record_id: "record-raw",
+    });
+
+    const addCall = fetchMock.mock.calls.find(
+      ([url, init]) =>
+        String(url).includes("/dns_records") && init?.method === "POST",
+    );
+    const record = addCall?.[1]?.body ? JSON.parse(addCall[1].body) : undefined;
+    expect(record.content).toBe(
+      "62a1de15-deb4-448f-a5d8-480debc959fb.cfargotunnel.com",
+    );
+  });
+
   it("allows a sibling raw hostname under the parent cloudflare zone", async () => {
     mockedSettings = {
       project_hosts_dns: "dev.example.com",
