@@ -242,16 +242,11 @@ describe("backend sync-fs watch policy", () => {
     await doc.close();
   });
 
-  it("disables backend sync-fs watch for chat documents", async () => {
+  it("keeps chat documents off the backend sync-fs bootstrap path", async () => {
     const { doc, syncFsWatch, syncFsReconcile } =
       await openDoc("conversation.chat");
     expect(syncFsWatch).not.toHaveBeenCalled();
-    expect(syncFsReconcile).toHaveBeenCalledWith(
-      "conversation.chat",
-      expect.objectContaining({
-        project_id,
-      }),
-    );
+    expect(syncFsReconcile).not.toHaveBeenCalled();
     await doc.close();
   });
 
