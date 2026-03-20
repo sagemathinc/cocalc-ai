@@ -84,7 +84,13 @@ describe("static app serving", () => {
       "public-viewer-ipynb.html",
     );
     expect(publicViewerHtmlForPath("slides/a.slides")).toBe(
-      "public-viewer.html",
+      "public-viewer-slides.html",
+    );
+    expect(publicViewerHtmlForPath("boards/a.board")).toBe(
+      "public-viewer-board.html",
+    );
+    expect(publicViewerHtmlForPath("logs/a.chat")).toBe(
+      "public-viewer-chat.html",
     );
   });
 

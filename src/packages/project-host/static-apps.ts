@@ -93,6 +93,8 @@ const MIME_BY_EXT: Record<string, string> = {
   ".ipynb": "application/x-ipynb+json; charset=utf-8",
   ".slides": "application/json; charset=utf-8",
   ".board": "application/json; charset=utf-8",
+  ".chat": "application/json; charset=utf-8",
+  ".sage-chat": "application/json; charset=utf-8",
 };
 
 function escapeHtml(value: string): string {

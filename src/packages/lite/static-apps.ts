@@ -69,6 +69,8 @@ const MIME_BY_EXT: Record<string, string> = {
   ".ipynb": "application/x-ipynb+json; charset=utf-8",
   ".slides": "application/json; charset=utf-8",
   ".board": "application/json; charset=utf-8",
+  ".chat": "application/json; charset=utf-8",
+  ".sage-chat": "application/json; charset=utf-8",
 };
 
 function liteHomeDir(): string {
@@ -172,6 +174,13 @@ function publicViewerHtmlForPath(entryPath: string): string {
       return "public-viewer-md.html";
     case ".ipynb":
       return "public-viewer-ipynb.html";
+    case ".slides":
+      return "public-viewer-slides.html";
+    case ".board":
+      return "public-viewer-board.html";
+    case ".chat":
+    case ".sage-chat":
+      return "public-viewer-chat.html";
     default:
       return "public-viewer.html";
   }

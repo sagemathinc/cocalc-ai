@@ -24,6 +24,21 @@ export default function appLoaderPlugin(
       filename: "public-viewer-ipynb.html",
       chunks: ["load", "public-viewer-ipynb"],
     },
+    {
+      desc: "public-viewer-board",
+      filename: "public-viewer-board.html",
+      chunks: ["load", "public-viewer-board"],
+    },
+    {
+      desc: "public-viewer-slides",
+      filename: "public-viewer-slides.html",
+      chunks: ["load", "public-viewer-slides"],
+    },
+    {
+      desc: "public-viewer-chat",
+      filename: "public-viewer-chat.html",
+      chunks: ["load", "public-viewer-chat"],
+    },
   ];
 
   for (const page of htmlPages) {

@@ -23,6 +23,7 @@ const CodeMirrorRenderer = lazy(() => import("./renderers/codemirror"));
 const IpynbRenderer = lazy(() => import("./renderers/ipynb"));
 const BoardRenderer = lazy(() => import("./renderers/board"));
 const SlidesRenderer = lazy(() => import("./renderers/slides"));
+const ChatRenderer = lazy(() => import("./renderers/chat"));
 
 export interface PublicViewerFileContentsProps {
   content?: string;
@@ -151,6 +152,18 @@ export default function PublicViewerFileContents({
     return (
       <Suspense fallback={<LoadingRenderer />}>
         <SlidesRenderer content={content} fileContext={resolvedFileContext} />
+      </Suspense>
+    );
+  }
+
+  if (ext === "chat" || ext === "sage-chat") {
+    return (
+      <Suspense fallback={<LoadingRenderer />}>
+        <ChatRenderer
+          content={content}
+          fileContext={resolvedFileContext}
+          style={style}
+        />
       </Suspense>
     );
   }
