@@ -64,7 +64,7 @@ export type ProjectJupyterRunSession = {
   ack: JupyterRunAck | null;
   cells: NotebookCellInfo[];
   iter: AsyncIterable<OutputMessage[]>;
-  close: () => void;
+  close: () => Promise<void>;
 };
 
 export type ProjectJupyterLiveSession = {
@@ -73,7 +73,7 @@ export type ProjectJupyterLiveSession = {
   path: string;
   getRunId: () => string | null;
   iter: AsyncIterable<OutputMessage[]>;
-  close: () => void;
+  close: () => Promise<void>;
 };
 
 type NotebookCellSelector = {
@@ -561,9 +561,9 @@ export function createProjectJupyterOps<Ctx, Project extends ProjectIdentity>(
         ack,
         cells: selected,
         iter,
-        close: () => {
+        close: async () => {
           runClient.close();
-          return void release();
+          await release();
         },
       };
     } catch (error) {
@@ -649,7 +649,7 @@ export function createProjectJupyterOps<Ctx, Project extends ProjectIdentity>(
       path: normalizedPath,
       getRunId: () => selectedRunId,
       iter: iter(),
-      close: () => {
+      close: async () => {
         store.close();
       },
     };

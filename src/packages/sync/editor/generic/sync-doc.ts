@@ -266,6 +266,7 @@ export class SyncDoc extends EventEmitter {
   public ipywidgets_state?: IpywidgetsState;
 
   private patchflowSession?: PatchflowSession;
+  private updateHasUnsavedChangesDebounced?: ReturnType<typeof debounce>;
   private patchflowStore?: PatchflowPatchStore;
   private patchflowCodec?: DocCodec;
 
@@ -1094,6 +1095,7 @@ export class SyncDoc extends EventEmitter {
       // Cancel any pending change emit calls.
       cancel_scheduled(this.emit_change);
     }
+    cancel_scheduled(this.updateHasUnsavedChangesDebounced);
 
     this.patchflowSession?.close();
 
@@ -1487,7 +1489,7 @@ export class SyncDoc extends EventEmitter {
     }
     this.applyPatchWriteHeaders();
 
-    const update_has_unsaved_changes = debounce(
+    this.updateHasUnsavedChangesDebounced = debounce(
       this.update_has_unsaved_changes,
       500,
       { leading: true, trailing: true },
@@ -1498,7 +1500,7 @@ export class SyncDoc extends EventEmitter {
     });
 
     this.on("change", () => {
-      update_has_unsaved_changes();
+      this.updateHasUnsavedChangesDebounced?.();
     });
 
     this.emitOpenPhase("patchflow_session_start");

@@ -141,6 +141,7 @@ async function openCurrentProjectConatClient({
   const client = connectConat({
     address: apiBaseUrl,
     noCache: true,
+    reconnection: false,
     auth: async (cb) =>
       cb({
         bearer,

@@ -416,12 +416,15 @@ export class ConatSocketClient extends ConatSocketBase {
       );
     }
     this.queuedWrites = [];
-    // tell server we're gone (but don't wait)
-    (async () => {
-      try {
-        await this.sendCommandToServer("close");
-      } catch {}
-    })();
+    // tell server we're gone (but don't wait for a reply)
+    try {
+      this.client.publishSync(this.serverSubject(), null, {
+        headers: {
+          [SOCKET_HEADER_CMD]: "close",
+          id: this.id,
+        },
+      });
+    } catch {}
     if (this.tcp != null) {
       this.tcp.send.close();
       this.tcp.recv.close();
