@@ -84,7 +84,13 @@ describe("static app serving", () => {
       "public-viewer-ipynb.html",
     );
     expect(publicViewerHtmlForPath("slides/a.slides")).toBe(
-      "public-viewer.html",
+      "public-viewer-slides.html",
+    );
+    expect(publicViewerHtmlForPath("boards/a.board")).toBe(
+      "public-viewer-board.html",
+    );
+    expect(publicViewerHtmlForPath("logs/a.chat")).toBe(
+      "public-viewer-chat.html",
     );
   });
 
@@ -116,6 +122,42 @@ describe("static app serving", () => {
     expect(handled).toBe(true);
     expect(res.statusCode).toBe(200);
     expect(res.body.toString("utf8")).toBe("hello world");
+  });
+
+  it("redirects directory roots to a trailing-slash URL", async () => {
+    const base = await mkdtemp(join(tmpdir(), "cocalc-static-apps-"));
+    const home = join(base, "home");
+    const rootfs = join(base, "rootfs");
+    const scratch = join(base, "scratch");
+    await mkdir(join(home, "public", "docs"), { recursive: true });
+    await mkdir(rootfs, { recursive: true });
+    await mkdir(scratch, { recursive: true });
+    await writeFile(
+      join(home, "public", "docs", "index.html"),
+      "<h1>Hello</h1>",
+    );
+
+    currentProjectFs = createProjectSandboxFilesystem({
+      project_id,
+      home,
+      rootfs,
+      scratch,
+    });
+
+    const res = new MockResponse();
+    const handled = await maybeHandleStaticAppRequest({
+      req: makeRequest("/docs"),
+      res: res as unknown as http.ServerResponse,
+      project_id,
+      match: {
+        ...makeMatch("/root/public", "/"),
+        requestPath: "/docs",
+      },
+    });
+
+    expect(handled).toBe(true);
+    expect(res.statusCode).toBe(302);
+    expect(res.headers.Location).toBe("/docs/");
   });
 
   it("does not follow symlinks outside the configured root", async () => {

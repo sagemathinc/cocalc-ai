@@ -2,6 +2,7 @@ import { listRows } from "./sqlite/database";
 import { site_settings_conf as SITE_SETTINGS_CONF } from "@cocalc/util/schema";
 import { buildPublicSiteSettings } from "@cocalc/util/db-schema/site-settings-public";
 import { EXTRAS as SITE_SETTINGS_EXTRAS } from "@cocalc/util/db-schema/site-settings-extras";
+import { resolvePublicViewerDns } from "@cocalc/util/public-viewer-origin";
 import { keys } from "@cocalc/util/misc";
 
 type CustomizePayload = {
@@ -31,6 +32,7 @@ const DEFAULT_CONFIGURATION = {
   share_server: true,
   i18n: ["en"],
   dns: "",
+  public_viewer_dns: "",
   country: "XX",
   ssh_remote_target: "",
   ssh_remote_url: "",
@@ -95,6 +97,11 @@ export async function getCustomizePayload(): Promise<CustomizePayload> {
     ...DEFAULT_CONFIGURATION,
     ...publicSettings,
   };
+  configuration.public_viewer_dns =
+    resolvePublicViewerDns({
+      publicViewerDns: configuration.public_viewer_dns,
+      dns: configuration.dns,
+    }) ?? "";
   const sshRemoteTarget = process.env.COCALC_REMOTE_SSH_TARGET;
   if (sshRemoteTarget) {
     configuration.ssh_remote_target = sshRemoteTarget;

@@ -12,6 +12,10 @@ import getLogger from "@cocalc/backend/logger";
 import { SandboxedFilesystem } from "@cocalc/backend/sandbox";
 import { hubApi } from "@cocalc/lite/hub/api";
 import {
+  normalizeOriginUrl,
+  resolvePublicViewerDns,
+} from "@cocalc/util/public-viewer-origin";
+import {
   COCALC_PUBLIC_VIEWER_MODE,
   isPublicViewerRenderablePath,
   parsePublicViewerManifest,
@@ -25,7 +29,7 @@ import type { AppRequestMatch } from "./app-public-access";
 
 const logger = getLogger("project-host:static-apps");
 const STATIC_CACHE_CONTROL_DEFAULT = "public, max-age=60";
-const PUBLIC_WEB_BASE_URL_CACHE = new TTL<string, string | null>({
+const PUBLIC_VIEWER_BASE_URL_CACHE = new TTL<string, string | null>({
   max: 1,
   ttl: 30_000,
 });
@@ -89,6 +93,8 @@ const MIME_BY_EXT: Record<string, string> = {
   ".ipynb": "application/x-ipynb+json; charset=utf-8",
   ".slides": "application/json; charset=utf-8",
   ".board": "application/json; charset=utf-8",
+  ".chat": "application/json; charset=utf-8",
+  ".sage-chat": "application/json; charset=utf-8",
 };
 
 function escapeHtml(value: string): string {
@@ -136,6 +142,27 @@ function isViewerRawRequest(req: http.IncomingMessage): boolean {
   }
 }
 
+function hasTrailingSlash(req: http.IncomingMessage): boolean {
+  const requestUrl = req.url ?? "/";
+  try {
+    const url = new URL(requestUrl, "http://127.0.0.1");
+    return url.pathname.endsWith("/");
+  } catch {
+    return requestUrl.split("?")[0]?.endsWith("/") ?? false;
+  }
+}
+
+function trailingSlashRedirectLocation(req: http.IncomingMessage): string {
+  const requestUrl = req.url ?? "/";
+  try {
+    const url = new URL(requestUrl, "http://127.0.0.1");
+    return `${url.pathname}/${url.search ?? ""}`;
+  } catch {
+    const [pathname, search = ""] = requestUrl.split("?", 2);
+    return `${pathname}/${search !== "" ? `?${search}` : ""}`;
+  }
+}
+
 function sortPublicViewerEntries(
   left: PublicViewerManifestEntry,
   right: PublicViewerManifestEntry,
@@ -158,45 +185,40 @@ function buildRequestOrigin(req: http.IncomingMessage): string | undefined {
   return `${proto}://${host}`;
 }
 
-function trimTrailingSlash(value: string): string {
-  return value.replace(/\/+$/, "");
-}
-
-function normalizePublicWebBaseUrl(value: unknown): string | undefined {
-  const raw = `${value ?? ""}`.trim();
-  if (!raw) return;
-  const withProtocol = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
-  try {
-    return trimTrailingSlash(new URL(withProtocol).toString());
-  } catch {
-    return;
-  }
-}
-
-async function getPublicWebBaseUrl(
+async function getPublicViewerBaseUrl(
   req: http.IncomingMessage,
 ): Promise<string | undefined> {
-  const explicit = normalizePublicWebBaseUrl(process.env.COCALC_PUBLIC_WEB_URL);
+  const explicit =
+    normalizeOriginUrl(process.env.COCALC_PUBLIC_VIEWER_URL ?? "") ??
+    normalizeOriginUrl(process.env.COCALC_PUBLIC_WEB_URL ?? "");
   if (explicit) return explicit;
-  const cached = PUBLIC_WEB_BASE_URL_CACHE.get("site");
+  const cached = PUBLIC_VIEWER_BASE_URL_CACHE.get("site");
   if (cached !== undefined) {
     return cached ?? undefined;
   }
   let resolved: string | undefined;
   try {
-    const customize = await hubApi.system?.getCustomize?.(["dns"]);
-    resolved = normalizePublicWebBaseUrl((customize as any)?.dns);
+    const customize = await hubApi.system?.getCustomize?.([
+      "public_viewer_dns",
+      "dns",
+    ]);
+    resolved = normalizeOriginUrl(
+      resolvePublicViewerDns({
+        publicViewerDns: (customize as any)?.public_viewer_dns,
+        dns: (customize as any)?.dns,
+      }) ?? "",
+    );
   } catch (err) {
-    logger.debug("failed to fetch project-host public web base url", {
+    logger.debug("failed to fetch project-host public viewer base url", {
       err: `${err}`,
     });
   }
   if (!resolved) {
     resolved =
-      normalizePublicWebBaseUrl(process.env.COCALC_API_URL) ??
+      normalizeOriginUrl(process.env.COCALC_API_URL ?? "") ??
       buildRequestOrigin(req);
   }
-  PUBLIC_WEB_BASE_URL_CACHE.set("site", resolved ?? null);
+  PUBLIC_VIEWER_BASE_URL_CACHE.set("site", resolved ?? null);
   return resolved;
 }
 
@@ -219,12 +241,12 @@ async function buildViewerRedirectUrl({
     requestOrigin ?? "http://127.0.0.1",
   );
   requestUrl.searchParams.set("raw", "1");
-  const publicWebBaseUrl = await getPublicWebBaseUrl(req);
-  if (!publicWebBaseUrl) {
-    throw new Error("unable to determine public web base url");
+  const publicViewerBaseUrl = await getPublicViewerBaseUrl(req);
+  if (!publicViewerBaseUrl) {
+    throw new Error("unable to determine public viewer base url");
   }
   const viewer = new URL(
-    `${publicWebBaseUrl}/static/${publicViewerHtmlForPath(sourcePath, viewerBundle)}`,
+    `${publicViewerBaseUrl}/static/${publicViewerHtmlForPath(sourcePath, viewerBundle)}`,
   );
   viewer.searchParams.set("source", requestUrl.toString());
   viewer.searchParams.set("path", sourcePath);
@@ -443,10 +465,14 @@ async function buildPublicFileHeaders({
     "Cross-Origin-Resource-Policy": "cross-origin",
   };
   const requestOrigin = `${req.headers.origin ?? ""}`.trim();
-  const publicWebBaseUrl = requestOrigin
-    ? await getPublicWebBaseUrl(req)
+  const publicViewerBaseUrl = requestOrigin
+    ? await getPublicViewerBaseUrl(req)
     : undefined;
-  if (requestOrigin && publicWebBaseUrl && requestOrigin === publicWebBaseUrl) {
+  if (
+    requestOrigin &&
+    publicViewerBaseUrl &&
+    requestOrigin === publicViewerBaseUrl
+  ) {
     headers["Access-Control-Allow-Origin"] = requestOrigin;
     headers["Access-Control-Allow-Credentials"] = "true";
     headers["Vary"] = "Origin";
@@ -812,6 +838,15 @@ export async function maybeHandleStaticAppRequest({
 
   if (!pathInfo.stat?.isDirectory()) {
     writeNotFound(res, extraHtmlHeaders);
+    return true;
+  }
+
+  if (!hasTrailingSlash(req)) {
+    res.writeHead(302, {
+      Location: trailingSlashRedirectLocation(req),
+      "Cache-Control": "no-store",
+    });
+    res.end();
     return true;
   }
 

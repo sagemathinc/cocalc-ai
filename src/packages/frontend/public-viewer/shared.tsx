@@ -7,6 +7,10 @@ import { useEffect, useState } from "react";
 import type { JSX, ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { resource_links } from "@cocalc/frontend/misc/resource-links";
+import {
+  deriveMainSiteOriginFromViewerOrigin,
+  isAllowedPublicViewerSourceHost,
+} from "@cocalc/util/public-viewer-origin";
 import { COLORS } from "@cocalc/util/theme";
 
 export interface PublicViewerConfig {
@@ -24,8 +28,10 @@ function normalizeAndValidateRawUrl(rawUrl: string): string {
   const currentHost = window.location.hostname;
   const sameHost =
     parsed.hostname === currentHost ||
-    parsed.hostname.endsWith(`.${currentHost}`) ||
-    parsed.hostname.endsWith(`-${currentHost}`);
+    isAllowedPublicViewerSourceHost({
+      sourceHostname: parsed.hostname,
+      viewerHostname: currentHost,
+    });
   const sameOrigin = parsed.origin === window.location.origin;
   if (!sameOrigin && !sameHost) {
     throw new Error("public viewer source host is not allowed");
@@ -97,6 +103,17 @@ function PublicViewerApp({
   const [content, setContent] = useState<string>();
   const [error, setError] = useState<string>();
   const [loading, setLoading] = useState(true);
+  const importHref = (() => {
+    const mainOrigin = deriveMainSiteOriginFromViewerOrigin(
+      window.location.origin,
+    );
+    if (!mainOrigin) {
+      return;
+    }
+    const url = new URL("/projects/", mainOrigin);
+    url.searchParams.set("import-public-url", window.location.href);
+    return url.toString();
+  })();
 
   useEffect(() => {
     let cancelled = false;
@@ -167,13 +184,25 @@ function PublicViewerApp({
             Source: <code>{config.path}</code>
           </div>
         </div>
-        <a
-          href={config.rawUrl}
-          rel="noreferrer noopener"
-          style={{ color: COLORS.ANTD_LINK_BLUE, fontWeight: 600 }}
-        >
-          Open raw file
-        </a>
+        <div style={{ display: "flex", gap: "16px", flexWrap: "wrap" }}>
+          <a
+            href={config.rawUrl}
+            rel="noreferrer noopener"
+            style={{ color: COLORS.ANTD_LINK_BLUE, fontWeight: 600 }}
+          >
+            Open raw file
+          </a>
+          {importHref ? (
+            <a
+              href={importHref}
+              rel="noreferrer noopener"
+              target="_blank"
+              style={{ color: COLORS.ANTD_LINK_BLUE, fontWeight: 600 }}
+            >
+              Copy to my project
+            </a>
+          ) : undefined}
+        </div>
       </header>
       <main style={{ padding: "24px", maxWidth: "1200px", margin: "0 auto" }}>
         {loading ? (

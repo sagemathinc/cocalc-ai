@@ -11,6 +11,8 @@ export const PUBLIC_VIEWER_DEFAULT_FILE_TYPES = [
   ".ipynb",
   ".slides",
   ".board",
+  ".chat",
+  ".sage-chat",
 ] as const;
 export const PUBLIC_VIEWER_DEFAULT_MANIFEST = "index.json" as const;
 export const PUBLIC_VIEWER_DEFAULT_DIRECTORY_LISTING = "manifest-only" as const;
@@ -19,6 +21,10 @@ export const PUBLIC_VIEWER_MANIFEST_KIND =
 export const PUBLIC_VIEWER_HTML_BY_EXT: Record<string, string> = {
   ".md": "public-viewer-md.html",
   ".ipynb": "public-viewer-ipynb.html",
+  ".slides": "public-viewer-slides.html",
+  ".board": "public-viewer-board.html",
+  ".chat": "public-viewer-chat.html",
+  ".sage-chat": "public-viewer-chat.html",
 };
 
 export type PublicViewerDirectoryListingPolicy =
@@ -180,6 +186,9 @@ function inferPublicViewerEntryType(entryPath: string): string {
       return "slides";
     case ".board":
       return "board";
+    case ".chat":
+    case ".sage-chat":
+      return "chat";
     default:
       return "file";
   }

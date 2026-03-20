@@ -12,15 +12,22 @@ import { client as filesystemClient } from "@cocalc/conat/files/file-server";
 export * from "@cocalc/server/conat/api/project-snapshots";
 export * from "@cocalc/server/conat/api/project-backups";
 import getPool from "@cocalc/database/pool";
+import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import { createHostControlClient } from "@cocalc/conat/project-host/api";
 import { updateAuthorizedKeysOnHost as updateAuthorizedKeysOnHostControl } from "@cocalc/server/project-host/control";
 import { getProject } from "@cocalc/server/projects/control";
 import { conatWithProjectRouting } from "@cocalc/server/conat/route-client";
 import { resolveOnPremHost } from "@cocalc/server/onprem";
+import { posix } from "path";
 import type {
   ExecuteCodeOptions,
   ExecuteCodeOutput,
 } from "@cocalc/util/types/execute-code";
+import { parsePublicViewerImportUrl } from "@cocalc/util/public-viewer-import";
+import {
+  isAllowedPublicViewerSourceHost,
+  resolvePublicViewerDns,
+} from "@cocalc/util/public-viewer-origin";
 import {
   cancelCopy as cancelCopyDb,
   listCopiesForProject,
@@ -43,6 +50,7 @@ import type {
   ChatStoreSegment,
   ChatStoreArchivedRow,
   ChatStoreSearchHit,
+  ImportPublicUrlResult,
   ProjectCopyRow,
   ProjectRuntimeLog,
   WorkspaceSshConnectionInfo,
@@ -138,6 +146,101 @@ export async function copyPathBetweenProjects({
     scope_id: src.project_id,
     service: PERSIST_SERVICE,
     stream_name: lroStreamName(op.op_id),
+  };
+}
+
+function basename(path: string): string {
+  const parts = `${path ?? ""}`.split("/").filter(Boolean);
+  return parts.at(-1) ?? path;
+}
+
+function normalizeImportTargetPath(path?: string): string {
+  const trimmed = `${path ?? ""}`.trim().replace(/\\/g, "/");
+  if (!trimmed) {
+    throw new Error("path is required");
+  }
+  const normalized = trimmed.startsWith("/") ? trimmed.slice(1) : trimmed;
+  if (
+    !normalized ||
+    normalized === "." ||
+    normalized.includes("/../") ||
+    normalized.startsWith("../") ||
+    normalized.endsWith("/..")
+  ) {
+    throw new Error("path must stay within the target project");
+  }
+  return normalized;
+}
+
+export async function importPublicUrl({
+  account_id,
+  project_id,
+  public_url,
+  path,
+}: {
+  account_id?: string;
+  project_id: string;
+  public_url: string;
+  path?: string;
+}): Promise<ImportPublicUrlResult> {
+  await assertCollab({ account_id, project_id });
+
+  const parsed = parsePublicViewerImportUrl(public_url);
+  const settings = await getServerSettings();
+  const viewerDns = resolvePublicViewerDns({
+    publicViewerDns: settings.public_viewer_dns as string | undefined,
+    dns: settings.dns as string | undefined,
+  });
+  const viewerHostname = (() => {
+    const raw = `${viewerDns ?? settings.dns ?? ""}`.trim();
+    if (!raw) return undefined;
+    try {
+      return new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`)
+        .hostname;
+    } catch {
+      return undefined;
+    }
+  })();
+  const sourceUrl = new URL(parsed.rawUrl);
+  if (
+    !viewerHostname ||
+    !isAllowedPublicViewerSourceHost({
+      sourceHostname: sourceUrl.hostname,
+      viewerHostname,
+    })
+  ) {
+    throw new Error("public import source host is not allowed");
+  }
+
+  const response = await fetch(parsed.rawUrl, {
+    signal: AbortSignal.timeout(30_000),
+  });
+  if (!response.ok) {
+    throw new Error(
+      `failed to fetch public source (${response.status} ${response.statusText})`,
+    );
+  }
+  const maxBytes = 100 * 1024 * 1024;
+  const contentLength = Number(response.headers.get("content-length") ?? "");
+  if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+    throw new Error("public import source is too large");
+  }
+  const buffer = Buffer.from(await response.arrayBuffer());
+  if (buffer.byteLength > maxBytes) {
+    throw new Error("public import source is too large");
+  }
+  const destPath = normalizeImportTargetPath(path || basename(parsed.path));
+  const fs = conatWithProjectRouting().fs({ project_id });
+  const parent = posix.dirname(destPath);
+  if (parent && parent !== ".") {
+    await fs.mkdir(parent, { recursive: true });
+  }
+  await fs.writeFile(destPath, buffer);
+  return {
+    project_id,
+    path: destPath,
+    bytes: buffer.byteLength,
+    source_url: parsed.rawUrl,
   };
 }
 

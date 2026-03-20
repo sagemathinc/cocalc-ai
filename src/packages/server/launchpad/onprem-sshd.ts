@@ -25,7 +25,9 @@ import {
   hasHubCloudflareTunnel,
   type CloudflareTunnel,
 } from "@cocalc/server/cloud/cloudflare-tunnel";
+import { ensurePublicViewerDns } from "@cocalc/server/cloud/dns";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
+import { resolvePublicViewerDns } from "@cocalc/util/public-viewer-origin";
 
 const logger = getLogger("launchpad:local:sshd");
 const REFRESH_INTERVAL_MS = 5 * 60 * 1000;
@@ -75,6 +77,24 @@ function clean(value: unknown): string | undefined {
   if (value == null) return undefined;
   const trimmed = String(value).trim();
   return trimmed ? trimmed : undefined;
+}
+
+function normalizeHostname(value: unknown): string | undefined {
+  const raw = clean(value);
+  if (!raw) return undefined;
+  let host = raw;
+  if (host.startsWith("http://") || host.startsWith("https://")) {
+    try {
+      host = new URL(host).host;
+    } catch {
+      host = host.replace(/^https?:\/\//, "");
+    }
+  }
+  host = host.split("/")[0];
+  if (host.includes(":")) {
+    host = host.split(":")[0];
+  }
+  return host || undefined;
 }
 
 function isEnabled(value: unknown): boolean {
@@ -813,6 +833,7 @@ async function writeCloudflaredConfig(opts: {
   origin: string;
   noTLSVerify: boolean;
   appPublicWildcard?: string;
+  publicViewerHostname?: string;
 }): Promise<void> {
   const yamlString = (value: string): string => JSON.stringify(value);
   const ingress: string[] = [
@@ -829,6 +850,18 @@ async function writeCloudflaredConfig(opts: {
     opts.appPublicWildcard !== opts.tunnel.hostname
   ) {
     ingress.push(`  - hostname: ${yamlString(opts.appPublicWildcard)}`);
+    ingress.push(`    service: ${yamlString(opts.origin)}`);
+    if (opts.noTLSVerify) {
+      ingress.push("    originRequest:");
+      ingress.push("      noTLSVerify: true");
+    }
+  }
+  if (
+    opts.publicViewerHostname &&
+    opts.publicViewerHostname !== opts.tunnel.hostname &&
+    opts.publicViewerHostname !== opts.appPublicWildcard
+  ) {
+    ingress.push(`  - hostname: ${yamlString(opts.publicViewerHostname)}`);
     ingress.push(`    service: ${yamlString(opts.origin)}`);
     if (opts.noTLSVerify) {
       ingress.push("    originRequest:");
@@ -988,6 +1021,12 @@ async function startCloudflared(): Promise<CloudflaredState | null> {
     settings.project_hosts_dns,
     settings.project_hosts_app_public_subdomain_suffix,
   );
+  const publicViewerHostname = normalizeHostname(
+    resolvePublicViewerDns({
+      publicViewerDns: settings.public_viewer_dns,
+      dns: settings.dns,
+    }) ?? "",
+  );
   await writeCloudflaredCredentials(credentialsPath, tunnel);
   await writeCloudflaredConfig({
     path: configPath,
@@ -996,6 +1035,7 @@ async function startCloudflared(): Promise<CloudflaredState | null> {
     origin,
     noTLSVerify,
     appPublicWildcard,
+    publicViewerHostname,
   });
 
   const persistedPid = await readPidFile(pidPath);
@@ -1081,6 +1121,14 @@ export async function maybeStartLaunchpadOnPremServices(): Promise<void> {
   const state = await startSshd();
   await startRestServer();
   const tunnel = await startCloudflared();
+  try {
+    const publicViewerDns = await ensurePublicViewerDns();
+    if (publicViewerDns) {
+      logger.info("public viewer dns ensured", publicViewerDns);
+    }
+  } catch (err) {
+    logger.warn("public viewer dns ensure failed", { err: `${err}` });
+  }
   if (!tunnel) {
     const status = await getLaunchpadCloudflaredStatus();
     if (status.enabled) {
