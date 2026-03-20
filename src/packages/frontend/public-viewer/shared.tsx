@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import type { JSX, ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { resource_links } from "@cocalc/frontend/misc/resource-links";
+import { isAllowedPublicViewerSourceHost } from "@cocalc/util/public-viewer-origin";
 import { COLORS } from "@cocalc/util/theme";
 
 export interface PublicViewerConfig {
@@ -24,8 +25,10 @@ function normalizeAndValidateRawUrl(rawUrl: string): string {
   const currentHost = window.location.hostname;
   const sameHost =
     parsed.hostname === currentHost ||
-    parsed.hostname.endsWith(`.${currentHost}`) ||
-    parsed.hostname.endsWith(`-${currentHost}`);
+    isAllowedPublicViewerSourceHost({
+      sourceHostname: parsed.hostname,
+      viewerHostname: currentHost,
+    });
   const sameOrigin = parsed.origin === window.location.origin;
   if (!sameOrigin && !sameHost) {
     throw new Error("public viewer source host is not allowed");

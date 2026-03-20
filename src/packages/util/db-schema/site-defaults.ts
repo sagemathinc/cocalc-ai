@@ -96,6 +96,7 @@ export type SiteSettingsKeys =
   | "kucalc"
   | "i18n"
   | "dns"
+  | "public_viewer_dns"
   | "datastore"
   | "versions"
   | "version_min_project"
@@ -399,6 +400,16 @@ export const site_settings_conf: SiteSettings = {
     subgroup: "Domain",
     order: 10,
     required_when: [{ key: "cloudflare_mode", equals: ["self", "managed"] }],
+  },
+  public_viewer_dns: {
+    name: "Public Viewer Domain",
+    desc: "Dedicated origin for the read-only public viewer bundle, e.g. `raw.cocalc.ai` or `dev-raw.cocalc.ai`. Leave empty to derive it automatically from the External Domain Name. This may optionally start with `http://` for local development and may include a `:port`.",
+    default: "",
+    to_val: to_trimmed_str,
+    tags: ["Cloudflare", "Security"],
+    group: "Networking",
+    subgroup: "Domain",
+    order: 11,
   },
   cloudflare_mode: {
     name: "Cloudflare Integration Mode",

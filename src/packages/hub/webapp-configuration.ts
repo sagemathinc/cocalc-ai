@@ -22,6 +22,7 @@ import { SoftwareEnvConfig } from "@cocalc/util/sanitize-software-envs";
 import { site_settings_conf as SITE_SETTINGS_CONF } from "@cocalc/util/schema";
 import { CustomLLMPublic } from "@cocalc/util/types/llm";
 import { parseDomain, ParseResultType } from "parse-domain";
+import { resolvePublicViewerDns } from "@cocalc/util/public-viewer-origin";
 import getServerSettings, {
   ServerSettingsDynamic,
 } from "./servers/server-settings";
@@ -189,6 +190,11 @@ export class WebappConfiguration {
         cloudflare_latitude: cloudflareLatitude,
         cloudflare_longitude: cloudflareLongitude,
         dns: host,
+        public_viewer_dns:
+          resolvePublicViewerDns({
+            publicViewerDns: (config as any).public_viewer_dns,
+            dns: host,
+          }) ?? "",
         cocalc_product: getCocalcProduct(),
         is_launchpad: isLaunchpadProduct(),
         is_rocket: isRocketProduct(),

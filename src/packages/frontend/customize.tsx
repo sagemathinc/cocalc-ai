@@ -115,6 +115,7 @@ export interface CustomizeState {
   commercial: boolean;
   default_quotas: TypedMap<DefaultQuotaSetting>;
   dns: string; // e.g. "cocalc.com"
+  public_viewer_dns?: string;
   email_enabled: false;
   email_signup: boolean;
   google_analytics: string;
