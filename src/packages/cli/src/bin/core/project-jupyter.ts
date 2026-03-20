@@ -7,6 +7,12 @@ import {
   type JupyterRunAck,
   type OutputMessage,
 } from "@cocalc/conat/project/jupyter/run-code";
+import {
+  canonicalJupyterLiveRunPath,
+  openJupyterLiveRunStore,
+  type JupyterLiveRunBatch,
+  type JupyterLiveRunSnapshot,
+} from "@cocalc/conat/project/jupyter/live-run";
 import { syncdbPath } from "@cocalc/util/jupyter/names";
 import { RefcountLeaseManager } from "@cocalc/util/refcount/lease";
 
@@ -55,7 +61,17 @@ export type ProjectJupyterRunSession = {
   project_title: string;
   path: string;
   run_id: string;
+  ack: JupyterRunAck | null;
   cells: NotebookCellInfo[];
+  iter: AsyncIterable<OutputMessage[]>;
+  close: () => void;
+};
+
+export type ProjectJupyterLiveSession = {
+  project_id: string;
+  project_title: string;
+  path: string;
+  getRunId: () => string | null;
   iter: AsyncIterable<OutputMessage[]>;
   close: () => void;
 };
@@ -230,6 +246,64 @@ export function selectNotebookCells(
     );
   }
   return ordered;
+}
+
+export function selectJupyterLiveRunSnapshot({
+  all,
+  path,
+  runId,
+}: {
+  all: Record<string, JupyterLiveRunSnapshot>;
+  path: string;
+  runId?: string;
+}): JupyterLiveRunSnapshot | undefined {
+  const canonicalPath = canonicalJupyterLiveRunPath(path);
+  const snapshots = Object.values(all)
+    .map((value) => toPlainValue(value) as JupyterLiveRunSnapshot | undefined)
+    .filter(
+      (value): value is JupyterLiveRunSnapshot => value?.path === canonicalPath,
+    );
+  if (runId != null && runId !== "") {
+    return snapshots.find((snapshot) => snapshot.run_id === runId);
+  }
+  const running = snapshots.filter((snapshot) => snapshot.done !== true);
+  const pool = running.length > 0 ? running : snapshots;
+  if (pool.length === 0) {
+    return;
+  }
+  pool.sort((left, right) => {
+    const delta = (right.updated_at_ms ?? 0) - (left.updated_at_ms ?? 0);
+    if (delta !== 0) {
+      return delta;
+    }
+    return `${right.run_id ?? ""}`.localeCompare(`${left.run_id ?? ""}`);
+  });
+  return pool[0];
+}
+
+export function getUnseenJupyterLiveRunBatches(
+  snapshot: JupyterLiveRunSnapshot | undefined,
+  seenBatchIds: Set<string>,
+): JupyterLiveRunBatch[] {
+  if (snapshot == null || !Array.isArray(snapshot.batches)) {
+    return [];
+  }
+  return snapshot.batches
+    .filter((batch) => {
+      const id = `${batch?.id ?? ""}`.trim();
+      return id !== "" && !seenBatchIds.has(id);
+    })
+    .sort((left, right) => {
+      const seqDelta = (left?.seq ?? 0) - (right?.seq ?? 0);
+      if (seqDelta !== 0) {
+        return seqDelta;
+      }
+      const sentDelta = (left?.sent_at_ms ?? 0) - (right?.sent_at_ms ?? 0);
+      if (sentDelta !== 0) {
+        return sentDelta;
+      }
+      return `${left?.id ?? ""}`.localeCompare(`${right?.id ?? ""}`);
+    });
 }
 
 export function createProjectJupyterOps<Ctx, Project extends ProjectIdentity>(
@@ -421,6 +495,7 @@ export function createProjectJupyterOps<Ctx, Project extends ProjectIdentity>(
     limit,
     stdin,
     onAck,
+    waitForAck = false,
     cwd,
   }: {
     ctx: Ctx;
@@ -437,6 +512,7 @@ export function createProjectJupyterOps<Ctx, Project extends ProjectIdentity>(
       password?: boolean;
     }) => Promise<string>;
     onAck?: (ack: JupyterRunAck) => void;
+    waitForAck?: boolean;
     cwd?: string;
   }): Promise<ProjectJupyterRunSession> {
     const normalizedPath = normalizeNotebookPath(path);
@@ -463,14 +539,18 @@ export function createProjectJupyterOps<Ctx, Project extends ProjectIdentity>(
       const run_id = `cli-${Date.now().toString(36)}-${Math.random()
         .toString(36)
         .slice(2, 8)}`;
+      let ack: JupyterRunAck | null = null;
       const iter = await runClient.run(
         selected.map(({ id, input }) => ({ id, input })),
         {
           noHalt,
           limit,
           run_id,
-          waitForAck: false,
-          onAck,
+          waitForAck,
+          onAck: (nextAck) => {
+            ack = nextAck;
+            onAck?.(nextAck);
+          },
         },
       );
       return {
@@ -478,6 +558,7 @@ export function createProjectJupyterOps<Ctx, Project extends ProjectIdentity>(
         project_title: project.title,
         path: normalizedPath,
         run_id,
+        ack,
         cells: selected,
         iter,
         close: () => {
@@ -490,9 +571,93 @@ export function createProjectJupyterOps<Ctx, Project extends ProjectIdentity>(
       throw error;
     }
   }
+
+  async function projectJupyterLiveRunSession({
+    ctx,
+    projectIdentifier,
+    path,
+    runId,
+    follow = true,
+    waitMs = 30_000,
+    pollMs = 200,
+    cwd,
+  }: {
+    ctx: Ctx;
+    projectIdentifier?: string;
+    path: string;
+    runId?: string;
+    follow?: boolean;
+    waitMs?: number;
+    pollMs?: number;
+    cwd?: string;
+  }): Promise<ProjectJupyterLiveSession> {
+    const normalizedPath = normalizeNotebookPath(path);
+    const { project, client } = await deps.resolveProjectConatClient(
+      ctx,
+      projectIdentifier,
+      cwd,
+    );
+    const store = await openJupyterLiveRunStore({
+      client,
+      project_id: project.project_id,
+    });
+    const startedAt = Date.now();
+    let selectedRunId = `${runId ?? ""}`.trim() || null;
+
+    async function* iter(): AsyncIterable<OutputMessage[]> {
+      const seenBatchIds = new Set<string>();
+      for (;;) {
+        const snapshot = selectJupyterLiveRunSnapshot({
+          all: store.getAll() as Record<string, JupyterLiveRunSnapshot>,
+          path: normalizedPath,
+          runId: selectedRunId ?? undefined,
+        });
+        if (snapshot == null) {
+          if (Date.now() - startedAt >= waitMs) {
+            throw new Error(
+              selectedRunId == null
+                ? `timed out waiting for live Jupyter run for ${normalizedPath}`
+                : `timed out waiting for live Jupyter run ${selectedRunId} for ${normalizedPath}`,
+            );
+          }
+          await new Promise((resolve) =>
+            setTimeout(resolve, Math.max(25, pollMs)),
+          );
+          continue;
+        }
+        selectedRunId = snapshot.run_id;
+        const nextBatches = getUnseenJupyterLiveRunBatches(
+          snapshot,
+          seenBatchIds,
+        );
+        for (const batch of nextBatches) {
+          seenBatchIds.add(batch.id);
+          yield batch.mesgs as OutputMessage[];
+        }
+        if (!follow || snapshot.done === true) {
+          return;
+        }
+        await new Promise((resolve) =>
+          setTimeout(resolve, Math.max(25, pollMs)),
+        );
+      }
+    }
+
+    return {
+      project_id: project.project_id,
+      project_title: project.title,
+      path: normalizedPath,
+      getRunId: () => selectedRunId,
+      iter: iter(),
+      close: () => {
+        store.close();
+      },
+    };
+  }
   return {
     close,
     projectJupyterCellsData,
     projectJupyterRunSession,
+    projectJupyterLiveRunSession,
   };
 }

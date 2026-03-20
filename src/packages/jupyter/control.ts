@@ -5,7 +5,13 @@ import { initJupyterRedux, removeJupyterRedux } from "@cocalc/jupyter/kernel";
 import { syncdbPath, ipynbPath } from "@cocalc/util/jupyter/names";
 import { once } from "@cocalc/util/async-utils";
 import { OutputHandler } from "@cocalc/jupyter/execute/output-handler";
-import { readFile as readFileAbsolute } from "node:fs/promises";
+import {
+  readFile as readFileAbsolute,
+  realpath as realpathAbsolute,
+  stat as statAbsolute,
+  writeFile as writeFileAbsolute,
+} from "node:fs/promises";
+import { basename, dirname, relative, resolve } from "node:path";
 import { throttle } from "lodash";
 import { type RunOptions } from "@cocalc/conat/project/jupyter/run-code";
 import { type JupyterActions } from "@cocalc/jupyter/redux/project-actions";
@@ -15,6 +21,171 @@ import { getLogger } from "@cocalc/backend/logger";
 const logger = getLogger("jupyter:control");
 
 const jupyterActions: { [ipynbPath: string]: JupyterActions } = {};
+
+function isAbsolutePath(path: string): boolean {
+  return typeof path === "string" && path.startsWith("/");
+}
+
+async function canonicalizeAbsolutePath(path: string): Promise<string> {
+  const suffix: string[] = [];
+  let candidate = resolve(path);
+  while (true) {
+    try {
+      const resolved = await realpathAbsolute(candidate);
+      return suffix.length === 0 ? resolved : resolve(resolved, ...suffix);
+    } catch (err: any) {
+      if (err?.code !== "ENOENT" && err?.code !== "ENOTDIR") {
+        throw err;
+      }
+    }
+    const parent = dirname(candidate);
+    if (parent === candidate) {
+      return resolve(path);
+    }
+    suffix.unshift(basename(candidate));
+    candidate = parent;
+  }
+}
+
+export function createJupyterSyncFilesystem(fs: Filesystem): Filesystem {
+  if ((fs as any)?.unsafeMode !== true) {
+    return fs;
+  }
+  const sandboxHome =
+    typeof (fs as any)?.path === "string" ? resolve((fs as any).path) : null;
+  const rewriteProjectHomePath = (path: string): string | null => {
+    if (!isAbsolutePath(path) || sandboxHome == null) {
+      return null;
+    }
+    if (path === sandboxHome || path.startsWith(`${sandboxHome}/`)) {
+      return relative(sandboxHome, path);
+    }
+    return null;
+  };
+  const useDirectAbsolutePath = (path: string): boolean => {
+    return isAbsolutePath(path) && rewriteProjectHomePath(path) == null;
+  };
+  return new Proxy(fs, {
+    get(target, prop, receiver) {
+      if (
+        prop === "canonicalSyncIdentityPath" ||
+        prop === "canonicalSyncFsPath"
+      ) {
+        return async (path: string) => {
+          if (isAbsolutePath(path)) {
+            return await canonicalizeAbsolutePath(path);
+          }
+          const fn = Reflect.get(target, prop, receiver);
+          if (typeof fn === "function") {
+            return await fn.call(target, path);
+          }
+          return path;
+        };
+      }
+      if (prop === "readFile") {
+        return async (path: string, encoding?: string, lock?: number) => {
+          const rewritten = rewriteProjectHomePath(path);
+          if (rewritten != null) {
+            return await target.readFile(rewritten, encoding, lock);
+          }
+          if (useDirectAbsolutePath(path) && lock == null) {
+            if (encoding == null) {
+              return await readFileAbsolute(path);
+            }
+            return await readFileAbsolute(path, {
+              encoding: encoding as BufferEncoding,
+            });
+          }
+          return await target.readFile(path, encoding, lock);
+        };
+      }
+      if (prop === "stat") {
+        return async (path: string) => {
+          const rewritten = rewriteProjectHomePath(path);
+          if (rewritten != null) {
+            return await target.stat(rewritten);
+          }
+          if (useDirectAbsolutePath(path)) {
+            return await statAbsolute(path);
+          }
+          return await target.stat(path);
+        };
+      }
+      if (prop === "exists") {
+        return async (path: string) => {
+          const rewritten = rewriteProjectHomePath(path);
+          if (rewritten != null) {
+            return await target.exists(rewritten);
+          }
+          if (useDirectAbsolutePath(path)) {
+            try {
+              await statAbsolute(path);
+              return true;
+            } catch (err: any) {
+              if (err?.code === "ENOENT" || err?.code === "ENOTDIR") {
+                return false;
+              }
+              throw err;
+            }
+          }
+          return await target.exists(path);
+        };
+      }
+      if (prop === "realpath") {
+        return async (path: string) => {
+          const rewritten = rewriteProjectHomePath(path);
+          if (rewritten != null) {
+            const resolved = await target.realpath(rewritten);
+            return isAbsolutePath(resolved)
+              ? resolved
+              : resolve(sandboxHome ?? "/", resolved);
+          }
+          if (useDirectAbsolutePath(path)) {
+            return await realpathAbsolute(path);
+          }
+          return await target.realpath(path);
+        };
+      }
+      if (prop === "writeFile") {
+        return async (path: string, data: any, saveLast?: boolean) => {
+          const rewritten = rewriteProjectHomePath(path);
+          if (rewritten != null) {
+            return await target.writeFile(rewritten, data, saveLast);
+          }
+          if (
+            useDirectAbsolutePath(path) &&
+            (typeof data === "string" ||
+              Buffer.isBuffer(data) ||
+              data instanceof Uint8Array)
+          ) {
+            await writeFileAbsolute(path, data);
+            return;
+          }
+          return await target.writeFile(path, data, saveLast);
+        };
+      }
+      if (prop === "writeFileDelta") {
+        return async (
+          path: string,
+          content: string | Buffer,
+          options?: any,
+        ) => {
+          const rewritten = rewriteProjectHomePath(path);
+          if (rewritten != null) {
+            return await target.writeFileDelta(rewritten, content, options);
+          }
+          if (useDirectAbsolutePath(path)) {
+            await writeFileAbsolute(path, content);
+            return;
+          }
+          return await target.writeFileDelta(path, content, options);
+        };
+      }
+      const value = Reflect.get(target, prop, receiver);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  }) as Filesystem;
+}
 
 export async function restoreKernelFromIpynb({
   actions,
@@ -80,12 +251,13 @@ export async function start({
   }
   project_id = project_id0;
   logger.debug("start: ", path, " - starting it");
+  const syncFs = createJupyterSyncFilesystem(fs);
   const syncdb = new SyncDB({
     ...SYNCDB_OPTIONS,
     project_id,
     path: syncdbPath(path),
     client,
-    fs,
+    fs: syncFs,
   });
   syncdb.on("error", (err) => {
     // [ ] TODO: some way to convey this to clients (?)
@@ -104,7 +276,7 @@ export async function start({
     return;
   }
   try {
-    await restoreKernelFromIpynb({ actions, fs, path });
+    await restoreKernelFromIpynb({ actions, fs: syncFs, path });
   } catch (err) {
     logger.debug("start: failed to initialize kernel from disk", {
       path,
@@ -242,6 +414,7 @@ export class MulticellOutputHandler {
     if (mesg.id !== this.id || this.handler == null) {
       this.id = mesg.id;
       let cell = this.cells[mesg.id] ?? { id: mesg.id };
+      const hadStaleOutput = cell.output != null || cell.exec_count != null;
       this.handler?.done();
       this.handler = new OutputHandler({ cell });
       const writeCell = (save: boolean) => {
@@ -249,6 +422,7 @@ export class MulticellOutputHandler {
         this.actions.set_runtime_cell_state(id, { state, start, end });
         this.actions._set({ type: "cell", id, output, exec_count }, save);
       };
+      let wroteInitialState = false;
       const f = throttle(
         () => {
           writeCell(false);
@@ -261,7 +435,17 @@ export class MulticellOutputHandler {
       );
       this.flush = () => f.flush();
       this.writeFinal = () => writeCell(true);
-      this.handler.on("change", f);
+      this.handler.on("change", () => {
+        if (!wroteInitialState) {
+          wroteInitialState = true;
+          writeCell(true);
+          if (hadStaleOutput) {
+            void this.actions.save_asap?.();
+          }
+          return;
+        }
+        f();
+      });
       this.handler.on("done", () => {
         this.flush?.();
         this.writeFinal?.();

@@ -1596,10 +1596,13 @@ const {
   resolveProjectConatClient,
 });
 
-const { projectJupyterCellsData, projectJupyterRunSession } =
-  createProjectJupyterOps<CommandContext, ProjectRow>({
-    resolveProjectConatClient,
-  });
+const {
+  projectJupyterCellsData,
+  projectJupyterRunSession,
+  projectJupyterLiveRunSession,
+} = createProjectJupyterOps<CommandContext, ProjectRow>({
+  resolveProjectConatClient,
+});
 
 const {
   expandUserPath,
@@ -2112,6 +2115,7 @@ const projectCommandDeps = {
   projectChatAutomationData,
   projectJupyterCellsData,
   projectJupyterRunSession,
+  projectJupyterLiveRunSession,
   normalizeUserSearchName,
   resolveAccountByIdentifier,
   serializeInviteRow,

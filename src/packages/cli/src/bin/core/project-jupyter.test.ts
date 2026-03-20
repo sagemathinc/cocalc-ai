@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  getUnseenJupyterLiveRunBatches,
   mapSyncDbNotebookCells,
   parseNotebookCells,
+  selectJupyterLiveRunSnapshot,
   selectNotebookCells,
 } from "./project-jupyter";
 
@@ -81,5 +83,105 @@ test("mapSyncDbNotebookCells orders by live notebook position", () => {
       { id: "c1", index: 1, cell_type: "code" },
       { id: "c2", index: 2, cell_type: "code" },
     ],
+  );
+});
+
+test("selectJupyterLiveRunSnapshot prefers the newest active run", () => {
+  const selected = selectJupyterLiveRunSnapshot({
+    path: "/home/user/demo.ipynb",
+    all: {
+      a: {
+        path: "/home/user/demo.ipynb",
+        run_id: "done-old",
+        updated_at_ms: 10,
+        done: true,
+        batches: [],
+      },
+      b: {
+        path: "/home/user/demo.ipynb",
+        run_id: "active-new",
+        updated_at_ms: 20,
+        done: false,
+        batches: [],
+      },
+      c: {
+        path: "/home/user/demo.ipynb",
+        run_id: "active-old",
+        updated_at_ms: 15,
+        done: false,
+        batches: [],
+      },
+    },
+  });
+
+  assert.equal(selected?.run_id, "active-new");
+});
+
+test("selectJupyterLiveRunSnapshot can target a specific run id", () => {
+  const selected = selectJupyterLiveRunSnapshot({
+    path: "/home/user/demo.ipynb",
+    runId: "run-2",
+    all: {
+      a: {
+        path: "/home/user/demo.ipynb",
+        run_id: "run-1",
+        updated_at_ms: 10,
+        done: false,
+        batches: [],
+      },
+      b: {
+        path: "/home/user/demo.ipynb",
+        run_id: "run-2",
+        updated_at_ms: 11,
+        done: true,
+        batches: [],
+      },
+    },
+  });
+
+  assert.equal(selected?.run_id, "run-2");
+});
+
+test("getUnseenJupyterLiveRunBatches returns unseen batches in seq order", () => {
+  const seen = new Set<string>(["run:2"]);
+  const batches = getUnseenJupyterLiveRunBatches(
+    {
+      path: "/home/user/demo.ipynb",
+      run_id: "run",
+      updated_at_ms: 1,
+      done: false,
+      batches: [
+        {
+          path: "/home/user/demo.ipynb",
+          run_id: "run",
+          id: "run:3",
+          seq: 3,
+          sent_at_ms: 30,
+          mesgs: [{ msg_type: "stream" }],
+        },
+        {
+          path: "/home/user/demo.ipynb",
+          run_id: "run",
+          id: "run:1",
+          seq: 1,
+          sent_at_ms: 10,
+          mesgs: [{ msg_type: "stream" }],
+        },
+        {
+          path: "/home/user/demo.ipynb",
+          run_id: "run",
+          id: "run:2",
+          seq: 2,
+          sent_at_ms: 20,
+          mesgs: [{ msg_type: "stream" }],
+        },
+      ],
+    },
+    seen,
+  );
+
+  assert.deepEqual(
+    batches.map((batch) => batch.id),
+    ["run:1", "run:3"],
   );
 });

@@ -6,7 +6,12 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { MulticellOutputHandler, restoreKernelFromIpynb } from "../control";
+import { SandboxedFilesystem } from "@cocalc/backend/sandbox";
+import {
+  createJupyterSyncFilesystem,
+  MulticellOutputHandler,
+  restoreKernelFromIpynb,
+} from "../control";
 
 describe("restoreKernelFromIpynb", () => {
   function createActions(kernel: string | null = null) {
@@ -128,11 +133,47 @@ describe("restoreKernelFromIpynb", () => {
 });
 
 describe("MulticellOutputHandler", () => {
+  it("clears durable stale output as soon as a cell starts running", () => {
+    const actions = {
+      set_runtime_cell_state: jest.fn(),
+      _set: jest.fn(),
+      processOutput: jest.fn(),
+      save_asap: jest.fn(),
+    };
+    const handler = new MulticellOutputHandler(
+      {
+        a: {
+          id: "a",
+          exec_count: 17,
+          output: { 0: { text: "old output" } },
+        },
+      } as any,
+      actions,
+    );
+
+    handler.process({
+      id: "a",
+      content: { execution_state: "busy" },
+    });
+
+    expect(actions._set).toHaveBeenCalledWith(
+      {
+        type: "cell",
+        id: "a",
+        output: null,
+        exec_count: null,
+      },
+      true,
+    );
+    expect(actions.save_asap).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps fallback output local until terminal flush", () => {
     const actions = {
       set_runtime_cell_state: jest.fn(),
       _set: jest.fn(),
       processOutput: jest.fn(),
+      save_asap: jest.fn(),
     };
     const handler = new MulticellOutputHandler(
       { a: { id: "a" } } as any,
@@ -151,7 +192,53 @@ describe("MulticellOutputHandler", () => {
     handler.done();
 
     expect(actions._set).toHaveBeenCalled();
-    expect(actions._set.mock.calls[0][1]).toBe(false);
+    expect(actions._set.mock.calls[0][1]).toBe(true);
+    expect(actions._set.mock.calls.some((call) => call[1] === false)).toBe(
+      true,
+    );
     expect(actions._set.mock.calls.at(-1)?.[1]).toBe(true);
+  });
+});
+
+describe("createJupyterSyncFilesystem", () => {
+  it("preserves absolute sync identities for project-home files in unsafe mode", async () => {
+    const home = await mkdtemp(join(tmpdir(), "jupyter-control-home-"));
+    try {
+      const fs = new SandboxedFilesystem(home, { unsafeMode: true });
+      const wrapped = createJupyterSyncFilesystem(fs);
+      const syncPath = join(home, ".widgets.ipynb.sage-jupyter2");
+      await writeFile(syncPath, "{}");
+
+      expect(await wrapped.readFile(syncPath, "utf8")).toBe("{}");
+      expect(await wrapped.canonicalSyncIdentityPath?.(syncPath)).toBe(
+        syncPath,
+      );
+      expect(await wrapped.canonicalSyncFsPath?.(syncPath)).toBe(syncPath);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it("supports absolute notebook paths outside the project home in unsafe mode", async () => {
+    const home = await mkdtemp(join(tmpdir(), "jupyter-control-home-"));
+    const outside = await mkdtemp(join(tmpdir(), "jupyter-control-outside-"));
+    try {
+      const fs = new SandboxedFilesystem(home, { unsafeMode: true });
+      const wrapped = createJupyterSyncFilesystem(fs);
+      const notebookPath = join(outside, "test.ipynb");
+      const syncPath = join(outside, ".test.ipynb.sage-jupyter2");
+      await writeFile(notebookPath, "{}");
+      await writeFile(syncPath, "[]");
+
+      expect(await wrapped.readFile(notebookPath, "utf8")).toBe("{}");
+      expect(await wrapped.readFile(syncPath, "utf8")).toBe("[]");
+      expect(await wrapped.canonicalSyncIdentityPath?.(syncPath)).toBe(
+        syncPath,
+      );
+      expect(await wrapped.canonicalSyncFsPath?.(syncPath)).toBe(syncPath);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+      await rm(outside, { recursive: true, force: true });
+    }
   });
 });
