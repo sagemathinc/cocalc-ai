@@ -805,10 +805,6 @@ export const labels = defineMessages({
     id: "labels.software",
     defaultMessage: "Software",
   },
-  software_environment: {
-    id: "labels.software_environment",
-    defaultMessage: "Software Environment",
-  },
   cloud_storage_remote_filesystems: {
     id: "labels.cloud_storage_remote_filesystems",
     defaultMessage: "Cloud Storage & Remote File Systems",

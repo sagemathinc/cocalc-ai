@@ -10,10 +10,6 @@ Actions involving configuration of the course.
 // cSpell:ignore collabs
 
 import { redux } from "@cocalc/frontend/app-framework";
-import {
-  derive_project_img_name,
-  SoftwareEnvironmentState,
-} from "@cocalc/frontend/custom-software/selector";
 import { Datastore, EnvVars } from "@cocalc/frontend/projects/actions";
 import { store as projects_store } from "@cocalc/frontend/projects/store";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
@@ -290,29 +286,6 @@ export class ConfigurationActions {
       nbgrader_include_hidden_tests: value,
       table: "settings",
     });
-  };
-
-  set_inherit_compute_image = (image?: string): void => {
-    this.set({ inherit_compute_image: image != null, table: "settings" });
-    if (image != null) {
-      this.set_compute_image(image);
-    }
-  };
-
-  set_compute_image = (image: string) => {
-    this.set({
-      custom_image: image,
-      table: "settings",
-    });
-    this.course_actions.student_projects.configure_all_projects();
-    this.course_actions.shared_project.set_project_compute_image();
-  };
-
-  set_software_environment = async (
-    state: SoftwareEnvironmentState,
-  ): Promise<void> => {
-    const image = await derive_project_img_name(state);
-    this.set_compute_image(image);
   };
 
   set_nbgrader_parallel = (

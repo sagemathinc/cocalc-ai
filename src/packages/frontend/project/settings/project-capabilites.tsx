@@ -10,8 +10,7 @@ import { keys, sortBy } from "lodash";
 import React from "react";
 
 import { Rendered, redux, useTypedRedux } from "@cocalc/frontend/app-framework";
-import { A, Icon, Loading, SettingBox } from "@cocalc/frontend/components";
-import { CUSTOM_SOFTWARE_HELP_URL } from "@cocalc/frontend/custom-software/util";
+import { Icon, Loading, SettingBox } from "@cocalc/frontend/components";
 import { labels } from "@cocalc/frontend/i18n";
 import { tool2display } from "@cocalc/util/code-formatter";
 import { R_IDE } from "@cocalc/util/consts/ui";
@@ -149,11 +148,10 @@ export const ProjectCapabilities: React.FC<ReactProps> = React.memo(
         <>
           <hr />
           <div style={{ color: COLORS.GRAY }}>
-            Some features are not available, because this {projectLabelLower}{" "}
-            runs a small{" "}
-            <A href={CUSTOM_SOFTWARE_HELP_URL}>customized stack of software</A>.
-            To enable all features, please create a new {projectLabelLower}{" "}
-            using the default software environment.
+            Some features are not available, because this {projectLabelLower} is
+            using a limited root filesystem image. To enable all features,
+            create a new {projectLabelLower} with a fuller root filesystem
+            image.
           </div>
         </>
       );

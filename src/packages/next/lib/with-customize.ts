@@ -8,8 +8,6 @@ import getAccountId from "lib/account/get-account";
 import { getName } from "lib/share/get-account-info";
 import isCollaborator from "@cocalc/server/projects/is-collaborator";
 import { KUCALC_COCALC_COM } from "@cocalc/util/db-schema/site-defaults";
-import { getSoftwareEnvironments } from "@cocalc/server/software-envs";
-import { DEFAULT_COMPUTE_IMAGE } from "@cocalc/util/db-schema";
 
 import { CustomizeType } from "./customize";
 
@@ -69,11 +67,6 @@ export default async function withCustomize(
   customize.imprintOrPolicies =
     (customize.imprint ?? "") + (customize.policies ?? "") != "";
   customize.serverTime = Date.now();
-
-  // this is used for creating new projects from a share
-  const softwareEnvs = await getSoftwareEnvironments("server");
-  customize.defaultComputeImage =
-    softwareEnvs?.default ?? DEFAULT_COMPUTE_IMAGE;
 
   customize.enabledPages = {
     about: {

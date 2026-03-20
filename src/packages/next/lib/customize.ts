@@ -48,7 +48,6 @@ interface Customize extends ServerCustomize {
     last_name?: string;
     name?: string;
   };
-  defaultComputeImage?: string; // default compute image, e.g. used when creating new projects from a share
   githubProjectId?: string; // proxy github urls
   imprint?: string; // HTML/MD for an imprint page
   imprintOrPolicies?: boolean; // is true if either of the above is more than an empty string

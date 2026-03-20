@@ -8,7 +8,6 @@ import { fromPairs } from "lodash";
 import LRU from "lru-cache";
 import { redux, Store, TypedMap } from "@cocalc/frontend/app-framework";
 import { StudentProjectFunctionality } from "@cocalc/frontend/course/configuration/customize-student-project-functionality";
-import { is_custom_image } from "@cocalc/frontend/custom-software/util";
 import { WebsocketState } from "@cocalc/frontend/project/websocket/websocket-state";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import {
@@ -447,18 +446,6 @@ export class ProjectsStore extends Store<ProjectsState> {
       }
     }
     return false;
-  }
-
-  public get_projects_with_compute_image(csi: string): any {
-    const by_csi = (val) => {
-      const ci = val.get("compute_image");
-      if (is_custom_image(ci)) {
-        return ci.split("/")[1] === csi;
-      } else {
-        return false;
-      }
-    };
-    return this.get("project_map")?.filter(by_csi).valueSeq();
   }
 
   public get_student_project_functionality(

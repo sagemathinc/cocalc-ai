@@ -50,7 +50,6 @@ import { path_to_tab, tab_to_path } from "@cocalc/util/misc";
 export interface ProjectContextState {
   actions?: ProjectActions;
   active_project_tab?: string;
-  compute_image: string | undefined;
   contentSize: { width: number; height: number };
   enabledLLMs: LLMServicesAvailable;
   flipTabs: [number, React.Dispatch<React.SetStateAction<number>>];
@@ -75,7 +74,6 @@ export interface ProjectContextState {
 export const emptyProjectContext = {
   actions: undefined,
   active_project_tab: undefined,
-  compute_image: undefined,
   contentSize: { width: 0, height: 0 },
   enabledLLMs: {
     openai: false,
@@ -138,7 +136,7 @@ export function useProjectContextProvider({
   mainWidthPx: number;
 }): ProjectContextState {
   const actions = useActions({ project_id });
-  const { project, group, compute_image } = useProject(project_id);
+  const { project, group } = useProject(project_id);
   const account_id = useTypedRedux("account", "account_id");
   const status: ProjectStatus = useProjectState(project_id);
   const hasInternet = useProjectHasInternetAccess(project_id) || lite;
@@ -394,7 +392,6 @@ export function useProjectContextProvider({
   return {
     actions,
     active_project_tab,
-    compute_image,
     contentSize,
     enabledLLMs,
     flipTabs,

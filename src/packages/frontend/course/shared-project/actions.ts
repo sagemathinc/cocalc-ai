@@ -31,7 +31,6 @@ export class SharedProjectActions {
   private settings = (): {
     title: string;
     description: string;
-    image?: string;
   } => {
     const settings = this.get_store().get("settings");
     return {
@@ -39,7 +38,6 @@ export class SharedProjectActions {
       description:
         settings.get("description") +
         `\n\n---\n\nThis ${WORKSPACE_LABEL.toLowerCase()} is shared with all students in the course.`,
-      image: settings.get("custom_image"),
     };
   };
 
@@ -146,28 +144,12 @@ export class SharedProjectActions {
         }
       }
 
-      // Also set the compute image
-      await this.set_project_compute_image();
       await this.set_datastore_and_envvars();
     } catch (err) {
       this.actions.set_error(`Error configuring shared project - ${err}`);
     } finally {
       this.actions.set_activity({ id });
     }
-  };
-
-  set_project_compute_image = async (): Promise<void> => {
-    const store = this.get_store();
-    const shared_project_id = store.get_shared_project_id();
-    if (!shared_project_id) {
-      return; // no shared project
-    }
-    const defaultImage = await redux
-      .getStore("customize")
-      .getDefaultComputeImage();
-    const imageId = store.get("settings").get("custom_image") ?? defaultImage;
-    const actions = redux.getProjectActions(shared_project_id);
-    await actions.set_compute_image(imageId);
   };
 
   set_datastore_and_envvars = async (): Promise<void> => {

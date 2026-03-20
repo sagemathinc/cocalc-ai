@@ -15,10 +15,8 @@ import { isEmpty } from "lodash";
 import LRU from "lru-cache";
 import type { PostgreSQL } from "@cocalc/database/postgres/types";
 import { get_passport_manager, PassportManager } from "@cocalc/server/hub/auth";
-import { getSoftwareEnvironments } from "@cocalc/server/software-envs";
 import { callback2 as cb2 } from "@cocalc/util/async-utils";
 import { EXTRAS as SERVER_SETTINGS_EXTRAS } from "@cocalc/util/db-schema/site-settings-extras";
-import { SoftwareEnvConfig } from "@cocalc/util/sanitize-software-envs";
 import { site_settings_conf as SITE_SETTINGS_CONF } from "@cocalc/util/schema";
 import { CustomLLMPublic } from "@cocalc/util/types/llm";
 import { parseDomain, ParseResultType } from "parse-domain";
@@ -49,7 +47,6 @@ interface Config {
   configuration: any;
   registration: any;
   strategies: object;
-  software: SoftwareEnvConfig | null;
   ollama: { [key: string]: CustomLLMPublic };
   custom_openai: { [key: string]: CustomLLMPublic };
 }
@@ -249,7 +246,7 @@ export class WebappConfiguration {
       await delay(100);
     }
 
-    const [configuration, registration, software, ollama, custom_openai] =
+    const [configuration, registration, ollama, custom_openai] =
       await Promise.all([
         this.get_configuration({
           host,
@@ -263,7 +260,6 @@ export class WebappConfiguration {
           cloudflareLongitude,
         }),
         have_active_registration_tokens(this.db),
-        getSoftwareEnvironments("webapp"),
         this.get_ollama_public(),
         this.get_custom_openai_public(),
       ]);
@@ -272,7 +268,6 @@ export class WebappConfiguration {
       configuration,
       registration,
       strategies,
-      software,
       ollama,
       custom_openai,
     };

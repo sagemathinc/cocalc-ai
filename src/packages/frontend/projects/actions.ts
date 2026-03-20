@@ -434,19 +434,15 @@ export class ProjectsActions extends Actions<ProjectsState> {
   public async create_project(opts: {
     title?: string;
     description?: string;
-    image?: string; // if given, sets the compute image (the ID string)
     rootfs_image?: string; // if given, sets the rootfs image
     start?: boolean; // immediately start on create
     license?: string;
     host_id?: string;
     region?: string;
   }): Promise<string> {
-    const image = await redux.getStore("customize").getDefaultComputeImage();
-
     const opts2: {
       title: string;
       description: string;
-      image?: string;
       rootfs_image?: string;
       host_id?: string;
       region?: string;
@@ -455,17 +451,12 @@ export class ProjectsActions extends Actions<ProjectsState> {
     } = defaults(opts, {
       title: "No Title",
       description: "No Description",
-      image,
       rootfs_image: opts.rootfs_image,
       host_id: undefined,
       region: undefined,
       start: false,
       license: undefined,
     });
-    if (!opts2.image) {
-      // make falseish same as not specified.
-      delete opts2.image;
-    }
     if (!opts2.rootfs_image) {
       delete opts2.rootfs_image;
     }
@@ -876,7 +867,6 @@ export class ProjectsActions extends Actions<ProjectsState> {
       title: title ?? `Clone of ${project.title}`,
       description: project?.description ?? "",
       src_project_id: project_id,
-      image: project?.compute_image,
       rootfs_image: project.rootfs_image,
     });
     this.open_project({ project_id: new_project_id });

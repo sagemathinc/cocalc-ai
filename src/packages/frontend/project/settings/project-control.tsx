@@ -6,44 +6,23 @@
 import { Space } from "antd";
 import { FormattedMessage, useIntl } from "react-intl";
 import BootLog from "../bootlog";
-import { alert_message } from "@cocalc/frontend/alerts";
-import {
-  React,
-  redux,
-  Rendered,
-  useState,
-  useTypedRedux,
-} from "@cocalc/frontend/app-framework";
+import { React, redux, Rendered } from "@cocalc/frontend/app-framework";
 import {
   A,
   Icon,
   LabeledRow,
-  Loading,
   Paragraph,
   ProjectState,
   SettingBox,
   TimeAgo,
   TimeElapsed,
 } from "@cocalc/frontend/components";
-import { ComputeImageTypes } from "@cocalc/frontend/custom-software/init";
-import {
-  custom_image_name,
-  CUSTOM_SOFTWARE_HELP_URL,
-  is_custom_image,
-} from "@cocalc/frontend/custom-software/util";
 import { labels } from "@cocalc/frontend/i18n";
-import {
-  KUCALC_COCALC_COM,
-  KUCALC_ON_PREMISES,
-} from "@cocalc/util/db-schema/site-defaults";
 import * as misc from "@cocalc/util/misc";
 import { COMPUTE_STATES } from "@cocalc/util/schema";
 import { COLORS } from "@cocalc/util/theme";
 import { useProjectContext } from "../context";
-import { ComputeImageSelector } from "./compute-image-selector";
 import { RestartProject } from "./restart-project";
-import { SOFTWARE_ENVIRONMENT_ICON } from "./software-consts";
-import { SoftwareImageDisplay } from "./software-image-display";
 import { StopProject } from "./stop-project";
 import MoveProject from "./move-project";
 import { Project } from "./types";
@@ -64,13 +43,11 @@ interface ReactProps {
 
 export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
   const { project, mode = "project" } = props;
-  const { project_id, compute_image } = useProjectContext();
+  const { project_id } = useProjectContext();
   const isFlyout = mode === "flyout";
   const intl = useIntl();
   const projectLabel = intl.formatMessage(labels.project);
   const projectLabelLower = projectLabel.toLowerCase();
-  const customize_kucalc = useTypedRedux("customize", "kucalc");
-  const [computeImgChanging, setComputeImgChanging] = useState<boolean>(false);
   const hostId = project.get("host_id") as string | undefined;
   const hostInfo = useHostInfo(hostId);
   const hostOperational = React.useMemo(
@@ -123,10 +100,6 @@ export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
         />
       </span>
     );
-  }
-
-  async function restart_project() {
-    await redux.getActions("projects").restart_project(project_id);
   }
 
   function render_stop_button(commands): Rendered {
@@ -268,99 +241,6 @@ export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
     );
   }
 
-  async function saveSelectedComputeImage({
-    id,
-    type,
-  }: {
-    id: string;
-    type: ComputeImageTypes;
-  }) {
-    const actions = redux.getProjectActions(project_id);
-    try {
-      setComputeImgChanging(true);
-      await actions.set_compute_image(
-        type === "standard" ? id : custom_image_name(id),
-      );
-      await restart_project();
-    } catch (err) {
-      alert_message({ type: "error", message: err });
-    } finally {
-      setComputeImgChanging(false);
-    }
-  }
-
-  function render_select_compute_image_row() {
-    // TODO: not sure how to do this with our new images...
-    if (
-      true ||
-      ![KUCALC_COCALC_COM, KUCALC_ON_PREMISES].includes(customize_kucalc)
-    ) {
-      return;
-    }
-
-    return (
-      <div style={{ marginTop: "10px" }}>
-        <LabeledRow
-          key="cpu-usage"
-          label={intl.formatMessage(labels.software_environment)}
-          style={rowStyle(true)}
-          vertical={isFlyout}
-        >
-          {render_select_compute_image()}
-        </LabeledRow>
-      </div>
-    );
-  }
-
-  function render_custom_compute_image() {
-    return (
-      <div style={{ color: COLORS.GRAY_M }}>
-        <div style={{ fontSize: "11pt" }}>
-          <div>
-            <Icon name={SOFTWARE_ENVIRONMENT_ICON} /> Custom image:
-          </div>
-          <SoftwareImageDisplay image={compute_image} />
-          &nbsp;
-          <span style={{ color: COLORS.GRAY, fontSize: "11pt" }}>
-            <br /> You cannot change a custom software image. Instead, create a
-            new {projectLabelLower} and select it there.{" "}
-            <a
-              href={CUSTOM_SOFTWARE_HELP_URL}
-              target={"_blank"}
-              rel={"noopener"}
-            >
-              Learn more...
-            </a>
-          </span>
-        </div>
-      </div>
-    );
-  }
-
-  function render_select_compute_image() {
-    if (compute_image == null) {
-      return <Loading />;
-    }
-
-    if (is_custom_image(compute_image)) {
-      return render_custom_compute_image();
-    }
-
-    return (
-      <ComputeImageSelector
-        current_image={compute_image}
-        layout={"dialog"}
-        onSelect={saveSelectedComputeImage}
-        changing={computeImgChanging}
-        hideCustomImages={true}
-        label={intl.formatMessage({
-          id: "project.settings.compute-image-selector.button.save-restart",
-          defaultMessage: "Save and Restart",
-        })}
-      />
-    );
-  }
-
   function rowStyle(delim?): React.CSSProperties | undefined {
     if (!delim) return;
     return {
@@ -408,7 +288,6 @@ export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
         >
           <RootFilesystemImage />
         </LabeledRow>
-        {render_select_compute_image_row()}
       </>
     );
   }

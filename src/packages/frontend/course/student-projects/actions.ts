@@ -68,15 +68,11 @@ export class StudentProjectsActions {
     const id = this.course_actions.set_activity({
       desc: `Create project for ${store.get_student_name(student_id)}.`,
     });
-    const defaultImage = await redux
-      .getStore("customize")
-      .getDefaultComputeImage();
     let project_id: string;
     try {
       project_id = await redux.getActions("projects").create_project({
         title: store.get("settings").get("title"),
         description: store.get("settings").get("description"),
-        image: store.get("settings").get("custom_image") ?? defaultImage,
       });
     } catch (err) {
       this.course_actions.set_error(
@@ -508,24 +504,10 @@ export class StudentProjectsActions {
         this.configure_project_visibility(student_project_id),
         this.configure_project_title(student_project_id, student_id),
         this.configure_project_description(student_project_id),
-        this.configure_project_compute_image(student_project_id),
         this.configure_project_envvars(student_project_id),
         this.configure_project_envvars(student_project_id),
       ]);
     }
-  };
-
-  private configure_project_compute_image = async (
-    student_project_id: string,
-  ): Promise<void> => {
-    const store = this.get_store();
-    if (store == null) return;
-    const defaultImage = await redux
-      .getStore("customize")
-      .getDefaultComputeImage();
-    const img_id = store.get("settings").get("custom_image") ?? defaultImage;
-    const actions = redux.getProjectActions(student_project_id);
-    await actions.set_compute_image(img_id);
   };
 
   private configure_project_envvars = async (

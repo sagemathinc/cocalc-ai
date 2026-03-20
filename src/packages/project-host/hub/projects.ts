@@ -13,7 +13,6 @@ import {
 import type { client as projectRunnerClient } from "@cocalc/conat/project/runner/run";
 import {
   DEFAULT_PROJECT_IMAGE,
-  DEFAULT_COMPUTE_IMAGE,
   PROJECT_IMAGE_PATH,
 } from "@cocalc/util/db-schema/defaults";
 import getLogger from "@cocalc/backend/logger";
@@ -208,21 +207,14 @@ function fileServer(project_id: string) {
   return fileServerClient({ project_id });
 }
 
-// **TODO: This normalizeImage is VERY VERY TEMPORARY!!!**
-// The only reason for this is the frontend by default uses the massive cocalc rootfs's
-// by default, which of course aren't the name of Docker images. For now, we just
-// revert them back to the the default docker image.
-// We will definitely change this for the actual release.
+// Until the rootfs catalog is fully wired end-to-end, fall back to the default
+// runtime image for non-OCI labels.
 function normalizeImage(image?: string): string {
   const trimmed = image?.trim();
   if (!trimmed) return DEFAULT_PROJECT_IMAGE;
   if (trimmed.includes(":") || trimmed.includes("/")) {
     return trimmed;
   }
-  if (trimmed === DEFAULT_COMPUTE_IMAGE) {
-    return DEFAULT_PROJECT_IMAGE;
-  }
-  // Otherwise assume it's a label meant for the old compute image list; fall back for now.
   return DEFAULT_PROJECT_IMAGE;
 }
 

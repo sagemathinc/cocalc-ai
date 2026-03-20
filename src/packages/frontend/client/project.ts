@@ -570,7 +570,6 @@ export class ProjectClient {
   create = async (opts: {
     title: string;
     description: string;
-    image?: string;
     rootfs_image?: string;
     start?: boolean;
     host_id?: string;
