@@ -28,6 +28,8 @@ function workspace(root_path: string): WorkspaceRecord {
     chat_path: null,
     notice_thread_id: null,
     notice: null,
+    activity_viewed_at: null,
+    activity_running_at: null,
     created_at: 1,
     updated_at: 1,
     source: "manual",

@@ -47,6 +47,8 @@ export type WorkspaceRecord = {
   chat_path: string | null;
   notice_thread_id: string | null;
   notice: WorkspaceNotice | null;
+  activity_viewed_at: number | null;
+  activity_running_at: number | null;
   created_at: number;
   updated_at: number;
   source: WorkspaceSource;
@@ -72,6 +74,8 @@ export type WorkspaceCreateInput = {
   chat_path?: string | null;
   notice_thread_id?: string | null;
   notice?: Partial<WorkspaceNotice> | null;
+  activity_viewed_at?: number | null;
+  activity_running_at?: number | null;
   last_active_path?: string | null;
   source?: WorkspaceSource;
 };
@@ -86,6 +90,8 @@ export type WorkspaceUpdatePatch = Partial<{
   chat_path: string | null;
   notice_thread_id: string | null;
   notice: Partial<WorkspaceNotice> | null;
+  activity_viewed_at: number | null;
+  activity_running_at: number | null;
   last_used_at: number | null;
   last_active_path: string | null;
   source: WorkspaceSource;
@@ -269,6 +275,16 @@ export function normalizeWorkspaceRecord(
                 ? record.notice.updated_at
                 : Date.now(),
           }
+        : null,
+    activity_viewed_at:
+      typeof record.activity_viewed_at === "number" &&
+      Number.isFinite(record.activity_viewed_at)
+        ? record.activity_viewed_at
+        : null,
+    activity_running_at:
+      typeof record.activity_running_at === "number" &&
+      Number.isFinite(record.activity_running_at)
+        ? record.activity_running_at
         : null,
     created_at:
       typeof record.created_at === "number" &&
@@ -646,6 +662,16 @@ export function createWorkspaceRecord({
                 : now,
           }
         : null,
+    activity_viewed_at:
+      typeof input.activity_viewed_at === "number" &&
+      Number.isFinite(input.activity_viewed_at)
+        ? input.activity_viewed_at
+        : null,
+    activity_running_at:
+      typeof input.activity_running_at === "number" &&
+      Number.isFinite(input.activity_running_at)
+        ? input.activity_running_at
+        : null,
     created_at: now,
     updated_at: now,
     source: input.source ?? "manual",
@@ -721,6 +747,14 @@ export function updateWorkspaceRecords(
                       ? patch.notice.updated_at
                       : now,
                 },
+        activity_viewed_at:
+          patch.activity_viewed_at === undefined
+            ? record.activity_viewed_at
+            : patch.activity_viewed_at,
+        activity_running_at:
+          patch.activity_running_at === undefined
+            ? record.activity_running_at
+            : patch.activity_running_at,
         last_used_at:
           patch.last_used_at === undefined
             ? record.last_used_at

@@ -70,9 +70,6 @@ import {
 
 const DEFAULT_ICON = "cube";
 const DAY_MS = 24 * 60 * 60 * 1000;
-const WORKSPACE_ACTIVITY_VIEWED_KEY = "project-workspaces-activity-viewed-v1";
-const WORKSPACE_ACTIVITY_RUNNING_KEY = "project-workspaces-activity-running-v1";
-
 type WorkspaceSectionKey = "pinned" | "today" | "last7" | "older";
 
 type Props = {
@@ -541,76 +538,18 @@ function processTooltipContent(
   );
 }
 
-function loadViewedActivity(project_id: string): Record<string, number> {
-  if (typeof window === "undefined") return {};
-  try {
-    const raw = window.localStorage.getItem(
-      `${WORKSPACE_ACTIVITY_VIEWED_KEY}:${project_id}`,
-    );
-    if (!raw) return {};
-    const parsed = JSON.parse(raw);
-    return parsed != null && typeof parsed === "object" ? parsed : {};
-  } catch {
-    return {};
-  }
-}
-
-function persistViewedActivity(
-  project_id: string,
-  viewed: Record<string, number>,
-): void {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(
-      `${WORKSPACE_ACTIVITY_VIEWED_KEY}:${project_id}`,
-      JSON.stringify(viewed),
-    );
-  } catch {
-    // best effort only
-  }
-}
-
-function loadRunningActivity(project_id: string): Record<string, number> {
-  if (typeof window === "undefined") return {};
-  try {
-    const raw = window.localStorage.getItem(
-      `${WORKSPACE_ACTIVITY_RUNNING_KEY}:${project_id}`,
-    );
-    if (!raw) return {};
-    const parsed = JSON.parse(raw);
-    return parsed != null && typeof parsed === "object" ? parsed : {};
-  } catch {
-    return {};
-  }
-}
-
-function persistRunningActivity(
-  project_id: string,
-  running: Record<string, number>,
-): void {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(
-      `${WORKSPACE_ACTIVITY_RUNNING_KEY}:${project_id}`,
-      JSON.stringify(running),
-    );
-  } catch {
-    // best effort only
-  }
-}
-
 function dateMs(value?: string): number {
   if (!value) return 0;
   const ms = new Date(value).valueOf();
   return Number.isFinite(ms) ? ms : 0;
 }
 
-function getWorkspaceActivityState(
+export function getWorkspaceActivityState(
   record: WorkspaceRecord,
   sessions: AgentSessionRecord[],
-  viewedAt: number,
-  runningSeenAt: number,
 ): WorkspaceActivityState {
+  const viewedAt = record.activity_viewed_at ?? 0;
+  const runningSeenAt = record.activity_running_at ?? 0;
   const chatPath = `${record.chat_path ?? ""}`.trim();
   if (!chatPath) return undefined;
   const matching = sessions
@@ -697,12 +636,6 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
   const [openingChatId, setOpeningChatId] = useState<string | null>(null);
   const [error, setError] = useState<string>("");
   const [agentSessions, setAgentSessions] = useState<AgentSessionRecord[]>([]);
-  const [viewedActivity, setViewedActivity] = useState<Record<string, number>>(
-    () => loadViewedActivity(project_id),
-  );
-  const [runningActivity, setRunningActivity] = useState<
-    Record<string, number>
-  >(() => loadRunningActivity(project_id));
   const isFlyout = layout === "flyout";
   const now = Date.now();
 
@@ -769,42 +702,40 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
   useEffect(() => {
     if (workspaces.selection.kind !== "workspace") return;
     const workspaceId = workspaces.selection.workspace_id;
-    setViewedActivity((current) => {
-      const next = { ...current, [workspaceId]: Date.now() };
-      persistViewedActivity(project_id, next);
-      return next;
+    const record = workspaces.records.find(
+      ({ workspace_id }) => workspace_id === workspaceId,
+    );
+    if (!record) return;
+    const activity = getWorkspaceActivityState(record, agentSessions);
+    if (activity == null || activity.kind === "running") return;
+    workspaces.updateWorkspace(workspaceId, {
+      activity_viewed_at: Date.now(),
     });
-  }, [project_id, workspaces.selection]);
+  }, [agentSessions, workspaces]);
 
   useEffect(() => {
-    setRunningActivity((current) => {
-      let changed = false;
-      const next = { ...current };
-      for (const record of workspaces.records) {
-        const chatPath = `${record.chat_path ?? ""}`.trim();
-        if (!chatPath) continue;
-        const latestRunning = agentSessions
-          .filter(
-            (session) =>
-              session.chat_path === chatPath && session.status === "running",
-          )
-          .reduce(
-            (best, session) => Math.max(best, dateMs(session.updated_at)),
-            0,
-          );
-        if (
-          latestRunning > 0 &&
-          latestRunning > (next[record.workspace_id] ?? 0)
-        ) {
-          next[record.workspace_id] = latestRunning;
-          changed = true;
-        }
+    for (const record of workspaces.records) {
+      const chatPath = `${record.chat_path ?? ""}`.trim();
+      if (!chatPath) continue;
+      const latestRunning = agentSessions
+        .filter(
+          (session) =>
+            session.chat_path === chatPath && session.status === "running",
+        )
+        .reduce(
+          (best, session) => Math.max(best, dateMs(session.updated_at)),
+          0,
+        );
+      if (
+        latestRunning > 0 &&
+        latestRunning > (record.activity_running_at ?? 0)
+      ) {
+        workspaces.updateWorkspace(record.workspace_id, {
+          activity_running_at: latestRunning,
+        });
       }
-      if (!changed) return current;
-      persistRunningActivity(project_id, next);
-      return next;
-    });
-  }, [agentSessions, project_id, workspaces.records]);
+    }
+  }, [agentSessions, workspaces]);
 
   function openCreate(): void {
     const draft = makeDraft(null, defaultRootPath);
@@ -959,12 +890,7 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
     const imageUrl = record.theme.image_blob?.trim()
       ? `/blobs/theme-image.png?uuid=${encodeURIComponent(record.theme.image_blob.trim())}`
       : undefined;
-    const activity = getWorkspaceActivityState(
-      record,
-      agentSessions,
-      viewedActivity[record.workspace_id] ?? 0,
-      runningActivity[record.workspace_id] ?? 0,
-    );
+    const activity = getWorkspaceActivityState(record, agentSessions);
     const fileActivity = getWorkspaceOpenFileActivity(
       record,
       openFilesOrder,
