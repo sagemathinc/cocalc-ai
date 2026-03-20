@@ -1095,6 +1095,10 @@ export class SyncDoc extends EventEmitter {
       // Cancel any pending change emit calls.
       cancel_scheduled(this.emit_change);
     }
+    cancel_scheduled(this.emit_change_debounced);
+    cancel_scheduled(this.debouncedStat);
+    cancel_scheduled(this.snapshotIfNecessary);
+    cancel_scheduled(this.touchProject);
     cancel_scheduled(this.updateHasUnsavedChangesDebounced);
 
     this.patchflowSession?.close();
