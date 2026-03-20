@@ -7,6 +7,7 @@ import { isAbsolute, resolve as resolvePath } from "node:path";
 import { Command } from "commander";
 
 import { dko } from "@cocalc/conat/sync/dko";
+import { jupyterClient } from "@cocalc/conat/project/jupyter/run-code";
 import { syncdb as openSyncDb } from "@cocalc/conat/sync-doc/syncdb";
 import { ipynbPath, syncdbPath } from "@cocalc/util/jupyter/names";
 import { createJupyterApi } from "../api/jupyter";
@@ -180,42 +181,6 @@ async function resolveRequestedCode(
   });
 }
 
-async function syncTargetCellInput({
-  binding,
-  syncdb,
-  cellId,
-  code,
-}: {
-  binding: ReturnType<ReturnType<typeof createJupyterApi>["bindDocument"]>;
-  syncdb: any;
-  cellId: string;
-  code: string;
-}): Promise<void> {
-  const current = readCellRecord(syncdb, cellId);
-  if (!current) {
-    throw new Error(`unknown cell id '${cellId}'`);
-  }
-  if ((current.input ?? "") === code) {
-    return;
-  }
-  syncdb.set({ type: "cell", id: cellId, input: code });
-  if (typeof syncdb.commit === "function") {
-    syncdb.commit();
-  }
-  if (typeof syncdb.save === "function") {
-    await syncdb.save();
-  }
-  await waitUntil({
-    desc: `cell ${cellId} input update`,
-    timeoutMs: 10_000,
-    fn: async () => {
-      const cells = await binding.listCells();
-      const cell = cells.cells.find((entry) => entry.id === cellId);
-      return cell?.input === code ? true : false;
-    },
-  });
-}
-
 function summarizeRunFailure(
   run: StressRunReport,
 ): { run_index: number; errors: string[] } | null {
@@ -226,6 +191,97 @@ function summarizeRunFailure(
     run_index: run.run_index,
     errors: [...run.errors],
   };
+}
+
+async function collectRunStream({
+  project_id,
+  path,
+  client,
+  cellId,
+  code,
+  limit,
+  runIndex,
+  timeoutMs,
+}: {
+  project_id: string;
+  path: string;
+  client: any;
+  cellId: string;
+  code: string;
+  limit?: number;
+  runIndex: number;
+  timeoutMs: number;
+}): Promise<{
+  lifecycleCounts: Record<string, number>;
+  messageCount: number;
+  errorCount: number;
+  moreOutputCount: number;
+  streamError: string | null;
+}> {
+  const runClient = jupyterClient({
+    path,
+    project_id,
+    client,
+  });
+  let timeout: NodeJS.Timeout | undefined;
+  try {
+    const iter = await runClient.run([{ id: cellId, input: code }], {
+      waitForAck: false,
+      run_id: `stress-${Date.now().toString(36)}-${runIndex}`,
+      limit,
+    });
+    let messageCount = 0;
+    let errorCount = 0;
+    let moreOutputCount = 0;
+    const lifecycleCounts: Record<string, number> = {};
+    let streamError: string | null = null;
+    try {
+      await Promise.race([
+        (async () => {
+          for await (const batch of iter) {
+            for (const mesg of batch) {
+              messageCount += 1;
+              if (mesg.msg_type === "error") {
+                errorCount += 1;
+              }
+              if (mesg.more_output) {
+                moreOutputCount += 1;
+              }
+              const lifecycle =
+                typeof mesg.lifecycle === "string"
+                  ? mesg.lifecycle
+                  : typeof mesg.msg_type === "string"
+                    ? mesg.msg_type
+                    : null;
+              if (lifecycle != null) {
+                lifecycleCounts[lifecycle] =
+                  (lifecycleCounts[lifecycle] ?? 0) + 1;
+              }
+            }
+          }
+        })(),
+        new Promise<void>((_, reject) => {
+          timeout = setTimeout(() => {
+            reject(new Error("timed out waiting for run stream to end"));
+          }, timeoutMs);
+        }),
+      ]);
+    } catch (err) {
+      streamError = `${err}`;
+    }
+    return {
+      lifecycleCounts,
+      messageCount,
+      errorCount,
+      moreOutputCount,
+      streamError,
+    };
+  } finally {
+    if (timeout != null) {
+      clearTimeout(timeout);
+    }
+    runClient.close();
+  }
 }
 
 async function main() {
@@ -346,12 +402,6 @@ async function main() {
     if (targetCell.cell_type !== "code") {
       throw new Error(`cell '${opts.cellId}' is not a code cell`);
     }
-    await syncTargetCellInput({
-      binding,
-      syncdb,
-      cellId: opts.cellId,
-      code: requestedCode,
-    });
 
     const report: StressReport = {
       project_id: connection.project.project_id,
@@ -369,40 +419,22 @@ async function main() {
       const startedAt = Date.now();
       const beforeCell = readCellRecord(syncdb, opts.cellId);
       const prevExecCount = normalizeExecCount(beforeCell?.exec_count);
-      const session = await binding.run({
-        cellIds: [opts.cellId],
+      const {
+        lifecycleCounts,
+        messageCount,
+        errorCount,
+        moreOutputCount,
+        streamError,
+      } = await collectRunStream({
+        project_id: connection.project.project_id,
+        path: normalizedPath,
+        client: connection.client,
+        cellId: opts.cellId,
+        code: requestedCode,
         limit: opts.limit,
+        runIndex: i + 1,
+        timeoutMs: opts.timeoutMs,
       });
-
-      let messageCount = 0;
-      let errorCount = 0;
-      let moreOutputCount = 0;
-      const lifecycleCounts: Record<string, number> = {};
-      try {
-        for await (const batch of session.iter) {
-          for (const mesg of batch) {
-            messageCount += 1;
-            if (mesg.msg_type === "error") {
-              errorCount += 1;
-            }
-            if (mesg.more_output) {
-              moreOutputCount += 1;
-            }
-            const lifecycle =
-              typeof mesg.lifecycle === "string"
-                ? mesg.lifecycle
-                : typeof mesg.msg_type === "string"
-                  ? mesg.msg_type
-                  : null;
-            if (lifecycle != null) {
-              lifecycleCounts[lifecycle] =
-                (lifecycleCounts[lifecycle] ?? 0) + 1;
-            }
-          }
-        }
-      } finally {
-        await session.close();
-      }
 
       let completionError: string | null = null;
       try {
@@ -438,6 +470,9 @@ async function main() {
         output_after: afterOutput,
         output_after_settle: settleOutput,
       });
+      if (streamError != null) {
+        errors.unshift(streamError);
+      }
       if (completionError != null) {
         errors.unshift(completionError);
       }
