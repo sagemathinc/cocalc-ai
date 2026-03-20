@@ -100,6 +100,7 @@ import {
   refineInitialWatchSourceDecision,
 } from "./watch-policy";
 import { classifyRunStreamMessage } from "./run-protocol";
+import { doesPersistentCellSatisfyRunCellOverlay } from "./run-cell-overlay";
 
 const dmpFileWatcher = new DiffMatchPatch({
   matchThreshold: 1,
@@ -163,6 +164,73 @@ export class JupyterActions extends JupyterActions0 {
   private ignoredLiveRunIds = new globalThis.Map<string, number>();
   private liveRunReplayPoll?: ReturnType<typeof setInterval>;
   private completedLiveRunIds = new globalThis.Map<string, number>();
+  private reconcileRunCellOverlay = (id: string, newCell: Map<string, any>) => {
+    const overlays = this.store?.get("runCellOverlays") as
+      | Map<string, Map<string, any>>
+      | undefined;
+    const overlay = overlays?.get(id);
+    if (
+      overlay != null &&
+      doesPersistentCellSatisfyRunCellOverlay(newCell, overlay)
+    ) {
+      this.clearRunCellOverlay(id);
+    }
+  };
+
+  private setRunCellOverlay = (
+    id: string,
+    patch: { output?: any; exec_count?: number | null },
+  ): boolean => {
+    if (!id || this.isClosed()) {
+      return false;
+    }
+    let nextPatch: Map<string, any> = Map();
+    if (Object.prototype.hasOwnProperty.call(patch, "output")) {
+      nextPatch = nextPatch.set(
+        "output",
+        patch.output == null ? null : fromJS(patch.output),
+      );
+    }
+    if (
+      Object.prototype.hasOwnProperty.call(patch, "exec_count") &&
+      patch.exec_count != null
+    ) {
+      nextPatch = nextPatch.set("exec_count", patch.exec_count);
+    }
+    if (nextPatch.size === 0) {
+      return false;
+    }
+    const overlays =
+      (this.store.get("runCellOverlays") as Map<string, Map<string, any>>) ??
+      Map<string, Map<string, any>>();
+    const current = overlays.get(id) ?? Map<string, any>();
+    const updated = current.merge(nextPatch) as Map<string, any>;
+    if (updated.equals(current)) {
+      return false;
+    }
+    this.store.setState({ runCellOverlays: overlays.set(id, updated) });
+    return true;
+  };
+
+  private clearRunCellOverlay = (id: string) => {
+    const overlays =
+      (this.store?.get("runCellOverlays") as Map<string, Map<string, any>>) ??
+      Map<string, Map<string, any>>();
+    if (!id || !overlays.has(id)) {
+      return;
+    }
+    this.store.setState({ runCellOverlays: overlays.delete(id) });
+  };
+
+  private clearAllRunCellOverlays = () => {
+    const overlays =
+      (this.store?.get("runCellOverlays") as Map<string, Map<string, any>>) ??
+      Map<string, Map<string, any>>();
+    if (overlays.size === 0) {
+      return;
+    }
+    this.store.setState({ runCellOverlays: Map() });
+  };
 
   private resolveRunDebugMode = (): "off" | "on" | "json" => {
     try {
@@ -399,8 +467,8 @@ export class JupyterActions extends JupyterActions0 {
       }
       if (opts.source === "remote") {
         this.reset_more_output(id);
-        this._set({ type: "cell", id, output: null, exec_count: null }, false);
       }
+      this.clearRunCellOverlay(id);
       let cell = this.store.getIn(["cells", id])?.toJS();
       if (cell == null) {
         cell = { id };
@@ -792,6 +860,7 @@ export class JupyterActions extends JupyterActions0 {
     // Also maintain read_only state.
     this.syncdb.on("metadata-change", this.sync_read_only);
     this.syncdb.on("connected", this.sync_read_only);
+    this.store.on("cell_change", this.reconcileRunCellOverlay);
 
     // first update
     this.syncdb.once("change", () => {
@@ -1054,6 +1123,7 @@ export class JupyterActions extends JupyterActions0 {
       this.liveRunReplayBuffer = [];
       this.ignoredLiveRunIds.clear();
       this.completedLiveRunIds.clear();
+      this.clearAllRunCellOverlays();
       this.jupyterClient?.close();
       this.jupyterClient = undefined;
       super.close();
@@ -1086,6 +1156,7 @@ export class JupyterActions extends JupyterActions0 {
       ?.getStore("account")
       ?.removeListener("change", this.account_change);
     this.syncdb?.removeListener("open-phase", this.handleSyncdbOpenPhase);
+    this.store?.removeListener("cell_change", this.reconcileRunCellOverlay);
   }
 
   private syncdb_cursor_activity = (): void => {
@@ -2171,30 +2242,24 @@ export class JupyterActions extends JupyterActions0 {
 
     // Under heavy output we throttle updates, but on "done" we force an
     // immediate flush to avoid leaving the cell in a stale running state.
-    // The first visible output update is written immediately (local only)
-    // so the initiating browser sees feedback without waiting for throttle.
-    let wroteFirstChange = false;
-    const writeCell = (save: boolean) => {
-      // we ONLY set certain fields; e.g., setting the input would be
-      // extremely annoying since the user can edit the input while the
-      // cell is running.
+    // Rendering state for active runs is purely local; the backend remains
+    // authoritative for durable notebook output and exec_count writes.
+    let wroteFirstVisibleChange = false;
+    const writeCell = (): boolean => {
       const { id, state, output, start, end, exec_count } = cell;
       this.set_runtime_cell_state(id, { state, start, end });
-      const patch: any = { type: "cell", id, output, exec_count };
-      if (
-        typeof start === "number" &&
-        Number.isFinite(start) &&
-        typeof end === "number" &&
-        Number.isFinite(end) &&
-        end >= start
-      ) {
-        patch.last = Math.round(end - start);
+      const patch: { output?: any; exec_count?: number | null } = {};
+      if (output != null || wroteFirstVisibleChange) {
+        patch.output = output ?? null;
       }
-      this._set(patch, save);
+      if (exec_count != null) {
+        patch.exec_count = exec_count;
+      }
+      return this.setRunCellOverlay(id, patch);
     };
     const writeCellThrottled = throttle(
       () => {
-        writeCell(false);
+        void writeCell();
       },
       1000 / OUTPUT_FPS,
       {
@@ -2203,22 +2268,24 @@ export class JupyterActions extends JupyterActions0 {
       },
     );
     handler.on("change", (save?: boolean) => {
-      if (!wroteFirstChange) {
-        wroteFirstChange = true;
+      if (!wroteFirstVisibleChange) {
+        if (!writeCell()) {
+          return;
+        }
+        wroteFirstVisibleChange = true;
         opts.onFirstWrite?.();
         this.runDebug("runCells.output.first_write", {
           runId,
           id: cell.id,
           save: !!save && persistFinal,
         });
-        writeCell(!!save && persistFinal);
         return;
       }
       writeCellThrottled();
     });
     handler.on("done", () => {
       writeCellThrottled.flush();
-      writeCell(persistFinal);
+      void writeCell();
       this.runDebug("runCells.handler.done.flush", {
         runId,
         id: cell.id,
@@ -2240,21 +2307,6 @@ export class JupyterActions extends JupyterActions0 {
     this.store.setState({ pendingCells });
     this.runDebug("pending.add", { ids });
     this.setQueuedCellState(ids);
-
-    // to avoid ugly flicker, we don't clear output until
-    // waiting a little while first (since often the output
-    // already appears in a fraction of a second):
-    setTimeout(() => {
-      if (this.isClosed()) {
-        return;
-      }
-      const p = this.store.get("pendingCells") ?? iSet();
-      const stillPending = ids.filter((id) => p.has(id));
-      this.runDebug("pending.clear_outputs.delay", { ids, stillPending });
-      if (stillPending.length > 0) {
-        this.clear_outputs(stillPending);
-      }
-    }, 250);
   };
 
   private deletePendingCells = (ids: string[]) => {
@@ -2356,12 +2408,6 @@ export class JupyterActions extends JupyterActions0 {
 
   private runQueue: any[] = [];
   private runningNow = false;
-  private toPlainJs = (value: any) => {
-    if (value != null && typeof value.toJS == "function") {
-      return value.toJS();
-    }
-    return value;
-  };
 
   private outputMessageCount = (output: any): number => {
     if (output == null) {
@@ -2371,24 +2417,6 @@ export class JupyterActions extends JupyterActions0 {
       return output.size;
     }
     return Object.keys(output).length;
-  };
-
-  private outputPreviewFirstMessage = (output: any): { [n: string]: any } => {
-    if (output == null) {
-      return {};
-    }
-    if (typeof output.get == "function") {
-      const first = output.get("0") ?? output.get(0);
-      if (first == null) {
-        return {};
-      }
-      return { "0": this.toPlainJs(first) };
-    }
-    const first = output["0"] ?? output[0];
-    if (first == null) {
-      return {};
-    }
-    return { "0": first };
   };
 
   runCells = async (
@@ -2455,12 +2483,6 @@ export class JupyterActions extends JupyterActions0 {
           this.runDebug("runCells.cell.skip.no_kernel", { runId, id });
           continue;
         }
-        if (outputCount > 0) {
-          const previewOutput = this.outputPreviewFirstMessage(output);
-          // trick to avoid flicker
-          // time last evaluation took
-          this._set({ type: "cell", id, last, output: previewOutput }, false);
-        }
         const cell: InputCell & { pos?: number } = {
           id,
           input,
@@ -2522,6 +2544,7 @@ export class JupyterActions extends JupyterActions0 {
           return existing;
         }
         this.deletePendingCells([id]);
+        this.clearRunCellOverlay(id);
         let cell = this.store.getIn(["cells", id])?.toJS();
         if (cell == null) {
           // cell removed?

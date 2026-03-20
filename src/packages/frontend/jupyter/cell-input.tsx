@@ -26,6 +26,10 @@ import { CellToolbar } from "./cell-toolbar";
 import { CodeMirror } from "./codemirror-component";
 import { Position } from "./insert-cell/types";
 import { InputPrompt } from "./prompt/input";
+import {
+  getDisplayedCellExecCount,
+  type RunCellOverlay,
+} from "./run-cell-overlay";
 import { SimpleInputMerge } from "@cocalc/sync/editor/generic/simple-input-merge";
 import { IS_TOUCH } from "@cocalc/frontend/feature";
 
@@ -89,6 +93,7 @@ export interface CellInputProps {
   setShowAICellGen?: (show: Position) => void;
   dragHandle?: React.JSX.Element;
   isPending?: boolean;
+  runOverlay?: RunCellOverlay;
 }
 
 export const CellInput: React.FC<CellInputProps> = React.memo(
@@ -159,7 +164,7 @@ export const CellInput: React.FC<CellInputProps> = React.memo(
           <InputPrompt
             type={type}
             state={props.isPending ? "start" : props.cell.get("state")}
-            exec_count={props.cell.get("exec_count")}
+            exec_count={getDisplayedCellExecCount(props.cell, props.runOverlay)}
             kernel={props.cell.get("kernel")}
             start={props.cell.get("start")}
             end={props.cell.get("end")}

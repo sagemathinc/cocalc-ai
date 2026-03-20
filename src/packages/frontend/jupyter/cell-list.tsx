@@ -90,6 +90,7 @@ interface CellListProps {
   llmTools?: LLMTools;
   read_only?: boolean;
   pendingCells?: immutable.Set<string>;
+  runCellOverlays?: immutable.Map<string, immutable.Map<string, any>>;
 }
 
 export const CellList: React.FC<CellListProps> = (props: CellListProps) => {
@@ -120,6 +121,7 @@ export const CellList: React.FC<CellListProps> = (props: CellListProps) => {
     llmTools,
     read_only,
     pendingCells,
+    runCellOverlays,
   } = props;
 
   const cellListDivRef = useRef<any>(null);
@@ -436,6 +438,7 @@ export const CellList: React.FC<CellListProps> = (props: CellListProps) => {
           read_only={read_only}
           isDragging={isDragging}
           isPending={pendingCells?.has(id)}
+          runOverlay={runCellOverlays?.get(id)}
         />
       </div>
     );
@@ -458,11 +461,7 @@ export const CellList: React.FC<CellListProps> = (props: CellListProps) => {
     const cell = cells.get(id);
     const input = cell?.get?.("input");
     if (typeof input === "string" && input.trim()) {
-      return input
-        .split("\n")
-        .slice(0, 10)
-        .join("\n")
-        .slice(0, 1200);
+      return input.split("\n").slice(0, 10).join("\n").slice(0, 1200);
     }
     return placeholderTextForCell(id, index);
   }

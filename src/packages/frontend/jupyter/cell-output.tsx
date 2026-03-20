@@ -16,6 +16,11 @@ import { CollapsedOutput, OutputToggle } from "./cell-output-toggle";
 import { CellOutputMessages } from "./output-messages/message";
 import { OutputPrompt } from "./prompt/output";
 import RawInput from "./raw-input";
+import {
+  getDisplayedCellExecCount,
+  getDisplayedCellOutput,
+  type RunCellOverlay,
+} from "./run-cell-overlay";
 
 interface CellOutputProps {
   actions?: JupyterActions;
@@ -33,6 +38,7 @@ interface CellOutputProps {
   llmTools?: LLMTools;
   isDragging?: boolean;
   stdin?;
+  runOverlay?: RunCellOverlay;
 }
 
 function isRunningState(state: string | undefined): boolean {
@@ -55,11 +61,13 @@ export function CellOutput({
   llmTools,
   isDragging,
   stdin,
+  runOverlay,
 }: CellOutputProps) {
   const outputRef = useRef<HTMLDivElement | null>(null);
   const [stableOutputHeight, setStableOutputHeight] = useState<number>(0);
   const running = isRunningState(cell.get("state"));
-  const outputCount = cell.get("output")?.size ?? 0;
+  const output = getDisplayedCellOutput(cell, runOverlay);
+  const outputCount = output?.size ?? 0;
   const moreOutputCount = more_output?.get("mesg_list")?.size ?? 0;
 
   const minHeight = complete
@@ -122,7 +130,7 @@ export function CellOutput({
     );
   }
 
-  if (cell.get("output") == null && !stdin) {
+  if (output == null && !stdin) {
     return <div key="out" style={{ minHeight }} />;
   }
 
@@ -142,7 +150,14 @@ export function CellOutput({
         "cocalc-output-div" /* used by stable unsafe html for clipping */
       }
     >
-      {!hidePrompt && <ControlColumn cell={cell} actions={actions} id={id} />}
+      {!hidePrompt && (
+        <ControlColumn
+          cell={cell}
+          actions={actions}
+          id={id}
+          runOverlay={runOverlay}
+        />
+      )}
       <div style={{ flex: 1 }}>
         <OutputColumn
           cell={cell}
@@ -155,6 +170,7 @@ export function CellOutput({
           trust={trust}
           llmTools={llmTools}
           isDragging={isDragging}
+          runOverlay={runOverlay}
         />
         {stdin && (
           <RawInput
@@ -179,6 +195,7 @@ interface OutputColumnProps {
   trust?: boolean;
   llmTools?;
   isDragging?: boolean;
+  runOverlay?: RunCellOverlay;
 }
 
 function OutputColumn({
@@ -192,6 +209,7 @@ function OutputColumn({
   trust,
   llmTools,
   isDragging,
+  runOverlay,
 }: OutputColumnProps) {
   if (isDragging) {
     // stable html + dragging breaks badly since you end up with two copies
@@ -202,7 +220,7 @@ function OutputColumn({
   if (cell.get("collapsed")) {
     return <CollapsedOutput actions={actions} id={id} />;
   }
-  let output = cell.get("output");
+  let output = getDisplayedCellOutput(cell, runOverlay);
   if (output == null) {
     return null;
   }
@@ -237,25 +255,10 @@ function OutputColumn({
   );
 }
 
-function ControlColumn({ actions, cell, id }) {
+function ControlColumn({ actions, cell, id, runOverlay }) {
   const collapsed = cell.get("collapsed");
-  let exec_count = cell.get("exec_count");
-  const output = cell.get("output");
-  if (output != null) {
-    for (const [, x] of output) {
-      if (
-        x == null ||
-        typeof x.has !== "function" ||
-        typeof x.get !== "function"
-      ) {
-        continue;
-      }
-      if (x.has("exec_count")) {
-        exec_count = x.get("exec_count");
-        break;
-      }
-    }
-  }
+  const output = getDisplayedCellOutput(cell, runOverlay);
+  const exec_count = getDisplayedCellExecCount(cell, runOverlay);
   const prompt = (
     <OutputPrompt
       state={cell.get("state")}

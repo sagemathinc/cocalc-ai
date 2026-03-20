@@ -184,6 +184,12 @@ export const JupyterEditor: React.FC<Props> = React.memo((props: Props) => {
     name,
     "pendingCells",
   ]);
+  const runCellOverlays:
+    | undefined
+    | immutable.Map<string, immutable.Map<string, any>> = useRedux([
+    name,
+    "runCellOverlays",
+  ]);
 
   useEffect(() => {
     actions.fetch_jupyter_kernels();
@@ -403,6 +409,7 @@ export const JupyterEditor: React.FC<Props> = React.memo((props: Props) => {
         trust={trust}
         llmTools={llmTools}
         pendingCells={pendingCells}
+        runCellOverlays={runCellOverlays}
       />
     );
   }
