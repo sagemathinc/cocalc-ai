@@ -352,6 +352,10 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
     }
   }
 
+  function kickOffAcpRehydrate(project_id: string, context: string): void {
+    void rehydrateAcpAutomations(project_id, context);
+  }
+
   async function createProject(
     opts: CreateProjectOptions = {},
   ): Promise<string> {
@@ -388,7 +392,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
         http_port: (status as any)?.http_port,
         ssh_port: (status as any)?.ssh_port,
       });
-      await rehydrateAcpAutomations(project_id, "createProject: post-start");
+      kickOffAcpRehydrate(project_id, "createProject: post-start");
     }
 
     return project_id;
@@ -443,7 +447,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
       });
       // During move/restore the destination project root may not exist until
       // runnerApi.start has created or restored it, so ACP rehydrate must wait.
-      await rehydrateAcpAutomations(project_id, "start: post-start");
+      kickOffAcpRehydrate(project_id, "start: post-start");
       await refreshAuthorizedKeys(project_id, authorized_keys);
     } catch (err) {
       // Fall back to stopped if startup fails so UI reflects failure.

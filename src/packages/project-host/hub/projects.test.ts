@@ -62,6 +62,10 @@ jest.mock("@cocalc/lite/hub/acp", () => ({
 
 describe("project host start ACP rehydrate ordering", () => {
   const project_id = "3f5d0b28-cf69-4c78-9b0a-ea747bc7acb3";
+  const flushMicrotasks = async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  };
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -92,6 +96,7 @@ describe("project host start ACP rehydrate ordering", () => {
     wireProjectsApi(runnerApi);
 
     await hubApi.projects.start({ project_id });
+    await flushMicrotasks();
 
     expect(order).toEqual(["applyPendingCopies", "runner:start", "rehydrate"]);
     expect(rehydrateAcpAutomationsForProject).toHaveBeenCalledTimes(1);
@@ -129,8 +134,36 @@ describe("project host start ACP rehydrate ordering", () => {
     wireProjectsApi(runnerApi);
 
     await hubApi.projects.createProject({ project_id, start: true });
+    await flushMicrotasks();
 
     expect(order).toEqual(["runner:start", "rehydrate"]);
     expect(rehydrateAcpAutomationsForProject).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not wait for ACP rehydrate before returning from start()", async () => {
+    let resolveRehydrate: (() => void) | undefined;
+    const runnerApi = {
+      start: jest.fn(async () => ({
+        state: "running",
+        http_port: 1234,
+        ssh_port: 2222,
+      })),
+      stop: jest.fn(),
+    } as any;
+    rehydrateAcpAutomationsForProject.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveRehydrate = resolve;
+        }),
+    );
+
+    const { wireProjectsApi } = await import("./projects");
+    wireProjectsApi(runnerApi);
+
+    const startPromise = hubApi.projects.start({ project_id });
+    await expect(startPromise).resolves.toMatchObject({ scope_id: project_id });
+    expect(rehydrateAcpAutomationsForProject).toHaveBeenCalledTimes(1);
+    resolveRehydrate?.();
+    await flushMicrotasks();
   });
 });
