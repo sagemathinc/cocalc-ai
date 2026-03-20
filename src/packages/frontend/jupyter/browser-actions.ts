@@ -101,6 +101,12 @@ import {
 } from "./watch-policy";
 import { classifyRunStreamMessage } from "./run-protocol";
 import { doesPersistentCellSatisfyRunCellOverlay } from "./run-cell-overlay";
+import {
+  createRunBatchOrderState,
+  enqueueRunBatch,
+  parseRunBatchSeq,
+  type RunBatchOrderState,
+} from "./run-batch-order";
 
 const dmpFileWatcher = new DiffMatchPatch({
   matchThreshold: 1,
@@ -157,8 +163,11 @@ export class JupyterActions extends JupyterActions0 {
     close?: () => void;
   };
   private liveRunContexts = new globalThis.Map<string, LiveRunRenderContext>();
-  private liveRunSeenBatchIds = new globalThis.Map<string, Set<string>>();
   private liveRunSeenSeq = new globalThis.Map<string, number>();
+  private liveRunBatchOrder = new globalThis.Map<
+    string,
+    RunBatchOrderState<JupyterLiveRunBatch>
+  >();
   private liveRunReplayPending = false;
   private liveRunReplayBuffer: JupyterLiveRunBatch[] = [];
   private ignoredLiveRunIds = new globalThis.Map<string, number>();
@@ -450,8 +459,19 @@ export class JupyterActions extends JupyterActions0 {
     }
     this.rememberCompletedLiveRunId(runId);
     this.liveRunContexts.delete(runId);
-    this.liveRunSeenBatchIds.delete(runId);
     this.liveRunSeenSeq.delete(runId);
+    this.liveRunBatchOrder.delete(runId);
+  };
+
+  private getLiveRunBatchOrder = (
+    runId: string,
+  ): RunBatchOrderState<JupyterLiveRunBatch> => {
+    let state = this.liveRunBatchOrder.get(runId);
+    if (state == null) {
+      state = createRunBatchOrderState<JupyterLiveRunBatch>();
+      this.liveRunBatchOrder.set(runId, state);
+    }
+    return state;
   };
 
   private createLiveRunContext = (
@@ -510,7 +530,7 @@ export class JupyterActions extends JupyterActions0 {
     return { handlers, finalizedCells, getHandlerForId, finalizeHandler };
   };
 
-  private processSharedLiveRunBatch = (
+  private processOrderedSharedLiveRunBatch = (
     batch: JupyterLiveRunBatch,
     source: "live" | "replay" | "buffered-live" = "live",
   ): void => {
@@ -525,47 +545,8 @@ export class JupyterActions extends JupyterActions0 {
       return;
     }
     const batchId = `${batch?.id ?? ""}`.trim();
-    if (batchId) {
-      let seenBatchIds = this.liveRunSeenBatchIds.get(runId);
-      if (seenBatchIds == null) {
-        seenBatchIds = new Set<string>();
-        this.liveRunSeenBatchIds.set(runId, seenBatchIds);
-      }
-      if (seenBatchIds.has(batchId)) {
-        this.runDebug("liveRun.batch.skip.duplicate_id", {
-          runId,
-          source,
-          batchId,
-          seq: batch?.seq,
-          mesgs: (batch?.mesgs ?? []).length,
-        });
-        return;
-      }
-      seenBatchIds.add(batchId);
-      if (seenBatchIds.size > 2048) {
-        const first = seenBatchIds.values().next().value;
-        if (first != null) {
-          seenBatchIds.delete(first);
-        }
-      }
-    }
-    const batchSeq =
-      typeof batch?.seq === "number"
-        ? batch.seq
-        : Number.parseInt(`${batch?.seq ?? ""}`, 10);
-    if (Number.isFinite(batchSeq)) {
-      const prev = this.liveRunSeenSeq.get(runId) ?? 0;
-      if (batchSeq <= prev) {
-        this.runDebug("liveRun.batch.skip.duplicate_seq", {
-          runId,
-          source,
-          batchId,
-          seq: batchSeq,
-          prevSeq: prev,
-          mesgs: (batch?.mesgs ?? []).length,
-        });
-        return;
-      }
+    const batchSeq = parseRunBatchSeq(batch);
+    if (batchSeq != null) {
       this.liveRunSeenSeq.set(runId, batchSeq);
     }
     const mesgs = Array.isArray(batch?.mesgs) ? batch.mesgs : [];
@@ -625,6 +606,43 @@ export class JupyterActions extends JupyterActions0 {
     }
     if (sawRunDone) {
       this.closeLiveRunContext(runId, "run_done");
+    }
+  };
+
+  private processSharedLiveRunBatch = (
+    batch: JupyterLiveRunBatch,
+    source: "live" | "replay" | "buffered-live" = "live",
+  ): void => {
+    if (this.isClosed()) {
+      return;
+    }
+    if (batch?.path !== this.liveRunPath) {
+      return;
+    }
+    const runId = `${batch?.run_id ?? ""}`.trim();
+    if (!runId || this.shouldIgnoreLiveRunId(runId)) {
+      return;
+    }
+    if (this.hasCompletedLiveRunId(runId)) {
+      return;
+    }
+    const batchId = `${batch?.id ?? ""}`.trim();
+    const batchSeq = parseRunBatchSeq(batch);
+    const order = this.getLiveRunBatchOrder(runId);
+    const ready = enqueueRunBatch(order, batch);
+    if (ready.length === 0) {
+      this.runDebug("liveRun.batch.buffer.waiting_for_gap", {
+        runId,
+        source,
+        batchId,
+        seq: batchSeq,
+        nextExpectedSeq: order.nextSeq,
+        pending: order.pending.size,
+      });
+      return;
+    }
+    for (const nextBatch of ready) {
+      this.processOrderedSharedLiveRunBatch(nextBatch, source);
     }
   };
 
@@ -1117,8 +1135,8 @@ export class JupyterActions extends JupyterActions0 {
       this.liveRunStore?.close?.();
       this.liveRunStore = undefined;
       this.liveRunContexts.clear();
-      this.liveRunSeenBatchIds.clear();
       this.liveRunSeenSeq.clear();
+      this.liveRunBatchOrder.clear();
       this.liveRunReplayPending = false;
       this.liveRunReplayBuffer = [];
       this.ignoredLiveRunIds.clear();
