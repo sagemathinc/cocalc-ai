@@ -128,6 +128,7 @@ export interface BrowserSessionInfo {
   browser_id: string;
   session_name?: string;
   url?: string;
+  spawn_marker?: string;
   active_project_id?: string;
   open_projects: BrowserOpenProjectState[];
   created_at: string;
@@ -459,6 +460,7 @@ export interface System {
     browser_id: string;
     session_name?: string;
     url?: string;
+    spawn_marker?: string;
     active_project_id?: string;
     open_projects?: BrowserOpenProjectState[];
   }) => Promise<{

@@ -84,9 +84,24 @@ type DaemonResponse =
     };
 
 const IPC_POLL_MS = 200;
+const SPAWN_MARKER_QUERY_PARAM = "_cocalc_browser_spawn";
+const SPAWN_MARKER_STORAGE_KEY = "cocalc-browser-spawn-marker";
 
 function nowIso(): string {
   return new Date().toISOString();
+}
+
+function spawnMarkerFromUrl(url: string): string | undefined {
+  const clean = `${url ?? ""}`.trim();
+  if (!clean) return undefined;
+  try {
+    const parsed = new URL(clean);
+    const marker =
+      `${parsed.searchParams.get(SPAWN_MARKER_QUERY_PARAM) ?? ""}`.trim();
+    return marker || undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function normalizeError(err: unknown): string {
@@ -324,6 +339,20 @@ async function main(): Promise<void> {
     await context.addCookies(config.cookies);
   }
   const page = await context.newPage();
+  const spawnMarker = spawnMarkerFromUrl(config.target_url);
+  if (spawnMarker) {
+    await page.addInitScript(
+      ({ marker, storageKey }) => {
+        try {
+          (globalThis as any).__COCALC_BROWSER_SPAWN_MARKER = marker;
+          globalThis.sessionStorage?.setItem(storageKey, marker);
+        } catch {
+          // best-effort only
+        }
+      },
+      { marker: spawnMarker, storageKey: SPAWN_MARKER_STORAGE_KEY },
+    );
+  }
   await page.goto(config.target_url, {
     waitUntil: "domcontentloaded",
     timeout: config.timeout_ms,

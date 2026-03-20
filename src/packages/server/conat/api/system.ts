@@ -965,6 +965,7 @@ export async function upsertBrowserSession({
   browser_id,
   session_name,
   url,
+  spawn_marker,
   active_project_id,
   open_projects,
 }: {
@@ -972,6 +973,7 @@ export async function upsertBrowserSession({
   browser_id: string;
   session_name?: string;
   url?: string;
+  spawn_marker?: string;
   active_project_id?: string;
   open_projects?: unknown;
 }): Promise<{ browser_id: string; created_at: string; updated_at: string }> {
@@ -983,6 +985,7 @@ export async function upsertBrowserSession({
     browser_id,
     session_name,
     url,
+    spawn_marker,
     active_project_id,
     open_projects,
   });
