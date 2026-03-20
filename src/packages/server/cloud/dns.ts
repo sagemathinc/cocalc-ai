@@ -397,11 +397,6 @@ export async function ensurePublicViewerDns(): Promise<
   if (!zone || !hostname || !target_hostname || hostname === target_hostname) {
     return undefined;
   }
-  if (!(hostname === zone || hostname.endsWith(`.${zone}`))) {
-    throw new Error(
-      `Public Viewer Domain '${hostname}' must end with '${zone}' for Cloudflare DNS automation.`,
-    );
-  }
   const { record_id } = await ensureAppSubdomainDns({
     hostname,
     target_hostname,

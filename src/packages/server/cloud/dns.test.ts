@@ -224,4 +224,42 @@ describe("cloud dns", () => {
     expect(record.content).toBe("dev.example.com");
     expect(record.proxied).toBe(true);
   });
+
+  it("allows a sibling raw hostname under the parent cloudflare zone", async () => {
+    mockedSettings = {
+      project_hosts_dns: "dev.example.com",
+      project_hosts_cloudflare_tunnel_api_token: "token",
+      dns: "https://dev.example.com",
+      public_viewer_dns: "dev-raw.example.com",
+    };
+
+    fetchMock.mockImplementation(async (input: any, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/zones?")) {
+        if (url.includes("name=dev.example.com")) {
+          return responseWith([]);
+        }
+        if (url.includes("name=example.com")) {
+          return responseWith([{ name: "example.com", id: "zone-parent" }]);
+        }
+      }
+      if (init?.method === "GET" && url.includes("/dns_records?")) {
+        return responseWith([]);
+      }
+      if (init?.method === "POST" && url.includes("/dns_records")) {
+        return responseWith({ id: "record-sibling" });
+      }
+      return responseWith({});
+    });
+    (global as any).fetch = fetchMock;
+
+    const { ensurePublicViewerDns } = await import("./dns");
+    const result = await ensurePublicViewerDns();
+
+    expect(result).toEqual({
+      hostname: "dev-raw.example.com",
+      target_hostname: "dev.example.com",
+      record_id: "record-sibling",
+    });
+  });
 });
