@@ -369,24 +369,30 @@ export async function getHost(opts) {
   if (hostCache.has(opts.id)) {
     return hostCache.get(opts.id);
   }
-  const info = await getSnapshot(opts);
-  // Robust parsing: rustic snapshots --json <id> currently returns an array of
-  // objects like:
-  // [
-  //   {
-  //     group_key: { hostname: "...", ... },
-  //     snapshots: [ { hostname: "...", ... }, ... ]
-  //   }
-  // ]
-  // Older versions emitted: [ [ group_key, [ { hostname, ... } ] ] ]
-  // Support both shapes and error clearly otherwise.
-  const hostname =
-    info?.[0]?.snapshots?.[0]?.hostname ?? info?.[0]?.[1]?.[0]?.hostname;
+  const snapshot = await getSnapshot(opts);
+  const hostname = snapshot?.hostname;
   if (!hostname) {
     throw new Error(`snapshot ${opts.id} not found or missing hostname`);
   }
   hostCache.set(opts.id, hostname);
   return hostname;
+}
+
+function flattenSnapshotGroups(groups: any): any[] {
+  if (!Array.isArray(groups)) {
+    return [];
+  }
+  const snapshots: any[] = [];
+  for (const group of groups) {
+    if (Array.isArray(group?.snapshots)) {
+      snapshots.push(...group.snapshots);
+      continue;
+    }
+    if (Array.isArray(group) && Array.isArray(group[1])) {
+      snapshots.push(...group[1]);
+    }
+  }
+  return snapshots;
 }
 
 export async function getSnapshot({
@@ -399,13 +405,20 @@ export async function getSnapshot({
   const common = getCommonArgs(repo);
   const { stdout } = await exec({
     cmd: rusticPath,
-    safety: [...common, "snapshots", "--json", id],
+    safety: [...common, "snapshots", "--json"],
   });
   if (!stdout) {
     throw Error(`no snapshot with id ${id}`);
   }
   try {
-    return JSON.parse(stdout.toString());
+    const parsed = JSON.parse(stdout.toString());
+    const snapshot = flattenSnapshotGroups(parsed).find(
+      (entry) => entry?.id === id,
+    );
+    if (!snapshot) {
+      throw Error(`no snapshot with id ${id}`);
+    }
+    return snapshot;
   } catch {
     throw Error(`no snapshot with id ${id}`);
   }

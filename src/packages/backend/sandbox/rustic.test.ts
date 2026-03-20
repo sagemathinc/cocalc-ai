@@ -4,13 +4,14 @@ Test the rustic backup api.
 https://github.com/rustic-rs/rustic
 */
 
-import rustic from "./rustic";
+import rustic, { getHost, getSnapshot } from "./rustic";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { parseOutput } from "./exec";
 
 let tempDir, options, home;
+let latestSnapshotId;
 beforeAll(async () => {
   tempDir = await mkdtemp(join(tmpdir(), "cocalc"));
   const repo = join(tempDir, "repo");
@@ -46,6 +47,7 @@ describe("rustic does something", () => {
     );
     const s = JSON.parse(Buffer.from(stdout).toString());
     expect(s.paths).toEqual(["a.txt"]);
+    latestSnapshotId = s.id;
     expect(truncated).toBe(false);
   });
 
@@ -104,5 +106,15 @@ password = ""
     );
     expect(paths).toEqual(expect.arrayContaining(["a.txt", "b.txt"]));
     expect(truncated).toBe(false);
+  });
+
+  it("can resolve a snapshot host by exact snapshot id", async () => {
+    expect(latestSnapshotId).toBeTruthy();
+    const snapshot = await getSnapshot({ id: latestSnapshotId, repo: options.repo });
+    expect(snapshot.id).toBe(latestSnapshotId);
+    expect(snapshot.hostname).toBe("my-host");
+    await expect(
+      getHost({ id: latestSnapshotId, repo: options.repo }),
+    ).resolves.toBe("my-host");
   });
 });

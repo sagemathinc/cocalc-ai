@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 "use strict";
 
+const cp = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
 
@@ -21,13 +22,15 @@ const DEFAULT_RUN_ROOT = path.join(
 );
 const DEFAULT_TIMEOUT = "90m";
 const DEFAULT_SEED_TIMEOUT_SECONDS = 7200;
-const WORKFLOWS = new Set(["backup", "move", "copy-path"]);
+const DEFAULT_CACHE_MODE = "cold";
+const WORKFLOWS = new Set(["backup", "move", "copy-path", "restore"]);
 const WORKLOADS = new Set(["random-4g", "apt-jupyter"]);
+const CACHE_MODES = new Set(["cold", "warm"]);
 
 function usageAndExit(message, code = 1) {
   if (message) console.error(message);
   console.error(
-    "Usage: launchpad-benchmark.js --workflow <backup|move|copy-path> --workload <random-4g|apt-jupyter> [--project <id>] [--host <host>] [--src-project <id>] [--dest-project <id>] [--src-host <host>] [--dest-host <host>] [--api-url <url>] [--account-id <uuid>] [--timeout <duration>] [--seed-timeout <seconds>] [--run-root <path>] [--dry-run] [--json]",
+    "Usage: launchpad-benchmark.js --workflow <backup|move|copy-path|restore> --workload <random-4g|apt-jupyter> [--project <id>] [--host <host>] [--src-project <id>] [--dest-project <id>] [--src-host <host>] [--dest-host <host>] [--cache-mode <cold|warm>] [--api-url <url>] [--account-id <uuid>] [--timeout <duration>] [--seed-timeout <seconds>] [--run-root <path>] [--dry-run] [--json]",
   );
   process.exit(code);
 }
@@ -58,10 +61,12 @@ function parseArgs(argv) {
     accountId: "",
     timeout: DEFAULT_TIMEOUT,
     seedTimeoutSeconds: DEFAULT_SEED_TIMEOUT_SECONDS,
+    cacheMode: DEFAULT_CACHE_MODE,
     runRoot: DEFAULT_RUN_ROOT,
     cleanupOnSuccess: true,
     dryRun: false,
     json: false,
+    verifyRestoredStart: false,
   };
   for (let i = 0; i < normalizedArgv.length; i += 1) {
     const arg = normalizedArgv[i];
@@ -114,6 +119,10 @@ function parseArgs(argv) {
         normalizedArgv[++i] || "",
         "--seed-timeout",
       );
+    } else if (arg === "--cache-mode") {
+      options.cacheMode =
+        `${normalizedArgv[++i] || ""}`.trim().toLowerCase() ||
+        usageAndExit("--cache-mode requires a value");
     } else if (arg === "--run-root") {
       options.runRoot = path.resolve(
         normalizedArgv[++i] || usageAndExit("--run-root requires a path"),
@@ -126,6 +135,8 @@ function parseArgs(argv) {
       options.dryRun = true;
     } else if (arg === "--json") {
       options.json = true;
+    } else if (arg === "--verify-restored-start") {
+      options.verifyRestoredStart = true;
     } else if (arg === "--help" || arg === "-h") {
       usageAndExit(undefined, 0);
     } else {
@@ -143,11 +154,28 @@ function parseArgs(argv) {
       `--workload must be one of ${Array.from(WORKLOADS).join(", ")}`,
     );
   }
+  if (!CACHE_MODES.has(options.cacheMode)) {
+    usageAndExit(
+      `--cache-mode must be one of ${Array.from(CACHE_MODES).join(", ")}`,
+    );
+  }
   if (options.workflow === "backup" && options.srcProject) {
     usageAndExit("--src-project is not used with --workflow backup");
   }
   if (options.workflow === "move" && !options.destHost) {
     usageAndExit("--dest-host is required for --workflow move");
+  }
+  if (options.workflow === "restore") {
+    if (!options.srcProject && !options.srcHost) {
+      usageAndExit(
+        "--src-host is required for --workflow restore when --src-project is not provided",
+      );
+    }
+    if (!options.destProject && !options.destHost) {
+      usageAndExit(
+        "--dest-host is required for --workflow restore when --dest-project is not provided",
+      );
+    }
   }
   return options;
 }
@@ -163,16 +191,24 @@ function buildWorkloadSpec(workload, now = Date.now()) {
     null,
     2,
   );
-  const markerPath = `/tmp/bug-hunt-benchmark-marker-${stamp}.json`;
+  const benchmarkDir = `bug-hunt-benchmark-${stamp}`;
+  const markerPath = `${benchmarkDir}/marker.json`;
+  const restoreTargetPath = `bug-hunt-restore-target-${stamp}`;
+  const restoreTargetShellPath = restoreTargetPath;
   if (workload === "random-4g") {
-    const payloadPath = `/tmp/bug-hunt-random-4g-${stamp}.bin`;
+    const payloadPath = `${benchmarkDir}/random-4g.bin`;
     return {
       workload,
+      benchmarkDir,
       markerPath,
       markerPayload: `${markerPayload}\n`,
       payloadPath,
+      restoreSourcePath: payloadPath,
+      restoreTargetPath: `${restoreTargetPath}/random-4g.bin`,
+      restoreTargetShellPath: `${restoreTargetShellPath}/random-4g.bin`,
       prepareBash: [
         "set -euo pipefail",
+        `mkdir -p ${shellQuote(benchmarkDir)}`,
         `cat > ${shellQuote(markerPath)} <<'EOF'`,
         markerPayload,
         "EOF",
@@ -191,11 +227,16 @@ function buildWorkloadSpec(workload, now = Date.now()) {
   }
   return {
     workload,
+    benchmarkDir,
     markerPath,
     markerPayload: `${markerPayload}\n`,
+    restoreSourcePath: benchmarkDir,
+    restoreTargetPath,
+    restoreTargetShellPath,
     prepareBash: [
       "set -euo pipefail",
       "export DEBIAN_FRONTEND=noninteractive",
+      `mkdir -p ${shellQuote(benchmarkDir)}`,
       `cat > ${shellQuote(markerPath)} <<'EOF'`,
       markerPayload,
       "EOF",
@@ -226,7 +267,7 @@ function makeStep(name, startedAt, data = {}) {
 }
 
 function runProjectExec(cliBase, projectId, bash, timeoutSeconds) {
-  return runCliJson(
+  const result = runCliJson(
     {
       ...cliBase,
       rpcTimeout: `${timeoutSeconds}s`,
@@ -242,6 +283,32 @@ function runProjectExec(cliBase, projectId, bash, timeoutSeconds) {
       bash,
     ],
   );
+  if ((result?.exit_code ?? 0) !== 0) {
+    const stderr = `${result?.stderr ?? ""}`.trim();
+    const stdout = `${result?.stdout ?? ""}`.trim();
+    const detail = stderr || stdout || `exit_code=${result?.exit_code}`;
+    throw new Error(`project exec failed: ${detail}`);
+  }
+  return result;
+}
+
+function getProject(cliBase, projectId, runner = runCliJson) {
+  return runner(cliBase, ["project", "get", "--project", projectId]);
+}
+
+async function ensureProjectRunning(cliBase, projectId, runner = runCliJson) {
+  const project = getProject(cliBase, projectId, runner);
+  if (`${project?.state ?? ""}`.trim().toLowerCase() === "running") {
+    return { already_running: true, project };
+  }
+  const started = runner(cliBase, [
+    "project",
+    "start",
+    "--project",
+    projectId,
+    "--wait",
+  ]);
+  return { already_running: false, started };
 }
 
 function verifyProjectPaths(cliBase, projectId, paths) {
@@ -257,6 +324,156 @@ function verifyProjectPaths(cliBase, projectId, paths) {
       `test -e ${shellQuote(filePath)}`,
     ]);
   }
+}
+
+function selectLatestBackupId(backups) {
+  const rows = Array.isArray(backups) ? backups : [];
+  const latest = [...rows].sort((left, right) =>
+    `${right.time ?? ""}`.localeCompare(`${left.time ?? ""}`),
+  )[0];
+  const backupId = `${latest?.backup_id ?? ""}`.trim();
+  if (!backupId) {
+    throw new Error("backup list did not return a usable backup id");
+  }
+  return backupId;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForRestorableBackupId(
+  cliBase,
+  projectId,
+  wait = { attempts: 20, intervalMs: 3000 },
+) {
+  let lastIndexed = [];
+  let lastDirect = [];
+  for (let attempt = 1; attempt <= wait.attempts; attempt += 1) {
+    const direct = runCliJson(cliBase, [
+      "project",
+      "backup",
+      "list",
+      "--project",
+      projectId,
+      "--limit",
+      "100",
+    ]);
+    if (Array.isArray(direct) && direct.length > 0) {
+      const candidateId = selectLatestBackupId(direct);
+      try {
+        runCliJson(cliBase, [
+          "project",
+          "backup",
+          "files",
+          "--project",
+          projectId,
+          "--backup-id",
+          candidateId,
+        ]);
+      } catch (_err) {
+        if (attempt < wait.attempts) {
+          await sleep(wait.intervalMs);
+          continue;
+        }
+        throw new Error(
+          `backup ${candidateId} appeared in direct listing but never became readable`,
+        );
+      }
+      return {
+        id: candidateId,
+        source: "direct",
+        direct,
+        indexed: lastIndexed,
+      };
+    }
+    lastDirect = Array.isArray(direct) ? direct : [];
+
+    const indexed = runCliJson(cliBase, [
+      "project",
+      "backup",
+      "list",
+      "--project",
+      projectId,
+      "--indexed-only",
+      "--limit",
+      "100",
+    ]);
+    lastIndexed = Array.isArray(indexed) ? indexed : [];
+
+    if (attempt < wait.attempts) {
+      await sleep(wait.intervalMs);
+    }
+  }
+  throw new Error(
+    `backup never appeared in direct listing (indexed backups=${lastIndexed.length}, direct backups=${lastDirect.length})`,
+  );
+}
+
+function runHostSsh(cliBase, hostId, bash, timeoutSeconds = 900) {
+  const host = runCliJson(cliBase, ["host", "get", hostId]);
+  const sshHost = `${host?.public_ip ?? ""}`.trim();
+  if (!sshHost) {
+    throw new Error(`host ${hostId} does not have a public ip for ssh`);
+  }
+  const result = cp.spawnSync(
+    "ssh",
+    [
+      "-o",
+      "BatchMode=yes",
+      "-o",
+      "StrictHostKeyChecking=no",
+      "-o",
+      "ConnectTimeout=15",
+      `ubuntu@${sshHost}`,
+      bash,
+    ],
+    {
+      cwd: ROOT,
+      encoding: "utf8",
+      timeout: timeoutSeconds * 1000,
+      maxBuffer: 16 * 1024 * 1024,
+    },
+  );
+  if (result.error) {
+    throw result.error;
+  }
+  if (result.status !== 0) {
+    throw new Error(
+      `${`${result.stderr ?? ""}`.trim() || `${result.stdout ?? ""}`.trim() || `ssh exited with code ${result.status}`}`,
+    );
+  }
+  return `${result.stdout ?? ""}`.trim();
+}
+
+function inspectHostRusticCache(cliBase, hostId) {
+  const stdout = runHostSsh(
+    cliBase,
+    hostId,
+    [
+      "set -euo pipefail",
+      'sudo -u cocalc-host -H python3 -c "import json,pathlib,subprocess; ' +
+        "import os; os.chdir(pathlib.Path.home()); " +
+        "root=pathlib.Path.home()/'.cache'/'rustic'; " +
+        "root_exists=root.exists(); " +
+        "entry_paths=[p for p in sorted(root.iterdir()) if p.is_dir() and p.name != 'CACHEDIR.TAG'] if root_exists else []; " +
+        "entries=[p.name for p in entry_paths]; " +
+        "total_bytes=sum(int(subprocess.check_output(['du','-sb', str(p)], text=True).split()[0]) for p in entry_paths); " +
+        "print(json.dumps({'root': str(root), 'exists': root_exists, 'entry_count': len(entries), 'entries': entries[:20], 'total_bytes': total_bytes}))\"",
+    ].join("\n"),
+  );
+  return JSON.parse(stdout || "{}");
+}
+
+function clearHostRusticCache(cliBase, hostId) {
+  runHostSsh(
+    cliBase,
+    hostId,
+    [
+      "set -euo pipefail",
+      'sudo -u cocalc-host -H bash -lc \'cd "$HOME" && mkdir -p "$HOME/.cache/rustic" && find "$HOME/.cache/rustic" -mindepth 1 -maxdepth 1 -exec rm -rf {} +\'',
+    ].join("\n"),
+  );
 }
 
 async function executeLaunchpadBenchmark(options, now = Date.now(), deps = {}) {
@@ -282,6 +499,7 @@ async function executeLaunchpadBenchmark(options, now = Date.now(), deps = {}) {
     dest_project_id: "",
     marker_path: workload.markerPath,
     payload_path: workload.payloadPath ?? null,
+    cache_mode: options.cacheMode,
   };
   const createdProjects = [];
   const cliBase = {
@@ -340,7 +558,7 @@ async function executeLaunchpadBenchmark(options, now = Date.now(), deps = {}) {
           project_id: result.src_project_id,
           dest_host: options.destHost,
         });
-      } else {
+      } else if (options.workflow === "copy-path") {
         result.src_project_id = options.srcProject || "planned-src-project";
         result.dest_project_id = options.destProject || "planned-dest-project";
         pushStep("prepare_workload", {
@@ -352,6 +570,24 @@ async function executeLaunchpadBenchmark(options, now = Date.now(), deps = {}) {
           status: "planned",
           src_project_id: result.src_project_id,
           dest_project_id: result.dest_project_id,
+        });
+      } else {
+        result.src_project_id = options.srcProject || "planned-src-project";
+        result.dest_project_id = options.destProject || "planned-dest-project";
+        pushStep("prepare_workload", {
+          status: "planned",
+          project_id: result.src_project_id,
+          workload: options.workload,
+        });
+        pushStep("create_backup", {
+          status: "planned",
+          project_id: result.src_project_id,
+        });
+        pushStep("run_restore", {
+          status: "planned",
+          src_project_id: result.src_project_id,
+          dest_project_id: result.dest_project_id,
+          cache_mode: options.cacheMode,
         });
       }
       result.ok = true;
@@ -375,13 +611,7 @@ async function executeLaunchpadBenchmark(options, now = Date.now(), deps = {}) {
       }
 
       await timeStep("start_project", () =>
-        runCli(cliBase, [
-          "project",
-          "start",
-          "--project",
-          result.project_id,
-          "--wait",
-        ]),
+        ensureProjectRunning(cliBase, result.project_id),
       );
 
       const prep = await timeStep("prepare_workload", async () =>
@@ -422,6 +652,7 @@ async function executeLaunchpadBenchmark(options, now = Date.now(), deps = {}) {
         ]),
       );
       writeJson(path.join(runDir, "indexed-backups.json"), backups);
+      result.backup_id = selectLatestBackupId(backups);
       result.ok = true;
     } else if (options.workflow === "move") {
       if (!options.srcProject) {
@@ -443,13 +674,7 @@ async function executeLaunchpadBenchmark(options, now = Date.now(), deps = {}) {
       }
 
       await timeStep("start_src_project", () =>
-        runCli(cliBase, [
-          "project",
-          "start",
-          "--project",
-          result.src_project_id,
-          "--wait",
-        ]),
+        ensureProjectRunning(cliBase, result.src_project_id),
       );
 
       const prep = await timeStep("prepare_workload", async () =>
@@ -486,7 +711,7 @@ async function executeLaunchpadBenchmark(options, now = Date.now(), deps = {}) {
       result.move_op_id = move.op_id ?? null;
       verifyProjectPaths(cliBase, result.src_project_id, workload.verifyPaths);
       result.ok = true;
-    } else {
+    } else if (options.workflow === "copy-path") {
       if (!options.srcProject) {
         const created = await timeStep(
           "create_src_project",
@@ -523,22 +748,10 @@ async function executeLaunchpadBenchmark(options, now = Date.now(), deps = {}) {
       }
 
       await timeStep("start_src_project", () =>
-        runCli(cliBase, [
-          "project",
-          "start",
-          "--project",
-          result.src_project_id,
-          "--wait",
-        ]),
+        ensureProjectRunning(cliBase, result.src_project_id),
       );
       await timeStep("start_dest_project", () =>
-        runCli(cliBase, [
-          "project",
-          "start",
-          "--project",
-          result.dest_project_id,
-          "--wait",
-        ]),
+        ensureProjectRunning(cliBase, result.dest_project_id),
       );
 
       const prep = await timeStep("prepare_workload", async () =>
@@ -581,9 +794,230 @@ async function executeLaunchpadBenchmark(options, now = Date.now(), deps = {}) {
         workload.markerPath,
       ]);
       result.ok = true;
+    } else {
+      if (!options.srcProject) {
+        const created = await timeStep(
+          "create_src_project",
+          () => {
+            const args = [
+              "project",
+              "create",
+              "Bug Hunt Benchmark Restore Src",
+            ];
+            if (options.srcHost) {
+              args.push("--host", options.srcHost);
+            }
+            return runCli(cliBase, args);
+          },
+          { host: options.srcHost || null },
+        );
+        result.src_project_id = `${created.project_id ?? ""}`.trim();
+        createdProjects.push(result.src_project_id);
+      } else {
+        result.src_project_id = options.srcProject;
+      }
+
+      await timeStep("start_src_project", () =>
+        ensureProjectRunning(cliBase, result.src_project_id),
+      );
+
+      const prep = await timeStep("prepare_workload", async () =>
+        runProjectExec(
+          cliBase,
+          result.src_project_id,
+          workload.prepareBash,
+          options.seedTimeoutSeconds,
+        ),
+      );
+      writeJson(path.join(runDir, "prepare-workload.json"), prep);
+
+      const inspect = await timeStep("inspect_workload", async () =>
+        runProjectExec(
+          cliBase,
+          result.src_project_id,
+          workload.inspectBash,
+          600,
+        ),
+      );
+      writeJson(path.join(runDir, "inspect-workload.json"), inspect);
+
+      const backup = await timeStep("create_backup", () =>
+        runCli(cliBase, [
+          "project",
+          "backup",
+          "create",
+          "--project",
+          result.src_project_id,
+          "--wait",
+        ]),
+      );
+      result.backup_op_id = backup.op_id ?? null;
+
+      const backupSelection = await timeStep("select_restorable_backup", () =>
+        waitForRestorableBackupId(cliBase, result.src_project_id),
+      );
+      writeJson(
+        path.join(runDir, "indexed-backups.json"),
+        backupSelection.indexed ?? [],
+      );
+      writeJson(
+        path.join(runDir, "direct-backups.json"),
+        backupSelection.direct ?? [],
+      );
+      result.backup_id = backupSelection.id;
+      result.backup_id_source = backupSelection.source;
+
+      result.dest_project_id = options.destProject || result.src_project_id;
+      const destHostId = options.destHost || options.srcHost || null;
+      if (destHostId) {
+        const beforeCache = await timeStep(
+          "inspect_dest_cache_before_restore",
+          () => inspectHostRusticCache(cliBase, destHostId),
+        );
+        writeJson(
+          path.join(runDir, "dest-cache-before-restore.json"),
+          beforeCache,
+        );
+      }
+
+      if (destHostId && options.cacheMode === "cold") {
+        await timeStep("clear_dest_rustic_cache", () => {
+          clearHostRusticCache(cliBase, destHostId);
+        });
+        const afterClear = await timeStep(
+          "inspect_dest_cache_after_clear",
+          () => inspectHostRusticCache(cliBase, destHostId),
+        );
+        writeJson(path.join(runDir, "dest-cache-after-clear.json"), afterClear);
+      }
+
+      await timeStep("prepare_restore_target", async () =>
+        runProjectExec(
+          cliBase,
+          result.dest_project_id,
+          [
+            "set -euo pipefail",
+            `rm -rf ${shellQuote(workload.restoreTargetShellPath)}`,
+            workload.payloadPath
+              ? `mkdir -p ${shellQuote(path.posix.dirname(workload.restoreTargetShellPath))}`
+              : `mkdir -p ${shellQuote(workload.restoreTargetShellPath)}`,
+          ].join("\n"),
+          300,
+        ),
+      );
+
+      if (options.cacheMode === "warm") {
+        await timeStep("warmup_restore", () =>
+          runCli(cliBase, [
+            "project",
+            "backup",
+            "restore",
+            "--project",
+            result.dest_project_id,
+            "--backup-id",
+            result.backup_id,
+            "--path",
+            workload.restoreSourcePath,
+            "--dest",
+            `${workload.restoreTargetPath}-warmup`,
+            "--wait",
+          ]),
+        );
+        await timeStep("cleanup_warmup_restore_target", async () =>
+          runProjectExec(
+            cliBase,
+            result.dest_project_id,
+            `rm -rf ${shellQuote(`${workload.restoreTargetShellPath}-warmup`)}`,
+            300,
+          ),
+        );
+        if (destHostId) {
+          const afterWarmup = await timeStep(
+            "inspect_dest_cache_after_warmup",
+            () => inspectHostRusticCache(cliBase, destHostId),
+          );
+          writeJson(
+            path.join(runDir, "dest-cache-after-warmup.json"),
+            afterWarmup,
+          );
+        }
+      }
+
+      const restored = await timeStep("run_restore", () =>
+        runCli(cliBase, [
+          "project",
+          "backup",
+          "restore",
+          "--project",
+          result.dest_project_id,
+          "--backup-id",
+          result.backup_id,
+          "--path",
+          workload.restoreSourcePath,
+          "--dest",
+          workload.restoreTargetPath,
+          "--wait",
+        ]),
+      );
+      result.restore_op_id = restored.op_id ?? null;
+
+      if (destHostId) {
+        const afterRestore = await timeStep(
+          "inspect_dest_cache_after_restore",
+          () => inspectHostRusticCache(cliBase, destHostId),
+        );
+        writeJson(
+          path.join(runDir, "dest-cache-after-restore.json"),
+          afterRestore,
+        );
+      }
+
+      const restoreVerifyPaths = workload.payloadPath
+        ? [workload.restoreTargetShellPath]
+        : workload.verifyPaths.map((filePath) =>
+            filePath.replace(
+              workload.benchmarkDir,
+              workload.restoreTargetShellPath,
+            ),
+          );
+      verifyProjectPaths(cliBase, result.dest_project_id, restoreVerifyPaths);
+
+      const restoredInspect = await timeStep(
+        "inspect_restored_workload",
+        async () =>
+          runProjectExec(
+            cliBase,
+            result.dest_project_id,
+            [
+              "set -euo pipefail",
+              workload.payloadPath
+                ? `stat -c 'restore_payload_bytes=%s' ${shellQuote(
+                    restoreVerifyPaths[0],
+                  )}`
+                : `stat -c 'restore_marker_bytes=%s' ${shellQuote(
+                    restoreVerifyPaths[0],
+                  )}`,
+              workload.payloadPath
+                ? `sha256sum ${shellQuote(restoreVerifyPaths[0])}`
+                : 'du -sb "$HOME/.local" 2>/dev/null || true',
+            ].join("\n"),
+            600,
+          ),
+      );
+      writeJson(
+        path.join(runDir, "inspect-restored-workload.json"),
+        restoredInspect,
+      );
+
+      if (options.verifyRestoredStart) {
+        await timeStep("start_restored_project", () =>
+          ensureProjectRunning(cliBase, result.dest_project_id),
+        );
+      }
+      result.ok = true;
     }
   } finally {
-    if (options.cleanupOnSuccess && !options.dryRun) {
+    if (options.cleanupOnSuccess && !options.dryRun && result.ok === true) {
       for (const projectId of createdProjects.reverse()) {
         try {
           runCli(cliBase, [
@@ -637,7 +1071,9 @@ async function main(argv = process.argv.slice(2), now = Date.now()) {
 
 module.exports = {
   buildWorkloadSpec,
+  ensureProjectRunning,
   executeLaunchpadBenchmark,
+  getProject,
   main,
   parseArgs,
 };
