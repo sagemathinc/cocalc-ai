@@ -368,7 +368,6 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
     });
 
     await ensureVolume(project_id);
-    await rehydrateAcpAutomations(project_id, "createProject: pre-start");
 
     if (opts.start) {
       // Immediately mark as starting so the master reflects that state while we pull/podman up.
