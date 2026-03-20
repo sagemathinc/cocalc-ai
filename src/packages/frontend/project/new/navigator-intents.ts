@@ -2,6 +2,7 @@ import type { AgentSessionRecord } from "@cocalc/frontend/chat/agent-session-ind
 import { listAgentSessionsForProject } from "@cocalc/frontend/chat/agent-session-index";
 import { redux } from "@cocalc/frontend/app-framework";
 import { getChatActions, initChat } from "@cocalc/frontend/chat/register";
+import { processLLM as processChatLLM } from "@cocalc/frontend/chat/actions/llm";
 import type { CodexThreadConfig } from "@cocalc/chat";
 import { lite } from "@cocalc/frontend/lite";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
@@ -381,16 +382,19 @@ export function dispatchNavigatorPromptIntent(opts: {
   return intent;
 }
 
-export async function stageNavigatorPromptInWorkspaceChat(opts: {
-  project_id: string;
-  prompt: string;
-  visiblePrompt?: string;
-  title?: string;
-  tag?: string;
-  forceCodex?: boolean;
-  codexConfig?: Partial<CodexThreadConfig>;
-  path?: string;
-}): Promise<boolean> {
+async function writeNavigatorPromptInWorkspaceChat(
+  opts: {
+    project_id: string;
+    prompt: string;
+    visiblePrompt?: string;
+    title?: string;
+    tag?: string;
+    forceCodex?: boolean;
+    codexConfig?: Partial<CodexThreadConfig>;
+    path?: string;
+  },
+  submitToAgent: boolean,
+): Promise<boolean> {
   try {
     const project_id = `${opts.project_id ?? ""}`.trim();
     const basePrompt = `${opts.prompt ?? ""}`.trim();
@@ -550,6 +554,23 @@ export async function stageNavigatorPromptInWorkspaceChat(opts: {
     if (typeof actions.syncdb?.save === "function") {
       await actions.syncdb.save();
     }
+    if (submitToAgent) {
+      const message =
+        actions.getMessageByDate?.(timeStamp) ??
+        actions.syncdb?.get_one?.({
+          event: "chat",
+          date: timeStamp,
+          sender_id: account_id,
+        });
+      if (!message) return false;
+      await processChatLLM({
+        actions,
+        message,
+        tag: opts.tag ?? "intent:navigator",
+        threadModel: model ?? null,
+        acpConfigOverride: threadAgentCodexConfig,
+      });
+    }
     setTimeout(() => {
       actions.scrollToIndex?.(Number.MAX_SAFE_INTEGER);
     }, 50);
@@ -557,6 +578,32 @@ export async function stageNavigatorPromptInWorkspaceChat(opts: {
   } catch {
     return false;
   }
+}
+
+export async function stageNavigatorPromptInWorkspaceChat(opts: {
+  project_id: string;
+  prompt: string;
+  visiblePrompt?: string;
+  title?: string;
+  tag?: string;
+  forceCodex?: boolean;
+  codexConfig?: Partial<CodexThreadConfig>;
+  path?: string;
+}): Promise<boolean> {
+  return await writeNavigatorPromptInWorkspaceChat(opts, false);
+}
+
+export async function submitNavigatorPromptInWorkspaceChat(opts: {
+  project_id: string;
+  prompt: string;
+  visiblePrompt?: string;
+  title?: string;
+  tag?: string;
+  forceCodex?: boolean;
+  codexConfig?: Partial<CodexThreadConfig>;
+  path?: string;
+}): Promise<boolean> {
+  return await writeNavigatorPromptInWorkspaceChat(opts, true);
 }
 
 export async function submitNavigatorPromptToCurrentThread(opts: {

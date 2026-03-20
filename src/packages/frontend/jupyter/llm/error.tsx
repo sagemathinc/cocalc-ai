@@ -7,7 +7,7 @@ import { CSSProperties, useMemo, useState } from "react";
 
 import { useFrameContext } from "@cocalc/frontend/frame-editors/frame-tree/frame-context";
 import HelpMeFix from "@cocalc/frontend/frame-editors/llm/help-me-fix";
-import { stageNavigatorPromptInWorkspaceChat } from "@cocalc/frontend/project/new/navigator-intents";
+import { submitNavigatorPromptInWorkspaceChat } from "@cocalc/frontend/project/new/navigator-intents";
 
 const DEFAULT_FIX_WITH_AGENT_MODEL = "gpt-5.4-mini";
 const NOTEBOOK_FIX_VISIBLE_PROMPT =
@@ -63,7 +63,7 @@ export default function LLMError({ style, traceback, input }: Props) {
     setRouting(true);
     setRoutingError("");
     try {
-      const staged = await stageNavigatorPromptInWorkspaceChat({
+      const sent = await submitNavigatorPromptInWorkspaceChat({
         project_id,
         path,
         prompt: intentPrompt,
@@ -73,8 +73,8 @@ export default function LLMError({ style, traceback, input }: Props) {
         forceCodex: true,
         codexConfig: { model: DEFAULT_FIX_WITH_AGENT_MODEL },
       });
-      if (!staged) {
-        throw new Error("Unable to stage the notebook repair request.");
+      if (!sent) {
+        throw new Error("Unable to submit the notebook repair request.");
       }
     } catch (err) {
       setRoutingError(`${err}`);
@@ -94,7 +94,7 @@ export default function LLMError({ style, traceback, input }: Props) {
           Fix with Agent
         </Button>
         <Typography.Text type="secondary">
-          Opens the workspace chat and stages this notebook error for Codex.
+          Opens the workspace chat and submits this notebook error to Codex.
         </Typography.Text>
       </Space>
       <HelpMeFix

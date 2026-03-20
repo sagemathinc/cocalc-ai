@@ -3,6 +3,7 @@
 const mockListSessions = jest.fn();
 const mockGetChatActions = jest.fn();
 const mockInitChat = jest.fn();
+const mockProcessLLM = jest.fn();
 const mockOpenFloating = jest.fn();
 const mockEnsureWorkspaceChatForPath = jest.fn();
 const mockEnsureWorkspaceChatPath = jest.fn();
@@ -17,6 +18,10 @@ jest.mock("@cocalc/frontend/chat/agent-session-index", () => ({
 jest.mock("@cocalc/frontend/chat/register", () => ({
   getChatActions: (...args: any[]) => mockGetChatActions(...args),
   initChat: (...args: any[]) => mockInitChat(...args),
+}));
+
+jest.mock("@cocalc/frontend/chat/actions/llm", () => ({
+  processLLM: (...args: any[]) => mockProcessLLM(...args),
 }));
 
 jest.mock("@cocalc/frontend/project/page/agent-dock-state", () => ({
@@ -59,6 +64,7 @@ import {
   createNavigatorPromptIntent,
   queueNavigatorPromptIntent,
   stageNavigatorPromptInWorkspaceChat,
+  submitNavigatorPromptInWorkspaceChat,
   submitNavigatorPromptToCurrentThread,
   takeQueuedNavigatorPromptIntents,
 } from "./navigator-intents";
@@ -958,5 +964,97 @@ describe("submitNavigatorPromptToCurrentThread", () => {
         skipModelDispatch: true,
       }),
     );
+  });
+
+  it("submits a staged workspace prompt only after saving the chat row", async () => {
+    const workspaceChatPath =
+      "/home/wstein/.local/share/cocalc/workspaces/acct/ws-submit.chat";
+    mockEnsureWorkspaceChatForPath.mockResolvedValue({
+      chat_path: workspaceChatPath,
+      assigned: false,
+      workspace: {
+        workspace_id: "ws-submit",
+        root_path: "/home/wstein/project/submit",
+        theme: {
+          title: "submit",
+          color: null,
+          accent_color: null,
+          icon: null,
+          image_blob: null,
+        },
+      },
+    });
+    mockListSessions.mockResolvedValue([]);
+    const save = jest.fn().mockResolvedValue(undefined);
+    mockProcessLLM.mockResolvedValue(undefined);
+    const timeStamp = "2026-03-20T06:10:00.000Z";
+    const message = {
+      history: [
+        {
+          author_id: "00000000-1000-4000-8000-000000000001",
+          content: "Investigate and fix this Jupyter notebook error.",
+        },
+      ],
+      message_id: "msg-submit",
+      thread_id: "thread-submit",
+    };
+    const sendChat = jest.fn(() => timeStamp);
+    const createEmptyThread = jest.fn(() => "thread-submit");
+    const get_one = jest.fn((where: any) =>
+      where?.event === "chat" && where?.date === timeStamp
+        ? message
+        : undefined,
+    );
+    const actions = {
+      syncdb: { get_state: () => "ready", save, get_one },
+      messageCache: { getThreadIndex: () => new Map() },
+      sendChat,
+      createEmptyThread,
+      getMessageByDate: jest.fn(() => undefined),
+      store: {
+        get: () => undefined,
+      },
+    };
+    mockGetChatActions.mockReturnValue(actions);
+    mockInitChat.mockReturnValue(actions);
+
+    const ok = await submitNavigatorPromptInWorkspaceChat({
+      project_id: "00000000-1000-4000-8000-000000000000",
+      path: "/home/wstein/project/submit/a.ipynb",
+      prompt: "Detailed hidden notebook repair prompt",
+      visiblePrompt: "Investigate and fix this Jupyter notebook error.",
+      title: "Fix notebook error",
+      tag: "intent:notebook-error",
+      forceCodex: true,
+      codexConfig: { model: "gpt-5.4-mini" },
+    });
+
+    expect(ok).toBe(true);
+    expect(sendChat).toHaveBeenCalledWith(
+      expect.objectContaining({
+        input: "Investigate and fix this Jupyter notebook error.",
+        skipModelDispatch: true,
+      }),
+    );
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(get_one).toHaveBeenCalledWith({
+      event: "chat",
+      date: timeStamp,
+      sender_id: "00000000-1000-4000-8000-000000000001",
+    });
+    expect(mockProcessLLM).toHaveBeenCalledWith({
+      actions,
+      message,
+      tag: "intent:notebook-error",
+      threadModel: "gpt-5.4-mini",
+      acpConfigOverride: expect.objectContaining({
+        model: "gpt-5.4-mini",
+        workingDirectory: "/home/wstein/project/submit",
+      }),
+    });
+    expect(save.mock.invocationCallOrder[0]).toBeLessThan(
+      mockProcessLLM.mock.invocationCallOrder[0],
+    );
+    expect(mockOpenFloating).not.toHaveBeenCalled();
   });
 });
