@@ -660,14 +660,20 @@ export class JupyterActions extends JupyterActions0 {
       return;
     }
     const snapshots = Object.values(this.liveRunStore.getAll())
-      .filter(
-        (snapshot) =>
+      .filter((snapshot) => {
+        const runId = `${snapshot?.run_id ?? ""}`.trim();
+        const needsCompletionReplay =
+          runId !== "" &&
+          (this.liveRunBatchOrder.has(runId) ||
+            this.liveRunContexts.has(runId));
+        return (
           snapshot?.path === this.liveRunPath &&
-          snapshot?.done !== true &&
-          !this.hasCompletedLiveRunId(`${snapshot?.run_id ?? ""}`) &&
+          !this.hasCompletedLiveRunId(runId) &&
           typeof snapshot?.run_id === "string" &&
-          Array.isArray(snapshot?.batches),
-      )
+          Array.isArray(snapshot?.batches) &&
+          (snapshot?.done !== true || needsCompletionReplay)
+        );
+      })
       .sort((a, b) => a.updated_at_ms - b.updated_at_ms);
     for (const snapshot of snapshots) {
       const batches = [...snapshot.batches].sort(
