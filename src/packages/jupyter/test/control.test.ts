@@ -133,6 +133,7 @@ describe("MulticellOutputHandler", () => {
       set_runtime_cell_state: jest.fn(),
       _set: jest.fn(),
       processOutput: jest.fn(),
+      save_asap: jest.fn(),
     };
     const handler = new MulticellOutputHandler(
       {
@@ -157,8 +158,9 @@ describe("MulticellOutputHandler", () => {
         output: null,
         exec_count: null,
       },
-      false,
+      true,
     );
+    expect(actions.save_asap).toHaveBeenCalledTimes(1);
   });
 
   it("keeps fallback output local until terminal flush", () => {
@@ -166,6 +168,7 @@ describe("MulticellOutputHandler", () => {
       set_runtime_cell_state: jest.fn(),
       _set: jest.fn(),
       processOutput: jest.fn(),
+      save_asap: jest.fn(),
     };
     const handler = new MulticellOutputHandler(
       { a: { id: "a" } } as any,
@@ -184,7 +187,10 @@ describe("MulticellOutputHandler", () => {
     handler.done();
 
     expect(actions._set).toHaveBeenCalled();
-    expect(actions._set.mock.calls[0][1]).toBe(false);
+    expect(actions._set.mock.calls[0][1]).toBe(true);
+    expect(actions._set.mock.calls.some((call) => call[1] === false)).toBe(
+      true,
+    );
     expect(actions._set.mock.calls.at(-1)?.[1]).toBe(true);
   });
 });

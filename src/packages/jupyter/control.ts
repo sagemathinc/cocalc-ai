@@ -242,6 +242,7 @@ export class MulticellOutputHandler {
     if (mesg.id !== this.id || this.handler == null) {
       this.id = mesg.id;
       let cell = this.cells[mesg.id] ?? { id: mesg.id };
+      const hadStaleOutput = cell.output != null || cell.exec_count != null;
       this.handler?.done();
       this.handler = new OutputHandler({ cell });
       const writeCell = (save: boolean) => {
@@ -249,6 +250,7 @@ export class MulticellOutputHandler {
         this.actions.set_runtime_cell_state(id, { state, start, end });
         this.actions._set({ type: "cell", id, output, exec_count }, save);
       };
+      let wroteInitialState = false;
       const f = throttle(
         () => {
           writeCell(false);
@@ -261,7 +263,17 @@ export class MulticellOutputHandler {
       );
       this.flush = () => f.flush();
       this.writeFinal = () => writeCell(true);
-      this.handler.on("change", f);
+      this.handler.on("change", () => {
+        if (!wroteInitialState) {
+          wroteInitialState = true;
+          writeCell(true);
+          if (hadStaleOutput) {
+            void this.actions.save_asap?.();
+          }
+          return;
+        }
+        f();
+      });
       this.handler.on("done", () => {
         this.flush?.();
         this.writeFinal?.();
