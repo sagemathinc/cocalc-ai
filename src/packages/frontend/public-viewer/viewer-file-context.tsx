@@ -27,7 +27,11 @@ export function buildViewerFileContext({
   rawUrl: string;
   fileContext?: IFileContext;
 }): IFileContext {
-  const defaults: IFileContext = { noSanitize: false };
+  // Public viewer pages are served from the dedicated raw/public origin, so we
+  // intentionally render them in the trusted mode instead of re-sanitizing
+  // markdown/HTML output. This is what allows notebook HTML output, embedded
+  // markdown HTML, etc. to behave like the underlying document expects.
+  const defaults: IFileContext = { noSanitize: true };
   if (typeof window === "undefined") {
     return { ...defaults, ...fileContext };
   }

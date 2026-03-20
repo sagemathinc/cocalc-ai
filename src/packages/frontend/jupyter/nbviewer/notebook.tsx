@@ -36,7 +36,7 @@ export default function Notebook({
   }
 
   return (
-    <JupyterContext.Provider value={{ kernelspec }}>
+    <JupyterContext.Provider value={{ kernelspec, trust: true }}>
       <div ref={ref} style={style}>
         <div style={{ margin: "15px", textAlign: "right" }}>
           <b>Kernel:</b> {kernelspec.display_name}
