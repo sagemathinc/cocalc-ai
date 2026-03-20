@@ -172,6 +172,9 @@ test("Fix with Agent opens workspace chat and submits in place", async ({
   await expect(page.getByText("Fix notebook error").first()).toBeVisible({
     timeout: 12_000,
   });
+  await expect(page.locator(".cc-agent-dock-handle")).toHaveCount(1, {
+    timeout: 12_000,
+  });
   await expect
     .poll(
       async () => {
@@ -224,5 +227,4 @@ test("Fix with Agent opens workspace chat and submits in place", async ({
         "Investigate and fix this Jupyter notebook error.",
   );
   expect(`${finalUserRow?.thread_id ?? ""}`.trim()).not.toBe("");
-  await expect(page.locator(".cc-agent-dock-handle")).toHaveCount(0);
 });

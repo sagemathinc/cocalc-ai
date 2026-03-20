@@ -1027,6 +1027,7 @@ describe("submitNavigatorPromptToCurrentThread", () => {
       tag: "intent:notebook-error",
       forceCodex: true,
       codexConfig: { model: "gpt-5.4-mini" },
+      openFloating: true,
     });
 
     expect(ok).toBe(true);
@@ -1055,6 +1056,25 @@ describe("submitNavigatorPromptToCurrentThread", () => {
     expect(save.mock.invocationCallOrder[0]).toBeLessThan(
       mockProcessLLM.mock.invocationCallOrder[0],
     );
-    expect(mockOpenFloating).not.toHaveBeenCalled();
+    expect(mockOpenFloating).toHaveBeenCalledWith(
+      "00000000-1000-4000-8000-000000000000",
+      expect.objectContaining({
+        session_id: "thread-submit",
+        thread_key: "thread-submit",
+        title: "Fix notebook error",
+        model: "gpt-5.4-mini",
+        working_directory: "/home/wstein/project/submit",
+      }),
+      {
+        workspaceId: "ws-submit",
+        workspaceOnly: true,
+      },
+    );
+    expect(save.mock.invocationCallOrder[0]).toBeLessThan(
+      mockOpenFloating.mock.invocationCallOrder[0],
+    );
+    expect(mockOpenFloating.mock.invocationCallOrder[0]).toBeLessThan(
+      mockProcessLLM.mock.invocationCallOrder[0],
+    );
   });
 });

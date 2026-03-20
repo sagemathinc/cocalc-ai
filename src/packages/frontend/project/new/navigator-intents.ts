@@ -392,6 +392,7 @@ async function writeNavigatorPromptInWorkspaceChat(
     forceCodex?: boolean;
     codexConfig?: Partial<CodexThreadConfig>;
     path?: string;
+    openFloating?: boolean;
   },
   submitToAgent: boolean,
 ): Promise<boolean> {
@@ -554,6 +555,30 @@ async function writeNavigatorPromptInWorkspaceChat(
     if (typeof actions.syncdb?.save === "function") {
       await actions.syncdb.save();
     }
+    if (opts.openFloating === true && nextThreadKey) {
+      openFloatingAgentSession(
+        project_id,
+        {
+          ...session,
+          session_id: nextThreadKey,
+          title:
+            messageThreadTitle ??
+            requestedTitle ??
+            session.title ??
+            workspaceTarget.workspace.theme.title?.trim() ??
+            "Navigator",
+          thread_key: nextThreadKey,
+          updated_at: new Date().toISOString(),
+          status: "active",
+          model,
+          working_directory: session.working_directory,
+        },
+        {
+          workspaceId: workspaceTarget.workspace.workspace_id,
+          workspaceOnly: true,
+        },
+      );
+    }
     if (submitToAgent) {
       const message =
         actions.getMessageByDate?.(timeStamp) ??
@@ -589,6 +614,7 @@ export async function stageNavigatorPromptInWorkspaceChat(opts: {
   forceCodex?: boolean;
   codexConfig?: Partial<CodexThreadConfig>;
   path?: string;
+  openFloating?: boolean;
 }): Promise<boolean> {
   return await writeNavigatorPromptInWorkspaceChat(opts, false);
 }
@@ -602,6 +628,7 @@ export async function submitNavigatorPromptInWorkspaceChat(opts: {
   forceCodex?: boolean;
   codexConfig?: Partial<CodexThreadConfig>;
   path?: string;
+  openFloating?: boolean;
 }): Promise<boolean> {
   return await writeNavigatorPromptInWorkspaceChat(opts, true);
 }

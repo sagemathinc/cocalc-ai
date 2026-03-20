@@ -72,6 +72,7 @@ export default function LLMError({ style, traceback, input }: Props) {
         tag: "intent:notebook-error",
         forceCodex: true,
         codexConfig: { model: DEFAULT_FIX_WITH_AGENT_MODEL },
+        openFloating: true,
       });
       if (!sent) {
         throw new Error("Unable to submit the notebook repair request.");
@@ -94,7 +95,8 @@ export default function LLMError({ style, traceback, input }: Props) {
           Fix with Agent
         </Button>
         <Typography.Text type="secondary">
-          Opens the workspace chat and submits this notebook error to Codex.
+          Opens the workspace chat, mirrors it in the floating agent, and
+          submits this notebook error to Codex.
         </Typography.Text>
       </Space>
       <HelpMeFix
