@@ -45,6 +45,22 @@ describe("jupyter run cell overlay helpers", () => {
     expect(getDisplayedCellExecCount(cell, overlay)).toBe(12);
   });
 
+  it("can clear stale output locally without clearing the prompt", () => {
+    const cell = fromJS({
+      id: "c1",
+      exec_count: 13,
+      output: {
+        0: { text: "old" },
+      },
+    });
+    const overlay = fromJS({
+      output: null,
+    });
+
+    expect(getDisplayedCellOutput(cell, overlay)).toBeNull();
+    expect(getDisplayedCellExecCount(cell, overlay)).toBe(13);
+  });
+
   it("clears the local overlay once durable cell state catches up", () => {
     const overlay = fromJS({
       exec_count: 9,

@@ -128,6 +128,39 @@ describe("restoreKernelFromIpynb", () => {
 });
 
 describe("MulticellOutputHandler", () => {
+  it("clears durable stale output as soon as a cell starts running", () => {
+    const actions = {
+      set_runtime_cell_state: jest.fn(),
+      _set: jest.fn(),
+      processOutput: jest.fn(),
+    };
+    const handler = new MulticellOutputHandler(
+      {
+        a: {
+          id: "a",
+          exec_count: 17,
+          output: { 0: { text: "old output" } },
+        },
+      } as any,
+      actions,
+    );
+
+    handler.process({
+      id: "a",
+      content: { execution_state: "busy" },
+    });
+
+    expect(actions._set).toHaveBeenCalledWith(
+      {
+        type: "cell",
+        id: "a",
+        output: null,
+        exec_count: null,
+      },
+      false,
+    );
+  });
+
   it("keeps fallback output local until terminal flush", () => {
     const actions = {
       set_runtime_cell_state: jest.fn(),

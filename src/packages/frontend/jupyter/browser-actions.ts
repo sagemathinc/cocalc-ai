@@ -68,6 +68,7 @@ import {
 } from "@cocalc/conat/project/jupyter/run-code";
 import {
   canonicalJupyterLiveRunPath,
+  jupyterLiveRunKey,
   openJupyterLiveRunStore,
   jupyterLiveRunSubject,
   type JupyterLiveRunBatch,
@@ -104,6 +105,7 @@ import { doesPersistentCellSatisfyRunCellOverlay } from "./run-cell-overlay";
 import {
   createRunBatchOrderState,
   enqueueRunBatch,
+  hasRunBatchGap,
   parseRunBatchSeq,
   type RunBatchOrderState,
 } from "./run-batch-order";
@@ -119,6 +121,7 @@ const WATCH_RECREATE_WAIT = 3000;
 
 type LiveRunRenderContext = {
   handlers: globalThis.Map<string, OutputHandler>;
+  cellIds: Set<string>;
   finalizedCells: Set<string>;
   getHandlerForId: (id: string) => OutputHandler;
   finalizeHandler: (
@@ -159,6 +162,7 @@ export class JupyterActions extends JupyterActions0 {
   private workspaceRecordsChange?: EventListener;
   private liveRunSub?: any;
   private liveRunStore?: {
+    get: (key: string) => JupyterLiveRunSnapshot | undefined;
     getAll: () => Record<string, JupyterLiveRunSnapshot>;
     close?: () => void;
   };
@@ -170,8 +174,18 @@ export class JupyterActions extends JupyterActions0 {
   >();
   private liveRunReplayPending = false;
   private liveRunReplayBuffer: JupyterLiveRunBatch[] = [];
+  private liveRunGapRepairs = new globalThis.Map<
+    string,
+    {
+      timeout?: ReturnType<typeof setTimeout>;
+      startedAtMs: number;
+      nextExpectedSeq: number;
+      attempts: number;
+    }
+  >();
   private ignoredLiveRunIds = new globalThis.Map<string, number>();
   private liveRunReplayPoll?: ReturnType<typeof setInterval>;
+  private kernelStatusRefreshTimeout?: ReturnType<typeof setTimeout>;
   private completedLiveRunIds = new globalThis.Map<string, number>();
   private reconcileRunCellOverlay = (id: string, newCell: Map<string, any>) => {
     const overlays = this.store?.get("runCellOverlays") as
@@ -239,6 +253,20 @@ export class JupyterActions extends JupyterActions0 {
       return;
     }
     this.store.setState({ runCellOverlays: Map() });
+  };
+
+  private scheduleKernelStatusRefresh = (delayMs: number = 150): void => {
+    if (this.isClosed() || this.kernelStatusRefreshTimeout != null) {
+      return;
+    }
+    this.kernelStatusRefreshTimeout = setTimeout(() => {
+      this.kernelStatusRefreshTimeout = undefined;
+      void this.refreshKernelStatus().catch((err) => {
+        if (!this.isClosed()) {
+          console.warn("failed to refresh kernel status after live run", err);
+        }
+      });
+    }, delayMs);
   };
 
   private resolveRunDebugMode = (): "off" | "on" | "json" => {
@@ -446,21 +474,186 @@ export class JupyterActions extends JupyterActions0 {
     return true;
   };
 
+  private clearLiveRunGapRepair = (runId: string) => {
+    const state = this.liveRunGapRepairs.get(runId);
+    if (state?.timeout != null) {
+      clearTimeout(state.timeout);
+    }
+    this.liveRunGapRepairs.delete(runId);
+  };
+
+  private scheduleLiveRunGapRepair = (
+    runId: string,
+    nextExpectedSeq: number,
+    delayMs: number = 200,
+  ) => {
+    if (
+      !runId ||
+      this.isClosed() ||
+      this.hasCompletedLiveRunId(runId) ||
+      this.shouldIgnoreLiveRunId(runId)
+    ) {
+      this.clearLiveRunGapRepair(runId);
+      return;
+    }
+    let state = this.liveRunGapRepairs.get(runId);
+    if (state == null || state.nextExpectedSeq !== nextExpectedSeq) {
+      if (state?.timeout != null) {
+        clearTimeout(state.timeout);
+      }
+      state = {
+        startedAtMs: Date.now(),
+        nextExpectedSeq,
+        attempts: 0,
+      };
+      this.liveRunGapRepairs.set(runId, state);
+    }
+    if (state.timeout != null) {
+      return;
+    }
+    state.timeout = setTimeout(() => {
+      const current = this.liveRunGapRepairs.get(runId);
+      if (current != null) {
+        current.timeout = undefined;
+      }
+      void this.repairLiveRunGap(runId).catch((err) => {
+        if (!this.isClosed()) {
+          console.warn("failed to repair jupyter live run gap", err);
+        }
+      });
+    }, delayMs);
+  };
+
+  private repairLiveRunGap = async (runId: string): Promise<void> => {
+    if (
+      this.isClosed() ||
+      this.hasCompletedLiveRunId(runId) ||
+      this.shouldIgnoreLiveRunId(runId)
+    ) {
+      this.clearLiveRunGapRepair(runId);
+      return;
+    }
+    const order = this.liveRunBatchOrder.get(runId);
+    if (order == null || order.pending.size === 0) {
+      this.clearLiveRunGapRepair(runId);
+      return;
+    }
+    if (this.liveRunStore == null) {
+      this.liveRunStore = await openJupyterLiveRunStore({
+        client: webapp_client.conat_client,
+        project_id: this.project_id,
+      });
+    }
+    if (this.isClosed()) {
+      return;
+    }
+    const snapshot = this.liveRunStore.get(
+      jupyterLiveRunKey({ path: this.liveRunPath, run_id: runId }),
+    );
+    if (
+      snapshot?.path === this.liveRunPath &&
+      Array.isArray(snapshot?.batches)
+    ) {
+      const batches = [...snapshot.batches].sort(
+        (a, b) =>
+          Number.parseInt(`${a.seq ?? 0}`, 10) -
+          Number.parseInt(`${b.seq ?? 0}`, 10),
+      );
+      this.runDebug("liveRun.gap.repair.snapshot", {
+        runId,
+        batches: batches.length,
+        done: snapshot.done === true,
+        nextExpectedSeq: order.nextSeq,
+        pending: order.pending.size,
+      });
+      for (const batch of batches) {
+        this.processSharedLiveRunBatch(batch, "replay");
+      }
+    }
+    const nextOrder = this.liveRunBatchOrder.get(runId);
+    if (
+      nextOrder == null ||
+      nextOrder.pending.size === 0 ||
+      !this.liveRunContexts.has(runId)
+    ) {
+      this.clearLiveRunGapRepair(runId);
+      if (snapshot?.done === true) {
+        this.scheduleKernelStatusRefresh();
+      }
+      return;
+    }
+    const state = this.liveRunGapRepairs.get(runId);
+    if (snapshot?.done === true) {
+      this.runDebug("liveRun.gap.repair.force_persistent", {
+        runId,
+        nextExpectedSeq: nextOrder.nextSeq,
+        pending: nextOrder.pending.size,
+      });
+      this.closeLiveRunContext(runId, "run_done", {
+        preferPersistent: true,
+        refreshKernelStatus: true,
+      });
+      this.clearLiveRunGapRepair(runId);
+      return;
+    }
+    if (state != null) {
+      state.attempts += 1;
+      const gapAgeMs = Math.max(0, Date.now() - state.startedAtMs);
+      if (gapAgeMs >= 1500) {
+        await this.refreshKernelStatus().catch(() => {});
+        const backendState = this.get_runtime_setting("backend_state");
+        const kernelState = this.get_runtime_setting("kernel_state");
+        if (backendState !== "running" || kernelState === "idle") {
+          this.runDebug("liveRun.gap.repair.idle_force_persistent", {
+            runId,
+            gapAgeMs,
+            backendState,
+            kernelState,
+            nextExpectedSeq: nextOrder.nextSeq,
+            pending: nextOrder.pending.size,
+          });
+          this.closeLiveRunContext(runId, "stream_end", {
+            preferPersistent: true,
+            refreshKernelStatus: false,
+          });
+          this.clearLiveRunGapRepair(runId);
+          return;
+        }
+      }
+    }
+    this.scheduleLiveRunGapRepair(runId, nextOrder.nextSeq, 250);
+  };
+
   private closeLiveRunContext = (
     runId: string,
     reason: "cell_done" | "run_done" | "stream_end",
+    opts: { preferPersistent?: boolean; refreshKernelStatus?: boolean } = {},
   ) => {
     const ctx = this.liveRunContexts.get(runId);
     if (ctx == null) {
+      this.clearLiveRunGapRepair(runId);
+      if (opts.refreshKernelStatus) {
+        this.scheduleKernelStatusRefresh();
+      }
       return;
     }
+    const cellIds = Array.from(ctx.cellIds);
     for (const id of Array.from(ctx.handlers.keys())) {
       ctx.finalizeHandler(id, reason);
+    }
+    if (opts.preferPersistent) {
+      for (const id of cellIds) {
+        this.clearRunCellOverlay(id);
+      }
     }
     this.rememberCompletedLiveRunId(runId);
     this.liveRunContexts.delete(runId);
     this.liveRunSeenSeq.delete(runId);
     this.liveRunBatchOrder.delete(runId);
+    this.clearLiveRunGapRepair(runId);
+    if (opts.refreshKernelStatus) {
+      this.scheduleKernelStatusRefresh();
+    }
   };
 
   private getLiveRunBatchOrder = (
@@ -479,12 +672,14 @@ export class JupyterActions extends JupyterActions0 {
     opts: { persistFinal: boolean; source: "local" | "remote" },
   ): LiveRunRenderContext => {
     const handlers = new globalThis.Map<string, OutputHandler>();
+    const cellIds = new Set<string>();
     const finalizedCells = new Set<string>();
     const getHandlerForId = (id: string): OutputHandler => {
       const existing = handlers.get(id);
       if (existing != null) {
         return existing;
       }
+      cellIds.add(id);
       if (opts.source === "remote") {
         this.reset_more_output(id);
       }
@@ -527,7 +722,13 @@ export class JupyterActions extends JupyterActions0 {
         remainingHandlers: handlers.size,
       });
     };
-    return { handlers, finalizedCells, getHandlerForId, finalizeHandler };
+    return {
+      handlers,
+      cellIds,
+      finalizedCells,
+      getHandlerForId,
+      finalizeHandler,
+    };
   };
 
   private processOrderedSharedLiveRunBatch = (
@@ -605,7 +806,9 @@ export class JupyterActions extends JupyterActions0 {
       handler.process(mesg);
     }
     if (sawRunDone) {
-      this.closeLiveRunContext(runId, "run_done");
+      this.closeLiveRunContext(runId, "run_done", {
+        refreshKernelStatus: true,
+      });
     }
   };
 
@@ -629,21 +832,30 @@ export class JupyterActions extends JupyterActions0 {
     const batchId = `${batch?.id ?? ""}`.trim();
     const batchSeq = parseRunBatchSeq(batch);
     const order = this.getLiveRunBatchOrder(runId);
+    const gapDetected = hasRunBatchGap(order, batch);
     const ready = enqueueRunBatch(order, batch);
     if (ready.length === 0) {
-      this.runDebug("liveRun.batch.buffer.waiting_for_gap", {
-        runId,
-        source,
-        batchId,
-        seq: batchSeq,
-        nextExpectedSeq: order.nextSeq,
-        pending: order.pending.size,
-      });
+      if (gapDetected || order.pending.size > 0) {
+        this.runDebug("liveRun.batch.buffer.waiting_for_gap", {
+          runId,
+          source,
+          batchId,
+          seq: batchSeq,
+          nextExpectedSeq: order.nextSeq,
+          pending: order.pending.size,
+        });
+        this.scheduleLiveRunGapRepair(runId, order.nextSeq);
+      }
       return;
     }
     for (const nextBatch of ready) {
       this.processOrderedSharedLiveRunBatch(nextBatch, source);
     }
+    if (order.pending.size === 0) {
+      this.clearLiveRunGapRepair(runId);
+      return;
+    }
+    this.scheduleLiveRunGapRepair(runId, order.nextSeq);
   };
 
   private replaySharedLiveRuns = async (): Promise<void> => {
@@ -1138,6 +1350,10 @@ export class JupyterActions extends JupyterActions0 {
         clearInterval(this.liveRunReplayPoll);
         this.liveRunReplayPoll = undefined;
       }
+      if (this.kernelStatusRefreshTimeout != null) {
+        clearTimeout(this.kernelStatusRefreshTimeout);
+        this.kernelStatusRefreshTimeout = undefined;
+      }
       this.liveRunStore?.close?.();
       this.liveRunStore = undefined;
       this.liveRunContexts.clear();
@@ -1145,6 +1361,12 @@ export class JupyterActions extends JupyterActions0 {
       this.liveRunBatchOrder.clear();
       this.liveRunReplayPending = false;
       this.liveRunReplayBuffer = [];
+      for (const state of this.liveRunGapRepairs.values()) {
+        if (state.timeout != null) {
+          clearTimeout(state.timeout);
+        }
+      }
+      this.liveRunGapRepairs.clear();
       this.ignoredLiveRunIds.clear();
       this.completedLiveRunIds.clear();
       this.clearAllRunCellOverlays();
@@ -2273,7 +2495,12 @@ export class JupyterActions extends JupyterActions0 {
       const { id, state, output, start, end, exec_count } = cell;
       this.set_runtime_cell_state(id, { state, start, end });
       const patch: { output?: any; exec_count?: number | null } = {};
-      if (output != null || wroteFirstVisibleChange) {
+      if (
+        output != null ||
+        wroteFirstVisibleChange ||
+        state === "run" ||
+        state === "busy"
+      ) {
         patch.output = output ?? null;
       }
       if (exec_count != null) {

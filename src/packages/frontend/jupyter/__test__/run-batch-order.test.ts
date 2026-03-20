@@ -1,4 +1,8 @@
-import { createRunBatchOrderState, enqueueRunBatch } from "../run-batch-order";
+import {
+  createRunBatchOrderState,
+  enqueueRunBatch,
+  hasRunBatchGap,
+} from "../run-batch-order";
 
 describe("jupyter live-run batch ordering", () => {
   it("emits in-order batches immediately", () => {
@@ -58,5 +62,18 @@ describe("jupyter live-run batch ordering", () => {
       { id: "r1:2", seq: 2 },
     ]);
     expect(enqueueRunBatch(state, { id: "r1:1b", seq: 1 })).toEqual([]);
+  });
+
+  it("only marks future seq numbers as gaps", () => {
+    const state = createRunBatchOrderState<{
+      id: string;
+      seq: number;
+    }>();
+    expect(hasRunBatchGap(state, { id: "r1:1", seq: 1 })).toBe(false);
+    expect(hasRunBatchGap(state, { id: "r1:2", seq: 2 })).toBe(true);
+    enqueueRunBatch(state, { id: "r1:1", seq: 1 });
+    expect(hasRunBatchGap(state, { id: "r1:1b", seq: 1 })).toBe(false);
+    expect(hasRunBatchGap(state, { id: "r1:2", seq: 2 })).toBe(false);
+    expect(hasRunBatchGap(state, { id: "r1:4", seq: 4 })).toBe(true);
   });
 });

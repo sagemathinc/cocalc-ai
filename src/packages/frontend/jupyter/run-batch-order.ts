@@ -30,6 +30,14 @@ export function parseRunBatchSeq(batch: SequencedRunBatch): number | null {
   return seq;
 }
 
+export function hasRunBatchGap<T extends SequencedRunBatch>(
+  state: RunBatchOrderState<T>,
+  batch: T,
+): boolean {
+  const seq = parseRunBatchSeq(batch);
+  return seq != null && seq > state.nextSeq;
+}
+
 export function enqueueRunBatch<T extends SequencedRunBatch>(
   state: RunBatchOrderState<T>,
   batch: T,
