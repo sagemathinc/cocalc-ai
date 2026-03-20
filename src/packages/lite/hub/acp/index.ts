@@ -4475,6 +4475,11 @@ function resolveCodexApiUrl({
     return `http://host.containers.internal:${port || "9100"}`;
   }
 
+  const browserLocal = normalizeApiUrl(browserOrigin, {
+    rewriteLoopbackHost: false,
+  });
+  if (browserLocal) return browserLocal;
+
   const explicitLocal = normalizeApiUrl(explicit, {
     rewriteLoopbackHost: false,
   });

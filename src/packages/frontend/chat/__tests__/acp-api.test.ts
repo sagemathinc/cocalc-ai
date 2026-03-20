@@ -279,6 +279,9 @@ describe("processAcpLLM", () => {
     expect(arg.chat.message_id).not.toBe("user-msg-1");
     expect(arg.chat.thread_id).toBe("thread-1");
     expect(arg.chat.parent_message_id).toBe("user-msg-1");
+    expect(arg.chat.user_message_date).toBe(new Date(1000).toISOString());
+    expect(arg.chat.user_message_content).toBe("run codex");
+    expect(arg.chat.user_parent_message_id).toBeUndefined();
     expect(arg.chat.reply_to_message_id).toBeUndefined();
     expect(arg.session_id).toBe("thread-1");
   });

@@ -107,6 +107,9 @@ export interface AcpChatContext {
   path: string;
   message_date: string;
   sender_id: string;
+  user_message_date?: string;
+  user_message_content?: string;
+  user_parent_message_id?: string;
   started_at_ms?: number;
   // Browser-visible API origin for this chat turn (e.g. https://host:port).
   api_url?: string;

@@ -146,10 +146,9 @@ test("Fix with Agent opens floating navigator and sends prompt in-place", async 
   expect(Date.now() - clickStarted).toBeLessThan(12_000);
   await expect(page).toHaveURL(/\/projects\/[^/]+\/files\//);
   const dock = page.locator("[data-selected-thread-key]").first();
-  await expect(dock.getByRole("button", { name: "Codex" })).toBeVisible({
-    timeout: 20_000,
-  });
-  await expect(dock.getByText(/gpt-5\.4-mini/).first()).toBeVisible({
+  await expect(
+    dock.getByText(/Codex Agent \(gpt-5\.4-mini\)/).first(),
+  ).toBeVisible({
     timeout: 20_000,
   });
   await expect(

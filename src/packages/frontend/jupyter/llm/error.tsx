@@ -13,6 +13,8 @@ import {
 } from "@cocalc/frontend/project/new/navigator-intents";
 
 const DEFAULT_FIX_WITH_AGENT_MODEL = "gpt-5.4-mini";
+const NOTEBOOK_FIX_VISIBLE_PROMPT =
+  "Investigate and fix this Jupyter notebook error.";
 
 interface Props {
   style?: CSSProperties;
@@ -68,6 +70,8 @@ export default function LLMError({ style, traceback, input }: Props) {
         project_id,
         path,
         prompt: intentPrompt,
+        visiblePrompt: NOTEBOOK_FIX_VISIBLE_PROMPT,
+        title: "Fix notebook error",
         tag: "intent:notebook-error",
         forceCodex: true,
         openFloating: true,
@@ -76,6 +80,8 @@ export default function LLMError({ style, traceback, input }: Props) {
       if (!sent) {
         dispatchNavigatorPromptIntent({
           prompt: intentPrompt,
+          visiblePrompt: NOTEBOOK_FIX_VISIBLE_PROMPT,
+          title: "Fix notebook error",
           tag: "intent:notebook-error",
           forceCodex: true,
           codexConfig: { model: DEFAULT_FIX_WITH_AGENT_MODEL },

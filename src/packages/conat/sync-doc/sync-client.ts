@@ -45,17 +45,25 @@ export class SyncClient extends EventEmitter implements Client0 {
     return this.client.isSignedIn();
   };
 
+  private accountId = (): string => {
+    const user = this.client.info?.user;
+    return (
+      user?.account_id ?? user?.project_id ?? user?.hub_id ?? this.client.id
+    );
+  };
+
   touch_project = async (project_id): Promise<void> => {
     const client = this.client;
+    const account_id = this.accountId();
     if (client == null || !client.isConnected()) {
       return;
     }
     try {
       await callHub({
         client,
-        account_id: this.client_id(),
+        account_id,
         name: "db.touch",
-        args: [{ project_id, account_id: this.client_id() }],
+        args: [{ project_id, account_id }],
       });
     } catch (err) {
       const code = (err as any)?.code;
@@ -90,12 +98,9 @@ export class SyncClient extends EventEmitter implements Client0 {
     return new PubSub({ client: this.client, ...opts });
   };
 
-  // account_id or project_id or hub_id or fallback client.id
+  // Unique sync-session identity for this client connection.
   client_id = (): string => {
-    const user = this.client.info?.user;
-    return (
-      user?.account_id ?? user?.project_id ?? user?.hub_id ?? this.client.id
-    );
+    return this.client.id;
   };
 
   server_time = (): Date => {

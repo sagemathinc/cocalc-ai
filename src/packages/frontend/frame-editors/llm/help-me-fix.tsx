@@ -24,6 +24,12 @@ import {
 
 const DEFAULT_HELP_ME_FIX_AGENT_MODEL = "gpt-5.4-mini";
 
+function getVisibleHelpPrompt(mode: "solution" | "hint"): string {
+  return mode === "hint"
+    ? "Diagnose this problem and give me a hint."
+    : "Diagnose this problem and fix it.";
+}
+
 // Re-export getHelp for backward compatibility
 export { getHelp } from "./help-me-fix-utils";
 
@@ -178,6 +184,8 @@ export default function HelpMeFix({
         project_id,
         path,
         prompt,
+        visiblePrompt: getVisibleHelpPrompt(mode),
+        title: mode === "hint" ? "Get debugging hint" : "Fix problem",
         tag: `intent:error-fix:${tagSuffix}`,
         forceCodex: true,
         openFloating: true,
@@ -186,6 +194,8 @@ export default function HelpMeFix({
       if (!sent) {
         dispatchNavigatorPromptIntent({
           prompt,
+          visiblePrompt: getVisibleHelpPrompt(mode),
+          title: mode === "hint" ? "Get debugging hint" : "Fix problem",
           tag: `intent:error-fix:${tagSuffix}`,
           forceCodex: true,
           codexConfig: { model: DEFAULT_HELP_ME_FIX_AGENT_MODEL },

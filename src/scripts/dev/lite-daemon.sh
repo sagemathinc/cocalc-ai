@@ -54,6 +54,8 @@ load_config() {
   LITE_STDOUT_LOG="${LITE_STDOUT_LOG:-$STATE_DIR/lite.stdout.log}"
   LITE_APP_DATA_DIR="${LITE_APP_DATA_DIR:-$app_data_default}"
   LITE_DB_PATH="${LITE_DB_PATH:-$LITE_APP_DATA_DIR/hub.db}"
+  LITE_MAIN_LOG="${LITE_MAIN_LOG:-$LITE_APP_DATA_DIR/logs/log}"
+  LITE_ACP_WORKER_LOG="${LITE_ACP_WORKER_LOG:-$LITE_APP_DATA_DIR/logs/acp-worker.log}"
 }
 
 resolve_node_bin() {
@@ -161,10 +163,9 @@ start_daemon() {
   mkdir -p "$(dirname "$LITE_STDOUT_LOG")"
   mkdir -p "$(dirname "$LITE_CONNECTION_INFO")"
   # Keep startup logs easy to reason about by clearing previous run output.
-  local lite_debug_log
-  lite_debug_log="$LITE_APP_DATA_DIR/logs/log"
-  mkdir -p "$(dirname "$lite_debug_log")"
-  rm -f "$lite_debug_log"
+  mkdir -p "$(dirname "$LITE_MAIN_LOG")"
+  rm -f "$LITE_MAIN_LOG"
+  rm -f "$LITE_ACP_WORKER_LOG"
   rm -f "$LITE_STDOUT_LOG"
   touch "$LITE_STDOUT_LOG"
 
@@ -269,6 +270,8 @@ show_status() {
   echo "state:          $STATE_DIR"
   echo "home:           $LITE_HOME"
   echo "stdout:         $LITE_STDOUT_LOG"
+  echo "daemon log:     $LITE_MAIN_LOG"
+  echo "acp worker log: $LITE_ACP_WORKER_LOG"
   echo "connection:     $LITE_CONNECTION_INFO"
   echo "sqlite db:      $LITE_DB_PATH"
   print_connection_info_summary
@@ -288,6 +291,8 @@ LITE_DB_PATH=$LITE_DB_PATH
 LITE_DEBUG=$LITE_DEBUG
 LITE_NODE_BIN=$LITE_NODE_BIN
 LITE_STDOUT_LOG=$LITE_STDOUT_LOG
+LITE_MAIN_LOG=$LITE_MAIN_LOG
+LITE_ACP_WORKER_LOG=$LITE_ACP_WORKER_LOG
 EOF
   echo "COCALC_*:"
   local key
@@ -326,8 +331,27 @@ case "$cmd" in
     ;;
   logs)
     load_config
-    touch "$LITE_STDOUT_LOG"
-    tail -f "$LITE_STDOUT_LOG"
+    log_target="${2:-stdout}"
+    case "$log_target" in
+      stdout)
+        touch "$LITE_STDOUT_LOG"
+        tail -f "$LITE_STDOUT_LOG"
+        ;;
+      main)
+        mkdir -p "$(dirname "$LITE_MAIN_LOG")"
+        touch "$LITE_MAIN_LOG"
+        tail -f "$LITE_MAIN_LOG"
+        ;;
+      acp|acp-worker)
+        mkdir -p "$(dirname "$LITE_ACP_WORKER_LOG")"
+        touch "$LITE_ACP_WORKER_LOG"
+        tail -f "$LITE_ACP_WORKER_LOG"
+        ;;
+      *)
+        echo "unknown log target: $log_target (expected stdout|main|acp)" >&2
+        exit 1
+        ;;
+    esac
     ;;
   env)
     show_env

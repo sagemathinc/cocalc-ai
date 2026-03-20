@@ -72,6 +72,9 @@ export async function getHelp({
 
   try {
     const tagSuffix = isHint ? "hint" : "solution";
+    const visiblePrompt = isHint
+      ? "Diagnose this problem and give me a hint."
+      : "Diagnose this problem and fix it.";
     const intentPrompt = createNavigatorIntentMessage({
       message: messageText,
       project_id,
@@ -84,6 +87,8 @@ export async function getHelp({
       project_id,
       path,
       prompt: intentPrompt,
+      visiblePrompt,
+      title: isHint ? "Get debugging hint" : "Fix problem",
       tag: `intent:error-fix:${tagSuffix}`,
       forceCodex: true,
       openFloating: true,
@@ -91,6 +96,8 @@ export async function getHelp({
     if (!sent) {
       dispatchNavigatorPromptIntent({
         prompt: intentPrompt,
+        visiblePrompt,
+        title: isHint ? "Get debugging hint" : "Fix problem",
         tag: `intent:error-fix:${tagSuffix}`,
         forceCodex: true,
       });
