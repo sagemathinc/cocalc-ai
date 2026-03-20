@@ -6,6 +6,7 @@ const mockInitChat = jest.fn();
 const mockOpenFloating = jest.fn();
 const mockEnsureWorkspaceChatForPath = jest.fn();
 const mockEnsureWorkspaceChatPath = jest.fn();
+const mockOpenFile = jest.fn();
 let mockAccountId = "00000000-1000-4000-8000-000000000001";
 let mockProjectStoreState: Record<string, any> = {};
 
@@ -44,7 +45,9 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
       get: (key: string) => mockProjectStoreState[key],
     }),
     getActions: () => undefined,
-    getProjectActions: () => undefined,
+    getProjectActions: () => ({
+      open_file: (...args: any[]) => mockOpenFile(...args),
+    }),
   },
 }));
 
@@ -55,6 +58,7 @@ jest.mock("@cocalc/frontend/project/home-directory", () => ({
 import {
   createNavigatorPromptIntent,
   queueNavigatorPromptIntent,
+  stageNavigatorPromptInWorkspaceChat,
   submitNavigatorPromptToCurrentThread,
   takeQueuedNavigatorPromptIntents,
 } from "./navigator-intents";
@@ -68,6 +72,7 @@ describe("submitNavigatorPromptToCurrentThread", () => {
     jest.clearAllMocks();
     mockAccountId = "00000000-1000-4000-8000-000000000001";
     mockProjectStoreState = {};
+    mockOpenFile.mockReset();
     window.localStorage.clear();
     window.sessionStorage.clear();
     takeQueuedNavigatorPromptIntents();
@@ -809,5 +814,149 @@ describe("submitNavigatorPromptToCurrentThread", () => {
       setSpy.mockRestore();
       removeSpy.mockRestore();
     }
+  });
+
+  it("opens the workspace chat and stages a visible prompt without ACP dispatch", async () => {
+    const workspaceChatPath =
+      "/home/wstein/.local/share/cocalc/workspaces/acct/ws-stage.chat";
+    mockEnsureWorkspaceChatForPath.mockResolvedValue({
+      chat_path: workspaceChatPath,
+      assigned: false,
+      workspace: {
+        workspace_id: "ws-stage",
+        root_path: "/home/wstein/project/stage",
+        theme: {
+          title: "stage",
+          color: null,
+          accent_color: null,
+          icon: null,
+          image_blob: null,
+        },
+      },
+    });
+    mockListSessions.mockResolvedValue([]);
+    const save = jest.fn().mockResolvedValue(undefined);
+    const sendChat = jest.fn(() => new Date().toISOString());
+    const createEmptyThread = jest.fn(() => "thread-stage");
+    const actions = {
+      syncdb: { get_state: () => "ready", save },
+      messageCache: { getThreadIndex: () => new Map() },
+      sendChat,
+      createEmptyThread,
+      store: {
+        get: () => undefined,
+      },
+    };
+    mockGetChatActions.mockReturnValue(actions);
+    mockInitChat.mockReturnValue(actions);
+
+    const ok = await stageNavigatorPromptInWorkspaceChat({
+      project_id: "00000000-1000-4000-8000-000000000000",
+      path: "/home/wstein/project/stage/a.ipynb",
+      prompt: "Detailed hidden notebook repair prompt",
+      visiblePrompt: "Investigate and fix this Jupyter notebook error.",
+      title: "Fix notebook error",
+      forceCodex: true,
+      codexConfig: { model: "gpt-5.4-mini" },
+    });
+
+    expect(ok).toBe(true);
+    expect(mockOpenFile).toHaveBeenCalledWith({
+      path: workspaceChatPath,
+      foreground: true,
+    });
+    expect(createEmptyThread).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "Fix notebook error",
+        threadAgent: expect.objectContaining({
+          mode: "codex",
+          model: "gpt-5.4-mini",
+        }),
+      }),
+    );
+    expect(sendChat).toHaveBeenCalledWith(
+      expect.objectContaining({
+        input: "Investigate and fix this Jupyter notebook error.",
+        acp_prompt: "Detailed hidden notebook repair prompt",
+        reply_thread_id: "thread-stage",
+        skipModelDispatch: true,
+      }),
+    );
+    expect(save).toHaveBeenCalled();
+    expect(mockOpenFloating).not.toHaveBeenCalled();
+  });
+
+  it("ignores phantom thread keys when staging a workspace prompt", async () => {
+    const workspaceChatPath =
+      "/home/wstein/.local/share/cocalc/workspaces/acct/ws-stage-phantom.chat";
+    mockEnsureWorkspaceChatForPath.mockResolvedValue({
+      chat_path: workspaceChatPath,
+      assigned: false,
+      workspace: {
+        workspace_id: "ws-stage-phantom",
+        root_path: "/home/wstein/project/stage-phantom",
+        theme: {
+          title: "stage-phantom",
+          color: null,
+          accent_color: null,
+          icon: null,
+          image_blob: null,
+        },
+      },
+    });
+    mockListSessions.mockResolvedValue([]);
+    const save = jest.fn().mockResolvedValue(undefined);
+    const sendChat = jest.fn(() => new Date().toISOString());
+    const createEmptyThread = jest.fn(() => "thread-stage-real");
+    const setThreadAgentMode = jest.fn();
+    const actions = {
+      syncdb: { get_state: () => "ready", save },
+      messageCache: {
+        getThreadIndex: () =>
+          new Map([
+            [
+              "thread-stage-phantom",
+              {
+                key: "thread-stage-phantom",
+                newestTime: Date.now(),
+                rootMessage: {},
+              },
+            ],
+          ]),
+      },
+      sendChat,
+      createEmptyThread,
+      setThreadAgentMode,
+      store: {
+        get: (key: string) =>
+          key === "selectedThreadKey" ? "thread-stage-phantom" : undefined,
+      },
+    };
+    mockGetChatActions.mockReturnValue(actions);
+    mockInitChat.mockReturnValue(actions);
+
+    const ok = await stageNavigatorPromptInWorkspaceChat({
+      project_id: "00000000-1000-4000-8000-000000000000",
+      path: "/home/wstein/project/stage-phantom/a.ipynb",
+      prompt: "Detailed hidden notebook repair prompt",
+      visiblePrompt: "Investigate and fix this Jupyter notebook error.",
+      title: "Fix notebook error",
+      forceCodex: true,
+      codexConfig: { model: "gpt-5.4-mini" },
+    });
+
+    expect(ok).toBe(true);
+    expect(setThreadAgentMode).not.toHaveBeenCalled();
+    expect(createEmptyThread).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "Fix notebook error",
+      }),
+    );
+    expect(sendChat).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reply_thread_id: "thread-stage-real",
+        skipModelDispatch: true,
+      }),
+    );
   });
 });
