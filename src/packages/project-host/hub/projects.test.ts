@@ -96,4 +96,41 @@ describe("project host start ACP rehydrate ordering", () => {
     expect(order).toEqual(["applyPendingCopies", "runner:start", "rehydrate"]);
     expect(rehydrateAcpAutomationsForProject).toHaveBeenCalledTimes(1);
   });
+
+  it("does not rehydrate ACP automations for createProject when start is false", async () => {
+    const runnerApi = {
+      start: jest.fn(),
+      stop: jest.fn(),
+    } as any;
+
+    const { wireProjectsApi } = await import("./projects");
+    wireProjectsApi(runnerApi);
+
+    await hubApi.projects.createProject({ project_id, start: false });
+
+    expect(rehydrateAcpAutomationsForProject).not.toHaveBeenCalled();
+    expect(runnerApi.start).not.toHaveBeenCalled();
+  });
+
+  it("rehydrates ACP automations only after runner start on createProject when start is true", async () => {
+    const order: string[] = [];
+    const runnerApi = {
+      start: jest.fn(async () => {
+        order.push("runner:start");
+        return { state: "running", http_port: 1234, ssh_port: 2222 };
+      }),
+      stop: jest.fn(),
+    } as any;
+    rehydrateAcpAutomationsForProject.mockImplementation(async () => {
+      order.push("rehydrate");
+    });
+
+    const { wireProjectsApi } = await import("./projects");
+    wireProjectsApi(runnerApi);
+
+    await hubApi.projects.createProject({ project_id, start: true });
+
+    expect(order).toEqual(["runner:start", "rehydrate"]);
+    expect(rehydrateAcpAutomationsForProject).toHaveBeenCalledTimes(1);
+  });
 });
