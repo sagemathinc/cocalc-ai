@@ -143,40 +143,68 @@ async function readLockInfo() {
   }
 }
 
-async function acquireLock() {
+function isPidRunning(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) {
+    return false;
+  }
   try {
-    const handle = await open(lockPath, "wx");
-    try {
-      await handle.writeFile(
-        JSON.stringify(
-          {
-            pid: process.pid,
-            started_at: startedAtIso,
-            cwd: process.cwd(),
-            static_root: staticRoot,
-            packages_root: packagesRoot,
-            log_path: logPath,
-            status_path: statusPath,
-          },
-          null,
-          2,
-        ),
-      );
-      ownsLock = true;
-    } finally {
-      await handle.close();
-    }
+    process.kill(pid, 0);
+    return true;
   } catch (err) {
-    if (err?.code !== "EEXIST") {
-      throw err;
+    if (err?.code === "ESRCH") {
+      return false;
     }
-    const info = await readLockInfo();
-    const suffix = info?.pid
-      ? ` already running (pid ${info.pid}, started ${info.started_at ?? "unknown"}).`
-      : " already running.";
-    throw new Error(
-      `watch:low-mem${suffix} See ${logPath} and ${statusPath} for details.`,
-    );
+    if (err?.code === "EPERM") {
+      return true;
+    }
+    throw err;
+  }
+}
+
+async function acquireLock() {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const handle = await open(lockPath, "wx");
+      try {
+        await handle.writeFile(
+          JSON.stringify(
+            {
+              pid: process.pid,
+              started_at: startedAtIso,
+              cwd: process.cwd(),
+              static_root: staticRoot,
+              packages_root: packagesRoot,
+              log_path: logPath,
+              status_path: statusPath,
+            },
+            null,
+            2,
+          ),
+        );
+        ownsLock = true;
+        return;
+      } finally {
+        await handle.close();
+      }
+    } catch (err) {
+      if (err?.code !== "EEXIST") {
+        throw err;
+      }
+      const info = await readLockInfo();
+      const pid = Number.isInteger(info?.pid)
+        ? info.pid
+        : Number.parseInt(`${info?.pid ?? ""}`, 10);
+      if (attempt === 0 && !isPidRunning(pid)) {
+        await rm(lockPath, { force: true });
+        continue;
+      }
+      const suffix = info?.pid
+        ? ` already running (pid ${info.pid}, started ${info.started_at ?? "unknown"}).`
+        : " already running.";
+      throw new Error(
+        `watch:low-mem${suffix} See ${logPath} and ${statusPath} for details.`,
+      );
+    }
   }
 }
 
