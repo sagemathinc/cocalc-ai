@@ -69,7 +69,7 @@ export default function RenameFile({
     if (src == null) {
       return;
     }
-    const renameDir = path_split(src).head;
+    const renameDir = path_split(src).head || "/";
     try {
       setLoading(true);
       const opts = {
@@ -81,7 +81,6 @@ export default function RenameFile({
         await actions.copyPaths({
           src: [opts.src],
           dest: opts.dest,
-          only_contents: true,
         });
       } else {
         await actions.renameFile(opts);
