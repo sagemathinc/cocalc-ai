@@ -71,8 +71,12 @@ const MIME_BY_EXT: Record<string, string> = {
   ".board": "application/json; charset=utf-8",
 };
 
+function liteHomeDir(): string {
+  return `${process.env.HOME ?? ""}`.trim() || process.cwd();
+}
+
 function appsDir(): string {
-  return path.join(process.cwd(), ".local", "share", "cocalc", "apps");
+  return path.join(liteHomeDir(), ".local", "share", "cocalc", "apps");
 }
 
 function normalizePrefix(value: string): string {
@@ -233,7 +237,7 @@ function resolveStaticRoot(root?: string): string | undefined {
   }
   return path.isAbsolute(trimmed)
     ? path.normalize(trimmed)
-    : path.resolve(process.cwd(), trimmed);
+    : path.resolve(liteHomeDir(), trimmed);
 }
 
 function contentTypeForFile(filePath: string): string {
