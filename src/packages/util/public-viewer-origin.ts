@@ -90,6 +90,24 @@ export function normalizeOriginUrl(value: string): string | undefined {
   );
 }
 
+export function deriveMainSiteOriginFromViewerOrigin(
+  viewerOrigin: string,
+): string | undefined {
+  const parsed = splitOriginish(viewerOrigin);
+  if (!parsed) return;
+  const candidates = allowedPublicViewerSourceBaseHosts(parsed.hostname);
+  const hostname =
+    candidates.find((candidate) => candidate !== parsed.hostname) ??
+    parsed.hostname;
+  return normalizeOriginUrl(
+    buildOriginish({
+      protocol: parsed.protocol ?? "https:",
+      hostname,
+      port: parsed.port,
+    }),
+  );
+}
+
 export function allowedPublicViewerSourceBaseHosts(
   viewerHostname: string,
 ): string[] {

@@ -51,6 +51,7 @@ import { HIDE_LABEL_THRESHOLD, NAV_CLASS } from "./top-nav-consts";
 import { VerifyEmail } from "./verify-email-banner";
 import VersionWarning from "./version-warning";
 import { CookieWarning, LocalStorageWarning } from "./warnings";
+import { ImportPublicUrlModal } from "./import-public-url-modal";
 import { lite } from "@cocalc/frontend/lite";
 
 // ipad and ios have a weird trick where they make the screen
@@ -364,6 +365,7 @@ export const Page: React.FC = () => {
         <ProjectsNav height={pageStyle.height} style={projectsNavStyle} />
       )}
       <ActiveContent />
+      <ImportPublicUrlModal />
       <PayAsYouGoModal />
       <PopconfirmModal />
       <SettingsModal />

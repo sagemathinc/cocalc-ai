@@ -1,5 +1,6 @@
 import {
   allowedPublicViewerSourceBaseHosts,
+  deriveMainSiteOriginFromViewerOrigin,
   derivePublicViewerDns,
   derivePublicViewerHostname,
   isAllowedPublicViewerSourceHost,
@@ -44,6 +45,15 @@ describe("public viewer origin helpers", () => {
     expect(normalizeOriginUrl("http://raw.dev.cocalc.ai:7001")).toBe(
       "http://raw.dev.cocalc.ai:7001",
     );
+  });
+
+  it("derives the main site origin from a raw viewer origin", () => {
+    expect(
+      deriveMainSiteOriginFromViewerOrigin("https://dev-raw.cocalc.ai"),
+    ).toBe("https://dev.cocalc.ai");
+    expect(
+      deriveMainSiteOriginFromViewerOrigin("http://raw.dev.cocalc.ai:7001"),
+    ).toBe("http://dev.cocalc.ai:7001");
   });
 
   it("allows project-host source domains that match the raw viewer base domain", () => {

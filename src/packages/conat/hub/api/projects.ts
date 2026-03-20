@@ -59,6 +59,13 @@ export interface ProjectRuntimeLog {
   reason?: string;
 }
 
+export interface ImportPublicUrlResult {
+  project_id: string;
+  path: string;
+  bytes: number;
+  source_url: string;
+}
+
 // "cloudflare-access-tcp" is kept temporarily for compatibility with older
 // servers/clients. The route is a Cloudflare-published SSH/TCP endpoint; it
 // may still use the `cloudflared access ssh` client shim, but it is not
@@ -240,6 +247,7 @@ export interface ChatStoreDeleteResult {
 export const projects = {
   createProject: authFirstRequireAccount,
   copyPathBetweenProjects: authFirstRequireAccount,
+  importPublicUrl: authFirstRequireAccount,
   listPendingCopies: authFirstRequireAccount,
   cancelPendingCopy: authFirstRequireAccount,
   removeCollaborator: authFirstRequireAccount,
@@ -340,6 +348,13 @@ export interface Projects {
     service: string;
     stream_name: string;
   }>;
+
+  importPublicUrl: (opts: {
+    account_id?: string;
+    project_id: string;
+    public_url: string;
+    path?: string;
+  }) => Promise<ImportPublicUrlResult>;
 
   listPendingCopies: (opts: {
     account_id?: string;
