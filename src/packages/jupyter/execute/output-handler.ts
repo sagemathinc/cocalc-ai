@@ -181,22 +181,20 @@ export class OutputHandler extends EventEmitter {
       this.start();
     }
 
-    if (content.payload != null) {
-      if (content.payload.length > 0) {
-        // payload shell message:
-        // Despite https://ipython.org/ipython-doc/3/development/messaging.html#payloads saying
-        // ""Payloads are considered deprecated, though their replacement is not yet implemented."
-        // we fully have to implement them, since they are used to implement (crazy, IMHO)
-        // things like %load in the python2 kernel!
-        for (const p of content.payload) {
-          this.payload(p);
-        }
-        return;
+    if (content.payload != null && content.payload.length > 0) {
+      // payload shell message:
+      // Despite https://ipython.org/ipython-doc/3/development/messaging.html#payloads saying
+      // ""Payloads are considered deprecated, though their replacement is not yet implemented."
+      // we fully have to implement them, since they are used to implement (crazy, IMHO)
+      // things like %load in the python2 kernel!
+      for (const p of content.payload) {
+        this.payload(p);
       }
-    } else {
-      // Normal iopub output message
-      this.message(content);
+      return;
     }
+
+    // Normal iopub output message, including execute_reply with payload: [].
+    this.message(content);
   };
 
   close = (): void => {
@@ -347,6 +345,7 @@ export class OutputHandler extends EventEmitter {
   // definitely mutates this.cell.
   message = (mesg: Message): void => {
     let has_exec_count: boolean;
+    const executionCount = mesg.execution_count ?? mesg.exec_count;
     if (this.isClosed()) {
       return;
     }
@@ -357,16 +356,20 @@ export class OutputHandler extends EventEmitter {
     }
 
     // record execution_count, if there.
-    if (mesg.execution_count != null) {
+    if (executionCount != null) {
       has_exec_count = true;
-      this._opts.cell.exec_count = mesg.execution_count;
+      this._opts.cell.exec_count = executionCount;
       delete mesg.execution_count;
+      delete mesg.exec_count;
     } else {
       has_exec_count = false;
     }
 
     // delete useless fields
     this._clean_mesg(mesg);
+    if (Array.isArray((mesg as any).payload) && (mesg as any).payload.length === 0) {
+      delete (mesg as any).payload;
+    }
 
     if (len(mesg) === 0) {
       // don't even bother saving this message; nothing useful here.
