@@ -1,226 +1,486 @@
 # Control Plane Launch Readiness Plan
 
-This document is the working plan for making the project-host / Launchpad control plane robust enough to go live in roughly two weeks.
+This document is the working plan for making the project-host / Launchpad control plane robust enough to launch.
 
-Target launch window:
+It incorporates product and architecture decisions made on March 20, 2026, including:
 
-- start of plan: March 20, 2026
-- target go-live decision: April 3, 2026
+- snapshot restore is a required launch feature and is distinct from copying files from a snapshot,
+- idle timeout should evolve into a priority-driven eviction model instead of hard-coded preemption windows,
+- "distribute assignment to a class" is a first-class workflow to test and optimize,
+- project move is primarily an admin operation and should optimize for staged, low-risk rebalancing,
+- the rootfs image model is a major launch foundation and should be narrowed to two official image families plus snapshot-based reuse,
+- the initial hosted-provider focus should be Nebius and GCP,
+- the main site should assume long-lived non-spot hosts,
+- worker splitting should be driven by measured bottlenecks, with conat routing as the most likely first split.
 
-This plan is intentionally operational. It is not a product vision document. It defines what must be true before launch, how to measure it, and what work should happen between now and the launch decision.
+The dates in this document are useful for sequencing, but should not be treated as rigid. The real driver is whether the blockers are resolved and whether measured evidence says the system is stable enough to launch.
 
-## Context
+## Why This Plan Exists
 
-The risk is not that one operation fails in isolation. The risk is that under real user load:
+The control plane does not need to be perfect. It does need to be trustworthy.
 
-- projects become slow or flaky,
-- control-plane operations wedge or time out,
-- host pressure causes unrelated projects to degrade,
-- operator confidence is low because the system lacks hard limits and clean signals,
-- pricing is set from intuition instead of measured safe capacity.
+If users create projects, restart them, make snapshots, restore state, copy files between projects, or distribute assignments, and those workflows are flaky or unexpectedly slow, the resulting damage is not just technical. It directly affects retention, support load, reputation, and pricing credibility.
 
-The launch goal is therefore:
+This plan is therefore aimed at five outcomes:
 
-1. user-visible core workflows are correct and predictably fast,
-2. overload causes queueing or refusal, not random breakage,
-3. safe per-host capacity is known for each main machine class,
-4. membership tiers map to measured resource budgets rather than guesses.
+1. core workflows are correct,
+2. latency is predictable,
+3. overload degrades gracefully instead of randomly,
+4. safe capacity is measured rather than guessed,
+5. product packaging and pricing are tied to measured operational limits.
 
-## Non-Negotiables
+## Product Decisions To Lock In Now
 
-The control plane is not launch-ready unless all of the following are true:
+These are not just engineering details. They change the launch plan and the test matrix.
 
-- no known stuck or corrupting core workflow remains unresolved,
-- all critical workflows have explicit SLO targets,
-- live canaries continuously exercise critical workflows on real providers,
-- per-host and per-user admission control exists for expensive operations,
-- there is a way to detect and reconcile orphaned or wedged operations,
-- safe sustained concurrency is measured for the main host classes,
-- launch rollback and kill-switch procedures are documented and tested.
+### 1. Snapshot restore is a full-project restore workflow
+
+There are two distinct user stories:
+
+- copy files from a snapshot,
+- restore the entire project to a prior snapshot state.
+
+These must not be conflated.
+
+Full snapshot restore should mean:
+
+1. stop the project,
+2. make a safety snapshot of current state,
+3. restore one or more filesystem domains from the chosen snapshot,
+4. start the project again.
+
+Restore modes should support:
+
+- restore rootfs only,
+- restore `HOME=/root` only,
+- restore both.
+
+The UI must make it explicit that full restore is a total project-state operation, including chatrooms, codex threads, and any other project-resident state. Users wanting selective recovery should use the "copy files from a snapshot" path instead.
+
+This is a launch blocker because:
+
+- it is a core recovery feature,
+- it belongs in the scenario matrix,
+- it changes the operational model for snapshots,
+- it should have first-class CLI support.
+
+### 2. Idle timeout should become priority-driven eviction
+
+The old hard-coded timeout model is too blunt for the hosted product.
+
+The target model is:
+
+- if capacity is plentiful, do not evict projects unnecessarily,
+- when capacity is constrained, evict the lowest-priority projects first,
+- higher membership tiers get meaningfully better survival and queue priority,
+- the policy should be based on demand and priority, not arbitrary wall-clock punishment.
+
+This should look more like priority-based cloud scheduling than the old fixed 30-minute / 2-hour / 1-day / infinity model.
+
+Likely policy inputs:
+
+- membership tier,
+- whether the project is currently interactive,
+- recent activity level,
+- whether kernels/terminals are active,
+- whether the project is running a high-priority operation,
+- admin pinning or policy overrides,
+- host pressure.
+
+The launch plan must therefore measure not only raw capacity, but also how eviction and queuing policies affect user experience.
+
+### 3. Assignment distribution is a first-class primitive
+
+One of the most important real use cases is distributing a small assignment payload to many projects at once, e.g.:
+
+- a 1 MB notebook,
+- one or two small data files,
+- delivery to 30 or more student projects.
+
+This is effectively a one-to-many control-plane operation.
+
+It is important because:
+
+- it is common in teaching,
+- it can often be optimized as local copy-on-write work on a single host,
+- it is a realistic burst workload,
+- it should likely become a named primitive in the system.
+
+This needs dedicated scenarios and performance targets.
+
+### 4. Project move is mostly an admin workflow
+
+Users rarely have a reason to manually move projects between hosts. In practice, move is mainly for operators to rebalance the fleet, retire underused nodes, or shift projects away from expensive hardware.
+
+This means the move design should optimize for:
+
+- staged execution,
+- safety over raw speed,
+- preferring cold or idle projects first,
+- optional "backup first, move later" workflows,
+- auditability and rollback.
+
+Project move still belongs in live canaries and scenario coverage, but it should be treated as an admin-grade workflow, not a common end-user click path.
+
+### 5. Rootfs images are a major launch foundation
+
+The broad "arbitrary glibc docker image" idea is too open-ended for launch.
+
+The narrower and more useful initial model is:
+
+- exactly two official Ubuntu-based image families:
+  - non-GPU:
+    - arm and x86,
+    - standard CoCalc tooling such as build-essential, Jupyter, LaTeX, code-server, Julia, conda, `uv`, etc.
+  - GPU:
+    - x86 only,
+    - same base plus GPU libraries such as PyTorch and TensorFlow
+- images stored in R2 as btrfs streams,
+- each project records image family and version,
+- users may customize rootfs via package installs and other changes,
+- users may snapshot their customized rootfs for reuse,
+- admins may promote rootfs snapshots for global availability,
+- normal users may publish their rootfs snapshots with a clear distinction from official images.
+
+This is a major launch dependency because it is the basis for:
+
+- efficient new project creation,
+- reproducible environments,
+- "configure once, reuse many times" workflows,
+- operationally manageable host provisioning.
+
+This should be treated as one of the largest unfinished launch features.
+
+### 6. Hosted launch assumptions
+
+For the main site, assume:
+
+- no spot instances,
+- stable, long-running hosts,
+- emphasis on disk management, host lifecycle, and predictable costs,
+- initial hosted-provider focus on:
+  - Nebius,
+  - GCP
+
+Nebius is important because of pricing, growable disks, free bandwidth, GPU availability, and partnership terms.
+
+GCP is important because of geography and broad regional coverage.
+
+User-owned project hosts and spot-instance support are valuable, but they are not hard launch requirements.
+
+## Launch Blockers
+
+The system is not launch-ready until these blockers are either implemented or explicitly deferred out of launch scope.
+
+### Blocker A: Full snapshot restore
+
+Deliverables:
+
+- control-plane workflow,
+- CLI support,
+- UI distinction from file-level restore,
+- safety snapshot before destructive restore,
+- test coverage for rootfs-only, home-only, and full restore modes.
+
+### Blocker B: Rootfs image system
+
+Deliverables:
+
+- official image family model,
+- image versioning,
+- R2 btrfs stream distribution path,
+- project metadata for selected image and version,
+- rootfs snapshot export / import / promotion path,
+- basic UI and CLI surfaces for selecting official images and snapshot-based images.
+
+### Blocker C: Admission / eviction policy
+
+Deliverables:
+
+- host pressure model,
+- project priority heuristic,
+- eviction and queue policy,
+- tier-aware behavior,
+- visibility into why a project was stopped or spared.
+
+### Blocker D: Host pricing and billing foundation
+
+Deliverables:
+
+- provider catalog ingestion sufficient for pricing,
+- billing model for predictable providers,
+- initial decision on whether GCP host resale is in or out of launch scope,
+- user-visible pricing semantics.
 
 ## Core Questions This Plan Must Answer
 
 ### Reliability
 
-- Can users consistently create, open, restart, move, snapshot, restore, and copy data between projects?
-- Does the system remain correct under retries, reconnects, and host churn?
-- Do operations either complete, fail cleanly, or reconcile later?
+- Can users consistently create, open, restart, snapshot, restore, copy, and distribute work?
+- Does the system remain correct under retries, reconnects, host drains, and provider failures?
+- Are all destructive operations either reversible or protected by safety snapshots / backups?
 
 ### Performance
 
-- What are the p50, p95, and p99 latencies for the critical workflows?
-- Which workflows are bottlenecked by provider APIs, host bootstrap, filesystem work, or the project-host process itself?
-- How much headroom exists before tail latency bends badly?
+- What are the p50, p95, and p99 latencies of the critical workflows?
+- How much time is spent in central-hub mediation versus direct project-host work?
+- Which workflows are provider-bound, filesystem-bound, routing-bound, or event-loop-bound?
 
 ### Capacity
 
-- How many light, medium, and heavy projects can safely run at once on each host class?
-- How many expensive control-plane operations can be admitted concurrently without harming active interactive sessions?
-- What is the right safety margin for production limits?
+- How many light, medium, and heavy projects fit safely on each host class?
+- How many concurrent expensive operations can run without harming active projects?
+- What is the right production safety margin?
 
 ### Architecture
 
-- Is the current single process for project-host acceptable at the required load?
-- If not, which components should move first into worker processes?
-- What metrics justify that split, and what failure isolation does it buy?
+- Is the current single Node.js process sufficient for launch load?
+- If not, which subsystem should be split first?
+- Does conat routing become the earliest bottleneck under terminal/chat/codex load?
 
 ### Packaging
 
-- What should `$8`, `$20`, and `$200` memberships actually guarantee?
-- Which limits are best-effort vs guaranteed?
-- How much queue priority or isolation should each tier provide?
+- What operational guarantees should `$8`, `$20`, and `$200` imply?
+- How should tier affect scheduling priority, eviction risk, and concurrency?
+
+## Workflow Taxonomy
+
+The plan and test matrix should use the following distinctions.
+
+### Project lifecycle
+
+- create project
+- open project
+- stop project
+- start project
+- restart project
+
+### Snapshot and backup workflows
+
+- create snapshot
+- list snapshots
+- copy files from snapshot
+- full snapshot restore
+- create backup
+- list backups
+- restore backup
+
+### Cross-project workflows
+
+- copy-path one-to-one
+- assignment distribution one-to-many
+
+### Host / admin workflows
+
+- staged move
+- host drain
+- rebalance
+- host retirement
 
 ## Launch SLO Framework
 
-Every critical workflow must have:
+Every critical workflow needs:
 
 - success-rate target,
-- p95 latency target,
-- p99 latency target,
+- p95 target,
+- p99 target,
 - timeout budget,
 - stuck-operation budget,
 - degraded-mode behavior.
 
-Initial control-plane SLO categories:
+Initial critical workflow table:
 
-| Workflow              | User-visible outcome                 | Notes                                       |
-| --------------------- | ------------------------------------ | ------------------------------------------- |
-| create project        | new project is usable                | includes host placement and first readiness |
-| open existing project | project is usable                    | warm vs cold should be separated            |
-| restart project       | project returns cleanly              | includes reconnect behavior                 |
-| stop/start project    | project stops or resumes predictably |                                             |
-| snapshot create       | snapshot is created and listed       |                                             |
-| snapshot restore      | prior state is restored correctly    | correctness matters more than raw speed     |
-| copy-path             | file/tree appears at destination     | small-file and large-tree variants          |
-| move project          | project moves without corruption     | includes cutover correctness                |
-| list backups          | backups are visible                  |                                             |
-| backup restore        | restored content matches source      |                                             |
+| Workflow                 | Outcome                                  | Notes                                                 |
+| ------------------------ | ---------------------------------------- | ----------------------------------------------------- |
+| create project           | new project is usable                    | should account for image selection and host placement |
+| open existing project    | project is usable                        | warm and cold open should be separate                 |
+| restart project          | project comes back cleanly               | central-hub vs direct-host latency should be measured |
+| create snapshot          | snapshot is durable and visible          |                                                       |
+| copy files from snapshot | selected content appears in destination  | this is not full restore                              |
+| full snapshot restore    | project returns to prior state correctly | must be explicit and safe                             |
+| create backup            | backup exists and is selectable          |                                                       |
+| restore backup           | project data is restored correctly       |                                                       |
+| copy-path                | content appears in destination project   | small and medium cases                                |
+| assignment distribution  | content appears across many projects     | one-to-many, should test CoW optimization             |
+| staged move              | project is relocated safely              | mostly admin-facing                                   |
 
-Separate SLOs should exist for:
+Separate SLO tracking should exist for:
 
 - warm host / warm project,
 - cold project on existing host,
 - host creation path,
-- degraded provider conditions.
+- degraded provider path.
 
 ## Scenario Inventory
 
-The test program must cover the following scenarios.
-
 ### Single-user core scenarios
 
-- create a project and open it
-- open an existing idle project
+- create a project from the default non-GPU image and open it
+- create a project from a promoted custom rootfs image and open it
+- open an idle project
 - restart an active project
-- stop and start a project
-- create a snapshot, list it, restore it
-- create a backup, select it, restore it
+- create a snapshot
+- copy selected files from a snapshot
+- restore full project from a snapshot using each restore mode
+- create and restore a backup
 - copy a small file between two projects
 - copy a medium directory tree between two projects
-- move a project to another host
-- open editor, terminal, and Jupyter together in one project
+- open editor, terminal, Jupyter, and codex in one project
 - disconnect browser during an active operation and reconnect
 
-### Multi-user realistic scenarios
+### Teaching / distribution scenarios
 
-- many users opening projects at the same time
-- many users restarting projects at the same time
-- background snapshots/backups while interactive sessions remain active
-- many cross-project copy-path operations
-- mixed light and heavy projects on the same host
-- project moves during peak interactive load
+- distribute a small assignment to 30 projects on one host
+- distribute a small assignment to 30 projects spread across multiple hosts
+- update an assignment and fan it out again
+- run assignment distribution while many students are already active
+
+### Admin scenarios
+
+- staged move of an idle project
+- staged move of a recently active project
+- drain a host by moving or stopping low-priority projects first
+- retire an underused GPU node
 
 ### Failure scenarios
 
 - provider host creation is slow
 - provider host creation fails transiently
-- provider API returns errors or rate limits
-- websocket/conat disconnect between control-plane components
+- central control hub adds latency or becomes unavailable
+- websocket / conat disconnect between components
 - file-server stalls or restarts
 - persist server stalls or restarts
+- conat router is saturated by high terminal output
 - project-host process restarts mid-operation
-- disk fills or approaches limit
-- host becomes unreachable or drains during active use
+- disk approaches full
+- host becomes unreachable during a move or restore
 
 ### Soak scenarios
 
-- 24-hour mixed-load run on one host class
-- 24-hour mixed-load run across multiple hosts/providers
-- long-running low-level background operations while users continue interacting
+- 24h mixed interactive load on one host class
+- 24h mixed interactive plus control-plane load on multiple hosts
+- 24h with codex app-server usage included
 
 ## Metrics and Telemetry
 
-At minimum, instrument and dashboard the following.
+The goal is not just to export metrics somewhere. The goal is to make them operationally useful and easy to query through the system itself.
 
 ### Control-plane metrics
 
 - operation count by type and state
 - queue depth by operation type
 - operation wait time vs execution time
-- retry count by workflow
 - timeout count by workflow
-- orphaned operation count
+- retry count by workflow
+- stuck-operation count
+- orphaned-operation count
 - reconciliation actions and success rate
+
+### Central-hub dependency metrics
+
+- latency added by the central control hub for start/stop/restart flows
+- percentage of end-to-end latency spent in central mediation versus direct host work
+- queue depth and processing latency inside the control hub for project lifecycle operations
 
 ### Project-host process metrics
 
 - RSS
 - CPU usage
 - event loop lag
-- GC pause behavior
-- open websocket count
-- internal queue depth
-- request latency for file, persist, and op-control paths
+- GC behavior
+- per-subsystem request latency
+- websocket count
+- queue depth
 
 ### Host metrics
 
 - CPU saturation
 - RAM saturation
+- disk usage
 - disk IO and latency
 - network throughput
 - running project count
 - active kernel count
-- terminal count
-- expensive operation count
+- active terminal count
+- active codex app-server count
+- expensive-operation count
 
-### Provider metrics
+### Conat / routing metrics
+
+- routing throughput
+- message fanout volume
+- compression/decompression cost
+- auth-check cost
+- latency impact under heavy terminal output
+
+### Codex metrics
+
+- codex app-server instance count
+- RAM and CPU usage by codex services
+- queueing or backpressure behavior
+- impact of codex load on unrelated project workflows
+
+### Provider / cost metrics
 
 - host create latency
 - host bootstrap latency
 - host delete latency
-- provider API failure rate
+- disk growth behavior
+- provider API error rate
 - rate-limit events
+- price observability quality by provider
 
-## Admission Control and Safety Limits
+### Presentation strategy
 
-Before launch, the system should prefer explicit refusal or queueing to soft overload.
+Prometheus may still be useful, but the main requirement is that host metrics should also be queryable and explorable through CoCalc-native tools and eventually visible in the UI, similar to existing project metrics.
 
-Required controls:
+The plan should assume:
+
+- host metrics accessible through `cocalc` CLI,
+- host metrics stored in a queryable internal form,
+- dashboards or plots visible in the product for operators.
+
+## Admission Control and Priority-Driven Eviction
+
+The hosted system should prefer queueing and selective eviction to indiscriminate hard timeouts.
+
+### Required controls
 
 - max running projects per host
 - max concurrent expensive operations per host
 - max concurrent expensive operations per user
 - queue priority classes for interactive vs background work
-- timeout policies per workflow
-- kill switches for risky workflows
-- reconciliation of stale running operations
+- host pressure thresholds
+- stale-operation reconciliation
 
-Recommended priority order:
+### Target policy
 
-1. keep already-active projects responsive,
-2. admit lightweight interactive actions,
-3. queue heavy background operations,
-4. reject or defer work when host safety limits are hit.
+- if capacity is available, do not evict projects just because time elapsed,
+- when capacity is constrained, stop or move the lowest-priority eligible projects first,
+- preserve higher-tier and actively used projects whenever possible,
+- prefer evicting idle, low-priority, cold projects before anything interactive.
 
-The system should never enter a state where a storm of snapshots or moves makes existing interactive projects effectively unusable.
+### Likely priority inputs
+
+- membership tier
+- current interactive activity
+- recent activity history
+- current heavy operation status
+- admin pinning
+- host pressure
+
+### Test outcomes needed
+
+- verify which projects get evicted under pressure,
+- verify that higher priority actually wins,
+- verify that eviction decisions are legible and explainable,
+- verify that operator rebalancing and automatic eviction do not fight each other.
 
 ## Load and Stress Testing Program
 
-The goal is to find safe sustained operating points, not theoretical maxima.
+The goal is to find safe sustained operating points, not heroic peaks.
 
 ### Workload profiles
-
-Define at least these project profiles:
 
 - light:
   - editor,
@@ -233,285 +493,253 @@ Define at least these project profiles:
 - heavy:
   - active kernels,
   - filesystem churn,
-  - snapshots or copies
-- ops-heavy:
-  - many control-plane actions,
-  - less interactive compute
+  - snapshots, backups, or copy operations
+- routing-heavy:
+  - multiple terminals with high output volume
+- codex-heavy:
+  - active codex app-server usage
 
 ### Host classes to test
 
-Test the host classes you are likely to sell against or depend on operationally. At minimum:
+Test the host classes you actually expect to run in production:
 
-- small baseline host
+- small shared host
 - medium shared host
-- large host for higher-tier users
+- larger premium host
+- at least one GPU-capable host class
 
-For each class, run increasing concurrency until at least one of the following bends:
+### Provider focus
 
-- p95 latency,
-- p99 latency,
-- timeout rate,
-- stuck-op rate,
-- event loop lag,
-- memory pressure,
-- filesystem latency.
+Initial hosted stress testing should focus on:
 
-### Output of each capacity sweep
+- Nebius
+- GCP
+
+This is enough to answer the launch questions. Broader provider work can come later.
+
+### Special scenarios to benchmark
+
+- many projects opening at once
+- many restarts at once
+- assignment distribution to a class
+- background snapshots / backups during interactive use
+- routing-heavy terminal fanout
+- codex-heavy mixed usage
+- admin drain / staged move under moderate background load
+
+### Output of each sweep
 
 Each sweep should produce:
 
-- host class,
-- workload mix,
-- admitted concurrency,
-- p50/p95/p99 by workflow,
-- CPU/RAM/IO usage,
-- failure modes observed,
-- recommended safe cap,
-- recommended production cap with headroom.
+- provider
+- host class
+- workload mix
+- admitted concurrency
+- p50 / p95 / p99 by workflow
+- CPU / RAM / disk / network usage
+- event loop lag
+- conat routing load
+- failure modes observed
+- recommended safe cap
+- recommended production cap with headroom
 
-Production caps should sit well below the knee, ideally with 30% to 50% headroom.
+Production limits should sit materially below the knee.
 
 ## Architecture Decision: Single Process vs Worker Split
 
-Do not split the project-host architecture preemptively unless measurement shows it is necessary.
+Do not split everything because the architecture allows it. Split when measurement says the single process is the limiting factor.
 
-### Default recommendation
+### Default assumption
 
-Keep the single-process design if all of the following remain true under target load:
+Launch with the single process if all of the following are true under realistic load:
 
-- event loop lag is acceptable,
-- p95/p99 of control-plane workflows stay within target,
+- event loop lag remains acceptable,
+- core workflows meet p95 / p99 targets,
 - one hot subsystem does not poison unrelated work,
-- memory growth is controlled,
-- crash risk is low enough,
-- operational simplicity is materially better.
+- memory growth remains controlled,
+- Node.js process tuning is sufficient,
+- operational simplicity is clearly better than added worker complexity.
 
-### Split into workers when one or more are true
+### Things to audit before deciding
 
-- file-serving load degrades unrelated control-plane latency,
-- persist/conat work degrades unrelated control-plane latency,
-- one subsystem has very different scaling or restart behavior,
-- crash isolation becomes necessary,
-- event loop lag shows one busy subsystem is harming everything else.
+- how much latency is added by central control hub mediation,
+- whether direct host paths can replace hub-mediated paths in common operations,
+- Node.js process parameter tuning such as max RSS or memory limits,
+- which subsystem dominates CPU under mixed load.
 
-### First split candidates
+### Most likely first split candidate
 
-If a split is needed, start with the most isolatable and load-sensitive components:
+The most likely first split is conat routing.
+
+Reason:
+
+- high-output terminals create heavy pub/sub pressure,
+- routing involves compression, decompression, auth checks, and fanout,
+- it can plausibly saturate one Node.js process before filesystem or persistence work does.
+
+### Next split candidates
+
+If the data shows they matter:
 
 - file-server worker
 - conat persist / coordination worker
 
-Do not split everything at once. Make the first split solve a measured problem.
-
 ### Decision criteria
 
-Use real measurements, not instinct:
-
-- event loop lag under load
-- per-subsystem latency under load
+- event loop lag under routing-heavy load
+- control-plane latency under routing-heavy load
+- CPU profile by subsystem
 - failure isolation benefit
-- deployment complexity cost
-- observability cost
+- operational complexity cost
 
-## Pricing and Membership Translation
+## Pricing, Billing, and Membership Translation
 
-Do not define memberships from intuition. Define them from measured safe capacity.
+Do not define memberships from intuition. Define them from measured capacity and explicit policy.
 
-The pricing points are fixed:
+Fixed price points:
 
 - `$8`
 - `$20`
 - `$200`
 
-The missing piece is what each price buys in operational terms.
-
-### What should be expressed per tier
+### What each tier should express
 
 - guaranteed RAM
 - guaranteed CPU share or reservation
-- maximum number of concurrently active projects
-- maximum number of concurrent heavy operations
-- priority in operation queues
-- snapshot/backup allowances if relevant
-- level of isolation from noisy neighbors
+- max concurrent active projects
+- max concurrent heavy operations
+- queue / eviction priority
+- degree of isolation from noisy neighbors
 
 ### Likely interpretation
 
 - `$8`:
-  - shared, best-effort, tight concurrency limits
+  - shared and best-effort,
+  - lowest priority,
+  - tight concurrency limits
 - `$20`:
-  - better interactive reliability, more concurrency, higher priority
+  - better interactivity and lower eviction risk,
+  - more concurrency,
+  - higher queue priority
 - `$200`:
-  - strong guarantees, materially lower contention risk, possibly host-level isolation
+  - materially stronger guarantees,
+  - much lower eviction risk,
+  - likely access to larger or more isolated capacity
 
-### How to derive the numbers
+### Billing caveats
 
-For each host class and workload mix:
+Host pricing and billing are not fully implemented yet.
 
-1. measure safe sustained capacity,
-2. reserve headroom for control-plane actions and noisy bursts,
-3. decide what fraction of that safe capacity can be sold as guaranteed,
-4. leave the rest for burst and operational slack.
+Implications:
 
-The final tier mapping should be a capacity sheet, not a marketing guess.
+- pricing work is itself a launch requirement if user-owned or user-selected host types are in scope,
+- Nebius and other predictable-price providers are easier to expose cleanly,
+- GCP bandwidth pricing is especially annoying and may be too opaque for launch resale,
+- user-owned project hosts are valuable but not a hard launch requirement.
+
+The initial hosted launch can succeed even if host resale is limited or disabled, provided internal costing and capacity policy are solid.
 
 ## Continuous Live Canaries
 
-The existing live workflow harnesses should become ongoing production-readiness canaries.
+Critical canaries should run continuously on the actual providers and host classes that matter for launch.
 
-Critical canaries:
+Required canaries:
 
 - create/open project
 - restart project
+- create snapshot
+- copy files from snapshot
 - backup-snapshot
 - copy-path
-- move project
-
-They should run continuously across the providers and host classes you plan to depend on.
+- assignment distribution
+- staged move
 
 Each canary should produce:
 
-- artifact directory,
-- workflow summary,
-- ledger of steps,
-- duration,
-- cleanup result.
+- artifact directory
+- summary
+- step ledger
+- duration
+- cleanup result
 
-The canary program should also page or at least alert on:
+Alerting should fire on:
 
-- repeated failures,
-- repeated cleanup leaks,
-- rising latency,
-- growing stuck-op count.
+- repeated failures
+- cleanup leaks
+- rising latency
+- growing stuck-op count
 
-## Concrete Deliverables Before Launch
+## Execution Order
 
-### 1. SLO table
+The plan should be executed in priority order, not on a rigid calendar.
 
-A markdown or JSON artifact listing:
+### Priority 0: Close the obvious feature gaps
 
-- workflow
-- success-rate target
-- p95 target
-- p99 target
-- timeout budget
-- degraded-mode behavior
+- implement full snapshot restore
+- define and begin implementing the rootfs image model
+- define the initial admission / eviction policy
 
-### 2. Scenario matrix
+These are more important than broad stress testing because they directly determine what needs to be tested.
 
-A tracked artifact enumerating:
+### Priority 1: Add observability and audit critical paths
 
-- scenario name
-- user value
-- automated vs manual
-- provider coverage
-- host-class coverage
-- pass/fail status
+- add the missing host and routing metrics
+- add codex usage metrics
+- audit central-hub dependency for project lifecycle flows
+- identify direct-to-host paths that could remove avoidable latency
 
-### 3. Load-test harness
+### Priority 2: Stabilize and expand live canaries
 
-A harness that can:
+- keep GCP and Nebius critical workflow canaries green
+- add snapshot-file-copy and assignment-distribution canaries
+- add admin move canaries oriented around staged operation
 
-- generate project populations,
-- drive mixed workloads,
-- measure end-to-end workflow latency,
-- record host saturation,
-- record control-plane lag,
-- produce a machine-readable result set.
-
-### 4. Capacity report
-
-A report per host class with:
-
-- safe project count by workload mix,
-- safe concurrent heavy-op count,
-- recommended production cap,
-- failure mode notes.
-
-### 5. Admission-control settings
-
-Repo-tracked default settings or a documented config sheet for:
-
-- host project limits,
-- heavy-op concurrency,
-- queue policy,
-- timeout policy,
-- retry policy.
-
-### 6. Launch runbooks
-
-At minimum:
-
-- how to pause risky workflows,
-- how to drain a host,
-- how to identify stuck operations,
-- how to reconcile or clean up orphaned state,
-- how to roll back a bad deploy.
-
-## Two-Week Execution Plan
-
-### March 20 to March 24: Foundation and instrumentation
-
-- define the critical workflows and SLO draft
-- add missing metrics and dashboards
-- make live canaries reliable and cheap enough to run frequently
-- document the scenario matrix
-- build the first load-test harness for mixed project workloads
-
-### March 24 to March 28: Capacity and admission control
+### Priority 3: Capacity sweeps and pressure-policy testing
 
 - run host-class capacity sweeps
-- measure concurrency knees
-- identify safe per-host project limits
-- identify safe per-host heavy-op limits
-- set initial admission-control defaults
+- validate queueing and eviction behavior
+- measure routing-heavy and codex-heavy loads
 
-### March 28 to April 1: Soak and failure injection
+### Priority 4: Soak, operator safety, and launch packaging
 
-- run 24h and 48h soak tests
-- inject provider and process faults
-- verify cleanup and reconciliation
-- verify overload behavior is queue/refuse, not random breakage
-- decide whether the single-process design survives target load
-
-### April 1 to April 3: Packaging and launch decision
-
-- finalize pricing-to-capacity mapping
-- review launch gates
-- confirm dashboards and runbooks
-- decide go / no-go / partial rollout
+- 24h / 48h soak tests
+- operator runbooks
+- kill switches
+- pricing-to-capacity mapping
 
 ## Launch Gates
 
-The system is ready for go-live only if:
+The system is ready for launch only if:
 
-- critical workflows meet SLOs on real providers,
-- no severe correctness bug remains in core workflows,
-- live canaries are green and stable,
-- soak tests do not show growth in leaks or wedged operations,
-- admission control is in place and tested,
-- safe capacity numbers exist for the main host classes,
-- pricing tiers can be mapped to measured budgets,
-- operators have clear runbooks and kill switches.
+- full snapshot restore exists and is safe,
+- the rootfs image foundation is sufficiently implemented for new-project provisioning,
+- core workflows meet SLOs on Nebius and GCP,
+- live canaries are stable,
+- admission / eviction policy is implemented and tested,
+- safe host capacity numbers exist,
+- routing-heavy loads do not destabilize the system,
+- operators have host-level metrics, runbooks, and kill switches,
+- pricing / membership semantics are tied to measured policy and capacity.
 
 ## Immediate Next Actions
 
-1. Write the first SLO table for the critical workflows.
-2. Enumerate the scenario matrix in a repo-tracked artifact.
-3. Choose the first three host classes for capacity sweeps.
-4. Add the metrics needed to measure event loop lag, operation queue depth, and per-host pressure.
-5. Turn the Nebius and GCP workflow harnesses into continuously runnable canaries.
-6. Build the first mixed-workload stress harness.
-7. Use the resulting data to decide whether project-host stays single-process for launch.
+1. Implement full snapshot restore with explicit restore modes and CLI support.
+2. Turn the rootfs image model into a concrete implementation plan and start the minimal launch path.
+3. Define the first version of the priority-driven eviction heuristic.
+4. Audit start / stop / restart latency to quantify how much the central control hub contributes.
+5. Add host, routing, and codex metrics that are queryable through CoCalc-native tools.
+6. Add assignment-distribution scenarios and canaries.
+7. Use the resulting data to decide whether conat routing must be split before launch.
 
 ## Principle
 
-The launch decision should not be based on whether the system feels okay during ad hoc testing.
+The launch decision should not be based on whether the system feels good in ad hoc testing.
 
-It should be based on measured evidence that:
+It should be based on evidence that:
 
-- the critical workflows are correct,
+- the missing core features are actually implemented,
+- the important workflows are correct,
 - the tails are acceptable,
 - overload is controlled,
 - the safe operating region is known,
-- the business tiers match that operating region.
+- the pricing and membership model matches that operating region.
