@@ -160,9 +160,18 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
 
   useEffect(() => {
     if (!session) return;
-    const updated = sessions.find(
-      (item) => item.session_id === session.session_id,
-    );
+    const updated =
+      sessions.find((item) => item.session_id === session.session_id) ??
+      (() => {
+        const chatPath = `${session.chat_path ?? ""}`.trim();
+        const threadKey = `${session.thread_key ?? ""}`.trim();
+        if (!chatPath || !threadKey) return undefined;
+        return sessions.find(
+          (item) =>
+            `${item.chat_path ?? ""}`.trim() === chatPath &&
+            `${item.thread_key ?? ""}`.trim() === threadKey,
+        );
+      })();
     if (updated) {
       setSession(updated);
     }

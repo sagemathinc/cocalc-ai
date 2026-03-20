@@ -398,6 +398,11 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
     const basePrompt = `${opts.prompt ?? ""}`.trim();
     const visiblePrompt = `${opts.visiblePrompt ?? ""}`.trim() || undefined;
     const requestedTitle = normalizeOptionalTitle(opts.title);
+    const requestedModel =
+      typeof opts.codexConfig?.model === "string" &&
+      opts.codexConfig.model.trim().length > 0
+        ? opts.codexConfig.model.trim()
+        : undefined;
     if (!project_id || !basePrompt) return false;
     const input = visiblePrompt ?? basePrompt;
     const account_id =
@@ -436,6 +441,7 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
       updated_at: new Date().toISOString(),
       status: "active",
       entrypoint: workspaceTarget ? "file" : "global",
+      model: requestedModel,
       working_directory: workspaceTarget?.workspace.root_path,
       thread_color: workspaceTarget?.workspace.theme.color ?? undefined,
       thread_accent_color:
@@ -447,6 +453,21 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
       opts.createNewThread === true
         ? fallbackSession
         : (indexedSession ?? fallbackSession);
+    if (opts.openFloating !== false) {
+      openFloatingAgentSession(
+        project_id,
+        {
+          ...fallbackSession,
+          title: requestedTitle ?? fallbackSession.title,
+          updated_at: new Date().toISOString(),
+          status: "active",
+        },
+        {
+          workspaceId: workspaceTarget?.workspace.workspace_id ?? null,
+          workspaceOnly: workspaceTarget != null,
+        },
+      );
+    }
     const queueFallbackIntent = (): boolean => {
       if (workspaceTarget) {
         return false;
@@ -526,11 +547,6 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
     const messageThreadTitle =
       requestedTitle && (!replyThreadId || !existingThreadTitle)
         ? requestedTitle
-        : undefined;
-    const requestedModel =
-      typeof opts.codexConfig?.model === "string" &&
-      opts.codexConfig.model.trim().length > 0
-        ? opts.codexConfig.model.trim()
         : undefined;
     const sessionModel =
       typeof session.model === "string" && session.model.trim().length > 0
