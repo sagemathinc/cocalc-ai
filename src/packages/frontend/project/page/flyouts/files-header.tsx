@@ -910,7 +910,7 @@ export function FilesHeader({
             showIcon={false}
             style={{ padding: FLYOUT_PADDING, margin: 0, cursor: "pointer" }}
             onClick={onRefreshListing}
-            message={
+            title={
               <>
                 <Icon name="sync-alt" /> {intl.formatMessage(labels.refresh)}
               </>

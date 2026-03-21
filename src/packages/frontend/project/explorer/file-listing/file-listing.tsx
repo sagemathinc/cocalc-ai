@@ -1259,7 +1259,7 @@ export function FileListing({
             type="info"
             showIcon
             style={{ margin: "8px 16px 0 16px" }}
-            message={
+            title={
               file_search.trim()
                 ? "No files or folders match the current filter."
                 : "No files or folders to display."

@@ -1986,13 +1986,13 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
               </Card>
             ) : null}
             {activePreset?.note ? (
-              <Alert type="info" showIcon message={activePreset.note} />
+              <Alert type="info" showIcon title={activePreset.note} />
             ) : null}
             {unavailableActivePreset && activePresetTemplate ? (
               <Alert
                 type="warning"
                 showIcon
-                message={`${unavailableActivePreset.label} is not installed yet`}
+                title={`${unavailableActivePreset.label} is not installed yet`}
                 description={
                   <Space
                     direction="vertical"
@@ -2768,7 +2768,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                     style={{ marginTop: "8px" }}
                     type="warning"
                     showIcon
-                    message={row.warnings.join(" ")}
+                    title={row.warnings.join(" ")}
                   />
                 ) : null}
                 {isExpanded && startupFailure ? (
@@ -2783,7 +2783,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                         [row.id]: undefined,
                       }))
                     }
-                    message={`Failed to ${startupFailure.action === "start" ? "start" : "start after save"} '${row.title || row.id}'`}
+                    title={`Failed to ${startupFailure.action === "start" ? "start" : "start after save"} '${row.title || row.id}'`}
                     description={
                       <div style={{ display: "grid", gap: "8px" }}>
                         <div>{startupFailure.errorMessage}</div>
@@ -2972,7 +2972,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
               <Alert
                 type="info"
                 showIcon
-                message="Current detection status"
+                title="Current detection status"
                 description={installWithCodexTarget.templateDetails}
               />
             ) : null}
@@ -3194,7 +3194,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
             type="error"
             showIcon
             style={{ marginBottom: "8px" }}
-            message={editSpecError}
+            title={editSpecError}
           />
         ) : null}
         {editSpecLoading ? <Spin /> : null}

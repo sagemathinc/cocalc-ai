@@ -1371,7 +1371,7 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
           <Alert
             type="error"
             showIcon
-            message={error}
+            title={error}
             style={{ marginBottom: 8 }}
           />
         ) : null}
@@ -1379,7 +1379,7 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
           <Alert
             type="error"
             showIcon
-            message={inlineError}
+            title={inlineError}
             style={{ marginBottom: 8 }}
           />
         ) : null}
@@ -1432,7 +1432,7 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
         <Alert
           type="error"
           showIcon
-          message={error}
+          title={error}
           style={{ marginBottom: 8 }}
         />
       ) : null}

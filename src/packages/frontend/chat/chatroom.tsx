@@ -1652,7 +1652,7 @@ export function ChatPanel({
     <Alert
       type={activeLoopState.status === "paused" ? "warning" : "info"}
       style={{ margin: "8px 8px 0 8px" }}
-      message={
+      title={
         <Space size="small" wrap>
           <strong>Codex loop</strong>
           <Tag
@@ -1722,7 +1722,7 @@ export function ChatPanel({
               : "info"
         }
         style={{ margin: "8px 8px 0 8px" }}
-        message={
+        title={
           <Space size="small" wrap>
             <strong>
               {selectedThreadAutomationConfig.title?.trim() ||

@@ -392,7 +392,7 @@ function HostOpTimeline({ op }: { op: HostLroState }) {
           <Alert
             type="error"
             showIcon
-            message="Operation failed"
+            title="Operation failed"
             description={summary.error}
           />
         ) : null}

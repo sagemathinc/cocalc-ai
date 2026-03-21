@@ -200,7 +200,7 @@ export function ThemeImageInput({
           : "Click here, then paste an image from the clipboard."}
       </div>
       {error ? (
-        <Alert type="error" showIcon style={{ marginTop: 8 }} message={error} />
+        <Alert type="error" showIcon style={{ marginTop: 8 }} title={error} />
       ) : null}
       {uniqueImages.length > 0 ? (
         <div style={{ marginTop: 8 }}>

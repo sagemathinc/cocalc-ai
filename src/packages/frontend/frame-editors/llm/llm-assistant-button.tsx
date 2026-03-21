@@ -216,7 +216,7 @@ export default function LanguageModelTitleBarButton({
           <div style={{ color: COLORS.GRAY_D }}>
             Codex will continue the work in the floating workspace agent thread.
           </div>
-          {error ? <Alert type="error" message={error} /> : undefined}
+          {error ? <Alert type="error" title={error} /> : undefined}
           <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
             <Button onClick={closeDialog} disabled={querying}>
               {intl.formatMessage(labels.cancel)}

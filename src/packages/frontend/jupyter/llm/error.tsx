@@ -100,7 +100,7 @@ export default function LLMError({ traceback, input }: Props) {
           style={{ marginTop: 8, maxWidth: 720 }}
           type="error"
           showIcon
-          message={routingError}
+          title={routingError}
         />
       ) : null}
     </div>

@@ -77,7 +77,7 @@ export function AgentDebugPanel() {
         <Alert
           type="error"
           showIcon
-          message="Agent request failed"
+          title="Agent request failed"
           description={error}
           style={{ marginBottom: 12 }}
         />

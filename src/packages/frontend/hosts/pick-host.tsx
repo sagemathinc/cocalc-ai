@@ -338,7 +338,7 @@ export function HostPickerModal({
           type="error"
           showIcon
           style={{ marginBottom: 12 }}
-          message={
+          title={
             isCreate
               ? "No available host can be used for this new project."
               : "No available destination host can be used for this move."

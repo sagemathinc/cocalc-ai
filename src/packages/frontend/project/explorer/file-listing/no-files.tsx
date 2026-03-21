@@ -45,7 +45,7 @@ export default function NoFiles({
         type="warning"
         showIcon
         style={{ margin: "8px 16px 0 16px" }}
-        message="No files or folders match the current filter."
+        title="No files or folders match the current filter."
         description={
           <Space wrap style={{ marginTop: 8 }}>
             {type_filter && (
@@ -77,7 +77,7 @@ export default function NoFiles({
         type="warning"
         showIcon
         style={{ margin: "8px 16px 0 16px" }}
-        message="No files or folders match the current filter."
+        title="No files or folders match the current filter."
         description={
           <Space wrap style={{ marginTop: 8 }}>
             <Button size="small" onClick={() => actions?.set_file_search("")}>
@@ -96,7 +96,7 @@ export default function NoFiles({
       type="warning"
       showIcon
       style={{ margin: "8px 16px 0 16px" }}
-      message="No files or folders to display."
+      title="No files or folders to display."
       description={
         <Space wrap style={{ marginTop: 8 }}>
           <Button size="small" type="primary" onClick={openNewPage}>

@@ -820,12 +820,7 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
             ) : null}
           </div>
           {error ? (
-            <Alert
-              type="error"
-              showIcon
-              message={error}
-              style={{ margin: 8 }}
-            />
+            <Alert type="error" showIcon title={error} style={{ margin: 8 }} />
           ) : null}
           <div style={{ flex: 1, minHeight: 0 }}>
             {chatActions ? (

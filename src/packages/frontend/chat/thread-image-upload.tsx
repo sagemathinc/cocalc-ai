@@ -117,7 +117,7 @@ export function ThreadImageUpload({
           style={{ marginTop: "10px" }}
           type="error"
           showIcon
-          message={error}
+          title={error}
         />
       ) : null}
     </div>

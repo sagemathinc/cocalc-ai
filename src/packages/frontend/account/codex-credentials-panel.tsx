@@ -408,11 +408,11 @@ function CodexCredentialsPanelBody({
   const content = (
     <Space direction="vertical" size="middle" style={{ width: "100%" }}>
       {loading && <Loading />}
-      {!loading && error && <Alert type="error" message={error} />}
+      {!loading && error && <Alert type="error" title={error} />}
       {!loading && !error && paymentSource && (
         <Alert
           type={paymentSource.source === "none" ? "warning" : "info"}
-          message={
+          title={
             <Space>
               <span>Current Codex payment source:</span>
               <Tag color={paymentSource.source === "none" ? "default" : "blue"}>
@@ -492,7 +492,7 @@ function CodexCredentialsPanelBody({
                   <Alert
                     type="warning"
                     showIcon
-                    message="No project available"
+                    title="No project available"
                     description="Create or open a project, then retry."
                   />
                 ) : (
@@ -556,18 +556,18 @@ function CodexCredentialsPanelBody({
                   <Alert
                     type="success"
                     showIcon
-                    message="Auth file uploaded"
+                    title="Auth file uploaded"
                     description={`Saved ${uploadedAuthFileStatus.bytes} bytes to ${uploadedAuthFileStatus.codexHome}`}
                   />
                 ) : null}
                 {deviceAuthError ? (
-                  <Alert type="error" showIcon message={deviceAuthError} />
+                  <Alert type="error" showIcon title={deviceAuthError} />
                 ) : null}
                 {deviceAuth ? (
                   <Alert
                     type={DEVICE_AUTH_ALERT_TYPE[deviceAuth.state]}
                     showIcon
-                    message={`Device auth status: ${deviceAuth.state}`}
+                    title={`Device auth status: ${deviceAuth.state}`}
                     description={
                       deviceAuth.state === "pending"
                         ? "Polling status every 1.5 seconds while this dialog is open."

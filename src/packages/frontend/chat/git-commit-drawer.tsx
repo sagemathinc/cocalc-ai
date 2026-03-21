@@ -2618,7 +2618,7 @@ export function GitCommitDrawer({
         {gitLogError ? (
           <Alert
             type="warning"
-            message={gitLogError}
+            title={gitLogError}
             showIcon
             style={{ marginBottom: 10 }}
           />
@@ -2725,12 +2725,12 @@ export function GitCommitDrawer({
               </Typography.Text>
             ) : null}
             {headCommitError ? (
-              <Alert type="error" showIcon message={headCommitError} />
+              <Alert type="error" showIcon title={headCommitError} />
             ) : null}
 
             <div style={{ fontWeight: 600 }}>Uncommitted files</div>
             {headStatusError ? (
-              <Alert type="warning" showIcon message={headStatusError} />
+              <Alert type="warning" showIcon title={headStatusError} />
             ) : null}
             {headStatusLoading ? (
               <div style={{ padding: "12px 0", textAlign: "center" }}>
@@ -3060,7 +3060,7 @@ export function GitCommitDrawer({
         {!loading && error ? (
           <Alert
             type="error"
-            message={error}
+            title={error}
             showIcon
             style={{ marginBottom: 12 }}
           />
@@ -3276,7 +3276,7 @@ export function GitCommitDrawer({
               <Alert
                 type="warning"
                 showIcon
-                message={`Showing first ${MAX_GIT_SHOW_LINES.toLocaleString()} lines (${data.shownLineCount.toLocaleString()} loaded of ${data.originalLineCount.toLocaleString()}).`}
+                title={`Showing first ${MAX_GIT_SHOW_LINES.toLocaleString()} lines (${data.shownLineCount.toLocaleString()} loaded of ${data.originalLineCount.toLocaleString()}).`}
                 description={
                   <span>
                     Output was truncated for UI performance. Use terminal for
