@@ -1,4 +1,4 @@
-import { Button, Card, Input, Space, Spin } from "antd";
+import { Button, Input, Space, Spin } from "antd";
 import { useEffect, useRef, useState } from "react";
 import { useIntl } from "react-intl";
 import { default_filename } from "@cocalc/frontend/account";
@@ -13,7 +13,13 @@ import CheckedFiles from "./checked-files";
 import { SelectFormat, createArchive } from "./create-archive";
 import { join } from "path";
 
-export default function Download({ clear }) {
+export default function Download({
+  clear,
+  display = "inline",
+}: {
+  clear: () => void;
+  display?: "inline" | "modal";
+}) {
   const [format, setFormat] = useState<string>("");
   const intl = useIntl();
   const inputRef = useRef<any>(null);
@@ -105,16 +111,18 @@ export default function Download({ clear }) {
     return null;
   }
 
-  return (
-    <Card
-      title=<>Download {archiveMode ? "files" : "a file"} to your computer</>
-    >
-      <div style={{ display: "flex" }}>
-        <div style={{ flex: 1, overflowX: "auto", marginRight: "15px" }}>
-          <CheckedFiles />
-        </div>
-        {archiveMode && (
-          <div style={{ flex: 1 }}>
+  const content = (
+    <>
+      <CheckedFiles
+        variant={display === "modal" ? "compact" : "block"}
+        maxVisible={3}
+      />
+      {archiveMode && (
+        <div style={{ marginBottom: "12px" }}>
+          <div style={{ marginBottom: "8px", fontWeight: 500 }}>
+            Archive name
+          </div>
+          <Space style={{ width: "100%" }} wrap>
             <Input
               ref={inputRef}
               autoFocus
@@ -124,54 +132,39 @@ export default function Download({ clear }) {
               onPressEnter={doDownload}
               suffix={"." + format}
             />
-          </div>
-        )}
-        {!archiveMode && (
-          <div
-            style={{
-              flex: 1,
-              overflowX: "auto",
-              display: "flex",
-            }}
-          >
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                height: PRE_STYLE.minHeight,
-                marginRight: "15px",
-              }}
-            >
-              <a href={url} target="_blank">
-                <Icon name="external-link" />
-              </a>
-            </div>
-            <pre style={{ ...PRE_STYLE, height: PRE_STYLE.minHeight }}>
-              <a href={url} target="_blank">
-                {url}
-              </a>
-            </pre>
-          </div>
-        )}
-      </div>
-      {archiveMode && (
-        <Space wrap>
-          <Button
-            onClick={() => {
-              actions?.set_file_action();
-            }}
-          >
-            {intl.formatMessage(labels.cancel)}
-          </Button>{" "}
-          <Button onClick={doDownload} type="primary" disabled={loading}>
-            <Icon name="cloud-download" /> Compress {checked_files?.size}{" "}
-            {plural(checked_files?.size, "item")} and Download {target}.{format}{" "}
-            {loading && <Spin />}
-          </Button>
-          <SelectFormat format={format} setFormat={setFormat} />
-        </Space>
+            <SelectFormat format={format} setFormat={setFormat} />
+          </Space>
+        </div>
       )}
       {!archiveMode && (
+        <div
+          style={{
+            overflowX: "auto",
+            display: "flex",
+            marginBottom: "12px",
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              height: PRE_STYLE.minHeight,
+              marginRight: "15px",
+            }}
+          >
+            <a href={url} target="_blank">
+              <Icon name="external-link" />
+            </a>
+          </div>
+          <pre style={{ ...PRE_STYLE, height: PRE_STYLE.minHeight, flex: 1 }}>
+            <a href={url} target="_blank">
+              {url}
+            </a>
+          </pre>
+        </div>
+      )}
+      <ShowError setError={setError} error={error} />
+      <div style={{ marginTop: "18px", textAlign: "right" }}>
         <Space wrap>
           <Button
             onClick={() => {
@@ -179,13 +172,33 @@ export default function Download({ clear }) {
             }}
           >
             {intl.formatMessage(labels.cancel)}
-          </Button>{" "}
-          <Button onClick={doDownload} type="primary" disabled={loading}>
-            <Icon name="cloud-download" /> Download {loading && <Spin />}
           </Button>
+          {archiveMode ? (
+            <Button onClick={doDownload} type="primary" disabled={loading}>
+              <Icon name="cloud-download" /> Compress {checked_files?.size}{" "}
+              {plural(checked_files?.size, "item")} and download {target}.
+              {format} {loading && <Spin />}
+            </Button>
+          ) : (
+            <Button onClick={doDownload} type="primary" disabled={loading}>
+              <Icon name="cloud-download" /> Download {loading && <Spin />}
+            </Button>
+          )}
         </Space>
-      )}
-      <ShowError setError={setError} error={error} />
-    </Card>
+      </div>
+    </>
+  );
+
+  if (display === "modal") {
+    return content;
+  }
+
+  return (
+    <div>
+      <div style={{ marginBottom: "10px", fontWeight: 500 }}>
+        Download {archiveMode ? "files" : "a file"} to your computer
+      </div>
+      {content}
+    </div>
   );
 }
