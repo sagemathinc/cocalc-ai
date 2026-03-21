@@ -20,6 +20,11 @@ import { executeCode } from "@cocalc/backend/execute-code";
 import { deleteProjectLocal } from "./sqlite/projects";
 import { setProjectHostAuthPublicKey } from "./auth-public-key";
 import { matchAppRequest } from "./app-public-access";
+import {
+  deleteRootfsCacheEntry,
+  listRootfsCacheEntries,
+  pullRootfsCacheEntry,
+} from "./rootfs-cache";
 import { connect as connectToConat } from "@cocalc/conat/core/client";
 import { inboxPrefix } from "@cocalc/conat/names";
 import {
@@ -678,6 +683,15 @@ export async function startMasterRegistration({
       },
       async getProjectRuntimeLog({ project_id, lines }) {
         return await readProjectRuntimeLogTail(project_id, lines);
+      },
+      async listRootfsImages() {
+        return await listRootfsCacheEntries();
+      },
+      async pullRootfsImage({ image }) {
+        return await pullRootfsCacheEntry(image);
+      },
+      async deleteRootfsImage({ image }) {
+        return await deleteRootfsCacheEntry(image);
       },
       async listHostSshAuthorizedKeys() {
         return await listHostSshAuthorizedKeys();

@@ -164,6 +164,19 @@ export interface HostProjectsResponse {
   host_last_seen?: string;
 }
 
+export interface HostRootfsImage {
+  image: string;
+  cache_path: string;
+  inspect_path?: string;
+  digest?: string;
+  size_bytes?: number;
+  cached_at?: string;
+  project_count: number;
+  running_project_count: number;
+  project_ids: string[];
+  running_project_ids: string[];
+}
+
 export interface HostCatalog {
   provider: string;
   entries: HostCatalogEntry[];
@@ -318,6 +331,9 @@ export const hosts = {
   updateCloudCatalog: authFirstRequireAccount,
   getHostLog: authFirstRequireAccount,
   getHostRuntimeLog: authFirstRequireAccount,
+  listHostRootfsImages: authFirstRequireAccount,
+  pullHostRootfsImage: authFirstRequireAccount,
+  deleteHostRootfsImage: authFirstRequireAccount,
   listHostSshAuthorizedKeys: authFirstRequireAccount,
   addHostSshAuthorizedKey: authFirstRequireAccount,
   removeHostSshAuthorizedKey: authFirstRequireAccount,
@@ -392,6 +408,20 @@ export interface Hosts {
     id: string;
     lines?: number;
   }) => Promise<HostRuntimeLog>;
+  listHostRootfsImages: (opts: {
+    account_id?: string;
+    id: string;
+  }) => Promise<HostRootfsImage[]>;
+  pullHostRootfsImage: (opts: {
+    account_id?: string;
+    id: string;
+    image: string;
+  }) => Promise<HostRootfsImage>;
+  deleteHostRootfsImage: (opts: {
+    account_id?: string;
+    id: string;
+    image: string;
+  }) => Promise<{ removed: boolean }>;
   listHostSshAuthorizedKeys: (opts: {
     account_id?: string;
     id: string;

@@ -18,6 +18,7 @@ import { useHostLog } from "./use-host-log";
 import { useHostOps } from "./use-host-ops";
 import { useHostProviders } from "./use-host-providers";
 import { useHostSelection } from "./use-host-selection";
+import { useHostRootfsImages } from "./use-host-rootfs-images";
 import { useHostSoftwareVersions } from "./use-host-software-versions";
 import { useParallelOps } from "./use-parallel-ops";
 import { formatHostUpgradeFailureMessage } from "./host-upgrade-errors";
@@ -534,6 +535,17 @@ export const useHostsPageViewModel = () => {
     enabled: drawerOpen && !!selected,
     hubSourceBaseUrl: baseUrl ? `${baseUrl}/software` : undefined,
   });
+  const canManageRootfs =
+    !!selected && (selected.scope === "owned" || (isAdmin && showAdmin));
+  const rootfsInventory = useHostRootfsImages(hub, {
+    hostId: selected?.id,
+    enabled:
+      drawerOpen &&
+      !!selected &&
+      selected.status === "running" &&
+      !selected.deleted &&
+      canManageRootfs,
+  });
   const upgradeHostSoftwareFromHub = React.useCallback(
     async (host: Host) => {
       if (!baseUrl) return;
@@ -952,6 +964,8 @@ export const useHostsPageViewModel = () => {
       ...softwareVersions,
       hubSourceBaseUrl: baseUrl ? `${baseUrl}/software` : undefined,
     },
+    rootfsInventory,
+    canManageRootfs,
     selfHost: {
       connectorMap: selfHostConnectorMap,
       isConnectorOnline: isSelfHostConnectorOnline,

@@ -20,6 +20,7 @@ import { React, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components/icon";
 import type {
   Host,
+  HostRootfsImage,
   HostSoftwareArtifact,
   HostSoftwareAvailableVersion,
 } from "@cocalc/conat/hub/api/hosts";
@@ -44,6 +45,7 @@ import { HostBootstrapProgress } from "./host-bootstrap-progress";
 import { HostParallelOpsPanel } from "./host-parallel-ops-panel";
 import { HostProjectStatus } from "./host-project-status";
 import { HostProjectsBrowser } from "./host-projects-browser";
+import { HostRootfsCachePanel } from "./host-rootfs-cache-panel";
 
 type HostDrawerViewModel = {
   open: boolean;
@@ -73,6 +75,17 @@ type HostDrawerViewModel = {
     refresh: () => Promise<void>;
     hubSourceBaseUrl?: string;
   };
+  rootfsInventory?: {
+    entries: HostRootfsImage[];
+    loading: boolean;
+    error?: string;
+    refreshing: boolean;
+    actionKey?: string;
+    refresh: () => Promise<void>;
+    pull: (image: string) => Promise<void>;
+    remove: (image: string) => Promise<void>;
+  };
+  canManageRootfs?: boolean;
   selfHost?: {
     connectorMap: Map<
       string,
@@ -328,6 +341,8 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
     hostLog,
     loadingLog,
     softwareVersions,
+    rootfsInventory,
+    canManageRootfs,
     selfHost,
     parallelOps,
   } = vm;
@@ -872,6 +887,11 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
               </Space>
             </Space>
           )}
+          <HostRootfsCachePanel
+            host={host}
+            canManage={!!canManageRootfs}
+            inventory={rootfsInventory}
+          />
           {showConnectorWarning && selfHost && (
             <Alert
               type="warning"
