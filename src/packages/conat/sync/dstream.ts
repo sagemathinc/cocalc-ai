@@ -120,6 +120,8 @@ export class DStream<T = any> extends EventEmitter {
       throw Error("closed");
     }
     this.stream.on("change", this.handleChange);
+    this.stream.on("metadata-change", this.handleMetadataChange);
+    this.stream.on("checkpoints-change", this.handleCheckpointsChange);
     this.stream.on("reset", () => {
       this.local = {};
       this.saved = {};
@@ -147,6 +149,14 @@ export class DStream<T = any> extends EventEmitter {
     }
   };
 
+  private handleMetadataChange = (metadata?: JSONValue) => {
+    this.emit("metadata-change", metadata);
+  };
+
+  private handleCheckpointsChange = (checkpoints: StreamCheckpoints) => {
+    this.emit("checkpoints-change", checkpoints);
+  };
+
   isStable = () => {
     for (const _ in this.saved) {
       return false;
@@ -168,6 +178,8 @@ export class DStream<T = any> extends EventEmitter {
     logger.debug("close", this.name);
     const stream = this.stream;
     stream.removeListener("change", this.handleChange);
+    stream.removeListener("metadata-change", this.handleMetadataChange);
+    stream.removeListener("checkpoints-change", this.handleCheckpointsChange);
     // @ts-ignore
     delete this.stream;
     stream.close();

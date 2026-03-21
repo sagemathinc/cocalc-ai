@@ -141,7 +141,7 @@ export class AStream<T = any> {
       for (const event of updates) {
         if (event.op == "delete") {
           yield event;
-        } else {
+        } else if (event.op == null) {
           const { seq, time, key, encoding, raw, headers } = event;
           const mesg = decode({ encoding, data: raw });
           yield { op: "set", mesg, headers, seq, time, key };

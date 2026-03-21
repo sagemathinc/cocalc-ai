@@ -63,6 +63,7 @@ import type {
   StoredMessage,
   PersistentStream,
   StorageOptions,
+  ChangefeedOperation,
 } from "./storage";
 import { getStream, SERVICE, MAX_PER_USER, MAX_GLOBAL, RESOURCE } from "./util";
 import { throttle } from "lodash";
@@ -386,7 +387,7 @@ function startChangefeed({ socket, stream, messagesThresh }) {
   logger.debug("startChangefeed", { subject: socket.subject });
   // this seq here has nothing to do with the seq of the StoredMessage!
   let seq = 0;
-  const respond = (error?, messages?: StoredMessage[]) => {
+  const respond = (error?, messages?: ChangefeedOperation[]) => {
     if (socket.state == "closed") {
       return;
     }
@@ -395,16 +396,18 @@ function startChangefeed({ socket, stream, messagesThresh }) {
     seq += 1;
   };
 
-  const unsentMessages: StoredMessage[] = [];
+  const unsentMessages: ChangefeedOperation[] = [];
   const sendAllUnsentMessages = throttle(
     () => {
       while (socket.state != "closed" && unsentMessages.length > 0) {
-        const messages: StoredMessage[] = [];
+        const messages: ChangefeedOperation[] = [];
         let size = 0;
         while (unsentMessages.length > 0 && socket.state != "closed") {
           const message = unsentMessages.shift();
           // e.g. op:'delete' messages have length 0 and no raw field
-          size += message?.raw?.length ?? 0;
+          if (message != null && "raw" in message) {
+            size += message.raw?.length ?? 0;
+          }
           messages.push(message!);
           if (size >= messagesThresh) {
             respond(undefined, messages);

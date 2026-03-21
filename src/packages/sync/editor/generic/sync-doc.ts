@@ -45,7 +45,7 @@ import { close, hash_string, minutes_ago } from "@cocalc/util/misc";
 import * as schema from "@cocalc/util/schema";
 import { delay } from "awaiting";
 import { EventEmitter } from "events";
-import { Map, fromJS } from "immutable";
+import { Map, fromJS, is as immutableIs } from "immutable";
 import { debounce, throttle } from "lodash";
 import { HistoryEntry, HistoryExportOptions, export_history } from "./export";
 import { IpywidgetsState } from "./ipywidgets-state";
@@ -262,6 +262,9 @@ export class SyncDoc extends EventEmitter {
   private syncstring_table?: SyncTable;
   public patches_table: SyncTable;
   private syncMetadata: Map<string, any> = Map();
+  private readonly patchMetadataChanged = () => {
+    void this.refreshPatchMetadataFromDStream();
+  };
 
   public ipywidgets_state?: IpywidgetsState;
 
@@ -957,6 +960,88 @@ export class SyncDoc extends EventEmitter {
     this.emit("settings-change", this.settings);
   };
 
+  private refreshPatchMetadataFromDStream = async (): Promise<void> => {
+    if (
+      !this.useConat ||
+      this.state === "closed" ||
+      this.patches_table == null
+    ) {
+      return;
+    }
+    const dstream = this.dstream();
+    const rawMetadata = dstream.getMetadata();
+    const metadata =
+      rawMetadata != null &&
+      typeof rawMetadata === "object" &&
+      !Array.isArray(rawMetadata)
+        ? (rawMetadata as PatchDocMetadataV1)
+        : undefined;
+    const checkpoint = dstream.getCheckpoint?.(LATEST_SNAPSHOT_CHECKPOINT) as
+      | { seq: number; data?: { patchId?: string } }
+      | undefined;
+    const previousSettings = this.settings;
+    const previousHistoryEpoch = this.history_epoch;
+    const previousHistoryPurgedAt =
+      previousSettings?.get?.("history_purged_at");
+    const nextSettings = fromJS(metadata?.settings ?? {}) as Map<string, any>;
+    const nextHistoryEpoch = this.metadataHistoryEpoch(nextSettings);
+    const nextHistoryPurgedAt = nextSettings?.get?.("history_purged_at");
+
+    this.setLastSnapshot(
+      typeof checkpoint?.data?.patchId === "string"
+        ? checkpoint.data.patchId
+        : undefined,
+    );
+    this.last_seq = checkpoint?.seq;
+    this.snapshot_interval =
+      metadata?.snapshot_interval ?? DEFAULT_SNAPSHOT_INTERVAL;
+    this.settings = nextSettings;
+    this.history_epoch = nextHistoryEpoch;
+    this.users = this.normalizedUsers(metadata?.users);
+    this.setSyncMetadataState({ metadata, checkpoint });
+
+    const historyEpochIncreased =
+      previousHistoryEpoch != null &&
+      nextHistoryEpoch != null &&
+      nextHistoryEpoch > previousHistoryEpoch;
+    const historyPurgeMarkerChanged =
+      nextHistoryPurgedAt != null &&
+      nextHistoryPurgedAt !== previousHistoryPurgedAt;
+    if (
+      historyEpochIncreased ||
+      (this.isReady() && historyPurgeMarkerChanged)
+    ) {
+      this.emit("history-reset", { history_epoch: nextHistoryEpoch });
+      this.close();
+      return;
+    }
+
+    this.applyPatchWriteHeaders();
+
+    if (this.client != null) {
+      const client_id = this.client_id();
+      let idx = this.users.indexOf(client_id);
+      if (idx === -1) {
+        this.users.push(client_id);
+        idx = this.users.length - 1;
+        await this.setDocumentMetadata({ users: this.users });
+      } else if (
+        idx === FILESYSTEM_USER_ID &&
+        this.users[idx] !== FILESYSTEM_CLIENT_ID
+      ) {
+        this.users.push(client_id);
+        idx = this.users.length - 1;
+        await this.setDocumentMetadata({ users: this.users });
+      }
+      this.my_user_id = Math.max(1, idx);
+    }
+
+    this.emit("metadata-change");
+    if (!immutableIs(previousSettings, nextSettings)) {
+      this.emit("settings-change", nextSettings);
+    }
+  };
+
   /* List of patch ids of the versions of this string in the sync
      table that we opened to start editing (so starts with what was
      the most recent snapshot when we started), sorted from oldest to newest. */
@@ -1080,6 +1165,11 @@ export class SyncDoc extends EventEmitter {
 
     this.stopBackendFsWatch();
     this.client.removeListener("closed", this.close);
+    if (this.useConat && this.patches_table != null) {
+      const dstream = this.dstream();
+      dstream.removeListener("metadata-change", this.patchMetadataChanged);
+      dstream.removeListener("checkpoints-change", this.patchMetadataChanged);
+    }
 
     // must be after the emits above, so clients know
     // what happened and can respond.
@@ -1486,6 +1576,9 @@ export class SyncDoc extends EventEmitter {
     this.assert_not_closed("init_patchflow -- after making synctable");
     if (this.useConat) {
       await this.loadPatchBootstrap();
+      const dstream = this.dstream();
+      dstream.on("metadata-change", this.patchMetadataChanged);
+      dstream.on("checkpoints-change", this.patchMetadataChanged);
     }
     this.applyPatchWriteHeaders();
 

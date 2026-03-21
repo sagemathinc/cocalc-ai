@@ -241,6 +241,22 @@ export interface DeleteOperation {
   seqs: number[];
 }
 
+export interface MetadataOperation {
+  op: "metadata";
+  metadata?: JSONValue;
+}
+
+export interface CheckpointsOperation {
+  op: "checkpoints";
+  checkpoints: StreamCheckpoints;
+}
+
+export type ChangefeedOperation =
+  | SetOperation
+  | DeleteOperation
+  | MetadataOperation
+  | CheckpointsOperation;
+
 export const DEFAULT_ARCHIVE_INTERVAL = 30_000; // 30 seconds
 
 export interface StorageOptions {
@@ -851,6 +867,7 @@ export class PersistentStream extends EventEmitter {
           .run(JSON.stringify(metadata));
       }
     });
+    this.emit("change", { op: "metadata", metadata });
     this.throttledBackup();
     return metadata;
   };
@@ -926,12 +943,20 @@ export class PersistentStream extends EventEmitter {
     this.runTransaction(() => {
       this.writeCheckpoint({ name, seq, time, data });
     });
+    this.emit("change", {
+      op: "checkpoints",
+      checkpoints: this.getCheckpoints(),
+    });
     this.throttledBackup();
     return { seq, time, data };
   };
 
   deleteCheckpoint = (name: string): void => {
     this.db.prepare("DELETE FROM stream_checkpoints WHERE name = ?").run(name);
+    this.emit("change", {
+      op: "checkpoints",
+      checkpoints: this.getCheckpoints(),
+    });
     this.throttledBackup();
   };
 
