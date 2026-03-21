@@ -13,6 +13,7 @@ extra support for being connected to:
 
 import { callback, delay } from "awaiting";
 import { Map } from "immutable";
+import type { Store } from "@cocalc/util/redux/Store";
 import { Terminal as XTerminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
@@ -147,6 +148,8 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
   private writeBuffer: TerminalTransmit[] = [];
 
   private title?: string;
+  private projectStore?: Store<any>;
+  private lastProjectState?: string;
 
   constructor(
     actions: Actions<T>,
@@ -225,6 +228,7 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
     this.update_settings();
     this.init_title();
     this.init_settings();
+    this.initProjectStatusWatcher();
     this.set_connection_status("disconnected");
 
     const handleData = (data: string, kind: TerminalMessageKind) => {
@@ -380,9 +384,44 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
     this.set_connection_status("disconnected");
     this.state = "closed";
     this.account_store.removeListener("change", this.update_settings);
+    this.projectStore?.removeListener("change", this.handleProjectStoreChange);
     this.terminal.dispose();
     close(this);
     this.state = "closed";
+  };
+
+  private initProjectStatusWatcher = (): void => {
+    const projectStore = this.project_actions.get_store?.();
+    if (projectStore == null) {
+      return;
+    }
+    this.projectStore = projectStore;
+    this.lastProjectState = projectStore.getIn(["status", "state"]);
+    projectStore.on("change", this.handleProjectStoreChange);
+  };
+
+  private handleProjectStoreChange = (): void => {
+    if (this.isClosed()) {
+      return;
+    }
+    const nextState = this.projectStore?.getIn(["status", "state"]);
+    if (nextState === this.lastProjectState) {
+      return;
+    }
+    const prevState = this.lastProjectState;
+    this.lastProjectState = nextState;
+
+    if (prevState === "running" && nextState !== "running") {
+      this.pty?.close();
+      this.pty = null;
+      this.set_connection_status("disconnected");
+      this.ptyExited = false;
+      return;
+    }
+
+    if (prevState !== "running" && nextState === "running") {
+      void this.connect();
+    }
   };
 
   private update_settings = (): void => {

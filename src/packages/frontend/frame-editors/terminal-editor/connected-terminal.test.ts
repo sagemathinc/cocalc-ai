@@ -1,9 +1,28 @@
 /** @jest-environment jsdom */
 
+import { EventEmitter } from "events";
 import { Map } from "immutable";
+import { waitFor } from "@testing-library/react";
 
 function loadTerminalModule() {
-  const pty = {
+  class MockProjectStore extends EventEmitter {
+    private data = Map({
+      status: Map({
+        state: "running",
+      }),
+    });
+
+    get = (key: string) => this.data.get(key);
+    getIn = (path: string[]) => this.data.getIn(path);
+    setStatus = (state: string) => {
+      this.data = this.data.set("status", Map({ state }));
+      this.emit("change", this.data);
+    };
+  }
+
+  const projectStore = new MockProjectStore();
+
+  const makePty = () => ({
     socket: {
       state: "ready",
       on: jest.fn(),
@@ -19,7 +38,10 @@ function loadTerminalModule() {
     destroy: jest.fn(),
     broadcast: jest.fn(),
     state: jest.fn(async () => "running"),
-  };
+  });
+  const availablePtys = [makePty(), makePty(), makePty()];
+  const createdPtys = [...availablePtys];
+  const terminalClient = jest.fn(() => availablePtys.shift() ?? makePty());
 
   jest.resetModules();
 
@@ -60,7 +82,7 @@ function loadTerminalModule() {
   jest.doMock("@cocalc/frontend/webapp-client", () => ({
     webapp_client: {
       conat_client: {
-        terminalClient: jest.fn(() => pty),
+        terminalClient,
       },
     },
   }));
@@ -77,6 +99,7 @@ function loadTerminalModule() {
       close_tab: jest.fn(),
       isTabClosed: jest.fn(() => false),
       open_directory: jest.fn(),
+      get_store: jest.fn(() => projectStore),
     };
     return {
       redux: {
@@ -105,7 +128,7 @@ function loadTerminalModule() {
   }));
 
   const { Terminal } = require("./connected-terminal");
-  return { Terminal, pty };
+  return { Terminal, ptys: createdPtys, projectStore, terminalClient };
 }
 
 describe("connected terminal resizing", () => {
@@ -159,5 +182,45 @@ describe("connected terminal resizing", () => {
     );
 
     warn.mockRestore();
+  });
+
+  it("drops stale pty on project restart and reconnects when running returns", async () => {
+    const { Terminal, ptys, projectStore, terminalClient } =
+      loadTerminalModule();
+    const parent = document.createElement("div");
+    document.body.appendChild(parent);
+    const actions = {
+      project_id: "project-1",
+      path: "/tmp/example.term",
+      get_term_env: jest.fn(() => ({})),
+      set_connection_status: jest.fn(),
+      set_title: jest.fn(),
+      set_error: jest.fn(),
+      _tree_is_single_leaf: jest.fn(() => false),
+      close_frame: jest.fn(),
+      open_code_editor_frame: jest.fn(),
+      _get_project_actions: jest.fn(() => ({
+        flag_file_activity: jest.fn(),
+        open_file: jest.fn(),
+        close_tab: jest.fn(),
+        isTabClosed: jest.fn(() => false),
+        open_directory: jest.fn(),
+      })),
+    } as any;
+
+    new Terminal(actions, 0, "term-1", parent);
+    await waitFor(() => expect(terminalClient).toHaveBeenCalledTimes(1));
+
+    const firstPty = ptys[0];
+
+    projectStore.setStatus("starting");
+    expect(firstPty.close).toHaveBeenCalled();
+    expect(actions.set_connection_status).toHaveBeenCalledWith(
+      "term-1",
+      "disconnected",
+    );
+
+    projectStore.setStatus("running");
+    await waitFor(() => expect(terminalClient).toHaveBeenCalledTimes(2));
   });
 });
