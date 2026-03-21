@@ -35,6 +35,14 @@ export const useProjectContext = () => ({
   path: "chat-harness.chat",
 });
 export const useProjectHasInternetAccess = () => true;
+export const effectiveImmutableEditorSettings = <T>(
+  editorSettings: T,
+  _record?: any,
+): T => editorSettings;
+export const useWorkspaceRecordForPath = (
+  _project_id?: string,
+  _path?: string | null,
+) => null;
 export const matchProjectNavigationCommand = () => undefined;
 export const handoffProjectNavigationFromLocalOwner = () => undefined;
 export const lite = false;
