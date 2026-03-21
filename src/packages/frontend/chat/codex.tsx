@@ -499,13 +499,13 @@ export function CodexConfigButton({
               <Alert
                 type="info"
                 showIcon
-                message="Checking local Codex install..."
+                title="Checking local Codex install..."
               />
             ) : liteCodexStatus?.installed === false ? (
               <Alert
                 type="warning"
                 showIcon
-                message="Codex CLI not detected"
+                title="Codex CLI not detected"
                 description={
                   liteCodexStatus.error
                     ? `Install Codex CLI and restart CoCalc Lite. Details: ${liteCodexStatus.error}`
@@ -516,7 +516,7 @@ export function CodexConfigButton({
               <Alert
                 type="success"
                 showIcon
-                message="Codex CLI detected"
+                title="Codex CLI detected"
                 description={`${liteCodexStatus.binaryPath ?? "codex"}${
                   liteCodexStatus.version ? ` (${liteCodexStatus.version})` : ""
                 }`}
