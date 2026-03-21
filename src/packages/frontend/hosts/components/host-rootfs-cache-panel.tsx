@@ -15,6 +15,7 @@ import {
   managedRootfsCatalogUrl,
   useRootfsImages,
 } from "@cocalc/frontend/rootfs/manifest";
+import type { RootfsImageEntry } from "@cocalc/util/rootfs-images";
 import { human_readable_size, plural } from "@cocalc/util/misc";
 
 type HostRootfsCachePanelProps = {
@@ -54,6 +55,36 @@ function sectionLabel(section?: string): string | undefined {
   }
 }
 
+function catalogEntryRank(entry: RootfsImageEntry): number {
+  if (entry.official) return 4;
+  switch (entry.section) {
+    case "mine":
+      return 3;
+    case "collaborators":
+      return 2;
+    case "public":
+      return 1;
+    default:
+      return 0;
+  }
+}
+
+function preferCatalogEntry(
+  left: RootfsImageEntry,
+  right: RootfsImageEntry,
+): RootfsImageEntry {
+  const leftRank = catalogEntryRank(left);
+  const rightRank = catalogEntryRank(right);
+  if (leftRank !== rightRank) {
+    return leftRank > rightRank ? left : right;
+  }
+  return left.label.localeCompare(right.label, undefined, {
+    sensitivity: "base",
+  }) <= 0
+    ? left
+    : right;
+}
+
 export function HostRootfsCachePanel({
   host,
   canManage,
@@ -64,17 +95,30 @@ export function HostRootfsCachePanel({
     managedRootfsCatalogUrl(),
   ]);
 
+  const uniqueCatalogEntries = React.useMemo(() => {
+    const byImage = new Map<string, RootfsImageEntry>();
+    for (const entry of catalogImages) {
+      const existing = byImage.get(entry.image);
+      byImage.set(
+        entry.image,
+        existing ? preferCatalogEntry(existing, entry) : entry,
+      );
+    }
+    return Array.from(byImage.values()).sort((a, b) =>
+      a.label.localeCompare(b.label, undefined, { sensitivity: "base" }),
+    );
+  }, [catalogImages]);
   const catalogByImage = React.useMemo(
-    () => new Map(catalogImages.map((entry) => [entry.image, entry])),
-    [catalogImages],
+    () => new Map(uniqueCatalogEntries.map((entry) => [entry.image, entry])),
+    [uniqueCatalogEntries],
   );
   const pullOptions = React.useMemo(
     () =>
-      catalogImages.map((entry) => ({
+      uniqueCatalogEntries.map((entry) => ({
         value: entry.image,
         label: `${entry.label} (${entry.image})`,
       })),
-    [catalogImages],
+    [uniqueCatalogEntries],
   );
   const totals = React.useMemo(() => {
     const size = (inventory?.entries ?? []).reduce(
@@ -89,7 +133,13 @@ export function HostRootfsCachePanel({
   }, [inventory?.entries]);
 
   React.useEffect(() => {
-    if (pullImage || pullOptions.length === 0) return;
+    if (pullOptions.length === 0) {
+      setPullImage(undefined);
+      return;
+    }
+    if (pullImage && pullOptions.some((option) => option.value === pullImage)) {
+      return;
+    }
     setPullImage(pullOptions[0].value);
   }, [pullImage, pullOptions]);
 
