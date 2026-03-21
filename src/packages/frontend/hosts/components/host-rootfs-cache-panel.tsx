@@ -120,6 +120,17 @@ export function HostRootfsCachePanel({
       })),
     [uniqueCatalogEntries],
   );
+  const cachedImages = React.useMemo(
+    () => new Set((inventory?.entries ?? []).map((entry) => entry.image)),
+    [inventory?.entries],
+  );
+  const uncachedPullOptions = React.useMemo(
+    () =>
+      pullOptions.filter(
+        (option) => !cachedImages.has(`${option.value ?? ""}`),
+      ),
+    [cachedImages, pullOptions],
+  );
   const totals = React.useMemo(() => {
     const size = (inventory?.entries ?? []).reduce(
       (sum, entry) => sum + (entry.size_bytes ?? 0),
@@ -133,15 +144,18 @@ export function HostRootfsCachePanel({
   }, [inventory?.entries]);
 
   React.useEffect(() => {
-    if (pullOptions.length === 0) {
+    if (uncachedPullOptions.length === 0) {
       setPullImage(undefined);
       return;
     }
-    if (pullImage && pullOptions.some((option) => option.value === pullImage)) {
+    if (
+      pullImage &&
+      uncachedPullOptions.some((option) => option.value === pullImage)
+    ) {
       return;
     }
-    setPullImage(pullOptions[0].value);
-  }, [pullImage, pullOptions]);
+    setPullImage(uncachedPullOptions[0].value);
+  }, [pullImage, uncachedPullOptions]);
 
   if (!canManage) {
     return null;
@@ -199,10 +213,15 @@ export function HostRootfsCachePanel({
             <Select
               style={{ flex: 1 }}
               showSearch
-              placeholder="Select managed RootFS image to cache"
-              options={pullOptions}
+              placeholder={
+                uncachedPullOptions.length > 0
+                  ? "Select managed RootFS image to cache"
+                  : "All managed RootFS images are already cached"
+              }
+              options={uncachedPullOptions}
               value={pullImage}
               loading={catalogLoading}
+              disabled={uncachedPullOptions.length === 0}
               onChange={(value) => setPullImage(value)}
               filterOption={(input, option) =>
                 `${option?.label ?? ""}`
@@ -213,7 +232,7 @@ export function HostRootfsCachePanel({
             <Button
               type="primary"
               loading={inventory.actionKey?.startsWith("pull:")}
-              disabled={!pullImage}
+              disabled={!pullImage || uncachedPullOptions.length === 0}
               onClick={() => {
                 if (!pullImage) return;
                 inventory.pull(pullImage).catch((err) => {
@@ -224,6 +243,11 @@ export function HostRootfsCachePanel({
               Pull
             </Button>
           </Space.Compact>
+          {!catalogLoading && uncachedPullOptions.length === 0 && (
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              All managed RootFS images are already cached on this host.
+            </Typography.Text>
+          )}
           {inventory.loading ? (
             <Typography.Text type="secondary">
               Loading RootFS cache…
