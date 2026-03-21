@@ -1081,7 +1081,7 @@ export const site_settings_conf: SiteSettings = {
   project_rootfs_manifest_url: {
     name: "Project RootFS Image Manifest URL",
     desc: "Primary manifest URL that lists the curated root filesystem images shown to users when creating a project.",
-    default: "https://software.cocalc.ai/rootfs/manifest.json",
+    default: "/rootfs/manifest.json",
     to_val: to_trimmed_str,
     tags: ["Workspace", "RootFS", "OCI"],
     group: "Compute / Projects",

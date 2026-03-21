@@ -571,6 +571,7 @@ export class ProjectClient {
     title: string;
     description: string;
     rootfs_image?: string;
+    rootfs_image_id?: string;
     start?: boolean;
     host_id?: string;
     region?: string;

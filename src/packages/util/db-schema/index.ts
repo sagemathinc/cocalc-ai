@@ -59,6 +59,7 @@ import "./project-host-bootstrap-tokens";
 import "./project-backup-secrets";
 import "./project-collab-invites";
 import "./projects";
+import "./rootfs-images";
 import "./public-path-stars";
 import "./public-paths";
 import "./purchase-quotas";

@@ -5,6 +5,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import {
+  DEFAULT_ROOTFS_CATALOG_URL,
+  type RootfsCatalogSaveBody,
   RootfsImageEntry,
   RootfsImageManifest,
   mergeRootfsManifests,
@@ -105,4 +107,28 @@ export function useRootfsImages(manifestUrls: string[]): ManifestLoadState {
   }, [urls.join("|")]);
 
   return state;
+}
+
+export async function saveRootfsCatalogEntry(
+  body: RootfsCatalogSaveBody,
+): Promise<RootfsImageEntry> {
+  const res = await fetch("/rootfs/catalog/save", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    throw Error(await res.text());
+  }
+  const json = (await res.json()) as { ok: boolean; entry: RootfsImageEntry };
+  return json.entry;
+}
+
+export function managedRootfsCatalogUrl(refresh?: number | string): string {
+  if (refresh == null) {
+    return DEFAULT_ROOTFS_CATALOG_URL;
+  }
+  return `${DEFAULT_ROOTFS_CATALOG_URL}?refresh=${encodeURIComponent(
+    `${refresh}`,
+  )}`;
 }

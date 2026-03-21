@@ -6,6 +6,22 @@
 export const ROOTFS_IMAGE_MANIFEST_VERSION = 1;
 
 export type RootfsImageArch = "amd64" | "arm64" | "any";
+export type RootfsImageVisibility = "private" | "collaborators" | "public";
+export type RootfsImageSection =
+  | "official"
+  | "mine"
+  | "collaborators"
+  | "public";
+export type RootfsImageWarning = "none" | "collaborator" | "public";
+
+export type RootfsImageTheme = {
+  title?: string;
+  description?: string;
+  color?: string | null;
+  accent_color?: string | null;
+  icon?: string | null;
+  image_blob?: string | null;
+};
 
 export type RootfsImageEntry = {
   id: string;
@@ -21,6 +37,15 @@ export type RootfsImageEntry = {
   prepull?: boolean;
   deprecated?: boolean;
   deprecated_reason?: string;
+  visibility?: RootfsImageVisibility;
+  official?: boolean;
+  hidden?: boolean;
+  owner_id?: string;
+  owner_name?: string;
+  section?: RootfsImageSection;
+  warning?: RootfsImageWarning;
+  theme?: RootfsImageTheme;
+  can_manage?: boolean;
 };
 
 export type RootfsImageManifest = {
@@ -28,6 +53,22 @@ export type RootfsImageManifest = {
   generated_at?: string;
   source?: string;
   images: RootfsImageEntry[];
+};
+
+export type RootfsCatalogSaveBody = {
+  image_id?: string;
+  image: string;
+  label: string;
+  description?: string;
+  visibility?: RootfsImageVisibility;
+  arch?: RootfsImageArch | RootfsImageArch[];
+  gpu?: boolean;
+  size_gb?: number;
+  tags?: string[];
+  theme?: RootfsImageTheme;
+  official?: boolean;
+  prepull?: boolean;
+  hidden?: boolean;
 };
 
 function normalizeArch(value?: RootfsImageEntry["arch"]): RootfsImageArch[] {
@@ -53,6 +94,9 @@ export function normalizeRootfsEntry(
     tags,
     arch: normalizeArch(entry.arch),
     priority: entry.priority ?? 0,
+    visibility: entry.visibility ?? "public",
+    warning: entry.warning ?? "none",
+    owner_name: entry.owner_name?.trim(),
     deprecated_reason: entry.deprecated_reason?.trim(),
   };
 }
@@ -74,3 +118,28 @@ export function mergeRootfsManifests(
     return a.label.localeCompare(b.label, undefined, { sensitivity: "base" });
   });
 }
+
+export const DEFAULT_ROOTFS_CATALOG_URL = "/rootfs/catalog.json";
+
+export const BUILTIN_ROOTFS_IMAGES: RootfsImageEntry[] = [
+  {
+    id: "official-cocalc-base",
+    label: "CoCalc Base",
+    image: "buildpack-deps:noble-scm",
+    description:
+      "Official minimal CoCalc base image for projects. This is the default launch image.",
+    priority: 1000,
+    prepull: true,
+    official: true,
+    visibility: "public",
+    section: "official",
+    warning: "none",
+    tags: ["official", "cpu", "base"],
+    theme: {
+      title: "CoCalc Base",
+      color: "#4474c0",
+      accent_color: "#14b8a6",
+      icon: "cube",
+    },
+  },
+];
