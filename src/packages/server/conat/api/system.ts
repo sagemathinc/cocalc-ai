@@ -32,7 +32,10 @@ import {
   testR2Credentials as testR2Credentials0,
   type R2CredentialsTestResult,
 } from "@cocalc/server/project-backup/r2";
-import { saveRootfsImage } from "@cocalc/server/rootfs/catalog";
+import {
+  listVisibleRootfsImages,
+  saveRootfsImage,
+} from "@cocalc/server/rootfs/catalog";
 import type { RootfsCatalogSaveBody } from "@cocalc/util/rootfs-images";
 import {
   type BrowserSessionLiveInfo,
@@ -308,6 +311,10 @@ export async function webappError(opts: object): Promise<void> {
 
 export async function getFrontendSourceFingerprint() {
   return await getFrontendSourceFingerprint0();
+}
+
+export async function getRootfsCatalog(opts: { account_id?: string } = {}) {
+  return await listVisibleRootfsImages(opts.account_id);
 }
 
 export async function saveRootfsCatalogEntry(

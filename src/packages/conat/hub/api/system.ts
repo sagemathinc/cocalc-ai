@@ -12,6 +12,7 @@ import type {
 import { type UserSearchResult } from "@cocalc/util/db-schema/accounts";
 import type {
   RootfsCatalogSaveBody,
+  RootfsImageManifest,
   RootfsImageEntry,
 } from "@cocalc/util/rootfs-images";
 
@@ -45,6 +46,7 @@ export const system = {
   getOpenAiApiKeyStatus: authFirst,
   getCodexPaymentSource: authFirst,
   getFrontendSourceFingerprint: authFirst,
+  getRootfsCatalog: authFirst,
   saveRootfsCatalogEntry: authFirstRequireAccount,
   getPublicSiteUrl: authFirst,
   testR2Credentials: authFirst,
@@ -448,6 +450,10 @@ export interface System {
   getFrontendSourceFingerprint: (opts?: {
     account_id?: string;
   }) => Promise<FrontendSourceFingerprintInfo>;
+
+  getRootfsCatalog: (opts?: {
+    account_id?: string;
+  }) => Promise<RootfsImageManifest>;
 
   saveRootfsCatalogEntry: (
     opts: RootfsCatalogSaveBody & { account_id?: string },
