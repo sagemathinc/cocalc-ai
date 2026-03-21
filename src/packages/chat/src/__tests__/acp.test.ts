@@ -100,6 +100,25 @@ describe("appendStreamMessage", () => {
       "I traced the app-server path through the live activity renderer and confirmed the chunks are arriving as separate agent deltas.\n\nThe main chat row should preserve this as a new paragraph instead of collapsing everything into one long block of text.",
     );
   });
+
+  test("inserts a paragraph break before a short emphasized section heading", () => {
+    const events = [
+      textEvent(
+        "message",
+        "If this barrier is the right fix, the ACP test should pass without widening the blast radius.",
+        1,
+      ),
+    ];
+    const merged = appendStreamMessage(
+      events,
+      textEvent("message", "** Iteration 1** Area", 2),
+    );
+
+    expect(merged).toHaveLength(1);
+    expect((merged[0] as any).event.text).toBe(
+      "If this barrier is the right fix, the ACP test should pass without widening the blast radius.\n\n** Iteration 1** Area",
+    );
+  });
 });
 
 describe("response text helpers", () => {
@@ -208,6 +227,25 @@ describe("response text helpers", () => {
     ]);
     expect(getLiveResponseMarkdown(events)).toBe(
       "I traced the app-server path through the live activity renderer and confirmed the chunks are arriving as separate agent deltas.\n\nThe main chat row should preserve this as a new paragraph instead of collapsing everything into one long block of text.",
+    );
+  });
+
+  test("keeps short emphasized section headings on a new paragraph", () => {
+    const events: AcpStreamMessage[] = [
+      textEvent(
+        "message",
+        "If this barrier is the right fix, the ACP test should pass without widening the blast radius.",
+        1,
+        { delta: true },
+      ),
+      textEvent("thinking", "reasoning chunk", 2),
+      textEvent("message", "** Iteration 1** Area", 3, { delta: true }),
+    ];
+    expect(getAgentMessageTexts(events)).toEqual([
+      "If this barrier is the right fix, the ACP test should pass without widening the blast radius.\n\n** Iteration 1** Area",
+    ]);
+    expect(getLiveResponseMarkdown(events)).toBe(
+      "If this barrier is the right fix, the ACP test should pass without widening the blast radius.\n\n** Iteration 1** Area",
     );
   });
 

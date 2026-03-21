@@ -77,10 +77,19 @@ function needsTextBoundaryParagraph(
   const left = previousText.replace(/\s+$/, "");
   const right = nextText.replace(/^\s+/, "");
   if (!left || !right) return false;
-  if (left.length < 60 || right.length < 30) return false;
   if (!/[.!?]$/.test(left)) return false;
+  if (isLikelyMarkdownSectionStart(right)) return true;
+  if (left.length < 60 || right.length < 30) return false;
   if (!/^(?:[#>*-]|\d+\.|[A-Z`])/.test(right)) return false;
   return true;
+}
+
+function isLikelyMarkdownSectionStart(text: string): boolean {
+  if (/^(?:[#>*-]|\d+\.)/.test(text)) return true;
+  if (/^\*{1,2}\s*[A-Z`#\d]/.test(text)) return true;
+  if (/^_{1,2}\s*[A-Z`#\d]/.test(text)) return true;
+  if (/^`\s*[A-Z#\d]/.test(text)) return true;
+  return false;
 }
 
 function needsTextBoundarySpace(
