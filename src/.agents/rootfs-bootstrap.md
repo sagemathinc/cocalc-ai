@@ -1,4 +1,6 @@
-# Rootfs Bootstrap Plan
+# (wont do) Rootfs Bootstrap Plan
+
+**NOT going to do this, because we should just lean into users explicitly customizing and publishing images from within cocalc itself.**
 
 Goal: support a practical range of glibc-based container images without
 requiring every image to already contain the exact CoCalc/Codex runtime
@@ -152,4 +154,3 @@ It should be revisited after:
 - project-container app-server execution is fully locked down
 - auth strategy is settled
 - remaining ACP lifecycle hardening is done
-
