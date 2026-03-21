@@ -20,6 +20,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useTypedRedux,
 } from "@cocalc/frontend/app-framework";
 import { debounce } from "lodash";
 import { ColorButton } from "@cocalc/frontend/components/color-picker";
@@ -56,7 +57,13 @@ import type {
   ChatStoreSearchHit,
 } from "@cocalc/conat/hub/api/projects";
 import { ChatIconPicker } from "./chat-icon-picker";
-import { getDefaultCodexSessionMode } from "./codex-defaults";
+import {
+  CODEX_NEW_CHAT_MODE_OPTIONS,
+  codexNewChatDefaultsEqual,
+  getDefaultCodexNewChatDefaults,
+  getDefaultCodexSessionMode,
+  saveCodexNewChatDefaults,
+} from "./codex-defaults";
 import { Icon } from "@cocalc/frontend/components";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { useAnyChatOverlayOpen } from "./drawer-overlay-state";
@@ -93,12 +100,6 @@ const DEFAULT_CODEX_MODEL =
 const ARCHIVED_SEARCH_LIMIT = 20;
 const ARCHIVED_HISTORY_LIMIT = 50;
 const ARCHIVED_INLINE_PREVIEW_LIMIT = 6;
-const MODE_OPTIONS: { value: CodexSessionMode; label: string }[] = [
-  { value: "read-only", label: "Read only" },
-  { value: "workspace-write", label: "Workspace write" },
-  { value: "full-access", label: "Full access" },
-];
-
 export type NewThreadAgentMode = "codex" | "human" | "model";
 export interface NewThreadSetup {
   title: string;
@@ -112,18 +113,18 @@ export interface NewThreadSetup {
 }
 
 export function getDefaultNewThreadSetup(): NewThreadSetup {
-  const defaultSessionMode = getDefaultCodexSessionMode();
+  const defaults = getDefaultCodexNewChatDefaults();
   return {
     title: "",
     icon: undefined,
     color: undefined,
     image: "",
     agentMode: "codex",
-    model: DEFAULT_CODEX_MODEL,
+    model: defaults.model,
     codexConfig: {
-      model: DEFAULT_CODEX_MODEL,
-      sessionMode: defaultSessionMode,
-      reasoning: getReasoningForModel({ modelValue: DEFAULT_CODEX_MODEL }),
+      model: defaults.model,
+      sessionMode: defaults.sessionMode,
+      reasoning: defaults.reasoning,
     },
     automationConfig: getDefaultAutomationConfig({ enabled: false }),
   };
@@ -265,6 +266,11 @@ export function ChatRoomThreadPanel({
   shortcutEnabled = true,
 }: ChatRoomThreadPanelProps) {
   const defaultSessionMode = getDefaultCodexSessionMode();
+  const accountOtherSettings = useTypedRedux("account", "other_settings");
+  const defaultNewChatCodexDefaults = useMemo(
+    () => getDefaultCodexNewChatDefaults(),
+    [accountOtherSettings],
+  );
   const [threadSearchOpen, setThreadSearchOpen] = useState(false);
   const [threadSearchInput, setThreadSearchInput] = useState("");
   const [threadSearchQuery, setThreadSearchQuery] = useState("");
@@ -759,6 +765,19 @@ export function ChatRoomThreadPanel({
       description: r.description,
       default: r.default,
     }));
+    const stagedCodexDefaults = {
+      model: codexModel,
+      reasoning: getReasoningForModel({
+        modelValue: codexModel,
+        desired: newThreadSetup.codexConfig.reasoning,
+      }),
+      sessionMode:
+        normalizeSessionMode(newThreadSetup.codexConfig) ?? defaultSessionMode,
+    };
+    const stagedCodexMatchesDefault = codexNewChatDefaultsEqual(
+      stagedCodexDefaults,
+      defaultNewChatCodexDefaults,
+    );
     const shouldHideChatType = hideChatTypeSelector;
     const automationDraft = buildAutomationDraft({
       config: newThreadSetup.automationConfig,
@@ -904,95 +923,124 @@ export function ChatRoomThreadPanel({
             </div>
           </div>
           {newThreadSetup.agentMode === "codex" && (
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-                gap: 12,
-                marginBottom: 12,
-              }}
-            >
-              <div>
-                <div style={{ marginBottom: 4, color: COLORS.GRAY_D }}>
-                  Codex model
-                </div>
-                <Select
-                  value={codexModel}
-                  style={{ width: "100%" }}
-                  options={codexModelOptions}
-                  optionRender={(option) =>
-                    renderOptionWithDescription({
-                      title: `${option.data.label}`,
-                      description: option.data.description,
-                    })
-                  }
-                  showSearch
-                  optionFilterProp="label"
-                  onChange={(value) => {
-                    const model = String(value);
-                    update({
-                      model,
-                      codexConfig: {
-                        ...newThreadSetup.codexConfig,
+            <>
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+                  gap: 12,
+                  marginBottom: 12,
+                }}
+              >
+                <div>
+                  <div style={{ marginBottom: 4, color: COLORS.GRAY_D }}>
+                    Codex model
+                  </div>
+                  <Select
+                    value={codexModel}
+                    style={{ width: "100%" }}
+                    options={codexModelOptions}
+                    optionRender={(option) =>
+                      renderOptionWithDescription({
+                        title: `${option.data.label}`,
+                        description: option.data.description,
+                      })
+                    }
+                    showSearch
+                    optionFilterProp="label"
+                    onChange={(value) => {
+                      const model = String(value);
+                      update({
                         model,
-                        reasoning: getReasoningForModel({
-                          modelValue: model,
-                          desired: newThreadSetup.codexConfig.reasoning,
-                        }),
-                      },
-                    });
-                  }}
-                />
-              </div>
-              <div>
-                <div style={{ marginBottom: 4, color: COLORS.GRAY_D }}>
-                  Reasoning
+                        codexConfig: {
+                          ...newThreadSetup.codexConfig,
+                          model,
+                          reasoning: getReasoningForModel({
+                            modelValue: model,
+                            desired: newThreadSetup.codexConfig.reasoning,
+                          }),
+                        },
+                      });
+                    }}
+                  />
                 </div>
-                <Select
-                  allowClear
-                  value={newThreadSetup.codexConfig.reasoning}
-                  style={{ width: "100%" }}
-                  options={codexReasoningOptions}
-                  optionRender={(option) =>
-                    renderOptionWithDescription({
-                      title: `${option.data.label}${
-                        option.data.default ? " (default)" : ""
-                      }`,
-                      description: option.data.description,
-                    })
-                  }
-                  onChange={(value) =>
-                    update({
-                      codexConfig: {
-                        ...newThreadSetup.codexConfig,
-                        reasoning: value as CodexReasoningId,
-                      },
-                    })
-                  }
-                />
-              </div>
-              <div>
-                <div style={{ marginBottom: 4, color: COLORS.GRAY_D }}>
-                  Execution mode
+                <div>
+                  <div style={{ marginBottom: 4, color: COLORS.GRAY_D }}>
+                    Reasoning
+                  </div>
+                  <Select
+                    allowClear
+                    value={newThreadSetup.codexConfig.reasoning}
+                    style={{ width: "100%" }}
+                    options={codexReasoningOptions}
+                    optionRender={(option) =>
+                      renderOptionWithDescription({
+                        title: `${option.data.label}${
+                          option.data.default ? " (default)" : ""
+                        }`,
+                        description: option.data.description,
+                      })
+                    }
+                    onChange={(value) =>
+                      update({
+                        codexConfig: {
+                          ...newThreadSetup.codexConfig,
+                          reasoning: value as CodexReasoningId,
+                        },
+                      })
+                    }
+                  />
                 </div>
-                <Select
-                  value={
-                    normalizeSessionMode(newThreadSetup.codexConfig) ??
-                    defaultSessionMode
-                  }
-                  style={{ width: "100%" }}
-                  options={MODE_OPTIONS}
-                  onChange={(value) =>
-                    update({
-                      codexConfig: {
-                        ...newThreadSetup.codexConfig,
-                        sessionMode: value as CodexSessionMode,
-                      },
-                    })
-                  }
-                />
+                <div>
+                  <div style={{ marginBottom: 4, color: COLORS.GRAY_D }}>
+                    Execution mode
+                  </div>
+                  <Select
+                    value={
+                      normalizeSessionMode(newThreadSetup.codexConfig) ??
+                      defaultSessionMode
+                    }
+                    style={{ width: "100%" }}
+                    options={CODEX_NEW_CHAT_MODE_OPTIONS}
+                    onChange={(value) =>
+                      update({
+                        codexConfig: {
+                          ...newThreadSetup.codexConfig,
+                          sessionMode: value as CodexSessionMode,
+                        },
+                      })
+                    }
+                  />
+                </div>
               </div>
-            </div>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 12,
+                  marginBottom: 12,
+                }}
+              >
+                <span style={{ color: COLORS.GRAY_D, fontSize: 13 }}>
+                  Save this Codex setup as the default for future new chats.
+                </span>
+                {stagedCodexMatchesDefault ? (
+                  <Button size="small" type="text" disabled>
+                    Default for new chats
+                  </Button>
+                ) : (
+                  <Button
+                    size="small"
+                    onClick={() =>
+                      saveCodexNewChatDefaults(stagedCodexDefaults)
+                    }
+                  >
+                    Make default
+                  </Button>
+                )}
+              </div>
+            </>
           )}
           <div
             style={{

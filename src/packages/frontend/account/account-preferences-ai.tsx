@@ -8,6 +8,7 @@ import { Alert, Typography } from "antd";
 import { lite } from "@cocalc/frontend/lite";
 import { OtherSettings } from "./other-settings";
 import { CodexCredentialsPanel } from "./codex-credentials-panel";
+import { CodexDefaultsPanel } from "./codex-defaults-panel";
 import LiteAISettings from "./lite-ai-settings";
 
 export function AccountPreferencesAI() {
@@ -31,6 +32,7 @@ export function AccountPreferencesAI() {
           style={{ marginBottom: 12 }}
         />
         <CodexCredentialsPanel />
+        <CodexDefaultsPanel other_settings={other_settings} />
         <LiteAISettings />
       </>
     );
@@ -47,6 +49,7 @@ export function AccountPreferencesAI() {
         mode="ai"
       />
       <CodexCredentialsPanel />
+      <CodexDefaultsPanel other_settings={other_settings} />
     </>
   );
 }
