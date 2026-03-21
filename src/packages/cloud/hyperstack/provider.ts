@@ -321,6 +321,14 @@ async function waitForVolumeAvailable(volumeId: number): Promise<void> {
   logger.warn("Hyperstack volume availability wait timed out", { volumeId });
 }
 
+function isVolumeReservedForDelete(err: unknown): boolean {
+  const message = String((err as Error)?.message ?? err).toLowerCase();
+  return (
+    message.includes("volume is not suitable for this operation") &&
+    message.includes("reserved")
+  );
+}
+
 async function waitForHyperstackFloatingIp(
   instanceId: number,
 ): Promise<string | undefined> {
@@ -618,7 +626,22 @@ export class HyperstackProvider implements CloudProvider {
     logger.debug("HyperstackProvider: deleteHost", runtime);
     ensureHyperstackConfig(creds);
     const id = parseInstanceId(runtime.instance_id);
-    await deleteVirtualMachine(id);
+    try {
+      await deleteVirtualMachine(id);
+    } catch (err) {
+      const message = String(err).toLowerCase();
+      if (
+        message.includes("not found") ||
+        message.includes("does not exist") ||
+        message.includes("does not exists") ||
+        message.includes("no such") ||
+        message.includes("not_found")
+      ) {
+        logger.info("Hyperstack VM already deleted", { id });
+      } else {
+        throw err;
+      }
+    }
     await waitForHyperstackDelete(id);
     if (opts?.preserveDataDisk) {
       return;
@@ -630,6 +653,7 @@ export class HyperstackProvider implements CloudProvider {
     if (!Number.isFinite(volumeId) || volumeId <= 0) {
       return;
     }
+    await waitForVolumeAvailable(volumeId);
     try {
       await deleteVolume(volumeId);
     } catch (err) {
@@ -640,6 +664,11 @@ export class HyperstackProvider implements CloudProvider {
         message.includes("no such")
       ) {
         logger.info("Hyperstack data volume already deleted", { volumeId });
+        return;
+      }
+      if (isVolumeReservedForDelete(err)) {
+        await waitForVolumeAvailable(volumeId);
+        await deleteVolume(volumeId);
         return;
       }
       logger.warn("Hyperstack deleteHost data volume delete failed", {
@@ -654,8 +683,19 @@ export class HyperstackProvider implements CloudProvider {
     throw new Error("Hyperstack disk resize not implemented");
   }
 
-  async getStatus(): Promise<"starting" | "running" | "stopped" | "error"> {
-    throw new Error("Hyperstack getStatus not implemented");
+  async getStatus(
+    runtime: HostRuntime,
+    creds: HyperstackCreds,
+  ): Promise<"starting" | "running" | "stopped" | "error"> {
+    const instance = await this.getInstance(runtime, creds);
+    if (!instance) {
+      return "stopped";
+    }
+    const mapped = this.mapStatus(instance.status);
+    if (mapped === "running") return "running";
+    if (mapped === "off") return "stopped";
+    if (mapped === "error") return "error";
+    return "starting";
   }
 
   async listInstances(
