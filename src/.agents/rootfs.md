@@ -33,7 +33,7 @@ My view is:
    - user-owned images,
    - collaborator-published images,
    - public images,
-   with different trust/warning levels.
+     with different trust/warning levels.
 6. Projects must store the exact immutable RootFS release they use.
 7. Admin promotion, prepull, host inventory, and course-level image selection
    are all part of the minimum launch architecture.
@@ -196,10 +196,24 @@ Therefore:
 
 The primary identity of a RootFS release should be:
 
-- `content_key = sha256(canonical_btrfs_send_stream_bytes)`
+- `content_key = sha256(canonical_full_filesystem_tree_bytes)`
+
+This key represents the complete logical RootFS content, independent of how we
+store or transport that release.
 
 and the system should also store:
 
+- `artifact_kind`
+  - `full`
+  - `delta`
+- `artifact_format`
+  - `btrfs-send`
+  - `btrfs-send-incremental`
+  - `tar-zst`
+- `artifact_sha256` for the exact stored artifact,
+- `artifact_bytes`,
+- `parent_release_id` and `parent_content_key` when the artifact is
+  incremental,
 - `oci_digest` if the release came from an OCI image,
 - `tree_sha256` or equivalent manifest hash if we later want stronger
   filesystem-level verification,
@@ -207,12 +221,15 @@ and the system should also store:
 - gpu/cpu capability,
 - release metadata.
 
-Why use the btrfs stream hash as the primary key:
+Why split release identity from artifact identity:
 
-- it is the exact artifact we distribute and receive on hosts,
-- it matches the actual lowerdir content after build/canonicalization,
-- it avoids ambiguity around OCI layer compression and extraction details,
-- it is directly useful for R2 storage and host cache naming.
+- a project must bind to the full logical release, not one particular transport
+  artifact,
+- the same release may later have both a full artifact and one or more
+  incremental artifacts,
+- incremental storage should not change the identity of the release,
+- it avoids coupling release identity to whichever parent chain happened to be
+  chosen at publish time.
 
 ### Project binding rule
 
@@ -257,13 +274,13 @@ state.
 
 ## Proposed Postgres Tables
 
-### 1. `rootfs_images`
+### 1. `rootfs_releases`
 
 Immutable release rows.
 
 Suggested fields:
 
-- `image_id UUID PRIMARY KEY`
+- `release_id UUID PRIMARY KEY`
 - `created TIMESTAMP`
 - `last_edited TIMESTAMP`
 - `status TEXT`
@@ -293,13 +310,21 @@ Suggested fields:
   - `arm64`
 - `gpu BOOLEAN`
 - `content_key TEXT UNIQUE`
+- `parent_release_id UUID NULL REFERENCES rootfs_releases(release_id)`
+- `parent_content_key TEXT NULL`
+- `artifact_kind TEXT`
+  - `full`
+  - `delta`
+- `artifact_format TEXT`
+  - `btrfs-send`
+  - `btrfs-send-incremental`
+  - `tar-zst`
 - `btrfs_stream_sha256 TEXT UNIQUE`
 - `btrfs_stream_bytes BIGINT`
 - `tar_zst_sha256 TEXT NULL`
 - `tar_zst_bytes BIGINT NULL`
 - `oci_ref TEXT NULL`
 - `oci_digest TEXT NULL`
-- `base_image_id UUID NULL`
 - `r2_bucket TEXT`
 - `r2_prefix TEXT`
 - `manifest JSONB`
@@ -312,7 +337,15 @@ Suggested fields:
 Important rule:
 
 - `content_key`, `arch`, `gpu`, and the stream checksums are immutable once the
-  image is `ready`.
+  release is `ready`.
+
+Important incremental rule:
+
+- `parent_release_id` must point to another immutable release, not to a mutable
+  catalog entry,
+- `content_key` always describes the full logical tree,
+- the parent pointer only describes how one artifact can be reconstructed
+  efficiently.
 
 ### 2. `rootfs_catalog_entries`
 
@@ -321,7 +354,7 @@ Mutable publish/presentation rows.
 Suggested fields:
 
 - `entry_id UUID PRIMARY KEY`
-- `image_id UUID REFERENCES rootfs_images(image_id)`
+- `release_id UUID REFERENCES rootfs_releases(release_id)`
 - `created TIMESTAMP`
 - `last_edited TIMESTAMP`
 - `owner_id UUID NULL`
@@ -368,7 +401,7 @@ stable names like:
 Suggested fields:
 
 - `alias TEXT PRIMARY KEY`
-- `image_id UUID REFERENCES rootfs_images(image_id)`
+- `release_id UUID REFERENCES rootfs_releases(release_id)`
 - `created TIMESTAMP`
 - `last_edited TIMESTAMP`
 - `owner_id UUID NULL`
@@ -487,12 +520,67 @@ That especially matters for:
 - multi-region rollout,
 - self-host launchpad setup.
 
+### Incremental release strategy
+
+We should support incremental releases, but not as a Docker-style runtime layer
+stack.
+
+The runtime model should stay simple:
+
+- each project mounts one materialized lowerdir for one immutable release.
+
+The storage model should be incremental:
+
+- a release may have an optional parent release,
+- the release content is still identified by its own full `content_key`,
+- the stored btrfs artifact may be:
+  - a full send stream,
+  - or an incremental send stream relative to the parent.
+
+This gives the desired behavior:
+
+- start from a 20 GB release,
+- make 100 MB of changes,
+- publish a child release,
+- only store roughly the changed extents as the new artifact.
+
+On hosts, the natural implementation is:
+
+1. materialize the parent release as a btrfs subvolume,
+2. make a writable btrfs snapshot,
+3. apply the new merged RootFS onto it with reflink-friendly copy plus
+   `--delete`,
+4. freeze it as a readonly release snapshot,
+5. compute the child `content_key`,
+6. upload either a full or incremental btrfs send stream.
+
+This is much better than trying to expose Docker-like runtime layers to the
+rest of the system.
+
+### Incremental retention and GC rule
+
+Because child releases depend on parent releases:
+
+- we must never hard-delete a release that still has child releases,
+- we must never hard-delete a release that any project still references,
+- user-facing delete should first hide/block the catalog entry,
+- actual artifact GC should happen only after dependency and project reference
+  counts drop to zero.
+
+We should also periodically squash long chains:
+
+- create full checkpoint releases every N generations or after a size ratio
+  threshold,
+- keep delta chains shallow enough that bootstrap and recovery remain fast.
+
 ### Canonical layout in R2
 
 For each `content_key`:
 
-- `rootfs/<content_key>/image.btrfs`
-- `rootfs/<content_key>/image.btrfs.sha256`
+- `rootfs/<content_key>/full/image.btrfs`
+- `rootfs/<content_key>/full/image.btrfs.sha256`
+- `rootfs/<content_key>/delta/from/<parent_content_key>/image.btrfs`
+- `rootfs/<content_key>/delta/from/<parent_content_key>/image.btrfs.sha256`
 - `rootfs/<content_key>/image.tar.zst`
 - `rootfs/<content_key>/image.tar.zst.sha256`
 - `rootfs/<content_key>/manifest.json`
@@ -500,6 +588,7 @@ For each `content_key`:
 `manifest.json` should include:
 
 - `content_key`
+- `parent_content_key`
 - `arch`
 - `gpu`
 - `label`
@@ -507,13 +596,15 @@ For each `content_key`:
 - `version`
 - `oci_ref`
 - `oci_digest`
+- `artifact_kind`
+- `artifact_format`
 - `btrfs_stream_sha256`
 - `btrfs_stream_bytes`
 - `tar_zst_sha256`
 - `tar_zst_bytes`
 - `build_time`
 - `build_host`
-- `base_image_id`
+- `parent_release_id`
 
 ### Host local layout
 
@@ -553,7 +644,7 @@ Output:
 
 - canonical btrfs subvolume,
 - btrfs send stream uploaded to R2,
-- `rootfs_images` row,
+- `rootfs_releases` row,
 - optional catalog entry,
 - optional prepull flag.
 
@@ -583,7 +674,7 @@ Output:
 
 - canonical RootFS release built from that project's effective rootfs,
 - uploaded to R2,
-- `rootfs_images` row,
+- `rootfs_releases` row,
 - `rootfs_catalog_entries` row with requested scope.
 
 ### Important publication rule
@@ -1091,7 +1182,7 @@ of the launch-critical RootFS effort.
 
 ### Phase 1: Central schema and APIs
 
-- add `rootfs_images`,
+- add `rootfs_releases`,
 - add `rootfs_catalog_entries`,
 - add project/account/course references,
 - add theme support,
@@ -1103,35 +1194,44 @@ of the launch-critical RootFS effort.
 - stop centering it on GCP Spot as the product architecture,
 - make its output the canonical R2 btrfs artifact plus DB registration.
 
-### Phase 3: Host download/cache/runtime
+### Phase 3: Incremental release storage
+
+- add parent-child release tracking,
+- emit full or incremental btrfs send streams as appropriate,
+- receive incremental artifacts on hosts,
+- add chain-depth controls and periodic checkpointing,
+- enforce dependency-aware artifact GC.
+
+### Phase 4: Host download/cache/runtime
 
 - fetch by `content_key`,
 - cache in content-addressed directories,
 - expose host inventory RPC,
 - add host UI.
 
-### Phase 4: Project picker and settings UX
+### Phase 5: Project picker and settings UX
 
 - replace freeform custom-first UI with managed catalog sections,
 - wire project creation to `image_id` plus `content_key`,
 - add publish-image flow from project settings,
 - add explicit image change / switch back / update workflow.
 
-### Phase 5: Admin workflows
+### Phase 6: Admin workflows
 
 - promote/demote official,
 - prepull flags,
 - deprecate/hide,
 - inspect provenance and usage.
 
-### Phase 6: Course integration
+### Phase 7: Course integration
 
 - course image selection,
 - student-project provisioning with exact release binding.
 
-### Phase 7: Benchmarking and hardening
+### Phase 8: Benchmarking and hardening
 
 - measure OCI versus btrfs receive,
+- measure full versus incremental btrfs send/receive,
 - confirm host bootstrap timings,
 - confirm prepull policy,
 - run soak/load tests around image churn and cache pressure.
@@ -1215,15 +1315,16 @@ wstein: admin/self host makes very good sense.
 
 Start simple with shared-project collaborators.
 
-wstein: exactly what you guessed; the UI could list links to the actual collab projects for verification. 
+wstein: exactly what you guessed; the UI could list links to the actual collab projects for verification.
 
 ## Recommended Immediate Next Step
 
 Before implementing everything, define the precise v1 schema and contracts for:
 
-- `rootfs_images`,
+- `rootfs_releases`,
 - `rootfs_catalog_entries`,
 - `projects.rootfs_image_id` plus `rootfs_content_key`,
+- parent-child release storage contracts for incremental btrfs artifacts,
 - host cache inventory RPC,
 - project creation picker sections.
 
