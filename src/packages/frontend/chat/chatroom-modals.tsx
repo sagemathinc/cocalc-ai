@@ -557,31 +557,14 @@ export function ChatRoomModals({
           </span>
         }
         renderImageInput={() => (
-          <div>
-            <Input
-              style={{ width: "100%", marginBottom: 8 }}
-              placeholder="Paste or drag an image URL (optional)"
-              value={renameImage}
-              onChange={(e) => setRenameImage(e.target.value)}
-              onDrop={(e) => {
-                const uri =
-                  e.dataTransfer.getData("text/uri-list") ||
-                  e.dataTransfer.getData("text/plain");
-                if (uri?.trim()) {
-                  e.preventDefault();
-                  setRenameImage(uri.trim());
-                }
-              }}
-            />
-            <ThreadImageUpload
-              projectId={project_id}
-              value={renameImage}
-              onChange={setRenameImage}
-              modalTitle="Edit Chat Image"
-              uploadText="Click or drag chat image"
-              size={64}
-            />
-          </div>
+          <ThreadImageUpload
+            projectId={project_id}
+            value={renameImage}
+            onChange={setRenameImage}
+            modalTitle="Edit Chat Image"
+            uploadText="Click or drag chat image"
+            size={64}
+          />
         )}
       />
       <Modal

@@ -3,6 +3,7 @@ import ImgCrop from "antd-img-crop";
 import { InboxOutlined } from "@ant-design/icons";
 import { React, useState } from "@cocalc/frontend/app-framework";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
+import { pastedBlobFilename } from "@cocalc/frontend/editors/slate/upload-utils";
 import { join } from "path";
 
 interface ThreadImageUploadProps {
@@ -24,6 +25,27 @@ export function ThreadImageUpload({
 }: ThreadImageUploadProps): React.JSX.Element {
   const [error, setError] = useState<string>("");
   const [uploading, setUploading] = useState<boolean>(false);
+  const [pasteFocused, setPasteFocused] = useState<boolean>(false);
+
+  async function handlePastedImage(
+    event: React.ClipboardEvent<HTMLDivElement>,
+  ) {
+    for (const item of Array.from(event.clipboardData?.items ?? [])) {
+      if (!item.type?.startsWith("image/")) continue;
+      const file = item.getAsFile();
+      if (!file) continue;
+      event.preventDefault();
+      event.stopPropagation();
+      await uploadCroppedImage({
+        file,
+        projectId,
+        onChange,
+        setError,
+        setUploading,
+      });
+      return;
+    }
+  }
 
   return (
     <div>
@@ -70,6 +92,26 @@ export function ThreadImageUpload({
           </p>
         </Upload.Dragger>
       </ImgCrop>
+      <div
+        tabIndex={0}
+        onPaste={(event) => void handlePastedImage(event)}
+        onFocus={() => setPasteFocused(true)}
+        onBlur={() => setPasteFocused(false)}
+        style={{
+          marginTop: 8,
+          border: `1px dashed ${pasteFocused ? "#1677ff" : "#bfbfbf"}`,
+          borderRadius: 10,
+          padding: "10px 12px",
+          color: pasteFocused ? "#1677ff" : "#666",
+          outline: "none",
+          background: pasteFocused ? "#f0f7ff" : "#fafafa",
+          boxShadow: pasteFocused ? "0 0 0 2px rgba(22,119,255,0.15)" : "none",
+        }}
+      >
+        {pasteFocused
+          ? "Paste mode enabled. Press Ctrl/Cmd+V to paste an image."
+          : "Click here, then paste an image from the clipboard."}
+      </div>
       {error ? (
         <Alert
           style={{ marginTop: "10px" }}
@@ -106,7 +148,7 @@ async function uploadCroppedImage({
     const filename =
       typeof (file as any).name === "string" && (file as any).name.trim()
         ? (file as any).name.trim()
-        : "chat-image.png";
+        : pastedBlobFilename(blob.type);
     const formData = new FormData();
     formData.append("file", blob, filename);
     const query = projectId
