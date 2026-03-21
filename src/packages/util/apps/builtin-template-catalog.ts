@@ -165,9 +165,9 @@ export const BUILTIN_APP_TEMPLATE_CATALOG: AppTemplateCatalogV1 = {
         strategy: "curated",
         command:
           "apt-get update && apt-get install -y python3-pip && python3 -m pip install --break-system-packages --ignore-installed streamlit",
-        hint: "Installs Streamlit systemwide in the project and uses a small bootstrap app.py if the project does not already have one.",
+        hint: "Installs Streamlit systemwide in the project and uses a small bootstrap streamlit_app.py if the project does not already have one.",
         agent_prompt:
-          "Install Streamlit in the current project so the managed Streamlit app can start. Use python3 -m pip with --break-system-packages --ignore-installed after ensuring python3-pip is installed, verify the runtime with 'python3 -m streamlit version', and mention that the managed template bootstraps app.py if missing.",
+          "Install Streamlit in the current project so the managed Streamlit app can start. Use python3 -m pip with --break-system-packages --ignore-installed after ensuring python3-pip is installed, verify the runtime with 'python3 -m streamlit version', and mention that the managed template bootstraps streamlit_app.py if missing.",
         recipes: [
           {
             id: "ubuntu-pip-streamlit",
@@ -178,7 +178,7 @@ export const BUILTIN_APP_TEMPLATE_CATALOG: AppTemplateCatalogV1 = {
               "python3 -m pip install --break-system-packages --ignore-installed streamlit",
             ],
             notes:
-              "The managed Streamlit template can create a default app.py automatically if the project is empty.",
+              "The managed Streamlit template can create a default streamlit_app.py automatically if the project is empty.",
           },
         ],
       },
@@ -188,7 +188,7 @@ export const BUILTIN_APP_TEMPLATE_CATALOG: AppTemplateCatalogV1 = {
         kind: "service",
         preferred_port: "6010",
         service_open_mode: "proxy",
-        command: `app=\${APP_START_FILE:-app.py}; if [ ! -f "$app" ]; then cat > "$app" <<'PY'
+        command: `app=\${APP_START_FILE:-streamlit_app.py}; if [ ! -f "$app" ]; then cat > "$app" <<'PY'
 import streamlit as st
 
 st.set_page_config(page_title="Streamlit on CoCalc")
@@ -203,7 +203,7 @@ exec python3 -m streamlit run "$app" --server.address="\${HOST:-127.0.0.1}" --se
         commands: ["python3 -m streamlit version"],
       },
       agent_prompt_seed:
-        "Prefer the direct python3-pip install path for Streamlit, and do not overcomplicate the bootstrap: the managed app template will create app.py if needed.",
+        "Prefer the direct python3-pip install path for Streamlit, and do not overcomplicate the bootstrap: the managed app template will create streamlit_app.py if needed.",
     },
     {
       id: "fastapi",
@@ -278,9 +278,9 @@ exec python3 -m uvicorn "\${APP_MODULE:-main:app}" --host "\${HOST:-127.0.0.1}" 
         strategy: "curated",
         command:
           "apt-get update && apt-get install -y python3-pip && python3 -m pip install --break-system-packages --ignore-installed flask",
-        hint: "Installs Flask and bootstraps app.py if the project does not already have one.",
+        hint: "Installs Flask and bootstraps flask_app.py if the project does not already have one.",
         agent_prompt:
-          "Install Flask in the current project so the managed Flask app can start. Use python3 -m pip with --break-system-packages --ignore-installed after ensuring python3-pip is installed, verify the runtime with a Python import/version check, and mention that the managed template bootstraps app.py if missing.",
+          "Install Flask in the current project so the managed Flask app can start. Use python3 -m pip with --break-system-packages --ignore-installed after ensuring python3-pip is installed, verify the runtime with a Python import/version check, and mention that the managed template bootstraps flask_app.py if missing.",
         recipes: [
           {
             id: "ubuntu-pip-flask",
@@ -299,7 +299,7 @@ exec python3 -m uvicorn "\${APP_MODULE:-main:app}" --host "\${HOST:-127.0.0.1}" 
         kind: "service",
         preferred_port: "6012",
         service_open_mode: "proxy",
-        command: `app=\${APP_START_FILE:-app.py}; if [ ! -f "$app" ]; then cat > "$app" <<'PY'
+        command: `app=\${APP_START_FILE:-flask_app.py}; if [ ! -f "$app" ]; then cat > "$app" <<'PY'
 from flask import Flask
 
 app = Flask(__name__)
@@ -332,9 +332,9 @@ exec python3 -m flask run --host="\${HOST:-127.0.0.1}" --port="\${PORT}"`,
         strategy: "curated",
         command:
           "apt-get update && apt-get install -y python3-pip && python3 -m pip install --break-system-packages --ignore-installed gradio",
-        hint: "Installs Gradio and bootstraps app.py if the project does not already have one.",
+        hint: "Installs Gradio and bootstraps gradio_app.py if the project does not already have one.",
         agent_prompt:
-          "Install Gradio in the current project so the managed Gradio app can start. Use python3 -m pip with --break-system-packages --ignore-installed after ensuring python3-pip is installed, verify the runtime with a Python import/version check, and mention that the managed template bootstraps app.py if missing.",
+          "Install Gradio in the current project so the managed Gradio app can start. Use python3 -m pip with --break-system-packages --ignore-installed after ensuring python3-pip is installed, verify the runtime with a Python import/version check, and mention that the managed template bootstraps gradio_app.py if missing.",
         recipes: [
           {
             id: "ubuntu-pip-gradio",
@@ -353,7 +353,7 @@ exec python3 -m flask run --host="\${HOST:-127.0.0.1}" --port="\${PORT}"`,
         kind: "service",
         preferred_port: "6013",
         service_open_mode: "proxy",
-        command: `app=\${APP_START_FILE:-app.py}; if [ ! -f "$app" ]; then cat > "$app" <<'PY'
+        command: `app=\${APP_START_FILE:-gradio_app.py}; if [ ! -f "$app" ]; then cat > "$app" <<'PY'
 import os
 import gradio as gr
 
@@ -400,9 +400,9 @@ exec python3 "$app"`,
         strategy: "curated",
         command:
           "apt-get update && apt-get install -y python3-pip && python3 -m pip install --break-system-packages --ignore-installed dash",
-        hint: "Installs Dash and bootstraps app.py if the project does not already have one.",
+        hint: "Installs Dash and bootstraps dash_app.py if the project does not already have one.",
         agent_prompt:
-          "Install Plotly Dash in the current project so the managed Dash app can start. Use python3 -m pip with --break-system-packages --ignore-installed after ensuring python3-pip is installed, verify the runtime with a Python import/version check, and mention that the managed template bootstraps app.py if missing.",
+          "Install Plotly Dash in the current project so the managed Dash app can start. Use python3 -m pip with --break-system-packages --ignore-installed after ensuring python3-pip is installed, verify the runtime with a Python import/version check, and mention that the managed template bootstraps dash_app.py if missing.",
         recipes: [
           {
             id: "ubuntu-pip-dash",
@@ -421,7 +421,7 @@ exec python3 "$app"`,
         kind: "service",
         preferred_port: "6014",
         service_open_mode: "proxy",
-        command: `app=\${APP_START_FILE:-app.py}; if [ ! -f "$app" ]; then cat > "$app" <<'PY'
+        command: `app=\${APP_START_FILE:-dash_app.py}; if [ ! -f "$app" ]; then cat > "$app" <<'PY'
 import os
 from dash import Dash, dcc, html
 
