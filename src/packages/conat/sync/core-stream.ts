@@ -599,6 +599,7 @@ export class CoreStream<T = any> extends EventEmitter {
         start: GET_ALL_RETRY_START,
         max: GET_ALL_RETRY_MAX,
         decay: GET_ALL_RETRY_DECAY,
+        unrefTimer: true,
       },
     );
     return bootstrap;

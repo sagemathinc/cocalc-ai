@@ -24,7 +24,20 @@ interface RetryOptions {
   max?: number;
   min?: number;
   timeout?: number;
+  unrefTimer?: boolean;
   log?: (...args) => void;
+}
+
+export async function sleep(
+  ms: number,
+  { unref = false }: { unref?: boolean } = {},
+): Promise<void> {
+  await new Promise<void>((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    if (unref) {
+      timer.unref?.();
+    }
+  });
 }
 
 // loop calling the async function f until it returns true.
@@ -41,9 +54,13 @@ export async function until(
     max = 15000,
     min = 50,
     timeout = 0,
+    unrefTimer = !!process.env.COCALC_TEST_MODE,
     log,
   }: RetryOptions = {},
 ) {
+  if (process.env.COCALC_TEST_MODE) {
+    unrefTimer = true;
+  }
   const end = timeout ? Date.now() + timeout : undefined;
   let d = Math.max(min, start);
   while (end === undefined || Date.now() < end) {
@@ -57,7 +74,7 @@ export async function until(
       d = Math.max(min, Math.min(max, d * decay));
     }
     log?.(`will retry in ${Math.round(d / 1000)} seconds`);
-    await awaiting.delay(d);
+    await sleep(d, { unref: unrefTimer });
   }
   log?.(`FAILED: timeout -- ${timeout} ms`);
   throw Error(`timeout -- ${timeout} ms`);
@@ -242,6 +259,7 @@ export async function once(
 
     if (timeout_ms > 0) {
       timer = setTimeout(onTimeout, timeout_ms);
+      timer.unref?.();
     }
   });
 }

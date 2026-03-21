@@ -174,12 +174,14 @@ describe("create very simple mocked jupyter runner and test evaluating code", ()
         }
       }
       expect(firstBatchAt).not.toBeNull();
-      expect(ackAt).not.toBeNull();
       // The event loop can schedule the ack callback and first output batch a
-      // few milliseconds apart in either order. What we actually need here is
-      // that the first visible batch is not blocked behind the delayed ack by
-      // an extra RTT.
-      expect(firstBatchAt!).toBeLessThanOrEqual(ackAt! + 20);
+      // few milliseconds apart in either order. In some runs the delayed ack
+      // arrives after iteration has already finished, which is also fine since
+      // the point of this path is that first visible output must not be gated
+      // on the ack.
+      if (ackAt != null) {
+        expect(firstBatchAt!).toBeLessThanOrEqual(ackAt + 20);
+      }
     } finally {
       delayedClient.close();
       delayedRawClient.close();

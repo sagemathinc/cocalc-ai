@@ -8,11 +8,17 @@ import {
   serverStatusSubject,
 } from "./util";
 import { ServerSocket } from "./server-socket";
-import { delay } from "awaiting";
 import { type Headers } from "@cocalc/conat/core/client";
 import { getLogger } from "@cocalc/conat/client";
 
 const logger = getLogger("socket:server");
+
+function unrefDelay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    timer.unref?.();
+  });
+}
 
 // DO NOT directly instantiate here -- instead, call the
 // socket.listen method on ConatClient.
@@ -148,7 +154,7 @@ export class ConatSocketServer extends ConatSocketBase {
           socket.destroy();
         }
       }
-      await delay(PING_PONG_INTERVAL);
+      await unrefDelay(PING_PONG_INTERVAL);
     }
   }
 

@@ -272,6 +272,19 @@ export function getSyncFsDebugStats({
   };
 }
 
+export function cleanupSyncFsServicesForTests(): void {
+  if (!process.env.COCALC_TEST_MODE) {
+    return;
+  }
+  for (const service of Array.from(activeServices)) {
+    try {
+      service.cleanupForTests();
+    } catch {
+      // best-effort test cleanup only
+    }
+  }
+}
+
 /**
  * Centralized filesystem watcher that:
  * - Maintains a durable snapshot of last-on-disk content (via SyncFsWatchStore).
@@ -639,6 +652,32 @@ export class SyncFsService extends EventEmitter {
     this.streamInfo.clear();
     this.store.close();
     this.removeAllListeners();
+  }
+
+  cleanupForTests(): void {
+    for (const path of [...this.pathStates.keys()]) {
+      this.releasePath(path, "test-cleanup");
+    }
+    for (const dir of [...this.watchers.keys()]) {
+      this.closeWatcher(dir, "test-cleanup");
+    }
+    this.watchers.clear();
+    this.pathStates.clear();
+    this.watcherInFlight.clear();
+    this.initInFlight.clear();
+    for (const timer of this.debounceTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.debounceTimers.clear();
+    for (const writer of this.patchWriters.values()) {
+      writer.close();
+    }
+    this.patchWriters.clear();
+    this.streamInfo.clear();
+    for (const marker of this.suppressOnce.values()) {
+      clearTimeout(marker.timer);
+    }
+    this.suppressOnce.clear();
   }
 
   // Update the persisted snapshot when we know a local write/delete happened

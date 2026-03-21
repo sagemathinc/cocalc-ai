@@ -70,6 +70,24 @@ function unrefDelay(ms: number): Promise<void> {
     (timer as any).unref?.();
   });
 }
+
+function emitWithAckTimeoutUnref(
+  socket: any,
+  event: string,
+  payload: any,
+  timeoutMs: number,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`timeout waiting for ${event} ack`));
+    }, timeoutMs);
+    timer.unref?.();
+    socket.emit(event, payload, () => {
+      clearTimeout(timer);
+      resolve();
+    });
+  });
+}
 import { type ConatSocketServer } from "@cocalc/conat/socket";
 import { throttle } from "lodash";
 import { getLogger } from "@cocalc/conat/client";
@@ -389,6 +407,8 @@ export class ConatServer extends EventEmitter {
     }
     this.clusterPersistServer?.close();
     delete this.clusterPersistServer;
+    this.trimClusterStream.cancel?.();
+    this.scanSoon.cancel?.();
 
     await unrefDelay(100);
     await new Promise<void>((resolve) => {
@@ -1107,16 +1127,19 @@ export class ConatServer extends EventEmitter {
             return true;
           }
           try {
-            await socket
-              .timeout(7500)
-              .emitWithAck("info", { ...this.info(), user });
+            await emitWithAckTimeoutUnref(
+              socket,
+              "info",
+              { ...this.info(), user },
+              7500,
+            );
             return true;
           } catch (err) {
             // logger.debug(`error sending "info" message to ${socket.id}`, err);
             return false;
           }
         },
-        { min: 5000, max: 30000, timeout: 120_000 },
+        { min: 5000, max: 30000, timeout: 120_000, unrefTimer: true },
       );
     } catch {
       // never ack'd "info" after a few minutes -- could just be an old client,
@@ -1247,12 +1270,14 @@ export class ConatServer extends EventEmitter {
         this.log(
           `cluster scan added ${x.count} links -- will scan again in ${this.options.autoscanInterval}`,
         );
-        await delay(this.options.autoscanInterval);
+        await unrefDelay(this.options.autoscanInterval ?? DEFAULT_AUTOSCAN_INTERVAL);
       } else {
         this.log(
           `cluster scan found no new links -- waiting ${this.options.longAutoscanInterval}ms before next scan`,
         );
-        await delay(this.options.longAutoscanInterval);
+        await unrefDelay(
+          this.options.longAutoscanInterval ?? DEFAULT_LONG_AUTOSCAN_INTERVAL,
+        );
       }
       lastCount = x.count;
     }
