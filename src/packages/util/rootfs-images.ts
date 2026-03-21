@@ -13,6 +13,7 @@ export type RootfsImageSection =
   | "collaborators"
   | "public";
 export type RootfsImageWarning = "none" | "collaborator" | "public";
+export type RootfsPublishSourceMode = "current";
 
 export type RootfsImageTheme = {
   title?: string;
@@ -71,9 +72,55 @@ export type RootfsCatalogSaveBody = {
   hidden?: boolean;
 };
 
+export type PublishProjectRootfsBody = {
+  project_id: string;
+  label: string;
+  description?: string;
+  visibility?: RootfsImageVisibility;
+  tags?: string[];
+  theme?: RootfsImageTheme;
+  official?: boolean;
+  prepull?: boolean;
+  hidden?: boolean;
+  source_mode?: RootfsPublishSourceMode;
+};
+
+export type PublishProjectRootfsArtifact = {
+  image: string;
+  content_key: string;
+  digest: string;
+  arch: RootfsImageArch;
+  size_bytes?: number;
+  snapshot: string;
+  created_snapshot: boolean;
+  source_image: string;
+};
+
+export const MANAGED_ROOTFS_IMAGE_PREFIX = "cocalc.local/rootfs/";
+
+export function managedRootfsImageName(contentKey: string): string {
+  const trimmed = `${contentKey ?? ""}`.trim();
+  if (!trimmed) {
+    throw new Error("content key must be specified");
+  }
+  return `${MANAGED_ROOTFS_IMAGE_PREFIX}${trimmed}`;
+}
+
+export function isManagedRootfsImageName(image?: string): boolean {
+  return `${image ?? ""}`.trim().startsWith(MANAGED_ROOTFS_IMAGE_PREFIX);
+}
+
+export function managedRootfsContentKey(image?: string): string | undefined {
+  const value = `${image ?? ""}`.trim();
+  if (!value.startsWith(MANAGED_ROOTFS_IMAGE_PREFIX)) return;
+  const contentKey = value.slice(MANAGED_ROOTFS_IMAGE_PREFIX.length).trim();
+  return contentKey.length > 0 ? contentKey : undefined;
+}
+
 export function normalizeRootfsImageName(image?: string): string {
   const value = `${image ?? ""}`.trim();
   if (!value) return "";
+  if (isManagedRootfsImageName(value)) return value;
   const firstSlash = value.indexOf("/");
   if (firstSlash === -1) return `docker.io/${value}`;
   const first = value.slice(0, firstSlash);

@@ -23,6 +23,7 @@ import ShowError from "@cocalc/frontend/components/error";
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import {
   managedRootfsCatalogUrl,
+  publishProjectRootfsImage,
   saveRootfsCatalogEntry,
   useRootfsImages,
 } from "@cocalc/frontend/rootfs/manifest";
@@ -64,6 +65,9 @@ export default function RootFilesystemImage() {
   const [images, setImages] = useState<string[]>([DEFAULT_PROJECT_IMAGE]);
   const [catalogRefresh, setCatalogRefresh] = useState<number>(0);
   const [publishMode, setPublishMode] = useState<"copy" | "manage">("copy");
+  const [publishCopyMode, setPublishCopyMode] = useState<"project" | "base">(
+    "project",
+  );
   const [publishSourceEntry, setPublishSourceEntry] =
     useState<RootfsImageEntry>();
   const [publishDraft, setPublishDraft] = useState<PublishDraft>({
@@ -189,6 +193,7 @@ export default function RootFilesystemImage() {
         : "copy";
     setPublishSourceEntry(currentEntry);
     setPublishMode(defaultMode);
+    setPublishCopyMode("project");
     setPublishDraft({
       image: currentImage,
       label:
@@ -247,30 +252,48 @@ export default function RootFilesystemImage() {
   async function saveCatalogEntry() {
     try {
       setPublishing(true);
-      const entry = await saveRootfsCatalogEntry({
-        image_id:
-          publishMode === "manage" && publishSourceEntry?.can_manage
-            ? publishSourceEntry.id
-            : undefined,
-        image: publishDraft.image,
-        label: publishDraft.label,
-        description: publishDraft.description,
-        visibility: publishDraft.visibility,
-        tags: publishDraft.tags
-          .split(",")
-          .map((tag) => tag.trim())
-          .filter(Boolean),
-        official: isAdmin ? publishDraft.official : undefined,
-        prepull: isAdmin ? publishDraft.prepull : undefined,
-        hidden: isAdmin ? publishDraft.hidden : undefined,
-      });
+      if (!project) {
+        throw new Error("project is not available");
+      }
+      const tags = publishDraft.tags
+        .split(",")
+        .map((tag) => tag.trim())
+        .filter(Boolean);
+      const entry =
+        publishMode === "copy" && publishCopyMode === "project"
+          ? await publishProjectRootfsImage({
+              project_id: project.get("project_id"),
+              label: publishDraft.label,
+              description: publishDraft.description,
+              visibility: publishDraft.visibility,
+              tags,
+              official: isAdmin ? publishDraft.official : undefined,
+              prepull: isAdmin ? publishDraft.prepull : undefined,
+              hidden: isAdmin ? publishDraft.hidden : undefined,
+            })
+          : await saveRootfsCatalogEntry({
+              image_id:
+                publishMode === "manage" && publishSourceEntry?.can_manage
+                  ? publishSourceEntry.id
+                  : undefined,
+              image: publishDraft.image,
+              label: publishDraft.label,
+              description: publishDraft.description,
+              visibility: publishDraft.visibility,
+              tags,
+              official: isAdmin ? publishDraft.official : undefined,
+              prepull: isAdmin ? publishDraft.prepull : undefined,
+              hidden: isAdmin ? publishDraft.hidden : undefined,
+            });
       setCatalogRefresh(Date.now());
       setPublishOpen(false);
-      if (entry.image === value) {
-        setImageId(entry.id);
-      }
-      if (entry.image === rootfsDraft) {
-        setRootfsDraftId(entry.id);
+      if (!(publishMode === "copy" && publishCopyMode === "project")) {
+        if (entry.image === value) {
+          setImageId(entry.id);
+        }
+        if (entry.image === rootfsDraft) {
+          setRootfsDraftId(entry.id);
+        }
       }
     } catch (err) {
       setError(`${err}`);
@@ -450,14 +473,18 @@ export default function RootFilesystemImage() {
           title={
             publishMode === "manage"
               ? "Manage RootFS Catalog Entry"
-              : "Save RootFS to My Images"
+              : publishCopyMode === "project"
+                ? "Publish Project RootFS"
+                : "Save RootFS to My Images"
           }
         >
           <Space direction="vertical" size="middle" style={{ width: "100%" }}>
             <Paragraph type="secondary" style={{ marginBottom: 0 }}>
               {publishMode === "manage"
                 ? "Update catalog metadata for the currently selected RootFS entry."
-                : "Create your own catalog entry for the current base image so it appears under My images."}
+                : publishCopyMode === "project"
+                  ? "Create a managed RootFS image from the current project state. This uses a fresh safety snapshot and publishes the effective merged root filesystem."
+                  : "Create your own catalog entry for the current base image so it appears under My images."}
             </Paragraph>
             {publishSourceEntry?.can_manage && (
               <Checkbox
@@ -471,7 +498,26 @@ export default function RootFilesystemImage() {
                   : "Edit the selected shared/official entry instead of saving my own copy"}
               </Checkbox>
             )}
-            <Input value={publishDraft.image} disabled addonBefore="Image" />
+            {publishMode !== "manage" && (
+              <Radio.Group
+                value={publishCopyMode}
+                onChange={(e) => setPublishCopyMode(e.target.value)}
+              >
+                <Radio value="project">
+                  Publish current project RootFS state
+                </Radio>
+                <Radio value="base">Save current base image only</Radio>
+              </Radio.Group>
+            )}
+            <Input
+              value={publishDraft.image}
+              disabled
+              addonBefore={
+                publishMode === "copy" && publishCopyMode === "project"
+                  ? "Base image"
+                  : "Image"
+              }
+            />
             <Input
               value={publishDraft.label}
               onChange={(e) =>
@@ -548,9 +594,9 @@ export default function RootFilesystemImage() {
               </Space>
             )}
             <Paragraph type="secondary" style={{ marginBottom: 0 }}>
-              This first slice saves catalog metadata for the current base image
-              string. Full publish-from-project-state via RootFS artifacts will
-              come in the next slice.
+              {publishMode === "copy" && publishCopyMode === "project"
+                ? "Publishing creates a new immutable managed RootFS reference. The current project keeps its existing live upperdir and is not automatically switched to that new image."
+                : "This saves catalog metadata for the current image string without creating a new managed RootFS artifact."}
             </Paragraph>
           </Space>
         </Modal>

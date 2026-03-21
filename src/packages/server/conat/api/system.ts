@@ -34,9 +34,14 @@ import {
 } from "@cocalc/server/project-backup/r2";
 import {
   listVisibleRootfsImages,
+  publishProjectRootfsCatalogEntry,
   saveRootfsImage,
 } from "@cocalc/server/rootfs/catalog";
-import type { RootfsCatalogSaveBody } from "@cocalc/util/rootfs-images";
+import type {
+  PublishProjectRootfsBody,
+  RootfsCatalogSaveBody,
+} from "@cocalc/util/rootfs-images";
+import { getProjectFileServerClient } from "@cocalc/server/conat/file-server-client";
 import {
   type BrowserSessionLiveInfo,
   listBrowserSessionsForAccount,
@@ -63,6 +68,7 @@ import {
 import { getParallelOpsWorkerRegistration } from "@cocalc/server/lro/worker-registry";
 
 const logger = getLogger("server:conat:api:system");
+const ROOTFS_PUBLISH_TIMEOUT_MS = 6 * 60 * 60 * 1000;
 
 export function ping() {
   return { now: Date.now() };
@@ -325,6 +331,38 @@ export async function saveRootfsCatalogEntry(
     throw Error("user must be signed in");
   }
   return await saveRootfsImage({ account_id, body });
+}
+
+export async function publishProjectRootfsImage(
+  opts: PublishProjectRootfsBody & { account_id?: string },
+) {
+  const { account_id, project_id, ...body } = opts;
+  if (!account_id) {
+    throw Error("user must be signed in");
+  }
+  if (
+    !(await isCollaborator({
+      account_id,
+      project_id,
+    }))
+  ) {
+    throw Error("user must be a collaborator on the project");
+  }
+  const client = await getProjectFileServerClient({
+    project_id,
+    timeout: ROOTFS_PUBLISH_TIMEOUT_MS,
+  });
+  const artifact = await client.publishRootfsImage({
+    project_id,
+  });
+  return await publishProjectRootfsCatalogEntry({
+    account_id,
+    body: {
+      ...body,
+      project_id,
+    },
+    artifact,
+  });
 }
 
 export {

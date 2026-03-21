@@ -11,6 +11,7 @@ import type {
 } from "@cocalc/util/db-schema/api-keys";
 import { type UserSearchResult } from "@cocalc/util/db-schema/accounts";
 import type {
+  PublishProjectRootfsBody,
   RootfsCatalogSaveBody,
   RootfsImageManifest,
   RootfsImageEntry,
@@ -48,6 +49,7 @@ export const system = {
   getFrontendSourceFingerprint: authFirst,
   getRootfsCatalog: authFirst,
   saveRootfsCatalogEntry: authFirstRequireAccount,
+  publishProjectRootfsImage: authFirstRequireAccount,
   getPublicSiteUrl: authFirst,
   testR2Credentials: authFirst,
   upsertBrowserSession: authFirst,
@@ -457,6 +459,10 @@ export interface System {
 
   saveRootfsCatalogEntry: (
     opts: RootfsCatalogSaveBody & { account_id?: string },
+  ) => Promise<RootfsImageEntry>;
+
+  publishProjectRootfsImage: (
+    opts: PublishProjectRootfsBody & { account_id?: string },
   ) => Promise<RootfsImageEntry>;
 
   getPublicSiteUrl: (opts?: {

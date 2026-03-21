@@ -31,6 +31,7 @@ path, which can corrupt large chat logs if interrupted mid-write.
 import { type Client } from "@cocalc/conat/core/client";
 import { conat } from "@cocalc/conat/client";
 import { type SnapshotCounts } from "@cocalc/util/consts/snapshots";
+import { type PublishProjectRootfsArtifact } from "@cocalc/util/rootfs-images";
 import { type CopyOptions } from "./fs";
 export { type CopyOptions };
 import { type MutagenSyncSession } from "@cocalc/conat/project/mutagen/types";
@@ -264,6 +265,10 @@ export interface Fileserver {
     safety_snapshot_name?: string;
     lro?: LroRef;
   }) => Promise<void>;
+  publishRootfsImage: (opts: {
+    project_id: string;
+    snapshot?: string;
+  }) => Promise<PublishProjectRootfsArtifact>;
 }
 
 export interface SnapshotUsage {

@@ -5,6 +5,7 @@ import { executeCode } from "@cocalc/backend/execute-code";
 import { spawn } from "node:child_process";
 import { readFile, rm, writeFile } from "fs/promises";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
+import { isManagedRootfsImageName } from "@cocalc/util/rootfs-images";
 import pullImage from "./pull-image";
 import { shiftProgress } from "@cocalc/conat/lro/progress";
 import { PROGRESS_ARGS, rsyncProgressReporter } from "./rsync-progress";
@@ -78,6 +79,15 @@ export const extractBaseImage = reuseInFlight(async (image: string) => {
       // already exist
       reportProgress({ progress: 100, desc: `${image} available` });
       return baseImagePath;
+    }
+    if (isManagedRootfsImageName(image)) {
+      reportProgress({
+        progress: 100,
+        desc: `${image} is not cached on this host`,
+      });
+      throw new Error(
+        `managed RootFS image '${image}' is not cached on this host yet`,
+      );
     }
     reportProgress({ progress: 5, desc: `pulling ${image}...` });
     // pull it -- this takes most of the time.

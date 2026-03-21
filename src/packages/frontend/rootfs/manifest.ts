@@ -7,6 +7,7 @@ import { useEffect, useMemo, useState } from "react";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import {
   DEFAULT_ROOTFS_CATALOG_URL,
+  type PublishProjectRootfsBody,
   type RootfsCatalogSaveBody,
   RootfsImageEntry,
   RootfsImageManifest,
@@ -159,6 +160,14 @@ export async function saveRootfsCatalogEntry(
   body: RootfsCatalogSaveBody,
 ): Promise<RootfsImageEntry> {
   return await webapp_client.conat_client.hub.system.saveRootfsCatalogEntry(
+    body,
+  );
+}
+
+export async function publishProjectRootfsImage(
+  body: PublishProjectRootfsBody,
+): Promise<RootfsImageEntry> {
+  return await webapp_client.conat_client.hub.system.publishProjectRootfsImage(
     body,
   );
 }

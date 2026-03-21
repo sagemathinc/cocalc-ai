@@ -15,6 +15,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
+import { executeCode } from "@cocalc/backend/execute-code";
 import {
   server as createFileServer,
   client as createFileClient,
@@ -55,6 +56,11 @@ import { isBtrfsSubvolume } from "@cocalc/file-server/btrfs/subvolume";
 import { exists } from "@cocalc/backend/misc/async-utils-node";
 import { type SnapshotCounts } from "@cocalc/util/db-schema/projects";
 import { PROJECT_IMAGE_PATH } from "@cocalc/util/db-schema/defaults";
+import {
+  managedRootfsImageName,
+  type RootfsImageArch,
+  type PublishProjectRootfsArtifact,
+} from "@cocalc/util/rootfs-images";
 import { init as initSshServer } from "@cocalc/project-proxy/ssh-server";
 import { type MutagenSyncSession } from "@cocalc/conat/project/mutagen/types";
 import { fsServer, DEFAULT_FILE_SERVICE } from "@cocalc/conat/files/fs";
@@ -86,6 +92,14 @@ import {
 import { publishLroEvent } from "@cocalc/conat/lro/stream";
 import { touchProjectLastEdited } from "./last-edited";
 import { getRootfsMountpoint } from "@cocalc/project-runner/run/rootfs";
+import {
+  extractBaseImage,
+  imageCachePath,
+  imagePathComponent,
+  inspect,
+  inspectFilePath,
+  IMAGE_CACHE,
+} from "@cocalc/project-runner/run/rootfs-base";
 import { createProjectSandboxFilesystem } from "./file-server-sandbox-policy";
 import { resetClonedProjectState } from "./clone-state";
 import {
@@ -102,6 +116,8 @@ const logger = getLogger("project-host:file-server");
 const RESTORE_STAGING_ROOT = ".restore-staging";
 const SNAPSHOT_RESTORE_STAGING_ROOT = ".snapshot-restore-staging";
 const MAX_TEXT_PREVIEW_BYTES = 10 * 1024 * 1024;
+const ROOTFS_PUBLISH_TIMEOUT_MS = 60 * 60 * 1000;
+const STORAGE_WRAPPER = "/usr/local/sbin/cocalc-runtime-storage";
 const SSH_WAKE_TIMEOUT_MS = Math.max(
   5_000,
   envToInt("COCALC_PROJECT_HOST_SSH_WAKE_TIMEOUT_MS", 120_000),
@@ -368,6 +384,11 @@ async function createSnapshotRestoreTempPath(prefix: string): Promise<string> {
   return join(root, `${prefix}${randomUUID()}`);
 }
 
+async function createImageCacheTempPath(prefix: string): Promise<string> {
+  await mkdir(IMAGE_CACHE, { recursive: true });
+  return await mkdtemp(join(IMAGE_CACHE, prefix));
+}
+
 async function replaceTreeByMove({
   src,
   dest,
@@ -388,6 +409,96 @@ async function replaceTreeByMove({
 async function removeDirectoryTree(pathToRemove?: string): Promise<void> {
   if (!pathToRemove || !(await exists(pathToRemove))) return;
   await sudo({ command: "rm", args: ["-rf", pathToRemove] });
+}
+
+async function mountOverlayForPublish({
+  lowerdir,
+  upperdir,
+  workdir,
+  merged,
+}: {
+  lowerdir: string;
+  upperdir: string;
+  workdir: string;
+  merged: string;
+}): Promise<void> {
+  await executeCode({
+    verbose: false,
+    err_on_exit: true,
+    timeout: ROOTFS_PUBLISH_TIMEOUT_MS,
+    command: "sudo",
+    args: [
+      "-n",
+      STORAGE_WRAPPER,
+      "mount-overlay-project",
+      lowerdir,
+      upperdir,
+      workdir,
+      merged,
+    ],
+  });
+}
+
+async function unmountOverlayForPublish(merged: string): Promise<void> {
+  await executeCode({
+    verbose: false,
+    timeout: ROOTFS_PUBLISH_TIMEOUT_MS,
+    command: "sudo",
+    args: ["-n", STORAGE_WRAPPER, "umount-overlay-project", merged],
+  }).catch(() => {});
+}
+
+async function rsyncTree({
+  src,
+  dest,
+}: {
+  src: string;
+  dest: string;
+}): Promise<void> {
+  await executeCode({
+    verbose: false,
+    err_on_exit: true,
+    timeout: ROOTFS_PUBLISH_TIMEOUT_MS,
+    command: "rsync",
+    args: ["-aHAXx", "--numeric-ids", "--delete", `${src}/`, `${dest}/`],
+  });
+}
+
+async function tarSha256(pathToHash: string): Promise<string> {
+  const { stdout } = await executeCode({
+    verbose: false,
+    err_on_exit: true,
+    timeout: ROOTFS_PUBLISH_TIMEOUT_MS,
+    command: "bash",
+    args: [
+      "-lc",
+      `set -euo pipefail; tar --sort=name --mtime='UTC 1970-01-01' --numeric-owner --owner=0 --group=0 --format=posix --acls --xattrs --xattrs-include='*' -cf - -C "$1" . | sha256sum | awk '{print $1}'`,
+      "bash",
+      pathToHash,
+    ],
+  });
+  const digest = `${stdout ?? ""}`.trim();
+  if (!digest) {
+    throw new Error("failed to compute published rootfs digest");
+  }
+  return digest;
+}
+
+async function directorySizeBytes(pathToMeasure: string): Promise<number> {
+  const { stdout } = await executeCode({
+    verbose: false,
+    err_on_exit: true,
+    timeout: ROOTFS_PUBLISH_TIMEOUT_MS,
+    command: "du",
+    args: ["-sb", pathToMeasure],
+  });
+  const value = Number.parseInt(`${stdout}`.trim().split(/\s+/)[0], 10);
+  if (!Number.isFinite(value)) {
+    throw new Error(
+      `failed to measure published rootfs size for ${pathToMeasure}`,
+    );
+  }
+  return value;
 }
 
 async function deleteSubvolumeTree(pathToDelete?: string): Promise<void> {
@@ -1242,6 +1353,132 @@ async function restoreSnapshot({
     await deleteSubvolumeTree(oldHomePath);
   }
   void touchProjectLastEdited(project_id, "restore-snapshot");
+}
+
+function defaultPublishSnapshotName(): string {
+  return `rootfs-publish-${new Date().toISOString()}-${randomUUID()}`;
+}
+
+function normalizePublishedArch(value: unknown): RootfsImageArch {
+  const arch = `${value ?? ""}`.trim().toLowerCase();
+  if (arch === "amd64" || arch === "arm64") {
+    return arch;
+  }
+  return "any";
+}
+
+async function publishRootfsImage({
+  project_id,
+  snapshot,
+}: {
+  project_id: string;
+  snapshot?: string;
+}): Promise<PublishProjectRootfsArtifact> {
+  const snapshotName = snapshot?.trim() || defaultPublishSnapshotName();
+  const createdSnapshot = !snapshot?.trim();
+  if (createdSnapshot) {
+    await createSnapshot({
+      project_id,
+      name: snapshotName,
+    });
+  }
+
+  const staged = await createSnapshotRestoreClone({
+    project_id,
+    snapshot: snapshotName,
+  });
+  const rootfsPath = join(staged.path, PROJECT_IMAGE_PATH);
+  let mergedPath: string | undefined;
+  let workdirPath: string | undefined;
+  let stagedRootfsPath: string | undefined;
+  try {
+    const currentImagePath = join(rootfsPath, "current-image.txt");
+    const sourceImage = `${await readFile(currentImagePath, "utf8")}`.trim();
+    if (!sourceImage) {
+      throw new Error(
+        "project has no current RootFS image recorded; start the project at least once before publishing",
+      );
+    }
+
+    const lowerdir = await extractBaseImage(sourceImage);
+    const overlayRoot = join(rootfsPath, imagePathComponent(sourceImage));
+    const upperdir = join(overlayRoot, "upperdir");
+    await mkdir(upperdir, { recursive: true });
+
+    workdirPath = await createImageCacheTempPath(".rootfs-publish-work-");
+    mergedPath = await createImageCacheTempPath(".rootfs-publish-merged-");
+    stagedRootfsPath = await createImageCacheTempPath(".rootfs-publish-tree-");
+
+    await mountOverlayForPublish({
+      lowerdir,
+      upperdir,
+      workdir: workdirPath,
+      merged: mergedPath,
+    });
+    await rsyncTree({
+      src: mergedPath,
+      dest: stagedRootfsPath,
+    });
+    await unmountOverlayForPublish(mergedPath);
+    mergedPath = undefined;
+
+    const digest = await tarSha256(stagedRootfsPath);
+    const image = managedRootfsImageName(digest);
+    const finalPath = imageCachePath(image);
+    const finalInspectPath = inspectFilePath(image);
+    const inspectData = await inspect(sourceImage);
+    const publishedInspectData = {
+      ...inspectData,
+      Digest: digest,
+      RepoTags: [image],
+      RepoDigests: [digest],
+      Config: {
+        ...(inspectData?.Config ?? {}),
+        Labels: {
+          ...(inspectData?.Config?.Labels ?? {}),
+          "com.cocalc.rootfs.managed": "true",
+          "com.cocalc.rootfs.content_key": digest,
+          "com.cocalc.rootfs.source_image": sourceImage,
+        },
+      },
+    };
+
+    if (!(await exists(finalPath))) {
+      await mkdir(dirname(finalPath), { recursive: true });
+      await executeCode({
+        verbose: false,
+        err_on_exit: true,
+        timeout: ROOTFS_PUBLISH_TIMEOUT_MS,
+        command: "mv",
+        args: [stagedRootfsPath, finalPath],
+      });
+      stagedRootfsPath = undefined;
+    }
+
+    if (!(await exists(finalInspectPath))) {
+      await writeFile(finalInspectPath, JSON.stringify(publishedInspectData));
+    }
+
+    const sizeBytes = await directorySizeBytes(finalPath);
+    return {
+      image,
+      content_key: digest,
+      digest,
+      arch: normalizePublishedArch(publishedInspectData?.Architecture),
+      size_bytes: sizeBytes,
+      snapshot: snapshotName,
+      created_snapshot: createdSnapshot,
+      source_image: sourceImage,
+    };
+  } finally {
+    if (mergedPath) {
+      await unmountOverlayForPublish(mergedPath);
+    }
+    await removeDirectoryTree(workdirPath).catch(() => {});
+    await removeDirectoryTree(mergedPath).catch(() => {});
+    await removeDirectoryTree(stagedRootfsPath).catch(() => {});
+    await deleteSubvolumeTree(staged.path).catch(() => {});
+  }
 }
 
 function createLroRusticReporter(
@@ -2402,6 +2639,7 @@ export async function initFileServer({
     allSnapshotUsage,
     getSnapshotFileText: reuseInFlight(getSnapshotFileText),
     restoreSnapshot: reuseInFlight(restoreSnapshot),
+    publishRootfsImage: reuseInFlight(publishRootfsImage),
     // file sync
     createSync,
     getAllSyncs,

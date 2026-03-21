@@ -7,6 +7,8 @@ import getPool from "@cocalc/database/pool";
 import isAdmin from "@cocalc/server/accounts/is-admin";
 import { v4 } from "uuid";
 import type {
+  PublishProjectRootfsArtifact,
+  PublishProjectRootfsBody,
   RootfsCatalogSaveBody,
   RootfsImageArch,
   RootfsImageEntry,
@@ -269,13 +271,17 @@ function normalizeVisibility(value?: unknown): RootfsImageVisibility {
   return "private";
 }
 
-export async function saveRootfsImage({
+async function upsertRootfsRow({
   account_id,
   body,
+  digest,
+  content_key,
 }: {
   account_id: string;
   body: RootfsCatalogSaveBody;
-}): Promise<RootfsImageEntry> {
+  digest?: string | null;
+  content_key?: string | null;
+}): Promise<{ image_id: string; entry?: RootfsImageEntry }> {
   const pool = getPool("medium");
   const admin = await isAdmin(account_id);
   const image = trimString(body.image);
@@ -335,7 +341,7 @@ export async function saveRootfsImage({
     `INSERT INTO rootfs_images
       (image_id, owner_id, runtime_image, label, description, visibility, official, prepull, hidden, arch, gpu, size_gb, tags, digest, content_key, deprecated, deprecated_reason, theme, created, updated)
      VALUES
-      ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::TEXT[], NULL, NULL, false, NULL, $14::JSONB, NOW(), NOW())
+      ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::TEXT[], $14, $15, false, NULL, $16::JSONB, NOW(), NOW())
      ON CONFLICT (image_id) DO UPDATE SET
       owner_id = EXCLUDED.owner_id,
       runtime_image = EXCLUDED.runtime_image,
@@ -349,6 +355,8 @@ export async function saveRootfsImage({
       gpu = EXCLUDED.gpu,
       size_gb = EXCLUDED.size_gb,
       tags = EXCLUDED.tags,
+      digest = COALESCE(EXCLUDED.digest, rootfs_images.digest),
+      content_key = COALESCE(EXCLUDED.content_key, rootfs_images.content_key),
       theme = EXCLUDED.theme,
       updated = NOW()`,
     [
@@ -365,15 +373,49 @@ export async function saveRootfsImage({
       gpu,
       size_gb,
       tags,
+      digest ?? null,
+      content_key ?? null,
       theme ? JSON.stringify(theme) : null,
     ],
   );
 
   const manifest = await listVisibleRootfsImages(account_id);
-  const entry = manifest.images.find((item) => item.id === image_id);
+  return {
+    image_id,
+    entry: manifest.images.find((item) => item.id === image_id),
+  };
+}
+
+export async function saveRootfsImage({
+  account_id,
+  body,
+}: {
+  account_id: string;
+  body: RootfsCatalogSaveBody;
+}): Promise<RootfsImageEntry> {
+  const { image_id, entry } = await upsertRootfsRow({
+    account_id,
+    body,
+  });
   if (entry) {
     return entry;
   }
+  const image = trimString(body.image)!;
+  const label = trimString(body.label)!;
+  const visibility = normalizeVisibility(body.visibility);
+  const tags = normalizeTags(body.tags);
+  const description = trimString(body.description);
+  const theme = normalizeTheme(body.theme);
+  const arch = normalizeArch(body.arch);
+  const gpu = body.gpu === true;
+  const size_gb =
+    typeof body.size_gb === "number" && Number.isFinite(body.size_gb)
+      ? body.size_gb
+      : null;
+  const admin = await isAdmin(account_id);
+  const official = admin && body.official === true;
+  const prepull = admin && body.prepull === true;
+  const hidden = admin && body.hidden === true;
   return normalizeRootfsEntry(
     {
       id: image_id,
@@ -390,6 +432,73 @@ export async function saveRootfsImage({
       tags,
       theme: theme ?? undefined,
       section: official ? "official" : "mine",
+      warning: "none",
+      can_manage: true,
+    },
+    DEFAULT_ROOTFS_CATALOG_URL,
+  );
+}
+
+export async function publishProjectRootfsCatalogEntry({
+  account_id,
+  body,
+  artifact,
+}: {
+  account_id: string;
+  body: PublishProjectRootfsBody;
+  artifact: PublishProjectRootfsArtifact;
+}): Promise<RootfsImageEntry> {
+  const tags = Array.from(
+    new Set(
+      [
+        ...(body.tags ?? []),
+        "project-publish",
+        `snapshot:${artifact.snapshot}`,
+      ].filter(Boolean),
+    ),
+  );
+  const size_gb =
+    artifact.size_bytes != null
+      ? Number((artifact.size_bytes / 1_000_000_000).toFixed(3))
+      : undefined;
+  const { image_id, entry } = await upsertRootfsRow({
+    account_id,
+    body: {
+      image: artifact.image,
+      label: body.label,
+      description: body.description,
+      visibility: body.visibility,
+      arch: artifact.arch,
+      tags,
+      theme: body.theme,
+      official: body.official,
+      prepull: body.prepull,
+      hidden: body.hidden,
+      size_gb,
+    },
+    digest: artifact.digest,
+    content_key: artifact.content_key,
+  });
+  if (entry) {
+    return entry;
+  }
+  const visibility = normalizeVisibility(body.visibility);
+  return normalizeRootfsEntry(
+    {
+      id: image_id,
+      label: body.label,
+      image: artifact.image,
+      description: body.description,
+      digest: artifact.digest,
+      arch: artifact.arch,
+      visibility,
+      official: false,
+      prepull: false,
+      hidden: body.hidden === true,
+      size_gb,
+      tags,
+      theme: normalizeTheme(body.theme) ?? undefined,
+      section: "mine",
       warning: "none",
       can_manage: true,
     },
