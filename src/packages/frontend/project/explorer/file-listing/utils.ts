@@ -11,9 +11,19 @@ import { FILE_ACTIONS } from "@cocalc/frontend/project_actions";
 
 export const TERM_MODE_CHARS = ["/", "!"] as const;
 export const TERM_MODE_CHAR = "/";
+export const AGENT_MODE_CHAR = "@";
 
 export function isTerminalMode(search: string): boolean {
   return search.length > 0 && TERM_MODE_CHARS.includes(search[0] as any);
+}
+
+export function isAgentMode(search: string): boolean {
+  return search.length > 0 && search[0] === AGENT_MODE_CHAR;
+}
+
+export function extractAgentPrompt(search: string): string {
+  if (!isAgentMode(search)) return "";
+  return search.slice(1).trim();
 }
 
 type Extension =
