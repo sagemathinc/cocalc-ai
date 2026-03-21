@@ -297,7 +297,9 @@ export async function waitForConsistentState(
 }
 
 export async function after() {
-  persistServer?.close();
+  try {
+    await persistServer?.close();
+  } catch {}
   while (true) {
     try {
       await rm(tempDir, { force: true, recursive: true });
@@ -308,11 +310,11 @@ export async function after() {
     }
   }
   try {
-    server?.close();
+    await server?.close();
   } catch {}
   for (const cn of clients) {
     try {
-      cn.close();
+      await cn.close();
     } catch {}
   }
 }

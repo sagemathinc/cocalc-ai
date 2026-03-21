@@ -107,7 +107,7 @@ describe("test automatic node discovery (and forgetting)", () => {
       ).length;
     };
     const n = numNodes();
-    nodes[1].server.close();
+    await nodes[1].server.close();
     expect(nodes[1].server.isHealthy()).toBe(false);
     // not instantly gone
     expect(numNodes()).toBe(n);
