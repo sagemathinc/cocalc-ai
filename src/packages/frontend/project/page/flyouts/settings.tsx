@@ -18,6 +18,8 @@ import { IntlMessage, isIntlMessage, labels } from "@cocalc/frontend/i18n";
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import { AboutBox } from "@cocalc/frontend/project/settings/about-box";
 import { ApiKeys } from "@cocalc/frontend/project/settings/api-keys";
+import CreateBackup from "@cocalc/frontend/project/backups/create";
+import CloneProject from "@cocalc/frontend/project/explorer/clone";
 import { Datastore } from "@cocalc/frontend/project/settings/datastore";
 import {
   ENV_VARS_ICON,
@@ -28,6 +30,7 @@ import { ProjectCapabilities } from "@cocalc/frontend/project/settings/project-c
 import { ProjectControl } from "@cocalc/frontend/project/settings/project-control";
 import { RestartProject } from "@cocalc/frontend/project/settings/restart-project";
 import MoveProject from "@cocalc/frontend/project/settings/move-project";
+import CreateSnapshot from "@cocalc/frontend/project/snapshots/create";
 import { SSHPanel } from "@cocalc/frontend/project/settings/ssh";
 import { StopProject } from "@cocalc/frontend/project/settings/stop-project";
 import { lite } from "@cocalc/frontend/lite";
@@ -223,6 +226,22 @@ export function SettingsFlyout(_: Readonly<Props>): React.JSX.Element {
           </>
         ),
         children: <ProjectControl project={project} mode="flyout" />,
+      },
+
+      {
+        key: "recovery",
+        label: (
+          <>
+            <Icon name="life-ring" /> Recovery and Copy
+          </>
+        ),
+        children: (
+          <Space wrap>
+            {!lite && <CreateSnapshot />}
+            {!lite && <CreateBackup />}
+            <CloneProject project_id={project_id} />
+          </Space>
+        ),
       },
 
       {
