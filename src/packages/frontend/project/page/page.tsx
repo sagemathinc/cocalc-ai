@@ -52,7 +52,6 @@ import {
   storeFlyoutState,
 } from "./flyouts/state";
 import HomePageButton from "./home-page/button";
-import { SoftwareEnvUpgrade } from "./software-env-upgrade";
 import ProjectTabs, {
   FIXED_TABS_BG_COLOR,
   VerticalFixedTabs,
@@ -678,7 +677,6 @@ You can wait for this host to become available again, or move this project to an
         <DiskSpaceWarning project_id={project_id} />
         <RamWarning project_id={project_id} />
         <OOMWarning project_id={project_id} />
-        <SoftwareEnvUpgrade project_id={project_id} />
         <ProjectWarningBanner />
         {renderTopRow()}
         {is_deleted && <DeletedProjectWarning />}

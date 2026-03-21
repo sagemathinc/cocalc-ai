@@ -32,17 +32,11 @@ import {
   ProjectState,
   TimeAgo,
 } from "@cocalc/frontend/components";
-import {
-  compute_image2basename,
-  is_custom_image,
-} from "@cocalc/frontend/custom-software/util";
 import { labels } from "@cocalc/frontend/i18n";
 import { FIXED_PROJECT_TABS } from "@cocalc/frontend/project/page/file-tab";
 import { useStarredFilesManager } from "@cocalc/frontend/project/page/flyouts/store";
 import { RestartProject } from "@cocalc/frontend/project/settings/restart-project";
 import { StopProject } from "@cocalc/frontend/project/settings/stop-project";
-import { DEFAULT_COMPUTE_IMAGE } from "@cocalc/util/db-schema";
-import { KUCALC_COCALC_COM } from "@cocalc/util/db-schema/site-defaults";
 import { COLORS } from "@cocalc/util/theme";
 import { ProjectUsers } from "./project-users";
 import {
@@ -64,9 +58,6 @@ export function ProjectRowExpandedContent({ project_id }: Props) {
 
   const actions = useActions("projects");
   const project = useRedux(["projects", "project_map", project_id]);
-  const images = useTypedRedux("compute_images", "images");
-  const kucalc = useTypedRedux("customize", "kucalc");
-  const software = useTypedRedux("customize", "software");
   const project_log = useTypedRedux({ project_id }, "project_log");
 
   // Get recent files - always enabled since component only renders when expanded
@@ -114,46 +105,6 @@ export function ProjectRowExpandedContent({ project_id }: Props) {
     const project_actions = redux.getProjectActions(project_id);
     if (project_actions) {
       project_actions.open_file({ path });
-    }
-  }
-
-  function renderSoftwareImage() {
-    const ci = project.get("compute_image");
-    if (ci == null || images == null) return "Default";
-
-    if (is_custom_image(ci)) {
-      const id = compute_image2basename(ci);
-      const img = images.get(id);
-      if (img == null) return ci;
-      const name = img.get("display");
-      return (
-        <span>
-          {name}{" "}
-          <span
-            style={{ color: COLORS.GRAY }}
-            title="Custom image created by a third party"
-          >
-            (custom)
-          </span>
-        </span>
-      );
-    } else {
-      if (ci === DEFAULT_COMPUTE_IMAGE) return "Default";
-      const name = software?.getIn(["environments", ci, "title"]) ?? ci;
-      const descr = software?.getIn(["environments", ci, "descr"]) ?? "";
-      return (
-        <span title={descr}>
-          {name}
-          {kucalc === KUCALC_COCALC_COM && (
-            <span
-              style={{ color: COLORS.GRAY, marginLeft: "4px" }}
-              title="Official image created by CoCalc"
-            >
-              (official)
-            </span>
-          )}
-        </span>
-      );
     }
   }
 
@@ -336,9 +287,6 @@ export function ProjectRowExpandedContent({ project_id }: Props) {
           {renderCollaborators()}
         </Descriptions.Item>
 
-        <Descriptions.Item label="Software Image">
-          {renderSoftwareImage()}
-        </Descriptions.Item>
         <Descriptions.Item label={`${projectLabel} ID`}>
           <CopyToClipBoard
             value={project_id}

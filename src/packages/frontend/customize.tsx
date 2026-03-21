@@ -6,7 +6,7 @@
 // Site Customize -- dynamically customize the look and configuration
 // of CoCalc for the client.
 
-import { fromJS, List, Map } from "immutable";
+import { fromJS, List } from "immutable";
 import { join } from "path";
 import { useIntl } from "react-intl";
 import {
@@ -33,12 +33,6 @@ import {
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { labels, Locale } from "@cocalc/frontend/i18n";
 import { callback2, retry_until_success } from "@cocalc/util/async-utils";
-import {
-  ComputeImage,
-  FALLBACK_ONPREM_ENV,
-  FALLBACK_SOFTWARE_ENV,
-} from "@cocalc/util/compute-images";
-import { DEFAULT_COMPUTE_IMAGE } from "@cocalc/util/db-schema";
 import { LLMServicesAvailable } from "@cocalc/util/db-schema/llm-utils";
 import {
   Config,
@@ -48,7 +42,6 @@ import {
   site_settings_conf,
 } from "@cocalc/util/db-schema/site-defaults";
 import { deep_copy, dict, YEAR } from "@cocalc/util/misc";
-import { sanitizeSoftwareEnv } from "@cocalc/util/sanitize-software-envs";
 import * as theme from "@cocalc/util/theme";
 import { CustomLLMPublic } from "@cocalc/util/types/llm";
 import { DefaultQuotaSetting, Upgrades } from "@cocalc/util/upgrades/quota";
@@ -89,12 +82,6 @@ defaults.ssh_remote_url = "";
 // so maybe there is a more clever way like this to do it than
 // what I did below.
 // type SiteSettings = { [k in keyof SiteSettingsConfig]: any  };
-
-export type SoftwareEnvironments = TypedMap<{
-  groups: List<string>;
-  default: string;
-  environments: Map<string, TypedMap<ComputeImage>>;
-}>;
 
 export interface CustomizeState {
   time: number; // this will always get set once customize has loaded.
@@ -171,8 +158,6 @@ export interface CustomizeState {
   cloudflare_timezone?: string;
   cloudflare_latitude?: string;
   cloudflare_longitude?: string;
-  // flag to signal data stored in the Store.
-  software: SoftwareEnvironments;
   _is_configured: boolean;
   project_hosts_nebius_enabled?: boolean;
   project_hosts_self_host_alpha_enabled?: boolean;
@@ -216,11 +201,6 @@ export class CustomizeStore extends Store<CustomizeState> {
     const hosts = this.get("iframe_comm_hosts");
     if (hosts == null) return [];
     return hosts.toJS();
-  }
-
-  async getDefaultComputeImage(): Promise<string> {
-    await this.until_configured();
-    return this.getIn(["software", "default"]) ?? DEFAULT_COMPUTE_IMAGE;
   }
 
   getEnabledLLMs(): LLMServicesAvailable {
@@ -280,13 +260,11 @@ async function loadCustomizeState() {
     configuration,
     registration,
     strategies,
-    software = null,
     ollama = null, // the derived public information
     custom_openai = null,
   } = customize;
   processLite(configuration);
   process_kucalc(configuration);
-  process_software(software, configuration.is_cocalc_com);
   process_customize(configuration); // this sets _is_configured to true
   process_ollama(ollama);
   process_custom_openai(custom_openai);
@@ -343,26 +321,6 @@ function set_customize(obj) {
 
   obj._is_configured = true;
   actions.setState(obj);
-}
-
-function process_software(software, is_cocalc_com) {
-  const dbg = (...msg) => console.log("sanitizeSoftwareEnv:", ...msg);
-  if (software != null) {
-    // this checks the data coming in from the "/customize" endpoint.
-    // Next step is to convert it to immutable and store it in the customize store.
-    software = sanitizeSoftwareEnv({ software, purpose: "webapp" }, dbg);
-    actions.setState({ software });
-  } else {
-    if (is_cocalc_com) {
-      actions.setState({ software: fromJS(FALLBACK_SOFTWARE_ENV) as any });
-    } else {
-      software = sanitizeSoftwareEnv(
-        { software: FALLBACK_ONPREM_ENV, purpose: "webapp" },
-        dbg,
-      );
-      actions.setState({ software });
-    }
-  }
 }
 
 interface HelpEmailLink {

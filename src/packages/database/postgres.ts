@@ -180,7 +180,6 @@ import {
   touchAccount,
 } from "./postgres/account/management";
 import { get_hub_servers, register_hub } from "./postgres/hub/management";
-import { insert_random_compute_images } from "./postgres/misc/insert-random-compute-images";
 import {
   get_file_access,
   get_file_use,
@@ -1844,20 +1843,6 @@ export class PostgreSQL extends EventEmitter implements PostgreSQLMethods {
 
   async get_hub_servers(opts: PgMethodOpts<"get_hub_servers">) {
     return runWithCbResultValue(opts.cb, () => get_hub_servers(this));
-  }
-
-  /*
-    Custom software images
-    */
-
-  // this is 100% for cc-in-cc dev projects only!
-  // Delete all patches, the blobs if archived, and the syncstring object itself
-  // Basically this erases everything from cocalc related to the file edit history
-  // of a given file... except ZFS snapshots.
-  async insert_random_compute_images(
-    opts: PgMethodOpts<"insert_random_compute_images">,
-  ) {
-    return runWithCb(opts.cb, () => insert_random_compute_images(this, opts));
   }
 
   // Delete all patches, the blobs if archived, and the syncstring object itself

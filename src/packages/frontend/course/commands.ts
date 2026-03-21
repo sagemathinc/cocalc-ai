@@ -169,20 +169,6 @@ export const COMMANDS: { [name: string]: Command } = {
       actions.setModal("nbgrader");
     },
   },
-  "software-environment": {
-    icon: "laptop",
-    label: labels.software_environment,
-    button: labels.software,
-    title: defineMessage({
-      id: "course.commands.software-environment.tooltip",
-      defaultMessage:
-        "Configure the software environment that all student projects will use.",
-    }),
-    onClick: ({ props }) => {
-      const { actions } = props;
-      actions.setModal("software-environment");
-    },
-  },
   "network-file-systems": {
     icon: "database",
     label: labels.cloud_storage_remote_filesystems,

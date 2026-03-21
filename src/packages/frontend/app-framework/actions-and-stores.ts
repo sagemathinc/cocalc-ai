@@ -29,12 +29,6 @@ export { BillingActions } from "@cocalc/frontend/billing/actions";
 export { BillingStore } from "@cocalc/frontend/billing/store";
 export type { BillingStoreState as BillingState } from "@cocalc/frontend/billing/store";
 
-// compute_images
-export {
-  ComputeImagesActions,
-  ComputeImagesStore,
-} from "../custom-software/init";
-export type { ComputeImagesState } from "@cocalc/frontend/custom-software/init";
 // customize
 export { CustomizeActions, CustomizeStore } from "@cocalc/frontend/customize";
 export type { CustomizeState } from "@cocalc/frontend/customize";

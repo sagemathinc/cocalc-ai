@@ -35,7 +35,6 @@ const QUERY = {
   unlisted: null,
   authenticated: null,
   license: null,
-  compute_image: null,
 };
 
 interface Info {
@@ -45,7 +44,6 @@ interface Info {
   unlisted?: boolean;
   authenticated?: boolean;
   license?: string;
-  compute_image?: string;
 }
 
 function get_visibility(edited) {
@@ -209,7 +207,6 @@ export default function ConfigurePublicPath({ id, project_id, path }: Props) {
             onChange={(license) => setEdited({ ...edited, license })}
           />
         </EditRow>
-        {/*TODO  Image: {edited.compute_image} */}
       </Space>
       {save}
     </div>

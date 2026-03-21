@@ -25,7 +25,6 @@ register({
         created: null,
         last_saved: null,
         counter: null,
-        compute_image: null,
         redirect: null,
       },
     ],

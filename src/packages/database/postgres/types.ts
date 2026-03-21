@@ -229,10 +229,6 @@ export interface DeleteSyncstringOpts {
   cb?: CB;
 }
 
-export interface InsertRandomComputeImagesOpts {
-  cb?: CB;
-}
-
 export interface DeleteBlobOpts {
   uuid: string;
   cb?: CB;
@@ -874,7 +870,6 @@ export interface PostgreSQLMethods extends EventEmitter {
 
   import_patches(opts: ImportPatchesOpts);
   delete_syncstring(opts: DeleteSyncstringOpts);
-  insert_random_compute_images(opts: InsertRandomComputeImagesOpts);
   delete_blob(opts: DeleteBlobOpts);
   touch_blob(opts: TouchBlobOpts): void;
   remove_blob_ttls(opts: RemoveBlobTtlsOpts): void;

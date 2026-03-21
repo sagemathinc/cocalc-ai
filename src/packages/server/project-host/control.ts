@@ -106,9 +106,7 @@ export function shouldSkipStartForSnapshot({
 
 export async function loadProject(project_id: string): Promise<ProjectMeta> {
   const { rows } = await pool().query(
-    // Prefer an explicit rootfs_image, but fall back to compute_image so legacy
-    // rows created before rootfs_image existed still work.
-    "SELECT title, users, COALESCE(rootfs_image, compute_image) as image, host_id, run_quota FROM projects WHERE project_id=$1",
+    "SELECT title, users, rootfs_image as image, host_id, run_quota FROM projects WHERE project_id=$1",
     [project_id],
   );
   if (!rows[0]) throw Error(`project ${project_id} not found`);

@@ -33,7 +33,6 @@ import { EnvironmentVariablesConfig } from "./envvars-config";
 import { Nbgrader } from "./nbgrader";
 import { Parallel } from "./parallel";
 import StudentPay from "./student-pay";
-import { StudentProjectSoftwareEnvironment } from "./student-project-software-environment";
 import { COLORS } from "@cocalc/util/theme";
 
 interface Props {
@@ -75,12 +74,6 @@ export function ConfigurationPanel({ name, project_id, settings }: Props) {
           <CollaboratorPolicy settings={settings} actions={actions} />
           <br />
           <RestrictStudentProjects settings={settings} actions={actions} />
-          <br />
-          <ConfigureSoftwareEnvironment
-            actions={actions}
-            settings={settings}
-            project_id={project_id}
-          />
           <br />
           <Parallel name={name} />
           <NetworkFilesystem
@@ -304,28 +297,6 @@ export function EnvVariables({
       actions={actions.configuration}
       envvars={settings.get("envvars")}
       project_id={project_id}
-      close={close}
-    />
-  );
-}
-
-export function ConfigureSoftwareEnvironment({
-  actions,
-  settings,
-  project_id,
-  close,
-}: {
-  actions;
-  settings;
-  project_id;
-  close?;
-}) {
-  return (
-    <StudentProjectSoftwareEnvironment
-      actions={actions.configuration}
-      software_image={settings.get("custom_image")}
-      course_project_id={project_id}
-      inherit_compute_image={settings.get("inherit_compute_image")}
       close={close}
     />
   );

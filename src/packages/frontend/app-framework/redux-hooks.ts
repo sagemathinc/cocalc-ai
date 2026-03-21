@@ -199,7 +199,6 @@ export interface StoreStates {
   account: types.AccountState;
   "admin-users": types.AdminUsersState;
   billing: types.BillingState;
-  compute_images: types.ComputeImagesState;
   customize: types.CustomizeState;
   file_use: types.FileUseState;
   mentions: types.MentionsState;
@@ -372,7 +371,6 @@ export interface Stores {
   account: types.AccountStore;
   "admin-users": types.AdminUsersStore;
   billing: types.BillingStore;
-  compute_images: types.ComputeImagesStore;
   customize: types.CustomizeStore;
   file_use: types.FileUseStore;
   mentions: types.MentionsStore;

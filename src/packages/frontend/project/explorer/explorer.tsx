@@ -22,7 +22,6 @@ import {
   HelpIcon,
   Loading,
 } from "@cocalc/frontend/components";
-import { CustomSoftwareReset } from "@cocalc/frontend/custom-software/reset-bar";
 import { IS_MOBILE } from "@cocalc/frontend/feature";
 import { FileUploadWrapper } from "@cocalc/frontend/file-upload";
 import { ProjectStatus } from "@cocalc/frontend/todo-types";
@@ -172,10 +171,6 @@ export function Explorer() {
     "file_creation_error",
   );
   const file_search = useTypedRedux({ project_id }, "file_search") ?? "";
-  const show_custom_software_reset = useTypedRedux(
-    { project_id },
-    "show_custom_software_reset",
-  );
   const show_directory_tree =
     useTypedRedux({ project_id }, "show_directory_tree") ?? false;
   const disableExplorerKeyhandler = useTypedRedux(
@@ -190,7 +185,6 @@ export function Explorer() {
 
   const project_map = useTypedRedux("projects", "project_map");
 
-  const images = useTypedRedux("compute_images", "images");
   const otherSettings = useTypedRedux("account", "other_settings");
   const mask = otherSettings?.get("mask_files");
   const autoUpdateListing = !!otherSettings?.get("auto_update_file_listing");
@@ -892,12 +886,7 @@ You can either wait for this host to become available again, or move this ${proj
                       project_id={project_id}
                       checked_files={checked_files}
                       current_path={effective_current_path}
-                      project_map={project_map}
-                      images={images}
                       actions={actions}
-                      available_features={available_features}
-                      show_custom_software_reset={show_custom_software_reset}
-                      project_is_running={project_is_running}
                       refreshBackups={refreshBackups}
                       hasPendingUpdate={hasPendingListingUpdate}
                       onRefreshListing={flushListingUpdates}
@@ -917,20 +906,6 @@ You can either wait for this host to become available again, or move this ${proj
                   <MiscSideButtons />
                 </div>
               </div>
-
-              {project_is_running &&
-                show_custom_software_reset &&
-                checked_files.size == 0 &&
-                images != null && (
-                  <CustomSoftwareReset
-                    project_id={project_id}
-                    images={images}
-                    project_map={project_map}
-                    actions={actions}
-                    available_features={available_features}
-                  />
-                )}
-
               {checked_files.size > 0 && file_action != undefined ? (
                 <Row>
                   <Col sm={12}>

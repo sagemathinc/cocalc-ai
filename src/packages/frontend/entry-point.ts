@@ -31,7 +31,6 @@ import { init as initJqueryPlugins } from "./jquery-plugins";
 import { init as initAccount } from "./account";
 import { init as initApp } from "./app/init";
 import { init as initProjects } from "./projects";
-import { init as initCustomSoftware } from "./custom-software/init";
 import { init as initFileUse } from "./file-use/init";
 import { init as initWebHooks } from "./webapp-hooks";
 import { init as initNotifications } from "./notifications/init";
@@ -57,7 +56,6 @@ export async function init() {
   initAccount(redux);
   initApp();
   initProjects();
-  initCustomSoftware();
   initFileUse();
   initWebHooks();
   if (!COCALC_MINIMAL) {

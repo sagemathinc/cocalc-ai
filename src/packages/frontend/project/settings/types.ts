@@ -37,7 +37,6 @@ export type Project = TypedMap<{
   status: ProjectStatus;
   settings: ProjectSettings;
   launcher?: Map<string, any>;
-  compute_image: string;
   rootfs_image?: string;
 }>;
 

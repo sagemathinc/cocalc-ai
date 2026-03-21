@@ -9,6 +9,8 @@
  * - acquire(key) bumps the refcount and returns an async release() function.
  * - release() decrements the refcount; when it reaches zero a disposer is
  *   scheduled after delayMs unless a new acquire happens first.
+ * - release({ immediate: true }) disposes immediately when the refcount hits
+ *   zero instead of scheduling delayed cleanup.
  * - All operations are serialized per key to avoid races.
  */
 export class RefcountLeaseManager<K> {
@@ -27,7 +29,9 @@ export class RefcountLeaseManager<K> {
   /**
    * Acquire a lease on key. Returns an async release function.
    */
-  async acquire(key: K): Promise<() => Promise<void>> {
+  async acquire(
+    key: K,
+  ): Promise<(opts?: { immediate?: boolean }) => Promise<void>> {
     if (this.closed) {
       throw new Error("lease manager is closed");
     }
@@ -42,12 +46,29 @@ export class RefcountLeaseManager<K> {
       this.counts.set(key, prev + 1);
     });
 
-    return async () => {
+    return async (opts?: { immediate?: boolean }) => {
       await this.withLock(key, async () => {
         const prev = this.counts.get(key) ?? 0;
         const next = Math.max(prev - 1, 0);
         this.counts.set(key, next);
         if (next > 0) return;
+
+        const pending = this.timers.get(key);
+        if (pending) {
+          clearTimeout(pending);
+          this.timers.delete(key);
+        }
+
+        if (opts?.immediate || this.delayMs <= 0) {
+          try {
+            await this.disposer(key);
+          } finally {
+            if ((this.counts.get(key) ?? 0) === 0) {
+              this.counts.delete(key);
+            }
+          }
+          return;
+        }
 
         // Schedule disposer after delay; if a new acquire happens before it fires, it will be cancelled.
         const timer = setTimeout(() => {

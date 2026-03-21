@@ -14,7 +14,6 @@ import {
 } from "@cocalc/util/types/execute-code";
 import { DEFAULT_QUOTAS } from "@cocalc/util/upgrade-spec";
 import { NOTES } from "./crm";
-import { FALLBACK_COMPUTE_IMAGE } from "./defaults";
 import { SCHEMA as schema } from "./index";
 import { Table } from "./types";
 export type { SnapshotCounts } from "@cocalc/util/consts/snapshots";
@@ -90,8 +89,6 @@ Table({
           last_active: null,
           action_request: null, // last requested action -- {action:?, time:?, started:?, finished:?, err:?}
           course: null,
-          // if the value is not set, we have to use the old default prior to summer 2020 (Ubuntu 18.04, not 20.04!)
-          compute_image: FALLBACK_COMPUTE_IMAGE,
           created: null,
           ephemeral: null,
           env: null,
@@ -118,7 +115,6 @@ Table({
             return db._user_set_query_project_manage_users_owner_only(obj);
           },
           action_request: true, // used to request that an action be performed, e.g., "save"; handled by before_change
-          compute_image: true,
           rootfs_image: true,
           env: true,
           avatar_image_tiny: true,
@@ -370,10 +366,6 @@ Table({
     run_quota: {
       type: "map",
       desc: "If project is running, this is the quota that it is running with.",
-    },
-    compute_image: {
-      type: "string",
-      desc: "Specify the name of the underlying (kucalc) compute image.",
     },
     rootfs_image: {
       type: "string",

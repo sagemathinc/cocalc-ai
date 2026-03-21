@@ -12,7 +12,6 @@ import { WORKSPACE_LABEL } from "@cocalc/util/i18n/terminology";
 
 interface Props {
   label?: string;
-  image?: string; // optional compute image
   defaultTitle?: string;
   start?: boolean; // start as soon as it is created.
   onCreate: (project: { project_id: string; title: string }) => void;
@@ -21,7 +20,6 @@ interface Props {
 
 export default function CreateProject({
   label,
-  image,
   defaultTitle,
   start,
   onCreate,
@@ -42,7 +40,6 @@ export default function CreateProject({
     try {
       const response = await apiPost("/projects/create", {
         title,
-        image,
         public_path_id,
       });
       if (response.error) {

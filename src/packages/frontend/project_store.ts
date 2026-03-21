@@ -80,7 +80,6 @@ export interface ProjectStoreState {
   configuration?: ProjectConfiguration;
   configuration_loading: boolean; // for UI feedback
   available_features?: TypedMap<AvailableFeatures>;
-  show_custom_software_reset: boolean;
 
   // Project Page
   active_project_tab: string;
@@ -304,7 +303,6 @@ export class ProjectStore extends Store<ProjectStoreState> {
       show_masked: true,
       configuration: undefined,
       configuration_loading: false, // for UI feedback
-      show_custom_software_reset: false,
 
       // Project Page
       active_project_tab: "files",

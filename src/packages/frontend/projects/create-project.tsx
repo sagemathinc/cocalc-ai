@@ -224,15 +224,11 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
   async function create_project(): Promise<void> {
     setSaving(true);
     const actions = redux.getActions("projects");
-    const defaultComputeImage = await redux
-      .getStore("customize")
-      .getDefaultComputeImage();
     let project_id: string;
     const chosenRootfs =
       rootfsImage?.trim() || effectiveDefaultRootfs || DEFAULT_PROJECT_IMAGE;
     const opts = {
       title: title_text,
-      image: defaultComputeImage,
       rootfs_image: chosenRootfs,
       start: true,
       host_id: selectedHost?.id,
@@ -383,8 +379,8 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
         <Space orientation="vertical" size="small" style={{ width: "100%" }}>
           <div style={{ fontWeight: 600 }}>Root Filesystem Software Image</div>
           <Paragraph type="secondary" style={{ marginBottom: 0 }}>
-            Select the OCI image that provides the base software environment for
-            this project.
+            Select the OCI image that provides the root filesystem for this
+            project.
           </Paragraph>
           <Space wrap>
             <Button onClick={openRootfsModal} disabled={saving}>

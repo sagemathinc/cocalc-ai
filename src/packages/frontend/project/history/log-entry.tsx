@@ -23,7 +23,6 @@ import {
   Tip,
 } from "@cocalc/frontend/components";
 import AIAvatar from "@cocalc/frontend/components/ai-avatar";
-import { SoftwareEnvironments } from "@cocalc/frontend/customize";
 import { file_associations } from "@cocalc/frontend/file-associations";
 import { modelToName } from "@cocalc/frontend/frame-editors/llm/llm-selector";
 import { labels } from "@cocalc/frontend/i18n";
@@ -35,7 +34,6 @@ import * as misc from "@cocalc/util/misc";
 import { round1 } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 import { FormattedMessage, useIntl } from "react-intl";
-import { SOFTWARE_ENVIRONMENT_ICON } from "../settings/software-consts";
 import { SystemProcess } from "./system-process";
 import type {
   AssistantEvent,
@@ -47,7 +45,6 @@ import type {
   ProjectControlEvent,
   ProjectEvent,
   PublicPathEvent,
-  SoftwareEnvironmentEvent,
   SystemEvent,
   UpgradeEvent,
   X11Event,
@@ -171,10 +168,6 @@ export const LogEntry: React.FC<Props> = React.memo(
     const intl = useIntl();
     const projectLabelLower = intl.formatMessage(labels.project).toLowerCase();
 
-    const software_envs: SoftwareEnvironments | null = useTypedRedux(
-      "customize",
-      "software",
-    );
     const otherSettings = useTypedRedux("account", "other_settings");
     const dimFileExtensions = !!otherSettings?.get("dim_file_extensions");
 
@@ -298,28 +291,6 @@ export const LogEntry: React.FC<Props> = React.memo(
               event: event.disabled ? "disabled" : "enabled",
               listed: event.unlisted ? "unlisted" : "listed",
             }}
-          />
-        </span>
-      );
-    }
-
-    function render_software_environment(
-      event: SoftwareEnvironmentEvent,
-    ): React.JSX.Element {
-      const envs = software_envs?.get("environments");
-      const prev: string = envs
-        ? (envs.get(event.previous)?.get("title") ?? event.previous)
-        : intl.formatMessage(labels.loading);
-      const next: string = envs
-        ? (envs.get(event.next)?.get("title") ?? event.next)
-        : intl.formatMessage(labels.loading);
-
-      return (
-        <span>
-          <FormattedMessage
-            id="project.history.log-entry.software"
-            defaultMessage={`changed the software environment from {prev} to {next}`}
-            values={{ prev, next }}
           />
         </span>
       );
@@ -890,8 +861,6 @@ export const LogEntry: React.FC<Props> = React.memo(
           return <span>unhid the {projectLabelLower} from themself</span>;
         case "public_path":
           return render_public_path(event);
-        case "software_environment":
-          return render_software_environment(event);
         case "llm":
           return render_llm(event);
         default:
@@ -951,8 +920,6 @@ export const LogEntry: React.FC<Props> = React.memo(
         case "invite_nonuser":
         case "remove_collaborator":
           return "user";
-        case "software_environment":
-          return SOFTWARE_ENVIRONMENT_ICON;
         case "public_path":
           return "share-square";
       }
