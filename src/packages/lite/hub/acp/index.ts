@@ -1368,6 +1368,66 @@ function chatKey(metadata: AcpChatContext): string {
   return `${metadata.project_id}:${metadata.path}:${metadata.message_date}`;
 }
 
+type ThrottledNoArgs = (() => void) & {
+  cancel: () => void;
+  flush: () => void;
+};
+
+function throttleNoArgsWithUnref(
+  fn: () => void,
+  wait: number,
+): ThrottledNoArgs {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let pending = false;
+  let lastInvokeAt = 0;
+
+  const clear = () => {
+    if (timer != null) {
+      clearTimeout(timer);
+      timer = undefined;
+    }
+  };
+
+  const invoke = () => {
+    lastInvokeAt = Date.now();
+    pending = false;
+    fn();
+  };
+
+  const wrapped = (() => {
+    const now = Date.now();
+    if (lastInvokeAt === 0 || now - lastInvokeAt >= wait) {
+      clear();
+      invoke();
+      return;
+    }
+    pending = true;
+    if (timer != null) return;
+    timer = setTimeout(() => {
+      timer = undefined;
+      if (pending) {
+        invoke();
+      }
+    }, Math.max(0, wait - (now - lastInvokeAt)));
+    (timer as any)?.unref?.();
+  }) as ThrottledNoArgs;
+
+  wrapped.cancel = () => {
+    clear();
+    pending = false;
+  };
+
+  wrapped.flush = () => {
+    const shouldInvoke = pending;
+    clear();
+    if (shouldInvoke) {
+      invoke();
+    }
+  };
+
+  return wrapped;
+}
+
 function findChatWriter({
   threadId,
   chat,
@@ -1447,12 +1507,11 @@ export class ChatStreamWriter {
   private patchflowVersionBaseline?: number;
   private patchflowVersionLatest?: number;
   private patchflowVersionPeak?: number;
-  private heartbeatLease = throttle(
+  private heartbeatLease = throttleNoArgsWithUnref(
     () => {
       this.touchLease();
     },
     LEASE_HEARTBEAT_INTERVAL,
-    { leading: true, trailing: true },
   );
   private persistLogProgress = throttle(
     async () => {
@@ -2633,6 +2692,11 @@ export class ChatStreamWriter {
       this.disposeTimer = undefined;
     }
 
+    // Finalize paths cancel the lease heartbeat, but dispose should not rely
+    // on that side effect. A writer can reach dispose after terminal handling
+    // and still have a trailing throttle timer pending.
+    this.heartbeatLease.cancel();
+
     if (!this.leaseFinalized) {
       const reason = this.finished
         ? "disposed after finished turn"
@@ -3269,6 +3333,26 @@ function findLatestGeneratingChatRow(
       (Number.isFinite(aDate) ? aDate : 0)
     );
   })[0];
+}
+
+export async function disposeAllChatWritersForTests(): Promise<void> {
+  const writers = Array.from(chatWritersByChatKey.values());
+  for (const writer of writers) {
+    try {
+      writer.dispose(true);
+    } catch {
+      // Ignore best-effort test cleanup errors.
+    }
+  }
+  await Promise.all(
+    writers.map(async (writer) => {
+      try {
+        await writer.waitUntilDisposed();
+      } catch {
+        // Ignore best-effort test cleanup errors.
+      }
+    }),
+  );
 }
 
 function hasLiveChatWriterForTurn(turn: {

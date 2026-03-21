@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import * as http from "node:http";
 import { tmpdir } from "node:os";
@@ -25,6 +26,38 @@ process.on("SIGINT", shutdown);
 
 function appId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
+}
+
+async function killIfRunning(pid?: number): Promise<void> {
+  if (!pid || pid <= 0) return;
+  try {
+    process.kill(pid, "SIGKILL");
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException)?.code;
+    if (code !== "ESRCH") {
+      throw err;
+    }
+    return;
+  }
+  await new Promise((resolve) => setTimeout(resolve, 50));
+}
+
+async function killDirectChildrenForTests(): Promise<void> {
+  let raw = "";
+  try {
+    raw = execFileSync(
+      "ps",
+      ["-o", "pid=", "--ppid", String(process.pid)],
+      { encoding: "utf8" },
+    );
+  } catch {
+    return;
+  }
+  for (const line of raw.split(/\r?\n/)) {
+    const pid = Number(line.trim());
+    if (!Number.isInteger(pid) || pid <= 0) continue;
+    await killIfRunning(pid);
+  }
 }
 
 async function httpGet(
@@ -79,7 +112,13 @@ describe("managed app metrics", () => {
     const { project_id, secretToken } = await import("@cocalc/project/data");
     const { startProxyServer } =
       await import("@cocalc/project/servers/proxy/proxy");
-    const { deleteApp, ensureRunning, upsertAppSpec } =
+    const {
+      appMetrics,
+      deleteApp,
+      ensureRunning,
+      resetAppMetricsForTests,
+      upsertAppSpec,
+    } =
       await import("./control");
 
     expect(secretToken).toBeTruthy();
@@ -100,9 +139,11 @@ describe("managed app metrics", () => {
     const proxyPort =
       address && typeof address === "object" ? address.port : undefined;
     expect(proxyPort).toBeGreaterThan(0);
+    let appPid: number | undefined;
 
     try {
-      await ensureRunning(id, { timeout: 10_000, interval: 100 });
+      const running = await ensureRunning(id, { timeout: 10_000, interval: 100 });
+      appPid = running.pid;
 
       const privateRes = await httpGet(
         `http://127.0.0.1:${proxyPort}/${project_id}/apps/${id}/`,
@@ -123,8 +164,7 @@ describe("managed app metrics", () => {
       expect(publicRes.statusCode).toBe(200);
 
       await new Promise((resolve) => setTimeout(resolve, 2200));
-      jest.resetModules();
-      const { appMetrics } = await import("./control");
+      resetAppMetricsForTests();
       const summary = await appMetrics(id, { minutes: 60 });
       expect(summary.totals.requests).toBe(2);
       expect(summary.totals.private_requests).toBe(1);
@@ -135,6 +175,8 @@ describe("managed app metrics", () => {
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
       await deleteApp(id);
+      await killIfRunning(appPid);
+      await killDirectChildrenForTests();
     }
   });
 
@@ -174,12 +216,14 @@ describe("managed app metrics", () => {
     const proxyPort =
       address && typeof address === "object" ? address.port : undefined;
     expect(proxyPort).toBeGreaterThan(0);
+    let appPid: number | undefined;
 
     try {
       const status = await ensureRunning(id, {
         timeout: 10_000,
         interval: 100,
       });
+      appPid = status.pid;
       expect(status.port).toBeGreaterThan(0);
       await expect(managedServiceAppForPort(status.port!)).resolves.toEqual({
         app_id: id,
@@ -204,6 +248,8 @@ describe("managed app metrics", () => {
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
       await deleteApp(id);
+      await killIfRunning(appPid);
+      await killDirectChildrenForTests();
     }
   });
 
@@ -238,12 +284,14 @@ describe("managed app metrics", () => {
     const proxyPort =
       address && typeof address === "object" ? address.port : undefined;
     expect(proxyPort).toBeGreaterThan(0);
+    let appPid: number | undefined;
 
     try {
       const status = await ensureRunning(id, {
         timeout: 10_000,
         interval: 100,
       });
+      appPid = status.pid;
       expect(status.port).toBeGreaterThan(0);
 
       const viaProxy = await httpGet(
@@ -264,6 +312,8 @@ describe("managed app metrics", () => {
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
       await deleteApp(id);
+      await killIfRunning(appPid);
+      await killDirectChildrenForTests();
     }
   });
 });

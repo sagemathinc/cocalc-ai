@@ -42,6 +42,7 @@ import {
   getAppMetrics as getAppMetricsState,
   listAppMetrics as listAppMetricsState,
   recordAppWake,
+  resetAppMetricsForTests,
 } from "./metrics";
 import { parseLsofListenOutput, parseSsOutput } from "./listen-parsers";
 import { listAppTemplates as listAppTemplatesFromCatalog } from "./template-catalog";
@@ -153,6 +154,8 @@ export async function appMetrics(id: string, opts?: { minutes?: number }) {
 export async function listMetrics(opts?: { minutes?: number }) {
   return listAppMetricsState(opts);
 }
+
+export { resetAppMetricsForTests };
 
 export type AppProxyTarget =
   | {
@@ -658,7 +661,10 @@ function clearChild(id: string): void {
   const existing = children[id];
   if (!existing) return;
   existing.child.stdout?.removeAllListeners();
+  existing.child.stdout?.destroy?.();
   existing.child.stderr?.removeAllListeners();
+  existing.child.stderr?.destroy?.();
+  existing.child.stdin?.destroy?.();
   existing.child.removeAllListeners();
   delete children[id];
   void clearRunningServicePort(id);
@@ -890,6 +896,7 @@ export async function startApp(
       APP_PUBLIC_EXPOSED: publicMode ? "1" : "0",
     },
   });
+  child.unref?.();
 
   children[spec.id] = {
     id: spec.id,
