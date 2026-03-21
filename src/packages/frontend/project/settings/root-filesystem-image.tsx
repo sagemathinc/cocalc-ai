@@ -4,7 +4,7 @@
  */
 
 import { dirname, join } from "path";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Button,
   Checkbox,
@@ -21,6 +21,7 @@ import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon, Paragraph } from "@cocalc/frontend/components";
 import ShowError from "@cocalc/frontend/components/error";
 import { useProjectContext } from "@cocalc/frontend/project/context";
+import RootfsPublishOps from "@cocalc/frontend/project/settings/rootfs-publish-ops";
 import {
   managedRootfsCatalogUrl,
   publishProjectRootfsImage,
@@ -50,7 +51,7 @@ type PublishDraft = {
 };
 
 export default function RootFilesystemImage() {
-  const { project } = useProjectContext();
+  const { actions, project, project_id } = useProjectContext();
   const [open, setOpen] = useState<boolean>(false);
   const [publishOpen, setPublishOpen] = useState<boolean>(false);
   const [saving, setSaving] = useState<boolean>(false);
@@ -95,6 +96,8 @@ export default function RootFilesystemImage() {
     "default_rootfs_image_gpu",
   );
   const isAdmin = !!useTypedRedux("account", "is_admin");
+  const rootfsPublishOps = useTypedRedux({ project_id }, "rootfs_publish_ops");
+  const seenCompletedPublishOpsRef = useRef<Set<string>>(new Set());
 
   const effectiveDefaultRootfs = useMemo(() => {
     const siteDefault = siteDefaultRootfs?.trim() || DEFAULT_PROJECT_IMAGE;
@@ -162,6 +165,23 @@ export default function RootFilesystemImage() {
       }
     })();
   }, [project?.get("project_id")]);
+
+  useEffect(() => {
+    const ops = rootfsPublishOps?.toJS() ?? {};
+    for (const op of Object.values(ops) as Array<{
+      op_id: string;
+      summary?: any;
+    }>) {
+      if (op.summary?.status !== "succeeded") {
+        continue;
+      }
+      if (seenCompletedPublishOpsRef.current.has(op.op_id)) {
+        continue;
+      }
+      seenCompletedPublishOpsRef.current.add(op.op_id);
+      setCatalogRefresh(Date.now());
+    }
+  }, [rootfsPublishOps]);
 
   if (project == null) {
     return null;
@@ -259,35 +279,36 @@ export default function RootFilesystemImage() {
         .split(",")
         .map((tag) => tag.trim())
         .filter(Boolean);
-      const entry =
-        publishMode === "copy" && publishCopyMode === "project"
-          ? await publishProjectRootfsImage({
-              project_id: project.get("project_id"),
-              label: publishDraft.label,
-              description: publishDraft.description,
-              visibility: publishDraft.visibility,
-              tags,
-              official: isAdmin ? publishDraft.official : undefined,
-              prepull: isAdmin ? publishDraft.prepull : undefined,
-              hidden: isAdmin ? publishDraft.hidden : undefined,
-            })
-          : await saveRootfsCatalogEntry({
-              image_id:
-                publishMode === "manage" && publishSourceEntry?.can_manage
-                  ? publishSourceEntry.id
-                  : undefined,
-              image: publishDraft.image,
-              label: publishDraft.label,
-              description: publishDraft.description,
-              visibility: publishDraft.visibility,
-              tags,
-              official: isAdmin ? publishDraft.official : undefined,
-              prepull: isAdmin ? publishDraft.prepull : undefined,
-              hidden: isAdmin ? publishDraft.hidden : undefined,
-            });
-      setCatalogRefresh(Date.now());
-      setPublishOpen(false);
-      if (!(publishMode === "copy" && publishCopyMode === "project")) {
+      if (publishMode === "copy" && publishCopyMode === "project") {
+        const op = await publishProjectRootfsImage({
+          project_id: project.get("project_id"),
+          label: publishDraft.label,
+          description: publishDraft.description,
+          visibility: publishDraft.visibility,
+          tags,
+          official: isAdmin ? publishDraft.official : undefined,
+          prepull: isAdmin ? publishDraft.prepull : undefined,
+          hidden: isAdmin ? publishDraft.hidden : undefined,
+        });
+        setPublishOpen(false);
+        actions?.trackRootfsPublishOp?.(op);
+      } else {
+        const entry = await saveRootfsCatalogEntry({
+          image_id:
+            publishMode === "manage" && publishSourceEntry?.can_manage
+              ? publishSourceEntry.id
+              : undefined,
+          image: publishDraft.image,
+          label: publishDraft.label,
+          description: publishDraft.description,
+          visibility: publishDraft.visibility,
+          tags,
+          official: isAdmin ? publishDraft.official : undefined,
+          prepull: isAdmin ? publishDraft.prepull : undefined,
+          hidden: isAdmin ? publishDraft.hidden : undefined,
+        });
+        setPublishOpen(false);
+        setCatalogRefresh(Date.now());
         if (entry.image === value) {
           setImageId(entry.id);
         }
@@ -304,6 +325,7 @@ export default function RootFilesystemImage() {
 
   return (
     <div style={{ marginTop: "-4px", marginLeft: "-10px" }}>
+      <RootfsPublishOps project_id={project_id} />
       <Button type="link" disabled={open} onClick={openPicker}>
         <code>{selectedRootfsEntry?.label || value}</code>
       </Button>

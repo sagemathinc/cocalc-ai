@@ -268,6 +268,7 @@ export interface Fileserver {
   publishRootfsImage: (opts: {
     project_id: string;
     snapshot?: string;
+    lro?: LroRef;
   }) => Promise<PublishProjectRootfsArtifact>;
 }
 

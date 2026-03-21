@@ -11,6 +11,7 @@ import type {
 } from "@cocalc/util/db-schema/api-keys";
 import { type UserSearchResult } from "@cocalc/util/db-schema/accounts";
 import type {
+  ProjectRootfsPublishLroRef,
   PublishProjectRootfsBody,
   RootfsCatalogSaveBody,
   RootfsImageManifest,
@@ -463,7 +464,7 @@ export interface System {
 
   publishProjectRootfsImage: (
     opts: PublishProjectRootfsBody & { account_id?: string },
-  ) => Promise<RootfsImageEntry>;
+  ) => Promise<ProjectRootfsPublishLroRef>;
 
   getPublicSiteUrl: (opts?: {
     account_id?: string;

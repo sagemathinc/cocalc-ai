@@ -96,6 +96,14 @@ export type PublishProjectRootfsArtifact = {
   source_image: string;
 };
 
+export type ProjectRootfsPublishLroRef = {
+  op_id: string;
+  scope_type: "project";
+  scope_id: string;
+  service: string;
+  stream_name: string;
+};
+
 export const MANAGED_ROOTFS_IMAGE_PREFIX = "cocalc.local/rootfs/";
 
 export function managedRootfsImageName(contentKey: string): string {

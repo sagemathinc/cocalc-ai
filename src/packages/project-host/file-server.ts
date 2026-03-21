@@ -1367,21 +1367,67 @@ function normalizePublishedArch(value: unknown): RootfsImageArch {
   return "any";
 }
 
+function publishRootfsProgress({
+  lro,
+  phase,
+  progress,
+  message,
+  detail,
+}: {
+  lro?: LroRef;
+  phase: string;
+  progress: number;
+  message: string;
+  detail?: any;
+}) {
+  if (!lro) return;
+  void publishLroEvent({
+    scope_type: lro.scope_type,
+    scope_id: lro.scope_id,
+    op_id: lro.op_id,
+    event: {
+      type: "progress",
+      ts: Date.now(),
+      phase,
+      message,
+      progress,
+      detail,
+    },
+  }).catch(() => {});
+}
+
 async function publishRootfsImage({
   project_id,
   snapshot,
+  lro,
 }: {
   project_id: string;
   snapshot?: string;
+  lro?: LroRef;
 }): Promise<PublishProjectRootfsArtifact> {
   const snapshotName = snapshot?.trim() || defaultPublishSnapshotName();
   const createdSnapshot = !snapshot?.trim();
   if (createdSnapshot) {
+    publishRootfsProgress({
+      lro,
+      phase: "snapshot",
+      progress: 15,
+      message: "creating publish snapshot",
+      detail: { snapshot: snapshotName },
+    });
     await createSnapshot({
       project_id,
       name: snapshotName,
     });
   }
+
+  publishRootfsProgress({
+    lro,
+    phase: "snapshot",
+    progress: 25,
+    message: createdSnapshot ? "snapshot ready" : "using existing snapshot",
+    detail: { snapshot: snapshotName, created_snapshot: createdSnapshot },
+  });
 
   const staged = await createSnapshotRestoreClone({
     project_id,
@@ -1400,6 +1446,13 @@ async function publishRootfsImage({
       );
     }
 
+    publishRootfsProgress({
+      lro,
+      phase: "publish",
+      progress: 40,
+      message: "materializing merged RootFS",
+      detail: { source_image: sourceImage },
+    });
     const lowerdir = await extractBaseImage(sourceImage);
     const overlayRoot = join(rootfsPath, imagePathComponent(sourceImage));
     const upperdir = join(overlayRoot, "upperdir");
@@ -1422,6 +1475,12 @@ async function publishRootfsImage({
     await unmountOverlayForPublish(mergedPath);
     mergedPath = undefined;
 
+    publishRootfsProgress({
+      lro,
+      phase: "publish",
+      progress: 75,
+      message: "hashing published RootFS",
+    });
     const digest = await tarSha256(stagedRootfsPath);
     const image = managedRootfsImageName(digest);
     const finalPath = imageCachePath(image);
@@ -1443,6 +1502,13 @@ async function publishRootfsImage({
       },
     };
 
+    publishRootfsProgress({
+      lro,
+      phase: "publish",
+      progress: 90,
+      message: "registering host cache entry",
+      detail: { image, content_key: digest },
+    });
     if (!(await exists(finalPath))) {
       await mkdir(dirname(finalPath), { recursive: true });
       await executeCode({
