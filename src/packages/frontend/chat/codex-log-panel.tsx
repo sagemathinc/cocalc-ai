@@ -24,6 +24,8 @@ interface Props {
   logEnabled?: boolean;
   activityContext?: ActivityLogContext;
   onJumpToBottom?: () => void;
+  jumpText?: string;
+  jumpToken?: number;
   onEventsChange?: (eventCount: number) => void;
   onDeleteEvents?: () => void;
   onDeleteAllEvents?: () => void;
@@ -48,6 +50,8 @@ export function CodexLogPanel({
   logEnabled,
   activityContext,
   onJumpToBottom,
+  jumpText,
+  jumpToken,
   onEventsChange,
   onDeleteEvents,
   onDeleteAllEvents,
@@ -117,6 +121,8 @@ export function CodexLogPanel({
       durationLabel={durationLabel}
       projectId={projectId}
       onJumpToBottom={onJumpToBottom}
+      jumpText={jumpText}
+      jumpToken={jumpToken}
       onDeleteEvents={handleDeleteEvents}
       onDeleteAllEvents={handleDeleteAllEvents}
       inlineCodeLinks={inlineCodeLinks}
