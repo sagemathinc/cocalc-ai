@@ -84,10 +84,17 @@ describe("cursor presence emits cursor_activity", () => {
 
 async function waitForReady(doc: SyncString): Promise<void> {
   if (doc.get_state() === "ready") return;
-  await Promise.race([
-    once(doc as any, "ready"),
-    new Promise((_, reject) =>
-      setTimeout(() => reject(new Error("ready timeout")), 2000),
-    ),
-  ]);
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    await Promise.race([
+      once(doc as any, "ready"),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error("ready timeout")), 2000);
+      }),
+    ]);
+  } finally {
+    if (timer != null) {
+      clearTimeout(timer);
+    }
+  }
 }
