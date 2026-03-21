@@ -4,6 +4,7 @@
  */
 
 import { useEffect, useMemo, useState } from "react";
+import { webapp_client } from "@cocalc/frontend/webapp-client";
 import {
   DEFAULT_ROOTFS_CATALOG_URL,
   type RootfsCatalogSaveBody,
@@ -112,16 +113,9 @@ export function useRootfsImages(manifestUrls: string[]): ManifestLoadState {
 export async function saveRootfsCatalogEntry(
   body: RootfsCatalogSaveBody,
 ): Promise<RootfsImageEntry> {
-  const res = await fetch("/rootfs/catalog/save", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) {
-    throw Error(await res.text());
-  }
-  const json = (await res.json()) as { ok: boolean; entry: RootfsImageEntry };
-  return json.entry;
+  return await webapp_client.conat_client.hub.system.saveRootfsCatalogEntry(
+    body,
+  );
 }
 
 export function managedRootfsCatalogUrl(refresh?: number | string): string {

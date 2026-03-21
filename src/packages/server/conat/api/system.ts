@@ -32,6 +32,8 @@ import {
   testR2Credentials as testR2Credentials0,
   type R2CredentialsTestResult,
 } from "@cocalc/server/project-backup/r2";
+import { saveRootfsImage } from "@cocalc/server/rootfs/catalog";
+import type { RootfsCatalogSaveBody } from "@cocalc/util/rootfs-images";
 import {
   type BrowserSessionLiveInfo,
   listBrowserSessionsForAccount,
@@ -306,6 +308,16 @@ export async function webappError(opts: object): Promise<void> {
 
 export async function getFrontendSourceFingerprint() {
   return await getFrontendSourceFingerprint0();
+}
+
+export async function saveRootfsCatalogEntry(
+  opts: RootfsCatalogSaveBody & { account_id?: string },
+) {
+  const { account_id, ...body } = opts;
+  if (!account_id) {
+    throw Error("user must be signed in");
+  }
+  return await saveRootfsImage({ account_id, body });
 }
 
 export {

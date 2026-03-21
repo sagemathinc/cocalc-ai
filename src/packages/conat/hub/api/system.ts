@@ -1,10 +1,19 @@
-import { noAuth, authFirst, requireSignedIn } from "./util";
+import {
+  noAuth,
+  authFirst,
+  authFirstRequireAccount,
+  requireSignedIn,
+} from "./util";
 import type { Customize } from "@cocalc/util/db-schema/server-settings";
 import type {
   ApiKey,
   Action as ApiKeyAction,
 } from "@cocalc/util/db-schema/api-keys";
 import { type UserSearchResult } from "@cocalc/util/db-schema/accounts";
+import type {
+  RootfsCatalogSaveBody,
+  RootfsImageEntry,
+} from "@cocalc/util/rootfs-images";
 
 export const system = {
   getCustomize: noAuth,
@@ -36,6 +45,7 @@ export const system = {
   getOpenAiApiKeyStatus: authFirst,
   getCodexPaymentSource: authFirst,
   getFrontendSourceFingerprint: authFirst,
+  saveRootfsCatalogEntry: authFirstRequireAccount,
   getPublicSiteUrl: authFirst,
   testR2Credentials: authFirst,
   upsertBrowserSession: authFirst,
@@ -438,6 +448,10 @@ export interface System {
   getFrontendSourceFingerprint: (opts?: {
     account_id?: string;
   }) => Promise<FrontendSourceFingerprintInfo>;
+
+  saveRootfsCatalogEntry: (
+    opts: RootfsCatalogSaveBody & { account_id?: string },
+  ) => Promise<RootfsImageEntry>;
 
   getPublicSiteUrl: (opts?: {
     account_id?: string;
