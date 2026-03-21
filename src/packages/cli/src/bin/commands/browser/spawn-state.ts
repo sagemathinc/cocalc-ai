@@ -87,6 +87,10 @@ export function sessionMatchesSpawnMarker(
 ): boolean {
   const clean = `${marker ?? ""}`.trim();
   if (!clean) return false;
+  const explicit = `${session.spawn_marker ?? ""}`.trim();
+  if (explicit) {
+    return explicit === clean;
+  }
   return spawnMarkerFromUrl(`${session.url ?? ""}`) === clean;
 }
 

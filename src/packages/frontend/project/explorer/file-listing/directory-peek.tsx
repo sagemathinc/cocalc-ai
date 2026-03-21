@@ -18,6 +18,7 @@ import {
 } from "@cocalc/frontend/project/explorer/dnd/file-dnd-provider";
 import { type DirectoryListingEntry } from "@cocalc/frontend/project/explorer/types";
 import { buildFileActionItems } from "@cocalc/frontend/project/file-context-menu";
+import { triggerFileAction as triggerProjectFileAction } from "@cocalc/frontend/project/file-action-trigger";
 import useFs from "@cocalc/frontend/project/listing/use-fs";
 import useListing from "@cocalc/frontend/project/listing/use-listing";
 import type { FileAction } from "@cocalc/frontend/project_actions";
@@ -81,9 +82,12 @@ export default function DirectoryPeek({
   }, [listing, showHidden, dirPath]);
 
   function triggerFileAction(entry: PeekEntry, action: FileAction) {
-    actions?.set_all_files_unchecked();
-    actions?.set_file_checked(entry.fullPath, true);
-    actions?.set_file_action(action);
+    triggerProjectFileAction({
+      actions,
+      action,
+      path: entry.fullPath,
+      multiple: false,
+    });
   }
 
   function getContextMenuItems(entry: PeekEntry): MenuProps["items"] {

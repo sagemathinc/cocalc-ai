@@ -122,6 +122,25 @@ async function expectMarkdownCaretVisible(page) {
     .toEqual({ visible: true });
 }
 
+async function getMarkdownComposerOverflow(page) {
+  return await page.evaluate(() => {
+    const wrapper = document.querySelector<HTMLElement>(".CodeMirror");
+    const host = wrapper?.parentElement as HTMLElement | null;
+    const body = host?.parentElement as HTMLElement | null;
+    const shell = body?.parentElement as HTMLElement | null;
+    if (wrapper == null || host == null || body == null || shell == null) {
+      return null;
+    }
+    const bodyRect = body.getBoundingClientRect();
+    const shellRect = shell.getBoundingClientRect();
+    return {
+      overflow: Math.round(bodyRect.bottom - shellRect.bottom),
+      bodyHeight: Math.round(bodyRect.height),
+      shellHeight: Math.round(shellRect.height),
+    };
+  });
+}
+
 test("new-thread shift+enter send clears and stays cleared", async ({
   page,
 }) => {
@@ -324,6 +343,26 @@ test("composer mode: markdown keeps the caret visible while moving upward", asyn
       );
     })
     .toEqual(Array.from({ length: 10 }, () => true));
+});
+
+test("composer mode: markdown body does not overflow while typing multiline text", async ({
+  page,
+}) => {
+  await page.goto("/?mode=composer&editorMode=markdown");
+  await waitForHarness(page);
+
+  await typeInCodeMirror(
+    page,
+    "line 1\nline 2\nline 3\nline 4\nline 5\nline 6\nline 7\nline 8",
+  );
+  await expectComposerInput(
+    page,
+    "line 1\nline 2\nline 3\nline 4\nline 5\nline 6\nline 7\nline 8",
+  );
+
+  await expect
+    .poll(async () => (await getMarkdownComposerOverflow(page))?.overflow)
+    .toBe(0);
 });
 
 test("composer editor mode: send button appears while typing", async ({

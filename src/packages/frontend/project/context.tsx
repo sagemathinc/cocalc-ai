@@ -7,6 +7,7 @@ import {
   Context,
   createContext,
   useContext,
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -50,7 +51,6 @@ import { path_to_tab, tab_to_path } from "@cocalc/util/misc";
 export interface ProjectContextState {
   actions?: ProjectActions;
   active_project_tab?: string;
-  compute_image: string | undefined;
   contentSize: { width: number; height: number };
   enabledLLMs: LLMServicesAvailable;
   flipTabs: [number, React.Dispatch<React.SetStateAction<number>>];
@@ -67,6 +67,10 @@ export interface ProjectContextState {
   onCoCalcDocker: boolean;
   project_id: string;
   project?: Project;
+  notifyUserFilesystemChange: () => void;
+  registerUserFilesystemChangeHandler: (
+    handler: (() => void) | null | undefined,
+  ) => () => void;
   setContentSize: (size: { width: number; height: number }) => void;
   status: ProjectStatus;
   workspaces: ProjectWorkspaceState;
@@ -75,7 +79,6 @@ export interface ProjectContextState {
 export const emptyProjectContext = {
   actions: undefined,
   active_project_tab: undefined,
-  compute_image: undefined,
   contentSize: { width: 0, height: 0 },
   enabledLLMs: {
     openai: false,
@@ -100,6 +103,8 @@ export const emptyProjectContext = {
   onCoCalcDocker: false,
   project: undefined,
   project_id: "",
+  notifyUserFilesystemChange: () => {},
+  registerUserFilesystemChangeHandler: () => () => {},
   setContentSize: () => {},
   status: INIT_PROJECT_STATE,
   workspaces: {
@@ -138,7 +143,7 @@ export function useProjectContextProvider({
   mainWidthPx: number;
 }): ProjectContextState {
   const actions = useActions({ project_id });
-  const { project, group, compute_image } = useProject(project_id);
+  const { project, group } = useProject(project_id);
   const account_id = useTypedRedux("account", "account_id");
   const status: ProjectStatus = useProjectState(project_id);
   const hasInternet = useProjectHasInternetAccess(project_id) || lite;
@@ -201,6 +206,7 @@ export function useProjectContextProvider({
   ]);
 
   const [contentSize, setContentSize] = useState({ width: 0, height: 0 });
+  const filesystemChangeHandlersRef = useRef<Set<() => void>>(new Set());
   const workspaces = useProjectWorkspaces(account_id, project_id);
   const previousWorkspaceSelectionRef = useRef<string>("all");
   const previousActivePathRef = useRef<string>("");
@@ -391,10 +397,26 @@ export function useProjectContextProvider({
       open_files_order?.toJS?.() ?? open_files_order ?? [];
   }, [active_project_tab, open_files_order]);
 
+  const registerUserFilesystemChangeHandler = useCallback(
+    (handler: (() => void) | null | undefined) => {
+      if (!handler) return () => {};
+      filesystemChangeHandlersRef.current.add(handler);
+      return () => {
+        filesystemChangeHandlersRef.current.delete(handler);
+      };
+    },
+    [],
+  );
+
+  const notifyUserFilesystemChange = useCallback(() => {
+    for (const handler of filesystemChangeHandlersRef.current) {
+      handler();
+    }
+  }, []);
+
   return {
     actions,
     active_project_tab,
-    compute_image,
     contentSize,
     enabledLLMs,
     flipTabs,
@@ -408,6 +430,8 @@ export function useProjectContextProvider({
     onCoCalcDocker,
     project_id,
     project,
+    notifyUserFilesystemChange,
+    registerUserFilesystemChangeHandler,
     setContentSize,
     status,
     workspaces,

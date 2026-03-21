@@ -53,6 +53,7 @@ type FileAction = undefined | keyof typeof file_actions;
 
 interface Props {
   checked_files: immutable.Set<string>;
+  display?: "inline" | "modal";
   file_action: FileAction;
   current_path: string;
   project_id: string;
@@ -62,6 +63,7 @@ interface Props {
 
 export function ActionBox({
   checked_files,
+  display = "inline",
   file_action,
   current_path,
   project_id,
@@ -85,6 +87,15 @@ export function ActionBox({
   const [show_different_project, set_show_different_project] =
     useState<boolean>(!!dnd_copy_dest && dnd_copy_dest !== project_id);
   const [overwrite, set_overwrite] = useState<boolean>(true);
+  const bodyStyle =
+    display === "modal"
+      ? undefined
+      : {
+          margin: "15px 30px",
+          overflowY: "auto" as const,
+          maxHeight: "50vh",
+          backgroundColor: "#fafafa",
+        };
 
   useEffect(() => {
     if (!dnd_copy_dest || dnd_copy_dest === project_id) {
@@ -156,6 +167,54 @@ export function ActionBox({
 
   function render_delete() {
     const { size } = checked_files;
+    if (display === "modal") {
+      return (
+        <div>
+          <div
+            style={{
+              marginBottom: "16px",
+              color: COLORS.GRAY_D,
+              lineHeight: 1.5,
+            }}
+          >
+            <div style={{ fontWeight: 500, marginBottom: "8px" }}>
+              This will immediately remove the selected items from disk.
+            </div>
+            Older backups may still be available in{" "}
+            <a
+              href=""
+              onClick={(e) => {
+                e.preventDefault();
+                actions.open_directory(SNAPSHOTS);
+              }}
+            >
+              {SNAPSHOTS}
+            </a>{" "}
+            and{" "}
+            <a
+              href=""
+              onClick={(e) => {
+                e.preventDefault();
+                actions.open_directory(BACKUPS);
+              }}
+            >
+              {BACKUPS}
+            </a>
+            .
+          </div>
+          {render_selected_files_list()}
+          <div style={{ textAlign: "right" }}>
+            <Space>
+              <AntdButton onClick={cancel_action}>Cancel</AntdButton>
+              <AntdButton danger onClick={delete_click}>
+                <Icon name="trash" /> Delete {size} {misc.plural(size, "Item")}
+              </AntdButton>
+            </Space>
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div>
         <Row>
@@ -516,6 +575,7 @@ export function ActionBox({
         return (
           <CreateArchive
             clear={clear}
+            display={display}
             onUserFilesystemChange={onUserFilesystemChange}
           />
         );
@@ -524,11 +584,12 @@ export function ActionBox({
       case "delete":
         return render_delete();
       case "download":
-        return <Download clear={clear} />;
+        return <Download clear={clear} display={display} />;
       case "rename":
         return (
           <RenameFile
             clear={clear}
+            display={display}
             onUserFilesystemChange={onUserFilesystemChange}
           />
         );
@@ -537,6 +598,7 @@ export function ActionBox({
           <RenameFile
             clear={clear}
             duplicate
+            display={display}
             onUserFilesystemChange={onUserFilesystemChange}
           />
         );
@@ -554,15 +616,12 @@ export function ActionBox({
   if (action_button == undefined) {
     return <div>Undefined action</div>;
   }
+  if (display === "modal") {
+    return <div>{render_action_box(action)}</div>;
+  }
+
   return (
-    <Well
-      style={{
-        margin: "15px 30px",
-        overflowY: "auto",
-        maxHeight: "50vh",
-        backgroundColor: "#fafafa",
-      }}
-    >
+    <Well style={bodyStyle}>
       <Row>
         <Col
           sm={12}

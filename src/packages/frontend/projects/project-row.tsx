@@ -14,7 +14,6 @@ import {
   useActions,
   useRedux,
   useState,
-  useTypedRedux,
 } from "@cocalc/frontend/app-framework";
 import { AddCollaborators } from "@cocalc/frontend/collaborators";
 import {
@@ -24,25 +23,13 @@ import {
   ProjectState,
   TimeAgo,
 } from "@cocalc/frontend/components";
-import {
-  compute_image2basename,
-  is_custom_image,
-} from "@cocalc/frontend/custom-software/util";
 import track from "@cocalc/frontend/user-tracking";
-import { DEFAULT_COMPUTE_IMAGE } from "@cocalc/util/db-schema";
-import { KUCALC_COCALC_COM } from "@cocalc/util/db-schema/site-defaults";
 import { COLORS } from "@cocalc/util/theme";
 import { Button, Tooltip } from "antd";
 import { ProjectAvatarImage } from "./project-avatar";
 import { ProjectUsers } from "./project-users";
 import { useBookmarkedProjects } from "./use-bookmarked-projects";
 import { blendBackgroundColor } from "./util";
-
-const image_name_style: React.CSSProperties = {
-  fontSize: "12px",
-  color: COLORS.GRAY,
-  marginTop: "5px",
-} as const;
 
 interface Props {
   project_id: string;
@@ -55,9 +42,6 @@ export const ProjectRow: React.FC<Props> = ({ project_id, index }: Props) => {
   const project = useRedux(["projects", "project_map", project_id]);
 
   const [add_collab, set_add_collab] = useState<boolean>(false);
-  const images = useTypedRedux("compute_images", "images");
-  const kucalc = useTypedRedux("customize", "kucalc");
-  const software = useTypedRedux("customize", "software");
 
   const actions = useActions("projects");
   const { isProjectBookmarked, setProjectBookmarked } = useBookmarkedProjects();
@@ -129,40 +113,6 @@ export const ProjectRow: React.FC<Props> = ({ project_id, index }: Props) => {
         {render_add_collab()}
       </div>
     );
-  }
-
-  // transforms the compute image ID to a human readable string
-  function render_image_name(): React.JSX.Element | undefined {
-    const ci = project.get("compute_image");
-    if (ci == null || images == null) return;
-    if (is_custom_image(ci)) {
-      const id = compute_image2basename(ci);
-      const img = images.get(id);
-      if (img == null) return;
-      const name = img.get("display");
-      return (
-        <div style={image_name_style}>
-          {name}{" "}
-          <span title="Custom image created by a third party">(custom)</span>
-        </div>
-      );
-    } else {
-      if (ci === DEFAULT_COMPUTE_IMAGE) return; // avoid clutter for the default.
-      // sanitizeSoftwareEnv ensures the title is set, but maybe there is no image named $ci
-      const name = software?.getIn(["environments", ci, "title"]) ?? ci;
-      const descr = software?.getIn(["environments", ci, "descr"]) ?? "";
-      return (
-        <div style={image_name_style}>
-          <span title={descr}>{name}</span>
-          {kucalc === KUCALC_COCALC_COM && (
-            <>
-              {" "}
-              {<span title="Official image created by CoCalc">(official)</span>}
-            </>
-          )}
-        </div>
-      );
-    }
   }
 
   function render_project_description() {
@@ -263,7 +213,6 @@ export const ProjectRow: React.FC<Props> = ({ project_id, index }: Props) => {
             </a>
           </div>
           <TimeAgo date={project.get("last_edited")} />
-          {render_image_name()}
         </Col>
         <Col
           onClick={handle_click}

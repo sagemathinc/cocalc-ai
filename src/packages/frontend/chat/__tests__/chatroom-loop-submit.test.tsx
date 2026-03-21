@@ -76,6 +76,7 @@ jest.mock("../thread-selection", () => ({
 const setInput = jest.fn();
 const clearInput = jest.fn();
 const clearComposerDraft = jest.fn();
+let lastThreadPanelProps: any = undefined;
 
 jest.mock("../use-chat-composer-draft", () => ({
   useChatComposerDraft: () => ({
@@ -139,7 +140,10 @@ jest.mock("../chatroom-thread-actions", () => ({
 }));
 
 jest.mock("../chatroom-thread-panel", () => ({
-  ChatRoomThreadPanel: () => null,
+  ChatRoomThreadPanel: (props: any) => {
+    lastThreadPanelProps = props;
+    return null;
+  },
   getDefaultNewThreadSetup: () => ({
     agentMode: "codex",
     title: "",
@@ -179,6 +183,7 @@ describe("ChatPanel loop submit behavior", () => {
     clearInput.mockClear();
     clearComposerDraft.mockClear();
     upsertAgentSessionRecord.mockClear();
+    lastThreadPanelProps = undefined;
     currentThreads = [selectedThread];
     currentArchivedThreads = [];
     currentAcpState = immutable.Map();
@@ -314,5 +319,86 @@ describe("ChatPanel loop submit behavior", () => {
         }),
       ),
     );
+  });
+
+  it("opens the latest activity log from the loop banner", async () => {
+    const latestAcpDate = "2026-03-20T02:00:00.000Z";
+    const olderAcpDate = "2026-03-20T01:00:00.000Z";
+    const actions = {
+      sendChat: jest.fn(() => Date.now()),
+      getThreadMetadata: jest.fn(() => ({
+        agent_kind: "acp",
+        acp_config: { model: "gpt-5.4", sessionMode: "workspace-write" },
+        loop_state: {
+          status: "running",
+          iteration: 2,
+          max_turns: 4,
+          updated_at_ms: Date.now(),
+        },
+      })),
+      getMessagesInThread: jest.fn(() => [
+        {
+          event: "chat",
+          sender_id: "assistant",
+          message_id: "msg-older",
+          thread_id: "t1",
+          date: olderAcpDate,
+          history: [],
+          acp_account_id: "acct",
+        },
+        {
+          event: "chat",
+          sender_id: "assistant",
+          message_id: "msg-non-acp",
+          thread_id: "t1",
+          date: "2026-03-20T01:30:00.000Z",
+          history: [],
+        },
+        {
+          event: "chat",
+          sender_id: "assistant",
+          message_id: "msg-latest",
+          thread_id: "t1",
+          date: latestAcpDate,
+          history: [],
+          acp_account_id: "acct",
+        },
+      ]),
+      deleteDraft: jest.fn(),
+      getThreadLoopConfig: jest.fn(),
+      getThreadLoopState: jest.fn(),
+      frameTreeActions: undefined,
+      frameId: undefined,
+      languageModelStopGenerating: jest.fn(),
+      getCodexConfig: jest.fn(() => ({
+        model: "gpt-5.4",
+        sessionMode: "workspace-write",
+      })),
+    } as any;
+
+    render(
+      <ChatPanel
+        actions={actions}
+        project_id="project-1"
+        path="chat/test.chat"
+        messages={new Map()}
+        threadIndex={undefined}
+        docVersion={0}
+      />,
+    );
+
+    expect(
+      screen.getByRole("button", { name: "View activity log" }),
+    ).not.toBeNull();
+    expect(lastThreadPanelProps?.activityJumpDate).toBeUndefined();
+
+    fireEvent.click(screen.getByRole("button", { name: "View activity log" }));
+
+    await waitFor(() =>
+      expect(lastThreadPanelProps?.activityJumpDate).toBe(
+        `${Date.parse(latestAcpDate)}`,
+      ),
+    );
+    expect(lastThreadPanelProps?.activityJumpToken).toBeGreaterThan(0);
   });
 });

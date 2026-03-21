@@ -65,7 +65,5 @@ export function useProject(project_id) {
     }
   }, [group, project_id, project_map]);
 
-  const compute_image = project_map?.get(project_id)?.get("compute_image");
-
-  return { project, group, compute_image };
+  return { project, group };
 }

@@ -1,4 +1,4 @@
-import { Button, Card, Input, Select, Space, Spin } from "antd";
+import { Button, Input, Select, Space, Spin } from "antd";
 import { useEffect, useRef, useState } from "react";
 import { useIntl } from "react-intl";
 import { default_filename } from "@cocalc/frontend/account";
@@ -21,9 +21,11 @@ const ARCHIVE_SUFFIXES = ["tar", ...OUCH_FORMATS].sort(
 
 export default function CreateArchive({
   clear,
+  display = "inline",
   onUserFilesystemChange,
 }: {
   clear: () => void;
+  display?: "inline" | "modal";
   onUserFilesystemChange?: () => void;
 }) {
   const [format, setFormat] = useState<string>("");
@@ -73,15 +75,14 @@ export default function CreateArchive({
     return null;
   }
 
-  return (
-    <Card
-      title=<>
-        Create a downloadable {format} archive from the following{" "}
-        {checked_files?.size} selected {plural(checked_files?.size, "item")}
-      </>
-    >
-      <CheckedFiles />
-      <Space style={{ marginTop: "15px" }} wrap>
+  const content = (
+    <>
+      <CheckedFiles
+        variant={display === "modal" ? "compact" : "block"}
+        maxVisible={3}
+      />
+      <div style={{ marginBottom: "8px", fontWeight: 500 }}>Archive name</div>
+      <Space style={{ width: "100%" }} wrap>
         <Input
           ref={inputRef}
           autoFocus
@@ -91,18 +92,6 @@ export default function CreateArchive({
           onPressEnter={doCompress}
           suffix={"." + format}
         />
-        <div style={{ marginLeft: "5px" }} />
-        <Button
-          onClick={() => {
-            actions?.set_file_action();
-          }}
-        >
-          {intl.formatMessage(labels.cancel)}
-        </Button>{" "}
-        <Button onClick={doCompress} type="primary" disabled={loading}>
-          Compress {checked_files?.size} {plural(checked_files?.size, "item")}{" "}
-          {loading && <Spin />}
-        </Button>
         <SelectFormat format={format} setFormat={setFormat} />
       </Space>
       <ShowError
@@ -110,7 +99,36 @@ export default function CreateArchive({
         error={error}
         style={{ marginTop: "15px" }}
       />
-    </Card>
+      <div style={{ marginTop: "18px", textAlign: "right" }}>
+        <Space wrap>
+          <Button
+            onClick={() => {
+              actions?.set_file_action();
+            }}
+          >
+            {intl.formatMessage(labels.cancel)}
+          </Button>
+          <Button onClick={doCompress} type="primary" disabled={loading}>
+            Compress {checked_files?.size} {plural(checked_files?.size, "item")}{" "}
+            {loading && <Spin />}
+          </Button>
+        </Space>
+      </div>
+    </>
+  );
+
+  if (display === "modal") {
+    return content;
+  }
+
+  return (
+    <div>
+      <div style={{ marginBottom: "10px", fontWeight: 500 }}>
+        Create a downloadable {format} archive from the following{" "}
+        {checked_files?.size} selected {plural(checked_files?.size, "item")}
+      </div>
+      {content}
+    </div>
   );
 }
 

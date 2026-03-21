@@ -9,6 +9,9 @@ import type { BrowserOpenFileInfo } from "@cocalc/conat/service/browser-session"
 import { isValidUUID } from "@cocalc/util/misc";
 import { asStringArray, toAbsolutePath } from "./common-utils";
 
+const SPAWN_MARKER_QUERY_PARAM = "_cocalc_browser_spawn";
+const SPAWN_MARKER_STORAGE_KEY = "cocalc-browser-spawn-marker";
+
 export function getActiveProjectIdFallback(
   openProjectIds: string[],
 ): string | undefined {
@@ -74,6 +77,7 @@ export function buildSessionSnapshot(
   browser_id: string;
   session_name?: string;
   url?: string;
+  spawn_marker?: string;
   active_project_id?: string;
   open_projects: BrowserOpenProjectState[];
 } {
@@ -89,11 +93,47 @@ export function buildSessionSnapshot(
       ? document.title?.trim() || undefined
       : undefined;
   const url = typeof location !== "undefined" ? location.href : undefined;
+  const spawn_marker = resolveBrowserSpawnMarker();
   return {
     browser_id: client.browser_id,
     ...(session_name ? { session_name } : {}),
     ...(url ? { url } : {}),
+    ...(spawn_marker ? { spawn_marker } : {}),
     ...(active_project_id ? { active_project_id } : {}),
     open_projects,
   };
+}
+
+function resolveBrowserSpawnMarker(): string | undefined {
+  if (typeof window === "undefined") return undefined;
+  const globalMarker =
+    `${(globalThis as any).__COCALC_BROWSER_SPAWN_MARKER ?? ""}`.trim() ||
+    undefined;
+  let marker: string | undefined;
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const current = `${params.get(SPAWN_MARKER_QUERY_PARAM) ?? ""}`.trim();
+    if (current) {
+      window.sessionStorage?.setItem(SPAWN_MARKER_STORAGE_KEY, current);
+      marker = current;
+    }
+  } catch {
+    // ignore URL/sessionStorage access failures and fall back below
+  }
+  if (marker) return marker;
+  if (globalMarker) {
+    try {
+      window.sessionStorage?.setItem(SPAWN_MARKER_STORAGE_KEY, globalMarker);
+    } catch {
+      // ignore sessionStorage write failures
+    }
+    return globalMarker;
+  }
+  try {
+    const stored =
+      `${window.sessionStorage?.getItem(SPAWN_MARKER_STORAGE_KEY) ?? ""}`.trim();
+    return stored || undefined;
+  } catch {
+    return undefined;
+  }
 }

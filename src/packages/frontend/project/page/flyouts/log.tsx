@@ -149,7 +149,6 @@ const PROJECT_EVENTS = [
   "undelete_project",
   "hide_project",
   "unhide_project",
-  "software_environment",
 ] as const;
 
 function isProjectEvent(event: string, entry: EventRecordMap): boolean {

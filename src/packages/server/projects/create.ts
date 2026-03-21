@@ -4,8 +4,6 @@
  */
 
 import getPool from "@cocalc/database/pool";
-import { getSoftwareEnvironments } from "@cocalc/server/software-envs";
-import { DEFAULT_COMPUTE_IMAGE } from "@cocalc/util/db-schema/defaults";
 import { isValidUUID } from "@cocalc/util/misc";
 import { v4 } from "uuid";
 import getLogger from "@cocalc/backend/logger";
@@ -67,7 +65,6 @@ export default async function createProject(opts: CreateProjectOptions) {
     account_id,
     title,
     description,
-    image,
     rootfs_image,
     start,
     src_project_id,
@@ -243,16 +240,13 @@ export default async function createProject(opts: CreateProjectOptions) {
   const users =
     account_id == null ? null : { [account_id]: { group: "owner" } };
 
-  const envs = await getSoftwareEnvironments("server");
-
   await pool.query(
-    "INSERT INTO projects (project_id, title, description, users, compute_image, created, last_edited, rootfs_image, ephemeral, host_id, region) VALUES($1, $2, $3, $4, $5, NOW(), NOW(), $6, $7::BIGINT, $8, $9)",
+    "INSERT INTO projects (project_id, title, description, users, created, last_edited, rootfs_image, ephemeral, host_id, region) VALUES($1, $2, $3, $4, NOW(), NOW(), $5, $6::BIGINT, $7, $8)",
     [
       project_id,
       title ?? "No Title",
       description ?? "",
       users != null ? JSON.stringify(users) : users,
-      image ?? envs?.default ?? DEFAULT_COMPUTE_IMAGE,
       rootfs_image,
       ephemeral ?? null,
       host_id ?? null,
@@ -276,7 +270,7 @@ export default async function createProject(opts: CreateProjectOptions) {
             project_id,
             title,
             users,
-            image: rootfs_image ?? image,
+            image: rootfs_image,
             start: false,
           });
           lastErr = undefined;

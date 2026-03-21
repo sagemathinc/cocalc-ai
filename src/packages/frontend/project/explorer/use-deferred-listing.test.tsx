@@ -2,6 +2,7 @@ import { act, render, screen } from "@testing-library/react";
 
 import {
   fileListingFingerprint,
+  refreshListingAfterUserAction,
   useDeferredListing,
 } from "./use-deferred-listing";
 
@@ -115,5 +116,14 @@ describe("useDeferredListing", () => {
 
     expect(screen.getByTestId("display").textContent).toBe("b");
     expect(screen.getByTestId("pending").textContent).toBe("no");
+  });
+
+  it("lets user-triggered refreshes open the latch before refreshing", () => {
+    const calls: string[] = [];
+    refreshListingAfterUserAction({
+      allowNextUpdate: () => calls.push("allow"),
+      refresh: () => calls.push("refresh"),
+    });
+    expect(calls).toEqual(["allow", "refresh"]);
   });
 });

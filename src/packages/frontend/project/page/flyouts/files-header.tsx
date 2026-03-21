@@ -44,6 +44,8 @@ import {
   DirectoryListingEntry,
 } from "@cocalc/frontend/project/explorer/types";
 import {
+  extractAgentPrompt,
+  isAgentMode,
   isTerminalMode,
   TypeFilterLabel,
 } from "@cocalc/frontend/project/explorer/file-listing/utils";
@@ -64,6 +66,7 @@ import { SNAPSHOTS } from "@cocalc/util/consts/snapshots";
 import { BACKUPS } from "@cocalc/util/consts/backups";
 import { lite } from "@cocalc/frontend/lite";
 import { dirname } from "path";
+import { submitNavigatorPromptToCurrentThread } from "@cocalc/frontend/project/new/navigator-intents";
 
 function searchToFilename(search: string): string {
   if (search.endsWith(" ")) {
@@ -311,6 +314,28 @@ export function FilesHeader({
     });
   }
 
+  async function runAgentPrompt(rawInput: string): Promise<void> {
+    const prompt = extractAgentPrompt(rawInput);
+    if (!prompt) return;
+
+    setTermError(undefined);
+    setTermStdout(undefined);
+    onTerminalCommand?.();
+
+    const sent = await submitNavigatorPromptToCurrentThread({
+      project_id,
+      prompt,
+      visiblePrompt: prompt,
+      path: effective_current_path,
+      tag: "intent:miniterm-agent",
+    });
+    if (sent) {
+      setSearchState("");
+      return;
+    }
+    setTermError("Unable to send prompt to the agent.");
+  }
+
   function filterKeyHandler(e: React.KeyboardEvent) {
     if (e.code === "ArrowUp") {
       if (!historyMode && historyInitialized && history.length > 0) {
@@ -360,6 +385,13 @@ export function FilesHeader({
           addHistoryEntry(file_search);
         }
         runTerminalCommand(command);
+        return;
+      }
+      if (isAgentMode(file_search)) {
+        if (extractAgentPrompt(file_search).length > 0) {
+          addHistoryEntry(file_search);
+        }
+        void runAgentPrompt(file_search);
         return;
       }
       if (scrollIdx != null) {
@@ -535,7 +567,13 @@ export function FilesHeader({
       );
     }
 
-    if (file_search === "" || !isEmpty || isTerminalMode(file_search)) return;
+    if (
+      file_search === "" ||
+      !isEmpty ||
+      isTerminalMode(file_search) ||
+      isAgentMode(file_search)
+    )
+      return;
 
     if (isReadonlyVirtualPath) {
       const style: CSS = {
@@ -731,7 +769,7 @@ export function FilesHeader({
           <div style={{ flex: "1", position: "relative" }}>
             <Input
               ref={refInput}
-              placeholder='Filter or "!" / "/" for Terminal...'
+              placeholder='Filter or "@", "!" / "/" for Agent / Terminal...'
               size="small"
               value={file_search}
               onKeyDown={filterKeyHandler}

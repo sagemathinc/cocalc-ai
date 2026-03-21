@@ -87,6 +87,7 @@ import { GitCommitDrawer } from "./git-commit-drawer";
 import { findInChatAndOpenFirstResult } from "./find-in-chat";
 import { setChatOverlayOpen } from "./drawer-overlay-state";
 import { formatTurnDuration } from "./turn-duration";
+import { CodexQuotaHelp } from "./codex-quota-help";
 
 const BLANK_COLUMN = (xs) => <Col key={"blankcolumn"} xs={xs}></Col>;
 
@@ -538,6 +539,10 @@ export default function Message({
   const [openActivityDrawerToken, setOpenActivityDrawerToken] = useState<
     number | undefined
   >(undefined);
+  const [activityJumpText, setActivityJumpText] = useState<string | undefined>(
+    undefined,
+  );
+  const [activityJumpToken, setActivityJumpToken] = useState(0);
   const [isActivityDrawerOpen, setIsActivityDrawerOpen] = useState(false);
   const [openCommitHash, setOpenCommitHash] = useState<string | undefined>(
     undefined,
@@ -1430,6 +1435,19 @@ export default function Message({
       e.stopPropagation();
       setOpenCommitHash(hash);
     };
+    const openActivityFromParagraph = (e: any) => {
+      if (!showCodexActivity || !effectiveGenerating) return;
+      const target = e.target as HTMLElement | null;
+      if (target?.closest?.("a[href]")) return;
+      const block = target?.closest?.(
+        "p, li, pre, blockquote, h1, h2, h3, h4, h5, h6",
+      ) as HTMLElement | null;
+      const text = block?.innerText?.replace(/\s+/g, " ").trim() ?? "";
+      if (text.length < 6) return;
+      setActivityJumpText(text);
+      setActivityJumpToken((n) => n + 1);
+      setOpenActivityDrawerToken((n) => (n ?? 0) + 1);
+    };
 
     return (
       <>
@@ -1463,6 +1481,8 @@ export default function Message({
             Array.isArray(inlineCodeLinks) ? inlineCodeLinks : undefined
           }
           openDrawerToken={openActivityDrawerToken}
+          jumpText={activityJumpText}
+          jumpToken={activityJumpToken}
           onOpenGitBrowser={
             isCodexThread && !is_viewers_message
               ? openGitBrowserFromMessage
@@ -1471,7 +1491,17 @@ export default function Message({
           onDrawerOpenChange={setIsActivityDrawerOpen}
         />
         {!suppressPlaceholderBody && value.trim().length > 0 ? (
-          <div onClickCapture={openCommitFromMessage}>
+          <div
+            onClickCapture={(e) => {
+              openCommitFromMessage(e);
+              openActivityFromParagraph(e);
+            }}
+            title={
+              showCodexActivity && effectiveGenerating
+                ? "Click a paragraph to open matching Codex activity"
+                : undefined
+            }
+          >
             <StaticMarkdown
               style={MARKDOWN_STYLE}
               value={value}
@@ -1483,6 +1513,7 @@ export default function Message({
               }
               inlineCodeProjectRoot={activityBasePath}
             />
+            <CodexQuotaHelp message={value} projectId={project_id} />
           </div>
         ) : null}
       </>

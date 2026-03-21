@@ -28,7 +28,6 @@ export default function EditOptions({
   url,
   relativePath,
   project_id,
-  image,
   onClose,
   description,
 }: EditOptionsProps) {
@@ -78,7 +77,6 @@ export default function EditOptions({
           relativePath={relativePath}
           everything={everything}
           project_id={project_id}
-          image={image}
           description={description}
           isCollaborator={isCollaborator}
           onCopied={() => setCopied(true)}
@@ -98,7 +96,6 @@ function SignedInOptions({
   url,
   relativePath,
   project_id,
-  image,
   description,
   everything,
   isCollaborator,
@@ -119,7 +116,6 @@ function SignedInOptions({
       url={url}
       relativePath={relativePath}
       everything={everything}
-      image={image}
       description={description ? description : path ? path : relativePath}
       onCopied={onCopied}
     />

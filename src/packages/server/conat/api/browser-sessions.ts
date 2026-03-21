@@ -21,6 +21,7 @@ type BrowserSessionRecord = {
   browser_id: string;
   session_name?: string;
   url?: string;
+  spawn_marker?: string;
   active_project_id?: string;
   open_projects: BrowserOpenProjectState[];
   created_at_ms: number;
@@ -102,6 +103,7 @@ export function upsertBrowserSessionRecord({
   browser_id,
   session_name,
   url,
+  spawn_marker,
   active_project_id,
   open_projects,
 }: {
@@ -109,6 +111,7 @@ export function upsertBrowserSessionRecord({
   browser_id: string;
   session_name?: unknown;
   url?: unknown;
+  spawn_marker?: unknown;
   active_project_id?: unknown;
   open_projects?: unknown;
 }): { browser_id: string; created_at: string; updated_at: string } {
@@ -124,6 +127,7 @@ export function upsertBrowserSessionRecord({
     browser_id: cleanedBrowserId,
     session_name: cleanText(session_name),
     url: cleanText(url),
+    spawn_marker: cleanText(spawn_marker),
     active_project_id: cleanText(active_project_id),
     open_projects: cleanOpenProjects(open_projects),
     created_at_ms: current?.created_at_ms ?? now,
@@ -178,6 +182,7 @@ export function listBrowserSessionsForAccount({
       browser_id: record.browser_id,
       ...(record.session_name ? { session_name: record.session_name } : {}),
       ...(record.url ? { url: record.url } : {}),
+      ...(record.spawn_marker ? { spawn_marker: record.spawn_marker } : {}),
       ...(record.active_project_id
         ? { active_project_id: record.active_project_id }
         : {}),

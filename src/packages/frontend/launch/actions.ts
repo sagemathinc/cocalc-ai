@@ -4,45 +4,29 @@
  */
 
 /*
-Launch actions are certain "intentions" for specific actions,
-which are triggered upon launching the webapp.
+Launch actions are URL-driven intents that survive redirects such as SSO.
 
-The automate a sequence of steps, possibly with some logic.
-
-Motivating example number 1: a URL pointing to /app has a query parameter
-that encodes a custom software image. The launch action creates a new
-project with that software environment, or – in case there is already
-a project with that environment, because the user comes back again
-via the same link – presents that project to open up.
-
-A similar example is crating a new project with the files from a
-specific "share" on the share server.   This is for implementing
-the "Open in CoCalc" link on the share server, with minimal friction.
+Legacy image-launch URLs have been removed. Unknown launch types
+are ignored after being persisted once and stripped from the URL.
 */
 
 import { Actions, Store, redux } from "@cocalc/frontend/app-framework";
 import * as LS from "@cocalc/frontend/misc/local-storage-typed";
 import { QueryParams } from "@cocalc/frontend/misc/query-params";
-import { CSILauncher } from "./custom-image";
 
 export const NAME = "launch-actions";
 const LS_KEY = NAME;
 
-export type LaunchTypes = "csi" | "share" | undefined;
+export type LaunchTypes = "share" | undefined;
 
-export function is_csi_launchvalue(launch: string) {
-  return (
-    typeof launch === "string" &&
-    launch.split("/")[0] === ("csi" as LaunchTypes)
-  );
+export function is_csi_launchvalue(_launch: string) {
+  return false;
 }
 
 export function launch_action_description(
   type: NonNullable<LaunchTypes>,
 ): string | undefined {
   switch (type) {
-    case "csi":
-      return "Run Custom Software Image";
     case "share":
       return "Open Shared File";
     default:
@@ -111,10 +95,6 @@ export async function launch() {
   actions.setState(data);
   try {
     switch (type) {
-      case "csi":
-        const image_id = launch.split("/")[1];
-        new CSILauncher(image_id).launch();
-        return;
       case "share":
         throw Error("share launcher is deprecated");
       default:

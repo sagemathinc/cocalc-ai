@@ -53,7 +53,6 @@ export interface PublicPathProps {
   relativePath?: string;
   description?: string;
   counter?: number;
-  compute_image?: string;
   license?: string;
   contents?: PathContentsType;
   error?: string;
@@ -85,7 +84,6 @@ export default function PublicPath({
   relativePath = "",
   description,
   counter,
-  compute_image,
   license,
   contents,
   error,
@@ -384,7 +382,6 @@ export default function PublicPath({
             isDir={contents?.isdir}
             exclude={new Set(["hosted"])}
             project_id={project_id}
-            image={compute_image}
             description={description}
           />
           <Space
@@ -444,12 +441,6 @@ export default function PublicPath({
             </>
           )}
           {visibility()}
-          {compute_image && (
-            <>
-              {compute_image}
-              <br />
-            </>
-          )}
         </div>
         {ogUrl && (
           <SocialMediaShareLinks

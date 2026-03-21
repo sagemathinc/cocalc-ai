@@ -56,10 +56,6 @@ jest.mock("@cocalc/frontend/course", () => ({
   }),
 }));
 
-jest.mock("@cocalc/frontend/custom-software/info-bar", () => ({
-  CustomSoftwareInfo: () => null,
-}));
-
 jest.mock("@cocalc/frontend/project/explorer/file-actions-dropdown", () => ({
   FileActionsDropdown: () => null,
 }));

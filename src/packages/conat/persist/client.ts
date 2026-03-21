@@ -9,8 +9,7 @@ import { EventIterator } from "@cocalc/util/event-iterator";
 import type {
   StorageOptions,
   Configuration,
-  SetOperation,
-  DeleteOperation,
+  ChangefeedOperation,
   StoredMessage,
   PartialInventory,
   StreamCheckpoints,
@@ -81,7 +80,7 @@ type PersistClientInitReporter = (
 
 const logger = getLogger("persist:client");
 
-export type ChangefeedEvent = (SetOperation | DeleteOperation)[];
+export type ChangefeedEvent = ChangefeedOperation[];
 export type Changefeed = EventIterator<ChangefeedEvent>;
 
 export interface GetAllInfo<
@@ -357,6 +356,8 @@ class PersistStreamClient extends EventEmitter {
   private changefeedEmit = (updates: ChangefeedEvent) => {
     updates = updates.filter((update) => {
       if (update.op == "delete") {
+        return true;
+      } else if (update.op == "metadata" || update.op == "checkpoints") {
         return true;
       } else {
         if (update.seq > (this.lastSeq ?? 0)) {

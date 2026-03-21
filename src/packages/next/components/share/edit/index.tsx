@@ -34,7 +34,6 @@ export interface Props {
   url?: string;
   relativePath: string;
   project_id: string;
-  image?: string;
   description?: string;
 }
 
@@ -44,7 +43,6 @@ export default function Edit({
   url,
   relativePath,
   project_id,
-  image,
   description,
 }: Props) {
   const router = useRouter();
@@ -74,7 +72,6 @@ export default function Edit({
           url={url}
           relativePath={relativePath}
           project_id={project_id}
-          image={image}
           description={description}
           onClose={() => {
             setExpanded(false);

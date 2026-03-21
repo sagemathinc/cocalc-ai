@@ -28,13 +28,6 @@ jest.mock("@cocalc/server/projects/is-collaborator", () => ({
   default: (...args: any[]) => isCollaboratorMock(...args),
 }));
 
-jest.mock("@cocalc/server/software-envs", () => ({
-  __esModule: true,
-  getSoftwareEnvironments: jest.fn(async () => ({
-    default: "ubuntu2404",
-  })),
-}));
-
 jest.mock("@cocalc/server/conat/file-server-client", () => ({
   __esModule: true,
   getProjectFileServerClient: (...args: any[]) =>
@@ -84,7 +77,9 @@ describe("projects.createProject clone routing", () => {
         return { rows: [] };
       }
       if (
-        sql.includes("SELECT project_id FROM projects WHERE project_id=$1 LIMIT 1")
+        sql.includes(
+          "SELECT project_id FROM projects WHERE project_id=$1 LIMIT 1",
+        )
       ) {
         return { rows: [] };
       }
@@ -115,8 +110,8 @@ describe("projects.createProject clone routing", () => {
         };
       }
       if (sql.startsWith("INSERT INTO projects ")) {
-        expect(params[7]).toBe(HOST_ID);
-        expect(params[8]).toBe("wnam");
+        expect(params[6]).toBe(HOST_ID);
+        expect(params[7]).toBe("wnam");
         return { rowCount: 1 };
       }
       throw new Error(`unexpected query: ${sql}`);

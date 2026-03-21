@@ -363,23 +363,26 @@ async function ensureSnapshotRestoreRoot(): Promise<string> {
   return root;
 }
 
-async function exactSyncDirectory({
+async function createSnapshotRestoreTempPath(prefix: string): Promise<string> {
+  const root = await ensureSnapshotRestoreRoot();
+  return join(root, `${prefix}${randomUUID()}`);
+}
+
+async function replaceTreeByMove({
   src,
   dest,
 }: {
   src?: string;
   dest: string;
 }): Promise<void> {
-  await sudo({ command: "mkdir", args: ["-p", dirname(dest)] });
-  if (!src || !(await exists(src))) {
+  if (await exists(dest)) {
     await sudo({ command: "rm", args: ["-rf", dest] });
+  }
+  if (!src || !(await exists(src))) {
     return;
   }
-  await sudo({ command: "mkdir", args: ["-p", dest] });
-  await sudo({
-    command: "rsync",
-    args: ["-aHAX", "--numeric-ids", "--delete", `${src}/`, `${dest}/`],
-  });
+  await sudo({ command: "mkdir", args: ["-p", dirname(dest)] });
+  await sudo({ command: "mv", args: [src, dest] });
 }
 
 async function removeDirectoryTree(pathToRemove?: string): Promise<void> {
@@ -488,25 +491,28 @@ async function rollbackProjectHomeSwap({
   }
 }
 
-async function moveSnapshotIntoCurrentHome({
+async function createSafetySnapshotFromPath({
+  snapshotPath,
   project_id,
   snapshot,
-  fromHome,
 }: {
+  snapshotPath: string;
   project_id: string;
   snapshot: string;
-  fromHome: string;
 }): Promise<void> {
+  if (!(await exists(snapshotPath))) return;
   const home = projectMountpoint(project_id);
-  const src = join(fromHome, ".snapshots", snapshot);
-  if (!(await exists(src))) return;
   const destDir = join(home, ".snapshots");
   const dest = join(destDir, snapshot);
   await sudo({ command: "mkdir", args: ["-p", destDir] });
   if (await exists(dest)) {
     throw new Error(`snapshot already exists after restore: ${snapshot}`);
   }
-  await sudo({ command: "mv", args: [src, dest] });
+  await btrfs({
+    args: ["subvolume", "snapshot", "-r", snapshotPath, dest],
+    err_on_exit: true,
+    verbose: false,
+  });
 }
 
 export async function getVolume(project_id: string) {
@@ -1152,19 +1158,17 @@ async function restoreSnapshot({
   let cleanupStagedClone = true;
   let oldHomePath: string | undefined;
   let preservedRootfsPath: string | undefined;
+  let restoredHomeRootfs = false;
   try {
     if (mode === "rootfs") {
-      preservedRootfsPath = await mkdtemp(
-        join(
-          await ensureSnapshotRestoreRoot(),
-          `${volName(project_id)}.rootfs-`,
-        ),
+      preservedRootfsPath = await createSnapshotRestoreTempPath(
+        `${volName(project_id)}.rootfs-`,
       );
-      await exactSyncDirectory({ src: rootfsPath, dest: preservedRootfsPath });
+      await replaceTreeByMove({ src: rootfsPath, dest: preservedRootfsPath });
       try {
-        await exactSyncDirectory({ src: stagedRootfsPath, dest: rootfsPath });
+        await replaceTreeByMove({ src: stagedRootfsPath, dest: rootfsPath });
       } catch (err) {
-        await exactSyncDirectory({
+        await replaceTreeByMove({
           src: preservedRootfsPath,
           dest: rootfsPath,
         }).catch(() => {});
@@ -1175,13 +1179,10 @@ async function restoreSnapshot({
     }
 
     if (mode === "home") {
-      preservedRootfsPath = await mkdtemp(
-        join(
-          await ensureSnapshotRestoreRoot(),
-          `${volName(project_id)}.rootfs-`,
-        ),
+      preservedRootfsPath = await createSnapshotRestoreTempPath(
+        `${volName(project_id)}.rootfs-`,
       );
-      await exactSyncDirectory({ src: rootfsPath, dest: preservedRootfsPath });
+      await replaceTreeByMove({ src: rootfsPath, dest: preservedRootfsPath });
     }
 
     ({ oldHomePath } = await swapProjectHome({
@@ -1192,19 +1193,36 @@ async function restoreSnapshot({
 
     try {
       if (mode === "home") {
-        await exactSyncDirectory({
+        await replaceTreeByMove({
           src: preservedRootfsPath,
           dest: join(projectMountpoint(project_id), PROJECT_IMAGE_PATH),
         });
+        preservedRootfsPath = undefined;
+        restoredHomeRootfs = true;
       }
       if (oldHomePath && safety_snapshot_name) {
-        await moveSnapshotIntoCurrentHome({
+        await createSafetySnapshotFromPath({
           project_id,
+          snapshotPath: join(oldHomePath, ".snapshots", safety_snapshot_name),
           snapshot: safety_snapshot_name,
-          fromHome: oldHomePath,
         });
       }
     } catch (err) {
+      if (mode === "home" && oldHomePath) {
+        const oldRootfsPath = join(oldHomePath, PROJECT_IMAGE_PATH);
+        if (preservedRootfsPath && (await exists(preservedRootfsPath))) {
+          await replaceTreeByMove({
+            src: preservedRootfsPath,
+            dest: oldRootfsPath,
+          }).catch(() => {});
+          preservedRootfsPath = undefined;
+        } else if (restoredHomeRootfs) {
+          await replaceTreeByMove({
+            src: join(projectMountpoint(project_id), PROJECT_IMAGE_PATH),
+            dest: oldRootfsPath,
+          }).catch(() => {});
+        }
+      }
       if (oldHomePath) {
         await rollbackProjectHomeSwap({
           project_id,

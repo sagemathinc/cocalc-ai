@@ -13,6 +13,7 @@ import {
 } from "@cocalc/frontend/app-framework";
 import { alert_message } from "@cocalc/frontend/alerts";
 import { TimeAgo } from "@cocalc/frontend/components";
+import type { VirtuosoHandle } from "react-virtuoso";
 import CopyButton from "@cocalc/frontend/components/copy-button";
 import StatefulVirtuoso from "@cocalc/frontend/components/stateful-virtuoso";
 import { IS_TOUCH } from "@cocalc/frontend/feature";
@@ -112,6 +113,8 @@ export interface CodexActivityProps {
   onDeleteEvents?: () => void;
   onDeleteAllEvents?: () => void;
   onJumpToBottom?: () => void;
+  jumpText?: string;
+  jumpToken?: number;
   expanded?: boolean;
   virtualizeEntries?: boolean;
   scrollParent?: HTMLElement | null;
@@ -134,6 +137,8 @@ export const CodexActivity: React.FC<CodexActivityProps> = ({
   onDeleteEvents,
   onDeleteAllEvents,
   onJumpToBottom,
+  jumpText,
+  jumpToken,
   expanded: initExpanded,
   virtualizeEntries = false,
   scrollParent,
@@ -156,6 +161,7 @@ export const CodexActivity: React.FC<CodexActivityProps> = ({
     return !!initExpanded;
   });
   const [hovered, setHovered] = useState(false);
+  const virtuosoRef = React.useRef<VirtuosoHandle | null>(null);
 
   useEffect(() => {
     if (!persistKey) return;
@@ -170,6 +176,28 @@ export const CodexActivity: React.FC<CodexActivityProps> = ({
       setExpanded(next);
     }
   }, [persistKey, generating]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (
+      typeof jumpToken !== "number" ||
+      jumpToken <= 0 ||
+      !jumpText ||
+      !entries.length
+    ) {
+      return;
+    }
+    const index = findActivityEntryIndexForJumpText(entries, jumpText);
+    if (index < 0) return;
+    const handle = virtuosoRef.current;
+    if (handle) {
+      handle.scrollToIndex({ index, align: "start" });
+      return;
+    }
+    const node = document.querySelector(
+      `[data-codex-activity-entry-index="${index}"]`,
+    ) as HTMLElement | null;
+    node?.scrollIntoView({ block: "start" });
+  }, [entries, jumpText, jumpToken]);
 
   const activityMarkdown = useMemo(
     () => codexActivityToMarkdown(events ?? [], { generating, durationLabel }),
@@ -344,6 +372,7 @@ export const CodexActivity: React.FC<CodexActivityProps> = ({
         {useVirtualizedEntries ? (
           <StatefulVirtuoso
             cacheId={`codex-activity:${persistKey ?? "default"}`}
+            ref={virtuosoRef}
             totalCount={entries.length}
             customScrollParent={scrollParent ?? undefined}
             itemContent={(index) => {
@@ -351,6 +380,7 @@ export const CodexActivity: React.FC<CodexActivityProps> = ({
               return (
                 <ActivityRow
                   key={entry.id}
+                  rowIndex={index}
                   entry={entry}
                   fontSize={baseFontSize}
                   projectId={projectId}
@@ -361,9 +391,10 @@ export const CodexActivity: React.FC<CodexActivityProps> = ({
             }}
           />
         ) : (
-          entries.map((entry) => (
+          entries.map((entry, index) => (
             <ActivityRow
               key={entry.id}
+              rowIndex={index}
               entry={entry}
               fontSize={baseFontSize}
               projectId={projectId}
@@ -379,6 +410,7 @@ export const CodexActivity: React.FC<CodexActivityProps> = ({
 };
 
 function ActivityRow({
+  rowIndex,
   entry,
   fontSize,
   projectId,
@@ -386,6 +418,7 @@ function ActivityRow({
   editorTheme,
   inlineCodeLinks,
 }: {
+  rowIndex: number;
   entry: ActivityEntry;
   fontSize: number;
   projectId?: string;
@@ -398,7 +431,7 @@ function ActivityRow({
   switch (entry.kind) {
     case "reasoning":
       return (
-        <div>
+        <div data-codex-activity-entry-index={rowIndex}>
           <ActivityTimestamp time={entry.time} />
           {entry.text ? (
             <StaticMarkdown
@@ -417,7 +450,7 @@ function ActivityRow({
       );
     case "agent":
       return (
-        <div>
+        <div data-codex-activity-entry-index={rowIndex}>
           <Space size={6} align="center" wrap style={{ marginBottom: 4 }}>
             <TimestampTooltip timestamp={timestamp}>
               <Tag color="cyan" style={{ margin: 0 }}>
@@ -443,7 +476,7 @@ function ActivityRow({
       );
     case "diff":
       return (
-        <div>
+        <div data-codex-activity-entry-index={rowIndex}>
           <Space size={6} align="center" wrap style={{ marginBottom: 4 }}>
             <TimestampTooltip timestamp={timestamp}>
               <span>
@@ -738,6 +771,38 @@ function formatSummaryDetail(
     parts.push(`Usage: ${formatUsage(message.usage)}`);
   }
   return parts.join(" · ");
+}
+
+function normalizeJumpText(text?: string): string {
+  return `${text ?? ""}`.replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+export function findActivityEntryIndexForJumpText(
+  entries: ActivityEntry[],
+  jumpText?: string,
+): number {
+  const normalizedTarget = normalizeJumpText(jumpText);
+  if (!normalizedTarget) return -1;
+  for (let i = 0; i < entries.length; i++) {
+    const entry = entries[i];
+    if (entry.kind !== "reasoning" && entry.kind !== "agent") continue;
+    const normalizedEntry = normalizeJumpText(entry.text);
+    if (!normalizedEntry) continue;
+    if (
+      normalizedEntry.includes(normalizedTarget) ||
+      normalizedTarget.includes(normalizedEntry)
+    ) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+export function findActivityEntryIndexForJumpEvents(
+  events: AcpLogStreamMessage[],
+  jumpText?: string,
+): number {
+  return findActivityEntryIndexForJumpText(normalizeEvents(events), jumpText);
 }
 
 function formatUsage(usage?: {

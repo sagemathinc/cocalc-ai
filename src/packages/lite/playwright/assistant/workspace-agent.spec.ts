@@ -380,6 +380,7 @@ test("title-bar assistant reuses one workspace agent thread across files", async
     workspaceSuffix,
     testInfo,
   );
+  await expect(page).toHaveURL(/assistant-agent-a\.md/, { timeout: 20_000 });
   console.log("markdown assistant step:first-complete", first.threadKey);
 
   await openMarkdownFile(page, fileUrl({ base_url, auth_token, path: pathB }));
@@ -393,6 +394,7 @@ test("title-bar assistant reuses one workspace agent thread across files", async
     workspaceSuffix,
     testInfo,
   );
+  await expect(page).toHaveURL(/assistant-agent-b\.md/, { timeout: 20_000 });
   console.log("markdown assistant step:second-complete", second.threadKey);
 
   expect(second.threadKey).toBe(first.threadKey);
@@ -409,6 +411,7 @@ test("title-bar assistant reuses one workspace agent thread across files", async
     workspaceSuffix,
     testInfo,
   );
+  await expect(page).toHaveURL(/assistant-agent-b\.md/, { timeout: 20_000 });
   console.log("markdown assistant step:third-complete", third.threadKey);
 
   expect(third.threadKey).toBe(first.threadKey);

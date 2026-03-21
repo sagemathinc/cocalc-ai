@@ -161,6 +161,42 @@ jest.mock("@cocalc/frontend/project/context", () => ({
   }),
 }));
 
+jest.mock("@cocalc/frontend/project/new/navigator-intents", () => ({
+  queueNavigatorPromptIntent: jest.fn((intent: any) => {
+    const raw = window.localStorage.getItem("cocalc:navigator:intent-queue");
+    const queue = raw ? JSON.parse(raw) : [];
+    queue.push(intent);
+    window.localStorage.setItem(
+      "cocalc:navigator:intent-queue",
+      JSON.stringify(queue),
+    );
+  }),
+  removeQueuedNavigatorPromptIntent: jest.fn((id: string) => {
+    const raw = window.localStorage.getItem("cocalc:navigator:intent-queue");
+    if (!raw) return;
+    const queue = JSON.parse(raw).filter((item: any) => item?.id !== id);
+    if (queue.length === 0) {
+      window.localStorage.removeItem("cocalc:navigator:intent-queue");
+      return;
+    }
+    window.localStorage.setItem(
+      "cocalc:navigator:intent-queue",
+      JSON.stringify(queue),
+    );
+  }),
+  resolveThreadIdFromIndex: jest.fn(() => undefined),
+  takeQueuedNavigatorPromptIntents: jest.fn(() => {
+    const raw = window.localStorage.getItem("cocalc:navigator:intent-queue");
+    if (!raw) return [];
+    window.localStorage.removeItem("cocalc:navigator:intent-queue");
+    return JSON.parse(raw);
+  }),
+}));
+
+jest.mock("@cocalc/frontend/project/new/navigator-state", () => ({
+  saveNavigatorSelectedThreadKey: jest.fn(),
+}));
+
 jest.mock("./agent-chat-font-size", () => ({
   useAgentChatFontSize: () => ({
     fontSize: 13,
@@ -197,7 +233,14 @@ describe("AgentDock keyboard suppression", () => {
   });
 
   async function openDock(threadKey = "thread-1", awaitComposer = true) {
-    render(<AgentDock project_id="project-1" is_active={true} />);
+    render(
+      <div>
+        <button type="button" data-testid="outside-target">
+          outside
+        </button>
+        <AgentDock project_id="project-1" is_active={true} />
+      </div>,
+    );
 
     act(() => {
       window.dispatchEvent(
@@ -264,6 +307,17 @@ describe("AgentDock keyboard suppression", () => {
         screen.getByTestId("agent-dock-composer"),
       ),
     );
+  });
+
+  it("blurs the floating composer when clicking outside the dock", async () => {
+    await openDock();
+
+    const composer = screen.getByTestId("agent-dock-composer");
+    expect(document.activeElement).toBe(composer);
+
+    fireEvent.mouseDown(screen.getByTestId("outside-target"));
+
+    await waitFor(() => expect(document.activeElement).not.toBe(composer));
   });
 
   it("stops dock clicks from bubbling to window listeners", async () => {

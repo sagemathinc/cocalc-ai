@@ -1,4 +1,4 @@
-import { Alert, Button, Card, Checkbox, Input, Space, Spin } from "antd";
+import { Alert, Button, Checkbox, Input, Space, Spin } from "antd";
 import { useEffect, useRef, useState } from "react";
 import { useIntl } from "react-intl";
 
@@ -19,12 +19,14 @@ const MAX_FILENAME_LENGTH = 4095;
 interface Props {
   duplicate?: boolean;
   clear: () => void;
+  display?: "inline" | "modal";
   onUserFilesystemChange?: () => void;
 }
 
 export default function RenameFile({
   duplicate,
   clear,
+  display = "inline",
   onUserFilesystemChange,
 }: Props) {
   const intl = useIntl();
@@ -98,68 +100,49 @@ export default function RenameFile({
     return null;
   }
 
-  return (
-    <Card
-      title=<>
-        <Icon name="swap" /> {duplicate ? "Duplicate" : "Rename"} the file '
-        {checked_files?.first()}'
-      </>
-    >
-      <CheckedFiles />
-      <Space style={{ marginTop: "15px" }} wrap>
-        New Name
-        {editExtension ? (
-          <Input
-            maxLength={MAX_FILENAME_LENGTH}
-            ref={inputRef}
-            autoFocus
-            onChange={(e) => setTarget(e.target.value)}
-            type="text"
-            value={target}
-            placeholder="New Name"
-            onPressEnter={doAction}
-          />
-        ) : (
-          <Input
-            maxLength={MAX_FILENAME_LENGTH - ext.length - 1}
-            ref={inputRef}
-            autoFocus
-            onChange={(e) => setTarget(e.target.value + "." + ext)}
-            type="text"
-            value={target.slice(0, -ext.length - 1)}
-            placeholder="New Name"
-            onPressEnter={doAction}
-            suffix={"." + ext}
-          />
-        )}
-        <div style={{ marginLeft: "5px" }} />
-        <Button
-          onClick={() => {
-            actions?.set_file_action();
-          }}
-        >
-          {intl.formatMessage(labels.cancel)}
-        </Button>{" "}
-        <Button
-          onClick={doAction}
-          type="primary"
-          disabled={
-            !target ||
-            loading ||
-            target == path_split(checked_files?.first() ?? "").tail
-          }
-        >
-          {duplicate ? "Duplicate" : "Rename"} File {loading && <Spin />}
-        </Button>
-      </Space>
-      <div style={{ marginTop: "15px" }} />
+  const input = editExtension ? (
+    <Input
+      maxLength={MAX_FILENAME_LENGTH}
+      ref={inputRef}
+      autoFocus
+      onChange={(e) => setTarget(e.target.value)}
+      type="text"
+      value={target}
+      placeholder="New name"
+      onPressEnter={doAction}
+    />
+  ) : (
+    <Input
+      maxLength={MAX_FILENAME_LENGTH - ext.length - 1}
+      ref={inputRef}
+      autoFocus
+      onChange={(e) => setTarget(e.target.value + "." + ext)}
+      type="text"
+      value={target.slice(0, -ext.length - 1)}
+      placeholder="New name"
+      onPressEnter={doAction}
+      suffix={"." + ext}
+    />
+  );
+
+  const content = (
+    <>
+      <CheckedFiles
+        variant={display === "modal" ? "compact" : "block"}
+        maxVisible={3}
+      />
+      <div style={{ marginTop: display === "modal" ? 0 : "15px" }}>
+        <div style={{ marginBottom: "8px", fontWeight: 500 }}>New name</div>
+        {input}
+      </div>
       {!duplicate && (
         <Checkbox
+          style={{ marginTop: "15px" }}
           disabled={!ext}
           checked={editExtension}
           onChange={() => setEditExtension(!editExtension)}
         >
-          Edit Filename Extension
+          Edit filename extension
         </Checkbox>
       )}
       {editExtension &&
@@ -167,9 +150,7 @@ export default function RenameFile({
           <Alert
             style={{ marginTop: "15px" }}
             type="warning"
-            title={
-              "Changing the filename extension may cause your file to no longer open properly."
-            }
+            message="Changing the filename extension may cause the file to stop opening properly."
             showIcon
           />
         )}
@@ -178,10 +159,46 @@ export default function RenameFile({
           style={{ marginTop: "15px" }}
           showIcon
           type="error"
-          title={`The maximum length of a filename is ${MAX_FILENAME_LENGTH}.`}
+          message={`The maximum length of a filename is ${MAX_FILENAME_LENGTH}.`}
         />
       )}
       <ShowError setError={setError} error={error} />
-    </Card>
+      <div style={{ marginTop: "18px", textAlign: "right" }}>
+        <Space wrap>
+          <Button
+            onClick={() => {
+              actions?.set_file_action();
+            }}
+          >
+            {intl.formatMessage(labels.cancel)}
+          </Button>
+          <Button
+            onClick={doAction}
+            type="primary"
+            disabled={
+              !target ||
+              loading ||
+              target == path_split(checked_files?.first() ?? "").tail
+            }
+          >
+            {duplicate ? "Duplicate" : "Rename"} file {loading && <Spin />}
+          </Button>
+        </Space>
+      </div>
+    </>
+  );
+
+  if (display === "modal") {
+    return content;
+  }
+
+  return (
+    <div>
+      <div style={{ marginBottom: "10px", fontWeight: 500 }}>
+        <Icon name="swap" /> {duplicate ? "Duplicate" : "Rename"} the file "
+        {checked_files?.first()}"
+      </div>
+      {content}
+    </div>
   );
 }

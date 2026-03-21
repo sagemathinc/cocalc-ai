@@ -5,7 +5,7 @@ import {
 } from "@cocalc/util/ai/codex";
 import {
   dispatchNavigatorPromptIntent,
-  submitNavigatorPromptToCurrentThread,
+  submitNavigatorPromptInWorkspaceChat,
 } from "@cocalc/frontend/project/new/navigator-intents";
 import { getMaxTokens as getLLMMaxTokens } from "@cocalc/util/db-schema/llm-utils";
 import { capitalize } from "@cocalc/util/misc";
@@ -69,7 +69,7 @@ export default async function createChat({
     frameType === "terminal"
       ? "intent:terminal-assistant"
       : "intent:editor-assistant";
-  const sent = await submitNavigatorPromptToCurrentThread({
+  const sent = await submitNavigatorPromptInWorkspaceChat({
     project_id: actions.project_id,
     path: actions.path,
     prompt,

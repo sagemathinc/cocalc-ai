@@ -11,6 +11,7 @@ import { debounce } from "lodash";
 import { Button as BSButton } from "@cocalc/frontend/antd-bootstrap";
 import {
   CSS,
+  redux,
   useActions,
   useEffect,
   useLayoutEffect,
@@ -100,6 +101,8 @@ export function FilesBottom({
   const [terminalTitle, setTerminalTitle] = useState<string>("");
   const [syncPath, setSyncPath] = useState<number>(0);
   const [sync, setSync] = useState<boolean>(true);
+  const [requestedTerminalStart, setRequestedTerminalStart] =
+    useState<boolean>(false);
 
   const collapseRef = useRef<HTMLDivElement>(null);
 
@@ -129,6 +132,19 @@ export function FilesBottom({
     }
     setActiveKeys([...next, ...activeKeys]);
   }, []);
+
+  useEffect(() => {
+    if (projectIsRunning) {
+      setRequestedTerminalStart(false);
+      return;
+    }
+    if (!activeKeys.includes("terminal")) {
+      setRequestedTerminalStart(false);
+      return;
+    }
+    setRequestedTerminalStart(true);
+    void redux.getActions("projects").start_project(project_id);
+  }, [activeKeys, projectIsRunning, project_id]);
 
   // useEffect(() => {
   //   // if any selected and nothing in state, open "selected".
@@ -169,7 +185,9 @@ export function FilesBottom({
     if (!projectIsRunning) {
       return (
         <div style={{ padding: FLYOUT_PADDING }}>
-          You have to start the project to be able to run a terminal.
+          {requestedTerminalStart
+            ? "Starting the project so the terminal can connect..."
+            : "You have to start the project to be able to run a terminal."}
         </div>
       );
     }

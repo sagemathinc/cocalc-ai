@@ -1,6 +1,8 @@
 import {
   codexActivityToMarkdown,
   codexEventsToMarkdown,
+  findActivityEntryIndexForJumpEvents,
+  findActivityEntryIndexForJumpText,
   parsePathLineTarget,
 } from "../codex-activity";
 
@@ -200,5 +202,90 @@ describe("codexActivityToMarkdown", () => {
     expect(markdown).toContain("## Codex Activity");
     expect(markdown).toContain("*Status:* Worked for 0:23");
     expect(markdown).toContain("- Reasoning: Inspecting the workspace state.");
+  });
+});
+
+describe("findActivityEntryIndexForJumpText", () => {
+  it("matches a clicked paragraph to the containing agent entry", () => {
+    expect(
+      findActivityEntryIndexForJumpEvents(
+        [
+          {
+            type: "event",
+            seq: 1,
+            event: {
+              type: "message",
+              text: "First paragraph.\n\nSecond paragraph with more detail.",
+            },
+          },
+        ] as any,
+        "Second paragraph with more detail.",
+      ),
+    ).toBe(0);
+  });
+
+  it("matches a clicked paragraph to an explicit normalized entry list", () => {
+    const entries = [
+      {
+        kind: "agent",
+        id: "agent-1",
+        seq: 1,
+        text: "First paragraph.\n\nSecond paragraph with more detail.",
+      },
+    ] as any;
+
+    expect(
+      findActivityEntryIndexForJumpText(
+        entries,
+        "Second paragraph with more detail.",
+      ),
+    ).toBe(0);
+  });
+
+  it("ignores whitespace differences in paragraph matching", () => {
+    expect(
+      findActivityEntryIndexForJumpEvents(
+        [
+          {
+            type: "event",
+            seq: 1,
+            event: {
+              type: "message",
+              text: "Investigate   the issue\n\nApply a fix",
+            },
+          },
+          {
+            type: "event",
+            seq: 2,
+            event: {
+              type: "message",
+              text: "Later activity block",
+            },
+          },
+        ] as any,
+        "Investigate the issue",
+      ),
+    ).toBe(0);
+  });
+
+  it("ignores whitespace differences for normalized entry matching", () => {
+    const entries = [
+      {
+        kind: "agent",
+        id: "agent-1",
+        seq: 1,
+        text: "Investigate   the issue\n\nApply a fix",
+      },
+      {
+        kind: "agent",
+        id: "agent-2",
+        seq: 2,
+        text: "Later activity block",
+      },
+    ] as any;
+
+    expect(
+      findActivityEntryIndexForJumpText(entries, "Investigate the issue"),
+    ).toBe(0);
   });
 });

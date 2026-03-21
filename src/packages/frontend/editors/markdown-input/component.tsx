@@ -227,6 +227,9 @@ export function MarkdownInput(props: Props) {
   onSelectionReadyRef.current = onSelectionReady;
 
   const showInstructions = chromeLayout !== "external" && !!value?.trim();
+  const instructionInset = showInstructions
+    ? MODE_SWITCH_OVERLAY_HEIGHT + INSTRUCTIONS_HEIGHT
+    : 0;
 
   const emitSelectionReady = useCallback(() => {
     queueMicrotask(() => {
@@ -248,11 +251,8 @@ export function MarkdownInput(props: Props) {
   const explicitEditorHeight = useMemo(() => {
     const parsed = parseHeightPx(height);
     if (parsed == null) return null;
-    const reserved = showInstructions
-      ? MODE_SWITCH_OVERLAY_HEIGHT + INSTRUCTIONS_HEIGHT
-      : 0;
-    return Math.max(1, Math.round(parsed - reserved));
-  }, [height, showInstructions]);
+    return Math.max(1, Math.round(parsed - instructionInset));
+  }, [height, instructionInset]);
 
   const initialMinHeight = useMemo(() => {
     if (
@@ -1208,11 +1208,11 @@ export function MarkdownInput(props: Props) {
 
   const bodyHeight =
     height != null && height !== "auto"
-      ? showInstructions
-        ? `calc(${height} - ${MODE_SWITCH_OVERLAY_HEIGHT}px)`
+      ? instructionInset > 0
+        ? `calc(${height} - ${instructionInset}px)`
         : height
-      : showInstructions
-        ? `calc(100% - ${MODE_SWITCH_OVERLAY_HEIGHT}px)`
+      : instructionInset > 0
+        ? `calc(100% - ${instructionInset}px)`
         : "100%";
 
   let body: React.JSX.Element = (

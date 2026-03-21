@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Alert, Button, Checkbox, Space, Spin, Table } from "antd";
+import { Alert, Button, Checkbox, Space, Table } from "antd";
 import { join } from "path";
 import { FormattedMessage, useIntl } from "react-intl";
 
@@ -19,10 +19,8 @@ import {
 } from "@cocalc/frontend/app-framework";
 import { A, Icon, Loading, TimeAgo } from "@cocalc/frontend/components";
 import ShowError from "@cocalc/frontend/components/error";
-import { custom_image_name } from "@cocalc/frontend/custom-software/util";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { labels } from "@cocalc/frontend/i18n";
-import { ComputeImageSelector } from "@cocalc/frontend/project/settings/compute-image-selector";
 import { LICENSES } from "@cocalc/frontend/share/licenses";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { PublicPath as PublicPath0 } from "@cocalc/util/db-schema/public-paths";
@@ -164,14 +162,6 @@ export const PublicPaths: React.FC = () => {
       dataIndex: "status",
       key: "status",
     },
-    {
-      title: "Image",
-      dataIndex: "compute_image",
-      key: "image",
-      render: (_, record) => {
-        return <ComputeImage {...record} setError={setError} />;
-      },
-    },
   ];
 
   async function fetch() {
@@ -193,7 +183,6 @@ export const PublicPaths: React.FC = () => {
               created: null,
               last_saved: null,
               counter: null,
-              compute_image: null,
             },
           },
         })
@@ -288,47 +277,3 @@ export const PublicPaths: React.FC = () => {
     </div>
   );
 };
-
-function ComputeImage({ compute_image, project_id, path, setError }) {
-  const [selectedImage, setSelectedImage] = useState<string>(compute_image);
-  const [saving, setSaving] = useState<boolean>(false);
-  const kucalc = useTypedRedux("customize", "kucalc");
-  const onCoCalcCom = kucalc === KUCALC_COCALC_COM;
-
-  useEffect(() => {
-    setSelectedImage(compute_image);
-  }, [compute_image]);
-
-  return (
-    <>
-      <ComputeImageSelector
-        disabled={saving}
-        current_image={selectedImage}
-        layout={"compact"}
-        hideCustomImages={!onCoCalcCom}
-        onSelect={async ({ id, type }) => {
-          const img = type === "custom" ? custom_image_name(id) : id;
-          setSelectedImage(img);
-          try {
-            setSaving(true);
-            await webapp_client.async_query({
-              query: { public_paths: { project_id, path, compute_image: img } },
-            });
-          } catch (err) {
-            setError(`${err}`);
-            // failed to save -- change back so clear indication
-            // it didn't work, and also so they can try again.
-            setSelectedImage(compute_image);
-          } finally {
-            setSaving(false);
-          }
-        }}
-      />
-      {saving && (
-        <div>
-          <Spin />
-        </div>
-      )}
-    </>
-  );
-}

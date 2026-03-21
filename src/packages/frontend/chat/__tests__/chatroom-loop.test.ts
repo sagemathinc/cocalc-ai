@@ -1,6 +1,10 @@
 /** @jest-environment jsdom */
 
-import { clearThreadLoopRuntime, enabledLoopConfig } from "../chatroom";
+import {
+  clearThreadLoopRuntime,
+  enabledLoopConfig,
+  getLatestCodexActivityDate,
+} from "../chatroom";
 
 describe("chatroom loop helpers", () => {
   it("returns enabled configs and hides disabled ones", () => {
@@ -30,5 +34,52 @@ describe("chatroom loop helpers", () => {
     clearThreadLoopRuntime(actions as any, " ");
     expect(actions.setThreadLoopConfig).not.toHaveBeenCalled();
     expect(actions.setThreadLoopState).not.toHaveBeenCalled();
+  });
+
+  it("returns the newest ACP-backed message date in a thread", () => {
+    expect(
+      getLatestCodexActivityDate([
+        {
+          date: "2026-03-20T01:00:00.000Z",
+          history: [],
+          sender_id: "acct",
+          event: "chat",
+          acp_account_id: "acct",
+        } as any,
+        {
+          date: "2026-03-20T01:05:00.000Z",
+          history: [],
+          sender_id: "acct",
+          event: "chat",
+        } as any,
+        {
+          date: "2026-03-20T01:10:00.000Z",
+          history: [],
+          sender_id: "acct",
+          event: "chat",
+          acp_account_id: "acct",
+        } as any,
+      ]),
+    ).toBe(`${Date.parse("2026-03-20T01:10:00.000Z")}`);
+  });
+
+  it("ignores non-ACP and invalid-date rows when resolving latest activity", () => {
+    expect(
+      getLatestCodexActivityDate([
+        {
+          date: "not-a-date",
+          history: [],
+          sender_id: "acct",
+          event: "chat",
+          acp_account_id: "acct",
+        } as any,
+        {
+          date: "2026-03-20T01:05:00.000Z",
+          history: [],
+          sender_id: "acct",
+          event: "chat",
+        } as any,
+      ]),
+    ).toBeUndefined();
   });
 });

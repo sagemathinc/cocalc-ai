@@ -10,8 +10,6 @@ import { FormattedMessage, useIntl } from "react-intl";
 import { Button, ButtonToolbar } from "@cocalc/frontend/antd-bootstrap";
 import { Gap, Icon } from "@cocalc/frontend/components";
 import { useStudentProjectFunctionality } from "@cocalc/frontend/course";
-import { CustomSoftwareInfo } from "@cocalc/frontend/custom-software/info-bar";
-import { type ComputeImages } from "@cocalc/frontend/custom-software/init";
 import { IS_MOBILE } from "@cocalc/frontend/feature";
 import { labels } from "@cocalc/frontend/i18n";
 import { type ProjectActions } from "@cocalc/frontend/project_store";
@@ -47,12 +45,7 @@ interface Props {
   checked_files: immutable.Set<string>;
   listing: DirectoryListingEntry[];
   current_path: string;
-  project_map?;
-  images?: ComputeImages;
   actions: ProjectActions;
-  available_features?;
-  show_custom_software_reset?: boolean;
-  project_is_running?: boolean;
   refreshBackups?: () => void;
   hasPendingUpdate?: boolean;
   onRefreshListing?: () => void;
@@ -65,12 +58,7 @@ export function ActionBar({
   checked_files,
   listing,
   current_path,
-  project_map,
-  images,
   actions,
-  available_features,
-  show_custom_software_reset,
-  project_is_running,
   refreshBackups,
   hasPendingUpdate,
   onRefreshListing,
@@ -548,27 +536,7 @@ export function ActionBar({
 
   function render_button_area(): React.JSX.Element | undefined {
     if (checked_files.size === 0) {
-      if (
-        project_id == null ||
-        images == null ||
-        project_map == null ||
-        available_features == null
-      ) {
-        return;
-      }
-      return (
-        <Space.Compact>
-          <CustomSoftwareInfo
-            project_id={project_id}
-            images={images}
-            project_map={project_map}
-            actions={actions}
-            available_features={available_features}
-            show_custom_software_reset={!!show_custom_software_reset}
-            project_is_running={!!project_is_running}
-          />
-        </Space.Compact>
-      );
+      return;
     } else {
       return render_action_buttons();
     }

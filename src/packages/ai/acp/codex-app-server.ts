@@ -106,6 +106,7 @@ type RunningTurn = {
   stop: () => Promise<void>;
   interrupted: boolean;
   turnId?: string;
+  exited: Promise<void>;
 };
 
 type RequestEntry = {
@@ -438,12 +439,17 @@ function toUsageFromTokenCount(info: any): AcpStreamUsage | undefined {
   };
 }
 
-async function readPersistedTurnUsage(opts: {
+type PersistedTurnInfo = {
+  usage?: AcpStreamUsage;
+  compacted?: boolean;
+};
+
+async function readPersistedTurnInfo(opts: {
   spawned: SpawnedCodexAppServer;
   cwd: string;
   threadId: string;
   turnId: string;
-}): Promise<AcpStreamUsage | undefined> {
+}): Promise<PersistedTurnInfo | undefined> {
   const codexHome = getCodexHomeHostPath(opts.spawned, opts.cwd);
   if (!codexHome) return undefined;
   const stateDbPath = path.join(codexHome, "state_5.sqlite");
@@ -463,6 +469,8 @@ async function readPersistedTurnUsage(opts: {
     if (!existsSync(hostRolloutPath)) return undefined;
     const lines = readFileSync(hostRolloutPath, "utf8").split(/\r?\n/);
     let foundCompletion = false;
+    let compacted = false;
+    let usage: AcpStreamUsage | undefined;
     for (let i = lines.length - 1; i >= 0; i -= 1) {
       const line = lines[i];
       if (!line.trim()) continue;
@@ -470,6 +478,12 @@ async function readPersistedTurnUsage(opts: {
       try {
         entry = JSON.parse(line);
       } catch {
+        continue;
+      }
+      if (entry?.type === "compacted") {
+        if (foundCompletion) {
+          compacted = true;
+        }
         continue;
       }
       const payload = entry?.payload;
@@ -489,15 +503,17 @@ async function readPersistedTurnUsage(opts: {
       }
       if (!foundCompletion) continue;
       if (payload.type === "token_count") {
-        return toUsageFromTokenCount(payload.info);
+        usage = toUsageFromTokenCount(payload.info);
+        continue;
       }
       if (
         payload.type === "task_started" &&
         `${payload.turn_id ?? ""}` === opts.turnId
       ) {
-        break;
+        return usage || compacted ? { usage, compacted } : undefined;
       }
     }
+    return usage || compacted ? { usage, compacted } : undefined;
   } catch (err) {
     logger.debug("codex app-server: persisted usage fallback failed", {
       threadId: opts.threadId,
@@ -729,6 +745,19 @@ export class CodexAppServerAgent implements AcpAgent {
     let quotaStopReason: string | undefined;
     const attemptStartedAt = Date.now();
 
+    let resolveExited: (() => void) | undefined;
+    const exited = new Promise<void>((resolve) => {
+      let settled = false;
+      resolveExited = () => {
+        if (settled) return;
+        settled = true;
+        resolve();
+      };
+    });
+    spawned.proc.once("exit", () => resolveExited?.());
+    spawned.proc.once("close", () => resolveExited?.());
+    spawned.proc.once("error", () => resolveExited?.());
+
     const stop = async () => {
       if (spawned.proc.exitCode == null && !spawned.proc.killed) {
         spawned.proc.kill("SIGKILL");
@@ -817,8 +846,10 @@ export class CodexAppServerAgent implements AcpAgent {
             }
           }
           await stop();
+          await exited;
         },
         interrupted: false,
+        exited,
       };
       this.running.set(currentThreadId, runningEntry);
 
@@ -1158,12 +1189,19 @@ export class CodexAppServerAgent implements AcpAgent {
       if (maxTurnTimer) {
         clearTimeout(maxTurnTimer);
       }
+      const persistedTurnInfo = await readPersistedTurnInfo({
+        spawned,
+        cwd,
+        threadId: actualThreadId,
+        turnId,
+      });
       if (!latestUsage) {
-        latestUsage = await readPersistedTurnUsage({
-          spawned,
-          cwd,
-          threadId: actualThreadId,
-          turnId,
+        latestUsage = persistedTurnInfo?.usage;
+      }
+      if (persistedTurnInfo?.compacted) {
+        await stream({
+          type: "event",
+          event: { type: "thinking", text: "Context compacted" },
         });
       }
 

@@ -61,7 +61,6 @@ const COURSE_MENUS = {
       ],
       nbgraderConfig: ["course-nbgrader"],
       environmentConfig: [
-        "course-software-environment",
         "course-network-file-systems",
         "course-env-variables",
       ],

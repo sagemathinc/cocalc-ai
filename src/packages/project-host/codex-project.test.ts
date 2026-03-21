@@ -492,3 +492,69 @@ describe("initCodexProjectRunner", () => {
     expect(spawnMock.mock.calls[0][1]).toContain("/tmp/debug-codex");
   });
 });
+
+describe("getBuiltinLaunchpadSkillMounts", () => {
+  const originalHome = process.env.HOME;
+  const originalCodexHome = process.env.COCALC_CODEX_HOME;
+
+  afterEach(() => {
+    if (originalHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = originalHome;
+    }
+    if (originalCodexHome === undefined) {
+      delete process.env.COCALC_CODEX_HOME;
+    } else {
+      process.env.COCALC_CODEX_HOME = originalCodexHome;
+    }
+    jest.resetModules();
+  });
+
+  it("injects the built-in cocalc skill when the project does not already have it", async () => {
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "codex-skill-test-"));
+    const hostHome = path.join(tmp, "host-home");
+    const projectHome = path.join(tmp, "project-home");
+    const hostSkill = path.join(hostHome, ".codex", "skills", "cocalc");
+    await fs.mkdir(hostSkill, { recursive: true });
+    await fs.mkdir(projectHome, { recursive: true });
+    await fs.writeFile(path.join(hostSkill, "SKILL.md"), "# cocalc\n");
+    process.env.HOME = hostHome;
+    delete process.env.COCALC_CODEX_HOME;
+
+    const { getBuiltinLaunchpadSkillMounts } =
+      await import("./codex/codex-project");
+
+    await expect(getBuiltinLaunchpadSkillMounts(projectHome)).resolves.toEqual([
+      {
+        source: hostSkill,
+        target: "/root/.codex/skills/cocalc",
+        readOnly: true,
+      },
+    ]);
+  });
+
+  it("does not override a project-local cocalc skill", async () => {
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "codex-skill-test-"));
+    const hostHome = path.join(tmp, "host-home");
+    const projectHome = path.join(tmp, "project-home");
+    const hostSkill = path.join(hostHome, ".codex", "skills", "cocalc");
+    const projectSkill = path.join(projectHome, ".codex", "skills", "cocalc");
+    await fs.mkdir(hostSkill, { recursive: true });
+    await fs.mkdir(projectSkill, { recursive: true });
+    await fs.writeFile(path.join(hostSkill, "SKILL.md"), "# host cocalc\n");
+    await fs.writeFile(
+      path.join(projectSkill, "SKILL.md"),
+      "# project cocalc\n",
+    );
+    process.env.HOME = hostHome;
+    delete process.env.COCALC_CODEX_HOME;
+
+    const { getBuiltinLaunchpadSkillMounts } =
+      await import("./codex/codex-project");
+
+    await expect(getBuiltinLaunchpadSkillMounts(projectHome)).resolves.toEqual(
+      [],
+    );
+  });
+});

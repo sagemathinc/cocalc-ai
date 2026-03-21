@@ -37,6 +37,9 @@ import jsonStableStringify from "json-stable-stringify";
 import type {
   SetOperation,
   DeleteOperation,
+  MetadataOperation,
+  CheckpointsOperation,
+  ChangefeedOperation,
   StoredMessage,
   Configuration,
   StreamCheckpoints,
@@ -493,7 +496,6 @@ export class CoreStream<T = any> extends EventEmitter {
       async () => {
         attempt += 1;
         let messages: StoredMessage[] = [];
-        let changes: (SetOperation | DeleteOperation | StoredMessage)[] = [];
         try {
           if (this.isClosed()) {
             return true;
@@ -518,28 +520,22 @@ export class CoreStream<T = any> extends EventEmitter {
             start_checkpoint,
             changefeed: true,
             include_config: includeConfig,
+            include_metadata: true,
+            include_checkpoints: true,
           });
-          if (includeConfig) {
-            const result = await this.persistClient.getAllWithInfo({
-              start_seq,
-              start_checkpoint,
-              timeout: DEFAULT_GET_ALL_TIMEOUT,
-              changefeed: true,
-            });
-            messages = result.messages;
-            bootstrap = {
-              config: result.config,
-              metadata: result.metadata,
-              checkpoints: result.checkpoints,
-            };
-          } else {
-            messages = await this.persistClient.getAll({
-              start_seq,
-              start_checkpoint,
-              timeout: DEFAULT_GET_ALL_TIMEOUT,
-              changefeed: true,
-            });
-          }
+          const result = await this.persistClient.getAllWithInfo({
+            start_seq,
+            start_checkpoint,
+            timeout: DEFAULT_GET_ALL_TIMEOUT,
+            changefeed: true,
+            includeConfig,
+          });
+          messages = result.messages;
+          bootstrap = {
+            config: result.config,
+            metadata: result.metadata,
+            checkpoints: result.checkpoints,
+          };
           let bytes = 0;
           for (const mesg of messages) {
             bytes += mesg.raw?.length ?? 0;
@@ -586,12 +582,7 @@ export class CoreStream<T = any> extends EventEmitter {
           noEmit,
           noSeqCheck: true,
         });
-        if (changes.length > 0) {
-          this.processPersistentMessages(changes, {
-            noEmit,
-            noSeqCheck: false,
-          });
-        }
+        this.applyPersistentBootstrap(bootstrap, { noEmit });
         // success!
         return true;
       },
@@ -606,7 +597,7 @@ export class CoreStream<T = any> extends EventEmitter {
   };
 
   private processPersistentMessages = (
-    messages: (SetOperation | DeleteOperation | StoredMessage)[],
+    messages: (ChangefeedOperation | StoredMessage)[],
     opts: { noEmit?: boolean; noSeqCheck?: boolean },
   ) => {
     if (this.raw === undefined) {
@@ -628,14 +619,62 @@ export class CoreStream<T = any> extends EventEmitter {
   };
 
   private processPersistentMessage = (
-    mesg: SetOperation | DeleteOperation | StoredMessage,
+    mesg: ChangefeedOperation | StoredMessage,
     opts: { noEmit?: boolean; noSeqCheck?: boolean },
   ) => {
     if ((mesg as DeleteOperation).op == "delete") {
       this.processPersistentDelete(mesg as DeleteOperation, opts);
+    } else if ((mesg as MetadataOperation).op == "metadata") {
+      this.processPersistentMetadata(mesg as MetadataOperation, opts);
+    } else if ((mesg as CheckpointsOperation).op == "checkpoints") {
+      this.processPersistentCheckpoints(mesg as CheckpointsOperation, opts);
     } else {
       // set is the default
       this.processPersistentSet(mesg as SetOperation, opts);
+    }
+  };
+
+  private applyPersistentBootstrap = (
+    bootstrap: Pick<GetAllInfo, "config" | "metadata" | "checkpoints">,
+    opts: { noEmit?: boolean },
+  ) => {
+    this.processPersistentMetadata(
+      { op: "metadata", metadata: bootstrap.metadata },
+      opts,
+    );
+    this.processPersistentCheckpoints(
+      {
+        op: "checkpoints",
+        checkpoints: bootstrap.checkpoints ?? {},
+      },
+      opts,
+    );
+  };
+
+  private processPersistentMetadata = (
+    { metadata }: MetadataOperation,
+    { noEmit }: { noEmit?: boolean },
+  ) => {
+    const changed =
+      jsonStableStringify(this.currentMetadata) !==
+      jsonStableStringify(metadata);
+    this.currentMetadata = metadata;
+    if (!noEmit && changed) {
+      this.emit("metadata-change", metadata);
+    }
+  };
+
+  private processPersistentCheckpoints = (
+    { checkpoints }: CheckpointsOperation,
+    { noEmit }: { noEmit?: boolean },
+  ) => {
+    const next = { ...checkpoints };
+    const changed =
+      jsonStableStringify(this.currentCheckpoints) !==
+      jsonStableStringify(next);
+    this.currentCheckpoints = next;
+    if (!noEmit && changed) {
+      this.emit("checkpoints-change", this.getCheckpoints());
     }
   };
 

@@ -945,6 +945,81 @@ def write_env(cfg: BootstrapConfig, image_size_gb: int) -> None:
         upsert_env(cfg.env_file, "COCALC_BTRFS_IMAGE_GB", str(image_size_gb))
 
 
+PODMAN_BASHRC_BLOCK_START = "# >>> CoCalc project-host podman env >>>"
+PODMAN_BASHRC_BLOCK_END = "# <<< CoCalc project-host podman env <<<"
+
+
+def runtime_podman_env_lines(cfg: BootstrapConfig) -> list[str]:
+    runtime_dir = None
+    if Path(cfg.env_file).exists():
+        for line in Path(cfg.env_file).read_text(encoding="utf-8").splitlines():
+            if line.startswith("COCALC_PODMAN_RUNTIME_DIR="):
+                runtime_dir = line.split("=", 1)[1].strip()
+                if runtime_dir:
+                    break
+    if not runtime_dir and cfg.ssh_user:
+        try:
+            uid = pwd.getpwnam(cfg.ssh_user).pw_uid
+        except Exception:
+            uid = None
+        if uid is not None:
+            runtime_dir = f"/mnt/cocalc/data/tmp/cocalc-podman-runtime-{uid}"
+    if not runtime_dir:
+        return []
+    return [
+        f'export XDG_RUNTIME_DIR="{runtime_dir}"',
+        f'export COCALC_PODMAN_RUNTIME_DIR="{runtime_dir}"',
+        'export CONTAINERS_CGROUP_MANAGER="cgroupfs"',
+    ]
+
+
+def upsert_managed_bashrc_block(path: Path, lines: list[str]) -> None:
+    existing_lines = []
+    if path.exists():
+        existing_lines = path.read_text(encoding="utf-8").splitlines()
+    out: list[str] = []
+    in_block = False
+    for line in existing_lines:
+        if line == PODMAN_BASHRC_BLOCK_START:
+            in_block = True
+            continue
+        if line == PODMAN_BASHRC_BLOCK_END:
+            in_block = False
+            continue
+        if not in_block:
+            out.append(line)
+    while out and out[-1] == "":
+        out.pop()
+    if out:
+        out.append("")
+    out.extend(
+        [
+            PODMAN_BASHRC_BLOCK_START,
+            "# Added by CoCalc project-host bootstrap so rootless podman works in login shells.",
+            *lines,
+            PODMAN_BASHRC_BLOCK_END,
+            "",
+        ]
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(out), encoding="utf-8")
+
+
+def configure_runtime_shell_env(cfg: BootstrapConfig) -> None:
+    if not cfg.ssh_user or cfg.ssh_user == "root":
+        return
+    lines = runtime_podman_env_lines(cfg)
+    if not lines:
+        return
+    bashrc = Path(runtime_home(cfg)) / ".bashrc"
+    upsert_managed_bashrc_block(bashrc, lines)
+    run_best_effort(
+        cfg,
+        ["chown", f"{cfg.ssh_user}:{cfg.ssh_user}", str(bashrc)],
+        "chown runtime bashrc podman env",
+    )
+
+
 def upsert_env(path: str, key: str, value: str) -> None:
     lines = []
     found = False
@@ -1748,6 +1823,7 @@ def main(argv: list[str]) -> int:
         ensure_btrfs_data(cfg)
         configure_podman(cfg)
         write_env(cfg, image_size_gb)
+        configure_runtime_shell_env(cfg)
         setup_master_conat_token(cfg)
         report_bootstrap_status(cfg, "running", "Downloading CoCalc software bundles")
         extract_bundle(cfg, cfg.project_host_bundle)

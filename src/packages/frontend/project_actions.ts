@@ -24,10 +24,7 @@ import type { ChatState } from "@cocalc/frontend/chat/chat-indicator";
 import { initChat } from "@cocalc/frontend/chat/register";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { local_storage } from "@cocalc/frontend/editor-local-storage";
-import {
-  query as client_query,
-  exec,
-} from "@cocalc/frontend/frame-editors/generic/client";
+import { query as client_query } from "@cocalc/frontend/frame-editors/generic/client";
 import { set_url } from "@cocalc/frontend/history";
 import {
   download_file,
@@ -36,10 +33,7 @@ import {
 } from "@cocalc/frontend/misc";
 import Fragment, { FragmentId } from "@cocalc/frontend/misc/fragment-id";
 import * as project_file from "@cocalc/frontend/project-file";
-import {
-  ProjectEvent,
-  SoftwareEnvironmentEvent,
-} from "@cocalc/frontend/project/history/types";
+import { ProjectEvent } from "@cocalc/frontend/project/history/types";
 import {
   OpenFileOpts,
   log_file_open,
@@ -176,7 +170,6 @@ export const QUERIES = {
       last_edited: null,
       last_saved: null,
       counter: null,
-      compute_image: null,
       redirect: null,
     },
   },
@@ -569,28 +562,6 @@ export class ProjectActions extends Actions<ProjectStoreState> {
 
   clear_all_activity(): void {
     this.setState({ activity: undefined });
-  }
-
-  async custom_software_reset(): Promise<void> {
-    // 1. delete the sentinel file that marks copying over the accompanying files
-    // 2. restart project. This isn't strictly necessary and a TODO for later, because
-    // this would have to do precisely what kucalc's project init does.
-    const sentinel = ".cocalc-project-init-done";
-    await exec({
-      timeout: 10,
-      project_id: this.project_id,
-      command: "rm",
-      args: ["-f", sentinel],
-      err_on_exit: false,
-      bash: false,
-    });
-    this.toggle_custom_software_reset(false);
-    const projects_actions = this.redux.getActions("projects") as any;
-    projects_actions.restart_project(this.project_id);
-  }
-
-  toggle_custom_software_reset(show: boolean): void {
-    this.setState({ show_custom_software_reset: show });
   }
 
   toggle_panel(name: keyof ProjectStoreState, show?: boolean): void {
@@ -2890,15 +2861,6 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     const project_id = this.project_id;
     const id = client_db.sha1(project_id, path);
 
-    const projects_store = redux.getStore("projects");
-    const defaultComputeImage = await redux
-      .getStore("customize")
-      .getDefaultComputeImage();
-
-    const compute_image: string =
-      projects_store.getIn(["project_map", project_id, "compute_image"]) ??
-      defaultComputeImage;
-
     const table = this.redux.getProjectTable(project_id, "public_paths");
     let obj: undefined | Map<string, any> = table._table.get(id);
 
@@ -2910,7 +2872,6 @@ export class ProjectActions extends Actions<ProjectStoreState> {
         project_id,
         path,
         created: now,
-        compute_image,
       });
     }
     if (obj == null) {
@@ -2924,7 +2885,6 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     obj = obj.delete("counter");
 
     obj = obj.set("last_edited", now);
-    obj = obj.set("compute_image", compute_image);
 
     for (const k in opts) {
       if (opts[k] !== undefined) {
@@ -3126,35 +3086,6 @@ export class ProjectActions extends Actions<ProjectStoreState> {
         misc.unreachable(main_segment);
         console.warn(`project/load_target: don't know segment ${main_segment}`);
     }
-  };
-
-  set_compute_image = async (compute_image: string): Promise<void> => {
-    const projects_store = this.redux.getStore("projects");
-    const previous: string =
-      projects_store.getIn(["project_map", this.project_id, "compute_image"]) ??
-      "";
-    if (previous == compute_image) {
-      // it is already set to the goal, so nothing to do.
-      // See https://github.com/sagemathinc/cocalc/issues/7304
-      return;
-    }
-
-    await client_query({
-      query: {
-        projects: {
-          project_id: this.project_id,
-          compute_image,
-        },
-      },
-    });
-
-    // if the above is successful, we log it
-    const event: SoftwareEnvironmentEvent = {
-      event: "software_environment",
-      previous,
-      next: compute_image,
-    };
-    this.log(event);
   };
 
   async set_environment(env: object): Promise<void> {

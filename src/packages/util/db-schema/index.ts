@@ -32,7 +32,6 @@ import "./cloud-vm-log";
 import "./cloud-vm-usage";
 import "./cloud-vm-work";
 import "./collaborators";
-import "./compute-images";
 import "./crm";
 import "./deleted-projects";
 import "./email-counter";
@@ -89,8 +88,6 @@ export {
   DEFAULT_FONT_SIZE,
   NEW_FILENAMES,
   DEFAULT_NEW_FILENAMES,
-  DEFAULT_COMPUTE_IMAGE,
-  FALLBACK_COMPUTE_IMAGE,
 } from "./defaults";
 
 export * from "./operators";

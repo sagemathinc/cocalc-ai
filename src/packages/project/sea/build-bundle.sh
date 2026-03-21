@@ -185,4 +185,9 @@ echo "- Copy project bin scripts"
 mkdir -p "$OUT"/src/packages/project
 cp -r packages/project/bin "$OUT"/src/packages/project/
 
+echo "- Copy open helper into bundle bin"
+mkdir -p "$OUT"/bin
+cp packages/backend/dist/bin/open.js "$OUT"/bin/open
+chmod +x "$OUT"/bin/open
+
 echo "- Bundle created at $OUT"

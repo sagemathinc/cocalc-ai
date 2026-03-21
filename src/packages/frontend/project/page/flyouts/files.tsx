@@ -51,6 +51,7 @@ import { FileListItem } from "./file-list-item";
 import { FilesBottom } from "./files-bottom";
 import { FilesHeader } from "./files-header";
 import { fileItemStyle } from "./utils";
+import { triggerFlyoutFileAction } from "./file-action-trigger";
 import useFs from "@cocalc/frontend/project/listing/use-fs";
 import useListing from "@cocalc/frontend/project/listing/use-listing";
 import useBackupsListing, {
@@ -111,6 +112,7 @@ export function FilesFlyout({
     project_id,
     actions,
     manageStarredFiles,
+    registerUserFilesystemChangeHandler,
     workspaces,
   } = useProjectContext();
   const rootRef = useRef<HTMLDivElement>(null as any);
@@ -379,6 +381,10 @@ export function FilesFlyout({
     alwaysPassThrough: autoUpdateListing,
     fingerprint: fileListingFingerprint,
   });
+  useEffect(() => {
+    return registerUserFilesystemChangeHandler(allowNextListingUpdate);
+  }, [allowNextListingUpdate, registerUserFilesystemChangeHandler]);
+
   const directoryFiles =
     deferredDirectoryFiles ?? liveDirectoryFiles ?? EMPTY_DIRECTORY_FILES;
   const fileMap = useMemo<FileMap>(
@@ -636,12 +642,13 @@ export function FilesFlyout({
 
   function showFileSharingDialog(file?: { name: string }) {
     if (!file) return;
-    actions?.set_active_tab("files");
     const fullPath = path_to_file(effective_current_path, file.name);
-    // only select the published file, same logic as in file-row.tsx
-    actions?.set_all_files_unchecked();
-    actions?.set_file_list_checked([fullPath]);
-    actions?.set_file_action("share");
+    triggerFlyoutFileAction({
+      actions,
+      action: "share",
+      path: fullPath,
+      multiple: false,
+    });
   }
 
   function renderTimeAgo(item: DirectoryListingEntry) {

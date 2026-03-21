@@ -20,7 +20,6 @@ interface Props {
   isDir?: boolean;
   exclude?: Set<string>;
   project_id: string;
-  image?: string;
   description?: string;
 }
 
@@ -32,7 +31,6 @@ export default function PathActions({
   isDir,
   exclude,
   project_id,
-  image,
   description,
 }: Props) {
   const include = (action: string) => !exclude?.has(action);
@@ -49,7 +47,6 @@ export default function PathActions({
           path={path}
           url={url}
           relativePath={relativePath}
-          image={image}
           project_id={project_id}
           description={description}
         />,

@@ -22,7 +22,6 @@ import {
 import ConfigurationCopying from "@cocalc/frontend/course/configuration/configuration-copying";
 import {
   CollaboratorPolicy,
-  ConfigureSoftwareEnvironment,
   EmailInvitation,
   EnvVariables,
   NetworkFilesystem,
@@ -174,8 +173,6 @@ function getModal(modal: string): {
       return { Body: EnvVariables };
     case "upgrades":
       return { Body: UpgradeConfiguration };
-    case "software-environment":
-      return { Body: ConfigureSoftwareEnvironment };
     case "configuration-copying":
       return { Body: ConfigurationCopying };
 

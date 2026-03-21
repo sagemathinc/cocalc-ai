@@ -18,7 +18,6 @@ import SelectProject from "components/project/select";
 import editURL from "lib/share/edit-url";
 import { Icon } from "@cocalc/frontend/components/icon";
 import RunApp from "components/app/path";
-import useCustomize from "lib/use-customize";
 import {
   WORKSPACE_LABEL,
   WORKSPACES_LABEL,
@@ -31,7 +30,6 @@ interface Props {
   url;
   relativePath;
   everything;
-  image;
   description;
   onCopied;
 }
@@ -44,12 +42,10 @@ export default function ChooseProject(props: Props) {
     url,
     relativePath,
     everything,
-    image,
     description,
     onCopied,
   } = props;
   const isMounted = useIsMounted();
-  const { defaultComputeImage } = useCustomize();
   const [project, setProject] = useState<
     { project_id: string; title: string } | undefined
   >(undefined);
@@ -129,12 +125,6 @@ export default function ChooseProject(props: Props) {
         {!errorCopying && copying == "after" && project?.project_id && (
           <RunApp start project_id={project.project_id} path={targetPath} />
         )}
-        {image && image != defaultComputeImage && (
-          <div>
-            We recommend that you create a new {WORKSPACE_LABEL.toLowerCase()},
-            since this public path uses the non-default image "{image}".
-          </div>
-        )}
         {log && <Alert type="info" message={log} />}
         {!hideSelect && (
           <SelectProject
@@ -149,7 +139,6 @@ export default function ChooseProject(props: Props) {
         )}
         {!hideCreate && (
           <CreateProject
-            image={image}
             label={`In a new ${WORKSPACE_LABEL.toLowerCase()}`}
             start={true}
             public_path_id={id}

@@ -36,7 +36,6 @@ export { TypedMap, createTypedMap } from "@cocalc/util/redux/TypedMap";
 import type { ClassMap } from "@cocalc/util/redux/types";
 import { redux_name, project_redux_name } from "@cocalc/util/redux/name";
 export { redux_name, project_redux_name };
-import { NAME_TYPE as ComputeImageStoreType } from "../custom-software/util";
 import { NEWS } from "@cocalc/frontend/notifications/news/init";
 
 import * as types from "./actions-and-stores";
@@ -92,7 +91,6 @@ export class AppRedux extends AppReduxBase {
   getStore(name: "file_use"): types.FileUseStore;
   getStore(name: "customize"): types.CustomizeStore;
   getStore(name: "users"): types.UsersStore;
-  getStore(name: ComputeImageStoreType): types.ComputeImagesStore;
   getStore(name: typeof NEWS): types.NewsStore;
   getStore<State extends Record<string, any>>(name: string): Store<State>;
   getStore<State extends Record<string, any>, C extends Store<State>>(
