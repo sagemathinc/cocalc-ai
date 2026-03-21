@@ -106,6 +106,7 @@ type RunningTurn = {
   stop: () => Promise<void>;
   interrupted: boolean;
   turnId?: string;
+  exited: Promise<void>;
 };
 
 type RequestEntry = {
@@ -744,6 +745,19 @@ export class CodexAppServerAgent implements AcpAgent {
     let quotaStopReason: string | undefined;
     const attemptStartedAt = Date.now();
 
+    let resolveExited: (() => void) | undefined;
+    const exited = new Promise<void>((resolve) => {
+      let settled = false;
+      resolveExited = () => {
+        if (settled) return;
+        settled = true;
+        resolve();
+      };
+    });
+    spawned.proc.once("exit", () => resolveExited?.());
+    spawned.proc.once("close", () => resolveExited?.());
+    spawned.proc.once("error", () => resolveExited?.());
+
     const stop = async () => {
       if (spawned.proc.exitCode == null && !spawned.proc.killed) {
         spawned.proc.kill("SIGKILL");
@@ -832,8 +846,10 @@ export class CodexAppServerAgent implements AcpAgent {
             }
           }
           await stop();
+          await exited;
         },
         interrupted: false,
+        exited,
       };
       this.running.set(currentThreadId, runningEntry);
 

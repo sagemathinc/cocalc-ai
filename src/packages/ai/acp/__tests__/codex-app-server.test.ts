@@ -476,6 +476,90 @@ describe("CodexAppServerAgent", () => {
     ).toBeUndefined();
   });
 
+  it("waits for the app-server process to exit before resolving interrupt", async () => {
+    let releaseExit: (() => void) | undefined;
+    const proc = new FakeCodexAppServerProc((fake, message) => {
+      switch (message.method) {
+        case "initialize":
+          fake.sendResponse(message.id, { ok: true });
+          break;
+        case "thread/start":
+          fake.sendResponse(message.id, {
+            thread: { id: "thr-interrupt-wait-1" },
+          });
+          break;
+        case "turn/start":
+          fake.sendResponse(message.id, {
+            turn: { id: "turn-interrupt-wait-1" },
+          });
+          setImmediate(() => {
+            fake.sendNotification("turn/started", {
+              turn: { id: "turn-interrupt-wait-1", status: "inProgress" },
+            });
+          });
+          break;
+        case "turn/interrupt":
+          fake.sendResponse(message.id, {});
+          break;
+        default:
+          if (typeof message.id === "number") {
+            fake.sendResponse(message.id, {});
+          }
+      }
+    });
+    proc.kill = ((signal: NodeJS.Signals = "SIGTERM") => {
+      if (proc.exitCode != null) return true;
+      proc.killed = true;
+      proc.exitCode = signal === "SIGKILL" ? 137 : 0;
+      releaseExit = () => {
+        setImmediate(() => proc.emit("exit", proc.exitCode, signal));
+      };
+      return true;
+    }) as any;
+
+    setCodexProjectSpawner({
+      spawnCodexExec: async () => {
+        throw new Error("unexpected codex exec spawn");
+      },
+      spawnCodexAppServer: async () => ({
+        proc: proc as any,
+        cmd: "fake-codex",
+        args: ["app-server"],
+        cwd: "/tmp/project",
+      }),
+    });
+
+    const agent = new CodexAppServerAgent();
+    const pending = agent.evaluate({
+      project_id: "00000000-0000-4000-8000-000000000000",
+      account_id: "00000000-0000-4000-8000-000000000001",
+      prompt: "interrupt me",
+      stream: async () => {},
+      config: {
+        workingDirectory: "/tmp/project",
+      } as any,
+    });
+
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+
+    let interruptResolved = false;
+    const interruptPromise = agent
+      .interrupt("thr-interrupt-wait-1")
+      .then(() => {
+        interruptResolved = true;
+      });
+
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(interruptResolved).toBe(false);
+    expect(typeof releaseExit).toBe("function");
+
+    releaseExit?.();
+    await interruptPromise;
+    await expect(pending).resolves.toBeUndefined();
+    expect(interruptResolved).toBe(true);
+  });
+
   it("forks an upstream app-server thread and returns the new thread id", async () => {
     const proc = new FakeCodexAppServerProc((fake, message) => {
       switch (message.method) {
