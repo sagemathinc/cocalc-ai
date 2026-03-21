@@ -243,7 +243,7 @@ export class Sender extends EventEmitter {
   });
 
   handleRequest = (mesg) => {
-    if (mesg.data?.socket == null || this.seq == null) {
+    if (!mesg.isRequest() || mesg.data?.socket == null || this.seq == null) {
       return;
     }
     const { emitted, missing } = mesg.data.socket;

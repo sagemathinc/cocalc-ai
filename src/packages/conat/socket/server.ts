@@ -56,6 +56,9 @@ export class ConatSocketServer extends ConatSocketBase {
           sub.close();
           return;
         }
+        if (!mesg.isRequest()) {
+          continue;
+        }
         // TODO: may return load info at some point
         mesg.respondSync({ id: this.id });
       }
@@ -207,6 +210,9 @@ export class ConatSocketServer extends ConatSocketBase {
   }) => {
     socket.lastPing = Date.now();
     if (cmd == "socket") {
+      if (!mesg.isRequest()) {
+        return;
+      }
       socket.tcp?.send.handleRequest(mesg);
     } else if (cmd == "ping") {
       if (socket.state == "ready") {
@@ -215,13 +221,17 @@ export class ConatSocketServer extends ConatSocketBase {
         // socket views itself as connected right now. If not, connected,
         // ping should timeout
         // logger.silly("responding to ping from client", socket.id);
-        mesg.respondSync(null);
+        if (mesg.isRequest()) {
+          mesg.respondSync(null);
+        }
       }
     } else if (cmd == "close") {
       const id = socket.id;
       socket.close();
       delete this.sockets[id];
-      mesg.respondSync("closed");
+      if (mesg.isRequest()) {
+        mesg.respondSync("closed");
+      }
     } else if (cmd == "connect") {
       await this.client.publish(socket.clientSubject, null, {
         headers: {
@@ -234,7 +244,9 @@ export class ConatSocketServer extends ConatSocketBase {
         noThrow: true,
       });
     } else {
-      mesg.respondSync({ error: `unknown command - '${cmd}'` });
+      if (mesg.isRequest()) {
+        mesg.respondSync({ error: `unknown command - '${cmd}'` });
+      }
     }
   };
 
