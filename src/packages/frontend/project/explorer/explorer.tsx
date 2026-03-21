@@ -80,6 +80,7 @@ import {
 } from "./navigate-browsing-path";
 import {
   fileListingFingerprint,
+  refreshListingAfterUserAction,
   useDeferredListing,
 } from "./use-deferred-listing";
 import { useExplorerSettings } from "./use-explorer-settings";
@@ -329,6 +330,18 @@ export function Explorer() {
     fingerprint: fileListingFingerprint,
   });
   const visibleListing = displayListing ?? listing;
+  const refreshSnapshotsAfterUserAction = useCallback(() => {
+    refreshListingAfterUserAction({
+      allowNextUpdate: allowNextListingUpdate,
+      refresh,
+    });
+  }, [allowNextListingUpdate, refresh]);
+  const refreshBackupsAfterUserAction = useCallback(() => {
+    refreshListingAfterUserAction({
+      allowNextUpdate: allowNextListingUpdate,
+      refresh: refreshBackups,
+    });
+  }, [allowNextListingUpdate, refreshBackups]);
   const showDirectoryTreeAvailable =
     !IS_MOBILE &&
     !inBackupsPath &&
@@ -915,8 +928,8 @@ You can either wait for this host to become available again, or move this ${proj
                   }}
                 >
                   <MiscSideButtons
-                    refreshSnapshots={refresh}
-                    refreshBackups={refreshBackups}
+                    refreshSnapshots={refreshSnapshotsAfterUserAction}
+                    refreshBackups={refreshBackupsAfterUserAction}
                   />
                 </div>
               </div>
