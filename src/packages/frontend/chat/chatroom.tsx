@@ -4,7 +4,15 @@
  */
 
 import { IS_MOBILE } from "@cocalc/frontend/feature";
-import { Alert, Button, Modal, Popconfirm, Space, Tag } from "antd";
+import {
+  Alert,
+  Button,
+  Modal,
+  Popconfirm,
+  Space,
+  Tag,
+  message as antdMessage,
+} from "antd";
 import {
   delete_local_storage,
   get_local_storage,
@@ -88,7 +96,10 @@ import {
   defaultWorkingDirectoryForChat,
   useWorkspaceChatWorkingDirectory,
 } from "@cocalc/frontend/project/workspaces/chat-defaults";
-import { resolveCodexSessionMode } from "@cocalc/util/ai/codex";
+import {
+  resolveCodexSessionMode,
+  type CodexReasoningId,
+} from "@cocalc/util/ai/codex";
 import { persistExternalSideChatSelectedThreadKey } from "./external-side-chat-selection";
 import {
   combinedComposerTargetStorageKey,
@@ -109,6 +120,9 @@ const GRID_STYLE: React.CSSProperties = {
 const DEFAULT_SIDEBAR_WIDTH = 260;
 const COMBINED_FEED_MAX_PER_THREAD = 5;
 const ACP_ACTIVE_STATES = new Set(["queue", "sending", "sent", "running"]);
+
+const FAST_CODEX_MODEL = "gpt-5.4-mini";
+const FAST_CODEX_REASONING: CodexReasoningId = "low";
 
 function normalizeThreadKey(value?: string | null): string | undefined {
   const key = `${value ?? ""}`.trim();
@@ -1241,6 +1255,70 @@ export function ChatPanel({
     }
   }
 
+  function applyComposerSlashCommand(rawInput: string): boolean {
+    const input = `${rawInput ?? ""}`.trim();
+    if (input !== "/fast") return false;
+
+    const target = resolveReplyTarget();
+    const reply_thread_id = target.thread_id;
+
+    if (reply_thread_id) {
+      const existingThreadMetadata = actions.getThreadMetadata?.(
+        reply_thread_id,
+        {
+          threadId: reply_thread_id,
+        },
+      );
+      const currentConfig =
+        existingThreadMetadata?.acp_config ??
+        actions.getCodexConfig?.(reply_thread_id);
+      if (
+        existingThreadMetadata?.agent_kind !== "acp" &&
+        currentConfig == null
+      ) {
+        return false;
+      }
+      const next: CodexThreadConfig = {
+        ...(currentConfig ?? {}),
+        model: FAST_CODEX_MODEL,
+        reasoning: FAST_CODEX_REASONING,
+      };
+      const sessionMode = resolveCodexSessionMode(next);
+      next.sessionMode = sessionMode;
+      next.allowWrite = sessionMode !== "read-only";
+      actions.setCodexConfig?.(reply_thread_id, next);
+      advanceComposerSession();
+      clearComposerNow(composerDraftKey);
+      antdMessage.success("Fast mode enabled.");
+      return true;
+    }
+
+    if (newThreadSetup.agentMode !== "codex") return false;
+
+    setAllowAutoSelectThread(false);
+    setNewThreadSetup((prev) => {
+      const nextCodexConfig: Partial<CodexThreadConfig> = {
+        ...(prev.codexConfig ?? {}),
+        model: FAST_CODEX_MODEL,
+        reasoning: FAST_CODEX_REASONING,
+      };
+      const sessionMode = resolveCodexSessionMode(
+        nextCodexConfig as CodexThreadConfig,
+      );
+      nextCodexConfig.sessionMode = sessionMode;
+      nextCodexConfig.allowWrite = sessionMode !== "read-only";
+      return {
+        ...prev,
+        model: FAST_CODEX_MODEL,
+        codexConfig: nextCodexConfig,
+      };
+    });
+    advanceComposerSession();
+    clearComposerNow(composerDraftKey);
+    antdMessage.success("Fast mode enabled.");
+    return true;
+  }
+
   function sendMessage(
     extraInput?: string,
     opts?: { immediate?: boolean },
@@ -1248,6 +1326,7 @@ export function ChatPanel({
     const rawSendingText = `${extraInput ?? inputRef.current ?? ""}`;
     const sendingText = rawSendingText.trim();
     if (sendingText.length === 0) return;
+    if (applyComposerSlashCommand(rawSendingText)) return;
     advanceComposerSession();
     const target = resolveReplyTarget();
     const reply_thread_id = target.thread_id;
