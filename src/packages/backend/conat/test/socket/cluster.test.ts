@@ -17,16 +17,16 @@ import {
 beforeAll(before);
 
 describe("most basic possible test of creating a socket in a cluster built from scratch", () => {
-  let client0, client1;
+  let client0, client1, socketServer, servers;
   it("a 2-node cluster", async () => {
-    const servers = Object.values(await createConatCluster(2));
+    servers = Object.values(await createConatCluster(2));
     client0 = servers[0].client();
     client1 = servers[1].client();
   });
 
   const SUBJECT = "xyz";
   it("create socket server in node0", async () => {
-    const socketServer = client0.socket.listen(SUBJECT);
+    socketServer = client0.socket.listen(SUBJECT);
     socketServer.on("connection", (socket) => {
       socket.write("ack");
     });
@@ -38,12 +38,19 @@ describe("most basic possible test of creating a socket in a cluster built from 
     expect(data).toBe("ack");
     conn.close();
   });
+
+  it("cleans up", async () => {
+    socketServer?.close();
+    client0?.close();
+    client1?.close();
+    await Promise.all(servers?.map((server) => server.close()) ?? []);
+  });
 });
 
 describe("create the client first, then the server and see it works", () => {
-  let client0, client1;
+  let client0, client1, socketServer, servers;
   it("a 2-node cluster", async () => {
-    const servers = Object.values(await createConatCluster(2));
+    servers = Object.values(await createConatCluster(2));
     client0 = servers[0].client();
     client1 = servers[1].client();
   });
@@ -55,7 +62,7 @@ describe("create the client first, then the server and see it works", () => {
     const dataPromise = once(conn, "data");
 
     await delay(250);
-    const socketServer = client0.socket.listen(SUBJECT);
+    socketServer = client0.socket.listen(SUBJECT);
     socketServer.on("connection", (socket) => {
       socket.write("ack");
     });
@@ -63,6 +70,13 @@ describe("create the client first, then the server and see it works", () => {
     const [data] = await dataPromise;
     expect(data).toBe("ack");
     conn.close();
+  });
+
+  it("cleans up", async () => {
+    socketServer?.close();
+    client0?.close();
+    client1?.close();
+    await Promise.all(servers?.map((server) => server.close()) ?? []);
   });
 });
 
@@ -123,6 +137,14 @@ describe("creating sockets in a cluster", () => {
     for (const conn of conns) {
       conn.close();
     }
+  });
+
+  it("cleans up", async () => {
+    socketServer?.close();
+    socketServer2?.close();
+    client0?.close();
+    client1?.close();
+    await server1?.close();
   });
 });
 

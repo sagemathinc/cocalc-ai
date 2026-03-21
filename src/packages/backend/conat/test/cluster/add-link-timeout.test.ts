@@ -6,14 +6,16 @@ beforeAll(before);
 
 describe("adding a node times out if we can't connect to it, rather than trying forever", () => {
   it("tries to add a link to a node that doesn't exist", async () => {
-    const { server } = await createClusterNode({
+    const { server, client } = await createClusterNode({
       clusterName: "cluster0",
       id: "1",
     });
     const port = await getPort();
-    await expect(server.join(`localhost:${port}`, { timeout: 500 })).rejects.toThrow(
-      "timeout",
-    );
+    await expect(
+      server.join(`localhost:${port}`, { timeout: 500 }),
+    ).rejects.toThrow("timeout");
+    client.close();
+    await server.close();
   });
 });
 

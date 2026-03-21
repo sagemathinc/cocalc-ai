@@ -9,10 +9,12 @@ const tempDirs: string[] = [];
 const servers: any[] = [];
 export async function createPathFileserver({
   service = `fs-${randomId()}`,
+  unsafeMode = false,
   allowSafeModeHardlink = true,
   allowSafeModeSymlink = true,
 }: {
   service?: string;
+  unsafeMode?: boolean;
   allowSafeModeHardlink?: boolean;
   allowSafeModeSymlink?: boolean;
 } = {}) {
@@ -22,6 +24,7 @@ export async function createPathFileserver({
     client,
     service,
     path: tempDir,
+    unsafeMode,
     allowSafeModeHardlink,
     allowSafeModeSymlink,
   });

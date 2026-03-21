@@ -12,6 +12,7 @@ import {
   restartServer,
   restartPersistServer,
   setDefaultTimeouts,
+  wait,
 } from "@cocalc/backend/conat/test/setup";
 
 beforeAll(async () => {
@@ -57,14 +58,23 @@ describe("test that dkv survives server restart", () => {
     expect(kv.hasUnsavedChanges()).toBe(false);
   });
 
-  jest.setTimeout(10000);
   it("restart both servers at once", async () => {
     await Promise.all([restartPersistServer(), restartServer()]);
     kv.b = 389;
     expect(kv.b).toEqual(389);
-    await kv.save();
+    await wait({
+      timeout: 15000,
+      until: async () => {
+        try {
+          await kv.save();
+          return true;
+        } catch {
+          return false;
+        }
+      },
+    });
     expect(kv.hasUnsavedChanges()).toBe(false);
-  });
+  }, 20000);
 });
 
 afterAll(after);

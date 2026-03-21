@@ -13,17 +13,25 @@ import {
 
 beforeAll(before);
 
+const clientsToClose: any[] = [];
+const serversToClose: any[] = [];
+const subsToClose: any[] = [];
+
 describe("the most basic pub/sub test with a 2-node cluster", () => {
   let client0, server1, client1;
   it("add another node to cluster", async () => {
     client0 = server.client();
+    clientsToClose.push(client0);
     server1 = await addNodeToDefaultCluster();
+    serversToClose.push(server1);
     client1 = server1.client();
+    clientsToClose.push(client1);
   });
 
   let sub;
   it("subscribe", async () => {
     sub = await client0.subscribe("cocalc");
+    subsToClose.push(sub);
   });
 
   // commenting this out, since it is impossible to robustly test in all cases,
@@ -62,6 +70,7 @@ describe("same basic test, but in the other direction", () => {
   let sub;
   it("subscribe", async () => {
     sub = await client1.subscribe("conat");
+    subsToClose.push(sub);
   });
 
   it("publish after waiting for interest -- this works", async () => {
@@ -85,16 +94,20 @@ describe("three nodes and two subscribers with different queue group on distinct
   let client0, client1, client2, server2;
   it("get the clients", async () => {
     client0 = server.client();
+    clientsToClose.push(client0);
     // @ts-ignore
     client1 = Object.values(server.clusterLinks[server.clusterName])[0].client;
     server2 = await addNodeToDefaultCluster();
+    serversToClose.push(server2);
     client2 = server2.client();
+    clientsToClose.push(client2);
   });
 
   let sub0, sub1;
   it("subscribes from two nodes", async () => {
     sub0 = await client0.subscribe("sage", { queue: "0" });
     sub1 = await client1.subscribe("sage", { queue: "1" });
+    subsToClose.push(sub0, sub1);
   });
 
   it("only way to be sure to get both is to just try -- different queue group so eventually there will be two receivers", async () => {
@@ -112,6 +125,7 @@ describe("three nodes and two subscribers with different queue group on distinct
   it("subscribe from two nodes but with same queue group so only one subscriber will get it", async () => {
     sub0 = await client0.subscribe("math", { queue: "0" });
     sub1 = await client1.subscribe("math", { queue: "0" });
+    subsToClose.push(sub0, sub1);
     await client2.waitForInterest("math");
     await delay(250);
     const { count } = await client2.publish("math", "hi");
@@ -119,4 +133,21 @@ describe("three nodes and two subscribers with different queue group on distinct
   });
 });
 
-afterAll(after);
+afterAll(async () => {
+  for (const sub of subsToClose.splice(0, subsToClose.length)) {
+    try {
+      sub?.close?.();
+    } catch {}
+  }
+  for (const client of clientsToClose.splice(0, clientsToClose.length)) {
+    try {
+      client?.close?.();
+    } catch {}
+  }
+  for (const server of serversToClose.splice(0, serversToClose.length)) {
+    try {
+      await server?.close?.();
+    } catch {}
+  }
+  await after();
+});

@@ -979,7 +979,7 @@ export class SyncDoc extends EventEmitter {
     } catch (err) {
       const message = `${err ?? ""}`.toLowerCase();
       if (
-        this.state === "closed" ||
+        (this.state as string) === "closed" ||
         message.includes("closed") ||
         message.includes("disconnected")
       ) {
@@ -1001,7 +1001,7 @@ export class SyncDoc extends EventEmitter {
     } catch (err) {
       const message = `${err ?? ""}`.toLowerCase();
       if (
-        this.state === "closed" ||
+        (this.state as string) === "closed" ||
         message.includes("closed") ||
         message.includes("disconnected")
       ) {

@@ -18,11 +18,21 @@ import {
   clusterService,
   trimClusterStreams,
 } from "@cocalc/conat/core/cluster";
-import { createClusterNode } from "./util";
+import { createClusterNode as createClusterNode0 } from "./util";
 import type { Client } from "@cocalc/conat/core/client";
 import { sysApi } from "@cocalc/conat/core/sys";
 
 beforeAll(before);
+
+const fileNodes: Array<{ server: any; client: any }> = [];
+
+async function createClusterNode(
+  opts: Parameters<typeof createClusterNode0>[0],
+): Promise<Awaited<ReturnType<typeof createClusterNode0>>> {
+  const node = await createClusterNode0(opts);
+  fileNodes.push(node);
+  return node;
+}
 
 jest.setTimeout(20000);
 
@@ -170,6 +180,16 @@ describe("create a cluster enabled socketio server and test that the streams upd
       link2.interest.serialize().patterns,
     );
     link2.close();
+  });
+
+  afterAll(async () => {
+    link?.close?.();
+    streams?.interest?.close?.();
+    streams?.subscriptions?.close?.();
+    streams?.services?.close?.();
+    streams?.sockets?.close?.();
+    client?.close?.();
+    await server?.close?.();
   });
 });
 
@@ -356,6 +376,14 @@ describe(`a cluster with ${clusterSize} nodes`, () => {
       expect(r).toBe(i + 1);
     }
   });
+
+  afterAll(async () => {
+    sub?.close?.();
+    for (const client of clients) {
+      client?.close?.();
+    }
+    await Promise.all(servers.map((server) => server?.close?.()));
+  });
 });
 
 describe("test trimming the interest stream", () => {
@@ -408,6 +436,12 @@ describe("test trimming the interest stream", () => {
         throw Error("adding 389 should have been removed");
       }
     }
+  });
+
+  afterAll(async () => {
+    sub?.close?.();
+    client?.close?.();
+    await server?.close?.();
   });
 });
 
@@ -485,6 +519,13 @@ describe("join two servers in a cluster using the sys api instead of directly ca
       },
     });
   });
+
+  afterAll(async () => {
+    sub?.close?.();
+    client1?.close?.();
+    client2?.close?.();
+    await Promise.all([server1?.close?.(), server2?.close?.()]);
+  });
 });
 
 describe("test automatic node discovery", () => {
@@ -558,22 +599,30 @@ describe("test automatic node discovery", () => {
       expect(nodes[i].server.clusterAddresses("discovery").length).toBe(4);
     }
   });
+
+  afterAll(async () => {
+    for (const { client } of nodes) {
+      client?.close?.();
+    }
+    await Promise.all(nodes.map(({ server }) => server?.close?.()));
+  });
 });
 
 describe("test the clusterIpAddress option", () => {
   it("create a server without explicit clusterIpAddress", async () => {
-    const { server } = await createClusterNode({
+    const { server, client } = await createClusterNode({
       clusterName: "cluster0",
       id: "0",
     });
 
     expect(server.options.clusterIpAddress).toBe(undefined);
     expect(server.address()).toBe(`http://localhost:${server.options.port}`);
-    server.close();
+    client.close();
+    await server.close();
   });
 
   it("create a server with explicit clusterIpAddress", async () => {
-    const { server } = await createClusterNode({
+    const { server, client } = await createClusterNode({
       clusterName: "cluster0",
       id: "0",
       clusterIpAddress: "127.0.0.1",
@@ -581,8 +630,15 @@ describe("test the clusterIpAddress option", () => {
 
     expect(server.options.clusterIpAddress).toBe("127.0.0.1");
     expect(server.address()).toBe(`http://127.0.0.1:${server.options.port}`);
-    server.close();
+    client.close();
+    await server.close();
   });
 });
 
-afterAll(after);
+afterAll(async () => {
+  for (const { client } of fileNodes) {
+    client?.close?.();
+  }
+  await Promise.all(fileNodes.map(({ server }) => server?.close?.()));
+  await after();
+});

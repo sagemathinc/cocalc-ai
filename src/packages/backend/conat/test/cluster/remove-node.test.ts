@@ -66,6 +66,13 @@ describe("setup basic pub/sub test with a 2-node cluster, then remove a node and
   it("checks addresses before deleting server1", () => {
     expect(server.clusterAddresses()).toEqual([server.address()]);
   });
+
+  afterAll(async () => {
+    sub?.close?.();
+    client0?.close?.();
+    client1?.close?.();
+    await server1?.close?.();
+  });
 });
 
 afterAll(after);

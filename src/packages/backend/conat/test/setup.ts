@@ -3,11 +3,12 @@ import { type Client } from "@cocalc/conat/core/client";
 import {
   init as createConatServer,
   type Options,
-  type ConatServer,
+  ConatServer,
 } from "@cocalc/conat/core/server";
 import getLogger from "@cocalc/backend/logger";
 import { setConatClient } from "@cocalc/conat/client";
 import { closeConatClientForTests } from "@cocalc/conat/client";
+import { Client as ConatClientClass } from "@cocalc/conat/core/client";
 import { server as createPersistServer } from "@cocalc/backend/conat/persist";
 import { syncFiles } from "@cocalc/conat/persist/context";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -319,6 +320,9 @@ export async function after() {
       } catch {}
     }
     try {
+      ConatClientClass.closeAllForTests?.();
+    } catch {}
+    try {
       closeConatClientForTests();
     } catch {}
     while (true) {
@@ -333,6 +337,10 @@ export async function after() {
     try {
       await server?.close();
     } catch {}
+    try {
+      await ConatServer.closeAllForTests?.();
+    } catch {}
+    defaultCluster.splice(0, defaultCluster.length);
     persistServer = null;
     server = null;
     client = null;

@@ -119,6 +119,13 @@ describe("test automatic node discovery (and forgetting)", () => {
     await nodes[0].server.scan();
     expect(numNodes()).toBe(n - 1);
   });
+
+  it("cleans up", async () => {
+    for (const { client } of nodes) {
+      client?.close?.();
+    }
+    await Promise.all(nodes.map(({ server }) => server?.close?.()));
+  });
 });
 
 afterAll(after);

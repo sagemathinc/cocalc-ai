@@ -5,6 +5,8 @@ pnpm test ./limits.test.ts
 */
 
 import { createServer } from "@cocalc/backend/conat/test/setup";
+import { Client } from "@cocalc/conat/core/client";
+import { ConatServer } from "@cocalc/conat/core/server";
 
 describe("test the per user subscription limit", () => {
   let server;
@@ -33,5 +35,7 @@ describe("test the per user subscription limit", () => {
   it("cleans up", async () => {
     client.close();
     await server.close();
+    Client.closeAllForTests?.();
+    await ConatServer.closeAllForTests?.();
   });
 });

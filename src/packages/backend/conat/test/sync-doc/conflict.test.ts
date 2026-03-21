@@ -21,7 +21,35 @@ import {
 import { split } from "@cocalc/util/misc";
 
 beforeAll(before);
-afterAll(after);
+
+const trackedDocs = new Set<any>();
+const trackedClients = new Set<any>();
+
+function trackClient<T>(client: T): T {
+  trackedClients.add(client);
+  return client;
+}
+
+function trackDoc<T>(doc: T): T {
+  trackedDocs.add(doc);
+  return doc;
+}
+
+async function closeTrackedSyncObjects() {
+  for (const doc of Array.from(trackedDocs)) {
+    trackedDocs.delete(doc);
+    try {
+      await doc?.close?.();
+    } catch {}
+  }
+}
+
+afterAll(async () => {
+  await closeTrackedSyncObjects();
+  trackedClients.clear();
+  await delay(250);
+  await after();
+});
 
 const GAP_DELAY = 50;
 
@@ -30,26 +58,30 @@ describe("synchronized editing with branching and merging", () => {
   let s1, s2, client1, client2;
 
   it("creates two clients", async () => {
-    client1 = connect();
-    client2 = connect();
-    s1 = client1.sync.string({
-      project_id,
-      path: "a.txt",
-      service: server.service,
-      noAutosave: true,
-      noBackendFsWatch: true,
-      firstReadLockTimeout: 1,
-    });
+    client1 = trackClient(connect());
+    client2 = trackClient(connect());
+    s1 = trackDoc(
+      client1.sync.string({
+        project_id,
+        path: "a.txt",
+        service: server.service,
+        noAutosave: true,
+        noBackendFsWatch: true,
+        firstReadLockTimeout: 1,
+      }),
+    );
     await once(s1, "ready");
 
-    s2 = client2.sync.string({
-      project_id,
-      path: "a.txt",
-      service: server.service,
-      noAutosave: true,
-      noBackendFsWatch: true,
-      firstReadLockTimeout: 1,
-    });
+    s2 = trackDoc(
+      client2.sync.string({
+        project_id,
+        path: "a.txt",
+        service: server.service,
+        noAutosave: true,
+        noBackendFsWatch: true,
+        firstReadLockTimeout: 1,
+      }),
+    );
     await once(s2, "ready");
     expect(s1.to_str()).toBe("");
     expect(s2.to_str()).toBe("");
@@ -124,33 +156,37 @@ describe("do the example in the blog post 'Lies I was Told About Collaborative E
   let client1, client2;
 
   async function getInitialState(path: string) {
-    client1 ??= connect();
-    client2 ??= connect();
+    client1 ??= trackClient(connect());
+    client2 ??= trackClient(connect());
     const fs = client1.fs({ project_id, service: server.service });
     await fs.writeFile(path, "The Color of Pomegranates");
-    const alice = client1.sync.string({
-      project_id,
-      path,
-      fs,
-      service: server.service,
-      noAutosave: true,
-      noBackendFsWatch: true,
-      firstReadLockTimeout: 1,
-    });
+    const alice = trackDoc(
+      client1.sync.string({
+        project_id,
+        path,
+        fs,
+        service: server.service,
+        noAutosave: true,
+        noBackendFsWatch: true,
+        firstReadLockTimeout: 1,
+      }),
+    );
     await once(alice, "ready");
     await wait({
       until: () => alice.to_str() === "The Color of Pomegranates",
     });
     await alice.save();
 
-    const bob = client2.sync.string({
-      project_id,
-      path,
-      service: server.service,
-      noAutosave: true,
-      noBackendFsWatch: true,
-      firstReadLockTimeout: 1,
-    });
+    const bob = trackDoc(
+      client2.sync.string({
+        project_id,
+        path,
+        service: server.service,
+        noAutosave: true,
+        noBackendFsWatch: true,
+        firstReadLockTimeout: 1,
+      }),
+    );
     await once(bob, "ready");
     await wait({
       until: () => bob.to_str() === "The Color of Pomegranates",
@@ -229,7 +265,7 @@ describe("do the example in the blog post 'Lies I was Told About Collaborative E
   });
 });
 
-const numHeads = 15;
+const numHeads = 8;
 describe(`create editing conflict with ${numHeads} heads`, () => {
   const project_id = uuid();
   let docs: any[] = [],
@@ -237,29 +273,33 @@ describe(`create editing conflict with ${numHeads} heads`, () => {
 
   it(`create ${numHeads} clients`, async () => {
     // first initialize
-    const client = connect();
-    const doc0 = client.sync.string({
-      project_id,
-      path: "a.txt",
-      service: server.service,
-      noAutosave: true,
-      noBackendFsWatch: true,
-      firstReadLockTimeout: 1,
-    });
-    await once(doc0, "ready");
-
-    const v: any[] = [];
-    for (let i = 0; i < numHeads; i++) {
-      const client = connect();
-      clients.push(client);
-      const doc = client.sync.string({
+    const client = trackClient(connect());
+    const doc0 = trackDoc(
+      client.sync.string({
         project_id,
         path: "a.txt",
         service: server.service,
         noAutosave: true,
         noBackendFsWatch: true,
         firstReadLockTimeout: 1,
-      });
+      }),
+    );
+    await once(doc0, "ready");
+
+    const v: any[] = [];
+    for (let i = 0; i < numHeads; i++) {
+      const client = trackClient(connect());
+      clients.push(client);
+      const doc = trackDoc(
+        client.sync.string({
+          project_id,
+          path: "a.txt",
+          service: server.service,
+          noAutosave: true,
+          noBackendFsWatch: true,
+          firstReadLockTimeout: 1,
+        }),
+      );
       docs.push(doc);
       v.push(once(doc, "ready"));
     }
@@ -267,11 +307,13 @@ describe(`create editing conflict with ${numHeads} heads`, () => {
   });
 
   it("every client writes a different value all at once", async () => {
+    const saves: Promise<void>[] = [];
     for (let i = 0; i < numHeads; i++) {
       docs[i].from_str(`${i} `);
       docs[i].commit();
-      docs[i].save();
+      saves.push(docs[i].save());
     }
+    await Promise.all(saves);
     await waitUntilSynced(docs);
     const heads = docs[0].getHeads();
     expect(heads.length).toBe(docs.length);

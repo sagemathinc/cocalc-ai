@@ -15,11 +15,33 @@ import {
 } from "../setup";
 
 beforeAll(before);
-
 jest.setTimeout(15000);
 
+let dstream, dstream2, dkv, dkv2, server2, client2;
+
+afterAll(async () => {
+  try {
+    dstream?.close?.();
+  } catch {}
+  try {
+    dstream2?.close?.();
+  } catch {}
+  try {
+    dkv?.close?.();
+  } catch {}
+  try {
+    dkv2?.close?.();
+  } catch {}
+  try {
+    client2?.close?.();
+  } catch {}
+  try {
+    await server2?.close?.();
+  } catch {}
+  await after();
+});
+
 describe("using various sync data structures with a cluster", () => {
-  let dstream;
   it("creates a dstream", async () => {
     dstream = await client.sync.dstream({ name: "foo" });
     expect(dstream.getAll()).toEqual([]);
@@ -28,7 +50,6 @@ describe("using various sync data structures with a cluster", () => {
     await dstream.save();
   });
 
-  let server2, client2;
   it("creates another node", async () => {
     server2 = await addNodeToDefaultCluster();
     expect(server2.options.port).not.toBe(server.options.port);
@@ -44,7 +65,6 @@ describe("using various sync data structures with a cluster", () => {
     await waitForConsistentState([server, server2], 15000);
   });
 
-  let dstream2;
   it("second client connected to the same dstream, and observe it works", async () => {
     dstream2 = await client2.sync.dstream({ name: "foo" });
     expect(dstream === dstream2).toBe(false);
@@ -87,7 +107,6 @@ describe("using various sync data structures with a cluster", () => {
     await client2.sync.dkv({ name: "unrelated" });
   });
 
-  let dkv, dkv2;
   it("test using a dkv (key value store)", async () => {
     dkv2 = await client2.sync.dkv({ name: "cc" });
     dkv = await client.sync.dkv({ name: "cc" });
@@ -97,5 +116,3 @@ describe("using various sync data structures with a cluster", () => {
     expect(dkv.opts.client.id).not.toEqual(dkv2.opts.client.id);
   });
 });
-
-afterAll(after);

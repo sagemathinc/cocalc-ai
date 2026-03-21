@@ -46,5 +46,5 @@ describe("just like above, create a dstream, write data, close it, then open it 
 
 afterAll(async () => {
   await delay(100);
-  after();
+  await after();
 });
