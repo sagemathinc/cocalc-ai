@@ -76,6 +76,8 @@ type OptionalBindMount = {
   readOnly?: boolean;
 };
 
+const BUILTIN_LAUNCHPAD_SKILLS = ["cocalc"] as const;
+
 const API_KEY_PROVIDER_ID = "cocalc-openai-api-key";
 const API_KEY_PROVIDER_CONFIG = `model_providers.${API_KEY_PROVIDER_ID}={name="OpenAI",base_url="https://api.openai.com/v1",env_key="OPENAI_API_KEY",wire_api="responses",requires_openai_auth=false}`;
 const API_KEY_PROVIDER_SELECT = `model_provider="${API_KEY_PROVIDER_ID}"`;
@@ -167,6 +169,50 @@ async function getOptionalCertMounts(): Promise<{
     // no host CA bundle found -- continue without extra mounts
   }
   return { mounts: [], env: {} };
+}
+
+export async function getBuiltinLaunchpadSkillMounts(
+  projectHome: string,
+): Promise<OptionalBindMount[]> {
+  const codexHome = `${process.env.COCALC_CODEX_HOME ?? ""}`.trim();
+  const home = `${process.env.HOME ?? ""}`.trim();
+  const hostSkillsRoot = codexHome
+    ? join(codexHome, "skills")
+    : home
+      ? join(home, ".codex", "skills")
+      : "";
+  if (!hostSkillsRoot) return [];
+
+  const projectSkillsRoot = join(projectHome, ".codex", "skills");
+  try {
+    await fs.mkdir(projectSkillsRoot, { recursive: true, mode: 0o700 });
+  } catch {
+    // Best effort: project home mount may already provide this path.
+  }
+
+  const mounts: OptionalBindMount[] = [];
+  for (const skillName of BUILTIN_LAUNCHPAD_SKILLS) {
+    const source = join(hostSkillsRoot, skillName);
+    const projectSkill = join(projectSkillsRoot, skillName);
+    try {
+      const sourceStat = await fs.stat(source);
+      if (!sourceStat.isDirectory()) continue;
+    } catch {
+      continue;
+    }
+    try {
+      const projectStat = await fs.stat(projectSkill);
+      if (projectStat.isDirectory()) continue;
+    } catch {
+      // Missing project-local skill is the normal case.
+    }
+    mounts.push({
+      source,
+      target: `/root/.codex/skills/${skillName}`,
+      readOnly: true,
+    });
+  }
+  return mounts;
 }
 
 function truncateForLog(value: string | undefined, max = 500): string {
@@ -775,6 +821,18 @@ async function ensureContainer({
       }
     } catch {
       // optional
+    }
+  }
+  if (authRuntime.source !== "shared-home") {
+    const builtinSkillMounts = await getBuiltinLaunchpadSkillMounts(home);
+    for (const mount of builtinSkillMounts) {
+      args.push(
+        mountArg({
+          source: mount.source,
+          target: mount.target,
+          readOnly: mount.readOnly,
+        }),
+      );
     }
   }
   for (const mount of optionalCerts.mounts) {
