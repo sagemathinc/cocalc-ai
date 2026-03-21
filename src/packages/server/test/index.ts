@@ -15,6 +15,7 @@ import {
   client,
   wait,
 } from "@cocalc/backend/conat/test/setup";
+import { delay } from "awaiting";
 
 export { client, connect, getPool, initEphemeralDatabase, wait };
 
@@ -40,11 +41,13 @@ export async function before({
 
 export async function after() {
   const { noConat, noDatabase } = opts;
-  if (!noDatabase && process.env.COCALC_DB !== "pglite") {
+  if (!noDatabase) {
     await getPool().end();
   }
 
   if (!noConat) {
     await conatTestClose();
   }
+
+  await delay(50);
 }

@@ -8,6 +8,7 @@ let isCollaboratorMock: jest.Mock;
 let resolveMembershipForAccountMock: jest.Mock;
 let computePlacementPermissionMock: jest.Mock;
 let getUserHostTierMock: jest.Mock;
+let conatWithProjectRoutingMock: jest.Mock;
 
 const ACCOUNT_ID = "6e22d250-68d4-46fb-9851-80fbeaa2d6b6";
 const SOURCE_PROJECT_ID = "9a79d9ef-d6a5-4ae1-a215-f594e864637c";
@@ -32,6 +33,12 @@ jest.mock("@cocalc/server/conat/file-server-client", () => ({
   __esModule: true,
   getProjectFileServerClient: (...args: any[]) =>
     getProjectFileServerClientMock(...args),
+}));
+
+jest.mock("@cocalc/server/conat/route-client", () => ({
+  __esModule: true,
+  conatWithProjectRouting: (...args: any[]) =>
+    conatWithProjectRoutingMock(...args),
 }));
 
 jest.mock("@cocalc/conat/project-host/api", () => ({
@@ -68,6 +75,7 @@ describe("projects.createProject clone routing", () => {
     }));
     computePlacementPermissionMock = jest.fn(() => ({ can_place: true }));
     getUserHostTierMock = jest.fn(() => 0);
+    conatWithProjectRoutingMock = jest.fn(() => ({ id: "mock-conat-client" }));
     queryMock = jest.fn(async (sql: string, params: any[]) => {
       if (
         sql.includes(
