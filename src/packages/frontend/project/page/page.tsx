@@ -34,6 +34,7 @@ import {
   useProjectContext,
   useProjectContextProvider,
 } from "../context";
+import FileActionModal from "../file-action-modal";
 import { ProjectWarningBanner } from "../project-banner";
 import { DeletedProjectWarning } from "../warnings/deleted";
 import { DiskSpaceWarning } from "../warnings/disk-space";
@@ -638,6 +639,7 @@ You can wait for this host to become available again, or move this project to an
           <AgentDock project_id={project_id} is_active={is_active} />
         </div>
         {render_project_modal()}
+        <FileActionModal />
       </div>
     );
   }
