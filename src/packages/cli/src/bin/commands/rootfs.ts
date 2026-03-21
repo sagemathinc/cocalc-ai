@@ -100,6 +100,89 @@ function serializeRootfsImageEntry(entry: RootfsImageEntry) {
   };
 }
 
+function wrapField({
+  label,
+  value,
+  indent = "   ",
+  width = 96,
+}: {
+  label: string;
+  value?: unknown;
+  indent?: string;
+  width?: number;
+}): string[] {
+  const text = `${value ?? ""}`.trim();
+  if (!text) return [];
+  const prefix = `${indent}${label}: `;
+  const maxWidth = Math.max(prefix.length + 10, width);
+  const words = text.split(/\s+/).filter(Boolean);
+  if (!words.length) return [];
+  const lines: string[] = [];
+  let current = prefix;
+  for (const word of words) {
+    const candidate =
+      current === prefix ? `${prefix}${word}` : `${current} ${word}`;
+    if (candidate.length <= maxWidth || current === prefix) {
+      current = candidate;
+      continue;
+    }
+    lines.push(current);
+    current = `${" ".repeat(prefix.length)}${word}`;
+  }
+  lines.push(current);
+  return lines;
+}
+
+function formatRootfsEntriesHuman(
+  entries: Array<ReturnType<typeof serializeRootfsImageEntry>>,
+): string {
+  if (!entries.length) {
+    return "(no rootfs images)";
+  }
+  return entries
+    .map((entry, index) => {
+      const header = `${index + 1}. ${entry.label}`;
+      const lines = [
+        header,
+        `   id: ${entry.image_id}`,
+        `   image: ${entry.image}`,
+        `   section: ${entry.section ?? "-"}`,
+        `   visibility: ${entry.visibility ?? "-"}`,
+        `   owner: ${entry.owner_name ?? entry.owner_id ?? "-"}`,
+        `   flags: official=${entry.official} prepull=${entry.prepull} hidden=${entry.hidden} gpu=${entry.gpu} can_manage=${entry.can_manage}`,
+      ];
+      if (entry.arch != null) {
+        const arch = Array.isArray(entry.arch)
+          ? entry.arch.join(", ")
+          : `${entry.arch}`;
+        lines.push(`   arch: ${arch}`);
+      }
+      if (entry.digest) {
+        lines.push(`   digest: ${entry.digest}`);
+      }
+      if (entry.size_gb != null) {
+        lines.push(`   size_gb: ${entry.size_gb}`);
+      }
+      if (entry.warning && entry.warning !== "none") {
+        lines.push(`   warning: ${entry.warning}`);
+      }
+      lines.push(
+        ...wrapField({
+          label: "description",
+          value: entry.description,
+        }),
+      );
+      lines.push(
+        ...wrapField({
+          label: "tags",
+          value: Array.isArray(entry.tags) ? entry.tags.join(", ") : "",
+        }),
+      );
+      return lines.join("\n");
+    })
+    .join("\n\n");
+}
+
 export function registerRootfsCommand(
   program: Command,
   deps: RootfsCommandDeps,
@@ -152,9 +235,13 @@ export function registerRootfsCommand(
               `${entry.label ?? ""}`.trim().toLowerCase().includes(labelFilter),
             );
           }
-          return images
+          const rows = images
             .slice(0, parseLimit(opts.limit))
             .map(serializeRootfsImageEntry);
+          if (ctx.globals.json || ctx.globals.output === "json") {
+            return rows;
+          }
+          return formatRootfsEntriesHuman(rows);
         });
       },
     );
