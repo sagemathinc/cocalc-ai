@@ -1074,4 +1074,105 @@ describe("submitNavigatorPromptToCurrentThread", () => {
       mockProcessLLM.mock.invocationCallOrder[0],
     );
   });
+
+  it("reuses an existing UUID workspace thread when submitting in place", async () => {
+    const workspaceChatPath =
+      "/home/wstein/.local/share/cocalc/workspaces/acct/ws-submit-reuse.chat";
+    mockEnsureWorkspaceChatForPath.mockResolvedValue({
+      chat_path: workspaceChatPath,
+      assigned: false,
+      workspace: {
+        workspace_id: "ws-submit-reuse",
+        root_path: "/home/wstein/project/submit-reuse",
+        theme: {
+          title: "submit-reuse",
+          color: null,
+          accent_color: null,
+          icon: null,
+          image_blob: null,
+        },
+      },
+    });
+    mockListSessions.mockResolvedValue([
+      {
+        session_id: "sess-reuse",
+        project_id: "00000000-1000-4000-8000-000000000000",
+        account_id: "00000000-1000-4000-8000-000000000001",
+        chat_path: workspaceChatPath,
+        thread_key: "thread-existing-uuid",
+        title: "Fix notebook error",
+        created_at: "2026-03-20T00:00:00.000Z",
+        updated_at: "2026-03-20T00:00:01.000Z",
+        status: "active",
+        entrypoint: "file",
+        model: "gpt-5.4-mini",
+      },
+    ]);
+    const save = jest.fn().mockResolvedValue(undefined);
+    mockProcessLLM.mockResolvedValue(undefined);
+    const timeStamp = "2026-03-20T06:11:00.000Z";
+    const message = {
+      history: [
+        {
+          author_id: "00000000-1000-4000-8000-000000000001",
+          content: "Investigate and fix this Jupyter notebook error.",
+        },
+      ],
+      message_id: "msg-submit-reuse",
+      thread_id: "thread-existing-uuid",
+    };
+    const sendChat = jest.fn(() => timeStamp);
+    const createEmptyThread = jest.fn();
+    const get_one = jest.fn((where: any) =>
+      where?.event === "chat" && where?.date === timeStamp
+        ? message
+        : undefined,
+    );
+    const actions = {
+      syncdb: { get_state: () => "ready", save, get_one },
+      messageCache: {
+        getThreadIndex: () =>
+          new Map([
+            [
+              "thread-existing-uuid",
+              {
+                key: "thread-existing-uuid",
+                newestTime: Date.now(),
+                rootMessage: { thread_id: "thread-existing-uuid" },
+              },
+            ],
+          ]),
+      },
+      sendChat,
+      createEmptyThread,
+      getMessageByDate: jest.fn(() => undefined),
+      store: {
+        get: () => undefined,
+      },
+      getThreadMetadata: jest.fn(() => ({ name: "Fix notebook error" })),
+    };
+    mockGetChatActions.mockReturnValue(actions);
+    mockInitChat.mockReturnValue(actions);
+
+    const ok = await submitNavigatorPromptInWorkspaceChat({
+      project_id: "00000000-1000-4000-8000-000000000000",
+      path: "/home/wstein/project/submit-reuse/a.ipynb",
+      prompt: "Detailed hidden notebook repair prompt",
+      visiblePrompt: "Investigate and fix this Jupyter notebook error.",
+      title: "Fix notebook error",
+      tag: "intent:notebook-error",
+      forceCodex: true,
+      codexConfig: { model: "gpt-5.4-mini" },
+      openFloating: true,
+    });
+
+    expect(ok).toBe(true);
+    expect(createEmptyThread).not.toHaveBeenCalled();
+    expect(sendChat).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reply_thread_id: "thread-existing-uuid",
+        skipModelDispatch: true,
+      }),
+    );
+  });
 });

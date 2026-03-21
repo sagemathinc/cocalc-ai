@@ -28,6 +28,7 @@ const NAVIGATOR_INTENT_QUEUE_KEY = "cocalc:navigator:intent-queue";
 export const NAVIGATOR_SUBMIT_PROMPT_EVENT = "cocalc:navigator:submit-prompt";
 const NAVIGATOR_SYNC_READY_TIMEOUT_MS = 12_000;
 const NAVIGATOR_THREAD_IDENTITY_TIMEOUT_MS = 15_000;
+const NAVIGATOR_WORKSPACE_THREAD_IDENTITY_TIMEOUT_MS = 1_500;
 const NAVIGATOR_WORKSPACE_RESOLVE_TIMEOUT_MS = 5_000;
 const NAVIGATOR_WORKSPACE_RESOLVE_POLL_MS = 150;
 let navigatorIntentQueueMemory: NavigatorSubmitPromptDetail[] = [];
@@ -468,8 +469,17 @@ async function writeNavigatorPromptInWorkspaceChat(
     });
     let replyThreadKey = resolvedThreadKey;
     let replyThreadId = resolveThreadIdFromIndex(actions, replyThreadKey);
-    if (replyThreadKey && !replyThreadId) {
-      replyThreadKey = "";
+    if (replyThreadKey) {
+      const rootReady = await waitForThreadReady({
+        actions,
+        threadKey: replyThreadKey,
+        timeoutMs: NAVIGATOR_WORKSPACE_THREAD_IDENTITY_TIMEOUT_MS,
+      });
+      replyThreadId = resolveThreadIdFromIndex(actions, replyThreadKey);
+      if (!rootReady || !replyThreadId) {
+        replyThreadKey = "";
+        replyThreadId = undefined;
+      }
     }
     const existingThreadTitle =
       replyThreadKey && replyThreadId

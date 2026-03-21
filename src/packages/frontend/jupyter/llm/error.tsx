@@ -2,11 +2,10 @@
 Use ChatGPT to explain an error message and help the user fix it.
 */
 
-import { Alert, Button, Space, Typography } from "antd";
-import { CSSProperties, useMemo, useState } from "react";
+import { Alert, Button, Space, Tooltip } from "antd";
+import { useMemo, useState } from "react";
 
 import { useFrameContext } from "@cocalc/frontend/frame-editors/frame-tree/frame-context";
-import HelpMeFix from "@cocalc/frontend/frame-editors/llm/help-me-fix";
 import { submitNavigatorPromptInWorkspaceChat } from "@cocalc/frontend/project/new/navigator-intents";
 
 const DEFAULT_FIX_WITH_AGENT_MODEL = "gpt-5.4-mini";
@@ -14,7 +13,6 @@ const NOTEBOOK_FIX_VISIBLE_PROMPT =
   "Investigate and fix this Jupyter notebook error.";
 
 interface Props {
-  style?: CSSProperties;
   input: string;
   traceback: string;
 }
@@ -48,7 +46,7 @@ function buildNotebookErrorPrompt(opts: {
   return parts.join("\n\n");
 }
 
-export default function LLMError({ style, traceback, input }: Props) {
+export default function LLMError({ traceback, input }: Props) {
   const { actions: frameActions, project_id, path } = useFrameContext();
   const [routing, setRouting] = useState(false);
   const [routingError, setRoutingError] = useState("");
@@ -87,27 +85,16 @@ export default function LLMError({ style, traceback, input }: Props) {
   return (
     <div>
       <Space wrap size={[8, 8]} style={{ marginBottom: 8 }}>
-        <Button
-          size="small"
-          loading={routing}
-          onClick={() => void routeToNavigator()}
-        >
-          Fix with Agent
-        </Button>
-        <Typography.Text type="secondary">
-          Opens the workspace chat, mirrors it in the floating agent, and
-          submits this notebook error to Codex.
-        </Typography.Text>
+        <Tooltip title="Opens the workspace chat, mirrors it in the floating agent, and submits this notebook error to Codex.">
+          <Button
+            size="small"
+            loading={routing}
+            onClick={() => void routeToNavigator()}
+          >
+            Fix with Agent
+          </Button>
+        </Tooltip>
       </Space>
-      <HelpMeFix
-        style={style}
-        task="ran a cell in a Jupyter notebook"
-        error={traceback}
-        input={input}
-        tag="jupyter-notebook-cell-eval"
-        extraFileInfo={frameActions.languageModelExtraFileInfo()}
-        language={frameActions.languageModelGetLanguage()}
-      />
       {routingError ? (
         <Alert
           style={{ marginTop: 8, maxWidth: 720 }}
