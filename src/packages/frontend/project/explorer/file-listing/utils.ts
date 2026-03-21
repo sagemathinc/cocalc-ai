@@ -8,6 +8,7 @@ import type {
   ProjectActions,
 } from "@cocalc/frontend/project_actions";
 import { FILE_ACTIONS } from "@cocalc/frontend/project_actions";
+import { triggerFileAction } from "@cocalc/frontend/project/file-action-trigger";
 
 export const TERM_MODE_CHARS = ["/", "!"] as const;
 export const TERM_MODE_CHAR = "/";
@@ -150,11 +151,12 @@ export function generate_click_for(
   return (e) => {
     e.preventDefault();
     e.stopPropagation();
-    if (!FILE_ACTIONS[file_action_name].allows_multiple_files) {
-      project_actions.set_all_files_unchecked();
-    }
-    project_actions.set_file_checked(full_path, true);
-    project_actions.set_file_action(file_action_name);
+    triggerFileAction({
+      actions: project_actions,
+      action: file_action_name,
+      path: full_path,
+      multiple: !!FILE_ACTIONS[file_action_name].allows_multiple_files,
+    });
   };
 }
 

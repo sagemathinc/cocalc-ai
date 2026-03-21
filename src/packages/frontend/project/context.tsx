@@ -7,6 +7,7 @@ import {
   Context,
   createContext,
   useContext,
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -67,6 +68,10 @@ export interface ProjectContextState {
   onCoCalcDocker: boolean;
   project_id: string;
   project?: Project;
+  notifyUserFilesystemChange: () => void;
+  registerUserFilesystemChangeHandler: (
+    handler: (() => void) | null | undefined,
+  ) => () => void;
   setContentSize: (size: { width: number; height: number }) => void;
   status: ProjectStatus;
   workspaces: ProjectWorkspaceState;
@@ -100,6 +105,8 @@ export const emptyProjectContext = {
   onCoCalcDocker: false,
   project: undefined,
   project_id: "",
+  notifyUserFilesystemChange: () => {},
+  registerUserFilesystemChangeHandler: () => () => {},
   setContentSize: () => {},
   status: INIT_PROJECT_STATE,
   workspaces: {
@@ -201,6 +208,7 @@ export function useProjectContextProvider({
   ]);
 
   const [contentSize, setContentSize] = useState({ width: 0, height: 0 });
+  const filesystemChangeHandlersRef = useRef<Set<() => void>>(new Set());
   const workspaces = useProjectWorkspaces(account_id, project_id);
   const previousWorkspaceSelectionRef = useRef<string>("all");
   const previousActivePathRef = useRef<string>("");
@@ -391,6 +399,23 @@ export function useProjectContextProvider({
       open_files_order?.toJS?.() ?? open_files_order ?? [];
   }, [active_project_tab, open_files_order]);
 
+  const registerUserFilesystemChangeHandler = useCallback(
+    (handler: (() => void) | null | undefined) => {
+      if (!handler) return () => {};
+      filesystemChangeHandlersRef.current.add(handler);
+      return () => {
+        filesystemChangeHandlersRef.current.delete(handler);
+      };
+    },
+    [],
+  );
+
+  const notifyUserFilesystemChange = useCallback(() => {
+    for (const handler of filesystemChangeHandlersRef.current) {
+      handler();
+    }
+  }, []);
+
   return {
     actions,
     active_project_tab,
@@ -408,6 +433,8 @@ export function useProjectContextProvider({
     onCoCalcDocker,
     project_id,
     project,
+    notifyUserFilesystemChange,
+    registerUserFilesystemChangeHandler,
     setContentSize,
     status,
     workspaces,

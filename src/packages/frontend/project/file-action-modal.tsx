@@ -15,7 +15,7 @@ import { ActionBox } from "./explorer/action-box";
 
 export default function FileActionModal() {
   const intl = useIntl();
-  const { project_id } = useProjectContext();
+  const { notifyUserFilesystemChange, project_id } = useProjectContext();
   const actions = useActions({ project_id });
   const file_action = useTypedRedux({ project_id }, "file_action");
   const checked_files = useTypedRedux({ project_id }, "checked_files");
@@ -58,6 +58,7 @@ export default function FileActionModal() {
         current_path={current_path}
         project_id={project_id}
         actions={actions}
+        onUserFilesystemChange={notifyUserFilesystemChange}
       />
     </Modal>
   );

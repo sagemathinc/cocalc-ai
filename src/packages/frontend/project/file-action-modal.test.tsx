@@ -3,6 +3,7 @@ import { IntlProvider } from "react-intl";
 import { Set as ImmutableSet } from "immutable";
 
 const mockSetFileAction = jest.fn();
+const mockNotifyUserFilesystemChange = jest.fn();
 
 const state = {
   file_action: "delete" as const,
@@ -34,13 +35,16 @@ jest.mock("@cocalc/frontend/project_actions", () => ({
 }));
 
 jest.mock("./context", () => ({
-  useProjectContext: () => ({ project_id: "project-1" }),
+  useProjectContext: () => ({
+    project_id: "project-1",
+    notifyUserFilesystemChange: mockNotifyUserFilesystemChange,
+  }),
 }));
 
 jest.mock("./explorer/action-box", () => ({
-  ActionBox: ({ file_action, current_path }) => (
+  ActionBox: ({ file_action, current_path, onUserFilesystemChange }) => (
     <div data-testid="action-box">
-      {file_action}:{current_path}
+      {file_action}:{current_path}:{typeof onUserFilesystemChange}
     </div>
   ),
 }));
@@ -61,7 +65,7 @@ describe("FileActionModal", () => {
 
     expect(screen.getByRole("dialog")).toBeTruthy();
     expect(screen.getByTestId("action-box").textContent).toBe(
-      "delete:/home/user",
+      "delete:/home/user:function",
     );
   });
 
