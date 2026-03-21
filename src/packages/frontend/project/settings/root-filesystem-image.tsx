@@ -280,6 +280,7 @@ export default function RootFilesystemImage() {
         .map((tag) => tag.trim())
         .filter(Boolean);
       if (publishMode === "copy" && publishCopyMode === "project") {
+        setPublishOpen(false);
         const op = await publishProjectRootfsImage({
           project_id: project.get("project_id"),
           label: publishDraft.label,
@@ -290,7 +291,6 @@ export default function RootFilesystemImage() {
           prepull: isAdmin ? publishDraft.prepull : undefined,
           hidden: isAdmin ? publishDraft.hidden : undefined,
         });
-        setPublishOpen(false);
         actions?.trackRootfsPublishOp?.(op);
       } else {
         const entry = await saveRootfsCatalogEntry({
