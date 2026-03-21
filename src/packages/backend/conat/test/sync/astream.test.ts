@@ -215,9 +215,9 @@ describe("test setting with key, ttl and msgID", () => {
 
   it("publish a value with ttl and sees it vanishes as expected", async () => {
     await s.config({ allow_msg_ttl: true });
-    const { seq } = await s.publish("foo", { key: "i-have-ttl", ttl: 25 });
+    const { seq } = await s.publish("foo", { key: "i-have-ttl", ttl: 250 });
     expect(await s.get("i-have-ttl")).toBe("foo");
-    await delay(50);
+    await delay(300);
     // call config to force enforcing limits
     await s.config();
     expect(await s.get("i-have-ttl")).toBe(undefined);
