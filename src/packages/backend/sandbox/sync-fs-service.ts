@@ -278,7 +278,7 @@ export function cleanupSyncFsServicesForTests(): void {
   }
   for (const service of Array.from(activeServices)) {
     try {
-      service.cleanupForTests();
+      service.close();
     } catch {
       // best-effort test cleanup only
     }
@@ -296,6 +296,7 @@ export function cleanupSyncFsServicesForTests(): void {
  */
 export class SyncFsService extends EventEmitter {
   private store: SyncFsWatchStore;
+  private closed = false;
   private watchers: Map<string, WatchEntry> = new Map();
   private watcherInFlight: Map<string, Promise<WatchEntry>> = new Map();
   private initInFlight: Map<string, Promise<void>> = new Map();
@@ -625,6 +626,7 @@ export class SyncFsService extends EventEmitter {
   }
 
   close(): void {
+    this.closed = true;
     activeServices.delete(this);
     if (this.pruneTimer != null) {
       clearInterval(this.pruneTimer);
@@ -655,6 +657,9 @@ export class SyncFsService extends EventEmitter {
   }
 
   cleanupForTests(): void {
+    if (this.closed) {
+      return;
+    }
     for (const path of [...this.pathStates.keys()]) {
       this.releasePath(path, "test-cleanup");
     }
@@ -1177,6 +1182,9 @@ export class SyncFsService extends EventEmitter {
     type: "change" | "delete",
     change: ExternalChange,
   ): Promise<void> {
+    if (this.closed) {
+      return;
+    }
     if (!this.canInitMeta(meta)) return;
     const syncPath = meta.syncPath;
     if (process.env.SYNC_FS_DEBUG) {
@@ -1244,6 +1252,9 @@ export class SyncFsService extends EventEmitter {
         obj,
         headers != null ? { headers } : undefined,
       );
+      if (this.closed) {
+        return;
+      }
       this.store.setFsHead({ string_id, time, version });
       this.updateStreamInfo(string_id, obj, seq);
       if (process.env.SYNC_FS_DEBUG) {

@@ -15,14 +15,59 @@ export { client0 as client };
 
 export let server, fs;
 
+const CLEANUP_DISCONNECT_RE =
+  /socket has been disconnected|socket is disconnected|once: .* not emitted before "closed"|connection closed/i;
+
+function isExpectedCleanupDisconnect(err: unknown): boolean {
+  return CLEANUP_DISCONNECT_RE.test(`${err ?? ""}`);
+}
+
+async function withSuppressedCleanupDisconnects(fn: () => Promise<void>) {
+  const onUnhandledRejection = (reason) => {
+    if (isExpectedCleanupDisconnect(reason)) {
+      return;
+    }
+    throw reason;
+  };
+  const onUncaughtException = (err) => {
+    if (isExpectedCleanupDisconnect(err)) {
+      return;
+    }
+    throw err;
+  };
+  process.prependListener("unhandledRejection", onUnhandledRejection);
+  process.prependListener("uncaughtException", onUncaughtException);
+  try {
+    try {
+      await fn();
+    } catch (err) {
+      if (!isExpectedCleanupDisconnect(err)) {
+        throw err;
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  } finally {
+    process.removeListener("unhandledRejection", onUnhandledRejection);
+    process.removeListener("uncaughtException", onUncaughtException);
+  }
+}
+
 export async function before() {
   await before0();
-  server = await createPathFileserver();
+  server = await createPathFileserver({ unsafeMode: true });
 }
 
 export async function after() {
-  await cleanupFileservers();
-  await after0();
+  await withSuppressedCleanupDisconnects(async () => {
+    try {
+      await require("@cocalc/sync/editor/generic/sync-doc").SyncDoc.closeAllForTests?.();
+    } catch {}
+    try {
+      require("@cocalc/backend/sandbox/sync-fs-service").cleanupSyncFsServicesForTests?.();
+    } catch {}
+    await cleanupFileservers();
+    await after0();
+  });
 }
 
 // wait until the state of several syncdocs all have same heads- they may have multiple

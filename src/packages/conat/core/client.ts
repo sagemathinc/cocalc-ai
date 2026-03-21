@@ -965,6 +965,17 @@ export class Client extends EventEmitter {
     delete this.permissionError;
 
     try {
+      const manager: any = this.conn.io;
+      if (manager != null) {
+        manager.opts = { ...manager.opts, reconnection: false };
+        manager.skipReconnect = true;
+        manager._reconnecting = false;
+      }
+    } catch {}
+    try {
+      this.conn.disconnect();
+    } catch {}
+    try {
       this.conn.close();
     } catch {}
     Client.testInstances.delete(this);

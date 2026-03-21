@@ -244,5 +244,5 @@ async function serialize(path: string): Promise<string> {
 }
 
 afterAll(async () => {
-  after();
+  await after();
 });

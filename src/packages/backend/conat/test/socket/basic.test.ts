@@ -19,6 +19,13 @@ beforeAll(async () => {
   setDefaultTimeouts({ request: 750, publish: 750 });
 });
 
+async function closeAndSettle(...items: any[]) {
+  for (const item of items) {
+    item?.close?.();
+  }
+  await delay(50);
+}
+
 describe("create a server and client, then send a message and get a response", () => {
   let client,
     server,
@@ -65,11 +72,8 @@ describe("create a server and client, then send a message and get a response", (
     expect(Date.now() - t).toBeLessThan(5000);
   });
 
-  it("cleans up", () => {
-    client.close();
-    server.close();
-    cn1.close();
-    cn2.close();
+  it("cleans up", async () => {
+    await closeAndSettle(client, server, cn1, cn2);
   });
 });
 
@@ -112,11 +116,8 @@ describe("create a client first, then the server, and see that write still works
     expect(response.headers).toBe("x");
   });
 
-  it("cleans up", () => {
-    client.close();
-    server.close();
-    cn1.close();
-    cn2.close();
+  it("cleans up", async () => {
+    await closeAndSettle(client, server, cn1, cn2);
   });
 });
 
@@ -188,11 +189,8 @@ describe("create a client first and write more messages than the queue size resu
     }
   });
 
-  it("cleans up", () => {
-    client.close();
-    server.close();
-    cn1.close();
-    cn2.close();
+  it("cleans up", async () => {
+    await closeAndSettle(client, server, cn1, cn2);
   });
 });
 
@@ -252,13 +250,8 @@ describe("test having two clients and see that communication is independent and 
     c2.close();
   });
 
-  it("cleans up", () => {
-    client1.close();
-    client2.close();
-    server.close();
-    cn1.close();
-    cn2.close();
-    cn3.close();
+  it("cleans up", async () => {
+    await closeAndSettle(client1, client2, server, cn1, cn2, cn3);
   });
 });
 
@@ -396,15 +389,8 @@ describe("create two socket servers with the same subject to test that sockets a
     await once(client, "closed");
   });
 
-  it("cleans up", () => {
-    s1.close();
-    s2.close();
-    s3.close();
-    c1.close();
-    c2.close();
-    c3.close();
-    c3b.close();
-    client.close();
+  it("cleans up", async () => {
+    await closeAndSettle(s1, s2, s3, c1, c2, c3, c3b, client);
   });
 });
 
@@ -436,11 +422,8 @@ describe("create a server where the subject has a wildcard, so clients can e.g.,
     expect(data2).toBe("account-389");
   });
 
-  it("cleans up", () => {
-    client.close();
-    server.close();
-    cn1.close();
-    cn2.close();
+  it("cleans up", async () => {
+    await closeAndSettle(client, server, cn1, cn2);
   });
 });
 
@@ -530,10 +513,8 @@ describe("creating multiple sockets from the one client to one server works (the
     socket2.close();
   });
 
-  it("cleans up", () => {
-    server.close();
-    cn1.close();
-    cn2.close();
+  it("cleans up", async () => {
+    await closeAndSettle(server, cn1, cn2);
   });
 });
 
@@ -595,13 +576,8 @@ describe("test request/respond from client to server and from server to client",
     expect(S.has(x.data)).toBe(true);
   });
 
-  it("cleans up", () => {
-    socket1.close();
-    socket2.close();
-    server.close();
-    cn1.close();
-    cn2.close();
-    cn3.close();
+  it("cleans up", async () => {
+    await closeAndSettle(socket1, socket2, server, cn1, cn2, cn3);
   });
 });
 
@@ -625,6 +601,7 @@ describe("test request/respond with headers", () => {
       });
     });
 
+    const connected = once(server, "connection");
     cn1 = connect();
     socket1 = cn1.socket.connect(subject);
     socket1.on("request", (mesg) => {
@@ -632,6 +609,7 @@ describe("test request/respond with headers", () => {
         headers: { ...mesg.headers, socket1: true },
       });
     });
+    await Promise.all([once(socket1, "ready"), connected]);
   });
 
   it("headers work when client calls server", async () => {
@@ -650,11 +628,8 @@ describe("test request/respond with headers", () => {
     );
   });
 
-  it("cleans up", () => {
-    socket1.close();
-    server.close();
-    cn1.close();
-    cn2.close();
+  it("cleans up", async () => {
+    await closeAndSettle(socket1, server, cn1, cn2);
   });
 });
 
@@ -678,8 +653,10 @@ describe("test requestMany/respond", () => {
       });
     });
 
+    const connected = once(server, "connection");
     cn1 = connect();
     socket1 = cn1.socket.connect(subject);
+    await Promise.all([once(socket1, "ready"), connected]);
   });
 
   it("sends a requestMany request and get 3 responses", async () => {
@@ -690,11 +667,8 @@ describe("test requestMany/respond", () => {
     sub.close();
   });
 
-  it("cleans up", () => {
-    socket1.close();
-    server.close();
-    cn1.close();
-    cn2.close();
+  it("cleans up", async () => {
+    await closeAndSettle(socket1, server, cn1, cn2);
   });
 });
 

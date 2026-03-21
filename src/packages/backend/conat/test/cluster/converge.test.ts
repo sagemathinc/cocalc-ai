@@ -54,6 +54,13 @@ describe(`explicitly build a cluster with ${clusterSize} nodes and ensure state 
     await delay(1000);
     await waitForConsistentState(servers, TIMEOUT);
   });
+
+  it("cleans up", async () => {
+    for (const client of clients) {
+      client?.close?.();
+    }
+    await Promise.all(servers.map((server) => server?.close?.()));
+  });
 });
 
 afterAll(after);

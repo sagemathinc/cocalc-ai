@@ -187,6 +187,19 @@ describe("test using multiple persist servers in a cluster", () => {
       expect(stream1.length).toBe(2);
     }
   });
+
+  afterAll(async () => {
+    for (const stream of openStreams0) {
+      stream?.close?.();
+    }
+    for (const stream of openStreams1) {
+      stream?.close?.();
+    }
+    persistServer1?.close?.();
+    client0?.close?.();
+    client1?.close?.();
+    await server1?.close?.();
+  });
 });
 
 afterAll(after);

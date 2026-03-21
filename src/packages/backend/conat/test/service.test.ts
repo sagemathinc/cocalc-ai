@@ -11,7 +11,11 @@ import {
   createServiceClient,
   createServiceHandler,
 } from "@cocalc/conat/service/typed";
-import { before, after } from "@cocalc/backend/conat/test/setup";
+import {
+  before,
+  after,
+  client as testClient,
+} from "@cocalc/backend/conat/test/setup";
 import { wait } from "@cocalc/backend/conat/test/util";
 import { is_date as isDate } from "@cocalc/util/misc";
 import { delay } from "awaiting";
@@ -25,19 +29,30 @@ describe("create a service and test it out", () => {
   let s;
   it("creates a service", async () => {
     s = createConatService({
+      client: testClient,
       service: "echo",
       handler: (mesg) => mesg.repeat(2),
     });
     await once(s, "running");
-    expect(await callConatService({ service: "echo", mesg: "hello" })).toBe(
-      "hellohello",
-    );
+    expect(
+      await callConatService({
+        client: testClient,
+        service: "echo",
+        mesg: "hello",
+      }),
+    ).toBe("hellohello");
   });
 
   it("closes the services and observes it doesn't work anymore", async () => {
     s.close();
+    await delay(50);
     await expect(async () => {
-      await callConatService({ service: "echo", mesg: "hi", timeout: 250 });
+      await callConatService({
+        client: testClient,
+        service: "echo",
+        mesg: "hi",
+        timeout: 250,
+      });
     }).rejects.toThrow("time");
   });
 });
@@ -46,12 +61,17 @@ describe("verify that you can create a service AFTER calling it and things to st
   let result = "";
   it("call a service that does not exist yet", () => {
     (async () => {
-      result = await callConatService({ service: "echo3", mesg: "hello " });
+      result = await callConatService({
+        client: testClient,
+        service: "echo3",
+        mesg: "hello ",
+      });
     })();
   });
 
   it("create the echo3 service and observe that it answer the request we made before the service was created", async () => {
     const s = createConatService({
+      client: testClient,
       service: "echo3",
       handler: (mesg) => mesg.repeat(3),
     });
@@ -59,6 +79,7 @@ describe("verify that you can create a service AFTER calling it and things to st
     expect(result).toBe("hello hello hello ");
 
     s.close();
+    await delay(50);
   });
 });
 
@@ -78,6 +99,7 @@ describe("create and test a more complicated service", () => {
       service: name,
       subject: name,
       description: "My Service",
+      client: testClient,
       impl: {
         // put any functions here that take/return MsgPack'able values
         add: async (a, b) => a + b,
@@ -92,6 +114,7 @@ describe("create and test a more complicated service", () => {
     });
 
     client = createServiceClient<Api>({
+      client: testClient,
       service: name,
       subject: name,
     });
@@ -115,8 +138,9 @@ describe("create and test a more complicated service", () => {
     expect(await client.len("x".repeat(n))).toBe(n);
   });
 
-  it("cleans up", () => {
+  it("cleans up", async () => {
     service.close();
+    await delay(50);
   });
 });
 
@@ -236,22 +260,34 @@ describe("create a service with specified client, stop and start the server, and
     ).toBe("hellohello");
   });
 
-  it("cleans up", () => {
+  it("cleans up", async () => {
+    client.conn.io.opts.reconnection = false;
+    client.conn.io.skipReconnect = true;
+    client2.conn.io.opts.reconnection = false;
+    client2.conn.io.skipReconnect = true;
     service.close();
     client.close();
     client2.close();
-    server.close();
+    await delay(100);
+    return server.close();
   });
 });
 
 describe("create a slow service and check that the timeout parameter works", () => {
   let s;
+  let activeHandlers = 0;
   it("creates a slow service", async () => {
     s = createConatService({
+      client: testClient,
       service: "slow",
       handler: async (d) => {
-        await delay(d);
-        return { delay: d };
+        activeHandlers += 1;
+        try {
+          await delay(d);
+          return { delay: d };
+        } finally {
+          activeHandlers -= 1;
+        }
       },
     });
     await once(s, "running");
@@ -272,14 +308,16 @@ describe("create a slow service and check that the timeout parameter works", () 
     await expect(async () => {
       await callConatService({
         service: s.name,
-        mesg: 5000,
+        mesg: 250,
         timeout: 75,
       });
     }).rejects.toThrow("imeout");
   });
 
   it("clean up", async () => {
+    await wait({ until: () => activeHandlers === 0, timeout: 1000 });
     s.close();
+    await delay(50);
   });
 });
 

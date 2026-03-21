@@ -3,10 +3,12 @@ import { type Client } from "@cocalc/conat/core/client";
 import {
   init as createConatServer,
   type Options,
-  type ConatServer,
+  ConatServer,
 } from "@cocalc/conat/core/server";
 import getLogger from "@cocalc/backend/logger";
 import { setConatClient } from "@cocalc/conat/client";
+import { closeConatClientForTests } from "@cocalc/conat/client";
+import { Client as ConatClientClass } from "@cocalc/conat/core/client";
 import { server as createPersistServer } from "@cocalc/backend/conat/persist";
 import { syncFiles } from "@cocalc/conat/persist/context";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -51,6 +53,8 @@ export async function initConatServer(
 export let tempDir;
 export let server: any = null;
 export let persistServer: any = null;
+let cleanedUp = false;
+let cleaningUp: Promise<void> | null = null;
 
 let nodeNumber = 0;
 function getNodeId() {
@@ -137,6 +141,8 @@ export let client;
 export async function before(
   opts: { archive?: string; backup?: string; archiveInterval?: number } = {},
 ) {
+  cleanedUp = false;
+  cleaningUp = null;
   // syncFiles and tempDir define where the persist server persists data.
   tempDir = await mkdtemp(join(tmpdir(), "conat-test"));
   syncFiles.local = join(tempDir, "local");
@@ -297,34 +303,64 @@ export async function waitForConsistentState(
 }
 
 export async function after() {
-  try {
-    await persistServer?.close();
-  } catch {}
-  while (true) {
-    try {
-      await rm(tempDir, { force: true, recursive: true });
-      break;
-    } catch (err) {
-      console.log(err);
-      await delay(1000);
-    }
+  if (cleanedUp) {
+    return;
   }
-  try {
-    await server?.close();
-  } catch {}
-  for (const cn of clients) {
+  if (cleaningUp != null) {
+    await cleaningUp;
+    return;
+  }
+  cleaningUp = (async () => {
     try {
-      await cn.close();
+      await persistServer?.close();
     } catch {}
+    for (const cn of clients.splice(0, clients.length)) {
+      try {
+        await cn.close();
+      } catch {}
+    }
+    try {
+      ConatClientClass.closeAllForTests?.();
+    } catch {}
+    try {
+      closeConatClientForTests();
+    } catch {}
+    while (true) {
+      try {
+        await rm(tempDir, { force: true, recursive: true });
+        break;
+      } catch (err) {
+        console.log(err);
+        await delay(1000);
+      }
+    }
+    try {
+      await server?.close();
+    } catch {}
+    try {
+      await ConatServer.closeAllForTests?.();
+    } catch {}
+    defaultCluster.splice(0, defaultCluster.length);
+    persistServer = null;
+    server = null;
+    client = null;
+    cleanedUp = true;
+  })();
+  try {
+    await cleaningUp;
+  } finally {
+    cleaningUp = null;
   }
 }
 
-process.once("exit", () => {
-  after();
-});
-
-["SIGINT", "SIGTERM", "SIGQUIT"].forEach((sig) => {
-  process.once(sig, () => {
-    process.exit();
+if (!process.env.COCALC_TEST_MODE) {
+  process.once("exit", () => {
+    void after().catch(() => {});
   });
-});
+
+  ["SIGINT", "SIGTERM", "SIGQUIT"].forEach((sig) => {
+    process.once(sig, () => {
+      process.exit();
+    });
+  });
+}
