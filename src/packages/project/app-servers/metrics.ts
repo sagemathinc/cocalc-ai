@@ -366,3 +366,13 @@ export function deleteAppMetrics(app_id: string): void {
   activeWebsocketCounts.delete(app_id);
   scheduleFlush();
 }
+
+export function resetAppMetricsForTests(): void {
+  if (flushTimer != null) {
+    clearTimeout(flushTimer);
+    flushTimer = undefined;
+  }
+  loaded = false;
+  state = { ...DEFAULT_STATE, apps: {} };
+  activeWebsocketCounts.clear();
+}

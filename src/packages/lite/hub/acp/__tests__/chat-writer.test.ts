@@ -11,6 +11,7 @@ import type { Client as ConatClient } from "@cocalc/conat/core/client";
 import { CHAT_THREAD_META_ROW_DATE, threadConfigSenderId } from "@cocalc/chat";
 import {
   ChatStreamWriter,
+  disposeAllChatWritersForTests,
   recoverCurrentWorkerStuckAcpTurns,
   recoverOrphanedAcpTurns,
   repairInterruptedAcpTurn,
@@ -173,6 +174,10 @@ beforeEach(() => {
   (chatServer.acquireChatSyncDB as any)?.mockReset?.();
   (chatServer.releaseChatSyncDB as any)?.mockReset?.();
   (chatServer.releaseChatSyncDB as any)?.mockResolvedValue?.(undefined);
+});
+
+afterEach(async () => {
+  await disposeAllChatWritersForTests();
 });
 
 async function flush(writer: ChatStreamWriter) {
