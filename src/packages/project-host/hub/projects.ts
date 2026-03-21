@@ -208,11 +208,10 @@ function fileServer(project_id: string) {
   return fileServerClient({ project_id });
 }
 
-// **TODO: This normalizeImage is VERY VERY TEMPORARY!!!**
-// The only reason for this is the frontend by default uses the massive cocalc rootfs's
-// by default, which of course aren't the name of Docker images. For now, we just
-// revert them back to the the default docker image.
-// We will definitely change this for the actual release.
+// Preserve explicit rootfs/docker image names, while keeping older compute-image
+// labels working for legacy rows and callers. Values such as "ubuntu2404" are
+// not valid container image references for the project runner, so map them back
+// to the default project image until those old paths disappear entirely.
 function normalizeImage(image?: string): string {
   const trimmed = image?.trim();
   if (!trimmed) return DEFAULT_PROJECT_IMAGE;
