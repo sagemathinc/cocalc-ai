@@ -59,5 +59,6 @@ describe("create ephemeral syncstring and test managing undo/redo using it", () 
     }
     // if should really just be ~100ms.
     expect(Date.now() - start).toBeLessThan(LENGTH * 10 + 500);
+    await syncstring.close();
   });
 });
