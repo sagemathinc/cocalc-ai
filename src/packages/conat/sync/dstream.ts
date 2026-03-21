@@ -250,32 +250,53 @@ export class DStream<T = any> extends EventEmitter {
   };
 
   getMetadata = (): JSONValue | undefined => {
+    if (this.isClosed()) {
+      return undefined;
+    }
     return this.stream.getMetadata();
   };
 
   setMetadata = async (
     metadata?: JSONValue,
   ): Promise<JSONValue | undefined> => {
+    if (this.isClosed()) {
+      return undefined;
+    }
     return await this.stream.setMetadata(metadata);
   };
 
   patchMetadata = async (delta: JSONValue): Promise<JSONValue | undefined> => {
+    if (this.isClosed()) {
+      return undefined;
+    }
     return await this.stream.patchMetadata(delta);
   };
 
   getCheckpoints = (): StreamCheckpoints => {
+    if (this.isClosed()) {
+      return {};
+    }
     return this.stream.getCheckpoints();
   };
 
   getCheckpoint = (name: string) => {
+    if (this.isClosed()) {
+      return;
+    }
     return this.stream.getCheckpoint(name);
   };
 
   setCheckpoint = async (checkpoint: CheckpointUpdate) => {
+    if (this.isClosed()) {
+      return;
+    }
     return await this.stream.setCheckpoint(checkpoint);
   };
 
   deleteCheckpoint = async (name: string): Promise<void> => {
+    if (this.isClosed()) {
+      return;
+    }
     await this.stream.deleteCheckpoint(name);
   };
 

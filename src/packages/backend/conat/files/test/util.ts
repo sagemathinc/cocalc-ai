@@ -31,10 +31,12 @@ export async function createPathFileserver({
 
 // clean up any
 export async function cleanupFileservers() {
-  for (const server of servers) {
-    server.close();
+  for (const server of servers.splice(0, servers.length)) {
+    try {
+      await server.close();
+    } catch {}
   }
-  for (const tempDir of tempDirs) {
+  for (const tempDir of tempDirs.splice(0, tempDirs.length)) {
     try {
       await rm(tempDir, { force: true, recursive: true });
     } catch {}

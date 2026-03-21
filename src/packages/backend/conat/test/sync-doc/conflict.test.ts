@@ -14,6 +14,7 @@ import {
   connect,
   server,
   once,
+  wait,
   delay,
   waitUntilSynced,
 } from "./setup";
@@ -36,6 +37,8 @@ describe("synchronized editing with branching and merging", () => {
       path: "a.txt",
       service: server.service,
       noAutosave: true,
+      noBackendFsWatch: true,
+      firstReadLockTimeout: 1,
     });
     await once(s1, "ready");
 
@@ -44,6 +47,8 @@ describe("synchronized editing with branching and merging", () => {
       path: "a.txt",
       service: server.service,
       noAutosave: true,
+      noBackendFsWatch: true,
+      firstReadLockTimeout: 1,
     });
     await once(s2, "ready");
     expect(s1.to_str()).toBe("");
@@ -121,16 +126,21 @@ describe("do the example in the blog post 'Lies I was Told About Collaborative E
   async function getInitialState(path: string) {
     client1 ??= connect();
     client2 ??= connect();
-    client1
-      .fs({ project_id, service: server.service })
-      .writeFile(path, "The Color of Pomegranates");
+    const fs = client1.fs({ project_id, service: server.service });
+    await fs.writeFile(path, "The Color of Pomegranates");
     const alice = client1.sync.string({
       project_id,
       path,
+      fs,
       service: server.service,
       noAutosave: true,
+      noBackendFsWatch: true,
+      firstReadLockTimeout: 1,
     });
     await once(alice, "ready");
+    await wait({
+      until: () => alice.to_str() === "The Color of Pomegranates",
+    });
     await alice.save();
 
     const bob = client2.sync.string({
@@ -138,8 +148,13 @@ describe("do the example in the blog post 'Lies I was Told About Collaborative E
       path,
       service: server.service,
       noAutosave: true,
+      noBackendFsWatch: true,
+      firstReadLockTimeout: 1,
     });
     await once(bob, "ready");
+    await wait({
+      until: () => bob.to_str() === "The Color of Pomegranates",
+    });
     await bob.save();
     await waitUntilSynced([bob, alice]);
 
@@ -228,6 +243,8 @@ describe(`create editing conflict with ${numHeads} heads`, () => {
       path: "a.txt",
       service: server.service,
       noAutosave: true,
+      noBackendFsWatch: true,
+      firstReadLockTimeout: 1,
     });
     await once(doc0, "ready");
 
@@ -240,6 +257,8 @@ describe(`create editing conflict with ${numHeads} heads`, () => {
         path: "a.txt",
         service: server.service,
         noAutosave: true,
+        noBackendFsWatch: true,
+        firstReadLockTimeout: 1,
       });
       docs.push(doc);
       v.push(once(doc, "ready"));
@@ -256,9 +275,13 @@ describe(`create editing conflict with ${numHeads} heads`, () => {
     await waitUntilSynced(docs);
     const heads = docs[0].getHeads();
     expect(heads.length).toBe(docs.length);
-  });
+  }, 15000);
 
   it("merge -- order is random, but value is consistent", async () => {
+    await wait({
+      until: () => docs.every((doc) => doc.to_str() === docs[0].to_str()),
+      timeout: 15000,
+    });
     const value = docs[0].to_str();
     let v = new Set<string>();
     for (let i = 0; i < numHeads; i++) {
@@ -277,11 +300,13 @@ describe(`create editing conflict with ${numHeads} heads`, () => {
     docs[0].from_str(r);
     docs[0].commit();
     await docs[0].save();
-
-    await waitUntilSynced(docs);
+    await wait({
+      until: () => docs.every((doc) => doc.to_str() === r),
+      timeout: 30000,
+    });
     for (let i = 0; i < numHeads; i++) {
       expect(docs[i].to_str()).toEqual(r);
     }
     // docs[0].show_history();
-  });
+  }, 30000);
 });

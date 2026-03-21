@@ -21,6 +21,9 @@ export async function before() {
 }
 
 export async function after() {
+  try {
+    await require("@cocalc/sync/editor/generic/sync-doc").SyncDoc.closeAllForTests?.();
+  } catch {}
   await cleanupFileservers();
   await after0();
 }

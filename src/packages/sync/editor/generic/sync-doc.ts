@@ -973,16 +973,42 @@ export class SyncDoc extends EventEmitter {
       return;
     }
     const dstream = this.dstream();
-    const rawMetadata = dstream.getMetadata();
+    let rawMetadata;
+    try {
+      rawMetadata = dstream.getMetadata();
+    } catch (err) {
+      const message = `${err ?? ""}`.toLowerCase();
+      if (
+        this.state === "closed" ||
+        message.includes("closed") ||
+        message.includes("disconnected")
+      ) {
+        return;
+      }
+      throw err;
+    }
     const metadata =
       rawMetadata != null &&
       typeof rawMetadata === "object" &&
       !Array.isArray(rawMetadata)
         ? (rawMetadata as PatchDocMetadataV1)
         : undefined;
-    const checkpoint = dstream.getCheckpoint?.(LATEST_SNAPSHOT_CHECKPOINT) as
-      | { seq: number; data?: { patchId?: string } }
-      | undefined;
+    let checkpoint;
+    try {
+      checkpoint = dstream.getCheckpoint?.(LATEST_SNAPSHOT_CHECKPOINT) as
+        | { seq: number; data?: { patchId?: string } }
+        | undefined;
+    } catch (err) {
+      const message = `${err ?? ""}`.toLowerCase();
+      if (
+        this.state === "closed" ||
+        message.includes("closed") ||
+        message.includes("disconnected")
+      ) {
+        return;
+      }
+      throw err;
+    }
     const previousSettings = this.settings;
     const previousHistoryEpoch = this.history_epoch;
     const previousHistoryPurgedAt =
@@ -3334,15 +3360,27 @@ export class SyncDoc extends EventEmitter {
 
     if (save && this.patches_table != null) {
       const dstream = this.dstream();
-      await dstream.setMetadata(this.patchDocMetadataFromState());
-      if (this.last_snapshot != null && this.last_seq != null) {
-        await dstream.setCheckpoint({
-          name: LATEST_SNAPSHOT_CHECKPOINT,
-          seq: this.last_seq,
-          data: { patchId: this.last_snapshot },
-        });
-      } else {
-        await dstream.deleteCheckpoint(LATEST_SNAPSHOT_CHECKPOINT);
+      try {
+        await dstream.setMetadata(this.patchDocMetadataFromState());
+        if (this.last_snapshot != null && this.last_seq != null) {
+          await dstream.setCheckpoint({
+            name: LATEST_SNAPSHOT_CHECKPOINT,
+            seq: this.last_seq,
+            data: { patchId: this.last_snapshot },
+          });
+        } else {
+          await dstream.deleteCheckpoint(LATEST_SNAPSHOT_CHECKPOINT);
+        }
+      } catch (err) {
+        const message = `${err ?? ""}`.toLowerCase();
+        if (
+          this.state === "closed" ||
+          message.includes("closed") ||
+          message.includes("disconnected")
+        ) {
+          return;
+        }
+        throw err;
       }
     }
   };
