@@ -116,6 +116,19 @@ function normalizeThreadKey(value?: string | null): string | undefined {
   return key;
 }
 
+export function getLatestCodexActivityDate(
+  messages: readonly ChatMessage[],
+): string | undefined {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
+    if (!field<string>(msg, "acp_account_id")) continue;
+    const d = dateValue(msg);
+    if (!d) continue;
+    return `${d.valueOf()}`;
+  }
+  return undefined;
+}
+
 export function enabledLoopConfig(
   config?: AcpLoopConfig,
 ): AcpLoopConfig | undefined {
@@ -1551,6 +1564,10 @@ export function ChatPanel({
     selectedThreadLoopState.status !== "stopped"
       ? selectedThreadLoopState
       : undefined;
+  const latestSelectedThreadCodexActivityDate = useMemo(
+    () => getLatestCodexActivityDate(selectedThreadMessages),
+    [selectedThreadMessages],
+  );
 
   const loopBanner = activeLoopState ? (
     <Alert
@@ -1596,6 +1613,19 @@ export function ChatPanel({
           ) : null}
           {activeLoopState.stop_reason ? (
             <span>{activeLoopState.stop_reason}</span>
+          ) : null}
+          {latestSelectedThreadCodexActivityDate ? (
+            <Button
+              size="small"
+              type="link"
+              style={{ padding: 0, height: "auto" }}
+              onClick={() => {
+                setActivityJumpDate(latestSelectedThreadCodexActivityDate);
+                setActivityJumpToken((n) => n + 1);
+              }}
+            >
+              View activity log
+            </Button>
           ) : null}
         </Space>
       }
