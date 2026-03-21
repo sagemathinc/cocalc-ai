@@ -207,7 +207,7 @@ export function HostParallelOpsSummary(props: Props) {
         <Alert
           type="warning"
           showIcon
-          message="Unable to load parallel ops status"
+          title="Unable to load parallel ops status"
           description={error}
           style={{ marginBottom: 12 }}
         />

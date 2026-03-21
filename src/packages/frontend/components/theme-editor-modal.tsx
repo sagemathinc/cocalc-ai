@@ -85,7 +85,7 @@ export function ThemeEditorModal({
       width={680}
     >
       <Space direction="vertical" style={{ width: "100%" }} size={12}>
-        {error ? <Alert type="error" showIcon message={error} /> : null}
+        {error ? <Alert type="error" showIcon title={error} /> : null}
         {extraBeforeTheme}
         <div
           style={{

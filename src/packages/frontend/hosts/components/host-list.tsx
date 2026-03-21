@@ -1238,7 +1238,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
         <Alert
           type="error"
           showIcon
-          message="Unable to load project hosts"
+          title="Unable to load project hosts"
           description={hostsError}
           action={
             <Button size="small" onClick={onRefresh}>

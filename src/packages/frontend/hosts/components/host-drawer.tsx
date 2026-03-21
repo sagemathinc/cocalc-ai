@@ -643,7 +643,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                 <Alert
                   type="warning"
                   showIcon
-                  message="Configured source lookup failed"
+                  title="Configured source lookup failed"
                   description={softwareVersions.configuredError}
                 />
               )}
@@ -651,7 +651,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                 <Alert
                   type="warning"
                   showIcon
-                  message="Hub source lookup failed"
+                  title="Hub source lookup failed"
                   description={softwareVersions.hubError}
                 />
               )}

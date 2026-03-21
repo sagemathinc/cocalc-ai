@@ -177,7 +177,7 @@ export function buildOfflineMoveConfirmationDialog(
         <Alert
           showIcon
           type={alertType}
-          message={sourceHeadline}
+          title={sourceHeadline}
           description={riskMessage}
         />
         <div>

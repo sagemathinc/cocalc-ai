@@ -150,7 +150,7 @@ export default function RenameFile({
           <Alert
             style={{ marginTop: "15px" }}
             type="warning"
-            message="Changing the filename extension may cause the file to stop opening properly."
+            title="Changing the filename extension may cause the file to stop opening properly."
             showIcon
           />
         )}
@@ -159,7 +159,7 @@ export default function RenameFile({
           style={{ marginTop: "15px" }}
           showIcon
           type="error"
-          message={`The maximum length of a filename is ${MAX_FILENAME_LENGTH}.`}
+          title={`The maximum length of a filename is ${MAX_FILENAME_LENGTH}.`}
         />
       )}
       <ShowError setError={setError} error={error} />

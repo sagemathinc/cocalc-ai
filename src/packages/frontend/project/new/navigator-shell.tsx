@@ -1199,7 +1199,7 @@ export function NavigatorShell({
       {error ? (
         <Alert
           type="error"
-          message={error}
+          title={error}
           showIcon
           style={{ marginBottom: 8 }}
         />

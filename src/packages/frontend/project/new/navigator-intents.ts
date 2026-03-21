@@ -2,7 +2,6 @@ import type { AgentSessionRecord } from "@cocalc/frontend/chat/agent-session-ind
 import { listAgentSessionsForProject } from "@cocalc/frontend/chat/agent-session-index";
 import { redux } from "@cocalc/frontend/app-framework";
 import { getChatActions, initChat } from "@cocalc/frontend/chat/register";
-import { processLLM as processChatLLM } from "@cocalc/frontend/chat/actions/llm";
 import type { CodexThreadConfig } from "@cocalc/chat";
 import { lite } from "@cocalc/frontend/lite";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
@@ -31,6 +30,17 @@ const NAVIGATOR_THREAD_IDENTITY_TIMEOUT_MS = 15_000;
 const NAVIGATOR_WORKSPACE_RESOLVE_TIMEOUT_MS = 5_000;
 const NAVIGATOR_WORKSPACE_RESOLVE_POLL_MS = 150;
 let navigatorIntentQueueMemory: NavigatorSubmitPromptDetail[] = [];
+
+async function processChatLLM(args: {
+  actions: any;
+  message: any;
+  tag?: string;
+  threadModel?: string | null;
+  acpConfigOverride?: any;
+}): Promise<void> {
+  const mod = await import("@cocalc/frontend/chat/actions/llm");
+  await mod.processLLM(args);
+}
 
 export interface NavigatorSubmitPromptDetail {
   id: string;

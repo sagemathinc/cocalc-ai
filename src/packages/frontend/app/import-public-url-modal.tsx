@@ -245,11 +245,11 @@ export function ImportPublicUrlModal() {
       title="Copy to my project"
     >
       {parsed.error ? (
-        <Alert message={parsed.error} showIcon type="error" />
+        <Alert title={parsed.error} showIcon type="error" />
       ) : (
         <Space direction="vertical" size="middle" style={{ width: "100%" }}>
           <Alert
-            message={parsed.value?.title || parsed.value?.path || "Public file"}
+            title={parsed.value?.title || parsed.value?.path || "Public file"}
             description={
               <>
                 Import from <code>{parsed.value?.rawUrl}</code>
@@ -259,7 +259,7 @@ export function ImportPublicUrlModal() {
             type="info"
           />
           {inspection.error ? (
-            <Alert message={inspection.error} showIcon type="error" />
+            <Alert title={inspection.error} showIcon type="error" />
           ) : undefined}
           {inspection.value ? (
             <div>
@@ -299,7 +299,7 @@ export function ImportPublicUrlModal() {
             </div>
           ) : undefined}
           {inspection.loading ? (
-            <Alert message="Inspecting public path..." showIcon type="info" />
+            <Alert title="Inspecting public path..." showIcon type="info" />
           ) : undefined}
           <div>
             <div style={{ fontWeight: 600, marginBottom: "8px" }}>
@@ -323,7 +323,7 @@ export function ImportPublicUrlModal() {
           </div>
           {inspection.value && selectedSource ? (
             <Alert
-              message={`Ready to copy ${selectedLabel}`}
+              title={`Ready to copy ${selectedLabel}`}
               description={
                 <>
                   Source <code>{selectedSource.container_path}</code>,{" "}
@@ -342,13 +342,13 @@ export function ImportPublicUrlModal() {
           (inspection.value.containing_directory.bytes ?? 0) >=
             LARGE_DIRECTORY_WARNING_BYTES ? (
             <Alert
-              message="Large folder copy"
+              title="Large folder copy"
               description="This can take a while. Large directory copies run as a background operation, especially when the source and destination are on different hosts."
               showIcon
               type="warning"
             />
           ) : undefined}
-          {error ? <Alert message={error} showIcon type="error" /> : undefined}
+          {error ? <Alert title={error} showIcon type="error" /> : undefined}
           {result ? (
             <Alert
               description={
@@ -359,7 +359,7 @@ export function ImportPublicUrlModal() {
                   operation.
                 </>
               }
-              message="Copy started"
+              title="Copy started"
               showIcon
               type="success"
             />

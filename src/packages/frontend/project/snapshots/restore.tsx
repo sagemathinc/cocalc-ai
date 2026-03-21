@@ -210,7 +210,7 @@ export default function RestoreSnapshot() {
             <Alert
               type="warning"
               showIcon
-              message="This is a total project restore, not a file copy."
+              title="This is a total project restore, not a file copy."
               description={
                 <span>
                   This workflow stops the project, creates a safety snapshot of
@@ -223,7 +223,7 @@ export default function RestoreSnapshot() {
             <Alert
               type="info"
               showIcon
-              message="Restoring can rewind CoCalc documents stored in the project."
+              title="Restoring can rewind CoCalc documents stored in the project."
               description={
                 <span>
                   A full restore can roll back project files and CoCalc content

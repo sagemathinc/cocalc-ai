@@ -205,7 +205,7 @@ export default function MoveInProgress({
         <Alert
           showIcon
           type="error"
-          message="Project move failed"
+          title="Project move failed"
           description={moveLro.summary?.error ?? "The move operation failed."}
         />
       );
@@ -215,7 +215,7 @@ export default function MoveInProgress({
         <Alert
           showIcon
           type="warning"
-          message="Project move canceled"
+          title="Project move canceled"
           description="The move operation was canceled."
         />
       );
@@ -225,7 +225,7 @@ export default function MoveInProgress({
         <Alert
           showIcon
           type="error"
-          message="Project move expired"
+          title="Project move expired"
           description="The move operation expired before completion."
         />
       );
@@ -234,7 +234,7 @@ export default function MoveInProgress({
       <Alert
         showIcon
         type="info"
-        message="Moving project..."
+        title="Moving project..."
         description={
           <Space direction="vertical" size={8} style={{ width: "100%" }}>
             <div>{phaseText}</div>
@@ -283,7 +283,7 @@ export default function MoveInProgress({
             <Alert
               showIcon
               type="error"
-              message="Move operation error"
+              title="Move operation error"
               description={opError}
               closable
               onClose={() => setOpError("")}

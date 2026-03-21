@@ -576,7 +576,7 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
             <Alert
               showIcon
               type="warning"
-              message="Project host is not available"
+              title="Project host is not available"
               description={`This project is assigned to ${assignedHostLabel}, which is unavailable (${hostUnavailableReason}).
 
 You can wait for this host to become available again, or move this project to another host.`}

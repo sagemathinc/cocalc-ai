@@ -29,7 +29,7 @@ export function AccountPreferencesAI() {
         <Alert
           type="info"
           showIcon
-          message="If both are configured, ChatGPT Plan is used."
+          title="If both are configured, ChatGPT Plan is used."
           style={{ marginBottom: 12 }}
         />
         <CodexCredentialsPanel />
