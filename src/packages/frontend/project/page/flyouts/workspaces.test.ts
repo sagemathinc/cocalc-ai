@@ -1,7 +1,10 @@
 import type { AgentSessionRecord } from "@cocalc/frontend/chat/agent-session-index";
 import type { WorkspaceRecord } from "@cocalc/frontend/project/workspaces/types";
 
-import { getWorkspaceActivityState } from "./workspaces";
+import {
+  applyWorkspaceBulkSelection,
+  getWorkspaceActivityState,
+} from "./workspaces";
 
 function workspace(overrides: Partial<WorkspaceRecord> = {}): WorkspaceRecord {
   return {
@@ -74,5 +77,57 @@ describe("getWorkspaceActivityState", () => {
       activity_viewed_at: viewedAt,
     });
     expect(getWorkspaceActivityState(record, [session()])).toBeUndefined();
+  });
+});
+
+describe("applyWorkspaceBulkSelection", () => {
+  const workspaceIds = ["w1", "w2", "w3", "w4"];
+
+  it("selects a contiguous range on shift-click", () => {
+    expect(
+      applyWorkspaceBulkSelection({
+        workspaceIds,
+        selectedIds: ["w2"],
+        anchorId: "w2",
+        clickedId: "w4",
+        nextChecked: true,
+        shiftKey: true,
+      }),
+    ).toEqual({
+      selectedIds: ["w2", "w3", "w4"],
+      anchorId: "w4",
+    });
+  });
+
+  it("clears a contiguous range on shift-uncheck", () => {
+    expect(
+      applyWorkspaceBulkSelection({
+        workspaceIds,
+        selectedIds: ["w1", "w2", "w3", "w4"],
+        anchorId: "w2",
+        clickedId: "w4",
+        nextChecked: false,
+        shiftKey: true,
+      }),
+    ).toEqual({
+      selectedIds: ["w1"],
+      anchorId: "w4",
+    });
+  });
+
+  it("falls back to single selection when no valid anchor exists", () => {
+    expect(
+      applyWorkspaceBulkSelection({
+        workspaceIds,
+        selectedIds: ["w1"],
+        anchorId: null,
+        clickedId: "w3",
+        nextChecked: true,
+        shiftKey: true,
+      }),
+    ).toEqual({
+      selectedIds: ["w1", "w3"],
+      anchorId: "w3",
+    });
   });
 });

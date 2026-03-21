@@ -106,6 +106,8 @@ interface AgentMessageStatusProps {
   activityContext: ActivityLogContext;
   inlineCodeLinks?: InlineCodeLink[];
   openDrawerToken?: number;
+  jumpText?: string;
+  jumpToken?: number;
   onOpenGitBrowser?: () => void;
   onDrawerOpenChange?: (open: boolean) => void;
 }
@@ -125,6 +127,8 @@ export function AgentMessageStatus({
   activityContext,
   inlineCodeLinks,
   openDrawerToken,
+  jumpText,
+  jumpToken,
   onOpenGitBrowser,
   onDrawerOpenChange,
 }: AgentMessageStatusProps) {
@@ -418,6 +422,8 @@ export function AgentMessageStatus({
             logEnabled={showDrawer}
             activityContext={activityContext}
             onJumpToBottom={handleJumpToBottom}
+            jumpText={jumpText}
+            jumpToken={jumpToken}
             onEventsChange={() => setContentVersion((prev) => prev + 1)}
             durationLabel={liveDurationLabel}
             projectId={project_id}

@@ -15,7 +15,11 @@ import { useProjectContext } from "@cocalc/frontend/project/context";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 
-export default function CreateSnapshot() {
+export default function CreateSnapshot({
+  onCreated,
+}: {
+  onCreated?: () => void;
+}) {
   const { actions, project_id } = useProjectContext();
   const [loading, setLoading] = useState<boolean>(false);
   const [open, setOpen] = useState<boolean>(false);
@@ -56,6 +60,7 @@ export default function CreateSnapshot() {
         project_id,
         name,
       });
+      onCreated?.();
       setName("");
       setOpen(false);
     } catch (err) {

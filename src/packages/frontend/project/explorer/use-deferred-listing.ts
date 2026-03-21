@@ -182,3 +182,14 @@ export function fileListingFingerprint(
   }
   return `${hash_string(raw)}`;
 }
+
+export function refreshListingAfterUserAction({
+  allowNextUpdate,
+  refresh,
+}: {
+  allowNextUpdate: () => void;
+  refresh?: () => void;
+}) {
+  allowNextUpdate();
+  refresh?.();
+}

@@ -1,11 +1,11 @@
 import createChat, { resolveAssistantCodexModel } from "./create-chat";
 
-const submitNavigatorPromptToCurrentThread = jest.fn();
+const submitNavigatorPromptInWorkspaceChat = jest.fn();
 const dispatchNavigatorPromptIntent = jest.fn();
 
 jest.mock("@cocalc/frontend/project/new/navigator-intents", () => ({
-  submitNavigatorPromptToCurrentThread: (...args: any[]) =>
-    submitNavigatorPromptToCurrentThread(...args),
+  submitNavigatorPromptInWorkspaceChat: (...args: any[]) =>
+    submitNavigatorPromptInWorkspaceChat(...args),
   dispatchNavigatorPromptIntent: (...args: any[]) =>
     dispatchNavigatorPromptIntent(...args),
 }));
@@ -21,7 +21,7 @@ describe("createChat", () => {
   });
 
   it("routes editor assistant requests through navigator Codex intents", async () => {
-    submitNavigatorPromptToCurrentThread.mockResolvedValue(true);
+    submitNavigatorPromptInWorkspaceChat.mockResolvedValue(true);
     const actions: any = {
       _get_frame_type: () => "cm",
       project_id: "project-1",
@@ -41,7 +41,7 @@ describe("createChat", () => {
       input: "print('hi')",
     });
 
-    expect(submitNavigatorPromptToCurrentThread).toHaveBeenCalledWith(
+    expect(submitNavigatorPromptInWorkspaceChat).toHaveBeenCalledWith(
       expect.objectContaining({
         project_id: "project-1",
         path: "/tmp/test.py",
@@ -57,7 +57,7 @@ describe("createChat", () => {
   });
 
   it("queues a navigator intent when immediate submission is unavailable", async () => {
-    submitNavigatorPromptToCurrentThread.mockResolvedValue(false);
+    submitNavigatorPromptInWorkspaceChat.mockResolvedValue(false);
     const actions: any = {
       _get_frame_type: () => "terminal",
       project_id: "project-1",

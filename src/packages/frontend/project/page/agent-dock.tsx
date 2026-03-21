@@ -92,6 +92,21 @@ function dockOwnsOtherInputFocus(
   );
 }
 
+function getDockFocusedInput(dockRoot: HTMLElement | null): HTMLElement | null {
+  if (typeof document === "undefined" || !dockRoot) return null;
+  const active = document.activeElement as HTMLElement | null;
+  if (!active || active === document.body) return null;
+  if (!dockRoot.contains(active)) return null;
+  if (
+    active.matches(
+      'input, textarea, select, [contenteditable="true"], [role="textbox"]',
+    )
+  ) {
+    return active;
+  }
+  return active.closest(".cm-editor");
+}
+
 export function AgentDock({ project_id, is_active }: AgentDockProps) {
   const { workspaces } = useProjectContext();
   const projectActions = useActions({ project_id }) as ProjectActions;
@@ -299,6 +314,24 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
       }
     };
   }, [chatActions, session?.session_id, session?.thread_key]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !session) return;
+    const onPointerDown = (event: MouseEvent | TouchEvent) => {
+      const dockRoot = nodeRef.current;
+      const target = event.target;
+      if (!(target instanceof Node) || !dockRoot) return;
+      if (dockRoot.contains(target)) return;
+      const focused = getDockFocusedInput(dockRoot);
+      focused?.blur?.();
+    };
+    window.addEventListener("mousedown", onPointerDown, true);
+    window.addEventListener("touchstart", onPointerDown, true);
+    return () => {
+      window.removeEventListener("mousedown", onPointerDown, true);
+      window.removeEventListener("touchstart", onPointerDown, true);
+    };
+  }, [session?.session_id]);
 
   const submitQueuedIntent = useCallback(
     (intent: NavigatorSubmitPromptDetail): boolean => {

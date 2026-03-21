@@ -66,6 +66,16 @@ function toFlyoutPathFromTerminalCwd(
   return payload;
 }
 
+export function flyoutTerminalOwnerPath(opts: {
+  browsingPath: string;
+  workspaceRoot?: string | null;
+}): string {
+  const browsingPath = `${opts.browsingPath ?? ""}`.trim();
+  if (browsingPath) return browsingPath;
+  const workspaceRoot = `${opts.workspaceRoot ?? ""}`.trim();
+  return workspaceRoot || "/";
+}
+
 // This is modeled after frame-editors/terminal-editor/terminal.tsx
 export function TerminalFlyout({
   project_id,
@@ -102,6 +112,10 @@ export function TerminalFlyout({
     terminal,
     workspaceRecord,
   );
+  const terminalOwnerPath = flyoutTerminalOwnerPath({
+    browsingPath,
+    workspaceRoot: workspaceRecord?.root_path,
+  });
 
   useEffect(() => {
     currentPathRef.current = browsingPath;
@@ -127,7 +141,6 @@ export function TerminalFlyout({
   // The last aspect is why it is per user, not one terminal for everyone.
   // Also, having a different terminal for each directory is a bit confusing.
   const hash = sha1(`${project_id}::${account_id}`);
-  const terminal_path = `/tmp/cocalc-${hash}.term`;
   const id = `flyout::${hash}`; // TODO what exactly is the ID? arbitrary or a path?
 
   function delete_terminal(): void {
@@ -146,7 +159,7 @@ export function TerminalFlyout({
     // That's why there are some references and functional state updates in play.
     return {
       project_id,
-      path: terminal_path,
+      path: terminalOwnerPath,
       get_term_env() {
         return DEFAULT_TERM_ENV;
       },

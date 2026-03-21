@@ -2,6 +2,7 @@ import type { AgentSessionRecord } from "@cocalc/frontend/chat/agent-session-ind
 import { listAgentSessionsForProject } from "@cocalc/frontend/chat/agent-session-index";
 import { redux } from "@cocalc/frontend/app-framework";
 import { getChatActions, initChat } from "@cocalc/frontend/chat/register";
+import { processLLM as processChatLLM } from "@cocalc/frontend/chat/actions/llm";
 import type { CodexThreadConfig } from "@cocalc/chat";
 import { lite } from "@cocalc/frontend/lite";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
@@ -87,6 +88,11 @@ function chooseThreadKeyFromIndex(opts: {
     }
   }
   return bestKey || fallback;
+}
+
+function isOpaqueThreadKey(value?: string): boolean {
+  const key = `${value ?? ""}`.trim();
+  return key.length > 0 && !/^\d+$/.test(key);
 }
 
 export function resolveThreadIdFromIndex(
@@ -381,16 +387,20 @@ export function dispatchNavigatorPromptIntent(opts: {
   return intent;
 }
 
-export async function stageNavigatorPromptInWorkspaceChat(opts: {
-  project_id: string;
-  prompt: string;
-  visiblePrompt?: string;
-  title?: string;
-  tag?: string;
-  forceCodex?: boolean;
-  codexConfig?: Partial<CodexThreadConfig>;
-  path?: string;
-}): Promise<boolean> {
+async function writeNavigatorPromptInWorkspaceChat(
+  opts: {
+    project_id: string;
+    prompt: string;
+    visiblePrompt?: string;
+    title?: string;
+    tag?: string;
+    forceCodex?: boolean;
+    codexConfig?: Partial<CodexThreadConfig>;
+    path?: string;
+    openFloating?: boolean;
+  },
+  submitToAgent: boolean,
+): Promise<boolean> {
   try {
     const project_id = `${opts.project_id ?? ""}`.trim();
     const basePrompt = `${opts.prompt ?? ""}`.trim();
@@ -444,10 +454,6 @@ export async function stageNavigatorPromptInWorkspaceChat(opts: {
     };
 
     await ensureNavigatorChatDirectory(project_id, targetChatPath);
-    await redux
-      .getProjectActions(project_id)
-      ?.open_file?.({ path: targetChatPath, foreground: true });
-
     const instanceKey = "navigator-intent-stage";
     const actions =
       getChatActions(project_id, targetChatPath, { instanceKey }) ??
@@ -467,8 +473,20 @@ export async function stageNavigatorPromptInWorkspaceChat(opts: {
     });
     let replyThreadKey = resolvedThreadKey;
     let replyThreadId = resolveThreadIdFromIndex(actions, replyThreadKey);
-    if (replyThreadKey && !replyThreadId) {
-      replyThreadKey = "";
+    if (replyThreadKey) {
+      const storedThreadKey =
+        `${preferredThreadKey ?? session.thread_key ?? ""}`.trim();
+      if (
+        !replyThreadId &&
+        replyThreadKey === storedThreadKey &&
+        isOpaqueThreadKey(replyThreadKey)
+      ) {
+        replyThreadId = replyThreadKey;
+      }
+      if (!replyThreadId) {
+        replyThreadKey = "";
+        replyThreadId = undefined;
+      }
     }
     const existingThreadTitle =
       replyThreadKey && replyThreadId
@@ -550,6 +568,47 @@ export async function stageNavigatorPromptInWorkspaceChat(opts: {
     if (typeof actions.syncdb?.save === "function") {
       await actions.syncdb.save();
     }
+    if (opts.openFloating === true && nextThreadKey) {
+      openFloatingAgentSession(
+        project_id,
+        {
+          ...session,
+          session_id: nextThreadKey,
+          title:
+            messageThreadTitle ??
+            requestedTitle ??
+            session.title ??
+            workspaceTarget.workspace.theme.title?.trim() ??
+            "Navigator",
+          thread_key: nextThreadKey,
+          updated_at: new Date().toISOString(),
+          status: "active",
+          model,
+          working_directory: session.working_directory,
+        },
+        {
+          workspaceId: workspaceTarget.workspace.workspace_id,
+          workspaceOnly: true,
+        },
+      );
+    }
+    if (submitToAgent) {
+      const message =
+        actions.getMessageByDate?.(timeStamp) ??
+        actions.syncdb?.get_one?.({
+          event: "chat",
+          date: timeStamp,
+          sender_id: account_id,
+        });
+      if (!message) return false;
+      await processChatLLM({
+        actions,
+        message,
+        tag: opts.tag ?? "intent:navigator",
+        threadModel: model ?? null,
+        acpConfigOverride: threadAgentCodexConfig,
+      });
+    }
     setTimeout(() => {
       actions.scrollToIndex?.(Number.MAX_SAFE_INTEGER);
     }, 50);
@@ -557,6 +616,34 @@ export async function stageNavigatorPromptInWorkspaceChat(opts: {
   } catch {
     return false;
   }
+}
+
+export async function stageNavigatorPromptInWorkspaceChat(opts: {
+  project_id: string;
+  prompt: string;
+  visiblePrompt?: string;
+  title?: string;
+  tag?: string;
+  forceCodex?: boolean;
+  codexConfig?: Partial<CodexThreadConfig>;
+  path?: string;
+  openFloating?: boolean;
+}): Promise<boolean> {
+  return await writeNavigatorPromptInWorkspaceChat(opts, false);
+}
+
+export async function submitNavigatorPromptInWorkspaceChat(opts: {
+  project_id: string;
+  prompt: string;
+  visiblePrompt?: string;
+  title?: string;
+  tag?: string;
+  forceCodex?: boolean;
+  codexConfig?: Partial<CodexThreadConfig>;
+  path?: string;
+  openFloating?: boolean;
+}): Promise<boolean> {
+  return await writeNavigatorPromptInWorkspaceChat(opts, true);
 }
 
 export async function submitNavigatorPromptToCurrentThread(opts: {

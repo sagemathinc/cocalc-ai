@@ -18,6 +18,8 @@ import { Project } from "./types";
 import { lite } from "@cocalc/frontend/lite";
 
 const { Text, Paragraph } = Typography;
+const COCALC_CLI_INSTALL_URL =
+  "https://software.cocalc.ai/software/cocalc/install.sh";
 
 interface Props {
   project: Project;
@@ -67,6 +69,9 @@ export function SSHPanel({ project, mode = "project" }: Props) {
         ? `ssh -p ${sshInfo.port} ${projectId}@${sshInfo.host}`
         : `ssh ${projectId}@${sshInfo.host}`
       : null;
+  const cliInstallCommand =
+    "curl -fsSL https://software.cocalc.ai/software/cocalc/install.sh | bash";
+  const cliSshCommand = `cocalc project ssh -w ${projectId}`;
 
   useEffect(() => {
     setSshCopied(false);
@@ -148,6 +153,20 @@ export function SSHPanel({ project, mode = "project" }: Props) {
                 you can reach the hub host and port from your machine.
               </Paragraph>
             )}
+          </>
+        )}
+        {localProxy && (
+          <>
+            <Paragraph>
+              For workspace SSH from your machine, install the{" "}
+              <A href={COCALC_CLI_INSTALL_URL}>CoCalc CLI</A> once, then run{" "}
+              <Text code>{cliSshCommand}</Text>. The CLI installs your local SSH
+              key automatically and configures the proxy command for this
+              workspace route.
+            </Paragraph>
+            <Paragraph type="secondary" style={{ marginBottom: 8 }}>
+              Install command: <Text code>{cliInstallCommand}</Text>
+            </Paragraph>
           </>
         )}
         <Paragraph>

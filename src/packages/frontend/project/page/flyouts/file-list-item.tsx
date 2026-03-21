@@ -42,6 +42,7 @@ import {
 import { COLORS } from "@cocalc/util/theme";
 import { FLYOUT_DEFAULT_WIDTH_PX, FLYOUT_PADDING } from "./consts";
 import { SNAPSHOTS } from "@cocalc/util/consts/snapshots";
+import { triggerFlyoutFileAction } from "./file-action-trigger";
 
 const FILE_ITEM_SELECTED_STYLE: CSS = {
   backgroundColor: COLORS.BLUE_LLL, // bit darker than .cc-project-flyout-file-item:hover
@@ -479,20 +480,17 @@ export const FileListItem = React.memo((props: Readonly<FileListItemProps>) => {
         icon: <Icon name={icon} />,
         disabled,
         onClick: () => {
+          if (fileName === "..") return;
+          const pathFn = path_to_file(effective_current_path, fileName);
           if (!multiple) {
-            // we have to check the file, otherwise the explorer's file action won't show it
-            if (onChecked != null) {
-              onChecked(true);
-            } else {
-              // if there is no handler for checking a file, only check this file (e.g. "flyout/Log")
-              if (fileName === "..") return;
-              const pathFn = path_to_file(effective_current_path, fileName);
-              actions?.set_all_files_unchecked();
-              actions?.set_file_list_checked([pathFn]);
-            }
+            onChecked?.(true);
           }
-          actions?.set_active_tab("files");
-          actions?.set_file_action(key);
+          triggerFlyoutFileAction({
+            actions,
+            action: key,
+            path: pathFn,
+            multiple,
+          });
         },
       });
     }

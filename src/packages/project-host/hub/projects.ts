@@ -207,8 +207,9 @@ function fileServer(project_id: string) {
   return fileServerClient({ project_id });
 }
 
-// Until the rootfs catalog is fully wired end-to-end, fall back to the default
-// runtime image for non-OCI labels.
+// Preserve explicit rootfs/docker image names. Older non-OCI labels such as
+// "ubuntu2404" are not valid container image references for the project
+// runner, so fall them back to the default runtime image.
 function normalizeImage(image?: string): string {
   const trimmed = image?.trim();
   if (!trimmed) return DEFAULT_PROJECT_IMAGE;

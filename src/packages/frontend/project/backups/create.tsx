@@ -6,7 +6,11 @@ import { useProjectContext } from "@cocalc/frontend/project/context";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 
-export default function CreateBackup() {
+export default function CreateBackup({
+  onCreated,
+}: {
+  onCreated?: () => void;
+}) {
   const { actions, project_id } = useProjectContext();
   const [open, setOpen] = useState<boolean>(false);
   const [loading, setLoading] = useState<boolean>(false);
@@ -35,6 +39,7 @@ export default function CreateBackup() {
         project_id,
       });
       actions?.trackBackupOp(op);
+      onCreated?.();
       setOpen(false);
     } catch (err) {
       setError(err);

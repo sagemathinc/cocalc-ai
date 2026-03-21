@@ -919,6 +919,44 @@ describe("ChatStreamWriter", () => {
     (writer as any).dispose?.(true);
   });
 
+  it("sanitizes usage limit errors and strips podman warning noise", async () => {
+    const { syncdb, sets } = makeFakeSyncDB();
+    const writer: any = new ChatStreamWriter({
+      metadata: baseMetadata,
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      syncdbOverride: syncdb as any,
+      logStoreFactory: () =>
+        ({
+          set: async () => {},
+        }) as any,
+    });
+
+    await (writer as any).handle({
+      type: "error",
+      error:
+        'You have reached your 5-hour LLM usage limit. Please try again later or upgrade your membership. time="2026-03-15T19:28:14Z" level=warning msg="The cgroupv2 manager is set to systemd but there is no systemd user session available" time="2026-03-15T19:28:14Z" level=warning msg="For using systemd, you may need to log in using a user session" time="2026-03-15T19:28:14Z" level=warning msg="Alternatively, you can enable lingering with: loginctl enable-linger 1002 (possibly as root)" time="2026-03-15T19:28:14Z" level=warning msg="Falling back to --cgroup-manager=cgroupfs"',
+      seq: 0,
+    } as AcpStreamMessage);
+    await flush(writer);
+
+    const final = sets[sets.length - 1] as any;
+    expect(final.generating).toBe(false);
+    expect((writer as any).content).toContain("**LLM usage limit reached**");
+    expect((writer as any).content).toContain(
+      "You have reached your 5-hour LLM usage limit.",
+    );
+    expect((writer as any).content).toContain("/store/membership");
+    expect((writer as any).content).toContain("/preferences/ai");
+    expect((writer as any).content).not.toContain(
+      "The cgroupv2 manager is set to systemd",
+    );
+    expect((writer as any).content).not.toContain(
+      "Falling back to --cgroup-manager=cgroupfs",
+    );
+    (writer as any).dispose?.(true);
+  });
+
   it("keeps streamed final message when error arrives before summary", async () => {
     const { syncdb } = makeFakeSyncDB();
     const writer: any = new ChatStreamWriter({

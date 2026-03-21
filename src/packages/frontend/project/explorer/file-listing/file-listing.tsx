@@ -32,6 +32,7 @@ import { should_open_in_foreground } from "@cocalc/frontend/lib/should-open-in-f
 import { open_new_tab } from "@cocalc/frontend/misc";
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import { buildFileActionItems } from "@cocalc/frontend/project/file-context-menu";
+import { triggerFileAction as triggerProjectFileAction } from "@cocalc/frontend/project/file-action-trigger";
 import { FILE_ITEM_OPENED_STYLE } from "@cocalc/frontend/project/page/flyouts/file-list-item";
 import { fileItemStyle } from "@cocalc/frontend/project/page/flyouts/utils";
 import { type DirectoryListingEntry } from "@cocalc/frontend/project/explorer/types";
@@ -573,10 +574,16 @@ export function FileListing({
 
   const triggerFileAction = useCallback(
     (fullPath: string, action: FileAction) => {
-      actions.set_file_checked(fullPath, true);
-      actions.set_file_action(action);
+      triggerProjectFileAction({
+        actions,
+        action,
+        path: fullPath,
+        multiple:
+          checked_files.size > 1 ||
+          (checked_files.size > 0 && checked_files.has(fullPath)),
+      });
     },
-    [actions],
+    [actions, checked_files],
   );
 
   const buildContextMenu = useCallback(

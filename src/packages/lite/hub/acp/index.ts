@@ -2129,8 +2129,8 @@ export class ChatStreamWriter {
       return;
     }
     if (payload.type === "error") {
-      this.content = `\n\n<span style='color:#b71c1c'>${payload.error}</span>\n\n`;
-      this.lastErrorText = payload.error;
+      this.content = formatUserFacingAcpError(payload.error);
+      this.lastErrorText = stripKnownAcpErrorNoise(payload.error);
       clearAcpPayloads(this.metadata);
       this.finished = true;
       this.finishedBy = "error";
@@ -3075,6 +3075,45 @@ function looksLikeErrorEcho(
   if (!summary || !error) return false;
   if (summary === error) return true;
   return summary.includes(error) || error.includes(summary);
+}
+
+function stripKnownAcpErrorNoise(text: string): string {
+  return text
+    .replace(/\u001b\[[0-9;]*m/g, "")
+    .replace(
+      /\s*time="[^"]+"\s+level=warning\s+msg="(?:The cgroupv2 manager is set to systemd but there is no systemd user session available|For using systemd, you may need to log in using a user session|Alternatively, you can enable lingering with: [^"]+|Falling back to --cgroup-manager=cgroupfs)"/g,
+      "",
+    )
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isUsageLimitError(text: string): boolean {
+  const normalized = text.toLowerCase();
+  return (
+    normalized.includes("llm usage limit") ||
+    normalized.includes("usage limit") ||
+    normalized.includes("upgrade your membership")
+  );
+}
+
+function formatUserFacingAcpError(error: string): string {
+  const cleaned = stripKnownAcpErrorNoise(`${error ?? ""}`);
+  if (!cleaned) {
+    return "\n\n<span style='color:#b71c1c'>Unknown ACP error.</span>\n\n";
+  }
+  if (!isUsageLimitError(cleaned)) {
+    return `\n\n<span style='color:#b71c1c'>${cleaned}</span>\n\n`;
+  }
+  return [
+    "**LLM usage limit reached**",
+    "",
+    cleaned,
+    "",
+    "Try one of these:",
+    "- [Upgrade your membership](/store/membership)",
+    "- [Open AI settings](/preferences/ai) to connect a ChatGPT Plan or your own OpenAI API key",
+  ].join("\n");
 }
 
 function syncdbField<T = unknown>(record: any, key: string): T | undefined {

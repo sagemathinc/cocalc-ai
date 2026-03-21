@@ -333,6 +333,7 @@ test("title-bar assistant in notebooks reuses one workspace agent thread", async
     workspaceSuffix,
     testInfo,
   );
+  await expect(page).toHaveURL(/assistant-a\.ipynb/, { timeout: 20_000 });
   console.log("notebook assistant step:first-complete", firstThreadKey);
 
   await openNotebookPage(
@@ -350,6 +351,7 @@ test("title-bar assistant in notebooks reuses one workspace agent thread", async
     workspaceSuffix,
     testInfo,
   );
+  await expect(page).toHaveURL(/assistant-b\.ipynb/, { timeout: 20_000 });
   console.log("notebook assistant step:second-complete", secondThreadKey);
 
   expect(secondThreadKey).toBe(firstThreadKey);
@@ -367,6 +369,7 @@ test("title-bar assistant in notebooks reuses one workspace agent thread", async
     workspaceSuffix,
     testInfo,
   );
+  await expect(page).toHaveURL(/assistant-b\.ipynb/, { timeout: 20_000 });
   console.log("notebook assistant step:third-complete", thirdThreadKey);
 
   expect(thirdThreadKey).toBe(firstThreadKey);

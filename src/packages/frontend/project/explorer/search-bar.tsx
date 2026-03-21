@@ -15,7 +15,12 @@ import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { lite } from "@cocalc/frontend/lite";
 import { SearchHistoryDropdown } from "./search-history-dropdown";
 import { useExplorerSearchHistory } from "./use-search-history";
-import { isTerminalMode } from "@cocalc/frontend/project/explorer/file-listing/utils";
+import {
+  extractAgentPrompt,
+  isAgentMode,
+  isTerminalMode,
+} from "@cocalc/frontend/project/explorer/file-listing/utils";
+import { submitNavigatorPromptToCurrentThread } from "@cocalc/frontend/project/new/navigator-intents";
 
 const HelpStyle = {
   wordWrap: "break-word",
@@ -259,6 +264,26 @@ export const SearchBar = memo(
       set_cmd({ input, id: _id.current });
     }
 
+    async function execute_agent_prompt(rawInput: string): Promise<void> {
+      set_error("");
+      set_stdout("");
+      const prompt = extractAgentPrompt(rawInput);
+      if (!prompt) return;
+      onTerminalCommand?.();
+      const sent = await submitNavigatorPromptToCurrentThread({
+        project_id,
+        prompt,
+        visiblePrompt: prompt,
+        path: current_path,
+        tag: "intent:miniterm-agent",
+      });
+      if (sent) {
+        actions.set_file_search("");
+        return;
+      }
+      set_error("Unable to send prompt to the agent.");
+    }
+
     function render_help_info() {
       if (historyMode) {
         return;
@@ -287,6 +312,15 @@ export const SearchBar = memo(
               borderRadius: "5px",
               opacity: 0.8,
             }}
+          />
+        );
+      }
+      if (isAgentMode(file_search)) {
+        return (
+          <Alert
+            style={HelpStyle}
+            type="info"
+            title="Press Enter to send this prompt to the agent."
           />
         );
       }
@@ -385,6 +419,11 @@ export const SearchBar = memo(
         }
         const command = value.slice(1, value.length);
         execute_command(command);
+      } else if (isAgentMode(value)) {
+        if (extractAgentPrompt(value).length > 0) {
+          addHistoryEntry(value);
+        }
+        void execute_agent_prompt(value);
       } else if (file_search.length > 0 && shift_down) {
         addHistoryEntry(value);
         // only create a file, if shift is pressed as well to avoid creating
@@ -487,7 +526,8 @@ export const SearchBar = memo(
           autoSelect
           placeholder={intl.formatMessage({
             id: "project.explorer.search-bar.placeholder",
-            defaultMessage: 'Filter files or "!" or "/" for Terminal...',
+            defaultMessage:
+              'Filter files or "@", "!" or "/" for Agent / Terminal...',
           })}
           value={file_search}
           on_change={on_change}
@@ -500,7 +540,9 @@ export const SearchBar = memo(
           on_focus={on_focus}
           disabled={disabled || !!ext_selection}
           status={
-            file_search.length > 0 && !isTerminalMode(file_search)
+            file_search.length > 0 &&
+            !isTerminalMode(file_search) &&
+            !isAgentMode(file_search)
               ? "warning"
               : undefined
           }

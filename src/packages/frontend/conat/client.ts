@@ -462,6 +462,32 @@ export class ConatClient extends EventEmitter {
     if (current) {
       this.removeRoutedHubClient(host_id);
     }
+    const reconnectRouted = () => {
+      if (this.permanentlyDisconnected) {
+        return;
+      }
+      for (const delayMs of [1_000, 3_500, 10_000]) {
+        setTimeout(() => {
+          if (this.permanentlyDisconnected) {
+            return;
+          }
+          if (this.routedHubClients[host_id]?.client !== routed) {
+            return;
+          }
+          if (routed.conn?.connected) {
+            return;
+          }
+          try {
+            routed.connect();
+          } catch (err) {
+            console.warn(
+              `failed reconnecting routed hub client for host ${host_id}`,
+              err,
+            );
+          }
+        }, delayMs);
+      }
+    };
     const routed = connectToConat({
       address,
       inboxPrefix: inboxPrefix({ account_id: this.client.account_id }),
@@ -479,10 +505,15 @@ export class ConatClient extends EventEmitter {
       },
       reconnection: false,
     });
+    routed.on("disconnected", () => {
+      this.invalidateProjectHostToken(host_id);
+      reconnectRouted();
+    });
     routed.conn.on("connect_error", (err) => {
       if (this.isProjectHostAuthError(err)) {
         this.invalidateProjectHostToken(host_id);
       }
+      reconnectRouted();
     });
     this.routedHubClients[host_id] = { address, client: routed };
     return routed;

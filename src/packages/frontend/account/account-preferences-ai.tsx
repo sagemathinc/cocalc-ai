@@ -8,7 +8,9 @@ import { Alert, Typography } from "antd";
 import { lite } from "@cocalc/frontend/lite";
 import { OtherSettings } from "./other-settings";
 import { CodexCredentialsPanel } from "./codex-credentials-panel";
+import { CodexDefaultsPanel } from "./codex-defaults-panel";
 import LiteAISettings from "./lite-ai-settings";
+import { LLMUsageStatus } from "@cocalc/frontend/misc/llm-cost-estimation";
 
 export function AccountPreferencesAI() {
   const other_settings = useTypedRedux("account", "other_settings");
@@ -31,6 +33,7 @@ export function AccountPreferencesAI() {
           style={{ marginBottom: 12 }}
         />
         <CodexCredentialsPanel />
+        <CodexDefaultsPanel other_settings={other_settings} />
         <LiteAISettings />
       </>
     );
@@ -46,7 +49,16 @@ export function AccountPreferencesAI() {
         kucalc={kucalc}
         mode="ai"
       />
+      <Typography.Title level={5} style={{ marginBottom: 8 }}>
+        LLM usage
+      </Typography.Title>
+      <Typography.Paragraph type="secondary" style={{ marginBottom: 12 }}>
+        Current 5-hour and 7-day LLM usage for your account. These limits apply
+        even when you use CoCalc&apos;s shared API access.
+      </Typography.Paragraph>
+      <LLMUsageStatus variant="full" showHelp />
       <CodexCredentialsPanel />
+      <CodexDefaultsPanel other_settings={other_settings} />
     </>
   );
 }

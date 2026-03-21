@@ -37,7 +37,13 @@ const OPEN_MSG = defineMessage({
   defaultMessage: `Opens the current directory in a {name} server instance, running inside this project.`,
 });
 
-export function MiscSideButtons() {
+export function MiscSideButtons({
+  refreshSnapshots,
+  refreshBackups,
+}: {
+  refreshSnapshots?: () => void;
+  refreshBackups?: () => void;
+}) {
   const { actions, project_id } = useProjectContext();
   const show_hidden = useTypedRedux({ project_id }, "show_hidden");
   const current_path_abs = useTypedRedux({ project_id }, "current_path_abs");
@@ -235,11 +241,15 @@ export function MiscSideButtons() {
   return (
     <Space className="pull-right">
       {(effective_current_path == SNAPSHOTS ||
-        effective_current_path.startsWith(SNAPSHOTS + "/")) && <Snapshots />}
+        effective_current_path.startsWith(SNAPSHOTS + "/")) && (
+        <Snapshots onCreated={refreshSnapshots} />
+      )}
       {effective_current_path &&
         isBackupsPath(effective_current_path) &&
         (effective_current_path === BACKUPS ||
-          effective_current_path.startsWith(`${BACKUPS}/`)) && <Backups />}
+          effective_current_path.startsWith(`${BACKUPS}/`)) && (
+          <Backups onCreated={refreshBackups} />
+        )}
       {SHOW_APPS && (
         <Space.Compact>
           {render_jupyterlab_button()}

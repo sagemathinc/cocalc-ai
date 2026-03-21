@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { root } from "@cocalc/backend/data";
 
@@ -6,7 +7,24 @@ export let nodePath = process.execPath;
 
 export const COCALC_BIN = "/opt/cocalc/bin";
 export const COCALC_BIN2 = "/opt/cocalc/bin2";
+export const COCALC_LIB = "/opt/cocalc/lib";
 export const COCALC_SRC = "/opt/cocalc/src";
+
+export function getNodeRuntimeMounts(
+  nodeExecPath = process.execPath,
+  pathExists: (path: string) => boolean = existsSync,
+) {
+  const binDir = dirname(nodeExecPath);
+  const mounts: Record<string, string> = {
+    [binDir]: COCALC_BIN,
+  };
+  const libDir = join(dirname(binDir), "lib");
+  if (pathExists(libDir)) {
+    mounts[libDir] = COCALC_LIB;
+  }
+  return mounts;
+}
+
 export function getCoCalcMounts() {
   // NODEJS_SEA_PATH is where we mount the directory containing the nodejs SEA binary,
   // which we *also* use for running the project itself.
@@ -18,7 +36,7 @@ export function getCoCalcMounts() {
     // COCALC_SRC is where the project's Javascript code is located, which is what the project
     // container runs at startup.
     [join(dirname(root), "src")]: COCALC_SRC,
-    [dirname(process.execPath)]: COCALC_BIN,
+    ...getNodeRuntimeMounts(),
   };
 
   const tools = process.env.COCALC_PROJECT_TOOLS;

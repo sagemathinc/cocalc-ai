@@ -1,4 +1,5 @@
 import { expect, test, type Page, type TestInfo } from "@playwright/test";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { project_id } from "@cocalc/project/data";
 import {
@@ -57,6 +58,17 @@ async function selectedWorkspaceState(page: Page): Promise<{
   );
 }
 
+type ChatJsonLine = Record<string, any>;
+
+async function readChatJsonLines(path: string): Promise<ChatJsonLine[]> {
+  const raw = await readFile(path, "utf8");
+  return raw
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => JSON.parse(line));
+}
+
 async function createWorkspaceFromCurrentDirectory(
   page: Page,
   workspaceRoot: string,
@@ -96,7 +108,7 @@ async function createWorkspaceFromCurrentDirectory(
   await page.locator("[role='tab']").first().click();
 }
 
-test("Fix with Agent opens workspace chat and stages the prompt", async ({
+test("Fix with Agent opens workspace chat and submits in place", async ({
   page,
 }, testInfo) => {
   const acpMode = await resolveAcpMode();
@@ -134,30 +146,92 @@ test("Fix with Agent opens workspace chat and stages the prompt", async ({
     workspaceSuffix,
     testInfo,
   );
-
   const fixButton = page.getByRole("button", { name: /Fix with Agent/i });
   await expect(fixButton).toBeVisible({ timeout: 30_000 });
   const clickStarted = Date.now();
   await fixButton.click();
 
-  await expect(page).toHaveURL(/\.chat/, {
+  await expect(page).toHaveURL(new RegExp("error\\.ipynb"), {
     timeout: 12_000,
   });
+  await expect
+    .poll(
+      async () =>
+        `${(await selectedWorkspaceState(page)).record?.chat_path ?? ""}`.trim(),
+      { timeout: 12_000 },
+    )
+    .not.toBe("");
+  const chatPath = await selectedWorkspaceState(page).then((selected) =>
+    `${selected.record?.chat_path ?? ""}`.trim(),
+  );
+  expect(chatPath).not.toBe("");
   expect(Date.now() - clickStarted).toBeLessThan(12_000);
   await expect(
     page.getByText("Investigate and fix this Jupyter notebook error.").first(),
   ).toBeVisible({
     timeout: 12_000,
   });
-  await expect(
-    page.getByText("Fix notebook error").first(),
-  ).toBeVisible({
+  await expect(page.getByText("Fix notebook error").first()).toBeVisible({
     timeout: 12_000,
   });
-  await expect(
-    page.getByText("Ask Codex...").first(),
-  ).toBeVisible({
+  await expect(page.locator(".cc-agent-dock-handle")).toHaveCount(1, {
     timeout: 12_000,
   });
-  await expect(page.locator(".cc-agent-dock-handle")).toHaveCount(0);
+  await expect
+    .poll(
+      async () => {
+        let rows: ChatJsonLine[] = [];
+        try {
+          rows = await readChatJsonLines(chatPath);
+        } catch (err: any) {
+          if (err?.code !== "ENOENT") throw err;
+        }
+        const userRow = rows.find(
+          (row) =>
+            row?.event === "chat" &&
+            row?.sender_id === "00000000-1000-4000-8000-000000000001" &&
+            row?.history?.[0]?.content ===
+              "Investigate and fix this Jupyter notebook error.",
+        );
+        const threadId = `${userRow?.thread_id ?? ""}`.trim();
+        const assistantRow =
+          threadId === ""
+            ? undefined
+            : rows.find(
+                (row) =>
+                  row?.event === "chat" &&
+                  `${row?.thread_id ?? ""}`.trim() === threadId &&
+                  `${row?.sender_id ?? ""}`.trim() !==
+                    "00000000-1000-4000-8000-000000000001",
+              );
+        const threadState =
+          threadId === ""
+            ? undefined
+            : rows.find(
+                (row) =>
+                  row?.event === "chat-thread-state" &&
+                  `${row?.thread_id ?? ""}`.trim() === threadId,
+              );
+        return {
+          rowCount: rows.length,
+          threadId,
+          assistantSender: `${assistantRow?.sender_id ?? ""}`.trim(),
+          threadState: `${threadState?.state ?? ""}`.trim(),
+        };
+      },
+      { timeout: 30_000 },
+    )
+    .toMatchObject({
+      threadId: expect.any(String),
+      assistantSender: expect.stringMatching(/\S/),
+    });
+  const finalRows = await readChatJsonLines(chatPath);
+  const finalUserRow = finalRows.find(
+    (row) =>
+      row?.event === "chat" &&
+      row?.sender_id === "00000000-1000-4000-8000-000000000001" &&
+      row?.history?.[0]?.content ===
+        "Investigate and fix this Jupyter notebook error.",
+  );
+  expect(`${finalUserRow?.thread_id ?? ""}`.trim()).not.toBe("");
 });

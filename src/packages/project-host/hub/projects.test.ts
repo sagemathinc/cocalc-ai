@@ -62,6 +62,7 @@ jest.mock("@cocalc/lite/hub/acp", () => ({
 
 describe("project host start ACP rehydrate ordering", () => {
   const project_id = "3f5d0b28-cf69-4c78-9b0a-ea747bc7acb3";
+  const customImage = "ghcr.io/example/custom-rootfs:2026-03-21";
   const flushMicrotasks = async () => {
     await Promise.resolve();
     await Promise.resolve();
@@ -165,5 +166,55 @@ describe("project host start ACP rehydrate ordering", () => {
     expect(rehydrateAcpAutomationsForProject).toHaveBeenCalledTimes(1);
     resolveRehydrate?.();
     await flushMicrotasks();
+  });
+
+  it("preserves explicit rootfs image names on createProject", async () => {
+    const runnerApi = {
+      start: jest.fn(async () => ({
+        state: "running",
+        http_port: 1234,
+        ssh_port: 2222,
+      })),
+      stop: jest.fn(),
+    } as any;
+
+    const { wireProjectsApi } = await import("./projects");
+    wireProjectsApi(runnerApi);
+
+    await hubApi.projects.createProject({
+      project_id,
+      image: customImage,
+      start: true,
+    });
+
+    expect(upsertProject).toHaveBeenCalledWith(
+      expect.objectContaining({ project_id, image: customImage }),
+    );
+    expect(runnerApi.start).toHaveBeenCalledWith({
+      project_id,
+      config: expect.objectContaining({ image: customImage }),
+    });
+  });
+
+  it("preserves explicit rootfs image names on start()", async () => {
+    const runnerApi = {
+      start: jest.fn(async () => ({
+        state: "running",
+        http_port: 1234,
+        ssh_port: 2222,
+      })),
+      stop: jest.fn(),
+    } as any;
+    getProject.mockReturnValue({ image: customImage, run_quota: undefined });
+
+    const { wireProjectsApi } = await import("./projects");
+    wireProjectsApi(runnerApi);
+
+    await hubApi.projects.start({ project_id });
+
+    expect(runnerApi.start).toHaveBeenCalledWith({
+      project_id,
+      config: expect.objectContaining({ image: customImage }),
+    });
   });
 });

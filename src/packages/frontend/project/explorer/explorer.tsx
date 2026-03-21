@@ -79,6 +79,7 @@ import {
 } from "./navigate-browsing-path";
 import {
   fileListingFingerprint,
+  refreshListingAfterUserAction,
   useDeferredListing,
 } from "./use-deferred-listing";
 import { useExplorerSettings } from "./use-explorer-settings";
@@ -132,7 +133,12 @@ export function Explorer() {
   const intl = useIntl();
   const projectLabel = intl.formatMessage(labels.project);
   const projectLabelLower = projectLabel.toLowerCase();
-  const { actions, project_id, workspaces } = useProjectContext();
+  const {
+    actions,
+    project_id,
+    registerUserFilesystemChangeHandler,
+    workspaces,
+  } = useProjectContext();
 
   const newFileRef = useRef<any>(null);
   const searchAndTerminalBar = useRef<any>(null);
@@ -323,6 +329,22 @@ export function Explorer() {
     fingerprint: fileListingFingerprint,
   });
   const visibleListing = displayListing ?? listing;
+  useEffect(() => {
+    return registerUserFilesystemChangeHandler(allowNextListingUpdate);
+  }, [allowNextListingUpdate, registerUserFilesystemChangeHandler]);
+
+  const refreshSnapshotsAfterUserAction = useCallback(() => {
+    refreshListingAfterUserAction({
+      allowNextUpdate: allowNextListingUpdate,
+      refresh,
+    });
+  }, [allowNextListingUpdate, refresh]);
+  const refreshBackupsAfterUserAction = useCallback(() => {
+    refreshListingAfterUserAction({
+      allowNextUpdate: allowNextListingUpdate,
+      refresh: refreshBackups,
+    });
+  }, [allowNextListingUpdate, refreshBackups]);
   const showDirectoryTreeAvailable =
     !IS_MOBILE &&
     !inBackupsPath &&
@@ -903,7 +925,10 @@ You can either wait for this host to become available again, or move this ${proj
                     textAlign: "right",
                   }}
                 >
-                  <MiscSideButtons />
+                  <MiscSideButtons
+                    refreshSnapshots={refreshSnapshotsAfterUserAction}
+                    refreshBackups={refreshBackupsAfterUserAction}
+                  />
                 </div>
               </div>
               {checked_files.size > 0 && file_action != undefined ? (
