@@ -85,7 +85,6 @@ import {
   DELETED_THRESHOLD,
   DELETED_CHECK_INTERVAL,
 } from "@cocalc/sync/editor/generic/sync-doc";
-import { lite } from "@cocalc/frontend/lite";
 import { type WatchIterator } from "@cocalc/conat/files/watch";
 import { DiffMatchPatch, decompressPatch } from "@cocalc/util/dmp";
 import { mark_open_phase } from "@cocalc/frontend/project/open-file";
@@ -109,6 +108,7 @@ import {
   parseRunBatchSeq,
   type RunBatchOrderState,
 } from "./run-batch-order";
+import { ensureProjectRunningForJupyter } from "./project-start";
 
 const dmpFileWatcher = new DiffMatchPatch({
   matchThreshold: 1,
@@ -2030,20 +2030,11 @@ export class JupyterActions extends JupyterActions0 {
   }
 
   waitUntilProjectIsRunning = reuseInFlight(async () => {
-    if (lite) {
-      return;
-    }
-    const store = this.redux.getStore("projects");
-    await until(
-      async () => {
-        if (store.get_state(this.project_id) == "running" || this.isClosed()) {
-          return true;
-        }
-        await once(store, "change");
-        return false;
-      },
-      { min: 500, max: 500 },
-    );
+    await ensureProjectRunningForJupyter({
+      redux: this.redux,
+      project_id: this.project_id,
+      isClosed: () => this.isClosed(),
+    });
   });
 
   fetch_jupyter_kernels = async ({
