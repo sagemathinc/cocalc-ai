@@ -87,6 +87,7 @@ import { GitCommitDrawer } from "./git-commit-drawer";
 import { findInChatAndOpenFirstResult } from "./find-in-chat";
 import { setChatOverlayOpen } from "./drawer-overlay-state";
 import { formatTurnDuration } from "./turn-duration";
+import { CodexQuotaHelp } from "./codex-quota-help";
 
 const BLANK_COLUMN = (xs) => <Col key={"blankcolumn"} xs={xs}></Col>;
 
@@ -1512,6 +1513,7 @@ export default function Message({
               }
               inlineCodeProjectRoot={activityBasePath}
             />
+            <CodexQuotaHelp message={value} projectId={project_id} />
           </div>
         ) : null}
       </>
