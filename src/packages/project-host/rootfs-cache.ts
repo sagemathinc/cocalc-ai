@@ -15,6 +15,7 @@ import {
   imageCachePath,
   inspectFilePath,
 } from "@cocalc/project-runner/run/rootfs-base";
+import { normalizeRootfsImageName } from "@cocalc/util/rootfs-images";
 
 import { listProjects } from "./sqlite/projects";
 
@@ -43,7 +44,7 @@ function decodeInspectFileImage(name: string): string | undefined {
 function rootfsUsageByImage(): Map<string, RootfsUsage> {
   const usage = new Map<string, RootfsUsage>();
   for (const row of listProjects()) {
-    const image = `${row.image ?? ""}`.trim();
+    const image = normalizeRootfsImageName(row.image);
     if (!image) continue;
     const current = usage.get(image) ?? {
       project_ids: [],
@@ -156,7 +157,10 @@ export async function listRootfsCacheEntries(): Promise<
     Array.from(images).map((image) =>
       buildEntry(
         image,
-        usage.get(image) ?? { project_ids: [], running_project_ids: [] },
+        usage.get(normalizeRootfsImageName(image)) ?? {
+          project_ids: [],
+          running_project_ids: [],
+        },
       ),
     ),
   );
@@ -182,7 +186,7 @@ export async function listRootfsCacheEntries(): Promise<
 export async function pullRootfsCacheEntry(
   image: string,
 ): Promise<HostRootfsCacheEntry> {
-  const trimmed = image.trim();
+  const trimmed = normalizeRootfsImageName(image);
   if (!trimmed) {
     throw new Error("image must be specified");
   }
@@ -201,7 +205,7 @@ export async function pullRootfsCacheEntry(
 export async function deleteRootfsCacheEntry(image: string): Promise<{
   removed: boolean;
 }> {
-  const trimmed = image.trim();
+  const trimmed = normalizeRootfsImageName(image);
   if (!trimmed) {
     throw new Error("image must be specified");
   }

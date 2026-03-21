@@ -71,6 +71,17 @@ export type RootfsCatalogSaveBody = {
   hidden?: boolean;
 };
 
+export function normalizeRootfsImageName(image?: string): string {
+  const value = `${image ?? ""}`.trim();
+  if (!value) return "";
+  const firstSlash = value.indexOf("/");
+  if (firstSlash === -1) return `docker.io/${value}`;
+  const first = value.slice(0, firstSlash);
+  return first === "localhost" || first.includes(".") || first.includes(":")
+    ? value
+    : `docker.io/${value}`;
+}
+
 function normalizeArch(value?: RootfsImageEntry["arch"]): RootfsImageArch[] {
   if (!value) return ["any"];
   if (Array.isArray(value)) return value.length ? value : ["any"];

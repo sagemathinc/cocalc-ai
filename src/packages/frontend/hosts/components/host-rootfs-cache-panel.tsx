@@ -15,7 +15,10 @@ import {
   managedRootfsCatalogUrl,
   useRootfsImages,
 } from "@cocalc/frontend/rootfs/manifest";
-import type { RootfsImageEntry } from "@cocalc/util/rootfs-images";
+import {
+  normalizeRootfsImageName,
+  type RootfsImageEntry,
+} from "@cocalc/util/rootfs-images";
 import { human_readable_size, plural } from "@cocalc/util/misc";
 
 type HostRootfsCachePanelProps = {
@@ -98,9 +101,10 @@ export function HostRootfsCachePanel({
   const uniqueCatalogEntries = React.useMemo(() => {
     const byImage = new Map<string, RootfsImageEntry>();
     for (const entry of catalogImages) {
-      const existing = byImage.get(entry.image);
+      const image = normalizeRootfsImageName(entry.image);
+      const existing = byImage.get(image);
       byImage.set(
-        entry.image,
+        image,
         existing ? preferCatalogEntry(existing, entry) : entry,
       );
     }
@@ -109,7 +113,13 @@ export function HostRootfsCachePanel({
     );
   }, [catalogImages]);
   const catalogByImage = React.useMemo(
-    () => new Map(uniqueCatalogEntries.map((entry) => [entry.image, entry])),
+    () =>
+      new Map(
+        uniqueCatalogEntries.map((entry) => [
+          normalizeRootfsImageName(entry.image),
+          entry,
+        ]),
+      ),
     [uniqueCatalogEntries],
   );
   const pullOptions = React.useMemo(
@@ -121,13 +131,19 @@ export function HostRootfsCachePanel({
     [uniqueCatalogEntries],
   );
   const cachedImages = React.useMemo(
-    () => new Set((inventory?.entries ?? []).map((entry) => entry.image)),
+    () =>
+      new Set(
+        (inventory?.entries ?? []).map((entry) =>
+          normalizeRootfsImageName(entry.image),
+        ),
+      ),
     [inventory?.entries],
   );
   const uncachedPullOptions = React.useMemo(
     () =>
       pullOptions.filter(
-        (option) => !cachedImages.has(`${option.value ?? ""}`),
+        (option) =>
+          !cachedImages.has(normalizeRootfsImageName(`${option.value ?? ""}`)),
       ),
     [cachedImages, pullOptions],
   );
@@ -263,7 +279,9 @@ export function HostRootfsCachePanel({
               style={{ width: "100%" }}
             >
               {inventory.entries.map((entry) => {
-                const catalogEntry = catalogByImage.get(entry.image);
+                const catalogEntry = catalogByImage.get(
+                  normalizeRootfsImageName(entry.image),
+                );
                 const running = entry.running_project_count > 0;
                 const actionKey = inventory.actionKey;
                 return (
