@@ -670,6 +670,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                   description={softwareVersions.hubError}
                 />
               )}
+              {showUpgradeProgress && <HostOpProgress op={activeOp} />}
               <Space
                 orientation="vertical"
                 size="small"
@@ -904,7 +905,6 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
               }
             />
           )}
-          {showUpgradeProgress && <HostOpProgress op={activeOp} />}
           {isSelfHost && selfHost && !host.deleted && (
             <Space orientation="vertical" size="small">
               <Typography.Text strong>Connector actions</Typography.Text>
