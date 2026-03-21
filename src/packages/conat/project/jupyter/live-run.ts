@@ -127,3 +127,20 @@ export async function openJupyterLiveRunStore(opts: {
   }
   return await store;
 }
+
+export async function closeAllLiveRunStoresForTests(): Promise<void> {
+  if (!process.env.COCALC_TEST_MODE) {
+    return;
+  }
+  const stores = Array.from(liveRunStoreCache.values());
+  liveRunStoreCache.clear();
+  await Promise.all(
+    stores.map(async (store) => {
+      try {
+        (await store)?.close?.();
+      } catch {
+        // best-effort test cleanup only
+      }
+    }),
+  );
+}

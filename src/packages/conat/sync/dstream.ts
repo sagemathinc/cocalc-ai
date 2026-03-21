@@ -39,7 +39,11 @@ import jsonStableStringify from "json-stable-stringify";
 import type { JSONValue } from "@cocalc/util/types";
 import { conat } from "@cocalc/conat/client";
 import { delay, map as awaitMap } from "awaiting";
-import { asyncThrottle, until } from "@cocalc/util/async-utils";
+import {
+  asyncThrottle,
+  cancel_scheduled,
+  until,
+} from "@cocalc/util/async-utils";
 import {
   inventory,
   inventoryUpdatesDisabled,
@@ -176,6 +180,7 @@ export class DStream<T = any> extends EventEmitter {
       return;
     }
     logger.debug("close", this.name);
+    cancel_scheduled(this.updateInventory);
     const stream = this.stream;
     stream.removeListener("change", this.handleChange);
     stream.removeListener("metadata-change", this.handleMetadataChange);

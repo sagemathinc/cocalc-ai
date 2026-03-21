@@ -3,10 +3,12 @@ module.exports = {
   preset: "ts-jest",
   testEnvironment: "node",
   setupFiles: ["./test/setup.js"],
+  setupFilesAfterEnv: ["./test/setup-after-env.js"],
   testMatch: ["**/?(*.)+(spec|test).ts?(x)"],
-   // Allow package-style imports (e.g., @cocalc/backend/conat/test/setup) to
-   // resolve directly to the source tree during tests.
-   moduleNameMapper: {
-     "^@cocalc/backend/(.*)$": "<rootDir>/$1",
-   },
+  // Allow package-style imports (e.g., @cocalc/backend/conat/test/setup) to
+  // resolve directly to the source tree during tests.
+  moduleNameMapper: {
+    "^@cocalc/backend/(.*)$": "<rootDir>/$1",
+    "^@cocalc/conat/(.*)$": "<rootDir>/../conat/$1",
+  },
 };

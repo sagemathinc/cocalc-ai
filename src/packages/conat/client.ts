@@ -7,7 +7,7 @@ DEVELOPMENT:
 'connected'
 */
 
-import { init } from "./time";
+import { init, close as closeTime } from "./time";
 import { EventEmitter } from "events";
 import { type Client as ConatClient } from "@cocalc/conat/core/client";
 
@@ -114,6 +114,19 @@ function initTime() {
 let globalClient: null | ClientWithState = null;
 export function setConatClient(client: Client) {
   globalClient = new ClientWithState(client);
+}
+
+export function closeConatClientForTests(): void {
+  if (!process.env.COCALC_TEST_MODE) {
+    return;
+  }
+  try {
+    globalClient?.close();
+  } catch {
+    // best-effort test cleanup only
+  }
+  globalClient = null;
+  closeTime();
 }
 
 export async function reconnect() {

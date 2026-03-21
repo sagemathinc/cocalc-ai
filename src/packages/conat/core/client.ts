@@ -519,6 +519,7 @@ export function getClient() {
 }
 
 export class Client extends EventEmitter {
+  private static readonly testInstances = new Set<Client>();
   public conn: ReturnType<typeof connectToSocketIO>;
   // queueGroups is a map from subject to the queue group for the subscription to that subject
   private queueGroups: { [subject: string]: string } = {};
@@ -560,6 +561,9 @@ export class Client extends EventEmitter {
 
   constructor(options: ClientOptions) {
     super();
+    if (process.env.COCALC_TEST_MODE) {
+      Client.testInstances.add(this);
+    }
     if (!options.address) {
       if (!process.env.CONAT_SERVER) {
         throw Error(
@@ -963,6 +967,20 @@ export class Client extends EventEmitter {
     try {
       this.conn.close();
     } catch {}
+    Client.testInstances.delete(this);
+  };
+
+  static closeAllForTests = (): void => {
+    if (!process.env.COCALC_TEST_MODE) {
+      return;
+    }
+    for (const client of Array.from(Client.testInstances)) {
+      try {
+        client.close();
+      } catch {
+        // best-effort test cleanup only
+      }
+    }
   };
 
   private syncSubscriptions = reuseInFlight(async () => {

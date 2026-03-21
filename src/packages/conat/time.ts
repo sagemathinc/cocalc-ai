@@ -39,7 +39,7 @@ Type ".help" for more information.
 import { timeClient } from "@cocalc/conat/service/time";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import { getClient } from "@cocalc/conat/client";
-import { delay } from "awaiting";
+import { sleep } from "@cocalc/util/async-utils";
 
 // we use exponential backoff starting with a short interval
 // then making it longer
@@ -75,12 +75,12 @@ async function syncLoop() {
       } else {
         d = Math.min(INTERVAL_GOOD, d * 2);
       }
-      await delay(d);
+      await sleep(d, { unref: true });
     } catch (err) {
       // console.log(`WARNING: failed to sync clock -- ${err}`);
       // reset delay
       d = INTERVAL_START;
-      await delay(d);
+      await sleep(d, { unref: true });
     }
   }
 }

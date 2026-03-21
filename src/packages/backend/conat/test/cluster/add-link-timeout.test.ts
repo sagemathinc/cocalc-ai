@@ -11,9 +11,9 @@ describe("adding a node times out if we can't connect to it, rather than trying 
       id: "1",
     });
     const port = await getPort();
-    expect(async () => {
-      await server.join(`localhost:${port}`, { timeout: 500 });
-    }).rejects.toThrow("timeout");
+    await expect(server.join(`localhost:${port}`, { timeout: 500 })).rejects.toThrow(
+      "timeout",
+    );
   });
 });
 

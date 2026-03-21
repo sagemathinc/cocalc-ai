@@ -30,8 +30,8 @@ describe("test the per user subscription limit", () => {
     }).rejects.toThrow("limit");
   });
 
-  it("cleans up", () => {
+  it("cleans up", async () => {
     client.close();
-    server.close();
+    await server.close();
   });
 });

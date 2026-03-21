@@ -620,13 +620,14 @@ async function handleRequest({
     throw err;
   } finally {
     throttle.close();
-    setTimeout(() => {
+    const cleanupTimer = setTimeout(() => {
       try {
         liveRunStore.delete(liveRunKey);
       } catch {
         // ignore cleanup failures for ephemeral replay state
       }
     }, LIVE_RUN_REPLAY_GRACE_MS);
+    cleanupTimer.unref?.();
     logger.debug("run summary", {
       run_id,
       path,

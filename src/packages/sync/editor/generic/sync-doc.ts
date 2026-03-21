@@ -225,6 +225,7 @@ interface PatchDocMetadataV1 {
 export class SyncDoc extends EventEmitter {
   static events = new EventEmitter();
   static lite = false;
+  private static testInstances: Set<SyncDoc> = new Set();
 
   public readonly opts: SyncOpts;
   public readonly project_id: string; // project_id that contains the doc
@@ -362,6 +363,9 @@ export class SyncDoc extends EventEmitter {
 
   constructor(opts: SyncOpts) {
     super();
+    if (process.env.COCALC_TEST_MODE) {
+      SyncDoc.testInstances.add(this);
+    }
     this.opts = opts;
 
     if (opts.string_id === undefined) {
@@ -1144,6 +1148,7 @@ export class SyncDoc extends EventEmitter {
   // for changes and stops broadcasting changes.
   close = reuseInFlight(async () => {
     if (this.state == "closed") {
+      SyncDoc.testInstances.delete(this);
       return;
     }
     const dbg = this.dbg("close");
@@ -1185,6 +1190,10 @@ export class SyncDoc extends EventEmitter {
       // Cancel any pending change emit calls.
       cancel_scheduled(this.emit_change);
     }
+    cancel_scheduled(this.emit_change_debounced);
+    cancel_scheduled(this.debouncedStat);
+    cancel_scheduled(this.snapshotIfNecessary);
+    cancel_scheduled(this.touchProject);
     cancel_scheduled(this.updateHasUnsavedChangesDebounced);
 
     this.patchflowSession?.close();
@@ -1196,12 +1205,26 @@ export class SyncDoc extends EventEmitter {
       dbg(`closeTables -- ERROR -- ${err}`);
     }
     // this avoids memory leaks:
+    SyncDoc.testInstances.delete(this);
     close(this);
 
     // after doing that close, we need to keep the state (which just got deleted) as 'closed'
     this.set_state("closed");
     dbg("close done");
   });
+
+  static closeAllForTests = async (): Promise<void> => {
+    if (!process.env.COCALC_TEST_MODE) {
+      return;
+    }
+    for (const doc of Array.from(SyncDoc.testInstances)) {
+      try {
+        await doc.close();
+      } catch {
+        // best-effort test cleanup only
+      }
+    }
+  };
 
   private closeTables = async () => {
     await this.syncstring_table?.close();

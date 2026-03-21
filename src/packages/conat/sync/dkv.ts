@@ -86,7 +86,11 @@ import {
 import refCache from "@cocalc/util/refcache";
 import { type JSONValue } from "@cocalc/util/types";
 import { conat } from "@cocalc/conat/client";
-import { asyncThrottle, until } from "@cocalc/util/async-utils";
+import {
+  asyncThrottle,
+  cancel_scheduled,
+  until,
+} from "@cocalc/util/async-utils";
 import {
   inventory,
   inventoryUpdatesDisabled,
@@ -254,6 +258,7 @@ export class DKV<T = any> extends EventEmitter {
     if (this.isClosed()) {
       return;
     }
+    cancel_scheduled(this.updateInventory);
     const kv = this.kv;
     delete this.kv;
     if (kv != null) {
