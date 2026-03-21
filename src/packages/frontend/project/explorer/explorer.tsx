@@ -914,7 +914,10 @@ You can either wait for this host to become available again, or move this ${proj
                     textAlign: "right",
                   }}
                 >
-                  <MiscSideButtons />
+                  <MiscSideButtons
+                    refreshSnapshots={refresh}
+                    refreshBackups={refreshBackups}
+                  />
                 </div>
               </div>
 

@@ -10,10 +10,10 @@ import CreateSnapshot from "./create";
 import EditSchedule from "./edit-schedule";
 import RestoreSnapshot from "./restore";
 
-export default function Snapshots() {
+export default function Snapshots({ onCreated }: { onCreated?: () => void }) {
   return (
     <Space.Compact>
-      <CreateSnapshot />
+      <CreateSnapshot onCreated={onCreated} />
       <RestoreSnapshot />
       <EditSchedule />
     </Space.Compact>
