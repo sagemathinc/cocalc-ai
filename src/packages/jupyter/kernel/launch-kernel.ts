@@ -20,6 +20,7 @@ import * as fs from "fs";
 import * as uuid from "uuid";
 import { mkdir } from "fs/promises";
 import { spawn } from "node:child_process";
+import { setTimeout as delay } from "node:timers/promises";
 import { findKernelSpec } from "./kernelspecs";
 import { homedir } from "node:os";
 import bash from "@cocalc/backend/bash";
@@ -185,7 +186,8 @@ async function launchKernelSpec(
   } else {
     running_kernel = spawn(argv[0], argv.slice(1), full_spawn_options);
   }
-  spawned.push(running_kernel);
+  running_kernel.unref?.();
+  rememberChild(running_kernel);
 
   running_kernel.on("error", (code, signal) => {
     logger.debug("launchKernelSpec: ERROR -- ", { argv, code, signal });
@@ -229,29 +231,94 @@ async function ensureDirectoryExists(path: string) {
 }
 
 // Clean up after any children created here
-const spawned: any[] = [];
-export function closeAll() {
-  for (const child of spawned) {
-    if (child.pid) {
-      try {
-        process.kill(-child.pid, "SIGKILL");
-      } catch (err) {
-        const code = (err as NodeJS.ErrnoException)?.code;
-        if (code !== "ESRCH" && code !== "EPERM" && code !== "EINVAL") {
-          throw err;
-        }
+const spawned = new Set<any>();
+
+function rememberChild(child) {
+  spawned.add(child);
+  const forget = () => spawned.delete(child);
+  child.once?.("exit", forget);
+  child.once?.("close", forget);
+}
+
+function isGone(child): boolean {
+  if (child == null) return true;
+  if (child.exitCode != null || child.signalCode != null) {
+    return true;
+  }
+  if (!child.pid) {
+    return true;
+  }
+  try {
+    process.kill(-child.pid, 0);
+    return false;
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException)?.code;
+    return code === "ESRCH" || code === "EINVAL";
+  }
+}
+
+function closeChild(child) {
+  if (child == null) {
+    return;
+  }
+  if (isGone(child)) {
+    spawned.delete(child);
+    return;
+  }
+  for (const stream of [child.stdout, child.stderr]) {
+    try {
+      stream?.removeAllListeners?.();
+      stream?.destroy?.();
+    } catch {
+      // best effort cleanup
+    }
+  }
+  try {
+    child.stdin?.destroy?.();
+  } catch {
+    // best effort cleanup
+  }
+  if (child.pid) {
+    try {
+      process.kill(-child.pid, "SIGKILL");
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException)?.code;
+      if (code !== "ESRCH" && code !== "EPERM" && code !== "EINVAL") {
+        throw err;
       }
-      try {
-        child.kill("SIGKILL");
-      } catch (err) {
-        const code = (err as NodeJS.ErrnoException)?.code;
-        if (code !== "ESRCH" && code !== "EPERM") {
-          throw err;
-        }
+    }
+    try {
+      child.kill("SIGKILL");
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException)?.code;
+      if (code !== "ESRCH" && code !== "EPERM") {
+        throw err;
       }
     }
   }
-  spawned.length = 0;
+  if (isGone(child)) {
+    spawned.delete(child);
+  }
+}
+
+export function closeAll() {
+  for (const child of [...spawned]) {
+    closeChild(child);
+  }
+}
+
+export async function closeAllAndWait(timeoutMs = 5000) {
+  const deadline = Date.now() + timeoutMs;
+  closeAll();
+  while (spawned.size > 0) {
+    for (const child of [...spawned]) {
+      closeChild(child);
+    }
+    if (spawned.size === 0 || Date.now() >= deadline) {
+      return;
+    }
+    await delay(50);
+  }
 }
 
 process.once("exit", () => {

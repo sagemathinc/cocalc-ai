@@ -50,10 +50,10 @@ describe("create a jupyter stateless-api kernel and test basic functionality", (
 
   it("cleans up", () => {
     kernel.close();
-    Kernel.closeAll();
+    return Kernel.closeAllAndWait();
   });
 });
 
 afterAll(async () => {
-  Kernel.closeAll();
+  await Kernel.closeAllAndWait();
 });

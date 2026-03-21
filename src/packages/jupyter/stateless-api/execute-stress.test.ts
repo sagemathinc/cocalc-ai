@@ -19,5 +19,5 @@ describe(`execute code ${count} times in a row to test for race conditions`, () 
 });
 
 afterAll(async () => {
-  Kernel.closeAll();
+  await Kernel.closeAllAndWait();
 });

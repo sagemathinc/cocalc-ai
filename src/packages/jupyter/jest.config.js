@@ -4,4 +4,5 @@ module.exports = {
   testEnvironment: "node",
   testMatch: ["**/?(*.)+(spec|test).ts?(x)"],
   setupFiles: ["./test/setup.js"],
+  setupFilesAfterEnv: ["./test/setup-after-env.js"],
 };

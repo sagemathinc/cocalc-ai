@@ -1,4 +1,4 @@
-import { kernel as createKernel } from "@cocalc/jupyter/kernel";
+import { kernel as createKernel } from "../kernel";
 import type { JupyterKernelInterface } from "@cocalc/jupyter/types/project-interface";
 import { run_cell } from "@cocalc/jupyter/nbgrader/jupyter-run";
 import { mkdtemp } from "fs/promises";
@@ -8,7 +8,10 @@ import { join } from "path";
 import getLogger from "@cocalc/backend/logger";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import { type Limits } from "@cocalc/util/jupyter/nbgrader-types";
-import { closeAll as closeAllLaunches } from "@cocalc/jupyter/kernel/launch-kernel";
+import {
+  closeAll as closeAllLaunches,
+  closeAllAndWait as closeAllLaunchesAndWait,
+} from "../kernel/launch-kernel";
 
 const log = getLogger("jupyter:stateless-api:kernel");
 
@@ -24,6 +27,7 @@ export default class Kernel {
   private kernel?: JupyterKernelInterface;
   private tempDir?: string;
   private state?: "closed" | undefined = undefined;
+  private closeWait?: Promise<void>;
 
   constructor(private kernelName: string) {
     kernels.push(this);
@@ -72,6 +76,10 @@ export default class Kernel {
     closeAllKernels();
   }
 
+  static async closeAllAndWait(timeoutMs?: number) {
+    await closeAllKernelsAndWait(timeoutMs);
+  }
+
   execute = async (
     code: string,
     limits: Partial<Limits> = {
@@ -102,11 +110,13 @@ export default class Kernel {
 
   close = () => {
     this.state = "closed";
+    const kernel = this.kernel as any;
     try {
       this.kernel?.close();
     } catch (err) {
       log.warn("Error closing kernel", err);
     } finally {
+      this.closeWait = kernel?.waitUntilClosed?.() ?? Promise.resolve();
       delete this.kernel;
     }
     if (this.tempDir) {
@@ -119,6 +129,10 @@ export default class Kernel {
       }
     }
   };
+
+  waitUntilClosed = async () => {
+    await this.closeWait;
+  };
 }
 
 // Clean up after any kernel created here
@@ -129,6 +143,13 @@ function closeAllKernels() {
     kernel.close();
   }
   kernels.length = 0;
+}
+
+async function closeAllKernelsAndWait(timeoutMs?: number) {
+  const current = [...kernels];
+  closeAllKernels();
+  await Promise.allSettled(current.map((kernel) => kernel.waitUntilClosed()));
+  await closeAllLaunchesAndWait(timeoutMs);
 }
 
 process.once("exit", () => {

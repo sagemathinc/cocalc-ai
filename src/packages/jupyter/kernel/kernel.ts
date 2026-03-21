@@ -29,7 +29,7 @@ import nodeCleanup from "node-cleanup";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import { callback } from "awaiting";
 import type { MessageType } from "@cocalc/jupyter/zmq/types";
-import { jupyterSockets, type JupyterSockets } from "@cocalc/jupyter/zmq";
+import { jupyterSockets, type JupyterSockets } from "../zmq";
 import { EventEmitter } from "node:events";
 import { existsSync, unlinkSync } from "node:fs";
 import {
@@ -63,7 +63,7 @@ import {
 import launchJupyterKernel, {
   LaunchJupyterOpts,
   SpawnedKernel,
-} from "@cocalc/jupyter/kernel/launch-kernel";
+} from "./launch-kernel";
 import { kernels } from "./kernels";
 import { getAbsolutePathFromHome } from "@cocalc/jupyter/util/fs";
 import type { KernelParams } from "@cocalc/jupyter/types/kernel";
@@ -113,6 +113,23 @@ function emitKernelLifecycle(event: KernelLifecycleEvent) {
 function killKernel(kernel: SpawnedKernel) {
   try {
     kernel.spawn?.removeAllListeners?.();
+  } catch {
+    // best effort cleanup
+  }
+  try {
+    kernel.spawn?.stdout?.removeAllListeners?.();
+    kernel.spawn?.stdout?.destroy?.();
+  } catch {
+    // best effort cleanup
+  }
+  try {
+    kernel.spawn?.stderr?.removeAllListeners?.();
+    kernel.spawn?.stderr?.destroy?.();
+  } catch {
+    // best effort cleanup
+  }
+  try {
+    kernel.spawn?.stdin?.destroy?.();
   } catch {
     // best effort cleanup
   }
@@ -294,6 +311,8 @@ export class JupyterKernel
   public sockets?: JupyterSockets;
   public failedError: string = "";
   private kernel_state: KernelState;
+  private spawn_timeout?: ReturnType<typeof setTimeout>;
+  private close_wait?: Promise<void>;
 
   constructor(
     name: string | undefined,
@@ -352,6 +371,10 @@ export class JupyterKernel
     // kernel restart without having to create a new Kernel instance.  This
     // instance manages one single lifecycle as above only.
     if (this._state == state) return;
+    if (state !== "spawning" && this.spawn_timeout != null) {
+      clearTimeout(this.spawn_timeout);
+      delete this.spawn_timeout;
+    }
     this._state = state;
     this.emit("state", this._state);
     this.emit(this._state); // we *SHOULD* use this everywhere, not above.
@@ -548,7 +571,7 @@ export class JupyterKernel
     }
     let success = false;
     let gaveUp = false;
-    setTimeout(() => {
+    const spawnTimeout = setTimeout(() => {
       if (!success) {
         gaveUp = true;
         // it's been 30s and the channels didn't work.  Let's give up.
@@ -560,7 +583,17 @@ export class JupyterKernel
         // I did rewrite that -- so let's revisit this!
       }
     }, MAX_KERNEL_SPAWN_TIME);
-    const sockets = await jupyterSockets(this._kernel.config, this.identity);
+    this.spawn_timeout = spawnTimeout;
+    (spawnTimeout as any)?.unref?.();
+    let sockets;
+    try {
+      sockets = await jupyterSockets(this._kernel.config, this.identity);
+    } finally {
+      clearTimeout(spawnTimeout);
+      if (this.spawn_timeout === spawnTimeout) {
+        delete this.spawn_timeout;
+      }
+    }
     if (gaveUp) {
       process.kill(-pid, 9);
       return;
@@ -645,6 +678,11 @@ export class JupyterKernel
     if (this._state === "closed") {
       return;
     }
+    if (this.spawn_timeout != null) {
+      clearTimeout(this.spawn_timeout);
+      delete this.spawn_timeout;
+    }
+    const waits: Promise<unknown>[] = [];
     emitKernelLifecycle({
       event: "close",
       identity: this.identity,
@@ -653,7 +691,9 @@ export class JupyterKernel
     });
     this.signal("SIGKILL");
     if (this.sockets != null) {
-      this.sockets.close();
+      const sockets = this.sockets;
+      waits.push(sockets.waitUntilClosed());
+      sockets.close();
       delete this.sockets;
     }
     this.setState("closed");
@@ -677,6 +717,11 @@ export class JupyterKernel
       }
       this._execute_code_queue = [];
     }
+    this.close_wait = Promise.allSettled(waits).then(() => {});
+  };
+
+  waitUntilClosed = async (): Promise<void> => {
+    await this.close_wait;
   };
 
   // public, since we do use it from some other places...
