@@ -10,8 +10,9 @@ jest.mock("antd", () => {
       {children}
     </button>
   );
-  const Div = ({ children, message, description }: any) => (
+  const Div = ({ children, message, title, description }: any) => (
     <div>
+      {title}
       {message}
       {description}
       {children}

@@ -5,8 +5,9 @@ import NoFiles from "./no-files";
 import { redux } from "@cocalc/frontend/app-framework";
 
 jest.mock("antd", () => ({
-  Alert: ({ message, description }: any) => (
+  Alert: ({ message, title, description }: any) => (
     <div>
+      <div>{title}</div>
       <div>{message}</div>
       {description}
     </div>
