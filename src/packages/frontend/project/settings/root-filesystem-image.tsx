@@ -38,7 +38,6 @@ import type {
 } from "@cocalc/util/rootfs-images";
 
 type PublishDraft = {
-  image_id?: string;
   image: string;
   label: string;
   description: string;
@@ -64,6 +63,9 @@ export default function RootFilesystemImage() {
   const [rootfsDraftId, setRootfsDraftId] = useState<string>("");
   const [images, setImages] = useState<string[]>([DEFAULT_PROJECT_IMAGE]);
   const [catalogRefresh, setCatalogRefresh] = useState<number>(0);
+  const [publishMode, setPublishMode] = useState<"copy" | "manage">("copy");
+  const [publishSourceEntry, setPublishSourceEntry] =
+    useState<RootfsImageEntry>();
   const [publishDraft, setPublishDraft] = useState<PublishDraft>({
     image: DEFAULT_PROJECT_IMAGE,
     label: "",
@@ -181,8 +183,13 @@ export default function RootFilesystemImage() {
     const currentEntry =
       (rootfsMode === "catalog" ? draftRootfsEntry : undefined) ??
       selectedRootfsEntry;
+    const defaultMode =
+      currentEntry?.section === "mine" && currentEntry?.can_manage
+        ? "manage"
+        : "copy";
+    setPublishSourceEntry(currentEntry);
+    setPublishMode(defaultMode);
     setPublishDraft({
-      image_id: currentEntry?.can_manage ? currentEntry.id : undefined,
       image: currentImage,
       label:
         currentEntry?.label ||
@@ -241,7 +248,10 @@ export default function RootFilesystemImage() {
     try {
       setPublishing(true);
       const entry = await saveRootfsCatalogEntry({
-        image_id: publishDraft.image_id,
+        image_id:
+          publishMode === "manage" && publishSourceEntry?.can_manage
+            ? publishSourceEntry.id
+            : undefined,
         image: publishDraft.image,
         label: publishDraft.label,
         description: publishDraft.description,
@@ -391,7 +401,7 @@ export default function RootFilesystemImage() {
 
             <Space wrap>
               <Button onClick={openPublishDialog}>
-                Publish / Manage Catalog…
+                {publishActionLabel(draftRootfsEntry ?? selectedRootfsEntry)}
               </Button>
               {(rootfsDraft || value) && (
                 <code style={{ fontSize: "11px", overflowWrap: "anywhere" }}>
@@ -437,13 +447,30 @@ export default function RootFilesystemImage() {
           onCancel={() => setPublishOpen(false)}
           onOk={saveCatalogEntry}
           okButtonProps={{ loading: publishing }}
-          title="Publish / Manage RootFS Catalog Entry"
+          title={
+            publishMode === "manage"
+              ? "Manage RootFS Catalog Entry"
+              : "Save RootFS to My Images"
+          }
         >
           <Space direction="vertical" size="middle" style={{ width: "100%" }}>
             <Paragraph type="secondary" style={{ marginBottom: 0 }}>
-              Publish the current base image into your RootFS catalog, or update
-              catalog metadata if you already manage this entry.
+              {publishMode === "manage"
+                ? "Update catalog metadata for the currently selected RootFS entry."
+                : "Create your own catalog entry for the current base image so it appears under My images."}
             </Paragraph>
+            {publishSourceEntry?.can_manage && (
+              <Checkbox
+                checked={publishMode === "manage"}
+                onChange={(e) =>
+                  setPublishMode(e.target.checked ? "manage" : "copy")
+                }
+              >
+                {publishSourceEntry.section === "mine"
+                  ? "Update the existing selected entry instead of saving another copy"
+                  : "Edit the selected shared/official entry instead of saving my own copy"}
+              </Checkbox>
+            )}
             <Input value={publishDraft.image} disabled addonBefore="Image" />
             <Input
               value={publishDraft.label}
@@ -521,9 +548,9 @@ export default function RootFilesystemImage() {
               </Space>
             )}
             <Paragraph type="secondary" style={{ marginBottom: 0 }}>
-              This first slice publishes catalog metadata for the current base
-              image selection. Full publish-from-project-state via RootFS
-              artifacts will follow in the next slice.
+              This first slice saves catalog metadata for the current base image
+              string. Full publish-from-project-state via RootFS artifacts will
+              come in the next slice.
             </Paragraph>
           </Space>
         </Modal>
@@ -635,6 +662,13 @@ function groupedRootfsOptions(images: RootfsImageEntry[]) {
     }
     return acc;
   }, []);
+}
+
+function publishActionLabel(entry?: RootfsImageEntry): string {
+  if (entry?.section === "mine" && entry.can_manage) {
+    return "Manage Catalog…";
+  }
+  return "Save to My Images…";
 }
 
 function renderRootfsWarning(
