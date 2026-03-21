@@ -1,8 +1,4 @@
-import {
-  COCALC_BIN,
-  COCALC_LIB,
-  getNodeRuntimeMounts,
-} from "../project-runner/run/mounts";
+import { COCALC_BIN, COCALC_LIB, getNodeRuntimeMounts } from "./run/mounts";
 
 describe("getNodeRuntimeMounts", () => {
   it("mounts the sibling lib directory for npm-style node installs", () => {
