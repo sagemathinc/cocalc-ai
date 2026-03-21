@@ -1,10 +1,14 @@
 import { EventEmitter } from "events";
-import { Dealer, Subscriber } from "zeromq";
+import { Dealer, Subscriber, context } from "zeromq";
 import { Message } from "./message";
 import type { JupyterMessage } from "./types";
 
 //import { getLogger } from "@cocalc/backend/logger";
 //const logger = getLogger("jupyter:zmq");
+
+// Jupyter closes its sockets explicitly; leaving the global zeromq context in
+// blocky mode can keep test and short-lived CLI processes alive at exit.
+context.blocky = false;
 
 type JupyterSocketName = "iopub" | "shell" | "stdin" | "control";
 
@@ -44,6 +48,7 @@ export class JupyterSockets extends EventEmitter {
     shell: Dealer;
     control: Dealer;
   };
+  private readonly listenTasks: Promise<void>[] = [];
 
   constructor(
     private config: JupyterConnectionInfo,
@@ -54,13 +59,33 @@ export class JupyterSockets extends EventEmitter {
 
   close = () => {
     if (this.sockets != null) {
-      for (const name in this.sockets) {
-        // close doesn't work and shouldn't be used according to the
-        // zmq docs: https://zeromq.github.io/zeromq.js/classes/Dealer.html#close
+      for (const name of Object.keys(this.sockets) as JupyterSocketName[]) {
+        const socket = this.sockets[name];
+        if (socket == null) continue;
+        try {
+          socket.linger = 0;
+        } catch {
+          // best effort cleanup
+        }
+        try {
+          socket.disconnect(connectionString(this.config, name));
+        } catch {
+          // best effort cleanup
+        }
+        try {
+          socket.close();
+        } catch {
+          // best effort cleanup
+        }
         delete this.sockets[name];
       }
       delete this.sockets;
     }
+    this.removeAllListeners();
+  };
+
+  waitUntilClosed = async () => {
+    await Promise.allSettled(this.listenTasks);
   };
 
   send = (message: JupyterMessage) => {
@@ -110,26 +135,38 @@ export class JupyterSockets extends EventEmitter {
     } else {
       throw Error(`bug -- invalid zmqType ${zmqType}`);
     }
+    socket.linger = 0;
     const url = connectionString(this.config, name);
     await socket.connect(url);
     // console.log("connected to", url);
-    this.listen(name, socket);
+    const listenTask = this.listen(name, socket).catch((err) => {
+      if (!socket.closed) {
+        throw err;
+      }
+    });
+    this.listenTasks.push(listenTask);
     return socket;
   };
 
   private listen = async (name: JupyterSocketName, socket) => {
-    if (ZMQ_TYPE[name] == "sub") {
-      // subscribe to everything --
-      //   https://zeromq.github.io/zeromq.js/classes/Subscriber.html#subscribe
-      socket.subscribe();
-    }
-    for await (const data of socket) {
-      const mesg = Message._decode(
-        data,
-        this.config.signature_scheme.slice("hmac-".length),
-        this.config.key,
-      );
-      this.emit(name, mesg);
+    try {
+      if (ZMQ_TYPE[name] == "sub") {
+        // subscribe to everything --
+        //   https://zeromq.github.io/zeromq.js/classes/Subscriber.html#subscribe
+        socket.subscribe();
+      }
+      for await (const data of socket) {
+        const mesg = Message._decode(
+          data,
+          this.config.signature_scheme.slice("hmac-".length),
+          this.config.key,
+        );
+        this.emit(name, mesg);
+      }
+    } catch (err) {
+      if (!socket.closed) {
+        throw err;
+      }
     }
   };
 }

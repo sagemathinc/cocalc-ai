@@ -54,5 +54,5 @@ describe("ulimit is set on the stateless api kernels (and can be configured)", (
 });
 
 afterAll(async () => {
-  Kernel.closeAll();
+  await Kernel.closeAllAndWait();
 });
