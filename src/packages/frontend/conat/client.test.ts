@@ -88,9 +88,13 @@ describe("ConatClient routed project-host reconnect", () => {
       }),
     }));
 
-    jest.doMock("@cocalc/util/async-utils", () => ({
-      until: jest.fn(),
-    }));
+    jest.doMock("@cocalc/util/async-utils", () => {
+      const actual = jest.requireActual("@cocalc/util/async-utils");
+      return {
+        ...actual,
+        until: jest.fn(),
+      };
+    });
 
     jest.doMock("@cocalc/frontend/customize/app-base-path", () => ({
       appBasePath: "",

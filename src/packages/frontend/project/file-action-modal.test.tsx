@@ -22,6 +22,16 @@ jest.mock("@cocalc/frontend/components", () => ({
   Icon: ({ name }) => <span data-testid={`icon-${name}`} />,
 }));
 
+jest.mock("antd", () => ({
+  Modal: ({ open, title, children }) =>
+    open ? (
+      <div role="dialog">
+        <div>{title}</div>
+        {children}
+      </div>
+    ) : null,
+}));
+
 jest.mock("@cocalc/frontend/project_actions", () => ({
   FILE_ACTIONS: {
     delete: {
