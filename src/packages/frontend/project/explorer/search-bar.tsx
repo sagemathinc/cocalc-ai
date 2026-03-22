@@ -20,7 +20,7 @@ import {
   isAgentMode,
   isTerminalMode,
 } from "@cocalc/frontend/project/explorer/file-listing/utils";
-import { submitNavigatorPromptToCurrentThread } from "@cocalc/frontend/project/new/navigator-intents";
+import { submitNavigatorPromptInWorkspaceChat } from "@cocalc/frontend/project/new/navigator-intents";
 
 const HelpStyle = {
   wordWrap: "break-word",
@@ -270,7 +270,7 @@ export const SearchBar = memo(
       const prompt = extractAgentPrompt(rawInput);
       if (!prompt) return;
       onTerminalCommand?.();
-      const sent = await submitNavigatorPromptToCurrentThread({
+      const sent = await submitNavigatorPromptInWorkspaceChat({
         project_id,
         prompt,
         visiblePrompt: prompt,

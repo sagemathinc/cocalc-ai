@@ -2,7 +2,7 @@
 
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
-const mockSubmitNavigatorPromptToCurrentThread = jest.fn();
+const mockSubmitNavigatorPromptInWorkspaceChat = jest.fn();
 const mockExec = jest.fn();
 const mockAddHistoryEntry = jest.fn();
 const mockSetFileSearch = jest.fn();
@@ -71,7 +71,8 @@ jest.mock(
 
 jest.mock("@cocalc/frontend/project/explorer/file-listing/utils", () => ({
   isTerminalMode: (value: string) =>
-    typeof value === "string" && (value.startsWith("/") || value.startsWith("!")),
+    typeof value === "string" &&
+    (value.startsWith("/") || value.startsWith("!")),
   isAgentMode: (value: string) =>
     typeof value === "string" && value.startsWith("@"),
   extractAgentPrompt: (value: string) =>
@@ -95,16 +96,16 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
 }));
 
 jest.mock("@cocalc/frontend/project/new/navigator-intents", () => ({
-  submitNavigatorPromptToCurrentThread: (...args: any[]) =>
-    mockSubmitNavigatorPromptToCurrentThread(...args),
+  submitNavigatorPromptInWorkspaceChat: (...args: any[]) =>
+    mockSubmitNavigatorPromptInWorkspaceChat(...args),
 }));
 
 const { SearchBar } = require("./search-bar");
 
 describe("SearchBar agent miniterm prefix", () => {
   beforeEach(() => {
-    mockSubmitNavigatorPromptToCurrentThread.mockReset();
-    mockSubmitNavigatorPromptToCurrentThread.mockResolvedValue(true);
+    mockSubmitNavigatorPromptInWorkspaceChat.mockReset();
+    mockSubmitNavigatorPromptInWorkspaceChat.mockResolvedValue(true);
     mockExec.mockReset();
     mockAddHistoryEntry.mockReset();
     mockSetFileSearch.mockReset();
@@ -134,7 +135,7 @@ describe("SearchBar agent miniterm prefix", () => {
     fireEvent.click(screen.getByRole("button", { name: "submit" }));
 
     await waitFor(() =>
-      expect(mockSubmitNavigatorPromptToCurrentThread).toHaveBeenCalledWith({
+      expect(mockSubmitNavigatorPromptInWorkspaceChat).toHaveBeenCalledWith({
         project_id: "project-1",
         prompt: "fix this directory",
         visiblePrompt: "fix this directory",
