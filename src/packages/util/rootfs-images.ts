@@ -26,6 +26,7 @@ export type RootfsImageTheme = {
 
 export type RootfsImageEntry = {
   id: string;
+  release_id?: string;
   label: string;
   image: string;
   description?: string;
@@ -94,6 +95,31 @@ export type PublishProjectRootfsArtifact = {
   snapshot: string;
   created_snapshot: boolean;
   source_image: string;
+  inspect_data?: Record<string, any>;
+};
+
+export type RootfsReleaseArtifactKind = "full";
+export type RootfsReleaseArtifactFormat = "btrfs-send";
+export type RootfsReleaseArtifactBackend = "hub-local";
+
+export type RootfsArtifactTransferTarget = {
+  url: string;
+  method: "PUT";
+  headers?: Record<string, string>;
+  chunk_bytes?: number;
+};
+
+export type RootfsReleaseArtifactAccess = {
+  release_id: string;
+  image: string;
+  content_key: string;
+  artifact_kind: RootfsReleaseArtifactKind;
+  artifact_format: RootfsReleaseArtifactFormat;
+  artifact_backend: RootfsReleaseArtifactBackend;
+  artifact_sha256: string;
+  artifact_bytes: number;
+  download_url: string;
+  inspect_data?: Record<string, any>;
 };
 
 export type ProjectRootfsPublishLroRef = {

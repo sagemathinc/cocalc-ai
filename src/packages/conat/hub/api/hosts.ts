@@ -3,6 +3,7 @@ import {
   type ProjectCopyRow,
   type ProjectCopyState,
 } from "@cocalc/conat/hub/api/projects";
+import type { RootfsReleaseArtifactAccess } from "@cocalc/util/rootfs-images";
 
 export type HostStatus =
   | "deprovisioned"
@@ -363,6 +364,7 @@ export const hosts = {
   getSiteOpenAiApiKey: authFirstRequireHost,
   checkCodexSiteUsageAllowance: authFirstRequireHost,
   recordCodexSiteUsage: authFirstRequireHost,
+  getManagedRootfsReleaseArtifact: authFirstRequireHost,
   issueProjectHostAuthToken: authFirstRequireAccount,
 };
 
@@ -524,6 +526,10 @@ export interface Hosts {
   }) => Promise<{
     usage_units: number;
   }>;
+  getManagedRootfsReleaseArtifact: (opts: {
+    host_id?: string;
+    image: string;
+  }) => Promise<RootfsReleaseArtifactAccess>;
   issueProjectHostAuthToken: (opts: {
     account_id?: string;
     host_id: string;

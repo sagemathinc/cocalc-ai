@@ -141,23 +141,42 @@ export function registerProjectBasicCommands(
     .command("create [name]")
     .description("create a project")
     .option("--host <host>", "host id or name")
+    .option("--rootfs-image <image>", "runtime RootFS image to assign")
+    .option(
+      "--rootfs-image-id <id>",
+      "managed RootFS catalog entry id to record on the project",
+    )
+    .option("--start", "start the project after creating it")
     .action(
       async (
         name: string | undefined,
-        opts: { host?: string },
+        opts: {
+          host?: string;
+          rootfsImage?: string;
+          rootfsImageId?: string;
+          start?: boolean;
+        },
         command: Command,
       ) => {
         await withContext(command, "project create", async (ctx) => {
           const host = opts.host ? await resolveHost(ctx, opts.host) : null;
+          const rootfs_image = `${opts.rootfsImage ?? ""}`.trim() || undefined;
+          const rootfs_image_id =
+            `${opts.rootfsImageId ?? ""}`.trim() || undefined;
           const projectId = await ctx.hub.projects.createProject({
             title: name ?? "New Project",
             host_id: host?.id,
-            start: false,
+            rootfs_image,
+            rootfs_image_id,
+            start: !!opts.start,
           });
           return {
             project_id: projectId,
             title: name ?? "New Project",
             host_id: host?.id ?? null,
+            rootfs_image: rootfs_image ?? null,
+            rootfs_image_id: rootfs_image_id ?? null,
+            started: !!opts.start,
           };
         });
       },

@@ -27,6 +27,7 @@ import {
 
 type RootfsImageRow = {
   image_id: string;
+  release_id: string | null;
   owner_id: string | null;
   runtime_image: string;
   label: string;
@@ -137,6 +138,7 @@ function rowToEntry({
   return normalizeRootfsEntry(
     {
       id: row.image_id,
+      release_id: row.release_id ?? undefined,
       label: row.label || row.runtime_image,
       image: row.runtime_image,
       description: row.description ?? undefined,
@@ -183,8 +185,8 @@ export async function ensureBuiltinRootfsImages(): Promise<void> {
   for (const entry of BUILTIN_ROOTFS_IMAGES) {
     await pool.query(
       `INSERT INTO rootfs_images
-      (image_id, owner_id, runtime_image, label, description, visibility, official, prepull, hidden, arch, gpu, size_gb, tags, digest, content_key, deprecated, deprecated_reason, theme, created, updated)
-      VALUES ($1, NULL, $2, $3, $4, $5, $6, $7, false, $8, $9, $10, $11::TEXT[], $12, $13, $14, $15, $16::JSONB, NOW(), NOW())
+      (image_id, release_id, owner_id, runtime_image, label, description, visibility, official, prepull, hidden, arch, gpu, size_gb, tags, digest, content_key, deprecated, deprecated_reason, theme, created, updated)
+      VALUES ($1, NULL, NULL, $2, $3, $4, $5, $6, $7, false, $8, $9, $10, $11::TEXT[], $12, $13, $14, $15, $16::JSONB, NOW(), NOW())
       ON CONFLICT (image_id) DO NOTHING`,
       [
         entry.id,
@@ -213,6 +215,7 @@ async function queryRootfsRows(): Promise<RootfsImageRow[]> {
   const { rows } = await pool.query<RootfsImageRow>(
     `SELECT
       r.image_id,
+      r.release_id,
       r.owner_id,
       r.runtime_image,
       r.label,
@@ -276,11 +279,13 @@ async function upsertRootfsRow({
   body,
   digest,
   content_key,
+  release_id,
 }: {
   account_id: string;
   body: RootfsCatalogSaveBody;
   digest?: string | null;
   content_key?: string | null;
+  release_id?: string | null;
 }): Promise<{ image_id: string; entry?: RootfsImageEntry }> {
   const pool = getPool("medium");
   const admin = await isAdmin(account_id);
@@ -339,10 +344,11 @@ async function upsertRootfsRow({
 
   await pool.query(
     `INSERT INTO rootfs_images
-      (image_id, owner_id, runtime_image, label, description, visibility, official, prepull, hidden, arch, gpu, size_gb, tags, digest, content_key, deprecated, deprecated_reason, theme, created, updated)
+      (image_id, release_id, owner_id, runtime_image, label, description, visibility, official, prepull, hidden, arch, gpu, size_gb, tags, digest, content_key, deprecated, deprecated_reason, theme, created, updated)
      VALUES
-      ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::TEXT[], $14, $15, false, NULL, $16::JSONB, NOW(), NOW())
+      ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::TEXT[], $15, $16, false, NULL, $17::JSONB, NOW(), NOW())
      ON CONFLICT (image_id) DO UPDATE SET
+      release_id = COALESCE(EXCLUDED.release_id, rootfs_images.release_id),
       owner_id = EXCLUDED.owner_id,
       runtime_image = EXCLUDED.runtime_image,
       label = EXCLUDED.label,
@@ -361,6 +367,7 @@ async function upsertRootfsRow({
       updated = NOW()`,
     [
       image_id,
+      release_id ?? null,
       owner_id,
       image,
       label,
@@ -443,10 +450,12 @@ export async function publishProjectRootfsCatalogEntry({
   account_id,
   body,
   artifact,
+  release_id,
 }: {
   account_id: string;
   body: PublishProjectRootfsBody;
   artifact: PublishProjectRootfsArtifact;
+  release_id?: string | null;
 }): Promise<RootfsImageEntry> {
   const tags = Array.from(
     new Set(
@@ -478,6 +487,7 @@ export async function publishProjectRootfsCatalogEntry({
     },
     digest: artifact.digest,
     content_key: artifact.content_key,
+    release_id,
   });
   if (entry) {
     return entry;
@@ -486,6 +496,7 @@ export async function publishProjectRootfsCatalogEntry({
   return normalizeRootfsEntry(
     {
       id: image_id,
+      release_id: release_id ?? undefined,
       label: body.label,
       image: artifact.image,
       description: body.description,

@@ -25,6 +25,11 @@ Table({
       pg_type: "VARCHAR(128)",
       desc: "Stable identifier for this RootFS image release/catalog entry.",
     },
+    release_id: {
+      type: "string",
+      pg_type: "VARCHAR(128)",
+      desc: "Optional immutable RootFS release referenced by this catalog entry.",
+    },
     owner_id: {
       type: "uuid",
       desc: "Account that published this image, if any.",

@@ -3,7 +3,9 @@
 // without having to run that project.
 
 import { randomUUID } from "node:crypto";
+import { spawn } from "node:child_process";
 import { dirname, join } from "node:path";
+import { createReadStream, createWriteStream } from "node:fs";
 import {
   chmod,
   mkdir,
@@ -60,6 +62,7 @@ import {
   managedRootfsImageName,
   type RootfsImageArch,
   type PublishProjectRootfsArtifact,
+  type RootfsArtifactTransferTarget,
 } from "@cocalc/util/rootfs-images";
 import { init as initSshServer } from "@cocalc/project-proxy/ssh-server";
 import { type MutagenSyncSession } from "@cocalc/conat/project/mutagen/types";
@@ -109,6 +112,7 @@ import {
 import { isMissingRusticRepositoryError } from "./backup-index-errors";
 import { btrfs, sudo } from "@cocalc/file-server/btrfs/util";
 import { subvolume } from "@cocalc/file-server/btrfs/subvolume";
+import { pipeline } from "node:stream/promises";
 
 type SshTarget = { type: "project"; project_id: string };
 
@@ -390,6 +394,17 @@ async function createImageCacheTempPath(prefix: string): Promise<string> {
   return await mkdtemp(join(IMAGE_CACHE, prefix));
 }
 
+async function createImageCacheTempSubvolume(prefix: string): Promise<string> {
+  await mkdir(IMAGE_CACHE, { recursive: true });
+  const path = join(IMAGE_CACHE, `${prefix}${randomUUID()}`);
+  await btrfs({
+    args: ["subvolume", "create", path],
+    err_on_exit: true,
+    verbose: false,
+  });
+  return path;
+}
+
 async function createOverlayMountTempPath(): Promise<string> {
   await mkdir(PROJECT_ROOTS_CACHE, { recursive: true });
   const path = join(PROJECT_ROOTS_CACHE, randomUUID());
@@ -499,6 +514,115 @@ async function directorySizeBytes(pathToMeasure: string): Promise<number> {
     );
   }
   return value;
+}
+
+async function btrfsSendToFile({
+  source,
+  dest,
+}: {
+  source: string;
+  dest: string;
+}): Promise<void> {
+  await mkdir(dirname(dest), { recursive: true });
+  const child = spawn(
+    "sudo",
+    ["-n", STORAGE_WRAPPER, "btrfs", "send", source],
+    {
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+  const output = createWriteStream(dest);
+  const pipePromise = pipeline(child.stdout, output);
+  const exitPromise = new Promise<void>((resolve, reject) => {
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      reject(
+        new Error(
+          `btrfs send exited with code ${code}: ${stderr.trim() || "unknown error"}`,
+        ),
+      );
+    });
+  });
+  try {
+    await Promise.all([pipePromise, exitPromise]);
+  } catch (err) {
+    await rm(dest, { force: true }).catch(() => {});
+    throw err;
+  }
+}
+
+async function uploadRootfsArtifactFile({
+  path,
+  upload,
+}: {
+  path: string;
+  upload: RootfsArtifactTransferTarget;
+}): Promise<void> {
+  const info = await stat(path);
+  const chunkBytes = Math.max(
+    0,
+    Math.floor(Number(upload.chunk_bytes ?? 0) || 0),
+  );
+  const totalParts =
+    chunkBytes > 0 ? Math.max(1, Math.ceil(info.size / chunkBytes)) : 1;
+  const uploadId = totalParts > 1 ? randomUUID() : undefined;
+
+  for (let part = 0; part < totalParts; part += 1) {
+    const start = chunkBytes > 0 ? part * chunkBytes : 0;
+    const endExclusive =
+      chunkBytes > 0 ? Math.min(info.size, start + chunkBytes) : info.size;
+    const partSize = endExclusive - start;
+    const stream = createReadStream(path, {
+      ...(chunkBytes > 0 ? { start, end: endExclusive - 1 } : {}),
+    });
+    try {
+      const url = new URL(upload.url);
+      if (uploadId) {
+        url.searchParams.set("upload_id", uploadId);
+        url.searchParams.set("part", `${part}`);
+        url.searchParams.set("parts", `${totalParts}`);
+      }
+      const response = await fetch(url, {
+        method: upload.method,
+        headers: {
+          ...(upload.headers ?? {}),
+          "content-length": `${partSize}`,
+        },
+        body: stream as any,
+        duplex: "half",
+      } as any);
+      if (!response.ok) {
+        const message = `${(await response.text().catch(() => "")).trim()}`;
+        throw new Error(
+          `artifact upload failed (${response.status} ${response.statusText})${message ? `: ${message}` : ""}`,
+        );
+      }
+    } finally {
+      stream.destroy();
+    }
+  }
+}
+
+async function btrfsSnapshotReadonly({
+  source,
+  dest,
+}: {
+  source: string;
+  dest: string;
+}): Promise<void> {
+  await btrfs({
+    args: ["subvolume", "snapshot", "-r", source, dest],
+    err_on_exit: true,
+    verbose: false,
+  });
 }
 
 async function deleteSubvolumeTree(pathToDelete?: string): Promise<void> {
@@ -1461,7 +1585,9 @@ async function publishRootfsImage({
     workdirPath = join(overlayRoot, `publish-workdir-${randomUUID()}`);
     await mkdir(workdirPath, { recursive: true });
     mergedPath = await createOverlayMountTempPath();
-    stagedRootfsPath = await createImageCacheTempPath(".rootfs-publish-tree-");
+    stagedRootfsPath = await createImageCacheTempSubvolume(
+      ".rootfs-publish-tree-",
+    );
 
     await mountOverlayForPublish({
       lowerdir,
@@ -1512,13 +1638,11 @@ async function publishRootfsImage({
     });
     if (!(await exists(finalPath))) {
       await mkdir(dirname(finalPath), { recursive: true });
-      await executeCode({
-        verbose: false,
-        err_on_exit: true,
-        timeout: ROOTFS_PUBLISH_TIMEOUT_S,
-        command: "mv",
-        args: [stagedRootfsPath, finalPath],
+      await btrfsSnapshotReadonly({
+        source: stagedRootfsPath,
+        dest: finalPath,
       });
+      await deleteSubvolumeTree(stagedRootfsPath);
       stagedRootfsPath = undefined;
     }
 
@@ -1536,6 +1660,7 @@ async function publishRootfsImage({
       snapshot: snapshotName,
       created_snapshot: createdSnapshot,
       source_image: sourceImage,
+      inspect_data: publishedInspectData,
     };
   } finally {
     if (mergedPath) {
@@ -1543,8 +1668,63 @@ async function publishRootfsImage({
     }
     await removeDirectoryTree(workdirPath).catch(() => {});
     await removeDirectoryTree(mergedPath).catch(() => {});
-    await removeDirectoryTree(stagedRootfsPath).catch(() => {});
+    await deleteSubvolumeTree(stagedRootfsPath).catch(() => {});
     await deleteSubvolumeTree(staged.path).catch(() => {});
+  }
+}
+
+async function uploadRootfsReleaseArtifact({
+  image,
+  upload,
+}: {
+  project_id: string;
+  image: string;
+  upload: RootfsArtifactTransferTarget;
+}): Promise<{ ok: true }> {
+  const finalPath = imageCachePath(image);
+  if (!(await exists(finalPath))) {
+    throw new Error(
+      `cached RootFS image '${image}' does not exist on this host`,
+    );
+  }
+
+  const tempDir = await createImageCacheTempPath(".rootfs-artifact-upload-");
+  const artifactPath = join(tempDir, "release.btrfs");
+  let stagedSourcePath: string | undefined;
+  let readonlySendSourcePath: string | undefined;
+  try {
+    let sendSource = finalPath;
+    if (!(await isBtrfsSubvolume(finalPath))) {
+      stagedSourcePath = await createImageCacheTempSubvolume(
+        ".rootfs-artifact-stage-",
+      );
+      await rsyncTree({
+        src: finalPath,
+        dest: stagedSourcePath,
+      });
+      readonlySendSourcePath = join(
+        tempDir,
+        `.rootfs-artifact-send-${randomUUID()}`,
+      );
+      await btrfsSnapshotReadonly({
+        source: stagedSourcePath,
+        dest: readonlySendSourcePath,
+      });
+      sendSource = readonlySendSourcePath;
+    }
+    await btrfsSendToFile({
+      source: sendSource,
+      dest: artifactPath,
+    });
+    await uploadRootfsArtifactFile({
+      path: artifactPath,
+      upload,
+    });
+    return { ok: true };
+  } finally {
+    await deleteSubvolumeTree(readonlySendSourcePath).catch(() => {});
+    await deleteSubvolumeTree(stagedSourcePath).catch(() => {});
+    await removeDirectoryTree(tempDir).catch(() => {});
   }
 }
 
@@ -2707,6 +2887,7 @@ export async function initFileServer({
     getSnapshotFileText: reuseInFlight(getSnapshotFileText),
     restoreSnapshot: reuseInFlight(restoreSnapshot),
     publishRootfsImage: reuseInFlight(publishRootfsImage),
+    uploadRootfsReleaseArtifact: reuseInFlight(uploadRootfsReleaseArtifact),
     // file sync
     createSync,
     getAllSyncs,

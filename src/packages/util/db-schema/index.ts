@@ -60,6 +60,7 @@ import "./project-backup-secrets";
 import "./project-collab-invites";
 import "./projects";
 import "./rootfs-images";
+import "./rootfs-releases";
 import "./public-path-stars";
 import "./public-paths";
 import "./purchase-quotas";

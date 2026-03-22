@@ -3,23 +3,42 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { readdir, readFile, rm, stat } from "fs/promises";
+import { spawn } from "node:child_process";
+import { createReadStream, createWriteStream } from "node:fs";
+import {
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  stat,
+  writeFile,
+} from "fs/promises";
+import { join } from "node:path";
+import { pipeline } from "node:stream/promises";
 
 import { executeCode } from "@cocalc/backend/execute-code";
 import getLogger from "@cocalc/backend/logger";
 import { exists } from "@cocalc/backend/misc/async-utils-node";
 import type { HostRootfsCacheEntry } from "@cocalc/conat/project-host/api";
+import { hubApi } from "@cocalc/lite/hub/api";
+import { isBtrfsSubvolume } from "@cocalc/file-server/btrfs/subvolume";
+import { btrfs } from "@cocalc/file-server/btrfs/util";
 import {
   IMAGE_CACHE,
   extractBaseImage,
   imageCachePath,
   inspectFilePath,
 } from "@cocalc/project-runner/run/rootfs-base";
-import { normalizeRootfsImageName } from "@cocalc/util/rootfs-images";
+import {
+  isManagedRootfsImageName,
+  normalizeRootfsImageName,
+} from "@cocalc/util/rootfs-images";
 
 import { listProjects } from "./sqlite/projects";
 
 const logger = getLogger("project-host:rootfs-cache");
+const STORAGE_WRAPPER = "/usr/local/sbin/cocalc-runtime-storage";
 
 type RootfsUsage = {
   project_ids: string[];
@@ -126,6 +145,159 @@ async function buildEntry(
   };
 }
 
+async function btrfsReceiveFromFile({
+  artifactPath,
+  destDir,
+}: {
+  artifactPath: string;
+  destDir: string;
+}): Promise<void> {
+  const child = spawn(
+    "sudo",
+    ["-n", STORAGE_WRAPPER, "btrfs", "receive", destDir],
+    {
+      stdio: ["pipe", "ignore", "pipe"],
+    },
+  );
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+  const pipePromise = pipeline(
+    createReadStream(artifactPath),
+    child.stdin as any,
+  );
+  const exitPromise = new Promise<void>((resolve, reject) => {
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      reject(
+        new Error(
+          `btrfs receive exited with code ${code}: ${stderr.trim() || "unknown error"}`,
+        ),
+      );
+    });
+  });
+  await Promise.all([pipePromise, exitPromise]);
+}
+
+async function downloadManagedRootfsArtifact({
+  image,
+}: {
+  image: string;
+}): Promise<void> {
+  const started = Date.now();
+  const access = await hubApi.hosts.getManagedRootfsReleaseArtifact({
+    image,
+  });
+  logger.info("downloading managed RootFS artifact", {
+    image,
+    release_id: access.release_id,
+    content_key: access.content_key,
+    artifact_bytes: access.artifact_bytes,
+    artifact_backend: access.artifact_backend,
+  });
+  const finalPath = imageCachePath(image);
+  const finalInspectPath = inspectFilePath(image);
+  if (await exists(finalPath)) {
+    logger.info("managed RootFS artifact already cached", {
+      image,
+      release_id: access.release_id,
+      content_key: access.content_key,
+    });
+    if (access.inspect_data && !(await exists(finalInspectPath))) {
+      await writeFile(finalInspectPath, JSON.stringify(access.inspect_data));
+    }
+    return;
+  }
+
+  await mkdir(IMAGE_CACHE, { recursive: true });
+  const tempDir = await mkdtemp(join(IMAGE_CACHE, ".managed-rootfs-receive-"));
+  const artifactPath = join(tempDir, "release.btrfs");
+  const receiveRoot = join(tempDir, "receive");
+  await mkdir(receiveRoot, { recursive: true });
+
+  try {
+    const downloadStarted = Date.now();
+    const response = await fetch(access.download_url, {
+      signal: AbortSignal.timeout(15 * 60 * 1000),
+    });
+    if (!response.ok || !response.body) {
+      throw new Error(
+        `artifact download failed (${response.status} ${response.statusText})`,
+      );
+    }
+    await pipeline(response.body as any, createWriteStream(artifactPath));
+    const artifactStats = await stat(artifactPath);
+    logger.info("downloaded managed RootFS artifact", {
+      image,
+      release_id: access.release_id,
+      content_key: access.content_key,
+      bytes: artifactStats.size,
+      elapsed_ms: Date.now() - downloadStarted,
+    });
+    const receiveStarted = Date.now();
+    await btrfsReceiveFromFile({
+      artifactPath,
+      destDir: receiveRoot,
+    });
+    logger.info("received managed RootFS artifact", {
+      image,
+      release_id: access.release_id,
+      content_key: access.content_key,
+      elapsed_ms: Date.now() - receiveStarted,
+    });
+
+    const receivedPath = join(receiveRoot, encodeURIComponent(image));
+    if (!(await exists(receivedPath))) {
+      throw new Error(`received RootFS image '${image}' was not created`);
+    }
+    const snapshotStarted = Date.now();
+    await btrfs({
+      args: ["subvolume", "snapshot", "-r", receivedPath, finalPath],
+      err_on_exit: true,
+      verbose: false,
+    });
+    await btrfs({
+      args: ["subvolume", "delete", receivedPath],
+      err_on_exit: true,
+      verbose: false,
+    });
+    if (access.inspect_data) {
+      await writeFile(finalInspectPath, JSON.stringify(access.inspect_data));
+    }
+    logger.info("cached managed RootFS artifact", {
+      image,
+      release_id: access.release_id,
+      content_key: access.content_key,
+      snapshot_elapsed_ms: Date.now() - snapshotStarted,
+      total_elapsed_ms: Date.now() - started,
+    });
+  } finally {
+    await rm(tempDir, { recursive: true, force: true, maxRetries: 3 }).catch(
+      () => {},
+    );
+  }
+}
+
+async function deleteCachedRootfsPath(path: string): Promise<void> {
+  if (!(await exists(path))) {
+    return;
+  }
+  if (await isBtrfsSubvolume(path)) {
+    await btrfs({
+      args: ["subvolume", "delete", path],
+      err_on_exit: true,
+      verbose: false,
+    });
+    return;
+  }
+  await rm(path, { recursive: true, force: true, maxRetries: 3 });
+}
+
 export async function listRootfsCacheEntries(): Promise<
   HostRootfsCacheEntry[]
 > {
@@ -190,7 +362,11 @@ export async function pullRootfsCacheEntry(
   if (!trimmed) {
     throw new Error("image must be specified");
   }
-  await extractBaseImage(trimmed);
+  if (isManagedRootfsImageName(trimmed)) {
+    await downloadManagedRootfsArtifact({ image: trimmed });
+  } else {
+    await extractBaseImage(trimmed);
+  }
   const usage = rootfsUsageByImage().get(trimmed) ?? {
     project_ids: [],
     running_project_ids: [],
@@ -219,7 +395,7 @@ export async function deleteRootfsCacheEntry(image: string): Promise<{
   const inspect_path = inspectFilePath(trimmed);
   let removed = false;
   if (await exists(cache_path)) {
-    await rm(cache_path, { recursive: true, force: true, maxRetries: 3 });
+    await deleteCachedRootfsPath(cache_path);
     removed = true;
   }
   if (await exists(inspect_path)) {

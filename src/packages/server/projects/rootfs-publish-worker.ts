@@ -1,11 +1,17 @@
 import { randomUUID } from "node:crypto";
 import getLogger from "@cocalc/backend/logger";
 import type { LroSummary } from "@cocalc/conat/hub/api/lro";
+import getPool from "@cocalc/database/pool";
 import { getProjectFileServerClient } from "@cocalc/server/conat/file-server-client";
 import { claimLroOps, touchLro, updateLro } from "@cocalc/server/lro/lro-db";
 import { getEffectiveParallelOpsLimit } from "@cocalc/server/lro/worker-config";
 import { publishLroEvent, publishLroSummary } from "@cocalc/conat/lro/stream";
 import { publishProjectRootfsCatalogEntry } from "@cocalc/server/rootfs/catalog";
+import {
+  hasStoredRootfsArtifact,
+  issueRootfsReleaseArtifactUpload,
+  upsertPublishedRootfsRelease,
+} from "@cocalc/server/rootfs/releases";
 
 const logger = getLogger("server:projects:rootfs-publish-worker");
 
@@ -21,7 +27,8 @@ const WORKER_ID = randomUUID();
 
 const progressSteps: Record<string, number> = {
   validate: 5,
-  publish: 90,
+  publish: 75,
+  upload: 88,
   catalog: 95,
   done: 100,
 };
@@ -81,6 +88,18 @@ function progressEvent({
       err,
     });
   });
+}
+
+async function loadProjectHostId(project_id: string): Promise<string> {
+  const { rows } = await getPool("medium").query<{ host_id: string | null }>(
+    "SELECT host_id FROM projects WHERE project_id=$1",
+    [project_id],
+  );
+  const host_id = `${rows[0]?.host_id ?? ""}`.trim();
+  if (!host_id) {
+    throw new Error(`project ${project_id} is not assigned to a host`);
+  }
+  return host_id;
 }
 
 async function handleRootfsPublishOp(op: LroSummary): Promise<void> {
@@ -184,12 +203,45 @@ async function handleRootfsPublishOp(op: LroSummary): Promise<void> {
       lro: { op_id, scope_type: op.scope_type, scope_id: op.scope_id },
     });
 
+    if (!(await hasStoredRootfsArtifact(artifact.content_key))) {
+      const host_id = await loadProjectHostId(project_id);
+      const upload = await issueRootfsReleaseArtifactUpload({
+        host_id,
+        content_key: artifact.content_key,
+      });
+      const uploadOp = await updateLro({
+        op_id,
+        progress_summary: {
+          phase: "upload",
+          image: artifact.image,
+          content_key: artifact.content_key,
+        },
+      });
+      await publishSummarySafe(uploadOp, {
+        op_id,
+        when: "set-upload-phase",
+      });
+      progress({
+        step: "upload",
+        message: "uploading RootFS release artifact",
+        detail: { image: artifact.image, content_key: artifact.content_key },
+      });
+      await client.uploadRootfsReleaseArtifact({
+        project_id,
+        image: artifact.image,
+        upload,
+      });
+    }
+
+    const release = await upsertPublishedRootfsRelease({ artifact });
+
     const catalogOp = await updateLro({
       op_id,
       progress_summary: {
         phase: "catalog",
         image: artifact.image,
         content_key: artifact.content_key,
+        release_id: release.release_id,
       },
     });
     await publishSummarySafe(catalogOp, {
@@ -216,12 +268,14 @@ async function handleRootfsPublishOp(op: LroSummary): Promise<void> {
         source_mode: input.source_mode,
       },
       artifact,
+      release_id: release.release_id,
     });
 
     const duration_ms = Date.now() - started;
     const result = {
       project_id,
       image_id: entry.id,
+      release_id: release.release_id,
       image: artifact.image,
       content_key: artifact.content_key,
       digest: artifact.digest,

@@ -101,6 +101,7 @@ import {
 import { syncProjectUsersOnHost } from "@cocalc/server/project-host/control";
 import { moveProjectToHost } from "@cocalc/server/projects/move";
 import { notifyProjectHostUpdate } from "@cocalc/server/conat/route-project";
+import { issueRootfsReleaseArtifactAccess } from "@cocalc/server/rootfs/releases";
 function pool() {
   return getPool();
 }
@@ -691,6 +692,22 @@ export async function touchProject({
       project_id,
     });
   }
+}
+
+export async function getManagedRootfsReleaseArtifact({
+  host_id,
+  image,
+}: {
+  host_id?: string;
+  image: string;
+}) {
+  if (!host_id) {
+    throw new Error("host_id must be specified");
+  }
+  return await issueRootfsReleaseArtifactAccess({
+    host_id,
+    image,
+  });
 }
 
 export async function claimPendingCopies({
