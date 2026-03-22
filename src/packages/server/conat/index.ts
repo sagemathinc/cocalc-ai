@@ -19,6 +19,7 @@ import { startBackupLroWorker } from "@cocalc/server/projects/backup-worker";
 import { startCopyLroWorker } from "@cocalc/server/projects/copy-worker";
 import { startProjectHardDeleteWorker } from "@cocalc/server/projects/hard-delete-worker";
 import { startMoveLroWorker } from "@cocalc/server/projects/move-worker";
+import { startRootfsPublishLroWorker } from "@cocalc/server/projects/rootfs-publish-worker";
 import { startRestoreLroWorker } from "@cocalc/server/projects/restore-worker";
 import { startHostLroWorker } from "@cocalc/server/hosts/start-worker";
 import { isLaunchpadProduct } from "@cocalc/server/launchpad/mode";
@@ -53,6 +54,7 @@ export async function initConatApi() {
   startCopyLroWorker();
   startProjectHardDeleteWorker();
   startMoveLroWorker();
+  startRootfsPublishLroWorker();
   startRestoreLroWorker();
   startHostLroWorker();
   initLLM();

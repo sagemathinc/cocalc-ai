@@ -82,4 +82,17 @@ export function wireSystemApi(): void {
       opts,
     ]);
   };
+
+  hubApi.hosts.getManagedRootfsReleaseArtifact = async (opts: {
+    host_id?: string;
+    image: string;
+  }) => {
+    const scope = defaultHostScope();
+    return await callHub({
+      client: requireMasterClient("hosts.getManagedRootfsReleaseArtifact"),
+      name: "hosts.getManagedRootfsReleaseArtifact",
+      args: [opts],
+      ...(scope?.host_id ? { host_id: scope.host_id } : {}),
+    });
+  };
 }

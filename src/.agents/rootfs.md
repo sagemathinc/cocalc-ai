@@ -7,12 +7,16 @@ It is written against the current state of the repo on March 21, 2026:
 
 - projects already run on overlayfs over a selected rootfs image,
 - project snapshots and restore now preserve rootfs and HOME correctly,
-- the current catalog is still a flat manifest of mostly placeholder OCI image
-  refs,
-- projects still store a freeform `rootfs_image` string,
-- there is no central database model for managed RootFS images,
-- there is no user publish/promote/prepull workflow,
-- there is no host UI for image cache management.
+- there is now a managed RootFS catalog in Postgres,
+- there is now an immutable RootFS release registry in Postgres,
+- project creation and project settings now use the managed catalog,
+- projects currently store both a runtime image ref and a managed image id,
+- users can publish RootFS state from a project via UI, CLI, and LRO,
+- hosts have a RootFS cache UI and RPCs for list/pull/delete,
+- cross-host distribution works today through a hub-local artifact backend,
+- R2 artifact storage is not implemented yet,
+- course image selection is not implemented yet,
+- incremental release storage is not implemented yet.
 
 The goal of this plan is to turn RootFS into a first-class product primitive,
 not just a freeform container-image string.
@@ -33,7 +37,7 @@ My view is:
    - user-owned images,
    - collaborator-published images,
    - public images,
-   with different trust/warning levels.
+     with different trust/warning levels.
 6. Projects must store the exact immutable RootFS release they use.
 7. Admin promotion, prepull, host inventory, and course-level image selection
    are all part of the minimum launch architecture.
@@ -46,6 +50,56 @@ The single most important design choice is this:
 
 That distinction is what makes promotion, reproducibility, and lowerdir
 stability work.
+
+## Current Status
+
+As of March 22, 2026, the RootFS effort has moved from plan-only into a real
+vertical slice.
+
+### Implemented
+
+- managed RootFS catalog rows and immutable release rows exist centrally,
+- project creation can select managed RootFS images,
+- project settings can:
+  - switch images,
+  - save catalog metadata,
+  - publish current project RootFS state,
+- publish runs as an LRO with visible progress and persistent error display,
+- CLI support exists for:
+  - listing images,
+  - saving catalog entries,
+  - publishing project RootFS state,
+  - waiting on the publish LRO,
+- host cache inventory exists with pull/delete controls,
+- cross-host distribution works for managed releases,
+- there is now a useful non-R2 fallback path via the central hub, which is
+  relevant for self-hosted deployments without managed object storage.
+
+### Implemented but not yet in the final shape
+
+- project binding still includes a runtime image string in addition to the
+  managed id; this should keep moving toward exact release binding,
+- artifact transport currently uses the hub-local backend instead of R2,
+- publish currently materializes a full tree before send; incremental release
+  storage is still future work.
+
+### Not implemented yet
+
+- R2-backed artifact storage and retrieval,
+- official build pipeline producing canonical hosted artifacts,
+- course image selection,
+- collaborator/public lifecycle moderation polish,
+- dependency-aware incremental release storage and GC,
+- production-grade benchmark and soak data on production-like host disks.
+
+### Immediate next win
+
+The next big milestone should be:
+
+1. bring R2 into the artifact path,
+2. rerun publish/download/create benchmarks end-to-end,
+3. do those benchmarks on hosts with production-level disks rather than tiny
+   dev disks.
 
 ## Product Requirements
 
@@ -125,12 +179,14 @@ This means we need to separate:
 
 - exact runtime identity,
 - product labeling and promotion,
+- regional artifact replicas,
 - local host cache state.
 
 That implies at least:
 
 - one central table for immutable image releases,
 - one central table for publishing/catalog metadata,
+- one central table for artifact replicas,
 - one host-side inventory model for local cache state.
 
 ## Terminology
@@ -196,10 +252,33 @@ Therefore:
 
 The primary identity of a RootFS release should be:
 
-- `content_key = sha256(canonical_btrfs_send_stream_bytes)`
+- `content_key = sha256(canonical_full_filesystem_tree_bytes)`
+
+This key represents the complete logical RootFS content, independent of how we
+store or transport that release.
+
+This does **not** mean we stop hashing the btrfs send stream artifacts. It
+means we separate:
+
+- logical release identity: `content_key`
+- exact stored artifact identity: `btrfs_stream_sha256`, `tar_zst_sha256`, etc.
+
+That distinction becomes necessary once incrementals exist, because the same
+logical release may have more than one transport artifact over time.
 
 and the system should also store:
 
+- `artifact_kind`
+  - `full`
+  - `delta`
+- `artifact_format`
+  - `btrfs-send`
+  - `btrfs-send-incremental`
+  - `tar-zst`
+- `artifact_sha256` for the exact stored artifact,
+- `artifact_bytes`,
+- `parent_release_id` and `parent_content_key` when the artifact is
+  incremental,
 - `oci_digest` if the release came from an OCI image,
 - `tree_sha256` or equivalent manifest hash if we later want stronger
   filesystem-level verification,
@@ -207,12 +286,15 @@ and the system should also store:
 - gpu/cpu capability,
 - release metadata.
 
-Why use the btrfs stream hash as the primary key:
+Why split release identity from artifact identity:
 
-- it is the exact artifact we distribute and receive on hosts,
-- it matches the actual lowerdir content after build/canonicalization,
-- it avoids ambiguity around OCI layer compression and extraction details,
-- it is directly useful for R2 storage and host cache naming.
+- a project must bind to the full logical release, not one particular transport
+  artifact,
+- the same release may later have both a full artifact and one or more
+  incremental artifacts,
+- incremental storage should not change the identity of the release,
+- it avoids coupling release identity to whichever parent chain happened to be
+  chosen at publish time.
 
 ### Project binding rule
 
@@ -248,22 +330,27 @@ I recommend three central logical models:
 
 1. immutable RootFS releases,
 2. mutable catalog/publishing state,
-3. per-host cache state.
+3. regional artifact replica state,
+4. per-host cache state.
 
-This can be implemented as three tables or two central Postgres tables plus one
-host-local inventory table mirrored via RPC. For launch, I recommend central
-Postgres for releases and catalog, and host-local sqlite plus RPC for cache
-state.
+This can be implemented as three central Postgres tables plus one host-local
+inventory table mirrored via RPC. For launch, I recommend central Postgres for:
+
+- releases,
+- catalog,
+- artifact replicas,
+
+and host-local sqlite plus RPC for cache state.
 
 ## Proposed Postgres Tables
 
-### 1. `rootfs_images`
+### 1. `rootfs_releases`
 
 Immutable release rows.
 
 Suggested fields:
 
-- `image_id UUID PRIMARY KEY`
+- `release_id UUID PRIMARY KEY`
 - `created TIMESTAMP`
 - `last_edited TIMESTAMP`
 - `status TEXT`
@@ -293,13 +380,21 @@ Suggested fields:
   - `arm64`
 - `gpu BOOLEAN`
 - `content_key TEXT UNIQUE`
+- `parent_release_id UUID NULL REFERENCES rootfs_releases(release_id)`
+- `parent_content_key TEXT NULL`
+- `artifact_kind TEXT`
+  - `full`
+  - `delta`
+- `artifact_format TEXT`
+  - `btrfs-send`
+  - `btrfs-send-incremental`
+  - `tar-zst`
 - `btrfs_stream_sha256 TEXT UNIQUE`
 - `btrfs_stream_bytes BIGINT`
 - `tar_zst_sha256 TEXT NULL`
 - `tar_zst_bytes BIGINT NULL`
 - `oci_ref TEXT NULL`
 - `oci_digest TEXT NULL`
-- `base_image_id UUID NULL`
 - `r2_bucket TEXT`
 - `r2_prefix TEXT`
 - `manifest JSONB`
@@ -312,7 +407,15 @@ Suggested fields:
 Important rule:
 
 - `content_key`, `arch`, `gpu`, and the stream checksums are immutable once the
-  image is `ready`.
+  release is `ready`.
+
+Important incremental rule:
+
+- `parent_release_id` must point to another immutable release, not to a mutable
+  catalog entry,
+- `content_key` always describes the full logical tree,
+- the parent pointer only describes how one artifact can be reconstructed
+  efficiently.
 
 ### 2. `rootfs_catalog_entries`
 
@@ -321,7 +424,7 @@ Mutable publish/presentation rows.
 Suggested fields:
 
 - `entry_id UUID PRIMARY KEY`
-- `image_id UUID REFERENCES rootfs_images(image_id)`
+- `release_id UUID REFERENCES rootfs_releases(release_id)`
 - `created TIMESTAMP`
 - `last_edited TIMESTAMP`
 - `owner_id UUID NULL`
@@ -356,7 +459,46 @@ Suggested fields:
 
 This table is what drives the picker UI.
 
-### 3. Optional alias table: `rootfs_aliases`
+### 3. `rootfs_release_artifacts`
+
+Immutable or append-only replica rows for where release artifacts actually
+exist.
+
+Suggested fields:
+
+- `artifact_id UUID PRIMARY KEY`
+- `release_id UUID REFERENCES rootfs_releases(release_id)`
+- `content_key TEXT`
+- `backend TEXT`
+  - `r2`
+  - `hub-local`
+- `region TEXT NULL`
+- `bucket_id UUID NULL REFERENCES buckets(id)`
+- `bucket_name TEXT NULL`
+- `bucket_purpose TEXT NULL`
+- `artifact_kind TEXT`
+- `artifact_format TEXT`
+- `artifact_path TEXT`
+- `artifact_sha256 TEXT`
+- `artifact_bytes BIGINT`
+- `status TEXT`
+  - `pending`
+  - `ready`
+  - `failed`
+  - `deleted`
+- `replicated_from_artifact_id UUID NULL`
+- `error TEXT NULL`
+- `created TIMESTAMP`
+- `updated TIMESTAMP`
+
+Important rule:
+
+- a release is global and immutable,
+- artifact rows describe where transport copies of that release exist,
+- same-region publish and cross-region lazy replication should be modeled here,
+  not by making the release itself regional.
+
+### 4. Optional alias table: `rootfs_aliases`
 
 This is not strictly required on day one, but it becomes useful if we want
 stable names like:
@@ -368,7 +510,7 @@ stable names like:
 Suggested fields:
 
 - `alias TEXT PRIMARY KEY`
-- `image_id UUID REFERENCES rootfs_images(image_id)`
+- `release_id UUID REFERENCES rootfs_releases(release_id)`
 - `created TIMESTAMP`
 - `last_edited TIMESTAMP`
 - `owner_id UUID NULL`
@@ -472,6 +614,62 @@ For the hosted product:
 - secondary fallback format: tar.zst in R2,
 - tertiary fallback: OCI pull/import path for bootstrap and recovery.
 
+### Transport strategy
+
+We should support both of the following artifact-upload modes:
+
+- staged upload
+  - `btrfs send` to a local file, then upload that file
+- direct streaming upload
+  - `btrfs send` streamed directly into the R2 multipart uploader
+
+My recommendation is:
+
+- keep both modes in the design,
+- use direct streaming as the preferred hosted steady-state path,
+- keep staged upload as a fallback/debug path and for self-hosted situations
+  where disk is fast but uplink bandwidth is poor.
+
+Why keep both:
+
+- direct streaming avoids an extra local write plus read and may be materially
+  better on slow cloud disks,
+- staged upload is simpler to retry, inspect, and resume operationally,
+- we already have working file-based send/receive code, so it is a good first
+  R2 implementation path and a useful fallback forever.
+
+### Region strategy
+
+We should make region a property of the artifact replica, not of the release.
+
+Recommended policy:
+
+1. publish a new release into the same region as the publishing host first,
+2. record that as a regional artifact replica,
+3. when another host needs the release:
+   - prefer a same-region replica,
+   - otherwise use any ready replica,
+4. after a successful cross-region restore, enqueue background replication into
+   the local region.
+
+This gives us:
+
+- fast local restores when replicas exist,
+- correct fallback behavior when they do not,
+- a simple path to demand-driven replication,
+- a clean upgrade path later for proactive replication of official/prepull
+  images.
+
+### Bucket strategy
+
+For now, RootFS artifacts should reuse the existing per-region backup buckets,
+but under a dedicated prefix or subdirectory, e.g.:
+
+- `rootfs/releases/<content_key>/full.btrfs`
+
+This avoids creating a second regional bucket fleet while still keeping RootFS
+artifacts logically separated from backup data.
+
 ### Why this is the right choice
 
 Because the official CPU image will likely be large. Even if it is only
@@ -487,12 +685,67 @@ That especially matters for:
 - multi-region rollout,
 - self-host launchpad setup.
 
+### Incremental release strategy
+
+We should support incremental releases, but not as a Docker-style runtime layer
+stack.
+
+The runtime model should stay simple:
+
+- each project mounts one materialized lowerdir for one immutable release.
+
+The storage model should be incremental:
+
+- a release may have an optional parent release,
+- the release content is still identified by its own full `content_key`,
+- the stored btrfs artifact may be:
+  - a full send stream,
+  - or an incremental send stream relative to the parent.
+
+This gives the desired behavior:
+
+- start from a 20 GB release,
+- make 100 MB of changes,
+- publish a child release,
+- only store roughly the changed extents as the new artifact.
+
+On hosts, the natural implementation is:
+
+1. materialize the parent release as a btrfs subvolume,
+2. make a writable btrfs snapshot,
+3. apply the new merged RootFS onto it with reflink-friendly copy plus
+   `--delete`,
+4. freeze it as a readonly release snapshot,
+5. compute the child `content_key`,
+6. upload either a full or incremental btrfs send stream.
+
+This is much better than trying to expose Docker-like runtime layers to the
+rest of the system.
+
+### Incremental retention and GC rule
+
+Because child releases depend on parent releases:
+
+- we must never hard-delete a release that still has child releases,
+- we must never hard-delete a release that any project still references,
+- user-facing delete should first hide/block the catalog entry,
+- actual artifact GC should happen only after dependency and project reference
+  counts drop to zero.
+
+We should also periodically squash long chains:
+
+- create full checkpoint releases every N generations or after a size ratio
+  threshold,
+- keep delta chains shallow enough that bootstrap and recovery remain fast.
+
 ### Canonical layout in R2
 
 For each `content_key`:
 
-- `rootfs/<content_key>/image.btrfs`
-- `rootfs/<content_key>/image.btrfs.sha256`
+- `rootfs/<content_key>/full/image.btrfs`
+- `rootfs/<content_key>/full/image.btrfs.sha256`
+- `rootfs/<content_key>/delta/from/<parent_content_key>/image.btrfs`
+- `rootfs/<content_key>/delta/from/<parent_content_key>/image.btrfs.sha256`
 - `rootfs/<content_key>/image.tar.zst`
 - `rootfs/<content_key>/image.tar.zst.sha256`
 - `rootfs/<content_key>/manifest.json`
@@ -500,6 +753,7 @@ For each `content_key`:
 `manifest.json` should include:
 
 - `content_key`
+- `parent_content_key`
 - `arch`
 - `gpu`
 - `label`
@@ -507,13 +761,15 @@ For each `content_key`:
 - `version`
 - `oci_ref`
 - `oci_digest`
+- `artifact_kind`
+- `artifact_format`
 - `btrfs_stream_sha256`
 - `btrfs_stream_bytes`
 - `tar_zst_sha256`
 - `tar_zst_bytes`
 - `build_time`
 - `build_host`
-- `base_image_id`
+- `parent_release_id`
 
 ### Host local layout
 
@@ -553,7 +809,7 @@ Output:
 
 - canonical btrfs subvolume,
 - btrfs send stream uploaded to R2,
-- `rootfs_images` row,
+- `rootfs_releases` row,
 - optional catalog entry,
 - optional prepull flag.
 
@@ -583,7 +839,7 @@ Output:
 
 - canonical RootFS release built from that project's effective rootfs,
 - uploaded to R2,
-- `rootfs_images` row,
+- `rootfs_releases` row,
 - `rootfs_catalog_entries` row with requested scope.
 
 ### Important publication rule
@@ -602,7 +858,10 @@ Recommended publish path:
    - reconstruct the effective merged rootfs,
    - materialize it into a canonical btrfs subvolume,
    - compute `content_key`,
-   - upload to R2,
+   - compute exact artifact hash and byte count while exporting,
+   - upload to R2 using either:
+     - staged file upload, or
+     - direct streaming upload,
    - create DB rows.
 
 This avoids races with a live changing upperdir.
@@ -1026,19 +1285,38 @@ projects still reference the release.
 
 Because distribution format choice matters, we should benchmark:
 
-1. OCI pull plus unpack time for the official CPU image.
-2. OCI pull plus unpack time for the official GPU image.
-3. R2 download plus `btrfs receive` time for the same images.
-4. R2 download plus `tar.zst` extract time.
-5. Host bootstrap time with:
+1. Baseline host disk performance before any RootFS test:
+   - sequential read throughput,
+   - sequential write throughput,
+   - random read/write IOPS or latency,
+   - filesystem-level throughput on the actual btrfs data volume.
+2. Publish time for representative images:
+   - merged-tree materialization,
+   - snapshot freeze,
+   - `btrfs send`,
+   - content hashing,
+   - total end-to-end publish LRO time.
+3. Artifact upload time:
+   - current hub-local fallback path,
+   - R2 upload path once implemented.
+4. Artifact download plus import time:
+   - R2 download plus `btrfs receive`,
+   - R2 download plus `tar.zst` extract time.
+5. OCI pull plus unpack time for the official CPU image.
+6. OCI pull plus unpack time for the official GPU image.
+7. Host bootstrap time with:
    - no prepull
    - CPU prepull
    - CPU plus GPU prepull
-6. Disk amplification:
+8. Cross-host first-use and repeat-use timings:
+   - publish on host A,
+   - create on host B with empty cache,
+   - create again on host B with warm cache.
+9. Disk amplification:
    - raw expanded rootfs size
    - btrfs send stream size
    - tar.zst size
-7. CPU overhead during import.
+10. CPU overhead during import.
 
 This should be measured on:
 
@@ -1046,6 +1324,12 @@ This should be measured on:
 - GCP,
 - at least one CPU host class,
 - at least one GPU host class.
+
+And for the next serious round, the hosts should have production-like disks.
+Tiny dev disks are useful for correctness testing, but they are not a good
+proxy for a launch configuration where disk throughput may dominate parts of
+the RootFS pipeline. We should explicitly record the disk class and size for
+every benchmark result.
 
 ## Operational Metrics
 
@@ -1089,13 +1373,22 @@ of the launch-critical RootFS effort.
 - finalize official family model,
 - decide whether `rootfs_aliases` ships in v1 or later.
 
+Status:
+
+- mostly complete
+
 ### Phase 1: Central schema and APIs
 
-- add `rootfs_images`,
+- add `rootfs_releases`,
 - add `rootfs_catalog_entries`,
 - add project/account/course references,
 - add theme support,
 - add APIs to list/select/promote/publish.
+
+Status:
+
+- largely implemented for projects and catalog
+- course references still missing
 
 ### Phase 2: Official build pipeline
 
@@ -1103,38 +1396,83 @@ of the launch-critical RootFS effort.
 - stop centering it on GCP Spot as the product architecture,
 - make its output the canonical R2 btrfs artifact plus DB registration.
 
-### Phase 3: Host download/cache/runtime
+Status:
+
+- not done
+- this should now be re-scoped around R2-backed releases, not the older
+  parallel GCP image builder as product architecture
+
+### Phase 3: Incremental release storage
+
+- add parent-child release tracking,
+- emit full or incremental btrfs send streams as appropriate,
+- receive incremental artifacts on hosts,
+- add chain-depth controls and periodic checkpointing,
+- enforce dependency-aware artifact GC.
+
+Status:
+
+- designed
+- not implemented
+
+### Phase 4: Host download/cache/runtime
 
 - fetch by `content_key`,
 - cache in content-addressed directories,
 - expose host inventory RPC,
 - add host UI.
 
-### Phase 4: Project picker and settings UX
+Status:
+
+- mostly implemented through the current hub-local artifact backend
+- R2 fetch is the next major missing piece
+
+### Phase 5: Project picker and settings UX
 
 - replace freeform custom-first UI with managed catalog sections,
 - wire project creation to `image_id` plus `content_key`,
 - add publish-image flow from project settings,
 - add explicit image change / switch back / update workflow.
 
-### Phase 5: Admin workflows
+Status:
+
+- implemented for project creation and project settings
+- still needs more lifecycle polish around sharing/admin workflows
+
+### Phase 6: Admin workflows
 
 - promote/demote official,
 - prepull flags,
 - deprecate/hide,
 - inspect provenance and usage.
 
-### Phase 6: Course integration
+Status:
+
+- partial
+- basic catalog/admin controls exist, but this needs dedicated admin polish
+
+### Phase 7: Course integration
 
 - course image selection,
 - student-project provisioning with exact release binding.
 
-### Phase 7: Benchmarking and hardening
+Status:
+
+- not implemented
+
+### Phase 8: Benchmarking and hardening
 
 - measure OCI versus btrfs receive,
+- measure full versus incremental btrfs send/receive,
 - confirm host bootstrap timings,
 - confirm prepull policy,
 - run soak/load tests around image churn and cache pressure.
+
+Status:
+
+- correctness-oriented baseline measurements exist
+- next real benchmark round should happen after R2 is in place and on better
+  disks
 
 ## Suggested Launch Acceptance Criteria
 
@@ -1215,15 +1553,16 @@ wstein: admin/self host makes very good sense.
 
 Start simple with shared-project collaborators.
 
-wstein: exactly what you guessed; the UI could list links to the actual collab projects for verification. 
+wstein: exactly what you guessed; the UI could list links to the actual collab projects for verification.
 
 ## Recommended Immediate Next Step
 
 Before implementing everything, define the precise v1 schema and contracts for:
 
-- `rootfs_images`,
+- `rootfs_releases`,
 - `rootfs_catalog_entries`,
 - `projects.rootfs_image_id` plus `rootfs_content_key`,
+- parent-child release storage contracts for incremental btrfs artifacts,
 - host cache inventory RPC,
 - project creation picker sections.
 

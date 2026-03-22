@@ -128,6 +128,10 @@ import {
   waitForWorkspaceNotRunning as waitForWorkspaceNotRunningCore,
 } from "./core/lro";
 import { registerOpCommand, type OpCommandDeps } from "./commands/op";
+import {
+  registerRootfsCommand,
+  type RootfsCommandDeps,
+} from "./commands/rootfs";
 import { registerHostCommand, type HostCommandDeps } from "./commands/host";
 import {
   registerProjectCommand,
@@ -2155,6 +2159,15 @@ const projectCommandDeps = {
 } satisfies ProjectCommandDeps;
 
 registerProjectCommand(program, projectCommandDeps);
+const rootfsCommandDeps = {
+  withContext,
+  resolveProjectFromArgOrContext,
+  waitForLro,
+  serializeLroSummary,
+} satisfies RootfsCommandDeps;
+
+registerRootfsCommand(program, rootfsCommandDeps);
+
 const opCommandDeps = {
   withContext,
   resolveProject,

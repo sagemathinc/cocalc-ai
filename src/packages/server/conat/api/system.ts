@@ -33,6 +33,20 @@ import {
   type R2CredentialsTestResult,
 } from "@cocalc/server/project-backup/r2";
 import {
+  listVisibleRootfsImages,
+  saveRootfsImage,
+} from "@cocalc/server/rootfs/catalog";
+import type {
+  ProjectRootfsPublishLroRef,
+  PublishProjectRootfsBody,
+  RootfsCatalogSaveBody,
+} from "@cocalc/util/rootfs-images";
+import { createLro } from "@cocalc/server/lro/lro-db";
+import { lroStreamName } from "@cocalc/conat/lro/names";
+import { SERVICE as PERSIST_SERVICE } from "@cocalc/conat/persist/util";
+import { publishLroEvent, publishLroSummary } from "@cocalc/conat/lro/stream";
+import type { LroSummary } from "@cocalc/conat/hub/api/lro";
+import {
   type BrowserSessionLiveInfo,
   listBrowserSessionsForAccount,
   removeBrowserSessionRecord,
@@ -58,6 +72,7 @@ import {
 import { getParallelOpsWorkerRegistration } from "@cocalc/server/lro/worker-registry";
 
 const logger = getLogger("server:conat:api:system");
+const ROOTFS_PUBLISH_LRO_KIND = "project-rootfs-publish";
 
 export function ping() {
   return { now: Date.now() };
@@ -306,6 +321,80 @@ export async function webappError(opts: object): Promise<void> {
 
 export async function getFrontendSourceFingerprint() {
   return await getFrontendSourceFingerprint0();
+}
+
+export async function getRootfsCatalog(opts: { account_id?: string } = {}) {
+  return await listVisibleRootfsImages(opts.account_id);
+}
+
+export async function saveRootfsCatalogEntry(
+  opts: RootfsCatalogSaveBody & { account_id?: string },
+) {
+  const { account_id, ...body } = opts;
+  if (!account_id) {
+    throw Error("user must be signed in");
+  }
+  return await saveRootfsImage({ account_id, body });
+}
+
+async function publishQueuedLroSafe({ op }: { op: LroSummary }) {
+  void publishLroSummary({
+    scope_type: op.scope_type,
+    scope_id: op.scope_id,
+    summary: op,
+  }).catch(() => {
+    // best effort only; worker will publish later summaries
+  });
+  publishLroEvent({
+    scope_type: op.scope_type,
+    scope_id: op.scope_id,
+    op_id: op.op_id,
+    event: {
+      type: "progress",
+      ts: Date.now(),
+      phase: "queued",
+      message: "queued",
+      progress: 0,
+    },
+  }).catch(() => {});
+}
+
+export async function publishProjectRootfsImage(
+  opts: PublishProjectRootfsBody & { account_id?: string },
+): Promise<ProjectRootfsPublishLroRef> {
+  const { account_id, project_id, ...body } = opts;
+  if (!account_id) {
+    throw Error("user must be signed in");
+  }
+  if (
+    !(await isCollaborator({
+      account_id,
+      project_id,
+    }))
+  ) {
+    throw Error("user must be a collaborator on the project");
+  }
+  const op = await createLro({
+    kind: ROOTFS_PUBLISH_LRO_KIND,
+    scope_type: "project",
+    scope_id: project_id,
+    created_by: account_id,
+    routing: "hub",
+    dedupe_key: `${ROOTFS_PUBLISH_LRO_KIND}:${project_id}`,
+    input: {
+      project_id,
+      ...body,
+    },
+    status: "queued",
+  });
+  await publishQueuedLroSafe({ op });
+  return {
+    op_id: op.op_id,
+    scope_type: "project",
+    scope_id: project_id,
+    service: PERSIST_SERVICE,
+    stream_name: lroStreamName(op.op_id),
+  };
 }
 
 export {

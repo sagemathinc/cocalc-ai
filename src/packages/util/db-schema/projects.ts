@@ -99,6 +99,7 @@ Table({
           snapshots: null,
           backups: null,
           rootfs_image: null,
+          rootfs_image_id: null,
         },
       },
       set: {
@@ -116,6 +117,7 @@ Table({
           },
           action_request: true, // used to request that an action be performed, e.g., "save"; handled by before_change
           rootfs_image: true,
+          rootfs_image_id: true,
           env: true,
           avatar_image_tiny: true,
           snapshots: true,
@@ -370,6 +372,10 @@ Table({
     rootfs_image: {
       type: "string",
       desc: "The root filesystem image for this project. This can be an arbitrary Docker image.",
+    },
+    rootfs_image_id: {
+      type: "string",
+      desc: "Optional managed RootFS image identifier bound to this project.",
     },
     addons: {
       type: "map",
@@ -785,6 +791,7 @@ export interface CreateProjectOptions {
   // combined with the project's own ~/.ssh/authorized_keys when serving SSH via project-host.
   authorized_keys?: string;
   rootfs_image?: string;
+  rootfs_image_id?: string;
   // Optional backup region (Cloudflare R2 region code).
   region?: string;
   public_path_id?: string;

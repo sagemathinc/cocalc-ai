@@ -3,7 +3,9 @@
 // without having to run that project.
 
 import { randomUUID } from "node:crypto";
+import { spawn } from "node:child_process";
 import { dirname, join } from "node:path";
+import { createReadStream, createWriteStream } from "node:fs";
 import {
   chmod,
   mkdir,
@@ -15,6 +17,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
+import { executeCode } from "@cocalc/backend/execute-code";
 import {
   server as createFileServer,
   client as createFileClient,
@@ -55,6 +58,12 @@ import { isBtrfsSubvolume } from "@cocalc/file-server/btrfs/subvolume";
 import { exists } from "@cocalc/backend/misc/async-utils-node";
 import { type SnapshotCounts } from "@cocalc/util/db-schema/projects";
 import { PROJECT_IMAGE_PATH } from "@cocalc/util/db-schema/defaults";
+import {
+  managedRootfsImageName,
+  type RootfsImageArch,
+  type PublishProjectRootfsArtifact,
+  type RootfsArtifactTransferTarget,
+} from "@cocalc/util/rootfs-images";
 import { init as initSshServer } from "@cocalc/project-proxy/ssh-server";
 import { type MutagenSyncSession } from "@cocalc/conat/project/mutagen/types";
 import { fsServer, DEFAULT_FILE_SERVICE } from "@cocalc/conat/files/fs";
@@ -86,6 +95,14 @@ import {
 import { publishLroEvent } from "@cocalc/conat/lro/stream";
 import { touchProjectLastEdited } from "./last-edited";
 import { getRootfsMountpoint } from "@cocalc/project-runner/run/rootfs";
+import {
+  extractBaseImage,
+  imageCachePath,
+  imagePathComponent,
+  inspect,
+  inspectFilePath,
+  IMAGE_CACHE,
+} from "@cocalc/project-runner/run/rootfs-base";
 import { createProjectSandboxFilesystem } from "./file-server-sandbox-policy";
 import { resetClonedProjectState } from "./clone-state";
 import {
@@ -95,6 +112,7 @@ import {
 import { isMissingRusticRepositoryError } from "./backup-index-errors";
 import { btrfs, sudo } from "@cocalc/file-server/btrfs/util";
 import { subvolume } from "@cocalc/file-server/btrfs/subvolume";
+import { pipeline } from "node:stream/promises";
 
 type SshTarget = { type: "project"; project_id: string };
 
@@ -102,6 +120,9 @@ const logger = getLogger("project-host:file-server");
 const RESTORE_STAGING_ROOT = ".restore-staging";
 const SNAPSHOT_RESTORE_STAGING_ROOT = ".snapshot-restore-staging";
 const MAX_TEXT_PREVIEW_BYTES = 10 * 1024 * 1024;
+const ROOTFS_PUBLISH_TIMEOUT_S = 60 * 60;
+const STORAGE_WRAPPER = "/usr/local/sbin/cocalc-runtime-storage";
+const PROJECT_ROOTS_CACHE = join(data, "cache", "project-roots");
 const SSH_WAKE_TIMEOUT_MS = Math.max(
   5_000,
   envToInt("COCALC_PROJECT_HOST_SSH_WAKE_TIMEOUT_MS", 120_000),
@@ -368,6 +389,29 @@ async function createSnapshotRestoreTempPath(prefix: string): Promise<string> {
   return join(root, `${prefix}${randomUUID()}`);
 }
 
+async function createImageCacheTempPath(prefix: string): Promise<string> {
+  await mkdir(IMAGE_CACHE, { recursive: true });
+  return await mkdtemp(join(IMAGE_CACHE, prefix));
+}
+
+async function createImageCacheTempSubvolume(prefix: string): Promise<string> {
+  await mkdir(IMAGE_CACHE, { recursive: true });
+  const path = join(IMAGE_CACHE, `${prefix}${randomUUID()}`);
+  await btrfs({
+    args: ["subvolume", "create", path],
+    err_on_exit: true,
+    verbose: false,
+  });
+  return path;
+}
+
+async function createOverlayMountTempPath(): Promise<string> {
+  await mkdir(PROJECT_ROOTS_CACHE, { recursive: true });
+  const path = join(PROJECT_ROOTS_CACHE, randomUUID());
+  await mkdir(path, { recursive: true });
+  return path;
+}
+
 async function replaceTreeByMove({
   src,
   dest,
@@ -388,6 +432,197 @@ async function replaceTreeByMove({
 async function removeDirectoryTree(pathToRemove?: string): Promise<void> {
   if (!pathToRemove || !(await exists(pathToRemove))) return;
   await sudo({ command: "rm", args: ["-rf", pathToRemove] });
+}
+
+async function mountOverlayForPublish({
+  lowerdir,
+  upperdir,
+  workdir,
+  merged,
+}: {
+  lowerdir: string;
+  upperdir: string;
+  workdir: string;
+  merged: string;
+}): Promise<void> {
+  await executeCode({
+    verbose: false,
+    err_on_exit: true,
+    timeout: ROOTFS_PUBLISH_TIMEOUT_S,
+    command: "sudo",
+    args: [
+      "-n",
+      STORAGE_WRAPPER,
+      "mount-overlay-project",
+      lowerdir,
+      upperdir,
+      workdir,
+      merged,
+    ],
+  });
+}
+
+async function unmountOverlayForPublish(merged: string): Promise<void> {
+  await executeCode({
+    verbose: false,
+    timeout: ROOTFS_PUBLISH_TIMEOUT_S,
+    command: "sudo",
+    args: ["-n", STORAGE_WRAPPER, "umount-overlay-project", merged],
+  }).catch(() => {});
+}
+
+async function rsyncTree({
+  src,
+  dest,
+}: {
+  src: string;
+  dest: string;
+}): Promise<void> {
+  await sudo({
+    verbose: false,
+    timeout: ROOTFS_PUBLISH_TIMEOUT_S,
+    command: "copy-tree-preserve",
+    args: [src, dest],
+  });
+}
+
+async function tarSha256(pathToHash: string): Promise<string> {
+  const { stdout } = await sudo({
+    verbose: false,
+    timeout: ROOTFS_PUBLISH_TIMEOUT_S,
+    command: "tar-sha256-tree",
+    args: [pathToHash],
+  });
+  const digest = `${stdout ?? ""}`.trim();
+  if (!digest) {
+    throw new Error("failed to compute published rootfs digest");
+  }
+  return digest;
+}
+
+async function directorySizeBytes(pathToMeasure: string): Promise<number> {
+  const { stdout } = await sudo({
+    verbose: false,
+    timeout: ROOTFS_PUBLISH_TIMEOUT_S,
+    command: "du-bytes",
+    args: [pathToMeasure],
+  });
+  const value = Number.parseInt(`${stdout}`.trim().split(/\s+/)[0], 10);
+  if (!Number.isFinite(value)) {
+    throw new Error(
+      `failed to measure published rootfs size for ${pathToMeasure}`,
+    );
+  }
+  return value;
+}
+
+async function btrfsSendToFile({
+  source,
+  dest,
+}: {
+  source: string;
+  dest: string;
+}): Promise<void> {
+  await mkdir(dirname(dest), { recursive: true });
+  const child = spawn(
+    "sudo",
+    ["-n", STORAGE_WRAPPER, "btrfs", "send", source],
+    {
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+  const output = createWriteStream(dest);
+  const pipePromise = pipeline(child.stdout, output);
+  const exitPromise = new Promise<void>((resolve, reject) => {
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      reject(
+        new Error(
+          `btrfs send exited with code ${code}: ${stderr.trim() || "unknown error"}`,
+        ),
+      );
+    });
+  });
+  try {
+    await Promise.all([pipePromise, exitPromise]);
+  } catch (err) {
+    await rm(dest, { force: true }).catch(() => {});
+    throw err;
+  }
+}
+
+async function uploadRootfsArtifactFile({
+  path,
+  upload,
+}: {
+  path: string;
+  upload: RootfsArtifactTransferTarget;
+}): Promise<void> {
+  const info = await stat(path);
+  const chunkBytes = Math.max(
+    0,
+    Math.floor(Number(upload.chunk_bytes ?? 0) || 0),
+  );
+  const totalParts =
+    chunkBytes > 0 ? Math.max(1, Math.ceil(info.size / chunkBytes)) : 1;
+  const uploadId = totalParts > 1 ? randomUUID() : undefined;
+
+  for (let part = 0; part < totalParts; part += 1) {
+    const start = chunkBytes > 0 ? part * chunkBytes : 0;
+    const endExclusive =
+      chunkBytes > 0 ? Math.min(info.size, start + chunkBytes) : info.size;
+    const partSize = endExclusive - start;
+    const stream = createReadStream(path, {
+      ...(chunkBytes > 0 ? { start, end: endExclusive - 1 } : {}),
+    });
+    try {
+      const url = new URL(upload.url);
+      if (uploadId) {
+        url.searchParams.set("upload_id", uploadId);
+        url.searchParams.set("part", `${part}`);
+        url.searchParams.set("parts", `${totalParts}`);
+      }
+      const response = await fetch(url, {
+        method: upload.method,
+        headers: {
+          ...(upload.headers ?? {}),
+          "content-length": `${partSize}`,
+        },
+        body: stream as any,
+        duplex: "half",
+      } as any);
+      if (!response.ok) {
+        const message = `${(await response.text().catch(() => "")).trim()}`;
+        throw new Error(
+          `artifact upload failed (${response.status} ${response.statusText})${message ? `: ${message}` : ""}`,
+        );
+      }
+    } finally {
+      stream.destroy();
+    }
+  }
+}
+
+async function btrfsSnapshotReadonly({
+  source,
+  dest,
+}: {
+  source: string;
+  dest: string;
+}): Promise<void> {
+  await btrfs({
+    args: ["subvolume", "snapshot", "-r", source, dest],
+    err_on_exit: true,
+    verbose: false,
+  });
 }
 
 async function deleteSubvolumeTree(pathToDelete?: string): Promise<void> {
@@ -1242,6 +1477,255 @@ async function restoreSnapshot({
     await deleteSubvolumeTree(oldHomePath);
   }
   void touchProjectLastEdited(project_id, "restore-snapshot");
+}
+
+function defaultPublishSnapshotName(): string {
+  return `rootfs-publish-${new Date().toISOString()}-${randomUUID()}`;
+}
+
+function normalizePublishedArch(value: unknown): RootfsImageArch {
+  const arch = `${value ?? ""}`.trim().toLowerCase();
+  if (arch === "amd64" || arch === "arm64") {
+    return arch;
+  }
+  return "any";
+}
+
+function publishRootfsProgress({
+  lro,
+  phase,
+  progress,
+  message,
+  detail,
+}: {
+  lro?: LroRef;
+  phase: string;
+  progress: number;
+  message: string;
+  detail?: any;
+}) {
+  if (!lro) return;
+  void publishLroEvent({
+    scope_type: lro.scope_type,
+    scope_id: lro.scope_id,
+    op_id: lro.op_id,
+    event: {
+      type: "progress",
+      ts: Date.now(),
+      phase,
+      message,
+      progress,
+      detail,
+    },
+  }).catch(() => {});
+}
+
+async function publishRootfsImage({
+  project_id,
+  snapshot,
+  lro,
+}: {
+  project_id: string;
+  snapshot?: string;
+  lro?: LroRef;
+}): Promise<PublishProjectRootfsArtifact> {
+  const snapshotName = snapshot?.trim() || defaultPublishSnapshotName();
+  const createdSnapshot = !snapshot?.trim();
+  if (createdSnapshot) {
+    publishRootfsProgress({
+      lro,
+      phase: "snapshot",
+      progress: 15,
+      message: "creating publish snapshot",
+      detail: { snapshot: snapshotName },
+    });
+    await createSnapshot({
+      project_id,
+      name: snapshotName,
+    });
+  }
+
+  publishRootfsProgress({
+    lro,
+    phase: "snapshot",
+    progress: 25,
+    message: createdSnapshot ? "snapshot ready" : "using existing snapshot",
+    detail: { snapshot: snapshotName, created_snapshot: createdSnapshot },
+  });
+
+  const staged = await createSnapshotRestoreClone({
+    project_id,
+    snapshot: snapshotName,
+  });
+  const rootfsPath = join(staged.path, PROJECT_IMAGE_PATH);
+  let mergedPath: string | undefined;
+  let workdirPath: string | undefined;
+  let stagedRootfsPath: string | undefined;
+  try {
+    const currentImagePath = join(rootfsPath, "current-image.txt");
+    const sourceImage = `${await readFile(currentImagePath, "utf8")}`.trim();
+    if (!sourceImage) {
+      throw new Error(
+        "project has no current RootFS image recorded; start the project at least once before publishing",
+      );
+    }
+
+    publishRootfsProgress({
+      lro,
+      phase: "publish",
+      progress: 40,
+      message: "materializing merged RootFS",
+      detail: { source_image: sourceImage },
+    });
+    const lowerdir = await extractBaseImage(sourceImage);
+    const overlayRoot = join(rootfsPath, imagePathComponent(sourceImage));
+    const upperdir = join(overlayRoot, "upperdir");
+    await mkdir(upperdir, { recursive: true });
+
+    workdirPath = join(overlayRoot, `publish-workdir-${randomUUID()}`);
+    await mkdir(workdirPath, { recursive: true });
+    mergedPath = await createOverlayMountTempPath();
+    stagedRootfsPath = await createImageCacheTempSubvolume(
+      ".rootfs-publish-tree-",
+    );
+
+    await mountOverlayForPublish({
+      lowerdir,
+      upperdir,
+      workdir: workdirPath,
+      merged: mergedPath,
+    });
+    await rsyncTree({
+      src: mergedPath,
+      dest: stagedRootfsPath,
+    });
+    await unmountOverlayForPublish(mergedPath);
+    mergedPath = undefined;
+
+    publishRootfsProgress({
+      lro,
+      phase: "publish",
+      progress: 75,
+      message: "hashing published RootFS",
+    });
+    const digest = await tarSha256(stagedRootfsPath);
+    const image = managedRootfsImageName(digest);
+    const finalPath = imageCachePath(image);
+    const finalInspectPath = inspectFilePath(image);
+    const inspectData = await inspect(sourceImage);
+    const publishedInspectData = {
+      ...inspectData,
+      Digest: digest,
+      RepoTags: [image],
+      RepoDigests: [digest],
+      Config: {
+        ...(inspectData?.Config ?? {}),
+        Labels: {
+          ...(inspectData?.Config?.Labels ?? {}),
+          "com.cocalc.rootfs.managed": "true",
+          "com.cocalc.rootfs.content_key": digest,
+          "com.cocalc.rootfs.source_image": sourceImage,
+        },
+      },
+    };
+
+    publishRootfsProgress({
+      lro,
+      phase: "publish",
+      progress: 90,
+      message: "registering host cache entry",
+      detail: { image, content_key: digest },
+    });
+    if (!(await exists(finalPath))) {
+      await mkdir(dirname(finalPath), { recursive: true });
+      await btrfsSnapshotReadonly({
+        source: stagedRootfsPath,
+        dest: finalPath,
+      });
+      await deleteSubvolumeTree(stagedRootfsPath);
+      stagedRootfsPath = undefined;
+    }
+
+    if (!(await exists(finalInspectPath))) {
+      await writeFile(finalInspectPath, JSON.stringify(publishedInspectData));
+    }
+
+    const sizeBytes = await directorySizeBytes(finalPath);
+    return {
+      image,
+      content_key: digest,
+      digest,
+      arch: normalizePublishedArch(publishedInspectData?.Architecture),
+      size_bytes: sizeBytes,
+      snapshot: snapshotName,
+      created_snapshot: createdSnapshot,
+      source_image: sourceImage,
+      inspect_data: publishedInspectData,
+    };
+  } finally {
+    if (mergedPath) {
+      await unmountOverlayForPublish(mergedPath);
+    }
+    await removeDirectoryTree(workdirPath).catch(() => {});
+    await removeDirectoryTree(mergedPath).catch(() => {});
+    await deleteSubvolumeTree(stagedRootfsPath).catch(() => {});
+    await deleteSubvolumeTree(staged.path).catch(() => {});
+  }
+}
+
+async function uploadRootfsReleaseArtifact({
+  image,
+  upload,
+}: {
+  project_id: string;
+  image: string;
+  upload: RootfsArtifactTransferTarget;
+}): Promise<{ ok: true }> {
+  const finalPath = imageCachePath(image);
+  if (!(await exists(finalPath))) {
+    throw new Error(
+      `cached RootFS image '${image}' does not exist on this host`,
+    );
+  }
+
+  const tempDir = await createImageCacheTempPath(".rootfs-artifact-upload-");
+  const artifactPath = join(tempDir, "release.btrfs");
+  let stagedSourcePath: string | undefined;
+  let readonlySendSourcePath: string | undefined;
+  try {
+    let sendSource = finalPath;
+    if (!(await isBtrfsSubvolume(finalPath))) {
+      stagedSourcePath = await createImageCacheTempSubvolume(
+        ".rootfs-artifact-stage-",
+      );
+      await rsyncTree({
+        src: finalPath,
+        dest: stagedSourcePath,
+      });
+      readonlySendSourcePath = join(
+        tempDir,
+        `.rootfs-artifact-send-${randomUUID()}`,
+      );
+      await btrfsSnapshotReadonly({
+        source: stagedSourcePath,
+        dest: readonlySendSourcePath,
+      });
+      sendSource = readonlySendSourcePath;
+    }
+    await btrfsSendToFile({
+      source: sendSource,
+      dest: artifactPath,
+    });
+    await uploadRootfsArtifactFile({
+      path: artifactPath,
+      upload,
+    });
+    return { ok: true };
+  } finally {
+    await deleteSubvolumeTree(readonlySendSourcePath).catch(() => {});
+    await deleteSubvolumeTree(stagedSourcePath).catch(() => {});
+    await removeDirectoryTree(tempDir).catch(() => {});
+  }
 }
 
 function createLroRusticReporter(
@@ -2402,6 +2886,8 @@ export async function initFileServer({
     allSnapshotUsage,
     getSnapshotFileText: reuseInFlight(getSnapshotFileText),
     restoreSnapshot: reuseInFlight(restoreSnapshot),
+    publishRootfsImage: reuseInFlight(publishRootfsImage),
+    uploadRootfsReleaseArtifact: reuseInFlight(uploadRootfsReleaseArtifact),
     // file sync
     createSync,
     getAllSyncs,

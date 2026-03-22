@@ -5,6 +5,7 @@ import { executeCode } from "@cocalc/backend/execute-code";
 import { spawn } from "node:child_process";
 import { readFile, rm, writeFile } from "fs/promises";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
+import { isManagedRootfsImageName } from "@cocalc/util/rootfs-images";
 import pullImage from "./pull-image";
 import { shiftProgress } from "@cocalc/conat/lro/progress";
 import { PROGRESS_ARGS, rsyncProgressReporter } from "./rsync-progress";
@@ -40,7 +41,7 @@ export function registerProgress(image: string, f: ProgressFunction) {
   }
 }
 
-function inspectFile(image: string): string {
+export function inspectFilePath(image: string): string {
   return join(IMAGE_CACHE, `.${imagePathComponent(image)}.json`);
 }
 
@@ -49,7 +50,7 @@ function inspectFile(image: string): string {
 // extractBaseImage before using this.  The reason is to ensure that users have visibility
 // into all long running steps.
 export async function inspect(image: string) {
-  return JSON.parse(await readFile(inspectFile(image), "utf8"));
+  return JSON.parse(await readFile(inspectFilePath(image), "utf8"));
 }
 
 export const extractBaseImage = reuseInFlight(async (image: string) => {
@@ -71,10 +72,22 @@ export const extractBaseImage = reuseInFlight(async (image: string) => {
   try {
     const baseImagePath = imageCachePath(image);
     reportProgress({ progress: 0, desc: `checking for ${image}...` });
-    if ((await exists(inspectFile(image))) && (await exists(baseImagePath))) {
+    if (
+      (await exists(inspectFilePath(image))) &&
+      (await exists(baseImagePath))
+    ) {
       // already exist
       reportProgress({ progress: 100, desc: `${image} available` });
       return baseImagePath;
+    }
+    if (isManagedRootfsImageName(image)) {
+      reportProgress({
+        progress: 100,
+        desc: `${image} is not cached on this host`,
+      });
+      throw new Error(
+        `managed RootFS image '${image}' is not cached on this host yet`,
+      );
     }
     reportProgress({ progress: 5, desc: `pulling ${image}...` });
     // pull it -- this takes most of the time.
@@ -168,7 +181,7 @@ export const extractBaseImage = reuseInFlight(async (image: string) => {
     // success -- write out "podman image inspect" in json format to:
     //   (1) signal success, and (2) it is useful for getting information about
     // the image (environment, sha256, etc.), without having to download it again.
-    await writeFile(inspectFile(image), inspect);
+    await writeFile(inspectFilePath(image), inspect);
     // remove the image to save space, in case it isn't used by
     // anything else.  we will not need it again, since we already
     // have a copy of it.

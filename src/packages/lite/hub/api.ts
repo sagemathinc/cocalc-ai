@@ -383,6 +383,21 @@ async function removeBrowserSession(opts?: {
   };
 }
 
+async function getManagedRootfsReleaseArtifact(opts?: {
+  host_id?: string;
+  image: string;
+}) {
+  if (!hasRemote) {
+    throw new Error(
+      "managed RootFS release artifacts require a remote hub connection",
+    );
+  }
+  return await callRemoteHub({
+    name: "hosts.getManagedRootfsReleaseArtifact",
+    args: [opts ?? {}],
+  });
+}
+
 // NOTE: Consumers (e.g., project-host) may extend this object in-place to add
 // host-specific implementations of hub APIs. Keep the defaults minimal here.
 export const hubApi: HubApi = {
@@ -397,6 +412,9 @@ export const hubApi: HubApi = {
     upsertBrowserSession,
     listBrowserSessions,
     removeBrowserSession,
+  },
+  hosts: {
+    getManagedRootfsReleaseArtifact,
   },
   projects: {
     chatStoreStats: async (opts: { chat_path: string; db_path?: string }) => {

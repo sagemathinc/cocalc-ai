@@ -124,8 +124,6 @@ export type SiteSettingsKeys =
   | "launcher_default_apps"
   | "launcher_remove_quick_create"
   | "launcher_remove_apps"
-  | "project_rootfs_manifest_url"
-  | "project_rootfs_manifest_url_extra"
   | "project_rootfs_default_image"
   | "project_rootfs_default_image_gpu"
   | "project_rootfs_prepull_images"
@@ -1077,24 +1075,6 @@ export const site_settings_conf: SiteSettings = {
     subgroup: "Launcher",
     wizard: { name: "launcher-defaults", label: "Wizard..." },
     managed_by_wizard: true,
-  },
-  project_rootfs_manifest_url: {
-    name: "Project RootFS Image Manifest URL",
-    desc: "Primary manifest URL that lists the curated root filesystem images shown to users when creating a project.",
-    default: "https://software.cocalc.ai/rootfs/manifest.json",
-    to_val: to_trimmed_str,
-    tags: ["Workspace", "RootFS", "OCI"],
-    group: "Compute / Projects",
-    subgroup: "Root Filesystem Images",
-  },
-  project_rootfs_manifest_url_extra: {
-    name: "Project RootFS Image Manifest URL (Additional)",
-    desc: "Optional additional manifest URL. Entries are merged with the primary manifest.",
-    default: "",
-    to_val: to_trimmed_str,
-    tags: ["Workspace", "RootFS", "OCI"],
-    group: "Compute / Projects",
-    subgroup: "Root Filesystem Images",
   },
   project_rootfs_default_image: {
     name: "Project RootFS Default Image",

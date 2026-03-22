@@ -1,5 +1,6 @@
 import type {
   Host,
+  HostRootfsImage,
   HostSoftwareArtifact,
   HostSoftwareAvailableVersion,
 } from "@cocalc/conat/hub/api/hosts";
@@ -37,6 +38,17 @@ type UseHostDrawerViewModelArgs = {
     refresh: () => Promise<void>;
     hubSourceBaseUrl?: string;
   };
+  rootfsInventory?: {
+    entries: HostRootfsImage[];
+    loading: boolean;
+    error?: string;
+    refreshing: boolean;
+    actionKey?: string;
+    refresh: () => Promise<void>;
+    pull: (image: string) => Promise<void>;
+    remove: (image: string) => Promise<void>;
+  };
+  canManageRootfs?: boolean;
   selfHost?: {
     connectorMap: Map<
       string,
@@ -79,6 +91,8 @@ export const useHostDrawerViewModel = ({
   hostLog,
   loadingLog,
   softwareVersions,
+  rootfsInventory,
+  canManageRootfs,
   selfHost,
   parallelOps,
 }: UseHostDrawerViewModelArgs) => {
@@ -96,6 +110,8 @@ export const useHostDrawerViewModel = ({
     hostLog,
     loadingLog,
     softwareVersions,
+    rootfsInventory,
+    canManageRootfs,
     selfHost,
     parallelOps,
   };

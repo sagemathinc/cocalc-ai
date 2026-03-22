@@ -17,6 +17,7 @@ import type {
   HostLroKind,
   HostProjectRow,
   HostProjectsResponse,
+  HostRootfsImage,
 } from "@cocalc/conat/hub/api/hosts";
 import type {
   ProjectCopyRow,
@@ -100,6 +101,7 @@ import {
 import { syncProjectUsersOnHost } from "@cocalc/server/project-host/control";
 import { moveProjectToHost } from "@cocalc/server/projects/move";
 import { notifyProjectHostUpdate } from "@cocalc/server/conat/route-project";
+import { issueRootfsReleaseArtifactAccess } from "@cocalc/server/rootfs/releases";
 function pool() {
   return getPool();
 }
@@ -122,6 +124,7 @@ const DEFAULT_SOFTWARE_BASE_URL = "https://software.cocalc.ai/software";
 const SOFTWARE_HISTORY_MAX_LIMIT = 50;
 const SOFTWARE_HISTORY_DEFAULT_LIMIT = 1;
 const SOFTWARE_FETCH_TIMEOUT_MS = 8_000;
+const HOST_ROOTFS_RPC_TIMEOUT_MS = 30 * 60 * 1000;
 const HOST_DRAIN_DEFAULT_PARALLEL = 10;
 const HOST_DRAIN_OWNER_MAX_PARALLEL = 15;
 const HOST_ONLINE_WINDOW_MS = 2 * 60 * 1000;
@@ -413,6 +416,28 @@ async function loadOwnedHost(id: string, account_id?: string): Promise<any> {
   return row;
 }
 
+async function loadHostForRootfsManagement(
+  id: string,
+  account_id?: string,
+): Promise<any> {
+  const owner = requireAccount(account_id);
+  const { rows } = await pool().query(
+    `SELECT * FROM project_hosts WHERE id=$1 AND deleted IS NULL`,
+    [id],
+  );
+  const row = rows[0];
+  if (!row) {
+    throw new Error("host not found");
+  }
+  if (await isAdmin(owner)) {
+    return row;
+  }
+  if (row.metadata?.owner && row.metadata.owner !== owner) {
+    throw new Error("not authorized");
+  }
+  return row;
+}
+
 async function loadHostForDrain(id: string, account_id?: string): Promise<any> {
   const owner = requireAccount(account_id);
   const { rows } = await pool().query(
@@ -667,6 +692,22 @@ export async function touchProject({
       project_id,
     });
   }
+}
+
+export async function getManagedRootfsReleaseArtifact({
+  host_id,
+  image,
+}: {
+  host_id?: string;
+  image: string;
+}) {
+  if (!host_id) {
+    throw new Error("host_id must be specified");
+  }
+  return await issueRootfsReleaseArtifactAccess({
+    host_id,
+    image,
+  });
 }
 
 export async function claimPendingCopies({
@@ -1849,6 +1890,79 @@ export async function getHostRuntimeLog({
     lines: response.lines,
     text: response.text,
   };
+}
+
+export async function listHostRootfsImages({
+  account_id,
+  id,
+}: {
+  account_id?: string;
+  id: string;
+}): Promise<HostRootfsImage[]> {
+  const row = await loadHostForRootfsManagement(id, account_id);
+  const availability = computeHostOperationalAvailability(row);
+  if (!availability.operational) {
+    throw new Error(
+      availability.reason_unavailable ??
+        "host must be running to inspect RootFS cache",
+    );
+  }
+  const client = createHostControlClient({
+    host_id: id,
+    client: conatWithProjectRouting(),
+    timeout: HOST_ROOTFS_RPC_TIMEOUT_MS,
+  });
+  return await client.listRootfsImages();
+}
+
+export async function pullHostRootfsImage({
+  account_id,
+  id,
+  image,
+}: {
+  account_id?: string;
+  id: string;
+  image: string;
+}): Promise<HostRootfsImage> {
+  const row = await loadHostForRootfsManagement(id, account_id);
+  const availability = computeHostOperationalAvailability(row);
+  if (!availability.operational) {
+    throw new Error(
+      availability.reason_unavailable ??
+        "host must be running to pull RootFS images",
+    );
+  }
+  const client = createHostControlClient({
+    host_id: id,
+    client: conatWithProjectRouting(),
+    timeout: HOST_ROOTFS_RPC_TIMEOUT_MS,
+  });
+  return await client.pullRootfsImage({ image });
+}
+
+export async function deleteHostRootfsImage({
+  account_id,
+  id,
+  image,
+}: {
+  account_id?: string;
+  id: string;
+  image: string;
+}): Promise<{ removed: boolean }> {
+  const row = await loadHostForRootfsManagement(id, account_id);
+  const availability = computeHostOperationalAvailability(row);
+  if (!availability.operational) {
+    throw new Error(
+      availability.reason_unavailable ??
+        "host must be running to delete RootFS images",
+    );
+  }
+  const client = createHostControlClient({
+    host_id: id,
+    client: conatWithProjectRouting(),
+    timeout: HOST_ROOTFS_RPC_TIMEOUT_MS,
+  });
+  return await client.deleteRootfsImage({ image });
 }
 
 export async function listHostSshAuthorizedKeys({
