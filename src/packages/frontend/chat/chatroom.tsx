@@ -1027,7 +1027,18 @@ export function ChatPanel({
 
   useEffect(() => {
     if (forceScrollToBottomToken == null) return;
-    scrollToBottomRef.current?.(true);
+    const scrollToBottom = () => {
+      scrollToBottomRef.current?.(true);
+    };
+    scrollToBottom();
+    const timers = [0, 50, 150, 300].map((delayMs) =>
+      window.setTimeout(scrollToBottom, delayMs),
+    );
+    return () => {
+      for (const timer of timers) {
+        window.clearTimeout(timer);
+      }
+    };
   }, [forceScrollToBottomToken]);
 
   useEffect(() => {

@@ -561,6 +561,9 @@ async function writeNavigatorPromptInWorkspaceChat(
         threadAgentCodexConfig,
       );
     }
+    if (createdThreadTitle && replyThreadKey) {
+      actions.renameThread?.(replyThreadKey, createdThreadTitle);
+    }
 
     const timeStamp = actions.sendChat({
       input: visiblePrompt ?? basePrompt,
@@ -588,8 +591,8 @@ async function writeNavigatorPromptInWorkspaceChat(
     }
     if (opts.openFloating === true && nextThreadKey) {
       const floatingTitle =
-        existingThreadTitle ??
         createdThreadTitle ??
+        existingThreadTitle ??
         session.title ??
         workspaceTarget.workspace.theme.title?.trim() ??
         "Navigator";
@@ -904,6 +907,9 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
         replyThreadId = undefined;
       }
     }
+    if (createdThreadTitle && replyThreadKey) {
+      actions.renameThread?.(replyThreadKey, createdThreadTitle);
+    }
     if (replyThreadKey && opts.forceCodex !== false && opts.codexConfig) {
       actions.setThreadAgentMode?.(replyThreadKey, "codex", opts.codexConfig);
     }
@@ -934,8 +940,8 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
     }
     if (opts.openFloating !== false) {
       const floatingTitle =
-        existingThreadTitle ??
         createdThreadTitle ??
+        existingThreadTitle ??
         session.title ??
         "Navigator";
       openFloatingAgentSession(
