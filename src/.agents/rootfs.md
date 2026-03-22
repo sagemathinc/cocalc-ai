@@ -1283,6 +1283,11 @@ projects still reference the release.
 
 ## Benchmarks We Need
 
+The detailed benchmark matrix and execution plan now live in
+[rootfs-benchmarks.md](/home/wstein/build/cocalc-lite2/src/.agents/rootfs-benchmarks.md).
+That file should be treated as the source of truth for benchmark scenarios,
+metrics, and result capture as the RootFS pipeline evolves.
+
 Because distribution format choice matters, we should benchmark:
 
 1. Baseline host disk performance before any RootFS test:
