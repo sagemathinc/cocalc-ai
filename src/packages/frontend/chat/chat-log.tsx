@@ -170,6 +170,8 @@ export function ChatLog({
     activeTopTab === project_id && activeProjectTab === `editor-${path}`;
   const canAutoScroll =
     !anyOverlayOpen && (mode === "sidechat" || isForegroundChatTab);
+  const canAutoScrollRef = useRef(canAutoScroll);
+  canAutoScrollRef.current = canAutoScroll;
   const handleSelectThread = useCallback(
     (threadKey: string) => {
       actions.clearAllFilters?.();
@@ -208,11 +210,6 @@ export function ChatLog({
     }, 1);
     return { dates, numChildren };
   }, [messages, account_id, singleThreadView, visibleKeys, combinedKeys]);
-
-  useEffect(() => {
-    if (!canAutoScroll) return;
-    scrollToBottomRef?.current?.(true);
-  }, [canAutoScroll]);
 
   useEffect(() => {
     if (!canAutoScroll) {
@@ -315,7 +312,7 @@ export function ChatLog({
   useEffect(() => {
     if (scrollToBottomRef == null) return;
     scrollToBottomRef.current = (force?: boolean) => {
-      if (!canAutoScroll) return;
+      if (!canAutoScrollRef.current) return;
       if (manualScrollRef.current && !force) return;
       manualScrollRef.current = false;
       setManualScroll(false);
@@ -328,7 +325,7 @@ export function ChatLog({
       // for side chat when there is little vertical space.
       setTimeout(doScroll, 1);
     };
-  }, [scrollToBottomRef != null, canAutoScroll]);
+  }, [scrollToBottomRef, setManualScroll]);
 
   return (
     <div style={CHAT_LOG_CONTAINER_STYLE}>
