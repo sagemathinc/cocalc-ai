@@ -141,7 +141,10 @@ import type { AcpWorkerState } from "../sqlite/acp-workers";
 import { throttle } from "lodash";
 import { akv, type AKV } from "@cocalc/conat/sync/akv";
 import type { DKV } from "@cocalc/conat/sync/dkv";
-import { rotateChatStore } from "@cocalc/backend/chat-store/sqlite-offload";
+import {
+  rotateChatStore,
+  type RotateChatStoreApplyHeadChangesContext,
+} from "@cocalc/backend/chat-store/sqlite-offload";
 import {
   ensureAcpWorkerRunning,
   startAcpWorkerSupervisor,
@@ -888,11 +891,13 @@ function stripLoopContractForDisplay(
 }
 
 async function maybeAutoRotateChatStore({
+  client,
   chatPath,
   chatKey,
   projectId,
   chatPathKey,
 }: {
+  client: ConatClient;
   chatPath?: string;
   chatKey: string;
   projectId: string;
@@ -930,6 +935,13 @@ async function maybeAutoRotateChatStore({
       // stale legacy generating=true rows blocking rotation forever.
       require_idle: false,
       force: false,
+      apply_head_changes: (context) =>
+        applyRotatedChatHeadViaSyncDB({
+          client,
+          project_id: projectId,
+          path: chatPathKey,
+          context,
+        }),
     });
     if (result.rotated) {
       logger.info("chat offload autorotate completed", {
@@ -955,6 +967,35 @@ async function maybeAutoRotateChatStore({
       err: `${err}`,
     });
   }
+}
+
+async function applyRotatedChatHeadViaSyncDB({
+  client,
+  project_id,
+  path,
+  context,
+}: {
+  client: ConatClient;
+  project_id: string;
+  path: string;
+  context: RotateChatStoreApplyHeadChangesContext;
+}): Promise<{ applied: boolean; status: "done"; warning?: string }> {
+  await withChatSyncDB({
+    client,
+    project_id,
+    path,
+    fn: async (syncdb) => {
+      for (const change of context.delete_changes) {
+        syncdb.delete(change.where);
+      }
+      for (const row of context.upsert_rows) {
+        syncdb.set(row);
+      }
+      syncdb.commit();
+      await syncdb.save();
+    },
+  });
+  return { applied: true, status: "done" };
 }
 
 function safeJsonParse(value: string): any | undefined {
@@ -1403,12 +1444,15 @@ function throttleNoArgsWithUnref(
     }
     pending = true;
     if (timer != null) return;
-    timer = setTimeout(() => {
-      timer = undefined;
-      if (pending) {
-        invoke();
-      }
-    }, Math.max(0, wait - (now - lastInvokeAt)));
+    timer = setTimeout(
+      () => {
+        timer = undefined;
+        if (pending) {
+          invoke();
+        }
+      },
+      Math.max(0, wait - (now - lastInvokeAt)),
+    );
     (timer as any)?.unref?.();
   }) as ThrottledNoArgs;
 
@@ -1507,12 +1551,9 @@ export class ChatStreamWriter {
   private patchflowVersionBaseline?: number;
   private patchflowVersionLatest?: number;
   private patchflowVersionPeak?: number;
-  private heartbeatLease = throttleNoArgsWithUnref(
-    () => {
-      this.touchLease();
-    },
-    LEASE_HEARTBEAT_INTERVAL,
-  );
+  private heartbeatLease = throttleNoArgsWithUnref(() => {
+    this.touchLease();
+  }, LEASE_HEARTBEAT_INTERVAL);
   private persistLogProgress = throttle(
     async () => {
       const started = performance.now();
@@ -2027,6 +2068,7 @@ export class ChatStreamWriter {
       await this.waitForScheduledSyncdbSaves();
       if (shouldAutoRotate) {
         await maybeAutoRotateChatStore({
+          client: this.client,
           chatPath: this.resolveChatFilePath(),
           chatKey: this.chatKey,
           projectId: this.metadata.project_id,

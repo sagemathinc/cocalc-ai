@@ -43,6 +43,7 @@ const logger = getLogger("lite:hub:sqlite:chat-offload");
 const DEFAULT_KEEP_RECENT_MESSAGES = 500;
 const DEFAULT_MAX_HEAD_BYTES = 2 * 1024 * 1024;
 const DEFAULT_MAX_HEAD_MESSAGES = 500;
+const LIVE_HEAD_APPLY_PENDING_MARKER = "live-head-apply:";
 
 type Json = Record<string, any>;
 
@@ -92,7 +93,32 @@ export interface RotateChatStoreOptions {
   require_idle?: boolean;
   force?: boolean;
   dry_run?: boolean;
+  apply_head_changes?: RotateChatStoreApplyHeadChanges;
 }
+
+export interface RotateChatStoreDeleteChange {
+  where: Json;
+}
+
+export interface RotateChatStoreApplyHeadChangesContext {
+  chat_path: string;
+  chat_id: string;
+  segment_id?: string;
+  source_sha256?: string;
+  head_after_jsonl: string;
+  delete_changes: RotateChatStoreDeleteChange[];
+  upsert_rows: Json[];
+}
+
+export interface RotateChatStoreApplyHeadChangesResult {
+  applied: boolean;
+  status?: "segment_written" | "done" | "conflict";
+  warning?: string;
+}
+
+export type RotateChatStoreApplyHeadChanges = (
+  context: RotateChatStoreApplyHeadChangesContext,
+) => Promise<RotateChatStoreApplyHeadChangesResult>;
 
 export interface RotateChatStoreResult {
   rotated: boolean;
@@ -457,6 +483,102 @@ function sha256Hex(data: string): string {
   return createHash("sha256").update(data).digest("hex");
 }
 
+function buildDeleteWhereForRow(obj?: Json): Json | undefined {
+  if (!obj || typeof obj !== "object") return undefined;
+  const event = typeof obj.event === "string" ? obj.event : undefined;
+  if (event === "chat" && typeof obj.message_id === "string") {
+    return { event: "chat", message_id: obj.message_id };
+  }
+  const where: Json = {};
+  if (event) where.event = event;
+  if (typeof obj.message_id === "string") where.message_id = obj.message_id;
+  if (typeof obj.thread_id === "string") where.thread_id = obj.thread_id;
+  if (typeof obj.sender_id === "string") where.sender_id = obj.sender_id;
+  if (typeof obj.date === "string") where.date = obj.date;
+  return Object.keys(where).length > 0 ? where : undefined;
+}
+
+function buildHeadApplyChanges({
+  archivedRows,
+  headAfterRaw,
+}: {
+  archivedRows: Array<Json | undefined>;
+  headAfterRaw: string;
+}): {
+  delete_changes: RotateChatStoreDeleteChange[];
+  upsert_rows: Json[];
+} {
+  const delete_changes = archivedRows
+    .map((row) => buildDeleteWhereForRow(row))
+    .filter((where): where is Json => where != null)
+    .map((where) => ({ where }));
+  const upsert_rows = parseChatFile(headAfterRaw)
+    .map((row) => row.obj)
+    .filter(
+      (row): row is Json =>
+        !!row && typeof row === "object" && row.event === "chat-thread-config",
+    )
+    .map((row) => {
+      const update: Json = {
+        event: row.event,
+        thread_id: row.thread_id,
+        sender_id: row.sender_id,
+        date: row.date,
+      };
+      if (row.archived_chat_rows != null) {
+        update.archived_chat_rows = row.archived_chat_rows;
+      }
+      if (row.latest_chat_date_ms != null) {
+        update.latest_chat_date_ms = row.latest_chat_date_ms;
+      }
+      return update;
+    });
+  return { delete_changes, upsert_rows };
+}
+
+function buildPendingHeadApplyChanges({
+  db,
+  chat_id,
+  op,
+}: {
+  db: DatabaseSync;
+  chat_id: string;
+  op: RotateMaintenanceOp;
+}): {
+  delete_changes: RotateChatStoreDeleteChange[];
+  upsert_rows: Json[];
+  warning?: string;
+} {
+  if (!op.segment_id) {
+    return {
+      delete_changes: [],
+      upsert_rows: [],
+      warning: `pending rotate op ${op.op_id} has no segment_id`,
+    };
+  }
+  const archived = db
+    .prepare(
+      `SELECT row_json
+         FROM archived_rows
+        WHERE chat_id = ? AND segment_id = ?
+        ORDER BY ordinal ASC`,
+    )
+    .all(chat_id, op.segment_id) as Array<{ row_json?: string }>;
+  const archivedRows = archived.map(({ row_json }) => {
+    if (!row_json) return undefined;
+    try {
+      return JSON.parse(row_json) as Json;
+    } catch {
+      return undefined;
+    }
+  });
+  const { delete_changes, upsert_rows } = buildHeadApplyChanges({
+    archivedRows,
+    headAfterRaw: op.head_after_jsonl ?? "",
+  });
+  return { delete_changes, upsert_rows };
+}
+
 function getPendingRotateOp(
   db: DatabaseSync,
   chat_id: string,
@@ -479,10 +601,14 @@ async function applyPendingRotateOp({
   db,
   chatPath,
   op,
+  apply_head_changes,
+  chat_id,
 }: {
   db: DatabaseSync;
   chatPath: string;
   op: RotateMaintenanceOp;
+  chat_id: string;
+  apply_head_changes?: RotateChatStoreApplyHeadChanges;
 }): Promise<{
   applied: boolean;
   status: RotateOpStatus;
@@ -495,6 +621,71 @@ async function applyPendingRotateOp({
       "UPDATE maintenance_ops SET status = 'conflict', updated_at_ms = ?, error = ? WHERE op_id = ?",
     ).run(now, warning, op.op_id);
     return { applied: false, status: "conflict", warning };
+  }
+
+  if (
+    !apply_head_changes &&
+    typeof op.error === "string" &&
+    op.error.startsWith(LIVE_HEAD_APPLY_PENDING_MARKER)
+  ) {
+    const warning =
+      op.error.slice(LIVE_HEAD_APPLY_PENDING_MARKER.length).trim() ||
+      `pending rotate op ${op.op_id} requires live head apply`;
+    return { applied: false, status: "segment_written", warning };
+  }
+
+  if (apply_head_changes) {
+    const { delete_changes, upsert_rows, warning } =
+      buildPendingHeadApplyChanges({
+        db,
+        chat_id,
+        op,
+      });
+    if (warning) {
+      db.prepare(
+        "UPDATE maintenance_ops SET status = 'conflict', updated_at_ms = ?, error = ? WHERE op_id = ?",
+      ).run(now, warning, op.op_id);
+      return { applied: false, status: "conflict", warning };
+    }
+    try {
+      const result = await apply_head_changes({
+        chat_path: chatPath,
+        chat_id,
+        segment_id: op.segment_id,
+        source_sha256: op.source_sha256,
+        head_after_jsonl: op.head_after_jsonl,
+        delete_changes,
+        upsert_rows,
+      });
+      if (!result.applied) {
+        const status = (result.status ?? "segment_written") as RotateOpStatus;
+        if (status === "done") {
+          db.prepare(
+            "UPDATE maintenance_ops SET status = 'done', updated_at_ms = ?, error = NULL, head_after_jsonl = NULL WHERE op_id = ?",
+          ).run(now, op.op_id);
+        } else {
+          const error =
+            status === "segment_written"
+              ? `${LIVE_HEAD_APPLY_PENDING_MARKER}${result.warning ?? "pending live head apply"}`
+              : (result.warning ?? null);
+          db.prepare(
+            "UPDATE maintenance_ops SET status = ?, updated_at_ms = ?, error = ? WHERE op_id = ?",
+          ).run(status, now, error, op.op_id);
+        }
+        return { applied: false, status, warning: result.warning };
+      }
+    } catch (err) {
+      const warning = `pending rotate op ${op.op_id} live head apply failed: ${err}`;
+      db.prepare(
+        "UPDATE maintenance_ops SET updated_at_ms = ?, error = ? WHERE op_id = ?",
+      ).run(now, `${LIVE_HEAD_APPLY_PENDING_MARKER}${warning}`, op.op_id);
+      return { applied: false, status: "segment_written", warning };
+    }
+
+    db.prepare(
+      "UPDATE maintenance_ops SET status = 'done', updated_at_ms = ?, error = NULL, head_after_jsonl = NULL WHERE op_id = ?",
+    ).run(now, op.op_id);
+    return { applied: true, status: "done" };
   }
 
   let currentRaw = "";
@@ -539,10 +730,12 @@ async function resumePendingRotate({
   db,
   chat_id,
   chatPath,
+  apply_head_changes,
 }: {
   db: DatabaseSync;
   chat_id: string;
   chatPath: string;
+  apply_head_changes?: RotateChatStoreApplyHeadChanges;
 }): Promise<{
   resumed: boolean;
   op_id?: string;
@@ -551,7 +744,13 @@ async function resumePendingRotate({
 }> {
   const pending = getPendingRotateOp(db, chat_id);
   if (!pending) return { resumed: false };
-  const applied = await applyPendingRotateOp({ db, chatPath, op: pending });
+  const applied = await applyPendingRotateOp({
+    db,
+    chatPath,
+    op: pending,
+    chat_id,
+    apply_head_changes,
+  });
   return {
     resumed: true,
     op_id: pending.op_id,
@@ -714,12 +913,18 @@ export async function rotateChatStore({
   require_idle = true,
   force = false,
   dry_run = false,
+  apply_head_changes,
 }: RotateChatStoreOptions): Promise<RotateChatStoreResult> {
   const chatPath = normalizeChatPath(chat_path);
   const dbPath = resolveDbPath(db_path);
   const db = openDb(dbPath);
   const { chat_id } = getOrCreateChatId(db, chatPath);
-  const resumed = await resumePendingRotate({ db, chat_id, chatPath });
+  const resumed = await resumePendingRotate({
+    db,
+    chat_id,
+    chatPath,
+    apply_head_changes,
+  });
   if (resumed.warning) {
     logger.warn("chat offload pending rotate resume", {
       chatPath,
@@ -1004,6 +1209,8 @@ export async function rotateChatStore({
       segment_id,
       updated_at_ms: now,
     },
+    chat_id,
+    apply_head_changes,
   });
   if (!applied.applied) {
     rewriteWarning =

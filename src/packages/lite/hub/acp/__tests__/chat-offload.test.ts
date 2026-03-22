@@ -380,4 +380,212 @@ describe("chat offload sqlite store", () => {
     expect(cfg?.thread_id).toBe(threadId);
     expect(cfg?.archived_chat_rows).toBe(1);
   });
+
+  it("can apply rotated head changes through a callback instead of rewriting the file", async () => {
+    const tmp = await fs.mkdtemp(
+      path.join(os.tmpdir(), "chat-offload-live-head-"),
+    );
+    const chatPath = path.join(tmp, "live-head.chat");
+    const dbPath = path.join(tmp, "offload.sqlite3");
+    const threadId = "thread-live-1";
+    const rows = [
+      {
+        event: "chat-thread-config",
+        sender_id: "__thread_config__",
+        date: "2026-02-20T00:00:00.000Z",
+        thread_id: threadId,
+        name: "Live Thread",
+      },
+      makeChatRow({
+        date: "2026-02-20T00:01:00.000Z",
+        message_id: "live-old-1",
+        thread_id: threadId,
+        content: "old in thread",
+      }),
+      makeChatRow({
+        date: "2026-02-20T00:02:00.000Z",
+        message_id: "live-new-1",
+        thread_id: "thread-other",
+        content: "newest",
+      }),
+    ];
+    const rawBefore = rows.map((x) => JSON.stringify(x)).join("\n") + "\n";
+    await fs.writeFile(chatPath, rawBefore, "utf8");
+
+    const calls: any[] = [];
+    const rotated = await rotateChatStore({
+      chat_path: chatPath,
+      db_path: dbPath,
+      keep_recent_messages: 1,
+      max_head_bytes: 1,
+      max_head_messages: 1,
+      require_idle: true,
+      apply_head_changes: async (context) => {
+        calls.push(context);
+        return { applied: true, status: "done" };
+      },
+    });
+    expect(rotated.rotated).toBe(true);
+    expect(rotated.maintenance_status).toBe("done");
+    expect(calls).toHaveLength(1);
+
+    const currentRaw = await fs.readFile(chatPath, "utf8");
+    expect(currentRaw).toBe(rawBefore);
+    expect(calls[0].delete_changes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          where: expect.objectContaining({
+            event: "chat",
+            message_id: "live-old-1",
+          }),
+        }),
+      ]),
+    );
+    const cfg = calls[0].upsert_rows.find(
+      (row: any) => row.event === "chat-thread-config",
+    );
+    expect(cfg?.thread_id).toBe(threadId);
+    expect(cfg?.archived_chat_rows).toBe(1);
+    expect(cfg?.name).toBeUndefined();
+  });
+
+  it("resumes pending live head application through the callback path", async () => {
+    const tmp = await fs.mkdtemp(
+      path.join(os.tmpdir(), "chat-offload-live-resume-"),
+    );
+    const chatPath = path.join(tmp, "live-resume.chat");
+    const dbPath = path.join(tmp, "offload.sqlite3");
+    const rows = [
+      makeChatRow({
+        date: "2026-02-20T00:00:00.000Z",
+        message_id: "resume-old-1",
+        content: "first",
+      }),
+      makeChatRow({
+        date: "2026-02-20T00:01:00.000Z",
+        message_id: "resume-old-2",
+        content: "second",
+      }),
+      makeChatRow({
+        date: "2026-02-20T00:02:00.000Z",
+        message_id: "resume-new-1",
+        content: "third",
+      }),
+    ];
+    const rawBefore = rows.map((x) => JSON.stringify(x)).join("\n") + "\n";
+    await fs.writeFile(chatPath, rawBefore, "utf8");
+
+    let attempts = 0;
+    const applyHead = jest.fn(async (context) => {
+      attempts += 1;
+      if (attempts === 1) {
+        return {
+          applied: false,
+          status: "segment_written" as const,
+          warning: "defer live apply",
+        };
+      }
+      await fs.writeFile(chatPath, context.head_after_jsonl, "utf8");
+      return { applied: true, status: "done" as const };
+    });
+
+    const first = await rotateChatStore({
+      chat_path: chatPath,
+      db_path: dbPath,
+      keep_recent_messages: 1,
+      max_head_bytes: 1,
+      max_head_messages: 1,
+      require_idle: true,
+      apply_head_changes: applyHead,
+    });
+    expect(first.rotated).toBe(true);
+    expect(first.maintenance_status).toBe("segment_written");
+    expect(first.rewrite_warning).toContain("defer live apply");
+    expect(await fs.readFile(chatPath, "utf8")).toBe(rawBefore);
+
+    const second = await rotateChatStore({
+      chat_path: chatPath,
+      db_path: dbPath,
+      keep_recent_messages: 1,
+      max_head_bytes: 1,
+      max_head_messages: 1,
+      require_idle: true,
+      apply_head_changes: applyHead,
+    });
+    expect(second.rotated).toBe(false);
+    expect(second.reason).toBeTruthy();
+    expect(applyHead).toHaveBeenCalledTimes(2);
+
+    const headRaw = await fs.readFile(chatPath, "utf8");
+    const headRows = headRaw
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((x) => JSON.parse(x));
+    expect(headRows.map((x) => x.message_id)).toEqual(
+      expect.arrayContaining(["resume-new-1"]),
+    );
+    expect(headRows.map((x) => x.message_id)).not.toEqual(
+      expect.arrayContaining(["resume-old-1", "resume-old-2"]),
+    );
+  });
+
+  it("does not fall back to raw file rewrite for pending live head apply", async () => {
+    const tmp = await fs.mkdtemp(
+      path.join(os.tmpdir(), "chat-offload-live-no-fallback-"),
+    );
+    const chatPath = path.join(tmp, "live-no-fallback.chat");
+    const dbPath = path.join(tmp, "offload.sqlite3");
+    const rows = [
+      makeChatRow({
+        date: "2026-02-20T00:00:00.000Z",
+        message_id: "fallback-old-1",
+        content: "first",
+      }),
+      makeChatRow({
+        date: "2026-02-20T00:01:00.000Z",
+        message_id: "fallback-old-2",
+        content: "second",
+      }),
+      makeChatRow({
+        date: "2026-02-20T00:02:00.000Z",
+        message_id: "fallback-new-1",
+        content: "third",
+      }),
+    ];
+    const rawBefore = rows.map((x) => JSON.stringify(x)).join("\n") + "\n";
+    await fs.writeFile(chatPath, rawBefore, "utf8");
+
+    const first = await rotateChatStore({
+      chat_path: chatPath,
+      db_path: dbPath,
+      keep_recent_messages: 1,
+      max_head_bytes: 1,
+      max_head_messages: 1,
+      require_idle: true,
+      apply_head_changes: async () => ({
+        applied: false,
+        status: "segment_written",
+        warning: "defer live apply",
+      }),
+    });
+    expect(first.rotated).toBe(true);
+    expect(first.maintenance_status).toBe("segment_written");
+    expect(await fs.readFile(chatPath, "utf8")).toBe(rawBefore);
+
+    const resumedWithoutCallback = await rotateChatStore({
+      chat_path: chatPath,
+      db_path: dbPath,
+      keep_recent_messages: 1,
+      max_head_bytes: 1,
+      max_head_messages: 1,
+      require_idle: true,
+    });
+    expect(resumedWithoutCallback.rotated).toBe(false);
+    expect(resumedWithoutCallback.reason).toContain(
+      "pending rotate operation requires recovery",
+    );
+    expect(resumedWithoutCallback.maintenance_status).toBe("segment_written");
+    expect(await fs.readFile(chatPath, "utf8")).toBe(rawBefore);
+  });
 });
