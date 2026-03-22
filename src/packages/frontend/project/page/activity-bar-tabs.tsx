@@ -169,20 +169,6 @@ export function VerticalFixedTabs({
     [hiddenTabs, tabOrder],
   );
 
-  if (!accountStoreReady) {
-    return (
-      <div
-        ref={parent}
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          height: "100%",
-          flex: "1 1 0",
-        }}
-      />
-    );
-  }
-
   const calcCondensed = throttle(
     () => {
       if (gap.current == null) return;
@@ -333,6 +319,7 @@ export function VerticalFixedTabs({
   }
 
   function renderOverflowMenu(): ReactNode {
+    if (!accountStoreReady || overflowTabs.length === 0) return null;
     const isActive =
       moreOpen ||
       (active_flyout != null && overflowTabs.includes(active_flyout));
@@ -429,6 +416,20 @@ export function VerticalFixedTabs({
           </Button>
         </Dropdown>
       </Tooltip>
+    );
+  }
+
+  if (!accountStoreReady) {
+    return (
+      <div
+        ref={parent}
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          height: "100%",
+          flex: "1 1 0",
+        }}
+      />
     );
   }
 
