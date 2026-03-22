@@ -1,6 +1,6 @@
 /*
-A generic button for helping a user fix problems using chatgpt.
-If chatgpt is disabled or not available it renders as null.
+A generic button for helping a user fix problems using Codex.
+If Codex is disabled or not available it renders as null.
 */
 
 import { Alert, Space } from "antd";
@@ -12,7 +12,7 @@ import { useCodexPaymentSource } from "@cocalc/frontend/chat/use-codex-payment-s
 import { useFrameContext } from "@cocalc/frontend/frame-editors/frame-tree/frame-context";
 import {
   dispatchNavigatorPromptIntent,
-  submitNavigatorPromptToCurrentThread,
+  submitNavigatorPromptInWorkspaceChat,
 } from "@cocalc/frontend/project/new/navigator-intents";
 import type { ProjectsStore } from "@cocalc/frontend/projects/store";
 import HelpMeFixButton from "./help-me-fix-button";
@@ -180,7 +180,7 @@ export default function HelpMeFix({
         isHint: mode === "hint",
         sourceTag,
       });
-      const sent = await submitNavigatorPromptToCurrentThread({
+      const sent = await submitNavigatorPromptInWorkspaceChat({
         project_id,
         path,
         prompt,

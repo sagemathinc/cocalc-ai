@@ -1,7 +1,7 @@
 import { backtickSequence } from "@cocalc/frontend/markdown/util";
 import {
   dispatchNavigatorPromptIntent,
-  submitNavigatorPromptToCurrentThread,
+  submitNavigatorPromptInWorkspaceChat,
 } from "@cocalc/frontend/project/new/navigator-intents";
 import { trunc, trunc_left, trunc_middle } from "@cocalc/util/misc";
 import { CUTOFF } from "./consts";
@@ -83,7 +83,7 @@ export async function getHelp({
       isHint,
       sourceTag: `help-me-fix-${tagSuffix}${tag ? `:${tag}` : ""}`,
     });
-    const sent = await submitNavigatorPromptToCurrentThread({
+    const sent = await submitNavigatorPromptInWorkspaceChat({
       project_id,
       path,
       prompt: intentPrompt,
