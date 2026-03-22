@@ -338,15 +338,13 @@ export async function saveRootfsCatalogEntry(
 }
 
 async function publishQueuedLroSafe({ op }: { op: LroSummary }) {
-  try {
-    await publishLroSummary({
-      scope_type: op.scope_type,
-      scope_id: op.scope_id,
-      summary: op,
-    });
-  } catch {
+  void publishLroSummary({
+    scope_type: op.scope_type,
+    scope_id: op.scope_id,
+    summary: op,
+  }).catch(() => {
     // best effort only; worker will publish later summaries
-  }
+  });
   publishLroEvent({
     scope_type: op.scope_type,
     scope_id: op.scope_id,

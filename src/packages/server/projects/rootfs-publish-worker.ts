@@ -42,15 +42,13 @@ async function publishSummarySafe(
   context: { op_id: string; when: string },
 ) {
   if (!summary) return;
-  try {
-    await publishSummary(summary);
-  } catch (err) {
+  void publishSummary(summary).catch((err) => {
     logger.warn("rootfs publish op publish summary failed", {
       op_id: context.op_id,
       when: context.when,
       err,
     });
-  }
+  });
 }
 
 function progressEvent({

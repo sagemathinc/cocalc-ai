@@ -116,8 +116,9 @@ const logger = getLogger("project-host:file-server");
 const RESTORE_STAGING_ROOT = ".restore-staging";
 const SNAPSHOT_RESTORE_STAGING_ROOT = ".snapshot-restore-staging";
 const MAX_TEXT_PREVIEW_BYTES = 10 * 1024 * 1024;
-const ROOTFS_PUBLISH_TIMEOUT_MS = 60 * 60 * 1000;
+const ROOTFS_PUBLISH_TIMEOUT_S = 60 * 60;
 const STORAGE_WRAPPER = "/usr/local/sbin/cocalc-runtime-storage";
+const PROJECT_ROOTS_CACHE = join(data, "cache", "project-roots");
 const SSH_WAKE_TIMEOUT_MS = Math.max(
   5_000,
   envToInt("COCALC_PROJECT_HOST_SSH_WAKE_TIMEOUT_MS", 120_000),
@@ -389,6 +390,13 @@ async function createImageCacheTempPath(prefix: string): Promise<string> {
   return await mkdtemp(join(IMAGE_CACHE, prefix));
 }
 
+async function createOverlayMountTempPath(): Promise<string> {
+  await mkdir(PROJECT_ROOTS_CACHE, { recursive: true });
+  const path = join(PROJECT_ROOTS_CACHE, randomUUID());
+  await mkdir(path, { recursive: true });
+  return path;
+}
+
 async function replaceTreeByMove({
   src,
   dest,
@@ -425,7 +433,7 @@ async function mountOverlayForPublish({
   await executeCode({
     verbose: false,
     err_on_exit: true,
-    timeout: ROOTFS_PUBLISH_TIMEOUT_MS,
+    timeout: ROOTFS_PUBLISH_TIMEOUT_S,
     command: "sudo",
     args: [
       "-n",
@@ -442,7 +450,7 @@ async function mountOverlayForPublish({
 async function unmountOverlayForPublish(merged: string): Promise<void> {
   await executeCode({
     verbose: false,
-    timeout: ROOTFS_PUBLISH_TIMEOUT_MS,
+    timeout: ROOTFS_PUBLISH_TIMEOUT_S,
     command: "sudo",
     args: ["-n", STORAGE_WRAPPER, "umount-overlay-project", merged],
   }).catch(() => {});
@@ -455,27 +463,20 @@ async function rsyncTree({
   src: string;
   dest: string;
 }): Promise<void> {
-  await executeCode({
+  await sudo({
     verbose: false,
-    err_on_exit: true,
-    timeout: ROOTFS_PUBLISH_TIMEOUT_MS,
-    command: "rsync",
-    args: ["-aHAXx", "--numeric-ids", "--delete", `${src}/`, `${dest}/`],
+    timeout: ROOTFS_PUBLISH_TIMEOUT_S,
+    command: "copy-tree-preserve",
+    args: [src, dest],
   });
 }
 
 async function tarSha256(pathToHash: string): Promise<string> {
-  const { stdout } = await executeCode({
+  const { stdout } = await sudo({
     verbose: false,
-    err_on_exit: true,
-    timeout: ROOTFS_PUBLISH_TIMEOUT_MS,
-    command: "bash",
-    args: [
-      "-lc",
-      `set -euo pipefail; tar --sort=name --mtime='UTC 1970-01-01' --numeric-owner --owner=0 --group=0 --format=posix --acls --xattrs --xattrs-include='*' -cf - -C "$1" . | sha256sum | awk '{print $1}'`,
-      "bash",
-      pathToHash,
-    ],
+    timeout: ROOTFS_PUBLISH_TIMEOUT_S,
+    command: "tar-sha256-tree",
+    args: [pathToHash],
   });
   const digest = `${stdout ?? ""}`.trim();
   if (!digest) {
@@ -485,12 +486,11 @@ async function tarSha256(pathToHash: string): Promise<string> {
 }
 
 async function directorySizeBytes(pathToMeasure: string): Promise<number> {
-  const { stdout } = await executeCode({
+  const { stdout } = await sudo({
     verbose: false,
-    err_on_exit: true,
-    timeout: ROOTFS_PUBLISH_TIMEOUT_MS,
-    command: "du",
-    args: ["-sb", pathToMeasure],
+    timeout: ROOTFS_PUBLISH_TIMEOUT_S,
+    command: "du-bytes",
+    args: [pathToMeasure],
   });
   const value = Number.parseInt(`${stdout}`.trim().split(/\s+/)[0], 10);
   if (!Number.isFinite(value)) {
@@ -1458,8 +1458,9 @@ async function publishRootfsImage({
     const upperdir = join(overlayRoot, "upperdir");
     await mkdir(upperdir, { recursive: true });
 
-    workdirPath = await createImageCacheTempPath(".rootfs-publish-work-");
-    mergedPath = await createImageCacheTempPath(".rootfs-publish-merged-");
+    workdirPath = join(overlayRoot, `publish-workdir-${randomUUID()}`);
+    await mkdir(workdirPath, { recursive: true });
+    mergedPath = await createOverlayMountTempPath();
     stagedRootfsPath = await createImageCacheTempPath(".rootfs-publish-tree-");
 
     await mountOverlayForPublish({
@@ -1514,7 +1515,7 @@ async function publishRootfsImage({
       await executeCode({
         verbose: false,
         err_on_exit: true,
-        timeout: ROOTFS_PUBLISH_TIMEOUT_MS,
+        timeout: ROOTFS_PUBLISH_TIMEOUT_S,
         command: "mv",
         args: [stagedRootfsPath, finalPath],
       });

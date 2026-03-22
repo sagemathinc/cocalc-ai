@@ -796,6 +796,34 @@ case "$cmd" in
     check_args "$@"
     exec /bin/rm "$@"
     ;;
+  copy-tree-preserve)
+    if [ "$#" -ne 2 ]; then
+      echo "usage: cocalc-runtime-storage copy-tree-preserve <src> <dest>" >&2
+      exit 2
+    fi
+    src="$1"
+    dest="$2"
+    check_args "$src" "$dest"
+    exec /usr/bin/cp -a --reflink=auto "$src"/. "$dest"/
+    ;;
+  tar-sha256-tree)
+    if [ "$#" -ne 1 ]; then
+      echo "usage: cocalc-runtime-storage tar-sha256-tree <path>" >&2
+      exit 2
+    fi
+    tree="$1"
+    check_args "$tree"
+    exec /bin/bash -lc 'set -euo pipefail; tar --sort=name --mtime='"'"'UTC 1970-01-01'"'"' --numeric-owner --owner=0 --group=0 --format=posix --acls --xattrs --xattrs-include='"'"'*'"'"' -cf - -C "$1" . | sha256sum | awk '"'"'{print $1}'"'"'' bash "$tree"
+    ;;
+  du-bytes)
+    if [ "$#" -ne 1 ]; then
+      echo "usage: cocalc-runtime-storage du-bytes <path>" >&2
+      exit 2
+    fi
+    path="$1"
+    check_args "$path"
+    exec /usr/bin/du -sb "$path"
+    ;;
   df)
     check_args "$@"
     exec /bin/df "$@"
