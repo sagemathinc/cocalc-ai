@@ -117,7 +117,7 @@ export function About(props: AboutProps) {
             so you can write nicely formatted text to explain your code without having to write markdown directly.
           </li>
           <li>
-            <b>AI Assistant:</b> Several AI tools help you to understand error messages, refine code, generate new code cells based on context, or just explain/document existing code.
+            <b>Codex:</b> Codex can help you understand error messages, refine code, generate new code cells based on context, or explain and document existing code.
           </li>
           <li>
             <b>Whiteboard:</b> create a whiteboard (documented ending in ".board") and use Jupyter cells as part of your whiteboard
