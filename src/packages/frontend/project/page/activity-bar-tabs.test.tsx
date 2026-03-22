@@ -5,6 +5,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 const mockSetActiveTab = jest.fn();
 const mockToggleFlyout = jest.fn();
 const mockSetOtherSettings = jest.fn();
+let mockAccountStoreReady = true;
 
 function flattenMenuItems(items: any[] = []): any[] {
   return items.flatMap((item) => {
@@ -89,6 +90,10 @@ jest.mock("@cocalc/frontend/app/use-context", () => ({
   default: () => ({ showActBarLabels: true }),
 }));
 
+jest.mock("@cocalc/frontend/app/account-store-ready", () => ({
+  useAccountStoreReady: () => mockAccountStoreReady,
+}));
+
 jest.mock("@cocalc/frontend/components", () => ({
   Icon: ({ name }: any) => <span>{name}</span>,
 }));
@@ -158,6 +163,7 @@ describe("VerticalFixedTabs overflow actions", () => {
     mockSetActiveTab.mockReset();
     mockToggleFlyout.mockReset();
     mockSetOtherSettings.mockReset();
+    mockAccountStoreReady = true;
     (global as any).ResizeObserver = class {
       observe() {}
       disconnect() {}
@@ -182,5 +188,14 @@ describe("VerticalFixedTabs overflow actions", () => {
 
     expect(mockToggleFlyout).toHaveBeenCalledWith("log");
     expect(mockSetActiveTab).not.toHaveBeenCalled();
+  });
+
+  it("shows no rail buttons until account settings are ready", () => {
+    mockAccountStoreReady = false;
+
+    render(<VerticalFixedTabs setHomePageButtonWidth={() => {}} />);
+
+    expect(screen.queryByTestId("rail-workspaces")).toBeNull();
+    expect(screen.queryByTestId("menu-overflow:log")).toBeNull();
   });
 });

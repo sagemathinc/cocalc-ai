@@ -20,6 +20,7 @@ import {
 } from "react";
 import { useIntl } from "react-intl";
 import { CSS, useActions, useTypedRedux } from "@cocalc/frontend/app-framework";
+import { useAccountStoreReady } from "@cocalc/frontend/app/account-store-ready";
 import useAppContext from "@cocalc/frontend/app/use-context";
 import { ChatIndicator } from "@cocalc/frontend/chat/chat-indicator";
 import { Icon, type IconName } from "@cocalc/frontend/components";
@@ -134,6 +135,7 @@ export function VerticalFixedTabs({
     workspaces,
   } = useProjectContext();
   const account_settings = useActions("account");
+  const accountStoreReady = useAccountStoreReady();
   const { showActBarLabels } = useAppContext();
   const active_flyout = useTypedRedux({ project_id }, "flyout");
   const other_settings = useTypedRedux("account", "other_settings");
@@ -166,6 +168,20 @@ export function VerticalFixedTabs({
     () => splitRailTabs(tabOrder, hiddenTabs),
     [hiddenTabs, tabOrder],
   );
+
+  if (!accountStoreReady) {
+    return (
+      <div
+        ref={parent}
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          height: "100%",
+          flex: "1 1 0",
+        }}
+      />
+    );
+  }
 
   const calcCondensed = throttle(
     () => {
