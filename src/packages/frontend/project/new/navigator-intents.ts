@@ -5,7 +5,7 @@ import { getChatActions, initChat } from "@cocalc/frontend/chat/register";
 import type { CodexThreadConfig } from "@cocalc/chat";
 import { lite } from "@cocalc/frontend/lite";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
-import { openFloatingAgentSession } from "@cocalc/frontend/project/page/agent-dock-state";
+import { revealAgentSession } from "@cocalc/frontend/project/page/agent-panel-state";
 import {
   ensureWorkspaceChatForPath,
   ensureWorkspaceChatPath,
@@ -596,7 +596,7 @@ async function writeNavigatorPromptInWorkspaceChat(
         session.title ??
         workspaceTarget.workspace.theme.title?.trim() ??
         "Navigator";
-      openFloatingAgentSession(
+      revealAgentSession(
         project_id,
         {
           ...session,
@@ -741,7 +741,7 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
         ? fallbackSession
         : (indexedSession ?? fallbackSession);
     if (opts.openFloating !== false) {
-      openFloatingAgentSession(
+      revealAgentSession(
         project_id,
         {
           ...fallbackSession,
@@ -769,7 +769,7 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
         createNewThread: opts.createNewThread ?? false,
       });
       if (opts.openFloating !== false) {
-        openFloatingAgentSession(
+        revealAgentSession(
           project_id,
           {
             ...(indexedSession ?? fallbackSession),
@@ -944,7 +944,7 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
         existingThreadTitle ??
         session.title ??
         "Navigator";
-      openFloatingAgentSession(
+      revealAgentSession(
         project_id,
         {
           ...session,
@@ -983,7 +983,7 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
         createNewThread: opts.createNewThread ?? false,
       });
       if (opts.openFloating !== false) {
-        openFloatingAgentSession(
+        revealAgentSession(
           project_id,
           {
             session_id: `navigator-${project_id}`,

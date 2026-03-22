@@ -66,7 +66,7 @@ export default function LLMError({ traceback, input }: Props) {
         path,
         prompt: intentPrompt,
         visiblePrompt: NOTEBOOK_FIX_VISIBLE_PROMPT,
-        title: "Fix notebook error",
+        title: "Agent",
         tag: "intent:notebook-error",
         forceCodex: true,
         codexConfig: { model: DEFAULT_FIX_WITH_AGENT_MODEL },
@@ -85,7 +85,7 @@ export default function LLMError({ traceback, input }: Props) {
   return (
     <div>
       <Space wrap size={[8, 8]} style={{ marginBottom: 8 }}>
-        <Tooltip title="Opens the workspace chat, mirrors it in the floating agent, and submits this notebook error to Codex.">
+        <Tooltip title="Opens the workspace agent thread and submits this notebook error to Codex.">
           <Button
             size="small"
             loading={routing}

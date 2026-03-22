@@ -171,10 +171,10 @@ test("Fix with Agent opens workspace chat and submits in place", async ({
   ).toBeVisible({
     timeout: 12_000,
   });
-  await expect(page.getByText("Fix notebook error").first()).toBeVisible({
+  await expect(page.getByText("Agent").first()).toBeVisible({
     timeout: 12_000,
   });
-  await expect(page.locator(".cc-agent-dock-handle")).toHaveCount(1, {
+  await expect(page.locator(".cc-agent-dock-handle")).toHaveCount(0, {
     timeout: 12_000,
   });
   await expect

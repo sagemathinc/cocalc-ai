@@ -45,8 +45,6 @@ import {
 } from "./flyouts";
 import { ActiveFlyout } from "./flyouts/active";
 import { shouldOpenFileInNewWindow } from "./utils";
-import { getValidActivityBarOption } from "./activity-bar";
-import { ACTIVITY_BAR_KEY } from "./activity-bar-consts";
 import { file_options } from "@cocalc/frontend/editor-tmp";
 
 export type FixedTab =
@@ -244,10 +242,6 @@ export function FileTab(props: Readonly<Props>) {
       : [];
 
   const other_settings = useTypedRedux("account", "other_settings");
-  const active_flyout = useTypedRedux({ project_id }, "flyout");
-  const actBar = getValidActivityBarOption(
-    other_settings.get(ACTIVITY_BAR_KEY),
-  );
   const tabAccentMode = other_settings.get("file_tab_accent_mode") ?? "bright";
   const workspaceRecord =
     path != null ? workspaces.resolveWorkspaceForPath(path) : null;
@@ -301,15 +295,13 @@ export function FileTab(props: Readonly<Props>) {
         });
       }
     } else if (name != null) {
-      if (flyout != null && FIXED_PROJECT_TABS[flyout].noFullPage) {
-        // this tab can't be opened in a full page
-        actions?.toggleFlyout(flyout);
-      } else if (flyout != null && actBar !== "both") {
-        if (anyModifierKey !== (actBar === "full")) {
+      if (flyout != null) {
+        const canOpenFullPage = !FIXED_PROJECT_TABS[flyout].noFullPage;
+        if (canOpenFullPage && (anyModifierKey || e.detail >= 2)) {
           setActiveTab(name);
-        } else {
-          actions?.toggleFlyout(flyout);
+          return;
         }
+        actions?.toggleFlyout(flyout);
       } else {
         setActiveTab(name);
       }
@@ -323,43 +315,6 @@ export function FileTab(props: Readonly<Props>) {
       e.preventDefault();
       closeFile();
     }
-  }
-
-  function renderFlyoutCaret() {
-    if (flyout == null || actBar !== "both") return;
-
-    const color =
-      flyout === active_flyout
-        ? COLORS.PROJECT.FIXED_LEFT_ACTIVE
-        : active_flyout == null
-          ? COLORS.GRAY_L
-          : COLORS.GRAY_L0;
-    const bg = flyout === active_flyout ? COLORS.GRAY_L0 : undefined;
-
-    return (
-      <div
-        className="cc-project-fixedtab"
-        style={{
-          display: "flex",
-          alignItems: "center",
-          color,
-          backgroundColor: bg,
-        }}
-        onClick={(e) => {
-          e.stopPropagation();
-          actions?.toggleFlyout(flyout);
-        }}
-      >
-        <Icon
-          style={{
-            padding: "0 3px",
-            margin: "0",
-            color,
-          }}
-          name="caret-right"
-        />
-      </div>
-    );
   }
 
   let style: CSSProperties;
@@ -487,20 +442,7 @@ export function FileTab(props: Readonly<Props>) {
     </>
   );
 
-  const inner = !isFixedTab ? (
-    btnLeft
-  ) : (
-    <div
-      style={{
-        display: "flex",
-        flex: "1 0 auto",
-        justifyContent: "space-between",
-      }}
-    >
-      {renderFixedTab()}
-      {renderFlyoutCaret()}
-    </div>
-  );
+  const inner = !isFixedTab ? btnLeft : renderFixedTab();
 
   const body = (
     <div
@@ -540,15 +482,6 @@ export function FileTab(props: Readonly<Props>) {
       ) : null}
     </div>
   );
-
-  // in pure "full page" vbar mode, do not show a vertical tab, which has no fullpage
-  if (
-    actBar === "full" &&
-    flyout != null &&
-    FIXED_PROJECT_TABS[flyout].noFullPage
-  ) {
-    return null;
-  }
 
   if (
     props.noPopover ||

@@ -24,8 +24,8 @@ jest.mock("@cocalc/frontend/chat/actions/llm", () => ({
   processLLM: (...args: any[]) => mockProcessLLM(...args),
 }));
 
-jest.mock("@cocalc/frontend/project/page/agent-dock-state", () => ({
-  openFloatingAgentSession: (...args: any[]) => mockOpenFloating(...args),
+jest.mock("@cocalc/frontend/project/page/agent-panel-state", () => ({
+  revealAgentSession: (...args: any[]) => mockOpenFloating(...args),
 }));
 
 jest.mock("@cocalc/frontend/project/workspaces/runtime", () => ({

@@ -8,7 +8,7 @@ Tabs in a particular project.
 */
 
 import type { MenuProps } from "antd";
-import { Button, Dropdown, Modal, Tooltip } from "antd";
+import { Button, Dropdown, Tooltip } from "antd";
 import { debounce, throttle } from "lodash";
 import { ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useIntl } from "react-intl";
@@ -16,17 +16,12 @@ import { CSS, useActions, useTypedRedux } from "@cocalc/frontend/app-framework";
 import useAppContext from "@cocalc/frontend/app/use-context";
 import { ChatIndicator } from "@cocalc/frontend/chat/chat-indicator";
 import { Icon, type IconName } from "@cocalc/frontend/components";
-import { labels } from "@cocalc/frontend/i18n";
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import track from "@cocalc/frontend/user-tracking";
 import { tab_to_path } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
-import { getValidActivityBarOption } from "./activity-bar";
 import {
-  ACTIVITY_BAR_EXPLANATION,
-  ACTIVITY_BAR_KEY,
   ACTIVITY_BAR_LABELS,
-  ACTIVITY_BAR_OPTIONS,
   ACTIVITY_BAR_TOGGLE_LABELS,
   TOGGLE_ACTIVITY_BAR_TOGGLE_BUTTON_SPACE,
 } from "./activity-bar-consts";
@@ -121,10 +116,6 @@ export function VerticalFixedTabs({
   } = useProjectContext();
   const { showActBarLabels } = useAppContext();
   const active_flyout = useTypedRedux({ project_id }, "flyout");
-  const other_settings = useTypedRedux("account", "other_settings");
-  const actBar = getValidActivityBarOption(
-    other_settings.get(ACTIVITY_BAR_KEY),
-  );
   const parent = useRef<HTMLDivElement>(null);
   const gap = useRef<HTMLDivElement>(null);
   const breakPoint = useRef<number>(0);
@@ -206,7 +197,7 @@ export function VerticalFixedTabs({
         ? { color: COLORS.PROJECT.FIXED_LEFT_ACTIVE }
         : undefined;
 
-    const isActive = (actBar === "flyout" ? active_flyout : activeTab) === name;
+    const isActive = active_flyout === name;
 
     const style: CSS = {
       ...color,
@@ -215,9 +206,7 @@ export function VerticalFixedTabs({
         isActive ? COLORS.PROJECT.FIXED_LEFT_ACTIVE : "transparent"
       }`,
       // highlight active flyout in flyout-only mode more -- see https://github.com/sagemathinc/cocalc/issues/6855
-      ...(isActive && actBar === "flyout"
-        ? { backgroundColor: COLORS.BLUE_LLLL }
-        : undefined),
+      ...(isActive ? { backgroundColor: COLORS.BLUE_LLLL } : undefined),
     };
 
     const spacing: string = showActBarLabels
@@ -314,67 +303,23 @@ export function VerticalFixedTabs({
       {/* moves the layout selector to the bottom */}
       <div ref={gap} style={{ flex: 1 }}></div>
       {/* moves hide switch to the bottom */}
-      <LayoutSelector actBar={actBar} workspaceChrome={workspaceChrome} />
+      <LayoutSelector workspaceChrome={workspaceChrome} />
       {renderToggleActivityBar()}
     </div>
   );
 }
 
 type LayoutSelectorProps = {
-  actBar: string;
   workspaceChrome: WorkspaceStrongThemeChrome | null;
 };
 
-function LayoutSelector({
-  actBar,
-  workspaceChrome,
-}: Readonly<LayoutSelectorProps>) {
+function LayoutSelector({ workspaceChrome }: Readonly<LayoutSelectorProps>) {
   const intl = useIntl();
   const [open, setOpen] = useState(false);
   const { showActBarLabels } = useAppContext();
-  const { project_id } = useProjectContext();
   const account_settings = useActions("account");
+  const items: NonNullable<MenuProps["items"]> = [];
 
-  const title = intl.formatMessage({
-    id: "project.page.activity-bar-layout.title",
-    defaultMessage: "Activity bar layout",
-  });
-
-  const items: NonNullable<MenuProps["items"]> = Object.entries(
-    ACTIVITY_BAR_OPTIONS,
-  ).map(([key, label]) => ({
-    key,
-    onClick: () => {
-      account_settings.set_other_settings(ACTIVITY_BAR_KEY, key);
-      track("flyout", {
-        aspect: "layout",
-        value: key,
-        how: "button",
-        project_id,
-      });
-    },
-    label: (
-      <span>
-        <Icon
-          name="check"
-          style={key === actBar ? undefined : { visibility: "hidden" }}
-        />{" "}
-        {intl.formatMessage(label)}
-      </span>
-    ),
-  }));
-
-  items.unshift({ key: "delim-top", type: "divider" });
-  items.unshift({
-    key: "title",
-    label: (
-      <span>
-        <Icon name="layout" /> {title}{" "}
-      </span>
-    ),
-  });
-
-  items.push({ key: "delimiter1", type: "divider" });
   items.push({
     key: "toggle-labels",
     label: (
@@ -390,22 +335,6 @@ function LayoutSelector({
         ACTIVITY_BAR_LABELS,
         !showActBarLabels,
       );
-    },
-  });
-
-  items.push({ key: "delimiter2", type: "divider" });
-  items.push({
-    key: "info",
-    label: (
-      <span>
-        <Icon name="question-circle" /> {intl.formatMessage(labels.more_info)}
-      </span>
-    ),
-    onClick: () => {
-      Modal.info({
-        title,
-        content: intl.formatMessage(ACTIVITY_BAR_EXPLANATION),
-      });
     },
   });
 

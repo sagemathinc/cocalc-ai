@@ -1,6 +1,12 @@
 /** @jest-environment jsdom */
 
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { AgentsPanel } from "./agents";
 
 const mockOpenFile = jest.fn();
@@ -145,9 +151,11 @@ jest.mock("@cocalc/frontend/misc", () => ({
     window.localStorage.setItem(key, value),
 }));
 
-jest.mock("@cocalc/frontend/project/page/agent-dock-state", () => ({
-  openFloatingAgentSession: (...args: any[]) =>
-    mockOpenFloatingAgentSession(...args),
+jest.mock("@cocalc/frontend/project/page/agent-panel-state", () => ({
+  AGENT_PANEL_REVEAL_EVENT: "cocalc:agent-panel:reveal",
+  loadOpenedAgentSessionSelection: () => null,
+  revealAgentSession: (...args: any[]) => mockOpenFloatingAgentSession(...args),
+  saveOpenedAgentSessionSelection: jest.fn(),
 }));
 
 jest.mock("@cocalc/frontend/project/page/anchor-tag-component", () => ({
@@ -238,6 +246,28 @@ describe("AgentsPanel session cards", () => {
       expect(screen.getByTestId("agent-session-card-session-1")).toBeTruthy(),
     );
     fireEvent.click(screen.getByTestId("agent-session-card-session-1"));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("agents-inline-chat")).toBeTruthy(),
+    );
+    expect(mockChatActions.setSelectedThread).toHaveBeenCalledWith("thread-1");
+  });
+
+  it("opens the inline chat when the agent panel reveal event fires", async () => {
+    render(<AgentsPanel project_id="project-1" layout="page" />);
+
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent("cocalc:agent-panel:reveal", {
+          detail: {
+            projectId: "project-1",
+            session: mockSessions[0],
+            workspaceId: null,
+            workspaceOnly: false,
+          },
+        }),
+      );
+    });
 
     await waitFor(() =>
       expect(screen.getByTestId("agents-inline-chat")).toBeTruthy(),
