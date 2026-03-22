@@ -79,6 +79,8 @@ const PAGE_STYLE: React.CSSProperties = {
   flex: 1,
   overflow: "hidden",
 } as const;
+const HIDDEN_RAIL_TOP_LEFT_WIDTH_PX = 84;
+const HIDDEN_RAIL_HOME_BUTTON_WIDTH_PX = 44;
 
 interface Props {
   project_id: string;
@@ -156,8 +158,8 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
   );
 
   const narrowerPX = useMemo(() => {
-    return hideActionButtons ? 84 : 0;
-  }, [hideActionButtons, homePageButtonWidth]);
+    return hideActionButtons ? HIDDEN_RAIL_TOP_LEFT_WIDTH_PX : 0;
+  }, [hideActionButtons]);
   const [workspaceStartupGuard, setWorkspaceStartupGuard] =
     useState<boolean>(true);
 
@@ -450,7 +452,11 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
           <HomePageButton
             project_id={project_id}
             active={active_project_tab == "home"}
-            width={hideActionButtons ? 84 : homePageButtonWidth}
+            width={
+              hideActionButtons
+                ? HIDDEN_RAIL_HOME_BUTTON_WIDTH_PX
+                : homePageButtonWidth
+            }
           />
           <div style={{ flex: 1 }} />
         </div>
@@ -465,7 +471,11 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
         <HomePageButton
           project_id={project_id}
           active={active_project_tab == "home"}
-          width={hideActionButtons ? 84 : homePageButtonWidth}
+          width={
+            hideActionButtons
+              ? HIDDEN_RAIL_HOME_BUTTON_WIDTH_PX
+              : homePageButtonWidth
+          }
         />
         {renderFlyoutHeader()}
         <div style={{ flex: 1, overflow: "hidden", display: "flex" }}>
