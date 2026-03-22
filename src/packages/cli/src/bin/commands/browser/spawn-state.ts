@@ -253,10 +253,14 @@ export function buildSpawnCookies({
   apiUrl,
   hubPassword,
   apiKey,
+  rememberMe,
+  accountId,
 }: {
   apiUrl: string;
   hubPassword?: string;
   apiKey?: string;
+  rememberMe?: string;
+  accountId?: string;
 }): SpawnCookie[] {
   const out: SpawnCookie[] = [];
   const addCookie = (name: string, value: string) => {
@@ -269,14 +273,30 @@ export function buildSpawnCookies({
   };
   const cleanHubPassword = `${hubPassword ?? ""}`.trim();
   const cleanApiKey = `${apiKey ?? ""}`.trim();
-  if (cleanHubPassword) {
+  const cleanRememberMe = `${rememberMe ?? ""}`.trim();
+  const cleanAccountId = `${accountId ?? ""}`.trim();
+  if (cleanRememberMe) {
+    const prefixed = cookieNameFor(apiUrl, "remember_me");
+    addCookie(prefixed, cleanRememberMe);
+    if (prefixed !== "remember_me") {
+      addCookie("remember_me", cleanRememberMe);
+    }
+  }
+  if (cleanAccountId) {
+    const prefixed = cookieNameFor(apiUrl, "account_id");
+    addCookie(prefixed, cleanAccountId);
+    if (prefixed !== "account_id") {
+      addCookie("account_id", cleanAccountId);
+    }
+  }
+  if (!cleanRememberMe && cleanHubPassword) {
     const prefixed = cookieNameFor(apiUrl, "hub_password");
     addCookie(prefixed, cleanHubPassword);
     if (prefixed !== "hub_password") {
       addCookie("hub_password", cleanHubPassword);
     }
   }
-  if (cleanApiKey) {
+  if (!cleanRememberMe && cleanApiKey) {
     const prefixed = cookieNameFor(apiUrl, "api_key");
     addCookie(prefixed, cleanApiKey);
     if (prefixed !== "api_key") {

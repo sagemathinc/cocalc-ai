@@ -398,6 +398,16 @@ async function getManagedRootfsReleaseArtifact(opts?: {
   });
 }
 
+async function issueBrowserSignInCookie(opts?: {
+  account_id?: string;
+  max_age_ms?: number;
+}) {
+  return {
+    account_id: `${opts?.account_id ?? ACCOUNT_ID}`,
+    max_age_ms: opts?.max_age_ms,
+  };
+}
+
 // NOTE: Consumers (e.g., project-host) may extend this object in-place to add
 // host-specific implementations of hub APIs. Keep the defaults minimal here.
 export const hubApi: HubApi = {
@@ -412,6 +422,7 @@ export const hubApi: HubApi = {
     upsertBrowserSession,
     listBrowserSessions,
     removeBrowserSession,
+    issueBrowserSignInCookie,
   },
   hosts: {
     getManagedRootfsReleaseArtifact,
