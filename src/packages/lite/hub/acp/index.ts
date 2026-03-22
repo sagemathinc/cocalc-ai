@@ -2012,6 +2012,8 @@ export class ChatStreamWriter {
       seq: this.seq++,
       time: (payload as any).time ?? Date.now(),
     };
+    const shouldAutoRotate =
+      message.type === "summary" || message.type === "error";
     this.processPayload(message, { persist: true });
     const isLastMessage =
       message.type === "summary" || message.type === "error" || this.finished;
@@ -2023,6 +2025,14 @@ export class ChatStreamWriter {
         message.type === "error" ? "error" : "summary",
       );
       await this.waitForScheduledSyncdbSaves();
+      if (shouldAutoRotate) {
+        await maybeAutoRotateChatStore({
+          chatPath: this.resolveChatFilePath(),
+          chatKey: this.chatKey,
+          projectId: this.metadata.project_id,
+          chatPathKey: this.metadata.path,
+        });
+      }
     }
   }
 
@@ -2179,12 +2189,6 @@ export class ChatStreamWriter {
         this.timeTravel?.finalizeTurn(this.metadata.message_date),
       );
       void this.persistLog();
-      void maybeAutoRotateChatStore({
-        chatPath: this.resolveChatFilePath(),
-        chatKey: this.chatKey,
-        projectId: this.metadata.project_id,
-        chatPathKey: this.metadata.path,
-      });
       return;
     }
     if (payload.type === "error") {
@@ -2199,12 +2203,6 @@ export class ChatStreamWriter {
         this.timeTravel?.finalizeTurn(this.metadata.message_date),
       );
       void this.persistLog();
-      void maybeAutoRotateChatStore({
-        chatPath: this.resolveChatFilePath(),
-        chatKey: this.chatKey,
-        projectId: this.metadata.project_id,
-        chatPathKey: this.metadata.path,
-      });
     }
   }
 

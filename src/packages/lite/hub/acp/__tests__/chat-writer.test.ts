@@ -19,6 +19,7 @@ import {
 import * as queue from "../../sqlite/acp-queue";
 import * as turns from "../../sqlite/acp-turns";
 import * as chatServer from "@cocalc/chat/server";
+import { rotateChatStore } from "@cocalc/backend/chat-store/sqlite-offload";
 
 // Mock ACP pieces that pull in ESM deps we don't need for this unit.
 jest.mock("@cocalc/ai/acp", () => ({
@@ -56,6 +57,9 @@ jest.mock("../../sqlite/acp-turns", () => ({
 jest.mock("@cocalc/chat/server", () => ({
   acquireChatSyncDB: jest.fn(),
   releaseChatSyncDB: jest.fn(),
+}));
+jest.mock("@cocalc/backend/chat-store/sqlite-offload", () => ({
+  rotateChatStore: jest.fn(async () => ({ rotated: false })),
 }));
 
 type RecordedSet = {
@@ -174,6 +178,8 @@ beforeEach(() => {
   (chatServer.acquireChatSyncDB as any)?.mockReset?.();
   (chatServer.releaseChatSyncDB as any)?.mockReset?.();
   (chatServer.releaseChatSyncDB as any)?.mockResolvedValue?.(undefined);
+  (rotateChatStore as any)?.mockReset?.();
+  (rotateChatStore as any)?.mockResolvedValue?.({ rotated: false });
 });
 
 afterEach(async () => {
@@ -460,6 +466,66 @@ describe("ChatStreamWriter", () => {
     releaseSave?.();
     await pending;
     expect(resolved).toBe(true);
+    (writer as any).dispose?.(true);
+  });
+
+  it("defers autorotate until after the terminal syncdb save settles", async () => {
+    const { syncdb, setCurrent } = makeFakeSyncDB();
+    setCurrent({
+      get: (key: string) => (key === "generating" ? true : undefined),
+    });
+    let holdSave = false;
+    let releaseSave: (() => void) | undefined;
+    const saveGate = new Promise<void>((resolve) => {
+      releaseSave = resolve;
+    });
+    syncdb.save = async () => {
+      if (holdSave) {
+        await saveGate;
+      }
+    };
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "acp-autorotate-"));
+    const chatPath = path.join(tmp, "live.chat");
+    const writer: any = new ChatStreamWriter({
+      metadata: {
+        ...baseMetadata,
+        path: chatPath,
+      },
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      syncdbOverride: syncdb as any,
+      logStoreFactory: () =>
+        ({
+          set: async () => {},
+        }) as any,
+    });
+    await writer.waitUntilReady();
+    holdSave = true;
+
+    let resolved = false;
+    const pending = writer
+      .handle({
+        type: "summary",
+        finalResponse: "done",
+        seq: 0,
+      } as AcpStreamMessage)
+      .then(() => {
+        resolved = true;
+      });
+
+    await delay(0);
+    expect(resolved).toBe(false);
+    expect(rotateChatStore).not.toHaveBeenCalled();
+
+    releaseSave?.();
+    await pending;
+
+    expect(resolved).toBe(true);
+    expect(rotateChatStore).toHaveBeenCalledWith(
+      expect.objectContaining({
+        chat_path: chatPath,
+      }),
+    );
     (writer as any).dispose?.(true);
   });
 
