@@ -7,6 +7,7 @@ const mockToggleFlyout = jest.fn();
 const mockToggleActionButtons = jest.fn();
 const mockSetOtherSettings = jest.fn();
 let mockAccountStoreReady = true;
+let mockLite = true;
 
 function flattenMenuItems(items: any[] = []): any[] {
   return items.flatMap((item) => {
@@ -122,7 +123,9 @@ jest.mock("@cocalc/frontend/project/context", () => ({
 jest.mock("@cocalc/frontend/user-tracking", () => jest.fn());
 
 jest.mock("@cocalc/frontend/lite", () => ({
-  lite: true,
+  get lite() {
+    return mockLite;
+  },
 }));
 
 jest.mock("@cocalc/frontend/account/settings-button", () => ({
@@ -144,6 +147,11 @@ jest.mock("../workspaces/strong-theme", () => ({
   workspaceStrongThemeChrome: () => null,
 }));
 
+jest.mock("./file-tabs", () => ({
+  __esModule: true,
+  default: () => <div data-testid="file-tabs" />,
+}));
+
 jest.mock("./file-tab", () => ({
   FileTab: ({ name }: any) => <div data-testid={`rail-${name}`}>{name}</div>,
   FIXED_PROJECT_TABS: {
@@ -163,6 +171,7 @@ jest.mock("./file-tab", () => ({
 
 import {
   HiddenActivityBarLauncher,
+  default as ProjectTabs,
   VerticalFixedTabs,
 } from "./activity-bar-tabs";
 
@@ -173,6 +182,7 @@ describe("VerticalFixedTabs overflow actions", () => {
     mockToggleActionButtons.mockReset();
     mockSetOtherSettings.mockReset();
     mockAccountStoreReady = true;
+    mockLite = true;
     (global as any).ResizeObserver = class {
       observe() {}
       disconnect() {}
@@ -207,6 +217,22 @@ describe("VerticalFixedTabs overflow actions", () => {
     expect(screen.queryByTestId("rail-workspaces")).toBeNull();
     expect(screen.queryByTestId("menu-overflow:log")).toBeNull();
     expect(screen.queryByTestId("account-settings-button")).toBeNull();
+  });
+});
+
+describe("ProjectTabs settings affordance", () => {
+  beforeEach(() => {
+    mockLite = false;
+  });
+
+  afterEach(() => {
+    mockLite = true;
+  });
+
+  it("shows account settings in launchpad mode", () => {
+    render(<ProjectTabs project_id="project-1" />);
+
+    expect(screen.getByTestId("account-settings-button")).toBeTruthy();
   });
 });
 

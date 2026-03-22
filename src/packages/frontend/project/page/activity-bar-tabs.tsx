@@ -112,9 +112,9 @@ export default function ProjectTabs(props: PTProps) {
           <>
             {sshRemoteTarget ? <RemoteSshButton /> : <SshButton />}
             <SshUpgradeButton />
-            <SettingsButton />
           </>
         )}
+        <SettingsButton />
       </div>
     </div>
   );
