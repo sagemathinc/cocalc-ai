@@ -28,8 +28,17 @@ const DEFAULT_HIDDEN: readonly FixedTab[] = [
 
 function toTabNames(value: any): string[] {
   if (Array.isArray(value)) return value.map((item) => `${item ?? ""}`);
+  if (typeof value?.valueSeq === "function") {
+    return value
+      .valueSeq()
+      .toArray()
+      .map((item) => `${item ?? ""}`);
+  }
   if (typeof value?.toArray === "function") {
     return value.toArray().map((item) => `${item ?? ""}`);
+  }
+  if (value != null && typeof value === "object") {
+    return Object.values(value).map((item) => `${item ?? ""}`);
   }
   return [];
 }
