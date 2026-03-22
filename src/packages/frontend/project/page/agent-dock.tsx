@@ -118,6 +118,7 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
   const [chatActions, setChatActions] = useState<ChatActions | null>(null);
   const [error, setError] = useState<string>("");
   const [intentRetryTick, setIntentRetryTick] = useState(0);
+  const [dockOpenNonce, setDockOpenNonce] = useState(0);
   const [position, setPosition] = useState(DEFAULT_POSITION);
   const [dockSize, setDockSize] = useState(DEFAULT_DOCK_SIZE);
   const [isResizing, setIsResizing] = useState(false);
@@ -200,6 +201,7 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
       setSession(detail.session);
       setWorkspaceScopeId(detail.workspaceId ?? null);
       setWorkspaceOnly(detail.workspaceOnly === true);
+      setDockOpenNonce((value) => value + 1);
       setError("");
     };
     const onClose = (evt: Event) => {
@@ -493,6 +495,17 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
       "data-showThreadImagePreview": false,
     };
   }, [session?.thread_key]);
+
+  const dockScrollCacheId = useMemo(() => {
+    if (!session?.chat_path) return undefined;
+    return [
+      "agent-dock",
+      project_id,
+      session.chat_path,
+      session.thread_key ?? "",
+      dockOpenNonce,
+    ].join(":");
+  }, [dockOpenNonce, project_id, session?.chat_path, session?.thread_key]);
 
   const handleComposerReady = useCallback(
     (control: ChatInputControl | null, root: ParentNode | null): void => {
@@ -831,6 +844,7 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
                   path={session.chat_path}
                   fontSize={fontSize}
                   hideSidebar
+                  scrollCacheId={dockScrollCacheId}
                   desc={desc}
                   onComposerReady={handleComposerReady}
                 />

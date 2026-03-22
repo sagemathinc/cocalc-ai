@@ -277,6 +277,7 @@ export interface ChatPanelProps {
   desc?: NodeDesc;
   variant?: "default" | "compact";
   hideSidebar?: boolean;
+  scrollCacheId?: string;
   onFocus?: () => void;
   isVisible?: boolean;
   tabIsVisible?: boolean;

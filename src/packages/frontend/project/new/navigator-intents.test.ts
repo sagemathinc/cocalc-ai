@@ -455,7 +455,7 @@ describe("submitNavigatorPromptToCurrentThread", () => {
     expect(ok).toBe(true);
     expect(createEmptyThread).toHaveBeenCalledWith(
       expect.objectContaining({
-        name: "Start tracking this workspace work",
+        name: "Codex",
       }),
     );
     expect(sendChat).toHaveBeenCalledWith(
@@ -870,7 +870,7 @@ describe("submitNavigatorPromptToCurrentThread", () => {
     expect(mockOpenFile).not.toHaveBeenCalled();
     expect(createEmptyThread).toHaveBeenCalledWith(
       expect.objectContaining({
-        name: "Fix notebook error",
+        name: "Codex",
         threadAgent: expect.objectContaining({
           mode: "codex",
           model: "gpt-5.4-mini",
@@ -952,7 +952,7 @@ describe("submitNavigatorPromptToCurrentThread", () => {
     expect(setThreadAgentMode).not.toHaveBeenCalled();
     expect(createEmptyThread).toHaveBeenCalledWith(
       expect.objectContaining({
-        name: "Fix notebook error",
+        name: "Codex",
       }),
     );
     expect(sendChat).toHaveBeenCalledWith(

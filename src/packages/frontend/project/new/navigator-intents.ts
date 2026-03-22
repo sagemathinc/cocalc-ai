@@ -29,6 +29,7 @@ const NAVIGATOR_SYNC_READY_TIMEOUT_MS = 12_000;
 const NAVIGATOR_THREAD_IDENTITY_TIMEOUT_MS = 15_000;
 const NAVIGATOR_WORKSPACE_RESOLVE_TIMEOUT_MS = 5_000;
 const NAVIGATOR_WORKSPACE_RESOLVE_POLL_MS = 150;
+const DEFAULT_WORKSPACE_CODEX_THREAD_TITLE = "Codex";
 let navigatorIntentQueueMemory: NavigatorSubmitPromptDetail[] = [];
 
 async function processChatLLM(args: {
@@ -57,6 +58,10 @@ export interface NavigatorSubmitPromptDetail {
 function normalizeOptionalTitle(value?: string): string | undefined {
   const title = `${value ?? ""}`.trim();
   return title || undefined;
+}
+
+function getWorkspaceSharedThreadTitle(): string {
+  return DEFAULT_WORKSPACE_CODEX_THREAD_TITLE;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -510,6 +515,9 @@ async function writeNavigatorPromptInWorkspaceChat(
       requestedTitle && (!replyThreadId || !existingThreadTitle)
         ? requestedTitle
         : undefined;
+    const createdThreadTitle = workspaceTarget
+      ? getWorkspaceSharedThreadTitle()
+      : messageThreadTitle;
     const sessionModel =
       typeof session.model === "string" && session.model.trim().length > 0
         ? session.model.trim()
@@ -534,7 +542,7 @@ async function writeNavigatorPromptInWorkspaceChat(
     let createdThreadNow = false;
     if (!replyThreadKey) {
       const createdThreadKey = actions.createEmptyThread?.({
-        name: messageThreadTitle,
+        name: createdThreadTitle,
         threadAgent: newThreadAgent,
         threadAppearance: {
           color: session.thread_color,
@@ -823,6 +831,10 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
       requestedTitle && (!replyThreadId || !existingThreadTitle)
         ? requestedTitle
         : undefined;
+    const createdThreadTitle =
+      workspaceTarget && opts.createNewThread !== true
+        ? getWorkspaceSharedThreadTitle()
+        : messageThreadTitle;
     const sessionModel =
       typeof session.model === "string" && session.model.trim().length > 0
         ? session.model.trim()
@@ -846,7 +858,7 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
     let createdThreadNow = false;
     if (opts.createNewThread === true) {
       const createdThreadKey = actions.createEmptyThread?.({
-        name: messageThreadTitle,
+        name: createdThreadTitle,
         threadAgent: newThreadAgent,
         threadAppearance: {
           color: session.thread_color,
@@ -863,7 +875,7 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
     }
     if (!replyThreadKey && workspaceTarget) {
       const createdThreadKey = actions.createEmptyThread?.({
-        name: messageThreadTitle,
+        name: createdThreadTitle,
         threadAgent: newThreadAgent,
         threadAppearance: {
           color: session.thread_color,

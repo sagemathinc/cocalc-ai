@@ -87,7 +87,7 @@ jest.mock("@cocalc/frontend/chat/register", () => ({
 
 jest.mock("@cocalc/frontend/chat/side-chat", () => ({
   __esModule: true,
-  default: ({ onComposerReady }: any) => {
+  default: ({ onComposerReady, scrollCacheId }: any) => {
     const React = require("react");
     const [ready, setReady] = React.useState(mockSideChatDelayMs === 0);
     const inputRef = React.useRef(null as HTMLInputElement | null);
@@ -115,7 +115,13 @@ jest.mock("@cocalc/frontend/chat/side-chat", () => ({
     }, [onComposerReady, ready]);
 
     if (!ready) return <div data-testid="agent-dock-loading" />;
-    return <input ref={inputRef} data-testid="agent-dock-composer" />;
+    return (
+      <input
+        ref={inputRef}
+        data-testid="agent-dock-composer"
+        data-scroll-cache-id={scrollCacheId}
+      />
+    );
   },
 }));
 
@@ -281,6 +287,18 @@ describe("AgentDock keyboard suppression", () => {
       expect(document.activeElement).toBe(
         screen.getByTestId("agent-dock-composer"),
       ),
+    );
+  });
+
+  it("uses a dock-specific scroll cache instead of the main chat cache", async () => {
+    await openDock("thread-1");
+
+    expect(
+      screen
+        .getByTestId("agent-dock-composer")
+        .getAttribute("data-scroll-cache-id"),
+    ).toContain(
+      "agent-dock:project-1:.local/share/cocalc/navigator-acct.chat:thread-1:",
     );
   });
 
