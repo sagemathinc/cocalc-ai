@@ -39,6 +39,8 @@ export async function deleteActivityLog({
     event: "chat",
     date: d.toISOString(),
     sender_id: message.sender_id,
+    message_id: field<string>(message, "message_id"),
+    thread_id: field<string>(message, "thread_id"),
     acp_events: null,
     codex_events: null,
   });
@@ -54,7 +56,12 @@ export async function deleteAllActivityLogs({
   path,
 }: ActivityLogContext): Promise<void> {
   if (!actions?.syncdb) return;
-  const targets: { date: Date; sender_id?: string }[] = [];
+  const targets: {
+    date: Date;
+    sender_id?: string;
+    message_id?: string;
+    thread_id?: string;
+  }[] = [];
   const logRefs: { store: string; key: string }[] = [];
   const normalizedThreadId =
     `${threadId ?? field<string>(message, "thread_id") ?? ""}`.trim() ||
@@ -67,6 +74,8 @@ export async function deleteAllActivityLogs({
       targets.push({
         date: d,
         sender_id: (msg as any)?.sender_id,
+        message_id: field<string>(msg, "message_id"),
+        thread_id: field<string>(msg, "thread_id"),
       });
       if (!project_id || !path) continue;
       const explicitStore = field<string>(msg, "acp_log_store");
@@ -92,6 +101,8 @@ export async function deleteAllActivityLogs({
       targets.push({
         date: d,
         sender_id: message.sender_id,
+        message_id: field<string>(message, "message_id"),
+        thread_id: field<string>(message, "thread_id"),
       });
     }
   }
@@ -116,6 +127,8 @@ export async function deleteAllActivityLogs({
       event: "chat",
       date: target.date.toISOString(),
       sender_id: target.sender_id,
+      message_id: target.message_id,
+      thread_id: target.thread_id,
       acp_events: null,
       codex_events: null,
     });

@@ -52,6 +52,8 @@ describe("deleteAllActivityLogs", () => {
       event: "chat",
       date: turnDate.toISOString(),
       sender_id: "assistant",
+      message_id: undefined,
+      thread_id: "thread-1",
       acp_events: null,
       codex_events: null,
     });
@@ -95,5 +97,14 @@ describe("deleteAllActivityLogs", () => {
       expect.stringContaining("acp-log"),
       "thread-2:assistant-msg-2",
     );
+    expect(actions.syncdb.set).toHaveBeenCalledWith({
+      event: "chat",
+      date: turnDate.toISOString(),
+      sender_id: "assistant",
+      message_id: "assistant-msg-2",
+      thread_id: "thread-2",
+      acp_events: null,
+      codex_events: null,
+    });
   });
 });

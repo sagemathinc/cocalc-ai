@@ -297,6 +297,36 @@ export function collectThreadMessages({
   return orderLinearThreadMessages(list);
 }
 
+function chatRowWhere({
+  sender_id,
+  date,
+  message_id,
+  thread_id,
+}: {
+  sender_id?: string;
+  date?: Date | string | number;
+  message_id?: string;
+  thread_id?: string;
+}): Record<string, unknown> | undefined {
+  const dateIso = toISOString(date);
+  const senderId0 = `${sender_id ?? ""}`.trim();
+  if (!dateIso || !senderId0) return undefined;
+  const where: Record<string, unknown> = {
+    event: "chat",
+    date: dateIso,
+    sender_id: senderId0,
+  };
+  const messageId0 = `${message_id ?? ""}`.trim();
+  if (messageId0) {
+    where.message_id = messageId0;
+  }
+  const threadId0 = `${thread_id ?? ""}`.trim();
+  if (threadId0) {
+    where.thread_id = threadId0;
+  }
+  return where;
+}
+
 export function resolveThreadAgentModel({
   date,
   messages,
@@ -628,11 +658,15 @@ export class ChatActions extends Actions<ChatState> {
     if (!dateIso) return;
     const account_id = this.redux.getStore("account").get_account_id();
     const messageId = field<string>(message, "message_id");
-    const cur = this.getSyncdbOne({
-      event: "chat",
+    const threadId = field<string>(message, "thread_id");
+    const where = chatRowWhere({
       date: dateIso,
       sender_id: senderId(message),
+      message_id: messageId,
+      thread_id: threadId,
     });
+    if (!where) return;
+    const cur = this.getSyncdbOne(where);
     const feedbacksRaw = field<any>(cur, "feedback");
     const feedbacks =
       typeof (feedbacksRaw as any)?.toJS === "function"
@@ -640,10 +674,7 @@ export class ChatActions extends Actions<ChatState> {
         : (feedbacksRaw ?? {});
     const next = { ...feedbacks, [account_id]: feedback };
     this.setSyncdb({
-      event: "chat",
-      date: dateIso,
-      sender_id: senderId(message),
-      message_id: messageId,
+      ...where,
       feedback: next,
     });
     this.syncdb.commit();
@@ -1131,11 +1162,15 @@ export class ChatActions extends Actions<ChatState> {
       if (messageThreadId !== threadIdTarget) {
         continue;
       }
-      this.syncdb.delete({
-        event: "chat",
+      const where = chatRowWhere({
         date: dateIso,
         sender_id: senderId(message),
+        message_id: field<string>(message, "message_id"),
+        thread_id: messageThreadId,
       });
+      if (where) {
+        this.syncdb.delete(where);
+      }
       deleted++;
     }
     const hasConfig =
@@ -1244,11 +1279,15 @@ export class ChatActions extends Actions<ChatState> {
       });
     }
 
-    this.syncdb.delete({
-      event: "chat",
+    const targetWhere = chatRowWhere({
       date: targetDateIso,
       sender_id: targetSenderId,
+      message_id: targetMessageId,
+      thread_id: targetThreadId,
     });
+    if (targetWhere) {
+      this.syncdb.delete(targetWhere);
+    }
 
     if (targetThreadId && remainingInThread === 0) {
       this.syncdb.delete({
@@ -2384,10 +2423,15 @@ export class ChatActions extends Actions<ChatState> {
     const targetSenderId =
       options?.senderId ?? senderId(this.getMessageByDate(date));
     if (!targetSenderId) return false;
-    this.setSyncdb({
-      event: "chat",
-      date: toISOString(date),
+    const targetMessage = this.getMessageByDate(date);
+    const where = chatRowWhere({
+      date,
       sender_id: targetSenderId,
+      message_id: field<string>(targetMessage, "message_id"),
+      thread_id: field<string>(targetMessage, "thread_id"),
+    });
+    this.setSyncdb({
+      ...(where ?? {}),
       generating: false,
     });
     this.syncdb.commit();

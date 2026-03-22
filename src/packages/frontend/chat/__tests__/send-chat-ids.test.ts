@@ -775,6 +775,24 @@ describe("deleteThread identity targeting", () => {
     const deletes = actions.syncdb.delete.mock.calls.map((x) => x[0]);
     const chatDeletes = deletes.filter((row: any) => row?.event === "chat");
     expect(chatDeletes).toHaveLength(2);
+    expect(chatDeletes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          event: "chat",
+          sender_id: "u1",
+          date: d1.toISOString(),
+          message_id: "m1",
+          thread_id: threadA,
+        }),
+        expect.objectContaining({
+          event: "chat",
+          sender_id: "u1",
+          date: d2.toISOString(),
+          message_id: "m2",
+          thread_id: threadA,
+        }),
+      ]),
+    );
     expect(
       deletes.find(
         (row: any) =>
@@ -1192,6 +1210,8 @@ describe("deleteMessage rewiring", () => {
       event: "chat",
       date: d2.toISOString(),
       sender_id: "u1",
+      message_id: "middle",
+      thread_id: threadId,
     });
     const rewired = actions.syncdb.set.mock.calls
       .map((x) => x[0])
@@ -1245,6 +1265,13 @@ describe("deleteMessage rewiring", () => {
     expect(rewired.parent_message_id).toBeNull();
     expect(rewired.reply_to_message_id).toBeNull();
     expect(rewired.reply_to).toBeNull();
+    expect(actions.syncdb.delete).toHaveBeenCalledWith({
+      event: "chat",
+      date: d1.toISOString(),
+      sender_id: "u1",
+      message_id: "root",
+      thread_id: threadId,
+    });
     expect(
       actions.syncdb.delete.mock.calls
         .map((x) => x[0])

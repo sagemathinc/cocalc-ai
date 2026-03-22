@@ -233,6 +233,8 @@ describe("processLLM guards", () => {
       event: "chat",
       date: where?.date,
       sender_id: where?.sender_id ?? "legacy-assistant",
+      message_id: "legacy-msg-1",
+      thread_id: "thread-test-1",
       history: [],
       reply_to: new Date("2025-02-02T01:00:00.000Z").toISOString(),
       generating: true,
@@ -261,6 +263,8 @@ describe("processLLM guards", () => {
     const deleteArg = syncdb.delete.mock.calls[0]?.[0];
     expect(deleteArg?.event).toBe("chat");
     expect(deleteArg?.sender_id).toBe("legacy-assistant");
+    expect(deleteArg?.message_id).toBe("legacy-msg-1");
+    expect(deleteArg?.thread_id).toBe("thread-test-1");
   });
 });
 

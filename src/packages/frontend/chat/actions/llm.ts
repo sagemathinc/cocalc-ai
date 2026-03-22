@@ -224,6 +224,8 @@ export async function processLLM({
         event: "chat",
         date: dateIso ?? date,
         sender_id: (cur as any)?.sender_id ?? message.sender_id,
+        message_id: (cur as any)?.message_id ?? messageId,
+        thread_id: (cur as any)?.thread_id ?? threadId,
       });
       syncdb.set({
         date: dateIso ?? date,
