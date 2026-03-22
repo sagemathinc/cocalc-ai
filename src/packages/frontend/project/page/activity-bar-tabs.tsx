@@ -37,7 +37,6 @@ import {
   ACTIVITY_BAR_LABELS,
   ACTIVITY_BAR_TAB_ORDER,
   ACTIVITY_BAR_TOGGLE_LABELS,
-  TOGGLE_ACTIVITY_BAR_TOGGLE_BUTTON_SPACE,
 } from "./activity-bar-consts";
 import { FileTab, FIXED_PROJECT_TABS, FixedTab } from "./file-tab";
 import FileTabs from "./file-tabs";
@@ -46,10 +45,7 @@ import { lite } from "@cocalc/frontend/lite";
 import SettingsButton from "@cocalc/frontend/account/settings-button";
 import { RemoteSshButton, SshButton } from "@cocalc/frontend/ssh";
 import SshUpgradeButton from "@cocalc/frontend/ssh/ssh-upgrade-button";
-import {
-  type WorkspaceStrongThemeChrome,
-  workspaceStrongThemeChrome,
-} from "../workspaces/strong-theme";
+import { workspaceStrongThemeChrome } from "../workspaces/strong-theme";
 import {
   getDefaultFixedTabOrder,
   getDefaultHiddenFixedTabs,
@@ -145,6 +141,7 @@ export function VerticalFixedTabs({
   const breakPoint = useRef<number>(0);
   const refCondensed = useRef<boolean>(false);
   const [condensed, setCondensed] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
   const [showCustomize, setShowCustomize] = useState(false);
   const workspaceChrome = workspaceStrongThemeChrome(workspaces.current);
   const tabOrder = useMemo(
@@ -306,22 +303,67 @@ export function VerticalFixedTabs({
   }
 
   function renderOverflowMenu(): ReactNode {
-    if (overflowTabs.length === 0) return null;
     const isActive =
-      active_flyout != null && overflowTabs.includes(active_flyout);
+      moreOpen ||
+      (active_flyout != null && overflowTabs.includes(active_flyout));
     const items: NonNullable<MenuProps["items"]> = overflowTabs.map((name) => ({
-      key: name,
-      label: (
-        <span>
-          <Icon name={FIXED_PROJECT_TABS[name].icon} />{" "}
-          {renderFixedTabLabel(name, intl)}
-        </span>
+      key: `overflow:${name}`,
+      label: renderMenuLabel(
+        <Icon name={FIXED_PROJECT_TABS[name].icon} />,
+        renderFixedTabLabel(name, intl),
       ),
       onClick: () => openOverflowTab(name),
     }));
+    if (overflowTabs.length > 0) {
+      items.push({ key: "divider-overflow", type: "divider" });
+    }
+    items.push({
+      key: "rail-controls",
+      type: "group",
+      label: "Rail",
+      children: [
+        {
+          key: "customize",
+          label: renderMenuLabel(<Icon name="sliders" />, "Customize buttons"),
+          onClick: () => setShowCustomize(true),
+        },
+        {
+          key: "toggle-labels",
+          label: renderMenuLabel(
+            <Icon name="signature-outlined" />,
+            intl.formatMessage(ACTIVITY_BAR_TOGGLE_LABELS, {
+              show: showActBarLabels,
+            }),
+          ),
+          onClick: () => {
+            account_settings.set_other_settings(
+              ACTIVITY_BAR_LABELS,
+              !showActBarLabels,
+            );
+          },
+        },
+        {
+          key: "hide-activity-bar",
+          label: renderMenuLabel(
+            <Icon name="vertical-right-outlined" />,
+            "Hide activity bar",
+          ),
+          onClick: () => {
+            track("action-bar", { action: "hide" });
+            actions?.toggleActionButtons();
+          },
+        },
+      ],
+    });
     return (
-      <Tooltip title="More panels" placement="rightTop">
-        <Dropdown menu={{ items }} trigger={["click"]} placement="topRight">
+      <Tooltip title="More" placement="rightTop">
+        <Dropdown
+          menu={{ items }}
+          trigger={["click"]}
+          placement="topLeft"
+          transitionName=""
+          onOpenChange={(next) => setMoreOpen(next)}
+        >
           <Button
             size="small"
             type="text"
@@ -343,7 +385,7 @@ export function VerticalFixedTabs({
                 display: "flex",
                 alignItems: "center",
                 justifyContent: showActBarLabels ? "flex-start" : "center",
-                gap: showActBarLabels ? "8px" : undefined,
+                gap: showActBarLabels ? "15px" : undefined,
                 minHeight: condensed ? "36px" : "40px",
               }}
             >
@@ -356,35 +398,6 @@ export function VerticalFixedTabs({
             </div>
           </Button>
         </Dropdown>
-      </Tooltip>
-    );
-  }
-
-  function renderToggleActivityBar() {
-    return (
-      <Tooltip
-        title={intl.formatMessage({
-          id: "project.page.activity-bar.hide.tooltip",
-          defaultMessage: "Hide the activity bar",
-          description: "This hides the vertical activity bar in the UI",
-        })}
-        placement="rightTop"
-      >
-        <Button
-          size="small"
-          type="text"
-          block
-          onClick={() => {
-            track("action-bar", { action: "hide" });
-            actions?.toggleActionButtons();
-          }}
-          style={{
-            marginBottom: TOGGLE_ACTIVITY_BAR_TOGGLE_BUTTON_SPACE,
-            background: workspaceChrome?.activityBarBackground,
-          }}
-        >
-          <Icon name="vertical-right-outlined" />
-        </Button>
       </Tooltip>
     );
   }
@@ -406,14 +419,7 @@ export function VerticalFixedTabs({
     >
       {items}
       {renderOverflowMenu()}
-      {/* moves the layout selector to the bottom */}
       <div ref={gap} style={{ flex: 1 }}></div>
-      {/* moves hide switch to the bottom */}
-      <LayoutSelector
-        workspaceChrome={workspaceChrome}
-        onCustomize={() => setShowCustomize(true)}
-      />
-      {renderToggleActivityBar()}
       <CustomizeRailButtonsModal
         hiddenTabs={hiddenTabs}
         open={showCustomize}
@@ -435,85 +441,18 @@ export function VerticalFixedTabs({
   );
 }
 
-type LayoutSelectorProps = {
-  workspaceChrome: WorkspaceStrongThemeChrome | null;
-  onCustomize: () => void;
-};
-
-function LayoutSelector({
-  workspaceChrome,
-  onCustomize,
-}: Readonly<LayoutSelectorProps>) {
-  const intl = useIntl();
-  const [open, setOpen] = useState(false);
-  const { showActBarLabels } = useAppContext();
-  const account_settings = useActions("account");
-  const items: NonNullable<MenuProps["items"]> = [];
-
-  items.push({
-    key: "toggle-labels",
-    label: (
-      <span>
-        <Icon name={"signature-outlined"} />{" "}
-        {intl.formatMessage(ACTIVITY_BAR_TOGGLE_LABELS, {
-          show: showActBarLabels,
-        })}
-      </span>
-    ),
-    onClick: () => {
-      account_settings.set_other_settings(
-        ACTIVITY_BAR_LABELS,
-        !showActBarLabels,
-      );
-    },
-  });
-  items.push({ key: "divider-1", type: "divider" });
-  items.push({
-    key: "customize",
-    label: (
-      <span>
-        <Icon name="sliders" /> Customize buttons
-      </span>
-    ),
-    onClick: onCustomize,
-  });
-
-  return (
-    <div style={{ textAlign: "center" }}>
-      <Dropdown
-        menu={{ items }}
-        trigger={["click"]}
-        onOpenChange={(next) => setOpen(next)}
-        placement="topLeft"
-      >
-        <Button
-          icon={<Icon name="layout" />}
-          block
-          style={{
-            ...(workspaceChrome
-              ? {
-                  background: workspaceChrome.activityBarBackground,
-                  boxShadow: `inset 0 -2px 0 ${workspaceChrome.activityBarBorder}`,
-                }
-              : undefined),
-            ...(open
-              ? workspaceChrome
-                ? {
-                    boxShadow: `inset 0 -2px 0 ${workspaceChrome.activityBarBorder}, inset 0 0 0 1px ${workspaceChrome.activityBarBorder}`,
-                  }
-                : { backgroundColor: COLORS.GRAY_LL }
-              : undefined),
-          }}
-          type="text"
-        />
-      </Dropdown>
-    </div>
-  );
-}
-
 function renderFixedTabLabel(name: FixedTab, intl): ReactNode {
   const label = FIXED_PROJECT_TABS[name].label;
   return typeof label === "string" ? label : intl.formatMessage(label as any);
+}
+
+function renderMenuLabel(icon: ReactNode, label: ReactNode): ReactNode {
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: "15px" }}>
+      {icon}
+      <span>{label}</span>
+    </span>
+  );
 }
 
 interface CustomizeRailButtonsModalProps {
@@ -602,7 +541,7 @@ function CustomizeRailButtonsModal({
         {draftOrder.map((name) => {
           const visible = !hiddenSet.has(name);
           return (
-            <SortableItem key={name} id={name}>
+            <SortableItem key={name} id={name} hideActive={false}>
               <div
                 style={{
                   display: "flex",
