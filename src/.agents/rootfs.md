@@ -7,12 +7,16 @@ It is written against the current state of the repo on March 21, 2026:
 
 - projects already run on overlayfs over a selected rootfs image,
 - project snapshots and restore now preserve rootfs and HOME correctly,
-- the current catalog is still a flat manifest of mostly placeholder OCI image
-  refs,
-- projects still store a freeform `rootfs_image` string,
-- there is no central database model for managed RootFS images,
-- there is no user publish/promote/prepull workflow,
-- there is no host UI for image cache management.
+- there is now a managed RootFS catalog in Postgres,
+- there is now an immutable RootFS release registry in Postgres,
+- project creation and project settings now use the managed catalog,
+- projects currently store both a runtime image ref and a managed image id,
+- users can publish RootFS state from a project via UI, CLI, and LRO,
+- hosts have a RootFS cache UI and RPCs for list/pull/delete,
+- cross-host distribution works today through a hub-local artifact backend,
+- R2 artifact storage is not implemented yet,
+- course image selection is not implemented yet,
+- incremental release storage is not implemented yet.
 
 The goal of this plan is to turn RootFS into a first-class product primitive,
 not just a freeform container-image string.
@@ -46,6 +50,56 @@ The single most important design choice is this:
 
 That distinction is what makes promotion, reproducibility, and lowerdir
 stability work.
+
+## Current Status
+
+As of March 22, 2026, the RootFS effort has moved from plan-only into a real
+vertical slice.
+
+### Implemented
+
+- managed RootFS catalog rows and immutable release rows exist centrally,
+- project creation can select managed RootFS images,
+- project settings can:
+  - switch images,
+  - save catalog metadata,
+  - publish current project RootFS state,
+- publish runs as an LRO with visible progress and persistent error display,
+- CLI support exists for:
+  - listing images,
+  - saving catalog entries,
+  - publishing project RootFS state,
+  - waiting on the publish LRO,
+- host cache inventory exists with pull/delete controls,
+- cross-host distribution works for managed releases,
+- there is now a useful non-R2 fallback path via the central hub, which is
+  relevant for self-hosted deployments without managed object storage.
+
+### Implemented but not yet in the final shape
+
+- project binding still includes a runtime image string in addition to the
+  managed id; this should keep moving toward exact release binding,
+- artifact transport currently uses the hub-local backend instead of R2,
+- publish currently materializes a full tree before send; incremental release
+  storage is still future work.
+
+### Not implemented yet
+
+- R2-backed artifact storage and retrieval,
+- official build pipeline producing canonical hosted artifacts,
+- course image selection,
+- collaborator/public lifecycle moderation polish,
+- dependency-aware incremental release storage and GC,
+- production-grade benchmark and soak data on production-like host disks.
+
+### Immediate next win
+
+The next big milestone should be:
+
+1. bring R2 into the artifact path,
+2. rerun publish/download/create benchmarks end-to-end,
+3. do those benchmarks on hosts with production-level disks rather than tiny
+   dev disks.
 
 ## Product Requirements
 
@@ -1117,19 +1171,38 @@ projects still reference the release.
 
 Because distribution format choice matters, we should benchmark:
 
-1. OCI pull plus unpack time for the official CPU image.
-2. OCI pull plus unpack time for the official GPU image.
-3. R2 download plus `btrfs receive` time for the same images.
-4. R2 download plus `tar.zst` extract time.
-5. Host bootstrap time with:
+1. Baseline host disk performance before any RootFS test:
+   - sequential read throughput,
+   - sequential write throughput,
+   - random read/write IOPS or latency,
+   - filesystem-level throughput on the actual btrfs data volume.
+2. Publish time for representative images:
+   - merged-tree materialization,
+   - snapshot freeze,
+   - `btrfs send`,
+   - content hashing,
+   - total end-to-end publish LRO time.
+3. Artifact upload time:
+   - current hub-local fallback path,
+   - R2 upload path once implemented.
+4. Artifact download plus import time:
+   - R2 download plus `btrfs receive`,
+   - R2 download plus `tar.zst` extract time.
+5. OCI pull plus unpack time for the official CPU image.
+6. OCI pull plus unpack time for the official GPU image.
+7. Host bootstrap time with:
    - no prepull
    - CPU prepull
    - CPU plus GPU prepull
-6. Disk amplification:
+8. Cross-host first-use and repeat-use timings:
+   - publish on host A,
+   - create on host B with empty cache,
+   - create again on host B with warm cache.
+9. Disk amplification:
    - raw expanded rootfs size
    - btrfs send stream size
    - tar.zst size
-7. CPU overhead during import.
+10. CPU overhead during import.
 
 This should be measured on:
 
@@ -1137,6 +1210,12 @@ This should be measured on:
 - GCP,
 - at least one CPU host class,
 - at least one GPU host class.
+
+And for the next serious round, the hosts should have production-like disks.
+Tiny dev disks are useful for correctness testing, but they are not a good
+proxy for a launch configuration where disk throughput may dominate parts of
+the RootFS pipeline. We should explicitly record the disk class and size for
+every benchmark result.
 
 ## Operational Metrics
 
@@ -1180,6 +1259,9 @@ of the launch-critical RootFS effort.
 - finalize official family model,
 - decide whether `rootfs_aliases` ships in v1 or later.
 
+Status:
+- mostly complete
+
 ### Phase 1: Central schema and APIs
 
 - add `rootfs_releases`,
@@ -1188,11 +1270,20 @@ of the launch-critical RootFS effort.
 - add theme support,
 - add APIs to list/select/promote/publish.
 
+Status:
+- largely implemented for projects and catalog
+- course references still missing
+
 ### Phase 2: Official build pipeline
 
 - turn the existing `src/rootfs-images/` effort into an official-image pipeline,
 - stop centering it on GCP Spot as the product architecture,
 - make its output the canonical R2 btrfs artifact plus DB registration.
+
+Status:
+- not done
+- this should now be re-scoped around R2-backed releases, not the older
+  parallel GCP image builder as product architecture
 
 ### Phase 3: Incremental release storage
 
@@ -1202,12 +1293,20 @@ of the launch-critical RootFS effort.
 - add chain-depth controls and periodic checkpointing,
 - enforce dependency-aware artifact GC.
 
+Status:
+- designed
+- not implemented
+
 ### Phase 4: Host download/cache/runtime
 
 - fetch by `content_key`,
 - cache in content-addressed directories,
 - expose host inventory RPC,
 - add host UI.
+
+Status:
+- mostly implemented through the current hub-local artifact backend
+- R2 fetch is the next major missing piece
 
 ### Phase 5: Project picker and settings UX
 
@@ -1216,6 +1315,10 @@ of the launch-critical RootFS effort.
 - add publish-image flow from project settings,
 - add explicit image change / switch back / update workflow.
 
+Status:
+- implemented for project creation and project settings
+- still needs more lifecycle polish around sharing/admin workflows
+
 ### Phase 6: Admin workflows
 
 - promote/demote official,
@@ -1223,10 +1326,17 @@ of the launch-critical RootFS effort.
 - deprecate/hide,
 - inspect provenance and usage.
 
+Status:
+- partial
+- basic catalog/admin controls exist, but this needs dedicated admin polish
+
 ### Phase 7: Course integration
 
 - course image selection,
 - student-project provisioning with exact release binding.
+
+Status:
+- not implemented
 
 ### Phase 8: Benchmarking and hardening
 
@@ -1235,6 +1345,11 @@ of the launch-critical RootFS effort.
 - confirm host bootstrap timings,
 - confirm prepull policy,
 - run soak/load tests around image churn and cache pressure.
+
+Status:
+- correctness-oriented baseline measurements exist
+- next real benchmark round should happen after R2 is in place and on better
+  disks
 
 ## Suggested Launch Acceptance Criteria
 
