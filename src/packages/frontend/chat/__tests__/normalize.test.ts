@@ -140,6 +140,114 @@ describe("handleSyncDBChange", () => {
     expect(store.state.acpState?.get("message:msg-1")).toBe("running");
   });
 
+  it("uses full primary key fields for chat-row incremental lookups", () => {
+    const store = new MockStore();
+    const date = "2024-01-02T03:04:05.000Z";
+    const chatRecord = {
+      event: "chat",
+      sender_id: "user-1",
+      date,
+      message_id: "msg-fullpk-chat",
+      thread_id: "thread-fullpk-chat",
+      acp_state: "queued",
+      history: [],
+      editing: {},
+      feedback: {},
+      schema_version: CURRENT_CHAT_MESSAGE_VERSION,
+    };
+    const syncdb = new MockSyncDB([chatRecord]);
+    syncdb.get_one = jest.fn((where: Record<string, unknown>) => {
+      if (
+        where?.event === chatRecord.event &&
+        where?.sender_id === chatRecord.sender_id &&
+        where?.date === chatRecord.date &&
+        where?.message_id === chatRecord.message_id &&
+        where?.thread_id === chatRecord.thread_id
+      ) {
+        return chatRecord;
+      }
+      return undefined;
+    });
+
+    handleSyncDBChange({
+      syncdb,
+      store,
+      changes: [
+        {
+          event: "chat",
+          sender_id: "user-1",
+          date,
+          message_id: "msg-fullpk-chat",
+          thread_id: "thread-fullpk-chat",
+        },
+      ],
+    });
+
+    expect(syncdb.get_one).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: chatRecord.event,
+        sender_id: chatRecord.sender_id,
+        date: chatRecord.date,
+        message_id: chatRecord.message_id,
+        thread_id: chatRecord.thread_id,
+      }),
+    );
+    expect(store.state.acpState?.get("message:msg-fullpk-chat")).toBe("queue");
+  });
+
+  it("clears message acpState on complete thread-state updates with strict lookups", () => {
+    const store = new MockStore();
+    store.state.acpState = iMap({
+      "thread:thread-complete": "running",
+      "message:msg-complete": "running",
+    });
+    const date = "2024-01-02T03:04:05.000Z";
+    const threadState = {
+      event: "chat-thread-state",
+      sender_id: "__thread_state__",
+      date,
+      thread_id: "thread-complete",
+      active_message_id: "msg-complete",
+      state: "complete",
+    };
+    const syncdb = new MockSyncDB([threadState]);
+    syncdb.get_one = jest.fn((where: Record<string, unknown>) => {
+      if (
+        where?.event === threadState.event &&
+        where?.sender_id === threadState.sender_id &&
+        where?.date === threadState.date &&
+        where?.thread_id === threadState.thread_id
+      ) {
+        return threadState;
+      }
+      return undefined;
+    });
+
+    handleSyncDBChange({
+      syncdb,
+      store,
+      changes: [
+        {
+          event: "chat-thread-state",
+          sender_id: "__thread_state__",
+          date,
+          thread_id: "thread-complete",
+        },
+      ],
+    });
+
+    expect(syncdb.get_one).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: threadState.event,
+        sender_id: threadState.sender_id,
+        date: threadState.date,
+        thread_id: threadState.thread_id,
+      }),
+    );
+    expect(store.state.acpState?.get("thread:thread-complete")).toBeUndefined();
+    expect(store.state.acpState?.get("message:msg-complete")).toBeUndefined();
+  });
+
   it("maps queued chat-row acp_state into acpState", () => {
     const store = new MockStore();
     const date = new Date("2024-01-02T03:04:05.000Z");

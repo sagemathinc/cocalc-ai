@@ -139,6 +139,26 @@ function getThreadStateRecord(syncdb: any, threadId?: string): any {
   });
 }
 
+function getChangedRecord(syncdb: any, change: Record<string, unknown>): any {
+  if (typeof syncdb?.get_one !== "function" || change == null) {
+    return undefined;
+  }
+  // Chat syncdocs use a multi-column primary key. Incremental change objects
+  // include exactly those primary-key fields, so reuse the full tuple here.
+  // Looking up by only a subset can miss the current row and leave stale ACP
+  // state behind, especially for thread-state completion updates.
+  const where: Record<string, unknown> = {};
+  if ((change as any).event != null) where.event = (change as any).event;
+  if ((change as any).sender_id != null)
+    where.sender_id = (change as any).sender_id;
+  if ((change as any).date != null) where.date = (change as any).date;
+  if ((change as any).message_id != null)
+    where.message_id = (change as any).message_id;
+  if ((change as any).thread_id != null)
+    where.thread_id = (change as any).thread_id;
+  return syncdb.get_one(where);
+}
+
 function reconcileThreadChatRowAcpState({
   acpState,
   syncdb,
@@ -190,16 +210,12 @@ export function handleSyncDBChange({
 
   for (const obj of rows) {
     const event = (obj as any)?.event;
-    const sender_id = (obj as any)?.sender_id;
-    const date = (obj as any)?.date;
-    const where: any = {};
-    if (event != null) where.event = event;
-    if (sender_id != null) where.sender_id = sender_id;
-    if (date != null) where.date = date;
+    const record = getChangedRecord(syncdb, obj);
 
     if (event === "draft") {
       let drafts = store.get("drafts") ?? (fromJS({}) as any);
-      const record = syncdb.get_one(where);
+      const sender_id = (record ?? (obj as any))?.sender_id;
+      const date = (record ?? (obj as any))?.date;
       const key = `${sender_id}:${date}`;
       if (record == null) {
         drafts = drafts.delete(key);
@@ -211,7 +227,6 @@ export function handleSyncDBChange({
     }
 
     if (event === CHAT_EVENT) {
-      const record = syncdb.get_one(where);
       if (!record) continue;
       const { message } = normalizeChatMessage(record);
       let acpState = store.get("acpState") ?? iMap();
@@ -238,7 +253,6 @@ export function handleSyncDBChange({
     }
 
     if (event === THREAD_STATE_EVENT) {
-      const record = syncdb.get_one(where);
       const mapped = threadStateToAcpState((record as any)?.state);
       const messageMapped =
         (record as any)?.state === "running" ? mapped : undefined;
@@ -257,8 +271,7 @@ export function handleSyncDBChange({
       next = reconcileThreadChatRowAcpState({
         acpState: next,
         syncdb,
-        threadId:
-          syncdb?.get_one?.(where)?.thread_id ?? (record ?? obj)?.thread_id,
+        threadId: (record ?? obj)?.thread_id,
       });
       store.setState({
         acpState: next,
