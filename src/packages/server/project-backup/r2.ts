@@ -148,6 +148,7 @@ function canonicalizeObjectPath(bucket: string, key: string): string {
 }
 
 function signedObjectHeaders({
+  method = "PUT",
   endpoint,
   accessKey,
   secretKey,
@@ -157,6 +158,7 @@ function signedObjectHeaders({
   contentType,
   cacheControl,
 }: {
+  method?: "PUT" | "GET";
   endpoint: string;
   accessKey: string;
   secretKey: string;
@@ -175,7 +177,6 @@ function signedObjectHeaders({
     throw new Error("R2 endpoint must use https");
   }
   const host = parsed.host;
-  const method = "PUT";
   const canonicalUri = canonicalizeObjectPath(bucket, key);
   const now = new Date();
   const amzDate = toAmzDate(now);
@@ -217,6 +218,35 @@ function signedObjectHeaders({
   return { parsed, canonicalUri, headers };
 }
 
+export function issueSignedObjectDownload({
+  endpoint,
+  accessKey,
+  secretKey,
+  bucket,
+  key,
+}: {
+  endpoint: string;
+  accessKey: string;
+  secretKey: string;
+  bucket: string;
+  key: string;
+}): { url: string; headers: Record<string, string> } {
+  const { parsed, canonicalUri, headers } = signedObjectHeaders({
+    method: "GET",
+    endpoint,
+    accessKey,
+    secretKey,
+    bucket,
+    key,
+    payloadSha256: hashHex(""),
+  });
+  const { host: _host, ...requestHeaders } = headers;
+  return {
+    url: `${parsed.origin}${canonicalUri}`,
+    headers: requestHeaders,
+  };
+}
+
 export async function uploadObjectFromFile({
   endpoint,
   accessKey,
@@ -241,6 +271,7 @@ export async function uploadObjectFromFile({
   cacheControl?: string;
 }): Promise<void> {
   const { parsed, canonicalUri, headers } = signedObjectHeaders({
+    method: "PUT",
     endpoint,
     accessKey,
     secretKey,
@@ -307,6 +338,7 @@ export async function uploadObjectFromBuffer({
 }): Promise<void> {
   const buffer = Buffer.isBuffer(body) ? body : Buffer.from(body);
   const { parsed, canonicalUri, headers } = signedObjectHeaders({
+    method: "PUT",
     endpoint,
     accessKey,
     secretKey,

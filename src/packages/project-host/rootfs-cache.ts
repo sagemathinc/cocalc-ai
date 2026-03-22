@@ -223,6 +223,7 @@ async function downloadManagedRootfsArtifact({
   try {
     const downloadStarted = Date.now();
     const response = await fetch(access.download_url, {
+      headers: access.download_headers,
       signal: AbortSignal.timeout(15 * 60 * 1000),
     });
     if (!response.ok || !response.body) {

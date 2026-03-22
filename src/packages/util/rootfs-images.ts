@@ -119,6 +119,7 @@ export type RootfsReleaseArtifactAccess = {
   artifact_sha256: string;
   artifact_bytes: number;
   download_url: string;
+  download_headers?: Record<string, string>;
   inspect_data?: Record<string, any>;
 };
 

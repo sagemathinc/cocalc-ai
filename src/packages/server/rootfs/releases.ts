@@ -17,11 +17,14 @@ import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import {
   uploadObjectFromBuffer,
   uploadObjectFromFile,
+  issueSignedObjectDownload,
 } from "@cocalc/server/project-backup/r2";
 import {
   DEFAULT_R2_REGION,
   mapCloudRegionToR2Region,
   parseR2Region,
+  rankR2RegionDistance,
+  type R2Region,
 } from "@cocalc/util/consts";
 import type {
   PublishProjectRootfsArtifact,
@@ -302,7 +305,7 @@ async function loadRootfsReleaseRowByContentKey(
   return rows[0] ?? null;
 }
 
-async function resolveHostR2Region(host_id: string): Promise<string> {
+async function resolveHostR2Region(host_id: string): Promise<R2Region> {
   const { rows } = await getPool("medium").query<{ region: string | null }>(
     `SELECT region FROM project_hosts WHERE id=$1`,
     [host_id],
@@ -334,6 +337,51 @@ async function loadR2BucketForRegion(
     ORDER BY created DESC
     LIMIT 1`,
     [region],
+  );
+  return rows[0] ?? null;
+}
+
+async function loadR2BucketById(bucket_id: string): Promise<BucketRow | null> {
+  const { rows } = await getPool("medium").query<BucketRow>(
+    `SELECT
+      id,
+      name,
+      purpose,
+      region,
+      endpoint,
+      access_key_id,
+      secret_access_key,
+      status
+    FROM buckets
+    WHERE id=$1
+      AND provider='r2'
+      AND purpose='project-backups'
+      AND (status IS NULL OR status != 'disabled')
+    LIMIT 1`,
+    [bucket_id],
+  );
+  return rows[0] ?? null;
+}
+
+async function loadR2BucketByName(name: string): Promise<BucketRow | null> {
+  const { rows } = await getPool("medium").query<BucketRow>(
+    `SELECT
+      id,
+      name,
+      purpose,
+      region,
+      endpoint,
+      access_key_id,
+      secret_access_key,
+      status
+    FROM buckets
+    WHERE name=$1
+      AND provider='r2'
+      AND purpose='project-backups'
+      AND (status IS NULL OR status != 'disabled')
+    ORDER BY created DESC
+    LIMIT 1`,
+    [name],
   );
   return rows[0] ?? null;
 }
@@ -379,6 +427,123 @@ async function loadReleaseArtifactReplica({
     [release_id, backend, region ?? null, artifact_path],
   );
   return rows[0] ?? null;
+}
+
+async function listReadyReleaseArtifactReplicas(
+  release_id: string,
+): Promise<RootfsReleaseArtifactReplicaRow[]> {
+  const { rows } = await getPool(
+    "medium",
+  ).query<RootfsReleaseArtifactReplicaRow>(
+    `SELECT
+      artifact_id,
+      release_id,
+      content_key,
+      backend,
+      region,
+      bucket_id,
+      bucket_name,
+      bucket_purpose,
+      artifact_kind,
+      artifact_format,
+      artifact_path,
+      artifact_sha256,
+      artifact_bytes,
+      status,
+      replicated_from_artifact_id,
+      error
+    FROM rootfs_release_artifacts
+    WHERE release_id=$1
+      AND backend='r2'
+      AND status='ready'
+    ORDER BY updated DESC NULLS LAST, created DESC`,
+    [release_id],
+  );
+  return rows;
+}
+
+async function resolveReplicaBucket(
+  replica: RootfsReleaseArtifactReplicaRow,
+): Promise<BucketRow | null> {
+  if (replica.bucket_id) {
+    const byId = await loadR2BucketById(replica.bucket_id);
+    if (byId) return byId;
+  }
+  if (replica.bucket_name) {
+    const byName = await loadR2BucketByName(replica.bucket_name);
+    if (byName) return byName;
+  }
+  if (replica.region) {
+    return await loadR2BucketForRegion(replica.region);
+  }
+  return null;
+}
+
+async function resolveBestR2Replica({
+  host_id,
+  release,
+}: {
+  host_id: string;
+  release: RootfsReleaseRow;
+}): Promise<{
+  replica: RootfsReleaseArtifactReplicaRow;
+  bucket: BucketRow;
+} | null> {
+  const hostRegion = await resolveHostR2Region(host_id);
+  const replicas = await listReadyReleaseArtifactReplicas(release.release_id);
+  const usable: {
+    replica: RootfsReleaseArtifactReplicaRow;
+    bucket: BucketRow;
+    distance: number;
+    index: number;
+  }[] = [];
+
+  for (const [index, replica] of replicas.entries()) {
+    if (
+      replica.artifact_sha256 !== release.artifact_sha256 ||
+      replica.artifact_bytes !== release.artifact_bytes
+    ) {
+      continue;
+    }
+    const bucket = await resolveReplicaBucket(replica);
+    if (
+      !bucket?.name ||
+      !bucket.endpoint ||
+      !bucket.access_key_id ||
+      !bucket.secret_access_key
+    ) {
+      continue;
+    }
+    usable.push({
+      replica,
+      bucket,
+      distance: rankR2RegionDistance(hostRegion, parseR2Region(replica.region)),
+      index,
+    });
+  }
+
+  usable.sort((a, b) => {
+    if (a.distance !== b.distance) {
+      return a.distance - b.distance;
+    }
+    return a.index - b.index;
+  });
+
+  const best = usable[0];
+  if (!best) {
+    return null;
+  }
+  if (best.distance > 0) {
+    logger.info("RootFS artifact falling back to non-local R2 replica", {
+      host_id,
+      release_id: release.release_id,
+      content_key: release.content_key,
+      host_region: hostRegion,
+      replica_region: best.replica.region,
+      bucket_name: best.bucket.name,
+    });
+  }
+  return { replica: best.replica, bucket: best.bucket };
 }
 
 async function upsertReleaseArtifactReplica({
@@ -764,6 +929,29 @@ export async function issueRootfsReleaseArtifactAccess({
   const release = await loadRootfsReleaseByImage(image);
   if (!release) {
     throw new Error(`RootFS release not found for image '${image}'`);
+  }
+  const bestReplica = await resolveBestR2Replica({ host_id, release });
+  if (bestReplica) {
+    const download = issueSignedObjectDownload({
+      endpoint: bestReplica.bucket.endpoint!,
+      accessKey: bestReplica.bucket.access_key_id!,
+      secretKey: bestReplica.bucket.secret_access_key!,
+      bucket: bestReplica.bucket.name,
+      key: bestReplica.replica.artifact_path,
+    });
+    return {
+      release_id: release.release_id,
+      image: release.runtime_image,
+      content_key: release.content_key,
+      artifact_kind: bestReplica.replica.artifact_kind,
+      artifact_format: bestReplica.replica.artifact_format,
+      artifact_backend: "r2",
+      artifact_sha256: bestReplica.replica.artifact_sha256,
+      artifact_bytes: bestReplica.replica.artifact_bytes,
+      download_url: download.url,
+      download_headers: download.headers,
+      inspect_data: release.inspect_json ?? undefined,
+    };
   }
   if (!(await hasStoredRootfsArtifact(release.content_key))) {
     throw new Error(
