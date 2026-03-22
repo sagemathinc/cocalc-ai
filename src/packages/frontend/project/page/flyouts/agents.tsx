@@ -498,6 +498,7 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
     if (loading) return;
     setInlineSessionId(null);
     setOpenedSelection(null);
+    setInlineError("");
   }, [inlineSession, inlineSessionId, openedSelection, loading]);
 
   useEffect(() => {
@@ -680,6 +681,12 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
       }),
     };
   }, [inlineSession?.chat_path, project_id]);
+
+  function closeInlineSession(): void {
+    setInlineSessionId(null);
+    setOpenedSelection(null);
+    setInlineError("");
+  }
 
   function openNavigatorSession(record: AgentSessionRecord): void {
     if (record.entrypoint !== "global") {
@@ -1358,7 +1365,7 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
               size="small"
               type="link"
               style={{ paddingLeft: 0 }}
-              onClick={() => setInlineSessionId(null)}
+              onClick={closeInlineSession}
             >
               Back
             </Button>

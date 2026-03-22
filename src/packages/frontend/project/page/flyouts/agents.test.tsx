@@ -253,6 +253,25 @@ describe("AgentsPanel session cards", () => {
     expect(mockChatActions.setSelectedThread).toHaveBeenCalledWith("thread-1");
   });
 
+  it("returns to the session list when Back is clicked", async () => {
+    render(<AgentsPanel project_id="project-1" layout="page" />);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("agent-session-card-session-1")).toBeTruthy(),
+    );
+    fireEvent.click(screen.getByTestId("agent-session-card-session-1"));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("agents-inline-chat")).toBeTruthy(),
+    );
+    fireEvent.click(screen.getByText("Back"));
+
+    await waitFor(() =>
+      expect(screen.queryByTestId("agents-inline-chat")).toBeNull(),
+    );
+    expect(screen.getByTestId("agent-session-card-session-1")).toBeTruthy();
+  });
+
   it("opens the inline chat when the agent panel reveal event fires", async () => {
     render(<AgentsPanel project_id="project-1" layout="page" />);
 
