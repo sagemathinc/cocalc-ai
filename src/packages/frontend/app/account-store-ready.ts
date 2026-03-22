@@ -13,26 +13,38 @@ import {
 export function useAccountStoreReady(): boolean {
   const account_id = useTypedRedux("account", "account_id");
   const is_ready = useTypedRedux("account", "is_ready");
-  const [loaded, setLoaded] = useState<boolean>(!!is_ready);
+  const [loaded, setLoaded] = useState<boolean>(() => {
+    const store = redux.getStore("account");
+    return !!(store?.get?.("is_ready") ?? is_ready);
+  });
 
   useEffect(() => {
-    const store = redux.getStore("account");
-    if (store == null) {
-      setLoaded(false);
-      return;
-    }
-    if (is_ready) {
-      setLoaded(true);
-      return;
-    }
-
-    setLoaded(false);
+    let store = redux.getStore("account");
     const onReady = () => {
       setLoaded(true);
     };
-    store.on("is_ready", onReady);
+
+    function syncLoaded(nextStore = redux.getStore("account")): void {
+      const ready = !!(nextStore?.get?.("is_ready") ?? is_ready);
+      setLoaded(ready);
+    }
+
+    syncLoaded(store);
+    store?.on("is_ready", onReady);
+
+    const unsubscribe = redux.reduxStore.subscribe(() => {
+      const nextStore = redux.getStore("account");
+      if (nextStore !== store) {
+        store?.removeListener("is_ready", onReady);
+        store = nextStore;
+        store?.on("is_ready", onReady);
+      }
+      syncLoaded(nextStore);
+    });
+
     return () => {
-      store.removeListener("is_ready", onReady);
+      unsubscribe?.();
+      store?.removeListener("is_ready", onReady);
     };
   }, [account_id, is_ready]);
 

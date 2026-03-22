@@ -112,9 +112,9 @@ export default function ProjectTabs(props: PTProps) {
           <>
             {sshRemoteTarget ? <RemoteSshButton /> : <SshButton />}
             <SshUpgradeButton />
-            <SettingsButton />
           </>
         )}
+        <SettingsButton />
       </div>
     </div>
   );
@@ -494,32 +494,30 @@ export function HiddenActivityBarLauncher() {
 
   return (
     <>
-      <Tooltip title="Panels and tools" placement="bottom">
-        <Dropdown
-          menu={{ items }}
-          trigger={["click"]}
-          placement="bottomLeft"
-          transitionName=""
-          onOpenChange={(next) => setMenuOpen(next)}
+      <Dropdown
+        menu={{ items }}
+        trigger={["click"]}
+        placement="bottomLeft"
+        transitionName=""
+        onOpenChange={(next) => setMenuOpen(next)}
+      >
+        <Button
+          data-testid="hidden-rail-launcher"
+          size="large"
+          type="text"
+          style={{
+            width: "40px",
+            border: "none",
+            borderRadius: "0",
+            fontSize: "22px",
+            color: menuOpen ? COLORS.ANTD_LINK_BLUE : COLORS.FILE_ICON,
+            transitionDuration: "0s",
+            background: "#fafafa",
+          }}
         >
-          <Button
-            data-testid="hidden-rail-launcher"
-            size="large"
-            type="text"
-            style={{
-              width: "40px",
-              border: "none",
-              borderRadius: "0",
-              fontSize: "22px",
-              color: menuOpen ? COLORS.ANTD_LINK_BLUE : COLORS.FILE_ICON,
-              transitionDuration: "0s",
-              background: "#fafafa",
-            }}
-          >
-            <Icon name="bars" style={{ verticalAlign: "4px" }} />
-          </Button>
-        </Dropdown>
-      </Tooltip>
+          <Icon name="bars" style={{ verticalAlign: "4px" }} />
+        </Button>
+      </Dropdown>
       <CustomizeRailButtonsModal
         hiddenTabs={hiddenTabs}
         open={showCustomize}

@@ -1,3 +1,4 @@
+import { fromJS } from "immutable";
 import {
   getDefaultFixedTabOrder,
   moveFixedTab,
@@ -58,6 +59,39 @@ describe("activity-bar preferences", () => {
         "servers",
       ],
       overflow: ["log", "info"],
+    });
+  });
+
+  it("accepts immutable map payloads with numeric keys from account settings", () => {
+    const order = normalizeFixedTabOrder(
+      fromJS({
+        0: "workspaces",
+        1: "agents",
+        2: "files",
+        3: "new",
+        4: "search",
+        5: "settings",
+        6: "active",
+        7: "log",
+        8: "servers",
+        9: "info",
+      }),
+      { liteMode: true },
+    );
+    const hidden = normalizeHiddenFixedTabs(
+      fromJS({
+        0: "active",
+        1: "log",
+        2: "servers",
+        3: "info",
+        4: "search",
+        5: "settings",
+      }),
+      { liteMode: true },
+    );
+    expect(splitRailTabs(order, hidden)).toEqual({
+      visible: ["workspaces", "agents", "files", "new"],
+      overflow: ["search", "settings", "active", "log", "servers", "info"],
     });
   });
 

@@ -8,6 +8,8 @@ import { EventEmitter } from "events";
 
 let currentAccountId: string | undefined;
 let currentReady = false;
+let storeExists = true;
+const subscribers = new Set<() => void>();
 
 class FakeAccountStore extends EventEmitter {
   get(key: string) {
@@ -22,7 +24,15 @@ jest.mock("@cocalc/frontend/app-framework", () => {
   const React = require("react");
   return {
     redux: {
-      getStore: () => store,
+      getStore: () => (storeExists ? store : undefined),
+      reduxStore: {
+        subscribe: (cb: () => void) => {
+          subscribers.add(cb);
+          return () => {
+            subscribers.delete(cb);
+          };
+        },
+      },
     },
     useEffect: React.useEffect,
     useState: React.useState,
@@ -44,7 +54,9 @@ describe("useAccountStoreReady", () => {
   beforeEach(() => {
     currentAccountId = "account-1";
     currentReady = false;
+    storeExists = true;
     store.removeAllListeners();
+    subscribers.clear();
   });
 
   it("resets readiness when the account changes and waits for the new store to be ready", () => {
@@ -66,6 +78,20 @@ describe("useAccountStoreReady", () => {
     act(() => {
       store.emit("is_ready");
     });
+    expect(screen.getByText("ready")).toBeTruthy();
+  });
+
+  it("becomes ready when the account store appears after mount", () => {
+    storeExists = false;
+    render(<Probe />);
+    expect(screen.getByText("waiting")).toBeTruthy();
+
+    storeExists = true;
+    currentReady = true;
+    act(() => {
+      for (const cb of subscribers) cb();
+    });
+
     expect(screen.getByText("ready")).toBeTruthy();
   });
 });
