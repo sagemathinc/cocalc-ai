@@ -216,6 +216,15 @@ export type BrowserCommandContext = {
       removeBrowserSession: (opts: {
         browser_id: string;
       }) => Promise<{ removed?: boolean }>;
+      issueBrowserSignInCookie: (opts?: { max_age_ms?: number }) => Promise<{
+        remember_me?: string;
+        account_id?: string;
+        max_age_ms?: number;
+      }>;
+      generateUserAuthToken: (opts: {
+        user_account_id: string;
+        password?: string;
+      }) => Promise<string>;
     };
   };
 };
@@ -375,6 +384,8 @@ export type BrowserSessionRegisterUtils = {
     apiUrl: string;
     hubPassword?: string;
     apiKey?: string;
+    rememberMe?: string;
+    accountId?: string;
   }) => SpawnCookie[];
   writeDaemonConfig: (path: string, value: PlaywrightDaemonConfig) => void;
   parseDiscoveryTimeout: (

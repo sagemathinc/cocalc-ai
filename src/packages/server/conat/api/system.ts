@@ -38,6 +38,7 @@ import {
   removeBrowserSessionRecord,
   upsertBrowserSessionRecord,
 } from "./browser-sessions";
+import { createRememberMeCookie } from "@cocalc/server/auth/remember-me";
 import {
   getProjectAppPublicPolicy as getProjectAppPublicPolicyRaw,
   getPublicAppRouteByHostname as getPublicAppRouteByHostnameRaw,
@@ -58,6 +59,7 @@ import {
 import { getParallelOpsWorkerRegistration } from "@cocalc/server/lro/worker-registry";
 
 const logger = getLogger("server:conat:api:system");
+const DEFAULT_BROWSER_SIGN_IN_COOKIE_MAX_AGE_MS = 12 * 3600 * 1000;
 
 export function ping() {
   return { now: Date.now() };
@@ -1065,6 +1067,32 @@ export async function removeBrowserSession({
       account_id,
       browser_id,
     }),
+  };
+}
+
+export async function issueBrowserSignInCookie({
+  account_id,
+  max_age_ms,
+}: {
+  account_id?: string;
+  max_age_ms?: number;
+}) {
+  if (!account_id) {
+    throw Error("must be signed in");
+  }
+  const cleanMaxAgeMs = Number(max_age_ms);
+  const resolvedMaxAgeMs =
+    Number.isFinite(cleanMaxAgeMs) && cleanMaxAgeMs > 0
+      ? Math.floor(cleanMaxAgeMs)
+      : DEFAULT_BROWSER_SIGN_IN_COOKIE_MAX_AGE_MS;
+  const { value } = await createRememberMeCookie(
+    account_id,
+    Math.max(60, Math.floor(resolvedMaxAgeMs / 1000)),
+  );
+  return {
+    account_id,
+    remember_me: value,
+    max_age_ms: resolvedMaxAgeMs,
   };
 }
 

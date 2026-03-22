@@ -41,6 +41,7 @@ export const system = {
   upsertBrowserSession: authFirst,
   listBrowserSessions: authFirst,
   removeBrowserSession: authFirst,
+  issueBrowserSignInCookie: requireSignedIn,
   getProjectAppPublicPolicy: authFirst,
   tracePublicAppHostname: authFirst,
   reserveProjectAppPublicSubdomain: authFirst,
@@ -136,6 +137,12 @@ export interface BrowserSessionInfo {
   stale: boolean;
   connected?: boolean;
   connection_count?: number;
+}
+
+export interface BrowserSignInCookieInfo {
+  remember_me?: string;
+  account_id?: string;
+  max_age_ms?: number;
 }
 
 export interface ProjectAppPublicPolicy {
@@ -479,6 +486,11 @@ export interface System {
     account_id?: string;
     browser_id: string;
   }) => Promise<{ removed: boolean }>;
+
+  issueBrowserSignInCookie: (opts?: {
+    account_id?: string;
+    max_age_ms?: number;
+  }) => Promise<BrowserSignInCookieInfo>;
 
   getProjectAppPublicPolicy: (opts?: {
     account_id?: string;
