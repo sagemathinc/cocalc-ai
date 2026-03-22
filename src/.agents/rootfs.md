@@ -179,12 +179,14 @@ This means we need to separate:
 
 - exact runtime identity,
 - product labeling and promotion,
+- regional artifact replicas,
 - local host cache state.
 
 That implies at least:
 
 - one central table for immutable image releases,
 - one central table for publishing/catalog metadata,
+- one central table for artifact replicas,
 - one host-side inventory model for local cache state.
 
 ## Terminology
@@ -328,12 +330,17 @@ I recommend three central logical models:
 
 1. immutable RootFS releases,
 2. mutable catalog/publishing state,
-3. per-host cache state.
+3. regional artifact replica state,
+4. per-host cache state.
 
-This can be implemented as three tables or two central Postgres tables plus one
-host-local inventory table mirrored via RPC. For launch, I recommend central
-Postgres for releases and catalog, and host-local sqlite plus RPC for cache
-state.
+This can be implemented as three central Postgres tables plus one host-local
+inventory table mirrored via RPC. For launch, I recommend central Postgres for:
+
+- releases,
+- catalog,
+- artifact replicas,
+
+and host-local sqlite plus RPC for cache state.
 
 ## Proposed Postgres Tables
 
@@ -452,7 +459,46 @@ Suggested fields:
 
 This table is what drives the picker UI.
 
-### 3. Optional alias table: `rootfs_aliases`
+### 3. `rootfs_release_artifacts`
+
+Immutable or append-only replica rows for where release artifacts actually
+exist.
+
+Suggested fields:
+
+- `artifact_id UUID PRIMARY KEY`
+- `release_id UUID REFERENCES rootfs_releases(release_id)`
+- `content_key TEXT`
+- `backend TEXT`
+  - `r2`
+  - `hub-local`
+- `region TEXT NULL`
+- `bucket_id UUID NULL REFERENCES buckets(id)`
+- `bucket_name TEXT NULL`
+- `bucket_purpose TEXT NULL`
+- `artifact_kind TEXT`
+- `artifact_format TEXT`
+- `artifact_path TEXT`
+- `artifact_sha256 TEXT`
+- `artifact_bytes BIGINT`
+- `status TEXT`
+  - `pending`
+  - `ready`
+  - `failed`
+  - `deleted`
+- `replicated_from_artifact_id UUID NULL`
+- `error TEXT NULL`
+- `created TIMESTAMP`
+- `updated TIMESTAMP`
+
+Important rule:
+
+- a release is global and immutable,
+- artifact rows describe where transport copies of that release exist,
+- same-region publish and cross-region lazy replication should be modeled here,
+  not by making the release itself regional.
+
+### 4. Optional alias table: `rootfs_aliases`
 
 This is not strictly required on day one, but it becomes useful if we want
 stable names like:
@@ -591,6 +637,38 @@ Why keep both:
 - staged upload is simpler to retry, inspect, and resume operationally,
 - we already have working file-based send/receive code, so it is a good first
   R2 implementation path and a useful fallback forever.
+
+### Region strategy
+
+We should make region a property of the artifact replica, not of the release.
+
+Recommended policy:
+
+1. publish a new release into the same region as the publishing host first,
+2. record that as a regional artifact replica,
+3. when another host needs the release:
+   - prefer a same-region replica,
+   - otherwise use any ready replica,
+4. after a successful cross-region restore, enqueue background replication into
+   the local region.
+
+This gives us:
+
+- fast local restores when replicas exist,
+- correct fallback behavior when they do not,
+- a simple path to demand-driven replication,
+- a clean upgrade path later for proactive replication of official/prepull
+  images.
+
+### Bucket strategy
+
+For now, RootFS artifacts should reuse the existing per-region backup buckets,
+but under a dedicated prefix or subdirectory, e.g.:
+
+- `rootfs/releases/<content_key>/full.btrfs`
+
+This avoids creating a second regional bucket fleet while still keeping RootFS
+artifacts logically separated from backup data.
 
 ### Why this is the right choice
 
