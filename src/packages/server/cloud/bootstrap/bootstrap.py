@@ -804,7 +804,7 @@ case "$cmd" in
     src="$1"
     dest="$2"
     check_args "$src" "$dest"
-    exec /usr/bin/cp -a --reflink=auto "$src"/. "$dest"/
+    exec /usr/bin/rsync -aHAX --numeric-ids "$src"/ "$dest"/
     ;;
   tar-sha256-tree)
     if [ "$#" -ne 1 ]; then

@@ -33,6 +33,21 @@ type RoutedHubClientState = {
 
 const routedHubClients: Record<string, RoutedHubClientState> = {};
 
+function evictRoutedHubClient(
+  host_id: string,
+  expected?: RoutedHubClientState,
+): void {
+  const current = routedHubClients[host_id];
+  if (!current) return;
+  if (expected != null && current !== expected) return;
+  delete routedHubClients[host_id];
+  try {
+    current.client.close();
+  } catch {
+    // ignore close errors
+  }
+}
+
 function issueHubRouteToken(host_id: string): {
   token: string;
   expiresAt: number;
@@ -86,12 +101,7 @@ function getOrCreateRoutedHubClient({
     return existing.client;
   }
   if (existing) {
-    try {
-      existing.client.close();
-    } catch {
-      // ignore close errors
-    }
-    delete routedHubClients[host_id];
+    evictRoutedHubClient(host_id, existing);
   }
   const state: RoutedHubClientState = {
     address,
@@ -109,6 +119,12 @@ function getOrCreateRoutedHubClient({
       reconnection: false,
     }),
   };
+  state.client.on("disconnected", () => {
+    evictRoutedHubClient(host_id, state);
+  });
+  state.client.on("closed", () => {
+    evictRoutedHubClient(host_id, state);
+  });
   routedHubClients[host_id] = state;
   return state.client;
 }
