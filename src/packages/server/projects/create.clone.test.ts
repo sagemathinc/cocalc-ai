@@ -92,10 +92,21 @@ describe("projects.createProject clone routing", () => {
         return { rows: [] };
       }
       if (
-        sql.includes("SELECT host_id, region FROM projects WHERE project_id=$1")
+        sql.includes(
+          "SELECT host_id, region, rootfs_image, rootfs_image_id FROM projects WHERE project_id=$1",
+        )
       ) {
         expect(params).toEqual([SOURCE_PROJECT_ID]);
-        return { rows: [{ host_id: HOST_ID, region: "wnam" }] };
+        return {
+          rows: [
+            {
+              host_id: HOST_ID,
+              region: "wnam",
+              rootfs_image: "buildpack-deps:noble-scm",
+              rootfs_image_id: "official-cocalc-base",
+            },
+          ],
+        };
       }
       if (sql.includes("SELECT * FROM project_hosts WHERE id=$1")) {
         expect(params).toEqual([HOST_ID]);
@@ -118,8 +129,8 @@ describe("projects.createProject clone routing", () => {
         };
       }
       if (sql.startsWith("INSERT INTO projects ")) {
-        expect(params[6]).toBe(HOST_ID);
-        expect(params[7]).toBe("wnam");
+        expect(params[7]).toBe(HOST_ID);
+        expect(params[8]).toBe("wnam");
         return { rowCount: 1 };
       }
       throw new Error(`unexpected query: ${sql}`);
@@ -155,5 +166,6 @@ describe("projects.createProject clone routing", () => {
         start: false,
       }),
     );
+    expect(conatWithProjectRoutingMock).toHaveBeenCalled();
   });
 });

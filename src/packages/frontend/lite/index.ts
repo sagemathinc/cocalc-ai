@@ -13,7 +13,7 @@ export let project_id: string = "";
 export let account_id: string = "";
 
 export function init(redux, configuration: CustomizeState) {
-  console.log("Initializing CoCalc Lite!");
+  // console.log("Initializing CoCalc Lite!");
   lite = true;
   ({ account_id = FALLBACK_ACCOUNT_UUID, project_id = FALLBACK_PROJECT_UUID } =
     configuration);
