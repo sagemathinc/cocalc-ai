@@ -587,17 +587,18 @@ async function writeNavigatorPromptInWorkspaceChat(
       await actions.syncdb.save();
     }
     if (opts.openFloating === true && nextThreadKey) {
+      const floatingTitle =
+        existingThreadTitle ??
+        createdThreadTitle ??
+        session.title ??
+        workspaceTarget.workspace.theme.title?.trim() ??
+        "Navigator";
       openFloatingAgentSession(
         project_id,
         {
           ...session,
           session_id: nextThreadKey,
-          title:
-            messageThreadTitle ??
-            requestedTitle ??
-            session.title ??
-            workspaceTarget.workspace.theme.title?.trim() ??
-            "Navigator",
+          title: floatingTitle,
           thread_key: nextThreadKey,
           updated_at: new Date().toISOString(),
           status: "active",
@@ -932,6 +933,11 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
       saveNavigatorSelectedThreadKey(nextThreadKey, targetChatPath);
     }
     if (opts.openFloating !== false) {
+      const floatingTitle =
+        existingThreadTitle ??
+        createdThreadTitle ??
+        session.title ??
+        "Navigator";
       openFloatingAgentSession(
         project_id,
         {
@@ -940,7 +946,7 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
             opts.createNewThread === true && nextThreadKey
               ? nextThreadKey
               : session.session_id,
-          title: messageThreadTitle ?? session.title,
+          title: floatingTitle,
           thread_key: nextThreadKey || session.thread_key,
           updated_at: new Date().toISOString(),
           status: "active",

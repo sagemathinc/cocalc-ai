@@ -280,10 +280,6 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
   useEffect(() => {
     if (!chatActions || !session?.thread_key) return;
     chatActions.setSelectedThread?.(session.thread_key);
-    const timer = setTimeout(() => {
-      chatActions.scrollToIndex?.(Number.MAX_SAFE_INTEGER);
-    }, 0);
-    return () => clearTimeout(timer);
   }, [chatActions, session?.thread_key]);
 
   useEffect(() => {
@@ -506,6 +502,11 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
       dockOpenNonce,
     ].join(":");
   }, [dockOpenNonce, project_id, session?.chat_path, session?.thread_key]);
+
+  const forceScrollToBottomToken = useMemo(() => {
+    if (!session?.chat_path) return undefined;
+    return `${dockOpenNonce}:${session.chat_path}:${session.thread_key ?? ""}`;
+  }, [dockOpenNonce, session?.chat_path, session?.thread_key]);
 
   const handleComposerReady = useCallback(
     (control: ChatInputControl | null, root: ParentNode | null): void => {
@@ -845,6 +846,7 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
                   fontSize={fontSize}
                   hideSidebar
                   scrollCacheId={dockScrollCacheId}
+                  forceScrollToBottomToken={forceScrollToBottomToken}
                   desc={desc}
                   onComposerReady={handleComposerReady}
                 />

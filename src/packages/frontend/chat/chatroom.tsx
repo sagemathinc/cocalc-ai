@@ -278,6 +278,7 @@ export interface ChatPanelProps {
   variant?: "default" | "compact";
   hideSidebar?: boolean;
   scrollCacheId?: string;
+  forceScrollToBottomToken?: string | number;
   onFocus?: () => void;
   isVisible?: boolean;
   tabIsVisible?: boolean;
@@ -317,6 +318,8 @@ export function ChatPanel({
   desc,
   variant = "default",
   hideSidebar = false,
+  scrollCacheId: scrollCacheIdOverride,
+  forceScrollToBottomToken,
   onFocus,
   isVisible = true,
   tabIsVisible = true,
@@ -1015,9 +1018,17 @@ export function ChatPanel({
   }, [threadIndex, messages, combinedThread, threads]);
 
   const scrollCacheId = useMemo(() => {
+    if (scrollCacheIdOverride) {
+      return scrollCacheIdOverride;
+    }
     const base = `${project_id ?? ""}${path ?? ""}`;
     return `${base}-${selectedThreadKey ?? COMBINED_FEED_KEY}`;
-  }, [project_id, path, selectedThreadKey]);
+  }, [project_id, path, scrollCacheIdOverride, selectedThreadKey]);
+
+  useEffect(() => {
+    if (forceScrollToBottomToken == null) return;
+    scrollToBottomRef.current?.(true);
+  }, [forceScrollToBottomToken]);
 
   useEffect(() => {
     const nextTargetKey = resolveCombinedComposerTargetKey(

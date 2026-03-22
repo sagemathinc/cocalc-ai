@@ -18,6 +18,7 @@ interface Props {
   desc?;
   hideSidebar?: boolean;
   scrollCacheId?: string;
+  forceScrollToBottomToken?: string | number;
   onComposerReady?: (
     control: ChatInputControl | null,
     root: ParentNode | null,
@@ -33,6 +34,7 @@ export default function SideChat({
   desc,
   hideSidebar = false,
   scrollCacheId,
+  forceScrollToBottomToken,
   onComposerReady,
 }: Props) {
   const actionsViaContext = redux.getEditorActions(project_id, path);
@@ -70,6 +72,7 @@ export default function SideChat({
           desc={desc}
           hideSidebar={hideSidebar}
           scrollCacheId={scrollCacheId}
+          forceScrollToBottomToken={forceScrollToBottomToken}
           onComposerReady={onComposerReady}
         />
       </KeyboardBoundary>
@@ -92,6 +95,7 @@ function SideChatInner(props: Props & { actions: ChatActions }) {
       variant="compact"
       hideSidebar={props.hideSidebar}
       scrollCacheId={props.scrollCacheId}
+      forceScrollToBottomToken={props.forceScrollToBottomToken}
       onComposerReady={props.onComposerReady}
     />
   );

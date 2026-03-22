@@ -87,7 +87,11 @@ jest.mock("@cocalc/frontend/chat/register", () => ({
 
 jest.mock("@cocalc/frontend/chat/side-chat", () => ({
   __esModule: true,
-  default: ({ onComposerReady, scrollCacheId }: any) => {
+  default: ({
+    onComposerReady,
+    scrollCacheId,
+    forceScrollToBottomToken,
+  }: any) => {
     const React = require("react");
     const [ready, setReady] = React.useState(mockSideChatDelayMs === 0);
     const inputRef = React.useRef(null as HTMLInputElement | null);
@@ -120,6 +124,7 @@ jest.mock("@cocalc/frontend/chat/side-chat", () => ({
         ref={inputRef}
         data-testid="agent-dock-composer"
         data-scroll-cache-id={scrollCacheId}
+        data-force-scroll-token={forceScrollToBottomToken}
       />
     );
   },
@@ -300,6 +305,16 @@ describe("AgentDock keyboard suppression", () => {
     ).toContain(
       "agent-dock:project-1:.local/share/cocalc/navigator-acct.chat:thread-1:",
     );
+  });
+
+  it("forces a bottom scroll token whenever the dock session opens", async () => {
+    await openDock("thread-1");
+
+    expect(
+      screen
+        .getByTestId("agent-dock-composer")
+        .getAttribute("data-force-scroll-token"),
+    ).toContain(":thread-1");
   });
 
   it("shows the current session title even before the watcher publishes options", async () => {

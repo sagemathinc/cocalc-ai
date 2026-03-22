@@ -1058,7 +1058,7 @@ describe("submitNavigatorPromptToCurrentThread", () => {
       expect.objectContaining({
         session_id: "thread-submit",
         thread_key: "thread-submit",
-        title: "Fix notebook error",
+        title: "Codex",
         model: "gpt-5.4-mini",
         working_directory: "/home/wstein/project/submit",
       }),
