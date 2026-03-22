@@ -8,27 +8,36 @@ Tabs in a particular project.
 */
 
 import type { MenuProps } from "antd";
-import { Button, Dropdown, Modal, Tooltip } from "antd";
+import { Button, Checkbox, Dropdown, Modal, Tooltip } from "antd";
 import { debounce, throttle } from "lodash";
-import { ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  ReactNode,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useIntl } from "react-intl";
 import { CSS, useActions, useTypedRedux } from "@cocalc/frontend/app-framework";
+import { useAccountStoreReady } from "@cocalc/frontend/app/account-store-ready";
 import useAppContext from "@cocalc/frontend/app/use-context";
 import { ChatIndicator } from "@cocalc/frontend/chat/chat-indicator";
 import { Icon, type IconName } from "@cocalc/frontend/components";
-import { labels } from "@cocalc/frontend/i18n";
+import {
+  DragHandle,
+  SortableItem,
+  SortableList,
+} from "@cocalc/frontend/components/sortable-list";
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import track from "@cocalc/frontend/user-tracking";
 import { tab_to_path } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
-import { getValidActivityBarOption } from "./activity-bar";
 import {
-  ACTIVITY_BAR_EXPLANATION,
-  ACTIVITY_BAR_KEY,
+  ACTIVITY_BAR_HIDDEN_TABS,
   ACTIVITY_BAR_LABELS,
-  ACTIVITY_BAR_OPTIONS,
+  ACTIVITY_BAR_TAB_ORDER,
   ACTIVITY_BAR_TOGGLE_LABELS,
-  TOGGLE_ACTIVITY_BAR_TOGGLE_BUTTON_SPACE,
 } from "./activity-bar-consts";
 import { FileTab, FIXED_PROJECT_TABS, FixedTab } from "./file-tab";
 import FileTabs from "./file-tabs";
@@ -37,10 +46,16 @@ import { lite } from "@cocalc/frontend/lite";
 import SettingsButton from "@cocalc/frontend/account/settings-button";
 import { RemoteSshButton, SshButton } from "@cocalc/frontend/ssh";
 import SshUpgradeButton from "@cocalc/frontend/ssh/ssh-upgrade-button";
+import { workspaceStrongThemeChrome } from "../workspaces/strong-theme";
 import {
-  type WorkspaceStrongThemeChrome,
-  workspaceStrongThemeChrome,
-} from "../workspaces/strong-theme";
+  getDefaultFixedTabOrder,
+  getDefaultHiddenFixedTabs,
+  moveFixedTab,
+  normalizeFixedTabOrder,
+  normalizeHiddenFixedTabs,
+  splitRailTabs,
+} from "./activity-bar-preferences";
+import { hasModifierKey } from "./utils";
 
 const INDICATOR_STYLE: React.CSSProperties = {
   overflow: "hidden",
@@ -119,18 +134,40 @@ export function VerticalFixedTabs({
     active_project_tab: activeTab,
     workspaces,
   } = useProjectContext();
+  const account_settings = useActions("account");
+  const accountStoreReady = useAccountStoreReady();
   const { showActBarLabels } = useAppContext();
   const active_flyout = useTypedRedux({ project_id }, "flyout");
   const other_settings = useTypedRedux("account", "other_settings");
-  const actBar = getValidActivityBarOption(
-    other_settings.get(ACTIVITY_BAR_KEY),
-  );
   const parent = useRef<HTMLDivElement>(null);
   const gap = useRef<HTMLDivElement>(null);
   const breakPoint = useRef<number>(0);
   const refCondensed = useRef<boolean>(false);
   const [condensed, setCondensed] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
+  const [showCustomize, setShowCustomize] = useState(false);
   const workspaceChrome = workspaceStrongThemeChrome(workspaces.current);
+  const tabOrder = useMemo(
+    () =>
+      normalizeFixedTabOrder(other_settings?.get?.(ACTIVITY_BAR_TAB_ORDER), {
+        liteMode: lite,
+      }),
+    [other_settings],
+  );
+  const hiddenTabs = useMemo(
+    () =>
+      normalizeHiddenFixedTabs(
+        other_settings?.get?.(ACTIVITY_BAR_HIDDEN_TABS),
+        {
+          liteMode: lite,
+        },
+      ),
+    [other_settings],
+  );
+  const { visible: pinnedTabs, overflow: overflowTabs } = useMemo(
+    () => splitRailTabs(tabOrder, hiddenTabs),
+    [hiddenTabs, tabOrder],
+  );
 
   const calcCondensed = throttle(
     () => {
@@ -195,18 +232,13 @@ export function VerticalFixedTabs({
   }, [condensed, showActBarLabels, parent.current, gap.current]);
 
   const items: ReactNode[] = [];
-  for (const nameStr in FIXED_PROJECT_TABS) {
-    const name: FixedTab = nameStr as FixedTab; // helping TS a little bit
-    const v = FIXED_PROJECT_TABS[name];
-    if (lite && v.noLite) {
-      continue;
-    }
+  for (const name of pinnedTabs) {
     const color =
       activeTab == name
         ? { color: COLORS.PROJECT.FIXED_LEFT_ACTIVE }
         : undefined;
 
-    const isActive = (actBar === "flyout" ? active_flyout : activeTab) === name;
+    const isActive = active_flyout === name;
 
     const style: CSS = {
       ...color,
@@ -215,9 +247,7 @@ export function VerticalFixedTabs({
         isActive ? COLORS.PROJECT.FIXED_LEFT_ACTIVE : "transparent"
       }`,
       // highlight active flyout in flyout-only mode more -- see https://github.com/sagemathinc/cocalc/issues/6855
-      ...(isActive && actBar === "flyout"
-        ? { backgroundColor: COLORS.BLUE_LLLL }
-        : undefined),
+      ...(isActive ? { backgroundColor: COLORS.BLUE_LLLL } : undefined),
     };
 
     const spacing: string = showActBarLabels
@@ -266,32 +296,140 @@ export function VerticalFixedTabs({
     if (tab != null) items.push(tab);
   }
 
-  function renderToggleActivityBar() {
-    return (
-      <Tooltip
-        title={intl.formatMessage({
-          id: "project.page.activity-bar.hide.tooltip",
-          defaultMessage: "Hide the activity bar",
-          description: "This hides the vertical activity bar in the UI",
-        })}
-        placement="rightTop"
-      >
-        <Button
-          size="small"
-          type="text"
-          block
-          onClick={() => {
+  function openOverflowTab(
+    name: FixedTab,
+    domEvent?: Pick<MouseEvent, "ctrlKey" | "shiftKey" | "metaKey"> | null,
+  ): void {
+    const canOpenFullPage = !FIXED_PROJECT_TABS[name].noFullPage;
+    if (canOpenFullPage && hasModifierKey(domEvent)) {
+      actions?.set_active_tab(name);
+      track("action-bar", {
+        action: "open-overflow-full-page",
+        name,
+        project_id,
+      });
+      return;
+    }
+    actions?.toggleFlyout(name);
+    track("action-bar", {
+      action: "open-overflow-flyout",
+      name,
+      project_id,
+    });
+  }
+
+  function renderOverflowMenu(): ReactNode {
+    if (!accountStoreReady || overflowTabs.length === 0) return null;
+    const isActive =
+      moreOpen ||
+      (active_flyout != null && overflowTabs.includes(active_flyout));
+    const items: NonNullable<MenuProps["items"]> = overflowTabs.map((name) => ({
+      key: `overflow:${name}`,
+      label: renderMenuLabel(
+        <Icon name={FIXED_PROJECT_TABS[name].icon} />,
+        renderFixedTabLabel(name, intl),
+      ),
+      onClick: ({ domEvent }) => openOverflowTab(name, domEvent),
+    }));
+    if (overflowTabs.length > 0) {
+      items.push({ key: "divider-overflow", type: "divider" });
+    }
+    items.push({
+      key: "rail-controls",
+      type: "group",
+      label: "Rail",
+      children: [
+        {
+          key: "customize",
+          label: renderMenuLabel(<Icon name="sliders" />, "Customize buttons"),
+          onClick: () => setShowCustomize(true),
+        },
+        {
+          key: "toggle-labels",
+          label: renderMenuLabel(
+            <Icon name="signature-outlined" />,
+            intl.formatMessage(ACTIVITY_BAR_TOGGLE_LABELS, {
+              show: showActBarLabels,
+            }),
+          ),
+          onClick: () => {
+            account_settings.set_other_settings(
+              ACTIVITY_BAR_LABELS,
+              !showActBarLabels,
+            );
+          },
+        },
+        {
+          key: "hide-activity-bar",
+          label: renderMenuLabel(
+            <Icon name="vertical-right-outlined" />,
+            "Hide activity bar",
+          ),
+          onClick: () => {
             track("action-bar", { action: "hide" });
             actions?.toggleActionButtons();
-          }}
-          style={{
-            marginBottom: TOGGLE_ACTIVITY_BAR_TOGGLE_BUTTON_SPACE,
-            background: workspaceChrome?.activityBarBackground,
-          }}
+          },
+        },
+      ],
+    });
+    return (
+      <Tooltip title="More" placement="rightTop">
+        <Dropdown
+          menu={{ items }}
+          trigger={["click"]}
+          placement="topLeft"
+          transitionName=""
+          onOpenChange={(next) => setMoreOpen(next)}
         >
-          <Icon name="vertical-right-outlined" />
-        </Button>
+          <Button
+            size="small"
+            type="text"
+            block
+            style={{
+              marginTop: "2px",
+              marginBottom: "2px",
+              borderLeft: `4px solid ${
+                isActive ? COLORS.PROJECT.FIXED_LEFT_ACTIVE : "transparent"
+              }`,
+              background: isActive
+                ? COLORS.BLUE_LLLL
+                : workspaceChrome?.activityBarBackground,
+              color: isActive ? COLORS.PROJECT.FIXED_LEFT_ACTIVE : undefined,
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: showActBarLabels ? "flex-start" : "center",
+                gap: showActBarLabels ? "15px" : undefined,
+                minHeight: condensed ? "36px" : "40px",
+              }}
+            >
+              <Icon
+                name="ellipsis"
+                rotate="90"
+                style={{ fontSize: condensed ? "18px" : "24px" }}
+              />
+              {showActBarLabels ? <span>More</span> : null}
+            </div>
+          </Button>
+        </Dropdown>
       </Tooltip>
+    );
+  }
+
+  if (!accountStoreReady) {
+    return (
+      <div
+        ref={parent}
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          height: "100%",
+          flex: "1 1 0",
+        }}
+      />
     );
   }
 
@@ -311,134 +449,164 @@ export function VerticalFixedTabs({
       }}
     >
       {items}
-      {/* moves the layout selector to the bottom */}
+      {renderOverflowMenu()}
       <div ref={gap} style={{ flex: 1 }}></div>
-      {/* moves hide switch to the bottom */}
-      <LayoutSelector actBar={actBar} workspaceChrome={workspaceChrome} />
-      {renderToggleActivityBar()}
+      <CustomizeRailButtonsModal
+        hiddenTabs={hiddenTabs}
+        open={showCustomize}
+        onClose={() => setShowCustomize(false)}
+        onSave={(nextOrder, nextHidden) => {
+          account_settings.set_other_settings(
+            ACTIVITY_BAR_TAB_ORDER,
+            nextOrder,
+          );
+          account_settings.set_other_settings(
+            ACTIVITY_BAR_HIDDEN_TABS,
+            nextHidden,
+          );
+          setShowCustomize(false);
+        }}
+        order={tabOrder}
+      />
     </div>
   );
 }
 
-type LayoutSelectorProps = {
-  actBar: string;
-  workspaceChrome: WorkspaceStrongThemeChrome | null;
-};
+function renderFixedTabLabel(name: FixedTab, intl): ReactNode {
+  const label = FIXED_PROJECT_TABS[name].label;
+  return typeof label === "string" ? label : intl.formatMessage(label as any);
+}
 
-function LayoutSelector({
-  actBar,
-  workspaceChrome,
-}: Readonly<LayoutSelectorProps>) {
+function renderMenuLabel(icon: ReactNode, label: ReactNode): ReactNode {
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: "15px" }}>
+      {icon}
+      <span>{label}</span>
+    </span>
+  );
+}
+
+interface CustomizeRailButtonsModalProps {
+  open: boolean;
+  onClose: () => void;
+  onSave: (order: FixedTab[], hidden: FixedTab[]) => void;
+  order: FixedTab[];
+  hiddenTabs: FixedTab[];
+}
+
+function CustomizeRailButtonsModal({
+  open,
+  onClose,
+  onSave,
+  order,
+  hiddenTabs,
+}: Readonly<CustomizeRailButtonsModalProps>) {
   const intl = useIntl();
-  const [open, setOpen] = useState(false);
-  const { showActBarLabels } = useAppContext();
-  const { project_id } = useProjectContext();
-  const account_settings = useActions("account");
+  const [draftOrder, setDraftOrder] = useState<FixedTab[]>(order);
+  const [draftHidden, setDraftHidden] = useState<FixedTab[]>(hiddenTabs);
+  const hiddenSet = useMemo(() => new Set(draftHidden), [draftHidden]);
 
-  const title = intl.formatMessage({
-    id: "project.page.activity-bar-layout.title",
-    defaultMessage: "Activity bar layout",
-  });
+  useEffect(() => {
+    if (!open) return;
+    setDraftOrder(order);
+    setDraftHidden(hiddenTabs);
+  }, [hiddenTabs, open, order]);
 
-  const items: NonNullable<MenuProps["items"]> = Object.entries(
-    ACTIVITY_BAR_OPTIONS,
-  ).map(([key, label]) => ({
-    key,
-    onClick: () => {
-      account_settings.set_other_settings(ACTIVITY_BAR_KEY, key);
-      track("flyout", {
-        aspect: "layout",
-        value: key,
-        how: "button",
-        project_id,
-      });
-    },
-    label: (
-      <span>
-        <Icon
-          name="check"
-          style={key === actBar ? undefined : { visibility: "hidden" }}
-        />{" "}
-        {intl.formatMessage(label)}
-      </span>
-    ),
-  }));
+  function setTabVisible(name: FixedTab, nextVisible: boolean): void {
+    if (nextVisible) {
+      setDraftHidden((current) => current.filter((item) => item !== name));
+      return;
+    }
+    const visibleCount = draftOrder.filter(
+      (item) => !hiddenSet.has(item),
+    ).length;
+    if (visibleCount <= 1) return;
+    setDraftHidden((current) =>
+      current.includes(name) ? current : [...current, name],
+    );
+  }
 
-  items.unshift({ key: "delim-top", type: "divider" });
-  items.unshift({
-    key: "title",
-    label: (
-      <span>
-        <Icon name="layout" /> {title}{" "}
-      </span>
-    ),
-  });
-
-  items.push({ key: "delimiter1", type: "divider" });
-  items.push({
-    key: "toggle-labels",
-    label: (
-      <span>
-        <Icon name={"signature-outlined"} />{" "}
-        {intl.formatMessage(ACTIVITY_BAR_TOGGLE_LABELS, {
-          show: showActBarLabels,
-        })}
-      </span>
-    ),
-    onClick: () => {
-      account_settings.set_other_settings(
-        ACTIVITY_BAR_LABELS,
-        !showActBarLabels,
-      );
-    },
-  });
-
-  items.push({ key: "delimiter2", type: "divider" });
-  items.push({
-    key: "info",
-    label: (
-      <span>
-        <Icon name="question-circle" /> {intl.formatMessage(labels.more_info)}
-      </span>
-    ),
-    onClick: () => {
-      Modal.info({
-        title,
-        content: intl.formatMessage(ACTIVITY_BAR_EXPLANATION),
-      });
-    },
-  });
+  const defaultsOrder = getDefaultFixedTabOrder({ liteMode: lite });
+  const defaultsHidden = getDefaultHiddenFixedTabs({ liteMode: lite });
 
   return (
-    <div style={{ textAlign: "center" }}>
-      <Dropdown
-        menu={{ items }}
-        trigger={["click"]}
-        onOpenChange={(next) => setOpen(next)}
-        placement="topLeft"
-      >
+    <Modal
+      open={open}
+      onCancel={onClose}
+      title="Customize left rail"
+      width={520}
+      okText="Save"
+      onOk={() => onSave(draftOrder, draftHidden)}
+      footer={[
         <Button
-          icon={<Icon name="layout" />}
-          block
-          style={{
-            ...(workspaceChrome
-              ? {
-                  background: workspaceChrome.activityBarBackground,
-                  boxShadow: `inset 0 -2px 0 ${workspaceChrome.activityBarBorder}`,
-                }
-              : undefined),
-            ...(open
-              ? workspaceChrome
-                ? {
-                    boxShadow: `inset 0 -2px 0 ${workspaceChrome.activityBarBorder}, inset 0 0 0 1px ${workspaceChrome.activityBarBorder}`,
-                  }
-                : { backgroundColor: COLORS.GRAY_LL }
-              : undefined),
+          key="reset"
+          onClick={() => {
+            setDraftOrder(defaultsOrder);
+            setDraftHidden(defaultsHidden);
           }}
-          type="text"
-        />
-      </Dropdown>
-    </div>
+        >
+          Reset defaults
+        </Button>,
+        <Button key="cancel" onClick={onClose}>
+          Cancel
+        </Button>,
+        <Button
+          key="save"
+          type="primary"
+          onClick={() => onSave(draftOrder, draftHidden)}
+        >
+          Save
+        </Button>,
+      ]}
+    >
+      <p style={{ color: COLORS.GRAY }}>
+        Drag to reorder buttons. Uncheck a button to move it into the More menu.
+        These preferences are stored per user.
+      </p>
+      <SortableList
+        items={draftOrder}
+        onDragStop={(oldIndex, newIndex) =>
+          setDraftOrder((current) => moveFixedTab(current, oldIndex, newIndex))
+        }
+      >
+        {draftOrder.map((name) => {
+          const visible = !hiddenSet.has(name);
+          return (
+            <SortableItem key={name} id={name} hideActive={false}>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "10px",
+                  padding: "8px 0",
+                  opacity: visible ? 1 : 0.6,
+                  borderBottom: `1px solid ${COLORS.GRAY_LLL}`,
+                }}
+              >
+                <Checkbox
+                  checked={visible}
+                  onChange={(e) => setTabVisible(name, e.target.checked)}
+                />
+                <Icon name={FIXED_PROJECT_TABS[name].icon} />
+                <div style={{ flex: 1 }}>
+                  {renderFixedTabLabel(name, intl)}
+                  <div
+                    style={{
+                      color: COLORS.GRAY,
+                      fontSize: "12px",
+                      marginTop: "2px",
+                    }}
+                  >
+                    {visible ? "Pinned to rail" : "Shown in More"}
+                  </div>
+                </div>
+                <DragHandle id={name} />
+              </div>
+            </SortableItem>
+          );
+        })}
+      </SortableList>
+    </Modal>
   );
 }
 

@@ -270,29 +270,53 @@ async function waitForSelectedThreadKey(page: Page): Promise<string> {
   await expect
     .poll(
       async () =>
-        (
-          await page
-            .locator("[data-selected-thread-key]")
-            .first()
-            .getAttribute("data-selected-thread-key")
-        )?.trim() ?? "",
+        await page.evaluate(
+          ({ projectId }) => {
+            const rawRecord = sessionStorage.getItem(
+              `project-workspace-record:${projectId}`,
+            );
+            if (!rawRecord) return "";
+            let chatPath = "";
+            try {
+              chatPath = `${JSON.parse(rawRecord)?.chat_path ?? ""}`.trim();
+            } catch {}
+            if (!chatPath) return "";
+            return (
+              localStorage.getItem(
+                `cocalc:navigator:selected-thread:chat:${encodeURIComponent(chatPath)}`,
+              ) ?? ""
+            ).trim();
+          },
+          { projectId: project_id },
+        ),
       { timeout: 45_000 },
     )
     .not.toBe("");
-  return (
-    (
-      await page
-        .locator("[data-selected-thread-key]")
-        .first()
-        .getAttribute("data-selected-thread-key")
-    )?.trim() ?? ""
+  return await page.evaluate(
+    ({ projectId }) => {
+      const rawRecord = sessionStorage.getItem(
+        `project-workspace-record:${projectId}`,
+      );
+      if (!rawRecord) return "";
+      let chatPath = "";
+      try {
+        chatPath = `${JSON.parse(rawRecord)?.chat_path ?? ""}`.trim();
+      } catch {}
+      if (!chatPath) return "";
+      return (
+        localStorage.getItem(
+          `cocalc:navigator:selected-thread:chat:${encodeURIComponent(chatPath)}`,
+        ) ?? ""
+      ).trim();
+    },
+    { projectId: project_id },
   );
 }
 
 async function submitAssistantRequest(
   page: Page,
   prompt: string,
-  workspaceLabel: string,
+  _workspaceLabel: string,
   testInfo: TestInfo,
 ): Promise<{
   threadKey: string;
@@ -311,11 +335,8 @@ async function submitAssistantRequest(
   await expect(sendButton).toBeEnabled({ timeout: 20_000 });
   await sendButton.click();
   await expect(composer).toHaveCount(0, { timeout: 45_000 });
-  await expect(page.locator(".cc-agent-dock-handle")).toBeVisible({
-    timeout: 45_000,
-  });
   await expectPromptVisible(page, prompt);
-  await expectWorkspaceScope(page, workspaceLabel);
+  await expectWorkspaceOnlyOn(page);
   return { threadKey: await waitForSelectedThreadKey(page) };
 }
 
@@ -325,23 +346,19 @@ async function expectPromptVisible(page: Page, prompt: string): Promise<void> {
   });
 }
 
-async function expectWorkspaceScope(
-  page: Page,
-  workspaceLabel: string,
-): Promise<void> {
-  const dock = page.locator("[data-selected-thread-key]").first();
-  await expect(
-    dock.getByText(`Workspace scope: ${workspaceLabel}`),
-  ).toBeVisible({
-    timeout: 20_000,
-  });
+async function expectWorkspaceOnlyOn(page: Page): Promise<void> {
   await expect
     .poll(
       async () =>
-        (await dock.locator(".ant-switch").first().getAttribute("class")) ?? "",
+        await page.evaluate(
+          ({ projectId }) =>
+            localStorage.getItem(`agents-panel-workspace-only:${projectId}`) ??
+            "",
+          { projectId: project_id },
+        ),
       { timeout: 20_000 },
     )
-    .toContain("ant-switch-checked");
+    .toBe("true");
 }
 
 test("title-bar assistant reuses one workspace agent thread across files", async ({

@@ -3,7 +3,18 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-export function shouldOpenFileInNewWindow(e?: React.MouseEvent) {
+interface ModifierKeyEvent {
+  ctrlKey?: boolean;
+  shiftKey?: boolean;
+  metaKey?: boolean;
+}
+
+export function hasModifierKey(e?: ModifierKeyEvent | null) {
   if (e == null) return false;
-  return e.ctrlKey || e.shiftKey || e.metaKey;
+  return !!(e.ctrlKey || e.shiftKey || e.metaKey);
+}
+
+export function shouldOpenFileInNewWindow(e?: ModifierKeyEvent | null) {
+  if (e == null) return false;
+  return hasModifierKey(e);
 }

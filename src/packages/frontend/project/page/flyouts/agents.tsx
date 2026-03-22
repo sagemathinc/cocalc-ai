@@ -50,13 +50,18 @@ import SideChat from "@cocalc/frontend/chat/side-chat";
 import { groupThreadsByRecency } from "@cocalc/frontend/chat/threads";
 import { FileContext } from "@cocalc/frontend/lib/file-context";
 import {
-  delete_local_storage,
   get_local_storage,
   html_to_text,
   set_local_storage,
 } from "@cocalc/frontend/misc";
 import { ThreadBadge } from "@cocalc/frontend/chat/thread-badge";
-import { openFloatingAgentSession } from "@cocalc/frontend/project/page/agent-dock-state";
+import {
+  AGENT_PANEL_REVEAL_EVENT,
+  loadOpenedAgentSessionSelection,
+  saveOpenedAgentSessionSelection,
+  type AgentPanelRevealDetail,
+  type OpenedAgentSessionSelection,
+} from "@cocalc/frontend/project/page/agent-panel-state";
 import getAnchorTagComponent from "@cocalc/frontend/project/page/anchor-tag-component";
 import getUrlTransform from "@cocalc/frontend/project/page/url-transform";
 import type { ProjectActions } from "@cocalc/frontend/project_actions";
@@ -97,7 +102,6 @@ function statusLabel(status: AgentSessionStatus): string {
 const AGENTS_INLINE_CHAT_INSTANCE_KEY = "agents-panel-inline";
 const AGENTS_PIN_CHAT_INSTANCE_KEY = "agents-panel-pin";
 const CHAT_PATH_SCAN_INTERVAL_MS = 20000;
-const AGENTS_OPEN_SESSION_STORAGE_PREFIX = "agents-panel-open-session";
 const AGENTS_MODEL_MIN_PANEL_WIDTH_PX = 360;
 const AGENTS_WORKSPACE_ONLY_STORAGE_PREFIX = "agents-panel-workspace-only";
 const NEW_AGENT_BASENAME = "agent";
@@ -181,36 +185,6 @@ interface SessionListItem {
   record: AgentSessionRecord;
 }
 
-function openedSessionStorageKey(
-  project_id: string,
-  layout: "flyout" | "page",
-): string {
-  return `${AGENTS_OPEN_SESSION_STORAGE_PREFIX}:${project_id}:${layout}`;
-}
-
-function loadOpenedSessionId(
-  project_id: string,
-  layout: "flyout" | "page",
-): string | null {
-  const raw = get_local_storage(openedSessionStorageKey(project_id, layout));
-  if (typeof raw !== "string") return null;
-  const trimmed = raw.trim();
-  return trimmed.length > 0 ? trimmed : null;
-}
-
-function saveOpenedSessionId(
-  project_id: string,
-  layout: "flyout" | "page",
-  sessionId: string | null,
-): void {
-  const key = openedSessionStorageKey(project_id, layout);
-  if (!sessionId) {
-    delete_local_storage(key);
-    return;
-  }
-  set_local_storage(key, sessionId);
-}
-
 function workspaceOnlyStorageKey(project_id: string): string {
   return `${AGENTS_WORKSPACE_ONLY_STORAGE_PREFIX}:${project_id}`;
 }
@@ -261,8 +235,13 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
   const [error, setError] = useState<string>("");
   const [creatingAgent, setCreatingAgent] = useState(false);
   const [updatingSessionId, setUpdatingSessionId] = useState<string>("");
-  const [inlineSessionId, setInlineSessionId] = useState<string | null>(() =>
-    loadOpenedSessionId(project_id, layout),
+  const [openedSelection, setOpenedSelection] =
+    useState<OpenedAgentSessionSelection | null>(() =>
+      loadOpenedAgentSessionSelection(project_id, layout),
+    );
+  const [inlineSessionId, setInlineSessionId] = useState<string | null>(
+    () =>
+      loadOpenedAgentSessionSelection(project_id, layout)?.session_id ?? null,
   );
   const [inlineActions, setInlineActions] = useState<ChatActions | null>(null);
   const [inlineError, setInlineError] = useState<string>("");
@@ -430,13 +409,19 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
   }, [sessions, missingChatPaths]);
 
   const inlineSession = useMemo(() => {
-    if (!inlineSessionId) return null;
+    if (!inlineSessionId && !openedSelection) return null;
     return (
       sessionsWithExistingChat.find(
-        (session) => session.session_id === inlineSessionId,
-      ) ?? null
+        (session) =>
+          session.session_id === inlineSessionId ||
+          (openedSelection != null &&
+            session.chat_path === openedSelection.chat_path &&
+            session.thread_key === openedSelection.thread_key),
+      ) ??
+      openedSelection?.session ??
+      null
     );
-  }, [inlineSessionId, sessionsWithExistingChat]);
+  }, [inlineSessionId, openedSelection, sessionsWithExistingChat]);
 
   const scopedSessions = useMemo(() => {
     let filtered = sessionsWithExistingChat;
@@ -508,15 +493,53 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
   }, [active_project_tab, current_path_abs]);
 
   useEffect(() => {
-    if (!inlineSessionId) return;
+    if (!inlineSessionId && !openedSelection) return;
     if (inlineSession) return;
     if (loading) return;
     setInlineSessionId(null);
-  }, [inlineSession, inlineSessionId, loading]);
+    setOpenedSelection(null);
+    setInlineError("");
+  }, [inlineSession, inlineSessionId, openedSelection, loading]);
 
   useEffect(() => {
-    saveOpenedSessionId(project_id, layout, inlineSessionId);
-  }, [inlineSessionId, layout, project_id]);
+    saveOpenedAgentSessionSelection(project_id, layout, openedSelection);
+  }, [layout, openedSelection, project_id]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onReveal = (evt: Event) => {
+      const detail = (evt as CustomEvent<AgentPanelRevealDetail>).detail;
+      if (!detail || detail.projectId !== project_id) return;
+      const selection = {
+        session_id: `${detail.session.session_id ?? ""}`.trim(),
+        chat_path: `${detail.session.chat_path ?? ""}`.trim(),
+        thread_key: `${detail.session.thread_key ?? ""}`.trim(),
+        session: detail.session,
+      };
+      if (
+        !selection.session_id ||
+        !selection.chat_path ||
+        !selection.thread_key
+      )
+        return;
+      setOpenedSelection(selection);
+      setInlineSessionId(selection.session_id);
+      if (detail.workspaceOnly != null) {
+        setWorkspaceOnly(detail.workspaceOnly === true);
+      }
+      setInlineError("");
+    };
+    window.addEventListener(
+      AGENT_PANEL_REVEAL_EVENT,
+      onReveal as EventListener,
+    );
+    return () => {
+      window.removeEventListener(
+        AGENT_PANEL_REVEAL_EVENT,
+        onReveal as EventListener,
+      );
+    };
+  }, [project_id]);
 
   async function openOrCreateAgentChat(): Promise<void> {
     if (!actions) return;
@@ -659,6 +682,12 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
     };
   }, [inlineSession?.chat_path, project_id]);
 
+  function closeInlineSession(): void {
+    setInlineSessionId(null);
+    setOpenedSelection(null);
+    setInlineError("");
+  }
+
   function openNavigatorSession(record: AgentSessionRecord): void {
     if (record.entrypoint !== "global") {
       actions?.open_file({ path: record.chat_path });
@@ -669,6 +698,12 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
   }
 
   function openInlineSession(record: AgentSessionRecord): void {
+    setOpenedSelection({
+      session_id: record.session_id,
+      chat_path: record.chat_path,
+      thread_key: record.thread_key,
+      session: record,
+    });
     setInlineSessionId(record.session_id);
     setInlineError("");
     const existingInlineActions = getChatActions(project_id, record.chat_path, {
@@ -677,16 +712,6 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
     if (existingInlineActions) {
       setInlineActions(existingInlineActions);
     }
-  }
-
-  function openFloatingSession(record: AgentSessionRecord): void {
-    const workspaceId =
-      workspaces.resolveWorkspaceForPath(record.chat_path)?.workspace_id ??
-      null;
-    openFloatingAgentSession(project_id, record, {
-      workspaceId,
-      workspaceOnly: workspaceId != null,
-    });
   }
 
   function openAutomation(record: AcpAutomationRecord): void {
@@ -729,10 +754,6 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
         label: resumeLabel,
       },
       {
-        key: "float",
-        label: "Float",
-      },
-      {
         key: "open-file",
         label: "Open Chat File",
       },
@@ -765,9 +786,6 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
               switch (key) {
                 case "resume":
                   openNavigatorSession(record);
-                  return;
-                case "float":
-                  openFloatingSession(record);
                   return;
                 case "open-file":
                   actions?.open_file({ path: record.chat_path });
@@ -805,10 +823,6 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
         label: resumeLabel,
       },
       {
-        key: "float",
-        label: "Float",
-      },
-      {
         key: "open-file",
         label: "Open Chat File",
       },
@@ -836,9 +850,6 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
             switch (key) {
               case "resume":
                 openNavigatorSession(record);
-                return;
-              case "float":
-                openFloatingSession(record);
                 return;
               case "open-file":
                 actions?.open_file({ path: record.chat_path });
@@ -1354,7 +1365,7 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
               size="small"
               type="link"
               style={{ paddingLeft: 0 }}
-              onClick={() => setInlineSessionId(null)}
+              onClick={closeInlineSession}
             >
               Back
             </Button>

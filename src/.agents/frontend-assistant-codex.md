@@ -1,5 +1,10 @@
 # Frontend Assistant to Codex Migration
 
+TODO
+
+- [ ] discuss eliminating ALL of the langchain non-coding agent use of LLM's entirely; they are already completely removed from the UI, but cause coding confusing, maintenance concerns, backend complexity, security issues, but aren't used.
+- [ ] add some good codex integration with the TERMINAL (maybe warp or something could be inspiration?)
+
 ## Goal
 
 Replace the legacy frontend "Assistant" and one-shot LLM integrations with the

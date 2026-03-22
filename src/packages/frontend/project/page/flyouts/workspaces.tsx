@@ -38,7 +38,7 @@ import {
   SortableItem,
   SortableList,
 } from "@cocalc/frontend/components/sortable-list";
-import { openFloatingAgentSession } from "@cocalc/frontend/project/page/agent-dock-state";
+import { revealAgentSession } from "@cocalc/frontend/project/page/agent-panel-state";
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 import useProjectInfo from "@cocalc/frontend/project/info/use-project-info";
@@ -952,7 +952,7 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
     }
   }
 
-  async function floatWorkspaceChat(record: WorkspaceRecord): Promise<void> {
+  async function showWorkspaceAgent(record: WorkspaceRecord): Promise<void> {
     setError("");
     try {
       const { chat_path } = await ensureWorkspaceChatPath({
@@ -979,7 +979,7 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
         workspace_id: record.workspace_id,
       } satisfies WorkspaceSelection;
       select(nextSelection);
-      openFloatingAgentSession(project_id, latestSession, {
+      revealAgentSession(project_id, latestSession, {
         workspaceId: record.workspace_id,
         workspaceOnly: true,
       });
@@ -1277,15 +1277,15 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
               >
                 Chat
               </Button>
-              <Tooltip title="Float the latest agent thread in this workspace chat">
+              <Tooltip title="Show the latest agent thread in the Agents panel">
                 <Button
                   size="small"
                   onClick={(e) => {
                     e.stopPropagation();
-                    void floatWorkspaceChat(record);
+                    void showWorkspaceAgent(record);
                   }}
                 >
-                  Float
+                  Agent
                 </Button>
               </Tooltip>
               <Button

@@ -5,7 +5,7 @@ import { getChatActions, initChat } from "@cocalc/frontend/chat/register";
 import type { CodexThreadConfig } from "@cocalc/chat";
 import { lite } from "@cocalc/frontend/lite";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
-import { openFloatingAgentSession } from "@cocalc/frontend/project/page/agent-dock-state";
+import { revealAgentSession } from "@cocalc/frontend/project/page/agent-panel-state";
 import {
   ensureWorkspaceChatForPath,
   ensureWorkspaceChatPath,
@@ -29,6 +29,7 @@ const NAVIGATOR_SYNC_READY_TIMEOUT_MS = 12_000;
 const NAVIGATOR_THREAD_IDENTITY_TIMEOUT_MS = 15_000;
 const NAVIGATOR_WORKSPACE_RESOLVE_TIMEOUT_MS = 5_000;
 const NAVIGATOR_WORKSPACE_RESOLVE_POLL_MS = 150;
+const DEFAULT_WORKSPACE_CODEX_THREAD_TITLE = "Codex";
 let navigatorIntentQueueMemory: NavigatorSubmitPromptDetail[] = [];
 
 async function processChatLLM(args: {
@@ -57,6 +58,10 @@ export interface NavigatorSubmitPromptDetail {
 function normalizeOptionalTitle(value?: string): string | undefined {
   const title = `${value ?? ""}`.trim();
   return title || undefined;
+}
+
+function getWorkspaceSharedThreadTitle(): string {
+  return DEFAULT_WORKSPACE_CODEX_THREAD_TITLE;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -510,6 +515,9 @@ async function writeNavigatorPromptInWorkspaceChat(
       requestedTitle && (!replyThreadId || !existingThreadTitle)
         ? requestedTitle
         : undefined;
+    const createdThreadTitle = workspaceTarget
+      ? getWorkspaceSharedThreadTitle()
+      : messageThreadTitle;
     const sessionModel =
       typeof session.model === "string" && session.model.trim().length > 0
         ? session.model.trim()
@@ -534,7 +542,7 @@ async function writeNavigatorPromptInWorkspaceChat(
     let createdThreadNow = false;
     if (!replyThreadKey) {
       const createdThreadKey = actions.createEmptyThread?.({
-        name: messageThreadTitle,
+        name: createdThreadTitle,
         threadAgent: newThreadAgent,
         threadAppearance: {
           color: session.thread_color,
@@ -552,6 +560,9 @@ async function writeNavigatorPromptInWorkspaceChat(
         "codex",
         threadAgentCodexConfig,
       );
+    }
+    if (createdThreadTitle && replyThreadKey) {
+      actions.renameThread?.(replyThreadKey, createdThreadTitle);
     }
 
     const timeStamp = actions.sendChat({
@@ -579,17 +590,18 @@ async function writeNavigatorPromptInWorkspaceChat(
       await actions.syncdb.save();
     }
     if (opts.openFloating === true && nextThreadKey) {
-      openFloatingAgentSession(
+      const floatingTitle =
+        createdThreadTitle ??
+        existingThreadTitle ??
+        session.title ??
+        workspaceTarget.workspace.theme.title?.trim() ??
+        "Navigator";
+      revealAgentSession(
         project_id,
         {
           ...session,
           session_id: nextThreadKey,
-          title:
-            messageThreadTitle ??
-            requestedTitle ??
-            session.title ??
-            workspaceTarget.workspace.theme.title?.trim() ??
-            "Navigator",
+          title: floatingTitle,
           thread_key: nextThreadKey,
           updated_at: new Date().toISOString(),
           status: "active",
@@ -729,7 +741,7 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
         ? fallbackSession
         : (indexedSession ?? fallbackSession);
     if (opts.openFloating !== false) {
-      openFloatingAgentSession(
+      revealAgentSession(
         project_id,
         {
           ...fallbackSession,
@@ -757,7 +769,7 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
         createNewThread: opts.createNewThread ?? false,
       });
       if (opts.openFloating !== false) {
-        openFloatingAgentSession(
+        revealAgentSession(
           project_id,
           {
             ...(indexedSession ?? fallbackSession),
@@ -823,6 +835,10 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
       requestedTitle && (!replyThreadId || !existingThreadTitle)
         ? requestedTitle
         : undefined;
+    const createdThreadTitle =
+      workspaceTarget && opts.createNewThread !== true
+        ? getWorkspaceSharedThreadTitle()
+        : messageThreadTitle;
     const sessionModel =
       typeof session.model === "string" && session.model.trim().length > 0
         ? session.model.trim()
@@ -846,7 +862,7 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
     let createdThreadNow = false;
     if (opts.createNewThread === true) {
       const createdThreadKey = actions.createEmptyThread?.({
-        name: messageThreadTitle,
+        name: createdThreadTitle,
         threadAgent: newThreadAgent,
         threadAppearance: {
           color: session.thread_color,
@@ -863,7 +879,7 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
     }
     if (!replyThreadKey && workspaceTarget) {
       const createdThreadKey = actions.createEmptyThread?.({
-        name: messageThreadTitle,
+        name: createdThreadTitle,
         threadAgent: newThreadAgent,
         threadAppearance: {
           color: session.thread_color,
@@ -890,6 +906,9 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
         replyThreadKey = "";
         replyThreadId = undefined;
       }
+    }
+    if (createdThreadTitle && replyThreadKey) {
+      actions.renameThread?.(replyThreadKey, createdThreadTitle);
     }
     if (replyThreadKey && opts.forceCodex !== false && opts.codexConfig) {
       actions.setThreadAgentMode?.(replyThreadKey, "codex", opts.codexConfig);
@@ -920,7 +939,12 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
       saveNavigatorSelectedThreadKey(nextThreadKey, targetChatPath);
     }
     if (opts.openFloating !== false) {
-      openFloatingAgentSession(
+      const floatingTitle =
+        createdThreadTitle ??
+        existingThreadTitle ??
+        session.title ??
+        "Navigator";
+      revealAgentSession(
         project_id,
         {
           ...session,
@@ -928,7 +952,7 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
             opts.createNewThread === true && nextThreadKey
               ? nextThreadKey
               : session.session_id,
-          title: messageThreadTitle ?? session.title,
+          title: floatingTitle,
           thread_key: nextThreadKey || session.thread_key,
           updated_at: new Date().toISOString(),
           status: "active",
@@ -959,7 +983,7 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
         createNewThread: opts.createNewThread ?? false,
       });
       if (opts.openFloating !== false) {
-        openFloatingAgentSession(
+        revealAgentSession(
           project_id,
           {
             session_id: `navigator-${project_id}`,

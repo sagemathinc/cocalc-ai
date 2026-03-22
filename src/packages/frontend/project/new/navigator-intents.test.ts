@@ -24,8 +24,8 @@ jest.mock("@cocalc/frontend/chat/actions/llm", () => ({
   processLLM: (...args: any[]) => mockProcessLLM(...args),
 }));
 
-jest.mock("@cocalc/frontend/project/page/agent-dock-state", () => ({
-  openFloatingAgentSession: (...args: any[]) => mockOpenFloating(...args),
+jest.mock("@cocalc/frontend/project/page/agent-panel-state", () => ({
+  revealAgentSession: (...args: any[]) => mockOpenFloating(...args),
 }));
 
 jest.mock("@cocalc/frontend/project/workspaces/runtime", () => ({
@@ -455,7 +455,7 @@ describe("submitNavigatorPromptToCurrentThread", () => {
     expect(ok).toBe(true);
     expect(createEmptyThread).toHaveBeenCalledWith(
       expect.objectContaining({
-        name: "Start tracking this workspace work",
+        name: "Codex",
       }),
     );
     expect(sendChat).toHaveBeenCalledWith(
@@ -870,7 +870,7 @@ describe("submitNavigatorPromptToCurrentThread", () => {
     expect(mockOpenFile).not.toHaveBeenCalled();
     expect(createEmptyThread).toHaveBeenCalledWith(
       expect.objectContaining({
-        name: "Fix notebook error",
+        name: "Codex",
         threadAgent: expect.objectContaining({
           mode: "codex",
           model: "gpt-5.4-mini",
@@ -952,7 +952,7 @@ describe("submitNavigatorPromptToCurrentThread", () => {
     expect(setThreadAgentMode).not.toHaveBeenCalled();
     expect(createEmptyThread).toHaveBeenCalledWith(
       expect.objectContaining({
-        name: "Fix notebook error",
+        name: "Codex",
       }),
     );
     expect(sendChat).toHaveBeenCalledWith(
@@ -1058,7 +1058,7 @@ describe("submitNavigatorPromptToCurrentThread", () => {
       expect.objectContaining({
         session_id: "thread-submit",
         thread_key: "thread-submit",
-        title: "Fix notebook error",
+        title: "Codex",
         model: "gpt-5.4-mini",
         working_directory: "/home/wstein/project/submit",
       }),

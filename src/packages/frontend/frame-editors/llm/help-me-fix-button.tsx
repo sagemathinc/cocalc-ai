@@ -12,22 +12,21 @@ const messages = {
   buttonText: defineMessage({
     id: "frame-editors.llm.help-me-fix-button.button-text",
     defaultMessage:
-      "{isHint, select, true {Give me a Hint...} other {Fix this Problem...}}",
-    description:
-      "Button text for help-me-fix functionality - hint vs complete solution",
+      "{isHint, select, true {Ask Codex for a Hint...} other {Fix with Codex...}}",
+    description: "Button text for Codex debugging actions - hint vs fix",
   }),
   okText: defineMessage({
     id: "frame-editors.llm.help-me-fix-button.ok-text",
     defaultMessage:
-      "{isHint, select, true {Get Hint [Return]} other {Get Solution [Return]}}",
+      "{isHint, select, true {Ask Codex [Return]} other {Send to Codex [Return]}}",
     description:
-      "Confirmation button text in help-me-fix dialog - hint vs complete solution",
+      "Confirmation button text in the Codex debugging dialog - hint vs fix",
   }),
   title: defineMessage({
     id: "frame-editors.llm.help-me-fix-button.title",
     defaultMessage:
-      "{isHint, select, true {Get Hint from} other {Get Complete Solution from}}",
-    description: "Title text in help-me-fix dialog - hint vs complete solution",
+      "{isHint, select, true {Ask Codex for a debugging hint} other {Ask Codex to fix this problem}}",
+    description: "Title text in the Codex debugging dialog - hint vs fix",
   }),
 };
 

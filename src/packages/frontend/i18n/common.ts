@@ -318,8 +318,8 @@ export const labels = defineMessages({
   },
   assistant: {
     id: "labels.assistant",
-    defaultMessage: "Assistant",
-    description: "The button to engage with the AI Assistant dialog",
+    defaultMessage: "Codex",
+    description: "The button to engage with the Codex dialog",
   },
   timetravel: {
     id: "labels.timetravel",
@@ -397,13 +397,13 @@ export const labels = defineMessages({
     id: "labels.ai_generate_label",
     defaultMessage: "Help me write...",
     description:
-      "Label on the menu entry to open the AI Assistant for generating documents",
+      "Label on the menu entry to open Codex for generating documents",
   },
   ai_generate_title: {
     id: "labels.ai_generate_title",
     defaultMessage: "Create a new file with the help of AI",
     description:
-      "Tooltip on the menu entry to open the AI Assistant for generating documents",
+      "Tooltip on the menu entry to open Codex for generating documents",
   },
   ai: {
     id: "labels.ai",

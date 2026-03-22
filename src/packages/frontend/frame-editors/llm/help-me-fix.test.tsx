@@ -50,7 +50,7 @@ jest.mock("@cocalc/frontend/frame-editors/frame-tree/frame-context", () => ({
 
 jest.mock("@cocalc/frontend/project/new/navigator-intents", () => ({
   dispatchNavigatorPromptIntent: jest.fn(),
-  submitNavigatorPromptToCurrentThread: jest.fn(),
+  submitNavigatorPromptInWorkspaceChat: jest.fn(),
 }));
 
 jest.mock("./help-me-fix-button", () => ({

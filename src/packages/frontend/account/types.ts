@@ -20,7 +20,11 @@ import { OTHER_SETTINGS_REPLY_ENGLISH_KEY } from "@cocalc/util/i18n/const";
 import type { CodexReasoningId, CodexSessionMode } from "@cocalc/util/ai/codex";
 import { PassportStrategyFrontend } from "@cocalc/util/types/passport-types";
 import { type PreferencesSubTabKey } from "@cocalc/util/types/settings";
-import { ACTIVITY_BAR_LABELS } from "../project/page/activity-bar-consts";
+import {
+  ACTIVITY_BAR_HIDDEN_TABS,
+  ACTIVITY_BAR_LABELS,
+  ACTIVITY_BAR_TAB_ORDER,
+} from "../project/page/activity-bar-consts";
 import { SETTINGS_LANGUAGE_MODEL_KEY } from "./useLanguageModelSetting";
 
 // this is incomplete...
@@ -72,6 +76,8 @@ export interface AccountState {
     follow_current_path?: boolean;
     show_symbol_bar_labels?: boolean; // whether to show labels on the menu buttons
     [ACTIVITY_BAR_LABELS]?: boolean; // whether to show labels on the vertical activity bar
+    [ACTIVITY_BAR_TAB_ORDER]?: string[]; // ordered fixed-tab names for the activity bar
+    [ACTIVITY_BAR_HIDDEN_TABS]?: string[]; // fixed-tab names hidden under the More menu
     codex_new_chat_defaults?: {
       model: string;
       reasoning?: CodexReasoningId;

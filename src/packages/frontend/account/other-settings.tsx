@@ -25,13 +25,9 @@ import AIAvatar from "@cocalc/frontend/components/ai-avatar";
 import { IS_MOBILE, IS_TOUCH } from "@cocalc/frontend/feature";
 import LLMSelector from "@cocalc/frontend/frame-editors/llm/llm-selector";
 import { labels, LOCALIZATIONS } from "@cocalc/frontend/i18n";
-import { getValidActivityBarOption } from "@cocalc/frontend/project/page/activity-bar";
 import {
-  ACTIVITY_BAR_EXPLANATION,
-  ACTIVITY_BAR_KEY,
   ACTIVITY_BAR_LABELS,
   ACTIVITY_BAR_LABELS_DEFAULT,
-  ACTIVITY_BAR_OPTIONS,
   ACTIVITY_BAR_TITLE,
   ACTIVITY_BAR_TOGGLE_LABELS,
   ACTIVITY_BAR_TOGGLE_LABELS_DESCRIPTION,
@@ -54,7 +50,6 @@ import {
   mergeLauncherSettings,
   updateUserLauncherPrefs,
 } from "@cocalc/frontend/project/new/launcher-preferences";
-import track from "@cocalc/frontend/user-tracking";
 import { DEFAULT_NEW_FILENAMES, NEW_FILENAMES } from "@cocalc/util/db-schema";
 import { OTHER_SETTINGS_REPLY_ENGLISH_KEY } from "@cocalc/util/i18n/const";
 import { file_options } from "@cocalc/frontend/editor-tmp";
@@ -298,33 +293,9 @@ export function OtherSettings(props: Readonly<Props>): React.JSX.Element {
   }
 
   function render_vertical_fixed_bar_options(): Rendered {
-    const selected = getValidActivityBarOption(
-      props.other_settings.get(ACTIVITY_BAR_KEY),
-    );
-    const options = Object.fromEntries(
-      Object.entries(ACTIVITY_BAR_OPTIONS).map(([k, v]) => [
-        k,
-        intl.formatMessage(v),
-      ]),
-    );
     return (
       <LabeledRow label={intl.formatMessage(ACTIVITY_BAR_TITLE)}>
         <div>
-          <SelectorInput
-            style={{ marginBottom: "10px" }}
-            selected={selected}
-            options={options}
-            on_change={(value) => {
-              on_change(ACTIVITY_BAR_KEY, value);
-              track("flyout", { aspect: "layout", how: "account", value });
-            }}
-          />
-          <Paragraph
-            type="secondary"
-            ellipsis={{ expandable: true, symbol: "more" }}
-          >
-            {intl.formatMessage(ACTIVITY_BAR_EXPLANATION)}
-          </Paragraph>
           <Switch
             checked={
               props.other_settings.get(ACTIVITY_BAR_LABELS) ??
