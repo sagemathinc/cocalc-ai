@@ -112,7 +112,6 @@ export default function ProjectTabs(props: PTProps) {
           <>
             {sshRemoteTarget ? <RemoteSshButton /> : <SshButton />}
             <SshUpgradeButton />
-            <SettingsButton />
           </>
         )}
       </div>
@@ -419,6 +418,42 @@ export function VerticalFixedTabs({
     );
   }
 
+  function renderRailSettingsButton(): ReactNode {
+    if (!lite) return null;
+    return (
+      <Tooltip title="Account settings" placement="rightTop">
+        <SettingsButton
+          block
+          className="cc-project-rail-settings-button"
+          iconStyle={{ fontSize: condensed ? "18px" : "24px" }}
+          style={{
+            marginTop: "2px",
+            marginBottom: "2px",
+            borderLeft: "4px solid transparent",
+            background: workspaceChrome?.activityBarBackground,
+          }}
+          label={
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: showActBarLabels ? "flex-start" : "center",
+                gap: showActBarLabels ? "15px" : undefined,
+                minHeight: condensed ? "36px" : "40px",
+              }}
+            >
+              <Icon
+                name="cog"
+                style={{ fontSize: condensed ? "18px" : "24px" }}
+              />
+              {showActBarLabels ? <span>Settings</span> : null}
+            </div>
+          }
+        />
+      </Tooltip>
+    );
+  }
+
   if (!accountStoreReady) {
     return (
       <div
@@ -449,8 +484,9 @@ export function VerticalFixedTabs({
       }}
     >
       {items}
-      {renderOverflowMenu()}
       <div ref={gap} style={{ flex: 1 }}></div>
+      {renderOverflowMenu()}
+      {renderRailSettingsButton()}
       <CustomizeRailButtonsModal
         hiddenTabs={hiddenTabs}
         open={showCustomize}
