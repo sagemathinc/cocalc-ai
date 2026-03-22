@@ -1167,16 +1167,17 @@ addCommands({
     icon: <AIAvatar size={16} />,
     title: defineMessage({
       id: "command.generic.chatgpt.title",
-      defaultMessage:
-        "Ask an Artificial Intelligence Assistant (e.g., ChatGPT) for help on what you're doing.",
+      defaultMessage: "Ask Codex for help with what you're doing.",
     }),
     label: defineMessage({
       id: "command.generic.chatgpt.label",
-      defaultMessage: "AI Assistant",
+      defaultMessage: "Codex",
     }),
     onClick: ({ setShowAI }) => setShowAI?.(true),
     isVisible: ({ props }) =>
-      redux.getStore("projects").hasLanguageModelEnabled(props.project_id),
+      redux.getStore("projects").hasLanguageModelEnabled(props.project_id) &&
+      props.type !== "chat" &&
+      !props.path.endsWith(".chat"),
   },
   chat: {
     // we have a side chat menu item... except for in a chatroom or side chat.

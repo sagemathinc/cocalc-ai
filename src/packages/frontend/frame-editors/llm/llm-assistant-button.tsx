@@ -21,6 +21,8 @@ import {
   resolveAssistantCodexModel,
 } from "./create-chat";
 
+const TITLE_BAR_CODEX_LABEL = "Codex";
+
 interface Props {
   id: string;
   path: string;
@@ -98,6 +100,11 @@ export default function LanguageModelTitleBarButton({
     LS.set(promptLsKey, command);
   }, [command, promptLsKey]);
 
+  const normalizedPath = `${path ?? ""}`.trim().toLowerCase();
+  if (type === "chat" || normalizedPath.endsWith(".chat")) {
+    return null;
+  }
+
   if (
     !actions.redux
       .getStore("projects")
@@ -155,16 +162,14 @@ export default function LanguageModelTitleBarButton({
         <span ref={buttonRef}>
           <AIAvatar
             size={16}
-            iconColor={COLORS.AI_ASSISTANT_TXT}
+            iconColor="currentColor"
             innerStyle={{ top: "2px" }}
           />
           {noLabel ? (
             ""
           ) : (
             <VisibleMDLG>
-              <span style={{ marginLeft: "5px" }}>
-                {intl.formatMessage(labels.assistant)}
-              </span>
+              <span style={{ marginLeft: "5px" }}>{TITLE_BAR_CODEX_LABEL}</span>
             </VisibleMDLG>
           )}
         </span>
@@ -172,8 +177,8 @@ export default function LanguageModelTitleBarButton({
       <Modal
         title={
           <Space align="center" size="small">
-            <AIAvatar size={18} iconColor={COLORS.AI_ASSISTANT_TXT} />
-            <span>{intl.formatMessage(labels.assistant)}</span>
+            <AIAvatar size={18} iconColor="currentColor" />
+            <span>{TITLE_BAR_CODEX_LABEL}</span>
           </Space>
         }
         open={Boolean(visible && showDialog)}

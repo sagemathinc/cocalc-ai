@@ -651,15 +651,7 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
         id={props.id}
         actions={props.actions}
         buttonSize={button_size()}
-        buttonStyle={{
-          ...button_style(),
-          ...(!darkMode
-            ? {
-                backgroundColor: COLORS.AI_ASSISTANT_BG,
-                color: COLORS.AI_ASSISTANT_TXT,
-              }
-            : undefined),
-        }}
+        buttonStyle={button_style()}
         visible={props.tab_is_visible && props.is_visible}
         noLabel={noLabel}
       />
