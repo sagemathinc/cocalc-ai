@@ -32,7 +32,12 @@ import {
 } from "./app-public-access";
 
 const logger = getLogger("project-host:static-apps");
-const STATIC_CACHE_CONTROL_DEFAULT = "public, max-age=60";
+const STATIC_CACHE_CONTROL_PRIVATE_DEFAULT =
+  "private, max-age=60, must-revalidate";
+const STATIC_CACHE_CONTROL_PUBLIC_FILE_DEFAULT =
+  "public, max-age=60, s-maxage=300, stale-while-revalidate=600";
+const STATIC_CACHE_CONTROL_PUBLIC_MANIFEST_DEFAULT =
+  "public, max-age=15, s-maxage=60, stale-while-revalidate=120";
 const PUBLIC_VIEWER_BASE_URL_CACHE = new TTL<string, string | null>({
   max: 1,
   ttl: 30_000,
@@ -204,6 +209,47 @@ function trailingSlashRedirectLocation(req: http.IncomingMessage): string {
     const [pathname, search = ""] = requestUrl.split("?", 2);
     return `${pathname}/${search !== "" ? `?${search}` : ""}`;
   }
+}
+
+function buildWeakEtag({
+  size,
+  mtimeMs,
+}: {
+  size: number;
+  mtimeMs?: number;
+}): string {
+  return `W/"${Math.max(0, Math.floor(size))}-${Math.max(
+    0,
+    Math.floor(mtimeMs ?? 0),
+  )}"`;
+}
+
+function matchesIfNoneMatch(req: http.IncomingMessage, etag: string): boolean {
+  const raw = `${req.headers["if-none-match"] ?? ""}`.trim();
+  if (!raw) return false;
+  return raw
+    .split(",")
+    .map((part) => part.trim())
+    .some((part) => part === "*" || part === etag);
+}
+
+function resolveStaticCacheControl({
+  explicit,
+  exposureMode,
+  kind,
+}: {
+  explicit?: string;
+  exposureMode: "private" | "public";
+  kind: "file" | "manifest";
+}): string {
+  const normalized = `${explicit ?? ""}`.trim();
+  if (normalized) return normalized;
+  if (exposureMode === "public") {
+    return kind === "manifest"
+      ? STATIC_CACHE_CONTROL_PUBLIC_MANIFEST_DEFAULT
+      : STATIC_CACHE_CONTROL_PUBLIC_FILE_DEFAULT;
+  }
+  return STATIC_CACHE_CONTROL_PRIVATE_DEFAULT;
 }
 
 function sortPublicViewerEntries(
@@ -788,12 +834,22 @@ async function writeResolvedStaticFile({
   const contentLength = end - start + 1;
   const headers: Record<string, string | number> = {
     "Content-Type": contentType,
-    "Cache-Control": cacheControl || STATIC_CACHE_CONTROL_DEFAULT,
+    "Cache-Control": cacheControl || STATIC_CACHE_CONTROL_PRIVATE_DEFAULT,
     "Accept-Ranges": "bytes",
     "Last-Modified": new Date(info.mtimeMs).toUTCString(),
     "Content-Length": contentLength,
     ...(extraHeaders ?? {}),
   };
+  const etag = buildWeakEtag({
+    size: Number(info.size),
+    mtimeMs: info.mtimeMs,
+  });
+  headers.ETag = etag;
+  if (!partial && matchesIfNoneMatch(req, etag)) {
+    res.writeHead(304, headers);
+    res.end();
+    return;
+  }
   if (partial) {
     headers["Content-Range"] = `bytes ${start}-${end}/${info.size}`;
   }
@@ -839,10 +895,27 @@ function writeStaticHtmlResponse({
   extraHeaders?: Record<string, string>;
 }): void {
   const body = Buffer.from(html, "utf8");
+  const etag = buildWeakEtag({
+    size: body.byteLength,
+    mtimeMs,
+  });
+  if (matchesIfNoneMatch(req, etag)) {
+    res.writeHead(304, {
+      "Cache-Control": cacheControl || STATIC_CACHE_CONTROL_PRIVATE_DEFAULT,
+      ETag: etag,
+      ...(mtimeMs != null
+        ? { "Last-Modified": new Date(mtimeMs).toUTCString() }
+        : {}),
+      ...(extraHeaders ?? {}),
+    });
+    res.end();
+    return;
+  }
   const headers: Record<string, string | number> = {
     "Content-Type": "text/html; charset=utf-8",
-    "Cache-Control": cacheControl || STATIC_CACHE_CONTROL_DEFAULT,
+    "Cache-Control": cacheControl || STATIC_CACHE_CONTROL_PRIVATE_DEFAULT,
     "Content-Length": body.byteLength,
+    ETag: etag,
     ...(extraHeaders ?? {}),
   };
   if (mtimeMs != null) {
@@ -945,7 +1018,11 @@ export async function maybeHandleStaticAppRequest({
         fsPath: pathInfo.fsPath,
         stat: pathInfo.stat,
       },
-      cacheControl: match.spec.static?.cache_control,
+      cacheControl: resolveStaticCacheControl({
+        explicit: match.spec.static?.cache_control,
+        exposureMode,
+        kind: "file",
+      }),
       extraHeaders: fileHeaders,
       maxBytes: getStaticReadLimit({
         integration,
@@ -1005,7 +1082,11 @@ export async function maybeHandleStaticAppRequest({
       res,
       fs: rootContext.fs,
       resolved: indexFile,
-      cacheControl: match.spec.static?.cache_control,
+      cacheControl: resolveStaticCacheControl({
+        explicit: match.spec.static?.cache_control,
+        exposureMode,
+        kind: "file",
+      }),
       extraHeaders: fileHeaders,
       maxBytes: getStaticReadLimit({
         integration,
@@ -1058,7 +1139,11 @@ export async function maybeHandleStaticAppRequest({
       req,
       res,
       html,
-      cacheControl: match.spec.static?.cache_control,
+      cacheControl: resolveStaticCacheControl({
+        explicit: match.spec.static?.cache_control,
+        exposureMode,
+        kind: "manifest",
+      }),
       mtimeMs: manifestFile.stat.mtimeMs,
       extraHeaders: extraHtmlHeaders,
     });

@@ -351,13 +351,36 @@ function cacheShortTerm(res) {
   );
 }
 
+function cacheNoStore(res) {
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("Expires", "0");
+}
+
+function setPublicViewerShellHeaders(res) {
+  cacheNoStore(res);
+  res.setHeader(
+    "Content-Security-Policy",
+    [
+      "default-src 'none'",
+      "base-uri 'none'",
+      "object-src 'none'",
+      "frame-ancestors 'none'",
+      "script-src 'self' 'unsafe-inline' 'unsafe-eval' blob: data: https: http:",
+      "style-src 'self' 'unsafe-inline' https: http:",
+      "img-src 'self' data: blob: https: http:",
+      "font-src 'self' data: https: http:",
+      "media-src 'self' data: blob: https: http:",
+      "connect-src 'self' https: http: ws: wss:",
+      "frame-src 'self' https: http:",
+      "worker-src 'self' blob: data:",
+    ].join("; "),
+  );
+}
+
 // Various files such as the webpack static content should be cached long-term,
 // and we use this function to set appropriate headers at various points below.
 function cacheLongTerm(res) {
-  res.setHeader(
-    "Cache-Control",
-    `public, max-age=${MAX_AGE}, must-revalidate'`,
-  );
+  res.setHeader("Cache-Control", `public, max-age=${MAX_AGE}, must-revalidate`);
   res.setHeader(
     "Expires",
     new Date(Date.now().valueOf() + MAX_AGE).toUTCString(),
@@ -437,9 +460,16 @@ async function initStatic(router) {
       }),
     );
     router.use(
-      "/static/public-viewer.html",
-      express.static(join(staticPath, "public-viewer.html"), {
-        setHeaders: cacheShortTerm,
+      [
+        "/static/public-viewer.html",
+        "/static/public-viewer-md.html",
+        "/static/public-viewer-ipynb.html",
+        "/static/public-viewer-board.html",
+        "/static/public-viewer-slides.html",
+        "/static/public-viewer-chat.html",
+      ],
+      express.static(staticPath, {
+        setHeaders: setPublicViewerShellHeaders,
       }),
     );
     router.use(
