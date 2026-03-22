@@ -1,5 +1,6 @@
 import getLogger from "@cocalc/backend/logger";
 import { createHash, createHmac } from "node:crypto";
+import { createReadStream } from "node:fs";
 import https from "node:https";
 
 const logger = getLogger("server:project-backup:r2");
@@ -132,6 +133,223 @@ function getSignatureKey(secret: string, dateStamp: string): Buffer {
 
 function toAmzDate(now: Date): string {
   return now.toISOString().replace(/[:-]|\.\d{3}/g, "");
+}
+
+function encodeRfc3986(str: string): string {
+  return encodeURIComponent(str).replace(
+    /[!'()*]/g,
+    (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`,
+  );
+}
+
+function canonicalizeObjectPath(bucket: string, key: string): string {
+  const parts = [bucket, ...`${key ?? ""}`.split("/").filter(Boolean)];
+  return `/${parts.map(encodeRfc3986).join("/")}`;
+}
+
+function signedObjectHeaders({
+  endpoint,
+  accessKey,
+  secretKey,
+  bucket,
+  key,
+  payloadSha256,
+  contentType,
+  cacheControl,
+}: {
+  endpoint: string;
+  accessKey: string;
+  secretKey: string;
+  bucket: string;
+  key: string;
+  payloadSha256: string;
+  contentType?: string;
+  cacheControl?: string;
+}): {
+  parsed: URL;
+  canonicalUri: string;
+  headers: Record<string, string>;
+} {
+  const parsed = new URL(endpoint);
+  if (parsed.protocol !== "https:") {
+    throw new Error("R2 endpoint must use https");
+  }
+  const host = parsed.host;
+  const method = "PUT";
+  const canonicalUri = canonicalizeObjectPath(bucket, key);
+  const now = new Date();
+  const amzDate = toAmzDate(now);
+  const dateStamp = amzDate.slice(0, 8);
+  const headers: Record<string, string> = {
+    host,
+    "x-amz-content-sha256": payloadSha256,
+    "x-amz-date": amzDate,
+  };
+  if (contentType) {
+    headers["content-type"] = contentType;
+  }
+  if (cacheControl) {
+    headers["cache-control"] = cacheControl;
+  }
+  const signedHeaderNames = Object.keys(headers).sort();
+  const canonicalHeaders = signedHeaderNames
+    .map((name) => `${name}:${String(headers[name]).trim()}\n`)
+    .join("");
+  const signedHeaders = signedHeaderNames.join(";");
+  const canonicalRequest = [
+    method,
+    canonicalUri,
+    "",
+    canonicalHeaders,
+    signedHeaders,
+    payloadSha256,
+  ].join("\n");
+  const credentialScope = `${dateStamp}/auto/s3/aws4_request`;
+  const stringToSign = [
+    "AWS4-HMAC-SHA256",
+    amzDate,
+    credentialScope,
+    hashHex(canonicalRequest),
+  ].join("\n");
+  const signingKey = getSignatureKey(secretKey, dateStamp);
+  const signature = hmac(signingKey, stringToSign, "hex") as string;
+  headers.authorization = `AWS4-HMAC-SHA256 Credential=${accessKey}/${credentialScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`;
+  return { parsed, canonicalUri, headers };
+}
+
+export async function uploadObjectFromFile({
+  endpoint,
+  accessKey,
+  secretKey,
+  bucket,
+  key,
+  filePath,
+  artifactSha256,
+  artifactBytes,
+  contentType,
+  cacheControl,
+}: {
+  endpoint: string;
+  accessKey: string;
+  secretKey: string;
+  bucket: string;
+  key: string;
+  filePath: string;
+  artifactSha256: string;
+  artifactBytes: number;
+  contentType?: string;
+  cacheControl?: string;
+}): Promise<void> {
+  const { parsed, canonicalUri, headers } = signedObjectHeaders({
+    endpoint,
+    accessKey,
+    secretKey,
+    bucket,
+    key,
+    payloadSha256: artifactSha256,
+    contentType,
+    cacheControl,
+  });
+  await new Promise<void>((resolve, reject) => {
+    const req = https.request(
+      {
+        method: "PUT",
+        protocol: parsed.protocol,
+        host: parsed.hostname,
+        port: parsed.port ? Number(parsed.port) : undefined,
+        path: canonicalUri,
+        headers: {
+          ...headers,
+          "content-length": artifactBytes,
+        },
+      },
+      (res) => {
+        const chunks: Buffer[] = [];
+        res.on("data", (chunk) =>
+          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)),
+        );
+        res.on("end", () => {
+          if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
+            resolve();
+            return;
+          }
+          reject(
+            new Error(
+              `R2 PUT failed (${res.statusCode}): ${Buffer.concat(chunks).toString("utf8")}`,
+            ),
+          );
+        });
+      },
+    );
+    req.on("error", reject);
+    createReadStream(filePath).on("error", reject).pipe(req);
+  });
+}
+
+export async function uploadObjectFromBuffer({
+  endpoint,
+  accessKey,
+  secretKey,
+  bucket,
+  key,
+  body,
+  contentType,
+  cacheControl,
+}: {
+  endpoint: string;
+  accessKey: string;
+  secretKey: string;
+  bucket: string;
+  key: string;
+  body: Buffer | string;
+  contentType?: string;
+  cacheControl?: string;
+}): Promise<void> {
+  const buffer = Buffer.isBuffer(body) ? body : Buffer.from(body);
+  const { parsed, canonicalUri, headers } = signedObjectHeaders({
+    endpoint,
+    accessKey,
+    secretKey,
+    bucket,
+    key,
+    payloadSha256: hashHex(buffer),
+    contentType,
+    cacheControl,
+  });
+  await new Promise<void>((resolve, reject) => {
+    const req = https.request(
+      {
+        method: "PUT",
+        protocol: parsed.protocol,
+        host: parsed.hostname,
+        port: parsed.port ? Number(parsed.port) : undefined,
+        path: canonicalUri,
+        headers: {
+          ...headers,
+          "content-length": buffer.length,
+        },
+      },
+      (res) => {
+        const chunks: Buffer[] = [];
+        res.on("data", (chunk) =>
+          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)),
+        );
+        res.on("end", () => {
+          if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
+            resolve();
+            return;
+          }
+          reject(
+            new Error(
+              `R2 PUT failed (${res.statusCode}): ${Buffer.concat(chunks).toString("utf8")}`,
+            ),
+          );
+        });
+      },
+    );
+    req.on("error", reject);
+    req.end(buffer);
+  });
 }
 
 function parseBucketNamesFromListBucketsXml(xml: string): string[] {

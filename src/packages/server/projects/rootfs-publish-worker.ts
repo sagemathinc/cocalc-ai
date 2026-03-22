@@ -8,6 +8,7 @@ import { getEffectiveParallelOpsLimit } from "@cocalc/server/lro/worker-config";
 import { publishLroEvent, publishLroSummary } from "@cocalc/conat/lro/stream";
 import { publishProjectRootfsCatalogEntry } from "@cocalc/server/rootfs/catalog";
 import {
+  ensureRootfsReleaseR2ReplicaForHost,
   hasStoredRootfsArtifact,
   issueRootfsReleaseArtifactUpload,
   upsertPublishedRootfsRelease,
@@ -29,7 +30,8 @@ const progressSteps: Record<string, number> = {
   validate: 5,
   publish: 75,
   upload: 88,
-  catalog: 95,
+  replicate: 92,
+  catalog: 96,
   done: 100,
 };
 
@@ -234,6 +236,30 @@ async function handleRootfsPublishOp(op: LroSummary): Promise<void> {
     }
 
     const release = await upsertPublishedRootfsRelease({ artifact });
+
+    const replicateOp = await updateLro({
+      op_id,
+      progress_summary: {
+        phase: "replicate",
+        image: artifact.image,
+        content_key: artifact.content_key,
+        release_id: release.release_id,
+      },
+    });
+    await publishSummarySafe(replicateOp, {
+      op_id,
+      when: "set-replicate-phase",
+    });
+    progress({
+      step: "replicate",
+      message: "replicating RootFS release artifact to regional R2 storage",
+      detail: { image: artifact.image, content_key: artifact.content_key },
+    });
+    const host_id = await loadProjectHostId(project_id);
+    await ensureRootfsReleaseR2ReplicaForHost({
+      host_id,
+      release,
+    });
 
     const catalogOp = await updateLro({
       op_id,

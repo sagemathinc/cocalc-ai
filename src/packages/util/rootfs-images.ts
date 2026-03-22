@@ -100,7 +100,7 @@ export type PublishProjectRootfsArtifact = {
 
 export type RootfsReleaseArtifactKind = "full";
 export type RootfsReleaseArtifactFormat = "btrfs-send";
-export type RootfsReleaseArtifactBackend = "hub-local";
+export type RootfsReleaseArtifactBackend = "hub-local" | "r2";
 
 export type RootfsArtifactTransferTarget = {
   url: string;

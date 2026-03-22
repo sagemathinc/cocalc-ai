@@ -11,8 +11,18 @@ import { pipeline } from "node:stream/promises";
 
 import basePath from "@cocalc/backend/base-path";
 import { data, secrets } from "@cocalc/backend/data";
+import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
+import {
+  uploadObjectFromBuffer,
+  uploadObjectFromFile,
+} from "@cocalc/server/project-backup/r2";
+import {
+  DEFAULT_R2_REGION,
+  mapCloudRegionToR2Region,
+  parseR2Region,
+} from "@cocalc/util/consts";
 import type {
   PublishProjectRootfsArtifact,
   RootfsReleaseArtifactAccess,
@@ -25,6 +35,7 @@ import { v4 as uuid } from "uuid";
 
 export const ROOTFS_RELEASE_ARTIFACT_ROUTE_PREFIX = "/rootfs/releases";
 const ROOTFS_RELEASE_ARTIFACT_ROOT = join(data, "rootfs", "releases");
+const ROOTFS_RELEASE_R2_PREFIX = "rootfs/releases";
 const ROOTFS_RELEASE_TOKEN_SECRET_PATH = join(
   secrets,
   "rootfs-release-artifact-token-key",
@@ -35,6 +46,7 @@ const ROOTFS_RELEASE_ARTIFACT_FORMAT: RootfsReleaseArtifactFormat =
 const ROOTFS_RELEASE_ARTIFACT_BACKEND: RootfsReleaseArtifactBackend =
   "hub-local";
 const ROOTFS_RELEASE_UPLOAD_CHUNK_BYTES = 32 * 1024 * 1024;
+const logger = getLogger("server:rootfs:releases");
 
 type RootfsReleaseRow = {
   release_id: string;
@@ -50,6 +62,36 @@ type RootfsReleaseRow = {
   artifact_sha256: string;
   artifact_bytes: number;
   inspect_json: Record<string, any> | null;
+};
+
+type BucketRow = {
+  id: string;
+  name: string;
+  purpose: string | null;
+  region: string | null;
+  endpoint: string | null;
+  access_key_id: string | null;
+  secret_access_key: string | null;
+  status: string | null;
+};
+
+type RootfsReleaseArtifactReplicaRow = {
+  artifact_id: string;
+  release_id: string;
+  content_key: string;
+  backend: RootfsReleaseArtifactBackend;
+  region: string | null;
+  bucket_id: string | null;
+  bucket_name: string | null;
+  bucket_purpose: string | null;
+  artifact_kind: RootfsReleaseArtifactKind;
+  artifact_format: RootfsReleaseArtifactFormat;
+  artifact_path: string;
+  artifact_sha256: string;
+  artifact_bytes: number;
+  status: string;
+  replicated_from_artifact_id: string | null;
+  error: string | null;
 };
 
 type RootfsStoredArtifactMetadata = {
@@ -76,6 +118,15 @@ function normalizeContentKey(content_key?: string): string {
 function artifactRelativePath(content_key: string): string {
   const key = normalizeContentKey(content_key);
   return `${key.slice(0, 2)}/${key}/full.btrfs`;
+}
+
+function r2ArtifactKey(content_key: string): string {
+  const key = normalizeContentKey(content_key);
+  return `${ROOTFS_RELEASE_R2_PREFIX}/${key}/full.btrfs`;
+}
+
+function r2ArtifactShaKey(content_key: string): string {
+  return `${r2ArtifactKey(content_key)}.sha256`;
 }
 
 export function rootfsReleaseArtifactLocalPath(content_key: string): string {
@@ -249,6 +300,194 @@ async function loadRootfsReleaseRowByContentKey(
     [normalizeContentKey(content_key)],
   );
   return rows[0] ?? null;
+}
+
+async function resolveHostR2Region(host_id: string): Promise<string> {
+  const { rows } = await getPool("medium").query<{ region: string | null }>(
+    `SELECT region FROM project_hosts WHERE id=$1`,
+    [host_id],
+  );
+  const hostRegion = `${rows[0]?.region ?? ""}`.trim();
+  const explicit = parseR2Region(hostRegion);
+  if (explicit) return explicit;
+  return mapCloudRegionToR2Region(hostRegion || DEFAULT_R2_REGION);
+}
+
+async function loadR2BucketForRegion(
+  region: string,
+): Promise<BucketRow | null> {
+  const { rows } = await getPool("medium").query<BucketRow>(
+    `SELECT
+      id,
+      name,
+      purpose,
+      region,
+      endpoint,
+      access_key_id,
+      secret_access_key,
+      status
+    FROM buckets
+    WHERE provider='r2'
+      AND purpose='project-backups'
+      AND region=$1
+      AND (status IS NULL OR status != 'disabled')
+    ORDER BY created DESC
+    LIMIT 1`,
+    [region],
+  );
+  return rows[0] ?? null;
+}
+
+async function loadReleaseArtifactReplica({
+  release_id,
+  backend,
+  region,
+  artifact_path,
+}: {
+  release_id: string;
+  backend: RootfsReleaseArtifactBackend;
+  region?: string | null;
+  artifact_path: string;
+}): Promise<RootfsReleaseArtifactReplicaRow | null> {
+  const { rows } = await getPool(
+    "medium",
+  ).query<RootfsReleaseArtifactReplicaRow>(
+    `SELECT
+      artifact_id,
+      release_id,
+      content_key,
+      backend,
+      region,
+      bucket_id,
+      bucket_name,
+      bucket_purpose,
+      artifact_kind,
+      artifact_format,
+      artifact_path,
+      artifact_sha256,
+      artifact_bytes,
+      status,
+      replicated_from_artifact_id,
+      error
+    FROM rootfs_release_artifacts
+    WHERE release_id=$1
+      AND backend=$2
+      AND COALESCE(region, '') = COALESCE($3, '')
+      AND artifact_path=$4
+    ORDER BY updated DESC NULLS LAST, created DESC
+    LIMIT 1`,
+    [release_id, backend, region ?? null, artifact_path],
+  );
+  return rows[0] ?? null;
+}
+
+async function upsertReleaseArtifactReplica({
+  artifact_id,
+  release_id,
+  content_key,
+  backend,
+  region,
+  bucket,
+  artifact_kind,
+  artifact_format,
+  artifact_path,
+  artifact_sha256,
+  artifact_bytes,
+  status,
+  error,
+}: {
+  artifact_id?: string;
+  release_id: string;
+  content_key: string;
+  backend: RootfsReleaseArtifactBackend;
+  region?: string | null;
+  bucket?: BucketRow | null;
+  artifact_kind: RootfsReleaseArtifactKind;
+  artifact_format: RootfsReleaseArtifactFormat;
+  artifact_path: string;
+  artifact_sha256: string;
+  artifact_bytes: number;
+  status: string;
+  error?: string | null;
+}): Promise<RootfsReleaseArtifactReplicaRow> {
+  const id = artifact_id ?? uuid();
+  const { rows } = await getPool(
+    "medium",
+  ).query<RootfsReleaseArtifactReplicaRow>(
+    `INSERT INTO rootfs_release_artifacts
+      (
+        artifact_id,
+        release_id,
+        content_key,
+        backend,
+        region,
+        bucket_id,
+        bucket_name,
+        bucket_purpose,
+        artifact_kind,
+        artifact_format,
+        artifact_path,
+        artifact_sha256,
+        artifact_bytes,
+        status,
+        replicated_from_artifact_id,
+        error,
+        created,
+        updated
+      )
+      VALUES
+      ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NULL, $15, NOW(), NOW())
+      ON CONFLICT (artifact_id) DO UPDATE SET
+        bucket_id = EXCLUDED.bucket_id,
+        bucket_name = EXCLUDED.bucket_name,
+        bucket_purpose = EXCLUDED.bucket_purpose,
+        artifact_sha256 = EXCLUDED.artifact_sha256,
+        artifact_bytes = EXCLUDED.artifact_bytes,
+        status = EXCLUDED.status,
+        error = EXCLUDED.error,
+        updated = NOW()
+      RETURNING
+        artifact_id,
+        release_id,
+        content_key,
+        backend,
+        region,
+        bucket_id,
+        bucket_name,
+        bucket_purpose,
+        artifact_kind,
+        artifact_format,
+        artifact_path,
+        artifact_sha256,
+        artifact_bytes,
+        status,
+        replicated_from_artifact_id,
+        error`,
+    [
+      id,
+      release_id,
+      content_key,
+      backend,
+      region ?? null,
+      bucket?.id ?? null,
+      bucket?.name ?? null,
+      bucket?.purpose ?? null,
+      artifact_kind,
+      artifact_format,
+      artifact_path,
+      artifact_sha256,
+      artifact_bytes,
+      status,
+      error ?? null,
+    ],
+  );
+  const row = rows[0];
+  if (!row) {
+    throw new Error(
+      `failed to upsert RootFS artifact replica for ${content_key}`,
+    );
+  }
+  return row;
 }
 
 export async function loadRootfsReleaseByImage(
@@ -580,4 +819,116 @@ export async function deleteStoredRootfsArtifact(
 
 export function rootfsReleaseArtifactContentType(): string {
   return "application/octet-stream";
+}
+
+export async function ensureRootfsReleaseR2ReplicaForHost({
+  host_id,
+  release,
+}: {
+  host_id: string;
+  release: RootfsReleaseRow;
+}): Promise<RootfsReleaseArtifactReplicaRow | null> {
+  const region = await resolveHostR2Region(host_id);
+  const bucket = await loadR2BucketForRegion(region);
+  if (
+    !bucket?.name ||
+    !bucket.endpoint ||
+    !bucket.access_key_id ||
+    !bucket.secret_access_key
+  ) {
+    logger.info("RootFS R2 replica skipped; no usable regional bucket", {
+      host_id,
+      release_id: release.release_id,
+      content_key: release.content_key,
+      region,
+    });
+    return null;
+  }
+
+  const key = normalizeContentKey(release.content_key);
+  const artifactPath = r2ArtifactKey(key);
+  const existing = await loadReleaseArtifactReplica({
+    release_id: release.release_id,
+    backend: "r2",
+    region,
+    artifact_path: artifactPath,
+  });
+  if (
+    existing?.status === "ready" &&
+    existing.artifact_sha256 === release.artifact_sha256 &&
+    existing.artifact_bytes === release.artifact_bytes
+  ) {
+    return existing;
+  }
+
+  const pending = await upsertReleaseArtifactReplica({
+    artifact_id: existing?.artifact_id,
+    release_id: release.release_id,
+    content_key: key,
+    backend: "r2",
+    region,
+    bucket,
+    artifact_kind: release.artifact_kind,
+    artifact_format: release.artifact_format,
+    artifact_path: artifactPath,
+    artifact_sha256: release.artifact_sha256,
+    artifact_bytes: release.artifact_bytes,
+    status: "pending",
+    error: null,
+  });
+
+  try {
+    await uploadObjectFromFile({
+      endpoint: bucket.endpoint,
+      accessKey: bucket.access_key_id,
+      secretKey: bucket.secret_access_key,
+      bucket: bucket.name,
+      key: artifactPath,
+      filePath: rootfsReleaseArtifactLocalPath(key),
+      artifactSha256: release.artifact_sha256,
+      artifactBytes: release.artifact_bytes,
+      contentType: rootfsReleaseArtifactContentType(),
+    });
+    await uploadObjectFromBuffer({
+      endpoint: bucket.endpoint,
+      accessKey: bucket.access_key_id,
+      secretKey: bucket.secret_access_key,
+      bucket: bucket.name,
+      key: r2ArtifactShaKey(key),
+      body: `${release.artifact_sha256}\n`,
+      contentType: "text/plain; charset=utf-8",
+    });
+    return await upsertReleaseArtifactReplica({
+      artifact_id: pending.artifact_id,
+      release_id: release.release_id,
+      content_key: key,
+      backend: "r2",
+      region,
+      bucket,
+      artifact_kind: release.artifact_kind,
+      artifact_format: release.artifact_format,
+      artifact_path: artifactPath,
+      artifact_sha256: release.artifact_sha256,
+      artifact_bytes: release.artifact_bytes,
+      status: "ready",
+      error: null,
+    });
+  } catch (err) {
+    await upsertReleaseArtifactReplica({
+      artifact_id: pending.artifact_id,
+      release_id: release.release_id,
+      content_key: key,
+      backend: "r2",
+      region,
+      bucket,
+      artifact_kind: release.artifact_kind,
+      artifact_format: release.artifact_format,
+      artifact_path: artifactPath,
+      artifact_sha256: release.artifact_sha256,
+      artifact_bytes: release.artifact_bytes,
+      status: "failed",
+      error: `${err}`,
+    });
+    throw err;
+  }
 }
