@@ -255,6 +255,15 @@ The primary identity of a RootFS release should be:
 This key represents the complete logical RootFS content, independent of how we
 store or transport that release.
 
+This does **not** mean we stop hashing the btrfs send stream artifacts. It
+means we separate:
+
+- logical release identity: `content_key`
+- exact stored artifact identity: `btrfs_stream_sha256`, `tar_zst_sha256`, etc.
+
+That distinction becomes necessary once incrementals exist, because the same
+logical release may have more than one transport artifact over time.
+
 and the system should also store:
 
 - `artifact_kind`
@@ -559,6 +568,30 @@ For the hosted product:
 - secondary fallback format: tar.zst in R2,
 - tertiary fallback: OCI pull/import path for bootstrap and recovery.
 
+### Transport strategy
+
+We should support both of the following artifact-upload modes:
+
+- staged upload
+  - `btrfs send` to a local file, then upload that file
+- direct streaming upload
+  - `btrfs send` streamed directly into the R2 multipart uploader
+
+My recommendation is:
+
+- keep both modes in the design,
+- use direct streaming as the preferred hosted steady-state path,
+- keep staged upload as a fallback/debug path and for self-hosted situations
+  where disk is fast but uplink bandwidth is poor.
+
+Why keep both:
+
+- direct streaming avoids an extra local write plus read and may be materially
+  better on slow cloud disks,
+- staged upload is simpler to retry, inspect, and resume operationally,
+- we already have working file-based send/receive code, so it is a good first
+  R2 implementation path and a useful fallback forever.
+
 ### Why this is the right choice
 
 Because the official CPU image will likely be large. Even if it is only
@@ -747,7 +780,10 @@ Recommended publish path:
    - reconstruct the effective merged rootfs,
    - materialize it into a canonical btrfs subvolume,
    - compute `content_key`,
-   - upload to R2,
+   - compute exact artifact hash and byte count while exporting,
+   - upload to R2 using either:
+     - staged file upload, or
+     - direct streaming upload,
    - create DB rows.
 
 This avoids races with a live changing upperdir.
@@ -1260,6 +1296,7 @@ of the launch-critical RootFS effort.
 - decide whether `rootfs_aliases` ships in v1 or later.
 
 Status:
+
 - mostly complete
 
 ### Phase 1: Central schema and APIs
@@ -1271,6 +1308,7 @@ Status:
 - add APIs to list/select/promote/publish.
 
 Status:
+
 - largely implemented for projects and catalog
 - course references still missing
 
@@ -1281,6 +1319,7 @@ Status:
 - make its output the canonical R2 btrfs artifact plus DB registration.
 
 Status:
+
 - not done
 - this should now be re-scoped around R2-backed releases, not the older
   parallel GCP image builder as product architecture
@@ -1294,6 +1333,7 @@ Status:
 - enforce dependency-aware artifact GC.
 
 Status:
+
 - designed
 - not implemented
 
@@ -1305,6 +1345,7 @@ Status:
 - add host UI.
 
 Status:
+
 - mostly implemented through the current hub-local artifact backend
 - R2 fetch is the next major missing piece
 
@@ -1316,6 +1357,7 @@ Status:
 - add explicit image change / switch back / update workflow.
 
 Status:
+
 - implemented for project creation and project settings
 - still needs more lifecycle polish around sharing/admin workflows
 
@@ -1327,6 +1369,7 @@ Status:
 - inspect provenance and usage.
 
 Status:
+
 - partial
 - basic catalog/admin controls exist, but this needs dedicated admin polish
 
@@ -1336,6 +1379,7 @@ Status:
 - student-project provisioning with exact release binding.
 
 Status:
+
 - not implemented
 
 ### Phase 8: Benchmarking and hardening
@@ -1347,6 +1391,7 @@ Status:
 - run soak/load tests around image churn and cache pressure.
 
 Status:
+
 - correctness-oriented baseline measurements exist
 - next real benchmark round should happen after R2 is in place and on better
   disks
