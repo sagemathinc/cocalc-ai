@@ -127,9 +127,7 @@ jest.mock("@cocalc/frontend/lite", () => ({
 
 jest.mock("@cocalc/frontend/account/settings-button", () => ({
   __esModule: true,
-  default: ({ label }: any) => (
-    <div data-testid="rail-settings-button">{label ?? "settings"}</div>
-  ),
+  default: () => <div data-testid="account-settings-button">settings</div>,
 }));
 jest.mock("@cocalc/frontend/ssh", () => ({
   RemoteSshButton: () => null,
@@ -208,13 +206,7 @@ describe("VerticalFixedTabs overflow actions", () => {
 
     expect(screen.queryByTestId("rail-workspaces")).toBeNull();
     expect(screen.queryByTestId("menu-overflow:log")).toBeNull();
-    expect(screen.queryByTestId("rail-settings-button")).toBeNull();
-  });
-
-  it("shows the account settings button at the bottom of the rail", () => {
-    render(<VerticalFixedTabs setHomePageButtonWidth={() => {}} />);
-
-    expect(screen.getByTestId("rail-settings-button")).toBeTruthy();
+    expect(screen.queryByTestId("account-settings-button")).toBeNull();
   });
 });
 

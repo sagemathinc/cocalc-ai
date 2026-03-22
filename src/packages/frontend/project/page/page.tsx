@@ -156,7 +156,7 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
   );
 
   const narrowerPX = useMemo(() => {
-    return hideActionButtons ? homePageButtonWidth : 0;
+    return hideActionButtons ? 84 : 0;
   }, [hideActionButtons, homePageButtonWidth]);
   const [workspaceStartupGuard, setWorkspaceStartupGuard] =
     useState<boolean>(true);
@@ -450,7 +450,7 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
           <HomePageButton
             project_id={project_id}
             active={active_project_tab == "home"}
-            width={homePageButtonWidth}
+            width={hideActionButtons ? 84 : homePageButtonWidth}
           />
           <div style={{ flex: 1 }} />
         </div>
@@ -465,7 +465,7 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
         <HomePageButton
           project_id={project_id}
           active={active_project_tab == "home"}
-          width={homePageButtonWidth}
+          width={hideActionButtons ? 84 : homePageButtonWidth}
         />
         {renderFlyoutHeader()}
         <div style={{ flex: 1, overflow: "hidden", display: "flex" }}>
