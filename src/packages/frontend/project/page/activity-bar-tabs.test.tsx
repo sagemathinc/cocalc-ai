@@ -4,6 +4,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 
 const mockSetActiveTab = jest.fn();
 const mockToggleFlyout = jest.fn();
+const mockToggleActionButtons = jest.fn();
 const mockSetOtherSettings = jest.fn();
 let mockAccountStoreReady = true;
 
@@ -46,7 +47,8 @@ jest.mock("antd", () => {
       </div>
     </div>
   );
-  const Modal = ({ children }: any) => <div>{children}</div>;
+  const Modal = ({ children, open }: any) =>
+    open ? <div>{children}</div> : null;
   const Tooltip = ({ children }: any) => children;
   return { Button, Checkbox, Dropdown, Modal, Tooltip };
 });
@@ -109,7 +111,7 @@ jest.mock("@cocalc/frontend/project/context", () => ({
     actions: {
       set_active_tab: mockSetActiveTab,
       toggleFlyout: mockToggleFlyout,
-      toggleActionButtons: jest.fn(),
+      toggleActionButtons: mockToggleActionButtons,
     },
     project_id: "project-1",
     active_project_tab: "files",
@@ -161,12 +163,16 @@ jest.mock("./file-tab", () => ({
   },
 }));
 
-import { VerticalFixedTabs } from "./activity-bar-tabs";
+import {
+  HiddenActivityBarLauncher,
+  VerticalFixedTabs,
+} from "./activity-bar-tabs";
 
 describe("VerticalFixedTabs overflow actions", () => {
   beforeEach(() => {
     mockSetActiveTab.mockReset();
     mockToggleFlyout.mockReset();
+    mockToggleActionButtons.mockReset();
     mockSetOtherSettings.mockReset();
     mockAccountStoreReady = true;
     (global as any).ResizeObserver = class {
@@ -209,5 +215,43 @@ describe("VerticalFixedTabs overflow actions", () => {
     render(<VerticalFixedTabs setHomePageButtonWidth={() => {}} />);
 
     expect(screen.getByTestId("rail-settings-button")).toBeTruthy();
+  });
+});
+
+describe("HiddenActivityBarLauncher", () => {
+  beforeEach(() => {
+    mockSetActiveTab.mockReset();
+    mockToggleFlyout.mockReset();
+    mockToggleActionButtons.mockReset();
+    mockSetOtherSettings.mockReset();
+    mockAccountStoreReady = true;
+  });
+
+  it("opens a flyout from the hidden launcher on ordinary click", () => {
+    render(<HiddenActivityBarLauncher />);
+
+    fireEvent.click(screen.getByTestId("menu-launcher:log"));
+
+    expect(mockToggleFlyout).toHaveBeenCalledWith("log");
+    expect(mockSetActiveTab).not.toHaveBeenCalled();
+  });
+
+  it("opens a full page from the hidden launcher on modifier click", () => {
+    render(<HiddenActivityBarLauncher />);
+
+    fireEvent.click(screen.getByTestId("menu-launcher:log"), {
+      ctrlKey: true,
+    });
+
+    expect(mockSetActiveTab).toHaveBeenCalledWith("log");
+    expect(mockToggleFlyout).not.toHaveBeenCalled();
+  });
+
+  it("shows the activity bar from the hidden launcher menu", () => {
+    render(<HiddenActivityBarLauncher />);
+
+    fireEvent.click(screen.getByTestId("menu-launcher:toggle-activity-bar"));
+
+    expect(mockToggleActionButtons).toHaveBeenCalled();
   });
 });

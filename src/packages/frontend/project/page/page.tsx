@@ -4,8 +4,7 @@
  */
 
 import { DndContext, useDraggable } from "@dnd-kit/core";
-import { Alert, Button, Modal, Space, Tooltip } from "antd";
-import { useIntl } from "react-intl";
+import { Alert, Button, Modal, Space } from "antd";
 import {
   React,
   redux,
@@ -25,7 +24,6 @@ import {
   defaultFrameContext,
 } from "@cocalc/frontend/frame-editors/frame-tree/frame-context";
 import StudentPayUpgrade from "@cocalc/frontend/purchases/student-pay";
-import track from "@cocalc/frontend/user-tracking";
 import { EDITOR_PREFIX, path_to_tab, tab_to_path } from "@cocalc/util/misc";
 import { pathMatchesWorkspace } from "@cocalc/conat/workspaces";
 import { COLORS } from "@cocalc/util/theme";
@@ -54,11 +52,11 @@ import {
 import HomePageButton from "./home-page/button";
 import ProjectTabs, {
   FIXED_TABS_BG_COLOR,
+  HiddenActivityBarLauncher,
   VerticalFixedTabs,
 } from "./activity-bar-tabs";
 import { throttle } from "lodash";
 import { StartButton } from "@cocalc/frontend/project/start-button";
-import { TOGGLE_ACTIVITY_BAR_TOGGLE_BUTTON_SPACE } from "./activity-bar-consts";
 import { useHostInfo } from "@cocalc/frontend/projects/host-info";
 import {
   evaluateHostOperational,
@@ -89,7 +87,6 @@ interface Props {
 
 export const ProjectPage: React.FC<Props> = (props: Props) => {
   const { project_id, is_active } = props;
-  const intl = useIntl();
   const projectPageRef = useRef<HTMLDivElement>(null);
   const mainRef = useRef<HTMLDivElement>(null);
   const [mainWidthPx, setMainWidthPx] = useState<number>(0);
@@ -449,6 +446,7 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
     if (workspaceBlocked) {
       return (
         <div style={{ display: "flex", height: "36px" }}>
+          {hideActionButtons ? <HiddenActivityBarLauncher /> : null}
           <HomePageButton
             project_id={project_id}
             active={active_project_tab == "home"}
@@ -463,6 +461,7 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
     // this was part of the container-content div, which makes little sense for e.g. the banner bars
     return (
       <div style={{ display: "flex", height: "36px" }}>
+        {hideActionButtons ? <HiddenActivityBarLauncher /> : null}
         <HomePageButton
           project_id={project_id}
           active={active_project_tab == "home"}
@@ -481,44 +480,7 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
     if (fullscreen && fullscreen !== "project") return;
 
     if (hideActionButtons) {
-      return (
-        <Tooltip
-          title={intl.formatMessage({
-            id: "project.page.activity-bar.show.tooltip",
-            defaultMessage: "Show the activity bar",
-            description: "This shows the vertical activity bar in the UI",
-          })}
-          placement="rightTop"
-        >
-          <Button
-            size="small"
-            type="text"
-            style={{
-              position: "fixed",
-              bottom: "0px",
-              marginBottom: TOGGLE_ACTIVITY_BAR_TOGGLE_BUTTON_SPACE,
-              left: "0px",
-              zIndex: 1000,
-              outline: `1px solid ${
-                workspaceChrome?.activityBarBorder ?? COLORS.GRAY_L
-              }`,
-              borderRadius: "0 3px 0 0 ",
-              background: workspaceChrome?.activityBarBackground,
-              backgroundColor:
-                workspaceChrome == null ? COLORS.GRAY_LLL : undefined,
-              boxShadow: workspaceChrome
-                ? `inset -2px 0 0 ${workspaceChrome.activityBarBorder}`
-                : undefined,
-            }}
-            onClick={() => {
-              track("action-bar", { action: "show" });
-              actions?.toggleActionButtons();
-            }}
-          >
-            <Icon name="vertical-left-outlined" />
-          </Button>
-        </Tooltip>
-      );
+      return null;
     } else {
       return (
         <div
