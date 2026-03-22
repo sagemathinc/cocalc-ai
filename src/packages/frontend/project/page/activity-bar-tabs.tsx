@@ -54,6 +54,7 @@ import {
   normalizeHiddenFixedTabs,
   splitRailTabs,
 } from "./activity-bar-preferences";
+import { hasModifierKey } from "./utils";
 
 const INDICATOR_STYLE: React.CSSProperties = {
   overflow: "hidden",
@@ -293,7 +294,20 @@ export function VerticalFixedTabs({
     if (tab != null) items.push(tab);
   }
 
-  function openOverflowTab(name: FixedTab): void {
+  function openOverflowTab(
+    name: FixedTab,
+    domEvent?: Pick<MouseEvent, "ctrlKey" | "shiftKey" | "metaKey"> | null,
+  ): void {
+    const canOpenFullPage = !FIXED_PROJECT_TABS[name].noFullPage;
+    if (canOpenFullPage && hasModifierKey(domEvent)) {
+      actions?.set_active_tab(name);
+      track("action-bar", {
+        action: "open-overflow-full-page",
+        name,
+        project_id,
+      });
+      return;
+    }
     actions?.toggleFlyout(name);
     track("action-bar", {
       action: "open-overflow-flyout",
@@ -312,7 +326,7 @@ export function VerticalFixedTabs({
         <Icon name={FIXED_PROJECT_TABS[name].icon} />,
         renderFixedTabLabel(name, intl),
       ),
-      onClick: () => openOverflowTab(name),
+      onClick: ({ domEvent }) => openOverflowTab(name, domEvent),
     }));
     if (overflowTabs.length > 0) {
       items.push({ key: "divider-overflow", type: "divider" });

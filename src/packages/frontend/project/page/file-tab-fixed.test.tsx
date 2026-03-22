@@ -138,7 +138,7 @@ describe("FileTab fixed-tab behavior", () => {
     expect(mockToggleFlyout).not.toHaveBeenCalled();
   });
 
-  it("opens the full page on double click", () => {
+  it("keeps opening the flyout on double click", () => {
     const { container } = render(
       <FileTab
         project_id="project-1"
@@ -150,7 +150,7 @@ describe("FileTab fixed-tab behavior", () => {
     );
     const tab = container.querySelector('[cocalc-test="Agents"]') as Element;
     fireEvent.click(tab, { detail: 2 });
-    expect(mockSetActiveTab).toHaveBeenCalledWith("agents");
-    expect(mockToggleFlyout).not.toHaveBeenCalled();
+    expect(mockToggleFlyout).toHaveBeenCalledWith("agents");
+    expect(mockSetActiveTab).not.toHaveBeenCalled();
   });
 });
