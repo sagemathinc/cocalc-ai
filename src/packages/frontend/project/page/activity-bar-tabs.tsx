@@ -8,20 +8,34 @@ Tabs in a particular project.
 */
 
 import type { MenuProps } from "antd";
-import { Button, Dropdown, Tooltip } from "antd";
+import { Button, Checkbox, Dropdown, Modal, Tooltip } from "antd";
 import { debounce, throttle } from "lodash";
-import { ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  ReactNode,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useIntl } from "react-intl";
 import { CSS, useActions, useTypedRedux } from "@cocalc/frontend/app-framework";
 import useAppContext from "@cocalc/frontend/app/use-context";
 import { ChatIndicator } from "@cocalc/frontend/chat/chat-indicator";
 import { Icon, type IconName } from "@cocalc/frontend/components";
+import {
+  DragHandle,
+  SortableItem,
+  SortableList,
+} from "@cocalc/frontend/components/sortable-list";
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import track from "@cocalc/frontend/user-tracking";
 import { tab_to_path } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 import {
+  ACTIVITY_BAR_HIDDEN_TABS,
   ACTIVITY_BAR_LABELS,
+  ACTIVITY_BAR_TAB_ORDER,
   ACTIVITY_BAR_TOGGLE_LABELS,
   TOGGLE_ACTIVITY_BAR_TOGGLE_BUTTON_SPACE,
 } from "./activity-bar-consts";
@@ -36,6 +50,14 @@ import {
   type WorkspaceStrongThemeChrome,
   workspaceStrongThemeChrome,
 } from "../workspaces/strong-theme";
+import {
+  getDefaultFixedTabOrder,
+  getDefaultHiddenFixedTabs,
+  moveFixedTab,
+  normalizeFixedTabOrder,
+  normalizeHiddenFixedTabs,
+  splitRailTabs,
+} from "./activity-bar-preferences";
 
 const INDICATOR_STYLE: React.CSSProperties = {
   overflow: "hidden",
@@ -114,14 +136,38 @@ export function VerticalFixedTabs({
     active_project_tab: activeTab,
     workspaces,
   } = useProjectContext();
+  const account_settings = useActions("account");
   const { showActBarLabels } = useAppContext();
   const active_flyout = useTypedRedux({ project_id }, "flyout");
+  const other_settings = useTypedRedux("account", "other_settings");
   const parent = useRef<HTMLDivElement>(null);
   const gap = useRef<HTMLDivElement>(null);
   const breakPoint = useRef<number>(0);
   const refCondensed = useRef<boolean>(false);
   const [condensed, setCondensed] = useState(false);
+  const [showCustomize, setShowCustomize] = useState(false);
   const workspaceChrome = workspaceStrongThemeChrome(workspaces.current);
+  const tabOrder = useMemo(
+    () =>
+      normalizeFixedTabOrder(other_settings?.get?.(ACTIVITY_BAR_TAB_ORDER), {
+        liteMode: lite,
+      }),
+    [other_settings],
+  );
+  const hiddenTabs = useMemo(
+    () =>
+      normalizeHiddenFixedTabs(
+        other_settings?.get?.(ACTIVITY_BAR_HIDDEN_TABS),
+        {
+          liteMode: lite,
+        },
+      ),
+    [other_settings],
+  );
+  const { visible: pinnedTabs, overflow: overflowTabs } = useMemo(
+    () => splitRailTabs(tabOrder, hiddenTabs),
+    [hiddenTabs, tabOrder],
+  );
 
   const calcCondensed = throttle(
     () => {
@@ -186,12 +232,7 @@ export function VerticalFixedTabs({
   }, [condensed, showActBarLabels, parent.current, gap.current]);
 
   const items: ReactNode[] = [];
-  for (const nameStr in FIXED_PROJECT_TABS) {
-    const name: FixedTab = nameStr as FixedTab; // helping TS a little bit
-    const v = FIXED_PROJECT_TABS[name];
-    if (lite && v.noLite) {
-      continue;
-    }
+  for (const name of pinnedTabs) {
     const color =
       activeTab == name
         ? { color: COLORS.PROJECT.FIXED_LEFT_ACTIVE }
@@ -255,6 +296,70 @@ export function VerticalFixedTabs({
     if (tab != null) items.push(tab);
   }
 
+  function openOverflowTab(name: FixedTab): void {
+    actions?.toggleFlyout(name);
+    track("action-bar", {
+      action: "open-overflow-flyout",
+      name,
+      project_id,
+    });
+  }
+
+  function renderOverflowMenu(): ReactNode {
+    if (overflowTabs.length === 0) return null;
+    const isActive =
+      active_flyout != null && overflowTabs.includes(active_flyout);
+    const items: NonNullable<MenuProps["items"]> = overflowTabs.map((name) => ({
+      key: name,
+      label: (
+        <span>
+          <Icon name={FIXED_PROJECT_TABS[name].icon} />{" "}
+          {renderFixedTabLabel(name, intl)}
+        </span>
+      ),
+      onClick: () => openOverflowTab(name),
+    }));
+    return (
+      <Tooltip title="More panels" placement="rightTop">
+        <Dropdown menu={{ items }} trigger={["click"]} placement="topRight">
+          <Button
+            size="small"
+            type="text"
+            block
+            style={{
+              marginTop: "2px",
+              marginBottom: "2px",
+              borderLeft: `4px solid ${
+                isActive ? COLORS.PROJECT.FIXED_LEFT_ACTIVE : "transparent"
+              }`,
+              background: isActive
+                ? COLORS.BLUE_LLLL
+                : workspaceChrome?.activityBarBackground,
+              color: isActive ? COLORS.PROJECT.FIXED_LEFT_ACTIVE : undefined,
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: showActBarLabels ? "flex-start" : "center",
+                gap: showActBarLabels ? "8px" : undefined,
+                minHeight: condensed ? "36px" : "40px",
+              }}
+            >
+              <Icon
+                name="ellipsis"
+                rotate="90"
+                style={{ fontSize: condensed ? "18px" : "24px" }}
+              />
+              {showActBarLabels ? <span>More</span> : null}
+            </div>
+          </Button>
+        </Dropdown>
+      </Tooltip>
+    );
+  }
+
   function renderToggleActivityBar() {
     return (
       <Tooltip
@@ -300,20 +405,45 @@ export function VerticalFixedTabs({
       }}
     >
       {items}
+      {renderOverflowMenu()}
       {/* moves the layout selector to the bottom */}
       <div ref={gap} style={{ flex: 1 }}></div>
       {/* moves hide switch to the bottom */}
-      <LayoutSelector workspaceChrome={workspaceChrome} />
+      <LayoutSelector
+        workspaceChrome={workspaceChrome}
+        onCustomize={() => setShowCustomize(true)}
+      />
       {renderToggleActivityBar()}
+      <CustomizeRailButtonsModal
+        hiddenTabs={hiddenTabs}
+        open={showCustomize}
+        onClose={() => setShowCustomize(false)}
+        onSave={(nextOrder, nextHidden) => {
+          account_settings.set_other_settings(
+            ACTIVITY_BAR_TAB_ORDER,
+            nextOrder,
+          );
+          account_settings.set_other_settings(
+            ACTIVITY_BAR_HIDDEN_TABS,
+            nextHidden,
+          );
+          setShowCustomize(false);
+        }}
+        order={tabOrder}
+      />
     </div>
   );
 }
 
 type LayoutSelectorProps = {
   workspaceChrome: WorkspaceStrongThemeChrome | null;
+  onCustomize: () => void;
 };
 
-function LayoutSelector({ workspaceChrome }: Readonly<LayoutSelectorProps>) {
+function LayoutSelector({
+  workspaceChrome,
+  onCustomize,
+}: Readonly<LayoutSelectorProps>) {
   const intl = useIntl();
   const [open, setOpen] = useState(false);
   const { showActBarLabels } = useAppContext();
@@ -336,6 +466,16 @@ function LayoutSelector({ workspaceChrome }: Readonly<LayoutSelectorProps>) {
         !showActBarLabels,
       );
     },
+  });
+  items.push({ key: "divider-1", type: "divider" });
+  items.push({
+    key: "customize",
+    label: (
+      <span>
+        <Icon name="sliders" /> Customize buttons
+      </span>
+    ),
+    onClick: onCustomize,
   });
 
   return (
@@ -368,6 +508,135 @@ function LayoutSelector({ workspaceChrome }: Readonly<LayoutSelectorProps>) {
         />
       </Dropdown>
     </div>
+  );
+}
+
+function renderFixedTabLabel(name: FixedTab, intl): ReactNode {
+  const label = FIXED_PROJECT_TABS[name].label;
+  return typeof label === "string" ? label : intl.formatMessage(label as any);
+}
+
+interface CustomizeRailButtonsModalProps {
+  open: boolean;
+  onClose: () => void;
+  onSave: (order: FixedTab[], hidden: FixedTab[]) => void;
+  order: FixedTab[];
+  hiddenTabs: FixedTab[];
+}
+
+function CustomizeRailButtonsModal({
+  open,
+  onClose,
+  onSave,
+  order,
+  hiddenTabs,
+}: Readonly<CustomizeRailButtonsModalProps>) {
+  const intl = useIntl();
+  const [draftOrder, setDraftOrder] = useState<FixedTab[]>(order);
+  const [draftHidden, setDraftHidden] = useState<FixedTab[]>(hiddenTabs);
+  const hiddenSet = useMemo(() => new Set(draftHidden), [draftHidden]);
+
+  useEffect(() => {
+    if (!open) return;
+    setDraftOrder(order);
+    setDraftHidden(hiddenTabs);
+  }, [hiddenTabs, open, order]);
+
+  function setTabVisible(name: FixedTab, nextVisible: boolean): void {
+    if (nextVisible) {
+      setDraftHidden((current) => current.filter((item) => item !== name));
+      return;
+    }
+    const visibleCount = draftOrder.filter(
+      (item) => !hiddenSet.has(item),
+    ).length;
+    if (visibleCount <= 1) return;
+    setDraftHidden((current) =>
+      current.includes(name) ? current : [...current, name],
+    );
+  }
+
+  const defaultsOrder = getDefaultFixedTabOrder({ liteMode: lite });
+  const defaultsHidden = getDefaultHiddenFixedTabs({ liteMode: lite });
+
+  return (
+    <Modal
+      open={open}
+      onCancel={onClose}
+      title="Customize left rail"
+      width={520}
+      okText="Save"
+      onOk={() => onSave(draftOrder, draftHidden)}
+      footer={[
+        <Button
+          key="reset"
+          onClick={() => {
+            setDraftOrder(defaultsOrder);
+            setDraftHidden(defaultsHidden);
+          }}
+        >
+          Reset defaults
+        </Button>,
+        <Button key="cancel" onClick={onClose}>
+          Cancel
+        </Button>,
+        <Button
+          key="save"
+          type="primary"
+          onClick={() => onSave(draftOrder, draftHidden)}
+        >
+          Save
+        </Button>,
+      ]}
+    >
+      <p style={{ color: COLORS.GRAY }}>
+        Drag to reorder buttons. Uncheck a button to move it into the More menu.
+        These preferences are stored per user.
+      </p>
+      <SortableList
+        items={draftOrder}
+        onDragStop={(oldIndex, newIndex) =>
+          setDraftOrder((current) => moveFixedTab(current, oldIndex, newIndex))
+        }
+      >
+        {draftOrder.map((name) => {
+          const visible = !hiddenSet.has(name);
+          return (
+            <SortableItem key={name} id={name}>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "10px",
+                  padding: "8px 0",
+                  opacity: visible ? 1 : 0.6,
+                  borderBottom: `1px solid ${COLORS.GRAY_LLL}`,
+                }}
+              >
+                <Checkbox
+                  checked={visible}
+                  onChange={(e) => setTabVisible(name, e.target.checked)}
+                />
+                <Icon name={FIXED_PROJECT_TABS[name].icon} />
+                <div style={{ flex: 1 }}>
+                  {renderFixedTabLabel(name, intl)}
+                  <div
+                    style={{
+                      color: COLORS.GRAY,
+                      fontSize: "12px",
+                      marginTop: "2px",
+                    }}
+                  >
+                    {visible ? "Pinned to rail" : "Shown in More"}
+                  </div>
+                </div>
+                <DragHandle id={name} />
+              </div>
+            </SortableItem>
+          );
+        })}
+      </SortableList>
+    </Modal>
   );
 }
 
