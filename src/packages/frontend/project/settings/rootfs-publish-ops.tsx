@@ -1,4 +1,5 @@
-import { Progress, Space, Tag } from "antd";
+import { Button, Popover, Progress, Space, Tag } from "antd";
+import { useState } from "react";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { TimeAgo } from "@cocalc/frontend/components";
 import {
@@ -6,6 +7,7 @@ import {
   progressBarStatus,
 } from "@cocalc/frontend/lro/utils";
 import type { RootfsPublishLroState } from "@cocalc/frontend/project/rootfs-publish-ops";
+import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type { LroStatus } from "@cocalc/conat/hub/api/lro";
 
 const PHASE_LABELS: Record<string, string> = {
@@ -25,12 +27,7 @@ export default function RootfsPublishOps({
   const publishOps =
     useTypedRedux({ project_id }, "rootfs_publish_ops")?.toJS() ?? {};
   const entries = Object.values(publishOps) as RootfsPublishLroState[];
-  const visible = entries.filter((op) => {
-    if (!op.summary) return true;
-    return !(
-      op.summary.status === "succeeded" && op.summary.dismissed_at != null
-    );
-  });
+  const visible = entries.filter((op) => op.summary?.dismissed_at == null);
   if (!visible.length) {
     return null;
   }
@@ -57,12 +54,20 @@ export default function RootfsPublishOps({
 }
 
 function RootfsPublishRow({ op }: { op: RootfsPublishLroState }) {
+  const [detailsOpen, setDetailsOpen] = useState<boolean>(false);
+  const [dismissed, setDismissed] = useState<boolean>(false);
   const percent = progressPercent(op);
   const status = op.summary?.status;
   const phase = phaseLabel(op);
   const message = op.last_progress?.message ?? statusLabel(status);
   const progressStatus = progressBarStatus(status);
   const resultImage = `${op.summary?.result?.image ?? ""}`.trim();
+  const errorText = `${op.summary?.error ?? ""}`.trim();
+  const dismissible = !!status && LRO_TERMINAL_STATUSES.has(status);
+
+  if (dismissed) {
+    return null;
+  }
 
   return (
     <div style={{ marginBottom: "6px" }}>
@@ -92,6 +97,44 @@ function RootfsPublishRow({ op }: { op: RootfsPublishLroState }) {
           <span style={{ fontSize: "11px", color: "#999" }}>
             <TimeAgo date={op.summary.updated_at} />
           </span>
+        ) : null}
+        {errorText ? (
+          <Popover
+            trigger="click"
+            open={detailsOpen}
+            onOpenChange={setDetailsOpen}
+            placement="bottomLeft"
+            content={
+              <div
+                style={{
+                  maxWidth: "640px",
+                  whiteSpace: "pre-wrap",
+                  fontFamily: "monospace",
+                  fontSize: "12px",
+                }}
+              >
+                {errorText}
+              </div>
+            }
+          >
+            <Button type="link" size="small">
+              Details
+            </Button>
+          </Popover>
+        ) : null}
+        {dismissible ? (
+          <Button
+            type="link"
+            size="small"
+            onClick={async () => {
+              await webapp_client.conat_client.hub.lro.dismiss({
+                op_id: op.op_id,
+              });
+              setDismissed(true);
+            }}
+          >
+            Dismiss
+          </Button>
         ) : null}
       </Space>
     </div>

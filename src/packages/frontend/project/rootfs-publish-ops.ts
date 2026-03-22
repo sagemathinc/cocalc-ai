@@ -36,7 +36,7 @@ export class RootfsPublishOpsManager {
       kind: ROOTFS_PUBLISH_LRO_KIND,
       scope_type: "project",
       scope_id: opts.project_id,
-      include_completed: false,
+      include_completed: true,
       retainTerminal: true,
       refreshMs: 30_000,
       listLro: opts.listLro,

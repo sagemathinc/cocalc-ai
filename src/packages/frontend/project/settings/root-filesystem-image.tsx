@@ -280,6 +280,7 @@ export default function RootFilesystemImage() {
         .map((tag) => tag.trim())
         .filter(Boolean);
       if (publishMode === "copy" && publishCopyMode === "project") {
+        setOpen(false);
         setPublishOpen(false);
         const op = await publishProjectRootfsImage({
           project_id: project.get("project_id"),
