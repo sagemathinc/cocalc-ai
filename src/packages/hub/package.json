@@ -7,7 +7,7 @@
     "./run/*": "./run/*.js"
   },
   "dependencies": {
-    "@cocalc/api-v2": "workspace:*",
+    "@cocalc/http-api": "workspace:*",
     "@cocalc/assets": "workspace:*",
     "@cocalc/backend": "workspace:*",
     "@cocalc/cdn": "workspace:*",

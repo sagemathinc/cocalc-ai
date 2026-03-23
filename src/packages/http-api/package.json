@@ -1,7 +1,7 @@
 {
-  "name": "@cocalc/api-v2",
+  "name": "@cocalc/http-api",
   "version": "0.1.0",
-  "description": "CoCalc api/v2 router and handlers",
+  "description": "CoCalc HTTP API router and handlers",
   "main": "./dist/index.js",
   "exports": {
     ".": "./dist/index.js"
@@ -20,7 +20,7 @@
     "generate-api-v2-manifest": "node ./scripts/generate-api-v2-manifest.js",
     "test": "NODE_ENV='dev' pnpm exec jest",
     "test-api": "NODE_ENV='production' pnpm exec jest ./lib/api/framework.test.ts",
-    "depcheck": "pnpm -w exec depcheck \"$PWD\" --ignores lib,pages,@cocalc/api-v2"
+    "depcheck": "pnpm -w exec depcheck \"$PWD\" --ignores lib,pages,@cocalc/http-api"
   },
   "repository": {
     "type": "git",
@@ -28,7 +28,7 @@
   },
   "author": "SageMath, Inc.",
   "license": "SEE LICENSE IN LICENSE.md",
-  "homepage": "https://github.com/sagemathinc/cocalc/tree/master/src/packages/api-v2",
+  "homepage": "https://github.com/sagemathinc/cocalc/tree/master/src/packages/http-api",
   "dependencies": {
     "@cocalc/backend": "workspace:*",
     "@cocalc/conat": "workspace:*",

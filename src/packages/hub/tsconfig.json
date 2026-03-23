@@ -7,7 +7,7 @@
   },
   "exclude": ["node_modules", "dist", "test"],
   "references": [
-    { "path": "../api-v2" },
+    { "path": "../http-api" },
     { "path": "../backend" },
     { "path": "../database" },
     { "path": "../frontend" },

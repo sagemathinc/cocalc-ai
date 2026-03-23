@@ -60,13 +60,13 @@ function prependPath(dir) {
       }
     }
     const apiRootCandidates = [
-      join(bundleDir, "api-v2-dist", "pages", "api", "v2"),
+      join(bundleDir, "http-api-dist", "pages", "api", "v2"),
       join(
         bundleDir,
         "bundle",
         "node_modules",
         "@cocalc",
-        "api-v2",
+        "http-api",
         "dist",
         "pages",
         "api",

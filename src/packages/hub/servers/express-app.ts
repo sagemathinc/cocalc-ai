@@ -36,7 +36,7 @@ import basePath from "@cocalc/backend/base-path";
 import { initConatServer } from "@cocalc/server/conat/socketio";
 import { conatSocketioCount, root } from "@cocalc/backend/data";
 import { ACCOUNT_ID_COOKIE_NAME } from "@cocalc/backend/auth/cookie-names";
-import { createApiV2Router } from "@cocalc/api-v2";
+import { createApiV2Router } from "@cocalc/http-api";
 import { ensureBootstrapAdminToken } from "@cocalc/server/auth/bootstrap-admin";
 import {
   getLicenseStatus,

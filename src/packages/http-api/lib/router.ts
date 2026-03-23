@@ -22,7 +22,7 @@ export interface ApiV2RouterOptions {
 export default function createApiV2Router(
   opts: ApiV2RouterOptions = {},
 ): express.Router {
-  const logger = getLogger("api-v2-router");
+  const logger = getLogger("http-api-router");
   const router = express.Router();
 
   router.use(express.json({ limit: "10mb" }));
@@ -79,13 +79,13 @@ function resolveApiRoot(override?: string): string {
   const bundleDir = process.env.COCALC_BUNDLE_DIR;
   if (bundleDir) {
     const bundledCandidates = [
-      join(bundleDir, "api-v2-dist", "pages", "api", "v2"),
+      join(bundleDir, "http-api-dist", "pages", "api", "v2"),
       join(
         bundleDir,
         "bundle",
         "node_modules",
         "@cocalc",
-        "api-v2",
+        "http-api",
         "dist",
         "pages",
         "api",
