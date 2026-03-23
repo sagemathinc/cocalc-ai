@@ -1,4 +1,4 @@
-import getAccountId from "lib/account/get-account";
+import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import { getChargesThisMonthByService } from "@cocalc/server/purchases/get-charges";
 
 export default async function handle(req, res) {

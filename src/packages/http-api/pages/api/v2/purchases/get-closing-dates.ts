@@ -2,7 +2,7 @@
 Return the last and next closing dates for this user.
 */
 
-import getAccountId from "lib/account/get-account";
+import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import {
   getLastClosingDate,
   getNextClosingDate,

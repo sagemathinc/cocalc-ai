@@ -6,9 +6,9 @@
 /* api call to unlink a specific single sign on for the currently authenticated user */
 
 import unlinkStrategy from "@cocalc/server/auth/sso/unlink-strategy";
-import getAccountId from "lib/account/get-account";
-import getParams from "lib/api/get-params";
-import { OkStatus } from "lib/api/status";
+import getAccountId from "@cocalc/http-api/lib/account/get-account";
+import getParams from "@cocalc/http-api/lib/api/get-params";
+import { OkStatus } from "@cocalc/http-api/lib/api/status";
 
 export default async function handle(req, res) {
   try {

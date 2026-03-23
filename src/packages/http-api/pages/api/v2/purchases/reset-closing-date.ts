@@ -2,9 +2,9 @@
 Set closing day to today (or 1 if today is >=29).
 */
 
-import getAccountId from "lib/account/get-account";
+import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import resetClosingDate from "@cocalc/server/purchases/reset-closing-date";
-import { OkStatus } from "lib/api/status";
+import { OkStatus } from "@cocalc/http-api/lib/api/status";
 
 export default async function handle(req, res) {
   try {

@@ -52,15 +52,15 @@ import {
   len,
 } from "@cocalc/util/misc";
 
-import getAccountId from "lib/account/get-account";
-import { apiRoute, apiRouteOperation } from "lib/api";
-import assertTrusted from "lib/api/assert-trusted";
-import getParams from "lib/api/get-params";
+import getAccountId from "@cocalc/http-api/lib/account/get-account";
+import { apiRoute, apiRouteOperation } from "@cocalc/http-api/lib/api";
+import assertTrusted from "@cocalc/http-api/lib/api/assert-trusted";
+import getParams from "@cocalc/http-api/lib/api/get-params";
 import {
   SignUpInputSchema,
   SignUpOutputSchema,
-} from "lib/api/schema/accounts/sign-up";
-import { SignUpIssues } from "lib/types/sign-up";
+} from "@cocalc/http-api/lib/api/schema/accounts/sign-up";
+import { SignUpIssues } from "@cocalc/http-api/lib/types/sign-up";
 import { getAccount, signUserIn } from "./sign-in";
 import {
   MAX_PASSWORD_LENGTH,

@@ -2,8 +2,8 @@
 Cost to renew one of your subscriptions right now for the next period. Returns {cost:...}.
 */
 
-import getAccountId from "lib/account/get-account";
-import getParams from "lib/api/get-params";
+import getAccountId from "@cocalc/http-api/lib/account/get-account";
+import getParams from "@cocalc/http-api/lib/api/get-params";
 import { costToResumeSubscription } from "@cocalc/server/purchases/resume-subscription";
 
 export default async function handle(req, res) {

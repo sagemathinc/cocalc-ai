@@ -3,8 +3,8 @@ Allows admins to get balance for a specific user.
 */
 
 import getBalance from "@cocalc/server/purchases/get-balance";
-import getAccountId from "lib/account/get-account";
-import getParams from "lib/api/get-params";
+import getAccountId from "@cocalc/http-api/lib/account/get-account";
+import getParams from "@cocalc/http-api/lib/api/get-params";
 import userIsInGroup from "@cocalc/server/accounts/is-in-group";
 
 export default async function handle(req, res) {

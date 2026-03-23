@@ -2,7 +2,7 @@
 Let user get all of their purchase quotas.
 */
 
-import getAccountId from "lib/account/get-account";
+import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import {
   getPurchaseQuotas,
   PurchaseQuotas,

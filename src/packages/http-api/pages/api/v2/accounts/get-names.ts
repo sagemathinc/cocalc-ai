@@ -8,8 +8,8 @@ exist or was deleted (instead of an error).
 There is about 30s of caching if you call this with the same input twice.
 */
 
-import getAccountId from "lib/account/get-account";
-import getParams from "lib/api/get-params";
+import getAccountId from "@cocalc/http-api/lib/account/get-account";
+import getParams from "@cocalc/http-api/lib/api/get-params";
 import { getNames } from "@cocalc/server/accounts/get-name";
 
 export default async function handle(req, res) {

@@ -1,8 +1,8 @@
 /* Request to save a particular public path. */
 
 import savePublicPath from "@cocalc/server/public-paths/save";
-import getAccountId from "lib/account/get-account";
-import getParams from "lib/api/get-params";
+import getAccountId from "@cocalc/http-api/lib/account/get-account";
+import getParams from "@cocalc/http-api/lib/api/get-params";
 
 export default async function handle(req, res) {
   try {

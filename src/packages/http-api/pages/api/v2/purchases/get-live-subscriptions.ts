@@ -2,7 +2,7 @@
 List of all live subscriptions [{id:number;cost:number;status:'unpaid'|'past_due'|'active'}, ...]
 */
 
-import getAccountId from "lib/account/get-account";
+import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import getLiveSubscriptions from "@cocalc/server/purchases/get-live-subscriptions";
 
 export default async function handle(req, res) {

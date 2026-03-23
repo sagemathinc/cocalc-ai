@@ -2,10 +2,10 @@
 Resume a subscription.
 */
 
-import getAccountId from "lib/account/get-account";
+import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import resumeSubscription from "@cocalc/server/purchases/resume-subscription";
-import getParams from "lib/api/get-params";
-import { OkStatus } from "lib/api/status";
+import getParams from "@cocalc/http-api/lib/api/get-params";
+import { OkStatus } from "@cocalc/http-api/lib/api/status";
 
 export default async function handle(req, res) {
   try {

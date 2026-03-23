@@ -3,7 +3,7 @@ Get customer object for the signed in user.  Error if user not signed in.
 */
 
 import getCustomer from "@cocalc/server/billing/get-customer";
-import getAccountId from "lib/account/get-account";
+import getAccountId from "@cocalc/http-api/lib/account/get-account";
 
 export default async function handle(req, res) {
   try {

@@ -2,7 +2,7 @@
 Get all unpaid invoices
 */
 
-import getAccountId from "lib/account/get-account";
+import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import getUnpaidInvoices from "@cocalc/server/purchases/get-unpaid-invoices";
 
 export default async function handle(req, res) {

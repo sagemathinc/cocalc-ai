@@ -2,12 +2,12 @@
 An admin can cancel anybody's payment intent, whereas a user can only cancel their own.
 */
 
-import getAccountId from "lib/account/get-account";
+import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import {
   cancelPaymentIntent,
   getPaymentIntentAccountId,
 } from "@cocalc/server/purchases/stripe/create-payment-intent";
-import getParams from "lib/api/get-params";
+import getParams from "@cocalc/http-api/lib/api/get-params";
 import userIsInGroup from "@cocalc/server/accounts/is-in-group";
 import throttle from "@cocalc/util/api/throttle";
 

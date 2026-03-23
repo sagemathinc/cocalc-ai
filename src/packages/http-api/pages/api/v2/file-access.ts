@@ -3,9 +3,9 @@ Get information about this user's activity to help them
 better find things.
 */
 
-import getAccountId from "lib/account/get-account";
+import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import getPool from "@cocalc/database/pool";
-import getParams from "lib/api/get-params";
+import getParams from "@cocalc/http-api/lib/api/get-params";
 
 export default async function handle(req, res) {
   const account_id = await getAccountId(req);

@@ -2,7 +2,7 @@
 Membership pricing + eligibility for in-app membership changes.
 */
 
-import getAccountId from "lib/account/get-account";
+import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import { computeMembershipChange } from "@cocalc/server/membership/tiers";
 import { isPurchaseAllowed } from "@cocalc/server/purchases/is-purchase-allowed";
 

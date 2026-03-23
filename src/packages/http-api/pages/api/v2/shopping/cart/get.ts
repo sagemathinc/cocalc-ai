@@ -4,8 +4,8 @@ ever removed from cart, and also everything ever purchased.
 */
 
 import getCart, { getItem, Item } from "@cocalc/server/shopping/cart/get";
-import getAccountId from "lib/account/get-account";
-import getParams from "lib/api/get-params";
+import getAccountId from "@cocalc/http-api/lib/account/get-account";
+import getParams from "@cocalc/http-api/lib/api/get-params";
 
 export default async function handle(req, res) {
   try {

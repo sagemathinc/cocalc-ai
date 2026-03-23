@@ -3,8 +3,8 @@ Handle a token action.
 */
 
 import handleTokenAction from "@cocalc/server/token-actions/handle";
-import getParams from "lib/api/get-params";
-import getAccountId from "lib/account/get-account";
+import getParams from "@cocalc/http-api/lib/api/get-params";
+import getAccountId from "@cocalc/http-api/lib/account/get-account";
 
 export default async function handle(req, res) {
   try {

@@ -8,13 +8,13 @@ Send verification email
 */
 
 import sendEmailVerification from "@cocalc/server/accounts/send-email-verification";
-import getAccountId from "lib/account/get-account";
-import { apiRoute, apiRouteOperation } from "lib/api";
-import { SuccessStatus } from "lib/api/status";
+import getAccountId from "@cocalc/http-api/lib/account/get-account";
+import { apiRoute, apiRouteOperation } from "@cocalc/http-api/lib/api";
+import { SuccessStatus } from "@cocalc/http-api/lib/api/status";
 import {
   SendAccountVerificationEmailInputSchema,
   SendAccountVerificationEmailOutputSchema,
-} from "lib/api/schema/accounts/send-verification-email";
+} from "@cocalc/http-api/lib/api/schema/accounts/send-verification-email";
 
 async function handle(req, res) {
   const account_id = await getAccountId(req);

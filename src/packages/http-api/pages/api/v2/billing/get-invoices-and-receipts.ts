@@ -3,7 +3,7 @@ Get invoices and receipts for the given user.
 */
 
 import getInvoicesAndReceipts from "@cocalc/server/billing/get-invoices-and-receipts";
-import getAccountId from "lib/account/get-account";
+import getAccountId from "@cocalc/http-api/lib/account/get-account";
 
 export default async function handle(req, res) {
   try {

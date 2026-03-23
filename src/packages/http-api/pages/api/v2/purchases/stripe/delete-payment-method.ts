@@ -1,6 +1,6 @@
 import deletePaymentMethod from "@cocalc/server/purchases/stripe/delete-payment-method";
-import getAccountId from "lib/account/get-account";
-import getParams from "lib/api/get-params";
+import getAccountId from "@cocalc/http-api/lib/account/get-account";
+import getParams from "@cocalc/http-api/lib/api/get-params";
 import throttle from "@cocalc/util/api/throttle";
 
 export default async function handle(req, res) {

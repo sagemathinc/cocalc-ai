@@ -5,15 +5,15 @@ Set project title, description, etc.
 import userIsInGroup from "@cocalc/server/accounts/is-in-group";
 import setProject from "@cocalc/server/projects/set-one";
 
-import getAccountId from "lib/account/get-account";
-import getParams from "lib/api/get-params";
+import getAccountId from "@cocalc/http-api/lib/account/get-account";
+import getParams from "@cocalc/http-api/lib/api/get-params";
 
-import { OkStatus } from "lib/api/status";
-import { apiRoute, apiRouteOperation } from "lib/api";
+import { OkStatus } from "@cocalc/http-api/lib/api/status";
+import { apiRoute, apiRouteOperation } from "@cocalc/http-api/lib/api";
 import {
   UpdateProjectInputSchema,
   UpdateProjectOutputSchema,
-} from "lib/api/schema/projects/update";
+} from "@cocalc/http-api/lib/api/schema/projects/update";
 
 async function handle(req, res) {
   try {

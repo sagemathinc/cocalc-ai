@@ -2,12 +2,12 @@
 Delete the account that the user is currently signed in using.
 */
 
-import getAccountId from "lib/account/get-account";
+import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import deleteAccount from "@cocalc/server/accounts/delete";
-import isPost from "lib/api/is-post";
-import { apiRoute, apiRouteOperation } from "lib/api";
-import { SuccessStatus } from "lib/api/status";
-import { DeleteAccountOutputSchema } from "lib/api/schema/accounts/delete";
+import isPost from "@cocalc/http-api/lib/api/is-post";
+import { apiRoute, apiRouteOperation } from "@cocalc/http-api/lib/api";
+import { SuccessStatus } from "@cocalc/http-api/lib/api/status";
+import { DeleteAccountOutputSchema } from "@cocalc/http-api/lib/api/schema/accounts/delete";
 
 async function handle(req, res) {
   try {

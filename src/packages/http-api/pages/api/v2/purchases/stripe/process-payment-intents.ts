@@ -1,4 +1,4 @@
-import getAccountId from "lib/account/get-account";
+import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import processPaymentIntents from "@cocalc/server/purchases/stripe/process-payment-intents";
 
 export default async function handle(req, res) {

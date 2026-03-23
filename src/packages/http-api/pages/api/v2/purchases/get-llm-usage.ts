@@ -2,7 +2,7 @@
 Return LLM usage status for the current account.
 */
 
-import getAccountId from "lib/account/get-account";
+import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import { getLLMUsageStatus } from "@cocalc/server/llm/usage-status";
 
 export default async function handle(req, res) {

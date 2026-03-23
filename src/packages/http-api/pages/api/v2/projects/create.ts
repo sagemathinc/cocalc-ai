@@ -3,9 +3,9 @@ API endpoint to create a new project.
 
 This requires the user to be signed in so they are allowed to create a project.
 */
-import getAccountId from "lib/account/get-account";
+import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import create from "@cocalc/server/projects/create";
-import getParams from "lib/api/get-params";
+import getParams from "@cocalc/http-api/lib/api/get-params";
 
 export default async function handle(req, res) {
   const { title, description, public_path_id } = getParams(req);

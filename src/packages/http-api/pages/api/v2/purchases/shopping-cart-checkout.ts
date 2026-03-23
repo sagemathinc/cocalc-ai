@@ -1,4 +1,4 @@
-import getAccountId from "lib/account/get-account";
+import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import { shoppingCartCheckout } from "@cocalc/server/purchases/shopping-cart-checkout";
 
 export default async function handle(req, res) {

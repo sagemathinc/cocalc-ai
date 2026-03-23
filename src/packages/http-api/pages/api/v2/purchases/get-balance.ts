@@ -3,7 +3,7 @@ Get balance right now.
 As a side effect, it updates the balance field of the accounts table.
 */
 
-import getAccountId from "lib/account/get-account";
+import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import getBalance from "@cocalc/server/purchases/get-balance";
 
 export default async function handle(req, res) {

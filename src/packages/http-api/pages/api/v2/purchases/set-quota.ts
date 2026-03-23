@@ -2,8 +2,8 @@
 Let user set one of their purchase quotas.
 */
 
-import getAccountId from "lib/account/get-account";
-import getParams from "lib/api/get-params";
+import getAccountId from "@cocalc/http-api/lib/account/get-account";
+import getParams from "@cocalc/http-api/lib/api/get-params";
 import {
   setPurchaseQuota,
   getPurchaseQuotas,

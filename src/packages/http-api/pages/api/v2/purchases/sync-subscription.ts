@@ -1,4 +1,4 @@
-import getAccountId from "lib/account/get-account";
+import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import { syncUsageBasedSubscription } from "@cocalc/server/purchases/stripe-usage-based-subscription";
 import { OkStatus } from "../../../../lib/api/status";
 

@@ -2,7 +2,7 @@
 Get spend rate right now of this user.
 */
 
-import getAccountId from "lib/account/get-account";
+import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import getSpendRate from "@cocalc/server/purchases/get-spend-rate";
 
 export default async function handle(req, res) {

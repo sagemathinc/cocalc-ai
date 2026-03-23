@@ -8,13 +8,13 @@ color, the name, and the image.
 
 import getProfile from "@cocalc/server/accounts/profile/get";
 import getPrivateProfile from "@cocalc/server/accounts/profile/private";
-import getAccountId from "lib/account/get-account";
-import getParams from "lib/api/get-params";
-import { apiRoute, apiRouteOperation } from "lib/api";
+import getAccountId from "@cocalc/http-api/lib/account/get-account";
+import getParams from "@cocalc/http-api/lib/api/get-params";
+import { apiRoute, apiRouteOperation } from "@cocalc/http-api/lib/api";
 import {
   AccountProfileInputSchema,
   AccountProfileOutputSchema,
-} from "lib/api/schema/accounts/profile";
+} from "@cocalc/http-api/lib/api/schema/accounts/profile";
 
 async function handle(req, res) {
   const { account_id, noCache } = getParams(req);

@@ -23,7 +23,7 @@ import {
 import sendPasswordResetEmail from "@cocalc/server/email/password-reset";
 import getRequiresToken from "@cocalc/server/auth/tokens/get-requires-token";
 import { getLogger } from "@cocalc/backend/logger";
-import getParams from "lib/api/get-params";
+import getParams from "@cocalc/http-api/lib/api/get-params";
 
 const logger = getLogger("auth:password-reset");
 const GENERIC_RESET_MESSAGE =

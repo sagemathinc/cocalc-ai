@@ -2,14 +2,14 @@
 
 import getProjects from "@cocalc/server/projects/get";
 import userIsInGroup from "@cocalc/server/accounts/is-in-group";
-import getAccountId from "lib/account/get-account";
-import getParams from "lib/api/get-params";
-import { apiRoute, apiRouteOperation } from "lib/api";
+import getAccountId from "@cocalc/http-api/lib/account/get-account";
+import getParams from "@cocalc/http-api/lib/api/get-params";
+import { apiRoute, apiRouteOperation } from "@cocalc/http-api/lib/api";
 
 import {
   GetAccountProjectsInputSchema,
   GetAccountProjectsOutputSchema,
-} from "lib/api/schema/projects/get";
+} from "@cocalc/http-api/lib/api/schema/projects/get";
 
 async function handle(req, res) {
   const client_account_id = await getAccountId(req);

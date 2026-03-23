@@ -1,4 +1,4 @@
-import getParams from "lib/api/get-params";
+import getParams from "@cocalc/http-api/lib/api/get-params";
 
 import {
   activateLicenseOnLaunchpad,

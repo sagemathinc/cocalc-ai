@@ -5,7 +5,7 @@ service - a single service name or an array of service names.
         - if array, returns map from service name to cost.
 */
 
-import getParams from "lib/api/get-params";
+import getParams from "@cocalc/http-api/lib/api/get-params";
 import getServiceCost from "@cocalc/server/purchases/get-service-cost";
 import { is_array } from "@cocalc/util/misc";
 import { zipObject } from "lodash";

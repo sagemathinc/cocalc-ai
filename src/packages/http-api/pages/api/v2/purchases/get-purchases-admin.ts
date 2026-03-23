@@ -2,9 +2,9 @@
 Let admin get all of the purchases for a specified user.
 */
 
-import getAccountId from "lib/account/get-account";
+import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import getPurchases from "@cocalc/server/purchases/get-purchases";
-import getParams from "lib/api/get-params";
+import getParams from "@cocalc/http-api/lib/api/get-params";
 import userIsInGroup from "@cocalc/server/accounts/is-in-group";
 import throttle from "@cocalc/util/api/throttle";
 

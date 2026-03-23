@@ -1,7 +1,7 @@
 // Not part of customize because its rare to need this -- only when actually making
 // an explicit purchase.
 
-import getAccountId from "lib/account/get-account";
+import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 
 export default async function handle(req, res) {

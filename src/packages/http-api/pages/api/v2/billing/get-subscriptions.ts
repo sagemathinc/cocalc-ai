@@ -3,8 +3,8 @@ Get subscriptions for the signed in user.
 */
 
 import getSubscriptions from "@cocalc/server/billing/get-subscriptions";
-import getAccountId from "lib/account/get-account";
-import getParams from "lib/api/get-params";
+import getAccountId from "@cocalc/http-api/lib/account/get-account";
+import getParams from "@cocalc/http-api/lib/api/get-params";
 
 export default async function handle(req, res) {
   try {

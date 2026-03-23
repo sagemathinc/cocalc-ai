@@ -11,15 +11,15 @@ currently set for the account, you have to set one as part of this request.
 */
 
 import setEmailAddress from "@cocalc/server/accounts/set-email-address";
-import getAccountId from "lib/account/get-account";
-import getParams from "lib/api/get-params";
+import getAccountId from "@cocalc/http-api/lib/account/get-account";
+import getParams from "@cocalc/http-api/lib/api/get-params";
 
-import { apiRoute, apiRouteOperation } from "lib/api";
-import { SuccessStatus } from "lib/api/status";
+import { apiRoute, apiRouteOperation } from "@cocalc/http-api/lib/api";
+import { SuccessStatus } from "@cocalc/http-api/lib/api/status";
 import {
   SetAccountEmailAddressInputSchema,
   SetAccountEmailAddressOutputSchema,
-} from "lib/api/schema/accounts/set-email-address";
+} from "@cocalc/http-api/lib/api/schema/accounts/set-email-address";
 
 async function handle(req, res) {
   const account_id = await getAccountId(req);

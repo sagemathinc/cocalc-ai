@@ -1,4 +1,4 @@
-import getAccountId from "lib/account/get-account";
+import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import getCustomerSession from "@cocalc/server/purchases/stripe/get-customer-session";
 import throttle from "@cocalc/util/api/throttle";
 

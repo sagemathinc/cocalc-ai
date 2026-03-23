@@ -3,7 +3,7 @@
    If they have projects, returns the most recently active one.
 */
 
-import getAccountId from "lib/account/get-account";
+import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import getOneProject from "@cocalc/server/projects/get-one";
 
 export default async function handle(req, res) {

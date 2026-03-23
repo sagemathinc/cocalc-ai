@@ -1,7 +1,7 @@
 /* API endpoint to determine whether or not the currently authenticated
 user has a passport. */
 
-import getAccountId from "lib/account/get-account";
+import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import hasPassword from "@cocalc/server/auth/has-password";
 
 export default async function handle(req, res) {

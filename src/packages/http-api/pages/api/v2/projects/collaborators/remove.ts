@@ -8,14 +8,14 @@ executed at this stage.
 import { db } from "@cocalc/database";
 import { remove_collaborators_from_projects } from "@cocalc/server/projects/collab";
 
-import getAccountId from "lib/account/get-account";
-import getParams from "lib/api/get-params";
-import { apiRoute, apiRouteOperation } from "lib/api";
-import { OkStatus } from "lib/api/status";
+import getAccountId from "@cocalc/http-api/lib/account/get-account";
+import getParams from "@cocalc/http-api/lib/api/get-params";
+import { apiRoute, apiRouteOperation } from "@cocalc/http-api/lib/api";
+import { OkStatus } from "@cocalc/http-api/lib/api/status";
 import {
   RemoveProjectCollaboratorInputSchema,
   RemoveProjectCollaboratorOutputSchema,
-} from "lib/api/schema/projects/collaborators/remove";
+} from "@cocalc/http-api/lib/api/schema/projects/collaborators/remove";
 
 async function handle(req, res) {
   const { project_id, account_id } = getParams(req);

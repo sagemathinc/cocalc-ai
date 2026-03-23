@@ -13,9 +13,9 @@ RETURNS:
   - {allowed:boolean; discouraged?:boolean; reason?:string}   or {error:message} (e.g., if not signed in)
 */
 
-import getAccountId from "lib/account/get-account";
+import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import { isPurchaseAllowed } from "@cocalc/server/purchases/is-purchase-allowed";
-import getParams from "lib/api/get-params";
+import getParams from "@cocalc/http-api/lib/api/get-params";
 
 export default async function handle(req, res) {
   try {

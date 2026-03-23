@@ -3,14 +3,14 @@ User query endpoint.
 */
 
 import userQuery from "@cocalc/database/user-query";
-import getAccountId from "lib/account/get-account";
-import getParams from "lib/api/get-params";
+import getAccountId from "@cocalc/http-api/lib/account/get-account";
+import getParams from "@cocalc/http-api/lib/api/get-params";
 
-import { apiRoute, apiRouteOperation } from "lib/api";
+import { apiRoute, apiRouteOperation } from "@cocalc/http-api/lib/api";
 import {
   UserQueryInputSchema,
   UserQueryOutputSchema,
-} from "lib/api/schema/user-query";
+} from "@cocalc/http-api/lib/api/schema/user-query";
 
 async function handle(req, res) {
   const account_id = await getAccountId(req);

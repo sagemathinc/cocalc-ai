@@ -8,8 +8,8 @@ import type { Request, Response } from "express";
 import userIsInGroup from "@cocalc/server/accounts/is-in-group";
 import editNews from "@cocalc/server/news/edit";
 import { clearCache } from "@cocalc/database/postgres/news";
-import getAccountId from "lib/account/get-account";
-import getParams from "lib/api/get-params";
+import getAccountId from "@cocalc/http-api/lib/account/get-account";
+import getParams from "@cocalc/http-api/lib/api/get-params";
 
 export default async function handle(req: Request, res: Response) {
   try {

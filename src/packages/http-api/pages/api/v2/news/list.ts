@@ -6,7 +6,7 @@
 import type { Request, Response } from "express";
 
 import { get } from "@cocalc/server/news/get";
-import getParams from "lib/api/get-params";
+import getParams from "@cocalc/http-api/lib/api/get-params";
 
 export default async function handle(req: Request, res: Response) {
   try {

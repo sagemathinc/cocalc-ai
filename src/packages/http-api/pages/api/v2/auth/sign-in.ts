@@ -20,7 +20,7 @@ import { Request, Response } from "express";
 import getPool from "@cocalc/database/pool";
 import { recordFail, signInCheck } from "@cocalc/server/auth/throttle";
 import getRequiresToken from "@cocalc/server/auth/tokens/get-requires-token";
-import getParams from "lib/api/get-params";
+import getParams from "@cocalc/http-api/lib/api/get-params";
 import { verify } from "password-hash";
 import { MAX_PASSWORD_LENGTH } from "@cocalc/util/auth";
 import setSignInCookies from "@cocalc/server/auth/set-sign-in-cookies";

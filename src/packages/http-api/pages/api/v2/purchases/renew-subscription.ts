@@ -3,8 +3,8 @@ Renew one of your subscriptions.  Returns {purchase_id:number|nill} for the purc
 Null if nothing needed to be done.
 */
 
-import getAccountId from "lib/account/get-account";
-import getParams from "lib/api/get-params";
+import getAccountId from "@cocalc/http-api/lib/account/get-account";
+import getParams from "@cocalc/http-api/lib/api/get-params";
 import renewSubscription from "@cocalc/server/purchases/renew-subscription";
 
 export default async function handle(req, res) {

@@ -6,8 +6,8 @@ Returns the number of items actually deleted (0 or 1).
 */
 
 import deleteFromCart from "@cocalc/server/shopping/cart/delete";
-import getAccountId from "lib/account/get-account";
-import getParams from "lib/api/get-params";
+import getAccountId from "@cocalc/http-api/lib/account/get-account";
+import getParams from "@cocalc/http-api/lib/api/get-params";
 
 export default async function handle(req, res) {
   try {

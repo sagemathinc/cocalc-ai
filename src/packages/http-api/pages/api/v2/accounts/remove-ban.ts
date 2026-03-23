@@ -2,17 +2,17 @@
 Remove ban from a user.  This is ONLY allowed for admins.
 */
 
-import getAccountId from "lib/account/get-account";
-import getParams from "lib/api/get-params";
+import getAccountId from "@cocalc/http-api/lib/account/get-account";
+import getParams from "@cocalc/http-api/lib/api/get-params";
 import userIsInGroup from "@cocalc/server/accounts/is-in-group";
 import { removeUserBan } from "@cocalc/server/accounts/ban";
 
-import { apiRoute, apiRouteOperation } from "lib/api";
-import { SuccessStatus } from "lib/api/status";
+import { apiRoute, apiRouteOperation } from "@cocalc/http-api/lib/api";
+import { SuccessStatus } from "@cocalc/http-api/lib/api/status";
 import {
   RemoveAccountBanInputSchema,
   RemoveAccountBanOutputSchema,
-} from "lib/api/schema/accounts/remove-ban";
+} from "@cocalc/http-api/lib/api/schema/accounts/remove-ban";
 
 async function handle(req, res) {
   try {

@@ -5,8 +5,8 @@ Unstar a public path
 */
 
 import { unstar } from "@cocalc/server/public-paths/star";
-import getAccountId from "lib/account/get-account";
-import getParams from "lib/api/get-params";
+import getAccountId from "@cocalc/http-api/lib/account/get-account";
+import getParams from "@cocalc/http-api/lib/api/get-params";
 
 export default async function handle(req, res) {
   try {

@@ -1,6 +1,6 @@
-import getAccountId from "lib/account/get-account";
+import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import createSetupIntent from "@cocalc/server/purchases/stripe/create-setup-intent";
-import getParams from "lib/api/get-params";
+import getParams from "@cocalc/http-api/lib/api/get-params";
 import throttle from "@cocalc/util/api/throttle";
 
 export default async function handle(req, res) {

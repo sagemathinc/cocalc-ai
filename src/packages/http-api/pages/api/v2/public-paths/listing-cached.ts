@@ -1,7 +1,7 @@
 import { Request } from "express";
 
 import { getPublicPathsListingCached } from "@cocalc/server/public-paths/listing-cached";
-import getAccountId from "lib/account/get-account";
+import getAccountId from "@cocalc/http-api/lib/account/get-account";
 
 export default async function handle(req, res) {
   try {

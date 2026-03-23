@@ -4,8 +4,8 @@ Get recent purchases.
 
 import type { Voucher } from "@cocalc/util/db-schema/vouchers";
 import getRecentlyCreatedVouchers from "@cocalc/server/vouchers/recent-vouchers";
-import getAccountId from "lib/account/get-account";
-import getParams from "lib/api/get-params";
+import getAccountId from "@cocalc/http-api/lib/account/get-account";
+import getParams from "@cocalc/http-api/lib/api/get-params";
 
 export default async function handle(req, res) {
   try {

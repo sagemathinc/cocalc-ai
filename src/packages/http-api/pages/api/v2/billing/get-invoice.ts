@@ -5,8 +5,8 @@ created the invoice.  The invoice id's seem pretty long and
 random, so this should be OK.
 */
 import { getInvoice } from "@cocalc/server/billing/get-invoices-and-receipts";
-import getAccountId from "lib/account/get-account";
-import getParams from "lib/api/get-params";
+import getAccountId from "@cocalc/http-api/lib/account/get-account";
+import getParams from "@cocalc/http-api/lib/api/get-params";
 
 export default async function handle(req, res) {
   try {

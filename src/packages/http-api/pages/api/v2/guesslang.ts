@@ -1,11 +1,11 @@
 import { ModelOperations } from "@vscode/vscode-languagedetection";
-import getParams from "lib/api/get-params";
+import getParams from "@cocalc/http-api/lib/api/get-params";
 
-import { apiRoute, apiRouteOperation } from "lib/api";
+import { apiRoute, apiRouteOperation } from "@cocalc/http-api/lib/api";
 import {
   GuesslangInputSchema,
   GuesslangOutputSchema,
-} from "lib/api/schema/guesslang";
+} from "@cocalc/http-api/lib/api/schema/guesslang";
 
 const modelOperations = new ModelOperations();
 

@@ -1,5 +1,5 @@
 import chargeForUnpaidVouchers from "@cocalc/server/vouchers/charge-for-unpaid-vouchers";
-import getAccountId from "lib/account/get-account";
+import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import userIsInGroup from "@cocalc/server/accounts/is-in-group";
 
 export default async function handle(req, res) {

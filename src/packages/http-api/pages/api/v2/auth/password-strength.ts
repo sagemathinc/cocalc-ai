@@ -18,8 +18,8 @@ Error: { error: "error message" }
 
 import passwordStrength from "@cocalc/server/auth/password-strength";
 import { MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH } from "@cocalc/util/auth";
-import { apiRoute, apiRouteOperation } from "lib/api";
-import getParams from "lib/api/get-params";
+import { apiRoute, apiRouteOperation } from "@cocalc/http-api/lib/api";
+import getParams from "@cocalc/http-api/lib/api/get-params";
 import { z } from "zod";
 
 const PasswordStrengthInputSchema = z.object({

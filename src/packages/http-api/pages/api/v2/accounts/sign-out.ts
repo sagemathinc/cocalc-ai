@@ -5,20 +5,20 @@ This invalidates 1 or more remember me cookies for
 the account that is making the API request.
 */
 
-import getAccountId from "lib/account/get-account";
+import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import { getRememberMeHash } from "@cocalc/server/auth/remember-me";
 import {
   deleteRememberMe,
   deleteAllRememberMe,
 } from "@cocalc/server/auth/remember-me";
 import { recordAccountRevocation } from "@cocalc/server/accounts/revocation";
-import getParams from "lib/api/get-params";
-import { apiRoute, apiRouteOperation } from "lib/api";
-import { SuccessStatus } from "lib/api/status";
+import getParams from "@cocalc/http-api/lib/api/get-params";
+import { apiRoute, apiRouteOperation } from "@cocalc/http-api/lib/api";
+import { SuccessStatus } from "@cocalc/http-api/lib/api/status";
 import {
   AccountSignOutInputSchema,
   AccountSignOutOutputSchema,
-} from "lib/api/schema/accounts/sign-out";
+} from "@cocalc/http-api/lib/api/schema/accounts/sign-out";
 import {
   ACCOUNT_ID_COOKIE_NAME,
   REMEMBER_ME_COOKIE_NAME,

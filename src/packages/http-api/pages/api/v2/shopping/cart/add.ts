@@ -13,13 +13,13 @@ import addToCart, {
   putBackInCart,
 } from "@cocalc/server/shopping/cart/add";
 import throttle from "@cocalc/util/api/throttle";
-import getAccountId from "lib/account/get-account";
-import { apiRoute, apiRouteOperation } from "lib/api";
-import getParams from "lib/api/get-params";
+import getAccountId from "@cocalc/http-api/lib/account/get-account";
+import { apiRoute, apiRouteOperation } from "@cocalc/http-api/lib/api";
+import getParams from "@cocalc/http-api/lib/api/get-params";
 import {
   ShoppingCartAddInputSchema,
   ShoppingCartAddOutputSchema,
-} from "lib/api/schema/shopping/cart/add";
+} from "@cocalc/http-api/lib/api/schema/shopping/cart/add";
 
 async function handle(req, res) {
   try {

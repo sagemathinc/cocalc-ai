@@ -6,16 +6,16 @@ highly privileged accounts, since we don't want anybody to be able
 to dump our email addresses and spam people.
 */
 
-import getAccountId from "lib/account/get-account";
+import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import getEmailAddress from "@cocalc/server/accounts/get-email-address";
-import getParams from "lib/api/get-params";
+import getParams from "@cocalc/http-api/lib/api/get-params";
 import userIsInGroup from "@cocalc/server/accounts/is-in-group";
 
-import { apiRoute, apiRouteOperation } from "lib/api";
+import { apiRoute, apiRouteOperation } from "@cocalc/http-api/lib/api";
 import {
   GetAccountEmailAddressInputSchema,
   GetAccountEmailAddressOutputSchema,
-} from "lib/api/schema/accounts/get-email-address";
+} from "@cocalc/http-api/lib/api/schema/accounts/get-email-address";
 
 async function handle(req, res) {
   const { account_id } = getParams(req);

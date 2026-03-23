@@ -3,7 +3,7 @@ Get items that are currently being processed.
 */
 
 import getProcessing from "@cocalc/server/shopping/cart/processing";
-import getAccountId from "lib/account/get-account";
+import getAccountId from "@cocalc/http-api/lib/account/get-account";
 
 export default async function handle(req, res) {
   try {

@@ -15,7 +15,7 @@ what is publicly shared (at some unit), and it's nice if it is useful (e.g., for
 
 */
 
-import getProxyProjectId from "lib/share/proxy/project";
+import getProxyProjectId from "@cocalc/http-api/lib/share/proxy/project";
 import getPool from "@cocalc/database/pool";
 import { sha1 } from "@cocalc/util/misc";
 import { fileInGist } from "./api";

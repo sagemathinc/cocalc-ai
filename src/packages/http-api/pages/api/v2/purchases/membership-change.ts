@@ -2,7 +2,7 @@
 Apply a membership change using account balance (no external payment).
 */
 
-import getAccountId from "lib/account/get-account";
+import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import { applyMembershipChange } from "@cocalc/server/purchases/membership-change";
 
 export default async function handle(req, res) {

@@ -19,8 +19,8 @@ transactions, if that turns out to be necessary.
 - notes - optional string; user DOES see this.
 */
 
-import getAccountId from "lib/account/get-account";
-import getParams from "lib/api/get-params";
+import getAccountId from "@cocalc/http-api/lib/account/get-account";
+import getParams from "@cocalc/http-api/lib/api/get-params";
 import userIsInGroup from "@cocalc/server/accounts/is-in-group";
 import createRefund from "@cocalc/server/purchases/create-refund";
 

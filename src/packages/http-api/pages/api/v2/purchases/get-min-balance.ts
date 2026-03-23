@@ -2,7 +2,7 @@
 Get minimum allowed balance for this user.  This is usually 0.
 */
 
-import getAccountId from "lib/account/get-account";
+import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import getMinBalance from "@cocalc/server/purchases/get-min-balance";
 
 export default async function handle(req, res) {

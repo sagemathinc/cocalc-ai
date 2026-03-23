@@ -2,7 +2,7 @@
 Cancels any configured automatic billing subscription.
 */
 
-import getAccountId from "lib/account/get-account";
+import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import { cancelUsageSubscription } from "@cocalc/server/purchases/stripe-usage-based-subscription";
 
 export default async function handle(req, res) {

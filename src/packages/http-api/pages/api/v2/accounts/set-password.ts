@@ -3,15 +3,15 @@ Set password for an existing account.
 */
 
 import setPassword from "@cocalc/server/accounts/set-password";
-import getAccountId from "lib/account/get-account";
-import getParams from "lib/api/get-params";
+import getAccountId from "@cocalc/http-api/lib/account/get-account";
+import getParams from "@cocalc/http-api/lib/api/get-params";
 
-import { apiRoute, apiRouteOperation } from "lib/api";
-import { SuccessStatus } from "lib/api/status";
+import { apiRoute, apiRouteOperation } from "@cocalc/http-api/lib/api";
+import { SuccessStatus } from "@cocalc/http-api/lib/api/status";
 import {
   SetAccountPasswordInputSchema,
   SetAccountPasswordOutputSchema,
-} from "lib/api/schema/accounts/set-password";
+} from "@cocalc/http-api/lib/api/schema/accounts/set-password";
 
 async function handle(req, res) {
   const account_id = await getAccountId(req);

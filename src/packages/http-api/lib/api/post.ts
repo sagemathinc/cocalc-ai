@@ -1,4 +1,4 @@
-import ROOT_PATH from "lib/root-path";
+import ROOT_PATH from "@cocalc/http-api/lib/root-path";
 import LRU from "lru-cache";
 import { join } from "path";
 

@@ -6,11 +6,11 @@ This requires the user to be signed in with appropriate access to the project.
 This grabs one file, reads it into memory, then writes it to disk in the project.
 */
 
-import getAccountId from "lib/account/get-account";
+import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import { isValidUUID } from "@cocalc/util/misc";
 import isCollaborator from "@cocalc/server/projects/is-collaborator";
-import getParams from "lib/api/get-params";
-import getProxiedPublicPathInfo from "lib/share/proxy/get-proxied-public-path-info";
+import getParams from "@cocalc/http-api/lib/api/get-params";
+import getProxiedPublicPathInfo from "@cocalc/http-api/lib/share/proxy/get-proxied-public-path-info";
 import { conat } from "@cocalc/backend/conat";
 
 export default async function handle(req, res) {

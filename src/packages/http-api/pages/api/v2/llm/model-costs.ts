@@ -9,7 +9,7 @@ import {
   USER_SELECTABLE_LANGUAGE_MODELS,
   getLLMCost,
 } from "@cocalc/util/db-schema/llm-utils";
-import getAccountId from "lib/account/get-account";
+import getAccountId from "@cocalc/http-api/lib/account/get-account";
 
 export default async function handle(req, res) {
   try {

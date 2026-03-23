@@ -7,10 +7,13 @@
 Run code in a project.
 */
 
-import getAccountId from "lib/account/get-account";
-import getParams from "lib/api/get-params";
-import { apiRoute, apiRouteOperation } from "lib/api";
-import { ExecInputSchema, ExecOutputSchema } from "lib/api/schema/exec";
+import getAccountId from "@cocalc/http-api/lib/account/get-account";
+import getParams from "@cocalc/http-api/lib/api/get-params";
+import { apiRoute, apiRouteOperation } from "@cocalc/http-api/lib/api";
+import {
+  ExecInputSchema,
+  ExecOutputSchema,
+} from "@cocalc/http-api/lib/api/schema/exec";
 import exec from "@cocalc/server/projects/exec";
 
 async function handle(req, res) {

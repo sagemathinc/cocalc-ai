@@ -4,10 +4,10 @@ Cancel a subscription.
 - now: if true, cancels license now and provides a refund.  Otherwise, cancels at period end.
 */
 
-import getAccountId from "lib/account/get-account";
+import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import cancelSubscription from "@cocalc/server/purchases/cancel-subscription";
-import getParams from "lib/api/get-params";
-import { OkStatus } from "lib/api/status";
+import getParams from "@cocalc/http-api/lib/api/get-params";
+import { OkStatus } from "@cocalc/http-api/lib/api/status";
 
 export default async function handle(req, res) {
   try {

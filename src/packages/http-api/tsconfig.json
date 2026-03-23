@@ -7,6 +7,8 @@
     "declarationDir": "dist-types",
     "lib": ["ESNext"],
     "paths": {
+      "@cocalc/http-api": ["./index.ts"],
+      "@cocalc/http-api/*": ["./*"],
       "@langchain/core/*": ["../ai/node_modules/@langchain/core/dist/*"]
     }
   },

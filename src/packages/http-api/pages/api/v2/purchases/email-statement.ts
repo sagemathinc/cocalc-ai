@@ -3,10 +3,10 @@ Email a specific statement to the user.  Error if this statement has been emaile
 within the last 6 hours.
 */
 
-import getAccountId from "lib/account/get-account";
+import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import emailStatement from "@cocalc/server/purchases/statements/email-statement";
-import getParams from "lib/api/get-params";
-import { OkStatus } from "lib/api/status";
+import getParams from "@cocalc/http-api/lib/api/get-params";
+import { OkStatus } from "@cocalc/http-api/lib/api/status";
 
 export default async function handle(req, res) {
   try {

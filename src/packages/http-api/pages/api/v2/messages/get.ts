@@ -2,9 +2,9 @@
 Get your messages via an api
 */
 
-import getAccountId from "lib/account/get-account";
-import getParams from "lib/api/get-params";
-import { SuccessStatus } from "lib/api/status";
+import getAccountId from "@cocalc/http-api/lib/account/get-account";
+import getParams from "@cocalc/http-api/lib/api/get-params";
+import { SuccessStatus } from "@cocalc/http-api/lib/api/status";
 import getMessages from "@cocalc/server/messages/get";
 import throttle from "@cocalc/util/api/throttle";
 

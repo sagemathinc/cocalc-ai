@@ -7,14 +7,14 @@ executed at this stage.
 */
 import userIsInGroup from "@cocalc/server/accounts/is-in-group";
 
-import getAccountId from "lib/account/get-account";
-import getParams from "lib/api/get-params";
-import { apiRoute, apiRouteOperation } from "lib/api";
+import getAccountId from "@cocalc/http-api/lib/account/get-account";
+import getParams from "@cocalc/http-api/lib/api/get-params";
+import { apiRoute, apiRouteOperation } from "@cocalc/http-api/lib/api";
 import {
   ListProjectCollaboratorsInputSchema,
   ListProjectCollaboratorsOutputSchema,
-} from "lib/api/schema/projects/collaborators/list";
-import getCollaborators from "lib/share/get-collaborators";
+} from "@cocalc/http-api/lib/api/schema/projects/collaborators/list";
+import getCollaborators from "@cocalc/http-api/lib/share/get-collaborators";
 
 async function handle(req, res) {
   try {

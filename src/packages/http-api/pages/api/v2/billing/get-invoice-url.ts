@@ -4,8 +4,8 @@ Get specific invoice's hosted URL, given that you know the invoice id.
 LEGACY: Also works for receipt of payment intent.
 */
 import { getInvoiceUrl } from "@cocalc/server/billing/get-invoices-and-receipts";
-import getAccountId from "lib/account/get-account";
-import getParams from "lib/api/get-params";
+import getAccountId from "@cocalc/http-api/lib/account/get-account";
+import getParams from "@cocalc/http-api/lib/api/get-params";
 
 export default async function handle(req, res) {
   try {

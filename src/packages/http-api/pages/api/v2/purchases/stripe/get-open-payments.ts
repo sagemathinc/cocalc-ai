@@ -1,7 +1,7 @@
-import getAccountId from "lib/account/get-account";
+import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import { getAllOpenPayments } from "@cocalc/server/purchases/stripe/get-payments";
 import throttle from "@cocalc/util/api/throttle";
-import getParams from "lib/api/get-params";
+import getParams from "@cocalc/http-api/lib/api/get-params";
 import userIsInGroup from "@cocalc/server/accounts/is-in-group";
 
 export default async function handle(req, res) {

@@ -5,15 +5,15 @@ Set account {user/first/last} name.
 import userQuery from "@cocalc/database/user-query";
 import userIsInGroup from "@cocalc/server/accounts/is-in-group";
 
-import getAccountId from "lib/account/get-account";
-import getParams from "lib/api/get-params";
+import getAccountId from "@cocalc/http-api/lib/account/get-account";
+import getParams from "@cocalc/http-api/lib/api/get-params";
 
-import { apiRoute, apiRouteOperation } from "lib/api";
-import { SuccessStatus } from "lib/api/status";
+import { apiRoute, apiRouteOperation } from "@cocalc/http-api/lib/api";
+import { SuccessStatus } from "@cocalc/http-api/lib/api/status";
 import {
   SetAccountNameInputSchema,
   SetAccountNameOutputSchema,
-} from "lib/api/schema/accounts/set-name";
+} from "@cocalc/http-api/lib/api/schema/accounts/set-name";
 
 async function handle(req, res) {
   try {

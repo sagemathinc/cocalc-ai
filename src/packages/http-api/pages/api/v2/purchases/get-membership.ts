@@ -2,7 +2,7 @@
 Resolve effective membership for the current account.
 */
 
-import getAccountId from "lib/account/get-account";
+import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
 
 export default async function handle(req, res) {

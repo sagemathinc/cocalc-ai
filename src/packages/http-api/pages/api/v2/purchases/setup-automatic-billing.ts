@@ -6,9 +6,9 @@ get automatically paid.  Also, if they are allowed to let their balance go below
 tops it back up to 0.
 */
 
-import getAccountId from "lib/account/get-account";
+import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import { createStripeUsageBasedSubscription } from "@cocalc/server/purchases/stripe-usage-based-subscription";
-import getParams from "lib/api/get-params";
+import getParams from "@cocalc/http-api/lib/api/get-params";
 
 export default async function handle(req, res) {
   try {

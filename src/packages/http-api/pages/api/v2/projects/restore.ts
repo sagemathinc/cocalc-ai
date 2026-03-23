@@ -7,14 +7,14 @@ import isCollaborator from "@cocalc/server/projects/is-collaborator";
 import userIsInGroup from "@cocalc/server/accounts/is-in-group";
 import userQuery from "@cocalc/database/user-query";
 
-import getAccountId from "lib/account/get-account";
-import getParams from "lib/api/get-params";
-import { apiRoute, apiRouteOperation } from "lib/api";
-import { OkStatus } from "lib/api/status";
+import getAccountId from "@cocalc/http-api/lib/account/get-account";
+import getParams from "@cocalc/http-api/lib/api/get-params";
+import { apiRoute, apiRouteOperation } from "@cocalc/http-api/lib/api";
+import { OkStatus } from "@cocalc/http-api/lib/api/status";
 import {
   RestoreProjectInputSchema,
   RestoreProjectOutputSchema,
-} from "lib/api/schema/projects/restore";
+} from "@cocalc/http-api/lib/api/schema/projects/restore";
 
 async function handle(req, res) {
   const { project_id } = getParams(req);

@@ -4,7 +4,10 @@
   "description": "CoCalc HTTP API router and handlers",
   "main": "./dist/index.js",
   "exports": {
-    ".": "./dist/index.js"
+    ".": "./dist/index.js",
+    "./lib/api": "./dist/lib/api/index.js",
+    "./lib/*": "./dist/lib/*.js",
+    "./pages/*": "./dist/pages/*.js"
   },
   "files": [
     "dist/**",

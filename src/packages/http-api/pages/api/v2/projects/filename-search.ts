@@ -5,8 +5,8 @@ It's under 'projects' since it's also a way to find the
 project you want to open.
 */
 
-import getAccountId from "lib/account/get-account";
-import getParams from "lib/api/get-params";
+import getAccountId from "@cocalc/http-api/lib/account/get-account";
+import getParams from "@cocalc/http-api/lib/api/get-params";
 import { filenameSearch } from "@cocalc/server/projects/filename-search";
 
 export default async function handle(req, res) {

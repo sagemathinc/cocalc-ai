@@ -3,17 +3,17 @@ API endpoint to stop a project running.
 
 This requires the user to be signed in so they are allowed to use this project.
 */
-import getAccountId from "lib/account/get-account";
+import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import { getProject } from "@cocalc/server/projects/control";
 import { isValidUUID } from "@cocalc/util/misc";
 import isCollaborator from "@cocalc/server/projects/is-collaborator";
-import getParams from "lib/api/get-params";
+import getParams from "@cocalc/http-api/lib/api/get-params";
 
-import { apiRoute, apiRouteOperation } from "lib/api";
+import { apiRoute, apiRouteOperation } from "@cocalc/http-api/lib/api";
 import {
   StopProjectInputSchema,
   StopProjectOutputSchema,
-} from "lib/api/schema/projects/stop";
+} from "@cocalc/http-api/lib/api/schema/projects/stop";
 import { OkStatus } from "../../../../lib/api/status";
 
 async function handle(req, res) {

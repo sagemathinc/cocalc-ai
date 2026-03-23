@@ -2,7 +2,7 @@ import { docsApiRoute } from "next-rest-framework";
 import { join } from "node:path";
 import type { Request, Response } from "express";
 
-import ROOT_PATH from "lib/root-path";
+import ROOT_PATH from "@cocalc/http-api/lib/root-path";
 
 const handler = docsApiRoute({
   deniedPaths: ["/api/conat/**", "/api/share/**", "/api/v2/**/*.test"],

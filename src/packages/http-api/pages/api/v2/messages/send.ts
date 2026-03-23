@@ -2,9 +2,9 @@
 Send an internal message to any one or more user of the site.
 */
 
-import getAccountId from "lib/account/get-account";
-import getParams from "lib/api/get-params";
-import { SuccessStatus } from "lib/api/status";
+import getAccountId from "@cocalc/http-api/lib/account/get-account";
+import getParams from "@cocalc/http-api/lib/api/get-params";
+import { SuccessStatus } from "@cocalc/http-api/lib/api/status";
 import send from "@cocalc/server/messages/send";
 import throttle from "@cocalc/util/api/throttle";
 

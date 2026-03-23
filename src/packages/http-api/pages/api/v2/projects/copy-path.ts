@@ -6,11 +6,11 @@ This requires the user to be signed in with appropriate access.
 
 See "@cocalc/server/projects/control/base" for params.
 */
-import getAccountId from "lib/account/get-account";
+import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import { isValidUUID } from "@cocalc/util/misc";
 import getPool from "@cocalc/database/pool";
 import isCollaborator from "@cocalc/server/projects/is-collaborator";
-import getParams from "lib/api/get-params";
+import getParams from "@cocalc/http-api/lib/api/get-params";
 import { client as filesystemClient } from "@cocalc/conat/files/file-server";
 import "@cocalc/backend/conat";
 

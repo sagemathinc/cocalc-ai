@@ -2,14 +2,14 @@
 Let user get all of their purchases
 */
 
-import getAccountId from "lib/account/get-account";
+import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import getPurchases from "@cocalc/server/purchases/get-purchases";
-import getParams from "lib/api/get-params";
-import { apiRoute, apiRouteOperation } from "lib/api";
+import getParams from "@cocalc/http-api/lib/api/get-params";
+import { apiRoute, apiRouteOperation } from "@cocalc/http-api/lib/api";
 import {
   GetPurchasesInputSchema,
   GetPurchasesOutputSchema,
-} from "lib/api/schema/purchases/get-purchases";
+} from "@cocalc/http-api/lib/api/schema/purchases/get-purchases";
 import throttle from "@cocalc/util/api/throttle";
 
 async function handle(req, res) {

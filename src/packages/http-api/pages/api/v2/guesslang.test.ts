@@ -1,6 +1,6 @@
 /** @jest-environment node */
 
-import { createMocks } from "lib/api/test-framework";
+import { createMocks } from "@cocalc/http-api/lib/api/test-framework";
 import handler from "./guesslang";
 
 describe("/api/v2/guesslang", () => {

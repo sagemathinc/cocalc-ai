@@ -6,7 +6,7 @@ This calls something that is LRU cached on the server for a few seconds.
 */
 
 import getCustomize from "@cocalc/database/settings/customize";
-import getParams from "lib/api/get-params";
+import getParams from "@cocalc/http-api/lib/api/get-params";
 
 export default async function handle(req, res) {
   const { fields } = getParams(req);

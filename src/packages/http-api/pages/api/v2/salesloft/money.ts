@@ -4,8 +4,8 @@ This is the same data we put in salesloft about them.
 */
 
 import { getMoneyData } from "@cocalc/server/salesloft/money";
-import getAccountId from "lib/account/get-account";
-import getParams from "lib/api/get-params";
+import getAccountId from "@cocalc/http-api/lib/account/get-account";
+import getParams from "@cocalc/http-api/lib/api/get-params";
 import userIsInGroup from "@cocalc/server/accounts/is-in-group";
 
 export default async function handle(req, res) {

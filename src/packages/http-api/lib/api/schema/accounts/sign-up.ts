@@ -1,4 +1,4 @@
-import { SignUpIssues } from "lib/types/sign-up";
+import { SignUpIssues } from "@cocalc/http-api/lib/types/sign-up";
 import { z } from "../../framework";
 
 import { FailedAPIOperationSchema } from "../common";

@@ -3,7 +3,10 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { FileInfo, PathContents } from "lib/share/get-contents";
+import {
+  FileInfo,
+  PathContents,
+} from "@cocalc/http-api/lib/share/get-contents";
 import { rawText, contents, defaultBranch, repos } from "./api";
 import { join } from "path";
 import { field_cmp } from "@cocalc/util/cmp";
