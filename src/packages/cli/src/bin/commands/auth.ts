@@ -1,4 +1,5 @@
 import { Command } from "commander";
+import { describeProjectScopedAuth } from "../../core/auth-cookies";
 
 export type AuthCommandDeps = {
   runLocalCommand: any;
@@ -63,9 +64,29 @@ export function registerAuthCommand(
         const apiBaseUrl = effective.api
           ? normalizeUrl(effective.api)
           : defaultApiBaseUrl();
+        const projectAuth = describeProjectScopedAuth(process.env);
+        const effective_remote_auth = projectAuth.has_project_scoped_auth
+          ? "project_scoped"
+          : (effective.bearer ?? process.env.COCALC_BEARER_TOKEN)
+            ? "bearer"
+            : effective.cookie
+              ? "cookie"
+              : (effective.apiKey ?? process.env.COCALC_API_KEY)
+                ? "api_key"
+                : normalizeSecretValue(
+                      effective.hubPassword ?? process.env.COCALC_HUB_PASSWORD,
+                    )
+                  ? "hub_password"
+                  : "none";
 
         let check:
-          | { ok: boolean; account_id?: string | null; error?: string }
+          | {
+              ok: boolean;
+              account_id?: string | null;
+              project_id?: string | null;
+              auth_actor?: string | null;
+              error?: string;
+            }
           | undefined;
         if (opts.check) {
           try {
@@ -78,6 +99,14 @@ export function registerAuthCommand(
             check = {
               ok: true,
               account_id: resolveAccountIdFromRemote(remote) ?? null,
+              project_id:
+                typeof remote.user?.project_id === "string"
+                  ? remote.user.project_id
+                  : null,
+              auth_actor:
+                typeof remote.user?.auth_actor === "string"
+                  ? remote.user.auth_actor
+                  : null,
             };
             remote.client.close();
           } catch (err) {
@@ -103,6 +132,8 @@ export function registerAuthCommand(
           has_hub_password: !!normalizeSecretValue(
             effective.hubPassword ?? process.env.COCALC_HUB_PASSWORD,
           ),
+          ...projectAuth,
+          effective_remote_auth,
           check: check ?? null,
         };
       });

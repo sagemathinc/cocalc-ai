@@ -7,6 +7,7 @@ import test from "node:test";
 import {
   buildCookieHeader,
   cookieNameFor,
+  describeProjectScopedAuth,
   normalizeSecretValue,
 } from "./auth-cookies";
 
@@ -46,4 +47,20 @@ test("buildCookieHeader skips project auth when project_id is invalid", () => {
     project_id: "not-a-uuid",
   } as any);
   assert.equal(header, undefined);
+});
+
+test("describeProjectScopedAuth explains when project-scoped auth is active", () => {
+  const dir = mkdtempSync(join(tmpdir(), "cocalc-cli-auth-cookie-"));
+  const tokenPath = join(dir, "secret-token");
+  writeFileSync(tokenPath, "project-secret-token\n", "utf8");
+  const status = describeProjectScopedAuth({
+    COCALC_SECRET_TOKEN: tokenPath,
+    COCALC_PROJECT_ID: "890afc74-9156-4386-a395-afd4bebab4dd",
+  } as any);
+  assert.equal(status.has_project_secret, true);
+  assert.equal(status.has_project_id, true);
+  assert.equal(status.has_project_scoped_auth, true);
+  assert.equal(status.project_auth_source, "COCALC_SECRET_TOKEN");
+  assert.match(status.project_auth_message, /project-scoped auth is available/);
+  rmSync(dir, { recursive: true, force: true });
 });
