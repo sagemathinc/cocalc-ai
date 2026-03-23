@@ -1,9 +1,9 @@
 import { Alert, Button, Input, Space } from "antd";
 import { useEffect, useMemo, useState } from "react";
 
+import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import api from "@cocalc/frontend/client/api";
 import { QueryParams } from "@cocalc/frontend/misc/query-params";
-import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import {
   is_valid_email_address as isValidEmailAddress,
   len,
@@ -16,10 +16,16 @@ interface SignUpProps {
   onNavigate: (view: AuthView) => void;
 }
 
-export default function SignUpForm({ onNavigate }: SignUpProps) {
-  const tokenFromStore = useTypedRedux("account", "token");
+interface SignUpFormBaseProps extends SignUpProps {
+  initialRequiresToken?: boolean;
+}
+
+export function SignUpFormBase({
+  onNavigate,
+  initialRequiresToken,
+}: SignUpFormBaseProps) {
   const [requiresToken, setRequiresToken] = useState<boolean | undefined>(
-    tokenFromStore,
+    initialRequiresToken,
   );
   const [registrationToken, setRegistrationToken] = useState<string>(
     QueryParams.get("registrationToken") ?? "",
@@ -35,10 +41,8 @@ export default function SignUpForm({ onNavigate }: SignUpProps) {
   const bootstrap = useMemo(() => QueryParams.get("bootstrap") === "1", []);
 
   useEffect(() => {
-    if (tokenFromStore !== undefined) {
-      setRequiresToken(!!tokenFromStore);
-    }
-  }, [tokenFromStore]);
+    setRequiresToken(initialRequiresToken);
+  }, [initialRequiresToken]);
 
   useEffect(() => {
     if (requiresToken !== undefined) {
@@ -196,5 +200,15 @@ export default function SignUpForm({ onNavigate }: SignUpProps) {
         </a>
       </div>
     </Space>
+  );
+}
+
+export default function SignUpForm({ onNavigate }: SignUpProps) {
+  const tokenFromStore = useTypedRedux("account", "token");
+  return (
+    <SignUpFormBase
+      onNavigate={onNavigate}
+      initialRequiresToken={tokenFromStore}
+    />
   );
 }

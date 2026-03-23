@@ -39,6 +39,11 @@ export default function appLoaderPlugin(
       filename: "public-viewer-chat.html",
       chunks: ["load", "public-viewer-chat"],
     },
+    {
+      desc: "public-auth",
+      filename: "public-auth.html",
+      chunks: ["load", "public-auth"],
+    },
   ];
 
   for (const page of htmlPages) {
