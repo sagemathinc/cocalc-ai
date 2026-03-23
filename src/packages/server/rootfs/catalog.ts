@@ -7,6 +7,7 @@ import getPool from "@cocalc/database/pool";
 import isAdmin from "@cocalc/server/accounts/is-admin";
 import { v4 } from "uuid";
 import type {
+  RootfsAdminCatalogEntry,
   PublishProjectRootfsArtifact,
   PublishProjectRootfsBody,
   RootfsCatalogSaveBody,
@@ -56,6 +57,10 @@ type RootfsImageRow = {
   theme: RootfsImageTheme | null;
   owner_first_name: string | null;
   owner_last_name: string | null;
+  release_gc_status: RootfsReleaseGcStatus | null;
+  scan_status: string | null;
+  scan_tool: string | null;
+  scanned_at: Date | null;
 };
 
 function trimString(value: unknown): string | undefined {
@@ -179,6 +184,57 @@ function rowToEntry({
   );
 }
 
+function rowToAdminEntry({
+  row,
+  account_id,
+  admin,
+}: {
+  row: RootfsImageRow;
+  account_id?: string;
+  admin: boolean;
+}): RootfsAdminCatalogEntry {
+  return {
+    ...normalizeRootfsEntry(
+      {
+        id: row.image_id,
+        release_id: row.release_id ?? undefined,
+        label: row.label || row.runtime_image,
+        image: row.runtime_image,
+        description: row.description ?? undefined,
+        digest: row.digest ?? undefined,
+        arch: row.arch ? [row.arch as any] : undefined,
+        gpu: row.gpu ?? undefined,
+        size_gb: row.size_gb ?? undefined,
+        tags: row.tags ?? undefined,
+        prepull: row.prepull ?? undefined,
+        deprecated: row.deprecated ?? undefined,
+        deprecated_reason: row.deprecated_reason ?? undefined,
+        visibility: row.visibility ?? "public",
+        official: row.official ?? false,
+        hidden: row.hidden ?? false,
+        blocked: row.blocked ?? false,
+        blocked_reason: row.blocked_reason ?? undefined,
+        owner_id: row.owner_id ?? undefined,
+        owner_name: fullName(row),
+        warning: "none",
+        theme: row.theme ?? undefined,
+        can_manage:
+          admin ||
+          (!!account_id && !!row.owner_id && row.owner_id === account_id),
+      },
+      DEFAULT_ROOTFS_CATALOG_URL,
+    ),
+    deleted: row.deleted ?? false,
+    deleted_reason: row.deleted_reason ?? undefined,
+    deleted_at: row.deleted_at?.toISOString(),
+    deleted_by: row.deleted_by ?? undefined,
+    release_gc_status: row.release_gc_status ?? undefined,
+    scan_status: (row.scan_status as any) ?? undefined,
+    scan_tool: row.scan_tool ?? undefined,
+    scanned_at: row.scanned_at?.toISOString(),
+  };
+}
+
 async function collaboratorIdsFor(account_id?: string): Promise<Set<string>> {
   if (!account_id) return new Set<string>();
   const pool = getPool("medium");
@@ -253,9 +309,14 @@ async function queryRootfsRows(): Promise<RootfsImageRow[]> {
       r.deprecated_reason,
       r.theme,
       a.first_name AS owner_first_name,
-      a.last_name AS owner_last_name
+      a.last_name AS owner_last_name,
+      rel.gc_status AS release_gc_status,
+      rel.scan_status,
+      rel.scan_tool,
+      rel.scanned_at
     FROM rootfs_images AS r
     LEFT JOIN accounts AS a ON a.account_id = r.owner_id
+    LEFT JOIN rootfs_releases AS rel ON rel.release_id = r.release_id
     ORDER BY r.official DESC, COALESCE(r.updated, r.created) DESC, r.label ASC`,
   );
   return rows;
@@ -279,6 +340,17 @@ export async function listVisibleRootfsImages(
     source: DEFAULT_ROOTFS_CATALOG_URL,
     images,
   };
+}
+
+export async function listRootfsImagesAdmin(
+  account_id?: string,
+): Promise<RootfsAdminCatalogEntry[]> {
+  if (!account_id || !(await isAdmin(account_id))) {
+    throw Error("must be an admin");
+  }
+  await ensureBuiltinRootfsImages();
+  const rows = await queryRootfsRows();
+  return rows.map((row) => rowToAdminEntry({ row, account_id, admin: true }));
 }
 
 function normalizeVisibility(value?: unknown): RootfsImageVisibility {

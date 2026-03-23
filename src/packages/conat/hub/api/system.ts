@@ -13,6 +13,7 @@ import { type UserSearchResult } from "@cocalc/util/db-schema/accounts";
 import type {
   ProjectRootfsPublishLroRef,
   PublishProjectRootfsBody,
+  RootfsAdminCatalogEntry,
   RootfsCatalogSaveBody,
   RootfsDeleteRequestResult,
   RootfsImageManifest,
@@ -51,6 +52,7 @@ export const system = {
   getCodexPaymentSource: authFirst,
   getFrontendSourceFingerprint: authFirst,
   getRootfsCatalog: authFirst,
+  getRootfsCatalogAdmin: authFirstRequireAccount,
   saveRootfsCatalogEntry: authFirstRequireAccount,
   requestRootfsImageDeletion: authFirstRequireAccount,
   runRootfsReleaseGc: authFirstRequireAccount,
@@ -468,6 +470,10 @@ export interface System {
   getRootfsCatalog: (opts?: {
     account_id?: string;
   }) => Promise<RootfsImageManifest>;
+
+  getRootfsCatalogAdmin: (opts?: {
+    account_id?: string;
+  }) => Promise<RootfsAdminCatalogEntry[]>;
 
   saveRootfsCatalogEntry: (
     opts: RootfsCatalogSaveBody & { account_id?: string },

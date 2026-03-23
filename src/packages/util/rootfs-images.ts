@@ -213,6 +213,17 @@ export type RootfsDeleteRequestResult = {
   blockers: RootfsDeleteBlockers;
 };
 
+export type RootfsAdminCatalogEntry = RootfsImageEntry & {
+  deleted?: boolean;
+  deleted_reason?: string;
+  deleted_at?: string;
+  deleted_by?: string;
+  release_gc_status?: RootfsReleaseGcStatus;
+  scan_status?: RootfsScanStatus;
+  scan_tool?: string;
+  scanned_at?: string;
+};
+
 export type RootfsReleaseGcItem = {
   release_id: string;
   content_key: string;

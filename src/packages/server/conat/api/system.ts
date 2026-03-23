@@ -33,6 +33,7 @@ import {
   type R2CredentialsTestResult,
 } from "@cocalc/server/project-backup/r2";
 import {
+  listRootfsImagesAdmin,
   listVisibleRootfsImages,
   requestRootfsImageDeletion as requestRootfsImageDeletion0,
   saveRootfsImage,
@@ -329,6 +330,14 @@ export async function getFrontendSourceFingerprint() {
 
 export async function getRootfsCatalog(opts: { account_id?: string } = {}) {
   return await listVisibleRootfsImages(opts.account_id);
+}
+
+export async function getRootfsCatalogAdmin(
+  opts: {
+    account_id?: string;
+  } = {},
+) {
+  return await listRootfsImagesAdmin(opts.account_id);
 }
 
 export async function saveRootfsCatalogEntry(
