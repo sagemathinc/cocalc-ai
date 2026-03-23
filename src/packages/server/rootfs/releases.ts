@@ -15,7 +15,6 @@ import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import {
-  issueSignedObjectUpload,
   uploadObjectFromBuffer,
   uploadObjectFromFile,
   issueSignedObjectDownload,
@@ -51,6 +50,8 @@ const ROOTFS_RELEASE_ARTIFACT_FORMAT: RootfsReleaseArtifactFormat =
 const ROOTFS_RELEASE_ARTIFACT_BACKEND: RootfsReleaseArtifactBackend =
   "hub-local";
 const ROOTFS_RELEASE_UPLOAD_CHUNK_BYTES = 32 * 1024 * 1024;
+const ROOTFS_RELEASE_R2_MULTIPART_PART_BYTES = 64 * 1024 * 1024;
+const ROOTFS_RELEASE_R2_MULTIPART_CONCURRENCY = 8;
 const logger = getLogger("server:rootfs:releases");
 
 type RootfsReleaseRow = {
@@ -275,25 +276,19 @@ export async function issueRootfsReleaseArtifactUpload({
     bucket.access_key_id &&
     bucket.secret_access_key
   ) {
-    const artifact_path = r2ArtifactKey(key);
-    const signed = issueSignedObjectUpload({
-      endpoint: bucket.endpoint,
-      accessKey: bucket.access_key_id,
-      secretKey: bucket.secret_access_key,
-      bucket: bucket.name,
-      key: artifact_path,
-      contentType: rootfsReleaseArtifactContentType(),
-    });
     return {
       backend: "r2",
       method: "PUT",
-      url: signed.url,
-      headers: signed.headers,
       region,
       bucket_id: bucket.id,
       bucket_name: bucket.name,
       bucket_purpose: bucket.purpose,
-      artifact_path,
+      artifact_path: r2ArtifactKey(key),
+      endpoint: bucket.endpoint,
+      access_key_id: bucket.access_key_id,
+      secret_access_key: bucket.secret_access_key,
+      multipart_part_bytes: ROOTFS_RELEASE_R2_MULTIPART_PART_BYTES,
+      multipart_concurrency: ROOTFS_RELEASE_R2_MULTIPART_CONCURRENCY,
     };
   }
   const token = await signToken({

@@ -115,6 +115,12 @@ import { isMissingRusticRepositoryError } from "./backup-index-errors";
 import { btrfs, sudo } from "@cocalc/file-server/btrfs/util";
 import { subvolume } from "@cocalc/file-server/btrfs/subvolume";
 import { pipeline } from "node:stream/promises";
+import {
+  abortMultipartUpload,
+  beginMultipartUpload,
+  completeMultipartUpload,
+  uploadMultipartPartFromFile,
+} from "@cocalc/backend/r2-multipart";
 
 type SshTarget = { type: "project"; project_id: string };
 
@@ -579,6 +585,59 @@ async function uploadRootfsArtifactFile({
   upload: RootfsArtifactTransferTarget;
 }): Promise<void> {
   const info = await stat(path);
+  if (upload.backend === "r2") {
+    const partBytes = Math.max(
+      5 * 1024 * 1024,
+      Math.floor(Number(upload.multipart_part_bytes ?? 0) || 0),
+    );
+    const maxConcurrency = Math.max(
+      1,
+      Math.floor(Number(upload.multipart_concurrency ?? 0) || 0),
+    );
+    const totalParts = Math.max(1, Math.ceil(info.size / partBytes));
+    const auth = {
+      endpoint: upload.endpoint,
+      accessKey: upload.access_key_id,
+      secretKey: upload.secret_access_key,
+      bucket: upload.bucket_name,
+      key: upload.artifact_path,
+    };
+    const { uploadId } = await beginMultipartUpload(auth);
+    const completedParts: Array<{ partNumber: number; etag: string }> = [];
+    let nextPart = 0;
+    try {
+      const workerCount = Math.min(maxConcurrency, totalParts);
+      await Promise.all(
+        Array.from({ length: workerCount }, async () => {
+          while (true) {
+            const current = nextPart;
+            nextPart += 1;
+            if (current >= totalParts) return;
+            const start = current * partBytes;
+            const endInclusive = Math.min(info.size, start + partBytes) - 1;
+            const result = await uploadMultipartPartFromFile({
+              ...auth,
+              uploadId,
+              partNumber: current + 1,
+              filePath: path,
+              start,
+              endInclusive,
+            });
+            completedParts[current] = result;
+          }
+        }),
+      );
+      await completeMultipartUpload({
+        auth,
+        uploadId,
+        parts: completedParts,
+      });
+      return;
+    } catch (err) {
+      await abortMultipartUpload({ auth, uploadId }).catch(() => {});
+      throw err;
+    }
+  }
   const chunkBytes = Math.max(
     0,
     Math.floor(Number(upload.chunk_bytes ?? 0) || 0),
