@@ -8,6 +8,17 @@ export const ROOTFS_IMAGE_MANIFEST_VERSION = 1;
 export type RootfsImageArch = "amd64" | "arm64" | "any";
 export type RootfsPhaseTimings = Record<string, number>;
 export type RootfsImageVisibility = "private" | "collaborators" | "public";
+export type RootfsReleaseGcStatus =
+  | "active"
+  | "pending_delete"
+  | "blocked"
+  | "deleted";
+export type RootfsScanStatus =
+  | "unknown"
+  | "pending"
+  | "clean"
+  | "findings"
+  | "error";
 export type RootfsImageSection =
   | "official"
   | "mine"
@@ -23,6 +34,17 @@ export type RootfsImageTheme = {
   accent_color?: string | null;
   icon?: string | null;
   image_blob?: string | null;
+};
+
+export type RootfsScanSummary = {
+  status?: RootfsScanStatus;
+  tool?: string;
+  scanned_at?: string;
+  scanner_version?: string;
+  summary?: string;
+  findings_summary?: Record<string, number>;
+  report_url?: string;
+  metadata?: Record<string, any>;
 };
 
 export type RootfsImageEntry = {
@@ -43,6 +65,8 @@ export type RootfsImageEntry = {
   visibility?: RootfsImageVisibility;
   official?: boolean;
   hidden?: boolean;
+  blocked?: boolean;
+  blocked_reason?: string;
   owner_id?: string;
   owner_name?: string;
   section?: RootfsImageSection;
@@ -72,6 +96,8 @@ export type RootfsCatalogSaveBody = {
   official?: boolean;
   prepull?: boolean;
   hidden?: boolean;
+  blocked?: boolean;
+  blocked_reason?: string;
 };
 
 export type PublishProjectRootfsBody = {
@@ -166,6 +192,25 @@ export type RootfsReleaseArtifactAccess = {
   download_url: string;
   download_headers?: Record<string, string>;
   inspect_data?: Record<string, any>;
+};
+
+export type RootfsDeleteBlockers = {
+  projects_using_release: number;
+  catalog_entries_using_release: number;
+  prepull_entries_using_release: number;
+  child_releases: number;
+  total: number;
+};
+
+export type RootfsDeleteRequestResult = {
+  image_id: string;
+  release_id?: string;
+  image: string;
+  hidden: boolean;
+  deleted: boolean;
+  release_gc_status?: RootfsReleaseGcStatus;
+  delete_requested: boolean;
+  blockers: RootfsDeleteBlockers;
 };
 
 export type ProjectRootfsPublishLroRef = {

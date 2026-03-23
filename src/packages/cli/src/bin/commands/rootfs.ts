@@ -1,5 +1,6 @@
 import { Command } from "commander";
 import type {
+  RootfsDeleteRequestResult,
   RootfsImageEntry,
   RootfsImageSection,
   RootfsImageTheme,
@@ -87,6 +88,7 @@ function serializeRootfsImageEntry(entry: RootfsImageEntry) {
     official: !!entry.official,
     prepull: !!entry.prepull,
     hidden: !!entry.hidden,
+    blocked: !!entry.blocked,
     digest: entry.digest ?? null,
     arch: entry.arch ?? null,
     gpu: !!entry.gpu,
@@ -149,7 +151,7 @@ function formatRootfsEntriesHuman(
         `   section: ${entry.section ?? "-"}`,
         `   visibility: ${entry.visibility ?? "-"}`,
         `   owner: ${entry.owner_name ?? entry.owner_id ?? "-"}`,
-        `   flags: official=${entry.official} prepull=${entry.prepull} hidden=${entry.hidden} gpu=${entry.gpu} can_manage=${entry.can_manage}`,
+        `   flags: official=${entry.official} prepull=${entry.prepull} hidden=${entry.hidden} blocked=${entry.blocked} gpu=${entry.gpu} can_manage=${entry.can_manage}`,
       ];
       if (entry.arch != null) {
         const arch = Array.isArray(entry.arch)
@@ -181,6 +183,22 @@ function formatRootfsEntriesHuman(
       return lines.join("\n");
     })
     .join("\n\n");
+}
+
+function formatRootfsDeleteResultHuman(
+  result: RootfsDeleteRequestResult,
+): string {
+  const lines = [
+    `image_id: ${result.image_id}`,
+    `image: ${result.image}`,
+    `hidden: ${result.hidden}`,
+    `deleted: ${result.deleted}`,
+    `delete_requested: ${result.delete_requested}`,
+    `release_id: ${result.release_id ?? "-"}`,
+    `release_gc_status: ${result.release_gc_status ?? "-"}`,
+    `blockers: total=${result.blockers.total} projects=${result.blockers.projects_using_release} catalog=${result.blockers.catalog_entries_using_release} prepull=${result.blockers.prepull_entries_using_release} child_releases=${result.blockers.child_releases}`,
+  ];
+  return lines.join("\n");
 }
 
 export function registerRootfsCommand(
@@ -242,6 +260,35 @@ export function registerRootfsCommand(
             return rows;
           }
           return formatRootfsEntriesHuman(rows);
+        });
+      },
+    );
+
+  rootfs
+    .command("delete")
+    .description("soft-delete a RootFS catalog entry and request safe GC")
+    .requiredOption("--image-id <id>", "catalog image id")
+    .option(
+      "--reason <text>",
+      "optional reason recorded with the delete request",
+    )
+    .action(
+      async (
+        opts: {
+          imageId: string;
+          reason?: string;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "rootfs delete", async (ctx) => {
+          const result = await ctx.hub.system.requestRootfsImageDeletion({
+            image_id: `${opts.imageId ?? ""}`.trim(),
+            reason: opts.reason,
+          });
+          if (ctx.globals.json || ctx.globals.output === "json") {
+            return result;
+          }
+          return formatRootfsDeleteResultHuman(result);
         });
       },
     );

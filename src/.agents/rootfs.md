@@ -125,7 +125,8 @@ Admins must be able to:
   projects,
 - remove an image from all user-facing views immediately, while deferring hard
   deletion until no projects use it,
-- inspect the provenance and usage of an image.
+- inspect the provenance and usage of an image,
+- inspect vulnerability scan status and scan provenance for official images.
 
 ### Required host workflows
 
@@ -152,6 +153,21 @@ release, not merely sharing an arbitrary mutable OCI tag with others.
 
 Official and published images must be stored in R2 using btrfs send streams so
 that project hosts can receive them efficiently and exactly.
+
+### Required security metadata
+
+We are not implementing vulnerability scanning itself inside RootFS, but the
+metadata model must support it from the start. For at least official releases,
+we need to store:
+
+- scan status,
+- scanner/pipeline name,
+- scan completion time,
+- summary counts / human summary,
+- optional report URL or opaque scanner metadata.
+
+Promotion of official images should eventually depend on either a recent clean
+scan or an explicit admin override.
 
 ### Required image switching workflow
 
@@ -1031,10 +1047,42 @@ We need to distinguish:
 - hide/delete from catalog,
 - actual artifact garbage collection.
 
+The control-plane states should be explicit:
+
+- `hidden`: remove from normal user-facing pickers immediately,
+- `blocked`: do not allow new selection or child publishes,
+- `deleted`: soft-delete the catalog entry immediately,
+- `pending_delete`: release is waiting for safe GC,
+- `blocked` on the release: deletion was requested, but blockers still exist,
+- `deleted` on the release: all central replicas were reclaimed.
+
 If an image is reported, illegal, or otherwise needs to disappear, admins
 should be able to remove it from all user-facing views immediately. However,
 the actual R2 artifact and Postgres release row should only be hard-deleted
 after no projects are still using that release.
+
+### First implementation slice
+
+The first delete/GC slice should not try to reclaim storage yet. It should:
+
+1. add explicit catalog-entry lifecycle state:
+   - `hidden`
+   - `blocked`
+   - `deleted`
+2. add explicit release lifecycle state:
+   - `gc_status`
+   - `delete_requested_at/by`
+   - `delete_reason`
+3. add release scan metadata:
+   - `scan_status`
+   - `scan_tool`
+   - `scanned_at`
+   - `scan_summary`
+4. implement safe delete-request RPCs that:
+   - immediately hide + soft-delete the catalog entry,
+   - compute deletion blockers,
+   - mark the underlying release `pending_delete` or `blocked`,
+   - do **not** yet delete replicas or host caches.
 
 ## Host UI
 

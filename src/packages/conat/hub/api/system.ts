@@ -14,6 +14,7 @@ import type {
   ProjectRootfsPublishLroRef,
   PublishProjectRootfsBody,
   RootfsCatalogSaveBody,
+  RootfsDeleteRequestResult,
   RootfsImageManifest,
   RootfsImageEntry,
 } from "@cocalc/util/rootfs-images";
@@ -50,6 +51,7 @@ export const system = {
   getFrontendSourceFingerprint: authFirst,
   getRootfsCatalog: authFirst,
   saveRootfsCatalogEntry: authFirstRequireAccount,
+  requestRootfsImageDeletion: authFirstRequireAccount,
   publishProjectRootfsImage: authFirstRequireAccount,
   getPublicSiteUrl: authFirst,
   testR2Credentials: authFirst,
@@ -468,6 +470,12 @@ export interface System {
   saveRootfsCatalogEntry: (
     opts: RootfsCatalogSaveBody & { account_id?: string },
   ) => Promise<RootfsImageEntry>;
+
+  requestRootfsImageDeletion: (opts: {
+    image_id: string;
+    reason?: string;
+    account_id?: string;
+  }) => Promise<RootfsDeleteRequestResult>;
 
   publishProjectRootfsImage: (
     opts: PublishProjectRootfsBody & { account_id?: string },

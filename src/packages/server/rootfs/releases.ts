@@ -973,6 +973,12 @@ export async function upsertPublishedRootfsRelease({
         artifact_path,
         artifact_sha256,
         artifact_bytes,
+        gc_status,
+        blocked,
+        scan_status,
+        scan_tool,
+        scanned_at,
+        scan_summary,
         inspect_json,
         created,
         updated
@@ -980,7 +986,7 @@ export async function upsertPublishedRootfsRelease({
       VALUES
       (
         $1, $2, $3, $4, $5, $6, $7, $8,
-        $9, $10, $11, $12, $13, $14, $15::JSONB, NOW(), NOW()
+        $9, $10, $11, $12, $13, $14, 'active', false, 'unknown', NULL, NULL, NULL, $15::JSONB, NOW(), NOW()
       )
       ON CONFLICT (content_key) DO UPDATE SET
         runtime_image = EXCLUDED.runtime_image,
@@ -995,6 +1001,12 @@ export async function upsertPublishedRootfsRelease({
         artifact_path = EXCLUDED.artifact_path,
         artifact_sha256 = EXCLUDED.artifact_sha256,
         artifact_bytes = EXCLUDED.artifact_bytes,
+        gc_status = COALESCE(rootfs_releases.gc_status, EXCLUDED.gc_status),
+        blocked = COALESCE(rootfs_releases.blocked, EXCLUDED.blocked),
+        scan_status = COALESCE(rootfs_releases.scan_status, EXCLUDED.scan_status),
+        scan_tool = COALESCE(rootfs_releases.scan_tool, EXCLUDED.scan_tool),
+        scanned_at = COALESCE(rootfs_releases.scanned_at, EXCLUDED.scanned_at),
+        scan_summary = COALESCE(rootfs_releases.scan_summary, EXCLUDED.scan_summary),
         inspect_json = COALESCE(EXCLUDED.inspect_json, rootfs_releases.inspect_json),
         updated = NOW()
       RETURNING

@@ -34,6 +34,7 @@ import {
 } from "@cocalc/server/project-backup/r2";
 import {
   listVisibleRootfsImages,
+  requestRootfsImageDeletion as requestRootfsImageDeletion0,
   saveRootfsImage,
 } from "@cocalc/server/rootfs/catalog";
 import type {
@@ -337,6 +338,22 @@ export async function saveRootfsCatalogEntry(
     throw Error("user must be signed in");
   }
   return await saveRootfsImage({ account_id, body });
+}
+
+export async function requestRootfsImageDeletion(opts: {
+  account_id?: string;
+  image_id: string;
+  reason?: string;
+}) {
+  const { account_id, image_id, reason } = opts;
+  if (!account_id) {
+    throw Error("user must be signed in");
+  }
+  return await requestRootfsImageDeletion0({
+    account_id,
+    image_id,
+    reason,
+  });
 }
 
 async function publishQueuedLroSafe({ op }: { op: LroSummary }) {

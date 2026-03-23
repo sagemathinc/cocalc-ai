@@ -9,7 +9,7 @@ Table({
   name: "rootfs_releases",
   rules: {
     primary_key: "release_id",
-    pg_indexes: ["content_key", "runtime_image", "created"],
+    pg_indexes: ["content_key", "runtime_image", "gc_status", "created"],
   },
   fields: {
     release_id: {
@@ -74,6 +74,48 @@ Table({
     artifact_bytes: {
       type: "number",
       desc: "Stored artifact size in bytes.",
+    },
+    gc_status: {
+      type: "string",
+      pg_type: "VARCHAR(32)",
+      desc: "Lifecycle state for release garbage collection (active, pending_delete, blocked, deleted).",
+    },
+    delete_requested_at: {
+      type: "timestamp",
+      desc: "When deletion of this release was requested.",
+    },
+    delete_requested_by: {
+      type: "uuid",
+      desc: "Account that requested deletion of this release.",
+    },
+    delete_reason: {
+      type: "string",
+      desc: "Optional explanation recorded with the deletion request.",
+    },
+    blocked: {
+      type: "boolean",
+      desc: "Prevent this release from being newly selected or used for child publishes.",
+    },
+    blocked_reason: {
+      type: "string",
+      desc: "Optional explanation for why this release was blocked.",
+    },
+    scan_status: {
+      type: "string",
+      pg_type: "VARCHAR(32)",
+      desc: "Most recent vulnerability scan status (unknown, pending, clean, findings, error).",
+    },
+    scan_tool: {
+      type: "string",
+      desc: "Scanner or pipeline name used for the most recent vulnerability scan.",
+    },
+    scanned_at: {
+      type: "timestamp",
+      desc: "When the most recent vulnerability scan completed.",
+    },
+    scan_summary: {
+      type: "map",
+      desc: "Structured metadata about the most recent vulnerability scan.",
     },
     inspect_json: {
       type: "map",
