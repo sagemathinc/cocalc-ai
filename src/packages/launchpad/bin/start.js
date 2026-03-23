@@ -42,7 +42,14 @@ function prependPath(dir) {
     process.env.COCALC_BUNDLE_DIR ??= bundleDir;
     const pgliteBundleCandidates = [
       join(bundleDir, "pglite"),
-      join(bundleDir, "bundle", "node_modules", "@electric-sql", "pglite", "dist"),
+      join(
+        bundleDir,
+        "bundle",
+        "node_modules",
+        "@electric-sql",
+        "pglite",
+        "dist",
+      ),
     ];
     if (!process.env.COCALC_PGLITE_BUNDLE_DIR) {
       for (const pgliteBundleDir of pgliteBundleCandidates) {
@@ -52,9 +59,28 @@ function prependPath(dir) {
         }
       }
     }
-    const apiRoot = join(bundleDir, "next-dist", "pages", "api", "v2");
-    if (!process.env.COCALC_API_V2_ROOT && existsSync(apiRoot)) {
-      process.env.COCALC_API_V2_ROOT = apiRoot;
+    const apiRootCandidates = [
+      join(bundleDir, "api-v2-dist", "pages", "api", "v2"),
+      join(
+        bundleDir,
+        "bundle",
+        "node_modules",
+        "@cocalc",
+        "api-v2",
+        "dist",
+        "pages",
+        "api",
+        "v2",
+      ),
+      join(bundleDir, "next-dist", "pages", "api", "v2"),
+    ];
+    if (!process.env.COCALC_API_V2_ROOT) {
+      for (const apiRoot of apiRootCandidates) {
+        if (existsSync(apiRoot)) {
+          process.env.COCALC_API_V2_ROOT = apiRoot;
+          break;
+        }
+      }
     }
 
     // put path to special node binaries if available

@@ -1,0 +1,35 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "rootDir": "./",
+    "outDir": "dist",
+    "lib": ["ESNext"],
+    "paths": {
+      "@langchain/core/*": ["../ai/node_modules/@langchain/core/dist/*"]
+    }
+  },
+  "include": [
+    "index.ts",
+    "lib/**/*.ts",
+    "lib/**/*.tsx",
+    "pages/**/*.ts",
+    "pages/**/*.tsx"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "**/*.test.ts",
+    "**/*.spec.ts",
+    "**/*.test.tsx",
+    "**/*.spec.tsx"
+  ],
+  "references": [
+    { "path": "../backend" },
+    { "path": "../conat" },
+    { "path": "../database" },
+    { "path": "../frontend" },
+    { "path": "../server" },
+    { "path": "../util" }
+  ]
+}
