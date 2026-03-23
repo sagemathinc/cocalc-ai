@@ -61,6 +61,7 @@ import { PROJECT_IMAGE_PATH } from "@cocalc/util/db-schema/defaults";
 import {
   managedRootfsImageName,
   type RootfsImageArch,
+  type RootfsPhaseTimings,
   type PublishProjectRootfsArtifact,
   type RootfsArtifactTransferTarget,
   type RootfsUploadedArtifactResult,
@@ -1531,6 +1532,21 @@ function publishRootfsProgress({
   }).catch(() => {});
 }
 
+function createPhaseTimingRecorder() {
+  const phase_timings_ms: RootfsPhaseTimings = {};
+  return {
+    phase_timings_ms,
+    async measure<T>(phase: string, fn: () => Promise<T>): Promise<T> {
+      const started = Date.now();
+      try {
+        return await fn();
+      } finally {
+        phase_timings_ms[phase] = Date.now() - started;
+      }
+    },
+  };
+}
+
 async function publishRootfsImage({
   project_id,
   snapshot,
@@ -1540,6 +1556,7 @@ async function publishRootfsImage({
   snapshot?: string;
   lro?: LroRef;
 }): Promise<PublishProjectRootfsArtifact> {
+  const timings = createPhaseTimingRecorder();
   const snapshotName = snapshot?.trim() || defaultPublishSnapshotName();
   const createdSnapshot = !snapshot?.trim();
   if (createdSnapshot) {
@@ -1550,9 +1567,11 @@ async function publishRootfsImage({
       message: "creating publish snapshot",
       detail: { snapshot: snapshotName },
     });
-    await createSnapshot({
-      project_id,
-      name: snapshotName,
+    await timings.measure("create_snapshot", async () => {
+      await createSnapshot({
+        project_id,
+        name: snapshotName,
+      });
     });
   }
 
@@ -1564,9 +1583,11 @@ async function publishRootfsImage({
     detail: { snapshot: snapshotName, created_snapshot: createdSnapshot },
   });
 
-  const staged = await createSnapshotRestoreClone({
-    project_id,
-    snapshot: snapshotName,
+  const staged = await timings.measure("clone_snapshot", async () => {
+    return await createSnapshotRestoreClone({
+      project_id,
+      snapshot: snapshotName,
+    });
   });
   const rootfsPath = join(staged.path, PROJECT_IMAGE_PATH);
   let mergedPath: string | undefined;
@@ -1588,7 +1609,9 @@ async function publishRootfsImage({
       message: "materializing merged RootFS",
       detail: { source_image: sourceImage },
     });
-    const lowerdir = await extractBaseImage(sourceImage);
+    const lowerdir = await timings.measure("extract_base_image", async () => {
+      return await extractBaseImage(sourceImage);
+    });
     const overlayRoot = join(rootfsPath, imagePathComponent(sourceImage));
     const upperdir = join(overlayRoot, "upperdir");
     await mkdir(upperdir, { recursive: true });
@@ -1600,17 +1623,22 @@ async function publishRootfsImage({
       ".rootfs-publish-tree-",
     );
 
-    await mountOverlayForPublish({
-      lowerdir,
-      upperdir,
-      workdir: workdirPath,
-      merged: mergedPath,
+    await timings.measure("materialize_tree", async () => {
+      const workdir = workdirPath!;
+      const merged = mergedPath!;
+      const stagedRootfs = stagedRootfsPath!;
+      await mountOverlayForPublish({
+        lowerdir,
+        upperdir,
+        workdir,
+        merged,
+      });
+      await rsyncTree({
+        src: merged,
+        dest: stagedRootfs,
+      });
+      await unmountOverlayForPublish(merged);
     });
-    await rsyncTree({
-      src: mergedPath,
-      dest: stagedRootfsPath,
-    });
-    await unmountOverlayForPublish(mergedPath);
     mergedPath = undefined;
 
     publishRootfsProgress({
@@ -1619,7 +1647,9 @@ async function publishRootfsImage({
       progress: 75,
       message: "hashing published RootFS",
     });
-    const digest = await tarSha256(stagedRootfsPath);
+    const digest = await timings.measure("hash_tree", async () => {
+      return await tarSha256(stagedRootfsPath!);
+    });
     const image = managedRootfsImageName(digest);
     const finalPath = imageCachePath(image);
     const finalInspectPath = inspectFilePath(image);
@@ -1648,13 +1678,16 @@ async function publishRootfsImage({
       detail: { image, content_key: digest },
     });
     if (!(await exists(finalPath))) {
-      await mkdir(dirname(finalPath), { recursive: true });
-      await btrfsSnapshotReadonly({
-        source: stagedRootfsPath,
-        dest: finalPath,
+      await timings.measure("register_cache_entry", async () => {
+        const stagedRootfs = stagedRootfsPath!;
+        await mkdir(dirname(finalPath), { recursive: true });
+        await btrfsSnapshotReadonly({
+          source: stagedRootfs,
+          dest: finalPath,
+        });
+        await deleteSubvolumeTree(stagedRootfs);
+        stagedRootfsPath = undefined;
       });
-      await deleteSubvolumeTree(stagedRootfsPath);
-      stagedRootfsPath = undefined;
     }
 
     if (!(await exists(finalInspectPath))) {
@@ -1672,6 +1705,7 @@ async function publishRootfsImage({
       created_snapshot: createdSnapshot,
       source_image: sourceImage,
       inspect_data: publishedInspectData,
+      phase_timings_ms: timings.phase_timings_ms,
     };
   } finally {
     if (mergedPath) {
@@ -1692,6 +1726,7 @@ async function uploadRootfsReleaseArtifact({
   image: string;
   upload: RootfsArtifactTransferTarget;
 }): Promise<RootfsUploadedArtifactResult> {
+  const timings = createPhaseTimingRecorder();
   const finalPath = imageCachePath(image);
   if (!(await exists(finalPath))) {
     throw new Error(
@@ -1709,30 +1744,42 @@ async function uploadRootfsReleaseArtifact({
       stagedSourcePath = await createImageCacheTempSubvolume(
         ".rootfs-artifact-stage-",
       );
-      await rsyncTree({
-        src: finalPath,
-        dest: stagedSourcePath,
+      await timings.measure("stage_send_source", async () => {
+        const stagedSource = stagedSourcePath!;
+        await rsyncTree({
+          src: finalPath,
+          dest: stagedSource,
+        });
+        readonlySendSourcePath = join(
+          tempDir,
+          `.rootfs-artifact-send-${randomUUID()}`,
+        );
+        await btrfsSnapshotReadonly({
+          source: stagedSource,
+          dest: readonlySendSourcePath!,
+        });
       });
-      readonlySendSourcePath = join(
-        tempDir,
-        `.rootfs-artifact-send-${randomUUID()}`,
-      );
-      await btrfsSnapshotReadonly({
-        source: stagedSourcePath,
-        dest: readonlySendSourcePath,
-      });
-      sendSource = readonlySendSourcePath;
+      sendSource = readonlySendSourcePath!;
     }
-    await btrfsSendToFile({
-      source: sendSource,
-      dest: artifactPath,
+    await timings.measure("btrfs_send", async () => {
+      await btrfsSendToFile({
+        source: sendSource,
+        dest: artifactPath,
+      });
     });
     if (upload.backend === "r2") {
       const info = await stat(artifactPath);
-      const artifact_sha256 = await fileSha256(artifactPath);
-      await uploadRootfsArtifactFile({
-        path: artifactPath,
-        upload,
+      const artifact_sha256 = await timings.measure(
+        "hash_artifact",
+        async () => {
+          return await fileSha256(artifactPath);
+        },
+      );
+      await timings.measure("upload_artifact", async () => {
+        await uploadRootfsArtifactFile({
+          path: artifactPath,
+          upload,
+        });
       });
       if (!upload.region || !upload.bucket_name || !upload.artifact_path) {
         throw new Error("direct R2 RootFS upload target is missing metadata");
@@ -1747,13 +1794,20 @@ async function uploadRootfsReleaseArtifact({
         bucket_name: upload.bucket_name,
         bucket_purpose: upload.bucket_purpose,
         artifact_path: upload.artifact_path,
+        phase_timings_ms: timings.phase_timings_ms,
       };
     }
-    await uploadRootfsArtifactFile({
-      path: artifactPath,
-      upload,
+    await timings.measure("upload_artifact", async () => {
+      await uploadRootfsArtifactFile({
+        path: artifactPath,
+        upload,
+      });
     });
-    return { ok: true, backend: "hub-local" };
+    return {
+      ok: true,
+      backend: "hub-local",
+      phase_timings_ms: timings.phase_timings_ms,
+    };
   } finally {
     await deleteSubvolumeTree(readonlySendSourcePath).catch(() => {});
     await deleteSubvolumeTree(stagedSourcePath).catch(() => {});

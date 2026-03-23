@@ -20,6 +20,7 @@ export interface HostCreateProjectRequest extends CreateProjectOptions {
 export interface HostCreateProjectResponse {
   project_id: string;
   state?: ProjectState | string;
+  phase_timings_ms?: Record<string, number>;
 }
 
 export interface HostRuntimeLogResponse {

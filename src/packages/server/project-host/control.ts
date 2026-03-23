@@ -14,6 +14,7 @@ const STOP_PROJECT_TIMEOUT_MS = 30 * 1000;
 const RECENT_RUNNING_STATE_MS = 60 * 1000;
 const RECENT_STARTING_STATE_MS = 5 * 60 * 1000;
 const startProjectInFlight = new Map<string, Promise<void>>();
+const startProjectPhaseTimings = new Map<string, Record<string, number>>();
 
 type HostPlacement = {
   host_id: string;
@@ -329,7 +330,7 @@ export async function startProjectOnHost(
       timeout: START_PROJECT_TIMEOUT_MS,
     });
     try {
-      await client.startProject({
+      const response = await client.startProject({
         project_id,
         authorized_keys: meta.authorized_keys,
         run_quota,
@@ -337,6 +338,9 @@ export async function startProjectOnHost(
         restore,
         lro_op_id: opts?.lro_op_id,
       });
+      if (opts?.lro_op_id && response.phase_timings_ms) {
+        startProjectPhaseTimings.set(opts.lro_op_id, response.phase_timings_ms);
+      }
     } catch (err) {
       log.warn("startProjectOnHost failed", {
         project_id,
@@ -354,6 +358,16 @@ export async function startProjectOnHost(
       startProjectInFlight.delete(project_id);
     }
   }
+}
+
+export function takeStartProjectPhaseTimings(
+  op_id?: string,
+): Record<string, number> | undefined {
+  const key = `${op_id ?? ""}`.trim();
+  if (!key) return;
+  const timings = startProjectPhaseTimings.get(key);
+  startProjectPhaseTimings.delete(key);
+  return timings;
 }
 
 export async function stopProjectOnHost(

@@ -6,6 +6,7 @@
 export const ROOTFS_IMAGE_MANIFEST_VERSION = 1;
 
 export type RootfsImageArch = "amd64" | "arm64" | "any";
+export type RootfsPhaseTimings = Record<string, number>;
 export type RootfsImageVisibility = "private" | "collaborators" | "public";
 export type RootfsImageSection =
   | "official"
@@ -96,6 +97,7 @@ export type PublishProjectRootfsArtifact = {
   created_snapshot: boolean;
   source_image: string;
   inspect_data?: Record<string, any>;
+  phase_timings_ms?: RootfsPhaseTimings;
 };
 
 export type RootfsReleaseArtifactKind = "full";
@@ -119,6 +121,7 @@ export type RootfsUploadedArtifactResult =
   | {
       ok: true;
       backend: "hub-local";
+      phase_timings_ms?: RootfsPhaseTimings;
     }
   | {
       ok: true;
@@ -130,6 +133,7 @@ export type RootfsUploadedArtifactResult =
       bucket_name: string;
       bucket_purpose?: string | null;
       artifact_path: string;
+      phase_timings_ms?: RootfsPhaseTimings;
     };
 
 export type RootfsReleaseArtifactAccess = {
