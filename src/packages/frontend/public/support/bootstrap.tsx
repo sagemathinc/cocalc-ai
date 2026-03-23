@@ -31,22 +31,24 @@ async function loadCustomize(): Promise<CustomizePayload | undefined> {
 
 export async function init(): Promise<void> {
   const target = new URLSearchParams(window.location.search).get("target");
-  if (target && target.includes("/support")) {
-    window.history.replaceState({}, "", target);
-  }
+  const initialPath =
+    target && target.includes("/support") ? target : window.location.pathname;
 
   const payload = await loadCustomize();
-  const root = createRoot(document.getElementById("smc-react-container")!);
+  const root = createRoot(document.getElementById("cocalc-webapp-container")!);
 
-  function render(): void {
+  function render(pathname = window.location.pathname): void {
     root.render(
       <PublicSupportApp
         config={payload?.configuration}
-        initialView={getSupportViewFromPath(window.location.pathname)}
+        initialView={getSupportViewFromPath(pathname)}
       />,
     );
   }
 
-  window.addEventListener("popstate", render);
-  render();
+  window.addEventListener("popstate", () => render());
+  render(initialPath);
+  if (target && target.includes("/support")) {
+    window.history.replaceState({}, "", target);
+  }
 }

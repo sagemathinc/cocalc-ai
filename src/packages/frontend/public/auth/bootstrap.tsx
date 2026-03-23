@@ -28,26 +28,28 @@ async function loadCustomize(): Promise<CustomizePayload | undefined> {
 
 export async function init(): Promise<void> {
   const target = new URLSearchParams(window.location.search).get("target");
-  if (target && target.includes("/auth")) {
-    window.history.replaceState({}, "", target);
-  }
+  const initialPath =
+    target && target.includes("/auth") ? target : window.location.pathname;
   const payload = await loadCustomize();
   if (payload?.configuration?.is_authenticated) {
     window.location.replace(joinUrlPath(appBasePath, "app"));
     return;
   }
-  const root = createRoot(document.getElementById("smc-react-container")!);
+  const root = createRoot(document.getElementById("cocalc-webapp-container")!);
 
-  function render(): void {
+  function render(pathname = window.location.pathname): void {
     root.render(
       <PublicAuthApp
         initialRequiresToken={!!payload?.registration}
-        initialView={getAuthViewFromPath(window.location.pathname)}
+        initialView={getAuthViewFromPath(pathname)}
         siteName={payload?.configuration?.site_name ?? SITE_NAME}
       />,
     );
   }
 
-  window.addEventListener("popstate", render);
-  render();
+  window.addEventListener("popstate", () => render());
+  render(initialPath);
+  if (target && target.includes("/auth")) {
+    window.history.replaceState({}, "", target);
+  }
 }

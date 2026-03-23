@@ -41,23 +41,27 @@ async function loadNews(): Promise<NewsItem[] | undefined> {
 
 export async function init(): Promise<void> {
   const target = new URLSearchParams(window.location.search).get("target");
-  if (target && /(\/about|\/policies|\/news)/.test(target)) {
-    window.history.replaceState({}, "", target);
-  }
+  const initialPath =
+    target && /(\/about|\/policies|\/news)/.test(target)
+      ? target
+      : window.location.pathname;
 
   const [customize, news] = await Promise.all([loadCustomize(), loadNews()]);
-  const root = createRoot(document.getElementById("smc-react-container")!);
+  const root = createRoot(document.getElementById("cocalc-webapp-container")!);
 
-  function render(): void {
+  function render(pathname = window.location.pathname): void {
     root.render(
       <PublicContentApp
         config={customize?.configuration}
         initialNews={news}
-        initialView={getContentViewFromPath(window.location.pathname)}
+        initialView={getContentViewFromPath(pathname)}
       />,
     );
   }
 
-  window.addEventListener("popstate", render);
-  render();
+  window.addEventListener("popstate", () => render());
+  render(initialPath);
+  if (target && /(\/about|\/policies|\/news)/.test(target)) {
+    window.history.replaceState({}, "", target);
+  }
 }

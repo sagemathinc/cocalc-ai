@@ -7,8 +7,18 @@ import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { joinUrlPath } from "@cocalc/util/url-path";
 declare var DEBUG;
 
+function shouldRegisterWebappManifest(): boolean {
+  const base = appBasePath === "/" ? "" : appBasePath;
+  const pathname = window.location.pathname;
+  return (
+    pathname === `${base}/app` ||
+    pathname.startsWith(`${base}/app/`) ||
+    pathname === joinUrlPath(appBasePath, "static/app.html")
+  );
+}
+
 window.addEventListener("load", async function () {
-  if (DEBUG) {
+  if (DEBUG || !shouldRegisterWebappManifest()) {
     return null;
   }
   const path = joinUrlPath(appBasePath, "webapp/serviceWorker.js");
@@ -24,7 +34,7 @@ window.addEventListener("load", async function () {
 });
 
 export default function Manifest() {
-  if (DEBUG) {
+  if (DEBUG || !shouldRegisterWebappManifest()) {
     return null;
   }
   return (
