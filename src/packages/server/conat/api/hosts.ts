@@ -26,6 +26,7 @@ import { issueProjectHostAuthToken as issueProjectHostAuthTokenJwt } from "@coca
 import getLogger from "@cocalc/backend/logger";
 import { getProjectHostAuthTokenPrivateKey } from "@cocalc/backend/data";
 import getPool from "@cocalc/database/pool";
+import { isValidUUID } from "@cocalc/util/misc";
 import {
   computePlacementPermission,
   getUserHostTier,
@@ -804,6 +805,41 @@ async function assertAccountCanIssueProjectHostToken({
   }
 }
 
+async function assertHostCanIssueProjectHostAgentToken({
+  host_id,
+  account_id,
+  project_id,
+}: {
+  host_id: string;
+  account_id: string;
+  project_id: string;
+}) {
+  if (!isValidUUID(host_id)) {
+    throw new Error("host_id must be specified");
+  }
+  if (!isValidUUID(account_id)) {
+    throw new Error("account_id must be specified");
+  }
+  if (!isValidUUID(project_id)) {
+    throw new Error("project_id must be specified");
+  }
+  const { rowCount } = await pool().query(
+    `
+      SELECT 1
+      FROM projects
+      WHERE project_id=$1
+        AND host_id=$2
+        AND deleted IS NOT true
+        AND (users -> $3::text ->> 'group') IN ('owner', 'collaborator')
+      LIMIT 1
+    `,
+    [project_id, host_id, account_id],
+  );
+  if (!rowCount) {
+    throw new Error("not authorized for project-host agent auth token");
+  }
+}
+
 export async function issueProjectHostAuthToken({
   account_id,
   host_id,
@@ -849,6 +885,43 @@ export async function issueProjectHostAuthToken({
     private_key: getProjectHostAuthTokenPrivateKey(),
   });
   return { host_id, token, expires_at };
+}
+
+export async function issueProjectHostAgentAuthToken({
+  host_id,
+  account_id,
+  project_id,
+  ttl_seconds,
+}: {
+  host_id?: string;
+  account_id: string;
+  project_id: string;
+  ttl_seconds?: number;
+}): Promise<{
+  host_id: string;
+  token: string;
+  expires_at: number;
+}> {
+  const resolvedHostId = `${host_id ?? ""}`.trim();
+  if (!resolvedHostId) {
+    throw new Error("host_id must be specified");
+  }
+  await assertHostCanIssueProjectHostAgentToken({
+    host_id: resolvedHostId,
+    account_id,
+    project_id,
+  });
+  await syncProjectUsersOnHost({
+    project_id,
+    expected_host_id: resolvedHostId,
+  });
+  const { token, expires_at } = issueProjectHostAuthTokenJwt({
+    account_id,
+    host_id: resolvedHostId,
+    ttl_seconds,
+    private_key: getProjectHostAuthTokenPrivateKey(),
+  });
+  return { host_id: resolvedHostId, token, expires_at };
 }
 
 function normalizeExternalCredentialSelector({

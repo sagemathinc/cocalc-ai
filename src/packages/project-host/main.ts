@@ -45,6 +45,7 @@ import { attachProjectProxy } from "@cocalc/project-proxy/proxy";
 import { init as initChangefeeds } from "@cocalc/lite/hub/changefeeds";
 import { hubApi, init as initHubApi } from "@cocalc/lite/hub/api";
 import { PROJECT_RUNNER_RPC_TIMEOUT_MS, wireProjectsApi } from "./hub/projects";
+import { wireHostsApi } from "./hub/hosts";
 import { wireSystemApi } from "./hub/system";
 import { startMasterRegistration } from "./master";
 import { startReconciler } from "./reconcile";
@@ -316,6 +317,7 @@ export async function main(
   initChangefeeds({ client: conatClient });
   await initHubApi({ client: conatClient });
   wireSystemApi();
+  wireHostsApi();
 
   // ACP runs inside project-host in container mode (no env flag needed).
   setPreferContainerExecutor(true);

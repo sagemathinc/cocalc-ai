@@ -516,6 +516,7 @@ export const hubApi: HubApi = {
   },
   db: { touch: () => {}, userQuery },
   purchases: {},
+  hosts: {},
   agent,
   sync: { history: syncHistory, purgeHistory: syncPurgeHistory },
   jupyter: {},
