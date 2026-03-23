@@ -277,6 +277,7 @@ export interface Fileserver {
   uploadRootfsReleaseArtifact: (opts: {
     project_id: string;
     image: string;
+    parent_image?: string;
     upload: RootfsArtifactTransferTarget;
   }) => Promise<RootfsUploadedArtifactResult>;
 }

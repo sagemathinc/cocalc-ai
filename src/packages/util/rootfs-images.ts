@@ -96,11 +96,14 @@ export type PublishProjectRootfsArtifact = {
   snapshot: string;
   created_snapshot: boolean;
   source_image: string;
+  artifact_kind?: RootfsReleaseArtifactKind;
+  parent_image?: string;
+  parent_content_key?: string;
   inspect_data?: Record<string, any>;
   phase_timings_ms?: RootfsPhaseTimings;
 };
 
-export type RootfsReleaseArtifactKind = "full";
+export type RootfsReleaseArtifactKind = "full" | "delta";
 export type RootfsReleaseArtifactFormat = "btrfs-send";
 export type RootfsReleaseArtifactBackend = "hub-local" | "r2";
 
@@ -131,11 +134,13 @@ export type RootfsUploadedArtifactResult =
   | {
       ok: true;
       backend: "hub-local";
+      artifact_kind?: RootfsReleaseArtifactKind;
       phase_timings_ms?: RootfsPhaseTimings;
     }
   | {
       ok: true;
       backend: "r2";
+      artifact_kind?: RootfsReleaseArtifactKind;
       artifact_sha256: string;
       artifact_bytes: number;
       region: string;
@@ -155,6 +160,9 @@ export type RootfsReleaseArtifactAccess = {
   artifact_backend: RootfsReleaseArtifactBackend;
   artifact_sha256: string;
   artifact_bytes: number;
+  parent_release_id?: string;
+  parent_image?: string;
+  parent_content_key?: string;
   download_url: string;
   download_headers?: Record<string, string>;
   inspect_data?: Record<string, any>;

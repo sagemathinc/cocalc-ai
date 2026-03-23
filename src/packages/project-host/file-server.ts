@@ -59,7 +59,9 @@ import { exists } from "@cocalc/backend/misc/async-utils-node";
 import { type SnapshotCounts } from "@cocalc/util/db-schema/projects";
 import { PROJECT_IMAGE_PATH } from "@cocalc/util/db-schema/defaults";
 import {
+  managedRootfsContentKey,
   managedRootfsImageName,
+  isManagedRootfsImageName,
   type RootfsImageArch,
   type RootfsPhaseTimings,
   type PublishProjectRootfsArtifact,
@@ -527,18 +529,21 @@ async function directorySizeBytes(pathToMeasure: string): Promise<number> {
 async function btrfsSendToFile({
   source,
   dest,
+  parent,
 }: {
   source: string;
   dest: string;
+  parent?: string;
 }): Promise<void> {
   await mkdir(dirname(dest), { recursive: true });
-  const child = spawn(
-    "sudo",
-    ["-n", STORAGE_WRAPPER, "btrfs", "send", source],
-    {
-      stdio: ["ignore", "pipe", "pipe"],
-    },
-  );
+  const args = ["-n", STORAGE_WRAPPER, "btrfs", "send"];
+  if (parent) {
+    args.push("-p", parent);
+  }
+  args.push(source);
+  const child = spawn("sudo", args, {
+    stdio: ["ignore", "pipe", "pipe"],
+  });
   let stderr = "";
   child.stderr.on("data", (chunk) => {
     stderr += chunk.toString();
@@ -691,6 +696,20 @@ async function btrfsSnapshotReadonly({
 }): Promise<void> {
   await btrfs({
     args: ["subvolume", "snapshot", "-r", source, dest],
+    err_on_exit: true,
+    verbose: false,
+  });
+}
+
+async function btrfsSnapshotWritable({
+  source,
+  dest,
+}: {
+  source: string;
+  dest: string;
+}): Promise<void> {
+  await btrfs({
+    args: ["subvolume", "snapshot", source, dest],
     err_on_exit: true,
     verbose: false,
   });
@@ -1652,6 +1671,7 @@ async function publishRootfsImage({
   let mergedPath: string | undefined;
   let workdirPath: string | undefined;
   let stagedRootfsPath: string | undefined;
+  let parentImage: string | undefined;
   try {
     const currentImagePath = join(rootfsPath, "current-image.txt");
     const sourceImage = `${await readFile(currentImagePath, "utf8")}`.trim();
@@ -1678,9 +1698,27 @@ async function publishRootfsImage({
     workdirPath = join(overlayRoot, `publish-workdir-${randomUUID()}`);
     await mkdir(workdirPath, { recursive: true });
     mergedPath = await createOverlayMountTempPath();
-    stagedRootfsPath = await createImageCacheTempSubvolume(
-      ".rootfs-publish-tree-",
-    );
+    if (isManagedRootfsImageName(sourceImage)) {
+      const managedParentPath = imageCachePath(sourceImage);
+      if (
+        (await exists(managedParentPath)) &&
+        (await isBtrfsSubvolume(managedParentPath))
+      ) {
+        parentImage = sourceImage;
+        await mkdir(IMAGE_CACHE, { recursive: true });
+        stagedRootfsPath = join(
+          IMAGE_CACHE,
+          `.rootfs-publish-tree-${randomUUID()}`,
+        );
+        await btrfsSnapshotWritable({
+          source: managedParentPath,
+          dest: stagedRootfsPath,
+        });
+      }
+    }
+    stagedRootfsPath =
+      stagedRootfsPath ??
+      (await createImageCacheTempSubvolume(".rootfs-publish-tree-"));
 
     await timings.measure("materialize_tree", async () => {
       const workdir = workdirPath!;
@@ -1763,6 +1801,9 @@ async function publishRootfsImage({
       snapshot: snapshotName,
       created_snapshot: createdSnapshot,
       source_image: sourceImage,
+      artifact_kind: parentImage ? "delta" : "full",
+      parent_image: parentImage,
+      parent_content_key: managedRootfsContentKey(parentImage),
       inspect_data: publishedInspectData,
       phase_timings_ms: timings.phase_timings_ms,
     };
@@ -1780,10 +1821,12 @@ async function publishRootfsImage({
 async function uploadRootfsReleaseArtifact({
   image,
   upload,
+  parent_image,
 }: {
   project_id: string;
   image: string;
   upload: RootfsArtifactTransferTarget;
+  parent_image?: string;
 }): Promise<RootfsUploadedArtifactResult> {
   const timings = createPhaseTimingRecorder();
   const finalPath = imageCachePath(image);
@@ -1797,6 +1840,7 @@ async function uploadRootfsReleaseArtifact({
   const artifactPath = join(tempDir, "release.btrfs");
   let stagedSourcePath: string | undefined;
   let readonlySendSourcePath: string | undefined;
+  let parentPath: string | undefined;
   try {
     let sendSource = finalPath;
     if (!(await isBtrfsSubvolume(finalPath))) {
@@ -1820,10 +1864,20 @@ async function uploadRootfsReleaseArtifact({
       });
       sendSource = readonlySendSourcePath!;
     }
+    if (parent_image && sendSource === finalPath) {
+      const candidateParent = imageCachePath(parent_image);
+      if (
+        (await exists(candidateParent)) &&
+        (await isBtrfsSubvolume(candidateParent))
+      ) {
+        parentPath = candidateParent;
+      }
+    }
     await timings.measure("btrfs_send", async () => {
       await btrfsSendToFile({
         source: sendSource,
         dest: artifactPath,
+        parent: parentPath,
       });
     });
     if (upload.backend === "r2") {
@@ -1846,6 +1900,7 @@ async function uploadRootfsReleaseArtifact({
       return {
         ok: true,
         backend: "r2",
+        artifact_kind: parentPath ? "delta" : "full",
         artifact_sha256,
         artifact_bytes: info.size,
         region: upload.region,
@@ -1865,6 +1920,7 @@ async function uploadRootfsReleaseArtifact({
     return {
       ok: true,
       backend: "hub-local",
+      artifact_kind: parentPath ? "delta" : "full",
       phase_timings_ms: timings.phase_timings_ms,
     };
   } finally {

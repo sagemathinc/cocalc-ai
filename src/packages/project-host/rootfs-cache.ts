@@ -11,6 +11,7 @@ import {
   open,
   readdir,
   readFile,
+  rename,
   rm,
   stat,
   writeFile,
@@ -203,6 +204,7 @@ async function downloadManagedRootfsArtifact({
     content_key: access.content_key,
     artifact_bytes: access.artifact_bytes,
     artifact_backend: access.artifact_backend,
+    parent_image: access.parent_image,
   });
   const finalPath = imageCachePath(image);
   const finalInspectPath = inspectFilePath(image);
@@ -216,6 +218,12 @@ async function downloadManagedRootfsArtifact({
       await writeFile(finalInspectPath, JSON.stringify(access.inspect_data));
     }
     return;
+  }
+  if (access.parent_image?.trim()) {
+    const parentImage = access.parent_image.trim();
+    if (!(await exists(imageCachePath(parentImage)))) {
+      await downloadManagedRootfsArtifact({ image: parentImage });
+    }
   }
 
   await mkdir(IMAGE_CACHE, { recursive: true });
@@ -282,16 +290,7 @@ async function downloadManagedRootfsArtifact({
       throw new Error(`received RootFS image '${image}' was not created`);
     }
     const snapshotStarted = Date.now();
-    await btrfs({
-      args: ["subvolume", "snapshot", "-r", receivedPath, finalPath],
-      err_on_exit: true,
-      verbose: false,
-    });
-    await btrfs({
-      args: ["subvolume", "delete", receivedPath],
-      err_on_exit: true,
-      verbose: false,
-    });
+    await rename(receivedPath, finalPath);
     if (access.inspect_data) {
       await writeFile(finalInspectPath, JSON.stringify(access.inspect_data));
     }

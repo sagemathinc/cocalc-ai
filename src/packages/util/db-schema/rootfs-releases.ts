@@ -31,6 +31,14 @@ Table({
       type: "string",
       desc: "Source image or parent runtime image used to build this release.",
     },
+    parent_release_id: {
+      type: "uuid",
+      desc: "Optional parent immutable RootFS release when this release is stored as a delta.",
+    },
+    depth: {
+      type: "number",
+      desc: "Delta ancestry depth for this release. Full releases have depth 0.",
+    },
     arch: {
       type: "string",
       pg_type: "VARCHAR(16)",
@@ -43,7 +51,7 @@ Table({
     artifact_kind: {
       type: "string",
       pg_type: "VARCHAR(32)",
-      desc: "Artifact kind for this release (currently full only).",
+      desc: "Artifact kind for this release (full, delta).",
     },
     artifact_format: {
       type: "string",

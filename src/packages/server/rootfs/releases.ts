@@ -44,7 +44,6 @@ const ROOTFS_RELEASE_TOKEN_SECRET_PATH = join(
   secrets,
   "rootfs-release-artifact-token-key",
 );
-const ROOTFS_RELEASE_ARTIFACT_KIND: RootfsReleaseArtifactKind = "full";
 const ROOTFS_RELEASE_ARTIFACT_FORMAT: RootfsReleaseArtifactFormat =
   "btrfs-send";
 const ROOTFS_RELEASE_ARTIFACT_BACKEND: RootfsReleaseArtifactBackend =
@@ -59,6 +58,8 @@ type RootfsReleaseRow = {
   content_key: string;
   runtime_image: string;
   source_image: string | null;
+  parent_release_id: string | null;
+  depth: number | null;
   arch: string | null;
   size_bytes: number | null;
   artifact_kind: RootfsReleaseArtifactKind;
@@ -113,7 +114,7 @@ type RootfsArtifactTokenPayload = {
   exp: number;
 };
 
-function normalizeContentKey(content_key?: string): string {
+function normalizeContentKey(content_key?: string | null): string {
   const value = `${content_key ?? ""}`.trim().toLowerCase();
   if (!/^[0-9a-f]{64}$/.test(value)) {
     throw new Error("invalid RootFS content key");
@@ -121,18 +122,38 @@ function normalizeContentKey(content_key?: string): string {
   return value;
 }
 
-function artifactRelativePath(content_key: string): string {
+function artifactRelativePath(
+  content_key: string,
+  artifact_kind: RootfsReleaseArtifactKind = "full",
+  parent_content_key?: string | null,
+): string {
   const key = normalizeContentKey(content_key);
+  if (artifact_kind === "delta") {
+    const parent = normalizeContentKey(parent_content_key);
+    return `${key.slice(0, 2)}/${key}/delta-from-${parent}.btrfs`;
+  }
   return `${key.slice(0, 2)}/${key}/full.btrfs`;
 }
 
-function r2ArtifactKey(content_key: string): string {
+function r2ArtifactKey(
+  content_key: string,
+  artifact_kind: RootfsReleaseArtifactKind = "full",
+  parent_content_key?: string | null,
+): string {
   const key = normalizeContentKey(content_key);
+  if (artifact_kind === "delta") {
+    const parent = normalizeContentKey(parent_content_key);
+    return `${ROOTFS_RELEASE_R2_PREFIX}/${key}/delta-from-${parent}.btrfs`;
+  }
   return `${ROOTFS_RELEASE_R2_PREFIX}/${key}/full.btrfs`;
 }
 
-function r2ArtifactShaKey(content_key: string): string {
-  return `${r2ArtifactKey(content_key)}.sha256`;
+function r2ArtifactShaKey(
+  content_key: string,
+  artifact_kind: RootfsReleaseArtifactKind = "full",
+  parent_content_key?: string | null,
+): string {
+  return `${r2ArtifactKey(content_key, artifact_kind, parent_content_key)}.sha256`;
 }
 
 export function rootfsReleaseArtifactLocalPath(content_key: string): string {
@@ -261,13 +282,18 @@ async function getArtifactBaseUrl(): Promise<string> {
 export async function issueRootfsReleaseArtifactUpload({
   host_id,
   content_key,
+  artifact_kind = "full",
+  parent_content_key,
   ttl_ms = 15 * 60 * 1000,
 }: {
   host_id: string;
   content_key: string;
+  artifact_kind?: RootfsReleaseArtifactKind;
+  parent_content_key?: string | null;
   ttl_ms?: number;
 }): Promise<RootfsArtifactTransferTarget> {
   const key = normalizeContentKey(content_key);
+  const artifactPath = r2ArtifactKey(key, artifact_kind, parent_content_key);
   const region = await resolveHostR2Region(host_id);
   const bucket = await loadR2BucketForRegion(region);
   if (
@@ -283,7 +309,7 @@ export async function issueRootfsReleaseArtifactUpload({
       bucket_id: bucket.id,
       bucket_name: bucket.name,
       bucket_purpose: bucket.purpose,
-      artifact_path: r2ArtifactKey(key),
+      artifact_path: artifactPath,
       endpoint: bucket.endpoint,
       access_key_id: bucket.access_key_id,
       secret_access_key: bucket.secret_access_key,
@@ -316,6 +342,8 @@ async function loadRootfsReleaseRowByContentKey(
       content_key,
       runtime_image,
       source_image,
+      parent_release_id,
+      depth,
       arch,
       size_bytes,
       artifact_kind,
@@ -692,6 +720,37 @@ export async function loadRootfsReleaseByImage(
   return await loadRootfsReleaseRowByContentKey(content_key);
 }
 
+async function loadRootfsReleaseById(
+  release_id?: string | null,
+): Promise<RootfsReleaseRow | null> {
+  const value = `${release_id ?? ""}`.trim();
+  if (!value) {
+    return null;
+  }
+  const { rows } = await getPool("medium").query<RootfsReleaseRow>(
+    `SELECT
+      release_id,
+      content_key,
+      runtime_image,
+      source_image,
+      parent_release_id,
+      depth,
+      arch,
+      size_bytes,
+      artifact_kind,
+      artifact_format,
+      artifact_backend,
+      artifact_path,
+      artifact_sha256,
+      artifact_bytes,
+      inspect_json
+    FROM rootfs_releases
+    WHERE release_id=$1`,
+    [value],
+  );
+  return rows[0] ?? null;
+}
+
 export async function readStoredRootfsArtifactMetadata(
   content_key: string,
 ): Promise<RootfsStoredArtifactMetadata | null> {
@@ -876,8 +935,24 @@ export async function upsertPublishedRootfsRelease({
       `stored RootFS artifact metadata missing for content key ${content_key}`,
     );
   }
+  const parentRelease = artifact.parent_image
+    ? await loadRootfsReleaseByImage(artifact.parent_image)
+    : null;
+  const resolvedParentRelease =
+    parentRelease?.content_key === content_key ? null : parentRelease;
+  const artifactKind: RootfsReleaseArtifactKind =
+    artifact.artifact_kind === "delta" && resolvedParentRelease
+      ? "delta"
+      : "full";
+  const depth =
+    artifactKind === "delta" ? (resolvedParentRelease?.depth ?? 0) + 1 : 0;
   const resolvedArtifactPath =
-    artifact_path ?? artifactRelativePath(content_key);
+    artifact_path ??
+    artifactRelativePath(
+      content_key,
+      artifactKind,
+      resolvedParentRelease?.content_key,
+    );
   const pool = getPool("medium");
   const existing = await loadRootfsReleaseRowByContentKey(content_key);
   const release_id = existing?.release_id ?? uuid();
@@ -888,6 +963,8 @@ export async function upsertPublishedRootfsRelease({
         content_key,
         runtime_image,
         source_image,
+        parent_release_id,
+        depth,
         arch,
         size_bytes,
         artifact_kind,
@@ -901,10 +978,15 @@ export async function upsertPublishedRootfsRelease({
         updated
       )
       VALUES
-      ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::JSONB, NOW(), NOW())
+      (
+        $1, $2, $3, $4, $5, $6, $7, $8,
+        $9, $10, $11, $12, $13, $14, $15::JSONB, NOW(), NOW()
+      )
       ON CONFLICT (content_key) DO UPDATE SET
         runtime_image = EXCLUDED.runtime_image,
         source_image = EXCLUDED.source_image,
+        parent_release_id = EXCLUDED.parent_release_id,
+        depth = EXCLUDED.depth,
         arch = EXCLUDED.arch,
         size_bytes = COALESCE(EXCLUDED.size_bytes, rootfs_releases.size_bytes),
         artifact_kind = EXCLUDED.artifact_kind,
@@ -920,6 +1002,8 @@ export async function upsertPublishedRootfsRelease({
         content_key,
         runtime_image,
         source_image,
+        parent_release_id,
+        depth,
         arch,
         size_bytes,
         artifact_kind,
@@ -934,9 +1018,11 @@ export async function upsertPublishedRootfsRelease({
       content_key,
       artifact.image,
       artifact.source_image ?? null,
+      resolvedParentRelease?.release_id ?? null,
+      depth,
       artifact.arch ?? null,
       artifact.size_bytes ?? null,
-      ROOTFS_RELEASE_ARTIFACT_KIND,
+      artifactKind,
       ROOTFS_RELEASE_ARTIFACT_FORMAT,
       artifact_backend,
       resolvedArtifactPath,
@@ -965,6 +1051,7 @@ export async function issueRootfsReleaseArtifactAccess({
   if (!release) {
     throw new Error(`RootFS release not found for image '${image}'`);
   }
+  const parentRelease = await loadRootfsReleaseById(release.parent_release_id);
   const bestReplica = await resolveBestR2Replica({ host_id, release });
   if (bestReplica) {
     const download = issueSignedObjectDownload({
@@ -983,6 +1070,9 @@ export async function issueRootfsReleaseArtifactAccess({
       artifact_backend: "r2",
       artifact_sha256: bestReplica.replica.artifact_sha256,
       artifact_bytes: bestReplica.replica.artifact_bytes,
+      parent_release_id: parentRelease?.release_id ?? undefined,
+      parent_image: parentRelease?.runtime_image ?? undefined,
+      parent_content_key: parentRelease?.content_key ?? undefined,
       download_url: download.url,
       download_headers: download.headers,
       inspect_data: release.inspect_json ?? undefined,
@@ -1009,6 +1099,9 @@ export async function issueRootfsReleaseArtifactAccess({
     artifact_backend: release.artifact_backend,
     artifact_sha256: release.artifact_sha256,
     artifact_bytes: release.artifact_bytes,
+    parent_release_id: parentRelease?.release_id ?? undefined,
+    parent_image: parentRelease?.runtime_image ?? undefined,
+    parent_content_key: parentRelease?.content_key ?? undefined,
     download_url: `${base}${artifactRoute(release.content_key)}?token=${encodeURIComponent(token)}`,
     inspect_data: release.inspect_json ?? undefined,
   };
@@ -1051,6 +1144,7 @@ export async function ensureRootfsReleaseR2ReplicaForHost({
   host_id: string;
   release: RootfsReleaseRow;
 }): Promise<RootfsReleaseArtifactReplicaRow | null> {
+  const parentRelease = await loadRootfsReleaseById(release.parent_release_id);
   const region = await resolveHostR2Region(host_id);
   const bucket = await loadR2BucketForRegion(region);
   if (
@@ -1069,7 +1163,11 @@ export async function ensureRootfsReleaseR2ReplicaForHost({
   }
 
   const key = normalizeContentKey(release.content_key);
-  const artifactPath = r2ArtifactKey(key);
+  const artifactPath = r2ArtifactKey(
+    key,
+    release.artifact_kind,
+    parentRelease?.content_key,
+  );
   const existing = await loadReleaseArtifactReplica({
     release_id: release.release_id,
     backend: "r2",
@@ -1117,7 +1215,11 @@ export async function ensureRootfsReleaseR2ReplicaForHost({
       accessKey: bucket.access_key_id,
       secretKey: bucket.secret_access_key,
       bucket: bucket.name,
-      key: r2ArtifactShaKey(key),
+      key: r2ArtifactShaKey(
+        key,
+        release.artifact_kind,
+        parentRelease?.content_key,
+      ),
       body: `${release.artifact_sha256}\n`,
       contentType: "text/plain; charset=utf-8",
     });

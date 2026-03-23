@@ -46,7 +46,7 @@ Table({
     },
     artifact_kind: {
       type: "string",
-      desc: "Artifact kind for this replica (currently full).",
+      desc: "Artifact kind for this replica (full, delta).",
     },
     artifact_format: {
       type: "string",
