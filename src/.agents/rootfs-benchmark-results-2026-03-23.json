@@ -1,0 +1,260 @@
+{
+  "date": "2026-03-23",
+  "environment": {
+    "source_host": {
+      "name": "rootfs-test-1",
+      "host_id": "5ff0a685-99ae-4dc0-974f-7d38480e736e",
+      "machine": "n2-highmem-4",
+      "ram_gb": 32,
+      "disk_gb": 200,
+      "region": "us-west1"
+    },
+    "destination_host": {
+      "name": "rootfs-test-2",
+      "host_id": "18521f3d-1d43-4663-aec3-91fc7374d114",
+      "machine": "n2-highmem-4",
+      "ram_gb": 32,
+      "disk_gb": 200,
+      "region": "us-west1"
+    },
+    "artifact_backend": "r2",
+    "notes": [
+      "Both hosts were rebuilt with 32 GB RAM before these runs.",
+      "Publish and start LROs include persisted phase timings.",
+      "Cold start means first use of the published image on host 2. Warm start means a second project start using the same image on host 2."
+    ]
+  },
+  "benchmarks": [
+    {
+      "name": "base-empty",
+      "prefix": "bench-base-1774288752923",
+      "src_project_id": "513bac6e-5897-421e-b34e-4beb2443e935",
+      "cold_project_id": "93e4226f-dbee-4f5f-a324-e7a7446ad78e",
+      "warm_project_id": "e8f00737-3188-4f94-aef1-bf7280e67f9a",
+      "image": "cocalc.local/rootfs/530b59abfe9a35ae5e739ea0636e2c121086b3364031a7c7d5a5c37dfe863cd2",
+      "image_id": "97b55806-700c-4d6c-baaf-2770b444add1",
+      "release_id": "321487b2-bc45-4c17-a871-d0e601a19388",
+      "content_key": "530b59abfe9a35ae5e739ea0636e2c121086b3364031a7c7d5a5c37dfe863cd2",
+      "src_start_ms": 3059,
+      "publish_ms": 19710,
+      "cold_start_ms": 9010,
+      "warm_start_ms": 677,
+      "publish_phase_timings_ms": {
+        "validate": 0,
+        "publish": 6646,
+        "upload": 12984,
+        "register_release": 13,
+        "replicate": 1,
+        "catalog_entry": 22,
+        "total": 19710
+      },
+      "publish_host_phase_timings_ms": {
+        "create_snapshot": 661,
+        "clone_snapshot": 1407,
+        "extract_base_image": 1,
+        "materialize_tree": 2742,
+        "hash_tree": 921,
+        "register_cache_entry": 352
+      },
+      "upload_phase_timings_ms": {
+        "btrfs_send": 4367,
+        "hash_artifact": 884,
+        "upload_artifact": 7414
+      },
+      "cold_start_phase_timings_ms": {
+        "apply_pending_copies": 50,
+        "prepare_config": 1,
+        "cache_rootfs": 8395,
+        "runner_start": 538,
+        "refresh_authorized_keys": 26,
+        "total": 9010
+      },
+      "warm_start_phase_timings_ms": {
+        "apply_pending_copies": 41,
+        "prepare_config": 0,
+        "cache_rootfs": 73,
+        "runner_start": 542,
+        "refresh_authorized_keys": 21,
+        "total": 677
+      }
+    },
+    {
+      "name": "package-heavy-torch",
+      "prefix": "bench-package-heavy-1774287898075",
+      "src_project_id": "d4c94b1b-5b49-4b17-925b-2b95bc39ef6f",
+      "cold_project_id": "70c252db-e4c2-4db6-a8f0-c3a304f718d6",
+      "warm_project_id": "fe3e185c-3108-4c44-9454-a3bbfa40a9bc",
+      "image": "cocalc.local/rootfs/8014451262418457641520bd2ea739e6e5f68059f7a6a46095479f9f8ed094a8",
+      "image_id": "39f31bb3-9645-44a4-a74e-d5f114a1c014",
+      "release_id": "4d31da0a-d497-4f26-a739-b2621abb12a5",
+      "content_key": "8014451262418457641520bd2ea739e6e5f68059f7a6a46095479f9f8ed094a8",
+      "setup_ms": 7330,
+      "size_bytes": {
+        "/usr": 240563299,
+        "/var/lib/apt/lists": 60033481
+      },
+      "src_start_ms": 1028,
+      "publish_ms": 21978,
+      "cold_start_ms": 11487,
+      "warm_start_ms": 706,
+      "publish_phase_timings_ms": {
+        "validate": 1,
+        "publish": 5192,
+        "upload": 16718,
+        "register_release": 9,
+        "replicate": 2,
+        "catalog_entry": 19,
+        "total": 21978
+      },
+      "publish_host_phase_timings_ms": {
+        "create_snapshot": 339,
+        "clone_snapshot": 451,
+        "extract_base_image": 2,
+        "materialize_tree": 2950,
+        "hash_tree": 959,
+        "register_cache_entry": 189
+      },
+      "upload_phase_timings_ms": {
+        "btrfs_send": 4298,
+        "hash_artifact": 1121,
+        "upload_artifact": 11021
+      },
+      "cold_start_phase_timings_ms": {
+        "apply_pending_copies": 41,
+        "prepare_config": 0,
+        "cache_rootfs": 10877,
+        "runner_start": 544,
+        "refresh_authorized_keys": 25,
+        "total": 11487
+      },
+      "warm_start_phase_timings_ms": {
+        "apply_pending_copies": 55,
+        "prepare_config": 0,
+        "cache_rootfs": 76,
+        "runner_start": 548,
+        "refresh_authorized_keys": 27,
+        "total": 706
+      }
+    },
+    {
+      "name": "metadata-heavy-repos",
+      "prefix": "bench-metadata-1774288620924",
+      "src_project_id": "11f2e1bd-7329-4345-8609-f5dbb4b213bb",
+      "cold_project_id": "48300343-e312-4292-a776-d0130f5d6a85",
+      "warm_project_id": "f02969b5-c31d-4dd1-981c-c493fa9f29aa",
+      "image": "cocalc.local/rootfs/f2341729b02b0a0c6b9b35442efcfcd0bb09c74558306e143d37b156ae179c97",
+      "image_id": "2c21aab4-2d6d-411a-b1c8-e7f201d76c90",
+      "release_id": "bbce650a-7e65-40c0-ba69-e32922ec59e8",
+      "content_key": "f2341729b02b0a0c6b9b35442efcfcd0bb09c74558306e143d37b156ae179c97",
+      "setup_ms": 15572,
+      "setup_workload": [
+        "git clone --depth 1 https://github.com/sagemathinc/cocalc.git",
+        "git clone --depth 1 https://github.com/openai/codex.git",
+        "git clone --depth 1 https://github.com/sagemath/sage.git"
+      ],
+      "size_bytes": {
+        "/opt/repos": 310951005
+      },
+      "src_start_ms": 2820,
+      "publish_ms": 47228,
+      "cold_start_ms": 18124,
+      "warm_start_ms": 761,
+      "publish_phase_timings_ms": {
+        "validate": 0,
+        "publish": 14943,
+        "upload": 32194,
+        "register_release": 12,
+        "replicate": 2,
+        "catalog_entry": 18,
+        "total": 47228
+      },
+      "publish_host_phase_timings_ms": {
+        "create_snapshot": 1176,
+        "clone_snapshot": 1483,
+        "extract_base_image": 1,
+        "materialize_tree": 8847,
+        "hash_tree": 1993,
+        "register_cache_entry": 634
+      },
+      "upload_phase_timings_ms": {
+        "btrfs_send": 10674,
+        "hash_artifact": 1977,
+        "upload_artifact": 19167
+      },
+      "cold_start_phase_timings_ms": {
+        "apply_pending_copies": 47,
+        "prepare_config": 1,
+        "cache_rootfs": 17479,
+        "runner_start": 569,
+        "refresh_authorized_keys": 28,
+        "total": 18124
+      },
+      "warm_start_phase_timings_ms": {
+        "apply_pending_copies": 40,
+        "prepare_config": 1,
+        "cache_rootfs": 162,
+        "runner_start": 531,
+        "refresh_authorized_keys": 27,
+        "total": 761
+      }
+    },
+    {
+      "name": "blob-4g-random",
+      "prefix": "bench-blob-4g-1774287995749",
+      "src_project_id": "c465aa7e-1dc3-4ddc-bd02-6c387a2b95a9",
+      "cold_project_id": "7ad958ce-d7b7-434a-8fe3-d5f61b19c6e0",
+      "warm_project_id": "955f48bb-ca7b-4593-8fb6-ba8233a87f12",
+      "image": "cocalc.local/rootfs/898413b668264fb6d8d7162bc08af8448dac0f115334e3f7d2a0e1bf85ff9dc2",
+      "image_id": "aa57b05e-37f1-4df3-9471-e1e511fa19ad",
+      "release_id": "d1d3a532-2cb6-4c48-86d7-ce2235187ec7",
+      "content_key": "898413b668264fb6d8d7162bc08af8448dac0f115334e3f7d2a0e1bf85ff9dc2",
+      "setup_ms": 15462,
+      "size_bytes": {
+        "/opt/random4g.bin": 4294967296,
+        "/usr": 240563299
+      },
+      "src_start_ms": 917,
+      "publish_ms": 256071,
+      "cold_start_ms": 131079,
+      "warm_start_ms": 719,
+      "publish_phase_timings_ms": {
+        "validate": 1,
+        "publish": 58034,
+        "upload": 197925,
+        "register_release": 13,
+        "replicate": 2,
+        "catalog_entry": 9,
+        "total": 256071
+      },
+      "publish_host_phase_timings_ms": {
+        "create_snapshot": 11752,
+        "clone_snapshot": 349,
+        "extract_base_image": 1,
+        "materialize_tree": 31096,
+        "hash_tree": 13985,
+        "register_cache_entry": 607
+      },
+      "upload_phase_timings_ms": {
+        "btrfs_send": 21075,
+        "hash_artifact": 14815,
+        "upload_artifact": 161399
+      },
+      "cold_start_phase_timings_ms": {
+        "apply_pending_copies": 54,
+        "prepare_config": 1,
+        "cache_rootfs": 129798,
+        "runner_start": 1202,
+        "refresh_authorized_keys": 24,
+        "total": 131079
+      },
+      "warm_start_phase_timings_ms": {
+        "apply_pending_copies": 72,
+        "prepare_config": 1,
+        "cache_rootfs": 71,
+        "runner_start": 549,
+        "refresh_authorized_keys": 26,
+        "total": 719
+      }
+    }
+  ]
+}

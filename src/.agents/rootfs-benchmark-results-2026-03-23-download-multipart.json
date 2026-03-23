@@ -1,0 +1,48 @@
+{
+  "date": "2026-03-23",
+  "mode": "multipart-r2-download",
+  "defaults": {
+    "multipart_part_bytes": 67108864,
+    "multipart_concurrency": 8
+  },
+  "benchmark": {
+    "name": "blob-4g-random-download-followup",
+    "prefix": "bench-download-blob4g-1774293798996",
+    "src_project_id": "6a527cc6-df8a-43d7-93b7-eb84b4510e49",
+    "cold_project_id": "52b31f4f-48b1-4da8-92b3-31bf0d314e82",
+    "warm_project_id": "ff6c9c90-9fca-486a-a32f-f6e6e703a129",
+    "image": "cocalc.local/rootfs/52aefb04a1ee913d2ba53ad0fe9d9a936ffdb2d059a1f95060646b8d2d025f5e",
+    "publish_ms": 112154,
+    "cold_start_ms": 47031,
+    "warm_start_ms": 723,
+    "publish_phase_timings_ms": {
+      "publish": 46558,
+      "upload": 65517,
+      "register_release": 3,
+      "replicate": 2,
+      "catalog_entry": 16,
+      "total": 112154
+    },
+    "upload_phase_timings_ms": {
+      "btrfs_send": 21605,
+      "hash_artifact": 15620,
+      "upload_artifact": 28214
+    },
+    "cold_start_phase_timings_ms": {
+      "cache_rootfs": 44634,
+      "runner_start": 2320,
+      "total": 47031
+    },
+    "warm_start_phase_timings_ms": {
+      "cache_rootfs": 61,
+      "runner_start": 599,
+      "total": 723
+    },
+    "comparison": {
+      "prior_single_stream_cold_start_ms": 106765,
+      "prior_single_stream_cache_rootfs_ms": 106033,
+      "new_cold_start_ms": 47031,
+      "new_cache_rootfs_ms": 44634
+    }
+  }
+}
