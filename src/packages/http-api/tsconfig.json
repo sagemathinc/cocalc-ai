@@ -4,6 +4,7 @@
     "baseUrl": ".",
     "rootDir": "./",
     "outDir": "dist",
+    "declarationDir": "dist-types",
     "lib": ["ESNext"],
     "paths": {
       "@langchain/core/*": ["../ai/node_modules/@langchain/core/dist/*"]
@@ -19,6 +20,7 @@
   "exclude": [
     "node_modules",
     "dist",
+    "dist-types",
     "**/*.test.ts",
     "**/*.spec.ts",
     "**/*.test.tsx",

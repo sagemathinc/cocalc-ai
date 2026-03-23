@@ -1314,6 +1314,9 @@ importers:
       '@cocalc/frontend':
         specifier: workspace:*
         version: link:../frontend
+      '@cocalc/http-api':
+        specifier: workspace:*
+        version: link:../http-api
       '@cocalc/server':
         specifier: workspace:*
         version: link:../server

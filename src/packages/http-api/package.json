@@ -16,10 +16,13 @@
   ],
   "scripts": {
     "preinstall": "npx only-allow pnpm",
-    "build": "pnpm generate-api-v2-manifest && ../node_modules/.bin/tsc --build",
+    "build": "pnpm patch-openapi && pnpm generate-api-v2-manifest && ../node_modules/.bin/tsc --build",
+    "patch-openapi": "node ./scripts/patch-openapi.js",
     "generate-api-v2-manifest": "node ./scripts/generate-api-v2-manifest.js",
+    "generate-openapi": "pnpm build && cd dist && rm -f public && ln -sf ../public public && COCALC_DB_SKIP_ENSURE_EXISTS=true NODE_ENV='dev' NODE_PATH=$(pwd) node ../node_modules/next-rest-framework/dist/cli/index.js generate --configPath /api/v2",
     "test": "NODE_ENV='dev' pnpm exec jest",
     "test-api": "NODE_ENV='production' pnpm exec jest ./lib/api/framework.test.ts",
+    "validate-openapi": "pnpm build && cd dist && rm -f public && ln -sf ../public public && COCALC_DB_SKIP_ENSURE_EXISTS=true NODE_ENV='dev' NODE_PATH=$(pwd) node ../node_modules/next-rest-framework/dist/cli/index.js validate --configPath /api/v2",
     "depcheck": "pnpm -w exec depcheck \"$PWD\" --ignores lib,pages,@cocalc/http-api"
   },
   "repository": {
