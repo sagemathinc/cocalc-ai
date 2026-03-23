@@ -4,18 +4,21 @@
  */
 
 import type { CSSProperties, ReactNode } from "react";
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, lazy, useEffect, useMemo, useState } from "react";
 
-import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { joinUrlPath } from "@cocalc/util/url-path";
+import { slugURL } from "@cocalc/util/news";
 import {
   CHANNELS_DESCRIPTIONS,
   type Channel,
   type NewsItem,
+  type NewsPrevNext,
 } from "@cocalc/util/types/news";
 import { COLORS, SITE_NAME } from "@cocalc/util/theme";
+import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
+import { contentPath, type PublicContentRoute, topLevelView } from "./routes";
 
-export type PublicContentView = "about" | "policies" | "news";
+const Markdown = lazy(() => import("@cocalc/frontend/markdown/component"));
 
 interface ContentConfig {
   help_email?: string;
@@ -28,8 +31,60 @@ interface ContentConfig {
 interface PublicContentAppProps {
   config?: ContentConfig;
   initialNews?: NewsItem[];
-  initialView: PublicContentView;
+  initialRoute: PublicContentRoute;
 }
+
+interface EventsPayload {
+  past?: NewsItem[];
+  upcoming?: NewsItem[];
+}
+
+interface NewsDetailPayload {
+  history?: boolean;
+  news?: NewsItem & {
+    expired?: boolean;
+    future?: boolean;
+    hide?: boolean;
+    history?: Record<number, Omit<NewsItem, "id" | "hide">>;
+  };
+  next?: NewsPrevNext | null;
+  nextTimestamp?: number | null;
+  permalink?: string;
+  prev?: NewsPrevNext | null;
+  prevTimestamp?: number | null;
+  timestamp?: number;
+}
+
+const TEAM_MEMBERS = [
+  {
+    description:
+      "CEO and founder of SageMath, Inc., with a long track record in mathematics, open-source software, and cloud computing.",
+    email: "wstein@sagemath.com",
+    name: "William Stein",
+    title: "CEO and Founder",
+  },
+  {
+    description:
+      "CTO at SageMath, Inc., focused on infrastructure, product direction, and pushing CoCalc into new technical territory.",
+    email: "hsy@sagemath.com",
+    name: "Harald Schilly",
+    title: "CTO",
+  },
+  {
+    description:
+      "COO at SageMath, Inc., overseeing daily operations, educational deployments, and customer-facing logistics.",
+    email: "andrey@cocalc.com",
+    name: "Andrey Novoseltsev",
+    title: "COO",
+  },
+  {
+    description:
+      "CSO at SageMath, Inc., combining applied mathematics, software development, and partnership work.",
+    email: "blaec@cocalc.com",
+    name: "Blaec Bejarano",
+    title: "CSO",
+  },
+] as const;
 
 const PAGE_STYLE: CSSProperties = {
   minHeight: "100%",
@@ -144,26 +199,39 @@ const FILTER_BUTTON_ACTIVE_STYLE: CSSProperties = {
   color: "white",
 } as const;
 
-function contentPath(view: PublicContentView): string {
-  const base = appBasePath === "/" ? "" : appBasePath;
-  return `${base}/${view}`;
+async function fetchJson<T>(path: string): Promise<T> {
+  const resp = await fetch(path);
+  return await resp.json();
 }
 
-export function getContentViewFromPath(pathname: string): PublicContentView {
-  if (pathname.includes("/policies")) {
-    return "policies";
-  }
-  if (pathname.includes("/news")) {
-    return "news";
-  }
-  return "about";
+function appPath(path: string): string {
+  return joinUrlPath(appBasePath, path);
 }
 
-function titleForView(view: PublicContentView, siteName: string): string {
-  switch (view) {
+function contentNewsPath(news?: Pick<NewsItem, "id" | "title">): string {
+  return appPath(slugURL(news));
+}
+
+function newsHistoryPath(permalink: string, timestamp: number): string {
+  return `${permalink.replace(/\/$/, "")}/${timestamp}`;
+}
+
+function titleForRoute(route: PublicContentRoute, siteName: string): string {
+  switch (route.view) {
+    case "about-events":
+      return `${siteName} events`;
+    case "about-team":
+      return `${siteName} team`;
     case "policies":
       return `${siteName} policies`;
+    case "policies-imprint":
+      return `${siteName} imprint`;
+    case "policies-custom":
+      return `${siteName} policies`;
     case "news":
+      return `${siteName} news`;
+    case "news-detail":
+    case "news-history":
       return `${siteName} news`;
     case "about":
     default:
@@ -196,23 +264,36 @@ function truncate(text: string, max = 260): string {
   return `${text.slice(0, max - 1).trimEnd()}…`;
 }
 
+function MarkdownCard({ value }: { value: string }) {
+  return (
+    <div style={CARD_STYLE}>
+      <Suspense fallback={<div>Loading content…</div>}>
+        <Markdown value={value} />
+      </Suspense>
+    </div>
+  );
+}
+
+function LoadingCard({ label }: { label: string }) {
+  return <div style={{ ...CARD_STYLE, marginTop: "18px" }}>{label}</div>;
+}
+
+function EmptyCard({ label }: { label: string }) {
+  return <div style={{ ...CARD_STYLE, marginTop: "18px" }}>{label}</div>;
+}
+
 function PageShell({
   children,
-  currentView,
+  route,
   subtitle,
   title,
 }: {
   children: ReactNode;
-  currentView: PublicContentView;
+  route: PublicContentRoute;
   subtitle: string;
   title: string;
 }) {
-  const navItems: Array<{ label: string; view: PublicContentView }> = [
-    { label: "About", view: "about" },
-    { label: "Policies", view: "policies" },
-    { label: "News", view: "news" },
-  ];
-
+  const currentTop = topLevelView(route);
   return (
     <div style={PAGE_STYLE}>
       <div style={SHELL_STYLE}>
@@ -227,12 +308,16 @@ function PageShell({
             {subtitle}
           </div>
           <div style={NAV_STYLE}>
-            {navItems.map(({ label, view }) => (
+            {[
+              ["About", "about"],
+              ["Policies", "policies"],
+              ["News", "news"],
+            ].map(([label, view]) => (
               <a
                 key={view}
                 href={contentPath(view)}
                 style={
-                  currentView === view ? NAV_LINK_ACTIVE_STYLE : NAV_LINK_STYLE
+                  currentTop === view ? NAV_LINK_ACTIVE_STYLE : NAV_LINK_STYLE
                 }
               >
                 {label}
@@ -246,7 +331,7 @@ function PageShell({
   );
 }
 
-function AboutPage({
+function AboutHome({
   helpEmail,
   siteName,
 }: {
@@ -263,12 +348,10 @@ function AboutPage({
       <div style={GRID_STYLE}>
         <div style={CARD_STYLE}>
           <h2 style={{ margin: 0, fontSize: "22px" }}>Events</h2>
+          <div>See conference appearances and other public events.</div>
           <div>
-            We regularly exhibit at academic conferences and community events.
-          </div>
-          <div>
-            <a href="/about/events" style={LINK_STYLE}>
-              See upcoming events
+            <a href={contentPath("about/events")} style={LINK_STYLE}>
+              Open events
             </a>
           </div>
         </div>
@@ -276,18 +359,16 @@ function AboutPage({
           <h2 style={{ margin: 0, fontSize: "22px" }}>Team</h2>
           <div>Meet the people building and operating {siteName}.</div>
           <div>
-            <a href="/about/team" style={LINK_STYLE}>
-              View the team
+            <a href={contentPath("about/team")} style={LINK_STYLE}>
+              Meet the team
             </a>
           </div>
         </div>
         <div style={CARD_STYLE}>
           <h2 style={{ margin: 0, fontSize: "22px" }}>Support</h2>
-          <div>
-            Need help or want to contact us directly about deployment or usage?
-          </div>
+          <div>Need help or want to contact us directly?</div>
           <div style={{ display: "grid", gap: "8px" }}>
-            <a href="/support" style={LINK_STYLE}>
+            <a href={appPath("support")} style={LINK_STYLE}>
               Open support
             </a>
             {helpEmail ? (
@@ -302,62 +383,158 @@ function AboutPage({
   );
 }
 
-function PoliciesPage({ config }: { config: ContentConfig }) {
+function AboutTeamPage() {
+  return (
+    <div style={GRID_STYLE}>
+      {TEAM_MEMBERS.map((member) => (
+        <div key={member.email} style={CARD_STYLE}>
+          <div style={{ ...MUTED_STYLE, fontSize: "13px", fontWeight: 700 }}>
+            {member.title}
+          </div>
+          <h2 style={{ margin: 0, fontSize: "24px" }}>{member.name}</h2>
+          <div>{member.description}</div>
+          <div>
+            <a href={`mailto:${member.email}`} style={LINK_STYLE}>
+              {member.email}
+            </a>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function EventList({ items }: { items: NewsItem[] }) {
+  if (items.length === 0) {
+    return <EmptyCard label="No events found." />;
+  }
+  return (
+    <div style={GRID_STYLE}>
+      {items.map((item) => (
+        <div key={`${item.id ?? item.title}-${item.date}`} style={CARD_STYLE}>
+          <div style={{ ...MUTED_STYLE, fontSize: "13px", fontWeight: 700 }}>
+            {formatNewsDate(item.date)}
+          </div>
+          <h2 style={{ margin: 0, fontSize: "22px" }}>{item.title}</h2>
+          {item.tags?.length ? (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
+              {item.tags.map((tag) => (
+                <span key={tag} style={TAG_STYLE}>
+                  #{tag}
+                </span>
+              ))}
+            </div>
+          ) : null}
+          <Suspense fallback={<div>Loading content…</div>}>
+            <Markdown value={item.text} />
+          </Suspense>
+          {item.url ? (
+            <div>
+              <a href={item.url} style={LINK_STYLE}>
+                Event website
+              </a>
+            </div>
+          ) : null}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function AboutEventsPage() {
+  const [loading, setLoading] = useState(true);
+  const [payload, setPayload] = useState<EventsPayload>({});
+
+  useEffect(() => {
+    let canceled = false;
+    void fetchJson<EventsPayload>(
+      joinUrlPath(appBasePath, "api/v2/news/events"),
+    )
+      .then((value) => {
+        if (!canceled) setPayload(value ?? {});
+      })
+      .finally(() => {
+        if (!canceled) setLoading(false);
+      });
+    return () => {
+      canceled = true;
+    };
+  }, []);
+
+  if (loading) {
+    return <LoadingCard label="Loading events…" />;
+  }
+
+  return (
+    <div style={{ display: "grid", gap: "24px" }}>
+      <div>
+        <h2 style={{ marginBottom: "10px" }}>Upcoming events</h2>
+        <EventList items={payload.upcoming ?? []} />
+      </div>
+      <div>
+        <h2 style={{ marginBottom: "10px" }}>Past events</h2>
+        <EventList items={payload.past ?? []} />
+      </div>
+    </div>
+  );
+}
+
+function PoliciesHome({ config }: { config: ContentConfig }) {
   const items = config.on_cocalc_com
     ? [
         {
-          title: "Terms of service",
-          href: "/policies/terms",
           description: "The terms governing use of CoCalc.",
+          href: "/policies/terms",
+          title: "Terms of service",
         },
         {
-          title: "Trust",
-          href: "/policies/trust",
           description: "Compliance and operational security information.",
+          href: "/policies/trust",
+          title: "Trust",
         },
         {
-          title: "Copyright policy",
-          href: "/policies/copyright",
           description: "How copyright complaints and notices are handled.",
+          href: "/policies/copyright",
+          title: "Copyright policy",
         },
         {
-          title: "Privacy",
-          href: "/policies/privacy",
           description: "How user data is handled and protected.",
+          href: "/policies/privacy",
+          title: "Privacy",
         },
         {
-          title: "Third parties",
-          href: "/policies/thirdparties",
           description: "The third-party services involved in operating CoCalc.",
+          href: "/policies/thirdparties",
+          title: "Third parties",
         },
         {
-          title: "FERPA compliance",
-          href: "/policies/ferpa",
           description: "Our FERPA compliance statement for educational use.",
+          href: "/policies/ferpa",
+          title: "FERPA compliance",
         },
         {
-          title: "Accessibility",
-          href: "/policies/accessibility",
           description: "Accessibility and VPAT information.",
+          href: "/policies/accessibility",
+          title: "Accessibility",
         },
       ]
     : [
         ...(config.imprint
           ? [
               {
-                title: "Imprint",
-                href: "/policies/imprint",
                 description: "Site-specific legal imprint information.",
+                href: contentPath("policies/imprint"),
+                title: "Imprint",
               },
             ]
           : []),
         ...(config.policies
           ? [
               {
-                title: "Policies",
-                href: "/policies/policies",
                 description:
                   "Site-specific policy information configured by admins.",
+                href: contentPath("policies/policies"),
+                title: "Policies",
               },
             ]
           : []),
@@ -391,6 +568,30 @@ function PoliciesPage({ config }: { config: ContentConfig }) {
   );
 }
 
+function PoliciesDetailPage({
+  markdown,
+  title,
+}: {
+  markdown?: string;
+  title: string;
+}) {
+  if (!markdown) {
+    return (
+      <EmptyCard label={`No ${title.toLowerCase()} content configured.`} />
+    );
+  }
+  return (
+    <div style={{ display: "grid", gap: "14px" }}>
+      <div>
+        <a href={contentPath("policies")} style={LINK_STYLE}>
+          Back to policies
+        </a>
+      </div>
+      <MarkdownCard value={markdown} />
+    </div>
+  );
+}
+
 function NewsCard({ item }: { item: NewsItem }) {
   const body = truncate(stripMarkdown(item.text));
   return (
@@ -410,52 +611,35 @@ function NewsCard({ item }: { item: NewsItem }) {
           ))}
         </div>
       ) : null}
-      {item.url ? (
-        <div>
+      <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
+        <a href={contentNewsPath(item)} style={LINK_STYLE}>
+          Open post
+        </a>
+        {item.url ? (
           <a href={item.url} style={LINK_STYLE}>
-            Read more
+            External link
           </a>
-        </div>
-      ) : null}
+        ) : null}
+      </div>
     </div>
   );
 }
 
-function NewsPage({ initialNews }: { initialNews?: NewsItem[] }) {
+function NewsListPage({ initialNews }: { initialNews?: NewsItem[] }) {
   const [channel, setChannel] = useState<Channel | "all">("all");
-  const [error, setError] = useState<string>("");
   const [items, setItems] = useState<NewsItem[]>(initialNews ?? []);
   const [loading, setLoading] = useState(initialNews == null);
 
   useEffect(() => {
+    if (initialNews != null) return;
     let canceled = false;
-    if (initialNews != null) {
-      return;
-    }
-    async function load() {
-      try {
-        setLoading(true);
-        const resp = await fetch(joinUrlPath(appBasePath, "api/v2/news/list"));
-        const payload = await resp.json();
-        if (canceled) return;
-        if (payload?.error) {
-          setError(`${payload.error}`);
-          setItems([]);
-        } else {
-          setError("");
-          setItems(Array.isArray(payload) ? payload : []);
-        }
-      } catch (err) {
-        if (canceled) return;
-        setError(`${err}`);
-        setItems([]);
-      } finally {
-        if (!canceled) {
-          setLoading(false);
-        }
-      }
-    }
-    void load();
+    void fetchJson<NewsItem[]>(joinUrlPath(appBasePath, "api/v2/news/list"))
+      .then((payload) => {
+        if (!canceled) setItems(Array.isArray(payload) ? payload : []);
+      })
+      .finally(() => {
+        if (!canceled) setLoading(false);
+      });
     return () => {
       canceled = true;
     };
@@ -470,11 +654,11 @@ function NewsPage({ initialNews }: { initialNews?: NewsItem[] }) {
     <>
       <div style={{ ...MUTED_STYLE, fontSize: "17px", maxWidth: "70ch" }}>
         Recent announcements and feature updates. Subscribe via{" "}
-        <a href="/news/rss.xml" style={LINK_STYLE}>
+        <a href={contentPath("news/rss.xml")} style={LINK_STYLE}>
           RSS
         </a>{" "}
         or{" "}
-        <a href="/news/feed.json" style={LINK_STYLE}>
+        <a href={contentPath("news/feed.json")} style={LINK_STYLE}>
           JSON Feed
         </a>
         .
@@ -506,15 +690,9 @@ function NewsPage({ initialNews }: { initialNews?: NewsItem[] }) {
         ))}
       </div>
       {loading ? (
-        <div style={{ ...CARD_STYLE, marginTop: "18px" }}>Loading news…</div>
-      ) : error ? (
-        <div style={{ ...CARD_STYLE, marginTop: "18px" }}>
-          Unable to load news right now.
-        </div>
+        <LoadingCard label="Loading news…" />
       ) : visible.length === 0 ? (
-        <div style={{ ...CARD_STYLE, marginTop: "18px" }}>
-          No news items match the selected filter.
-        </div>
+        <EmptyCard label="No news items match the selected filter." />
       ) : (
         <div style={GRID_STYLE}>
           {visible.map((item) => (
@@ -529,61 +707,219 @@ function NewsPage({ initialNews }: { initialNews?: NewsItem[] }) {
   );
 }
 
+function NewsDetailPage({ route }: { route: PublicContentRoute }) {
+  const [loading, setLoading] = useState(true);
+  const [payload, setPayload] = useState<NewsDetailPayload>({});
+
+  useEffect(() => {
+    let canceled = false;
+    const params = new URLSearchParams({ id: `${route.newsId}` });
+    if (route.timestamp != null) {
+      params.set("timestamp", `${route.timestamp}`);
+    }
+    void fetchJson<NewsDetailPayload>(
+      `${joinUrlPath(appBasePath, "api/v2/news/get")}?${params.toString()}`,
+    )
+      .then((value) => {
+        if (!canceled) setPayload(value ?? {});
+      })
+      .finally(() => {
+        if (!canceled) setLoading(false);
+      });
+    return () => {
+      canceled = true;
+    };
+  }, [route.newsId, route.timestamp]);
+
+  if (loading) return <LoadingCard label="Loading news item…" />;
+  if (!payload.news) return <EmptyCard label="This news item was not found." />;
+
+  const { news } = payload;
+  return (
+    <div style={{ display: "grid", gap: "16px" }}>
+      <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
+        <a href={contentPath("news")} style={LINK_STYLE}>
+          Back to news
+        </a>
+        {payload.history && payload.permalink ? (
+          <a href={appPath(payload.permalink)} style={LINK_STYLE}>
+            Current version
+          </a>
+        ) : null}
+        {news.url ? (
+          <a href={news.url} style={LINK_STYLE}>
+            External link
+          </a>
+        ) : null}
+      </div>
+      {payload.history ? (
+        <div style={CARD_STYLE}>
+          Historic snapshot from {formatNewsDate(payload.timestamp)}
+        </div>
+      ) : null}
+      <div style={CARD_STYLE}>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
+          <span style={TAG_STYLE}>{news.channel}</span>
+          <span style={MUTED_STYLE}>{formatNewsDate(news.date)}</span>
+        </div>
+        <h2 style={{ margin: 0, fontSize: "28px" }}>{news.title}</h2>
+        {news.tags?.length ? (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
+            {news.tags.map((tag) => (
+              <span key={tag} style={TAG_STYLE}>
+                #{tag}
+              </span>
+            ))}
+          </div>
+        ) : null}
+        <Suspense fallback={<div>Loading content…</div>}>
+          <Markdown value={news.text} />
+        </Suspense>
+      </div>
+      <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
+        {!payload.history && payload.prev ? (
+          <a href={contentNewsPath(payload.prev)} style={LINK_STYLE}>
+            Older
+          </a>
+        ) : null}
+        {!payload.history && payload.next ? (
+          <a href={contentNewsPath(payload.next)} style={LINK_STYLE}>
+            Newer
+          </a>
+        ) : null}
+        {payload.history && payload.prevTimestamp != null ? (
+          <a
+            href={newsHistoryPath(
+              appPath(payload.permalink ?? `news/${route.newsId}`),
+              payload.prevTimestamp,
+            )}
+            style={LINK_STYLE}
+          >
+            Older revision
+          </a>
+        ) : null}
+        {payload.history && payload.nextTimestamp != null ? (
+          <a
+            href={newsHistoryPath(
+              appPath(payload.permalink ?? `news/${route.newsId}`),
+              payload.nextTimestamp,
+            )}
+            style={LINK_STYLE}
+          >
+            Newer revision
+          </a>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 export default function PublicContentApp({
   config,
   initialNews,
-  initialView,
+  initialRoute,
 }: PublicContentAppProps) {
-  const [view, setView] = useState<PublicContentView>(initialView);
   const siteName = config?.site_name ?? SITE_NAME;
-  const title = useMemo(() => titleForView(view, siteName), [siteName, view]);
+  const title = titleForRoute(initialRoute, siteName);
 
   useEffect(() => {
     document.title = title;
   }, [title]);
 
-  useEffect(() => {
-    const onPopstate = () =>
-      setView(getContentViewFromPath(window.location.pathname));
-    window.addEventListener("popstate", onPopstate);
-    return () => window.removeEventListener("popstate", onPopstate);
-  }, []);
-
-  useEffect(() => {
-    setView(initialView);
-  }, [initialView]);
-
-  if (view === "policies") {
+  if (initialRoute.view === "about-events") {
     return (
       <PageShell
-        currentView={view}
-        subtitle="Public legal and compliance information for this deployment."
+        route={initialRoute}
+        subtitle={`Where to find ${siteName} in person.`}
         title={title}
       >
-        <PoliciesPage config={config ?? {}} />
+        <AboutEventsPage />
       </PageShell>
     );
   }
 
-  if (view === "news") {
+  if (initialRoute.view === "about-team") {
     return (
       <PageShell
-        currentView={view}
+        route={initialRoute}
+        subtitle={`Meet the people behind ${siteName}.`}
+        title={title}
+      >
+        <AboutTeamPage />
+      </PageShell>
+    );
+  }
+
+  if (initialRoute.view === "policies-imprint") {
+    return (
+      <PageShell
+        route={initialRoute}
+        subtitle="Deployment-specific imprint information."
+        title={title}
+      >
+        <PoliciesDetailPage markdown={config?.imprint} title="Imprint" />
+      </PageShell>
+    );
+  }
+
+  if (initialRoute.view === "policies-custom") {
+    return (
+      <PageShell
+        route={initialRoute}
+        subtitle="Deployment-specific policy information configured by admins."
+        title={title}
+      >
+        <PoliciesDetailPage markdown={config?.policies} title="Policies" />
+      </PageShell>
+    );
+  }
+
+  if (initialRoute.view === "policies") {
+    return (
+      <PageShell
+        route={initialRoute}
+        subtitle="Public legal and compliance information for this deployment."
+        title={title}
+      >
+        <PoliciesHome config={config ?? {}} />
+      </PageShell>
+    );
+  }
+
+  if (
+    initialRoute.view === "news-detail" ||
+    initialRoute.view === "news-history"
+  ) {
+    return (
+      <PageShell
+        route={initialRoute}
         subtitle={`News and release notes for ${siteName}.`}
         title={title}
       >
-        <NewsPage initialNews={initialNews} />
+        <NewsDetailPage route={initialRoute} />
+      </PageShell>
+    );
+  }
+
+  if (initialRoute.view === "news") {
+    return (
+      <PageShell
+        route={initialRoute}
+        subtitle={`News and release notes for ${siteName}.`}
+        title={title}
+      >
+        <NewsListPage initialNews={initialNews} />
       </PageShell>
     );
   }
 
   return (
     <PageShell
-      currentView={view}
+      route={initialRoute}
       subtitle={`Background information and public resources for ${siteName}.`}
       title={title}
     >
-      <AboutPage helpEmail={config?.help_email} siteName={siteName} />
+      <AboutHome helpEmail={config?.help_email} siteName={siteName} />
     </PageShell>
   );
 }

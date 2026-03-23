@@ -8,7 +8,8 @@ import { createRoot } from "react-dom/client";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { joinUrlPath } from "@cocalc/util/url-path";
 import type { NewsItem } from "@cocalc/util/types/news";
-import PublicContentApp, { getContentViewFromPath } from "./app";
+import PublicContentApp from "./app";
+import { getContentRouteFromPath } from "./routes";
 
 interface CustomizePayload {
   configuration?: {
@@ -54,7 +55,7 @@ export async function init(): Promise<void> {
       <PublicContentApp
         config={customize?.configuration}
         initialNews={news}
-        initialView={getContentViewFromPath(pathname)}
+        initialRoute={getContentRouteFromPath(pathname)}
       />,
     );
   }

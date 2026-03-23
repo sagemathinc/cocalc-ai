@@ -31,6 +31,7 @@ export default function createApiV2Router(
 
   const apiRoot = resolveApiRoot(opts.rootDir);
   ensureApiLibAlias(apiRoot, logger);
+  const registered = new Set<string>();
   if (shouldUseManifest()) {
     const manifest = loadManifest(logger);
     if (manifest.length > 0) {
@@ -38,9 +39,9 @@ export default function createApiV2Router(
         if (!opts.includeDocs && entry.path === "/") {
           continue;
         }
+        registered.add(entry.path);
         router.all(entry.path, wrapHandler(entry.handler, logger, entry.path));
       }
-      return router;
     }
   }
 
@@ -52,8 +53,12 @@ export default function createApiV2Router(
       continue;
     }
     const routePath = toRoutePath(relative, ext);
+    if (registered.has(routePath)) {
+      continue;
+    }
     const handler = loadHandler(file, logger);
     if (handler != null) {
+      registered.add(routePath);
       router.all(routePath, wrapHandler(handler, logger, routePath));
     }
   }
