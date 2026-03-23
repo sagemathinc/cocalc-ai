@@ -14,8 +14,13 @@
 set -euo pipefail
 
 ROOT="$(realpath "$(dirname "$0")/../../..")"
-OUT="${1:-$ROOT/packages/project-host/build/bundle}"
+OUT="$(realpath -m "${1:-$ROOT/packages/project-host/build/bundle}")"
 TARBALL="${2:-}"
+if [ -n "$TARBALL" ]; then
+  TARBALL="$(realpath -m "$TARBALL")"
+fi
+FINAL_OUT="$OUT"
+FINAL_TARBALL="$TARBALL"
 OUT_PARENT="$(dirname "$OUT")"
 OUT_NAME="$(basename "$OUT")"
 LOCKFILE="$OUT_PARENT/.${OUT_NAME}.build.lock"
@@ -282,18 +287,17 @@ done
 echo "- Remove other platform binaries"
 rm -rf "$OUT"/build/win32 "$OUT"/build/darwin || true
 
-FINAL_OUT="${1:-$ROOT/packages/project-host/build/bundle}"
 mkdir -p "$(dirname "$FINAL_OUT")"
 rm -rf "$FINAL_OUT"
 mv "$OUT" "$FINAL_OUT"
 OUT="$FINAL_OUT"
 
-if [ -n "$TARBALL" ]; then
-  mkdir -p "$(dirname "$TARBALL")"
-  TMP_TARBALL="$TARBALL.tmp.$$"
+if [ -n "$FINAL_TARBALL" ]; then
+  mkdir -p "$(dirname "$FINAL_TARBALL")"
+  TMP_TARBALL="$FINAL_TARBALL.tmp.$$"
   tar -C "$(dirname "$OUT")" -Jcf "$TMP_TARBALL" "$(basename "$OUT")"
   tar -tJf "$TMP_TARBALL" >/dev/null
-  mv "$TMP_TARBALL" "$TARBALL"
+  mv "$TMP_TARBALL" "$FINAL_TARBALL"
   TMP_TARBALL=""
 fi
 
