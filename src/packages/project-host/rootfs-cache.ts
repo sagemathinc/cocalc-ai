@@ -11,7 +11,6 @@ import {
   open,
   readdir,
   readFile,
-  rename,
   rm,
   stat,
   writeFile,
@@ -189,6 +188,45 @@ async function btrfsReceiveFromFile({
   await Promise.all([pipePromise, exitPromise]);
 }
 
+async function moveIntoRootfsCache({
+  src,
+  dest,
+}: {
+  src: string;
+  dest: string;
+}): Promise<void> {
+  const result = await executeCode({
+    command: "sudo",
+    args: ["-n", STORAGE_WRAPPER, "mv", src, dest],
+    timeout: 120,
+    err_on_exit: false,
+  });
+  if (result.exit_code !== 0) {
+    throw new Error(
+      `moving managed RootFS cache entry failed: ${result.stderr || result.stdout || `exit ${result.exit_code}`}`,
+    );
+  }
+}
+
+async function finalizeReceivedManagedRootfs({
+  receivedPath,
+  finalPath,
+}: {
+  receivedPath: string;
+  finalPath: string;
+}): Promise<void> {
+  if (await isBtrfsSubvolume(receivedPath)) {
+    await btrfs({
+      args: ["subvolume", "snapshot", "-r", receivedPath, finalPath],
+      err_on_exit: true,
+      verbose: false,
+    });
+    await deleteCachedRootfsPath(receivedPath);
+    return;
+  }
+  await moveIntoRootfsCache({ src: receivedPath, dest: finalPath });
+}
+
 async function downloadManagedRootfsArtifact({
   image,
 }: {
@@ -290,7 +328,7 @@ async function downloadManagedRootfsArtifact({
       throw new Error(`received RootFS image '${image}' was not created`);
     }
     const snapshotStarted = Date.now();
-    await rename(receivedPath, finalPath);
+    await finalizeReceivedManagedRootfs({ receivedPath, finalPath });
     if (access.inspect_data) {
       await writeFile(finalInspectPath, JSON.stringify(access.inspect_data));
     }
