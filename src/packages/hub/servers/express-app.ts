@@ -24,6 +24,7 @@ import initBlobs from "./app/blobs";
 import initCustomize from "./app/customize";
 import initPublicAuth from "./app/public-auth";
 import initPublicContent from "./app/public-content";
+import initPublicFeatures from "./app/public-features";
 import initPublicSupport from "./app/public-support";
 import { initMetricsEndpoint, setupInstrumentation } from "./app/metrics";
 import initProjectHostBootstrap from "./app/project-host-bootstrap";
@@ -258,6 +259,7 @@ export default async function init(opts: Options): Promise<{
     initLanding(router);
     initPublicAuth(router);
     initPublicContent(router);
+    initPublicFeatures(router);
     initPublicSupport(router);
   }
   if (!opts.nextServer && isLaunchpadMode() && isLicenseRequired()) {

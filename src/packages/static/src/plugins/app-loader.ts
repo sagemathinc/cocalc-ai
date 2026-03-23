@@ -54,6 +54,11 @@ export default function appLoaderPlugin(
       filename: "public-content.html",
       chunks: ["load", "public-content"],
     },
+    {
+      desc: "public-features",
+      filename: "public-features.html",
+      chunks: ["load", "public-features"],
+    },
   ];
 
   for (const page of htmlPages) {
