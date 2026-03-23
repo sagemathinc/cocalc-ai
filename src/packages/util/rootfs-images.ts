@@ -103,11 +103,34 @@ export type RootfsReleaseArtifactFormat = "btrfs-send";
 export type RootfsReleaseArtifactBackend = "hub-local" | "r2";
 
 export type RootfsArtifactTransferTarget = {
+  backend: RootfsReleaseArtifactBackend;
   url: string;
   method: "PUT";
   headers?: Record<string, string>;
   chunk_bytes?: number;
+  region?: string;
+  bucket_id?: string;
+  bucket_name?: string;
+  bucket_purpose?: string | null;
+  artifact_path?: string;
 };
+
+export type RootfsUploadedArtifactResult =
+  | {
+      ok: true;
+      backend: "hub-local";
+    }
+  | {
+      ok: true;
+      backend: "r2";
+      artifact_sha256: string;
+      artifact_bytes: number;
+      region: string;
+      bucket_id?: string;
+      bucket_name: string;
+      bucket_purpose?: string | null;
+      artifact_path: string;
+    };
 
 export type RootfsReleaseArtifactAccess = {
   release_id: string;

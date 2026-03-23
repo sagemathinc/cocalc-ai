@@ -34,6 +34,7 @@ import { type SnapshotCounts } from "@cocalc/util/consts/snapshots";
 import type {
   PublishProjectRootfsArtifact,
   RootfsArtifactTransferTarget,
+  RootfsUploadedArtifactResult,
 } from "@cocalc/util/rootfs-images";
 import { type CopyOptions } from "./fs";
 export { type CopyOptions };
@@ -277,7 +278,7 @@ export interface Fileserver {
     project_id: string;
     image: string;
     upload: RootfsArtifactTransferTarget;
-  }) => Promise<{ ok: true }>;
+  }) => Promise<RootfsUploadedArtifactResult>;
 }
 
 export interface SnapshotUsage {

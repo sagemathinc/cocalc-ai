@@ -15,6 +15,7 @@ import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import {
+  issueSignedObjectUpload,
   uploadObjectFromBuffer,
   uploadObjectFromFile,
   issueSignedObjectDownload,
@@ -28,6 +29,7 @@ import {
 } from "@cocalc/util/consts";
 import type {
   PublishProjectRootfsArtifact,
+  RootfsArtifactTransferTarget,
   RootfsReleaseArtifactAccess,
   RootfsReleaseArtifactBackend,
   RootfsReleaseArtifactFormat,
@@ -263,8 +265,37 @@ export async function issueRootfsReleaseArtifactUpload({
   host_id: string;
   content_key: string;
   ttl_ms?: number;
-}): Promise<{ url: string; method: "PUT"; chunk_bytes: number }> {
+}): Promise<RootfsArtifactTransferTarget> {
   const key = normalizeContentKey(content_key);
+  const region = await resolveHostR2Region(host_id);
+  const bucket = await loadR2BucketForRegion(region);
+  if (
+    bucket?.name &&
+    bucket.endpoint &&
+    bucket.access_key_id &&
+    bucket.secret_access_key
+  ) {
+    const artifact_path = r2ArtifactKey(key);
+    const signed = issueSignedObjectUpload({
+      endpoint: bucket.endpoint,
+      accessKey: bucket.access_key_id,
+      secretKey: bucket.secret_access_key,
+      bucket: bucket.name,
+      key: artifact_path,
+      contentType: rootfsReleaseArtifactContentType(),
+    });
+    return {
+      backend: "r2",
+      method: "PUT",
+      url: signed.url,
+      headers: signed.headers,
+      region,
+      bucket_id: bucket.id,
+      bucket_name: bucket.name,
+      bucket_purpose: bucket.purpose,
+      artifact_path,
+    };
+  }
   const token = await signToken({
     kind: "upload",
     host_id,
@@ -273,6 +304,7 @@ export async function issueRootfsReleaseArtifactUpload({
   });
   const base = await getArtifactBaseUrl();
   return {
+    backend: "hub-local",
     method: "PUT",
     chunk_bytes: ROOTFS_RELEASE_UPLOAD_CHUNK_BYTES,
     url: `${base}${artifactRoute(key)}?token=${encodeURIComponent(token)}`,
@@ -546,7 +578,7 @@ async function resolveBestR2Replica({
   return { replica: best.replica, bucket: best.bucket };
 }
 
-async function upsertReleaseArtifactReplica({
+export async function upsertReleaseArtifactReplica({
   artifact_id,
   release_id,
   content_key,
@@ -832,17 +864,25 @@ export async function appendUploadedRootfsReleaseArtifactChunk({
 
 export async function upsertPublishedRootfsRelease({
   artifact,
+  metadata,
+  artifact_backend = ROOTFS_RELEASE_ARTIFACT_BACKEND,
+  artifact_path,
 }: {
   artifact: PublishProjectRootfsArtifact;
+  metadata?: RootfsStoredArtifactMetadata;
+  artifact_backend?: RootfsReleaseArtifactBackend;
+  artifact_path?: string;
 }): Promise<RootfsReleaseRow> {
   const content_key = normalizeContentKey(artifact.content_key);
-  const metadata = await readStoredRootfsArtifactMetadata(content_key);
-  if (!metadata) {
+  const storedMetadata =
+    metadata ?? (await readStoredRootfsArtifactMetadata(content_key));
+  if (!storedMetadata) {
     throw new Error(
       `stored RootFS artifact metadata missing for content key ${content_key}`,
     );
   }
-  const artifact_path = artifactRelativePath(content_key);
+  const resolvedArtifactPath =
+    artifact_path ?? artifactRelativePath(content_key);
   const pool = getPool("medium");
   const existing = await loadRootfsReleaseRowByContentKey(content_key);
   const release_id = existing?.release_id ?? uuid();
@@ -903,10 +943,10 @@ export async function upsertPublishedRootfsRelease({
       artifact.size_bytes ?? null,
       ROOTFS_RELEASE_ARTIFACT_KIND,
       ROOTFS_RELEASE_ARTIFACT_FORMAT,
-      ROOTFS_RELEASE_ARTIFACT_BACKEND,
-      artifact_path,
-      metadata.artifact_sha256,
-      metadata.artifact_bytes,
+      artifact_backend,
+      resolvedArtifactPath,
+      storedMetadata.artifact_sha256,
+      storedMetadata.artifact_bytes,
       artifact.inspect_data ? JSON.stringify(artifact.inspect_data) : null,
     ],
   );

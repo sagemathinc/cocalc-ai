@@ -11,6 +11,7 @@ import {
   ensureRootfsReleaseR2ReplicaForHost,
   hasStoredRootfsArtifact,
   issueRootfsReleaseArtifactUpload,
+  upsertReleaseArtifactReplica,
   upsertPublishedRootfsRelease,
 } from "@cocalc/server/rootfs/releases";
 
@@ -205,8 +206,12 @@ async function handleRootfsPublishOp(op: LroSummary): Promise<void> {
       lro: { op_id, scope_type: op.scope_type, scope_id: op.scope_id },
     });
 
+    const host_id = await loadProjectHostId(project_id);
+    let uploadedDirectToR2 = false;
+    let uploadResult:
+      | Awaited<ReturnType<typeof client.uploadRootfsReleaseArtifact>>
+      | undefined;
     if (!(await hasStoredRootfsArtifact(artifact.content_key))) {
-      const host_id = await loadProjectHostId(project_id);
       const upload = await issueRootfsReleaseArtifactUpload({
         host_id,
         content_key: artifact.content_key,
@@ -226,40 +231,83 @@ async function handleRootfsPublishOp(op: LroSummary): Promise<void> {
       progress({
         step: "upload",
         message: "uploading RootFS release artifact",
-        detail: { image: artifact.image, content_key: artifact.content_key },
+        detail: {
+          image: artifact.image,
+          content_key: artifact.content_key,
+          backend: upload.backend,
+        },
       });
-      await client.uploadRootfsReleaseArtifact({
+      uploadResult = await client.uploadRootfsReleaseArtifact({
         project_id,
         image: artifact.image,
         upload,
       });
+      uploadedDirectToR2 = uploadResult.backend === "r2";
     }
 
-    const release = await upsertPublishedRootfsRelease({ artifact });
+    const release = await upsertPublishedRootfsRelease(
+      uploadedDirectToR2 && uploadResult?.backend === "r2"
+        ? {
+            artifact,
+            metadata: {
+              artifact_sha256: uploadResult.artifact_sha256,
+              artifact_bytes: uploadResult.artifact_bytes,
+              uploaded_at: new Date().toISOString(),
+            },
+            artifact_backend: "r2",
+            artifact_path: uploadResult.artifact_path,
+          }
+        : { artifact },
+    );
 
-    const replicateOp = await updateLro({
-      op_id,
-      progress_summary: {
-        phase: "replicate",
-        image: artifact.image,
-        content_key: artifact.content_key,
+    if (uploadedDirectToR2 && uploadResult?.backend === "r2") {
+      await upsertReleaseArtifactReplica({
         release_id: release.release_id,
-      },
-    });
-    await publishSummarySafe(replicateOp, {
-      op_id,
-      when: "set-replicate-phase",
-    });
-    progress({
-      step: "replicate",
-      message: "replicating RootFS release artifact to regional R2 storage",
-      detail: { image: artifact.image, content_key: artifact.content_key },
-    });
-    const host_id = await loadProjectHostId(project_id);
-    await ensureRootfsReleaseR2ReplicaForHost({
-      host_id,
-      release,
-    });
+        content_key: artifact.content_key,
+        backend: "r2",
+        region: uploadResult.region,
+        bucket: {
+          id: uploadResult.bucket_id ?? "",
+          name: uploadResult.bucket_name,
+          purpose: uploadResult.bucket_purpose ?? null,
+          region: uploadResult.region,
+          endpoint: null,
+          access_key_id: null,
+          secret_access_key: null,
+          status: "ready",
+        },
+        artifact_kind: release.artifact_kind,
+        artifact_format: release.artifact_format,
+        artifact_path: uploadResult.artifact_path,
+        artifact_sha256: uploadResult.artifact_sha256,
+        artifact_bytes: uploadResult.artifact_bytes,
+        status: "ready",
+        error: null,
+      });
+    } else {
+      const replicateOp = await updateLro({
+        op_id,
+        progress_summary: {
+          phase: "replicate",
+          image: artifact.image,
+          content_key: artifact.content_key,
+          release_id: release.release_id,
+        },
+      });
+      await publishSummarySafe(replicateOp, {
+        op_id,
+        when: "set-replicate-phase",
+      });
+      progress({
+        step: "replicate",
+        message: "replicating RootFS release artifact to regional R2 storage",
+        detail: { image: artifact.image, content_key: artifact.content_key },
+      });
+      await ensureRootfsReleaseR2ReplicaForHost({
+        host_id,
+        release,
+      });
+    }
 
     const catalogOp = await updateLro({
       op_id,

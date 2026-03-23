@@ -247,6 +247,43 @@ export function issueSignedObjectDownload({
   };
 }
 
+export function issueSignedObjectUpload({
+  endpoint,
+  accessKey,
+  secretKey,
+  bucket,
+  key,
+  contentType,
+  cacheControl,
+  unsignedPayload = true,
+}: {
+  endpoint: string;
+  accessKey: string;
+  secretKey: string;
+  bucket: string;
+  key: string;
+  contentType?: string;
+  cacheControl?: string;
+  unsignedPayload?: boolean;
+}): { url: string; headers: Record<string, string> } {
+  const { parsed, canonicalUri, headers } = signedObjectHeaders({
+    method: "PUT",
+    endpoint,
+    accessKey,
+    secretKey,
+    bucket,
+    key,
+    payloadSha256: unsignedPayload ? "UNSIGNED-PAYLOAD" : hashHex(""),
+    contentType,
+    cacheControl,
+  });
+  const { host: _host, ...requestHeaders } = headers;
+  return {
+    url: `${parsed.origin}${canonicalUri}`,
+    headers: requestHeaders,
+  };
+}
+
 export async function uploadObjectFromFile({
   endpoint,
   accessKey,

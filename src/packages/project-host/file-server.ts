@@ -2,7 +2,7 @@
 // This allows users to browse and generally use the filesystem of any project,
 // without having to run that project.
 
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { dirname, join } from "node:path";
 import { createReadStream, createWriteStream } from "node:fs";
@@ -63,6 +63,7 @@ import {
   type RootfsImageArch,
   type PublishProjectRootfsArtifact,
   type RootfsArtifactTransferTarget,
+  type RootfsUploadedArtifactResult,
 } from "@cocalc/util/rootfs-images";
 import { init as initSshServer } from "@cocalc/project-proxy/ssh-server";
 import { type MutagenSyncSession } from "@cocalc/conat/project/mutagen/types";
@@ -557,6 +558,16 @@ async function btrfsSendToFile({
     await rm(dest, { force: true }).catch(() => {});
     throw err;
   }
+}
+
+async function fileSha256(pathToHash: string): Promise<string> {
+  const hash = createHash("sha256");
+  const input = createReadStream(pathToHash);
+  for await (const chunk of input) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    hash.update(buffer);
+  }
+  return hash.digest("hex");
 }
 
 async function uploadRootfsArtifactFile({
@@ -1680,7 +1691,7 @@ async function uploadRootfsReleaseArtifact({
   project_id: string;
   image: string;
   upload: RootfsArtifactTransferTarget;
-}): Promise<{ ok: true }> {
+}): Promise<RootfsUploadedArtifactResult> {
   const finalPath = imageCachePath(image);
   if (!(await exists(finalPath))) {
     throw new Error(
@@ -1716,11 +1727,33 @@ async function uploadRootfsReleaseArtifact({
       source: sendSource,
       dest: artifactPath,
     });
+    if (upload.backend === "r2") {
+      const info = await stat(artifactPath);
+      const artifact_sha256 = await fileSha256(artifactPath);
+      await uploadRootfsArtifactFile({
+        path: artifactPath,
+        upload,
+      });
+      if (!upload.region || !upload.bucket_name || !upload.artifact_path) {
+        throw new Error("direct R2 RootFS upload target is missing metadata");
+      }
+      return {
+        ok: true,
+        backend: "r2",
+        artifact_sha256,
+        artifact_bytes: info.size,
+        region: upload.region,
+        bucket_id: upload.bucket_id,
+        bucket_name: upload.bucket_name,
+        bucket_purpose: upload.bucket_purpose,
+        artifact_path: upload.artifact_path,
+      };
+    }
     await uploadRootfsArtifactFile({
       path: artifactPath,
       upload,
     });
-    return { ok: true };
+    return { ok: true, backend: "hub-local" };
   } finally {
     await deleteSubvolumeTree(readonlySendSourcePath).catch(() => {});
     await deleteSubvolumeTree(stagedSourcePath).catch(() => {});
