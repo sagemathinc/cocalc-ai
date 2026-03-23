@@ -62,7 +62,13 @@ function RootfsPublishRow({ op }: { op: RootfsPublishLroState }) {
   const phase = phaseLabel(op);
   const message = op.last_progress?.message ?? statusLabel(status);
   const progressStatus = progressBarStatus(status);
+  const requestedLabel = `${op.summary?.input?.label ?? ""}`.trim();
   const resultImage = `${op.summary?.result?.image ?? ""}`.trim();
+  const durationMs = Number(
+    op.summary?.result?.duration_ms ??
+      op.summary?.progress_summary?.duration_ms,
+  );
+  const phaseTimings = op.summary?.result?.phase_timings_ms;
   const errorText = `${op.summary?.error ?? ""}`.trim();
   const dismissible = !!status && LRO_TERMINAL_STATUSES.has(status);
 
@@ -71,77 +77,75 @@ function RootfsPublishRow({ op }: { op: RootfsPublishLroState }) {
   }
 
   return (
-    <div style={{ marginBottom: "6px" }}>
-      <div style={{ fontSize: "12px", marginBottom: "2px" }}>
-        Publish current project RootFS state
+    <div
+      style={{
+        marginBottom: "8px",
+        padding: "8px",
+        border: "1px solid #eee",
+        borderRadius: "4px",
+      }}
+    >
+      <div style={{ fontSize: "12px", fontWeight: 600, marginBottom: "4px" }}>
+        {requestedLabel || "Publish current project RootFS state"}
       </div>
-      <Space size="small" align="center" wrap>
+      <div style={{ marginBottom: "6px" }}>
         <Progress
           percent={percent}
           status={progressStatus}
           size="small"
-          style={{ width: "180px" }}
+          style={{ width: "100%", maxWidth: "320px" }}
         />
+      </div>
+      <Space size="small" align="center" wrap style={{ marginBottom: "4px" }}>
         <span style={{ fontSize: "11px", color: "#666" }}>
           {phase}
           {message ? `: ${message}` : ""}
         </span>
         {status ? <Tag color={statusColor(status)}>{status}</Tag> : null}
-        {resultImage ? (
-          <Tag color="blue" style={{ maxWidth: "240px" }}>
-            <span style={{ whiteSpace: "nowrap", overflow: "hidden" }}>
-              {resultImage}
-            </span>
-          </Tag>
-        ) : null}
         {op.summary?.updated_at ? (
           <span style={{ fontSize: "11px", color: "#999" }}>
             <TimeAgo date={op.summary.updated_at} />
           </span>
         ) : null}
-        {errorText ? (
-          <Popover
-            trigger="click"
-            open={detailsOpen}
-            onOpenChange={setDetailsOpen}
-            placement="bottomLeft"
-            content={
-              <div style={{ width: "640px", maxWidth: "80vw" }}>
-                <Space direction="vertical" size={8} style={{ width: "100%" }}>
-                  <Space wrap size={[6, 6]}>
-                    <Tag>
-                      Operation ID: <code>{op.op_id}</code>
-                    </Tag>
-                    <Button
-                      size="small"
-                      type="link"
-                      onClick={async () => {
-                        await navigator.clipboard.writeText(op.op_id);
-                        setCopied(true);
-                        window.setTimeout(() => setCopied(false), 1200);
-                      }}
-                    >
-                      {copied ? "Copied" : "Copy ID"}
-                    </Button>
-                  </Space>
-                  <div
-                    style={{
-                      whiteSpace: "pre-wrap",
-                      fontFamily: "monospace",
-                      fontSize: "12px",
-                    }}
-                  >
-                    {errorText}
-                  </div>
-                </Space>
-              </div>
-            }
+      </Space>
+      {resultImage ? (
+        <div style={{ fontSize: "11px", color: "#444", marginBottom: "4px" }}>
+          <span style={{ color: "#666" }}>Image:</span>{" "}
+          <code
+            style={{
+              whiteSpace: "pre-wrap",
+              wordBreak: "break-all",
+              overflowWrap: "anywhere",
+            }}
           >
-            <Button type="link" size="small">
-              Details
-            </Button>
-          </Popover>
-        ) : null}
+            {resultImage}
+          </code>
+        </div>
+      ) : null}
+      {Number.isFinite(durationMs) || phaseTimings ? (
+        <div style={{ fontSize: "11px", color: "#666", marginBottom: "4px" }}>
+          {formatTimingSummary(durationMs, phaseTimings)}
+        </div>
+      ) : null}
+      <Space size="small" align="center" wrap>
+        <Popover
+          trigger="click"
+          open={detailsOpen}
+          onOpenChange={setDetailsOpen}
+          placement="bottomLeft"
+          content={
+            <RootfsPublishDetails
+              op={op}
+              copied={copied}
+              setCopied={setCopied}
+              errorText={errorText}
+            />
+          }
+        >
+          <Button type="link" size="small">
+            Details
+          </Button>
+        </Popover>
         {dismissible ? (
           <Button
             type="link"
@@ -155,6 +159,85 @@ function RootfsPublishRow({ op }: { op: RootfsPublishLroState }) {
           >
             Dismiss
           </Button>
+        ) : null}
+      </Space>
+    </div>
+  );
+}
+
+function RootfsPublishDetails({
+  op,
+  copied,
+  setCopied,
+  errorText,
+}: {
+  op: RootfsPublishLroState;
+  copied: boolean;
+  setCopied: (value: boolean) => void;
+  errorText: string;
+}) {
+  const requestedLabel = `${op.summary?.input?.label ?? ""}`.trim();
+  const result = op.summary?.result ?? {};
+  const resultImage = `${result.image ?? ""}`.trim();
+  const durationMs = Number(
+    result.duration_ms ?? op.summary?.progress_summary?.duration_ms,
+  );
+  const phaseTimings = result.phase_timings_ms;
+
+  return (
+    <div style={{ width: "640px", maxWidth: "80vw" }}>
+      <Space direction="vertical" size={8} style={{ width: "100%" }}>
+        <Space wrap size={[6, 6]}>
+          <Tag>
+            Operation ID: <code>{op.op_id}</code>
+          </Tag>
+          <Button
+            size="small"
+            type="link"
+            onClick={async () => {
+              await navigator.clipboard.writeText(op.op_id);
+              setCopied(true);
+              window.setTimeout(() => setCopied(false), 1200);
+            }}
+          >
+            {copied ? "Copied" : "Copy ID"}
+          </Button>
+        </Space>
+        {requestedLabel ? (
+          <div style={{ fontSize: "12px" }}>
+            <strong>Label:</strong> {requestedLabel}
+          </div>
+        ) : null}
+        {resultImage ? (
+          <div style={{ fontSize: "12px" }}>
+            <strong>Image:</strong>{" "}
+            <code
+              style={{
+                whiteSpace: "pre-wrap",
+                wordBreak: "break-all",
+                overflowWrap: "anywhere",
+              }}
+            >
+              {resultImage}
+            </code>
+          </div>
+        ) : null}
+        {Number.isFinite(durationMs) || phaseTimings ? (
+          <div style={{ fontSize: "12px" }}>
+            <strong>Timings:</strong>{" "}
+            {formatTimingSummary(durationMs, phaseTimings)}
+          </div>
+        ) : null}
+        {errorText ? (
+          <div
+            style={{
+              whiteSpace: "pre-wrap",
+              fontFamily: "monospace",
+              fontSize: "12px",
+            }}
+          >
+            {errorText}
+          </div>
         ) : null}
       </Space>
     </div>
@@ -215,4 +298,40 @@ function statusColor(status: LroStatus): string {
     default:
       return "blue";
   }
+}
+
+function formatTimingSummary(
+  durationMs: number,
+  phaseTimings?: Record<string, number>,
+): string {
+  const parts: string[] = [];
+  if (Number.isFinite(durationMs)) {
+    parts.push(`total ${formatDurationMs(durationMs)}`);
+  }
+  for (const key of ["publish", "upload", "replicate", "catalog_entry"]) {
+    const value = Number(phaseTimings?.[key]);
+    if (Number.isFinite(value) && value > 0) {
+      parts.push(`${keyLabel(key)} ${formatDurationMs(value)}`);
+    }
+  }
+  return parts.join(" · ");
+}
+
+function keyLabel(key: string): string {
+  switch (key) {
+    case "catalog_entry":
+      return "catalog";
+    default:
+      return key;
+  }
+}
+
+function formatDurationMs(ms: number): string {
+  if (!Number.isFinite(ms)) return "";
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  const seconds = ms / 1000;
+  if (seconds < 60) return `${seconds.toFixed(seconds < 10 ? 1 : 0)}s`;
+  const minutes = Math.floor(seconds / 60);
+  const remainder = Math.round(seconds % 60);
+  return `${minutes}m ${remainder}s`;
 }
