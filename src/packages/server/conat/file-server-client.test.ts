@@ -1,13 +1,13 @@
 export {};
 
-let materializeProjectHostMock: jest.Mock;
+let materializeProjectHostTargetMock: jest.Mock;
 let fileServerClientMock: jest.Mock;
 let conatWithProjectRoutingMock: jest.Mock;
 
 jest.mock("./route-project", () => ({
   __esModule: true,
-  materializeProjectHost: (...args: any[]) =>
-    materializeProjectHostMock(...args),
+  materializeProjectHostTarget: (...args: any[]) =>
+    materializeProjectHostTargetMock(...args),
 }));
 
 jest.mock("./route-client", () => ({
@@ -24,7 +24,10 @@ jest.mock("@cocalc/conat/files/file-server", () => ({
 describe("conat/file-server-client", () => {
   beforeEach(() => {
     jest.resetModules();
-    materializeProjectHostMock = jest.fn(async () => "https://host");
+    materializeProjectHostTargetMock = jest.fn(async () => ({
+      address: "https://host",
+      host_id: "host-1",
+    }));
     conatWithProjectRoutingMock = jest.fn(() => ({ id: "routed-client" }));
     fileServerClientMock = jest.fn(() => ({ createBackup: jest.fn() }));
   });
@@ -36,8 +39,9 @@ describe("conat/file-server-client", () => {
       timeout: 1234,
     });
 
-    expect(materializeProjectHostMock).toHaveBeenCalledWith(
+    expect(materializeProjectHostTargetMock).toHaveBeenCalledWith(
       "11111111-1111-1111-1111-111111111111",
+      { fresh: true },
     );
     expect(fileServerClientMock).toHaveBeenCalledWith({
       client: { id: "routed-client" },
@@ -49,7 +53,7 @@ describe("conat/file-server-client", () => {
   });
 
   it("throws a clear error when no route can be resolved", async () => {
-    materializeProjectHostMock = jest.fn(async () => undefined);
+    materializeProjectHostTargetMock = jest.fn(async () => undefined);
     const { getProjectFileServerClient } = await import("./file-server-client");
 
     await expect(
@@ -69,7 +73,7 @@ describe("conat/file-server-client", () => {
       ensure_route: false,
     });
 
-    expect(materializeProjectHostMock).not.toHaveBeenCalled();
+    expect(materializeProjectHostTargetMock).not.toHaveBeenCalled();
     expect(fileServerClientMock).toHaveBeenCalledWith({
       client: { id: "routed-client" },
       project_id: "33333333-3333-3333-3333-333333333333",

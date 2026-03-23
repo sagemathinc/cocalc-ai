@@ -243,10 +243,20 @@ export async function notifyProjectHostUpdate(opts: {
   }
 }
 
+export async function materializeProjectHostTarget(
+  project_id: string,
+  opts?: { fresh?: boolean },
+): Promise<ProjectHostRouteTarget | undefined> {
+  if (opts?.fresh !== true) {
+    const cached = cache.get(project_id);
+    if (cached) return cached;
+  }
+  return await fetchHostAddress(project_id);
+}
+
 export async function materializeProjectHost(
   project_id: string,
+  opts?: { fresh?: boolean },
 ): Promise<string | undefined> {
-  const cached = cache.get(project_id);
-  if (cached) return cached.address;
-  return (await fetchHostAddress(project_id))?.address;
+  return (await materializeProjectHostTarget(project_id, opts))?.address;
 }
