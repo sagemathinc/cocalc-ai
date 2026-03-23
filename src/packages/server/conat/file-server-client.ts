@@ -39,5 +39,6 @@ export async function getProjectFileServerClient({
     client: getRoutedClient(),
     project_id,
     timeout,
+    waitForInterest: true,
   });
 }

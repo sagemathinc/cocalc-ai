@@ -56,6 +56,7 @@ export default function RootfsPublishOps({
 function RootfsPublishRow({ op }: { op: RootfsPublishLroState }) {
   const [detailsOpen, setDetailsOpen] = useState<boolean>(false);
   const [dismissed, setDismissed] = useState<boolean>(false);
+  const [copied, setCopied] = useState<boolean>(false);
   const percent = progressPercent(op);
   const status = op.summary?.status;
   const phase = phaseLabel(op);
@@ -105,15 +106,34 @@ function RootfsPublishRow({ op }: { op: RootfsPublishLroState }) {
             onOpenChange={setDetailsOpen}
             placement="bottomLeft"
             content={
-              <div
-                style={{
-                  maxWidth: "640px",
-                  whiteSpace: "pre-wrap",
-                  fontFamily: "monospace",
-                  fontSize: "12px",
-                }}
-              >
-                {errorText}
+              <div style={{ width: "640px", maxWidth: "80vw" }}>
+                <Space direction="vertical" size={8} style={{ width: "100%" }}>
+                  <Space wrap size={[6, 6]}>
+                    <Tag>
+                      Operation ID: <code>{op.op_id}</code>
+                    </Tag>
+                    <Button
+                      size="small"
+                      type="link"
+                      onClick={async () => {
+                        await navigator.clipboard.writeText(op.op_id);
+                        setCopied(true);
+                        window.setTimeout(() => setCopied(false), 1200);
+                      }}
+                    >
+                      {copied ? "Copied" : "Copy ID"}
+                    </Button>
+                  </Space>
+                  <div
+                    style={{
+                      whiteSpace: "pre-wrap",
+                      fontFamily: "monospace",
+                      fontSize: "12px",
+                    }}
+                  >
+                    {errorText}
+                  </div>
+                </Space>
               </div>
             }
           >

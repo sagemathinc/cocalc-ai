@@ -43,6 +43,7 @@ describe("conat/file-server-client", () => {
       client: { id: "routed-client" },
       project_id: "11111111-1111-1111-1111-111111111111",
       timeout: 1234,
+      waitForInterest: true,
     });
     expect(client).toBeDefined();
   });
@@ -73,6 +74,7 @@ describe("conat/file-server-client", () => {
       client: { id: "routed-client" },
       project_id: "33333333-3333-3333-3333-333333333333",
       timeout: undefined,
+      waitForInterest: true,
     });
   });
 });

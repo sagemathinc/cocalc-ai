@@ -313,12 +313,14 @@ export function client({
   client,
   project_id,
   timeout,
+  waitForInterest = true,
 }: {
   client?: Client;
   // provide project_id so that client is automatically selected to
   // be the one for the project-host that contains the project.
   project_id?: string;
   timeout?: number;
+  waitForInterest?: boolean;
 } = {}): Fileserver {
   client ??= conat();
   // we use this subject so that requests get routed to the
@@ -326,6 +328,8 @@ export function client({
   // src/packages/server/conat/route-client.ts
   return client.call<Fileserver>(
     `${SUBJECT}.${project_id ? project_id : "api"}`,
-    timeout ? { timeout } : undefined,
+    timeout != null || waitForInterest !== true
+      ? { timeout, waitForInterest }
+      : { waitForInterest },
   );
 }
