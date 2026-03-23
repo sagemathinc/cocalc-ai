@@ -5,6 +5,7 @@ import type {
   RootfsImageSection,
   RootfsImageTheme,
   RootfsImageVisibility,
+  RootfsReleaseGcRunResult,
 } from "@cocalc/util/rootfs-images";
 
 export type RootfsCommandDeps = {
@@ -201,6 +202,33 @@ function formatRootfsDeleteResultHuman(
   return lines.join("\n");
 }
 
+function formatRootfsGcResultHuman(result: RootfsReleaseGcRunResult): string {
+  const lines = [
+    `scanned: ${result.scanned}`,
+    `deleted: ${result.deleted}`,
+    `blocked: ${result.blocked}`,
+    `failed: ${result.failed}`,
+  ];
+  for (const item of result.items) {
+    lines.push(
+      "",
+      `${item.release_id} ${item.status} ${item.image || item.content_key}`,
+    );
+    if (item.deleted_replicas != null) {
+      lines.push(`  deleted_replicas: ${item.deleted_replicas}`);
+    }
+    if (item.blockers) {
+      lines.push(
+        `  blockers: total=${item.blockers.total} projects=${item.blockers.projects_using_release} catalog=${item.blockers.catalog_entries_using_release} prepull=${item.blockers.prepull_entries_using_release} child_releases=${item.blockers.child_releases}`,
+      );
+    }
+    if (item.error) {
+      lines.push(`  error: ${item.error}`);
+    }
+  }
+  return lines.join("\n");
+}
+
 export function registerRootfsCommand(
   program: Command,
   deps: RootfsCommandDeps,
@@ -289,6 +317,29 @@ export function registerRootfsCommand(
             return result;
           }
           return formatRootfsDeleteResultHuman(result);
+        });
+      },
+    );
+
+  rootfs
+    .command("gc")
+    .description("garbage collect pending-delete RootFS releases (admin only)")
+    .option("--limit <n>", "max pending releases to scan", "10")
+    .action(
+      async (
+        opts: {
+          limit?: string;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "rootfs gc", async (ctx) => {
+          const result = await ctx.hub.system.runRootfsReleaseGc({
+            limit: parseLimit(opts.limit, 10),
+          });
+          if (ctx.globals.json || ctx.globals.output === "json") {
+            return result;
+          }
+          return formatRootfsGcResultHuman(result);
         });
       },
     );

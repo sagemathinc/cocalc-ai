@@ -15,6 +15,7 @@ import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import {
+  deleteObject,
   uploadObjectFromBuffer,
   uploadObjectFromFile,
   issueSignedObjectDownload,
@@ -29,10 +30,13 @@ import {
 import type {
   PublishProjectRootfsArtifact,
   RootfsArtifactTransferTarget,
+  RootfsDeleteBlockers,
   RootfsReleaseArtifactAccess,
   RootfsReleaseArtifactBackend,
   RootfsReleaseArtifactFormat,
   RootfsReleaseArtifactKind,
+  RootfsReleaseGcItem,
+  RootfsReleaseGcRunResult,
 } from "@cocalc/util/rootfs-images";
 import { managedRootfsContentKey } from "@cocalc/util/rootfs-images";
 import { v4 as uuid } from "uuid";
@@ -517,6 +521,37 @@ async function listReadyReleaseArtifactReplicas(
   return rows;
 }
 
+async function listReleaseArtifactReplicas(
+  release_id: string,
+): Promise<RootfsReleaseArtifactReplicaRow[]> {
+  const { rows } = await getPool(
+    "medium",
+  ).query<RootfsReleaseArtifactReplicaRow>(
+    `SELECT
+      artifact_id,
+      release_id,
+      content_key,
+      backend,
+      region,
+      bucket_id,
+      bucket_name,
+      bucket_purpose,
+      artifact_kind,
+      artifact_format,
+      artifact_path,
+      artifact_sha256,
+      artifact_bytes,
+      status,
+      replicated_from_artifact_id,
+      error
+    FROM rootfs_release_artifacts
+    WHERE release_id=$1
+    ORDER BY updated DESC NULLS LAST, created DESC`,
+    [release_id],
+  );
+  return rows;
+}
+
 async function resolveReplicaBucket(
   replica: RootfsReleaseArtifactReplicaRow,
 ): Promise<BucketRow | null> {
@@ -749,6 +784,58 @@ async function loadRootfsReleaseById(
     [value],
   );
   return rows[0] ?? null;
+}
+
+async function getReleaseDeleteBlockers(
+  release: RootfsReleaseRow,
+): Promise<RootfsDeleteBlockers> {
+  const pool = getPool("medium");
+  const [projects, catalogEntries, prepullEntries, childReleases] =
+    await Promise.all([
+      pool.query<{ count: string }>(
+        `SELECT COUNT(*)::TEXT AS count
+         FROM projects
+         WHERE rootfs_image=$1`,
+        [release.runtime_image],
+      ),
+      pool.query<{ count: string }>(
+        `SELECT COUNT(*)::TEXT AS count
+         FROM rootfs_images
+         WHERE release_id=$1 AND COALESCE(deleted, false)=false`,
+        [release.release_id],
+      ),
+      pool.query<{ count: string }>(
+        `SELECT COUNT(*)::TEXT AS count
+         FROM rootfs_images
+         WHERE release_id=$1 AND prepull=true AND COALESCE(deleted, false)=false`,
+        [release.release_id],
+      ),
+      pool.query<{ count: string }>(
+        `SELECT COUNT(*)::TEXT AS count
+         FROM rootfs_releases
+         WHERE parent_release_id=$1 AND COALESCE(gc_status, 'active') <> 'deleted'`,
+        [release.release_id],
+      ),
+    ]);
+  const projects_using_release = Number(projects.rows[0]?.count ?? 0);
+  const catalog_entries_using_release = Number(
+    catalogEntries.rows[0]?.count ?? 0,
+  );
+  const prepull_entries_using_release = Number(
+    prepullEntries.rows[0]?.count ?? 0,
+  );
+  const child_releases = Number(childReleases.rows[0]?.count ?? 0);
+  return {
+    projects_using_release,
+    catalog_entries_using_release,
+    prepull_entries_using_release,
+    child_releases,
+    total:
+      projects_using_release +
+      catalog_entries_using_release +
+      prepull_entries_using_release +
+      child_releases,
+  };
 }
 
 export async function readStoredRootfsArtifactMetadata(
@@ -1143,6 +1230,174 @@ export async function deleteStoredRootfsArtifact(
   await rm(rootfsReleaseArtifactMetadataPath(key), { force: true }).catch(
     () => {},
   );
+}
+
+async function deleteReplicaObject(
+  replica: RootfsReleaseArtifactReplicaRow,
+): Promise<void> {
+  if (replica.backend === "hub-local") {
+    await deleteStoredRootfsArtifact(replica.content_key);
+    return;
+  }
+  const bucket = await resolveReplicaBucket(replica);
+  if (
+    !bucket?.name ||
+    !bucket.endpoint ||
+    !bucket.access_key_id ||
+    !bucket.secret_access_key
+  ) {
+    throw new Error(
+      `missing bucket credentials for RootFS replica ${replica.artifact_id}`,
+    );
+  }
+  const release = await loadRootfsReleaseById(replica.release_id);
+  const parentRelease = await loadRootfsReleaseById(release?.parent_release_id);
+  await deleteObject({
+    endpoint: bucket.endpoint,
+    accessKey: bucket.access_key_id,
+    secretKey: bucket.secret_access_key,
+    bucket: bucket.name,
+    key: replica.artifact_path,
+  });
+  await deleteObject({
+    endpoint: bucket.endpoint,
+    accessKey: bucket.access_key_id,
+    secretKey: bucket.secret_access_key,
+    bucket: bucket.name,
+    key: r2ArtifactShaKey(
+      replica.content_key,
+      replica.artifact_kind,
+      parentRelease?.content_key,
+    ),
+  });
+}
+
+async function markReleaseArtifactReplica({
+  artifact_id,
+  status,
+  error,
+}: {
+  artifact_id: string;
+  status: string;
+  error?: string | null;
+}): Promise<void> {
+  await getPool("medium").query(
+    `UPDATE rootfs_release_artifacts
+     SET status=$2,
+         error=$3,
+         updated=NOW()
+     WHERE artifact_id=$1`,
+    [artifact_id, status, error ?? null],
+  );
+}
+
+export async function gcRootfsRelease({
+  release_id,
+}: {
+  release_id: string;
+}): Promise<RootfsReleaseGcItem> {
+  const release = await loadRootfsReleaseById(release_id);
+  if (!release) {
+    return {
+      release_id,
+      content_key: "",
+      image: "",
+      status: "skipped",
+      error: "release not found",
+    };
+  }
+  const blockers = await getReleaseDeleteBlockers(release);
+  if (blockers.total > 0) {
+    await getPool("medium").query(
+      `UPDATE rootfs_releases
+       SET gc_status='blocked',
+           updated=NOW()
+       WHERE release_id=$1`,
+      [release_id],
+    );
+    return {
+      release_id: release.release_id,
+      content_key: release.content_key,
+      image: release.runtime_image,
+      status: "blocked",
+      blockers,
+    };
+  }
+
+  const replicas = await listReleaseArtifactReplicas(release.release_id);
+  let deletedReplicas = 0;
+  try {
+    for (const replica of replicas) {
+      if (replica.status === "deleted") continue;
+      await deleteReplicaObject(replica);
+      await markReleaseArtifactReplica({
+        artifact_id: replica.artifact_id,
+        status: "deleted",
+      });
+      deletedReplicas += 1;
+    }
+    if (release.artifact_backend === "hub-local") {
+      await deleteStoredRootfsArtifact(release.content_key);
+    }
+    await getPool("medium").query(
+      `UPDATE rootfs_releases
+       SET gc_status='deleted',
+           updated=NOW()
+       WHERE release_id=$1`,
+      [release.release_id],
+    );
+    return {
+      release_id: release.release_id,
+      content_key: release.content_key,
+      image: release.runtime_image,
+      status: "deleted",
+      deleted_replicas: deletedReplicas,
+      blockers,
+    };
+  } catch (err) {
+    await getPool("medium").query(
+      `UPDATE rootfs_releases
+       SET gc_status='blocked',
+           updated=NOW()
+       WHERE release_id=$1`,
+      [release.release_id],
+    );
+    return {
+      release_id: release.release_id,
+      content_key: release.content_key,
+      image: release.runtime_image,
+      status: "failed",
+      blockers,
+      deleted_replicas: deletedReplicas,
+      error: `${err}`,
+    };
+  }
+}
+
+export async function runPendingRootfsReleaseGc({
+  limit = 10,
+}: {
+  limit?: number;
+} = {}): Promise<RootfsReleaseGcRunResult> {
+  const { rows } = await getPool("medium").query<{ release_id: string }>(
+    `SELECT release_id
+     FROM rootfs_releases
+     WHERE gc_status='pending_delete'
+     ORDER BY delete_requested_at ASC NULLS LAST, updated ASC NULLS LAST, created ASC
+     LIMIT $1`,
+    [Math.max(1, Math.min(1000, limit))],
+  );
+  const items: RootfsReleaseGcItem[] = [];
+  for (const row of rows) {
+    items.push(await gcRootfsRelease({ release_id: row.release_id }));
+  }
+  return {
+    scanned: rows.length,
+    deleted: items.filter((item) => item.status === "deleted").length,
+    blocked: items.filter((item) => item.status === "blocked").length,
+    failed: items.filter((item) => item.status === "failed").length,
+    items,
+  };
 }
 
 export function rootfsReleaseArtifactContentType(): string {

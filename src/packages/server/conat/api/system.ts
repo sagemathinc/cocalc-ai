@@ -37,6 +37,7 @@ import {
   requestRootfsImageDeletion as requestRootfsImageDeletion0,
   saveRootfsImage,
 } from "@cocalc/server/rootfs/catalog";
+import { runPendingRootfsReleaseGc } from "@cocalc/server/rootfs/releases";
 import type {
   ProjectRootfsPublishLroRef,
   PublishProjectRootfsBody,
@@ -354,6 +355,17 @@ export async function requestRootfsImageDeletion(opts: {
     image_id,
     reason,
   });
+}
+
+export async function runRootfsReleaseGc(opts: {
+  account_id?: string;
+  limit?: number;
+}) {
+  const { account_id, limit } = opts;
+  if (!account_id || !(await isAdmin(account_id))) {
+    throw Error("must be an admin");
+  }
+  return await runPendingRootfsReleaseGc({ limit });
 }
 
 async function publishQueuedLroSafe({ op }: { op: LroSummary }) {

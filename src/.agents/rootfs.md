@@ -1084,6 +1084,14 @@ The first delete/GC slice should not try to reclaim storage yet. It should:
    - mark the underlying release `pending_delete` or `blocked`,
    - do **not** yet delete replicas or host caches.
 
+The next slice after this should add a GC sweep that:
+
+- rescans releases in `pending_delete`,
+- rechecks blockers,
+- deletes central hub-local/R2 replicas when still safe,
+- marks the release `deleted`,
+- leaves host-cache eviction lazy.
+
 ## Host UI
 
 The project-host UI should have an Images tab.

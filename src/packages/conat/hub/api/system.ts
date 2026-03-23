@@ -17,6 +17,7 @@ import type {
   RootfsDeleteRequestResult,
   RootfsImageManifest,
   RootfsImageEntry,
+  RootfsReleaseGcRunResult,
 } from "@cocalc/util/rootfs-images";
 
 export const system = {
@@ -52,6 +53,7 @@ export const system = {
   getRootfsCatalog: authFirst,
   saveRootfsCatalogEntry: authFirstRequireAccount,
   requestRootfsImageDeletion: authFirstRequireAccount,
+  runRootfsReleaseGc: authFirstRequireAccount,
   publishProjectRootfsImage: authFirstRequireAccount,
   getPublicSiteUrl: authFirst,
   testR2Credentials: authFirst,
@@ -476,6 +478,11 @@ export interface System {
     reason?: string;
     account_id?: string;
   }) => Promise<RootfsDeleteRequestResult>;
+
+  runRootfsReleaseGc: (opts: {
+    limit?: number;
+    account_id?: string;
+  }) => Promise<RootfsReleaseGcRunResult>;
 
   publishProjectRootfsImage: (
     opts: PublishProjectRootfsBody & { account_id?: string },

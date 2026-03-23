@@ -213,6 +213,24 @@ export type RootfsDeleteRequestResult = {
   blockers: RootfsDeleteBlockers;
 };
 
+export type RootfsReleaseGcItem = {
+  release_id: string;
+  content_key: string;
+  image: string;
+  status: "deleted" | "blocked" | "skipped" | "failed";
+  blockers?: RootfsDeleteBlockers;
+  deleted_replicas?: number;
+  error?: string;
+};
+
+export type RootfsReleaseGcRunResult = {
+  scanned: number;
+  deleted: number;
+  blocked: number;
+  failed: number;
+  items: RootfsReleaseGcItem[];
+};
+
 export type ProjectRootfsPublishLroRef = {
   op_id: string;
   scope_type: "project";
