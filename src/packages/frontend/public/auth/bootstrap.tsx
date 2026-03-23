@@ -4,8 +4,8 @@
  */
 
 import { createRoot } from "react-dom/client";
-import { join } from "path";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
+import { joinUrlPath } from "@cocalc/util/url-path";
 import { SITE_NAME } from "@cocalc/util/theme";
 import PublicAuthApp, { getAuthViewFromPath } from "./app";
 
@@ -19,7 +19,7 @@ interface CustomizePayload {
 
 async function loadCustomize(): Promise<CustomizePayload | undefined> {
   try {
-    const resp = await fetch(join(appBasePath, "customize"));
+    const resp = await fetch(joinUrlPath(appBasePath, "customize"));
     return await resp.json();
   } catch {
     return undefined;
@@ -33,7 +33,7 @@ export async function init(): Promise<void> {
   }
   const payload = await loadCustomize();
   if (payload?.configuration?.is_authenticated) {
-    window.location.replace(join(appBasePath, "app"));
+    window.location.replace(joinUrlPath(appBasePath, "app"));
     return;
   }
   const root = createRoot(document.getElementById("smc-react-container")!);

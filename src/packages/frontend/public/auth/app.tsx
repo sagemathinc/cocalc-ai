@@ -6,10 +6,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { SITE_NAME } from "@cocalc/util/theme";
-import PasswordResetForm from "@cocalc/frontend/auth/password-reset";
-import SignInForm from "@cocalc/frontend/auth/sign-in";
-import { SignUpFormBase } from "@cocalc/frontend/auth/sign-up";
 import type { AuthView } from "@cocalc/frontend/auth/types";
+import {
+  PublicPasswordResetForm,
+  PublicSignInForm,
+  PublicSignUpForm,
+} from "./forms";
 import PublicAuthPageShell from "./page-shell";
 
 interface PublicAuthAppProps {
@@ -72,15 +74,15 @@ export default function PublicAuthApp({
 
   return (
     <PublicAuthPageShell title={title} subtitle={siteName}>
-      {view === "sign-in" && <SignInForm onNavigate={onNavigate} />}
+      {view === "sign-in" && <PublicSignInForm onNavigate={onNavigate} />}
       {view === "sign-up" && (
-        <SignUpFormBase
+        <PublicSignUpForm
           initialRequiresToken={initialRequiresToken}
           onNavigate={onNavigate}
         />
       )}
       {view === "password-reset" && (
-        <PasswordResetForm onNavigate={onNavigate} />
+        <PublicPasswordResetForm onNavigate={onNavigate} />
       )}
     </PublicAuthPageShell>
   );
