@@ -23,6 +23,7 @@ import initUpload from "./app/upload";
 import initBlobs from "./app/blobs";
 import initCustomize from "./app/customize";
 import initPublicAuth from "./app/public-auth";
+import initPublicSupport from "./app/public-support";
 import { initMetricsEndpoint, setupInstrumentation } from "./app/metrics";
 import initProjectHostBootstrap from "./app/project-host-bootstrap";
 import initProjectHostSoftware from "./app/project-host-software";
@@ -255,6 +256,7 @@ export default async function init(opts: Options): Promise<{
   if (!opts.nextServer) {
     initLanding(router);
     initPublicAuth(router);
+    initPublicSupport(router);
   }
   if (!opts.nextServer && isLaunchpadMode() && isLicenseRequired()) {
     initLaunchpadActivationGate(router);
@@ -447,6 +449,12 @@ async function initStatic(router) {
     router.use(
       "/static/public-auth.html",
       express.static(join(staticPath, "public-auth.html"), {
+        setHeaders: cacheShortTerm,
+      }),
+    );
+    router.use(
+      "/static/public-support.html",
+      express.static(join(staticPath, "public-support.html"), {
         setHeaders: cacheShortTerm,
       }),
     );

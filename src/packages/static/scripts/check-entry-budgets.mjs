@@ -11,6 +11,10 @@ const budgets = [
     html: "public-auth.html",
     maxGzipBytes: 250 * 1024,
   },
+  {
+    html: "public-support.html",
+    maxGzipBytes: 250 * 1024,
+  },
 ];
 
 function parseAssetsFromHtml(htmlPath) {

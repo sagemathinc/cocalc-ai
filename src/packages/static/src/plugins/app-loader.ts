@@ -44,6 +44,11 @@ export default function appLoaderPlugin(
       filename: "public-auth.html",
       chunks: ["load", "public-auth"],
     },
+    {
+      desc: "public-support",
+      filename: "public-support.html",
+      chunks: ["load", "public-support"],
+    },
   ];
 
   for (const page of htmlPages) {
