@@ -1,5 +1,6 @@
 import type {
   Host,
+  HostRootfsGcResult,
   HostRootfsImage,
   HostSoftwareArtifact,
   HostSoftwareAvailableVersion,
@@ -47,6 +48,7 @@ type UseHostDrawerViewModelArgs = {
     refresh: () => Promise<void>;
     pull: (image: string) => Promise<void>;
     remove: (image: string) => Promise<void>;
+    gcDeleted: () => Promise<HostRootfsGcResult | undefined>;
   };
   canManageRootfs?: boolean;
   selfHost?: {
