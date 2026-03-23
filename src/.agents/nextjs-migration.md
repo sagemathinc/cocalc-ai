@@ -31,8 +31,9 @@ This means:
 - the only purchase flows that matter in the new system are:
   - membership upgrades
   - vouchers
-  - student pay
-  - user-owned hosts
+  - student pay (not clearly defined yet)
+  - user-owned hosts (not implemented at all yet)
+  - team/organization memberships (not clearly defined yet)
 
 ### Non-goal
 

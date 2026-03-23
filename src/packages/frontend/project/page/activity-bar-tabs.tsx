@@ -112,9 +112,9 @@ export default function ProjectTabs(props: PTProps) {
           <>
             {sshRemoteTarget ? <RemoteSshButton /> : <SshButton />}
             <SshUpgradeButton />
-            <SettingsButton />
           </>
         )}
+        <SettingsButton />
       </div>
     </div>
   );
@@ -300,21 +300,12 @@ export function VerticalFixedTabs({
     name: FixedTab,
     domEvent?: Pick<MouseEvent, "ctrlKey" | "shiftKey" | "metaKey"> | null,
   ): void {
-    const canOpenFullPage = !FIXED_PROJECT_TABS[name].noFullPage;
-    if (canOpenFullPage && hasModifierKey(domEvent)) {
-      actions?.set_active_tab(name);
-      track("action-bar", {
-        action: "open-overflow-full-page",
-        name,
-        project_id,
-      });
-      return;
-    }
-    actions?.toggleFlyout(name);
-    track("action-bar", {
-      action: "open-overflow-flyout",
+    openRailMenuTab({
+      actions,
+      domEvent,
       name,
       project_id,
+      source: "overflow",
     });
   }
 
@@ -323,54 +314,25 @@ export function VerticalFixedTabs({
     const isActive =
       moreOpen ||
       (active_flyout != null && overflowTabs.includes(active_flyout));
-    const items: NonNullable<MenuProps["items"]> = overflowTabs.map((name) => ({
-      key: `overflow:${name}`,
-      label: renderMenuLabel(
-        <Icon name={FIXED_PROJECT_TABS[name].icon} />,
-        renderFixedTabLabel(name, intl),
-      ),
-      onClick: ({ domEvent }) => openOverflowTab(name, domEvent),
-    }));
-    if (overflowTabs.length > 0) {
-      items.push({ key: "divider-overflow", type: "divider" });
-    }
-    items.push({
-      key: "rail-controls",
-      type: "group",
-      label: "Rail",
-      children: [
-        {
-          key: "customize",
-          label: renderMenuLabel(<Icon name="sliders" />, "Customize buttons"),
-          onClick: () => setShowCustomize(true),
-        },
-        {
-          key: "toggle-labels",
-          label: renderMenuLabel(
-            <Icon name="signature-outlined" />,
-            intl.formatMessage(ACTIVITY_BAR_TOGGLE_LABELS, {
-              show: showActBarLabels,
-            }),
-          ),
-          onClick: () => {
-            account_settings.set_other_settings(
-              ACTIVITY_BAR_LABELS,
-              !showActBarLabels,
-            );
-          },
-        },
-        {
-          key: "hide-activity-bar",
-          label: renderMenuLabel(
-            <Icon name="vertical-right-outlined" />,
-            "Hide activity bar",
-          ),
-          onClick: () => {
-            track("action-bar", { action: "hide" });
-            actions?.toggleActionButtons();
-          },
-        },
-      ],
+    const items = createRailMenuItems({
+      intl,
+      names: overflowTabs,
+      onCustomize: () => setShowCustomize(true),
+      onToggleActivityBar: () => {
+        track("action-bar", { action: "hide" });
+        actions?.toggleActionButtons();
+      },
+      onToggleLabels: () => {
+        account_settings.set_other_settings(
+          ACTIVITY_BAR_LABELS,
+          !showActBarLabels,
+        );
+      },
+      onTabClick: openOverflowTab,
+      railToggleLabel: "Hide activity bar",
+      railToggleIcon: "vertical-right-outlined",
+      sectionKeyPrefix: "overflow",
+      showActBarLabels: showActBarLabels === true,
     });
     return (
       <Tooltip title="More" placement="rightTop">
@@ -470,6 +432,205 @@ export function VerticalFixedTabs({
       />
     </div>
   );
+}
+
+export function HiddenActivityBarLauncher() {
+  const intl = useIntl();
+  const { actions, project_id } = useProjectContext();
+  const account_settings = useActions("account");
+  const accountStoreReady = useAccountStoreReady();
+  const { showActBarLabels } = useAppContext();
+  const other_settings = useTypedRedux("account", "other_settings");
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [showCustomize, setShowCustomize] = useState(false);
+  const tabOrder = useMemo(
+    () =>
+      normalizeFixedTabOrder(other_settings?.get?.(ACTIVITY_BAR_TAB_ORDER), {
+        liteMode: lite,
+      }),
+    [other_settings],
+  );
+  const hiddenTabs = useMemo(
+    () =>
+      normalizeHiddenFixedTabs(
+        other_settings?.get?.(ACTIVITY_BAR_HIDDEN_TABS),
+        {
+          liteMode: lite,
+        },
+      ),
+    [other_settings],
+  );
+
+  if (!accountStoreReady) return null;
+
+  const items = createRailMenuItems({
+    intl,
+    names: tabOrder,
+    onCustomize: () => setShowCustomize(true),
+    onToggleActivityBar: () => {
+      track("action-bar", { action: "show" });
+      actions?.toggleActionButtons();
+    },
+    onToggleLabels: () => {
+      account_settings.set_other_settings(
+        ACTIVITY_BAR_LABELS,
+        !showActBarLabels,
+      );
+    },
+    onTabClick: (name, domEvent) => {
+      openRailMenuTab({
+        actions,
+        domEvent,
+        name,
+        project_id,
+        source: "hidden-launcher",
+      });
+    },
+    railToggleLabel: "Show activity bar",
+    railToggleIcon: "vertical-left-outlined",
+    sectionKeyPrefix: "launcher",
+    showActBarLabels: showActBarLabels === true,
+  });
+
+  return (
+    <>
+      <Dropdown
+        menu={{ items }}
+        trigger={["click"]}
+        placement="bottomLeft"
+        transitionName=""
+        onOpenChange={(next) => setMenuOpen(next)}
+      >
+        <Button
+          data-testid="hidden-rail-launcher"
+          size="large"
+          type="text"
+          style={{
+            width: "40px",
+            border: "none",
+            borderRadius: "0",
+            fontSize: "22px",
+            color: menuOpen ? COLORS.ANTD_LINK_BLUE : COLORS.FILE_ICON,
+            transitionDuration: "0s",
+            background: "#fafafa",
+          }}
+        >
+          <Icon name="bars" style={{ verticalAlign: "4px" }} />
+        </Button>
+      </Dropdown>
+      <CustomizeRailButtonsModal
+        hiddenTabs={hiddenTabs}
+        open={showCustomize}
+        onClose={() => setShowCustomize(false)}
+        onSave={(nextOrder, nextHidden) => {
+          account_settings.set_other_settings(
+            ACTIVITY_BAR_TAB_ORDER,
+            nextOrder,
+          );
+          account_settings.set_other_settings(
+            ACTIVITY_BAR_HIDDEN_TABS,
+            nextHidden,
+          );
+          setShowCustomize(false);
+        }}
+        order={tabOrder}
+      />
+    </>
+  );
+}
+
+function openRailMenuTab(opts: {
+  actions: any;
+  domEvent?: Pick<MouseEvent, "ctrlKey" | "shiftKey" | "metaKey"> | null;
+  name: FixedTab;
+  project_id: string;
+  source: "overflow" | "hidden-launcher";
+}): void {
+  const { actions, domEvent, name, project_id, source } = opts;
+  const canOpenFullPage = !FIXED_PROJECT_TABS[name].noFullPage;
+  if (canOpenFullPage && hasModifierKey(domEvent)) {
+    actions?.set_active_tab(name);
+    track("action-bar", {
+      action: `open-${source}-full-page`,
+      name,
+      project_id,
+    });
+    return;
+  }
+  actions?.toggleFlyout(name);
+  track("action-bar", {
+    action: `open-${source}-flyout`,
+    name,
+    project_id,
+  });
+}
+
+function createRailMenuItems(opts: {
+  intl: ReturnType<typeof useIntl>;
+  names: FixedTab[];
+  onCustomize: () => void;
+  onToggleActivityBar: () => void;
+  onToggleLabels: () => void;
+  onTabClick: (
+    name: FixedTab,
+    domEvent?: Pick<MouseEvent, "ctrlKey" | "shiftKey" | "metaKey"> | null,
+  ) => void;
+  railToggleLabel: string;
+  railToggleIcon: IconName;
+  sectionKeyPrefix: string;
+  showActBarLabels: boolean;
+}): NonNullable<MenuProps["items"]> {
+  const {
+    intl,
+    names,
+    onCustomize,
+    onToggleActivityBar,
+    onToggleLabels,
+    onTabClick,
+    railToggleLabel,
+    railToggleIcon,
+    sectionKeyPrefix,
+    showActBarLabels,
+  } = opts;
+  const items: NonNullable<MenuProps["items"]> = names.map((name) => ({
+    key: `${sectionKeyPrefix}:${name}`,
+    label: renderMenuLabel(
+      <Icon name={FIXED_PROJECT_TABS[name].icon} />,
+      renderFixedTabLabel(name, intl),
+    ),
+    onClick: ({ domEvent }) => onTabClick(name, domEvent),
+  }));
+  if (names.length > 0) {
+    items.push({ key: `divider-${sectionKeyPrefix}`, type: "divider" });
+  }
+  items.push({
+    key: `${sectionKeyPrefix}-rail-controls`,
+    type: "group",
+    label: "Rail",
+    children: [
+      {
+        key: `${sectionKeyPrefix}:customize`,
+        label: renderMenuLabel(<Icon name="sliders" />, "Customize buttons"),
+        onClick: onCustomize,
+      },
+      {
+        key: `${sectionKeyPrefix}:toggle-labels`,
+        label: renderMenuLabel(
+          <Icon name="signature-outlined" />,
+          intl.formatMessage(ACTIVITY_BAR_TOGGLE_LABELS, {
+            show: showActBarLabels,
+          }),
+        ),
+        onClick: onToggleLabels,
+      },
+      {
+        key: `${sectionKeyPrefix}:toggle-activity-bar`,
+        label: renderMenuLabel(<Icon name={railToggleIcon} />, railToggleLabel),
+        onClick: onToggleActivityBar,
+      },
+    ],
+  });
+  return items;
 }
 
 function renderFixedTabLabel(name: FixedTab, intl): ReactNode {

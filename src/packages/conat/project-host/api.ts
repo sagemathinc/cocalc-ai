@@ -37,6 +37,19 @@ export interface HostProjectRuntimeLogResponse {
   running: boolean;
 }
 
+export interface HostRootfsCacheEntry {
+  image: string;
+  cache_path: string;
+  inspect_path?: string;
+  digest?: string;
+  size_bytes?: number;
+  cached_at?: string;
+  project_count: number;
+  running_project_count: number;
+  project_ids: string[];
+  running_project_ids: string[];
+}
+
 export interface HostSshAuthorizedKeysResponse {
   user: string;
   home: string;
@@ -107,6 +120,9 @@ export interface HostControlApi {
     project_id: string;
     lines?: number;
   }) => Promise<HostProjectRuntimeLogResponse>;
+  listRootfsImages: () => Promise<HostRootfsCacheEntry[]>;
+  pullRootfsImage: (opts: { image: string }) => Promise<HostRootfsCacheEntry>;
+  deleteRootfsImage: (opts: { image: string }) => Promise<{ removed: boolean }>;
   listHostSshAuthorizedKeys: () => Promise<HostSshAuthorizedKeysResponse>;
   addHostSshAuthorizedKey: (opts: {
     public_key: string;

@@ -45,8 +45,12 @@ import {
 import { capitalize } from "@cocalc/util/misc";
 import type { Host } from "@cocalc/conat/hub/api/hosts";
 import { SelectNewHost } from "@cocalc/frontend/hosts/select-new-host";
-import { useRootfsImages } from "@cocalc/frontend/rootfs/manifest";
+import {
+  managedRootfsCatalogUrl,
+  useRootfsImages,
+} from "@cocalc/frontend/rootfs/manifest";
 import { DEFAULT_PROJECT_IMAGE } from "@cocalc/util/db-schema/defaults";
+import type { RootfsImageEntry } from "@cocalc/util/rootfs-images";
 
 interface Props {
   default_value: string;
@@ -86,8 +90,10 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
   const [rootfsModalOpen, setRootfsModalOpen] = useState<boolean>(false);
   const [rootfsTouched, setRootfsTouched] = useState<boolean>(false);
   const [rootfsImage, setRootfsImage] = useState<string | undefined>();
+  const [rootfsImageId, setRootfsImageId] = useState<string | undefined>();
   const [rootfsMode, setRootfsMode] = useState<"catalog" | "custom">("catalog");
   const [rootfsDraft, setRootfsDraft] = useState<string>("");
+  const [rootfsDraftId, setRootfsDraftId] = useState<string | undefined>();
   const regionOptions = useMemo(
     () =>
       R2_REGIONS.map((region) => ({
@@ -95,11 +101,6 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
         label: R2_REGION_LABELS[region],
       })),
     [],
-  );
-  const manifestUrl = useTypedRedux("customize", "project_rootfs_manifest_url");
-  const manifestUrlExtra = useTypedRedux(
-    "customize",
-    "project_rootfs_manifest_url_extra",
   );
   const siteDefaultRootfs = useTypedRedux(
     "customize",
@@ -116,18 +117,11 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
   );
 
   const [form] = Form.useForm();
-  const manifestUrls = useMemo(
-    () =>
-      [manifestUrl, manifestUrlExtra]
-        .map((url) => url?.trim())
-        .filter((url): url is string => !!url && url.length > 0),
-    [manifestUrl, manifestUrlExtra],
-  );
   const {
     images: rootfsImages,
     loading: rootfsLoading,
     error: rootfsError,
-  } = useRootfsImages(manifestUrls);
+  } = useRootfsImages([managedRootfsCatalogUrl()]);
   const isGpu = selectedHost?.gpu ?? false;
   const effectiveDefaultRootfs = useMemo(() => {
     const siteDefault = siteDefaultRootfs?.trim() || DEFAULT_PROJECT_IMAGE;
@@ -160,10 +154,18 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
     [rootfsImages, isGpu],
   );
   const selectedRootfsEntry = useMemo(() => {
+    const imageId = rootfsImageId?.trim();
+    if (imageId) {
+      return rootfsImages.find((entry) => entry.id === imageId);
+    }
     const image = rootfsImage?.trim();
     if (!image) return undefined;
     return rootfsImages.find((entry) => entry.image === image);
-  }, [rootfsImages, rootfsImage]);
+  }, [rootfsImage, rootfsImageId, rootfsImages]);
+  const rootfsGroupedOptions = useMemo(
+    () => groupedRootfsOptions(filteredRootfsImages),
+    [filteredRootfsImages],
+  );
 
   useEffect(() => {
     form.setFieldsValue({ title: title_text });
@@ -180,8 +182,12 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
   useEffect(() => {
     if (!rootfsTouched) {
       setRootfsImage(effectiveDefaultRootfs);
+      setRootfsImageId(
+        rootfsImages.find((entry) => entry.image === effectiveDefaultRootfs)
+          ?.id,
+      );
     }
-  }, [effectiveDefaultRootfs, rootfsTouched]);
+  }, [effectiveDefaultRootfs, rootfsImages, rootfsTouched]);
 
   const is_mounted_ref = useIsMountedRef();
 
@@ -205,9 +211,11 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
     setSaving(false);
     setRootfsTouched(false);
     setRootfsImage(effectiveDefaultRootfs);
+    setRootfsImageId(undefined);
     setRootfsModalOpen(false);
     setRootfsMode("catalog");
     setRootfsDraft("");
+    setRootfsDraftId(undefined);
   }
 
   function start_editing(): void {
@@ -230,6 +238,7 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
     const opts = {
       title: title_text,
       rootfs_image: chosenRootfs,
+      rootfs_image_id: rootfsImageId?.trim() || undefined,
       start: true,
       host_id: selectedHost?.id,
       region: projectRegion,
@@ -289,22 +298,20 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
       effectiveDefaultRootfs ||
       DEFAULT_PROJECT_IMAGE) as string;
     setRootfsDraft(current);
-    const isCatalog = filteredRootfsImages.some(
-      (entry) => entry.image === current,
-    );
+    const currentEntry =
+      filteredRootfsImages.find((entry) => entry.id === rootfsImageId) ??
+      filteredRootfsImages.find((entry) => entry.image === current);
+    setRootfsDraftId(currentEntry?.id);
+    const isCatalog = !!currentEntry;
     setRootfsMode(isCatalog ? "catalog" : "custom");
     setRootfsModalOpen(true);
   }
 
   function renderRootfsModal() {
     if (!rootfsModalOpen) return null;
-    const options = filteredRootfsImages.map((entry) => ({
-      value: entry.image,
-      label: entry.label || entry.image,
-    }));
-    const activeEntry = filteredRootfsImages.find(
-      (entry) => entry.image === rootfsDraft,
-    );
+    const activeEntry =
+      filteredRootfsImages.find((entry) => entry.id === rootfsDraftId) ??
+      filteredRootfsImages.find((entry) => entry.image === rootfsDraft);
     return (
       <Modal
         open
@@ -313,11 +320,18 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
         onCancel={() => setRootfsModalOpen(false)}
         onOk={() => {
           const trimmed = rootfsDraft.trim();
-          const next =
-            rootfsMode === "custom"
-              ? trimmed || effectiveDefaultRootfs
-              : rootfsDraft || effectiveDefaultRootfs;
-          setRootfsImage(next || effectiveDefaultRootfs);
+          if (rootfsMode === "custom") {
+            setRootfsImage(trimmed || effectiveDefaultRootfs);
+            setRootfsImageId(undefined);
+          } else {
+            const nextEntry =
+              filteredRootfsImages.find(
+                (entry) => entry.id === rootfsDraftId,
+              ) ??
+              filteredRootfsImages.find((entry) => entry.image === rootfsDraft);
+            setRootfsImage(nextEntry?.image || effectiveDefaultRootfs);
+            setRootfsImageId(nextEntry?.id);
+          }
           setRootfsTouched(true);
           setRootfsModalOpen(false);
         }}
@@ -338,10 +352,16 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
             <>
               <Select
                 showSearch
-                options={options}
-                value={rootfsDraft}
+                options={rootfsGroupedOptions}
+                value={rootfsDraftId}
                 placeholder="Select an image"
-                onChange={(value) => setRootfsDraft(value)}
+                onChange={(value) => {
+                  const next = filteredRootfsImages.find(
+                    (entry) => entry.id === value,
+                  );
+                  setRootfsDraft(next?.image || "");
+                  setRootfsDraftId(next?.id);
+                }}
                 loading={rootfsLoading}
                 disabled={rootfsLoading}
               />
@@ -350,10 +370,21 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
                   {activeEntry.description}
                 </Paragraph>
               )}
-              {activeEntry?.gpu && <Tag color="purple">GPU image</Tag>}
+              {activeEntry && renderRootfsWarning(activeEntry)}
+              <Space wrap>
+                {activeEntry?.section && (
+                  <Tag color={sectionTagColor(activeEntry.section)}>
+                    {sectionLabel(activeEntry.section)}
+                  </Tag>
+                )}
+                {activeEntry?.gpu && <Tag color="purple">GPU image</Tag>}
+                {activeEntry?.owner_name && activeEntry.section !== "mine" && (
+                  <Tag>{activeEntry.owner_name}</Tag>
+                )}
+              </Space>
               {rootfsError && (
                 <Paragraph type="secondary" style={{ marginBottom: 0 }}>
-                  Manifest load issue: {rootfsError}
+                  Catalog load issue: {rootfsError}
                 </Paragraph>
               )}
             </>
@@ -361,7 +392,10 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
             <Input
               value={rootfsDraft}
               placeholder="docker.io/library/ubuntu:24.04"
-              onChange={(e) => setRootfsDraft(e.target.value)}
+              onChange={(e) => {
+                setRootfsDraft(e.target.value);
+                setRootfsDraftId(undefined);
+              }}
             />
           )}
         </Space>
@@ -379,16 +413,27 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
         <Space orientation="vertical" size="small" style={{ width: "100%" }}>
           <div style={{ fontWeight: 600 }}>Root Filesystem Software Image</div>
           <Paragraph type="secondary" style={{ marginBottom: 0 }}>
-            Select the OCI image that provides the root filesystem for this
-            project.
+            Select the base root filesystem image for this project.
           </Paragraph>
           <Space wrap>
             <Button onClick={openRootfsModal} disabled={saving}>
               Choose image...
             </Button>
             <Tag color="blue">{displayLabel}</Tag>
+            {selectedRootfsEntry?.section && (
+              <Tag color={sectionTagColor(selectedRootfsEntry.section)}>
+                {sectionLabel(selectedRootfsEntry.section)}
+              </Tag>
+            )}
             {selectedRootfsEntry?.gpu && <Tag color="purple">GPU</Tag>}
+            {!selectedRootfsEntry && <Tag>Custom</Tag>}
           </Space>
+          {displayImage && (
+            <code style={{ fontSize: "11px", overflowWrap: "anywhere" }}>
+              {displayImage}
+            </code>
+          )}
+          {selectedRootfsEntry && renderRootfsWarning(selectedRootfsEntry)}
           {renderRootfsModal()}
         </Space>
       </Card>
@@ -520,4 +565,81 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
       </Space>
     </Space>
   );
+}
+
+function sectionLabel(section: RootfsImageEntry["section"]): string {
+  switch (section) {
+    case "official":
+      return "Official";
+    case "mine":
+      return "My image";
+    case "collaborators":
+      return "Collaborator image";
+    case "public":
+      return "Public image";
+    default:
+      return "Catalog";
+  }
+}
+
+function sectionTagColor(section: RootfsImageEntry["section"]): string {
+  switch (section) {
+    case "official":
+      return "blue";
+    case "mine":
+      return "green";
+    case "collaborators":
+      return "gold";
+    case "public":
+      return "red";
+    default:
+      return "default";
+  }
+}
+
+function groupedRootfsOptions(images: RootfsImageEntry[]) {
+  const sections: Array<{
+    key: NonNullable<RootfsImageEntry["section"]>;
+    label: string;
+  }> = [
+    { key: "official", label: "Official images" },
+    { key: "mine", label: "My images" },
+    { key: "collaborators", label: "Collaborator images" },
+    { key: "public", label: "Public images" },
+  ];
+  return sections.reduce<
+    Array<{ label: string; options: Array<{ value: string; label: string }> }>
+  >((acc, { key, label }) => {
+    const options = images
+      .filter((entry) => entry.section === key)
+      .map((entry) => ({
+        value: entry.id,
+        label: entry.label || entry.image,
+      }));
+    if (options.length > 0) {
+      acc.push({ label, options });
+    }
+    return acc;
+  }, []);
+}
+
+function renderRootfsWarning(
+  entry: RootfsImageEntry,
+): React.JSX.Element | undefined {
+  if (entry.warning === "collaborator") {
+    return (
+      <Paragraph type="secondary" style={{ marginBottom: 0 }}>
+        This image was published by one of your collaborators. Review it before
+        using it in shared or teaching projects.
+      </Paragraph>
+    );
+  }
+  if (entry.warning === "public") {
+    return (
+      <Paragraph type="secondary" style={{ marginBottom: 0 }}>
+        This is a public community image. It may be slow, unsupported, or unsafe
+        for general use.
+      </Paragraph>
+    );
+  }
 }

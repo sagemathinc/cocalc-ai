@@ -38,6 +38,7 @@ export type Project = TypedMap<{
   settings: ProjectSettings;
   launcher?: Map<string, any>;
   rootfs_image?: string;
+  rootfs_image_id?: string;
 }>;
 
 export type SoftwareInfo = {

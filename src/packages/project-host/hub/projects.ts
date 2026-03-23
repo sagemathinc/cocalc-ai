@@ -53,6 +53,9 @@ import { uploadSubscriptionAuthFile } from "../codex/codex-auth";
 import { pushSubscriptionAuthToRegistry } from "../codex/codex-auth-registry";
 import { clearProjectHostConatAuthCaches } from "../conat-auth";
 import { rehydrateAcpAutomationsForProject } from "@cocalc/lite/hub/acp";
+import { getImage } from "@cocalc/project-runner/run/podman";
+import { isManagedRootfsImageName } from "@cocalc/util/rootfs-images";
+import { pullRootfsCacheEntry } from "../rootfs-cache";
 
 const logger = getLogger("project-host:hub:projects");
 export const PROJECT_RUNNER_RPC_TIMEOUT_MS = 60 * 60 * 1000;
@@ -332,6 +335,16 @@ async function getRunnerConfig(
   };
 }
 
+async function ensureManagedRootfsCached(
+  config?: Configuration,
+): Promise<void> {
+  const image = getImage(config);
+  if (!isManagedRootfsImageName(image)) {
+    return;
+  }
+  await pullRootfsCacheEntry(image);
+}
+
 export function wireProjectsApi(runnerApi: RunnerApi) {
   async function rehydrateAcpAutomations(
     project_id: string,
@@ -376,9 +389,11 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
         state: "starting",
         authorized_keys: (opts as any).authorized_keys,
       });
+      const config = await getRunnerConfig(project_id, opts);
+      await ensureManagedRootfsCached(config);
       const status = await runnerApi.start({
         project_id,
-        config: await getRunnerConfig(project_id, opts),
+        config,
       });
       ensureProjectRow({
         project_id,
@@ -423,15 +438,17 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
     });
     try {
       await applyPendingCopies({ project_id });
+      const config = await getRunnerConfig(project_id, {
+        authorized_keys,
+        run_quota,
+        image,
+        restore,
+        lro_op_id: op_id,
+      });
+      await ensureManagedRootfsCached(config);
       const status = await runnerApi.start({
         project_id,
-        config: await getRunnerConfig(project_id, {
-          authorized_keys,
-          run_quota,
-          image,
-          restore,
-          lro_op_id: op_id,
-        }),
+        config,
       });
       ensureProjectRow({
         project_id,

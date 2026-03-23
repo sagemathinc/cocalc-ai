@@ -106,6 +106,20 @@ export const parallelOpsWorkerRegistry: ParallelOpsWorkerRegistration[] = [
     }),
   },
   {
+    worker_kind: "project-rootfs-publish",
+    category: "lro",
+    scope_model: "global",
+    dynamic_limit_supported: true,
+    lro_kinds: ["project-rootfs-publish"],
+    lease_ms: 120_000,
+    getLimitSnapshot: () => ({
+      default_limit: 1,
+      configured_limit: 1,
+      effective_limit: 1,
+      config_source: "constant",
+    }),
+  },
+  {
     worker_kind: "project-hard-delete",
     category: "lro",
     scope_model: "global",

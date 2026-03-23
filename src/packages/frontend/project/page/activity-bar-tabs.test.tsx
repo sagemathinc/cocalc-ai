@@ -4,8 +4,10 @@ import { fireEvent, render, screen } from "@testing-library/react";
 
 const mockSetActiveTab = jest.fn();
 const mockToggleFlyout = jest.fn();
+const mockToggleActionButtons = jest.fn();
 const mockSetOtherSettings = jest.fn();
 let mockAccountStoreReady = true;
+let mockLite = true;
 
 function flattenMenuItems(items: any[] = []): any[] {
   return items.flatMap((item) => {
@@ -46,7 +48,8 @@ jest.mock("antd", () => {
       </div>
     </div>
   );
-  const Modal = ({ children }: any) => <div>{children}</div>;
+  const Modal = ({ children, open }: any) =>
+    open ? <div>{children}</div> : null;
   const Tooltip = ({ children }: any) => children;
   return { Button, Checkbox, Dropdown, Modal, Tooltip };
 });
@@ -109,7 +112,7 @@ jest.mock("@cocalc/frontend/project/context", () => ({
     actions: {
       set_active_tab: mockSetActiveTab,
       toggleFlyout: mockToggleFlyout,
-      toggleActionButtons: jest.fn(),
+      toggleActionButtons: mockToggleActionButtons,
     },
     project_id: "project-1",
     active_project_tab: "files",
@@ -120,10 +123,15 @@ jest.mock("@cocalc/frontend/project/context", () => ({
 jest.mock("@cocalc/frontend/user-tracking", () => jest.fn());
 
 jest.mock("@cocalc/frontend/lite", () => ({
-  lite: true,
+  get lite() {
+    return mockLite;
+  },
 }));
 
-jest.mock("@cocalc/frontend/account/settings-button", () => () => null);
+jest.mock("@cocalc/frontend/account/settings-button", () => ({
+  __esModule: true,
+  default: () => <div data-testid="account-settings-button">settings</div>,
+}));
 jest.mock("@cocalc/frontend/ssh", () => ({
   RemoteSshButton: () => null,
   SshButton: () => null,
@@ -137,6 +145,11 @@ jest.mock("./share-indicator", () => ({
 }));
 jest.mock("../workspaces/strong-theme", () => ({
   workspaceStrongThemeChrome: () => null,
+}));
+
+jest.mock("./file-tabs", () => ({
+  __esModule: true,
+  default: () => <div data-testid="file-tabs" />,
 }));
 
 jest.mock("./file-tab", () => ({
@@ -156,14 +169,20 @@ jest.mock("./file-tab", () => ({
   },
 }));
 
-import { VerticalFixedTabs } from "./activity-bar-tabs";
+import {
+  HiddenActivityBarLauncher,
+  default as ProjectTabs,
+  VerticalFixedTabs,
+} from "./activity-bar-tabs";
 
 describe("VerticalFixedTabs overflow actions", () => {
   beforeEach(() => {
     mockSetActiveTab.mockReset();
     mockToggleFlyout.mockReset();
+    mockToggleActionButtons.mockReset();
     mockSetOtherSettings.mockReset();
     mockAccountStoreReady = true;
+    mockLite = true;
     (global as any).ResizeObserver = class {
       observe() {}
       disconnect() {}
@@ -197,5 +216,60 @@ describe("VerticalFixedTabs overflow actions", () => {
 
     expect(screen.queryByTestId("rail-workspaces")).toBeNull();
     expect(screen.queryByTestId("menu-overflow:log")).toBeNull();
+    expect(screen.queryByTestId("account-settings-button")).toBeNull();
+  });
+});
+
+describe("ProjectTabs settings affordance", () => {
+  beforeEach(() => {
+    mockLite = false;
+  });
+
+  afterEach(() => {
+    mockLite = true;
+  });
+
+  it("shows account settings in launchpad mode", () => {
+    render(<ProjectTabs project_id="project-1" />);
+
+    expect(screen.getByTestId("account-settings-button")).toBeTruthy();
+  });
+});
+
+describe("HiddenActivityBarLauncher", () => {
+  beforeEach(() => {
+    mockSetActiveTab.mockReset();
+    mockToggleFlyout.mockReset();
+    mockToggleActionButtons.mockReset();
+    mockSetOtherSettings.mockReset();
+    mockAccountStoreReady = true;
+  });
+
+  it("opens a flyout from the hidden launcher on ordinary click", () => {
+    render(<HiddenActivityBarLauncher />);
+
+    fireEvent.click(screen.getByTestId("menu-launcher:log"));
+
+    expect(mockToggleFlyout).toHaveBeenCalledWith("log");
+    expect(mockSetActiveTab).not.toHaveBeenCalled();
+  });
+
+  it("opens a full page from the hidden launcher on modifier click", () => {
+    render(<HiddenActivityBarLauncher />);
+
+    fireEvent.click(screen.getByTestId("menu-launcher:log"), {
+      ctrlKey: true,
+    });
+
+    expect(mockSetActiveTab).toHaveBeenCalledWith("log");
+    expect(mockToggleFlyout).not.toHaveBeenCalled();
+  });
+
+  it("shows the activity bar from the hidden launcher menu", () => {
+    render(<HiddenActivityBarLauncher />);
+
+    fireEvent.click(screen.getByTestId("menu-launcher:toggle-activity-bar"));
+
+    expect(mockToggleActionButtons).toHaveBeenCalled();
   });
 });

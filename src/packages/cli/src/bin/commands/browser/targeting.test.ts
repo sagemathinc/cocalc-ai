@@ -17,6 +17,8 @@ function makeContext(
       system: {
         listBrowserSessions,
         removeBrowserSession: async () => ({ removed: false }),
+        issueBrowserSignInCookie: async () => ({}),
+        generateUserAuthToken: async () => "token",
       },
     },
   };

@@ -66,6 +66,7 @@ export default async function createProject(opts: CreateProjectOptions) {
     title,
     description,
     rootfs_image,
+    rootfs_image_id,
     start,
     src_project_id,
     ephemeral,
@@ -203,7 +204,7 @@ export default async function createProject(opts: CreateProjectOptions) {
     }
     // keep the clone on the same project-host as the source unless explicitly overridden
     const { rows } = await pool.query(
-      "SELECT host_id, region FROM projects WHERE project_id=$1",
+      "SELECT host_id, region, rootfs_image, rootfs_image_id FROM projects WHERE project_id=$1",
       [src_project_id],
     );
     if (!host_id && rows[0]?.host_id) {
@@ -214,6 +215,12 @@ export default async function createProject(opts: CreateProjectOptions) {
     }
     if (!requested_region_raw && rows[0]?.region) {
       requested_region_raw = rows[0].region;
+    }
+    if (!opts.rootfs_image && rows[0]?.rootfs_image) {
+      opts.rootfs_image = rows[0].rootfs_image;
+    }
+    if (!opts.rootfs_image_id && rows[0]?.rootfs_image_id) {
+      opts.rootfs_image_id = rows[0].rootfs_image_id;
     }
     // create filesystem for new project as a clone.
     // Route clone to the host that owns the source project.
@@ -241,13 +248,14 @@ export default async function createProject(opts: CreateProjectOptions) {
     account_id == null ? null : { [account_id]: { group: "owner" } };
 
   await pool.query(
-    "INSERT INTO projects (project_id, title, description, users, created, last_edited, rootfs_image, ephemeral, host_id, region) VALUES($1, $2, $3, $4, NOW(), NOW(), $5, $6::BIGINT, $7, $8)",
+    "INSERT INTO projects (project_id, title, description, users, created, last_edited, rootfs_image, rootfs_image_id, ephemeral, host_id, region) VALUES($1, $2, $3, $4, NOW(), NOW(), $5, $6, $7::BIGINT, $8, $9)",
     [
       project_id,
       title ?? "No Title",
       description ?? "",
       users != null ? JSON.stringify(users) : users,
       rootfs_image,
+      opts.rootfs_image_id ?? rootfs_image_id ?? null,
       ephemeral ?? null,
       host_id ?? null,
       projectRegion,

@@ -1,10 +1,22 @@
-import { noAuth, authFirst, requireSignedIn } from "./util";
+import {
+  noAuth,
+  authFirst,
+  authFirstRequireAccount,
+  requireSignedIn,
+} from "./util";
 import type { Customize } from "@cocalc/util/db-schema/server-settings";
 import type {
   ApiKey,
   Action as ApiKeyAction,
 } from "@cocalc/util/db-schema/api-keys";
 import { type UserSearchResult } from "@cocalc/util/db-schema/accounts";
+import type {
+  ProjectRootfsPublishLroRef,
+  PublishProjectRootfsBody,
+  RootfsCatalogSaveBody,
+  RootfsImageManifest,
+  RootfsImageEntry,
+} from "@cocalc/util/rootfs-images";
 
 export const system = {
   getCustomize: noAuth,
@@ -36,11 +48,15 @@ export const system = {
   getOpenAiApiKeyStatus: authFirst,
   getCodexPaymentSource: authFirst,
   getFrontendSourceFingerprint: authFirst,
+  getRootfsCatalog: authFirst,
+  saveRootfsCatalogEntry: authFirstRequireAccount,
+  publishProjectRootfsImage: authFirstRequireAccount,
   getPublicSiteUrl: authFirst,
   testR2Credentials: authFirst,
   upsertBrowserSession: authFirst,
   listBrowserSessions: authFirst,
   removeBrowserSession: authFirst,
+  issueBrowserSignInCookie: requireSignedIn,
   getProjectAppPublicPolicy: authFirst,
   tracePublicAppHostname: authFirst,
   reserveProjectAppPublicSubdomain: authFirst,
@@ -136,6 +152,12 @@ export interface BrowserSessionInfo {
   stale: boolean;
   connected?: boolean;
   connection_count?: number;
+}
+
+export interface BrowserSignInCookieInfo {
+  remember_me?: string;
+  account_id?: string;
+  max_age_ms?: number;
 }
 
 export interface ProjectAppPublicPolicy {
@@ -439,6 +461,18 @@ export interface System {
     account_id?: string;
   }) => Promise<FrontendSourceFingerprintInfo>;
 
+  getRootfsCatalog: (opts?: {
+    account_id?: string;
+  }) => Promise<RootfsImageManifest>;
+
+  saveRootfsCatalogEntry: (
+    opts: RootfsCatalogSaveBody & { account_id?: string },
+  ) => Promise<RootfsImageEntry>;
+
+  publishProjectRootfsImage: (
+    opts: PublishProjectRootfsBody & { account_id?: string },
+  ) => Promise<ProjectRootfsPublishLroRef>;
+
   getPublicSiteUrl: (opts?: {
     account_id?: string;
   }) => Promise<{ url: string }>;
@@ -479,6 +513,11 @@ export interface System {
     account_id?: string;
     browser_id: string;
   }) => Promise<{ removed: boolean }>;
+
+  issueBrowserSignInCookie: (opts?: {
+    account_id?: string;
+    max_age_ms?: number;
+  }) => Promise<BrowserSignInCookieInfo>;
 
   getProjectAppPublicPolicy: (opts?: {
     account_id?: string;

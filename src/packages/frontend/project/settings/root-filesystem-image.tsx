@@ -1,26 +1,87 @@
+/*
+ *  This file is part of CoCalc: Copyright © 2020 Sagemath, Inc.
+ *  License: MS-RSL – see LICENSE.md for details
+ */
+
+import { dirname, join } from "path";
+import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  Button,
+  Checkbox,
+  Input,
+  Modal,
+  Radio,
+  Select,
+  Space,
+  Spin,
+  Tag,
+} from "antd";
+
+import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
+import { Icon, Paragraph } from "@cocalc/frontend/components";
+import ShowError from "@cocalc/frontend/components/error";
 import { useProjectContext } from "@cocalc/frontend/project/context";
+import RootfsPublishOps from "@cocalc/frontend/project/settings/rootfs-publish-ops";
+import {
+  managedRootfsCatalogUrl,
+  publishProjectRootfsImage,
+  saveRootfsCatalogEntry,
+  useRootfsImages,
+} from "@cocalc/frontend/rootfs/manifest";
+import { webapp_client } from "@cocalc/frontend/webapp-client";
 import {
   DEFAULT_PROJECT_IMAGE,
   PROJECT_IMAGE_PATH,
 } from "@cocalc/util/db-schema/defaults";
-import { Button, Input, Modal, Radio, Select, Space, Spin, Tag } from "antd";
-import { useEffect, useMemo, useState } from "react";
-import { useIntl } from "react-intl";
-import { webapp_client } from "@cocalc/frontend/webapp-client";
-import ShowError from "@cocalc/frontend/components/error";
-import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
-import { dirname, join } from "path";
-import { A, Icon } from "@cocalc/frontend/components";
-import { labels } from "@cocalc/frontend/i18n";
 import { split } from "@cocalc/util/misc";
-import { useRootfsImages } from "@cocalc/frontend/rootfs/manifest";
+import type {
+  RootfsImageEntry,
+  RootfsImageVisibility,
+} from "@cocalc/util/rootfs-images";
+
+type PublishDraft = {
+  image: string;
+  label: string;
+  description: string;
+  visibility: RootfsImageVisibility;
+  tags: string;
+  official: boolean;
+  prepull: boolean;
+  hidden: boolean;
+};
 
 export default function RootFilesystemImage() {
-  const { project } = useProjectContext();
-  const intl = useIntl();
-  const projectLabelLower = intl.formatMessage(labels.project).toLowerCase();
+  const { actions, project, project_id } = useProjectContext();
   const [open, setOpen] = useState<boolean>(false);
+  const [publishOpen, setPublishOpen] = useState<boolean>(false);
   const [saving, setSaving] = useState<boolean>(false);
+  const [publishing, setPublishing] = useState<boolean>(false);
+  const [help, setHelp] = useState<boolean>(false);
+  const [error, setError] = useState<string>("");
+  const [value, setValue] = useState<string>("");
+  const [imageId, setImageId] = useState<string>("");
+  const [rootfsMode, setRootfsMode] = useState<"catalog" | "custom">("catalog");
+  const [rootfsDraft, setRootfsDraft] = useState<string>("");
+  const [rootfsDraftId, setRootfsDraftId] = useState<string>("");
+  const [images, setImages] = useState<string[]>([DEFAULT_PROJECT_IMAGE]);
+  const [catalogRefresh, setCatalogRefresh] = useState<number>(0);
+  const [publishMode, setPublishMode] = useState<"copy" | "manage">("copy");
+  const [publishCopyMode, setPublishCopyMode] = useState<"project" | "base">(
+    "project",
+  );
+  const [publishSourceEntry, setPublishSourceEntry] =
+    useState<RootfsImageEntry>();
+  const [publishDraft, setPublishDraft] = useState<PublishDraft>({
+    image: DEFAULT_PROJECT_IMAGE,
+    label: "",
+    description: "",
+    visibility: "private",
+    tags: "",
+    official: false,
+    prepull: false,
+    hidden: false,
+  });
+
   const siteDefaultRootfs = useTypedRedux(
     "customize",
     "project_rootfs_default_image",
@@ -34,11 +95,10 @@ export default function RootFilesystemImage() {
     "account",
     "default_rootfs_image_gpu",
   );
-  const manifestUrl = useTypedRedux("customize", "project_rootfs_manifest_url");
-  const manifestUrlExtra = useTypedRedux(
-    "customize",
-    "project_rootfs_manifest_url_extra",
-  );
+  const isAdmin = !!useTypedRedux("account", "is_admin");
+  const rootfsPublishOps = useTypedRedux({ project_id }, "rootfs_publish_ops");
+  const seenCompletedPublishOpsRef = useRef<Set<string>>(new Set());
+
   const effectiveDefaultRootfs = useMemo(() => {
     const siteDefault = siteDefaultRootfs?.trim() || DEFAULT_PROJECT_IMAGE;
     const siteGpu = siteDefaultRootfsGpu?.trim() || "";
@@ -57,82 +117,227 @@ export default function RootFilesystemImage() {
     siteDefaultRootfs,
     siteDefaultRootfsGpu,
   ]);
-  const [value, setValue] = useState<string>(
-    getImage(project, effectiveDefaultRootfs),
-  );
-  const [error, setError] = useState<string>("");
-  const [images, setImages] = useState<string[]>([DEFAULT_PROJECT_IMAGE]);
-  const [help, setHelp] = useState<boolean>(false);
-  const [rootfsMode, setRootfsMode] = useState<"catalog" | "custom">("catalog");
-  const [rootfsDraft, setRootfsDraft] = useState<string>("");
-  const manifestUrls = useMemo(
-    () =>
-      [manifestUrl, manifestUrlExtra]
-        .map((url) => url?.trim())
-        .filter((url): url is string => !!url && url.length > 0),
-    [manifestUrl, manifestUrlExtra],
-  );
+
   const {
     images: rootfsImages,
     loading: rootfsLoading,
     error: rootfsError,
-  } = useRootfsImages(manifestUrls);
+  } = useRootfsImages([managedRootfsCatalogUrl(catalogRefresh)]);
+
   const selectedRootfsEntry = useMemo(() => {
-    const image = rootfsDraft?.trim();
+    const selectedId = imageId.trim();
+    if (selectedId) {
+      return rootfsImages.find((entry) => entry.id === selectedId);
+    }
+    const image = value.trim();
     if (!image) return undefined;
     return rootfsImages.find((entry) => entry.image === image);
-  }, [rootfsImages, rootfsDraft]);
+  }, [imageId, rootfsImages, value]);
+
+  const draftRootfsEntry = useMemo(() => {
+    const selectedId = rootfsDraftId.trim();
+    if (selectedId) {
+      return rootfsImages.find((entry) => entry.id === selectedId);
+    }
+    const image = rootfsDraft.trim();
+    if (!image) return undefined;
+    return rootfsImages.find((entry) => entry.image === image);
+  }, [rootfsDraft, rootfsDraftId, rootfsImages]);
+
   const rootfsOptions = useMemo(
-    () =>
-      rootfsImages.map((entry) => ({
-        value: entry.image,
-        label: entry.label || entry.image,
-      })),
+    () => groupedRootfsOptions(rootfsImages),
     [rootfsImages],
   );
 
   useEffect(() => {
-    setValue(getImage(project, effectiveDefaultRootfs));
-  }, [project, effectiveDefaultRootfs]);
+    const nextImage = getImage(project, effectiveDefaultRootfs);
+    setValue(nextImage);
+    setImageId(project?.get("rootfs_image_id", "")?.trim() ?? "");
+  }, [effectiveDefaultRootfs, project]);
 
   useEffect(() => {
     if (project == null) return;
     (async () => {
       try {
         setImages(await getImages(project.get("project_id")));
-      } catch {}
+      } catch {
+        // ignore recent image listing failures
+      }
     })();
   }, [project?.get("project_id")]);
+
+  useEffect(() => {
+    const ops = rootfsPublishOps?.toJS() ?? {};
+    for (const op of Object.values(ops) as Array<{
+      op_id: string;
+      summary?: any;
+    }>) {
+      if (op.summary?.status !== "succeeded") {
+        continue;
+      }
+      if (seenCompletedPublishOpsRef.current.has(op.op_id)) {
+        continue;
+      }
+      seenCompletedPublishOpsRef.current.add(op.op_id);
+      setCatalogRefresh(Date.now());
+    }
+  }, [rootfsPublishOps]);
 
   if (project == null) {
     return null;
   }
 
+  function openPicker() {
+    const current = getImage(project, effectiveDefaultRootfs);
+    const currentId = project?.get("rootfs_image_id", "")?.trim() ?? "";
+    const currentEntry =
+      rootfsImages.find((entry) => entry.id === currentId) ??
+      rootfsImages.find((entry) => entry.image === current);
+    setRootfsDraft(currentEntry?.image ?? current);
+    setRootfsDraftId(currentEntry?.id ?? "");
+    setRootfsMode(currentEntry ? "catalog" : "custom");
+    setOpen(true);
+  }
+
+  function openPublishDialog() {
+    const currentImage =
+      rootfsMode === "custom"
+        ? rootfsDraft.trim() || value || effectiveDefaultRootfs
+        : draftRootfsEntry?.image || value || effectiveDefaultRootfs;
+    const currentEntry =
+      (rootfsMode === "catalog" ? draftRootfsEntry : undefined) ??
+      selectedRootfsEntry;
+    const defaultMode =
+      currentEntry?.section === "mine" && currentEntry?.can_manage
+        ? "manage"
+        : "copy";
+    setPublishSourceEntry(currentEntry);
+    setPublishMode(defaultMode);
+    setPublishCopyMode("project");
+    setPublishDraft({
+      image: currentImage,
+      label:
+        currentEntry?.label ||
+        currentImage.split("/").slice(-1)[0] ||
+        "Custom RootFS",
+      description: currentEntry?.description ?? "",
+      visibility: currentEntry?.visibility ?? "private",
+      tags: (currentEntry?.tags ?? []).join(", "),
+      official: currentEntry?.official ?? false,
+      prepull: currentEntry?.prepull ?? false,
+      hidden: currentEntry?.hidden ?? false,
+    });
+    setPublishOpen(true);
+  }
+
+  async function applyRootfsChange() {
+    try {
+      setSaving(true);
+      if (!project) return;
+      const project_id = project.get("project_id");
+      const nextEntry =
+        rootfsMode === "catalog"
+          ? rootfsImages.find((entry) => entry.id === rootfsDraftId.trim())
+          : undefined;
+      const nextImage =
+        rootfsMode === "custom"
+          ? rootfsDraft.trim() || effectiveDefaultRootfs
+          : nextEntry?.image || effectiveDefaultRootfs;
+      const nextImageId =
+        rootfsMode === "custom"
+          ? undefined
+          : nextEntry?.id?.trim() || undefined;
+      const parts = split(
+        nextImage.trim() ? nextImage.trim() : effectiveDefaultRootfs,
+      );
+      const image = parts.slice(-1)[0];
+      await setRootFilesystemImage({
+        project_id,
+        image,
+        image_id: nextImageId,
+      });
+      setValue(image);
+      setImageId(nextImageId ?? "");
+      if (project.getIn(["state", "state"]) == "running") {
+        redux.getActions("projects").restart_project(project_id);
+      }
+      setOpen(false);
+    } catch (err) {
+      setError(`${err}`);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function saveCatalogEntry() {
+    try {
+      setPublishing(true);
+      if (!project) {
+        throw new Error("project is not available");
+      }
+      const tags = publishDraft.tags
+        .split(",")
+        .map((tag) => tag.trim())
+        .filter(Boolean);
+      if (publishMode === "copy" && publishCopyMode === "project") {
+        setOpen(false);
+        setPublishOpen(false);
+        const op = await publishProjectRootfsImage({
+          project_id: project.get("project_id"),
+          label: publishDraft.label,
+          description: publishDraft.description,
+          visibility: publishDraft.visibility,
+          tags,
+          official: isAdmin ? publishDraft.official : undefined,
+          prepull: isAdmin ? publishDraft.prepull : undefined,
+          hidden: isAdmin ? publishDraft.hidden : undefined,
+        });
+        actions?.trackRootfsPublishOp?.(op);
+      } else {
+        const entry = await saveRootfsCatalogEntry({
+          image_id:
+            publishMode === "manage" && publishSourceEntry?.can_manage
+              ? publishSourceEntry.id
+              : undefined,
+          image: publishDraft.image,
+          label: publishDraft.label,
+          description: publishDraft.description,
+          visibility: publishDraft.visibility,
+          tags,
+          official: isAdmin ? publishDraft.official : undefined,
+          prepull: isAdmin ? publishDraft.prepull : undefined,
+          hidden: isAdmin ? publishDraft.hidden : undefined,
+        });
+        setPublishOpen(false);
+        setCatalogRefresh(Date.now());
+        if (entry.image === value) {
+          setImageId(entry.id);
+        }
+        if (entry.image === rootfsDraft) {
+          setRootfsDraftId(entry.id);
+        }
+      }
+    } catch (err) {
+      setError(`${err}`);
+    } finally {
+      setPublishing(false);
+    }
+  }
+
   return (
     <div style={{ marginTop: "-4px", marginLeft: "-10px" }}>
-      <Button
-        type={"link"}
-        disabled={open}
-        onClick={() => {
-          const current = getImage(project, effectiveDefaultRootfs);
-          setRootfsDraft(current);
-          const inCatalog = rootfsImages.some(
-            (entry) => entry.image === current,
-          );
-          setRootfsMode(inCatalog ? "catalog" : "custom");
-          setOpen(!open);
-        }}
-      >
-        <code>{value}</code>
+      <RootfsPublishOps project_id={project_id} />
+      <Button type="link" disabled={open} onClick={openPicker}>
+        <code>{selectedRootfsEntry?.label || value}</code>
       </Button>
       {open && (
         <Modal
-          width={700}
+          width={760}
           open
           onCancel={() => {
             const current = getImage(project, effectiveDefaultRootfs);
             setValue(current);
-            setRootfsDraft(current);
+            setImageId(project?.get("rootfs_image_id", "")?.trim() ?? "");
             setOpen(false);
           }}
           title={
@@ -154,88 +359,37 @@ export default function RootFilesystemImage() {
               </Button>
             </>
           }
-          onOk={async () => {
-            try {
-              setSaving(true);
-              const project_id = project.get("project_id");
-              const next =
-                rootfsMode === "custom"
-                  ? rootfsDraft?.trim() || effectiveDefaultRootfs
-                  : rootfsDraft || effectiveDefaultRootfs;
-              const v = split(
-                next?.trim() ? next.trim() : effectiveDefaultRootfs,
-              );
-              // just take last part, so if they type "docker pull imagename" it still works.
-              let image = v.slice(-1)[0];
-              await setRootFilesystemImage({
-                project_id,
-                image,
-              });
-              setValue(image);
-              setRootfsDraft(image);
-              const inCatalog = rootfsImages.some(
-                (entry) => entry.image === image,
-              );
-              setRootfsMode(inCatalog ? "catalog" : "custom");
-              if (project.getIn(["state", "state"]) == "running") {
-                redux.getActions("projects").restart_project(project_id);
-              }
-            } catch (err) {
-              setError(err);
-              return;
-            } finally {
-              setSaving(false);
-            }
-            setOpen(false);
-          }}
+          onOk={applyRootfsChange}
         >
           {help && (
             <div style={{ color: "#666", marginBottom: "8px" }}>
               <p>
-                You can try to run your {projectLabelLower} using{" "}
-                <A href="https://hub.docker.com/search">any container image</A>.
-                You can change the image at any time.
+                Choose a managed catalog image or enter any container image
+                directly. You can change the image at any time.
               </p>
               <p>
-                If you install software or otherwise modify files in the root
-                filesystem, then those changes <b>are saved</b>. If you change
-                the root image namebelow, the changes you made to the previous
-                root filesystem are no longer <b>visible</b>. You will see the
-                changes if you change the image back. The changes are stored in{" "}
-                <code>$HOME/{PROJECT_IMAGE_PATH}</code>. It's best to specify an
-                explicit tag for your image, so that your changes don't become
-                invalid.
+                Changing the image changes which root filesystem lowerdir and
+                upperdir are visible. If you switch back later, your previous
+                changes under <code>/</code> become visible again.
               </p>
               <p>
-                Using a large image can make {projectLabelLower} startup slower,
-                especially the first time. Also, images can contain literally
-                anything, so there is no guarantee they will work. If you try
-                one and it doesn't work for you, just switch back -- it's safe.
-                Selecting an image determines the root filesystem and also
-                impacts environment variables. For example,{" "}
-                <A href="https://hub.docker.com/_/julia">
-                  the official Julia image
-                </A>{" "}
-                installs julia in <code>/usr/local/julia/bin</code>.
+                Catalog images can be official, published by you, published by
+                collaborators, or public community images. Public images should
+                be treated cautiously.
               </p>
               <p>
-                If you fork a {projectLabelLower}, any changes that you make to
-                the root image are also immediately visible in the fork. Thus
-                you can install whatever you want anywhere in your{" "}
-                {projectLabelLower}, then fork it to get an exact copy with
-                everything preserved. You can of course also create your own
-                images and publish them to any container registry, then your or
-                anybody else can use them on CoCalc.
+                The current project runtime still uses a concrete image string.
+                This first slice adds managed catalog entries on top of that.
               </p>
             </div>
           )}
 
-          <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
+          <Space direction="vertical" size="middle" style={{ width: "100%" }}>
             <Radio.Group
               value={rootfsMode}
               onChange={(e) => setRootfsMode(e.target.value)}
             >
-              <Radio value="catalog">Curated images</Radio>
+              <Radio value="catalog">Catalog images</Radio>
               <Radio value="custom">Custom image</Radio>
             </Radio.Group>
             {rootfsMode === "catalog" ? (
@@ -243,53 +397,231 @@ export default function RootFilesystemImage() {
                 <Select
                   showSearch
                   options={rootfsOptions}
-                  value={rootfsDraft}
+                  value={rootfsDraftId || undefined}
                   placeholder="Select an image"
-                  onChange={(next) => setRootfsDraft(next)}
+                  onChange={(nextId) => {
+                    const next = rootfsImages.find(
+                      (entry) => entry.id === nextId,
+                    );
+                    setRootfsDraft(next?.image || "");
+                    setRootfsDraftId(next?.id || "");
+                  }}
                   loading={rootfsLoading}
                   disabled={rootfsLoading}
                 />
-                {selectedRootfsEntry?.description && (
-                  <div style={{ color: "#666" }}>
-                    {selectedRootfsEntry.description}
-                  </div>
+                {draftRootfsEntry?.description && (
+                  <Paragraph type="secondary" style={{ marginBottom: 0 }}>
+                    {draftRootfsEntry.description}
+                  </Paragraph>
                 )}
-                {rootfsError && (
-                  <div style={{ color: "#c00" }}>{rootfsError}</div>
-                )}
+                {draftRootfsEntry && renderRootfsWarning(draftRootfsEntry)}
+                <Space wrap>
+                  {draftRootfsEntry?.section && (
+                    <Tag color={sectionTagColor(draftRootfsEntry.section)}>
+                      {sectionLabel(draftRootfsEntry.section)}
+                    </Tag>
+                  )}
+                  {draftRootfsEntry?.gpu && <Tag color="purple">GPU image</Tag>}
+                  {draftRootfsEntry?.owner_name &&
+                    draftRootfsEntry.section !== "mine" && (
+                      <Tag>{draftRootfsEntry.owner_name}</Tag>
+                    )}
+                </Space>
               </>
             ) : (
               <Input
                 value={rootfsDraft}
-                onChange={(e) => setRootfsDraft(e.target.value)}
+                onChange={(e) => {
+                  setRootfsDraft(e.target.value);
+                  setRootfsDraftId("");
+                }}
                 allowClear
                 placeholder="e.g. ghcr.io/org/image:tag"
               />
             )}
+            {rootfsError && (
+              <Paragraph type="secondary" style={{ marginBottom: 0 }}>
+                Catalog load issue: {rootfsError}
+              </Paragraph>
+            )}
+
+            <Space wrap>
+              <Button onClick={openPublishDialog}>
+                {publishActionLabel(draftRootfsEntry ?? selectedRootfsEntry)}
+              </Button>
+              {(rootfsDraft || value) && (
+                <code style={{ fontSize: "11px", overflowWrap: "anywhere" }}>
+                  {(rootfsMode === "custom"
+                    ? rootfsDraft
+                    : draftRootfsEntry?.image || rootfsDraft || value
+                  ).trim() || effectiveDefaultRootfs}
+                </code>
+              )}
+            </Space>
+
+            <div style={{ marginTop: "15px" }}>
+              <div style={{ marginBottom: "8px" }}>Recent Images:</div>
+              {images.map((image) => (
+                <Tag
+                  style={{
+                    cursor: "pointer",
+                    marginBottom: "8px",
+                    padding: "6px",
+                    fontSize: "11pt",
+                  }}
+                  color={image == value ? "#108ee9" : undefined}
+                  key={image}
+                  onClick={() => {
+                    setRootfsDraft(image);
+                    setRootfsDraftId("");
+                    setRootfsMode("custom");
+                  }}
+                >
+                  {image}
+                  {image == DEFAULT_PROJECT_IMAGE ? " (default)" : ""}
+                </Tag>
+              ))}
+            </div>
           </Space>
-          <div style={{ marginTop: "15px" }}>
-            <div style={{ marginBottom: "8px" }}>Recent Images:</div>
-            {images.map((image) => (
-              <Tag
-                style={{
-                  cursor: "pointer",
-                  marginBottom: "8px",
-                  padding: "6px",
-                  fontSize: "11pt",
-                }}
-                color={image == value ? "#108ee9" : undefined}
-                key={image}
-                onClick={() => {
-                  setRootfsDraft(image);
-                  setRootfsMode("custom");
-                }}
-              >
-                {image}
-                {image == DEFAULT_PROJECT_IMAGE ? " (default)" : ""}
-              </Tag>
-            ))}
-          </div>
           <ShowError error={error} setError={setError} />
+        </Modal>
+      )}
+      {publishOpen && (
+        <Modal
+          open
+          width={720}
+          onCancel={() => setPublishOpen(false)}
+          onOk={saveCatalogEntry}
+          okButtonProps={{ loading: publishing }}
+          title={
+            publishMode === "manage"
+              ? "Manage RootFS Catalog Entry"
+              : publishCopyMode === "project"
+                ? "Publish Project RootFS"
+                : "Save RootFS to My Images"
+          }
+        >
+          <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+            <Paragraph type="secondary" style={{ marginBottom: 0 }}>
+              {publishMode === "manage"
+                ? "Update catalog metadata for the currently selected RootFS entry."
+                : publishCopyMode === "project"
+                  ? "Create a managed RootFS image from the current project state. This uses a fresh safety snapshot and publishes the effective merged root filesystem."
+                  : "Create your own catalog entry for the current base image so it appears under My images."}
+            </Paragraph>
+            {publishSourceEntry?.can_manage && (
+              <Checkbox
+                checked={publishMode === "manage"}
+                onChange={(e) =>
+                  setPublishMode(e.target.checked ? "manage" : "copy")
+                }
+              >
+                {publishSourceEntry.section === "mine"
+                  ? "Update the existing selected entry instead of saving another copy"
+                  : "Edit the selected shared/official entry instead of saving my own copy"}
+              </Checkbox>
+            )}
+            {publishMode !== "manage" && (
+              <Radio.Group
+                value={publishCopyMode}
+                onChange={(e) => setPublishCopyMode(e.target.value)}
+              >
+                <Radio value="project">
+                  Publish current project RootFS state
+                </Radio>
+                <Radio value="base">Save current base image only</Radio>
+              </Radio.Group>
+            )}
+            <Input
+              value={publishDraft.image}
+              disabled
+              addonBefore={
+                publishMode === "copy" && publishCopyMode === "project"
+                  ? "Base image"
+                  : "Image"
+              }
+            />
+            <Input
+              value={publishDraft.label}
+              onChange={(e) =>
+                setPublishDraft((cur) => ({ ...cur, label: e.target.value }))
+              }
+              addonBefore="Label"
+            />
+            <Input.TextArea
+              value={publishDraft.description}
+              onChange={(e) =>
+                setPublishDraft((cur) => ({
+                  ...cur,
+                  description: e.target.value,
+                }))
+              }
+              rows={3}
+              placeholder="Describe when this image should be used."
+            />
+            <Radio.Group
+              value={publishDraft.visibility}
+              onChange={(e) =>
+                setPublishDraft((cur) => ({
+                  ...cur,
+                  visibility: e.target.value,
+                }))
+              }
+            >
+              <Radio value="private">Only me</Radio>
+              <Radio value="collaborators">My collaborators</Radio>
+              <Radio value="public">Public</Radio>
+            </Radio.Group>
+            <Input
+              value={publishDraft.tags}
+              onChange={(e) =>
+                setPublishDraft((cur) => ({ ...cur, tags: e.target.value }))
+              }
+              placeholder="comma,separated,tags"
+            />
+            {isAdmin && (
+              <Space direction="vertical" size="small">
+                <Checkbox
+                  checked={publishDraft.official}
+                  onChange={(e) =>
+                    setPublishDraft((cur) => ({
+                      ...cur,
+                      official: e.target.checked,
+                    }))
+                  }
+                >
+                  Official image
+                </Checkbox>
+                <Checkbox
+                  checked={publishDraft.prepull}
+                  onChange={(e) =>
+                    setPublishDraft((cur) => ({
+                      ...cur,
+                      prepull: e.target.checked,
+                    }))
+                  }
+                >
+                  Pre-pull on new hosts
+                </Checkbox>
+                <Checkbox
+                  checked={publishDraft.hidden}
+                  onChange={(e) =>
+                    setPublishDraft((cur) => ({
+                      ...cur,
+                      hidden: e.target.checked,
+                    }))
+                  }
+                >
+                  Hide from user-facing catalog views
+                </Checkbox>
+              </Space>
+            )}
+            <Paragraph type="secondary" style={{ marginBottom: 0 }}>
+              {publishMode === "copy" && publishCopyMode === "project"
+                ? "Publishing creates a new immutable managed RootFS reference. The current project keeps its existing live upperdir and is not automatically switched to that new image."
+                : "This saves catalog metadata for the current image string without creating a new managed RootFS artifact."}
+            </Paragraph>
+          </Space>
         </Modal>
       )}
     </div>
@@ -302,8 +634,6 @@ function getImage(project, fallback: string) {
 }
 
 async function getImages(project_id: string) {
-  // [ ] TODO: this should really be the fs in the sandbox that runs on the file-server ALWAYS
-  // but I don't have a way to express that yet.
   const fs = redux.getProjectActions(project_id).fs();
   const { stdout } = await fs.fd(join(PROJECT_IMAGE_PATH, "0"), {
     options: ["-E", "workdir", "-E", "upperdir"],
@@ -327,19 +657,106 @@ async function getImages(project_id: string) {
   return w;
 }
 
-export async function setRootFilesystemImage({
+async function setRootFilesystemImage({
   project_id,
   image,
+  image_id,
 }: {
   project_id: string;
   image: string;
+  image_id?: string;
 }) {
   await webapp_client.query({
     query: {
       projects: {
         project_id,
         rootfs_image: image,
+        rootfs_image_id: image_id ?? "",
       },
     },
   });
+}
+
+function sectionLabel(section: RootfsImageEntry["section"]): string {
+  switch (section) {
+    case "official":
+      return "Official";
+    case "mine":
+      return "My image";
+    case "collaborators":
+      return "Collaborator image";
+    case "public":
+      return "Public image";
+    default:
+      return "Catalog";
+  }
+}
+
+function sectionTagColor(section: RootfsImageEntry["section"]): string {
+  switch (section) {
+    case "official":
+      return "blue";
+    case "mine":
+      return "green";
+    case "collaborators":
+      return "gold";
+    case "public":
+      return "red";
+    default:
+      return "default";
+  }
+}
+
+function groupedRootfsOptions(images: RootfsImageEntry[]) {
+  const sections: Array<{
+    key: NonNullable<RootfsImageEntry["section"]>;
+    label: string;
+  }> = [
+    { key: "official", label: "Official images" },
+    { key: "mine", label: "My images" },
+    { key: "collaborators", label: "Collaborator images" },
+    { key: "public", label: "Public images" },
+  ];
+  return sections.reduce<
+    Array<{ label: string; options: Array<{ value: string; label: string }> }>
+  >((acc, { key, label }) => {
+    const options = images
+      .filter((entry) => entry.section === key)
+      .map((entry) => ({
+        value: entry.id,
+        label: entry.label || entry.image,
+      }));
+    if (options.length > 0) {
+      acc.push({ label, options });
+    }
+    return acc;
+  }, []);
+}
+
+function publishActionLabel(entry?: RootfsImageEntry): string {
+  if (entry?.section === "mine" && entry.can_manage) {
+    return "Manage Catalog…";
+  }
+  return "Save to My Images…";
+}
+
+function renderRootfsWarning(
+  entry: RootfsImageEntry,
+): React.JSX.Element | undefined {
+  if (entry.warning === "collaborator") {
+    return (
+      <Paragraph type="secondary" style={{ marginBottom: 0 }}>
+        Published by one of your collaborators. Review it before using it in a
+        shared or teaching context.
+      </Paragraph>
+    );
+  }
+  if (entry.warning === "public") {
+    return (
+      <Paragraph type="secondary" style={{ marginBottom: 0 }}>
+        Public community image. Treat it cautiously unless you trust its
+        publisher and contents.
+      </Paragraph>
+    );
+  }
 }

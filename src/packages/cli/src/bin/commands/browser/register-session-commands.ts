@@ -3,12 +3,82 @@ Register `cocalc browser session ...` subcommands.
 */
 
 import { Command } from "commander";
+import { URL } from "node:url";
 import type {
   BrowserCommandDeps,
+  BrowserCommandContext,
   BrowserSessionRegisterUtils,
   SpawnStateRecord,
 } from "./types";
 import type { BrowserSessionInfo } from "@cocalc/conat/hub/api/system";
+
+const DEFAULT_SIGN_IN_COOKIE_MAX_AGE_MS = 12 * 3600 * 1000;
+
+function extractCookieValue(
+  cookieHeaders: string[],
+  name: string,
+): string | undefined {
+  for (const header of cookieHeaders) {
+    const firstPart = `${header ?? ""}`.split(";", 1)[0]?.trim();
+    if (!firstPart) continue;
+    const eq = firstPart.indexOf("=");
+    if (eq <= 0) continue;
+    const key = firstPart.slice(0, eq).trim();
+    if (key !== name) continue;
+    return firstPart.slice(eq + 1).trim();
+  }
+  return;
+}
+
+function getSetCookieHeaders(response: Response): string[] {
+  const headers = response.headers as Headers & {
+    getSetCookie?: () => string[];
+  };
+  if (typeof headers.getSetCookie === "function") {
+    return headers.getSetCookie();
+  }
+  const single = response.headers.get("set-cookie");
+  return single ? [single] : [];
+}
+
+async function resolveSpawnRememberMeCookie({
+  ctx,
+  apiUrl,
+}: {
+  ctx: BrowserCommandContext;
+  apiUrl: string;
+}): Promise<{ remember_me?: string; account_id?: string }> {
+  try {
+    return await ctx.hub.system.issueBrowserSignInCookie({
+      max_age_ms: DEFAULT_SIGN_IN_COOKIE_MAX_AGE_MS,
+    });
+  } catch (err) {
+    const message =
+      err instanceof Error ? err.message : `${err ?? "unknown error"}`;
+    if (!/must be signed in/i.test(message)) {
+      throw err;
+    }
+  }
+
+  const authToken = await ctx.hub.system.generateUserAuthToken({
+    user_account_id: ctx.accountId,
+  });
+  const url = new URL("/auth/impersonate", apiUrl);
+  url.searchParams.set("auth_token", authToken);
+  const response = await fetch(url.toString(), {
+    redirect: "manual",
+  });
+  const remember_me = extractCookieValue(
+    getSetCookieHeaders(response),
+    "remember_me",
+  );
+  if (!remember_me) {
+    throw new Error(
+      "failed to bootstrap browser remember_me cookie via /auth/impersonate",
+    );
+  }
+  return { remember_me, account_id: ctx.accountId };
+}
 
 type RegisterSessionDeps = {
   browser: Command;
@@ -304,10 +374,16 @@ export function registerBrowserSessionCommands({
             const apiKey = resolveSecret(
               globals.apiKey ?? process.env.COCALC_API_KEY,
             );
+            const signInCookie = await resolveSpawnRememberMeCookie({
+              ctx,
+              apiUrl: parsedApiUrl,
+            });
             const cookies = buildSpawnCookies({
               apiUrl: parsedApiUrl,
               hubPassword,
               apiKey,
+              rememberMe: signInCookie?.remember_me,
+              accountId: signInCookie?.account_id,
             });
             const sessionName =
               `${opts.sessionName ?? ""}`.trim() ||

@@ -435,6 +435,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
     title?: string;
     description?: string;
     rootfs_image?: string; // if given, sets the rootfs image
+    rootfs_image_id?: string;
     start?: boolean; // immediately start on create
     license?: string;
     host_id?: string;
@@ -444,6 +445,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
       title: string;
       description: string;
       rootfs_image?: string;
+      rootfs_image_id?: string;
       host_id?: string;
       region?: string;
       start: boolean;
@@ -452,6 +454,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
       title: "No Title",
       description: "No Description",
       rootfs_image: opts.rootfs_image,
+      rootfs_image_id: opts.rootfs_image_id,
       host_id: undefined,
       region: undefined,
       start: false,
@@ -459,6 +462,9 @@ export class ProjectsActions extends Actions<ProjectsState> {
     });
     if (!opts2.rootfs_image) {
       delete opts2.rootfs_image;
+    }
+    if (!opts2.rootfs_image_id) {
+      delete opts2.rootfs_image_id;
     }
 
     const project_id = await webapp_client.project_client.create(opts2);
@@ -868,6 +874,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
       description: project?.description ?? "",
       src_project_id: project_id,
       rootfs_image: project.rootfs_image,
+      rootfs_image_id: project.rootfs_image_id,
     });
     this.open_project({ project_id: new_project_id });
   };
