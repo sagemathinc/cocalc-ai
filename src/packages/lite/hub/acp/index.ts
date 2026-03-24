@@ -3725,7 +3725,7 @@ export async function repairInterruptedAcpTurn({
   return repairedChat || repairedBackend;
 }
 
-async function turnNeedsInterruptedRepair({
+export async function turnNeedsInterruptedRepair({
   client,
   turn,
 }: {
@@ -3749,13 +3749,16 @@ async function turnNeedsInterruptedRepair({
     message_id: `${turn.message_id ?? ""}`.trim() || undefined,
     thread_id: thread_id || undefined,
   };
+  // A live running job/lease means the detached ACP worker still owns this
+  // turn. In that case an interrupt request must be forwarded to the worker,
+  // not "repaired" locally as if the turn were orphaned.
   if (
     listRunningAcpJobs().some((row) => runningTurnMatchesTarget(row, target)) ||
     listRunningAcpTurnLeases().some((row) =>
       runningTurnMatchesTarget(row, target),
     )
   ) {
-    return true;
+    return false;
   }
   if (!thread_id) {
     return false;
