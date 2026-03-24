@@ -11,7 +11,7 @@ import {
   stat as statAbsolute,
   writeFile as writeFileAbsolute,
 } from "node:fs/promises";
-import { basename, dirname, relative, resolve } from "node:path";
+import { relative, resolve } from "node:path";
 import { throttle } from "lodash";
 import { type RunOptions } from "@cocalc/conat/project/jupyter/run-code";
 import { type JupyterActions } from "@cocalc/jupyter/redux/project-actions";
@@ -24,27 +24,6 @@ const jupyterActions: { [ipynbPath: string]: JupyterActions } = {};
 
 function isAbsolutePath(path: string): boolean {
   return typeof path === "string" && path.startsWith("/");
-}
-
-async function canonicalizeAbsolutePath(path: string): Promise<string> {
-  const suffix: string[] = [];
-  let candidate = resolve(path);
-  while (true) {
-    try {
-      const resolved = await realpathAbsolute(candidate);
-      return suffix.length === 0 ? resolved : resolve(resolved, ...suffix);
-    } catch (err: any) {
-      if (err?.code !== "ENOENT" && err?.code !== "ENOTDIR") {
-        throw err;
-      }
-    }
-    const parent = dirname(candidate);
-    if (parent === candidate) {
-      return resolve(path);
-    }
-    suffix.unshift(basename(candidate));
-    candidate = parent;
-  }
 }
 
 export function createJupyterSyncFilesystem(fs: Filesystem): Filesystem {
@@ -73,7 +52,7 @@ export function createJupyterSyncFilesystem(fs: Filesystem): Filesystem {
       ) {
         return async (path: string) => {
           if (isAbsolutePath(path)) {
-            return await canonicalizeAbsolutePath(path);
+            return path;
           }
           const fn = Reflect.get(target, prop, receiver);
           if (typeof fn === "function") {
