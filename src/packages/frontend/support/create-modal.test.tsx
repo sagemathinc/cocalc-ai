@@ -94,6 +94,7 @@ describe("SupportCreateModal", () => {
     mockOpenSupportTicketsPage.mockReset();
     mockedApi.mockReset();
     mockedUploadBlobImage.mockReset();
+    window.localStorage.clear();
     window.history.replaceState({}, "", "/projects/abc/files/test.ipynb");
   });
 
@@ -190,5 +191,45 @@ describe("SupportCreateModal", () => {
         }),
       });
     });
+  });
+
+  it("persists the draft until it is explicitly cleared", async () => {
+    const { unmount } = render(<SupportCreateModal />);
+    fireEvent.change(screen.getByLabelText("Support body"), {
+      target: { value: "Updated draft body that should survive closing." },
+    });
+    fireEvent.change(
+      screen.getByPlaceholderText("Summarize what this is about..."),
+      {
+        target: { value: "Updated subject" },
+      },
+    );
+
+    unmount();
+    render(<SupportCreateModal />);
+
+    expect(
+      (screen.getByLabelText("Support body") as HTMLTextAreaElement).value,
+    ).toBe("Updated draft body that should survive closing.");
+    expect(
+      (
+        screen.getByPlaceholderText(
+          "Summarize what this is about...",
+        ) as HTMLInputElement
+      ).value,
+    ).toBe("Updated subject");
+
+    fireEvent.click(screen.getByRole("button", { name: "Clear draft" }));
+
+    expect(
+      (screen.getByLabelText("Support body") as HTMLTextAreaElement).value,
+    ).toBe("Detailed notebook problem with enough context.");
+    expect(
+      (
+        screen.getByPlaceholderText(
+          "Summarize what this is about...",
+        ) as HTMLInputElement
+      ).value,
+    ).toBe("Notebook issue");
   });
 });

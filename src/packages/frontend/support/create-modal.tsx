@@ -32,9 +32,18 @@ interface SupportFileRef {
   project_id: string;
 }
 
+interface SupportDraft {
+  body: string;
+  files: SupportFileRef[];
+  includeScreenshot: boolean;
+  subject: string;
+  type: TicketType;
+}
+
 const { Paragraph, Text } = Typography;
 
 const MIN_BODY_LENGTH = 16;
+const SUPPORT_DRAFT_STORAGE_PREFIX = "cocalc:support-draft:v1:";
 
 function normalizeType(value?: string): TicketType {
   switch (value) {
@@ -139,6 +148,25 @@ function submitButtonLabel(params: {
   return "Create support ticket";
 }
 
+function loadDraft(key: string): SupportDraft | undefined {
+  if (typeof window === "undefined") return;
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (!raw) return;
+    const parsed = JSON.parse(raw);
+    if (typeof parsed !== "object" || parsed == null) return;
+    return {
+      body: typeof parsed.body === "string" ? parsed.body : "",
+      files: Array.isArray(parsed.files) ? parsed.files : [],
+      includeScreenshot: !!parsed.includeScreenshot,
+      subject: typeof parsed.subject === "string" ? parsed.subject : "",
+      type: normalizeType(parsed.type),
+    };
+  } catch {
+    return;
+  }
+}
+
 export default function SupportCreateModal() {
   const pageActions = useActions("page");
   const accountEmail = useTypedRedux("account", "email_address") ?? "";
@@ -158,27 +186,57 @@ export default function SupportCreateModal() {
   const [type, setType] = useState<TicketType>(
     normalizeType(initialOptions.type),
   );
+  const draftStorageKey = useMemo(
+    () => `${SUPPORT_DRAFT_STORAGE_PREFIX}${accountEmail || "signed-in-user"}`,
+    [accountEmail],
+  );
 
   useEffect(() => {
     setEmail(accountEmail);
   }, [accountEmail]);
 
   useEffect(() => {
-    setBody(initialOptions.body ?? "");
-    setFiles([]);
-    setIncludeScreenshot(false);
+    const draft = loadDraft(draftStorageKey);
+    setBody(draft?.body ?? initialOptions.body ?? "");
+    setFiles(draft?.files ?? []);
+    setIncludeScreenshot(draft?.includeScreenshot ?? false);
     setLastImageUrl("");
-    setSubject(initialOptions.subject ?? "");
+    setSubject(draft?.subject ?? initialOptions.subject ?? "");
     setSubmitError("");
     setSubmitting(false);
     setSuccessUrl("");
-    setType(normalizeType(initialOptions.type));
+    setType(draft?.type ?? normalizeType(initialOptions.type));
   }, [
+    draftStorageKey,
     initialOptions.body,
     initialOptions.subject,
     initialOptions.type,
     initialOptions.url,
     initialOptions.required,
+  ]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || successUrl) return;
+    const draft: SupportDraft = {
+      body,
+      files,
+      includeScreenshot,
+      subject,
+      type,
+    };
+    try {
+      window.localStorage.setItem(draftStorageKey, JSON.stringify(draft));
+    } catch {
+      // Ignore localStorage quota/access issues; the modal still works.
+    }
+  }, [
+    body,
+    draftStorageKey,
+    files,
+    includeScreenshot,
+    subject,
+    successUrl,
+    type,
   ]);
 
   const hasRequired =
@@ -235,12 +293,33 @@ export default function SupportCreateModal() {
       if (result?.error) {
         throw Error(result.error);
       }
+      try {
+        window.localStorage.removeItem(draftStorageKey);
+      } catch {
+        // Ignore storage cleanup errors after successful submit.
+      }
       setSuccessUrl(result?.url ?? "");
     } catch (err) {
       setSubmitError(`${err}`);
     } finally {
       setSubmitting(false);
     }
+  }
+
+  function clearDraft(): void {
+    try {
+      window.localStorage.removeItem(draftStorageKey);
+    } catch {
+      // Ignore localStorage failures; reset the in-memory draft anyway.
+    }
+    setBody(initialOptions.body ?? "");
+    setFiles([]);
+    setIncludeScreenshot(false);
+    setLastImageUrl("");
+    setSubject(initialOptions.subject ?? "");
+    setSubmitError("");
+    setSuccessUrl("");
+    setType(normalizeType(initialOptions.type));
   }
 
   const buttonText = submitButtonLabel({
@@ -297,8 +376,8 @@ export default function SupportCreateModal() {
       <Alert
         type="info"
         showIcon
-        message="Describe the issue, paste screenshots directly into the image box below, or attach one before submitting."
-        description="The body uses the same markdown / rich-text composer as chat. Any images are converted to absolute links before the Zendesk ticket is created."
+        message="This draft is not cleared until you explicitly clear it or submit the ticket."
+        description="You can close and reopen this modal while gathering evidence, copying error messages, or pasting screenshots. The body uses the same markdown / rich-text composer as chat, and any images are converted to absolute links before the Zendesk ticket is created."
       />
       {initialOptions.required ? (
         <Alert
@@ -414,7 +493,10 @@ export default function SupportCreateModal() {
       </div>
       <Divider style={{ margin: 0 }} />
       <Space style={{ justifyContent: "space-between", width: "100%" }} wrap>
-        <Button onClick={() => openSupportTicketsPage()}>View tickets</Button>
+        <Space wrap>
+          <Button onClick={() => clearDraft()}>Clear draft</Button>
+          <Button onClick={() => openSupportTicketsPage()}>View tickets</Button>
+        </Space>
         <Space wrap>
           <Button onClick={() => pageActions.settings("")}>Cancel</Button>
           <Button
