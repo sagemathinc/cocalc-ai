@@ -6,6 +6,7 @@
 import { dirname, join } from "path";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  Alert,
   Button,
   Checkbox,
   Input,
@@ -35,6 +36,7 @@ import {
   PROJECT_IMAGE_PATH,
 } from "@cocalc/util/db-schema/defaults";
 import { split } from "@cocalc/util/misc";
+import { COLORS } from "@cocalc/util/theme";
 import type {
   ProjectRootfsStateEntry,
   RootfsImageEntry,
@@ -418,8 +420,10 @@ export default function RootFilesystemImage() {
           {help && (
             <div style={{ color: "#666", marginBottom: "8px" }}>
               <p>
-                Choose a managed catalog image or enter any container image
-                directly. You can change the image at any time.
+                Choose a managed catalog image for the normal case. Advanced
+                OCI/Docker images are still possible, but they bypass CoCalc's
+                catalog safety and metadata layer. You can change the image at
+                any time.
               </p>
               <p>
                 Changing the image changes which root filesystem lowerdir and
@@ -439,20 +443,28 @@ export default function RootFilesystemImage() {
           )}
 
           <Space direction="vertical" size="middle" style={{ width: "100%" }}>
-            <Radio.Group
-              value={rootfsMode}
-              onChange={(e) => setRootfsMode(e.target.value)}
-            >
-              <Radio value="catalog">Catalog images</Radio>
-              <Radio value="custom">Custom image</Radio>
-            </Radio.Group>
             {rootfsMode === "catalog" ? (
               <>
+                <Paragraph type="secondary" style={{ marginBottom: 0 }}>
+                  Pick a managed catalog image. These entries have CoCalc
+                  metadata, visibility, and lifecycle management on top of the
+                  underlying runtime image.
+                </Paragraph>
                 <Select
                   showSearch
                   options={rootfsOptions}
                   value={rootfsDraftId || undefined}
                   placeholder="Select an image"
+                  style={{ width: "100%" }}
+                  listHeight={420}
+                  filterOption={(input, option) =>
+                    rootfsOptionSearchText(option).includes(
+                      input.trim().toLowerCase(),
+                    )
+                  }
+                  optionRender={(option) =>
+                    renderRootfsCatalogOption((option.data as any).entry)
+                  }
                   onChange={(nextId) => {
                     const next = rootfsImages.find(
                       (entry) => entry.id === nextId,
@@ -463,6 +475,13 @@ export default function RootFilesystemImage() {
                   loading={rootfsLoading}
                   disabled={rootfsLoading}
                 />
+                <Button
+                  type="link"
+                  onClick={() => setRootfsMode("custom")}
+                  style={{ paddingLeft: 0, width: "fit-content" }}
+                >
+                  Use an advanced OCI or Docker image instead
+                </Button>
                 {draftRootfsEntry?.description && (
                   <Paragraph type="secondary" style={{ marginBottom: 0 }}>
                     {draftRootfsEntry.description}
@@ -484,15 +503,41 @@ export default function RootFilesystemImage() {
                 </Space>
               </>
             ) : (
-              <Input
-                value={rootfsDraft}
-                onChange={(e) => {
-                  setRootfsDraft(e.target.value);
-                  setRootfsDraftId("");
-                }}
-                allowClear
-                placeholder="e.g. ghcr.io/org/image:tag"
-              />
+              <Space
+                direction="vertical"
+                size="small"
+                style={{ width: "100%" }}
+              >
+                <Alert
+                  type="warning"
+                  showIcon
+                  message="Advanced OCI / Docker image"
+                  description={
+                    <>
+                      This bypasses the managed RootFS catalog. Some OCI images
+                      will not work correctly with CoCalc if they are missing
+                      expected basics such as certificates, shells, or standard
+                      userland packages.
+                    </>
+                  }
+                />
+                <Input
+                  value={rootfsDraft}
+                  onChange={(e) => {
+                    setRootfsDraft(e.target.value);
+                    setRootfsDraftId("");
+                  }}
+                  allowClear
+                  placeholder="e.g. ghcr.io/org/image:tag"
+                />
+                <Button
+                  type="link"
+                  onClick={() => setRootfsMode("catalog")}
+                  style={{ paddingLeft: 0, width: "fit-content" }}
+                >
+                  Back to managed catalog images
+                </Button>
+              </Space>
             )}
             {rootfsError && (
               <Paragraph type="secondary" style={{ marginBottom: 0 }}>
@@ -769,19 +814,116 @@ function groupedRootfsOptions(images: RootfsImageEntry[]) {
     { key: "public", label: "Public images" },
   ];
   return sections.reduce<
-    Array<{ label: string; options: Array<{ value: string; label: string }> }>
+    Array<{
+      label: string;
+      options: Array<{
+        value: string;
+        label: string;
+        searchText: string;
+        entry: RootfsImageEntry;
+      }>;
+    }>
   >((acc, { key, label }) => {
     const options = images
       .filter((entry) => entry.section === key)
       .map((entry) => ({
         value: entry.id,
         label: entry.label || entry.image,
+        entry,
+        searchText: [
+          entry.label,
+          entry.image,
+          entry.description,
+          entry.owner_name,
+          ...(entry.tags ?? []),
+        ]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase(),
       }));
     if (options.length > 0) {
       acc.push({ label, options });
     }
     return acc;
   }, []);
+}
+
+function rootfsOptionSearchText(option?: any): string {
+  return `${option?.searchText ?? option?.data?.searchText ?? ""}`.toLowerCase();
+}
+
+function renderRootfsCatalogOption(entry: RootfsImageEntry) {
+  return (
+    <div
+      style={{
+        padding: "6px 0",
+        lineHeight: "18px",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: "8px",
+          flexWrap: "wrap",
+          marginBottom: "2px",
+        }}
+      >
+        <span style={{ fontWeight: 600 }}>{entry.label || entry.image}</span>
+        {entry.section ? (
+          <Tag
+            color={sectionTagColor(entry.section)}
+            style={{ marginInlineEnd: 0 }}
+          >
+            {sectionLabel(entry.section)}
+          </Tag>
+        ) : null}
+        {entry.gpu ? (
+          <Tag color="purple" style={{ marginInlineEnd: 0 }}>
+            GPU
+          </Tag>
+        ) : null}
+        {entry.scan?.status && entry.scan.status !== "unknown" ? (
+          <Tag
+            color={
+              entry.scan.status === "clean"
+                ? "green"
+                : entry.scan.status === "findings"
+                  ? "orange"
+                  : entry.scan.status === "error"
+                    ? "red"
+                    : "blue"
+            }
+            style={{ marginInlineEnd: 0 }}
+          >
+            scan {entry.scan.status}
+          </Tag>
+        ) : null}
+      </div>
+      <div
+        style={{
+          fontFamily: "monospace",
+          fontSize: "11px",
+          color: COLORS.GRAY_M,
+          overflowWrap: "anywhere",
+          marginBottom: entry.description ? "2px" : 0,
+        }}
+      >
+        {entry.image}
+      </div>
+      {entry.description ? (
+        <div
+          style={{
+            fontSize: "12px",
+            color: COLORS.GRAY_D,
+            overflowWrap: "anywhere",
+          }}
+        >
+          {entry.description}
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 function publishActionLabel(entry?: RootfsImageEntry): string {
