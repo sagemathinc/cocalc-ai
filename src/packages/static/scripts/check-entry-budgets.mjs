@@ -8,6 +8,10 @@ const DIST = resolve(process.cwd(), "dist");
 
 const budgets = [
   {
+    html: "public-home.html",
+    maxGzipBytes: 420 * 1024,
+  },
+  {
     html: "public-auth.html",
     maxGzipBytes: 250 * 1024,
   },

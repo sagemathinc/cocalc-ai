@@ -40,6 +40,11 @@ export default function appLoaderPlugin(
       chunks: ["load", "public-viewer-chat"],
     },
     {
+      desc: "public-home",
+      filename: "public-home.html",
+      chunks: ["load", "public-home"],
+    },
+    {
       desc: "public-auth",
       filename: "public-auth.html",
       chunks: ["load", "public-auth"],

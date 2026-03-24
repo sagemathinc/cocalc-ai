@@ -255,6 +255,12 @@ export default function getConfig({ middleware }: Options = {}): Configuration {
         ]),
         dependOn: "load",
       },
+      "public-home": {
+        import: insertHotMiddlewareUrl([
+          resolve("dist-ts/src/webapp-public-home.js"),
+        ]),
+        dependOn: "load",
+      },
       "public-support": {
         import: insertHotMiddlewareUrl([
           resolve("dist-ts/src/webapp-public-support.js"),
