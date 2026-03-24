@@ -985,6 +985,9 @@ importers:
       lodash:
         specifier: ^4.17.21
         version: 4.17.23
+      lru-cache:
+        specifier: ^7.18.3
+        version: 7.18.3
       next-rest-framework:
         specifier: 6.1.1
         version: 6.1.1
@@ -13136,6 +13139,7 @@ packages:
   whatwg-encoding@3.1.1:
     resolution: {integrity: sha512-6qN4hJdMwfYBtE3YBTTHhoeuUrDBPZmbQaxWAqSALV/MeEnR5z1xd8UKud2RAkFoPkmB+hli1TZSnyi84xz1vQ==}
     engines: {node: '>=18'}
+    deprecated: Use @exodus/bytes instead for a more spec-conformant and faster implementation
 
   whatwg-fetch@3.6.20:
     resolution: {integrity: sha512-EqhiFU6daOA8kpjOWTL0olhVOF3i7OrFzSYiGsEMB8GcXS+RrzauAERX65xMeNWVqxA6HXH2m69Z9LaKKdisfg==}
