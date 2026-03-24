@@ -64,15 +64,15 @@ Use this for:
 
 Current commands:
 
-- `cocalc project jupyter --path <ipynb> cells`
-- `cocalc project jupyter --path <ipynb> set ...`
-- `cocalc project jupyter --path <ipynb> insert ...`
-- `cocalc project jupyter --path <ipynb> delete ...`
-- `cocalc project jupyter --path <ipynb> move ...`
-- `cocalc project jupyter --path <ipynb> run ...`
-- `cocalc project jupyter --path <ipynb> live ...`
-- `cocalc project jupyter --path <ipynb> exec-api`
-- `cocalc project jupyter --path <ipynb> exec --file <script.js>`
+- `cocalc project jupyter cells --path <ipynb>`
+- `cocalc project jupyter set --path <ipynb> ...`
+- `cocalc project jupyter insert --path <ipynb> ...`
+- `cocalc project jupyter delete --path <ipynb> ...`
+- `cocalc project jupyter move --path <ipynb> ...`
+- `cocalc project jupyter run --path <ipynb> ...`
+- `cocalc project jupyter live --path <ipynb> ...`
+- `cocalc project jupyter exec-api`
+- `cocalc project jupyter exec --path <ipynb> --file <script.js>`
 
 This is the preferred path because it survives browser refreshes/disconnects and does not require reverse-engineering frontend notebook state.
 
@@ -81,8 +81,8 @@ Use the direct commands for one-step operations. For multi-step notebook work, p
 Example:
 
 ```bash
-cocalc project jupyter --path scratch/demo.ipynb exec-api
-cocalc project jupyter --path scratch/demo.ipynb exec --file ./tool.js
+cocalc project jupyter exec-api
+cocalc project jupyter exec --path scratch/demo.ipynb --file ./tool.js
 ```
 
 Where `tool.js` looks like:

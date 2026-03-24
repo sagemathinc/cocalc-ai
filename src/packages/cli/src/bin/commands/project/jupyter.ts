@@ -200,6 +200,14 @@ type JupyterExecCliOptions = {
   stdin?: boolean;
 };
 
+export function normalizeJupyterExecInlineScriptTokens(code: string[]): string {
+  const tokens = [...(code ?? [])];
+  if (tokens[0] === "exec" && tokens.length > 1) {
+    tokens.shift();
+  }
+  return tokens.join(" ").trim();
+}
+
 function humanTextForOutputMessage(mesg: OutputMessage): {
   stream?: string;
   error?: string;
@@ -494,7 +502,7 @@ Use plain JavaScript. Inspect the ambient API with:
   cocalc project jupyter exec-api
 
 Example:
-  cocalc --json project jupyter --path scratch/demo.ipynb exec '
+  cocalc --json project jupyter exec --path scratch/demo.ipynb '
     let { cells } = await api.notebook.listCells();
     let anchor = cells[cells.length - 1];
     let inserted = await api.notebook.insertCell({
@@ -520,7 +528,7 @@ Example:
         command: Command,
       ) => {
         await withContext(command, "project jupyter exec", async (ctx) => {
-          const inlineScript = (code ?? []).join(" ").trim();
+          const inlineScript = normalizeJupyterExecInlineScriptTokens(code);
           const filePath = `${opts.file ?? ""}`.trim();
           const readFromStdin = !!opts.stdin || filePath === "-";
           const readFromFile = filePath.length > 0 && filePath !== "-";
