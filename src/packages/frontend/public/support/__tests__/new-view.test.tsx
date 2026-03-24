@@ -6,6 +6,9 @@ import api from "@cocalc/frontend/client/api";
 import SupportNew from "../new-view";
 
 jest.mock("@cocalc/frontend/client/api", () => jest.fn());
+jest.mock("../recent-files", () => function RecentFilesMock() {
+  return <div>Recent files picker</div>;
+});
 
 const mockedApi = api as jest.Mock;
 
@@ -18,6 +21,12 @@ describe("SupportNew", () => {
       disconnect() {}
     };
     mockedApi.mockReset();
+    mockedApi.mockImplementation(async (endpoint: string) => {
+      if (endpoint === "accounts/profile") {
+        return { profile: {} };
+      }
+      return {};
+    });
   });
 
   it("renders a richer zendesk-backed support form", () => {
@@ -38,7 +47,29 @@ describe("SupportNew", () => {
       screen.getByText("Something is not working the way I think it should."),
     ).not.toBeNull();
     expect(screen.getByText("Helpful links")).not.toBeNull();
+    expect(screen.getByText("Relevant files")).not.toBeNull();
+    expect(screen.getByText("Recent files picker")).not.toBeNull();
     expect(screen.getByText("Enter a valid email address")).not.toBeNull();
+  });
+
+  it("prefills the email field for signed-in users", async () => {
+    mockedApi.mockImplementation(async (endpoint: string) => {
+      if (endpoint === "accounts/profile") {
+        return { profile: { email_address: "signed-in@example.com" } };
+      }
+      return {};
+    });
+
+    render(
+      <SupportNew
+        config={{ site_name: "Launchpad", zendesk: true }}
+        onNavigate={jest.fn()}
+      />,
+    );
+
+    expect(
+      await screen.findByDisplayValue("signed-in@example.com"),
+    ).not.toBeNull();
   });
 
   it("uses query string values to prefill the public form", () => {
@@ -63,8 +94,14 @@ describe("SupportNew", () => {
   });
 
   it("shows a success alert after creating a ticket", async () => {
-    mockedApi.mockResolvedValue({
-      url: "https://example.zendesk.com/requests/123",
+    mockedApi.mockImplementation(async (endpoint: string) => {
+      if (endpoint === "accounts/profile") {
+        return { profile: {} };
+      }
+      if (endpoint === "support/create-ticket") {
+        return { url: "https://example.zendesk.com/requests/123" };
+      }
+      return {};
     });
 
     render(

@@ -12,6 +12,7 @@ import api from "@cocalc/frontend/client/api";
 import { PublicSectionCard } from "@cocalc/frontend/public/ui/shell";
 import { is_valid_email_address as isValidEmailAddress } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
+import RecentFiles from "./recent-files";
 
 type SupportView = "index" | "new" | "tickets";
 type TicketType = "problem" | "question" | "task" | "purchase" | "chat";
@@ -32,6 +33,11 @@ interface QueryState {
   title: string;
   type: TicketType;
   url: string;
+}
+
+interface SupportFileRef {
+  path?: string;
+  project_id: string;
 }
 
 const { Paragraph, Text, Title } = Typography;
@@ -430,6 +436,7 @@ export default function SupportNew({
   const [subject, setSubject] = useState(initial.subject);
   const [type, setType] = useState<TicketType>(initial.type);
   const [body, setBody] = useState(initial.body);
+  const [files, setFiles] = useState<SupportFileRef[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState("");
   const [successUrl, setSuccessUrl] = useState("");
@@ -476,6 +483,7 @@ export default function SupportNew({
           email,
           subject,
           body,
+          files,
           type,
           url: initial.url,
           info,
@@ -505,6 +513,31 @@ export default function SupportNew({
       block: "center",
     });
   }, [submitError, successUrl]);
+
+  useEffect(() => {
+    let canceled = false;
+    if (email.trim().length > 0) {
+      return;
+    }
+    (async () => {
+      try {
+        const result = await api("accounts/profile");
+        const nextEmail = result?.profile?.email_address;
+        if (
+          !canceled &&
+          typeof nextEmail === "string" &&
+          nextEmail.length > 0
+        ) {
+          setEmail(nextEmail);
+        }
+      } catch {
+        // Anonymous sessions are expected to land here.
+      }
+    })();
+    return () => {
+      canceled = true;
+    };
+  }, [email]);
 
   return (
     <Space direction="vertical" size="large" style={{ width: "100%" }}>
@@ -624,6 +657,25 @@ export default function SupportNew({
           </div>
 
           <Divider style={{ margin: 0 }}>Support Ticket</Divider>
+
+          {!initial.hideExtra && type !== "purchase" && type !== "chat" ? (
+            <div>
+              <SectionLabel done={files.length > 0}>
+                Relevant files
+              </SectionLabel>
+              <Paragraph
+                style={{ color: COLORS.GRAY_D, margin: "10px 0 12px 0" }}
+              >
+                Select any relevant projects and files below. This will make it
+                much easier for us to quickly understand your problem.
+              </Paragraph>
+              <RecentFiles
+                disabled={formLocked}
+                interval="1 day"
+                onChange={setFiles}
+              />
+            </div>
+          ) : null}
 
           <div>
             <SectionLabel
