@@ -13,6 +13,7 @@ import {
 } from "@cocalc/frontend/app-framework";
 import { TimeAgo } from "@cocalc/frontend/components";
 import type { InlineCodeLink } from "@cocalc/chat";
+import type { AcpStreamMessage } from "@cocalc/conat/ai/acp/types";
 import { COLORS } from "@cocalc/util/theme";
 import CodexLogPanel from "./codex-log-panel";
 import type { ActivityLogContext } from "./actions/activity-logs";
@@ -111,6 +112,8 @@ interface AgentMessageStatusProps {
   jumpToken?: number;
   onOpenGitBrowser?: () => void;
   onDrawerOpenChange?: (open: boolean) => void;
+  logEvents?: AcpStreamMessage[] | null;
+  deleteLog?: () => Promise<void>;
 }
 
 export function AgentMessageStatus({
@@ -132,6 +135,8 @@ export function AgentMessageStatus({
   jumpToken,
   onOpenGitBrowser,
   onDrawerOpenChange,
+  logEvents,
+  deleteLog,
 }: AgentMessageStatusProps) {
   const [showDrawer, setShowDrawer] = useState(false);
   const [scrollParent, setScrollParent] = useState<HTMLDivElement | null>(null);
@@ -422,6 +427,7 @@ export function AgentMessageStatus({
             liveLogStream={logRefs.liveStream}
             logProjectId={project_id}
             logEnabled={showDrawer}
+            events={logEvents}
             activityContext={activityContext}
             onJumpToBottom={handleJumpToBottom}
             jumpText={jumpText}
@@ -433,6 +439,7 @@ export function AgentMessageStatus({
             virtualizeEntries
             scrollParent={scrollParent}
             onOpenFileLink={handleDrawerClose}
+            deleteLog={deleteLog}
           />
         </div>
       </Drawer>

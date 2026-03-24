@@ -204,7 +204,7 @@ export function getAgentMessageTexts(events: AcpStreamMessage[]): string[] {
   return messages.map(({ text }) => text);
 }
 
-function mergeProgressiveMessageText(
+export function mergeProgressiveMessageText(
   previous: string | undefined,
   next: string | undefined,
   opts?: {

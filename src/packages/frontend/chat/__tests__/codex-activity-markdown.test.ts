@@ -3,7 +3,6 @@ import {
   codexEventsToMarkdown,
   findActivityEntryIndexForJumpEvents,
   findActivityEntryIndexForJumpText,
-  getLivePreviewMarkdown,
   parsePathLineTarget,
 } from "../codex-activity";
 
@@ -291,58 +290,52 @@ describe("findActivityEntryIndexForJumpText", () => {
   });
 });
 
-describe("getLivePreviewMarkdown", () => {
+describe("agent activity normalization", () => {
   it("keeps distinct agent messages as separate paragraphs", () => {
-    expect(
-      getLivePreviewMarkdown([
-        {
-          type: "event",
-          seq: 1,
-          event: {
-            type: "message",
-            text: "First agent message.",
-          },
+    const markdown = codexEventsToMarkdown([
+      {
+        type: "event",
+        seq: 1,
+        event: {
+          type: "message",
+          text: "First agent message.",
         },
-        {
-          type: "event",
-          seq: 2,
-          event: {
-            type: "message",
-            text: "Second agent message.",
-          },
+      },
+      {
+        type: "event",
+        seq: 2,
+        event: {
+          type: "message",
+          text: "Second agent message.",
         },
-      ] as any),
-    ).toBe("First agent message.\n\nSecond agent message.");
+      },
+    ] as any);
+    expect(markdown).toContain(
+      "- Agent: First agent message.\n\nSecond agent message.",
+    );
   });
 
-  it("matches the normalized activity view for clickable paragraph jumps", () => {
-    expect(
-      getLivePreviewMarkdown([
-        {
-          type: "event",
-          seq: 1,
-          event: {
-            type: "message",
-            text: "Paragraph one.",
-          },
+  it("merges progressive adjacent agent chunks instead of inserting paragraph breaks mid-word", () => {
+    const markdown = codexEventsToMarkdown([
+      {
+        type: "event",
+        seq: 1,
+        event: {
+          type: "message",
+          text: "I",
+          delta: true,
         },
-        {
-          type: "event",
-          seq: 2,
-          event: {
-            type: "thinking",
-            text: "ignored reasoning",
-          },
+      },
+      {
+        type: "event",
+        seq: 2,
+        event: {
+          type: "message",
+          text: "'ll",
+          delta: true,
         },
-        {
-          type: "event",
-          seq: 3,
-          event: {
-            type: "message",
-            text: "Paragraph two.",
-          },
-        },
-      ] as any),
-    ).toBe("Paragraph one.\n\nParagraph two.");
+      },
+    ] as any);
+    expect(markdown).toContain("- Agent: I'll");
   });
 });

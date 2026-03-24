@@ -44,14 +44,12 @@ import {
   deriveAcpLogRefs,
   getBestResponseText,
   getInterruptedResponseMarkdown,
+  getLiveResponseMarkdown,
   type InlineCodeLink,
 } from "@cocalc/chat";
 import { ChatActions } from "./actions";
 import { getUserName } from "./chat-log";
-import {
-  codexEventsToMarkdown,
-  getLivePreviewMarkdown,
-} from "./codex-activity";
+import { codexEventsToMarkdown } from "./codex-activity";
 import {
   cancelQueuedAcpTurn,
   resetAcpThreadState,
@@ -796,7 +794,7 @@ export default function Message({
       return undefined;
     }
     if (effectiveGenerating) {
-      return getLivePreviewMarkdown(codexBodyLog.events as any);
+      return getLiveResponseMarkdown(codexBodyLog.events as any);
     }
     if (acpInterrupted) {
       return getInterruptedResponseMarkdown(
@@ -1488,6 +1486,8 @@ export default function Message({
           inlineCodeLinks={
             Array.isArray(inlineCodeLinks) ? inlineCodeLinks : undefined
           }
+          logEvents={codexBodyLog.events as any}
+          deleteLog={codexBodyLog.deleteLog}
           openDrawerToken={openActivityDrawerToken}
           jumpText={activityJumpText}
           jumpToken={activityJumpToken}
