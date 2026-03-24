@@ -102,5 +102,11 @@ describe("SupportNew", () => {
     expect(
       screen.getByText("https://example.zendesk.com/requests/123"),
     ).not.toBeNull();
+    expect(
+      screen.getByRole("button", { name: "View my tickets" }),
+    ).not.toBeNull();
+    expect(
+      screen.getByPlaceholderText("Email address...").hasAttribute("disabled"),
+    ).toBe(true);
   });
 });

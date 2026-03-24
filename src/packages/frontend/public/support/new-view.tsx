@@ -114,7 +114,13 @@ function composeSections(sections: Array<[string, string]>): string {
     .join("\n\n\n");
 }
 
-function ProblemFields({ onChange }: { onChange: (value: string) => void }) {
+function ProblemFields({
+  disabled,
+  onChange,
+}: {
+  disabled?: boolean;
+  onChange: (value: string) => void;
+}) {
   const answers = useRef<[string, string, string]>(["", "", ""]);
 
   function update(index: 0 | 1 | 2, value: string): void {
@@ -133,6 +139,7 @@ function ProblemFields({ onChange }: { onChange: (value: string) => void }) {
       <div>
         <Text strong>What did you do exactly?</Text>
         <Input.TextArea
+          disabled={disabled}
           rows={3}
           placeholder="Describe exactly what you did before the problem happened."
           style={{ marginTop: 8 }}
@@ -142,6 +149,7 @@ function ProblemFields({ onChange }: { onChange: (value: string) => void }) {
       <div>
         <Text strong>What happened?</Text>
         <Input.TextArea
+          disabled={disabled}
           rows={3}
           placeholder="Tell us what happened."
           style={{ marginTop: 8 }}
@@ -151,6 +159,7 @@ function ProblemFields({ onChange }: { onChange: (value: string) => void }) {
       <div>
         <Text strong>How did this differ from what you expected?</Text>
         <Input.TextArea
+          disabled={disabled}
           rows={3}
           placeholder="Explain what you expected instead."
           style={{ marginTop: 8 }}
@@ -163,13 +172,16 @@ function ProblemFields({ onChange }: { onChange: (value: string) => void }) {
 
 function QuestionFields({
   defaultValue,
+  disabled,
   onChange,
 }: {
   defaultValue: string;
+  disabled?: boolean;
   onChange: (value: string) => void;
 }) {
   return (
     <Input.TextArea
+      disabled={disabled}
       rows={8}
       defaultValue={defaultValue}
       placeholder="Ask your question here."
@@ -180,10 +192,12 @@ function QuestionFields({
 
 function PurchaseFields({
   defaultValue,
+  disabled,
   onChange,
   showExtra,
 }: {
   defaultValue: string;
+  disabled?: boolean;
   onChange: (value: string) => void;
   showExtra: boolean;
 }) {
@@ -205,6 +219,7 @@ function PurchaseFields({
         />
       ) : null}
       <Input.TextArea
+        disabled={disabled}
         rows={8}
         defaultValue={defaultValue}
         placeholder="Describe what you want to purchase and any constraints we should know about."
@@ -215,9 +230,11 @@ function PurchaseFields({
 }
 
 function TaskFields({
+  disabled,
   onChange,
   siteName,
 }: {
+  disabled?: boolean;
   onChange: (value: string) => void;
   siteName: string;
 }) {
@@ -254,6 +271,7 @@ function TaskFields({
       <div>
         <Text strong>What software do you need?</Text>
         <Input.TextArea
+          disabled={disabled}
           rows={4}
           placeholder="Name the software, package, library, or stack you need."
           style={{ marginTop: 8 }}
@@ -263,6 +281,7 @@ function TaskFields({
       <div>
         <Text strong>How do you plan to use this software?</Text>
         <Input.TextArea
+          disabled={disabled}
           rows={3}
           placeholder="Explain the workload, project, class, or timeline."
           style={{ marginTop: 8 }}
@@ -274,6 +293,7 @@ function TaskFields({
           How can we test that the software is properly installed?
         </Text>
         <Input.TextArea
+          disabled={disabled}
           rows={3}
           placeholder="Include the commands, notebook imports, or checks that should work."
           style={{ marginTop: 8 }}
@@ -333,6 +353,7 @@ function bodyButtonLabel(params: {
 
 function renderBodyFields(params: {
   body: string;
+  disabled?: boolean;
   setBody: (value: string) => void;
   showExtra: boolean;
   siteName: string;
@@ -340,24 +361,34 @@ function renderBodyFields(params: {
   type: TicketType;
 }) {
   const { body, setBody, showExtra, siteName, supportVideoCall, type } = params;
+  const { disabled } = params;
 
   if (type === "problem") {
-    return <ProblemFields onChange={setBody} />;
+    return <ProblemFields disabled={disabled} onChange={setBody} />;
   }
   if (type === "question") {
-    return <QuestionFields defaultValue={body} onChange={setBody} />;
+    return (
+      <QuestionFields
+        defaultValue={body}
+        disabled={disabled}
+        onChange={setBody}
+      />
+    );
   }
   if (type === "purchase") {
     return (
       <PurchaseFields
         defaultValue={body}
+        disabled={disabled}
         onChange={setBody}
         showExtra={showExtra}
       />
     );
   }
   if (type === "task") {
-    return <TaskFields onChange={setBody} siteName={siteName} />;
+    return (
+      <TaskFields disabled={disabled} onChange={setBody} siteName={siteName} />
+    );
   }
   return (
     <Alert
@@ -374,6 +405,7 @@ function renderBodyFields(params: {
       }
       description={
         <Input.TextArea
+          disabled={disabled}
           rows={6}
           defaultValue={body}
           placeholder="Describe what you want to discuss, your goals, and any scheduling constraints."
@@ -402,6 +434,7 @@ export default function SupportNew({
   const [submitError, setSubmitError] = useState("");
   const [successUrl, setSuccessUrl] = useState("");
   const feedbackRef = useRef<HTMLDivElement | null>(null);
+  const formLocked = !!successUrl;
 
   const hasRequired = !initial.required || !body.includes(initial.required);
   const canSubmit =
@@ -533,6 +566,7 @@ export default function SupportNew({
               Your email address
             </SectionLabel>
             <Input
+              disabled={formLocked}
               placeholder="Email address..."
               style={{ marginTop: 10, maxWidth: 520 }}
               type="email"
@@ -546,6 +580,7 @@ export default function SupportNew({
               Subject
             </SectionLabel>
             <Input
+              disabled={formLocked}
               placeholder="Summarize what this is about..."
               style={{ marginTop: 10 }}
               value={subject}
@@ -558,6 +593,7 @@ export default function SupportNew({
               Support request type
             </SectionLabel>
             <Radio.Group
+              disabled={formLocked}
               name="support-type"
               style={{ display: "block", marginTop: 10 }}
               value={type}
@@ -604,6 +640,7 @@ export default function SupportNew({
             >
               {renderBodyFields({
                 body,
+                disabled: formLocked,
                 setBody,
                 showExtra: !initial.hideExtra,
                 siteName,
@@ -623,25 +660,46 @@ export default function SupportNew({
           ) : null}
 
           <div style={{ textAlign: "center" }}>
-            <Button
-              disabled={!canSubmit}
-              loading={submitting}
-              shape="round"
-              size="large"
-              type="primary"
-              onClick={submit}
-            >
-              {bodyButtonLabel({
-                body,
-                email,
-                hasRequired,
-                subject,
-                submitting,
-                successUrl,
-                submitError,
-                type,
-              })}
-            </Button>
+            {formLocked ? (
+              <Space wrap>
+                <Button
+                  shape="round"
+                  size="large"
+                  type="primary"
+                  onClick={() => onNavigate("tickets")}
+                >
+                  View my tickets
+                </Button>
+                <Button
+                  href={successUrl}
+                  shape="round"
+                  size="large"
+                  target="_blank"
+                >
+                  Open saved ticket URL
+                </Button>
+              </Space>
+            ) : (
+              <Button
+                disabled={!canSubmit}
+                loading={submitting}
+                shape="round"
+                size="large"
+                type="primary"
+                onClick={submit}
+              >
+                {bodyButtonLabel({
+                  body,
+                  email,
+                  hasRequired,
+                  subject,
+                  submitting,
+                  successUrl,
+                  submitError,
+                  type,
+                })}
+              </Button>
+            )}
           </div>
 
           <div ref={feedbackRef}>
