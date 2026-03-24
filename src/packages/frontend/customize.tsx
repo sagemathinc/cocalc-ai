@@ -107,6 +107,7 @@ export interface CustomizeState {
   email_signup: boolean;
   google_analytics: string;
   help_email: string;
+  zendesk?: boolean;
   iframe_comm_hosts: string[];
   index_info_html: string;
   is_cocalc_com: boolean;

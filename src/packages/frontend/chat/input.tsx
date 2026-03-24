@@ -54,6 +54,8 @@ interface Props {
   externalMultilinePasteAsCodeBlock?: boolean;
   inputControlRef?: MutableRefObject<ChatInputControl | null>;
   onControlReady?: (control: ChatInputControl | null) => void;
+  enableUpload?: boolean;
+  enableMentions?: boolean;
 }
 
 export interface ChatInputControl {
@@ -93,6 +95,8 @@ export default function ChatInput({
   externalMultilinePasteAsCodeBlock,
   inputControlRef,
   onControlReady,
+  enableUpload = true,
+  enableMentions = true,
 }: Props) {
   const intl = useIntl();
   const controlRef = useRef<any>(null);
@@ -286,8 +290,8 @@ export default function ChatInput({
       cacheId={cacheId}
       value={input}
       controlRef={controlRef}
-      enableUpload={true}
-      enableMentions={true}
+      enableUpload={enableUpload}
+      enableMentions={enableMentions}
       submitMentionsRef={submitMentionsRef}
       onChange={(value) => {
         if (!mountedRef.current) return;

@@ -119,6 +119,7 @@ export const Page: React.FC = () => {
   const groups = useTypedRedux("account", "groups");
   const show_i18n = useShowI18NBanner();
   const is_commercial = useTypedRedux("customize", "is_commercial");
+  const zendesk = !!useTypedRedux("customize", "zendesk");
 
   function account_tab_icon(): IconName | React.JSX.Element {
     if (account_id) {
@@ -213,7 +214,7 @@ export const Page: React.FC = () => {
   }
 
   function render_support(): React.JSX.Element | undefined {
-    if (!is_commercial) {
+    if (!is_commercial || !zendesk || !is_logged_in) {
       return;
     }
     // Note: that styled span around the label is just
@@ -275,8 +276,8 @@ export const Page: React.FC = () => {
       >
         {render_admin_tab()}
         {render_sign_in_tab()}
-        {render_support()}
         {is_logged_in ? render_account_tab() : undefined}
+        {render_support()}
         {render_balance()}
         {render_notification()}
         {render_bell()}

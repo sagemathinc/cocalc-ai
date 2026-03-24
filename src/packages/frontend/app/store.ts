@@ -8,6 +8,7 @@ import target from "@cocalc/frontend/client/handle-target";
 import { parse_target } from "../history";
 import type { AuthView } from "@cocalc/frontend/auth/types";
 import type { ConatConnectionStatus } from "@cocalc/frontend/conat/client";
+import type { Options as SupportOpenOptions } from "@cocalc/frontend/support/url";
 
 type TopTab =
   | "about" // the "/help" page
@@ -58,6 +59,7 @@ export interface PageState {
   };
 
   settingsModal?: string;
+  supportModalOptions?: SupportOpenOptions;
   conat?: TypedMap<ConatConnectionStatus>;
 }
 
