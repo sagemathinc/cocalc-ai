@@ -6,7 +6,16 @@
 import type { CSSProperties, ReactNode } from "react";
 import { Suspense, lazy, useEffect, useMemo, useState } from "react";
 
-import { Button, Empty, Flex, Segmented, Spin, Tag, Typography } from "antd";
+import {
+  App as AntdApp,
+  Button,
+  Empty,
+  Flex,
+  Segmented,
+  Spin,
+  Tag,
+  Typography,
+} from "antd";
 import { joinUrlPath } from "@cocalc/util/url-path";
 import { slugURL } from "@cocalc/util/news";
 import {
@@ -138,6 +147,8 @@ function titleForRoute(route: PublicContentRoute, siteName: string): string {
     case "news-detail":
     case "news-history":
       return `${siteName} news`;
+    case "software-cocalc-plus":
+      return "CoCalc Plus";
     case "about":
     default:
       return `About ${siteName}`;
@@ -206,6 +217,44 @@ function LinkButton({ children, href }: { children: ReactNode; href: string }) {
   );
 }
 
+function CodeCommand({ value }: { value: string }) {
+  return (
+    <div
+      style={{
+        background: "#f8fafc",
+        border: `1px solid ${COLORS.GRAY_LL}`,
+        borderRadius: 12,
+        padding: 16,
+      }}
+    >
+      <code style={{ fontSize: "0.95rem", wordBreak: "break-all" }}>
+        {value}
+      </code>
+    </div>
+  );
+}
+
+function CopyCommandButton({ value }: { value: string }) {
+  const { message } = AntdApp.useApp();
+
+  return (
+    <Button
+      onClick={() => {
+        if (typeof navigator === "undefined" || navigator.clipboard == null) {
+          void message.info("Copy the command manually from the box below.");
+          return;
+        }
+        void navigator.clipboard.writeText(value).then(
+          () => void message.success("Install command copied."),
+          () => void message.error("Unable to copy command."),
+        );
+      }}
+    >
+      Copy command
+    </Button>
+  );
+}
+
 function PageShell({
   children,
   route,
@@ -230,6 +279,7 @@ function PageShell({
               ["About", "about"],
               ["Policies", "policies"],
               ["News", "news"],
+              ["Software", "software/cocalc-plus"],
             ].map(([label, view]) => (
               <Button
                 key={view}
@@ -244,6 +294,71 @@ function PageShell({
       />
       <div style={{ marginTop: "24px" }}>{children}</div>
     </PublicPageRoot>
+  );
+}
+
+function CocalcPlusPage() {
+  const installCommand =
+    "curl -fsSL https://software.cocalc.ai/software/cocalc-plus/install.sh | bash";
+
+  return (
+    <div style={GRID_STYLE}>
+      <PublicSectionCard>
+        <Title level={3} style={{ margin: 0 }}>
+          What CoCalc Plus is
+        </Title>
+        <Paragraph style={{ margin: 0 }}>
+          CoCalc Plus is the local single-user version of CoCalc. It is meant to
+          feel more like installing VS Code or JupyterLab on your own machine
+          than signing up for a hosted multi-user service.
+        </Paragraph>
+        <Paragraph style={{ margin: 0 }}>
+          Under the hood it builds on the Lite core, so it reuses the same
+          application and document model while packaging it as a local product.
+        </Paragraph>
+      </PublicSectionCard>
+      <PublicSectionCard>
+        <Title level={3} style={{ margin: 0 }}>
+          Install CoCalc Plus
+        </Title>
+        <Paragraph style={{ margin: 0 }}>
+          The current install flow uses the hosted software distribution:
+        </Paragraph>
+        <CodeCommand value={installCommand} />
+        <Flex wrap gap={12}>
+          <CopyCommandButton value={installCommand} />
+          <Button href="https://software.cocalc.ai/software/cocalc-plus/install.sh">
+            Open install script
+          </Button>
+        </Flex>
+        <Paragraph style={{ margin: 0 }}>
+          Current target platforms are Linux and macOS. The installer places the
+          runtime in a user-owned location and adds a launcher if needed.
+        </Paragraph>
+      </PublicSectionCard>
+      <PublicSectionCard>
+        <Title level={3} style={{ margin: 0 }}>
+          Why this matters for the public site
+        </Title>
+        <Paragraph style={{ margin: 0 }}>
+          The product story is no longer just “use CoCalc in the browser”.
+          Hosted CoCalc and CoCalc Plus both matter, so the public marketing
+          pages should stop implying that online use is the only option.
+        </Paragraph>
+        <Paragraph style={{ margin: 0 }}>
+          This is especially relevant for notebook workflows, where some users
+          want the same broader CoCalc environment on their own machine.
+        </Paragraph>
+        <Flex wrap gap={12}>
+          <LinkButton href={appPath("features/jupyter-notebook")}>
+            Jupyter notebooks
+          </LinkButton>
+          <LinkButton href={appPath("features/linux")}>
+            Linux workflow
+          </LinkButton>
+        </Flex>
+      </PublicSectionCard>
+    </div>
   );
 }
 
@@ -804,6 +919,18 @@ export default function PublicContentApp({
         title={title}
       >
         <NewsListPage initialNews={initialNews} />
+      </PageShell>
+    );
+  }
+
+  if (initialRoute.view === "software-cocalc-plus") {
+    return (
+      <PageShell
+        route={initialRoute}
+        subtitle="The local single-user CoCalc experience for your own machine."
+        title={title}
+      >
+        <CocalcPlusPage />
       </PageShell>
     );
   }

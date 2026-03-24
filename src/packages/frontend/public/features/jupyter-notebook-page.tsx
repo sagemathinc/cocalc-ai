@@ -143,23 +143,28 @@ export default function JupyterNotebookFeaturePage({
         <Col xs={24} lg={12}>
           <PublicSectionCard>
             <Title level={3} style={{ margin: 0 }}>
-              No local setup, and not a fixed stack either
+              Start instantly in the browser, or run CoCalc Plus locally
             </Title>
             <Paragraph style={{ margin: 0 }}>
-              CoCalc is an online service where you can run Jupyter notebooks
-              right in your browser and share them privately with project
-              collaborators.
+              CoCalc still gives you an immediate browser-based Jupyter
+              experience for collaboration and teaching, but it is no longer
+              accurate to describe the product as browser-only.
             </Paragraph>
             <Paragraph style={{ margin: 0 }}>
-              You can start immediately without installing anything on your
-              laptop, but you are also not limited to whatever happened to be
-              preinstalled by the platform operator.
+              CoCalc Plus brings the same broader environment to a single-user
+              local install on your own machine, closer to how people think
+              about VS Code or JupyterLab.
             </Paragraph>
             <Paragraph style={{ margin: 0 }}>
               Root access, project-local Linux environments, snapshots, and
               rollback make it practical to install what your notebook actually
               requires and keep that environment reusable.
             </Paragraph>
+            <div>
+              <LinkButton href={appPath("software/cocalc-plus")}>
+                Learn about CoCalc Plus
+              </LinkButton>
+            </div>
           </PublicSectionCard>
         </Col>
       </Row>
@@ -431,9 +436,9 @@ export default function JupyterNotebookFeaturePage({
               Publishing notebooks
             </Title>
             <Paragraph style={{ margin: 0 }}>
-              CoCalc can publish notebook output as fast server-rendered static
-              HTML, including pre-rendered mathematics, for lightweight public
-              sharing.
+              CoCalc can publish notebook output through static app server
+              support in projects, which makes notebook results easy to share
+              without exposing a full collaborative workspace.
             </Paragraph>
             <Paragraph style={{ margin: 0 }}>
               That makes public notebook output easier to share without asking

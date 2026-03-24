@@ -191,6 +191,8 @@ export default function initPublicContent(router: Router): void {
     "/news/:slug/",
     "/news/:slug/:timestamp",
     "/news/:slug/:timestamp/",
+    "/software/cocalc-plus",
+    "/software/cocalc-plus/",
   ];
 
   router.get(contentPaths, redirectToStatic);
