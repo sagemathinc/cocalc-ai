@@ -636,7 +636,11 @@ export async function startMasterRegistration({
           restore,
           lro_op_id,
         });
-        return { project_id, state: (status as any)?.state };
+        return {
+          project_id,
+          state: (status as any)?.state,
+          phase_timings_ms: (status as any)?.phase_timings_ms,
+        };
       },
       async stopProject({ project_id }) {
         if (!hubApi.projects?.stop) {

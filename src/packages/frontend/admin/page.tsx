@@ -15,6 +15,7 @@ import { UserSearch } from "./users/user-search";
 import AIAvatar from "@cocalc/frontend/components/ai-avatar";
 import { TestLLMAdmin } from "./llm/admin-llm-test";
 import { SoftwareLicensesAdmin } from "./software-licenses";
+import { RootfsAdmin } from "./rootfs";
 
 const headerStyle = { fontSize: "12pt" } as const;
 
@@ -45,6 +46,15 @@ export function AdminPage() {
           }}
         />
       ),
+    },
+    {
+      key: "rootfs",
+      label: (
+        <div style={headerStyle}>
+          <Icon name="database" style={{ marginRight: "8px" }} /> RootFS Images
+        </div>
+      ),
+      children: <RootfsAdmin />,
     },
     {
       key: "software-licenses",

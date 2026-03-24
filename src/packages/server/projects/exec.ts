@@ -4,11 +4,12 @@ DOES check auth
 */
 
 import { projectApiClient } from "@cocalc/conat/project/api";
-import { conat } from "@cocalc/backend/conat";
 import type {
   ExecuteCodeOutput,
   ExecuteCodeOptions,
 } from "@cocalc/util/types/execute-code";
+import { conatWithProjectRouting } from "@cocalc/server/conat/route-client";
+import { materializeProjectHost } from "@cocalc/server/conat/route-project";
 import isCollaborator from "@cocalc/server/projects/is-collaborator";
 
 // checks auth and runs code
@@ -25,8 +26,9 @@ export default async function exec({
     throw Error("user must be collaborator on project");
   }
 
+  await materializeProjectHost(project_id);
   const api = projectApiClient({
-    client: conat(),
+    client: conatWithProjectRouting(),
     project_id,
     timeout: execOpts.timeout ? execOpts.timeout * 1000 + 2000 : undefined,
   });

@@ -210,6 +210,21 @@ function fileServer(project_id: string) {
   return fileServerClient({ project_id });
 }
 
+function createPhaseTimingRecorder() {
+  const phase_timings_ms: Record<string, number> = {};
+  return {
+    phase_timings_ms,
+    async measure<T>(phase: string, fn: () => Promise<T>): Promise<T> {
+      const started = Date.now();
+      try {
+        return await fn();
+      } finally {
+        phase_timings_ms[phase] = Date.now() - started;
+      }
+    },
+  };
+}
+
 // Preserve explicit rootfs/docker image names. Older non-OCI labels such as
 // "ubuntu2404" are not valid container image references for the project
 // runner, so fall them back to the default runtime image.
@@ -428,8 +443,10 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
     scope_id: string;
     service: string;
     stream_name: string;
+    phase_timings_ms?: Record<string, number>;
   }> {
     const op_id = lro_op_id ?? uuid();
+    const timings = createPhaseTimingRecorder();
     // Mark as starting immediately so hub/clients see progress even if image pulls are slow.
     ensureProjectRow({
       project_id,
@@ -437,18 +454,26 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
       state: "starting",
     });
     try {
-      await applyPendingCopies({ project_id });
-      const config = await getRunnerConfig(project_id, {
-        authorized_keys,
-        run_quota,
-        image,
-        restore,
-        lro_op_id: op_id,
+      await timings.measure("apply_pending_copies", async () => {
+        await applyPendingCopies({ project_id });
       });
-      await ensureManagedRootfsCached(config);
-      const status = await runnerApi.start({
-        project_id,
-        config,
+      const config = await timings.measure("prepare_config", async () => {
+        return await getRunnerConfig(project_id, {
+          authorized_keys,
+          run_quota,
+          image,
+          restore,
+          lro_op_id: op_id,
+        });
+      });
+      await timings.measure("cache_rootfs", async () => {
+        await ensureManagedRootfsCached(config);
+      });
+      const status = await timings.measure("runner_start", async () => {
+        return await runnerApi.start({
+          project_id,
+          config,
+        });
       });
       ensureProjectRow({
         project_id,
@@ -460,7 +485,12 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
       // During move/restore the destination project root may not exist until
       // runnerApi.start has created or restored it, so ACP rehydrate must wait.
       kickOffAcpRehydrate(project_id, "start: post-start");
-      await refreshAuthorizedKeys(project_id, authorized_keys);
+      await timings.measure("refresh_authorized_keys", async () => {
+        await refreshAuthorizedKeys(project_id, authorized_keys);
+      });
+      timings.phase_timings_ms.total = Object.values(
+        timings.phase_timings_ms,
+      ).reduce((sum, value) => sum + value, 0);
     } catch (err) {
       // Fall back to stopped if startup fails so UI reflects failure.
       ensureProjectRow({
@@ -476,6 +506,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
       scope_id: project_id,
       service: PERSIST_SERVICE,
       stream_name: lroStreamName(op_id),
+      phase_timings_ms: timings.phase_timings_ms,
     };
   }
 

@@ -11,6 +11,8 @@ import {
   ensureRootfsReleaseR2ReplicaForHost,
   hasStoredRootfsArtifact,
   issueRootfsReleaseArtifactUpload,
+  loadRootfsReleaseByImage,
+  upsertReleaseArtifactReplica,
   upsertPublishedRootfsRelease,
 } from "@cocalc/server/rootfs/releases";
 
@@ -37,6 +39,21 @@ const progressSteps: Record<string, number> = {
 
 let running = false;
 let inFlight = 0;
+
+function createPhaseTimingRecorder() {
+  const phase_timings_ms: Record<string, number> = {};
+  return {
+    phase_timings_ms,
+    async measure<T>(phase: string, fn: () => Promise<T>): Promise<T> {
+      const started = Date.now();
+      try {
+        return await fn();
+      } finally {
+        phase_timings_ms[phase] = Date.now() - started;
+      }
+    },
+  };
+}
 
 function publishSummary(summary: LroSummary) {
   return publishLroSummary({
@@ -134,6 +151,7 @@ async function handleRootfsPublishOp(op: LroSummary): Promise<void> {
   heartbeat.unref?.();
 
   let lastProgressKey: string | null = null;
+  const timings = createPhaseTimingRecorder();
   const progress = (update: {
     step: string;
     message?: string;
@@ -182,9 +200,11 @@ async function handleRootfsPublishOp(op: LroSummary): Promise<void> {
     });
 
     const started = Date.now();
-    const client = await getProjectFileServerClient({
-      project_id,
-      timeout: ROOTFS_PUBLISH_TIMEOUT_MS,
+    const client = await timings.measure("validate", async () => {
+      return await getProjectFileServerClient({
+        project_id,
+        timeout: ROOTFS_PUBLISH_TIMEOUT_MS,
+      });
     });
 
     const publishingOp = await updateLro({
@@ -200,23 +220,52 @@ async function handleRootfsPublishOp(op: LroSummary): Promise<void> {
       message: "publishing project filesystem state",
       detail: { project_id },
     });
-    const artifact = await client.publishRootfsImage({
-      project_id,
-      lro: { op_id, scope_type: op.scope_type, scope_id: op.scope_id },
+    const artifact = await timings.measure("publish", async () => {
+      return await client.publishRootfsImage({
+        project_id,
+        lro: { op_id, scope_type: op.scope_type, scope_id: op.scope_id },
+      });
     });
+    const parentRelease =
+      artifact.artifact_kind === "delta" && artifact.parent_image
+        ? await loadRootfsReleaseByImage(artifact.parent_image)
+        : null;
+    const resolvedParentRelease =
+      parentRelease?.content_key === artifact.content_key
+        ? null
+        : parentRelease;
+    const resolvedArtifact =
+      artifact.artifact_kind === "delta" && resolvedParentRelease
+        ? {
+            ...artifact,
+            artifact_kind: "delta" as const,
+            parent_content_key: resolvedParentRelease.content_key,
+          }
+        : {
+            ...artifact,
+            artifact_kind: "full" as const,
+            parent_image: undefined,
+            parent_content_key: undefined,
+          };
 
+    const host_id = await loadProjectHostId(project_id);
+    let uploadedDirectToR2 = false;
+    let uploadResult:
+      | Awaited<ReturnType<typeof client.uploadRootfsReleaseArtifact>>
+      | undefined;
     if (!(await hasStoredRootfsArtifact(artifact.content_key))) {
-      const host_id = await loadProjectHostId(project_id);
       const upload = await issueRootfsReleaseArtifactUpload({
         host_id,
-        content_key: artifact.content_key,
+        content_key: resolvedArtifact.content_key,
+        artifact_kind: resolvedArtifact.artifact_kind,
+        parent_content_key: resolvedArtifact.parent_content_key,
       });
       const uploadOp = await updateLro({
         op_id,
         progress_summary: {
           phase: "upload",
           image: artifact.image,
-          content_key: artifact.content_key,
+          content_key: resolvedArtifact.content_key,
         },
       });
       await publishSummarySafe(uploadOp, {
@@ -226,40 +275,101 @@ async function handleRootfsPublishOp(op: LroSummary): Promise<void> {
       progress({
         step: "upload",
         message: "uploading RootFS release artifact",
-        detail: { image: artifact.image, content_key: artifact.content_key },
+        detail: {
+          image: artifact.image,
+          content_key: resolvedArtifact.content_key,
+          backend: upload.backend,
+        },
       });
-      await client.uploadRootfsReleaseArtifact({
-        project_id,
-        image: artifact.image,
-        upload,
+      uploadResult = await timings.measure("upload", async () => {
+        return await client.uploadRootfsReleaseArtifact({
+          project_id,
+          image: artifact.image,
+          parent_image: resolvedArtifact.parent_image,
+          upload,
+        });
       });
+      uploadedDirectToR2 = uploadResult.backend === "r2";
     }
 
-    const release = await upsertPublishedRootfsRelease({ artifact });
+    const release = await timings.measure("register_release", async () => {
+      return await upsertPublishedRootfsRelease(
+        uploadedDirectToR2 && uploadResult?.backend === "r2"
+          ? {
+              artifact: {
+                ...resolvedArtifact,
+                artifact_kind: uploadResult.artifact_kind,
+              },
+              metadata: {
+                artifact_sha256: uploadResult.artifact_sha256,
+                artifact_bytes: uploadResult.artifact_bytes,
+                uploaded_at: new Date().toISOString(),
+              },
+              artifact_backend: "r2",
+              artifact_path: uploadResult.artifact_path,
+            }
+          : {
+              artifact: {
+                ...resolvedArtifact,
+                artifact_kind:
+                  uploadResult?.artifact_kind ?? resolvedArtifact.artifact_kind,
+              },
+            },
+      );
+    });
 
-    const replicateOp = await updateLro({
-      op_id,
-      progress_summary: {
-        phase: "replicate",
-        image: artifact.image,
-        content_key: artifact.content_key,
-        release_id: release.release_id,
-      },
-    });
-    await publishSummarySafe(replicateOp, {
-      op_id,
-      when: "set-replicate-phase",
-    });
-    progress({
-      step: "replicate",
-      message: "replicating RootFS release artifact to regional R2 storage",
-      detail: { image: artifact.image, content_key: artifact.content_key },
-    });
-    const host_id = await loadProjectHostId(project_id);
-    await ensureRootfsReleaseR2ReplicaForHost({
-      host_id,
-      release,
-    });
+    if (uploadedDirectToR2 && uploadResult?.backend === "r2") {
+      await timings.measure("replicate", async () => {
+        await upsertReleaseArtifactReplica({
+          release_id: release.release_id,
+          content_key: artifact.content_key,
+          backend: "r2",
+          region: uploadResult.region,
+          bucket: {
+            id: uploadResult.bucket_id ?? "",
+            name: uploadResult.bucket_name,
+            purpose: uploadResult.bucket_purpose ?? null,
+            region: uploadResult.region,
+            endpoint: null,
+            access_key_id: null,
+            secret_access_key: null,
+            status: "ready",
+          },
+          artifact_kind: release.artifact_kind,
+          artifact_format: release.artifact_format,
+          artifact_path: uploadResult.artifact_path,
+          artifact_sha256: uploadResult.artifact_sha256,
+          artifact_bytes: uploadResult.artifact_bytes,
+          status: "ready",
+          error: null,
+        });
+      });
+    } else {
+      const replicateOp = await updateLro({
+        op_id,
+        progress_summary: {
+          phase: "replicate",
+          image: artifact.image,
+          content_key: artifact.content_key,
+          release_id: release.release_id,
+        },
+      });
+      await publishSummarySafe(replicateOp, {
+        op_id,
+        when: "set-replicate-phase",
+      });
+      progress({
+        step: "replicate",
+        message: "replicating RootFS release artifact to regional R2 storage",
+        detail: { image: artifact.image, content_key: artifact.content_key },
+      });
+      await timings.measure("replicate", async () => {
+        await ensureRootfsReleaseR2ReplicaForHost({
+          host_id,
+          release,
+        });
+      });
+    }
 
     const catalogOp = await updateLro({
       op_id,
@@ -279,22 +389,24 @@ async function handleRootfsPublishOp(op: LroSummary): Promise<void> {
       message: "saving published image to catalog",
       detail: { image: artifact.image, content_key: artifact.content_key },
     });
-    const entry = await publishProjectRootfsCatalogEntry({
-      account_id: created_by,
-      body: {
-        project_id,
-        label: input.label,
-        description: input.description,
-        visibility: input.visibility,
-        tags: Array.isArray(input.tags) ? input.tags : undefined,
-        theme: input.theme,
-        official: input.official,
-        prepull: input.prepull,
-        hidden: input.hidden,
-        source_mode: input.source_mode,
-      },
-      artifact,
-      release_id: release.release_id,
+    const entry = await timings.measure("catalog_entry", async () => {
+      return await publishProjectRootfsCatalogEntry({
+        account_id: created_by,
+        body: {
+          project_id,
+          label: input.label,
+          description: input.description,
+          visibility: input.visibility,
+          tags: Array.isArray(input.tags) ? input.tags : undefined,
+          theme: input.theme,
+          official: input.official,
+          prepull: input.prepull,
+          hidden: input.hidden,
+          source_mode: input.source_mode,
+        },
+        artifact,
+        release_id: release.release_id,
+      });
     });
 
     const duration_ms = Date.now() - started;
@@ -308,6 +420,12 @@ async function handleRootfsPublishOp(op: LroSummary): Promise<void> {
       snapshot: artifact.snapshot,
       created_snapshot: artifact.created_snapshot,
       duration_ms,
+      phase_timings_ms: {
+        ...timings.phase_timings_ms,
+        total: duration_ms,
+      },
+      publish_phase_timings_ms: artifact.phase_timings_ms,
+      upload_phase_timings_ms: uploadResult?.phase_timings_ms,
     };
 
     const updated = await updateLro({
@@ -319,6 +437,7 @@ async function handleRootfsPublishOp(op: LroSummary): Promise<void> {
         image_id: entry.id,
         image: artifact.image,
         duration_ms,
+        phase_timings_ms: result.phase_timings_ms,
       },
       error: null,
     });
@@ -337,6 +456,10 @@ async function handleRootfsPublishOp(op: LroSummary): Promise<void> {
       op_id,
       status: "failed",
       error: `${err}`,
+      progress_summary: {
+        phase: "failed",
+        phase_timings_ms: timings.phase_timings_ms,
+      },
     });
     await publishSummarySafe(updated, {
       op_id,

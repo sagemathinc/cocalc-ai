@@ -10,7 +10,11 @@ import {
 } from "antd";
 import { SyncOutlined } from "@ant-design/icons";
 import { React } from "@cocalc/frontend/app-framework";
-import type { Host, HostRootfsImage } from "@cocalc/conat/hub/api/hosts";
+import type {
+  Host,
+  HostRootfsGcResult,
+  HostRootfsImage,
+} from "@cocalc/conat/hub/api/hosts";
 import {
   managedRootfsCatalogUrl,
   useRootfsImages,
@@ -33,6 +37,7 @@ type HostRootfsCachePanelProps = {
     refresh: () => Promise<void>;
     pull: (image: string) => Promise<void>;
     remove: (image: string) => Promise<void>;
+    gcDeleted: () => Promise<HostRootfsGcResult | undefined>;
   };
 };
 
@@ -55,6 +60,22 @@ function sectionLabel(section?: string): string | undefined {
       return "Public";
     default:
       return undefined;
+  }
+}
+
+function releaseStateLabel(entry: HostRootfsImage): {
+  color: string;
+  label: string;
+} | null {
+  switch (entry.release_gc_status) {
+    case "deleted":
+      return { color: "red", label: "Deleted centrally" };
+    case "pending_delete":
+      return { color: "orange", label: "Pending delete" };
+    case "blocked":
+      return { color: "gold", label: "Delete blocked" };
+    default:
+      return null;
   }
 }
 
@@ -158,6 +179,12 @@ export function HostRootfsCachePanel({
     );
     return { size, projects };
   }, [inventory?.entries]);
+  const gcEligibleCount = React.useMemo(
+    () =>
+      (inventory?.entries ?? []).filter((entry) => entry.host_gc_eligible)
+        .length,
+    [inventory?.entries],
+  );
 
   React.useEffect(() => {
     if (uncachedPullOptions.length === 0) {
@@ -224,6 +251,29 @@ export function HostRootfsCachePanel({
             <Tag>
               {totals.projects} {plural(totals.projects, "project reference")}
             </Tag>
+            {gcEligibleCount > 0 && (
+              <Tag color="red">{gcEligibleCount} ready for host GC</Tag>
+            )}
+          </Space>
+          <Space wrap>
+            <Button
+              size="small"
+              loading={inventory.actionKey === "gc:deleted"}
+              disabled={gcEligibleCount === 0}
+              onClick={() => {
+                inventory.gcDeleted().catch((err) => {
+                  console.error("failed to gc deleted host rootfs images", err);
+                });
+              }}
+            >
+              GC deleted
+            </Button>
+            {gcEligibleCount > 0 && (
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                Evicts centrally deleted managed images that have no local
+                project references.
+              </Typography.Text>
+            )}
           </Space>
           <Space.Compact style={{ width: "100%" }}>
             <Select
@@ -284,6 +334,7 @@ export function HostRootfsCachePanel({
                 );
                 const running = entry.running_project_count > 0;
                 const actionKey = inventory.actionKey;
+                const releaseState = releaseStateLabel(entry);
                 return (
                   <Card
                     key={entry.image}
@@ -320,6 +371,14 @@ export function HostRootfsCachePanel({
                             )}
                           </Tag>
                         )}
+                        {releaseState && (
+                          <Tag color={releaseState.color}>
+                            {releaseState.label}
+                          </Tag>
+                        )}
+                        {entry.host_gc_eligible && (
+                          <Tag color="red">GC eligible on this host</Tag>
+                        )}
                       </Space>
                       <Typography.Text copyable={{ text: entry.image }}>
                         Image: <code>{entry.image}</code>
@@ -349,6 +408,15 @@ export function HostRootfsCachePanel({
                             )} on this host`
                           : ""}
                       </Typography.Text>
+                      {entry.release_id && (
+                        <Typography.Text
+                          type="secondary"
+                          copyable={{ text: entry.release_id }}
+                          style={{ fontSize: 12 }}
+                        >
+                          Release: <code>{entry.release_id}</code>
+                        </Typography.Text>
+                      )}
                       <Space wrap>
                         <Popconfirm
                           title={

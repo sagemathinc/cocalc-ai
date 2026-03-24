@@ -158,7 +158,7 @@ function signedObjectHeaders({
   contentType,
   cacheControl,
 }: {
-  method?: "PUT" | "GET";
+  method?: "PUT" | "GET" | "DELETE";
   endpoint: string;
   accessKey: string;
   secretKey: string;
@@ -239,6 +239,43 @@ export function issueSignedObjectDownload({
     bucket,
     key,
     payloadSha256: hashHex(""),
+  });
+  const { host: _host, ...requestHeaders } = headers;
+  return {
+    url: `${parsed.origin}${canonicalUri}`,
+    headers: requestHeaders,
+  };
+}
+
+export function issueSignedObjectUpload({
+  endpoint,
+  accessKey,
+  secretKey,
+  bucket,
+  key,
+  contentType,
+  cacheControl,
+  unsignedPayload = true,
+}: {
+  endpoint: string;
+  accessKey: string;
+  secretKey: string;
+  bucket: string;
+  key: string;
+  contentType?: string;
+  cacheControl?: string;
+  unsignedPayload?: boolean;
+}): { url: string; headers: Record<string, string> } {
+  const { parsed, canonicalUri, headers } = signedObjectHeaders({
+    method: "PUT",
+    endpoint,
+    accessKey,
+    secretKey,
+    bucket,
+    key,
+    payloadSha256: unsignedPayload ? "UNSIGNED-PAYLOAD" : hashHex(""),
+    contentType,
+    cacheControl,
   });
   const { host: _host, ...requestHeaders } = headers;
   return {
@@ -381,6 +418,67 @@ export async function uploadObjectFromBuffer({
     );
     req.on("error", reject);
     req.end(buffer);
+  });
+}
+
+export async function deleteObject({
+  endpoint,
+  accessKey,
+  secretKey,
+  bucket,
+  key,
+}: {
+  endpoint: string;
+  accessKey: string;
+  secretKey: string;
+  bucket: string;
+  key: string;
+}): Promise<void> {
+  const { parsed, canonicalUri, headers } = signedObjectHeaders({
+    method: "DELETE",
+    endpoint,
+    accessKey,
+    secretKey,
+    bucket,
+    key,
+    payloadSha256: hashHex(""),
+  });
+  await new Promise<void>((resolve, reject) => {
+    const req = https.request(
+      {
+        method: "DELETE",
+        protocol: parsed.protocol,
+        host: parsed.hostname,
+        port: parsed.port ? Number(parsed.port) : undefined,
+        path: canonicalUri,
+        headers,
+      },
+      (res) => {
+        const chunks: Buffer[] = [];
+        res.on("data", (chunk) =>
+          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)),
+        );
+        res.on("end", () => {
+          if (
+            res.statusCode &&
+            (res.statusCode === 204 ||
+              res.statusCode === 200 ||
+              res.statusCode === 202 ||
+              res.statusCode === 404)
+          ) {
+            resolve();
+            return;
+          }
+          reject(
+            new Error(
+              `R2 DELETE failed (${res.statusCode}): ${Buffer.concat(chunks).toString("utf8")}`,
+            ),
+          );
+        });
+      },
+    );
+    req.on("error", reject);
+    req.end();
   });
 }
 

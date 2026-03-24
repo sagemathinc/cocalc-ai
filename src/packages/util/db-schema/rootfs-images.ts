@@ -14,6 +14,8 @@ Table({
       "official",
       "prepull",
       "hidden",
+      "blocked",
+      "deleted",
       "visibility",
       "runtime_image",
       "updated",
@@ -62,6 +64,30 @@ Table({
     hidden: {
       type: "boolean",
       desc: "Hide this image from normal user-facing pickers.",
+    },
+    blocked: {
+      type: "boolean",
+      desc: "Prevent this image from being newly selected or published from.",
+    },
+    blocked_reason: {
+      type: "string",
+      desc: "Optional explanation for why this image was blocked.",
+    },
+    deleted: {
+      type: "boolean",
+      desc: "Soft-delete this catalog entry while retaining referenced releases.",
+    },
+    deleted_reason: {
+      type: "string",
+      desc: "Optional explanation for why this catalog entry was deleted.",
+    },
+    deleted_at: {
+      type: "timestamp",
+      desc: "When this catalog entry was soft-deleted.",
+    },
+    deleted_by: {
+      type: "uuid",
+      desc: "Account that soft-deleted this catalog entry.",
     },
     arch: {
       type: "string",

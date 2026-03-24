@@ -8,7 +8,7 @@ import { claimLroOps, touchLro, updateLro } from "@cocalc/server/lro/lro-db";
 import { publishLroEvent, publishLroSummary } from "@cocalc/conat/lro/stream";
 import { getProjectFileServerClient } from "@cocalc/server/conat/file-server-client";
 import { getProject } from "@cocalc/server/projects/control";
-import getPool from "@cocalc/database/pool";
+import { replaceProjectRootfsStates } from "@cocalc/server/projects/rootfs-state";
 
 const logger = getLogger("server:projects:restore-worker");
 
@@ -122,10 +122,10 @@ async function setProjectRestoreImage({
   image?: string;
 }): Promise<void> {
   if (!image) return;
-  await getPool().query(
-    "UPDATE projects SET rootfs_image=$1 WHERE project_id=$2",
-    [image, project_id],
-  );
+  await replaceProjectRootfsStates({
+    project_id,
+    current: { image },
+  });
 }
 
 async function handleRestoreOp(op: LroSummary): Promise<void> {

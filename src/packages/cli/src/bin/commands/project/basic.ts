@@ -545,10 +545,24 @@ export function registerProjectBasicCommands(
                 path: opts.path,
               };
 
-          const result = await ctx.hub.projects.exec({
-            project_id: ws.project_id,
-            execOpts,
-          });
+          const commandTimeoutMs = Math.max(
+            30_000,
+            Math.ceil(timeout * 1000) + 5_000,
+          );
+          const prevTimeoutMs = ctx.timeoutMs;
+          const prevRpcTimeoutMs = ctx.rpcTimeoutMs;
+          ctx.timeoutMs = Math.max(prevTimeoutMs, commandTimeoutMs);
+          ctx.rpcTimeoutMs = Math.max(prevRpcTimeoutMs, commandTimeoutMs);
+          let result;
+          try {
+            result = await ctx.hub.projects.exec({
+              project_id: ws.project_id,
+              execOpts,
+            });
+          } finally {
+            ctx.timeoutMs = prevTimeoutMs;
+            ctx.rpcTimeoutMs = prevRpcTimeoutMs;
+          }
 
           if (!ctx.globals.json && ctx.globals.output !== "json") {
             if (result.stdout) process.stdout.write(result.stdout);
