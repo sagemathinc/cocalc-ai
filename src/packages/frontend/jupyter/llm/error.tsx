@@ -85,7 +85,7 @@ export default function LLMError({ traceback, input }: Props) {
   return (
     <div>
       <Space wrap size={[8, 8]} style={{ marginBottom: 8 }}>
-        <Tooltip title="Opens the workspace agent thread and submits this notebook error to Codex.">
+        <Tooltip title="Opens the workspace agent thread and submits this notebook error to the Agent.">
           <Button
             size="small"
             loading={routing}

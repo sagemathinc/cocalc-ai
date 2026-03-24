@@ -2,7 +2,7 @@
 
 import { buildHiddenPrompt, buildVisiblePrompt } from "./cell-tool";
 
-describe("Jupyter cell Codex prompts", () => {
+describe("Jupyter cell Agent prompts", () => {
   it("builds a minimal hidden prompt for bugfix mode", () => {
     const prompt = buildHiddenPrompt({
       mode: "bugfix",

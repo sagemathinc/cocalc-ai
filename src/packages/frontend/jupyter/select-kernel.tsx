@@ -240,7 +240,7 @@ export function KernelSelector({
                 name="question-circle"
               />
             </Popover>{" "}
-            for kernels. Need a new kernel? Ask Codex to install it.
+            for kernels. Need a new kernel? Ask Agent to install it.
           </Paragraph>
         </Space.Compact>
       </Descriptions.Item>,
