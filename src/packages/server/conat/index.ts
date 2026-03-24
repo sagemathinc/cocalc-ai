@@ -23,6 +23,7 @@ import { startRootfsPublishLroWorker } from "@cocalc/server/projects/rootfs-publ
 import { startRestoreLroWorker } from "@cocalc/server/projects/restore-worker";
 import { startHostLroWorker } from "@cocalc/server/hosts/start-worker";
 import { isLaunchpadProduct } from "@cocalc/server/launchpad/mode";
+import { startRootfsReleaseGcMaintenance } from "@cocalc/server/rootfs/gc-maintenance";
 
 export { loadConatConfiguration };
 
@@ -55,6 +56,7 @@ export async function initConatApi() {
   startProjectHardDeleteWorker();
   startMoveLroWorker();
   startRootfsPublishLroWorker();
+  startRootfsReleaseGcMaintenance();
   startRestoreLroWorker();
   startHostLroWorker();
   initLLM();
