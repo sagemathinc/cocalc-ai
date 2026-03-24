@@ -51,6 +51,13 @@ function getEventTime(evt: any): number | undefined {
     : undefined;
 }
 
+function getEventSeq(evt: any): number | undefined {
+  const value = evt?.seq;
+  return typeof value === "number" && Number.isFinite(value)
+    ? value
+    : undefined;
+}
+
 function normalizeIncomingLogPayload(payload: any): any[] {
   if (Array.isArray(payload)) {
     return payload.filter(Boolean);
@@ -252,18 +259,26 @@ export function useCodexLog({
             name: liveLogStream,
             ephemeral: true,
           });
+          sub = await liveStream.changefeed();
           const initial: any[] = [];
+          let initialMaxSeq: number | undefined;
           for await (const { mesg, seq, time } of liveStream.getAll()) {
             const evt =
               getEventTime(mesg) == null
                 ? { ...mesg, seq: mesg?.seq ?? seq, time }
                 : mesg;
             initial.push(evt);
+            const eventSeq = getEventSeq(evt);
+            if (
+              eventSeq != null &&
+              (initialMaxSeq == null || eventSeq > initialMaxSeq)
+            ) {
+              initialMaxSeq = eventSeq;
+            }
           }
           if (!stopped && initial.length > 0) {
             setLiveLog((prev) => mergeLogs(prev ?? [], initial));
           }
-          sub = await liveStream.changefeed();
           for await (const batch of sub) {
             if (stopped) break;
             let immediate = false;
@@ -277,6 +292,10 @@ export function useCodexLog({
                       time: update.time,
                     }
                   : update.mesg;
+              const eventSeq = getEventSeq(evt);
+              if (eventSeq != null && initialMaxSeq != null) {
+                if (eventSeq <= initialMaxSeq) continue;
+              }
               liveBufferRef.current.push(evt);
               if (evt.type === "summary" || evt.type === "error") {
                 immediate = true;

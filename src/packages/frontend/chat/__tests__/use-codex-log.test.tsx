@@ -95,10 +95,14 @@ class FakeAstream {
       time: number;
     }> = [],
     private readonly feed = new FakeChangefeed(),
+    private readonly opts: {
+      onYield?: (item: { mesg: any; seq: number; time: number }) => void;
+    } = {},
   ) {}
 
   async *getAll() {
     for (const item of this.initial) {
+      this.opts.onYield?.(item);
       yield item;
     }
   }
@@ -344,6 +348,66 @@ describe("useCodexLog", () => {
 
     await waitFor(() => {
       expect(screen.getByTestId("latest-event").textContent).toBe("Hello!");
+    });
+    expect(get).not.toHaveBeenCalled();
+  });
+
+  it("does not miss events published while the initial astream backlog loads", async () => {
+    jest.useFakeTimers();
+    const stream = new FakeAstream(
+      [
+        {
+          mesg: {
+            type: "event",
+            seq: 1,
+            event: { type: "message", text: "Hel" },
+          },
+          seq: 1,
+          time: 10,
+        },
+      ],
+      new FakeChangefeed(),
+      {
+        onYield: () => {
+          stream.push([
+            {
+              op: "set",
+              mesg: {
+                type: "event",
+                seq: 2,
+                event: { type: "message", text: "lo" },
+              },
+              seq: 2,
+              time: 20,
+            },
+          ]);
+        },
+      },
+    );
+    const get = jest.fn().mockResolvedValue(null);
+    conatMock.mockReturnValue({
+      subscribe: jest.fn(),
+      sync: {
+        akv: () => ({ get }),
+        astream: () => stream,
+      },
+    });
+
+    render(
+      <TestComponent
+        generating={true}
+        logKey="log-key-live-gap"
+        liveLogStream="live-stream-gap"
+      />,
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+      await jest.advanceTimersByTimeAsync(150);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("latest-event").textContent).toBe("Hello");
     });
     expect(get).not.toHaveBeenCalled();
   });
