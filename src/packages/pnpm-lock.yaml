@@ -329,6 +329,9 @@ importers:
       reflect-sync:
         specifier: 0.15.1
         version: 0.15.1
+      typescript:
+        specifier: ^5.9.2
+        version: 5.9.3
     devDependencies:
       '@types/node':
         specifier: ^22.10.10

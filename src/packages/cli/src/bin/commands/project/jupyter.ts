@@ -1,7 +1,14 @@
+import { resolve as resolvePath } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { Command } from "commander";
 
 import type { OutputMessage } from "@cocalc/conat/project/jupyter/run-code";
+import {
+  loadScriptModule,
+  loadScriptModuleFromFile,
+  resolveScriptHandler,
+} from "../../core/script-runner";
+import { createJupyterApi } from "../../../api/jupyter";
 import type { ProjectCommandDeps } from "../project";
 
 function normalizePath(value?: string): string {
@@ -153,6 +160,7 @@ export function registerProjectJupyterCommands(
     projectJupyterLiveRunSession,
     durationToMs,
     readAllStdin,
+    resolveProjectConatClient,
   } = deps;
 
   const jupyter = project
@@ -325,6 +333,69 @@ export function registerProjectJupyterCommands(
             atStart: opts.atStart === true,
             atEnd: opts.atEnd === true,
           });
+        });
+      },
+    );
+
+  jupyter
+    .command("exec")
+    .description(
+      "run a local TypeScript/JavaScript notebook script against the backend notebook API",
+    )
+    .requiredOption("--path <path>", "notebook path inside the project")
+    .option("-w, --project <project>", "project id or name")
+    .option("--file <path>", "local .ts/.js script file")
+    .option("--stdin", "read the script from stdin as TypeScript")
+    .action(
+      async (
+        opts: {
+          path: string;
+          project?: string;
+          file?: string;
+          stdin?: boolean;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "project jupyter exec", async (ctx) => {
+          const sourceCount = [opts.file ? 1 : 0, opts.stdin ? 1 : 0].reduce(
+            (sum, n) => sum + n,
+            0,
+          );
+          if (sourceCount !== 1) {
+            throw new Error("exec requires exactly one of --file or --stdin");
+          }
+          const bindingPath = normalizePath(opts.path);
+          const scriptModule = opts.file
+            ? await loadScriptModuleFromFile(resolvePath(opts.file))
+            : await loadScriptModule({
+                filename: resolvePath("stdin.project-jupyter-exec.ts"),
+                source: await readAllStdin(),
+              });
+          const handler = resolveScriptHandler(scriptModule) as (
+            ctx: Record<string, unknown>,
+          ) => Promise<unknown> | unknown;
+          const jupyterApi = createJupyterApi({
+            resolveProjectConatClient,
+          });
+          try {
+            const notebook = jupyterApi.bindDocument(ctx, {
+              projectIdentifier: opts.project,
+              path: bindingPath,
+            });
+            const { project } = await resolveProjectConatClient(
+              ctx,
+              opts.project,
+              process.cwd(),
+            );
+            return await handler({
+              notebook,
+              project,
+              path: bindingPath,
+              cwd: process.cwd(),
+            });
+          } finally {
+            await (jupyterApi as any).close?.();
+          }
         });
       },
     );

@@ -22,7 +22,7 @@
     "publish:sea": "cd sea && ./publish-sea.sh",
     "publish:sea:signed": "pnpm sea:signed && pnpm publish:sea",
     "publish:site": "cd site && ./publish-site.sh",
-    "test": "pnpm build && node --test dist/core/*.test.js"
+    "test": "pnpm build && node --test $(find dist -name '*.test.js' -print)"
   },
   "files": [
     "dist/**",
@@ -44,6 +44,10 @@
     "./api/jupyter": {
       "types": "./dist/api/jupyter.d.ts",
       "default": "./dist/api/jupyter.js"
+    },
+    "./api/jupyter-script": {
+      "types": "./dist/api/jupyter-script.d.ts",
+      "default": "./dist/api/jupyter-script.js"
     },
     "./api/timetravel": {
       "types": "./dist/api/timetravel.d.ts",
@@ -71,7 +75,8 @@
     "ascii-table3": "^1.0.1",
     "commander": "^14.0.1",
     "playwright-core": "^1.57.0",
-    "reflect-sync": "0.15.1"
+    "reflect-sync": "0.15.1",
+    "typescript": "^5.9.2"
   },
   "devDependencies": {
     "@types/node": "^22.10.10",

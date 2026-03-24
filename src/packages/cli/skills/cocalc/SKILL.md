@@ -71,8 +71,34 @@ Current commands:
 - `cocalc project jupyter --path <ipynb> move ...`
 - `cocalc project jupyter --path <ipynb> run ...`
 - `cocalc project jupyter --path <ipynb> live ...`
+- `cocalc project jupyter --path <ipynb> exec --file <script.ts>`
 
 This is the preferred path because it survives browser refreshes/disconnects and does not require reverse-engineering frontend notebook state.
+
+Use the direct commands for one-step operations. For multi-step notebook work, prefer `project jupyter exec` so one local TypeScript script can reuse the same bound notebook API instead of shelling several separate commands.
+
+Example:
+
+```bash
+cocalc project jupyter --path scratch/demo.ipynb exec --file ./tool.ts
+```
+
+Where `tool.ts` looks like:
+
+```ts
+import type { ProjectJupyterExecContext } from "@cocalc/cli/api/jupyter-script";
+
+export default async function ({ notebook }: ProjectJupyterExecContext) {
+  let { cells } = await notebook.listCells();
+  let anchor = cells[cells.length - 1];
+  let inserted = await notebook.insertCell({
+    afterId: anchor.id,
+    input: "2 + 3",
+    cellType: "code",
+  });
+  return await notebook.run({ cellIds: [inserted.cell.id] });
+}
+```
 
 Use `cocalc browser exec` for notebook work only when you need transient UI context such as:
 
