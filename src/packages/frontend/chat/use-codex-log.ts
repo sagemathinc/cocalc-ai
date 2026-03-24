@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import LRUCache from "lru-cache";
 import { appendStreamMessage } from "@cocalc/chat";
+import type { AcpStreamMessage } from "@cocalc/conat/ai/acp/types";
+import type { DStream } from "@cocalc/conat/sync/dstream";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 
 // Backend batches live ACP log pubsub at 100ms and AKV persistence at 250ms in
@@ -51,18 +53,21 @@ function getEventTime(evt: any): number | undefined {
     : undefined;
 }
 
-function getEventSeq(evt: any): number | undefined {
-  const value = evt?.seq;
-  return typeof value === "number" && Number.isFinite(value)
-    ? value
-    : undefined;
-}
-
 function normalizeIncomingLogPayload(payload: any): any[] {
   if (Array.isArray(payload)) {
     return payload.filter(Boolean);
   }
   return payload ? [payload] : [];
+}
+
+function normalizeLiveStreamEvent(event: AcpStreamMessage): AcpStreamMessage {
+  if (getEventTime(event) != null) {
+    return event;
+  }
+  return {
+    ...event,
+    time: Date.now(),
+  };
 }
 
 /**
@@ -220,7 +225,10 @@ export function useCodexLog({
   // Subscribe to live events while generating.
   useEffect(() => {
     let sub: any;
-    let liveStream: any;
+    let liveStream: DStream<AcpStreamMessage> | undefined;
+    let liveStreamListener:
+      | ((event: AcpStreamMessage, seq?: number) => void)
+      | undefined;
     let stopped = false;
     const flushBufferedLiveLog = () => {
       if (liveFlushTimerRef.current != null) {
@@ -254,54 +262,34 @@ export function useCodexLog({
       try {
         const cn = webapp_client.conat_client.conat();
         if (liveLogStream) {
-          liveStream = cn.sync.astream({
-            project_id: projectId,
-            name: liveLogStream,
-            ephemeral: true,
-          });
-          sub = await liveStream.changefeed();
-          const initial: any[] = [];
-          let initialMaxSeq: number | undefined;
-          for await (const { mesg, seq, time } of liveStream.getAll()) {
-            const evt =
-              getEventTime(mesg) == null
-                ? { ...mesg, seq: mesg?.seq ?? seq, time }
-                : mesg;
-            initial.push(evt);
-            const eventSeq = getEventSeq(evt);
-            if (
-              eventSeq != null &&
-              (initialMaxSeq == null || eventSeq > initialMaxSeq)
-            ) {
-              initialMaxSeq = eventSeq;
-            }
+          liveStream =
+            await webapp_client.conat_client.dstream<AcpStreamMessage>({
+              project_id: projectId,
+              name: liveLogStream,
+              ephemeral: true,
+            });
+          if (stopped) {
+            liveStream.close();
+            return;
           }
+          liveStream.setMaxListeners(
+            Math.max(liveStream.getMaxListeners(), 50),
+          );
+          liveStreamListener = (event: AcpStreamMessage) => {
+            if (stopped) return;
+            const evt = normalizeLiveStreamEvent(event);
+            liveBufferRef.current.push(evt);
+            scheduleBufferedFlush(
+              evt.type === "summary" || evt.type === "error",
+            );
+          };
+          // DStream already bridges the backlog/live-update race internally.
+          // Register the listener before reading getAll() so local hook state
+          // can't miss a late event that arrives between these two steps.
+          liveStream.on("change", liveStreamListener);
+          const initial = liveStream.getAll().map(normalizeLiveStreamEvent);
           if (!stopped && initial.length > 0) {
             setLiveLog((prev) => mergeLogs(prev ?? [], initial));
-          }
-          for await (const batch of sub) {
-            if (stopped) break;
-            let immediate = false;
-            for (const update of batch ?? []) {
-              if (update?.op !== "set" || update?.mesg == null) continue;
-              const evt =
-                getEventTime(update.mesg) == null
-                  ? {
-                      ...update.mesg,
-                      seq: update.mesg?.seq ?? update.seq,
-                      time: update.time,
-                    }
-                  : update.mesg;
-              const eventSeq = getEventSeq(evt);
-              if (eventSeq != null && initialMaxSeq != null) {
-                if (eventSeq <= initialMaxSeq) continue;
-              }
-              liveBufferRef.current.push(evt);
-              if (evt.type === "summary" || evt.type === "error") {
-                immediate = true;
-              }
-            }
-            scheduleBufferedFlush(immediate);
           }
           return;
         }
@@ -336,6 +324,13 @@ export function useCodexLog({
       liveBufferRef.current = [];
       try {
         sub?.close?.();
+      } catch {
+        // ignore
+      }
+      try {
+        if (liveStream && liveStreamListener) {
+          liveStream.off("change", liveStreamListener);
+        }
       } catch {
         // ignore
       }

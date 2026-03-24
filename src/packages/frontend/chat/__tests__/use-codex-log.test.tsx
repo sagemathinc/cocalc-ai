@@ -1,4 +1,5 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
+import { EventEmitter } from "events";
 import { getLatestEventLineText } from "@cocalc/chat";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { useCodexLog } from "../use-codex-log";
@@ -7,6 +8,7 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
   webapp_client: {
     conat_client: {
       conat: jest.fn(),
+      dstream: jest.fn(),
     },
   },
 }));
@@ -49,68 +51,17 @@ class FakeSubscription {
   }
 }
 
-class FakeChangefeed {
-  private closed = false;
-  private queue: IteratorResult<any>[] = [];
-  private wake?: (value: IteratorResult<any>) => void;
-
-  close = jest.fn(() => {
-    this.closed = true;
-    if (this.wake != null) {
-      const wake = this.wake;
-      this.wake = undefined;
-      wake({ value: undefined, done: true });
-    }
-  });
-
-  push(data: any) {
-    const next = { value: data, done: false } as IteratorResult<any>;
-    if (this.wake != null) {
-      const wake = this.wake;
-      this.wake = undefined;
-      wake(next);
-      return;
-    }
-    this.queue.push(next);
+class FakeDstream extends EventEmitter {
+  constructor(private messages: any[] = []) {
+    super();
   }
 
-  async *[Symbol.asyncIterator]() {
-    while (!this.closed) {
-      const next =
-        this.queue.shift() ??
-        (await new Promise<IteratorResult<any>>((resolve) => {
-          this.wake = resolve;
-        }));
-      if (next.done) return;
-      yield next.value;
-    }
-  }
-}
-
-class FakeAstream {
-  constructor(
-    private readonly initial: Array<{
-      mesg: any;
-      seq: number;
-      time: number;
-    }> = [],
-    private readonly feed = new FakeChangefeed(),
-    private readonly opts: {
-      onYield?: (item: { mesg: any; seq: number; time: number }) => void;
-    } = {},
-  ) {}
-
-  async *getAll() {
-    for (const item of this.initial) {
-      this.opts.onYield?.(item);
-      yield item;
-    }
-  }
-
-  changefeed = jest.fn(async () => this.feed);
   close = jest.fn();
-  push(update: any) {
-    this.feed.push(update);
+  getAll = jest.fn(() => [...this.messages]);
+
+  push(message: any) {
+    this.messages = [...this.messages, message];
+    this.emit("change", message, message?.seq);
   }
 }
 
@@ -143,10 +94,12 @@ function TestComponent({
 
 describe("useCodexLog", () => {
   const conatMock = webapp_client.conat_client.conat as jest.Mock;
+  const dstreamMock = webapp_client.conat_client.dstream as jest.Mock;
 
   beforeEach(() => {
     jest.clearAllMocks();
     jest.useRealTimers();
+    dstreamMock.mockReset();
   });
 
   it("does not subscribe to live events when the turn is idle", async () => {
@@ -158,6 +111,7 @@ describe("useCodexLog", () => {
         akv: () => ({ get }),
       },
     });
+    dstreamMock.mockResolvedValue(new FakeDstream());
 
     render(<TestComponent generating={false} />);
 
@@ -177,6 +131,7 @@ describe("useCodexLog", () => {
         akv: () => ({ get }),
       },
     });
+    dstreamMock.mockResolvedValue(new FakeDstream());
 
     const { rerender } = render(<TestComponent generating={true} />);
 
@@ -202,6 +157,7 @@ describe("useCodexLog", () => {
         akv: () => ({ get }),
       },
     });
+    dstreamMock.mockResolvedValue(new FakeDstream());
 
     render(
       <TestComponent
@@ -281,34 +237,28 @@ describe("useCodexLog", () => {
     });
   });
 
-  it("loads live events from an ephemeral astream while generating", async () => {
+  it("loads live events from an ephemeral dstream while generating", async () => {
     jest.useFakeTimers();
-    const stream = new FakeAstream([
+    const stream = new FakeDstream([
       {
-        mesg: {
-          type: "event",
-          seq: 1,
-          event: { type: "message", text: "Hel" },
-        },
+        type: "event",
         seq: 1,
         time: 10,
+        event: { type: "message", text: "Hel" },
       },
       {
-        mesg: {
-          type: "event",
-          seq: 2,
-          event: { type: "message", text: "lo" },
-        },
+        type: "event",
         seq: 2,
         time: 20,
+        event: { type: "message", text: "lo" },
       },
     ]);
     const get = jest.fn().mockResolvedValue(null);
+    dstreamMock.mockResolvedValue(stream);
     conatMock.mockReturnValue({
       subscribe: jest.fn(),
       sync: {
         akv: () => ({ get }),
-        astream: () => stream,
       },
     });
 
@@ -321,25 +271,23 @@ describe("useCodexLog", () => {
     );
 
     await waitFor(() => {
-      expect(stream.changefeed).toHaveBeenCalled();
+      expect(dstreamMock).toHaveBeenCalledWith({
+        project_id: "project-1",
+        name: "live-stream-1",
+        ephemeral: true,
+      });
     });
 
     await waitFor(() => {
       expect(screen.getByTestId("latest-event").textContent).toBe("Hello");
     });
 
-    stream.push([
-      {
-        op: "set",
-        mesg: {
-          type: "event",
-          seq: 3,
-          event: { type: "message", text: "!" },
-        },
-        seq: 3,
-        time: 30,
-      },
-    ]);
+    stream.push({
+      type: "event",
+      seq: 3,
+      time: 30,
+      event: { type: "message", text: "!" },
+    });
 
     await act(async () => {
       await Promise.resolve();
@@ -352,44 +300,22 @@ describe("useCodexLog", () => {
     expect(get).not.toHaveBeenCalled();
   });
 
-  it("does not miss events published while the initial astream backlog loads", async () => {
+  it("does not miss messages pushed after the shared dstream listener attaches", async () => {
     jest.useFakeTimers();
-    const stream = new FakeAstream(
-      [
-        {
-          mesg: {
-            type: "event",
-            seq: 1,
-            event: { type: "message", text: "Hel" },
-          },
-          seq: 1,
-          time: 10,
-        },
-      ],
-      new FakeChangefeed(),
+    const stream = new FakeDstream([
       {
-        onYield: () => {
-          stream.push([
-            {
-              op: "set",
-              mesg: {
-                type: "event",
-                seq: 2,
-                event: { type: "message", text: "lo" },
-              },
-              seq: 2,
-              time: 20,
-            },
-          ]);
-        },
+        type: "event",
+        seq: 1,
+        time: 10,
+        event: { type: "message", text: "Hel" },
       },
-    );
+    ]);
     const get = jest.fn().mockResolvedValue(null);
+    dstreamMock.mockResolvedValue(stream);
     conatMock.mockReturnValue({
       subscribe: jest.fn(),
       sync: {
         akv: () => ({ get }),
-        astream: () => stream,
       },
     });
 
@@ -401,6 +327,17 @@ describe("useCodexLog", () => {
       />,
     );
 
+    await waitFor(() => {
+      expect(dstreamMock).toHaveBeenCalled();
+    });
+
+    stream.push({
+      type: "event",
+      seq: 2,
+      time: 20,
+      event: { type: "message", text: "lo" },
+    });
+
     await act(async () => {
       await Promise.resolve();
       await jest.advanceTimersByTimeAsync(150);
@@ -410,5 +347,35 @@ describe("useCodexLog", () => {
       expect(screen.getByTestId("latest-event").textContent).toBe("Hello");
     });
     expect(get).not.toHaveBeenCalled();
+  });
+
+  it("closes the shared dstream on cleanup", async () => {
+    const stream = new FakeDstream();
+    const get = jest.fn().mockResolvedValue(null);
+    dstreamMock.mockResolvedValue(stream);
+    conatMock.mockReturnValue({
+      subscribe: jest.fn(),
+      sync: {
+        akv: () => ({ get }),
+      },
+    });
+
+    const { unmount } = render(
+      <TestComponent
+        generating={true}
+        logKey="log-key-live-close"
+        liveLogStream="live-stream-close"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(dstreamMock).toHaveBeenCalled();
+    });
+
+    unmount();
+
+    await waitFor(() => {
+      expect(stream.close).toHaveBeenCalled();
+    });
   });
 });
