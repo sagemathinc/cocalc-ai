@@ -424,11 +424,11 @@ export default function SupportCreateModal() {
             onChange={(e) => setType(e.target.value)}
           >
             <Space wrap>
-              <Radio.Button value="problem">Problem</Radio.Button>
-              <Radio.Button value="question">Question</Radio.Button>
-              <Radio.Button value="task">Task</Radio.Button>
-              <Radio.Button value="purchase">Purchase</Radio.Button>
-              <Radio.Button value="chat">Video chat</Radio.Button>
+              <Radio value="problem">Problem</Radio>
+              <Radio value="question">Question</Radio>
+              <Radio value="task">Task</Radio>
+              <Radio value="purchase">Purchase</Radio>
+              <Radio value="chat">Video chat</Radio>
             </Space>
           </Radio.Group>
         </div>
