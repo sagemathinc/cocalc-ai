@@ -64,4 +64,21 @@ describe("PublicFeaturesApp", () => {
     expect(screen.getByText("Agent-native workflows")).not.toBeNull();
     expect(screen.getByText("Create account")).not.toBeNull();
   });
+
+  it("renders the richer jupyter feature page", () => {
+    render(
+      <PublicFeaturesApp
+        config={{ help_email: "help@example.com", site_name: "Launchpad" }}
+        initialRoute={{ slug: "jupyter-notebook", view: "detail" }}
+      />,
+    );
+
+    expect(
+      screen.getByText("Jupyter notebooks made for teaching"),
+    ).not.toBeNull();
+    expect(
+      screen.getByText("Managed kernels and practical compatibility"),
+    ).not.toBeNull();
+    expect(screen.getByText("Publishing notebooks")).not.toBeNull();
+  });
 });

@@ -6,7 +6,7 @@ import cookieParser from "cookie-parser";
 import express from "express";
 import { existsSync } from "fs";
 import ms from "ms";
-import { join } from "path";
+import { dirname, join } from "path";
 import { parse as parseURL } from "url";
 import * as Module from "module";
 import { path as WEBAPP_PATH } from "@cocalc/assets";
@@ -230,6 +230,12 @@ export default async function init(opts: Options): Promise<{
 
   // Static assets that are used by the webapp, the landing page, etc.
   router.use(
+    "/favicon.ico",
+    express.static(join(WEBAPP_PATH, "favicon.ico"), {
+      setHeaders: cacheLongTerm,
+    }),
+  );
+  router.use(
     "/webapp",
     express.static(WEBAPP_PATH, { setHeaders: cacheLongTerm }),
   );
@@ -392,6 +398,28 @@ function resolveStaticPath(): string {
   return STATIC_PATH;
 }
 
+function resolveNextPublicPath(): string | undefined {
+  const candidates: string[] = [];
+  try {
+    const nextInitPath = moduleRequire?.resolve?.("@cocalc/next/init");
+    if (nextInitPath) {
+      candidates.push(join(dirname(dirname(nextInitPath)), "public"));
+    }
+  } catch {
+    // ignore and continue with repository-local fallbacks
+  }
+  candidates.push(
+    join(process.cwd(), "packages", "next", "public"),
+    join(process.cwd(), "..", "packages", "next", "public"),
+    join(__dirname, "..", "..", "next", "public"),
+  );
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+}
+
 async function initStatic(router) {
   const staticPath = resolveStaticPath();
   const staticLogger = getLogger("express-app:static");
@@ -399,6 +427,16 @@ async function initStatic(router) {
     staticLogger.warn("static assets not found", { staticPath });
   } else {
     staticLogger.info("serving static assets", { staticPath });
+  }
+  const nextPublicPath = resolveNextPublicPath();
+  if (!nextPublicPath) {
+    staticLogger.warn("next public assets not found");
+  } else {
+    staticLogger.info("serving next public assets", { nextPublicPath });
+    router.use(
+      "/public",
+      express.static(nextPublicPath, { setHeaders: cacheLongTerm }),
+    );
   }
   let compiler: any = null;
   if (

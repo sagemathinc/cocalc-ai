@@ -36,6 +36,9 @@ describe("getContentRouteFromPath", () => {
       timestamp: 1712345678,
       view: "news-history",
     });
+    expect(
+      getContentRouteFromPath(contentPath("software/cocalc-plus")),
+    ).toEqual({ view: "software-cocalc-plus" });
   });
 });
 
@@ -112,5 +115,22 @@ describe("PublicContentApp", () => {
     ).not.toBeNull();
     expect(screen.getByText("Launchpad update")).not.toBeNull();
     expect(screen.getByText("#launchpad")).not.toBeNull();
+  });
+
+  it("renders the cocalc plus page", () => {
+    render(
+      <PublicContentApp
+        config={{ site_name: "Launchpad" }}
+        initialRoute={{ view: "software-cocalc-plus" }}
+      />,
+    );
+
+    expect(screen.getByRole("heading", { name: "CoCalc Plus" })).not.toBeNull();
+    expect(screen.getByText("Install CoCalc Plus")).not.toBeNull();
+    expect(
+      screen.getByText(
+        "The local single-user CoCalc experience for your own machine.",
+      ),
+    ).not.toBeNull();
   });
 });

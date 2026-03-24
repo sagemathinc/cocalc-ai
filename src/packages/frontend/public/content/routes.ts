@@ -14,7 +14,8 @@ export type PublicContentView =
   | "policies-custom"
   | "news"
   | "news-detail"
-  | "news-history";
+  | "news-history"
+  | "software-cocalc-plus";
 
 export interface PublicContentRoute {
   newsId?: number;
@@ -62,12 +63,16 @@ export function getContentRouteFromPath(pathname: string): PublicContentRoute {
     return { view: "news" };
   }
 
+  if (routeParts[0] === "software" && routeParts[1] === "cocalc-plus") {
+    return { view: "software-cocalc-plus" };
+  }
+
   return { view: "about" };
 }
 
 export function topLevelView(
   route: PublicContentRoute,
-): "about" | "policies" | "news" {
+): "about" | "policies" | "news" | "software" {
   switch (route.view) {
     case "policies":
     case "policies-imprint":
@@ -77,6 +82,8 @@ export function topLevelView(
     case "news-detail":
     case "news-history":
       return "news";
+    case "software-cocalc-plus":
+      return "software";
     default:
       return "about";
   }
