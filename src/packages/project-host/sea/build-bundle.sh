@@ -6,7 +6,7 @@
 # single archive.
 #
 # Usage:
-#   ./build-bundle.sh [output-directory]
+#   ./build-bundle.sh [output-directory] [tarball-path]
 #
 # You should have already installed workspace dependencies. The script will
 # build the TypeScript sources for @cocalc/project-host and the static assets.
@@ -14,7 +14,40 @@
 set -euo pipefail
 
 ROOT="$(realpath "$(dirname "$0")/../../..")"
-OUT="${1:-$ROOT/packages/project-host/build/bundle}"
+OUT="$(realpath -m "${1:-$ROOT/packages/project-host/build/bundle}")"
+TARBALL="${2:-}"
+if [ -n "$TARBALL" ]; then
+  TARBALL="$(realpath -m "$TARBALL")"
+fi
+FINAL_OUT="$OUT"
+FINAL_TARBALL="$TARBALL"
+OUT_PARENT="$(dirname "$OUT")"
+OUT_NAME="$(basename "$OUT")"
+LOCKFILE="$OUT_PARENT/.${OUT_NAME}.build.lock"
+TMP_ROOT=""
+TMP_TARBALL=""
+
+cleanup() {
+  if [ -n "$TMP_TARBALL" ]; then
+    rm -f "$TMP_TARBALL" || true
+  fi
+  if [ -n "$TMP_ROOT" ]; then
+    rm -rf "$TMP_ROOT" || true
+  fi
+}
+
+mkdir -p "$OUT_PARENT"
+if [ -d "$LOCKFILE" ]; then
+  rmdir "$LOCKFILE" 2>/dev/null || {
+    echo "ERROR: stale bundle lock directory exists at $LOCKFILE" >&2
+    exit 1
+  }
+fi
+exec 9>"$LOCKFILE"
+flock 9
+trap cleanup EXIT
+TMP_ROOT="$(mktemp -d "$OUT_PARENT/.${OUT_NAME}.tmp.XXXXXX")"
+OUT="$TMP_ROOT/$OUT_NAME"
 
 echo "Building CoCalc Project Host bundle..."
 echo "  root: $ROOT"
@@ -253,5 +286,19 @@ done
 
 echo "- Remove other platform binaries"
 rm -rf "$OUT"/build/win32 "$OUT"/build/darwin || true
+
+mkdir -p "$(dirname "$FINAL_OUT")"
+rm -rf "$FINAL_OUT"
+mv "$OUT" "$FINAL_OUT"
+OUT="$FINAL_OUT"
+
+if [ -n "$FINAL_TARBALL" ]; then
+  mkdir -p "$(dirname "$FINAL_TARBALL")"
+  TMP_TARBALL="$FINAL_TARBALL.tmp.$$"
+  tar -C "$(dirname "$OUT")" -Jcf "$TMP_TARBALL" "$(basename "$OUT")"
+  tar -tJf "$TMP_TARBALL" >/dev/null
+  mv "$TMP_TARBALL" "$FINAL_TARBALL"
+  TMP_TARBALL=""
+fi
 
 echo "- Bundle created at $OUT"

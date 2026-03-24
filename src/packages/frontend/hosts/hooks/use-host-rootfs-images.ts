@@ -4,7 +4,10 @@ import {
   useRef,
   useState,
 } from "@cocalc/frontend/app-framework";
-import type { HostRootfsImage } from "@cocalc/conat/hub/api/hosts";
+import type {
+  HostRootfsGcResult,
+  HostRootfsImage,
+} from "@cocalc/conat/hub/api/hosts";
 
 type HubClient = {
   hosts: {
@@ -17,6 +20,9 @@ type HubClient = {
       id: string;
       image: string;
     }) => Promise<{ removed: boolean }>;
+    gcDeletedHostRootfsImages: (opts: {
+      id: string;
+    }) => Promise<HostRootfsGcResult>;
   };
 };
 
@@ -34,6 +40,7 @@ type UseHostRootfsImagesResult = {
   refresh: () => Promise<void>;
   pull: (image: string) => Promise<void>;
   remove: (image: string) => Promise<void>;
+  gcDeleted: () => Promise<HostRootfsGcResult | undefined>;
 };
 
 function getErrorMessage(err: unknown): string {
@@ -117,6 +124,21 @@ export function useHostRootfsImages(
     [hostId, hub, refresh],
   );
 
+  const gcDeleted = useCallback(async () => {
+    if (!hostId) return;
+    setActionKey("gc:deleted");
+    setError(undefined);
+    try {
+      const result = await hub.hosts.gcDeletedHostRootfsImages({ id: hostId });
+      await refresh();
+      return result;
+    } catch (err) {
+      setError(getErrorMessage(err));
+    } finally {
+      setActionKey(undefined);
+    }
+  }, [hostId, hub, refresh]);
+
   useEffect(() => {
     if (!enabled || !hostId) {
       setEntries([]);
@@ -143,5 +165,6 @@ export function useHostRootfsImages(
     refresh,
     pull,
     remove,
+    gcDeleted,
   };
 }

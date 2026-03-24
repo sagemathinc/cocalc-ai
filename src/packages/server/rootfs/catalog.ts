@@ -7,9 +7,12 @@ import getPool from "@cocalc/database/pool";
 import isAdmin from "@cocalc/server/accounts/is-admin";
 import { v4 } from "uuid";
 import type {
+  RootfsAdminCatalogEntry,
   PublishProjectRootfsArtifact,
   PublishProjectRootfsBody,
   RootfsCatalogSaveBody,
+  RootfsDeleteBlockers,
+  RootfsDeleteRequestResult,
   RootfsImageArch,
   RootfsImageEntry,
   RootfsImageManifest,
@@ -17,6 +20,7 @@ import type {
   RootfsImageTheme,
   RootfsImageVisibility,
   RootfsImageWarning,
+  RootfsReleaseGcStatus,
 } from "@cocalc/util/rootfs-images";
 import {
   BUILTIN_ROOTFS_IMAGES,
@@ -36,6 +40,12 @@ type RootfsImageRow = {
   official: boolean | null;
   prepull: boolean | null;
   hidden: boolean | null;
+  blocked: boolean | null;
+  blocked_reason: string | null;
+  deleted: boolean | null;
+  deleted_reason: string | null;
+  deleted_at: Date | null;
+  deleted_by: string | null;
   arch: string | null;
   gpu: boolean | null;
   size_gb: number | null;
@@ -47,6 +57,10 @@ type RootfsImageRow = {
   theme: RootfsImageTheme | null;
   owner_first_name: string | null;
   owner_last_name: string | null;
+  release_gc_status: RootfsReleaseGcStatus | null;
+  scan_status: string | null;
+  scan_tool: string | null;
+  scanned_at: Date | null;
 };
 
 function trimString(value: unknown): string | undefined {
@@ -99,6 +113,8 @@ function sectionFor({
   collaboratorIds: Set<string>;
 }): RootfsImageSection | undefined {
   if (row.hidden) return undefined;
+  if (row.blocked) return undefined;
+  if (row.deleted) return undefined;
   if (row.official) return "official";
   if (account_id && row.owner_id === account_id) return "mine";
   if (
@@ -153,6 +169,8 @@ function rowToEntry({
       visibility: row.visibility ?? "public",
       official: row.official ?? false,
       hidden: row.hidden ?? false,
+      blocked: row.blocked ?? false,
+      blocked_reason: row.blocked_reason ?? undefined,
       owner_id: row.owner_id ?? undefined,
       owner_name: fullName(row),
       section,
@@ -164,6 +182,57 @@ function rowToEntry({
     },
     DEFAULT_ROOTFS_CATALOG_URL,
   );
+}
+
+function rowToAdminEntry({
+  row,
+  account_id,
+  admin,
+}: {
+  row: RootfsImageRow;
+  account_id?: string;
+  admin: boolean;
+}): RootfsAdminCatalogEntry {
+  return {
+    ...normalizeRootfsEntry(
+      {
+        id: row.image_id,
+        release_id: row.release_id ?? undefined,
+        label: row.label || row.runtime_image,
+        image: row.runtime_image,
+        description: row.description ?? undefined,
+        digest: row.digest ?? undefined,
+        arch: row.arch ? [row.arch as any] : undefined,
+        gpu: row.gpu ?? undefined,
+        size_gb: row.size_gb ?? undefined,
+        tags: row.tags ?? undefined,
+        prepull: row.prepull ?? undefined,
+        deprecated: row.deprecated ?? undefined,
+        deprecated_reason: row.deprecated_reason ?? undefined,
+        visibility: row.visibility ?? "public",
+        official: row.official ?? false,
+        hidden: row.hidden ?? false,
+        blocked: row.blocked ?? false,
+        blocked_reason: row.blocked_reason ?? undefined,
+        owner_id: row.owner_id ?? undefined,
+        owner_name: fullName(row),
+        warning: "none",
+        theme: row.theme ?? undefined,
+        can_manage:
+          admin ||
+          (!!account_id && !!row.owner_id && row.owner_id === account_id),
+      },
+      DEFAULT_ROOTFS_CATALOG_URL,
+    ),
+    deleted: row.deleted ?? false,
+    deleted_reason: row.deleted_reason ?? undefined,
+    deleted_at: row.deleted_at?.toISOString(),
+    deleted_by: row.deleted_by ?? undefined,
+    release_gc_status: row.release_gc_status ?? undefined,
+    scan_status: (row.scan_status as any) ?? undefined,
+    scan_tool: row.scan_tool ?? undefined,
+    scanned_at: row.scanned_at?.toISOString(),
+  };
 }
 
 async function collaboratorIdsFor(account_id?: string): Promise<Set<string>> {
@@ -185,8 +254,8 @@ export async function ensureBuiltinRootfsImages(): Promise<void> {
   for (const entry of BUILTIN_ROOTFS_IMAGES) {
     await pool.query(
       `INSERT INTO rootfs_images
-      (image_id, release_id, owner_id, runtime_image, label, description, visibility, official, prepull, hidden, arch, gpu, size_gb, tags, digest, content_key, deprecated, deprecated_reason, theme, created, updated)
-      VALUES ($1, NULL, NULL, $2, $3, $4, $5, $6, $7, false, $8, $9, $10, $11::TEXT[], $12, $13, $14, $15, $16::JSONB, NOW(), NOW())
+      (image_id, release_id, owner_id, runtime_image, label, description, visibility, official, prepull, hidden, blocked, blocked_reason, deleted, deleted_reason, deleted_at, deleted_by, arch, gpu, size_gb, tags, digest, content_key, deprecated, deprecated_reason, theme, created, updated)
+      VALUES ($1, NULL, NULL, $2, $3, $4, $5, $6, $7, false, false, NULL, false, NULL, NULL, NULL, $8, $9, $10, $11::TEXT[], $12, $13, $14, $15, $16::JSONB, NOW(), NOW())
       ON CONFLICT (image_id) DO NOTHING`,
       [
         entry.id,
@@ -224,6 +293,12 @@ async function queryRootfsRows(): Promise<RootfsImageRow[]> {
       r.official,
       r.prepull,
       r.hidden,
+      r.blocked,
+      r.blocked_reason,
+      r.deleted,
+      r.deleted_reason,
+      r.deleted_at,
+      r.deleted_by,
       r.arch,
       r.gpu,
       r.size_gb,
@@ -234,9 +309,14 @@ async function queryRootfsRows(): Promise<RootfsImageRow[]> {
       r.deprecated_reason,
       r.theme,
       a.first_name AS owner_first_name,
-      a.last_name AS owner_last_name
+      a.last_name AS owner_last_name,
+      rel.gc_status AS release_gc_status,
+      rel.scan_status,
+      rel.scan_tool,
+      rel.scanned_at
     FROM rootfs_images AS r
     LEFT JOIN accounts AS a ON a.account_id = r.owner_id
+    LEFT JOIN rootfs_releases AS rel ON rel.release_id = r.release_id
     ORDER BY r.official DESC, COALESCE(r.updated, r.created) DESC, r.label ASC`,
   );
   return rows;
@@ -260,6 +340,17 @@ export async function listVisibleRootfsImages(
     source: DEFAULT_ROOTFS_CATALOG_URL,
     images,
   };
+}
+
+export async function listRootfsImagesAdmin(
+  account_id?: string,
+): Promise<RootfsAdminCatalogEntry[]> {
+  if (!account_id || !(await isAdmin(account_id))) {
+    throw Error("must be an admin");
+  }
+  await ensureBuiltinRootfsImages();
+  const rows = await queryRootfsRows();
+  return rows.map((row) => rowToAdminEntry({ row, account_id, admin: true }));
 }
 
 function normalizeVisibility(value?: unknown): RootfsImageVisibility {
@@ -305,9 +396,11 @@ async function upsertRootfsRow({
     const { rows } = await pool.query<{
       image_id: string;
       owner_id: string | null;
-    }>("SELECT image_id, owner_id FROM rootfs_images WHERE image_id=$1", [
-      image_id,
-    ]);
+      deleted: boolean | null;
+    }>(
+      "SELECT image_id, owner_id, deleted FROM rootfs_images WHERE image_id=$1",
+      [image_id],
+    );
     const existing = rows[0];
     if (!existing) {
       throw Error("rootfs image not found");
@@ -315,12 +408,15 @@ async function upsertRootfsRow({
     if (!admin && existing.owner_id !== account_id) {
       throw Error("not allowed to update this rootfs image");
     }
+    if (existing.deleted) {
+      throw Error("deleted rootfs images cannot be updated");
+    }
     owner_id = existing.owner_id ?? owner_id;
   } else {
     const { rows } = await pool.query<{ image_id: string }>(
       `SELECT image_id
        FROM rootfs_images
-       WHERE owner_id=$1 AND runtime_image=$2
+       WHERE owner_id=$1 AND runtime_image=$2 AND COALESCE(deleted, false)=false
        ORDER BY updated DESC NULLS LAST, created DESC NULLS LAST
        LIMIT 1`,
       [account_id, image],
@@ -341,12 +437,16 @@ async function upsertRootfsRow({
   const official = admin && body.official === true;
   const prepull = admin && body.prepull === true;
   const hidden = admin && body.hidden === true;
+  const blocked = admin && body.blocked === true;
+  const blocked_reason = blocked
+    ? (trimString(body.blocked_reason) ?? null)
+    : null;
 
   await pool.query(
     `INSERT INTO rootfs_images
-      (image_id, release_id, owner_id, runtime_image, label, description, visibility, official, prepull, hidden, arch, gpu, size_gb, tags, digest, content_key, deprecated, deprecated_reason, theme, created, updated)
+      (image_id, release_id, owner_id, runtime_image, label, description, visibility, official, prepull, hidden, blocked, blocked_reason, deleted, deleted_reason, deleted_at, deleted_by, arch, gpu, size_gb, tags, digest, content_key, deprecated, deprecated_reason, theme, created, updated)
      VALUES
-      ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::TEXT[], $15, $16, false, NULL, $17::JSONB, NOW(), NOW())
+      ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, false, NULL, NULL, NULL, $13, $14, $15, $16::TEXT[], $17, $18, false, NULL, $19::JSONB, NOW(), NOW())
      ON CONFLICT (image_id) DO UPDATE SET
       release_id = COALESCE(EXCLUDED.release_id, rootfs_images.release_id),
       owner_id = EXCLUDED.owner_id,
@@ -357,6 +457,8 @@ async function upsertRootfsRow({
       official = EXCLUDED.official,
       prepull = EXCLUDED.prepull,
       hidden = EXCLUDED.hidden,
+      blocked = EXCLUDED.blocked,
+      blocked_reason = EXCLUDED.blocked_reason,
       arch = EXCLUDED.arch,
       gpu = EXCLUDED.gpu,
       size_gb = EXCLUDED.size_gb,
@@ -376,6 +478,8 @@ async function upsertRootfsRow({
       official,
       prepull,
       hidden,
+      blocked,
+      blocked_reason,
       arch,
       gpu,
       size_gb,
@@ -423,6 +527,7 @@ export async function saveRootfsImage({
   const official = admin && body.official === true;
   const prepull = admin && body.prepull === true;
   const hidden = admin && body.hidden === true;
+  const blocked = admin && body.blocked === true;
   return normalizeRootfsEntry(
     {
       id: image_id,
@@ -433,6 +538,8 @@ export async function saveRootfsImage({
       official,
       prepull,
       hidden,
+      blocked,
+      blocked_reason: blocked ? trimString(body.blocked_reason) : undefined,
       arch: arch as RootfsImageArch,
       gpu,
       size_gb: size_gb ?? undefined,
@@ -515,4 +622,157 @@ export async function publishProjectRootfsCatalogEntry({
     },
     DEFAULT_ROOTFS_CATALOG_URL,
   );
+}
+
+async function getDeleteBlockers({
+  release_id,
+  runtime_image,
+}: {
+  release_id?: string | null;
+  runtime_image: string;
+}): Promise<RootfsDeleteBlockers> {
+  if (!release_id) {
+    return {
+      projects_using_release: 0,
+      catalog_entries_using_release: 0,
+      prepull_entries_using_release: 0,
+      child_releases: 0,
+      total: 0,
+    };
+  }
+  const pool = getPool("medium");
+  const [projects, catalogEntries, prepullEntries, childReleases] =
+    await Promise.all([
+      pool.query<{ count: string }>(
+        `SELECT COUNT(DISTINCT project_id)::TEXT AS count
+         FROM (
+           SELECT project_id
+           FROM project_rootfs_states
+           WHERE release_id=$1 OR runtime_image=$2
+           UNION
+           SELECT project_id
+           FROM projects
+           WHERE rootfs_image=$2
+         ) AS retained_projects`,
+        [release_id, runtime_image],
+      ),
+      pool.query<{ count: string }>(
+        `SELECT COUNT(*)::TEXT AS count
+         FROM rootfs_images
+         WHERE release_id=$1 AND COALESCE(deleted, false)=false`,
+        [release_id],
+      ),
+      pool.query<{ count: string }>(
+        `SELECT COUNT(*)::TEXT AS count
+         FROM rootfs_images
+         WHERE release_id=$1 AND prepull=true AND COALESCE(deleted, false)=false`,
+        [release_id],
+      ),
+      pool.query<{ count: string }>(
+        `SELECT COUNT(*)::TEXT AS count
+         FROM rootfs_releases
+         WHERE parent_release_id=$1 AND COALESCE(gc_status, 'active') <> 'deleted'`,
+        [release_id],
+      ),
+    ]);
+  const projects_using_release = Number(projects.rows[0]?.count ?? 0);
+  const catalog_entries_using_release = Number(
+    catalogEntries.rows[0]?.count ?? 0,
+  );
+  const prepull_entries_using_release = Number(
+    prepullEntries.rows[0]?.count ?? 0,
+  );
+  const child_releases = Number(childReleases.rows[0]?.count ?? 0);
+  return {
+    projects_using_release,
+    catalog_entries_using_release,
+    prepull_entries_using_release,
+    child_releases,
+    total:
+      projects_using_release +
+      catalog_entries_using_release +
+      prepull_entries_using_release +
+      child_releases,
+  };
+}
+
+export async function requestRootfsImageDeletion({
+  account_id,
+  image_id,
+  reason,
+}: {
+  account_id: string;
+  image_id: string;
+  reason?: string;
+}): Promise<RootfsDeleteRequestResult> {
+  const pool = getPool("medium");
+  const admin = await isAdmin(account_id);
+  const { rows } = await pool.query<{
+    image_id: string;
+    release_id: string | null;
+    owner_id: string | null;
+    runtime_image: string;
+    deleted: boolean | null;
+  }>(
+    `SELECT image_id, release_id, owner_id, runtime_image, deleted
+     FROM rootfs_images
+     WHERE image_id=$1`,
+    [image_id],
+  );
+  const row = rows[0];
+  if (!row) {
+    throw Error("rootfs image not found");
+  }
+  if (!admin && row.owner_id !== account_id) {
+    throw Error("not allowed to delete this rootfs image");
+  }
+  if (row.deleted) {
+    throw Error("rootfs image is already deleted");
+  }
+
+  const delete_reason = trimString(reason) ?? null;
+  await pool.query(
+    `UPDATE rootfs_images
+     SET hidden=true,
+         deleted=true,
+         deleted_reason=$2,
+         deleted_by=$3,
+         deleted_at=NOW(),
+         updated=NOW()
+     WHERE image_id=$1`,
+    [image_id, delete_reason, account_id],
+  );
+
+  const blockers = await getDeleteBlockers({
+    release_id: row.release_id,
+    runtime_image: row.runtime_image,
+  });
+  const release_gc_status: RootfsReleaseGcStatus | undefined = row.release_id
+    ? blockers.total === 0
+      ? "pending_delete"
+      : "blocked"
+    : undefined;
+  if (row.release_id) {
+    await pool.query(
+      `UPDATE rootfs_releases
+       SET gc_status=$2,
+           delete_requested_at=NOW(),
+           delete_requested_by=$3,
+           delete_reason=$4,
+           updated=NOW()
+       WHERE release_id=$1`,
+      [row.release_id, release_gc_status, account_id, delete_reason],
+    );
+  }
+
+  return {
+    image_id: row.image_id,
+    release_id: row.release_id ?? undefined,
+    image: row.runtime_image,
+    hidden: true,
+    deleted: true,
+    release_gc_status,
+    delete_requested: true,
+    blockers,
+  };
 }

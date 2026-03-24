@@ -17,7 +17,7 @@
     "app": "pnpm run build && node dist/main.js",
     "daemon:start": "node scripts/daemon-start.js",
     "daemon:stop": "node scripts/daemon-stop.js",
-    "build:bundle": "cd sea && ./build-bundle.sh && cd ../build && tar Jcvf bundle-linux.tar.xz bundle",
+    "build:bundle": "cd sea && ./build-bundle.sh ../build/bundle ../build/bundle-linux.tar.xz",
     "run:bundle": "node ./build/bundle/bundle/index.js",
     "publish:bundle": "cd sea && ./publish-bundle.sh",
     "build:tarball": "pnpm run build:bundle",

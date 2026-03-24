@@ -21,6 +21,10 @@ import {
 } from "@cocalc/server/project-host/placement";
 import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
 import {
+  cloneProjectRootfsStates,
+  initializeProjectRootfsStates,
+} from "@cocalc/server/projects/rootfs-state";
+import {
   DEFAULT_R2_REGION,
   mapCloudRegionToR2Region,
   parseR2Region,
@@ -261,6 +265,20 @@ export default async function createProject(opts: CreateProjectOptions) {
       projectRegion,
     ],
   );
+
+  if (src_project_id) {
+    await cloneProjectRootfsStates({
+      project_id,
+      src_project_id,
+    });
+  } else {
+    await initializeProjectRootfsStates({
+      project_id,
+      image: rootfs_image,
+      image_id: opts.rootfs_image_id ?? rootfs_image_id ?? null,
+      set_by_account_id: account_id,
+    });
+  }
 
   // If this is a clone with a known host, register the project row on that host
   // so it is visible in its local sqlite/changefeeds without starting it.

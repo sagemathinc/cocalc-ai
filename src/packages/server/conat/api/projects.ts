@@ -1,6 +1,7 @@
 import createProject from "@cocalc/server/projects/create";
 export { createProject };
 import execProject from "@cocalc/server/projects/exec";
+import { takeStartProjectPhaseTimings } from "@cocalc/server/project-host/control";
 import deleteProjectControl from "@cocalc/server/projects/delete";
 import { setProjectDeleted as setProjectDeletedControl } from "@cocalc/server/projects/delete";
 import { assertHardDeleteProjectPermission } from "@cocalc/server/projects/hard-delete";
@@ -700,7 +701,11 @@ export async function start({
       });
     }
     try {
-      await project.start({ lro_op_id: op.op_id, account_id });
+      await project.start({
+        lro_op_id: op.op_id,
+        account_id,
+      });
+      const phase_timings_ms = takeStartProjectPhaseTimings(op.op_id);
       const progress_summary = {
         done: 1,
         total: 1,
@@ -709,6 +714,7 @@ export async function start({
         expired: 0,
         applying: 0,
         canceled: 0,
+        phase_timings_ms,
       };
       const updated = await updateLro({
         op_id: op.op_id,

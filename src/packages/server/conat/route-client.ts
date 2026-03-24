@@ -3,6 +3,7 @@ import {
   conatServer,
   getProjectHostAuthTokenPrivateKey,
 } from "@cocalc/backend/data";
+import getLogger from "@cocalc/backend/logger";
 import { HUB_PASSWORD_COOKIE_NAME } from "@cocalc/backend/auth/cookie-names";
 import { inboxPrefix } from "@cocalc/conat/names";
 import {
@@ -22,6 +23,8 @@ import {
 // was configured (e.g., backend/conat init).
 let listenerStarted = false;
 const HUB_ROUTE_TOKEN_LEEWAY_MS = 60_000;
+const ROUTED_RECONNECT_DELAYS_MS = [1_000, 3_500, 10_000];
+const log = getLogger("server:conat:route-client");
 
 type RoutedHubClientState = {
   address: string;
@@ -119,8 +122,39 @@ function getOrCreateRoutedHubClient({
       reconnection: false,
     }),
   };
+  const reconnectRouted = () => {
+    for (const delayMs of ROUTED_RECONNECT_DELAYS_MS) {
+      setTimeout(() => {
+        if (routedHubClients[host_id] !== state) {
+          return;
+        }
+        if (state.client.conn?.connected) {
+          return;
+        }
+        try {
+          state.client.connect();
+        } catch (err) {
+          log.debug("failed reconnecting routed hub client", {
+            host_id,
+            address,
+            err: `${err}`,
+          });
+        }
+      }, delayMs).unref?.();
+    }
+  };
   state.client.on("disconnected", () => {
-    evictRoutedHubClient(host_id, state);
+    delete state.token;
+    delete state.expiresAt;
+    reconnectRouted();
+  });
+  state.client.conn.on("connect_error", () => {
+    delete state.token;
+    delete state.expiresAt;
+    reconnectRouted();
+  });
+  state.client.conn.io.on("error", () => {
+    reconnectRouted();
   });
   state.client.on("closed", () => {
     evictRoutedHubClient(host_id, state);
