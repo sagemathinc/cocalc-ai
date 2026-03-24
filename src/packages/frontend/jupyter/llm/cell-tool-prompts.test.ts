@@ -21,6 +21,7 @@ describe("Jupyter cell Agent prompts", () => {
     expect(prompt).toContain(
       "Treat the live in-memory notebook state as the source of truth",
     );
+    expect(prompt).toContain("Do not read or edit the `.ipynb` JSON directly");
     expect(prompt).toContain("The output looks wrong");
     expect(prompt).not.toContain("Cells BEFORE current cell");
     expect(prompt).not.toContain("Current cell content:");

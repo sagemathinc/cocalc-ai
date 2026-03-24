@@ -77,6 +77,8 @@ function getCoCalcRuntimeGuidanceHeader(cliCommand: string): string {
     "For notebook edits/execution that must survive browser refresh or disconnect, prefer `cocalc project jupyter -h` over `browser exec`.",
     "For multi-step notebook work, prefer `cocalc project jupyter exec --path ... --file <script.js>` instead of shelling multiple notebook commands.",
     "Use `cocalc project jupyter exec-api` to inspect the ambient notebook script API before writing a multi-step script.",
+    "Treat the live in-memory notebook state as the source of truth for live notebook work.",
+    "Do not read or edit `.ipynb` JSON directly for live notebook inspection or mutation unless the user explicitly asks for filesystem-level work.",
     "Use `browser exec` only for UI-only notebook context such as selection or viewport state.",
     "For questions like 'tell me about my browser workspaces', start with:",
     `1) Inspect live workspace state: ${cliCommand} browser workspace-state --project-id \"$COCALC_PROJECT_ID\" --browser \"$COCALC_BROWSER_ID\"`,

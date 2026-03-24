@@ -24,6 +24,7 @@ describe("Jupyter generate-cell Agent prompts", () => {
     expect(prompt).toContain(
       "Treat the live in-memory notebook state as the source of truth",
     );
+    expect(prompt).toContain("Do not read or edit the `.ipynb` JSON directly");
     expect(prompt).toContain("Create a summary statistics cell");
     expect(prompt).not.toContain("Cells BEFORE insertion point");
     expect(prompt).not.toContain("Pick an example");

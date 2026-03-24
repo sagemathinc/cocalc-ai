@@ -76,6 +76,12 @@ Current commands:
 
 This is the preferred path because it survives browser refreshes/disconnects and does not require reverse-engineering frontend notebook state.
 
+Hard rule for live notebook work:
+
+- Treat the live in-memory notebook as the source of truth.
+- Do not read or edit `.ipynb` JSON directly to inspect or mutate a live notebook unless the user explicitly asks for filesystem-level work.
+- Use `cocalc project jupyter cells/set/insert/move/delete/run/live/exec` for live notebook inspection and mutation.
+
 Use the direct commands for one-step operations. For multi-step notebook work, prefer `project jupyter exec` so one local JavaScript script can reuse the same bound notebook API instead of shelling several separate commands.
 
 Example:
