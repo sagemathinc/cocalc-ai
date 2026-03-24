@@ -12,14 +12,16 @@ Use the CoCalc backend exec API first when it can solve the task. Fall back to e
 Prefer these paths in this order:
 
 1. `cocalc exec-api` + `cocalc exec`
-2. `cocalc export ...` / `cocalc import ...`
-3. `cocalc browser exec-api` + `cocalc browser exec`
+2. `cocalc project jupyter ...` for notebook cell listing, mutation, execution, and live-run inspection
+3. `cocalc export ...` / `cocalc import ...`
+4. `cocalc browser exec-api` + `cocalc browser exec`
 
 This is the key rule:
 
 - Use backend exec for live collaborative document operations.
+- Use `cocalc project jupyter` for durable notebook operations that must keep working even if the browser refreshes or disconnects.
 - Use export/import for archive, bulk transformation, or document types that do not yet have a live backend API.
-- Use browser exec only when the task is inherently about the browser UI.
+- Use browser exec only when the task is inherently about the browser UI or when notebook work needs ephemeral UI context such as the active cell, selection, or viewport.
 
 ## Backend Exec First
 
@@ -43,6 +45,39 @@ Current high-value namespaces:
 - `api.timetravel`
 - `api.export`
 - `api.import`
+
+## Notebooks: Prefer `project jupyter`
+
+For notebook work, prefer the backend/project-host path:
+
+```bash
+cocalc project jupyter -h
+```
+
+Use this for:
+
+- listing stable notebook cells
+- setting or replacing cell input
+- inserting and deleting cells
+- running code cells
+- following live run output
+
+Current commands:
+
+- `cocalc project jupyter --path <ipynb> cells`
+- `cocalc project jupyter --path <ipynb> set ...`
+- `cocalc project jupyter --path <ipynb> insert ...`
+- `cocalc project jupyter --path <ipynb> delete ...`
+- `cocalc project jupyter --path <ipynb> run ...`
+- `cocalc project jupyter --path <ipynb> live ...`
+
+This is the preferred path because it survives browser refreshes/disconnects and does not require reverse-engineering frontend notebook state.
+
+Use `cocalc browser exec` for notebook work only when you need transient UI context such as:
+
+- which notebook tab is currently active
+- which cell is selected
+- cursor/scroll/viewport state
 
 ### Tasks
 

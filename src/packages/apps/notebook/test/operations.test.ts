@@ -1,13 +1,12 @@
-const assert = require("node:assert/strict");
-const test = require("node:test");
+import assert from "node:assert/strict";
 
-const {
+import {
   createNotebookSnapshot,
-  insertNotebookCellAdjacent,
-  setNotebookCellInput,
   deleteNotebookCells,
+  insertNotebookCellAdjacent,
   normalizeNotebookCellRows,
-} = require("../dist/index.js");
+  setNotebookCellInput,
+} from "../src";
 
 test("insertNotebookCellAdjacent inserts below the anchor cell", () => {
   const snapshot = createNotebookSnapshot([

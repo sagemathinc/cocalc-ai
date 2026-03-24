@@ -14,8 +14,13 @@
   },
   "scripts": {
     "build": "pnpm exec tsc --build --force",
+    "test": "pnpm exec jest",
     "clean": "rm -rf dist node_modules tsconfig.tsbuildinfo",
-    "depcheck": "pnpm -w exec depcheck \"$PWD\""
+    "depcheck": "pnpm -w exec depcheck \"$PWD\" --ignores=@types/jest"
+  },
+  "devDependencies": {
+    "@types/jest": "^30.0.0",
+    "ts-jest": "^29.4.5"
   },
   "license": "SEE LICENSE.md"
 }
