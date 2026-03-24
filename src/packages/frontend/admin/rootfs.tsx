@@ -8,6 +8,7 @@ import {
   Button,
   Input,
   Popconfirm,
+  Tooltip,
   Space,
   Table,
   Tag,
@@ -55,6 +56,55 @@ function scanTag(entry: RootfsAdminCatalogEntry): React.ReactNode {
     default:
       return <Tag>unknown</Tag>;
   }
+}
+
+function blockerSummary(entry: RootfsAdminCatalogEntry): React.ReactNode {
+  const blockers = entry.delete_blockers;
+  if (!blockers) {
+    return (
+      <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+        Not pending deletion
+      </Typography.Text>
+    );
+  }
+  if (blockers.total === 0) {
+    return (
+      <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+        No blockers
+      </Typography.Text>
+    );
+  }
+  const items: string[] = [];
+  if (blockers.projects_using_release) {
+    items.push(
+      `${blockers.projects_using_release} ${plural(blockers.projects_using_release, "project")}`,
+    );
+  }
+  if (blockers.catalog_entries_using_release) {
+    items.push(
+      `${blockers.catalog_entries_using_release} ${plural(blockers.catalog_entries_using_release, "catalog entry")}`,
+    );
+  }
+  if (blockers.prepull_entries_using_release) {
+    items.push(
+      `${blockers.prepull_entries_using_release} ${plural(blockers.prepull_entries_using_release, "prepull entry")}`,
+    );
+  }
+  if (blockers.child_releases) {
+    items.push(
+      `${blockers.child_releases} ${plural(blockers.child_releases, "child release")}`,
+    );
+  }
+  return (
+    <Space direction="vertical" size={0}>
+      <Typography.Text style={{ fontSize: 12 }}>
+        {items.join(", ")}
+      </Typography.Text>
+      <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+        Total: {blockers.total}
+      </Typography.Text>
+    </Space>
+  );
 }
 
 export function RootfsAdmin() {
@@ -129,6 +179,44 @@ export function RootfsAdmin() {
       await load();
     } catch (err) {
       message.error(`Failed to delete RootFS image: ${err}`);
+    } finally {
+      setActionImageId(undefined);
+    }
+  }
+
+  async function saveEntry(
+    entry: RootfsAdminCatalogEntry,
+    patch: Partial<RootfsAdminCatalogEntry>,
+    success: string,
+  ) {
+    setActionImageId(entry.id);
+    try {
+      await hub.system.saveRootfsCatalogEntry({
+        image_id: entry.id,
+        image: entry.image,
+        label: entry.label,
+        description: entry.description,
+        visibility: entry.visibility,
+        arch: entry.arch,
+        gpu: entry.gpu,
+        size_gb: entry.size_gb,
+        tags: entry.tags,
+        theme: entry.theme,
+        official: patch.official ?? entry.official,
+        prepull: patch.prepull ?? entry.prepull,
+        hidden: patch.hidden ?? entry.hidden,
+        blocked: patch.blocked ?? entry.blocked,
+        blocked_reason:
+          patch.blocked === false
+            ? undefined
+            : (patch.blocked_reason ??
+              entry.blocked_reason ??
+              "Blocked by admin"),
+      });
+      message.success(success);
+      await load();
+    } catch (err) {
+      message.error(`Failed to update RootFS image: ${err}`);
     } finally {
       setActionImageId(undefined);
     }
@@ -223,7 +311,21 @@ export function RootfsAdmin() {
             {
               title: "Lifecycle",
               key: "lifecycle",
-              render: (_, entry) => <Space wrap>{lifecycleTags(entry)}</Space>,
+              render: (_, entry) => (
+                <Space direction="vertical" size={0}>
+                  <Space wrap>{lifecycleTags(entry)}</Space>
+                  {entry.blocked_reason ? (
+                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                      {entry.blocked_reason}
+                    </Typography.Text>
+                  ) : null}
+                </Space>
+              ),
+            },
+            {
+              title: "Delete blockers",
+              key: "blockers",
+              render: (_, entry) => blockerSummary(entry),
             },
             {
               title: "Scan",
@@ -247,6 +349,74 @@ export function RootfsAdmin() {
               key: "actions",
               render: (_, entry) => (
                 <Space wrap>
+                  {!entry.deleted ? (
+                    entry.hidden ? (
+                      <Button
+                        size="small"
+                        loading={actionImageId === entry.id}
+                        onClick={() =>
+                          saveEntry(
+                            entry,
+                            { hidden: false },
+                            "RootFS image is visible again.",
+                          )
+                        }
+                      >
+                        Unhide
+                      </Button>
+                    ) : (
+                      <Button
+                        size="small"
+                        loading={actionImageId === entry.id}
+                        onClick={() =>
+                          saveEntry(
+                            entry,
+                            { hidden: true },
+                            "RootFS image hidden.",
+                          )
+                        }
+                      >
+                        Hide
+                      </Button>
+                    )
+                  ) : null}
+                  {!entry.deleted ? (
+                    entry.blocked ? (
+                      <Button
+                        size="small"
+                        loading={actionImageId === entry.id}
+                        onClick={() =>
+                          saveEntry(
+                            entry,
+                            { blocked: false, blocked_reason: undefined },
+                            "RootFS image unblocked.",
+                          )
+                        }
+                      >
+                        Unblock
+                      </Button>
+                    ) : (
+                      <Tooltip title="Prevent new selections while preserving existing projects.">
+                        <Button
+                          size="small"
+                          loading={actionImageId === entry.id}
+                          onClick={() =>
+                            saveEntry(
+                              entry,
+                              {
+                                blocked: true,
+                                blocked_reason:
+                                  entry.blocked_reason ?? "Blocked by admin",
+                              },
+                              "RootFS image blocked.",
+                            )
+                          }
+                        >
+                          Block
+                        </Button>
+                      </Tooltip>
+                    )
+                  ) : null}
                   {!entry.deleted ? (
                     <Popconfirm
                       title="Delete this RootFS catalog entry?"

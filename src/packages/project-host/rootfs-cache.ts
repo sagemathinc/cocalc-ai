@@ -21,6 +21,10 @@ import { pipeline } from "node:stream/promises";
 import { executeCode } from "@cocalc/backend/execute-code";
 import getLogger from "@cocalc/backend/logger";
 import { exists } from "@cocalc/backend/misc/async-utils-node";
+import type {
+  HostManagedRootfsReleaseLifecycle,
+  HostRootfsGcResult,
+} from "@cocalc/conat/hub/api/hosts";
 import type { HostRootfsCacheEntry } from "@cocalc/conat/project-host/api";
 import { hubApi } from "@cocalc/lite/hub/api";
 import { isBtrfsSubvolume } from "@cocalc/file-server/btrfs/subvolume";
@@ -543,4 +547,75 @@ export async function deleteRootfsCacheEntry(image: string): Promise<{
     removed = true;
   }
   return { removed };
+}
+
+export async function gcDeletedManagedRootfsCacheEntries(): Promise<HostRootfsGcResult> {
+  const entries = await listRootfsCacheEntries();
+  const candidates = entries.filter(
+    (entry) =>
+      isManagedRootfsImageName(entry.image) &&
+      (entry.project_count ?? 0) === 0 &&
+      (entry.running_project_count ?? 0) === 0,
+  );
+  if (candidates.length === 0) {
+    return {
+      scanned: 0,
+      removed: 0,
+      skipped: 0,
+      failed: 0,
+      items: [],
+    };
+  }
+  const lifecycleRows = await hubApi.hosts.listManagedRootfsReleaseLifecycle?.({
+    images: candidates.map((entry) => entry.image),
+  });
+  const lifecycleByImage = new Map<string, HostManagedRootfsReleaseLifecycle>(
+    (lifecycleRows ?? []).map((row) => [row.image, row]),
+  );
+  const result: HostRootfsGcResult = {
+    scanned: candidates.length,
+    removed: 0,
+    skipped: 0,
+    failed: 0,
+    items: [],
+  };
+  for (const entry of candidates) {
+    const lifecycle = lifecycleByImage.get(entry.image);
+    if (lifecycle?.gc_status !== "deleted") {
+      result.skipped += 1;
+      result.items.push({
+        image: entry.image,
+        status: "skipped",
+        reason: lifecycle?.gc_status
+          ? `central release is ${lifecycle.gc_status}`
+          : "central release is not deleted",
+      });
+      continue;
+    }
+    try {
+      const deletion = await deleteRootfsCacheEntry(entry.image);
+      if (deletion.removed) {
+        result.removed += 1;
+        result.items.push({
+          image: entry.image,
+          status: "removed",
+        });
+      } else {
+        result.skipped += 1;
+        result.items.push({
+          image: entry.image,
+          status: "skipped",
+          reason: "cache entry already absent",
+        });
+      }
+    } catch (err) {
+      result.failed += 1;
+      result.items.push({
+        image: entry.image,
+        status: "failed",
+        reason: `${err}`,
+      });
+    }
+  }
+  return result;
 }

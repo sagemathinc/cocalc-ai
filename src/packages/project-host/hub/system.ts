@@ -95,4 +95,17 @@ export function wireSystemApi(): void {
       ...(scope?.host_id ? { host_id: scope.host_id } : {}),
     });
   };
+
+  hubApi.hosts.listManagedRootfsReleaseLifecycle = async (opts: {
+    host_id?: string;
+    images: string[];
+  }) => {
+    const scope = defaultHostScope();
+    return await callHub({
+      client: requireMasterClient("hosts.listManagedRootfsReleaseLifecycle"),
+      name: "hosts.listManagedRootfsReleaseLifecycle",
+      args: [opts],
+      ...(scope?.host_id ? { host_id: scope.host_id } : {}),
+    });
+  };
 }

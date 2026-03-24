@@ -17,6 +17,7 @@ import type {
   HostLroKind,
   HostProjectRow,
   HostProjectsResponse,
+  HostManagedRootfsReleaseLifecycle,
   HostRootfsGcResult,
   HostRootfsImage,
 } from "@cocalc/conat/hub/api/hosts";
@@ -772,6 +773,26 @@ export async function getManagedRootfsReleaseArtifact({
     host_id,
     image,
   });
+}
+
+export async function listManagedRootfsReleaseLifecycle({
+  host_id,
+  images,
+}: {
+  host_id?: string;
+  images: string[];
+}): Promise<HostManagedRootfsReleaseLifecycle[]> {
+  if (!host_id) {
+    throw new Error("host_id must be specified");
+  }
+  const lifecycleByImage = await loadRootfsReleaseLifecycleByImage(
+    images ?? [],
+  );
+  return Array.from(lifecycleByImage.values()).map((row) => ({
+    image: row.runtime_image,
+    release_id: row.release_id,
+    gc_status: row.gc_status ?? undefined,
+  }));
 }
 
 export async function claimPendingCopies({

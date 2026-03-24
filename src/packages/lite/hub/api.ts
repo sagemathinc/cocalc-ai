@@ -398,6 +398,21 @@ async function getManagedRootfsReleaseArtifact(opts?: {
   });
 }
 
+async function listManagedRootfsReleaseLifecycle(opts?: {
+  host_id?: string;
+  images: string[];
+}) {
+  if (!hasRemote) {
+    throw new Error(
+      "managed RootFS release lifecycle requires a remote hub connection",
+    );
+  }
+  return await callRemoteHub({
+    name: "hosts.listManagedRootfsReleaseLifecycle",
+    args: [opts ?? {}],
+  });
+}
+
 async function issueBrowserSignInCookie(opts?: {
   account_id?: string;
   max_age_ms?: number;
@@ -426,6 +441,7 @@ export const hubApi: HubApi = {
   },
   hosts: {
     getManagedRootfsReleaseArtifact,
+    listManagedRootfsReleaseLifecycle,
   },
   projects: {
     chatStoreStats: async (opts: { chat_path: string; db_path?: string }) => {

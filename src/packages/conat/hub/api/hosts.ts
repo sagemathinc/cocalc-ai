@@ -200,6 +200,12 @@ export interface HostRootfsGcResult {
   items: HostRootfsGcItem[];
 }
 
+export interface HostManagedRootfsReleaseLifecycle {
+  image: string;
+  release_id?: string;
+  gc_status?: RootfsReleaseGcStatus;
+}
+
 export interface HostCatalog {
   provider: string;
   entries: HostCatalogEntry[];
@@ -388,6 +394,7 @@ export const hosts = {
   checkCodexSiteUsageAllowance: authFirstRequireHost,
   recordCodexSiteUsage: authFirstRequireHost,
   getManagedRootfsReleaseArtifact: authFirstRequireHost,
+  listManagedRootfsReleaseLifecycle: authFirstRequireHost,
   issueProjectHostAuthToken: authFirstRequireAccount,
 };
 
@@ -557,6 +564,10 @@ export interface Hosts {
     host_id?: string;
     image: string;
   }) => Promise<RootfsReleaseArtifactAccess>;
+  listManagedRootfsReleaseLifecycle: (opts: {
+    host_id?: string;
+    images: string[];
+  }) => Promise<HostManagedRootfsReleaseLifecycle[]>;
   issueProjectHostAuthToken: (opts: {
     account_id?: string;
     host_id: string;

@@ -22,6 +22,7 @@ import { setProjectHostAuthPublicKey } from "./auth-public-key";
 import { matchAppRequest } from "./app-public-access";
 import {
   deleteRootfsCacheEntry,
+  gcDeletedManagedRootfsCacheEntries,
   listRootfsCacheEntries,
   pullRootfsCacheEntry,
 } from "./rootfs-cache";
@@ -90,6 +91,10 @@ const USER_RECONCILE_RECENT_DAYS = Math.max(
     90,
     Number(process.env.COCALC_PROJECT_HOST_USER_RECONCILE_RECENT_DAYS ?? 7),
   ),
+);
+const ROOTFS_CACHE_GC_MS = Math.max(
+  60_000,
+  Number(process.env.COCALC_PROJECT_HOST_ROOTFS_CACHE_GC_MS ?? 15 * 60_000),
 );
 const USER_DELTA_CURSOR_KEY = "users-delta-cursor";
 const STORAGE_WRAPPER = "/usr/local/sbin/cocalc-runtime-storage";
@@ -1019,6 +1024,14 @@ export async function startMasterRegistration({
   } catch (err) {
     logger.warn("initial project user sync failed", { err });
   }
+  try {
+    const rootfsGc = await gcDeletedManagedRootfsCacheEntries();
+    if (rootfsGc.removed > 0 || rootfsGc.failed > 0) {
+      logger.info("initial managed RootFS cache GC completed", rootfsGc);
+    }
+  } catch (err) {
+    logger.warn("initial managed RootFS cache GC failed", { err });
+  }
   const timer = setInterval(() => void send("heartbeat"), 30_000);
   const deltaTimer = setInterval(() => {
     void syncUserDeltas("interval").catch((err) =>
@@ -1032,6 +1045,16 @@ export async function startMasterRegistration({
     );
   }, USER_RECONCILE_MS);
   reconcileTimer.unref?.();
+  const rootfsGcTimer = setInterval(() => {
+    void gcDeletedManagedRootfsCacheEntries()
+      .then((result) => {
+        if (result.removed > 0 || result.failed > 0) {
+          logger.info("managed RootFS cache GC completed", result);
+        }
+      })
+      .catch((err) => logger.debug("managed RootFS cache GC failed", { err }));
+  }, ROOTFS_CACHE_GC_MS);
+  rootfsGcTimer.unref?.();
   let tokenRotationRetryStep = 0;
   let tokenRotationTimer: NodeJS.Timeout | undefined;
   const scheduleTokenRotation = (delayMs: number) => {
@@ -1074,6 +1097,7 @@ export async function startMasterRegistration({
     clearInterval(timer);
     clearInterval(deltaTimer);
     clearInterval(reconcileTimer);
+    clearInterval(rootfsGcTimer);
     clearInterval(missingTokenProbe);
     if (tokenRotationTimer) {
       clearTimeout(tokenRotationTimer);

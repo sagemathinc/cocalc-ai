@@ -354,7 +354,26 @@ export async function listRootfsImagesAdmin(
   }
   await ensureBuiltinRootfsImages();
   const rows = await queryRootfsRows();
-  return rows.map((row) => rowToAdminEntry({ row, account_id, admin: true }));
+  const entries = rows.map((row) =>
+    rowToAdminEntry({ row, account_id, admin: true }),
+  );
+  await Promise.all(
+    entries.map(async (entry) => {
+      if (
+        !entry.release_id ||
+        (!entry.deleted &&
+          entry.release_gc_status !== "blocked" &&
+          entry.release_gc_status !== "pending_delete")
+      ) {
+        return;
+      }
+      entry.delete_blockers = await getDeleteBlockers({
+        release_id: entry.release_id,
+        runtime_image: entry.image,
+      });
+    }),
+  );
+  return entries;
 }
 
 function normalizeVisibility(value?: unknown): RootfsImageVisibility {

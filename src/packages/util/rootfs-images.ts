@@ -220,6 +220,7 @@ export type RootfsAdminCatalogEntry = RootfsImageEntry & {
   deleted_at?: string;
   deleted_by?: string;
   release_gc_status?: RootfsReleaseGcStatus;
+  delete_blockers?: RootfsDeleteBlockers;
   scan_status?: RootfsScanStatus;
   scan_tool?: string;
   scanned_at?: string;
