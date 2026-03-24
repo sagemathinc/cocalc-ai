@@ -6,6 +6,7 @@
 import type {
   InsertNotebookCellAdjacentOptions,
   InsertNotebookCellOptions,
+  MoveNotebookCellOptions,
   NotebookCellRecord,
   NotebookSnapshot,
 } from "../operations";
@@ -15,6 +16,7 @@ import {
   getNotebookCell,
   insertNotebookCellAdjacent,
   insertNotebookCellAt,
+  moveNotebookCell,
   normalizeNotebookCellRows,
   setNotebookCellInput,
   setNotebookCellType,
@@ -117,6 +119,15 @@ export class SyncDBNotebookSession {
     this.assertWritable();
     const result = deleteNotebookCells(this.readSnapshot(), cellIds);
     await this.persistResult(result.snapshot, result.changedCellIds);
+  }
+
+  async moveCell(
+    options: MoveNotebookCellOptions,
+  ): Promise<NotebookCellRecord> {
+    this.assertWritable();
+    const result = moveNotebookCell(this.readSnapshot(), options);
+    await this.persistResult(result.snapshot, result.changedCellIds);
+    return this.requireCell(result.snapshot, options.cellId);
   }
 
   private readSnapshot(): NotebookSnapshot {

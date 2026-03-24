@@ -68,6 +68,7 @@ Current commands:
 - `cocalc project jupyter --path <ipynb> set ...`
 - `cocalc project jupyter --path <ipynb> insert ...`
 - `cocalc project jupyter --path <ipynb> delete ...`
+- `cocalc project jupyter --path <ipynb> move ...`
 - `cocalc project jupyter --path <ipynb> run ...`
 - `cocalc project jupyter --path <ipynb> live ...`
 

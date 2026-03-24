@@ -42,6 +42,14 @@ export interface NotebookInsertResult extends NotebookMutationResult {
   cell: NotebookCellRecord;
 }
 
+export interface MoveNotebookCellOptions {
+  cellId: string;
+  beforeId?: string;
+  afterId?: string;
+  atStart?: boolean;
+  atEnd?: boolean;
+}
+
 export function createNotebookSnapshot(
   cells: readonly NotebookCellRecord[],
 ): NotebookSnapshot {
@@ -173,6 +181,57 @@ export function deleteNotebookCells(
     snapshot: createNotebookSnapshot(next),
     changedCellIds: [...removed],
   };
+}
+
+export function moveNotebookCell(
+  snapshot: NotebookSnapshot,
+  options: MoveNotebookCellOptions,
+): NotebookMutationResult {
+  const { cellId, beforeId, afterId, atStart, atEnd } = options;
+  const anchors = [
+    beforeId ? 1 : 0,
+    afterId ? 1 : 0,
+    atStart ? 1 : 0,
+    atEnd ? 1 : 0,
+  ].reduce((sum, n) => sum + n, 0);
+  if (anchors !== 1) {
+    throw new Error(
+      "move requires exactly one of beforeId, afterId, atStart, or atEnd",
+    );
+  }
+  const existing = getNotebookCell(snapshot, cellId);
+  if (existing == null) {
+    throw new Error(`Notebook cell "${cellId}" not found`);
+  }
+  const others = snapshot.cells.filter((cell) => cell.id !== cellId);
+  let pos: number;
+  if (beforeId) {
+    const targetIndex = others.findIndex((cell) => cell.id === beforeId);
+    if (targetIndex === -1) {
+      throw new Error(`Notebook cell "${beforeId}" not found`);
+    }
+    pos = computeInsertPosition({
+      beforePos: targetIndex > 0 ? others[targetIndex - 1].pos : undefined,
+      afterPos: others[targetIndex].pos,
+    });
+  } else if (afterId) {
+    const targetIndex = others.findIndex((cell) => cell.id === afterId);
+    if (targetIndex === -1) {
+      throw new Error(`Notebook cell "${afterId}" not found`);
+    }
+    pos = computeInsertPosition({
+      beforePos: others[targetIndex].pos,
+      afterPos:
+        targetIndex + 1 < others.length
+          ? others[targetIndex + 1].pos
+          : undefined,
+    });
+  } else if (atStart) {
+    pos = others.length === 0 ? 0 : others[0].pos - 1;
+  } else {
+    pos = others.length === 0 ? 0 : others[others.length - 1].pos + 1;
+  }
+  return updateNotebookCell(snapshot, cellId, { pos });
 }
 
 export function normalizeNotebookCellRows(rows: unknown): NotebookCellRecord[] {

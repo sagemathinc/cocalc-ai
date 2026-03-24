@@ -1545,6 +1545,7 @@ const {
   projectJupyterSetCellData,
   projectJupyterInsertCellData,
   projectJupyterDeleteCellsData,
+  projectJupyterMoveCellData,
   projectJupyterRunSession,
   projectJupyterLiveRunSession,
 } = createProjectJupyterOps<CommandContext, ProjectRow>({
@@ -2064,6 +2065,7 @@ const projectCommandDeps = {
   projectJupyterSetCellData,
   projectJupyterInsertCellData,
   projectJupyterDeleteCellsData,
+  projectJupyterMoveCellData,
   projectJupyterRunSession,
   projectJupyterLiveRunSession,
   normalizeUserSearchName,

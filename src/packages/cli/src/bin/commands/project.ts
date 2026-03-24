@@ -113,6 +113,7 @@ export type ProjectCommandDeps = {
   projectJupyterSetCellData: any;
   projectJupyterInsertCellData: any;
   projectJupyterDeleteCellsData: any;
+  projectJupyterMoveCellData: any;
   projectJupyterRunSession: any;
   projectJupyterLiveRunSession: any;
 };

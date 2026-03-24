@@ -148,6 +148,7 @@ export function registerProjectJupyterCommands(
     projectJupyterSetCellData,
     projectJupyterInsertCellData,
     projectJupyterDeleteCellsData,
+    projectJupyterMoveCellData,
     projectJupyterRunSession,
     projectJupyterLiveRunSession,
     durationToMs,
@@ -274,6 +275,55 @@ export function registerProjectJupyterCommands(
             projectIdentifier: opts.project,
             path: normalizePath(opts.path),
             cellIds: (opts.cellId ?? []).map((id) => `${id ?? ""}`.trim()),
+          });
+        });
+      },
+    );
+
+  jupyter
+    .command("move")
+    .description("move a notebook cell relative to another cell or boundary")
+    .requiredOption("--path <path>", "notebook path inside the project")
+    .requiredOption("--cell-id <id>", "cell id to move")
+    .option("-w, --project <project>", "project id or name")
+    .option("--before-id <id>", "move the cell above this anchor cell")
+    .option("--after-id <id>", "move the cell below this anchor cell")
+    .option("--at-start", "move the cell to the beginning of the notebook")
+    .option("--at-end", "move the cell to the end of the notebook")
+    .action(
+      async (
+        opts: {
+          path: string;
+          project?: string;
+          cellId: string;
+          beforeId?: string;
+          afterId?: string;
+          atStart?: boolean;
+          atEnd?: boolean;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "project jupyter move", async (ctx) => {
+          const anchors = [
+            opts.beforeId ? 1 : 0,
+            opts.afterId ? 1 : 0,
+            opts.atStart ? 1 : 0,
+            opts.atEnd ? 1 : 0,
+          ].reduce((sum, n) => sum + n, 0);
+          if (anchors !== 1) {
+            throw new Error(
+              "move requires exactly one of --before-id, --after-id, --at-start, or --at-end",
+            );
+          }
+          return await projectJupyterMoveCellData({
+            ctx,
+            projectIdentifier: opts.project,
+            path: normalizePath(opts.path),
+            cellId: `${opts.cellId ?? ""}`.trim(),
+            beforeId: opts.beforeId?.trim(),
+            afterId: opts.afterId?.trim(),
+            atStart: opts.atStart === true,
+            atEnd: opts.atEnd === true,
           });
         });
       },

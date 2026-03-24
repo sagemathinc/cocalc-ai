@@ -73,6 +73,18 @@ export interface BoundJupyterDocument<Project extends ProjectIdentity> {
     deleted: string[];
   }>;
 
+  moveCell(options: {
+    cellId: string;
+    beforeId?: string;
+    afterId?: string;
+    atStart?: boolean;
+    atEnd?: boolean;
+  }): Promise<{
+    project: Project;
+    path: string;
+    cell: NotebookCellInfo;
+  }>;
+
   run(options: JupyterRunOptions): Promise<ProjectJupyterRunSession>;
 }
 
@@ -209,6 +221,30 @@ export function createJupyterApi<Ctx, Project extends ProjectIdentity>({
             ).project,
             path: result.path,
             deleted: result.deleted ?? [],
+          };
+        },
+        async moveCell(options) {
+          const result = await ops.projectJupyterMoveCellData({
+            ctx,
+            projectIdentifier: binding.projectIdentifier,
+            path: binding.path,
+            cwd: binding.cwd,
+            cellId: options.cellId,
+            beforeId: options.beforeId,
+            afterId: options.afterId,
+            atStart: options.atStart,
+            atEnd: options.atEnd,
+          });
+          return {
+            project: (
+              await resolveProjectConatClient(
+                ctx,
+                binding.projectIdentifier,
+                binding.cwd,
+              )
+            ).project,
+            path: result.path,
+            cell: result.cell!,
           };
         },
         async run(runOptions) {

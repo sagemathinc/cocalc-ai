@@ -4,6 +4,7 @@ import {
   createNotebookSnapshot,
   deleteNotebookCells,
   insertNotebookCellAdjacent,
+  moveNotebookCell,
   normalizeNotebookCellRows,
   setNotebookCellInput,
 } from "../src";
@@ -53,5 +54,21 @@ test("normalizeNotebookCellRows sorts rows by pos", () => {
   assert.deepEqual(
     cells.map((cell) => cell.id),
     ["a", "b"],
+  );
+});
+
+test("moveNotebookCell reorders a cell before the requested anchor", () => {
+  const snapshot = createNotebookSnapshot([
+    { type: "cell", id: "a", pos: 0, input: "x=1", cell_type: "code" },
+    { type: "cell", id: "b", pos: 1, input: "y=2", cell_type: "code" },
+    { type: "cell", id: "c", pos: 2, input: "z=3", cell_type: "code" },
+  ]);
+  const result = moveNotebookCell(snapshot, {
+    cellId: "c",
+    beforeId: "b",
+  });
+  assert.deepEqual(
+    result.snapshot.cells.map((cell) => cell.id),
+    ["a", "c", "b"],
   );
 });

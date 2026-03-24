@@ -702,6 +702,50 @@ export function createProjectJupyterOps<Ctx, Project extends ProjectIdentity>(
     });
   }
 
+  async function projectJupyterMoveCellData({
+    ctx,
+    projectIdentifier,
+    path,
+    cellId,
+    beforeId,
+    afterId,
+    atStart,
+    atEnd,
+    cwd,
+  }: {
+    ctx: Ctx;
+    projectIdentifier?: string;
+    path: string;
+    cellId: string;
+    beforeId?: string;
+    afterId?: string;
+    atStart?: boolean;
+    atEnd?: boolean;
+    cwd?: string;
+  }): Promise<ProjectJupyterMutationResult> {
+    return await withNotebookSession({
+      ctx,
+      projectIdentifier,
+      path,
+      cwd,
+      fn: async ({ project, path, session }) => {
+        const cell = await session.moveCell({
+          cellId,
+          beforeId,
+          afterId,
+          atStart,
+          atEnd,
+        });
+        const cells = await session.listCells();
+        return {
+          project_id: project.project_id,
+          path,
+          cell: notebookCellInfoFromRecord(cells, cell.id),
+        };
+      },
+    });
+  }
+
   async function projectJupyterRunSession({
     ctx,
     projectIdentifier,
@@ -878,6 +922,7 @@ export function createProjectJupyterOps<Ctx, Project extends ProjectIdentity>(
     projectJupyterSetCellData,
     projectJupyterInsertCellData,
     projectJupyterDeleteCellsData,
+    projectJupyterMoveCellData,
     projectJupyterRunSession,
     projectJupyterLiveRunSession,
   };
