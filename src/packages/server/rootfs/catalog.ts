@@ -21,6 +21,7 @@ import type {
   RootfsImageVisibility,
   RootfsImageWarning,
   RootfsReleaseGcStatus,
+  RootfsScanSummary,
 } from "@cocalc/util/rootfs-images";
 import {
   BUILTIN_ROOTFS_IMAGES,
@@ -43,10 +44,14 @@ type RootfsImageRow = {
   hidden: boolean | null;
   blocked: boolean | null;
   blocked_reason: string | null;
+  blocked_at: Date | null;
+  blocked_by: string | null;
   deleted: boolean | null;
   deleted_reason: string | null;
   deleted_at: Date | null;
   deleted_by: string | null;
+  hidden_at: Date | null;
+  hidden_by: string | null;
   arch: string | null;
   gpu: boolean | null;
   size_gb: number | null;
@@ -62,6 +67,7 @@ type RootfsImageRow = {
   scan_status: string | null;
   scan_tool: string | null;
   scanned_at: Date | null;
+  scan_summary: RootfsScanSummary | null;
 };
 
 function trimString(value: unknown): string | undefined {
@@ -180,6 +186,16 @@ function rowToEntry({
       section,
       warning: warningFor(section),
       theme: row.theme ?? undefined,
+      scan:
+        row.scan_status || row.scan_tool || row.scanned_at || row.scan_summary
+          ? {
+              ...(row.scan_summary ?? {}),
+              status: (row.scan_status as any) ?? row.scan_summary?.status,
+              tool: row.scan_tool ?? row.scan_summary?.tool,
+              scanned_at:
+                row.scanned_at?.toISOString() ?? row.scan_summary?.scanned_at,
+            }
+          : undefined,
       can_manage:
         admin ||
         (!!account_id && !!row.owner_id && row.owner_id === account_id),
@@ -222,6 +238,16 @@ function rowToAdminEntry({
         owner_name: fullName(row),
         warning: "none",
         theme: row.theme ?? undefined,
+        scan:
+          row.scan_status || row.scan_tool || row.scanned_at || row.scan_summary
+            ? {
+                ...(row.scan_summary ?? {}),
+                status: (row.scan_status as any) ?? row.scan_summary?.status,
+                tool: row.scan_tool ?? row.scan_summary?.tool,
+                scanned_at:
+                  row.scanned_at?.toISOString() ?? row.scan_summary?.scanned_at,
+              }
+            : undefined,
         can_manage:
           admin ||
           (!!account_id && !!row.owner_id && row.owner_id === account_id),
@@ -230,6 +256,10 @@ function rowToAdminEntry({
     ),
     deleted: row.deleted ?? false,
     deleted_reason: row.deleted_reason ?? undefined,
+    hidden_at: row.hidden_at?.toISOString(),
+    hidden_by: row.hidden_by ?? undefined,
+    blocked_at: row.blocked_at?.toISOString(),
+    blocked_by: row.blocked_by ?? undefined,
     deleted_at: row.deleted_at?.toISOString(),
     deleted_by: row.deleted_by ?? undefined,
     release_gc_status: row.release_gc_status ?? undefined,
@@ -258,8 +288,8 @@ export async function ensureBuiltinRootfsImages(): Promise<void> {
   for (const entry of BUILTIN_ROOTFS_IMAGES) {
     await pool.query(
       `INSERT INTO rootfs_images
-      (image_id, release_id, owner_id, runtime_image, label, description, visibility, official, prepull, hidden, blocked, blocked_reason, deleted, deleted_reason, deleted_at, deleted_by, arch, gpu, size_gb, tags, digest, content_key, deprecated, deprecated_reason, theme, created, updated)
-      VALUES ($1, NULL, NULL, $2, $3, $4, $5, $6, $7, false, false, NULL, false, NULL, NULL, NULL, $8, $9, $10, $11::TEXT[], $12, $13, $14, $15, $16::JSONB, NOW(), NOW())
+      (image_id, release_id, owner_id, runtime_image, label, description, visibility, official, prepull, hidden, hidden_at, hidden_by, blocked, blocked_reason, blocked_at, blocked_by, deleted, deleted_reason, deleted_at, deleted_by, arch, gpu, size_gb, tags, digest, content_key, deprecated, deprecated_reason, theme, created, updated)
+      VALUES ($1, NULL, NULL, $2, $3, $4, $5, $6, $7, false, NULL, NULL, false, NULL, NULL, NULL, false, NULL, NULL, NULL, $8, $9, $10, $11::TEXT[], $12, $13, $14, $15, $16::JSONB, NOW(), NOW())
       ON CONFLICT (image_id) DO NOTHING`,
       [
         entry.id,
@@ -297,8 +327,12 @@ async function queryRootfsRows(): Promise<RootfsImageRow[]> {
       r.official,
       r.prepull,
       r.hidden,
+      r.hidden_at,
+      r.hidden_by,
       r.blocked,
       r.blocked_reason,
+      r.blocked_at,
+      r.blocked_by,
       r.deleted,
       r.deleted_reason,
       r.deleted_at,
@@ -317,7 +351,8 @@ async function queryRootfsRows(): Promise<RootfsImageRow[]> {
       rel.gc_status AS release_gc_status,
       rel.scan_status,
       rel.scan_tool,
-      rel.scanned_at
+      rel.scanned_at,
+      rel.scan_summary
     FROM rootfs_images AS r
     LEFT JOIN accounts AS a ON a.account_id = r.owner_id
     LEFT JOIN rootfs_releases AS rel ON rel.release_id = r.release_id
@@ -461,15 +496,20 @@ async function upsertRootfsRow({
   const prepull = admin && body.prepull === true;
   const hidden = admin && body.hidden === true;
   const blocked = admin && body.blocked === true;
-  const blocked_reason = blocked
-    ? (trimString(body.blocked_reason) ?? null)
-    : null;
+  const blocked_reason = trimString(body.blocked_reason) ?? null;
 
   await pool.query(
     `INSERT INTO rootfs_images
-      (image_id, release_id, owner_id, runtime_image, label, description, visibility, official, prepull, hidden, blocked, blocked_reason, deleted, deleted_reason, deleted_at, deleted_by, arch, gpu, size_gb, tags, digest, content_key, deprecated, deprecated_reason, theme, created, updated)
+      (image_id, release_id, owner_id, runtime_image, label, description, visibility, official, prepull, hidden, hidden_at, hidden_by, blocked, blocked_reason, blocked_at, blocked_by, deleted, deleted_reason, deleted_at, deleted_by, arch, gpu, size_gb, tags, digest, content_key, deprecated, deprecated_reason, theme, created, updated)
      VALUES
-      ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, false, NULL, NULL, NULL, $13, $14, $15, $16::TEXT[], $17, $18, false, NULL, $19::JSONB, NOW(), NOW())
+      ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+       CASE WHEN $10 THEN NOW() ELSE NULL END,
+       CASE WHEN $10 THEN $3 ELSE NULL END,
+       $11,
+       CASE WHEN $11 THEN $12 ELSE NULL END,
+       CASE WHEN $11 THEN NOW() ELSE NULL END,
+       CASE WHEN $11 THEN $3 ELSE NULL END,
+       false, NULL, NULL, NULL, $13, $14, $15, $16::TEXT[], $17, $18, false, NULL, $19::JSONB, NOW(), NOW())
      ON CONFLICT (image_id) DO UPDATE SET
       release_id = COALESCE(EXCLUDED.release_id, rootfs_images.release_id),
       owner_id = EXCLUDED.owner_id,
@@ -480,8 +520,27 @@ async function upsertRootfsRow({
       official = EXCLUDED.official,
       prepull = EXCLUDED.prepull,
       hidden = EXCLUDED.hidden,
+      hidden_at = CASE
+        WHEN EXCLUDED.hidden AND COALESCE(rootfs_images.hidden, false) = false THEN NOW()
+        ELSE rootfs_images.hidden_at
+      END,
+      hidden_by = CASE
+        WHEN EXCLUDED.hidden AND COALESCE(rootfs_images.hidden, false) = false THEN EXCLUDED.owner_id
+        ELSE rootfs_images.hidden_by
+      END,
       blocked = EXCLUDED.blocked,
-      blocked_reason = EXCLUDED.blocked_reason,
+      blocked_reason = CASE
+        WHEN EXCLUDED.blocked THEN COALESCE(EXCLUDED.blocked_reason, rootfs_images.blocked_reason)
+        ELSE rootfs_images.blocked_reason
+      END,
+      blocked_at = CASE
+        WHEN EXCLUDED.blocked AND COALESCE(rootfs_images.blocked, false) = false THEN NOW()
+        ELSE rootfs_images.blocked_at
+      END,
+      blocked_by = CASE
+        WHEN EXCLUDED.blocked AND COALESCE(rootfs_images.blocked, false) = false THEN EXCLUDED.owner_id
+        ELSE rootfs_images.blocked_by
+      END,
       arch = EXCLUDED.arch,
       gpu = EXCLUDED.gpu,
       size_gb = EXCLUDED.size_gb,
@@ -757,6 +816,8 @@ export async function requestRootfsImageDeletion({
   await pool.query(
     `UPDATE rootfs_images
      SET hidden=true,
+         hidden_at = COALESCE(hidden_at, NOW()),
+         hidden_by = COALESCE(hidden_by, $3),
          deleted=true,
          deleted_reason=$2,
          deleted_by=$3,

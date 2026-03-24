@@ -74,6 +74,7 @@ export type RootfsImageEntry = {
   warning?: RootfsImageWarning;
   theme?: RootfsImageTheme;
   can_manage?: boolean;
+  scan?: RootfsScanSummary;
 };
 
 export type RootfsImageManifest = {
@@ -219,6 +220,10 @@ export type RootfsAdminCatalogEntry = RootfsImageEntry & {
   deleted_reason?: string;
   deleted_at?: string;
   deleted_by?: string;
+  hidden_at?: string;
+  hidden_by?: string;
+  blocked_at?: string;
+  blocked_by?: string;
   release_gc_status?: RootfsReleaseGcStatus;
   delete_blockers?: RootfsDeleteBlockers;
   scan_status?: RootfsScanStatus;

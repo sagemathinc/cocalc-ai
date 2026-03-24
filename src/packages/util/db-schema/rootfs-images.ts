@@ -65,6 +65,14 @@ Table({
       type: "boolean",
       desc: "Hide this image from normal user-facing pickers.",
     },
+    hidden_at: {
+      type: "timestamp",
+      desc: "When this image was most recently hidden.",
+    },
+    hidden_by: {
+      type: "uuid",
+      desc: "Account that most recently hid this image.",
+    },
     blocked: {
       type: "boolean",
       desc: "Prevent this image from being newly selected or published from.",
@@ -72,6 +80,14 @@ Table({
     blocked_reason: {
       type: "string",
       desc: "Optional explanation for why this image was blocked.",
+    },
+    blocked_at: {
+      type: "timestamp",
+      desc: "When this image was most recently blocked.",
+    },
+    blocked_by: {
+      type: "uuid",
+      desc: "Account that most recently blocked this image.",
     },
     deleted: {
       type: "boolean",

@@ -102,6 +102,7 @@ function serializeRootfsImageEntry(entry: RootfsImageEntry) {
     description: entry.description ?? null,
     tags: entry.tags ?? [],
     can_manage: !!entry.can_manage,
+    scan: entry.scan ?? null,
   };
 }
 
@@ -110,6 +111,10 @@ function serializeRootfsAdminEntry(entry: RootfsAdminCatalogEntry) {
     ...serializeRootfsImageEntry(entry),
     deleted: !!entry.deleted,
     deleted_reason: entry.deleted_reason ?? null,
+    hidden_at: entry.hidden_at ?? null,
+    hidden_by: entry.hidden_by ?? null,
+    blocked_at: entry.blocked_at ?? null,
+    blocked_by: entry.blocked_by ?? null,
     deleted_at: entry.deleted_at ?? null,
     deleted_by: entry.deleted_by ?? null,
     release_id: entry.release_id ?? null,
@@ -187,6 +192,11 @@ function formatRootfsEntriesHuman(
       if (entry.warning && entry.warning !== "none") {
         lines.push(`   warning: ${entry.warning}`);
       }
+      if (entry.scan?.status && entry.scan.status !== "unknown") {
+        lines.push(
+          `   scan: status=${entry.scan.status} tool=${entry.scan.tool ?? "-"} scanned_at=${entry.scan.scanned_at ?? "-"}`,
+        );
+      }
       lines.push(
         ...wrapField({
           label: "description",
@@ -225,6 +235,21 @@ function formatRootfsAdminEntriesHuman(
       if (entry.blocked && entry.blocked_reason) {
         lines.push(`   blocked_reason: ${entry.blocked_reason}`);
       }
+      if (entry.blocked_at || entry.blocked_by) {
+        lines.push(
+          `   last_blocked: ${entry.blocked_at ?? "-"} by ${entry.blocked_by ?? "-"}`,
+        );
+      }
+      if (entry.hidden_at || entry.hidden_by) {
+        lines.push(
+          `   last_hidden: ${entry.hidden_at ?? "-"} by ${entry.hidden_by ?? "-"}`,
+        );
+      }
+      if (entry.deleted_at || entry.deleted_by) {
+        lines.push(
+          `   deleted_at: ${entry.deleted_at ?? "-"} by ${entry.deleted_by ?? "-"}`,
+        );
+      }
       if (entry.delete_blockers) {
         lines.push(
           `   delete_blockers: total=${entry.delete_blockers.total} projects=${entry.delete_blockers.projects_using_release} catalog=${entry.delete_blockers.catalog_entries_using_release} prepull=${entry.delete_blockers.prepull_entries_using_release} child_releases=${entry.delete_blockers.child_releases}`,
@@ -234,6 +259,12 @@ function formatRootfsAdminEntriesHuman(
         lines.push(
           `   scan: status=${entry.scan_status ?? "unknown"} tool=${entry.scan_tool ?? "-"} scanned_at=${entry.scanned_at ?? "-"}`,
         );
+      }
+      if (entry.scan?.summary) {
+        lines.push(`   scan_summary: ${entry.scan.summary}`);
+      }
+      if (entry.scan?.report_url) {
+        lines.push(`   scan_report: ${entry.scan.report_url}`);
       }
       lines.push(
         ...wrapField({
