@@ -76,7 +76,9 @@ describe("PublicFeaturesApp", () => {
     expect(
       screen.getByText("Jupyter notebooks made for teaching"),
     ).not.toBeNull();
-    expect(screen.getByText("Managed kernels")).not.toBeNull();
+    expect(
+      screen.getByText("Managed kernels and practical compatibility"),
+    ).not.toBeNull();
     expect(screen.getByText("Publishing notebooks")).not.toBeNull();
   });
 });

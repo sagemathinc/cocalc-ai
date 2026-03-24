@@ -68,17 +68,19 @@ export default function JupyterNotebookFeaturePage({
                 ONLINE JUPYTER
               </Text>
               <Title level={2} style={{ margin: 0 }}>
-                CoCalc&apos;s collaborative, fully compatible, supercharged
-                Jupyter notebooks
+                Jupyter notebooks for collaborative technical work, teaching,
+                and custom environments
               </Title>
               <Paragraph style={{ fontSize: 17, margin: 0 }}>
-                Run notebooks directly in the browser, collaborate live, keep
-                the exact edit history, and teach from the same environment.
+                Run Jupyter in the browser, collaborate live, keep the full
+                history, and build the software environment your work actually
+                needs instead of being trapped in a fixed hosted stack.
               </Paragraph>
               <Paragraph style={{ margin: 0 }}>
-                This page restores the richer public Jupyter landing content
-                from the old site while keeping it inside the new standalone
-                AntD public frontend.
+                CoCalc starts from a working notebook environment, then lets you
+                keep going: install packages, customize the system, snapshot the
+                result, and share that environment with collaborators, students,
+                or an entire class.
               </Paragraph>
               <Flex wrap gap={12}>
                 <Button type="primary" href={appPath("auth/sign-up")}>
@@ -132,15 +134,16 @@ export default function JupyterNotebookFeaturePage({
               ]}
             />
             <Paragraph style={{ margin: 0 }}>
-              CoCalc ships with many kernels out of the box: multiple Python
-              environments, SageMath, R, Octave, Julia, and more.
+              The point is not only that notebooks open in the browser. It is
+              that the same environment can be used to distribute assignments,
+              collect submissions, collaborate with TAs, and grade at scale.
             </Paragraph>
           </PublicSectionCard>
         </Col>
         <Col xs={24} lg={12}>
           <PublicSectionCard>
             <Title level={3} style={{ margin: 0 }}>
-              No software setup
+              No local setup, and not a fixed stack either
             </Title>
             <Paragraph style={{ margin: 0 }}>
               CoCalc is an online service where you can run Jupyter notebooks
@@ -148,12 +151,14 @@ export default function JupyterNotebookFeaturePage({
               collaborators.
             </Paragraph>
             <Paragraph style={{ margin: 0 }}>
-              You do not have to manage Python environments, package installs,
-              machine-specific setup, or backup scripts just to get productive.
+              You can start immediately without installing anything on your
+              laptop, but you are also not limited to whatever happened to be
+              preinstalled by the platform operator.
             </Paragraph>
             <Paragraph style={{ margin: 0 }}>
-              CoCalc handles the underlying environment while keeping your
-              notebooks compatible with the broader Jupyter ecosystem.
+              Root access, project-local Linux environments, snapshots, and
+              rollback make it practical to install what your notebook actually
+              requires and keep that environment reusable.
             </Paragraph>
           </PublicSectionCard>
         </Col>
@@ -192,9 +197,56 @@ export default function JupyterNotebookFeaturePage({
                 local browser illusion.
               </Paragraph>
               <Paragraph style={{ margin: 0 }}>
-                You can mix code cells with markdown or rich text between cells,
-                which is especially useful for teaching and collaborative
-                research notes.
+                Recent work has gone into making this robust under reruns,
+                refreshes, reconnects, and widget-heavy workflows, which is the
+                difference between a demo and a notebook system people can
+                actually rely on.
+              </Paragraph>
+            </Flex>
+          </Col>
+        </Row>
+      </PublicSectionCard>
+
+      <PublicSectionCard>
+        <Row gutter={[24, 24]} align="middle">
+          <Col xs={24} lg={11}>
+            <FeatureImage
+              alt="Managed Jupyter kernels and environments"
+              src="/public/features/cocalc-jupyter-kernels.png"
+            />
+          </Col>
+          <Col xs={24} lg={13}>
+            <Flex vertical gap={12}>
+              <Tag
+                color="blue"
+                style={{
+                  alignSelf: "flex-start",
+                  background: COLORS.ANTD_BG_BLUE_L,
+                  color: COLORS.BLUE_D,
+                }}
+              >
+                Custom environments
+              </Tag>
+              <Title level={3} style={{ margin: 0 }}>
+                Install what you need, snapshot it, and reuse it
+              </Title>
+              <Paragraph style={{ margin: 0 }}>
+                A major shift in the product is that CoCalc is no longer framed
+                as a fixed hosted stack that happens to include many packages.
+                It is a managed Jupyter workspace where you can install what
+                your project needs.
+              </Paragraph>
+              <Paragraph style={{ margin: 0 }}>
+                Root access, filesystem snapshots, and rollback make system-wide
+                installation far less fragile than the usual “hope this VM does
+                not drift” workflow. Entire software stacks can be reused across
+                collaborators, students, and projects.
+              </Paragraph>
+              <Paragraph style={{ margin: 0 }}>
+                AI agent integration also lowers the cost of getting difficult
+                environments working, since the agent can help diagnose and
+                install the missing pieces instead of leaving users to chase
+                package errors manually.
               </Paragraph>
             </Flex>
           </Col>
@@ -216,6 +268,11 @@ export default function JupyterNotebookFeaturePage({
               and forth across edits, recover deleted work, and inspect how a
               notebook evolved.
             </Paragraph>
+            <Paragraph style={{ margin: 0 }}>
+              That matters especially when notebooks are shared among several
+              people or used in classes, where understanding how something broke
+              can be as important as recovering the final answer.
+            </Paragraph>
             <LinkButton href="https://doc.cocalc.com/time-travel.html">
               Learn about TimeTravel
             </LinkButton>
@@ -235,6 +292,11 @@ export default function JupyterNotebookFeaturePage({
               including teacher notebooks with exercise cells, hidden tests, and
               immediate feedback cells for students.
             </Paragraph>
+            <Paragraph style={{ margin: 0 }}>
+              This is one of the areas where collaborative infrastructure,
+              notebook execution, and course workflows really need to live in
+              the same product.
+            </Paragraph>
             <LinkButton href="https://doc.cocalc.com/teaching-nbgrader.html">
               nbgrader in CoCalc
             </LinkButton>
@@ -250,17 +312,23 @@ export default function JupyterNotebookFeaturePage({
               src="/public/features/cocalc-jupyter-kernels.png"
             />
             <Title level={3} style={{ margin: 0 }}>
-              Managed kernels
+              Managed kernels and practical compatibility
             </Title>
             <Paragraph style={{ margin: 0 }}>
-              Choose from many preinstalled, fully managed kernels, or create a{" "}
+              You can start with working kernels immediately, then create a{" "}
               <a href="https://doc.cocalc.com/howto/custom-jupyter-kernel.html">
                 custom kernel
               </a>{" "}
-              when you need something more specific.
+              or extend the base environment when the default options are not
+              enough.
+            </Paragraph>
+            <Paragraph style={{ margin: 0 }}>
+              The goal is compatibility with the broader Jupyter ecosystem
+              without treating users as if they must stay inside a frozen image
+              forever.
             </Paragraph>
             <LinkButton href={appPath("features/linux")}>
-              Available software
+              Linux workflow
             </LinkButton>
           </PublicSectionCard>
         </Col>
@@ -277,6 +345,12 @@ export default function JupyterNotebookFeaturePage({
               Each notebook can have a chat side panel for collaboration,
               questions, pasted screenshots, file drops, markdown, and LaTeX
               formulas.
+            </Paragraph>
+            <Paragraph style={{ margin: 0 }}>
+              In practice this matters because notebook work is rarely just a
+              single user editing cells. There are code reviews, debugging
+              discussions, teaching interactions, and increasingly AI-assisted
+              workflows happening around the notebook.
             </Paragraph>
             <LinkButton href="https://doc.cocalc.com/chat.html">
               Chat documentation
@@ -307,6 +381,12 @@ export default function JupyterNotebookFeaturePage({
                 servers from a CoCalc project when that better matches your
                 workflow or extension stack.
               </Paragraph>
+              <Paragraph style={{ margin: 0 }}>
+                That gives you a practical spectrum: use CoCalc&apos;s notebook
+                experience when collaboration and integrated workflow matter
+                most, and drop into classical Jupyter interfaces when you need
+                them.
+              </Paragraph>
               <Flex wrap gap={12}>
                 <LinkButton href="https://doc.cocalc.com/jupyter.html#alternatives-plain-jupyter-server-and-jupyterlab-server">
                   Jupyter alternatives
@@ -336,7 +416,8 @@ export default function JupyterNotebookFeaturePage({
             </Paragraph>
             <Paragraph style={{ margin: 0 }}>
               You can also close the browser during long computations and come
-              back later without losing notebook output.
+              back later without losing notebook output, which is essential when
+              the computation matters more than the browser tab.
             </Paragraph>
           </PublicSectionCard>
         </Col>
@@ -354,6 +435,10 @@ export default function JupyterNotebookFeaturePage({
               HTML, including pre-rendered mathematics, for lightweight public
               sharing.
             </Paragraph>
+            <Paragraph style={{ margin: 0 }}>
+              That makes public notebook output easier to share without asking
+              readers to run a whole notebook server just to view results.
+            </Paragraph>
             <LinkButton href={appPath("share")}>Sharing overview</LinkButton>
           </PublicSectionCard>
         </Col>
@@ -366,9 +451,10 @@ export default function JupyterNotebookFeaturePage({
         <BulletList
           items={[
             "Live collaboration instead of taking turns emailing notebooks.",
-            "Built-in history, backups, and recovery paths instead of hoping local files survive.",
+            "A notebook system that holds up under refreshes, reconnects, long runs, and shared widget sessions.",
+            "Built-in history, backups, snapshots, and recovery paths instead of hoping local files survive.",
             "Teaching and grading workflows in the same environment as the notebooks.",
-            "Managed kernels and shared Linux projects for reproducible technical work.",
+            "A Linux environment you can actually customize, snapshot, and reuse, rather than a locked-down hosted stack.",
           ]}
         />
         <Flex wrap gap={12}>
