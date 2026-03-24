@@ -36,11 +36,7 @@ import {
 import { projectApiClient, type ProjectApi } from "@cocalc/conat/project/api";
 import type { UserSearchResult } from "@cocalc/util/db-schema/accounts";
 import { createBrowserSessionClient } from "@cocalc/conat/service/browser-session";
-import {
-  FALLBACK_ACCOUNT_UUID,
-  basePathCookieName,
-  isValidUUID,
-} from "@cocalc/util/misc";
+import { FALLBACK_ACCOUNT_UUID, isValidUUID } from "@cocalc/util/misc";
 import {
   applyAuthProfile,
   authConfigPath,
@@ -51,6 +47,7 @@ import {
   type AuthProfile,
   type GlobalAuthOptions,
 } from "../core/auth-config";
+import { buildCookieHeader, normalizeSecretValue } from "../core/auth-cookies";
 import {
   durationToMs,
   extractCookie,
@@ -543,63 +540,6 @@ function globalsFrom(command: unknown): GlobalOptions {
 
 function getExplicitAccountId(globals: GlobalOptions): string | undefined {
   return globals.accountId ?? globals.account_id;
-}
-
-function normalizeSecretValue(raw: string | undefined): string | undefined {
-  const value = `${raw ?? ""}`.trim();
-  if (!value) return undefined;
-  if (existsSync(value)) {
-    try {
-      const data = readFileSync(value, "utf8").trim();
-      if (data) return data;
-    } catch {
-      // fall through and use raw value
-    }
-  }
-  return value;
-}
-
-function cookieNameFor(baseUrl: string, name: string): string {
-  const pathname = new URL(baseUrl).pathname || "/";
-  const basePath = pathname.replace(/\/+$/, "") || "/";
-  return basePathCookieName({ basePath, name });
-}
-
-function buildCookieHeader(
-  baseUrl: string,
-  globals: GlobalOptions,
-  options: { includeHubPassword?: boolean } = {},
-): string | undefined {
-  const includeHubPassword = options.includeHubPassword !== false;
-  const parts: string[] = [];
-  if (globals.cookie?.trim()) {
-    parts.push(globals.cookie.trim());
-  }
-
-  const apiKey = globals.apiKey ?? process.env.COCALC_API_KEY;
-  if (apiKey?.trim()) {
-    const scopedName = cookieNameFor(baseUrl, "api_key");
-    parts.push(`${scopedName}=${apiKey}`);
-    if (scopedName !== "api_key") {
-      parts.push(`api_key=${apiKey}`);
-    }
-  }
-
-  if (includeHubPassword) {
-    const hubPassword = normalizeSecretValue(
-      globals.hubPassword ?? process.env.COCALC_HUB_PASSWORD,
-    );
-    if (hubPassword?.trim()) {
-      const scopedName = cookieNameFor(baseUrl, "hub_password");
-      parts.push(`${scopedName}=${hubPassword}`);
-      if (scopedName !== "hub_password") {
-        parts.push(`hub_password=${hubPassword}`);
-      }
-    }
-  }
-
-  if (!parts.length) return undefined;
-  return parts.join("; ");
 }
 
 function hasHubPassword(globals: GlobalOptions): boolean {

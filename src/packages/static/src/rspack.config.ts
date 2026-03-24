@@ -100,7 +100,6 @@ export default function getConfig({ middleware }: Options = {}): Configuration {
   const frontendSourceFingerprint = getFrontendSourceFingerprintSync({
     now: date,
   });
-  const COCALC_CLEAN = !!process.env.COCALC_CLEAN;
   const RSPACK_DEV_SERVER =
     NODE_ENV != "production" && !process.env.NO_RSPACK_DEV_SERVER;
 
@@ -110,7 +109,6 @@ export default function getConfig({ middleware }: Options = {}): Configuration {
   console.log(`NODE_ENV            = ${NODE_ENV}`);
   console.log(`MEASURE             = ${MEASURE}`);
   console.log(`OUTPUT              = ${OUTPUT}`);
-  console.log(`COCALC_CLEAN        = ${COCALC_CLEAN}`);
   console.log(`RSPACK_DEV_SERVER   = ${RSPACK_DEV_SERVER}`);
   console.log(
     `FRONTEND_BUILD_FP    = ${frontendSourceFingerprint.fingerprint}`,
@@ -139,7 +137,7 @@ export default function getConfig({ middleware }: Options = {}): Configuration {
     COCALC_LICENSE,
   });
 
-  if (!middleware && COCALC_CLEAN) {
+  if (!middleware) {
     cleanPlugin(registerPlugin, OUTPUT);
   }
 
@@ -246,6 +244,36 @@ export default function getConfig({ middleware }: Options = {}): Configuration {
       "public-viewer-chat": {
         import: insertHotMiddlewareUrl([
           resolve("dist-ts/src/webapp-public-viewer-chat.js"),
+        ]),
+        dependOn: "load",
+      },
+      "public-auth": {
+        import: insertHotMiddlewareUrl([
+          resolve("dist-ts/src/webapp-public-auth.js"),
+        ]),
+        dependOn: "load",
+      },
+      "public-home": {
+        import: insertHotMiddlewareUrl([
+          resolve("dist-ts/src/webapp-public-home.js"),
+        ]),
+        dependOn: "load",
+      },
+      "public-support": {
+        import: insertHotMiddlewareUrl([
+          resolve("dist-ts/src/webapp-public-support.js"),
+        ]),
+        dependOn: "load",
+      },
+      "public-content": {
+        import: insertHotMiddlewareUrl([
+          resolve("dist-ts/src/webapp-public-content.js"),
+        ]),
+        dependOn: "load",
+      },
+      "public-features": {
+        import: insertHotMiddlewareUrl([
+          resolve("dist-ts/src/webapp-public-features.js"),
         ]),
         dependOn: "load",
       },

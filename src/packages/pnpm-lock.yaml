@@ -953,6 +953,67 @@ importers:
         specifier: ^0.3.1
         version: 0.3.1
 
+  http-api:
+    dependencies:
+      '@cocalc/backend':
+        specifier: workspace:*
+        version: link:../backend
+      '@cocalc/conat':
+        specifier: workspace:*
+        version: link:../conat
+      '@cocalc/database':
+        specifier: workspace:*
+        version: link:../database
+      '@cocalc/frontend':
+        specifier: workspace:*
+        version: link:../frontend
+      '@cocalc/server':
+        specifier: workspace:*
+        version: link:../server
+      '@cocalc/util':
+        specifier: workspace:*
+        version: link:../util
+      '@vscode/vscode-languagedetection':
+        specifier: ^1.0.22
+        version: 1.0.22
+      base-64:
+        specifier: ^1.0.0
+        version: 1.0.0
+      express:
+        specifier: ^4.21.2
+        version: 4.22.1
+      lodash:
+        specifier: ^4.17.21
+        version: 4.17.23
+      lru-cache:
+        specifier: ^7.18.3
+        version: 7.18.3
+      next-rest-framework:
+        specifier: 6.1.1
+        version: 6.1.1
+      password-hash:
+        specifier: ^1.2.2
+        version: 1.2.2
+      uuid:
+        specifier: ^8.3.2
+        version: 8.3.2
+      zod:
+        specifier: 4.3.6
+        version: 4.3.6
+    devDependencies:
+      '@types/express':
+        specifier: ^4.17.23
+        version: 4.17.25
+      '@types/lodash':
+        specifier: ^4.17.20
+        version: 4.17.20
+      '@types/node':
+        specifier: ^22.10.10
+        version: 22.19.15
+      node-mocks-http:
+        specifier: ^1.14.1
+        version: 1.17.2(@types/express@4.17.25)(@types/node@22.19.15)
+
   hub:
     dependencies:
       '@cocalc/assets':
@@ -970,6 +1031,9 @@ importers:
       '@cocalc/database':
         specifier: workspace:*
         version: link:../database
+      '@cocalc/http-api':
+        specifier: workspace:*
+        version: link:../http-api
       '@cocalc/hub':
         specifier: workspace:*
         version: 'link:'
@@ -1253,6 +1317,9 @@ importers:
       '@cocalc/frontend':
         specifier: workspace:*
         version: link:../frontend
+      '@cocalc/http-api':
+        specifier: workspace:*
+        version: link:../http-api
       '@cocalc/server':
         specifier: workspace:*
         version: link:../server
@@ -5446,9 +5513,6 @@ packages:
   '@types/estree@1.0.8':
     resolution: {integrity: sha512-dWHzHa2WqEXI/O1E9OjrocMTKJl2mSrEolh1Iomrv6U+JuNwaHXsXx9bLu5gG7BUWFIN0skIQJQ/L1rIex4X6w==}
 
-  '@types/express-serve-static-core@4.19.7':
-    resolution: {integrity: sha512-FvPtiIf1LfhzsaIXhv/PHan/2FeQBbtBDtfX2QfvPxdUelMDEckK08SM6nqo1MIZY3RUlfA+HV8+hFUSio78qg==}
-
   '@types/express-serve-static-core@4.19.8':
     resolution: {integrity: sha512-02S5fmqeoKzVZCHPZid4b8JH2eM5HzQLZWN2FohQEy/0eXTq8VXZfSN6Pcr3F6N9R/vNrj7cpgbhjie6m/1tCA==}
 
@@ -5622,9 +5686,6 @@ packages:
 
   '@types/prismjs@1.26.5':
     resolution: {integrity: sha512-AUZTa7hQ2KY5L7AmtSiqxlhWxb4ina0yd8hNbl4TWuqnv/pFP0nDMb3YrfSBf4hJVGLh2YEIBfKaBW/9UEl6IQ==}
-
-  '@types/qs@6.14.0':
-    resolution: {integrity: sha512-eOunJqu0K1923aExK6y8p6fsihYEn/BYuQ4g0CxAAgFc4b/ZLN4CrsRZ55srTdqoiLzU2B2evC+apEIxprEzkQ==}
 
   '@types/qs@6.15.0':
     resolution: {integrity: sha512-JawvT8iBVWpzTrz3EGw9BTQFg3BQNmwERdKE22vlTxawwtbyUSlMppvZYKLZzB5zgACXdXxbD3m1bXaMqP/9ow==}
@@ -13078,6 +13139,7 @@ packages:
   whatwg-encoding@3.1.1:
     resolution: {integrity: sha512-6qN4hJdMwfYBtE3YBTTHhoeuUrDBPZmbQaxWAqSALV/MeEnR5z1xd8UKud2RAkFoPkmB+hli1TZSnyi84xz1vQ==}
     engines: {node: '>=18'}
+    deprecated: Use @exodus/bytes instead for a more spec-conformant and faster implementation
 
   whatwg-fetch@3.6.20:
     resolution: {integrity: sha512-EqhiFU6daOA8kpjOWTL0olhVOF3i7OrFzSYiGsEMB8GcXS+RrzauAERX65xMeNWVqxA6HXH2m69Z9LaKKdisfg==}
@@ -15557,7 +15619,7 @@ snapshots:
       backbone: 1.2.3
       base64-js: 1.5.1
       jquery: 3.7.1
-      lodash: 4.17.21
+      lodash: 4.17.23
     transitivePeerDependencies:
       - bufferutil
       - react
@@ -16116,7 +16178,7 @@ snapshots:
   '@node-saml/node-saml@5.1.0':
     dependencies:
       '@types/debug': 4.1.12
-      '@types/qs': 6.14.0
+      '@types/qs': 6.15.0
       '@types/xml-encryption': 1.2.4
       '@types/xml2js': 0.4.14
       '@xmldom/is-dom-node': 1.0.1
@@ -16329,7 +16391,7 @@ snapshots:
   '@passport-next/passport-oauth2@2.1.4':
     dependencies:
       '@passport-next/passport-strategy': 1.1.0
-      lodash: 4.17.21
+      lodash: 4.17.23
       oauth: 0.9.15
 
   '@passport-next/passport-strategy@1.1.0': {}
@@ -17624,13 +17686,6 @@ snapshots:
 
   '@types/estree@1.0.8': {}
 
-  '@types/express-serve-static-core@4.19.7':
-    dependencies:
-      '@types/node': 22.19.15
-      '@types/qs': 6.14.0
-      '@types/range-parser': 1.2.7
-      '@types/send': 1.2.1
-
   '@types/express-serve-static-core@4.19.8':
     dependencies:
       '@types/node': 22.19.15
@@ -17645,8 +17700,8 @@ snapshots:
   '@types/express@4.17.25':
     dependencies:
       '@types/body-parser': 1.19.6
-      '@types/express-serve-static-core': 4.19.7
-      '@types/qs': 6.14.0
+      '@types/express-serve-static-core': 4.19.8
+      '@types/qs': 6.15.0
       '@types/serve-static': 1.15.10
 
   '@types/formidable@3.4.6':
@@ -17834,8 +17889,6 @@ snapshots:
       '@types/node': 22.19.15
 
   '@types/prismjs@1.26.5': {}
-
-  '@types/qs@6.14.0': {}
 
   '@types/qs@6.15.0': {}
 
@@ -19981,7 +20034,7 @@ snapshots:
       is-core-module: 2.16.1
       js-yaml: 4.1.1
       json5: 2.2.3
-      lodash: 4.17.21
+      lodash: 4.17.23
       minimatch: 7.4.6
       multimatch: 5.0.0
       please-upgrade-node: 3.2.0
@@ -21657,7 +21710,7 @@ snapshots:
     dependencies:
       '@types/html-minifier-terser': 6.1.0
       html-minifier-terser: 6.1.0
-      lodash: 4.17.21
+      lodash: 4.17.23
       pretty-error: 4.0.0
       tapable: 2.3.0
     optionalDependencies:
@@ -24334,6 +24387,22 @@ snapshots:
       '@types/express': 4.17.25
       '@types/node': 22.19.1
 
+  node-mocks-http@1.17.2(@types/express@4.17.25)(@types/node@22.19.15):
+    dependencies:
+      accepts: 1.3.8
+      content-disposition: 0.5.4
+      depd: 1.1.2
+      fresh: 0.5.2
+      merge-descriptors: 1.0.3
+      methods: 1.1.2
+      mime: 1.6.0
+      parseurl: 1.3.3
+      range-parser: 1.2.1
+      type-is: 1.6.18
+    optionalDependencies:
+      '@types/express': 4.17.25
+      '@types/node': 22.19.15
+
   node-pty@1.2.0-beta.11:
     dependencies:
       node-addon-api: 7.1.1
@@ -24675,7 +24744,7 @@ snapshots:
       cache-manager: 3.6.3
       https-proxy-agent: 5.0.1
       jws: 4.0.0
-      lodash: 4.17.21
+      lodash: 4.17.23
       node-jose: 2.2.0
       oauth: 0.9.15
       passport: 0.6.0
@@ -25109,7 +25178,7 @@ snapshots:
   project-name-generator@2.1.9:
     dependencies:
       commander: 6.2.1
-      lodash: 4.17.21
+      lodash: 4.17.23
 
   prom-client@15.1.3:
     dependencies:
@@ -25311,7 +25380,7 @@ snapshots:
   react-color@2.19.3(react@19.2.1):
     dependencies:
       '@icons/material': 0.2.4(react@19.2.1)
-      lodash: 4.17.21
+      lodash: 4.17.23
       lodash-es: 4.17.21
       material-colors: 1.2.6
       prop-types: 15.8.1
@@ -26117,7 +26186,7 @@ snapshots:
       '@juggle/resize-observer': 3.4.0
       direction: 1.0.4
       is-hotkey: 0.2.0
-      lodash: 4.17.21
+      lodash: 4.17.23
       react: 19.2.1
       react-dom: 19.2.1(react@19.2.1)
       scroll-into-view-if-needed: 3.1.0

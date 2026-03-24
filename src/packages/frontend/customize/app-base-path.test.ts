@@ -7,11 +7,13 @@ describe("inferAppBasePath", () => {
   });
 
   it("infers a subpath from refreshed app routes", () => {
+    expect(inferAppBasePath("/projects")).toBe("/");
     expect(
       inferAppBasePath(
         "/base/projects/00000000-1000-4000-8000-000000000000/files",
       ),
     ).toBe("/base");
+    expect(inferAppBasePath("/base/projects")).toBe("/base");
     expect(inferAppBasePath("/base/auth/sign-in")).toBe("/base");
     expect(inferAppBasePath("/base/settings/profile")).toBe("/base");
     expect(inferAppBasePath("/base/ssh")).toBe("/base");
