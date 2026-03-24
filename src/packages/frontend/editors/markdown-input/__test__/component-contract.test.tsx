@@ -432,6 +432,19 @@ describe("MarkdownInput CodeMirror wrapper contract", () => {
     expect(body.children).toHaveLength(1);
   });
 
+  it("allows blob uploads without a project or path", () => {
+    expect(() =>
+      render(
+        <MarkdownInput
+          value="hello"
+          onChange={() => {}}
+          saveDebounceMs={0}
+          enableUpload={true}
+        />,
+      ),
+    ).not.toThrow();
+  });
+
   it("clamps auto-grow to the allocated host height and clears stale host scroll", () => {
     const { rerender } = render(
       <MarkdownInput

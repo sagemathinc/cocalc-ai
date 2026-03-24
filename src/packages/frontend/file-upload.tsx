@@ -520,7 +520,9 @@ export function UploadLink({
 }
 
 export function BlobUpload(props) {
-  const url = `${join(appBasePath, "blobs")}?project_id=${props.project_id}`;
+  const url = props.project_id
+    ? `${join(appBasePath, "blobs")}?project_id=${props.project_id}`
+    : join(appBasePath, "blobs");
   const handlers = {
     ...props.event_handlers,
     complete: (file) => {

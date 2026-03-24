@@ -903,10 +903,6 @@ export function MarkdownInput(props: Props) {
   ]);
 
   function upload_sending(file: { name: string }): void {
-    if (project_id == null || path == null) {
-      throw Error("path must be set if enableUploads is set.");
-    }
-
     // console.log("upload_sending", file);
     if (current_uploads_ref.current == null) {
       current_uploads_ref.current = { [file.name]: true };
@@ -926,9 +922,6 @@ export function MarkdownInput(props: Props) {
   }
 
   function upload_complete(file): void {
-    if (path == null) {
-      throw Error("path must be set if enableUploads is set.");
-    }
     const filename = file.name ?? file.upload.filename;
 
     if (current_uploads_ref.current != null) {
@@ -1261,13 +1254,10 @@ export function MarkdownInput(props: Props) {
         actions?.set_error(`${message}`);
       },
     };
-    if (project_id == null || path == null) {
-      throw Error("project_id and path must be set if enableUploads is set.");
-    }
     body = (
       <BlobUpload
         show_upload={false}
-        project_id={project_id}
+        project_id={project_id ?? ""}
         event_handlers={event_handlers}
         style={{ height: "100%", width: "100%" }}
         dropzone_ref={dropzone_ref}

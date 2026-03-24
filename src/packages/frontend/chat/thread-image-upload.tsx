@@ -63,6 +63,7 @@ export function ThreadImageUpload({
         }}
       >
         <Upload.Dragger
+          beforeUpload={() => false}
           name="file"
           showUploadList={false}
           onDrop={(e) => {
@@ -142,7 +143,15 @@ async function uploadCroppedImage({
   setUploading(true);
   setError("");
   try {
-    const blob = file as Blob;
+    const blob =
+      (file as any).originFileObj instanceof Blob
+        ? ((file as any).originFileObj as Blob)
+        : file instanceof Blob
+          ? file
+          : undefined;
+    if (blob == null) {
+      throw Error("unable to resolve image data");
+    }
     const { url } = await uploadBlobImage({
       file: blob,
       filename:

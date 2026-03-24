@@ -454,7 +454,7 @@ export default function SupportCreateModal() {
         type="info"
         showIcon
         message="This draft is not cleared until you explicitly clear it or submit the ticket."
-        description="You can close and reopen this modal while gathering evidence, copying error messages, or pasting screenshots. The body uses the same markdown / rich-text composer as chat, and any images are converted to absolute links before the Zendesk ticket is created."
+        description="You can close and reopen this modal while gathering evidence, copying error messages, or pasting screenshots. The body uses the same markdown / rich-text composer as chat, supports pasted and dropped images, and converts those images to absolute links before the Zendesk ticket is created."
       />
       {initialOptions.required ? (
         <Alert
@@ -525,7 +525,7 @@ export default function SupportCreateModal() {
             key={`support-create-${currentUrl}`}
             autoGrowMaxHeight={320}
             enableMentions={false}
-            enableUpload={false}
+            enableUpload={true}
             fixedMode="editor"
             height="220px"
             input={body}
@@ -541,9 +541,10 @@ export default function SupportCreateModal() {
       <div>
         <Text strong>Images</Text>
         <Paragraph type="secondary" style={{ marginTop: 4 }}>
-          Paste screenshots into the box below or upload them. Each image is
-          inserted into the ticket body as markdown and converted to clickable
-          absolute links for Zendesk.
+          You can paste or drop images directly into the composer above. This
+          extra upload box is useful when you want to crop an image before it is
+          inserted into the ticket body. Every image is converted to a clickable
+          absolute link for Zendesk.
         </Paragraph>
         <ThreadImageUpload
           modalTitle="Crop support image"
