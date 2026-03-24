@@ -9,8 +9,9 @@ import { useEffect, useState } from "react";
 import api from "@cocalc/frontend/client/api";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { PublicSectionCard } from "@cocalc/frontend/public/ui/shell";
-import { joinUrlPath } from "@cocalc/util/url-path";
 import { COLORS } from "@cocalc/util/theme";
+import { joinUrlPath } from "@cocalc/util/url-path";
+import MarkdownIt from "markdown-it";
 
 type TicketType = "problem" | "question" | "task" | "purchase" | "chat";
 
@@ -45,6 +46,37 @@ const LINK_STYLE: CSSProperties = {
   color: COLORS.BLUE_D,
   cursor: "pointer",
 } as const;
+
+const TICKET_BODY_STYLE: CSSProperties = {
+  whiteSpace: "normal",
+  background: COLORS.GRAY_LLL,
+  borderRadius: "8px",
+  padding: "12px",
+  lineHeight: 1.65,
+  overflow: "auto",
+  maxHeight: "30vh",
+} as const;
+
+const ticketMarkdown = new MarkdownIt({
+  breaks: true,
+  html: false,
+  linkify: true,
+});
+
+const defaultLinkOpen =
+  ticketMarkdown.renderer.rules.link_open ??
+  ((tokens, idx, options, _env, self) =>
+    self.renderToken(tokens, idx, options));
+
+ticketMarkdown.renderer.rules.link_open = (tokens, idx, options, env, self) => {
+  tokens[idx].attrSet("target", "_blank");
+  tokens[idx].attrSet("rel", "noreferrer noopener");
+  return defaultLinkOpen(tokens, idx, options, env, self);
+};
+
+export function renderTicketDescription(value?: string): string {
+  return ticketMarkdown.render(value ?? "");
+}
 
 function Alert({
   children,
@@ -209,14 +241,12 @@ export default function SupportTickets({ config }: { config: SupportConfig }) {
           </div>
           <div
             style={{
-              whiteSpace: "pre-wrap",
-              background: COLORS.GRAY_LLL,
-              borderRadius: "8px",
-              padding: "12px",
+              ...TICKET_BODY_STYLE,
             }}
-          >
-            {ticket.description ?? ""}
-          </div>
+            dangerouslySetInnerHTML={{
+              __html: renderTicketDescription(ticket.description ?? ""),
+            }}
+          ></div>
           {ticket.userURL ? (
             <div>
               <a href={ticket.userURL} style={LINK_STYLE}>
