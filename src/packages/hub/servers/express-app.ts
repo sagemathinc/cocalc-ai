@@ -230,6 +230,12 @@ export default async function init(opts: Options): Promise<{
 
   // Static assets that are used by the webapp, the landing page, etc.
   router.use(
+    "/favicon.ico",
+    express.static(join(WEBAPP_PATH, "favicon.ico"), {
+      setHeaders: cacheLongTerm,
+    }),
+  );
+  router.use(
     "/webapp",
     express.static(WEBAPP_PATH, { setHeaders: cacheLongTerm }),
   );
