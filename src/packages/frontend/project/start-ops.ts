@@ -39,7 +39,7 @@ export class StartOpsManager {
       scope_type: "project",
       scope_id: opts.project_id,
       include_completed: false,
-      retainTerminal: false,
+      retainTerminal: true,
       refreshMs: 30_000,
       listLro: opts.listLro,
       getLroStream: opts.getLroStream,

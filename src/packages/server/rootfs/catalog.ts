@@ -25,6 +25,7 @@ import type {
 import {
   BUILTIN_ROOTFS_IMAGES,
   DEFAULT_ROOTFS_CATALOG_URL,
+  isManagedRootfsImageName,
   normalizeRootfsEntry,
   ROOTFS_IMAGE_MANIFEST_VERSION,
 } from "@cocalc/util/rootfs-images";
@@ -149,6 +150,9 @@ function rowToEntry({
   collaboratorIds: Set<string>;
   admin: boolean;
 }): RootfsImageEntry | undefined {
+  if (isManagedRootfsImageName(row.runtime_image) && !row.release_id) {
+    return undefined;
+  }
   const section = sectionFor({ row, account_id, collaboratorIds });
   if (!section) return undefined;
   return normalizeRootfsEntry(

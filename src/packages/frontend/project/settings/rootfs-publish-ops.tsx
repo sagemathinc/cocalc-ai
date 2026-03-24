@@ -71,6 +71,12 @@ function RootfsPublishRow({ op }: { op: RootfsPublishLroState }) {
   const phaseTimings = op.summary?.result?.phase_timings_ms;
   const errorText = `${op.summary?.error ?? ""}`.trim();
   const dismissible = !!status && LRO_TERMINAL_STATUSES.has(status);
+  async function dismissOp() {
+    await webapp_client.conat_client.hub.lro.dismiss({
+      op_id: op.op_id,
+    });
+    setDismissed(true);
+  }
 
   if (dismissed) {
     return null;
@@ -139,6 +145,8 @@ function RootfsPublishRow({ op }: { op: RootfsPublishLroState }) {
               copied={copied}
               setCopied={setCopied}
               errorText={errorText}
+              dismissible={dismissible}
+              onDismiss={dismissOp}
             />
           }
         >
@@ -147,16 +155,7 @@ function RootfsPublishRow({ op }: { op: RootfsPublishLroState }) {
           </Button>
         </Popover>
         {dismissible ? (
-          <Button
-            type="link"
-            size="small"
-            onClick={async () => {
-              await webapp_client.conat_client.hub.lro.dismiss({
-                op_id: op.op_id,
-              });
-              setDismissed(true);
-            }}
-          >
+          <Button type="link" size="small" onClick={dismissOp}>
             Dismiss
           </Button>
         ) : null}
@@ -170,11 +169,15 @@ function RootfsPublishDetails({
   copied,
   setCopied,
   errorText,
+  dismissible,
+  onDismiss,
 }: {
   op: RootfsPublishLroState;
   copied: boolean;
   setCopied: (value: boolean) => void;
   errorText: string;
+  dismissible: boolean;
+  onDismiss: () => Promise<void>;
 }) {
   const requestedLabel = `${op.summary?.input?.label ?? ""}`.trim();
   const result = op.summary?.result ?? {};
@@ -238,6 +241,11 @@ function RootfsPublishDetails({
           >
             {errorText}
           </div>
+        ) : null}
+        {dismissible ? (
+          <Button size="small" onClick={() => void onDismiss()}>
+            Dismiss
+          </Button>
         ) : null}
       </Space>
     </div>

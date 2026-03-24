@@ -41,6 +41,7 @@ import {
   normalizeProjectStateForDisplay,
 } from "@cocalc/frontend/projects/host-operational";
 import MoveProject from "@cocalc/frontend/project/settings/move-project";
+import { webapp_client } from "@cocalc/frontend/webapp-client";
 
 const STYLE: CSSProperties = {
   fontSize: "40px",
@@ -112,6 +113,8 @@ export function StartButton({
   const startLroStatus = startLroSummary?.status
     ? capitalize(startLroSummary.status)
     : undefined;
+  const startLroError = `${startLroSummary?.error ?? ""}`.trim();
+  const startFailed = startLroSummary?.status === "failed" && !!startLroError;
   const startLroStartTs = startLroSummary
     ? toTimestamp(startLroSummary.started_at ?? startLroSummary.created_at)
     : undefined;
@@ -252,85 +255,108 @@ export function StartButton({
     const membership_hint = `This ${projectLabel.toLowerCase()} will start with the upgrades that your membership level provides.`;
 
     return (
-      <Space size="small" align="center">
-        <Tooltip
-          title={
-            <div>
-              <ProjectState state={state} show_desc={allowed} />
-              <div style={{ fontSize: "12px", color: "#fff" }}>
-                {membership_hint}
-              </div>
-              {hostUnavailable && (
+      <div>
+        <Space size="small" align="center">
+          <Tooltip
+            title={
+              <div>
+                <ProjectState state={state} show_desc={allowed} />
                 <div style={{ fontSize: "12px", color: "#fff" }}>
-                  Host unavailable: {hostUnavailableReason}
+                  {membership_hint}
                 </div>
-              )}
-              {render_not_allowed()}
-              {starting && (
-                <div style={{ background: "white" }}>
-                  {startLroSummary && (
-                    <div style={{ fontSize: "12px", color: COLORS.GRAY_M }}>
-                      LRO: {startLroStatus ?? "Unknown"}
-                      {startLroStartTs != null && (
-                        <>
-                          {" "}
-                          &middot;{" "}
-                          <TimeElapsed
-                            start_ts={startLroStartTs}
-                            longform={false}
-                          />
-                        </>
-                      )}
-                    </div>
-                  )}
-                  <Bootlog
-                    style={{
-                      border: "1px solid #ddd",
-                      padding: "15px",
-                      boxShadow: "5px 5px 5px grey",
-                    }}
-                    lro={
-                      startLroSummary
-                        ? {
-                            op_id: startLroSummary.op_id,
-                            scope_type: startLroSummary.scope_type,
-                            scope_id: startLroSummary.scope_id,
-                          }
-                        : undefined
-                    }
-                  />
-                </div>
-              )}
-            </div>
-          }
-        >
-          <Button
-            type="primary"
-            size={size ?? (minimal ? undefined : "large")}
-            style={minimal ? style : undefined}
-            danger={danger}
-            disabled={!enabled || disabled}
-            onClick={async () => {
-              try {
-                await redux.getActions("projects").start_project(project_id);
-              } catch (err) {
-                // maybe ui should show this some other way
-                console.warn("WARNING -- issue starting project ", err);
-              }
-            }}
+                {hostUnavailable && (
+                  <div style={{ fontSize: "12px", color: "#fff" }}>
+                    Host unavailable: {hostUnavailableReason}
+                  </div>
+                )}
+                {render_not_allowed()}
+                {(starting || startFailed) && (
+                  <div style={{ background: "white" }}>
+                    {startLroSummary && (
+                      <div style={{ fontSize: "12px", color: COLORS.GRAY_M }}>
+                        LRO: {startLroStatus ?? "Unknown"}
+                        {startLroStartTs != null && (
+                          <>
+                            {" "}
+                            &middot;{" "}
+                            <TimeElapsed
+                              start_ts={startLroStartTs}
+                              longform={false}
+                            />
+                          </>
+                        )}
+                      </div>
+                    )}
+                    <Bootlog
+                      style={{
+                        border: "1px solid #ddd",
+                        padding: "15px",
+                        boxShadow: "5px 5px 5px grey",
+                      }}
+                      lro={
+                        startLroSummary
+                          ? {
+                              op_id: startLroSummary.op_id,
+                              scope_type: startLroSummary.scope_type,
+                              scope_id: startLroSummary.scope_id,
+                            }
+                          : undefined
+                      }
+                    />
+                  </div>
+                )}
+              </div>
+            }
           >
-            <Space>
-              {starting ? (
-                <Icon name="cocalc-ring" spin />
-              ) : (
-                <Icon name="play" />
-              )}
-              {txt}
-            </Space>
-          </Button>
-        </Tooltip>
-        {moveActive && moveLro && <MoveProgressInline moveLro={moveLro} />}
-      </Space>
+            <Button
+              type="primary"
+              size={size ?? (minimal ? undefined : "large")}
+              style={minimal ? style : undefined}
+              danger={danger}
+              disabled={!enabled || disabled}
+              onClick={async () => {
+                try {
+                  await redux.getActions("projects").start_project(project_id);
+                } catch (err) {
+                  // maybe ui should show this some other way
+                  console.warn("WARNING -- issue starting project ", err);
+                }
+              }}
+            >
+              <Space>
+                {starting ? (
+                  <Icon name="cocalc-ring" spin />
+                ) : (
+                  <Icon name="play" />
+                )}
+                {txt}
+              </Space>
+            </Button>
+          </Tooltip>
+          {moveActive && moveLro && <MoveProgressInline moveLro={moveLro} />}
+        </Space>
+        {startFailed && startLroSummary && (
+          <Alert
+            style={{ marginTop: "10px", maxWidth: "720px" }}
+            type="error"
+            showIcon
+            message="Project start failed"
+            description={startLroError}
+            action={
+              <Button
+                size="small"
+                onClick={async () => {
+                  await webapp_client.conat_client.hub.lro.dismiss({
+                    op_id: startLroSummary.op_id,
+                  });
+                }}
+              >
+                Dismiss
+              </Button>
+            }
+          />
+        )}
+      </div>
     );
   }
 

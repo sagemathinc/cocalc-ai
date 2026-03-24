@@ -9,6 +9,7 @@ import type {
   ProjectRootfsStateEntry,
   ProjectRootfsStateRole,
 } from "@cocalc/util/rootfs-images";
+import { isManagedRootfsImageName } from "@cocalc/util/rootfs-images";
 
 type RootfsStateRow = {
   project_id: string;
@@ -115,13 +116,19 @@ async function resolveManagedBinding({
      WHERE runtime_image=$1
        AND COALESCE(gc_status, 'active') <> 'deleted'
      ORDER BY updated DESC
-     LIMIT 1`,
+    LIMIT 1`,
     [runtimeImage],
   );
+  const releaseId = trimString(releaseRows.rows[0]?.release_id);
+  if (isManagedRootfsImageName(runtimeImage) && !releaseId) {
+    throw new Error(
+      `managed RootFS image '${runtimeImage}' has no registered release`,
+    );
+  }
   return {
     image: runtimeImage,
     image_id: catalogId,
-    release_id: trimString(releaseRows.rows[0]?.release_id),
+    release_id: releaseId,
   };
 }
 
