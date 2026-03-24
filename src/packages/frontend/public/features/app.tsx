@@ -16,6 +16,7 @@ import {
 import { SITE_NAME } from "@cocalc/util/theme";
 import { joinUrlPath } from "@cocalc/util/url-path";
 import { getFeatureIndexPages, getFeaturePage } from "./catalog";
+import JupyterNotebookFeaturePage from "./jupyter-notebook-page";
 import type { PublicFeaturesRoute } from "./routes";
 import { featurePath } from "./routes";
 
@@ -115,6 +116,10 @@ function FeatureDetail({
         </div>
       </PublicSectionCard>
     );
+  }
+
+  if (slug === "jupyter-notebook") {
+    return <JupyterNotebookFeaturePage helpEmail={helpEmail} />;
   }
 
   return (
