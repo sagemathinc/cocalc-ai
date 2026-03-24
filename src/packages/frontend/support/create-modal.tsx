@@ -44,6 +44,13 @@ const { Paragraph, Text } = Typography;
 
 const MIN_BODY_LENGTH = 16;
 const SUPPORT_DRAFT_STORAGE_PREFIX = "cocalc:support-draft:v1:";
+const ALL_TICKET_TYPES: TicketType[] = [
+  "problem",
+  "question",
+  "task",
+  "purchase",
+  "chat",
+];
 
 function normalizeType(value?: string): TicketType {
   switch (value) {
@@ -55,6 +62,51 @@ function normalizeType(value?: string): TicketType {
       return value;
     default:
       return "problem";
+  }
+}
+
+function defaultBodyForType(type: TicketType): string {
+  switch (type) {
+    case "problem":
+      return [
+        "**What did you do exactly?**",
+        "",
+        "**What happened?**",
+        "",
+        "**How did this differ from what you expected?**",
+      ].join("\n");
+    case "question":
+      return [
+        "**What is your question?**",
+        "",
+        "**What have you tried so far?**",
+      ].join("\n");
+    case "task":
+      return [
+        "**What software or configuration do you need?**",
+        "",
+        "**How do you plan to use it?**",
+        "",
+        "**How can we test that it works?**",
+      ].join("\n");
+    case "purchase":
+      return [
+        "**What would you like to purchase?**",
+        "",
+        "**Roughly how many users or projects are involved?**",
+        "",
+        "**Are there any timing, pricing, or deployment constraints?**",
+      ].join("\n");
+    case "chat":
+      return [
+        "**What would you like to discuss in the video chat?**",
+        "",
+        "**What outcome are you hoping for?**",
+        "",
+        "**Do you have any scheduling constraints?**",
+      ].join("\n");
+    default:
+      return "";
   }
 }
 
@@ -197,7 +249,11 @@ export default function SupportCreateModal() {
 
   useEffect(() => {
     const draft = loadDraft(draftStorageKey);
-    setBody(draft?.body ?? initialOptions.body ?? "");
+    setBody(
+      draft?.body ??
+        initialOptions.body ??
+        defaultBodyForType(normalizeType(initialOptions.type)),
+    );
     setFiles(draft?.files ?? []);
     setIncludeScreenshot(draft?.includeScreenshot ?? false);
     setLastImageUrl("");
@@ -214,6 +270,27 @@ export default function SupportCreateModal() {
     initialOptions.url,
     initialOptions.required,
   ]);
+
+  useEffect(() => {
+    const nextTemplate = defaultBodyForType(type);
+    if (!nextTemplate) return;
+    setBody((current) => {
+      const trimmed = current.trim();
+      const initialTemplate = defaultBodyForType(
+        normalizeType(initialOptions.type),
+      );
+      if (
+        trimmed.length === 0 ||
+        trimmed === initialTemplate.trim() ||
+        ALL_TICKET_TYPES.some(
+          (ticketType) => trimmed === defaultBodyForType(ticketType).trim(),
+        )
+      ) {
+        return nextTemplate;
+      }
+      return current;
+    });
+  }, [type, initialOptions.type]);
 
   useEffect(() => {
     if (typeof window === "undefined" || successUrl) return;

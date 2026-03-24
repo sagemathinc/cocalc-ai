@@ -232,4 +232,24 @@ describe("SupportCreateModal", () => {
       ).value,
     ).toBe("Notebook issue");
   });
+
+  it("seeds the single composer with prompts that match the selected ticket type", () => {
+    supportModalOptions = {
+      body: "",
+      subject: "Need help",
+      type: "problem",
+    };
+
+    render(<SupportCreateModal />);
+
+    expect(
+      (screen.getByLabelText("Support body") as HTMLTextAreaElement).value,
+    ).toContain("**What did you do exactly?**");
+
+    fireEvent.click(screen.getByRole("radio", { name: "Purchase" }));
+
+    expect(
+      (screen.getByLabelText("Support body") as HTMLTextAreaElement).value,
+    ).toContain("**What would you like to purchase?**");
+  });
 });
