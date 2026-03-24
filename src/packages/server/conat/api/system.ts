@@ -33,14 +33,22 @@ import {
   type R2CredentialsTestResult,
 } from "@cocalc/server/project-backup/r2";
 import {
+  listRootfsImagesAdmin,
   listVisibleRootfsImages,
+  requestRootfsImageDeletion as requestRootfsImageDeletion0,
   saveRootfsImage,
 } from "@cocalc/server/rootfs/catalog";
+import { runPendingRootfsReleaseGc } from "@cocalc/server/rootfs/releases";
 import type {
+  ProjectRootfsStateEntry,
   ProjectRootfsPublishLroRef,
   PublishProjectRootfsBody,
   RootfsCatalogSaveBody,
 } from "@cocalc/util/rootfs-images";
+import {
+  getProjectRootfsStates as getProjectRootfsStates0,
+  setProjectRootfsImageWithRollback,
+} from "@cocalc/server/projects/rootfs-state";
 import { createLro } from "@cocalc/server/lro/lro-db";
 import { lroStreamName } from "@cocalc/conat/lro/names";
 import { SERVICE as PERSIST_SERVICE } from "@cocalc/conat/persist/util";
@@ -329,6 +337,14 @@ export async function getRootfsCatalog(opts: { account_id?: string } = {}) {
   return await listVisibleRootfsImages(opts.account_id);
 }
 
+export async function getRootfsCatalogAdmin(
+  opts: {
+    account_id?: string;
+  } = {},
+) {
+  return await listRootfsImagesAdmin(opts.account_id);
+}
+
 export async function saveRootfsCatalogEntry(
   opts: RootfsCatalogSaveBody & { account_id?: string },
 ) {
@@ -337,6 +353,33 @@ export async function saveRootfsCatalogEntry(
     throw Error("user must be signed in");
   }
   return await saveRootfsImage({ account_id, body });
+}
+
+export async function requestRootfsImageDeletion(opts: {
+  account_id?: string;
+  image_id: string;
+  reason?: string;
+}) {
+  const { account_id, image_id, reason } = opts;
+  if (!account_id) {
+    throw Error("user must be signed in");
+  }
+  return await requestRootfsImageDeletion0({
+    account_id,
+    image_id,
+    reason,
+  });
+}
+
+export async function runRootfsReleaseGc(opts: {
+  account_id?: string;
+  limit?: number;
+}) {
+  const { account_id, limit } = opts;
+  if (!account_id || !(await isAdmin(account_id))) {
+    throw Error("must be an admin");
+  }
+  return await runPendingRootfsReleaseGc({ limit });
 }
 
 async function publishQueuedLroSafe({ op }: { op: LroSummary }) {
@@ -397,6 +440,41 @@ export async function publishProjectRootfsImage(
     service: PERSIST_SERVICE,
     stream_name: lroStreamName(op.op_id),
   };
+}
+
+export async function getProjectRootfsStates(opts: {
+  account_id?: string;
+  project_id: string;
+}): Promise<ProjectRootfsStateEntry[]> {
+  const { account_id, project_id } = opts;
+  if (!account_id) {
+    throw Error("user must be signed in");
+  }
+  if (!(await isCollaborator({ account_id, project_id }))) {
+    throw Error("user must be a collaborator on the project");
+  }
+  return await getProjectRootfsStates0({ project_id });
+}
+
+export async function setProjectRootfsImage(opts: {
+  account_id?: string;
+  project_id: string;
+  image: string;
+  image_id?: string;
+}): Promise<ProjectRootfsStateEntry[]> {
+  const { account_id, project_id, image, image_id } = opts;
+  if (!account_id) {
+    throw Error("user must be signed in");
+  }
+  if (!(await isCollaborator({ account_id, project_id }))) {
+    throw Error("user must be a collaborator on the project");
+  }
+  return await setProjectRootfsImageWithRollback({
+    project_id,
+    image,
+    image_id,
+    set_by_account_id: account_id,
+  });
 }
 
 export {

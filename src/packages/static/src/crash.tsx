@@ -3,10 +3,9 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { join } from "path";
-
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import supportURL from "@cocalc/frontend/support/url";
+import { joinUrlPath } from "@cocalc/util/url-path";
 import { COLORS, HELP_EMAIL } from "@cocalc/util/theme";
 import A from "./link";
 
@@ -96,7 +95,9 @@ export default function Crash() {
               Reload this browser tab
             </a>{" "}
             in order to recover from this. You might also try{" "}
-            <a href={join(appBasePath, `projects?session=${Date.now()}`)}>
+            <a
+              href={joinUrlPath(appBasePath, `projects?session=${Date.now()}`)}
+            >
               a new session
             </a>
             .
@@ -123,9 +124,9 @@ export default function Crash() {
         If this happens repeatedly for a specific file or action, please report
         all details in <A href={getSupport}>a support ticket</A>, via email to{" "}
         <A href={`mailto:${HELP_EMAIL}`}>{HELP_EMAIL}</A>, or consult our{" "}
-        <A href={join(appBasePath, "info")}>other support resources</A>. Thank
-        you! Unfortunately, if you don't explain how you hit this problem so we
-        can reproduce it, then we probably will not be able to fix it.
+        <A href={joinUrlPath(appBasePath, "info")}>other support resources</A>.
+        Thank you! Unfortunately, if you don't explain how you hit this problem
+        so we can reproduce it, then we probably will not be able to fix it.
       </div>
     </div>
   );

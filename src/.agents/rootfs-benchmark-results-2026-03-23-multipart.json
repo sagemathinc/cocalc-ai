@@ -1,0 +1,205 @@
+{
+  "date": "2026-03-23",
+  "mode": "multipart-r2-upload",
+  "defaults": {
+    "multipart_part_bytes": 67108864,
+    "multipart_concurrency": 8
+  },
+  "environment": {
+    "source_host": {
+      "name": "rootfs-test-1",
+      "host_id": "5ff0a685-99ae-4dc0-974f-7d38480e736e",
+      "machine": "n2-highmem-4",
+      "ram_gb": 32,
+      "disk_gb": 200,
+      "region": "us-west1"
+    },
+    "destination_host": {
+      "name": "rootfs-test-2",
+      "host_id": "18521f3d-1d43-4663-aec3-91fc7374d114",
+      "machine": "n2-highmem-4",
+      "ram_gb": 32,
+      "disk_gb": 200,
+      "region": "us-west1"
+    }
+  },
+  "benchmarks": [
+    {
+      "name": "base-empty",
+      "prefix": "bench-multipart-base-empty-1774292335985",
+      "src_project_id": "75e90065-2e45-4ab9-8d53-2413834d9680",
+      "cold_project_id": "fac9e90b-73f1-467b-b53d-ae148b8fede5",
+      "warm_project_id": "ee0102db-629c-47da-9087-d53990585854",
+      "image": "cocalc.local/rootfs/96c1e317a6c6424280ea8c53a947f758f6c4bbd386f05b45229612bb8826caae",
+      "publish_ms": 12176,
+      "cold_start_ms": 8948,
+      "warm_start_ms": 757,
+      "publish_phase_timings_ms": {
+        "publish": 3915,
+        "upload": 8208,
+        "register_release": 3,
+        "replicate": 1,
+        "catalog_entry": 10,
+        "total": 12176
+      },
+      "publish_host_phase_timings_ms": {
+        "create_snapshot": 138,
+        "clone_snapshot": 277,
+        "materialize_tree": 2367,
+        "hash_tree": 768,
+        "register_cache_entry": 156
+      },
+      "upload_phase_timings_ms": {
+        "btrfs_send": 3691,
+        "hash_artifact": 847,
+        "upload_artifact": 3541
+      },
+      "cold_start_phase_timings_ms": {
+        "cache_rootfs": 8289,
+        "runner_start": 580,
+        "total": 8948
+      },
+      "warm_start_phase_timings_ms": {
+        "cache_rootfs": 75,
+        "runner_start": 583,
+        "total": 757
+      }
+    },
+    {
+      "name": "package-heavy-jupyter",
+      "prefix": "bench-multipart-package-heavy-jupyter-1774292788937",
+      "src_project_id": "0263e6db-145e-41e7-b331-ffdbabcb7325",
+      "cold_project_id": "0192dd70-6f8d-4ed1-8116-737619d390a0",
+      "warm_project_id": "e57b44a6-5f8c-417a-a828-cdc55486049a",
+      "image": "cocalc.local/rootfs/a6abe0cf83e386aa4e861b11fd0d0e574b67c4ddd68bfcc0b1a2ca88b056577d",
+      "setup_ms": 100606,
+      "size_bytes": {
+        "/usr": 1124276164
+      },
+      "publish_ms": 57280,
+      "cold_start_ms": 36607,
+      "warm_start_ms": 760,
+      "publish_phase_timings_ms": {
+        "publish": 23616,
+        "upload": 33597,
+        "register_release": 3,
+        "replicate": 1,
+        "catalog_entry": 10,
+        "total": 57280
+      },
+      "publish_host_phase_timings_ms": {
+        "create_snapshot": 462,
+        "clone_snapshot": 297,
+        "materialize_tree": 17082,
+        "hash_tree": 4444,
+        "register_cache_entry": 656
+      },
+      "upload_phase_timings_ms": {
+        "btrfs_send": 20516,
+        "hash_artifact": 4671,
+        "upload_artifact": 8311
+      },
+      "cold_start_phase_timings_ms": {
+        "cache_rootfs": 35957,
+        "runner_start": 580,
+        "total": 36607
+      },
+      "warm_start_phase_timings_ms": {
+        "cache_rootfs": 138,
+        "runner_start": 542,
+        "total": 760
+      }
+    },
+    {
+      "name": "metadata-heavy-repos",
+      "prefix": "bench-multipart-metadata-heavy-repos-1774292405647",
+      "src_project_id": "84daf7c3-b76a-4fd4-b26b-dcd06160fa54",
+      "cold_project_id": "76d3bb56-0431-49fd-a203-b1096e1e7d04",
+      "warm_project_id": "4c7f4ff0-de93-48be-8d62-e5898df309fc",
+      "image": "cocalc.local/rootfs/34b598026389ddc6a414fafb90f9417798bd997fc722d059dec8d00d6665dfb6",
+      "setup_ms": 18287,
+      "size_bytes": {
+        "/opt/repos": 310982413
+      },
+      "publish_ms": 32870,
+      "cold_start_ms": 24368,
+      "warm_start_ms": 1385,
+      "publish_phase_timings_ms": {
+        "publish": 12425,
+        "upload": 20381,
+        "register_release": 11,
+        "replicate": 1,
+        "catalog_entry": 10,
+        "total": 32870
+      },
+      "publish_host_phase_timings_ms": {
+        "create_snapshot": 694,
+        "clone_snapshot": 290,
+        "materialize_tree": 8546,
+        "hash_tree": 2011,
+        "register_cache_entry": 411
+      },
+      "upload_phase_timings_ms": {
+        "btrfs_send": 11951,
+        "hash_artifact": 1984,
+        "upload_artifact": 6143
+      },
+      "cold_start_phase_timings_ms": {
+        "cache_rootfs": 23740,
+        "runner_start": 553,
+        "total": 24368
+      },
+      "warm_start_phase_timings_ms": {
+        "cache_rootfs": 170,
+        "runner_start": 1125,
+        "total": 1385
+      }
+    },
+    {
+      "name": "blob-4g-random",
+      "prefix": "bench-multipart-blob-4g-random-1774292489957",
+      "src_project_id": "6a527cc6-df8a-43d7-93b7-eb84b4510e49",
+      "cold_project_id": "4d7bd335-f6b9-48d7-beb5-68421ea8bb05",
+      "warm_project_id": "5422a7d1-76fa-4861-98d7-1dac6c59a046",
+      "image": "cocalc.local/rootfs/b6bc27f742358783e20f04d513809a1afe55c36572a8d9c7ef83519e467140d9",
+      "setup_ms": 16236,
+      "size_bytes": {
+        "/usr": 240563299,
+        "/opt/random4g.bin": 4294967296
+      },
+      "publish_ms": 120989,
+      "cold_start_ms": 106765,
+      "warm_start_ms": 710,
+      "publish_phase_timings_ms": {
+        "publish": 54937,
+        "upload": 65974,
+        "register_release": 3,
+        "replicate": 2,
+        "catalog_entry": 19,
+        "total": 120989
+      },
+      "publish_host_phase_timings_ms": {
+        "create_snapshot": 7939,
+        "clone_snapshot": 299,
+        "materialize_tree": 32063,
+        "hash_tree": 13339,
+        "register_cache_entry": 646
+      },
+      "upload_phase_timings_ms": {
+        "btrfs_send": 21160,
+        "hash_artifact": 14904,
+        "upload_artifact": 29773
+      },
+      "cold_start_phase_timings_ms": {
+        "cache_rootfs": 106033,
+        "runner_start": 656,
+        "total": 106765
+      },
+      "warm_start_phase_timings_ms": {
+        "cache_rootfs": 57,
+        "runner_start": 576,
+        "total": 710
+      }
+    }
+  ]
+}

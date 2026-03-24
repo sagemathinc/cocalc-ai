@@ -1,0 +1,33 @@
+{
+  "date": "2026-03-22",
+  "git_commit": "31feb972ebffdef575a7d336423a14a9e46d98d3",
+  "source_host": "rootfs-test-1",
+  "dest_host": "rootfs-test-2",
+  "benchmarks": [
+    {
+      "name": "base-empty",
+      "description": "unchanged buildpack-deps:noble-scm base image",
+      "source_project_id": "62fbb4e7-86f4-4dc6-b40d-22e07e7ffd8d",
+      "source_create_sec": 2.832,
+      "setup_sec": 0.0,
+      "setup_exit_code": 0,
+      "publish_wall_sec": 25.707,
+      "publish_duration_ms": 20376,
+      "op_id": "841d3064-6009-49d3-ba6b-74d399f12291",
+      "image": "cocalc.local/rootfs/c96e63cb2312aaab62e78a10145933e555141c8b10ff25b116e36e063a68d088",
+      "image_id": "028fca0d-5988-4a39-977e-a4f1297d200a",
+      "release_id": "415b47aa-28e3-4a01-9c29-789412862ecd",
+      "content_key": "c96e63cb2312aaab62e78a10145933e555141c8b10ff25b116e36e063a68d088",
+      "artifact_backend": "r2",
+      "artifact_bytes": 252606889,
+      "artifact_path": "rootfs/releases/c96e63cb2312aaab62e78a10145933e555141c8b10ff25b116e36e063a68d088/full.btrfs",
+      "replica_region": "wnam",
+      "replica_bucket": "lite2-dev-wnam",
+      "replica_status": "ready",
+      "cold_project_id": "45e33b5e-2be6-4e31-982a-c866041b2e59",
+      "cold_create_sec": 9.433,
+      "warm_project_id": "8875e12d-d0c2-4638-a10d-5d29169e6cae",
+      "warm_create_sec": 2.787
+    }
+  ]
+}

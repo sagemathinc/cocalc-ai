@@ -20,6 +20,7 @@ import { React, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components/icon";
 import type {
   Host,
+  HostRootfsGcResult,
   HostRootfsImage,
   HostSoftwareArtifact,
   HostSoftwareAvailableVersion,
@@ -84,6 +85,7 @@ type HostDrawerViewModel = {
     refresh: () => Promise<void>;
     pull: (image: string) => Promise<void>;
     remove: (image: string) => Promise<void>;
+    gcDeleted: () => Promise<HostRootfsGcResult | undefined>;
   };
   canManageRootfs?: boolean;
   selfHost?: {

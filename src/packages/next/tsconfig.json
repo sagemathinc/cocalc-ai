@@ -35,16 +35,10 @@
     "locales/*/*.json",
     "locales/en/common.ts"
   ],
-  "exclude": [
-    "node_modules",
-    "public",
-    "styles",
-    "dist",
-    ".next",
-    "target"
-  ],
+  "exclude": ["node_modules", "public", "styles", "dist", ".next", "target"],
   "references": [
     { "path": "../backend" },
+    { "path": "../http-api" },
     { "path": "../database" },
     { "path": "../frontend" },
     { "path": "../conat" },

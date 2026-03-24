@@ -6,7 +6,19 @@
 export const ROOTFS_IMAGE_MANIFEST_VERSION = 1;
 
 export type RootfsImageArch = "amd64" | "arm64" | "any";
+export type RootfsPhaseTimings = Record<string, number>;
 export type RootfsImageVisibility = "private" | "collaborators" | "public";
+export type RootfsReleaseGcStatus =
+  | "active"
+  | "pending_delete"
+  | "blocked"
+  | "deleted";
+export type RootfsScanStatus =
+  | "unknown"
+  | "pending"
+  | "clean"
+  | "findings"
+  | "error";
 export type RootfsImageSection =
   | "official"
   | "mine"
@@ -14,6 +26,7 @@ export type RootfsImageSection =
   | "public";
 export type RootfsImageWarning = "none" | "collaborator" | "public";
 export type RootfsPublishSourceMode = "current";
+export type ProjectRootfsStateRole = "current" | "previous";
 
 export type RootfsImageTheme = {
   title?: string;
@@ -22,6 +35,17 @@ export type RootfsImageTheme = {
   accent_color?: string | null;
   icon?: string | null;
   image_blob?: string | null;
+};
+
+export type RootfsScanSummary = {
+  status?: RootfsScanStatus;
+  tool?: string;
+  scanned_at?: string;
+  scanner_version?: string;
+  summary?: string;
+  findings_summary?: Record<string, number>;
+  report_url?: string;
+  metadata?: Record<string, any>;
 };
 
 export type RootfsImageEntry = {
@@ -42,6 +66,8 @@ export type RootfsImageEntry = {
   visibility?: RootfsImageVisibility;
   official?: boolean;
   hidden?: boolean;
+  blocked?: boolean;
+  blocked_reason?: string;
   owner_id?: string;
   owner_name?: string;
   section?: RootfsImageSection;
@@ -71,6 +97,8 @@ export type RootfsCatalogSaveBody = {
   official?: boolean;
   prepull?: boolean;
   hidden?: boolean;
+  blocked?: boolean;
+  blocked_reason?: string;
 };
 
 export type PublishProjectRootfsBody = {
@@ -95,19 +123,60 @@ export type PublishProjectRootfsArtifact = {
   snapshot: string;
   created_snapshot: boolean;
   source_image: string;
+  artifact_kind?: RootfsReleaseArtifactKind;
+  parent_image?: string;
+  parent_content_key?: string;
   inspect_data?: Record<string, any>;
+  phase_timings_ms?: RootfsPhaseTimings;
 };
 
-export type RootfsReleaseArtifactKind = "full";
+export type RootfsReleaseArtifactKind = "full" | "delta";
 export type RootfsReleaseArtifactFormat = "btrfs-send";
 export type RootfsReleaseArtifactBackend = "hub-local" | "r2";
 
-export type RootfsArtifactTransferTarget = {
-  url: string;
-  method: "PUT";
-  headers?: Record<string, string>;
-  chunk_bytes?: number;
-};
+export type RootfsArtifactTransferTarget =
+  | {
+      backend: "hub-local";
+      url: string;
+      method: "PUT";
+      headers?: Record<string, string>;
+      chunk_bytes?: number;
+    }
+  | {
+      backend: "r2";
+      method: "PUT";
+      region: string;
+      bucket_id?: string;
+      bucket_name: string;
+      bucket_purpose?: string | null;
+      artifact_path: string;
+      endpoint: string;
+      access_key_id: string;
+      secret_access_key: string;
+      multipart_part_bytes: number;
+      multipart_concurrency: number;
+    };
+
+export type RootfsUploadedArtifactResult =
+  | {
+      ok: true;
+      backend: "hub-local";
+      artifact_kind?: RootfsReleaseArtifactKind;
+      phase_timings_ms?: RootfsPhaseTimings;
+    }
+  | {
+      ok: true;
+      backend: "r2";
+      artifact_kind?: RootfsReleaseArtifactKind;
+      artifact_sha256: string;
+      artifact_bytes: number;
+      region: string;
+      bucket_id?: string;
+      bucket_name: string;
+      bucket_purpose?: string | null;
+      artifact_path: string;
+      phase_timings_ms?: RootfsPhaseTimings;
+    };
 
 export type RootfsReleaseArtifactAccess = {
   release_id: string;
@@ -118,9 +187,72 @@ export type RootfsReleaseArtifactAccess = {
   artifact_backend: RootfsReleaseArtifactBackend;
   artifact_sha256: string;
   artifact_bytes: number;
+  parent_release_id?: string;
+  parent_image?: string;
+  parent_content_key?: string;
   download_url: string;
   download_headers?: Record<string, string>;
   inspect_data?: Record<string, any>;
+};
+
+export type RootfsDeleteBlockers = {
+  projects_using_release: number;
+  catalog_entries_using_release: number;
+  prepull_entries_using_release: number;
+  child_releases: number;
+  total: number;
+};
+
+export type RootfsDeleteRequestResult = {
+  image_id: string;
+  release_id?: string;
+  image: string;
+  hidden: boolean;
+  deleted: boolean;
+  release_gc_status?: RootfsReleaseGcStatus;
+  delete_requested: boolean;
+  blockers: RootfsDeleteBlockers;
+};
+
+export type RootfsAdminCatalogEntry = RootfsImageEntry & {
+  deleted?: boolean;
+  deleted_reason?: string;
+  deleted_at?: string;
+  deleted_by?: string;
+  release_gc_status?: RootfsReleaseGcStatus;
+  scan_status?: RootfsScanStatus;
+  scan_tool?: string;
+  scanned_at?: string;
+};
+
+export type ProjectRootfsStateEntry = {
+  project_id: string;
+  state_role: ProjectRootfsStateRole;
+  image: string;
+  release_id?: string;
+  image_id?: string;
+  set_by_account_id?: string;
+  set_by_name?: string;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type RootfsReleaseGcItem = {
+  release_id: string;
+  content_key: string;
+  image: string;
+  status: "deleted" | "blocked" | "skipped" | "failed";
+  blockers?: RootfsDeleteBlockers;
+  deleted_replicas?: number;
+  error?: string;
+};
+
+export type RootfsReleaseGcRunResult = {
+  scanned: number;
+  deleted: number;
+  blocked: number;
+  failed: number;
+  items: RootfsReleaseGcItem[];
 };
 
 export type ProjectRootfsPublishLroRef = {

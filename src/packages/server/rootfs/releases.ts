@@ -15,6 +15,7 @@ import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import {
+  deleteObject,
   uploadObjectFromBuffer,
   uploadObjectFromFile,
   issueSignedObjectDownload,
@@ -28,10 +29,14 @@ import {
 } from "@cocalc/util/consts";
 import type {
   PublishProjectRootfsArtifact,
+  RootfsArtifactTransferTarget,
+  RootfsDeleteBlockers,
   RootfsReleaseArtifactAccess,
   RootfsReleaseArtifactBackend,
   RootfsReleaseArtifactFormat,
   RootfsReleaseArtifactKind,
+  RootfsReleaseGcItem,
+  RootfsReleaseGcRunResult,
 } from "@cocalc/util/rootfs-images";
 import { managedRootfsContentKey } from "@cocalc/util/rootfs-images";
 import { v4 as uuid } from "uuid";
@@ -43,12 +48,13 @@ const ROOTFS_RELEASE_TOKEN_SECRET_PATH = join(
   secrets,
   "rootfs-release-artifact-token-key",
 );
-const ROOTFS_RELEASE_ARTIFACT_KIND: RootfsReleaseArtifactKind = "full";
 const ROOTFS_RELEASE_ARTIFACT_FORMAT: RootfsReleaseArtifactFormat =
   "btrfs-send";
 const ROOTFS_RELEASE_ARTIFACT_BACKEND: RootfsReleaseArtifactBackend =
   "hub-local";
 const ROOTFS_RELEASE_UPLOAD_CHUNK_BYTES = 32 * 1024 * 1024;
+const ROOTFS_RELEASE_R2_MULTIPART_PART_BYTES = 64 * 1024 * 1024;
+const ROOTFS_RELEASE_R2_MULTIPART_CONCURRENCY = 8;
 const logger = getLogger("server:rootfs:releases");
 
 type RootfsReleaseRow = {
@@ -56,6 +62,8 @@ type RootfsReleaseRow = {
   content_key: string;
   runtime_image: string;
   source_image: string | null;
+  parent_release_id: string | null;
+  depth: number | null;
   arch: string | null;
   size_bytes: number | null;
   artifact_kind: RootfsReleaseArtifactKind;
@@ -110,7 +118,7 @@ type RootfsArtifactTokenPayload = {
   exp: number;
 };
 
-function normalizeContentKey(content_key?: string): string {
+function normalizeContentKey(content_key?: string | null): string {
   const value = `${content_key ?? ""}`.trim().toLowerCase();
   if (!/^[0-9a-f]{64}$/.test(value)) {
     throw new Error("invalid RootFS content key");
@@ -118,18 +126,38 @@ function normalizeContentKey(content_key?: string): string {
   return value;
 }
 
-function artifactRelativePath(content_key: string): string {
+function artifactRelativePath(
+  content_key: string,
+  artifact_kind: RootfsReleaseArtifactKind = "full",
+  parent_content_key?: string | null,
+): string {
   const key = normalizeContentKey(content_key);
+  if (artifact_kind === "delta") {
+    const parent = normalizeContentKey(parent_content_key);
+    return `${key.slice(0, 2)}/${key}/delta-from-${parent}.btrfs`;
+  }
   return `${key.slice(0, 2)}/${key}/full.btrfs`;
 }
 
-function r2ArtifactKey(content_key: string): string {
+function r2ArtifactKey(
+  content_key: string,
+  artifact_kind: RootfsReleaseArtifactKind = "full",
+  parent_content_key?: string | null,
+): string {
   const key = normalizeContentKey(content_key);
+  if (artifact_kind === "delta") {
+    const parent = normalizeContentKey(parent_content_key);
+    return `${ROOTFS_RELEASE_R2_PREFIX}/${key}/delta-from-${parent}.btrfs`;
+  }
   return `${ROOTFS_RELEASE_R2_PREFIX}/${key}/full.btrfs`;
 }
 
-function r2ArtifactShaKey(content_key: string): string {
-  return `${r2ArtifactKey(content_key)}.sha256`;
+function r2ArtifactShaKey(
+  content_key: string,
+  artifact_kind: RootfsReleaseArtifactKind = "full",
+  parent_content_key?: string | null,
+): string {
+  return `${r2ArtifactKey(content_key, artifact_kind, parent_content_key)}.sha256`;
 }
 
 export function rootfsReleaseArtifactLocalPath(content_key: string): string {
@@ -258,13 +286,41 @@ async function getArtifactBaseUrl(): Promise<string> {
 export async function issueRootfsReleaseArtifactUpload({
   host_id,
   content_key,
+  artifact_kind = "full",
+  parent_content_key,
   ttl_ms = 15 * 60 * 1000,
 }: {
   host_id: string;
   content_key: string;
+  artifact_kind?: RootfsReleaseArtifactKind;
+  parent_content_key?: string | null;
   ttl_ms?: number;
-}): Promise<{ url: string; method: "PUT"; chunk_bytes: number }> {
+}): Promise<RootfsArtifactTransferTarget> {
   const key = normalizeContentKey(content_key);
+  const artifactPath = r2ArtifactKey(key, artifact_kind, parent_content_key);
+  const region = await resolveHostR2Region(host_id);
+  const bucket = await loadR2BucketForRegion(region);
+  if (
+    bucket?.name &&
+    bucket.endpoint &&
+    bucket.access_key_id &&
+    bucket.secret_access_key
+  ) {
+    return {
+      backend: "r2",
+      method: "PUT",
+      region,
+      bucket_id: bucket.id,
+      bucket_name: bucket.name,
+      bucket_purpose: bucket.purpose,
+      artifact_path: artifactPath,
+      endpoint: bucket.endpoint,
+      access_key_id: bucket.access_key_id,
+      secret_access_key: bucket.secret_access_key,
+      multipart_part_bytes: ROOTFS_RELEASE_R2_MULTIPART_PART_BYTES,
+      multipart_concurrency: ROOTFS_RELEASE_R2_MULTIPART_CONCURRENCY,
+    };
+  }
   const token = await signToken({
     kind: "upload",
     host_id,
@@ -273,6 +329,7 @@ export async function issueRootfsReleaseArtifactUpload({
   });
   const base = await getArtifactBaseUrl();
   return {
+    backend: "hub-local",
     method: "PUT",
     chunk_bytes: ROOTFS_RELEASE_UPLOAD_CHUNK_BYTES,
     url: `${base}${artifactRoute(key)}?token=${encodeURIComponent(token)}`,
@@ -289,6 +346,8 @@ async function loadRootfsReleaseRowByContentKey(
       content_key,
       runtime_image,
       source_image,
+      parent_release_id,
+      depth,
       arch,
       size_bytes,
       artifact_kind,
@@ -462,6 +521,37 @@ async function listReadyReleaseArtifactReplicas(
   return rows;
 }
 
+async function listReleaseArtifactReplicas(
+  release_id: string,
+): Promise<RootfsReleaseArtifactReplicaRow[]> {
+  const { rows } = await getPool(
+    "medium",
+  ).query<RootfsReleaseArtifactReplicaRow>(
+    `SELECT
+      artifact_id,
+      release_id,
+      content_key,
+      backend,
+      region,
+      bucket_id,
+      bucket_name,
+      bucket_purpose,
+      artifact_kind,
+      artifact_format,
+      artifact_path,
+      artifact_sha256,
+      artifact_bytes,
+      status,
+      replicated_from_artifact_id,
+      error
+    FROM rootfs_release_artifacts
+    WHERE release_id=$1
+    ORDER BY updated DESC NULLS LAST, created DESC`,
+    [release_id],
+  );
+  return rows;
+}
+
 async function resolveReplicaBucket(
   replica: RootfsReleaseArtifactReplicaRow,
 ): Promise<BucketRow | null> {
@@ -546,7 +636,7 @@ async function resolveBestR2Replica({
   return { replica: best.replica, bucket: best.bucket };
 }
 
-async function upsertReleaseArtifactReplica({
+export async function upsertReleaseArtifactReplica({
   artifact_id,
   release_id,
   content_key,
@@ -663,6 +753,96 @@ export async function loadRootfsReleaseByImage(
     return null;
   }
   return await loadRootfsReleaseRowByContentKey(content_key);
+}
+
+async function loadRootfsReleaseById(
+  release_id?: string | null,
+): Promise<RootfsReleaseRow | null> {
+  const value = `${release_id ?? ""}`.trim();
+  if (!value) {
+    return null;
+  }
+  const { rows } = await getPool("medium").query<RootfsReleaseRow>(
+    `SELECT
+      release_id,
+      content_key,
+      runtime_image,
+      source_image,
+      parent_release_id,
+      depth,
+      arch,
+      size_bytes,
+      artifact_kind,
+      artifact_format,
+      artifact_backend,
+      artifact_path,
+      artifact_sha256,
+      artifact_bytes,
+      inspect_json
+    FROM rootfs_releases
+    WHERE release_id=$1`,
+    [value],
+  );
+  return rows[0] ?? null;
+}
+
+async function getReleaseDeleteBlockers(
+  release: RootfsReleaseRow,
+): Promise<RootfsDeleteBlockers> {
+  const pool = getPool("medium");
+  const [projects, catalogEntries, prepullEntries, childReleases] =
+    await Promise.all([
+      pool.query<{ count: string }>(
+        `SELECT COUNT(DISTINCT project_id)::TEXT AS count
+         FROM (
+           SELECT project_id
+           FROM project_rootfs_states
+           WHERE release_id=$1 OR runtime_image=$2
+           UNION
+           SELECT project_id
+           FROM projects
+           WHERE rootfs_image=$2
+         ) AS retained_projects`,
+        [release.release_id, release.runtime_image],
+      ),
+      pool.query<{ count: string }>(
+        `SELECT COUNT(*)::TEXT AS count
+         FROM rootfs_images
+         WHERE release_id=$1 AND COALESCE(deleted, false)=false`,
+        [release.release_id],
+      ),
+      pool.query<{ count: string }>(
+        `SELECT COUNT(*)::TEXT AS count
+         FROM rootfs_images
+         WHERE release_id=$1 AND prepull=true AND COALESCE(deleted, false)=false`,
+        [release.release_id],
+      ),
+      pool.query<{ count: string }>(
+        `SELECT COUNT(*)::TEXT AS count
+         FROM rootfs_releases
+         WHERE parent_release_id=$1 AND COALESCE(gc_status, 'active') <> 'deleted'`,
+        [release.release_id],
+      ),
+    ]);
+  const projects_using_release = Number(projects.rows[0]?.count ?? 0);
+  const catalog_entries_using_release = Number(
+    catalogEntries.rows[0]?.count ?? 0,
+  );
+  const prepull_entries_using_release = Number(
+    prepullEntries.rows[0]?.count ?? 0,
+  );
+  const child_releases = Number(childReleases.rows[0]?.count ?? 0);
+  return {
+    projects_using_release,
+    catalog_entries_using_release,
+    prepull_entries_using_release,
+    child_releases,
+    total:
+      projects_using_release +
+      catalog_entries_using_release +
+      prepull_entries_using_release +
+      child_releases,
+  };
 }
 
 export async function readStoredRootfsArtifactMetadata(
@@ -832,17 +1012,41 @@ export async function appendUploadedRootfsReleaseArtifactChunk({
 
 export async function upsertPublishedRootfsRelease({
   artifact,
+  metadata,
+  artifact_backend = ROOTFS_RELEASE_ARTIFACT_BACKEND,
+  artifact_path,
 }: {
   artifact: PublishProjectRootfsArtifact;
+  metadata?: RootfsStoredArtifactMetadata;
+  artifact_backend?: RootfsReleaseArtifactBackend;
+  artifact_path?: string;
 }): Promise<RootfsReleaseRow> {
   const content_key = normalizeContentKey(artifact.content_key);
-  const metadata = await readStoredRootfsArtifactMetadata(content_key);
-  if (!metadata) {
+  const storedMetadata =
+    metadata ?? (await readStoredRootfsArtifactMetadata(content_key));
+  if (!storedMetadata) {
     throw new Error(
       `stored RootFS artifact metadata missing for content key ${content_key}`,
     );
   }
-  const artifact_path = artifactRelativePath(content_key);
+  const parentRelease = artifact.parent_image
+    ? await loadRootfsReleaseByImage(artifact.parent_image)
+    : null;
+  const resolvedParentRelease =
+    parentRelease?.content_key === content_key ? null : parentRelease;
+  const artifactKind: RootfsReleaseArtifactKind =
+    artifact.artifact_kind === "delta" && resolvedParentRelease
+      ? "delta"
+      : "full";
+  const depth =
+    artifactKind === "delta" ? (resolvedParentRelease?.depth ?? 0) + 1 : 0;
+  const resolvedArtifactPath =
+    artifact_path ??
+    artifactRelativePath(
+      content_key,
+      artifactKind,
+      resolvedParentRelease?.content_key,
+    );
   const pool = getPool("medium");
   const existing = await loadRootfsReleaseRowByContentKey(content_key);
   const release_id = existing?.release_id ?? uuid();
@@ -853,6 +1057,8 @@ export async function upsertPublishedRootfsRelease({
         content_key,
         runtime_image,
         source_image,
+        parent_release_id,
+        depth,
         arch,
         size_bytes,
         artifact_kind,
@@ -861,15 +1067,26 @@ export async function upsertPublishedRootfsRelease({
         artifact_path,
         artifact_sha256,
         artifact_bytes,
+        gc_status,
+        blocked,
+        scan_status,
+        scan_tool,
+        scanned_at,
+        scan_summary,
         inspect_json,
         created,
         updated
       )
       VALUES
-      ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::JSONB, NOW(), NOW())
+      (
+        $1, $2, $3, $4, $5, $6, $7, $8,
+        $9, $10, $11, $12, $13, $14, 'active', false, 'unknown', NULL, NULL, NULL, $15::JSONB, NOW(), NOW()
+      )
       ON CONFLICT (content_key) DO UPDATE SET
         runtime_image = EXCLUDED.runtime_image,
         source_image = EXCLUDED.source_image,
+        parent_release_id = EXCLUDED.parent_release_id,
+        depth = EXCLUDED.depth,
         arch = EXCLUDED.arch,
         size_bytes = COALESCE(EXCLUDED.size_bytes, rootfs_releases.size_bytes),
         artifact_kind = EXCLUDED.artifact_kind,
@@ -878,6 +1095,12 @@ export async function upsertPublishedRootfsRelease({
         artifact_path = EXCLUDED.artifact_path,
         artifact_sha256 = EXCLUDED.artifact_sha256,
         artifact_bytes = EXCLUDED.artifact_bytes,
+        gc_status = COALESCE(rootfs_releases.gc_status, EXCLUDED.gc_status),
+        blocked = COALESCE(rootfs_releases.blocked, EXCLUDED.blocked),
+        scan_status = COALESCE(rootfs_releases.scan_status, EXCLUDED.scan_status),
+        scan_tool = COALESCE(rootfs_releases.scan_tool, EXCLUDED.scan_tool),
+        scanned_at = COALESCE(rootfs_releases.scanned_at, EXCLUDED.scanned_at),
+        scan_summary = COALESCE(rootfs_releases.scan_summary, EXCLUDED.scan_summary),
         inspect_json = COALESCE(EXCLUDED.inspect_json, rootfs_releases.inspect_json),
         updated = NOW()
       RETURNING
@@ -885,6 +1108,8 @@ export async function upsertPublishedRootfsRelease({
         content_key,
         runtime_image,
         source_image,
+        parent_release_id,
+        depth,
         arch,
         size_bytes,
         artifact_kind,
@@ -899,14 +1124,16 @@ export async function upsertPublishedRootfsRelease({
       content_key,
       artifact.image,
       artifact.source_image ?? null,
+      resolvedParentRelease?.release_id ?? null,
+      depth,
       artifact.arch ?? null,
       artifact.size_bytes ?? null,
-      ROOTFS_RELEASE_ARTIFACT_KIND,
+      artifactKind,
       ROOTFS_RELEASE_ARTIFACT_FORMAT,
-      ROOTFS_RELEASE_ARTIFACT_BACKEND,
-      artifact_path,
-      metadata.artifact_sha256,
-      metadata.artifact_bytes,
+      artifact_backend,
+      resolvedArtifactPath,
+      storedMetadata.artifact_sha256,
+      storedMetadata.artifact_bytes,
       artifact.inspect_data ? JSON.stringify(artifact.inspect_data) : null,
     ],
   );
@@ -930,6 +1157,7 @@ export async function issueRootfsReleaseArtifactAccess({
   if (!release) {
     throw new Error(`RootFS release not found for image '${image}'`);
   }
+  const parentRelease = await loadRootfsReleaseById(release.parent_release_id);
   const bestReplica = await resolveBestR2Replica({ host_id, release });
   if (bestReplica) {
     const download = issueSignedObjectDownload({
@@ -948,6 +1176,9 @@ export async function issueRootfsReleaseArtifactAccess({
       artifact_backend: "r2",
       artifact_sha256: bestReplica.replica.artifact_sha256,
       artifact_bytes: bestReplica.replica.artifact_bytes,
+      parent_release_id: parentRelease?.release_id ?? undefined,
+      parent_image: parentRelease?.runtime_image ?? undefined,
+      parent_content_key: parentRelease?.content_key ?? undefined,
       download_url: download.url,
       download_headers: download.headers,
       inspect_data: release.inspect_json ?? undefined,
@@ -974,6 +1205,9 @@ export async function issueRootfsReleaseArtifactAccess({
     artifact_backend: release.artifact_backend,
     artifact_sha256: release.artifact_sha256,
     artifact_bytes: release.artifact_bytes,
+    parent_release_id: parentRelease?.release_id ?? undefined,
+    parent_image: parentRelease?.runtime_image ?? undefined,
+    parent_content_key: parentRelease?.content_key ?? undefined,
     download_url: `${base}${artifactRoute(release.content_key)}?token=${encodeURIComponent(token)}`,
     inspect_data: release.inspect_json ?? undefined,
   };
@@ -1005,6 +1239,174 @@ export async function deleteStoredRootfsArtifact(
   );
 }
 
+async function deleteReplicaObject(
+  replica: RootfsReleaseArtifactReplicaRow,
+): Promise<void> {
+  if (replica.backend === "hub-local") {
+    await deleteStoredRootfsArtifact(replica.content_key);
+    return;
+  }
+  const bucket = await resolveReplicaBucket(replica);
+  if (
+    !bucket?.name ||
+    !bucket.endpoint ||
+    !bucket.access_key_id ||
+    !bucket.secret_access_key
+  ) {
+    throw new Error(
+      `missing bucket credentials for RootFS replica ${replica.artifact_id}`,
+    );
+  }
+  const release = await loadRootfsReleaseById(replica.release_id);
+  const parentRelease = await loadRootfsReleaseById(release?.parent_release_id);
+  await deleteObject({
+    endpoint: bucket.endpoint,
+    accessKey: bucket.access_key_id,
+    secretKey: bucket.secret_access_key,
+    bucket: bucket.name,
+    key: replica.artifact_path,
+  });
+  await deleteObject({
+    endpoint: bucket.endpoint,
+    accessKey: bucket.access_key_id,
+    secretKey: bucket.secret_access_key,
+    bucket: bucket.name,
+    key: r2ArtifactShaKey(
+      replica.content_key,
+      replica.artifact_kind,
+      parentRelease?.content_key,
+    ),
+  });
+}
+
+async function markReleaseArtifactReplica({
+  artifact_id,
+  status,
+  error,
+}: {
+  artifact_id: string;
+  status: string;
+  error?: string | null;
+}): Promise<void> {
+  await getPool("medium").query(
+    `UPDATE rootfs_release_artifacts
+     SET status=$2,
+         error=$3,
+         updated=NOW()
+     WHERE artifact_id=$1`,
+    [artifact_id, status, error ?? null],
+  );
+}
+
+export async function gcRootfsRelease({
+  release_id,
+}: {
+  release_id: string;
+}): Promise<RootfsReleaseGcItem> {
+  const release = await loadRootfsReleaseById(release_id);
+  if (!release) {
+    return {
+      release_id,
+      content_key: "",
+      image: "",
+      status: "skipped",
+      error: "release not found",
+    };
+  }
+  const blockers = await getReleaseDeleteBlockers(release);
+  if (blockers.total > 0) {
+    await getPool("medium").query(
+      `UPDATE rootfs_releases
+       SET gc_status='blocked',
+           updated=NOW()
+       WHERE release_id=$1`,
+      [release_id],
+    );
+    return {
+      release_id: release.release_id,
+      content_key: release.content_key,
+      image: release.runtime_image,
+      status: "blocked",
+      blockers,
+    };
+  }
+
+  const replicas = await listReleaseArtifactReplicas(release.release_id);
+  let deletedReplicas = 0;
+  try {
+    for (const replica of replicas) {
+      if (replica.status === "deleted") continue;
+      await deleteReplicaObject(replica);
+      await markReleaseArtifactReplica({
+        artifact_id: replica.artifact_id,
+        status: "deleted",
+      });
+      deletedReplicas += 1;
+    }
+    if (release.artifact_backend === "hub-local") {
+      await deleteStoredRootfsArtifact(release.content_key);
+    }
+    await getPool("medium").query(
+      `UPDATE rootfs_releases
+       SET gc_status='deleted',
+           updated=NOW()
+       WHERE release_id=$1`,
+      [release.release_id],
+    );
+    return {
+      release_id: release.release_id,
+      content_key: release.content_key,
+      image: release.runtime_image,
+      status: "deleted",
+      deleted_replicas: deletedReplicas,
+      blockers,
+    };
+  } catch (err) {
+    await getPool("medium").query(
+      `UPDATE rootfs_releases
+       SET gc_status='blocked',
+           updated=NOW()
+       WHERE release_id=$1`,
+      [release.release_id],
+    );
+    return {
+      release_id: release.release_id,
+      content_key: release.content_key,
+      image: release.runtime_image,
+      status: "failed",
+      blockers,
+      deleted_replicas: deletedReplicas,
+      error: `${err}`,
+    };
+  }
+}
+
+export async function runPendingRootfsReleaseGc({
+  limit = 10,
+}: {
+  limit?: number;
+} = {}): Promise<RootfsReleaseGcRunResult> {
+  const { rows } = await getPool("medium").query<{ release_id: string }>(
+    `SELECT release_id
+     FROM rootfs_releases
+     WHERE gc_status='pending_delete'
+     ORDER BY delete_requested_at ASC NULLS LAST, updated ASC NULLS LAST, created ASC
+     LIMIT $1`,
+    [Math.max(1, Math.min(1000, limit))],
+  );
+  const items: RootfsReleaseGcItem[] = [];
+  for (const row of rows) {
+    items.push(await gcRootfsRelease({ release_id: row.release_id }));
+  }
+  return {
+    scanned: rows.length,
+    deleted: items.filter((item) => item.status === "deleted").length,
+    blocked: items.filter((item) => item.status === "blocked").length,
+    failed: items.filter((item) => item.status === "failed").length,
+    items,
+  };
+}
+
 export function rootfsReleaseArtifactContentType(): string {
   return "application/octet-stream";
 }
@@ -1016,6 +1418,7 @@ export async function ensureRootfsReleaseR2ReplicaForHost({
   host_id: string;
   release: RootfsReleaseRow;
 }): Promise<RootfsReleaseArtifactReplicaRow | null> {
+  const parentRelease = await loadRootfsReleaseById(release.parent_release_id);
   const region = await resolveHostR2Region(host_id);
   const bucket = await loadR2BucketForRegion(region);
   if (
@@ -1034,7 +1437,11 @@ export async function ensureRootfsReleaseR2ReplicaForHost({
   }
 
   const key = normalizeContentKey(release.content_key);
-  const artifactPath = r2ArtifactKey(key);
+  const artifactPath = r2ArtifactKey(
+    key,
+    release.artifact_kind,
+    parentRelease?.content_key,
+  );
   const existing = await loadReleaseArtifactReplica({
     release_id: release.release_id,
     backend: "r2",
@@ -1082,7 +1489,11 @@ export async function ensureRootfsReleaseR2ReplicaForHost({
       accessKey: bucket.access_key_id,
       secretKey: bucket.secret_access_key,
       bucket: bucket.name,
-      key: r2ArtifactShaKey(key),
+      key: r2ArtifactShaKey(
+        key,
+        release.artifact_kind,
+        parentRelease?.content_key,
+      ),
       body: `${release.artifact_sha256}\n`,
       contentType: "text/plain; charset=utf-8",
     });

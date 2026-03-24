@@ -3,7 +3,7 @@
 # Build a compact Node bundle for the CoCalc project daemon using @vercel/ncc.
 #
 # Usage:
-#   ./build-bundle.sh [output-directory]
+#   ./build-bundle.sh [output-directory] [tarball-path]
 #
 # The script emits the bundle in packages/project/build/bundle by default.
 # It bundles the runtime entry point, copies required native modules and
@@ -13,13 +13,44 @@
 set -euo pipefail
 
 ROOT="$(realpath "$(dirname "$0")/../../..")"
-OUT="${1:-$ROOT/packages/project/build/bundle}"
+OUT="$(realpath -m "${1:-$ROOT/packages/project/build/bundle}")"
+TARBALL="${2:-}"
+if [ -n "$TARBALL" ]; then
+  TARBALL="$(realpath -m "$TARBALL")"
+fi
+FINAL_OUT="$OUT"
+FINAL_TARBALL="$TARBALL"
+OUT_PARENT="$(dirname "$OUT")"
+OUT_NAME="$(basename "$OUT")"
+LOCKFILE="$OUT_PARENT/.${OUT_NAME}.build.lock"
+TMP_ROOT=""
+TMP_TARBALL=""
+
+cleanup() {
+  if [ -n "$TMP_TARBALL" ]; then
+    rm -f "$TMP_TARBALL" || true
+  fi
+  if [ -n "$TMP_ROOT" ]; then
+    rm -rf "$TMP_ROOT" || true
+  fi
+}
 
 echo "Building CoCalc Project bundle..."
 echo "  root: $ROOT"
 echo "  out : $OUT"
 
-rm -rf "$OUT"
+mkdir -p "$OUT_PARENT"
+if [ -d "$LOCKFILE" ]; then
+  rmdir "$LOCKFILE" 2>/dev/null || {
+    echo "ERROR: stale bundle lock directory exists at $LOCKFILE" >&2
+    exit 1
+  }
+fi
+exec 9>"$LOCKFILE"
+flock 9
+trap cleanup EXIT
+TMP_ROOT="$(mktemp -d "$OUT_PARENT/.${OUT_NAME}.tmp.XXXXXX")"
+OUT="$TMP_ROOT/$OUT_NAME"
 mkdir -p "$OUT"
 
 cd "$ROOT"
@@ -189,5 +220,19 @@ echo "- Copy open helper into bundle bin"
 mkdir -p "$OUT"/bin
 cp packages/backend/dist/bin/open.js "$OUT"/bin/open
 chmod +x "$OUT"/bin/open
+
+mkdir -p "$(dirname "$FINAL_OUT")"
+rm -rf "$FINAL_OUT"
+mv "$OUT" "$FINAL_OUT"
+OUT="$FINAL_OUT"
+
+if [ -n "$FINAL_TARBALL" ]; then
+  mkdir -p "$(dirname "$FINAL_TARBALL")"
+  TMP_TARBALL="$FINAL_TARBALL.tmp.$$"
+  tar -C "$(dirname "$OUT")" -Jcf "$TMP_TARBALL" "$(basename "$OUT")"
+  tar -tJf "$TMP_TARBALL" >/dev/null
+  mv "$TMP_TARBALL" "$FINAL_TARBALL"
+  TMP_TARBALL=""
+fi
 
 echo "- Bundle created at $OUT"

@@ -3,15 +3,15 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { join } from "path";
 import React, { useRef, useState } from "react";
 
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
+import { joinUrlPath } from "@cocalc/util/url-path";
 import { Customize, DEFAULT_CUSTOMIZE } from "./consts";
 
 async function _loadCustomize(): Promise<Customize | undefined> {
   // check for a custom logo
-  const customizeData = await fetch(join(appBasePath, "customize"));
+  const customizeData = await fetch(joinUrlPath(appBasePath, "customize"));
   return (await customizeData.json())?.configuration;
 }
 

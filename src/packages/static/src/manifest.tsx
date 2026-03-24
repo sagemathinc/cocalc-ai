@@ -3,15 +3,25 @@
 // web app", as was started in this PR: https://github.com/sagemathinc/cocalc/pull/5254
 
 import { Helmet } from "react-helmet";
-import { join } from "path";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
+import { joinUrlPath } from "@cocalc/util/url-path";
 declare var DEBUG;
 
+function shouldRegisterWebappManifest(): boolean {
+  const base = appBasePath === "/" ? "" : appBasePath;
+  const pathname = window.location.pathname;
+  return (
+    pathname === `${base}/app` ||
+    pathname.startsWith(`${base}/app/`) ||
+    pathname === joinUrlPath(appBasePath, "static/app.html")
+  );
+}
+
 window.addEventListener("load", async function () {
-  if (DEBUG) {
+  if (DEBUG || !shouldRegisterWebappManifest()) {
     return null;
   }
-  const path = join(appBasePath, "webapp/serviceWorker.js");
+  const path = joinUrlPath(appBasePath, "webapp/serviceWorker.js");
 
   try {
     await navigator.serviceWorker.register(path, {
@@ -24,14 +34,14 @@ window.addEventListener("load", async function () {
 });
 
 export default function Manifest() {
-  if (DEBUG) {
+  if (DEBUG || !shouldRegisterWebappManifest()) {
     return null;
   }
   return (
     <Helmet>
       <link
         rel="manifest"
-        href={join(appBasePath, "customize?type=manifest")}
+        href={joinUrlPath(appBasePath, "customize?type=manifest")}
       />
     </Helmet>
   );

@@ -8,6 +8,7 @@ import { createReadStream, createWriteStream } from "node:fs";
 import {
   mkdir,
   mkdtemp,
+  open,
   readdir,
   readFile,
   rm,
@@ -33,12 +34,15 @@ import {
 import {
   isManagedRootfsImageName,
   normalizeRootfsImageName,
+  type RootfsReleaseArtifactAccess,
 } from "@cocalc/util/rootfs-images";
 
 import { listProjects } from "./sqlite/projects";
 
 const logger = getLogger("project-host:rootfs-cache");
 const STORAGE_WRAPPER = "/usr/local/sbin/cocalc-runtime-storage";
+const ROOTFS_R2_MULTIPART_DOWNLOAD_PART_BYTES = 64 * 1024 * 1024;
+const ROOTFS_R2_MULTIPART_DOWNLOAD_CONCURRENCY = 8;
 
 type RootfsUsage = {
   project_ids: string[];
@@ -184,6 +188,45 @@ async function btrfsReceiveFromFile({
   await Promise.all([pipePromise, exitPromise]);
 }
 
+async function moveIntoRootfsCache({
+  src,
+  dest,
+}: {
+  src: string;
+  dest: string;
+}): Promise<void> {
+  const result = await executeCode({
+    command: "sudo",
+    args: ["-n", STORAGE_WRAPPER, "mv", src, dest],
+    timeout: 120,
+    err_on_exit: false,
+  });
+  if (result.exit_code !== 0) {
+    throw new Error(
+      `moving managed RootFS cache entry failed: ${result.stderr || result.stdout || `exit ${result.exit_code}`}`,
+    );
+  }
+}
+
+async function finalizeReceivedManagedRootfs({
+  receivedPath,
+  finalPath,
+}: {
+  receivedPath: string;
+  finalPath: string;
+}): Promise<void> {
+  if (await isBtrfsSubvolume(receivedPath)) {
+    await btrfs({
+      args: ["subvolume", "snapshot", "-r", receivedPath, finalPath],
+      err_on_exit: true,
+      verbose: false,
+    });
+    await deleteCachedRootfsPath(receivedPath);
+    return;
+  }
+  await moveIntoRootfsCache({ src: receivedPath, dest: finalPath });
+}
+
 async function downloadManagedRootfsArtifact({
   image,
 }: {
@@ -199,6 +242,7 @@ async function downloadManagedRootfsArtifact({
     content_key: access.content_key,
     artifact_bytes: access.artifact_bytes,
     artifact_backend: access.artifact_backend,
+    parent_image: access.parent_image,
   });
   const finalPath = imageCachePath(image);
   const finalInspectPath = inspectFilePath(image);
@@ -213,6 +257,12 @@ async function downloadManagedRootfsArtifact({
     }
     return;
   }
+  if (access.parent_image?.trim()) {
+    const parentImage = access.parent_image.trim();
+    if (!(await exists(imageCachePath(parentImage)))) {
+      await downloadManagedRootfsArtifact({ image: parentImage });
+    }
+  }
 
   await mkdir(IMAGE_CACHE, { recursive: true });
   const tempDir = await mkdtemp(join(IMAGE_CACHE, ".managed-rootfs-receive-"));
@@ -222,16 +272,37 @@ async function downloadManagedRootfsArtifact({
 
   try {
     const downloadStarted = Date.now();
-    const response = await fetch(access.download_url, {
-      headers: access.download_headers,
-      signal: AbortSignal.timeout(15 * 60 * 1000),
-    });
-    if (!response.ok || !response.body) {
-      throw new Error(
-        `artifact download failed (${response.status} ${response.statusText})`,
-      );
+    if (
+      access.artifact_backend === "r2" &&
+      access.artifact_bytes > ROOTFS_R2_MULTIPART_DOWNLOAD_PART_BYTES
+    ) {
+      try {
+        await downloadRootfsArtifactMultipart({
+          access,
+          artifactPath,
+        });
+      } catch (err) {
+        logger.warn(
+          "multipart managed RootFS download failed; retrying single stream",
+          {
+            image,
+            release_id: access.release_id,
+            content_key: access.content_key,
+            err: `${err}`,
+          },
+        );
+        await rm(artifactPath, { force: true }).catch(() => {});
+        await downloadRootfsArtifactSingle({
+          access,
+          artifactPath,
+        });
+      }
+    } else {
+      await downloadRootfsArtifactSingle({
+        access,
+        artifactPath,
+      });
     }
-    await pipeline(response.body as any, createWriteStream(artifactPath));
     const artifactStats = await stat(artifactPath);
     logger.info("downloaded managed RootFS artifact", {
       image,
@@ -257,16 +328,7 @@ async function downloadManagedRootfsArtifact({
       throw new Error(`received RootFS image '${image}' was not created`);
     }
     const snapshotStarted = Date.now();
-    await btrfs({
-      args: ["subvolume", "snapshot", "-r", receivedPath, finalPath],
-      err_on_exit: true,
-      verbose: false,
-    });
-    await btrfs({
-      args: ["subvolume", "delete", receivedPath],
-      err_on_exit: true,
-      verbose: false,
-    });
+    await finalizeReceivedManagedRootfs({ receivedPath, finalPath });
     if (access.inspect_data) {
       await writeFile(finalInspectPath, JSON.stringify(access.inspect_data));
     }
@@ -282,6 +344,83 @@ async function downloadManagedRootfsArtifact({
       () => {},
     );
   }
+}
+
+async function downloadRootfsArtifactSingle({
+  access,
+  artifactPath,
+}: {
+  access: RootfsReleaseArtifactAccess;
+  artifactPath: string;
+}): Promise<void> {
+  const response = await fetch(access.download_url, {
+    headers: access.download_headers,
+    signal: AbortSignal.timeout(15 * 60 * 1000),
+  });
+  if (!response.ok || !response.body) {
+    throw new Error(
+      `artifact download failed (${response.status} ${response.statusText})`,
+    );
+  }
+  await pipeline(response.body as any, createWriteStream(artifactPath));
+}
+
+async function downloadRootfsArtifactMultipart({
+  access,
+  artifactPath,
+}: {
+  access: RootfsReleaseArtifactAccess;
+  artifactPath: string;
+}): Promise<void> {
+  const partBytes = ROOTFS_R2_MULTIPART_DOWNLOAD_PART_BYTES;
+  const totalParts = Math.max(1, Math.ceil(access.artifact_bytes / partBytes));
+  const workerCount = Math.min(
+    ROOTFS_R2_MULTIPART_DOWNLOAD_CONCURRENCY,
+    totalParts,
+  );
+  const file = await open(artifactPath, "w");
+  try {
+    await file.truncate(access.artifact_bytes);
+  } finally {
+    await file.close();
+  }
+  let nextPart = 0;
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (true) {
+        const current = nextPart;
+        nextPart += 1;
+        if (current >= totalParts) return;
+        const start = current * partBytes;
+        const end = Math.min(access.artifact_bytes, start + partBytes) - 1;
+        const response = await fetch(access.download_url, {
+          headers: {
+            ...(access.download_headers ?? {}),
+            Range: `bytes=${start}-${end}`,
+          },
+          signal: AbortSignal.timeout(15 * 60 * 1000),
+        });
+        if (
+          !(
+            response.status === 206 ||
+            (response.status === 200 && totalParts === 1)
+          ) ||
+          !response.body
+        ) {
+          throw new Error(
+            `artifact ranged download failed (${response.status} ${response.statusText}) for bytes=${start}-${end}`,
+          );
+        }
+        await pipeline(
+          response.body as any,
+          createWriteStream(artifactPath, {
+            flags: "r+",
+            start,
+          }),
+        );
+      }
+    }),
+  );
 }
 
 async function deleteCachedRootfsPath(path: string): Promise<void> {

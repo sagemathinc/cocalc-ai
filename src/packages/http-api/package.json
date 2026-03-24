@@ -1,0 +1,61 @@
+{
+  "name": "@cocalc/http-api",
+  "version": "0.1.0",
+  "description": "CoCalc HTTP API router and handlers",
+  "main": "./dist/index.js",
+  "exports": {
+    ".": "./dist/index.js",
+    "./lib/api": "./dist/lib/api/index.js",
+    "./lib/*": "./dist/lib/*.js",
+    "./pages/*": "./dist/pages/*.js"
+  },
+  "files": [
+    "dist/**",
+    "lib/**",
+    "pages/**",
+    "scripts/**",
+    "package.json",
+    "README.md"
+  ],
+  "scripts": {
+    "preinstall": "npx only-allow pnpm",
+    "build": "pnpm patch-openapi && pnpm generate-api-v2-manifest && ../node_modules/.bin/tsc --build",
+    "patch-openapi": "node ./scripts/patch-openapi.js",
+    "generate-api-v2-manifest": "node ./scripts/generate-api-v2-manifest.js",
+    "generate-openapi": "pnpm build && cd dist && rm -f public && ln -sf ../public public && COCALC_DB_SKIP_ENSURE_EXISTS=true NODE_ENV='dev' NODE_PATH=$(pwd) node ../node_modules/next-rest-framework/dist/cli/index.js generate --configPath /api/v2",
+    "test": "NODE_ENV='dev' pnpm exec jest",
+    "test-api": "NODE_ENV='production' pnpm exec jest ./lib/api/framework.test.ts",
+    "validate-openapi": "pnpm build && cd dist && rm -f public && ln -sf ../public public && COCALC_DB_SKIP_ENSURE_EXISTS=true NODE_ENV='dev' NODE_PATH=$(pwd) node ../node_modules/next-rest-framework/dist/cli/index.js validate --configPath /api/v2",
+    "depcheck": "pnpm -w exec depcheck \"$PWD\" --ignores lib,pages,@cocalc/http-api"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sagemathinc/cocalc"
+  },
+  "author": "SageMath, Inc.",
+  "license": "SEE LICENSE IN LICENSE.md",
+  "homepage": "https://github.com/sagemathinc/cocalc/tree/master/src/packages/http-api",
+  "dependencies": {
+    "@cocalc/backend": "workspace:*",
+    "@cocalc/conat": "workspace:*",
+    "@cocalc/database": "workspace:*",
+    "@cocalc/frontend": "workspace:*",
+    "@cocalc/server": "workspace:*",
+    "@cocalc/util": "workspace:*",
+    "@vscode/vscode-languagedetection": "^1.0.22",
+    "base-64": "^1.0.0",
+    "express": "^4.21.2",
+    "lodash": "^4.17.21",
+    "lru-cache": "^7.18.3",
+    "next-rest-framework": "6.1.1",
+    "password-hash": "^1.2.2",
+    "uuid": "^8.3.2",
+    "zod": "4.3.6"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.23",
+    "@types/lodash": "^4.17.20",
+    "@types/node": "^22.10.10",
+    "node-mocks-http": "^1.14.1"
+  }
+}

@@ -54,6 +54,6 @@ export function hasHostAbsoluteRoutePrefix(path?: string): boolean {
 // updates here. Auth is kept separate because it is routed through the SPA
 // only in selected server contexts.
 export const APP_BASE_PATH_ROUTE_MARKERS: readonly string[] = [
-  "/projects/",
+  "/projects",
   ...HOST_ABSOLUTE_ROUTE_PREFIXES.filter((prefix) => prefix !== "/projects"),
 ];

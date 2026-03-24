@@ -1,0 +1,88 @@
+{
+  "date": "2026-03-23",
+  "kind": "rootfs-incremental-benchmark",
+  "environment": {
+    "source_host": {
+      "name": "rootfs-test-2",
+      "host_id": "18521f3d-1d43-4663-aec3-91fc7374d114"
+    },
+    "destination_host": {
+      "name": "rootfs-test-1",
+      "host_id": "5ff0a685-99ae-4dc0-974f-7d38480e736e"
+    },
+    "machine_type": "n2-highmem-4",
+    "ram_gb": 32,
+    "disk": "200 GB persistent SSD",
+    "region": "us-west1",
+    "upload_mode": "multipart-r2",
+    "download_mode": "multipart-r2",
+    "delta_depth": 1
+  },
+  "workload": {
+    "source_project_id": "cac84af9-1e2d-475c-8c73-cb22b8c12dec",
+    "parent_image": "cocalc.local/rootfs/6b9872bc71a1b6b8480a5b08f28d1fb24fb82383b12e0379f2a37004c33467de",
+    "change": "/sage source tree",
+    "source_tree_size_human": "638M"
+  },
+  "investigation": {
+    "failed_publish_op_id": "9e813246-48b4-49ad-a485-54052919a202",
+    "root_cause": "stale cached project-to-host routing for routed file-server control-plane RPCs after the project moved hosts",
+    "fix_commit": "4e5039508f",
+    "fix_subject": "server/conat: bypass stale route cache for file-server control ops"
+  },
+  "publish": {
+    "op_id": "6ef3136f-fd5f-4984-8ebb-fe8630dd7e47",
+    "image": "cocalc.local/rootfs/42ff7aee58781188b3a2921b972fc1521a5f2456efe3806693994d293aaa1f29",
+    "image_id": "85a10d16-0052-41bd-817e-b2c491b7b721",
+    "release_id": "7638a3cb-ce01-4690-80d6-a32348003b4e",
+    "artifact_kind": "delta",
+    "parent_release_id": "29e35fde-ef7b-4eda-9dd4-5db7a7dcb170",
+    "artifact_bytes": 644618451,
+    "artifact_path": "rootfs/releases/42ff7aee58781188b3a2921b972fc1521a5f2456efe3806693994d293aaa1f29/delta-from-6b9872bc71a1b6b8480a5b08f28d1fb24fb82383b12e0379f2a37004c33467de.btrfs",
+    "phase_timings_ms": {
+      "total": 59325,
+      "validate": 6,
+      "publish": 40751,
+      "upload": 18512,
+      "register_release": 14,
+      "catalog_entry": 14,
+      "replicate": 3
+    },
+    "publish_phase_timings_ms": {
+      "create_snapshot": 142,
+      "clone_snapshot": 247,
+      "materialize_tree": 7544,
+      "hash_tree": 29237,
+      "extract_base_image": 1,
+      "register_cache_entry": 3026
+    },
+    "upload_phase_timings_ms": {
+      "btrfs_send": 8131,
+      "hash_artifact": 2322,
+      "upload_artifact": 7844
+    }
+  },
+  "cold_consume": {
+    "project_id": "86712958-4c10-4b6e-a8bd-21bf2aa7bfda",
+    "start_op_id": "10579235-a118-4da3-a421-94d959a77e48",
+    "state": "running",
+    "phase_timings_ms": {
+      "total": 15969,
+      "cache_rootfs": 15037,
+      "runner_start": 790,
+      "apply_pending_copies": 112,
+      "refresh_authorized_keys": 29,
+      "prepare_config": 1
+    },
+    "observed_host_fetch_timings_ms": {
+      "download_delta_artifact": 3252,
+      "receive_materialize_delta_artifact": 11380
+    }
+  },
+  "content_verification": {
+    "source_path": "/mnt/cocalc/data/cache/project-roots/cac84af9-1e2d-475c-8c73-cb22b8c12dec/sage",
+    "source_size_human": "638M",
+    "destination_path": "/mnt/cocalc/data/cache/project-roots/86712958-4c10-4b6e-a8bd-21bf2aa7bfda/sage",
+    "destination_size_human": "638M"
+  }
+}

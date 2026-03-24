@@ -9,18 +9,18 @@ The v1 api is also exported here.
 This doesn't know anything about types, etc.
 */
 
-import { join } from "path";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { delay } from "awaiting";
 import { trunc } from "@cocalc/util/misc";
+import { joinUrlPath } from "@cocalc/util/url-path";
 
 export default async function api(endpoint: string, args?: object) {
-  return await callApi(join("v2", endpoint), args);
+  return await callApi(joinUrlPath("v2", endpoint), args);
 }
 
 // also the old v1 api
 export async function v1(endpoint: string, args?: object) {
-  return await callApi(join("v1", endpoint), args);
+  return await callApi(joinUrlPath("v1", endpoint), args);
 }
 
 // if api call fails (typically 5xx due to a temporary restart of
@@ -42,7 +42,7 @@ async function callApi(
   numRetriesOnFail?: number,
 ) {
   // console.log("callApi", { endpoint, args });
-  const url = join(appBasePath, "api", endpoint);
+  const url = joinUrlPath(appBasePath, "api", endpoint);
   const resp = await fetch(url, {
     method: "POST",
     headers: {

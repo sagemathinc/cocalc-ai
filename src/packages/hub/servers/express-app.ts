@@ -22,6 +22,10 @@ import initBlobUpload from "./app/blob-upload";
 import initUpload from "./app/upload";
 import initBlobs from "./app/blobs";
 import initCustomize from "./app/customize";
+import initPublicAuth from "./app/public-auth";
+import initPublicContent from "./app/public-content";
+import initPublicFeatures from "./app/public-features";
+import initPublicSupport from "./app/public-support";
 import { initMetricsEndpoint, setupInstrumentation } from "./app/metrics";
 import initProjectHostBootstrap from "./app/project-host-bootstrap";
 import initProjectHostSoftware from "./app/project-host-software";
@@ -35,8 +39,7 @@ import getServerSettings from "./server-settings";
 import basePath from "@cocalc/backend/base-path";
 import { initConatServer } from "@cocalc/server/conat/socketio";
 import { conatSocketioCount, root } from "@cocalc/backend/data";
-import { ACCOUNT_ID_COOKIE_NAME } from "@cocalc/backend/auth/cookie-names";
-import createApiV2Router from "@cocalc/next/lib/api-v2-router";
+import { createApiV2Router } from "@cocalc/http-api";
 import { ensureBootstrapAdminToken } from "@cocalc/server/auth/bootstrap-admin";
 import {
   getLicenseStatus,
@@ -253,11 +256,15 @@ export default async function init(opts: Options): Promise<{
   initStats(router);
   if (!opts.nextServer) {
     initLanding(router);
+    initPublicAuth(router);
+    initPublicContent(router);
+    initPublicFeatures(router);
+    initPublicSupport(router);
   }
   if (!opts.nextServer && isLaunchpadMode() && isLicenseRequired()) {
     initLaunchpadActivationGate(router);
   }
-  initAppRedirect(router, { includeAuth: !opts.nextServer });
+  initAppRedirect(router, { includeAuth: false });
   initProjectHostBootstrap(router);
   initProjectHostSoftware(router);
   initRootfsManifest(router);
@@ -473,6 +480,30 @@ async function initStatic(router) {
       }),
     );
     router.use(
+      "/static/public-home.html",
+      express.static(join(staticPath, "public-home.html"), {
+        setHeaders: cacheShortTerm,
+      }),
+    );
+    router.use(
+      "/static/public-auth.html",
+      express.static(join(staticPath, "public-auth.html"), {
+        setHeaders: cacheShortTerm,
+      }),
+    );
+    router.use(
+      "/static/public-support.html",
+      express.static(join(staticPath, "public-support.html"), {
+        setHeaders: cacheShortTerm,
+      }),
+    );
+    router.use(
+      "/static/public-content.html",
+      express.static(join(staticPath, "public-content.html"), {
+        setHeaders: cacheShortTerm,
+      }),
+    );
+    router.use(
       "/static",
       express.static(staticPath, { setHeaders: cacheLongTerm }),
     );
@@ -624,101 +655,7 @@ function initLanding(router: express.Router) {
           return;
         }
       }
-      const signedIn = Boolean(req.cookies?.[ACCOUNT_ID_COOKIE_NAME]);
-      const links: Array<{ href: string; label: string }> = [
-        { href: `${base}/auth/sign-in`, label: "Sign in" },
-        { href: `${base}/auth/sign-up`, label: "Sign up" },
-      ];
-      if (signedIn) {
-        links.unshift({ href: `${base}/projects`, label: "Workspaces" });
-      }
-      res.type("html").send(`<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>CoCalc Launchpad</title>
-    <style>
-      :root {
-        color-scheme: light;
-        --bg: #f7f6f1;
-        --fg: #1f1f1f;
-        --muted: #6a6a6a;
-        --card: #ffffff;
-        --accent: #2f6f6d;
-        --border: #e5e1d8;
-      }
-      body {
-        margin: 0;
-        font-family: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
-        background: radial-gradient(1200px 600px at 20% -10%, #e9f0ea, transparent),
-                    radial-gradient(800px 400px at 120% 20%, #f6efe6, transparent),
-                    var(--bg);
-        color: var(--fg);
-      }
-      .wrap {
-        max-width: 760px;
-        margin: 10vh auto;
-        padding: 24px;
-      }
-      .card {
-        background: var(--card);
-        border: 1px solid var(--border);
-        border-radius: 16px;
-        padding: 28px;
-        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.08);
-      }
-      h1 {
-        font-size: 28px;
-        margin: 0 0 8px;
-      }
-      p {
-        margin: 0 0 16px;
-        color: var(--muted);
-      }
-      .links {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 12px;
-      }
-      a {
-        text-decoration: none;
-        color: var(--accent);
-        border: 1px solid var(--accent);
-        padding: 8px 14px;
-        border-radius: 999px;
-        font-weight: 600;
-      }
-      a.primary {
-        background: var(--accent);
-        color: #fff;
-      }
-      .hint {
-        margin-top: 16px;
-        font-size: 13px;
-        color: var(--muted);
-      }
-    </style>
-  </head>
-  <body>
-    <div class="wrap">
-      <div class="card">
-        <h1 style="margin-bottom:30px">CoCalc Launchpad</h1>
-        <div class="links">
-          ${links
-            .map((link, index) => {
-              const cls = index === 0 ? "primary" : "";
-              return `<a class="${cls}" href="${link.href}">${link.label}</a>`;
-            })
-            .join("")}
-        </div>
-        <div class="hint">
-          ${signedIn ? "You're signed in." : "Sign in to continue."}
-        </div>
-      </div>
-    </div>
-  </body>
-</html>`);
+      res.redirect(join(base, "static/public-home.html"));
     })().catch((err) => {
       logger.warn("landing page failed", { err });
       res.status(500).send("Landing page error.");

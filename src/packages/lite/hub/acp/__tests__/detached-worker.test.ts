@@ -3,6 +3,7 @@ import type { Client as ConatClient } from "@cocalc/conat/core/client";
 import {
   recoverDetachedWorkerStartupState,
   shouldStopDetachedWorkerForIdle,
+  turnNeedsInterruptedRepair,
 } from "../index";
 import {
   closeDatabase,
@@ -36,6 +37,21 @@ jest.mock("@cocalc/backend/logger", () => ({
     error: () => {},
   }),
 }));
+jest.mock("@cocalc/project/logger", () => {
+  const makeLogger = () => ({
+    debug: () => {},
+    info: () => {},
+    warn: () => {},
+    error: () => {},
+    extend: (_name?: string) => makeLogger(),
+  });
+  return {
+    __esModule: true,
+    rootLogger: makeLogger(),
+    default: (name?: string) => makeLogger().extend(name),
+    getLogger: (name?: string) => makeLogger().extend(name),
+  };
+});
 jest.mock("../../sqlite/acp-turns", () => ({
   startAcpTurnLease: jest.fn(),
   heartbeatAcpTurnLease: jest.fn(),
@@ -172,5 +188,33 @@ describe("shouldStopDetachedWorkerForIdle", () => {
         now,
       }),
     ).toBe(true);
+  });
+});
+
+describe("turnNeedsInterruptedRepair", () => {
+  it("does not treat a live detached-worker turn as a stale chat repair", async () => {
+    const request = makeRequest();
+    const queued = enqueueAcpJob(request as any);
+    const running = claimNextQueuedAcpJobForThread({
+      project_id: queued.project_id,
+      path: queued.path,
+      thread_id: queued.thread_id,
+      worker_id: "worker-a",
+      worker_bundle_version: "bundle-a",
+    });
+    expect(running?.state).toBe("running");
+
+    await expect(
+      turnNeedsInterruptedRepair({
+        client: {} as ConatClient,
+        turn: {
+          project_id: queued.project_id,
+          path: queued.path,
+          message_date: queued.assistant_message_date,
+          message_id: queued.assistant_message_id,
+          thread_id: queued.thread_id,
+        },
+      }),
+    ).resolves.toBe(false);
   });
 });

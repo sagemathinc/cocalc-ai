@@ -13,7 +13,6 @@ extra support for being connected to:
 
 import { callback, delay } from "awaiting";
 import { Map } from "immutable";
-import type { Store } from "@cocalc/util/redux/Store";
 import { Terminal as XTerminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
@@ -148,7 +147,7 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
   private writeBuffer: TerminalTransmit[] = [];
 
   private title?: string;
-  private projectStore?: Store<any>;
+  private projectsStore?;
   private lastProjectState?: string;
 
   constructor(
@@ -384,27 +383,27 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
     this.set_connection_status("disconnected");
     this.state = "closed";
     this.account_store.removeListener("change", this.update_settings);
-    this.projectStore?.removeListener("change", this.handleProjectStoreChange);
+    this.projectsStore?.removeListener("change", this.handleProjectsStoreChange);
     this.terminal.dispose();
     close(this);
     this.state = "closed";
   };
 
   private initProjectStatusWatcher = (): void => {
-    const projectStore = this.project_actions.get_store?.();
-    if (projectStore == null) {
+    const projectsStore = redux.getProjectsStore();
+    if (projectsStore == null) {
       return;
     }
-    this.projectStore = projectStore;
-    this.lastProjectState = projectStore.getIn(["status", "state"]);
-    projectStore.on("change", this.handleProjectStoreChange);
+    this.projectsStore = projectsStore;
+    this.lastProjectState = projectsStore.get_state(this.project_id);
+    projectsStore.on("change", this.handleProjectsStoreChange);
   };
 
-  private handleProjectStoreChange = (): void => {
+  private handleProjectsStoreChange = (): void => {
     if (this.isClosed()) {
       return;
     }
-    const nextState = this.projectStore?.getIn(["status", "state"]);
+    const nextState = this.projectsStore?.get_state(this.project_id);
     if (nextState === this.lastProjectState) {
       return;
     }
