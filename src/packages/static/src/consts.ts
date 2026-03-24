@@ -3,9 +3,8 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { join } from "path";
-
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
+import { joinUrlPath } from "@cocalc/util/url-path";
 
 // subset of CustomizeState
 export interface Customize {
@@ -15,5 +14,5 @@ export interface Customize {
 
 export const DEFAULT_CUSTOMIZE: Customize = {
   logo_rectangular: "",
-  logo_square: join(appBasePath, "webapp/favicon.ico"),
+  logo_square: joinUrlPath(appBasePath, "webapp/favicon.ico"),
 };

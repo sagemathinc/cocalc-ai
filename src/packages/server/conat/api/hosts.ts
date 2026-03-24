@@ -17,6 +17,7 @@ import type {
   HostLroKind,
   HostProjectRow,
   HostProjectsResponse,
+  HostRootfsGcResult,
   HostRootfsImage,
 } from "@cocalc/conat/hub/api/hosts";
 import type {
@@ -27,6 +28,7 @@ import { issueProjectHostAuthToken as issueProjectHostAuthTokenJwt } from "@coca
 import getLogger from "@cocalc/backend/logger";
 import { getProjectHostAuthTokenPrivateKey } from "@cocalc/backend/data";
 import getPool from "@cocalc/database/pool";
+import { isValidUUID } from "@cocalc/util/misc";
 import {
   computePlacementPermission,
   getUserHostTier,
@@ -102,6 +104,10 @@ import { syncProjectUsersOnHost } from "@cocalc/server/project-host/control";
 import { moveProjectToHost } from "@cocalc/server/projects/move";
 import { notifyProjectHostUpdate } from "@cocalc/server/conat/route-project";
 import { issueRootfsReleaseArtifactAccess } from "@cocalc/server/rootfs/releases";
+import {
+  isManagedRootfsImageName,
+  type RootfsReleaseGcStatus,
+} from "@cocalc/util/rootfs-images";
 function pool() {
   return getPool();
 }
@@ -130,6 +136,12 @@ const HOST_DRAIN_OWNER_MAX_PARALLEL = 15;
 const HOST_ONLINE_WINDOW_MS = 2 * 60 * 1000;
 const HOST_RUNNING_STATUSES = new Set(["running", "active"]);
 
+type RootfsReleaseLifecycleRow = {
+  release_id: string;
+  runtime_image: string;
+  gc_status: RootfsReleaseGcStatus | null;
+};
+
 function logStatusUpdate(id: string, status: string, source: string) {
   const stack = new Error().stack;
   logger.debug("status update", {
@@ -137,6 +149,59 @@ function logStatusUpdate(id: string, status: string, source: string) {
     status,
     source,
     stack,
+  });
+}
+
+async function loadRootfsReleaseLifecycleByImage(
+  images: string[],
+): Promise<Map<string, RootfsReleaseLifecycleRow>> {
+  const managedImages = Array.from(
+    new Set(images.filter((image) => isManagedRootfsImageName(image))),
+  );
+  if (managedImages.length === 0) {
+    return new Map();
+  }
+  const { rows } = await pool().query<RootfsReleaseLifecycleRow>(
+    `SELECT release_id, runtime_image, gc_status
+     FROM rootfs_releases
+     WHERE runtime_image = ANY($1::TEXT[])`,
+    [managedImages],
+  );
+  return new Map(
+    rows.map((row) => [
+      `${row.runtime_image ?? ""}`.trim(),
+      {
+        ...row,
+        runtime_image: `${row.runtime_image ?? ""}`.trim(),
+        gc_status: row.gc_status ?? "active",
+      },
+    ]),
+  );
+}
+
+async function enrichHostRootfsImages(
+  entries: HostRootfsImage[],
+): Promise<HostRootfsImage[]> {
+  const lifecycleByImage = await loadRootfsReleaseLifecycleByImage(
+    entries.map((entry) => entry.image),
+  );
+  return entries.map((entry) => {
+    const lifecycle = lifecycleByImage.get(`${entry.image ?? ""}`.trim());
+    const managed = isManagedRootfsImageName(entry.image);
+    const release_gc_status = lifecycle?.gc_status ?? undefined;
+    const centrally_deleted = release_gc_status === "deleted";
+    const host_gc_eligible =
+      centrally_deleted &&
+      (entry.project_count ?? 0) === 0 &&
+      (entry.running_project_count ?? 0) === 0;
+    return {
+      ...entry,
+      managed,
+      release_id: lifecycle?.release_id ?? entry.release_id,
+      release_gc_status,
+      centrally_deleted,
+      host_gc_eligible,
+    };
   });
 }
 
@@ -845,6 +910,41 @@ async function assertAccountCanIssueProjectHostToken({
   }
 }
 
+async function assertHostCanIssueProjectHostAgentToken({
+  host_id,
+  account_id,
+  project_id,
+}: {
+  host_id: string;
+  account_id: string;
+  project_id: string;
+}) {
+  if (!isValidUUID(host_id)) {
+    throw new Error("host_id must be specified");
+  }
+  if (!isValidUUID(account_id)) {
+    throw new Error("account_id must be specified");
+  }
+  if (!isValidUUID(project_id)) {
+    throw new Error("project_id must be specified");
+  }
+  const { rowCount } = await pool().query(
+    `
+      SELECT 1
+      FROM projects
+      WHERE project_id=$1
+        AND host_id=$2
+        AND deleted IS NOT true
+        AND (users -> $3::text ->> 'group') IN ('owner', 'collaborator')
+      LIMIT 1
+    `,
+    [project_id, host_id, account_id],
+  );
+  if (!rowCount) {
+    throw new Error("not authorized for project-host agent auth token");
+  }
+}
+
 export async function issueProjectHostAuthToken({
   account_id,
   host_id,
@@ -890,6 +990,43 @@ export async function issueProjectHostAuthToken({
     private_key: getProjectHostAuthTokenPrivateKey(),
   });
   return { host_id, token, expires_at };
+}
+
+export async function issueProjectHostAgentAuthToken({
+  host_id,
+  account_id,
+  project_id,
+  ttl_seconds,
+}: {
+  host_id?: string;
+  account_id: string;
+  project_id: string;
+  ttl_seconds?: number;
+}): Promise<{
+  host_id: string;
+  token: string;
+  expires_at: number;
+}> {
+  const resolvedHostId = `${host_id ?? ""}`.trim();
+  if (!resolvedHostId) {
+    throw new Error("host_id must be specified");
+  }
+  await assertHostCanIssueProjectHostAgentToken({
+    host_id: resolvedHostId,
+    account_id,
+    project_id,
+  });
+  await syncProjectUsersOnHost({
+    project_id,
+    expected_host_id: resolvedHostId,
+  });
+  const { token, expires_at } = issueProjectHostAuthTokenJwt({
+    account_id,
+    host_id: resolvedHostId,
+    ttl_seconds,
+    private_key: getProjectHostAuthTokenPrivateKey(),
+  });
+  return { host_id: resolvedHostId, token, expires_at };
 }
 
 function normalizeExternalCredentialSelector({
@@ -1912,7 +2049,7 @@ export async function listHostRootfsImages({
     client: conatWithProjectRouting(),
     timeout: HOST_ROOTFS_RPC_TIMEOUT_MS,
   });
-  return await client.listRootfsImages();
+  return await enrichHostRootfsImages(await client.listRootfsImages());
 }
 
 export async function pullHostRootfsImage({
@@ -1963,6 +2100,67 @@ export async function deleteHostRootfsImage({
     timeout: HOST_ROOTFS_RPC_TIMEOUT_MS,
   });
   return await client.deleteRootfsImage({ image });
+}
+
+export async function gcDeletedHostRootfsImages({
+  account_id,
+  id,
+}: {
+  account_id?: string;
+  id: string;
+}): Promise<HostRootfsGcResult> {
+  const row = await loadHostForRootfsManagement(id, account_id);
+  const availability = computeHostOperationalAvailability(row);
+  if (!availability.operational) {
+    throw new Error(
+      availability.reason_unavailable ??
+        "host must be running to garbage collect RootFS images",
+    );
+  }
+  const client = createHostControlClient({
+    host_id: id,
+    client: conatWithProjectRouting(),
+    timeout: HOST_ROOTFS_RPC_TIMEOUT_MS,
+  });
+  const entries = await enrichHostRootfsImages(await client.listRootfsImages());
+  const items: HostRootfsGcResult["items"] = [];
+  for (const entry of entries) {
+    if (!entry.host_gc_eligible) {
+      items.push({
+        image: entry.image,
+        status: "skipped",
+        reason: entry.managed
+          ? entry.release_gc_status === "deleted"
+            ? "image is still referenced on this host"
+            : entry.release_gc_status
+              ? `central release status is ${entry.release_gc_status}`
+              : "central release is still active"
+          : "image is not managed by the RootFS release registry",
+      });
+      continue;
+    }
+    try {
+      const result = await client.deleteRootfsImage({ image: entry.image });
+      items.push({
+        image: entry.image,
+        status: result.removed ? "removed" : "skipped",
+        reason: result.removed ? undefined : "image was not present in cache",
+      });
+    } catch (err) {
+      items.push({
+        image: entry.image,
+        status: "failed",
+        reason: err instanceof Error ? err.message : `${err}`,
+      });
+    }
+  }
+  return {
+    scanned: entries.length,
+    removed: items.filter((item) => item.status === "removed").length,
+    skipped: items.filter((item) => item.status === "skipped").length,
+    failed: items.filter((item) => item.status === "failed").length,
+    items,
+  };
 }
 
 export async function listHostSshAuthorizedKeys({

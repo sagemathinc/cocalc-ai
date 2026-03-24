@@ -125,7 +125,8 @@ Admins must be able to:
   projects,
 - remove an image from all user-facing views immediately, while deferring hard
   deletion until no projects use it,
-- inspect the provenance and usage of an image.
+- inspect the provenance and usage of an image,
+- inspect vulnerability scan status and scan provenance for official images.
 
 ### Required host workflows
 
@@ -152,6 +153,21 @@ release, not merely sharing an arbitrary mutable OCI tag with others.
 
 Official and published images must be stored in R2 using btrfs send streams so
 that project hosts can receive them efficiently and exactly.
+
+### Required security metadata
+
+We are not implementing vulnerability scanning itself inside RootFS, but the
+metadata model must support it from the start. For at least official releases,
+we need to store:
+
+- scan status,
+- scanner/pipeline name,
+- scan completion time,
+- summary counts / human summary,
+- optional report URL or opaque scanner metadata.
+
+Promotion of official images should eventually depend on either a recent clean
+scan or an explicit admin override.
 
 ### Required image switching workflow
 
@@ -1031,10 +1047,50 @@ We need to distinguish:
 - hide/delete from catalog,
 - actual artifact garbage collection.
 
+The control-plane states should be explicit:
+
+- `hidden`: remove from normal user-facing pickers immediately,
+- `blocked`: do not allow new selection or child publishes,
+- `deleted`: soft-delete the catalog entry immediately,
+- `pending_delete`: release is waiting for safe GC,
+- `blocked` on the release: deletion was requested, but blockers still exist,
+- `deleted` on the release: all central replicas were reclaimed.
+
 If an image is reported, illegal, or otherwise needs to disappear, admins
 should be able to remove it from all user-facing views immediately. However,
 the actual R2 artifact and Postgres release row should only be hard-deleted
 after no projects are still using that release.
+
+### First implementation slice
+
+The first delete/GC slice should not try to reclaim storage yet. It should:
+
+1. add explicit catalog-entry lifecycle state:
+   - `hidden`
+   - `blocked`
+   - `deleted`
+2. add explicit release lifecycle state:
+   - `gc_status`
+   - `delete_requested_at/by`
+   - `delete_reason`
+3. add release scan metadata:
+   - `scan_status`
+   - `scan_tool`
+   - `scanned_at`
+   - `scan_summary`
+4. implement safe delete-request RPCs that:
+   - immediately hide + soft-delete the catalog entry,
+   - compute deletion blockers,
+   - mark the underlying release `pending_delete` or `blocked`,
+   - do **not** yet delete replicas or host caches.
+
+The next slice after this should add a GC sweep that:
+
+- rescans releases in `pending_delete`,
+- rechecks blockers,
+- deletes central hub-local/R2 replicas when still safe,
+- marks the release `deleted`,
+- leaves host-cache eviction lazy.
 
 ## Host UI
 
@@ -1100,6 +1156,50 @@ The UI should explain that:
 - `/root` and `/scratch` are not thrown away by this operation,
 - switching back later makes the previous per-image `/` customizations visible
   again.
+
+### Retained project RootFS states
+
+We cannot model project RootFS usage only as `projects.rootfs_image`.
+
+Why:
+
+- the runtime stores per-image upperdirs under image-specific paths,
+- a project can switch from image `A` to image `B` and later switch back,
+- if we GC `A` only because `projects.rootfs_image = B`, we break rollback.
+
+The product policy should therefore be:
+
+- each project retains one `current` RootFS state,
+- each project may also retain one `previous` rollback RootFS state,
+- switching `A -> B` promotes `B` to `current` and demotes `A` to `previous`,
+- replacing the current image again evicts the older previous rollback state.
+
+This should be modeled centrally in a dedicated table, not hidden in the
+filesystem:
+
+- `project_rootfs_states(project_id, state_role, runtime_image, release_id, image_id, set_by_account_id, created, updated)`
+
+Notes:
+
+- `state_role` is currently bounded to `current | previous`
+- `set_by_account_id` records who explicitly selected that retained RootFS
+  state for the project
+- this answers questions such as whether an instructor, student, or another
+  collaborator changed the project's RootFS
+- when a current state is demoted to previous during a switch, its existing
+  `set_by_account_id` should be preserved
+- the new current state gets the account id of the actor who performed the
+  switch
+
+GC implications:
+
+- managed release GC must count references from `project_rootfs_states`, not
+  only `projects.rootfs_image`
+- a release cannot be hard-deleted while any project retains it as either
+  `current` or `previous`
+- for compatibility during rollout, GC queries should union both the retained
+  state table and the legacy `projects.rootfs_image` column until all projects
+  have explicit rows
 
 ### OCI fallback
 
@@ -1282,6 +1382,11 @@ new selections are allowed and background cleanup can remove artifacts once no
 projects still reference the release.
 
 ## Benchmarks We Need
+
+The detailed benchmark matrix and execution plan now live in
+[rootfs-benchmarks.md](/home/wstein/build/cocalc-lite2/src/.agents/rootfs-benchmarks.md).
+That file should be treated as the source of truth for benchmark scenarios,
+metrics, and result capture as the RootFS pipeline evolves.
 
 Because distribution format choice matters, we should benchmark:
 

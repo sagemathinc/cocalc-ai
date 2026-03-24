@@ -23,18 +23,20 @@ import ShowError from "@cocalc/frontend/components/error";
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import RootfsPublishOps from "@cocalc/frontend/project/settings/rootfs-publish-ops";
 import {
+  getProjectRootfsStates,
   managedRootfsCatalogUrl,
   publishProjectRootfsImage,
   saveRootfsCatalogEntry,
+  setProjectRootfsImage,
   useRootfsImages,
 } from "@cocalc/frontend/rootfs/manifest";
-import { webapp_client } from "@cocalc/frontend/webapp-client";
 import {
   DEFAULT_PROJECT_IMAGE,
   PROJECT_IMAGE_PATH,
 } from "@cocalc/util/db-schema/defaults";
 import { split } from "@cocalc/util/misc";
 import type {
+  ProjectRootfsStateEntry,
   RootfsImageEntry,
   RootfsImageVisibility,
 } from "@cocalc/util/rootfs-images";
@@ -65,6 +67,9 @@ export default function RootFilesystemImage() {
   const [rootfsDraftId, setRootfsDraftId] = useState<string>("");
   const [images, setImages] = useState<string[]>([DEFAULT_PROJECT_IMAGE]);
   const [catalogRefresh, setCatalogRefresh] = useState<number>(0);
+  const [projectRootfsStates, setProjectRootfsStates] = useState<
+    ProjectRootfsStateEntry[]
+  >([]);
   const [publishMode, setPublishMode] = useState<"copy" | "manage">("copy");
   const [publishCopyMode, setPublishCopyMode] = useState<"project" | "base">(
     "project",
@@ -148,6 +153,14 @@ export default function RootFilesystemImage() {
     () => groupedRootfsOptions(rootfsImages),
     [rootfsImages],
   );
+  const currentProjectRootfsState = useMemo(
+    () => projectRootfsStates.find((state) => state.state_role === "current"),
+    [projectRootfsStates],
+  );
+  const previousProjectRootfsState = useMemo(
+    () => projectRootfsStates.find((state) => state.state_role === "previous"),
+    [projectRootfsStates],
+  );
 
   useEffect(() => {
     const nextImage = getImage(project, effectiveDefaultRootfs);
@@ -165,6 +178,23 @@ export default function RootFilesystemImage() {
       }
     })();
   }, [project?.get("project_id")]);
+
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        const states = await getProjectRootfsStates(project_id);
+        if (!active) return;
+        setProjectRootfsStates(states);
+      } catch {
+        if (!active) return;
+        setProjectRootfsStates([]);
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [project_id]);
 
   useEffect(() => {
     const ops = rootfsPublishOps?.toJS() ?? {};
@@ -251,13 +281,17 @@ export default function RootFilesystemImage() {
         nextImage.trim() ? nextImage.trim() : effectiveDefaultRootfs,
       );
       const image = parts.slice(-1)[0];
-      await setRootFilesystemImage({
+      const states = await setRootFilesystemImage({
         project_id,
         image,
         image_id: nextImageId,
       });
-      setValue(image);
-      setImageId(nextImageId ?? "");
+      setProjectRootfsStates(states);
+      const currentState = states.find(
+        (state) => state.state_role === "current",
+      );
+      setValue(currentState?.image ?? image);
+      setImageId(currentState?.image_id ?? nextImageId ?? "");
       if (project.getIn(["state", "state"]) == "running") {
         redux.getActions("projects").restart_project(project_id);
       }
@@ -330,6 +364,26 @@ export default function RootFilesystemImage() {
       <Button type="link" disabled={open} onClick={openPicker}>
         <code>{selectedRootfsEntry?.label || value}</code>
       </Button>
+      {(currentProjectRootfsState || previousProjectRootfsState) && (
+        <div style={{ marginLeft: "15px", color: "#666" }}>
+          {currentProjectRootfsState && (
+            <Paragraph type="secondary" style={{ marginBottom: "4px" }}>
+              Current: <code>{currentProjectRootfsState.image}</code>
+              {currentProjectRootfsState.set_by_name
+                ? ` set by ${currentProjectRootfsState.set_by_name}`
+                : ""}
+            </Paragraph>
+          )}
+          {previousProjectRootfsState && (
+            <Paragraph type="secondary" style={{ marginBottom: "4px" }}>
+              Previous rollback: <code>{previousProjectRootfsState.image}</code>
+              {previousProjectRootfsState.set_by_name
+                ? ` set by ${previousProjectRootfsState.set_by_name}`
+                : ""}
+            </Paragraph>
+          )}
+        </div>
+      )}
       {open && (
         <Modal
           width={760}
@@ -666,14 +720,10 @@ async function setRootFilesystemImage({
   image: string;
   image_id?: string;
 }) {
-  await webapp_client.query({
-    query: {
-      projects: {
-        project_id,
-        rootfs_image: image,
-        rootfs_image_id: image_id ?? "",
-      },
-    },
+  return await setProjectRootfsImage({
+    project_id,
+    image,
+    image_id,
   });
 }
 

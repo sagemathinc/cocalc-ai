@@ -11,11 +11,15 @@ import type {
 } from "@cocalc/util/db-schema/api-keys";
 import { type UserSearchResult } from "@cocalc/util/db-schema/accounts";
 import type {
+  ProjectRootfsStateEntry,
   ProjectRootfsPublishLroRef,
   PublishProjectRootfsBody,
+  RootfsAdminCatalogEntry,
   RootfsCatalogSaveBody,
+  RootfsDeleteRequestResult,
   RootfsImageManifest,
   RootfsImageEntry,
+  RootfsReleaseGcRunResult,
 } from "@cocalc/util/rootfs-images";
 
 export const system = {
@@ -49,8 +53,13 @@ export const system = {
   getCodexPaymentSource: authFirst,
   getFrontendSourceFingerprint: authFirst,
   getRootfsCatalog: authFirst,
+  getRootfsCatalogAdmin: authFirstRequireAccount,
   saveRootfsCatalogEntry: authFirstRequireAccount,
+  requestRootfsImageDeletion: authFirstRequireAccount,
+  runRootfsReleaseGc: authFirstRequireAccount,
   publishProjectRootfsImage: authFirstRequireAccount,
+  getProjectRootfsStates: authFirstRequireAccount,
+  setProjectRootfsImage: authFirstRequireAccount,
   getPublicSiteUrl: authFirst,
   testR2Credentials: authFirst,
   upsertBrowserSession: authFirst,
@@ -465,13 +474,40 @@ export interface System {
     account_id?: string;
   }) => Promise<RootfsImageManifest>;
 
+  getRootfsCatalogAdmin: (opts?: {
+    account_id?: string;
+  }) => Promise<RootfsAdminCatalogEntry[]>;
+
   saveRootfsCatalogEntry: (
     opts: RootfsCatalogSaveBody & { account_id?: string },
   ) => Promise<RootfsImageEntry>;
 
+  requestRootfsImageDeletion: (opts: {
+    image_id: string;
+    reason?: string;
+    account_id?: string;
+  }) => Promise<RootfsDeleteRequestResult>;
+
+  runRootfsReleaseGc: (opts: {
+    limit?: number;
+    account_id?: string;
+  }) => Promise<RootfsReleaseGcRunResult>;
+
   publishProjectRootfsImage: (
     opts: PublishProjectRootfsBody & { account_id?: string },
   ) => Promise<ProjectRootfsPublishLroRef>;
+
+  getProjectRootfsStates: (opts: {
+    project_id: string;
+    account_id?: string;
+  }) => Promise<ProjectRootfsStateEntry[]>;
+
+  setProjectRootfsImage: (opts: {
+    project_id: string;
+    image: string;
+    image_id?: string;
+    account_id?: string;
+  }) => Promise<ProjectRootfsStateEntry[]>;
 
   getPublicSiteUrl: (opts?: {
     account_id?: string;

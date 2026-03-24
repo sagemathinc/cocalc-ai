@@ -3,7 +3,10 @@ import {
   type ProjectCopyRow,
   type ProjectCopyState,
 } from "@cocalc/conat/hub/api/projects";
-import type { RootfsReleaseArtifactAccess } from "@cocalc/util/rootfs-images";
+import type {
+  RootfsReleaseArtifactAccess,
+  RootfsReleaseGcStatus,
+} from "@cocalc/util/rootfs-images";
 
 export type HostStatus =
   | "deprovisioned"
@@ -176,6 +179,25 @@ export interface HostRootfsImage {
   running_project_count: number;
   project_ids: string[];
   running_project_ids: string[];
+  managed?: boolean;
+  release_id?: string;
+  release_gc_status?: RootfsReleaseGcStatus;
+  centrally_deleted?: boolean;
+  host_gc_eligible?: boolean;
+}
+
+export interface HostRootfsGcItem {
+  image: string;
+  status: "removed" | "skipped" | "failed";
+  reason?: string;
+}
+
+export interface HostRootfsGcResult {
+  scanned: number;
+  removed: number;
+  skipped: number;
+  failed: number;
+  items: HostRootfsGcItem[];
 }
 
 export interface HostCatalog {
@@ -335,6 +357,7 @@ export const hosts = {
   listHostRootfsImages: authFirstRequireAccount,
   pullHostRootfsImage: authFirstRequireAccount,
   deleteHostRootfsImage: authFirstRequireAccount,
+  gcDeletedHostRootfsImages: authFirstRequireAccount,
   listHostSshAuthorizedKeys: authFirstRequireAccount,
   addHostSshAuthorizedKey: authFirstRequireAccount,
   removeHostSshAuthorizedKey: authFirstRequireAccount,
@@ -364,6 +387,7 @@ export const hosts = {
   getSiteOpenAiApiKey: authFirstRequireHost,
   checkCodexSiteUsageAllowance: authFirstRequireHost,
   recordCodexSiteUsage: authFirstRequireHost,
+  issueProjectHostAgentAuthToken: authFirstRequireHost,
   getManagedRootfsReleaseArtifact: authFirstRequireHost,
   issueProjectHostAuthToken: authFirstRequireAccount,
 };
@@ -424,6 +448,10 @@ export interface Hosts {
     id: string;
     image: string;
   }) => Promise<{ removed: boolean }>;
+  gcDeletedHostRootfsImages: (opts: {
+    account_id?: string;
+    id: string;
+  }) => Promise<HostRootfsGcResult>;
   listHostSshAuthorizedKeys: (opts: {
     account_id?: string;
     id: string;
@@ -534,6 +562,16 @@ export interface Hosts {
     account_id?: string;
     host_id: string;
     project_id?: string;
+    ttl_seconds?: number;
+  }) => Promise<{
+    host_id: string;
+    token: string;
+    expires_at: number;
+  }>;
+  issueProjectHostAgentAuthToken: (opts: {
+    host_id?: string;
+    account_id: string;
+    project_id: string;
     ttl_seconds?: number;
   }) => Promise<{
     host_id: string;

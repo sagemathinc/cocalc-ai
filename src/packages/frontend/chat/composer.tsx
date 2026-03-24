@@ -397,8 +397,6 @@ export function ChatRoomComposer({
       toggleZenMode,
     ],
   );
-  const sendViaComposer =
-    hasActiveAcpTurn && isSelectedThreadAI ? handleSendImmediately : handleSend;
 
   const composerStyle: CSSProperties = {
     display: "flex",
@@ -550,7 +548,7 @@ export function ChatRoomComposer({
             cacheId={`${path}${project_id}-draft-${composerDraftKey}`}
             input={input}
             presenceThreadKey={presenceThreadKey}
-            on_send={sendViaComposer}
+            on_send={handleSend}
             height={chatInputHeight}
             autoGrowMaxHeight={autoGrowMaxHeight}
             onChange={(value) => {
@@ -650,9 +648,9 @@ export function ChatRoomComposer({
               title={
                 hasActiveAcpTurn && isSelectedThreadAI ? (
                   <FormattedMessage
-                    id="chatroom.chat_input.send_now_button.tooltip"
+                    id="chatroom.chat_input.queue_button.tooltip"
                     defaultMessage={
-                      "Interrupt the current Codex turn and send now (shift+enter)"
+                      "Queue after current Codex turn (shift+enter)"
                     }
                   />
                 ) : (
@@ -664,25 +662,15 @@ export function ChatRoomComposer({
               }
             >
               <Button
-                onClick={
-                  hasActiveAcpTurn && isSelectedThreadAI
-                    ? handleSendImmediately
-                    : handleSend
-                }
+                onClick={handleSend}
                 disabled={!hasInput}
                 type="primary"
-                icon={
-                  hasActiveAcpTurn && isSelectedThreadAI ? (
-                    <Icon name="bolt" />
-                  ) : (
-                    <Icon name="paper-plane" />
-                  )
-                }
+                icon={<Icon name="paper-plane" />}
               >
                 {hasActiveAcpTurn && isSelectedThreadAI ? (
                   <FormattedMessage
-                    id="chatroom.chat_input.send_now_button.label"
-                    defaultMessage={"Send Now"}
+                    id="chatroom.chat_input.queue_button.label"
+                    defaultMessage={"Queue"}
                   />
                 ) : (
                   <FormattedMessage
@@ -695,14 +683,14 @@ export function ChatRoomComposer({
             {hasActiveAcpTurn && isSelectedThreadAI ? (
               <>
                 <div style={{ height: "5px" }} />
-                <Tooltip title="Queue after the current Codex turn">
+                <Tooltip title="Interrupt the current Codex turn and send now">
                   <Button
-                    onClick={handleSend}
+                    onClick={handleSendImmediately}
                     disabled={!hasInput}
                     type="default"
-                    icon={<Icon name="paper-plane" />}
+                    icon={<Icon name="bolt" />}
                   >
-                    Queue
+                    Send Now
                   </Button>
                 </Tooltip>
               </>

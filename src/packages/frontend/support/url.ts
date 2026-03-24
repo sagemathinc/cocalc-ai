@@ -1,8 +1,8 @@
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
-import { join } from "path";
+import { joinUrlPath } from "@cocalc/util/url-path";
 
-export const supportURL = join(appBasePath, "support/new");
-export const ticketsURL = join(appBasePath, "support/tickets");
+export const supportURL = joinUrlPath(appBasePath, "support/new");
+export const ticketsURL = joinUrlPath(appBasePath, "support/tickets");
 
 export interface Options {
   url?: string;
