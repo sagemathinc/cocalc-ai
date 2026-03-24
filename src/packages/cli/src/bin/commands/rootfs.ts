@@ -86,6 +86,10 @@ function serializeRootfsImageEntry(entry: RootfsImageEntry) {
     image_id: entry.id,
     label: entry.label,
     image: entry.image,
+    family: entry.family ?? null,
+    version: entry.version ?? null,
+    channel: entry.channel ?? null,
+    supersedes_image_id: entry.supersedes_image_id ?? null,
     section: entry.section ?? null,
     visibility: entry.visibility ?? null,
     official: !!entry.official,
@@ -199,6 +203,14 @@ function formatRootfsEntriesHuman(
       if (entry.digest) {
         lines.push(`   digest: ${entry.digest}`);
       }
+      if (entry.family || entry.version || entry.channel) {
+        lines.push(
+          `   release: family=${entry.family ?? "-"} version=${entry.version ?? "-"} channel=${entry.channel ?? "-"}`,
+        );
+      }
+      if (entry.supersedes_image_id) {
+        lines.push(`   supersedes: ${entry.supersedes_image_id}`);
+      }
       if (entry.size_gb != null) {
         lines.push(`   size_gb: ${entry.size_gb}`);
       }
@@ -247,6 +259,14 @@ function formatRootfsAdminEntriesHuman(
       ];
       if (entry.blocked && entry.blocked_reason) {
         lines.push(`   blocked_reason: ${entry.blocked_reason}`);
+      }
+      if (entry.family || entry.version || entry.channel) {
+        lines.push(
+          `   release: family=${entry.family ?? "-"} version=${entry.version ?? "-"} channel=${entry.channel ?? "-"}`,
+        );
+      }
+      if (entry.supersedes_image_id) {
+        lines.push(`   supersedes: ${entry.supersedes_image_id}`);
       }
       if (entry.blocked_at || entry.blocked_by) {
         lines.push(
@@ -643,6 +663,13 @@ export function registerRootfsCommand(
     .requiredOption("--image <image>", "runtime image reference")
     .requiredOption("--label <label>", "catalog label")
     .option("--image-id <id>", "update an existing catalog entry by id")
+    .option("--family <family>", "optional image family for upgrade grouping")
+    .option("--version <version>", "optional user-facing image version")
+    .option("--channel <channel>", "optional release channel, e.g. stable")
+    .option(
+      "--supersedes-image-id <id>",
+      "optional catalog image id superseded by this entry",
+    )
     .option("--description <text>", "catalog description")
     .option("--visibility <visibility>", "private, collaborators, or public")
     .option("--tags <csv>", "comma-separated tags")
@@ -656,6 +683,10 @@ export function registerRootfsCommand(
           image: string;
           label: string;
           imageId?: string;
+          family?: string;
+          version?: string;
+          channel?: string;
+          supersedesImageId?: string;
           description?: string;
           visibility?: string;
           tags?: string;
@@ -671,6 +702,10 @@ export function registerRootfsCommand(
             image_id: `${opts.imageId ?? ""}`.trim() || undefined,
             image: opts.image,
             label: opts.label,
+            family: opts.family,
+            version: opts.version,
+            channel: opts.channel,
+            supersedes_image_id: opts.supersedesImageId,
             description: opts.description,
             visibility: parseVisibility(opts.visibility),
             tags: parseTags(opts.tags),
@@ -689,6 +724,13 @@ export function registerRootfsCommand(
     .description("publish the current RootFS state of a project")
     .option("-w, --project <project>", "project id or name")
     .requiredOption("--label <label>", "catalog label for the published image")
+    .option("--family <family>", "optional image family for upgrade grouping")
+    .option("--version <version>", "optional user-facing image version")
+    .option("--channel <channel>", "optional release channel, e.g. stable")
+    .option(
+      "--supersedes-image-id <id>",
+      "optional catalog image id superseded by this entry",
+    )
     .option("--description <text>", "catalog description")
     .option("--visibility <visibility>", "private, collaborators, or public")
     .option("--tags <csv>", "comma-separated tags")
@@ -702,6 +744,10 @@ export function registerRootfsCommand(
         opts: {
           project?: string;
           label: string;
+          family?: string;
+          version?: string;
+          channel?: string;
+          supersedesImageId?: string;
           description?: string;
           visibility?: string;
           tags?: string;
@@ -718,6 +764,10 @@ export function registerRootfsCommand(
           const op = await ctx.hub.system.publishProjectRootfsImage({
             project_id: ws.project_id,
             label: opts.label,
+            family: opts.family,
+            version: opts.version,
+            channel: opts.channel,
+            supersedes_image_id: opts.supersedesImageId,
             description: opts.description,
             visibility: parseVisibility(opts.visibility),
             tags: parseTags(opts.tags),

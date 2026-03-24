@@ -495,6 +495,12 @@ export default function RootFilesystemImage() {
                       {sectionLabel(draftRootfsEntry.section)}
                     </Tag>
                   )}
+                  {draftRootfsEntry?.version && (
+                    <Tag>{draftRootfsEntry.version}</Tag>
+                  )}
+                  {draftRootfsEntry?.channel && (
+                    <Tag color="cyan">{draftRootfsEntry.channel}</Tag>
+                  )}
                   {draftRootfsEntry?.gpu && <Tag color="purple">GPU image</Tag>}
                   {draftRootfsEntry?.owner_name &&
                     draftRootfsEntry.section !== "mine" && (
@@ -876,6 +882,14 @@ function renderRootfsCatalogOption(entry: RootfsImageEntry) {
             style={{ marginInlineEnd: 0 }}
           >
             {sectionLabel(entry.section)}
+          </Tag>
+        ) : null}
+        {entry.version ? (
+          <Tag style={{ marginInlineEnd: 0 }}>{entry.version}</Tag>
+        ) : null}
+        {entry.channel ? (
+          <Tag color="cyan" style={{ marginInlineEnd: 0 }}>
+            {entry.channel}
           </Tag>
         ) : null}
         {entry.gpu ? (

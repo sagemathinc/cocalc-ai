@@ -41,6 +41,10 @@ type RootfsImageRow = {
   owner_id: string | null;
   runtime_image: string;
   label: string;
+  family: string | null;
+  version: string | null;
+  channel: string | null;
+  supersedes_image_id: string | null;
   description: string | null;
   visibility: RootfsImageVisibility | null;
   official: boolean | null;
@@ -181,6 +185,10 @@ function rowToEntry({
       release_id: row.release_id ?? undefined,
       label: row.label || row.runtime_image,
       image: row.runtime_image,
+      family: row.family ?? undefined,
+      version: row.version ?? undefined,
+      channel: row.channel ?? undefined,
+      supersedes_image_id: row.supersedes_image_id ?? undefined,
       description: row.description ?? undefined,
       digest: row.digest ?? undefined,
       arch: row.arch ? [row.arch as any] : undefined,
@@ -234,6 +242,10 @@ function rowToAdminEntry({
         release_id: row.release_id ?? undefined,
         label: row.label || row.runtime_image,
         image: row.runtime_image,
+        family: row.family ?? undefined,
+        version: row.version ?? undefined,
+        channel: row.channel ?? undefined,
+        supersedes_image_id: row.supersedes_image_id ?? undefined,
         description: row.description ?? undefined,
         digest: row.digest ?? undefined,
         arch: row.arch ? [row.arch as any] : undefined,
@@ -336,6 +348,10 @@ async function queryRootfsRows(): Promise<RootfsImageRow[]> {
       r.owner_id,
       r.runtime_image,
       r.label,
+      r.family,
+      r.version,
+      r.channel,
+      r.supersedes_image_id,
       r.description,
       r.visibility,
       r.official,
@@ -521,6 +537,10 @@ async function upsertRootfsRow({
   }
 
   const visibility = normalizeVisibility(body.visibility);
+  const family = trimString(body.family) ?? null;
+  const version = trimString(body.version) ?? null;
+  const channel = trimString(body.channel) ?? null;
+  const supersedes_image_id = trimString(body.supersedes_image_id) ?? null;
   const tags = normalizeTags(body.tags);
   const description = trimString(body.description) ?? null;
   const theme = normalizeTheme(body.theme);
@@ -538,21 +558,25 @@ async function upsertRootfsRow({
 
   await pool.query(
     `INSERT INTO rootfs_images
-      (image_id, release_id, owner_id, runtime_image, label, description, visibility, official, prepull, hidden, hidden_at, hidden_by, blocked, blocked_reason, blocked_at, blocked_by, deleted, deleted_reason, deleted_at, deleted_by, arch, gpu, size_gb, tags, digest, content_key, deprecated, deprecated_reason, theme, created, updated)
+      (image_id, release_id, owner_id, runtime_image, label, family, version, channel, supersedes_image_id, description, visibility, official, prepull, hidden, hidden_at, hidden_by, blocked, blocked_reason, blocked_at, blocked_by, deleted, deleted_reason, deleted_at, deleted_by, arch, gpu, size_gb, tags, digest, content_key, deprecated, deprecated_reason, theme, created, updated)
      VALUES
-      ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-       CASE WHEN $10 THEN NOW() ELSE NULL END,
-       CASE WHEN $10 THEN $3 ELSE NULL END,
-       $11,
-       CASE WHEN $11 THEN $12 ELSE NULL END,
-       CASE WHEN $11 THEN NOW() ELSE NULL END,
-       CASE WHEN $11 THEN $3 ELSE NULL END,
-       false, NULL, NULL, NULL, $13, $14, $15, $16::TEXT[], $17, $18, false, NULL, $19::JSONB, NOW(), NOW())
+      ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
+       CASE WHEN $14 THEN NOW() ELSE NULL END,
+       CASE WHEN $14 THEN $3 ELSE NULL END,
+       $15,
+       CASE WHEN $15 THEN $16 ELSE NULL END,
+       CASE WHEN $15 THEN NOW() ELSE NULL END,
+       CASE WHEN $15 THEN $3 ELSE NULL END,
+       false, NULL, NULL, NULL, $17, $18, $19, $20::TEXT[], $21, $22, false, NULL, $23::JSONB, NOW(), NOW())
      ON CONFLICT (image_id) DO UPDATE SET
       release_id = COALESCE(EXCLUDED.release_id, rootfs_images.release_id),
       owner_id = EXCLUDED.owner_id,
       runtime_image = EXCLUDED.runtime_image,
       label = EXCLUDED.label,
+      family = COALESCE(EXCLUDED.family, rootfs_images.family),
+      version = COALESCE(EXCLUDED.version, rootfs_images.version),
+      channel = COALESCE(EXCLUDED.channel, rootfs_images.channel),
+      supersedes_image_id = COALESCE(EXCLUDED.supersedes_image_id, rootfs_images.supersedes_image_id),
       description = EXCLUDED.description,
       visibility = EXCLUDED.visibility,
       official = EXCLUDED.official,
@@ -593,6 +617,10 @@ async function upsertRootfsRow({
       owner_id,
       image,
       label,
+      family,
+      version,
+      channel,
+      supersedes_image_id,
       description,
       visibility,
       official,
@@ -620,6 +648,9 @@ async function upsertRootfsRow({
       payload: {
         image,
         label,
+        family,
+        version,
+        channel,
         visibility,
       },
     });
@@ -708,6 +739,10 @@ export async function saveRootfsImage({
       id: image_id,
       label,
       image,
+      family: body.family,
+      version: body.version,
+      channel: body.channel,
+      supersedes_image_id: body.supersedes_image_id,
       description: description ?? undefined,
       visibility,
       official,
@@ -757,6 +792,10 @@ export async function publishProjectRootfsCatalogEntry({
     body: {
       image: artifact.image,
       label: body.label,
+      family: body.family,
+      version: body.version,
+      channel: body.channel,
+      supersedes_image_id: body.supersedes_image_id,
       description: body.description,
       visibility: body.visibility,
       arch: artifact.arch,
@@ -781,6 +820,10 @@ export async function publishProjectRootfsCatalogEntry({
       release_id: release_id ?? undefined,
       label: body.label,
       image: artifact.image,
+      family: body.family,
+      version: body.version,
+      channel: body.channel,
+      supersedes_image_id: body.supersedes_image_id,
       description: body.description,
       digest: artifact.digest,
       arch: artifact.arch,

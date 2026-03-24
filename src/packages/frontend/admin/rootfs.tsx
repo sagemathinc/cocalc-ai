@@ -152,6 +152,23 @@ function lifecycleHistory(entry: RootfsAdminCatalogEntry): React.ReactNode {
   );
 }
 
+function releaseMetadata(entry: RootfsAdminCatalogEntry): React.ReactNode {
+  if (!entry.family && !entry.version && !entry.channel) {
+    return null;
+  }
+  return (
+    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+      {[
+        entry.family ? `family=${entry.family}` : null,
+        entry.version ? `version=${entry.version}` : null,
+        entry.channel ? `channel=${entry.channel}` : null,
+      ]
+        .filter(Boolean)
+        .join(" ")}
+    </Typography.Text>
+  );
+}
+
 function eventTitle(event: RootfsImageEvent): string {
   switch (event.event_type) {
     case "catalog_created":
@@ -260,6 +277,9 @@ export function RootfsAdmin() {
       [
         entry.label,
         entry.image,
+        entry.family,
+        entry.version,
+        entry.channel,
         entry.owner_name,
         entry.owner_id,
         entry.visibility,
@@ -322,6 +342,10 @@ export function RootfsAdmin() {
         size_gb: entry.size_gb,
         tags: entry.tags,
         theme: entry.theme,
+        family: entry.family,
+        version: entry.version,
+        channel: entry.channel,
+        supersedes_image_id: entry.supersedes_image_id,
         official: patch.official ?? entry.official,
         prepull: patch.prepull ?? entry.prepull,
         hidden: patch.hidden ?? entry.hidden,
@@ -405,6 +429,7 @@ export function RootfsAdmin() {
                   <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                     {entry.owner_name ?? entry.owner_id ?? "builtin"}
                   </Typography.Text>
+                  {releaseMetadata(entry)}
                 </Space>
               ),
             },

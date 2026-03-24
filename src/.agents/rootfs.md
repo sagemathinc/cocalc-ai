@@ -240,6 +240,27 @@ A product concept such as:
 
 A family has many releases over time.
 
+### Catalog version metadata
+
+Catalog entries should optionally carry:
+
+- `family`
+- `version`
+- `channel`
+- `supersedes_image_id`
+
+This is a product-layer concept, not a storage-layer concept.
+
+It exists so the UI can express:
+
+- what series an image belongs to,
+- whether a newer version exists,
+- whether an entry is stable/beta/nightly,
+- and what older catalog entry it should upgrade from.
+
+This must remain separate from `parent_release_id`, which exists only for
+incremental storage and transport.
+
 ### Publish scope
 
 Who can discover/select a catalog entry:

@@ -18,6 +18,9 @@ Table({
       "deleted",
       "visibility",
       "runtime_image",
+      "family",
+      "channel",
+      "supersedes_image_id",
       "updated",
     ],
   },
@@ -43,6 +46,23 @@ Table({
     label: {
       type: "string",
       desc: "Human-facing label shown in pickers.",
+    },
+    family: {
+      type: "string",
+      desc: "Optional product family or series name for upgrade grouping.",
+    },
+    version: {
+      type: "string",
+      desc: "Optional product version string shown to users.",
+    },
+    channel: {
+      type: "string",
+      desc: "Optional release channel such as stable, beta, or nightly.",
+    },
+    supersedes_image_id: {
+      type: "string",
+      pg_type: "VARCHAR(128)",
+      desc: "Optional previous catalog image id that this entry supersedes.",
     },
     description: {
       type: "string",

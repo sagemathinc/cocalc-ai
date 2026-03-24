@@ -393,6 +393,10 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
                     {sectionLabel(activeEntry.section)}
                   </Tag>
                 )}
+                {activeEntry?.version && <Tag>{activeEntry.version}</Tag>}
+                {activeEntry?.channel && (
+                  <Tag color="cyan">{activeEntry.channel}</Tag>
+                )}
                 {activeEntry?.gpu && <Tag color="purple">GPU image</Tag>}
                 {activeEntry?.owner_name && activeEntry.section !== "mine" && (
                   <Tag>{activeEntry.owner_name}</Tag>
@@ -465,6 +469,12 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
               <Tag color={sectionTagColor(selectedRootfsEntry.section)}>
                 {sectionLabel(selectedRootfsEntry.section)}
               </Tag>
+            )}
+            {selectedRootfsEntry?.version && (
+              <Tag>{selectedRootfsEntry.version}</Tag>
+            )}
+            {selectedRootfsEntry?.channel && (
+              <Tag color="cyan">{selectedRootfsEntry.channel}</Tag>
             )}
             {selectedRootfsEntry?.gpu && <Tag color="purple">GPU</Tag>}
             {!selectedRootfsEntry && <Tag color="orange">Advanced OCI</Tag>}
@@ -712,6 +722,14 @@ function renderRootfsCatalogOption(entry: RootfsImageEntry) {
             style={{ marginInlineEnd: 0 }}
           >
             {sectionLabel(entry.section)}
+          </Tag>
+        ) : null}
+        {entry.version ? (
+          <Tag style={{ marginInlineEnd: 0 }}>{entry.version}</Tag>
+        ) : null}
+        {entry.channel ? (
+          <Tag color="cyan" style={{ marginInlineEnd: 0 }}>
+            {entry.channel}
           </Tag>
         ) : null}
         {entry.gpu ? (

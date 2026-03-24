@@ -64,6 +64,10 @@ export type RootfsImageEntry = {
   release_id?: string;
   label: string;
   image: string;
+  family?: string;
+  version?: string;
+  channel?: string;
+  supersedes_image_id?: string;
   description?: string;
   digest?: string;
   arch?: RootfsImageArch | RootfsImageArch[];
@@ -99,6 +103,10 @@ export type RootfsCatalogSaveBody = {
   image_id?: string;
   image: string;
   label: string;
+  family?: string;
+  version?: string;
+  channel?: string;
+  supersedes_image_id?: string;
   description?: string;
   visibility?: RootfsImageVisibility;
   arch?: RootfsImageArch | RootfsImageArch[];
@@ -116,6 +124,10 @@ export type RootfsCatalogSaveBody = {
 export type PublishProjectRootfsBody = {
   project_id: string;
   label: string;
+  family?: string;
+  version?: string;
+  channel?: string;
+  supersedes_image_id?: string;
   description?: string;
   visibility?: RootfsImageVisibility;
   tags?: string[];
