@@ -26,6 +26,7 @@ export type RootfsImageSection =
   | "public";
 export type RootfsImageWarning = "none" | "collaborator" | "public";
 export type RootfsPublishSourceMode = "current";
+export type ProjectRootfsStateRole = "current" | "previous";
 
 export type RootfsImageTheme = {
   title?: string;
@@ -222,6 +223,18 @@ export type RootfsAdminCatalogEntry = RootfsImageEntry & {
   scan_status?: RootfsScanStatus;
   scan_tool?: string;
   scanned_at?: string;
+};
+
+export type ProjectRootfsStateEntry = {
+  project_id: string;
+  state_role: ProjectRootfsStateRole;
+  image: string;
+  release_id?: string;
+  image_id?: string;
+  set_by_account_id?: string;
+  set_by_name?: string;
+  created_at?: string;
+  updated_at?: string;
 };
 
 export type RootfsReleaseGcItem = {

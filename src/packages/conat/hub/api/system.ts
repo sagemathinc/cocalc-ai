@@ -11,6 +11,7 @@ import type {
 } from "@cocalc/util/db-schema/api-keys";
 import { type UserSearchResult } from "@cocalc/util/db-schema/accounts";
 import type {
+  ProjectRootfsStateEntry,
   ProjectRootfsPublishLroRef,
   PublishProjectRootfsBody,
   RootfsAdminCatalogEntry,
@@ -57,6 +58,8 @@ export const system = {
   requestRootfsImageDeletion: authFirstRequireAccount,
   runRootfsReleaseGc: authFirstRequireAccount,
   publishProjectRootfsImage: authFirstRequireAccount,
+  getProjectRootfsStates: authFirstRequireAccount,
+  setProjectRootfsImage: authFirstRequireAccount,
   getPublicSiteUrl: authFirst,
   testR2Credentials: authFirst,
   upsertBrowserSession: authFirst,
@@ -493,6 +496,18 @@ export interface System {
   publishProjectRootfsImage: (
     opts: PublishProjectRootfsBody & { account_id?: string },
   ) => Promise<ProjectRootfsPublishLroRef>;
+
+  getProjectRootfsStates: (opts: {
+    project_id: string;
+    account_id?: string;
+  }) => Promise<ProjectRootfsStateEntry[]>;
+
+  setProjectRootfsImage: (opts: {
+    project_id: string;
+    image: string;
+    image_id?: string;
+    account_id?: string;
+  }) => Promise<ProjectRootfsStateEntry[]>;
 
   getPublicSiteUrl: (opts?: {
     account_id?: string;

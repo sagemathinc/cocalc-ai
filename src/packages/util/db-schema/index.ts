@@ -58,6 +58,7 @@ import "./project-hosts";
 import "./project-host-bootstrap-tokens";
 import "./project-backup-secrets";
 import "./project-collab-invites";
+import "./project-rootfs-states";
 import "./projects";
 import "./rootfs-images";
 import "./rootfs-release-artifacts";

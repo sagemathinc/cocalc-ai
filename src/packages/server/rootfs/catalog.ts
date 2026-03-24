@@ -644,10 +644,17 @@ async function getDeleteBlockers({
   const [projects, catalogEntries, prepullEntries, childReleases] =
     await Promise.all([
       pool.query<{ count: string }>(
-        `SELECT COUNT(*)::TEXT AS count
-         FROM projects
-         WHERE rootfs_image=$1`,
-        [runtime_image],
+        `SELECT COUNT(DISTINCT project_id)::TEXT AS count
+         FROM (
+           SELECT project_id
+           FROM project_rootfs_states
+           WHERE release_id=$1 OR runtime_image=$2
+           UNION
+           SELECT project_id
+           FROM projects
+           WHERE rootfs_image=$2
+         ) AS retained_projects`,
+        [release_id, runtime_image],
       ),
       pool.query<{ count: string }>(
         `SELECT COUNT(*)::TEXT AS count

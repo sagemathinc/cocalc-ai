@@ -7,6 +7,7 @@ import { useEffect, useMemo, useState } from "react";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import {
   DEFAULT_ROOTFS_CATALOG_URL,
+  type ProjectRootfsStateEntry,
   type ProjectRootfsPublishLroRef,
   type PublishProjectRootfsBody,
   type RootfsCatalogSaveBody,
@@ -169,6 +170,24 @@ export async function publishProjectRootfsImage(
   body: PublishProjectRootfsBody,
 ): Promise<ProjectRootfsPublishLroRef> {
   return await webapp_client.conat_client.hub.system.publishProjectRootfsImage(
+    body,
+  );
+}
+
+export async function getProjectRootfsStates(
+  project_id: string,
+): Promise<ProjectRootfsStateEntry[]> {
+  return await webapp_client.conat_client.hub.system.getProjectRootfsStates({
+    project_id,
+  });
+}
+
+export async function setProjectRootfsImage(body: {
+  project_id: string;
+  image: string;
+  image_id?: string;
+}): Promise<ProjectRootfsStateEntry[]> {
+  return await webapp_client.conat_client.hub.system.setProjectRootfsImage(
     body,
   );
 }

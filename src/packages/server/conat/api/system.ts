@@ -40,10 +40,15 @@ import {
 } from "@cocalc/server/rootfs/catalog";
 import { runPendingRootfsReleaseGc } from "@cocalc/server/rootfs/releases";
 import type {
+  ProjectRootfsStateEntry,
   ProjectRootfsPublishLroRef,
   PublishProjectRootfsBody,
   RootfsCatalogSaveBody,
 } from "@cocalc/util/rootfs-images";
+import {
+  getProjectRootfsStates as getProjectRootfsStates0,
+  setProjectRootfsImageWithRollback,
+} from "@cocalc/server/projects/rootfs-state";
 import { createLro } from "@cocalc/server/lro/lro-db";
 import { lroStreamName } from "@cocalc/conat/lro/names";
 import { SERVICE as PERSIST_SERVICE } from "@cocalc/conat/persist/util";
@@ -435,6 +440,41 @@ export async function publishProjectRootfsImage(
     service: PERSIST_SERVICE,
     stream_name: lroStreamName(op.op_id),
   };
+}
+
+export async function getProjectRootfsStates(opts: {
+  account_id?: string;
+  project_id: string;
+}): Promise<ProjectRootfsStateEntry[]> {
+  const { account_id, project_id } = opts;
+  if (!account_id) {
+    throw Error("user must be signed in");
+  }
+  if (!(await isCollaborator({ account_id, project_id }))) {
+    throw Error("user must be a collaborator on the project");
+  }
+  return await getProjectRootfsStates0({ project_id });
+}
+
+export async function setProjectRootfsImage(opts: {
+  account_id?: string;
+  project_id: string;
+  image: string;
+  image_id?: string;
+}): Promise<ProjectRootfsStateEntry[]> {
+  const { account_id, project_id, image, image_id } = opts;
+  if (!account_id) {
+    throw Error("user must be signed in");
+  }
+  if (!(await isCollaborator({ account_id, project_id }))) {
+    throw Error("user must be a collaborator on the project");
+  }
+  return await setProjectRootfsImageWithRollback({
+    project_id,
+    image,
+    image_id,
+    set_by_account_id: account_id,
+  });
 }
 
 export {

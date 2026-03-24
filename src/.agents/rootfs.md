@@ -1157,6 +1157,50 @@ The UI should explain that:
 - switching back later makes the previous per-image `/` customizations visible
   again.
 
+### Retained project RootFS states
+
+We cannot model project RootFS usage only as `projects.rootfs_image`.
+
+Why:
+
+- the runtime stores per-image upperdirs under image-specific paths,
+- a project can switch from image `A` to image `B` and later switch back,
+- if we GC `A` only because `projects.rootfs_image = B`, we break rollback.
+
+The product policy should therefore be:
+
+- each project retains one `current` RootFS state,
+- each project may also retain one `previous` rollback RootFS state,
+- switching `A -> B` promotes `B` to `current` and demotes `A` to `previous`,
+- replacing the current image again evicts the older previous rollback state.
+
+This should be modeled centrally in a dedicated table, not hidden in the
+filesystem:
+
+- `project_rootfs_states(project_id, state_role, runtime_image, release_id, image_id, set_by_account_id, created, updated)`
+
+Notes:
+
+- `state_role` is currently bounded to `current | previous`
+- `set_by_account_id` records who explicitly selected that retained RootFS
+  state for the project
+- this answers questions such as whether an instructor, student, or another
+  collaborator changed the project's RootFS
+- when a current state is demoted to previous during a switch, its existing
+  `set_by_account_id` should be preserved
+- the new current state gets the account id of the actor who performed the
+  switch
+
+GC implications:
+
+- managed release GC must count references from `project_rootfs_states`, not
+  only `projects.rootfs_image`
+- a release cannot be hard-deleted while any project retains it as either
+  `current` or `previous`
+- for compatibility during rollout, GC queries should union both the retained
+  state table and the legacy `projects.rootfs_image` column until all projects
+  have explicit rows
+
 ### OCI fallback
 
 For self-host recovery and bootstrap:
