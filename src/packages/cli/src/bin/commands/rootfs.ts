@@ -1,5 +1,6 @@
 import { Command } from "commander";
 import type {
+  RootfsAdminCatalogEntry,
   RootfsDeleteRequestResult,
   RootfsImageEntry,
   RootfsImageSection,
@@ -90,6 +91,7 @@ function serializeRootfsImageEntry(entry: RootfsImageEntry) {
     prepull: !!entry.prepull,
     hidden: !!entry.hidden,
     blocked: !!entry.blocked,
+    blocked_reason: entry.blocked_reason ?? null,
     digest: entry.digest ?? null,
     arch: entry.arch ?? null,
     gpu: !!entry.gpu,
@@ -100,6 +102,22 @@ function serializeRootfsImageEntry(entry: RootfsImageEntry) {
     description: entry.description ?? null,
     tags: entry.tags ?? [],
     can_manage: !!entry.can_manage,
+  };
+}
+
+function serializeRootfsAdminEntry(entry: RootfsAdminCatalogEntry) {
+  return {
+    ...serializeRootfsImageEntry(entry),
+    deleted: !!entry.deleted,
+    deleted_reason: entry.deleted_reason ?? null,
+    deleted_at: entry.deleted_at ?? null,
+    deleted_by: entry.deleted_by ?? null,
+    release_id: entry.release_id ?? null,
+    release_gc_status: entry.release_gc_status ?? null,
+    delete_blockers: entry.delete_blockers ?? null,
+    scan_status: entry.scan_status ?? null,
+    scan_tool: entry.scan_tool ?? null,
+    scanned_at: entry.scanned_at ?? null,
   };
 }
 
@@ -186,6 +204,54 @@ function formatRootfsEntriesHuman(
     .join("\n\n");
 }
 
+function formatRootfsAdminEntriesHuman(
+  entries: Array<ReturnType<typeof serializeRootfsAdminEntry>>,
+): string {
+  if (!entries.length) {
+    return "(no rootfs images)";
+  }
+  return entries
+    .map((entry, index) => {
+      const header = `${index + 1}. ${entry.label}`;
+      const lines = [
+        header,
+        `   id: ${entry.image_id}`,
+        `   image: ${entry.image}`,
+        `   owner: ${entry.owner_name ?? entry.owner_id ?? "-"}`,
+        `   visibility: ${entry.visibility ?? "-"}`,
+        `   release_id: ${entry.release_id ?? "-"}`,
+        `   lifecycle: hidden=${entry.hidden} blocked=${entry.blocked} deleted=${entry.deleted} release_gc_status=${entry.release_gc_status ?? "-"}`,
+      ];
+      if (entry.blocked && entry.blocked_reason) {
+        lines.push(`   blocked_reason: ${entry.blocked_reason}`);
+      }
+      if (entry.delete_blockers) {
+        lines.push(
+          `   delete_blockers: total=${entry.delete_blockers.total} projects=${entry.delete_blockers.projects_using_release} catalog=${entry.delete_blockers.catalog_entries_using_release} prepull=${entry.delete_blockers.prepull_entries_using_release} child_releases=${entry.delete_blockers.child_releases}`,
+        );
+      }
+      if (entry.scan_status || entry.scan_tool || entry.scanned_at) {
+        lines.push(
+          `   scan: status=${entry.scan_status ?? "unknown"} tool=${entry.scan_tool ?? "-"} scanned_at=${entry.scanned_at ?? "-"}`,
+        );
+      }
+      lines.push(
+        ...wrapField({
+          label: "description",
+          value: entry.description,
+        }),
+      );
+      lines.push(
+        ...wrapField({
+          label: "tags",
+          value: Array.isArray(entry.tags) ? entry.tags.join(", ") : "",
+        }),
+      );
+      return lines.join("\n");
+    })
+    .join("\n\n");
+}
+
 function formatRootfsDeleteResultHuman(
   result: RootfsDeleteRequestResult,
 ): string {
@@ -227,6 +293,49 @@ function formatRootfsGcResultHuman(result: RootfsReleaseGcRunResult): string {
     }
   }
   return lines.join("\n");
+}
+
+async function loadAdminRootfsEntryById(ctx: any, image_id: string) {
+  const trimmed = `${image_id ?? ""}`.trim();
+  if (!trimmed) {
+    throw new Error("image_id must be specified");
+  }
+  const rows: RootfsAdminCatalogEntry[] =
+    (await ctx.hub.system.getRootfsCatalogAdmin({})) ?? [];
+  const entry = rows.find((row) => row.id === trimmed);
+  if (!entry) {
+    throw new Error(`rootfs image '${trimmed}' not found`);
+  }
+  return entry;
+}
+
+async function saveAdminRootfsEntry(
+  ctx: any,
+  entry: RootfsAdminCatalogEntry,
+  patch: Partial<RootfsAdminCatalogEntry>,
+) {
+  return await ctx.hub.system.saveRootfsCatalogEntry({
+    image_id: entry.id,
+    image: entry.image,
+    label: entry.label,
+    description: entry.description,
+    visibility: entry.visibility,
+    arch: entry.arch,
+    gpu: entry.gpu,
+    size_gb: entry.size_gb,
+    tags: entry.tags,
+    theme: entry.theme,
+    official: patch.official ?? entry.official,
+    prepull: patch.prepull ?? entry.prepull,
+    hidden: patch.hidden ?? entry.hidden,
+    blocked: patch.blocked ?? entry.blocked,
+    blocked_reason:
+      patch.blocked === false
+        ? undefined
+        : (patch.blocked_reason ??
+          entry.blocked_reason ??
+          (patch.blocked ? "Blocked by admin" : undefined)),
+  });
 }
 
 export function registerRootfsCommand(
@@ -293,6 +402,52 @@ export function registerRootfsCommand(
     );
 
   rootfs
+    .command("admin-list")
+    .description("list all RootFS catalog entries with admin lifecycle details")
+    .option("--image <image>", "filter by runtime image name")
+    .option("--label <label>", "filter by label substring")
+    .option("--include-deleted", "include deleted rows in output")
+    .option("--limit <n>", "max rows", "100")
+    .action(
+      async (
+        opts: {
+          image?: string;
+          label?: string;
+          includeDeleted?: boolean;
+          limit?: string;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "rootfs admin-list", async (ctx) => {
+          const imageFilter = `${opts.image ?? ""}`.trim().toLowerCase();
+          const labelFilter = `${opts.label ?? ""}`.trim().toLowerCase();
+          let rows: RootfsAdminCatalogEntry[] =
+            (await ctx.hub.system.getRootfsCatalogAdmin({})) ?? [];
+          if (!opts.includeDeleted) {
+            rows = rows.filter((entry) => !entry.deleted);
+          }
+          if (imageFilter) {
+            rows = rows.filter((entry) =>
+              `${entry.image ?? ""}`.trim().toLowerCase().includes(imageFilter),
+            );
+          }
+          if (labelFilter) {
+            rows = rows.filter((entry) =>
+              `${entry.label ?? ""}`.trim().toLowerCase().includes(labelFilter),
+            );
+          }
+          const serialized = rows
+            .slice(0, parseLimit(opts.limit))
+            .map(serializeRootfsAdminEntry);
+          if (ctx.globals.json || ctx.globals.output === "json") {
+            return serialized;
+          }
+          return formatRootfsAdminEntriesHuman(serialized);
+        });
+      },
+    );
+
+  rootfs
     .command("delete")
     .description("soft-delete a RootFS catalog entry and request safe GC")
     .requiredOption("--image-id <id>", "catalog image id")
@@ -317,6 +472,94 @@ export function registerRootfsCommand(
             return result;
           }
           return formatRootfsDeleteResultHuman(result);
+        });
+      },
+    );
+
+  rootfs
+    .command("hide")
+    .description("hide a RootFS catalog entry from normal views")
+    .requiredOption("--image-id <id>", "catalog image id")
+    .action(
+      async (
+        opts: {
+          imageId: string;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "rootfs hide", async (ctx) => {
+          const entry = await loadAdminRootfsEntryById(ctx, opts.imageId);
+          const result = await saveAdminRootfsEntry(ctx, entry, {
+            hidden: true,
+          });
+          return serializeRootfsImageEntry(result);
+        });
+      },
+    );
+
+  rootfs
+    .command("unhide")
+    .description("make a hidden RootFS catalog entry visible again")
+    .requiredOption("--image-id <id>", "catalog image id")
+    .action(
+      async (
+        opts: {
+          imageId: string;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "rootfs unhide", async (ctx) => {
+          const entry = await loadAdminRootfsEntryById(ctx, opts.imageId);
+          const result = await saveAdminRootfsEntry(ctx, entry, {
+            hidden: false,
+          });
+          return serializeRootfsImageEntry(result);
+        });
+      },
+    );
+
+  rootfs
+    .command("block")
+    .description("block new use of a RootFS catalog entry")
+    .requiredOption("--image-id <id>", "catalog image id")
+    .option("--reason <text>", "optional block reason")
+    .action(
+      async (
+        opts: {
+          imageId: string;
+          reason?: string;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "rootfs block", async (ctx) => {
+          const entry = await loadAdminRootfsEntryById(ctx, opts.imageId);
+          const result = await saveAdminRootfsEntry(ctx, entry, {
+            blocked: true,
+            blocked_reason: opts.reason,
+          });
+          return serializeRootfsImageEntry(result);
+        });
+      },
+    );
+
+  rootfs
+    .command("unblock")
+    .description("remove the block from a RootFS catalog entry")
+    .requiredOption("--image-id <id>", "catalog image id")
+    .action(
+      async (
+        opts: {
+          imageId: string;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "rootfs unblock", async (ctx) => {
+          const entry = await loadAdminRootfsEntryById(ctx, opts.imageId);
+          const result = await saveAdminRootfsEntry(ctx, entry, {
+            blocked: false,
+            blocked_reason: undefined,
+          });
+          return serializeRootfsImageEntry(result);
         });
       },
     );
