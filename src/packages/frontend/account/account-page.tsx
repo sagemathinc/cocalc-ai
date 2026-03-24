@@ -416,7 +416,7 @@ export const AccountPage: React.FC = () => {
     ) {
     }
 
-    if (is_commercial && zendesk) {
+    if (zendesk) {
       items.push({ type: "divider" });
       items.push({
         key: "support",

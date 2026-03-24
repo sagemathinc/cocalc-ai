@@ -214,7 +214,7 @@ export const Page: React.FC = () => {
   }
 
   function render_support(): React.JSX.Element | undefined {
-    if (!is_commercial || !zendesk || !is_logged_in) {
+    if (!zendesk || !is_logged_in) {
       return;
     }
     // Note: that styled span around the label is just
