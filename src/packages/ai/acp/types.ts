@@ -38,6 +38,7 @@ export interface AcpEvaluateRequest {
   project_id: string;
   account_id: string;
   prompt: string;
+  local_images?: string[];
   session_id?: string;
   runtime_env?: Record<string, string>;
   stream: AcpStreamHandler;

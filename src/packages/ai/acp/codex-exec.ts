@@ -222,7 +222,7 @@ export class CodexExecAgent implements AcpAgent {
     }
     const preContentCache = this.createPreContentCache();
     void this.capturePreContentsFromText(prompt, cwd, preContentCache);
-    const args = this.buildArgs(config, cwd);
+    const args = this.buildArgs(config, cwd, request.local_images);
     const projectSpawner = getCodexProjectSpawner();
     const projectId = request.chat?.project_id ?? request.project_id;
     const accountId = request.account_id;
@@ -663,13 +663,15 @@ export class CodexExecAgent implements AcpAgent {
   private buildArgs(
     config: CodexSessionConfig | undefined,
     cwd: string,
+    localImages?: string[],
   ): string[] {
-    const args: string[] = [
-      "--search",
-      "exec",
-      "--experimental-json",
-      "--skip-git-repo-check",
-    ];
+    const args: string[] = ["--search"];
+    for (const imagePath of localImages ?? []) {
+      const trimmed = `${imagePath ?? ""}`.trim();
+      if (!trimmed) continue;
+      args.push("--image", trimmed);
+    }
+    args.push("exec", "--experimental-json", "--skip-git-repo-check");
     if (cwd) {
       args.push("--cd", cwd);
     }

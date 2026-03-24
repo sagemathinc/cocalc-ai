@@ -4763,7 +4763,9 @@ async function executeAcpRequest({
   }
   const bindings = buildExecutorAdapters(executor, workspaceRoot, hostRoot);
   const currentAgent = await ensureAgent(useNativeTerminal, bindings);
-  const { prompt, cleanup } = await materializeBlobs(request.prompt ?? "");
+  const { prompt, local_images, cleanup } = await materializeBlobs(
+    request.prompt ?? "",
+  );
   if (!conatClient) {
     throw Error("conat client must be initialized");
   }
@@ -4881,6 +4883,7 @@ async function executeAcpRequest({
         await currentAgent.evaluate({
           ...request,
           prompt: iterationPrompt,
+          local_images,
           runtime_env: runtimeEnv,
           config: effectiveConfig,
           stream: wrappedStream,
@@ -6525,19 +6528,21 @@ type BlobReference = {
   filename?: string;
 };
 
-async function materializeBlobs(
-  prompt: string,
-): Promise<{ prompt: string; cleanup: () => Promise<void> }> {
+async function materializeBlobs(prompt: string): Promise<{
+  prompt: string;
+  local_images: string[];
+  cleanup: () => Promise<void>;
+}> {
   if (!blobStore) {
-    return { prompt, cleanup: async () => {} };
+    return { prompt, local_images: [], cleanup: async () => {} };
   }
   const refs = extractBlobReferences(prompt);
   if (!refs.length) {
-    return { prompt, cleanup: async () => {} };
+    return { prompt, local_images: [], cleanup: async () => {} };
   }
   const unique = dedupeRefs(refs);
   if (!unique.length) {
-    return { prompt, cleanup: async () => {} };
+    return { prompt, local_images: [], cleanup: async () => {} };
   }
   const started = performance.now();
   const tempDir = await fs.mkdtemp(
@@ -6577,7 +6582,7 @@ async function materializeBlobs(
     }
     if (!attachments.length) {
       await fs.rm(tempDir, { recursive: true, force: true });
-      return { prompt, cleanup: async () => {} };
+      return { prompt, local_images: [], cleanup: async () => {} };
     }
     const info = attachments
       .map(
@@ -6588,6 +6593,7 @@ async function materializeBlobs(
     const augmented = `${prompt}\n\nAttachments saved locally:\n${info}\n`;
     return {
       prompt: augmented,
+      local_images: attachments.map((att) => att.path),
       cleanup: async () => {
         await fs.rm(tempDir, { recursive: true, force: true });
       },
@@ -6601,7 +6607,7 @@ async function materializeBlobs(
       err,
     });
     await fs.rm(tempDir, { recursive: true, force: true });
-    return { prompt, cleanup: async () => {} };
+    return { prompt, local_images: [], cleanup: async () => {} };
   }
 }
 

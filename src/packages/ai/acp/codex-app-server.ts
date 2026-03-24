@@ -594,6 +594,34 @@ function addRuntimeGuidance(
   return `${getCoCalcRuntimeGuidanceHeader(getCoCalcCliCommand(runtimeEnv))}\n\n${prompt}`;
 }
 
+function buildTurnStartInput(
+  request: AcpEvaluateRequest,
+  prompt: string,
+  runtimeEnv?: Record<string, string>,
+): Array<
+  | { type: "localImage"; path: string }
+  | { type: "text"; text: string; textElements: any[] }
+> {
+  const input: Array<
+    | { type: "localImage"; path: string }
+    | { type: "text"; text: string; textElements: any[] }
+  > = [];
+  for (const imagePath of request.local_images ?? []) {
+    const trimmed = `${imagePath ?? ""}`.trim();
+    if (!trimmed) continue;
+    input.push({ type: "localImage", path: trimmed });
+  }
+  input.push({
+    type: "text",
+    text: decoratePrompt(prompt, {
+      sendMode: request.chat?.send_mode,
+      runtimeEnv,
+    }),
+    textElements: [],
+  });
+  return input;
+}
+
 async function spawnStandaloneAppServer(
   opts: CodexAppServerOptions,
   env?: NodeJS.ProcessEnv,
@@ -908,16 +936,7 @@ export class CodexAppServerAgent implements AcpAgent {
         cwd,
         model: config?.model ?? this.opts.model,
         effort: toReasoningEffort(config),
-        input: [
-          {
-            type: "text",
-            text: decoratePrompt(prompt, {
-              sendMode: request.chat?.send_mode,
-              runtimeEnv,
-            }),
-            textElements: [],
-          },
-        ],
+        input: buildTurnStartInput(request, prompt, runtimeEnv),
       });
 
       turnId = turnStart?.turn?.id;
