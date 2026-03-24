@@ -805,6 +805,19 @@ export function findActivityEntryIndexForJumpEvents(
   return findActivityEntryIndexForJumpText(normalizeEvents(events), jumpText);
 }
 
+export function getLivePreviewMarkdown(
+  events: AcpLogStreamMessage[],
+): string | undefined {
+  const blocks = normalizeEvents(events).flatMap((entry) => {
+    if (entry.kind !== "agent") return [];
+    if (typeof entry.text !== "string") return [];
+    const text = entry.text.trim();
+    return text.length > 0 ? [text] : [];
+  });
+  if (blocks.length === 0) return undefined;
+  return blocks.join("\n\n");
+}
+
 function formatUsage(usage?: {
   input_tokens?: number;
   output_tokens?: number;

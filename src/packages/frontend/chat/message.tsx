@@ -44,12 +44,14 @@ import {
   deriveAcpLogRefs,
   getBestResponseText,
   getInterruptedResponseMarkdown,
-  getLiveResponseMarkdown,
   type InlineCodeLink,
 } from "@cocalc/chat";
 import { ChatActions } from "./actions";
 import { getUserName } from "./chat-log";
-import { codexEventsToMarkdown } from "./codex-activity";
+import {
+  codexEventsToMarkdown,
+  getLivePreviewMarkdown,
+} from "./codex-activity";
 import {
   cancelQueuedAcpTurn,
   resetAcpThreadState,
@@ -794,7 +796,7 @@ export default function Message({
       return undefined;
     }
     if (effectiveGenerating) {
-      return getLiveResponseMarkdown(codexBodyLog.events as any);
+      return getLivePreviewMarkdown(codexBodyLog.events as any);
     }
     if (acpInterrupted) {
       return getInterruptedResponseMarkdown(

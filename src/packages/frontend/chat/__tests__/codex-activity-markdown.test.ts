@@ -3,6 +3,7 @@ import {
   codexEventsToMarkdown,
   findActivityEntryIndexForJumpEvents,
   findActivityEntryIndexForJumpText,
+  getLivePreviewMarkdown,
   parsePathLineTarget,
 } from "../codex-activity";
 
@@ -287,5 +288,61 @@ describe("findActivityEntryIndexForJumpText", () => {
     expect(
       findActivityEntryIndexForJumpText(entries, "Investigate the issue"),
     ).toBe(0);
+  });
+});
+
+describe("getLivePreviewMarkdown", () => {
+  it("keeps distinct agent messages as separate paragraphs", () => {
+    expect(
+      getLivePreviewMarkdown([
+        {
+          type: "event",
+          seq: 1,
+          event: {
+            type: "message",
+            text: "First agent message.",
+          },
+        },
+        {
+          type: "event",
+          seq: 2,
+          event: {
+            type: "message",
+            text: "Second agent message.",
+          },
+        },
+      ] as any),
+    ).toBe("First agent message.\n\nSecond agent message.");
+  });
+
+  it("matches the normalized activity view for clickable paragraph jumps", () => {
+    expect(
+      getLivePreviewMarkdown([
+        {
+          type: "event",
+          seq: 1,
+          event: {
+            type: "message",
+            text: "Paragraph one.",
+          },
+        },
+        {
+          type: "event",
+          seq: 2,
+          event: {
+            type: "thinking",
+            text: "ignored reasoning",
+          },
+        },
+        {
+          type: "event",
+          seq: 3,
+          event: {
+            type: "message",
+            text: "Paragraph two.",
+          },
+        },
+      ] as any),
+    ).toBe("Paragraph one.\n\nParagraph two.");
   });
 });
