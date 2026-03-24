@@ -1,4 +1,12 @@
+/*
+ *  This file is part of CoCalc: Copyright © 2026 Sagemath, Inc.
+ *  License: MS-RSL – see LICENSE.md for details
+ */
+
 import type { CSSProperties, ReactNode } from "react";
+
+import { Card } from "antd";
+
 import { COLORS } from "@cocalc/util/theme";
 
 const PAGE_STYLE: CSSProperties = {
@@ -8,17 +16,6 @@ const PAGE_STYLE: CSSProperties = {
   minHeight: "100%",
   padding: "40px 16px",
   background: COLORS.GRAY_LLL,
-} as const;
-
-const CARD_STYLE: CSSProperties = {
-  width: "min(480px, 96vw)",
-  borderRadius: "12px",
-  border: `1px solid ${COLORS.GRAY_LL}`,
-  boxShadow: "0 12px 32px rgba(0, 0, 0, 0.08)",
-} as const;
-
-const TITLE_STYLE: CSSProperties = {
-  marginBottom: "12px",
 } as const;
 
 interface PublicAuthPageShellProps {
@@ -34,10 +31,23 @@ export default function PublicAuthPageShell({
 }: PublicAuthPageShellProps) {
   return (
     <div style={PAGE_STYLE}>
-      <div style={{ ...CARD_STYLE, background: "white", padding: "32px" }}>
+      <Card
+        variant="outlined"
+        style={{
+          width: "min(480px, 96vw)",
+          boxShadow: "0 12px 32px rgba(0, 0, 0, 0.08)",
+        }}
+        styles={{
+          body: {
+            display: "grid",
+            gap: 12,
+            padding: 32,
+          },
+        }}
+      >
         <h1
           style={{
-            ...TITLE_STYLE,
+            margin: 0,
             color: COLORS.GRAY_D,
             fontSize: "28px",
             lineHeight: 1.2,
@@ -46,10 +56,12 @@ export default function PublicAuthPageShell({
           {title}
         </h1>
         {subtitle ? (
-          <div style={{ color: COLORS.GRAY, fontSize: "15px" }}>{subtitle}</div>
+          <div style={{ margin: 0, color: COLORS.GRAY, fontSize: "15px" }}>
+            {subtitle}
+          </div>
         ) : null}
-        <div style={{ marginTop: "24px" }}>{children}</div>
-      </div>
+        <div style={{ marginTop: 8 }}>{children}</div>
+      </Card>
     </div>
   );
 }

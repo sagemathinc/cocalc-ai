@@ -69,7 +69,7 @@ describe("PublicContentApp", () => {
     ).not.toBeNull();
     expect(screen.getByText("Imprint")).not.toBeNull();
     expect(
-      screen.getByRole("heading", { name: "Policies", level: 2 }),
+      screen.getByRole("heading", { name: "Policies", level: 3 }),
     ).not.toBeNull();
   });
 

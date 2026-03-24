@@ -5,6 +5,22 @@ import { render, screen } from "@testing-library/react";
 import PublicFeaturesApp from "../app";
 import { featurePath, getFeaturesRouteFromPath } from "../routes";
 
+beforeAll(() => {
+  Object.defineProperty(window, "matchMedia", {
+    writable: true,
+    value: (query: string) => ({
+      addEventListener: () => {},
+      addListener: () => {},
+      dispatchEvent: () => false,
+      matches: false,
+      media: query,
+      onchange: null,
+      removeEventListener: () => {},
+      removeListener: () => {},
+    }),
+  });
+});
+
 describe("getFeaturesRouteFromPath", () => {
   it("supports the features index and detail routes", () => {
     expect(getFeaturesRouteFromPath(featurePath())).toEqual({ view: "index" });

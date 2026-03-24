@@ -6,6 +6,7 @@
 import type { CSSProperties, ReactNode } from "react";
 import { Suspense, lazy, useEffect, useMemo, useState } from "react";
 
+import { Button, Empty, Flex, Segmented, Spin, Tag, Typography } from "antd";
 import { joinUrlPath } from "@cocalc/util/url-path";
 import { slugURL } from "@cocalc/util/news";
 import {
@@ -16,9 +17,15 @@ import {
 } from "@cocalc/util/types/news";
 import { COLORS, SITE_NAME } from "@cocalc/util/theme";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
+import {
+  PublicHero,
+  PublicPageRoot,
+  PublicSectionCard,
+} from "@cocalc/frontend/public/ui/shell";
 import { contentPath, type PublicContentRoute, topLevelView } from "./routes";
 
 const Markdown = lazy(() => import("@cocalc/frontend/markdown/component"));
+const { Paragraph, Text, Title } = Typography;
 
 interface ContentConfig {
   help_email?: string;
@@ -86,56 +93,6 @@ const TEAM_MEMBERS = [
   },
 ] as const;
 
-const PAGE_STYLE: CSSProperties = {
-  minHeight: "100%",
-  background: COLORS.GRAY_LLL,
-  color: COLORS.GRAY_D,
-} as const;
-
-const SHELL_STYLE: CSSProperties = {
-  width: "min(1100px, 100%)",
-  margin: "0 auto",
-  padding: "32px 16px 56px",
-} as const;
-
-const HERO_STYLE: CSSProperties = {
-  display: "grid",
-  gap: "16px",
-  borderRadius: "24px",
-  background: "white",
-  border: `1px solid ${COLORS.GRAY_LL}`,
-  boxShadow: "0 20px 40px rgba(0, 0, 0, 0.08)",
-  padding: "28px",
-} as const;
-
-const NAV_STYLE: CSSProperties = {
-  display: "flex",
-  flexWrap: "wrap",
-  gap: "10px",
-  marginTop: "12px",
-} as const;
-
-const NAV_LINK_STYLE: CSSProperties = {
-  display: "inline-flex",
-  alignItems: "center",
-  justifyContent: "center",
-  minHeight: "40px",
-  padding: "0 14px",
-  borderRadius: "999px",
-  border: `1px solid ${COLORS.GRAY_LL}`,
-  background: "white",
-  color: COLORS.GRAY_D,
-  textDecoration: "none",
-  fontWeight: 600,
-} as const;
-
-const NAV_LINK_ACTIVE_STYLE: CSSProperties = {
-  ...NAV_LINK_STYLE,
-  background: COLORS.BLUE_D,
-  borderColor: COLORS.BLUE_D,
-  color: "white",
-} as const;
-
 const GRID_STYLE: CSSProperties = {
   display: "grid",
   gridTemplateColumns: "repeat(auto-fit, minmax(250px, 1fr))",
@@ -143,60 +100,8 @@ const GRID_STYLE: CSSProperties = {
   marginTop: "24px",
 } as const;
 
-const CARD_STYLE: CSSProperties = {
-  display: "grid",
-  gap: "10px",
-  borderRadius: "18px",
-  background: "white",
-  border: `1px solid ${COLORS.GRAY_LL}`,
-  padding: "20px",
-} as const;
-
-const LINK_STYLE: CSSProperties = {
-  color: COLORS.BLUE_D,
-  textDecoration: "none",
-  fontWeight: 600,
-} as const;
-
 const MUTED_STYLE: CSSProperties = {
   color: COLORS.GRAY_M,
-} as const;
-
-const TAG_STYLE: CSSProperties = {
-  display: "inline-block",
-  padding: "4px 8px",
-  borderRadius: "999px",
-  border: `1px solid ${COLORS.GRAY_LL}`,
-  color: COLORS.GRAY_D,
-  fontSize: "12px",
-  fontWeight: 600,
-} as const;
-
-const FILTER_ROW_STYLE: CSSProperties = {
-  display: "flex",
-  flexWrap: "wrap",
-  gap: "10px",
-  alignItems: "center",
-  marginTop: "20px",
-} as const;
-
-const FILTER_BUTTON_STYLE: CSSProperties = {
-  border: `1px solid ${COLORS.GRAY_LL}`,
-  borderRadius: "999px",
-  background: "white",
-  color: COLORS.GRAY_D,
-  cursor: "pointer",
-  fontSize: "14px",
-  fontWeight: 600,
-  minHeight: "36px",
-  padding: "0 12px",
-} as const;
-
-const FILTER_BUTTON_ACTIVE_STYLE: CSSProperties = {
-  ...FILTER_BUTTON_STYLE,
-  background: COLORS.BLUE_D,
-  borderColor: COLORS.BLUE_D,
-  color: "white",
 } as const;
 
 async function fetchJson<T>(path: string): Promise<T> {
@@ -266,20 +171,39 @@ function truncate(text: string, max = 260): string {
 
 function MarkdownCard({ value }: { value: string }) {
   return (
-    <div style={CARD_STYLE}>
+    <PublicSectionCard>
       <Suspense fallback={<div>Loading content…</div>}>
         <Markdown value={value} />
       </Suspense>
-    </div>
+    </PublicSectionCard>
   );
 }
 
 function LoadingCard({ label }: { label: string }) {
-  return <div style={{ ...CARD_STYLE, marginTop: "18px" }}>{label}</div>;
+  return (
+    <PublicSectionCard>
+      <Flex align="center" gap={12}>
+        <Spin size="small" />
+        <Text>{label}</Text>
+      </Flex>
+    </PublicSectionCard>
+  );
 }
 
 function EmptyCard({ label }: { label: string }) {
-  return <div style={{ ...CARD_STYLE, marginTop: "18px" }}>{label}</div>;
+  return (
+    <PublicSectionCard>
+      <Empty description={label} image={Empty.PRESENTED_IMAGE_SIMPLE} />
+    </PublicSectionCard>
+  );
+}
+
+function LinkButton({ children, href }: { children: ReactNode; href: string }) {
+  return (
+    <Button type="link" href={href} style={{ paddingInline: 0 }}>
+      {children}
+    </Button>
+  );
 }
 
 function PageShell({
@@ -295,39 +219,31 @@ function PageShell({
 }) {
   const currentTop = topLevelView(route);
   return (
-    <div style={PAGE_STYLE}>
-      <div style={SHELL_STYLE}>
-        <div style={HERO_STYLE}>
-          <div style={{ ...MUTED_STYLE, fontSize: "13px", fontWeight: 700 }}>
-            PUBLIC CONTENT
-          </div>
-          <h1 style={{ margin: 0, fontSize: "36px", lineHeight: 1.1 }}>
-            {title}
-          </h1>
-          <div style={{ ...MUTED_STYLE, fontSize: "17px", maxWidth: "68ch" }}>
-            {subtitle}
-          </div>
-          <div style={NAV_STYLE}>
+    <PublicPageRoot>
+      <PublicHero
+        eyebrow="PUBLIC CONTENT"
+        title={title}
+        subtitle={subtitle}
+        actions={
+          <Flex wrap gap={8}>
             {[
               ["About", "about"],
               ["Policies", "policies"],
               ["News", "news"],
             ].map(([label, view]) => (
-              <a
+              <Button
                 key={view}
+                type={currentTop === view ? "primary" : "default"}
                 href={contentPath(view)}
-                style={
-                  currentTop === view ? NAV_LINK_ACTIVE_STYLE : NAV_LINK_STYLE
-                }
               >
                 {label}
-              </a>
+              </Button>
             ))}
-          </div>
-        </div>
-        <div style={{ marginTop: "24px" }}>{children}</div>
-      </div>
-    </div>
+          </Flex>
+        }
+      />
+      <div style={{ marginTop: "24px" }}>{children}</div>
+    </PublicPageRoot>
   );
 }
 
@@ -346,38 +262,46 @@ function AboutHome({
         outside the main app shell.
       </div>
       <div style={GRID_STYLE}>
-        <div style={CARD_STYLE}>
-          <h2 style={{ margin: 0, fontSize: "22px" }}>Events</h2>
-          <div>See conference appearances and other public events.</div>
-          <div>
-            <a href={contentPath("about/events")} style={LINK_STYLE}>
-              Open events
-            </a>
-          </div>
-        </div>
-        <div style={CARD_STYLE}>
-          <h2 style={{ margin: 0, fontSize: "22px" }}>Team</h2>
-          <div>Meet the people building and operating {siteName}.</div>
-          <div>
-            <a href={contentPath("about/team")} style={LINK_STYLE}>
-              Meet the team
-            </a>
-          </div>
-        </div>
-        <div style={CARD_STYLE}>
-          <h2 style={{ margin: 0, fontSize: "22px" }}>Support</h2>
-          <div>Need help or want to contact us directly?</div>
+        <PublicSectionCard>
+          <Title level={3} style={{ margin: 0 }}>
+            Events
+          </Title>
+          <Paragraph style={{ margin: 0 }}>
+            See conference appearances and other public events.
+          </Paragraph>
           <div style={{ display: "grid", gap: "8px" }}>
-            <a href={appPath("support")} style={LINK_STYLE}>
-              Open support
-            </a>
+            <LinkButton href={contentPath("about/events")}>
+              Open events
+            </LinkButton>
+          </div>
+        </PublicSectionCard>
+        <PublicSectionCard>
+          <Title level={3} style={{ margin: 0 }}>
+            Team
+          </Title>
+          <Paragraph style={{ margin: 0 }}>
+            Meet the people building and operating {siteName}.
+          </Paragraph>
+          <div>
+            <LinkButton href={contentPath("about/team")}>
+              Meet the team
+            </LinkButton>
+          </div>
+        </PublicSectionCard>
+        <PublicSectionCard>
+          <Title level={3} style={{ margin: 0 }}>
+            Support
+          </Title>
+          <Paragraph style={{ margin: 0 }}>
+            Need help or want to contact us directly?
+          </Paragraph>
+          <div style={{ display: "grid", gap: "8px" }}>
+            <LinkButton href={appPath("support")}>Open support</LinkButton>
             {helpEmail ? (
-              <a href={`mailto:${helpEmail}`} style={LINK_STYLE}>
-                {helpEmail}
-              </a>
+              <LinkButton href={`mailto:${helpEmail}`}>{helpEmail}</LinkButton>
             ) : null}
           </div>
-        </div>
+        </PublicSectionCard>
       </div>
     </>
   );
@@ -387,18 +311,20 @@ function AboutTeamPage() {
   return (
     <div style={GRID_STYLE}>
       {TEAM_MEMBERS.map((member) => (
-        <div key={member.email} style={CARD_STYLE}>
+        <PublicSectionCard key={member.email}>
           <div style={{ ...MUTED_STYLE, fontSize: "13px", fontWeight: 700 }}>
             {member.title}
           </div>
-          <h2 style={{ margin: 0, fontSize: "24px" }}>{member.name}</h2>
+          <Title level={3} style={{ margin: 0 }}>
+            {member.name}
+          </Title>
           <div>{member.description}</div>
           <div>
-            <a href={`mailto:${member.email}`} style={LINK_STYLE}>
+            <LinkButton href={`mailto:${member.email}`}>
               {member.email}
-            </a>
+            </LinkButton>
           </div>
-        </div>
+        </PublicSectionCard>
       ))}
     </div>
   );
@@ -411,31 +337,29 @@ function EventList({ items }: { items: NewsItem[] }) {
   return (
     <div style={GRID_STYLE}>
       {items.map((item) => (
-        <div key={`${item.id ?? item.title}-${item.date}`} style={CARD_STYLE}>
+        <PublicSectionCard key={`${item.id ?? item.title}-${item.date}`}>
           <div style={{ ...MUTED_STYLE, fontSize: "13px", fontWeight: 700 }}>
             {formatNewsDate(item.date)}
           </div>
-          <h2 style={{ margin: 0, fontSize: "22px" }}>{item.title}</h2>
+          <Title level={3} style={{ margin: 0 }}>
+            {item.title}
+          </Title>
           {item.tags?.length ? (
-            <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
+            <Flex wrap gap={8}>
               {item.tags.map((tag) => (
-                <span key={tag} style={TAG_STYLE}>
-                  #{tag}
-                </span>
+                <Tag key={tag}>#{tag}</Tag>
               ))}
-            </div>
+            </Flex>
           ) : null}
           <Suspense fallback={<div>Loading content…</div>}>
             <Markdown value={item.text} />
           </Suspense>
           {item.url ? (
             <div>
-              <a href={item.url} style={LINK_STYLE}>
-                Event website
-              </a>
+              <LinkButton href={item.url}>Event website</LinkButton>
             </div>
           ) : null}
-        </div>
+        </PublicSectionCard>
       ))}
     </div>
   );
@@ -542,27 +466,29 @@ function PoliciesHome({ config }: { config: ContentConfig }) {
 
   if (items.length === 0) {
     return (
-      <div style={CARD_STYLE}>
-        <h2 style={{ margin: 0, fontSize: "22px" }}>
+      <PublicSectionCard>
+        <Title level={3} style={{ margin: 0 }}>
           No public policies configured
-        </h2>
-        <div>This deployment has not exposed any public policy pages yet.</div>
-      </div>
+        </Title>
+        <Paragraph style={{ margin: 0 }}>
+          This deployment has not exposed any public policy pages yet.
+        </Paragraph>
+      </PublicSectionCard>
     );
   }
 
   return (
     <div style={GRID_STYLE}>
       {items.map((item) => (
-        <div key={item.href} style={CARD_STYLE}>
-          <h2 style={{ margin: 0, fontSize: "22px" }}>{item.title}</h2>
-          <div>{item.description}</div>
+        <PublicSectionCard key={item.href}>
+          <Title level={3} style={{ margin: 0 }}>
+            {item.title}
+          </Title>
+          <Paragraph style={{ margin: 0 }}>{item.description}</Paragraph>
           <div>
-            <a href={item.href} style={LINK_STYLE}>
-              Open page
-            </a>
+            <LinkButton href={item.href}>Open page</LinkButton>
           </div>
-        </div>
+        </PublicSectionCard>
       ))}
     </div>
   );
@@ -583,9 +509,7 @@ function PoliciesDetailPage({
   return (
     <div style={{ display: "grid", gap: "14px" }}>
       <div>
-        <a href={contentPath("policies")} style={LINK_STYLE}>
-          Back to policies
-        </a>
+        <LinkButton href={contentPath("policies")}>Back to policies</LinkButton>
       </div>
       <MarkdownCard value={markdown} />
     </div>
@@ -595,33 +519,29 @@ function PoliciesDetailPage({
 function NewsCard({ item }: { item: NewsItem }) {
   const body = truncate(stripMarkdown(item.text));
   return (
-    <div style={CARD_STYLE}>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
-        <span style={TAG_STYLE}>{item.channel}</span>
-        <span style={MUTED_STYLE}>{formatNewsDate(item.date)}</span>
-      </div>
-      <h2 style={{ margin: 0, fontSize: "22px" }}>{item.title}</h2>
-      <div>{body}</div>
+    <PublicSectionCard>
+      <Flex wrap gap={8}>
+        <Tag color="blue">{item.channel}</Tag>
+        <Text type="secondary">{formatNewsDate(item.date)}</Text>
+      </Flex>
+      <Title level={3} style={{ margin: 0 }}>
+        {item.title}
+      </Title>
+      <Paragraph style={{ margin: 0 }}>{body}</Paragraph>
       {item.tags?.length ? (
-        <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
+        <Flex wrap gap={8}>
           {item.tags.map((tag) => (
-            <span key={tag} style={TAG_STYLE}>
-              #{tag}
-            </span>
+            <Tag key={tag}>#{tag}</Tag>
           ))}
-        </div>
+        </Flex>
       ) : null}
-      <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
-        <a href={contentNewsPath(item)} style={LINK_STYLE}>
-          Open post
-        </a>
+      <Flex wrap gap={12}>
+        <LinkButton href={contentNewsPath(item)}>Open post</LinkButton>
         {item.url ? (
-          <a href={item.url} style={LINK_STYLE}>
-            External link
-          </a>
+          <LinkButton href={item.url}>External link</LinkButton>
         ) : null}
-      </div>
-    </div>
+      </Flex>
+    </PublicSectionCard>
   );
 }
 
@@ -652,42 +572,27 @@ function NewsListPage({ initialNews }: { initialNews?: NewsItem[] }) {
 
   return (
     <>
-      <div style={{ ...MUTED_STYLE, fontSize: "17px", maxWidth: "70ch" }}>
+      <Paragraph style={{ marginTop: 24, maxWidth: "70ch" }}>
         Recent announcements and feature updates. Subscribe via{" "}
-        <a href={contentPath("news/rss.xml")} style={LINK_STYLE}>
-          RSS
-        </a>{" "}
-        or{" "}
-        <a href={contentPath("news/feed.json")} style={LINK_STYLE}>
-          JSON Feed
-        </a>
-        .
-      </div>
-      <div style={FILTER_ROW_STYLE}>
-        <button
-          style={
-            channel === "all" ? FILTER_BUTTON_ACTIVE_STYLE : FILTER_BUTTON_STYLE
-          }
-          type="button"
-          onClick={() => setChannel("all")}
-        >
-          All
-        </button>
-        {(Object.keys(CHANNELS_DESCRIPTIONS) as Channel[]).map((name) => (
-          <button
-            key={name}
-            style={
-              channel === name
-                ? FILTER_BUTTON_ACTIVE_STYLE
-                : FILTER_BUTTON_STYLE
-            }
-            type="button"
-            onClick={() => setChannel(name)}
-            title={CHANNELS_DESCRIPTIONS[name]}
-          >
-            {name}
-          </button>
-        ))}
+        <LinkButton href={contentPath("news/rss.xml")}>RSS</LinkButton> or{" "}
+        <LinkButton href={contentPath("news/feed.json")}>JSON Feed</LinkButton>.
+      </Paragraph>
+      <div style={{ marginTop: 12 }}>
+        <Segmented
+          block
+          options={[
+            { label: "All", value: "all", title: "All channels" },
+            ...(Object.keys(CHANNELS_DESCRIPTIONS) as Channel[]).map(
+              (name) => ({
+                label: name,
+                value: name,
+                title: CHANNELS_DESCRIPTIONS[name],
+              }),
+            ),
+          ]}
+          value={channel}
+          onChange={(value) => setChannel(value as Channel | "all")}
+        />
       </div>
       {loading ? (
         <LoadingCard label="Loading news…" />
@@ -737,79 +642,69 @@ function NewsDetailPage({ route }: { route: PublicContentRoute }) {
   const { news } = payload;
   return (
     <div style={{ display: "grid", gap: "16px" }}>
-      <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
-        <a href={contentPath("news")} style={LINK_STYLE}>
-          Back to news
-        </a>
+      <Flex wrap gap={12}>
+        <LinkButton href={contentPath("news")}>Back to news</LinkButton>
         {payload.history && payload.permalink ? (
-          <a href={appPath(payload.permalink)} style={LINK_STYLE}>
+          <LinkButton href={appPath(payload.permalink)}>
             Current version
-          </a>
+          </LinkButton>
         ) : null}
         {news.url ? (
-          <a href={news.url} style={LINK_STYLE}>
-            External link
-          </a>
+          <LinkButton href={news.url}>External link</LinkButton>
         ) : null}
-      </div>
+      </Flex>
       {payload.history ? (
-        <div style={CARD_STYLE}>
+        <PublicSectionCard>
           Historic snapshot from {formatNewsDate(payload.timestamp)}
-        </div>
+        </PublicSectionCard>
       ) : null}
-      <div style={CARD_STYLE}>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
-          <span style={TAG_STYLE}>{news.channel}</span>
-          <span style={MUTED_STYLE}>{formatNewsDate(news.date)}</span>
-        </div>
-        <h2 style={{ margin: 0, fontSize: "28px" }}>{news.title}</h2>
+      <PublicSectionCard>
+        <Flex wrap gap={8}>
+          <Tag color="blue">{news.channel}</Tag>
+          <Text type="secondary">{formatNewsDate(news.date)}</Text>
+        </Flex>
+        <Title level={2} style={{ margin: 0 }}>
+          {news.title}
+        </Title>
         {news.tags?.length ? (
-          <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
+          <Flex wrap gap={8}>
             {news.tags.map((tag) => (
-              <span key={tag} style={TAG_STYLE}>
-                #{tag}
-              </span>
+              <Tag key={tag}>#{tag}</Tag>
             ))}
-          </div>
+          </Flex>
         ) : null}
         <Suspense fallback={<div>Loading content…</div>}>
           <Markdown value={news.text} />
         </Suspense>
-      </div>
-      <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
+      </PublicSectionCard>
+      <Flex wrap gap={12}>
         {!payload.history && payload.prev ? (
-          <a href={contentNewsPath(payload.prev)} style={LINK_STYLE}>
-            Older
-          </a>
+          <LinkButton href={contentNewsPath(payload.prev)}>Older</LinkButton>
         ) : null}
         {!payload.history && payload.next ? (
-          <a href={contentNewsPath(payload.next)} style={LINK_STYLE}>
-            Newer
-          </a>
+          <LinkButton href={contentNewsPath(payload.next)}>Newer</LinkButton>
         ) : null}
         {payload.history && payload.prevTimestamp != null ? (
-          <a
+          <LinkButton
             href={newsHistoryPath(
               appPath(payload.permalink ?? `news/${route.newsId}`),
               payload.prevTimestamp,
             )}
-            style={LINK_STYLE}
           >
             Older revision
-          </a>
+          </LinkButton>
         ) : null}
         {payload.history && payload.nextTimestamp != null ? (
-          <a
+          <LinkButton
             href={newsHistoryPath(
               appPath(payload.permalink ?? `news/${route.newsId}`),
               payload.nextTimestamp,
             )}
-            style={LINK_STYLE}
           >
             Newer revision
-          </a>
+          </LinkButton>
         ) : null}
-      </div>
+      </Flex>
     </div>
   );
 }
