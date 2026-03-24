@@ -3,133 +3,385 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import type { CSSProperties, ReactNode } from "react";
-import { useState } from "react";
+import type { ReactNode } from "react";
+import { useMemo, useRef, useState } from "react";
+
+import { Alert, Button, Divider, Input, Radio, Space, Typography } from "antd";
 
 import api from "@cocalc/frontend/client/api";
 import { PublicSectionCard } from "@cocalc/frontend/public/ui/shell";
+import { is_valid_email_address as isValidEmailAddress } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 
 type SupportView = "index" | "new" | "tickets";
 type TicketType = "problem" | "question" | "task" | "purchase" | "chat";
 
 interface SupportConfig {
+  help_email?: string;
+  site_name?: string;
   support_video_call?: string;
   zendesk?: boolean;
 }
 
-const STACK_STYLE: CSSProperties = {
-  display: "flex",
-  flexDirection: "column",
-  gap: "16px",
-} as const;
-
-const FIELD_STYLE: CSSProperties = {
-  display: "flex",
-  flexDirection: "column",
-  gap: "6px",
-} as const;
-
-const INPUT_STYLE: CSSProperties = {
-  width: "100%",
-  borderRadius: "8px",
-  border: `1px solid ${COLORS.GRAY_LL}`,
-  padding: "10px 12px",
-  fontSize: "16px",
-  fontFamily: "inherit",
-} as const;
-
-const BUTTON_STYLE: CSSProperties = {
-  border: "none",
-  borderRadius: "8px",
-  background: COLORS.BLUE_D,
-  color: "white",
-  fontSize: "16px",
-  fontWeight: 600,
-  padding: "11px 16px",
-  cursor: "pointer",
-} as const;
-
-const SUBTLE_BUTTON_STYLE: CSSProperties = {
-  ...BUTTON_STYLE,
-  background: COLORS.GRAY_LL,
-  color: COLORS.GRAY_D,
-} as const;
-
-const ALERT_BASE_STYLE: CSSProperties = {
-  borderRadius: "8px",
-  padding: "10px 12px",
-  fontSize: "14px",
-} as const;
-
-const LINK_STYLE: CSSProperties = {
-  color: COLORS.BLUE_D,
-  cursor: "pointer",
-} as const;
-
-function Alert({
-  children,
-  kind,
-}: {
-  children: ReactNode;
-  kind: "error" | "success";
-}) {
-  const style: CSSProperties =
-    kind === "error"
-      ? {
-          ...ALERT_BASE_STYLE,
-          background: "#fff2f0",
-          border: "1px solid #ffccc7",
-          color: "#a8071a",
-        }
-      : {
-          ...ALERT_BASE_STYLE,
-          background: "#f6ffed",
-          border: "1px solid #b7eb8f",
-          color: "#237804",
-        };
-  return <div style={style}>{children}</div>;
+interface QueryState {
+  body: string;
+  context: string;
+  hideExtra: boolean;
+  required: string;
+  subject: string;
+  title: string;
+  type: TicketType;
+  url: string;
 }
 
-function TicketTypeOptions({
-  value,
+const { Paragraph, Text, Title } = Typography;
+
+const MIN_BODY_LENGTH = 16;
+
+function stringToType(value?: string): TicketType {
+  switch (value) {
+    case "problem":
+    case "question":
+    case "task":
+    case "purchase":
+    case "chat":
+      return value;
+    default:
+      return "problem";
+  }
+}
+
+function useInitialQueryState(): QueryState {
+  return useMemo(() => {
+    const params = new URLSearchParams(window.location.search);
+    return {
+      body: params.get("body") ?? "",
+      context: params.get("context") ?? "",
+      hideExtra: params.get("hideExtra") === "true",
+      required: params.get("required") ?? "",
+      subject: params.get("subject") ?? "",
+      title: params.get("title") ?? "",
+      type: stringToType(params.get("type") ?? undefined),
+      url: params.get("url") ?? window.location.href,
+    };
+  }, []);
+}
+
+function Status({ done }: { done: boolean }) {
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        width: 18,
+        height: 18,
+        borderRadius: "50%",
+        background: done ? "#f6ffed" : "#fff7e6",
+        border: `1px solid ${done ? "#b7eb8f" : "#ffd591"}`,
+        color: done ? "#389e0d" : "#d46b08",
+        fontSize: 12,
+        fontWeight: 700,
+        marginRight: 8,
+      }}
+    >
+      {done ? "✓" : "→"}
+    </span>
+  );
+}
+
+function SectionLabel({
+  children,
+  done,
+}: {
+  children: ReactNode;
+  done: boolean;
+}) {
+  return (
+    <div style={{ fontSize: 16, fontWeight: 700 }}>
+      <Status done={done} />
+      {children}
+    </div>
+  );
+}
+
+function composeSections(sections: Array<[string, string]>): string {
+  return sections
+    .map(([heading, value]) =>
+      value.trim().length > 0 ? `${heading}\n\n${value.trim()}` : "",
+    )
+    .filter(Boolean)
+    .join("\n\n\n");
+}
+
+function ProblemFields({ onChange }: { onChange: (value: string) => void }) {
+  const answers = useRef<[string, string, string]>(["", "", ""]);
+
+  function update(index: 0 | 1 | 2, value: string): void {
+    answers.current[index] = value;
+    onChange(
+      composeSections([
+        ["WHAT DID YOU DO EXACTLY?", answers.current[0]],
+        ["WHAT HAPPENED?", answers.current[1]],
+        ["HOW DID THIS DIFFER FROM WHAT YOU EXPECTED?", answers.current[2]],
+      ]),
+    );
+  }
+
+  return (
+    <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+      <div>
+        <Text strong>What did you do exactly?</Text>
+        <Input.TextArea
+          rows={3}
+          placeholder="Describe exactly what you did before the problem happened."
+          style={{ marginTop: 8 }}
+          onChange={(e) => update(0, e.target.value)}
+        />
+      </div>
+      <div>
+        <Text strong>What happened?</Text>
+        <Input.TextArea
+          rows={3}
+          placeholder="Tell us what happened."
+          style={{ marginTop: 8 }}
+          onChange={(e) => update(1, e.target.value)}
+        />
+      </div>
+      <div>
+        <Text strong>How did this differ from what you expected?</Text>
+        <Input.TextArea
+          rows={3}
+          placeholder="Explain what you expected instead."
+          style={{ marginTop: 8 }}
+          onChange={(e) => update(2, e.target.value)}
+        />
+      </div>
+    </Space>
+  );
+}
+
+function QuestionFields({
+  defaultValue,
   onChange,
 }: {
-  onChange: (value: TicketType) => void;
-  value: TicketType;
+  defaultValue: string;
+  onChange: (value: string) => void;
 }) {
-  const options: Array<{ value: TicketType; label: string }> = [
-    { value: "problem", label: "Problem" },
-    { value: "question", label: "Question" },
-    { value: "task", label: "Software install task" },
-    { value: "purchase", label: "Purchase question" },
-    { value: "chat", label: "Video chat" },
-  ];
   return (
-    <div style={{ display: "grid", gap: "8px" }}>
-      {options.map((option) => (
-        <label
-          key={option.value}
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "10px",
-            border: `1px solid ${COLORS.GRAY_LL}`,
-            borderRadius: "8px",
-            padding: "10px 12px",
-          }}
-        >
-          <input
-            checked={value === option.value}
-            name="support-type"
-            type="radio"
-            value={option.value}
-            onChange={() => onChange(option.value)}
-          />
-          <span>{option.label}</span>
-        </label>
-      ))}
-    </div>
+    <Input.TextArea
+      rows={8}
+      defaultValue={defaultValue}
+      placeholder="Ask your question here."
+      onChange={(e) => onChange(e.target.value)}
+    />
+  );
+}
+
+function PurchaseFields({
+  defaultValue,
+  onChange,
+  showExtra,
+}: {
+  defaultValue: string;
+  onChange: (value: string) => void;
+  showExtra: boolean;
+}) {
+  return (
+    <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+      {showExtra ? (
+        <Alert
+          showIcon
+          type="info"
+          message="What information helps us respond quickly?"
+          description={
+            <ul style={{ marginBottom: 0, paddingLeft: 18 }}>
+              <li>The rough number of users or projects.</li>
+              <li>The kind of workload you expect.</li>
+              <li>How long you expect to use the service.</li>
+              <li>Any academic, classroom, or organizational context.</li>
+            </ul>
+          }
+        />
+      ) : null}
+      <Input.TextArea
+        rows={8}
+        defaultValue={defaultValue}
+        placeholder="Describe what you want to purchase and any constraints we should know about."
+        onChange={(e) => onChange(e.target.value)}
+      />
+    </Space>
+  );
+}
+
+function TaskFields({
+  onChange,
+  siteName,
+}: {
+  onChange: (value: string) => void;
+  siteName: string;
+}) {
+  const answers = useRef<[string, string, string]>(["", "", ""]);
+
+  function update(index: 0 | 1 | 2, value: string): void {
+    answers.current[index] = value;
+    onChange(
+      composeSections([
+        ["WHAT SOFTWARE DO YOU NEED?", answers.current[0]],
+        ["HOW DO YOU PLAN TO USE THIS SOFTWARE?", answers.current[1]],
+        [
+          "HOW CAN WE TEST THAT THE SOFTWARE IS PROPERLY INSTALLED?",
+          answers.current[2],
+        ],
+      ]),
+    );
+  }
+
+  return (
+    <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+      <Alert
+        showIcon
+        type="info"
+        message="Software install requests"
+        description={
+          <>
+            {siteName} projects run Linux, so software requests are often
+            possible. Please tell us exactly what you need and how to verify the
+            install.
+          </>
+        }
+      />
+      <div>
+        <Text strong>What software do you need?</Text>
+        <Input.TextArea
+          rows={4}
+          placeholder="Name the software, package, library, or stack you need."
+          style={{ marginTop: 8 }}
+          onChange={(e) => update(0, e.target.value)}
+        />
+      </div>
+      <div>
+        <Text strong>How do you plan to use this software?</Text>
+        <Input.TextArea
+          rows={3}
+          placeholder="Explain the workload, project, class, or timeline."
+          style={{ marginTop: 8 }}
+          onChange={(e) => update(1, e.target.value)}
+        />
+      </div>
+      <div>
+        <Text strong>
+          How can we test that the software is properly installed?
+        </Text>
+        <Input.TextArea
+          rows={3}
+          placeholder="Include the commands, notebook imports, or checks that should work."
+          style={{ marginTop: 8 }}
+          onChange={(e) => update(2, e.target.value)}
+        />
+      </div>
+    </Space>
+  );
+}
+
+function bodyButtonLabel(params: {
+  body: string;
+  email: string;
+  hasRequired: boolean;
+  subject: string;
+  submitting: boolean;
+  successUrl: string;
+  submitError: string;
+  type: TicketType;
+}): string {
+  const {
+    body,
+    email,
+    hasRequired,
+    subject,
+    submitting,
+    successUrl,
+    submitError,
+    type,
+  } = params;
+
+  if (submitting) {
+    return "Submitting...";
+  }
+  if (successUrl) {
+    return "Ticket created";
+  }
+  if (submitError) {
+    return "Fix the error above to try again";
+  }
+  if (!isValidEmailAddress(email)) {
+    return "Enter a valid email address";
+  }
+  if (!subject.trim()) {
+    return "Enter a subject";
+  }
+  if ((body ?? "").trim().length < MIN_BODY_LENGTH) {
+    return type === "chat"
+      ? "Describe the video chat you want"
+      : `Describe your ${type} in more detail`;
+  }
+  if (!hasRequired) {
+    return "Replace the required placeholder text";
+  }
+  return "Create support ticket";
+}
+
+function renderBodyFields(params: {
+  body: string;
+  setBody: (value: string) => void;
+  showExtra: boolean;
+  siteName: string;
+  supportVideoCall?: string;
+  type: TicketType;
+}) {
+  const { body, setBody, showExtra, siteName, supportVideoCall, type } = params;
+
+  if (type === "problem") {
+    return <ProblemFields onChange={setBody} />;
+  }
+  if (type === "question") {
+    return <QuestionFields defaultValue={body} onChange={setBody} />;
+  }
+  if (type === "purchase") {
+    return (
+      <PurchaseFields
+        defaultValue={body}
+        onChange={setBody}
+        showExtra={showExtra}
+      />
+    );
+  }
+  if (type === "task") {
+    return <TaskFields onChange={setBody} siteName={siteName} />;
+  }
+  return (
+    <Alert
+      showIcon
+      type="info"
+      message={
+        supportVideoCall ? (
+          <>
+            You can also <a href={supportVideoCall}>book a video call</a>.
+          </>
+        ) : (
+          "Video chat request"
+        )
+      }
+      description={
+        <Input.TextArea
+          rows={6}
+          defaultValue={body}
+          placeholder="Describe what you want to discuss, your goals, and any scheduling constraints."
+          style={{ marginTop: 12 }}
+          onChange={(e) => setBody(e.target.value)}
+        />
+      }
+    />
   );
 }
 
@@ -140,141 +392,297 @@ export default function SupportNew({
   config: SupportConfig;
   onNavigate: (view: SupportView) => void;
 }) {
+  const initial = useInitialQueryState();
+  const siteName = config.site_name ?? "CoCalc";
   const [email, setEmail] = useState("");
-  const [subject, setSubject] = useState("");
-  const [type, setType] = useState<TicketType>("problem");
-  const [body, setBody] = useState("");
+  const [subject, setSubject] = useState(initial.subject);
+  const [type, setType] = useState<TicketType>(initial.type);
+  const [body, setBody] = useState(initial.body);
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState("");
+  const [submitError, setSubmitError] = useState("");
   const [successUrl, setSuccessUrl] = useState("");
+
+  const hasRequired = !initial.required || !body.includes(initial.required);
+  const canSubmit =
+    !submitting &&
+    !submitError &&
+    !successUrl &&
+    isValidEmailAddress(email) &&
+    subject.trim().length > 0 &&
+    body.trim().length >= MIN_BODY_LENGTH &&
+    hasRequired;
 
   if (!config.zendesk) {
     return (
-      <Alert kind="error">Support ticket creation is not configured.</Alert>
+      <Alert
+        showIcon
+        type="error"
+        message="Support ticket creation is not configured."
+      />
     );
   }
-
-  const canSubmit =
-    !submitting &&
-    email.trim().length > 3 &&
-    subject.trim().length > 3 &&
-    body.trim().length >= 16;
 
   async function submit() {
     if (!canSubmit) {
       return;
     }
     setSubmitting(true);
-    setError("");
+    setSubmitError("");
     setSuccessUrl("");
     try {
+      const info: Record<string, string> = {
+        context: "public-support",
+        userAgent: navigator.userAgent,
+      };
+      if (initial.context) {
+        info.context = initial.context;
+      }
       const result = await api("support/create-ticket", {
         options: {
           email,
           subject,
           body,
           type,
-          url: window.location.href,
-          info: {
-            context: "public-support",
-            userAgent: navigator.userAgent,
-          },
+          url: initial.url,
+          info,
         },
       });
       if (result?.url) {
         setSuccessUrl(result.url);
       } else if (result?.error) {
-        setError(result.error);
+        setSubmitError(result.error);
       }
     } catch (err) {
-      setError(`${err}`);
+      setSubmitError(`${err}`);
     } finally {
       setSubmitting(false);
     }
   }
 
   return (
-    <div style={STACK_STYLE}>
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          gap: "12px",
-          flexWrap: "wrap",
-        }}
-      >
-        <div style={{ color: COLORS.GRAY }}>
-          Need general help first?{" "}
-          <a
-            style={LINK_STYLE}
-            onClick={(e) => {
-              e.preventDefault();
-              onNavigate("index");
-            }}
-          >
-            Back to support options
-          </a>
-        </div>
-        {config.support_video_call ? (
-          <a href={config.support_video_call} style={LINK_STYLE}>
-            Book a video chat
-          </a>
-        ) : null}
-      </div>
-      {error ? <Alert kind="error">{error}</Alert> : null}
-      {successUrl ? (
-        <Alert kind="success">
-          Ticket created. Save this URL:{" "}
-          <a href={successUrl} style={LINK_STYLE}>
-            {successUrl}
-          </a>
-        </Alert>
+    <Space direction="vertical" size="large" style={{ width: "100%" }}>
+      {!initial.hideExtra ? (
+        <PublicSectionCard>
+          <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+            <Title level={2} style={{ margin: 0 }}>
+              {initial.title || "Create a New Support Ticket"}
+            </Title>
+            <Paragraph style={{ fontSize: 16, marginBottom: 0 }}>
+              Create a new support ticket below or{" "}
+              <a
+                onClick={(e) => {
+                  e.preventDefault();
+                  onNavigate("tickets");
+                }}
+              >
+                check the status of your support tickets
+              </a>
+              .
+            </Paragraph>
+            {config.help_email ? (
+              <Paragraph style={{ fontSize: 16, marginBottom: 0 }}>
+                You can also email us directly at{" "}
+                <a href={`mailto:${config.help_email}`}>{config.help_email}</a>.
+              </Paragraph>
+            ) : null}
+            {config.support_video_call ? (
+              <Paragraph style={{ fontSize: 16, marginBottom: 0 }}>
+                Alternatively, you can{" "}
+                <a href={config.support_video_call}>book a video call</a>.
+              </Paragraph>
+            ) : null}
+            <Alert
+              showIcon
+              type="warning"
+              message="Helpful links"
+              description={
+                <ul style={{ marginBottom: 0, paddingLeft: 18 }}>
+                  <li>
+                    <a href="https://doc.cocalc.com/">The CoCalc Manual</a>
+                  </li>
+                  <li>
+                    <a href="https://github.com/sagemathinc/cocalc/issues">
+                      Bug reports
+                    </a>
+                  </li>
+                  <li>
+                    <a href="https://github.com/sagemathinc/cocalc/discussions">
+                      Discussion forum
+                    </a>
+                  </li>
+                </ul>
+              }
+            />
+          </Space>
+        </PublicSectionCard>
       ) : null}
+
+      {submitError ? (
+        <Alert
+          closable
+          showIcon
+          type="error"
+          message="Error creating support ticket"
+          description={submitError}
+          onClose={() => setSubmitError("")}
+        />
+      ) : null}
+
+      {successUrl ? (
+        <Alert
+          closable
+          showIcon
+          type="success"
+          message="Successfully created support ticket"
+          description={
+            <Space direction="vertical" size="small">
+              <div>
+                Please save this URL: <a href={successUrl}>{successUrl}</a>
+              </div>
+              <div>
+                You can also{" "}
+                <a
+                  onClick={(e) => {
+                    e.preventDefault();
+                    onNavigate("tickets");
+                  }}
+                >
+                  check the status of your support tickets
+                </a>
+                .
+              </div>
+            </Space>
+          }
+        />
+      ) : null}
+
       <PublicSectionCard>
-        <div style={STACK_STYLE}>
-          <div style={FIELD_STYLE}>
-            <div>Email address</div>
-            <input
-              style={INPUT_STYLE}
+        <Space direction="vertical" size="large" style={{ width: "100%" }}>
+          <div>
+            <SectionLabel done={isValidEmailAddress(email)}>
+              Your email address
+            </SectionLabel>
+            <Input
+              placeholder="Email address..."
+              style={{ marginTop: 10, maxWidth: 520 }}
               type="email"
               value={email}
-              onChange={(e) => setEmail(e.currentTarget.value)}
+              onChange={(e) => setEmail(e.target.value)}
             />
           </div>
-          <div style={FIELD_STYLE}>
-            <div>Subject</div>
-            <input
-              style={INPUT_STYLE}
+
+          <div>
+            <SectionLabel done={subject.trim().length > 0}>
+              Subject
+            </SectionLabel>
+            <Input
+              placeholder="Summarize what this is about..."
+              style={{ marginTop: 10 }}
               value={subject}
-              onChange={(e) => setSubject(e.currentTarget.value)}
+              onChange={(e) => setSubject(e.target.value)}
             />
           </div>
-          <div style={FIELD_STYLE}>
-            <div>Support request type</div>
-            <TicketTypeOptions value={type} onChange={setType} />
-          </div>
-          <div style={FIELD_STYLE}>
-            <div>Description</div>
-            <textarea
-              rows={10}
-              style={{ ...INPUT_STYLE, resize: "vertical" }}
-              value={body}
-              onChange={(e) => setBody(e.currentTarget.value)}
-            />
-          </div>
-          <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
-            <button disabled={!canSubmit} style={BUTTON_STYLE} onClick={submit}>
-              {submitting ? "Submitting..." : "Create support ticket"}
-            </button>
-            <button
-              style={SUBTLE_BUTTON_STYLE}
-              onClick={() => onNavigate("tickets")}
+
+          <div>
+            <SectionLabel done={body.trim().length >= MIN_BODY_LENGTH}>
+              Support request type
+            </SectionLabel>
+            <Radio.Group
+              name="support-type"
+              style={{ display: "block", marginTop: 10 }}
+              value={type}
+              onChange={(e) => {
+                setType(e.target.value);
+                setBody("");
+              }}
             >
-              View my tickets
-            </button>
+              <Space direction="vertical" size="middle">
+                <Radio value="problem">
+                  Something is not working the way I think it should.
+                </Radio>
+                <Radio value="question">
+                  I have a question about billing, functionality, teaching, or
+                  how something works.
+                </Radio>
+                <Radio value="task">
+                  I need help installing or configuring software.
+                </Radio>
+                <Radio value="purchase">
+                  I have a question about pricing or purchasing.
+                </Radio>
+                <Radio value="chat">
+                  I would like to schedule a video chat.
+                </Radio>
+              </Space>
+            </Radio.Group>
           </div>
-        </div>
+
+          <Divider style={{ margin: 0 }}>Support Ticket</Divider>
+
+          <div>
+            <SectionLabel
+              done={body.trim().length >= MIN_BODY_LENGTH && hasRequired}
+            >
+              Description
+            </SectionLabel>
+            <div
+              style={{
+                marginTop: 12,
+                paddingLeft: 16,
+                borderLeft: `2px solid ${COLORS.GRAY_LL}`,
+              }}
+            >
+              {renderBodyFields({
+                body,
+                setBody,
+                showExtra: !initial.hideExtra,
+                siteName,
+                supportVideoCall: config.support_video_call,
+                type,
+              })}
+            </div>
+          </div>
+
+          {!hasRequired ? (
+            <Alert
+              showIcon
+              type="error"
+              message="Required information is still missing"
+              description={`Replace the text '${initial.required}' everywhere above with the requested information.`}
+            />
+          ) : null}
+
+          <div style={{ textAlign: "center" }}>
+            <Button
+              disabled={!canSubmit}
+              loading={submitting}
+              shape="round"
+              size="large"
+              type="primary"
+              onClick={submit}
+            >
+              {bodyButtonLabel({
+                body,
+                email,
+                hasRequired,
+                subject,
+                submitting,
+                successUrl,
+                submitError,
+                type,
+              })}
+            </Button>
+          </div>
+        </Space>
       </PublicSectionCard>
-    </div>
+
+      {type !== "chat" ? (
+        <Paragraph style={{ color: COLORS.GRAY_D, marginBottom: 0 }}>
+          After submitting this, you will receive a link that you should save
+          until you receive a confirmation email. You can also review your
+          support tickets later from the support page.
+        </Paragraph>
+      ) : null}
+    </Space>
   );
 }
