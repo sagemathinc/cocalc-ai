@@ -387,6 +387,7 @@ export const hosts = {
   getSiteOpenAiApiKey: authFirstRequireHost,
   checkCodexSiteUsageAllowance: authFirstRequireHost,
   recordCodexSiteUsage: authFirstRequireHost,
+  issueProjectHostAgentAuthToken: authFirstRequireHost,
   getManagedRootfsReleaseArtifact: authFirstRequireHost,
   issueProjectHostAuthToken: authFirstRequireAccount,
 };
@@ -561,6 +562,16 @@ export interface Hosts {
     account_id?: string;
     host_id: string;
     project_id?: string;
+    ttl_seconds?: number;
+  }) => Promise<{
+    host_id: string;
+    token: string;
+    expires_at: number;
+  }>;
+  issueProjectHostAgentAuthToken: (opts: {
+    host_id?: string;
+    account_id: string;
+    project_id: string;
     ttl_seconds?: number;
   }) => Promise<{
     host_id: string;

@@ -16,7 +16,11 @@ mkdir -p "$STATE_DIR"
 PID_FILE="$STATE_DIR/hub.pid"
 
 find_hub_pids() {
-  pgrep -f "$SRC_DIR/packages/hub/node_modules/.bin/../@cocalc/hub/run/hub.js" || true
+  ps -eo pid=,args= \
+    | awk -v hub_root="$SRC_DIR/packages/hub" '
+        index($0, hub_root) > 0 && $0 ~ /run\/hub\.js/ { print $1 }
+      ' \
+    || true
 }
 
 find_pids_listening_on_port() {
