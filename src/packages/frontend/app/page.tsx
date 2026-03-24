@@ -217,22 +217,18 @@ export const Page: React.FC = () => {
     if (!zendesk || !is_logged_in) {
       return;
     }
-    // Note: that styled span around the label is just
-    // because I'm too lazy to fix this properly, since
-    // it's all ancient react bootstrap stuff that will
-    // get rewritten.
     return (
       <NavTab
         name={undefined} // does not open a tab, just a popup
         active_top_tab={active_top_tab} // it's never supposed to be active!
-        label={intl.formatMessage({
+        label_class={NAV_CLASS}
+        icon={"support"}
+        on_click={openSupportTab}
+        hide_label={true}
+        tooltip={intl.formatMessage({
           id: "page.help.label",
           defaultMessage: "Help",
         })}
-        label_class={NAV_CLASS}
-        icon={"medkit"}
-        on_click={openSupportTab}
-        hide_label={!show_label}
       />
     );
   }
