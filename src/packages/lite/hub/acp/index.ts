@@ -1,5 +1,4 @@
 import path from "node:path";
-import { URL } from "node:url";
 import os from "node:os";
 import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
