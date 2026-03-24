@@ -1,15 +1,141 @@
+import { readFile } from "node:fs/promises";
 import { resolve as resolvePath } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { Command } from "commander";
 
-import type { OutputMessage } from "@cocalc/conat/project/jupyter/run-code";
-import {
-  loadScriptModule,
-  loadScriptModuleFromFile,
-  resolveScriptHandler,
-} from "../../core/script-runner";
 import { createJupyterApi } from "../../../api/jupyter";
+import type { OutputMessage } from "@cocalc/conat/project/jupyter/run-code";
 import type { ProjectCommandDeps } from "../project";
+
+const AsyncFunction = Object.getPrototypeOf(async function () {})
+  .constructor as new (...args: string[]) => (...fnArgs: any[]) => Promise<any>;
+
+const PROJECT_JUPYTER_EXEC_API_DECLARATION = `declare const api: {
+  project: {
+    project_id: string;
+    title: string;
+    host_id: string | null;
+  };
+  notebook: {
+    path: string;
+    listCells(options?: { codeOnly?: boolean }): Promise<{
+      project: { project_id: string; title: string; host_id: string | null };
+      path: string;
+      cells: Array<{
+        id: string;
+        index: number;
+        cell_type: string;
+        input: string;
+        preview: string;
+        line_count: number;
+        generated_id: boolean;
+      }>;
+    }>;
+    setCell(options: {
+      cellId: string;
+      input?: string;
+      cellType?: string;
+    }): Promise<{
+      project: { project_id: string; title: string; host_id: string | null };
+      path: string;
+      cell: {
+        id: string;
+        index: number;
+        cell_type: string;
+        input: string;
+        preview: string;
+        line_count: number;
+        generated_id: boolean;
+      };
+    }>;
+    insertCell(options: {
+      afterId?: string;
+      beforeId?: string;
+      atStart?: boolean;
+      atEnd?: boolean;
+      input?: string;
+      cellType?: string;
+    }): Promise<{
+      project: { project_id: string; title: string; host_id: string | null };
+      path: string;
+      cell: {
+        id: string;
+        index: number;
+        cell_type: string;
+        input: string;
+        preview: string;
+        line_count: number;
+        generated_id: boolean;
+      };
+    }>;
+    moveCell(options: {
+      cellId: string;
+      beforeId?: string;
+      afterId?: string;
+      atStart?: boolean;
+      atEnd?: boolean;
+    }): Promise<{
+      project: { project_id: string; title: string; host_id: string | null };
+      path: string;
+      cell: {
+        id: string;
+        index: number;
+        cell_type: string;
+        input: string;
+        preview: string;
+        line_count: number;
+        generated_id: boolean;
+      };
+    }>;
+    deleteCells(options: { cellIds: string[] }): Promise<{
+      project: { project_id: string; title: string; host_id: string | null };
+      path: string;
+      deleted: string[];
+    }>;
+    run(options: {
+      cellIds?: string[];
+      cellIndices?: number[];
+      allCode?: boolean;
+      noHalt?: boolean;
+      limit?: number;
+      stdin?: (opts: {
+        id: string;
+        prompt: string;
+        password?: boolean;
+      }) => Promise<string>;
+    }): Promise<{
+      project_id: string;
+      project_title: string;
+      path: string;
+      run_id: string;
+      ack: unknown;
+      cells: Array<{
+        id: string;
+        index: number;
+        cell_type: string;
+        input: string;
+        preview: string;
+        line_count: number;
+        generated_id: boolean;
+      }>;
+      iter: AsyncIterable<any[]>;
+      close: () => Promise<void>;
+    }>;
+    live(options?: {
+      runId?: string;
+      follow?: boolean;
+      waitMs?: number;
+      pollMs?: number;
+    }): Promise<{
+      project_id: string;
+      project_title: string;
+      path: string;
+      getRunId: () => string | null;
+      iter: AsyncIterable<any[]>;
+      close: () => Promise<void>;
+    }>;
+  };
+};`;
 
 function normalizePath(value?: string): string {
   const path = `${value ?? ""}`.trim();
@@ -68,6 +194,11 @@ async function resolveOptionalNotebookInput(
   }
   return `${opts.input}`;
 }
+
+type JupyterExecCliOptions = {
+  file?: string;
+  stdin?: boolean;
+};
 
 function humanTextForOutputMessage(mesg: OutputMessage): {
   stream?: string;
@@ -166,6 +297,16 @@ export function registerProjectJupyterCommands(
   const jupyter = project
     .command("jupyter")
     .description("project Jupyter notebook execution");
+
+  jupyter
+    .command("exec-api")
+    .description("print the TypeScript declaration for the notebook exec API")
+    .action(() => {
+      process.stdout.write(PROJECT_JUPYTER_EXEC_API_DECLARATION);
+      if (!PROJECT_JUPYTER_EXEC_API_DECLARATION.endsWith("\n")) {
+        process.stdout.write("\n");
+      }
+    });
 
   jupyter
     .command("cells")
@@ -338,42 +479,69 @@ export function registerProjectJupyterCommands(
     );
 
   jupyter
-    .command("exec")
+    .command("exec [code...]")
     .description(
-      "run a local TypeScript/JavaScript notebook script against the backend notebook API",
+      "execute javascript against the ambient notebook api; provide code inline, with --file, or with --stdin",
     )
     .requiredOption("--path <path>", "notebook path inside the project")
     .option("-w, --project <project>", "project id or name")
-    .option("--file <path>", "local .ts/.js script file")
-    .option("--stdin", "read the script from stdin as TypeScript")
+    .option("--file <path>", "read javascript from a file path")
+    .option("--stdin", "read javascript from stdin")
+    .addHelpText(
+      "after",
+      `
+Use plain JavaScript. Inspect the ambient API with:
+  cocalc project jupyter exec-api
+
+Example:
+  cocalc --json project jupyter --path scratch/demo.ipynb exec '
+    let { cells } = await api.notebook.listCells();
+    let anchor = cells[cells.length - 1];
+    let inserted = await api.notebook.insertCell({
+      afterId: anchor.id,
+      input: "2 + 3",
+      cellType: "code",
+    });
+    let session = await api.notebook.run({ cellIds: [inserted.cell.id] });
+    let batches = [];
+    for await (let batch of session.iter) batches.push(batch);
+    await session.close();
+    return { inserted: inserted.cell.id, batches: batches.length };
+  '
+`,
+    )
     .action(
       async (
-        opts: {
+        code: string[],
+        opts: JupyterExecCliOptions & {
           path: string;
           project?: string;
-          file?: string;
-          stdin?: boolean;
         },
         command: Command,
       ) => {
         await withContext(command, "project jupyter exec", async (ctx) => {
-          const sourceCount = [opts.file ? 1 : 0, opts.stdin ? 1 : 0].reduce(
-            (sum, n) => sum + n,
-            0,
-          );
+          const inlineScript = (code ?? []).join(" ").trim();
+          const filePath = `${opts.file ?? ""}`.trim();
+          const readFromStdin = !!opts.stdin || filePath === "-";
+          const readFromFile = filePath.length > 0 && filePath !== "-";
+          const sourceCount =
+            (inlineScript.length > 0 ? 1 : 0) +
+            (readFromFile ? 1 : 0) +
+            (readFromStdin ? 1 : 0);
           if (sourceCount !== 1) {
-            throw new Error("exec requires exactly one of --file or --stdin");
+            throw new Error(
+              "choose exactly one script source: inline code, --file <path>, or --stdin",
+            );
           }
           const bindingPath = normalizePath(opts.path);
-          const scriptModule = opts.file
-            ? await loadScriptModuleFromFile(resolvePath(opts.file))
-            : await loadScriptModule({
-                filename: resolvePath("stdin.project-jupyter-exec.ts"),
-                source: await readAllStdin(),
-              });
-          const handler = resolveScriptHandler(scriptModule) as (
-            ctx: Record<string, unknown>,
-          ) => Promise<unknown> | unknown;
+          const script = readFromFile
+            ? await readFile(resolvePath(filePath), "utf8")
+            : readFromStdin
+              ? await readAllStdin()
+              : inlineScript;
+          if (!script.trim()) {
+            throw new Error("javascript code must be specified");
+          }
           const jupyterApi = createJupyterApi({
             resolveProjectConatClient,
           });
@@ -387,12 +555,46 @@ export function registerProjectJupyterCommands(
               opts.project,
               process.cwd(),
             );
-            return await handler({
-              notebook,
-              project,
-              path: bindingPath,
-              cwd: process.cwd(),
-            });
+            const api = {
+              project: {
+                project_id: project.project_id,
+                title: project.title,
+                host_id: project.host_id,
+              },
+              notebook: {
+                path: bindingPath,
+                listCells: notebook.listCells.bind(notebook),
+                setCell: notebook.setCell.bind(notebook),
+                insertCell: notebook.insertCell.bind(notebook),
+                moveCell: notebook.moveCell.bind(notebook),
+                deleteCells: notebook.deleteCells.bind(notebook),
+                run: notebook.run.bind(notebook),
+                live: async (options?: {
+                  runId?: string;
+                  follow?: boolean;
+                  waitMs?: number;
+                  pollMs?: number;
+                }) =>
+                  await projectJupyterLiveRunSession({
+                    ctx,
+                    projectIdentifier: opts.project,
+                    path: bindingPath,
+                    cwd: process.cwd(),
+                    runId: options?.runId,
+                    follow: options?.follow,
+                    waitMs: options?.waitMs,
+                    pollMs: options?.pollMs,
+                  }),
+              },
+            };
+            const runner = new AsyncFunction(
+              "api",
+              `"use strict";\n${script}\n`,
+            );
+            const result = await runner(api);
+            return {
+              result: result ?? null,
+            };
           } finally {
             await (jupyterApi as any).close?.();
           }
