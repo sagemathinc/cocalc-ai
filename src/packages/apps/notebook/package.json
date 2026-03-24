@@ -1,0 +1,21 @@
+{
+  "name": "@cocalc/app-notebook",
+  "version": "0.0.1",
+  "description": "Headless notebook document operations for CoCalc",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "require": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "build": "pnpm exec tsc --build --force",
+    "clean": "rm -rf dist node_modules tsconfig.tsbuildinfo",
+    "depcheck": "pnpm -w exec depcheck \"$PWD\""
+  },
+  "license": "SEE LICENSE.md"
+}

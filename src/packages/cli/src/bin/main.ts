@@ -1542,6 +1542,9 @@ const {
 
 const {
   projectJupyterCellsData,
+  projectJupyterSetCellData,
+  projectJupyterInsertCellData,
+  projectJupyterDeleteCellsData,
   projectJupyterRunSession,
   projectJupyterLiveRunSession,
 } = createProjectJupyterOps<CommandContext, ProjectRow>({
@@ -2058,6 +2061,9 @@ const projectCommandDeps = {
   projectChatLoopClearData,
   projectChatAutomationData,
   projectJupyterCellsData,
+  projectJupyterSetCellData,
+  projectJupyterInsertCellData,
+  projectJupyterDeleteCellsData,
   projectJupyterRunSession,
   projectJupyterLiveRunSession,
   normalizeUserSearchName,

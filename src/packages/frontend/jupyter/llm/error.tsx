@@ -34,6 +34,8 @@ function buildNotebookErrorPrompt(opts: {
     "Investigate and fix this Jupyter notebook error.",
     `Notebook path: ${opts.path}`,
     "Treat the live in-memory notebook state as the source of truth, even if the file on disk is stale.",
+    "Prefer `cocalc project jupyter ...` for notebook cell edits and execution because it remains available if the browser refreshes or disconnects.",
+    "Use `cocalc browser exec` only for transient UI context such as the current selection, scroll position, or other browser-only state.",
     "Explain the root cause briefly, propose a fix, and apply changes when possible. Ask before installing or upgrading packages and before destructive actions.",
     "Traceback:",
     "```text",

@@ -366,6 +366,8 @@ export function buildHiddenPrompt(opts: {
     `Kernel language: ${opts.kernelLanguage}`,
     `Kernel display name: ${opts.kernelDisplay}`,
     "Treat the live in-memory notebook state as the source of truth, even if the file on disk is stale.",
+    "Prefer `cocalc project jupyter ...` for notebook cell edits and execution because it remains available if the browser refreshes or disconnects.",
+    "Use `cocalc browser exec` only for transient UI context such as the current selection, scroll position, or other browser-only state.",
     "Start with the selected cell. Inspect surrounding cells, outputs, notebook execution state, or files on disk only if needed.",
     "If you decide changes are appropriate, apply them when possible. Ask before destructive actions or installing or upgrading packages.",
   ];

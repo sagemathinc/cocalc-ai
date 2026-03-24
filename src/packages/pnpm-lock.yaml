@@ -156,6 +156,8 @@ importers:
         specifier: ^22.10.10
         version: 22.19.1
 
+  apps/notebook: {}
+
   apps/tasks:
     dependencies:
       '@cocalc/conat':
@@ -287,6 +289,9 @@ importers:
 
   cli:
     dependencies:
+      '@cocalc/app-notebook':
+        specifier: workspace:*
+        version: link:../apps/notebook
       '@cocalc/app-tasks':
         specifier: workspace:*
         version: link:../apps/tasks

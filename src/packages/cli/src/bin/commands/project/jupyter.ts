@@ -40,6 +40,28 @@ function normalizeRichText(value: unknown): string {
   return `${value}`;
 }
 
+function normalizeCellType(value?: string): string | undefined {
+  const trimmed = `${value ?? ""}`.trim();
+  if (!trimmed) return undefined;
+  if (trimmed !== "code" && trimmed !== "markdown") {
+    throw new Error("--type must be code or markdown");
+  }
+  return trimmed;
+}
+
+async function resolveOptionalNotebookInput(
+  opts: { input?: string; stdin?: boolean },
+  readAllStdin: () => Promise<string>,
+): Promise<string | undefined> {
+  if (opts.stdin) {
+    return await readAllStdin();
+  }
+  if (opts.input == null) {
+    return undefined;
+  }
+  return `${opts.input}`;
+}
+
 function humanTextForOutputMessage(mesg: OutputMessage): {
   stream?: string;
   error?: string;
@@ -123,9 +145,13 @@ export function registerProjectJupyterCommands(
   const {
     withContext,
     projectJupyterCellsData,
+    projectJupyterSetCellData,
+    projectJupyterInsertCellData,
+    projectJupyterDeleteCellsData,
     projectJupyterRunSession,
     projectJupyterLiveRunSession,
     durationToMs,
+    readAllStdin,
   } = deps;
 
   const jupyter = project
@@ -149,6 +175,105 @@ export function registerProjectJupyterCommands(
             projectIdentifier: opts.project,
             path: normalizePath(opts.path),
             codeOnly: opts.codeOnly,
+          });
+        });
+      },
+    );
+
+  jupyter
+    .command("set")
+    .description("update an existing notebook cell")
+    .requiredOption("--path <path>", "notebook path inside the project")
+    .requiredOption("--cell-id <id>", "cell id to update")
+    .option("-w, --project <project>", "project id or name")
+    .option("--input <text>", "replace the cell input with this text")
+    .option("--stdin", "read the replacement cell input from stdin")
+    .option("--type <kind>", "change the cell type to code or markdown")
+    .action(
+      async (
+        opts: {
+          path: string;
+          project?: string;
+          cellId: string;
+          input?: string;
+          stdin?: boolean;
+          type?: string;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "project jupyter set", async (ctx) => {
+          return await projectJupyterSetCellData({
+            ctx,
+            projectIdentifier: opts.project,
+            path: normalizePath(opts.path),
+            cellId: `${opts.cellId ?? ""}`.trim(),
+            input: await resolveOptionalNotebookInput(opts, readAllStdin),
+            cellType: normalizeCellType(opts.type),
+          });
+        });
+      },
+    );
+
+  jupyter
+    .command("insert")
+    .description("insert a notebook cell relative to an anchor or boundary")
+    .requiredOption("--path <path>", "notebook path inside the project")
+    .option("-w, --project <project>", "project id or name")
+    .option("--after-id <id>", "insert below this anchor cell")
+    .option("--before-id <id>", "insert above this anchor cell")
+    .option("--at-start", "insert at the beginning of the notebook")
+    .option("--at-end", "insert at the end of the notebook")
+    .option("--input <text>", "initial input for the new cell")
+    .option("--stdin", "read initial cell input from stdin")
+    .option("--type <kind>", "new cell type: code or markdown")
+    .action(
+      async (
+        opts: {
+          path: string;
+          project?: string;
+          afterId?: string;
+          beforeId?: string;
+          atStart?: boolean;
+          atEnd?: boolean;
+          input?: string;
+          stdin?: boolean;
+          type?: string;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "project jupyter insert", async (ctx) => {
+          return await projectJupyterInsertCellData({
+            ctx,
+            projectIdentifier: opts.project,
+            path: normalizePath(opts.path),
+            afterId: opts.afterId?.trim(),
+            beforeId: opts.beforeId?.trim(),
+            atStart: opts.atStart === true,
+            atEnd: opts.atEnd === true,
+            input: await resolveOptionalNotebookInput(opts, readAllStdin),
+            cellType: normalizeCellType(opts.type),
+          });
+        });
+      },
+    );
+
+  jupyter
+    .command("delete")
+    .description("delete one or more notebook cells by id")
+    .requiredOption("--path <path>", "notebook path inside the project")
+    .requiredOption("--cell-id <id>", "cell id to delete", collectString, [])
+    .option("-w, --project <project>", "project id or name")
+    .action(
+      async (
+        opts: { path: string; project?: string; cellId?: string[] },
+        command: Command,
+      ) => {
+        await withContext(command, "project jupyter delete", async (ctx) => {
+          return await projectJupyterDeleteCellsData({
+            ctx,
+            projectIdentifier: opts.project,
+            path: normalizePath(opts.path),
+            cellIds: (opts.cellId ?? []).map((id) => `${id ?? ""}`.trim()),
           });
         });
       },

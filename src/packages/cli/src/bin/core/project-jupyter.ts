@@ -1,6 +1,10 @@
 import { once } from "node:events";
 import { isAbsolute, resolve as resolvePath } from "node:path";
 
+import {
+  SyncDBNotebookSession,
+  type NotebookCellRecord,
+} from "@cocalc/app-notebook";
 import { syncdb as openSyncDb } from "@cocalc/conat/sync-doc/syncdb";
 import {
   jupyterClient,
@@ -54,6 +58,13 @@ export type ProjectJupyterCellsResult = {
   project_id: string;
   path: string;
   cells: NotebookCellInfo[];
+};
+
+export type ProjectJupyterMutationResult = {
+  project_id: string;
+  path: string;
+  cell?: NotebookCellInfo;
+  deleted?: string[];
 };
 
 export type ProjectJupyterRunSession = {
@@ -484,6 +495,213 @@ export function createProjectJupyterOps<Ctx, Project extends ProjectIdentity>(
     };
   }
 
+  async function withNotebookSession<T>({
+    ctx,
+    projectIdentifier,
+    path,
+    cwd,
+    fn,
+  }: {
+    ctx: Ctx;
+    projectIdentifier?: string;
+    path: string;
+    cwd?: string;
+    fn: (opts: {
+      project: Project;
+      path: string;
+      session: SyncDBNotebookSession;
+    }) => Promise<T>;
+  }): Promise<T> {
+    const normalizedPath = normalizeNotebookPath(path);
+    const { project, syncdb, release } = await acquireProjectJupyterSession0({
+      ctx,
+      projectIdentifier,
+      path: normalizedPath,
+      cwd,
+    });
+    try {
+      return await fn({
+        project,
+        path: normalizedPath,
+        session: new SyncDBNotebookSession(syncdb as any),
+      });
+    } finally {
+      await release();
+    }
+  }
+
+  function notebookCellInfoFromRecord(
+    cells: NotebookCellRecord[],
+    cellId: string,
+  ): NotebookCellInfo {
+    const index = cells.findIndex((cell) => cell.id === cellId);
+    if (index === -1) {
+      throw new Error(`unknown cell id '${cellId}'`);
+    }
+    const cell = cells[index];
+    const input = normalizeNotebookSource(cell.input);
+    return {
+      id: cell.id,
+      index,
+      cell_type:
+        typeof cell.cell_type === "string" ? cell.cell_type : "unknown",
+      input,
+      preview: summarizePreview(input),
+      line_count: input === "" ? 0 : input.split("\n").length,
+      generated_id: cell.id.startsWith("__missing_cell_id__:"),
+    };
+  }
+
+  async function projectJupyterSetCellData({
+    ctx,
+    projectIdentifier,
+    path,
+    cellId,
+    input,
+    cellType,
+    cwd,
+  }: {
+    ctx: Ctx;
+    projectIdentifier?: string;
+    path: string;
+    cellId: string;
+    input?: string;
+    cellType?: string;
+    cwd?: string;
+  }): Promise<ProjectJupyterMutationResult> {
+    return await withNotebookSession({
+      ctx,
+      projectIdentifier,
+      path,
+      cwd,
+      fn: async ({ project, path, session }) => {
+        if (input == null && cellType == null) {
+          throw new Error("set requires --input, --stdin, and/or --type");
+        }
+        if (input != null) {
+          await session.setCellInput(cellId, input);
+        }
+        if (cellType != null) {
+          await session.setCellType(cellId, cellType);
+        }
+        const cells = await session.listCells();
+        return {
+          project_id: project.project_id,
+          path,
+          cell: notebookCellInfoFromRecord(cells, cellId),
+        };
+      },
+    });
+  }
+
+  async function projectJupyterInsertCellData({
+    ctx,
+    projectIdentifier,
+    path,
+    afterId,
+    beforeId,
+    atStart,
+    atEnd,
+    input,
+    cellType,
+    cwd,
+  }: {
+    ctx: Ctx;
+    projectIdentifier?: string;
+    path: string;
+    afterId?: string;
+    beforeId?: string;
+    atStart?: boolean;
+    atEnd?: boolean;
+    input?: string;
+    cellType?: string;
+    cwd?: string;
+  }): Promise<ProjectJupyterMutationResult> {
+    return await withNotebookSession({
+      ctx,
+      projectIdentifier,
+      path,
+      cwd,
+      fn: async ({ project, path, session }) => {
+        const anchors = [
+          afterId ? 1 : 0,
+          beforeId ? 1 : 0,
+          atStart ? 1 : 0,
+          atEnd ? 1 : 0,
+        ].reduce((sum, n) => sum + n, 0);
+        if (anchors !== 1) {
+          throw new Error(
+            "insert requires exactly one of --after-id, --before-id, --at-start, or --at-end",
+          );
+        }
+        let cell: NotebookCellRecord;
+        if (afterId) {
+          cell = await session.insertCellAdjacent({
+            anchorId: afterId,
+            delta: 1,
+            input,
+            cell_type: cellType,
+          });
+        } else if (beforeId) {
+          cell = await session.insertCellAdjacent({
+            anchorId: beforeId,
+            delta: -1,
+            input,
+            cell_type: cellType,
+          });
+        } else {
+          const cells = await session.listCells();
+          const pos =
+            cells.length === 0
+              ? 0
+              : atStart
+                ? cells[0].pos - 1
+                : cells[cells.length - 1].pos + 1;
+          cell = await session.insertCellAt({
+            pos,
+            input,
+            cell_type: cellType,
+          });
+        }
+        const cells = await session.listCells();
+        return {
+          project_id: project.project_id,
+          path,
+          cell: notebookCellInfoFromRecord(cells, cell.id),
+        };
+      },
+    });
+  }
+
+  async function projectJupyterDeleteCellsData({
+    ctx,
+    projectIdentifier,
+    path,
+    cellIds,
+    cwd,
+  }: {
+    ctx: Ctx;
+    projectIdentifier?: string;
+    path: string;
+    cellIds: string[];
+    cwd?: string;
+  }): Promise<ProjectJupyterMutationResult> {
+    return await withNotebookSession({
+      ctx,
+      projectIdentifier,
+      path,
+      cwd,
+      fn: async ({ project, path, session }) => {
+        await session.deleteCells(cellIds);
+        return {
+          project_id: project.project_id,
+          path,
+          deleted: [...cellIds],
+        };
+      },
+    });
+  }
+
   async function projectJupyterRunSession({
     ctx,
     projectIdentifier,
@@ -657,6 +875,9 @@ export function createProjectJupyterOps<Ctx, Project extends ProjectIdentity>(
   return {
     close,
     projectJupyterCellsData,
+    projectJupyterSetCellData,
+    projectJupyterInsertCellData,
+    projectJupyterDeleteCellsData,
     projectJupyterRunSession,
     projectJupyterLiveRunSession,
   };
