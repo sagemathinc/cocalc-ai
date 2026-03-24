@@ -19,7 +19,10 @@ import {
 import { React } from "@cocalc/frontend/app-framework";
 import { ErrorDisplay, Loading, TimeAgo } from "@cocalc/frontend/components";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
-import type { RootfsAdminCatalogEntry } from "@cocalc/util/rootfs-images";
+import type {
+  RootfsAdminCatalogEntry,
+  RootfsImageEvent,
+} from "@cocalc/util/rootfs-images";
 import { plural } from "@cocalc/util/misc";
 
 function lifecycleTags(entry: RootfsAdminCatalogEntry): React.ReactNode[] {
@@ -145,6 +148,81 @@ function lifecycleHistory(entry: RootfsAdminCatalogEntry): React.ReactNode {
   return (
     <Space direction="vertical" size={0}>
       {lines}
+    </Space>
+  );
+}
+
+function eventTitle(event: RootfsImageEvent): string {
+  switch (event.event_type) {
+    case "catalog_created":
+      return "Catalog entry created";
+    case "hidden":
+      return "Hidden";
+    case "unhidden":
+      return "Unhidden";
+    case "blocked":
+      return "Blocked";
+    case "unblocked":
+      return "Unblocked";
+    case "deleted":
+      return "Deleted";
+    case "release_gc_pending":
+      return "Release queued for GC";
+    case "release_gc_blocked":
+      return "Release GC blocked";
+    case "release_gc_deleted":
+      return "Release deleted";
+    case "release_gc_failed":
+      return "Release GC failed";
+    default:
+      return event.event_type;
+  }
+}
+
+function eventSummary(event: RootfsImageEvent): string | undefined {
+  if (event.reason) return event.reason;
+  const blockers = event.payload?.blockers;
+  if (blockers?.total != null) {
+    return `blockers=${blockers.total}`;
+  }
+  if (event.payload?.blocked_reason) {
+    return `${event.payload.blocked_reason}`;
+  }
+}
+
+function recentEvents(entry: RootfsAdminCatalogEntry): React.ReactNode {
+  if (!entry.events?.length) {
+    return (
+      <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+        No recent events
+      </Typography.Text>
+    );
+  }
+  return (
+    <Space direction="vertical" size={0}>
+      {entry.events.map((event) => (
+        <Space
+          key={event.event_id}
+          direction="vertical"
+          size={0}
+          style={{ width: "100%" }}
+        >
+          <Typography.Text style={{ fontSize: 12 }}>
+            {eventTitle(event)}
+          </Typography.Text>
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            <TimeAgo date={event.created} />
+            {event.actor_name || event.actor_account_id
+              ? ` by ${event.actor_name ?? event.actor_account_id}`
+              : ""}
+          </Typography.Text>
+          {eventSummary(event) ? (
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              {eventSummary(event)}
+            </Typography.Text>
+          ) : null}
+        </Space>
+      ))}
     </Space>
   );
 }
@@ -369,6 +447,11 @@ export function RootfsAdmin() {
               title: "Delete blockers",
               key: "blockers",
               render: (_, entry) => blockerSummary(entry),
+            },
+            {
+              title: "Recent events",
+              key: "events",
+              render: (_, entry) => recentEvents(entry),
             },
             {
               title: "Scan",

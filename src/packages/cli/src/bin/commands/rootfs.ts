@@ -3,6 +3,7 @@ import type {
   RootfsAdminCatalogEntry,
   RootfsDeleteRequestResult,
   RootfsImageEntry,
+  RootfsImageEvent,
   RootfsImageSection,
   RootfsImageTheme,
   RootfsImageVisibility,
@@ -123,7 +124,19 @@ function serializeRootfsAdminEntry(entry: RootfsAdminCatalogEntry) {
     scan_status: entry.scan_status ?? null,
     scan_tool: entry.scan_tool ?? null,
     scanned_at: entry.scanned_at ?? null,
+    events: entry.events ?? [],
   };
+}
+
+function formatRootfsEventHuman(event: RootfsImageEvent): string {
+  const who = event.actor_name ?? event.actor_account_id ?? "-";
+  const details =
+    event.reason ??
+    event.payload?.blocked_reason ??
+    (event.payload?.blockers?.total != null
+      ? `blockers=${event.payload.blockers.total}`
+      : "");
+  return `${event.created} ${event.event_type} by ${who}${details ? ` (${details})` : ""}`;
 }
 
 function wrapField({
@@ -265,6 +278,12 @@ function formatRootfsAdminEntriesHuman(
       }
       if (entry.scan?.report_url) {
         lines.push(`   scan_report: ${entry.scan.report_url}`);
+      }
+      if (entry.events?.length) {
+        lines.push("   recent_events:");
+        for (const event of entry.events) {
+          lines.push(`     - ${formatRootfsEventHuman(event)}`);
+        }
       }
       lines.push(
         ...wrapField({

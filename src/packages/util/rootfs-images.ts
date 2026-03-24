@@ -19,6 +19,17 @@ export type RootfsScanStatus =
   | "clean"
   | "findings"
   | "error";
+export type RootfsImageEventType =
+  | "catalog_created"
+  | "hidden"
+  | "unhidden"
+  | "blocked"
+  | "unblocked"
+  | "deleted"
+  | "release_gc_pending"
+  | "release_gc_blocked"
+  | "release_gc_deleted"
+  | "release_gc_failed";
 export type RootfsImageSection =
   | "official"
   | "mine"
@@ -215,6 +226,18 @@ export type RootfsDeleteRequestResult = {
   blockers: RootfsDeleteBlockers;
 };
 
+export type RootfsImageEvent = {
+  event_id: string;
+  image_id: string;
+  release_id?: string;
+  event_type: RootfsImageEventType;
+  actor_account_id?: string;
+  actor_name?: string;
+  reason?: string;
+  payload?: Record<string, any>;
+  created: string;
+};
+
 export type RootfsAdminCatalogEntry = RootfsImageEntry & {
   deleted?: boolean;
   deleted_reason?: string;
@@ -229,6 +252,7 @@ export type RootfsAdminCatalogEntry = RootfsImageEntry & {
   scan_status?: RootfsScanStatus;
   scan_tool?: string;
   scanned_at?: string;
+  events?: RootfsImageEvent[];
 };
 
 export type ProjectRootfsStateEntry = {
