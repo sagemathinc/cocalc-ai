@@ -140,6 +140,7 @@ import {
 import type { AcpWorkerState } from "../sqlite/acp-workers";
 import { throttle } from "lodash";
 import { akv, type AKV } from "@cocalc/conat/sync/akv";
+import { astream, type AStream } from "@cocalc/conat/sync/astream";
 import type { DKV } from "@cocalc/conat/sync/dkv";
 import {
   rotateChatStore,
@@ -155,18 +156,6 @@ import { buildCodexRuntimeEnv } from "./runtime-env";
 // How often to persist in-flight ACP metadata (thread state/usage/flags).
 // Message body content is persisted at terminal commits only.
 const COMMIT_INTERVAL = 2_000;
-// Coalesce high-frequency live ACP output so we do not publish one network
-// message per streamed word/chunk. A 100ms cadence still feels realtime.
-const ACP_LOG_PUBLISH_FLUSH_MS = envNumber(
-  "COCALC_ACP_LOG_PUBLISH_FLUSH_MS",
-  100,
-);
-// Persist incremental ACP log state to AKV on a slightly slower cadence than
-// pubsub. This keeps reload/reconnect fast without writing AKV on every token.
-const ACP_LOG_PERSIST_FLUSH_MS = envNumber(
-  "COCALC_ACP_LOG_PERSIST_FLUSH_MS",
-  250,
-);
 const LEASE_HEARTBEAT_INTERVAL = 2_000;
 const TERMINAL_CHAT_VERIFY_DELAYS_MS = [0, 100, 250, 500, 1_000] as const;
 const MESSAGE_ID_LOOKUP_WARN_ROWS = 2_000;
@@ -238,6 +227,15 @@ const ACP_LOG_PERSIST_SLOW_MS = envNumber(
   "COCALC_ACP_LOG_PERSIST_SLOW_MS",
   150,
 );
+const ACP_LIVE_LOG_PUBLISH_SLOW_MS = envNumber(
+  "COCALC_ACP_LIVE_LOG_PUBLISH_SLOW_MS",
+  100,
+);
+const ACP_LIVE_LOG_MAX_BYTES = envNumber(
+  "COCALC_ACP_LIVE_LOG_MAX_BYTES",
+  8 * 1024 * 1024,
+);
+const ACP_LIVE_LOG_MAX_MSGS = envNumber("COCALC_ACP_LIVE_LOG_MAX_MSGS", 5_000);
 const ACP_PATCHFLOW_COMMIT_TARGET = envNumber(
   "COCALC_ACP_PATCHFLOW_COMMIT_TARGET",
   6,
@@ -1535,7 +1533,10 @@ export class ChatStreamWriter {
   private logStoreName: string;
   private logKey: string;
   private logSubject: string;
-  private readonly pendingPublishedLogEvents: AcpStreamMessage[] = [];
+  private liveLogStream?: AStream<AcpStreamMessage>;
+  private liveLogStreamName: string;
+  private liveLogInitPromise?: Promise<AStream<AcpStreamMessage>>;
+  private liveLogPublishChain: Promise<void> = Promise.resolve();
   private client: ConatClient;
   private timeTravel?: AgentTimeTravelRecorder;
   private integritySnapshot: ChatIntegritySnapshot = {
@@ -1555,50 +1556,6 @@ export class ChatStreamWriter {
   private heartbeatLease = throttleNoArgsWithUnref(() => {
     this.touchLease();
   }, LEASE_HEARTBEAT_INTERVAL);
-  private persistLogProgress = throttle(
-    async () => {
-      const started = performance.now();
-      try {
-        const store = this.getLogStore();
-        await store.set(this.logKey, this.events);
-        const durationMs = performance.now() - started;
-        if (durationMs >= ACP_LOG_PERSIST_SLOW_MS) {
-          logger.warn("acp log incremental persist slow", {
-            chatKey: this.chatKey,
-            path: this.metadata.path,
-            events: this.events.length,
-            durationMs: roundMs(durationMs),
-          });
-        }
-      } catch (err) {
-        logger.debug("failed to persist acp log incrementally", {
-          chatKey: this.chatKey,
-          path: this.metadata.path,
-          events: this.events.length,
-          durationMs: roundMs(performance.now() - started),
-          err,
-        });
-      }
-    },
-    ACP_LOG_PERSIST_FLUSH_MS,
-    { leading: false, trailing: true },
-  );
-  private flushPublishedLog = throttle(
-    () => {
-      if (this.closed || this.pendingPublishedLogEvents.length === 0) return;
-      const batch = this.pendingPublishedLogEvents.splice(
-        0,
-        this.pendingPublishedLogEvents.length,
-      );
-      const payload = batch.length === 1 ? batch[0] : batch;
-      void this.client
-        .publish(this.logSubject, payload)
-        .catch((err) => logger.debug("publish log failed", err));
-    },
-    ACP_LOG_PUBLISH_FLUSH_MS,
-    { leading: false, trailing: true },
-  );
-
   // Read a field from a syncdb record that may be either an Immutable.js map
   // (legacy) or a plain JS object (immer). This keeps the ACP hub compatible
   // with both modes while we migrate fully to immer.
@@ -1856,6 +1813,7 @@ export class ChatStreamWriter {
     hostWorkspaceRoot,
     syncdbOverride,
     logStoreFactory,
+    liveLogStreamFactory,
   }: {
     metadata: AcpChatContext;
     client: ConatClient;
@@ -1865,6 +1823,7 @@ export class ChatStreamWriter {
     hostWorkspaceRoot?: string;
     syncdbOverride?: any;
     logStoreFactory?: () => AKV<AcpStreamMessage[]>;
+    liveLogStreamFactory?: () => AStream<AcpStreamMessage>;
   }) {
     if (`${metadata.message_id ?? ""}`.trim().length === 0) {
       throw new Error("acp chat metadata is missing required message_id");
@@ -1924,11 +1883,15 @@ export class ChatStreamWriter {
     this.logStoreName = refs.store;
     this.logKey = refs.key;
     this.logSubject = refs.subject;
+    this.liveLogStreamName = refs.liveStream;
     // ensure initialization rejections are observed immediately
     this.ready = this.initialize();
     this.waitUntilReady();
     if (logStoreFactory) {
       this.logStore = logStoreFactory();
+    }
+    if (liveLogStreamFactory) {
+      this.liveLogStream = liveLogStreamFactory();
     }
     if (workspaceRoot) {
       this.timeTravel = new AgentTimeTravelRecorder({
@@ -1999,6 +1962,7 @@ export class ChatStreamWriter {
         acp_log_store: this.logStoreName,
         acp_log_key: this.logKey,
         acp_log_subject: this.logSubject,
+        acp_live_log_stream: this.liveLogStreamName,
         message_id: this.metadata.message_id,
         thread_id: this.metadata.thread_id,
         parent_message_id: (this.metadata as any).parent_message_id,
@@ -2023,6 +1987,10 @@ export class ChatStreamWriter {
     const queued = listAcpPayloads(this.metadata);
     for (const payload of queued) {
       this.processPayload(payload, { persist: false });
+    }
+    if (this.finished) {
+      await this.waitForLiveLogFlush();
+      await this.persistLog();
     }
     this.setThreadState("running");
     try {
@@ -2060,6 +2028,8 @@ export class ChatStreamWriter {
     const isLastMessage =
       message.type === "summary" || message.type === "error" || this.finished;
     if (isLastMessage) {
+      await this.waitForLiveLogFlush();
+      await this.persistLog();
       // Live turn output is rendered from the ACP log/DKV path. Reserve
       // durable .chat writes for terminal state so patchflow history stays
       // bounded regardless of streamed word count.
@@ -2110,8 +2080,7 @@ export class ChatStreamWriter {
       return;
     }
     this.events = appendStreamMessage(this.events, payload);
-    this.publishLog(payload);
-    this.persistLogProgress();
+    this.publishLiveLog(payload);
     if (payload.type === "event") {
       this.handleAgentEvent(payload.event);
       if (this.interruptNotified) {
@@ -2231,7 +2200,6 @@ export class ChatStreamWriter {
       this.trackTimeTravelOperation("finalize", this.metadata.path, () =>
         this.timeTravel?.finalizeTurn(this.metadata.message_date),
       );
-      void this.persistLog();
       return;
     }
     if (payload.type === "error") {
@@ -2245,7 +2213,6 @@ export class ChatStreamWriter {
       this.trackTimeTravelOperation("finalize", this.metadata.path, () =>
         this.timeTravel?.finalizeTurn(this.metadata.message_date),
       );
-      void this.persistLog();
     }
   }
 
@@ -2262,6 +2229,7 @@ export class ChatStreamWriter {
       acp_log_store: this.logStoreName,
       acp_log_key: this.logKey,
       acp_log_subject: this.logSubject,
+      acp_live_log_stream: generating ? this.liveLogStreamName : undefined,
       acp_thread_id: this.threadId,
       acp_started_at_ms:
         Number(this.metadata.started_at_ms) > 0
@@ -2769,19 +2737,18 @@ export class ChatStreamWriter {
     if (!this.finished) {
       clearAcpPayloads(this.metadata);
     }
-    try {
-      this.persistLogProgress.flush();
-    } catch {
-      // ignore
-    }
-    try {
-      this.flushPublishedLog.flush();
-    } catch {
-      // ignore
-    }
-    this.flushPublishedLog.cancel();
-    void this.persistLog();
     this.disposePromise = (async () => {
+      try {
+        await this.waitForLiveLogFlush();
+        await this.persistLog();
+      } catch {
+        // ignore
+      }
+      try {
+        this.liveLogStream?.close();
+      } catch (err) {
+        logger.warn("failed to close live acp log stream", err);
+      }
       try {
         await this.waitForScheduledSyncdbSaves();
         await this.syncdbPromise;
@@ -3020,20 +2987,85 @@ export class ChatStreamWriter {
     return this.logStore;
   }
 
-  private publishLog(event: AcpStreamMessage): void {
+  private async getLiveLogStream(): Promise<AStream<AcpStreamMessage>> {
+    if (this.liveLogStream) return this.liveLogStream;
+    if (this.liveLogInitPromise) return await this.liveLogInitPromise;
+    this.liveLogInitPromise = (async () => {
+      const stream = astream<AcpStreamMessage>({
+        project_id: this.metadata.project_id,
+        name: this.liveLogStreamName,
+        client: this.client,
+        ephemeral: true,
+      });
+      await stream.config({
+        max_bytes: ACP_LIVE_LOG_MAX_BYTES,
+        max_msgs: ACP_LIVE_LOG_MAX_MSGS,
+        discard_policy: "old",
+      });
+      this.liveLogStream = stream;
+      return stream;
+    })();
+    try {
+      return await this.liveLogInitPromise;
+    } finally {
+      this.liveLogInitPromise = undefined;
+    }
+  }
+
+  private publishLiveLog(event: AcpStreamMessage): void {
     if (this.closed) return;
-    this.pendingPublishedLogEvents.push(event);
-    this.flushPublishedLog();
-    if (event.type === "summary" || event.type === "error") {
-      this.flushPublishedLog.flush();
+    this.liveLogPublishChain = this.liveLogPublishChain
+      .catch(() => {
+        // ignore prior publish failures; the source error was already logged
+      })
+      .then(async () => {
+        const started = performance.now();
+        try {
+          const stream = await this.getLiveLogStream();
+          await stream.publish(event);
+          const durationMs = performance.now() - started;
+          if (durationMs >= ACP_LIVE_LOG_PUBLISH_SLOW_MS) {
+            logger.warn("acp live log publish slow", {
+              chatKey: this.chatKey,
+              path: this.metadata.path,
+              events: this.events.length,
+              durationMs: roundMs(durationMs),
+            });
+          }
+        } catch (err) {
+          logger.debug("failed to publish live acp log event", {
+            chatKey: this.chatKey,
+            path: this.metadata.path,
+            seq: event.seq,
+            err,
+          });
+        }
+      });
+  }
+
+  private async waitForLiveLogFlush(): Promise<void> {
+    try {
+      await this.liveLogPublishChain;
+    } catch {
+      // publish failures are logged above
     }
   }
 
   private async persistLog(): Promise<void> {
     if (this.events.length === 0) return;
     try {
+      const started = performance.now();
       const store = this.getLogStore();
       await store.set(this.logKey, this.events);
+      const durationMs = performance.now() - started;
+      if (durationMs >= ACP_LOG_PERSIST_SLOW_MS) {
+        logger.warn("acp final log persist slow", {
+          chatKey: this.chatKey,
+          path: this.metadata.path,
+          events: this.events.length,
+          durationMs: roundMs(durationMs),
+        });
+      }
     } catch (err) {
       logger.warn("failed to persist acp log", err);
     }

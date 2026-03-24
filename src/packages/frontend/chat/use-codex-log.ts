@@ -20,6 +20,7 @@ export interface CodexLogOptions {
   logStore?: string | null;
   logKey?: string | null;
   logSubject?: string | null;
+  liveLogStream?: string | null;
   generating?: boolean;
   enabled?: boolean;
 }
@@ -66,6 +67,7 @@ export function useCodexLog({
   logStore,
   logKey,
   logSubject,
+  liveLogStream,
   generating,
   enabled = true,
 }: CodexLogOptions): CodexLogResult {
@@ -150,7 +152,15 @@ export function useCodexLog({
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     async function fetchLog() {
-      if (!enabled || !hasLogRef || !projectId || akvLoaded) return;
+      if (
+        !enabled ||
+        !hasLogRef ||
+        !projectId ||
+        akvLoaded ||
+        (generating && liveLogStream)
+      ) {
+        return;
+      }
       try {
         const cn = webapp_client.conat_client.conat();
         const kv = cn.sync.akv<any[]>({
@@ -176,18 +186,28 @@ export function useCodexLog({
       }
     }
     void fetchLog();
-    if (!generating) return;
+    if (!generating || liveLogStream) return;
     // Also delay and call again to let the throttled writer persist the first batch.
     timer = setTimeout(fetchLog, LOG_PERSIST_THROTTLE_MS + 500);
     return () => {
       cancelled = true;
       if (timer) clearTimeout(timer);
     };
-  }, [hasLogRef, projectId, logStore, logKey, enabled, akvLoaded, generating]);
+  }, [
+    hasLogRef,
+    projectId,
+    logStore,
+    logKey,
+    enabled,
+    akvLoaded,
+    generating,
+    liveLogStream,
+  ]);
 
   // Subscribe to live events while generating.
   useEffect(() => {
     let sub: any;
+    let liveStream: any;
     let stopped = false;
     const flushBufferedLiveLog = () => {
       if (liveFlushTimerRef.current != null) {
@@ -217,9 +237,50 @@ export function useCodexLog({
       );
     };
     async function subscribe() {
-      if (!enabled || !generating || !logSubject) return;
+      if (!enabled || !generating || !projectId) return;
       try {
         const cn = webapp_client.conat_client.conat();
+        if (liveLogStream) {
+          liveStream = cn.sync.astream({
+            project_id: projectId,
+            name: liveLogStream,
+            ephemeral: true,
+          });
+          const initial: any[] = [];
+          for await (const { mesg, seq, time } of liveStream.getAll()) {
+            const evt =
+              getEventTime(mesg) == null
+                ? { ...mesg, seq: mesg?.seq ?? seq, time }
+                : mesg;
+            initial.push(evt);
+          }
+          if (!stopped && initial.length > 0) {
+            setLiveLog((prev) => mergeLogs(prev ?? [], initial));
+          }
+          sub = await liveStream.changefeed();
+          for await (const batch of sub) {
+            if (stopped) break;
+            let immediate = false;
+            for (const update of batch ?? []) {
+              if (update?.op !== "set" || update?.mesg == null) continue;
+              const evt =
+                getEventTime(update.mesg) == null
+                  ? {
+                      ...update.mesg,
+                      seq: update.mesg?.seq ?? update.seq,
+                      time: update.time,
+                    }
+                  : update.mesg;
+              liveBufferRef.current.push(evt);
+              if (evt.type === "summary" || evt.type === "error") {
+                immediate = true;
+              }
+            }
+            scheduleBufferedFlush(immediate);
+          }
+          return;
+        }
+        if (!logSubject) return;
         sub = await cn.subscribe(logSubject);
         for await (const mesg of sub) {
           if (stopped) break;
@@ -253,8 +314,13 @@ export function useCodexLog({
       } catch {
         // ignore
       }
+      try {
+        liveStream?.close?.();
+      } catch {
+        // ignore
+      }
     };
-  }, [enabled, generating, logSubject]);
+  }, [enabled, generating, projectId, liveLogStream, logSubject, mergeLogs]);
 
   const events = useMemo(() => {
     if (!hasLogRef) return generating ? liveLog : undefined;

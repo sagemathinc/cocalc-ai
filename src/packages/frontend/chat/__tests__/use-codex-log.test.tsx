@@ -49,14 +49,77 @@ class FakeSubscription {
   }
 }
 
+class FakeChangefeed {
+  private closed = false;
+  private queue: IteratorResult<any>[] = [];
+  private wake?: (value: IteratorResult<any>) => void;
+
+  close = jest.fn(() => {
+    this.closed = true;
+    if (this.wake != null) {
+      const wake = this.wake;
+      this.wake = undefined;
+      wake({ value: undefined, done: true });
+    }
+  });
+
+  push(data: any) {
+    const next = { value: data, done: false } as IteratorResult<any>;
+    if (this.wake != null) {
+      const wake = this.wake;
+      this.wake = undefined;
+      wake(next);
+      return;
+    }
+    this.queue.push(next);
+  }
+
+  async *[Symbol.asyncIterator]() {
+    while (!this.closed) {
+      const next =
+        this.queue.shift() ??
+        (await new Promise<IteratorResult<any>>((resolve) => {
+          this.wake = resolve;
+        }));
+      if (next.done) return;
+      yield next.value;
+    }
+  }
+}
+
+class FakeAstream {
+  constructor(
+    private readonly initial: Array<{
+      mesg: any;
+      seq: number;
+      time: number;
+    }> = [],
+    private readonly feed = new FakeChangefeed(),
+  ) {}
+
+  async *getAll() {
+    for (const item of this.initial) {
+      yield item;
+    }
+  }
+
+  changefeed = jest.fn(async () => this.feed);
+  close = jest.fn();
+  push(update: any) {
+    this.feed.push(update);
+  }
+}
+
 function TestComponent({
   generating,
   logKey = "log-key",
   logSubject = "subject-1",
+  liveLogStream,
 }: {
   generating: boolean;
   logKey?: string;
   logSubject?: string;
+  liveLogStream?: string;
 }) {
   const { events } = useCodexLog({
     enabled: true,
@@ -65,6 +128,7 @@ function TestComponent({
     logStore: "acp-log",
     logKey,
     logSubject,
+    liveLogStream,
   });
   return (
     <div data-testid="latest-event">
@@ -211,5 +275,57 @@ describe("useCodexLog", () => {
     await waitFor(() => {
       expect(screen.getByTestId("latest-event").textContent).toBe("Hello");
     });
+  });
+
+  it("loads live events from an ephemeral astream while generating", async () => {
+    jest.useFakeTimers();
+    const stream = new FakeAstream([
+      {
+        mesg: {
+          type: "event",
+          seq: 1,
+          event: { type: "message", text: "Hel" },
+        },
+        seq: 1,
+        time: 10,
+      },
+    ]);
+    const get = jest.fn().mockResolvedValue(null);
+    conatMock.mockReturnValue({
+      subscribe: jest.fn(),
+      sync: {
+        akv: () => ({ get }),
+        astream: () => stream,
+      },
+    });
+
+    render(<TestComponent generating={true} liveLogStream="live-stream-1" />);
+
+    await waitFor(() => {
+      expect(stream.changefeed).toHaveBeenCalled();
+    });
+
+    stream.push([
+      {
+        op: "set",
+        mesg: {
+          type: "event",
+          seq: 2,
+          event: { type: "message", text: "lo" },
+        },
+        seq: 2,
+        time: 20,
+      },
+    ]);
+
+    await act(async () => {
+      await Promise.resolve();
+      await jest.advanceTimersByTimeAsync(150);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("latest-event").textContent).toBe("Hello");
+    });
+    expect(get).not.toHaveBeenCalled();
   });
 });

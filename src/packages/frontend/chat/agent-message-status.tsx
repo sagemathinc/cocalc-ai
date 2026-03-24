@@ -45,6 +45,7 @@ type LogRefs = {
   store?: string;
   key?: string;
   subject?: string;
+  liveStream?: string;
 };
 
 export const STALE_ACTIVITY_MS = 2 * 60 * 1000;
@@ -418,6 +419,7 @@ export function AgentMessageStatus({
             logStore={logRefs.store}
             logKey={logRefs.key}
             logSubject={logRefs.subject}
+            liveLogStream={logRefs.liveStream}
             logProjectId={project_id}
             logEnabled={showDrawer}
             activityContext={activityContext}

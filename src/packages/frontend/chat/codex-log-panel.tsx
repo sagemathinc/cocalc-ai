@@ -20,6 +20,7 @@ interface Props {
   logStore?: string;
   logKey?: string;
   logSubject?: string;
+  liveLogStream?: string;
   logProjectId?: string;
   logEnabled?: boolean;
   activityContext?: ActivityLogContext;
@@ -46,6 +47,7 @@ export function CodexLogPanel({
   logStore,
   logKey,
   logSubject,
+  liveLogStream,
   logProjectId,
   logEnabled,
   activityContext,
@@ -65,6 +67,7 @@ export function CodexLogPanel({
     logStore,
     logKey,
     logSubject,
+    liveLogStream,
     generating: generating === true,
     enabled: logEnabled,
   });
