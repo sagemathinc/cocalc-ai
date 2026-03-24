@@ -91,14 +91,14 @@ export function useCodexLog({
       const combined = [...(a ?? []), ...b];
       if (combined.length === 0) return combined;
       const seen = new Map<number | string, any>();
+      const withoutSeq: any[] = [];
       for (const evt of combined) {
         const key =
           typeof evt?.seq === "number" || typeof evt?.seq === "string"
             ? evt.seq
             : undefined;
         if (key === undefined) {
-          // no seq — append with synthetic key
-          seen.set(`no-seq-${seen.size}`, evt);
+          withoutSeq.push(evt);
           continue;
         }
         const prev = seen.get(key);
@@ -106,6 +106,8 @@ export function useCodexLog({
           seen.set(key, evt);
         } else if (getEventTime(prev) == null && getEventTime(evt) != null) {
           seen.set(key, { ...prev, time: getEventTime(evt) });
+        } else {
+          seen.set(key, evt);
         }
       }
       const ordered = Array.from(seen.values());
@@ -117,7 +119,11 @@ export function useCodexLog({
           return sx.localeCompare(sy);
         return 0;
       });
-      return ordered;
+      let normalized = withoutSeq.slice();
+      for (const evt of ordered) {
+        normalized = appendStreamMessage(normalized, evt);
+      }
+      return normalized;
     };
   }, []);
 

@@ -289,6 +289,15 @@ describe("useCodexLog", () => {
         seq: 1,
         time: 10,
       },
+      {
+        mesg: {
+          type: "event",
+          seq: 2,
+          event: { type: "message", text: "lo" },
+        },
+        seq: 2,
+        time: 20,
+      },
     ]);
     const get = jest.fn().mockResolvedValue(null);
     conatMock.mockReturnValue({
@@ -299,10 +308,20 @@ describe("useCodexLog", () => {
       },
     });
 
-    render(<TestComponent generating={true} liveLogStream="live-stream-1" />);
+    render(
+      <TestComponent
+        generating={true}
+        logKey="log-key-live-astream"
+        liveLogStream="live-stream-1"
+      />,
+    );
 
     await waitFor(() => {
       expect(stream.changefeed).toHaveBeenCalled();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("latest-event").textContent).toBe("Hello");
     });
 
     stream.push([
@@ -310,11 +329,11 @@ describe("useCodexLog", () => {
         op: "set",
         mesg: {
           type: "event",
-          seq: 2,
-          event: { type: "message", text: "lo" },
+          seq: 3,
+          event: { type: "message", text: "!" },
         },
-        seq: 2,
-        time: 20,
+        seq: 3,
+        time: 30,
       },
     ]);
 
@@ -324,7 +343,7 @@ describe("useCodexLog", () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByTestId("latest-event").textContent).toBe("Hello");
+      expect(screen.getByTestId("latest-event").textContent).toBe("Hello!");
     });
     expect(get).not.toHaveBeenCalled();
   });
