@@ -3,9 +3,8 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Alert, Button, Input, Modal, Space } from "antd";
-import { useEffect, useMemo, useRef, useState } from "react";
-import type { KeyboardEvent } from "react";
+import { Alert, Button, Modal, Space } from "antd";
+import { useEffect, useMemo, useState } from "react";
 import { useIntl } from "react-intl";
 
 import { labels } from "@cocalc/frontend/i18n";
@@ -15,6 +14,7 @@ import AIAvatar from "@cocalc/frontend/components/ai-avatar";
 import { Icon } from "@cocalc/frontend/components/icon";
 import { useFrameContext } from "@cocalc/frontend/app-framework";
 import type { NotebookFrameActions } from "@cocalc/frontend/frame-editors/jupyter-editor/cell-notebook/actions";
+import { PopupAgentComposer } from "@cocalc/frontend/frame-editors/llm/popup-agent-composer";
 import track from "@cocalc/frontend/user-tracking";
 import type { JupyterActions } from "../browser-actions";
 import type { Position } from "./types";
@@ -89,10 +89,6 @@ export function buildGenerateCellHiddenPrompt(opts: {
   return parts.join("\n\n");
 }
 
-function stopKeyboardPropagation(e: KeyboardEvent<HTMLElement>): void {
-  e.stopPropagation();
-}
-
 export function AIGenerateCodeCell({
   actions,
   children,
@@ -102,7 +98,6 @@ export function AIGenerateCodeCell({
   showAICellGen,
 }: AIGenerateCodeCellProps) {
   const intl = useIntl();
-  const promptRef = useRef<any>(null);
   const { actions: projectActions } = useProjectContext();
   const { project_id, path } = useFrameContext();
   const [prompt, setPrompt] = useState("");
@@ -135,21 +130,21 @@ export function AIGenerateCodeCell({
       return;
     }
     setError("");
-    setTimeout(() => promptRef.current?.focus?.(), 10);
   }, [open]);
 
-  async function submit(): Promise<void> {
-    if (showAICellGen == null || !canSubmit) return;
+  async function submit(nextPrompt?: string): Promise<void> {
+    const effectivePrompt = `${nextPrompt ?? prompt}`.trim();
+    if (showAICellGen == null || !effectivePrompt || querying) return;
     setQuerying(true);
     setError("");
     try {
       const visiblePrompt = buildGenerateCellVisiblePrompt({
-        prompt,
+        prompt: effectivePrompt,
         position: showAICellGen,
         anchorCellType,
       });
       const hiddenPrompt = buildGenerateCellHiddenPrompt({
-        prompt,
+        prompt: effectivePrompt,
         path,
         cellId: id,
         anchorCellType,
@@ -220,23 +215,13 @@ export function AIGenerateCodeCell({
           <div style={{ color: "rgba(0,0,0,0.65)" }}>
             Target: generate new cells {placement}.
           </div>
-          <Input.TextArea
-            ref={promptRef}
+          <PopupAgentComposer
             value={prompt}
-            disabled={querying}
-            autoFocus
-            allowClear
+            onChange={setPrompt}
+            onSubmit={(value) => void submit(value)}
             placeholder="Describe the cells you want Agent to generate..."
-            onChange={(e) => setPrompt(e.target.value)}
-            onKeyDown={stopKeyboardPropagation}
-            onPressEnter={(e) => {
-              if (e.shiftKey) {
-                e.preventDefault();
-                e.stopPropagation();
-                void submit();
-              }
-            }}
-            autoSize={{ minRows: 3, maxRows: 8 }}
+            cacheId={`popup-agent:jupyter-generate:${path}:${id}:${showAICellGen ?? "none"}`}
+            autoFocus
           />
           {error ? <Alert type="error" title={error} /> : null}
           <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>

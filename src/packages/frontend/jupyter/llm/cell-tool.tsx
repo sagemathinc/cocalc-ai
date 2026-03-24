@@ -13,6 +13,7 @@ import AIAvatar from "@cocalc/frontend/components/ai-avatar";
 import { Icon, type IconName } from "@cocalc/frontend/components/icon";
 import { useFrameContext } from "@cocalc/frontend/frame-editors/frame-tree/frame-context";
 import { labels, type IntlMessage } from "@cocalc/frontend/i18n";
+import { PopupAgentComposer } from "@cocalc/frontend/frame-editors/llm/popup-agent-composer";
 import track from "@cocalc/frontend/user-tracking";
 import type { LLMTools } from "@cocalc/jupyter/types";
 import type { JupyterActions } from "../browser-actions";
@@ -479,15 +480,28 @@ export function LLMCellTool({ actions, id, style, llmTools, cellType }: Props) {
 
   const actionMap = isMarkdownCell ? ACTIONS_MD : ACTIONS_CODE;
 
-  async function submit(): Promise<void> {
-    if (mode == null || !canSubmit) return;
+  async function submit(nextExtraPrompt?: string): Promise<void> {
+    if (mode == null) return;
+    const effectiveExtra =
+      nextExtraPrompt != null ? nextExtraPrompt : extraPrompt;
+    const effectiveCanSubmit = (() => {
+      if (querying) return false;
+      if (requiresFreeformInput(mode)) {
+        return effectiveExtra.trim().length > 0;
+      }
+      if (mode === "translate" || mode === "translate_text") {
+        return targetLanguage.trim().length > 0;
+      }
+      return true;
+    })();
+    if (!effectiveCanSubmit) return;
     setQuerying(true);
     setError("");
     try {
       const visiblePrompt = buildVisiblePrompt({
         mode,
         cellType,
-        extra: extraPrompt,
+        extra: effectiveExtra,
         targetLanguage,
       });
       const prompt = buildHiddenPrompt({
@@ -497,7 +511,7 @@ export function LLMCellTool({ actions, id, style, llmTools, cellType }: Props) {
         cellType,
         kernelLanguage,
         kernelDisplay,
-        extra: extraPrompt,
+        extra: effectiveExtra,
         targetLanguage,
       });
       const title = `${intl.formatMessage(actionLabel(mode, isMarkdownCell))} cell`;
@@ -556,12 +570,12 @@ export function LLMCellTool({ actions, id, style, llmTools, cellType }: Props) {
         {needsText ? (
           <div>
             <div style={{ marginBottom: 8, fontWeight: 500 }}>{label}</div>
-            <Input.TextArea
+            <PopupAgentComposer
               value={extraPrompt}
-              onChange={(e) => setExtraPrompt(e.target.value)}
-              onKeyDown={stopKeyboardPropagation}
-              rows={3}
+              onChange={setExtraPrompt}
+              onSubmit={(value) => void submit(value)}
               placeholder={placeholder}
+              cacheId={`popup-agent:jupyter-cell:${path}:${id}:${mode}`}
               autoFocus
             />
           </div>

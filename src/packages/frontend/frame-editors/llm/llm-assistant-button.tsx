@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Alert, Button, Input, Modal, Select, Space } from "antd";
+import { Alert, Button, Modal, Select, Space } from "antd";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useIntl } from "react-intl";
 
@@ -20,6 +20,7 @@ import {
   Options,
   resolveAssistantCodexModel,
 } from "./create-chat";
+import { PopupAgentComposer } from "./popup-agent-composer";
 
 const TITLE_BAR_CODEX_LABEL = "Codex";
 
@@ -53,7 +54,6 @@ export default function LanguageModelTitleBarButton({
   noLabel,
 }: Props) {
   const intl = useIntl();
-  const inputRef = useRef<any>(null);
   const submittingRef = useRef(false);
   const [error, setError] = useState<string>("");
   const [querying, setQuerying] = useState<boolean>(false);
@@ -89,7 +89,6 @@ export default function LanguageModelTitleBarButton({
     setError("");
     setCommand(LS.get(promptLsKey) ?? "");
     setModel(LS.get(modelLsKey) ?? DEFAULT_ASSISTANT_CODEX_MODEL);
-    setTimeout(() => inputRef.current?.focus?.(), 10);
   }, [showDialog]);
 
   useEffect(() => {
@@ -129,15 +128,16 @@ export default function LanguageModelTitleBarButton({
     }
   }
 
-  async function doIt() {
-    if (!canSubmit || submittingRef.current) {
+  async function doIt(nextCommand?: string) {
+    const resolvedCommand = `${nextCommand ?? command}`.trim();
+    if (!resolvedCommand || querying || submittingRef.current) {
       return;
     }
     submittingRef.current = true;
     try {
       closeDialog();
       await queryLLM({
-        command: command.trim(),
+        command: resolvedCommand,
         codegen: false,
         allowEmpty: true,
         model,
@@ -201,25 +201,16 @@ export default function LanguageModelTitleBarButton({
                 : item.name,
             }))}
           />
-          <Input.TextArea
-            ref={inputRef}
+          <PopupAgentComposer
             value={command}
-            disabled={querying}
-            autoFocus
-            allowClear
+            onChange={setCommand}
+            onSubmit={(value) => void doIt(value)}
             placeholder="What should Codex do..."
-            onChange={(e) => setCommand(e.target.value)}
-            onPressEnter={(e) => {
-              if (e.shiftKey) {
-                e.preventDefault();
-                e.stopPropagation();
-                void doIt();
-              }
-            }}
-            autoSize={{ minRows: 3, maxRows: 8 }}
+            cacheId={`popup-agent:${project_id}:${path}:${type}`}
+            autoFocus
           />
           <div style={{ color: COLORS.GRAY_D }}>
-            Codex will continue the work in the floating workspace agent thread.
+            Codex will continue the work in the workspace agent thread.
           </div>
           {error ? <Alert type="error" title={error} /> : undefined}
           <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
