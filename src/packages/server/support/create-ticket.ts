@@ -26,6 +26,10 @@ interface Options {
   };
 }
 
+export function ticketResultToUserURL(ticketResult: any): string {
+  return urlToUserURL(ticketResult?.result?.url ?? ticketResult?.url);
+}
+
 export default async function createTicket(options: Options): Promise<string> {
   log.debug("createTicket", options);
   const client = await getClient();
@@ -75,8 +79,7 @@ export default async function createTicket(options: Options): Promise<string> {
 
   const ticketResult = await client.tickets.create(ticket);
   log.debug("got ", { ticketResult });
-  // @ts-ignore:  @types/node-zendesk is wrong about fields in ticketResult.
-  return urlToUserURL(ticketResult.url);
+  return ticketResultToUserURL(ticketResult);
 }
 
 async function toURL({
