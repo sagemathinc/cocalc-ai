@@ -3,7 +3,6 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { dirname, join } from "path";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
@@ -31,10 +30,7 @@ import {
   setProjectRootfsImage,
   useRootfsImages,
 } from "@cocalc/frontend/rootfs/manifest";
-import {
-  DEFAULT_PROJECT_IMAGE,
-  PROJECT_IMAGE_PATH,
-} from "@cocalc/util/db-schema/defaults";
+import { DEFAULT_PROJECT_IMAGE } from "@cocalc/util/db-schema/defaults";
 import { split } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 import type {
@@ -67,7 +63,6 @@ export default function RootFilesystemImage() {
   const [rootfsMode, setRootfsMode] = useState<"catalog" | "custom">("catalog");
   const [rootfsDraft, setRootfsDraft] = useState<string>("");
   const [rootfsDraftId, setRootfsDraftId] = useState<string>("");
-  const [images, setImages] = useState<string[]>([DEFAULT_PROJECT_IMAGE]);
   const [catalogRefresh, setCatalogRefresh] = useState<number>(0);
   const [projectRootfsStates, setProjectRootfsStates] = useState<
     ProjectRootfsStateEntry[]
@@ -171,17 +166,6 @@ export default function RootFilesystemImage() {
   }, [effectiveDefaultRootfs, project]);
 
   useEffect(() => {
-    if (project == null) return;
-    (async () => {
-      try {
-        setImages(await getImages(project.get("project_id")));
-      } catch {
-        // ignore recent image listing failures
-      }
-    })();
-  }, [project?.get("project_id")]);
-
-  useEffect(() => {
     let active = true;
     (async () => {
       try {
@@ -231,21 +215,18 @@ export default function RootFilesystemImage() {
     setOpen(true);
   }
 
-  function openPublishDialog() {
-    const currentImage =
-      rootfsMode === "custom"
-        ? rootfsDraft.trim() || value || effectiveDefaultRootfs
-        : draftRootfsEntry?.image || value || effectiveDefaultRootfs;
-    const currentEntry =
-      (rootfsMode === "catalog" ? draftRootfsEntry : undefined) ??
-      selectedRootfsEntry;
-    const defaultMode =
-      currentEntry?.section === "mine" && currentEntry?.can_manage
-        ? "manage"
-        : "copy";
+  function openPublishDialog(opts?: {
+    image?: string;
+    entry?: RootfsImageEntry;
+    publishMode?: "copy" | "manage";
+    copyMode?: "project" | "base";
+  }) {
+    const currentImage = opts?.image?.trim() || value || effectiveDefaultRootfs;
+    const currentEntry = opts?.entry ?? selectedRootfsEntry;
+    const defaultMode = opts?.publishMode ?? "copy";
     setPublishSourceEntry(currentEntry);
     setPublishMode(defaultMode);
-    setPublishCopyMode("project");
+    setPublishCopyMode(opts?.copyMode ?? "project");
     setPublishDraft({
       image: currentImage,
       label:
@@ -363,9 +344,55 @@ export default function RootFilesystemImage() {
   return (
     <div style={{ marginTop: "-4px", marginLeft: "-10px" }}>
       <RootfsPublishOps project_id={project_id} />
-      <Button type="link" disabled={open} onClick={openPicker}>
-        <code>{selectedRootfsEntry?.label || value}</code>
-      </Button>
+      <div style={{ marginLeft: "15px" }}>
+        <Paragraph style={{ marginBottom: "6px" }}>
+          <strong>{selectedRootfsEntry?.label || value}</strong>
+        </Paragraph>
+        <Space wrap style={{ marginBottom: "6px" }}>
+          {selectedRootfsEntry?.section && (
+            <Tag color={sectionTagColor(selectedRootfsEntry.section)}>
+              {sectionLabel(selectedRootfsEntry.section)}
+            </Tag>
+          )}
+          {selectedRootfsEntry?.version && (
+            <Tag>{selectedRootfsEntry.version}</Tag>
+          )}
+          {selectedRootfsEntry?.channel && (
+            <Tag color="cyan">{selectedRootfsEntry.channel}</Tag>
+          )}
+          {selectedRootfsEntry?.gpu && <Tag color="purple">GPU image</Tag>}
+        </Space>
+        <code style={{ fontSize: "11px", overflowWrap: "anywhere" }}>
+          {value || effectiveDefaultRootfs}
+        </code>
+        <Paragraph
+          type="secondary"
+          style={{ marginTop: "8px", marginBottom: 0 }}
+        >
+          Publishing captures the current visible <code>/</code> software
+          environment into a reusable managed image. It does not automatically
+          switch this project.
+        </Paragraph>
+        <Space wrap style={{ marginTop: "10px" }}>
+          <Button
+            type="primary"
+            disabled={open}
+            onClick={() =>
+              openPublishDialog({
+                image: value || effectiveDefaultRootfs,
+                entry: selectedRootfsEntry,
+                publishMode: "copy",
+                copyMode: "project",
+              })
+            }
+          >
+            Publish current RootFS...
+          </Button>
+          <Button disabled={open} onClick={openPicker}>
+            Change / upgrade image...
+          </Button>
+        </Space>
+      </div>
       {(currentProjectRootfsState || previousProjectRootfsState) && (
         <div style={{ marginLeft: "15px", color: "#666" }}>
           {currentProjectRootfsState && (
@@ -399,7 +426,7 @@ export default function RootFilesystemImage() {
           title={
             <>
               <Icon name="docker" style={{ marginRight: "15px" }} />
-              Root Filesystem Image{" "}
+              Change / Upgrade RootFS Image{" "}
               {saving && (
                 <>
                   Saving...
@@ -416,7 +443,23 @@ export default function RootFilesystemImage() {
             </>
           }
           onOk={applyRootfsChange}
+          okText="Switch image"
         >
+          <Alert
+            type="warning"
+            showIcon
+            message="Changing the image switches the visible / environment"
+            description={
+              <>
+                Most projects should stay on their current image. Use this when
+                upgrading to a newer release, rolling back, or deliberately
+                moving to a different software environment. Switching back later
+                restores the previous per-image <code>/</code> customizations;
+                <code> /root</code> and <code>/scratch</code> remain available.
+              </>
+            }
+            style={{ marginBottom: "12px" }}
+          />
           {help && (
             <div style={{ color: "#666", marginBottom: "8px" }}>
               <p>
@@ -550,44 +593,6 @@ export default function RootFilesystemImage() {
                 Catalog load issue: {rootfsError}
               </Paragraph>
             )}
-
-            <Space wrap>
-              <Button onClick={openPublishDialog}>
-                {publishActionLabel(draftRootfsEntry ?? selectedRootfsEntry)}
-              </Button>
-              {(rootfsDraft || value) && (
-                <code style={{ fontSize: "11px", overflowWrap: "anywhere" }}>
-                  {(rootfsMode === "custom"
-                    ? rootfsDraft
-                    : draftRootfsEntry?.image || rootfsDraft || value
-                  ).trim() || effectiveDefaultRootfs}
-                </code>
-              )}
-            </Space>
-
-            <div style={{ marginTop: "15px" }}>
-              <div style={{ marginBottom: "8px" }}>Recent Images:</div>
-              {images.map((image) => (
-                <Tag
-                  style={{
-                    cursor: "pointer",
-                    marginBottom: "8px",
-                    padding: "6px",
-                    fontSize: "11pt",
-                  }}
-                  color={image == value ? "#108ee9" : undefined}
-                  key={image}
-                  onClick={() => {
-                    setRootfsDraft(image);
-                    setRootfsDraftId("");
-                    setRootfsMode("custom");
-                  }}
-                >
-                  {image}
-                  {image == DEFAULT_PROJECT_IMAGE ? " (default)" : ""}
-                </Tag>
-              ))}
-            </div>
           </Space>
           <ShowError error={error} setError={setError} />
         </Modal>
@@ -603,18 +608,54 @@ export default function RootFilesystemImage() {
             publishMode === "manage"
               ? "Manage RootFS Catalog Entry"
               : publishCopyMode === "project"
-                ? "Publish Project RootFS"
+                ? "Publish Current RootFS"
                 : "Save RootFS to My Images"
           }
         >
           <Space direction="vertical" size="middle" style={{ width: "100%" }}>
-            <Paragraph type="secondary" style={{ marginBottom: 0 }}>
-              {publishMode === "manage"
-                ? "Update catalog metadata for the currently selected RootFS entry."
-                : publishCopyMode === "project"
-                  ? "Create a managed RootFS image from the current project state. This uses a fresh safety snapshot and publishes the effective merged root filesystem."
-                  : "Create your own catalog entry for the current base image so it appears under My images."}
-            </Paragraph>
+            {publishMode === "manage" ? (
+              <Paragraph type="secondary" style={{ marginBottom: 0 }}>
+                Update catalog metadata for the currently selected RootFS entry.
+              </Paragraph>
+            ) : publishCopyMode === "project" ? (
+              <Alert
+                type="info"
+                showIcon
+                message="What this publishes"
+                description={
+                  <ul style={{ margin: 0, paddingLeft: "18px" }}>
+                    <li>
+                      The current visible <code>/</code> software environment
+                    </li>
+                    <li>
+                      A new immutable managed RootFS image built from a safety
+                      snapshot of this project
+                    </li>
+                    <li>
+                      Not <code>/root</code>, <code>/scratch</code>, or other
+                      project data outside the RootFS layer
+                    </li>
+                    <li>
+                      This project is not switched automatically to the newly
+                      published image
+                    </li>
+                  </ul>
+                }
+              />
+            ) : (
+              <Alert
+                type="info"
+                showIcon
+                message="Save current base image only"
+                description={
+                  <>
+                    This does not publish the current project state. It only
+                    saves catalog metadata for the current base image so it can
+                    appear under My images.
+                  </>
+                }
+              />
+            )}
             {publishSourceEntry?.can_manage && (
               <Checkbox
                 checked={publishMode === "manage"}
@@ -737,30 +778,6 @@ export default function RootFilesystemImage() {
 function getImage(project, fallback: string) {
   const image = project?.get("rootfs_image")?.trim();
   return image ? image : fallback;
-}
-
-async function getImages(project_id: string) {
-  const fs = redux.getProjectActions(project_id).fs();
-  const { stdout } = await fs.fd(join(PROJECT_IMAGE_PATH, "0"), {
-    options: ["-E", "workdir", "-E", "upperdir"],
-  });
-  const v = Buffer.from(stdout)
-    .toString()
-    .split("\n")
-    .map((x) => x.slice(0, -1))
-    .filter((x) => x);
-  const X = new Set(v);
-  X.add(DEFAULT_PROJECT_IMAGE);
-  const notLeaf = new Set<string>();
-  for (const w of X) {
-    notLeaf.add(dirname(w));
-  }
-  const w: string[] = [];
-  for (const y of X) {
-    if (notLeaf.has(y)) continue;
-    w.push(y);
-  }
-  return w;
 }
 
 async function setRootFilesystemImage({
@@ -938,13 +955,6 @@ function renderRootfsCatalogOption(entry: RootfsImageEntry) {
       ) : null}
     </div>
   );
-}
-
-function publishActionLabel(entry?: RootfsImageEntry): string {
-  if (entry?.section === "mine" && entry.can_manage) {
-    return "Manage Catalog…";
-  }
-  return "Save to My Images…";
 }
 
 function renderRootfsWarning(
