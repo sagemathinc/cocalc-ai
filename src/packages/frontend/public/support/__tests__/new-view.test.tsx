@@ -1,8 +1,13 @@
 /** @jest-environment jsdom */
 
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 
+import api from "@cocalc/frontend/client/api";
 import SupportNew from "../new-view";
+
+jest.mock("@cocalc/frontend/client/api", () => jest.fn());
+
+const mockedApi = api as jest.Mock;
 
 describe("SupportNew", () => {
   beforeEach(() => {
@@ -12,6 +17,7 @@ describe("SupportNew", () => {
       unobserve() {}
       disconnect() {}
     };
+    mockedApi.mockReset();
   });
 
   it("renders a richer zendesk-backed support form", () => {
@@ -53,6 +59,48 @@ describe("SupportNew", () => {
     expect(screen.getByDisplayValue("Need pricing")).not.toBeNull();
     expect(
       screen.getByDisplayValue("Tell me more about pricing"),
+    ).not.toBeNull();
+  });
+
+  it("shows a success alert after creating a ticket", async () => {
+    mockedApi.mockResolvedValue({
+      url: "https://example.zendesk.com/requests/123",
+    });
+
+    render(
+      <SupportNew
+        config={{ site_name: "Launchpad", zendesk: true }}
+        onNavigate={jest.fn()}
+      />,
+    );
+
+    fireEvent.change(screen.getByPlaceholderText("Email address..."), {
+      target: { value: "user@example.com" },
+    });
+    fireEvent.change(
+      screen.getByPlaceholderText("Summarize what this is about..."),
+      {
+        target: { value: "Notebook problem" },
+      },
+    );
+    fireEvent.change(
+      screen.getByPlaceholderText(
+        "Describe exactly what you did before the problem happened.",
+      ),
+      {
+        target: { value: "I opened a notebook and hit run several times." },
+      },
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Create support ticket" }),
+    );
+
+    expect(
+      await screen.findByText("Successfully created support ticket"),
+    ).not.toBeNull();
+    expect(
+      screen.getByText("https://example.zendesk.com/requests/123"),
     ).not.toBeNull();
   });
 });

@@ -4,7 +4,7 @@
  */
 
 import type { ReactNode } from "react";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { Alert, Button, Divider, Input, Radio, Space, Typography } from "antd";
 
@@ -401,6 +401,7 @@ export default function SupportNew({
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState("");
   const [successUrl, setSuccessUrl] = useState("");
+  const feedbackRef = useRef<HTMLDivElement | null>(null);
 
   const hasRequired = !initial.required || !body.includes(initial.required);
   const canSubmit =
@@ -459,6 +460,19 @@ export default function SupportNew({
     }
   }
 
+  useEffect(() => {
+    if (!submitError && !successUrl) {
+      return;
+    }
+    if (typeof feedbackRef.current?.scrollIntoView !== "function") {
+      return;
+    }
+    feedbackRef.current.scrollIntoView({
+      behavior: "smooth",
+      block: "center",
+    });
+  }, [submitError, successUrl]);
+
   return (
     <Space direction="vertical" size="large" style={{ width: "100%" }}>
       {!initial.hideExtra ? (
@@ -501,13 +515,8 @@ export default function SupportNew({
                     <a href="https://doc.cocalc.com/">The CoCalc Manual</a>
                   </li>
                   <li>
-                    <a href="https://github.com/sagemathinc/cocalc/issues">
+                    <a href="https://github.com/sagemathinc/cocalc-ai/issues">
                       Bug reports
-                    </a>
-                  </li>
-                  <li>
-                    <a href="https://github.com/sagemathinc/cocalc/discussions">
-                      Discussion forum
                     </a>
                   </li>
                 </ul>
@@ -515,45 +524,6 @@ export default function SupportNew({
             />
           </Space>
         </PublicSectionCard>
-      ) : null}
-
-      {submitError ? (
-        <Alert
-          closable
-          showIcon
-          type="error"
-          message="Error creating support ticket"
-          description={submitError}
-          onClose={() => setSubmitError("")}
-        />
-      ) : null}
-
-      {successUrl ? (
-        <Alert
-          closable
-          showIcon
-          type="success"
-          message="Successfully created support ticket"
-          description={
-            <Space direction="vertical" size="small">
-              <div>
-                Please save this URL: <a href={successUrl}>{successUrl}</a>
-              </div>
-              <div>
-                You can also{" "}
-                <a
-                  onClick={(e) => {
-                    e.preventDefault();
-                    onNavigate("tickets");
-                  }}
-                >
-                  check the status of your support tickets
-                </a>
-                .
-              </div>
-            </Space>
-          }
-        />
       ) : null}
 
       <PublicSectionCard>
@@ -672,6 +642,48 @@ export default function SupportNew({
                 type,
               })}
             </Button>
+          </div>
+
+          <div ref={feedbackRef}>
+            {submitError ? (
+              <Alert
+                closable
+                showIcon
+                type="error"
+                message="Error creating support ticket"
+                description={submitError}
+                onClose={() => setSubmitError("")}
+              />
+            ) : null}
+
+            {successUrl ? (
+              <Alert
+                closable
+                showIcon
+                type="success"
+                message="Successfully created support ticket"
+                description={
+                  <Space direction="vertical" size="small">
+                    <div>
+                      Please save this URL:{" "}
+                      <a href={successUrl}>{successUrl}</a>
+                    </div>
+                    <div>
+                      You can also{" "}
+                      <a
+                        onClick={(e) => {
+                          e.preventDefault();
+                          onNavigate("tickets");
+                        }}
+                      >
+                        check the status of your support tickets
+                      </a>
+                      .
+                    </div>
+                  </Space>
+                }
+              />
+            ) : null}
           </div>
         </Space>
       </PublicSectionCard>
