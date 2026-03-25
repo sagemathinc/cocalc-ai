@@ -37,6 +37,7 @@ export function PublicPageRoot({ children, width }: PublicPageRootProps) {
           colorPrimary: COLORS.BLUE_D,
           colorText: COLORS.GRAY_D,
           colorTextSecondary: COLORS.GRAY_M,
+          fontSize: 16,
         },
       }}
     >
