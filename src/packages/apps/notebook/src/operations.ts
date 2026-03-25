@@ -235,10 +235,11 @@ export function moveNotebookCell(
 }
 
 export function normalizeNotebookCellRows(rows: unknown): NotebookCellRecord[] {
-  if (!Array.isArray(rows)) {
+  const plainRows = toPlainRows(rows);
+  if (!Array.isArray(plainRows)) {
     return [];
   }
-  const cells = rows
+  const cells = plainRows
     .map((row) => toPlainValue(row))
     .filter((row): row is NotebookCellRecord => row?.type === "cell")
     .map((row, index) => normalizeNotebookCellRow(row, index));
@@ -270,6 +271,17 @@ function toPlainValue(value: any): any {
     return value.toJS();
   }
   return value;
+}
+
+function toPlainRows(rows: unknown): unknown[] | undefined {
+  const value = toPlainValue(rows);
+  if (Array.isArray(value)) {
+    return value;
+  }
+  if (value != null && typeof value === "object") {
+    return Object.values(value as Record<string, unknown>);
+  }
+  return undefined;
 }
 
 function compareNotebookCells(

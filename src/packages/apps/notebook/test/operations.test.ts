@@ -57,6 +57,21 @@ test("normalizeNotebookCellRows sorts rows by pos", () => {
   );
 });
 
+test("normalizeNotebookCellRows accepts immutable-style rows with toJS", () => {
+  const cells = normalizeNotebookCellRows({
+    toJS() {
+      return [
+        { type: "cell", id: "b", pos: 2, input: "2" },
+        { type: "cell", id: "a", pos: 1, input: "1" },
+      ];
+    },
+  });
+  assert.deepEqual(
+    cells.map((cell) => cell.id),
+    ["a", "b"],
+  );
+});
+
 test("moveNotebookCell reorders a cell before the requested anchor", () => {
   const snapshot = createNotebookSnapshot([
     { type: "cell", id: "a", pos: 0, input: "x=1", cell_type: "code" },
