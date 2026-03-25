@@ -4,8 +4,9 @@
  */
 
 import type { CSSProperties, ReactNode } from "react";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
+import { Button } from "antd";
 import api from "@cocalc/frontend/client/api";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { PublicSectionCard } from "@cocalc/frontend/public/ui/shell";
@@ -159,63 +160,104 @@ function formatDate(value?: string): string {
 export default function SupportTickets({ config }: { config: SupportConfig }) {
   const [tickets, setTickets] = useState<SupportTicket[] | null>(null);
   const [error, setError] = useState("");
+  const [refreshing, setRefreshing] = useState(false);
 
-  useEffect(() => {
-    let canceled = false;
-    (async () => {
+  const loadTickets = useCallback(
+    async (canceledRef?: { current: boolean }) => {
       try {
+        setRefreshing(true);
+        setError("");
         const result = await api("support/tickets");
-        if (canceled) {
+        if (canceledRef?.current) {
           return;
         }
         if (result?.error) {
           setError(result.error);
+          setTickets([]);
           return;
         }
         setTickets(result?.tickets ?? []);
       } catch (err) {
-        if (!canceled) {
+        if (!canceledRef?.current) {
           setError(`${err}`);
+          setTickets([]);
+        }
+      } finally {
+        if (!canceledRef?.current) {
+          setRefreshing(false);
         }
       }
-    })();
+    },
+    [],
+  );
+
+  useEffect(() => {
+    const canceled = { current: false };
+    void loadTickets(canceled);
     return () => {
-      canceled = true;
+      canceled.current = true;
     };
-  }, []);
+  }, [loadTickets]);
 
   if (!config.zendesk) {
     return <Alert kind="error">Support tickets are not configured.</Alert>;
   }
 
+  const refreshButton = (
+    <div
+      style={{
+        display: "flex",
+        justifyContent: "flex-end",
+      }}
+    >
+      <Button loading={refreshing} onClick={() => void loadTickets()}>
+        Refresh
+      </Button>
+    </div>
+  );
+
   if (error) {
     const signInTarget = `${joinUrlPath(appBasePath, "auth/sign-in")}?target=${encodeURIComponent(window.location.pathname)}`;
     return (
-      <Alert kind="error">
-        {error}
-        {error.includes("must be signed in") ? (
-          <>
-            {" "}
-            <a href={signInTarget} style={LINK_STYLE}>
-              Sign in
-            </a>{" "}
-            to see your tickets.
-          </>
-        ) : null}
-      </Alert>
+      <div style={STACK_STYLE}>
+        {refreshButton}
+        <Alert kind="error">
+          {error}
+          {error.includes("must be signed in") ? (
+            <>
+              {" "}
+              <a href={signInTarget} style={LINK_STYLE}>
+                Sign in
+              </a>{" "}
+              to see your tickets.
+            </>
+          ) : null}
+        </Alert>
+      </div>
     );
   }
 
   if (tickets == null) {
-    return <Alert kind="info">Loading support tickets...</Alert>;
+    return (
+      <div style={STACK_STYLE}>
+        {refreshButton}
+        <Alert kind="info">Loading support tickets...</Alert>
+      </div>
+    );
   }
 
   if (tickets.length === 0) {
-    return <Alert kind="info">No support tickets found yet.</Alert>;
+    return (
+      <div style={STACK_STYLE}>
+        {refreshButton}
+        <Alert kind="info">No support tickets found yet.</Alert>
+      </div>
+    );
   }
 
   return (
     <div style={STACK_STYLE}>
+      {refreshButton}
       {tickets.map((ticket, i) => (
         <PublicSectionCard key={`${ticket.id ?? i}`}>
           <div

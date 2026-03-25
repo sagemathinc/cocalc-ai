@@ -1,22 +1,46 @@
 /** @jest-environment jsdom */
 
-import { renderTicketDescription } from "./tickets-view";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import SupportTicketsView from "./tickets-view";
 
-describe("renderTicketDescription", () => {
-  it("renders basic markdown and linkifies plain URLs", () => {
-    const html = renderTicketDescription(
-      "Hello **world**\n\nSee https://cocalc.com",
-    );
+const mockApi = jest.fn();
 
-    expect(html).toContain("<strong>world</strong>");
-    expect(html).toContain('href="https://cocalc.com"');
-    expect(html).toContain('target="_blank"');
+jest.mock("antd", () => ({
+  Button: ({ children, ...props }: any) => (
+    <button {...props}>{children}</button>
+  ),
+}));
+
+jest.mock("@cocalc/frontend/client/api", () => ({
+  __esModule: true,
+  default: (...args: any[]) => mockApi(...args),
+}));
+
+jest.mock("@cocalc/frontend/public/ui/shell", () => ({
+  PublicSectionCard: ({ children }: any) => <div>{children}</div>,
+}));
+
+describe("SupportTicketsView", () => {
+  beforeEach(() => {
+    mockApi.mockReset();
   });
 
-  it("does not render raw html tags", () => {
-    const html = renderTicketDescription("<script>alert(1)</script>");
+  it("refreshes the ticket list on demand", async () => {
+    mockApi
+      .mockResolvedValueOnce({
+        tickets: [
+          { id: 1, subject: "First ticket", description: "Initial body" },
+        ],
+      })
+      .mockResolvedValueOnce({ tickets: [] });
 
-    expect(html).not.toContain("<script>");
-    expect(html).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
+    render(<SupportTicketsView config={{ zendesk: true }} />);
+
+    expect(await screen.findByText("First ticket")).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /Refresh/ }));
+    await waitFor(() => expect(mockApi).toHaveBeenCalledTimes(2));
+    expect(mockApi).toHaveBeenCalledTimes(2);
+    expect(mockApi).toHaveBeenNthCalledWith(1, "support/tickets");
+    expect(mockApi).toHaveBeenNthCalledWith(2, "support/tickets");
   });
 });

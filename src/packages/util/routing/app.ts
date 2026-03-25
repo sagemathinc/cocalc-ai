@@ -48,7 +48,7 @@ export function hasHostAbsoluteRoutePrefix(path?: string): boolean {
 }
 
 // Shared route markers for places that need to infer the app root from a live
-// browser pathname. Project subroutes are covered by "/projects/", so
+// browser pathname. Project subroutes are covered by the "/projects" prefix, so
 // project-internal pages such as "/projects/<id>/apps" and
 // "/projects/<id>/project-home" do not belong in APP_ROUTES and do not require
 // updates here. Auth is kept separate because it is routed through the SPA
