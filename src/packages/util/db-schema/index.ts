@@ -60,6 +60,7 @@ import "./project-backup-secrets";
 import "./project-collab-invites";
 import "./project-rootfs-states";
 import "./projects";
+import "./rootfs-image-events";
 import "./rootfs-images";
 import "./rootfs-release-artifacts";
 import "./rootfs-releases";
