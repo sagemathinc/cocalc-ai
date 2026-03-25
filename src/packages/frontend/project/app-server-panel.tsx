@@ -875,6 +875,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
   >(undefined);
   const [transferBusy, setTransferBusy] = useState<boolean>(false);
   const importInputRef = useRef<HTMLInputElement | null>(null);
+  const presetSelectorContainerRef = useRef<HTMLDivElement | null>(null);
   const [creatorOpen, setCreatorOpen] = useState<boolean>(false);
   const [creatorInitialized, setCreatorInitialized] = useState<boolean>(false);
   const [expandedRows, setExpandedRows] = useState<Record<string, boolean>>({});
@@ -1180,6 +1181,19 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
     setStaticRefreshOnHit(true);
     setStartNow(true);
     setOpenWhenReady(true);
+  }
+
+  function focusPresetSelector() {
+    setTimeout(() => {
+      presetSelectorContainerRef.current
+        ?.querySelector<HTMLInputElement>("input")
+        ?.focus();
+    }, 0);
+  }
+
+  function openCreator() {
+    setCreatorOpen(true);
+    focusPresetSelector();
   }
 
   function toggleRowExpanded(id: string) {
@@ -2067,7 +2081,15 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
             </Tag>
           </Space>
           <Space wrap>
-            <Button onClick={() => setCreatorOpen((open) => !open)}>
+            <Button
+              onClick={() => {
+                if (creatorOpen) {
+                  setCreatorOpen(false);
+                  return;
+                }
+                openCreator();
+              }}
+            >
               {creatorOpen ? "Hide new app form" : "New app"}
             </Button>
             <Button onClick={() => setSecurityOpen(true)}>Security?</Button>
@@ -2099,7 +2121,16 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
         size="small"
         title="Create a managed application"
         extra={
-          <Button type="link" onClick={() => setCreatorOpen((open) => !open)}>
+          <Button
+            type="link"
+            onClick={() => {
+              if (creatorOpen) {
+                setCreatorOpen(false);
+                return;
+              }
+              openCreator();
+            }}
+          >
             {creatorOpen ? "Collapse" : "Expand"}
           </Button>
         }
@@ -2125,43 +2156,53 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                   compact
                   onClick={() => {
                     applyPreset(preset.key);
-                    setCreatorOpen(true);
+                    openCreator();
                   }}
                 />
               ))}
             </div>
+            <Button
+              block
+              size="large"
+              onClick={() => openCreator()}
+              style={{ marginTop: "4px" }}
+            >
+              More...
+            </Button>
           </Space>
         ) : (
           <Space direction="vertical" style={{ width: "100%" }} size={10}>
-            <Select
-              value={presetKey || undefined}
-              placeholder="Preset (optional)"
-              allowClear
-              showSearch
-              optionFilterProp="label"
-              filterOption={(input, option) => {
-                const haystack = [option?.label, (option as any)?.searchText]
-                  .join(" ")
-                  .toLowerCase();
-                return haystack.includes(input.trim().toLowerCase());
-              }}
-              style={{ width: "100%", minWidth: "320px" }}
-              onClear={() => setPresetKey("")}
-              onChange={(value) => applyPreset(value)}
-              options={presets.map((preset) => ({
-                value: preset.key,
-                label: `${preset.label}${preset.category ? ` (${preset.category})` : ""}`,
-                searchText: [
-                  preset.label,
-                  preset.title,
-                  preset.category,
-                  preset.description,
-                  preset.homepage,
-                ]
-                  .filter(Boolean)
-                  .join(" "),
-              }))}
-            />
+            <div ref={presetSelectorContainerRef}>
+              <Select
+                value={presetKey || undefined}
+                placeholder="Preset (optional)"
+                allowClear
+                showSearch
+                optionFilterProp="label"
+                filterOption={(input, option) => {
+                  const haystack = [option?.label, (option as any)?.searchText]
+                    .join(" ")
+                    .toLowerCase();
+                  return haystack.includes(input.trim().toLowerCase());
+                }}
+                style={{ width: "100%", minWidth: "320px" }}
+                onClear={() => setPresetKey("")}
+                onChange={(value) => applyPreset(value)}
+                options={presets.map((preset) => ({
+                  value: preset.key,
+                  label: `${preset.label}${preset.description ? ` - ${preset.description}` : preset.category ? ` - ${preset.category}` : ""}`,
+                  searchText: [
+                    preset.label,
+                    preset.title,
+                    preset.category,
+                    preset.description,
+                    preset.homepage,
+                  ]
+                    .filter(Boolean)
+                    .join(" "),
+                }))}
+              />
+            </div>
             {activePreset ? <PresetSummaryCard preset={activePreset} /> : null}
             {activePreset?.note ? (
               <Alert type="info" showIcon title={activePreset.note} />

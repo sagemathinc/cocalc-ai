@@ -720,6 +720,7 @@ if __name__ == "__main__":
 PY
 fi
 base_url="\${APP_BASE_URL/\\/proxy\\//\\/port\\/}"
+base_url="\${base_url%/}"
 exec python3 -m marimo edit --headless --no-token --base-url "\${base_url}" --host "\${HOST:-127.0.0.1}" --port "\${PORT}" "$app"`,
       },
       verify: {
