@@ -1,35 +1,38 @@
 /*
- *  This file is part of CoCalc: Copyright © 2020 Sagemath, Inc.
+ *  This file is part of CoCalc: Copyright © 2026 Sagemath, Inc.
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { A, Icon } from "../components";
-import openSupport, {
-  supportURL,
-  ticketsURL,
-} from "@cocalc/frontend/support/url";
+import { Button, Space, Typography } from "antd";
+import { React, useTypedRedux } from "@cocalc/frontend/app-framework";
+import SupportTicketsView from "@cocalc/frontend/public/support/tickets-view";
+import openSupportTab from "./open";
+
+const { Paragraph, Title } = Typography;
 
 export const SupportTickets: React.FC = () => {
+  const helpEmail = useTypedRedux("customize", "help_email");
+  const zendesk = !!useTypedRedux("customize", "zendesk");
+
   return (
-    <div style={{ color: "#666", fontSize: "12pt" }}>
-      <p>
-        Check the <A href={ticketsURL}>status of your support tickets here</A>.
-      </p>
-      To report an issue, navigate to the file in question and click the{" "}
-      <div
-        onClick={(_e) => {
-          openSupport();
-        }}
-        style={{
-          cursor: "pointer",
-          display: "inline-block",
-          padding: "5px",
-          backgroundColor: "rgb(224,224,224)",
-        }}
-      >
-        <Icon name="medkit" /> Help
-      </div>{" "}
-      tab in the top right corner or <A href={supportURL}>visit this page</A>.
-    </div>
+    <Space direction="vertical" size="large" style={{ width: "100%" }}>
+      <div>
+        <Title level={3} style={{ marginBottom: 8 }}>
+          Support
+        </Title>
+        <Paragraph type="secondary" style={{ marginBottom: 0 }}>
+          Create a support ticket without leaving the app, paste screenshots
+          directly into the composer, and review your existing Zendesk tickets
+          below.
+          {helpEmail ? ` You can also reach us at ${helpEmail}.` : ""}
+        </Paragraph>
+      </div>
+      <Space wrap>
+        <Button type="primary" onClick={() => openSupportTab()}>
+          New support ticket
+        </Button>
+      </Space>
+      <SupportTicketsView config={{ zendesk }} />
+    </Space>
   );
 };

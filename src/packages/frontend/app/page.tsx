@@ -119,6 +119,7 @@ export const Page: React.FC = () => {
   const groups = useTypedRedux("account", "groups");
   const show_i18n = useShowI18NBanner();
   const is_commercial = useTypedRedux("customize", "is_commercial");
+  const zendesk = !!useTypedRedux("customize", "zendesk");
 
   function account_tab_icon(): IconName | React.JSX.Element {
     if (account_id) {
@@ -213,25 +214,21 @@ export const Page: React.FC = () => {
   }
 
   function render_support(): React.JSX.Element | undefined {
-    if (!is_commercial) {
+    if (!zendesk || !is_logged_in) {
       return;
     }
-    // Note: that styled span around the label is just
-    // because I'm too lazy to fix this properly, since
-    // it's all ancient react bootstrap stuff that will
-    // get rewritten.
     return (
       <NavTab
         name={undefined} // does not open a tab, just a popup
         active_top_tab={active_top_tab} // it's never supposed to be active!
-        label={intl.formatMessage({
+        label_class={NAV_CLASS}
+        icon={"support"}
+        on_click={openSupportTab}
+        hide_label={true}
+        tooltip={intl.formatMessage({
           id: "page.help.label",
           defaultMessage: "Help",
         })}
-        label_class={NAV_CLASS}
-        icon={"medkit"}
-        on_click={openSupportTab}
-        hide_label={!show_label}
       />
     );
   }
@@ -275,8 +272,8 @@ export const Page: React.FC = () => {
       >
         {render_admin_tab()}
         {render_sign_in_tab()}
-        {render_support()}
         {is_logged_in ? render_account_tab() : undefined}
+        {render_support()}
         {render_balance()}
         {render_notification()}
         {render_bell()}

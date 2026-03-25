@@ -3,6 +3,23 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { ThreadImageUpload } from "../thread-image-upload";
 
+jest.mock("antd-img-crop", () => ({
+  __esModule: true,
+  default: ({ children, onModalOk }: any) => (
+    <div>
+      <button
+        type="button"
+        onClick={() =>
+          onModalOk?.(new File(["cropped"], "crop.png", { type: "image/png" }))
+        }
+      >
+        Confirm crop
+      </button>
+      {children}
+    </div>
+  ),
+}));
+
 describe("ThreadImageUpload", () => {
   const originalFetch = global.fetch;
 
@@ -46,6 +63,26 @@ describe("ThreadImageUpload", () => {
         ],
       },
     });
+
+    await waitFor(() => expect(global.fetch).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(onChange).toHaveBeenCalledWith(
+        expect.stringContaining("?uuid=uuid-123"),
+      ),
+    );
+  });
+
+  it("uploads an image chosen through the cropper flow", async () => {
+    const onChange = jest.fn();
+    render(
+      <ThreadImageUpload
+        value=""
+        onChange={onChange}
+        modalTitle="Edit Chat Image"
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Confirm crop" }));
 
     await waitFor(() => expect(global.fetch).toHaveBeenCalled());
     await waitFor(() =>

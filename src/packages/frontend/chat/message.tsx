@@ -761,6 +761,10 @@ export default function Message({
     () => field<string>(message, "acp_log_subject") ?? fallbackLogRefs.subject,
     [message, fallbackLogRefs.subject],
   );
+  const liveLogStream = useMemo(
+    () => field<string>(message, "acp_live_log_stream"),
+    [message],
+  );
   const loadLogBody = useMemo(() => {
     if (!showCodexActivity || !project_id) return false;
     if (effectiveGenerating) return true;
@@ -778,6 +782,7 @@ export default function Message({
     logStore,
     logKey,
     logSubject,
+    liveLogStream,
     generating: effectiveGenerating,
     enabled: loadLogBody,
   });
@@ -1467,6 +1472,7 @@ export default function Message({
             store: logStore,
             key: logKey,
             subject: logSubject,
+            liveStream: liveLogStream,
           }}
           activityContext={{
             actions,
@@ -1480,6 +1486,8 @@ export default function Message({
           inlineCodeLinks={
             Array.isArray(inlineCodeLinks) ? inlineCodeLinks : undefined
           }
+          logEvents={codexBodyLog.events as any}
+          deleteLog={codexBodyLog.deleteLog}
           openDrawerToken={openActivityDrawerToken}
           jumpText={activityJumpText}
           jumpToken={activityJumpToken}

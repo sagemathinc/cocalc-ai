@@ -390,7 +390,7 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
   };
 
   private initProjectStatusWatcher = (): void => {
-    const projectsStore = redux.getProjectsStore();
+    const projectsStore = redux.getProjectsStore?.();
     if (projectsStore == null) {
       return;
     }

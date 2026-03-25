@@ -2,9 +2,7 @@ import { Alert, Upload } from "antd";
 import ImgCrop from "antd-img-crop";
 import { InboxOutlined } from "@ant-design/icons";
 import { React, useState } from "@cocalc/frontend/app-framework";
-import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
-import { pastedBlobFilename } from "@cocalc/frontend/editors/slate/upload-utils";
-import { join } from "path";
+import { uploadBlobImage } from "@cocalc/frontend/blobs/upload-image";
 
 interface ThreadImageUploadProps {
   projectId?: string;
@@ -145,36 +143,17 @@ async function uploadCroppedImage({
   setError("");
   try {
     const blob = file as Blob;
-    const filename =
-      typeof (file as any).name === "string" && (file as any).name.trim()
-        ? (file as any).name.trim()
-        : pastedBlobFilename(blob.type);
-    const formData = new FormData();
-    formData.append("file", blob, filename);
-    const query = projectId
-      ? `?project_id=${encodeURIComponent(projectId)}`
-      : "";
-    const response = await fetch(`${join(appBasePath, "blobs")}${query}`, {
-      method: "POST",
-      body: formData,
-      credentials: "include",
+    const { url } = await uploadBlobImage({
+      file: blob,
+      filename:
+        typeof (file as any).name === "string" ? (file as any).name : undefined,
+      projectId,
     });
-    if (!response.ok) {
-      const message = await response.text();
-      throw Error(message || `HTTP ${response.status}`);
-    }
-    const { uuid } = await response.json();
-    if (!uuid) {
-      throw Error("missing upload uuid");
-    }
-    const url = `${join(
-      appBasePath,
-      "blobs",
-      encodeURIComponent(filename),
-    )}?uuid=${uuid}`;
     onChange(url);
   } catch (err) {
-    setError(`Image upload failed: ${err}`);
+    const message =
+      err instanceof Error ? err.message : `${err ?? "upload failed"}`;
+    setError(`Image upload failed: ${message}`);
   } finally {
     setUploading(false);
   }

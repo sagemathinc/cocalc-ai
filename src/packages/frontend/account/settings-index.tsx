@@ -134,6 +134,7 @@ const FLEX_PROPS = {
 export function SettingsOverview() {
   const intl = useIntl();
   const is_commercial = useTypedRedux("customize", "is_commercial");
+  const zendesk = !!useTypedRedux("customize", "zendesk");
 
   function handleNavigate(path: NavigatePath) {
     // Use the same navigation pattern as the account page
@@ -356,7 +357,7 @@ export function SettingsOverview() {
         </>
       )}
 
-      {is_commercial && (
+      {zendesk && (
         <>
           <Divider plain>
             <Icon name="medkit" /> {intl.formatMessage(labels.support)}

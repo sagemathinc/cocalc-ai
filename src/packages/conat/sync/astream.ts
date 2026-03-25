@@ -136,6 +136,16 @@ export class AStream<T = any> {
     void,
     unknown
   > {
+    // Standard race-avoidance pattern for "backlog + tail-follow" consumers:
+    //
+    //   1. open changefeed()
+    //   2. replay getAll()
+    //   3. then drain changefeed(), skipping overlap by seq
+    //
+    // If you do getAll() first and only then call changefeed(), any messages
+    // published in that gap can be lost. This changefeed is exact-once and
+    // ordered for an already-open subscription, but it does not retroactively
+    // cover messages that arrived before the subscription existed.
     const cf = await this.stream.changefeed();
     for await (const updates of cf) {
       for (const event of updates) {

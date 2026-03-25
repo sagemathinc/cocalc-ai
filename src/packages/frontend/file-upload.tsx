@@ -520,9 +520,34 @@ export function UploadLink({
 }
 
 export function BlobUpload(props) {
-  const url = `${join(appBasePath, "blobs")}?project_id=${props.project_id}`;
+  const hasProject =
+    typeof props.project_id === "string" && props.project_id.trim() !== "";
+  function normalizeUploadError(
+    message: unknown,
+    xhr?: { responseText?: string },
+  ): string {
+    const responseText = `${xhr?.responseText ?? ""}`.trim();
+    if (responseText && responseText !== "[object Object]") {
+      return responseText;
+    }
+    const text = `${message ?? ""}`.trim();
+    if (text && text !== "[object Object]") {
+      return text;
+    }
+    return "Upload failed. Please try again later.";
+  }
+  const url = hasProject
+    ? `${join(appBasePath, "blobs")}?project_id=${props.project_id}`
+    : join(appBasePath, "blobs");
   const handlers = {
     ...props.event_handlers,
+    error: (file, message, xhr) => {
+      props.event_handlers?.error?.(
+        file,
+        normalizeUploadError(message, xhr),
+        xhr,
+      );
+    },
     complete: (file) => {
       if (file.xhr?.responseText) {
         let uuid;
@@ -534,8 +559,7 @@ export function BlobUpload(props) {
           console.warn("WARNING: upload failure", file.xhr.responseText);
           alert_message({
             type: "error",
-            message:
-              "Failed to upload. Server may be down.  Please try again later.",
+            message: normalizeUploadError(undefined, file.xhr),
           });
           return;
         }
@@ -554,6 +578,9 @@ export function BlobUpload(props) {
   // Avoid registering undefined handlers; Dropzone will crash when trying to emit them.
   if (handlers.sending == null) {
     delete handlers.sending;
+  }
+  if (handlers.error == null) {
+    delete handlers.error;
   }
   if (handlers.removedfile == null) {
     delete handlers.removedfile;

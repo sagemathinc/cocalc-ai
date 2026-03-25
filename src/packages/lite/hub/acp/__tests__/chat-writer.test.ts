@@ -42,6 +42,35 @@ jest.mock("@cocalc/backend/logger", () => ({
     error: () => {},
   }),
 }));
+jest.mock("@cocalc/project/logger", () => ({
+  __esModule: true,
+  default: () => ({
+    debug: () => {},
+    info: () => {},
+    warn: () => {},
+    error: () => {},
+    extend: () => ({
+      debug: () => {},
+      info: () => {},
+      warn: () => {},
+      error: () => {},
+      extend: () => ({}),
+    }),
+  }),
+  getLogger: () => ({
+    debug: () => {},
+    info: () => {},
+    warn: () => {},
+    error: () => {},
+    extend: () => ({
+      debug: () => {},
+      info: () => {},
+      warn: () => {},
+      error: () => {},
+      extend: () => ({}),
+    }),
+  }),
+}));
 jest.mock("../../sqlite/acp-queue", () => ({
   enqueueAcpPayload: jest.fn(),
   listAcpPayloads: jest.fn(() => []),
@@ -71,6 +100,7 @@ type RecordedSet = {
   acp_log_store?: string;
   acp_log_key?: string;
   acp_log_subject?: string;
+  acp_live_log_stream?: string;
   message_id?: string;
 };
 
@@ -287,6 +317,7 @@ describe("ChatStreamWriter", () => {
     expect(placeholder?.acp_log_store).toBeTruthy();
     expect(placeholder?.acp_log_key).toBeTruthy();
     expect(placeholder?.acp_log_subject).toBeTruthy();
+    expect(placeholder?.acp_live_log_stream).toBeTruthy();
     (writer as any).dispose?.(true);
   });
 
@@ -635,6 +666,55 @@ describe("ChatStreamWriter", () => {
     expect(final.acp_log_subject).toBe(
       "project.p.acp-log.thread-7.assistant-msg-7",
     );
+    expect(final.acp_live_log_stream).toBeUndefined();
+    (writer as any).dispose?.(true);
+  });
+
+  it("publishes live events to the ephemeral stream and persists the final log once", async () => {
+    const { syncdb } = makeFakeSyncDB();
+    const persistedLogs: any[][] = [];
+    const liveEvents: AcpStreamMessage[] = [];
+    const writer: any = new ChatStreamWriter({
+      metadata: baseMetadata,
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      syncdbOverride: syncdb as any,
+      logStoreFactory: () =>
+        ({
+          set: async (_key: string, value: any[]) => {
+            persistedLogs.push(value);
+          },
+        }) as any,
+      liveLogStreamFactory: () =>
+        ({
+          publish: async (event: AcpStreamMessage) => {
+            liveEvents.push(event);
+            return { seq: liveEvents.length, time: Date.now() };
+          },
+          close: () => {},
+        }) as any,
+    });
+
+    await writer.handle({
+      type: "event",
+      event: { type: "message", text: "hi" } as any,
+      seq: 0,
+    } as AcpStreamMessage);
+    await flush(writer);
+
+    expect(liveEvents).toHaveLength(1);
+    expect(persistedLogs).toHaveLength(0);
+
+    await writer.handle({
+      type: "summary",
+      finalResponse: "done",
+      seq: 1,
+    } as AcpStreamMessage);
+    await flush(writer);
+
+    expect(liveEvents).toHaveLength(2);
+    expect(persistedLogs).toHaveLength(1);
+    expect(persistedLogs[0].at(-1)?.type).toBe("summary");
     (writer as any).dispose?.(true);
   });
 
@@ -754,18 +834,26 @@ describe("ChatStreamWriter", () => {
     (writer as any).dispose?.(true);
   });
 
-  it("publishes logs and persists AKV", async () => {
-    const publish = jest.fn().mockResolvedValue(undefined);
+  it("publishes live logs and persists AKV at terminal", async () => {
     const logSet = jest.fn().mockResolvedValue(undefined);
+    const livePublish = jest.fn().mockResolvedValue({
+      seq: 1,
+      time: Date.now(),
+    });
     const { syncdb } = makeFakeSyncDB();
     const writer: any = new ChatStreamWriter({
       metadata: baseMetadata,
-      client: { publish } as any,
+      client: makeFakeClient(),
       approverAccountId: "u",
       syncdbOverride: syncdb as any,
       logStoreFactory: () =>
         ({
           set: logSet,
+        }) as any,
+      liveLogStreamFactory: () =>
+        ({
+          publish: livePublish,
+          close: () => {},
         }) as any,
     });
     const payload: AcpStreamMessage = {
@@ -774,31 +862,39 @@ describe("ChatStreamWriter", () => {
       seq: 0,
     };
     await (writer as any).handle(payload);
-    (writer as any).persistLogProgress.flush();
-    (writer as any).flushPublishedLog.flush();
+    await flush(writer);
+    expect(livePublish).toHaveBeenCalledTimes(1);
+    expect(logSet).not.toHaveBeenCalled();
     await (writer as any).handle({
       type: "summary",
       finalResponse: "done",
       seq: 1,
     } as AcpStreamMessage);
     await flush(writer);
-    expect(publish).toHaveBeenCalled();
+    expect(livePublish).toHaveBeenCalledTimes(2);
     expect(logSet).toHaveBeenCalled();
     (writer as any).dispose?.(true);
   });
 
-  it("coalesces live log publishes into short backend batches", async () => {
-    jest.useFakeTimers();
-    const publish = jest.fn().mockResolvedValue(undefined);
+  it("publishes live log events to the ephemeral stream in order", async () => {
+    const liveEvents: AcpStreamMessage[] = [];
     const { syncdb } = makeFakeSyncDB();
     const writer: any = new ChatStreamWriter({
       metadata: baseMetadata,
-      client: { publish } as any,
+      client: makeFakeClient(),
       approverAccountId: "u",
       syncdbOverride: syncdb as any,
       logStoreFactory: () =>
         ({
           set: async () => {},
+        }) as any,
+      liveLogStreamFactory: () =>
+        ({
+          publish: async (event: AcpStreamMessage) => {
+            liveEvents.push(event);
+            return { seq: liveEvents.length, time: Date.now() };
+          },
+          close: () => {},
         }) as any,
     });
 
@@ -807,40 +903,40 @@ describe("ChatStreamWriter", () => {
       event: { type: "message", text: "Hel" } as any,
       seq: 0,
     } as AcpStreamMessage);
+    await flush(writer);
     await (writer as any).handle({
       type: "event",
       event: { type: "message", text: "lo" } as any,
       seq: 1,
     } as AcpStreamMessage);
+    await flush(writer);
 
-    expect(publish).not.toHaveBeenCalled();
-
-    await jest.advanceTimersByTimeAsync(120);
-
-    expect(publish).toHaveBeenCalledTimes(1);
-    expect(publish).toHaveBeenCalledWith(
-      "project.p.acp-log.thread-0.msg-0",
-      expect.arrayContaining([
-        expect.objectContaining({ seq: 0, type: "event" }),
-        expect.objectContaining({ seq: 1, type: "event" }),
-      ]),
-    );
+    expect(liveEvents).toHaveLength(2);
+    expect(liveEvents[0]).toMatchObject({ seq: 0, type: "event" });
+    expect(liveEvents[1]).toMatchObject({ seq: 1, type: "event" });
     (writer as any).dispose?.(true);
-    jest.useRealTimers();
   });
 
-  it("persists durable timestamps on published log events", async () => {
-    const publish = jest.fn().mockResolvedValue(undefined);
+  it("persists durable timestamps on live and terminal log events", async () => {
     const logSet = jest.fn().mockResolvedValue(undefined);
+    const liveEvents: AcpStreamMessage[] = [];
     const { syncdb } = makeFakeSyncDB();
     const writer: any = new ChatStreamWriter({
       metadata: baseMetadata,
-      client: { publish } as any,
+      client: makeFakeClient(),
       approverAccountId: "u",
       syncdbOverride: syncdb as any,
       logStoreFactory: () =>
         ({
           set: logSet,
+        }) as any,
+      liveLogStreamFactory: () =>
+        ({
+          publish: async (event: AcpStreamMessage) => {
+            liveEvents.push(event);
+            return { seq: liveEvents.length, time: Date.now() };
+          },
+          close: () => {},
         }) as any,
     });
 
@@ -849,16 +945,15 @@ describe("ChatStreamWriter", () => {
       event: { type: "message", text: "hi" } as any,
       seq: 0,
     } as AcpStreamMessage);
-
-    (writer as any).persistLogProgress.flush();
-    (writer as any).flushPublishedLog.flush();
+    await (writer as any).handle({
+      type: "summary",
+      finalResponse: "done",
+      seq: 1,
+    } as AcpStreamMessage);
     await flush(writer);
 
-    const published = publish.mock.calls[0]?.[1];
-    const publishedEvents = Array.isArray(published) ? published : [published];
-    expect(typeof publishedEvents?.[0]?.time).toBe("number");
-
     const persistedEvents = logSet.mock.calls[0]?.[1];
+    expect(typeof liveEvents?.[0]?.time).toBe("number");
     expect(Array.isArray(persistedEvents)).toBe(true);
     expect(typeof persistedEvents?.[0]?.time).toBe("number");
 

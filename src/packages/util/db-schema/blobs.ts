@@ -122,7 +122,6 @@ Table({
         required_fields: {
           id: true,
           blob: true,
-          project_id: true,
         },
         async instead_of_change(
           database,

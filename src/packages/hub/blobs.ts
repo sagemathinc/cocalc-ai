@@ -49,9 +49,9 @@ export function save_blob(rawOpts: SaveBlobOpts): void {
   } else if (!opts.uuid) {
     err =
       "save_blob: BUG -- error in call to save_blob; received a save_blob request without corresponding uuid";
-  } else if (!opts.project_id) {
+  } else if (!opts.project_id && !opts.account_id) {
     err =
-      "save_blob: BUG -- error in call to save_blob; received a save_blob request without corresponding project_id";
+      "save_blob: BUG -- error in call to save_blob; received a save_blob request without corresponding project_id or account_id";
   } else if (blobLength > MAX_BLOB_SIZE) {
     err = `save_blob: blobs are limited to ${human_readable_size(
       MAX_BLOB_SIZE,

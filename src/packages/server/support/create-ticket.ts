@@ -26,6 +26,35 @@ interface Options {
   };
 }
 
+export function ticketResultToUserURL(ticketResult: any): string {
+  return urlToUserURL(ticketResult?.result?.url ?? ticketResult?.url);
+}
+
+export async function normalizeZendeskBody(body: string): Promise<string> {
+  const baseUrl = (await siteURL()).replace(/\/+$/, "");
+
+  function absoluteBlobUrl(raw: string): string {
+    const value = `${raw ?? ""}`.trim();
+    if (!value) return value;
+    if (value.startsWith("/blobs/")) return `${baseUrl}${value}`;
+    if (value.startsWith("blobs/")) return `${baseUrl}/${value}`;
+    return value;
+  }
+
+  const imgTag = /<img\b[^>]*\bsrc=(["'])(.*?)\1[^>]*>/gi;
+  const markdownImage = /!\[[^\]]*]\(([^)\s]+)(?:\s+["'][^"']*["'])?\)/g;
+
+  return body
+    .replace(
+      imgTag,
+      (_match, _quote, src) => `\n- Image: ${absoluteBlobUrl(src)}\n`,
+    )
+    .replace(
+      markdownImage,
+      (_match, src) => `\n- Image: ${absoluteBlobUrl(src)}\n`,
+    );
+}
+
 export default async function createTicket(options: Options): Promise<string> {
   log.debug("createTicket", options);
   const client = await getClient();
@@ -33,7 +62,7 @@ export default async function createTicket(options: Options): Promise<string> {
   const { account_id, email, files, type, subject, url, info } = options;
   const name = await getUserName(email, account_id);
 
-  let body: string = options.body ?? "";
+  let body: string = await normalizeZendeskBody(options.body ?? "");
 
   if (url) {
     body += `\n\n\nURL:\n${url}\n`;
@@ -75,8 +104,7 @@ export default async function createTicket(options: Options): Promise<string> {
 
   const ticketResult = await client.tickets.create(ticket);
   log.debug("got ", { ticketResult });
-  // @ts-ignore:  @types/node-zendesk is wrong about fields in ticketResult.
-  return urlToUserURL(ticketResult.url);
+  return ticketResultToUserURL(ticketResult);
 }
 
 async function toURL({

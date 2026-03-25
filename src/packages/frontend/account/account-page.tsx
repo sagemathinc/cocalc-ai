@@ -131,6 +131,7 @@ export const AccountPage: React.FC = () => {
   const account_id = useTypedRedux("account", "account_id");
   const kucalc = useTypedRedux("customize", "kucalc");
   const is_commercial = useTypedRedux("customize", "is_commercial");
+  const zendesk = !!useTypedRedux("customize", "zendesk");
   const get_api_key = useTypedRedux("page", "get_api_key");
 
   useEffect(() => {
@@ -415,7 +416,7 @@ export const AccountPage: React.FC = () => {
     ) {
     }
 
-    if (is_commercial) {
+    if (zendesk) {
       items.push({ type: "divider" });
       items.push({
         key: "support",

@@ -5,3 +5,4 @@
 
 export { ShowSupportLink } from "./link";
 export { SupportTickets } from "./tickets";
+export { default as SupportCreateModal } from "./create-modal";

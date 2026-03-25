@@ -289,3 +289,53 @@ describe("findActivityEntryIndexForJumpText", () => {
     ).toBe(0);
   });
 });
+
+describe("agent activity normalization", () => {
+  it("keeps distinct agent messages as separate paragraphs", () => {
+    const markdown = codexEventsToMarkdown([
+      {
+        type: "event",
+        seq: 1,
+        event: {
+          type: "message",
+          text: "First agent message.",
+        },
+      },
+      {
+        type: "event",
+        seq: 2,
+        event: {
+          type: "message",
+          text: "Second agent message.",
+        },
+      },
+    ] as any);
+    expect(markdown).toContain(
+      "- Agent: First agent message.\n\nSecond agent message.",
+    );
+  });
+
+  it("merges progressive adjacent agent chunks instead of inserting paragraph breaks mid-word", () => {
+    const markdown = codexEventsToMarkdown([
+      {
+        type: "event",
+        seq: 1,
+        event: {
+          type: "message",
+          text: "I",
+          delta: true,
+        },
+      },
+      {
+        type: "event",
+        seq: 2,
+        event: {
+          type: "message",
+          text: "'ll",
+          delta: true,
+        },
+      },
+    ] as any);
+    expect(markdown).toContain("- Agent: I'll");
+  });
+});

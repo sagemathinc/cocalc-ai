@@ -417,6 +417,7 @@ interface Props {
   editBar2?: MutableRefObject<React.JSX.Element | undefined>;
   dirtyRef?: MutableRefObject<boolean>;
   minimal?: boolean;
+  enableUpload?: boolean;
   controlRef?: MutableRefObject<
     | (RichTextSelectionBridgeControl & {
         setSelection?: (selection: any) => boolean;
@@ -464,6 +465,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     is_fullscreen,
     isFocused,
     minimal,
+    enableUpload = true,
     noVfill,
     onBlur,
     onCursorBottom,
@@ -2762,7 +2764,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
       />
     </ChangeContext.Provider>
   );
-  return useUpload(editor, body);
+  return enableUpload ? useUpload(editor, body) : body;
 });
 
 export const EditableMarkdown: React.FC<Props> = React.memo((props: Props) => {

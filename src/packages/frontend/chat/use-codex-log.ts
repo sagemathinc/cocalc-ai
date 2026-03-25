@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import LRUCache from "lru-cache";
 import { appendStreamMessage } from "@cocalc/chat";
+import type { AcpStreamMessage } from "@cocalc/conat/ai/acp/types";
+import type { DStream } from "@cocalc/conat/sync/dstream";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 
 // Backend batches live ACP log pubsub at 100ms and AKV persistence at 250ms in
@@ -20,6 +22,7 @@ export interface CodexLogOptions {
   logStore?: string | null;
   logKey?: string | null;
   logSubject?: string | null;
+  liveLogStream?: string | null;
   generating?: boolean;
   enabled?: boolean;
 }
@@ -57,6 +60,16 @@ function normalizeIncomingLogPayload(payload: any): any[] {
   return payload ? [payload] : [];
 }
 
+function normalizeLiveStreamEvent(event: AcpStreamMessage): AcpStreamMessage {
+  if (getEventTime(event) != null) {
+    return event;
+  }
+  return {
+    ...event,
+    time: Date.now(),
+  };
+}
+
 /**
  * Fetch Codex/ACP logs from AKV and live stream from conat during generation.
  * Resets state when the log key changes so logs don't bleed across turns.
@@ -66,6 +79,7 @@ export function useCodexLog({
   logStore,
   logKey,
   logSubject,
+  liveLogStream,
   generating,
   enabled = true,
 }: CodexLogOptions): CodexLogResult {
@@ -89,14 +103,14 @@ export function useCodexLog({
       const combined = [...(a ?? []), ...b];
       if (combined.length === 0) return combined;
       const seen = new Map<number | string, any>();
+      const withoutSeq: any[] = [];
       for (const evt of combined) {
         const key =
           typeof evt?.seq === "number" || typeof evt?.seq === "string"
             ? evt.seq
             : undefined;
         if (key === undefined) {
-          // no seq — append with synthetic key
-          seen.set(`no-seq-${seen.size}`, evt);
+          withoutSeq.push(evt);
           continue;
         }
         const prev = seen.get(key);
@@ -104,6 +118,8 @@ export function useCodexLog({
           seen.set(key, evt);
         } else if (getEventTime(prev) == null && getEventTime(evt) != null) {
           seen.set(key, { ...prev, time: getEventTime(evt) });
+        } else {
+          seen.set(key, evt);
         }
       }
       const ordered = Array.from(seen.values());
@@ -115,7 +131,11 @@ export function useCodexLog({
           return sx.localeCompare(sy);
         return 0;
       });
-      return ordered;
+      let normalized = withoutSeq.slice();
+      for (const evt of ordered) {
+        normalized = appendStreamMessage(normalized, evt);
+      }
+      return normalized;
     };
   }, []);
 
@@ -150,7 +170,15 @@ export function useCodexLog({
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     async function fetchLog() {
-      if (!enabled || !hasLogRef || !projectId || akvLoaded) return;
+      if (
+        !enabled ||
+        !hasLogRef ||
+        !projectId ||
+        akvLoaded ||
+        (generating && liveLogStream)
+      ) {
+        return;
+      }
       try {
         const cn = webapp_client.conat_client.conat();
         const kv = cn.sync.akv<any[]>({
@@ -176,18 +204,31 @@ export function useCodexLog({
       }
     }
     void fetchLog();
-    if (!generating) return;
+    if (!generating || liveLogStream) return;
     // Also delay and call again to let the throttled writer persist the first batch.
     timer = setTimeout(fetchLog, LOG_PERSIST_THROTTLE_MS + 500);
     return () => {
       cancelled = true;
       if (timer) clearTimeout(timer);
     };
-  }, [hasLogRef, projectId, logStore, logKey, enabled, akvLoaded, generating]);
+  }, [
+    hasLogRef,
+    projectId,
+    logStore,
+    logKey,
+    enabled,
+    akvLoaded,
+    generating,
+    liveLogStream,
+  ]);
 
   // Subscribe to live events while generating.
   useEffect(() => {
     let sub: any;
+    let liveStream: DStream<AcpStreamMessage> | undefined;
+    let liveStreamListener:
+      | ((event: AcpStreamMessage, seq?: number) => void)
+      | undefined;
     let stopped = false;
     const flushBufferedLiveLog = () => {
       if (liveFlushTimerRef.current != null) {
@@ -217,9 +258,42 @@ export function useCodexLog({
       );
     };
     async function subscribe() {
-      if (!enabled || !generating || !logSubject) return;
+      if (!enabled || !generating || !projectId) return;
       try {
         const cn = webapp_client.conat_client.conat();
+        if (liveLogStream) {
+          liveStream =
+            await webapp_client.conat_client.dstream<AcpStreamMessage>({
+              project_id: projectId,
+              name: liveLogStream,
+              ephemeral: true,
+            });
+          if (stopped) {
+            liveStream.close();
+            return;
+          }
+          liveStream.setMaxListeners(
+            Math.max(liveStream.getMaxListeners(), 50),
+          );
+          liveStreamListener = (event: AcpStreamMessage) => {
+            if (stopped) return;
+            const evt = normalizeLiveStreamEvent(event);
+            liveBufferRef.current.push(evt);
+            scheduleBufferedFlush(
+              evt.type === "summary" || evt.type === "error",
+            );
+          };
+          // DStream already bridges the backlog/live-update race internally.
+          // Register the listener before reading getAll() so local hook state
+          // can't miss a late event that arrives between these two steps.
+          liveStream.on("change", liveStreamListener);
+          const initial = liveStream.getAll().map(normalizeLiveStreamEvent);
+          if (!stopped && initial.length > 0) {
+            setLiveLog((prev) => mergeLogs(prev ?? [], initial));
+          }
+          return;
+        }
+        if (!logSubject) return;
         sub = await cn.subscribe(logSubject);
         for await (const mesg of sub) {
           if (stopped) break;
@@ -253,8 +327,20 @@ export function useCodexLog({
       } catch {
         // ignore
       }
+      try {
+        if (liveStream && liveStreamListener) {
+          liveStream.off("change", liveStreamListener);
+        }
+      } catch {
+        // ignore
+      }
+      try {
+        liveStream?.close?.();
+      } catch {
+        // ignore
+      }
     };
-  }, [enabled, generating, logSubject]);
+  }, [enabled, generating, projectId, liveLogStream, logSubject, mergeLogs]);
 
   const events = useMemo(() => {
     if (!hasLogRef) return generating ? liveLog : undefined;

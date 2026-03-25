@@ -70,5 +70,13 @@ export function buildPublicSiteSettings(all: Record<string, any>): {
     version.version_recommended_browser = recommended;
   }
 
+  // Public pages need a derived flag that indicates whether Zendesk-backed
+  // support flows are enabled without exposing any Zendesk secrets.
+  configuration.zendesk = !!(
+    all.zendesk_token &&
+    all.zendesk_username &&
+    all.zendesk_uri
+  );
+
   return { configuration, version };
 }

@@ -1,5 +1,5 @@
 import { Button, Popconfirm, Space, Tag, Tooltip, Typography } from "antd";
-import type { InlineCodeLink } from "@cocalc/chat";
+import { mergeProgressiveMessageText, type InlineCodeLink } from "@cocalc/chat";
 import type {
   AcpStreamEvent,
   AcpStreamMessage as AcpLogStreamMessage,
@@ -40,6 +40,7 @@ type ActivityEntry =
       seq: number;
       time?: number;
       text?: string;
+      delta?: boolean;
     }
   | {
       kind: "agent";
@@ -47,6 +48,7 @@ type ActivityEntry =
       seq: number;
       time?: number;
       text?: string;
+      delta?: boolean;
     }
   | {
       kind: "status";
@@ -640,12 +642,21 @@ function coalesceTextEntries(entries: ActivityEntry[]): ActivityEntry[] {
       if (last.kind === entry.kind) {
         const lastText = last.text ?? "";
         const nextText = entry.text ?? "";
+        const progressive =
+          entry.kind === "agent"
+            ? mergeProgressiveMessageText(lastText, nextText, {
+                previousHasDelta: last.delta === true,
+                nextIsDelta: entry.delta === true,
+              })
+            : undefined;
         merged[merged.length - 1] = {
           ...last,
           text:
-            lastText && nextText
+            progressive ??
+            (lastText && nextText
               ? `${lastText}\n\n${nextText}`
-              : lastText || nextText,
+              : lastText || nextText),
+          delta: last.delta === true || entry.delta === true,
         };
         continue;
       }
@@ -749,6 +760,7 @@ function createEventEntry({
       seq,
       time,
       text: event.text ?? "",
+      delta: false,
     };
   }
   return {
@@ -757,6 +769,7 @@ function createEventEntry({
     seq,
     time,
     text: eventHasText(event) ? (event.text ?? "") : "",
+    delta: event?.type === "message" && event.delta === true,
   };
 }
 

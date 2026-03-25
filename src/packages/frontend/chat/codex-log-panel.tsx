@@ -10,6 +10,7 @@ import {
 import { useCodexLog } from "./use-codex-log";
 
 interface Props {
+  events?: AcpStreamMessage[] | null;
   generating?: boolean;
   fontSize?: number;
   persistKey: string;
@@ -20,6 +21,7 @@ interface Props {
   logStore?: string;
   logKey?: string;
   logSubject?: string;
+  liveLogStream?: string;
   logProjectId?: string;
   logEnabled?: boolean;
   activityContext?: ActivityLogContext;
@@ -33,9 +35,11 @@ interface Props {
   virtualizeEntries?: boolean;
   scrollParent?: HTMLElement | null;
   onOpenFileLink?: () => void;
+  deleteLog?: () => Promise<void>;
 }
 
 export function CodexLogPanel({
+  events,
   generating,
   fontSize,
   persistKey,
@@ -46,6 +50,7 @@ export function CodexLogPanel({
   logStore,
   logKey,
   logSubject,
+  liveLogStream,
   logProjectId,
   logEnabled,
   activityContext,
@@ -59,19 +64,23 @@ export function CodexLogPanel({
   virtualizeEntries = false,
   scrollParent,
   onOpenFileLink,
+  deleteLog,
 }: Props) {
   const codexLog = useCodexLog({
     projectId: logProjectId,
     logStore,
     logKey,
     logSubject,
+    liveLogStream,
     generating: generating === true,
-    enabled: logEnabled,
+    enabled: events == null && logEnabled,
   });
+  const resolvedEvents = events ?? codexLog.events;
+  const resolvedDeleteLog = deleteLog ?? codexLog.deleteLog;
 
   const activityEvents: AcpStreamMessage[] =
-    (codexLog.events ?? []).length > 0
-      ? codexLog.events!
+    (resolvedEvents ?? []).length > 0
+      ? resolvedEvents!
       : generating
         ? [
             {
@@ -96,10 +105,10 @@ export function CodexLogPanel({
       await deleteActivityLog({
         actions: activityContext.actions,
         message: activityContext.message,
-        deleteLog: codexLog.deleteLog,
+        deleteLog: resolvedDeleteLog,
       });
     };
-  }, [onDeleteEvents, activityContext, codexLog.deleteLog]);
+  }, [onDeleteEvents, activityContext, resolvedDeleteLog]);
 
   const handleDeleteAllEvents = useMemo(() => {
     if (onDeleteAllEvents) return onDeleteAllEvents;
