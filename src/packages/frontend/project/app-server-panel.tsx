@@ -2240,8 +2240,12 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                       </div>
                     ) : null}
                     {unavailableActivePreset.installCommand ? (
-                      <div
+                      <Typography.Paragraph
+                        copyable={{
+                          text: unavailableActivePreset.installCommand,
+                        }}
                         style={{
+                          marginBottom: 0,
                           fontFamily: "monospace",
                           whiteSpace: "pre-wrap",
                           overflowWrap: "anywhere",
@@ -2252,7 +2256,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                         }}
                       >
                         {unavailableActivePreset.installCommand}
-                      </div>
+                      </Typography.Paragraph>
                     ) : null}
                     {canInstallWithCodex(unavailableActivePreset) ? (
                       <div>
@@ -3024,8 +3028,10 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                           </div>
                         ) : null}
                         {startupFailure.installCommand ? (
-                          <div
+                          <Typography.Paragraph
+                            copyable={{ text: startupFailure.installCommand }}
                             style={{
+                              marginBottom: 0,
                               fontFamily: "monospace",
                               whiteSpace: "pre-wrap",
                               overflowWrap: "anywhere",
@@ -3036,7 +3042,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                             }}
                           >
                             {startupFailure.installCommand}
-                          </div>
+                          </Typography.Paragraph>
                         ) : null}
                         <Space wrap>
                           <Button
