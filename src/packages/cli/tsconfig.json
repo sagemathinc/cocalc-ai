@@ -5,6 +5,8 @@
     "outDir": "dist",
     "baseUrl": ".",
     "paths": {
+      "@cocalc/app-notebook": ["../apps/notebook/src"],
+      "@cocalc/app-notebook/*": ["../apps/notebook/src/*"],
       "@cocalc/app-tasks": ["../apps/tasks/src"],
       "@cocalc/app-tasks/*": ["../apps/tasks/src/*"],
       "@cocalc/chat": ["../chat"],
@@ -23,6 +25,9 @@
   "include": ["src/**/*.ts"],
   "exclude": ["dist", "node_modules"],
   "references": [
+    {
+      "path": "../apps/notebook"
+    },
     {
       "path": "../apps/tasks"
     },
