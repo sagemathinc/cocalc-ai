@@ -270,7 +270,7 @@ describe("managed app metrics", () => {
     }
   });
 
-  test("strips the /port/<port> prefix before forwarding", async () => {
+  test("preserves the /port/<port> prefix when forwarding", async () => {
     jest.resetModules();
     const { project_id, secretToken } = await import("@cocalc/project/data");
     const { startProxyServer } =
@@ -317,7 +317,9 @@ describe("managed app metrics", () => {
         },
       );
       expect(viaPort.statusCode).toBe(200);
-      expect(viaPort.body).toBe("/manifest.json?demo=1");
+      expect(viaPort.body).toBe(
+        `/${project_id}/port/${status.port}/manifest.json?demo=1`,
+      );
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
       await deleteApp(id);
