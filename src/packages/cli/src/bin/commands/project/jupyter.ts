@@ -107,6 +107,7 @@ const PROJECT_JUPYTER_EXEC_API_DECLARATION = `declare const api: {
       project_id: string;
       project_title: string;
       path: string;
+      // Use run.run_id for a stable identifier. The live() option still accepts runId.
       run_id: string;
       ack: unknown;
       cells: Array<{
@@ -501,7 +502,23 @@ export function registerProjectJupyterCommands(
 Use plain JavaScript. Inspect the ambient API with:
   cocalc project jupyter exec-api
 
+Use --stdin for heredocs or piped multi-line JavaScript.
+
 Example:
+  cocalc --json project jupyter exec --path scratch/demo.ipynb --stdin <<'EOF'
+    let { cells } = await api.notebook.listCells();
+    let anchor = cells[cells.length - 1];
+    let inserted = await api.notebook.insertCell({
+      afterId: anchor.id,
+      input: "2 + 3",
+      cellType: "code",
+    });
+    let run = await api.notebook.run({ cellIds: [inserted.cell.id] });
+    await run.close();
+    return { inserted: inserted.cell.id, run_id: run.run_id };
+  EOF
+
+Saved script example:
   cocalc --json project jupyter exec --path scratch/demo.ipynb '
     let { cells } = await api.notebook.listCells();
     let anchor = cells[cells.length - 1];
@@ -510,11 +527,9 @@ Example:
       input: "2 + 3",
       cellType: "code",
     });
-    let session = await api.notebook.run({ cellIds: [inserted.cell.id] });
-    let batches = [];
-    for await (let batch of session.iter) batches.push(batch);
-    await session.close();
-    return { inserted: inserted.cell.id, batches: batches.length };
+    let run = await api.notebook.run({ cellIds: [inserted.cell.id] });
+    await run.close();
+    return { inserted: inserted.cell.id, run_id: run.run_id };
   '
 `,
     )
