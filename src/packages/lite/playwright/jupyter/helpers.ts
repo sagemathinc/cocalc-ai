@@ -10,6 +10,16 @@ import { connectionInfoPath } from "../../connection-info";
 
 const execFileAsync = promisify(execFile);
 
+type LiteDevEnv = {
+  api_url?: string;
+  project_id?: string;
+  cli_bin?: string;
+  path_prepend?: string;
+  exports?: Record<string, string>;
+};
+
+let liteDevEnvPromise: Promise<LiteDevEnv> | undefined;
+
 type ConnectionInfo = {
   pid?: number;
   port?: number;
@@ -102,6 +112,95 @@ function candidateConnectionInfoPaths(): string[] {
   push(connectionInfoPath());
 
   return out;
+}
+
+function candidateDevEnvScriptPaths(): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const push = (path?: string) => {
+    const p = path?.trim();
+    if (!p || seen.has(p)) return;
+    seen.add(p);
+    out.push(p);
+  };
+
+  push(process.env.COCALC_JUPYTER_E2E_DEV_ENV);
+  push(join(process.cwd(), "src", "scripts", "dev", "dev-env.js"));
+  push(join(process.cwd(), "..", "..", "scripts", "dev", "dev-env.js"));
+  push(join(process.cwd(), "..", "..", "..", "scripts", "dev", "dev-env.js"));
+  push(
+    join(process.cwd(), "..", "..", "..", "..", "scripts", "dev", "dev-env.js"),
+  );
+  return out;
+}
+
+async function resolveLiteDevEnvScriptPath(): Promise<string> {
+  for (const path of candidateDevEnvScriptPaths()) {
+    try {
+      await readFile(path, "utf8");
+      return path;
+    } catch (err: any) {
+      if (err?.code === "ENOENT") continue;
+      throw err;
+    }
+  }
+  throw new Error(
+    `unable to locate scripts/dev/dev-env.js (checked: ${candidateDevEnvScriptPaths().join(", ")})`,
+  );
+}
+
+export async function resolveLiteDevEnv(): Promise<LiteDevEnv> {
+  liteDevEnvPromise ??= (async () => {
+    const script = await resolveLiteDevEnvScriptPath();
+    const { stdout } = await execFileAsync(process.execPath, [
+      script,
+      "lite",
+      "--json",
+      "--with-browser",
+    ]);
+    return JSON.parse(stdout) as LiteDevEnv;
+  })();
+  return await liteDevEnvPromise;
+}
+
+function createLiteCliEnv(devEnv: LiteDevEnv): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    ...(devEnv.exports ?? {}),
+  };
+  if (devEnv.path_prepend?.trim()) {
+    env.PATH = `${devEnv.path_prepend}:${process.env.PATH ?? ""}`;
+  }
+  return env;
+}
+
+export async function runLiteCliJson(
+  args: string[],
+): Promise<Record<string, any>> {
+  const devEnv = await resolveLiteDevEnv();
+  const cliBin = `${devEnv.cli_bin ?? ""}`.trim();
+  if (!cliBin) {
+    throw new Error("lite dev env did not provide cli_bin");
+  }
+  const { stdout } = await execFileAsync(
+    process.execPath,
+    [cliBin, "--json", ...args],
+    {
+      env: createLiteCliEnv(devEnv),
+      maxBuffer: 32 * 1024 * 1024,
+    },
+  );
+  const payload = JSON.parse(stdout) as {
+    ok?: boolean;
+    error?: { message?: string };
+    data?: Record<string, any>;
+  };
+  if (payload?.ok !== true) {
+    throw new Error(
+      payload?.error?.message ?? `cocalc ${args.join(" ")} failed`,
+    );
+  }
+  return payload.data ?? {};
 }
 
 function expandShellHome(path: string): string {
