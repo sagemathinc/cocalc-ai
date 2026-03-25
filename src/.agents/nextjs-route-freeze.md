@@ -31,7 +31,8 @@ Status meanings:
 | Auth completion flows | `auth/password-reset/[id].tsx`, `auth/password-reset-done.tsx`, `auth/verify/[token].tsx` | `port` | `not started` | `frontend/public/auth` | These are still missing from the new public-web layer. |
 | SSO overview and detail | `sso/index.tsx`, `sso/[id].tsx` | `port` | `not started` | `frontend/public/auth` or `frontend/public/sso` | Should use `api/v2/auth/sso-strategies` for discovery. |
 | Public support core | `support/index.tsx`, `support/new.tsx`, `support/tickets.tsx` | `port` | `done` | `frontend/public/support` | These routes are already live off Next. |
-| Support extras | `support/community.tsx`, `support/chatgpt.tsx` | `decision needed` | `not started` | public-web or delete | `support/community` is in the plan. `support/chatgpt` may be merged into support or deleted. |
+| Support community | `support/community.tsx` | `port` | `not started` | `frontend/public/support` | Keep this route in the new public web layer. |
+| Support ChatGPT page | `support/chatgpt.tsx` | `delete` | `not started` | none | Explicitly remove this route instead of carrying it forward. |
 | Public news | `news/index.tsx`, `news/[id].tsx`, `news/[id]/[timestamp].tsx`, `news/rss.xml.tsx`, `news/feed.json.tsx` | `port` | `done` | `frontend/public/content` + hub server routes | Public list/detail/feed routes are already off Next. |
 | News editing | `news/edit/[id].tsx` | `replace` | `not started` | app-native admin/editor surface | This is not a public content page. It should move into an admin/app flow if we keep it. |
 | Policy landing pages | `policies/index.tsx`, `policies/imprint.tsx`, `policies/policies.tsx` | `port` | `partial` | `frontend/public/content` | The top-level routes are already live off Next. |
@@ -40,47 +41,46 @@ Status meanings:
 | Redeem pages | `redeem.tsx`, `redeem/[id].tsx` | `replace` | `not started` | public-web or app-native | Route family still needed, but exact UX owner should follow the simplified commerce design. |
 | Voucher pages | `vouchers/index.tsx`, `vouchers/[id].tsx`, `vouchers/admin.tsx`, `vouchers/created.tsx`, `vouchers/notes.tsx`, `vouchers/redeemed.tsx` | `replace` | `not started` | app-native voucher center | These should move into the main app, not stay as Next pages. |
 | Billing and store catchalls | `billing/[[...page]].tsx`, `store/[[...page]].tsx` | `replace` | `not started` | app-native billing/purchases | The old cart/store model is explicitly not being ported. |
-| Named account / project / public path pages | `[owner].tsx`, `[owner]/[project].tsx`, `[owner]/[project]/[...public_path].tsx` | `decision needed` | `not started` | static app servers / public viewer / delete | These overlap with the old share/public-path model and need an explicit cutover decision. |
+| Named account / project / public path pages | `[owner].tsx`, `[owner]/[project].tsx`, `[owner]/[project]/[...public_path].tsx` | `delete` | `not started` | none | These old public-path routes go away with the old share/public-path model. Custom subdomains, if kept, are a separate feature. |
 | Share server pages | `share/index.tsx`, `share/accounts/[account_id].tsx`, `share/projects/[project_id].tsx`, `share/public_paths/[...id].tsx` | `replace` | `not started` | static app servers / public viewer | This is the main hard blocker. Current plan is to replace, not port. |
 | Legacy config pages | `config/index.tsx`, `config/[...page].tsx` | `replace` | `not started` | server redirect or app redirect to `/settings/*` | These are already marked deprecated in the Next implementation. |
 | `/.well-known/change-password` | `.well-known/change-password.tsx` | `keep server-only` | `not started` | hub/server redirect | Should become a tiny server redirect to the new password-change path. |
-| Info pages | `info/index.tsx`, `info/doc.tsx`, `info/run.tsx`, `info/status.tsx` | `decision needed` | `not started` | public-web or delete | These are not in the original migration plan and need a keep/delete decision. |
-| Language landing pages | `lang/index.tsx`, `lang/[locale]/index.tsx` | `decision needed` | `not started` | public-web or delete | If kept, they should be a real public-web localization surface, not a lingering Next island. |
+| Info pages | `info/index.tsx`, `info/doc.tsx`, `info/run.tsx`, `info/status.tsx` | `replace` | `not started` | public-web content folded into `/about` and `/support` | Keep the information, but fold it into the new public content surface instead of preserving `/info/*` as-is. `info/run` should be rewritten around CoCalc Launchpad and CoCalc Plus. |
+| Language landing pages | `lang/index.tsx`, `lang/[locale]/index.tsx` | `port` | `not started` | public-web | Keep these as minimal translated landing pages if feasible. |
 | Stars page | `stars.tsx` | `replace` | `not started` | app-native account/settings page | This is authenticated user functionality, not public-web. |
-| Testimonials page | `testimonials/index.tsx` | `decision needed` | `not started` | public-web or delete | Not in the original route plan. |
-| Token action pages | `token.tsx`, `token/[id].tsx` | `decision needed` | `not started` | public-web, app-native, or server-driven hybrid | This route family is important, but ownership is not yet frozen. |
+| Testimonials page | `testimonials/index.tsx` | `delete` | `not started` | none | Remove this route instead of porting it. |
+| Token action pages | `token.tsx`, `token/[id].tsx` | `replace` | `not started` | special-purpose public-web or server-driven replacement | Likely keep only the student-pay / third-party payment flow, then rebuild that flow directly instead of porting the old generic token UI. |
 | `api/v2` routes | `api/v2/**` | `replace` | `done` | `@cocalc/http-api` | Extracted already. |
-| Legacy `api/conat` routes | `api/conat/hub.ts`, `api/conat/project.ts` | `decision needed` | `not started` | server-only or delete | These are outside the public-web plan and should not remain Next-owned. |
+| Legacy `api/conat` routes | `api/conat/hub.ts`, `api/conat/project.ts` | `replace` | `not started` | `@cocalc/http-api` or another non-Next server route package | These are still needed by the Python client and should move out of Next, likely under `/api/v2`. |
 
-## Decision-Needed Items
+## Resolved Decisions
 
-These are the route families where I do not want to guess:
+These decisions are now frozen for the migration:
 
 1. `support/chatgpt`
-Should this become a normal public support page, move into the app, or be deleted?
+Delete.
 
 2. Named account/project/public-path routes
-Do `[owner]*` stay at all in `cocalc.ai`, or do they disappear together with the old share/public-path model?
+Delete them with the old share/public-path model.
 
 3. `info/*`
-Keep as public informational pages, fold into `about`/`support`, or delete?
+Fold into `about` and `support`; rewrite `info/run` around CoCalc Launchpad and CoCalc Plus.
 
 4. `lang/*`
-Keep as a translated public-web landing surface, or drop them entirely for `cocalc.ai`?
+Keep if feasible as minimal translated landing pages.
 
 5. `testimonials`
-Keep as a public page, merge into `/about` or `/`, or delete?
+Delete.
 
 6. `token*`
-Should token-action flows live in public-web, in the authenticated app, or as a more server-driven special flow?
+Replace with a focused new flow rather than porting the old generic token UI.
 
 7. `api/conat/*`
-Are these still needed at all, or should they be deleted rather than moved?
+Keep, but move them out of Next because the Python client still depends on them.
 
 ## Completion Criteria For Step 1
 
 Step 1 is complete when:
 
 - every route family above has a frozen disposition
-- every `decision needed` item is resolved
 - the remainder of the migration can proceed against this ledger without route ambiguity
