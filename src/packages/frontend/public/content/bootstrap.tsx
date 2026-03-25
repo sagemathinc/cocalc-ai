@@ -15,6 +15,7 @@ interface CustomizePayload {
   configuration?: {
     help_email?: string;
     imprint?: string;
+    is_authenticated?: boolean;
     on_cocalc_com?: boolean;
     policies?: string;
     site_name?: string;

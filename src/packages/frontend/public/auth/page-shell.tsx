@@ -7,6 +7,8 @@ import type { CSSProperties, ReactNode } from "react";
 
 import { Card } from "antd";
 
+import { PublicPageRoot } from "@cocalc/frontend/public/ui/shell";
+import PublicTopNav from "@cocalc/frontend/public/ui/top-nav";
 import { COLORS } from "@cocalc/util/theme";
 
 const PAGE_STYLE: CSSProperties = {
@@ -20,48 +22,58 @@ const PAGE_STYLE: CSSProperties = {
 
 interface PublicAuthPageShellProps {
   children: ReactNode;
+  isAuthenticated?: boolean;
+  siteName?: ReactNode;
   subtitle?: ReactNode;
   title: ReactNode;
 }
 
 export default function PublicAuthPageShell({
   children,
+  isAuthenticated,
+  siteName,
   subtitle,
   title,
 }: PublicAuthPageShellProps) {
   return (
-    <div style={PAGE_STYLE}>
-      <Card
-        variant="outlined"
-        style={{
-          width: "min(480px, 96vw)",
-          boxShadow: "0 12px 32px rgba(0, 0, 0, 0.08)",
-        }}
-        styles={{
-          body: {
-            display: "grid",
-            gap: 12,
-            padding: 32,
-          },
-        }}
-      >
-        <h1
+    <PublicPageRoot>
+      <PublicTopNav
+        isAuthenticated={isAuthenticated}
+        siteName={typeof siteName === "string" ? siteName : undefined}
+      />
+      <div style={PAGE_STYLE}>
+        <Card
+          variant="outlined"
           style={{
-            margin: 0,
-            color: COLORS.GRAY_D,
-            fontSize: "28px",
-            lineHeight: 1.2,
+            width: "min(480px, 96vw)",
+            boxShadow: "0 12px 32px rgba(0, 0, 0, 0.08)",
+          }}
+          styles={{
+            body: {
+              display: "grid",
+              gap: 12,
+              padding: 32,
+            },
           }}
         >
-          {title}
-        </h1>
-        {subtitle ? (
-          <div style={{ margin: 0, color: COLORS.GRAY, fontSize: "15px" }}>
-            {subtitle}
-          </div>
-        ) : null}
-        <div style={{ marginTop: 8 }}>{children}</div>
-      </Card>
-    </div>
+          <h1
+            style={{
+              margin: 0,
+              color: COLORS.GRAY_D,
+              fontSize: "28px",
+              lineHeight: 1.2,
+            }}
+          >
+            {title}
+          </h1>
+          {subtitle ? (
+            <div style={{ margin: 0, color: COLORS.GRAY, fontSize: "15px" }}>
+              {subtitle}
+            </div>
+          ) : null}
+          <div style={{ marginTop: 8 }}>{children}</div>
+        </Card>
+      </div>
+    </PublicPageRoot>
   );
 }

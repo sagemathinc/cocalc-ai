@@ -14,6 +14,7 @@ import {
   PublicPageRoot,
   PublicSectionCard,
 } from "@cocalc/frontend/public/ui/shell";
+import PublicTopNav from "@cocalc/frontend/public/ui/top-nav";
 import { COLORS, HELP_EMAIL, SITE_NAME } from "@cocalc/util/theme";
 
 const { Paragraph } = Typography;
@@ -25,6 +26,7 @@ type SupportView = "index" | "new" | "tickets";
 
 interface SupportConfig {
   help_email?: string;
+  is_authenticated?: boolean;
   on_cocalc_com?: boolean;
   site_name?: string;
   support?: string;
@@ -210,6 +212,11 @@ export default function PublicSupportApp({
 
   return (
     <PublicPageRoot>
+      <PublicTopNav
+        active="support"
+        isAuthenticated={!!config?.is_authenticated}
+        siteName={config?.site_name}
+      />
       <PublicHero
         eyebrow="SUPPORT"
         title={title}

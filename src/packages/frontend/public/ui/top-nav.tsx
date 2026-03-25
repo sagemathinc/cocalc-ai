@@ -26,9 +26,11 @@ function appPath(path: string): string {
 
 export default function PublicTopNav({
   active,
+  isAuthenticated = false,
   siteName = SITE_NAME,
 }: {
   active?: PublicNavKey;
+  isAuthenticated?: boolean;
   siteName?: string;
 }) {
   const items: Array<{ href: string; key: PublicNavKey; label: string }> = [
@@ -64,9 +66,14 @@ export default function PublicTopNav({
             background: COLORS.BLUE_D,
           }}
         />
-        <Text strong style={{ color: COLORS.GRAY_D, fontSize: 16 }}>
-          {siteName}
-        </Text>
+        <a
+          href={appPath("")}
+          style={{ color: "inherit", textDecoration: "none" }}
+        >
+          <Text strong style={{ color: COLORS.GRAY_D, fontSize: 16 }}>
+            {siteName}
+          </Text>
+        </a>
       </Flex>
       <Flex wrap gap={8}>
         {items.map((item) => (
@@ -80,10 +87,21 @@ export default function PublicTopNav({
         ))}
       </Flex>
       <Flex wrap gap={8}>
-        <Button href={appPath("auth/sign-in")}>Sign in</Button>
-        <Button href={appPath("auth/sign-up")} type="primary">
-          Sign up
-        </Button>
+        {isAuthenticated ? (
+          <>
+            <Button href={appPath("projects")}>Projects</Button>
+            <Button href={appPath("settings")} type="primary">
+              Settings
+            </Button>
+          </>
+        ) : (
+          <>
+            <Button href={appPath("auth/sign-in")}>Sign in</Button>
+            <Button href={appPath("auth/sign-up")} type="primary">
+              Sign up
+            </Button>
+          </>
+        )}
       </Flex>
     </Flex>
   );

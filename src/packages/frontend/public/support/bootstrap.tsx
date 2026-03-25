@@ -12,6 +12,7 @@ import PublicSupportApp, { getSupportViewFromPath } from "./app";
 interface CustomizePayload {
   configuration?: {
     help_email?: string;
+    is_authenticated?: boolean;
     on_cocalc_com?: boolean;
     site_name?: string;
     support?: string;

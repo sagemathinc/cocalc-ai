@@ -28,4 +28,17 @@ describe("PublicAuthApp", () => {
     ).not.toBeNull();
     expect(screen.getByText("Registration token")).not.toBeNull();
   });
+
+  it("shows app links in the shared nav for authenticated users", () => {
+    render(
+      <PublicAuthApp
+        initialView="sign-in"
+        isAuthenticated={true}
+        siteName="Launchpad"
+      />,
+    );
+
+    expect(screen.getByRole("link", { name: "Projects" })).not.toBeNull();
+    expect(screen.getByRole("link", { name: "Settings" })).not.toBeNull();
+  });
 });

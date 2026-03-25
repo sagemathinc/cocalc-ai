@@ -5,6 +5,7 @@
 
 import { send as sendManifest } from "@cocalc/hub/manifest";
 import { WebappConfiguration } from "@cocalc/hub/webapp-configuration";
+import getAccount from "@cocalc/server/auth/get-account";
 import { getDatabase } from "../database";
 
 function headerString(value: unknown): string | undefined {
@@ -50,6 +51,7 @@ export default function init(router, isPersonal: boolean) {
       cloudflareLatitude,
       cloudflareLongitude,
     });
+    config.configuration.is_authenticated = !!(await getAccount(req));
     if (isPersonal) {
       config.configuration.is_personal = true;
     }

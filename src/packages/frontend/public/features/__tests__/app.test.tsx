@@ -47,6 +47,18 @@ describe("PublicFeaturesApp", () => {
     expect(screen.getByText("Linux Terminal")).not.toBeNull();
   });
 
+  it("shows app links in the shared nav when authenticated", () => {
+    render(
+      <PublicFeaturesApp
+        config={{ is_authenticated: true, site_name: "Launchpad" }}
+        initialRoute={{ view: "index" }}
+      />,
+    );
+
+    expect(screen.getByRole("link", { name: "Projects" })).not.toBeNull();
+    expect(screen.getByRole("link", { name: "Settings" })).not.toBeNull();
+  });
+
   it("renders a detail page", () => {
     render(
       <PublicFeaturesApp
@@ -61,7 +73,9 @@ describe("PublicFeaturesApp", () => {
         level: 1,
       }),
     ).not.toBeNull();
-    expect(screen.getByText("Agent-native workflows")).not.toBeNull();
+    expect(
+      screen.getByText("Code, explain, and fix in context"),
+    ).not.toBeNull();
     expect(screen.getByText("Create account")).not.toBeNull();
   });
 
@@ -80,5 +94,21 @@ describe("PublicFeaturesApp", () => {
       screen.getByText("Managed kernels and practical compatibility"),
     ).not.toBeNull();
     expect(screen.getByText("Publishing notebooks")).not.toBeNull();
+  });
+
+  it("renders the richer terminal feature page", () => {
+    render(
+      <PublicFeaturesApp
+        config={{ help_email: "help@example.com", site_name: "Launchpad" }}
+        initialRoute={{ slug: "terminal", view: "detail" }}
+      />,
+    );
+
+    expect(
+      screen.getByText("A real Linux shell inside every project"),
+    ).not.toBeNull();
+    expect(
+      screen.getByText("Realtime collaboration in the shell"),
+    ).not.toBeNull();
   });
 });

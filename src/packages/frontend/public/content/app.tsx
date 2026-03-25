@@ -31,6 +31,7 @@ import {
   PublicPageRoot,
   PublicSectionCard,
 } from "@cocalc/frontend/public/ui/shell";
+import PublicTopNav from "@cocalc/frontend/public/ui/top-nav";
 import { contentPath, type PublicContentRoute, topLevelView } from "./routes";
 
 const Markdown = lazy(() => import("@cocalc/frontend/markdown/component"));
@@ -39,6 +40,7 @@ const { Paragraph, Text, Title } = Typography;
 interface ContentConfig {
   help_email?: string;
   imprint?: string;
+  is_authenticated?: boolean;
   on_cocalc_com?: boolean;
   policies?: string;
   site_name?: string;
@@ -257,18 +259,29 @@ function CopyCommandButton({ value }: { value: string }) {
 
 function PageShell({
   children,
+  config,
   route,
   subtitle,
   title,
 }: {
   children: ReactNode;
+  config?: ContentConfig;
   route: PublicContentRoute;
   subtitle: string;
   title: string;
 }) {
   const currentTop = topLevelView(route);
+  const navActive =
+    currentTop === "about" || currentTop === "policies" || currentTop === "news"
+      ? currentTop
+      : undefined;
   return (
     <PublicPageRoot>
+      <PublicTopNav
+        active={navActive}
+        isAuthenticated={!!config?.is_authenticated}
+        siteName={config?.site_name ?? SITE_NAME}
+      />
       <PublicHero
         eyebrow="PUBLIC CONTENT"
         title={title}
@@ -839,6 +852,7 @@ export default function PublicContentApp({
   if (initialRoute.view === "about-events") {
     return (
       <PageShell
+        config={config}
         route={initialRoute}
         subtitle={`Where to find ${siteName} in person.`}
         title={title}
@@ -851,6 +865,7 @@ export default function PublicContentApp({
   if (initialRoute.view === "about-team") {
     return (
       <PageShell
+        config={config}
         route={initialRoute}
         subtitle={`Meet the people behind ${siteName}.`}
         title={title}
@@ -863,6 +878,7 @@ export default function PublicContentApp({
   if (initialRoute.view === "policies-imprint") {
     return (
       <PageShell
+        config={config}
         route={initialRoute}
         subtitle="Deployment-specific imprint information."
         title={title}
@@ -875,6 +891,7 @@ export default function PublicContentApp({
   if (initialRoute.view === "policies-custom") {
     return (
       <PageShell
+        config={config}
         route={initialRoute}
         subtitle="Deployment-specific policy information configured by admins."
         title={title}
@@ -887,6 +904,7 @@ export default function PublicContentApp({
   if (initialRoute.view === "policies") {
     return (
       <PageShell
+        config={config}
         route={initialRoute}
         subtitle="Public legal and compliance information for this deployment."
         title={title}
@@ -902,6 +920,7 @@ export default function PublicContentApp({
   ) {
     return (
       <PageShell
+        config={config}
         route={initialRoute}
         subtitle={`News and release notes for ${siteName}.`}
         title={title}
@@ -914,6 +933,7 @@ export default function PublicContentApp({
   if (initialRoute.view === "news") {
     return (
       <PageShell
+        config={config}
         route={initialRoute}
         subtitle={`News and release notes for ${siteName}.`}
         title={title}
@@ -926,6 +946,7 @@ export default function PublicContentApp({
   if (initialRoute.view === "software-cocalc-plus") {
     return (
       <PageShell
+        config={config}
         route={initialRoute}
         subtitle="The local single-user CoCalc experience for your own machine."
         title={title}
@@ -937,6 +958,7 @@ export default function PublicContentApp({
 
   return (
     <PageShell
+      config={config}
       route={initialRoute}
       subtitle={`Background information and public resources for ${siteName}.`}
       title={title}

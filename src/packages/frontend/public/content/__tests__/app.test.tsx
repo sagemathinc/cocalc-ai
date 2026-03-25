@@ -59,6 +59,18 @@ describe("PublicContentApp", () => {
     ).not.toBeNull();
   });
 
+  it("shows app links in the shared nav when authenticated", () => {
+    render(
+      <PublicContentApp
+        config={{ is_authenticated: true, site_name: "Launchpad" }}
+        initialRoute={{ view: "about" }}
+      />,
+    );
+
+    expect(screen.getByRole("link", { name: "Projects" })).not.toBeNull();
+    expect(screen.getByRole("link", { name: "Settings" })).not.toBeNull();
+  });
+
   it("renders configured policy cards", () => {
     render(
       <PublicContentApp

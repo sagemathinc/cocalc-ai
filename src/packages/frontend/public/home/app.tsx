@@ -24,6 +24,7 @@ const { Paragraph, Text, Title } = Typography;
 
 interface HomeConfig {
   help_email?: string;
+  is_authenticated?: boolean;
   organization_name?: string;
   organization_url?: string;
   site_description?: string;
@@ -47,7 +48,11 @@ export default function PublicHomeApp({
 
   return (
     <PublicPageRoot>
-      <PublicTopNav active="home" siteName={siteName} />
+      <PublicTopNav
+        active="home"
+        isAuthenticated={!!config?.is_authenticated}
+        siteName={siteName}
+      />
       <PublicHero
         eyebrow="COLLABORATIVE TECHNICAL COMPUTING"
         title={siteName}

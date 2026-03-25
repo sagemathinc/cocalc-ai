@@ -13,6 +13,7 @@ import PublicHomeApp from "./app";
 interface CustomizePayload {
   configuration?: {
     help_email?: string;
+    is_authenticated?: boolean;
     organization_name?: string;
     organization_url?: string;
     site_description?: string;

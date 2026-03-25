@@ -7,23 +7,28 @@ import { useEffect } from "react";
 
 import { Button, Col, Empty, Flex, Row, Tag, Typography } from "antd";
 
-import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import {
   PublicHero,
   PublicPageRoot,
   PublicSectionCard,
 } from "@cocalc/frontend/public/ui/shell";
+import PublicTopNav from "@cocalc/frontend/public/ui/top-nav";
 import { SITE_NAME } from "@cocalc/util/theme";
-import { joinUrlPath } from "@cocalc/util/url-path";
+import AIFeaturePage from "./ai-page";
 import { getFeatureIndexPages, getFeaturePage } from "./catalog";
 import JupyterNotebookFeaturePage from "./jupyter-notebook-page";
+import LatexEditorFeaturePage from "./latex-editor-page";
+import { FeatureImage, featureAppPath as appPath } from "./page-components";
 import type { PublicFeaturesRoute } from "./routes";
 import { featurePath } from "./routes";
+import TeachingFeaturePage from "./teaching-page";
+import TerminalFeaturePage from "./terminal-page";
 
 const { Paragraph, Text, Title } = Typography;
 
 interface FeaturesConfig {
   help_email?: string;
+  is_authenticated?: boolean;
   site_name?: string;
 }
 
@@ -32,9 +37,13 @@ interface PublicFeaturesAppProps {
   initialRoute: PublicFeaturesRoute;
 }
 
-function appPath(path: string): string {
-  return joinUrlPath(appBasePath, path);
-}
+const FEATURE_DETAIL_COMPONENTS = {
+  ai: AIFeaturePage,
+  "jupyter-notebook": JupyterNotebookFeaturePage,
+  "latex-editor": LatexEditorFeaturePage,
+  teaching: TeachingFeaturePage,
+  terminal: TerminalFeaturePage,
+} as const;
 
 function titleForRoute(route: PublicFeaturesRoute, siteName: string): string {
   if (route.view === "detail" && route.slug) {
@@ -43,30 +52,15 @@ function titleForRoute(route: PublicFeaturesRoute, siteName: string): string {
   return `${siteName} features`;
 }
 
-function FeatureImage({ alt, src }: { alt: string; src?: string }) {
-  if (!src) return null;
-  return (
-    <img
-      src={src}
-      alt={alt}
-      style={{
-        width: "100%",
-        aspectRatio: "16 / 9",
-        objectFit: "cover",
-        borderRadius: 12,
-      }}
-    />
-  );
-}
-
 function FeaturesIndex({ siteName }: { siteName: string }) {
   const pages = getFeatureIndexPages();
   return (
     <>
       <Paragraph style={{ margin: "24px 0 0", maxWidth: "70ch" }}>
-        These pages are the standalone, Next-free public feature overviews for{" "}
-        {siteName}. The content stays lightweight for now, but the UI is back on
-        the AntD design system instead of ad hoc styling.
+        Explore the core capabilities of {siteName}, from collaborative
+        notebooks and terminals to AI-assisted workflows, teaching tools, and
+        technical writing. These public pages are now served without Next.js
+        while keeping the AntD design language consistent with the main app.
       </Paragraph>
       <Row gutter={[16, 16]} style={{ marginTop: 8 }}>
         {pages.map((page) => (
@@ -118,8 +112,10 @@ function FeatureDetail({
     );
   }
 
-  if (slug === "jupyter-notebook") {
-    return <JupyterNotebookFeaturePage helpEmail={helpEmail} />;
+  const CustomPage =
+    FEATURE_DETAIL_COMPONENTS[slug as keyof typeof FEATURE_DETAIL_COMPONENTS];
+  if (CustomPage) {
+    return <CustomPage helpEmail={helpEmail} />;
   }
 
   return (
@@ -211,6 +207,11 @@ export default function PublicFeaturesApp({
 
   return (
     <PublicPageRoot>
+      <PublicTopNav
+        active="features"
+        isAuthenticated={!!config?.is_authenticated}
+        siteName={siteName}
+      />
       <PublicHero
         eyebrow="FEATURES"
         title={
@@ -221,7 +222,7 @@ export default function PublicFeaturesApp({
         subtitle={
           initialRoute.view === "detail" && initialRoute.slug
             ? getFeaturePage(initialRoute.slug)?.tagline
-            : "Standalone feature landing pages served without Next.js."
+            : "Standalone feature landing pages for the main CoCalc workflows."
         }
         actions={
           initialRoute.view === "detail" ? (

@@ -32,7 +32,7 @@ export async function init(): Promise<void> {
     target && target.includes("/auth") ? target : window.location.pathname;
   const payload = await loadCustomize();
   if (payload?.configuration?.is_authenticated) {
-    window.location.replace(joinUrlPath(appBasePath, "app"));
+    window.location.replace(joinUrlPath(appBasePath, "projects"));
     return;
   }
   const root = createRoot(document.getElementById("cocalc-webapp-container")!);
@@ -42,6 +42,7 @@ export async function init(): Promise<void> {
       <PublicAuthApp
         initialRequiresToken={!!payload?.registration}
         initialView={getAuthViewFromPath(pathname)}
+        isAuthenticated={!!payload?.configuration?.is_authenticated}
         siteName={payload?.configuration?.site_name ?? SITE_NAME}
       />,
     );

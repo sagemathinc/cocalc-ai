@@ -17,6 +17,7 @@ import PublicAuthPageShell from "./page-shell";
 interface PublicAuthAppProps {
   initialView: AuthView;
   initialRequiresToken?: boolean;
+  isAuthenticated?: boolean;
   siteName?: string;
 }
 
@@ -58,6 +59,7 @@ export function getAuthViewFromPath(pathname: string): AuthView {
 export default function PublicAuthApp({
   initialView,
   initialRequiresToken,
+  isAuthenticated,
   siteName = SITE_NAME,
 }: PublicAuthAppProps) {
   const [view, setView] = useState<AuthView>(initialView);
@@ -73,7 +75,12 @@ export default function PublicAuthApp({
   }
 
   return (
-    <PublicAuthPageShell title={title} subtitle={siteName}>
+    <PublicAuthPageShell
+      isAuthenticated={isAuthenticated}
+      siteName={siteName}
+      title={title}
+      subtitle={siteName}
+    >
       {view === "sign-in" && <PublicSignInForm onNavigate={onNavigate} />}
       {view === "sign-up" && (
         <PublicSignUpForm
