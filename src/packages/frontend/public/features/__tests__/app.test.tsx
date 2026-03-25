@@ -111,4 +111,58 @@ describe("PublicFeaturesApp", () => {
       screen.getByText("Realtime collaboration in the shell"),
     ).not.toBeNull();
   });
+
+  it("renders the richer linux environment page", () => {
+    render(
+      <PublicFeaturesApp
+        config={{ help_email: "help@example.com", site_name: "Launchpad" }}
+        initialRoute={{ slug: "linux", view: "detail" }}
+      />,
+    );
+
+    expect(
+      screen.getByText(
+        "A browser-based Linux workspace for real technical projects",
+      ),
+    ).not.toBeNull();
+    expect(
+      screen.getByText("Learn and use Linux without risking your own machine"),
+    ).not.toBeNull();
+  });
+
+  it("renders the richer python feature page", () => {
+    render(
+      <PublicFeaturesApp
+        config={{ help_email: "help@example.com", site_name: "Launchpad" }}
+        initialRoute={{ slug: "python", view: "detail" }}
+      />,
+    );
+
+    expect(
+      screen.getByText(
+        "Run Python notebooks, scripts, and experiments in one shared environment",
+      ),
+    ).not.toBeNull();
+    expect(
+      screen.getByText("Zero-setup Python for technical work"),
+    ).not.toBeNull();
+  });
+
+  it("renders the richer whiteboard feature page", () => {
+    render(
+      <PublicFeaturesApp
+        config={{ help_email: "help@example.com", site_name: "Launchpad" }}
+        initialRoute={{ slug: "whiteboard", view: "detail" }}
+      />,
+    );
+
+    expect(
+      screen.getByText(
+        "An infinite collaborative canvas with code, math, and sketching",
+      ),
+    ).not.toBeNull();
+    expect(
+      screen.getByText("Built for interactive explanation"),
+    ).not.toBeNull();
+  });
 });

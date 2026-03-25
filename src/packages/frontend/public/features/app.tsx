@@ -15,14 +15,19 @@ import {
 import PublicTopNav from "@cocalc/frontend/public/ui/top-nav";
 import { SITE_NAME } from "@cocalc/util/theme";
 import AIFeaturePage from "./ai-page";
+import ApiFeaturePage from "./api-page";
 import { getFeatureIndexPages, getFeaturePage } from "./catalog";
 import JupyterNotebookFeaturePage from "./jupyter-notebook-page";
 import LatexEditorFeaturePage from "./latex-editor-page";
+import LinuxFeaturePage from "./linux-page";
 import { FeatureImage, featureAppPath as appPath } from "./page-components";
 import type { PublicFeaturesRoute } from "./routes";
 import { featurePath } from "./routes";
+import PythonFeaturePage from "./python-page";
+import SlidesFeaturePage from "./slides-page";
 import TeachingFeaturePage from "./teaching-page";
 import TerminalFeaturePage from "./terminal-page";
+import WhiteboardFeaturePage from "./whiteboard-page";
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -39,10 +44,15 @@ interface PublicFeaturesAppProps {
 
 const FEATURE_DETAIL_COMPONENTS = {
   ai: AIFeaturePage,
+  api: ApiFeaturePage,
   "jupyter-notebook": JupyterNotebookFeaturePage,
   "latex-editor": LatexEditorFeaturePage,
+  linux: LinuxFeaturePage,
+  python: PythonFeaturePage,
+  slides: SlidesFeaturePage,
   teaching: TeachingFeaturePage,
   terminal: TerminalFeaturePage,
+  whiteboard: WhiteboardFeaturePage,
 } as const;
 
 function titleForRoute(route: PublicFeaturesRoute, siteName: string): string {
