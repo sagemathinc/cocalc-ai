@@ -695,7 +695,7 @@ exec python3 -m mkdocs serve --dev-addr "\${HOST:-127.0.0.1}:\${PORT}"`,
         title: "marimo",
         kind: "service",
         preferred_port: "6016",
-        service_open_mode: "proxy",
+        service_open_mode: "port",
         command: `app=\${APP_START_FILE:-marimo_app.py}; if [ ! -f "$app" ]; then cat > "$app" <<'PY'
 import marimo
 
@@ -719,7 +719,8 @@ if __name__ == "__main__":
     app.run()
 PY
 fi
-base_url="\${APP_BASE_URL%/}"
+base_url="\${APP_BASE_URL/\\/proxy\\//\\/port\\/}"
+base_url="\${base_url%/}"
 exec python3 -m marimo edit --headless --no-token --base-url "\${base_url}" --host "\${HOST:-127.0.0.1}" --port "\${PORT}" "$app"`,
       },
       verify: {

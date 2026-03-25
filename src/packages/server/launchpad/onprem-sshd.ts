@@ -816,14 +816,25 @@ function resolveCloudflaredOrigin(): { origin: string; noTLSVerify: boolean } {
 async function writeCloudflaredCredentials(
   path: string,
   tunnel: CloudflareTunnel,
-): Promise<void> {
+): Promise<boolean> {
   const payload = {
     AccountTag: tunnel.account_id,
     TunnelID: tunnel.id,
     TunnelSecret: tunnel.tunnel_secret,
   };
-  await writeFile(path, JSON.stringify(payload, null, 2), { mode: 0o600 });
+  const next = JSON.stringify(payload, null, 2);
+  try {
+    const current = await readFile(path, "utf8");
+    if (current === next) {
+      await chmod(path, 0o600);
+      return false;
+    }
+  } catch {
+    // fall through and write a fresh file
+  }
+  await writeFile(path, next, { mode: 0o600 });
   await chmod(path, 0o600);
+  return true;
 }
 
 async function writeCloudflaredConfig(opts: {
@@ -834,7 +845,7 @@ async function writeCloudflaredConfig(opts: {
   noTLSVerify: boolean;
   appPublicWildcard?: string;
   publicViewerHostname?: string;
-}): Promise<void> {
+}): Promise<boolean> {
   const yamlString = (value: string): string => JSON.stringify(value);
   const ingress: string[] = [
     "ingress:",
@@ -875,8 +886,19 @@ async function writeCloudflaredConfig(opts: {
     ...ingress,
     "",
   ];
-  await writeFile(opts.path, lines.join("\n"), { mode: 0o600 });
+  const next = lines.join("\n");
+  try {
+    const current = await readFile(opts.path, "utf8");
+    if (current === next) {
+      await chmod(opts.path, 0o600);
+      return false;
+    }
+  } catch {
+    // fall through and write a fresh file
+  }
+  await writeFile(opts.path, next, { mode: 0o600 });
   await chmod(opts.path, 0o600);
+  return true;
 }
 
 function appPublicWildcardHostname(
@@ -970,16 +992,8 @@ async function startCloudflared(): Promise<CloudflaredState | null> {
     logger.info("cloudflare tunnel not started (configuration incomplete)");
     return null;
   }
-  if (cloudflaredState) {
-    if (!isPidRunning(cloudflaredState.pid)) {
-      cloudflaredState = null;
-    } else {
-      logger.info("cloudflare tunnel already running", {
-        hostname: cloudflaredState.tunnel.hostname,
-        pid: cloudflaredState.pid,
-      });
-      return cloudflaredState;
-    }
+  if (cloudflaredState && !isPidRunning(cloudflaredState.pid)) {
+    cloudflaredState = null;
   }
   const cloudflaredBin = await resolveCloudflaredBinary();
   if (!cloudflaredBin) {
@@ -998,6 +1012,7 @@ async function startCloudflared(): Promise<CloudflaredState | null> {
   const pidPath = cloudflaredPidFilePath();
 
   let tunnel: CloudflareTunnel | undefined;
+  let tunnelStateChanged = false;
   try {
     const existing = await loadCloudflaredStateFile(tunnelPath);
     tunnel = await ensureCloudflareTunnelForHub({ existing });
@@ -1007,10 +1022,19 @@ async function startCloudflared(): Promise<CloudflaredState | null> {
       logger.warn(cloudflaredLastError);
       return null;
     }
-    await writeFile(tunnelPath, JSON.stringify(tunnel, null, 2), {
-      mode: 0o600,
-    });
-    await chmod(tunnelPath, 0o600);
+    const next = JSON.stringify(tunnel, null, 2);
+    try {
+      const current = await readFile(tunnelPath, "utf8");
+      if (current !== next) {
+        await writeFile(tunnelPath, next, { mode: 0o600 });
+        await chmod(tunnelPath, 0o600);
+        tunnelStateChanged = true;
+      }
+    } catch {
+      await writeFile(tunnelPath, next, { mode: 0o600 });
+      await chmod(tunnelPath, 0o600);
+      tunnelStateChanged = true;
+    }
   } catch (err) {
     cloudflaredLastError = String(err);
     logger.warn("cloudflare tunnel ensure failed", { err });
@@ -1028,8 +1052,11 @@ async function startCloudflared(): Promise<CloudflaredState | null> {
       dns: settings.dns,
     }) ?? "",
   );
-  await writeCloudflaredCredentials(credentialsPath, tunnel);
-  await writeCloudflaredConfig({
+  const credentialsChanged = await writeCloudflaredCredentials(
+    credentialsPath,
+    tunnel,
+  );
+  const configChanged = await writeCloudflaredConfig({
     path: configPath,
     credentialsPath,
     tunnel,
@@ -1038,22 +1065,48 @@ async function startCloudflared(): Promise<CloudflaredState | null> {
     appPublicWildcard,
     publicViewerHostname,
   });
+  const shouldRestartRunning =
+    tunnelStateChanged || credentialsChanged || configChanged;
 
   const persistedPid = await readPidFile(pidPath);
   if (isPidRunning(persistedPid)) {
-    logger.info("cloudflare tunnel already running", {
-      hostname: tunnel.hostname,
-      pid: persistedPid,
-    });
-    cloudflaredState = {
-      tunnel,
-      configPath,
-      credentialsPath,
-      origin,
-      pid: persistedPid as number,
-      pidFile: pidPath,
-    };
-    return cloudflaredState;
+    if (shouldRestartRunning) {
+      logger.info("restarting cloudflared to apply updated config", {
+        hostname: tunnel.hostname,
+        pid: persistedPid,
+      });
+      try {
+        process.kill(persistedPid as number, "SIGTERM");
+      } catch {
+        // ignore and fall through to a fresh start
+      }
+      await new Promise((resolve) => setTimeout(resolve, 750));
+      if (isPidRunning(persistedPid)) {
+        try {
+          process.kill(persistedPid as number, "SIGKILL");
+        } catch {
+          // ignore
+        }
+      }
+      await clearPidFile(pidPath);
+      if (cloudflaredState?.pid === persistedPid) {
+        cloudflaredState = null;
+      }
+    } else {
+      logger.info("cloudflare tunnel already running", {
+        hostname: tunnel.hostname,
+        pid: persistedPid,
+      });
+      cloudflaredState = {
+        tunnel,
+        configPath,
+        credentialsPath,
+        origin,
+        pid: persistedPid as number,
+        pidFile: pidPath,
+      };
+      return cloudflaredState;
+    }
   }
   if (persistedPid) {
     await clearPidFile(pidPath);
