@@ -1,0 +1,453 @@
+/*
+ *  This file is part of CoCalc: Copyright © 2026 Sagemath, Inc.
+ *  License: MS-RSL – see LICENSE.md for details
+ */
+
+import { useEffect, useMemo, useState } from "react";
+import {
+  Alert,
+  Button,
+  Card,
+  Form,
+  Modal,
+  Select,
+  Space,
+  Tag,
+  Typography,
+} from "antd";
+
+import { useStore } from "@cocalc/frontend/app-framework";
+import { Icon } from "@cocalc/frontend/components";
+import {
+  managedRootfsCatalogUrl,
+  useRootfsImages,
+} from "@cocalc/frontend/rootfs/manifest";
+import type { RootfsImageEntry } from "@cocalc/util/rootfs-images";
+import { COLORS } from "@cocalc/util/theme";
+import type { CourseActions } from "../actions";
+import type { CourseStore } from "../store";
+
+interface Props {
+  actions: CourseActions;
+  name: string;
+  settings;
+}
+
+export function StudentProjectRootfsConfig({ actions, name, settings }: Props) {
+  const store = useStore<CourseStore>({ name });
+  const [helpOpen, setHelpOpen] = useState<boolean>(false);
+  const [applying, setApplying] = useState<boolean>(false);
+  const [nextImageId, setNextImageId] = useState<string>("");
+  const [nextImage, setNextImage] = useState<string>("");
+  const currentImage =
+    `${settings.get("student_project_rootfs_image") ?? ""}`.trim();
+  const currentImageId =
+    `${settings.get("student_project_rootfs_image_id") ?? ""}`.trim();
+  const existingStudentProjectCount =
+    store?.get_student_project_ids().length ?? 0;
+  const {
+    images: rootfsImages,
+    loading: rootfsLoading,
+    error: rootfsError,
+  } = useRootfsImages([managedRootfsCatalogUrl()]);
+
+  useEffect(() => {
+    setNextImage(currentImage);
+    setNextImageId(currentImageId);
+  }, [currentImage, currentImageId]);
+
+  const visibleRootfsImages = useMemo(
+    () => rootfsImages.filter((entry) => !entry.hidden && !entry.blocked),
+    [rootfsImages],
+  );
+  const rootfsOptions = useMemo(
+    () => groupedRootfsOptions(visibleRootfsImages),
+    [visibleRootfsImages],
+  );
+  const currentEntry = useMemo(() => {
+    if (currentImageId) {
+      const byId = rootfsImages.find((entry) => entry.id === currentImageId);
+      if (byId) return byId;
+    }
+    if (!currentImage) return undefined;
+    return rootfsImages.find((entry) => entry.image === currentImage);
+  }, [currentImage, currentImageId, rootfsImages]);
+  const nextEntry = useMemo(() => {
+    if (nextImageId) {
+      const byId = rootfsImages.find((entry) => entry.id === nextImageId);
+      if (byId) return byId;
+    }
+    if (!nextImage) return undefined;
+    return rootfsImages.find((entry) => entry.image === nextImage);
+  }, [nextImage, nextImageId, rootfsImages]);
+  const needSave =
+    nextImage.trim() !== currentImage || nextImageId.trim() !== currentImageId;
+
+  function save() {
+    actions.configuration.set_student_project_rootfs({
+      image: nextImage,
+      image_id: nextImageId,
+    });
+  }
+
+  function confirmApply() {
+    const targetEntry = currentEntry;
+    const targetLabel = targetEntry?.label?.trim() || currentImage;
+    Modal.confirm({
+      title: "Apply RootFS image to existing student projects?",
+      width: 680,
+      okText: `Change ${existingStudentProjectCount} student project${
+        existingStudentProjectCount === 1 ? "" : "s"
+      }`,
+      okButtonProps: { danger: true },
+      content: (
+        <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+          <Typography.Paragraph style={{ marginBottom: 0 }}>
+            {existingStudentProjectCount} existing student project
+            {existingStudentProjectCount === 1 ? "" : "s"} will have their
+            RootFS image changed to{" "}
+            <Typography.Text strong>{targetLabel}</Typography.Text>.
+          </Typography.Paragraph>
+          <Alert
+            type="warning"
+            showIcon
+            message="This changes the / software environment"
+            description={
+              <>
+                Running student projects will be restarted so the new RootFS
+                takes effect immediately. Important student data belongs in
+                <Typography.Text code> /root </Typography.Text>
+                or
+                <Typography.Text code> /scratch </Typography.Text>, not in the
+                base RootFS image itself.
+              </>
+            }
+          />
+          {targetEntry?.description ? (
+            <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
+              {targetEntry.description}
+            </Typography.Paragraph>
+          ) : null}
+        </Space>
+      ),
+      onOk: async () => {
+        setApplying(true);
+        try {
+          await actions.student_projects.set_all_student_project_rootfs();
+        } finally {
+          setApplying(false);
+        }
+      },
+    });
+  }
+
+  return (
+    <>
+      <Card
+        title={
+          <>
+            <Icon name="cube" /> Student Project RootFS Image
+          </>
+        }
+      >
+        <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+          <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
+            Choose a managed RootFS image for new student projects. Existing
+            student projects keep their current image until you explicitly apply
+            the new one.
+          </Typography.Paragraph>
+
+          <Alert
+            type="info"
+            showIcon
+            message="Why use this?"
+            description="Use one managed software environment across all student projects, then roll out upgrades deliberately when you are ready."
+          />
+
+          <Form layout="vertical">
+            <Form.Item
+              label="Managed RootFS image for new student projects"
+              style={{ marginBottom: "12px" }}
+            >
+              <Select
+                allowClear
+                showSearch
+                placeholder="Use the platform default image"
+                options={rootfsOptions}
+                value={nextImageId || undefined}
+                style={{ width: "100%" }}
+                listHeight={420}
+                filterOption={(input, option) =>
+                  rootfsOptionSearchText(option).includes(
+                    input.trim().toLowerCase(),
+                  )
+                }
+                optionRender={(option) =>
+                  renderRootfsCatalogOption((option.data as any).entry)
+                }
+                onChange={(value) => {
+                  const next = visibleRootfsImages.find(
+                    (entry) => entry.id === value,
+                  );
+                  setNextImage(next?.image ?? "");
+                  setNextImageId(next?.id ?? "");
+                }}
+                loading={rootfsLoading}
+                disabled={rootfsLoading}
+              />
+            </Form.Item>
+          </Form>
+
+          {nextEntry ? (
+            <Space wrap size={[8, 8]}>
+              {nextEntry.section ? (
+                <Tag color={sectionTagColor(nextEntry.section)}>
+                  {sectionLabel(nextEntry.section)}
+                </Tag>
+              ) : null}
+              {nextEntry.version ? <Tag>{nextEntry.version}</Tag> : null}
+              {nextEntry.channel ? (
+                <Tag color="cyan">{nextEntry.channel}</Tag>
+              ) : null}
+              {nextEntry.gpu ? <Tag color="purple">GPU image</Tag> : null}
+            </Space>
+          ) : (
+            <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
+              No course-specific RootFS image is configured. New student
+              projects will use the usual platform default image.
+            </Typography.Paragraph>
+          )}
+
+          {currentImage && !currentEntry ? (
+            <Alert
+              type="warning"
+              showIcon
+              message="Configured image is no longer visible in the catalog"
+              description={`The course is currently configured to use ${currentImage}. Save a new selection to replace it.`}
+            />
+          ) : null}
+
+          {rootfsError ? (
+            <Typography.Paragraph
+              type="secondary"
+              style={{ marginBottom: 0, color: COLORS.GRAY_D }}
+            >
+              Catalog load issue: {rootfsError}
+            </Typography.Paragraph>
+          ) : null}
+
+          <Space wrap>
+            <Button
+              type={needSave ? "primary" : "default"}
+              disabled={!needSave}
+              onClick={save}
+            >
+              Save
+            </Button>
+            <Button
+              disabled={
+                needSave ||
+                applying ||
+                !currentImage ||
+                existingStudentProjectCount === 0
+              }
+              onClick={confirmApply}
+            >
+              {applying ? (
+                <Icon name="cocalc-ring" spin />
+              ) : (
+                <Icon name="refresh" />
+              )}{" "}
+              Apply To Existing Student Projects...
+            </Button>
+            <Button type="link" onClick={() => setHelpOpen(true)}>
+              What does this change?
+            </Button>
+          </Space>
+
+          {needSave ? (
+            <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
+              Save this course setting before applying it to existing student
+              projects.
+            </Typography.Paragraph>
+          ) : null}
+        </Space>
+      </Card>
+      <Modal
+        open={helpOpen}
+        footer={null}
+        onCancel={() => setHelpOpen(false)}
+        title="How course RootFS images work"
+      >
+        <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+          <Alert
+            type="info"
+            showIcon
+            message="New student projects"
+            description="New student projects created from this course use the configured managed RootFS image."
+          />
+          <Alert
+            type="warning"
+            showIcon
+            message="Existing student projects"
+            description="Existing student projects do not change automatically. Use “Apply To Existing Student Projects...” when you want to switch them."
+          />
+          <Typography.Paragraph style={{ marginBottom: 0 }}>
+            Changing the RootFS image switches the project&apos;s visible
+            <Typography.Text code> / </Typography.Text>
+            software environment. That is appropriate for managed software and
+            base filesystem customizations, but not for important long-term
+            data.
+          </Typography.Paragraph>
+          <Typography.Paragraph style={{ marginBottom: 0 }}>
+            Tell students to treat
+            <Typography.Text code> /root </Typography.Text>
+            as the place for long-term project data and configuration, and
+            <Typography.Text code> /scratch </Typography.Text>
+            as ephemeral workspace storage.
+          </Typography.Paragraph>
+        </Space>
+      </Modal>
+    </>
+  );
+}
+
+function sectionLabel(section: RootfsImageEntry["section"]): string {
+  switch (section) {
+    case "official":
+      return "Official";
+    case "mine":
+      return "My image";
+    case "collaborators":
+      return "Collaborator image";
+    case "public":
+      return "Public image";
+    default:
+      return "Catalog";
+  }
+}
+
+function sectionTagColor(section: RootfsImageEntry["section"]): string {
+  switch (section) {
+    case "official":
+      return "blue";
+    case "mine":
+      return "green";
+    case "collaborators":
+      return "gold";
+    case "public":
+      return "red";
+    default:
+      return "default";
+  }
+}
+
+function groupedRootfsOptions(images: RootfsImageEntry[]) {
+  const sections: Array<{
+    key: NonNullable<RootfsImageEntry["section"]>;
+    label: string;
+  }> = [
+    { key: "official", label: "Official images" },
+    { key: "mine", label: "My images" },
+    { key: "collaborators", label: "Collaborator images" },
+    { key: "public", label: "Public images" },
+  ];
+  return sections.reduce<
+    Array<{
+      label: string;
+      options: Array<{
+        value: string;
+        label: string;
+        searchText: string;
+        entry: RootfsImageEntry;
+      }>;
+    }>
+  >((acc, { key, label }) => {
+    const options = images
+      .filter((entry) => entry.section === key)
+      .map((entry) => ({
+        value: entry.id,
+        label: entry.label || entry.image,
+        entry,
+        searchText: [
+          entry.label,
+          entry.image,
+          entry.description,
+          entry.owner_name,
+          ...(entry.tags ?? []),
+        ]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase(),
+      }));
+    if (options.length > 0) {
+      acc.push({ label, options });
+    }
+    return acc;
+  }, []);
+}
+
+function rootfsOptionSearchText(option?: any): string {
+  return `${option?.searchText ?? option?.data?.searchText ?? ""}`.toLowerCase();
+}
+
+function renderRootfsCatalogOption(entry: RootfsImageEntry) {
+  return (
+    <div
+      style={{
+        padding: "6px 0",
+        lineHeight: "18px",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: "8px",
+          flexWrap: "wrap",
+          marginBottom: "2px",
+        }}
+      >
+        <span style={{ fontWeight: 600 }}>{entry.label || entry.image}</span>
+        {entry.section ? (
+          <Tag
+            color={sectionTagColor(entry.section)}
+            style={{ marginInlineEnd: 0 }}
+          >
+            {sectionLabel(entry.section)}
+          </Tag>
+        ) : null}
+        {entry.version ? (
+          <Tag style={{ marginInlineEnd: 0 }}>{entry.version}</Tag>
+        ) : null}
+        {entry.channel ? (
+          <Tag color="cyan" style={{ marginInlineEnd: 0 }}>
+            {entry.channel}
+          </Tag>
+        ) : null}
+      </div>
+      <div
+        style={{
+          fontFamily: "monospace",
+          fontSize: "11px",
+          color: COLORS.GRAY_M,
+          overflowWrap: "anywhere",
+          marginBottom: entry.description ? "2px" : 0,
+        }}
+      >
+        {entry.image}
+      </div>
+      {entry.description ? (
+        <div
+          style={{
+            fontSize: "12px",
+            color: COLORS.GRAY_D,
+            overflowWrap: "anywhere",
+          }}
+        >
+          {entry.description}
+        </div>
+      ) : null}
+    </div>
+  );
+}

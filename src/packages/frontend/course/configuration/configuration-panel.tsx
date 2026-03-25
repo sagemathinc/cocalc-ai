@@ -32,6 +32,7 @@ import { DisableStudentCollaboratorsPanel } from "./disable-collaborators";
 import { EnvironmentVariablesConfig } from "./envvars-config";
 import { Nbgrader } from "./nbgrader";
 import { Parallel } from "./parallel";
+import { StudentProjectRootfsConfig } from "./student-project-rootfs";
 import StudentPay from "./student-pay";
 import { COLORS } from "@cocalc/util/theme";
 
@@ -80,6 +81,12 @@ export function ConfigurationPanel({ name, project_id, settings }: Props) {
             actions={actions}
             settings={settings}
             project_id={project_id}
+          />
+          <br />
+          <StudentProjectRootfs
+            actions={actions}
+            settings={settings}
+            name={name}
           />
           <br />
           <EnvVariables
@@ -298,6 +305,24 @@ export function EnvVariables({
       envvars={settings.get("envvars")}
       project_id={project_id}
       close={close}
+    />
+  );
+}
+
+export function StudentProjectRootfs({
+  settings,
+  actions,
+  name,
+}: {
+  settings;
+  actions;
+  name: string;
+}) {
+  return (
+    <StudentProjectRootfsConfig
+      actions={actions}
+      settings={settings}
+      name={name}
     />
   );
 }

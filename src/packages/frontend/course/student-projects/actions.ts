@@ -10,6 +10,7 @@ Actions specific to manipulating the student projects that students have in a co
 import { delay, map as awaitMap } from "awaiting";
 import { redux } from "@cocalc/frontend/app-framework";
 import { markdown_to_html } from "@cocalc/frontend/markdown";
+import { setProjectRootfsImage } from "@cocalc/frontend/rootfs/manifest";
 import { Datastore, EnvVars } from "@cocalc/frontend/projects/actions";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { RESEND_INVITE_INTERVAL_DAYS } from "@cocalc/util/consts/invites";
@@ -69,10 +70,13 @@ export class StudentProjectsActions {
       desc: `Create project for ${store.get_student_name(student_id)}.`,
     });
     let project_id: string;
+    const courseRootfs = store.get_student_project_rootfs();
     try {
       project_id = await redux.getActions("projects").create_project({
         title: store.get("settings").get("title"),
         description: store.get("settings").get("description"),
+        rootfs_image: courseRootfs?.image,
+        rootfs_image_id: courseRootfs?.image_id,
       });
     } catch (err) {
       this.course_actions.set_error(
@@ -437,6 +441,7 @@ export class StudentProjectsActions {
 
     const datastore: Datastore = store.get_datastore();
     const envvars: EnvVars = store.get_envvars();
+    const courseRootfs = store.get_student_project_rootfs();
     const student_project_functionality = store
       .getIn(["settings", "student_project_functionality"])
       ?.toJS();
@@ -465,6 +470,8 @@ export class StudentProjectsActions {
           type: "student",
           student_project_functionality,
           envvars,
+          rootfs_image: courseRootfs?.image,
+          rootfs_image_id: courseRootfs?.image_id,
         });
       }
     } finally {
@@ -524,6 +531,54 @@ export class StudentProjectsActions {
         ?.toJS() ?? {};
     const actions = redux.getProjectActions(student_project_id);
     await actions.set_environment(env);
+  };
+
+  set_all_student_project_rootfs = async (): Promise<void> => {
+    const store = this.get_store();
+    const courseRootfs = store.get_student_project_rootfs();
+    if (!courseRootfs?.image) {
+      throw Error("No course RootFS image is configured.");
+    }
+    const project_ids = store.get_student_project_ids();
+    if (project_ids.length === 0) {
+      return;
+    }
+    await redux.getActions("projects").load_all_projects();
+    const projectsActions = redux.getActions("projects");
+    const overallId = this.course_actions.set_activity({
+      desc: `Changing RootFS image for ${project_ids.length} student projects...`,
+    });
+    try {
+      let i = 0;
+      for (const project_id of project_ids) {
+        if (this.course_actions.is_closed()) return;
+        i += 1;
+        const activityId = this.course_actions.set_activity({
+          desc: `Changing RootFS image for student project ${i} of ${project_ids.length}`,
+        });
+        try {
+          await setProjectRootfsImage({
+            project_id,
+            image: courseRootfs.image,
+            image_id: courseRootfs.image_id,
+          });
+          if (redux.getStore("projects").get_state(project_id) === "running") {
+            await projectsActions.restart_project(project_id);
+          }
+        } finally {
+          this.course_actions.set_activity({ id: activityId });
+        }
+        await delay(0);
+      }
+      await this.set_all_student_project_course_info();
+    } catch (err) {
+      this.course_actions.set_error(
+        `Error changing student project RootFS images - ${err}`,
+      );
+      throw err;
+    } finally {
+      this.course_actions.set_activity({ id: overallId });
+    }
   };
 
   private delete_student_project = async (

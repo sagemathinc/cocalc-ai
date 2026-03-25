@@ -85,6 +85,17 @@ export class ConfigurationActions {
     await this.course_actions.student_projects.configure_all_projects();
   };
 
+  set_student_project_rootfs = (opts?: {
+    image?: string;
+    image_id?: string;
+  }): void => {
+    this.set({
+      student_project_rootfs_image: opts?.image?.trim() || "",
+      student_project_rootfs_image_id: opts?.image_id?.trim() || "",
+      table: "settings",
+    });
+  };
+
   set_email_invite = (body: string): void => {
     this.set({ email_invite: body, table: "settings" });
   };

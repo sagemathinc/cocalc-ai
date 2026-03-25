@@ -136,6 +136,8 @@ export type SortDescription = TypedMap<{
 export type CourseSettingsRecord = TypedMap<{
   allow_collabs: boolean;
   student_project_functionality?: StudentProjectFunctionality;
+  student_project_rootfs_image?: string;
+  student_project_rootfs_image_id?: string;
   description: string;
   email_invite: string;
   institute_pay: boolean;
@@ -297,6 +299,20 @@ export class CourseStore extends Store<CourseState> {
       console.warn(`course/get_envvars: encountered faulty value:`, envvars);
       return;
     }
+  }
+
+  public get_student_project_rootfs():
+    | { image: string; image_id?: string }
+    | undefined {
+    const image =
+      `${this.getIn(["settings", "student_project_rootfs_image"]) ?? ""}`.trim();
+    if (!image) return;
+    const image_id =
+      `${this.getIn(["settings", "student_project_rootfs_image_id"]) ?? ""}`.trim();
+    return {
+      image,
+      ...(image_id ? { image_id } : undefined),
+    };
   }
 
   public get_allow_collabs(): boolean {

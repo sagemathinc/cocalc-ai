@@ -23,6 +23,8 @@ export interface SyncDBRecordSettings {
   mirror_config?: boolean;
   mirror_config_path?: string;
   student_project_functionality?: StudentProjectFunctionality;
+  student_project_rootfs_image?: string;
+  student_project_rootfs_image_id?: string;
   shared_project_id?: string;
   pay?: string;
   payInfo?: PurchaseInfo;
