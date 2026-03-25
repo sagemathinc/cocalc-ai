@@ -73,6 +73,7 @@ export type ProjectCommandDeps = {
   projectChatLoopSetData: any;
   projectChatLoopClearData: any;
   projectChatAutomationData: any;
+  projectChatActivityData: any;
   normalizeUserSearchName: any;
   resolveAccountByIdentifier: any;
   serializeInviteRow: any;

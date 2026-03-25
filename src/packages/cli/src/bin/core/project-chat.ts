@@ -3,14 +3,17 @@ import { randomUUID } from "node:crypto";
 
 import {
   buildThreadConfigRecord,
+  deriveAcpLogRefs,
   type ChatThreadConfigRecord,
   type ChatThreadLoopConfig,
 } from "@cocalc/chat";
+import { akv } from "@cocalc/conat/sync/akv";
 import { automationAcp } from "@cocalc/conat/ai/acp/client";
 import type {
   AcpAutomationConfig,
   AcpAutomationRequest,
   AcpAutomationResponse,
+  AcpStreamMessage,
 } from "@cocalc/conat/ai/acp/types";
 import type { CodexSessionConfig } from "@cocalc/util/ai/codex";
 
@@ -75,6 +78,39 @@ function getThreadConfigRecord(
 
 function listThreadConfigRecords(rows: any[]): ChatThreadConfigRecord[] {
   return rows.filter((row) => row?.event === "chat-thread-config");
+}
+
+function listChatRowsForThread(rows: any[], threadId: string): any[] {
+  const cleanThreadId = `${threadId ?? ""}`.trim();
+  if (!cleanThreadId) return [];
+  return rows.filter(
+    (row) =>
+      row?.event === "chat" &&
+      `${row?.thread_id ?? ""}`.trim() === cleanThreadId,
+  );
+}
+
+function getChatRowForThreadMessage(
+  rows: any[],
+  threadId: string,
+  messageId?: string,
+): any | undefined {
+  const cleanMessageId = `${messageId ?? ""}`.trim();
+  const chatRows = listChatRowsForThread(rows, threadId);
+  if (cleanMessageId) {
+    return chatRows.find(
+      (row) => `${row?.message_id ?? ""}`.trim() === cleanMessageId,
+    );
+  }
+  for (let i = chatRows.length - 1; i >= 0; i -= 1) {
+    const row = chatRows[i];
+    const logStore = `${row?.acp_log_store ?? ""}`.trim();
+    const logKey = `${row?.acp_log_key ?? ""}`.trim();
+    if (logStore && logKey) {
+      return row;
+    }
+  }
+  return undefined;
 }
 
 function summarizeThread(
@@ -492,11 +528,87 @@ export function createProjectChatOps<Ctx, Project extends ProjectIdentity>(
     });
   }
 
+  async function projectChatActivityData({
+    ctx,
+    projectIdentifier,
+    path,
+    threadId,
+    messageId,
+    cwd,
+  }: {
+    ctx: Ctx;
+    projectIdentifier?: string;
+    path: string;
+    threadId: string;
+    messageId?: string;
+    cwd?: string;
+  }): Promise<Record<string, unknown>> {
+    return await withProjectChatFile({
+      deps,
+      ctx,
+      projectIdentifier,
+      chatPath: path,
+      cwd,
+      fn: async ({ project, client, rows }) => {
+        const row = getChatRowForThreadMessage(rows, threadId, messageId);
+        const cleanMessageId = `${messageId ?? ""}`.trim();
+        if (!row) {
+          if (cleanMessageId) {
+            throw new Error(
+              `message '${cleanMessageId}' not found in thread '${threadId}'`,
+            );
+          }
+          throw new Error(
+            `thread '${threadId}' has no persisted Codex activity log`,
+          );
+        }
+        const resolvedMessageId = `${row?.message_id ?? ""}`.trim();
+        if (!resolvedMessageId) {
+          throw new Error(`selected chat row does not have a message id`);
+        }
+        const explicitStore = `${row?.acp_log_store ?? ""}`.trim();
+        const explicitKey = `${row?.acp_log_key ?? ""}`.trim();
+        const refs =
+          explicitStore && explicitKey
+            ? {
+                store: explicitStore,
+                key: explicitKey,
+              }
+            : deriveAcpLogRefs({
+                project_id: project.project_id,
+                path,
+                thread_id: threadId,
+                message_id: resolvedMessageId,
+              });
+        const store = akv<AcpStreamMessage[]>({
+          project_id: project.project_id,
+          name: refs.store,
+          client,
+        });
+        const events = await store.get(refs.key);
+        const persistedAt = await store.time(refs.key);
+        return {
+          project_id: project.project_id,
+          path,
+          thread_id: threadId,
+          message_id: resolvedMessageId,
+          log_store: refs.store,
+          log_key: refs.key,
+          persisted: events != null,
+          persisted_at: persistedAt?.toISOString() ?? null,
+          event_count: Array.isArray(events) ? events.length : 0,
+          events: events ?? [],
+        };
+      },
+    });
+  }
+
   return {
     projectChatThreadCreateData,
     projectChatThreadStatusData,
     projectChatLoopSetData,
     projectChatLoopClearData,
     projectChatAutomationData,
+    projectChatActivityData,
   };
 }

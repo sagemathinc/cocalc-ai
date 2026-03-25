@@ -46,6 +46,7 @@ function getCoCalcRuntimeGuidanceHeader(cliCommand: string): string {
   return [
     "[CoCalc runtime capabilities]",
     "This turn may run with CoCalc CLI/browser automation context.",
+    `When you need the CoCalc CLI, use this exact command: \`${cliCommand}\`. Do not assume bare \`cocalc\` resolves to the right binary.`,
     `If relevant, you can use \`${cliCommand}\` to inspect browser state and run browser exec scripts.`,
     "Prefer scoped variables already provided in environment, e.g.:",
     "- COCALC_PROJECT_ID",
@@ -567,6 +568,8 @@ function toSandboxMode(
 }
 
 function getCoCalcCliCommand(runtimeEnv?: Record<string, string>): string {
+  const rawCliCommand = `${runtimeEnv?.COCALC_CLI_CMD ?? ""}`.trim();
+  if (rawCliCommand) return rawCliCommand;
   const rawCli = `${runtimeEnv?.COCALC_CLI_BIN ?? ""}`.trim();
   return rawCli ? `"${rawCli}"` : "cocalc";
 }

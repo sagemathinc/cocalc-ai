@@ -127,6 +127,18 @@ Use `cocalc browser exec` for notebook work only when you need transient UI cont
 - which cell is selected
 - cursor/scroll/viewport state
 
+## Codex Activity Logs
+
+For persisted Codex activity/thinking logs in a `.chat` thread, use the backend
+chat command instead of scraping the UI:
+
+- `cocalc project chat activity --path <chat-path> --thread-id <id>`
+- `cocalc project chat activity --path <chat-path> --thread-id <id> --message-id <assistant-message-id>`
+
+This reads the ACP activity log directly from the Conat AKV store and returns
+the store/key plus persisted events for the selected turn. If `--message-id` is
+omitted, it uses the latest persisted activity log in the thread.
+
 ### Tasks
 
 Use `api.tasks` for normal live task operations. This goes through the collaborative sync/session path, not direct filesystem edits.

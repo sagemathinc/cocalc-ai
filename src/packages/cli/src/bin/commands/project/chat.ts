@@ -39,6 +39,7 @@ export function registerProjectChatCommands(
     projectChatLoopSetData,
     projectChatLoopClearData,
     projectChatAutomationData,
+    projectChatActivityData,
   } = deps;
 
   const chat = project.command("chat").description("project chat operations");
@@ -140,6 +141,38 @@ export function registerProjectChatCommands(
             });
           },
         );
+      },
+    );
+
+  chat
+    .command("activity")
+    .description("fetch persisted Codex activity log for a chat thread")
+    .requiredOption("--path <path>", "chat document path inside the project")
+    .requiredOption("--thread-id <id>", "thread id")
+    .option(
+      "--message-id <id>",
+      "specific assistant message id (defaults to the latest persisted activity in the thread)",
+    )
+    .option("-w, --project <project>", "project id or name")
+    .action(
+      async (
+        opts: {
+          path: string;
+          threadId: string;
+          messageId?: string;
+          project?: string;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "project chat activity", async (ctx) => {
+          return await projectChatActivityData({
+            ctx,
+            projectIdentifier: opts.project,
+            path: normalizePath(opts.path),
+            threadId: normalizeThreadId(opts.threadId),
+            messageId: opts.messageId,
+          });
+        });
       },
     );
 

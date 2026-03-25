@@ -728,6 +728,7 @@ async function ensureContainer({
   }
   if (cliBinary?.containerPath) {
     env.COCALC_CLI_BIN = cliBinary.containerPath;
+    env.COCALC_CLI_CMD = `"${cliBinary.containerPath}"`;
     env.PATH = `${dirname(cliBinary.containerPath)}:${env.PATH ?? ""}`;
   }
   if (extraEnv) {
