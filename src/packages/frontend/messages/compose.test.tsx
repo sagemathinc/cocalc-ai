@@ -56,6 +56,7 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
     mark: jest.fn(),
   })),
   useTypedRedux: jest.fn((_store: string, key: string) => {
+    if (_store === "account" && key === "account_id") return "account-1";
     if (key === "fontSize") return 14;
     if (key === "compose") return false;
     return undefined;
@@ -113,6 +114,7 @@ describe("messages compose editor", () => {
     render(<Compose />);
 
     expect(latestMarkdownInputProps).toBeTruthy();
+    expect(latestMarkdownInputProps.account_id).toBe("account-1");
     expect(latestMarkdownInputProps.undoMode).toBe("local");
     expect(latestMarkdownInputProps.redoMode).toBe("local");
   });

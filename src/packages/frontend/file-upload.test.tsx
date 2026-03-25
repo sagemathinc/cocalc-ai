@@ -1,10 +1,7 @@
 /** @jest-environment jsdom */
 
-import { render, waitFor } from "@testing-library/react";
+import { render } from "@testing-library/react";
 import { BlobUpload } from "./file-upload";
-import { uploadBlobImage } from "@cocalc/frontend/blobs/upload-image";
-
-const mockUploadBlobImage = uploadBlobImage as jest.Mock;
 
 let latestDropzone: any;
 
@@ -41,18 +38,8 @@ jest.mock("dropzone", () => {
     }
 
     removeAllFiles() {}
-
-    addFile(file: any) {
-      for (const handler of this.handlers.addedfile ?? []) {
-        handler(file);
-      }
-    }
   };
 });
-
-jest.mock("@cocalc/frontend/blobs/upload-image", () => ({
-  uploadBlobImage: jest.fn(),
-}));
 
 jest.mock("@cocalc/frontend/app-framework", () => ({
   redux: {
@@ -77,72 +64,47 @@ jest.mock("@cocalc/frontend/alerts", () => ({
 describe("BlobUpload", () => {
   beforeEach(() => {
     latestDropzone = undefined;
-    mockUploadBlobImage.mockReset();
   });
 
-  it("uploads non-project files via the blob upload helper", async () => {
-    mockUploadBlobImage.mockResolvedValue({
-      filename: "clip.png",
-      url: "/blobs/clip.png?uuid=abc",
-      uuid: "abc",
-    });
-    const complete = jest.fn();
-    const sending = jest.fn();
-    const dropzoneRef = { current: null as any };
-    render(
-      <BlobUpload
-        show_upload={false}
-        project_id=""
-        dropzone_ref={dropzoneRef}
-        event_handlers={{ complete, sending }}
-      >
-        <div>body</div>
-      </BlobUpload>,
-    );
-
-    const file = new File(["image"], "clip.png", { type: "image/png" });
-    latestDropzone.addFile(file);
-
-    await waitFor(() => expect(mockUploadBlobImage).toHaveBeenCalledTimes(1));
-    expect(mockUploadBlobImage).toHaveBeenCalledWith({
-      file,
-      filename: "clip.png",
-      projectId: undefined,
-    });
-    expect(sending).toHaveBeenCalledWith(file);
-    await waitFor(() =>
-      expect(complete).toHaveBeenCalledWith(
-        expect.objectContaining({
-          status: "success",
-          url: "/blobs/clip.png?uuid=abc",
-          uuid: "abc",
-        }),
-      ),
-    );
-  });
-
-  it("passes project ids through when uploading project-scoped blobs", async () => {
-    mockUploadBlobImage.mockResolvedValue({
-      filename: "clip.png",
-      url: "/blobs/clip.png?uuid=project-abc",
-      uuid: "project-abc",
-    });
+  it("uses project-scoped blob uploads when project_id is set", () => {
     render(
       <BlobUpload show_upload={false} project_id="project-1">
         <div>body</div>
       </BlobUpload>,
     );
 
-    latestDropzone.addFile(
-      new File(["image"], "clip.png", { type: "image/png" }),
+    expect(latestDropzone.options.url).toBe("/blobs?project_id=project-1");
+  });
+
+  it("uses account-scoped blob uploads when only account_id is set", () => {
+    render(
+      <BlobUpload show_upload={false} project_id="" account_id="account-1">
+        <div>body</div>
+      </BlobUpload>,
     );
 
-    await waitFor(() =>
-      expect(mockUploadBlobImage).toHaveBeenCalledWith({
-        file: expect.any(File),
-        filename: "clip.png",
-        projectId: "project-1",
-      }),
+    expect(latestDropzone.options.url).toBe("/blobs");
+  });
+
+  it("forwards readable server upload errors", () => {
+    const error = jest.fn();
+    render(
+      <BlobUpload
+        show_upload={false}
+        project_id=""
+        account_id="account-1"
+        event_handlers={{ error }}
+      >
+        <div>body</div>
+      </BlobUpload>,
     );
+
+    latestDropzone.handlers.error[0]({}, "upload failed", {
+      responseText: "missing project_id or account_id",
+    });
+
+    expect(error).toHaveBeenCalledWith({}, "missing project_id or account_id", {
+      responseText: "missing project_id or account_id",
+    });
   });
 });

@@ -41,6 +41,7 @@ export default function Compose({
   const intl = useIntl();
   const actions = useActions("messages");
   const fontSize = useTypedRedux("messages", "fontSize");
+  const account_id = useTypedRedux("account", "account_id");
   const draftId = useRef<number | null>(message?.id ?? null);
 
   const [to_ids, setToIds] = useState<string[]>(() => {
@@ -336,6 +337,7 @@ export default function Compose({
         ))}
       {!(state == "sending" || state == "sent") && (
         <MarkdownInput
+          account_id={account_id}
           fontSize={fontSize}
           isFocused={bodyIsFocused}
           editorDivRef={editorDivRef}

@@ -221,6 +221,7 @@ function loadDraft(key: string): SupportDraft | undefined {
 
 export default function SupportCreateModal() {
   const pageActions = useActions("page");
+  const account_id = useTypedRedux("account", "account_id");
   const accountEmail = useTypedRedux("account", "email_address") ?? "";
   const supportConfigured = !!useTypedRedux("customize", "zendesk");
   const initialOptions =
@@ -523,6 +524,7 @@ export default function SupportCreateModal() {
         >
           <ChatInput
             key={`support-create-${currentUrl}`}
+            account_id={account_id}
             autoGrowMaxHeight={320}
             enableMentions={false}
             enableUpload={true}

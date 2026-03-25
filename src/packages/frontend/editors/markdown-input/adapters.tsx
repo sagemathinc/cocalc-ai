@@ -14,6 +14,7 @@ const MIN_INPUT_HEIGHT = 38;
 const MAX_INPUT_HEIGHT = "50vh";
 
 interface MarkdownTextAdapterProps {
+  account_id?: string;
   editorDivRef?: RefObject<HTMLDivElement>;
   selectionRef: MutableRefObject<SelectionController | null>;
   value?: string;
@@ -62,6 +63,7 @@ interface MarkdownTextAdapterProps {
 }
 
 export function MarkdownTextAdapter({
+  account_id,
   editorDivRef,
   selectionRef,
   value,
@@ -116,6 +118,7 @@ export function MarkdownTextAdapter({
       onChange={onChange}
       saveDebounceMs={saveDebounceMs}
       getValueRef={getValueRef}
+      account_id={account_id}
       project_id={project_id}
       path={path}
       enableUpload={enableUpload}
@@ -160,6 +163,7 @@ export function MarkdownTextAdapter({
 }
 
 interface SlateRichTextAdapterProps {
+  account_id?: string;
   selectionRef: MutableRefObject<SelectionController | null>;
   editorDivRef?: RefObject<HTMLDivElement>;
   noVfill?: boolean;
@@ -203,6 +207,7 @@ interface SlateRichTextAdapterProps {
 }
 
 export function SlateRichTextAdapter({
+  account_id,
   selectionRef,
   editorDivRef,
   noVfill,
@@ -300,6 +305,7 @@ export function SlateRichTextAdapter({
         }}
         saveDebounceMs={saveDebounceMs}
         getValueRef={getValueRef}
+        account_id={account_id}
         actions={{
           set_value: onChange,
           shiftEnter: (value) => {

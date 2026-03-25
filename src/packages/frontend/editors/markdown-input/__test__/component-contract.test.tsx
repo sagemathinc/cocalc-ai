@@ -432,7 +432,21 @@ describe("MarkdownInput CodeMirror wrapper contract", () => {
     expect(body.children).toHaveLength(1);
   });
 
-  it("allows blob uploads without a project or path", () => {
+  it("allows blob uploads without a project or path when account_id is set", () => {
+    expect(() =>
+      render(
+        <MarkdownInput
+          account_id="account-1"
+          value="hello"
+          onChange={() => {}}
+          saveDebounceMs={0}
+          enableUpload={true}
+        />,
+      ),
+    ).not.toThrow();
+  });
+
+  it("requires project_id/path or account_id when uploads are enabled", () => {
     expect(() =>
       render(
         <MarkdownInput
@@ -442,7 +456,9 @@ describe("MarkdownInput CodeMirror wrapper contract", () => {
           enableUpload={true}
         />,
       ),
-    ).not.toThrow();
+    ).toThrow(
+      "project_id/path or account_id must be set if enableUploads is set.",
+    );
   });
 
   it("clamps auto-grow to the allocated host height and clears stale host scroll", () => {

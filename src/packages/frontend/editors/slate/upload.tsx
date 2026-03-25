@@ -36,6 +36,7 @@ async function loadImageDimensions(
 export default function useUpload(
   editor: SlateEditor,
   body: React.JSX.Element,
+  account_id?: string,
 ): React.JSX.Element {
   const dropzoneRef = useRef<Dropzone>(null);
   const { actions, project_id, path } = useFrameContext();
@@ -144,6 +145,7 @@ export default function useUpload(
       show_upload={false}
       className="smc-vfill"
       project_id={project_id}
+      account_id={account_id}
       event_handlers={updloadEventHandlers}
       style={{ height: "100%", width: "100%" }}
       dropzone_ref={dropzoneRef}

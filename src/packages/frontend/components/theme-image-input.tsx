@@ -98,7 +98,9 @@ export function ThemeImageInput({
       const blob = await uploadThemeImageBlob(file, projectId);
       onChange(blob);
     } catch (err) {
-      setError(`Image upload failed: ${err}`);
+      const message =
+        err instanceof Error ? err.message : `${err ?? "upload failed"}`;
+      setError(`Image upload failed: ${message}`);
     } finally {
       setUploading(false);
     }

@@ -10,6 +10,7 @@ const mockSettings = jest.fn();
 const mockOpenSupportTicketsPage = openSupportTicketsPage as jest.Mock;
 const mockedApi = api as jest.Mock;
 const mockedUploadBlobImage = uploadBlobImage as jest.Mock;
+let latestChatInputProps: any = null;
 
 let supportModalOptions: any = {};
 
@@ -20,6 +21,9 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
   useTypedRedux: (store: string, key: string) => {
     if (store === "account" && key === "email_address") {
       return "user@example.com";
+    }
+    if (store === "account" && key === "account_id") {
+      return "account-1";
     }
     if (store === "customize" && key === "zendesk") {
       return true;
@@ -38,6 +42,7 @@ jest.mock("@cocalc/frontend/blobs/upload-image", () => ({
 jest.mock("@cocalc/frontend/chat/input", () => ({
   __esModule: true,
   default: function ChatInputMock(props) {
+    latestChatInputProps = props;
     return (
       <textarea
         aria-label="Support body"
@@ -83,6 +88,7 @@ jest.mock("./open", () => ({
 
 describe("SupportCreateModal", () => {
   beforeEach(() => {
+    latestChatInputProps = null;
     supportModalOptions = {
       body: "Detailed notebook problem with enough context.",
       context: "command palette",
@@ -107,6 +113,7 @@ describe("SupportCreateModal", () => {
     });
 
     render(<SupportCreateModal />);
+    expect(latestChatInputProps?.account_id).toBe("account-1");
     fireEvent.click(screen.getByRole("button", { name: "Add image" }));
     fireEvent.click(screen.getByRole("button", { name: "Add file" }));
     fireEvent.click(

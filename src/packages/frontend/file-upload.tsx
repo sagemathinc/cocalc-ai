@@ -13,7 +13,6 @@ import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { Icon, Tip } from "@cocalc/frontend/components";
-import { uploadBlobImage } from "@cocalc/frontend/blobs/upload-image";
 import { useStudentProjectFunctionality } from "@cocalc/frontend/course";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { labels } from "@cocalc/frontend/i18n";
@@ -521,110 +520,81 @@ export function UploadLink({
 }
 
 export function BlobUpload(props) {
-  const handlers = props.event_handlers ?? {};
-  const url = props.project_id
+  const hasProject =
+    typeof props.project_id === "string" && props.project_id.trim() !== "";
+  const hasAccount =
+    typeof props.account_id === "string" && props.account_id.trim() !== "";
+  function normalizeUploadError(
+    message: unknown,
+    xhr?: { responseText?: string },
+  ): string {
+    const responseText = `${xhr?.responseText ?? ""}`.trim();
+    if (responseText && responseText !== "[object Object]") {
+      return responseText;
+    }
+    const text = `${message ?? ""}`.trim();
+    if (text && text !== "[object Object]") {
+      return text;
+    }
+    return "Upload failed. Please try again later.";
+  }
+  const url = hasProject
     ? `${join(appBasePath, "blobs")}?project_id=${props.project_id}`
-    : join(appBasePath, "blobs");
-
-  function getBlobFromDropzoneFile(
-    file,
-  ): (Blob & { name?: string }) | undefined {
-    const chunkFile = file?.upload?.chunks?.[0]?.file;
-    if (chunkFile instanceof Blob) {
-      return chunkFile as Blob & { name?: string };
-    }
-    if (file instanceof Blob) {
-      return file as Blob & { name?: string };
-    }
-    return;
-  }
-
-  function callHandlers(name: string, ...args): void {
-    const handlerOrHandlers = handlers?.[name];
-    if (is_array(handlerOrHandlers)) {
-      for (const handler of handlerOrHandlers) {
-        if (typeof handler === "function") {
-          handler(...args);
+    : hasAccount
+      ? join(appBasePath, "blobs")
+      : `${join(appBasePath, "blobs")}?project_id=${props.project_id}`;
+  const handlers = {
+    ...props.event_handlers,
+    error: (file, message, xhr) => {
+      props.event_handlers?.error?.(
+        file,
+        normalizeUploadError(message, xhr),
+        xhr,
+      );
+    },
+    complete: (file) => {
+      if (file.xhr?.responseText) {
+        let uuid;
+        try {
+          ({ uuid } = JSON.parse(file.xhr.responseText));
+        } catch (err) {
+          // this will happen if the server is down/broken, e.g., instead of proper json, we get
+          // back an error from cloudflare.
+          console.warn("WARNING: upload failure", file.xhr.responseText);
+          alert_message({
+            type: "error",
+            message: normalizeUploadError(undefined, file.xhr),
+          });
+          return;
         }
+        const url = `${join(
+          appBasePath,
+          "blobs",
+          encodeURIComponent(file.upload.filename),
+        )}?uuid=${uuid}`;
+        props.event_handlers?.complete({ ...file, uuid, url });
+      } else {
+        // e.g., if there was an error
+        props.event_handlers?.complete(file);
       }
-      return;
-    }
-    if (typeof handlerOrHandlers === "function") {
-      handlerOrHandlers(...args);
-    }
-  }
-
-  async function uploadViaBlobEndpoint(file): Promise<void> {
-    if ((file as any)?.__blobUploadStarted) {
-      return;
-    }
-    (file as any).__blobUploadStarted = true;
-    callHandlers("sending", file);
-    try {
-      const blob = getBlobFromDropzoneFile(file);
-      if (blob == null) {
-        throw Error("unable to read selected file");
-      }
-      const { filename, url, uuid } = await uploadBlobImage({
-        file: blob,
-        filename:
-          typeof file?.name === "string" && file.name.trim()
-            ? file.name
-            : undefined,
-        projectId: props.project_id || undefined,
-      });
-      callHandlers("complete", {
-        ...file,
-        uuid,
-        url,
-        status: "success",
-        upload: { ...(file.upload ?? {}), filename },
-        xhr: { responseText: JSON.stringify({ uuid }) },
-      });
-    } catch (err) {
-      const message = `${err}`;
-      callHandlers("error", file, message);
-      callHandlers("complete", { ...file, status: "error" });
-      alert_message({
-        type: "error",
-        message:
-          message ||
-          "Failed to upload. Server may be down.  Please try again later.",
-      });
-    }
-  }
-
-  const initHandlers = is_array(handlers.init)
-    ? handlers.init.filter((handler) => typeof handler === "function")
-    : typeof handlers.init === "function"
-      ? [handlers.init]
-      : [];
-
-  const wrappedHandlers = {
-    ...handlers,
-    init: [
-      (dropzone) => {
-        dropzone.on("addedfile", (file) => {
-          void uploadViaBlobEndpoint(file);
-        });
-      },
-      ...initHandlers,
-    ],
+    },
   };
   // Avoid registering undefined handlers; Dropzone will crash when trying to emit them.
-  if (wrappedHandlers.sending == null) {
-    delete wrappedHandlers.sending;
+  if (handlers.sending == null) {
+    delete handlers.sending;
   }
-  if (wrappedHandlers.removedfile == null) {
-    delete wrappedHandlers.removedfile;
+  if (handlers.error == null) {
+    delete handlers.error;
+  }
+  if (handlers.removedfile == null) {
+    delete handlers.removedfile;
   }
   return (
     <FileUploadWrapper
       {...props}
-      event_handlers={wrappedHandlers}
+      event_handlers={handlers}
       dest_path={""}
       config={{
-        autoProcessQueue: false,
         url,
         maxFilesize: MAX_BLOB_SIZE / (1000 * 1000),
         ...props.config,

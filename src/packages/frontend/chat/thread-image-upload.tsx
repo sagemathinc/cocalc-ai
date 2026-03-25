@@ -142,15 +142,7 @@ async function uploadCroppedImage({
   setUploading(true);
   setError("");
   try {
-    const blob =
-      (file as any).originFileObj instanceof Blob
-        ? ((file as any).originFileObj as Blob)
-        : file instanceof Blob
-          ? file
-          : undefined;
-    if (blob == null) {
-      throw Error("unable to resolve image data");
-    }
+    const blob = file as Blob;
     const { url } = await uploadBlobImage({
       file: blob,
       filename:
@@ -159,7 +151,9 @@ async function uploadCroppedImage({
     });
     onChange(url);
   } catch (err) {
-    setError(`Image upload failed: ${err}`);
+    const message =
+      err instanceof Error ? err.message : `${err ?? "upload failed"}`;
+    setError(`Image upload failed: ${message}`);
   } finally {
     setUploading(false);
   }
