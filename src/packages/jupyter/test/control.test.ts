@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import { SandboxedFilesystem } from "@cocalc/backend/sandbox";
 import {
   createJupyterSyncFilesystem,
+  hydrateNotebookFromIpynbIfNeeded,
   MulticellOutputHandler,
   restoreKernelFromIpynb,
 } from "../control";
@@ -129,6 +130,64 @@ describe("restoreKernelFromIpynb", () => {
 
     expect(restored).toBe(false);
     expect(actions.syncdb.set).not.toHaveBeenCalled();
+  });
+});
+
+describe("hydrateNotebookFromIpynbIfNeeded", () => {
+  function createActions(existingCells: any[] = []) {
+    return {
+      syncdb: {
+        get: jest.fn(() => existingCells),
+      },
+      setToIpynb: jest.fn(async () => {}),
+    } as any;
+  }
+
+  it("hydrates an empty live notebook from the ipynb file", async () => {
+    const actions = createActions();
+    const hydrated = await hydrateNotebookFromIpynbIfNeeded({
+      actions,
+      fs: {
+        readFile: async () =>
+          Buffer.from(
+            JSON.stringify({
+              cells: [{ cell_type: "code", source: ["2+3\n"] }],
+            }),
+          ),
+      },
+      path: "/tmp/test.ipynb",
+    });
+
+    expect(hydrated).toBe(true);
+    expect(actions.setToIpynb).toHaveBeenCalledTimes(1);
+  });
+
+  it("does nothing when live cells already exist", async () => {
+    const actions = createActions([{ type: "cell", id: "abc" }]);
+    const readFile = jest.fn(async () => Buffer.from("{}"));
+    const hydrated = await hydrateNotebookFromIpynbIfNeeded({
+      actions,
+      fs: { readFile },
+      path: "/tmp/test.ipynb",
+    });
+
+    expect(hydrated).toBe(false);
+    expect(readFile).not.toHaveBeenCalled();
+    expect(actions.setToIpynb).not.toHaveBeenCalled();
+  });
+
+  it("does nothing when the ipynb has no cells", async () => {
+    const actions = createActions();
+    const hydrated = await hydrateNotebookFromIpynbIfNeeded({
+      actions,
+      fs: {
+        readFile: async () => Buffer.from(JSON.stringify({ cells: [] })),
+      },
+      path: "/tmp/test.ipynb",
+    });
+
+    expect(hydrated).toBe(false);
+    expect(actions.setToIpynb).not.toHaveBeenCalled();
   });
 });
 

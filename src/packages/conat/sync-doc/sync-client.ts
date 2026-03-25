@@ -12,6 +12,9 @@ import { type ConatSyncTable } from "@cocalc/conat/sync/synctable";
 import { projectApiClient } from "@cocalc/conat/project/api";
 import { base64ToBuffer } from "@cocalc/util/base64";
 import callHub from "@cocalc/conat/hub/call-hub";
+import { getLogger } from "@cocalc/conat/client";
+
+const logger = getLogger("conat:sync-doc:sync-client");
 
 export class SyncClient extends EventEmitter implements Client0 {
   private client: ConatClient;
@@ -75,7 +78,7 @@ export class SyncClient extends EventEmitter implements Client0 {
         );
       if (!disconnected && code != 503) {
         // 503 when hub not running yet
-        console.log("WARNING: issue touching project", { project_id }, err);
+        logger.warn("issue touching project", { project_id, err });
       }
     }
   };

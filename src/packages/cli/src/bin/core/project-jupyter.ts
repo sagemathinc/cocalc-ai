@@ -17,8 +17,10 @@ import {
   type JupyterLiveRunBatch,
   type JupyterLiveRunSnapshot,
 } from "@cocalc/conat/project/jupyter/live-run";
+import { projectApiClient } from "@cocalc/conat/project/api";
 import { syncdbPath } from "@cocalc/util/jupyter/names";
 import { RefcountLeaseManager } from "@cocalc/util/refcount/lease";
+import { sleep } from "@cocalc/util/async-utils";
 
 type ProjectIdentity = {
   project_id: string;
@@ -102,6 +104,9 @@ const JUPYTER_SYNCDB_OPTIONS = {
   persistent: true,
   noSaveToDisk: true,
 };
+
+const NOTEBOOK_MUTATION_VISIBILITY_TIMEOUT_MS = 2_000;
+const NOTEBOOK_MUTATION_VISIBILITY_POLL_MS = 50;
 
 function normalizeNotebookSource(source: unknown): string {
   if (typeof source === "string") {
@@ -364,6 +369,10 @@ export function createProjectJupyterOps<Ctx, Project extends ProjectIdentity>(
       projectIdentifier,
       cwd,
     );
+    await projectApiClient({
+      project_id: project.project_id,
+      client,
+    }).jupyter.start(normalizedPath);
     const key = JSON.stringify({
       project_id: project.project_id,
       path: normalizedPath,
@@ -466,6 +475,97 @@ export function createProjectJupyterOps<Ctx, Project extends ProjectIdentity>(
     }
   }
 
+  async function readNotebookCellsFresh({
+    ctx,
+    projectIdentifier,
+    path,
+    cwd,
+  }: {
+    ctx: Ctx;
+    projectIdentifier?: string;
+    path: string;
+    cwd?: string;
+  }): Promise<{
+    project: Project;
+    client: any;
+    cells: NotebookCellInfo[];
+  }> {
+    const normalizedPath = normalizeNotebookPath(path);
+    const { project, client } = await deps.resolveProjectConatClient(
+      ctx,
+      projectIdentifier,
+      cwd,
+    );
+    await projectApiClient({
+      project_id: project.project_id,
+      client,
+    }).jupyter.start(normalizedPath);
+    const syncdb = openSyncDb({
+      ...JUPYTER_SYNCDB_OPTIONS,
+      project_id: project.project_id,
+      path: syncdbPath(normalizedPath),
+      client,
+    });
+    try {
+      if (syncdb.get_state() === "init") {
+        await once(syncdb, "ready");
+      }
+      if (syncdb.isClosed?.()) {
+        throw new Error(
+          `failed to open notebook sync session for ${normalizedPath}`,
+        );
+      }
+      return {
+        project,
+        client,
+        cells: getLiveNotebookCells(syncdb),
+      };
+    } finally {
+      await syncdb.close();
+    }
+  }
+
+  async function waitForFreshNotebookCells<T>({
+    ctx,
+    projectIdentifier,
+    path,
+    cwd,
+    desc,
+    pick,
+  }: {
+    ctx: Ctx;
+    projectIdentifier?: string;
+    path: string;
+    cwd?: string;
+    desc: string;
+    pick: (cells: NotebookCellInfo[]) => T | undefined;
+  }): Promise<{
+    project: Project;
+    cells: NotebookCellInfo[];
+    value: T;
+  }> {
+    const started = Date.now();
+    while (true) {
+      const { project, cells } = await readNotebookCellsFresh({
+        ctx,
+        projectIdentifier,
+        path,
+        cwd,
+      });
+      const value = pick(cells);
+      if (value !== undefined) {
+        return { project, cells, value };
+      }
+      if (Date.now() - started >= NOTEBOOK_MUTATION_VISIBILITY_TIMEOUT_MS) {
+        break;
+      }
+      await sleep(NOTEBOOK_MUTATION_VISIBILITY_POLL_MS);
+    }
+    throw new Error(
+      `timed out waiting for notebook mutation to become visible (${desc})`,
+    );
+  }
+
   async function projectJupyterCellsData({
     ctx,
     projectIdentifier,
@@ -530,28 +630,6 @@ export function createProjectJupyterOps<Ctx, Project extends ProjectIdentity>(
     }
   }
 
-  function notebookCellInfoFromRecord(
-    cells: NotebookCellRecord[],
-    cellId: string,
-  ): NotebookCellInfo {
-    const index = cells.findIndex((cell) => cell.id === cellId);
-    if (index === -1) {
-      throw new Error(`unknown cell id '${cellId}'`);
-    }
-    const cell = cells[index];
-    const input = normalizeNotebookSource(cell.input);
-    return {
-      id: cell.id,
-      index,
-      cell_type:
-        typeof cell.cell_type === "string" ? cell.cell_type : "unknown",
-      input,
-      preview: summarizePreview(input),
-      line_count: input === "" ? 0 : input.split("\n").length,
-      generated_id: cell.id.startsWith("__missing_cell_id__:"),
-    };
-  }
-
   async function projectJupyterSetCellData({
     ctx,
     projectIdentifier,
@@ -584,11 +662,30 @@ export function createProjectJupyterOps<Ctx, Project extends ProjectIdentity>(
         if (cellType != null) {
           await session.setCellType(cellId, cellType);
         }
-        const cells = await session.listCells();
+        const { value: cell } = await waitForFreshNotebookCells({
+          ctx,
+          projectIdentifier,
+          path,
+          cwd,
+          desc: `set ${cellId}`,
+          pick: (cells) => {
+            const cell = cells.find((candidate) => candidate.id === cellId);
+            if (cell == null) {
+              return undefined;
+            }
+            if (input != null && cell.input !== input) {
+              return undefined;
+            }
+            if (cellType != null && cell.cell_type !== cellType) {
+              return undefined;
+            }
+            return cell;
+          },
+        });
         return {
           project_id: project.project_id,
           path,
-          cell: notebookCellInfoFromRecord(cells, cellId),
+          cell,
         };
       },
     });
@@ -663,11 +760,18 @@ export function createProjectJupyterOps<Ctx, Project extends ProjectIdentity>(
             cell_type: cellType,
           });
         }
-        const cells = await session.listCells();
+        const { value: freshCell } = await waitForFreshNotebookCells({
+          ctx,
+          projectIdentifier,
+          path,
+          cwd,
+          desc: `insert ${cell.id}`,
+          pick: (cells) => cells.find((candidate) => candidate.id === cell.id),
+        });
         return {
           project_id: project.project_id,
           path,
-          cell: notebookCellInfoFromRecord(cells, cell.id),
+          cell: freshCell,
         };
       },
     });
@@ -693,6 +797,19 @@ export function createProjectJupyterOps<Ctx, Project extends ProjectIdentity>(
       cwd,
       fn: async ({ project, path, session }) => {
         await session.deleteCells(cellIds);
+        await waitForFreshNotebookCells({
+          ctx,
+          projectIdentifier,
+          path,
+          cwd,
+          desc: `delete ${cellIds.join(",")}`,
+          pick: (cells) =>
+            cellIds.every(
+              (cellId) => !cells.some((candidate) => candidate.id === cellId),
+            )
+              ? true
+              : undefined,
+        });
         return {
           project_id: project.project_id,
           path,
@@ -736,11 +853,38 @@ export function createProjectJupyterOps<Ctx, Project extends ProjectIdentity>(
           atStart,
           atEnd,
         });
-        const cells = await session.listCells();
+        const { cells } = await waitForFreshNotebookCells({
+          ctx,
+          projectIdentifier,
+          path,
+          cwd,
+          desc: `move ${cell.id}`,
+          pick: (cells) => {
+            const index = cells.findIndex(
+              (candidate) => candidate.id === cell.id,
+            );
+            if (index === -1) {
+              return undefined;
+            }
+            if (beforeId != null) {
+              return cells[index + 1]?.id === beforeId ? true : undefined;
+            }
+            if (afterId != null) {
+              return cells[index - 1]?.id === afterId ? true : undefined;
+            }
+            if (atStart) {
+              return index === 0 ? true : undefined;
+            }
+            if (atEnd) {
+              return index === cells.length - 1 ? true : undefined;
+            }
+            return true;
+          },
+        });
         return {
           project_id: project.project_id,
           path,
-          cell: notebookCellInfoFromRecord(cells, cell.id),
+          cell: cells.find((candidate) => candidate.id === cell.id)!,
         };
       },
     });
