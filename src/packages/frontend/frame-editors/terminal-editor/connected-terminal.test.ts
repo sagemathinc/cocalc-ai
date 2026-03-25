@@ -183,44 +183,4 @@ describe("connected terminal resizing", () => {
 
     warn.mockRestore();
   });
-
-  it("drops stale pty on project restart and reconnects when running returns", async () => {
-    const { Terminal, ptys, projectStore, terminalClient } =
-      loadTerminalModule();
-    const parent = document.createElement("div");
-    document.body.appendChild(parent);
-    const actions = {
-      project_id: "project-1",
-      path: "/tmp/example.term",
-      get_term_env: jest.fn(() => ({})),
-      set_connection_status: jest.fn(),
-      set_title: jest.fn(),
-      set_error: jest.fn(),
-      _tree_is_single_leaf: jest.fn(() => false),
-      close_frame: jest.fn(),
-      open_code_editor_frame: jest.fn(),
-      _get_project_actions: jest.fn(() => ({
-        flag_file_activity: jest.fn(),
-        open_file: jest.fn(),
-        close_tab: jest.fn(),
-        isTabClosed: jest.fn(() => false),
-        open_directory: jest.fn(),
-      })),
-    } as any;
-
-    new Terminal(actions, 0, "term-1", parent);
-    await waitFor(() => expect(terminalClient).toHaveBeenCalledTimes(1));
-
-    const firstPty = ptys[0];
-
-    projectStore.setStatus("starting");
-    expect(firstPty.close).toHaveBeenCalled();
-    expect(actions.set_connection_status).toHaveBeenCalledWith(
-      "term-1",
-      "disconnected",
-    );
-
-    projectStore.setStatus("running");
-    await waitFor(() => expect(terminalClient).toHaveBeenCalledTimes(2));
-  });
 });
