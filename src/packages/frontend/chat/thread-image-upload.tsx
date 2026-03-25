@@ -63,7 +63,6 @@ export function ThreadImageUpload({
         }}
       >
         <Upload.Dragger
-          beforeUpload={() => false}
           name="file"
           showUploadList={false}
           onDrop={(e) => {
