@@ -56,6 +56,49 @@ function run(cmd, args, opts = {}) {
   });
 }
 
+function daemonStateDir(mode) {
+  if (mode === "hub") {
+    return (
+      `${process.env.COCALC_HUB_DAEMON_STATE_DIR ?? ""}`.trim() ||
+      path.join(ROOT, ".local", "hub-daemon")
+    );
+  }
+  return (
+    `${process.env.COCALC_LITE_DAEMON_STATE_DIR ?? ""}`.trim() ||
+    path.join(ROOT, ".local", "lite-daemon")
+  );
+}
+
+function pidFileForMode(mode) {
+  return path.join(
+    daemonStateDir(mode),
+    mode === "hub" ? "hub.pid" : "lite.pid",
+  );
+}
+
+function isPidRunning(pid) {
+  const raw = `${pid ?? ""}`.trim();
+  if (!/^\d+$/.test(raw)) return false;
+  try {
+    process.kill(Number(raw), 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function fastHubDaemonStatus() {
+  const pidFile = pidFileForMode("hub");
+  if (!fs.existsSync(pidFile)) return undefined;
+  const pid = `${fs.readFileSync(pidFile, "utf8")}`.trim();
+  if (!isPidRunning(pid)) return undefined;
+  return {
+    running: true,
+    statusText: `running (pid ${pid})\n`,
+    stderr: "",
+  };
+}
+
 function parseKeyValueLines(text) {
   const out = {};
   for (const raw of `${text ?? ""}`.split(/\r?\n/)) {
@@ -63,7 +106,10 @@ function parseKeyValueLines(text) {
     if (!line) continue;
     const idx = line.indexOf("=");
     if (idx <= 0) continue;
-    const key = line.slice(0, idx).trim();
+    const key = line
+      .slice(0, idx)
+      .trim()
+      .replace(/^export\s+/, "");
     const val = line.slice(idx + 1);
     out[key] = val;
   }
@@ -150,6 +196,10 @@ function chooseProfileForApi(profiles, current, targetApi) {
 }
 
 function daemonStatus(mode) {
+  if (mode === "hub") {
+    const fast = fastHubDaemonStatus();
+    if (fast) return fast;
+  }
   const script = mode === "lite" ? LITE_DAEMON : HUB_DAEMON;
   const res = run("bash", [script, "status"]);
   const out = `${res.stdout ?? ""}`;
