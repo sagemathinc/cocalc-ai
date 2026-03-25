@@ -70,6 +70,10 @@ type PublishDraft = {
   image: string;
   label: string;
   description: string;
+  family: string;
+  version: string;
+  channel: string;
+  supersedes_image_id: string;
   theme: ThemeEditorDraft;
   visibility: RootfsImageVisibility;
   tags: string;
@@ -108,6 +112,10 @@ export default function RootFilesystemImage() {
     image: DEFAULT_PROJECT_IMAGE,
     label: "",
     description: "",
+    family: "",
+    version: "",
+    channel: "",
+    supersedes_image_id: "",
     theme: themeDraftFromTheme(null),
     visibility: "private",
     tags: "",
@@ -280,6 +288,53 @@ export default function RootFilesystemImage() {
       publishSourceEntry,
     ],
   );
+  const publishTagOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          rootfsImages.flatMap((entry) => entry.tags ?? []).filter(Boolean),
+        ),
+      )
+        .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }))
+        .map((tag) => ({ label: tag, value: tag })),
+    [rootfsImages],
+  );
+  const publishFamilyOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          rootfsImages.map((entry) => entry.family?.trim()).filter(Boolean),
+        ),
+      )
+        .sort((a, b) =>
+          `${a}`.localeCompare(`${b}`, undefined, { sensitivity: "base" }),
+        )
+        .map((family) => ({ label: family, value: family })),
+    [rootfsImages],
+  );
+  const publishChannelOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          rootfsImages.map((entry) => entry.channel?.trim()).filter(Boolean),
+        ),
+      )
+        .sort((a, b) =>
+          `${a}`.localeCompare(`${b}`, undefined, { sensitivity: "base" }),
+        )
+        .map((channel) => ({ label: channel, value: channel })),
+    [rootfsImages],
+  );
+  const publishSupersedesOptions = useMemo(
+    () =>
+      rootfsImages
+        .filter((entry) => entry.id !== publishSourceEntry?.id)
+        .map((entry) => ({
+          value: entry.id,
+          label: `${entry.label || entry.image}${entry.version ? ` (${entry.version})` : ""}`,
+        })),
+    [publishSourceEntry?.id, rootfsImages],
+  );
 
   useEffect(() => {
     const nextImage = getImage(project, effectiveDefaultRootfs);
@@ -364,6 +419,10 @@ export default function RootFilesystemImage() {
       image: currentImage,
       label: nextLabel,
       description: nextDescription,
+      family: currentEntry?.family ?? "",
+      version: currentEntry?.version ?? "",
+      channel: currentEntry?.channel ?? "",
+      supersedes_image_id: currentEntry?.supersedes_image_id ?? "",
       theme: {
         ...themeDraftFromTheme(currentEntry?.theme, nextLabel),
         title: nextLabel,
@@ -460,6 +519,11 @@ export default function RootFilesystemImage() {
         const op = await publishProjectRootfsImage({
           project_id: project.get("project_id"),
           label: publishDraft.label,
+          family: publishDraft.family.trim() || undefined,
+          version: publishDraft.version.trim() || undefined,
+          channel: publishDraft.channel.trim() || undefined,
+          supersedes_image_id:
+            publishDraft.supersedes_image_id.trim() || undefined,
           description: publishDraft.description,
           visibility: publishDraft.visibility,
           tags,
@@ -477,6 +541,11 @@ export default function RootFilesystemImage() {
               : undefined,
           image: publishDraft.image,
           label: publishDraft.label,
+          family: publishDraft.family.trim() || undefined,
+          version: publishDraft.version.trim() || undefined,
+          channel: publishDraft.channel.trim() || undefined,
+          supersedes_image_id:
+            publishDraft.supersedes_image_id.trim() || undefined,
           description: publishDraft.description,
           visibility: publishDraft.visibility,
           tags,
@@ -610,6 +679,20 @@ export default function RootFilesystemImage() {
           <Button disabled={open} onClick={openPicker}>
             Change / upgrade image...
           </Button>
+          {activeDisplayEntry?.can_manage ? (
+            <Button
+              disabled={open}
+              onClick={() =>
+                openPublishDialog({
+                  image: value || effectiveDefaultRootfs,
+                  entry: activeDisplayEntry,
+                  publishMode: "manage",
+                })
+              }
+            >
+              Manage current catalog entry...
+            </Button>
+          ) : null}
           {previousProjectRootfsState && (
             <Button
               disabled={open || saving}
@@ -1077,44 +1160,58 @@ export default function RootFilesystemImage() {
                 }
               />
             )}
-            <Input
-              value={publishDraft.image}
-              disabled
-              addonBefore={
-                publishMode === "copy" && publishCopyMode === "project"
+            <div>
+              <Paragraph strong style={{ marginBottom: "6px" }}>
+                {publishMode === "copy" && publishCopyMode === "project"
                   ? "Base image"
-                  : "Image"
-              }
-            />
-            <Input
-              value={publishDraft.label}
-              onChange={(e) =>
-                setPublishDraft((cur) => ({
-                  ...cur,
-                  label: e.target.value,
-                  theme: {
-                    ...cur.theme,
-                    title: e.target.value,
-                  },
-                }))
-              }
-              addonBefore="Label"
-            />
-            <Input.TextArea
-              value={publishDraft.description}
-              onChange={(e) =>
-                setPublishDraft((cur) => ({
-                  ...cur,
-                  description: e.target.value,
-                  theme: {
-                    ...cur.theme,
+                  : "Image"}
+              </Paragraph>
+              <Input value={publishDraft.image} disabled />
+            </div>
+            <div>
+              <Paragraph strong style={{ marginBottom: "6px" }}>
+                Label
+              </Paragraph>
+              <Input
+                value={publishDraft.label}
+                onChange={(e) =>
+                  setPublishDraft((cur) => ({
+                    ...cur,
+                    label: e.target.value,
+                    theme: {
+                      ...cur.theme,
+                      title: e.target.value,
+                    },
+                  }))
+                }
+              />
+            </div>
+            <div>
+              <Paragraph strong style={{ marginBottom: "6px" }}>
+                Description
+              </Paragraph>
+              <Input.TextArea
+                value={publishDraft.description}
+                onChange={(e) =>
+                  setPublishDraft((cur) => ({
+                    ...cur,
                     description: e.target.value,
-                  },
-                }))
-              }
-              rows={3}
-              placeholder="Describe when this image should be used."
-            />
+                    theme: {
+                      ...cur.theme,
+                      description: e.target.value,
+                    },
+                  }))
+                }
+                rows={3}
+                placeholder="Describe when this image should be used."
+              />
+              <Paragraph
+                type="secondary"
+                style={{ marginTop: "6px", marginBottom: 0 }}
+              >
+                Plain text only. Markdown is not rendered here.
+              </Paragraph>
+            </div>
             <Radio.Group
               value={publishDraft.visibility}
               onChange={(e) =>
@@ -1166,16 +1263,123 @@ export default function RootFilesystemImage() {
                     <Radio value="base">Save current base image only</Radio>
                   </Radio.Group>
                 )}
-                <Input
-                  value={publishDraft.tags}
-                  onChange={(e) =>
-                    setPublishDraft((cur) => ({
-                      ...cur,
-                      tags: e.target.value,
-                    }))
-                  }
-                  placeholder="comma,separated,tags"
-                />
+                <div>
+                  <Paragraph strong style={{ marginBottom: "6px" }}>
+                    Tags
+                  </Paragraph>
+                  <Select
+                    mode="tags"
+                    style={{ width: "100%" }}
+                    options={publishTagOptions}
+                    value={parseRootfsTagString(publishDraft.tags)}
+                    onChange={(values) =>
+                      setPublishDraft((cur) => ({
+                        ...cur,
+                        tags: normalizeRootfsTags(values).join(", "),
+                      }))
+                    }
+                    tokenSeparators={[","]}
+                    placeholder="Add tags such as course, official, python, or jupyter"
+                  />
+                </div>
+                <div>
+                  <Paragraph strong style={{ marginBottom: "6px" }}>
+                    Version metadata
+                  </Paragraph>
+                  <Space
+                    direction="vertical"
+                    size="small"
+                    style={{ width: "100%" }}
+                  >
+                    <Input
+                      value={publishDraft.family}
+                      onChange={(e) =>
+                        setPublishDraft((cur) => ({
+                          ...cur,
+                          family: e.target.value,
+                        }))
+                      }
+                      placeholder="Family or series, e.g. tensorflow or ubuntu"
+                    />
+                    {publishFamilyOptions.length > 0 ? (
+                      <Space wrap size={[6, 6]}>
+                        {publishFamilyOptions.slice(0, 8).map((option) => (
+                          <Tag
+                            key={`${option.value}`}
+                            style={{ cursor: "pointer" }}
+                            onClick={() =>
+                              setPublishDraft((cur) => ({
+                                ...cur,
+                                family: `${option.value}`,
+                              }))
+                            }
+                          >
+                            {option.value}
+                          </Tag>
+                        ))}
+                      </Space>
+                    ) : null}
+                    <Input
+                      value={publishDraft.version}
+                      onChange={(e) =>
+                        setPublishDraft((cur) => ({
+                          ...cur,
+                          version: e.target.value,
+                        }))
+                      }
+                      placeholder="Version, e.g. 2.4 or 24.04"
+                    />
+                    <Input
+                      value={publishDraft.channel}
+                      onChange={(e) =>
+                        setPublishDraft((cur) => ({
+                          ...cur,
+                          channel: e.target.value,
+                        }))
+                      }
+                      placeholder="Channel, e.g. stable, beta, or nightly"
+                    />
+                    {publishChannelOptions.length > 0 ? (
+                      <Space wrap size={[6, 6]}>
+                        {publishChannelOptions.slice(0, 8).map((option) => (
+                          <Tag
+                            key={`${option.value}`}
+                            style={{ cursor: "pointer" }}
+                            onClick={() =>
+                              setPublishDraft((cur) => ({
+                                ...cur,
+                                channel: `${option.value}`,
+                              }))
+                            }
+                          >
+                            {option.value}
+                          </Tag>
+                        ))}
+                      </Space>
+                    ) : null}
+                    <Select
+                      allowClear
+                      showSearch
+                      optionFilterProp="label"
+                      options={publishSupersedesOptions}
+                      value={publishDraft.supersedes_image_id || undefined}
+                      onChange={(value) =>
+                        setPublishDraft((cur) => ({
+                          ...cur,
+                          supersedes_image_id: value ?? "",
+                        }))
+                      }
+                      placeholder="Optional image this replaces for upgrade guidance"
+                    />
+                  </Space>
+                  <Paragraph
+                    type="secondary"
+                    style={{ marginTop: "6px", marginBottom: 0 }}
+                  >
+                    Optional. Use these fields for curated versioned images so
+                    CoCalc can show upgrade recommendations.
+                  </Paragraph>
+                </div>
                 <div>
                   <Space
                     align="start"
@@ -1426,6 +1630,16 @@ function compareRootfsVersions(a?: string, b?: string): number {
   });
 }
 
+function normalizeRootfsTags(tags: string[]): string[] {
+  return Array.from(
+    new Set(tags.map((tag) => tag.trim()).filter((tag) => tag.length > 0)),
+  );
+}
+
+function parseRootfsTagString(tags: string): string[] {
+  return normalizeRootfsTags(tags.split(","));
+}
+
 function rootfsThemeHasVisuals(theme: ThemeEditorDraft): boolean {
   return [theme.color, theme.accent_color, theme.icon, theme.image_blob].some(
     (value) => `${value ?? ""}`.trim().length > 0,
@@ -1596,6 +1810,14 @@ function buildRootfsPublishAssistCommand(opts: {
     pushCliOption(parts, "--image-id", publishSourceEntry.id);
   }
   pushCliOption(parts, "--description", publishDraft.description);
+  pushCliOption(parts, "--family", publishDraft.family);
+  pushCliOption(parts, "--version", publishDraft.version);
+  pushCliOption(parts, "--channel", publishDraft.channel);
+  pushCliOption(
+    parts,
+    "--supersedes-image-id",
+    publishDraft.supersedes_image_id,
+  );
   if (publishDraft.visibility) {
     pushCliOption(parts, "--visibility", publishDraft.visibility);
   }
@@ -1647,6 +1869,10 @@ function buildRootfsPublishAgentPrompt(opts: {
     "Desired metadata:",
     `- label: ${publishDraft.label}`,
     `- description: ${publishDraft.description || "(empty)"}`,
+    `- family: ${publishDraft.family || "(none)"}`,
+    `- version: ${publishDraft.version || "(none)"}`,
+    `- channel: ${publishDraft.channel || "(none)"}`,
+    `- supersedes_image_id: ${publishDraft.supersedes_image_id || "(none)"}`,
     `- visibility: ${publishDraft.visibility}`,
     `- tags: ${publishDraft.tags || "(none)"}`,
     `- theme: ${rootfsThemeFromPublishDraft(publishDraft) ? "customized" : "default"}`,
