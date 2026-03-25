@@ -481,11 +481,22 @@ async function writeNavigatorPromptInWorkspaceChat(
     });
     if (!ready) return false;
 
-    const resolvedThreadKey = chooseThreadKeyFromIndex({
+    let resolvedThreadKey = chooseThreadKeyFromIndex({
       actions,
       preferredThreadKey,
       fallbackThreadKey: `${session.thread_key ?? ""}`.trim(),
     });
+    if (
+      preferredThreadKey &&
+      isOpaqueThreadKey(preferredThreadKey) &&
+      resolvedThreadKey !== preferredThreadKey &&
+      !resolveThreadIdFromIndex(actions, preferredThreadKey)
+    ) {
+      // A freshly cleared workspace thread may be selected in localStorage
+      // before the chat index has loaded it. Keep using that UUID instead of
+      // snapping back to the previous indexed thread.
+      resolvedThreadKey = preferredThreadKey;
+    }
     let replyThreadKey = resolvedThreadKey;
     let replyThreadId = resolveThreadIdFromIndex(actions, replyThreadKey);
     if (replyThreadKey) {
