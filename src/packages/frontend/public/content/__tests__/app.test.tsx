@@ -15,11 +15,21 @@ describe("getContentRouteFromPath", () => {
     expect(getContentRouteFromPath(contentPath("about/team"))).toEqual({
       view: "about-team",
     });
+    expect(
+      getContentRouteFromPath(contentPath("about/team/william-stein")),
+    ).toEqual({
+      teamSlug: "william-stein",
+      view: "about-team-member",
+    });
     expect(getContentRouteFromPath(contentPath("policies/imprint"))).toEqual({
       view: "policies-imprint",
     });
     expect(getContentRouteFromPath(contentPath("policies/policies"))).toEqual({
       view: "policies-custom",
+    });
+    expect(getContentRouteFromPath(contentPath("policies/privacy"))).toEqual({
+      policySlug: "privacy",
+      view: "policies-detail",
     });
     expect(
       getContentRouteFromPath(contentPath("news/launchpad-update-17")),
@@ -101,6 +111,35 @@ describe("PublicContentApp", () => {
     ).not.toBeNull();
     expect(screen.getByText("William Stein")).not.toBeNull();
     expect(screen.getByText("Harald Schilly")).not.toBeNull();
+  });
+
+  it("renders an individual team profile", () => {
+    render(
+      <PublicContentApp
+        config={{ site_name: "Launchpad" }}
+        initialRoute={{ teamSlug: "william-stein", view: "about-team-member" }}
+      />,
+    );
+
+    expect(
+      screen.getByRole("heading", { name: "William Stein" }),
+    ).not.toBeNull();
+    expect(screen.getByText("Experience")).not.toBeNull();
+    expect(screen.getByText("Personal website")).not.toBeNull();
+  });
+
+  it("renders a structured policy page", () => {
+    render(
+      <PublicContentApp
+        config={{ site_name: "Launchpad" }}
+        initialRoute={{ policySlug: "privacy", view: "policies-detail" }}
+      />,
+    );
+
+    expect(
+      screen.getByRole("heading", { name: "Privacy policy" }),
+    ).not.toBeNull();
+    expect(screen.getByText("How information is used")).not.toBeNull();
   });
 
   it("renders the public news list from initial data", () => {

@@ -216,4 +216,19 @@ describe("PublicFeaturesApp", () => {
       expect(screen.getByText(section)).not.toBeNull();
     },
   );
+
+  it("renders the compare feature page", () => {
+    render(
+      <PublicFeaturesApp
+        config={{ help_email: "help@example.com", site_name: "Launchpad" }}
+        initialRoute={{ slug: "compare", view: "detail" }}
+      />,
+    );
+
+    expect(
+      screen.getByText("Comparing CoCalc to common alternatives"),
+    ).not.toBeNull();
+    expect(screen.getByText("Where CoCalc stands out")).not.toBeNull();
+    expect(screen.getByText("Typical point solution")).not.toBeNull();
+  });
 });

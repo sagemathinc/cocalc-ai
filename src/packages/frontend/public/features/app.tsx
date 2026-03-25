@@ -17,6 +17,7 @@ import { SITE_NAME } from "@cocalc/util/theme";
 import AIFeaturePage from "./ai-page";
 import ApiFeaturePage from "./api-page";
 import { getFeatureIndexPages, getFeaturePage } from "./catalog";
+import CompareFeaturePage from "./compare-page";
 import JupyterNotebookFeaturePage from "./jupyter-notebook-page";
 import JuliaFeaturePage from "./julia-page";
 import LatexEditorFeaturePage from "./latex-editor-page";
@@ -50,6 +51,7 @@ interface PublicFeaturesAppProps {
 const FEATURE_DETAIL_COMPONENTS = {
   ai: AIFeaturePage,
   api: ApiFeaturePage,
+  compare: CompareFeaturePage,
   "jupyter-notebook": JupyterNotebookFeaturePage,
   julia: JuliaFeaturePage,
   "latex-editor": LatexEditorFeaturePage,
