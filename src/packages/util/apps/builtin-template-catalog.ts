@@ -582,7 +582,7 @@ if __name__ == "__main__":
     app.run()
 PY
 fi
-exec python3 -m marimo edit --headless --host "\${HOST:-127.0.0.1}" --port "\${PORT}" "$app"`,
+exec python3 -m marimo edit --headless --no-token --host "\${HOST:-127.0.0.1}" --port "\${PORT}" "$app"`,
       },
       verify: {
         commands: ["python3 -m marimo --version"],
@@ -634,6 +634,7 @@ exec python3 -m marimo edit --headless --host "\${HOST:-127.0.0.1}" --port "\${P
   "cells": [
     {
       "cell_type": "markdown",
+      "id": "intro",
       "metadata": {},
       "source": [
         "# Voilà on CoCalc\\n",
@@ -643,6 +644,7 @@ exec python3 -m marimo edit --headless --host "\${HOST:-127.0.0.1}" --port "\${P
     },
     {
       "cell_type": "code",
+      "id": "demo",
       "execution_count": null,
       "metadata": {},
       "outputs": [],
@@ -684,7 +686,9 @@ exec python3 -m voila "$app" --no-browser --Voila.ip="\${HOST:-127.0.0.1}" --por
       description:
         "Technical publishing for notebooks, docs, presentations, and sites.",
       detect: {
-        commands: ["quarto --version"],
+        commands: [
+          `bash -lc 'command -v quarto >/dev/null 2>&1 && quarto --version || /opt/quarto/bin/quarto --version'`,
+        ],
       },
       install: {
         strategy: "agent",
@@ -698,7 +702,7 @@ exec python3 -m voila "$app" --no-browser --Voila.ip="\${HOST:-127.0.0.1}" --por
         kind: "service",
         preferred_port: "6018",
         service_open_mode: "port",
-        command: `if [ ! -f index.qmd ]; then
+        command: `quarto_bin="\${QUARTO_BIN:-}"; if [ -z "$quarto_bin" ] && command -v quarto >/dev/null 2>&1; then quarto_bin="$(command -v quarto)"; fi; if [ -z "$quarto_bin" ] && [ -x /opt/quarto/bin/quarto ]; then quarto_bin=/opt/quarto/bin/quarto; fi; if [ -z "$quarto_bin" ]; then echo "quarto not found; install Quarto or set QUARTO_BIN" >&2; exit 127; fi; if [ ! -f index.qmd ]; then
   cat > index.qmd <<'QMD'
 ---
 title: "Quarto on CoCalc"
@@ -710,10 +714,12 @@ format: html
 Edit index.qmd to replace this demo.
 QMD
 fi
-exec quarto preview index.qmd --no-browser --host "\${HOST:-127.0.0.1}" --port "\${PORT}"`,
+exec "$quarto_bin" preview index.qmd --no-browser --host "\${HOST:-127.0.0.1}" --port "\${PORT}"`,
       },
       verify: {
-        commands: ["quarto --version"],
+        commands: [
+          `bash -lc 'command -v quarto >/dev/null 2>&1 && quarto --version || /opt/quarto/bin/quarto --version'`,
+        ],
       },
       agent_prompt_seed:
         "Quarto is worth offering even though install is heavier. Prefer a straightforward verified install and let the managed template bootstrap index.qmd if needed.",
