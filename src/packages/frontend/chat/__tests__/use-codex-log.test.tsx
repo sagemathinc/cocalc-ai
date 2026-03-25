@@ -300,6 +300,69 @@ describe("useCodexLog", () => {
     expect(get).not.toHaveBeenCalled();
   });
 
+  it("accepts batched live events from the shared dstream", async () => {
+    jest.useFakeTimers();
+    const stream = new FakeDstream([
+      [
+        {
+          type: "event",
+          seq: 1,
+          time: 10,
+          event: { type: "message", text: "Hel" },
+        },
+        {
+          type: "event",
+          seq: 2,
+          time: 20,
+          event: { type: "message", text: "lo" },
+        },
+      ],
+    ]);
+    const get = jest.fn().mockResolvedValue(null);
+    dstreamMock.mockResolvedValue(stream);
+    conatMock.mockReturnValue({
+      subscribe: jest.fn(),
+      sync: {
+        akv: () => ({ get }),
+      },
+    });
+
+    render(
+      <TestComponent
+        generating={true}
+        logKey="log-key-live-batch"
+        liveLogStream="live-stream-batch"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(dstreamMock).toHaveBeenCalled();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("latest-event").textContent).toBe("Hello");
+    });
+
+    stream.push([
+      {
+        type: "event",
+        seq: 3,
+        time: 30,
+        event: { type: "message", text: "!" },
+      },
+    ]);
+
+    await act(async () => {
+      await Promise.resolve();
+      await jest.advanceTimersByTimeAsync(150);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("latest-event").textContent).toBe("Hello!");
+    });
+    expect(get).not.toHaveBeenCalled();
+  });
+
   it("does not miss messages pushed after the shared dstream listener attaches", async () => {
     jest.useFakeTimers();
     const stream = new FakeDstream([

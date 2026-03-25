@@ -221,6 +221,14 @@ async function flush(writer: ChatStreamWriter) {
   await delay(0);
 }
 
+function flattenLivePayloads(
+  payloads: Array<AcpStreamMessage | AcpStreamMessage[]>,
+): AcpStreamMessage[] {
+  return payloads.flatMap((payload) =>
+    Array.isArray(payload) ? payload : [payload],
+  );
+}
+
 describe("ChatStreamWriter", () => {
   it("requires thread_id in metadata", async () => {
     const { syncdb } = makeFakeSyncDB();
@@ -673,7 +681,7 @@ describe("ChatStreamWriter", () => {
   it("publishes live status/events to the ephemeral stream and persists the final log once", async () => {
     const { syncdb } = makeFakeSyncDB();
     const persistedLogs: any[][] = [];
-    const liveEvents: AcpStreamMessage[] = [];
+    const livePayloads: Array<AcpStreamMessage | AcpStreamMessage[]> = [];
     const writer: any = new ChatStreamWriter({
       metadata: baseMetadata,
       client: makeFakeClient(),
@@ -687,9 +695,9 @@ describe("ChatStreamWriter", () => {
         }) as any,
       liveLogStreamFactory: () =>
         ({
-          publish: async (event: AcpStreamMessage) => {
-            liveEvents.push(event);
-            return { seq: liveEvents.length, time: Date.now() };
+          publish: async (payload: AcpStreamMessage | AcpStreamMessage[]) => {
+            livePayloads.push(payload);
+            return { seq: livePayloads.length, time: Date.now() };
           },
           close: () => {},
         }) as any,
@@ -701,6 +709,7 @@ describe("ChatStreamWriter", () => {
       seq: 0,
     } as AcpStreamMessage);
     await flush(writer);
+    await (writer as any).waitForLiveLogFlush();
 
     await writer.handle({
       type: "event",
@@ -708,7 +717,9 @@ describe("ChatStreamWriter", () => {
       seq: 1,
     } as AcpStreamMessage);
     await flush(writer);
+    await (writer as any).waitForLiveLogFlush();
 
+    const liveEvents = flattenLivePayloads(livePayloads);
     expect(liveEvents).toHaveLength(2);
     expect(liveEvents[0].type).toBe("status");
     expect((liveEvents[0] as any).state).toBe("running");
@@ -722,7 +733,7 @@ describe("ChatStreamWriter", () => {
     } as AcpStreamMessage);
     await flush(writer);
 
-    expect(liveEvents).toHaveLength(3);
+    expect(flattenLivePayloads(livePayloads)).toHaveLength(3);
     expect(persistedLogs).toHaveLength(1);
     expect(persistedLogs[0][0]?.type).toBe("status");
     expect(persistedLogs[0].at(-1)?.type).toBe("summary");
@@ -874,6 +885,7 @@ describe("ChatStreamWriter", () => {
     };
     await (writer as any).handle(payload);
     await flush(writer);
+    await (writer as any).waitForLiveLogFlush();
     expect(livePublish).toHaveBeenCalledTimes(1);
     expect(logSet).not.toHaveBeenCalled();
     await (writer as any).handle({
@@ -888,7 +900,7 @@ describe("ChatStreamWriter", () => {
   });
 
   it("publishes live log events to the ephemeral stream in order", async () => {
-    const liveEvents: AcpStreamMessage[] = [];
+    const livePayloads: Array<AcpStreamMessage | AcpStreamMessage[]> = [];
     const { syncdb } = makeFakeSyncDB();
     const writer: any = new ChatStreamWriter({
       metadata: baseMetadata,
@@ -901,9 +913,9 @@ describe("ChatStreamWriter", () => {
         }) as any,
       liveLogStreamFactory: () =>
         ({
-          publish: async (event: AcpStreamMessage) => {
-            liveEvents.push(event);
-            return { seq: liveEvents.length, time: Date.now() };
+          publish: async (payload: AcpStreamMessage | AcpStreamMessage[]) => {
+            livePayloads.push(payload);
+            return { seq: livePayloads.length, time: Date.now() };
           },
           close: () => {},
         }) as any,
@@ -915,13 +927,15 @@ describe("ChatStreamWriter", () => {
       seq: 0,
     } as AcpStreamMessage);
     await flush(writer);
-    await (writer as any).handle({
+    await writer.handle({
       type: "event",
       event: { type: "message", text: "lo" } as any,
       seq: 1,
     } as AcpStreamMessage);
     await flush(writer);
+    await (writer as any).waitForLiveLogFlush();
 
+    const liveEvents = flattenLivePayloads(livePayloads);
     expect(liveEvents).toHaveLength(2);
     expect(liveEvents[0]).toMatchObject({ seq: 0, type: "event" });
     expect(liveEvents[1]).toMatchObject({ seq: 1, type: "event" });
@@ -930,7 +944,7 @@ describe("ChatStreamWriter", () => {
 
   it("persists durable timestamps on live and terminal log events", async () => {
     const logSet = jest.fn().mockResolvedValue(undefined);
-    const liveEvents: AcpStreamMessage[] = [];
+    const livePayloads: Array<AcpStreamMessage | AcpStreamMessage[]> = [];
     const { syncdb } = makeFakeSyncDB();
     const writer: any = new ChatStreamWriter({
       metadata: baseMetadata,
@@ -943,9 +957,9 @@ describe("ChatStreamWriter", () => {
         }) as any,
       liveLogStreamFactory: () =>
         ({
-          publish: async (event: AcpStreamMessage) => {
-            liveEvents.push(event);
-            return { seq: liveEvents.length, time: Date.now() };
+          publish: async (payload: AcpStreamMessage | AcpStreamMessage[]) => {
+            livePayloads.push(payload);
+            return { seq: livePayloads.length, time: Date.now() };
           },
           close: () => {},
         }) as any,
@@ -964,6 +978,7 @@ describe("ChatStreamWriter", () => {
     await flush(writer);
 
     const persistedEvents = logSet.mock.calls[0]?.[1];
+    const liveEvents = flattenLivePayloads(livePayloads);
     expect(typeof liveEvents?.[0]?.time).toBe("number");
     expect(Array.isArray(persistedEvents)).toBe(true);
     expect(typeof persistedEvents?.[0]?.time).toBe("number");
