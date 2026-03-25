@@ -143,6 +143,44 @@ function redactPodmanArgs(args: string[]): string {
   return argsJoin(redacted);
 }
 
+async function resolveProjectCliBearer({
+  projectId,
+  accountId,
+  currentEnv,
+}: {
+  projectId: string;
+  accountId?: string;
+  currentEnv?: NodeJS.ProcessEnv;
+}): Promise<string | undefined> {
+  const existing =
+    `${currentEnv?.COCALC_BEARER_TOKEN ?? ""}`.trim() ||
+    `${currentEnv?.COCALC_AGENT_TOKEN ?? ""}`.trim();
+  if (existing) return existing;
+  const resolvedAccountId = `${accountId ?? ""}`.trim();
+  if (!projectId.trim() || !resolvedAccountId) {
+    return;
+  }
+  const issueAgentToken = hubApi.hosts?.issueProjectHostAgentAuthToken;
+  if (typeof issueAgentToken !== "function") {
+    return;
+  }
+  try {
+    const issued = await issueAgentToken({
+      account_id: resolvedAccountId,
+      project_id: projectId,
+    });
+    const token = `${issued?.token ?? ""}`.trim();
+    return token || undefined;
+  } catch (err) {
+    logger.debug("codex project: failed to issue project-host agent token", {
+      projectId,
+      accountId,
+      err: `${err}`,
+    });
+    return;
+  }
+}
+
 async function getOptionalCertMounts(): Promise<{
   mounts: OptionalBindMount[];
   env: Record<string, string>;
@@ -635,10 +673,12 @@ const containerLeases = new RefcountLeaseManager<string>({
 
 async function ensureContainer({
   projectId,
+  accountId,
   authRuntime,
   extraEnv,
 }: {
   projectId: string;
+  accountId?: string;
   authRuntime: CodexAuthRuntime;
   extraEnv?: NodeJS.ProcessEnv;
 }): Promise<ContainerInfo> {
@@ -725,6 +765,15 @@ async function ensureContainer({
   }
   for (const key in authRuntime.env) {
     env[key] = authRuntime.env[key];
+  }
+  const cliBearer = await resolveProjectCliBearer({
+    projectId,
+    accountId,
+    currentEnv: { ...env, ...authRuntime.env, ...extraEnv },
+  });
+  if (cliBearer) {
+    env.COCALC_BEARER_TOKEN = cliBearer;
+    env.COCALC_AGENT_TOKEN = cliBearer;
   }
   if (cliBinary?.containerPath) {
     env.COCALC_CLI_BIN = cliBinary.containerPath;
@@ -954,7 +1003,7 @@ export async function spawnCodexInProjectContainer({
   let info: ContainerInfo | undefined;
   try {
     info = await withTimeout(
-      ensureContainer({ projectId, authRuntime, extraEnv }),
+      ensureContainer({ projectId, accountId, authRuntime, extraEnv }),
       CONTAINER_SETUP_TIMEOUT_MS,
       `codex container setup (project=${projectId})`,
     );
@@ -972,6 +1021,15 @@ export async function spawnCodexInProjectContainer({
     "HOME=/root",
   ];
   const execEnv = { ...authRuntime.env, ...toStringEnv(extraEnv) };
+  const cliBearer = await resolveProjectCliBearer({
+    projectId,
+    accountId,
+    currentEnv: execEnv,
+  });
+  if (cliBearer) {
+    execEnv.COCALC_BEARER_TOKEN = cliBearer;
+    execEnv.COCALC_AGENT_TOKEN = cliBearer;
+  }
   if (!execEnv.OPENAI_API_KEY?.trim()) {
     // Avoid overriding runtime key selection with an empty per-turn value.
     delete execEnv.OPENAI_API_KEY;
@@ -1080,6 +1138,15 @@ async function spawnCodexAppServerInProjectRuntime({
     "HOME=/root",
   ];
   const execEnv = toStringEnv(extraEnv);
+  const cliBearer = await resolveProjectCliBearer({
+    projectId,
+    accountId,
+    currentEnv: execEnv,
+  });
+  if (cliBearer) {
+    execEnv.COCALC_BEARER_TOKEN = cliBearer;
+    execEnv.COCALC_AGENT_TOKEN = cliBearer;
+  }
   if (
     appServerLogin?.type === "apiKey" &&
     execEnv.OPENAI_API_KEY &&

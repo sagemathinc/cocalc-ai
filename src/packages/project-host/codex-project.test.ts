@@ -89,6 +89,9 @@ jest.mock("@cocalc/lite/hub/api", () => ({
     projects: {
       start: jest.fn(),
     },
+    hosts: {
+      issueProjectHostAgentAuthToken: jest.fn(),
+    },
   },
 }));
 
@@ -129,6 +132,10 @@ describe("initCodexProjectRunner", () => {
     });
     hubApi.projects.start.mockReset();
     hubApi.projects.start.mockResolvedValue({});
+    hubApi.hosts.issueProjectHostAgentAuthToken.mockReset();
+    hubApi.hosts.issueProjectHostAgentAuthToken.mockResolvedValue({
+      token: "issued-project-host-token",
+    });
   });
 
   afterEach(() => {
@@ -188,6 +195,10 @@ describe("initCodexProjectRunner", () => {
         "-e",
         "HOME=/root",
         "-e",
+        "COCALC_BEARER_TOKEN=issued-project-host-token",
+        "-e",
+        "COCALC_AGENT_TOKEN=issued-project-host-token",
+        "-e",
         "FOO=bar",
         "project-6bc2c387-4c80-4a79-aa68-65d8e68a6a52",
         "/opt/cocalc/bin2/codex",
@@ -210,6 +221,10 @@ describe("initCodexProjectRunner", () => {
     expect(spawned.appServerLogin).toEqual({
       type: "apiKey",
       apiKey: "secret-key",
+    });
+    expect(hubApi.hosts.issueProjectHostAgentAuthToken).toHaveBeenCalledWith({
+      account_id: "00000000-0000-4000-8000-000000000001",
+      project_id: "6bc2c387-4c80-4a79-aa68-65d8e68a6a52",
     });
     expect(spawned.containerPathMap).toEqual({
       rootHostPath: home,
