@@ -302,4 +302,132 @@ describe("static app serving", () => {
       }
     }
   });
+
+  it("uses public cache defaults for exposed raw files and supports etag revalidation", async () => {
+    const base = await mkdtemp(join(tmpdir(), "cocalc-static-apps-"));
+    const home = join(base, "home");
+    const rootfs = join(base, "rootfs");
+    const scratch = join(base, "scratch");
+    await mkdir(join(home, "public"), { recursive: true });
+    await mkdir(rootfs, { recursive: true });
+    await mkdir(scratch, { recursive: true });
+    await writeFile(join(home, "public", "a.md"), "# Hello\n");
+
+    currentProjectFs = createProjectSandboxFilesystem({
+      project_id,
+      home,
+      rootfs,
+      scratch,
+    });
+
+    const firstRes = new MockResponse();
+    const firstHandled = await maybeHandleStaticAppRequest({
+      req: makeRequest("/a.md?raw=1"),
+      res: firstRes as unknown as http.ServerResponse,
+      project_id,
+      match: {
+        ...makeMatch("/root/public", "/a.md?raw=1"),
+        exposure: { mode: "public" },
+        spec: {
+          id: "site",
+          kind: "static",
+          static: { root: "/root/public" },
+          integration: {
+            mode: "cocalc-public-viewer",
+            manifest: "index.json",
+            directory_listing: "manifest-only",
+            file_types: [".md", ".ipynb", ".slides", ".board", ".chat"],
+          },
+        },
+      },
+    });
+
+    expect(firstHandled).toBe(true);
+    expect(firstRes.statusCode).toBe(200);
+    expect(firstRes.headers["Cache-Control"]).toBe(
+      "public, max-age=60, s-maxage=300, stale-while-revalidate=600",
+    );
+    expect(typeof firstRes.headers.ETag).toBe("string");
+
+    const secondReq = makeRequest("/a.md?raw=1");
+    secondReq.headers["if-none-match"] = `${firstRes.headers.ETag}`;
+    const secondRes = new MockResponse();
+    const secondHandled = await maybeHandleStaticAppRequest({
+      req: secondReq,
+      res: secondRes as unknown as http.ServerResponse,
+      project_id,
+      match: {
+        ...makeMatch("/root/public", "/a.md?raw=1"),
+        exposure: { mode: "public" },
+        spec: {
+          id: "site",
+          kind: "static",
+          static: { root: "/root/public" },
+          integration: {
+            mode: "cocalc-public-viewer",
+            manifest: "index.json",
+            directory_listing: "manifest-only",
+            file_types: [".md", ".ipynb", ".slides", ".board", ".chat"],
+          },
+        },
+      },
+    });
+
+    expect(secondHandled).toBe(true);
+    expect(secondRes.statusCode).toBe(304);
+  });
+
+  it("uses a shorter public cache default for generated manifest pages", async () => {
+    const base = await mkdtemp(join(tmpdir(), "cocalc-static-apps-"));
+    const home = join(base, "home");
+    const rootfs = join(base, "rootfs");
+    const scratch = join(base, "scratch");
+    await mkdir(join(home, "public"), { recursive: true });
+    await mkdir(rootfs, { recursive: true });
+    await mkdir(scratch, { recursive: true });
+    await writeFile(
+      join(home, "public", "index.json"),
+      JSON.stringify({
+        version: 1,
+        kind: "cocalc-public-viewer-index",
+        title: "Demo",
+        entries: [{ path: "a.md", render: "viewer" }],
+      }),
+    );
+
+    currentProjectFs = createProjectSandboxFilesystem({
+      project_id,
+      home,
+      rootfs,
+      scratch,
+    });
+
+    const res = new MockResponse();
+    const handled = await maybeHandleStaticAppRequest({
+      req: makeRequest("/"),
+      res: res as unknown as http.ServerResponse,
+      project_id,
+      match: {
+        ...makeMatch("/root/public", "/"),
+        exposure: { mode: "public" },
+        spec: {
+          id: "site",
+          kind: "static",
+          static: { root: "/root/public" },
+          integration: {
+            mode: "cocalc-public-viewer",
+            manifest: "index.json",
+            directory_listing: "manifest-only",
+            file_types: [".md", ".ipynb", ".slides", ".board", ".chat"],
+          },
+        },
+      },
+    });
+
+    expect(handled).toBe(true);
+    expect(res.statusCode).toBe(200);
+    expect(res.headers["Cache-Control"]).toBe(
+      "public, max-age=15, s-maxage=60, stale-while-revalidate=120",
+    );
+  });
 });
