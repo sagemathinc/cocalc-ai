@@ -15,6 +15,23 @@ mkdir -p "$STATE_DIR"
 
 PID_FILE="$STATE_DIR/lite.pid"
 
+rotate_log_file() {
+  local file="${1:-}"
+  if [ -z "$file" ]; then
+    return 0
+  fi
+  mkdir -p "$(dirname "$file")"
+  rm -f "$file.2"
+  if [ -f "$file.1" ]; then
+    mv -f "$file.1" "$file.2"
+  fi
+  if [ -f "$file" ] && [ -s "$file" ]; then
+    mv -f "$file" "$file.1"
+  else
+    rm -f "$file"
+  fi
+}
+
 usage() {
   cat <<EOF
 Usage: $(basename "$0") <init|start|stop|restart|status|logs|env>
@@ -162,11 +179,10 @@ start_daemon() {
   mkdir -p "$LITE_HOME"
   mkdir -p "$(dirname "$LITE_STDOUT_LOG")"
   mkdir -p "$(dirname "$LITE_CONNECTION_INFO")"
-  # Keep startup logs easy to reason about by clearing previous run output.
   mkdir -p "$(dirname "$LITE_MAIN_LOG")"
-  rm -f "$LITE_MAIN_LOG"
-  rm -f "$LITE_ACP_WORKER_LOG"
-  rm -f "$LITE_STDOUT_LOG"
+  rotate_log_file "$LITE_MAIN_LOG"
+  rotate_log_file "$LITE_ACP_WORKER_LOG"
+  rotate_log_file "$LITE_STDOUT_LOG"
   touch "$LITE_STDOUT_LOG"
 
   (

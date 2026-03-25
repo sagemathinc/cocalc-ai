@@ -15,6 +15,23 @@ mkdir -p "$STATE_DIR"
 
 PID_FILE="$STATE_DIR/hub.pid"
 
+rotate_log_file() {
+  local file="${1:-}"
+  if [ -z "$file" ]; then
+    return 0
+  fi
+  mkdir -p "$(dirname "$file")"
+  rm -f "$file.2"
+  if [ -f "$file.1" ]; then
+    mv -f "$file.1" "$file.2"
+  fi
+  if [ -f "$file" ] && [ -s "$file" ]; then
+    mv -f "$file" "$file.1"
+  else
+    rm -f "$file"
+  fi
+}
+
 find_hub_pids() {
   ps -eo pid=,args= \
     | awk -v hub_root="$SRC_DIR/packages/hub" '
@@ -61,14 +78,60 @@ find_primary_hub_pid() {
   find_hub_pids_on_config_port | tail -n 1
 }
 
-detect_hub_postgres_socket_dir() {
-  if [ ! -f "$HUB_STDOUT_LOG" ]; then
+current_hub_pid() {
+  if is_running; then
+    cat "$PID_FILE" 2>/dev/null || true
+  fi
+}
+
+get_env_from_pid() {
+  local pid="${1:-}"
+  local key="${2:-}"
+  if [ -z "$pid" ] || [ -z "$key" ] || [ ! -r "/proc/$pid/environ" ]; then
     return 0
   fi
-  sed -n "s/.*socketDir: '\\([^']*\\)'.*/\\1/p" "$HUB_STDOUT_LOG" | tail -n 1
+  tr '\0' '\n' <"/proc/$pid/environ" 2>/dev/null \
+    | sed -n "s/^${key}=//p" \
+    | head -n 1
+}
+
+find_latest_in_log() {
+  local file="${1:-}"
+  local sed_expr="${2:-}"
+  if [ -z "$file" ] || [ ! -f "$file" ]; then
+    return 0
+  fi
+  tail -n 20000 "$file" 2>/dev/null | sed -n "$sed_expr" | tail -n 1
+}
+
+detect_hub_postgres_socket_dir() {
+  local pid pg_host
+  pid="$(current_hub_pid || true)"
+  pg_host="$(get_env_from_pid "$pid" "PGHOST" || true)"
+  if [ -n "$pg_host" ]; then
+    echo "$pg_host"
+    return 0
+  fi
+  find_latest_in_log "$HUB_STDOUT_LOG" "s/.*socketDir: '\\([^']*\\)'.*/\\1/p"
 }
 
 detect_hub_postgres_data_dir() {
+  local pid data_dir
+  pid="$(current_hub_pid || true)"
+  data_dir="$(get_env_from_pid "$pid" "DATA" || true)"
+  if [ -n "$data_dir" ]; then
+    echo "$data_dir/postgres"
+    return 0
+  fi
+  data_dir="$(get_env_from_pid "$pid" "COCALC_DATA_DIR" || true)"
+  if [ -n "$data_dir" ]; then
+    if [ -d "$data_dir/postgres" ]; then
+      echo "$data_dir/postgres"
+    else
+      echo "$data_dir"
+    fi
+    return 0
+  fi
   local env_file data_base
   for env_file in \
     "$SRC_DIR/data/app/postgres/local-postgres.env" \
@@ -92,24 +155,20 @@ detect_hub_postgres_data_dir() {
       fi
     fi
   done
-  if [ ! -f "$HUB_STDOUT_LOG" ]; then
-    return 0
-  fi
-  sed -n "s/.*dataDir: '\\([^']*\\)'.*/\\1/p" "$HUB_STDOUT_LOG" | tail -n 1
+  find_latest_in_log "$HUB_STDOUT_LOG" "s/.*dataDir: '\\([^']*\\)'.*/\\1/p"
 }
 
 detect_hub_public_hostname() {
-  if [ ! -f "$HUB_STDOUT_LOG" ]; then
-    return 0
-  fi
-  sed -n "s/.*hostname: '\\([^']*\\)'.*/\\1/p" "$HUB_STDOUT_LOG" | tail -n 1
+  find_latest_in_log "$HUB_STDOUT_LOG" "s/.*hostname: '\\([^']*\\)'.*/\\1/p"
 }
 
 detect_hub_bootstrap_signup_url() {
   if [ ! -f "$HUB_STDOUT_LOG" ]; then
     return 0
   fi
-  grep -Eo 'https?://[^[:space:]]+/auth/sign-up\?registrationToken=[^[:space:]]*bootstrap=1[^[:space:]]*' "$HUB_STDOUT_LOG" | tail -n 1
+  tail -n 20000 "$HUB_STDOUT_LOG" 2>/dev/null \
+    | grep -Eo 'https?://[^[:space:]]+/auth/sign-up\?registrationToken=[^[:space:]]*bootstrap=1[^[:space:]]*' \
+    | tail -n 1
 }
 
 print_bootstrap_signup_url() {
@@ -340,9 +399,15 @@ start_daemon() {
   ensure_local_software_artifacts
 
   rm -f "$PID_FILE"
-  rm -f "$HUB_DEBUG_FILE"
   mkdir -p "$(dirname "$HUB_STDOUT_LOG")"
+  rotate_log_file "$HUB_STDOUT_LOG"
+  if [ -n "$HUB_DEBUG_FILE" ]; then
+    rotate_log_file "$HUB_DEBUG_FILE"
+  fi
   touch "$HUB_STDOUT_LOG"
+  if [ -n "$HUB_DEBUG_FILE" ]; then
+    touch "$HUB_DEBUG_FILE"
+  fi
 
   (
     cd "$SRC_DIR"
