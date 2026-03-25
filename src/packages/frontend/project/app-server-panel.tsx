@@ -211,7 +211,7 @@ function PresetSummaryCard({
             style={{
               position: "absolute",
               left: 16,
-              bottom: -18,
+              bottom: -12,
               width: compact ? 40 : 46,
               height: compact ? 40 : 46,
               borderRadius: compact ? 14 : 16,
@@ -231,7 +231,7 @@ function PresetSummaryCard({
           align="start"
           style={{ width: "100%", justifyContent: "space-between" }}
         >
-          <div style={{ minWidth: 0, paddingTop: 4 }}>
+          <div style={{ minWidth: 0, paddingTop: compact ? 12 : 16 }}>
             <Typography.Text strong style={{ display: "block" }}>
               {preset.label}
             </Typography.Text>
@@ -1123,9 +1123,9 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
 
   useEffect(() => {
     if (creatorInitialized || loading) return;
-    setCreatorOpen(rows.length === 0);
+    setCreatorOpen(false);
     setCreatorInitialized(true);
-  }, [creatorInitialized, loading, rows.length]);
+  }, [creatorInitialized, loading]);
 
   useEffect(() => {
     if (detectingInstalledTemplates || installedTemplates.length > 0) return;
@@ -1159,6 +1159,27 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
       setStartNow(false);
       setOpenWhenReady(false);
     }
+  }
+
+  function resetCreatorForm() {
+    setPresetKey("");
+    setKind("service");
+    setAppId("");
+    setTitle("");
+    setBasePath("");
+    setCommand("");
+    setPort("");
+    setHealthPath("");
+    setServiceOpenMode("proxy");
+    setStaticRoot("");
+    setStaticIndex("index.html");
+    setStaticCacheControl("public,max-age=3600");
+    setStaticRefreshCommand("");
+    setStaticRefreshStaleAfter("3600");
+    setStaticRefreshTimeout("120");
+    setStaticRefreshOnHit(true);
+    setStartNow(true);
+    setOpenWhenReady(true);
   }
 
   function toggleRowExpanded(id: string) {
@@ -1477,6 +1498,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
   async function onCreate() {
     let createdId: string | undefined;
     const creatingService = kind === "service" && startNow;
+    const shouldOpenWhenReady = openWhenReady;
     try {
       setFormSubmitting(true);
       setError(undefined);
@@ -1503,7 +1525,9 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
         });
       }
       await refresh();
-      if (openWhenReady && status.state === "running") {
+      resetCreatorForm();
+      setCreatorOpen(false);
+      if (shouldOpenWhenReady && status.state === "running") {
         await openStatus(status);
       }
     } catch (err) {
@@ -2113,12 +2137,29 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
               value={presetKey || undefined}
               placeholder="Preset (optional)"
               allowClear
+              showSearch
+              optionFilterProp="label"
+              filterOption={(input, option) => {
+                const haystack = [option?.label, (option as any)?.searchText]
+                  .join(" ")
+                  .toLowerCase();
+                return haystack.includes(input.trim().toLowerCase());
+              }}
               style={{ width: "100%", minWidth: "320px" }}
               onClear={() => setPresetKey("")}
               onChange={(value) => applyPreset(value)}
               options={presets.map((preset) => ({
                 value: preset.key,
                 label: `${preset.label}${preset.category ? ` (${preset.category})` : ""}`,
+                searchText: [
+                  preset.label,
+                  preset.title,
+                  preset.category,
+                  preset.description,
+                  preset.homepage,
+                ]
+                  .filter(Boolean)
+                  .join(" "),
               }))}
             />
             {activePreset ? <PresetSummaryCard preset={activePreset} /> : null}

@@ -719,7 +719,8 @@ if __name__ == "__main__":
     app.run()
 PY
 fi
-exec python3 -m marimo edit --headless --no-token --host "\${HOST:-127.0.0.1}" --port "\${PORT}" "$app"`,
+base_url="\${APP_BASE_URL/\\/proxy\\//\\/port\\/}"
+exec python3 -m marimo edit --headless --no-token --base-url "\${base_url}" --host "\${HOST:-127.0.0.1}" --port "\${PORT}" "$app"`,
       },
       verify: {
         commands: ["python3 -m marimo --version"],
