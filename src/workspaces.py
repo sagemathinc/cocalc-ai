@@ -114,7 +114,6 @@ def all_packages() -> List[str]:
         'packages/conat',
         'packages/backend',
         'packages/api-client',
-        'packages/http-api',
         'packages/apps/tasks',
         'packages/jupyter',
         'packages/comm',
@@ -124,6 +123,7 @@ def all_packages() -> List[str]:
         'packages/ai',
         'packages/frontend',  # static depends on frontend; frontend depends on assets
         'packages/static',  # packages/hub assumes this is built (for webpack dev server)
+        'packages/http-api',  # depends on packages/frontend for i18n
         'packages/lite',
         'packages/project-runner',
         'packages/project-host',
@@ -547,9 +547,10 @@ def tsc(args) -> None:
         TypeScript project builds can report success from tsbuildinfo cache even if
         emitted output was deleted. Detect that state so we can force a rebuild.
         """
-        return os.path.exists(os.path.join(package_path, "tsconfig.tsbuildinfo")) and not os.path.exists(
-            os.path.join(package_path, "dist")
-        )
+        return os.path.exists(
+            os.path.join(package_path,
+                         "tsconfig.tsbuildinfo")) and not os.path.exists(
+                             os.path.join(package_path, "dist"))
 
     def f(path: str) -> None:
         package_path = os.path.join(CUR, path)
