@@ -165,4 +165,55 @@ describe("PublicFeaturesApp", () => {
       screen.getByText("Built for interactive explanation"),
     ).not.toBeNull();
   });
+
+  it.each([
+    {
+      slug: "sage",
+      title: "Use SageMath online in the environment built by the same team",
+      section: "Why SageMath fits naturally in CoCalc",
+    },
+    {
+      slug: "julia",
+      title: "Use Julia in notebooks, terminals, and project workflows",
+      section: "Multiple ways to work with Julia",
+    },
+    {
+      slug: "r-statistical-software",
+      title:
+        "Use R in notebooks, terminals, and reproducible document workflows",
+      section: "Zero-setup R for teaching and analysis",
+    },
+    {
+      slug: "octave",
+      title:
+        "Run Octave online in notebooks, terminals, or a graphical desktop",
+      section: "Flexible Octave workflows",
+    },
+    {
+      slug: "x11",
+      title: "Run graphical Linux applications remotely in the browser",
+      section: "Why X11 matters",
+    },
+  ])(
+    "renders the richer $slug feature page",
+    ({
+      section,
+      slug,
+      title,
+    }: {
+      section: string;
+      slug: string;
+      title: string;
+    }) => {
+      render(
+        <PublicFeaturesApp
+          config={{ help_email: "help@example.com", site_name: "Launchpad" }}
+          initialRoute={{ slug, view: "detail" }}
+        />,
+      );
+
+      expect(screen.getByText(title)).not.toBeNull();
+      expect(screen.getByText(section)).not.toBeNull();
+    },
+  );
 });

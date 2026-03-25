@@ -18,16 +18,21 @@ import AIFeaturePage from "./ai-page";
 import ApiFeaturePage from "./api-page";
 import { getFeatureIndexPages, getFeaturePage } from "./catalog";
 import JupyterNotebookFeaturePage from "./jupyter-notebook-page";
+import JuliaFeaturePage from "./julia-page";
 import LatexEditorFeaturePage from "./latex-editor-page";
 import LinuxFeaturePage from "./linux-page";
+import OctaveFeaturePage from "./octave-page";
 import { FeatureImage, featureAppPath as appPath } from "./page-components";
+import RStatisticalSoftwareFeaturePage from "./r-statistical-software-page";
 import type { PublicFeaturesRoute } from "./routes";
 import { featurePath } from "./routes";
+import SageFeaturePage from "./sage-page";
 import PythonFeaturePage from "./python-page";
 import SlidesFeaturePage from "./slides-page";
 import TeachingFeaturePage from "./teaching-page";
 import TerminalFeaturePage from "./terminal-page";
 import WhiteboardFeaturePage from "./whiteboard-page";
+import X11FeaturePage from "./x11-page";
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -46,13 +51,18 @@ const FEATURE_DETAIL_COMPONENTS = {
   ai: AIFeaturePage,
   api: ApiFeaturePage,
   "jupyter-notebook": JupyterNotebookFeaturePage,
+  julia: JuliaFeaturePage,
   "latex-editor": LatexEditorFeaturePage,
   linux: LinuxFeaturePage,
+  octave: OctaveFeaturePage,
   python: PythonFeaturePage,
+  "r-statistical-software": RStatisticalSoftwareFeaturePage,
+  sage: SageFeaturePage,
   slides: SlidesFeaturePage,
   teaching: TeachingFeaturePage,
   terminal: TerminalFeaturePage,
   whiteboard: WhiteboardFeaturePage,
+  x11: X11FeaturePage,
 } as const;
 
 function titleForRoute(route: PublicFeaturesRoute, siteName: string): string {
