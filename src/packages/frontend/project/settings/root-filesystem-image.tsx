@@ -71,6 +71,7 @@ export default function RootFilesystemImage() {
   const [publishCopyMode, setPublishCopyMode] = useState<"project" | "base">(
     "project",
   );
+  const [publishAdvanced, setPublishAdvanced] = useState<boolean>(false);
   const [publishSourceEntry, setPublishSourceEntry] =
     useState<RootfsImageEntry>();
   const [publishDraft, setPublishDraft] = useState<PublishDraft>({
@@ -158,6 +159,50 @@ export default function RootFilesystemImage() {
     () => projectRootfsStates.find((state) => state.state_role === "previous"),
     [projectRootfsStates],
   );
+  const currentProjectRootfsEntry = useMemo(() => {
+    if (!currentProjectRootfsState) return undefined;
+    if (currentProjectRootfsState.image_id) {
+      const byId = rootfsImages.find(
+        (entry) => entry.id === currentProjectRootfsState.image_id,
+      );
+      if (byId) return byId;
+    }
+    return rootfsImages.find(
+      (entry) => entry.image === currentProjectRootfsState.image,
+    );
+  }, [currentProjectRootfsState, rootfsImages]);
+  const previousProjectRootfsEntry = useMemo(() => {
+    if (!previousProjectRootfsState) return undefined;
+    if (previousProjectRootfsState.image_id) {
+      const byId = rootfsImages.find(
+        (entry) => entry.id === previousProjectRootfsState.image_id,
+      );
+      if (byId) return byId;
+    }
+    return rootfsImages.find(
+      (entry) => entry.image === previousProjectRootfsState.image,
+    );
+  }, [previousProjectRootfsState, rootfsImages]);
+  const currentDisplayEntry = useMemo(() => {
+    if (!currentProjectRootfsState) return undefined;
+    if (
+      currentProjectRootfsEntry &&
+      currentProjectRootfsEntry.image === currentProjectRootfsState.image
+    ) {
+      return currentProjectRootfsEntry;
+    }
+    if (
+      selectedRootfsEntry &&
+      selectedRootfsEntry.image === currentProjectRootfsState.image
+    ) {
+      return selectedRootfsEntry;
+    }
+    return currentProjectRootfsEntry ?? selectedRootfsEntry;
+  }, [
+    currentProjectRootfsEntry,
+    currentProjectRootfsState,
+    selectedRootfsEntry,
+  ]);
 
   useEffect(() => {
     const nextImage = getImage(project, effectiveDefaultRootfs);
@@ -227,6 +272,7 @@ export default function RootFilesystemImage() {
     setPublishSourceEntry(currentEntry);
     setPublishMode(defaultMode);
     setPublishCopyMode(opts?.copyMode ?? "project");
+    setPublishAdvanced(false);
     setPublishDraft({
       image: currentImage,
       label:
@@ -260,25 +306,48 @@ export default function RootFilesystemImage() {
         rootfsMode === "custom"
           ? undefined
           : nextEntry?.id?.trim() || undefined;
-      const parts = split(
-        nextImage.trim() ? nextImage.trim() : effectiveDefaultRootfs,
-      );
-      const image = parts.slice(-1)[0];
-      const states = await setRootFilesystemImage({
+      const states = await switchProjectRootfs({
         project_id,
-        image,
+        image: nextImage,
         image_id: nextImageId,
       });
       setProjectRootfsStates(states);
       const currentState = states.find(
         (state) => state.state_role === "current",
       );
-      setValue(currentState?.image ?? image);
+      setValue(currentState?.image ?? nextImage);
       setImageId(currentState?.image_id ?? nextImageId ?? "");
       if (project.getIn(["state", "state"]) == "running") {
         redux.getActions("projects").restart_project(project_id);
       }
       setOpen(false);
+    } catch (err) {
+      setError(`${err}`);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function rollbackToPreviousRootfs() {
+    if (!previousProjectRootfsState || !project) return;
+    try {
+      setSaving(true);
+      const states = await switchProjectRootfs({
+        project_id: project.get("project_id"),
+        image: previousProjectRootfsState.image,
+        image_id: previousProjectRootfsState.image_id,
+      });
+      setProjectRootfsStates(states);
+      const currentState = states.find(
+        (state) => state.state_role === "current",
+      );
+      setValue(currentState?.image ?? previousProjectRootfsState.image);
+      setImageId(
+        currentState?.image_id ?? previousProjectRootfsState.image_id ?? "",
+      );
+      if (project.getIn(["state", "state"]) == "running") {
+        redux.getActions("projects").restart_project(project.get("project_id"));
+      }
     } catch (err) {
       setError(`${err}`);
     } finally {
@@ -369,9 +438,9 @@ export default function RootFilesystemImage() {
           type="secondary"
           style={{ marginTop: "8px", marginBottom: 0 }}
         >
-          Publishing captures the current visible <code>/</code> software
-          environment into a reusable managed image. It does not automatically
-          switch this project.
+          Publish to reuse software and <code>/</code>-filesystem customizations
+          in your other projects, with collaborators, with students, or
+          publicly.
         </Paragraph>
         <Space wrap style={{ marginTop: "10px" }}>
           <Button
@@ -391,24 +460,60 @@ export default function RootFilesystemImage() {
           <Button disabled={open} onClick={openPicker}>
             Change / upgrade image...
           </Button>
+          {previousProjectRootfsState && (
+            <Button
+              disabled={open || saving}
+              onClick={rollbackToPreviousRootfs}
+            >
+              Switch back to previous image
+            </Button>
+          )}
         </Space>
       </div>
       {(currentProjectRootfsState || previousProjectRootfsState) && (
-        <div style={{ marginLeft: "15px", color: "#666" }}>
+        <div
+          style={{
+            marginLeft: "15px",
+            marginTop: "16px",
+            color: COLORS.GRAY_D,
+            borderLeft: `3px solid ${COLORS.GRAY_L}`,
+            paddingLeft: "12px",
+          }}
+        >
           {currentProjectRootfsState && (
-            <Paragraph type="secondary" style={{ marginBottom: "4px" }}>
-              Current: <code>{currentProjectRootfsState.image}</code>
+            <Paragraph type="secondary" style={{ marginBottom: "8px" }}>
+              <strong>Current image:</strong>{" "}
+              <code>
+                {displayRootfsLabel(
+                  currentDisplayEntry,
+                  currentProjectRootfsState.image,
+                )}
+              </code>
               {currentProjectRootfsState.set_by_name
                 ? ` set by ${currentProjectRootfsState.set_by_name}`
                 : ""}
+              {displayRootfsDetail(
+                currentDisplayEntry,
+                currentProjectRootfsState.image,
+              )}
             </Paragraph>
           )}
           {previousProjectRootfsState && (
-            <Paragraph type="secondary" style={{ marginBottom: "4px" }}>
-              Previous rollback: <code>{previousProjectRootfsState.image}</code>
+            <Paragraph type="secondary" style={{ marginBottom: 0 }}>
+              <strong>Previous rollback:</strong>{" "}
+              <code>
+                {displayRootfsLabel(
+                  previousProjectRootfsEntry,
+                  previousProjectRootfsState.image,
+                )}
+              </code>
               {previousProjectRootfsState.set_by_name
                 ? ` set by ${previousProjectRootfsState.set_by_name}`
                 : ""}
+              {displayRootfsDetail(
+                previousProjectRootfsEntry,
+                previousProjectRootfsState.image,
+              )}
             </Paragraph>
           )}
         </div>
@@ -621,25 +726,16 @@ export default function RootFilesystemImage() {
               <Alert
                 type="info"
                 showIcon
-                message="What this publishes"
+                message="Publish a reusable RootFS image"
                 description={
-                  <ul style={{ margin: 0, paddingLeft: "18px" }}>
-                    <li>
-                      The current visible <code>/</code> software environment
-                    </li>
-                    <li>
-                      A new immutable managed RootFS image built from a safety
-                      snapshot of this project
-                    </li>
-                    <li>
-                      Not <code>/root</code>, <code>/scratch</code>, or other
-                      project data outside the RootFS layer
-                    </li>
-                    <li>
-                      This project is not switched automatically to the newly
-                      published image
-                    </li>
-                  </ul>
+                  <>
+                    Publish the current visible <code>/</code> software
+                    environment as a managed image that can be reused in your
+                    other projects, by collaborators, in courses, or publicly.
+                    This does not publish <code>/root</code> or{" "}
+                    <code>/scratch</code>, and it does not automatically switch
+                    this project to the new image.
+                  </>
                 }
               />
             ) : (
@@ -655,29 +751,6 @@ export default function RootFilesystemImage() {
                   </>
                 }
               />
-            )}
-            {publishSourceEntry?.can_manage && (
-              <Checkbox
-                checked={publishMode === "manage"}
-                onChange={(e) =>
-                  setPublishMode(e.target.checked ? "manage" : "copy")
-                }
-              >
-                {publishSourceEntry.section === "mine"
-                  ? "Update the existing selected entry instead of saving another copy"
-                  : "Edit the selected shared/official entry instead of saving my own copy"}
-              </Checkbox>
-            )}
-            {publishMode !== "manage" && (
-              <Radio.Group
-                value={publishCopyMode}
-                onChange={(e) => setPublishCopyMode(e.target.value)}
-              >
-                <Radio value="project">
-                  Publish current project RootFS state
-                </Radio>
-                <Radio value="base">Save current base image only</Radio>
-              </Radio.Group>
             )}
             <Input
               value={publishDraft.image}
@@ -719,48 +792,91 @@ export default function RootFilesystemImage() {
               <Radio value="collaborators">My collaborators</Radio>
               <Radio value="public">Public</Radio>
             </Radio.Group>
-            <Input
-              value={publishDraft.tags}
-              onChange={(e) =>
-                setPublishDraft((cur) => ({ ...cur, tags: e.target.value }))
-              }
-              placeholder="comma,separated,tags"
-            />
-            {isAdmin && (
-              <Space direction="vertical" size="small">
-                <Checkbox
-                  checked={publishDraft.official}
+            <Button
+              type="link"
+              onClick={() => setPublishAdvanced(!publishAdvanced)}
+              style={{ paddingLeft: 0, width: "fit-content" }}
+            >
+              {publishAdvanced
+                ? "Hide advanced publish options"
+                : "Show advanced publish options"}
+            </Button>
+            {publishAdvanced && (
+              <Space
+                direction="vertical"
+                size="middle"
+                style={{ width: "100%" }}
+              >
+                {publishSourceEntry?.can_manage && (
+                  <Checkbox
+                    checked={publishMode === "manage"}
+                    onChange={(e) =>
+                      setPublishMode(e.target.checked ? "manage" : "copy")
+                    }
+                  >
+                    {publishSourceEntry.section === "mine"
+                      ? "Update the existing selected entry instead of saving another copy"
+                      : "Edit the selected shared or official entry instead of saving my own copy"}
+                  </Checkbox>
+                )}
+                {publishMode !== "manage" && (
+                  <Radio.Group
+                    value={publishCopyMode}
+                    onChange={(e) => setPublishCopyMode(e.target.value)}
+                  >
+                    <Radio value="project">
+                      Publish current project RootFS state
+                    </Radio>
+                    <Radio value="base">Save current base image only</Radio>
+                  </Radio.Group>
+                )}
+                <Input
+                  value={publishDraft.tags}
                   onChange={(e) =>
                     setPublishDraft((cur) => ({
                       ...cur,
-                      official: e.target.checked,
+                      tags: e.target.value,
                     }))
                   }
-                >
-                  Official image
-                </Checkbox>
-                <Checkbox
-                  checked={publishDraft.prepull}
-                  onChange={(e) =>
-                    setPublishDraft((cur) => ({
-                      ...cur,
-                      prepull: e.target.checked,
-                    }))
-                  }
-                >
-                  Pre-pull on new hosts
-                </Checkbox>
-                <Checkbox
-                  checked={publishDraft.hidden}
-                  onChange={(e) =>
-                    setPublishDraft((cur) => ({
-                      ...cur,
-                      hidden: e.target.checked,
-                    }))
-                  }
-                >
-                  Hide from user-facing catalog views
-                </Checkbox>
+                  placeholder="comma,separated,tags"
+                />
+                {isAdmin && (
+                  <Space direction="vertical" size="small">
+                    <Checkbox
+                      checked={publishDraft.official}
+                      onChange={(e) =>
+                        setPublishDraft((cur) => ({
+                          ...cur,
+                          official: e.target.checked,
+                        }))
+                      }
+                    >
+                      Official image
+                    </Checkbox>
+                    <Checkbox
+                      checked={publishDraft.prepull}
+                      onChange={(e) =>
+                        setPublishDraft((cur) => ({
+                          ...cur,
+                          prepull: e.target.checked,
+                        }))
+                      }
+                    >
+                      Pre-pull on new hosts
+                    </Checkbox>
+                    <Checkbox
+                      checked={publishDraft.hidden}
+                      onChange={(e) =>
+                        setPublishDraft((cur) => ({
+                          ...cur,
+                          hidden: e.target.checked,
+                        }))
+                      }
+                    >
+                      Hide from user-facing catalog views
+                    </Checkbox>
+                  </Space>
+                )}
               </Space>
             )}
             <Paragraph type="secondary" style={{ marginBottom: 0 }}>
@@ -794,6 +910,40 @@ async function setRootFilesystemImage({
     image,
     image_id,
   });
+}
+
+async function switchProjectRootfs({
+  project_id,
+  image,
+  image_id,
+}: {
+  project_id: string;
+  image: string;
+  image_id?: string;
+}) {
+  const parts = split(image.trim() ? image.trim() : DEFAULT_PROJECT_IMAGE);
+  const normalizedImage = parts.slice(-1)[0];
+  return await setRootFilesystemImage({
+    project_id,
+    image: normalizedImage,
+    image_id,
+  });
+}
+
+function displayRootfsLabel(
+  entry: RootfsImageEntry | undefined,
+  fallbackImage: string,
+): string {
+  return entry?.label?.trim() || fallbackImage;
+}
+
+function displayRootfsDetail(
+  entry: RootfsImageEntry | undefined,
+  fallbackImage: string,
+): string {
+  const detail = entry?.image?.trim() || fallbackImage;
+  const label = entry?.label?.trim();
+  return detail && detail !== label ? ` (${detail})` : "";
 }
 
 function sectionLabel(section: RootfsImageEntry["section"]): string {
