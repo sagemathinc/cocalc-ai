@@ -878,9 +878,20 @@ export function createBrowserSessionAutomation({
               chat_path,
               chatActions,
             });
+            const previousName =
+              previous_thread_id != null
+                ? `${
+                    chatActions.getThreadMetadata(previous_thread_id, {
+                      threadId: previous_thread_id,
+                    })?.name ?? ""
+                  }`.trim() || "Codex"
+                : "Codex";
             let thread_id = previous_thread_id
               ? chatActions.resetThread?.(previous_thread_id, {
                   name: "Codex",
+                  renameSourceTo: `Previous ${previousName}`,
+                  pinNewThread: true,
+                  unpinSourceThread: true,
                 })
               : undefined;
             if (!thread_id) {
@@ -896,6 +907,9 @@ export function createBrowserSessionAutomation({
                   },
                 },
               });
+              if (thread_id) {
+                chatActions.setThreadPin?.(thread_id, true);
+              }
             }
             if (!thread_id) {
               throw Error("failed to clear workspace chat thread");

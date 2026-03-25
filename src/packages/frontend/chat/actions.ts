@@ -1006,6 +1006,9 @@ export class ChatActions extends Actions<ChatState> {
     opts: {
       name?: string;
       preserveSelectedThread?: boolean;
+      renameSourceTo?: string;
+      pinNewThread?: boolean;
+      unpinSourceThread?: boolean;
     } = {},
   ): string => {
     const sourceThreadKey =
@@ -1025,7 +1028,7 @@ export class ChatActions extends Actions<ChatState> {
       (typeof sourceMetadata?.name === "string"
         ? sourceMetadata.name.trim()
         : "");
-    return this.createEmptyThread({
+    const nextThreadKey = this.createEmptyThread({
       name: name || undefined,
       threadAgent: deriveThreadAgentFromMetadata({
         metadata: sourceMetadata,
@@ -1034,6 +1037,20 @@ export class ChatActions extends Actions<ChatState> {
       threadAppearance: deriveThreadAppearanceFromMetadata(sourceMetadata),
       preserveSelectedThread: opts.preserveSelectedThread,
     });
+    if (!nextThreadKey) {
+      return "";
+    }
+    const renamedSource = opts.renameSourceTo?.trim();
+    if (sourceThreadKey && renamedSource) {
+      this.renameThread(sourceThreadKey, renamedSource);
+    }
+    if (sourceThreadKey && opts.unpinSourceThread) {
+      this.setThreadPin(sourceThreadKey, false);
+    }
+    if (opts.pinNewThread) {
+      this.setThreadPin(nextThreadKey, true);
+    }
+    return nextThreadKey;
   };
 
   setEditing = (message: ChatMessageTyped, is_editing: boolean) => {

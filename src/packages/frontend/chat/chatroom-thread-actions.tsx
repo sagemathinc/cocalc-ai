@@ -8,6 +8,11 @@ import { useEffect, useMemo, useRef } from "@cocalc/frontend/app-framework";
 import { saveNavigatorSelectedThreadKey } from "@cocalc/frontend/project/new/navigator-state";
 import type { ChatActions } from "./actions";
 
+function getPreviousThreadLabel(label?: string): string {
+  const clean = `${label ?? ""}`.trim();
+  return clean ? `Previous ${clean}` : "Previous chat";
+}
+
 export interface ChatRoomThreadActionHandlers {
   confirmDeleteThread: (threadKey: string, label?: string) => void;
   confirmResetThread: (threadKey: string, label?: string) => void;
@@ -47,7 +52,11 @@ export function ChatRoomThreadActions({
           const currentActions = actionsRef.current;
           const currentSetSelected = setSelectedThreadKeyRef.current;
           const currentPath = pathRef.current;
-          const nextThreadKey = currentActions?.resetThread?.(threadKey);
+          const nextThreadKey = currentActions?.resetThread?.(threadKey, {
+            renameSourceTo: getPreviousThreadLabel(label),
+            pinNewThread: true,
+            unpinSourceThread: true,
+          });
           if (!nextThreadKey) {
             antdMessage.error("Unable to start a fresh chat thread.");
             return;

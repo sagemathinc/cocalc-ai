@@ -278,8 +278,14 @@ describe("sendChat identity fields", () => {
       sessionMode: "workspace-write",
       reasoning: "high",
     });
+    actions.setThreadPin = jest.fn().mockImplementation(() => true);
+    actions.renameThread = jest.fn().mockImplementation(() => true);
 
-    const threadId = actions.resetThread("thread-old");
+    const threadId = actions.resetThread("thread-old", {
+      renameSourceTo: "Previous Codex",
+      pinNewThread: true,
+      unpinSourceThread: true,
+    });
 
     expect(threadId).toBeTruthy();
     const cfgSet = actions.syncdb.set.mock.calls
@@ -304,6 +310,16 @@ describe("sendChat identity fields", () => {
         reasoning: "high",
       }),
     );
+    expect(actions.renameThread).toHaveBeenCalledWith(
+      "thread-old",
+      "Previous Codex",
+    );
+    expect(actions.setThreadPin).toHaveBeenNthCalledWith(
+      1,
+      "thread-old",
+      false,
+    );
+    expect(actions.setThreadPin).toHaveBeenNthCalledWith(2, threadId, true);
     expect(actions.setSelectedThread).toHaveBeenCalledWith(threadId);
   });
 

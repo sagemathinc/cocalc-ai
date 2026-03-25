@@ -983,12 +983,21 @@ export function NavigatorShell({
 
   function clearCurrentThread(): void {
     if (!actions || !selectedThreadKey) return;
-    const deleted = actions.deleteThread(selectedThreadKey);
-    if (deleted <= 0) return;
-    const next =
-      chooseNonArchivedThreadKey(actions) ?? chooseThreadKey(actions);
+    const sourceLabel =
+      typeof selectedThreadMetadata?.name === "string" &&
+      selectedThreadMetadata.name.trim().length > 0
+        ? selectedThreadMetadata.name.trim()
+        : "Codex";
+    const next = actions.resetThread(selectedThreadKey, {
+      name: "Codex",
+      renameSourceTo: `Previous ${sourceLabel}`,
+      pinNewThread: true,
+      unpinSourceThread: true,
+    });
+    if (!next) return;
     setSelectedThreadKey(next);
     actions.setSelectedThread?.(next);
+    saveNavigatorSelectedThreadKey(next, navigatorPath);
   }
 
   function openChatFile(): void {
@@ -1039,9 +1048,9 @@ export function NavigatorShell({
       if (key === "clear") {
         Modal.confirm({
           title: "Clear the current thread?",
-          content: "This deletes all messages in the selected thread.",
+          content:
+            "This starts a fresh empty thread, keeps the current thread as history, and selects the fresh thread.",
           okText: "Clear",
-          okType: "danger",
           cancelText: "Cancel",
           onOk: clearCurrentThread,
         });
