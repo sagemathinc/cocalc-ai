@@ -16,7 +16,7 @@ import {
   Typography,
 } from "antd";
 
-import { useStore } from "@cocalc/frontend/app-framework";
+import { useStore, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components";
 import {
   managedRootfsCatalogUrl,
@@ -35,6 +35,7 @@ interface Props {
 
 export function StudentProjectRootfsConfig({ actions, name, settings }: Props) {
   const store = useStore<CourseStore>({ name });
+  const projectMap = useTypedRedux("projects", "project_map");
   const [helpOpen, setHelpOpen] = useState<boolean>(false);
   const [applying, setApplying] = useState<boolean>(false);
   const [nextImageId, setNextImageId] = useState<string>("");
@@ -43,6 +44,14 @@ export function StudentProjectRootfsConfig({ actions, name, settings }: Props) {
     `${settings.get("student_project_rootfs_image") ?? ""}`.trim();
   const currentImageId =
     `${settings.get("student_project_rootfs_image_id") ?? ""}`.trim();
+  const courseProjectId = store?.get("course_project_id");
+  const inheritedImage =
+    `${projectMap?.getIn([courseProjectId, "rootfs_image"]) ?? ""}`.trim();
+  const inheritedImageId =
+    `${projectMap?.getIn([courseProjectId, "rootfs_image_id"]) ?? ""}`.trim();
+  const effectiveCurrentImage = currentImage || inheritedImage;
+  const effectiveCurrentImageId =
+    currentImageId || (!currentImage ? inheritedImageId : "");
   const existingStudentProjectCount =
     store?.get_student_project_ids().length ?? 0;
   const {
@@ -65,13 +74,15 @@ export function StudentProjectRootfsConfig({ actions, name, settings }: Props) {
     [visibleRootfsImages],
   );
   const currentEntry = useMemo(() => {
-    if (currentImageId) {
-      const byId = rootfsImages.find((entry) => entry.id === currentImageId);
+    if (effectiveCurrentImageId) {
+      const byId = rootfsImages.find(
+        (entry) => entry.id === effectiveCurrentImageId,
+      );
       if (byId) return byId;
     }
-    if (!currentImage) return undefined;
-    return rootfsImages.find((entry) => entry.image === currentImage);
-  }, [currentImage, currentImageId, rootfsImages]);
+    if (!effectiveCurrentImage) return undefined;
+    return rootfsImages.find((entry) => entry.image === effectiveCurrentImage);
+  }, [effectiveCurrentImage, effectiveCurrentImageId, rootfsImages]);
   const nextEntry = useMemo(() => {
     if (nextImageId) {
       const byId = rootfsImages.find((entry) => entry.id === nextImageId);
@@ -92,7 +103,7 @@ export function StudentProjectRootfsConfig({ actions, name, settings }: Props) {
 
   function confirmApply() {
     const targetEntry = currentEntry;
-    const targetLabel = targetEntry?.label?.trim() || currentImage;
+    const targetLabel = targetEntry?.label?.trim() || effectiveCurrentImage;
     Modal.confirm({
       title: "Apply RootFS image to existing student projects?",
       width: 680,
@@ -152,9 +163,9 @@ export function StudentProjectRootfsConfig({ actions, name, settings }: Props) {
       >
         <Space direction="vertical" size="middle" style={{ width: "100%" }}>
           <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
-            Choose a managed RootFS image for new student projects. Existing
-            student projects keep their current image until you explicitly apply
-            the new one.
+            By default, new student projects use the same RootFS image as this
+            instructor project. Set an override here only when this course
+            should use a different managed image.
           </Typography.Paragraph>
 
           <Alert
@@ -172,7 +183,7 @@ export function StudentProjectRootfsConfig({ actions, name, settings }: Props) {
               <Select
                 allowClear
                 showSearch
-                placeholder="Use the platform default image"
+                placeholder="Follow this course project's current RootFS image"
                 options={rootfsOptions}
                 value={nextImageId || undefined}
                 style={{ width: "100%" }}
@@ -213,8 +224,24 @@ export function StudentProjectRootfsConfig({ actions, name, settings }: Props) {
             </Space>
           ) : (
             <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
-              No course-specific RootFS image is configured. New student
-              projects will use the usual platform default image.
+              {currentEntry ? (
+                <>
+                  No course-specific override is configured. New student
+                  projects will use this instructor project&apos;s current
+                  RootFS image:
+                  <Typography.Text strong>
+                    {" "}
+                    {currentEntry.label || effectiveCurrentImage}
+                  </Typography.Text>
+                  .
+                </>
+              ) : (
+                <>
+                  No course-specific override is configured. New student
+                  projects will follow this instructor project&apos;s current
+                  RootFS setting.
+                </>
+              )}
             </Typography.Paragraph>
           )}
 
@@ -248,7 +275,7 @@ export function StudentProjectRootfsConfig({ actions, name, settings }: Props) {
               disabled={
                 needSave ||
                 applying ||
-                !currentImage ||
+                !effectiveCurrentImage ||
                 existingStudentProjectCount === 0
               }
               onClick={confirmApply}
@@ -284,7 +311,7 @@ export function StudentProjectRootfsConfig({ actions, name, settings }: Props) {
             type="info"
             showIcon
             message="New student projects"
-            description="New student projects created from this course use the configured managed RootFS image."
+            description="If you leave this unset, new student projects use the same RootFS image as the instructor project that contains this .course file. If you set an override here, that managed image is used instead."
           />
           <Alert
             type="warning"
