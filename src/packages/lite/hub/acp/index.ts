@@ -81,6 +81,10 @@ import type { SyncDB } from "@cocalc/conat/sync-doc/syncdb";
 import type { AcpStreamUsage } from "@cocalc/ai/acp";
 import { once } from "@cocalc/util/async-utils";
 import {
+  createAdaptiveAsyncBatcher,
+  type AdaptiveAsyncBatcher,
+} from "@cocalc/util/adaptive-batching";
+import {
   enqueueAcpPayload,
   listAcpPayloads,
   clearAcpPayloads,
@@ -231,7 +235,22 @@ const ACP_LIVE_LOG_PUBLISH_SLOW_MS = envNumber(
   "COCALC_ACP_LIVE_LOG_PUBLISH_SLOW_MS",
   100,
 );
-const ACP_LIVE_LOG_BATCH_MS = envNumber("COCALC_ACP_LIVE_LOG_BATCH_MS", 100);
+const ACP_LIVE_LOG_BATCH_MIN_MS = envNumber(
+  "COCALC_ACP_LIVE_LOG_BATCH_MS",
+  100,
+);
+const ACP_LIVE_LOG_BATCH_MAX_MS = envNumber(
+  "COCALC_ACP_LIVE_LOG_BATCH_MAX_MS",
+  1000,
+);
+const ACP_LIVE_LOG_BATCH_EWMA_ALPHA = envNumber(
+  "COCALC_ACP_LIVE_LOG_BATCH_EWMA_ALPHA",
+  0.25,
+);
+const ACP_LIVE_LOG_BATCH_LATENCY_MULTIPLIER = envNumber(
+  "COCALC_ACP_LIVE_LOG_BATCH_LATENCY_MULTIPLIER",
+  2,
+);
 const ACP_LIVE_LOG_BATCH_MAX_EVENTS = envNumber(
   "COCALC_ACP_LIVE_LOG_BATCH_MAX_EVENTS",
   128,
@@ -1543,9 +1562,7 @@ export class ChatStreamWriter {
   private liveLogInitPromise?: Promise<
     AStream<AcpStreamMessage | AcpStreamMessage[]>
   >;
-  private liveLogPublishChain: Promise<void> = Promise.resolve();
-  private liveLogBatch: AcpStreamMessage[] = [];
-  private liveLogFlushTimer?: NodeJS.Timeout;
+  private liveLogBatcher!: AdaptiveAsyncBatcher<AcpStreamMessage>;
   private client: ConatClient;
   private timeTravel?: AgentTimeTravelRecorder;
   private integritySnapshot: ChatIntegritySnapshot = {
@@ -1893,6 +1910,7 @@ export class ChatStreamWriter {
     this.logKey = refs.key;
     this.logSubject = refs.subject;
     this.liveLogStreamName = refs.liveStream;
+    this.liveLogBatcher = this.createLiveLogBatcher();
     // ensure initialization rejections are observed immediately
     this.ready = this.initialize();
     this.waitUntilReady();
@@ -2753,7 +2771,11 @@ export class ChatStreamWriter {
     }
     this.disposePromise = (async () => {
       try {
-        await this.waitForLiveLogFlush();
+        await this.liveLogBatcher.close();
+      } catch {
+        // ignore
+      }
+      try {
         await this.persistLog();
       } catch {
         // ignore
@@ -3028,53 +3050,17 @@ export class ChatStreamWriter {
     }
   }
 
-  private publishLiveLog(event: AcpStreamMessage): void {
-    if (this.closed) return;
-    this.liveLogBatch.push(event);
-    const shouldFlushNow =
-      event.type === "status" ||
-      event.type === "summary" ||
-      event.type === "error" ||
-      this.liveLogBatch.length >= ACP_LIVE_LOG_BATCH_MAX_EVENTS;
-    if (shouldFlushNow) {
-      void this.flushLiveLogBatch();
-      return;
-    }
-    if (this.liveLogFlushTimer != null) return;
-    this.liveLogFlushTimer = setTimeout(() => {
-      this.liveLogFlushTimer = undefined;
-      void this.flushLiveLogBatch();
-    }, ACP_LIVE_LOG_BATCH_MS);
-    this.liveLogFlushTimer.unref?.();
-  }
-
-  private async flushLiveLogBatch(): Promise<void> {
-    if (this.liveLogFlushTimer != null) {
-      clearTimeout(this.liveLogFlushTimer);
-      this.liveLogFlushTimer = undefined;
-    }
-    if (this.liveLogBatch.length === 0) return;
-    const batch = this.liveLogBatch;
-    this.liveLogBatch = [];
-    this.liveLogPublishChain = this.liveLogPublishChain
-      .catch(() => {
-        // ignore prior publish failures; the source error was already logged
-      })
-      .then(async () => {
-        const started = performance.now();
+  private createLiveLogBatcher(): AdaptiveAsyncBatcher<AcpStreamMessage> {
+    return createAdaptiveAsyncBatcher<AcpStreamMessage>({
+      minDelayMs: ACP_LIVE_LOG_BATCH_MIN_MS,
+      maxDelayMs: ACP_LIVE_LOG_BATCH_MAX_MS,
+      ewmaAlpha: ACP_LIVE_LOG_BATCH_EWMA_ALPHA,
+      latencyMultiplier: ACP_LIVE_LOG_BATCH_LATENCY_MULTIPLIER,
+      maxItems: ACP_LIVE_LOG_BATCH_MAX_EVENTS,
+      flush: async (batch) => {
         try {
           const stream = await this.getLiveLogStream();
           await stream.publish(batch.length === 1 ? batch[0] : batch);
-          const durationMs = performance.now() - started;
-          if (durationMs >= ACP_LIVE_LOG_PUBLISH_SLOW_MS) {
-            logger.warn("acp live log publish slow", {
-              chatKey: this.chatKey,
-              path: this.metadata.path,
-              events: this.events.length,
-              batchSize: batch.length,
-              durationMs: roundMs(durationMs),
-            });
-          }
         } catch (err) {
           logger.debug("failed to publish live acp log event", {
             chatKey: this.chatKey,
@@ -3085,16 +3071,45 @@ export class ChatStreamWriter {
             err,
           });
         }
-      });
+      },
+      onFlushComplete: ({
+        batchSize,
+        durationMs,
+        nextDelayMs,
+        estimatedLatencyMs,
+      }) => {
+        if (durationMs < ACP_LIVE_LOG_PUBLISH_SLOW_MS) {
+          return;
+        }
+        logger.warn("acp live log publish slow", {
+          chatKey: this.chatKey,
+          path: this.metadata.path,
+          events: this.events.length,
+          batchSize,
+          durationMs: roundMs(durationMs),
+          nextDelayMs,
+          estimatedLatencyMs:
+            estimatedLatencyMs == null
+              ? undefined
+              : roundMs(estimatedLatencyMs),
+        });
+      },
+    });
+  }
+
+  private publishLiveLog(event: AcpStreamMessage): void {
+    if (this.closed) return;
+    const shouldFlushNow =
+      event.type === "status" ||
+      event.type === "summary" ||
+      event.type === "error";
+    this.liveLogBatcher.add(event, {
+      flush: shouldFlushNow,
+    });
   }
 
   private async waitForLiveLogFlush(): Promise<void> {
-    await this.flushLiveLogBatch();
-    try {
-      await this.liveLogPublishChain;
-    } catch {
-      // publish failures are logged above
-    }
+    await this.liveLogBatcher.flush();
   }
 
   private async persistLog(): Promise<void> {

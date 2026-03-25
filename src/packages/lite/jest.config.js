@@ -2,6 +2,9 @@
 module.exports = {
   preset: "ts-jest",
   testEnvironment: "node",
+  moduleNameMapper: {
+    "^@cocalc/util/(.*)$": "<rootDir>/../util/dist/$1",
+  },
   roots: [
     "<rootDir>/hub/acp/__tests__",
     "<rootDir>/hub/acp/executor/__tests__",
