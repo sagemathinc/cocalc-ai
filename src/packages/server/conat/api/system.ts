@@ -1335,7 +1335,7 @@ export async function tracePublicAppHostname({
     await resolveProjectContext({ host_id, project_id: target.project_id });
   }
   const policy = await getProjectAppPublicPolicyRaw(target.project_id);
-  const dnsTargetHostname = policy.host_hostname ?? policy.site_hostname;
+  const dnsTargetHostname = policy.site_hostname ?? policy.host_hostname;
   const dns_target =
     dnsTargetHostname != null
       ? await resolvePublicAppDnsTarget(dnsTargetHostname)

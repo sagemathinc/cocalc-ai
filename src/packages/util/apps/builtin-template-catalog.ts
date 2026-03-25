@@ -695,7 +695,7 @@ exec python3 -m mkdocs serve --dev-addr "\${HOST:-127.0.0.1}:\${PORT}"`,
         title: "marimo",
         kind: "service",
         preferred_port: "6016",
-        service_open_mode: "port",
+        service_open_mode: "proxy",
         command: `app=\${APP_START_FILE:-marimo_app.py}; if [ ! -f "$app" ]; then cat > "$app" <<'PY'
 import marimo
 
@@ -719,8 +719,7 @@ if __name__ == "__main__":
     app.run()
 PY
 fi
-base_url="\${APP_BASE_URL/\\/proxy\\//\\/port\\/}"
-base_url="\${base_url%/}"
+base_url="\${APP_BASE_URL%/}"
 exec python3 -m marimo edit --headless --no-token --base-url "\${base_url}" --host "\${HOST:-127.0.0.1}" --port "\${PORT}" "$app"`,
       },
       verify: {
@@ -852,7 +851,7 @@ exec python3 -m voila "$app" --no-browser --Voila.ip="\${HOST:-127.0.0.1}" --por
         title: "Quarto",
         kind: "service",
         preferred_port: "6018",
-        service_open_mode: "port",
+        service_open_mode: "proxy",
         command: `quarto_bin="\${QUARTO_BIN:-}"; if [ -z "$quarto_bin" ] && command -v quarto >/dev/null 2>&1; then quarto_bin="$(command -v quarto)"; fi; if [ -z "$quarto_bin" ] && [ -x /opt/quarto/bin/quarto ]; then quarto_bin=/opt/quarto/bin/quarto; fi; if [ -z "$quarto_bin" ]; then echo "quarto not found; install Quarto or set QUARTO_BIN" >&2; exit 127; fi; if [ ! -f index.qmd ]; then
   cat > index.qmd <<'QMD'
 ---
