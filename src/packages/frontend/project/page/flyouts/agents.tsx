@@ -146,6 +146,11 @@ function normalizedTitle(record: AgentSessionRecord): string {
   return "Navigator session";
 }
 
+function previousTitle(title?: string): string {
+  const clean = `${title ?? ""}`.trim();
+  return clean ? `Previous ${clean}` : "Previous chat";
+}
+
 function deriveAgentRootPath(opts: {
   activeProjectTab?: string;
   currentPath?: string;
@@ -758,6 +763,11 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
         label: "Open Chat File",
       },
       {
+        key: "clear",
+        label: "Clear Thread",
+        disabled: updatingSessionId === record.session_id,
+      },
+      {
         type: "divider",
       },
       {
@@ -789,6 +799,9 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
                   return;
                 case "open-file":
                   actions?.open_file({ path: record.chat_path });
+                  return;
+                case "clear":
+                  void clearThread(record);
                   return;
                 case "pin":
                   void togglePin(record);
@@ -827,6 +840,11 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
         label: "Open Chat File",
       },
       {
+        key: "clear",
+        label: "Clear Thread",
+        disabled: updatingSessionId === record.session_id,
+      },
+      {
         type: "divider",
       },
       {
@@ -853,6 +871,9 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
                 return;
               case "open-file":
                 actions?.open_file({ path: record.chat_path });
+                return;
+              case "clear":
+                void clearThread(record);
                 return;
               case "pin":
                 void togglePin(record);
@@ -981,6 +1002,60 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
         thread_pin: nextPinned,
         updated_at: new Date().toISOString(),
       });
+    } catch (err) {
+      setError(`${err}`);
+    } finally {
+      cleanup?.();
+      setUpdatingSessionId("");
+    }
+  }
+
+  async function clearThread(record: AgentSessionRecord): Promise<void> {
+    setUpdatingSessionId(record.session_id);
+    let cleanup: (() => void) | undefined;
+    try {
+      const { chatActions, cleanup: removeTemp } =
+        await resolveChatActionsForRecord(record);
+      cleanup = removeTemp;
+      const nextThreadKey = chatActions.resetThread?.(record.thread_key, {
+        name: "Codex",
+        renameSourceTo: previousTitle(normalizedTitle(record)),
+        pinNewThread: true,
+        unpinSourceThread: true,
+      });
+      if (!nextThreadKey) {
+        throw new Error("Could not clear thread.");
+      }
+      saveNavigatorSelectedThreadKey(nextThreadKey, record.chat_path);
+      if (typeof chatActions.syncdb?.save === "function") {
+        await chatActions.syncdb.save();
+      }
+      const updatedAt = new Date().toISOString();
+      await upsertAgentSessionRecord({
+        ...record,
+        title: previousTitle(normalizedTitle(record)),
+        thread_pin: false,
+        updated_at: updatedAt,
+      });
+      const nextRecord: AgentSessionRecord = {
+        ...record,
+        session_id: nextThreadKey,
+        thread_key: nextThreadKey,
+        title: "Codex",
+        status: "active",
+        thread_pin: true,
+        created_at: updatedAt,
+        updated_at: updatedAt,
+      };
+      await upsertAgentSessionRecord(nextRecord);
+      setOpenedSelection({
+        session_id: nextRecord.session_id,
+        chat_path: nextRecord.chat_path,
+        thread_key: nextRecord.thread_key,
+        session: nextRecord,
+      });
+      setInlineSessionId(nextRecord.session_id);
+      setInlineError("");
     } catch (err) {
       setError(`${err}`);
     } finally {

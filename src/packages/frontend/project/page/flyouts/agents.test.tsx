@@ -16,6 +16,8 @@ const mockOpenFloatingAgentSession = jest.fn();
 const mockChatActions = {
   setSelectedThread: jest.fn(),
   scrollToIndex: jest.fn(),
+  resetThread: jest.fn(() => "thread-2"),
+  syncdb: { save: jest.fn().mockResolvedValue(undefined) },
 } as any;
 const mockEnsureWorkspaceChatPath = jest.fn();
 const mockEnsureWorkspaceChatDirectory = jest.fn();
@@ -36,7 +38,27 @@ jest.mock("antd", () => {
       {children}
     </button>
   );
-  const Dropdown = ({ children }: any) => children;
+  const Dropdown = ({ children, menu }: any) => (
+    <div>
+      {children}
+      <div>
+        {(menu?.items ?? []).map((item: any, index: number) => {
+          if (!item || item.type === "divider") {
+            return <span key={`divider-${index}`} />;
+          }
+          return (
+            <button
+              key={item.key}
+              type="button"
+              onClick={() => menu?.onClick?.({ key: item.key })}
+            >
+              {item.label}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
   const Empty = ({ description }: any) => <div>{description}</div>;
   const Popconfirm = ({ children }: any) => children;
   const Space = ({ children }: any) => <div>{children}</div>;
@@ -206,6 +228,9 @@ describe("AgentsPanel session cards", () => {
     mockOpenFloatingAgentSession.mockClear();
     mockChatActions.setSelectedThread.mockClear();
     mockChatActions.scrollToIndex.mockClear();
+    mockChatActions.resetThread.mockClear();
+    mockChatActions.resetThread.mockReturnValue("thread-2");
+    mockChatActions.syncdb.save.mockClear();
     mockEnsureWorkspaceChatPath.mockReset();
     mockEnsureWorkspaceChatDirectory.mockReset();
     mockSessions = [
@@ -316,6 +341,34 @@ describe("AgentsPanel session cards", () => {
     });
 
     expect(screen.queryByTestId("agents-inline-chat")).toBeNull();
+  });
+
+  it("clears a session from the flyout menu into a fresh codex thread", async () => {
+    render(<AgentsPanel project_id="project-1" layout="page" />);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("agent-session-menu-session-1")).toBeTruthy(),
+    );
+    fireEvent.click(screen.getByText("Clear Thread"));
+
+    await waitFor(() =>
+      expect(mockChatActions.resetThread).toHaveBeenCalledWith("thread-1", {
+        name: "Codex",
+        renameSourceTo: "Previous Agent session",
+        pinNewThread: true,
+        unpinSourceThread: true,
+      }),
+    );
+    await waitFor(() =>
+      expect(mockUpsertAgentSessionRecord).toHaveBeenCalledWith(
+        expect.objectContaining({
+          session_id: "thread-2",
+          thread_key: "thread-2",
+          title: "Codex",
+          thread_pin: true,
+        }),
+      ),
+    );
   });
 
   it("creates a new agent chat in the active folder when no chat exists there", async () => {
