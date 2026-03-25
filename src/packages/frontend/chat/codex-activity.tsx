@@ -573,6 +573,21 @@ function normalizeEvents(events: AcpLogStreamMessage[]): ActivityEntry[] {
       });
       continue;
     }
+    if (message.type === "status") {
+      rows.push({
+        kind: "status",
+        id: `status-${seq}`,
+        seq,
+        time,
+        label:
+          message.state === "running"
+            ? "Codex started"
+            : message.state === "queued"
+              ? "Queued"
+              : "Starting",
+      });
+      continue;
+    }
     if (
       message.type === "event" &&
       "event" in message &&

@@ -2114,7 +2114,7 @@ export default function Message({
           : acpStateToRender === "sent"
             ? "waiting for Codex"
             : acpStateToRender === "running" && is_viewers_message
-              ? "Codex is starting"
+              ? "Codex is working"
               : acpStateToRender}
       </Tag>
     );

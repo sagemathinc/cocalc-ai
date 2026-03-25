@@ -203,6 +203,23 @@ describe("codexActivityToMarkdown", () => {
     expect(markdown).toContain("*Status:* Worked for 0:23");
     expect(markdown).toContain("- Reasoning: Inspecting the workspace state.");
   });
+
+  it("includes top-level running status events", () => {
+    const markdown = codexActivityToMarkdown(
+      [
+        {
+          type: "status",
+          seq: 1,
+          state: "running",
+          time: 1000,
+        },
+      ] as any,
+      { generating: true, durationLabel: "0:05" },
+    );
+
+    expect(markdown).toContain("*Status:* Working... 0:05");
+    expect(markdown).toContain("- Codex started");
+  });
 });
 
 describe("findActivityEntryIndexForJumpText", () => {
