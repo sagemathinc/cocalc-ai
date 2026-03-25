@@ -218,13 +218,15 @@ export async function hydrateNotebookFromIpynbIfNeeded({
   path: string;
 }): Promise<boolean> {
   const existing = actions.syncdb.get({ type: "cell" });
-  const rows =
-    existing?.toJS instanceof Function
-      ? existing.toJS()
+  const existingCount =
+    typeof existing?.size === "number"
+      ? existing.size
       : Array.isArray(existing)
-        ? existing
-        : [];
-  if (rows.length > 0) {
+        ? existing.length
+        : existing == null
+          ? 0
+          : 1;
+  if (existingCount > 0) {
     return false;
   }
   const notebookPath = ipynbPath(path);
