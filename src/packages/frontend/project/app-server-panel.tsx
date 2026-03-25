@@ -32,6 +32,7 @@ import type {
 } from "@cocalc/conat/project/api/apps";
 import { Paragraph } from "@cocalc/frontend/components";
 import ShowError from "@cocalc/frontend/components/error";
+import { Icon, type IconName } from "@cocalc/frontend/components/icon";
 import { TimeAgo } from "@cocalc/frontend/components/time-ago";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import {
@@ -40,6 +41,7 @@ import {
 } from "@cocalc/frontend/project/new/navigator-intents";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import { COLORS } from "@cocalc/util/theme";
 import {
   appServerPresetsFromCatalogEntries,
   builtinAppServerPresets,
@@ -112,6 +114,144 @@ More detail: \`docs/security/private-app-trust-model.md\`
 
 const COCALC_CLI_DOWNLOAD_URL =
   "https://software.cocalc.ai/software/cocalc/index.html";
+
+function getPresetTheme(preset: AppServerPreset): {
+  accent: string;
+  surface: string;
+  icon: IconName;
+} {
+  const defaults: Record<
+    string,
+    { accent: string; surface: string; icon: IconName }
+  > = {
+    core: {
+      accent: COLORS.BLUE_D,
+      surface: COLORS.BLUE_LLLL,
+      icon: "server",
+    },
+    docs: {
+      accent: COLORS.BLUE_DOC,
+      surface: COLORS.BLUE_LLLL,
+      icon: "book",
+    },
+    publishing: {
+      accent: COLORS.BRWN,
+      surface: COLORS.YELL_LLL,
+      icon: "layout",
+    },
+    "python-web": {
+      accent: COLORS.BS_GREEN_D,
+      surface: COLORS.BS_GREEN_LL,
+      icon: "rocket",
+    },
+    "python-notebooks": {
+      accent: COLORS.COCALC_ORANGE,
+      surface: COLORS.YELL_LLL,
+      icon: "edit",
+    },
+  };
+  const fallback = defaults[preset.category ?? ""] ??
+    defaults.core ?? {
+      accent: COLORS.BLUE_D,
+      surface: COLORS.GRAY_LLL,
+      icon: "server" as IconName,
+    };
+  return {
+    accent: preset.accentColor ?? fallback.accent,
+    surface: preset.surfaceColor ?? fallback.surface,
+    icon: (preset.icon as IconName | undefined) ?? fallback.icon,
+  };
+}
+
+function PresetSummaryCard({
+  preset,
+  onClick,
+  compact = false,
+}: {
+  preset: AppServerPreset;
+  onClick?: () => void;
+  compact?: boolean;
+}) {
+  const theme = getPresetTheme(preset);
+  return (
+    <Card
+      size="small"
+      hoverable={!!onClick}
+      onClick={onClick}
+      style={{
+        cursor: onClick ? "pointer" : undefined,
+        borderColor: theme.accent,
+        background: `linear-gradient(135deg, ${theme.surface} 0%, white 78%)`,
+        minHeight: compact ? 136 : undefined,
+        overflow: "hidden",
+      }}
+    >
+      <Space
+        direction="vertical"
+        size={compact ? 8 : 6}
+        style={{ width: "100%" }}
+      >
+        <Space
+          align="start"
+          style={{ width: "100%", justifyContent: "space-between" }}
+        >
+          <Space size={10} align="start">
+            <div
+              style={{
+                width: compact ? 36 : 40,
+                height: compact ? 36 : 40,
+                borderRadius: compact ? 12 : 14,
+                background: theme.accent,
+                color: "white",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                flexShrink: 0,
+                boxShadow: `0 10px 24px ${theme.accent}33`,
+              }}
+            >
+              <Icon name={theme.icon} />
+            </div>
+            <div style={{ minWidth: 0 }}>
+              <Typography.Text strong style={{ display: "block" }}>
+                {preset.label}
+              </Typography.Text>
+              {preset.description ? (
+                <Typography.Text
+                  type="secondary"
+                  style={{
+                    display: "block",
+                    marginTop: 2,
+                    lineHeight: 1.35,
+                  }}
+                >
+                  {preset.description}
+                </Typography.Text>
+              ) : null}
+            </div>
+          </Space>
+          {preset.category ? (
+            <Tag
+              style={{
+                marginInlineEnd: 0,
+                borderColor: theme.accent,
+                color: theme.accent,
+                background: "white",
+              }}
+            >
+              {preset.category}
+            </Tag>
+          ) : null}
+        </Space>
+        {!compact && preset.homepage ? (
+          <a href={preset.homepage} target="_blank" rel="noreferrer">
+            Learn more
+          </a>
+        ) : null}
+      </Space>
+    </Card>
+  );
+}
 
 function normalizeError(err: unknown): Error {
   if (err instanceof Error) return err;
@@ -1924,24 +2064,30 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
       >
         {!creatorOpen ? (
           <Space direction="vertical" style={{ width: "100%" }} size={10}>
-            <Paragraph style={{ color: "#666", marginBottom: 0 }}>
+            <Paragraph style={{ color: COLORS.GRAY_M, marginBottom: 0 }}>
               Start from a preset or expand the full form when you need custom
               commands and proxy settings.
             </Paragraph>
-            <Space wrap>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+                gap: "12px",
+                width: "100%",
+              }}
+            >
               {quickPresets.map((preset) => (
-                <Button
+                <PresetSummaryCard
                   key={preset.key}
-                  title={preset.description ?? preset.label}
+                  preset={preset}
+                  compact
                   onClick={() => {
                     applyPreset(preset.key);
                     setCreatorOpen(true);
                   }}
-                >
-                  {preset.label}
-                </Button>
+                />
               ))}
-            </Space>
+            </div>
           </Space>
         ) : (
           <Space direction="vertical" style={{ width: "100%" }} size={10}>
@@ -1957,34 +2103,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                 label: `${preset.label}${preset.category ? ` (${preset.category})` : ""}`,
               }))}
             />
-            {activePreset ? (
-              <Card size="small" style={{ background: "#fafafa" }}>
-                <Space direction="vertical" size={4} style={{ width: "100%" }}>
-                  <Space wrap>
-                    <Typography.Text strong>
-                      {activePreset.label}
-                    </Typography.Text>
-                    {activePreset.category ? (
-                      <Tag>{activePreset.category}</Tag>
-                    ) : null}
-                  </Space>
-                  {activePreset.description ? (
-                    <Typography.Text type="secondary">
-                      {activePreset.description}
-                    </Typography.Text>
-                  ) : null}
-                  {activePreset.homepage ? (
-                    <a
-                      href={activePreset.homepage}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      Learn more
-                    </a>
-                  ) : null}
-                </Space>
-              </Card>
-            ) : null}
+            {activePreset ? <PresetSummaryCard preset={activePreset} /> : null}
             {activePreset?.note ? (
               <Alert type="info" showIcon title={activePreset.note} />
             ) : null}

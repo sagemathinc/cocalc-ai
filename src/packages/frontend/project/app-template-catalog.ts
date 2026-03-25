@@ -40,6 +40,9 @@ export interface AppServerPreset {
   homepage?: string;
   category?: string;
   priority?: number;
+  icon?: string;
+  accentColor?: string;
+  surfaceColor?: string;
 }
 
 function joinPath(head: string, tail: string): string {
@@ -84,6 +87,9 @@ function toPreset(
     homepage: template.homepage,
     category: template.category,
     priority: template.priority,
+    icon: template.theme?.icon,
+    accentColor: template.theme?.accent_color,
+    surfaceColor: template.theme?.surface_color,
   };
 }
 

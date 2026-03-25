@@ -3,7 +3,33 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { COLORS } from "../theme";
 import type { AppTemplateCatalogV1 } from "./template-catalog";
+
+const CORE_TEMPLATE_THEME = {
+  accent_color: COLORS.BLUE_D,
+  surface_color: COLORS.BLUE_LLLL,
+} as const;
+
+const PYTHON_WEB_TEMPLATE_THEME = {
+  accent_color: COLORS.BS_GREEN_D,
+  surface_color: COLORS.BS_GREEN_LL,
+} as const;
+
+const PYTHON_NOTEBOOK_TEMPLATE_THEME = {
+  accent_color: COLORS.COCALC_ORANGE,
+  surface_color: COLORS.YELL_LLL,
+} as const;
+
+const DOCS_TEMPLATE_THEME = {
+  accent_color: COLORS.BLUE_DOC,
+  surface_color: COLORS.BLUE_LLLL,
+} as const;
+
+const PUBLISHING_TEMPLATE_THEME = {
+  accent_color: COLORS.BRWN,
+  surface_color: COLORS.YELL_LLL,
+} as const;
 
 export const BUILTIN_APP_TEMPLATE_CATALOG: AppTemplateCatalogV1 = {
   version: 1,
@@ -18,6 +44,7 @@ export const BUILTIN_APP_TEMPLATE_CATALOG: AppTemplateCatalogV1 = {
       priority: 100,
       homepage: "https://jupyter.org/",
       description: "Interactive notebooks, terminals, and files.",
+      theme: { icon: "ipynb", ...CORE_TEMPLATE_THEME },
       detect: {
         commands: ["jupyter lab --version", "jupyter-lab --version"],
       },
@@ -67,6 +94,7 @@ export const BUILTIN_APP_TEMPLATE_CATALOG: AppTemplateCatalogV1 = {
       priority: 95,
       homepage: "https://code-server.dev/",
       description: "VS Code in the browser, proxied as a managed app.",
+      theme: { icon: "vscode", ...CORE_TEMPLATE_THEME },
       detect: {
         commands: ["code-server --version"],
       },
@@ -97,6 +125,7 @@ export const BUILTIN_APP_TEMPLATE_CATALOG: AppTemplateCatalogV1 = {
       priority: 90,
       homepage: "https://plutojl.org/",
       description: "Reactive Julia notebooks.",
+      theme: { icon: "julia", ...CORE_TEMPLATE_THEME },
       detect: {
         commands: [
           "julia -e 'Base.find_package(\"Pluto\") |> isnothing && exit(1)'",
@@ -132,6 +161,7 @@ export const BUILTIN_APP_TEMPLATE_CATALOG: AppTemplateCatalogV1 = {
       priority: 80,
       homepage: "https://posit.co/products/open-source/rstudio-server/",
       description: "Browser IDE for R and data science workflows.",
+      theme: { icon: "r", ...CORE_TEMPLATE_THEME },
       detect: {
         commands: ["command -v rserver"],
       },
@@ -158,6 +188,7 @@ export const BUILTIN_APP_TEMPLATE_CATALOG: AppTemplateCatalogV1 = {
       priority: 78,
       homepage: "https://streamlit.io/",
       description: "Interactive Python dashboards and data apps.",
+      theme: { icon: "dashboard", ...PYTHON_WEB_TEMPLATE_THEME },
       detect: {
         commands: ["python3 -m streamlit version"],
       },
@@ -212,6 +243,7 @@ exec python3 -m streamlit run "$app" --server.address="\${HOST:-127.0.0.1}" --se
       priority: 74,
       homepage: "https://fastapi.tiangolo.com/",
       description: "Fast Python APIs served with Uvicorn.",
+      theme: { icon: "rocket", ...PYTHON_WEB_TEMPLATE_THEME },
       detect: {
         commands: [
           `python3 -c "import fastapi, uvicorn; print(fastapi.__version__)"`,
@@ -271,6 +303,7 @@ exec python3 -m uvicorn "\${APP_MODULE:-main:app}" --host "\${HOST:-127.0.0.1}" 
       priority: 72,
       homepage: "https://flask.palletsprojects.com/",
       description: "Minimal Python web apps and APIs.",
+      theme: { icon: "api", ...PYTHON_WEB_TEMPLATE_THEME },
       detect: {
         commands: [`python3 -c "import flask; print(flask.__version__)"`],
       },
@@ -325,6 +358,7 @@ exec python3 -m flask run --host="\${HOST:-127.0.0.1}" --port="\${PORT}"`,
       priority: 70,
       homepage: "https://www.gradio.app/",
       description: "Quick browser UIs for Python functions and ML demos.",
+      theme: { icon: "robot", ...PYTHON_WEB_TEMPLATE_THEME },
       detect: {
         commands: [`python3 -c "import gradio; print(gradio.__version__)"`],
       },
@@ -393,6 +427,7 @@ exec python3 "$app"`,
       priority: 68,
       homepage: "https://dash.plotly.com/",
       description: "Interactive analytic dashboards with Plotly Dash.",
+      theme: { icon: "line-chart", ...PYTHON_WEB_TEMPLATE_THEME },
       detect: {
         commands: [`python3 -c "import dash; print(dash.__version__)"`],
       },
@@ -469,6 +504,7 @@ exec python3 "$app"`,
       homepage: "https://www.mkdocs.org/",
       description:
         "Documentation sites from Markdown, served live in the browser.",
+      theme: { icon: "book", ...DOCS_TEMPLATE_THEME },
       detect: {
         commands: ["python3 -m mkdocs --version"],
       },
@@ -529,6 +565,7 @@ exec python3 -m mkdocs serve --dev-addr "\${HOST:-127.0.0.1}:\${PORT}"`,
       homepage: "https://marimo.io/",
       description:
         "Reactive Python notebooks and apps in a lightweight editor.",
+      theme: { icon: "edit", ...PYTHON_NOTEBOOK_TEMPLATE_THEME },
       detect: {
         commands: ["python3 -m marimo --version"],
       },
@@ -598,6 +635,7 @@ exec python3 -m marimo edit --headless --no-token --host "\${HOST:-127.0.0.1}" -
       homepage: "https://voila.readthedocs.io/",
       description:
         "Turn Jupyter notebooks into standalone dashboards and apps.",
+      theme: { icon: "project", ...PYTHON_NOTEBOOK_TEMPLATE_THEME },
       detect: {
         commands: ["python3 -m voila --version"],
       },
@@ -685,6 +723,7 @@ exec python3 -m voila "$app" --no-browser --Voila.ip="\${HOST:-127.0.0.1}" --por
       homepage: "https://quarto.org/",
       description:
         "Technical publishing for notebooks, docs, presentations, and sites.",
+      theme: { icon: "layout", ...PUBLISHING_TEMPLATE_THEME },
       detect: {
         commands: [
           `bash -lc 'command -v quarto >/dev/null 2>&1 && quarto --version || /opt/quarto/bin/quarto --version'`,
@@ -731,6 +770,7 @@ exec "$quarto_bin" preview index.qmd --no-browser --host "\${HOST:-127.0.0.1}" -
       priority: 40,
       description:
         "Minimal HTTP hello-world app for testing the managed app flow.",
+      theme: { icon: "code", ...CORE_TEMPLATE_THEME },
       detect: {
         commands: ["command -v python3"],
       },
@@ -751,6 +791,7 @@ exec "$quarto_bin" preview index.qmd --no-browser --host "\${HOST:-127.0.0.1}" -
       category: "core",
       priority: 35,
       description: "Minimal Node HTTP app for testing the managed app flow.",
+      theme: { icon: "api", ...CORE_TEMPLATE_THEME },
       detect: {
         commands: ["command -v node"],
       },
@@ -771,6 +812,7 @@ exec "$quarto_bin" preview index.qmd --no-browser --host "\${HOST:-127.0.0.1}" -
       priority: 30,
       description:
         "Minimal static site example with optional refresh/bootstrap logic.",
+      theme: { icon: "html5", ...PUBLISHING_TEMPLATE_THEME },
       preset: {
         id: "static-hello",
         title: "Static Hello World",

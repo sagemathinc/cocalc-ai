@@ -44,13 +44,19 @@ export interface AppTemplatePresetV1 {
   note?: string;
 }
 
+export interface AppTemplateThemeV1 {
+  icon?: string;
+  accent_color?: string;
+  surface_color?: string;
+}
+
 export interface AppTemplateCatalogEntryV1 {
   id: string;
   title: string;
   short_label?: string;
   category: string;
   priority: number;
-  icon?: string;
+  theme?: AppTemplateThemeV1;
   homepage?: string;
   description?: string;
   detect?: AppTemplateDetectV1;
