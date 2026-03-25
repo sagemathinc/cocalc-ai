@@ -19,7 +19,6 @@ import type { Mode, MultiMarkdownInputProps } from "./types";
 // very good support for "markdown", hence the default below.
 
 export default function MultiMarkdownInput({
-  account_id,
   autoFocus,
   cacheId,
   cmOptions,
@@ -311,7 +310,6 @@ export default function MultiMarkdownInput({
             }}
             saveDebounceMs={saveDebounceMs}
             getValueRef={internalGetValueRef}
-            account_id={account_id}
             project_id={project_id}
             path={path}
             enableUpload={enableUpload}
@@ -369,7 +367,6 @@ export default function MultiMarkdownInput({
           <SlateRichTextAdapter
             selectionRef={selectionRef}
             editorDivRef={editorDivRef}
-            account_id={account_id}
             noVfill={noVfill}
             value={value}
             minimal={minimal}

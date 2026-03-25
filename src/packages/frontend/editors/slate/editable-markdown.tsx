@@ -377,7 +377,6 @@ function debugSyncLog(type: string, data?: Record<string, unknown>): void {
 }
 
 interface Props {
-  account_id?: string;
   value?: string;
   value_slate?: Descendant[];
   placeholder?: string;
@@ -447,7 +446,6 @@ interface Props {
 const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
   const {
     actions: actions0,
-    account_id,
     autoFocus,
     cursors,
     dirtyRef,
@@ -2766,7 +2764,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
       />
     </ChangeContext.Provider>
   );
-  return enableUpload ? useUpload(editor, body, account_id) : body;
+  return enableUpload ? useUpload(editor, body) : body;
 });
 
 export const EditableMarkdown: React.FC<Props> = React.memo((props: Props) => {

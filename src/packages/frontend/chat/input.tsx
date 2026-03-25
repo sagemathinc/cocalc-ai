@@ -28,7 +28,6 @@ import { shouldIgnoreSentEcho, type SentEchoGuard } from "./send-echo-guard";
 import { SubmitMentionsRef } from "./types";
 
 interface Props {
-  account_id?: string;
   on_send: (value: string) => void;
   onChange: (value: string, sessionToken?: number) => void;
   syncdb: ImmerDB | undefined;
@@ -73,7 +72,6 @@ function markdownEndPosition(value: string): { line: number; ch: number } {
 }
 
 export default function ChatInput({
-  account_id,
   autoFocus,
   cacheId,
   date,
@@ -291,7 +289,6 @@ export default function ChatInput({
       }}
       cacheId={cacheId}
       value={input}
-      account_id={account_id}
       controlRef={controlRef}
       enableUpload={enableUpload}
       enableMentions={enableMentions}

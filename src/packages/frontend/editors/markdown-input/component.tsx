@@ -66,7 +66,6 @@ const MENTION_CSS =
   "color:#7289da; background:rgba(114,137,218,.1); border-radius: 3px; padding: 0 2px;";
 
 interface Props {
-  account_id?: string;
   project_id?: string; // must be set if enableUpload or enableMentions is set  (todo: enforce via typescript)
   path?: string; // must be set if enableUpload or enableMentions is set (todo: enforce via typescript)
   value?: string;
@@ -157,7 +156,6 @@ export function MarkdownInput(props: Props) {
     undoMode,
     onUploadEnd,
     onUploadStart,
-    account_id,
     path,
     placeholder,
     project_id,
@@ -1256,16 +1254,10 @@ export function MarkdownInput(props: Props) {
         actions?.set_error(`${message}`);
       },
     };
-    if ((project_id == null || path == null) && account_id == null) {
-      throw Error(
-        "project_id/path or account_id must be set if enableUploads is set.",
-      );
-    }
     body = (
       <BlobUpload
         show_upload={false}
         project_id={project_id ?? ""}
-        account_id={account_id}
         event_handlers={event_handlers}
         style={{ height: "100%", width: "100%" }}
         dropzone_ref={dropzone_ref}

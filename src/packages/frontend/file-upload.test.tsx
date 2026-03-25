@@ -76,9 +76,9 @@ describe("BlobUpload", () => {
     expect(latestDropzone.options.url).toBe("/blobs?project_id=project-1");
   });
 
-  it("uses account-scoped blob uploads when only account_id is set", () => {
+  it("uses non-project blob uploads when project_id is not set", () => {
     render(
-      <BlobUpload show_upload={false} project_id="" account_id="account-1">
+      <BlobUpload show_upload={false} project_id="">
         <div>body</div>
       </BlobUpload>,
     );
@@ -89,12 +89,7 @@ describe("BlobUpload", () => {
   it("forwards readable server upload errors", () => {
     const error = jest.fn();
     render(
-      <BlobUpload
-        show_upload={false}
-        project_id=""
-        account_id="account-1"
-        event_handlers={{ error }}
-      >
+      <BlobUpload show_upload={false} project_id="" event_handlers={{ error }}>
         <div>body</div>
       </BlobUpload>,
     );

@@ -522,8 +522,6 @@ export function UploadLink({
 export function BlobUpload(props) {
   const hasProject =
     typeof props.project_id === "string" && props.project_id.trim() !== "";
-  const hasAccount =
-    typeof props.account_id === "string" && props.account_id.trim() !== "";
   function normalizeUploadError(
     message: unknown,
     xhr?: { responseText?: string },
@@ -540,9 +538,7 @@ export function BlobUpload(props) {
   }
   const url = hasProject
     ? `${join(appBasePath, "blobs")}?project_id=${props.project_id}`
-    : hasAccount
-      ? join(appBasePath, "blobs")
-      : `${join(appBasePath, "blobs")}?project_id=${props.project_id}`;
+    : join(appBasePath, "blobs");
   const handlers = {
     ...props.event_handlers,
     error: (file, message, xhr) => {

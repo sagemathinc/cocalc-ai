@@ -41,7 +41,6 @@ export interface RichTextSelectionBridgeControl {
 export type UndoMode = "auto" | "local" | "external";
 
 export interface MultiMarkdownInputProps {
-  account_id?: string;
   cacheId?: string;
   value?: string;
   defaultMode?: Mode;
