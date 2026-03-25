@@ -61,6 +61,7 @@ import {
   withTimeout,
 } from "./core/context";
 import { isProjectScopedRemoteForProject } from "./core/remote-scope";
+import { effectiveDaemonGlobals } from "./core/daemon-globals";
 import {
   listHosts as listHostsCore,
   normalizeUserSearchName as normalizeUserSearchNameCore,
@@ -1894,6 +1895,8 @@ const { serveDaemon, runDaemonRequestFromCommand } =
     contextForGlobals,
     closeCommandContext,
     globalsFrom,
+    daemonRequestGlobals: (globals) =>
+      effectiveDaemonGlobals(globals, { defaultApiBaseUrl }),
     daemonContextMeta: (ctx) => ({
       api: ctx.apiBaseUrl,
       account_id: ctx.accountId,
