@@ -877,6 +877,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
   const importInputRef = useRef<HTMLInputElement | null>(null);
   const presetSelectorContainerRef = useRef<HTMLDivElement | null>(null);
   const [creatorOpen, setCreatorOpen] = useState<boolean>(false);
+  const [presetSelectorOpen, setPresetSelectorOpen] = useState<boolean>(false);
   const [creatorInitialized, setCreatorInitialized] = useState<boolean>(false);
   const [expandedRows, setExpandedRows] = useState<Record<string, boolean>>({});
   const presets = useMemo(
@@ -1193,6 +1194,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
 
   function openCreator() {
     setCreatorOpen(true);
+    setPresetSelectorOpen(true);
     focusPresetSelector();
   }
 
@@ -2085,6 +2087,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
               onClick={() => {
                 if (creatorOpen) {
                   setCreatorOpen(false);
+                  setPresetSelectorOpen(false);
                   return;
                 }
                 openCreator();
@@ -2126,6 +2129,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
             onClick={() => {
               if (creatorOpen) {
                 setCreatorOpen(false);
+                setPresetSelectorOpen(false);
                 return;
               }
               openCreator();
@@ -2174,10 +2178,12 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
           <Space direction="vertical" style={{ width: "100%" }} size={10}>
             <div ref={presetSelectorContainerRef}>
               <Select
+                open={presetSelectorOpen}
                 value={presetKey || undefined}
                 placeholder="Preset (optional)"
                 allowClear
                 showSearch
+                onOpenChange={setPresetSelectorOpen}
                 optionFilterProp="label"
                 filterOption={(input, option) => {
                   const haystack = [option?.label, (option as any)?.searchText]
@@ -2186,8 +2192,14 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                   return haystack.includes(input.trim().toLowerCase());
                 }}
                 style={{ width: "100%", minWidth: "320px" }}
-                onClear={() => setPresetKey("")}
-                onChange={(value) => applyPreset(value)}
+                onClear={() => {
+                  setPresetKey("");
+                  setPresetSelectorOpen(false);
+                }}
+                onChange={(value) => {
+                  applyPreset(value);
+                  setPresetSelectorOpen(false);
+                }}
                 options={presets.map((preset) => ({
                   value: preset.key,
                   label: `${preset.label}${preset.description ? ` - ${preset.description}` : preset.category ? ` - ${preset.category}` : ""}`,
