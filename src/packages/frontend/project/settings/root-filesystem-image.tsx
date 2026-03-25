@@ -203,6 +203,35 @@ export default function RootFilesystemImage() {
     currentProjectRootfsState,
     selectedRootfsEntry,
   ]);
+  const activeDisplayEntry = currentDisplayEntry ?? selectedRootfsEntry;
+  const relatedVersionEntries = useMemo(() => {
+    if (!currentDisplayEntry?.family) return [];
+    return rootfsImages
+      .filter(
+        (entry) =>
+          entry.id !== currentDisplayEntry.id &&
+          entry.family === currentDisplayEntry.family &&
+          !entry.hidden &&
+          !entry.blocked &&
+          (!currentDisplayEntry.channel ||
+            entry.channel === currentDisplayEntry.channel),
+      )
+      .sort((a, b) => compareRootfsVersionEntries(a, b));
+  }, [currentDisplayEntry, rootfsImages]);
+  const suggestedUpgradeEntry = useMemo(() => {
+    if (!currentDisplayEntry) return undefined;
+    const explicitUpgrade = relatedVersionEntries.find(
+      (entry) => entry.supersedes_image_id === currentDisplayEntry.id,
+    );
+    if (explicitUpgrade) return explicitUpgrade;
+    if (!currentDisplayEntry.version) return undefined;
+    const newerVersions = relatedVersionEntries.filter(
+      (entry) =>
+        !!entry.version &&
+        compareRootfsVersions(entry.version, currentDisplayEntry.version!) > 0,
+    );
+    return newerVersions[0];
+  }, [currentDisplayEntry, relatedVersionEntries]);
 
   useEffect(() => {
     const nextImage = getImage(project, effectiveDefaultRootfs);
@@ -257,6 +286,13 @@ export default function RootFilesystemImage() {
     setRootfsDraft(currentEntry?.image ?? current);
     setRootfsDraftId(currentEntry?.id ?? "");
     setRootfsMode(currentEntry ? "catalog" : "custom");
+    setOpen(true);
+  }
+
+  function openUpgradeDialog(entry: RootfsImageEntry) {
+    setRootfsMode("catalog");
+    setRootfsDraft(entry.image);
+    setRootfsDraftId(entry.id);
     setOpen(true);
   }
 
@@ -415,21 +451,21 @@ export default function RootFilesystemImage() {
       <RootfsPublishOps project_id={project_id} />
       <div style={{ marginLeft: "15px" }}>
         <Paragraph style={{ marginBottom: "6px" }}>
-          <strong>{selectedRootfsEntry?.label || value}</strong>
+          <strong>{activeDisplayEntry?.label || value}</strong>
         </Paragraph>
         <Space wrap style={{ marginBottom: "6px" }}>
-          {selectedRootfsEntry?.section && (
-            <Tag color={sectionTagColor(selectedRootfsEntry.section)}>
-              {sectionLabel(selectedRootfsEntry.section)}
+          {activeDisplayEntry?.section && (
+            <Tag color={sectionTagColor(activeDisplayEntry.section)}>
+              {sectionLabel(activeDisplayEntry.section)}
             </Tag>
           )}
-          {selectedRootfsEntry?.version && (
-            <Tag>{selectedRootfsEntry.version}</Tag>
+          {activeDisplayEntry?.version && (
+            <Tag>{activeDisplayEntry.version}</Tag>
           )}
-          {selectedRootfsEntry?.channel && (
-            <Tag color="cyan">{selectedRootfsEntry.channel}</Tag>
+          {activeDisplayEntry?.channel && (
+            <Tag color="cyan">{activeDisplayEntry.channel}</Tag>
           )}
-          {selectedRootfsEntry?.gpu && <Tag color="purple">GPU image</Tag>}
+          {activeDisplayEntry?.gpu && <Tag color="purple">GPU image</Tag>}
         </Space>
         <code style={{ fontSize: "11px", overflowWrap: "anywhere" }}>
           {value || effectiveDefaultRootfs}
@@ -469,6 +505,52 @@ export default function RootFilesystemImage() {
             </Button>
           )}
         </Space>
+        {suggestedUpgradeEntry && (
+          <Alert
+            type="info"
+            showIcon
+            style={{ marginTop: "14px", maxWidth: "760px" }}
+            message={
+              <>
+                Upgrade available:{" "}
+                <strong>
+                  {displayRootfsLabel(
+                    suggestedUpgradeEntry,
+                    suggestedUpgradeEntry.image,
+                  )}
+                </strong>
+              </>
+            }
+            description={
+              <>
+                Switch from{" "}
+                <code>
+                  {displayRootfsLabel(
+                    activeDisplayEntry,
+                    value || effectiveDefaultRootfs,
+                  )}
+                </code>{" "}
+                to{" "}
+                <code>
+                  {displayRootfsLabel(
+                    suggestedUpgradeEntry,
+                    suggestedUpgradeEntry.image,
+                  )}
+                </code>
+                . This changes the visible <code>/</code> software environment,
+                but your current RootFS remains available as a rollback target.
+              </>
+            }
+            action={
+              <Button
+                size="small"
+                onClick={() => openUpgradeDialog(suggestedUpgradeEntry)}
+              >
+                Review upgrade
+              </Button>
+            }
+          />
+        )}
       </div>
       {(currentProjectRootfsState || previousProjectRootfsState) && (
         <div
@@ -591,6 +673,39 @@ export default function RootFilesystemImage() {
           )}
 
           <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+            {rootfsMode === "catalog" &&
+              currentDisplayEntry &&
+              draftRootfsEntry &&
+              draftRootfsEntry.id !== currentDisplayEntry.id &&
+              isRelatedRootfsVersion(currentDisplayEntry, draftRootfsEntry) && (
+                <Alert
+                  type="info"
+                  showIcon
+                  message="Planned image change"
+                  description={
+                    <>
+                      Switching from{" "}
+                      <code>
+                        {displayRootfsLabel(
+                          currentDisplayEntry,
+                          currentProjectRootfsState?.image ??
+                            value ??
+                            effectiveDefaultRootfs,
+                        )}
+                      </code>{" "}
+                      to{" "}
+                      <code>
+                        {displayRootfsLabel(
+                          draftRootfsEntry,
+                          draftRootfsEntry.image,
+                        )}
+                      </code>
+                      . After the switch, this project can still roll back to
+                      the previous RootFS state.
+                    </>
+                  }
+                />
+              )}
             {rootfsMode === "catalog" ? (
               <>
                 <Paragraph type="secondary" style={{ marginBottom: 0 }}>
@@ -944,6 +1059,42 @@ function displayRootfsDetail(
   const detail = entry?.image?.trim() || fallbackImage;
   const label = entry?.label?.trim();
   return detail && detail !== label ? ` (${detail})` : "";
+}
+
+function isRelatedRootfsVersion(
+  current: RootfsImageEntry | undefined,
+  next: RootfsImageEntry | undefined,
+): boolean {
+  if (!current || !next) return false;
+  if (current.id === next.id) return false;
+  if (next.supersedes_image_id === current.id) return true;
+  return !!current.family && current.family === next.family;
+}
+
+function compareRootfsVersionEntries(
+  a: RootfsImageEntry,
+  b: RootfsImageEntry,
+): number {
+  const versionCompare = compareRootfsVersions(b.version, a.version);
+  if (versionCompare !== 0) return versionCompare;
+  return `${a.label || a.image}`.localeCompare(
+    `${b.label || b.image}`,
+    undefined,
+    {
+      numeric: true,
+      sensitivity: "base",
+    },
+  );
+}
+
+function compareRootfsVersions(a?: string, b?: string): number {
+  if (!a && !b) return 0;
+  if (a && !b) return 1;
+  if (!a && b) return -1;
+  return `${a}`.localeCompare(`${b}`, undefined, {
+    numeric: true,
+    sensitivity: "base",
+  });
 }
 
 function sectionLabel(section: RootfsImageEntry["section"]): string {
