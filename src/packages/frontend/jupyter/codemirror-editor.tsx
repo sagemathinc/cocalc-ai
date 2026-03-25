@@ -836,7 +836,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
               setShowAICellGen("replace");
             }}
           >
-            generate using AI...
+            generate with Agent...
           </a>
         </div>
       </div>

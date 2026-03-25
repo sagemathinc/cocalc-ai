@@ -1,6 +1,10 @@
 import { once } from "node:events";
 import { isAbsolute, resolve as resolvePath } from "node:path";
 
+import {
+  SyncDBNotebookSession,
+  type NotebookCellRecord,
+} from "@cocalc/app-notebook";
 import { syncdb as openSyncDb } from "@cocalc/conat/sync-doc/syncdb";
 import {
   jupyterClient,
@@ -13,8 +17,10 @@ import {
   type JupyterLiveRunBatch,
   type JupyterLiveRunSnapshot,
 } from "@cocalc/conat/project/jupyter/live-run";
+import { projectApiClient } from "@cocalc/conat/project/api";
 import { syncdbPath } from "@cocalc/util/jupyter/names";
 import { RefcountLeaseManager } from "@cocalc/util/refcount/lease";
+import { sleep } from "@cocalc/util/async-utils";
 
 type ProjectIdentity = {
   project_id: string;
@@ -56,6 +62,13 @@ export type ProjectJupyterCellsResult = {
   cells: NotebookCellInfo[];
 };
 
+export type ProjectJupyterMutationResult = {
+  project_id: string;
+  path: string;
+  cell?: NotebookCellInfo;
+  deleted?: string[];
+};
+
 export type ProjectJupyterRunSession = {
   project_id: string;
   project_title: string;
@@ -91,6 +104,9 @@ const JUPYTER_SYNCDB_OPTIONS = {
   persistent: true,
   noSaveToDisk: true,
 };
+
+const NOTEBOOK_MUTATION_VISIBILITY_TIMEOUT_MS = 2_000;
+const NOTEBOOK_MUTATION_VISIBILITY_POLL_MS = 50;
 
 function normalizeNotebookSource(source: unknown): string {
   if (typeof source === "string") {
@@ -353,6 +369,10 @@ export function createProjectJupyterOps<Ctx, Project extends ProjectIdentity>(
       projectIdentifier,
       cwd,
     );
+    await projectApiClient({
+      project_id: project.project_id,
+      client,
+    }).jupyter.start(normalizedPath);
     const key = JSON.stringify({
       project_id: project.project_id,
       path: normalizedPath,
@@ -455,6 +475,97 @@ export function createProjectJupyterOps<Ctx, Project extends ProjectIdentity>(
     }
   }
 
+  async function readNotebookCellsFresh({
+    ctx,
+    projectIdentifier,
+    path,
+    cwd,
+  }: {
+    ctx: Ctx;
+    projectIdentifier?: string;
+    path: string;
+    cwd?: string;
+  }): Promise<{
+    project: Project;
+    client: any;
+    cells: NotebookCellInfo[];
+  }> {
+    const normalizedPath = normalizeNotebookPath(path);
+    const { project, client } = await deps.resolveProjectConatClient(
+      ctx,
+      projectIdentifier,
+      cwd,
+    );
+    await projectApiClient({
+      project_id: project.project_id,
+      client,
+    }).jupyter.start(normalizedPath);
+    const syncdb = openSyncDb({
+      ...JUPYTER_SYNCDB_OPTIONS,
+      project_id: project.project_id,
+      path: syncdbPath(normalizedPath),
+      client,
+    });
+    try {
+      if (syncdb.get_state() === "init") {
+        await once(syncdb, "ready");
+      }
+      if (syncdb.isClosed?.()) {
+        throw new Error(
+          `failed to open notebook sync session for ${normalizedPath}`,
+        );
+      }
+      return {
+        project,
+        client,
+        cells: getLiveNotebookCells(syncdb),
+      };
+    } finally {
+      await syncdb.close();
+    }
+  }
+
+  async function waitForFreshNotebookCells<T>({
+    ctx,
+    projectIdentifier,
+    path,
+    cwd,
+    desc,
+    pick,
+  }: {
+    ctx: Ctx;
+    projectIdentifier?: string;
+    path: string;
+    cwd?: string;
+    desc: string;
+    pick: (cells: NotebookCellInfo[]) => T | undefined;
+  }): Promise<{
+    project: Project;
+    cells: NotebookCellInfo[];
+    value: T;
+  }> {
+    const started = Date.now();
+    while (true) {
+      const { project, cells } = await readNotebookCellsFresh({
+        ctx,
+        projectIdentifier,
+        path,
+        cwd,
+      });
+      const value = pick(cells);
+      if (value !== undefined) {
+        return { project, cells, value };
+      }
+      if (Date.now() - started >= NOTEBOOK_MUTATION_VISIBILITY_TIMEOUT_MS) {
+        break;
+      }
+      await sleep(NOTEBOOK_MUTATION_VISIBILITY_POLL_MS);
+    }
+    throw new Error(
+      `timed out waiting for notebook mutation to become visible (${desc})`,
+    );
+  }
+
   async function projectJupyterCellsData({
     ctx,
     projectIdentifier,
@@ -482,6 +593,301 @@ export function createProjectJupyterOps<Ctx, Project extends ProjectIdentity>(
         ? cells.filter((cell) => cell.cell_type === "code")
         : cells,
     };
+  }
+
+  async function withNotebookSession<T>({
+    ctx,
+    projectIdentifier,
+    path,
+    cwd,
+    fn,
+  }: {
+    ctx: Ctx;
+    projectIdentifier?: string;
+    path: string;
+    cwd?: string;
+    fn: (opts: {
+      project: Project;
+      path: string;
+      session: SyncDBNotebookSession;
+    }) => Promise<T>;
+  }): Promise<T> {
+    const normalizedPath = normalizeNotebookPath(path);
+    const { project, syncdb, release } = await acquireProjectJupyterSession0({
+      ctx,
+      projectIdentifier,
+      path: normalizedPath,
+      cwd,
+    });
+    try {
+      return await fn({
+        project,
+        path: normalizedPath,
+        session: new SyncDBNotebookSession(syncdb as any),
+      });
+    } finally {
+      await release();
+    }
+  }
+
+  async function projectJupyterSetCellData({
+    ctx,
+    projectIdentifier,
+    path,
+    cellId,
+    input,
+    cellType,
+    cwd,
+  }: {
+    ctx: Ctx;
+    projectIdentifier?: string;
+    path: string;
+    cellId: string;
+    input?: string;
+    cellType?: string;
+    cwd?: string;
+  }): Promise<ProjectJupyterMutationResult> {
+    return await withNotebookSession({
+      ctx,
+      projectIdentifier,
+      path,
+      cwd,
+      fn: async ({ project, path, session }) => {
+        if (input == null && cellType == null) {
+          throw new Error("set requires --input, --stdin, and/or --type");
+        }
+        if (input != null) {
+          await session.setCellInput(cellId, input);
+        }
+        if (cellType != null) {
+          await session.setCellType(cellId, cellType);
+        }
+        const { value: cell } = await waitForFreshNotebookCells({
+          ctx,
+          projectIdentifier,
+          path,
+          cwd,
+          desc: `set ${cellId}`,
+          pick: (cells) => {
+            const cell = cells.find((candidate) => candidate.id === cellId);
+            if (cell == null) {
+              return undefined;
+            }
+            if (input != null && cell.input !== input) {
+              return undefined;
+            }
+            if (cellType != null && cell.cell_type !== cellType) {
+              return undefined;
+            }
+            return cell;
+          },
+        });
+        return {
+          project_id: project.project_id,
+          path,
+          cell,
+        };
+      },
+    });
+  }
+
+  async function projectJupyterInsertCellData({
+    ctx,
+    projectIdentifier,
+    path,
+    afterId,
+    beforeId,
+    atStart,
+    atEnd,
+    input,
+    cellType,
+    cwd,
+  }: {
+    ctx: Ctx;
+    projectIdentifier?: string;
+    path: string;
+    afterId?: string;
+    beforeId?: string;
+    atStart?: boolean;
+    atEnd?: boolean;
+    input?: string;
+    cellType?: string;
+    cwd?: string;
+  }): Promise<ProjectJupyterMutationResult> {
+    return await withNotebookSession({
+      ctx,
+      projectIdentifier,
+      path,
+      cwd,
+      fn: async ({ project, path, session }) => {
+        const anchors = [
+          afterId ? 1 : 0,
+          beforeId ? 1 : 0,
+          atStart ? 1 : 0,
+          atEnd ? 1 : 0,
+        ].reduce((sum, n) => sum + n, 0);
+        if (anchors !== 1) {
+          throw new Error(
+            "insert requires exactly one of --after-id, --before-id, --at-start, or --at-end",
+          );
+        }
+        let cell: NotebookCellRecord;
+        if (afterId) {
+          cell = await session.insertCellAdjacent({
+            anchorId: afterId,
+            delta: 1,
+            input,
+            cell_type: cellType,
+          });
+        } else if (beforeId) {
+          cell = await session.insertCellAdjacent({
+            anchorId: beforeId,
+            delta: -1,
+            input,
+            cell_type: cellType,
+          });
+        } else {
+          const cells = await session.listCells();
+          const pos =
+            cells.length === 0
+              ? 0
+              : atStart
+                ? cells[0].pos - 1
+                : cells[cells.length - 1].pos + 1;
+          cell = await session.insertCellAt({
+            pos,
+            input,
+            cell_type: cellType,
+          });
+        }
+        const { value: freshCell } = await waitForFreshNotebookCells({
+          ctx,
+          projectIdentifier,
+          path,
+          cwd,
+          desc: `insert ${cell.id}`,
+          pick: (cells) => cells.find((candidate) => candidate.id === cell.id),
+        });
+        return {
+          project_id: project.project_id,
+          path,
+          cell: freshCell,
+        };
+      },
+    });
+  }
+
+  async function projectJupyterDeleteCellsData({
+    ctx,
+    projectIdentifier,
+    path,
+    cellIds,
+    cwd,
+  }: {
+    ctx: Ctx;
+    projectIdentifier?: string;
+    path: string;
+    cellIds: string[];
+    cwd?: string;
+  }): Promise<ProjectJupyterMutationResult> {
+    return await withNotebookSession({
+      ctx,
+      projectIdentifier,
+      path,
+      cwd,
+      fn: async ({ project, path, session }) => {
+        await session.deleteCells(cellIds);
+        await waitForFreshNotebookCells({
+          ctx,
+          projectIdentifier,
+          path,
+          cwd,
+          desc: `delete ${cellIds.join(",")}`,
+          pick: (cells) =>
+            cellIds.every(
+              (cellId) => !cells.some((candidate) => candidate.id === cellId),
+            )
+              ? true
+              : undefined,
+        });
+        return {
+          project_id: project.project_id,
+          path,
+          deleted: [...cellIds],
+        };
+      },
+    });
+  }
+
+  async function projectJupyterMoveCellData({
+    ctx,
+    projectIdentifier,
+    path,
+    cellId,
+    beforeId,
+    afterId,
+    atStart,
+    atEnd,
+    cwd,
+  }: {
+    ctx: Ctx;
+    projectIdentifier?: string;
+    path: string;
+    cellId: string;
+    beforeId?: string;
+    afterId?: string;
+    atStart?: boolean;
+    atEnd?: boolean;
+    cwd?: string;
+  }): Promise<ProjectJupyterMutationResult> {
+    return await withNotebookSession({
+      ctx,
+      projectIdentifier,
+      path,
+      cwd,
+      fn: async ({ project, path, session }) => {
+        const cell = await session.moveCell({
+          cellId,
+          beforeId,
+          afterId,
+          atStart,
+          atEnd,
+        });
+        const { cells } = await waitForFreshNotebookCells({
+          ctx,
+          projectIdentifier,
+          path,
+          cwd,
+          desc: `move ${cell.id}`,
+          pick: (cells) => {
+            const index = cells.findIndex(
+              (candidate) => candidate.id === cell.id,
+            );
+            if (index === -1) {
+              return undefined;
+            }
+            if (beforeId != null) {
+              return cells[index + 1]?.id === beforeId ? true : undefined;
+            }
+            if (afterId != null) {
+              return cells[index - 1]?.id === afterId ? true : undefined;
+            }
+            if (atStart) {
+              return index === 0 ? true : undefined;
+            }
+            if (atEnd) {
+              return index === cells.length - 1 ? true : undefined;
+            }
+            return true;
+          },
+        });
+        return {
+          project_id: project.project_id,
+          path,
+          cell: cells.find((candidate) => candidate.id === cell.id)!,
+        };
+      },
+    });
   }
 
   async function projectJupyterRunSession({
@@ -657,6 +1063,10 @@ export function createProjectJupyterOps<Ctx, Project extends ProjectIdentity>(
   return {
     close,
     projectJupyterCellsData,
+    projectJupyterSetCellData,
+    projectJupyterInsertCellData,
+    projectJupyterDeleteCellsData,
+    projectJupyterMoveCellData,
     projectJupyterRunSession,
     projectJupyterLiveRunSession,
   };

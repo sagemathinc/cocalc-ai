@@ -1,5 +1,5 @@
 /*
-Use Codex to work on a Jupyter cell.
+Use the Agent to work on a Jupyter cell.
 */
 
 import { Alert, Button, Dropdown, Input, Modal, Space, Tooltip } from "antd";
@@ -13,6 +13,7 @@ import AIAvatar from "@cocalc/frontend/components/ai-avatar";
 import { Icon, type IconName } from "@cocalc/frontend/components/icon";
 import { useFrameContext } from "@cocalc/frontend/frame-editors/frame-tree/frame-context";
 import { labels, type IntlMessage } from "@cocalc/frontend/i18n";
+import { PopupAgentComposer } from "@cocalc/frontend/frame-editors/llm/popup-agent-composer";
 import track from "@cocalc/frontend/user-tracking";
 import type { LLMTools } from "@cocalc/jupyter/types";
 import type { JupyterActions } from "../browser-actions";
@@ -66,7 +67,7 @@ const ACTIONS_CODE: { [mode in CodeMode]: CodexCellToolAction } = {
     }),
     descr: defineMessage({
       id: "jupyter.llm.cell-tool.actions.ask.descr",
-      defaultMessage: "Ask Codex a question about this cell.",
+      defaultMessage: "Ask the Agent a question about this cell.",
     }),
   },
   explain: {
@@ -77,7 +78,7 @@ const ACTIONS_CODE: { [mode in CodeMode]: CodexCellToolAction } = {
     }),
     descr: defineMessage({
       id: "jupyter.llm.cell-tool.actions.explain.descr",
-      defaultMessage: "Ask Codex to explain what this cell is doing.",
+      defaultMessage: "Ask the Agent to explain what this cell is doing.",
     }),
   },
   bugfix: {
@@ -88,7 +89,8 @@ const ACTIONS_CODE: { [mode in CodeMode]: CodexCellToolAction } = {
     }),
     descr: defineMessage({
       id: "jupyter.llm.cell-tool.actions.bugfix.descr",
-      defaultMessage: "Ask Codex to diagnose and fix problems in this cell.",
+      defaultMessage:
+        "Ask the Agent to diagnose and fix problems in this cell.",
     }),
   },
   modify: {
@@ -99,7 +101,7 @@ const ACTIONS_CODE: { [mode in CodeMode]: CodexCellToolAction } = {
     }),
     descr: defineMessage({
       id: "jupyter.llm.cell-tool.actions.modify.descr",
-      defaultMessage: "Ask Codex to make a specific change to this cell.",
+      defaultMessage: "Ask the Agent to make a specific change to this cell.",
     }),
   },
   improve: {
@@ -110,7 +112,7 @@ const ACTIONS_CODE: { [mode in CodeMode]: CodexCellToolAction } = {
     }),
     descr: defineMessage({
       id: "jupyter.llm.cell-tool.actions.improve.descr",
-      defaultMessage: "Ask Codex to improve this cell.",
+      defaultMessage: "Ask the Agent to improve this cell.",
     }),
   },
   document: {
@@ -121,7 +123,7 @@ const ACTIONS_CODE: { [mode in CodeMode]: CodexCellToolAction } = {
     }),
     descr: defineMessage({
       id: "jupyter.llm.cell-tool.actions.document.descr",
-      defaultMessage: "Ask Codex to document this cell.",
+      defaultMessage: "Ask the Agent to document this cell.",
     }),
   },
   translate: {
@@ -132,7 +134,8 @@ const ACTIONS_CODE: { [mode in CodeMode]: CodexCellToolAction } = {
     }),
     descr: defineMessage({
       id: "jupyter.llm.cell-tool.actions.translate.descr",
-      defaultMessage: "Ask Codex to translate this cell to another language.",
+      defaultMessage:
+        "Ask the Agent to translate this cell to another language.",
     }),
   },
 };
@@ -146,7 +149,7 @@ const ACTIONS_MD: { [mode in MarkdownMode]: CodexCellToolAction } = {
     }),
     descr: defineMessage({
       id: "jupyter.llm.cell-tool.actions.md.ask.descr",
-      defaultMessage: "Ask Codex a question about this Markdown cell.",
+      defaultMessage: "Ask the Agent a question about this Markdown cell.",
     }),
   },
   document: {
@@ -157,7 +160,8 @@ const ACTIONS_MD: { [mode in MarkdownMode]: CodexCellToolAction } = {
     }),
     descr: defineMessage({
       id: "jupyter.llm.cell-tool.actions.md.document.descr",
-      defaultMessage: "Ask Codex to improve the documentation in this cell.",
+      defaultMessage:
+        "Ask the Agent to improve the documentation in this cell.",
     }),
   },
   proofread: {
@@ -168,7 +172,7 @@ const ACTIONS_MD: { [mode in MarkdownMode]: CodexCellToolAction } = {
     }),
     descr: defineMessage({
       id: "jupyter.llm.cell-tool.actions.md.proofread.descr",
-      defaultMessage: "Ask Codex to proofread this Markdown cell.",
+      defaultMessage: "Ask the Agent to proofread this Markdown cell.",
     }),
   },
   formulize: {
@@ -179,7 +183,8 @@ const ACTIONS_MD: { [mode in MarkdownMode]: CodexCellToolAction } = {
     }),
     descr: defineMessage({
       id: "jupyter.llm.cell-tool.actions.md.formulize.descr",
-      defaultMessage: "Ask Codex to add useful formulas to this Markdown cell.",
+      defaultMessage:
+        "Ask the Agent to add useful formulas to this Markdown cell.",
     }),
   },
   translate_text: {
@@ -190,7 +195,7 @@ const ACTIONS_MD: { [mode in MarkdownMode]: CodexCellToolAction } = {
     }),
     descr: defineMessage({
       id: "jupyter.llm.cell-tool.actions.md.translate-text.descr",
-      defaultMessage: "Ask Codex to translate this Markdown cell.",
+      defaultMessage: "Ask the Agent to translate this Markdown cell.",
     }),
   },
 };
@@ -273,12 +278,12 @@ function optionalPromptPlaceholder(
       return intl.formatMessage({
         id: "jupyter.llm.cell-tool.bugfix.placeholder",
         defaultMessage:
-          "Optional: describe the issue you want Codex to focus on.",
+          "Optional: describe the issue you want the Agent to focus on.",
       });
     case "modify":
       return intl.formatMessage({
         id: "jupyter.llm.cell-tool.modify.placeholder",
-        defaultMessage: "Describe the change you want Codex to make.",
+        defaultMessage: "Describe the change you want the Agent to make.",
       });
     case "improve":
       return intl.formatMessage({
@@ -361,7 +366,11 @@ export function buildHiddenPrompt(opts: {
     `Kernel language: ${opts.kernelLanguage}`,
     `Kernel display name: ${opts.kernelDisplay}`,
     "Treat the live in-memory notebook state as the source of truth, even if the file on disk is stale.",
-    "Start with the selected cell. Inspect surrounding cells, outputs, notebook execution state, or files on disk only if needed.",
+    "Do not read or edit the `.ipynb` JSON directly for this task unless the user explicitly asks for filesystem-level work.",
+    "Prefer `cocalc project jupyter ...` for notebook cell edits and execution because it remains available if the browser refreshes or disconnects.",
+    "Use `cocalc browser exec` only for transient UI context such as the current selection, scroll position, or other browser-only state.",
+    "Use `cocalc project jupyter set`, `insert`, `move`, `delete`, `run`, or `exec` for live notebook changes.",
+    "Start with the selected cell. Inspect surrounding cells, outputs, or notebook execution state only if needed.",
     "If you decide changes are appropriate, apply them when possible. Ask before destructive actions or installing or upgrading packages.",
   ];
 
@@ -475,15 +484,28 @@ export function LLMCellTool({ actions, id, style, llmTools, cellType }: Props) {
 
   const actionMap = isMarkdownCell ? ACTIONS_MD : ACTIONS_CODE;
 
-  async function submit(): Promise<void> {
-    if (mode == null || !canSubmit) return;
+  async function submit(nextExtraPrompt?: string): Promise<void> {
+    if (mode == null) return;
+    const effectiveExtra =
+      nextExtraPrompt != null ? nextExtraPrompt : extraPrompt;
+    const effectiveCanSubmit = (() => {
+      if (querying) return false;
+      if (requiresFreeformInput(mode)) {
+        return effectiveExtra.trim().length > 0;
+      }
+      if (mode === "translate" || mode === "translate_text") {
+        return targetLanguage.trim().length > 0;
+      }
+      return true;
+    })();
+    if (!effectiveCanSubmit) return;
     setQuerying(true);
     setError("");
     try {
       const visiblePrompt = buildVisiblePrompt({
         mode,
         cellType,
-        extra: extraPrompt,
+        extra: effectiveExtra,
         targetLanguage,
       });
       const prompt = buildHiddenPrompt({
@@ -493,7 +515,7 @@ export function LLMCellTool({ actions, id, style, llmTools, cellType }: Props) {
         cellType,
         kernelLanguage,
         kernelDisplay,
-        extra: extraPrompt,
+        extra: effectiveExtra,
         targetLanguage,
       });
       const title = `${intl.formatMessage(actionLabel(mode, isMarkdownCell))} cell`;
@@ -509,7 +531,7 @@ export function LLMCellTool({ actions, id, style, llmTools, cellType }: Props) {
         openFloating: true,
       });
       if (!sent) {
-        throw new Error("Unable to send this cell request to Codex.");
+        throw new Error("Unable to send this cell request to the Agent.");
       }
       projectActions?.log({
         event: "llm",
@@ -552,12 +574,12 @@ export function LLMCellTool({ actions, id, style, llmTools, cellType }: Props) {
         {needsText ? (
           <div>
             <div style={{ marginBottom: 8, fontWeight: 500 }}>{label}</div>
-            <Input.TextArea
+            <PopupAgentComposer
               value={extraPrompt}
-              onChange={(e) => setExtraPrompt(e.target.value)}
-              onKeyDown={stopKeyboardPropagation}
-              rows={3}
+              onChange={setExtraPrompt}
+              onSubmit={(value) => void submit(value)}
               placeholder={placeholder}
+              cacheId={`popup-agent:jupyter-cell:${path}:${id}:${mode}`}
               autoFocus
             />
           </div>
@@ -575,7 +597,7 @@ export function LLMCellTool({ actions, id, style, llmTools, cellType }: Props) {
           </div>
         ) : null}
         <div style={{ color: "rgba(0,0,0,0.65)" }}>
-          Codex will inspect the live notebook state itself. The frontend is
+          The Agent will inspect the live notebook state itself. The frontend is
           only sending the notebook path, the selected cell id, and your
           request.
         </div>
@@ -593,7 +615,7 @@ export function LLMCellTool({ actions, id, style, llmTools, cellType }: Props) {
               <AIAvatar size={18} />
               <span>
                 {intl.formatMessage(actionLabel(mode, isMarkdownCell))} with
-                Codex
+                Agent
               </span>
             </Space>
           )
@@ -631,7 +653,7 @@ export function LLMCellTool({ actions, id, style, llmTools, cellType }: Props) {
             disabled={!canSubmit}
           >
             <Icon name={querying ? "spinner" : "paper-plane"} spin={querying} />{" "}
-            Send to Codex
+            Send to Agent
           </Button>
         </div>
       </Modal>
@@ -660,7 +682,7 @@ export function LLMCellTool({ actions, id, style, llmTools, cellType }: Props) {
         <Tooltip
           title={intl.formatMessage({
             id: "jupyter.llm.cell-tool.assistant.title",
-            defaultMessage: "Use Codex on this cell",
+            defaultMessage: "Use Agent on this cell",
           })}
         >
           <Button
@@ -671,7 +693,7 @@ export function LLMCellTool({ actions, id, style, llmTools, cellType }: Props) {
             icon={<AIAvatar size={14} style={{ top: "1px" }} />}
           >
             <Space size="small">
-              {intl.formatMessage(labels.assistant)}
+              Agent
               <Icon name="angle-down" />
             </Space>
           </Button>

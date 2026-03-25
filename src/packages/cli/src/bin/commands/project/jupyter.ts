@@ -1,8 +1,142 @@
+import { readFile } from "node:fs/promises";
+import { resolve as resolvePath } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { Command } from "commander";
 
+import { createJupyterApi } from "../../../api/jupyter";
 import type { OutputMessage } from "@cocalc/conat/project/jupyter/run-code";
 import type { ProjectCommandDeps } from "../project";
+
+const AsyncFunction = Object.getPrototypeOf(async function () {})
+  .constructor as new (...args: string[]) => (...fnArgs: any[]) => Promise<any>;
+
+const PROJECT_JUPYTER_EXEC_API_DECLARATION = `declare const api: {
+  project: {
+    project_id: string;
+    title: string;
+    host_id: string | null;
+  };
+  notebook: {
+    path: string;
+    listCells(options?: { codeOnly?: boolean }): Promise<{
+      project: { project_id: string; title: string; host_id: string | null };
+      path: string;
+      cells: Array<{
+        id: string;
+        index: number;
+        cell_type: string;
+        input: string;
+        preview: string;
+        line_count: number;
+        generated_id: boolean;
+      }>;
+    }>;
+    setCell(options: {
+      cellId: string;
+      input?: string;
+      cellType?: string;
+    }): Promise<{
+      project: { project_id: string; title: string; host_id: string | null };
+      path: string;
+      cell: {
+        id: string;
+        index: number;
+        cell_type: string;
+        input: string;
+        preview: string;
+        line_count: number;
+        generated_id: boolean;
+      };
+    }>;
+    insertCell(options: {
+      afterId?: string;
+      beforeId?: string;
+      atStart?: boolean;
+      atEnd?: boolean;
+      input?: string;
+      cellType?: string;
+    }): Promise<{
+      project: { project_id: string; title: string; host_id: string | null };
+      path: string;
+      cell: {
+        id: string;
+        index: number;
+        cell_type: string;
+        input: string;
+        preview: string;
+        line_count: number;
+        generated_id: boolean;
+      };
+    }>;
+    moveCell(options: {
+      cellId: string;
+      beforeId?: string;
+      afterId?: string;
+      atStart?: boolean;
+      atEnd?: boolean;
+    }): Promise<{
+      project: { project_id: string; title: string; host_id: string | null };
+      path: string;
+      cell: {
+        id: string;
+        index: number;
+        cell_type: string;
+        input: string;
+        preview: string;
+        line_count: number;
+        generated_id: boolean;
+      };
+    }>;
+    deleteCells(options: { cellIds: string[] }): Promise<{
+      project: { project_id: string; title: string; host_id: string | null };
+      path: string;
+      deleted: string[];
+    }>;
+    run(options: {
+      cellIds?: string[];
+      cellIndices?: number[];
+      allCode?: boolean;
+      noHalt?: boolean;
+      limit?: number;
+      stdin?: (opts: {
+        id: string;
+        prompt: string;
+        password?: boolean;
+      }) => Promise<string>;
+    }): Promise<{
+      project_id: string;
+      project_title: string;
+      path: string;
+      // Use run.run_id for a stable identifier. The live() option still accepts runId.
+      run_id: string;
+      ack: unknown;
+      cells: Array<{
+        id: string;
+        index: number;
+        cell_type: string;
+        input: string;
+        preview: string;
+        line_count: number;
+        generated_id: boolean;
+      }>;
+      iter: AsyncIterable<any[]>;
+      close: () => Promise<void>;
+    }>;
+    live(options?: {
+      runId?: string;
+      follow?: boolean;
+      waitMs?: number;
+      pollMs?: number;
+    }): Promise<{
+      project_id: string;
+      project_title: string;
+      path: string;
+      getRunId: () => string | null;
+      iter: AsyncIterable<any[]>;
+      close: () => Promise<void>;
+    }>;
+  };
+};`;
 
 function normalizePath(value?: string): string {
   const path = `${value ?? ""}`.trim();
@@ -38,6 +172,41 @@ function normalizeRichText(value: unknown): string {
     return "";
   }
   return `${value}`;
+}
+
+function normalizeCellType(value?: string): string | undefined {
+  const trimmed = `${value ?? ""}`.trim();
+  if (!trimmed) return undefined;
+  if (trimmed !== "code" && trimmed !== "markdown") {
+    throw new Error("--type must be code or markdown");
+  }
+  return trimmed;
+}
+
+async function resolveOptionalNotebookInput(
+  opts: { input?: string; stdin?: boolean },
+  readAllStdin: () => Promise<string>,
+): Promise<string | undefined> {
+  if (opts.stdin) {
+    return await readAllStdin();
+  }
+  if (opts.input == null) {
+    return undefined;
+  }
+  return `${opts.input}`;
+}
+
+type JupyterExecCliOptions = {
+  file?: string;
+  stdin?: boolean;
+};
+
+export function normalizeJupyterExecInlineScriptTokens(code: string[]): string {
+  const tokens = [...(code ?? [])];
+  if (tokens[0] === "exec" && tokens.length > 1) {
+    tokens.shift();
+  }
+  return tokens.join(" ").trim();
 }
 
 function humanTextForOutputMessage(mesg: OutputMessage): {
@@ -123,14 +292,30 @@ export function registerProjectJupyterCommands(
   const {
     withContext,
     projectJupyterCellsData,
+    projectJupyterSetCellData,
+    projectJupyterInsertCellData,
+    projectJupyterDeleteCellsData,
+    projectJupyterMoveCellData,
     projectJupyterRunSession,
     projectJupyterLiveRunSession,
     durationToMs,
+    readAllStdin,
+    resolveProjectConatClient,
   } = deps;
 
   const jupyter = project
     .command("jupyter")
     .description("project Jupyter notebook execution");
+
+  jupyter
+    .command("exec-api")
+    .description("print the TypeScript declaration for the notebook exec API")
+    .action(() => {
+      process.stdout.write(PROJECT_JUPYTER_EXEC_API_DECLARATION);
+      if (!PROJECT_JUPYTER_EXEC_API_DECLARATION.endsWith("\n")) {
+        process.stdout.write("\n");
+      }
+    });
 
   jupyter
     .command("cells")
@@ -150,6 +335,292 @@ export function registerProjectJupyterCommands(
             path: normalizePath(opts.path),
             codeOnly: opts.codeOnly,
           });
+        });
+      },
+    );
+
+  jupyter
+    .command("set")
+    .description("update an existing notebook cell")
+    .requiredOption("--path <path>", "notebook path inside the project")
+    .requiredOption("--cell-id <id>", "cell id to update")
+    .option("-w, --project <project>", "project id or name")
+    .option("--input <text>", "replace the cell input with this text")
+    .option("--stdin", "read the replacement cell input from stdin")
+    .option("--type <kind>", "change the cell type to code or markdown")
+    .action(
+      async (
+        opts: {
+          path: string;
+          project?: string;
+          cellId: string;
+          input?: string;
+          stdin?: boolean;
+          type?: string;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "project jupyter set", async (ctx) => {
+          return await projectJupyterSetCellData({
+            ctx,
+            projectIdentifier: opts.project,
+            path: normalizePath(opts.path),
+            cellId: `${opts.cellId ?? ""}`.trim(),
+            input: await resolveOptionalNotebookInput(opts, readAllStdin),
+            cellType: normalizeCellType(opts.type),
+          });
+        });
+      },
+    );
+
+  jupyter
+    .command("insert")
+    .description("insert a notebook cell relative to an anchor or boundary")
+    .requiredOption("--path <path>", "notebook path inside the project")
+    .option("-w, --project <project>", "project id or name")
+    .option("--after-id <id>", "insert below this anchor cell")
+    .option("--before-id <id>", "insert above this anchor cell")
+    .option("--at-start", "insert at the beginning of the notebook")
+    .option("--at-end", "insert at the end of the notebook")
+    .option("--input <text>", "initial input for the new cell")
+    .option("--stdin", "read initial cell input from stdin")
+    .option("--type <kind>", "new cell type: code or markdown")
+    .action(
+      async (
+        opts: {
+          path: string;
+          project?: string;
+          afterId?: string;
+          beforeId?: string;
+          atStart?: boolean;
+          atEnd?: boolean;
+          input?: string;
+          stdin?: boolean;
+          type?: string;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "project jupyter insert", async (ctx) => {
+          return await projectJupyterInsertCellData({
+            ctx,
+            projectIdentifier: opts.project,
+            path: normalizePath(opts.path),
+            afterId: opts.afterId?.trim(),
+            beforeId: opts.beforeId?.trim(),
+            atStart: opts.atStart === true,
+            atEnd: opts.atEnd === true,
+            input: await resolveOptionalNotebookInput(opts, readAllStdin),
+            cellType: normalizeCellType(opts.type),
+          });
+        });
+      },
+    );
+
+  jupyter
+    .command("delete")
+    .description("delete one or more notebook cells by id")
+    .requiredOption("--path <path>", "notebook path inside the project")
+    .requiredOption("--cell-id <id>", "cell id to delete", collectString, [])
+    .option("-w, --project <project>", "project id or name")
+    .action(
+      async (
+        opts: { path: string; project?: string; cellId?: string[] },
+        command: Command,
+      ) => {
+        await withContext(command, "project jupyter delete", async (ctx) => {
+          return await projectJupyterDeleteCellsData({
+            ctx,
+            projectIdentifier: opts.project,
+            path: normalizePath(opts.path),
+            cellIds: (opts.cellId ?? []).map((id) => `${id ?? ""}`.trim()),
+          });
+        });
+      },
+    );
+
+  jupyter
+    .command("move")
+    .description("move a notebook cell relative to another cell or boundary")
+    .requiredOption("--path <path>", "notebook path inside the project")
+    .requiredOption("--cell-id <id>", "cell id to move")
+    .option("-w, --project <project>", "project id or name")
+    .option("--before-id <id>", "move the cell above this anchor cell")
+    .option("--after-id <id>", "move the cell below this anchor cell")
+    .option("--at-start", "move the cell to the beginning of the notebook")
+    .option("--at-end", "move the cell to the end of the notebook")
+    .action(
+      async (
+        opts: {
+          path: string;
+          project?: string;
+          cellId: string;
+          beforeId?: string;
+          afterId?: string;
+          atStart?: boolean;
+          atEnd?: boolean;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "project jupyter move", async (ctx) => {
+          const anchors = [
+            opts.beforeId ? 1 : 0,
+            opts.afterId ? 1 : 0,
+            opts.atStart ? 1 : 0,
+            opts.atEnd ? 1 : 0,
+          ].reduce((sum, n) => sum + n, 0);
+          if (anchors !== 1) {
+            throw new Error(
+              "move requires exactly one of --before-id, --after-id, --at-start, or --at-end",
+            );
+          }
+          return await projectJupyterMoveCellData({
+            ctx,
+            projectIdentifier: opts.project,
+            path: normalizePath(opts.path),
+            cellId: `${opts.cellId ?? ""}`.trim(),
+            beforeId: opts.beforeId?.trim(),
+            afterId: opts.afterId?.trim(),
+            atStart: opts.atStart === true,
+            atEnd: opts.atEnd === true,
+          });
+        });
+      },
+    );
+
+  jupyter
+    .command("exec [code...]")
+    .description(
+      "execute javascript against the ambient notebook api; provide code inline, with --file, or with --stdin",
+    )
+    .requiredOption("--path <path>", "notebook path inside the project")
+    .option("-w, --project <project>", "project id or name")
+    .option("--file <path>", "read javascript from a file path")
+    .option("--stdin", "read javascript from stdin")
+    .addHelpText(
+      "after",
+      `
+Use plain JavaScript. Inspect the ambient API with:
+  cocalc project jupyter exec-api
+
+Use --stdin for heredocs or piped multi-line JavaScript.
+
+Example:
+  cocalc --json project jupyter exec --path scratch/demo.ipynb --stdin <<'EOF'
+    let { cells } = await api.notebook.listCells();
+    let anchor = cells[cells.length - 1];
+    let inserted = await api.notebook.insertCell({
+      afterId: anchor.id,
+      input: "2 + 3",
+      cellType: "code",
+    });
+    let run = await api.notebook.run({ cellIds: [inserted.cell.id] });
+    await run.close();
+    return { inserted: inserted.cell.id, run_id: run.run_id };
+  EOF
+
+Saved script example:
+  cocalc --json project jupyter exec --path scratch/demo.ipynb '
+    let { cells } = await api.notebook.listCells();
+    let anchor = cells[cells.length - 1];
+    let inserted = await api.notebook.insertCell({
+      afterId: anchor.id,
+      input: "2 + 3",
+      cellType: "code",
+    });
+    let run = await api.notebook.run({ cellIds: [inserted.cell.id] });
+    await run.close();
+    return { inserted: inserted.cell.id, run_id: run.run_id };
+  '
+`,
+    )
+    .action(
+      async (
+        code: string[],
+        opts: JupyterExecCliOptions & {
+          path: string;
+          project?: string;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "project jupyter exec", async (ctx) => {
+          const inlineScript = normalizeJupyterExecInlineScriptTokens(code);
+          const filePath = `${opts.file ?? ""}`.trim();
+          const readFromStdin = !!opts.stdin || filePath === "-";
+          const readFromFile = filePath.length > 0 && filePath !== "-";
+          const sourceCount =
+            (inlineScript.length > 0 ? 1 : 0) +
+            (readFromFile ? 1 : 0) +
+            (readFromStdin ? 1 : 0);
+          if (sourceCount !== 1) {
+            throw new Error(
+              "choose exactly one script source: inline code, --file <path>, or --stdin",
+            );
+          }
+          const bindingPath = normalizePath(opts.path);
+          const script = readFromFile
+            ? await readFile(resolvePath(filePath), "utf8")
+            : readFromStdin
+              ? await readAllStdin()
+              : inlineScript;
+          if (!script.trim()) {
+            throw new Error("javascript code must be specified");
+          }
+          const jupyterApi = createJupyterApi({
+            resolveProjectConatClient,
+          });
+          try {
+            const notebook = jupyterApi.bindDocument(ctx, {
+              projectIdentifier: opts.project,
+              path: bindingPath,
+            });
+            const { project } = await resolveProjectConatClient(
+              ctx,
+              opts.project,
+              process.cwd(),
+            );
+            const api = {
+              project: {
+                project_id: project.project_id,
+                title: project.title,
+                host_id: project.host_id,
+              },
+              notebook: {
+                path: bindingPath,
+                listCells: notebook.listCells.bind(notebook),
+                setCell: notebook.setCell.bind(notebook),
+                insertCell: notebook.insertCell.bind(notebook),
+                moveCell: notebook.moveCell.bind(notebook),
+                deleteCells: notebook.deleteCells.bind(notebook),
+                run: notebook.run.bind(notebook),
+                live: async (options?: {
+                  runId?: string;
+                  follow?: boolean;
+                  waitMs?: number;
+                  pollMs?: number;
+                }) =>
+                  await projectJupyterLiveRunSession({
+                    ctx,
+                    projectIdentifier: opts.project,
+                    path: bindingPath,
+                    cwd: process.cwd(),
+                    runId: options?.runId,
+                    follow: options?.follow,
+                    waitMs: options?.waitMs,
+                    pollMs: options?.pollMs,
+                  }),
+              },
+            };
+            const runner = new AsyncFunction(
+              "api",
+              `"use strict";\n${script}\n`,
+            );
+            const result = await runner(api);
+            return {
+              result: result ?? null,
+            };
+          } finally {
+            await (jupyterApi as any).close?.();
+          }
         });
       },
     );

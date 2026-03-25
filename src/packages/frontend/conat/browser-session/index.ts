@@ -299,6 +299,46 @@ export function createBrowserSessionAutomation({
       });
     };
 
+    const resolveWorkspaceChatThreadKey = async ({
+      chat_path,
+      chatActions,
+    }: {
+      chat_path: string;
+      chatActions: import("@cocalc/frontend/chat/actions").ChatActions;
+    }): Promise<string | undefined> => {
+      const { loadNavigatorSelectedThreadKey } =
+        await import("@cocalc/frontend/project/new/navigator-state");
+      const preferred = loadNavigatorSelectedThreadKey(project_id, chat_path);
+      if (preferred?.trim()) {
+        return preferred.trim();
+      }
+      const selected =
+        `${chatActions.store?.get?.("selectedThreadKey") ?? ""}`.trim();
+      if (selected) {
+        return selected;
+      }
+      const threadIndex = chatActions.messageCache?.getThreadIndex?.();
+      if (!(threadIndex instanceof Map) || threadIndex.size === 0) {
+        return undefined;
+      }
+      let chosen: string | undefined;
+      let chosenTime = Number.NEGATIVE_INFINITY;
+      for (const [key, entry] of threadIndex.entries()) {
+        const cleanKey = `${key ?? ""}`.trim();
+        if (!cleanKey) continue;
+        const newestTime =
+          typeof entry?.newestTime === "number" &&
+          Number.isFinite(entry.newestTime)
+            ? entry.newestTime
+            : Number.NEGATIVE_INFINITY;
+        if (!chosen || newestTime >= chosenTime) {
+          chosen = cleanKey;
+          chosenTime = newestTime;
+        }
+      }
+      return chosen;
+    };
+
     const threadExists = (
       chatActions: import("@cocalc/frontend/chat/actions").ChatActions,
       thread_id: string,
@@ -785,6 +825,107 @@ export function createBrowserSessionAutomation({
                 ? { tag: tag.trim() }
                 : {}),
               timestamp,
+            };
+          } finally {
+            cleanup?.();
+          }
+        },
+        clearThread: async ({
+          workspace_id,
+          open = true,
+          foreground = true,
+        }: {
+          workspace_id: string;
+          open?: boolean;
+          foreground?: boolean;
+        }): Promise<{
+          ok: true;
+          workspace_id: string;
+          chat_path: string;
+          assigned: boolean;
+          opened: boolean;
+          previous_thread_id?: string;
+          thread_id: string;
+        }> => {
+          assertExecNotCanceled(isCanceled);
+          const workspace = await resolveWorkspaceRecord(workspace_id);
+          const { chat_path, assigned } = await ensureWorkspaceChatTarget(
+            workspace.workspace_id,
+          );
+          const { ensureWorkspaceChatDirectory } =
+            await import("@cocalc/frontend/project/workspaces/runtime");
+          await ensureWorkspaceChatDirectory({ project_id, chat_path });
+          const selection = {
+            kind: "workspace" as const,
+            workspace_id: workspace.workspace_id,
+          };
+          persistSessionSelection(project_id, selection);
+          dispatchWorkspaceSelectionEvent(project_id, selection);
+          if (open) {
+            await openFileInProject({
+              project_id,
+              path: chat_path,
+              foreground,
+              foreground_project: foreground,
+            });
+          }
+          const { saveNavigatorSelectedThreadKey } =
+            await import("@cocalc/frontend/project/new/navigator-state");
+          const { chatActions, cleanup } =
+            await resolveChatActionsForPath(chat_path);
+          try {
+            const previous_thread_id = await resolveWorkspaceChatThreadKey({
+              chat_path,
+              chatActions,
+            });
+            const previousName =
+              previous_thread_id != null
+                ? `${
+                    chatActions.getThreadMetadata(previous_thread_id, {
+                      threadId: previous_thread_id,
+                    })?.name ?? ""
+                  }`.trim() || "Codex"
+                : "Codex";
+            let thread_id = previous_thread_id
+              ? chatActions.resetThread?.(previous_thread_id, {
+                  name: "Codex",
+                  renameSourceTo: `Previous ${previousName}`,
+                  pinNewThread: true,
+                  unpinSourceThread: true,
+                })
+              : undefined;
+            if (!thread_id) {
+              const { DEFAULT_CODEX_MODEL_NAME } =
+                await import("@cocalc/util/ai/codex");
+              thread_id = chatActions.createEmptyThread?.({
+                name: "Codex",
+                threadAgent: {
+                  mode: "codex",
+                  model: DEFAULT_CODEX_MODEL_NAME,
+                  codexConfig: {
+                    model: DEFAULT_CODEX_MODEL_NAME,
+                  },
+                },
+              });
+              if (thread_id) {
+                chatActions.setThreadPin?.(thread_id, true);
+              }
+            }
+            if (!thread_id) {
+              throw Error("failed to clear workspace chat thread");
+            }
+            saveNavigatorSelectedThreadKey(thread_id, chat_path);
+            if (typeof chatActions.syncdb?.save === "function") {
+              await chatActions.syncdb.save();
+            }
+            return {
+              ok: true,
+              workspace_id: workspace.workspace_id,
+              chat_path,
+              assigned,
+              opened: open,
+              ...(previous_thread_id ? { previous_thread_id } : {}),
+              thread_id,
             };
           } finally {
             cleanup?.();

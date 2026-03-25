@@ -141,7 +141,7 @@ export function InsertCell({
           {showGenerateCell && llmTools && (
             <TinyButton
               type="aicell"
-              title="Create code based on your description (alt+click line)"
+              title="Generate new notebook cells with Agent"
               handleButtonClick={handleButtonClick}
             >
               <Space>
@@ -176,7 +176,6 @@ export function InsertCell({
           actions={actions}
           frameActions={frameActions}
           id={id}
-          llmTools={llmTools}
         >
           {renderControls()}
         </AIGenerateCodeCell>

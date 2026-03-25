@@ -3,111 +3,21 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import type { MenuProps } from "antd";
-import {
-  Alert,
-  Button,
-  Collapse,
-  Divider,
-  Dropdown,
-  Flex,
-  Input,
-  Popover,
-  Space,
-  Switch,
-  Tag,
-} from "antd";
-import { debounce, throttle } from "lodash";
-import React, { useEffect, useRef, useState } from "react";
+import { Alert, Button, Modal, Space } from "antd";
+import { useEffect, useMemo, useState } from "react";
 import { useIntl } from "react-intl";
 
-import { useLanguageModelSetting } from "@cocalc/frontend/account/useLanguageModelSetting";
-import { alert_message } from "@cocalc/frontend/alerts";
-import {
-  useAsyncEffect,
-  useFrameContext,
-} from "@cocalc/frontend/app-framework";
-import type { Message } from "@cocalc/frontend/client/types";
-import {
-  LLMNameLink,
-  Paragraph,
-  RawPrompt,
-  Text,
-} from "@cocalc/frontend/components";
+import { labels } from "@cocalc/frontend/i18n";
+import { useProjectContext } from "@cocalc/frontend/project/context";
+import { submitNavigatorPromptInWorkspaceChat } from "@cocalc/frontend/project/new/navigator-intents";
 import AIAvatar from "@cocalc/frontend/components/ai-avatar";
 import { Icon } from "@cocalc/frontend/components/icon";
-import { NotebookFrameActions } from "@cocalc/frontend/frame-editors/jupyter-editor/cell-notebook/actions";
-import { LLMHistorySelector } from "@cocalc/frontend/frame-editors/llm/llm-history-selector";
-import { LLMQueryDropdownButton } from "@cocalc/frontend/frame-editors/llm/llm-query-dropdown";
-import LLMSelector, {
-  modelToName,
-} from "@cocalc/frontend/frame-editors/llm/llm-selector";
-import { useLLMHistory } from "@cocalc/frontend/frame-editors/llm/use-llm-history";
-import { labels } from "@cocalc/frontend/i18n";
-import { JupyterActions } from "@cocalc/frontend/jupyter/browser-actions";
-import { LLMCellContextSelector } from "@cocalc/frontend/jupyter/llm/cell-context-selector";
-import { splitCells } from "@cocalc/frontend/jupyter/llm/split-cells";
-import { backtickSequence } from "@cocalc/frontend/markdown/util";
-import { LLMCostEstimation } from "@cocalc/frontend/misc/llm-cost-estimation";
-import { useProjectContext } from "@cocalc/frontend/project/context";
-import { LLMEvent } from "@cocalc/frontend/project/history/types";
-import { PREVIEW_BOX } from "@cocalc/frontend/project/page/home-page/ai-generate-document";
+import { useFrameContext } from "@cocalc/frontend/app-framework";
+import type { NotebookFrameActions } from "@cocalc/frontend/frame-editors/jupyter-editor/cell-notebook/actions";
+import { PopupAgentComposer } from "@cocalc/frontend/frame-editors/llm/popup-agent-composer";
 import track from "@cocalc/frontend/user-tracking";
-import { webapp_client } from "@cocalc/frontend/webapp-client";
-import { LLMTools } from "@cocalc/jupyter/types";
-import {
-  LanguageModel,
-  getLLMServiceStatusCheckMD,
-  model2vendor,
-} from "@cocalc/util/db-schema/llm-utils";
-import {
-  capitalize,
-  getRandomColor,
-  plural,
-  smallIntegerToEnglishWord,
-} from "@cocalc/util/misc";
-import { COLORS } from "@cocalc/util/theme";
-import NBViewer from "../nbviewer/nbviewer";
-import {
-  CellContextContent,
-  getNonemptyCellContents,
-} from "../util/cell-content";
-import { Position } from "./types";
-import { insertCell } from "./util";
-
-type Cell = { cell_type: "markdown" | "code"; source: string[] };
-type Cells = Cell[];
-
-const EXAMPLES: readonly (readonly [string, readonly string[]])[] = [
-  ["Visualize the data.", ["visualize"]],
-  ["Run the last function to see it in action.", ["run"]],
-  [
-    "Combine the code in one large cell and wrap it into a function.",
-    ["merge"],
-  ],
-  [
-    "Write a summary in a markdown cell explaining the purpose of the code.",
-    ["documentation"],
-  ],
-  [
-    "Summarize the key findings of this analysis in a clear and concise paragraph.",
-    ["summary"],
-  ],
-  [
-    "Generate a summary statistics table for the entire dataset",
-    ["statistics"],
-  ],
-  ["Perform a principal component analysis (PCA) on the dataset.", ["PCA"]],
-  [
-    "Conduct a time series analysis on the dataset and extrapolate.",
-    ["time series"],
-  ],
-  ["Create an interactive slider for the function.", ["interactive"]],
-  [
-    "Expand this analysis to include additional statistical tests or visualizations.",
-    ["statistics"],
-  ],
-] as const;
+import type { JupyterActions } from "../browser-actions";
+import type { Position } from "./types";
 
 interface AIGenerateCodeCellProps {
   actions: JupyterActions;
@@ -116,7 +26,71 @@ interface AIGenerateCodeCellProps {
   id: string;
   setShowAICellGen: (show: Position) => void;
   showAICellGen: Position;
-  llmTools?: LLMTools;
+}
+
+const DEFAULT_GENERATE_AGENT_MODEL = "gpt-5.4-mini";
+
+function normalizeCellType(value: string | undefined): "code" | "markdown" {
+  return value === "markdown" ? "markdown" : "code";
+}
+
+function cellLabel(cellType: "code" | "markdown"): string {
+  return cellType === "markdown" ? "Markdown cell" : "code cell";
+}
+
+function describePlacement(
+  position: Exclude<Position, null>,
+  anchorCellType: "code" | "markdown",
+): string {
+  const label = cellLabel(anchorCellType);
+  switch (position) {
+    case "above":
+      return `above this ${label}`;
+    case "below":
+      return `below this ${label}`;
+    case "replace":
+      return `by replacing this ${label}`;
+  }
+}
+
+export function buildGenerateCellVisiblePrompt(opts: {
+  prompt: string;
+  position: Exclude<Position, null>;
+  anchorCellType: "code" | "markdown";
+}): string {
+  const request = opts.prompt.trim();
+  const placement = describePlacement(opts.position, opts.anchorCellType);
+  return `Generate new cells ${placement}: ${request}`;
+}
+
+export function buildGenerateCellHiddenPrompt(opts: {
+  prompt: string;
+  path: string;
+  cellId: string;
+  anchorCellType: "code" | "markdown";
+  position: Exclude<Position, null>;
+  kernelLanguage: string;
+  kernelDisplay: string;
+}): string {
+  const placement = describePlacement(opts.position, opts.anchorCellType);
+  const parts = [
+    `Generate one or more notebook cells ${placement} according to this request: ${opts.prompt.trim()}`,
+    `Jupyter notebook path: ${opts.path}`,
+    `Anchor cell id: ${opts.cellId}`,
+    `Anchor cell type: ${opts.anchorCellType}`,
+    `Requested position: ${opts.position}`,
+    `Kernel language: ${opts.kernelLanguage}`,
+    `Kernel display name: ${opts.kernelDisplay}`,
+    "Treat the live in-memory notebook state as the source of truth, even if the file on disk is stale.",
+    "Do not read or edit the `.ipynb` JSON directly for this task unless the user explicitly asks for filesystem-level work.",
+    "Prefer `cocalc project jupyter ...` for notebook cell edits and execution because it remains available if the browser refreshes or disconnects.",
+    "Use `cocalc browser exec` only for transient UI context such as the current selection, scroll position, or other browser-only state.",
+    "Use `cocalc project jupyter insert`, `set`, `move`, `delete`, `run`, or `exec` for live notebook changes.",
+    "Start from the anchor cell. Inspect surrounding cells, outputs, or notebook execution state only if needed.",
+    "Decide whether the result should be code cells, Markdown cells, or both. Insert or replace cells in the requested location when appropriate.",
+    "Ask before destructive actions or installing or upgrading packages.",
+  ];
+  return parts.join("\n\n");
 }
 
 export function AIGenerateCodeCell({
@@ -126,657 +100,152 @@ export function AIGenerateCodeCell({
   id,
   setShowAICellGen,
   showAICellGen,
-  llmTools,
 }: AIGenerateCodeCellProps) {
   const intl = useIntl();
-  const { actions: project_actions } = useProjectContext();
+  const { actions: projectActions } = useProjectContext();
   const { project_id, path } = useFrameContext();
-  const cancel = useRef<boolean>(false);
-  const [querying, setQuerying] = useState<boolean>(false);
-  const [model, setModel] = useLanguageModelSetting(project_id);
-  const [prompt, setPrompt] = useState<string>("");
-  const [cellTypes, setCellTypes] = useState<"code" | "all">("code");
-  // Context for the new selector component - default to 2 previous cells, 0 after
-  const [contextRange, setContextRange] = useState<[number, number]>([-2, 0]);
-  const [error, setError] = useState<string>();
-  const [preview, setPreview] = useState<Cells | null>(null);
-  const [attribute, setAttribute] = useState<boolean>(false);
-  const promptRef = useRef<HTMLElement>(null);
-  const [tokens, setTokens] = useState<number>(0);
-  const { prompts: historyPrompts, addPrompt } = useLLMHistory("general");
-
-  const kernel_info = actions.store.get("kernel_info");
-  const lang = kernel_info?.get("language") ?? "python";
-  const kernel_name = kernel_info?.get("display_name") ?? "Python 3";
+  const [prompt, setPrompt] = useState("");
+  const [querying, setQuerying] = useState(false);
+  const [error, setError] = useState("");
 
   const open = showAICellGen != null;
-
-  const contextContent = getContextContents();
-
-  const inputPrompt = getInput({
-    frameActions,
-    prompt,
-    lang,
-    kernel_name,
-    position: showAICellGen,
-    model,
-    contextContent,
-    contextRange,
-  });
-
-  const { input } = inputPrompt;
-
-  useEffect(() => {
-    if (tokens > 0 && inputPrompt.input == "") setTokens(0);
-  }, [input]);
-
-  useAsyncEffect(
-    debounce(
-      async () => {
-        if (input == "") return;
-
-        // do not import until needed -- it is HUGE!
-        const { getMaxTokens, numTokensUpperBound } =
-          await import("@cocalc/frontend/misc/llm");
-
-        const { history, system } = inputPrompt;
-
-        const all = [
-          input,
-          history.map(({ content }) => content).join(" "),
-          system,
-        ].join(" ");
-
-        const tokens = numTokensUpperBound(all, getMaxTokens(model));
-
-        setTokens(tokens);
-      },
-      2000,
-      { leading: false, trailing: true },
-    ),
-    [input],
+  const anchorCellType = useMemo(
+    () =>
+      normalizeCellType(
+        frameActions.current?.get_cell_by_id(id)?.get?.("cell_type", "code"),
+      ),
+    [frameActions, id],
   );
+  const kernelInfo = actions.store.get("kernel_info");
+  const kernelLanguage = kernelInfo?.get("language") ?? "python";
+  const kernelDisplay = kernelInfo?.get("display_name") ?? "Python 3";
+  const placement =
+    showAICellGen == null
+      ? ""
+      : describePlacement(showAICellGen, anchorCellType);
+  const canSubmit =
+    prompt.trim().length > 0 && !querying && showAICellGen != null;
 
   useEffect(() => {
-    if (!preview && open) {
-      promptRef.current?.focus();
-    }
-  }, [preview, open]);
-
-  function getContextContents(): CellContextContent {
-    const [rangeStart, rangeEnd] = contextRange;
-
-    // For insertion mode:
-    // - rangeStart to rangeEnd defines which cells relative to insertion point to include
-    // - Current cell id represents position 0 (insertion point)
-    // - [-2, 0] means include cells from id-1 to id (2 cells before insertion)
-    // - [0, 2] means include cells from id+1 to id+2 (2 cells after insertion)
-
-    const aboveCount = rangeStart < 0 ? Math.abs(rangeStart) : 0;
-    const belowCount = rangeEnd > 0 ? rangeEnd : 0;
-
-    const result = getNonemptyCellContents({
-      actions: frameActions.current,
-      id,
-      cellTypes,
-      lang,
-      aboveCount,
-      belowCount,
-      includeCurrentCellInAbove: true,
-    });
-
-    return result;
-  }
-
-  function insertCells() {
-    if (preview == null) {
-      console.error("jupyter cell generator: no preview - should never happen");
+    if (!open) {
+      setPrompt("");
+      setQuerying(false);
+      setError("");
       return;
     }
+    setError("");
+  }, [open]);
 
-    const fa = frameActions.current;
-    if (fa == null) {
-      throw Error("frame actions must be defined");
-    }
-
-    let curCellId = id;
-
-    // only insert the "attribution" cell, if the user wants.
-    // What's recorded in any case is an entry in the project's log.
-    if (attribute) {
-      // This is here to make it clear this was generated by a language model.
-      // It could also be a comment in the code cell but for that we would need to know how the
-      // comment character of the language.
-      const n = preview.length;
-      const cellStr = `${smallIntegerToEnglishWord(n)} ${plural(n, "cell")}`;
-      const firstCellId = insertCell({
-        frameActions,
-        actions,
-        id,
-        position: showAICellGen,
-        type: "markdown",
-        content: `The following ${cellStr} was generated by [${modelToName(
-          model,
-        )}](${
-          model2vendor(model).url
-        }) in response to the prompt:\n\n> ${prompt}\n\n `,
-      });
-
-      if (!firstCellId) {
-        throw new Error("unable to insert cell");
-      }
-
-      fa.set_mode("escape");
-      fa.set_md_cell_not_editing(firstCellId);
-
-      curCellId = firstCellId;
-    }
-
-    for (let i = 0; i < preview.length; i++) {
-      const cell = preview[i];
-      const nextCellId = insertCell({
-        frameActions,
-        actions,
-        id: curCellId,
-        position: "below",
-        type: cell.cell_type,
-        content: cell.source.join(""),
-      });
-
-      // this shouldn't happen
-      if (nextCellId == null) continue;
-
-      fa.set_mode("escape");
-      if (cell.cell_type === "markdown") {
-        fa.set_md_cell_not_editing(nextCellId);
-      }
-
-      curCellId = nextCellId;
-    }
-  }
-
-  async function queryLanguageModel({
-    contextContent,
-  }: {
-    contextContent: CellContextContent;
-  }) {
-    if (!prompt.trim()) return;
-
-    const { input, history, system } = getInput({
-      lang,
-      kernel_name,
-      frameActions,
-      model,
-      position: showAICellGen,
-      prompt,
-      contextContent,
-      contextRange,
-    });
-
-    if (!input) {
-      return;
-    }
-
+  async function submit(nextPrompt?: string): Promise<void> {
+    const effectivePrompt = `${nextPrompt ?? prompt}`.trim();
+    if (showAICellGen == null || !effectivePrompt || querying) return;
+    setQuerying(true);
+    setError("");
     try {
-      const tag = `generate-jupyter-cell`;
+      const visiblePrompt = buildGenerateCellVisiblePrompt({
+        prompt: effectivePrompt,
+        position: showAICellGen,
+        anchorCellType,
+      });
+      const hiddenPrompt = buildGenerateCellHiddenPrompt({
+        prompt: effectivePrompt,
+        path,
+        cellId: id,
+        anchorCellType,
+        position: showAICellGen,
+        kernelLanguage,
+        kernelDisplay,
+      });
+      const sent = await submitNavigatorPromptInWorkspaceChat({
+        project_id,
+        path,
+        prompt: hiddenPrompt,
+        visiblePrompt,
+        title: "Agent",
+        tag: `intent:jupyter-generate-cell:${showAICellGen}`,
+        forceCodex: true,
+        codexConfig: { model: DEFAULT_GENERATE_AGENT_MODEL },
+        openFloating: true,
+      });
+      if (!sent) {
+        throw new Error(
+          "Unable to send this cell generation request to the Agent.",
+        );
+      }
+      projectActions?.log({
+        event: "llm",
+        usage: "jupyter-generate-cell",
+        model: DEFAULT_GENERATE_AGENT_MODEL,
+        path,
+      });
       track("chatgpt", {
         project_id,
         path,
-        tag,
+        tag: "generate-jupyter-cell",
         type: "generate",
-        model,
-        contextRange,
+        model: DEFAULT_GENERATE_AGENT_MODEL,
+        position: showAICellGen,
       });
-
-      const stream = await webapp_client.openai_client.queryStream({
-        input,
-        history,
-        system,
-        project_id,
-        path,
-        tag,
-        model,
-      });
-
-      const updateCells = throttle(
-        function (answer) {
-          if (cancel.current) return;
-          const cells = splitCells(answer);
-          setPreview(cells);
-        },
-        500,
-        { leading: true, trailing: true },
-      );
-
-      let answer = "";
-
-      stream.on("token", async (token) => {
-        if (cancel.current) {
-          // we abort this
-          stream.removeAllListeners();
-          // single "finalization"
-          updateCells(answer);
-          return;
-        }
-
-        if (token != null) {
-          answer += token;
-          updateCells(answer);
-        } else {
-          // reply emits undefined text *once* when done, so done at this point.
-          updateCells(answer);
-          setQuerying(false);
-        }
-      });
-
-      stream.on("error", (err) => {
-        setError(
-          `Error generating code cell: ${err}\n\n${getLLMServiceStatusCheckMD(
-            model2vendor(model).name,
-          )}.`,
-        );
-        setQuerying(false);
-      });
-
-      stream.emit("start");
+      setShowAICellGen(null);
     } catch (err) {
-      setPreview(null);
-      alert_message({
-        type: "error",
-        title: "Problem generating code cell",
-        message: `${err}`,
-      });
+      setError(`${err}`);
+    } finally {
+      setQuerying(false);
     }
-  }
-
-  function doQuery(contextContent: CellContextContent) {
-    cancel.current = false;
-    setError("");
-    setQuerying(true);
-
-    if (showAICellGen == null) return;
-
-    // Add prompt to history
-    addPrompt(prompt);
-
-    queryLanguageModel({
-      contextContent,
-    });
-
-    // we also log this
-    const event: LLMEvent = {
-      event: "llm",
-      usage: "jupyter-generate-cell",
-      model,
-      path,
-    };
-    project_actions?.log(event);
-  }
-
-  function renderExamples() {
-    const items: MenuProps["items"] = EXAMPLES.map(([ex, tags], idx) => {
-      const label = (
-        <Flex gap={"5px"} justify="space-between">
-          <Flex>{ex} </Flex>
-          <Flex>
-            {tags.map((tag) => (
-              <Tag key={tag} color={getRandomColor(tag)}>
-                {tag}
-              </Tag>
-            ))}
-          </Flex>
-        </Flex>
-      );
-      return {
-        key: `${idx}`,
-        label,
-        onClick: () => {
-          setPrompt(ex);
-        },
-      };
-    });
-    return (
-      <Paragraph>
-        <Dropdown
-          menu={{ items, style: { maxHeight: "50vh", overflow: "auto" } }}
-          trigger={["click"]}
-        >
-          <Button style={{ width: "100%" }}>
-            <Space>
-              <Icon name="magic" />
-              Pick an example
-              <Icon name="caret-down" />
-            </Space>
-          </Button>
-        </Dropdown>
-      </Paragraph>
-    );
-  }
-
-  function renderContext() {
-    return (
-      <>
-        <Divider titlePlacement="start">
-          <Text>Context</Text>
-        </Divider>
-        <LLMCellContextSelector
-          contextRange={contextRange}
-          onContextRangeChange={setContextRange}
-          cellTypes={cellTypes}
-          onCellTypesChange={setCellTypes}
-          currentCellId={id}
-          frameActions={frameActions.current}
-          mode="insertion"
-        />
-      </>
-    );
-  }
-
-  function insert() {
-    insertCells();
-    setPreview(null);
-    setShowAICellGen(null);
-  }
-
-  function renderContentPreview() {
-    const cellStr = plural(preview?.length ?? 0, "cell");
-    return (
-      <>
-        <Paragraph>
-          This is a preview of the generated content.{" "}
-          {querying ? (
-            <Text strong>Please wait until it is fully generated...</Text>
-          ) : (
-            <Text strong>
-              You can now{" "}
-              <Button
-                size="small"
-                onClick={insert}
-                type="primary"
-                disabled={querying}
-              >
-                <Icon name="plus" /> insert the {cellStr}
-              </Button>
-              .
-            </Text>
-          )}
-        </Paragraph>
-        <Paragraph>
-          <NBViewer
-            content={JSON.stringify(
-              { metadata: { kernelspec: kernel_info }, cells: preview },
-              null,
-              2,
-            )}
-            fontSize={undefined}
-            style={PREVIEW_BOX}
-            cellListStyle={{
-              transform: "scale(0.9)",
-              transformOrigin: "top left",
-              width: "110%",
-            }}
-            scrollBottom={true}
-          />
-        </Paragraph>
-        <Paragraph>
-          <Flex align="center" gap="10px">
-            <Flex flex={0}>
-              <Switch
-                value={attribute}
-                onChange={(val) => setAttribute(val)}
-                unCheckedChildren={"Only cells"}
-                checkedChildren={"With attribution"}
-              />
-            </Flex>
-            <Flex flex={1}>
-              <Text type="secondary">
-                Include cell describing the language model and prompt.
-              </Text>
-            </Flex>
-          </Flex>
-        </Paragraph>
-        <Paragraph style={{ textAlign: "center", marginTop: "15px" }}>
-          <Space size="middle">
-            <Button
-              size="large"
-              onClick={() => {
-                cancel.current = true;
-                setPreview(null);
-                setQuerying(false);
-              }}
-            >
-              {intl.formatMessage(labels.cancel)}
-            </Button>
-            <Button
-              size="large"
-              onClick={insert}
-              type="primary"
-              disabled={querying}
-            >
-              <Icon name="plus" /> Insert {capitalize(cellStr)}
-            </Button>
-          </Space>
-        </Paragraph>
-        {error ? <Alert type="error" title={error} /> : undefined}
-      </>
-    );
-  }
-
-  function renderPromptPreview() {
-    if (!input?.trim()) return;
-
-    const { history, system } = inputPrompt;
-    const ex = history.map(({ content }) => content).join("\n\n");
-    const raw = [input, "Example:", ex, "System:", system].join("\n\n");
-
-    return (
-      <>
-        <Divider />
-        <Paragraph type="secondary">
-          A prompt to generate one or more cells based on your description and
-          context will be sent to the <LLMNameLink model={model} /> language
-          model.
-        </Paragraph>
-        <Collapse
-          items={[
-            {
-              key: "1",
-              label: (
-                <>Click to see what will be sent to {modelToName(model)}.</>
-              ),
-              children: (
-                <RawPrompt
-                  input={raw}
-                  rawText
-                  style={{ border: "none", padding: "0", margin: "0" }}
-                />
-              ),
-            },
-          ]}
-        />
-      </>
-    );
-  }
-
-  function renderContentDialog() {
-    const empty = prompt.trim() == "";
-    return (
-      <>
-        <Paragraph>What do you want the new cell to do?</Paragraph>
-        <Paragraph>
-          <Space.Compact style={{ width: "100%" }}>
-            <Input.TextArea
-              ref={promptRef}
-              allowClear
-              autoFocus
-              value={prompt}
-              onChange={(e) => {
-                setPrompt(e.target.value);
-              }}
-              placeholder="Describe the new cell..."
-              onPressEnter={(e) => {
-                if (!e.shiftKey) return;
-                e.preventDefault(); // prevent the default action
-                e.stopPropagation(); // stop event propagation
-                doQuery(contextContent);
-              }}
-              onKeyDownCapture={(e) => e.stopPropagation()}
-              onKeyUpCapture={(e) => e.stopPropagation()}
-              autoSize={{ minRows: 2, maxRows: 6 }}
-              style={{ flex: 1 }}
-            />
-            <LLMHistorySelector
-              prompts={historyPrompts}
-              onSelect={setPrompt}
-              disabled={querying}
-            />
-          </Space.Compact>
-        </Paragraph>
-        {renderExamples()}
-        {empty ? undefined : renderContext()}
-        {renderPromptPreview()}
-        <Paragraph style={{ textAlign: "center", marginTop: "30px" }}>
-          <Space size="large">
-            <Button onClick={() => setShowAICellGen(null)}>Cancel</Button>
-            <LLMQueryDropdownButton
-              disabled={!prompt.trim()}
-              loading={querying}
-              onClick={() => doQuery(contextContent)}
-              llmTools={llmTools}
-              task="Generate using"
-            />
-          </Space>
-        </Paragraph>
-        {input && tokens > 0 ? (
-          <LLMCostEstimation
-            tokens={tokens}
-            model={model}
-            paragraph
-            textAlign="center"
-            type="secondary"
-          />
-        ) : undefined}
-        {error ? <Alert type="error" title={error} /> : undefined}
-      </>
-    );
-  }
-
-  // called, when actually displayed
-  function renderContent() {
-    return (
-      <div style={{ maxWidth: "min(650px, 90vw)" }}>
-        {preview ? renderContentPreview() : renderContentDialog()}
-      </div>
-    );
   }
 
   return (
-    <Popover
-      placement="bottom"
-      title={() => (
-        <div style={{ fontSize: "18px" }}>
-          <AIAvatar size={22} /> Generate code cell using{" "}
-          <LLMSelector
-            project_id={project_id}
-            model={model}
-            setModel={(model) => {
-              setError("");
-              setModel(model);
-            }}
-          />
-          <Button
-            onClick={() => setShowAICellGen(null)}
-            type="text"
-            style={{ float: "right", color: COLORS.GRAY_M }}
-          >
-            <Icon name="times" />
-          </Button>
-        </div>
-      )}
-      open={open}
-      content={renderContent}
-      trigger={[]}
-      destroyOnHidden
-    >
+    <>
       {children}
-    </Popover>
+      <Modal
+        destroyOnClose
+        title={
+          <Space size="small">
+            <AIAvatar size={18} />
+            <span>Generate with Agent</span>
+          </Space>
+        }
+        open={open}
+        onCancel={() => setShowAICellGen(null)}
+        footer={null}
+        width={560}
+      >
+        <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+          <div style={{ color: "rgba(0,0,0,0.65)" }}>
+            Agent will inspect the live notebook state itself. The frontend is
+            only sending the notebook path, the anchor cell id, the requested
+            placement, and your request.
+          </div>
+          <div style={{ color: "rgba(0,0,0,0.65)" }}>
+            Target: generate new cells {placement}.
+          </div>
+          <PopupAgentComposer
+            value={prompt}
+            onChange={setPrompt}
+            onSubmit={(value) => void submit(value)}
+            placeholder="Describe the cells you want Agent to generate..."
+            cacheId={`popup-agent:jupyter-generate:${path}:${id}:${showAICellGen ?? "none"}`}
+            autoFocus
+          />
+          {error ? <Alert type="error" title={error} /> : null}
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+            <Button onClick={() => setShowAICellGen(null)} disabled={querying}>
+              {intl.formatMessage(labels.cancel)}
+            </Button>
+            <Button
+              type="primary"
+              onClick={() => void submit()}
+              disabled={!canSubmit}
+            >
+              <Icon
+                name={querying ? "spinner" : "paper-plane"}
+                spin={querying}
+              />{" "}
+              Send to Agent
+            </Button>
+          </div>
+        </Space>
+      </Modal>
+    </>
   );
-}
-
-interface GetInputProps {
-  frameActions: React.MutableRefObject<NotebookFrameActions | undefined>;
-  model: LanguageModel;
-  position: Position;
-  prompt: string;
-  contextContent: CellContextContent;
-  lang: string;
-  kernel_name: string;
-  contextRange: [number, number];
-}
-
-function getInputPrompt(prompt: string): string {
-  return `The new cell should do the following:\n\n${prompt}`;
-}
-
-function getInput({
-  frameActions,
-  prompt,
-  contextContent,
-  lang,
-  kernel_name,
-  contextRange,
-}: GetInputProps): {
-  input: string;
-  system: string;
-  history: Message[];
-} {
-  if (!prompt?.trim()) {
-    return { input: "", system: "", history: [] };
-  }
-  if (frameActions.current == null) {
-    console.warn(
-      "Unable to create cell due to frameActions not being defined.",
-    );
-    return { input: "", system: "", history: [] };
-  }
-
-  const prevCount = -contextRange[0]; // cells before insertion point
-  const afterCount = contextRange[1]; // cells after insertion point
-
-  let contextInfo = "";
-
-  if (contextContent.before || contextContent.after) {
-    const beforeCells =
-      prevCount > 0 ? `${prevCount} cells before` : "no cells before";
-    const afterCells =
-      afterCount > 0 ? `${afterCount} cells after` : "no cells after";
-    contextInfo = `Context: The new cell will be inserted with ${beforeCells} and ${afterCells} the insertion point.\n\n`;
-
-    if (contextContent.before) {
-      const beforeDelim = backtickSequence(contextContent.before);
-      contextInfo += `Cells BEFORE insertion point:\n\n${beforeDelim}\n${contextContent.before}\n${beforeDelim}\n\n`;
-    }
-
-    if (contextContent.after) {
-      const afterDelim = backtickSequence(contextContent.after);
-      contextInfo += `Cells AFTER insertion point:\n\n${afterDelim}\n${contextContent.after}\n${afterDelim}\n\n`;
-    }
-  } else {
-    contextInfo =
-      "Context: The new cell will be inserted at the beginning or end of the notebook.\n\n";
-  }
-
-  const history: Message[] = [
-    { role: "user", content: getInputPrompt("Show the value of foo.") },
-    {
-      role: "assistant",
-      content: `This is the value of foo:\n\n\`\`\`${lang}\nprint(foo)\n\`\`\``,
-    },
-  ];
-
-  return {
-    input: `${contextInfo}${getInputPrompt(prompt)}`,
-    history,
-    system: `Create one or more code cells in a Jupyter Notebook.\n\nKernel: "${kernel_name}".\n\nProgramming language: "${lang}".\n\nThe new cell(s) will be inserted at a specific position in the notebook. Pay attention to the context provided - cells marked as BEFORE come before the insertion point, cells marked as AFTER come after the insertion point.\n\nEach code cell must be wrapped in triple backticks. Do not say what the output will be. Be brief.`,
-  };
 }

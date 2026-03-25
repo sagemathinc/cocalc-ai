@@ -1,5 +1,4 @@
 import path from "node:path";
-import { URL } from "node:url";
 import os from "node:os";
 import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
@@ -52,6 +51,13 @@ import {
   preferContainerExecutor,
   resolveWorkspaceRoot,
 } from "./workspace-root";
+import {
+  buildSafeBlobFilename,
+  dedupeBlobReferences,
+  extractBlobReferences,
+  rewriteBlobReferencesInPrompt,
+  type MaterializedBlobAttachment,
+} from "./blob-materialization";
 import { getBlobstore } from "../blobs/download";
 import {
   buildChatMessage,
@@ -4650,7 +4656,9 @@ async function executeAcpRequest({
   }
   const bindings = buildExecutorAdapters(executor, workspaceRoot, hostRoot);
   const currentAgent = await ensureAgent(useNativeTerminal, bindings);
-  const { prompt, cleanup } = await materializeBlobs(request.prompt ?? "");
+  const { prompt, local_images, cleanup } = await materializeBlobs(
+    request.prompt ?? "",
+  );
   if (!conatClient) {
     throw Error("conat client must be initialized");
   }
@@ -4768,6 +4776,7 @@ async function executeAcpRequest({
         await currentAgent.evaluate({
           ...request,
           prompt: iterationPrompt,
+          local_images,
           runtime_env: runtimeEnv,
           config: effectiveConfig,
           stream: wrappedStream,
@@ -6406,31 +6415,27 @@ export async function init(
   }
 }
 
-type BlobReference = {
-  url: string;
-  uuid: string;
-  filename?: string;
-};
-
-async function materializeBlobs(
-  prompt: string,
-): Promise<{ prompt: string; cleanup: () => Promise<void> }> {
+async function materializeBlobs(prompt: string): Promise<{
+  prompt: string;
+  local_images: string[];
+  cleanup: () => Promise<void>;
+}> {
   if (!blobStore) {
-    return { prompt, cleanup: async () => {} };
+    return { prompt, local_images: [], cleanup: async () => {} };
   }
   const refs = extractBlobReferences(prompt);
   if (!refs.length) {
-    return { prompt, cleanup: async () => {} };
+    return { prompt, local_images: [], cleanup: async () => {} };
   }
-  const unique = dedupeRefs(refs);
+  const unique = dedupeBlobReferences(refs);
   if (!unique.length) {
-    return { prompt, cleanup: async () => {} };
+    return { prompt, local_images: [], cleanup: async () => {} };
   }
   const started = performance.now();
   const tempDir = await fs.mkdtemp(
     path.join(os.tmpdir(), `cocalc-blobs-${randomUUID()}-`),
   );
-  const attachments: { url: string; path: string }[] = [];
+  const attachments: MaterializedBlobAttachment[] = [];
   let bytes = 0;
   try {
     for (const ref of unique) {
@@ -6438,11 +6443,11 @@ async function materializeBlobs(
         const data = await blobStore!.get(ref.uuid);
         if (data == null) continue;
         const buffer = Buffer.isBuffer(data) ? data : Buffer.from(data);
-        const safeName = buildSafeFilename(ref);
+        const safeName = buildSafeBlobFilename(ref);
         const filePath = path.join(tempDir, safeName);
         await fs.writeFile(filePath, buffer);
         bytes += buffer.byteLength;
-        attachments.push({ url: ref.url, path: filePath });
+        attachments.push({ ref, path: filePath });
       } catch (err) {
         logger.warn("failed to materialize blob", { ref, err });
       }
@@ -6464,17 +6469,18 @@ async function materializeBlobs(
     }
     if (!attachments.length) {
       await fs.rm(tempDir, { recursive: true, force: true });
-      return { prompt, cleanup: async () => {} };
+      return { prompt, local_images: [], cleanup: async () => {} };
     }
+    const sanitizedPrompt = rewriteBlobReferencesInPrompt(prompt, attachments);
     const info = attachments
       .map(
-        (att, idx) =>
-          `Attachment ${idx + 1}: saved at ${att.path} (source ${att.url})`,
+        (att, idx) => `Attachment ${idx + 1}: available locally at ${att.path}`,
       )
       .join("\n");
-    const augmented = `${prompt}\n\nAttachments saved locally:\n${info}\n`;
+    const augmented = `${sanitizedPrompt}\n\nAttached images are already included with this request. Local fallback paths:\n${info}\n`;
     return {
       prompt: augmented,
+      local_images: attachments.map((att) => att.path),
       cleanup: async () => {
         await fs.rm(tempDir, { recursive: true, force: true });
       },
@@ -6488,77 +6494,7 @@ async function materializeBlobs(
       err,
     });
     await fs.rm(tempDir, { recursive: true, force: true });
-    return { prompt, cleanup: async () => {} };
-  }
-}
-
-function dedupeRefs(refs: BlobReference[]): BlobReference[] {
-  const seen = new Set<string>();
-  const result: BlobReference[] = [];
-  for (const ref of refs) {
-    if (seen.has(ref.uuid)) continue;
-    seen.add(ref.uuid);
-    result.push(ref);
-  }
-  return result;
-}
-
-function buildSafeFilename(ref: BlobReference): string {
-  const baseName = sanitizeFilename(ref.filename || ref.uuid);
-  const extension = path.extname(baseName);
-  const finalName =
-    extension.length > 0 ? baseName : `${baseName || ref.uuid}.bin`;
-  return `${ref.uuid}-${finalName}`;
-}
-
-function sanitizeFilename(name: string): string {
-  return name.replace(/[^A-Za-z0-9._-]/g, "_");
-}
-
-function extractBlobReferences(prompt: string): BlobReference[] {
-  const urls = new Set<string>();
-  const markdown = /!\[[^\]]*\]\(([^)]+\/blobs\/[^)]+)\)/gi;
-  const html = /<img[^>]+src=["']([^"']+\/blobs\/[^"']+)["'][^>]*>/gi;
-  let match: RegExpExecArray | null;
-  while ((match = markdown.exec(prompt)) != null) {
-    urls.add(match[1]);
-  }
-  while ((match = html.exec(prompt)) != null) {
-    urls.add(match[1]);
-  }
-  const refs: BlobReference[] = [];
-  for (const url of urls) {
-    const parsed = parseBlobReference(url);
-    if (parsed?.uuid) {
-      refs.push(parsed);
-    }
-  }
-  return refs;
-}
-
-function parseBlobReference(target: string): BlobReference | undefined {
-  const trimmed = target.trim();
-  if (!trimmed) return undefined;
-  try {
-    const url = new URL(
-      trimmed,
-      trimmed.startsWith("http://") || trimmed.startsWith("https://")
-        ? undefined
-        : "http://placeholder",
-    );
-    if (!url.pathname.includes("/blobs/")) {
-      return undefined;
-    }
-    const uuid = url.searchParams.get("uuid");
-    if (!uuid) return undefined;
-    const filename = path.basename(url.pathname);
-    return {
-      url: trimmed,
-      uuid,
-      filename,
-    };
-  } catch {
-    return undefined;
+    return { prompt, local_images: [], cleanup: async () => {} };
   }
 }
 

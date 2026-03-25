@@ -21,6 +21,25 @@ describe("CodexExecAgent event path formatting", () => {
     const pathAbs = "/home/test/project/README.md";
     expect(toEventPath(pathAbs, cwd)).toBe(pathAbs);
   });
+
+  it("passes local images as top-level codex exec args", () => {
+    const args = (agent as any).buildArgs(
+      { model: "gpt-5.4-mini" },
+      "/tmp/project",
+      ["/tmp/one.png", "/tmp/two.png"],
+    );
+    expect(args).toEqual(
+      expect.arrayContaining([
+        "--image",
+        "/tmp/one.png",
+        "--image",
+        "/tmp/two.png",
+        "exec",
+      ]),
+    );
+    expect(args.indexOf("/tmp/one.png")).toBeLessThan(args.indexOf("exec"));
+    expect(args.indexOf("/tmp/two.png")).toBeLessThan(args.indexOf("exec"));
+  });
 });
 
 describe("CodexExecAgent pre-content path heuristics", () => {

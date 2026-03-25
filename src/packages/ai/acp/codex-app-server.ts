@@ -53,6 +53,12 @@ function getCoCalcRuntimeGuidanceHeader(cliCommand: string): string {
     "- COCALC_API_URL",
     "- COCALC_BEARER_TOKEN",
     "Prefer high-signal commands over raw browser scripts when available.",
+    "For notebook edits/execution that must survive browser refresh or disconnect, prefer `cocalc project jupyter -h` over `browser exec`.",
+    "For multi-step notebook work, prefer `cocalc project jupyter exec --path ... --stdin` for ad hoc snippets or `--file <script.js>` for saved scripts instead of shelling multiple notebook commands.",
+    "Use `cocalc project jupyter exec-api` to inspect the ambient notebook script API before writing a multi-step script. `api.notebook.run(...)` returns `run.run_id`.",
+    "Treat the live in-memory notebook state as the source of truth for live notebook work.",
+    "Do not read or edit `.ipynb` JSON directly for live notebook inspection or mutation unless the user explicitly asks for filesystem-level work.",
+    "Use `browser exec` only for UI-only notebook context such as selection or viewport state.",
     "For questions like 'tell me about my browser workspaces', start with:",
     `1) Inspect live workspace state: ${cliCommand} browser workspace-state --project-id \"$COCALC_PROJECT_ID\" --browser \"$COCALC_BROWSER_ID\"`,
     `2) Inspect API: ${cliCommand} browser exec-api --browser \"$COCALC_BROWSER_ID\"`,
@@ -594,6 +600,34 @@ function addRuntimeGuidance(
   return `${getCoCalcRuntimeGuidanceHeader(getCoCalcCliCommand(runtimeEnv))}\n\n${prompt}`;
 }
 
+function buildTurnStartInput(
+  request: AcpEvaluateRequest,
+  prompt: string,
+  runtimeEnv?: Record<string, string>,
+): Array<
+  | { type: "localImage"; path: string }
+  | { type: "text"; text: string; textElements: any[] }
+> {
+  const input: Array<
+    | { type: "localImage"; path: string }
+    | { type: "text"; text: string; textElements: any[] }
+  > = [];
+  for (const imagePath of request.local_images ?? []) {
+    const trimmed = `${imagePath ?? ""}`.trim();
+    if (!trimmed) continue;
+    input.push({ type: "localImage", path: trimmed });
+  }
+  input.push({
+    type: "text",
+    text: decoratePrompt(prompt, {
+      sendMode: request.chat?.send_mode,
+      runtimeEnv,
+    }),
+    textElements: [],
+  });
+  return input;
+}
+
 async function spawnStandaloneAppServer(
   opts: CodexAppServerOptions,
   env?: NodeJS.ProcessEnv,
@@ -908,16 +942,7 @@ export class CodexAppServerAgent implements AcpAgent {
         cwd,
         model: config?.model ?? this.opts.model,
         effort: toReasoningEffort(config),
-        input: [
-          {
-            type: "text",
-            text: decoratePrompt(prompt, {
-              sendMode: request.chat?.send_mode,
-              runtimeEnv,
-            }),
-            textElements: [],
-          },
-        ],
+        input: buildTurnStartInput(request, prompt, runtimeEnv),
       });
 
       turnId = turnStart?.turn?.id;

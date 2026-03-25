@@ -1918,6 +1918,9 @@ export function ChatPanel({
               modalHandlers?.openExportModal ?? (() => undefined)
             }
             openForkModal={modalHandlers?.openForkModal ?? (() => undefined)}
+            confirmResetThread={
+              threadActionHandlers?.confirmResetThread ?? (() => undefined)
+            }
             confirmDeleteThread={
               threadActionHandlers?.confirmDeleteThread ?? (() => undefined)
             }
@@ -1942,6 +1945,7 @@ export function ChatPanel({
       />
       <ChatRoomThreadActions
         actions={actions}
+        path={path}
         selectedThreadKey={selectedThreadKey}
         setSelectedThreadKey={setSelectedThreadKey}
         onHandlers={setThreadActionHandlers}

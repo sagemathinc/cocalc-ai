@@ -262,6 +262,67 @@ describe("sendChat identity fields", () => {
     expect(actions.syncdb.commit).toHaveBeenCalled();
   });
 
+  it("resets a thread by creating a fresh empty thread with copied codex settings", async () => {
+    const actions = makeActions();
+    actions.getThreadMetadata = jest.fn().mockReturnValue({
+      name: "Codex",
+      thread_color: "#123456",
+      thread_accent_color: "#abcdef",
+      thread_icon: "robot",
+      thread_image: "https://example.com/thread.png",
+      agent_kind: "acp",
+      agent_model: "gpt-5.4",
+    });
+    actions.getCodexConfig = jest.fn().mockReturnValue({
+      model: "gpt-5.4",
+      sessionMode: "workspace-write",
+      reasoning: "high",
+    });
+    actions.setThreadPin = jest.fn().mockImplementation(() => true);
+    actions.renameThread = jest.fn().mockImplementation(() => true);
+
+    const threadId = actions.resetThread("thread-old", {
+      renameSourceTo: "Previous Codex",
+      pinNewThread: true,
+      unpinSourceThread: true,
+    });
+
+    expect(threadId).toBeTruthy();
+    const cfgSet = actions.syncdb.set.mock.calls
+      .map((x) => x[0])
+      .find(
+        (row: any) =>
+          row?.event === "chat-thread-config" && row?.thread_id === threadId,
+      );
+    expect(cfgSet).toBeTruthy();
+    expect(cfgSet.name).toBe("Codex");
+    expect(cfgSet.thread_color).toBe("#123456");
+    expect(cfgSet.thread_accent_color).toBe("#abcdef");
+    expect(cfgSet.thread_icon).toBe("robot");
+    expect(cfgSet.thread_image).toBe("https://example.com/thread.png");
+    expect(cfgSet.agent_kind).toBe("acp");
+    expect(cfgSet.agent_mode).toBe("interactive");
+    expect(cfgSet.agent_model).toBe("gpt-5.4");
+    expect(cfgSet.acp_config).toEqual(
+      expect.objectContaining({
+        model: "gpt-5.4",
+        sessionMode: "workspace-write",
+        reasoning: "high",
+      }),
+    );
+    expect(actions.renameThread).toHaveBeenCalledWith(
+      "thread-old",
+      "Previous Codex",
+    );
+    expect(actions.setThreadPin).toHaveBeenNthCalledWith(
+      1,
+      "thread-old",
+      false,
+    );
+    expect(actions.setThreadPin).toHaveBeenNthCalledWith(2, threadId, true);
+    expect(actions.setSelectedThread).toHaveBeenCalledWith(threadId);
+  });
+
   it("passes normalized new-thread codex config directly to ACP dispatch", async () => {
     const actions = makeActions();
 

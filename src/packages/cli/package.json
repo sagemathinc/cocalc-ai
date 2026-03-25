@@ -22,7 +22,7 @@
     "publish:sea": "cd sea && ./publish-sea.sh",
     "publish:sea:signed": "pnpm sea:signed && pnpm publish:sea",
     "publish:site": "cd site && ./publish-site.sh",
-    "test": "pnpm build && node --test dist/core/*.test.js"
+    "test": "pnpm build && node --test $(find dist -name '*.test.js' -print)"
   },
   "files": [
     "dist/**",
@@ -61,6 +61,7 @@
   "author": "SageMath, Inc.",
   "license": "SEE LICENSE.md",
   "dependencies": {
+    "@cocalc/app-notebook": "workspace:*",
     "@cocalc/app-tasks": "workspace:*",
     "@cocalc/chat": "workspace:*",
     "@cocalc/comm": "workspace:*",

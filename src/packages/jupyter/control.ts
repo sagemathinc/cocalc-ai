@@ -208,6 +208,50 @@ export async function restoreKernelFromIpynb({
   return true;
 }
 
+export async function hydrateNotebookFromIpynbIfNeeded({
+  actions,
+  fs,
+  path,
+}: {
+  actions: Pick<JupyterActions, "syncdb" | "setToIpynb">;
+  fs: Pick<Filesystem, "readFile">;
+  path: string;
+}): Promise<boolean> {
+  const existing = actions.syncdb.get({ type: "cell" });
+  const existingCount =
+    typeof existing?.size === "number"
+      ? existing.size
+      : Array.isArray(existing)
+        ? existing.length
+        : existing == null
+          ? 0
+          : 1;
+  if (existingCount > 0) {
+    return false;
+  }
+  const notebookPath = ipynbPath(path);
+  let raw: Buffer | Uint8Array | string;
+  try {
+    raw = await fs.readFile(notebookPath);
+  } catch (err) {
+    if (!notebookPath.startsWith("/") || (err as any)?.code !== "ENOENT") {
+      throw err;
+    }
+    raw = await readFileAbsolute(notebookPath);
+  }
+  const content = Buffer.from(raw);
+  if (content.length === 0) {
+    return false;
+  }
+  const ipynb = JSON.parse(content.toString());
+  const cells = Array.isArray(ipynb?.cells) ? ipynb.cells : [];
+  if (cells.length === 0) {
+    return false;
+  }
+  await actions.setToIpynb(ipynb);
+  return true;
+}
+
 export function isRunning(path): boolean {
   return jupyterActions[ipynbPath(path)] != null;
 }
@@ -255,6 +299,7 @@ export async function start({
     return;
   }
   try {
+    await hydrateNotebookFromIpynbIfNeeded({ actions, fs: syncFs, path });
     await restoreKernelFromIpynb({ actions, fs: syncFs, path });
   } catch (err) {
     logger.debug("start: failed to initialize kernel from disk", {

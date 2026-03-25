@@ -110,6 +110,10 @@ export type ProjectCommandDeps = {
   PROJECT_HOST_HTTP_AUTH_QUERY_PARAM: string;
   resolveProjectProjectApi: any;
   projectJupyterCellsData: any;
+  projectJupyterSetCellData: any;
+  projectJupyterInsertCellData: any;
+  projectJupyterDeleteCellsData: any;
+  projectJupyterMoveCellData: any;
   projectJupyterRunSession: any;
   projectJupyterLiveRunSession: any;
 };

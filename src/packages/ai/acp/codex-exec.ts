@@ -74,6 +74,12 @@ function getCoCalcRuntimeGuidanceHeader(cliCommand: string): string {
     "- COCALC_API_URL",
     "- COCALC_BEARER_TOKEN",
     "Prefer high-signal commands over raw browser scripts when available.",
+    "For notebook edits/execution that must survive browser refresh or disconnect, prefer `cocalc project jupyter -h` over `browser exec`.",
+    "For multi-step notebook work, prefer `cocalc project jupyter exec --path ... --stdin` for ad hoc snippets or `--file <script.js>` for saved scripts instead of shelling multiple notebook commands.",
+    "Use `cocalc project jupyter exec-api` to inspect the ambient notebook script API before writing a multi-step script. `api.notebook.run(...)` returns `run.run_id`.",
+    "Treat the live in-memory notebook state as the source of truth for live notebook work.",
+    "Do not read or edit `.ipynb` JSON directly for live notebook inspection or mutation unless the user explicitly asks for filesystem-level work.",
+    "Use `browser exec` only for UI-only notebook context such as selection or viewport state.",
     "For questions like 'tell me about my browser workspaces', start with:",
     `1) Inspect live workspace state: ${cliCommand} browser workspace-state --project-id \"$COCALC_PROJECT_ID\" --browser \"$COCALC_BROWSER_ID\"`,
     `2) Inspect API: ${cliCommand} browser exec-api --browser \"$COCALC_BROWSER_ID\"`,
@@ -222,7 +228,7 @@ export class CodexExecAgent implements AcpAgent {
     }
     const preContentCache = this.createPreContentCache();
     void this.capturePreContentsFromText(prompt, cwd, preContentCache);
-    const args = this.buildArgs(config, cwd);
+    const args = this.buildArgs(config, cwd, request.local_images);
     const projectSpawner = getCodexProjectSpawner();
     const projectId = request.chat?.project_id ?? request.project_id;
     const accountId = request.account_id;
@@ -663,13 +669,15 @@ export class CodexExecAgent implements AcpAgent {
   private buildArgs(
     config: CodexSessionConfig | undefined,
     cwd: string,
+    localImages?: string[],
   ): string[] {
-    const args: string[] = [
-      "--search",
-      "exec",
-      "--experimental-json",
-      "--skip-git-repo-check",
-    ];
+    const args: string[] = ["--search"];
+    for (const imagePath of localImages ?? []) {
+      const trimmed = `${imagePath ?? ""}`.trim();
+      if (!trimmed) continue;
+      args.push("--image", trimmed);
+    }
+    args.push("exec", "--experimental-json", "--skip-git-repo-check");
     if (cwd) {
       args.push("--cd", cwd);
     }

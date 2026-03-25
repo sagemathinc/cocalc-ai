@@ -44,6 +44,47 @@ export interface BoundJupyterDocument<Project extends ProjectIdentity> {
     cells: NotebookCellInfo[];
   }>;
 
+  setCell(options: {
+    cellId: string;
+    input?: string;
+    cellType?: string;
+  }): Promise<{
+    project: Project;
+    path: string;
+    cell: NotebookCellInfo;
+  }>;
+
+  insertCell(options: {
+    afterId?: string;
+    beforeId?: string;
+    atStart?: boolean;
+    atEnd?: boolean;
+    input?: string;
+    cellType?: string;
+  }): Promise<{
+    project: Project;
+    path: string;
+    cell: NotebookCellInfo;
+  }>;
+
+  deleteCells(options: { cellIds: string[] }): Promise<{
+    project: Project;
+    path: string;
+    deleted: string[];
+  }>;
+
+  moveCell(options: {
+    cellId: string;
+    beforeId?: string;
+    afterId?: string;
+    atStart?: boolean;
+    atEnd?: boolean;
+  }): Promise<{
+    project: Project;
+    path: string;
+    cell: NotebookCellInfo;
+  }>;
+
   run(options: JupyterRunOptions): Promise<ProjectJupyterRunSession>;
 }
 
@@ -113,6 +154,97 @@ export function createJupyterApi<Ctx, Project extends ProjectIdentity>({
             ).project,
             path: result.path,
             cells: result.cells,
+          };
+        },
+        async setCell(options) {
+          const result = await ops.projectJupyterSetCellData({
+            ctx,
+            projectIdentifier: binding.projectIdentifier,
+            path: binding.path,
+            cwd: binding.cwd,
+            cellId: options.cellId,
+            input: options.input,
+            cellType: options.cellType,
+          });
+          return {
+            project: (
+              await resolveProjectConatClient(
+                ctx,
+                binding.projectIdentifier,
+                binding.cwd,
+              )
+            ).project,
+            path: result.path,
+            cell: result.cell!,
+          };
+        },
+        async insertCell(options) {
+          const result = await ops.projectJupyterInsertCellData({
+            ctx,
+            projectIdentifier: binding.projectIdentifier,
+            path: binding.path,
+            cwd: binding.cwd,
+            afterId: options.afterId,
+            beforeId: options.beforeId,
+            atStart: options.atStart,
+            atEnd: options.atEnd,
+            input: options.input,
+            cellType: options.cellType,
+          });
+          return {
+            project: (
+              await resolveProjectConatClient(
+                ctx,
+                binding.projectIdentifier,
+                binding.cwd,
+              )
+            ).project,
+            path: result.path,
+            cell: result.cell!,
+          };
+        },
+        async deleteCells(options) {
+          const result = await ops.projectJupyterDeleteCellsData({
+            ctx,
+            projectIdentifier: binding.projectIdentifier,
+            path: binding.path,
+            cwd: binding.cwd,
+            cellIds: options.cellIds,
+          });
+          return {
+            project: (
+              await resolveProjectConatClient(
+                ctx,
+                binding.projectIdentifier,
+                binding.cwd,
+              )
+            ).project,
+            path: result.path,
+            deleted: result.deleted ?? [],
+          };
+        },
+        async moveCell(options) {
+          const result = await ops.projectJupyterMoveCellData({
+            ctx,
+            projectIdentifier: binding.projectIdentifier,
+            path: binding.path,
+            cwd: binding.cwd,
+            cellId: options.cellId,
+            beforeId: options.beforeId,
+            afterId: options.afterId,
+            atStart: options.atStart,
+            atEnd: options.atEnd,
+          });
+          return {
+            project: (
+              await resolveProjectConatClient(
+                ctx,
+                binding.projectIdentifier,
+                binding.cwd,
+              )
+            ).project,
+            path: result.path,
+            cell: result.cell!,
           };
         },
         async run(runOptions) {

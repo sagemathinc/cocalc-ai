@@ -125,6 +125,19 @@ export type BrowserExecApi = {
       tag?: string;
       timestamp: string;
     }>;
+    clearThread: (opts: {
+      workspace_id: string;
+      open?: boolean;
+      foreground?: boolean;
+    }) => Promise<{
+      ok: true;
+      workspace_id: string;
+      chat_path: string;
+      assigned: boolean;
+      opened: boolean;
+      previous_thread_id?: string;
+      thread_id: string;
+    }>;
   };
   notebook: {
     listCells: (path: string) => Promise<
