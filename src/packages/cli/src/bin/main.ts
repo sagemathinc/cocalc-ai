@@ -60,6 +60,7 @@ import {
   hubCallByName as hubCallByNameCore,
   withTimeout,
 } from "./core/context";
+import { isProjectScopedRemoteForProject } from "./core/remote-scope";
 import {
   listHosts as listHostsCore,
   normalizeUserSearchName as normalizeUserSearchNameCore,
@@ -1467,7 +1468,8 @@ async function resolveProjectConatClient(
   const envProjectId = `${process.env.COCALC_PROJECT_ID ?? ""}`.trim();
   if (
     isValidUUID(envProjectId) &&
-    (!explicitIdentifier || explicitIdentifier === envProjectId)
+    (!explicitIdentifier || explicitIdentifier === envProjectId) &&
+    isProjectScopedRemoteForProject(ctx.remote, envProjectId)
   ) {
     return {
       project: {
