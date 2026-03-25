@@ -14,6 +14,7 @@ import {
   Space,
   Tag,
   Typography,
+  message,
 } from "antd";
 
 import { useStore, useTypedRedux } from "@cocalc/frontend/app-framework";
@@ -136,6 +137,7 @@ export function StudentProjectRootfsConfig({ actions, name, settings }: Props) {
           />
           {targetEntry?.description ? (
             <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
+              <Typography.Text strong>Image description:</Typography.Text>{" "}
               {targetEntry.description}
             </Typography.Paragraph>
           ) : null}
@@ -145,6 +147,11 @@ export function StudentProjectRootfsConfig({ actions, name, settings }: Props) {
         setApplying(true);
         try {
           await actions.student_projects.set_all_student_project_rootfs();
+          message.success(
+            `Changed the RootFS image for ${existingStudentProjectCount} student project${
+              existingStudentProjectCount === 1 ? "" : "s"
+            }.`,
+          );
         } finally {
           setApplying(false);
         }

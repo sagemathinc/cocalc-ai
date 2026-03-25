@@ -278,7 +278,11 @@ export default function RootFilesystemImage() {
     return () => {
       active = false;
     };
-  }, [project_id]);
+  }, [
+    project_id,
+    project?.get("rootfs_image"),
+    project?.get("rootfs_image_id"),
+  ]);
 
   useEffect(() => {
     const ops = rootfsPublishOps?.toJS() ?? {};
