@@ -67,6 +67,14 @@ const FEATURE_DETAIL_COMPONENTS = {
   x11: X11FeaturePage,
 } as const;
 
+const FEATURE_INDEX_PRIORITY = [
+  "ai",
+  "compare",
+  "jupyter-notebook",
+  "terminal",
+  "teaching",
+] as const;
+
 function titleForRoute(route: PublicFeaturesRoute, siteName: string): string {
   if (route.view === "detail" && route.slug) {
     return `${getFeaturePage(route.slug)?.title ?? "Features"} – ${siteName}`;
@@ -75,7 +83,20 @@ function titleForRoute(route: PublicFeaturesRoute, siteName: string): string {
 }
 
 function FeaturesIndex({ siteName }: { siteName: string }) {
-  const pages = getFeatureIndexPages();
+  const priorities = new Map<string, number>(
+    FEATURE_INDEX_PRIORITY.map((slug, index) => [slug, index]),
+  );
+  const pages = getFeatureIndexPages()
+    .map((page, index) => ({ index, page }))
+    .sort((a, b) => {
+      const aPriority = priorities.get(a.page.slug);
+      const bPriority = priorities.get(b.page.slug);
+      if (aPriority != null || bPriority != null) {
+        return (aPriority ?? 100) - (bPriority ?? 100);
+      }
+      return a.index - b.index;
+    })
+    .map(({ page }) => page);
   return (
     <>
       <Paragraph style={{ margin: "24px 0 0", maxWidth: "70ch" }}>
@@ -85,6 +106,64 @@ function FeaturesIndex({ siteName }: { siteName: string }) {
         the same projects, files, and collaboration features inside the main
         app.
       </Paragraph>
+      <PublicSectionCard>
+        <Title level={3} style={{ margin: 0 }}>
+          The new direction is increasingly agent-first
+        </Title>
+        <Paragraph style={{ margin: 0 }}>
+          CoCalc still matters for notebooks, terminals, teaching, and technical
+          writing. The new CoCalc AI direction adds something more: coding
+          agents that work inside the same collaborative projects where the
+          files, notebooks, shells, and conversations already live.
+        </Paragraph>
+        <Paragraph style={{ margin: 0 }}>
+          That is a different model from bolting a generic chat box onto a
+          notebook product. It is about making agents useful for real technical
+          work, especially around Codex, inside the broader workspace.
+        </Paragraph>
+        <Flex wrap gap={12}>
+          <Button type="primary" href={featurePath("ai")}>
+            AI agents
+          </Button>
+          <Button href={featurePath("compare")}>Compare CoCalc</Button>
+        </Flex>
+      </PublicSectionCard>
+      <Row gutter={[16, 16]} style={{ marginTop: 8 }}>
+        <Col xs={24} md={8}>
+          <PublicSectionCard>
+            <Title level={4} style={{ margin: 0 }}>
+              Integrated technical projects
+            </Title>
+            <Paragraph style={{ margin: 0 }}>
+              Keep notebooks, Linux tools, documents, slides, and support in one
+              place instead of spreading work across separate services.
+            </Paragraph>
+          </PublicSectionCard>
+        </Col>
+        <Col xs={24} md={8}>
+          <PublicSectionCard>
+            <Title level={4} style={{ margin: 0 }}>
+              Agent-native workflows
+            </Title>
+            <Paragraph style={{ margin: 0 }}>
+              Use AI where the technical work is already happening, not only in
+              a detached prompt interface.
+            </Paragraph>
+          </PublicSectionCard>
+        </Col>
+        <Col xs={24} md={8}>
+          <PublicSectionCard>
+            <Title level={4} style={{ margin: 0 }}>
+              Teaching and deployment flexibility
+            </Title>
+            <Paragraph style={{ margin: 0 }}>
+              Support classes, research groups, and engineering teams, whether
+              you stay hosted or move to CoCalc Plus, Launchpad, or custom
+              deployment.
+            </Paragraph>
+          </PublicSectionCard>
+        </Col>
+      </Row>
       <Row gutter={[16, 16]} style={{ marginTop: 8 }}>
         {pages.map((page) => (
           <Col key={page.slug} xs={24} md={12} xl={8}>

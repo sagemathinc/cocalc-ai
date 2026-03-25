@@ -43,6 +43,9 @@ describe("PublicFeaturesApp", () => {
     expect(
       screen.getByRole("heading", { name: "Launchpad features" }),
     ).not.toBeNull();
+    expect(
+      screen.getByText("The new direction is increasingly agent-first"),
+    ).not.toBeNull();
     expect(screen.getByText("Jupyter Notebooks")).not.toBeNull();
     expect(screen.getByText("Linux Terminal")).not.toBeNull();
   });
