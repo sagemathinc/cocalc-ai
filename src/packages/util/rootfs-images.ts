@@ -19,6 +19,17 @@ export type RootfsScanStatus =
   | "clean"
   | "findings"
   | "error";
+export type RootfsImageEventType =
+  | "catalog_created"
+  | "hidden"
+  | "unhidden"
+  | "blocked"
+  | "unblocked"
+  | "deleted"
+  | "release_gc_pending"
+  | "release_gc_blocked"
+  | "release_gc_deleted"
+  | "release_gc_failed";
 export type RootfsImageSection =
   | "official"
   | "mine"
@@ -53,6 +64,10 @@ export type RootfsImageEntry = {
   release_id?: string;
   label: string;
   image: string;
+  family?: string;
+  version?: string;
+  channel?: string;
+  supersedes_image_id?: string;
   description?: string;
   digest?: string;
   arch?: RootfsImageArch | RootfsImageArch[];
@@ -74,6 +89,7 @@ export type RootfsImageEntry = {
   warning?: RootfsImageWarning;
   theme?: RootfsImageTheme;
   can_manage?: boolean;
+  scan?: RootfsScanSummary;
 };
 
 export type RootfsImageManifest = {
@@ -87,6 +103,10 @@ export type RootfsCatalogSaveBody = {
   image_id?: string;
   image: string;
   label: string;
+  family?: string;
+  version?: string;
+  channel?: string;
+  supersedes_image_id?: string;
   description?: string;
   visibility?: RootfsImageVisibility;
   arch?: RootfsImageArch | RootfsImageArch[];
@@ -104,6 +124,10 @@ export type RootfsCatalogSaveBody = {
 export type PublishProjectRootfsBody = {
   project_id: string;
   label: string;
+  family?: string;
+  version?: string;
+  channel?: string;
+  supersedes_image_id?: string;
   description?: string;
   visibility?: RootfsImageVisibility;
   tags?: string[];
@@ -214,16 +238,33 @@ export type RootfsDeleteRequestResult = {
   blockers: RootfsDeleteBlockers;
 };
 
+export type RootfsImageEvent = {
+  event_id: string;
+  image_id: string;
+  release_id?: string;
+  event_type: RootfsImageEventType;
+  actor_account_id?: string;
+  actor_name?: string;
+  reason?: string;
+  payload?: Record<string, any>;
+  created: string;
+};
+
 export type RootfsAdminCatalogEntry = RootfsImageEntry & {
   deleted?: boolean;
   deleted_reason?: string;
   deleted_at?: string;
   deleted_by?: string;
+  hidden_at?: string;
+  hidden_by?: string;
+  blocked_at?: string;
+  blocked_by?: string;
   release_gc_status?: RootfsReleaseGcStatus;
   delete_blockers?: RootfsDeleteBlockers;
   scan_status?: RootfsScanStatus;
   scan_tool?: string;
   scanned_at?: string;
+  events?: RootfsImageEvent[];
 };
 
 export type ProjectRootfsStateEntry = {

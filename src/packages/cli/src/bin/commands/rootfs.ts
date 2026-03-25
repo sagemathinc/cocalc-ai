@@ -3,6 +3,7 @@ import type {
   RootfsAdminCatalogEntry,
   RootfsDeleteRequestResult,
   RootfsImageEntry,
+  RootfsImageEvent,
   RootfsImageSection,
   RootfsImageTheme,
   RootfsImageVisibility,
@@ -85,6 +86,10 @@ function serializeRootfsImageEntry(entry: RootfsImageEntry) {
     image_id: entry.id,
     label: entry.label,
     image: entry.image,
+    family: entry.family ?? null,
+    version: entry.version ?? null,
+    channel: entry.channel ?? null,
+    supersedes_image_id: entry.supersedes_image_id ?? null,
     section: entry.section ?? null,
     visibility: entry.visibility ?? null,
     official: !!entry.official,
@@ -102,6 +107,7 @@ function serializeRootfsImageEntry(entry: RootfsImageEntry) {
     description: entry.description ?? null,
     tags: entry.tags ?? [],
     can_manage: !!entry.can_manage,
+    scan: entry.scan ?? null,
   };
 }
 
@@ -110,6 +116,10 @@ function serializeRootfsAdminEntry(entry: RootfsAdminCatalogEntry) {
     ...serializeRootfsImageEntry(entry),
     deleted: !!entry.deleted,
     deleted_reason: entry.deleted_reason ?? null,
+    hidden_at: entry.hidden_at ?? null,
+    hidden_by: entry.hidden_by ?? null,
+    blocked_at: entry.blocked_at ?? null,
+    blocked_by: entry.blocked_by ?? null,
     deleted_at: entry.deleted_at ?? null,
     deleted_by: entry.deleted_by ?? null,
     release_id: entry.release_id ?? null,
@@ -118,7 +128,19 @@ function serializeRootfsAdminEntry(entry: RootfsAdminCatalogEntry) {
     scan_status: entry.scan_status ?? null,
     scan_tool: entry.scan_tool ?? null,
     scanned_at: entry.scanned_at ?? null,
+    events: entry.events ?? [],
   };
+}
+
+function formatRootfsEventHuman(event: RootfsImageEvent): string {
+  const who = event.actor_name ?? event.actor_account_id ?? "-";
+  const details =
+    event.reason ??
+    event.payload?.blocked_reason ??
+    (event.payload?.blockers?.total != null
+      ? `blockers=${event.payload.blockers.total}`
+      : "");
+  return `${event.created} ${event.event_type} by ${who}${details ? ` (${details})` : ""}`;
 }
 
 function wrapField({
@@ -181,11 +203,24 @@ function formatRootfsEntriesHuman(
       if (entry.digest) {
         lines.push(`   digest: ${entry.digest}`);
       }
+      if (entry.family || entry.version || entry.channel) {
+        lines.push(
+          `   release: family=${entry.family ?? "-"} version=${entry.version ?? "-"} channel=${entry.channel ?? "-"}`,
+        );
+      }
+      if (entry.supersedes_image_id) {
+        lines.push(`   supersedes: ${entry.supersedes_image_id}`);
+      }
       if (entry.size_gb != null) {
         lines.push(`   size_gb: ${entry.size_gb}`);
       }
       if (entry.warning && entry.warning !== "none") {
         lines.push(`   warning: ${entry.warning}`);
+      }
+      if (entry.scan?.status && entry.scan.status !== "unknown") {
+        lines.push(
+          `   scan: status=${entry.scan.status} tool=${entry.scan.tool ?? "-"} scanned_at=${entry.scan.scanned_at ?? "-"}`,
+        );
       }
       lines.push(
         ...wrapField({
@@ -225,6 +260,29 @@ function formatRootfsAdminEntriesHuman(
       if (entry.blocked && entry.blocked_reason) {
         lines.push(`   blocked_reason: ${entry.blocked_reason}`);
       }
+      if (entry.family || entry.version || entry.channel) {
+        lines.push(
+          `   release: family=${entry.family ?? "-"} version=${entry.version ?? "-"} channel=${entry.channel ?? "-"}`,
+        );
+      }
+      if (entry.supersedes_image_id) {
+        lines.push(`   supersedes: ${entry.supersedes_image_id}`);
+      }
+      if (entry.blocked_at || entry.blocked_by) {
+        lines.push(
+          `   last_blocked: ${entry.blocked_at ?? "-"} by ${entry.blocked_by ?? "-"}`,
+        );
+      }
+      if (entry.hidden_at || entry.hidden_by) {
+        lines.push(
+          `   last_hidden: ${entry.hidden_at ?? "-"} by ${entry.hidden_by ?? "-"}`,
+        );
+      }
+      if (entry.deleted_at || entry.deleted_by) {
+        lines.push(
+          `   deleted_at: ${entry.deleted_at ?? "-"} by ${entry.deleted_by ?? "-"}`,
+        );
+      }
       if (entry.delete_blockers) {
         lines.push(
           `   delete_blockers: total=${entry.delete_blockers.total} projects=${entry.delete_blockers.projects_using_release} catalog=${entry.delete_blockers.catalog_entries_using_release} prepull=${entry.delete_blockers.prepull_entries_using_release} child_releases=${entry.delete_blockers.child_releases}`,
@@ -234,6 +292,18 @@ function formatRootfsAdminEntriesHuman(
         lines.push(
           `   scan: status=${entry.scan_status ?? "unknown"} tool=${entry.scan_tool ?? "-"} scanned_at=${entry.scanned_at ?? "-"}`,
         );
+      }
+      if (entry.scan?.summary) {
+        lines.push(`   scan_summary: ${entry.scan.summary}`);
+      }
+      if (entry.scan?.report_url) {
+        lines.push(`   scan_report: ${entry.scan.report_url}`);
+      }
+      if (entry.events?.length) {
+        lines.push("   recent_events:");
+        for (const event of entry.events) {
+          lines.push(`     - ${formatRootfsEventHuman(event)}`);
+        }
       }
       lines.push(
         ...wrapField({
@@ -593,6 +663,13 @@ export function registerRootfsCommand(
     .requiredOption("--image <image>", "runtime image reference")
     .requiredOption("--label <label>", "catalog label")
     .option("--image-id <id>", "update an existing catalog entry by id")
+    .option("--family <family>", "optional image family for upgrade grouping")
+    .option("--version <version>", "optional user-facing image version")
+    .option("--channel <channel>", "optional release channel, e.g. stable")
+    .option(
+      "--supersedes-image-id <id>",
+      "optional catalog image id superseded by this entry",
+    )
     .option("--description <text>", "catalog description")
     .option("--visibility <visibility>", "private, collaborators, or public")
     .option("--tags <csv>", "comma-separated tags")
@@ -606,6 +683,10 @@ export function registerRootfsCommand(
           image: string;
           label: string;
           imageId?: string;
+          family?: string;
+          version?: string;
+          channel?: string;
+          supersedesImageId?: string;
           description?: string;
           visibility?: string;
           tags?: string;
@@ -621,6 +702,10 @@ export function registerRootfsCommand(
             image_id: `${opts.imageId ?? ""}`.trim() || undefined,
             image: opts.image,
             label: opts.label,
+            family: opts.family,
+            version: opts.version,
+            channel: opts.channel,
+            supersedes_image_id: opts.supersedesImageId,
             description: opts.description,
             visibility: parseVisibility(opts.visibility),
             tags: parseTags(opts.tags),
@@ -639,6 +724,13 @@ export function registerRootfsCommand(
     .description("publish the current RootFS state of a project")
     .option("-w, --project <project>", "project id or name")
     .requiredOption("--label <label>", "catalog label for the published image")
+    .option("--family <family>", "optional image family for upgrade grouping")
+    .option("--version <version>", "optional user-facing image version")
+    .option("--channel <channel>", "optional release channel, e.g. stable")
+    .option(
+      "--supersedes-image-id <id>",
+      "optional catalog image id superseded by this entry",
+    )
     .option("--description <text>", "catalog description")
     .option("--visibility <visibility>", "private, collaborators, or public")
     .option("--tags <csv>", "comma-separated tags")
@@ -652,6 +744,10 @@ export function registerRootfsCommand(
         opts: {
           project?: string;
           label: string;
+          family?: string;
+          version?: string;
+          channel?: string;
+          supersedesImageId?: string;
           description?: string;
           visibility?: string;
           tags?: string;
@@ -668,6 +764,10 @@ export function registerRootfsCommand(
           const op = await ctx.hub.system.publishProjectRootfsImage({
             project_id: ws.project_id,
             label: opts.label,
+            family: opts.family,
+            version: opts.version,
+            channel: opts.channel,
+            supersedes_image_id: opts.supersedesImageId,
             description: opts.description,
             visibility: parseVisibility(opts.visibility),
             tags: parseTags(opts.tags),

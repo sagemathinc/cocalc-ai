@@ -5,6 +5,10 @@
 
 import getPool from "@cocalc/database/pool";
 import isAdmin from "@cocalc/server/accounts/is-admin";
+import {
+  appendRootfsImageEvent,
+  listRecentRootfsImageEvents,
+} from "@cocalc/server/rootfs/events";
 import { v4 } from "uuid";
 import type {
   RootfsAdminCatalogEntry,
@@ -21,6 +25,7 @@ import type {
   RootfsImageVisibility,
   RootfsImageWarning,
   RootfsReleaseGcStatus,
+  RootfsScanSummary,
 } from "@cocalc/util/rootfs-images";
 import {
   BUILTIN_ROOTFS_IMAGES,
@@ -36,6 +41,10 @@ type RootfsImageRow = {
   owner_id: string | null;
   runtime_image: string;
   label: string;
+  family: string | null;
+  version: string | null;
+  channel: string | null;
+  supersedes_image_id: string | null;
   description: string | null;
   visibility: RootfsImageVisibility | null;
   official: boolean | null;
@@ -43,10 +52,14 @@ type RootfsImageRow = {
   hidden: boolean | null;
   blocked: boolean | null;
   blocked_reason: string | null;
+  blocked_at: Date | null;
+  blocked_by: string | null;
   deleted: boolean | null;
   deleted_reason: string | null;
   deleted_at: Date | null;
   deleted_by: string | null;
+  hidden_at: Date | null;
+  hidden_by: string | null;
   arch: string | null;
   gpu: boolean | null;
   size_gb: number | null;
@@ -62,6 +75,17 @@ type RootfsImageRow = {
   scan_status: string | null;
   scan_tool: string | null;
   scanned_at: Date | null;
+  scan_summary: RootfsScanSummary | null;
+};
+
+type RootfsLifecycleSnapshot = {
+  image_id: string;
+  release_id: string | null;
+  owner_id: string | null;
+  hidden: boolean | null;
+  blocked: boolean | null;
+  blocked_reason: string | null;
+  deleted: boolean | null;
 };
 
 function trimString(value: unknown): string | undefined {
@@ -161,6 +185,10 @@ function rowToEntry({
       release_id: row.release_id ?? undefined,
       label: row.label || row.runtime_image,
       image: row.runtime_image,
+      family: row.family ?? undefined,
+      version: row.version ?? undefined,
+      channel: row.channel ?? undefined,
+      supersedes_image_id: row.supersedes_image_id ?? undefined,
       description: row.description ?? undefined,
       digest: row.digest ?? undefined,
       arch: row.arch ? [row.arch as any] : undefined,
@@ -180,6 +208,16 @@ function rowToEntry({
       section,
       warning: warningFor(section),
       theme: row.theme ?? undefined,
+      scan:
+        row.scan_status || row.scan_tool || row.scanned_at || row.scan_summary
+          ? {
+              ...(row.scan_summary ?? {}),
+              status: (row.scan_status as any) ?? row.scan_summary?.status,
+              tool: row.scan_tool ?? row.scan_summary?.tool,
+              scanned_at:
+                row.scanned_at?.toISOString() ?? row.scan_summary?.scanned_at,
+            }
+          : undefined,
       can_manage:
         admin ||
         (!!account_id && !!row.owner_id && row.owner_id === account_id),
@@ -204,6 +242,10 @@ function rowToAdminEntry({
         release_id: row.release_id ?? undefined,
         label: row.label || row.runtime_image,
         image: row.runtime_image,
+        family: row.family ?? undefined,
+        version: row.version ?? undefined,
+        channel: row.channel ?? undefined,
+        supersedes_image_id: row.supersedes_image_id ?? undefined,
         description: row.description ?? undefined,
         digest: row.digest ?? undefined,
         arch: row.arch ? [row.arch as any] : undefined,
@@ -222,6 +264,16 @@ function rowToAdminEntry({
         owner_name: fullName(row),
         warning: "none",
         theme: row.theme ?? undefined,
+        scan:
+          row.scan_status || row.scan_tool || row.scanned_at || row.scan_summary
+            ? {
+                ...(row.scan_summary ?? {}),
+                status: (row.scan_status as any) ?? row.scan_summary?.status,
+                tool: row.scan_tool ?? row.scan_summary?.tool,
+                scanned_at:
+                  row.scanned_at?.toISOString() ?? row.scan_summary?.scanned_at,
+              }
+            : undefined,
         can_manage:
           admin ||
           (!!account_id && !!row.owner_id && row.owner_id === account_id),
@@ -230,6 +282,10 @@ function rowToAdminEntry({
     ),
     deleted: row.deleted ?? false,
     deleted_reason: row.deleted_reason ?? undefined,
+    hidden_at: row.hidden_at?.toISOString(),
+    hidden_by: row.hidden_by ?? undefined,
+    blocked_at: row.blocked_at?.toISOString(),
+    blocked_by: row.blocked_by ?? undefined,
     deleted_at: row.deleted_at?.toISOString(),
     deleted_by: row.deleted_by ?? undefined,
     release_gc_status: row.release_gc_status ?? undefined,
@@ -258,8 +314,8 @@ export async function ensureBuiltinRootfsImages(): Promise<void> {
   for (const entry of BUILTIN_ROOTFS_IMAGES) {
     await pool.query(
       `INSERT INTO rootfs_images
-      (image_id, release_id, owner_id, runtime_image, label, description, visibility, official, prepull, hidden, blocked, blocked_reason, deleted, deleted_reason, deleted_at, deleted_by, arch, gpu, size_gb, tags, digest, content_key, deprecated, deprecated_reason, theme, created, updated)
-      VALUES ($1, NULL, NULL, $2, $3, $4, $5, $6, $7, false, false, NULL, false, NULL, NULL, NULL, $8, $9, $10, $11::TEXT[], $12, $13, $14, $15, $16::JSONB, NOW(), NOW())
+      (image_id, release_id, owner_id, runtime_image, label, description, visibility, official, prepull, hidden, hidden_at, hidden_by, blocked, blocked_reason, blocked_at, blocked_by, deleted, deleted_reason, deleted_at, deleted_by, arch, gpu, size_gb, tags, digest, content_key, deprecated, deprecated_reason, theme, created, updated)
+      VALUES ($1, NULL, NULL, $2, $3, $4, $5, $6, $7, false, NULL, NULL, false, NULL, NULL, NULL, false, NULL, NULL, NULL, $8, $9, $10, $11::TEXT[], $12, $13, $14, $15, $16::JSONB, NOW(), NOW())
       ON CONFLICT (image_id) DO NOTHING`,
       [
         entry.id,
@@ -292,13 +348,21 @@ async function queryRootfsRows(): Promise<RootfsImageRow[]> {
       r.owner_id,
       r.runtime_image,
       r.label,
+      r.family,
+      r.version,
+      r.channel,
+      r.supersedes_image_id,
       r.description,
       r.visibility,
       r.official,
       r.prepull,
       r.hidden,
+      r.hidden_at,
+      r.hidden_by,
       r.blocked,
       r.blocked_reason,
+      r.blocked_at,
+      r.blocked_by,
       r.deleted,
       r.deleted_reason,
       r.deleted_at,
@@ -317,7 +381,8 @@ async function queryRootfsRows(): Promise<RootfsImageRow[]> {
       rel.gc_status AS release_gc_status,
       rel.scan_status,
       rel.scan_tool,
-      rel.scanned_at
+      rel.scanned_at,
+      rel.scan_summary
     FROM rootfs_images AS r
     LEFT JOIN accounts AS a ON a.account_id = r.owner_id
     LEFT JOIN rootfs_releases AS rel ON rel.release_id = r.release_id
@@ -373,6 +438,13 @@ export async function listRootfsImagesAdmin(
       });
     }),
   );
+  const eventsByImageId = await listRecentRootfsImageEvents({
+    image_ids: entries.map((entry) => entry.id),
+    limitPerImage: 5,
+  });
+  for (const entry of entries) {
+    entry.events = eventsByImageId.get(entry.id) ?? [];
+  }
   return entries;
 }
 
@@ -414,14 +486,21 @@ async function upsertRootfsRow({
 
   let image_id = trimString(body.image_id);
   let owner_id = account_id;
+  let previous: RootfsLifecycleSnapshot | undefined;
 
   if (image_id) {
     const { rows } = await pool.query<{
       image_id: string;
       owner_id: string | null;
       deleted: boolean | null;
+      release_id: string | null;
+      hidden: boolean | null;
+      blocked: boolean | null;
+      blocked_reason: string | null;
     }>(
-      "SELECT image_id, owner_id, deleted FROM rootfs_images WHERE image_id=$1",
+      `SELECT image_id, owner_id, release_id, hidden, blocked, blocked_reason, deleted
+       FROM rootfs_images
+       WHERE image_id=$1`,
       [image_id],
     );
     const existing = rows[0];
@@ -434,6 +513,7 @@ async function upsertRootfsRow({
     if (existing.deleted) {
       throw Error("deleted rootfs images cannot be updated");
     }
+    previous = existing;
     owner_id = existing.owner_id ?? owner_id;
   } else {
     const { rows } = await pool.query<{ image_id: string }>(
@@ -445,9 +525,22 @@ async function upsertRootfsRow({
       [account_id, image],
     );
     image_id = rows[0]?.image_id ?? v4();
+    if (rows[0]?.image_id) {
+      const existingRows = await pool.query<RootfsLifecycleSnapshot>(
+        `SELECT image_id, owner_id, release_id, hidden, blocked, blocked_reason, deleted
+         FROM rootfs_images
+         WHERE image_id=$1`,
+        [image_id],
+      );
+      previous = existingRows.rows[0];
+    }
   }
 
   const visibility = normalizeVisibility(body.visibility);
+  const family = trimString(body.family) ?? null;
+  const version = trimString(body.version) ?? null;
+  const channel = trimString(body.channel) ?? null;
+  const supersedes_image_id = trimString(body.supersedes_image_id) ?? null;
   const tags = normalizeTags(body.tags);
   const description = trimString(body.description) ?? null;
   const theme = normalizeTheme(body.theme);
@@ -461,27 +554,55 @@ async function upsertRootfsRow({
   const prepull = admin && body.prepull === true;
   const hidden = admin && body.hidden === true;
   const blocked = admin && body.blocked === true;
-  const blocked_reason = blocked
-    ? (trimString(body.blocked_reason) ?? null)
-    : null;
+  const blocked_reason = trimString(body.blocked_reason) ?? null;
 
   await pool.query(
     `INSERT INTO rootfs_images
-      (image_id, release_id, owner_id, runtime_image, label, description, visibility, official, prepull, hidden, blocked, blocked_reason, deleted, deleted_reason, deleted_at, deleted_by, arch, gpu, size_gb, tags, digest, content_key, deprecated, deprecated_reason, theme, created, updated)
+      (image_id, release_id, owner_id, runtime_image, label, family, version, channel, supersedes_image_id, description, visibility, official, prepull, hidden, hidden_at, hidden_by, blocked, blocked_reason, blocked_at, blocked_by, deleted, deleted_reason, deleted_at, deleted_by, arch, gpu, size_gb, tags, digest, content_key, deprecated, deprecated_reason, theme, created, updated)
      VALUES
-      ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, false, NULL, NULL, NULL, $13, $14, $15, $16::TEXT[], $17, $18, false, NULL, $19::JSONB, NOW(), NOW())
+      ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
+       CASE WHEN $14 THEN NOW() ELSE NULL END,
+       CASE WHEN $14 THEN $3 ELSE NULL END,
+       $15,
+       CASE WHEN $15 THEN $16 ELSE NULL END,
+       CASE WHEN $15 THEN NOW() ELSE NULL END,
+       CASE WHEN $15 THEN $3 ELSE NULL END,
+       false, NULL, NULL, NULL, $17, $18, $19, $20::TEXT[], $21, $22, false, NULL, $23::JSONB, NOW(), NOW())
      ON CONFLICT (image_id) DO UPDATE SET
       release_id = COALESCE(EXCLUDED.release_id, rootfs_images.release_id),
       owner_id = EXCLUDED.owner_id,
       runtime_image = EXCLUDED.runtime_image,
       label = EXCLUDED.label,
+      family = COALESCE(EXCLUDED.family, rootfs_images.family),
+      version = COALESCE(EXCLUDED.version, rootfs_images.version),
+      channel = COALESCE(EXCLUDED.channel, rootfs_images.channel),
+      supersedes_image_id = COALESCE(EXCLUDED.supersedes_image_id, rootfs_images.supersedes_image_id),
       description = EXCLUDED.description,
       visibility = EXCLUDED.visibility,
       official = EXCLUDED.official,
       prepull = EXCLUDED.prepull,
       hidden = EXCLUDED.hidden,
+      hidden_at = CASE
+        WHEN EXCLUDED.hidden AND COALESCE(rootfs_images.hidden, false) = false THEN NOW()
+        ELSE rootfs_images.hidden_at
+      END,
+      hidden_by = CASE
+        WHEN EXCLUDED.hidden AND COALESCE(rootfs_images.hidden, false) = false THEN EXCLUDED.owner_id
+        ELSE rootfs_images.hidden_by
+      END,
       blocked = EXCLUDED.blocked,
-      blocked_reason = EXCLUDED.blocked_reason,
+      blocked_reason = CASE
+        WHEN EXCLUDED.blocked THEN COALESCE(EXCLUDED.blocked_reason, rootfs_images.blocked_reason)
+        ELSE rootfs_images.blocked_reason
+      END,
+      blocked_at = CASE
+        WHEN EXCLUDED.blocked AND COALESCE(rootfs_images.blocked, false) = false THEN NOW()
+        ELSE rootfs_images.blocked_at
+      END,
+      blocked_by = CASE
+        WHEN EXCLUDED.blocked AND COALESCE(rootfs_images.blocked, false) = false THEN EXCLUDED.owner_id
+        ELSE rootfs_images.blocked_by
+      END,
       arch = EXCLUDED.arch,
       gpu = EXCLUDED.gpu,
       size_gb = EXCLUDED.size_gb,
@@ -496,6 +617,10 @@ async function upsertRootfsRow({
       owner_id,
       image,
       label,
+      family,
+      version,
+      channel,
+      supersedes_image_id,
       description,
       visibility,
       official,
@@ -512,6 +637,64 @@ async function upsertRootfsRow({
       theme ? JSON.stringify(theme) : null,
     ],
   );
+
+  const effectiveReleaseId = release_id ?? previous?.release_id ?? null;
+  if (!previous) {
+    await appendRootfsImageEvent({
+      image_id,
+      release_id: effectiveReleaseId,
+      event_type: "catalog_created",
+      actor_account_id: account_id,
+      payload: {
+        image,
+        label,
+        family,
+        version,
+        channel,
+        visibility,
+      },
+    });
+  } else {
+    if (!!previous.hidden !== hidden) {
+      await appendRootfsImageEvent({
+        image_id,
+        release_id: effectiveReleaseId,
+        event_type: hidden ? "hidden" : "unhidden",
+        actor_account_id: account_id,
+      });
+    }
+    if (!!previous.blocked !== blocked) {
+      await appendRootfsImageEvent({
+        image_id,
+        release_id: effectiveReleaseId,
+        event_type: blocked ? "blocked" : "unblocked",
+        actor_account_id: account_id,
+        reason: blocked ? blocked_reason : null,
+        payload:
+          blocked && blocked_reason
+            ? {
+                blocked_reason,
+              }
+            : null,
+      });
+    } else if (
+      blocked &&
+      trimString(previous.blocked_reason) !== blocked_reason &&
+      blocked_reason
+    ) {
+      await appendRootfsImageEvent({
+        image_id,
+        release_id: effectiveReleaseId,
+        event_type: "blocked",
+        actor_account_id: account_id,
+        reason: blocked_reason,
+        payload: {
+          blocked_reason,
+          replaced_reason: trimString(previous.blocked_reason) ?? null,
+        },
+      });
+    }
+  }
 
   const manifest = await listVisibleRootfsImages(account_id);
   return {
@@ -556,6 +739,10 @@ export async function saveRootfsImage({
       id: image_id,
       label,
       image,
+      family: body.family,
+      version: body.version,
+      channel: body.channel,
+      supersedes_image_id: body.supersedes_image_id,
       description: description ?? undefined,
       visibility,
       official,
@@ -605,6 +792,10 @@ export async function publishProjectRootfsCatalogEntry({
     body: {
       image: artifact.image,
       label: body.label,
+      family: body.family,
+      version: body.version,
+      channel: body.channel,
+      supersedes_image_id: body.supersedes_image_id,
       description: body.description,
       visibility: body.visibility,
       arch: artifact.arch,
@@ -629,6 +820,10 @@ export async function publishProjectRootfsCatalogEntry({
       release_id: release_id ?? undefined,
       label: body.label,
       image: artifact.image,
+      family: body.family,
+      version: body.version,
+      channel: body.channel,
+      supersedes_image_id: body.supersedes_image_id,
       description: body.description,
       digest: artifact.digest,
       arch: artifact.arch,
@@ -757,6 +952,8 @@ export async function requestRootfsImageDeletion({
   await pool.query(
     `UPDATE rootfs_images
      SET hidden=true,
+         hidden_at = COALESCE(hidden_at, NOW()),
+         hidden_by = COALESCE(hidden_by, $3),
          deleted=true,
          deleted_reason=$2,
          deleted_by=$3,
@@ -786,6 +983,32 @@ export async function requestRootfsImageDeletion({
        WHERE release_id=$1`,
       [row.release_id, release_gc_status, account_id, delete_reason],
     );
+  }
+  await appendRootfsImageEvent({
+    image_id: row.image_id,
+    release_id: row.release_id,
+    event_type: "deleted",
+    actor_account_id: account_id,
+    reason: delete_reason,
+    payload: {
+      release_gc_status,
+      blockers,
+    },
+  });
+  if (row.release_id && release_gc_status) {
+    await appendRootfsImageEvent({
+      image_id: row.image_id,
+      release_id: row.release_id,
+      event_type:
+        release_gc_status === "pending_delete"
+          ? "release_gc_pending"
+          : "release_gc_blocked",
+      actor_account_id: account_id,
+      reason: delete_reason,
+      payload: {
+        blockers,
+      },
+    });
   }
 
   return {

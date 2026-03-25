@@ -8,12 +8,12 @@ Create a new project
 */
 
 import {
+  Alert,
   Button,
   Card,
   Form,
   Input,
   Modal,
-  Radio,
   Select,
   Space,
   Tag,
@@ -43,6 +43,7 @@ import {
   type R2Region,
 } from "@cocalc/util/consts";
 import { capitalize } from "@cocalc/util/misc";
+import { COLORS } from "@cocalc/util/theme";
 import type { Host } from "@cocalc/conat/hub/api/hosts";
 import { SelectNewHost } from "@cocalc/frontend/hosts/select-new-host";
 import {
@@ -338,23 +339,30 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
       >
         <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
           <Paragraph type="secondary" style={{ marginBottom: 0 }}>
-            Pick the base OCI image for this project. You can always change it
-            later in project settings.
+            Pick a managed RootFS image for this project. You can always change
+            it later in project settings.
           </Paragraph>
-          <Radio.Group
-            value={rootfsMode}
-            onChange={(e) => setRootfsMode(e.target.value)}
-          >
-            <Radio value="catalog">Curated images</Radio>
-            <Radio value="custom">Custom image</Radio>
-          </Radio.Group>
           {rootfsMode === "catalog" ? (
             <>
+              <Paragraph type="secondary" style={{ marginBottom: 0 }}>
+                Managed catalog images are the recommended path. They carry
+                visibility, publishing, scanning, and lifecycle metadata.
+              </Paragraph>
               <Select
                 showSearch
                 options={rootfsGroupedOptions}
                 value={rootfsDraftId}
                 placeholder="Select an image"
+                style={{ width: "100%" }}
+                listHeight={420}
+                filterOption={(input, option) =>
+                  rootfsOptionSearchText(option).includes(
+                    input.trim().toLowerCase(),
+                  )
+                }
+                optionRender={(option) =>
+                  renderRootfsCatalogOption((option.data as any).entry)
+                }
                 onChange={(value) => {
                   const next = filteredRootfsImages.find(
                     (entry) => entry.id === value,
@@ -365,17 +373,29 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
                 loading={rootfsLoading}
                 disabled={rootfsLoading}
               />
+              <Button
+                type="link"
+                onClick={() => setRootfsMode("custom")}
+                style={{ paddingLeft: 0, width: "fit-content" }}
+              >
+                Use an advanced OCI or Docker image instead
+              </Button>
               {activeEntry?.description && (
                 <Paragraph type="secondary" style={{ marginBottom: 0 }}>
                   {activeEntry.description}
                 </Paragraph>
               )}
               {activeEntry && renderRootfsWarning(activeEntry)}
+              {activeEntry && renderRootfsScan(activeEntry)}
               <Space wrap>
                 {activeEntry?.section && (
                   <Tag color={sectionTagColor(activeEntry.section)}>
                     {sectionLabel(activeEntry.section)}
                   </Tag>
+                )}
+                {activeEntry?.version && <Tag>{activeEntry.version}</Tag>}
+                {activeEntry?.channel && (
+                  <Tag color="cyan">{activeEntry.channel}</Tag>
                 )}
                 {activeEntry?.gpu && <Tag color="purple">GPU image</Tag>}
                 {activeEntry?.owner_name && activeEntry.section !== "mine" && (
@@ -389,14 +409,39 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
               )}
             </>
           ) : (
-            <Input
-              value={rootfsDraft}
-              placeholder="docker.io/library/ubuntu:24.04"
-              onChange={(e) => {
-                setRootfsDraft(e.target.value);
-                setRootfsDraftId(undefined);
-              }}
-            />
+            <Space
+              orientation="vertical"
+              size="small"
+              style={{ width: "100%" }}
+            >
+              <Alert
+                type="warning"
+                showIcon
+                message="Advanced OCI / Docker image"
+                description={
+                  <>
+                    This bypasses the managed catalog. Some raw OCI images will
+                    break parts of CoCalc if they are missing expected runtime
+                    packages such as certificates or a normal shell/userland.
+                  </>
+                }
+              />
+              <Input
+                value={rootfsDraft}
+                placeholder="docker.io/library/ubuntu:24.04"
+                onChange={(e) => {
+                  setRootfsDraft(e.target.value);
+                  setRootfsDraftId(undefined);
+                }}
+              />
+              <Button
+                type="link"
+                onClick={() => setRootfsMode("catalog")}
+                style={{ paddingLeft: 0, width: "fit-content" }}
+              >
+                Back to managed catalog images
+              </Button>
+            </Space>
           )}
         </Space>
       </Modal>
@@ -425,8 +470,14 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
                 {sectionLabel(selectedRootfsEntry.section)}
               </Tag>
             )}
+            {selectedRootfsEntry?.version && (
+              <Tag>{selectedRootfsEntry.version}</Tag>
+            )}
+            {selectedRootfsEntry?.channel && (
+              <Tag color="cyan">{selectedRootfsEntry.channel}</Tag>
+            )}
             {selectedRootfsEntry?.gpu && <Tag color="purple">GPU</Tag>}
-            {!selectedRootfsEntry && <Tag>Custom</Tag>}
+            {!selectedRootfsEntry && <Tag color="orange">Advanced OCI</Tag>}
           </Space>
           {displayImage && (
             <code style={{ fontSize: "11px", overflowWrap: "anywhere" }}>
@@ -434,6 +485,7 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
             </code>
           )}
           {selectedRootfsEntry && renderRootfsWarning(selectedRootfsEntry)}
+          {selectedRootfsEntry && renderRootfsScan(selectedRootfsEntry)}
           {renderRootfsModal()}
         </Space>
       </Card>
@@ -608,19 +660,124 @@ function groupedRootfsOptions(images: RootfsImageEntry[]) {
     { key: "public", label: "Public images" },
   ];
   return sections.reduce<
-    Array<{ label: string; options: Array<{ value: string; label: string }> }>
+    Array<{
+      label: string;
+      options: Array<{
+        value: string;
+        label: string;
+        searchText: string;
+        entry: RootfsImageEntry;
+      }>;
+    }>
   >((acc, { key, label }) => {
     const options = images
       .filter((entry) => entry.section === key)
       .map((entry) => ({
         value: entry.id,
         label: entry.label || entry.image,
+        entry,
+        searchText: [
+          entry.label,
+          entry.image,
+          entry.description,
+          entry.owner_name,
+          ...(entry.tags ?? []),
+        ]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase(),
       }));
     if (options.length > 0) {
       acc.push({ label, options });
     }
     return acc;
   }, []);
+}
+
+function rootfsOptionSearchText(option?: any): string {
+  return `${option?.searchText ?? option?.data?.searchText ?? ""}`.toLowerCase();
+}
+
+function renderRootfsCatalogOption(entry: RootfsImageEntry) {
+  return (
+    <div
+      style={{
+        padding: "6px 0",
+        lineHeight: "18px",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: "8px",
+          flexWrap: "wrap",
+          marginBottom: "2px",
+        }}
+      >
+        <span style={{ fontWeight: 600 }}>{entry.label || entry.image}</span>
+        {entry.section ? (
+          <Tag
+            color={sectionTagColor(entry.section)}
+            style={{ marginInlineEnd: 0 }}
+          >
+            {sectionLabel(entry.section)}
+          </Tag>
+        ) : null}
+        {entry.version ? (
+          <Tag style={{ marginInlineEnd: 0 }}>{entry.version}</Tag>
+        ) : null}
+        {entry.channel ? (
+          <Tag color="cyan" style={{ marginInlineEnd: 0 }}>
+            {entry.channel}
+          </Tag>
+        ) : null}
+        {entry.gpu ? (
+          <Tag color="purple" style={{ marginInlineEnd: 0 }}>
+            GPU
+          </Tag>
+        ) : null}
+        {entry.scan?.status && entry.scan.status !== "unknown" ? (
+          <Tag
+            color={
+              entry.scan.status === "clean"
+                ? "green"
+                : entry.scan.status === "findings"
+                  ? "orange"
+                  : entry.scan.status === "error"
+                    ? "red"
+                    : "blue"
+            }
+            style={{ marginInlineEnd: 0 }}
+          >
+            scan {entry.scan.status}
+          </Tag>
+        ) : null}
+      </div>
+      <div
+        style={{
+          fontFamily: "monospace",
+          fontSize: "11px",
+          color: COLORS.GRAY_M,
+          overflowWrap: "anywhere",
+          marginBottom: entry.description ? "2px" : 0,
+        }}
+      >
+        {entry.image}
+      </div>
+      {entry.description ? (
+        <div
+          style={{
+            fontSize: "12px",
+            color: COLORS.GRAY_D,
+            overflowWrap: "anywhere",
+          }}
+        >
+          {entry.description}
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 function renderRootfsWarning(
@@ -642,4 +799,28 @@ function renderRootfsWarning(
       </Paragraph>
     );
   }
+}
+
+function renderRootfsScan(
+  entry: RootfsImageEntry,
+): React.JSX.Element | undefined {
+  const scan = entry.scan;
+  if (!scan?.status || scan.status === "unknown") {
+    return;
+  }
+  const color =
+    scan.status === "clean"
+      ? "green"
+      : scan.status === "findings"
+        ? "orange"
+        : scan.status === "error"
+          ? "red"
+          : "blue";
+  return (
+    <Paragraph type="secondary" style={{ marginBottom: 0 }}>
+      <Tag color={color}>Scan: {scan.status}</Tag>
+      {scan.tool ? ` ${scan.tool}` : ""}
+      {scan.summary ? ` - ${scan.summary}` : ""}
+    </Paragraph>
+  );
 }

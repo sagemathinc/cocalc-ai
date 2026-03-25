@@ -20,6 +20,7 @@ import {
   uploadObjectFromFile,
   issueSignedObjectDownload,
 } from "@cocalc/server/project-backup/r2";
+import { appendRootfsImageEventForReleaseImages } from "@cocalc/server/rootfs/events";
 import {
   DEFAULT_R2_REGION,
   mapCloudRegionToR2Region,
@@ -1353,6 +1354,13 @@ export async function gcRootfsRelease({
        WHERE release_id=$1`,
       [release.release_id],
     );
+    await appendRootfsImageEventForReleaseImages({
+      release_id: release.release_id,
+      event_type: "release_gc_deleted",
+      payload: {
+        deleted_replicas: deletedReplicas,
+      },
+    });
     return {
       release_id: release.release_id,
       content_key: release.content_key,
@@ -1369,6 +1377,14 @@ export async function gcRootfsRelease({
        WHERE release_id=$1`,
       [release.release_id],
     );
+    await appendRootfsImageEventForReleaseImages({
+      release_id: release.release_id,
+      event_type: "release_gc_failed",
+      payload: {
+        deleted_replicas: deletedReplicas,
+        error: `${err}`,
+      },
+    });
     return {
       release_id: release.release_id,
       content_key: release.content_key,

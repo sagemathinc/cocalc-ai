@@ -19,7 +19,10 @@ import {
 import { React } from "@cocalc/frontend/app-framework";
 import { ErrorDisplay, Loading, TimeAgo } from "@cocalc/frontend/components";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
-import type { RootfsAdminCatalogEntry } from "@cocalc/util/rootfs-images";
+import type {
+  RootfsAdminCatalogEntry,
+  RootfsImageEvent,
+} from "@cocalc/util/rootfs-images";
 import { plural } from "@cocalc/util/misc";
 
 function lifecycleTags(entry: RootfsAdminCatalogEntry): React.ReactNode[] {
@@ -107,6 +110,140 @@ function blockerSummary(entry: RootfsAdminCatalogEntry): React.ReactNode {
   );
 }
 
+function lifecycleHistory(entry: RootfsAdminCatalogEntry): React.ReactNode {
+  const lines: React.ReactNode[] = [];
+  if (entry.blocked_at || entry.blocked_by) {
+    lines.push(
+      <Typography.Text key="blocked" type="secondary" style={{ fontSize: 12 }}>
+        Last blocked{" "}
+        {entry.blocked_at ? <TimeAgo date={entry.blocked_at} /> : null}
+        {entry.blocked_by ? ` by ${entry.blocked_by}` : ""}
+      </Typography.Text>,
+    );
+  }
+  if (entry.hidden_at || entry.hidden_by) {
+    lines.push(
+      <Typography.Text key="hidden" type="secondary" style={{ fontSize: 12 }}>
+        Last hidden{" "}
+        {entry.hidden_at ? <TimeAgo date={entry.hidden_at} /> : null}
+        {entry.hidden_by ? ` by ${entry.hidden_by}` : ""}
+      </Typography.Text>,
+    );
+  }
+  if (entry.deleted_at || entry.deleted_by) {
+    lines.push(
+      <Typography.Text key="deleted" type="secondary" style={{ fontSize: 12 }}>
+        Deleted {entry.deleted_at ? <TimeAgo date={entry.deleted_at} /> : null}
+        {entry.deleted_by ? ` by ${entry.deleted_by}` : ""}
+      </Typography.Text>,
+    );
+  }
+  if (!lines.length) {
+    return (
+      <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+        No lifecycle history yet
+      </Typography.Text>
+    );
+  }
+  return (
+    <Space direction="vertical" size={0}>
+      {lines}
+    </Space>
+  );
+}
+
+function releaseMetadata(entry: RootfsAdminCatalogEntry): React.ReactNode {
+  if (!entry.family && !entry.version && !entry.channel) {
+    return null;
+  }
+  return (
+    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+      {[
+        entry.family ? `family=${entry.family}` : null,
+        entry.version ? `version=${entry.version}` : null,
+        entry.channel ? `channel=${entry.channel}` : null,
+      ]
+        .filter(Boolean)
+        .join(" ")}
+    </Typography.Text>
+  );
+}
+
+function eventTitle(event: RootfsImageEvent): string {
+  switch (event.event_type) {
+    case "catalog_created":
+      return "Catalog entry created";
+    case "hidden":
+      return "Hidden";
+    case "unhidden":
+      return "Unhidden";
+    case "blocked":
+      return "Blocked";
+    case "unblocked":
+      return "Unblocked";
+    case "deleted":
+      return "Deleted";
+    case "release_gc_pending":
+      return "Release queued for GC";
+    case "release_gc_blocked":
+      return "Release GC blocked";
+    case "release_gc_deleted":
+      return "Release deleted";
+    case "release_gc_failed":
+      return "Release GC failed";
+    default:
+      return event.event_type;
+  }
+}
+
+function eventSummary(event: RootfsImageEvent): string | undefined {
+  if (event.reason) return event.reason;
+  const blockers = event.payload?.blockers;
+  if (blockers?.total != null) {
+    return `blockers=${blockers.total}`;
+  }
+  if (event.payload?.blocked_reason) {
+    return `${event.payload.blocked_reason}`;
+  }
+}
+
+function recentEvents(entry: RootfsAdminCatalogEntry): React.ReactNode {
+  if (!entry.events?.length) {
+    return (
+      <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+        No recent events
+      </Typography.Text>
+    );
+  }
+  return (
+    <Space direction="vertical" size={0}>
+      {entry.events.map((event) => (
+        <Space
+          key={event.event_id}
+          direction="vertical"
+          size={0}
+          style={{ width: "100%" }}
+        >
+          <Typography.Text style={{ fontSize: 12 }}>
+            {eventTitle(event)}
+          </Typography.Text>
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            <TimeAgo date={event.created} />
+            {event.actor_name || event.actor_account_id
+              ? ` by ${event.actor_name ?? event.actor_account_id}`
+              : ""}
+          </Typography.Text>
+          {eventSummary(event) ? (
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              {eventSummary(event)}
+            </Typography.Text>
+          ) : null}
+        </Space>
+      ))}
+    </Space>
+  );
+}
+
 export function RootfsAdmin() {
   const hub = webapp_client.conat_client.hub;
   const [rows, setRows] = React.useState<RootfsAdminCatalogEntry[]>([]);
@@ -140,6 +277,9 @@ export function RootfsAdmin() {
       [
         entry.label,
         entry.image,
+        entry.family,
+        entry.version,
+        entry.channel,
         entry.owner_name,
         entry.owner_id,
         entry.visibility,
@@ -202,6 +342,10 @@ export function RootfsAdmin() {
         size_gb: entry.size_gb,
         tags: entry.tags,
         theme: entry.theme,
+        family: entry.family,
+        version: entry.version,
+        channel: entry.channel,
+        supersedes_image_id: entry.supersedes_image_id,
         official: patch.official ?? entry.official,
         prepull: patch.prepull ?? entry.prepull,
         hidden: patch.hidden ?? entry.hidden,
@@ -285,6 +429,7 @@ export function RootfsAdmin() {
                   <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                     {entry.owner_name ?? entry.owner_id ?? "builtin"}
                   </Typography.Text>
+                  {releaseMetadata(entry)}
                 </Space>
               ),
             },
@@ -319,6 +464,7 @@ export function RootfsAdmin() {
                       {entry.blocked_reason}
                     </Typography.Text>
                   ) : null}
+                  {lifecycleHistory(entry)}
                 </Space>
               ),
             },
@@ -326,6 +472,11 @@ export function RootfsAdmin() {
               title: "Delete blockers",
               key: "blockers",
               render: (_, entry) => blockerSummary(entry),
+            },
+            {
+              title: "Recent events",
+              key: "events",
+              render: (_, entry) => recentEvents(entry),
             },
             {
               title: "Scan",
@@ -336,6 +487,21 @@ export function RootfsAdmin() {
                     {scanTag(entry)}
                     {entry.scan_tool ? <Tag>{entry.scan_tool}</Tag> : null}
                   </Space>
+                  {entry.scan?.summary ? (
+                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                      {entry.scan.summary}
+                    </Typography.Text>
+                  ) : null}
+                  {entry.scan?.report_url ? (
+                    <Typography.Link
+                      href={entry.scan.report_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      style={{ fontSize: 12 }}
+                    >
+                      View report
+                    </Typography.Link>
+                  ) : null}
                   {entry.scanned_at ? (
                     <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                       <TimeAgo date={entry.scanned_at} />
