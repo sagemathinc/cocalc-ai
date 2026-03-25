@@ -237,6 +237,11 @@ const ACP_LIVE_LOG_PUBLISH_SLOW_MS = envNumber(
   "COCALC_ACP_LIVE_LOG_PUBLISH_SLOW_MS",
   100,
 );
+const ACP_LIVE_LOG_BATCH_MS = envNumber("COCALC_ACP_LIVE_LOG_BATCH_MS", 100);
+const ACP_LIVE_LOG_BATCH_MAX_EVENTS = envNumber(
+  "COCALC_ACP_LIVE_LOG_BATCH_MAX_EVENTS",
+  128,
+);
 const ACP_LIVE_LOG_MAX_BYTES = envNumber(
   "COCALC_ACP_LIVE_LOG_MAX_BYTES",
   8 * 1024 * 1024,
@@ -1539,10 +1544,14 @@ export class ChatStreamWriter {
   private logStoreName: string;
   private logKey: string;
   private logSubject: string;
-  private liveLogStream?: AStream<AcpStreamMessage>;
+  private liveLogStream?: AStream<AcpStreamMessage | AcpStreamMessage[]>;
   private liveLogStreamName: string;
-  private liveLogInitPromise?: Promise<AStream<AcpStreamMessage>>;
+  private liveLogInitPromise?: Promise<
+    AStream<AcpStreamMessage | AcpStreamMessage[]>
+  >;
   private liveLogPublishChain: Promise<void> = Promise.resolve();
+  private liveLogBatch: AcpStreamMessage[] = [];
+  private liveLogFlushTimer?: NodeJS.Timeout;
   private client: ConatClient;
   private timeTravel?: AgentTimeTravelRecorder;
   private integritySnapshot: ChatIntegritySnapshot = {
@@ -1829,7 +1838,7 @@ export class ChatStreamWriter {
     hostWorkspaceRoot?: string;
     syncdbOverride?: any;
     logStoreFactory?: () => AKV<AcpStreamMessage[]>;
-    liveLogStreamFactory?: () => AStream<AcpStreamMessage>;
+    liveLogStreamFactory?: () => AStream<AcpStreamMessage | AcpStreamMessage[]>;
   }) {
     if (`${metadata.message_id ?? ""}`.trim().length === 0) {
       throw new Error("acp chat metadata is missing required message_id");
@@ -2998,7 +3007,9 @@ export class ChatStreamWriter {
     return this.logStore;
   }
 
-  private async getLiveLogStream(): Promise<AStream<AcpStreamMessage>> {
+  private async getLiveLogStream(): Promise<
+    AStream<AcpStreamMessage | AcpStreamMessage[]>
+  > {
     if (this.liveLogStream) return this.liveLogStream;
     if (this.liveLogInitPromise) return await this.liveLogInitPromise;
     this.liveLogInitPromise = (async () => {
@@ -3025,6 +3036,32 @@ export class ChatStreamWriter {
 
   private publishLiveLog(event: AcpStreamMessage): void {
     if (this.closed) return;
+    this.liveLogBatch.push(event);
+    const shouldFlushNow =
+      event.type === "status" ||
+      event.type === "summary" ||
+      event.type === "error" ||
+      this.liveLogBatch.length >= ACP_LIVE_LOG_BATCH_MAX_EVENTS;
+    if (shouldFlushNow) {
+      void this.flushLiveLogBatch();
+      return;
+    }
+    if (this.liveLogFlushTimer != null) return;
+    this.liveLogFlushTimer = setTimeout(() => {
+      this.liveLogFlushTimer = undefined;
+      void this.flushLiveLogBatch();
+    }, ACP_LIVE_LOG_BATCH_MS);
+    this.liveLogFlushTimer.unref?.();
+  }
+
+  private async flushLiveLogBatch(): Promise<void> {
+    if (this.liveLogFlushTimer != null) {
+      clearTimeout(this.liveLogFlushTimer);
+      this.liveLogFlushTimer = undefined;
+    }
+    if (this.liveLogBatch.length === 0) return;
+    const batch = this.liveLogBatch;
+    this.liveLogBatch = [];
     this.liveLogPublishChain = this.liveLogPublishChain
       .catch(() => {
         // ignore prior publish failures; the source error was already logged
@@ -3033,13 +3070,14 @@ export class ChatStreamWriter {
         const started = performance.now();
         try {
           const stream = await this.getLiveLogStream();
-          await stream.publish(event);
+          await stream.publish(batch.length === 1 ? batch[0] : batch);
           const durationMs = performance.now() - started;
           if (durationMs >= ACP_LIVE_LOG_PUBLISH_SLOW_MS) {
             logger.warn("acp live log publish slow", {
               chatKey: this.chatKey,
               path: this.metadata.path,
               events: this.events.length,
+              batchSize: batch.length,
               durationMs: roundMs(durationMs),
             });
           }
@@ -3047,7 +3085,9 @@ export class ChatStreamWriter {
           logger.debug("failed to publish live acp log event", {
             chatKey: this.chatKey,
             path: this.metadata.path,
-            seq: event.seq,
+            seqStart: batch[0]?.seq,
+            seqEnd: batch.at(-1)?.seq,
+            batchSize: batch.length,
             err,
           });
         }
@@ -3055,6 +3095,7 @@ export class ChatStreamWriter {
   }
 
   private async waitForLiveLogFlush(): Promise<void> {
+    await this.flushLiveLogBatch();
     try {
       await this.liveLogPublishChain;
     } catch {

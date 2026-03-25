@@ -70,6 +70,12 @@ function normalizeLiveStreamEvent(event: AcpStreamMessage): AcpStreamMessage {
   };
 }
 
+function normalizeLiveStreamPayload(
+  payload: AcpStreamMessage | AcpStreamMessage[] | null | undefined,
+): AcpStreamMessage[] {
+  return normalizeIncomingLogPayload(payload).map(normalizeLiveStreamEvent);
+}
+
 /**
  * Fetch Codex/ACP logs from AKV and live stream from conat during generation.
  * Resets state when the log key changes so logs don't bleed across turns.
@@ -225,9 +231,9 @@ export function useCodexLog({
   // Subscribe to live events while generating.
   useEffect(() => {
     let sub: any;
-    let liveStream: DStream<AcpStreamMessage> | undefined;
+    let liveStream: DStream<AcpStreamMessage | AcpStreamMessage[]> | undefined;
     let liveStreamListener:
-      | ((event: AcpStreamMessage, seq?: number) => void)
+      | ((event: AcpStreamMessage | AcpStreamMessage[], seq?: number) => void)
       | undefined;
     let stopped = false;
     const flushBufferedLiveLog = () => {
@@ -275,19 +281,32 @@ export function useCodexLog({
           liveStream.setMaxListeners(
             Math.max(liveStream.getMaxListeners(), 50),
           );
-          liveStreamListener = (event: AcpStreamMessage) => {
+          liveStreamListener = (
+            payload: AcpStreamMessage | AcpStreamMessage[],
+          ) => {
             if (stopped) return;
-            const evt = normalizeLiveStreamEvent(event);
-            liveBufferRef.current.push(evt);
-            scheduleBufferedFlush(
-              evt.type === "summary" || evt.type === "error",
-            );
+            const events = normalizeLiveStreamPayload(payload);
+            if (events.length === 0) return;
+            let immediate = false;
+            for (const evt of events) {
+              liveBufferRef.current.push(evt);
+              if (
+                evt.type === "summary" ||
+                evt.type === "error" ||
+                evt.type === "status"
+              ) {
+                immediate = true;
+              }
+            }
+            scheduleBufferedFlush(immediate);
           };
           // DStream already bridges the backlog/live-update race internally.
           // Register the listener before reading getAll() so local hook state
           // can't miss a late event that arrives between these two steps.
           liveStream.on("change", liveStreamListener);
-          const initial = liveStream.getAll().map(normalizeLiveStreamEvent);
+          const initial = liveStream
+            .getAll()
+            .flatMap((payload) => normalizeLiveStreamPayload(payload as any));
           if (!stopped && initial.length > 0) {
             setLiveLog((prev) => mergeLogs(prev ?? [], initial));
           }
