@@ -839,6 +839,18 @@ export default function RootFilesystemImage() {
                 </>
               }
             />
+            <Alert
+              type="info"
+              showIcon
+              message="Base RootFS size does not count against your project disk quota"
+              description={
+                <>
+                  Managed RootFS images are shared lower directories on the
+                  host. Their base size does not count against your project
+                  quota. Only your own writable project data still counts.
+                </>
+              }
+            />
             {renderRootfsEntrySummary({
               heading: "Current image",
               entry: currentDisplayEntry,
@@ -1772,6 +1784,7 @@ function renderRootfsEntrySummary({
             >
               {entry?.image ?? fallbackImage}
             </div>
+            {renderRootfsEntryFacts(entry)}
             {note ? (
               <Paragraph
                 type="secondary"
@@ -1785,6 +1798,72 @@ function renderRootfsEntrySummary({
       </div>
     </div>
   );
+}
+
+function renderRootfsEntryFacts(
+  entry: RootfsImageEntry | undefined,
+): React.JSX.Element | null {
+  if (!entry) return null;
+  const facts: string[] = [];
+  const size = formatRootfsBaseSize(entry.size_gb);
+  if (size) {
+    facts.push(`Base size: ${size}`);
+  }
+  const publisher = describeRootfsPublisher(entry);
+  if (publisher) {
+    facts.push(publisher);
+  }
+  if (!facts.length) {
+    return null;
+  }
+  return (
+    <Paragraph type="secondary" style={{ marginTop: "8px", marginBottom: 0 }}>
+      {facts.join(" • ")}
+    </Paragraph>
+  );
+}
+
+function formatRootfsBaseSize(size_gb?: number): string | undefined {
+  if (
+    typeof size_gb !== "number" ||
+    !Number.isFinite(size_gb) ||
+    size_gb <= 0
+  ) {
+    return undefined;
+  }
+  if (size_gb >= 100) {
+    return `${Math.round(size_gb)} GB`;
+  }
+  if (size_gb >= 10) {
+    return `${size_gb.toFixed(1)} GB`;
+  }
+  if (size_gb >= 1) {
+    return `${size_gb.toFixed(2)} GB`;
+  }
+  return `${Math.round(size_gb * 1000)} MB`;
+}
+
+function describeRootfsPublisher(entry: RootfsImageEntry): string | undefined {
+  const owner = entry.owner_name?.trim();
+  if (entry.official) {
+    return owner
+      ? `Official image published by ${owner}`
+      : "Official CoCalc image";
+  }
+  if (entry.section === "mine") {
+    return "Published by you";
+  }
+  if (entry.warning === "collaborator") {
+    return owner
+      ? `Published by your collaborator ${owner}`
+      : "Published by one of your collaborators";
+  }
+  if (owner) {
+    return `Published by ${owner}`;
+  }
+  if (entry.warning === "public") {
+    return "Public community image";
+  }
 }
 
 function buildRootfsPublishAssistCommand(opts: {
