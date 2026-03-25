@@ -60,6 +60,11 @@ export default function appLoaderPlugin(
       chunks: ["load", "public-content"],
     },
     {
+      desc: "public-lang",
+      filename: "public-lang.html",
+      chunks: ["load", "public-lang"],
+    },
+    {
       desc: "public-features",
       filename: "public-features.html",
       chunks: ["load", "public-features"],
