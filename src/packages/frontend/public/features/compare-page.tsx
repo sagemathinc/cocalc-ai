@@ -3,53 +3,88 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Alert, Button, Flex, Table, Typography } from "antd";
+import { Alert, Button, Col, Flex, Row, Table, Typography } from "antd";
 
 import { PublicSectionCard } from "@cocalc/frontend/public/ui/shell";
 import { BulletList, LinkButton, featureAppPath } from "./page-components";
 
 const { Paragraph, Text, Title } = Typography;
 
-const ROWS = [
+const COMPARISON_GROUPS = [
   {
-    key: "collaboration",
-    feature: "Realtime collaboration",
+    bestAt:
+      "Quick notebook startup, lightweight sharing, and easy access to hosted compute.",
     cocalc:
-      "Shared editing across notebooks, terminals, whiteboards, and documents.",
-    alternatives:
-      "Often limited to a subset of file types or handled by separate products.",
+      "Choose CoCalc when the notebook is only one part of the workflow and you also need terminals, files, LaTeX, course management, shared history, or self-hosted options.",
+    key: "colab",
+    title: "Google Colab and quick notebook hosts",
   },
   {
-    key: "environment",
-    feature: "Integrated environment",
+    bestAt:
+      "Warehouse-connected analytics, dashboards, and SQL-heavy collaborative data work.",
     cocalc:
-      "Notebooks, terminals, files, LaTeX, chat, and course workflows in one project.",
-    alternatives:
-      "Users stitch together separate notebook, editor, terminal, storage, and chat tools.",
+      "Choose CoCalc when the center of gravity is a technical project rather than a BI or data-app surface: notebooks, Linux tools, reproducible documents, teaching, and broader engineering workflows.",
+    key: "analytics",
+    title: "Deepnote and analytics-first notebook platforms",
   },
   {
+    bestAt:
+      "Building-block flexibility for organizations that want to assemble and operate their own notebook stack.",
+    cocalc:
+      "Choose CoCalc when you want the integrated product instead of stitching together Jupyter interfaces, terminals, collaboration, support, grading, and user-facing operations yourself.",
+    key: "jupyter-stack",
+    title: "JupyterHub, JupyterLab, and VS Code notebook workflows",
+  },
+  {
+    bestAt:
+      "IDE-first application development, app shipping, and product-style coding workflows.",
+    cocalc:
+      "Choose CoCalc when the team also needs notebook-native work, technical teaching, mathematical documents, or shared Linux/project workflows beyond a single app editor.",
+    key: "ide",
+    title: "Replit and other IDE-first coding platforms",
+  },
+];
+
+const DECISION_ROWS = [
+  {
+    cocalc:
+      "The whole technical project: notebooks, terminals, files, documents, whiteboards, support, and AI work in one shared place.",
+    key: "unit",
+    question: "What is the unit of work?",
+    typical:
+      "A single notebook, dashboard, editor, or app builder is the center, and the rest lives elsewhere.",
+  },
+  {
+    cocalc:
+      "Realtime collaboration spans notebooks, terminals, documents, whiteboards, and chat, backed by Patchflow.",
+    key: "collab",
+    question: "How broad is collaboration?",
+    typical:
+      "Collaboration is strongest in one surface, while adjacent tools are separate or less synchronized.",
+  },
+  {
+    cocalc:
+      "Courses, assignments, collection, grading, and student support live in the same environment as the technical work.",
     key: "teaching",
-    feature: "Teaching workflows",
-    cocalc:
-      "Assignments, collection, grading, nbgrader support, and classroom-friendly sharing.",
-    alternatives:
-      "Usually require extra LMS glue, scripts, or additional tools.",
+    question: "How important is teaching or structured support?",
+    typical:
+      "Teaching, LMS integration, or support workflows often require separate systems and operational glue.",
   },
   {
-    key: "history",
-    feature: "History and recovery",
     cocalc:
-      "TimeTravel and file history are built into collaborative workflows.",
-    alternatives:
-      "Versioning often depends on Git only, snapshots, or provider-specific partial history.",
+      "The same user model can start hosted and later move to CoCalc Plus, Launchpad, or custom deployment.",
+    key: "deployment",
+    question: "Do deployment options matter?",
+    typical:
+      "The product is optimized around a single hosted or self-assembled deployment model.",
   },
   {
-    key: "hosting",
-    feature: "Hosted plus self-hosted",
     cocalc:
-      "Hosted CoCalc, CoCalc Plus, Launchpad, and custom deployment options all share the same overall model.",
-    alternatives:
-      "Products often optimize for one narrow deployment mode only.",
+      "You can keep shell tools, documents, slides, and notebooks close together instead of splitting work across services.",
+    key: "breadth",
+    question: "How broad is the technical workflow?",
+    typical:
+      "The product is excellent at its slice, but you still need other tools for the rest of the workflow.",
   },
 ];
 
@@ -65,24 +100,29 @@ export default function CompareFeaturePage({
           COMPARISON
         </Text>
         <Title level={2} style={{ margin: 0 }}>
-          Comparing CoCalc to common alternatives
+          Compare CoCalc by workflow, not by one checkbox
         </Title>
         <Paragraph style={{ fontSize: 18, margin: 0 }}>
-          CoCalc is not just one more notebook host. The point is that it
-          bundles the pieces technical teams usually have to assemble
-          themselves.
+          CoCalc is strongest when your team needs more than a notebook host,
+          more than an IDE, and more than a dashboard surface. It is built for
+          technical work that spills across notebooks, terminals, documents,
+          teaching, and collaboration.
         </Paragraph>
         <Paragraph style={{ margin: 0 }}>
-          In practice, people often compare isolated slices: notebooks,
-          terminals, grading, document editing, or collaborative support. CoCalc
-          is strongest when those workflows need to live in one place.
+          The most useful comparison is not feature-counting. It is asking
+          whether you want one integrated technical workspace, or a narrower
+          product that is excellent at one slice and expects the rest of the
+          workflow to live elsewhere.
         </Paragraph>
         <Flex wrap gap={12}>
           <Button type="primary" href={featureAppPath("auth/sign-up")}>
             Create account
           </Button>
-          <LinkButton href={featureAppPath("features")}>
-            Browse feature pages
+          <LinkButton href={featureAppPath("features/jupyter-notebook")}>
+            Jupyter notebooks
+          </LinkButton>
+          <LinkButton href={featureAppPath("features/teaching")}>
+            Teaching workflows
           </LinkButton>
           {helpEmail ? (
             <Button href={`mailto:${helpEmail}`}>Contact support</Button>
@@ -93,35 +133,91 @@ export default function CompareFeaturePage({
         type="warning"
         showIcon
         message="These comparisons are intentionally high level."
-        description="Products change quickly, and many are strong at the slice they focus on. The point here is to show where CoCalc's integrated model matters most."
+        description="Products evolve quickly, and many competitors are excellent at the workflow they target. The point here is to clarify where CoCalc's integrated model is a better fit."
       />
+      <Row gutter={[16, 16]}>
+        <Col xs={24} lg={12}>
+          <PublicSectionCard>
+            <Title level={3} style={{ margin: 0 }}>
+              Pick CoCalc if you want
+            </Title>
+            <BulletList
+              items={[
+                "One place for notebooks, Linux tools, files, technical documents, whiteboards, and collaboration.",
+                "Realtime editing that extends beyond notebook cells, backed by Patchflow.",
+                "A product that works for classes, research groups, and engineering teams without assembling a stack.",
+                "Hosted and self-hosted deployment options that still feel like the same product.",
+              ]}
+            />
+          </PublicSectionCard>
+        </Col>
+        <Col xs={24} lg={12}>
+          <PublicSectionCard>
+            <Title level={3} style={{ margin: 0 }}>
+              Another tool may fit better if you mainly want
+            </Title>
+            <BulletList
+              items={[
+                "A lightweight hosted notebook with quick access to compute and sharing.",
+                "An analytics-first environment centered on SQL, dashboards, and data-source integrations.",
+                "A do-it-yourself Jupyter stack where building blocks matter more than integrated product behavior.",
+                "An IDE-first app-building workflow where notebooks and teaching are secondary.",
+              ]}
+            />
+          </PublicSectionCard>
+        </Col>
+      </Row>
       <PublicSectionCard>
         <Title level={3} style={{ margin: 0 }}>
-          Where CoCalc stands out
+          How CoCalc compares by category
+        </Title>
+        <Row gutter={[16, 16]}>
+          {COMPARISON_GROUPS.map((group) => (
+            <Col key={group.key} xs={24} md={12}>
+              <PublicSectionCard>
+                <Title level={4} style={{ margin: 0 }}>
+                  {group.title}
+                </Title>
+                <Paragraph style={{ margin: 0 }}>
+                  <Text strong>Usually best at: </Text>
+                  {group.bestAt}
+                </Paragraph>
+                <Paragraph style={{ margin: 0 }}>
+                  <Text strong>Why people still choose CoCalc: </Text>
+                  {group.cocalc}
+                </Paragraph>
+              </PublicSectionCard>
+            </Col>
+          ))}
+        </Row>
+      </PublicSectionCard>
+      <PublicSectionCard>
+        <Title level={3} style={{ margin: 0 }}>
+          Questions technical teams usually care about
         </Title>
         <Table
           bordered
           columns={[
             {
-              title: "Workflow",
-              dataIndex: "feature",
-              key: "feature",
+              dataIndex: "question",
+              key: "question",
+              title: "Question",
               width: "22%",
             },
             {
-              title: "CoCalc",
               dataIndex: "cocalc",
               key: "cocalc",
+              title: "If you choose CoCalc",
               width: "39%",
             },
             {
-              title: "Typical point solution",
-              dataIndex: "alternatives",
-              key: "alternatives",
+              dataIndex: "typical",
+              key: "typical",
+              title: "If you choose a narrower point solution",
               width: "39%",
             },
           ]}
-          dataSource={ROWS}
+          dataSource={DECISION_ROWS}
           pagination={false}
           rowKey="key"
           size="middle"
@@ -133,9 +229,9 @@ export default function CompareFeaturePage({
         </Title>
         <BulletList
           items={[
-            "Technical courses where the same environment must support assignments, grading, notebooks, and support.",
-            "Research or engineering teams that want notebooks, terminals, documents, and collaboration in one place.",
-            "Organizations that want hosted and self-hosted options without changing the basic user model.",
+            "Technical courses where notebooks, grading, student support, and shared infrastructure all need to work together.",
+            "Research or engineering teams that want notebooks, terminals, and technical documents in the same collaborative environment.",
+            "Organizations that may start hosted and later want CoCalc Plus, Launchpad, or a custom deployment without changing the user model.",
           ]}
         />
       </PublicSectionCard>
@@ -155,6 +251,12 @@ export default function CompareFeaturePage({
           </LinkButton>
           <LinkButton href={featureAppPath("features/latex-editor")}>
             LaTeX editor
+          </LinkButton>
+          <LinkButton href={featureAppPath("features/ai")}>
+            AI agents
+          </LinkButton>
+          <LinkButton href="https://github.com/sagemathinc/patchflow">
+            Patchflow
           </LinkButton>
         </Flex>
       </PublicSectionCard>

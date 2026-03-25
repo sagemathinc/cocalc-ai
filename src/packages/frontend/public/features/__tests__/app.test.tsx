@@ -226,9 +226,11 @@ describe("PublicFeaturesApp", () => {
     );
 
     expect(
-      screen.getByText("Comparing CoCalc to common alternatives"),
+      screen.getByText("Compare CoCalc by workflow, not by one checkbox"),
     ).not.toBeNull();
-    expect(screen.getByText("Where CoCalc stands out")).not.toBeNull();
-    expect(screen.getByText("Typical point solution")).not.toBeNull();
+    expect(screen.getByText("How CoCalc compares by category")).not.toBeNull();
+    expect(
+      screen.getByText("Google Colab and quick notebook hosts"),
+    ).not.toBeNull();
   });
 });
