@@ -12,7 +12,7 @@ describe("routing/app", () => {
   });
 
   it("exposes shared markers for base-path inference", () => {
-    expect(APP_BASE_PATH_ROUTE_MARKERS).toContain("/projects/");
+    expect(APP_BASE_PATH_ROUTE_MARKERS).toContain("/projects");
     expect(APP_BASE_PATH_ROUTE_MARKERS).toContain("/auth");
     expect(APP_BASE_PATH_ROUTE_MARKERS).toContain("/ssh");
   });
