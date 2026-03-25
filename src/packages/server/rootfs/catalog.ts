@@ -560,13 +560,13 @@ async function upsertRootfsRow({
     `INSERT INTO rootfs_images
       (image_id, release_id, owner_id, runtime_image, label, family, version, channel, supersedes_image_id, description, visibility, official, prepull, hidden, hidden_at, hidden_by, blocked, blocked_reason, blocked_at, blocked_by, deleted, deleted_reason, deleted_at, deleted_by, arch, gpu, size_gb, tags, digest, content_key, deprecated, deprecated_reason, theme, created, updated)
      VALUES
-      ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
+      ($1, $2, $3::UUID, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
        CASE WHEN $14 THEN NOW() ELSE NULL END,
-       CASE WHEN $14 THEN $3 ELSE NULL END,
+       CASE WHEN $14 THEN $3::UUID ELSE NULL END,
        $15,
        CASE WHEN $15 THEN $16 ELSE NULL END,
        CASE WHEN $15 THEN NOW() ELSE NULL END,
-       CASE WHEN $15 THEN $3 ELSE NULL END,
+       CASE WHEN $15 THEN $3::UUID ELSE NULL END,
        false, NULL, NULL, NULL, $17, $18, $19, $20::TEXT[], $21, $22, false, NULL, $23::JSONB, NOW(), NOW())
      ON CONFLICT (image_id) DO UPDATE SET
       release_id = COALESCE(EXCLUDED.release_id, rootfs_images.release_id),
