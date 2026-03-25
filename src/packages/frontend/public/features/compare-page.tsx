@@ -80,6 +80,14 @@ const DECISION_ROWS = [
   },
   {
     cocalc:
+      "Agent workflows increasingly live inside the same collaborative project, especially with Codex integration, so the model can help with real files, notebooks, terminals, and chat context.",
+    key: "agents",
+    question: "How agent-native is the AI story?",
+    typical:
+      "AI may be useful, but it often behaves more like a sidecar prompt box, autocomplete layer, or isolated assistant tied to one surface.",
+  },
+  {
+    cocalc:
       "You can keep shell tools, documents, slides, and notebooks close together instead of splitting work across services.",
     key: "breadth",
     question: "How broad is the technical workflow?",
@@ -135,6 +143,39 @@ export default function CompareFeaturePage({
         message="These comparisons are intentionally high level."
         description="Products evolve quickly, and many competitors are excellent at the workflow they target. The point here is to clarify where CoCalc's integrated model is a better fit."
       />
+      <PublicSectionCard>
+        <Title level={3} style={{ margin: 0 }}>
+          AI agents now change the comparison
+        </Title>
+        <Paragraph style={{ margin: 0 }}>
+          A lot of products now have some version of AI help. What matters is
+          whether that help is just a prompt box next to your work, or whether
+          it can participate in the real workspace where the files, notebooks,
+          shell commands, and conversations already live.
+        </Paragraph>
+        <Paragraph style={{ margin: 0 }}>
+          CoCalc AI&apos;s current direction is increasingly agent-first,
+          especially around Codex. The goal is not only to answer questions, but
+          to help inspect code, patch files, reason about failures, and move
+          technical work forward inside the same collaborative environment as
+          the rest of the team.
+        </Paragraph>
+        <BulletList
+          items={[
+            "Use agents in the same chats and projects where the actual work is happening.",
+            "Keep notebooks, terminals, files, screenshots, and collaborators near the model instead of reconstructing context elsewhere.",
+            "Treat AI as part of the workflow for debugging, migration, support, and technical writing, not only as answer generation.",
+          ]}
+        />
+        <Flex wrap gap={12}>
+          <LinkButton href={featureAppPath("features/ai")}>
+            AI agents
+          </LinkButton>
+          <LinkButton href="https://github.com/sagemathinc/patchflow">
+            Patchflow
+          </LinkButton>
+        </Flex>
+      </PublicSectionCard>
       <Row gutter={[16, 16]}>
         <Col xs={24} lg={12}>
           <PublicSectionCard>
@@ -145,6 +186,7 @@ export default function CompareFeaturePage({
               items={[
                 "One place for notebooks, Linux tools, files, technical documents, whiteboards, and collaboration.",
                 "Realtime editing that extends beyond notebook cells, backed by Patchflow.",
+                "Coding agents that work inside the shared workspace instead of only in a detached prompt box.",
                 "A product that works for classes, research groups, and engineering teams without assembling a stack.",
                 "Hosted and self-hosted deployment options that still feel like the same product.",
               ]}

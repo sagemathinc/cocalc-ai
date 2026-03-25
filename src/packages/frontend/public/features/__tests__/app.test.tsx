@@ -232,5 +232,8 @@ describe("PublicFeaturesApp", () => {
     expect(
       screen.getByText("Google Colab and quick notebook hosts"),
     ).not.toBeNull();
+    expect(
+      screen.getByText("AI agents now change the comparison"),
+    ).not.toBeNull();
   });
 });
