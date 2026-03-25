@@ -55,12 +55,27 @@ const VIDEO_RESOURCES = [
   },
 ] as const;
 
+const HOME_FEATURE_PRIORITY = [
+  "ai",
+  "compare",
+  "jupyter-notebook",
+  "terminal",
+  "teaching",
+  "latex-editor",
+  "linux",
+  "whiteboard",
+] as const;
+
 function appPath(path: string): string {
   return joinUrlPath(appBasePath, path);
 }
 
 function getHomeHighlights(): Array<{ body: ReactNode; title: string }> {
   return [
+    {
+      body: "Recent CoCalc work is increasingly focused on coding agents, especially Codex, inside the same projects where notebooks, files, terminals, and collaborators already live.",
+      title: "Agent-first workflows",
+    },
     {
       body: "Keep notebooks, terminals, LaTeX, slides, whiteboards, chat, and support inside the same project instead of spreading work across disconnected services.",
       title: "One technical workspace",
@@ -189,7 +204,7 @@ function HeroDetails({
             <Paragraph style={{ margin: 0 }}>
               The point is not only notebooks. It is keeping the whole technical
               workflow together: files, shell, documents, teaching, support, and
-              now coding agents.
+              increasingly agent-first coding workflows in the same environment.
             </Paragraph>
           </PublicSectionCard>
           <PublicSectionCard>
@@ -229,13 +244,63 @@ function HeroDetails({
             </Paragraph>
             <Flex wrap gap={12}>
               <LinkButton href={appPath("features")}>All features</LinkButton>
-              <LinkButton href={appPath("news")}>News</LinkButton>
-              <LinkButton href={appPath("about")}>About</LinkButton>
+              <LinkButton href={appPath("features/ai")}>AI agents</LinkButton>
+              <LinkButton href={appPath("features/compare")}>
+                Compare
+              </LinkButton>
             </Flex>
           </PublicSectionCard>
         </Flex>
       </Col>
     </Row>
+  );
+}
+
+function AgentSection() {
+  return (
+    <section style={{ marginTop: 32 }}>
+      <PublicSectionCard>
+        <Row gutter={[24, 24]} align="middle">
+          <Col xs={24} xl={13}>
+            <Flex vertical gap={12}>
+              <Text strong type="secondary">
+                CODING AGENTS
+              </Text>
+              <Title level={2} style={{ margin: 0 }}>
+                CoCalc AI is becoming agent-first
+              </Title>
+              <Paragraph style={{ margin: 0 }}>
+                The older model was “send an LLM some context.” The new
+                direction is much more agent-native, especially around Codex:
+                let the model participate in the same collaborative workspace
+                where the files, notebooks, shell commands, and conversations
+                already live.
+              </Paragraph>
+              <Paragraph style={{ margin: 0 }}>
+                That matters because real technical work is not just text in a
+                prompt box. It is debugging a failing notebook, editing files,
+                reasoning about a project tree, fixing a shell command, or
+                helping move a migration forward with teammates watching.
+              </Paragraph>
+              <Flex wrap gap={12}>
+                <Button href={appPath("features/ai")} type="primary">
+                  AI agents
+                </Button>
+                <Button href={appPath("features/compare")}>
+                  Compare CoCalc
+                </Button>
+              </Flex>
+            </Flex>
+          </Col>
+          <Col xs={24} xl={11}>
+            <FeatureImage
+              alt="Coding agent helping in a CoCalc workspace"
+              src="/public/features/chatgpt-fix-code.png"
+            />
+          </Col>
+        </Row>
+      </PublicSectionCard>
+    </section>
   );
 }
 
@@ -263,12 +328,26 @@ function HighlightSection({ siteName }: { siteName: string }) {
 }
 
 function FeaturesSection({ siteName }: { siteName: string }) {
-  const features = getFeatureIndexPages().slice(0, 8);
+  const priorities = new Map<string, number>(
+    HOME_FEATURE_PRIORITY.map((slug, index) => [slug, index]),
+  );
+  const features = getFeatureIndexPages()
+    .map((feature, index) => ({ feature, index }))
+    .sort((a, b) => {
+      const aPriority = priorities.get(a.feature.slug);
+      const bPriority = priorities.get(b.feature.slug);
+      if (aPriority != null || bPriority != null) {
+        return (aPriority ?? 100) - (bPriority ?? 100);
+      }
+      return a.index - b.index;
+    })
+    .map(({ feature }) => feature)
+    .slice(0, 8);
   return (
     <section style={{ marginTop: 32 }}>
       <Flex align="baseline" justify="space-between" wrap gap={12}>
         <Title level={2} style={{ margin: 0 }}>
-          Popular Features
+          Core workflows
         </Title>
         <Button
           href={appPath("features")}
@@ -280,7 +359,8 @@ function FeaturesSection({ siteName }: { siteName: string }) {
       </Flex>
       <Paragraph style={{ margin: "8px 0 0", maxWidth: "70ch" }}>
         These are some of the most important workflows that already live inside
-        the same {siteName} environment.
+        the same {siteName} environment, including the newer agent-first
+        direction.
       </Paragraph>
       <Row gutter={[16, 16]} style={{ marginTop: 8 }}>
         {features.map((feature) => (
@@ -478,7 +558,7 @@ export default function PublicHomeApp({
         title={siteName}
         subtitle={
           config?.site_description ??
-          "Run Jupyter notebooks, Linux terminals, documents, and coding agents in one collaborative online workspace."
+          "Run Jupyter notebooks, Linux terminals, documents, and coding agents in one collaborative online workspace built for real technical projects."
         }
         actions={
           <Flex wrap gap={12}>
@@ -515,6 +595,7 @@ export default function PublicHomeApp({
         }
       />
       <HeroDetails config={config} siteName={siteName} />
+      <AgentSection />
       <HighlightSection siteName={siteName} />
       <FeaturesSection siteName={siteName} />
       <ResourceSection />

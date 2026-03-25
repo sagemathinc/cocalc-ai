@@ -40,7 +40,12 @@ describe("PublicHomeApp", () => {
 
     expect(screen.getByRole("link", { name: "Home" })).not.toBeNull();
     expect(
-      screen.getByRole("heading", { name: "Popular Features" }),
+      screen.getByRole("heading", {
+        name: "CoCalc AI is becoming agent-first",
+      }),
+    ).not.toBeNull();
+    expect(
+      screen.getByRole("heading", { name: "Core workflows" }),
     ).not.toBeNull();
     expect(screen.getByRole("heading", { name: "Recent News" })).not.toBeNull();
     expect(
