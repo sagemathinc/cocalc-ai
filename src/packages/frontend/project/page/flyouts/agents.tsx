@@ -8,12 +8,14 @@ import {
   Button,
   Dropdown,
   Empty,
+  Modal,
   Popconfirm,
   Space,
   Switch,
   Tag,
   Tooltip,
   Typography,
+  message as antdMessage,
   type MenuProps,
 } from "antd";
 import {
@@ -149,6 +151,12 @@ function normalizedTitle(record: AgentSessionRecord): string {
 function previousTitle(title?: string): string {
   const clean = `${title ?? ""}`.trim();
   return clean ? `Previous ${clean}` : "Previous chat";
+}
+
+function displayThreadLabel(title?: string): string | null {
+  const clean = `${title ?? ""}`.trim();
+  if (!clean) return null;
+  return clean.length > 120 ? `${clean.slice(0, 117)}...` : clean;
 }
 
 function deriveAgentRootPath(opts: {
@@ -801,7 +809,7 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
                   actions?.open_file({ path: record.chat_path });
                   return;
                 case "clear":
-                  void clearThread(record);
+                  confirmClearThread(record);
                   return;
                 case "pin":
                   void togglePin(record);
@@ -873,7 +881,7 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
                 actions?.open_file({ path: record.chat_path });
                 return;
               case "clear":
-                void clearThread(record);
+                confirmClearThread(record);
                 return;
               case "pin":
                 void togglePin(record);
@@ -1056,12 +1064,25 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
       });
       setInlineSessionId(nextRecord.session_id);
       setInlineError("");
+      antdMessage.success("Started a fresh empty chat thread.");
     } catch (err) {
       setError(`${err}`);
     } finally {
       cleanup?.();
       setUpdatingSessionId("");
     }
+  }
+
+  function confirmClearThread(record: AgentSessionRecord): void {
+    const label = displayThreadLabel(normalizedTitle(record));
+    Modal.confirm({
+      title: label ? `Clear chat "${label}"?` : "Clear chat?",
+      content:
+        "This starts a fresh empty thread with the same chat settings and selects it. The existing thread and its messages are kept.",
+      okText: "Clear",
+      cancelText: "Cancel",
+      onOk: () => clearThread(record),
+    });
   }
 
   async function toggleArchive(record: AgentSessionRecord): Promise<void> {

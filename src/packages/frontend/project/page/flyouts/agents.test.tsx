@@ -21,6 +21,8 @@ const mockChatActions = {
 } as any;
 const mockEnsureWorkspaceChatPath = jest.fn();
 const mockEnsureWorkspaceChatDirectory = jest.fn();
+const mockModalConfirm = jest.fn();
+const mockAntdMessageSuccess = jest.fn();
 
 let mockSessions: any[] = [];
 let mockCurrentPath = "/home/user";
@@ -60,6 +62,9 @@ jest.mock("antd", () => {
     </div>
   );
   const Empty = ({ description }: any) => <div>{description}</div>;
+  const Modal = {
+    confirm: (...args: any[]) => mockModalConfirm(...args),
+  };
   const Popconfirm = ({ children }: any) => children;
   const Space = ({ children }: any) => <div>{children}</div>;
   const Switch = ({ checked, onChange, ...props }: any) => (
@@ -84,6 +89,8 @@ jest.mock("antd", () => {
     Button,
     Dropdown,
     Empty,
+    Modal,
+    message: { success: (...args: any[]) => mockAntdMessageSuccess(...args) },
     Popconfirm,
     Space,
     Switch,
@@ -231,6 +238,8 @@ describe("AgentsPanel session cards", () => {
     mockChatActions.resetThread.mockClear();
     mockChatActions.resetThread.mockReturnValue("thread-2");
     mockChatActions.syncdb.save.mockClear();
+    mockModalConfirm.mockClear();
+    mockAntdMessageSuccess.mockClear();
     mockEnsureWorkspaceChatPath.mockReset();
     mockEnsureWorkspaceChatDirectory.mockReset();
     mockSessions = [
@@ -351,6 +360,20 @@ describe("AgentsPanel session cards", () => {
     );
     fireEvent.click(screen.getByText("Clear Thread"));
 
+    expect(mockModalConfirm).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: 'Clear chat "Agent session"?',
+        content:
+          "This starts a fresh empty thread with the same chat settings and selects it. The existing thread and its messages are kept.",
+        okText: "Clear",
+        cancelText: "Cancel",
+      }),
+    );
+
+    await act(async () => {
+      await mockModalConfirm.mock.calls[0][0].onOk();
+    });
+
     await waitFor(() =>
       expect(mockChatActions.resetThread).toHaveBeenCalledWith("thread-1", {
         name: "Codex",
@@ -368,6 +391,9 @@ describe("AgentsPanel session cards", () => {
           thread_pin: true,
         }),
       ),
+    );
+    expect(mockAntdMessageSuccess).toHaveBeenCalledWith(
+      "Started a fresh empty chat thread.",
     );
   });
 
