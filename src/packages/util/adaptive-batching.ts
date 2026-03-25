@@ -1,3 +1,14 @@
+/*
+Adaptive batching for async sinks that can become the bottleneck under load.
+
+Use this when individual events arrive quickly, but flushing each one
+independently would overload an async writer such as sqlite, a socket, or a
+remote RPC. The batcher keeps a minimum delay floor for low-latency updates,
+measures actual flush latency, and backs off toward a larger delay when the
+sink slows down. Immediate terminal events can still force a flush, and batch
+size / byte limits bound memory growth while the sink catches up.
+*/
+
 type AddToAdaptiveBatchOptions = {
   flush?: boolean;
   size?: number;
