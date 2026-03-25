@@ -30,6 +30,7 @@ import {
 import RootfsPublishOps from "@cocalc/frontend/project/settings/rootfs-publish-ops";
 import {
   getProjectRootfsStates,
+  invalidateRootfsImageCache,
   managedRootfsCatalogUrl,
   publishProjectRootfsImage,
   saveRootfsCatalogEntry,
@@ -292,6 +293,7 @@ export default function RootFilesystemImage() {
         continue;
       }
       seenCompletedPublishOpsRef.current.add(op.op_id);
+      invalidateRootfsImageCache();
       setCatalogRefresh(Date.now());
     }
   }, [rootfsPublishOps]);
