@@ -670,7 +670,7 @@ describe("ChatStreamWriter", () => {
     (writer as any).dispose?.(true);
   });
 
-  it("publishes live events to the ephemeral stream and persists the final log once", async () => {
+  it("publishes live status/events to the ephemeral stream and persists the final log once", async () => {
     const { syncdb } = makeFakeSyncDB();
     const persistedLogs: any[][] = [];
     const liveEvents: AcpStreamMessage[] = [];
@@ -696,24 +696,35 @@ describe("ChatStreamWriter", () => {
     });
 
     await writer.handle({
-      type: "event",
-      event: { type: "message", text: "hi" } as any,
+      type: "status",
+      state: "running",
       seq: 0,
     } as AcpStreamMessage);
     await flush(writer);
 
-    expect(liveEvents).toHaveLength(1);
-    expect(persistedLogs).toHaveLength(0);
-
     await writer.handle({
-      type: "summary",
-      finalResponse: "done",
+      type: "event",
+      event: { type: "message", text: "hi" } as any,
       seq: 1,
     } as AcpStreamMessage);
     await flush(writer);
 
     expect(liveEvents).toHaveLength(2);
+    expect(liveEvents[0].type).toBe("status");
+    expect((liveEvents[0] as any).state).toBe("running");
+    expect(liveEvents[1].type).toBe("event");
+    expect(persistedLogs).toHaveLength(0);
+
+    await writer.handle({
+      type: "summary",
+      finalResponse: "done",
+      seq: 2,
+    } as AcpStreamMessage);
+    await flush(writer);
+
+    expect(liveEvents).toHaveLength(3);
     expect(persistedLogs).toHaveLength(1);
+    expect(persistedLogs[0][0]?.type).toBe("status");
     expect(persistedLogs[0].at(-1)?.type).toBe("summary");
     (writer as any).dispose?.(true);
   });

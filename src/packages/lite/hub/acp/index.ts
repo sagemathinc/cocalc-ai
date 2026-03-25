@@ -2070,6 +2070,11 @@ export class ChatStreamWriter {
         this.threadId = payload.threadId;
         this.registerThreadKey(payload.threadId);
       }
+      // Preserve status updates in the visible ACP log so the frontend can
+      // distinguish "turn acknowledged and running" from "still waiting for
+      // the first text event".
+      this.events = appendStreamMessage(this.events, payload);
+      this.publishLiveLog(payload);
       this.commitNow(true);
       return;
     }
