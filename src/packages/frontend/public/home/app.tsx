@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { useEffect } from "react";
+import { type ReactNode, useEffect } from "react";
 
 import { Button, Col, Flex, Row, Tag, Typography } from "antd";
 
@@ -55,27 +55,57 @@ const VIDEO_RESOURCES = [
   },
 ] as const;
 
-const HOME_HIGHLIGHTS = [
-  {
-    body: "Keep notebooks, terminals, LaTeX, slides, whiteboards, chat, and support inside the same project instead of spreading work across disconnected services.",
-    title: "One technical workspace",
-  },
-  {
-    body: "Collaborate directly in the tools people actually use for research, teaching, and engineering, with shared state and file history built in.",
-    title: "Realtime collaboration",
-  },
-  {
-    body: "Run courses, distribute assignments, collect work, and grade technical files without building your own integration stack.",
-    title: "Teaching and operations",
-  },
-  {
-    body: "Use hosted CoCalc, CoCalc Plus, Launchpad, and custom deployments without changing the overall user model.",
-    title: "Hosted and self-hosted",
-  },
-] as const;
-
 function appPath(path: string): string {
   return joinUrlPath(appBasePath, path);
+}
+
+function getHomeHighlights(): Array<{ body: ReactNode; title: string }> {
+  return [
+    {
+      body: "Keep notebooks, terminals, LaTeX, slides, whiteboards, chat, and support inside the same project instead of spreading work across disconnected services.",
+      title: "One technical workspace",
+    },
+    {
+      body: (
+        <>
+          Collaborate directly in the tools people actually use for research,
+          teaching, and engineering, with shared state and file history built
+          in, backed by{" "}
+          <a
+            href="https://github.com/sagemathinc/patchflow"
+            rel="noreferrer"
+            target="_blank"
+          >
+            Patchflow
+          </a>
+          , the free open source software we wrote that powers CoCalc AI&apos;s
+          realtime collaboration model.
+        </>
+      ),
+      title: "Realtime collaboration",
+    },
+    {
+      body: "Run courses, distribute assignments, collect work, and grade technical files without building your own integration stack.",
+      title: "Teaching and operations",
+    },
+    {
+      body: (
+        <>
+          Use hosted CoCalc,{" "}
+          <a href={appPath("software/cocalc-plus")}>CoCalc Plus</a>,{" "}
+          <a
+            href="https://software.cocalc.ai/software/cocalc-launchpad/index.html"
+            rel="noreferrer"
+            target="_blank"
+          >
+            Launchpad
+          </a>
+          , and custom deployments without changing the overall user model.
+        </>
+      ),
+      title: "Hosted and self-hosted",
+    },
+  ];
 }
 
 function formatNewsDate(value?: number | Date): string {
@@ -210,13 +240,14 @@ function HeroDetails({
 }
 
 function HighlightSection({ siteName }: { siteName: string }) {
+  const highlights = getHomeHighlights();
   return (
     <section style={{ marginTop: 32 }}>
       <Title level={2} style={{ margin: 0 }}>
         Why {siteName} is different
       </Title>
       <Row gutter={[16, 16]} style={{ marginTop: 8 }}>
-        {HOME_HIGHLIGHTS.map((item) => (
+        {highlights.map((item) => (
           <Col key={item.title} xs={24} md={12}>
             <PublicSectionCard>
               <Title level={3} style={{ margin: 0 }}>

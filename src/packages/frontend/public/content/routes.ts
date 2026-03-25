@@ -100,6 +100,13 @@ export function topLevelView(
   }
 }
 
+export function isPublicContentTarget(
+  target?: string | null,
+): target is string {
+  if (!target) return false;
+  return /\/(about|policies|news|software)(\/|$)/.test(target);
+}
+
 export function contentPath(view: string): string {
   const base = appBasePath === "/" ? "" : appBasePath;
   return `${base}/${view}`;

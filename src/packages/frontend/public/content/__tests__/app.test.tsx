@@ -4,7 +4,11 @@ import { render, screen } from "@testing-library/react";
 
 import type { NewsItem } from "@cocalc/util/types/news";
 import PublicContentApp from "../app";
-import { contentPath, getContentRouteFromPath } from "../routes";
+import {
+  contentPath,
+  getContentRouteFromPath,
+  isPublicContentTarget,
+} from "../routes";
 
 describe("getContentRouteFromPath", () => {
   it("supports deeper content routes under a base path", () => {
@@ -49,6 +53,12 @@ describe("getContentRouteFromPath", () => {
     expect(
       getContentRouteFromPath(contentPath("software/cocalc-plus")),
     ).toEqual({ view: "software-cocalc-plus" });
+  });
+
+  it("recognizes software routes when booting from a static content entry", () => {
+    expect(isPublicContentTarget("/software/cocalc-plus")).toBe(true);
+    expect(isPublicContentTarget("/base/software/cocalc-plus")).toBe(true);
+    expect(isPublicContentTarget("/features/jupyter-notebook")).toBe(false);
   });
 });
 

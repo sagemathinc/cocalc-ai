@@ -43,6 +43,21 @@ describe("PublicHomeApp", () => {
       screen.getByRole("heading", { name: "Popular Features" }),
     ).not.toBeNull();
     expect(screen.getByRole("heading", { name: "Recent News" })).not.toBeNull();
+    expect(
+      screen.getByRole("link", { name: "Patchflow" }).getAttribute("href"),
+    ).toBe("https://github.com/sagemathinc/patchflow");
+    expect(
+      screen.getByRole("link", { name: "CoCalc Plus" }).getAttribute("href"),
+    ).toBe("/software/cocalc-plus");
+    expect(
+      screen
+        .getAllByRole("link", { name: "Launchpad" })
+        .some(
+          (link) =>
+            link.getAttribute("href") ===
+            "https://software.cocalc.ai/software/cocalc-launchpad/index.html",
+        ),
+    ).toBe(true);
   });
 
   it("shows direct app actions when authenticated", () => {

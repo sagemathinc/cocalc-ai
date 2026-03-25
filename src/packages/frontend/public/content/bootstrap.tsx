@@ -9,7 +9,7 @@ import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { joinUrlPath } from "@cocalc/util/url-path";
 import type { NewsItem } from "@cocalc/util/types/news";
 import PublicContentApp from "./app";
-import { getContentRouteFromPath } from "./routes";
+import { getContentRouteFromPath, isPublicContentTarget } from "./routes";
 
 interface CustomizePayload {
   configuration?: {
@@ -43,10 +43,9 @@ async function loadNews(): Promise<NewsItem[] | undefined> {
 
 export async function init(): Promise<void> {
   const target = new URLSearchParams(window.location.search).get("target");
-  const initialPath =
-    target && /(\/about|\/policies|\/news)/.test(target)
-      ? target
-      : window.location.pathname;
+  const initialPath = isPublicContentTarget(target)
+    ? target
+    : window.location.pathname;
 
   const [customize, news] = await Promise.all([loadCustomize(), loadNews()]);
   const root = createRoot(document.getElementById("cocalc-webapp-container")!);
@@ -63,7 +62,7 @@ export async function init(): Promise<void> {
 
   window.addEventListener("popstate", () => render());
   render(initialPath);
-  if (target && /(\/about|\/policies|\/news)/.test(target)) {
+  if (isPublicContentTarget(target)) {
     window.history.replaceState({}, "", target);
   }
 }

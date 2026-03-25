@@ -268,17 +268,21 @@ function PageShell({
         actions={
           <Flex wrap gap={8}>
             {[
-              ["About", "about"],
-              ["Policies", "policies"],
-              ["News", "news"],
-              ["Software", "software/cocalc-plus"],
-            ].map(([label, view]) => (
+              { href: "about", key: "about", label: "About" },
+              { href: "policies", key: "policies", label: "Policies" },
+              { href: "news", key: "news", label: "News" },
+              {
+                href: "software/cocalc-plus",
+                key: "software",
+                label: "Software",
+              },
+            ].map((item) => (
               <Button
-                key={view}
-                type={currentTop === view ? "primary" : "default"}
-                href={contentPath(view)}
+                key={item.href}
+                type={currentTop === item.key ? "primary" : "default"}
+                href={contentPath(item.href)}
               >
-                {label}
+                {item.label}
               </Button>
             ))}
           </Flex>
