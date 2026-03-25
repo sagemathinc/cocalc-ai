@@ -18,9 +18,15 @@ import {
 } from "antd";
 
 import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
+import ActionAssist from "@cocalc/frontend/components/action-assist";
 import { Icon, Paragraph } from "@cocalc/frontend/components";
 import ShowError from "@cocalc/frontend/components/error";
 import { useProjectContext } from "@cocalc/frontend/project/context";
+import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
+import {
+  dispatchNavigatorPromptIntent,
+  submitNavigatorPromptToCurrentThread,
+} from "@cocalc/frontend/project/new/navigator-intents";
 import RootfsPublishOps from "@cocalc/frontend/project/settings/rootfs-publish-ops";
 import {
   getProjectRootfsStates,
@@ -232,6 +238,23 @@ export default function RootFilesystemImage() {
     );
     return newerVersions[0];
   }, [currentDisplayEntry, relatedVersionEntries]);
+  const publishAssistCommand = useMemo(
+    () =>
+      buildRootfsPublishAssistCommand({
+        projectId: project_id,
+        publishMode,
+        publishCopyMode,
+        publishDraft,
+        publishSourceEntry,
+      }),
+    [
+      project_id,
+      publishMode,
+      publishCopyMode,
+      publishDraft,
+      publishSourceEntry,
+    ],
+  );
 
   useEffect(() => {
     const nextImage = getImage(project, effectiveDefaultRootfs);
@@ -443,6 +466,58 @@ export default function RootFilesystemImage() {
       setError(`${err}`);
     } finally {
       setPublishing(false);
+    }
+  }
+
+  async function sendPublishAssistToAgent() {
+    const prompt = buildRootfsPublishAgentPrompt({
+      projectId: project_id,
+      command: publishAssistCommand,
+      publishMode,
+      publishCopyMode,
+      publishDraft,
+      publishSourceEntry,
+    });
+    try {
+      const sent = await submitNavigatorPromptToCurrentThread({
+        project_id,
+        prompt,
+        title:
+          publishMode === "copy" && publishCopyMode === "project"
+            ? "Publish RootFS"
+            : publishMode === "manage"
+              ? "Update RootFS Catalog Entry"
+              : "Save RootFS Image",
+        tag: "intent:rootfs-publish",
+        forceCodex: true,
+        openFloating: true,
+        codexConfig: {
+          sessionMode: "full-access",
+          allowWrite: true,
+          workingDirectory: getProjectHomeDirectory(project_id),
+        },
+      });
+      if (!sent) {
+        dispatchNavigatorPromptIntent({
+          prompt,
+          title:
+            publishMode === "copy" && publishCopyMode === "project"
+              ? "Publish RootFS"
+              : publishMode === "manage"
+                ? "Update RootFS Catalog Entry"
+                : "Save RootFS Image",
+          tag: "intent:rootfs-publish",
+          forceCodex: true,
+          codexConfig: {
+            sessionMode: "full-access",
+            allowWrite: true,
+            workingDirectory: getProjectHomeDirectory(project_id),
+          },
+        });
+      }
+    } catch (err) {
+      setError(`${err}`);
+      throw err;
     }
   }
 
@@ -999,6 +1074,18 @@ export default function RootFilesystemImage() {
                 ? "Publishing creates a new immutable managed RootFS reference. The current project keeps its existing live upperdir and is not automatically switched to that new image."
                 : "This saves catalog metadata for the current image string without creating a new managed RootFS artifact."}
             </Paragraph>
+            <ActionAssist
+              title="Use CLI or Agent"
+              description={
+                publishMode === "copy" && publishCopyMode === "project"
+                  ? "Preview the equivalent CLI command, or send the same publish request to the current workspace agent thread."
+                  : "Preview the equivalent CLI command, or send the same catalog-save request to the current workspace agent thread."
+              }
+              cliTitle="RootFS CLI"
+              cliCommands={[publishAssistCommand]}
+              onSendAgent={sendPublishAssistToAgent}
+              agentDescription="Agent support depends on the current workspace Codex session. Restart-sensitive actions such as changing the project image still need more care than publishing."
+            />
           </Space>
         </Modal>
       )}
@@ -1095,6 +1182,113 @@ function compareRootfsVersions(a?: string, b?: string): number {
     numeric: true,
     sensitivity: "base",
   });
+}
+
+function buildRootfsPublishAssistCommand(opts: {
+  projectId: string;
+  publishMode: "copy" | "manage";
+  publishCopyMode: "project" | "base";
+  publishDraft: PublishDraft;
+  publishSourceEntry?: RootfsImageEntry;
+}): string {
+  const {
+    projectId,
+    publishMode,
+    publishCopyMode,
+    publishDraft,
+    publishSourceEntry,
+  } = opts;
+  const parts: string[] =
+    publishMode === "copy" && publishCopyMode === "project"
+      ? [
+          "cocalc",
+          "rootfs",
+          "publish",
+          "--project",
+          shellQuoteCliArg(projectId),
+          "--label",
+          shellQuoteCliArg(publishDraft.label),
+          "--wait",
+        ]
+      : [
+          "cocalc",
+          "rootfs",
+          "save",
+          "--image",
+          shellQuoteCliArg(publishDraft.image),
+          "--label",
+          shellQuoteCliArg(publishDraft.label),
+        ];
+  if (publishMode === "manage" && publishSourceEntry?.can_manage) {
+    pushCliOption(parts, "--image-id", publishSourceEntry.id);
+  }
+  pushCliOption(parts, "--description", publishDraft.description);
+  if (publishDraft.visibility) {
+    pushCliOption(parts, "--visibility", publishDraft.visibility);
+  }
+  pushCliOption(parts, "--tags", publishDraft.tags);
+  if (publishDraft.official) parts.push("--official");
+  if (publishDraft.prepull) parts.push("--prepull");
+  if (publishDraft.hidden) parts.push("--hidden");
+  return parts.join(" ");
+}
+
+function buildRootfsPublishAgentPrompt(opts: {
+  projectId: string;
+  command: string;
+  publishMode: "copy" | "manage";
+  publishCopyMode: "project" | "base";
+  publishDraft: PublishDraft;
+  publishSourceEntry?: RootfsImageEntry;
+}): string {
+  const {
+    projectId,
+    command,
+    publishMode,
+    publishCopyMode,
+    publishDraft,
+    publishSourceEntry,
+  } = opts;
+  const lines = [
+    publishMode === "copy" && publishCopyMode === "project"
+      ? `Publish the current RootFS of project ${projectId} as a managed CoCalc image.`
+      : publishMode === "manage"
+        ? `Update the existing RootFS catalog entry for project ${projectId}.`
+        : `Save the current base image of project ${projectId} into the RootFS catalog.`,
+    "",
+    "Use the CoCalc CLI for this action:",
+    "```sh",
+    command,
+    "```",
+    "",
+    publishMode === "copy" && publishCopyMode === "project"
+      ? "Important: this publishes the current visible / software environment. It does not publish /root or /scratch, and it does not automatically switch the project to the new image."
+      : publishMode === "manage"
+        ? `Important: update the existing catalog entry${publishSourceEntry?.label ? ` (${publishSourceEntry.label})` : ""} instead of creating another copy.`
+        : "Important: this only saves catalog metadata for the current base image. It does not create a new managed RootFS artifact from the live project state.",
+    "",
+    "Desired metadata:",
+    `- label: ${publishDraft.label}`,
+    `- description: ${publishDraft.description || "(empty)"}`,
+    `- visibility: ${publishDraft.visibility}`,
+    `- tags: ${publishDraft.tags || "(none)"}`,
+    `- official: ${publishDraft.official ? "yes" : "no"}`,
+    `- prepull: ${publishDraft.prepull ? "yes" : "no"}`,
+    `- hidden: ${publishDraft.hidden ? "yes" : "no"}`,
+    "",
+    "After the action completes, report the resulting image name, image_id/release_id if available, and whether the action succeeded cleanly.",
+  ];
+  return lines.join("\n");
+}
+
+function pushCliOption(parts: string[], flag: string, value?: string) {
+  const trimmed = `${value ?? ""}`.trim();
+  if (!trimmed) return;
+  parts.push(flag, shellQuoteCliArg(trimmed));
+}
+
+function shellQuoteCliArg(value: string): string {
+  return `'${`${value ?? ""}`.replace(/'/g, `'\\''`)}'`;
 }
 
 function sectionLabel(section: RootfsImageEntry["section"]): string {
