@@ -1192,10 +1192,13 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
     }, 0);
   }
 
-  function openCreator() {
+  function openCreator(opts?: { openSelector?: boolean }) {
+    const openSelector = opts?.openSelector ?? false;
     setCreatorOpen(true);
-    setPresetSelectorOpen(true);
-    focusPresetSelector();
+    setPresetSelectorOpen(openSelector);
+    if (openSelector) {
+      focusPresetSelector();
+    }
   }
 
   function toggleRowExpanded(id: string) {
@@ -2132,7 +2135,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                 setPresetSelectorOpen(false);
                 return;
               }
-              openCreator();
+              openCreator({ openSelector: true });
             }}
           >
             {creatorOpen ? "Collapse" : "Expand"}
@@ -2160,7 +2163,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                   compact
                   onClick={() => {
                     applyPreset(preset.key);
-                    openCreator();
+                    openCreator({ openSelector: false });
                   }}
                 />
               ))}
@@ -2168,7 +2171,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
             <Button
               block
               size="large"
-              onClick={() => openCreator()}
+              onClick={() => openCreator({ openSelector: true })}
               style={{ marginTop: "4px" }}
             >
               More...
