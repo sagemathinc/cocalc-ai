@@ -81,6 +81,7 @@ type PublishDraft = {
 export default function RootFilesystemImage() {
   const { actions, project, project_id } = useProjectContext();
   const [open, setOpen] = useState<boolean>(false);
+  const [upgradeOpen, setUpgradeOpen] = useState<boolean>(false);
   const [publishOpen, setPublishOpen] = useState<boolean>(false);
   const [saving, setSaving] = useState<boolean>(false);
   const [publishing, setPublishing] = useState<boolean>(false);
@@ -341,13 +342,6 @@ export default function RootFilesystemImage() {
     setOpen(true);
   }
 
-  function openUpgradeDialog(entry: RootfsImageEntry) {
-    setRootfsMode("catalog");
-    setRootfsDraft(entry.image);
-    setRootfsDraftId(entry.id);
-    setOpen(true);
-  }
-
   function openPublishDialog(opts?: {
     image?: string;
     entry?: RootfsImageEntry;
@@ -384,62 +378,27 @@ export default function RootFilesystemImage() {
     setPublishOpen(true);
   }
 
-  async function applyRootfsChange() {
-    try {
-      setSaving(true);
-      if (!project) return;
-      const project_id = project.get("project_id");
-      const nextEntry =
-        rootfsMode === "catalog"
-          ? rootfsImages.find((entry) => entry.id === rootfsDraftId.trim())
-          : undefined;
-      const nextImage =
-        rootfsMode === "custom"
-          ? rootfsDraft.trim() || effectiveDefaultRootfs
-          : nextEntry?.image || effectiveDefaultRootfs;
-      const nextImageId =
-        rootfsMode === "custom"
-          ? undefined
-          : nextEntry?.id?.trim() || undefined;
-      const states = await switchProjectRootfs({
-        project_id,
-        image: nextImage,
-        image_id: nextImageId,
-      });
-      setProjectRootfsStates(states);
-      const currentState = states.find(
-        (state) => state.state_role === "current",
-      );
-      setValue(currentState?.image ?? nextImage);
-      setImageId(currentState?.image_id ?? nextImageId ?? "");
-      if (project.getIn(["state", "state"]) == "running") {
-        redux.getActions("projects").restart_project(project_id);
-      }
-      setOpen(false);
-    } catch (err) {
-      setError(`${err}`);
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function rollbackToPreviousRootfs() {
-    if (!previousProjectRootfsState || !project) return;
+  async function applyProjectRootfsSelection({
+    image,
+    image_id,
+  }: {
+    image: string;
+    image_id?: string;
+  }) {
+    if (!project) return;
     try {
       setSaving(true);
       const states = await switchProjectRootfs({
         project_id: project.get("project_id"),
-        image: previousProjectRootfsState.image,
-        image_id: previousProjectRootfsState.image_id,
+        image,
+        image_id,
       });
       setProjectRootfsStates(states);
       const currentState = states.find(
         (state) => state.state_role === "current",
       );
-      setValue(currentState?.image ?? previousProjectRootfsState.image);
-      setImageId(
-        currentState?.image_id ?? previousProjectRootfsState.image_id ?? "",
-      );
+      setValue(currentState?.image ?? image);
+      setImageId(currentState?.image_id ?? image_id ?? "");
       if (project.getIn(["state", "state"]) == "running") {
         redux.getActions("projects").restart_project(project.get("project_id"));
       }
@@ -448,6 +407,41 @@ export default function RootFilesystemImage() {
     } finally {
       setSaving(false);
     }
+  }
+
+  async function applyRootfsChange() {
+    const nextEntry =
+      rootfsMode === "catalog"
+        ? rootfsImages.find((entry) => entry.id === rootfsDraftId.trim())
+        : undefined;
+    const nextImage =
+      rootfsMode === "custom"
+        ? rootfsDraft.trim() || effectiveDefaultRootfs
+        : nextEntry?.image || effectiveDefaultRootfs;
+    const nextImageId =
+      rootfsMode === "custom" ? undefined : nextEntry?.id?.trim() || undefined;
+    await applyProjectRootfsSelection({
+      image: nextImage,
+      image_id: nextImageId,
+    });
+    setOpen(false);
+  }
+
+  async function rollbackToPreviousRootfs() {
+    if (!previousProjectRootfsState) return;
+    await applyProjectRootfsSelection({
+      image: previousProjectRootfsState.image,
+      image_id: previousProjectRootfsState.image_id,
+    });
+  }
+
+  async function applySuggestedUpgrade() {
+    if (!suggestedUpgradeEntry) return;
+    await applyProjectRootfsSelection({
+      image: suggestedUpgradeEntry.image,
+      image_id: suggestedUpgradeEntry.id,
+    });
+    setUpgradeOpen(false);
   }
 
   async function saveCatalogEntry() {
@@ -621,7 +615,7 @@ export default function RootFilesystemImage() {
               disabled={open || saving}
               onClick={rollbackToPreviousRootfs}
             >
-              Switch back to previous image
+              Roll back to previous image
             </Button>
           )}
         </Space>
@@ -662,12 +656,18 @@ export default function RootFilesystemImage() {
               </>
             }
             action={
-              <Button
-                size="small"
-                onClick={() => openUpgradeDialog(suggestedUpgradeEntry)}
-              >
-                Review upgrade
-              </Button>
+              <Space size="small">
+                <Button
+                  size="small"
+                  type="primary"
+                  onClick={() => setUpgradeOpen(true)}
+                >
+                  Review upgrade
+                </Button>
+                <Button size="small" onClick={openPicker}>
+                  Other images
+                </Button>
+              </Space>
             }
           />
         )}
@@ -719,6 +719,96 @@ export default function RootFilesystemImage() {
             </Paragraph>
           )}
         </div>
+      )}
+      {upgradeOpen && suggestedUpgradeEntry && currentDisplayEntry && (
+        <Modal
+          open
+          width={760}
+          onCancel={() => setUpgradeOpen(false)}
+          onOk={applySuggestedUpgrade}
+          okText={`Upgrade to ${displayRootfsLabel(
+            suggestedUpgradeEntry,
+            suggestedUpgradeEntry.image,
+          )}`}
+          okButtonProps={{ loading: saving }}
+          title={
+            <>
+              <Icon name="arrow-circle-up" style={{ marginRight: "12px" }} />
+              Upgrade RootFS Image
+            </>
+          }
+        >
+          <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+            <Alert
+              type="info"
+              showIcon
+              message="This upgrades the visible / software environment"
+              description={
+                <>
+                  Upgrading changes the project to a newer managed RootFS image.
+                  Your files in <code>/root</code> and <code>/scratch</code>{" "}
+                  stay available. Packages and files you added directly under{" "}
+                  <code>/</code> belong to the previous RootFS state and only
+                  come back if you roll back.
+                </>
+              }
+            />
+            {renderRootfsEntrySummary({
+              heading: "Current image",
+              entry: currentDisplayEntry,
+              fallbackImage:
+                currentProjectRootfsState?.image ??
+                value ??
+                effectiveDefaultRootfs,
+              note: "This is the software environment your project is using right now.",
+            })}
+            {renderRootfsEntrySummary({
+              heading: "Upgrade target",
+              entry: suggestedUpgradeEntry,
+              fallbackImage: suggestedUpgradeEntry.image,
+              note: "This newer image will become the visible / environment after the restart.",
+            })}
+            <Alert
+              type="warning"
+              showIcon
+              message="Rollback stays available, but only for one previous image"
+              description={
+                previousProjectRootfsState ? (
+                  <>
+                    Your current image will become the new rollback target. The
+                    older rollback image{" "}
+                    <code>
+                      {displayRootfsLabel(
+                        previousProjectRootfsEntry,
+                        previousProjectRootfsState.image,
+                      )}
+                    </code>{" "}
+                    will be replaced.
+                  </>
+                ) : (
+                  <>
+                    After the upgrade, you can still roll back to{" "}
+                    <code>
+                      {displayRootfsLabel(
+                        currentDisplayEntry,
+                        currentProjectRootfsState?.image ??
+                          value ??
+                          effectiveDefaultRootfs,
+                      )}
+                    </code>
+                    .
+                  </>
+                )
+              }
+            />
+            {project.getIn(["state", "state"]) == "running" ? (
+              <Paragraph type="secondary" style={{ marginBottom: 0 }}>
+                The project is currently running, so CoCalc will restart it
+                after switching the RootFS image.
+              </Paragraph>
+            ) : null}
+          </Space>
+        </Modal>
       )}
       {open && (
         <Modal
@@ -1401,6 +1491,68 @@ function renderRootfsThemePreview(entry?: {
       }}
     >
       <Icon name={iconName as any} style={{ fontSize: "24px" }} />
+    </div>
+  );
+}
+
+function renderRootfsEntrySummary({
+  heading,
+  entry,
+  fallbackImage,
+  note,
+}: {
+  heading: string;
+  entry: RootfsImageEntry | undefined;
+  fallbackImage: string;
+  note?: React.JSX.Element | string;
+}): React.JSX.Element {
+  return (
+    <div>
+      <Paragraph strong style={{ marginBottom: "8px" }}>
+        {heading}
+      </Paragraph>
+      <div style={rootfsSummaryCardStyle(entry)}>
+        <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
+          {renderRootfsThemePreview({
+            theme: entry?.theme,
+            label: entry?.label,
+            image: entry?.image ?? fallbackImage,
+          })}
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <div style={{ fontWeight: 600, marginBottom: 4 }}>
+              {displayRootfsLabel(entry, fallbackImage)}
+            </div>
+            <Space wrap style={{ marginBottom: "6px" }}>
+              {entry?.section ? (
+                <Tag color={sectionTagColor(entry.section)}>
+                  {sectionLabel(entry.section)}
+                </Tag>
+              ) : null}
+              {entry?.version ? <Tag>{entry.version}</Tag> : null}
+              {entry?.channel ? <Tag color="cyan">{entry.channel}</Tag> : null}
+              {entry?.gpu ? <Tag color="purple">GPU image</Tag> : null}
+            </Space>
+            <div
+              style={{
+                fontFamily: "monospace",
+                fontSize: "11px",
+                color: COLORS.GRAY_M,
+                overflowWrap: "anywhere",
+              }}
+            >
+              {entry?.image ?? fallbackImage}
+            </div>
+            {note ? (
+              <Paragraph
+                type="secondary"
+                style={{ marginTop: "8px", marginBottom: 0 }}
+              >
+                {note}
+              </Paragraph>
+            ) : null}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
