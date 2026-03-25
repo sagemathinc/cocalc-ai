@@ -43,6 +43,7 @@ export interface AppServerPreset {
   icon?: string;
   accentColor?: string;
   surfaceColor?: string;
+  heroImage?: string;
 }
 
 function joinPath(head: string, tail: string): string {
@@ -90,6 +91,7 @@ function toPreset(
     icon: template.theme?.icon,
     accentColor: template.theme?.accent_color,
     surfaceColor: template.theme?.surface_color,
+    heroImage: template.theme?.hero_image,
   };
 }
 

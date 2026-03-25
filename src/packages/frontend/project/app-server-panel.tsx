@@ -173,6 +173,7 @@ function PresetSummaryCard({
   compact?: boolean;
 }) {
   const theme = getPresetTheme(preset);
+  const heroHeight = compact ? 88 : 110;
   return (
     <Card
       size="small"
@@ -182,7 +183,7 @@ function PresetSummaryCard({
         cursor: onClick ? "pointer" : undefined,
         borderColor: theme.accent,
         background: `linear-gradient(135deg, ${theme.surface} 0%, white 78%)`,
-        minHeight: compact ? 136 : undefined,
+        minHeight: compact ? 196 : undefined,
         overflow: "hidden",
       }}
     >
@@ -191,45 +192,62 @@ function PresetSummaryCard({
         size={compact ? 8 : 6}
         style={{ width: "100%" }}
       >
+        <div
+          style={{
+            margin: "-12px -12px 0",
+            height: heroHeight,
+            borderBottom: `1px solid ${theme.accent}22`,
+            backgroundColor: theme.surface,
+            backgroundImage: preset.heroImage
+              ? `url("${preset.heroImage}")`
+              : `radial-gradient(circle at 82% 22%, ${theme.accent}22 0, ${theme.accent}22 18%, transparent 18%), linear-gradient(135deg, ${theme.surface} 0%, white 85%)`,
+            backgroundSize: "cover",
+            backgroundPosition: "center",
+            backgroundRepeat: "no-repeat",
+            position: "relative",
+          }}
+        >
+          <div
+            style={{
+              position: "absolute",
+              left: 16,
+              bottom: -18,
+              width: compact ? 40 : 46,
+              height: compact ? 40 : 46,
+              borderRadius: compact ? 14 : 16,
+              background: theme.accent,
+              color: "white",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              boxShadow: `0 10px 24px ${theme.accent}44`,
+              border: "2px solid white",
+            }}
+          >
+            <Icon name={theme.icon} />
+          </div>
+        </div>
         <Space
           align="start"
           style={{ width: "100%", justifyContent: "space-between" }}
         >
-          <Space size={10} align="start">
-            <div
-              style={{
-                width: compact ? 36 : 40,
-                height: compact ? 36 : 40,
-                borderRadius: compact ? 12 : 14,
-                background: theme.accent,
-                color: "white",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                flexShrink: 0,
-                boxShadow: `0 10px 24px ${theme.accent}33`,
-              }}
-            >
-              <Icon name={theme.icon} />
-            </div>
-            <div style={{ minWidth: 0 }}>
-              <Typography.Text strong style={{ display: "block" }}>
-                {preset.label}
+          <div style={{ minWidth: 0, paddingTop: 4 }}>
+            <Typography.Text strong style={{ display: "block" }}>
+              {preset.label}
+            </Typography.Text>
+            {preset.description ? (
+              <Typography.Text
+                type="secondary"
+                style={{
+                  display: "block",
+                  marginTop: 2,
+                  lineHeight: 1.35,
+                }}
+              >
+                {preset.description}
               </Typography.Text>
-              {preset.description ? (
-                <Typography.Text
-                  type="secondary"
-                  style={{
-                    display: "block",
-                    marginTop: 2,
-                    lineHeight: 1.35,
-                  }}
-                >
-                  {preset.description}
-                </Typography.Text>
-              ) : null}
-            </div>
-          </Space>
+            ) : null}
+          </div>
           {preset.category ? (
             <Tag
               style={{

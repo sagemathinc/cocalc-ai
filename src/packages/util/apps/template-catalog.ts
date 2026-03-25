@@ -48,6 +48,7 @@ export interface AppTemplateThemeV1 {
   icon?: string;
   accent_color?: string;
   surface_color?: string;
+  hero_image?: string;
 }
 
 export interface AppTemplateCatalogEntryV1 {

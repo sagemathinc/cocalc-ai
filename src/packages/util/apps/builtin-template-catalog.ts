@@ -31,6 +31,51 @@ const PUBLISHING_TEMPLATE_THEME = {
   surface_color: COLORS.YELL_LLL,
 } as const;
 
+function svgDataUrl(svg: string): string {
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+}
+
+function makeTemplateHero(
+  title: string,
+  subtitle: string,
+  accent: string,
+  surface: string,
+): string {
+  return svgDataUrl(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 520 240" role="img" aria-label="${title}">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="${surface}" />
+      <stop offset="100%" stop-color="white" />
+    </linearGradient>
+  </defs>
+  <rect width="520" height="240" rx="28" fill="url(#bg)" />
+  <circle cx="410" cy="58" r="82" fill="${accent}" fill-opacity="0.16" />
+  <circle cx="468" cy="198" r="118" fill="${accent}" fill-opacity="0.10" />
+  <rect x="28" y="30" width="110" height="12" rx="6" fill="${accent}" fill-opacity="0.22" />
+  <rect x="28" y="54" width="74" height="12" rx="6" fill="${accent}" fill-opacity="0.14" />
+  <text x="28" y="126" font-family="system-ui, sans-serif" font-size="38" font-weight="700" fill="${COLORS.GRAY_DD}">${title}</text>
+  <text x="28" y="164" font-family="system-ui, sans-serif" font-size="21" fill="${COLORS.GRAY_M}">${subtitle}</text>
+</svg>`);
+}
+
+function withTemplateTheme(
+  icon: string,
+  theme: { accent_color: string; surface_color: string },
+  title: string,
+  subtitle: string,
+) {
+  return {
+    icon,
+    ...theme,
+    hero_image: makeTemplateHero(
+      title,
+      subtitle,
+      theme.accent_color,
+      theme.surface_color,
+    ),
+  };
+}
+
 export const BUILTIN_APP_TEMPLATE_CATALOG: AppTemplateCatalogV1 = {
   version: 1,
   kind: "cocalc-app-template-catalog",
@@ -44,7 +89,12 @@ export const BUILTIN_APP_TEMPLATE_CATALOG: AppTemplateCatalogV1 = {
       priority: 100,
       homepage: "https://jupyter.org/",
       description: "Interactive notebooks, terminals, and files.",
-      theme: { icon: "ipynb", ...CORE_TEMPLATE_THEME },
+      theme: withTemplateTheme(
+        "ipynb",
+        CORE_TEMPLATE_THEME,
+        "JupyterLab",
+        "Notebooks + terminals",
+      ),
       detect: {
         commands: ["jupyter lab --version", "jupyter-lab --version"],
       },
@@ -94,7 +144,12 @@ export const BUILTIN_APP_TEMPLATE_CATALOG: AppTemplateCatalogV1 = {
       priority: 95,
       homepage: "https://code-server.dev/",
       description: "VS Code in the browser, proxied as a managed app.",
-      theme: { icon: "vscode", ...CORE_TEMPLATE_THEME },
+      theme: withTemplateTheme(
+        "vscode",
+        CORE_TEMPLATE_THEME,
+        "VS Code",
+        "Editor in the browser",
+      ),
       detect: {
         commands: ["code-server --version"],
       },
@@ -125,7 +180,12 @@ export const BUILTIN_APP_TEMPLATE_CATALOG: AppTemplateCatalogV1 = {
       priority: 90,
       homepage: "https://plutojl.org/",
       description: "Reactive Julia notebooks.",
-      theme: { icon: "julia", ...CORE_TEMPLATE_THEME },
+      theme: withTemplateTheme(
+        "julia",
+        CORE_TEMPLATE_THEME,
+        "Pluto",
+        "Reactive Julia notebooks",
+      ),
       detect: {
         commands: [
           "julia -e 'Base.find_package(\"Pluto\") |> isnothing && exit(1)'",
@@ -161,7 +221,12 @@ export const BUILTIN_APP_TEMPLATE_CATALOG: AppTemplateCatalogV1 = {
       priority: 80,
       homepage: "https://posit.co/products/open-source/rstudio-server/",
       description: "Browser IDE for R and data science workflows.",
-      theme: { icon: "r", ...CORE_TEMPLATE_THEME },
+      theme: withTemplateTheme(
+        "r",
+        CORE_TEMPLATE_THEME,
+        "RStudio",
+        "R IDE and data workflows",
+      ),
       detect: {
         commands: ["command -v rserver"],
       },
@@ -188,7 +253,12 @@ export const BUILTIN_APP_TEMPLATE_CATALOG: AppTemplateCatalogV1 = {
       priority: 78,
       homepage: "https://streamlit.io/",
       description: "Interactive Python dashboards and data apps.",
-      theme: { icon: "dashboard", ...PYTHON_WEB_TEMPLATE_THEME },
+      theme: withTemplateTheme(
+        "dashboard",
+        PYTHON_WEB_TEMPLATE_THEME,
+        "Streamlit",
+        "Data apps and dashboards",
+      ),
       detect: {
         commands: ["python3 -m streamlit version"],
       },
@@ -243,7 +313,12 @@ exec python3 -m streamlit run "$app" --server.address="\${HOST:-127.0.0.1}" --se
       priority: 74,
       homepage: "https://fastapi.tiangolo.com/",
       description: "Fast Python APIs served with Uvicorn.",
-      theme: { icon: "rocket", ...PYTHON_WEB_TEMPLATE_THEME },
+      theme: withTemplateTheme(
+        "rocket",
+        PYTHON_WEB_TEMPLATE_THEME,
+        "FastAPI",
+        "Modern Python APIs",
+      ),
       detect: {
         commands: [
           `python3 -c "import fastapi, uvicorn; print(fastapi.__version__)"`,
@@ -303,7 +378,12 @@ exec python3 -m uvicorn "\${APP_MODULE:-main:app}" --host "\${HOST:-127.0.0.1}" 
       priority: 72,
       homepage: "https://flask.palletsprojects.com/",
       description: "Minimal Python web apps and APIs.",
-      theme: { icon: "api", ...PYTHON_WEB_TEMPLATE_THEME },
+      theme: withTemplateTheme(
+        "api",
+        PYTHON_WEB_TEMPLATE_THEME,
+        "Flask",
+        "Minimal Python services",
+      ),
       detect: {
         commands: [`python3 -c "import flask; print(flask.__version__)"`],
       },
@@ -358,7 +438,12 @@ exec python3 -m flask run --host="\${HOST:-127.0.0.1}" --port="\${PORT}"`,
       priority: 70,
       homepage: "https://www.gradio.app/",
       description: "Quick browser UIs for Python functions and ML demos.",
-      theme: { icon: "robot", ...PYTHON_WEB_TEMPLATE_THEME },
+      theme: withTemplateTheme(
+        "robot",
+        PYTHON_WEB_TEMPLATE_THEME,
+        "Gradio",
+        "Browser UIs for Python",
+      ),
       detect: {
         commands: [`python3 -c "import gradio; print(gradio.__version__)"`],
       },
@@ -427,7 +512,12 @@ exec python3 "$app"`,
       priority: 68,
       homepage: "https://dash.plotly.com/",
       description: "Interactive analytic dashboards with Plotly Dash.",
-      theme: { icon: "line-chart", ...PYTHON_WEB_TEMPLATE_THEME },
+      theme: withTemplateTheme(
+        "line-chart",
+        PYTHON_WEB_TEMPLATE_THEME,
+        "Dash",
+        "Interactive analytics",
+      ),
       detect: {
         commands: [`python3 -c "import dash; print(dash.__version__)"`],
       },
@@ -504,7 +594,12 @@ exec python3 "$app"`,
       homepage: "https://www.mkdocs.org/",
       description:
         "Documentation sites from Markdown, served live in the browser.",
-      theme: { icon: "book", ...DOCS_TEMPLATE_THEME },
+      theme: withTemplateTheme(
+        "book",
+        DOCS_TEMPLATE_THEME,
+        "MkDocs",
+        "Live docs from Markdown",
+      ),
       detect: {
         commands: ["python3 -m mkdocs --version"],
       },
@@ -565,7 +660,12 @@ exec python3 -m mkdocs serve --dev-addr "\${HOST:-127.0.0.1}:\${PORT}"`,
       homepage: "https://marimo.io/",
       description:
         "Reactive Python notebooks and apps in a lightweight editor.",
-      theme: { icon: "edit", ...PYTHON_NOTEBOOK_TEMPLATE_THEME },
+      theme: withTemplateTheme(
+        "edit",
+        PYTHON_NOTEBOOK_TEMPLATE_THEME,
+        "marimo",
+        "Reactive Python notebooks",
+      ),
       detect: {
         commands: ["python3 -m marimo --version"],
       },
@@ -635,7 +735,12 @@ exec python3 -m marimo edit --headless --no-token --host "\${HOST:-127.0.0.1}" -
       homepage: "https://voila.readthedocs.io/",
       description:
         "Turn Jupyter notebooks into standalone dashboards and apps.",
-      theme: { icon: "project", ...PYTHON_NOTEBOOK_TEMPLATE_THEME },
+      theme: withTemplateTheme(
+        "project",
+        PYTHON_NOTEBOOK_TEMPLATE_THEME,
+        "Voila",
+        "Notebook-powered apps",
+      ),
       detect: {
         commands: ["python3 -m voila --version"],
       },
@@ -723,7 +828,12 @@ exec python3 -m voila "$app" --no-browser --Voila.ip="\${HOST:-127.0.0.1}" --por
       homepage: "https://quarto.org/",
       description:
         "Technical publishing for notebooks, docs, presentations, and sites.",
-      theme: { icon: "layout", ...PUBLISHING_TEMPLATE_THEME },
+      theme: withTemplateTheme(
+        "layout",
+        PUBLISHING_TEMPLATE_THEME,
+        "Quarto",
+        "Publishing and reports",
+      ),
       detect: {
         commands: [
           `bash -lc 'command -v quarto >/dev/null 2>&1 && quarto --version || /opt/quarto/bin/quarto --version'`,
@@ -770,7 +880,12 @@ exec "$quarto_bin" preview index.qmd --no-browser --host "\${HOST:-127.0.0.1}" -
       priority: 40,
       description:
         "Minimal HTTP hello-world app for testing the managed app flow.",
-      theme: { icon: "code", ...CORE_TEMPLATE_THEME },
+      theme: withTemplateTheme(
+        "code",
+        CORE_TEMPLATE_THEME,
+        "Python",
+        "Minimal HTTP demo",
+      ),
       detect: {
         commands: ["command -v python3"],
       },
@@ -791,7 +906,12 @@ exec "$quarto_bin" preview index.qmd --no-browser --host "\${HOST:-127.0.0.1}" -
       category: "core",
       priority: 35,
       description: "Minimal Node HTTP app for testing the managed app flow.",
-      theme: { icon: "api", ...CORE_TEMPLATE_THEME },
+      theme: withTemplateTheme(
+        "api",
+        CORE_TEMPLATE_THEME,
+        "Node.js",
+        "Minimal HTTP demo",
+      ),
       detect: {
         commands: ["command -v node"],
       },
@@ -812,7 +932,12 @@ exec "$quarto_bin" preview index.qmd --no-browser --host "\${HOST:-127.0.0.1}" -
       priority: 30,
       description:
         "Minimal static site example with optional refresh/bootstrap logic.",
-      theme: { icon: "html5", ...PUBLISHING_TEMPLATE_THEME },
+      theme: withTemplateTheme(
+        "html5",
+        PUBLISHING_TEMPLATE_THEME,
+        "Static site",
+        "Generated or hand-written",
+      ),
       preset: {
         id: "static-hello",
         title: "Static Hello World",
