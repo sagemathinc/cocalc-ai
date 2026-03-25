@@ -881,19 +881,20 @@ async function writeCloudflaredConfig(opts: {
 
 function appPublicWildcardHostname(
   dns?: string,
-  suffix?: string,
+  _suffix?: string,
 ): string | undefined {
   const raw = clean(dns)?.toLowerCase();
   if (!raw) return;
   const parts = raw.split(".").filter(Boolean);
   if (!parts.length) return;
   const root = parts.length > 2 ? parts.slice(-2).join(".") : raw;
-  const prefix = parts.length > 2 ? parts.slice(0, -2).join("-") : "";
-  const normalizedSuffix = clean(suffix)?.toLowerCase() || "app";
-  const wildcardLabel = ["*", normalizedSuffix, prefix]
-    .filter(Boolean)
-    .join("-");
-  return `${wildcardLabel}.${root}`;
+  // Public app hostnames are allocated as single labels such as
+  // <label>-app-dev.cocalc.ai. Cloudflare tunnel ingress wildcard matching
+  // only supports whole-label wildcards, so a pattern like
+  // "*-app-dev.cocalc.ai" does not match these hosts. Route them via a
+  // wildcard on the zone root label instead, relying on exact ingress entries
+  // for the main site/raw viewer hosts to take precedence.
+  return `*.${root}`;
 }
 
 async function loadCloudflaredStateFile(

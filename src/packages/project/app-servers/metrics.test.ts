@@ -24,6 +24,23 @@ process.on("SIGTERM", shutdown);
 process.on("SIGINT", shutdown);
 `;
 
+const SERVICE_PATH_SCRIPT = `
+const http = require("http");
+const host = process.env.HOST || "127.0.0.1";
+const port = Number(process.env.PORT || 0);
+const server = http.createServer((req, res) => {
+  const body = String(req.url || "/");
+  res.statusCode = 200;
+  res.setHeader("content-type", "text/plain; charset=utf-8");
+  res.setHeader("content-length", Buffer.byteLength(body));
+  res.end(body);
+});
+server.listen(port, host);
+const shutdown = () => server.close(() => process.exit(0));
+process.on("SIGTERM", shutdown);
+process.on("SIGINT", shutdown);
+`;
+
 function appId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
 }
@@ -245,6 +262,62 @@ describe("managed app metrics", () => {
       expect(summary.totals.private_requests).toBe(1);
       expect(summary.totals.bytes_sent).toBeGreaterThan(0);
       expect(summary.last_hit_ms).toBeGreaterThan(0);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await deleteApp(id);
+      await killIfRunning(appPid);
+      await killDirectChildrenForTests();
+    }
+  });
+
+  test("strips the /port/<port> prefix before forwarding", async () => {
+    jest.resetModules();
+    const { project_id, secretToken } = await import("@cocalc/project/data");
+    const { startProxyServer } =
+      await import("@cocalc/project/servers/proxy/proxy");
+    const { deleteApp, ensureRunning, upsertAppSpec } = await import("./control");
+
+    expect(secretToken).toBeTruthy();
+
+    const id = appId("metrics-port-path");
+    await upsertAppSpec({
+      version: 1,
+      id,
+      kind: "service",
+      command: { exec: process.execPath, args: ["-e", SERVICE_PATH_SCRIPT] },
+      network: { listen_host: "127.0.0.1", protocol: "http" },
+      proxy: {
+        base_path: `/apps/${id}`,
+        strip_prefix: true,
+        websocket: false,
+        open_mode: "port",
+      },
+      wake: { enabled: true, keep_warm_s: 300, startup_timeout_s: 15 },
+    });
+
+    const server = await startProxyServer({ port: 0, host: "127.0.0.1" });
+    const address = server.address();
+    const proxyPort =
+      address && typeof address === "object" ? address.port : undefined;
+    expect(proxyPort).toBeGreaterThan(0);
+    let appPid: number | undefined;
+
+    try {
+      const status = await ensureRunning(id, {
+        timeout: 10_000,
+        interval: 100,
+      });
+      appPid = status.pid;
+      expect(status.port).toBeGreaterThan(0);
+
+      const viaPort = await httpGet(
+        `http://127.0.0.1:${proxyPort}/${project_id}/port/${status.port}/manifest.json?demo=1`,
+        {
+          [PROJECT_PROXY_AUTH_HEADER]: secretToken,
+        },
+      );
+      expect(viaPort.statusCode).toBe(200);
+      expect(viaPort.body).toBe("/manifest.json?demo=1");
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
       await deleteApp(id);

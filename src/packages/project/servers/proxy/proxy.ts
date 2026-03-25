@@ -1056,6 +1056,7 @@ ${entries}
     const mPort = portPattern.exec(url);
     if (mPort) {
       const port = Number(mPort[1]);
+      const rest = mPort[2] || "/";
       const managedApp = await managedServiceAppForPort(port);
       if (managedApp) {
         (req as any)[APP_METRICS_CONTEXT] = {
@@ -1066,6 +1067,7 @@ ${entries}
           bytes_received: getRequestBytes(req),
         } satisfies AppMetricsContext;
       }
+      req.url = rest;
       return { port, host };
     }
     const mServer = serverPattern.exec(url) || proxyPattern.exec(url);
