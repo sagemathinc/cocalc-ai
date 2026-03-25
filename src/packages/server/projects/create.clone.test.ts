@@ -9,6 +9,7 @@ let resolveMembershipForAccountMock: jest.Mock;
 let computePlacementPermissionMock: jest.Mock;
 let getUserHostTierMock: jest.Mock;
 let conatWithProjectRoutingMock: jest.Mock;
+let insertedProjectId: string | undefined;
 
 const ACCOUNT_ID = "6e22d250-68d4-46fb-9851-80fbeaa2d6b6";
 const SOURCE_PROJECT_ID = "9a79d9ef-d6a5-4ae1-a215-f594e864637c";
@@ -64,6 +65,7 @@ jest.mock("@cocalc/server/membership/resolve", () => ({
 describe("projects.createProject clone routing", () => {
   beforeEach(() => {
     jest.resetModules();
+    insertedProjectId = undefined;
     cloneMock = jest.fn(async () => undefined);
     hostCreateProjectMock = jest.fn(async () => undefined);
     getProjectFileServerClientMock = jest.fn(async () => ({
@@ -129,9 +131,35 @@ describe("projects.createProject clone routing", () => {
         };
       }
       if (sql.startsWith("INSERT INTO projects ")) {
+        insertedProjectId = params[0];
         expect(params[7]).toBe(HOST_ID);
         expect(params[8]).toBe("wnam");
         return { rowCount: 1 };
+      }
+      if (sql.includes("INSERT INTO project_rootfs_states")) {
+        expect(params[0]).toBe(insertedProjectId);
+        expect(params[1]).toBe(SOURCE_PROJECT_ID);
+        return { rowCount: 1 };
+      }
+      if (
+        sql.includes("FROM project_rootfs_states") &&
+        sql.includes("ORDER BY CASE state_role WHEN 'current' THEN 0 ELSE 1 END")
+      ) {
+        expect(params).toEqual([insertedProjectId]);
+        return {
+          rows: [
+            {
+              project_id: insertedProjectId,
+              state_role: "current",
+              runtime_image: "buildpack-deps:noble-scm",
+              release_id: null,
+              image_id: "official-cocalc-base",
+              set_by_account_id: null,
+              created: new Date(),
+              updated: new Date(),
+            },
+          ],
+        };
       }
       throw new Error(`unexpected query: ${sql}`);
     });
