@@ -20,10 +20,16 @@ import {
 import { useStore, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components";
 import {
+  groupedRootfsOptions,
+  renderRootfsCatalogOption,
+  rootfsOptionSearchText,
+  sectionLabel,
+  sectionTagColor,
+} from "@cocalc/frontend/rootfs/catalog-ui";
+import {
   managedRootfsCatalogUrl,
   useRootfsImages,
 } from "@cocalc/frontend/rootfs/manifest";
-import type { RootfsImageEntry } from "@cocalc/util/rootfs-images";
 import { COLORS } from "@cocalc/util/theme";
 import type { CourseActions } from "../actions";
 import type { CourseStore } from "../store";
@@ -343,145 +349,5 @@ export function StudentProjectRootfsConfig({ actions, name, settings }: Props) {
         </Space>
       </Modal>
     </>
-  );
-}
-
-function sectionLabel(section: RootfsImageEntry["section"]): string {
-  switch (section) {
-    case "official":
-      return "Official";
-    case "mine":
-      return "My image";
-    case "collaborators":
-      return "Collaborator image";
-    case "public":
-      return "Public image";
-    default:
-      return "Catalog";
-  }
-}
-
-function sectionTagColor(section: RootfsImageEntry["section"]): string {
-  switch (section) {
-    case "official":
-      return "blue";
-    case "mine":
-      return "green";
-    case "collaborators":
-      return "gold";
-    case "public":
-      return "red";
-    default:
-      return "default";
-  }
-}
-
-function groupedRootfsOptions(images: RootfsImageEntry[]) {
-  const sections: Array<{
-    key: NonNullable<RootfsImageEntry["section"]>;
-    label: string;
-  }> = [
-    { key: "official", label: "Official images" },
-    { key: "mine", label: "My images" },
-    { key: "collaborators", label: "Collaborator images" },
-    { key: "public", label: "Public images" },
-  ];
-  return sections.reduce<
-    Array<{
-      label: string;
-      options: Array<{
-        value: string;
-        label: string;
-        searchText: string;
-        entry: RootfsImageEntry;
-      }>;
-    }>
-  >((acc, { key, label }) => {
-    const options = images
-      .filter((entry) => entry.section === key)
-      .map((entry) => ({
-        value: entry.id,
-        label: entry.label || entry.image,
-        entry,
-        searchText: [
-          entry.label,
-          entry.image,
-          entry.description,
-          entry.owner_name,
-          ...(entry.tags ?? []),
-        ]
-          .filter(Boolean)
-          .join(" ")
-          .toLowerCase(),
-      }));
-    if (options.length > 0) {
-      acc.push({ label, options });
-    }
-    return acc;
-  }, []);
-}
-
-function rootfsOptionSearchText(option?: any): string {
-  return `${option?.searchText ?? option?.data?.searchText ?? ""}`.toLowerCase();
-}
-
-function renderRootfsCatalogOption(entry: RootfsImageEntry) {
-  return (
-    <div
-      style={{
-        padding: "6px 0",
-        lineHeight: "18px",
-      }}
-    >
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: "8px",
-          flexWrap: "wrap",
-          marginBottom: "2px",
-        }}
-      >
-        <span style={{ fontWeight: 600 }}>{entry.label || entry.image}</span>
-        {entry.section ? (
-          <Tag
-            color={sectionTagColor(entry.section)}
-            style={{ marginInlineEnd: 0 }}
-          >
-            {sectionLabel(entry.section)}
-          </Tag>
-        ) : null}
-        {entry.version ? (
-          <Tag style={{ marginInlineEnd: 0 }}>{entry.version}</Tag>
-        ) : null}
-        {entry.channel ? (
-          <Tag color="cyan" style={{ marginInlineEnd: 0 }}>
-            {entry.channel}
-          </Tag>
-        ) : null}
-      </div>
-      <div
-        style={{
-          fontFamily: "monospace",
-          fontSize: "11px",
-          color: COLORS.GRAY_M,
-          overflowWrap: "anywhere",
-          marginBottom: entry.description ? "2px" : 0,
-        }}
-      >
-        {entry.image}
-      </div>
-      {entry.description ? (
-        <div
-          style={{
-            fontSize: "12px",
-            color: COLORS.GRAY_D,
-            overflowWrap: "anywhere",
-          }}
-        >
-          {entry.description}
-        </div>
-      ) : null}
-    </div>
   );
 }

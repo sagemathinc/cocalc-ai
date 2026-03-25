@@ -3,7 +3,13 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  type CSSProperties,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   Alert,
   Button,
@@ -19,7 +25,7 @@ import {
 
 import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import ActionAssist from "@cocalc/frontend/components/action-assist";
-import { Icon, Paragraph } from "@cocalc/frontend/components";
+import { Icon, Paragraph, ThemeEditorModal } from "@cocalc/frontend/components";
 import ShowError from "@cocalc/frontend/components/error";
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
@@ -37,12 +43,26 @@ import {
   setProjectRootfsImage,
   useRootfsImages,
 } from "@cocalc/frontend/rootfs/manifest";
+import {
+  groupedRootfsOptions,
+  renderRootfsCatalogOption,
+  rootfsOptionSearchText,
+  rootfsThemeImageUrl,
+  sectionLabel,
+  sectionTagColor,
+} from "@cocalc/frontend/rootfs/catalog-ui";
+import {
+  themeDraftFromTheme,
+  themeFromDraft,
+  type ThemeEditorDraft,
+} from "@cocalc/frontend/theme/types";
 import { DEFAULT_PROJECT_IMAGE } from "@cocalc/util/db-schema/defaults";
 import { split } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 import type {
   ProjectRootfsStateEntry,
   RootfsImageEntry,
+  RootfsImageTheme,
   RootfsImageVisibility,
 } from "@cocalc/util/rootfs-images";
 
@@ -50,6 +70,7 @@ type PublishDraft = {
   image: string;
   label: string;
   description: string;
+  theme: ThemeEditorDraft;
   visibility: RootfsImageVisibility;
   tags: string;
   official: boolean;
@@ -79,12 +100,14 @@ export default function RootFilesystemImage() {
     "project",
   );
   const [publishAdvanced, setPublishAdvanced] = useState<boolean>(false);
+  const [publishThemeOpen, setPublishThemeOpen] = useState<boolean>(false);
   const [publishSourceEntry, setPublishSourceEntry] =
     useState<RootfsImageEntry>();
   const [publishDraft, setPublishDraft] = useState<PublishDraft>({
     image: DEFAULT_PROJECT_IMAGE,
     label: "",
     description: "",
+    theme: themeDraftFromTheme(null),
     visibility: "private",
     tags: "",
     official: false,
@@ -333,6 +356,11 @@ export default function RootFilesystemImage() {
   }) {
     const currentImage = opts?.image?.trim() || value || effectiveDefaultRootfs;
     const currentEntry = opts?.entry ?? selectedRootfsEntry;
+    const nextLabel =
+      currentEntry?.label ||
+      currentImage.split("/").slice(-1)[0] ||
+      "Custom RootFS";
+    const nextDescription = currentEntry?.description ?? "";
     const defaultMode = opts?.publishMode ?? "copy";
     setPublishSourceEntry(currentEntry);
     setPublishMode(defaultMode);
@@ -340,11 +368,13 @@ export default function RootFilesystemImage() {
     setPublishAdvanced(false);
     setPublishDraft({
       image: currentImage,
-      label:
-        currentEntry?.label ||
-        currentImage.split("/").slice(-1)[0] ||
-        "Custom RootFS",
-      description: currentEntry?.description ?? "",
+      label: nextLabel,
+      description: nextDescription,
+      theme: {
+        ...themeDraftFromTheme(currentEntry?.theme, nextLabel),
+        title: nextLabel,
+        description: nextDescription,
+      },
       visibility: currentEntry?.visibility ?? "private",
       tags: (currentEntry?.tags ?? []).join(", "),
       official: currentEntry?.official ?? false,
@@ -439,6 +469,7 @@ export default function RootFilesystemImage() {
           description: publishDraft.description,
           visibility: publishDraft.visibility,
           tags,
+          theme: rootfsThemeFromPublishDraft(publishDraft),
           official: isAdmin ? publishDraft.official : undefined,
           prepull: isAdmin ? publishDraft.prepull : undefined,
           hidden: isAdmin ? publishDraft.hidden : undefined,
@@ -455,6 +486,7 @@ export default function RootFilesystemImage() {
           description: publishDraft.description,
           visibility: publishDraft.visibility,
           tags,
+          theme: rootfsThemeFromPublishDraft(publishDraft),
           official: isAdmin ? publishDraft.official : undefined,
           prepull: isAdmin ? publishDraft.prepull : undefined,
           hidden: isAdmin ? publishDraft.hidden : undefined,
@@ -531,26 +563,33 @@ export default function RootFilesystemImage() {
     <div style={{ marginTop: "-4px", marginLeft: "-10px" }}>
       <RootfsPublishOps project_id={project_id} />
       <div style={{ marginLeft: "15px" }}>
-        <Paragraph style={{ marginBottom: "6px" }}>
-          <strong>{activeDisplayEntry?.label || value}</strong>
-        </Paragraph>
-        <Space wrap style={{ marginBottom: "6px" }}>
-          {activeDisplayEntry?.section && (
-            <Tag color={sectionTagColor(activeDisplayEntry.section)}>
-              {sectionLabel(activeDisplayEntry.section)}
-            </Tag>
-          )}
-          {activeDisplayEntry?.version && (
-            <Tag>{activeDisplayEntry.version}</Tag>
-          )}
-          {activeDisplayEntry?.channel && (
-            <Tag color="cyan">{activeDisplayEntry.channel}</Tag>
-          )}
-          {activeDisplayEntry?.gpu && <Tag color="purple">GPU image</Tag>}
-        </Space>
-        <code style={{ fontSize: "11px", overflowWrap: "anywhere" }}>
-          {value || effectiveDefaultRootfs}
-        </code>
+        <div style={rootfsSummaryCardStyle(activeDisplayEntry)}>
+          <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
+            {renderRootfsThemePreview(activeDisplayEntry)}
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <Paragraph style={{ marginBottom: "6px" }}>
+                <strong>{activeDisplayEntry?.label || value}</strong>
+              </Paragraph>
+              <Space wrap style={{ marginBottom: "6px" }}>
+                {activeDisplayEntry?.section && (
+                  <Tag color={sectionTagColor(activeDisplayEntry.section)}>
+                    {sectionLabel(activeDisplayEntry.section)}
+                  </Tag>
+                )}
+                {activeDisplayEntry?.version && (
+                  <Tag>{activeDisplayEntry.version}</Tag>
+                )}
+                {activeDisplayEntry?.channel && (
+                  <Tag color="cyan">{activeDisplayEntry.channel}</Tag>
+                )}
+                {activeDisplayEntry?.gpu && <Tag color="purple">GPU image</Tag>}
+              </Space>
+              <code style={{ fontSize: "11px", overflowWrap: "anywhere" }}>
+                {value || effectiveDefaultRootfs}
+              </code>
+            </div>
+          </div>
+        </div>
         <Paragraph
           type="secondary"
           style={{ marginTop: "8px", marginBottom: 0 }}
@@ -960,7 +999,14 @@ export default function RootFilesystemImage() {
             <Input
               value={publishDraft.label}
               onChange={(e) =>
-                setPublishDraft((cur) => ({ ...cur, label: e.target.value }))
+                setPublishDraft((cur) => ({
+                  ...cur,
+                  label: e.target.value,
+                  theme: {
+                    ...cur.theme,
+                    title: e.target.value,
+                  },
+                }))
               }
               addonBefore="Label"
             />
@@ -970,6 +1016,10 @@ export default function RootFilesystemImage() {
                 setPublishDraft((cur) => ({
                   ...cur,
                   description: e.target.value,
+                  theme: {
+                    ...cur.theme,
+                    description: e.target.value,
+                  },
                 }))
               }
               rows={3}
@@ -1036,6 +1086,85 @@ export default function RootFilesystemImage() {
                   }
                   placeholder="comma,separated,tags"
                 />
+                <div>
+                  <Space
+                    align="start"
+                    size="middle"
+                    style={{ width: "100%", justifyContent: "space-between" }}
+                  >
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                      <Paragraph type="secondary" style={{ marginBottom: 0 }}>
+                        Theme this image with a color, accent color, icon, and
+                        optional artwork so it stands out in RootFS pickers.
+                      </Paragraph>
+                      <Space wrap style={{ marginTop: "8px" }}>
+                        {publishDraft.theme.color ? (
+                          <Tag color={publishDraft.theme.color}>Color</Tag>
+                        ) : null}
+                        {publishDraft.theme.accent_color ? (
+                          <Tag color={publishDraft.theme.accent_color}>
+                            Accent
+                          </Tag>
+                        ) : null}
+                        {publishDraft.theme.image_blob?.trim() ? (
+                          <Tag>Image</Tag>
+                        ) : null}
+                        {publishDraft.theme.icon?.trim() ? (
+                          <Tag>{publishDraft.theme.icon.trim()}</Tag>
+                        ) : null}
+                      </Space>
+                    </div>
+                    <Button onClick={() => setPublishThemeOpen(true)}>
+                      Edit theme...
+                    </Button>
+                  </Space>
+                </div>
+                <div
+                  style={rootfsSummaryCardStyle({
+                    theme: rootfsThemeFromPublishDraft(publishDraft),
+                  })}
+                >
+                  <div
+                    style={{
+                      display: "flex",
+                      gap: 12,
+                      alignItems: "flex-start",
+                    }}
+                  >
+                    {renderRootfsThemePreview({
+                      ...publishSourceEntry,
+                      label: publishDraft.label,
+                      image: publishDraft.image,
+                      theme: rootfsThemeFromPublishDraft(publishDraft),
+                    })}
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                      <div style={{ fontWeight: 600, marginBottom: 4 }}>
+                        {publishDraft.label || "Untitled RootFS image"}
+                      </div>
+                      <div
+                        style={{
+                          fontFamily: "monospace",
+                          fontSize: "11px",
+                          color: COLORS.GRAY_M,
+                          overflowWrap: "anywhere",
+                        }}
+                      >
+                        {publishDraft.image}
+                      </div>
+                      {publishDraft.description ? (
+                        <div
+                          style={{
+                            fontSize: "12px",
+                            color: COLORS.GRAY_D,
+                            marginTop: 4,
+                          }}
+                        >
+                          {publishDraft.description}
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                </div>
                 {isAdmin && (
                   <Space direction="vertical" size="small">
                     <Checkbox
@@ -1095,6 +1224,23 @@ export default function RootFilesystemImage() {
           </Space>
         </Modal>
       )}
+      <ThemeEditorModal
+        open={publishThemeOpen}
+        title="Edit RootFS Theme"
+        value={publishDraft.theme}
+        onChange={(patch) =>
+          setPublishDraft((cur) => ({
+            ...cur,
+            theme: { ...cur.theme, ...patch },
+          }))
+        }
+        onCancel={() => setPublishThemeOpen(false)}
+        onSave={() => setPublishThemeOpen(false)}
+        showTitle={false}
+        showDescription={false}
+        defaultIcon="cube"
+        projectId={project_id}
+      />
     </div>
   );
 }
@@ -1190,6 +1336,75 @@ function compareRootfsVersions(a?: string, b?: string): number {
   });
 }
 
+function rootfsThemeHasVisuals(theme: ThemeEditorDraft): boolean {
+  return [theme.color, theme.accent_color, theme.icon, theme.image_blob].some(
+    (value) => `${value ?? ""}`.trim().length > 0,
+  );
+}
+
+function rootfsThemeFromPublishDraft(
+  publishDraft: PublishDraft,
+): RootfsImageTheme | undefined {
+  if (!rootfsThemeHasVisuals(publishDraft.theme)) {
+    return undefined;
+  }
+  return themeFromDraft(publishDraft.theme);
+}
+
+function rootfsSummaryCardStyle(entry?: {
+  theme?: RootfsImageTheme;
+}): CSSProperties {
+  const themeColor = entry?.theme?.color?.trim() || COLORS.GRAY_L;
+  const accentColor = entry?.theme?.accent_color?.trim();
+  return {
+    border: `1px solid ${themeColor}`,
+    borderRadius: 12,
+    padding: "12px 14px",
+    background: accentColor ? `${accentColor}18` : "rgba(0, 0, 0, 0.02)",
+    maxWidth: "760px",
+  };
+}
+
+function renderRootfsThemePreview(entry?: {
+  theme?: RootfsImageTheme;
+  label?: string;
+  image?: string;
+}): React.JSX.Element {
+  const imageUrl = rootfsThemeImageUrl(entry?.theme);
+  const accentColor = entry?.theme?.accent_color?.trim();
+  const color = entry?.theme?.color?.trim();
+  const iconName = entry?.theme?.icon?.trim() || "cube";
+  return imageUrl ? (
+    <img
+      src={imageUrl}
+      alt={`${entry?.label || entry?.image || "RootFS"} theme`}
+      style={{
+        width: 56,
+        height: 56,
+        borderRadius: 12,
+        objectFit: "cover",
+        flex: "0 0 auto",
+      }}
+    />
+  ) : (
+    <div
+      style={{
+        width: 56,
+        height: 56,
+        borderRadius: 12,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        background: accentColor || "#f5f5f5",
+        color: color || undefined,
+        flex: "0 0 auto",
+      }}
+    >
+      <Icon name={iconName as any} style={{ fontSize: "24px" }} />
+    </div>
+  );
+}
+
 function buildRootfsPublishAssistCommand(opts: {
   projectId: string;
   publishMode: "copy" | "manage";
@@ -1233,6 +1448,10 @@ function buildRootfsPublishAssistCommand(opts: {
     pushCliOption(parts, "--visibility", publishDraft.visibility);
   }
   pushCliOption(parts, "--tags", publishDraft.tags);
+  const theme = rootfsThemeFromPublishDraft(publishDraft);
+  if (theme != null) {
+    pushCliOption(parts, "--theme-json", JSON.stringify(theme));
+  }
   if (publishDraft.official) parts.push("--official");
   if (publishDraft.prepull) parts.push("--prepull");
   if (publishDraft.hidden) parts.push("--hidden");
@@ -1278,6 +1497,7 @@ function buildRootfsPublishAgentPrompt(opts: {
     `- description: ${publishDraft.description || "(empty)"}`,
     `- visibility: ${publishDraft.visibility}`,
     `- tags: ${publishDraft.tags || "(none)"}`,
+    `- theme: ${rootfsThemeFromPublishDraft(publishDraft) ? "customized" : "default"}`,
     `- official: ${publishDraft.official ? "yes" : "no"}`,
     `- prepull: ${publishDraft.prepull ? "yes" : "no"}`,
     `- hidden: ${publishDraft.hidden ? "yes" : "no"}`,
@@ -1295,167 +1515,6 @@ function pushCliOption(parts: string[], flag: string, value?: string) {
 
 function shellQuoteCliArg(value: string): string {
   return `'${`${value ?? ""}`.replace(/'/g, `'\\''`)}'`;
-}
-
-function sectionLabel(section: RootfsImageEntry["section"]): string {
-  switch (section) {
-    case "official":
-      return "Official";
-    case "mine":
-      return "My image";
-    case "collaborators":
-      return "Collaborator image";
-    case "public":
-      return "Public image";
-    default:
-      return "Catalog";
-  }
-}
-
-function sectionTagColor(section: RootfsImageEntry["section"]): string {
-  switch (section) {
-    case "official":
-      return "blue";
-    case "mine":
-      return "green";
-    case "collaborators":
-      return "gold";
-    case "public":
-      return "red";
-    default:
-      return "default";
-  }
-}
-
-function groupedRootfsOptions(images: RootfsImageEntry[]) {
-  const sections: Array<{
-    key: NonNullable<RootfsImageEntry["section"]>;
-    label: string;
-  }> = [
-    { key: "official", label: "Official images" },
-    { key: "mine", label: "My images" },
-    { key: "collaborators", label: "Collaborator images" },
-    { key: "public", label: "Public images" },
-  ];
-  return sections.reduce<
-    Array<{
-      label: string;
-      options: Array<{
-        value: string;
-        label: string;
-        searchText: string;
-        entry: RootfsImageEntry;
-      }>;
-    }>
-  >((acc, { key, label }) => {
-    const options = images
-      .filter((entry) => entry.section === key)
-      .map((entry) => ({
-        value: entry.id,
-        label: entry.label || entry.image,
-        entry,
-        searchText: [
-          entry.label,
-          entry.image,
-          entry.description,
-          entry.owner_name,
-          ...(entry.tags ?? []),
-        ]
-          .filter(Boolean)
-          .join(" ")
-          .toLowerCase(),
-      }));
-    if (options.length > 0) {
-      acc.push({ label, options });
-    }
-    return acc;
-  }, []);
-}
-
-function rootfsOptionSearchText(option?: any): string {
-  return `${option?.searchText ?? option?.data?.searchText ?? ""}`.toLowerCase();
-}
-
-function renderRootfsCatalogOption(entry: RootfsImageEntry) {
-  return (
-    <div
-      style={{
-        padding: "6px 0",
-        lineHeight: "18px",
-      }}
-    >
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: "8px",
-          flexWrap: "wrap",
-          marginBottom: "2px",
-        }}
-      >
-        <span style={{ fontWeight: 600 }}>{entry.label || entry.image}</span>
-        {entry.section ? (
-          <Tag
-            color={sectionTagColor(entry.section)}
-            style={{ marginInlineEnd: 0 }}
-          >
-            {sectionLabel(entry.section)}
-          </Tag>
-        ) : null}
-        {entry.version ? (
-          <Tag style={{ marginInlineEnd: 0 }}>{entry.version}</Tag>
-        ) : null}
-        {entry.channel ? (
-          <Tag color="cyan" style={{ marginInlineEnd: 0 }}>
-            {entry.channel}
-          </Tag>
-        ) : null}
-        {entry.gpu ? (
-          <Tag color="purple" style={{ marginInlineEnd: 0 }}>
-            GPU
-          </Tag>
-        ) : null}
-        {entry.scan?.status && entry.scan.status !== "unknown" ? (
-          <Tag
-            color={
-              entry.scan.status === "clean"
-                ? "green"
-                : entry.scan.status === "findings"
-                  ? "orange"
-                  : entry.scan.status === "error"
-                    ? "red"
-                    : "blue"
-            }
-            style={{ marginInlineEnd: 0 }}
-          >
-            scan {entry.scan.status}
-          </Tag>
-        ) : null}
-      </div>
-      <div
-        style={{
-          fontFamily: "monospace",
-          fontSize: "11px",
-          color: COLORS.GRAY_M,
-          overflowWrap: "anywhere",
-          marginBottom: entry.description ? "2px" : 0,
-        }}
-      >
-        {entry.image}
-      </div>
-      {entry.description ? (
-        <div
-          style={{
-            fontSize: "12px",
-            color: COLORS.GRAY_D,
-            overflowWrap: "anywhere",
-          }}
-        >
-          {entry.description}
-        </div>
-      ) : null}
-    </div>
-  );
 }
 
 function renderRootfsWarning(
