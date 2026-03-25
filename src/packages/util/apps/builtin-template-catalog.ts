@@ -522,6 +522,203 @@ exec python3 -m mkdocs serve --dev-addr "\${HOST:-127.0.0.1}:\${PORT}"`,
       },
     },
     {
+      id: "marimo",
+      title: "marimo",
+      category: "python-notebooks",
+      priority: 76,
+      homepage: "https://marimo.io/",
+      description:
+        "Reactive Python notebooks and apps in a lightweight editor.",
+      detect: {
+        commands: ["python3 -m marimo --version"],
+      },
+      install: {
+        strategy: "curated",
+        command:
+          "apt-get update && apt-get install -y python3-pip && python3 -m pip install --break-system-packages --ignore-installed marimo",
+        hint: "Installs marimo and bootstraps marimo_app.py if the project does not already have one.",
+        agent_prompt:
+          "Install marimo in the current project so the managed marimo app can start. Use python3 -m pip with --break-system-packages --ignore-installed after ensuring python3-pip is installed, verify the runtime with 'python3 -m marimo --version', and mention that the managed template bootstraps marimo_app.py if missing.",
+        recipes: [
+          {
+            id: "ubuntu-pip-marimo",
+            match: { os_family: ["debian", "ubuntu"] },
+            commands: [
+              "apt-get update",
+              "apt-get install -y python3-pip",
+              "python3 -m pip install --break-system-packages --ignore-installed marimo",
+            ],
+            notes:
+              "The managed marimo template creates marimo_app.py automatically if the project is empty.",
+          },
+        ],
+      },
+      preset: {
+        id: "marimo",
+        title: "marimo",
+        kind: "service",
+        preferred_port: "6016",
+        service_open_mode: "port",
+        command: `app=\${APP_START_FILE:-marimo_app.py}; if [ ! -f "$app" ]; then cat > "$app" <<'PY'
+import marimo
+
+__generated_with = "0.0.0"
+app = marimo.App(width="medium")
+
+
+@app.cell
+def _():
+    import marimo as mo
+    return (mo,)
+
+
+@app.cell
+def _(mo):
+    mo.md("# marimo on CoCalc\\n\\nEdit marimo_app.py to replace this demo.")
+    return
+
+
+if __name__ == "__main__":
+    app.run()
+PY
+fi
+exec python3 -m marimo edit --headless --host "\${HOST:-127.0.0.1}" --port "\${PORT}" "$app"`,
+      },
+      verify: {
+        commands: ["python3 -m marimo --version"],
+      },
+      agent_prompt_seed:
+        "marimo is a good fit for reactive Python notebooks. Keep the install simple with python3 -m pip and rely on the managed template bootstrap for marimo_app.py.",
+    },
+    {
+      id: "voila",
+      title: "Voilà",
+      category: "python-notebooks",
+      priority: 67,
+      homepage: "https://voila.readthedocs.io/",
+      description:
+        "Turn Jupyter notebooks into standalone dashboards and apps.",
+      detect: {
+        commands: ["python3 -m voila --version"],
+      },
+      install: {
+        strategy: "curated",
+        command:
+          "apt-get update && apt-get install -y python3-pip && python3 -m pip install --break-system-packages --ignore-installed voila ipywidgets",
+        hint: "Installs Voilà plus ipywidgets and bootstraps voila_app.ipynb if the project does not already have one.",
+        agent_prompt:
+          "Install Voilà in the current project so the managed Voilà app can start. Use python3 -m pip with --break-system-packages --ignore-installed after ensuring python3-pip is installed, verify the runtime with 'python3 -m voila --version', and mention that the managed template bootstraps voila_app.ipynb if missing.",
+        recipes: [
+          {
+            id: "ubuntu-pip-voila",
+            match: { os_family: ["debian", "ubuntu"] },
+            commands: [
+              "apt-get update",
+              "apt-get install -y python3-pip",
+              "python3 -m pip install --break-system-packages --ignore-installed voila ipywidgets",
+            ],
+            notes:
+              "The managed Voilà template creates voila_app.ipynb automatically if the project is empty.",
+          },
+        ],
+      },
+      preset: {
+        id: "voila",
+        title: "Voilà",
+        kind: "service",
+        preferred_port: "6017",
+        service_open_mode: "proxy",
+        health_path: "/",
+        command: `app=\${APP_START_FILE:-voila_app.ipynb}; if [ ! -f "$app" ]; then cat > "$app" <<'JSON'
+{
+  "cells": [
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "# Voilà on CoCalc\\n",
+        "\\n",
+        "Edit voila_app.ipynb to replace this demo."
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {},
+      "outputs": [],
+      "source": [
+        "from IPython.display import HTML\\n",
+        "HTML('<p>This notebook is ready for Voilà.</p>')\\n"
+      ]
+    }
+  ],
+  "metadata": {
+    "kernelspec": {
+      "display_name": "Python 3",
+      "language": "python",
+      "name": "python3"
+    },
+    "language_info": {
+      "name": "python"
+    }
+  },
+  "nbformat": 4,
+  "nbformat_minor": 5
+}
+JSON
+fi
+exec python3 -m voila "$app" --no-browser --Voila.ip="\${HOST:-127.0.0.1}" --port="\${PORT}" --Voila.base_url="\${APP_BASE_URL}"`,
+      },
+      verify: {
+        commands: ["python3 -m voila --version"],
+      },
+      agent_prompt_seed:
+        "Prefer the standard Voilà CLI. The managed template can bootstrap a simple voila_app.ipynb, so installation should focus on the runtime and widgets support.",
+    },
+    {
+      id: "quarto",
+      title: "Quarto",
+      category: "publishing",
+      priority: 64,
+      homepage: "https://quarto.org/",
+      description:
+        "Technical publishing for notebooks, docs, presentations, and sites.",
+      detect: {
+        commands: ["quarto --version"],
+      },
+      install: {
+        strategy: "agent",
+        hint: "Quarto installation is more platform-specific than the pip-based Python templates. Let an agent install it or use your platform packaging workflow.",
+        agent_prompt:
+          "Install Quarto in the current project so the managed Quarto app can start. Choose a safe Linux installation path for this system, verify 'quarto --version', and explain any additional runtime assumptions such as Pandoc, TeX, or Jupyter integration.",
+      },
+      preset: {
+        id: "quarto",
+        title: "Quarto",
+        kind: "service",
+        preferred_port: "6018",
+        service_open_mode: "port",
+        command: `if [ ! -f index.qmd ]; then
+  cat > index.qmd <<'QMD'
+---
+title: "Quarto on CoCalc"
+format: html
+---
+
+# Quarto on CoCalc
+
+Edit index.qmd to replace this demo.
+QMD
+fi
+exec quarto preview index.qmd --no-browser --host "\${HOST:-127.0.0.1}" --port "\${PORT}"`,
+      },
+      verify: {
+        commands: ["quarto --version"],
+      },
+      agent_prompt_seed:
+        "Quarto is worth offering even though install is heavier. Prefer a straightforward verified install and let the managed template bootstrap index.qmd if needed.",
+    },
+    {
       id: "python-hello",
       title: "Python Hello World",
       category: "core",
