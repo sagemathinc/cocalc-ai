@@ -44,4 +44,16 @@ describe("PublicHomeApp", () => {
     ).not.toBeNull();
     expect(screen.getByRole("heading", { name: "Recent News" })).not.toBeNull();
   });
+
+  it("shows direct app actions when authenticated", () => {
+    render(
+      <PublicHomeApp
+        config={{ is_authenticated: true, site_name: "Launchpad" }}
+      />,
+    );
+
+    expect(screen.getByRole("link", { name: "Open projects" })).not.toBeNull();
+    expect(screen.getAllByRole("link", { name: "Settings" })).toHaveLength(2);
+    expect(screen.queryByRole("link", { name: "Create account" })).toBeNull();
+  });
 });

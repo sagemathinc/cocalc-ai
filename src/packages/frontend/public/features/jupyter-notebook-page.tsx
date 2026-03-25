@@ -41,9 +41,9 @@ export default function JupyterNotebookFeaturePage({
               </Paragraph>
               <Paragraph style={{ margin: 0 }}>
                 CoCalc starts from a working notebook environment, then lets you
-                keep going: install packages, customize the system, snapshot the
-                result, and share that environment with collaborators, students,
-                or an entire class.
+                keep going: install packages, customize the environment, and
+                keep those changes reusable for collaborators, students, or a
+                whole class.
               </Paragraph>
               <Flex wrap gap={12}>
                 <Button type="primary" href={appPath("auth/sign-up")}>
@@ -119,9 +119,9 @@ export default function JupyterNotebookFeaturePage({
               about VS Code or JupyterLab.
             </Paragraph>
             <Paragraph style={{ margin: 0 }}>
-              Root access, project-local Linux environments, snapshots, and
-              rollback make it practical to install what your notebook actually
-              requires and keep that environment reusable.
+              Project-local Linux environments, persistent package installs, and
+              project backups make it practical to install what your notebook
+              actually requires and keep that environment reusable.
             </Paragraph>
             <div>
               <LinkButton href={appPath("software/cocalc-plus")}>
@@ -196,19 +196,18 @@ export default function JupyterNotebookFeaturePage({
                 Custom environments
               </Tag>
               <Title level={3} style={{ margin: 0 }}>
-                Install what you need, snapshot it, and reuse it
+                Install what you need and keep the environment reusable
               </Title>
               <Paragraph style={{ margin: 0 }}>
-                A major shift in the product is that CoCalc is no longer framed
-                as a fixed hosted stack that happens to include many packages.
-                It is a managed Jupyter workspace where you can install what
-                your project needs.
+                CoCalc is not limited to a fixed hosted stack. Projects can be
+                extended with the packages and tooling your notebook workflow
+                actually needs.
               </Paragraph>
               <Paragraph style={{ margin: 0 }}>
-                Root access, filesystem snapshots, and rollback make system-wide
-                installation far less fragile than the usual “hope this VM does
-                not drift” workflow. Entire software stacks can be reused across
-                collaborators, students, and projects.
+                Project-local Linux environments, persistent package installs,
+                and backup/recovery support make longer-lived notebook
+                environments much more practical than the usual “hope this VM
+                does not drift” workflow.
               </Paragraph>
               <Paragraph style={{ margin: 0 }}>
                 AI agent integration also lowers the cost of getting difficult
@@ -420,9 +419,9 @@ export default function JupyterNotebookFeaturePage({
           items={[
             "Live collaboration instead of taking turns emailing notebooks.",
             "A notebook system that holds up under refreshes, reconnects, long runs, and shared widget sessions.",
-            "Built-in history, backups, snapshots, and recovery paths instead of hoping local files survive.",
+            "Built-in history, backups, and recovery paths instead of hoping local files survive.",
             "Teaching and grading workflows in the same environment as the notebooks.",
-            "A Linux environment you can actually customize, snapshot, and reuse, rather than a locked-down hosted stack.",
+            "A Linux environment you can actually customize and reuse, rather than a locked-down hosted stack.",
           ]}
         />
         <Flex wrap gap={12}>

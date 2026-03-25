@@ -62,15 +62,35 @@ export default function PublicHomeApp({
         }
         actions={
           <Flex wrap gap={12}>
-            <Button href={appPath("auth/sign-up")} size="large" type="primary">
-              Create account
-            </Button>
-            <Button href={appPath("features")} size="large">
-              Explore features
-            </Button>
-            <Button href={appPath("support")} size="large">
-              Contact support
-            </Button>
+            {config?.is_authenticated ? (
+              <>
+                <Button href={appPath("projects")} size="large" type="primary">
+                  Open projects
+                </Button>
+                <Button href={appPath("settings")} size="large">
+                  Settings
+                </Button>
+                <Button href={appPath("features")} size="large">
+                  Explore features
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button
+                  href={appPath("auth/sign-up")}
+                  size="large"
+                  type="primary"
+                >
+                  Create account
+                </Button>
+                <Button href={appPath("features")} size="large">
+                  Explore features
+                </Button>
+                <Button href={appPath("support")} size="large">
+                  Contact support
+                </Button>
+              </>
+            )}
           </Flex>
         }
       />
@@ -107,12 +127,12 @@ export default function PublicHomeApp({
             </PublicSectionCard>
             <PublicSectionCard>
               <Title level={3} style={{ margin: 0 }}>
-                Good defaults for launchpad mode
+                Public pages that connect to the main app
               </Title>
               <Paragraph style={{ margin: 0 }}>
-                Public pages, auth, support, news, and policies now work without
-                Next.js, which keeps launchpad deployments simpler and more
-                uniform.
+                Features, support, news, and policies are available from the
+                same deployment as the main CoCalc workspace, so people can move
+                from the public site into real projects without losing context.
               </Paragraph>
             </PublicSectionCard>
           </Flex>

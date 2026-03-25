@@ -77,16 +77,17 @@ export default function ApiFeaturePage({ helpEmail }: { helpEmail?: string }) {
         <Col xs={24} lg={12}>
           <PublicSectionCard>
             <Title level={3} style={{ margin: 0 }}>
-              Why this matters in the migration
+              Works with hosted and self-hosted deployments
             </Title>
             <Paragraph style={{ margin: 0 }}>
-              The HTTP API is no longer tied conceptually to the old Next.js app
-              layer. It is being pulled into its own package so the route layer
-              can evolve independently from the public site migration.
+              The same HTTP API is useful whether you use CoCalc as a hosted
+              service, a launchpad-style deployment, or one part of a larger
+              internal platform.
             </Paragraph>
             <Paragraph style={{ margin: 0 }}>
-              That is the right architecture for future `/api/v2.x` and
-              `/api/v3` work as well.
+              It gives administrators and developers a stable way to automate
+              routine work without depending on browser automation or fragile UI
+              scripts.
             </Paragraph>
           </PublicSectionCard>
         </Col>

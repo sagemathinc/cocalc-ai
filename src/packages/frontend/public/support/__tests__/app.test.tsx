@@ -27,4 +27,16 @@ describe("PublicSupportApp", () => {
     expect(screen.getByText("New support ticket")).not.toBeNull();
     expect(screen.getByText("Ticket status")).not.toBeNull();
   });
+
+  it("does not advertise ticket actions when zendesk is disabled", () => {
+    render(
+      <PublicSupportApp
+        config={{ site_name: "Launchpad", zendesk: false }}
+        initialView="index"
+      />,
+    );
+
+    expect(screen.queryByRole("button", { name: "New ticket" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "My tickets" })).toBeNull();
+  });
 });

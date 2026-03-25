@@ -326,8 +326,8 @@ function CocalcPlusPage() {
           than signing up for a hosted multi-user service.
         </Paragraph>
         <Paragraph style={{ margin: 0 }}>
-          Under the hood it builds on the Lite core, so it reuses the same
-          application and document model while packaging it as a local product.
+          It brings notebooks, terminals, files, and the broader CoCalc
+          workspace model into a local single-user install.
         </Paragraph>
       </PublicSectionCard>
       <PublicSectionCard>
@@ -351,16 +351,17 @@ function CocalcPlusPage() {
       </PublicSectionCard>
       <PublicSectionCard>
         <Title level={3} style={{ margin: 0 }}>
-          Why this matters for the public site
+          Choose hosted CoCalc or CoCalc Plus
         </Title>
         <Paragraph style={{ margin: 0 }}>
-          The product story is no longer just “use CoCalc in the browser”.
-          Hosted CoCalc and CoCalc Plus both matter, so the public marketing
-          pages should stop implying that online use is the only option.
+          Hosted CoCalc is the right fit when you want multi-user collaboration,
+          shared projects, and managed infrastructure. CoCalc Plus is the right
+          fit when you want the same style of environment on your own machine.
         </Paragraph>
         <Paragraph style={{ margin: 0 }}>
-          This is especially relevant for notebook workflows, where some users
-          want the same broader CoCalc environment on their own machine.
+          Both options matter for notebook-heavy technical work, and they share
+          the same overall approach to projects, files, terminals, and
+          computational workflows.
         </Paragraph>
         <Flex wrap gap={12}>
           <LinkButton href={appPath("features/jupyter-notebook")}>
@@ -386,8 +387,8 @@ function AboutHome({
     <>
       <div style={{ ...MUTED_STYLE, fontSize: "17px", maxWidth: "70ch" }}>
         {siteName} is collaborative software for technical computing, teaching,
-        and research. These public pages stay available in launchpad mode and
-        outside the main app shell.
+        and research. Use these pages to explore the platform, read public
+        policies and news, and then move into projects when you are ready.
       </div>
       <div style={GRID_STYLE}>
         <PublicSectionCard>

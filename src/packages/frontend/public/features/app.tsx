@@ -79,8 +79,9 @@ function FeaturesIndex({ siteName }: { siteName: string }) {
       <Paragraph style={{ margin: "24px 0 0", maxWidth: "70ch" }}>
         Explore the core capabilities of {siteName}, from collaborative
         notebooks and terminals to AI-assisted workflows, teaching tools, and
-        technical writing. These public pages are now served without Next.js
-        while keeping the AntD design language consistent with the main app.
+        technical writing. Each page highlights how these workflows connect to
+        the same projects, files, and collaboration features inside the main
+        app.
       </Paragraph>
       <Row gutter={[16, 16]} style={{ marginTop: 8 }}>
         {pages.map((page) => (

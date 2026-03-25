@@ -129,8 +129,8 @@ function SupportIndex({
   return (
     <div style={{ display: "grid", gap: 16 }}>
       <Paragraph style={{ fontSize: "16px", margin: 0 }}>
-        We provide direct support, documentation, and community channels. Use
-        the links below to open a ticket, review ticket status, or contact us.
+        We provide direct support, documentation, and contact options. Use the
+        links below to open a ticket, review ticket status, or contact us.
       </Paragraph>
       <div
         style={{
@@ -220,7 +220,7 @@ export default function PublicSupportApp({
       <PublicHero
         eyebrow="SUPPORT"
         title={title}
-        subtitle="Direct support, Zendesk-backed tickets, and public help flows without Next.js."
+        subtitle="Direct support, Zendesk-backed tickets, and public help resources."
         actions={
           <Flex wrap gap={8}>
             <Button
@@ -229,18 +229,22 @@ export default function PublicSupportApp({
             >
               Support
             </Button>
-            <Button
-              type={view === "new" ? "primary" : "default"}
-              onClick={() => navigate("new")}
-            >
-              New ticket
-            </Button>
-            <Button
-              type={view === "tickets" ? "primary" : "default"}
-              onClick={() => navigate("tickets")}
-            >
-              My tickets
-            </Button>
+            {config.zendesk ? (
+              <Button
+                type={view === "new" ? "primary" : "default"}
+                onClick={() => navigate("new")}
+              >
+                New ticket
+              </Button>
+            ) : null}
+            {config.zendesk ? (
+              <Button
+                type={view === "tickets" ? "primary" : "default"}
+                onClick={() => navigate("tickets")}
+              >
+                My tickets
+              </Button>
+            ) : null}
           </Flex>
         }
       />
