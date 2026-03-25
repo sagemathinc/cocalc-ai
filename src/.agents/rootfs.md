@@ -1195,6 +1195,20 @@ The product policy should therefore be:
 - switching `A -> B` promotes `B` to `current` and demotes `A` to `previous`,
 - replacing the current image again evicts the older previous rollback state.
 
+Important implementation note:
+
+- this bounded retention policy must eventually apply both to metadata and to
+  the actual per-image upperdirs on disk
+- otherwise a project may accumulate stale historical upperdirs under
+  `/root/.local/share/...` even though only `current` and `previous` are
+  guaranteed by product semantics
+- we have implemented the bounded retained-state model centrally, but we have
+  not yet implemented automatic deletion of older on-disk upperdirs after they
+  fall out of the retained `current | previous` set
+- this should be added as explicit host-side cleanup work, with the important
+  safety rule that the old data will still remain recoverable for a while via
+  snapshots even after the live upperdir namespace is removed
+
 This should be modeled centrally in a dedicated table, not hidden in the
 filesystem:
 
