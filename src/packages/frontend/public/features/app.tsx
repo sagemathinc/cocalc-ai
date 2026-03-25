@@ -99,13 +99,15 @@ function FeaturesIndex({ siteName }: { siteName: string }) {
     .map(({ page }) => page);
   return (
     <>
-      <Paragraph style={{ margin: "24px 0 0", maxWidth: "70ch" }}>
-        Explore the core capabilities of {siteName}, from collaborative
-        notebooks and terminals to AI-assisted workflows, teaching tools, and
-        technical writing. Each page highlights how these workflows connect to
-        the same projects, files, and collaboration features inside the main
-        app.
-      </Paragraph>
+      <PublicSectionCard>
+        <Paragraph style={{ margin: 0, maxWidth: "70ch" }}>
+          Explore the core capabilities of {siteName}, from collaborative
+          notebooks and terminals to AI-assisted workflows, teaching tools, and
+          technical writing. Each page highlights how these workflows connect to
+          the same projects, files, and collaboration features inside the main
+          app.
+        </Paragraph>
+      </PublicSectionCard>
       <PublicSectionCard>
         <Title level={3} style={{ margin: 0 }}>
           The new direction is increasingly agent-first
