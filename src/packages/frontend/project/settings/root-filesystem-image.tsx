@@ -422,7 +422,10 @@ export default function RootFilesystemImage() {
       family: currentEntry?.family ?? "",
       version: currentEntry?.version ?? "",
       channel: currentEntry?.channel ?? "",
-      supersedes_image_id: currentEntry?.supersedes_image_id ?? "",
+      supersedes_image_id:
+        defaultMode === "manage"
+          ? (currentEntry?.supersedes_image_id ?? "")
+          : (currentEntry?.id ?? ""),
       theme: {
         ...themeDraftFromTheme(currentEntry?.theme, nextLabel),
         title: nextLabel,
@@ -1811,7 +1814,7 @@ function buildRootfsPublishAssistCommand(opts: {
   }
   pushCliOption(parts, "--description", publishDraft.description);
   pushCliOption(parts, "--family", publishDraft.family);
-  pushCliOption(parts, "--version", publishDraft.version);
+  pushCliOption(parts, "--image-version", publishDraft.version);
   pushCliOption(parts, "--channel", publishDraft.channel);
   pushCliOption(
     parts,
