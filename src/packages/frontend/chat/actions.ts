@@ -178,6 +178,62 @@ export interface ThreadMetadataSnapshot {
   automation_state?: ChatThreadAutomationState;
 }
 
+function deriveThreadAgentFromMetadata(args: {
+  metadata?: ThreadMetadataSnapshot;
+  codexConfig?: CodexThreadConfig;
+}): NewThreadAgentOptions | undefined {
+  const metadata = args.metadata;
+  const codexConfig = args.codexConfig;
+  const agentModel =
+    typeof metadata?.agent_model === "string" && metadata.agent_model.trim()
+      ? metadata.agent_model.trim()
+      : undefined;
+  if (
+    codexConfig != null ||
+    metadata?.agent_kind === "acp" ||
+    (agentModel != null && isCodexModelName(agentModel))
+  ) {
+    const model =
+      codexConfig?.model?.trim() || agentModel || DEFAULT_CODEX_MODEL_NAME;
+    return {
+      mode: "codex",
+      model,
+      codexConfig: codexConfig ?? { model },
+    };
+  }
+  if (metadata?.agent_kind === "llm" && agentModel) {
+    return {
+      mode: "model",
+      model: agentModel,
+    };
+  }
+  if (metadata?.agent_kind === "none") {
+    return {
+      mode: "human",
+    };
+  }
+  return undefined;
+}
+
+function deriveThreadAppearanceFromMetadata(
+  metadata?: ThreadMetadataSnapshot,
+): NewThreadAppearanceOptions | undefined {
+  if (metadata == null) return undefined;
+  const color = metadata.thread_color?.trim();
+  const accentColor = metadata.thread_accent_color?.trim();
+  const icon = metadata.thread_icon?.trim();
+  const image = metadata.thread_image?.trim();
+  if (!color && !accentColor && !icon && !image) {
+    return undefined;
+  }
+  return {
+    color,
+    accentColor,
+    icon,
+    image,
+  };
+}
+
 function normalizeAgentKind(value: unknown): ThreadAgentKind | undefined {
   if (value === "acp" || value === "llm" || value === "none") return value;
   return undefined;
@@ -943,6 +999,41 @@ export class ChatActions extends Actions<ChatState> {
       track("create_chat_thread", { project_id, path });
     }
     return thread_id;
+  };
+
+  resetThread = (
+    threadKey?: string,
+    opts: {
+      name?: string;
+      preserveSelectedThread?: boolean;
+    } = {},
+  ): string => {
+    const sourceThreadKey =
+      `${threadKey ?? this.store?.get?.("selectedThreadKey") ?? ""}`.trim() ||
+      undefined;
+    const sourceThreadId = sourceThreadKey;
+    const sourceMetadata = sourceThreadKey
+      ? this.getThreadMetadata(sourceThreadKey, {
+          threadId: sourceThreadId,
+        })
+      : undefined;
+    const sourceCodexConfig = sourceThreadKey
+      ? this.getCodexConfig(sourceThreadKey)
+      : undefined;
+    const name =
+      opts.name?.trim() ||
+      (typeof sourceMetadata?.name === "string"
+        ? sourceMetadata.name.trim()
+        : "");
+    return this.createEmptyThread({
+      name: name || undefined,
+      threadAgent: deriveThreadAgentFromMetadata({
+        metadata: sourceMetadata,
+        codexConfig: sourceCodexConfig,
+      }),
+      threadAppearance: deriveThreadAppearanceFromMetadata(sourceMetadata),
+      preserveSelectedThread: opts.preserveSelectedThread,
+    });
   };
 
   setEditing = (message: ChatMessageTyped, is_editing: boolean) => {

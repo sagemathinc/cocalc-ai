@@ -238,6 +238,7 @@ interface ChatRoomSidebarContentProps {
   openGitBrowser: (threadKey: string) => void;
   openExportModal: (opts?: ChatExportOpenRequest) => void;
   openForkModal: (threadKey: string, label: string, isAI: boolean) => void;
+  confirmResetThread: (threadKey: string, label: string) => void;
   confirmDeleteThread: (threadKey: string, label: string) => void;
   openAutomationModal: (threadKey: string) => void;
 }
@@ -258,6 +259,7 @@ export function ChatRoomSidebarContent({
   openGitBrowser,
   openExportModal,
   openForkModal,
+  confirmResetThread,
   confirmDeleteThread,
   openAutomationModal,
 }: ChatRoomSidebarContentProps) {
@@ -324,6 +326,10 @@ export function ChatRoomSidebarContent({
           label: "Fork chat…",
         },
         {
+          key: "clear",
+          label: "Clear thread",
+        },
+        {
           type: "divider",
         },
         {
@@ -362,6 +368,8 @@ export function ChatRoomSidebarContent({
           });
         } else if (key === "fork") {
           openForkModal(threadKey, plainLabel, isAI);
+        } else if (key === "clear") {
+          confirmResetThread(threadKey, plainLabel);
         } else if (key === "archive") {
           if (!actions?.setThreadArchived) {
             antdMessage.error("Archiving chats is not available.");
