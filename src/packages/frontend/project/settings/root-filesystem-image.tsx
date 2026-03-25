@@ -714,7 +714,7 @@ export default function RootFilesystemImage() {
               <>
                 Upgrade available:{" "}
                 <strong>
-                  {displayRootfsLabel(
+                  {displayRootfsUpgradeLabel(
                     suggestedUpgradeEntry,
                     suggestedUpgradeEntry.image,
                   )}
@@ -725,14 +725,14 @@ export default function RootFilesystemImage() {
               <>
                 Switch from{" "}
                 <code>
-                  {displayRootfsLabel(
+                  {displayRootfsUpgradeLabel(
                     activeDisplayEntry,
                     value || effectiveDefaultRootfs,
                   )}
                 </code>{" "}
                 to{" "}
                 <code>
-                  {displayRootfsLabel(
+                  {displayRootfsUpgradeLabel(
                     suggestedUpgradeEntry,
                     suggestedUpgradeEntry.image,
                   )}
@@ -812,7 +812,7 @@ export default function RootFilesystemImage() {
           width={760}
           onCancel={() => setUpgradeOpen(false)}
           onOk={applySuggestedUpgrade}
-          okText={`Upgrade to ${displayRootfsLabel(
+          okText={`Upgrade to ${displayRootfsUpgradeLabel(
             suggestedUpgradeEntry,
             suggestedUpgradeEntry.image,
           )}`}
@@ -864,7 +864,7 @@ export default function RootFilesystemImage() {
                     Your current image will become the new rollback target. The
                     older rollback image{" "}
                     <code>
-                      {displayRootfsLabel(
+                      {displayRootfsUpgradeLabel(
                         previousProjectRootfsEntry,
                         previousProjectRootfsState.image,
                       )}
@@ -875,7 +875,7 @@ export default function RootFilesystemImage() {
                   <>
                     After the upgrade, you can still roll back to{" "}
                     <code>
-                      {displayRootfsLabel(
+                      {displayRootfsUpgradeLabel(
                         currentDisplayEntry,
                         currentProjectRootfsState?.image ??
                           value ??
@@ -1586,6 +1586,19 @@ function displayRootfsLabel(
   fallbackImage: string,
 ): string {
   return entry?.label?.trim() || fallbackImage;
+}
+
+function displayRootfsUpgradeLabel(
+  entry: RootfsImageEntry | undefined,
+  fallbackImage: string,
+): string {
+  const label = displayRootfsLabel(entry, fallbackImage);
+  const version = entry?.version?.trim();
+  if (!version) return label;
+  if (label.toLowerCase().includes(version.toLowerCase())) {
+    return label;
+  }
+  return `${label} ${version}`;
 }
 
 function displayRootfsDetail(
