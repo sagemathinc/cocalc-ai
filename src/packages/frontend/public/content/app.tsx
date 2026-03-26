@@ -945,76 +945,73 @@ function AboutEventsPage() {
 }
 
 function PoliciesHome({ config }: { config: ContentConfig }) {
-  const items = config.on_cocalc_com
-    ? [
-        {
-          description: "The Terms of Service govern use of CoCalc.",
-          href: "/policies/terms",
-          title: "Terms of service",
-        },
-        {
-          description:
-            "The Trust page highlights our compliance with laws and frameworks, such as GDPR and SOC 2. We adhere to rigorous standards to protect your data and maintain transparency and accountability in all our operations.",
-          href: "/policies/trust",
-          title: "Trust",
-        },
-        {
-          description:
-            "The Copyright Policy explains how SageMath, Inc. respects copyright policies, and provides a site that does not infringe on others' copyright.",
-          href: "/policies/copyright",
-          title: "Copyright policies",
-        },
-        {
-          description:
-            "The Privacy Policy describes how SageMath, Inc. respects the privacy of its users.",
-          href: "/policies/privacy",
-          title: "Privacy",
-        },
-        {
-          description:
-            "Our List of third parties enumerates what is used to provide CoCalc.",
-          href: "/policies/thirdparties",
-          title: "Third parties",
-        },
-        {
-          description:
-            "CoCalc's FERPA Compliance statement explains how we address FERPA requirements at US educational instituations.",
-          href: "/policies/ferpa",
-          title: "FERPA compliance statement",
-        },
-        {
-          description:
-            "CoCalc's Voluntary Product Accessibility Template (VPAT) describes how we address accessibility issues.",
-          href: "/policies/accessibility",
-          title: "Accessibility",
-        },
-        {
-          description: "Enterprise and institutional agreement overview.",
-          href: "/policies/enterprise-terms",
-          title: "Enterprise terms",
-        },
-      ]
-    : [
-        ...(config.imprint
-          ? [
-              {
-                description: "Site-specific legal imprint information.",
-                href: contentPath("policies/imprint"),
-                title: "Imprint",
-              },
-            ]
-          : []),
-        ...(config.policies
-          ? [
-              {
-                description:
-                  "Site-specific policy information configured by admins.",
-                href: contentPath("policies/policies"),
-                title: "Policies",
-              },
-            ]
-          : []),
-      ];
+  const items = [
+    {
+      description: "The Terms of Service govern use of CoCalc.",
+      href: "/policies/terms",
+      title: "Terms of service",
+    },
+    {
+      description:
+        "The Trust page highlights our compliance with laws and frameworks, such as GDPR and SOC 2. We adhere to rigorous standards to protect your data and maintain transparency and accountability in all our operations.",
+      href: "/policies/trust",
+      title: "Trust",
+    },
+    {
+      description:
+        "The Copyright Policy explains how SageMath, Inc. respects copyright policies, and provides a site that does not infringe on others' copyright.",
+      href: "/policies/copyright",
+      title: "Copyright policies",
+    },
+    {
+      description:
+        "The Privacy Policy describes how SageMath, Inc. respects the privacy of its users.",
+      href: "/policies/privacy",
+      title: "Privacy",
+    },
+    {
+      description:
+        "Our List of third parties enumerates what is used to provide CoCalc.",
+      href: "/policies/thirdparties",
+      title: "Third parties",
+    },
+    {
+      description:
+        "CoCalc's FERPA Compliance statement explains how we address FERPA requirements at US educational instituations.",
+      href: "/policies/ferpa",
+      title: "FERPA compliance statement",
+    },
+    {
+      description:
+        "CoCalc's Voluntary Product Accessibility Template (VPAT) describes how we address accessibility issues.",
+      href: "/policies/accessibility",
+      title: "Accessibility",
+    },
+    {
+      description: "Enterprise and institutional agreement overview.",
+      href: "/policies/enterprise-terms",
+      title: "Enterprise terms",
+    },
+    ...(config.imprint
+      ? [
+          {
+            description: "Site-specific legal imprint information.",
+            href: contentPath("policies/imprint"),
+            title: "Imprint",
+          },
+        ]
+      : []),
+    ...(config.policies
+      ? [
+          {
+            description:
+              "Site-specific policy information configured by admins.",
+            href: contentPath("policies/policies"),
+            title: "Policies",
+          },
+        ]
+      : []),
+  ];
 
   if (items.length === 0) {
     return (

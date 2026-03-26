@@ -117,6 +117,19 @@ describe("PublicContentApp", () => {
     ).not.toBeNull();
   });
 
+  it("shows built-in policy pages even without custom policy settings", () => {
+    render(
+      <PublicContentApp
+        config={{ site_name: "Launchpad" }}
+        initialRoute={{ view: "policies" }}
+      />,
+    );
+
+    expect(screen.getByText("Terms of service")).not.toBeNull();
+    expect(screen.getByText("Privacy")).not.toBeNull();
+    expect(screen.getByText("Trust")).not.toBeNull();
+  });
+
   it("renders the team page", () => {
     render(
       <PublicContentApp
