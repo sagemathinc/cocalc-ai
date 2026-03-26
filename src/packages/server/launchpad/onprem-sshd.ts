@@ -31,6 +31,7 @@ import { resolvePublicViewerDns } from "@cocalc/util/public-viewer-origin";
 
 const logger = getLogger("launchpad:local:sshd");
 const REFRESH_INTERVAL_MS = 5 * 60 * 1000;
+const PUBLIC_APP_SUBDOMAINS_TABLE = "project_app_public_subdomains";
 
 type SshdState = {
   sshdDir: string;
@@ -843,7 +844,7 @@ async function writeCloudflaredConfig(opts: {
   tunnel: CloudflareTunnel;
   origin: string;
   noTLSVerify: boolean;
-  appPublicWildcard?: string;
+  appPublicHostnames?: string[];
   publicViewerHostname?: string;
 }): Promise<boolean> {
   const yamlString = (value: string): string => JSON.stringify(value);
@@ -856,11 +857,9 @@ async function writeCloudflaredConfig(opts: {
     ingress.push("    originRequest:");
     ingress.push("      noTLSVerify: true");
   }
-  if (
-    opts.appPublicWildcard &&
-    opts.appPublicWildcard !== opts.tunnel.hostname
-  ) {
-    ingress.push(`  - hostname: ${yamlString(opts.appPublicWildcard)}`);
+  for (const hostname of opts.appPublicHostnames ?? []) {
+    if (!hostname || hostname === opts.tunnel.hostname) continue;
+    ingress.push(`  - hostname: ${yamlString(hostname)}`);
     ingress.push(`    service: ${yamlString(opts.origin)}`);
     if (opts.noTLSVerify) {
       ingress.push("    originRequest:");
@@ -870,7 +869,7 @@ async function writeCloudflaredConfig(opts: {
   if (
     opts.publicViewerHostname &&
     opts.publicViewerHostname !== opts.tunnel.hostname &&
-    opts.publicViewerHostname !== opts.appPublicWildcard
+    !(opts.appPublicHostnames ?? []).includes(opts.publicViewerHostname)
   ) {
     ingress.push(`  - hostname: ${yamlString(opts.publicViewerHostname)}`);
     ingress.push(`    service: ${yamlString(opts.origin)}`);
@@ -901,22 +900,24 @@ async function writeCloudflaredConfig(opts: {
   return true;
 }
 
-function appPublicWildcardHostname(
-  dns?: string,
-  _suffix?: string,
-): string | undefined {
-  const raw = clean(dns)?.toLowerCase();
-  if (!raw) return;
-  const parts = raw.split(".").filter(Boolean);
-  if (!parts.length) return;
-  const root = parts.length > 2 ? parts.slice(-2).join(".") : raw;
-  // Public app hostnames are allocated as single labels such as
-  // <label>-app-dev.cocalc.ai. Cloudflare tunnel ingress wildcard matching
-  // only supports whole-label wildcards, so a pattern like
-  // "*-app-dev.cocalc.ai" does not match these hosts. Route them via a
-  // wildcard on the zone root label instead, relying on exact ingress entries
-  // for the main site/raw viewer hosts to take precedence.
-  return `*.${root}`;
+async function listReservedPublicAppHostnames(): Promise<string[]> {
+  try {
+    const { rows } = await getPool().query<{ hostname?: string }>(
+      `SELECT hostname FROM ${PUBLIC_APP_SUBDOMAINS_TABLE} WHERE hostname IS NOT NULL`,
+    );
+    return Array.from(
+      new Set(
+        rows
+          .map((row) => clean(row.hostname)?.toLowerCase())
+          .filter((hostname): hostname is string => !!hostname),
+      ),
+    ).sort();
+  } catch (err: any) {
+    if (`${err?.code ?? ""}` === "42P01") {
+      return [];
+    }
+    throw err;
+  }
 }
 
 async function loadCloudflaredStateFile(
@@ -1042,10 +1043,7 @@ async function startCloudflared(): Promise<CloudflaredState | null> {
   }
 
   const { origin, noTLSVerify } = resolveCloudflaredOrigin();
-  const appPublicWildcard = appPublicWildcardHostname(
-    settings.project_hosts_dns,
-    settings.project_hosts_app_public_subdomain_suffix,
-  );
+  const appPublicHostnames = await listReservedPublicAppHostnames();
   const publicViewerHostname = normalizeHostname(
     resolvePublicViewerDns({
       publicViewerDns: settings.public_viewer_dns,
@@ -1062,7 +1060,7 @@ async function startCloudflared(): Promise<CloudflaredState | null> {
     tunnel,
     origin,
     noTLSVerify,
-    appPublicWildcard,
+    appPublicHostnames,
     publicViewerHostname,
   });
   const shouldRestartRunning =
