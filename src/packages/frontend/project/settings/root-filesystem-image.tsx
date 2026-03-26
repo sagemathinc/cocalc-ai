@@ -45,6 +45,7 @@ import {
 } from "@cocalc/frontend/rootfs/manifest";
 import {
   groupedRootfsOptions,
+  latestRootfsVersionEntries,
   renderRootfsCatalogOption,
   rootfsOptionSearchText,
   rootfsThemeImageUrl,
@@ -97,6 +98,7 @@ export default function RootFilesystemImage() {
   const [rootfsDraft, setRootfsDraft] = useState<string>("");
   const [rootfsDraftId, setRootfsDraftId] = useState<string>("");
   const [catalogRefresh, setCatalogRefresh] = useState<number>(0);
+  const [showOlderVersions, setShowOlderVersions] = useState<boolean>(false);
   const [projectRootfsStates, setProjectRootfsStates] = useState<
     ProjectRootfsStateEntry[]
   >([]);
@@ -186,10 +188,6 @@ export default function RootFilesystemImage() {
     return rootfsImages.find((entry) => entry.image === image);
   }, [rootfsDraft, rootfsDraftId, rootfsImages]);
 
-  const rootfsOptions = useMemo(
-    () => groupedRootfsOptions(rootfsImages),
-    [rootfsImages],
-  );
   const currentProjectRootfsState = useMemo(
     () => projectRootfsStates.find((state) => state.state_role === "current"),
     [projectRootfsStates],
@@ -243,6 +241,24 @@ export default function RootFilesystemImage() {
     selectedRootfsEntry,
   ]);
   const activeDisplayEntry = currentDisplayEntry ?? selectedRootfsEntry;
+  const pickerRootfsImages = useMemo(
+    () =>
+      latestRootfsVersionEntries(rootfsImages, {
+        showOlderVersions,
+        preserveIds: [rootfsDraftId, imageId, currentDisplayEntry?.id],
+      }),
+    [
+      currentDisplayEntry?.id,
+      imageId,
+      rootfsDraftId,
+      rootfsImages,
+      showOlderVersions,
+    ],
+  );
+  const rootfsOptions = useMemo(
+    () => groupedRootfsOptions(pickerRootfsImages),
+    [pickerRootfsImages],
+  );
   const relatedVersionEntries = useMemo(() => {
     if (!currentDisplayEntry?.family) return [];
     return rootfsImages
@@ -1046,6 +1062,12 @@ export default function RootFilesystemImage() {
                   loading={rootfsLoading}
                   disabled={rootfsLoading}
                 />
+                <Checkbox
+                  checked={showOlderVersions}
+                  onChange={(e) => setShowOlderVersions(e.target.checked)}
+                >
+                  Show older versions
+                </Checkbox>
                 <Button
                   type="link"
                   onClick={() => setRootfsMode("custom")}

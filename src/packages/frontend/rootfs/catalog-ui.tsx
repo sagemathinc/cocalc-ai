@@ -7,7 +7,10 @@ import { Tag } from "antd";
 
 import { Icon } from "@cocalc/frontend/components";
 import { blobImageUrl } from "@cocalc/frontend/components/theme-image-input";
-import type { RootfsImageEntry } from "@cocalc/util/rootfs-images";
+import {
+  managedRootfsContentKey,
+  type RootfsImageEntry,
+} from "@cocalc/util/rootfs-images";
 import { COLORS } from "@cocalc/util/theme";
 
 export function sectionLabel(section: RootfsImageEntry["section"]): string {
@@ -85,6 +88,67 @@ export function groupedRootfsOptions(images: RootfsImageEntry[]) {
   }, []);
 }
 
+const VERSION_COLLATOR = new Intl.Collator(undefined, {
+  numeric: true,
+  sensitivity: "base",
+});
+
+function rootfsSeriesKey(entry: RootfsImageEntry): string | undefined {
+  if (!entry.family || !entry.version) return;
+  const arch = Array.isArray(entry.arch)
+    ? entry.arch.join(",")
+    : (entry.arch ?? "any");
+  return [
+    (entry.owner_id ?? "").trim().toLowerCase(),
+    entry.official ? "official" : "user",
+    entry.label.trim().toLowerCase(),
+    entry.family.trim().toLowerCase(),
+    (entry.channel ?? "").trim().toLowerCase(),
+    entry.gpu ? "gpu" : "cpu",
+    arch,
+  ].join("|");
+}
+
+function compareVersionRecency(
+  a: RootfsImageEntry,
+  b: RootfsImageEntry,
+): number {
+  const versionCmp = VERSION_COLLATOR.compare(a.version ?? "", b.version ?? "");
+  if (versionCmp !== 0) return versionCmp;
+  const aTime = Date.parse(a.created ?? "") || 0;
+  const bTime = Date.parse(b.created ?? "") || 0;
+  if (aTime !== bTime) return aTime - bTime;
+  return a.id.localeCompare(b.id);
+}
+
+export function latestRootfsVersionEntries(
+  images: RootfsImageEntry[],
+  opts?: {
+    showOlderVersions?: boolean;
+    preserveIds?: Array<string | undefined>;
+  },
+): RootfsImageEntry[] {
+  if (opts?.showOlderVersions) return images;
+  const preserveIds = new Set(
+    (opts?.preserveIds ?? []).map((id) => `${id ?? ""}`.trim()).filter(Boolean),
+  );
+  const latestBySeries = new Map<string, RootfsImageEntry>();
+  for (const entry of images) {
+    const key = rootfsSeriesKey(entry);
+    if (!key) continue;
+    const current = latestBySeries.get(key);
+    if (!current || compareVersionRecency(entry, current) > 0) {
+      latestBySeries.set(key, entry);
+    }
+  }
+  return images.filter((entry) => {
+    if (preserveIds.has(entry.id)) return true;
+    const key = rootfsSeriesKey(entry);
+    if (!key) return true;
+    return latestBySeries.get(key)?.id === entry.id;
+  });
+}
+
 export function rootfsOptionSearchText(option?: any): string {
   return `${option?.searchText ?? option?.data?.searchText ?? ""}`.toLowerCase();
 }
@@ -106,6 +170,29 @@ function scanTagColor(entry: RootfsImageEntry): string | undefined {
         : "blue";
 }
 
+function shortRootfsRef(image: string): string {
+  const contentKey = managedRootfsContentKey(image);
+  if (contentKey) {
+    return `managed image ${contentKey.slice(0, 8)}…${contentKey.slice(-8)}`;
+  }
+  const value = image.trim();
+  if (value.length <= 56) return value;
+  return `${value.slice(0, 34)}…${value.slice(-14)}`;
+}
+
+function publishedLabel(created?: string): string | undefined {
+  if (!created) return;
+  const date = new Date(created);
+  if (Number.isNaN(date.valueOf())) return;
+  const now = new Date();
+  const includeYear = date.getFullYear() !== now.getFullYear();
+  return `Published ${date.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    ...(includeYear ? { year: "numeric" } : {}),
+  })}`;
+}
+
 export function renderRootfsCatalogOption(entry: RootfsImageEntry) {
   const imageUrl = rootfsThemeImageUrl(entry.theme);
   const themeColor = entry.theme?.color?.trim() || COLORS.GRAY_L;
@@ -114,6 +201,15 @@ export function renderRootfsCatalogOption(entry: RootfsImageEntry) {
   const themeTitle = entry.theme?.title?.trim() || entry.label || entry.image;
   const themeDescription =
     entry.theme?.description?.trim() || entry.description?.trim();
+  const metadata = [
+    publishedLabel(entry.created),
+    entry.section !== "mine" && !entry.official && entry.owner_name
+      ? `by ${entry.owner_name}`
+      : undefined,
+    shortRootfsRef(entry.image),
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
   return (
     <div
@@ -196,15 +292,15 @@ export function renderRootfsCatalogOption(entry: RootfsImageEntry) {
             ) : null}
           </div>
           <div
+            title={entry.image}
             style={{
-              fontFamily: "monospace",
               fontSize: "11px",
               color: COLORS.GRAY_M,
               overflowWrap: "anywhere",
               marginBottom: themeDescription ? "2px" : 0,
             }}
           >
-            {entry.image}
+            {metadata}
           </div>
           {themeDescription ? (
             <div

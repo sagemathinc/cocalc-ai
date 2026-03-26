@@ -11,6 +11,7 @@ import {
   Alert,
   Button,
   Card,
+  Checkbox,
   Form,
   Input,
   Modal,
@@ -51,6 +52,7 @@ import {
 } from "@cocalc/frontend/rootfs/manifest";
 import {
   groupedRootfsOptions,
+  latestRootfsVersionEntries,
   renderRootfsCatalogOption,
   rootfsOptionSearchText,
   sectionLabel,
@@ -95,6 +97,8 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
     preferredProjectRegion,
   );
   const [rootfsModalOpen, setRootfsModalOpen] = useState<boolean>(false);
+  const [showOlderRootfsVersions, setShowOlderRootfsVersions] =
+    useState<boolean>(false);
   const [rootfsTouched, setRootfsTouched] = useState<boolean>(false);
   const [rootfsImage, setRootfsImage] = useState<string | undefined>();
   const [rootfsImageId, setRootfsImageId] = useState<string | undefined>();
@@ -160,6 +164,19 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
       }),
     [rootfsImages, isGpu],
   );
+  const pickerRootfsImages = useMemo(
+    () =>
+      latestRootfsVersionEntries(filteredRootfsImages, {
+        showOlderVersions: showOlderRootfsVersions,
+        preserveIds: [rootfsDraftId, rootfsImageId],
+      }),
+    [
+      filteredRootfsImages,
+      rootfsDraftId,
+      rootfsImageId,
+      showOlderRootfsVersions,
+    ],
+  );
   const selectedRootfsEntry = useMemo(() => {
     const imageId = rootfsImageId?.trim();
     if (imageId) {
@@ -170,8 +187,8 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
     return rootfsImages.find((entry) => entry.image === image);
   }, [rootfsImage, rootfsImageId, rootfsImages]);
   const rootfsGroupedOptions = useMemo(
-    () => groupedRootfsOptions(filteredRootfsImages),
-    [filteredRootfsImages],
+    () => groupedRootfsOptions(pickerRootfsImages),
+    [pickerRootfsImages],
   );
 
   useEffect(() => {
@@ -379,6 +396,12 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
                 loading={rootfsLoading}
                 disabled={rootfsLoading}
               />
+              <Checkbox
+                checked={showOlderRootfsVersions}
+                onChange={(e) => setShowOlderRootfsVersions(e.target.checked)}
+              >
+                Show older versions
+              </Checkbox>
               <Button
                 type="link"
                 onClick={() => setRootfsMode("custom")}

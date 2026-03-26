@@ -8,6 +8,7 @@ import {
   Alert,
   Button,
   Card,
+  Checkbox,
   Form,
   Modal,
   Select,
@@ -21,6 +22,7 @@ import { useStore, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components";
 import {
   groupedRootfsOptions,
+  latestRootfsVersionEntries,
   renderRootfsCatalogOption,
   rootfsOptionSearchText,
   sectionLabel,
@@ -66,6 +68,7 @@ export function StudentProjectRootfsConfig({ actions, name, settings }: Props) {
     loading: rootfsLoading,
     error: rootfsError,
   } = useRootfsImages([managedRootfsCatalogUrl()]);
+  const [showOlderVersions, setShowOlderVersions] = useState<boolean>(false);
 
   useEffect(() => {
     setNextImage(currentImage);
@@ -73,8 +76,21 @@ export function StudentProjectRootfsConfig({ actions, name, settings }: Props) {
   }, [currentImage, currentImageId]);
 
   const visibleRootfsImages = useMemo(
-    () => rootfsImages.filter((entry) => !entry.hidden && !entry.blocked),
-    [rootfsImages],
+    () =>
+      latestRootfsVersionEntries(
+        rootfsImages.filter((entry) => !entry.hidden && !entry.blocked),
+        {
+          showOlderVersions,
+          preserveIds: [effectiveCurrentImageId, nextImageId, inheritedImageId],
+        },
+      ),
+    [
+      effectiveCurrentImageId,
+      inheritedImageId,
+      nextImageId,
+      rootfsImages,
+      showOlderVersions,
+    ],
   );
   const rootfsOptions = useMemo(
     () => groupedRootfsOptions(visibleRootfsImages),
@@ -219,6 +235,12 @@ export function StudentProjectRootfsConfig({ actions, name, settings }: Props) {
                 loading={rootfsLoading}
                 disabled={rootfsLoading}
               />
+              <Checkbox
+                checked={showOlderVersions}
+                onChange={(e) => setShowOlderVersions(e.target.checked)}
+              >
+                Show older versions
+              </Checkbox>
             </Form.Item>
           </Form>
 

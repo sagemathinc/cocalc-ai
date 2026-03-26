@@ -40,6 +40,7 @@ type RootfsImageRow = {
   release_id: string | null;
   owner_id: string | null;
   runtime_image: string;
+  created: Date | null;
   label: string;
   family: string | null;
   version: string | null;
@@ -185,6 +186,7 @@ function rowToEntry({
       release_id: row.release_id ?? undefined,
       label: row.label || row.runtime_image,
       image: row.runtime_image,
+      created: row.created?.toISOString(),
       family: row.family ?? undefined,
       version: row.version ?? undefined,
       channel: row.channel ?? undefined,
@@ -242,6 +244,7 @@ function rowToAdminEntry({
         release_id: row.release_id ?? undefined,
         label: row.label || row.runtime_image,
         image: row.runtime_image,
+        created: row.created?.toISOString(),
         family: row.family ?? undefined,
         version: row.version ?? undefined,
         channel: row.channel ?? undefined,
@@ -347,6 +350,7 @@ async function queryRootfsRows(): Promise<RootfsImageRow[]> {
       r.release_id,
       r.owner_id,
       r.runtime_image,
+      r.created,
       r.label,
       r.family,
       r.version,
