@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
-import { mkdir, readFile, utimes, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 
@@ -151,6 +151,15 @@ async function resolveLiteDevEnvScriptPath(): Promise<string> {
 
 export async function resolveLiteDevEnv(): Promise<LiteDevEnv> {
   liteDevEnvPromise ??= (async () => {
+    const explicitCliBin =
+      process.env.COCALC_JUPYTER_E2E_CLI_BIN?.trim() ||
+      process.env.COCALC_CLI_BIN?.trim();
+    if (explicitCliBin) {
+      return {
+        cli_bin: explicitCliBin,
+        path_prepend: process.env.COCALC_JUPYTER_E2E_PATH_PREPEND?.trim(),
+      };
+    }
     const script = await resolveLiteDevEnvScriptPath();
     const { stdout } = await execFileAsync(process.execPath, [
       script,
@@ -201,6 +210,39 @@ export async function runLiteCliJson(
     );
   }
   return payload.data ?? {};
+}
+
+export async function resolveLoginUrl(): Promise<string | undefined> {
+  const explicit = process.env.COCALC_JUPYTER_E2E_LOGIN_URL?.trim();
+  if (explicit) return explicit;
+  const mode = process.env.COCALC_DEV_ENV_MODE?.trim();
+  const accountId = process.env.COCALC_ACCOUNT_ID?.trim();
+  if (mode !== "hub" || !accountId) return;
+  try {
+    const data = await runLiteCliJson([
+      "admin",
+      "user",
+      "issue-auth-token",
+      accountId,
+    ]);
+    const issued = `${data.url ?? ""}`.trim();
+    if (!issued) return;
+    const targetBase =
+      process.env.COCALC_JUPYTER_E2E_BASE_URL?.trim() ||
+      process.env.COCALC_API_URL?.trim();
+    if (!targetBase) return issued;
+    try {
+      const issuedUrl = new URL(issued);
+      return new URL(
+        `${issuedUrl.pathname}${issuedUrl.search}${issuedUrl.hash}`,
+        targetBase.endsWith("/") ? targetBase : `${targetBase}/`,
+      ).toString();
+    } catch {
+      return issued;
+    }
+  } catch {
+    return;
+  }
 }
 
 function expandShellHome(path: string): string {
@@ -416,6 +458,33 @@ export async function ensureNotebook(
     nbformat: 4,
     nbformat_minor: 5,
   };
+  if (
+    process.env.COCALC_DEV_ENV_MODE?.trim() === "hub" &&
+    path_ipynb.startsWith("/root/")
+  ) {
+    const projectId = process.env.COCALC_PROJECT_ID?.trim();
+    if (!projectId) {
+      throw new Error("hub notebook fixture upload requires COCALC_PROJECT_ID");
+    }
+    const uploadDir = join(process.cwd(), ".playwright-jupyter-upload");
+    const uploadPath = join(uploadDir, `${randomUUID()}.ipynb`);
+    await mkdir(uploadDir, { recursive: true });
+    try {
+      await writeFile(uploadPath, JSON.stringify(ipynb, null, 2), "utf8");
+      await runLiteCliJson([
+        "project",
+        "file",
+        "put",
+        "--project",
+        projectId,
+        uploadPath,
+        path_ipynb,
+      ]);
+    } finally {
+      await rm(uploadPath, { force: true }).catch(() => undefined);
+    }
+    return;
+  }
   await mkdir(dirname(path_ipynb), { recursive: true });
   await writeFile(path_ipynb, JSON.stringify(ipynb, null, 2), "utf8");
 }
@@ -445,10 +514,33 @@ export async function openNotebookPage(
   url: string,
   timeout_ms: number = 45_000,
 ): Promise<void> {
-  await page.goto(trimTrailingSlash(url), {
+  const targetUrl = trimTrailingSlash(url);
+  const maybeHandleStaleBuild = async (): Promise<boolean> => {
+    const staleDismiss = page.getByRole("button", {
+      name: /Dismiss stale frontend build warning/i,
+    });
+    try {
+      await staleDismiss.first().waitFor({ state: "visible", timeout: 2_500 });
+    } catch {
+      return false;
+    }
+    await staleDismiss
+      .first()
+      .click()
+      .catch(() => undefined);
+    return true;
+  };
+  await page.goto(targetUrl, {
     waitUntil: "domcontentloaded",
     timeout: timeout_ms,
   });
+  if (await maybeHandleStaleBuild()) {
+    await page.reload({
+      waitUntil: "domcontentloaded",
+      timeout: timeout_ms,
+    });
+    await maybeHandleStaleBuild();
+  }
   await page.waitForSelector('[cocalc-test="jupyter-cell"]', {
     timeout: timeout_ms,
   });
@@ -458,6 +550,27 @@ export async function openNotebookPage(
   // Fast-open can render cells before patchflow session initialization completes.
   // Give the sync layer a short settle window before mutating notebook state.
   await page.waitForTimeout(8_000);
+}
+
+export async function ensureSignedIn(
+  page: Page,
+  timeout_ms: number = 45_000,
+): Promise<void> {
+  const loginUrl = await resolveLoginUrl();
+  if (!loginUrl) return;
+  await page.goto(trimTrailingSlash(loginUrl), {
+    waitUntil: "domcontentloaded",
+    timeout: timeout_ms,
+  });
+  try {
+    await page.waitForURL((url) => !url.pathname.startsWith("/auth/"), {
+      timeout: timeout_ms,
+    });
+  } catch {
+    // Some flows keep the auth route during a transition; the next notebook
+    // navigation below is the real gate.
+  }
+  await page.waitForTimeout(2_000);
 }
 
 export async function openSingleDocNotebookPage(

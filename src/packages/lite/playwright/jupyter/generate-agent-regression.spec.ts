@@ -5,6 +5,7 @@ import { project_id } from "@cocalc/project/data";
 import {
   codeCell,
   countCells,
+  ensureSignedIn,
   ensureNotebook,
   notebookUrl,
   openNotebookPage,
@@ -22,7 +23,10 @@ function envFlag(name: string): boolean {
 
 const RUN_ACP_E2E =
   envFlag("COCALC_JUPYTER_E2E_ACP") || envFlag("COCALC_JUPYTER_E2E_AGENT");
-const FIXTURE_PARENT = "/tmp/cocalc-lite3-generate-agent-e2e";
+const FIXTURE_PARENT =
+  process.env.COCALC_DEV_ENV_MODE?.trim() === "hub"
+    ? "/root/cocalc-lite3-generate-agent-e2e"
+    : "/tmp/cocalc-lite3-generate-agent-e2e";
 
 test.describe.configure({ mode: "serial" });
 
@@ -106,21 +110,69 @@ async function waitForSelectedThreadKey(page: Page): Promise<string> {
   );
 }
 
-async function createWorkspaceFromCurrentDirectory(
-  page: Page,
+function projectScopedArgs(args: string[]): string[] {
+  const projectId = process.env.COCALC_PROJECT_ID?.trim();
+  if (!projectId || args[0] !== "project" || args.includes("--project")) {
+    return args;
+  }
+  if (args.length >= 3) {
+    return [
+      args[0],
+      args[1],
+      args[2],
+      "--project",
+      projectId,
+      ...args.slice(3),
+    ];
+  }
+  if (args.length >= 2) {
+    return [args[0], args[1], "--project", projectId, ...args.slice(2)];
+  }
+  return args;
+}
+
+async function createWorkspaceRecord(
   workspaceRoot: string,
   workspaceTitle: string,
   testInfo: TestInfo,
+): Promise<{ workspace_id: string; record: Record<string, any> }> {
+  const projectId = process.env.COCALC_PROJECT_ID?.trim();
+  if (!projectId) {
+    throw new Error("missing COCALC_PROJECT_ID for workspaces create");
+  }
+  const created = await runLiteCliJson([
+    "workspaces",
+    "create",
+    "--project",
+    projectId,
+    "--title",
+    workspaceTitle,
+    workspaceRoot,
+  ]);
+  const workspace_id = `${created.workspace_id ?? ""}`.trim();
+  if (!workspace_id) {
+    await testInfo.attach("workspace-create", {
+      body: JSON.stringify(created, null, 2),
+      contentType: "application/json",
+    });
+    throw new Error(`workspace create returned no workspace_id`);
+  }
+  return {
+    workspace_id,
+    record: {
+      ...created,
+      workspace_id,
+      root_path:
+        `${created.root_path ?? workspaceRoot}`.trim() || workspaceRoot,
+    },
+  };
+}
+
+async function ensureWorkspaceSelection(
+  page: Page,
+  workspaceRoot: string,
+  testInfo: TestInfo,
 ): Promise<{ workspace_id: string }> {
-  await page.getByText("Workspaces", { exact: true }).first().click();
-  await page.getByRole("button", { name: "New workspace" }).click();
-  const dialog = page.getByRole("dialog", { name: "New Workspace" });
-  await expect(dialog).toBeVisible({ timeout: 30_000 });
-  const inputs = dialog.locator("input");
-  await expect(inputs.nth(0)).toHaveValue(workspaceRoot, { timeout: 15_000 });
-  await inputs.nth(1).fill(workspaceTitle);
-  await dialog.getByRole("button", { name: "OK" }).click();
-  await expect(dialog).toHaveCount(0, { timeout: 30_000 });
   await expect
     .poll(async () => await selectedWorkspaceState(page), {
       timeout: 30_000,
@@ -139,7 +191,7 @@ async function createWorkspaceFromCurrentDirectory(
       contentType: "application/json",
     });
     throw new Error(
-      `workspace create mismatch: selected=${selected.workspace_id} root=${selected.record?.root_path ?? ""}`,
+      `workspace selection mismatch: selected=${selected.workspace_id} root=${selected.record?.root_path ?? ""}`,
     );
   }
   await page.locator("[role='tab']").first().click();
@@ -211,13 +263,15 @@ async function waitForCompletedActivityLog(
       async () => {
         try {
           latest = await runLiteCliJson([
-            "project",
-            "chat",
-            "activity",
-            "--path",
-            chatPath,
-            "--thread-id",
-            threadId,
+            ...projectScopedArgs([
+              "project",
+              "chat",
+              "activity",
+              "--path",
+              chatPath,
+              "--thread-id",
+              threadId,
+            ]),
           ]);
         } catch (err) {
           const message = `${err ?? ""}`;
@@ -262,25 +316,46 @@ test("Generate with Agent uses durable backend notebook operations", async ({
   ]);
 
   const { base_url, auth_token } = await resolveBaseUrl();
+  const createdWorkspace = await createWorkspaceRecord(
+    workspaceRoot,
+    workspaceSuffix,
+    testInfo,
+  );
+  await page.addInitScript(
+    ({ projectId, workspace }) => {
+      sessionStorage.setItem(
+        `project-workspace-selection:${projectId}`,
+        JSON.stringify({
+          kind: "workspace",
+          workspace_id: workspace.workspace_id,
+        }),
+      );
+      sessionStorage.setItem(
+        `project-workspace-record:${projectId}`,
+        JSON.stringify(workspace.record),
+      );
+    },
+    {
+      projectId: project_id,
+      workspace: createdWorkspace,
+    },
+  );
+  await ensureSignedIn(page);
   await openNotebookPage(
     page,
     notebookUrl({ base_url, path_ipynb, auth_token }),
     60_000,
   );
-  const workspace = await createWorkspaceFromCurrentDirectory(
+  const workspace = await ensureWorkspaceSelection(
     page,
     workspaceRoot,
-    workspaceSuffix,
     testInfo,
   );
+  expect(workspace.workspace_id).toBe(createdWorkspace.workspace_id);
 
-  const initialCells = await runLiteCliJson([
-    "project",
-    "jupyter",
-    "cells",
-    "--path",
-    path_ipynb,
-  ]);
+  const initialCells = await runLiteCliJson(
+    projectScopedArgs(["project", "jupyter", "cells", "--path", path_ipynb]),
+  );
   const anchorCell = Array.isArray(initialCells.cells)
     ? initialCells.cells[0]
     : undefined;
@@ -318,13 +393,9 @@ test("Generate with Agent uses durable backend notebook operations", async ({
   const threadId = await waitForSelectedThreadKey(page);
   const activity = await waitForCompletedActivityLog(chatPath, threadId);
   const commands = terminalStartCommands(activity);
-  const cellsAfter = await runLiteCliJson([
-    "project",
-    "jupyter",
-    "cells",
-    "--path",
-    path_ipynb,
-  ]);
+  const cellsAfter = await runLiteCliJson(
+    projectScopedArgs(["project", "jupyter", "cells", "--path", path_ipynb]),
+  );
 
   await testInfo.attach("activity-log.json", {
     body: JSON.stringify(activity, null, 2),
