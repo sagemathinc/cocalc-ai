@@ -150,7 +150,7 @@ describe("PublicContentApp", () => {
     expect(screen.getByText("Personal website")).not.toBeNull();
   });
 
-  it("renders a structured policy page", () => {
+  it("renders the exact privacy policy page", () => {
     render(
       <PublicContentApp
         config={{ site_name: "Launchpad" }}
@@ -158,13 +158,13 @@ describe("PublicContentApp", () => {
       />,
     );
 
+    expect(screen.getByText("CoCalc - Privacy Policy")).not.toBeNull();
     expect(
-      screen.getByRole("heading", { name: "Privacy policy" }),
+      screen.getByText(/Protecting your privacy is really important to us/i),
     ).not.toBeNull();
-    expect(screen.getByText("How information is used")).not.toBeNull();
   });
 
-  it("renders the detailed third-party policy page", () => {
+  it("renders the exact third-party policy page", () => {
     render(
       <PublicContentApp
         config={{ site_name: "Launchpad" }}
@@ -173,10 +173,24 @@ describe("PublicContentApp", () => {
     );
 
     expect(
-      screen.getByRole("heading", { name: "Third-parties statement" }),
+      screen.getByText("CoCalc - Third Parties Statements"),
     ).not.toBeNull();
-    expect(screen.getByText("OpenAI privacy policy")).not.toBeNull();
-    expect(screen.getByText("Salesloft privacy notice")).not.toBeNull();
+    expect(screen.getByText("Cloudflare")).not.toBeNull();
+    expect(screen.getByText("Salesloft")).not.toBeNull();
+  });
+
+  it("renders the exact terms page", () => {
+    render(
+      <PublicContentApp
+        config={{ site_name: "Launchpad" }}
+        initialRoute={{ policySlug: "terms", view: "policies-detail" }}
+      />,
+    );
+
+    expect(screen.getByText("CoCalc - Terms of Service")).not.toBeNull();
+    expect(
+      screen.getByText(/Once you POST TO THE GENERAL PUBLIC/i),
+    ).not.toBeNull();
   });
 
   it("renders the public news list from initial data", () => {

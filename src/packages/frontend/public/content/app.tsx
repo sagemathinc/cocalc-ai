@@ -33,6 +33,7 @@ import {
   PublicSectionCard,
 } from "@cocalc/frontend/public/ui/shell";
 import PublicTopNav from "@cocalc/frontend/public/ui/top-nav";
+import { ExactPolicyPage, getExactPolicyPage } from "./legal-pages";
 import { getPolicyPage } from "./policy-data";
 import { contentPath, type PublicContentRoute, topLevelView } from "./routes";
 import {
@@ -129,7 +130,7 @@ function titleForRoute(route: PublicContentRoute, siteName: string): string {
     case "policies-custom":
       return `${siteName} policies`;
     case "policies-detail":
-      return `${getPolicyPage(route.policySlug)?.title ?? "Policies"} - ${siteName}`;
+      return `${getExactPolicyPage(route.policySlug)?.title ?? getPolicyPage(route.policySlug)?.title ?? "Policies"} - ${siteName}`;
     case "news":
       return `${siteName} news`;
     case "news-detail":
@@ -947,37 +948,43 @@ function PoliciesHome({ config }: { config: ContentConfig }) {
   const items = config.on_cocalc_com
     ? [
         {
-          description: "The terms governing use of CoCalc.",
+          description: "The Terms of Service govern use of CoCalc.",
           href: "/policies/terms",
           title: "Terms of service",
         },
         {
-          description: "Compliance and operational security information.",
+          description:
+            "The Trust page highlights our compliance with laws and frameworks, such as GDPR and SOC 2. We adhere to rigorous standards to protect your data and maintain transparency and accountability in all our operations.",
           href: "/policies/trust",
           title: "Trust",
         },
         {
-          description: "How copyright complaints and notices are handled.",
+          description:
+            "The Copyright Policy explains how SageMath, Inc. respects copyright policies, and provides a site that does not infringe on others' copyright.",
           href: "/policies/copyright",
-          title: "Copyright policy",
+          title: "Copyright policies",
         },
         {
-          description: "How user data is handled and protected.",
+          description:
+            "The Privacy Policy describes how SageMath, Inc. respects the privacy of its users.",
           href: "/policies/privacy",
           title: "Privacy",
         },
         {
-          description: "The third-party services involved in operating CoCalc.",
+          description:
+            "Our List of third parties enumerates what is used to provide CoCalc.",
           href: "/policies/thirdparties",
           title: "Third parties",
         },
         {
-          description: "Our FERPA compliance statement for educational use.",
+          description:
+            "CoCalc's FERPA Compliance statement explains how we address FERPA requirements at US educational instituations.",
           href: "/policies/ferpa",
-          title: "FERPA compliance",
+          title: "FERPA compliance statement",
         },
         {
-          description: "Accessibility and VPAT information.",
+          description:
+            "CoCalc's Voluntary Product Accessibility Template (VPAT) describes how we address accessibility issues.",
           href: "/policies/accessibility",
           title: "Accessibility",
         },
@@ -1062,8 +1069,12 @@ function PoliciesDetailPage({
 }
 
 function StructuredPolicyPage({ slug }: { slug?: string }) {
+  if (getExactPolicyPage(slug) != null) {
+    return <ExactPolicyPage slug={slug} />;
+  }
+
   const page = getPolicyPage(slug);
-  if (!page) {
+  if (page == null) {
     return <EmptyCard label="This policy page was not found." />;
   }
 
