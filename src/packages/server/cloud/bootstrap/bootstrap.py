@@ -804,7 +804,11 @@ case "$cmd" in
     src="$1"
     dest="$2"
     check_args "$src" "$dest"
-    exec /usr/bin/rsync -aHAX --numeric-ids "$src"/ "$dest"/
+    # Do not preserve hardlinks when copying from a merged overlayfs view.
+    # Rsync's -H inference can misidentify unrelated files as hardlinked when
+    # inode identity comes from overlayfs, which corrupts published child
+    # RootFS trees.
+    exec /usr/bin/rsync -aAX --numeric-ids "$src"/ "$dest"/
     ;;
   tar-sha256-tree)
     if [ "$#" -ne 1 ]; then

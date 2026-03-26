@@ -488,6 +488,10 @@ async function rsyncTree({
   src: string;
   dest: string;
 }): Promise<void> {
+  // This is used to materialize a merged overlayfs view into a publishable
+  // tree. We intentionally do not preserve hardlinks from the merged view,
+  // because overlayfs inode identity is not reliable enough for rsync -H and
+  // can create bogus hardlinks between unrelated files in child images.
   await sudo({
     verbose: false,
     timeout: ROOTFS_PUBLISH_TIMEOUT_S,
