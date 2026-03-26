@@ -738,37 +738,36 @@ export default function RootFilesystemImage() {
               </>
             }
             description={
-              <>
-                Switch from{" "}
-                <code>
-                  {displayRootfsUpgradeLabel(
-                    activeDisplayEntry,
-                    value || effectiveDefaultRootfs,
-                  )}
-                </code>{" "}
-                to{" "}
-                <code>
-                  {displayRootfsUpgradeLabel(
-                    suggestedUpgradeEntry,
-                    suggestedUpgradeEntry.image,
-                  )}
-                </code>
-                . This changes the visible <code>/</code> software environment,
-                but your current RootFS remains available as a rollback target.
-              </>
-            }
-            action={
-              <Space size="small">
-                <Button
-                  size="small"
-                  type="primary"
-                  onClick={() => setUpgradeOpen(true)}
-                >
-                  Review upgrade
-                </Button>
-                <Button size="small" onClick={openPicker}>
-                  Other images
-                </Button>
+              <Space
+                direction="vertical"
+                size="middle"
+                style={{ width: "100%" }}
+              >
+                <div>
+                  Switch from{" "}
+                  <code>
+                    {displayRootfsUpgradeLabel(
+                      activeDisplayEntry,
+                      value || effectiveDefaultRootfs,
+                    )}
+                  </code>{" "}
+                  to{" "}
+                  <code>
+                    {displayRootfsUpgradeLabel(
+                      suggestedUpgradeEntry,
+                      suggestedUpgradeEntry.image,
+                    )}
+                  </code>
+                  . This changes the visible <code>/</code> software
+                  environment, but your current RootFS remains available as a
+                  rollback target.
+                </div>
+                <Space wrap size="small">
+                  <Button type="primary" onClick={() => setUpgradeOpen(true)}>
+                    Review upgrade
+                  </Button>
+                  <Button onClick={openPicker}>Other images</Button>
+                </Space>
               </Space>
             }
           />
