@@ -8,6 +8,7 @@ import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 export type PublicContentView =
   | "about"
   | "about-events"
+  | "about-status"
   | "about-team"
   | "about-team-member"
   | "policies"
@@ -17,6 +18,8 @@ export type PublicContentView =
   | "news"
   | "news-detail"
   | "news-history"
+  | "software"
+  | "software-cocalc-launchpad"
   | "software-cocalc-plus";
 
 export interface PublicContentRoute {
@@ -42,6 +45,7 @@ export function getContentRouteFromPath(pathname: string): PublicContentRoute {
 
   if (routeParts[0] === "about") {
     if (routeParts[1] === "events") return { view: "about-events" };
+    if (routeParts[1] === "status") return { view: "about-status" };
     if (routeParts[1] === "team" && routeParts[2]) {
       return { teamSlug: routeParts[2], view: "about-team-member" };
     }
@@ -73,8 +77,14 @@ export function getContentRouteFromPath(pathname: string): PublicContentRoute {
     return { view: "news" };
   }
 
-  if (routeParts[0] === "software" && routeParts[1] === "cocalc-plus") {
-    return { view: "software-cocalc-plus" };
+  if (routeParts[0] === "software") {
+    if (routeParts[1] === "cocalc-launchpad") {
+      return { view: "software-cocalc-launchpad" };
+    }
+    if (routeParts[1] === "cocalc-plus") {
+      return { view: "software-cocalc-plus" };
+    }
+    return { view: "software" };
   }
 
   return { view: "about" };
@@ -93,6 +103,8 @@ export function topLevelView(
     case "news-detail":
     case "news-history":
       return "news";
+    case "software":
+    case "software-cocalc-launchpad":
     case "software-cocalc-plus":
       return "software";
     default:

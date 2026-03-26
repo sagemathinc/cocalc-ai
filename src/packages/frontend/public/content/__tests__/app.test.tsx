@@ -16,6 +16,9 @@ describe("getContentRouteFromPath", () => {
     expect(getContentRouteFromPath(contentPath("about/events"))).toEqual({
       view: "about-events",
     });
+    expect(getContentRouteFromPath(contentPath("about/status"))).toEqual({
+      view: "about-status",
+    });
     expect(getContentRouteFromPath(contentPath("about/team"))).toEqual({
       view: "about-team",
     });
@@ -50,6 +53,12 @@ describe("getContentRouteFromPath", () => {
       timestamp: 1712345678,
       view: "news-history",
     });
+    expect(getContentRouteFromPath(contentPath("software"))).toEqual({
+      view: "software",
+    });
+    expect(
+      getContentRouteFromPath(contentPath("software/cocalc-launchpad")),
+    ).toEqual({ view: "software-cocalc-launchpad" });
     expect(
       getContentRouteFromPath(contentPath("software/cocalc-plus")),
     ).toEqual({ view: "software-cocalc-plus" });
@@ -196,5 +205,35 @@ describe("PublicContentApp", () => {
         "The local single-user CoCalc experience for your own machine.",
       ),
     ).not.toBeNull();
+  });
+
+  it("renders the software overview page", () => {
+    render(
+      <PublicContentApp
+        config={{ site_name: "Launchpad" }}
+        initialRoute={{ view: "software" }}
+      />,
+    );
+
+    expect(
+      screen.getByRole("heading", { name: "Launchpad software" }),
+    ).not.toBeNull();
+    expect(screen.getByText("CoCalc Launchpad")).not.toBeNull();
+    expect(screen.getByText("Hosted CoCalc")).not.toBeNull();
+  });
+
+  it("renders the cocalc launchpad page", () => {
+    render(
+      <PublicContentApp
+        config={{ site_name: "Launchpad" }}
+        initialRoute={{ view: "software-cocalc-launchpad" }}
+      />,
+    );
+
+    expect(
+      screen.getByRole("heading", { name: "CoCalc Launchpad" }),
+    ).not.toBeNull();
+    expect(screen.getByText("Install CoCalc Launchpad")).not.toBeNull();
+    expect(screen.getByText("What the installer does")).not.toBeNull();
   });
 });

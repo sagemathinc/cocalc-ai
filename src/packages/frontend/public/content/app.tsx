@@ -17,6 +17,7 @@ import {
   Typography,
 } from "antd";
 import { joinUrlPath } from "@cocalc/util/url-path";
+import type { HistoricCounts, Stats } from "@cocalc/util/db-schema/stats";
 import { slugURL } from "@cocalc/util/news";
 import {
   CHANNELS_DESCRIPTIONS,
@@ -79,6 +80,10 @@ interface NewsDetailPayload {
   timestamp?: number;
 }
 
+interface StatsPayload extends Partial<Stats> {
+  error?: string;
+}
+
 const GRID_STYLE: CSSProperties = {
   display: "grid",
   gridTemplateColumns: "repeat(auto-fit, minmax(250px, 1fr))",
@@ -111,6 +116,8 @@ function titleForRoute(route: PublicContentRoute, siteName: string): string {
   switch (route.view) {
     case "about-events":
       return `${siteName} events`;
+    case "about-status":
+      return `${siteName} status`;
     case "about-team":
       return `${siteName} team`;
     case "about-team-member":
@@ -128,6 +135,10 @@ function titleForRoute(route: PublicContentRoute, siteName: string): string {
     case "news-detail":
     case "news-history":
       return `${siteName} news`;
+    case "software":
+      return `${siteName} software`;
+    case "software-cocalc-launchpad":
+      return "CoCalc Launchpad";
     case "software-cocalc-plus":
       return "CoCalc Plus";
     case "about":
@@ -154,6 +165,13 @@ function formatNewsDate(value?: number | Date): string {
     month: "short",
     day: "numeric",
   });
+}
+
+function formatDateTime(value?: number | Date): string {
+  if (value == null) return "";
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.valueOf())) return "";
+  return date.toLocaleString();
 }
 
 function truncate(text: string, max = 260): string {
@@ -271,11 +289,7 @@ function PageShell({
               { href: "about", key: "about", label: "About" },
               { href: "policies", key: "policies", label: "Policies" },
               { href: "news", key: "news", label: "News" },
-              {
-                href: "software/cocalc-plus",
-                key: "software",
-                label: "Software",
-              },
+              { href: "software", key: "software", label: "Software" },
             ].map((item) => (
               <Button
                 key={item.href}
@@ -290,6 +304,150 @@ function PageShell({
       />
       <div style={{ marginTop: "24px" }}>{children}</div>
     </PublicPageRoot>
+  );
+}
+
+function SoftwareOverviewPage() {
+  return (
+    <div style={GRID_STYLE}>
+      <PublicSectionCard>
+        <Title level={3} style={{ margin: 0 }}>
+          Hosted CoCalc
+        </Title>
+        <Paragraph style={{ margin: 0 }}>
+          Use the full hosted service when you want managed infrastructure,
+          multi-user collaboration, shared projects, and the broadest set of
+          public pages and support workflows.
+        </Paragraph>
+        <Flex wrap gap={12}>
+          <LinkButton href={appPath("features")}>Explore features</LinkButton>
+          <LinkButton href={appPath("support")}>Support</LinkButton>
+        </Flex>
+      </PublicSectionCard>
+      <PublicSectionCard>
+        <Title level={3} style={{ margin: 0 }}>
+          CoCalc Plus
+        </Title>
+        <Paragraph style={{ margin: 0 }}>
+          The local single-user CoCalc experience for your own machine. It is
+          the simplest path when you want the CoCalc workspace model without
+          standing up a shared service.
+        </Paragraph>
+        <div>
+          <LinkButton href={contentPath("software/cocalc-plus")}>
+            Open CoCalc Plus
+          </LinkButton>
+        </div>
+      </PublicSectionCard>
+      <PublicSectionCard>
+        <Title level={3} style={{ margin: 0 }}>
+          CoCalc Launchpad
+        </Title>
+        <Paragraph style={{ margin: 0 }}>
+          The lightweight control-plane bundle for small teams and self-hosted
+          deployments that want the CoCalc user model without the old Next.js
+          stack.
+        </Paragraph>
+        <div>
+          <LinkButton href={contentPath("software/cocalc-launchpad")}>
+            Open Launchpad
+          </LinkButton>
+        </div>
+      </PublicSectionCard>
+      <PublicSectionCard>
+        <Title level={3} style={{ margin: 0 }}>
+          Documentation
+        </Title>
+        <Paragraph style={{ margin: 0 }}>
+          Read the main docs, deployment references, and operator-facing setup
+          material before choosing an install path.
+        </Paragraph>
+        <Flex wrap gap={12}>
+          <LinkButton href="https://doc.cocalc.com/">CoCalc docs</LinkButton>
+          <LinkButton href="https://software.cocalc.ai/software/cocalc-launchpad/index.html">
+            Launchpad software site
+          </LinkButton>
+        </Flex>
+      </PublicSectionCard>
+    </div>
+  );
+}
+
+function CocalcLaunchpadPage() {
+  const installCommand =
+    "curl -fsSL https://software.cocalc.ai/software/cocalc-launchpad/install.sh | bash";
+
+  return (
+    <div style={GRID_STYLE}>
+      <PublicSectionCard>
+        <Title level={3} style={{ margin: 0 }}>
+          What CoCalc Launchpad is
+        </Title>
+        <Paragraph style={{ margin: 0 }}>
+          CoCalc Launchpad is the lightweight control-plane bundle for small
+          teams and self-hosted deployments. It is the clearest path when you
+          want a shared CoCalc environment that you operate yourself.
+        </Paragraph>
+        <Paragraph style={{ margin: 0 }}>
+          It is aimed at rapid iteration, small deployments, and productized use
+          of the same collaborative workspace model that powers the hosted
+          service.
+        </Paragraph>
+      </PublicSectionCard>
+      <PublicSectionCard>
+        <Title level={3} style={{ margin: 0 }}>
+          Install CoCalc Launchpad
+        </Title>
+        <Paragraph style={{ margin: 0 }}>
+          Copy and run this in your terminal:
+        </Paragraph>
+        <CodeCommand value={installCommand} />
+        <Flex wrap gap={12}>
+          <CopyCommandButton value={installCommand} />
+          <Button href="https://software.cocalc.ai/software/cocalc-launchpad/install.sh">
+            Open install script
+          </Button>
+          <Button href="https://software.cocalc.ai/software/cocalc-launchpad/index.html">
+            Open software page
+          </Button>
+        </Flex>
+        <Paragraph style={{ margin: 0 }}>
+          Current supported targets are Linux on x64 or arm64, and macOS on
+          arm64.
+        </Paragraph>
+      </PublicSectionCard>
+      <PublicSectionCard>
+        <Title level={3} style={{ margin: 0 }}>
+          What the installer does
+        </Title>
+        <Paragraph style={{ margin: 0 }}>
+          The installer downloads the platform-specific manifest, verifies the
+          corresponding Launchpad artifact, installs it into a user-owned
+          directory, and adds a launcher to your PATH if needed.
+        </Paragraph>
+        <Paragraph style={{ margin: 0 }}>
+          On Linux this lives under
+          <code> ~/.local/share/cocalc-launchpad</code>, and on macOS under
+          <code> ~/Library/Application Support/cocalc-launchpad</code>.
+        </Paragraph>
+      </PublicSectionCard>
+      <PublicSectionCard>
+        <Title level={3} style={{ margin: 0 }}>
+          Choose Launchpad or CoCalc Plus
+        </Title>
+        <Paragraph style={{ margin: 0 }}>
+          Choose CoCalc Plus for a local single-user install. Choose Launchpad
+          when you want a shared deployment for a small team or an operator-run
+          instance with the same overall workspace model.
+        </Paragraph>
+        <Flex wrap gap={12}>
+          <LinkButton href={contentPath("software/cocalc-plus")}>
+            Compare with CoCalc Plus
+          </LinkButton>
+          <LinkButton href={appPath("features/api")}>HTTP API</LinkButton>
+        </Flex>
+      </PublicSectionCard>
+    </div>
   );
 }
 
@@ -412,6 +570,45 @@ function AboutHome({
             {helpEmail ? (
               <LinkButton href={`mailto:${helpEmail}`}>{helpEmail}</LinkButton>
             ) : null}
+          </div>
+        </PublicSectionCard>
+        <PublicSectionCard>
+          <Title level={3} style={{ margin: 0 }}>
+            Documentation
+          </Title>
+          <Paragraph style={{ margin: 0 }}>
+            Browse the CoCalc manual, teaching guide, API docs, and admin
+            references.
+          </Paragraph>
+          <div style={{ display: "grid", gap: "8px" }}>
+            <LinkButton href={appPath("support")}>Open support</LinkButton>
+            <LinkButton href="https://doc.cocalc.com/">Read docs</LinkButton>
+          </div>
+        </PublicSectionCard>
+        <PublicSectionCard>
+          <Title level={3} style={{ margin: 0 }}>
+            System status
+          </Title>
+          <Paragraph style={{ margin: 0 }}>
+            See current activity and high-level usage metrics for {siteName}.
+          </Paragraph>
+          <div>
+            <LinkButton href={contentPath("about/status")}>
+              Open status
+            </LinkButton>
+          </div>
+        </PublicSectionCard>
+        <PublicSectionCard>
+          <Title level={3} style={{ margin: 0 }}>
+            Ways to run CoCalc
+          </Title>
+          <Paragraph style={{ margin: 0 }}>
+            Compare hosted CoCalc, CoCalc Plus, and CoCalc Launchpad.
+          </Paragraph>
+          <div>
+            <LinkButton href={contentPath("software")}>
+              Open software
+            </LinkButton>
           </div>
         </PublicSectionCard>
       </div>
@@ -566,6 +763,107 @@ function AboutTeamMemberPage({ slug }: { slug?: string }) {
         </Title>
         <ExperienceList member={member} />
       </PublicSectionCard>
+    </div>
+  );
+}
+
+function historicCount(
+  counts: HistoricCounts | undefined,
+  key: keyof HistoricCounts,
+): number {
+  const value = counts?.[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function StatusMetricCard({
+  detail,
+  title,
+  value,
+}: {
+  detail: string;
+  title: string;
+  value: string;
+}) {
+  return (
+    <PublicSectionCard>
+      <div style={{ ...MUTED_STYLE, fontSize: "13px", fontWeight: 700 }}>
+        {title}
+      </div>
+      <div style={{ fontSize: "2rem", fontWeight: 700, lineHeight: 1.1 }}>
+        {value}
+      </div>
+      <Paragraph style={{ margin: 0 }}>{detail}</Paragraph>
+    </PublicSectionCard>
+  );
+}
+
+function AboutStatusPage({ siteName }: { siteName: string }) {
+  const [loading, setLoading] = useState(true);
+  const [payload, setPayload] = useState<StatsPayload>({});
+
+  useEffect(() => {
+    let canceled = false;
+    void fetchJson<StatsPayload>(joinUrlPath(appBasePath, "stats"))
+      .then((value) => {
+        if (!canceled) setPayload(value ?? {});
+      })
+      .finally(() => {
+        if (!canceled) setLoading(false);
+      });
+    return () => {
+      canceled = true;
+    };
+  }, []);
+
+  if (loading) {
+    return <LoadingCard label="Loading system status…" />;
+  }
+
+  if (payload.error) {
+    return <EmptyCard label={`Status unavailable: ${payload.error}`} />;
+  }
+
+  const connectedClients = (payload.hub_servers ?? []).reduce(
+    (sum, server) => sum + (server.clients ?? 0),
+    0,
+  );
+
+  return (
+    <div style={{ display: "grid", gap: 24 }}>
+      <PublicSectionCard>
+        <Title level={3} style={{ margin: 0 }}>
+          Live activity snapshot
+        </Title>
+        <Paragraph style={{ margin: 0 }}>
+          This is the current high-level activity view for {siteName}. It is
+          intended as a public system monitor rather than a full admin console.
+        </Paragraph>
+        <Paragraph style={{ margin: 0 }}>
+          Last updated: {formatDateTime(payload.time)}
+        </Paragraph>
+      </PublicSectionCard>
+      <div style={GRID_STYLE}>
+        <StatusMetricCard
+          title="Accounts"
+          value={`${payload.accounts ?? 0}`}
+          detail={`Active in 5 minutes: ${historicCount(payload.accounts_active, "5min")} · Active in 1 day: ${historicCount(payload.accounts_active, "1d")}`}
+        />
+        <StatusMetricCard
+          title="Projects"
+          value={`${payload.projects ?? 0}`}
+          detail={`Edited in 5 minutes: ${historicCount(payload.projects_edited, "5min")} · Edited in 1 day: ${historicCount(payload.projects_edited, "1d")}`}
+        />
+        <StatusMetricCard
+          title="Running projects"
+          value={`${(payload.running_projects?.free ?? 0) + (payload.running_projects?.member ?? 0)}`}
+          detail={`Free: ${payload.running_projects?.free ?? 0} · Member: ${payload.running_projects?.member ?? 0}`}
+        />
+        <StatusMetricCard
+          title="Hub servers"
+          value={`${payload.hub_servers?.length ?? 0}`}
+          detail={`Connected browser sessions: ${connectedClients}`}
+        />
+      </div>
     </div>
   );
 }
@@ -1065,6 +1363,19 @@ export default function PublicContentApp({
     );
   }
 
+  if (initialRoute.view === "about-status") {
+    return (
+      <PageShell
+        config={config}
+        route={initialRoute}
+        subtitle={`Live activity and current usage metrics for ${siteName}.`}
+        title={title}
+      >
+        <AboutStatusPage siteName={siteName} />
+      </PageShell>
+    );
+  }
+
   if (initialRoute.view === "policies-imprint") {
     return (
       <PageShell
@@ -1155,6 +1466,32 @@ export default function PublicContentApp({
         title={title}
       >
         <CocalcPlusPage />
+      </PageShell>
+    );
+  }
+
+  if (initialRoute.view === "software-cocalc-launchpad") {
+    return (
+      <PageShell
+        config={config}
+        route={initialRoute}
+        subtitle="The lightweight self-hosted control-plane bundle for small teams."
+        title={title}
+      >
+        <CocalcLaunchpadPage />
+      </PageShell>
+    );
+  }
+
+  if (initialRoute.view === "software") {
+    return (
+      <PageShell
+        config={config}
+        route={initialRoute}
+        subtitle="Hosted, local, and self-hosted ways to run CoCalc."
+        title={title}
+      >
+        <SoftwareOverviewPage />
       </PageShell>
     );
   }

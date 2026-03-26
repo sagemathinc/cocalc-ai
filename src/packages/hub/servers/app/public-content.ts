@@ -38,6 +38,12 @@ function redirectToStatic(req: Request, res: Response): void {
   );
 }
 
+function redirectCompatibility(target: string) {
+  return function (_req: Request, res: Response): void {
+    res.redirect(joinUrlPath(basePath, target));
+  };
+}
+
 function stripMarkdown(text?: string): string {
   return `${text ?? ""}`
     .replace(/!\[[^\]]*\]\([^)]+\)/g, " ")
@@ -152,6 +158,14 @@ async function renderJsonFeed(req: Request): Promise<object> {
 }
 
 export default function initPublicContent(router: Router): void {
+  router.get(["/info", "/info/"], redirectCompatibility("about"));
+  router.get(["/info/doc", "/info/doc/"], redirectCompatibility("support"));
+  router.get(
+    ["/info/status", "/info/status/"],
+    redirectCompatibility("about/status"),
+  );
+  router.get(["/info/run", "/info/run/"], redirectCompatibility("software"));
+
   router.get("/news/rss.xml", async (req, res) => {
     try {
       res.setHeader("Content-Type", "text/xml");
@@ -177,6 +191,8 @@ export default function initPublicContent(router: Router): void {
     "/about/",
     "/about/events",
     "/about/events/",
+    "/about/status",
+    "/about/status/",
     "/about/team",
     "/about/team/",
     "/about/team/:slug",
@@ -195,6 +211,10 @@ export default function initPublicContent(router: Router): void {
     "/news/:slug/",
     "/news/:slug/:timestamp",
     "/news/:slug/:timestamp/",
+    "/software",
+    "/software/",
+    "/software/cocalc-launchpad",
+    "/software/cocalc-launchpad/",
     "/software/cocalc-plus",
     "/software/cocalc-plus/",
   ];
