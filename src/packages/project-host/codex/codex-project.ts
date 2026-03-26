@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { execFile } from "node:child_process";
 import { promises as fs } from "node:fs";
 import { basename, dirname, join, isAbsolute } from "node:path";
+import { URL } from "node:url";
 import getLogger from "@cocalc/backend/logger";
 import { podmanEnv } from "@cocalc/backend/podman/env";
 import { argsJoin } from "@cocalc/util/args";
@@ -65,7 +66,6 @@ type ContainerInfo = {
   name: string;
   rootfs: string;
   codexPath: string;
-  cliPath?: string;
   home: string;
   scratch?: string;
 };
@@ -91,6 +91,88 @@ function getProjectRuntimeCodexPath(): string {
   return (
     process.env.COCALC_DANGEROUS_PROJECT_RUNTIME_CODEX_PATH_OVERRIDE ??
     "/opt/cocalc/bin2/codex"
+  );
+}
+
+function getProjectRuntimeCliPath(): string {
+  return (
+    process.env.COCALC_DANGEROUS_PROJECT_RUNTIME_CLI_PATH_OVERRIDE ??
+    "/opt/cocalc/bin2/cocalc"
+  );
+}
+
+function getProjectRuntimeCliCommand(): string {
+  const override =
+    `${process.env.COCALC_DANGEROUS_PROJECT_RUNTIME_CLI_CMD_OVERRIDE ?? ""}`.trim();
+  if (override) return override;
+  return '"/opt/cocalc/bin/node" "/opt/cocalc/bin2/cocalc-cli.js"';
+}
+
+function isLoopbackHostname(hostname: string): boolean {
+  const host = `${hostname ?? ""}`.trim().toLowerCase();
+  return host === "localhost" || host === "127.0.0.1" || host === "::1";
+}
+
+function normalizeApiUrl(
+  raw: string,
+  { rewriteLoopbackHost }: { rewriteLoopbackHost: boolean },
+): string | undefined {
+  const trimmed = `${raw ?? ""}`.trim();
+  if (!trimmed) return;
+  try {
+    const parsed = new URL(trimmed);
+    if (rewriteLoopbackHost && isLoopbackHostname(parsed.hostname)) {
+      parsed.hostname = "host.containers.internal";
+    }
+    return parsed.toString().replace(/\/$/, "");
+  } catch {
+    return trimmed;
+  }
+}
+
+function normalizeProjectRuntimePath(pathValue?: string): string {
+  const seen = new Set<string>();
+  const ordered = [
+    "/root/.local/bin",
+    "/opt/cocalc/bin",
+    "/opt/cocalc/bin2",
+    "/opt/cocalc-cli/bin",
+    "/usr/local/sbin",
+    "/usr/local/bin",
+    "/usr/sbin",
+    "/usr/bin",
+    "/sbin",
+    "/bin",
+    ...`${pathValue ?? ""}`
+      .split(":")
+      .map((part) => part.trim())
+      .filter(Boolean),
+  ];
+  const normalized: string[] = [];
+  for (const part of ordered) {
+    if (seen.has(part)) continue;
+    seen.add(part);
+    normalized.push(part);
+  }
+  return normalized.join(":");
+}
+
+function applyProjectRuntimeCliEnv(env: Record<string, string>): void {
+  env.COCALC_CLI_BIN = getProjectRuntimeCliPath();
+  env.COCALC_CLI_CMD = getProjectRuntimeCliCommand();
+  env.PATH = normalizeProjectRuntimePath(env.PATH);
+}
+
+function resolveProjectRuntimeApiUrl(explicit?: string): string {
+  const masterConat =
+    `${process.env.MASTER_CONAT_SERVER ?? process.env.COCALC_MASTER_CONAT_SERVER ?? ""}`.trim();
+  const hostConfigured =
+    `${process.env.COCALC_API_URL ?? process.env.BASE_URL ?? ""}`.trim();
+  return (
+    normalizeApiUrl(masterConat, { rewriteLoopbackHost: true }) ??
+    normalizeApiUrl(hostConfigured, { rewriteLoopbackHost: true }) ??
+    normalizeApiUrl(explicit ?? "", { rewriteLoopbackHost: true }) ??
+    `http://host.containers.internal:${`${process.env.HUB_PORT ?? process.env.PORT ?? "9100"}`.trim() || "9100"}`
   );
 }
 
@@ -610,47 +692,6 @@ async function resolveCodexBinary(): Promise<{
   return { hostPath, containerPath, mount: hostDir };
 }
 
-async function resolveOptionalCliBinary(): Promise<
-  | {
-      hostPath: string;
-      containerPath: string;
-      mount: string;
-    }
-  | undefined
-> {
-  const requested = `${process.env.COCALC_CLI_BIN ?? ""}`.trim();
-  const candidates = [
-    requested,
-    process.env.COCALC_BIN_PATH
-      ? join(process.env.COCALC_BIN_PATH, "cocalc")
-      : "",
-    process.env.COCALC_BIN_PATH
-      ? join(process.env.COCALC_BIN_PATH, "cocalc-cli")
-      : "",
-    "cocalc",
-    "cocalc-cli",
-  ].filter((value) => !!value);
-  for (const candidate of candidates) {
-    let hostPath = candidate;
-    if (!isAbsolute(hostPath)) {
-      const resolved = await which(candidate);
-      if (!resolved) continue;
-      hostPath = resolved;
-    }
-    try {
-      const stat = await fs.stat(hostPath);
-      if (!stat.isFile()) continue;
-    } catch {
-      continue;
-    }
-    const hostDir = dirname(hostPath);
-    const mount = "/opt/cocalc-cli/bin";
-    const containerPath = join(mount, basename(hostPath));
-    return { hostPath, containerPath, mount: hostDir };
-  }
-  return undefined;
-}
-
 const containerLeases = new RefcountLeaseManager<string>({
   delayMs: CONTAINER_TTL_MS,
   disposer: async (key: string) => {
@@ -691,7 +732,6 @@ async function ensureContainer({
   });
   const name = codexContainerName(projectId, authRuntime.contextId);
   const { containerPath, mount } = await resolveCodexBinary();
-  const cliBinary = await resolveOptionalCliBinary();
   const codexHome =
     authRuntime.codexHome ??
     (authRuntime.source === "shared-home"
@@ -729,7 +769,6 @@ async function ensureContainer({
         name,
         rootfs,
         codexPath: containerPath,
-        cliPath: cliBinary?.containerPath,
         home,
         scratch,
       };
@@ -775,11 +814,7 @@ async function ensureContainer({
     env.COCALC_BEARER_TOKEN = cliBearer;
     env.COCALC_AGENT_TOKEN = cliBearer;
   }
-  if (cliBinary?.containerPath) {
-    env.COCALC_CLI_BIN = cliBinary.containerPath;
-    env.COCALC_CLI_CMD = `"${cliBinary.containerPath}"`;
-    env.PATH = `${dirname(cliBinary.containerPath)}:${env.PATH ?? ""}`;
-  }
+  applyProjectRuntimeCliEnv(env);
   if (extraEnv) {
     for (const key in extraEnv) {
       if (typeof extraEnv[key] === "string") {
@@ -792,6 +827,8 @@ async function ensureContainer({
       }
     }
   }
+  env.COCALC_API_URL = resolveProjectRuntimeApiUrl(env.COCALC_API_URL);
+  applyProjectRuntimeCliEnv(env);
   for (const key in env) {
     args.push("-e", `${key}=${env[key]}`);
   }
@@ -821,15 +858,6 @@ async function ensureContainer({
   args.push(
     mountArg({ source: mount, target: "/opt/codex/bin", readOnly: true }),
   );
-  if (cliBinary) {
-    args.push(
-      mountArg({
-        source: cliBinary.mount,
-        target: "/opt/cocalc-cli/bin",
-        readOnly: true,
-      }),
-    );
-  }
   if (codexHome && authRuntime.source === "shared-home") {
     try {
       const stat = await fs.stat(codexHome);
@@ -910,7 +938,6 @@ async function ensureContainer({
     name,
     rootfs,
     codexPath: containerPath,
-    cliPath: cliBinary?.containerPath,
     home,
     scratch,
   };
@@ -1103,6 +1130,7 @@ type SpawnCodexAppServerInProjectRuntimeResult = {
   scratch?: string;
   appServerLogin?: CodexAppServerLoginHint;
   handleAppServerRequest?: CodexAppServerRequestHandler;
+  runtimeEnv?: Record<string, string>;
 };
 
 async function spawnCodexAppServerInProjectRuntime({
@@ -1157,6 +1185,9 @@ async function spawnCodexAppServerInProjectRuntime({
   if (!execEnv.OPENAI_API_KEY?.trim()) {
     delete execEnv.OPENAI_API_KEY;
   }
+  applyProjectRuntimeCliEnv(execEnv);
+  execEnv.COCALC_API_URL = resolveProjectRuntimeApiUrl(execEnv.COCALC_API_URL);
+  applyProjectRuntimeCliEnv(execEnv);
   for (const key in execEnv) {
     execArgs.push("-e", `${key}=${execEnv[key]}`);
   }
@@ -1226,6 +1257,7 @@ async function spawnCodexAppServerInProjectRuntime({
     scratch,
     appServerLogin,
     handleAppServerRequest,
+    runtimeEnv: execEnv,
   };
 }
 
@@ -1289,6 +1321,7 @@ export function initCodexProjectRunner(): void {
         },
         appServerLogin: spawned.appServerLogin,
         handleAppServerRequest: spawned.handleAppServerRequest,
+        runtimeEnv: spawned.runtimeEnv,
       };
     },
   });

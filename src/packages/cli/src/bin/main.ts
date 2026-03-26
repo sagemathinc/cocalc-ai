@@ -404,6 +404,14 @@ function defaultApiBaseUrl(): string {
   return normalizeUrl(raw);
 }
 
+function defaultConatAddress(apiBaseUrl: string): string {
+  const fromEnv = `${process.env.CONAT_SERVER ?? ""}`.trim();
+  if (fromEnv) {
+    return normalizeUrl(fromEnv);
+  }
+  return apiBaseUrl;
+}
+
 function asUtf8(value: unknown): string {
   if (value == null) return "";
   if (typeof value === "string") return value;
@@ -730,6 +738,7 @@ async function connectRemote({
   timeoutMs: number;
 }): Promise<RemoteConnection> {
   const signInTimeoutMs = Math.min(timeoutMs, MAX_TRANSPORT_TIMEOUT_MS);
+  const conatAddress = defaultConatAddress(apiBaseUrl);
   const extraHeaders: Record<string, string> = {};
   const cookie = buildCookieHeader(apiBaseUrl, globals);
   if (cookie) {
@@ -750,7 +759,7 @@ async function connectRemote({
   });
 
   const client = connectConat({
-    address: apiBaseUrl,
+    address: conatAddress,
     noCache: true,
     ...(Object.keys(extraHeaders).length ? { extraHeaders } : undefined),
     ...(effectiveBearer?.trim()

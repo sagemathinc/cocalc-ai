@@ -42,6 +42,14 @@ export function defaultApiBaseUrl(): string {
   return normalizeUrl(raw);
 }
 
+function currentProjectConatAddress(apiBaseUrl: string): string {
+  const fromEnv = `${process.env.CONAT_SERVER ?? ""}`.trim();
+  if (fromEnv) {
+    return normalizeUrl(fromEnv);
+  }
+  return apiBaseUrl;
+}
+
 function isLoopbackHostName(hostname: string): boolean {
   const host = `${hostname ?? ""}`.trim().toLowerCase();
   if (!host) return false;
@@ -138,8 +146,9 @@ async function openCurrentProjectConatClient({
   timeoutMs: number;
   projectId: string;
 }): Promise<ConatClient> {
+  const conatAddress = currentProjectConatAddress(apiBaseUrl);
   const client = connectConat({
-    address: apiBaseUrl,
+    address: conatAddress,
     noCache: true,
     reconnection: false,
     auth: async (cb) =>
