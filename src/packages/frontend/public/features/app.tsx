@@ -107,8 +107,6 @@ function FeaturesIndex({ siteName }: { siteName: string }) {
           the same projects, files, and collaboration features inside the main
           app.
         </Paragraph>
-      </PublicSectionCard>
-      <PublicSectionCard>
         <Title level={3} style={{ margin: 0 }}>
           The new direction is increasingly agent-first
         </Title>
