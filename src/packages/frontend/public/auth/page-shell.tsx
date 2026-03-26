@@ -21,6 +21,7 @@ const PAGE_STYLE: CSSProperties = {
 } as const;
 
 interface PublicAuthPageShellProps {
+  cardWidth?: CSSProperties["width"];
   children: ReactNode;
   isAuthenticated?: boolean;
   siteName?: ReactNode;
@@ -29,6 +30,7 @@ interface PublicAuthPageShellProps {
 }
 
 export default function PublicAuthPageShell({
+  cardWidth,
   children,
   isAuthenticated,
   siteName,
@@ -45,7 +47,7 @@ export default function PublicAuthPageShell({
         <Card
           variant="outlined"
           style={{
-            width: "min(480px, 96vw)",
+            width: cardWidth ?? "min(480px, 96vw)",
             boxShadow: "0 12px 32px rgba(0, 0, 0, 0.08)",
           }}
           styles={{
