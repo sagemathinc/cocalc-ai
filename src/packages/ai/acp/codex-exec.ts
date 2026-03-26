@@ -67,6 +67,7 @@ function getCoCalcRuntimeGuidanceHeader(cliCommand: string): string {
   return [
     "[CoCalc runtime capabilities]",
     "This turn may run with CoCalc CLI/browser automation context.",
+    `When you need the CoCalc CLI, use this exact command: \`${cliCommand}\`. Do not assume bare \`cocalc\` resolves to the right binary.`,
     `If relevant, you can use \`${cliCommand}\` to inspect browser state and run browser exec scripts.`,
     "Prefer scoped variables already provided in environment, e.g.:",
     "- COCALC_PROJECT_ID",
@@ -816,8 +817,10 @@ export class CodexExecAgent implements AcpAgent {
     if (!hasProject || !hasBrowser) {
       return prompt;
     }
-    const rawCli = `${runtimeEnv?.COCALC_CLI_BIN ?? ""}`.trim();
-    const cliCommand = rawCli ? `"${rawCli}"` : "cocalc";
+    const rawCliCommand = `${runtimeEnv?.COCALC_CLI_CMD ?? ""}`.trim();
+    const rawCliBin = `${runtimeEnv?.COCALC_CLI_BIN ?? ""}`.trim();
+    const cliCommand =
+      rawCliCommand || (rawCliBin ? `"${rawCliBin}"` : "cocalc");
     return `${getCoCalcRuntimeGuidanceHeader(cliCommand)}\n\n${prompt}`;
   }
 

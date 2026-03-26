@@ -152,6 +152,17 @@ export function createProjectHostConatAuth({ host_id }: { host_id: string }): {
     ) {
       return { hub_id: "system" };
     }
+    const handshakeProjectAuth = readProjectScopedAuth(socket);
+    if (handshakeProjectAuth) {
+      const row = getProject(handshakeProjectAuth.project_id);
+      if (!row?.secret_token) {
+        throw new Error("project secret token not configured");
+      }
+      if (handshakeProjectAuth.project_secret !== row.secret_token) {
+        throw new Error("invalid secret token for project");
+      }
+      return { project_id: handshakeProjectAuth.project_id };
+    }
     if (cookies?.[PROJECT_SECRET_COOKIE_NAME] != null) {
       const project_id = cookies?.[PROJECT_ID_COOKIE_NAME];
       if (!project_id || !isValidUUID(project_id)) {
@@ -252,4 +263,24 @@ export function createProjectHostConatAuth({ host_id }: { host_id: string }): {
     isAllowed,
     clearCaches: clearAuthCaches,
   };
+}
+
+function readProjectScopedAuth(
+  socket: any,
+): { project_id: string; project_secret: string } | undefined {
+  const auth = socket?.handshake?.auth;
+  const project_secret =
+    typeof auth?.project_secret === "string" ? auth.project_secret.trim() : "";
+  const project_id =
+    typeof auth?.project_id === "string" ? auth.project_id.trim() : "";
+  if (!project_secret && !project_id) {
+    return undefined;
+  }
+  if (!project_id || !isValidUUID(project_id)) {
+    throw new Error("invalid or missing project_id for project auth");
+  }
+  if (!project_secret) {
+    throw new Error("missing project_secret for project auth");
+  }
+  return { project_id, project_secret };
 }

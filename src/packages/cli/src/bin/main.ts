@@ -47,7 +47,11 @@ import {
   type AuthProfile,
   type GlobalAuthOptions,
 } from "../core/auth-config";
-import { buildCookieHeader, normalizeSecretValue } from "../core/auth-cookies";
+import {
+  buildCookieHeader,
+  normalizeSecretValue,
+  resolveProjectScopedAuth,
+} from "../core/auth-cookies";
 import {
   durationToMs,
   extractCookie,
@@ -60,6 +64,8 @@ import {
   hubCallByName as hubCallByNameCore,
   withTimeout,
 } from "./core/context";
+import { isProjectScopedRemoteForProject } from "./core/remote-scope";
+import { effectiveDaemonGlobals } from "./core/daemon-globals";
 import {
   listHosts as listHostsCore,
   normalizeUserSearchName as normalizeUserSearchNameCore,
@@ -402,6 +408,14 @@ function defaultApiBaseUrl(): string {
   return normalizeUrl(raw);
 }
 
+function defaultConatAddress(apiBaseUrl: string): string {
+  const fromEnv = `${process.env.CONAT_SERVER ?? ""}`.trim();
+  if (fromEnv) {
+    return normalizeUrl(fromEnv);
+  }
+  return apiBaseUrl;
+}
+
 function asUtf8(value: unknown): string {
   if (value == null) return "";
   if (typeof value === "string") return value;
@@ -728,6 +742,7 @@ async function connectRemote({
   timeoutMs: number;
 }): Promise<RemoteConnection> {
   const signInTimeoutMs = Math.min(timeoutMs, MAX_TRANSPORT_TIMEOUT_MS);
+  const conatAddress = defaultConatAddress(apiBaseUrl);
   const extraHeaders: Record<string, string> = {};
   const cookie = buildCookieHeader(apiBaseUrl, globals);
   if (cookie) {
@@ -735,6 +750,7 @@ async function connectRemote({
   }
   const bearer = globals.bearer ?? process.env.COCALC_BEARER_TOKEN;
   const effectiveBearer = bearer ?? process.env.COCALC_AGENT_TOKEN;
+  const projectScopedAuth = resolveProjectScopedAuth(process.env);
   const agentProjectId = `${process.env.COCALC_PROJECT_ID ?? ""}`.trim();
   cliDebug("connectRemote", {
     apiBaseUrl,
@@ -742,23 +758,40 @@ async function connectRemote({
     signInTimeoutMs,
     hasCookie: !!cookie,
     hasBearer: !!effectiveBearer?.trim(),
+    hasProjectScopedAuth: !!projectScopedAuth,
     hasAgentProjectId: isValidUUID(agentProjectId),
     hasApiKey: !!(globals.apiKey ?? process.env.COCALC_API_KEY),
     hasHubPassword: hasHubPassword(globals),
   });
 
   const client = connectConat({
-    address: apiBaseUrl,
+    address: conatAddress,
     noCache: true,
+    ...(projectScopedAuth?.project_id
+      ? {
+          inboxPrefix: inboxPrefix({
+            project_id: projectScopedAuth.project_id,
+          }),
+        }
+      : undefined),
     ...(Object.keys(extraHeaders).length ? { extraHeaders } : undefined),
-    ...(effectiveBearer?.trim()
+    ...(effectiveBearer?.trim() || projectScopedAuth
       ? {
           auth: async (cb) =>
             cb({
-              bearer: effectiveBearer.trim(),
-              ...(isValidUUID(agentProjectId)
-                ? { project_id: agentProjectId }
-                : {}),
+              ...(effectiveBearer?.trim()
+                ? {
+                    bearer: effectiveBearer.trim(),
+                    ...(isValidUUID(agentProjectId)
+                      ? { project_id: agentProjectId }
+                      : {}),
+                  }
+                : projectScopedAuth
+                  ? {
+                      project_secret: projectScopedAuth.project_secret,
+                      project_id: projectScopedAuth.project_id,
+                    }
+                  : {}),
             }),
         }
       : undefined),
@@ -1467,7 +1500,8 @@ async function resolveProjectConatClient(
   const envProjectId = `${process.env.COCALC_PROJECT_ID ?? ""}`.trim();
   if (
     isValidUUID(envProjectId) &&
-    (!explicitIdentifier || explicitIdentifier === envProjectId)
+    (!explicitIdentifier || explicitIdentifier === envProjectId) &&
+    isProjectScopedRemoteForProject(ctx.remote, envProjectId)
   ) {
     return {
       project: {
@@ -1536,6 +1570,7 @@ const {
   projectChatLoopSetData,
   projectChatLoopClearData,
   projectChatAutomationData,
+  projectChatActivityData,
 } = createProjectChatOps<CommandContext, ProjectRow>({
   resolveProjectConatClient,
 });
@@ -1891,6 +1926,8 @@ const { serveDaemon, runDaemonRequestFromCommand } =
     contextForGlobals,
     closeCommandContext,
     globalsFrom,
+    daemonRequestGlobals: (globals) =>
+      effectiveDaemonGlobals(globals, { defaultApiBaseUrl }),
     daemonContextMeta: (ctx) => ({
       api: ctx.apiBaseUrl,
       account_id: ctx.accountId,
@@ -2061,6 +2098,7 @@ const projectCommandDeps = {
   projectChatLoopSetData,
   projectChatLoopClearData,
   projectChatAutomationData,
+  projectChatActivityData,
   projectJupyterCellsData,
   projectJupyterSetCellData,
   projectJupyterInsertCellData,

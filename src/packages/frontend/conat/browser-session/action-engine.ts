@@ -72,6 +72,74 @@ const isElementVisible = (element: Element | null): boolean => {
   return true;
 };
 
+const isTypeableContentEditable = (
+  element: Element | null,
+): element is HTMLElement => {
+  if (!(element instanceof HTMLElement)) return false;
+  return (
+    element.isContentEditable ||
+    element.contentEditable === "true" ||
+    `${element.getAttribute("contenteditable") ?? ""}`.toLowerCase() === "true"
+  );
+};
+
+const getReactPropsBag = (element: HTMLElement): Record<string, any> | null => {
+  const key = Object.keys(element).find((name) =>
+    name.startsWith("__reactProps"),
+  );
+  if (!key) return null;
+  const value = (element as any)[key];
+  return value && typeof value === "object" ? value : null;
+};
+
+const invokeReactBeforeInput = ({
+  editable,
+  text,
+}: {
+  editable: HTMLElement;
+  text: string;
+}): boolean => {
+  if (`${editable.getAttribute("data-slate-editor") ?? ""}`.trim() !== "true") {
+    return false;
+  }
+  const props = getReactPropsBag(editable);
+  if (typeof props?.onBeforeInput !== "function") {
+    return false;
+  }
+  const native = createInputEvent("beforeinput", {
+    bubbles: true,
+    cancelable: true,
+    composed: true,
+    inputType: "insertText",
+    data: text,
+  });
+  let defaultPrevented = false;
+  let propagationStopped = false;
+  const event = {
+    nativeEvent: native,
+    currentTarget: editable,
+    target: editable,
+    bubbles: true,
+    cancelable: true,
+    defaultPrevented: false,
+    type: "beforeinput",
+    preventDefault: () => {
+      defaultPrevented = true;
+      event.defaultPrevented = true;
+      native.preventDefault();
+    },
+    isDefaultPrevented: () => defaultPrevented,
+    stopPropagation: () => {
+      propagationStopped = true;
+      native.stopPropagation();
+    },
+    isPropagationStopped: () => propagationStopped,
+    persist: () => {},
+  };
+  props.onBeforeInput(event);
+  return true;
+};
+
 const querySelectorSafe = (selector: string): Element | null => {
   try {
     return document.querySelector(selector);
@@ -206,6 +274,155 @@ const dispatchClickAtPoint = ({
     if (detail === 2) {
       upTarget.dispatchEvent(new MouseEvent("dblclick", init));
     }
+  }
+};
+
+const createInputEvent = (
+  type: "beforeinput" | "input",
+  init: {
+    bubbles: boolean;
+    cancelable?: boolean;
+    composed?: boolean;
+    inputType: string;
+    data?: string | null;
+  },
+): Event => {
+  if (typeof InputEvent !== "undefined") {
+    try {
+      return new InputEvent(type, init);
+    } catch {
+      // fall through to the plain Event fallback below
+    }
+  }
+  const event = new Event(type, {
+    bubbles: init.bubbles,
+    cancelable: init.cancelable,
+    composed: init.composed,
+  }) as Event & { inputType?: string; data?: string | null };
+  event.inputType = init.inputType;
+  event.data = init.data ?? null;
+  return event;
+};
+
+const selectEditableContents = ({
+  editable,
+  append,
+}: {
+  editable: HTMLElement;
+  append: boolean;
+}): Range | null => {
+  const selection = window.getSelection?.();
+  if (!selection) return null;
+  const range = document.createRange();
+  range.selectNodeContents(editable);
+  if (append) {
+    range.collapse(false);
+  }
+  selection.removeAllRanges();
+  selection.addRange(range);
+  return range;
+};
+
+const fallbackReplaceEditableSelection = ({
+  editable,
+  text,
+  append,
+}: {
+  editable: HTMLElement;
+  text: string;
+  append: boolean;
+}): void => {
+  const selection = window.getSelection?.();
+  const range = selectEditableContents({ editable, append });
+  if (!selection || !range) {
+    editable.textContent = append
+      ? `${editable.textContent ?? ""}${text}`
+      : text;
+    return;
+  }
+  range.deleteContents();
+  if (text.length > 0) {
+    const node = document.createTextNode(text);
+    range.insertNode(node);
+    range.setStartAfter(node);
+    range.collapse(true);
+    selection.removeAllRanges();
+    selection.addRange(range);
+  }
+};
+
+const typeIntoContentEditable = ({
+  editable,
+  text,
+  append,
+}: {
+  editable: HTMLElement;
+  text: string;
+  append: boolean;
+}): void => {
+  selectEditableContents({ editable, append });
+  if (invokeReactBeforeInput({ editable, text })) {
+    return;
+  }
+  const beforeInput = createInputEvent("beforeinput", {
+    bubbles: true,
+    cancelable: true,
+    composed: true,
+    inputType: "insertText",
+    data: text,
+  });
+  const proceed = editable.dispatchEvent(beforeInput);
+  if (!proceed) {
+    return;
+  }
+  const execCommand =
+    typeof document.execCommand === "function"
+      ? document.execCommand.bind(document)
+      : undefined;
+  const inserted =
+    execCommand != null ? execCommand("insertText", false, text) : false;
+  if (!inserted) {
+    fallbackReplaceEditableSelection({ editable, text, append });
+    editable.dispatchEvent(
+      createInputEvent("input", {
+        bubbles: true,
+        composed: true,
+        inputType: "insertText",
+        data: text,
+      }),
+    );
+  }
+};
+
+const clearContentEditable = (editable: HTMLElement): void => {
+  selectEditableContents({ editable, append: false });
+  const beforeInput = createInputEvent("beforeinput", {
+    bubbles: true,
+    cancelable: true,
+    composed: true,
+    inputType: "deleteContentBackward",
+    data: null,
+  });
+  const proceed = editable.dispatchEvent(beforeInput);
+  if (!proceed) {
+    return;
+  }
+  const execCommand =
+    typeof document.execCommand === "function"
+      ? document.execCommand.bind(document)
+      : undefined;
+  const cleared =
+    execCommand != null ? execCommand("delete", false, undefined) : false;
+  if (!cleared) {
+    editable.textContent = "";
+    editable.dispatchEvent(
+      createInputEvent("input", {
+        bubbles: true,
+        composed: true,
+        inputType: "deleteContentBackward",
+        data: null,
+      }),
+    );
   }
 };
 
@@ -783,13 +1000,19 @@ export async function executeBrowserAction({
       clientX: Number(rect.left || 0) + Number(rect.width || 0) / 2,
       clientY: Number(rect.top || 0) + Number(rect.height || 0) / 2,
     };
-    for (let i = 0; i < click_count; i++) {
-      dispatchClickAtPoint({
-        clientX: center.clientX,
-        clientY: center.clientY,
-        button,
-        clickIndex: i,
-      });
+    const useSemanticClick =
+      button === "left" && click_count === 1 && element instanceof HTMLElement;
+    if (useSemanticClick) {
+      element.click();
+    } else {
+      for (let i = 0; i < click_count; i++) {
+        dispatchClickAtPoint({
+          clientX: center.clientX,
+          clientY: center.clientY,
+          button,
+          clickIndex: i,
+        });
+      }
     }
     let navigation_changed = false;
     if (wait_for_navigation_ms > 0) {
@@ -993,13 +1216,18 @@ export async function executeBrowserAction({
         const pos = element.value.length;
         element.setSelectionRange(pos, pos);
       }
-    } else if ((element as HTMLElement).isContentEditable) {
-      const editable = element as HTMLElement;
+    } else if (isTypeableContentEditable(element)) {
+      const editable = element;
       if (clear || !append) {
-        editable.textContent = "";
+        clearContentEditable(editable);
       }
-      editable.textContent = `${editable.textContent ?? ""}${text}`;
-      editable.dispatchEvent(new Event("input", { bubbles: true }));
+      if (text.length > 0) {
+        typeIntoContentEditable({
+          editable,
+          text,
+          append: clear ? false : append,
+        });
+      }
     } else {
       throw Error(
         `selector '${selector}' does not target a typeable input/textarea/contenteditable element`,

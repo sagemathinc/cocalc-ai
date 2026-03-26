@@ -18,8 +18,14 @@ jest.mock("@cocalc/server/conat/route-project", () => ({
   materializeProjectHost: jest.fn(),
 }));
 
+jest.mock("@cocalc/server/projects/control/secret-token", () => ({
+  __esModule: true,
+  getProjectSecretToken: jest.fn(),
+}));
+
 import isCollaborator from "@cocalc/server/projects/is-collaborator";
 import { materializeProjectHost } from "@cocalc/server/conat/route-project";
+import { getProjectSecretToken } from "@cocalc/server/projects/control/secret-token";
 
 const PUBSUB: ("pub" | "sub")[] = ["pub", "sub"];
 
@@ -354,5 +360,41 @@ describe("tests system accounts", () => {
         },
       });
     }).rejects.toThrow("invalid");
+  });
+});
+
+describe("project-scoped handshake auth", () => {
+  beforeEach(() => {
+    (getProjectSecretToken as jest.Mock).mockReset();
+  });
+
+  it("authenticates using project_secret and project_id from socket auth payload", async () => {
+    (getProjectSecretToken as jest.Mock).mockResolvedValue("secret-token");
+    const socket = {
+      handshake: {
+        auth: {
+          project_secret: "secret-token",
+          project_id,
+        },
+        headers: {},
+      },
+    };
+    await expect(getUser(socket)).resolves.toEqual({ project_id });
+  });
+
+  it("rejects invalid socket auth project_secret", async () => {
+    (getProjectSecretToken as jest.Mock).mockResolvedValue("correct-secret");
+    const socket = {
+      handshake: {
+        auth: {
+          project_secret: "bad-secret",
+          project_id,
+        },
+        headers: {},
+      },
+    };
+    await expect(getUser(socket)).rejects.toThrow(
+      "invalid secret token for project",
+    );
   });
 });

@@ -1175,4 +1175,117 @@ describe("submitNavigatorPromptToCurrentThread", () => {
       }),
     );
   });
+
+  it("keeps a freshly cleared UUID workspace thread even before it is indexed", async () => {
+    const workspaceChatPath =
+      "/home/wstein/.local/share/cocalc/workspaces/acct/ws-submit-fresh.chat";
+    const preferredThreadKey = "fresh-thread-uuid";
+    mockEnsureWorkspaceChatForPath.mockResolvedValue({
+      chat_path: workspaceChatPath,
+      assigned: false,
+      workspace: {
+        workspace_id: "ws-submit-fresh",
+        root_path: "/home/wstein/project/submit-fresh",
+        theme: {
+          title: "submit-fresh",
+          color: null,
+          accent_color: null,
+          icon: null,
+          image_blob: null,
+        },
+      },
+    });
+    window.localStorage.setItem(
+      `cocalc:navigator:selected-thread:chat:${encodeURIComponent(
+        workspaceChatPath,
+      )}`,
+      preferredThreadKey,
+    );
+    mockListSessions.mockResolvedValue([
+      {
+        session_id: "sess-stale",
+        project_id: "00000000-1000-4000-8000-000000000000",
+        account_id: "00000000-1000-4000-8000-000000000001",
+        chat_path: workspaceChatPath,
+        thread_key: "thread-stale-old",
+        title: "Old workspace thread",
+        created_at: "2026-03-20T00:00:00.000Z",
+        updated_at: "2026-03-20T00:00:01.000Z",
+        status: "active",
+        entrypoint: "file",
+        model: "gpt-5.4-mini",
+      },
+    ]);
+    const save = jest.fn().mockResolvedValue(undefined);
+    mockProcessLLM.mockResolvedValue(undefined);
+    const timeStamp = "2026-03-20T06:12:00.000Z";
+    const message = {
+      history: [
+        {
+          author_id: "00000000-1000-4000-8000-000000000001",
+          content: "Generate one new code cell.",
+        },
+      ],
+      message_id: "msg-submit-fresh",
+      thread_id: preferredThreadKey,
+    };
+    const sendChat = jest.fn(() => timeStamp);
+    const get_one = jest.fn((where: any) =>
+      where?.event === "chat" && where?.date === timeStamp
+        ? message
+        : undefined,
+    );
+    const actions = {
+      syncdb: { get_state: () => "ready", save, get_one },
+      messageCache: {
+        getThreadIndex: () =>
+          new Map([
+            [
+              "thread-stale-old",
+              {
+                key: "thread-stale-old",
+                newestTime: Date.now(),
+                rootMessage: { thread_id: "thread-stale-old" },
+              },
+            ],
+          ]),
+      },
+      sendChat,
+      createEmptyThread: jest.fn(),
+      getMessageByDate: jest.fn(() => undefined),
+      store: {
+        get: () => undefined,
+      },
+      getThreadMetadata: jest.fn(() => ({ name: "Old workspace thread" })),
+    };
+    mockGetChatActions.mockReturnValue(actions);
+    mockInitChat.mockReturnValue(actions);
+
+    const ok = await submitNavigatorPromptInWorkspaceChat({
+      project_id: "00000000-1000-4000-8000-000000000000",
+      path: "/home/wstein/project/submit-fresh/a.ipynb",
+      prompt: "Detailed hidden prompt",
+      visiblePrompt: "Generate one new code cell.",
+      title: "Agent",
+      tag: "intent:jupyter-generate-cell:below",
+      forceCodex: true,
+      codexConfig: { model: "gpt-5.4-mini" },
+      openFloating: true,
+    });
+
+    expect(ok).toBe(true);
+    expect(sendChat).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reply_thread_id: preferredThreadKey,
+        skipModelDispatch: true,
+      }),
+    );
+    expect(
+      window.localStorage.getItem(
+        `cocalc:navigator:selected-thread:chat:${encodeURIComponent(
+          workspaceChatPath,
+        )}`,
+      ),
+    ).toBe(preferredThreadKey);
+  });
 });

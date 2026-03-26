@@ -17,6 +17,12 @@ export type ProjectScopedAuthStatus = {
   project_auth_message: string;
 };
 
+export type ProjectScopedAuthPayload = {
+  project_id: string;
+  project_secret: string;
+  project_auth_source: string | null;
+};
+
 export function normalizeSecretValue(
   raw: string | undefined,
 ): string | undefined {
@@ -105,6 +111,21 @@ export function describeProjectScopedAuth(
     project_auth_source: source,
     project_id: projectId ?? null,
     project_auth_message,
+  };
+}
+
+export function resolveProjectScopedAuth(
+  env = process.env,
+): ProjectScopedAuthPayload | undefined {
+  const project_secret = resolveProjectSecret(env);
+  const project_id = resolveProjectId(env);
+  if (!project_secret?.trim() || !project_id) {
+    return undefined;
+  }
+  return {
+    project_id,
+    project_secret,
+    project_auth_source: resolveProjectSecretSource(env),
   };
 }
 

@@ -9,6 +9,7 @@ export const COCALC_BIN = "/opt/cocalc/bin";
 export const COCALC_BIN2 = "/opt/cocalc/bin2";
 export const COCALC_LIB = "/opt/cocalc/lib";
 export const COCALC_SRC = "/opt/cocalc/src";
+export const DEFAULT_PROJECT_TOOLS = "/opt/cocalc/tools/current";
 
 export function getNodeRuntimeMounts(
   nodeExecPath = process.execPath,
@@ -25,7 +26,10 @@ export function getNodeRuntimeMounts(
   return mounts;
 }
 
-export function getCoCalcMounts() {
+export function getCoCalcMounts(
+  env: NodeJS.ProcessEnv = process.env,
+  pathExists: (path: string) => boolean = existsSync,
+) {
   // NODEJS_SEA_PATH is where we mount the directory containing the nodejs SEA binary,
   // which we *also* use for running the project itself.
   // Also, we assume that there is "node" here, e.g., this could be a symlink to
@@ -39,16 +43,16 @@ export function getCoCalcMounts() {
     ...getNodeRuntimeMounts(),
   };
 
-  const tools = process.env.COCALC_PROJECT_TOOLS;
-  if (tools) {
+  const tools = env.COCALC_PROJECT_TOOLS ?? DEFAULT_PROJECT_TOOLS;
+  if (tools && pathExists(tools)) {
     mounts[tools] = COCALC_BIN2;
     return mounts;
   }
 
-  if (process.env.COCALC_PROJECT_BUNDLE) {
+  if (env.COCALC_PROJECT_BUNDLE) {
     // Legacy layout: bundle contains src/ and bin/ directories.
-    mounts[join(process.env.COCALC_PROJECT_BUNDLE, "src")] = COCALC_SRC;
-    mounts[join(process.env.COCALC_PROJECT_BUNDLE, "bin")] = COCALC_BIN2;
+    mounts[join(env.COCALC_PROJECT_BUNDLE, "src")] = COCALC_SRC;
+    mounts[join(env.COCALC_PROJECT_BUNDLE, "bin")] = COCALC_BIN2;
     return mounts;
   }
 

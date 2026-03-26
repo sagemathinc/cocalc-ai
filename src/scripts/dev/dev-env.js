@@ -608,6 +608,7 @@ function main() {
   if (fs.existsSync(LOCAL_CLI_BIN) && fs.existsSync(LOCAL_CLI_BIN_DIR)) {
     prependPath = LOCAL_CLI_BIN_DIR;
     exportsMap.COCALC_CLI_BIN = LOCAL_CLI_BIN;
+    exportsMap.COCALC_CLI_CMD = `"${LOCAL_CLI_BIN}"`;
   }
   if (mode === "lite" && source.connectionPath) {
     exportsMap.COCALC_LITE_CONNECTION_INFO = source.connectionPath;

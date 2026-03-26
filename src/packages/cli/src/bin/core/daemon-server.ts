@@ -34,6 +34,7 @@ type DaemonServerDeps<Ctx> = {
   contextForGlobals: (globals: any) => Promise<Ctx>;
   closeCommandContext: (ctx: Ctx | undefined) => void;
   globalsFrom: (command: unknown) => any;
+  daemonRequestGlobals?: (globals: any) => any;
   daemonContextMeta: (ctx: Ctx) => { api: string; account_id: string };
   projectFileListData: (args: any) => Promise<any>;
   projectFileCatData: (args: any) => Promise<any>;
@@ -51,6 +52,7 @@ export function createDaemonServerOps<Ctx>(deps: DaemonServerDeps<Ctx>) {
     contextForGlobals,
     closeCommandContext,
     globalsFrom,
+    daemonRequestGlobals,
     daemonContextMeta,
     projectFileListData,
     projectFileCatData,
@@ -507,7 +509,9 @@ export function createDaemonServerOps<Ctx>(deps: DaemonServerDeps<Ctx>) {
       action: request.action,
       payload: request.payload,
       cwd: process.cwd(),
-      globals: { ...globals, noDaemon: true },
+      globals: daemonRequestGlobals
+        ? daemonRequestGlobals({ ...globals, noDaemon: true })
+        : { ...globals, noDaemon: true },
     });
   }
 

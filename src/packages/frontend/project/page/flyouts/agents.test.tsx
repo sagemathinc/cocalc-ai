@@ -16,9 +16,13 @@ const mockOpenFloatingAgentSession = jest.fn();
 const mockChatActions = {
   setSelectedThread: jest.fn(),
   scrollToIndex: jest.fn(),
+  resetThread: jest.fn(() => "thread-2"),
+  syncdb: { save: jest.fn().mockResolvedValue(undefined) },
 } as any;
 const mockEnsureWorkspaceChatPath = jest.fn();
 const mockEnsureWorkspaceChatDirectory = jest.fn();
+const mockModalConfirm = jest.fn();
+const mockAntdMessageSuccess = jest.fn();
 
 let mockSessions: any[] = [];
 let mockCurrentPath = "/home/user";
@@ -36,8 +40,31 @@ jest.mock("antd", () => {
       {children}
     </button>
   );
-  const Dropdown = ({ children }: any) => children;
+  const Dropdown = ({ children, menu }: any) => (
+    <div>
+      {children}
+      <div>
+        {(menu?.items ?? []).map((item: any, index: number) => {
+          if (!item || item.type === "divider") {
+            return <span key={`divider-${index}`} />;
+          }
+          return (
+            <button
+              key={item.key}
+              type="button"
+              onClick={() => menu?.onClick?.({ key: item.key })}
+            >
+              {item.label}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
   const Empty = ({ description }: any) => <div>{description}</div>;
+  const Modal = {
+    confirm: (...args: any[]) => mockModalConfirm(...args),
+  };
   const Popconfirm = ({ children }: any) => children;
   const Space = ({ children }: any) => <div>{children}</div>;
   const Switch = ({ checked, onChange, ...props }: any) => (
@@ -62,6 +89,8 @@ jest.mock("antd", () => {
     Button,
     Dropdown,
     Empty,
+    Modal,
+    message: { success: (...args: any[]) => mockAntdMessageSuccess(...args) },
     Popconfirm,
     Space,
     Switch,
@@ -206,6 +235,11 @@ describe("AgentsPanel session cards", () => {
     mockOpenFloatingAgentSession.mockClear();
     mockChatActions.setSelectedThread.mockClear();
     mockChatActions.scrollToIndex.mockClear();
+    mockChatActions.resetThread.mockClear();
+    mockChatActions.resetThread.mockReturnValue("thread-2");
+    mockChatActions.syncdb.save.mockClear();
+    mockModalConfirm.mockClear();
+    mockAntdMessageSuccess.mockClear();
     mockEnsureWorkspaceChatPath.mockReset();
     mockEnsureWorkspaceChatDirectory.mockReset();
     mockSessions = [
@@ -316,6 +350,51 @@ describe("AgentsPanel session cards", () => {
     });
 
     expect(screen.queryByTestId("agents-inline-chat")).toBeNull();
+  });
+
+  it("clears a session from the flyout menu into a fresh codex thread", async () => {
+    render(<AgentsPanel project_id="project-1" layout="page" />);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("agent-session-menu-session-1")).toBeTruthy(),
+    );
+    fireEvent.click(screen.getByText("Clear Thread"));
+
+    expect(mockModalConfirm).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: 'Clear chat "Agent session"?',
+        content:
+          "This starts a fresh empty thread with the same chat settings and selects it. The existing thread and its messages are kept.",
+        okText: "Clear",
+        cancelText: "Cancel",
+      }),
+    );
+
+    await act(async () => {
+      await mockModalConfirm.mock.calls[0][0].onOk();
+    });
+
+    await waitFor(() =>
+      expect(mockChatActions.resetThread).toHaveBeenCalledWith("thread-1", {
+        name: "Codex",
+        renameSourceTo: "Previous Agent session",
+        pinNewThread: true,
+        unpinSourceThread: true,
+      }),
+    );
+    await waitFor(() =>
+      expect(mockUpsertAgentSessionRecord).toHaveBeenCalledWith(
+        expect.objectContaining({
+          session_id: "thread-2",
+          thread_key: "thread-2",
+          title: "Codex",
+          thread_pin: true,
+        }),
+      ),
+    );
+    expect(mockAntdMessageSuccess).toHaveBeenCalledWith(
+      "Started a fresh empty chat thread.",
+    );
   });
 
   it("creates a new agent chat in the active folder when no chat exists there", async () => {

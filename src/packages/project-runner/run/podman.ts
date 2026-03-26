@@ -73,6 +73,7 @@ const PROJECT_BUNDLE_ENTRY_CANDIDATES = [
 ] as const;
 const PROJECT_BUNDLE_MOUNT_POINT = "/opt/cocalc/project-bundle";
 const PROJECT_BUNDLE_BIN_PATH = join(PROJECT_BUNDLE_MOUNT_POINT, "bin");
+const DEFAULT_PROJECT_BUNDLES_ROOT = "/opt/cocalc/project-bundles";
 
 // if computing status of a project shows pod is
 // somehow messed up, this will cleanly kill it.  It's
@@ -323,7 +324,8 @@ function getErrorCode(err: unknown): string | undefined {
 }
 
 async function resolveProjectScript(): Promise<ScriptResolution> {
-  const bundlesRootEnv = process.env.COCALC_PROJECT_BUNDLES;
+  const bundlesRootEnv =
+    process.env.COCALC_PROJECT_BUNDLES ?? DEFAULT_PROJECT_BUNDLES_ROOT;
   if (!bundlesRootEnv) {
     return { script: DEFAULT_PROJECT_SCRIPT };
   }

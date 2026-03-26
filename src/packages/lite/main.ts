@@ -56,6 +56,7 @@ const PRESERVED_COCALC_ENV_KEYS = [
   "COCALC_CODEX_BIN",
   "COCALC_CODEX_HOME",
   "COCALC_CLI_BIN",
+  "COCALC_CLI_CMD",
 ] as const;
 
 function captureEnv(keys: readonly string[]): Record<string, string> {
@@ -203,6 +204,7 @@ export async function main(opts?: {
   }
   if (CLI_BIN) {
     process.env.COCALC_CLI_BIN = CLI_BIN;
+    process.env.COCALC_CLI_CMD ??= `"${CLI_BIN}"`;
   }
   const acpMode = `${process.env.COCALC_ACP_MODE ?? ""}`.trim() || "codex";
   logger.info("lite acp mode", { mode: acpMode });

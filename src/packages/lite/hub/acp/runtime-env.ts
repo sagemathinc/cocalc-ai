@@ -144,8 +144,13 @@ export async function buildCodexRuntimeEnv({
     out.COCALC_AGENT_TOKEN = bearer;
   }
   if (includeCliBin) {
+    const cliCommand = `${process.env.COCALC_CLI_CMD ?? ""}`.trim();
+    if (cliCommand) out.COCALC_CLI_CMD = cliCommand;
     const cliBin = `${process.env.COCALC_CLI_BIN ?? ""}`.trim();
     if (cliBin) out.COCALC_CLI_BIN = cliBin;
+    if (!out.COCALC_CLI_CMD && cliBin) {
+      out.COCALC_CLI_CMD = `"${cliBin}"`;
+    }
   }
   if (request.runtime_env) {
     for (const [key, value] of Object.entries(request.runtime_env)) {
