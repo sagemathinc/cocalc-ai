@@ -164,6 +164,21 @@ describe("PublicContentApp", () => {
     expect(screen.getByText("How information is used")).not.toBeNull();
   });
 
+  it("renders the detailed third-party policy page", () => {
+    render(
+      <PublicContentApp
+        config={{ site_name: "Launchpad" }}
+        initialRoute={{ policySlug: "thirdparties", view: "policies-detail" }}
+      />,
+    );
+
+    expect(
+      screen.getByRole("heading", { name: "Third-parties statement" }),
+    ).not.toBeNull();
+    expect(screen.getByText("OpenAI privacy policy")).not.toBeNull();
+    expect(screen.getByText("Salesloft privacy notice")).not.toBeNull();
+  });
+
   it("renders the public news list from initial data", () => {
     const initialNews: NewsItem[] = [
       {
