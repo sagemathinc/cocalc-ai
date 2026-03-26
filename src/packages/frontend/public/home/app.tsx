@@ -32,6 +32,7 @@ interface HomeConfig {
   is_authenticated?: boolean;
   organization_name?: string;
   organization_url?: string;
+  show_policies?: boolean;
   site_description?: string;
   site_name?: string;
   splash_image?: string;
@@ -550,6 +551,7 @@ export default function PublicHomeApp({
       <PublicTopNav
         active="home"
         isAuthenticated={!!config?.is_authenticated}
+        showPolicies={!!config?.show_policies}
         siteName={siteName}
       />
       <HeadlineStrip items={(initialNews ?? []).slice(0, 3)} />

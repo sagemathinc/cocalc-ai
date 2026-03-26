@@ -52,6 +52,8 @@ interface ContentConfig {
   on_cocalc_com?: boolean;
   policies?: string;
   site_name?: string;
+  show_policies?: boolean;
+  terms_of_service_url?: string;
 }
 
 interface PublicContentAppProps {
@@ -217,6 +219,58 @@ function LinkButton({ children, href }: { children: ReactNode; href: string }) {
   );
 }
 
+function arePoliciesVisible(config?: ContentConfig): boolean {
+  return !!config?.show_policies;
+}
+
+function getExternalPoliciesUrl(config?: ContentConfig): string | undefined {
+  const url = config?.terms_of_service_url?.trim();
+  return url ? url : undefined;
+}
+
+function PolicyGateCard({ config }: { config?: ContentConfig }) {
+  const externalUrl = getExternalPoliciesUrl(config);
+
+  if (!arePoliciesVisible(config)) {
+    return (
+      <PublicSectionCard>
+        <Title level={3} style={{ margin: 0 }}>
+          Public policy pages are disabled
+        </Title>
+        <Paragraph style={{ margin: 0 }}>
+          This deployment is not exposing a public policy section.
+        </Paragraph>
+      </PublicSectionCard>
+    );
+  }
+
+  if (!externalUrl) {
+    return null;
+  }
+
+  return (
+    <PublicSectionCard>
+      <Title level={3} style={{ margin: 0 }}>
+        Public policy information
+      </Title>
+      <Paragraph style={{ margin: 0 }}>
+        This deployment uses an external policy page instead of the built-in
+        legal documents.
+      </Paragraph>
+      <div>
+        <Button
+          href={externalUrl}
+          rel="noreferrer"
+          target="_blank"
+          type="primary"
+        >
+          Open policy page
+        </Button>
+      </div>
+    </PublicSectionCard>
+  );
+}
+
 function CodeCommand({ value }: { value: string }) {
   return (
     <div
@@ -278,6 +332,7 @@ function PageShell({
       <PublicTopNav
         active={navActive}
         isAuthenticated={!!config?.is_authenticated}
+        showPolicies={arePoliciesVisible(config)}
         siteName={config?.site_name ?? SITE_NAME}
       />
       <PublicHero
@@ -288,7 +343,9 @@ function PageShell({
           <Flex wrap gap={8}>
             {[
               { href: "about", key: "about", label: "About" },
-              { href: "policies", key: "policies", label: "Policies" },
+              ...(arePoliciesVisible(config)
+                ? [{ href: "policies", key: "policies", label: "Policies" }]
+                : []),
               { href: "news", key: "news", label: "News" },
               { href: "software", key: "software", label: "Software" },
             ].map((item) => (
@@ -945,51 +1002,56 @@ function AboutEventsPage() {
 }
 
 function PoliciesHome({ config }: { config: ContentConfig }) {
+  const externalUrl = getExternalPoliciesUrl(config);
+  if (!arePoliciesVisible(config) || externalUrl) {
+    return <PolicyGateCard config={config} />;
+  }
+
   const items = [
     {
       description: "The Terms of Service govern use of CoCalc.",
-      href: "/policies/terms",
+      href: contentPath("policies/terms"),
       title: "Terms of service",
     },
     {
       description:
         "The Trust page highlights our compliance with laws and frameworks, such as GDPR and SOC 2. We adhere to rigorous standards to protect your data and maintain transparency and accountability in all our operations.",
-      href: "/policies/trust",
+      href: contentPath("policies/trust"),
       title: "Trust",
     },
     {
       description:
         "The Copyright Policy explains how SageMath, Inc. respects copyright policies, and provides a site that does not infringe on others' copyright.",
-      href: "/policies/copyright",
+      href: contentPath("policies/copyright"),
       title: "Copyright policies",
     },
     {
       description:
         "The Privacy Policy describes how SageMath, Inc. respects the privacy of its users.",
-      href: "/policies/privacy",
+      href: contentPath("policies/privacy"),
       title: "Privacy",
     },
     {
       description:
         "Our List of third parties enumerates what is used to provide CoCalc.",
-      href: "/policies/thirdparties",
+      href: contentPath("policies/thirdparties"),
       title: "Third parties",
     },
     {
       description:
         "CoCalc's FERPA Compliance statement explains how we address FERPA requirements at US educational instituations.",
-      href: "/policies/ferpa",
+      href: contentPath("policies/ferpa"),
       title: "FERPA compliance statement",
     },
     {
       description:
         "CoCalc's Voluntary Product Accessibility Template (VPAT) describes how we address accessibility issues.",
-      href: "/policies/accessibility",
+      href: contentPath("policies/accessibility"),
       title: "Accessibility",
     },
     {
       description: "Enterprise and institutional agreement overview.",
-      href: "/policies/enterprise-terms",
+      href: contentPath("policies/enterprise-terms"),
       title: "Enterprise terms",
     },
     ...(config.imprint
@@ -1013,19 +1075,6 @@ function PoliciesHome({ config }: { config: ContentConfig }) {
       : []),
   ];
 
-  if (items.length === 0) {
-    return (
-      <PublicSectionCard>
-        <Title level={3} style={{ margin: 0 }}>
-          No public policies configured
-        </Title>
-        <Paragraph style={{ margin: 0 }}>
-          This deployment has not exposed any public policy pages yet.
-        </Paragraph>
-      </PublicSectionCard>
-    );
-  }
-
   return (
     <div style={GRID_STYLE}>
       {items.map((item) => (
@@ -1044,12 +1093,17 @@ function PoliciesHome({ config }: { config: ContentConfig }) {
 }
 
 function PoliciesDetailPage({
+  config,
   markdown,
   title,
 }: {
+  config?: ContentConfig;
   markdown?: string;
   title: string;
 }) {
+  if (!arePoliciesVisible(config) || getExternalPoliciesUrl(config)) {
+    return <PolicyGateCard config={config} />;
+  }
   if (!markdown) {
     return (
       <EmptyCard label={`No ${title.toLowerCase()} content configured.`} />
@@ -1394,7 +1448,11 @@ export default function PublicContentApp({
         subtitle="Deployment-specific imprint information."
         title={title}
       >
-        <PoliciesDetailPage markdown={config?.imprint} title="Imprint" />
+        <PoliciesDetailPage
+          config={config}
+          markdown={config?.imprint}
+          title="Imprint"
+        />
       </PageShell>
     );
   }
@@ -1407,7 +1465,11 @@ export default function PublicContentApp({
         subtitle="Deployment-specific policy information configured by admins."
         title={title}
       >
-        <PoliciesDetailPage markdown={config?.policies} title="Policies" />
+        <PoliciesDetailPage
+          config={config}
+          markdown={config?.policies}
+          title="Policies"
+        />
       </PageShell>
     );
   }
@@ -1433,7 +1495,11 @@ export default function PublicContentApp({
         subtitle="Public legal and compliance information for this deployment."
         title={title}
       >
-        <StructuredPolicyPage slug={initialRoute.policySlug} />
+        {!arePoliciesVisible(config) || getExternalPoliciesUrl(config) ? (
+          <PolicyGateCard config={config} />
+        ) : (
+          <StructuredPolicyPage slug={initialRoute.policySlug} />
+        )}
       </PageShell>
     );
   }

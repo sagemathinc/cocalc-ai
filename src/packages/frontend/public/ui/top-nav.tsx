@@ -27,10 +27,12 @@ function appPath(path: string): string {
 export default function PublicTopNav({
   active,
   isAuthenticated = false,
+  showPolicies = true,
   siteName = SITE_NAME,
 }: {
   active?: PublicNavKey;
   isAuthenticated?: boolean;
+  showPolicies?: boolean;
   siteName?: string;
 }) {
   const items: Array<{ href: string; key: PublicNavKey; label: string }> = [
@@ -39,8 +41,14 @@ export default function PublicTopNav({
     { href: appPath("support"), key: "support", label: "Support" },
     { href: appPath("news"), key: "news", label: "News" },
     { href: appPath("about"), key: "about", label: "About" },
-    { href: appPath("policies"), key: "policies", label: "Policies" },
   ];
+  if (showPolicies) {
+    items.push({
+      href: appPath("policies"),
+      key: "policies",
+      label: "Policies",
+    });
+  }
 
   return (
     <Flex

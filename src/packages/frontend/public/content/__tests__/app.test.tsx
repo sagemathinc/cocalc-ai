@@ -100,10 +100,26 @@ describe("PublicContentApp", () => {
     expect(screen.getByRole("link", { name: "Settings" })).not.toBeNull();
   });
 
+  it("hides the shared Policies nav item when public policies are disabled", () => {
+    render(
+      <PublicContentApp
+        config={{ show_policies: false, site_name: "Launchpad" }}
+        initialRoute={{ view: "about" }}
+      />,
+    );
+
+    expect(screen.queryByRole("link", { name: "Policies" })).toBeNull();
+  });
+
   it("renders configured policy cards", () => {
     render(
       <PublicContentApp
-        config={{ imprint: "enabled", policies: "enabled", site_name: "Hub" }}
+        config={{
+          imprint: "enabled",
+          policies: "enabled",
+          show_policies: true,
+          site_name: "Hub",
+        }}
         initialRoute={{ view: "policies" }}
       />,
     );
@@ -120,7 +136,7 @@ describe("PublicContentApp", () => {
   it("shows built-in policy pages even without custom policy settings", () => {
     render(
       <PublicContentApp
-        config={{ site_name: "Launchpad" }}
+        config={{ show_policies: true, site_name: "Launchpad" }}
         initialRoute={{ view: "policies" }}
       />,
     );
@@ -166,7 +182,7 @@ describe("PublicContentApp", () => {
   it("renders the exact privacy policy page", () => {
     render(
       <PublicContentApp
-        config={{ site_name: "Launchpad" }}
+        config={{ show_policies: true, site_name: "Launchpad" }}
         initialRoute={{ policySlug: "privacy", view: "policies-detail" }}
       />,
     );
@@ -180,7 +196,7 @@ describe("PublicContentApp", () => {
   it("renders the exact third-party policy page", () => {
     render(
       <PublicContentApp
-        config={{ site_name: "Launchpad" }}
+        config={{ show_policies: true, site_name: "Launchpad" }}
         initialRoute={{ policySlug: "thirdparties", view: "policies-detail" }}
       />,
     );
@@ -195,7 +211,7 @@ describe("PublicContentApp", () => {
   it("renders the exact terms page", () => {
     render(
       <PublicContentApp
-        config={{ site_name: "Launchpad" }}
+        config={{ show_policies: true, site_name: "Launchpad" }}
         initialRoute={{ policySlug: "terms", view: "policies-detail" }}
       />,
     );
@@ -204,6 +220,53 @@ describe("PublicContentApp", () => {
     expect(
       screen.getByText(/Once you POST TO THE GENERAL PUBLIC/i),
     ).not.toBeNull();
+  });
+
+  it("hides policy pages when public policies are disabled", () => {
+    render(
+      <PublicContentApp
+        config={{ show_policies: false, site_name: "Launchpad" }}
+        initialRoute={{ view: "policies" }}
+      />,
+    );
+
+    expect(screen.getByText("Public policy pages are disabled")).not.toBeNull();
+    expect(screen.queryByText("Terms of service")).toBeNull();
+  });
+
+  it("shows an external policy link instead of built-in policy pages", () => {
+    render(
+      <PublicContentApp
+        config={{
+          show_policies: true,
+          site_name: "Launchpad",
+          terms_of_service_url: "https://example.com/policies",
+        }}
+        initialRoute={{ view: "policies" }}
+      />,
+    );
+
+    expect(screen.getByText("Public policy information")).not.toBeNull();
+    expect(
+      screen.getByRole("link", { name: "Open policy page" }),
+    ).not.toBeNull();
+    expect(screen.queryByText("Terms of service")).toBeNull();
+  });
+
+  it("uses the external policy link for direct policy routes as well", () => {
+    render(
+      <PublicContentApp
+        config={{
+          show_policies: true,
+          site_name: "Launchpad",
+          terms_of_service_url: "https://example.com/policies",
+        }}
+        initialRoute={{ policySlug: "privacy", view: "policies-detail" }}
+      />,
+    );
+
+    expect(screen.getByText("Public policy information")).not.toBeNull();
+    expect(screen.queryByText("CoCalc - Privacy Policy")).toBeNull();
   });
 
   it("renders the public news list from initial data", () => {

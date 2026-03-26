@@ -14,6 +14,7 @@ import { getLangRouteFromPath, parsePublicLangTarget } from "./routes";
 interface CustomizePayload {
   configuration?: {
     is_authenticated?: boolean;
+    show_policies?: boolean;
     site_name?: string;
   };
 }

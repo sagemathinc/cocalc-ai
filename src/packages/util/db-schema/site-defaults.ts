@@ -87,6 +87,7 @@ export type SiteSettingsKeys =
   | "organization_name"
   | "organization_email"
   | "organization_url"
+  | "show_policies"
   | "terms_of_service"
   | "terms_of_service_url"
   | "commercial"
@@ -467,9 +468,20 @@ export const site_settings_conf: SiteSettings = {
     group: "Branding & UI",
     subgroup: "Contact",
   },
+  show_policies: {
+    name: "Show policy pages",
+    desc: "Expose /policies publicly. If a Terms of Service URL is set, the policies page will link there instead of showing the built-in documents.",
+    default: "no",
+    valid: only_booleans,
+    show: show_theming_vars,
+    tags: ["Theme"],
+    to_val: to_bool,
+    group: "Branding & UI",
+    subgroup: "Legal",
+  },
   terms_of_service_url: {
-    name: "Terms of Service URL",
-    desc: "URL to the page describing ToS, Policies, etc. (leave empty to not require)",
+    name: "Terms of Service / Policies URL",
+    desc: "External URL for Terms of Service or policy information. When public policy pages are enabled, /policies will link here instead of showing the built-in documents.",
     default: "",
     clearable: true,
     show: show_theming_vars,

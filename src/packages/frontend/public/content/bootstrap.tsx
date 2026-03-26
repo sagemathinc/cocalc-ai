@@ -19,6 +19,8 @@ interface CustomizePayload {
     on_cocalc_com?: boolean;
     policies?: string;
     site_name?: string;
+    show_policies?: boolean;
+    terms_of_service_url?: string;
   };
 }
 

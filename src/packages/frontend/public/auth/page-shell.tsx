@@ -25,6 +25,7 @@ interface PublicAuthPageShellProps {
   children: ReactNode;
   isAuthenticated?: boolean;
   siteName?: ReactNode;
+  showPolicies?: boolean;
   subtitle?: ReactNode;
   title: ReactNode;
 }
@@ -34,6 +35,7 @@ export default function PublicAuthPageShell({
   children,
   isAuthenticated,
   siteName,
+  showPolicies,
   subtitle,
   title,
 }: PublicAuthPageShellProps) {
@@ -42,6 +44,7 @@ export default function PublicAuthPageShell({
       <PublicTopNav
         isAuthenticated={isAuthenticated}
         siteName={typeof siteName === "string" ? siteName : undefined}
+        showPolicies={showPolicies}
       />
       <div style={PAGE_STYLE}>
         <Card

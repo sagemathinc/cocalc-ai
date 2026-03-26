@@ -12,6 +12,7 @@ import PublicAuthApp, { getPublicAuthRouteFromPath } from "./app";
 interface CustomizePayload {
   configuration?: {
     is_authenticated?: boolean;
+    show_policies?: boolean;
     site_name?: string;
   };
   registration?: unknown;
@@ -56,6 +57,7 @@ export async function init(): Promise<void> {
         initialRequiresToken={!!payload?.registration}
         initialRoute={getPublicAuthRouteFromPath(pathname, search)}
         isAuthenticated={!!payload?.configuration?.is_authenticated}
+        showPolicies={!!payload?.configuration?.show_policies}
         siteName={payload?.configuration?.site_name ?? SITE_NAME}
       />,
     );
