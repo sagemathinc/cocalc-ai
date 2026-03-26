@@ -435,7 +435,7 @@ function AboutTeamPage() {
             }}
           />
           <div style={{ ...MUTED_STYLE, fontSize: "13px", fontWeight: 700 }}>
-            {member.title}
+            {member.title} · {member.positionTimeframe}
           </div>
           <Title level={3} style={{ margin: 0 }}>
             {member.name}
@@ -514,7 +514,13 @@ function AboutTeamMemberPage({ slug }: { slug?: string }) {
               {member.name}
             </Title>
             <Paragraph style={{ fontSize: 18, margin: 0 }}>
-              {member.title}
+              {member.position}
+            </Paragraph>
+            <Paragraph style={{ ...MUTED_STYLE, margin: 0 }}>
+              {member.positionTimeframe}
+            </Paragraph>
+            <Paragraph style={{ fontSize: 17, margin: 0 }}>
+              {member.summary}
             </Paragraph>
             {member.role.map((paragraph) => (
               <Paragraph key={paragraph} style={{ margin: 0 }}>

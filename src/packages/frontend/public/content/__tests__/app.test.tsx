@@ -134,6 +134,9 @@ describe("PublicContentApp", () => {
     expect(
       screen.getByRole("heading", { name: "William Stein" }),
     ).not.toBeNull();
+    expect(
+      screen.getByText("Chief Executive Officer and Founder of SageMath, Inc."),
+    ).not.toBeNull();
     expect(screen.getByText("Experience")).not.toBeNull();
     expect(screen.getByText("Personal website")).not.toBeNull();
   });
