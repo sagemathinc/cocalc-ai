@@ -452,6 +452,102 @@ Rustic-specific validation:
 3. cross-region first-use replication works
 4. self-hosted rest-server publish/restore works
 
+## Verification
+
+Because rustic itself does not have strong enough restore-fidelity coverage for
+our use case, RootFS-rustic needs its own explicit verification program before
+we treat the migration as complete.
+
+### Verification goals
+
+For a representative set of real workloads, prove that we can:
+
+1. save a RootFS on one host,
+2. restore it on another host and in another region,
+3. get back exactly the same file contents,
+4. preserve hardlink topology correctly,
+5. repeat this reliably enough that the result is boring.
+
+### Workload matrix
+
+At minimum verify all of these:
+
+- package-heavy apt/Jupyter image
+- conda-heavy image
+- pnpm / Node.js image with known hardlink-heavy stores
+- Python/pip image
+- a mixed scientific stack image with large binary packages
+
+Add a few synthetic fixtures too:
+
+- explicit hardlink groups
+- symlink-heavy trees
+- a moderately large tree with many small files
+
+Sparse-file coverage can remain lower priority because it is mainly an
+optimization concern for CoCalc, not the main semantic correctness target.
+
+### What to compare
+
+For each workload, compute a filesystem manifest before publish and after
+restore that includes at least:
+
+- relative path
+- file type
+- mode
+- uid / gid
+- size
+- symlink target when relevant
+- sha256 for every regular file
+- hardlink identity group for files with link count greater than one
+
+The key requirement is not just "it runs", but "the manifest matches".
+
+### Hardlink verification
+
+Hardlinks need explicit verification, not just file-content checks.
+
+For every hardlink group, verify:
+
+- the same paths belong to the same group after restore
+- link counts are correct
+- restored files that should share identity actually share identity
+
+This should be enforced both:
+
+- in the standalone rustic-fidelity tests, and
+- in the RootFS publish/restore verification matrix.
+
+### Cross-host and cross-region verification
+
+Every representative workload should be tested in at least these scenarios:
+
+- publish on host A, restore on host B in the same region
+- publish in region A, restore in region B after replication
+- self-hosted publish/restore through rest-server
+
+This matters because the migration is really about software distribution, not
+just local backup/restore.
+
+### Operational verification
+
+For each verified workload, record:
+
+- publish time
+- restore time
+- packed bytes
+- restored local bytes
+- whether the manifest matched exactly
+- whether hardlink topology matched exactly
+
+This gives us both a correctness record and a performance baseline.
+
+### Exit criterion for verification
+
+The rustic migration should not be considered complete until the verification
+matrix passes on a meaningful set of real workloads, with exact manifest
+matches and correct hardlink preservation.
+
 ## Operational Notes
 
 ### Rustic password / credentials
