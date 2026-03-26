@@ -101,6 +101,97 @@ The next big milestone should be:
 3. do those benchmarks on hosts with production-level disks rather than tiny
    dev disks.
 
+## Work Section: Durability
+
+RootFS operations on the project-host are now good enough to build product
+workflows on top of, but they are still mostly **retryable** rather than truly
+**durable/resumable** across a project-host daemon restart.
+
+This needs to be part of the RootFS project, not treated as optional cleanup.
+
+### Current durability shape
+
+- hub/database-backed metadata actions are mostly durable:
+  - catalog edits
+  - hide/block/delete
+  - central release GC
+- host-executed RootFS work is usually not resumable:
+  - RootFS publish/materialize/send/upload
+  - managed artifact download/receive
+  - project start while caching/switching RootFS
+- many host paths are reasonably retry-safe, but a daemon restart can still:
+  - fail the active operation,
+  - leave temporary Btrfs subvolumes behind,
+  - leave stale overlay mounts behind,
+  - leave incomplete multipart uploads/download state behind.
+
+### Required durability work
+
+We should implement the following in a deliberate hardening pass.
+
+1. Host draining / maintenance mode
+
+- before an admin restart or software rollout, mark the host as draining,
+- stop accepting new RootFS publish/cache/start work,
+- wait for active RootFS operations to finish or time out cleanly,
+- expose this state in host/admin UI and CLI.
+
+2. Persisted host-side RootFS jobs
+
+- represent long host-side RootFS work as explicit durable jobs in host-local
+  sqlite,
+- on project-host startup, reconcile incomplete jobs and decide whether to:
+  - resume,
+  - roll back,
+  - or mark failed with a clear reason,
+- do not rely on in-memory RPC call stacks as the only state for long work.
+
+3. Startup scrubbing and recovery
+
+- on project-host startup, scrub stale:
+  - `.managed-rootfs-receive-*`
+  - `.rootfs-publish-tree-*`
+  - `.rootfs-artifact-*`
+  - stale overlay mountpoints
+- keep the scrubber conservative and scoped to paths we created.
+
+4. Better multipart transfer recovery
+
+- uploads/downloads do not need perfect byte-range resume immediately,
+- but they should at least:
+  - detect abandoned multipart sessions,
+  - abort or reclaim them,
+  - and fail with a state that can be retried automatically.
+
+5. LRO recovery semantics
+
+- make it clear which RootFS LROs are:
+  - resumable,
+  - retryable,
+  - or terminal after restart,
+- after host restart, hub-side workers should reconcile outstanding RootFS
+  operations instead of leaving ambiguous UI state.
+
+6. Failure-injection testing
+
+Add explicit tests for restarting/killing the project-host during:
+
+- RootFS publish before artifact upload,
+- RootFS publish during multipart upload,
+- managed artifact download,
+- incremental receive,
+- project start while switching/caching RootFS,
+- host cache GC.
+
+### Exit criterion
+
+The durability milestone is complete when an admin can restart a project-host in
+the middle of RootFS activity and the system reliably does one of:
+
+- cleanly finishes the operation,
+- cleanly resumes it,
+- or cleanly fails it and leaves the next retry safe and obvious.
+
 ## Product Requirements
 
 The system must support all of the following.
