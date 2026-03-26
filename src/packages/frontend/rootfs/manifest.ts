@@ -23,6 +23,23 @@ type ManifestLoadState = {
 };
 
 const manifestCache = new Map<string, Promise<RootfsImageEntry[]>>();
+let manifestRevision = 0;
+const manifestListeners = new Set<() => void>();
+
+function subscribeManifestInvalidation(listener: () => void): () => void {
+  manifestListeners.add(listener);
+  return () => {
+    manifestListeners.delete(listener);
+  };
+}
+
+export function invalidateRootfsImageCache(): void {
+  manifestCache.clear();
+  manifestRevision += 1;
+  for (const listener of manifestListeners) {
+    listener();
+  }
+}
 
 function normalizeUrls(urls: string[]): string[] {
   return Array.from(
@@ -125,8 +142,14 @@ export function useRootfsImages(manifestUrls: string[]): ManifestLoadState {
     images: [],
     loading: true,
   });
+  const [revision, setRevision] = useState<number>(manifestRevision);
   const urls = useMemo(() => normalizeUrls(manifestUrls), [manifestUrls]);
   const scopeKey = rootfsCatalogScopeKey();
+
+  useEffect(
+    () => subscribeManifestInvalidation(() => setRevision(manifestRevision)),
+    [],
+  );
 
   useEffect(() => {
     let active = true;
@@ -153,7 +176,7 @@ export function useRootfsImages(manifestUrls: string[]): ManifestLoadState {
     return () => {
       active = false;
     };
-  }, [scopeKey, urls.join("|")]);
+  }, [revision, scopeKey, urls.join("|")]);
 
   return state;
 }
@@ -161,9 +184,10 @@ export function useRootfsImages(manifestUrls: string[]): ManifestLoadState {
 export async function saveRootfsCatalogEntry(
   body: RootfsCatalogSaveBody,
 ): Promise<RootfsImageEntry> {
-  return await webapp_client.conat_client.hub.system.saveRootfsCatalogEntry(
-    body,
-  );
+  const entry =
+    await webapp_client.conat_client.hub.system.saveRootfsCatalogEntry(body);
+  invalidateRootfsImageCache();
+  return entry;
 }
 
 export async function publishProjectRootfsImage(

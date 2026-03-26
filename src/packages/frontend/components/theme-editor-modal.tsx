@@ -25,6 +25,7 @@ interface ThemeEditorModalProps {
   extraAfterTheme?: React.ReactNode;
   recentImageChoices?: ThemeImageChoice[];
   showIcon?: boolean;
+  showTitle?: boolean;
   showDescription?: boolean;
   showAccentColor?: boolean;
   previewImageUrl?: string;
@@ -51,6 +52,7 @@ export function ThemeEditorModal({
   extraAfterTheme,
   recentImageChoices = [],
   showIcon = true,
+  showTitle = true,
   showDescription = true,
   showAccentColor = true,
   previewImageUrl,
@@ -150,13 +152,15 @@ export function ThemeEditorModal({
             </div>
           </div>
         </div>
-        <div>
-          <Typography.Text strong>Title</Typography.Text>
-          <Input
-            value={value?.title ?? ""}
-            onChange={(e) => onChange({ title: e.target.value })}
-          />
-        </div>
+        {showTitle ? (
+          <div>
+            <Typography.Text strong>Title</Typography.Text>
+            <Input
+              value={value?.title ?? ""}
+              onChange={(e) => onChange({ title: e.target.value })}
+            />
+          </div>
+        ) : null}
         {showDescription ? (
           <div>
             <Typography.Text strong>Description</Typography.Text>

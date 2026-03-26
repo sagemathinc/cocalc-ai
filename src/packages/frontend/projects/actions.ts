@@ -380,6 +380,8 @@ export class ProjectsActions extends Actions<ProjectsState> {
     type,
     student_project_functionality,
     envvars,
+    rootfs_image,
+    rootfs_image_id,
   }: {
     project_id: string;
     course_project_id: string;
@@ -392,6 +394,8 @@ export class ProjectsActions extends Actions<ProjectsState> {
     type: "student" | "shared" | "nbgrader";
     student_project_functionality?: StudentProjectFunctionality | null;
     envvars?: EnvVars;
+    rootfs_image?: string;
+    rootfs_image_id?: string;
   }): Promise<void | { course: null | CourseInfo }> {
     if (!(await this.have_project(project_id))) {
       const msg = `Can't set course info -- you are not a collaborator on project '${project_id}'.`;
@@ -412,6 +416,12 @@ export class ProjectsActions extends Actions<ProjectsState> {
     }
     if (typeof envvars?.inherit === "boolean") {
       course.envvars = envvars;
+    }
+    if (rootfs_image?.trim()) {
+      course.rootfs_image = rootfs_image.trim();
+    }
+    if (rootfs_image_id?.trim()) {
+      course.rootfs_image_id = rootfs_image_id.trim();
     }
     // account_id and email is null for shared/nbgrader project, otherwise student project
     // the corresponding check of the two fields below is the

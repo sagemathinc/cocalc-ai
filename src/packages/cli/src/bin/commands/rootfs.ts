@@ -664,7 +664,7 @@ export function registerRootfsCommand(
     .requiredOption("--label <label>", "catalog label")
     .option("--image-id <id>", "update an existing catalog entry by id")
     .option("--family <family>", "optional image family for upgrade grouping")
-    .option("--version <version>", "optional user-facing image version")
+    .option("--image-version <version>", "optional user-facing image version")
     .option("--channel <channel>", "optional release channel, e.g. stable")
     .option(
       "--supersedes-image-id <id>",
@@ -684,7 +684,7 @@ export function registerRootfsCommand(
           label: string;
           imageId?: string;
           family?: string;
-          version?: string;
+          imageVersion?: string;
           channel?: string;
           supersedesImageId?: string;
           description?: string;
@@ -703,7 +703,7 @@ export function registerRootfsCommand(
             image: opts.image,
             label: opts.label,
             family: opts.family,
-            version: opts.version,
+            version: opts.imageVersion,
             channel: opts.channel,
             supersedes_image_id: opts.supersedesImageId,
             description: opts.description,
@@ -725,7 +725,7 @@ export function registerRootfsCommand(
     .option("-w, --project <project>", "project id or name")
     .requiredOption("--label <label>", "catalog label for the published image")
     .option("--family <family>", "optional image family for upgrade grouping")
-    .option("--version <version>", "optional user-facing image version")
+    .option("--image-version <version>", "optional user-facing image version")
     .option("--channel <channel>", "optional release channel, e.g. stable")
     .option(
       "--supersedes-image-id <id>",
@@ -745,7 +745,7 @@ export function registerRootfsCommand(
           project?: string;
           label: string;
           family?: string;
-          version?: string;
+          imageVersion?: string;
           channel?: string;
           supersedesImageId?: string;
           description?: string;
@@ -765,7 +765,7 @@ export function registerRootfsCommand(
             project_id: ws.project_id,
             label: opts.label,
             family: opts.family,
-            version: opts.version,
+            version: opts.imageVersion,
             channel: opts.channel,
             supersedes_image_id: opts.supersedesImageId,
             description: opts.description,

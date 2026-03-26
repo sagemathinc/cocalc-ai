@@ -78,25 +78,30 @@ function blockerSummary(entry: RootfsAdminCatalogEntry): React.ReactNode {
     );
   }
   const items: string[] = [];
+  const nextSteps: string[] = [];
   if (blockers.projects_using_release) {
     items.push(
       `${blockers.projects_using_release} ${plural(blockers.projects_using_release, "project")}`,
     );
+    nextSteps.push("switch or delete projects still using this release");
   }
   if (blockers.catalog_entries_using_release) {
     items.push(
       `${blockers.catalog_entries_using_release} ${plural(blockers.catalog_entries_using_release, "catalog entry")}`,
     );
+    nextSteps.push("delete or repoint other catalog entries using it");
   }
   if (blockers.prepull_entries_using_release) {
     items.push(
       `${blockers.prepull_entries_using_release} ${plural(blockers.prepull_entries_using_release, "prepull entry")}`,
     );
+    nextSteps.push("disable pre-pull on entries that still reference it");
   }
   if (blockers.child_releases) {
     items.push(
       `${blockers.child_releases} ${plural(blockers.child_releases, "child release")}`,
     );
+    nextSteps.push("delete child releases or repack them as full releases");
   }
   return (
     <Space direction="vertical" size={0}>
@@ -106,6 +111,11 @@ function blockerSummary(entry: RootfsAdminCatalogEntry): React.ReactNode {
       <Typography.Text type="secondary" style={{ fontSize: 12 }}>
         Total: {blockers.total}
       </Typography.Text>
+      {nextSteps.length > 0 ? (
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          To unblock GC: {nextSteps.join("; ")}.
+        </Typography.Text>
+      ) : null}
     </Space>
   );
 }

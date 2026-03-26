@@ -64,6 +64,7 @@ export type RootfsImageEntry = {
   release_id?: string;
   label: string;
   image: string;
+  created?: string;
   family?: string;
   version?: string;
   channel?: string;

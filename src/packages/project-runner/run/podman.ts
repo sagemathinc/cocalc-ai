@@ -32,10 +32,7 @@ import { getCoCalcMounts, COCALC_SRC } from "./mounts";
 import { fileServerClient, setQuota } from "./filesystem";
 import { type RestoreMode } from "@cocalc/conat/files/file-server";
 import { dirname, join, relative, isAbsolute } from "node:path";
-import {
-  mount as mountRootFs,
-  unmountAll as unmountAllRootFs,
-} from "./rootfs";
+import { mount as mountRootFs, unmountAll as unmountAllRootFs } from "./rootfs";
 import { type ProjectState } from "@cocalc/conat/project/runner/state";
 import { type Configuration } from "@cocalc/conat/project/runner/types";
 import { DEFAULT_PROJECT_IMAGE } from "@cocalc/util/db-schema/defaults";
@@ -1013,6 +1010,12 @@ export async function start({
     return { state: "running", ssh_port, http_port };
   } catch (err) {
     report({ type: "start-project", error: err });
+    await unmountAllRootFs(project_id).catch((unmountErr) => {
+      logger.warn("start: failed to unmount rootfs after startup error", {
+        project_id,
+        err: `${unmountErr}`,
+      });
+    });
     throw err;
   } finally {
     starting.delete(project_id);
@@ -1065,16 +1068,16 @@ export async function stop({
             timeout: STOP_RM_TIMEOUT_S,
           });
         }
-        // A fully stopped project must release every overlay lease. Otherwise
-        // a stale merged mount can survive a snapshot restore and mask the
-        // restored upperdir on the next start.
-        await unmountAllRootFs(project_id);
       } else {
-        logger.debug("stop: container not found; skipping rm/unmount", {
+        logger.debug("stop: container not found; skipping rm", {
           project_id,
           name,
         });
       }
+      // A fully stopped project must release every overlay lease. Otherwise a
+      // stale merged mount can survive a failed start or snapshot restore and
+      // mask the correct lowerdir on the next start.
+      await unmountAllRootFs(project_id);
     } catch (err) {
       logger.debug("stop", { err });
       throw err;

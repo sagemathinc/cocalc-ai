@@ -736,6 +736,8 @@ export interface CourseInfo {
   datastore: Datastore;
   student_project_functionality?: StudentProjectFunctionality;
   envvars?: EnvVars;
+  rootfs_image?: string;
+  rootfs_image_id?: string;
 }
 
 type ExecOptsCommon = {

@@ -3,7 +3,13 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  type CSSProperties,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   Alert,
   Button,
@@ -19,7 +25,7 @@ import {
 
 import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import ActionAssist from "@cocalc/frontend/components/action-assist";
-import { Icon, Paragraph } from "@cocalc/frontend/components";
+import { Icon, Paragraph, ThemeEditorModal } from "@cocalc/frontend/components";
 import ShowError from "@cocalc/frontend/components/error";
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
@@ -30,18 +36,34 @@ import {
 import RootfsPublishOps from "@cocalc/frontend/project/settings/rootfs-publish-ops";
 import {
   getProjectRootfsStates,
+  invalidateRootfsImageCache,
   managedRootfsCatalogUrl,
   publishProjectRootfsImage,
   saveRootfsCatalogEntry,
   setProjectRootfsImage,
   useRootfsImages,
 } from "@cocalc/frontend/rootfs/manifest";
+import {
+  groupedRootfsOptions,
+  latestRootfsVersionEntries,
+  renderRootfsCatalogOption,
+  rootfsOptionSearchText,
+  rootfsThemeImageUrl,
+  sectionLabel,
+  sectionTagColor,
+} from "@cocalc/frontend/rootfs/catalog-ui";
+import {
+  themeDraftFromTheme,
+  themeFromDraft,
+  type ThemeEditorDraft,
+} from "@cocalc/frontend/theme/types";
 import { DEFAULT_PROJECT_IMAGE } from "@cocalc/util/db-schema/defaults";
 import { split } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 import type {
   ProjectRootfsStateEntry,
   RootfsImageEntry,
+  RootfsImageTheme,
   RootfsImageVisibility,
 } from "@cocalc/util/rootfs-images";
 
@@ -49,6 +71,11 @@ type PublishDraft = {
   image: string;
   label: string;
   description: string;
+  family: string;
+  version: string;
+  channel: string;
+  supersedes_image_id: string;
+  theme: ThemeEditorDraft;
   visibility: RootfsImageVisibility;
   tags: string;
   official: boolean;
@@ -59,6 +86,7 @@ type PublishDraft = {
 export default function RootFilesystemImage() {
   const { actions, project, project_id } = useProjectContext();
   const [open, setOpen] = useState<boolean>(false);
+  const [upgradeOpen, setUpgradeOpen] = useState<boolean>(false);
   const [publishOpen, setPublishOpen] = useState<boolean>(false);
   const [saving, setSaving] = useState<boolean>(false);
   const [publishing, setPublishing] = useState<boolean>(false);
@@ -70,6 +98,7 @@ export default function RootFilesystemImage() {
   const [rootfsDraft, setRootfsDraft] = useState<string>("");
   const [rootfsDraftId, setRootfsDraftId] = useState<string>("");
   const [catalogRefresh, setCatalogRefresh] = useState<number>(0);
+  const [showOlderVersions, setShowOlderVersions] = useState<boolean>(false);
   const [projectRootfsStates, setProjectRootfsStates] = useState<
     ProjectRootfsStateEntry[]
   >([]);
@@ -78,12 +107,18 @@ export default function RootFilesystemImage() {
     "project",
   );
   const [publishAdvanced, setPublishAdvanced] = useState<boolean>(false);
+  const [publishThemeOpen, setPublishThemeOpen] = useState<boolean>(false);
   const [publishSourceEntry, setPublishSourceEntry] =
     useState<RootfsImageEntry>();
   const [publishDraft, setPublishDraft] = useState<PublishDraft>({
     image: DEFAULT_PROJECT_IMAGE,
     label: "",
     description: "",
+    family: "",
+    version: "",
+    channel: "",
+    supersedes_image_id: "",
+    theme: themeDraftFromTheme(null),
     visibility: "private",
     tags: "",
     official: false,
@@ -153,10 +188,6 @@ export default function RootFilesystemImage() {
     return rootfsImages.find((entry) => entry.image === image);
   }, [rootfsDraft, rootfsDraftId, rootfsImages]);
 
-  const rootfsOptions = useMemo(
-    () => groupedRootfsOptions(rootfsImages),
-    [rootfsImages],
-  );
   const currentProjectRootfsState = useMemo(
     () => projectRootfsStates.find((state) => state.state_role === "current"),
     [projectRootfsStates],
@@ -210,6 +241,24 @@ export default function RootFilesystemImage() {
     selectedRootfsEntry,
   ]);
   const activeDisplayEntry = currentDisplayEntry ?? selectedRootfsEntry;
+  const pickerRootfsImages = useMemo(
+    () =>
+      latestRootfsVersionEntries(rootfsImages, {
+        showOlderVersions,
+        preserveIds: [rootfsDraftId, imageId, currentDisplayEntry?.id],
+      }),
+    [
+      currentDisplayEntry?.id,
+      imageId,
+      rootfsDraftId,
+      rootfsImages,
+      showOlderVersions,
+    ],
+  );
+  const rootfsOptions = useMemo(
+    () => groupedRootfsOptions(pickerRootfsImages),
+    [pickerRootfsImages],
+  );
   const relatedVersionEntries = useMemo(() => {
     if (!currentDisplayEntry?.family) return [];
     return rootfsImages
@@ -255,6 +304,53 @@ export default function RootFilesystemImage() {
       publishSourceEntry,
     ],
   );
+  const publishTagOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          rootfsImages.flatMap((entry) => entry.tags ?? []).filter(Boolean),
+        ),
+      )
+        .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }))
+        .map((tag) => ({ label: tag, value: tag })),
+    [rootfsImages],
+  );
+  const publishFamilyOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          rootfsImages.map((entry) => entry.family?.trim()).filter(Boolean),
+        ),
+      )
+        .sort((a, b) =>
+          `${a}`.localeCompare(`${b}`, undefined, { sensitivity: "base" }),
+        )
+        .map((family) => ({ label: family, value: family })),
+    [rootfsImages],
+  );
+  const publishChannelOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          rootfsImages.map((entry) => entry.channel?.trim()).filter(Boolean),
+        ),
+      )
+        .sort((a, b) =>
+          `${a}`.localeCompare(`${b}`, undefined, { sensitivity: "base" }),
+        )
+        .map((channel) => ({ label: channel, value: channel })),
+    [rootfsImages],
+  );
+  const publishSupersedesOptions = useMemo(
+    () =>
+      rootfsImages
+        .filter((entry) => entry.id !== publishSourceEntry?.id)
+        .map((entry) => ({
+          value: entry.id,
+          label: `${entry.label || entry.image}${entry.version ? ` (${entry.version})` : ""}`,
+        })),
+    [publishSourceEntry?.id, rootfsImages],
+  );
 
   useEffect(() => {
     const nextImage = getImage(project, effectiveDefaultRootfs);
@@ -277,7 +373,11 @@ export default function RootFilesystemImage() {
     return () => {
       active = false;
     };
-  }, [project_id]);
+  }, [
+    project_id,
+    project?.get("rootfs_image"),
+    project?.get("rootfs_image_id"),
+  ]);
 
   useEffect(() => {
     const ops = rootfsPublishOps?.toJS() ?? {};
@@ -292,6 +392,7 @@ export default function RootFilesystemImage() {
         continue;
       }
       seenCompletedPublishOpsRef.current.add(op.op_id);
+      invalidateRootfsImageCache();
       setCatalogRefresh(Date.now());
     }
   }, [rootfsPublishOps]);
@@ -312,13 +413,6 @@ export default function RootFilesystemImage() {
     setOpen(true);
   }
 
-  function openUpgradeDialog(entry: RootfsImageEntry) {
-    setRootfsMode("catalog");
-    setRootfsDraft(entry.image);
-    setRootfsDraftId(entry.id);
-    setOpen(true);
-  }
-
   function openPublishDialog(opts?: {
     image?: string;
     entry?: RootfsImageEntry;
@@ -327,6 +421,11 @@ export default function RootFilesystemImage() {
   }) {
     const currentImage = opts?.image?.trim() || value || effectiveDefaultRootfs;
     const currentEntry = opts?.entry ?? selectedRootfsEntry;
+    const nextLabel =
+      currentEntry?.label ||
+      currentImage.split("/").slice(-1)[0] ||
+      "Custom RootFS";
+    const nextDescription = currentEntry?.description ?? "";
     const defaultMode = opts?.publishMode ?? "copy";
     setPublishSourceEntry(currentEntry);
     setPublishMode(defaultMode);
@@ -334,11 +433,20 @@ export default function RootFilesystemImage() {
     setPublishAdvanced(false);
     setPublishDraft({
       image: currentImage,
-      label:
-        currentEntry?.label ||
-        currentImage.split("/").slice(-1)[0] ||
-        "Custom RootFS",
-      description: currentEntry?.description ?? "",
+      label: nextLabel,
+      description: nextDescription,
+      family: currentEntry?.family ?? "",
+      version: currentEntry?.version ?? "",
+      channel: currentEntry?.channel ?? "",
+      supersedes_image_id:
+        defaultMode === "manage"
+          ? (currentEntry?.supersedes_image_id ?? "")
+          : (currentEntry?.id ?? ""),
+      theme: {
+        ...themeDraftFromTheme(currentEntry?.theme, nextLabel),
+        title: nextLabel,
+        description: nextDescription,
+      },
       visibility: currentEntry?.visibility ?? "private",
       tags: (currentEntry?.tags ?? []).join(", "),
       official: currentEntry?.official ?? false,
@@ -348,62 +456,27 @@ export default function RootFilesystemImage() {
     setPublishOpen(true);
   }
 
-  async function applyRootfsChange() {
-    try {
-      setSaving(true);
-      if (!project) return;
-      const project_id = project.get("project_id");
-      const nextEntry =
-        rootfsMode === "catalog"
-          ? rootfsImages.find((entry) => entry.id === rootfsDraftId.trim())
-          : undefined;
-      const nextImage =
-        rootfsMode === "custom"
-          ? rootfsDraft.trim() || effectiveDefaultRootfs
-          : nextEntry?.image || effectiveDefaultRootfs;
-      const nextImageId =
-        rootfsMode === "custom"
-          ? undefined
-          : nextEntry?.id?.trim() || undefined;
-      const states = await switchProjectRootfs({
-        project_id,
-        image: nextImage,
-        image_id: nextImageId,
-      });
-      setProjectRootfsStates(states);
-      const currentState = states.find(
-        (state) => state.state_role === "current",
-      );
-      setValue(currentState?.image ?? nextImage);
-      setImageId(currentState?.image_id ?? nextImageId ?? "");
-      if (project.getIn(["state", "state"]) == "running") {
-        redux.getActions("projects").restart_project(project_id);
-      }
-      setOpen(false);
-    } catch (err) {
-      setError(`${err}`);
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function rollbackToPreviousRootfs() {
-    if (!previousProjectRootfsState || !project) return;
+  async function applyProjectRootfsSelection({
+    image,
+    image_id,
+  }: {
+    image: string;
+    image_id?: string;
+  }) {
+    if (!project) return;
     try {
       setSaving(true);
       const states = await switchProjectRootfs({
         project_id: project.get("project_id"),
-        image: previousProjectRootfsState.image,
-        image_id: previousProjectRootfsState.image_id,
+        image,
+        image_id,
       });
       setProjectRootfsStates(states);
       const currentState = states.find(
         (state) => state.state_role === "current",
       );
-      setValue(currentState?.image ?? previousProjectRootfsState.image);
-      setImageId(
-        currentState?.image_id ?? previousProjectRootfsState.image_id ?? "",
-      );
+      setValue(currentState?.image ?? image);
+      setImageId(currentState?.image_id ?? image_id ?? "");
       if (project.getIn(["state", "state"]) == "running") {
         redux.getActions("projects").restart_project(project.get("project_id"));
       }
@@ -412,6 +485,41 @@ export default function RootFilesystemImage() {
     } finally {
       setSaving(false);
     }
+  }
+
+  async function applyRootfsChange() {
+    const nextEntry =
+      rootfsMode === "catalog"
+        ? rootfsImages.find((entry) => entry.id === rootfsDraftId.trim())
+        : undefined;
+    const nextImage =
+      rootfsMode === "custom"
+        ? rootfsDraft.trim() || effectiveDefaultRootfs
+        : nextEntry?.image || effectiveDefaultRootfs;
+    const nextImageId =
+      rootfsMode === "custom" ? undefined : nextEntry?.id?.trim() || undefined;
+    await applyProjectRootfsSelection({
+      image: nextImage,
+      image_id: nextImageId,
+    });
+    setOpen(false);
+  }
+
+  async function rollbackToPreviousRootfs() {
+    if (!previousProjectRootfsState) return;
+    await applyProjectRootfsSelection({
+      image: previousProjectRootfsState.image,
+      image_id: previousProjectRootfsState.image_id,
+    });
+  }
+
+  async function applySuggestedUpgrade() {
+    if (!suggestedUpgradeEntry) return;
+    await applyProjectRootfsSelection({
+      image: suggestedUpgradeEntry.image,
+      image_id: suggestedUpgradeEntry.id,
+    });
+    setUpgradeOpen(false);
   }
 
   async function saveCatalogEntry() {
@@ -430,9 +538,15 @@ export default function RootFilesystemImage() {
         const op = await publishProjectRootfsImage({
           project_id: project.get("project_id"),
           label: publishDraft.label,
+          family: publishDraft.family.trim() || undefined,
+          version: publishDraft.version.trim() || undefined,
+          channel: publishDraft.channel.trim() || undefined,
+          supersedes_image_id:
+            publishDraft.supersedes_image_id.trim() || undefined,
           description: publishDraft.description,
           visibility: publishDraft.visibility,
           tags,
+          theme: rootfsThemeFromPublishDraft(publishDraft),
           official: isAdmin ? publishDraft.official : undefined,
           prepull: isAdmin ? publishDraft.prepull : undefined,
           hidden: isAdmin ? publishDraft.hidden : undefined,
@@ -446,9 +560,15 @@ export default function RootFilesystemImage() {
               : undefined,
           image: publishDraft.image,
           label: publishDraft.label,
+          family: publishDraft.family.trim() || undefined,
+          version: publishDraft.version.trim() || undefined,
+          channel: publishDraft.channel.trim() || undefined,
+          supersedes_image_id:
+            publishDraft.supersedes_image_id.trim() || undefined,
           description: publishDraft.description,
           visibility: publishDraft.visibility,
           tags,
+          theme: rootfsThemeFromPublishDraft(publishDraft),
           official: isAdmin ? publishDraft.official : undefined,
           prepull: isAdmin ? publishDraft.prepull : undefined,
           hidden: isAdmin ? publishDraft.hidden : undefined,
@@ -525,26 +645,33 @@ export default function RootFilesystemImage() {
     <div style={{ marginTop: "-4px", marginLeft: "-10px" }}>
       <RootfsPublishOps project_id={project_id} />
       <div style={{ marginLeft: "15px" }}>
-        <Paragraph style={{ marginBottom: "6px" }}>
-          <strong>{activeDisplayEntry?.label || value}</strong>
-        </Paragraph>
-        <Space wrap style={{ marginBottom: "6px" }}>
-          {activeDisplayEntry?.section && (
-            <Tag color={sectionTagColor(activeDisplayEntry.section)}>
-              {sectionLabel(activeDisplayEntry.section)}
-            </Tag>
-          )}
-          {activeDisplayEntry?.version && (
-            <Tag>{activeDisplayEntry.version}</Tag>
-          )}
-          {activeDisplayEntry?.channel && (
-            <Tag color="cyan">{activeDisplayEntry.channel}</Tag>
-          )}
-          {activeDisplayEntry?.gpu && <Tag color="purple">GPU image</Tag>}
-        </Space>
-        <code style={{ fontSize: "11px", overflowWrap: "anywhere" }}>
-          {value || effectiveDefaultRootfs}
-        </code>
+        <div style={rootfsSummaryCardStyle(activeDisplayEntry)}>
+          <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
+            {renderRootfsThemePreview(activeDisplayEntry)}
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <Paragraph style={{ marginBottom: "6px" }}>
+                <strong>{activeDisplayEntry?.label || value}</strong>
+              </Paragraph>
+              <Space wrap style={{ marginBottom: "6px" }}>
+                {activeDisplayEntry?.section && (
+                  <Tag color={sectionTagColor(activeDisplayEntry.section)}>
+                    {sectionLabel(activeDisplayEntry.section)}
+                  </Tag>
+                )}
+                {activeDisplayEntry?.version && (
+                  <Tag>{activeDisplayEntry.version}</Tag>
+                )}
+                {activeDisplayEntry?.channel && (
+                  <Tag color="cyan">{activeDisplayEntry.channel}</Tag>
+                )}
+                {activeDisplayEntry?.gpu && <Tag color="purple">GPU image</Tag>}
+              </Space>
+              <code style={{ fontSize: "11px", overflowWrap: "anywhere" }}>
+                {value || effectiveDefaultRootfs}
+              </code>
+            </div>
+          </div>
+        </div>
         <Paragraph
           type="secondary"
           style={{ marginTop: "8px", marginBottom: 0 }}
@@ -571,12 +698,26 @@ export default function RootFilesystemImage() {
           <Button disabled={open} onClick={openPicker}>
             Change / upgrade image...
           </Button>
+          {activeDisplayEntry?.can_manage ? (
+            <Button
+              disabled={open}
+              onClick={() =>
+                openPublishDialog({
+                  image: value || effectiveDefaultRootfs,
+                  entry: activeDisplayEntry,
+                  publishMode: "manage",
+                })
+              }
+            >
+              Manage current catalog entry...
+            </Button>
+          ) : null}
           {previousProjectRootfsState && (
             <Button
               disabled={open || saving}
               onClick={rollbackToPreviousRootfs}
             >
-              Switch back to previous image
+              Roll back to previous image
             </Button>
           )}
         </Space>
@@ -589,7 +730,7 @@ export default function RootFilesystemImage() {
               <>
                 Upgrade available:{" "}
                 <strong>
-                  {displayRootfsLabel(
+                  {displayRootfsUpgradeLabel(
                     suggestedUpgradeEntry,
                     suggestedUpgradeEntry.image,
                   )}
@@ -597,32 +738,37 @@ export default function RootFilesystemImage() {
               </>
             }
             description={
-              <>
-                Switch from{" "}
-                <code>
-                  {displayRootfsLabel(
-                    activeDisplayEntry,
-                    value || effectiveDefaultRootfs,
-                  )}
-                </code>{" "}
-                to{" "}
-                <code>
-                  {displayRootfsLabel(
-                    suggestedUpgradeEntry,
-                    suggestedUpgradeEntry.image,
-                  )}
-                </code>
-                . This changes the visible <code>/</code> software environment,
-                but your current RootFS remains available as a rollback target.
-              </>
-            }
-            action={
-              <Button
-                size="small"
-                onClick={() => openUpgradeDialog(suggestedUpgradeEntry)}
+              <Space
+                direction="vertical"
+                size="middle"
+                style={{ width: "100%" }}
               >
-                Review upgrade
-              </Button>
+                <div>
+                  Switch from{" "}
+                  <code>
+                    {displayRootfsUpgradeLabel(
+                      activeDisplayEntry,
+                      value || effectiveDefaultRootfs,
+                    )}
+                  </code>{" "}
+                  to{" "}
+                  <code>
+                    {displayRootfsUpgradeLabel(
+                      suggestedUpgradeEntry,
+                      suggestedUpgradeEntry.image,
+                    )}
+                  </code>
+                  . This changes the visible <code>/</code> software
+                  environment, but your current RootFS remains available as a
+                  rollback target.
+                </div>
+                <Space wrap size="small">
+                  <Button type="primary" onClick={() => setUpgradeOpen(true)}>
+                    Review upgrade
+                  </Button>
+                  <Button onClick={openPicker}>Other images</Button>
+                </Space>
+              </Space>
             }
           />
         )}
@@ -674,6 +820,108 @@ export default function RootFilesystemImage() {
             </Paragraph>
           )}
         </div>
+      )}
+      {upgradeOpen && suggestedUpgradeEntry && currentDisplayEntry && (
+        <Modal
+          open
+          width={760}
+          onCancel={() => setUpgradeOpen(false)}
+          onOk={applySuggestedUpgrade}
+          okText={`Upgrade to ${displayRootfsUpgradeLabel(
+            suggestedUpgradeEntry,
+            suggestedUpgradeEntry.image,
+          )}`}
+          okButtonProps={{ loading: saving }}
+          title={
+            <>
+              <Icon name="arrow-circle-up" style={{ marginRight: "12px" }} />
+              Upgrade RootFS Image
+            </>
+          }
+        >
+          <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+            <Alert
+              type="info"
+              showIcon
+              message="This upgrades the visible / software environment"
+              description={
+                <>
+                  Upgrading changes the project to a newer managed RootFS image.
+                  Your files in <code>/root</code> and <code>/scratch</code>{" "}
+                  stay available. Packages and files you added directly under{" "}
+                  <code>/</code> belong to the previous RootFS state and only
+                  come back if you roll back.
+                </>
+              }
+            />
+            <Alert
+              type="info"
+              showIcon
+              message="Base RootFS size does not count against your project disk quota"
+              description={
+                <>
+                  Managed RootFS images are shared lower directories on the
+                  host. Their base size does not count against your project
+                  quota. Only your own writable project data still counts.
+                </>
+              }
+            />
+            {renderRootfsEntrySummary({
+              heading: "Current image",
+              entry: currentDisplayEntry,
+              fallbackImage:
+                currentProjectRootfsState?.image ??
+                value ??
+                effectiveDefaultRootfs,
+              note: "This is the software environment your project is using right now.",
+            })}
+            {renderRootfsEntrySummary({
+              heading: "Upgrade target",
+              entry: suggestedUpgradeEntry,
+              fallbackImage: suggestedUpgradeEntry.image,
+              note: "This newer image will become the visible / environment after the restart.",
+            })}
+            <Alert
+              type="warning"
+              showIcon
+              message="Rollback stays available, but only for one previous image"
+              description={
+                previousProjectRootfsState ? (
+                  <>
+                    Your current image will become the new rollback target. The
+                    older rollback image{" "}
+                    <code>
+                      {displayRootfsUpgradeLabel(
+                        previousProjectRootfsEntry,
+                        previousProjectRootfsState.image,
+                      )}
+                    </code>{" "}
+                    will be replaced.
+                  </>
+                ) : (
+                  <>
+                    After the upgrade, you can still roll back to{" "}
+                    <code>
+                      {displayRootfsUpgradeLabel(
+                        currentDisplayEntry,
+                        currentProjectRootfsState?.image ??
+                          value ??
+                          effectiveDefaultRootfs,
+                      )}
+                    </code>
+                    .
+                  </>
+                )
+              }
+            />
+            {project.getIn(["state", "state"]) == "running" ? (
+              <Paragraph type="secondary" style={{ marginBottom: 0 }}>
+                The project is currently running, so CoCalc will restart it
+                after switching the RootFS image.
+              </Paragraph>
+            ) : null}
+          </Space>
+        </Modal>
       )}
       {open && (
         <Modal
@@ -813,6 +1061,12 @@ export default function RootFilesystemImage() {
                   loading={rootfsLoading}
                   disabled={rootfsLoading}
                 />
+                <Checkbox
+                  checked={showOlderVersions}
+                  onChange={(e) => setShowOlderVersions(e.target.checked)}
+                >
+                  Show older versions
+                </Checkbox>
                 <Button
                   type="link"
                   onClick={() => setRootfsMode("custom")}
@@ -942,33 +1196,58 @@ export default function RootFilesystemImage() {
                 }
               />
             )}
-            <Input
-              value={publishDraft.image}
-              disabled
-              addonBefore={
-                publishMode === "copy" && publishCopyMode === "project"
+            <div>
+              <Paragraph strong style={{ marginBottom: "6px" }}>
+                {publishMode === "copy" && publishCopyMode === "project"
                   ? "Base image"
-                  : "Image"
-              }
-            />
-            <Input
-              value={publishDraft.label}
-              onChange={(e) =>
-                setPublishDraft((cur) => ({ ...cur, label: e.target.value }))
-              }
-              addonBefore="Label"
-            />
-            <Input.TextArea
-              value={publishDraft.description}
-              onChange={(e) =>
-                setPublishDraft((cur) => ({
-                  ...cur,
-                  description: e.target.value,
-                }))
-              }
-              rows={3}
-              placeholder="Describe when this image should be used."
-            />
+                  : "Image"}
+              </Paragraph>
+              <Input value={publishDraft.image} disabled />
+            </div>
+            <div>
+              <Paragraph strong style={{ marginBottom: "6px" }}>
+                Label
+              </Paragraph>
+              <Input
+                value={publishDraft.label}
+                onChange={(e) =>
+                  setPublishDraft((cur) => ({
+                    ...cur,
+                    label: e.target.value,
+                    theme: {
+                      ...cur.theme,
+                      title: e.target.value,
+                    },
+                  }))
+                }
+              />
+            </div>
+            <div>
+              <Paragraph strong style={{ marginBottom: "6px" }}>
+                Description
+              </Paragraph>
+              <Input.TextArea
+                value={publishDraft.description}
+                onChange={(e) =>
+                  setPublishDraft((cur) => ({
+                    ...cur,
+                    description: e.target.value,
+                    theme: {
+                      ...cur.theme,
+                      description: e.target.value,
+                    },
+                  }))
+                }
+                rows={3}
+                placeholder="Describe when this image should be used."
+              />
+              <Paragraph
+                type="secondary"
+                style={{ marginTop: "6px", marginBottom: 0 }}
+              >
+                Plain text only. Markdown is not rendered here.
+              </Paragraph>
+            </div>
             <Radio.Group
               value={publishDraft.visibility}
               onChange={(e) =>
@@ -1020,16 +1299,202 @@ export default function RootFilesystemImage() {
                     <Radio value="base">Save current base image only</Radio>
                   </Radio.Group>
                 )}
-                <Input
-                  value={publishDraft.tags}
-                  onChange={(e) =>
-                    setPublishDraft((cur) => ({
-                      ...cur,
-                      tags: e.target.value,
-                    }))
-                  }
-                  placeholder="comma,separated,tags"
-                />
+                <div>
+                  <Paragraph strong style={{ marginBottom: "6px" }}>
+                    Tags
+                  </Paragraph>
+                  <Select
+                    mode="tags"
+                    style={{ width: "100%" }}
+                    options={publishTagOptions}
+                    value={parseRootfsTagString(publishDraft.tags)}
+                    onChange={(values) =>
+                      setPublishDraft((cur) => ({
+                        ...cur,
+                        tags: normalizeRootfsTags(values).join(", "),
+                      }))
+                    }
+                    tokenSeparators={[","]}
+                    placeholder="Add tags such as course, official, python, or jupyter"
+                  />
+                </div>
+                <div>
+                  <Paragraph strong style={{ marginBottom: "6px" }}>
+                    Version metadata
+                  </Paragraph>
+                  <Space
+                    direction="vertical"
+                    size="small"
+                    style={{ width: "100%" }}
+                  >
+                    <Input
+                      value={publishDraft.family}
+                      onChange={(e) =>
+                        setPublishDraft((cur) => ({
+                          ...cur,
+                          family: e.target.value,
+                        }))
+                      }
+                      placeholder="Family or series, e.g. tensorflow or ubuntu"
+                    />
+                    {publishFamilyOptions.length > 0 ? (
+                      <Space wrap size={[6, 6]}>
+                        {publishFamilyOptions.slice(0, 8).map((option) => (
+                          <Tag
+                            key={`${option.value}`}
+                            style={{ cursor: "pointer" }}
+                            onClick={() =>
+                              setPublishDraft((cur) => ({
+                                ...cur,
+                                family: `${option.value}`,
+                              }))
+                            }
+                          >
+                            {option.value}
+                          </Tag>
+                        ))}
+                      </Space>
+                    ) : null}
+                    <Input
+                      value={publishDraft.version}
+                      onChange={(e) =>
+                        setPublishDraft((cur) => ({
+                          ...cur,
+                          version: e.target.value,
+                        }))
+                      }
+                      placeholder="Version, e.g. 2.4 or 24.04"
+                    />
+                    <Input
+                      value={publishDraft.channel}
+                      onChange={(e) =>
+                        setPublishDraft((cur) => ({
+                          ...cur,
+                          channel: e.target.value,
+                        }))
+                      }
+                      placeholder="Channel, e.g. stable, beta, or nightly"
+                    />
+                    {publishChannelOptions.length > 0 ? (
+                      <Space wrap size={[6, 6]}>
+                        {publishChannelOptions.slice(0, 8).map((option) => (
+                          <Tag
+                            key={`${option.value}`}
+                            style={{ cursor: "pointer" }}
+                            onClick={() =>
+                              setPublishDraft((cur) => ({
+                                ...cur,
+                                channel: `${option.value}`,
+                              }))
+                            }
+                          >
+                            {option.value}
+                          </Tag>
+                        ))}
+                      </Space>
+                    ) : null}
+                    <Select
+                      allowClear
+                      showSearch
+                      optionFilterProp="label"
+                      options={publishSupersedesOptions}
+                      value={publishDraft.supersedes_image_id || undefined}
+                      onChange={(value) =>
+                        setPublishDraft((cur) => ({
+                          ...cur,
+                          supersedes_image_id: value ?? "",
+                        }))
+                      }
+                      placeholder="Optional image this replaces for upgrade guidance"
+                    />
+                  </Space>
+                  <Paragraph
+                    type="secondary"
+                    style={{ marginTop: "6px", marginBottom: 0 }}
+                  >
+                    Optional. Use these fields for curated versioned images so
+                    CoCalc can show upgrade recommendations.
+                  </Paragraph>
+                </div>
+                <div>
+                  <Space
+                    align="start"
+                    size="middle"
+                    style={{ width: "100%", justifyContent: "space-between" }}
+                  >
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                      <Paragraph type="secondary" style={{ marginBottom: 0 }}>
+                        Theme this image with a color, accent color, icon, and
+                        optional artwork so it stands out in RootFS pickers.
+                      </Paragraph>
+                      <Space wrap style={{ marginTop: "8px" }}>
+                        {publishDraft.theme.color ? (
+                          <Tag color={publishDraft.theme.color}>Color</Tag>
+                        ) : null}
+                        {publishDraft.theme.accent_color ? (
+                          <Tag color={publishDraft.theme.accent_color}>
+                            Accent
+                          </Tag>
+                        ) : null}
+                        {publishDraft.theme.image_blob?.trim() ? (
+                          <Tag>Image</Tag>
+                        ) : null}
+                        {publishDraft.theme.icon?.trim() ? (
+                          <Tag>{publishDraft.theme.icon.trim()}</Tag>
+                        ) : null}
+                      </Space>
+                    </div>
+                    <Button onClick={() => setPublishThemeOpen(true)}>
+                      Edit theme...
+                    </Button>
+                  </Space>
+                </div>
+                <div
+                  style={rootfsSummaryCardStyle({
+                    theme: rootfsThemeFromPublishDraft(publishDraft),
+                  })}
+                >
+                  <div
+                    style={{
+                      display: "flex",
+                      gap: 12,
+                      alignItems: "flex-start",
+                    }}
+                  >
+                    {renderRootfsThemePreview({
+                      ...publishSourceEntry,
+                      label: publishDraft.label,
+                      image: publishDraft.image,
+                      theme: rootfsThemeFromPublishDraft(publishDraft),
+                    })}
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                      <div style={{ fontWeight: 600, marginBottom: 4 }}>
+                        {publishDraft.label || "Untitled RootFS image"}
+                      </div>
+                      <div
+                        style={{
+                          fontFamily: "monospace",
+                          fontSize: "11px",
+                          color: COLORS.GRAY_M,
+                          overflowWrap: "anywhere",
+                        }}
+                      >
+                        {publishDraft.image}
+                      </div>
+                      {publishDraft.description ? (
+                        <div
+                          style={{
+                            fontSize: "12px",
+                            color: COLORS.GRAY_D,
+                            marginTop: 4,
+                          }}
+                        >
+                          {publishDraft.description}
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                </div>
                 {isAdmin && (
                   <Space direction="vertical" size="small">
                     <Checkbox
@@ -1089,6 +1554,23 @@ export default function RootFilesystemImage() {
           </Space>
         </Modal>
       )}
+      <ThemeEditorModal
+        open={publishThemeOpen}
+        title="Edit RootFS Theme"
+        value={publishDraft.theme}
+        onChange={(patch) =>
+          setPublishDraft((cur) => ({
+            ...cur,
+            theme: { ...cur.theme, ...patch },
+          }))
+        }
+        onCancel={() => setPublishThemeOpen(false)}
+        onSave={() => setPublishThemeOpen(false)}
+        showTitle={false}
+        showDescription={false}
+        defaultIcon="cube"
+        projectId={project_id}
+      />
     </div>
   );
 }
@@ -1139,6 +1621,19 @@ function displayRootfsLabel(
   return entry?.label?.trim() || fallbackImage;
 }
 
+function displayRootfsUpgradeLabel(
+  entry: RootfsImageEntry | undefined,
+  fallbackImage: string,
+): string {
+  const label = displayRootfsLabel(entry, fallbackImage);
+  const version = entry?.version?.trim();
+  if (!version) return label;
+  if (label.toLowerCase().includes(version.toLowerCase())) {
+    return label;
+  }
+  return `${label} ${version}`;
+}
+
 function displayRootfsDetail(
   entry: RootfsImageEntry | undefined,
   fallbackImage: string,
@@ -1184,6 +1679,214 @@ function compareRootfsVersions(a?: string, b?: string): number {
   });
 }
 
+function normalizeRootfsTags(tags: string[]): string[] {
+  return Array.from(
+    new Set(tags.map((tag) => tag.trim()).filter((tag) => tag.length > 0)),
+  );
+}
+
+function parseRootfsTagString(tags: string): string[] {
+  return normalizeRootfsTags(tags.split(","));
+}
+
+function rootfsThemeHasVisuals(theme: ThemeEditorDraft): boolean {
+  return [theme.color, theme.accent_color, theme.icon, theme.image_blob].some(
+    (value) => `${value ?? ""}`.trim().length > 0,
+  );
+}
+
+function rootfsThemeFromPublishDraft(
+  publishDraft: PublishDraft,
+): RootfsImageTheme | undefined {
+  if (!rootfsThemeHasVisuals(publishDraft.theme)) {
+    return undefined;
+  }
+  return themeFromDraft(publishDraft.theme);
+}
+
+function rootfsSummaryCardStyle(entry?: {
+  theme?: RootfsImageTheme;
+}): CSSProperties {
+  const themeColor = entry?.theme?.color?.trim() || COLORS.GRAY_L;
+  const accentColor = entry?.theme?.accent_color?.trim();
+  return {
+    border: `1px solid ${themeColor}`,
+    borderRadius: 12,
+    padding: "12px 14px",
+    background: accentColor ? `${accentColor}18` : "rgba(0, 0, 0, 0.02)",
+    maxWidth: "760px",
+  };
+}
+
+function renderRootfsThemePreview(entry?: {
+  theme?: RootfsImageTheme;
+  label?: string;
+  image?: string;
+}): React.JSX.Element {
+  const imageUrl = rootfsThemeImageUrl(entry?.theme);
+  const accentColor = entry?.theme?.accent_color?.trim();
+  const color = entry?.theme?.color?.trim();
+  const iconName = entry?.theme?.icon?.trim() || "cube";
+  return imageUrl ? (
+    <img
+      src={imageUrl}
+      alt={`${entry?.label || entry?.image || "RootFS"} theme`}
+      style={{
+        width: 56,
+        height: 56,
+        borderRadius: 12,
+        objectFit: "cover",
+        flex: "0 0 auto",
+      }}
+    />
+  ) : (
+    <div
+      style={{
+        width: 56,
+        height: 56,
+        borderRadius: 12,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        background: accentColor || "#f5f5f5",
+        color: color || undefined,
+        flex: "0 0 auto",
+      }}
+    >
+      <Icon name={iconName as any} style={{ fontSize: "24px" }} />
+    </div>
+  );
+}
+
+function renderRootfsEntrySummary({
+  heading,
+  entry,
+  fallbackImage,
+  note,
+}: {
+  heading: string;
+  entry: RootfsImageEntry | undefined;
+  fallbackImage: string;
+  note?: React.JSX.Element | string;
+}): React.JSX.Element {
+  return (
+    <div>
+      <Paragraph strong style={{ marginBottom: "8px" }}>
+        {heading}
+      </Paragraph>
+      <div style={rootfsSummaryCardStyle(entry)}>
+        <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
+          {renderRootfsThemePreview({
+            theme: entry?.theme,
+            label: entry?.label,
+            image: entry?.image ?? fallbackImage,
+          })}
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <div style={{ fontWeight: 600, marginBottom: 4 }}>
+              {displayRootfsLabel(entry, fallbackImage)}
+            </div>
+            <Space wrap style={{ marginBottom: "6px" }}>
+              {entry?.section ? (
+                <Tag color={sectionTagColor(entry.section)}>
+                  {sectionLabel(entry.section)}
+                </Tag>
+              ) : null}
+              {entry?.version ? <Tag>{entry.version}</Tag> : null}
+              {entry?.channel ? <Tag color="cyan">{entry.channel}</Tag> : null}
+              {entry?.gpu ? <Tag color="purple">GPU image</Tag> : null}
+            </Space>
+            <div
+              style={{
+                fontFamily: "monospace",
+                fontSize: "11px",
+                color: COLORS.GRAY_M,
+                overflowWrap: "anywhere",
+              }}
+            >
+              {entry?.image ?? fallbackImage}
+            </div>
+            {renderRootfsEntryFacts(entry)}
+            {note ? (
+              <Paragraph
+                type="secondary"
+                style={{ marginTop: "8px", marginBottom: 0 }}
+              >
+                {note}
+              </Paragraph>
+            ) : null}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function renderRootfsEntryFacts(
+  entry: RootfsImageEntry | undefined,
+): React.JSX.Element | null {
+  if (!entry) return null;
+  const facts: string[] = [];
+  const size = formatRootfsBaseSize(entry.size_gb);
+  if (size) {
+    facts.push(`Base size: ${size}`);
+  }
+  const publisher = describeRootfsPublisher(entry);
+  if (publisher) {
+    facts.push(publisher);
+  }
+  if (!facts.length) {
+    return null;
+  }
+  return (
+    <Paragraph type="secondary" style={{ marginTop: "8px", marginBottom: 0 }}>
+      {facts.join(" • ")}
+    </Paragraph>
+  );
+}
+
+function formatRootfsBaseSize(size_gb?: number): string | undefined {
+  if (
+    typeof size_gb !== "number" ||
+    !Number.isFinite(size_gb) ||
+    size_gb <= 0
+  ) {
+    return undefined;
+  }
+  if (size_gb >= 100) {
+    return `${Math.round(size_gb)} GB`;
+  }
+  if (size_gb >= 10) {
+    return `${size_gb.toFixed(1)} GB`;
+  }
+  if (size_gb >= 1) {
+    return `${size_gb.toFixed(2)} GB`;
+  }
+  return `${Math.round(size_gb * 1000)} MB`;
+}
+
+function describeRootfsPublisher(entry: RootfsImageEntry): string | undefined {
+  const owner = entry.owner_name?.trim();
+  if (entry.official) {
+    return owner
+      ? `Official image published by ${owner}`
+      : "Official CoCalc image";
+  }
+  if (entry.section === "mine") {
+    return "Published by you";
+  }
+  if (entry.warning === "collaborator") {
+    return owner
+      ? `Published by your collaborator ${owner}`
+      : "Published by one of your collaborators";
+  }
+  if (owner) {
+    return `Published by ${owner}`;
+  }
+  if (entry.warning === "public") {
+    return "Public community image";
+  }
+}
+
 function buildRootfsPublishAssistCommand(opts: {
   projectId: string;
   publishMode: "copy" | "manage";
@@ -1223,10 +1926,22 @@ function buildRootfsPublishAssistCommand(opts: {
     pushCliOption(parts, "--image-id", publishSourceEntry.id);
   }
   pushCliOption(parts, "--description", publishDraft.description);
+  pushCliOption(parts, "--family", publishDraft.family);
+  pushCliOption(parts, "--image-version", publishDraft.version);
+  pushCliOption(parts, "--channel", publishDraft.channel);
+  pushCliOption(
+    parts,
+    "--supersedes-image-id",
+    publishDraft.supersedes_image_id,
+  );
   if (publishDraft.visibility) {
     pushCliOption(parts, "--visibility", publishDraft.visibility);
   }
   pushCliOption(parts, "--tags", publishDraft.tags);
+  const theme = rootfsThemeFromPublishDraft(publishDraft);
+  if (theme != null) {
+    pushCliOption(parts, "--theme-json", JSON.stringify(theme));
+  }
   if (publishDraft.official) parts.push("--official");
   if (publishDraft.prepull) parts.push("--prepull");
   if (publishDraft.hidden) parts.push("--hidden");
@@ -1270,8 +1985,13 @@ function buildRootfsPublishAgentPrompt(opts: {
     "Desired metadata:",
     `- label: ${publishDraft.label}`,
     `- description: ${publishDraft.description || "(empty)"}`,
+    `- family: ${publishDraft.family || "(none)"}`,
+    `- version: ${publishDraft.version || "(none)"}`,
+    `- channel: ${publishDraft.channel || "(none)"}`,
+    `- supersedes_image_id: ${publishDraft.supersedes_image_id || "(none)"}`,
     `- visibility: ${publishDraft.visibility}`,
     `- tags: ${publishDraft.tags || "(none)"}`,
+    `- theme: ${rootfsThemeFromPublishDraft(publishDraft) ? "customized" : "default"}`,
     `- official: ${publishDraft.official ? "yes" : "no"}`,
     `- prepull: ${publishDraft.prepull ? "yes" : "no"}`,
     `- hidden: ${publishDraft.hidden ? "yes" : "no"}`,
@@ -1289,167 +2009,6 @@ function pushCliOption(parts: string[], flag: string, value?: string) {
 
 function shellQuoteCliArg(value: string): string {
   return `'${`${value ?? ""}`.replace(/'/g, `'\\''`)}'`;
-}
-
-function sectionLabel(section: RootfsImageEntry["section"]): string {
-  switch (section) {
-    case "official":
-      return "Official";
-    case "mine":
-      return "My image";
-    case "collaborators":
-      return "Collaborator image";
-    case "public":
-      return "Public image";
-    default:
-      return "Catalog";
-  }
-}
-
-function sectionTagColor(section: RootfsImageEntry["section"]): string {
-  switch (section) {
-    case "official":
-      return "blue";
-    case "mine":
-      return "green";
-    case "collaborators":
-      return "gold";
-    case "public":
-      return "red";
-    default:
-      return "default";
-  }
-}
-
-function groupedRootfsOptions(images: RootfsImageEntry[]) {
-  const sections: Array<{
-    key: NonNullable<RootfsImageEntry["section"]>;
-    label: string;
-  }> = [
-    { key: "official", label: "Official images" },
-    { key: "mine", label: "My images" },
-    { key: "collaborators", label: "Collaborator images" },
-    { key: "public", label: "Public images" },
-  ];
-  return sections.reduce<
-    Array<{
-      label: string;
-      options: Array<{
-        value: string;
-        label: string;
-        searchText: string;
-        entry: RootfsImageEntry;
-      }>;
-    }>
-  >((acc, { key, label }) => {
-    const options = images
-      .filter((entry) => entry.section === key)
-      .map((entry) => ({
-        value: entry.id,
-        label: entry.label || entry.image,
-        entry,
-        searchText: [
-          entry.label,
-          entry.image,
-          entry.description,
-          entry.owner_name,
-          ...(entry.tags ?? []),
-        ]
-          .filter(Boolean)
-          .join(" ")
-          .toLowerCase(),
-      }));
-    if (options.length > 0) {
-      acc.push({ label, options });
-    }
-    return acc;
-  }, []);
-}
-
-function rootfsOptionSearchText(option?: any): string {
-  return `${option?.searchText ?? option?.data?.searchText ?? ""}`.toLowerCase();
-}
-
-function renderRootfsCatalogOption(entry: RootfsImageEntry) {
-  return (
-    <div
-      style={{
-        padding: "6px 0",
-        lineHeight: "18px",
-      }}
-    >
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: "8px",
-          flexWrap: "wrap",
-          marginBottom: "2px",
-        }}
-      >
-        <span style={{ fontWeight: 600 }}>{entry.label || entry.image}</span>
-        {entry.section ? (
-          <Tag
-            color={sectionTagColor(entry.section)}
-            style={{ marginInlineEnd: 0 }}
-          >
-            {sectionLabel(entry.section)}
-          </Tag>
-        ) : null}
-        {entry.version ? (
-          <Tag style={{ marginInlineEnd: 0 }}>{entry.version}</Tag>
-        ) : null}
-        {entry.channel ? (
-          <Tag color="cyan" style={{ marginInlineEnd: 0 }}>
-            {entry.channel}
-          </Tag>
-        ) : null}
-        {entry.gpu ? (
-          <Tag color="purple" style={{ marginInlineEnd: 0 }}>
-            GPU
-          </Tag>
-        ) : null}
-        {entry.scan?.status && entry.scan.status !== "unknown" ? (
-          <Tag
-            color={
-              entry.scan.status === "clean"
-                ? "green"
-                : entry.scan.status === "findings"
-                  ? "orange"
-                  : entry.scan.status === "error"
-                    ? "red"
-                    : "blue"
-            }
-            style={{ marginInlineEnd: 0 }}
-          >
-            scan {entry.scan.status}
-          </Tag>
-        ) : null}
-      </div>
-      <div
-        style={{
-          fontFamily: "monospace",
-          fontSize: "11px",
-          color: COLORS.GRAY_M,
-          overflowWrap: "anywhere",
-          marginBottom: entry.description ? "2px" : 0,
-        }}
-      >
-        {entry.image}
-      </div>
-      {entry.description ? (
-        <div
-          style={{
-            fontSize: "12px",
-            color: COLORS.GRAY_D,
-            overflowWrap: "anywhere",
-          }}
-        >
-          {entry.description}
-        </div>
-      ) : null}
-    </div>
-  );
 }
 
 function renderRootfsWarning(

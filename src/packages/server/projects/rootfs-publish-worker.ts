@@ -395,6 +395,10 @@ async function handleRootfsPublishOp(op: LroSummary): Promise<void> {
         body: {
           project_id,
           label: input.label,
+          family: input.family,
+          version: input.version,
+          channel: input.channel,
+          supersedes_image_id: input.supersedes_image_id,
           description: input.description,
           visibility: input.visibility,
           tags: Array.isArray(input.tags) ? input.tags : undefined,
