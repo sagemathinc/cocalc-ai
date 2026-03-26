@@ -16,6 +16,9 @@ describe("getContentRouteFromPath", () => {
     expect(getContentRouteFromPath(contentPath("about/events"))).toEqual({
       view: "about-events",
     });
+    expect(getContentRouteFromPath(contentPath("about/status"))).toEqual({
+      view: "about-status",
+    });
     expect(getContentRouteFromPath(contentPath("about/team"))).toEqual({
       view: "about-team",
     });
@@ -50,6 +53,12 @@ describe("getContentRouteFromPath", () => {
       timestamp: 1712345678,
       view: "news-history",
     });
+    expect(getContentRouteFromPath(contentPath("software"))).toEqual({
+      view: "software",
+    });
+    expect(
+      getContentRouteFromPath(contentPath("software/cocalc-launchpad")),
+    ).toEqual({ view: "software-cocalc-launchpad" });
     expect(
       getContentRouteFromPath(contentPath("software/cocalc-plus")),
     ).toEqual({ view: "software-cocalc-plus" });
@@ -91,10 +100,26 @@ describe("PublicContentApp", () => {
     expect(screen.getByRole("link", { name: "Settings" })).not.toBeNull();
   });
 
+  it("hides the shared Policies nav item when public policies are disabled", () => {
+    render(
+      <PublicContentApp
+        config={{ show_policies: false, site_name: "Launchpad" }}
+        initialRoute={{ view: "about" }}
+      />,
+    );
+
+    expect(screen.queryByRole("link", { name: "Policies" })).toBeNull();
+  });
+
   it("renders configured policy cards", () => {
     render(
       <PublicContentApp
-        config={{ imprint: "enabled", policies: "enabled", site_name: "Hub" }}
+        config={{
+          imprint: "enabled",
+          policies: "enabled",
+          show_policies: true,
+          site_name: "Hub",
+        }}
         initialRoute={{ view: "policies" }}
       />,
     );
@@ -106,6 +131,19 @@ describe("PublicContentApp", () => {
     expect(
       screen.getByRole("heading", { name: "Policies", level: 3 }),
     ).not.toBeNull();
+  });
+
+  it("shows built-in policy pages even without custom policy settings", () => {
+    render(
+      <PublicContentApp
+        config={{ show_policies: true, site_name: "Launchpad" }}
+        initialRoute={{ view: "policies" }}
+      />,
+    );
+
+    expect(screen.getByText("Terms of service")).not.toBeNull();
+    expect(screen.getByText("Privacy")).not.toBeNull();
+    expect(screen.getByText("Trust")).not.toBeNull();
   });
 
   it("renders the team page", () => {
@@ -141,18 +179,94 @@ describe("PublicContentApp", () => {
     expect(screen.getByText("Personal website")).not.toBeNull();
   });
 
-  it("renders a structured policy page", () => {
+  it("renders the exact privacy policy page", () => {
     render(
       <PublicContentApp
-        config={{ site_name: "Launchpad" }}
+        config={{ show_policies: true, site_name: "Launchpad" }}
         initialRoute={{ policySlug: "privacy", view: "policies-detail" }}
       />,
     );
 
+    expect(screen.getByText("CoCalc - Privacy Policy")).not.toBeNull();
     expect(
-      screen.getByRole("heading", { name: "Privacy policy" }),
+      screen.getByText(/Protecting your privacy is really important to us/i),
     ).not.toBeNull();
-    expect(screen.getByText("How information is used")).not.toBeNull();
+  });
+
+  it("renders the exact third-party policy page", () => {
+    render(
+      <PublicContentApp
+        config={{ show_policies: true, site_name: "Launchpad" }}
+        initialRoute={{ policySlug: "thirdparties", view: "policies-detail" }}
+      />,
+    );
+
+    expect(
+      screen.getByText("CoCalc - Third Parties Statements"),
+    ).not.toBeNull();
+    expect(screen.getByText("Cloudflare")).not.toBeNull();
+    expect(screen.getByText("Salesloft")).not.toBeNull();
+  });
+
+  it("renders the exact terms page", () => {
+    render(
+      <PublicContentApp
+        config={{ show_policies: true, site_name: "Launchpad" }}
+        initialRoute={{ policySlug: "terms", view: "policies-detail" }}
+      />,
+    );
+
+    expect(screen.getByText("CoCalc - Terms of Service")).not.toBeNull();
+    expect(
+      screen.getByText(/Once you POST TO THE GENERAL PUBLIC/i),
+    ).not.toBeNull();
+  });
+
+  it("hides policy pages when public policies are disabled", () => {
+    render(
+      <PublicContentApp
+        config={{ show_policies: false, site_name: "Launchpad" }}
+        initialRoute={{ view: "policies" }}
+      />,
+    );
+
+    expect(screen.getByText("Public policy pages are disabled")).not.toBeNull();
+    expect(screen.queryByText("Terms of service")).toBeNull();
+  });
+
+  it("shows an external policy link instead of built-in policy pages", () => {
+    render(
+      <PublicContentApp
+        config={{
+          show_policies: true,
+          site_name: "Launchpad",
+          terms_of_service_url: "https://example.com/policies",
+        }}
+        initialRoute={{ view: "policies" }}
+      />,
+    );
+
+    expect(screen.getByText("Public policy information")).not.toBeNull();
+    expect(
+      screen.getByRole("link", { name: "Open policy page" }),
+    ).not.toBeNull();
+    expect(screen.queryByText("Terms of service")).toBeNull();
+  });
+
+  it("uses the external policy link for direct policy routes as well", () => {
+    render(
+      <PublicContentApp
+        config={{
+          show_policies: true,
+          site_name: "Launchpad",
+          terms_of_service_url: "https://example.com/policies",
+        }}
+        initialRoute={{ policySlug: "privacy", view: "policies-detail" }}
+      />,
+    );
+
+    expect(screen.getByText("Public policy information")).not.toBeNull();
+    expect(screen.queryByText("CoCalc - Privacy Policy")).toBeNull();
   });
 
   it("renders the public news list from initial data", () => {
@@ -196,5 +310,35 @@ describe("PublicContentApp", () => {
         "The local single-user CoCalc experience for your own machine.",
       ),
     ).not.toBeNull();
+  });
+
+  it("renders the software overview page", () => {
+    render(
+      <PublicContentApp
+        config={{ site_name: "Launchpad" }}
+        initialRoute={{ view: "software" }}
+      />,
+    );
+
+    expect(
+      screen.getByRole("heading", { name: "Launchpad software" }),
+    ).not.toBeNull();
+    expect(screen.getByText("CoCalc Launchpad")).not.toBeNull();
+    expect(screen.getByText("Hosted CoCalc")).not.toBeNull();
+  });
+
+  it("renders the cocalc launchpad page", () => {
+    render(
+      <PublicContentApp
+        config={{ site_name: "Launchpad" }}
+        initialRoute={{ view: "software-cocalc-launchpad" }}
+      />,
+    );
+
+    expect(
+      screen.getByRole("heading", { name: "CoCalc Launchpad" }),
+    ).not.toBeNull();
+    expect(screen.getByText("Install CoCalc Launchpad")).not.toBeNull();
+    expect(screen.getByText("What the installer does")).not.toBeNull();
   });
 });

@@ -26,6 +26,7 @@ const { Paragraph, Text, Title } = Typography;
 
 interface LangConfig {
   is_authenticated?: boolean;
+  show_policies?: boolean;
   site_name?: string;
 }
 
@@ -327,6 +328,7 @@ export default function PublicLangApp({
       <PublicTopNav
         active="home"
         isAuthenticated={!!config?.is_authenticated}
+        showPolicies={!!config?.show_policies}
         siteName={siteName}
       />
       {content}

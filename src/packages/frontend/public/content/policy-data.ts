@@ -41,6 +41,7 @@ export const POLICY_PAGES: PublicPolicyPage[] = [
       {
         title: "What to review",
         bullets: [
+          "VPAT-style accessibility documentation together with the exact workflows your users rely on",
           "Keyboard navigation in the specific editors and workflows your users depend on",
           "Screen-reader compatibility for the main product surfaces you care about",
           "Institutional documentation or procurement requirements related to accessibility review",
@@ -52,6 +53,7 @@ export const POLICY_PAGES: PublicPolicyPage[] = [
           "If you need accessibility documentation or want to discuss whether a particular workflow is a good fit, contact the CoCalc team directly.",
         ],
         links: [
+          { href: "/support", label: "Support" },
           { href: "mailto:office@sagemath.com", label: "office@sagemath.com" },
         ],
       },
@@ -276,31 +278,13 @@ export const POLICY_PAGES: PublicPolicyPage[] = [
     sections: [
       {
         title: "Essential infrastructure",
+        paragraphs: [
+          "These services support CoCalc's core infrastructure and are part of normal operation for most hosted deployments.",
+        ],
         bullets: [
-          "Cloudflare for DDoS protection and traffic handling",
-          "Google Cloud Platform for hosted compute and storage resources",
+          "Cloudflare for DDoS protection and traffic handling, with client IP information needed to establish connections",
+          "Google Cloud Platform for hosted compute and storage resources, including the primary hosted runtime",
           "reCAPTCHA and similar anti-abuse protections where needed",
-        ],
-      },
-      {
-        title: "Payments and communication",
-        bullets: [
-          "Stripe for payment processing",
-          "Amazon Web Services, Google Workspace, and Twilio SendGrid for communication and email infrastructure",
-          "Zendesk for support ticket handling",
-        ],
-      },
-      {
-        title: "Extra services and AI",
-        paragraphs: [
-          "Some optional features involve additional providers such as avatar services or AI model providers. These are feature-specific rather than ambient background integrations.",
-          "In particular, AI interactions in CoCalc are explicit: you choose when to invoke them and what context to send.",
-        ],
-      },
-      {
-        title: "Privacy and agreements",
-        paragraphs: [
-          "For each provider, the historical page linked to privacy notices and data processing agreements. Those remain the right documents to consult when doing institutional review.",
         ],
         links: [
           {
@@ -311,6 +295,19 @@ export const POLICY_PAGES: PublicPolicyPage[] = [
             href: "https://cloud.google.com/terms/cloud-privacy-notice",
             label: "Google Cloud privacy notice",
           },
+        ],
+      },
+      {
+        title: "Payments and communication",
+        paragraphs: [
+          "These services support payments, email delivery, and ticket handling between users and the CoCalc team.",
+        ],
+        bullets: [
+          "Stripe for payment processing",
+          "Amazon Web Services, Google Workspace, and Twilio SendGrid for communication and email infrastructure",
+          "Zendesk for support ticket handling",
+        ],
+        links: [
           {
             href: "https://stripe.com/us/privacy",
             label: "Stripe privacy policy",
@@ -321,18 +318,92 @@ export const POLICY_PAGES: PublicPolicyPage[] = [
           },
         ],
       },
+      {
+        title: "Extra services",
+        paragraphs: [
+          "Some optional features involve additional providers such as avatar services. These are feature-specific rather than ambient background integrations.",
+        ],
+        links: [
+          {
+            href: "https://automattic.com/privacy/",
+            label: "Gravatar / Automattic privacy policy",
+          },
+        ],
+      },
+      {
+        title: "AI services",
+        paragraphs: [
+          "AI interactions in CoCalc are explicit: you choose when to invoke them and what context to send. They are not background services attached to every page view.",
+          "Current integrations and dependencies in this codebase include providers such as OpenAI, Anthropic, Google AI, and Mistral.",
+        ],
+        links: [
+          {
+            href: "https://openai.com/policies/privacy-policy/",
+            label: "OpenAI privacy policy",
+          },
+          {
+            href: "https://www.anthropic.com/legal/privacy",
+            label: "Anthropic privacy policy",
+          },
+          {
+            href: "https://policies.google.com/privacy",
+            label: "Google privacy policy",
+          },
+          {
+            href: "https://mistral.ai/terms#privacy-policy",
+            label: "Mistral AI privacy policy",
+          },
+        ],
+      },
+      {
+        title: "Marketing and customer outreach",
+        paragraphs: [
+          "We do not sell user data for marketing purposes, but we do use vendor systems for sales and customer communication workflows.",
+        ],
+        bullets: [
+          "Salesloft for onboarding emails, sales, and marketing follow-up",
+        ],
+        links: [
+          {
+            href: "https://www.salesloft.com/legal/privacy-notice",
+            label: "Salesloft privacy notice",
+          },
+        ],
+      },
+      {
+        title: "Questions",
+        paragraphs: [
+          "If you are doing procurement, privacy review, or institutional compliance work and need more detail about third-party providers, contact the team directly.",
+        ],
+        links: [
+          {
+            href: "mailto:office@sagemath.com",
+            label: "office@sagemath.com",
+          },
+        ],
+      },
     ],
   },
   {
     slug: "trust",
     title: "Trust and compliance",
-    summary: "Security, compliance, and external trust resources for CoCalc.",
+    summary: "Security, GDPR, SOC 2, and external trust resources for CoCalc.",
     sections: [
       {
         title: "Security posture",
         paragraphs: [
           "The old Next.js page focused on GDPR verification, SOC 2, and the public trust center. That remains the right structure for this route.",
-          "The trust page should help institutions and technical buyers understand where to find security and compliance information quickly.",
+          "This page is mainly here to point technical buyers and institutions toward the current trust materials quickly.",
+        ],
+      },
+      {
+        title: "GDPR",
+        paragraphs: [
+          "SageMath, Inc.'s GDPR compliance posture has historically been presented through its EU and UK representative process with GDPR Local.",
+        ],
+        links: [
+          { href: "https://gdpr-info.eu/", label: "GDPR information" },
+          { href: "https://gdprlocal.com/", label: "GDPR Local" },
         ],
       },
       {
@@ -347,7 +418,6 @@ export const POLICY_PAGES: PublicPolicyPage[] = [
         title: "More information",
         links: [
           { href: "https://trust.cocalc.com/", label: "Trust Center" },
-          { href: "https://gdpr-info.eu/", label: "GDPR information" },
           {
             href: "https://www.vanta.com/collection/soc-2/what-is-soc-2",
             label: "What SOC 2 means",

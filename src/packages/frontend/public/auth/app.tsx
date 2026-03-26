@@ -35,6 +35,7 @@ interface PublicAuthAppProps {
   initialRoute: PublicAuthRoute;
   initialSSOStrategies?: PublicSSOStrategy[];
   isAuthenticated?: boolean;
+  showPolicies?: boolean;
   siteName?: string;
 }
 
@@ -98,6 +99,7 @@ export default function PublicAuthApp({
   initialRoute,
   initialSSOStrategies,
   isAuthenticated,
+  showPolicies,
   siteName = SITE_NAME,
 }: PublicAuthAppProps) {
   const [route, setRoute] = useState<PublicAuthRoute>(initialRoute);
@@ -126,6 +128,7 @@ export default function PublicAuthApp({
       cardWidth={cardWidthForRoute(route)}
       isAuthenticated={isAuthenticated}
       siteName={siteName}
+      showPolicies={showPolicies}
       subtitle={subtitleForRoute(route, siteName)}
       title={title}
     >

@@ -40,6 +40,7 @@ const { Paragraph, Text, Title } = Typography;
 interface FeaturesConfig {
   help_email?: string;
   is_authenticated?: boolean;
+  show_policies?: boolean;
   site_name?: string;
 }
 
@@ -312,6 +313,7 @@ export default function PublicFeaturesApp({
       <PublicTopNav
         active="features"
         isAuthenticated={!!config?.is_authenticated}
+        showPolicies={!!config?.show_policies}
         siteName={siteName}
       />
       <PublicHero

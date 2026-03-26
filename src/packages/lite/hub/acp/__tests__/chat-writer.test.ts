@@ -724,7 +724,8 @@ describe("ChatStreamWriter", () => {
     expect(liveEvents[0].type).toBe("status");
     expect((liveEvents[0] as any).state).toBe("running");
     expect(liveEvents[1].type).toBe("event");
-    expect(persistedLogs).toHaveLength(0);
+    expect(persistedLogs).toHaveLength(1);
+    expect(persistedLogs[0][0]?.type).toBe("status");
 
     await writer.handle({
       type: "summary",
@@ -734,9 +735,64 @@ describe("ChatStreamWriter", () => {
     await flush(writer);
 
     expect(flattenLivePayloads(livePayloads)).toHaveLength(3);
+    expect(persistedLogs).toHaveLength(2);
+    expect(persistedLogs[0][0]?.type).toBe("status");
+    expect(persistedLogs[1].at(-1)?.type).toBe("summary");
+    (writer as any).dispose?.(true);
+  });
+
+  it("persists coarse checkpoints during long-running turns", async () => {
+    const { syncdb } = makeFakeSyncDB();
+    const persistedLogs: any[][] = [];
+    const writer: any = new ChatStreamWriter({
+      metadata: baseMetadata,
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      syncdbOverride: syncdb as any,
+      logStoreFactory: () =>
+        ({
+          set: async (_key: string, value: any[]) => {
+            persistedLogs.push(value.map((evt) => ({ ...evt })));
+          },
+        }) as any,
+      liveLogStreamFactory: () =>
+        ({
+          publish: async () => ({ seq: 1, time: Date.now() }),
+          close: () => {},
+        }) as any,
+    });
+
+    await writer.handle({
+      type: "status",
+      state: "running",
+      seq: 0,
+    } as AcpStreamMessage);
+    await flush(writer);
+    await (writer as any).checkpointPersistBatcher.flush();
+
     expect(persistedLogs).toHaveLength(1);
     expect(persistedLogs[0][0]?.type).toBe("status");
-    expect(persistedLogs[0].at(-1)?.type).toBe("summary");
+
+    await writer.handle({
+      type: "event",
+      event: { type: "message", text: "hello" } as any,
+      seq: 1,
+    } as AcpStreamMessage);
+    await flush(writer);
+    await (writer as any).checkpointPersistBatcher.flush();
+
+    expect(persistedLogs).toHaveLength(2);
+    expect(persistedLogs[1].at(-1)?.type).toBe("event");
+
+    await writer.handle({
+      type: "summary",
+      finalResponse: "done",
+      seq: 2,
+    } as AcpStreamMessage);
+    await flush(writer);
+
+    expect(persistedLogs).toHaveLength(3);
+    expect(persistedLogs[2].at(-1)?.type).toBe("summary");
     (writer as any).dispose?.(true);
   });
 
@@ -887,7 +943,8 @@ describe("ChatStreamWriter", () => {
     await flush(writer);
     await (writer as any).waitForLiveLogFlush();
     expect(livePublish).toHaveBeenCalledTimes(1);
-    expect(logSet).not.toHaveBeenCalled();
+    expect(logSet).toHaveBeenCalledTimes(1);
+    expect(logSet.mock.calls[0][1][0]?.type).toBe("event");
     await (writer as any).handle({
       type: "summary",
       finalResponse: "done",
@@ -895,7 +952,8 @@ describe("ChatStreamWriter", () => {
     } as AcpStreamMessage);
     await flush(writer);
     expect(livePublish).toHaveBeenCalledTimes(2);
-    expect(logSet).toHaveBeenCalled();
+    expect(logSet).toHaveBeenCalledTimes(2);
+    expect(logSet.mock.calls[1][1].at(-1)?.type).toBe("summary");
     (writer as any).dispose?.(true);
   });
 

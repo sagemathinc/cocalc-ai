@@ -17,6 +17,7 @@ import {
   Typography,
 } from "antd";
 import { joinUrlPath } from "@cocalc/util/url-path";
+import type { HistoricCounts, Stats } from "@cocalc/util/db-schema/stats";
 import { slugURL } from "@cocalc/util/news";
 import {
   CHANNELS_DESCRIPTIONS,
@@ -32,6 +33,7 @@ import {
   PublicSectionCard,
 } from "@cocalc/frontend/public/ui/shell";
 import PublicTopNav from "@cocalc/frontend/public/ui/top-nav";
+import { ExactPolicyPage, getExactPolicyPage } from "./legal-pages";
 import { getPolicyPage } from "./policy-data";
 import { contentPath, type PublicContentRoute, topLevelView } from "./routes";
 import {
@@ -50,6 +52,8 @@ interface ContentConfig {
   on_cocalc_com?: boolean;
   policies?: string;
   site_name?: string;
+  show_policies?: boolean;
+  terms_of_service_url?: string;
 }
 
 interface PublicContentAppProps {
@@ -77,6 +81,10 @@ interface NewsDetailPayload {
   prev?: NewsPrevNext | null;
   prevTimestamp?: number | null;
   timestamp?: number;
+}
+
+interface StatsPayload extends Partial<Stats> {
+  error?: string;
 }
 
 const GRID_STYLE: CSSProperties = {
@@ -111,6 +119,8 @@ function titleForRoute(route: PublicContentRoute, siteName: string): string {
   switch (route.view) {
     case "about-events":
       return `${siteName} events`;
+    case "about-status":
+      return `${siteName} status`;
     case "about-team":
       return `${siteName} team`;
     case "about-team-member":
@@ -122,12 +132,16 @@ function titleForRoute(route: PublicContentRoute, siteName: string): string {
     case "policies-custom":
       return `${siteName} policies`;
     case "policies-detail":
-      return `${getPolicyPage(route.policySlug)?.title ?? "Policies"} - ${siteName}`;
+      return `${getExactPolicyPage(route.policySlug)?.title ?? getPolicyPage(route.policySlug)?.title ?? "Policies"} - ${siteName}`;
     case "news":
       return `${siteName} news`;
     case "news-detail":
     case "news-history":
       return `${siteName} news`;
+    case "software":
+      return `${siteName} software`;
+    case "software-cocalc-launchpad":
+      return "CoCalc Launchpad";
     case "software-cocalc-plus":
       return "CoCalc Plus";
     case "about":
@@ -154,6 +168,13 @@ function formatNewsDate(value?: number | Date): string {
     month: "short",
     day: "numeric",
   });
+}
+
+function formatDateTime(value?: number | Date): string {
+  if (value == null) return "";
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.valueOf())) return "";
+  return date.toLocaleString();
 }
 
 function truncate(text: string, max = 260): string {
@@ -195,6 +216,58 @@ function LinkButton({ children, href }: { children: ReactNode; href: string }) {
     <Button type="link" href={href} style={{ paddingInline: 0 }}>
       {children}
     </Button>
+  );
+}
+
+function arePoliciesVisible(config?: ContentConfig): boolean {
+  return !!config?.show_policies;
+}
+
+function getExternalPoliciesUrl(config?: ContentConfig): string | undefined {
+  const url = config?.terms_of_service_url?.trim();
+  return url ? url : undefined;
+}
+
+function PolicyGateCard({ config }: { config?: ContentConfig }) {
+  const externalUrl = getExternalPoliciesUrl(config);
+
+  if (!arePoliciesVisible(config)) {
+    return (
+      <PublicSectionCard>
+        <Title level={3} style={{ margin: 0 }}>
+          Public policy pages are disabled
+        </Title>
+        <Paragraph style={{ margin: 0 }}>
+          This deployment is not exposing a public policy section.
+        </Paragraph>
+      </PublicSectionCard>
+    );
+  }
+
+  if (!externalUrl) {
+    return null;
+  }
+
+  return (
+    <PublicSectionCard>
+      <Title level={3} style={{ margin: 0 }}>
+        Public policy information
+      </Title>
+      <Paragraph style={{ margin: 0 }}>
+        This deployment uses an external policy page instead of the built-in
+        legal documents.
+      </Paragraph>
+      <div>
+        <Button
+          href={externalUrl}
+          rel="noreferrer"
+          target="_blank"
+          type="primary"
+        >
+          Open policy page
+        </Button>
+      </div>
+    </PublicSectionCard>
   );
 }
 
@@ -259,6 +332,7 @@ function PageShell({
       <PublicTopNav
         active={navActive}
         isAuthenticated={!!config?.is_authenticated}
+        showPolicies={arePoliciesVisible(config)}
         siteName={config?.site_name ?? SITE_NAME}
       />
       <PublicHero
@@ -269,13 +343,11 @@ function PageShell({
           <Flex wrap gap={8}>
             {[
               { href: "about", key: "about", label: "About" },
-              { href: "policies", key: "policies", label: "Policies" },
+              ...(arePoliciesVisible(config)
+                ? [{ href: "policies", key: "policies", label: "Policies" }]
+                : []),
               { href: "news", key: "news", label: "News" },
-              {
-                href: "software/cocalc-plus",
-                key: "software",
-                label: "Software",
-              },
+              { href: "software", key: "software", label: "Software" },
             ].map((item) => (
               <Button
                 key={item.href}
@@ -290,6 +362,152 @@ function PageShell({
       />
       <div style={{ marginTop: "24px" }}>{children}</div>
     </PublicPageRoot>
+  );
+}
+
+function SoftwareOverviewPage() {
+  return (
+    <div style={GRID_STYLE}>
+      <PublicSectionCard>
+        <Title level={3} style={{ margin: 0 }}>
+          Hosted CoCalc
+        </Title>
+        <Paragraph style={{ margin: 0 }}>
+          Use the full hosted service when you want managed infrastructure,
+          multi-user collaboration, shared projects, and the broadest set of
+          public pages and support workflows.
+        </Paragraph>
+        <Flex wrap gap={12}>
+          <LinkButton href={appPath("features")}>Explore features</LinkButton>
+          <LinkButton href={appPath("support")}>Support</LinkButton>
+        </Flex>
+      </PublicSectionCard>
+      <PublicSectionCard>
+        <Title level={3} style={{ margin: 0 }}>
+          CoCalc Plus
+        </Title>
+        <Paragraph style={{ margin: 0 }}>
+          The local single-user CoCalc experience for your own machine. It is
+          the simplest path when you want the CoCalc workspace model without
+          standing up a shared service.
+        </Paragraph>
+        <div>
+          <LinkButton href={contentPath("software/cocalc-plus")}>
+            Open CoCalc Plus
+          </LinkButton>
+        </div>
+      </PublicSectionCard>
+      <PublicSectionCard>
+        <Title level={3} style={{ margin: 0 }}>
+          CoCalc Launchpad
+        </Title>
+        <Paragraph style={{ margin: 0 }}>
+          The lightweight control-plane bundle for small teams and self-hosted
+          deployments that want the CoCalc user model without the old Next.js
+          stack.
+        </Paragraph>
+        <div>
+          <LinkButton href={contentPath("software/cocalc-launchpad")}>
+            Open Launchpad
+          </LinkButton>
+        </div>
+      </PublicSectionCard>
+      <PublicSectionCard>
+        <Title level={3} style={{ margin: 0 }}>
+          Documentation
+        </Title>
+        <Paragraph style={{ margin: 0 }}>
+          Read the main docs, deployment references, and operator-facing setup
+          material before choosing an install path.
+        </Paragraph>
+        <Flex wrap gap={12}>
+          <LinkButton href="https://doc.cocalc.com/">CoCalc docs</LinkButton>
+          <LinkButton href="https://software.cocalc.ai/software/cocalc-launchpad/index.html">
+            Launchpad software site
+          </LinkButton>
+        </Flex>
+      </PublicSectionCard>
+    </div>
+  );
+}
+
+function CocalcLaunchpadPage() {
+  const installCommand =
+    "curl -fsSL https://software.cocalc.ai/software/cocalc-launchpad/install.sh | bash";
+
+  return (
+    <div style={{ display: "grid", gap: 24 }}>
+      <div style={GRID_STYLE}>
+        <PublicSectionCard>
+          <Title level={3} style={{ margin: 0 }}>
+            What CoCalc Launchpad is
+          </Title>
+          <Paragraph style={{ margin: 0 }}>
+            CoCalc Launchpad is the lightweight control-plane bundle for small
+            teams and self-hosted deployments. It is the clearest path when you
+            want a shared CoCalc environment that you operate yourself.
+          </Paragraph>
+          <Paragraph style={{ margin: 0 }}>
+            It is aimed at rapid iteration, small deployments, and productized
+            use of the same collaborative workspace model that powers the hosted
+            service.
+          </Paragraph>
+        </PublicSectionCard>
+        <PublicSectionCard>
+          <Title level={3} style={{ margin: 0 }}>
+            Install CoCalc Launchpad
+          </Title>
+          <Paragraph style={{ margin: 0 }}>
+            Copy and run this in your terminal:
+          </Paragraph>
+          <CodeCommand value={installCommand} />
+          <Flex wrap gap={12}>
+            <CopyCommandButton value={installCommand} />
+            <Button href="https://software.cocalc.ai/software/cocalc-launchpad/install.sh">
+              Open install script
+            </Button>
+            <Button href="https://software.cocalc.ai/software/cocalc-launchpad/index.html">
+              Open software page
+            </Button>
+          </Flex>
+          <Paragraph style={{ margin: 0 }}>
+            Current supported targets are Linux on x64 or arm64, and macOS on
+            arm64.
+          </Paragraph>
+        </PublicSectionCard>
+        <PublicSectionCard>
+          <Title level={3} style={{ margin: 0 }}>
+            What the installer does
+          </Title>
+          <Paragraph style={{ margin: 0 }}>
+            The installer downloads the platform-specific manifest, verifies the
+            corresponding Launchpad artifact, installs it into a user-owned
+            directory, and adds a launcher to your PATH if needed.
+          </Paragraph>
+          <Paragraph style={{ margin: 0 }}>
+            On Linux this lives under
+            <code> ~/.local/share/cocalc-launchpad</code>, and on macOS under
+            <code> ~/Library/Application Support/cocalc-launchpad</code>.
+          </Paragraph>
+        </PublicSectionCard>
+      </div>
+      <PublicSectionCard>
+        <Title level={3} style={{ margin: 0 }}>
+          Choose Launchpad or CoCalc Plus
+        </Title>
+        <Paragraph style={{ margin: 0 }}>
+          Choose CoCalc Plus for a local single-user install. Choose Launchpad
+          when you want a shared deployment for a small team or an operator-run
+          instance with the same overall workspace model.
+        </Paragraph>
+        <Flex wrap gap={12}>
+          <LinkButton href={contentPath("software/cocalc-plus")}>
+            Compare with CoCalc Plus
+          </LinkButton>
+          <LinkButton href={appPath("features/api")}>HTTP API</LinkButton>
+        </Flex>
+      </PublicSectionCard>
+    </div>
   );
 }
 
@@ -412,6 +630,45 @@ function AboutHome({
             {helpEmail ? (
               <LinkButton href={`mailto:${helpEmail}`}>{helpEmail}</LinkButton>
             ) : null}
+          </div>
+        </PublicSectionCard>
+        <PublicSectionCard>
+          <Title level={3} style={{ margin: 0 }}>
+            Documentation
+          </Title>
+          <Paragraph style={{ margin: 0 }}>
+            Browse the CoCalc manual, teaching guide, API docs, and admin
+            references.
+          </Paragraph>
+          <div style={{ display: "grid", gap: "8px" }}>
+            <LinkButton href={appPath("support")}>Open support</LinkButton>
+            <LinkButton href="https://doc.cocalc.com/">Read docs</LinkButton>
+          </div>
+        </PublicSectionCard>
+        <PublicSectionCard>
+          <Title level={3} style={{ margin: 0 }}>
+            System status
+          </Title>
+          <Paragraph style={{ margin: 0 }}>
+            See current activity and high-level usage metrics for {siteName}.
+          </Paragraph>
+          <div>
+            <LinkButton href={contentPath("about/status")}>
+              Open status
+            </LinkButton>
+          </div>
+        </PublicSectionCard>
+        <PublicSectionCard>
+          <Title level={3} style={{ margin: 0 }}>
+            Ways to run CoCalc
+          </Title>
+          <Paragraph style={{ margin: 0 }}>
+            Compare hosted CoCalc, CoCalc Plus, and CoCalc Launchpad.
+          </Paragraph>
+          <div>
+            <LinkButton href={contentPath("software")}>
+              Open software
+            </LinkButton>
           </div>
         </PublicSectionCard>
       </div>
@@ -570,6 +827,107 @@ function AboutTeamMemberPage({ slug }: { slug?: string }) {
   );
 }
 
+function historicCount(
+  counts: HistoricCounts | undefined,
+  key: keyof HistoricCounts,
+): number {
+  const value = counts?.[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function StatusMetricCard({
+  detail,
+  title,
+  value,
+}: {
+  detail: string;
+  title: string;
+  value: string;
+}) {
+  return (
+    <PublicSectionCard>
+      <div style={{ ...MUTED_STYLE, fontSize: "13px", fontWeight: 700 }}>
+        {title}
+      </div>
+      <div style={{ fontSize: "2rem", fontWeight: 700, lineHeight: 1.1 }}>
+        {value}
+      </div>
+      <Paragraph style={{ margin: 0 }}>{detail}</Paragraph>
+    </PublicSectionCard>
+  );
+}
+
+function AboutStatusPage({ siteName }: { siteName: string }) {
+  const [loading, setLoading] = useState(true);
+  const [payload, setPayload] = useState<StatsPayload>({});
+
+  useEffect(() => {
+    let canceled = false;
+    void fetchJson<StatsPayload>(joinUrlPath(appBasePath, "stats"))
+      .then((value) => {
+        if (!canceled) setPayload(value ?? {});
+      })
+      .finally(() => {
+        if (!canceled) setLoading(false);
+      });
+    return () => {
+      canceled = true;
+    };
+  }, []);
+
+  if (loading) {
+    return <LoadingCard label="Loading system status…" />;
+  }
+
+  if (payload.error) {
+    return <EmptyCard label={`Status unavailable: ${payload.error}`} />;
+  }
+
+  const connectedClients = (payload.hub_servers ?? []).reduce(
+    (sum, server) => sum + (server.clients ?? 0),
+    0,
+  );
+
+  return (
+    <div style={{ display: "grid", gap: 24 }}>
+      <PublicSectionCard>
+        <Title level={3} style={{ margin: 0 }}>
+          Live activity snapshot
+        </Title>
+        <Paragraph style={{ margin: 0 }}>
+          This is the current high-level activity view for {siteName}. It is
+          intended as a public system monitor rather than a full admin console.
+        </Paragraph>
+        <Paragraph style={{ margin: 0 }}>
+          Last updated: {formatDateTime(payload.time)}
+        </Paragraph>
+      </PublicSectionCard>
+      <div style={GRID_STYLE}>
+        <StatusMetricCard
+          title="Accounts"
+          value={`${payload.accounts ?? 0}`}
+          detail={`Active in 5 minutes: ${historicCount(payload.accounts_active, "5min")} · Active in 1 day: ${historicCount(payload.accounts_active, "1d")}`}
+        />
+        <StatusMetricCard
+          title="Projects"
+          value={`${payload.projects ?? 0}`}
+          detail={`Edited in 5 minutes: ${historicCount(payload.projects_edited, "5min")} · Edited in 1 day: ${historicCount(payload.projects_edited, "1d")}`}
+        />
+        <StatusMetricCard
+          title="Running projects"
+          value={`${(payload.running_projects?.free ?? 0) + (payload.running_projects?.member ?? 0)}`}
+          detail={`Free: ${payload.running_projects?.free ?? 0} · Member: ${payload.running_projects?.member ?? 0}`}
+        />
+        <StatusMetricCard
+          title="Hub servers"
+          value={`${payload.hub_servers?.length ?? 0}`}
+          detail={`Connected browser sessions: ${connectedClients}`}
+        />
+      </div>
+    </div>
+  );
+}
+
 function EventList({ items }: { items: NewsItem[] }) {
   if (items.length === 0) {
     return <EmptyCard label="No events found." />;
@@ -644,83 +1002,78 @@ function AboutEventsPage() {
 }
 
 function PoliciesHome({ config }: { config: ContentConfig }) {
-  const items = config.on_cocalc_com
-    ? [
-        {
-          description: "The terms governing use of CoCalc.",
-          href: "/policies/terms",
-          title: "Terms of service",
-        },
-        {
-          description: "Compliance and operational security information.",
-          href: "/policies/trust",
-          title: "Trust",
-        },
-        {
-          description: "How copyright complaints and notices are handled.",
-          href: "/policies/copyright",
-          title: "Copyright policy",
-        },
-        {
-          description: "How user data is handled and protected.",
-          href: "/policies/privacy",
-          title: "Privacy",
-        },
-        {
-          description: "The third-party services involved in operating CoCalc.",
-          href: "/policies/thirdparties",
-          title: "Third parties",
-        },
-        {
-          description: "Our FERPA compliance statement for educational use.",
-          href: "/policies/ferpa",
-          title: "FERPA compliance",
-        },
-        {
-          description: "Accessibility and VPAT information.",
-          href: "/policies/accessibility",
-          title: "Accessibility",
-        },
-        {
-          description: "Enterprise and institutional agreement overview.",
-          href: "/policies/enterprise-terms",
-          title: "Enterprise terms",
-        },
-      ]
-    : [
-        ...(config.imprint
-          ? [
-              {
-                description: "Site-specific legal imprint information.",
-                href: contentPath("policies/imprint"),
-                title: "Imprint",
-              },
-            ]
-          : []),
-        ...(config.policies
-          ? [
-              {
-                description:
-                  "Site-specific policy information configured by admins.",
-                href: contentPath("policies/policies"),
-                title: "Policies",
-              },
-            ]
-          : []),
-      ];
-
-  if (items.length === 0) {
-    return (
-      <PublicSectionCard>
-        <Title level={3} style={{ margin: 0 }}>
-          No public policies configured
-        </Title>
-        <Paragraph style={{ margin: 0 }}>
-          This deployment has not exposed any public policy pages yet.
-        </Paragraph>
-      </PublicSectionCard>
-    );
+  const externalUrl = getExternalPoliciesUrl(config);
+  if (!arePoliciesVisible(config) || externalUrl) {
+    return <PolicyGateCard config={config} />;
   }
+
+  const items = [
+    {
+      description: "The Terms of Service govern use of CoCalc.",
+      href: contentPath("policies/terms"),
+      title: "Terms of service",
+    },
+    {
+      description:
+        "The Trust page highlights our compliance with laws and frameworks, such as GDPR and SOC 2. We adhere to rigorous standards to protect your data and maintain transparency and accountability in all our operations.",
+      href: contentPath("policies/trust"),
+      title: "Trust",
+    },
+    {
+      description:
+        "The Copyright Policy explains how SageMath, Inc. respects copyright policies, and provides a site that does not infringe on others' copyright.",
+      href: contentPath("policies/copyright"),
+      title: "Copyright policies",
+    },
+    {
+      description:
+        "The Privacy Policy describes how SageMath, Inc. respects the privacy of its users.",
+      href: contentPath("policies/privacy"),
+      title: "Privacy",
+    },
+    {
+      description:
+        "Our List of third parties enumerates what is used to provide CoCalc.",
+      href: contentPath("policies/thirdparties"),
+      title: "Third parties",
+    },
+    {
+      description:
+        "CoCalc's FERPA Compliance statement explains how we address FERPA requirements at US educational instituations.",
+      href: contentPath("policies/ferpa"),
+      title: "FERPA compliance statement",
+    },
+    {
+      description:
+        "CoCalc's Voluntary Product Accessibility Template (VPAT) describes how we address accessibility issues.",
+      href: contentPath("policies/accessibility"),
+      title: "Accessibility",
+    },
+    {
+      description: "Enterprise and institutional agreement overview.",
+      href: contentPath("policies/enterprise-terms"),
+      title: "Enterprise terms",
+    },
+    ...(config.imprint
+      ? [
+          {
+            description: "Site-specific legal imprint information.",
+            href: contentPath("policies/imprint"),
+            title: "Imprint",
+          },
+        ]
+      : []),
+    ...(config.policies
+      ? [
+          {
+            description:
+              "Site-specific policy information configured by admins.",
+            href: contentPath("policies/policies"),
+            title: "Policies",
+          },
+        ]
+      : []),
+  ];
 
   return (
     <div style={GRID_STYLE}>
@@ -740,12 +1093,17 @@ function PoliciesHome({ config }: { config: ContentConfig }) {
 }
 
 function PoliciesDetailPage({
+  config,
   markdown,
   title,
 }: {
+  config?: ContentConfig;
   markdown?: string;
   title: string;
 }) {
+  if (!arePoliciesVisible(config) || getExternalPoliciesUrl(config)) {
+    return <PolicyGateCard config={config} />;
+  }
   if (!markdown) {
     return (
       <EmptyCard label={`No ${title.toLowerCase()} content configured.`} />
@@ -762,8 +1120,12 @@ function PoliciesDetailPage({
 }
 
 function StructuredPolicyPage({ slug }: { slug?: string }) {
+  if (getExactPolicyPage(slug) != null) {
+    return <ExactPolicyPage slug={slug} />;
+  }
+
   const page = getPolicyPage(slug);
-  if (!page) {
+  if (page == null) {
     return <EmptyCard label="This policy page was not found." />;
   }
 
@@ -1065,6 +1427,19 @@ export default function PublicContentApp({
     );
   }
 
+  if (initialRoute.view === "about-status") {
+    return (
+      <PageShell
+        config={config}
+        route={initialRoute}
+        subtitle={`Live activity and current usage metrics for ${siteName}.`}
+        title={title}
+      >
+        <AboutStatusPage siteName={siteName} />
+      </PageShell>
+    );
+  }
+
   if (initialRoute.view === "policies-imprint") {
     return (
       <PageShell
@@ -1073,7 +1448,11 @@ export default function PublicContentApp({
         subtitle="Deployment-specific imprint information."
         title={title}
       >
-        <PoliciesDetailPage markdown={config?.imprint} title="Imprint" />
+        <PoliciesDetailPage
+          config={config}
+          markdown={config?.imprint}
+          title="Imprint"
+        />
       </PageShell>
     );
   }
@@ -1086,7 +1465,11 @@ export default function PublicContentApp({
         subtitle="Deployment-specific policy information configured by admins."
         title={title}
       >
-        <PoliciesDetailPage markdown={config?.policies} title="Policies" />
+        <PoliciesDetailPage
+          config={config}
+          markdown={config?.policies}
+          title="Policies"
+        />
       </PageShell>
     );
   }
@@ -1112,7 +1495,11 @@ export default function PublicContentApp({
         subtitle="Public legal and compliance information for this deployment."
         title={title}
       >
-        <StructuredPolicyPage slug={initialRoute.policySlug} />
+        {!arePoliciesVisible(config) || getExternalPoliciesUrl(config) ? (
+          <PolicyGateCard config={config} />
+        ) : (
+          <StructuredPolicyPage slug={initialRoute.policySlug} />
+        )}
       </PageShell>
     );
   }
@@ -1155,6 +1542,32 @@ export default function PublicContentApp({
         title={title}
       >
         <CocalcPlusPage />
+      </PageShell>
+    );
+  }
+
+  if (initialRoute.view === "software-cocalc-launchpad") {
+    return (
+      <PageShell
+        config={config}
+        route={initialRoute}
+        subtitle="The lightweight self-hosted control-plane bundle for small teams."
+        title={title}
+      >
+        <CocalcLaunchpadPage />
+      </PageShell>
+    );
+  }
+
+  if (initialRoute.view === "software") {
+    return (
+      <PageShell
+        config={config}
+        route={initialRoute}
+        subtitle="Hosted, local, and self-hosted ways to run CoCalc."
+        title={title}
+      >
+        <SoftwareOverviewPage />
       </PageShell>
     );
   }
