@@ -345,6 +345,24 @@ These are storage details and should not be part of the RootFS product story.
 - scan metadata
 - upgrade / rollback workflow
 
+### Publish progress UX
+
+RootFS publish/save should reuse the same kind of rustic progress reporting that
+project backups already expose.
+
+Specifically:
+
+- parse rustic progress output into structured progress events,
+- surface bytes processed, total bytes when known, transfer speed, and ETA,
+- show phase-level progress in the RootFS save/publish modal and operation
+  timeline,
+- avoid a "blind spinner" save experience when the host is backing up a large
+  image.
+
+This is an important product requirement because RootFS image creation is
+long-running and users benefit from the same reassurance we already provide for
+project backups.
+
 ### Admin/debug only
 
 If needed, admin views can show:
