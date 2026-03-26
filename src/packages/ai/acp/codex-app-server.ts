@@ -85,6 +85,7 @@ type SpawnedCodexAppServer = {
   containerPathMap?: CodexProjectContainerPathMap;
   appServerLogin?: CodexAppServerLoginHint;
   handleAppServerRequest?: CodexAppServerRequestHandler;
+  runtimeEnv?: Record<string, string>;
 };
 
 type RpcResponse = {
@@ -757,6 +758,12 @@ export class CodexAppServerAgent implements AcpAgent {
       cwd,
       env: runtimeEnv,
     });
+    const turnEnv = Object.fromEntries(
+      Object.entries({
+        ...runtimeEnv,
+        ...(spawned.runtimeEnv ?? {}),
+      }).filter(([, value]) => typeof value === "string" && !!`${value}`),
+    ) as Record<string, string>;
     const client = new AppServerClient(
       spawned.proc,
       spawned.handleAppServerRequest,
@@ -945,7 +952,8 @@ export class CodexAppServerAgent implements AcpAgent {
         cwd,
         model: config?.model ?? this.opts.model,
         effort: toReasoningEffort(config),
-        input: buildTurnStartInput(request, prompt, runtimeEnv),
+        env: Object.keys(turnEnv).length > 0 ? turnEnv : undefined,
+        input: buildTurnStartInput(request, prompt, turnEnv),
       });
 
       turnId = turnStart?.turn?.id;

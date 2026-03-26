@@ -59,6 +59,7 @@ export type CodexProjectSpawner = {
     containerPathMap?: CodexProjectContainerPathMap;
     appServerLogin?: CodexAppServerLoginHint;
     handleAppServerRequest?: CodexAppServerRequestHandler;
+    runtimeEnv?: Record<string, string>;
   }>;
 };
 

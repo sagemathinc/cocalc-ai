@@ -354,6 +354,89 @@ describe("CodexAppServerAgent", () => {
     ]);
   });
 
+  it("passes merged runtime env to turn/start and prompt guidance", async () => {
+    let turnStartParams: any;
+    const proc = new FakeCodexAppServerProc((fake, message) => {
+      switch (message.method) {
+        case "initialize":
+          fake.sendResponse(message.id, { ok: true });
+          break;
+        case "thread/start":
+          fake.sendResponse(message.id, {
+            thread: { id: "thr-runtime-env-1" },
+          });
+          break;
+        case "turn/start":
+          turnStartParams = message.params;
+          fake.sendResponse(message.id, {
+            turn: { id: "turn-runtime-env-1" },
+          });
+          setImmediate(() => {
+            fake.sendNotification("turn/started", {
+              turn: { id: "turn-runtime-env-1", status: "inProgress" },
+            });
+            fake.sendNotification("turn/completed", {
+              turn: { id: "turn-runtime-env-1", status: "completed" },
+            });
+          });
+          break;
+        default:
+          if (typeof message.id === "number") {
+            fake.sendResponse(message.id, {});
+          }
+      }
+    });
+
+    setCodexProjectSpawner({
+      spawnCodexExec: async () => {
+        throw new Error("unexpected codex exec spawn");
+      },
+      spawnCodexAppServer: async () => ({
+        proc: proc as any,
+        cmd: "fake-codex",
+        args: ["app-server"],
+        cwd: "/tmp/project",
+        runtimeEnv: {
+          COCALC_CLI_CMD: '"/root/.local/bin/cocalc"',
+          COCALC_CLI_BIN: "/root/.local/bin/cocalc",
+          COCALC_BEARER_TOKEN: "project-token",
+          COCALC_AGENT_TOKEN: "project-token",
+          PATH: "/root/.local/bin:/usr/bin",
+        },
+      }),
+    });
+
+    const agent = new CodexAppServerAgent();
+    await agent.evaluate({
+      project_id: "00000000-0000-4000-8000-000000000000",
+      account_id: "00000000-0000-4000-8000-000000000001",
+      prompt: "add a notebook cell",
+      runtime_env: {
+        COCALC_PROJECT_ID: "00000000-0000-4000-8000-000000000000",
+        COCALC_BROWSER_ID: "browser-1",
+        COCALC_API_URL: "https://lite3.cocalc.ai",
+      },
+      stream: async () => {},
+      config: {
+        workingDirectory: "/tmp/project",
+      } as any,
+    });
+
+    expect(turnStartParams?.env).toMatchObject({
+      COCALC_PROJECT_ID: "00000000-0000-4000-8000-000000000000",
+      COCALC_BROWSER_ID: "browser-1",
+      COCALC_API_URL: "https://lite3.cocalc.ai",
+      COCALC_CLI_CMD: '"/root/.local/bin/cocalc"',
+      COCALC_CLI_BIN: "/root/.local/bin/cocalc",
+      COCALC_BEARER_TOKEN: "project-token",
+      COCALC_AGENT_TOKEN: "project-token",
+      PATH: "/root/.local/bin:/usr/bin",
+    });
+    expect(turnStartParams?.input?.[0]?.text).toContain(
+      'When you need the CoCalc CLI, use this exact command: `"/root/.local/bin/cocalc"`.',
+    );
+  });
+
   it("answers server auth-refresh requests during a turn", async () => {
     const refreshResponses: any[] = [];
     const proc = new FakeCodexAppServerProc((fake, message) => {
