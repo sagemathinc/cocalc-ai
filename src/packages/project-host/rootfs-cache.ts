@@ -6,6 +6,7 @@
 import { spawn } from "node:child_process";
 import { createReadStream, createWriteStream } from "node:fs";
 import {
+  access as fsAccess,
   mkdir,
   mkdtemp,
   open,
@@ -192,43 +193,119 @@ async function btrfsReceiveFromFile({
   await Promise.all([pipePromise, exitPromise]);
 }
 
-async function moveIntoRootfsCache({
-  src,
-  dest,
-}: {
-  src: string;
-  dest: string;
-}): Promise<void> {
-  const result = await executeCode({
-    command: "sudo",
-    args: ["-n", STORAGE_WRAPPER, "mv", src, dest],
-    timeout: 120,
-    err_on_exit: false,
-  });
-  if (result.exit_code !== 0) {
-    throw new Error(
-      `moving managed RootFS cache entry failed: ${result.stderr || result.stdout || `exit ${result.exit_code}`}`,
-    );
+async function receivedUuid(path: string): Promise<string | undefined> {
+  if (!(await exists(path)) || !(await isBtrfsSubvolume(path))) {
+    return undefined;
   }
+  const { stdout } = await btrfs({
+    args: ["subvolume", "show", path],
+    err_on_exit: true,
+    verbose: false,
+  });
+  const match = `${stdout}`.match(/^\s*Received UUID:\s*(.+)$/m);
+  const value = match?.[1]?.trim();
+  return value && value !== "-" ? value : undefined;
 }
 
-async function finalizeReceivedManagedRootfs({
-  receivedPath,
-  finalPath,
-}: {
-  receivedPath: string;
-  finalPath: string;
-}): Promise<void> {
-  if (await isBtrfsSubvolume(receivedPath)) {
-    await btrfs({
-      args: ["subvolume", "snapshot", "-r", receivedPath, finalPath],
-      err_on_exit: true,
-      verbose: false,
+async function looksLikeUsableManagedRootfs(path: string): Promise<boolean> {
+  for (const candidate of ["usr", "etc", "bin", "lib", "lib64"]) {
+    try {
+      await fsAccess(join(path, candidate));
+      return true;
+    } catch {
+      // try next marker
+    }
+  }
+  return false;
+}
+
+async function cleanupManagedRootfsTempDir(tempDir: string): Promise<void> {
+  const receiveRoot = join(tempDir, "receive");
+  if (await exists(receiveRoot)) {
+    for (const entry of await readdir(receiveRoot, { withFileTypes: true })) {
+      await deleteCachedRootfsPath(join(receiveRoot, entry.name)).catch(
+        (err) => {
+          logger.warn("unable to delete managed RootFS receive entry", {
+            temp_dir: tempDir,
+            entry: entry.name,
+            err: `${err}`,
+          });
+        },
+      );
+    }
+  }
+  await rm(tempDir, { recursive: true, force: true, maxRetries: 3 }).catch(
+    (err) => {
+      logger.warn("unable to remove managed RootFS temp dir", {
+        temp_dir: tempDir,
+        err: `${err}`,
+      });
+    },
+  );
+}
+
+async function findManagedRootfsReceiveTemps(image: string): Promise<string[]> {
+  if (!(await exists(IMAGE_CACHE))) {
+    return [];
+  }
+  const encoded = encodeURIComponent(image);
+  const candidates: Array<{ tempDir: string; mtimeMs: number }> = [];
+  for (const entry of await readdir(IMAGE_CACHE, { withFileTypes: true })) {
+    if (
+      !entry.isDirectory() ||
+      !entry.name.startsWith(".managed-rootfs-receive-")
+    ) {
+      continue;
+    }
+    const tempDir = join(IMAGE_CACHE, entry.name);
+    const receivedPath = join(tempDir, "receive", encoded);
+    if (!(await exists(receivedPath))) {
+      continue;
+    }
+    const stats = await stat(receivedPath).catch(() => undefined);
+    candidates.push({
+      tempDir,
+      mtimeMs: stats?.mtimeMs ?? 0,
     });
-    await deleteCachedRootfsPath(receivedPath);
+  }
+  candidates.sort((a, b) => b.mtimeMs - a.mtimeMs);
+  return candidates.map(({ tempDir }) => tempDir);
+}
+
+async function deleteCachedManagedRootfs({
+  image,
+  reason,
+}: {
+  image: string;
+  reason: string;
+}): Promise<void> {
+  const finalPath = imageCachePath(image);
+  const finalInspectPath = inspectFilePath(image);
+  logger.warn("removing cached managed RootFS entry", {
+    image,
+    reason,
+    cache_path: finalPath,
+  });
+  await deleteCachedRootfsPath(finalPath).catch(() => {});
+  await rm(finalInspectPath, { force: true }).catch(() => {});
+}
+
+async function ensureIncrementalParentCacheReady(image: string): Promise<void> {
+  const path = imageCachePath(image);
+  if (!(await exists(path))) {
+    await downloadManagedRootfsArtifact({ image });
     return;
   }
-  await moveIntoRootfsCache({ src: receivedPath, dest: finalPath });
+  const parentReceivedUuid = await receivedUuid(path).catch(() => undefined);
+  if (parentReceivedUuid) {
+    return;
+  }
+  await deleteCachedManagedRootfs({
+    image,
+    reason:
+      "cached parent is missing Btrfs received UUID required for incremental receive",
+  });
+  await downloadManagedRootfsArtifact({ image });
 }
 
 async function downloadManagedRootfsArtifact({
@@ -251,28 +328,43 @@ async function downloadManagedRootfsArtifact({
   const finalPath = imageCachePath(image);
   const finalInspectPath = inspectFilePath(image);
   if (await exists(finalPath)) {
-    logger.info("managed RootFS artifact already cached", {
+    const usable = await looksLikeUsableManagedRootfs(finalPath).catch(
+      () => false,
+    );
+    if (!usable) {
+      await deleteCachedManagedRootfs({
+        image,
+        reason: "cached image is missing expected rootfs directories",
+      });
+    } else {
+      logger.info("managed RootFS artifact already cached", {
+        image,
+        release_id: access.release_id,
+        content_key: access.content_key,
+      });
+      if (access.inspect_data && !(await exists(finalInspectPath))) {
+        await writeFile(finalInspectPath, JSON.stringify(access.inspect_data));
+      }
+      return;
+    }
+  }
+  for (const tempDir of await findManagedRootfsReceiveTemps(image)) {
+    logger.warn("removing stale managed RootFS receive temp dir", {
       image,
       release_id: access.release_id,
       content_key: access.content_key,
+      temp_dir: tempDir,
     });
-    if (access.inspect_data && !(await exists(finalInspectPath))) {
-      await writeFile(finalInspectPath, JSON.stringify(access.inspect_data));
-    }
-    return;
+    await cleanupManagedRootfsTempDir(tempDir);
   }
   if (access.parent_image?.trim()) {
     const parentImage = access.parent_image.trim();
-    if (!(await exists(imageCachePath(parentImage)))) {
-      await downloadManagedRootfsArtifact({ image: parentImage });
-    }
+    await ensureIncrementalParentCacheReady(parentImage);
   }
 
   await mkdir(IMAGE_CACHE, { recursive: true });
   const tempDir = await mkdtemp(join(IMAGE_CACHE, ".managed-rootfs-receive-"));
   const artifactPath = join(tempDir, "release.btrfs");
-  const receiveRoot = join(tempDir, "receive");
-  await mkdir(receiveRoot, { recursive: true });
 
   try {
     const downloadStarted = Date.now();
@@ -316,37 +408,40 @@ async function downloadManagedRootfsArtifact({
       elapsed_ms: Date.now() - downloadStarted,
     });
     const receiveStarted = Date.now();
-    await btrfsReceiveFromFile({
-      artifactPath,
-      destDir: receiveRoot,
-    });
-    logger.info("received managed RootFS artifact", {
-      image,
-      release_id: access.release_id,
-      content_key: access.content_key,
-      elapsed_ms: Date.now() - receiveStarted,
-    });
-
-    const receivedPath = join(receiveRoot, encodeURIComponent(image));
-    if (!(await exists(receivedPath))) {
-      throw new Error(`received RootFS image '${image}' was not created`);
+    try {
+      await btrfsReceiveFromFile({
+        artifactPath,
+        destDir: IMAGE_CACHE,
+      });
+      logger.info("received managed RootFS artifact", {
+        image,
+        release_id: access.release_id,
+        content_key: access.content_key,
+        elapsed_ms: Date.now() - receiveStarted,
+      });
+      if (!(await exists(finalPath))) {
+        throw new Error(`received RootFS image '${image}' was not created`);
+      }
+      if (access.inspect_data) {
+        await writeFile(finalInspectPath, JSON.stringify(access.inspect_data));
+      }
+      logger.info("cached managed RootFS artifact", {
+        image,
+        release_id: access.release_id,
+        content_key: access.content_key,
+        total_elapsed_ms: Date.now() - started,
+      });
+    } catch (err) {
+      if (await exists(finalPath)) {
+        await deleteCachedManagedRootfs({
+          image,
+          reason: `failed while receiving managed artifact: ${err}`,
+        });
+      }
+      throw err;
     }
-    const snapshotStarted = Date.now();
-    await finalizeReceivedManagedRootfs({ receivedPath, finalPath });
-    if (access.inspect_data) {
-      await writeFile(finalInspectPath, JSON.stringify(access.inspect_data));
-    }
-    logger.info("cached managed RootFS artifact", {
-      image,
-      release_id: access.release_id,
-      content_key: access.content_key,
-      snapshot_elapsed_ms: Date.now() - snapshotStarted,
-      total_elapsed_ms: Date.now() - started,
-    });
   } finally {
-    await rm(tempDir, { recursive: true, force: true, maxRetries: 3 }).catch(
-      () => {},
-    );
+    await cleanupManagedRootfsTempDir(tempDir);
   }
 }
 

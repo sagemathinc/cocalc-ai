@@ -381,8 +381,20 @@ async function startNewProject(
       await project.start({ account_id });
     }
   } catch (err) {
-    log.debug(`WARNING: problem starting new project -- ${err}`, {
+    log.warn(`problem starting new project -- ${err}`, {
       project_id,
     });
+    try {
+      await project.saveStateToDatabase({
+        state: "opened",
+        error: `${err}`,
+        time: new Date(),
+      });
+    } catch (stateErr) {
+      log.warn("failed to reset project state after startNewProject error", {
+        project_id,
+        err: `${stateErr}`,
+      });
+    }
   }
 }
