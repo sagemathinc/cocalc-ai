@@ -168,14 +168,19 @@ export const SPEC = {
     pathInArchive: () => `ouch-${getOS()}/${SPEC.ouch.binary}`,
   },
   rustic: {
-    // See https://github.com/rustic-rs/rustic/releases
-    VERSION: "v0.11.0",
+    // See https://github.com/sagemathinc/rustic/releases
+    VERSION: "0.11.1",
     getVersion: "rustic --version",
-    BASE: "https://github.com/rustic-rs/rustic/releases/download",
+    BASE: "https://github.com/sagemathinc/rustic/releases/download/v0.11.1",
     binary: "rustic",
     path: join(binPath, "rustic"),
+    platforms: ["linux"],
     stripComponents: 0,
     pathInArchive: () => "rustic",
+    url: () => {
+      const archName = effectiveArch() === "x64" ? "x86_64" : "arm64";
+      return `${SPEC.rustic.BASE}/rustic-v${SPEC.rustic.VERSION}-linux-${archName}.tar.gz`;
+    },
   },
   restServer: {
     // See https://github.com/restic/rest-server/releases
