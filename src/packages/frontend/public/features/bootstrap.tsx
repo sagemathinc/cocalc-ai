@@ -13,6 +13,7 @@ import { getFeaturesRouteFromPath } from "./routes";
 interface CustomizePayload {
   configuration?: {
     help_email?: string;
+    is_authenticated?: boolean;
     site_name?: string;
   };
 }

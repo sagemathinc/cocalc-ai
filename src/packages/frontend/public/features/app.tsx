@@ -7,23 +7,39 @@ import { useEffect } from "react";
 
 import { Button, Col, Empty, Flex, Row, Tag, Typography } from "antd";
 
-import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import {
   PublicHero,
   PublicPageRoot,
   PublicSectionCard,
 } from "@cocalc/frontend/public/ui/shell";
+import PublicTopNav from "@cocalc/frontend/public/ui/top-nav";
 import { SITE_NAME } from "@cocalc/util/theme";
-import { joinUrlPath } from "@cocalc/util/url-path";
+import AIFeaturePage from "./ai-page";
+import ApiFeaturePage from "./api-page";
 import { getFeatureIndexPages, getFeaturePage } from "./catalog";
+import CompareFeaturePage from "./compare-page";
 import JupyterNotebookFeaturePage from "./jupyter-notebook-page";
+import JuliaFeaturePage from "./julia-page";
+import LatexEditorFeaturePage from "./latex-editor-page";
+import LinuxFeaturePage from "./linux-page";
+import OctaveFeaturePage from "./octave-page";
+import { FeatureImage, featureAppPath as appPath } from "./page-components";
+import RStatisticalSoftwareFeaturePage from "./r-statistical-software-page";
 import type { PublicFeaturesRoute } from "./routes";
 import { featurePath } from "./routes";
+import SageFeaturePage from "./sage-page";
+import PythonFeaturePage from "./python-page";
+import SlidesFeaturePage from "./slides-page";
+import TeachingFeaturePage from "./teaching-page";
+import TerminalFeaturePage from "./terminal-page";
+import WhiteboardFeaturePage from "./whiteboard-page";
+import X11FeaturePage from "./x11-page";
 
 const { Paragraph, Text, Title } = Typography;
 
 interface FeaturesConfig {
   help_email?: string;
+  is_authenticated?: boolean;
   site_name?: string;
 }
 
@@ -32,9 +48,32 @@ interface PublicFeaturesAppProps {
   initialRoute: PublicFeaturesRoute;
 }
 
-function appPath(path: string): string {
-  return joinUrlPath(appBasePath, path);
-}
+const FEATURE_DETAIL_COMPONENTS = {
+  ai: AIFeaturePage,
+  api: ApiFeaturePage,
+  compare: CompareFeaturePage,
+  "jupyter-notebook": JupyterNotebookFeaturePage,
+  julia: JuliaFeaturePage,
+  "latex-editor": LatexEditorFeaturePage,
+  linux: LinuxFeaturePage,
+  octave: OctaveFeaturePage,
+  python: PythonFeaturePage,
+  "r-statistical-software": RStatisticalSoftwareFeaturePage,
+  sage: SageFeaturePage,
+  slides: SlidesFeaturePage,
+  teaching: TeachingFeaturePage,
+  terminal: TerminalFeaturePage,
+  whiteboard: WhiteboardFeaturePage,
+  x11: X11FeaturePage,
+} as const;
+
+const FEATURE_INDEX_PRIORITY = [
+  "ai",
+  "compare",
+  "jupyter-notebook",
+  "terminal",
+  "teaching",
+] as const;
 
 function titleForRoute(route: PublicFeaturesRoute, siteName: string): string {
   if (route.view === "detail" && route.slug) {
@@ -43,31 +82,88 @@ function titleForRoute(route: PublicFeaturesRoute, siteName: string): string {
   return `${siteName} features`;
 }
 
-function FeatureImage({ alt, src }: { alt: string; src?: string }) {
-  if (!src) return null;
-  return (
-    <img
-      src={src}
-      alt={alt}
-      style={{
-        width: "100%",
-        aspectRatio: "16 / 9",
-        objectFit: "cover",
-        borderRadius: 12,
-      }}
-    />
-  );
-}
-
 function FeaturesIndex({ siteName }: { siteName: string }) {
-  const pages = getFeatureIndexPages();
+  const priorities = new Map<string, number>(
+    FEATURE_INDEX_PRIORITY.map((slug, index) => [slug, index]),
+  );
+  const pages = getFeatureIndexPages()
+    .map((page, index) => ({ index, page }))
+    .sort((a, b) => {
+      const aPriority = priorities.get(a.page.slug);
+      const bPriority = priorities.get(b.page.slug);
+      if (aPriority != null || bPriority != null) {
+        return (aPriority ?? 100) - (bPriority ?? 100);
+      }
+      return a.index - b.index;
+    })
+    .map(({ page }) => page);
   return (
     <>
-      <Paragraph style={{ margin: "24px 0 0", maxWidth: "70ch" }}>
-        These pages are the standalone, Next-free public feature overviews for{" "}
-        {siteName}. The content stays lightweight for now, but the UI is back on
-        the AntD design system instead of ad hoc styling.
-      </Paragraph>
+      <PublicSectionCard>
+        <Paragraph style={{ margin: 0, maxWidth: "70ch" }}>
+          Explore the core capabilities of {siteName}, from collaborative
+          notebooks and terminals to AI-assisted workflows, teaching tools, and
+          technical writing. Each page highlights how these workflows connect to
+          the same projects, files, and collaboration features inside the main
+          app.
+        </Paragraph>
+        <Title level={3} style={{ margin: 0 }}>
+          The new direction is increasingly agent-first
+        </Title>
+        <Paragraph style={{ margin: 0 }}>
+          CoCalc still matters for notebooks, terminals, teaching, and technical
+          writing. The new CoCalc AI direction adds something more: coding
+          agents that work inside the same collaborative projects where the
+          files, notebooks, shells, and conversations already live.
+        </Paragraph>
+        <Paragraph style={{ margin: 0 }}>
+          That is a different model from bolting a generic chat box onto a
+          notebook product. It is about making agents useful for real technical
+          work, especially around Codex, inside the broader workspace.
+        </Paragraph>
+        <Flex wrap gap={12}>
+          <Button type="primary" href={featurePath("ai")}>
+            AI agents
+          </Button>
+          <Button href={featurePath("compare")}>Compare CoCalc</Button>
+        </Flex>
+      </PublicSectionCard>
+      <Row gutter={[16, 16]} style={{ marginTop: 8 }}>
+        <Col xs={24} md={8}>
+          <PublicSectionCard>
+            <Title level={4} style={{ margin: 0 }}>
+              Integrated technical projects
+            </Title>
+            <Paragraph style={{ margin: 0 }}>
+              Keep notebooks, Linux tools, documents, slides, and support in one
+              place instead of spreading work across separate services.
+            </Paragraph>
+          </PublicSectionCard>
+        </Col>
+        <Col xs={24} md={8}>
+          <PublicSectionCard>
+            <Title level={4} style={{ margin: 0 }}>
+              Agent-native workflows
+            </Title>
+            <Paragraph style={{ margin: 0 }}>
+              Use AI where the technical work is already happening, not only in
+              a detached prompt interface.
+            </Paragraph>
+          </PublicSectionCard>
+        </Col>
+        <Col xs={24} md={8}>
+          <PublicSectionCard>
+            <Title level={4} style={{ margin: 0 }}>
+              Teaching and deployment flexibility
+            </Title>
+            <Paragraph style={{ margin: 0 }}>
+              Support classes, research groups, and engineering teams, whether
+              you stay hosted or move to CoCalc Plus, Launchpad, or custom
+              deployment.
+            </Paragraph>
+          </PublicSectionCard>
+        </Col>
+      </Row>
       <Row gutter={[16, 16]} style={{ marginTop: 8 }}>
         {pages.map((page) => (
           <Col key={page.slug} xs={24} md={12} xl={8}>
@@ -118,8 +214,10 @@ function FeatureDetail({
     );
   }
 
-  if (slug === "jupyter-notebook") {
-    return <JupyterNotebookFeaturePage helpEmail={helpEmail} />;
+  const CustomPage =
+    FEATURE_DETAIL_COMPONENTS[slug as keyof typeof FEATURE_DETAIL_COMPONENTS];
+  if (CustomPage) {
+    return <CustomPage helpEmail={helpEmail} />;
   }
 
   return (
@@ -211,6 +309,11 @@ export default function PublicFeaturesApp({
 
   return (
     <PublicPageRoot>
+      <PublicTopNav
+        active="features"
+        isAuthenticated={!!config?.is_authenticated}
+        siteName={siteName}
+      />
       <PublicHero
         eyebrow="FEATURES"
         title={
@@ -221,7 +324,7 @@ export default function PublicFeaturesApp({
         subtitle={
           initialRoute.view === "detail" && initialRoute.slug
             ? getFeaturePage(initialRoute.slug)?.tagline
-            : "Standalone feature landing pages served without Next.js."
+            : "Standalone feature landing pages for the main CoCalc workflows."
         }
         actions={
           initialRoute.view === "detail" ? (

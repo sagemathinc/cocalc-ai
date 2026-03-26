@@ -45,7 +45,7 @@ export const FEATURE_PAGES: FeaturePage[] = [
         title: "Highlights",
         bullets: [
           "Real-time collaborative editing with visible cursors and shared kernel sessions",
-          "Built-in time travel and snapshot history for recovering earlier notebook states",
+          "Built-in TimeTravel and recovery tools for recovering earlier notebook states",
           "Course workflows for distributing, collecting, and grading notebook assignments",
           "Managed kernels with many languages and preinstalled scientific software",
         ],
@@ -242,18 +242,17 @@ export const FEATURE_PAGES: FeaturePage[] = [
   {
     slug: "icons",
     title: "Feature Assets",
-    tagline: "Internal asset page retained for compatibility.",
+    tagline: "Legacy asset references used by older public links.",
     summary:
-      "This route exists for compatibility during the Next.js migration.",
+      "This route is kept available so older links to feature assets still resolve cleanly.",
     index: false,
   },
   {
     slug: "i18n",
     title: "Internationalization",
-    tagline:
-      "Localization work remains available while the public site is migrated.",
+    tagline: "Localization and translation support across the public site.",
     summary:
-      "This route exists for compatibility during the Next.js migration.",
+      "CoCalc supports translated public pages and localized product interfaces.",
     index: false,
   },
 ];

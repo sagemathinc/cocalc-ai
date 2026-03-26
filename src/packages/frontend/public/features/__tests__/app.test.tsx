@@ -43,8 +43,23 @@ describe("PublicFeaturesApp", () => {
     expect(
       screen.getByRole("heading", { name: "Launchpad features" }),
     ).not.toBeNull();
+    expect(
+      screen.getByText("The new direction is increasingly agent-first"),
+    ).not.toBeNull();
     expect(screen.getByText("Jupyter Notebooks")).not.toBeNull();
     expect(screen.getByText("Linux Terminal")).not.toBeNull();
+  });
+
+  it("shows app links in the shared nav when authenticated", () => {
+    render(
+      <PublicFeaturesApp
+        config={{ is_authenticated: true, site_name: "Launchpad" }}
+        initialRoute={{ view: "index" }}
+      />,
+    );
+
+    expect(screen.getByRole("link", { name: "Projects" })).not.toBeNull();
+    expect(screen.getByRole("link", { name: "Settings" })).not.toBeNull();
   });
 
   it("renders a detail page", () => {
@@ -61,7 +76,9 @@ describe("PublicFeaturesApp", () => {
         level: 1,
       }),
     ).not.toBeNull();
-    expect(screen.getByText("Agent-native workflows")).not.toBeNull();
+    expect(
+      screen.getByText("Code, explain, and fix in context"),
+    ).not.toBeNull();
     expect(screen.getByText("Create account")).not.toBeNull();
   });
 
@@ -80,5 +97,146 @@ describe("PublicFeaturesApp", () => {
       screen.getByText("Managed kernels and practical compatibility"),
     ).not.toBeNull();
     expect(screen.getByText("Publishing notebooks")).not.toBeNull();
+  });
+
+  it("renders the richer terminal feature page", () => {
+    render(
+      <PublicFeaturesApp
+        config={{ help_email: "help@example.com", site_name: "Launchpad" }}
+        initialRoute={{ slug: "terminal", view: "detail" }}
+      />,
+    );
+
+    expect(
+      screen.getByText("A real Linux shell inside every project"),
+    ).not.toBeNull();
+    expect(
+      screen.getByText("Realtime collaboration in the shell"),
+    ).not.toBeNull();
+  });
+
+  it("renders the richer linux environment page", () => {
+    render(
+      <PublicFeaturesApp
+        config={{ help_email: "help@example.com", site_name: "Launchpad" }}
+        initialRoute={{ slug: "linux", view: "detail" }}
+      />,
+    );
+
+    expect(
+      screen.getByText(
+        "A browser-based Linux workspace for real technical projects",
+      ),
+    ).not.toBeNull();
+    expect(
+      screen.getByText("Learn and use Linux without risking your own machine"),
+    ).not.toBeNull();
+  });
+
+  it("renders the richer python feature page", () => {
+    render(
+      <PublicFeaturesApp
+        config={{ help_email: "help@example.com", site_name: "Launchpad" }}
+        initialRoute={{ slug: "python", view: "detail" }}
+      />,
+    );
+
+    expect(
+      screen.getByText(
+        "Run Python notebooks, scripts, and experiments in one shared environment",
+      ),
+    ).not.toBeNull();
+    expect(
+      screen.getByText("Zero-setup Python for technical work"),
+    ).not.toBeNull();
+  });
+
+  it("renders the richer whiteboard feature page", () => {
+    render(
+      <PublicFeaturesApp
+        config={{ help_email: "help@example.com", site_name: "Launchpad" }}
+        initialRoute={{ slug: "whiteboard", view: "detail" }}
+      />,
+    );
+
+    expect(
+      screen.getByText(
+        "An infinite collaborative canvas with code, math, and sketching",
+      ),
+    ).not.toBeNull();
+    expect(
+      screen.getByText("Built for interactive explanation"),
+    ).not.toBeNull();
+  });
+
+  it.each([
+    {
+      slug: "sage",
+      title: "Use SageMath online in the environment built by the same team",
+      section: "Why SageMath fits naturally in CoCalc",
+    },
+    {
+      slug: "julia",
+      title: "Use Julia in notebooks, terminals, and project workflows",
+      section: "Multiple ways to work with Julia",
+    },
+    {
+      slug: "r-statistical-software",
+      title:
+        "Use R in notebooks, terminals, and reproducible document workflows",
+      section: "Zero-setup R for teaching and analysis",
+    },
+    {
+      slug: "octave",
+      title:
+        "Run Octave online in notebooks, terminals, or a graphical desktop",
+      section: "Flexible Octave workflows",
+    },
+    {
+      slug: "x11",
+      title: "Run graphical Linux applications remotely in the browser",
+      section: "Why X11 matters",
+    },
+  ])(
+    "renders the richer $slug feature page",
+    ({
+      section,
+      slug,
+      title,
+    }: {
+      section: string;
+      slug: string;
+      title: string;
+    }) => {
+      render(
+        <PublicFeaturesApp
+          config={{ help_email: "help@example.com", site_name: "Launchpad" }}
+          initialRoute={{ slug, view: "detail" }}
+        />,
+      );
+
+      expect(screen.getByText(title)).not.toBeNull();
+      expect(screen.getByText(section)).not.toBeNull();
+    },
+  );
+
+  it("renders the compare feature page", () => {
+    render(
+      <PublicFeaturesApp
+        config={{ help_email: "help@example.com", site_name: "Launchpad" }}
+        initialRoute={{ slug: "compare", view: "detail" }}
+      />,
+    );
+
+    expect(
+      screen.getByText("Compare CoCalc by workflow, not by one checkbox"),
+    ).not.toBeNull();
+    expect(screen.getByText("How CoCalc compares by category")).not.toBeNull();
+    expect(
+      screen.getByText("Google Colab and quick notebook hosts"),
+    ).not.toBeNull();
+    expect(
+      screen.getByText("AI agents now change the comparison"),
+    ).not.toBeNull();
   });
 });

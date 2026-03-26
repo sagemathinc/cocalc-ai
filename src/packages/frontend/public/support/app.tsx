@@ -14,17 +14,20 @@ import {
   PublicPageRoot,
   PublicSectionCard,
 } from "@cocalc/frontend/public/ui/shell";
+import PublicTopNav from "@cocalc/frontend/public/ui/top-nav";
 import { COLORS, HELP_EMAIL, SITE_NAME } from "@cocalc/util/theme";
 
 const { Paragraph } = Typography;
 
+const CommunityView = lazy(() => import("./community-view"));
 const SupportNew = lazy(() => import("./new-view"));
 const SupportTickets = lazy(() => import("./tickets-view"));
 
-type SupportView = "index" | "new" | "tickets";
+type SupportView = "index" | "new" | "tickets" | "community";
 
 interface SupportConfig {
   help_email?: string;
+  is_authenticated?: boolean;
   on_cocalc_com?: boolean;
   site_name?: string;
   support?: string;
@@ -44,12 +47,17 @@ function supportPath(view: SupportView): string {
       return `${base}/support/new`;
     case "tickets":
       return `${base}/support/tickets`;
+    case "community":
+      return `${base}/support/community`;
     default:
       return `${base}/support`;
   }
 }
 
 export function getSupportViewFromPath(pathname: string): SupportView {
+  if (pathname.includes("/support/community")) {
+    return "community";
+  }
   if (pathname.includes("/support/new")) {
     return "new";
   }
@@ -65,6 +73,8 @@ function titleForView(view: SupportView, siteName: string): string {
       return `Create a ${siteName} support ticket`;
     case "tickets":
       return `${siteName} support tickets`;
+    case "community":
+      return `${siteName} community support`;
     default:
       return `${siteName} support`;
   }
@@ -127,8 +137,8 @@ function SupportIndex({
   return (
     <div style={{ display: "grid", gap: 16 }}>
       <Paragraph style={{ fontSize: "16px", margin: 0 }}>
-        We provide direct support, documentation, and community channels. Use
-        the links below to open a ticket, review ticket status, or contact us.
+        We provide direct support, documentation, and contact options. Use the
+        links below to open a ticket, review ticket status, or contact us.
       </Paragraph>
       <div
         style={{
@@ -168,6 +178,14 @@ function SupportIndex({
             </a>
           </SupportCard>
         ) : null}
+        <SupportCard
+          description="Join discussions and public community channels."
+          title="Community"
+        >
+          <Button onClick={() => onNavigate("community")}>
+            Open community
+          </Button>
+        </SupportCard>
         <SupportCard
           description="Browse user and admin documentation."
           title="Documentation"
@@ -210,10 +228,15 @@ export default function PublicSupportApp({
 
   return (
     <PublicPageRoot>
+      <PublicTopNav
+        active="support"
+        isAuthenticated={!!config?.is_authenticated}
+        siteName={config?.site_name}
+      />
       <PublicHero
         eyebrow="SUPPORT"
         title={title}
-        subtitle="Direct support, Zendesk-backed tickets, and public help flows without Next.js."
+        subtitle="Direct support, Zendesk-backed tickets, and public help resources."
         actions={
           <Flex wrap gap={8}>
             <Button
@@ -222,17 +245,27 @@ export default function PublicSupportApp({
             >
               Support
             </Button>
+            {config.zendesk ? (
+              <Button
+                type={view === "new" ? "primary" : "default"}
+                onClick={() => navigate("new")}
+              >
+                New ticket
+              </Button>
+            ) : null}
+            {config.zendesk ? (
+              <Button
+                type={view === "tickets" ? "primary" : "default"}
+                onClick={() => navigate("tickets")}
+              >
+                My tickets
+              </Button>
+            ) : null}
             <Button
-              type={view === "new" ? "primary" : "default"}
-              onClick={() => navigate("new")}
+              type={view === "community" ? "primary" : "default"}
+              onClick={() => navigate("community")}
             >
-              New ticket
-            </Button>
-            <Button
-              type={view === "tickets" ? "primary" : "default"}
-              onClick={() => navigate("tickets")}
-            >
-              My tickets
+              Community
             </Button>
           </Flex>
         }
@@ -255,6 +288,15 @@ export default function PublicSupportApp({
             fallback={<PublicSectionCard>Loading tickets…</PublicSectionCard>}
           >
             <SupportTickets config={config} />
+          </Suspense>
+        ) : null}
+        {view === "community" ? (
+          <Suspense
+            fallback={
+              <PublicSectionCard>Loading community links…</PublicSectionCard>
+            }
+          >
+            <CommunityView />
           </Suspense>
         ) : null}
       </div>

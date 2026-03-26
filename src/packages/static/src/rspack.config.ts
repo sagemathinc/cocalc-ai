@@ -271,6 +271,12 @@ export default function getConfig({ middleware }: Options = {}): Configuration {
         ]),
         dependOn: "load",
       },
+      "public-lang": {
+        import: insertHotMiddlewareUrl([
+          resolve("dist-ts/src/webapp-public-lang.js"),
+        ]),
+        dependOn: "load",
+      },
       "public-features": {
         import: insertHotMiddlewareUrl([
           resolve("dist-ts/src/webapp-public-features.js"),

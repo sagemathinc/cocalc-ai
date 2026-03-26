@@ -4,7 +4,11 @@ import { render, screen } from "@testing-library/react";
 
 import type { NewsItem } from "@cocalc/util/types/news";
 import PublicContentApp from "../app";
-import { contentPath, getContentRouteFromPath } from "../routes";
+import {
+  contentPath,
+  getContentRouteFromPath,
+  isPublicContentTarget,
+} from "../routes";
 
 describe("getContentRouteFromPath", () => {
   it("supports deeper content routes under a base path", () => {
@@ -15,11 +19,21 @@ describe("getContentRouteFromPath", () => {
     expect(getContentRouteFromPath(contentPath("about/team"))).toEqual({
       view: "about-team",
     });
+    expect(
+      getContentRouteFromPath(contentPath("about/team/william-stein")),
+    ).toEqual({
+      teamSlug: "william-stein",
+      view: "about-team-member",
+    });
     expect(getContentRouteFromPath(contentPath("policies/imprint"))).toEqual({
       view: "policies-imprint",
     });
     expect(getContentRouteFromPath(contentPath("policies/policies"))).toEqual({
       view: "policies-custom",
+    });
+    expect(getContentRouteFromPath(contentPath("policies/privacy"))).toEqual({
+      policySlug: "privacy",
+      view: "policies-detail",
     });
     expect(
       getContentRouteFromPath(contentPath("news/launchpad-update-17")),
@@ -40,6 +54,12 @@ describe("getContentRouteFromPath", () => {
       getContentRouteFromPath(contentPath("software/cocalc-plus")),
     ).toEqual({ view: "software-cocalc-plus" });
   });
+
+  it("recognizes software routes when booting from a static content entry", () => {
+    expect(isPublicContentTarget("/software/cocalc-plus")).toBe(true);
+    expect(isPublicContentTarget("/base/software/cocalc-plus")).toBe(true);
+    expect(isPublicContentTarget("/features/jupyter-notebook")).toBe(false);
+  });
 });
 
 describe("PublicContentApp", () => {
@@ -57,6 +77,18 @@ describe("PublicContentApp", () => {
     expect(
       screen.getByText("See conference appearances and other public events."),
     ).not.toBeNull();
+  });
+
+  it("shows app links in the shared nav when authenticated", () => {
+    render(
+      <PublicContentApp
+        config={{ is_authenticated: true, site_name: "Launchpad" }}
+        initialRoute={{ view: "about" }}
+      />,
+    );
+
+    expect(screen.getByRole("link", { name: "Projects" })).not.toBeNull();
+    expect(screen.getByRole("link", { name: "Settings" })).not.toBeNull();
   });
 
   it("renders configured policy cards", () => {
@@ -89,6 +121,38 @@ describe("PublicContentApp", () => {
     ).not.toBeNull();
     expect(screen.getByText("William Stein")).not.toBeNull();
     expect(screen.getByText("Harald Schilly")).not.toBeNull();
+  });
+
+  it("renders an individual team profile", () => {
+    render(
+      <PublicContentApp
+        config={{ site_name: "Launchpad" }}
+        initialRoute={{ teamSlug: "william-stein", view: "about-team-member" }}
+      />,
+    );
+
+    expect(
+      screen.getByRole("heading", { name: "William Stein" }),
+    ).not.toBeNull();
+    expect(
+      screen.getByText("Chief Executive Officer and Founder of SageMath, Inc."),
+    ).not.toBeNull();
+    expect(screen.getByText("Experience")).not.toBeNull();
+    expect(screen.getByText("Personal website")).not.toBeNull();
+  });
+
+  it("renders a structured policy page", () => {
+    render(
+      <PublicContentApp
+        config={{ site_name: "Launchpad" }}
+        initialRoute={{ policySlug: "privacy", view: "policies-detail" }}
+      />,
+    );
+
+    expect(
+      screen.getByRole("heading", { name: "Privacy policy" }),
+    ).not.toBeNull();
+    expect(screen.getByText("How information is used")).not.toBeNull();
   });
 
   it("renders the public news list from initial data", () => {

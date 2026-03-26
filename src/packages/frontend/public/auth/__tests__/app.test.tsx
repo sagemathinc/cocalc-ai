@@ -1,15 +1,58 @@
 /** @jest-environment jsdom */
 
 import { render, screen } from "@testing-library/react";
-import PublicAuthApp, { getAuthViewFromPath } from "../app";
+import PublicAuthApp, { getPublicAuthRouteFromPath } from "../app";
 
-describe("getAuthViewFromPath", () => {
-  it("supports auth routes under a base path", () => {
-    expect(getAuthViewFromPath("/auth/sign-in")).toBe("sign-in");
-    expect(getAuthViewFromPath("/base/auth/sign-up")).toBe("sign-up");
-    expect(getAuthViewFromPath("/base/auth/password-reset")).toBe(
-      "password-reset",
-    );
+beforeAll(() => {
+  Object.defineProperty(window, "matchMedia", {
+    writable: true,
+    value: (query: string) => ({
+      addEventListener: () => {},
+      addListener: () => {},
+      dispatchEvent: () => false,
+      matches: false,
+      media: query,
+      onchange: null,
+      removeEventListener: () => {},
+      removeListener: () => {},
+    }),
+  });
+});
+
+describe("getPublicAuthRouteFromPath", () => {
+  it("supports auth and sso routes under a base path", () => {
+    expect(getPublicAuthRouteFromPath("/auth/sign-in")).toEqual({
+      kind: "auth-form",
+      view: "sign-in",
+    });
+    expect(getPublicAuthRouteFromPath("/base/auth/sign-up")).toEqual({
+      kind: "auth-form",
+      view: "sign-up",
+    });
+    expect(getPublicAuthRouteFromPath("/base/auth/password-reset")).toEqual({
+      kind: "auth-form",
+      view: "password-reset",
+    });
+    expect(
+      getPublicAuthRouteFromPath("/base/auth/password-reset/token-123"),
+    ).toEqual({
+      kind: "auth-password-reset-redeem",
+      passwordResetId: "token-123",
+    });
+    expect(
+      getPublicAuthRouteFromPath("/base/auth/verify/abc", "?email=x@y.z"),
+    ).toEqual({
+      email: "x@y.z",
+      kind: "auth-verify-email",
+      token: "abc",
+    });
+    expect(getPublicAuthRouteFromPath("/base/sso")).toEqual({
+      kind: "sso-index",
+    });
+    expect(getPublicAuthRouteFromPath("/base/sso/example")).toEqual({
+      id: "example",
+      kind: "sso-detail",
+    });
   });
 });
 
@@ -17,8 +60,8 @@ describe("PublicAuthApp", () => {
   it("renders the sign-up view without the app redux shell", () => {
     render(
       <PublicAuthApp
+        initialRoute={{ kind: "auth-form", view: "sign-up" }}
         initialRequiresToken={true}
-        initialView="sign-up"
         siteName="Launchpad"
       />,
     );
@@ -27,5 +70,55 @@ describe("PublicAuthApp", () => {
       screen.getByRole("heading", { name: "Create your Launchpad account" }),
     ).not.toBeNull();
     expect(screen.getByText("Registration token")).not.toBeNull();
+  });
+
+  it("shows app links in the shared nav for authenticated users", () => {
+    render(
+      <PublicAuthApp
+        initialRoute={{ kind: "auth-form", view: "sign-in" }}
+        isAuthenticated={true}
+        siteName="Launchpad"
+      />,
+    );
+
+    expect(screen.getByRole("link", { name: "Projects" })).not.toBeNull();
+    expect(screen.getByRole("link", { name: "Settings" })).not.toBeNull();
+  });
+
+  it("renders the password reset done screen", () => {
+    render(
+      <PublicAuthApp
+        initialRoute={{ kind: "auth-password-reset-done" }}
+        siteName="Launchpad"
+      />,
+    );
+
+    expect(
+      screen.getByRole("heading", { name: "Launchpad password updated" }),
+    ).not.toBeNull();
+    expect(screen.getByText("Password updated")).not.toBeNull();
+  });
+
+  it("renders the sso index with provided strategies", () => {
+    render(
+      <PublicAuthApp
+        initialRoute={{ kind: "sso-index" }}
+        initialSSOStrategies={[
+          {
+            descr: "Use your Example account.",
+            display: "Example SSO",
+            domains: ["example.edu"],
+            id: "example",
+          },
+        ]}
+        siteName="Launchpad"
+      />,
+    );
+
+    expect(
+      screen.getByRole("heading", { name: "Launchpad single sign-on" }),
+    ).not.toBeNull();
+    expect(screen.getByText("Example SSO")).not.toBeNull();
+    expect(screen.getByRole("link", { name: "Continue" })).not.toBeNull();
   });
 });

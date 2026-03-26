@@ -31,7 +31,14 @@ import {
   PublicPageRoot,
   PublicSectionCard,
 } from "@cocalc/frontend/public/ui/shell";
+import PublicTopNav from "@cocalc/frontend/public/ui/top-nav";
+import { getPolicyPage } from "./policy-data";
 import { contentPath, type PublicContentRoute, topLevelView } from "./routes";
+import {
+  getTeamMember,
+  TEAM_MEMBERS,
+  type TeamMemberProfile,
+} from "./team-data";
 
 const Markdown = lazy(() => import("@cocalc/frontend/markdown/component"));
 const { Paragraph, Text, Title } = Typography;
@@ -39,6 +46,7 @@ const { Paragraph, Text, Title } = Typography;
 interface ContentConfig {
   help_email?: string;
   imprint?: string;
+  is_authenticated?: boolean;
   on_cocalc_com?: boolean;
   policies?: string;
   site_name?: string;
@@ -70,37 +78,6 @@ interface NewsDetailPayload {
   prevTimestamp?: number | null;
   timestamp?: number;
 }
-
-const TEAM_MEMBERS = [
-  {
-    description:
-      "CEO and founder of SageMath, Inc., with a long track record in mathematics, open-source software, and cloud computing.",
-    email: "wstein@sagemath.com",
-    name: "William Stein",
-    title: "CEO and Founder",
-  },
-  {
-    description:
-      "CTO at SageMath, Inc., focused on infrastructure, product direction, and pushing CoCalc into new technical territory.",
-    email: "hsy@sagemath.com",
-    name: "Harald Schilly",
-    title: "CTO",
-  },
-  {
-    description:
-      "COO at SageMath, Inc., overseeing daily operations, educational deployments, and customer-facing logistics.",
-    email: "andrey@cocalc.com",
-    name: "Andrey Novoseltsev",
-    title: "COO",
-  },
-  {
-    description:
-      "CSO at SageMath, Inc., combining applied mathematics, software development, and partnership work.",
-    email: "blaec@cocalc.com",
-    name: "Blaec Bejarano",
-    title: "CSO",
-  },
-] as const;
 
 const GRID_STYLE: CSSProperties = {
   display: "grid",
@@ -136,12 +113,16 @@ function titleForRoute(route: PublicContentRoute, siteName: string): string {
       return `${siteName} events`;
     case "about-team":
       return `${siteName} team`;
+    case "about-team-member":
+      return `${getTeamMember(route.teamSlug)?.name ?? "Team"} - ${siteName}`;
     case "policies":
       return `${siteName} policies`;
     case "policies-imprint":
       return `${siteName} imprint`;
     case "policies-custom":
       return `${siteName} policies`;
+    case "policies-detail":
+      return `${getPolicyPage(route.policySlug)?.title ?? "Policies"} - ${siteName}`;
     case "news":
       return `${siteName} news`;
     case "news-detail":
@@ -257,18 +238,29 @@ function CopyCommandButton({ value }: { value: string }) {
 
 function PageShell({
   children,
+  config,
   route,
   subtitle,
   title,
 }: {
   children: ReactNode;
+  config?: ContentConfig;
   route: PublicContentRoute;
   subtitle: string;
   title: string;
 }) {
   const currentTop = topLevelView(route);
+  const navActive =
+    currentTop === "about" || currentTop === "policies" || currentTop === "news"
+      ? currentTop
+      : undefined;
   return (
     <PublicPageRoot>
+      <PublicTopNav
+        active={navActive}
+        isAuthenticated={!!config?.is_authenticated}
+        siteName={config?.site_name ?? SITE_NAME}
+      />
       <PublicHero
         eyebrow="PUBLIC CONTENT"
         title={title}
@@ -276,17 +268,21 @@ function PageShell({
         actions={
           <Flex wrap gap={8}>
             {[
-              ["About", "about"],
-              ["Policies", "policies"],
-              ["News", "news"],
-              ["Software", "software/cocalc-plus"],
-            ].map(([label, view]) => (
+              { href: "about", key: "about", label: "About" },
+              { href: "policies", key: "policies", label: "Policies" },
+              { href: "news", key: "news", label: "News" },
+              {
+                href: "software/cocalc-plus",
+                key: "software",
+                label: "Software",
+              },
+            ].map((item) => (
               <Button
-                key={view}
-                type={currentTop === view ? "primary" : "default"}
-                href={contentPath(view)}
+                key={item.href}
+                type={currentTop === item.key ? "primary" : "default"}
+                href={contentPath(item.href)}
               >
-                {label}
+                {item.label}
               </Button>
             ))}
           </Flex>
@@ -313,8 +309,8 @@ function CocalcPlusPage() {
           than signing up for a hosted multi-user service.
         </Paragraph>
         <Paragraph style={{ margin: 0 }}>
-          Under the hood it builds on the Lite core, so it reuses the same
-          application and document model while packaging it as a local product.
+          It brings notebooks, terminals, files, and the broader CoCalc
+          workspace model into a local single-user install.
         </Paragraph>
       </PublicSectionCard>
       <PublicSectionCard>
@@ -338,16 +334,17 @@ function CocalcPlusPage() {
       </PublicSectionCard>
       <PublicSectionCard>
         <Title level={3} style={{ margin: 0 }}>
-          Why this matters for the public site
+          Choose hosted CoCalc or CoCalc Plus
         </Title>
         <Paragraph style={{ margin: 0 }}>
-          The product story is no longer just “use CoCalc in the browser”.
-          Hosted CoCalc and CoCalc Plus both matter, so the public marketing
-          pages should stop implying that online use is the only option.
+          Hosted CoCalc is the right fit when you want multi-user collaboration,
+          shared projects, and managed infrastructure. CoCalc Plus is the right
+          fit when you want the same style of environment on your own machine.
         </Paragraph>
         <Paragraph style={{ margin: 0 }}>
-          This is especially relevant for notebook workflows, where some users
-          want the same broader CoCalc environment on their own machine.
+          Both options matter for notebook-heavy technical work, and they share
+          the same overall approach to projects, files, terminals, and
+          computational workflows.
         </Paragraph>
         <Flex wrap gap={12}>
           <LinkButton href={appPath("features/jupyter-notebook")}>
@@ -373,8 +370,8 @@ function AboutHome({
     <>
       <div style={{ ...MUTED_STYLE, fontSize: "17px", maxWidth: "70ch" }}>
         {siteName} is collaborative software for technical computing, teaching,
-        and research. These public pages stay available in launchpad mode and
-        outside the main app shell.
+        and research. Use these pages to explore the platform, read public
+        policies and news, and then move into projects when you are ready.
       </div>
       <div style={GRID_STYLE}>
         <PublicSectionCard>
@@ -427,20 +424,148 @@ function AboutTeamPage() {
     <div style={GRID_STYLE}>
       {TEAM_MEMBERS.map((member) => (
         <PublicSectionCard key={member.email}>
+          <img
+            alt={member.imageAlt}
+            src={member.imageSrc}
+            style={{
+              width: "100%",
+              aspectRatio: "4 / 3",
+              objectFit: "cover",
+              borderRadius: 14,
+            }}
+          />
           <div style={{ ...MUTED_STYLE, fontSize: "13px", fontWeight: 700 }}>
-            {member.title}
+            {member.title} · {member.positionTimeframe}
           </div>
           <Title level={3} style={{ margin: 0 }}>
             {member.name}
           </Title>
-          <div>{member.description}</div>
-          <div>
+          <div>{member.summary}</div>
+          <Flex wrap gap={12}>
+            <LinkButton href={contentPath(`about/team/${member.slug}`)}>
+              Read bio
+            </LinkButton>
             <LinkButton href={`mailto:${member.email}`}>
               {member.email}
             </LinkButton>
-          </div>
+          </Flex>
         </PublicSectionCard>
       ))}
+    </div>
+  );
+}
+
+function ExperienceList({ member }: { member: TeamMemberProfile }) {
+  return (
+    <div style={{ display: "grid", gap: 12 }}>
+      {member.experience.map((item) => (
+        <div
+          key={`${item.position}-${item.institution}-${item.timeframe}`}
+          style={{
+            border: `1px solid ${COLORS.GRAY_LL}`,
+            borderRadius: 12,
+            padding: 14,
+          }}
+        >
+          <div style={{ fontWeight: 700 }}>{item.position}</div>
+          <div>{item.institution}</div>
+          <div style={MUTED_STYLE}>{item.timeframe}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function AboutTeamMemberPage({ slug }: { slug?: string }) {
+  const member = getTeamMember(slug);
+
+  if (!member) {
+    return <EmptyCard label="This team profile was not found." />;
+  }
+
+  return (
+    <div style={{ display: "grid", gap: 16 }}>
+      <div>
+        <LinkButton href={contentPath("about/team")}>Back to team</LinkButton>
+      </div>
+      <PublicSectionCard>
+        <div
+          style={{
+            display: "grid",
+            gap: 24,
+            gridTemplateColumns: "minmax(220px, 320px) minmax(0, 1fr)",
+            alignItems: "start",
+          }}
+        >
+          <img
+            alt={member.imageAlt}
+            src={member.imageSrc}
+            style={{
+              width: "100%",
+              borderRadius: 16,
+              objectFit: "cover",
+            }}
+          />
+          <div style={{ display: "grid", gap: 12 }}>
+            <Text strong type="secondary">
+              TEAM
+            </Text>
+            <Title level={2} style={{ margin: 0 }}>
+              {member.name}
+            </Title>
+            <Paragraph style={{ fontSize: 18, margin: 0 }}>
+              {member.position}
+            </Paragraph>
+            <Paragraph style={{ ...MUTED_STYLE, margin: 0 }}>
+              {member.positionTimeframe}
+            </Paragraph>
+            <Paragraph style={{ fontSize: 17, margin: 0 }}>
+              {member.summary}
+            </Paragraph>
+            {member.role.map((paragraph) => (
+              <Paragraph key={paragraph} style={{ margin: 0 }}>
+                {paragraph}
+              </Paragraph>
+            ))}
+            <Flex wrap gap={12}>
+              <Button href={`mailto:${member.email}`} type="primary">
+                {member.email}
+              </Button>
+              {member.website ? (
+                <Button href={member.website.href}>
+                  {member.website.label}
+                </Button>
+              ) : null}
+            </Flex>
+          </div>
+        </div>
+      </PublicSectionCard>
+      <PublicSectionCard>
+        <Title level={3} style={{ margin: 0 }}>
+          Background
+        </Title>
+        {member.background.map((paragraph) => (
+          <Paragraph key={paragraph} style={{ margin: 0 }}>
+            {paragraph}
+          </Paragraph>
+        ))}
+      </PublicSectionCard>
+      <PublicSectionCard>
+        <Title level={3} style={{ margin: 0 }}>
+          Personal notes
+        </Title>
+        {member.personal.map((paragraph) => (
+          <Paragraph key={paragraph} style={{ margin: 0 }}>
+            {paragraph}
+          </Paragraph>
+        ))}
+      </PublicSectionCard>
+      <PublicSectionCard>
+        <Title level={3} style={{ margin: 0 }}>
+          Experience
+        </Title>
+        <ExperienceList member={member} />
+      </PublicSectionCard>
     </div>
   );
 }
@@ -556,6 +681,11 @@ function PoliciesHome({ config }: { config: ContentConfig }) {
           href: "/policies/accessibility",
           title: "Accessibility",
         },
+        {
+          description: "Enterprise and institutional agreement overview.",
+          href: "/policies/enterprise-terms",
+          title: "Enterprise terms",
+        },
       ]
     : [
         ...(config.imprint
@@ -627,6 +757,66 @@ function PoliciesDetailPage({
         <LinkButton href={contentPath("policies")}>Back to policies</LinkButton>
       </div>
       <MarkdownCard value={markdown} />
+    </div>
+  );
+}
+
+function StructuredPolicyPage({ slug }: { slug?: string }) {
+  const page = getPolicyPage(slug);
+  if (!page) {
+    return <EmptyCard label="This policy page was not found." />;
+  }
+
+  return (
+    <div style={{ display: "grid", gap: 16 }}>
+      <div>
+        <LinkButton href={contentPath("policies")}>Back to policies</LinkButton>
+      </div>
+      <PublicSectionCard>
+        <Text strong type="secondary">
+          POLICY
+        </Text>
+        <Title level={2} style={{ margin: 0 }}>
+          {page.title}
+        </Title>
+        {page.updated ? (
+          <Text type="secondary">Last updated: {page.updated}</Text>
+        ) : null}
+        <Paragraph style={{ margin: 0 }}>{page.summary}</Paragraph>
+      </PublicSectionCard>
+      {page.sections.map((section) => (
+        <PublicSectionCard key={section.title}>
+          <Title level={3} style={{ margin: 0 }}>
+            {section.title}
+          </Title>
+          {section.paragraphs?.map((paragraph) => (
+            <Paragraph key={paragraph} style={{ margin: 0 }}>
+              {paragraph}
+            </Paragraph>
+          ))}
+          {section.bullets?.length ? (
+            <ul style={{ margin: 0, paddingLeft: 20 }}>
+              {section.bullets.map((bullet) => (
+                <li key={bullet} style={{ marginBottom: 8 }}>
+                  {bullet}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          {section.links?.length ? (
+            <Flex wrap gap={12}>
+              {section.links.map((link) => (
+                <LinkButton
+                  key={`${section.title}-${link.href}`}
+                  href={link.href}
+                >
+                  {link.label}
+                </LinkButton>
+              ))}
+            </Flex>
+          ) : null}
+        </PublicSectionCard>
+      ))}
     </div>
   );
 }
@@ -839,6 +1029,7 @@ export default function PublicContentApp({
   if (initialRoute.view === "about-events") {
     return (
       <PageShell
+        config={config}
         route={initialRoute}
         subtitle={`Where to find ${siteName} in person.`}
         title={title}
@@ -851,6 +1042,7 @@ export default function PublicContentApp({
   if (initialRoute.view === "about-team") {
     return (
       <PageShell
+        config={config}
         route={initialRoute}
         subtitle={`Meet the people behind ${siteName}.`}
         title={title}
@@ -860,9 +1052,23 @@ export default function PublicContentApp({
     );
   }
 
+  if (initialRoute.view === "about-team-member") {
+    return (
+      <PageShell
+        config={config}
+        route={initialRoute}
+        subtitle={`Meet the people behind ${siteName}.`}
+        title={title}
+      >
+        <AboutTeamMemberPage slug={initialRoute.teamSlug} />
+      </PageShell>
+    );
+  }
+
   if (initialRoute.view === "policies-imprint") {
     return (
       <PageShell
+        config={config}
         route={initialRoute}
         subtitle="Deployment-specific imprint information."
         title={title}
@@ -875,6 +1081,7 @@ export default function PublicContentApp({
   if (initialRoute.view === "policies-custom") {
     return (
       <PageShell
+        config={config}
         route={initialRoute}
         subtitle="Deployment-specific policy information configured by admins."
         title={title}
@@ -887,11 +1094,25 @@ export default function PublicContentApp({
   if (initialRoute.view === "policies") {
     return (
       <PageShell
+        config={config}
         route={initialRoute}
         subtitle="Public legal and compliance information for this deployment."
         title={title}
       >
         <PoliciesHome config={config ?? {}} />
+      </PageShell>
+    );
+  }
+
+  if (initialRoute.view === "policies-detail") {
+    return (
+      <PageShell
+        config={config}
+        route={initialRoute}
+        subtitle="Public legal and compliance information for this deployment."
+        title={title}
+      >
+        <StructuredPolicyPage slug={initialRoute.policySlug} />
       </PageShell>
     );
   }
@@ -902,6 +1123,7 @@ export default function PublicContentApp({
   ) {
     return (
       <PageShell
+        config={config}
         route={initialRoute}
         subtitle={`News and release notes for ${siteName}.`}
         title={title}
@@ -914,6 +1136,7 @@ export default function PublicContentApp({
   if (initialRoute.view === "news") {
     return (
       <PageShell
+        config={config}
         route={initialRoute}
         subtitle={`News and release notes for ${siteName}.`}
         title={title}
@@ -926,6 +1149,7 @@ export default function PublicContentApp({
   if (initialRoute.view === "software-cocalc-plus") {
     return (
       <PageShell
+        config={config}
         route={initialRoute}
         subtitle="The local single-user CoCalc experience for your own machine."
         title={title}
@@ -937,6 +1161,7 @@ export default function PublicContentApp({
 
   return (
     <PageShell
+      config={config}
       route={initialRoute}
       subtitle={`Background information and public resources for ${siteName}.`}
       title={title}

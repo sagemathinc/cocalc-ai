@@ -4,85 +4,162 @@
  */
 
 import { useEffect, useMemo, useState } from "react";
-import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
-import { SITE_NAME } from "@cocalc/util/theme";
+
 import type { AuthView } from "@cocalc/frontend/auth/types";
+import { SITE_NAME } from "@cocalc/util/theme";
+
+import {
+  PublicPasswordResetDoneView,
+  PublicRedeemPasswordResetView,
+  PublicVerifyEmailView,
+} from "./completion-views";
 import {
   PublicPasswordResetForm,
   PublicSignInForm,
   PublicSignUpForm,
 } from "./forms";
 import PublicAuthPageShell from "./page-shell";
+import {
+  getPublicAuthRouteFromPath,
+  pathForAuthView,
+  type PublicAuthRoute,
+} from "./routes";
+import {
+  PublicSSODetailView,
+  PublicSSOIndexView,
+  type PublicSSOStrategy,
+} from "./sso-views";
 
 interface PublicAuthAppProps {
-  initialView: AuthView;
   initialRequiresToken?: boolean;
+  initialRoute: PublicAuthRoute;
+  initialSSOStrategies?: PublicSSOStrategy[];
+  isAuthenticated?: boolean;
   siteName?: string;
 }
 
-function titleForView(view: AuthView, siteName: string): string {
-  switch (view) {
-    case "sign-up":
-      return `Create your ${siteName} account`;
-    case "password-reset":
-      return `Reset your ${siteName} password`;
-    case "sign-in":
+function titleForRoute(route: PublicAuthRoute, siteName: string): string {
+  switch (route.kind) {
+    case "auth-form":
+      switch (route.view) {
+        case "sign-up":
+          return `Create your ${siteName} account`;
+        case "password-reset":
+          return `Reset your ${siteName} password`;
+        case "sign-in":
+        default:
+          return `Sign in to ${siteName}`;
+      }
+    case "auth-password-reset-done":
+      return `${siteName} password updated`;
+    case "auth-password-reset-redeem":
+      return `Choose a new ${siteName} password`;
+    case "auth-verify-email":
+      return `Verify your ${siteName} email`;
+    case "sso-detail":
+    case "sso-index":
+      return `${siteName} single sign-on`;
     default:
-      return `Sign in to ${siteName}`;
+      return siteName;
   }
 }
 
-function pathForView(view: AuthView): string {
-  const base = appBasePath === "/" ? "" : appBasePath;
-  switch (view) {
-    case "sign-up":
-      return `${base}/auth/sign-up`;
-    case "password-reset":
-      return `${base}/auth/password-reset`;
-    case "sign-in":
+function subtitleForRoute(route: PublicAuthRoute, siteName: string): string {
+  switch (route.kind) {
+    case "sso-detail":
+    case "sso-index":
+      return `Single sign-on for ${siteName}`;
+    case "auth-password-reset-done":
+      return siteName;
     default:
-      return `${base}/auth/sign-in`;
+      return siteName;
   }
 }
 
-export function getAuthViewFromPath(pathname: string): AuthView {
-  if (pathname.includes("/auth/sign-up")) {
-    return "sign-up";
+function cardWidthForRoute(route: PublicAuthRoute): string | undefined {
+  switch (route.kind) {
+    case "sso-detail":
+      return "min(760px, 96vw)";
+    case "sso-index":
+      return "min(900px, 96vw)";
+    case "auth-password-reset-redeem":
+    case "auth-password-reset-done":
+    case "auth-verify-email":
+      return "min(560px, 96vw)";
+    default:
+      return undefined;
   }
-  if (pathname.includes("/auth/password-reset")) {
-    return "password-reset";
-  }
-  return "sign-in";
 }
+
+export { getPublicAuthRouteFromPath };
 
 export default function PublicAuthApp({
-  initialView,
   initialRequiresToken,
+  initialRoute,
+  initialSSOStrategies,
+  isAuthenticated,
   siteName = SITE_NAME,
 }: PublicAuthAppProps) {
-  const [view, setView] = useState<AuthView>(initialView);
-  const title = useMemo(() => titleForView(view, siteName), [siteName, view]);
+  const [route, setRoute] = useState<PublicAuthRoute>(initialRoute);
+
+  useEffect(() => {
+    setRoute(initialRoute);
+  }, [initialRoute]);
+
+  const title = useMemo(
+    () => titleForRoute(route, siteName),
+    [route, siteName],
+  );
 
   useEffect(() => {
     document.title = title;
   }, [title]);
 
   function onNavigate(next: AuthView) {
-    setView(next);
-    window.history.pushState({}, "", pathForView(next));
+    const nextRoute: PublicAuthRoute = { kind: "auth-form", view: next };
+    setRoute(nextRoute);
+    window.history.pushState({}, "", pathForAuthView(next));
   }
 
   return (
-    <PublicAuthPageShell title={title} subtitle={siteName}>
-      {view === "sign-in" && <PublicSignInForm onNavigate={onNavigate} />}
-      {view === "sign-up" && (
+    <PublicAuthPageShell
+      cardWidth={cardWidthForRoute(route)}
+      isAuthenticated={isAuthenticated}
+      siteName={siteName}
+      subtitle={subtitleForRoute(route, siteName)}
+      title={title}
+    >
+      {route.kind === "auth-form" && route.view === "sign-in" && (
+        <PublicSignInForm onNavigate={onNavigate} />
+      )}
+      {route.kind === "auth-form" && route.view === "sign-up" && (
         <PublicSignUpForm
           initialRequiresToken={initialRequiresToken}
           onNavigate={onNavigate}
         />
       )}
-      {view === "password-reset" && (
+      {route.kind === "auth-form" && route.view === "password-reset" && (
         <PublicPasswordResetForm onNavigate={onNavigate} />
+      )}
+      {route.kind === "auth-password-reset-redeem" && (
+        <PublicRedeemPasswordResetView
+          passwordResetId={route.passwordResetId}
+        />
+      )}
+      {route.kind === "auth-password-reset-done" && (
+        <PublicPasswordResetDoneView />
+      )}
+      {route.kind === "auth-verify-email" && (
+        <PublicVerifyEmailView email={route.email} token={route.token} />
+      )}
+      {route.kind === "sso-index" && (
+        <PublicSSOIndexView initialStrategies={initialSSOStrategies} />
+      )}
+      {route.kind === "sso-detail" && (
+        <PublicSSODetailView
+          id={route.id}
+          initialStrategies={initialSSOStrategies}
+        />
       )}
     </PublicAuthPageShell>
   );

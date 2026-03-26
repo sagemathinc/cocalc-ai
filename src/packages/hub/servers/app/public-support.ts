@@ -12,6 +12,8 @@ export default function initPublicSupport(router: Router): void {
   const supportPaths = [
     "/support",
     "/support/",
+    "/support/community",
+    "/support/community/",
     "/support/new",
     "/support/new/*",
     "/support/tickets",

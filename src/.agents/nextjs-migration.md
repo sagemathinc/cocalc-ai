@@ -4,6 +4,10 @@
 
 Eliminate the `@cocalc/next` package from the active CoCalc application stack.
 
+Route inventory freeze:
+
+- see [nextjs-route-freeze.md](/home/wstein/build/cocalc-lite4/src/.agents/nextjs-route-freeze.md)
+
 This means:
 
 - no Next.js runtime in `cocalc.ai`

@@ -1,4 +1,35 @@
 import { APP_BASE_PATH_ROUTE_MARKERS } from "@cocalc/util/routing/app";
+import { LOCALE } from "@cocalc/util/i18n";
+
+function inferLangBasePath(pathname: string): string | undefined {
+  const normalized =
+    pathname.length > 1 ? pathname.replace(/\/+$/, "") : pathname;
+  if (normalized === "/lang") {
+    return "/";
+  }
+  const marker = "/lang/";
+  const index = normalized.indexOf(marker);
+  if (index !== -1) {
+    return index === 0 ? "/" : normalized.slice(0, index);
+  }
+}
+
+function inferLocaleAliasBasePath(pathname: string): string | undefined {
+  const normalized =
+    pathname.length > 1 ? pathname.replace(/\/+$/, "") : pathname;
+  for (const locale of LOCALE) {
+    const marker = `/${locale}`;
+    if (normalized === marker) {
+      return "/";
+    }
+    if (normalized.endsWith(marker)) {
+      const prefix = normalized.slice(0, -marker.length);
+      if (prefix.startsWith("/")) {
+        return prefix || "/";
+      }
+    }
+  }
+}
 
 export function inferAppBasePath(pathname?: string): string {
   const normalizedPathname = `${pathname ?? ""}`.trim();
@@ -18,6 +49,16 @@ export function inferAppBasePath(pathname?: string): string {
     if (index !== -1) {
       return index === 0 ? "/" : normalizedPathname.slice(0, index);
     }
+  }
+
+  const langBasePath = inferLangBasePath(normalizedPathname);
+  if (langBasePath != null) {
+    return langBasePath;
+  }
+
+  const localeBasePath = inferLocaleAliasBasePath(normalizedPathname);
+  if (localeBasePath != null) {
+    return localeBasePath;
   }
 
   const trimmed =

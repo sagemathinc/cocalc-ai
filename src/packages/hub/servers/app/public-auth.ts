@@ -17,6 +17,12 @@ export default function initPublicAuth(router: Router): void {
     "/auth/sign-up/*",
     "/auth/password-reset",
     "/auth/password-reset/*",
+    "/auth/password-reset-done",
+    "/auth/password-reset-done/*",
+    "/auth/verify",
+    "/auth/verify/*",
+    "/sso",
+    "/sso/*",
   ];
 
   router.get(authPaths, (req, res) => {

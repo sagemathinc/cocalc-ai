@@ -9,9 +9,11 @@ export type PublicContentView =
   | "about"
   | "about-events"
   | "about-team"
+  | "about-team-member"
   | "policies"
   | "policies-imprint"
   | "policies-custom"
+  | "policies-detail"
   | "news"
   | "news-detail"
   | "news-history"
@@ -19,6 +21,8 @@ export type PublicContentView =
 
 export interface PublicContentRoute {
   newsId?: number;
+  policySlug?: string;
+  teamSlug?: string;
   timestamp?: number;
   view: PublicContentView;
 }
@@ -38,6 +42,9 @@ export function getContentRouteFromPath(pathname: string): PublicContentRoute {
 
   if (routeParts[0] === "about") {
     if (routeParts[1] === "events") return { view: "about-events" };
+    if (routeParts[1] === "team" && routeParts[2]) {
+      return { teamSlug: routeParts[2], view: "about-team-member" };
+    }
     if (routeParts[1] === "team") return { view: "about-team" };
     return { view: "about" };
   }
@@ -45,6 +52,9 @@ export function getContentRouteFromPath(pathname: string): PublicContentRoute {
   if (routeParts[0] === "policies") {
     if (routeParts[1] === "imprint") return { view: "policies-imprint" };
     if (routeParts[1] === "policies") return { view: "policies-custom" };
+    if (routeParts[1]) {
+      return { policySlug: routeParts[1], view: "policies-detail" };
+    }
     return { view: "policies" };
   }
 
@@ -77,6 +87,7 @@ export function topLevelView(
     case "policies":
     case "policies-imprint":
     case "policies-custom":
+    case "policies-detail":
       return "policies";
     case "news":
     case "news-detail":
@@ -87,6 +98,13 @@ export function topLevelView(
     default:
       return "about";
   }
+}
+
+export function isPublicContentTarget(
+  target?: string | null,
+): target is string {
+  if (!target) return false;
+  return /\/(about|policies|news|software)(\/|$)/.test(target);
 }
 
 export function contentPath(view: string): string {
