@@ -256,18 +256,18 @@ export function VerticalFixedTabs({
         ? "8px" // margin for condensed mode
         : "12px"; // margin for normal mode
     const workspaceImage =
-      name === "workspaces" && workspaces.current?.theme.image_blob?.trim()
+      name === "workspaces" && workspaces.current?.theme?.image_blob?.trim()
         ? `/blobs/theme-image.png?uuid=${encodeURIComponent(
             workspaces.current.theme.image_blob.trim(),
           )}`
         : undefined;
     const iconName: IconName | undefined =
       name === "workspaces"
-        ? (workspaces.current?.theme.icon?.trim() as IconName | undefined) ||
+        ? (workspaces.current?.theme?.icon?.trim() as IconName | undefined) ||
           undefined
         : undefined;
     const themedIconStyle =
-      name === "workspaces" && workspaces.current?.theme.color
+      name === "workspaces" && workspaces.current?.theme?.color
         ? { color: workspaces.current.theme.color }
         : undefined;
 
