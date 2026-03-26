@@ -123,6 +123,17 @@ export async function getUser(
     throw Error("invalid master host auth token");
   }
 
+  const projectScopedAuth = getProjectScopedAuthFromHandshake(socket);
+  if (projectScopedAuth) {
+    if (
+      (await getProjectSecretToken(projectScopedAuth.project_id)) ==
+      projectScopedAuth.secret
+    ) {
+      return { project_id: projectScopedAuth.project_id };
+    }
+    throw Error("invalid secret token for project");
+  }
+
   if (!socket.handshake.headers.cookie) {
     throw Error(`no auth cookie set; set one of ${COOKIES}`);
   }
@@ -207,6 +218,29 @@ function getBearerToken(socket): string | undefined {
     }
   }
   return undefined;
+}
+
+function getProjectScopedAuthFromHandshake(
+  socket: any,
+): { project_id: string; secret: string } | undefined {
+  const auth = socket?.handshake?.auth;
+  const secret =
+    typeof auth?.project_secret === "string" ? auth.project_secret.trim() : "";
+  const project_id =
+    typeof auth?.project_id === "string" ? auth.project_id.trim() : "";
+  if (!secret && !project_id) {
+    return undefined;
+  }
+  if (!project_id) {
+    throw Error("must specify project_id in socket handshake auth");
+  }
+  if (!isValidUUID(project_id)) {
+    throw Error("invalid project_id in socket handshake auth");
+  }
+  if (!secret) {
+    throw Error("must specify project_secret in socket handshake auth");
+  }
+  return { project_id, secret };
 }
 
 const isAllowedCache = new LRU<string, boolean>({

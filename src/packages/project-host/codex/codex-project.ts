@@ -157,9 +157,15 @@ function normalizeProjectRuntimePath(pathValue?: string): string {
   return normalized.join(":");
 }
 
-function applyProjectRuntimeCliEnv(env: Record<string, string>): void {
+function applyProjectRuntimeCliEnv(
+  env: Record<string, string>,
+  accountId?: string,
+): void {
   env.COCALC_CLI_BIN = getProjectRuntimeCliPath();
   env.COCALC_CLI_CMD = getProjectRuntimeCliCommand();
+  if (accountId?.trim()) {
+    env.COCALC_ACCOUNT_ID = accountId.trim();
+  }
   env.PATH = normalizeProjectRuntimePath(env.PATH);
 }
 
@@ -814,7 +820,7 @@ async function ensureContainer({
     env.COCALC_BEARER_TOKEN = cliBearer;
     env.COCALC_AGENT_TOKEN = cliBearer;
   }
-  applyProjectRuntimeCliEnv(env);
+  applyProjectRuntimeCliEnv(env, accountId);
   if (extraEnv) {
     for (const key in extraEnv) {
       if (typeof extraEnv[key] === "string") {
@@ -828,7 +834,7 @@ async function ensureContainer({
     }
   }
   env.COCALC_API_URL = resolveProjectRuntimeApiUrl(env.COCALC_API_URL);
-  applyProjectRuntimeCliEnv(env);
+  applyProjectRuntimeCliEnv(env, accountId);
   for (const key in env) {
     args.push("-e", `${key}=${env[key]}`);
   }
@@ -1185,9 +1191,9 @@ async function spawnCodexAppServerInProjectRuntime({
   if (!execEnv.OPENAI_API_KEY?.trim()) {
     delete execEnv.OPENAI_API_KEY;
   }
-  applyProjectRuntimeCliEnv(execEnv);
+  applyProjectRuntimeCliEnv(execEnv, accountId);
   execEnv.COCALC_API_URL = resolveProjectRuntimeApiUrl(execEnv.COCALC_API_URL);
-  applyProjectRuntimeCliEnv(execEnv);
+  applyProjectRuntimeCliEnv(execEnv, accountId);
   for (const key in execEnv) {
     execArgs.push("-e", `${key}=${execEnv[key]}`);
   }

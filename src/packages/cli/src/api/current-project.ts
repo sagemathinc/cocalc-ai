@@ -8,6 +8,10 @@ import {
 } from "@cocalc/conat/core/client";
 import { inboxPrefix } from "@cocalc/conat/names";
 import { isValidUUID } from "@cocalc/util/misc";
+import {
+  buildCookieHeader,
+  resolveProjectScopedAuth,
+} from "../core/auth-cookies";
 import { normalizeUrl } from "../core/utils";
 
 type LiteConnectionInfo = {
@@ -147,14 +151,29 @@ async function openCurrentProjectConatClient({
   projectId: string;
 }): Promise<ConatClient> {
   const conatAddress = currentProjectConatAddress(apiBaseUrl);
+  const projectAuth = resolveProjectScopedAuth(process.env);
+  const cookie = buildCookieHeader(apiBaseUrl, {}, {}, process.env);
   const client = connectConat({
     address: conatAddress,
     noCache: true,
     reconnection: false,
+    ...(projectAuth?.project_id
+      ? { inboxPrefix: inboxPrefix({ project_id: projectAuth.project_id }) }
+      : undefined),
+    ...(cookie ? { extraHeaders: { Cookie: cookie } } : undefined),
     auth: async (cb) =>
       cb({
-        bearer,
-        project_id: projectId,
+        ...(bearer
+          ? {
+              bearer,
+              project_id: projectId,
+            }
+          : projectAuth
+            ? {
+                project_secret: projectAuth.project_secret,
+                project_id: projectAuth.project_id,
+              }
+            : {}),
       }),
   });
   client.inboxPrefixHook = (info) => {
@@ -200,10 +219,13 @@ export async function openCurrentProjectConnection(
     ? normalizeUrl(options.apiBaseUrl)
     : defaultApiBaseUrl();
   const bearer = resolveCurrentProjectBearer(apiBaseUrl, options.bearer);
+  const projectAuth = resolveProjectScopedAuth(process.env);
   if (!bearer) {
-    throw new Error(
-      "requires a bearer token; set COCALC_BEARER_TOKEN or pass options.bearer",
-    );
+    if (!projectAuth) {
+      throw new Error(
+        "requires a bearer token or project-scoped auth; set COCALC_BEARER_TOKEN, or provide COCALC_SECRET_TOKEN plus COCALC_PROJECT_ID",
+      );
+    }
   }
   const projectId =
     `${options.projectId ?? process.env.COCALC_PROJECT_ID ?? ""}`.trim();

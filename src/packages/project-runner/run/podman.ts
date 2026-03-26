@@ -32,10 +32,7 @@ import { getCoCalcMounts, COCALC_SRC } from "./mounts";
 import { fileServerClient, setQuota } from "./filesystem";
 import { type RestoreMode } from "@cocalc/conat/files/file-server";
 import { dirname, join, relative, isAbsolute } from "node:path";
-import {
-  mount as mountRootFs,
-  unmountAll as unmountAllRootFs,
-} from "./rootfs";
+import { mount as mountRootFs, unmountAll as unmountAllRootFs } from "./rootfs";
 import { type ProjectState } from "@cocalc/conat/project/runner/state";
 import { type Configuration } from "@cocalc/conat/project/runner/types";
 import { DEFAULT_PROJECT_IMAGE } from "@cocalc/util/db-schema/defaults";
@@ -76,6 +73,7 @@ const PROJECT_BUNDLE_ENTRY_CANDIDATES = [
 ] as const;
 const PROJECT_BUNDLE_MOUNT_POINT = "/opt/cocalc/project-bundle";
 const PROJECT_BUNDLE_BIN_PATH = join(PROJECT_BUNDLE_MOUNT_POINT, "bin");
+const DEFAULT_PROJECT_BUNDLES_ROOT = "/opt/cocalc/project-bundles";
 
 // if computing status of a project shows pod is
 // somehow messed up, this will cleanly kill it.  It's
@@ -326,7 +324,8 @@ function getErrorCode(err: unknown): string | undefined {
 }
 
 async function resolveProjectScript(): Promise<ScriptResolution> {
-  const bundlesRootEnv = process.env.COCALC_PROJECT_BUNDLES;
+  const bundlesRootEnv =
+    process.env.COCALC_PROJECT_BUNDLES ?? DEFAULT_PROJECT_BUNDLES_ROOT;
   if (!bundlesRootEnv) {
     return { script: DEFAULT_PROJECT_SCRIPT };
   }

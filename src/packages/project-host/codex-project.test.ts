@@ -231,6 +231,7 @@ describe("initCodexProjectRunner", () => {
       COCALC_API_URL: "http://host.containers.internal:7103",
       COCALC_BEARER_TOKEN: "issued-project-host-token",
       COCALC_AGENT_TOKEN: "issued-project-host-token",
+      COCALC_ACCOUNT_ID: "00000000-0000-4000-8000-000000000001",
     });
     expect(spawned.appServerLogin).toEqual({
       type: "apiKey",
@@ -301,6 +302,7 @@ describe("initCodexProjectRunner", () => {
         COCALC_CLI_BIN: "/opt/cocalc/bin2/cocalc",
         COCALC_CLI_CMD:
           '"/opt/cocalc/bin/node" "/opt/cocalc/bin2/cocalc-cli.js"',
+        COCALC_ACCOUNT_ID: "00000000-0000-4000-8000-000000000001",
       });
       const pathEnv = args.find((value) => `${value}`.startsWith("PATH="));
       expect(pathEnv).toContain("/usr/bin");

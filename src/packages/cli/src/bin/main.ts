@@ -47,7 +47,11 @@ import {
   type AuthProfile,
   type GlobalAuthOptions,
 } from "../core/auth-config";
-import { buildCookieHeader, normalizeSecretValue } from "../core/auth-cookies";
+import {
+  buildCookieHeader,
+  normalizeSecretValue,
+  resolveProjectScopedAuth,
+} from "../core/auth-cookies";
 import {
   durationToMs,
   extractCookie,
@@ -746,6 +750,7 @@ async function connectRemote({
   }
   const bearer = globals.bearer ?? process.env.COCALC_BEARER_TOKEN;
   const effectiveBearer = bearer ?? process.env.COCALC_AGENT_TOKEN;
+  const projectScopedAuth = resolveProjectScopedAuth(process.env);
   const agentProjectId = `${process.env.COCALC_PROJECT_ID ?? ""}`.trim();
   cliDebug("connectRemote", {
     apiBaseUrl,
@@ -753,6 +758,7 @@ async function connectRemote({
     signInTimeoutMs,
     hasCookie: !!cookie,
     hasBearer: !!effectiveBearer?.trim(),
+    hasProjectScopedAuth: !!projectScopedAuth,
     hasAgentProjectId: isValidUUID(agentProjectId),
     hasApiKey: !!(globals.apiKey ?? process.env.COCALC_API_KEY),
     hasHubPassword: hasHubPassword(globals),
@@ -761,15 +767,31 @@ async function connectRemote({
   const client = connectConat({
     address: conatAddress,
     noCache: true,
+    ...(projectScopedAuth?.project_id
+      ? {
+          inboxPrefix: inboxPrefix({
+            project_id: projectScopedAuth.project_id,
+          }),
+        }
+      : undefined),
     ...(Object.keys(extraHeaders).length ? { extraHeaders } : undefined),
-    ...(effectiveBearer?.trim()
+    ...(effectiveBearer?.trim() || projectScopedAuth
       ? {
           auth: async (cb) =>
             cb({
-              bearer: effectiveBearer.trim(),
-              ...(isValidUUID(agentProjectId)
-                ? { project_id: agentProjectId }
-                : {}),
+              ...(effectiveBearer?.trim()
+                ? {
+                    bearer: effectiveBearer.trim(),
+                    ...(isValidUUID(agentProjectId)
+                      ? { project_id: agentProjectId }
+                      : {}),
+                  }
+                : projectScopedAuth
+                  ? {
+                      project_secret: projectScopedAuth.project_secret,
+                      project_id: projectScopedAuth.project_id,
+                    }
+                  : {}),
             }),
         }
       : undefined),

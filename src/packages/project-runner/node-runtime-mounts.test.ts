@@ -1,4 +1,11 @@
-import { COCALC_BIN, COCALC_LIB, getNodeRuntimeMounts } from "./run/mounts";
+import {
+  COCALC_BIN,
+  COCALC_BIN2,
+  COCALC_LIB,
+  DEFAULT_PROJECT_TOOLS,
+  getCoCalcMounts,
+  getNodeRuntimeMounts,
+} from "./run/mounts";
 
 describe("getNodeRuntimeMounts", () => {
   it("mounts the sibling lib directory for npm-style node installs", () => {
@@ -22,5 +29,27 @@ describe("getNodeRuntimeMounts", () => {
     expect(mounts).toEqual({
       "/runtime/node-v24.14.0-linux-x64/bin": COCALC_BIN,
     });
+  });
+});
+
+describe("getCoCalcMounts", () => {
+  it("falls back to the canonical host tools path when env is absent", () => {
+    const mounts = getCoCalcMounts(
+      {},
+      (path) => path === DEFAULT_PROJECT_TOOLS,
+    );
+
+    expect(mounts[DEFAULT_PROJECT_TOOLS]).toBe(COCALC_BIN2);
+  });
+
+  it("prefers an explicit COCALC_PROJECT_TOOLS path when provided", () => {
+    const explicitTools = "/srv/cocalc/tools/current";
+    const mounts = getCoCalcMounts(
+      { COCALC_PROJECT_TOOLS: explicitTools },
+      (path) => path === explicitTools,
+    );
+
+    expect(mounts[explicitTools]).toBe(COCALC_BIN2);
+    expect(mounts[DEFAULT_PROJECT_TOOLS]).toBeUndefined();
   });
 });

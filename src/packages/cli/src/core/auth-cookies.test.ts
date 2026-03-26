@@ -9,6 +9,7 @@ import {
   cookieNameFor,
   describeProjectScopedAuth,
   normalizeSecretValue,
+  resolveProjectScopedAuth,
 } from "./auth-cookies";
 
 test("normalizeSecretValue reads token contents from a file path", () => {
@@ -62,5 +63,21 @@ test("describeProjectScopedAuth explains when project-scoped auth is active", ()
   assert.equal(status.has_project_scoped_auth, true);
   assert.equal(status.project_auth_source, "COCALC_SECRET_TOKEN");
   assert.match(status.project_auth_message, /project-scoped auth is available/);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("resolveProjectScopedAuth reads project secret token contents from a file path", () => {
+  const dir = mkdtempSync(join(tmpdir(), "cocalc-cli-auth-cookie-"));
+  const tokenPath = join(dir, "secret-token");
+  writeFileSync(tokenPath, "project-secret-token\n", "utf8");
+  const auth = resolveProjectScopedAuth({
+    COCALC_SECRET_TOKEN: tokenPath,
+    COCALC_PROJECT_ID: "890afc74-9156-4386-a395-afd4bebab4dd",
+  } as any);
+  assert.deepEqual(auth, {
+    project_id: "890afc74-9156-4386-a395-afd4bebab4dd",
+    project_secret: "project-secret-token",
+    project_auth_source: "COCALC_SECRET_TOKEN",
+  });
   rmSync(dir, { recursive: true, force: true });
 });
