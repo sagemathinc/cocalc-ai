@@ -378,59 +378,61 @@ function CocalcLaunchpadPage() {
     "curl -fsSL https://software.cocalc.ai/software/cocalc-launchpad/install.sh | bash";
 
   return (
-    <div style={GRID_STYLE}>
-      <PublicSectionCard>
-        <Title level={3} style={{ margin: 0 }}>
-          What CoCalc Launchpad is
-        </Title>
-        <Paragraph style={{ margin: 0 }}>
-          CoCalc Launchpad is the lightweight control-plane bundle for small
-          teams and self-hosted deployments. It is the clearest path when you
-          want a shared CoCalc environment that you operate yourself.
-        </Paragraph>
-        <Paragraph style={{ margin: 0 }}>
-          It is aimed at rapid iteration, small deployments, and productized use
-          of the same collaborative workspace model that powers the hosted
-          service.
-        </Paragraph>
-      </PublicSectionCard>
-      <PublicSectionCard>
-        <Title level={3} style={{ margin: 0 }}>
-          Install CoCalc Launchpad
-        </Title>
-        <Paragraph style={{ margin: 0 }}>
-          Copy and run this in your terminal:
-        </Paragraph>
-        <CodeCommand value={installCommand} />
-        <Flex wrap gap={12}>
-          <CopyCommandButton value={installCommand} />
-          <Button href="https://software.cocalc.ai/software/cocalc-launchpad/install.sh">
-            Open install script
-          </Button>
-          <Button href="https://software.cocalc.ai/software/cocalc-launchpad/index.html">
-            Open software page
-          </Button>
-        </Flex>
-        <Paragraph style={{ margin: 0 }}>
-          Current supported targets are Linux on x64 or arm64, and macOS on
-          arm64.
-        </Paragraph>
-      </PublicSectionCard>
-      <PublicSectionCard>
-        <Title level={3} style={{ margin: 0 }}>
-          What the installer does
-        </Title>
-        <Paragraph style={{ margin: 0 }}>
-          The installer downloads the platform-specific manifest, verifies the
-          corresponding Launchpad artifact, installs it into a user-owned
-          directory, and adds a launcher to your PATH if needed.
-        </Paragraph>
-        <Paragraph style={{ margin: 0 }}>
-          On Linux this lives under
-          <code> ~/.local/share/cocalc-launchpad</code>, and on macOS under
-          <code> ~/Library/Application Support/cocalc-launchpad</code>.
-        </Paragraph>
-      </PublicSectionCard>
+    <div style={{ display: "grid", gap: 24 }}>
+      <div style={GRID_STYLE}>
+        <PublicSectionCard>
+          <Title level={3} style={{ margin: 0 }}>
+            What CoCalc Launchpad is
+          </Title>
+          <Paragraph style={{ margin: 0 }}>
+            CoCalc Launchpad is the lightweight control-plane bundle for small
+            teams and self-hosted deployments. It is the clearest path when you
+            want a shared CoCalc environment that you operate yourself.
+          </Paragraph>
+          <Paragraph style={{ margin: 0 }}>
+            It is aimed at rapid iteration, small deployments, and productized
+            use of the same collaborative workspace model that powers the hosted
+            service.
+          </Paragraph>
+        </PublicSectionCard>
+        <PublicSectionCard>
+          <Title level={3} style={{ margin: 0 }}>
+            Install CoCalc Launchpad
+          </Title>
+          <Paragraph style={{ margin: 0 }}>
+            Copy and run this in your terminal:
+          </Paragraph>
+          <CodeCommand value={installCommand} />
+          <Flex wrap gap={12}>
+            <CopyCommandButton value={installCommand} />
+            <Button href="https://software.cocalc.ai/software/cocalc-launchpad/install.sh">
+              Open install script
+            </Button>
+            <Button href="https://software.cocalc.ai/software/cocalc-launchpad/index.html">
+              Open software page
+            </Button>
+          </Flex>
+          <Paragraph style={{ margin: 0 }}>
+            Current supported targets are Linux on x64 or arm64, and macOS on
+            arm64.
+          </Paragraph>
+        </PublicSectionCard>
+        <PublicSectionCard>
+          <Title level={3} style={{ margin: 0 }}>
+            What the installer does
+          </Title>
+          <Paragraph style={{ margin: 0 }}>
+            The installer downloads the platform-specific manifest, verifies the
+            corresponding Launchpad artifact, installs it into a user-owned
+            directory, and adds a launcher to your PATH if needed.
+          </Paragraph>
+          <Paragraph style={{ margin: 0 }}>
+            On Linux this lives under
+            <code> ~/.local/share/cocalc-launchpad</code>, and on macOS under
+            <code> ~/Library/Application Support/cocalc-launchpad</code>.
+          </Paragraph>
+        </PublicSectionCard>
+      </div>
       <PublicSectionCard>
         <Title level={3} style={{ margin: 0 }}>
           Choose Launchpad or CoCalc Plus
