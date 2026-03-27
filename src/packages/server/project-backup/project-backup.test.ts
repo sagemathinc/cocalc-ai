@@ -5,7 +5,7 @@ let readFileMock: jest.Mock;
 let writeFileMock: jest.Mock;
 let createBucketMock: jest.Mock;
 let listBucketsMock: jest.Mock;
-let settings: Record<string, string | undefined> = {};
+let settings: Record<string, any> = {};
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
@@ -30,6 +30,21 @@ jest.mock("./r2", () => ({
 const HOST_ID = "11111111-1111-1111-1111-111111111111";
 const PROJECT_ID = "22222222-2222-2222-2222-222222222222";
 const BUCKET_ID = "33333333-3333-3333-3333-333333333333";
+const REPO_ID = "44444444-4444-4444-4444-444444444444";
+
+function repoRow(overrides: Record<string, any> = {}) {
+  return {
+    id: overrides.id ?? settings.backup_repo_id ?? REPO_ID,
+    region: overrides.region ?? settings.project_region ?? "wnam",
+    bucket_id: overrides.bucket_id ?? BUCKET_ID,
+    root: overrides.root ?? settings.repo_root ?? "rustic/shared-wnam-0001",
+    secret: overrides.secret ?? settings.repo_secret ?? "repo-secret",
+    status: overrides.status ?? "active",
+    created: overrides.created ?? new Date("2026-01-01T00:00:00Z"),
+    updated: overrides.updated ?? new Date("2026-01-01T00:00:00Z"),
+    assigned_project_count: overrides.assigned_project_count ?? 0,
+  };
+}
 
 describe("project-backup", () => {
   beforeEach(() => {
@@ -44,7 +59,36 @@ describe("project-backup", () => {
     }));
     listBucketsMock = jest.fn(async () => ["cocalc-backups-wnam"]);
     queryMock = jest.fn(async (sql: string, params: any[]) => {
-      if (sql.includes("SELECT backup_bucket_id FROM projects")) {
+      if (
+        sql.includes("CREATE TABLE IF NOT EXISTS project_backup_repos") ||
+        sql.includes(
+          "ALTER TABLE projects ADD COLUMN IF NOT EXISTS backup_repo_id",
+        ) ||
+        sql.includes("CREATE INDEX IF NOT EXISTS project_backup_repos_") ||
+        sql.includes(
+          "CREATE UNIQUE INDEX IF NOT EXISTS project_backup_repos_",
+        ) ||
+        sql.includes("CREATE INDEX IF NOT EXISTS projects_backup_repo_id_idx")
+      ) {
+        return { rows: [] };
+      }
+      if (
+        sql.includes(
+          "SELECT backup_repo_id, backup_bucket_id FROM projects WHERE project_id",
+        )
+      ) {
+        return {
+          rows: [
+            {
+              backup_repo_id: settings.backup_repo_id ?? null,
+              backup_bucket_id: settings.backup_bucket_id ?? null,
+            },
+          ],
+        };
+      }
+      if (
+        sql.includes("SELECT backup_bucket_id FROM projects WHERE project_id")
+      ) {
         return {
           rows: [{ backup_bucket_id: settings.backup_bucket_id ?? null }],
         };
@@ -69,15 +113,34 @@ describe("project-backup", () => {
         return { rows: [{ value: settings[key] ?? null }] };
       }
       if (sql.includes("FROM project_backup_secrets")) {
-        return {
-          rows: [{ secret: settings.project_secret ?? "plain-secret" }],
-        };
+        return settings.project_secret
+          ? {
+              rows: [{ secret: settings.project_secret }],
+            }
+          : { rows: [] };
       }
       if (sql.startsWith("UPDATE project_backup_secrets")) {
         return { rows: [] };
       }
       if (sql.startsWith("INSERT INTO project_backup_secrets")) {
         return { rows: [] };
+      }
+      if (sql.includes("FROM project_backup_repos WHERE id")) {
+        return settings.backup_repo_id ? { rows: [repoRow()] } : { rows: [] };
+      }
+      if (sql.includes("FROM project_backup_repos r")) {
+        return settings.active_repo ? { rows: [repoRow()] } : { rows: [] };
+      }
+      if (
+        sql.startsWith(
+          "SELECT COUNT(*)::INTEGER AS count FROM project_backup_repos",
+        )
+      ) {
+        return { rows: [{ count: settings.project_backup_repo_count ?? 0 }] };
+      }
+      if (sql.startsWith("INSERT INTO project_backup_repos")) {
+        settings.backup_repo_id = REPO_ID;
+        return { rows: [repoRow()] };
       }
       if (sql.startsWith("INSERT INTO buckets")) {
         return { rows: [] };
@@ -134,7 +197,39 @@ describe("project-backup", () => {
 
   const masterKeyBase64 = Buffer.alloc(32, 7).toString("base64");
 
-  it("builds per-project config when settings exist", async () => {
+  it("builds shared-repo config and assigns the project to an active repo", async () => {
+    settings = {
+      r2_account_id: "account",
+      r2_api_token: "token",
+      r2_access_key_id: "access",
+      r2_secret_access_key: "secret",
+      r2_bucket_prefix: "cocalc-backups",
+      project_region: "wnam",
+      repo_secret: "repo-secret",
+      repo_root: "rustic/shared-wnam-0001",
+      active_repo: true,
+    };
+    const { getBackupConfig } = await import("./index");
+    const result = await getBackupConfig({
+      host_id: HOST_ID,
+      project_id: PROJECT_ID,
+    });
+    expect(result.toml).toContain('repository = "opendal:s3"');
+    expect(result.toml).toContain('password = "repo-secret"');
+    expect(result.toml).toContain('bucket = "cocalc-backups-wnam"');
+    expect(result.toml).toContain('root = "rustic/shared-wnam-0001"');
+    expect(
+      queryMock.mock.calls.some(
+        ([sql]) =>
+          typeof sql === "string" &&
+          sql.includes("UPDATE projects") &&
+          sql.includes("backup_repo_id"),
+      ),
+    ).toBe(true);
+    expect(result.ttl_seconds).toBeGreaterThan(0);
+  });
+
+  it("preserves legacy per-project backup config when one already exists", async () => {
     settings = {
       r2_account_id: "account",
       r2_api_token: "token",
@@ -143,17 +238,15 @@ describe("project-backup", () => {
       r2_bucket_prefix: "cocalc-backups",
       project_secret: "project-secret",
       project_region: "wnam",
+      backup_bucket_id: BUCKET_ID,
     };
     const { getBackupConfig } = await import("./index");
     const result = await getBackupConfig({
       host_id: HOST_ID,
       project_id: PROJECT_ID,
     });
-    expect(result.toml).toContain('repository = "opendal:s3"');
     expect(result.toml).toContain('password = "project-secret"');
-    expect(result.toml).toContain('bucket = "cocalc-backups-wnam"');
     expect(result.toml).toContain(`root = \"rustic/project-${PROJECT_ID}\"`);
-    expect(result.ttl_seconds).toBeGreaterThan(0);
   });
 
   it("records last_backup using the provided time", async () => {

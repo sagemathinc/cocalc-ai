@@ -36,6 +36,7 @@ type ProjectRow = {
   users: any;
   host_id: string | null;
   backup_bucket_id: string | null;
+  backup_repo_id: string | null;
   created: Date | null;
   last_edited: Date | null;
 };
@@ -129,6 +130,7 @@ async function ensureDeletedProjectsSchema(): Promise<void> {
           owner_account_id UUID,
           host_id UUID,
           backup_bucket_id UUID,
+          backup_repo_id UUID,
           created TIMESTAMPTZ,
           last_edited TIMESTAMPTZ,
           deleted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -144,6 +146,9 @@ async function ensureDeletedProjectsSchema(): Promise<void> {
       `);
       await pool().query(
         "ALTER TABLE deleted_projects ADD COLUMN IF NOT EXISTS backup_bucket_id UUID",
+      );
+      await pool().query(
+        "ALTER TABLE deleted_projects ADD COLUMN IF NOT EXISTS backup_repo_id UUID",
       );
       await pool().query(
         "ALTER TABLE deleted_projects ADD COLUMN IF NOT EXISTS backup_retention_days INTEGER NOT NULL DEFAULT 0",
@@ -194,6 +199,7 @@ async function loadProject(project_id: string): Promise<ProjectRow | null> {
         users,
         host_id,
         backup_bucket_id,
+        backup_repo_id,
         created,
         last_edited
       FROM projects
@@ -369,15 +375,18 @@ async function deleteProjectBackupsForDeletedProject({
   project_id,
   host_id,
   backup_bucket_id,
+  backup_repo_id,
 }: {
   project_id: string;
   host_id: string | null;
   backup_bucket_id: string | null;
+  backup_repo_id: string | null;
 }): Promise<BackupDeletionResult> {
   const { toml } = await getDeletedProjectBackupConfigForDeletion({
     project_id,
     host_id,
     backup_bucket_id,
+    backup_repo_id,
   });
   return await deleteProjectBackupsWithToml({ project_id, toml });
 }
@@ -446,13 +455,13 @@ async function purgeProjectRows({
       `
         INSERT INTO deleted_projects
           (
-            project_id, name, title, description, owner_account_id, host_id, backup_bucket_id,
+            project_id, name, title, description, owner_account_id, host_id, backup_bucket_id, backup_repo_id,
             created, last_edited, deleted_at, deleted_by, backup_retention_days,
             backup_purge_due_at, backups_purged_at, backup_purge_status, backup_purge_started_at,
             backup_purge_error, metadata
           )
         VALUES
-          ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), $10, $11, $12, $13, $14, NULL, NULL, $15::jsonb)
+          ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), $11, $12, $13, $14, $15, NULL, NULL, $16::jsonb)
         ON CONFLICT (project_id)
         DO UPDATE SET
           name = EXCLUDED.name,
@@ -461,6 +470,7 @@ async function purgeProjectRows({
           owner_account_id = EXCLUDED.owner_account_id,
           host_id = EXCLUDED.host_id,
           backup_bucket_id = EXCLUDED.backup_bucket_id,
+          backup_repo_id = EXCLUDED.backup_repo_id,
           created = EXCLUDED.created,
           last_edited = EXCLUDED.last_edited,
           deleted_at = EXCLUDED.deleted_at,
@@ -481,6 +491,7 @@ async function purgeProjectRows({
         owner_account_id,
         project.host_id,
         project.backup_bucket_id,
+        project.backup_repo_id,
         project.created,
         project.last_edited,
         deleted_by,
@@ -637,6 +648,7 @@ type DeletedProjectBackupPurgeRow = {
   project_id: string;
   host_id: string | null;
   backup_bucket_id: string | null;
+  backup_repo_id: string | null;
   backup_purge_due_at: Date | null;
   backup_purge_status: string | null;
   backup_purge_started_at: Date | null;
@@ -671,6 +683,7 @@ async function claimDeletedProjectBackupPurge(
         project_id,
         host_id,
         backup_bucket_id,
+        backup_repo_id,
         backup_purge_due_at,
         backup_purge_status,
         backup_purge_started_at
@@ -760,6 +773,7 @@ export async function processDueDeletedProjectBackupPurges({
         project_id,
         host_id,
         backup_bucket_id,
+        backup_repo_id,
         backup_purge_due_at,
         backup_purge_status,
         backup_purge_started_at
@@ -797,6 +811,7 @@ export async function processDueDeletedProjectBackupPurges({
         project_id: claimed.project_id,
         host_id: claimed.host_id,
         backup_bucket_id: claimed.backup_bucket_id,
+        backup_repo_id: claimed.backup_repo_id,
       });
       await markDeletedProjectBackupPurgeSuccess({
         project_id: claimed.project_id,

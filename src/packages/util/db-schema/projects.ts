@@ -439,6 +439,11 @@ Table({
       desc: "Bucket id used for this project's backups.",
       render: { type: "text", editable: false },
     },
+    backup_repo_id: {
+      type: "uuid",
+      desc: "Shared project backup repository id used for this project's backups.",
+      render: { type: "text", editable: false },
+    },
   },
 });
 
