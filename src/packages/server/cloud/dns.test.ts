@@ -225,6 +225,53 @@ describe("cloud dns", () => {
     expect(record.proxied).toBe(true);
   });
 
+  it("recreates an app cname when the stored record id is stale", async () => {
+    fetchMock.mockImplementation(async (input: any, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/zones?")) {
+        return zoneResponse;
+      }
+      if (init?.method === "GET" && url.includes("/dns_records?")) {
+        return responseWith([]);
+      }
+      if (
+        init?.method === "PUT" &&
+        url.includes("/dns_records/stale-record-id")
+      ) {
+        return {
+          ok: true,
+          json: async () => ({
+            success: false,
+            errors: [{ message: "Record does not exist." }],
+          }),
+        };
+      }
+      if (init?.method === "POST" && url.includes("/dns_records")) {
+        return responseWith({ id: "record-fresh" });
+      }
+      return responseWith({});
+    });
+
+    const { ensureAppSubdomainDns } = await import("./dns");
+    const result = await ensureAppSubdomainDns({
+      hostname: "demo-app.example.com",
+      target_hostname: "host-abc.example.com",
+      record_id: "stale-record-id",
+    });
+
+    expect(result.record_id).toBe("record-fresh");
+    const createCall = fetchMock.mock.calls.find(
+      ([url, init]) =>
+        String(url).includes("/dns_records") && init?.method === "POST",
+    );
+    const record = createCall?.[1]?.body
+      ? JSON.parse(createCall[1].body)
+      : undefined;
+    expect(record.type).toBe("CNAME");
+    expect(record.name).toBe("demo-app.example.com");
+    expect(record.content).toBe("host-abc.example.com");
+  });
+
   it("points the public viewer hostname directly at the tunnel target", async () => {
     mockedSettings = {
       project_hosts_dns: "example.com",
