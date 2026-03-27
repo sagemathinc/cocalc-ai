@@ -11,7 +11,6 @@ import {
   ensureRootfsReleaseR2ReplicaForHost,
   hasStoredRootfsArtifact,
   issueRootfsReleaseArtifactUpload,
-  loadRootfsReleaseByImage,
   upsertReleaseArtifactReplica,
   upsertPublishedRootfsRelease,
 } from "@cocalc/server/rootfs/releases";
@@ -226,46 +225,28 @@ async function handleRootfsPublishOp(op: LroSummary): Promise<void> {
         lro: { op_id, scope_type: op.scope_type, scope_id: op.scope_id },
       });
     });
-    const parentRelease =
-      artifact.artifact_kind === "delta" && artifact.parent_image
-        ? await loadRootfsReleaseByImage(artifact.parent_image)
-        : null;
-    const resolvedParentRelease =
-      parentRelease?.content_key === artifact.content_key
-        ? null
-        : parentRelease;
-    const resolvedArtifact =
-      artifact.artifact_kind === "delta" && resolvedParentRelease
-        ? {
-            ...artifact,
-            artifact_kind: "delta" as const,
-            parent_content_key: resolvedParentRelease.content_key,
-          }
-        : {
-            ...artifact,
-            artifact_kind: "full" as const,
-            parent_image: undefined,
-            parent_content_key: undefined,
-          };
 
     const host_id = await loadProjectHostId(project_id);
     let uploadedDirectToR2 = false;
+    let uploadedToRustic = false;
     let uploadResult:
       | Awaited<ReturnType<typeof client.uploadRootfsReleaseArtifact>>
       | undefined;
-    if (!(await hasStoredRootfsArtifact(artifact.content_key))) {
-      const upload = await issueRootfsReleaseArtifactUpload({
-        host_id,
-        content_key: resolvedArtifact.content_key,
-        artifact_kind: resolvedArtifact.artifact_kind,
-        parent_content_key: resolvedArtifact.parent_content_key,
-      });
+    const upload = await issueRootfsReleaseArtifactUpload({
+      host_id,
+      content_key: artifact.content_key,
+      artifact_kind: "full",
+    });
+    if (
+      upload.backend === "rustic" ||
+      !(await hasStoredRootfsArtifact(artifact.content_key))
+    ) {
       const uploadOp = await updateLro({
         op_id,
         progress_summary: {
           phase: "upload",
           image: artifact.image,
-          content_key: resolvedArtifact.content_key,
+          content_key: artifact.content_key,
         },
       });
       await publishSummarySafe(uploadOp, {
@@ -274,10 +255,13 @@ async function handleRootfsPublishOp(op: LroSummary): Promise<void> {
       });
       progress({
         step: "upload",
-        message: "uploading RootFS release artifact",
+        message:
+          upload.backend === "rustic"
+            ? "saving RootFS release to rustic storage"
+            : "uploading RootFS release artifact",
         detail: {
           image: artifact.image,
-          content_key: resolvedArtifact.content_key,
+          content_key: artifact.content_key,
           backend: upload.backend,
         },
       });
@@ -285,37 +269,23 @@ async function handleRootfsPublishOp(op: LroSummary): Promise<void> {
         return await client.uploadRootfsReleaseArtifact({
           project_id,
           image: artifact.image,
-          parent_image: resolvedArtifact.parent_image,
+          parent_image: artifact.parent_image,
           upload,
+          lro: { op_id, scope_type: op.scope_type, scope_id: op.scope_id },
         });
       });
       uploadedDirectToR2 = uploadResult.backend === "r2";
+      uploadedToRustic = uploadResult.backend === "rustic";
     }
 
     const release = await timings.measure("register_release", async () => {
-      return await upsertPublishedRootfsRelease(
-        uploadedDirectToR2 && uploadResult?.backend === "r2"
-          ? {
-              artifact: {
-                ...resolvedArtifact,
-                artifact_kind: uploadResult.artifact_kind,
-              },
-              metadata: {
-                artifact_sha256: uploadResult.artifact_sha256,
-                artifact_bytes: uploadResult.artifact_bytes,
-                uploaded_at: new Date().toISOString(),
-              },
-              artifact_backend: "r2",
-              artifact_path: uploadResult.artifact_path,
-            }
-          : {
-              artifact: {
-                ...resolvedArtifact,
-                artifact_kind:
-                  uploadResult?.artifact_kind ?? resolvedArtifact.artifact_kind,
-              },
-            },
-      );
+      return await upsertPublishedRootfsRelease({
+        artifact: {
+          ...artifact,
+          artifact_kind: uploadResult?.artifact_kind ?? "full",
+        },
+        upload: uploadResult,
+      });
     });
 
     if (uploadedDirectToR2 && uploadResult?.backend === "r2") {
@@ -344,7 +314,7 @@ async function handleRootfsPublishOp(op: LroSummary): Promise<void> {
           error: null,
         });
       });
-    } else {
+    } else if (!uploadedToRustic) {
       const replicateOp = await updateLro({
         op_id,
         progress_summary: {

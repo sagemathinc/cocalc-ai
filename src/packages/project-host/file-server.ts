@@ -116,6 +116,7 @@ import {
 import { isMissingRusticRepositoryError } from "./backup-index-errors";
 import { btrfs, sudo } from "@cocalc/file-server/btrfs/util";
 import { subvolume } from "@cocalc/file-server/btrfs/subvolume";
+import { ensureRootfsRusticRepoProfile } from "./rootfs-rustic";
 import { pipeline } from "node:stream/promises";
 import {
   abortMultipartUpload,
@@ -591,7 +592,7 @@ async function uploadRootfsArtifactFile({
   upload,
 }: {
   path: string;
-  upload: RootfsArtifactTransferTarget;
+  upload: Exclude<RootfsArtifactTransferTarget, { backend: "rustic" }>;
 }): Promise<void> {
   const info = await stat(path);
   if (upload.backend === "r2") {
@@ -1826,11 +1827,13 @@ async function uploadRootfsReleaseArtifact({
   image,
   upload,
   parent_image,
+  lro,
 }: {
   project_id: string;
   image: string;
   upload: RootfsArtifactTransferTarget;
   parent_image?: string;
+  lro?: LroRef;
 }): Promise<RootfsUploadedArtifactResult> {
   const timings = createPhaseTimingRecorder();
   const finalPath = imageCachePath(image);
@@ -1838,6 +1841,67 @@ async function uploadRootfsReleaseArtifact({
     throw new Error(
       `cached RootFS image '${image}' does not exist on this host`,
     );
+  }
+
+  if (upload.backend === "rustic") {
+    const repoProfile = await ensureRootfsRusticRepoProfile({
+      repo_selector: upload.repo_selector,
+      repo_toml: upload.repo_toml,
+    });
+    const rootfsFs = new SandboxedFilesystem(finalPath, {
+      rusticRepo: repoProfile,
+      host: image,
+    });
+    const progress = createLroRusticReporter(lro, "upload");
+    const tagArgs = [
+      "--tag",
+      "rootfs-release",
+      "--tag",
+      `rootfs-image:${image}`,
+    ];
+    const contentKey = managedRootfsContentKey(image);
+    if (contentKey) {
+      tagArgs.push("--tag", `rootfs-content:${contentKey}`);
+    }
+    const { stdout } = parseOutput(
+      await timings.measure("rustic_backup", async () => {
+        return await rootfsFs.rustic(["backup", "--json", ...tagArgs, "."], {
+          timeout: 6 * 60 * 60 * 1000,
+          env: progress ? { RUSTIC_PROGRESS_INTERVAL: "1s" } : undefined,
+          onStderrLine: progress
+            ? createRusticProgressHandler({ onProgress: progress })
+            : undefined,
+        });
+      }),
+    );
+    const parsed = JSON.parse(stdout);
+    const snapshot_id = `${parsed?.id ?? ""}`.trim();
+    if (!snapshot_id) {
+      throw new Error("rustic backup did not return a snapshot id");
+    }
+    const summary = parsed?.summary ?? {};
+    const packedBytes =
+      Number(summary?.data_added_packed) ||
+      Number(summary?.data_added) ||
+      Number(summary?.total_bytes_processed) ||
+      0;
+    return {
+      ok: true,
+      backend: "rustic",
+      artifact_kind: "full",
+      artifact_format: "rustic",
+      artifact_backend: upload.artifact_backend,
+      artifact_sha256: contentKey ?? snapshot_id,
+      artifact_bytes: packedBytes,
+      artifact_path: snapshot_id,
+      snapshot_id,
+      repo_selector: upload.repo_selector,
+      region: upload.region,
+      bucket_id: upload.bucket_id,
+      bucket_name: upload.bucket_name,
+      bucket_purpose: upload.bucket_purpose,
+      phase_timings_ms: timings.phase_timings_ms,
+    };
   }
 
   const tempDir = await createImageCacheTempPath(".rootfs-artifact-upload-");

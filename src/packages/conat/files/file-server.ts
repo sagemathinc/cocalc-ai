@@ -279,6 +279,7 @@ export interface Fileserver {
     image: string;
     parent_image?: string;
     upload: RootfsArtifactTransferTarget;
+    lro?: LroRef;
   }) => Promise<RootfsUploadedArtifactResult>;
 }
 
