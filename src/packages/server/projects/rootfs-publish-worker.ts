@@ -7,6 +7,7 @@ import { claimLroOps, touchLro, updateLro } from "@cocalc/server/lro/lro-db";
 import { getEffectiveParallelOpsLimit } from "@cocalc/server/lro/worker-config";
 import { publishLroEvent, publishLroSummary } from "@cocalc/conat/lro/stream";
 import { publishProjectRootfsCatalogEntry } from "@cocalc/server/rootfs/catalog";
+import { withTimeout } from "@cocalc/util/async-utils";
 import {
   ensureRootfsReleaseR2ReplicaForHost,
   hasStoredRootfsArtifact,
@@ -220,10 +221,13 @@ async function handleRootfsPublishOp(op: LroSummary): Promise<void> {
       detail: { project_id },
     });
     const artifact = await timings.measure("publish", async () => {
-      return await client.publishRootfsImage({
-        project_id,
-        lro: { op_id, scope_type: op.scope_type, scope_id: op.scope_id },
-      });
+      return await withTimeout(
+        client.publishRootfsImage({
+          project_id,
+          lro: { op_id, scope_type: op.scope_type, scope_id: op.scope_id },
+        }),
+        ROOTFS_PUBLISH_TIMEOUT_MS,
+      );
     });
 
     const host_id = await loadProjectHostId(project_id);
@@ -265,17 +269,21 @@ async function handleRootfsPublishOp(op: LroSummary): Promise<void> {
           backend: upload.backend,
         },
       });
-      uploadResult = await timings.measure("upload", async () => {
-        return await client.uploadRootfsReleaseArtifact({
-          project_id,
-          image: artifact.image,
-          parent_image: artifact.parent_image,
-          upload,
-          lro: { op_id, scope_type: op.scope_type, scope_id: op.scope_id },
-        });
+      const result = await timings.measure("upload", async () => {
+        return await withTimeout(
+          client.uploadRootfsReleaseArtifact({
+            project_id,
+            image: artifact.image,
+            parent_image: artifact.parent_image,
+            upload,
+            lro: { op_id, scope_type: op.scope_type, scope_id: op.scope_id },
+          }),
+          ROOTFS_PUBLISH_TIMEOUT_MS,
+        );
       });
-      uploadedDirectToR2 = uploadResult.backend === "r2";
-      uploadedToRustic = uploadResult.backend === "rustic";
+      uploadResult = result;
+      uploadedDirectToR2 = result.backend === "r2";
+      uploadedToRustic = result.backend === "rustic";
     }
 
     const release = await timings.measure("register_release", async () => {
