@@ -9,6 +9,13 @@
       "@cocalc/hub/*": ["../hub/*"]
     }
   },
-  "exclude": ["dist", "node_modules", "build", "sea"],
+  "exclude": [
+    "dist",
+    "node_modules",
+    "build",
+    "sea",
+    "**/*.test.ts",
+    "jest.config.js"
+  ],
   "references": [{ "path": "../hub" }]
 }

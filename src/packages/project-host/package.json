@@ -1,6 +1,6 @@
 {
   "name": "@cocalc/project-host",
-  "version": "0.7.18",
+  "version": "0.7.19",
   "description": "Multi-project host built on CoCalc Lite with embedded runner/file-server/proxy",
   "exports": {
     ".": "./dist/index.js",
@@ -12,7 +12,7 @@
   "scripts": {
     "preinstall": "npx only-allow pnpm",
     "build": "rm -rf dist tsconfig.tsbuildinfo && pnpm exec tsc --build",
-    "test": "exit 0",
+    "test": "pnpm exec jest --config jest.config.js",
     "clean": "rm -rf node_modules dist tsconfig.tsbuildinfo build",
     "app": "pnpm run build && node dist/main.js",
     "daemon:start": "node scripts/daemon-start.js",

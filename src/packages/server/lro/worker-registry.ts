@@ -5,7 +5,11 @@ export type ParallelOpsScopeModel =
   | "global"
   | "per-provider"
   | "per-project-host";
-export type ParallelOpsConfigSource = "constant" | "env-legacy" | "db-override";
+export type ParallelOpsConfigSource =
+  | "constant"
+  | "env-legacy"
+  | "db-override"
+  | "env-debug-cap";
 
 export interface ParallelOpsLimitSnapshot {
   default_limit: number | null;
@@ -112,10 +116,31 @@ export const parallelOpsWorkerRegistry: ParallelOpsWorkerRegistration[] = [
     dynamic_limit_supported: true,
     lro_kinds: ["project-rootfs-publish"],
     lease_ms: 120_000,
+    notes: [
+      "This is the global RootFS publish admission cap.",
+      "Per-project-host RootFS publish limits are reported separately.",
+    ],
+    getLimitSnapshot: () => ({
+      default_limit: 100,
+      configured_limit: 100,
+      effective_limit: 100,
+      config_source: "constant",
+    }),
+  },
+  {
+    worker_kind: "project-rootfs-publish-host",
+    category: "lro",
+    scope_model: "per-project-host",
+    dynamic_limit_supported: true,
+    lease_ms: 120_000,
+    notes: [
+      "This reports host-local admission usage for RootFS publish.",
+      "The default is intentionally conservative until same-host publish scaling is benchmarked.",
+    ],
     getLimitSnapshot: () => ({
       default_limit: 1,
-      configured_limit: 1,
-      effective_limit: 1,
+      configured_limit: null,
+      effective_limit: null,
       config_source: "constant",
     }),
   },

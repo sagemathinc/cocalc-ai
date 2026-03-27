@@ -1,52 +1,168 @@
-# CoCalc HTTP Proxying (Project Hosts)
+# CoCalc HTTP Proxying and Public App Traffic
 
-This note summarizes how HTTP traffic is routed now that projects live on project-hosts. See the referenced source files for the current implementation details.
+This note summarizes the intended routing model for project-host HTTP traffic,
+managed apps, and public app subdomains.
 
-## High-level flow
+It is not just a description of current code. It also records a hard product
+constraint that future changes must preserve.
 
-- Browser (or API client) issues a URL like `/PROJECT_ID/port/6002/...` against the master hub.
-- Master hub proxies that request to the project-host that owns the project (host lookup is part of project placement).
-- Project-host proxies the request into the project container’s internal HTTP proxy (running inside the Podman container on port 80).
-- Responses flow back along the same chain; WebSocket upgrades follow the identical path.
+## Hard Constraint
 
-## Diagram
+For Launchpad and Cloudflare-backed deployments, app traffic must not flow
+through the central hub in the steady state.
+
+That means:
+
+- Private app traffic should go directly to the owning `project-host`.
+- Public app subdomains must resolve directly to the owning `project-host`.
+- The central hub may participate in control-plane decisions:
+  - project placement
+  - DNS reservation
+  - lookup metadata
+  - auth token minting
+- The central hub must not sit in the hot data path for public app traffic.
+- The central hub should not sit in the hot data path for private app traffic
+  either.
+
+Reason:
+
+- routing all app bytes through the hub is a non-starter for performance,
+  latency, and egress cost
+- it would also make the hub a central bottleneck for unrelated project traffic
+
+Exception:
+
+- self-hosted / local-dev cases may temporarily accept central relays when the
+  network environment forces that, but this is an exception for bring-up and
+  debugging, not the target architecture
+
+## Target Architecture
+
+### Private app traffic
+
+Target architecture:
+
+- Browser should request a project-host URL directly for private app traffic.
+- `project-host` authenticates the request and proxies into the project
+  container's internal HTTP proxy.
+
+Current status:
+
+- some existing authenticated flows still enter via the hub first
+- that is transitional behavior, not the desired final design
+
+### Public app traffic
+
+- Browser requests `https://<label>-app-<env>.<root>/...`
+- Cloudflare DNS points that hostname at the owning `project-host` hostname
+- Browser connects directly to `project-host`
+- `project-host` maps `Host:` to `(project_id, app_id, base_path)`
+- `project-host` rewrites the request to the canonical internal app path
+- `project-host` serves static/public-viewer apps directly or proxies dynamic
+  traffic to the project container
+
+This keeps the control plane centralized while keeping the traffic path local to
+the owning host.
+
+## Diagrams
+
+### Private app flow
 
 ```mermaid
 flowchart LR
     Browser["Browser / client"]
-    Master["Master hub HTTP proxy (hub/server)"]
-    Host["Project-host HTTP proxy @cocalc/project-host using @cocalc/project-proxy"]
-    Container["Project container internal HTTP proxy port 80"]
+    Host["Owning project-host"]
+    Container["Project container internal HTTP proxy"]
 
-    Browser -- URL: /<project>/port/<p>/... --> Master
-    Master -- proxy --> Host
-    Host -- proxy (prependPath:false,\nxfwd, ws) --> Container
+    Browser -->|direct app URL| Host
+    Host -->|proxy| Container
 ```
 
-## Master hub behavior
+### Public app flow
 
-- The hub inspects incoming project URLs, resolves the project’s host from Postgres, and proxies directly to that host.
-- Path is preserved (no extra prefixes). WebSocket upgrades are forwarded.
-- Key code: hub proxy middleware in [src/packages/server](./src/packages/server).
+```mermaid
+flowchart LR
+    Browser["Browser / client"]
+    DNS["Cloudflare DNS"]
+    Host["Owning project-host"]
+    Container["Project container internal HTTP proxy or static app handler"]
+    Hub["Central hub control plane"]
 
-## Project-host behavior
+    Browser -->|app hostname| DNS
+    DNS -->|direct to owning host| Host
+    Host -->|host-header lookup + rewrite| Container
+    Host -.lookup/cache miss only.-> Hub
+```
 
-- Project-host attaches the shared proxy handler from `@cocalc/project-proxy`.
-- URL parser extracts `project_id` and optional `port/<n>` selector.
-- It resolves the project’s ephemeral proxy port from the project-host SQLite state and targets `127.0.0.1:<http_port>` with `prependPath: false`.
-- WebSocket upgrades are enabled; `xfwd` is on for accurate client IPs.
-- Key code: [src/packages/project-host/main.ts](./src/packages/project-host/main.ts) and [src/packages/project-proxy/proxy.ts](./src/packages/project-proxy/proxy.ts).
+Important:
 
-## Project container behavior
+- the public app flow must not be `Browser -> DNS -> Hub -> project-host`
+- the private app flow should also not be `Browser -> Hub -> project-host` in
+  the final design
+- if a design requires restarting the shared central `cloudflared` instance when
+  a user exposes/unexposes an app, that design is wrong
 
-- Inside each project container, `cocalc-project` runs an internal HTTP proxy \(port 80\) that fronts services like JupyterLab, VS Code, etc., using the `/project_id/port/<n>/...` pattern.
-- The container listens on `0.0.0.0` so the host\-level proxy can reach it.
-- Key code: [src/packages/project/servers/proxy/proxy.ts](./src/packages/project/servers/proxy/proxy.ts).
+## Why per-app tunnel config churn is wrong
 
-## Notable implementation points
+Using a shared `cloudflared` process whose config changes whenever a user
+exposes or unexposes an app is not acceptable.
 
-- Proxy library: `http-proxy-3` \(maintained API\-compatible fork of unmaintained http\-proxy\) with `prependPath: false`, `ws: true`, `xfwd: true`.
-- Routing correctness depends on stable project→host placement and the project\-host SQLite port registry.
-- If a request arrives before placement exists, the hub will not have a host; callers should surface a clear error.
-- For security, host\-level proxies only forward to loopback targets derived from registered project state; unrecognized paths fall through to a 404 handler.
+Problems:
 
+- config churn is driven by ordinary user actions
+- restarting the shared tunnel risks breaking unrelated active connections
+- even graceful shutdown would still terminate long-lived app sessions such as
+  WebSockets
+- forceful restart makes denial-of-service trivial
+
+Therefore:
+
+- app expose/unexpose must only change DNS / control-plane state
+- it must not require shared tunnel daemon restart in the normal case
+
+## Current implementation responsibilities
+
+### Hub
+
+- project placement lookup
+- control-plane APIs for app exposure metadata
+- public app hostname lookup APIs used by `project-host`
+- auth minting and coordination
+
+### Project-host
+
+- public app hostname routing
+- public app auth / policy enforcement
+- static app serving
+- Public Viewer Mode serving and redirects
+- service proxying into the project container
+
+### Cloudflare
+
+- public DNS only
+- stable tunnel / host entrypoints
+- optional caching for public static content
+
+## Design notes
+
+- Public app DNS should target the owning `project-host` hostname, not the
+  central site hostname.
+- `project-host` should treat public app hostnames as a first-class input, not
+  as a special hub-only feature.
+- Public Viewer raw-domain traffic follows the same principle: centralized
+  control plane is fine, but the content-serving path should avoid unnecessary
+  hub bottlenecks.
+
+## Relevant code
+
+- Hub private/public proxying:
+  - [src/packages/hub/proxy/project-host.ts](../src/packages/hub/proxy/project-host.ts)
+  - [src/packages/hub/proxy/public-app-subdomain.ts](../src/packages/hub/proxy/public-app-subdomain.ts)
+- Public app reservation and lookup:
+  - [src/packages/server/app-public-subdomains.ts](../src/packages/server/app-public-subdomains.ts)
+  - [src/packages/server/conat/api/system.ts](../src/packages/server/conat/api/system.ts)
+- Project-host request handling:
+  - [src/packages/project-host/main.ts](../src/packages/project-host/main.ts)
+  - [src/packages/project-host/http-proxy-auth.ts](../src/packages/project-host/http-proxy-auth.ts)
+- Container-side proxy behavior:
+  - [src/packages/project/servers/proxy/proxy.ts](../src/packages/project/servers/proxy/proxy.ts)

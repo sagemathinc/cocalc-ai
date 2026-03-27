@@ -5,7 +5,7 @@
     "outDir": "dist",
     "lib": ["ESNext"]
   },
-  "exclude": ["node_modules", "dist", "test"],
+  "exclude": ["node_modules", "dist", "test", "**/*.test.ts", "jest.config.js"],
   "references": [
     { "path": "../http-api" },
     { "path": "../backend" },

@@ -1,0 +1,71 @@
+{
+  "date": "2026-03-25",
+  "mode": "rustic-r2-quick-check",
+  "environment": {
+    "host": {
+      "name": "rootfs-test-2",
+      "host_id": "18521f3d-1d43-4663-aec3-91fc7374d114",
+      "machine": "n2-highmem-4",
+      "ram_gb": 32,
+      "disk_gb": 200,
+      "region": "us-west1"
+    },
+    "bucket": {
+      "name": "lite2-dev-wnam",
+      "region": "wnam"
+    }
+  },
+  "notes": [
+    "This was a quick due-diligence benchmark, not a production implementation.",
+    "The source trees were the already-cached benchmark lowerdirs from the 2026-03-23 multipart RootFS run.",
+    "The rustic test measured backup to R2 and restore into a fresh btrfs subvolume on the same host.",
+    "The btrfs-stream comparison values below come from the earlier multipart RootFS benchmark artifacts."
+  ],
+  "benchmarks": [
+    {
+      "name": "package-heavy-jupyter",
+      "image": "cocalc.local/rootfs/a6abe0cf83e386aa4e861b11fd0d0e574b67c4ddd68bfcc0b1a2ca88b056577d",
+      "source_human": "1.4G",
+      "source_bytes": 1357315530,
+      "rustic": {
+        "backup_s": 32.19,
+        "restore_s": 10.6,
+        "data_added": 1367046516,
+        "data_added_packed": 473020990,
+        "total_files_processed": 41173,
+        "total_dirs_processed": 6636
+      },
+      "btrfs_stream_reference": {
+        "publish_total_s": 57.28,
+        "btrfs_send_s": 20.516,
+        "hash_artifact_s": 4.671,
+        "upload_artifact_s": 8.311,
+        "cold_start_s": 36.607,
+        "cache_rootfs_s": 35.957
+      }
+    },
+    {
+      "name": "blob-4g-random",
+      "image": "cocalc.local/rootfs/b6bc27f742358783e20f04d513809a1afe55c36572a8d9c7ef83519e467140d9",
+      "source_human": "4.3G",
+      "source_bytes": 4542984511,
+      "rustic": {
+        "backup_s": 229.91,
+        "restore_s": 18.9,
+        "data_added": 4537097541,
+        "data_added_packed": 4384161417,
+        "total_files_processed": 8660,
+        "total_dirs_processed": 1439
+      },
+      "btrfs_stream_reference": {
+        "publish_total_s": 120.989,
+        "btrfs_send_s": 21.16,
+        "hash_artifact_s": 14.904,
+        "upload_artifact_s": 29.773,
+        "cold_start_s": 106.765,
+        "cache_rootfs_s": 106.033,
+        "cache_rootfs_multipart_download_s": 44.634
+      }
+    }
+  ]
+}

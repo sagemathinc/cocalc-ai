@@ -21,11 +21,14 @@ jest.mock("@cocalc/database/pool", () => ({
 describe("parallel ops worker config", () => {
   let rows: Map<string, StoredOverride>;
   let selectCount: number;
+  let prevDebugCap: string | undefined;
 
   beforeEach(() => {
     jest.resetModules();
     rows = new Map();
     selectCount = 0;
+    prevDebugCap = process.env.COCALC_PARALLEL_OPS_DEBUG_CAP;
+    delete process.env.COCALC_PARALLEL_OPS_DEBUG_CAP;
     queryMock = jest.fn(async (sql: string, params?: any[]) => {
       if (
         sql.includes("CREATE TABLE IF NOT EXISTS parallel_ops_limits") ||
@@ -82,6 +85,14 @@ describe("parallel ops worker config", () => {
 
       throw new Error(`unexpected query: ${sql}`);
     });
+  });
+
+  afterEach(() => {
+    if (prevDebugCap == null) {
+      delete process.env.COCALC_PARALLEL_OPS_DEBUG_CAP;
+    } else {
+      process.env.COCALC_PARALLEL_OPS_DEBUG_CAP = prevDebugCap;
+    }
   });
 
   it("returns the default limit and caches repeated lookups", async () => {
@@ -198,6 +209,61 @@ describe("parallel ops worker config", () => {
         scope_id: "host-123",
       }),
     ).resolves.toEqual({ value: 10, source: "default" });
+  });
+
+  it("caps global limits via the debug env", async () => {
+    const { clearParallelOpsLimitCache, getEffectiveParallelOpsLimit } =
+      await import("./worker-config");
+
+    process.env.COCALC_PARALLEL_OPS_DEBUG_CAP = "1";
+    clearParallelOpsLimitCache();
+    await expect(
+      getEffectiveParallelOpsLimit({
+        worker_kind: "project-rootfs-publish",
+        default_limit: 100,
+      }),
+    ).resolves.toEqual({ value: 1, source: "env-debug-cap" });
+  });
+
+  it("caps per-project-host limits via the debug env", async () => {
+    const {
+      clearParallelOpsLimitCache,
+      getEffectiveParallelOpsLimit,
+      getEffectiveParallelOpsLimits,
+      setParallelOpsLimitOverride,
+    } = await import("./worker-config");
+
+    await setParallelOpsLimitOverride({
+      worker_kind: "project-rootfs-publish-host",
+      scope_type: "project_host",
+      scope_id: "host-a",
+      limit_value: 4,
+    });
+    process.env.COCALC_PARALLEL_OPS_DEBUG_CAP = "1";
+    clearParallelOpsLimitCache();
+
+    await expect(
+      getEffectiveParallelOpsLimit({
+        worker_kind: "project-rootfs-publish-host",
+        default_limit: 2,
+        scope_type: "project_host",
+        scope_id: "host-a",
+      }),
+    ).resolves.toEqual({ value: 1, source: "env-debug-cap" });
+
+    await expect(
+      getEffectiveParallelOpsLimits({
+        worker_kind: "project-rootfs-publish-host",
+        default_limit: 2,
+        scope_type: "project_host",
+        scope_ids: ["host-a", "host-b"],
+      }),
+    ).resolves.toEqual(
+      new Map([
+        ["host-a", { value: 1, source: "env-debug-cap" }],
+        ["host-b", { value: 1, source: "env-debug-cap" }],
+      ]),
+    );
   });
 
   it("resolves multiple per-project-host limits in one query", async () => {

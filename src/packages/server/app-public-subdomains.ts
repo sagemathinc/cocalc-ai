@@ -324,15 +324,14 @@ export async function reserveProjectAppPublicSubdomain(opts: {
   const ttl_s = Math.max(60, Math.floor(Number(opts.ttl_s) || 0));
 
   const policy = await getProjectAppPublicPolicy(project_id);
-  // Public app subdomains should target the central site/hub entrypoint first.
-  // The hub already knows how to rewrite these hostnames onto the owning
-  // project/app route, whereas sending them straight to a project-host bypasses
-  // the public-subdomain routing path entirely.
-  const dnsTargetHostname = policy.site_hostname ?? policy.host_hostname;
+  // Public app subdomains must target the owning project-host directly in the
+  // normal Launchpad/Cloudflare case. The hub may participate in the control
+  // plane, but it must not sit in the hot data path for public app traffic.
+  const dnsTargetHostname = policy.host_hostname;
   if (!policy.enabled || !policy.dns_domain || !dnsTargetHostname) {
     throw new Error(
       policy.warnings[0] ??
-        "public app subdomains are not available; cloudflare dns and public site url are required",
+        "public app subdomains are not available; cloudflare dns and project-host public hostname are required",
     );
   }
 

@@ -26,6 +26,10 @@ import {
   listRootfsCacheEntries,
   pullRootfsCacheEntry,
 } from "./rootfs-cache";
+import {
+  buildCachedRootfsManifest,
+  buildProjectRootfsManifest,
+} from "./rootfs-manifest";
 import { connect as connectToConat } from "@cocalc/conat/core/client";
 import { inboxPrefix } from "@cocalc/conat/names";
 import {
@@ -725,6 +729,12 @@ export async function startMasterRegistration({
           throw new Error("static app path not found");
         }
         return inspection;
+      },
+      async buildRootfsImageManifest({ image }) {
+        return await buildCachedRootfsManifest(image);
+      },
+      async buildProjectRootfsManifest({ project_id }) {
+        return await buildProjectRootfsManifest(project_id);
       },
     },
   });

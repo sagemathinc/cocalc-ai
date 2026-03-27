@@ -145,7 +145,11 @@ export async function getProjectHostParallelOpsLimit({
     configured_limit: source === "db-override" ? value : null,
     effective_limit: value,
     config_source:
-      source === "db-override" ? "db-override" : base.config_source,
+      source === "db-override"
+        ? "db-override"
+        : source === "env-debug-cap"
+          ? "env-debug-cap"
+          : base.config_source,
   };
 }
 
@@ -1335,7 +1339,7 @@ export async function tracePublicAppHostname({
     await resolveProjectContext({ host_id, project_id: target.project_id });
   }
   const policy = await getProjectAppPublicPolicyRaw(target.project_id);
-  const dnsTargetHostname = policy.site_hostname ?? policy.host_hostname;
+  const dnsTargetHostname = policy.host_hostname;
   const dns_target =
     dnsTargetHostname != null
       ? await resolvePublicAppDnsTarget(dnsTargetHostname)

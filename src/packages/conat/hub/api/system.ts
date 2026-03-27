@@ -203,7 +203,7 @@ export interface ParallelOpsWorkerStatus {
   default_limit: number | null;
   configured_limit: number | null;
   effective_limit: number | null;
-  config_source: "constant" | "env-legacy" | "db-override";
+  config_source: "constant" | "env-legacy" | "db-override" | "env-debug-cap";
   extra_limits?: Record<string, number>;
   queued_count: number;
   running_count: number;
@@ -233,7 +233,7 @@ export interface ParallelOpsLimitResolution {
   default_limit: number | null;
   configured_limit: number | null;
   effective_limit: number | null;
-  config_source: "constant" | "env-legacy" | "db-override";
+  config_source: "constant" | "env-legacy" | "db-override" | "env-debug-cap";
 }
 
 export interface ReserveProjectAppPublicSubdomainResult {

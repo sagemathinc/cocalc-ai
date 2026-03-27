@@ -6,9 +6,12 @@ import getLogger from "../logger";
 import { stripBasePath } from "./util";
 import siteUrl from "@cocalc/database/settings/site-url";
 import { parseReq } from "./parse";
-import hasAccess from "./check-for-access-to-project";
+import hasAccess, {
+  resolveAuthenticatedAccountId,
+} from "./check-for-access-to-project";
 import { handleFileDownload } from "@cocalc/conat/files/file-download";
 import { isPublicAppSubdomainRequest } from "./public-app-subdomain";
+import { getProjectHostRedirectUrl } from "./project-host";
 
 const logger = getLogger("proxy:handle-request");
 const APP_PUBLIC_TOKEN_QUERY_PARAM = "cocalc_app_token";
@@ -109,6 +112,30 @@ export default function init({
     if (type == "files") {
       await handleFileDownload({ req, res, url });
       return;
+    }
+
+    if (
+      !allowAnonymousProxyBypass &&
+      type !== "conat" &&
+      /^(GET|HEAD)$/i.test(req.method ?? "GET")
+    ) {
+      const account_id = await resolveAuthenticatedAccountId({
+        remember_me,
+        api_key,
+      });
+      if (account_id) {
+        const target = await getProjectHostRedirectUrl({
+          project_id,
+          path: url,
+          account_id,
+        });
+        if (target) {
+          res.statusCode = 307;
+          res.setHeader("Location", target);
+          res.end();
+          return;
+        }
+      }
     }
 
     const projectProxyHandlers = await projectProxyHandlersPromise;

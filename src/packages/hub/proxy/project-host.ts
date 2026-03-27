@@ -4,6 +4,7 @@ import { parseReq } from "./parse";
 import getPool from "@cocalc/database/pool";
 import LRU from "lru-cache";
 import { isPublicAppSubdomainRequest } from "./public-app-subdomain";
+import { PROJECT_HOST_HTTP_AUTH_QUERY_PARAM } from "@cocalc/conat/auth/project-host-http";
 import { issueProjectHostAuthToken } from "@cocalc/conat/auth/project-host-token";
 import { getProjectHostAuthTokenPrivateKey } from "@cocalc/backend/data";
 
@@ -89,6 +90,35 @@ function getPublicAppHubAuthToken(host_id: string): string {
   };
   publicAuthTokenCache.set(host_id, value);
   return value.token;
+}
+
+export async function getProjectHostRedirectUrl({
+  project_id,
+  path,
+  account_id,
+}: {
+  project_id: string;
+  path: string;
+  account_id: string;
+}): Promise<string | undefined> {
+  const host = await getHost(project_id);
+  const host_id = `${host?.host_id ?? ""}`.trim();
+  const base = `${host?.public_url ?? ""}`.trim();
+  if (!host_id || !base || !account_id) {
+    return;
+  }
+  const issued = issueProjectHostAuthToken({
+    host_id,
+    actor: "account",
+    account_id,
+    ttl_seconds: 5 * 60,
+    private_key: getProjectHostAuthTokenPrivateKey(),
+  });
+  const normalizedBase = base.replace(/\/+$/, "");
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  const target = new URL(`${normalizedBase}${normalizedPath}`);
+  target.searchParams.set(PROJECT_HOST_HTTP_AUTH_QUERY_PARAM, issued.token);
+  return target.toString();
 }
 
 export async function createProjectHostProxyHandlers() {
