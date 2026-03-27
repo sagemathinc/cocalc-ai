@@ -815,6 +815,37 @@ case "$cmd" in
     # RootFS trees.
     exec /usr/bin/rsync -aAX --numeric-ids "$src"/ "$dest"/
     ;;
+  rootfs-rustic-backup)
+    if [ "$#" -lt 3 ]; then
+      echo "usage: cocalc-runtime-storage rootfs-rustic-backup <src> <repo-profile> <host> [rustic args...]" >&2
+      exit 2
+    fi
+    src="$1"
+    repo_profile="$2"
+    host_name="$3"
+    shift 3
+    check_args "$src" "$repo_profile"
+    if [[ "$repo_profile" == *.toml ]]; then
+      repo_profile="${repo_profile%.toml}"
+    fi
+    cd "$src"
+    exec /opt/cocalc/tools/current/rustic -P "$repo_profile" backup --json --no-scan --host "$host_name" "$@" .
+    ;;
+  rootfs-rustic-restore)
+    if [ "$#" -lt 3 ]; then
+      echo "usage: cocalc-runtime-storage rootfs-rustic-restore <repo-profile> <snapshot> <dest> [rustic args...]" >&2
+      exit 2
+    fi
+    repo_profile="$1"
+    snapshot="$2"
+    dest="$3"
+    shift 3
+    check_args "$repo_profile" "$dest"
+    if [[ "$repo_profile" == *.toml ]]; then
+      repo_profile="${repo_profile%.toml}"
+    fi
+    exec /opt/cocalc/tools/current/rustic -P "$repo_profile" restore "$@" "$snapshot" "$dest"
+    ;;
   tar-sha256-tree)
     if [ "$#" -ne 1 ]; then
       echo "usage: cocalc-runtime-storage tar-sha256-tree <path>" >&2

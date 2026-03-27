@@ -19,7 +19,6 @@ import {
 import { join } from "node:path";
 import { pipeline } from "node:stream/promises";
 
-import { SandboxedFilesystem } from "@cocalc/backend/sandbox";
 import { executeCode } from "@cocalc/backend/execute-code";
 import getLogger from "@cocalc/backend/logger";
 import { exists } from "@cocalc/backend/misc/async-utils-node";
@@ -280,11 +279,9 @@ async function snapshotManagedRootfsReadonly({
 }
 
 async function restoreManagedRootfsRustic({
-  image,
   access,
   destPath,
 }: {
-  image: string;
   access: Extract<RootfsReleaseArtifactAccess, { artifact_format: "rustic" }>;
   destPath: string;
 }): Promise<void> {
@@ -292,12 +289,23 @@ async function restoreManagedRootfsRustic({
     repo_selector: access.repo_selector,
     repo_toml: access.repo_toml,
   });
-  const restoreFs = new SandboxedFilesystem(destPath, {
-    rusticRepo: repoProfile,
-    host: image,
-  });
-  await restoreFs.rustic(["restore", "--delete", access.snapshot_id, "."], {
+  const profileArg = repoProfile.endsWith(".toml")
+    ? repoProfile.slice(0, -5)
+    : repoProfile;
+  await executeCode({
+    verbose: false,
+    err_on_exit: true,
     timeout: 30 * 60 * 1000,
+    command: "sudo",
+    args: [
+      "-n",
+      STORAGE_WRAPPER,
+      "rootfs-rustic-restore",
+      profileArg,
+      access.snapshot_id,
+      destPath,
+      "--delete",
+    ],
   });
 }
 
@@ -424,7 +432,6 @@ async function downloadManagedRootfsArtifact({
       await createManagedRootfsRestoreSubvolume(stagedRootfsPath);
       const restoreStarted = Date.now();
       await restoreManagedRootfsRustic({
-        image,
         access,
         destPath: stagedRootfsPath,
       });

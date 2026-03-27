@@ -516,19 +516,146 @@ async function tarSha256(pathToHash: string): Promise<string> {
 }
 
 async function directorySizeBytes(pathToMeasure: string): Promise<number> {
-  const { stdout } = await sudo({
+  const result = await sudo({
     verbose: false,
+    err_on_exit: false,
     timeout: ROOTFS_PUBLISH_TIMEOUT_S,
     command: "du-bytes",
     args: [pathToMeasure],
   });
-  const value = Number.parseInt(`${stdout}`.trim().split(/\s+/)[0], 10);
+  const value = Number.parseInt(`${result.stdout}`.trim().split(/\s+/)[0], 10);
   if (!Number.isFinite(value)) {
     throw new Error(
       `failed to measure published rootfs size for ${pathToMeasure}`,
     );
   }
+  if (result.exit_code !== 0) {
+    logger.debug("du-bytes exited nonzero but returned a usable size", {
+      path: pathToMeasure,
+      exit_code: result.exit_code,
+      stderr: result.stderr,
+    });
+  }
   return value;
+}
+
+async function backupRootfsTreeToRustic({
+  sourcePath,
+  image,
+  upload,
+  lro,
+  timings,
+  timingPhase = "rustic_backup",
+}: {
+  sourcePath: string;
+  image: string;
+  upload: Extract<RootfsArtifactTransferTarget, { backend: "rustic" }>;
+  lro?: LroRef;
+  timings?: ReturnType<typeof createPhaseTimingRecorder>;
+  timingPhase?: string;
+}): Promise<Extract<RootfsUploadedArtifactResult, { backend: "rustic" }>> {
+  logger.info("rootfs rustic backup start", {
+    image,
+    sourcePath,
+    repo_selector: upload.repo_selector,
+    artifact_backend: upload.artifact_backend,
+  });
+  const repoProfile = await ensureRootfsRusticRepoProfile({
+    repo_selector: upload.repo_selector,
+    repo_toml: upload.repo_toml,
+  });
+  const progress = createLroRusticReporter(lro, "upload");
+  const progressHandler = progress
+    ? createRusticProgressHandler({ onProgress: progress })
+    : undefined;
+  let stderrBuffer = "";
+  const pushProgressChunk = (chunk?: string) => {
+    if (!progressHandler || !chunk) return;
+    stderrBuffer += chunk.replace(/\r/g, "\n");
+    const parts = stderrBuffer.split("\n");
+    stderrBuffer = parts.pop() ?? "";
+    for (const part of parts) {
+      const line = part.trim();
+      if (line) {
+        progressHandler(line);
+      }
+    }
+  };
+  const flushProgressChunk = () => {
+    if (!progressHandler) return;
+    const line = stderrBuffer.trim();
+    stderrBuffer = "";
+    if (line) {
+      progressHandler(line);
+    }
+  };
+  const tagArgs = ["--tag", "rootfs-release", "--tag", `rootfs-image:${image}`];
+  const contentKey = managedRootfsContentKey(image);
+  if (contentKey) {
+    tagArgs.push("--tag", `rootfs-content:${contentKey}`);
+  }
+  const profileArg = repoProfile.endsWith(".toml")
+    ? repoProfile.slice(0, -5)
+    : repoProfile;
+  const runBackup = async () =>
+    (await executeCode({
+      verbose: false,
+      err_on_exit: true,
+      timeout: 6 * 60 * 60,
+      command: "sudo",
+      args: [
+        "-n",
+        STORAGE_WRAPPER,
+        "rootfs-rustic-backup",
+        sourcePath,
+        profileArg,
+        image,
+        ...tagArgs,
+      ],
+      env: progress ? { RUSTIC_PROGRESS_INTERVAL: "1s" } : undefined,
+      streamCB: (event) => {
+        if (event.type === "stderr" && typeof event.data === "string") {
+          pushProgressChunk(event.data);
+        } else if (event.type === "done") {
+          flushProgressChunk();
+        }
+      },
+    })) as { stdout: string };
+  const { stdout } = timings
+    ? await timings.measure(timingPhase, runBackup)
+    : await runBackup();
+  logger.info("rootfs rustic backup finished", {
+    image,
+    sourcePath,
+  });
+  const parsed = JSON.parse(stdout);
+  const snapshot_id = `${parsed?.id ?? ""}`.trim();
+  if (!snapshot_id) {
+    throw new Error("rustic backup did not return a snapshot id");
+  }
+  const summary = parsed?.summary ?? {};
+  const packedBytes =
+    Number(summary?.data_added_packed) ||
+    Number(summary?.data_added) ||
+    Number(summary?.total_bytes_processed) ||
+    0;
+  return {
+    ok: true,
+    backend: "rustic",
+    artifact_kind: "full",
+    artifact_format: "rustic",
+    artifact_backend: upload.artifact_backend,
+    artifact_sha256: contentKey ?? snapshot_id,
+    artifact_bytes: packedBytes,
+    artifact_path: snapshot_id,
+    snapshot_id,
+    repo_selector: upload.repo_selector,
+    region: upload.region,
+    bucket_id: upload.bucket_id,
+    bucket_name: upload.bucket_name,
+    bucket_purpose: upload.bucket_purpose,
+    phase_timings_ms: timings?.phase_timings_ms,
+  };
 }
 
 async function btrfsSendToFile({
@@ -1633,10 +1760,12 @@ function createPhaseTimingRecorder() {
 async function publishRootfsImage({
   project_id,
   snapshot,
+  upload,
   lro,
 }: {
   project_id: string;
   snapshot?: string;
+  upload?: RootfsArtifactTransferTarget;
   lro?: LroRef;
 }): Promise<PublishProjectRootfsArtifact> {
   const timings = createPhaseTimingRecorder();
@@ -1686,13 +1815,6 @@ async function publishRootfsImage({
       );
     }
 
-    publishRootfsProgress({
-      lro,
-      phase: "publish",
-      progress: 40,
-      message: "materializing merged RootFS",
-      detail: { source_image: sourceImage },
-    });
     const lowerdir = await timings.measure("extract_base_image", async () => {
       return await extractBaseImage(sourceImage);
     });
@@ -1703,59 +1825,156 @@ async function publishRootfsImage({
     workdirPath = join(overlayRoot, `publish-workdir-${randomUUID()}`);
     await mkdir(workdirPath, { recursive: true });
     mergedPath = await createOverlayMountTempPath();
-    if (isManagedRootfsImageName(sourceImage)) {
-      const managedParentPath = imageCachePath(sourceImage);
-      if (
-        (await exists(managedParentPath)) &&
-        (await isBtrfsSubvolume(managedParentPath))
-      ) {
-        parentImage = sourceImage;
-        await mkdir(IMAGE_CACHE, { recursive: true });
-        stagedRootfsPath = join(
-          IMAGE_CACHE,
-          `.rootfs-publish-tree-${randomUUID()}`,
-        );
-        await btrfsSnapshotWritable({
-          source: managedParentPath,
-          dest: stagedRootfsPath,
-        });
-      }
-    }
-    stagedRootfsPath =
-      stagedRootfsPath ??
-      (await createImageCacheTempSubvolume(".rootfs-publish-tree-"));
-
-    await timings.measure("materialize_tree", async () => {
-      const workdir = workdirPath!;
-      const merged = mergedPath!;
-      const stagedRootfs = stagedRootfsPath!;
-      await mountOverlayForPublish({
-        lowerdir,
-        upperdir,
-        workdir,
-        merged,
-      });
-      await rsyncTree({
-        src: merged,
-        dest: stagedRootfs,
-      });
-      await unmountOverlayForPublish(merged);
+    const inspectData = await inspect(sourceImage);
+    const merged = mergedPath!;
+    await mountOverlayForPublish({
+      lowerdir,
+      upperdir,
+      workdir: workdirPath!,
+      merged,
     });
-    mergedPath = undefined;
 
     publishRootfsProgress({
       lro,
       phase: "publish",
-      progress: 75,
-      message: "hashing published RootFS",
+      progress: upload?.backend === "rustic" ? 45 : 40,
+      message:
+        upload?.backend === "rustic"
+          ? "hashing merged RootFS"
+          : "materializing merged RootFS",
+      detail: { source_image: sourceImage },
     });
-    const digest = await timings.measure("hash_tree", async () => {
-      return await tarSha256(stagedRootfsPath!);
-    });
-    const image = managedRootfsImageName(digest);
-    const finalPath = imageCachePath(image);
-    const finalInspectPath = inspectFilePath(image);
-    const inspectData = await inspect(sourceImage);
+
+    let uploadResult:
+      | Extract<RootfsUploadedArtifactResult, { backend: "rustic" }>
+      | undefined;
+    let image: string;
+    let digest: string;
+    let sizeBytes: number | undefined;
+    let finalInspectPath: string;
+
+    if (upload?.backend === "rustic") {
+      logger.info("rootfs publish direct rustic begin", {
+        project_id,
+        snapshot: snapshotName,
+        source_image: sourceImage,
+        merged,
+      });
+      digest = await timings.measure("hash_tree", async () => {
+        return await tarSha256(merged);
+      });
+      logger.info("rootfs publish direct rustic hashed", {
+        project_id,
+        source_image: sourceImage,
+        merged,
+        digest,
+      });
+      image = managedRootfsImageName(digest);
+      finalInspectPath = inspectFilePath(image);
+      sizeBytes = await directorySizeBytes(merged);
+      logger.info("rootfs publish direct rustic sized", {
+        project_id,
+        source_image: sourceImage,
+        merged,
+        image,
+        sizeBytes,
+      });
+
+      publishRootfsProgress({
+        lro,
+        phase: "upload",
+        progress: 70,
+        message: "saving RootFS release to rustic storage",
+        detail: { image, content_key: digest, source_image: sourceImage },
+      });
+      const uploadTimings = createPhaseTimingRecorder();
+      logger.info("rootfs publish direct rustic backup starting", {
+        project_id,
+        source_image: sourceImage,
+        merged,
+        image,
+      });
+      uploadResult = await timings.measure("upload_rustic", async () => {
+        return await backupRootfsTreeToRustic({
+          sourcePath: merged,
+          image,
+          upload,
+          lro,
+          timings: uploadTimings,
+        });
+      });
+      logger.info("rootfs publish direct rustic backup finished", {
+        project_id,
+        source_image: sourceImage,
+        merged,
+        image,
+        snapshot_id: uploadResult.snapshot_id,
+      });
+    } else {
+      if (isManagedRootfsImageName(sourceImage)) {
+        const managedParentPath = imageCachePath(sourceImage);
+        if (
+          (await exists(managedParentPath)) &&
+          (await isBtrfsSubvolume(managedParentPath))
+        ) {
+          parentImage = sourceImage;
+          await mkdir(IMAGE_CACHE, { recursive: true });
+          stagedRootfsPath = join(
+            IMAGE_CACHE,
+            `.rootfs-publish-tree-${randomUUID()}`,
+          );
+          await btrfsSnapshotWritable({
+            source: managedParentPath,
+            dest: stagedRootfsPath,
+          });
+        }
+      }
+      stagedRootfsPath =
+        stagedRootfsPath ??
+        (await createImageCacheTempSubvolume(".rootfs-publish-tree-"));
+
+      await timings.measure("materialize_tree", async () => {
+        await rsyncTree({
+          src: merged,
+          dest: stagedRootfsPath!,
+        });
+      });
+
+      publishRootfsProgress({
+        lro,
+        phase: "publish",
+        progress: 75,
+        message: "hashing published RootFS",
+      });
+      digest = await timings.measure("hash_tree", async () => {
+        return await tarSha256(stagedRootfsPath!);
+      });
+      image = managedRootfsImageName(digest);
+      const finalPath = imageCachePath(image);
+      finalInspectPath = inspectFilePath(image);
+
+      publishRootfsProgress({
+        lro,
+        phase: "publish",
+        progress: 90,
+        message: "registering host cache entry",
+        detail: { image, content_key: digest },
+      });
+      if (!(await exists(finalPath))) {
+        await timings.measure("register_cache_entry", async () => {
+          const stagedRootfs = stagedRootfsPath!;
+          await mkdir(dirname(finalPath), { recursive: true });
+          await btrfsSnapshotReadonly({
+            source: stagedRootfs,
+            dest: finalPath,
+          });
+          await deleteSubvolumeTree(stagedRootfs);
+          stagedRootfsPath = undefined;
+        });
+      }
+      sizeBytes = await directorySizeBytes(finalPath);
+    }
+
     const publishedInspectData = {
       ...inspectData,
       Digest: digest,
@@ -1772,31 +1991,11 @@ async function publishRootfsImage({
       },
     };
 
-    publishRootfsProgress({
-      lro,
-      phase: "publish",
-      progress: 90,
-      message: "registering host cache entry",
-      detail: { image, content_key: digest },
-    });
-    if (!(await exists(finalPath))) {
-      await timings.measure("register_cache_entry", async () => {
-        const stagedRootfs = stagedRootfsPath!;
-        await mkdir(dirname(finalPath), { recursive: true });
-        await btrfsSnapshotReadonly({
-          source: stagedRootfs,
-          dest: finalPath,
-        });
-        await deleteSubvolumeTree(stagedRootfs);
-        stagedRootfsPath = undefined;
-      });
-    }
-
     if (!(await exists(finalInspectPath))) {
+      await mkdir(dirname(finalInspectPath), { recursive: true });
       await writeFile(finalInspectPath, JSON.stringify(publishedInspectData));
     }
 
-    const sizeBytes = await directorySizeBytes(finalPath);
     return {
       image,
       content_key: digest,
@@ -1806,10 +2005,15 @@ async function publishRootfsImage({
       snapshot: snapshotName,
       created_snapshot: createdSnapshot,
       source_image: sourceImage,
-      artifact_kind: parentImage ? "delta" : "full",
-      parent_image: parentImage,
-      parent_content_key: managedRootfsContentKey(parentImage),
+      artifact_kind:
+        upload?.backend === "rustic" ? "full" : parentImage ? "delta" : "full",
+      parent_image: upload?.backend === "rustic" ? undefined : parentImage,
+      parent_content_key:
+        upload?.backend === "rustic"
+          ? undefined
+          : managedRootfsContentKey(parentImage),
       inspect_data: publishedInspectData,
+      upload_result: uploadResult,
       phase_timings_ms: timings.phase_timings_ms,
     };
   } finally {
@@ -1844,64 +2048,13 @@ async function uploadRootfsReleaseArtifact({
   }
 
   if (upload.backend === "rustic") {
-    const repoProfile = await ensureRootfsRusticRepoProfile({
-      repo_selector: upload.repo_selector,
-      repo_toml: upload.repo_toml,
+    return await backupRootfsTreeToRustic({
+      sourcePath: finalPath,
+      image,
+      upload,
+      lro,
+      timings,
     });
-    const rootfsFs = new SandboxedFilesystem(finalPath, {
-      rusticRepo: repoProfile,
-      host: image,
-    });
-    const progress = createLroRusticReporter(lro, "upload");
-    const tagArgs = [
-      "--tag",
-      "rootfs-release",
-      "--tag",
-      `rootfs-image:${image}`,
-    ];
-    const contentKey = managedRootfsContentKey(image);
-    if (contentKey) {
-      tagArgs.push("--tag", `rootfs-content:${contentKey}`);
-    }
-    const { stdout } = parseOutput(
-      await timings.measure("rustic_backup", async () => {
-        return await rootfsFs.rustic(["backup", "--json", ...tagArgs, "."], {
-          timeout: 6 * 60 * 60 * 1000,
-          env: progress ? { RUSTIC_PROGRESS_INTERVAL: "1s" } : undefined,
-          onStderrLine: progress
-            ? createRusticProgressHandler({ onProgress: progress })
-            : undefined,
-        });
-      }),
-    );
-    const parsed = JSON.parse(stdout);
-    const snapshot_id = `${parsed?.id ?? ""}`.trim();
-    if (!snapshot_id) {
-      throw new Error("rustic backup did not return a snapshot id");
-    }
-    const summary = parsed?.summary ?? {};
-    const packedBytes =
-      Number(summary?.data_added_packed) ||
-      Number(summary?.data_added) ||
-      Number(summary?.total_bytes_processed) ||
-      0;
-    return {
-      ok: true,
-      backend: "rustic",
-      artifact_kind: "full",
-      artifact_format: "rustic",
-      artifact_backend: upload.artifact_backend,
-      artifact_sha256: contentKey ?? snapshot_id,
-      artifact_bytes: packedBytes,
-      artifact_path: snapshot_id,
-      snapshot_id,
-      repo_selector: upload.repo_selector,
-      region: upload.region,
-      bucket_id: upload.bucket_id,
-      bucket_name: upload.bucket_name,
-      bucket_purpose: upload.bucket_purpose,
-      phase_timings_ms: timings.phase_timings_ms,
-    };
   }
 
   const tempDir = await createImageCacheTempPath(".rootfs-artifact-upload-");

@@ -152,6 +152,7 @@ export type PublishProjectRootfsArtifact = {
   parent_image?: string;
   parent_content_key?: string;
   inspect_data?: Record<string, any>;
+  upload_result?: RootfsUploadedArtifactResult;
   phase_timings_ms?: RootfsPhaseTimings;
 };
 

@@ -9,6 +9,7 @@ import { publishLroEvent, publishLroSummary } from "@cocalc/conat/lro/stream";
 import { publishProjectRootfsCatalogEntry } from "@cocalc/server/rootfs/catalog";
 import { withTimeout } from "@cocalc/util/async-utils";
 import {
+  configuredRootfsArtifactFormat,
   ensureRootfsReleaseR2ReplicaForHost,
   hasStoredRootfsArtifact,
   issueRootfsReleaseArtifactUpload,
@@ -220,30 +221,43 @@ async function handleRootfsPublishOp(op: LroSummary): Promise<void> {
       message: "publishing project filesystem state",
       detail: { project_id },
     });
+    const host_id = await loadProjectHostId(project_id);
+    const publishUpload =
+      configuredRootfsArtifactFormat() === "rustic"
+        ? await issueRootfsReleaseArtifactUpload({
+            host_id,
+            artifact_kind: "full",
+          })
+        : undefined;
     const artifact = await timings.measure("publish", async () => {
       return await withTimeout(
         client.publishRootfsImage({
           project_id,
+          upload: publishUpload,
           lro: { op_id, scope_type: op.scope_type, scope_id: op.scope_id },
         }),
         ROOTFS_PUBLISH_TIMEOUT_MS,
       );
     });
 
-    const host_id = await loadProjectHostId(project_id);
     let uploadedDirectToR2 = false;
     let uploadedToRustic = false;
     let uploadResult:
       | Awaited<ReturnType<typeof client.uploadRootfsReleaseArtifact>>
-      | undefined;
-    const upload = await issueRootfsReleaseArtifactUpload({
-      host_id,
-      content_key: artifact.content_key,
-      artifact_kind: "full",
-    });
+      | undefined = artifact.upload_result;
+    const upload =
+      uploadResult == null
+        ? await issueRootfsReleaseArtifactUpload({
+            host_id,
+            content_key: artifact.content_key,
+            artifact_kind: "full",
+          })
+        : publishUpload;
     if (
-      upload.backend === "rustic" ||
-      !(await hasStoredRootfsArtifact(artifact.content_key))
+      uploadResult == null &&
+      upload &&
+      (upload.backend === "rustic" ||
+        !(await hasStoredRootfsArtifact(artifact.content_key)))
     ) {
       const uploadOp = await updateLro({
         op_id,
@@ -285,6 +299,7 @@ async function handleRootfsPublishOp(op: LroSummary): Promise<void> {
       uploadedDirectToR2 = result.backend === "r2";
       uploadedToRustic = result.backend === "rustic";
     }
+    uploadedToRustic ||= uploadResult?.backend === "rustic";
 
     const release = await timings.measure("register_release", async () => {
       return await upsertPublishedRootfsRelease({

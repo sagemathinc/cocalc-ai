@@ -142,7 +142,7 @@ function normalizeContentKey(content_key?: string | null): string {
   return value;
 }
 
-function configuredRootfsArtifactFormat(): RootfsReleaseArtifactFormat {
+export function configuredRootfsArtifactFormat(): RootfsReleaseArtifactFormat {
   const raw = `${process.env.COCALC_ROOTFS_ARTIFACT_FORMAT ?? ""}`
     .trim()
     .toLowerCase();
@@ -366,7 +366,7 @@ export async function issueRootfsReleaseArtifactUpload({
   ttl_ms = 15 * 60 * 1000,
 }: {
   host_id: string;
-  content_key: string;
+  content_key?: string;
   artifact_kind?: RootfsReleaseArtifactKind;
   parent_content_key?: string | null;
   ttl_ms?: number;
@@ -383,6 +383,11 @@ export async function issueRootfsReleaseArtifactUpload({
       bucket_name: repo.bucket?.name,
       bucket_purpose: repo.bucket?.purpose ?? null,
     };
+  }
+  if (!content_key) {
+    throw new Error(
+      "content_key is required when issuing non-rustic RootFS artifact uploads",
+    );
   }
   const key = normalizeContentKey(content_key);
   const artifactPath = r2ArtifactKey(key, artifact_kind, parent_content_key);
