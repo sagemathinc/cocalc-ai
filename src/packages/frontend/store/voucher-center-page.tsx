@@ -19,8 +19,9 @@ import {
 } from "antd";
 import { useEffect, useMemo, useState } from "react";
 
+import { openAccountSettings } from "@cocalc/frontend/account/settings-routing";
 import { Avatar } from "@cocalc/frontend/account/avatar/avatar";
-import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
+import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon, TimeAgo } from "@cocalc/frontend/components";
 import CopyToClipboard from "@cocalc/frontend/components/copy-to-clipboard";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
@@ -59,11 +60,6 @@ function voucherStatus(record: Voucher): string {
 function redeemUrl(code: string): string {
   const origin = window.location.origin;
   return `${origin}${joinUrlPath(appBasePath, "redeem", code)}`;
-}
-
-function openSettingsPage(page: "store" | "vouchers") {
-  redux.getActions("page").set_active_tab("account");
-  redux.getActions("account").set_active_tab(page);
 }
 
 function VoucherBatchModal({
@@ -351,7 +347,11 @@ export function VoucherCenterPage() {
           <Button onClick={load}>
             <Icon name="sync-alt" /> Refresh
           </Button>
-          <Button onClick={() => openSettingsPage("store")}>Open Store</Button>
+          <Button
+            onClick={() => openAccountSettings({ kind: "tab", page: "store" })}
+          >
+            Open Store
+          </Button>
           <Button href={joinUrlPath(appBasePath, "redeem")} target="_blank">
             Redeem Voucher
           </Button>
@@ -536,8 +536,12 @@ export function VoucherCenterPage() {
       <Card style={{ marginTop: "16px" }}>
         <Paragraph style={{ marginBottom: 0 }}>
           Need to buy more voucher codes? Go back to the{" "}
-          <a onClick={() => openSettingsPage("store")}>Store</a>. Need to redeem
-          a code from outside the app? Use the public{" "}
+          <a
+            onClick={() => openAccountSettings({ kind: "tab", page: "store" })}
+          >
+            Store
+          </a>
+          . Need to redeem a code from outside the app? Use the public{" "}
           <a href={joinUrlPath(appBasePath, "redeem")} target="_blank">
             redeem page
           </a>

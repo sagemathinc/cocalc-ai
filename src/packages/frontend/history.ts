@@ -50,28 +50,19 @@ The URI schema handled by the single page app is as follows:
 import { join } from "path";
 
 import { redux } from "@cocalc/frontend/app-framework";
+import {
+  applyAccountSettingsRoute,
+  parseAccountSettingsRoute,
+} from "@cocalc/frontend/account/settings-routing";
 import { IS_EMBEDDED } from "@cocalc/frontend/client/handle-target";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import Fragment from "@cocalc/frontend/misc/fragment-id";
 import type { AuthView } from "@cocalc/frontend/auth/types";
-import {
-  type PreferencesSubTabKey,
-  type PreferencesSubTabType,
-  VALID_PREFERENCES_SUB_TYPES,
-  VALID_SETTINGS_PAGES,
-  type SettingsPageType,
+import type {
+  PreferencesSubTabKey,
+  SettingsPageType,
 } from "@cocalc/util/types/settings";
 import { getNotificationFilterFromFragment } from "./notifications/fragment";
-
-// Utility function to safely create preferences sub-tab key
-function createPreferencesSubTabKey(
-  subTab: string,
-): PreferencesSubTabKey | null {
-  if (VALID_PREFERENCES_SUB_TYPES.includes(subTab as PreferencesSubTabType)) {
-    return `preferences-${subTab}` as PreferencesSubTabKey;
-  }
-  return null;
-}
 
 // Determine query params part of URL based on state of the project store.
 // This also leaves unchanged any *other* params already there (i.e., not
@@ -188,45 +179,12 @@ export function load_target(
 
     case "settings":
       redux.getActions("page").set_active_tab("account", false);
-      const actions = redux.getActions("account");
-      if (!segments[1] || segments[1] === "" || segments[1] === "index") {
-        // Handle settings overview: settings/, settings, or settings/index
-        actions.setState({
-          active_page: "index",
-          active_sub_tab: undefined,
-        });
-      } else if (segments[1] === "profile") {
-        // Handle profile: settings/profile
-        actions.setState({
-          active_page: "profile",
-          active_sub_tab: undefined,
-        });
-      } else if (segments[1] === "preferences" && segments[2]) {
-        // Handle preferences sub-tabs: settings/preferences/[sub-tab]
-        const subTabKey = createPreferencesSubTabKey(segments[2]);
-        if (subTabKey) {
-          actions.setState({
-            active_page: "preferences",
-            active_sub_tab: subTabKey,
-          });
-        } else {
-          // Invalid sub-tab, default to appearance
-          actions.setState({
-            active_page: "preferences",
-            active_sub_tab: "preferences-appearance" as PreferencesSubTabKey,
-          });
-        }
-      } else if (segments[1]) {
-        // Handle main tabs: settings/[tab]
-        actions.set_active_tab(segments[1]);
-      } else {
-        // No specific tab provided, default to index: settings/ -> settings/index
-        actions.setState({
-          active_page: "index",
-          active_sub_tab: undefined,
-        });
-      }
-      actions.setFragment(Fragment.decode(hash));
+      applyAccountSettingsRoute(
+        redux.getActions("account"),
+        parseAccountSettingsRoute(segments.slice(1)) ?? { kind: "index" },
+        { pushHistory: change_history },
+      );
+      redux.getActions("account").setFragment(Fragment.decode(hash));
 
       break;
 
@@ -310,39 +268,27 @@ export function parse_target(target?: string):
         return { page: "project", target: segments.slice(1).join("/") };
       }
     case "settings":
-      switch (segments[1]) {
-        case undefined:
-        case "":
+      const settingsRoute = parseAccountSettingsRoute(segments.slice(1));
+      switch (settingsRoute?.kind) {
         case "index":
           return { page: "settings" };
         case "profile":
           return { page: "profile" };
         case "preferences":
-          if (segments[2]) {
-            // Handle sub-tabs: settings/preferences/[sub-tab]
-            const subTabKey = createPreferencesSubTabKey(segments[2]);
-            return {
-              page: "preferences",
-              sub_tab: subTabKey ?? "preferences-appearance", // Default to appearance if invalid
-            };
-          } else {
-            return { page: "preferences" };
-          }
+          return {
+            page: "preferences",
+            sub_tab: settingsRoute.subTabKey as PreferencesSubTabKey,
+          };
+        case "tab":
+          return {
+            page: "account",
+            tab: settingsRoute.page as Exclude<
+              SettingsPageType,
+              "index" | "profile"
+            >,
+          };
         default:
-          if (
-            VALID_SETTINGS_PAGES.includes(segments[1] as SettingsPageType) &&
-            segments[1] !== "index" &&
-            segments[1] !== "profile"
-          ) {
-            return {
-              page: "account",
-              tab: segments[1] as Exclude<
-                SettingsPageType,
-                "index" | "profile"
-              >,
-            };
-          }
-          return { page: "profile" };
+          return { page: "settings" };
       }
     case "notifications":
       return { page: "notifications" };

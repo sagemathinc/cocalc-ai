@@ -6,6 +6,7 @@
 import { Popconfirm } from "antd";
 import { useState } from "react";
 
+import { openAccountSettings } from "@cocalc/frontend/account/settings-routing";
 import { redux, useRedux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components/icon";
 import { SiteName } from "@cocalc/frontend/customize";
@@ -82,8 +83,7 @@ export default function FirstSteps({ project_id }: Props) {
               guide" in{" "}
               <a
                 onClick={() => {
-                  redux.getActions("page").set_active_tab("account");
-                  redux.getActions("account").set_active_tab("account");
+                  openAccountSettings({ kind: "index" });
                 }}
               >
                 Account Preferences

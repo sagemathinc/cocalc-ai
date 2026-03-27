@@ -4,7 +4,8 @@
  */
 
 import { Button, Card, Space, Tag, Typography } from "antd";
-import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
+import { useTypedRedux } from "@cocalc/frontend/app-framework";
+import { openAccountSettings } from "@cocalc/frontend/account/settings-routing";
 import { MembershipStatusPanel } from "@cocalc/frontend/account/membership-status";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { joinUrlPath } from "@cocalc/util/url-path";
@@ -13,11 +14,6 @@ import AdminPurchasePanel from "./admin-purchase-panel";
 import VoucherPurchasePanel from "./voucher-purchase-panel";
 
 const { Paragraph, Text, Title } = Typography;
-
-function openSettingsPage(page: "store" | "vouchers") {
-  redux.getActions("page").set_active_tab("account");
-  redux.getActions("account").set_active_tab(page);
-}
 
 export function StorePage() {
   const isAdmin = !!useTypedRedux("account", "is_admin");
@@ -37,7 +33,11 @@ export function StorePage() {
         <Card
           extra={
             <Space>
-              <Button onClick={() => openSettingsPage("vouchers")}>
+              <Button
+                onClick={() =>
+                  openAccountSettings({ kind: "tab", page: "vouchers" })
+                }
+              >
                 Voucher Center
               </Button>
               <Button href={joinUrlPath(appBasePath, "hosts")}>
@@ -52,7 +52,9 @@ export function StorePage() {
 
         <Card title="Credit vouchers">
           <VoucherPurchasePanel
-            onOpenVoucherCenter={() => openSettingsPage("vouchers")}
+            onOpenVoucherCenter={() =>
+              openAccountSettings({ kind: "tab", page: "vouchers" })
+            }
           />
         </Card>
 

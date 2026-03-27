@@ -1,8 +1,8 @@
 import { Button, Flex, Modal, Space, Spin } from "antd";
 import Balance from "./balance";
 import { useEffect, useRef, useState } from "react";
+import { openAccountSettings } from "@cocalc/frontend/account/settings-routing";
 import ShowError from "@cocalc/frontend/components/error";
-import { redux } from "@cocalc/frontend/app-framework";
 import Payments from "@cocalc/frontend/purchases/payments";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import {
@@ -114,8 +114,7 @@ const LINKS = [
 ];
 
 function openPage(value) {
-  redux.getActions("page").set_active_tab("account");
-  redux.getActions("account").set_active_tab(value);
+  openAccountSettings({ kind: "tab", page: value });
 }
 
 function Links({ onClose }) {

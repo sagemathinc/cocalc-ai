@@ -6,9 +6,10 @@
 import { Popconfirm, Popover } from "antd";
 import React from "react";
 import { FormattedMessage, useIntl } from "react-intl";
-import { AccountActions } from "@cocalc/frontend/account";
 import { labels } from "@cocalc/frontend/i18n";
 import { CancelText } from "@cocalc/frontend/i18n/components";
+import type { AccountActions } from "@cocalc/frontend/account";
+import { openAccountSettings } from "./settings-routing";
 
 interface Props {
   icon: React.ReactNode; // When clicked, show popover
@@ -71,7 +72,6 @@ interface LinksProps {
 
 export const DefaultAccountDropDownLinks: React.FC<LinksProps> = ({
   account_actions, // Type AccountActions
-  page_actions, // PageActions (untyped for now)
 }) => {
   return (
     <>
@@ -86,8 +86,7 @@ export const DefaultAccountDropDownLinks: React.FC<LinksProps> = ({
             className={"cocalc-account-button"}
             onClick={(event) => {
               event.preventDefault();
-              page_actions.set_active_tab("account"); // Set to account page
-              account_actions.set_active_tab("account"); /// Set to the Subs and course packs tab
+              openAccountSettings({ kind: "index" });
             }}
             href=""
           >
@@ -104,8 +103,7 @@ export const DefaultAccountDropDownLinks: React.FC<LinksProps> = ({
             className={"cocalc-account-button"}
             onClick={(event) => {
               event.preventDefault();
-              page_actions.set_active_tab("account"); // Set to account page
-              account_actions.set_active_tab("billing"); /// Set to the Preferences tab
+              openAccountSettings({ kind: "index" });
             }}
             href=""
           >
@@ -122,8 +120,7 @@ export const DefaultAccountDropDownLinks: React.FC<LinksProps> = ({
             className={"cocalc-account-button"}
             onClick={(event) => {
               event.preventDefault();
-              page_actions.set_active_tab("account"); // Set to account page
-              account_actions.set_active_tab("support"); /// Set to the Preferences tab
+              openAccountSettings({ kind: "tab", page: "support" });
             }}
             href=""
           >

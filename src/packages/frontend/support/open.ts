@@ -1,4 +1,5 @@
 import { redux } from "@cocalc/frontend/app-framework";
+import { openAccountSettings } from "@cocalc/frontend/account/settings-routing";
 import { open_new_tab as openNewTab } from "@cocalc/frontend/misc/open-browser-tab";
 import getURL from "./url";
 import type { Options } from "./url";
@@ -16,9 +17,6 @@ export default function openSupportTab(options: Options = {}) {
 }
 
 export function openSupportTicketsPage(): void {
-  const pageActions = redux.getActions("page");
-  const accountActions = redux.getActions("account");
-  pageActions?.settings("");
-  pageActions?.set_active_tab("account");
-  accountActions?.set_active_tab("support");
+  redux.getActions("page")?.settings("");
+  openAccountSettings({ kind: "tab", page: "support" });
 }
