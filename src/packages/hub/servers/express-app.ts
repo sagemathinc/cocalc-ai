@@ -40,7 +40,7 @@ import getServerSettings from "./server-settings";
 import basePath from "@cocalc/backend/base-path";
 import { initConatServer } from "@cocalc/server/conat/socketio";
 import { conatSocketioCount, root } from "@cocalc/backend/data";
-import { createApiV2Router } from "@cocalc/http-api";
+import { createApiV2Router, createConatRouter } from "@cocalc/http-api";
 import { ensureBootstrapAdminToken } from "@cocalc/server/auth/bootstrap-admin";
 import {
   getLicenseStatus,
@@ -277,6 +277,7 @@ export default async function init(opts: Options): Promise<{
   initProjectHostSoftware(router);
   initRootfsManifest(router);
   initSelfHostConnector(router);
+  router.use("/api/conat", createConatRouter());
 
   if (!opts.nextServer) {
     logger.info("enabling api/v2 express router (nextjs disabled)");
