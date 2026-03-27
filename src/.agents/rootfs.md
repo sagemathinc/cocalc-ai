@@ -183,6 +183,24 @@ Add explicit tests for restarting/killing the project-host during:
 - project start while switching/caching RootFS,
 - host cache GC.
 
+7. Worker concurrency tuning
+
+- do not treat the current RootFS worker parallelism defaults as final product
+  settings,
+- `1` is a conservative bootstrap value, not necessarily the right long-term
+  number,
+- empirically tune at least:
+  - RootFS publish parallelism,
+  - RootFS restore/cache parallelism,
+  - RootFS GC / prune parallelism,
+- account for:
+  - host disk throughput,
+  - CPU and memory pressure,
+  - object-storage / rest-server bandwidth,
+  - the fact that one wedged operation must not block all later work,
+- make the tuned limits configurable per deployment or host class rather than
+  baking in one universal number.
+
 ### Exit criterion
 
 The durability milestone is complete when an admin can restart a project-host in

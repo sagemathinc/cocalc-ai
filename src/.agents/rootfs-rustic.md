@@ -319,6 +319,32 @@ The recommended order is:
 This optimization should be tracked explicitly because it is likely valuable on
 cocalc.com, where many image families are large and evolve incrementally.
 
+## Parallelism Tuning
+
+Do not treat the current RootFS worker parallelism settings as final product
+numbers.
+
+Right now, a value like `1` is a conservative bootstrap default. It is useful
+while stabilizing the architecture, but it is not necessarily the right steady
+state for cocalc.com or for self-hosted deployments.
+
+We should explicitly benchmark and tune at least:
+
+- RootFS publish parallelism,
+- RootFS restore/cache parallelism,
+- RootFS GC / prune parallelism.
+
+The tuning criteria should include:
+
+- host disk throughput and IOPS,
+- available CPU and RAM,
+- object storage or rest-server bandwidth,
+- the fact that one wedged operation must not block all later work,
+- differences between small self-hosted nodes and large hosted regions.
+
+The final design should support configurable limits per deployment or host
+class, rather than baking in one universal global number.
+
 ## Cross-Region Replication
 
 Start with lazy replication.
