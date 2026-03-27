@@ -28,6 +28,7 @@ import ssl
 import subprocess
 import sys
 import time
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
@@ -43,6 +44,7 @@ class BundleSpec:
     dir: str
     current: str
     version: str | None = None
+    manifest_url: str | None = None
 
 
 @dataclass(frozen=True)
@@ -150,6 +152,7 @@ def load_config(path: str) -> BootstrapConfig:
             dir=_ensure_str(bundle_host.get("dir"), "project_host_bundle.dir"),
             current=_ensure_str(bundle_host.get("current"), "project_host_bundle.current"),
             version=bundle_host.get("version"),
+            manifest_url=bundle_host.get("manifest_url") or None,
         ),
         project_bundle=BundleSpec(
             url=_ensure_str(bundle_project.get("url"), "project_bundle.url"),
@@ -159,6 +162,7 @@ def load_config(path: str) -> BootstrapConfig:
             dir=_ensure_str(bundle_project.get("dir"), "project_bundle.dir"),
             current=_ensure_str(bundle_project.get("current"), "project_bundle.current"),
             version=bundle_project.get("version"),
+            manifest_url=bundle_project.get("manifest_url") or None,
         ),
         tools_bundle=BundleSpec(
             url=_ensure_str(bundle_tools.get("url"), "tools_bundle.url"),
@@ -168,6 +172,7 @@ def load_config(path: str) -> BootstrapConfig:
             dir=_ensure_str(bundle_tools.get("dir"), "tools_bundle.dir"),
             current=_ensure_str(bundle_tools.get("current"), "tools_bundle.current"),
             version=bundle_tools.get("version"),
+            manifest_url=bundle_tools.get("manifest_url") or None,
         ),
         cloudflared=CloudflaredSpec(
             enabled=_ensure_bool(cloudflared.get("enabled"), "cloudflared.enabled"),
@@ -1212,7 +1217,66 @@ def verify_sha256(cfg: BootstrapConfig, path: str, expected: str | None) -> None
     log_line(cfg, "bootstrap: checksum ok")
 
 
+def fetch_json(cfg: BootstrapConfig, url: str) -> dict[str, Any]:
+    log_line(cfg, f"bootstrap: fetching manifest {url}")
+    if cfg.ca_cert_path:
+        context = ssl.create_default_context(cafile=cfg.ca_cert_path)
+    else:
+        context = ssl.create_default_context()
+    try:
+        with urllib.request.urlopen(url, context=context, timeout=60) as response:
+            payload = response.read().decode("utf-8")
+            return json.loads(payload)
+    except Exception as err:
+        log_line(cfg, f"bootstrap: manifest fetch via urllib failed ({err}); trying curl")
+    if shutil.which("curl") is None:
+        raise RuntimeError("curl not available for manifest fetch fallback")
+    payload = subprocess.check_output(["curl", "-fsSL", url], text=True)
+    return json.loads(payload)
+
+
+def extract_version_from_bundle_url(url: str) -> str | None:
+    try:
+        path = urllib.parse.urlparse(url).path
+    except Exception:
+        return None
+    parts = [part for part in path.split("/") if part]
+    if len(parts) < 2:
+        return None
+    version = parts[-2].strip()
+    return version or None
+
+
+def resolve_bundle_spec(cfg: BootstrapConfig, bundle: BundleSpec) -> BundleSpec:
+    if not bundle.manifest_url:
+        return bundle
+    manifest = fetch_json(cfg, bundle.manifest_url)
+    url = f"{manifest.get('url') or ''}".strip()
+    if not url:
+        raise RuntimeError(f"manifest missing bundle url: {bundle.manifest_url}")
+    version = f"{manifest.get('version') or ''}".strip()
+    if not version:
+        version = extract_version_from_bundle_url(url) or bundle.version or "latest"
+    sha256 = f"{manifest.get('sha256') or ''}".strip() or bundle.sha256
+    resolved = BundleSpec(
+        url=url,
+        sha256=sha256,
+        remote=bundle.remote,
+        root=bundle.root,
+        dir=f"{bundle.root}/{version}",
+        current=bundle.current,
+        version=version,
+        manifest_url=bundle.manifest_url,
+    )
+    log_line(
+        cfg,
+        f"bootstrap: resolved manifest {bundle.manifest_url} to version={version} url={url}",
+    )
+    return resolved
+
+
 def extract_bundle(cfg: BootstrapConfig, bundle: BundleSpec) -> None:
+    bundle = resolve_bundle_spec(cfg, bundle)
     Path(cfg.bootstrap_tmp).mkdir(parents=True, exist_ok=True)
     if cfg.bootstrap_user and cfg.bootstrap_user != "root":
         run_best_effort(

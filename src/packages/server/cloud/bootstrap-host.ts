@@ -317,6 +317,7 @@ export type BootstrapScripts = {
   projectBundleDir: string;
   projectBundleRemote: string;
   projectBundleVersion: string;
+  toolsManifestUrl: string;
   toolsUrl: string;
   toolsSha256: string;
   toolsRoot: string;
@@ -685,6 +686,7 @@ export async function buildBootstrapScripts(
     projectBundleDir,
     projectBundleRemote,
     projectBundleVersion,
+    toolsManifestUrl,
     toolsUrl,
     toolsSha256,
     toolsRoot,
@@ -871,6 +873,7 @@ cat <<EOF_COCALC_BOOTSTRAP_CONFIG > "$BOOTSTRAP_DIR/bootstrap-config.json"
     "version": "${scripts.projectBundleVersion}"
   },
   "tools_bundle": {
+    "manifest_url": "${scripts.toolsManifestUrl}",
     "url": "${scripts.toolsUrl}",
     "sha256": "${scripts.toolsSha256}",
     "remote": "${scripts.toolsRemote}",

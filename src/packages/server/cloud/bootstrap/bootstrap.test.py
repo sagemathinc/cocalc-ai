@@ -75,5 +75,44 @@ class BootstrapRuntimeShellEnvTest(unittest.TestCase):
             self.assertIn('export CONTAINERS_CGROUP_MANAGER="cgroupfs"', text)
 
 
+class BootstrapBundleManifestResolutionTest(unittest.TestCase):
+    def test_resolves_latest_tools_bundle_from_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            bundle = bootstrap.BundleSpec(
+                url="https://example.invalid/software/tools/old/tools-linux-amd64.tar.xz",
+                sha256="oldsha",
+                remote=str(Path(tmpdir) / "tools.tar.xz"),
+                root="/opt/cocalc/tools",
+                dir="/opt/cocalc/tools/old",
+                current="/opt/cocalc/tools/current",
+                version="old",
+                manifest_url="https://example.invalid/software/tools/latest-linux-amd64.json",
+            )
+
+            original = bootstrap.fetch_json
+            bootstrap.fetch_json = lambda _cfg, _url: {
+                "url": "https://example.invalid/software/tools/1774551251773/tools-linux-amd64.tar.xz",
+                "sha256": "newsha",
+                "version": "1774551251773",
+            }
+            try:
+                resolved = bootstrap.resolve_bundle_spec(cfg, bundle)
+            finally:
+                bootstrap.fetch_json = original
+
+            self.assertEqual(
+                resolved.url,
+                "https://example.invalid/software/tools/1774551251773/tools-linux-amd64.tar.xz",
+            )
+            self.assertEqual(resolved.sha256, "newsha")
+            self.assertEqual(resolved.version, "1774551251773")
+            self.assertEqual(resolved.dir, "/opt/cocalc/tools/1774551251773")
+            self.assertEqual(
+                resolved.manifest_url,
+                "https://example.invalid/software/tools/latest-linux-amd64.json",
+            )
+
+
 if __name__ == "__main__":
     unittest.main()
