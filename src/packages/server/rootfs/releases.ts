@@ -49,7 +49,6 @@ import type {
   RootfsReleaseGcRunResult,
   RootfsUploadedArtifactResult,
 } from "@cocalc/util/rootfs-images";
-import { managedRootfsContentKey } from "@cocalc/util/rootfs-images";
 import { v4 as uuid } from "uuid";
 
 export const ROOTFS_RELEASE_ARTIFACT_ROUTE_PREFIX = "/rootfs/releases";
@@ -1046,11 +1045,32 @@ export async function upsertReleaseArtifactReplica({
 export async function loadRootfsReleaseByImage(
   image: string,
 ): Promise<RootfsReleaseRow | null> {
-  const content_key = managedRootfsContentKey(image);
-  if (!content_key) {
+  const runtime_image = `${image ?? ""}`.trim();
+  if (!runtime_image) {
     return null;
   }
-  return await loadRootfsReleaseRowByContentKey(content_key);
+  const { rows } = await getPool("medium").query<RootfsReleaseRow>(
+    `SELECT
+      release_id,
+      content_key,
+      runtime_image,
+      source_image,
+      parent_release_id,
+      depth,
+      arch,
+      size_bytes,
+      artifact_kind,
+      artifact_format,
+      artifact_backend,
+      artifact_path,
+      artifact_sha256,
+      artifact_bytes,
+      inspect_json
+    FROM rootfs_releases
+    WHERE runtime_image=$1`,
+    [runtime_image],
+  );
+  return rows[0] ?? null;
 }
 
 async function loadRootfsReleaseById(

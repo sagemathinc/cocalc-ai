@@ -142,7 +142,7 @@ export type PublishProjectRootfsBody = {
 export type PublishProjectRootfsArtifact = {
   image: string;
   content_key: string;
-  digest: string;
+  digest?: string;
   arch: RootfsImageArch;
   size_bytes?: number;
   snapshot: string;
