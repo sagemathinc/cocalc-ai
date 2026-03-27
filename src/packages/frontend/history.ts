@@ -56,12 +56,12 @@ import {
 } from "@cocalc/frontend/account/settings-routing";
 import { IS_EMBEDDED } from "@cocalc/frontend/client/handle-target";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
+import {
+  parsePageTarget,
+  type ParsedPageTarget,
+} from "@cocalc/frontend/page-routing";
 import Fragment from "@cocalc/frontend/misc/fragment-id";
 import type { AuthView } from "@cocalc/frontend/auth/types";
-import type {
-  PreferencesSubTabKey,
-  SettingsPageType,
-} from "@cocalc/util/types/settings";
 import { getNotificationFilterFromFragment } from "./notifications/fragment";
 
 // Determine query params part of URL based on state of the project store.
@@ -227,84 +227,6 @@ window.onpopstate = (_) => {
   );
 };
 
-export function parse_target(target?: string):
-  | {
-      page:
-        | "projects"
-        | "help"
-        | "file-use"
-        | "notifications"
-        | "admin"
-        | "hosts"
-        | "ssh";
-    }
-  | { page: "project"; target: string }
-  | { page: "profile" | "settings" }
-  | {
-      page: "preferences";
-      sub_tab?: PreferencesSubTabKey;
-    }
-  | {
-      page: "account";
-      tab: Exclude<SettingsPageType, "index" | "profile">;
-    }
-  | {
-      page: "notifications";
-      tab: "mentions";
-    }
-  | {
-      page: "auth";
-      view: AuthView;
-    } {
-  if (target == undefined) {
-    return { page: "profile" };
-  }
-  const segments = target.split("/");
-  switch (segments[0]) {
-    case "projects":
-      if (segments.length < 2 || (segments.length == 2 && segments[1] == "")) {
-        return { page: "projects" };
-      } else {
-        return { page: "project", target: segments.slice(1).join("/") };
-      }
-    case "settings":
-      const settingsRoute = parseAccountSettingsRoute(segments.slice(1));
-      switch (settingsRoute?.kind) {
-        case "index":
-          return { page: "settings" };
-        case "profile":
-          return { page: "profile" };
-        case "preferences":
-          return {
-            page: "preferences",
-            sub_tab: settingsRoute.subTabKey as PreferencesSubTabKey,
-          };
-        case "tab":
-          return {
-            page: "account",
-            tab: settingsRoute.page as Exclude<
-              SettingsPageType,
-              "index" | "profile"
-            >,
-          };
-        default:
-          return { page: "settings" };
-      }
-    case "notifications":
-      return { page: "notifications" };
-    case "help":
-      return { page: "help" };
-    case "file-use":
-      return { page: "file-use" };
-    case "admin":
-      return { page: "admin" };
-    case "hosts":
-      return { page: "hosts" };
-    case "ssh":
-      return { page: "ssh" };
-    case "auth":
-      return { page: "auth", view: parseAuthView(segments[1]) };
-    default:
-      return { page: "profile" };
-  }
+export function parse_target(target?: string): ParsedPageTarget {
+  return parsePageTarget(target);
 }
