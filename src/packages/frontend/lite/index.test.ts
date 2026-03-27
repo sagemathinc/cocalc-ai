@@ -1,6 +1,7 @@
 const removeCookie = jest.fn();
 const recreate_account_table = jest.fn();
 const initSyncDoc = jest.fn();
+let mockTarget = "projects";
 
 jest.mock("js-cookie", () => ({
   remove: (...args) => removeCookie(...args),
@@ -8,6 +9,11 @@ jest.mock("js-cookie", () => ({
 
 jest.mock("@cocalc/frontend/client/client", () => ({
   ACCOUNT_ID_COOKIE: "account_id",
+}));
+
+jest.mock("@cocalc/frontend/client/handle-target", () => ({
+  __esModule: true,
+  default: mockTarget,
 }));
 
 jest.mock("@cocalc/frontend/webapp-client", () => ({
@@ -27,6 +33,8 @@ jest.mock("./sync", () => ({
 describe("lite init", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    jest.resetModules();
+    mockTarget = "projects";
   });
 
   it("clears the readable account cookie and recreates the account table when the client id changes", async () => {
@@ -107,5 +115,77 @@ describe("lite init", () => {
 
     expect(removeCookie).toHaveBeenCalledWith("account_id");
     expect(recreate_account_table).not.toHaveBeenCalled();
+  });
+
+  it("keeps explicit settings routes in the foreground", async () => {
+    mockTarget = "settings/vouchers";
+
+    const open_project = jest.fn(async () => {});
+    const redux = {
+      getActions: (name: string) => {
+        if (name === "account") {
+          return { setState: jest.fn() };
+        }
+        if (name === "projects") {
+          return {
+            setState: jest.fn(),
+            open_project,
+          };
+        }
+        throw Error(`unexpected actions store ${name}`);
+      },
+    };
+
+    const lite = await import("./index");
+    lite.init(
+      redux as any,
+      {
+        account_id: "00000000-1000-4000-8000-000000000001",
+        project_id: "00000000-1000-4000-8000-000000000000",
+      } as any,
+    );
+
+    expect(open_project).toHaveBeenCalledWith({
+      project_id: "00000000-1000-4000-8000-000000000000",
+      target: "project-home",
+      switch_to: false,
+      restore_session: false,
+    });
+  });
+
+  it("respects explicit project routes for the lite project", async () => {
+    mockTarget = "projects/00000000-1000-4000-8000-000000000000/files/test.txt";
+
+    const open_project = jest.fn(async () => {});
+    const redux = {
+      getActions: (name: string) => {
+        if (name === "account") {
+          return { setState: jest.fn() };
+        }
+        if (name === "projects") {
+          return {
+            setState: jest.fn(),
+            open_project,
+          };
+        }
+        throw Error(`unexpected actions store ${name}`);
+      },
+    };
+
+    const lite = await import("./index");
+    lite.init(
+      redux as any,
+      {
+        account_id: "00000000-1000-4000-8000-000000000001",
+        project_id: "00000000-1000-4000-8000-000000000000",
+      } as any,
+    );
+
+    expect(open_project).toHaveBeenCalledWith({
+      project_id: "00000000-1000-4000-8000-000000000000",
+      target: "files/test.txt",
+      switch_to: true,
+      restore_session: false,
+    });
   });
 });
