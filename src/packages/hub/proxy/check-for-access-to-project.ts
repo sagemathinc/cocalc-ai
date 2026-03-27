@@ -21,6 +21,11 @@ interface Options {
   isPersonal: boolean;
 }
 
+interface ResolveAuthenticatedAccountIdOptions {
+  remember_me?: string;
+  api_key?: string;
+}
+
 // 1 minute cache: grant "yes" for a while
 const yesCache = new LRU({ max: 20000, ttl: 1000 * 60 * 1.5 });
 // 5 second cache: recheck "no" much more frequently
@@ -70,6 +75,22 @@ export default async function hasAccess(opts: Options): Promise<boolean> {
     noCache.set(key, access);
   }
   return access;
+}
+
+export async function resolveAuthenticatedAccountId({
+  remember_me,
+  api_key,
+}: ResolveAuthenticatedAccountIdOptions): Promise<string | undefined> {
+  if (remember_me) {
+    const account_id = await resolveRememberMeAccountId(remember_me);
+    if (account_id) {
+      return account_id;
+    }
+  }
+  if (api_key) {
+    return await resolveApiKeyAccountId(api_key);
+  }
+  return;
 }
 
 async function checkForAccess({
@@ -173,6 +194,26 @@ async function checkForRememberMeAccess({
   return { access };
 }
 
+async function resolveRememberMeAccountId(
+  remember_me: string,
+): Promise<string | undefined> {
+  const database = getDatabase();
+  const x = remember_me.split("$");
+  const hash = generateHash(x[0], x[1], parseInt(x[2]), x[3]);
+  const signed_in_mesg = await callback2(database.get_remember_me, {
+    hash,
+    cache: true,
+  });
+  const account_id = `${signed_in_mesg?.account_id ?? ""}`.trim();
+  if (!account_id) {
+    return;
+  }
+  if (await isBanned(account_id)) {
+    return;
+  }
+  return account_id;
+}
+
 async function checkForApiKeyAccess({ project_id, api_key, type, dbg }) {
   // we don't have a notion of "read" access, for type.
   dbg("checkForApiKeyAccess", { project_id, type });
@@ -187,4 +228,14 @@ async function checkForApiKeyAccess({ project_id, api_key, type, dbg }) {
   return {
     access: await isCollaborator({ account_id: user.account_id!, project_id }),
   };
+}
+
+async function resolveApiKeyAccountId(
+  api_key: string,
+): Promise<string | undefined> {
+  const user = await getAccountWithApiKey(api_key);
+  if (!user?.account_id || user.project_id) {
+    return;
+  }
+  return user.account_id;
 }
