@@ -52,7 +52,7 @@
     "app": "pnpm app:pglite",
     "app:pglite": "./bin/start.sh pglite",
     "app:postgres": "./bin/start.sh postgres",
-    "test": "exit 0",
+    "test": "pnpm exec jest --config jest.config.js",
     "depcheck": "pnpm -w exec depcheck \"$PWD\" --ignores next,webpack-dev-middleware,webpack-hot-middleware | grep -Ev '\\.coffee|coffee$'",
     "prepublishOnly": "test"
   },

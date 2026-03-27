@@ -1,0 +1,166 @@
+{
+  "date": "2026-03-25",
+  "kind": "rootfs-rustic-round2",
+  "run_id": "1774501163-76d2bfe0",
+  "environment": {
+    "source_host": {
+      "name": "rootfs-test-2",
+      "host": "136.118.80.203"
+    },
+    "destination_host": {
+      "name": "rootfs-test-1",
+      "host": "34.11.143.199"
+    },
+    "bucket": "lite2-dev-wnam",
+    "endpoint": "https://bf59ea74a28f5bf3c2679e78f6db1205.r2.cloudflarestorage.com"
+  },
+  "package_series": {
+    "repo_root": "rootfs-benchmarks/rustic-round2/1774501163-76d2bfe0/package-series",
+    "path": "/mnt/cocalc/data/cache/rustic-rootfs-round2-1774501163-76d2bfe0/pkg-work",
+    "baseline": {
+      "snapshot_id": "b3f30ba2a83be4031ef987a64abb5338280e61f71f2873ed7686d77b9d893336",
+      "tree_bytes_processed": 1361349501,
+      "backup_duration_s": 44.266794457,
+      "measured_wall_s": 45.62123525000061,
+      "data_added": 1367270125,
+      "data_added_packed": 473193673,
+      "repo_total_bytes": 477175133,
+      "cross_host_restore_s": 13.568478316999972,
+      "restored_bytes": 1361382781
+    },
+    "tiny_update": {
+      "snapshot_id": "003f6cd46eaac9826f1ded09613554ad2c94261323dd29f94b631e8991db9004",
+      "backup_duration_s": 3.39876086,
+      "measured_wall_s": 4.534383226004138,
+      "data_added": 28396,
+      "data_added_packed": 4195,
+      "repo_total_bytes": 477181361
+    },
+    "repo_add_update": {
+      "snapshot_id": "adbbd0c47fb2986b25cf0650a65eca8f8d3769f0a455d0858e9f1e896f30e60f",
+      "logical_added_bytes": 310982413,
+      "backup_duration_s": 18.62962156,
+      "measured_wall_s": 19.582336034996842,
+      "data_added": 316025056,
+      "data_added_packed": 176622175,
+      "repo_total_bytes": 655635832,
+      "cross_host_restore_s": 20.152430763002485,
+      "restored_bytes": 1672377482
+    }
+  },
+  "blob_full": {
+    "repo_root": "rootfs-benchmarks/rustic-round2/1774501163-76d2bfe0/blob-full",
+    "path": "/mnt/cocalc/data/cache/images/cocalc.local%2Frootfs%2Fb6bc27f742358783e20f04d513809a1afe55c36572a8d9c7ef83519e467140d9",
+    "snapshot_id": "c47cf291330b765babcc17731547605724063048acc3d9d6b8f0309ce80ac8b9",
+    "tree_bytes_processed": 4547030058,
+    "backup_duration_s": 168.165650449,
+    "measured_wall_s": 169.24988412399398,
+    "data_added": 4537043462,
+    "data_added_packed": 4384116577,
+    "repo_total_bytes": 4385131488,
+    "cross_host_restore_s": 22.75036309999996,
+    "restored_bytes": 4547051762
+  },
+  "fidelity": {
+    "repo_root": "rootfs-benchmarks/rustic-round2/1774501163-76d2bfe0/fidelity",
+    "path": "/mnt/cocalc/data/cache/rustic-rootfs-round2-1774501163-76d2bfe0/fidelity-src",
+    "snapshot_id": "91fc1ca6e39ab43df581b776897bd19843d821609a84e2472a3a29a4c6f63a23",
+    "backup_duration_s": 0.616452903,
+    "measured_wall_s": 1.5852007899957243,
+    "data_added": 546208,
+    "data_added_packed": 6853,
+    "repo_total_bytes": 13033,
+    "restore_seconds": 1.328154363000067,
+    "expected": {
+      "regular.txt": {
+        "mode_octal": "0o644",
+        "nlink": 2,
+        "size": 15,
+        "kind": "file",
+        "target": null
+      },
+      "hardlink.txt": {
+        "mode_octal": "0o644",
+        "nlink": 2,
+        "size": 15,
+        "kind": "file",
+        "target": null
+      },
+      "exec.sh": {
+        "mode_octal": "0o755",
+        "nlink": 1,
+        "size": 18,
+        "kind": "file",
+        "target": null
+      },
+      "symlink.txt": {
+        "mode_octal": "0o777",
+        "nlink": 1,
+        "size": 11,
+        "kind": "symlink",
+        "target": "regular.txt"
+      },
+      "pipe.fifo": {
+        "mode_octal": "0o644",
+        "nlink": 1,
+        "size": 0,
+        "kind": "fifo",
+        "target": null
+      },
+      "sparse.bin": {
+        "mode_octal": "0o644",
+        "nlink": 1,
+        "size": 10485760,
+        "kind": "file",
+        "target": null,
+        "allocated_bytes": 4096
+      }
+    },
+    "restored": {
+      "regular.txt": {
+        "mode_octal": "0o644",
+        "nlink": 1,
+        "size": 15,
+        "kind": "file",
+        "target": null
+      },
+      "hardlink.txt": {
+        "mode_octal": "0o644",
+        "nlink": 1,
+        "size": 15,
+        "kind": "file",
+        "target": null
+      },
+      "exec.sh": {
+        "mode_octal": "0o755",
+        "nlink": 1,
+        "size": 18,
+        "kind": "file",
+        "target": null
+      },
+      "symlink.txt": {
+        "mode_octal": "0o777",
+        "nlink": 1,
+        "size": 11,
+        "kind": "symlink",
+        "target": "regular.txt"
+      },
+      "pipe.fifo": {
+        "mode_octal": "0o644",
+        "nlink": 1,
+        "size": 0,
+        "kind": "fifo",
+        "target": null
+      },
+      "sparse.bin": {
+        "mode_octal": "0o644",
+        "nlink": 1,
+        "size": 10485760,
+        "kind": "file",
+        "target": null,
+        "allocated_bytes": 10485760
+      }
+    },
+    "matches_expected": false
+  }
+}

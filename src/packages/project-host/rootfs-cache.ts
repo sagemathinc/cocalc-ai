@@ -29,7 +29,7 @@ import type {
 import type { HostRootfsCacheEntry } from "@cocalc/conat/project-host/api";
 import { hubApi } from "@cocalc/lite/hub/api";
 import { isBtrfsSubvolume } from "@cocalc/file-server/btrfs/subvolume";
-import { btrfs } from "@cocalc/file-server/btrfs/util";
+import { btrfs, sudo } from "@cocalc/file-server/btrfs/util";
 import {
   IMAGE_CACHE,
   extractBaseImage,
@@ -43,6 +43,7 @@ import {
 } from "@cocalc/util/rootfs-images";
 
 import { listProjects } from "./sqlite/projects";
+import { ensureRootfsRusticRepoProfile } from "./rootfs-rustic";
 
 const logger = getLogger("project-host:rootfs-cache");
 const STORAGE_WRAPPER = "/usr/local/sbin/cocalc-runtime-storage";
@@ -244,6 +245,70 @@ async function cleanupManagedRootfsTempDir(tempDir: string): Promise<void> {
   );
 }
 
+async function chownManagedRootfsPath(path: string): Promise<void> {
+  await sudo({
+    command: "chown",
+    args: [`${process.getuid?.() ?? 0}:${process.getgid?.() ?? 0}`, path],
+    verbose: false,
+  });
+}
+
+async function createManagedRootfsRestoreSubvolume(
+  path: string,
+): Promise<void> {
+  await btrfs({
+    args: ["subvolume", "create", path],
+    err_on_exit: true,
+    verbose: false,
+  });
+  await chownManagedRootfsPath(path);
+}
+
+async function snapshotManagedRootfsReadonly({
+  source,
+  dest,
+}: {
+  source: string;
+  dest: string;
+}): Promise<void> {
+  await btrfs({
+    args: ["subvolume", "snapshot", "-r", source, dest],
+    err_on_exit: true,
+    verbose: false,
+  });
+}
+
+async function restoreManagedRootfsRustic({
+  access,
+  destPath,
+}: {
+  access: Extract<RootfsReleaseArtifactAccess, { artifact_format: "rustic" }>;
+  destPath: string;
+}): Promise<void> {
+  const repoProfile = await ensureRootfsRusticRepoProfile({
+    repo_selector: access.repo_selector,
+    repo_toml: access.repo_toml,
+  });
+  const profileArg = repoProfile.endsWith(".toml")
+    ? repoProfile.slice(0, -5)
+    : repoProfile;
+  await executeCode({
+    verbose: false,
+    err_on_exit: true,
+    timeout: 30 * 60 * 1000,
+    command: "sudo",
+    args: [
+      "-n",
+      STORAGE_WRAPPER,
+      "rootfs-rustic-restore",
+      profileArg,
+      access.snapshot_id,
+      destPath,
+      "--delete",
+    ],
+  });
+}
+
 async function findManagedRootfsReceiveTemps(image: string): Promise<string[]> {
   if (!(await exists(IMAGE_CACHE))) {
     return [];
@@ -323,7 +388,8 @@ async function downloadManagedRootfsArtifact({
     content_key: access.content_key,
     artifact_bytes: access.artifact_bytes,
     artifact_backend: access.artifact_backend,
-    parent_image: access.parent_image,
+    parent_image:
+      access.artifact_format === "btrfs-send" ? access.parent_image : undefined,
   });
   const finalPath = imageCachePath(image);
   const finalInspectPath = inspectFilePath(image);
@@ -356,6 +422,59 @@ async function downloadManagedRootfsArtifact({
       temp_dir: tempDir,
     });
     await cleanupManagedRootfsTempDir(tempDir);
+  }
+  if (access.artifact_format === "rustic") {
+    const tempDir = await mkdtemp(
+      join(IMAGE_CACHE, ".managed-rootfs-rustic-restore-"),
+    );
+    const stagedRootfsPath = join(tempDir, "rootfs");
+    try {
+      await createManagedRootfsRestoreSubvolume(stagedRootfsPath);
+      const restoreStarted = Date.now();
+      await restoreManagedRootfsRustic({
+        access,
+        destPath: stagedRootfsPath,
+      });
+      logger.info("restored managed RootFS rustic snapshot", {
+        image,
+        release_id: access.release_id,
+        content_key: access.content_key,
+        artifact_bytes: access.artifact_bytes,
+        elapsed_ms: Date.now() - restoreStarted,
+      });
+      try {
+        await snapshotManagedRootfsReadonly({
+          source: stagedRootfsPath,
+          dest: finalPath,
+        });
+        if (access.inspect_data) {
+          await writeFile(
+            finalInspectPath,
+            JSON.stringify(access.inspect_data),
+          );
+        }
+      } catch (err) {
+        if (await exists(finalPath)) {
+          await deleteCachedManagedRootfs({
+            image,
+            reason: `failed while finalizing restored rustic snapshot: ${err}`,
+          });
+        }
+        throw err;
+      }
+      logger.info("cached managed RootFS from rustic snapshot", {
+        image,
+        release_id: access.release_id,
+        content_key: access.content_key,
+        total_elapsed_ms: Date.now() - started,
+      });
+      return;
+    } finally {
+      await deleteCachedRootfsPath(stagedRootfsPath).catch(() => {});
+      await rm(tempDir, { recursive: true, force: true, maxRetries: 3 }).catch(
+        () => {},
+      );
+    }
   }
   if (access.parent_image?.trim()) {
     const parentImage = access.parent_image.trim();
@@ -449,7 +568,10 @@ async function downloadRootfsArtifactSingle({
   access,
   artifactPath,
 }: {
-  access: RootfsReleaseArtifactAccess;
+  access: Extract<
+    RootfsReleaseArtifactAccess,
+    { artifact_format: "btrfs-send" }
+  >;
   artifactPath: string;
 }): Promise<void> {
   const response = await fetch(access.download_url, {
@@ -468,7 +590,10 @@ async function downloadRootfsArtifactMultipart({
   access,
   artifactPath,
 }: {
-  access: RootfsReleaseArtifactAccess;
+  access: Extract<
+    RootfsReleaseArtifactAccess,
+    { artifact_format: "btrfs-send" }
+  >;
   artifactPath: string;
 }): Promise<void> {
   const partBytes = ROOTFS_R2_MULTIPART_DOWNLOAD_PART_BYTES;

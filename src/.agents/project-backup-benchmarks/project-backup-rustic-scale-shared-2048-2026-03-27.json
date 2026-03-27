@@ -1,0 +1,44 @@
+{
+  "ok": true,
+  "host": "8.229.132.110",
+  "user": "ubuntu",
+  "port": 22,
+  "workdir": "/mnt/cocalc/data/project-backup-rustic-bench-shared-2048",
+  "started_at": "2026-03-27T16:52:36.132Z",
+  "finished_at": "2026-03-27T17:05:52.066Z",
+  "layouts": [
+    {
+      "kind": "shared"
+    }
+  ],
+  "project_counts": [
+    2048
+  ],
+  "snapshots_per_project": 1,
+  "measurements": [
+    {
+      "layout_kind": "shared",
+      "shard_count": 1,
+      "project_count": 2048,
+      "snapshots_per_project": 1,
+      "repo_count": 1,
+      "total_snapshots": 2048,
+      "target_project": "project-00000",
+      "target_snapshot_id": "c70f51ba2f18f33e4859bbd83e1efa56f3f7bac716438c2109b1e4d6e0c98cea",
+      "timings_ms": {
+        "snapshots_filter_host": 378.38595499988514,
+        "snapshot_lookup_wrapper_scan": 506.4293769996766,
+        "snapshot_lookup_direct_id": 340.1236820000122,
+        "repoinfo": 405.0019380001686,
+        "backup_after_change": 420.8601790001012
+      },
+      "outputs": {
+        "filter_host_snapshot_count": 1,
+        "wrapper_all_snapshot_count": 2048,
+        "all_snapshots_stdout_bytes": 4217003
+      }
+    }
+  ],
+  "python_version": "3.12.3",
+  "rustic_version": "rustic 0.11.1"
+}

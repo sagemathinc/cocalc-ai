@@ -3,15 +3,27 @@ import getLogger from "@cocalc/backend/logger";
 import type { LroSummary } from "@cocalc/conat/hub/api/lro";
 import getPool from "@cocalc/database/pool";
 import { getProjectFileServerClient } from "@cocalc/server/conat/file-server-client";
-import { claimLroOps, touchLro, updateLro } from "@cocalc/server/lro/lro-db";
-import { getEffectiveParallelOpsLimit } from "@cocalc/server/lro/worker-config";
+import {
+  ensureLroSchema,
+  touchLro,
+  updateLro,
+} from "@cocalc/server/lro/lro-db";
+import {
+  getEffectiveParallelOpsLimit,
+  getEffectiveParallelOpsLimits,
+} from "@cocalc/server/lro/worker-config";
 import { publishLroEvent, publishLroSummary } from "@cocalc/conat/lro/stream";
 import { publishProjectRootfsCatalogEntry } from "@cocalc/server/rootfs/catalog";
+import { withTimeout } from "@cocalc/util/async-utils";
 import {
+  computeAvailableRootfsPublishHostSlots,
+  selectRootfsPublishClaimCandidates,
+} from "./rootfs-publish-admission";
+import {
+  configuredRootfsArtifactFormat,
   ensureRootfsReleaseR2ReplicaForHost,
   hasStoredRootfsArtifact,
   issueRootfsReleaseArtifactUpload,
-  loadRootfsReleaseByImage,
   upsertReleaseArtifactReplica,
   upsertPublishedRootfsRelease,
 } from "@cocalc/server/rootfs/releases";
@@ -19,11 +31,13 @@ import {
 const logger = getLogger("server:projects:rootfs-publish-worker");
 
 const ROOTFS_PUBLISH_LRO_KIND = "project-rootfs-publish";
+const ROOTFS_PUBLISH_HOST_WORKER_KIND = "project-rootfs-publish-host";
 const OWNER_TYPE = "hub" as const;
 const LEASE_MS = 120_000;
 const HEARTBEAT_MS = 15_000;
 const TICK_MS = 5_000;
-const DEFAULT_MAX_PARALLEL = 1;
+const DEFAULT_MAX_PARALLEL = 100;
+const DEFAULT_PER_HOST_MAX_PARALLEL = 1;
 const ROOTFS_PUBLISH_TIMEOUT_MS = 6 * 60 * 60 * 1000;
 
 const WORKER_ID = randomUUID();
@@ -39,6 +53,32 @@ const progressSteps: Record<string, number> = {
 
 let running = false;
 let inFlight = 0;
+
+type RootfsPublishTopologyRow = {
+  project_host_id: string | null;
+};
+
+type RootfsPublishClaimCandidateRecord = LroSummary & {
+  project_host_id: string | null;
+};
+
+function createNonOverlappingAsyncRunner(
+  run: () => Promise<void>,
+): () => Promise<boolean> {
+  let active: Promise<void> | undefined;
+  return async () => {
+    if (active) return false;
+    active = (async () => {
+      try {
+        await run();
+      } finally {
+        active = undefined;
+      }
+    })();
+    await active;
+    return true;
+  };
+}
 
 function createPhaseTimingRecorder() {
   const phase_timings_ms: Record<string, number> = {};
@@ -119,6 +159,158 @@ async function loadProjectHostId(project_id: string): Promise<string> {
     throw new Error(`project ${project_id} is not assigned to a host`);
   }
   return host_id;
+}
+
+async function listFreshRunningRootfsPublishTopologyRows({
+  lease_ms,
+}: {
+  lease_ms: number;
+}): Promise<RootfsPublishTopologyRow[]> {
+  const { rows } = await getPool("medium").query<RootfsPublishTopologyRow>(
+    `
+      SELECT COALESCE(NULLIF(l.input->>'project_host_id', ''), p.host_id::text) AS project_host_id
+      FROM long_running_operations l
+      JOIN projects p ON p.project_id = l.scope_id::uuid
+      WHERE l.kind = $1
+        AND l.dismissed_at IS NULL
+        AND l.status = 'running'
+        AND l.heartbeat_at IS NOT NULL
+        AND l.heartbeat_at >= now() - ($2::text || ' milliseconds')::interval
+    `,
+    [ROOTFS_PUBLISH_LRO_KIND, lease_ms],
+  );
+  return rows;
+}
+
+async function claimRootfsPublishLroOps({
+  owner_type,
+  owner_id,
+  limit,
+  lease_ms = LEASE_MS,
+}: {
+  owner_type: "hub";
+  owner_id: string;
+  limit: number;
+  lease_ms?: number;
+}): Promise<LroSummary[]> {
+  if (limit <= 0) return [];
+  const runningRows = await listFreshRunningRootfsPublishTopologyRows({
+    lease_ms,
+  });
+  const runningCounts = new Map<string, number>();
+  for (const row of runningRows) {
+    if (!row.project_host_id) continue;
+    runningCounts.set(
+      row.project_host_id,
+      (runningCounts.get(row.project_host_id) ?? 0) + 1,
+    );
+  }
+
+  await ensureLroSchema();
+  const client = await getPool("medium").connect();
+  try {
+    await client.query("BEGIN");
+    const { rows } = await client.query<RootfsPublishClaimCandidateRecord>(
+      `
+        SELECT
+          l.*,
+          COALESCE(NULLIF(l.input->>'project_host_id', ''), p.host_id::text) AS project_host_id
+        FROM long_running_operations l
+        JOIN projects p ON p.project_id = l.scope_id::uuid
+        WHERE l.kind = $1
+          AND l.dismissed_at IS NULL
+          AND (
+            l.status = 'queued'
+            OR (
+              l.status = 'running'
+              AND (l.heartbeat_at IS NULL OR l.heartbeat_at < now() - ($2::text || ' milliseconds')::interval)
+            )
+          )
+        ORDER BY
+          CASE WHEN l.status = 'queued' THEN 0 ELSE 1 END,
+          l.updated_at
+        FOR UPDATE OF l SKIP LOCKED
+        LIMIT $3
+      `,
+      [ROOTFS_PUBLISH_LRO_KIND, lease_ms, Math.max(limit * 8, 50)],
+    );
+    if (rows.length === 0) {
+      await client.query("ROLLBACK");
+      return [];
+    }
+
+    const hostIds = Array.from(
+      new Set(
+        [
+          ...runningRows.map(({ project_host_id }) => project_host_id),
+          ...rows.map(({ project_host_id }) => project_host_id),
+        ].filter(Boolean) as string[],
+      ),
+    );
+    const hostLimits = await getEffectiveParallelOpsLimits({
+      worker_kind: ROOTFS_PUBLISH_HOST_WORKER_KIND,
+      default_limit: DEFAULT_PER_HOST_MAX_PARALLEL,
+      scope_type: "project_host",
+      scope_ids: hostIds,
+    });
+    const limitByHost = new Map(
+      hostIds.map((host_id) => [
+        host_id,
+        hostLimits.get(host_id)?.value ?? DEFAULT_PER_HOST_MAX_PARALLEL,
+      ]),
+    );
+    const selected = selectRootfsPublishClaimCandidates({
+      candidates: rows.map(({ op_id, project_host_id }) => ({
+        op_id,
+        project_host_id,
+      })),
+      availableByHost: computeAvailableRootfsPublishHostSlots({
+        runningCounts,
+        limitByHost,
+      }),
+      limit,
+    });
+    if (selected.length === 0) {
+      await client.query("ROLLBACK");
+      return [];
+    }
+
+    const claimed: LroSummary[] = [];
+    for (const selection of selected) {
+      const updated = await client.query<LroSummary>(
+        `
+          UPDATE long_running_operations
+          SET owner_type = $2,
+              owner_id = $3,
+              heartbeat_at = now(),
+              status = CASE WHEN status = 'queued' THEN 'running' ELSE status END,
+              started_at = COALESCE(started_at, now()),
+              attempt = attempt + 1,
+              updated_at = now(),
+              input = jsonb_set(
+                COALESCE(input, '{}'::jsonb),
+                '{project_host_id}',
+                to_jsonb($4::text),
+                true
+              )
+          WHERE op_id = $1
+          RETURNING *
+        `,
+        [selection.op_id, owner_type, owner_id, selection.project_host_id],
+      );
+      if (updated.rows[0]) {
+        claimed.push(updated.rows[0]);
+      }
+    }
+
+    await client.query("COMMIT");
+    return claimed;
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 async function handleRootfsPublishOp(op: LroSummary): Promise<void> {
@@ -220,52 +412,50 @@ async function handleRootfsPublishOp(op: LroSummary): Promise<void> {
       message: "publishing project filesystem state",
       detail: { project_id },
     });
-    const artifact = await timings.measure("publish", async () => {
-      return await client.publishRootfsImage({
-        project_id,
-        lro: { op_id, scope_type: op.scope_type, scope_id: op.scope_id },
-      });
-    });
-    const parentRelease =
-      artifact.artifact_kind === "delta" && artifact.parent_image
-        ? await loadRootfsReleaseByImage(artifact.parent_image)
-        : null;
-    const resolvedParentRelease =
-      parentRelease?.content_key === artifact.content_key
-        ? null
-        : parentRelease;
-    const resolvedArtifact =
-      artifact.artifact_kind === "delta" && resolvedParentRelease
-        ? {
-            ...artifact,
-            artifact_kind: "delta" as const,
-            parent_content_key: resolvedParentRelease.content_key,
-          }
-        : {
-            ...artifact,
-            artifact_kind: "full" as const,
-            parent_image: undefined,
-            parent_content_key: undefined,
-          };
-
     const host_id = await loadProjectHostId(project_id);
+    const publishUpload =
+      configuredRootfsArtifactFormat() === "rustic"
+        ? await issueRootfsReleaseArtifactUpload({
+            host_id,
+            artifact_kind: "full",
+          })
+        : undefined;
+    const artifact = await timings.measure("publish", async () => {
+      return await withTimeout(
+        client.publishRootfsImage({
+          project_id,
+          upload: publishUpload,
+          lro: { op_id, scope_type: op.scope_type, scope_id: op.scope_id },
+        }),
+        ROOTFS_PUBLISH_TIMEOUT_MS,
+      );
+    });
+
     let uploadedDirectToR2 = false;
+    let uploadedToRustic = false;
     let uploadResult:
       | Awaited<ReturnType<typeof client.uploadRootfsReleaseArtifact>>
-      | undefined;
-    if (!(await hasStoredRootfsArtifact(artifact.content_key))) {
-      const upload = await issueRootfsReleaseArtifactUpload({
-        host_id,
-        content_key: resolvedArtifact.content_key,
-        artifact_kind: resolvedArtifact.artifact_kind,
-        parent_content_key: resolvedArtifact.parent_content_key,
-      });
+      | undefined = artifact.upload_result;
+    const upload =
+      uploadResult == null
+        ? await issueRootfsReleaseArtifactUpload({
+            host_id,
+            content_key: artifact.content_key,
+            artifact_kind: "full",
+          })
+        : publishUpload;
+    if (
+      uploadResult == null &&
+      upload &&
+      (upload.backend === "rustic" ||
+        !(await hasStoredRootfsArtifact(artifact.content_key)))
+    ) {
       const uploadOp = await updateLro({
         op_id,
         progress_summary: {
           phase: "upload",
           image: artifact.image,
-          content_key: resolvedArtifact.content_key,
+          content_key: artifact.content_key,
         },
       });
       await publishSummarySafe(uploadOp, {
@@ -274,48 +464,42 @@ async function handleRootfsPublishOp(op: LroSummary): Promise<void> {
       });
       progress({
         step: "upload",
-        message: "uploading RootFS release artifact",
+        message:
+          upload.backend === "rustic"
+            ? "saving RootFS release to rustic storage"
+            : "uploading RootFS release artifact",
         detail: {
           image: artifact.image,
-          content_key: resolvedArtifact.content_key,
+          content_key: artifact.content_key,
           backend: upload.backend,
         },
       });
-      uploadResult = await timings.measure("upload", async () => {
-        return await client.uploadRootfsReleaseArtifact({
-          project_id,
-          image: artifact.image,
-          parent_image: resolvedArtifact.parent_image,
-          upload,
-        });
+      const result = await timings.measure("upload", async () => {
+        return await withTimeout(
+          client.uploadRootfsReleaseArtifact({
+            project_id,
+            image: artifact.image,
+            parent_image: artifact.parent_image,
+            upload,
+            lro: { op_id, scope_type: op.scope_type, scope_id: op.scope_id },
+          }),
+          ROOTFS_PUBLISH_TIMEOUT_MS,
+        );
       });
-      uploadedDirectToR2 = uploadResult.backend === "r2";
+      uploadResult = result;
+      uploadedDirectToR2 = result.backend === "r2";
+      uploadedToRustic = result.backend === "rustic";
     }
+    uploadedToRustic ||= uploadResult?.backend === "rustic";
 
     const release = await timings.measure("register_release", async () => {
-      return await upsertPublishedRootfsRelease(
-        uploadedDirectToR2 && uploadResult?.backend === "r2"
-          ? {
-              artifact: {
-                ...resolvedArtifact,
-                artifact_kind: uploadResult.artifact_kind,
-              },
-              metadata: {
-                artifact_sha256: uploadResult.artifact_sha256,
-                artifact_bytes: uploadResult.artifact_bytes,
-                uploaded_at: new Date().toISOString(),
-              },
-              artifact_backend: "r2",
-              artifact_path: uploadResult.artifact_path,
-            }
-          : {
-              artifact: {
-                ...resolvedArtifact,
-                artifact_kind:
-                  uploadResult?.artifact_kind ?? resolvedArtifact.artifact_kind,
-              },
-            },
-      );
+      return await upsertPublishedRootfsRelease({
+        artifact: {
+          ...artifact,
+          artifact_kind: uploadResult?.artifact_kind ?? "full",
+        },
+        upload: uploadResult,
+      });
     });
 
     if (uploadedDirectToR2 && uploadResult?.backend === "r2") {
@@ -344,7 +528,7 @@ async function handleRootfsPublishOp(op: LroSummary): Promise<void> {
           error: null,
         });
       });
-    } else {
+    } else if (!uploadedToRustic) {
       const replicateOp = await updateLro({
         op_id,
         progress_summary: {
@@ -490,7 +674,7 @@ export function startRootfsPublishLroWorker({
     max_parallel: maxParallel ?? "dynamic",
   });
 
-  const tick = async () => {
+  const tick = createNonOverlappingAsyncRunner(async () => {
     let effectiveMaxParallel = maxParallel;
     if (effectiveMaxParallel == null) {
       try {
@@ -507,8 +691,7 @@ export function startRootfsPublishLroWorker({
     if (inFlight >= effectiveMaxParallel) return;
     let ops: LroSummary[] = [];
     try {
-      ops = await claimLroOps({
-        kind: ROOTFS_PUBLISH_LRO_KIND,
+      ops = await claimRootfsPublishLroOps({
         owner_type: OWNER_TYPE,
         owner_id: WORKER_ID,
         limit: Math.max(1, effectiveMaxParallel - inFlight),
@@ -541,7 +724,7 @@ export function startRootfsPublishLroWorker({
           inFlight = Math.max(0, inFlight - 1);
         });
     }
-  };
+  });
 
   const timer = setInterval(() => {
     void tick();
