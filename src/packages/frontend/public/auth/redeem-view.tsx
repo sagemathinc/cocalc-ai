@@ -220,7 +220,7 @@ export default function PublicRedeemVoucherView({
           voucher documentation
         </a>
         , open the{" "}
-        <a href={joinUrlPath(appBasePath, "settings/vouchers")}>
+        <a href={joinUrlPath(appBasePath, "settings", "vouchers")}>
           Voucher Center
         </a>
         , or contact <a href={joinUrlPath(appBasePath, "support")}>support</a>.

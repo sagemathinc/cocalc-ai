@@ -40,37 +40,43 @@ export async function getVoucherCenterData(): Promise<{
   created: Voucher[];
   redeemed: VoucherCode[];
 }> {
-  const result = await api("user-query", {
-    query: {
-      voucher_codes: [
-        {
-          canceled: null,
-          code: null,
-          created: null,
-          id: null,
-          purchase_ids: null,
-          redeemed_by: null,
-          when_redeemed: null,
-        },
-      ],
-      vouchers: [
-        {
-          active: null,
-          count: null,
-          cost: null,
-          created: null,
-          expire: null,
-          id: null,
-          purchased: null,
-          title: null,
-          when_pay: null,
-        },
-      ],
-    },
-  });
+  const [vouchersResult, voucherCodesResult] = await Promise.all([
+    api("user-query", {
+      query: {
+        vouchers: [
+          {
+            active: null,
+            count: null,
+            cost: null,
+            created: null,
+            expire: null,
+            id: null,
+            purchased: null,
+            title: null,
+            when_pay: null,
+          },
+        ],
+      },
+    }),
+    api("user-query", {
+      query: {
+        voucher_codes: [
+          {
+            canceled: null,
+            code: null,
+            created: null,
+            id: null,
+            purchase_ids: null,
+            redeemed_by: null,
+            when_redeemed: null,
+          },
+        ],
+      },
+    }),
+  ]);
   return {
-    created: result?.query?.vouchers ?? [],
-    redeemed: result?.query?.voucher_codes ?? [],
+    created: vouchersResult?.query?.vouchers ?? [],
+    redeemed: voucherCodesResult?.query?.voucher_codes ?? [],
   };
 }
 

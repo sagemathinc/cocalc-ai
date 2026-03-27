@@ -343,15 +343,10 @@ export function VoucherCenterPage() {
       />
 
       <Flex align="center" gap="middle" justify="space-between" wrap>
-        <div>
-          <Title level={3} style={{ marginBottom: 4 }}>
-            Voucher Center
-          </Title>
-          <Paragraph type="secondary" style={{ marginBottom: 0 }}>
-            Buy vouchers in the Store, redeem them publicly, and manage the
-            voucher batches and redemptions tied to your account.
-          </Paragraph>
-        </div>
+        <Paragraph style={{ marginBottom: 0 }} type="secondary">
+          Buy vouchers in the Store, redeem them publicly, and manage the
+          voucher batches and redemptions tied to your account.
+        </Paragraph>
         <Space>
           <Button onClick={load}>
             <Icon name="sync-alt" /> Refresh

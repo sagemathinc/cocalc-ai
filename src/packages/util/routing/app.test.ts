@@ -5,6 +5,8 @@ describe("routing/app", () => {
     expect(hasHostAbsoluteRoutePrefix("/projects")).toBe(true);
     expect(hasHostAbsoluteRoutePrefix("/projects/123/files")).toBe(true);
     expect(hasHostAbsoluteRoutePrefix("/auth/sign-in")).toBe(true);
+    expect(hasHostAbsoluteRoutePrefix("/redeem")).toBe(true);
+    expect(hasHostAbsoluteRoutePrefix("/redeem/ABC12345")).toBe(true);
     expect(hasHostAbsoluteRoutePrefix("/software")).toBe(true);
     expect(hasHostAbsoluteRoutePrefix("/billing?tab=upgrade")).toBe(true);
     expect(hasHostAbsoluteRoutePrefix("/home/wstein/x.txt")).toBe(false);
@@ -15,6 +17,7 @@ describe("routing/app", () => {
     expect(APP_BASE_PATH_ROUTE_MARKERS).toContain("/projects");
     expect(APP_BASE_PATH_ROUTE_MARKERS).toContain("/auth");
     expect(APP_BASE_PATH_ROUTE_MARKERS).toContain("/lang");
+    expect(APP_BASE_PATH_ROUTE_MARKERS).toContain("/redeem");
     expect(APP_BASE_PATH_ROUTE_MARKERS).toContain("/ssh");
   });
 
