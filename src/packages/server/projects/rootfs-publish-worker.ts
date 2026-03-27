@@ -24,7 +24,7 @@ const OWNER_TYPE = "hub" as const;
 const LEASE_MS = 120_000;
 const HEARTBEAT_MS = 15_000;
 const TICK_MS = 5_000;
-const DEFAULT_MAX_PARALLEL = 1;
+const DEFAULT_MAX_PARALLEL = 100;
 const ROOTFS_PUBLISH_TIMEOUT_MS = 6 * 60 * 60 * 1000;
 
 const WORKER_ID = randomUUID();

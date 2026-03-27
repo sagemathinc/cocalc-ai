@@ -112,10 +112,14 @@ export const parallelOpsWorkerRegistry: ParallelOpsWorkerRegistration[] = [
     dynamic_limit_supported: true,
     lro_kinds: ["project-rootfs-publish"],
     lease_ms: 120_000,
+    notes: [
+      "This is the global RootFS publish admission cap.",
+      "Per-project-host RootFS publish limits are not implemented yet.",
+    ],
     getLimitSnapshot: () => ({
-      default_limit: 1,
-      configured_limit: 1,
-      effective_limit: 1,
+      default_limit: 100,
+      configured_limit: 100,
+      effective_limit: 100,
       config_source: "constant",
     }),
   },
