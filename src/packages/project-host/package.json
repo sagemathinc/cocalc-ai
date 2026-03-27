@@ -12,7 +12,7 @@
   "scripts": {
     "preinstall": "npx only-allow pnpm",
     "build": "rm -rf dist tsconfig.tsbuildinfo && pnpm exec tsc --build",
-    "test": "exit 0",
+    "test": "pnpm exec jest --config jest.config.js",
     "clean": "rm -rf node_modules dist tsconfig.tsbuildinfo build",
     "app": "pnpm run build && node dist/main.js",
     "daemon:start": "node scripts/daemon-start.js",

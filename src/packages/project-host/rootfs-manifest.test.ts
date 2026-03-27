@@ -12,13 +12,15 @@ jest.mock("@cocalc/project-runner/run/rootfs", () => ({
   isMounted: jest.fn(),
 }));
 
-const rootfsBase = jest.requireMock("@cocalc/project-runner/run/rootfs-base");
-const rootfs = jest.requireMock("@cocalc/project-runner/run/rootfs");
-
 describe("rootfs manifest", () => {
   let tmpdir: string;
+  let rootfsBase: any;
+  let rootfs: any;
 
   beforeEach(async () => {
+    jest.resetModules();
+    rootfsBase = jest.requireMock("@cocalc/project-runner/run/rootfs-base");
+    rootfs = jest.requireMock("@cocalc/project-runner/run/rootfs");
     tmpdir = await fs.mkdtemp(path.join(os.tmpdir(), "rootfs-manifest-"));
     rootfsBase.imageCachePath.mockReturnValue(tmpdir);
     rootfsBase.inspectFilePath.mockReturnValue(
@@ -29,7 +31,7 @@ describe("rootfs manifest", () => {
   });
 
   afterEach(async () => {
-    jest.resetModules();
+    jest.clearAllMocks();
     await fs.rm(tmpdir, { recursive: true, force: true });
   });
 
