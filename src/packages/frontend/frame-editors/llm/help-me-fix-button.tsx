@@ -5,38 +5,32 @@ import { defineMessage, useIntl } from "react-intl";
 import { AIAvatar, RawPrompt } from "@cocalc/frontend/components";
 import { Icon } from "@cocalc/frontend/components/icon";
 import PopconfirmKeyboard from "@cocalc/frontend/components/popconfirm-keyboard";
-import { LLMCostEstimation } from "@cocalc/frontend/misc/llm-cost-estimation";
-import LLMSelector, { modelToName } from "./llm-selector";
 
 const messages = {
   buttonText: defineMessage({
     id: "frame-editors.llm.help-me-fix-button.button-text",
     defaultMessage:
-      "{isHint, select, true {Ask Codex for a Hint...} other {Fix with Codex...}}",
-    description: "Button text for Codex debugging actions - hint vs fix",
+      "{isHint, select, true {Ask Agent for a Hint...} other {Fix with Agent...}}",
+    description: "Button text for agent debugging actions - hint vs fix",
   }),
   okText: defineMessage({
     id: "frame-editors.llm.help-me-fix-button.ok-text",
     defaultMessage:
-      "{isHint, select, true {Ask Codex [Return]} other {Send to Codex [Return]}}",
+      "{isHint, select, true {Ask Agent [Return]} other {Send to Agent [Return]}}",
     description:
-      "Confirmation button text in the Codex debugging dialog - hint vs fix",
+      "Confirmation button text in the agent debugging dialog - hint vs fix",
   }),
   title: defineMessage({
     id: "frame-editors.llm.help-me-fix-button.title",
     defaultMessage:
-      "{isHint, select, true {Ask Codex for a debugging hint} other {Ask Codex to fix this problem}}",
-    description: "Title text in the Codex debugging dialog - hint vs fix",
+      "{isHint, select, true {Ask Agent for a debugging hint} other {Ask Agent to fix this problem}}",
+    description: "Title text in the agent debugging dialog - hint vs fix",
   }),
 };
 
 interface HelpMeFixButtonProps {
   mode: "hint" | "solution";
-  model: string;
-  setModel: (model: string) => void;
-  project_id: string;
   inputText: string;
-  tokens: number;
   size?: any;
   style?: React.CSSProperties;
   gettingHelp: boolean;
@@ -45,11 +39,7 @@ interface HelpMeFixButtonProps {
 
 export default function HelpMeFixButton({
   mode,
-  model,
-  setModel,
-  project_id,
   inputText,
-  tokens,
   size,
   style,
   gettingHelp,
@@ -66,16 +56,7 @@ export default function HelpMeFixButton({
   return (
     <PopconfirmKeyboard
       icon={<AIAvatar size={20} />}
-      title={
-        <>
-          {title}{" "}
-          <LLMSelector
-            model={model}
-            setModel={setModel}
-            project_id={project_id}
-          />
-        </>
-      }
+      title={title}
       description={() => (
         <div
           style={{
@@ -85,14 +66,8 @@ export default function HelpMeFixButton({
             maxHeight: "400px",
           }}
         >
-          The following will be sent to {modelToName(model)}:
+          The following context will be sent to the agent:
           <RawPrompt input={inputText} />
-          <LLMCostEstimation
-            model={model}
-            tokens={tokens}
-            type="secondary"
-            paragraph
-          />
         </div>
       )}
       okText={
