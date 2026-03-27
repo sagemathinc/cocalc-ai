@@ -345,6 +345,28 @@ The tuning criteria should include:
 The final design should support configurable limits per deployment or host
 class, rather than baking in one universal global number.
 
+### Initial measurement: hosted dev testbed
+
+The first explicit publish sweep on March 27, 2026 used two known-good
+workloads on the two-host dev testbed:
+
+- `apt-jupyter-hardlinks` on `rootfs-test-2`
+- `project-1b-hardlinks` on `rootfs-test-1`
+
+Measured result:
+
+- global limit `1`: `44.23s` total wall clock
+- global limit `2`: `21.36s` total wall clock
+
+Both runs succeeded without errors. So the first concrete recommendation is:
+
+- do not leave hosted dev at `1`
+- use `2` as the initial hosted default while continuing to measure larger
+  workload sets
+
+This is still not a universal final number. It is just the first
+evidence-based step beyond the bootstrap setting.
+
 ## Cross-Region Replication
 
 Start with lazy replication.
@@ -607,6 +629,30 @@ This gives us both a correctness record and a performance baseline.
 The rustic migration should not be considered complete until the verification
 matrix passes on a meaningful set of real workloads, with exact manifest
 matches and correct hardlink preservation.
+
+### Initial verification status
+
+The first exact-manifest verification pass ran on March 27, 2026 and produced
+two clean cross-host workloads:
+
+- `apt-jupyter-hardlinks`
+- `project-1b-hardlinks`
+
+For both workloads:
+
+- source project manifest matched source cached restore exactly
+- source project manifest matched destination cached restore exactly
+- hardlink topology matched exactly
+
+The detailed record is in:
+
+- [rootfs-rustic-verification-2026-03-27.md](/home/wstein/build/cocalc-lite2/src/.agents/rootfs-benchmarks/rootfs-rustic-verification-2026-03-27.md)
+- [rootfs-rustic-verification-2026-03-27.json](/home/wstein/build/cocalc-lite2/src/.agents/rootfs-benchmarks/rootfs-rustic-verification-2026-03-27.json)
+
+This is strong evidence that the current rustic publish/restore path is
+correct for the tested workloads, but it is only an initial matrix. The
+remaining `conda`, `pnpm`, `pip`, mixed scientific, and cross-region cases
+still need to be added before we treat verification as complete.
 
 ## Operational Notes
 

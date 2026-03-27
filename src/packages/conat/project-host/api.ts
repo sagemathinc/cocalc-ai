@@ -51,6 +51,26 @@ export interface HostRootfsCacheEntry {
   running_project_ids: string[];
 }
 
+export interface HostRootfsManifest {
+  format: "rootfs-manifest-v1";
+  source_kind: "project-rootfs" | "cached-image";
+  image?: string;
+  inspect_path?: string;
+  project_id?: string;
+  root_path: string;
+  generated_at: string;
+  manifest_sha256: string;
+  hardlink_sha256: string;
+  entry_count: number;
+  regular_file_count: number;
+  directory_count: number;
+  symlink_count: number;
+  other_count: number;
+  hardlink_group_count: number;
+  hardlink_member_count: number;
+  total_regular_bytes: number;
+}
+
 export interface HostSshAuthorizedKeysResponse {
   user: string;
   home: string;
@@ -136,6 +156,12 @@ export interface HostControlApi {
     project_id: string;
     url: string;
   }) => Promise<HostStaticAppPathInspection>;
+  buildRootfsImageManifest: (opts: {
+    image: string;
+  }) => Promise<HostRootfsManifest>;
+  buildProjectRootfsManifest: (opts: {
+    project_id: string;
+  }) => Promise<HostRootfsManifest>;
   // Later: updateProject to adjust title/users/etc.
 }
 

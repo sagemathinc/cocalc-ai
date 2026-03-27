@@ -1,0 +1,179 @@
+{
+  "generated_at": "2026-03-27T08:10:00Z",
+  "kind": "rootfs-rustic-verification-v1",
+  "notes": [
+    "Exact manifests were compared for source project, source cached restore, and destination cached restore.",
+    "The destination restore used the same host-side rustic restore path as managed RootFS cache pulls.",
+    "The publish parallelism sweep used two known-good projects and a global worker override of 1 then 2."
+  ],
+  "workloads": [
+    {
+      "id": "apt-jupyter-hardlinks",
+      "description": "Docker noble-scm base with apt-installed Jupyter plus explicit hardlink verifier fixture",
+      "source_project_id": "82b2655e-ffd0-4085-99ce-331a32b04147",
+      "source_host_id": "18521f3d-1d43-4663-aec3-91fc7374d114",
+      "source_host_name": "rootfs-test-2",
+      "destination_host_id": "5ff0a685-99ae-4dc0-974f-7d38480e736e",
+      "destination_host_name": "rootfs-test-1",
+      "publish": {
+        "op_id": "205f6340-3c2f-4bef-831f-ce6f76d81b3d",
+        "image": "cocalc.local/rootfs/5dddfe69306abc5c7d5ab9992b4a3c55d206d76e476059d4fdb15ff1c833d21f",
+        "image_id": "a2c503cd-29a7-486d-83c6-1babbc50489b",
+        "release_id": "4c29d8fa-a61f-4fb6-b46f-e15e6b503618",
+        "duration_ms": 16152,
+        "publish_phase_timings_ms": {
+          "upload_rustic": 14132,
+          "clone_snapshot": 203,
+          "create_snapshot": 132,
+          "extract_base_image": 1
+        }
+      },
+      "source_project_manifest": {
+        "manifest_sha256": "318f5d47f9819100cae4599ae227f7e8fa13cdf03603651934f9c29ac12ffcaa",
+        "hardlink_sha256": "8a5e357803a87283bc909d63f07edcd84cc96f346220eef63f82855d1ab7f550",
+        "entry_count": 47164,
+        "regular_file_count": 39422,
+        "directory_count": 6514,
+        "symlink_count": 1228,
+        "hardlink_group_count": 3,
+        "hardlink_member_count": 6,
+        "total_regular_bytes": 1357317324
+      },
+      "source_cached_manifest": {
+        "manifest_sha256": "318f5d47f9819100cae4599ae227f7e8fa13cdf03603651934f9c29ac12ffcaa",
+        "hardlink_sha256": "8a5e357803a87283bc909d63f07edcd84cc96f346220eef63f82855d1ab7f550",
+        "entry_count": 47164,
+        "regular_file_count": 39422,
+        "directory_count": 6514,
+        "symlink_count": 1228,
+        "hardlink_group_count": 3,
+        "hardlink_member_count": 6,
+        "total_regular_bytes": 1357317324
+      },
+      "destination_cached_manifest": {
+        "manifest_sha256": "318f5d47f9819100cae4599ae227f7e8fa13cdf03603651934f9c29ac12ffcaa",
+        "hardlink_sha256": "8a5e357803a87283bc909d63f07edcd84cc96f346220eef63f82855d1ab7f550",
+        "entry_count": 47164,
+        "regular_file_count": 39422,
+        "directory_count": 6514,
+        "symlink_count": 1228,
+        "hardlink_group_count": 3,
+        "hardlink_member_count": 6,
+        "total_regular_bytes": 1357317324
+      },
+      "manifest_match": true,
+      "hardlink_match": true
+    },
+    {
+      "id": "project-1b-hardlinks",
+      "description": "Existing project state on rootfs-test-1 plus explicit hardlink verifier fixture",
+      "source_project_id": "8e5ddc49-8105-4ece-bc83-e47b7362dbbb",
+      "source_host_id": "5ff0a685-99ae-4dc0-974f-7d38480e736e",
+      "source_host_name": "rootfs-test-1",
+      "destination_host_id": "18521f3d-1d43-4663-aec3-91fc7374d114",
+      "destination_host_name": "rootfs-test-2",
+      "publish": {
+        "op_id": "f5b4d577-566b-42f8-a3ff-59b07cb43642",
+        "image": "cocalc.local/rootfs/005e3c435a589d24ad98f08280abd40d8705f7ddb03fb4325eed1aba2390f082",
+        "image_id": "453f5561-3346-4c04-bb30-52ad8eed6de7",
+        "release_id": "43e3166a-2e7f-4d91-9b97-15549f6cd7be",
+        "duration_ms": 21498,
+        "publish_phase_timings_ms": {
+          "upload_rustic": 19668,
+          "clone_snapshot": 269,
+          "create_snapshot": 158,
+          "extract_base_image": 1
+        }
+      },
+      "source_project_manifest": {
+        "manifest_sha256": "39e9afb0ed3c53e1255097d3397341bc8480bd1d9ba017c9a3f62650fd0dc833",
+        "hardlink_sha256": "4d77daf3b20e5146deed0a02e3bfb3b9d0ae8b81fae94e92768ecc122a146b99",
+        "entry_count": 54221,
+        "regular_file_count": 45594,
+        "directory_count": 7390,
+        "symlink_count": 1237,
+        "hardlink_group_count": 1,
+        "hardlink_member_count": 3,
+        "total_regular_bytes": 2011542063
+      },
+      "source_cached_manifest": {
+        "manifest_sha256": "39e9afb0ed3c53e1255097d3397341bc8480bd1d9ba017c9a3f62650fd0dc833",
+        "hardlink_sha256": "4d77daf3b20e5146deed0a02e3bfb3b9d0ae8b81fae94e92768ecc122a146b99",
+        "entry_count": 54221,
+        "regular_file_count": 45594,
+        "directory_count": 7390,
+        "symlink_count": 1237,
+        "hardlink_group_count": 1,
+        "hardlink_member_count": 3,
+        "total_regular_bytes": 2011542063
+      },
+      "destination_cached_manifest": {
+        "manifest_sha256": "39e9afb0ed3c53e1255097d3397341bc8480bd1d9ba017c9a3f62650fd0dc833",
+        "hardlink_sha256": "4d77daf3b20e5146deed0a02e3bfb3b9d0ae8b81fae94e92768ecc122a146b99",
+        "entry_count": 54221,
+        "regular_file_count": 45594,
+        "directory_count": 7390,
+        "symlink_count": 1237,
+        "hardlink_group_count": 1,
+        "hardlink_member_count": 3,
+        "total_regular_bytes": 2011542063
+      },
+      "manifest_match": true,
+      "hardlink_match": true
+    }
+  ],
+  "publish_parallelism_sweep": {
+    "workloads": [
+      {
+        "id": "apt-jupyter-hardlinks",
+        "project_id": "82b2655e-ffd0-4085-99ce-331a32b04147"
+      },
+      {
+        "id": "project-1b-hardlinks",
+        "project_id": "8e5ddc49-8105-4ece-bc83-e47b7362dbbb"
+      }
+    ],
+    "runs": [
+      {
+        "parallel": 1,
+        "wall_ms": 44232,
+        "operations": [
+          {
+            "op_id": "883549d7-bdd8-4df6-b4dc-c8bcc8181217",
+            "project_id": "82b2655e-ffd0-4085-99ce-331a32b04147",
+            "duration_ms": 18567,
+            "status": "succeeded"
+          },
+          {
+            "op_id": "0896272a-141d-4447-8fd2-6f46852925cc",
+            "project_id": "8e5ddc49-8105-4ece-bc83-e47b7362dbbb",
+            "duration_ms": 44214,
+            "status": "succeeded"
+          }
+        ]
+      },
+      {
+        "parallel": 2,
+        "wall_ms": 21364,
+        "operations": [
+          {
+            "op_id": "da03befe-4446-47dc-9c13-3973d0793937",
+            "project_id": "82b2655e-ffd0-4085-99ce-331a32b04147",
+            "duration_ms": 16431,
+            "status": "succeeded"
+          },
+          {
+            "op_id": "5a253428-7f04-4f47-92e8-b13b6571d6a8",
+            "project_id": "8e5ddc49-8105-4ece-bc83-e47b7362dbbb",
+            "duration_ms": 21332,
+            "status": "succeeded"
+          }
+        ]
+      }
+    ],
+    "initial_recommendation": {
+      "global_publish_parallelism": 2,
+      "rationale": "On the two-host dev testbed, raising the global publish worker limit from 1 to 2 reduced two-workload wall time from 44.2s to 21.4s with no failures."
+    }
+  }
+}

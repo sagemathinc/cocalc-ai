@@ -846,6 +846,182 @@ case "$cmd" in
     fi
     exec /opt/cocalc/tools/current/rustic -P "$repo_profile" restore "$@" "$snapshot" "$dest"
     ;;
+  rootfs-manifest)
+    if [ "$#" -ne 1 ]; then
+      echo "usage: cocalc-runtime-storage rootfs-manifest <path>" >&2
+      exit 2
+    fi
+    tree="$1"
+    check_args "$tree"
+    exec /bin/bash -lc 'set -euo pipefail; python3 - "$1" <<'"'"'PY'"'"'
+import hashlib
+import json
+import os
+import stat
+import sys
+from datetime import datetime, timezone
+
+root = sys.argv[1]
+records = []
+hardlink_paths = {}
+counts = {
+    "entry_count": 0,
+    "regular_file_count": 0,
+    "directory_count": 0,
+    "symlink_count": 0,
+    "other_count": 0,
+    "total_regular_bytes": 0,
+}
+
+
+def detect_type(st):
+    mode = st.st_mode
+    if stat.S_ISREG(mode):
+        return "file"
+    if stat.S_ISDIR(mode):
+        return "directory"
+    if stat.S_ISLNK(mode):
+        return "symlink"
+    if stat.S_ISBLK(mode):
+        return "block"
+    if stat.S_ISCHR(mode):
+        return "char"
+    if stat.S_ISFIFO(mode):
+        return "fifo"
+    if stat.S_ISSOCK(mode):
+        return "socket"
+    return "other"
+
+
+def sha256_file(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def manifest_line(record, hardlink_group="", hardlink_group_size=1):
+    return json.dumps(
+        [
+            record["type"],
+            record["path"],
+            record["mode"],
+            record["uid"],
+            record["gid"],
+            record["size"],
+            record.get("sha256", ""),
+            record.get("target", ""),
+            hardlink_group,
+            hardlink_group_size,
+            record.get("rdev", ""),
+        ],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+
+
+def walk(path, relative_path):
+    st = os.lstat(path)
+    file_type = detect_type(st)
+    is_root_entry = relative_path == "."
+    record = {
+        "type": file_type,
+        "path": relative_path,
+        # The mounted/cache root directory itself is transport scaffolding, not
+        # semantic RootFS content, so normalize its ownership/mode fields.
+        "mode": "0000" if is_root_entry else format(stat.S_IMODE(st.st_mode), "04o"),
+        "uid": "0" if is_root_entry else str(st.st_uid),
+        "gid": "0" if is_root_entry else str(st.st_gid),
+        # Directory and special-file st_size values are allocator details, not
+        # semantic tree content, and differ between overlay views and restored
+        # standalone trees.
+        "size": "0",
+    }
+    counts["entry_count"] += 1
+    if file_type == "file":
+        counts["regular_file_count"] += 1
+        counts["total_regular_bytes"] += int(st.st_size)
+        record["size"] = str(st.st_size)
+        record["sha256"] = sha256_file(path)
+        if st.st_nlink > 1:
+            key = f"{st.st_dev}:{st.st_ino}"
+            record["hardlink_key"] = key
+            hardlink_paths.setdefault(key, []).append(relative_path)
+    elif file_type == "directory":
+        counts["directory_count"] += 1
+    elif file_type == "symlink":
+        counts["symlink_count"] += 1
+        record["target"] = os.readlink(path)
+    else:
+        counts["other_count"] += 1
+        record["rdev"] = str(st.st_rdev)
+    records.append(record)
+    if file_type != "directory":
+        return
+    with os.scandir(path) as entries:
+        names = sorted(entry.name for entry in entries)
+    for name in names:
+        child_path = os.path.join(path, name)
+        child_relative = name if relative_path == "." else f"{relative_path}/{name}"
+        walk(child_path, child_relative)
+
+
+walk(root, ".")
+
+hardlink_groups = {}
+hardlink_group_count = 0
+hardlink_member_count = 0
+for key, paths in hardlink_paths.items():
+    if len(paths) <= 1:
+        continue
+    paths.sort()
+    hardlink_groups[key] = {
+        "group_id": paths[0],
+        "visible_count": len(paths),
+    }
+    hardlink_group_count += 1
+    hardlink_member_count += len(paths)
+
+lines = []
+for record in records:
+    group = hardlink_groups.get(record.get("hardlink_key", ""))
+    lines.append(
+        manifest_line(
+            record,
+            group["group_id"] if group else "",
+            group["visible_count"] if group else 1,
+        )
+    )
+
+manifest_text = ("\\n".join(lines) + "\\n") if lines else "\\n"
+hardlink_lines = [
+    json.dumps(
+        [group["group_id"], group["visible_count"]],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    for group in hardlink_groups.values()
+]
+hardlink_text = ("\\n".join(hardlink_lines) + "\\n") if hardlink_lines else ""
+
+result = {
+    "generated_at": datetime.now(timezone.utc).isoformat(),
+    "manifest_sha256": hashlib.sha256(manifest_text.encode("utf-8")).hexdigest(),
+    "hardlink_sha256": hashlib.sha256(hardlink_text.encode("utf-8")).hexdigest(),
+    "entry_count": counts["entry_count"],
+    "regular_file_count": counts["regular_file_count"],
+    "directory_count": counts["directory_count"],
+    "symlink_count": counts["symlink_count"],
+    "other_count": counts["other_count"],
+    "hardlink_group_count": hardlink_group_count,
+    "hardlink_member_count": hardlink_member_count,
+    "total_regular_bytes": counts["total_regular_bytes"],
+}
+json.dump(result, sys.stdout, ensure_ascii=False, separators=(",", ":"))
+sys.stdout.write("\\n")
+PY' bash "$tree"
+    ;;
   tar-sha256-tree)
     if [ "$#" -ne 1 ]; then
       echo "usage: cocalc-runtime-storage tar-sha256-tree <path>" >&2
