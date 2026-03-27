@@ -297,7 +297,7 @@ describe("useCodexLog", () => {
     await waitFor(() => {
       expect(screen.getByTestId("latest-event").textContent).toBe("Hello!");
     });
-    expect(get).toHaveBeenCalledWith("log-key-live-astream");
+    expect(get).not.toHaveBeenCalled();
   });
 
   it("accepts batched live events from the shared dstream", async () => {
@@ -360,7 +360,7 @@ describe("useCodexLog", () => {
     await waitFor(() => {
       expect(screen.getByTestId("latest-event").textContent).toBe("Hello!");
     });
-    expect(get).toHaveBeenCalledWith("log-key-live-batch");
+    expect(get).not.toHaveBeenCalled();
   });
 
   it("does not miss messages pushed after the shared dstream listener attaches", async () => {
@@ -409,7 +409,7 @@ describe("useCodexLog", () => {
     await waitFor(() => {
       expect(screen.getByTestId("latest-event").textContent).toBe("Hello");
     });
-    expect(get).toHaveBeenCalledWith("log-key-live-gap");
+    expect(get).not.toHaveBeenCalled();
   });
 
   it("closes the shared dstream on cleanup", async () => {
@@ -440,58 +440,5 @@ describe("useCodexLog", () => {
     await waitFor(() => {
       expect(stream.close).toHaveBeenCalled();
     });
-  });
-
-  it("falls back to periodic AKV checkpoints while generating", async () => {
-    jest.useFakeTimers();
-    const stream = new FakeDstream();
-    const get = jest
-      .fn()
-      .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce([
-        {
-          type: "status",
-          seq: 1,
-          time: 20,
-          state: "running",
-        },
-        {
-          type: "event",
-          seq: 2,
-          time: 30,
-          event: { type: "message", text: "Recovered checkpoint" },
-        },
-      ]);
-    dstreamMock.mockResolvedValue(stream);
-    conatMock.mockReturnValue({
-      subscribe: jest.fn(),
-      sync: {
-        akv: () => ({ get }),
-      },
-    });
-
-    render(
-      <TestComponent
-        generating={true}
-        logKey="log-key-live-checkpoint"
-        liveLogStream="live-stream-checkpoint"
-      />,
-    );
-
-    await waitFor(() => {
-      expect(dstreamMock).toHaveBeenCalled();
-    });
-    expect(screen.getByTestId("latest-event").textContent).toBe("");
-
-    await act(async () => {
-      await jest.advanceTimersByTimeAsync(6_000);
-    });
-
-    await waitFor(() => {
-      expect(screen.getByTestId("latest-event").textContent).toBe(
-        "Recovered checkpoint",
-      );
-    });
-    expect(get.mock.calls.length).toBeGreaterThanOrEqual(2);
   });
 });

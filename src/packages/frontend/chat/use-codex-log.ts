@@ -11,7 +11,6 @@ import { webapp_client } from "@cocalc/frontend/webapp-client";
 // cadence changes, update this constant too.
 const LOG_PERSIST_THROTTLE_MS = 250;
 const LIVE_LOG_FLUSH_MS = 100;
-const LIVE_LOG_CHECKPOINT_POLL_MS = 5_000;
 const RECENT_LOG_CACHE_SIZE = 5;
 
 const recentLogCache = new LRUCache<string, any[]>({
@@ -176,12 +175,14 @@ export function useCodexLog({
   useEffect(() => {
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    async function fetchLog({
-      markLoadedWhenMissing,
-    }: {
-      markLoadedWhenMissing: boolean;
-    }) {
-      if (!enabled || !hasLogRef || !projectId || (!generating && akvLoaded)) {
+    async function fetchLog() {
+      if (
+        !enabled ||
+        !hasLogRef ||
+        !projectId ||
+        akvLoaded ||
+        (generating && liveLogStream)
+      ) {
         return;
       }
       try {
@@ -195,36 +196,37 @@ export function useCodexLog({
           // If the log has not yet been persisted, leave fetchedLog as null so
           // we will retry (immediately below and on the delayed retry).
           if (data == null) {
-            if (markLoadedWhenMissing) {
+            if (!generating) {
               setAkvLoaded(true);
             }
             return;
           }
           setFetchedLog(data);
-          if (!generating) {
-            setAkvLoaded(true);
-          }
+          setAkvLoaded(true);
         }
         // console.log(data);
       } catch (err) {
         console.warn("failed to fetch acp log", err);
       }
     }
-    const pollWhileGenerating = generating === true;
-    void fetchLog({ markLoadedWhenMissing: !pollWhileGenerating });
-    if (!pollWhileGenerating) return;
-    const runPoll = async () => {
-      await fetchLog({ markLoadedWhenMissing: false });
-      if (cancelled) return;
-      timer = setTimeout(runPoll, LIVE_LOG_CHECKPOINT_POLL_MS);
-    };
-    // Give the backend a chance to land the first checkpoint or delayed batch.
-    timer = setTimeout(runPoll, LOG_PERSIST_THROTTLE_MS + 500);
+    void fetchLog();
+    if (!generating || liveLogStream) return;
+    // Also delay and call again to let the throttled writer persist the first batch.
+    timer = setTimeout(fetchLog, LOG_PERSIST_THROTTLE_MS + 500);
     return () => {
       cancelled = true;
       if (timer) clearTimeout(timer);
     };
-  }, [hasLogRef, projectId, logStore, logKey, enabled, akvLoaded, generating]);
+  }, [
+    hasLogRef,
+    projectId,
+    logStore,
+    logKey,
+    enabled,
+    akvLoaded,
+    generating,
+    liveLogStream,
+  ]);
 
   // Subscribe to live events while generating.
   useEffect(() => {
