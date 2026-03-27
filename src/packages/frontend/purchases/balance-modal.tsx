@@ -4,8 +4,6 @@ import { useEffect, useRef, useState } from "react";
 import ShowError from "@cocalc/frontend/components/error";
 import { redux } from "@cocalc/frontend/app-framework";
 import Payments from "@cocalc/frontend/purchases/payments";
-import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
-import { join } from "path";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import {
   LLMUsageHelpContent,
@@ -106,6 +104,8 @@ export default function BalanceModal({
 }
 
 const LINKS = [
+  { label: "Store", value: "store" },
+  { label: "Vouchers", value: "vouchers" },
   { label: "Purchases", value: "purchases" },
   { label: "Payments", value: "payments" },
   { label: "Methods", value: "payment-methods" },
@@ -134,15 +134,6 @@ function Links({ onClose }) {
           {label}
         </Button>
       ))}
-      <Button
-        size="small"
-        type="link"
-        key="store"
-        target="_blank"
-        href={join(appBasePath, "store")}
-      >
-        Store
-      </Button>
     </Space.Compact>
   );
 }

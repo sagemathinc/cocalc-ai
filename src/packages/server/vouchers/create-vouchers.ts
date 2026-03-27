@@ -35,6 +35,9 @@ interface Options {
   numVouchers: number;
   // value of each voucher code
   amount: number;
+  // actual amount charged for the whole voucher batch purchase.
+  // if not given, defaults to amount * numVouchers.
+  purchaseCost?: number;
   active: Date | null;
   // expire is ignored except for admin vouchers
   expire: Date | null;
@@ -56,6 +59,7 @@ export default async function createVouchers({
   whenPay, // createVouchers *does* check if they claim to be an admin that they actually are.
   numVouchers: count,
   amount,
+  purchaseCost,
   active,
   expire,
   cancelBy,
@@ -63,9 +67,10 @@ export default async function createVouchers({
   generate,
   credit_id,
 }: Options): Promise<{
-  id: string;
+  id: number;
   codes: string[];
   amount: number; // value of one single voucher
+  purchase_id?: number;
 }> {
   const amountValue = toDecimal(amount);
   log.debug({
@@ -73,6 +78,7 @@ export default async function createVouchers({
     whenPay,
     count,
     amount,
+    purchaseCost,
     expire,
     title,
     generate,
@@ -104,6 +110,9 @@ export default async function createVouchers({
       `there is a hard limit of at most ${MAX_VOUCHERS[whenPay]} vouchers`,
     );
   }
+
+  const purchaseCostValue =
+    purchaseCost != null ? toDecimal(purchaseCost) : amountValue.mul(count);
 
   if (generate != null) {
     if (generate.length != null && generate.length < 8) {
@@ -180,7 +189,7 @@ export default async function createVouchers({
       log.debug("charging user; description =", description);
       const purchase_id = await createPurchase({
         account_id,
-        cost: amountValue.mul(count),
+        cost: purchaseCostValue,
         service: "voucher",
         description,
         client,
@@ -195,6 +204,12 @@ export default async function createVouchers({
         purchased,
         id,
       ]);
+      return {
+        id,
+        codes,
+        amount: amountValue.toNumber(),
+        purchase_id,
+      };
     }
     return { id, codes, amount: amountValue.toNumber() };
   } catch (err) {

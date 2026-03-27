@@ -39,6 +39,7 @@ import PaymentMethodsPage from "@cocalc/frontend/purchases/payment-methods-page"
 import PaymentsPage from "@cocalc/frontend/purchases/payments-page";
 import PurchasesPage from "@cocalc/frontend/purchases/purchases-page";
 import StatementsPage from "@cocalc/frontend/purchases/statements-page";
+import { StorePage, VoucherCenterPage } from "@cocalc/frontend/store";
 import SubscriptionsPage from "@cocalc/frontend/purchases/subscriptions-page";
 import { SupportTickets } from "@cocalc/frontend/support";
 import {
@@ -131,6 +132,7 @@ export const AccountPage: React.FC = () => {
   const account_id = useTypedRedux("account", "account_id");
   const kucalc = useTypedRedux("customize", "kucalc");
   const is_commercial = useTypedRedux("customize", "is_commercial");
+  const is_admin = !!useTypedRedux("account", "is_admin");
   const zendesk = !!useTypedRedux("customize", "zendesk");
   const get_api_key = useTypedRedux("page", "get_api_key");
 
@@ -326,7 +328,7 @@ export const AccountPage: React.FC = () => {
     // adds a few conditional tabs
     items.push({ type: "divider" });
 
-    if (is_commercial) {
+    if (is_commercial || is_admin) {
       items.push({
         key: "subscriptions",
         label: (
@@ -346,6 +348,28 @@ export const AccountPage: React.FC = () => {
         children: active_page === "licenses" && <LicensesPage />,
       });
       items.push({
+        key: "store",
+        label: (
+          <span>
+            <Icon name="shopping-cart" /> Store
+          </span>
+        ),
+        children: active_page === "store" && <StorePage />,
+      });
+      items.push({
+        key: "vouchers",
+        label: (
+          <span>
+            <Icon name="gift" /> Voucher Center
+          </span>
+        ),
+        children: active_page === "vouchers" && <VoucherCenterPage />,
+      });
+      items.push({ type: "divider" });
+    }
+
+    if (is_commercial) {
+      items.push({
         key: "payg",
         label: (
           <span>
@@ -355,7 +379,6 @@ export const AccountPage: React.FC = () => {
         ),
         children: active_page === "payg" && <PayAsYouGoPage />,
       });
-      items.push({ type: "divider" });
       items.push({
         key: "purchases",
         label: (

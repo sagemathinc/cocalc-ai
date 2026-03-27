@@ -914,11 +914,25 @@ function Description({ description, service }) {
     return <>Course fee</>;
   }
   if (service === "membership") {
-    const { class: membershipClass, subscription_id } = description;
+    const {
+      admin_assigned,
+      assigned_by,
+      class: membershipClass,
+      interval,
+      subscription_id,
+    } = description;
     return (
       <>
-        Membership: {membershipClass ?? "unknown"} (subscription{" "}
-        {subscription_id})
+        Membership: {membershipClass ?? "unknown"} ({interval ?? "unknown"})
+        {admin_assigned ? (
+          <>
+            {" "}
+            <Tag color="blue">admin assigned</Tag>
+            {assigned_by ? ` by ${assigned_by}` : ""}
+          </>
+        ) : subscription_id != null ? (
+          <> (subscription {subscription_id})</>
+        ) : null}
       </>
     );
   }
@@ -958,10 +972,10 @@ function Description({ description, service }) {
   }
 
   if (service === "voucher") {
-    const { title, quantity, voucher_id } = description;
+    const { title, quantity } = description;
     return (
       <div>
-        <Next href={`vouchers/${voucher_id}`}>
+        <Next href={"settings/vouchers"}>
           {quantity} {plural(quantity, "voucher")}: {title}
         </Next>
       </div>
