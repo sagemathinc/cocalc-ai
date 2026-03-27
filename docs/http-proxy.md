@@ -13,8 +13,7 @@ through the central hub in the steady state.
 
 That means:
 
-- Private app traffic may be routed by the hub only as part of the existing
-  authenticated `/project/port/...` and `/project/proxy/...` flows.
+- Private app traffic should go directly to the owning `project-host`.
 - Public app subdomains must resolve directly to the owning `project-host`.
 - The central hub may participate in control-plane decisions:
   - project placement
@@ -22,6 +21,8 @@ That means:
   - lookup metadata
   - auth token minting
 - The central hub must not sit in the hot data path for public app traffic.
+- The central hub should not sit in the hot data path for private app traffic
+  either.
 
 Reason:
 
@@ -39,12 +40,16 @@ Exception:
 
 ### Private app traffic
 
-- Browser requests a URL like `/PROJECT_ID/proxy/6010/...` or
-  `/PROJECT_ID/port/6010/...` against the hub.
-- The hub resolves project placement and proxies to the owning `project-host`.
-- `project-host` proxies into the project container's internal HTTP proxy.
+Target architecture:
 
-This is the existing authenticated multi-user path.
+- Browser should request a project-host URL directly for private app traffic.
+- `project-host` authenticates the request and proxies into the project
+  container's internal HTTP proxy.
+
+Current status:
+
+- some existing authenticated flows still enter via the hub first
+- that is transitional behavior, not the desired final design
 
 ### Public app traffic
 
@@ -66,12 +71,10 @@ the owning host.
 ```mermaid
 flowchart LR
     Browser["Browser / client"]
-    Hub["Central hub"]
     Host["Owning project-host"]
     Container["Project container internal HTTP proxy"]
 
-    Browser -->|/project/proxy/<port>/...| Hub
-    Hub -->|project placement proxy| Host
+    Browser -->|direct app URL| Host
     Host -->|proxy| Container
 ```
 
@@ -94,6 +97,8 @@ flowchart LR
 Important:
 
 - the public app flow must not be `Browser -> DNS -> Hub -> project-host`
+- the private app flow should also not be `Browser -> Hub -> project-host` in
+  the final design
 - if a design requires restarting the shared central `cloudflared` instance when
   a user exposes/unexposes an app, that design is wrong
 
@@ -119,10 +124,10 @@ Therefore:
 
 ### Hub
 
-- private project URL proxying
 - project placement lookup
 - control-plane APIs for app exposure metadata
 - public app hostname lookup APIs used by `project-host`
+- auth minting and coordination
 
 ### Project-host
 
