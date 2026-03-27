@@ -1,0 +1,160 @@
+{
+  "ok": true,
+  "host": "8.229.132.110",
+  "user": "ubuntu",
+  "port": 22,
+  "workdir": "/mnt/cocalc/cocalc-project-backup-rustic-scale-mn99c1gp",
+  "started_at": "2026-03-27T18:51:17.737Z",
+  "finished_at": "2026-03-27T20:28:31.850Z",
+  "layouts": [
+    {
+      "kind": "shared"
+    },
+    {
+      "kind": "sharded",
+      "shard_count": 64
+    }
+  ],
+  "project_counts": [
+    128,
+    512,
+    1024
+  ],
+  "snapshots_per_project": 1,
+  "measurements": [
+    {
+      "layout_kind": "shared",
+      "shard_count": 1,
+      "project_count": 128,
+      "snapshots_per_project": 1,
+      "repo_count": 1,
+      "total_snapshots": 128,
+      "target_project": "project-00000",
+      "target_snapshot_id": "f12f3b33af14344e8f2620cac58ab75bb99026ec2200620b2ba93852b901c081",
+      "timings_ms": {
+        "snapshots_filter_host": 2274.229942000602,
+        "snapshot_lookup_wrapper_scan": 1589.1737589990953,
+        "snapshot_lookup_direct_id": 724.6886579996499,
+        "repoinfo": 3209.921226000006,
+        "backup_after_change": 3531.927818999975
+      },
+      "outputs": {
+        "filter_host_snapshot_count": 1,
+        "wrapper_all_snapshot_count": 128,
+        "all_snapshots_stdout_bytes": 265279
+      }
+    },
+    {
+      "layout_kind": "shared",
+      "shard_count": 1,
+      "project_count": 512,
+      "snapshots_per_project": 1,
+      "repo_count": 1,
+      "total_snapshots": 513,
+      "target_project": "project-00000",
+      "target_snapshot_id": "f12f3b33af14344e8f2620cac58ab75bb99026ec2200620b2ba93852b901c081",
+      "timings_ms": {
+        "snapshots_filter_host": 5443.604701998993,
+        "snapshot_lookup_wrapper_scan": 3775.20288300002,
+        "snapshot_lookup_direct_id": 693.0862120007077,
+        "repoinfo": 7698.404938999374,
+        "backup_after_change": 7062.994628000524
+      },
+      "outputs": {
+        "filter_host_snapshot_count": 1,
+        "wrapper_all_snapshot_count": 513,
+        "all_snapshots_stdout_bytes": 1063483
+      }
+    },
+    {
+      "layout_kind": "shared",
+      "shard_count": 1,
+      "project_count": 1024,
+      "snapshots_per_project": 1,
+      "repo_count": 1,
+      "total_snapshots": 1026,
+      "target_project": "project-00000",
+      "target_snapshot_id": "f12f3b33af14344e8f2620cac58ab75bb99026ec2200620b2ba93852b901c081",
+      "timings_ms": {
+        "snapshots_filter_host": 8638.297854000484,
+        "snapshot_lookup_wrapper_scan": 6232.029588998557,
+        "snapshot_lookup_direct_id": 709.3934119984624,
+        "repoinfo": 11068.425252999077,
+        "backup_after_change": 11816.423317000954
+      },
+      "outputs": {
+        "filter_host_snapshot_count": 1,
+        "wrapper_all_snapshot_count": 1026,
+        "all_snapshots_stdout_bytes": 2126956
+      }
+    },
+    {
+      "layout_kind": "sharded",
+      "shard_count": 64,
+      "project_count": 128,
+      "snapshots_per_project": 1,
+      "repo_count": 56,
+      "total_snapshots": 2,
+      "target_project": "project-00000",
+      "target_snapshot_id": "dfb710a3b843fcd9bc36dd0047af957bb993c718b0a090f0c48999a30ce23a8b",
+      "timings_ms": {
+        "snapshots_filter_host": 1899.1448689994286,
+        "snapshot_lookup_wrapper_scan": 1755.0205490006192,
+        "snapshot_lookup_direct_id": 1552.420844000153,
+        "repoinfo": 3114.2416180009604,
+        "backup_after_change": 6776.39696299957
+      },
+      "outputs": {
+        "filter_host_snapshot_count": 1,
+        "wrapper_all_snapshot_count": 2,
+        "all_snapshots_stdout_bytes": 4204
+      }
+    },
+    {
+      "layout_kind": "sharded",
+      "shard_count": 64,
+      "project_count": 512,
+      "snapshots_per_project": 1,
+      "repo_count": 64,
+      "total_snapshots": 13,
+      "target_project": "project-00000",
+      "target_snapshot_id": "dfb710a3b843fcd9bc36dd0047af957bb993c718b0a090f0c48999a30ce23a8b",
+      "timings_ms": {
+        "snapshots_filter_host": 1029.5369569994364,
+        "snapshot_lookup_wrapper_scan": 887.2740560000238,
+        "snapshot_lookup_direct_id": 783.1486520008184,
+        "repoinfo": 1564.420725000673,
+        "backup_after_change": 2008.1087589987874
+      },
+      "outputs": {
+        "filter_host_snapshot_count": 1,
+        "wrapper_all_snapshot_count": 13,
+        "all_snapshots_stdout_bytes": 27596
+      }
+    },
+    {
+      "layout_kind": "sharded",
+      "shard_count": 64,
+      "project_count": 1024,
+      "snapshots_per_project": 1,
+      "repo_count": 64,
+      "total_snapshots": 19,
+      "target_project": "project-00000",
+      "target_snapshot_id": "dfb710a3b843fcd9bc36dd0047af957bb993c718b0a090f0c48999a30ce23a8b",
+      "timings_ms": {
+        "snapshots_filter_host": 1316.2745330009784,
+        "snapshot_lookup_wrapper_scan": 991.393338999842,
+        "snapshot_lookup_direct_id": 830.410436999955,
+        "repoinfo": 1356.5127719994052,
+        "backup_after_change": 2048.8002669990237
+      },
+      "outputs": {
+        "filter_host_snapshot_count": 1,
+        "wrapper_all_snapshot_count": 19,
+        "all_snapshots_stdout_bytes": 40486
+      }
+    }
+  ],
+  "python_version": "3.12.3",
+  "rustic_version": "rustic 0.11.1"
+}

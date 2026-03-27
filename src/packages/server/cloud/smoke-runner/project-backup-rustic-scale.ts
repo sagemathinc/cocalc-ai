@@ -256,6 +256,7 @@ PASSWORD = BACKEND.get("password") or "cocalc-rustic-bench"
 ENV = os.environ.copy()
 ENV["RUSTIC_NO_PROGRESS"] = "true"
 ENV["RUSTIC_LOG_LEVEL"] = "error"
+INITIALIZED_REPO_KEYS = set()
 
 
 def run(cmd, *, cwd=None, check=True):
@@ -368,17 +369,22 @@ def rustic_cmd(repo_key, repos_root, profiles_root, cache_dir=None):
 
 
 def init_repo(repo_key, repos_root, profiles_root, cache_dir):
+    if repo_key in INITIALIZED_REPO_KEYS:
+        return
     if BACKEND["kind"] == "local":
         repo_path = local_repo_path(repo_key, repos_root)
         config_file = repo_path / "config"
         if config_file.exists():
+            INITIALIZED_REPO_KEYS.add(repo_key)
             return
         run(rustic_cmd(repo_key, repos_root, profiles_root, cache_dir) + ["init"])
+        INITIALIZED_REPO_KEYS.add(repo_key)
         return
     try:
         run(rustic_cmd(repo_key, repos_root, profiles_root, cache_dir) + ["repoinfo"])
     except Exception:
         run(rustic_cmd(repo_key, repos_root, profiles_root, cache_dir) + ["init"])
+    INITIALIZED_REPO_KEYS.add(repo_key)
 
 
 def list_repo_dirs(root):
@@ -406,6 +412,14 @@ def project_name(index):
 def shard_index(name, shard_count):
     digest = hashlib.sha256(name.encode("utf-8")).digest()
     return int.from_bytes(digest[:4], "big") % shard_count
+
+
+def layout_key(layout):
+    if layout["kind"] == "sharded":
+        return f"sharded-{int(layout['shard_count'])}"
+    return layout["kind"]
+
+
 def prepare_common_payload(fixtures_root, count, size_bytes):
     fixtures_root.mkdir(parents=True, exist_ok=True)
     payload = (b"0123456789abcdef" * ((size_bytes // 16) + 1))[:size_bytes]
@@ -535,24 +549,33 @@ def measure_repo(repo_key, repos_root, profiles_root, cache_root, target_host, t
     )
     result["timings_ms"]["repoinfo"] = ms
 
-    mutate_project(target_project_root, 999999)
-    _, ms = timed(
-        rustic_cmd(
-            repo_key,
-            repos_root,
-            profiles_root,
-            cache_dir_for_measurement(cache_root, "backup-after-change", target_host),
+    measure_host = f"measure-{target_host}-{time.time_ns()}"
+    measure_root = cache_root / "measure-projects" / measure_host
+    if measure_root.exists():
+        shutil.rmtree(measure_root)
+    measure_root.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(target_project_root, measure_root)
+    try:
+        mutate_project(measure_root, 999999)
+        _, ms = timed(
+            rustic_cmd(
+                repo_key,
+                repos_root,
+                profiles_root,
+                cache_dir_for_measurement(cache_root, "backup-after-change", measure_host),
+            )
+            + [
+                "backup",
+                "--json",
+                "--no-scan",
+                "--host",
+                measure_host,
+                str(measure_root),
+            ]
         )
-        + [
-            "backup",
-            "--json",
-            "--no-scan",
-            "--host",
-            target_host,
-            str(target_project_root),
-        ]
-    )
-    result["timings_ms"]["backup_after_change"] = ms
+        result["timings_ms"]["backup_after_change"] = ms
+    finally:
+        shutil.rmtree(measure_root, ignore_errors=True)
     return result
 
 
@@ -577,14 +600,6 @@ def benchmark_layout(layout, project_count, base_root):
         int(OPTIONS["common_file_count"]),
         int(OPTIONS["common_file_size_bytes"]),
     )
-    if projects_root.exists():
-        shutil.rmtree(projects_root)
-    if repos_root.exists():
-        shutil.rmtree(repos_root)
-    if profiles_root.exists():
-        shutil.rmtree(profiles_root)
-    if cache_root.exists():
-        shutil.rmtree(cache_root)
     projects_root.mkdir(parents=True, exist_ok=True)
     repos_root.mkdir(parents=True, exist_ok=True)
     profiles_root.mkdir(parents=True, exist_ok=True)
@@ -592,11 +607,16 @@ def benchmark_layout(layout, project_count, base_root):
 
     project_names = [project_name(i) for i in range(project_count)]
     snapshots_per_project = int(OPTIONS["snapshots_per_project"])
+    existing_names = {
+        path.name
+        for path in projects_root.iterdir()
+        if path.is_dir() and path.name.startswith("project-")
+    }
 
     for name in project_names:
+        if name in existing_names:
+            continue
         materialize_project(projects_root / name, name, fixtures_root)
-
-    for name in project_names:
         repo_key = scoped_repo_key(scenario_key, repo_key_for(layout, name))
         cache_dir = cache_dir_for(cache_root, OPTIONS["cache_mode"], name)
         init_repo(repo_key, repos_root, profiles_root, cache_dir)
@@ -636,13 +656,17 @@ def benchmark_layout(layout, project_count, base_root):
         projects_root / target_host,
     )
     measurements["outputs"]["filter_host_snapshot_count"] = filtered_count
+    repo_snapshot_count = int(
+        measurements["outputs"].get("wrapper_all_snapshot_count") or 0
+    )
     return {
         "layout_kind": layout["kind"],
         "shard_count": int(layout.get("shard_count") or 1),
         "project_count": project_count,
         "snapshots_per_project": snapshots_per_project,
         "repo_count": repo_count_for_layout(layout, project_names),
-        "total_snapshots": project_count * snapshots_per_project,
+        "total_snapshots": repo_snapshot_count
+        or (project_count * snapshots_per_project),
         "target_project": target_host,
         "target_snapshot_id": target_snapshot_id,
         **measurements,
@@ -663,11 +687,16 @@ def main():
     try:
         result["rustic_version"] = run([RUSTIC, "--version"]).stdout.strip()
         for layout in OPTIONS["layouts"]:
-            for project_count in OPTIONS["project_counts"]:
-                scenario_root = workdir / f"{layout['kind']}-count-{project_count}"
-                if scenario_root.exists():
-                    shutil.rmtree(scenario_root)
-                scenario_root.mkdir(parents=True, exist_ok=True)
+            scenario_root = workdir / layout_key(layout)
+            if scenario_root.exists():
+                shutil.rmtree(scenario_root)
+            scenario_root.mkdir(parents=True, exist_ok=True)
+            for project_count in sorted({int(count) for count in OPTIONS["project_counts"]}):
+                print(
+                    f"scenario start layout={layout_key(layout)} count={project_count}",
+                    file=sys.stderr,
+                    flush=True,
+                )
                 try:
                     measurement = benchmark_layout(layout, int(project_count), scenario_root)
                 except Exception as err:
@@ -690,6 +719,11 @@ def main():
                     }
                     result["ok"] = False
                 result["measurements"].append(measurement)
+                print(
+                    f"scenario done layout={layout_key(layout)} count={project_count} ok={not measurement.get('error')} repo_snapshots={measurement.get('total_snapshots', 0)}",
+                    file=sys.stderr,
+                    flush=True,
+                )
     except Exception as err:
         result["ok"] = False
         result["error"] = str(err)
@@ -708,6 +742,7 @@ async function runRemotePython({
   port,
   identity,
   script,
+  onStderrLine,
 }: {
   host: string;
   user: string;
@@ -715,6 +750,7 @@ async function runRemotePython({
   port: number;
   identity?: string;
   script: string;
+  onStderrLine?: (line: string) => void;
 }): Promise<string> {
   const args = ["-o", "BatchMode=yes"];
   if (identity) {
@@ -734,6 +770,7 @@ async function runRemotePython({
   });
   let stdout = "";
   let stderr = "";
+  let stderrBuffer = "";
   child.stdout.setEncoding("utf8");
   child.stderr.setEncoding("utf8");
   child.stdout.on("data", (chunk) => {
@@ -741,12 +778,26 @@ async function runRemotePython({
   });
   child.stderr.on("data", (chunk) => {
     stderr += chunk;
+    stderrBuffer += chunk;
+    let idx = stderrBuffer.indexOf("\n");
+    while (idx !== -1) {
+      const line = stderrBuffer.slice(0, idx).trim();
+      stderrBuffer = stderrBuffer.slice(idx + 1);
+      if (line) {
+        onStderrLine?.(line);
+      }
+      idx = stderrBuffer.indexOf("\n");
+    }
   });
   child.stdin.end(script);
   const code: number = await new Promise((resolve, reject) => {
     child.on("error", reject);
     child.on("close", resolve);
   });
+  const trailing = stderrBuffer.trim();
+  if (trailing) {
+    onStderrLine?.(trailing);
+  }
   if (code !== 0) {
     throw new Error(
       `ssh remote benchmark failed with code ${code}: ${stderr || stdout}`,
@@ -823,6 +874,13 @@ export async function runProjectBackupRusticScaleBenchmark(
         common_file_size_bytes,
         target_project_index,
       }),
+      onStderrLine: (line) => {
+        opts.log?.({
+          step: "project-backup-rustic-scale",
+          status: "start",
+          message: line,
+        });
+      },
     });
     const parsed = JSON.parse(stdout.trim());
     result.ok = !!parsed?.ok;
