@@ -285,6 +285,40 @@ In [rootfs-cache.ts](/home/wstein/build/cocalc-lite2/src/packages/project-host/r
 
 The user-visible behavior should not change.
 
+### Restore optimization: clone previous release before restore
+
+For large image families with small incremental updates, the restore path should
+eventually support a btrfs-assisted optimization on the destination host.
+
+Example:
+
+- host B already has `standard-0` materialized locally,
+- `standard-1` is a new release in the same family,
+- `standard-1` differs by only a small amount,
+- instead of restoring `standard-1` into an empty destination, host B starts
+  from a btrfs clone/snapshot of `standard-0`,
+- then runs `rustic restore --delete` into that clone,
+- then finalizes the result as the cached readonly `standard-1`.
+
+Potential benefits:
+
+- much lower temporary local disk usage before BEES dedup catches up,
+- less redundant write amplification on the destination host,
+- a particularly good fit for CoCalc image families where large software stacks
+  change modestly over time, such as monthly Colab-style updates.
+
+This is an optimization, not part of the minimum migration slice.
+
+The recommended order is:
+
+1. ship the correct empty-destination rustic restore path first,
+2. verify correctness and performance,
+3. then benchmark clone-plus-restore on representative workloads,
+4. enable it only if the space and restore-time tradeoffs are clearly better.
+
+This optimization should be tracked explicitly because it is likely valuable on
+cocalc.com, where many image families are large and evolve incrementally.
+
 ## Cross-Region Replication
 
 Start with lazy replication.
