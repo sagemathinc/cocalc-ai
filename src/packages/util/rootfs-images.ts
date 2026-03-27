@@ -142,7 +142,7 @@ export type PublishProjectRootfsBody = {
 export type PublishProjectRootfsArtifact = {
   image: string;
   content_key: string;
-  digest: string;
+  digest?: string;
   arch: RootfsImageArch;
   size_bytes?: number;
   snapshot: string;
@@ -152,12 +152,13 @@ export type PublishProjectRootfsArtifact = {
   parent_image?: string;
   parent_content_key?: string;
   inspect_data?: Record<string, any>;
+  upload_result?: RootfsUploadedArtifactResult;
   phase_timings_ms?: RootfsPhaseTimings;
 };
 
 export type RootfsReleaseArtifactKind = "full" | "delta";
-export type RootfsReleaseArtifactFormat = "btrfs-send";
-export type RootfsReleaseArtifactBackend = "hub-local" | "r2";
+export type RootfsReleaseArtifactFormat = "btrfs-send" | "rustic";
+export type RootfsReleaseArtifactBackend = "hub-local" | "r2" | "rest";
 
 export type RootfsArtifactTransferTarget =
   | {
@@ -180,6 +181,16 @@ export type RootfsArtifactTransferTarget =
       secret_access_key: string;
       multipart_part_bytes: number;
       multipart_concurrency: number;
+    }
+  | {
+      backend: "rustic";
+      repo_toml: string;
+      repo_selector: string;
+      artifact_backend: RootfsReleaseArtifactBackend;
+      region?: string;
+      bucket_id?: string;
+      bucket_name?: string;
+      bucket_purpose?: string | null;
     };
 
 export type RootfsUploadedArtifactResult =
@@ -201,24 +212,59 @@ export type RootfsUploadedArtifactResult =
       bucket_purpose?: string | null;
       artifact_path: string;
       phase_timings_ms?: RootfsPhaseTimings;
+    }
+  | {
+      ok: true;
+      backend: "rustic";
+      artifact_kind?: RootfsReleaseArtifactKind;
+      artifact_format: "rustic";
+      artifact_backend: RootfsReleaseArtifactBackend;
+      artifact_sha256: string;
+      artifact_bytes: number;
+      artifact_path: string;
+      snapshot_id: string;
+      repo_selector: string;
+      region?: string;
+      bucket_id?: string;
+      bucket_name?: string;
+      bucket_purpose?: string | null;
+      phase_timings_ms?: RootfsPhaseTimings;
     };
 
-export type RootfsReleaseArtifactAccess = {
-  release_id: string;
-  image: string;
-  content_key: string;
-  artifact_kind: RootfsReleaseArtifactKind;
-  artifact_format: RootfsReleaseArtifactFormat;
-  artifact_backend: RootfsReleaseArtifactBackend;
-  artifact_sha256: string;
-  artifact_bytes: number;
-  parent_release_id?: string;
-  parent_image?: string;
-  parent_content_key?: string;
-  download_url: string;
-  download_headers?: Record<string, string>;
-  inspect_data?: Record<string, any>;
-};
+export type RootfsReleaseArtifactAccess =
+  | {
+      release_id: string;
+      image: string;
+      content_key: string;
+      artifact_kind: RootfsReleaseArtifactKind;
+      artifact_format: "btrfs-send";
+      artifact_backend: RootfsReleaseArtifactBackend;
+      artifact_sha256: string;
+      artifact_bytes: number;
+      artifact_path?: string;
+      parent_release_id?: string;
+      parent_image?: string;
+      parent_content_key?: string;
+      download_url: string;
+      download_headers?: Record<string, string>;
+      inspect_data?: Record<string, any>;
+    }
+  | {
+      release_id: string;
+      image: string;
+      content_key: string;
+      artifact_kind: "full";
+      artifact_format: "rustic";
+      artifact_backend: RootfsReleaseArtifactBackend;
+      artifact_sha256: string;
+      artifact_bytes: number;
+      artifact_path: string;
+      snapshot_id: string;
+      repo_selector: string;
+      repo_toml: string;
+      region?: string;
+      inspect_data?: Record<string, any>;
+    };
 
 export type RootfsDeleteBlockers = {
   projects_using_release: number;

@@ -11,6 +11,12 @@
       "@cocalc/lite/*": ["../lite/*"]
     }
   },
-  "exclude": ["dist", "node_modules", "build"],
+  "exclude": [
+    "dist",
+    "node_modules",
+    "build",
+    "**/*.test.ts",
+    "jest.config.js"
+  ],
   "references": [{ "path": "../lite" }]
 }

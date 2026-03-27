@@ -4,10 +4,11 @@ import {
   parallelOpsWorkerRegistryByKind,
 } from "./worker-registry";
 import {
-  summarizeMoveRoleWorkerStatus,
   summarizeCloudVmWorkStatus,
   summarizeHostLocalBackupStatus,
   summarizeLroWorkerStatus,
+  summarizeMoveRoleWorkerStatus,
+  summarizeProjectHostLroWorkerStatus,
 } from "./worker-status";
 
 describe("parallel ops worker registry", () => {
@@ -287,5 +288,57 @@ describe("summarizeMoveRoleWorkerStatus", () => {
     expect(status.notes).toContain(
       "Queued moves without a selected destination are tracked under the 'unassigned' breakdown key.",
     );
+  });
+});
+
+describe("summarizeProjectHostLroWorkerStatus", () => {
+  it("reports per-host RootFS publish admission usage", () => {
+    const worker = parallelOpsWorkerRegistryByKind.get(
+      "project-rootfs-publish-host",
+    );
+    expect(worker).toBeDefined();
+    const status = summarizeProjectHostLroWorkerStatus({
+      worker: worker!,
+      nowMs: Date.parse("2026-03-18T20:00:00.000Z"),
+      limitByHost: new Map([
+        ["host-a", { value: 1, source: "default" as const }],
+        ["host-b", { value: 2, source: "db-override" as const }],
+      ]),
+      rows: [
+        {
+          status: "queued",
+          owner_id: null,
+          heartbeat_at: null,
+          created_at: new Date("2026-03-18T19:58:00.000Z"),
+          project_host_id: "host-a",
+        },
+        {
+          status: "running",
+          owner_id: "worker-a",
+          heartbeat_at: new Date("2026-03-18T19:59:40.000Z"),
+          created_at: new Date("2026-03-18T19:57:00.000Z"),
+          project_host_id: "host-b",
+        },
+        {
+          status: "running",
+          owner_id: "worker-b",
+          heartbeat_at: new Date("2026-03-18T19:57:00.000Z"),
+          created_at: new Date("2026-03-18T19:56:00.000Z"),
+          project_host_id: "host-b",
+        },
+      ],
+      missingHostNote:
+        "Some RootFS publish ops are missing host metadata and were excluded from the host breakdown.",
+    });
+
+    expect(status.queued_count).toBe(1);
+    expect(status.running_count).toBe(2);
+    expect(status.stale_running_count).toBe(1);
+    expect(status.worker_instances).toBe(2);
+    expect(status.config_source).toBe("db-override");
+    expect(status.breakdown).toEqual([
+      { key: "host-a", queued_count: 1, running_count: 0, limit: 1 },
+      { key: "host-b", queued_count: 0, running_count: 2, limit: 2 },
+    ]);
   });
 });

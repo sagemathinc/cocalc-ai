@@ -4,6 +4,11 @@ import {
   legacyProjectHostCookiePath,
   projectCookiePath,
 } from "./http-proxy-cookies";
+
+jest.mock("./app-public-access", () => ({
+  authorizePublicAppPath: jest.fn(async () => false),
+}));
+
 import {
   createProjectHostHttpSessionToken,
   resolveProjectHostHttpSessionFromCookieHeader,

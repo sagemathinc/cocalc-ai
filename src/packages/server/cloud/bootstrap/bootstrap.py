@@ -28,6 +28,7 @@ import ssl
 import subprocess
 import sys
 import time
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
@@ -43,6 +44,7 @@ class BundleSpec:
     dir: str
     current: str
     version: str | None = None
+    manifest_url: str | None = None
 
 
 @dataclass(frozen=True)
@@ -150,6 +152,7 @@ def load_config(path: str) -> BootstrapConfig:
             dir=_ensure_str(bundle_host.get("dir"), "project_host_bundle.dir"),
             current=_ensure_str(bundle_host.get("current"), "project_host_bundle.current"),
             version=bundle_host.get("version"),
+            manifest_url=bundle_host.get("manifest_url") or None,
         ),
         project_bundle=BundleSpec(
             url=_ensure_str(bundle_project.get("url"), "project_bundle.url"),
@@ -159,6 +162,7 @@ def load_config(path: str) -> BootstrapConfig:
             dir=_ensure_str(bundle_project.get("dir"), "project_bundle.dir"),
             current=_ensure_str(bundle_project.get("current"), "project_bundle.current"),
             version=bundle_project.get("version"),
+            manifest_url=bundle_project.get("manifest_url") or None,
         ),
         tools_bundle=BundleSpec(
             url=_ensure_str(bundle_tools.get("url"), "tools_bundle.url"),
@@ -168,6 +172,7 @@ def load_config(path: str) -> BootstrapConfig:
             dir=_ensure_str(bundle_tools.get("dir"), "tools_bundle.dir"),
             current=_ensure_str(bundle_tools.get("current"), "tools_bundle.current"),
             version=bundle_tools.get("version"),
+            manifest_url=bundle_tools.get("manifest_url") or None,
         ),
         cloudflared=CloudflaredSpec(
             enabled=_ensure_bool(cloudflared.get("enabled"), "cloudflared.enabled"),
@@ -810,6 +815,213 @@ case "$cmd" in
     # RootFS trees.
     exec /usr/bin/rsync -aAX --numeric-ids "$src"/ "$dest"/
     ;;
+  rootfs-rustic-backup)
+    if [ "$#" -lt 3 ]; then
+      echo "usage: cocalc-runtime-storage rootfs-rustic-backup <src> <repo-profile> <host> [rustic args...]" >&2
+      exit 2
+    fi
+    src="$1"
+    repo_profile="$2"
+    host_name="$3"
+    shift 3
+    check_args "$src" "$repo_profile"
+    if [[ "$repo_profile" == *.toml ]]; then
+      repo_profile="${repo_profile%.toml}"
+    fi
+    cd "$src"
+    exec /opt/cocalc/tools/current/rustic -P "$repo_profile" backup --json --no-scan --host "$host_name" "$@" .
+    ;;
+  rootfs-rustic-restore)
+    if [ "$#" -lt 3 ]; then
+      echo "usage: cocalc-runtime-storage rootfs-rustic-restore <repo-profile> <snapshot> <dest> [rustic args...]" >&2
+      exit 2
+    fi
+    repo_profile="$1"
+    snapshot="$2"
+    dest="$3"
+    shift 3
+    check_args "$repo_profile" "$dest"
+    if [[ "$repo_profile" == *.toml ]]; then
+      repo_profile="${repo_profile%.toml}"
+    fi
+    exec /opt/cocalc/tools/current/rustic -P "$repo_profile" restore "$@" "$snapshot" "$dest"
+    ;;
+  rootfs-manifest)
+    if [ "$#" -ne 1 ]; then
+      echo "usage: cocalc-runtime-storage rootfs-manifest <path>" >&2
+      exit 2
+    fi
+    tree="$1"
+    check_args "$tree"
+    exec /bin/bash -lc 'set -euo pipefail; python3 - "$1" <<'"'"'PY'"'"'
+import hashlib
+import json
+import os
+import stat
+import sys
+from datetime import datetime, timezone
+
+root = sys.argv[1]
+records = []
+hardlink_paths = {}
+counts = {
+    "entry_count": 0,
+    "regular_file_count": 0,
+    "directory_count": 0,
+    "symlink_count": 0,
+    "other_count": 0,
+    "total_regular_bytes": 0,
+}
+
+
+def detect_type(st):
+    mode = st.st_mode
+    if stat.S_ISREG(mode):
+        return "file"
+    if stat.S_ISDIR(mode):
+        return "directory"
+    if stat.S_ISLNK(mode):
+        return "symlink"
+    if stat.S_ISBLK(mode):
+        return "block"
+    if stat.S_ISCHR(mode):
+        return "char"
+    if stat.S_ISFIFO(mode):
+        return "fifo"
+    if stat.S_ISSOCK(mode):
+        return "socket"
+    return "other"
+
+
+def sha256_file(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def manifest_line(record, hardlink_group="", hardlink_group_size=1):
+    return json.dumps(
+        [
+            record["type"],
+            record["path"],
+            record["mode"],
+            record["uid"],
+            record["gid"],
+            record["size"],
+            record.get("sha256", ""),
+            record.get("target", ""),
+            hardlink_group,
+            hardlink_group_size,
+            record.get("rdev", ""),
+        ],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+
+
+def walk(path, relative_path):
+    st = os.lstat(path)
+    file_type = detect_type(st)
+    is_root_entry = relative_path == "."
+    record = {
+        "type": file_type,
+        "path": relative_path,
+        # The mounted/cache root directory itself is transport scaffolding, not
+        # semantic RootFS content, so normalize its ownership/mode fields.
+        "mode": "0000" if is_root_entry else format(stat.S_IMODE(st.st_mode), "04o"),
+        "uid": "0" if is_root_entry else str(st.st_uid),
+        "gid": "0" if is_root_entry else str(st.st_gid),
+        # Directory and special-file st_size values are allocator details, not
+        # semantic tree content, and differ between overlay views and restored
+        # standalone trees.
+        "size": "0",
+    }
+    counts["entry_count"] += 1
+    if file_type == "file":
+        counts["regular_file_count"] += 1
+        counts["total_regular_bytes"] += int(st.st_size)
+        record["size"] = str(st.st_size)
+        record["sha256"] = sha256_file(path)
+        if st.st_nlink > 1:
+            key = f"{st.st_dev}:{st.st_ino}"
+            record["hardlink_key"] = key
+            hardlink_paths.setdefault(key, []).append(relative_path)
+    elif file_type == "directory":
+        counts["directory_count"] += 1
+    elif file_type == "symlink":
+        counts["symlink_count"] += 1
+        record["target"] = os.readlink(path)
+    else:
+        counts["other_count"] += 1
+        record["rdev"] = str(st.st_rdev)
+    records.append(record)
+    if file_type != "directory":
+        return
+    with os.scandir(path) as entries:
+        names = sorted(entry.name for entry in entries)
+    for name in names:
+        child_path = os.path.join(path, name)
+        child_relative = name if relative_path == "." else f"{relative_path}/{name}"
+        walk(child_path, child_relative)
+
+
+walk(root, ".")
+
+hardlink_groups = {}
+hardlink_group_count = 0
+hardlink_member_count = 0
+for key, paths in hardlink_paths.items():
+    if len(paths) <= 1:
+        continue
+    paths.sort()
+    hardlink_groups[key] = {
+        "group_id": paths[0],
+        "visible_count": len(paths),
+    }
+    hardlink_group_count += 1
+    hardlink_member_count += len(paths)
+
+lines = []
+for record in records:
+    group = hardlink_groups.get(record.get("hardlink_key", ""))
+    lines.append(
+        manifest_line(
+            record,
+            group["group_id"] if group else "",
+            group["visible_count"] if group else 1,
+        )
+    )
+
+manifest_text = ("\\n".join(lines) + "\\n") if lines else "\\n"
+hardlink_lines = [
+    json.dumps(
+        [group["group_id"], group["visible_count"]],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    for group in hardlink_groups.values()
+]
+hardlink_text = ("\\n".join(hardlink_lines) + "\\n") if hardlink_lines else ""
+
+result = {
+    "generated_at": datetime.now(timezone.utc).isoformat(),
+    "manifest_sha256": hashlib.sha256(manifest_text.encode("utf-8")).hexdigest(),
+    "hardlink_sha256": hashlib.sha256(hardlink_text.encode("utf-8")).hexdigest(),
+    "entry_count": counts["entry_count"],
+    "regular_file_count": counts["regular_file_count"],
+    "directory_count": counts["directory_count"],
+    "symlink_count": counts["symlink_count"],
+    "other_count": counts["other_count"],
+    "hardlink_group_count": hardlink_group_count,
+    "hardlink_member_count": hardlink_member_count,
+    "total_regular_bytes": counts["total_regular_bytes"],
+}
+json.dump(result, sys.stdout, ensure_ascii=False, separators=(",", ":"))
+sys.stdout.write("\\n")
+PY' bash "$tree"
+    ;;
   tar-sha256-tree)
     if [ "$#" -ne 1 ]; then
       echo "usage: cocalc-runtime-storage tar-sha256-tree <path>" >&2
@@ -1212,7 +1424,66 @@ def verify_sha256(cfg: BootstrapConfig, path: str, expected: str | None) -> None
     log_line(cfg, "bootstrap: checksum ok")
 
 
+def fetch_json(cfg: BootstrapConfig, url: str) -> dict[str, Any]:
+    log_line(cfg, f"bootstrap: fetching manifest {url}")
+    if cfg.ca_cert_path:
+        context = ssl.create_default_context(cafile=cfg.ca_cert_path)
+    else:
+        context = ssl.create_default_context()
+    try:
+        with urllib.request.urlopen(url, context=context, timeout=60) as response:
+            payload = response.read().decode("utf-8")
+            return json.loads(payload)
+    except Exception as err:
+        log_line(cfg, f"bootstrap: manifest fetch via urllib failed ({err}); trying curl")
+    if shutil.which("curl") is None:
+        raise RuntimeError("curl not available for manifest fetch fallback")
+    payload = subprocess.check_output(["curl", "-fsSL", url], text=True)
+    return json.loads(payload)
+
+
+def extract_version_from_bundle_url(url: str) -> str | None:
+    try:
+        path = urllib.parse.urlparse(url).path
+    except Exception:
+        return None
+    parts = [part for part in path.split("/") if part]
+    if len(parts) < 2:
+        return None
+    version = parts[-2].strip()
+    return version or None
+
+
+def resolve_bundle_spec(cfg: BootstrapConfig, bundle: BundleSpec) -> BundleSpec:
+    if not bundle.manifest_url:
+        return bundle
+    manifest = fetch_json(cfg, bundle.manifest_url)
+    url = f"{manifest.get('url') or ''}".strip()
+    if not url:
+        raise RuntimeError(f"manifest missing bundle url: {bundle.manifest_url}")
+    version = f"{manifest.get('version') or ''}".strip()
+    if not version:
+        version = extract_version_from_bundle_url(url) or bundle.version or "latest"
+    sha256 = f"{manifest.get('sha256') or ''}".strip() or bundle.sha256
+    resolved = BundleSpec(
+        url=url,
+        sha256=sha256,
+        remote=bundle.remote,
+        root=bundle.root,
+        dir=f"{bundle.root}/{version}",
+        current=bundle.current,
+        version=version,
+        manifest_url=bundle.manifest_url,
+    )
+    log_line(
+        cfg,
+        f"bootstrap: resolved manifest {bundle.manifest_url} to version={version} url={url}",
+    )
+    return resolved
+
+
 def extract_bundle(cfg: BootstrapConfig, bundle: BundleSpec) -> None:
+    bundle = resolve_bundle_spec(cfg, bundle)
     Path(cfg.bootstrap_tmp).mkdir(parents=True, exist_ok=True)
     if cfg.bootstrap_user and cfg.bootstrap_user != "root":
         run_best_effort(

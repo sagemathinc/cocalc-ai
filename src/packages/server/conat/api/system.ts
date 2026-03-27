@@ -145,7 +145,11 @@ export async function getProjectHostParallelOpsLimit({
     configured_limit: source === "db-override" ? value : null,
     effective_limit: value,
     config_source:
-      source === "db-override" ? "db-override" : base.config_source,
+      source === "db-override"
+        ? "db-override"
+        : source === "env-debug-cap"
+          ? "env-debug-cap"
+          : base.config_source,
   };
 }
 

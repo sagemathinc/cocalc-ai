@@ -7,6 +7,7 @@ import { ConatError } from "@cocalc/conat/core/client";
 import { type SnapshotUsage } from "@cocalc/conat/files/file-server";
 import { SNAPSHOTS } from "@cocalc/util/consts/snapshots";
 import { getSubvolumeField, getSubvolumeId } from "./subvolume";
+import { parsePlainQgroupShow } from "./subvolume-quota";
 
 const logger = getLogger("file-server:btrfs:subvolume-snapshots");
 
@@ -158,13 +159,36 @@ export class SubvolumeSnapshots {
   };
 
   usage = async (name: string): Promise<SnapshotUsage> => {
-    // btrfs --format=json qgroup show -reF --raw project-eac5b48a-70aa-4401-a54d-0f58c5eb09ba/.snapshots/cocalc
     const snapshotPath = join(this.snapshotsDir, name);
-    const { stdout } = await btrfs({
-      args: ["--format=json", "qgroup", "show", "-ref", "--raw", snapshotPath],
-    });
-    const x = JSON.parse(stdout);
-    const { referenced, max_referenced, exclusive } = x["qgroup-show"][0];
+    let row;
+    try {
+      const { stdout } = await btrfs({
+        args: [
+          "--format=json",
+          "qgroup",
+          "show",
+          "-ref",
+          "--raw",
+          snapshotPath,
+        ],
+      });
+      const x = JSON.parse(stdout);
+      row = x["qgroup-show"]?.[0];
+    } catch (err: any) {
+      const stderr =
+        typeof err?.stderr === "string" ? err.stderr : `${err?.message ?? err}`;
+      if (!stderr.includes("unrecognized option '--format=json'")) {
+        throw err;
+      }
+      const { stdout } = await btrfs({
+        args: ["qgroup", "show", "-ref", "--raw", snapshotPath],
+      });
+      row = parsePlainQgroupShow(stdout)[0];
+    }
+    if (!row) {
+      throw new Error(`no qgroup info for snapshot ${snapshotPath}`);
+    }
+    const { referenced, max_referenced, exclusive } = row;
     return { name, used: referenced, quota: max_referenced, exclusive };
   };
 

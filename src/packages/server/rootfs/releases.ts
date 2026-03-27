@@ -12,8 +12,17 @@ import { pipeline } from "node:stream/promises";
 import basePath from "@cocalc/backend/base-path";
 import { data, secrets } from "@cocalc/backend/data";
 import getLogger from "@cocalc/backend/logger";
+import rustic from "@cocalc/backend/sandbox/rustic";
+import type { HostMachine } from "@cocalc/conat/hub/api/hosts";
+import { ONPREM_REST_TUNNEL_LOCAL_PORT } from "@cocalc/conat/project-host/api";
 import getPool from "@cocalc/database/pool";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
+import { getLaunchpadLocalConfig } from "@cocalc/server/launchpad/mode";
+import {
+  getLaunchpadRestAuth,
+  getLaunchpadRestPort,
+} from "@cocalc/server/launchpad/onprem-sshd";
+import { maybeStartLaunchpadOnPremServices } from "@cocalc/server/launchpad/onprem-sshd";
 import {
   deleteObject,
   uploadObjectFromBuffer,
@@ -38,8 +47,8 @@ import type {
   RootfsReleaseArtifactKind,
   RootfsReleaseGcItem,
   RootfsReleaseGcRunResult,
+  RootfsUploadedArtifactResult,
 } from "@cocalc/util/rootfs-images";
-import { managedRootfsContentKey } from "@cocalc/util/rootfs-images";
 import { v4 as uuid } from "uuid";
 
 export const ROOTFS_RELEASE_ARTIFACT_ROUTE_PREFIX = "/rootfs/releases";
@@ -49,6 +58,10 @@ const ROOTFS_RELEASE_TOKEN_SECRET_PATH = join(
   secrets,
   "rootfs-release-artifact-token-key",
 );
+const ROOTFS_RUSTIC_SHARED_SECRET_PATH = join(
+  secrets,
+  "rootfs-rustic-shared-secret",
+);
 const ROOTFS_RELEASE_ARTIFACT_FORMAT: RootfsReleaseArtifactFormat =
   "btrfs-send";
 const ROOTFS_RELEASE_ARTIFACT_BACKEND: RootfsReleaseArtifactBackend =
@@ -56,6 +69,7 @@ const ROOTFS_RELEASE_ARTIFACT_BACKEND: RootfsReleaseArtifactBackend =
 const ROOTFS_RELEASE_UPLOAD_CHUNK_BYTES = 32 * 1024 * 1024;
 const ROOTFS_RELEASE_R2_MULTIPART_PART_BYTES = 64 * 1024 * 1024;
 const ROOTFS_RELEASE_R2_MULTIPART_CONCURRENCY = 8;
+const ROOTFS_RUSTIC_REPO_ROOT = "rootfs-images";
 const logger = getLogger("server:rootfs:releases");
 
 type RootfsReleaseRow = {
@@ -125,6 +139,65 @@ function normalizeContentKey(content_key?: string | null): string {
     throw new Error("invalid RootFS content key");
   }
   return value;
+}
+
+export function configuredRootfsArtifactFormat(): RootfsReleaseArtifactFormat {
+  const raw = `${process.env.COCALC_ROOTFS_ARTIFACT_FORMAT ?? ""}`
+    .trim()
+    .toLowerCase();
+  if (raw === "btrfs-send" || raw === "btrfs_stream" || raw === "btrfs") {
+    return "btrfs-send";
+  }
+  return "rustic";
+}
+
+type RootfsRusticArtifactPath = {
+  artifact_backend: RootfsReleaseArtifactBackend;
+  snapshot_id: string;
+  region?: string;
+};
+
+function encodeRusticArtifactPath({
+  artifact_backend,
+  snapshot_id,
+  region,
+}: RootfsRusticArtifactPath): string {
+  const backend = `${artifact_backend ?? ""}`.trim();
+  const snapshot = `${snapshot_id ?? ""}`.trim();
+  if (!backend || !snapshot) {
+    throw new Error("invalid rustic RootFS artifact path");
+  }
+  const safeRegion = `${region ?? ""}`.trim() || "site";
+  return [
+    "rustic",
+    encodeURIComponent(backend),
+    encodeURIComponent(safeRegion),
+    encodeURIComponent(snapshot),
+  ].join("/");
+}
+
+function decodeRusticArtifactPath(
+  artifact_path?: string | null,
+): RootfsRusticArtifactPath | null {
+  const parts = `${artifact_path ?? ""}`.split("/").map((part) => {
+    try {
+      return decodeURIComponent(part);
+    } catch {
+      return part;
+    }
+  });
+  if (parts.length !== 4 || parts[0] !== "rustic") {
+    return null;
+  }
+  const [_, artifact_backend, region, snapshot_id] = parts;
+  if (!artifact_backend || !snapshot_id) {
+    return null;
+  }
+  return {
+    artifact_backend: artifact_backend as RootfsReleaseArtifactBackend,
+    region: region === "site" ? undefined : region,
+    snapshot_id,
+  };
 }
 
 function artifactRelativePath(
@@ -292,11 +365,29 @@ export async function issueRootfsReleaseArtifactUpload({
   ttl_ms = 15 * 60 * 1000,
 }: {
   host_id: string;
-  content_key: string;
+  content_key?: string;
   artifact_kind?: RootfsReleaseArtifactKind;
   parent_content_key?: string | null;
   ttl_ms?: number;
 }): Promise<RootfsArtifactTransferTarget> {
+  if (configuredRootfsArtifactFormat() === "rustic") {
+    const repo = await buildRootfsRusticRepoConfigForHost(host_id);
+    return {
+      backend: "rustic",
+      repo_toml: repo.repo_toml,
+      repo_selector: repo.repo_selector,
+      artifact_backend: repo.artifact_backend,
+      region: repo.region,
+      bucket_id: repo.bucket?.id,
+      bucket_name: repo.bucket?.name,
+      bucket_purpose: repo.bucket?.purpose ?? null,
+    };
+  }
+  if (!content_key) {
+    throw new Error(
+      "content_key is required when issuing non-rustic RootFS artifact uploads",
+    );
+  }
   const key = normalizeContentKey(content_key);
   const artifactPath = r2ArtifactKey(key, artifact_kind, parent_content_key);
   const region = await resolveHostR2Region(host_id);
@@ -444,6 +535,211 @@ async function loadR2BucketByName(name: string): Promise<BucketRow | null> {
     [name],
   );
   return rows[0] ?? null;
+}
+
+let rootfsRusticSharedSecret: string | undefined;
+
+async function getRootfsRusticSharedSecret(): Promise<string> {
+  if (rootfsRusticSharedSecret) {
+    return rootfsRusticSharedSecret;
+  }
+  let encoded = "";
+  try {
+    encoded = (await readFile(ROOTFS_RUSTIC_SHARED_SECRET_PATH, "utf8")).trim();
+  } catch {}
+  if (!encoded) {
+    encoded = randomBytes(32).toString("base64url");
+    await mkdir(secrets, { recursive: true });
+    await writeFile(ROOTFS_RUSTIC_SHARED_SECRET_PATH, encoded, { mode: 0o600 });
+  }
+  rootfsRusticSharedSecret = encoded;
+  return encoded;
+}
+
+function buildRootfsRusticS3Toml({
+  endpoint,
+  bucket,
+  accessKey,
+  secretKey,
+  password,
+}: {
+  endpoint: string;
+  bucket: string;
+  accessKey: string;
+  secretKey: string;
+  password: string;
+}): string {
+  return [
+    "[repository]",
+    'repository = "opendal:s3"',
+    `password = "${password}"`,
+    "",
+    "[repository.options]",
+    `endpoint = "${endpoint}"`,
+    'region = "auto"',
+    `bucket = "${bucket}"`,
+    `root = "${ROOTFS_RUSTIC_REPO_ROOT}"`,
+    `access_key_id = "${accessKey}"`,
+    `secret_access_key = "${secretKey}"`,
+    "",
+  ].join("\n");
+}
+
+function isSelfHostLocalMachine(machine: HostMachine): boolean {
+  const selfHostMode = machine?.metadata?.self_host_mode;
+  const effectiveSelfHostMode =
+    machine?.cloud === "self-host" && !selfHostMode ? "local" : selfHostMode;
+  return machine?.cloud === "self-host" && effectiveSelfHostMode === "local";
+}
+
+async function loadHostStorageContext(host_id: string): Promise<{
+  region: string | null;
+  machine: HostMachine;
+}> {
+  const { rows } = await getPool("medium").query<{
+    region: string | null;
+    metadata: any;
+  }>("SELECT region, metadata FROM project_hosts WHERE id=$1", [host_id]);
+  if (!rows[0]) {
+    throw new Error(`host '${host_id}' not found`);
+  }
+  return {
+    region: rows[0].region ?? null,
+    machine: (rows[0].metadata?.machine ?? {}) as HostMachine,
+  };
+}
+
+type RootfsRusticRepoConfig = {
+  repo_toml: string;
+  repo_selector: string;
+  artifact_backend: RootfsReleaseArtifactBackend;
+  region?: string;
+  bucket?: BucketRow | null;
+};
+
+async function buildSelfHostRootfsRusticRepoConfig(): Promise<RootfsRusticRepoConfig> {
+  await maybeStartLaunchpadOnPremServices();
+  const config = getLaunchpadLocalConfig("local");
+  const restPort = getLaunchpadRestPort() ?? config.rest_port;
+  if (!restPort || !config.backup_root) {
+    throw new Error("self-host local rest-server is not configured");
+  }
+  try {
+    await mkdir(join(config.backup_root, ROOTFS_RUSTIC_REPO_ROOT), {
+      recursive: true,
+    });
+  } catch {
+    // rustic will surface a clearer error later if this path is unusable
+  }
+  const password = await getRootfsRusticSharedSecret();
+  const auth = await getLaunchpadRestAuth();
+  const authPrefix = auth
+    ? `${encodeURIComponent(auth.user)}:${encodeURIComponent(auth.password)}@`
+    : "";
+  const tunnelLocalPort =
+    Number.parseInt(
+      process.env.COCALC_ONPREM_REST_TUNNEL_LOCAL_PORT ?? "",
+      10,
+    ) || ONPREM_REST_TUNNEL_LOCAL_PORT;
+  const endpoint = `http://${authPrefix}127.0.0.1:${tunnelLocalPort}/${ROOTFS_RUSTIC_REPO_ROOT}`;
+  return {
+    repo_toml: [
+      "[repository]",
+      `repository = "rest:${endpoint}"`,
+      `password = "${password}"`,
+      "",
+    ].join("\n"),
+    repo_selector: "rest:rootfs-images",
+    artifact_backend: "rest",
+  };
+}
+
+async function buildHostedRootfsRusticRepoConfig(
+  region: string,
+): Promise<RootfsRusticRepoConfig> {
+  const bucket = await loadR2BucketForRegion(region);
+  if (!bucket?.name) {
+    throw new Error(`no usable R2 bucket configured for region '${region}'`);
+  }
+  const settings = await getServerSettings();
+  const accountId = `${settings.r2_account_id ?? ""}`.trim() || undefined;
+  const accessKey =
+    `${settings.r2_access_key_id ?? ""}`.trim() ||
+    bucket.access_key_id ||
+    undefined;
+  const secretKey =
+    `${settings.r2_secret_access_key ?? ""}`.trim() ||
+    bucket.secret_access_key ||
+    undefined;
+  const endpoint =
+    (accountId ? `https://${accountId}.r2.cloudflarestorage.com` : undefined) ??
+    bucket.endpoint ??
+    undefined;
+  if (!endpoint || !accessKey || !secretKey) {
+    throw new Error(`missing R2 credentials for region '${region}'`);
+  }
+  return {
+    repo_toml: buildRootfsRusticS3Toml({
+      endpoint,
+      bucket: bucket.name,
+      accessKey,
+      secretKey,
+      password: await getRootfsRusticSharedSecret(),
+    }),
+    repo_selector: `r2:rootfs-images:${region}`,
+    artifact_backend: "r2",
+    region,
+    bucket,
+  };
+}
+
+async function buildRootfsRusticRepoConfigForHost(
+  host_id: string,
+): Promise<RootfsRusticRepoConfig> {
+  const { region, machine } = await loadHostStorageContext(host_id);
+  if (isSelfHostLocalMachine(machine)) {
+    return await buildSelfHostRootfsRusticRepoConfig();
+  }
+  const mappedRegion = mapCloudRegionToR2Region(region ?? DEFAULT_R2_REGION);
+  return await buildHostedRootfsRusticRepoConfig(mappedRegion);
+}
+
+async function buildRootfsRusticRepoConfigForRelease(
+  release: RootfsReleaseRow,
+): Promise<RootfsRusticRepoConfig> {
+  const info = decodeRusticArtifactPath(release.artifact_path);
+  if (!info) {
+    throw new Error(
+      `release '${release.release_id}' is missing rustic artifact metadata`,
+    );
+  }
+  if (info.artifact_backend === "rest") {
+    return await buildSelfHostRootfsRusticRepoConfig();
+  }
+  return await buildHostedRootfsRusticRepoConfig(
+    info.region ?? DEFAULT_R2_REGION,
+  );
+}
+
+async function ensureRootfsRusticRepoProfile({
+  repo_selector,
+  repo_toml,
+}: RootfsRusticRepoConfig): Promise<string> {
+  const digest = createHash("sha256")
+    .update(`${repo_selector}\0${repo_toml}`)
+    .digest("hex");
+  const dir = join(secrets, "rustic", "rootfs-images");
+  const path = join(dir, `${digest}.toml`);
+  try {
+    if ((await readFile(path, "utf8")) === repo_toml) {
+      return path;
+    }
+  } catch {
+    // write below
+  }
+  await mkdir(dir, { recursive: true });
+  await writeFile(path, repo_toml, { mode: 0o600 });
+  return path;
 }
 
 async function loadReleaseArtifactReplica({
@@ -749,11 +1045,32 @@ export async function upsertReleaseArtifactReplica({
 export async function loadRootfsReleaseByImage(
   image: string,
 ): Promise<RootfsReleaseRow | null> {
-  const content_key = managedRootfsContentKey(image);
-  if (!content_key) {
+  const runtime_image = `${image ?? ""}`.trim();
+  if (!runtime_image) {
     return null;
   }
-  return await loadRootfsReleaseRowByContentKey(content_key);
+  const { rows } = await getPool("medium").query<RootfsReleaseRow>(
+    `SELECT
+      release_id,
+      content_key,
+      runtime_image,
+      source_image,
+      parent_release_id,
+      depth,
+      arch,
+      size_bytes,
+      artifact_kind,
+      artifact_format,
+      artifact_backend,
+      artifact_path,
+      artifact_sha256,
+      artifact_bytes,
+      inspect_json
+    FROM rootfs_releases
+    WHERE runtime_image=$1`,
+    [runtime_image],
+  );
+  return rows[0] ?? null;
 }
 
 async function loadRootfsReleaseById(
@@ -1013,41 +1330,79 @@ export async function appendUploadedRootfsReleaseArtifactChunk({
 
 export async function upsertPublishedRootfsRelease({
   artifact,
+  upload,
   metadata,
   artifact_backend = ROOTFS_RELEASE_ARTIFACT_BACKEND,
   artifact_path,
 }: {
   artifact: PublishProjectRootfsArtifact;
+  upload?: RootfsUploadedArtifactResult;
   metadata?: RootfsStoredArtifactMetadata;
   artifact_backend?: RootfsReleaseArtifactBackend;
   artifact_path?: string;
 }): Promise<RootfsReleaseRow> {
   const content_key = normalizeContentKey(artifact.content_key);
-  const storedMetadata =
-    metadata ?? (await readStoredRootfsArtifactMetadata(content_key));
-  if (!storedMetadata) {
-    throw new Error(
-      `stored RootFS artifact metadata missing for content key ${content_key}`,
-    );
+  let artifactKind: RootfsReleaseArtifactKind = "full";
+  let artifactFormat: RootfsReleaseArtifactFormat =
+    ROOTFS_RELEASE_ARTIFACT_FORMAT;
+  let resolvedArtifactBackend = artifact_backend;
+  let resolvedArtifactPath = artifact_path;
+  let artifactSha256 = content_key;
+  let artifactBytes = 0;
+  let resolvedParentRelease: RootfsReleaseRow | null = null;
+  let depth = 0;
+
+  if (upload?.backend === "rustic") {
+    artifactFormat = "rustic";
+    resolvedArtifactBackend = upload.artifact_backend;
+    resolvedArtifactPath =
+      artifact_path ??
+      encodeRusticArtifactPath({
+        artifact_backend: upload.artifact_backend,
+        snapshot_id: upload.snapshot_id,
+        region: upload.region,
+      });
+    artifactSha256 = upload.artifact_sha256 || content_key;
+    artifactBytes = upload.artifact_bytes;
+  } else {
+    const storedMetadata =
+      upload?.backend === "r2"
+        ? {
+            artifact_sha256: upload.artifact_sha256,
+            artifact_bytes: upload.artifact_bytes,
+            uploaded_at: new Date().toISOString(),
+          }
+        : (metadata ?? (await readStoredRootfsArtifactMetadata(content_key)));
+    if (!storedMetadata) {
+      throw new Error(
+        `stored RootFS artifact metadata missing for content key ${content_key}`,
+      );
+    }
+    const parentRelease = artifact.parent_image
+      ? await loadRootfsReleaseByImage(artifact.parent_image)
+      : null;
+    resolvedParentRelease =
+      parentRelease?.content_key === content_key ? null : parentRelease;
+    artifactKind =
+      artifact.artifact_kind === "delta" && resolvedParentRelease
+        ? "delta"
+        : "full";
+    depth =
+      artifactKind === "delta" ? (resolvedParentRelease?.depth ?? 0) + 1 : 0;
+    resolvedArtifactBackend =
+      upload?.backend === "r2" ? "r2" : resolvedArtifactBackend;
+    resolvedArtifactPath =
+      artifact_path ??
+      (upload?.backend === "r2"
+        ? upload.artifact_path
+        : artifactRelativePath(
+            content_key,
+            artifactKind,
+            resolvedParentRelease?.content_key,
+          ));
+    artifactSha256 = storedMetadata.artifact_sha256;
+    artifactBytes = storedMetadata.artifact_bytes;
   }
-  const parentRelease = artifact.parent_image
-    ? await loadRootfsReleaseByImage(artifact.parent_image)
-    : null;
-  const resolvedParentRelease =
-    parentRelease?.content_key === content_key ? null : parentRelease;
-  const artifactKind: RootfsReleaseArtifactKind =
-    artifact.artifact_kind === "delta" && resolvedParentRelease
-      ? "delta"
-      : "full";
-  const depth =
-    artifactKind === "delta" ? (resolvedParentRelease?.depth ?? 0) + 1 : 0;
-  const resolvedArtifactPath =
-    artifact_path ??
-    artifactRelativePath(
-      content_key,
-      artifactKind,
-      resolvedParentRelease?.content_key,
-    );
   const pool = getPool("medium");
   const existing = await loadRootfsReleaseRowByContentKey(content_key);
   const release_id = existing?.release_id ?? uuid();
@@ -1130,11 +1485,11 @@ export async function upsertPublishedRootfsRelease({
       artifact.arch ?? null,
       artifact.size_bytes ?? null,
       artifactKind,
-      ROOTFS_RELEASE_ARTIFACT_FORMAT,
-      artifact_backend,
+      artifactFormat,
+      resolvedArtifactBackend,
       resolvedArtifactPath,
-      storedMetadata.artifact_sha256,
-      storedMetadata.artifact_bytes,
+      artifactSha256,
+      artifactBytes,
       artifact.inspect_data ? JSON.stringify(artifact.inspect_data) : null,
     ],
   );
@@ -1158,6 +1513,31 @@ export async function issueRootfsReleaseArtifactAccess({
   if (!release) {
     throw new Error(`RootFS release not found for image '${image}'`);
   }
+  if (release.artifact_format === "rustic") {
+    const info = decodeRusticArtifactPath(release.artifact_path);
+    if (!info) {
+      throw new Error(
+        `rustic RootFS release '${release.release_id}' is missing snapshot metadata`,
+      );
+    }
+    const repo = await buildRootfsRusticRepoConfigForRelease(release);
+    return {
+      release_id: release.release_id,
+      image: release.runtime_image,
+      content_key: release.content_key,
+      artifact_kind: "full",
+      artifact_format: "rustic",
+      artifact_backend: info.artifact_backend,
+      artifact_sha256: release.artifact_sha256,
+      artifact_bytes: release.artifact_bytes,
+      artifact_path: release.artifact_path,
+      snapshot_id: info.snapshot_id,
+      repo_selector: repo.repo_selector,
+      repo_toml: repo.repo_toml,
+      region: info.region,
+      inspect_data: release.inspect_json ?? undefined,
+    };
+  }
   const parentRelease = await loadRootfsReleaseById(release.parent_release_id);
   const bestReplica = await resolveBestR2Replica({ host_id, release });
   if (bestReplica) {
@@ -1173,7 +1553,7 @@ export async function issueRootfsReleaseArtifactAccess({
       image: release.runtime_image,
       content_key: release.content_key,
       artifact_kind: bestReplica.replica.artifact_kind,
-      artifact_format: bestReplica.replica.artifact_format,
+      artifact_format: "btrfs-send",
       artifact_backend: "r2",
       artifact_sha256: bestReplica.replica.artifact_sha256,
       artifact_bytes: bestReplica.replica.artifact_bytes,
@@ -1202,7 +1582,7 @@ export async function issueRootfsReleaseArtifactAccess({
     image: release.runtime_image,
     content_key: release.content_key,
     artifact_kind: release.artifact_kind,
-    artifact_format: release.artifact_format,
+    artifact_format: "btrfs-send",
     artifact_backend: release.artifact_backend,
     artifact_sha256: release.artifact_sha256,
     artifact_bytes: release.artifact_bytes,
@@ -1299,6 +1679,24 @@ async function markReleaseArtifactReplica({
   );
 }
 
+async function forgetRootfsRusticRelease(
+  release: RootfsReleaseRow,
+): Promise<void> {
+  const info = decodeRusticArtifactPath(release.artifact_path);
+  if (!info) {
+    throw new Error(
+      `release '${release.release_id}' is missing rustic snapshot metadata`,
+    );
+  }
+  const repo = await buildRootfsRusticRepoConfigForRelease(release);
+  const repoProfile = await ensureRootfsRusticRepoProfile(repo);
+  await rustic(["forget", info.snapshot_id], {
+    repo: repoProfile,
+    host: release.runtime_image,
+    timeout: 10 * 60 * 1000,
+  });
+}
+
 export async function gcRootfsRelease({
   release_id,
 }: {
@@ -1335,6 +1733,9 @@ export async function gcRootfsRelease({
   const replicas = await listReleaseArtifactReplicas(release.release_id);
   let deletedReplicas = 0;
   try {
+    if (release.artifact_format === "rustic") {
+      await forgetRootfsRusticRelease(release);
+    }
     for (const replica of replicas) {
       if (replica.status === "deleted") continue;
       await deleteReplicaObject(replica);
@@ -1344,7 +1745,10 @@ export async function gcRootfsRelease({
       });
       deletedReplicas += 1;
     }
-    if (release.artifact_backend === "hub-local") {
+    if (
+      release.artifact_format === "btrfs-send" &&
+      release.artifact_backend === "hub-local"
+    ) {
       await deleteStoredRootfsArtifact(release.content_key);
     }
     await getPool("medium").query(
@@ -1434,6 +1838,9 @@ export async function ensureRootfsReleaseR2ReplicaForHost({
   host_id: string;
   release: RootfsReleaseRow;
 }): Promise<RootfsReleaseArtifactReplicaRow | null> {
+  if (release.artifact_format === "rustic") {
+    return null;
+  }
   const parentRelease = await loadRootfsReleaseById(release.parent_release_id);
   const region = await resolveHostR2Region(host_id);
   const bucket = await loadR2BucketForRegion(region);

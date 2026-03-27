@@ -1,8 +1,14 @@
+import { envToInt } from "@cocalc/backend/misc/env-to-number";
 import getPool from "@cocalc/database/pool";
 
 const pool = () => getPool();
 const GLOBAL_SCOPE_ID = "";
 const CACHE_TTL_MS = 5000;
+const DEBUG_CAP_ENV = "COCALC_PARALLEL_OPS_DEBUG_CAP";
+type EffectiveParallelOpsLimitSource =
+  | "default"
+  | "db-override"
+  | "env-debug-cap";
 
 export type ParallelOpsLimitScopeType = "global" | "provider" | "project_host";
 
@@ -19,7 +25,11 @@ export interface ParallelOpsLimitOverride {
 
 const cache = new Map<
   string,
-  { expires_at: number; value: number; source: "default" | "db-override" }
+  {
+    expires_at: number;
+    value: number;
+    source: EffectiveParallelOpsLimitSource;
+  }
 >();
 
 function cacheKey(worker_kind: string, scope_type: string, scope_id: string) {
@@ -32,6 +42,26 @@ function normalizeScopeId(
 ): string {
   if (scope_type === "global") return GLOBAL_SCOPE_ID;
   return `${scope_id ?? ""}`.trim();
+}
+
+function getParallelOpsDebugCap(): number | null {
+  const cap = envToInt(DEBUG_CAP_ENV, 0);
+  if (!Number.isFinite(cap) || cap <= 0) return null;
+  return Math.max(1, cap);
+}
+
+function applyDebugCap({
+  value,
+  source,
+}: {
+  value: number;
+  source: "default" | "db-override";
+}): { value: number; source: EffectiveParallelOpsLimitSource } {
+  const cap = getParallelOpsDebugCap();
+  if (cap == null) {
+    return { value, source };
+  }
+  return { value: Math.min(value, cap), source: "env-debug-cap" };
 }
 
 export async function ensureParallelOpsLimitSchema(): Promise<void> {
@@ -169,7 +199,7 @@ export async function getEffectiveParallelOpsLimit({
   default_limit: number;
   scope_type?: ParallelOpsLimitScopeType;
   scope_id?: string;
-}): Promise<{ value: number; source: "default" | "db-override" }> {
+}): Promise<{ value: number; source: EffectiveParallelOpsLimitSource }> {
   const normalizedScopeId = normalizeScopeId(scope_type, scope_id);
   const key = cacheKey(worker_kind, scope_type, normalizedScopeId);
   const cached = cache.get(key);
@@ -181,14 +211,16 @@ export async function getEffectiveParallelOpsLimit({
     scope_type,
     scope_id: normalizedScopeId,
   });
-  const value = row?.enabled ? row.limit_value : default_limit;
-  const source = row?.enabled ? "db-override" : "default";
+  const capped = applyDebugCap({
+    value: row?.enabled ? row.limit_value : default_limit,
+    source: row?.enabled ? "db-override" : "default",
+  });
   cache.set(key, {
     expires_at: Date.now() + CACHE_TTL_MS,
-    value,
-    source,
+    value: capped.value,
+    source: capped.source,
   });
-  return { value, source };
+  return capped;
 }
 
 export async function getEffectiveParallelOpsLimits({
@@ -201,7 +233,9 @@ export async function getEffectiveParallelOpsLimits({
   default_limit: number;
   scope_type: Exclude<ParallelOpsLimitScopeType, "global">;
   scope_ids: string[];
-}): Promise<Map<string, { value: number; source: "default" | "db-override" }>> {
+}): Promise<
+  Map<string, { value: number; source: EffectiveParallelOpsLimitSource }>
+> {
   const normalizedIds = Array.from(
     new Set(
       scope_ids.map((id) => normalizeScopeId(scope_type, id)).filter(Boolean),
@@ -209,7 +243,7 @@ export async function getEffectiveParallelOpsLimits({
   );
   const result = new Map<
     string,
-    { value: number; source: "default" | "db-override" }
+    { value: number; source: EffectiveParallelOpsLimitSource }
   >();
   if (normalizedIds.length === 0) {
     return result;
@@ -230,10 +264,13 @@ export async function getEffectiveParallelOpsLimits({
   );
   for (const scope_id of normalizedIds) {
     const row = overrideByScopeId.get(scope_id);
-    result.set(scope_id, {
-      value: row?.enabled ? row.limit_value : default_limit,
-      source: row?.enabled ? "db-override" : "default",
-    });
+    result.set(
+      scope_id,
+      applyDebugCap({
+        value: row?.enabled ? row.limit_value : default_limit,
+        source: row?.enabled ? "db-override" : "default",
+      }),
+    );
   }
   return result;
 }
