@@ -31,7 +31,6 @@ import { resolvePublicViewerDns } from "@cocalc/util/public-viewer-origin";
 
 const logger = getLogger("launchpad:local:sshd");
 const REFRESH_INTERVAL_MS = 5 * 60 * 1000;
-const PUBLIC_APP_SUBDOMAINS_TABLE = "project_app_public_subdomains";
 
 type SshdState = {
   sshdDir: string;
@@ -844,7 +843,6 @@ async function writeCloudflaredConfig(opts: {
   tunnel: CloudflareTunnel;
   origin: string;
   noTLSVerify: boolean;
-  appPublicHostnames?: string[];
   publicViewerHostname?: string;
 }): Promise<boolean> {
   const yamlString = (value: string): string => JSON.stringify(value);
@@ -857,19 +855,9 @@ async function writeCloudflaredConfig(opts: {
     ingress.push("    originRequest:");
     ingress.push("      noTLSVerify: true");
   }
-  for (const hostname of opts.appPublicHostnames ?? []) {
-    if (!hostname || hostname === opts.tunnel.hostname) continue;
-    ingress.push(`  - hostname: ${yamlString(hostname)}`);
-    ingress.push(`    service: ${yamlString(opts.origin)}`);
-    if (opts.noTLSVerify) {
-      ingress.push("    originRequest:");
-      ingress.push("      noTLSVerify: true");
-    }
-  }
   if (
     opts.publicViewerHostname &&
-    opts.publicViewerHostname !== opts.tunnel.hostname &&
-    !(opts.appPublicHostnames ?? []).includes(opts.publicViewerHostname)
+    opts.publicViewerHostname !== opts.tunnel.hostname
   ) {
     ingress.push(`  - hostname: ${yamlString(opts.publicViewerHostname)}`);
     ingress.push(`    service: ${yamlString(opts.origin)}`);
@@ -898,26 +886,6 @@ async function writeCloudflaredConfig(opts: {
   await writeFile(opts.path, next, { mode: 0o600 });
   await chmod(opts.path, 0o600);
   return true;
-}
-
-async function listReservedPublicAppHostnames(): Promise<string[]> {
-  try {
-    const { rows } = await getPool().query<{ hostname?: string }>(
-      `SELECT hostname FROM ${PUBLIC_APP_SUBDOMAINS_TABLE} WHERE hostname IS NOT NULL`,
-    );
-    return Array.from(
-      new Set(
-        rows
-          .map((row) => clean(row.hostname)?.toLowerCase())
-          .filter((hostname): hostname is string => !!hostname),
-      ),
-    ).sort();
-  } catch (err: any) {
-    if (`${err?.code ?? ""}` === "42P01") {
-      return [];
-    }
-    throw err;
-  }
 }
 
 async function loadCloudflaredStateFile(
@@ -1043,7 +1011,6 @@ async function startCloudflared(): Promise<CloudflaredState | null> {
   }
 
   const { origin, noTLSVerify } = resolveCloudflaredOrigin();
-  const appPublicHostnames = await listReservedPublicAppHostnames();
   const publicViewerHostname = normalizeHostname(
     resolvePublicViewerDns({
       publicViewerDns: settings.public_viewer_dns,
@@ -1060,7 +1027,6 @@ async function startCloudflared(): Promise<CloudflaredState | null> {
     tunnel,
     origin,
     noTLSVerify,
-    appPublicHostnames,
     publicViewerHostname,
   });
   const shouldRestartRunning =
