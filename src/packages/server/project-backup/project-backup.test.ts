@@ -18,6 +18,7 @@ jest.mock("@cocalc/backend/data", () => ({
 }));
 
 jest.mock("fs/promises", () => ({
+  mkdir: jest.fn(async () => undefined),
   readFile: (...args: any[]) => readFileMock(...args),
   writeFile: (...args: any[]) => writeFileMock(...args),
 }));
@@ -31,6 +32,22 @@ const HOST_ID = "11111111-1111-1111-1111-111111111111";
 const PROJECT_ID = "22222222-2222-2222-2222-222222222222";
 const BUCKET_ID = "33333333-3333-3333-3333-333333333333";
 const REPO_ID = "44444444-4444-4444-4444-444444444444";
+
+function bucketRow(name = "cocalc-backups-wnam") {
+  return {
+    id: BUCKET_ID,
+    name,
+    provider: "r2",
+    purpose: "project-backups",
+    region: "wnam",
+    location: "wnam",
+    account_id: settings.r2_account_id ?? "account",
+    access_key_id: settings.r2_access_key_id ?? "access",
+    secret_access_key: settings.r2_secret_access_key ?? "secret",
+    endpoint: "https://account.r2.cloudflarestorage.com",
+    status: "active",
+  };
+}
 
 function repoRow(overrides: Record<string, any> = {}) {
   return {
@@ -47,8 +64,11 @@ function repoRow(overrides: Record<string, any> = {}) {
 }
 
 describe("project-backup", () => {
+  const masterKeyBase64 = Buffer.alloc(32, 7).toString("base64");
+
   beforeEach(() => {
     jest.resetModules();
+    settings = {};
     jest.doMock("@cocalc/database/settings/server-settings", () => ({
       __esModule: true,
       getServerSettings: jest.fn(async () => settings),
@@ -58,6 +78,8 @@ describe("project-backup", () => {
       location: "wnam",
     }));
     listBucketsMock = jest.fn(async () => ["cocalc-backups-wnam"]);
+    readFileMock = jest.fn(async () => masterKeyBase64);
+    writeFileMock = jest.fn(async () => undefined);
     queryMock = jest.fn(async (sql: string, params: any[]) => {
       if (
         sql.includes("CREATE TABLE IF NOT EXISTS project_backup_repos") ||
@@ -72,35 +94,19 @@ describe("project-backup", () => {
       ) {
         return { rows: [] };
       }
-      if (
-        sql.includes(
-          "SELECT backup_repo_id, backup_bucket_id FROM projects WHERE project_id",
-        )
-      ) {
+      if (sql === "SELECT backup_repo_id FROM projects WHERE project_id=$1") {
         return {
-          rows: [
-            {
-              backup_repo_id: settings.backup_repo_id ?? null,
-              backup_bucket_id: settings.backup_bucket_id ?? null,
-            },
-          ],
+          rows: [{ backup_repo_id: settings.backup_repo_id ?? null }],
         };
       }
-      if (
-        sql.includes("SELECT backup_bucket_id FROM projects WHERE project_id")
-      ) {
-        return {
-          rows: [{ backup_bucket_id: settings.backup_bucket_id ?? null }],
-        };
+      if (sql === "SELECT region FROM projects WHERE project_id=$1") {
+        return { rows: [{ region: settings.project_region ?? "wnam" }] };
       }
-      if (sql.includes("FROM project_hosts")) {
-        return { rows: [{ region: "us-west1" }] };
-      }
-      if (sql.includes("SELECT host_id FROM projects")) {
+      if (sql === "SELECT host_id FROM projects WHERE project_id=$1") {
         return { rows: [{ host_id: settings.project_host_id ?? HOST_ID }] };
       }
-      if (sql.includes("SELECT region FROM projects")) {
-        return { rows: [{ region: settings.project_region ?? "wnam" }] };
+      if (sql.includes("FROM project_hosts")) {
+        return { rows: [{ region: "us-west1", metadata: {} }] };
       }
       if (sql.includes("FROM project_moves")) {
         return { rows: [] };
@@ -108,24 +114,7 @@ describe("project-backup", () => {
       if (sql.includes("CREATE TABLE IF NOT EXISTS project_moves")) {
         return { rows: [] };
       }
-      if (sql.includes("FROM server_settings")) {
-        const key = params?.[0];
-        return { rows: [{ value: settings[key] ?? null }] };
-      }
-      if (sql.includes("FROM project_backup_secrets")) {
-        return settings.project_secret
-          ? {
-              rows: [{ secret: settings.project_secret }],
-            }
-          : { rows: [] };
-      }
-      if (sql.startsWith("UPDATE project_backup_secrets")) {
-        return { rows: [] };
-      }
-      if (sql.startsWith("INSERT INTO project_backup_secrets")) {
-        return { rows: [] };
-      }
-      if (sql.includes("FROM project_backup_repos WHERE id")) {
+      if (sql.includes("FROM project_backup_repos WHERE id=$1")) {
         return settings.backup_repo_id ? { rows: [repoRow()] } : { rows: [] };
       }
       if (sql.includes("FROM project_backup_repos r")) {
@@ -142,60 +131,32 @@ describe("project-backup", () => {
         settings.backup_repo_id = REPO_ID;
         return { rows: [repoRow()] };
       }
+      if (sql.startsWith("UPDATE projects SET backup_repo_id=$2")) {
+        settings.backup_repo_id = params?.[1] ?? REPO_ID;
+        return { rows: [] };
+      }
+      if (sql.startsWith("UPDATE projects SET region=$2")) {
+        settings.project_region = params?.[1];
+        return { rows: [] };
+      }
+      if (sql.startsWith("UPDATE projects SET last_backup")) {
+        return { rows: [] };
+      }
       if (sql.startsWith("INSERT INTO buckets")) {
         return { rows: [] };
       }
       if (sql.includes("FROM buckets WHERE provider")) {
         return { rows: [] };
       }
-      if (sql.includes("FROM buckets WHERE id")) {
-        return {
-          rows: [
-            {
-              id: BUCKET_ID,
-              name: "cocalc-backups-wnam",
-              provider: "r2",
-              purpose: "project-backups",
-              region: "wnam",
-              location: "wnam",
-              account_id: settings.r2_account_id ?? "account",
-              access_key_id: settings.r2_access_key_id ?? "access",
-              secret_access_key: settings.r2_secret_access_key ?? "secret",
-              endpoint: "https://account.r2.cloudflarestorage.com",
-              status: "active",
-            },
-          ],
-        };
+      if (sql.includes("FROM buckets WHERE id=$1")) {
+        return { rows: [bucketRow()] };
       }
-      if (sql.includes("FROM buckets WHERE name")) {
-        return {
-          rows: [
-            {
-              id: BUCKET_ID,
-              name: params?.[0] ?? "cocalc-backups-wnam",
-              provider: "r2",
-              purpose: "project-backups",
-              region: "wnam",
-              location: "wnam",
-              account_id: settings.r2_account_id ?? "account",
-              access_key_id: settings.r2_access_key_id ?? "access",
-              secret_access_key: settings.r2_secret_access_key ?? "secret",
-              endpoint: "https://account.r2.cloudflarestorage.com",
-              status: "active",
-            },
-          ],
-        };
-      }
-      if (sql.startsWith("UPDATE projects")) {
-        return { rows: [] };
+      if (sql.includes("FROM buckets WHERE name=$1")) {
+        return { rows: [bucketRow(params?.[0])] };
       }
       throw new Error(`unexpected query: ${sql}`);
     });
-    readFileMock = jest.fn(async () => masterKeyBase64);
-    writeFileMock = jest.fn(async () => undefined);
   });
-
-  const masterKeyBase64 = Buffer.alloc(32, 7).toString("base64");
 
   it("builds shared-repo config and assigns the project to an active repo", async () => {
     settings = {
@@ -222,31 +183,44 @@ describe("project-backup", () => {
       queryMock.mock.calls.some(
         ([sql]) =>
           typeof sql === "string" &&
-          sql.includes("UPDATE projects") &&
-          sql.includes("backup_repo_id"),
+          sql.startsWith("UPDATE projects SET backup_repo_id=$2"),
       ),
     ).toBe(true);
     expect(result.ttl_seconds).toBeGreaterThan(0);
   });
 
-  it("preserves legacy per-project backup config when one already exists", async () => {
+  it("creates the first shared repo and bucket on first use", async () => {
     settings = {
       r2_account_id: "account",
       r2_api_token: "token",
       r2_access_key_id: "access",
       r2_secret_access_key: "secret",
       r2_bucket_prefix: "cocalc-backups",
-      project_secret: "project-secret",
       project_region: "wnam",
-      backup_bucket_id: BUCKET_ID,
+      project_backup_repo_count: 0,
+      active_repo: false,
+      repo_secret: "repo-secret",
     };
+    listBucketsMock = jest.fn(async () => []);
     const { getBackupConfig } = await import("./index");
     const result = await getBackupConfig({
       host_id: HOST_ID,
       project_id: PROJECT_ID,
     });
-    expect(result.toml).toContain('password = "project-secret"');
-    expect(result.toml).toContain(`root = \"rustic/project-${PROJECT_ID}\"`);
+    expect(createBucketMock).toHaveBeenCalledWith(
+      "token",
+      "account",
+      "cocalc-backups-wnam",
+      "wnam",
+    );
+    expect(
+      queryMock.mock.calls.some(([sql]) =>
+        typeof sql === "string"
+          ? sql.startsWith("INSERT INTO project_backup_repos")
+          : false,
+      ),
+    ).toBe(true);
+    expect(result.toml).toContain('root = "rustic/shared-wnam-0001"');
   });
 
   it("records last_backup using the provided time", async () => {
@@ -267,30 +241,5 @@ describe("project-backup", () => {
     expect(updateCall).toBeDefined();
     const params = updateCall?.[1] as [string, Date];
     expect(params?.[1]?.toISOString()).toBe(when.toISOString());
-  });
-
-  it("recreates missing remote bucket for existing project bucket rows", async () => {
-    settings = {
-      r2_account_id: "account",
-      r2_api_token: "token",
-      r2_access_key_id: "access",
-      r2_secret_access_key: "secret",
-      r2_bucket_prefix: "cocalc-backups",
-      project_secret: "project-secret",
-      project_region: "wnam",
-      backup_bucket_id: BUCKET_ID,
-    };
-    listBucketsMock = jest.fn(async () => []);
-    const { getBackupConfig } = await import("./index");
-    await getBackupConfig({
-      host_id: HOST_ID,
-      project_id: PROJECT_ID,
-    });
-    expect(createBucketMock).toHaveBeenCalledWith(
-      "token",
-      "account",
-      "cocalc-backups-wnam",
-      "wnam",
-    );
   });
 });

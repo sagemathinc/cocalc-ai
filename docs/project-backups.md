@@ -46,7 +46,6 @@ flowchart TD
 - [cocalc.com](http://cocalc.com): region buckets on Cloudflare R2. Projects are assigned to a shared rustic repo recorded in Postgres via `project_backup_repos` and `projects.backup_repo_id`.
   - Today, the first project in a region auto-creates one active shared repo for that region.
   - Additional shards can be added later by inserting more active repo rows; new projects are assigned by the hub.
-  - Older per-project backup repos are still supported as a compatibility fallback until they are migrated.
 - Untrusted hosts: use per\-host \(or per\-tenant\) buckets/credentials, or signed\-URL gateway uploads so untrusted hosts lack broad bucket access.
   - Restores can target any host directly from the repo; no host\-to\-host SSH is required.
 - On\-prem: repo location is configurable \(local/NAS/S3\-compatible\).

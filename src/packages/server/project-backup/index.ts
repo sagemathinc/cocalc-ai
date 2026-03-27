@@ -516,57 +516,16 @@ async function ensureExistingBucketRowIsUsable({
   });
 }
 
-async function getProjectBucket(
-  project_id: string,
-  region: string,
-): Promise<BucketRow | null> {
-  await ensureProjectBackupRepoSchema();
-  const { rows } = await pool().query<{ backup_bucket_id: string | null }>(
-    "SELECT backup_bucket_id FROM projects WHERE project_id=$1",
-    [project_id],
-  );
-  const bucketId = rows[0]?.backup_bucket_id ?? null;
-  if (bucketId) {
-    const bucket = await loadBucketById(bucketId);
-    if (bucket) {
-      await ensureExistingBucketRowIsUsable({
-        bucket,
-        fallbackRegion: region,
-      });
-      return bucket;
-    }
-  }
-  const bucket = await getOrCreateBucketForRegion(region);
-  if (!bucket) return null;
-  if (bucketId) {
-    await pool().query(
-      "UPDATE projects SET backup_bucket_id=$2 WHERE project_id=$1",
-      [project_id, bucket.id],
-    );
-  } else {
-    await pool().query(
-      "UPDATE projects SET backup_bucket_id=$2 WHERE project_id=$1 AND backup_bucket_id IS NULL",
-      [project_id, bucket.id],
-    );
-  }
-  return bucket;
-}
-
 async function getProjectBackupAssignment(project_id: string): Promise<{
   backup_repo_id: string | null;
-  backup_bucket_id: string | null;
 }> {
   await ensureProjectBackupRepoSchema();
-  const { rows } = await pool().query<{
-    backup_repo_id: string | null;
-    backup_bucket_id: string | null;
-  }>(
-    "SELECT backup_repo_id, backup_bucket_id FROM projects WHERE project_id=$1",
+  const { rows } = await pool().query<{ backup_repo_id: string | null }>(
+    "SELECT backup_repo_id FROM projects WHERE project_id=$1",
     [project_id],
   );
   return {
     backup_repo_id: rows[0]?.backup_repo_id ?? null,
-    backup_bucket_id: rows[0]?.backup_bucket_id ?? null,
   };
 }
 
@@ -579,11 +538,8 @@ async function assignProjectBackupRepo({
 }): Promise<void> {
   await ensureProjectBackupRepoSchema();
   await pool().query(
-    `UPDATE projects
-      SET backup_repo_id=$2,
-          backup_bucket_id=COALESCE($3, backup_bucket_id)
-      WHERE project_id=$1`,
-    [project_id, repo.id, repo.bucket_id],
+    "UPDATE projects SET backup_repo_id=$2 WHERE project_id=$1",
+    [project_id, repo.id],
   );
 }
 
@@ -608,28 +564,6 @@ async function resolveProjectRegion(
     mapped,
   ]);
   return mapped;
-}
-
-async function peekProjectBackupSecret(
-  project_id: string,
-): Promise<string | null> {
-  const masterKey = await getBackupMasterKey();
-  const { rows } = await pool().query<{ secret: string }>(
-    "SELECT secret FROM project_backup_secrets WHERE project_id=$1",
-    [project_id],
-  );
-  if (!rows[0]?.secret) {
-    return null;
-  }
-  const decoded = decryptBackupSecret(rows[0].secret, masterKey);
-  if (!rows[0].secret.startsWith("v1:")) {
-    const encrypted = encryptBackupSecret(decoded, masterKey);
-    await pool().query(
-      "UPDATE project_backup_secrets SET secret=$2, updated=NOW() WHERE project_id=$1",
-      [project_id, encrypted],
-    );
-  }
-  return decoded;
 }
 
 async function getProjectBackupRepoSecret(
@@ -906,23 +840,6 @@ export async function getBackupConfig({
     }
   }
 
-  // Preserve access to older per-project repositories until they are migrated.
-  if (assignment.backup_bucket_id) {
-    const legacySecret = await peekProjectBackupSecret(project_id);
-    if (legacySecret) {
-      const bucket = await getProjectBucket(project_id, projectR2Region);
-      if (!bucket) {
-        return { toml: "", ttl_seconds: 0 };
-      }
-      const toml = await buildTomlForBucket({
-        bucket,
-        password: legacySecret,
-        root: `${DEFAULT_BACKUP_ROOT}/project-${project_id}`,
-      });
-      return { toml, ttl_seconds: toml ? DEFAULT_BACKUP_TTL_SECONDS : 0 };
-    }
-  }
-
   const assigned = await getOrCreateProjectBackupRepoForRegion(projectR2Region);
   if (!assigned?.bucket || !assigned.repo.root) {
     return { toml: "", ttl_seconds: 0 };
@@ -946,12 +863,10 @@ export async function getProjectBackupConfigForDeletion({
   }
   const { rows } = await pool().query<{
     host_id: string | null;
-    backup_bucket_id: string | null;
     backup_repo_id: string | null;
-  }>(
-    "SELECT host_id, backup_bucket_id, backup_repo_id FROM projects WHERE project_id=$1",
-    [project_id],
-  );
+  }>("SELECT host_id, backup_repo_id FROM projects WHERE project_id=$1", [
+    project_id,
+  ]);
   const row = rows[0];
   if (!row) {
     throw new Error("project not found");
@@ -959,7 +874,6 @@ export async function getProjectBackupConfigForDeletion({
   return await getDeletedProjectBackupConfigForDeletion({
     project_id,
     host_id: row.host_id,
-    backup_bucket_id: row.backup_bucket_id ?? null,
     backup_repo_id: row.backup_repo_id ?? null,
   });
 }
@@ -967,12 +881,10 @@ export async function getProjectBackupConfigForDeletion({
 export async function getDeletedProjectBackupConfigForDeletion({
   project_id,
   host_id,
-  backup_bucket_id,
   backup_repo_id,
 }: {
   project_id: string;
   host_id?: string | null;
-  backup_bucket_id?: string | null;
   backup_repo_id?: string | null;
 }): Promise<{ toml: string }> {
   if (!project_id || !isValidUUID(project_id)) {
@@ -993,47 +905,17 @@ export async function getDeletedProjectBackupConfigForDeletion({
     }
   }
 
-  if (backup_repo_id) {
-    const repo = await loadProjectBackupRepoById(backup_repo_id);
-    if (repo?.bucket_id && repo.root) {
-      const bucket = await loadBucketById(repo.bucket_id);
-      if (bucket) {
-        const accountId =
-          (await getSiteSetting("r2_account_id")) ?? bucket.account_id;
-        const accessKey =
-          (await getSiteSetting("r2_access_key_id")) ?? bucket.access_key_id;
-        const secretKey =
-          (await getSiteSetting("r2_secret_access_key")) ??
-          bucket.secret_access_key;
-        const endpoint =
-          (accountId
-            ? `https://${accountId}.r2.cloudflarestorage.com`
-            : undefined) ?? bucket.endpoint;
-        if (accountId && accessKey && secretKey && endpoint) {
-          return {
-            toml: buildS3ProjectBackupToml({
-              endpoint,
-              bucket: bucket.name,
-              accessKey,
-              secretKey,
-              password: await getProjectBackupRepoSecret(repo),
-              root: repo.root,
-            }),
-          };
-        }
-      }
-    }
-  }
-
-  const bucketId = backup_bucket_id ?? null;
-  if (!bucketId) {
+  if (!backup_repo_id) {
     return { toml: "" };
   }
-  const bucket = await loadBucketById(bucketId);
+  const repo = await loadProjectBackupRepoById(backup_repo_id);
+  if (!repo?.bucket_id || !repo.root) {
+    return { toml: "" };
+  }
+  const bucket = await loadBucketById(repo.bucket_id);
   if (!bucket) {
     return { toml: "" };
   }
-
   const accountId =
     (await getSiteSetting("r2_account_id")) ?? bucket.account_id;
   const accessKey =
@@ -1046,27 +928,16 @@ export async function getDeletedProjectBackupConfigForDeletion({
   if (!accountId || !accessKey || !secretKey || !endpoint) {
     return { toml: "" };
   }
-
-  let password = "";
-  try {
-    const existing = await peekProjectBackupSecret(project_id);
-    password = existing ?? "";
-  } catch {
-    return { toml: "" };
-  }
-  if (!password) {
-    return { toml: "" };
-  }
-  const root = `${DEFAULT_BACKUP_ROOT}/project-${project_id}`;
-  const toml = buildS3ProjectBackupToml({
-    endpoint,
-    bucket: bucket.name,
-    accessKey,
-    secretKey,
-    password,
-    root,
-  });
-  return { toml };
+  return {
+    toml: buildS3ProjectBackupToml({
+      endpoint,
+      bucket: bucket.name,
+      accessKey,
+      secretKey,
+      password: await getProjectBackupRepoSecret(repo),
+      root: repo.root,
+    }),
+  };
 }
 
 async function assertHostProjectAccess(host_id: string, project_id: string) {

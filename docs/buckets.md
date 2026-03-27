@@ -30,7 +30,6 @@ flowchart TD
     BackupRepos[(project_backup_repos)]
   end
 
-  Projects -->|backup_bucket_id| Buckets
   Projects -->|backup_repo_id| BackupRepos
   BackupRepos -->|bucket_id| Buckets
 
@@ -57,11 +56,6 @@ flowchart TD
 - `status` (active, mismatch, unknown, disabled)
 - timestamps
 
-`projects.backup_bucket_id`:
-
-- Set once on first backup.
-- Never changed unless an explicit migration is run.
-
 `project_backup_repos`:
 
 - `id`
@@ -76,7 +70,6 @@ flowchart TD
 
 - Set for projects using the shared-repo model.
 - Points at the repo row that owns future backups for that project.
-- Existing legacy projects may still rely only on `backup_bucket_id` until migrated.
 
 ## Backup Flow (shared repo)
 
@@ -86,7 +79,6 @@ flowchart TD
    - Verify actual location and record in `buckets`.
 2. Create or select an active `project_backup_repos` row for that region.
 3. Assign:
-   - `projects.backup_bucket_id`
    - `projects.backup_repo_id`
 4. Rustic uses:
    - `bucket` = bucket name
@@ -136,7 +128,7 @@ Migration requires an explicit admin action:
 - Reassign new projects to a different active repo row, or
 - Copy/restore repo contents to a new bucket/root
 - Verify restore works
-- Update `projects.backup_bucket_id` and/or `projects.backup_repo_id`
+- Update `projects.backup_repo_id`
 - Optionally deprecate old bucket
 
 This is intentionally not automatic.

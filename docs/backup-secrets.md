@@ -1,15 +1,14 @@
 # Backup Repo Secrets and Key Management
 
 This document describes how backup secrets are generated, stored, and used for
-Rustic repositories. It also outlines current semantics for hosted shared repos,
-legacy per-project repos, and future key rotation.
+Rustic repositories. It also outlines current semantics for hosted shared repos
+and future key rotation.
 
 ## Goals
 
 - Shared Rustic repos have encrypted passwords stored in Postgres.
 - Secrets are not stored in plaintext in the database.
 - A database leak alone does not expose backup passwords.
-- Legacy per-project repos remain readable until migrated.
 - Key rotation remains possible without breaking restore.
 
 ## Current Design
@@ -24,11 +23,6 @@ legacy per-project repos, and future key rotation.
   - Table: `project_backup_repos`
   - Column: `secret`
   - Format: `v1:<iv_b64>:<tag_b64>:<cipher_b64>` (AES-256-GCM)
-
-- Legacy per-project repos still use:
-  - Table: `project_backup_secrets`
-  - Column: `secret`
-  - This remains only for older projects that have not been migrated yet.
 
 - When a project host requests backup configuration:
   - The control plane resolves the assigned repo row.
@@ -47,8 +41,6 @@ legacy per-project repos, and future key rotation.
   snapshots, not deleting the repo secret.
 - Deleting a shared repo secret would affect every project assigned to that repo,
   so it is not a per-project deletion mechanism.
-- Older per-project repos still have the old crypto-erase behavior until they
-  are migrated off `project_backup_secrets`.
 
 ## Rotation Plan (Future)
 
@@ -83,7 +75,7 @@ Recommended approach:
    - Remove old keys once safe.
 
 This enables controlled key rotation while keeping restore compatibility for
-shared repos and any remaining legacy per-project repos.
+shared repos.
 
 ## Operational Notes
 
