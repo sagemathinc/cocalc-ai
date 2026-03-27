@@ -9,7 +9,12 @@ import { join } from "node:path";
 
 import { secrets } from "@cocalc/backend/data";
 
-const ROOTFS_RUSTIC_PROFILE_DIR = join(secrets, "rustic", "rootfs-images");
+function rootfsRusticProfileDir(): string {
+  if (!secrets) {
+    throw new Error("SECRETS path is not configured");
+  }
+  return join(secrets, "rustic", "rootfs-images");
+}
 
 function profileName(repo_selector: string, repo_toml: string): string {
   const digest = createHash("sha256")
@@ -25,10 +30,8 @@ export async function ensureRootfsRusticRepoProfile({
   repo_selector: string;
   repo_toml: string;
 }): Promise<string> {
-  const path = join(
-    ROOTFS_RUSTIC_PROFILE_DIR,
-    profileName(repo_selector, repo_toml),
-  );
+  const profileDir = rootfsRusticProfileDir();
+  const path = join(profileDir, profileName(repo_selector, repo_toml));
   try {
     if ((await readFile(path, "utf8")) === repo_toml) {
       return path;
@@ -36,7 +39,7 @@ export async function ensureRootfsRusticRepoProfile({
   } catch {
     // write below
   }
-  await mkdir(ROOTFS_RUSTIC_PROFILE_DIR, { recursive: true });
+  await mkdir(profileDir, { recursive: true });
   await writeFile(path, repo_toml, "utf8");
   await chmod(path, 0o600);
   return path;
