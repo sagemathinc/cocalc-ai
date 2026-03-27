@@ -542,6 +542,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
     opts.target = defaultOpenProjectTarget({
       target: opts.target,
       activeProjectTab,
+      switchTo: opts.switch_to,
     });
     if (opts.target != null) {
       await project_actions.load_target(
