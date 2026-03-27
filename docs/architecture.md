@@ -25,7 +25,7 @@ At a glance: The control hub handles auth/config and keeps project placement in 
 
 ## High-Level Components
 
-1) **Control Hub (master)**
+1. **Control Hub (master)**
 
 - Auth/billing/config and the source of project placement metadata (Postgres).
 - Runs conat for control-plane RPC (project-host registry, project start/stop/move, backups).
@@ -33,7 +33,7 @@ At a glance: The control hub handles auth/config and keeps project placement in 
 - Maintains `projects` rows (host_id, host info, rootfs_image, quotas, move_status) and `project_hosts` registry.
 - Internally the “hub” is a pool of Node.js hub/server processes plus the shared Postgres database; hub processes are elastic/ephemeral, Postgres is the durable source of truth.
 
-2) **Project Hosts**
+2. **Project Hosts**
 
 - Combined file-server + project-runner + proxies on a btrfs volume.
 - SQLite state per host: projects table (ports, users, image, quotas, auth keys), sshpiperd keys, backup jobs.
@@ -42,16 +42,16 @@ At a glance: The control hub handles auth/config and keeps project placement in 
   - Project runner (podman) with overlayfs rootfs per image.
   - HTTP proxy (to project containers) and SSH ingress via sshpiperd.
   - Conat server for project services (fs, terminal, etc.).
-- Backups: rustic repo per host (configurable; GCS on cocalc.com).
+- Backups: rustic repo configured by the hub; hosted mode now uses region buckets on R2 with DB-assigned shared repos.
 
-3) **Projects (containers)**
+3. **Projects (containers)**
 
 - Podman container per project with overlayfs upperdir in `.local/share/overlay/` keyed by image.
 - Ports: internal HTTP proxy on 80; SSH on per-project port.
 - Rootfs image: `rootfs_image` (or legacy `compute_image`) normalized on host, cached locally.
 - Persist store: per-project data/kv streams under `sync/projects/<project_id>` on the host.
 
-4) **Proxies**
+4. **Proxies**
 
 - HTTP: master proxies `/PROJECT/port/<p>/...` to the owning host; project-host proxies to container:80 with `prependPath:false`.
 - SSH: sshpiperd on each host terminates SSH and forwards to the project sshd (user-level).
@@ -68,7 +68,7 @@ flowchart TD
   FS["File Server<br/>(btrfs, quotas, snapshots, backups)"]
   Runner["Project Runner<br/>(podman, overlayfs upper)"]
   Proxy["Host Proxies<br/>HTTP/ws + sshpiperd"]
-  Repo["Rustic Repo<br/>(GCS/S3/disk)"]
+  Repo["Rustic Repo<br/>(R2/S3/disk)"]
 
   Browser -->|conat + HTTP| Hub
   Hub -->|route project| Host
@@ -87,7 +87,7 @@ flowchart TD
 ## Conat topology (multiple networks)
 
 - Central **control conat network** runs in the hub tier for control\-plane subjects \(project\-host registry, start/stop/move/backup RPCs\).
-- Each **project\-host runs its own conat server** for project data\-plane subjects \(fs, terminal, editor sync, etc.\) scoped to its projects.  This includes its own persistence layer for TimeTravel edit history.
+- Each **project\-host runs its own conat server** for project data\-plane subjects \(fs, terminal, editor sync, etc.\) scoped to its projects. This includes its own persistence layer for TimeTravel edit history.
 - Participants hold multiple connections:
   - **Hub**: connected to the central network to talk to all hosts; may open host data\-plane connections when proxying certain operations.
   - **Project\-host**: connected to the central network \(register, receive control RPCs\) and runs its own conat server for project traffic.
@@ -140,7 +140,7 @@ flowchart TB
 
 ## Backups
 
-- Taken from a RO snapshot + persist dir; stored in a rustic repo per host (GCS on cocalc.com, configurable elsewhere).
+- Taken from a RO snapshot + persist dir; stored in a rustic repo selected by the hub (shared per-region repo on cocalc.com, configurable elsewhere).
 - Restores can target any host; archived projects may exist only as backups.
 - Scheduling: daily per active project (host-side) plus user-triggered; one at a time per project.
 

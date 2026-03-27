@@ -6,17 +6,17 @@ future providers.
 
 ## Goals
 
-- Backups are **per\-project, encrypted** and can be destroyed independently.
+- Backups are **region-aware** and can move from one shared repo per region to multiple shards later without changing lookup semantics.
 - Bucket placement is **region\-aware** but **stable** once assigned.
-- Bucket selection is **explicit** and recorded in the database.
+- Bucket and repo selection are **explicit** and recorded in the database.
 - Artifacts \(software, rootfs\) are **separate** from backups.
 - Future migrations are possible but **never implicit**.
 
 ## Key Principles
 
-- **Per\-project repo**: each project has its own rustic repo in its bucket.
+- **DB-assigned repo membership**: each project is assigned to a repo row in Postgres, not by a hash function.
 - **Bucket registry**: buckets are tracked in a `buckets` table with a purpose field.
-- **First\-use creation**: buckets are created automatically only when a region is used.
+- **First\-use creation**: buckets and the initial shared repo row are created automatically only when a region is used.
 - **No silent switches**: once a project is bound to a bucket, it stays unless
   a deliberate migration is performed.
 
@@ -27,9 +27,12 @@ flowchart TD
   subgraph DB[Postgres]
     Projects[(projects)]
     Buckets[(buckets)]
+    BackupRepos[(project_backup_repos)]
   end
 
   Projects -->|backup_bucket_id| Buckets
+  Projects -->|backup_repo_id| BackupRepos
+  BackupRepos -->|bucket_id| Buckets
 
   subgraph R2[Cloudflare R2]
     BackupBuckets["bucket (purpose=backups)"]
@@ -59,17 +62,42 @@ flowchart TD
 - Set once on first backup.
 - Never changed unless an explicit migration is run.
 
-## Backup Flow (per-project)
+`project_backup_repos`:
+
+- `id`
+- `region`
+- `bucket_id`
+- `root`
+- `secret`
+- `status`
+- timestamps
+
+`projects.backup_repo_id`:
+
+- Set for projects using the shared-repo model.
+- Points at the repo row that owns future backups for that project.
+- Existing legacy projects may still rely only on `backup_bucket_id` until migrated.
+
+## Backup Flow (shared repo)
 
 1. On first backup, select a bucket for the project:
    - Prefer region-matched bucket.
    - Create bucket if missing (using location hint).
    - Verify actual location and record in `buckets`.
-2. Assign `projects.backup_bucket_id`.
-3. Rustic uses:
+2. Create or select an active `project_backup_repos` row for that region.
+3. Assign:
+   - `projects.backup_bucket_id`
+   - `projects.backup_repo_id`
+4. Rustic uses:
    - `bucket` = bucket name
-   - `root` = `rustic/project-<project_id>`
-   - `password` = per-project secret
+   - `root` = repo row root, e.g. `rustic/shared-wnam-0001`
+   - `password` = repo row secret
+
+Current operational policy:
+
+- Each region auto-creates one active shared repo on first use.
+- If we later add more active repo rows, the hub assigns new projects to the least-loaded active repo.
+- Existing assigned projects stay on their current repo unless explicitly migrated.
 
 ## Artifact Flow (software, rootfs)
 
@@ -89,21 +117,26 @@ reason:
 
 ## Deletion & Compliance
 
-Per-project repos + per-project passwords allow for strong deletion semantics.
-Destroying a project’s backups can be done by:
+Project deletion forgets only that project's snapshots from the shared repo.
+It does **not** delete the whole rustic repo. Actual blob cleanup happens later
+through repo-wide prune/maintenance.
 
-- Deleting the repo objects, and/or
-- Destroying the project backup password
+This means:
 
-Master-key rotation can further limit exposure from old DB backups.
+- We no longer rely on per-project crypto-erase semantics.
+- Compliance-focused deletion depends on forgetting the project's snapshots and
+  conservative delayed prune policy.
+- If stronger deletion guarantees are required later, they must be designed at
+  the repo/shard level rather than by claiming independent per-project keys.
 
 ## Migration (Future)
 
 Migration requires an explicit admin action:
 
-- Copy/restore repo to a new bucket
+- Reassign new projects to a different active repo row, or
+- Copy/restore repo contents to a new bucket/root
 - Verify restore works
-- Update `projects.backup_bucket_id`
+- Update `projects.backup_bucket_id` and/or `projects.backup_repo_id`
 - Optionally deprecate old bucket
 
 This is intentionally not automatic.
@@ -119,3 +152,5 @@ builder would be needed.
 
 - Admin UI: add a Buckets panel in `/admin` showing configured buckets, status,
   actual location, and project counts.
+- Add admin controls for `project_backup_repos` so new shards can be created and
+  old ones marked non-active for future assignments.
