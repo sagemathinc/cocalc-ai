@@ -145,7 +145,11 @@ async function resolveLimitSnapshot(
       source === "db-override" ? value : (base.configured_limit ?? null),
     effective_limit: value,
     config_source:
-      source === "db-override" ? "db-override" : base.config_source,
+      source === "db-override"
+        ? "db-override"
+        : source === "env-debug-cap"
+          ? "env-debug-cap"
+          : base.config_source,
   };
 }
 
@@ -220,10 +224,7 @@ export function summarizeCloudVmWorkStatus({
   rows: CloudVmWorkStatusRow[];
   nowMs: number;
   limit?: ParallelOpsLimitSnapshot;
-  providerLimits: Map<
-    string,
-    { value: number; source: "default" | "db-override" }
-  >;
+  providerLimits: Map<string, { value: number; source: string }>;
 }): ParallelOpsWorkerStatus {
   const status = baseStatusForWorker(
     worker,
@@ -284,6 +285,8 @@ export function summarizeCloudVmWorkStatus({
       const limitEntry = providerLimits.get(entry.key);
       if (limitEntry?.source === "db-override") {
         hasProviderOverride = true;
+      } else if (limitEntry?.source === "env-debug-cap") {
+        status.config_source = "env-debug-cap";
       }
       return {
         ...entry,
@@ -365,10 +368,7 @@ export function summarizeMoveRoleWorkerStatus({
   role: "source" | "destination";
   nowMs: number;
   limit?: ParallelOpsLimitSnapshot;
-  limitByHost: Map<
-    string,
-    { value: number; source: "default" | "db-override" }
-  >;
+  limitByHost: Map<string, { value: number; source: string }>;
 }): ParallelOpsWorkerStatus {
   const status = baseStatusForWorker(
     worker,
@@ -448,6 +448,8 @@ export function summarizeMoveRoleWorkerStatus({
       const limitEntry = limitByHost.get(entry.key);
       if (limitEntry?.source === "db-override") {
         hasDbOverride = true;
+      } else if (limitEntry?.source === "env-debug-cap") {
+        status.config_source = "env-debug-cap";
       }
       return {
         ...entry,
@@ -499,10 +501,7 @@ export function summarizeProjectHostLroWorkerStatus({
   rows: RootfsPublishHostStatusRow[];
   nowMs: number;
   limit?: ParallelOpsLimitSnapshot;
-  limitByHost: Map<
-    string,
-    { value: number; source: "default" | "db-override" }
-  >;
+  limitByHost: Map<string, { value: number; source: string }>;
   missingHostNote: string;
 }): ParallelOpsWorkerStatus {
   const status = baseStatusForWorker(
@@ -573,6 +572,8 @@ export function summarizeProjectHostLroWorkerStatus({
       const limitEntry = limitByHost.get(entry.key);
       if (limitEntry?.source === "db-override") {
         hasDbOverride = true;
+      } else if (limitEntry?.source === "env-debug-cap") {
+        status.config_source = "env-debug-cap";
       }
       return {
         ...entry,

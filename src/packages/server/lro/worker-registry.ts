@@ -5,7 +5,11 @@ export type ParallelOpsScopeModel =
   | "global"
   | "per-provider"
   | "per-project-host";
-export type ParallelOpsConfigSource = "constant" | "env-legacy" | "db-override";
+export type ParallelOpsConfigSource =
+  | "constant"
+  | "env-legacy"
+  | "db-override"
+  | "env-debug-cap";
 
 export interface ParallelOpsLimitSnapshot {
   default_limit: number | null;
