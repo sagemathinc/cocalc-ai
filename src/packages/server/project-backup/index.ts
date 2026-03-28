@@ -1,14 +1,9 @@
 import { createCipheriv, createDecipheriv, randomBytes } from "crypto";
-import { mkdir, readFile, writeFile } from "fs/promises";
+import { readFile, writeFile } from "fs/promises";
 import { join } from "path";
 import { secrets } from "@cocalc/backend/data";
 import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
-import { getLaunchpadLocalConfig } from "@cocalc/server/launchpad/mode";
-import {
-  getLaunchpadRestAuth,
-  getLaunchpadRestPort,
-} from "@cocalc/server/launchpad/onprem-sshd";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import { isValidUUID } from "@cocalc/util/misc";
 import {
@@ -19,8 +14,7 @@ import {
 import { createBucket, listBuckets, R2BucketInfo } from "./r2";
 import { ensureCopySchema } from "@cocalc/server/projects/copy-db";
 import type { HostMachine } from "@cocalc/conat/hub/api/hosts";
-import { ONPREM_REST_TUNNEL_LOCAL_PORT } from "@cocalc/conat/project-host/api";
-import { maybeStartLaunchpadOnPremServices } from "@cocalc/server/launchpad/onprem-sshd";
+import { buildLaunchpadRestRusticRepoConfig } from "@cocalc/server/launchpad/rest-repo";
 
 const DEFAULT_BACKUP_TTL_SECONDS = 60 * 60 * 12; // 12 hours
 const DEFAULT_BACKUP_ROOT = "rustic";
@@ -685,36 +679,14 @@ async function buildSelfHostLocalBackupConfig(): Promise<{
   toml: string;
   ttl_seconds: number;
 }> {
-  await maybeStartLaunchpadOnPremServices();
-  const config = getLaunchpadLocalConfig("local");
-  const restPort = getLaunchpadRestPort() ?? config.rest_port;
-  if (!restPort || !config.backup_root) {
+  const repo = await buildLaunchpadRestRusticRepoConfig({
+    root: DEFAULT_BACKUP_ROOT,
+    password: await getSharedBackupSecret(),
+  });
+  if (!repo) {
     return { toml: "", ttl_seconds: 0 };
   }
-  const tunnelLocalPort =
-    Number.parseInt(
-      process.env.COCALC_ONPREM_REST_TUNNEL_LOCAL_PORT ?? "",
-      10,
-    ) || ONPREM_REST_TUNNEL_LOCAL_PORT;
-  const root = DEFAULT_BACKUP_ROOT;
-  try {
-    await mkdir(join(config.backup_root, root), { recursive: true });
-  } catch {
-    // Best-effort; rustic will surface a clearer error if repo is unusable.
-  }
-  const password = await getSharedBackupSecret();
-  const auth = await getLaunchpadRestAuth();
-  const authPrefix = auth
-    ? `${encodeURIComponent(auth.user)}:${encodeURIComponent(auth.password)}@`
-    : "";
-  const endpoint = `http://${authPrefix}127.0.0.1:${tunnelLocalPort}/${root}`;
-  const toml = [
-    "[repository]",
-    `repository = \"rest:${endpoint}\"`,
-    `password = \"${password}\"`,
-    "",
-  ].join("\n");
-  return { toml, ttl_seconds: DEFAULT_BACKUP_TTL_SECONDS };
+  return { toml: repo.repo_toml, ttl_seconds: DEFAULT_BACKUP_TTL_SECONDS };
 }
 
 function buildS3ProjectBackupToml({

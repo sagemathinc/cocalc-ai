@@ -42,7 +42,9 @@ type SshdState = {
 type RestServerState = {
   restPort: number;
   repoRoot: string;
-  child: ChildProcessWithoutNullStreams;
+  htpasswdPath: string;
+  pid: number;
+  child?: ChildProcessWithoutNullStreams;
 };
 
 let sshdState: SshdState | null = null;
@@ -620,16 +622,79 @@ async function startRestServer(): Promise<RestServerState | null> {
     logger.warn("rest-server binary not found", { path: restServer });
     return null;
   }
-  const preferredPort = config.rest_port;
-  const restPort = (await isPortAvailable(preferredPort))
-    ? preferredPort
-    : await getPort();
-  const listen = `127.0.0.1:${restPort}`;
   const auth = await ensureRestAuth();
   if (!auth?.htpasswdPath) {
     logger.warn("rest-server auth initialization failed; not starting server");
     return null;
   }
+  const stateFile = restServerStateFilePath();
+  const stored = await loadRestServerStateFile(stateFile);
+  if (
+    stored?.pid &&
+    (await isManagedRestServerProcess({
+      pid: stored.pid,
+      repoRoot,
+      htpasswdPath: auth.htpasswdPath,
+      restPort: stored.rest_port,
+    }))
+  ) {
+    restServerState = {
+      restPort: stored.rest_port,
+      repoRoot,
+      htpasswdPath: auth.htpasswdPath,
+      pid: stored.pid,
+    };
+    await killDuplicateRestServers({
+      repoRoot,
+      htpasswdPath: auth.htpasswdPath,
+      keepPid: stored.pid,
+    });
+    logger.info("reusing existing rest-server from state file", {
+      rest_port: stored.rest_port,
+      pid: stored.pid,
+      repoRoot,
+    });
+    return restServerState;
+  }
+  const preferredPort = config.rest_port;
+  const existingPreferredPid = await listeningPidOnPort(preferredPort);
+  if (
+    existingPreferredPid &&
+    (await isManagedRestServerProcess({
+      pid: existingPreferredPid,
+      repoRoot,
+      htpasswdPath: auth.htpasswdPath,
+      restPort: preferredPort,
+    }))
+  ) {
+    await writeRestServerStateFile(stateFile, {
+      pid: existingPreferredPid,
+      rest_port: preferredPort,
+      repo_root: repoRoot,
+      htpasswd_path: auth.htpasswdPath,
+    });
+    restServerState = {
+      restPort: preferredPort,
+      repoRoot,
+      htpasswdPath: auth.htpasswdPath,
+      pid: existingPreferredPid,
+    };
+    await killDuplicateRestServers({
+      repoRoot,
+      htpasswdPath: auth.htpasswdPath,
+      keepPid: existingPreferredPid,
+    });
+    logger.info("reusing existing rest-server on preferred port", {
+      rest_port: preferredPort,
+      pid: existingPreferredPid,
+      repoRoot,
+    });
+    return restServerState;
+  }
+  const restPort = (await isPortAvailable(preferredPort))
+    ? preferredPort
+    : await getPort();
+  const listen = `127.0.0.1:${restPort}`;
   const args = [
     "--path",
     repoRoot,
@@ -649,12 +714,29 @@ async function startRestServer(): Promise<RestServerState | null> {
   child.on("exit", (code, signal) => {
     logger.error("rest-server exited", { code, signal });
     restServerState = null;
+    void clearRestServerStateFile(stateFile);
   });
+  if (child.pid) {
+    child.unref();
+    await writeRestServerStateFile(stateFile, {
+      pid: child.pid,
+      rest_port: restPort,
+      repo_root: repoRoot,
+      htpasswd_path: auth.htpasswdPath,
+    });
+  }
   restServerState = {
     restPort,
     repoRoot,
+    htpasswdPath: auth.htpasswdPath,
+    pid: child.pid ?? 0,
     child,
   };
+  await killDuplicateRestServers({
+    repoRoot,
+    htpasswdPath: auth.htpasswdPath,
+    keepPid: child.pid ?? undefined,
+  });
   return restServerState;
 }
 
@@ -744,6 +826,11 @@ function cloudflaredPidFilePath(): string {
   return configured ?? join(cloudflaredStateDir(), "cloudflared.pid");
 }
 
+function restServerStateFilePath(): string {
+  const configured = clean(process.env.COCALC_LAUNCHPAD_REST_STATE_FILE);
+  return configured ?? join(secrets, "launchpad-rest", "rest-server.json");
+}
+
 function parsePid(raw: string): number | undefined {
   const text = `${raw ?? ""}`.trim();
   if (!/^\d+$/.test(text)) {
@@ -803,6 +890,162 @@ function clearPidFileSync(path: string): void {
     unlinkSync(path);
   } catch {
     // ignore
+  }
+}
+
+type StoredRestServerState = {
+  pid: number;
+  rest_port: number;
+  repo_root: string;
+  htpasswd_path: string;
+};
+
+async function loadRestServerStateFile(
+  path: string,
+): Promise<StoredRestServerState | undefined> {
+  if (!(await fileExists(path))) {
+    return undefined;
+  }
+  try {
+    return JSON.parse(await readFile(path, "utf8")) as StoredRestServerState;
+  } catch {
+    return undefined;
+  }
+}
+
+function loadRestServerStateFileSync(
+  path: string,
+): StoredRestServerState | undefined {
+  try {
+    return JSON.parse(readFileSync(path, "utf8")) as StoredRestServerState;
+  } catch {
+    return undefined;
+  }
+}
+
+async function writeRestServerStateFile(
+  path: string,
+  state: StoredRestServerState,
+): Promise<void> {
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, JSON.stringify(state, null, 2), { mode: 0o600 });
+  await chmod(path, 0o600);
+}
+
+async function clearRestServerStateFile(path: string): Promise<void> {
+  try {
+    await unlink(path);
+  } catch {
+    // ignore
+  }
+}
+
+function clearRestServerStateFileSync(path: string): void {
+  try {
+    unlinkSync(path);
+  } catch {
+    // ignore
+  }
+}
+
+async function readProcessArgs(pid: number): Promise<string[]> {
+  try {
+    const raw = await readFile(`/proc/${pid}/cmdline`, "utf8");
+    return raw.split("\0").filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+function restServerArgsMatch(opts: {
+  args: string[];
+  repoRoot: string;
+  htpasswdPath: string;
+  restPort?: number;
+}): boolean {
+  const { args, repoRoot, htpasswdPath, restPort } = opts;
+  if (!args.length) return false;
+  const joined = args.join(" ");
+  if (!joined.includes("rest-server")) return false;
+  const pathIndex = args.indexOf("--path");
+  if (pathIndex < 0 || args[pathIndex + 1] !== repoRoot) return false;
+  const authIndex = args.indexOf("--htpasswd-file");
+  if (authIndex < 0 || args[authIndex + 1] !== htpasswdPath) return false;
+  if (restPort != null) {
+    const listenIndex = args.indexOf("--listen");
+    if (listenIndex < 0 || args[listenIndex + 1] !== `127.0.0.1:${restPort}`) {
+      return false;
+    }
+  }
+  return true;
+}
+
+async function isManagedRestServerProcess(opts: {
+  pid: number;
+  repoRoot: string;
+  htpasswdPath: string;
+  restPort?: number;
+}): Promise<boolean> {
+  if (!isPidRunning(opts.pid)) return false;
+  return restServerArgsMatch({
+    args: await readProcessArgs(opts.pid),
+    repoRoot: opts.repoRoot,
+    htpasswdPath: opts.htpasswdPath,
+    restPort: opts.restPort,
+  });
+}
+
+async function listeningPidOnPort(port: number): Promise<number | undefined> {
+  try {
+    const { stdout, exit_code } = await executeCode({
+      command: "lsof",
+      args: ["-nP", "-t", `-iTCP:${port}`, "-sTCP:LISTEN"],
+      timeout: 10,
+    });
+    if (exit_code !== 0) return undefined;
+    return parsePid(`${stdout}`.trim().split(/\s+/)[0]);
+  } catch {
+    return undefined;
+  }
+}
+
+async function killDuplicateRestServers(opts: {
+  repoRoot: string;
+  htpasswdPath: string;
+  keepPid?: number;
+}): Promise<void> {
+  try {
+    const { stdout, exit_code } = await executeCode({
+      command: "pgrep",
+      args: ["-af", "rest-server"],
+      timeout: 10,
+    });
+    if (exit_code !== 0 && `${stdout ?? ""}`.trim() === "") {
+      return;
+    }
+    const pids = `${stdout ?? ""}`
+      .split(/\r?\n/)
+      .map((line) => parsePid(line.trim().split(/\s+/, 1)[0]))
+      .filter((pid): pid is number => !!pid);
+    for (const pid of pids) {
+      if (opts.keepPid && pid === opts.keepPid) continue;
+      if (
+        !(await isManagedRestServerProcess({
+          pid,
+          repoRoot: opts.repoRoot,
+          htpasswdPath: opts.htpasswdPath,
+        }))
+      ) {
+        continue;
+      }
+      try {
+        process.kill(pid, "SIGTERM");
+      } catch {
+        // ignore
+      }
+    }
+  } catch {
+    // ignore cleanup failure
   }
 }
 
@@ -1174,10 +1417,29 @@ export function stopLaunchpadOnPremServices(): void {
     sshdState = null;
   }
   if (restServerState) {
-    if (restServerState.child.exitCode == null) {
-      restServerState.child.kill("SIGTERM");
+    const child = restServerState.child;
+    if (child && child.exitCode == null) {
+      child.kill("SIGTERM");
+    } else if (isPidRunning(restServerState.pid)) {
+      try {
+        process.kill(restServerState.pid, "SIGTERM");
+      } catch {
+        // ignore
+      }
     }
+    clearRestServerStateFileSync(restServerStateFilePath());
     restServerState = null;
+  } else {
+    const statePath = restServerStateFilePath();
+    const stored = loadRestServerStateFileSync(statePath);
+    if (isPidRunning(stored?.pid)) {
+      try {
+        process.kill(stored!.pid, "SIGTERM");
+      } catch {
+        // ignore
+      }
+    }
+    clearRestServerStateFileSync(statePath);
   }
   if (cloudflaredState) {
     if (isPidRunning(cloudflaredState.pid)) {
