@@ -1,16 +1,15 @@
-# Per Project Backup Secrets and Key Management
+# Backup Repo Secrets and Key Management
 
-This document describes how per-project backup secrets are generated, stored, and
-used for Rustic repositories. It also outlines a safe path for master-key
-rotation and crypto-erase semantics.
+This document describes how backup secrets are generated, stored, and used for
+Rustic repositories. It also outlines current semantics for hosted shared repos
+and future key rotation.
 
 ## Goals
 
-- Each project has its own Rustic repository password.
+- Shared Rustic repos have encrypted passwords stored in Postgres.
 - Secrets are not stored in plaintext in the database.
 - A database leak alone does not expose backup passwords.
-- Projects can be crypto\-erased by deleting their per\-project secret.
-- Projects become impossible to recover when backups of the database age out.
+- Key rotation remains possible without breaking restore.
 
 ## Current Design
 
@@ -20,13 +19,14 @@ rotation and crypto-erase semantics.
   - The key is **not** stored in the database.
   - In Kubernetes, the file should be mounted from a secret.
 
-- Each project has a random secret stored in Postgres:
-  - Table: `project_backup_secrets`
+- Hosted shared repos have one random secret per repo stored in Postgres:
+  - Table: `project_backup_repos`
   - Column: `secret`
   - Format: `v1:<iv_b64>:<tag_b64>:<cipher_b64>` (AES-256-GCM)
 
 - When a project host requests backup configuration:
-  - The control plane decrypts the secret using the master key.
+  - The control plane resolves the assigned repo row.
+  - It decrypts that repo secret using the master key.
   - The secret is embedded into the Rustic TOML.
 
 ### Security Properties
@@ -37,10 +37,10 @@ rotation and crypto-erase semantics.
 
 ### Deletion Semantics
 
-- Deleting `project_backup_secrets` for a project makes the repo unrecoverable
-  (crypto-erase).
-- DB backups that still contain the encrypted secret delay deletion until those
-  backups expire. This is acceptable if backup retention is short and documented.
+- For shared repos, deleting one project's data means forgetting that project's
+  snapshots, not deleting the repo secret.
+- Deleting a shared repo secret would affect every project assigned to that repo,
+  so it is not a per-project deletion mechanism.
 
 ## Rotation Plan (Future)
 
@@ -74,13 +74,12 @@ Recommended approach:
    - Keep old keys until all DB backups older than the rotation are expired.
    - Remove old keys once safe.
 
-This enables **fast project deletion** (delete secret) while also allowing
-timed retirement of old keys to enforce hard deletion over time.
+This enables controlled key rotation while keeping restore compatibility for
+shared repos.
 
 ## Operational Notes
 
-- The master key file must be backed up securely; losing it makes **all** project
-  backups unrecoverable.
+- The master key file must be backed up securely; losing it makes **all**
+  encrypted backup secrets unrecoverable.
 - For local dev, the file is generated automatically.
 - For production, treat the master key like any other high-value secret.
-

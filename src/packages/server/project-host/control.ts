@@ -319,11 +319,10 @@ export async function startProjectOnHost(
       meta.run_quota,
       placement.host_id,
     );
-    const { rows } = await pool().query<{ backup_bucket_id: string | null }>(
-      "SELECT backup_bucket_id FROM projects WHERE project_id=$1",
-      [project_id],
-    );
-    const restore = rows[0]?.backup_bucket_id ? "auto" : "none";
+    const { rows } = await pool().query<{
+      backup_repo_id: string | null;
+    }>("SELECT backup_repo_id FROM projects WHERE project_id=$1", [project_id]);
+    const restore = rows[0]?.backup_repo_id ? "auto" : "none";
     const client = createHostControlClient({
       host_id: placement.host_id,
       client: conatWithProjectRouting(),

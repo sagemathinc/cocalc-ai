@@ -56,7 +56,7 @@ import "./project-invite-tokens";
 import "./project-log";
 import "./project-hosts";
 import "./project-host-bootstrap-tokens";
-import "./project-backup-secrets";
+import "./project-backup-repos";
 import "./project-collab-invites";
 import "./project-rootfs-states";
 import "./projects";

@@ -33,9 +33,9 @@ Table({
       type: "uuid",
       desc: "Assigned host at delete time, if any.",
     },
-    backup_bucket_id: {
+    backup_repo_id: {
       type: "uuid",
-      desc: "Backup bucket id used by this workspace at delete time, if any.",
+      desc: "Shared backup repository id used by this workspace at delete time, if any.",
     },
     created: {
       type: "timestamp",
