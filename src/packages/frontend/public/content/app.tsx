@@ -35,6 +35,7 @@ import {
 import PublicTopNav from "@cocalc/frontend/public/ui/top-nav";
 import { ExactPolicyPage, getExactPolicyPage } from "./legal-pages";
 import { getPolicyPage } from "./policy-data";
+import PricingPage, { type PublicMembershipTier } from "./pricing-page";
 import { contentPath, type PublicContentRoute, topLevelView } from "./routes";
 import {
   getTeamMember,
@@ -58,6 +59,7 @@ interface ContentConfig {
 
 interface PublicContentAppProps {
   config?: ContentConfig;
+  initialMembershipTiers?: PublicMembershipTier[];
   initialNews?: NewsItem[];
   initialRoute: PublicContentRoute;
 }
@@ -125,6 +127,8 @@ function titleForRoute(route: PublicContentRoute, siteName: string): string {
       return `${siteName} team`;
     case "about-team-member":
       return `${getTeamMember(route.teamSlug)?.name ?? "Team"} - ${siteName}`;
+    case "pricing":
+      return `${siteName} pricing`;
     case "policies":
       return `${siteName} policies`;
     case "policies-imprint":
@@ -324,7 +328,10 @@ function PageShell({
 }) {
   const currentTop = topLevelView(route);
   const navActive =
-    currentTop === "about" || currentTop === "policies" || currentTop === "news"
+    currentTop === "about" ||
+    currentTop === "pricing" ||
+    currentTop === "policies" ||
+    currentTop === "news"
       ? currentTop
       : undefined;
   return (
@@ -343,6 +350,7 @@ function PageShell({
           <Flex wrap gap={8}>
             {[
               { href: "about", key: "about", label: "About" },
+              { href: "pricing", key: "pricing", label: "Pricing" },
               ...(arePoliciesVisible(config)
                 ? [{ href: "policies", key: "policies", label: "Policies" }]
                 : []),
@@ -1378,6 +1386,7 @@ function NewsDetailPage({ route }: { route: PublicContentRoute }) {
 
 export default function PublicContentApp({
   config,
+  initialMembershipTiers,
   initialNews,
   initialRoute,
 }: PublicContentAppProps) {
@@ -1568,6 +1577,23 @@ export default function PublicContentApp({
         title={title}
       >
         <SoftwareOverviewPage />
+      </PageShell>
+    );
+  }
+
+  if (initialRoute.view === "pricing") {
+    return (
+      <PageShell
+        config={config}
+        route={initialRoute}
+        subtitle={`Memberships, vouchers, course purchasing, and self-hosted deployment options for ${siteName}.`}
+        title={title}
+      >
+        <PricingPage
+          isAuthenticated={!!config?.is_authenticated}
+          siteName={siteName}
+          tiers={initialMembershipTiers}
+        />
       </PageShell>
     );
   }

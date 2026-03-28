@@ -11,6 +11,7 @@ export type PublicContentView =
   | "about-status"
   | "about-team"
   | "about-team-member"
+  | "pricing"
   | "policies"
   | "policies-imprint"
   | "policies-custom"
@@ -53,6 +54,10 @@ export function getContentRouteFromPath(pathname: string): PublicContentRoute {
     return { view: "about" };
   }
 
+  if (routeParts[0] === "pricing") {
+    return { view: "pricing" };
+  }
+
   if (routeParts[0] === "policies") {
     if (routeParts[1] === "imprint") return { view: "policies-imprint" };
     if (routeParts[1] === "policies") return { view: "policies-custom" };
@@ -92,8 +97,10 @@ export function getContentRouteFromPath(pathname: string): PublicContentRoute {
 
 export function topLevelView(
   route: PublicContentRoute,
-): "about" | "policies" | "news" | "software" {
+): "about" | "pricing" | "policies" | "news" | "software" {
   switch (route.view) {
+    case "pricing":
+      return "pricing";
     case "policies":
     case "policies-imprint":
     case "policies-custom":
@@ -116,7 +123,7 @@ export function isPublicContentTarget(
   target?: string | null,
 ): target is string {
   if (!target) return false;
-  return /\/(about|policies|news|software)(\/|$)/.test(target);
+  return /\/(about|pricing|policies|news|software)(\/|$)/.test(target);
 }
 
 export function contentPath(view: string): string {
