@@ -10,8 +10,9 @@ import {
 } from "@cocalc/server/lro/lro-db";
 import {
   getEffectiveParallelOpsLimit,
-  getEffectiveParallelOpsLimits,
+  getEffectiveParallelOpsLimitsByDefaultMap,
 } from "@cocalc/server/lro/worker-config";
+import { getProjectHostDefaultParallelLimits } from "@cocalc/server/lro/project-host-defaults";
 import { publishLroEvent, publishLroSummary } from "@cocalc/conat/lro/stream";
 import { publishProjectRootfsCatalogEntry } from "@cocalc/server/rootfs/catalog";
 import { withTimeout } from "@cocalc/util/async-utils";
@@ -36,8 +37,7 @@ const OWNER_TYPE = "hub" as const;
 const LEASE_MS = 120_000;
 const HEARTBEAT_MS = 15_000;
 const TICK_MS = 5_000;
-const DEFAULT_MAX_PARALLEL = 100;
-const DEFAULT_PER_HOST_MAX_PARALLEL = 1;
+const DEFAULT_MAX_PARALLEL = 250;
 const ROOTFS_PUBLISH_TIMEOUT_MS = 6 * 60 * 60 * 1000;
 
 const WORKER_ID = randomUUID();
@@ -247,16 +247,18 @@ async function claimRootfsPublishLroOps({
         ].filter(Boolean) as string[],
       ),
     );
-    const hostLimits = await getEffectiveParallelOpsLimits({
+    const hostDefaultLimits = await getProjectHostDefaultParallelLimits({
+      host_ids: hostIds,
+    });
+    const hostLimits = await getEffectiveParallelOpsLimitsByDefaultMap({
       worker_kind: ROOTFS_PUBLISH_HOST_WORKER_KIND,
-      default_limit: DEFAULT_PER_HOST_MAX_PARALLEL,
+      default_limits: hostDefaultLimits,
       scope_type: "project_host",
-      scope_ids: hostIds,
     });
     const limitByHost = new Map(
       hostIds.map((host_id) => [
         host_id,
-        hostLimits.get(host_id)?.value ?? DEFAULT_PER_HOST_MAX_PARALLEL,
+        hostLimits.get(host_id)?.value ?? hostDefaultLimits.get(host_id) ?? 1,
       ]),
     );
     const selected = selectRootfsPublishClaimCandidates({

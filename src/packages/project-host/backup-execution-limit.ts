@@ -1,15 +1,32 @@
+import { availableParallelism } from "node:os";
 import getLogger from "@cocalc/backend/logger";
-import { envToInt } from "@cocalc/backend/misc/env-to-number";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import { hubApi } from "@cocalc/lite/hub/api";
 import { getLocalHostId } from "./sqlite/hosts";
 
 const logger = getLogger("project-host:backup-execution-limit");
 
-export const DEFAULT_BACKUP_MAX_PARALLEL = Math.max(
-  1,
-  Math.min(100, envToInt("COCALC_PROJECT_HOST_BACKUP_MAX_PARALLEL", 10)),
-);
+function recommendedBackupParallelism(ncpus: number): number {
+  if (!Number.isFinite(ncpus) || ncpus <= 0) {
+    return 1;
+  }
+  return Math.min(32, Math.max(1, Math.floor(ncpus / 2)));
+}
+
+function envConfiguredBackupParallelism(): number | undefined {
+  const raw =
+    `${process.env.COCALC_PROJECT_HOST_BACKUP_MAX_PARALLEL ?? ""}`.trim();
+  if (!raw) return undefined;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return undefined;
+  }
+  return Math.max(1, Math.min(32, Math.floor(parsed)));
+}
+
+export const DEFAULT_BACKUP_MAX_PARALLEL =
+  envConfiguredBackupParallelism() ??
+  recommendedBackupParallelism(availableParallelism());
 
 const CACHE_TTL_MS = 5_000;
 

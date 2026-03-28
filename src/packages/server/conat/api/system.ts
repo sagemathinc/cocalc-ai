@@ -79,6 +79,7 @@ import {
   type ParallelOpsLimitScopeType,
 } from "@cocalc/server/lro/worker-config";
 import { getParallelOpsWorkerRegistration } from "@cocalc/server/lro/worker-registry";
+import { getProjectHostDefaultParallelLimit } from "@cocalc/server/lro/project-host-defaults";
 
 const logger = getLogger("server:conat:api:system");
 const ROOTFS_PUBLISH_LRO_KIND = "project-rootfs-publish";
@@ -127,7 +128,16 @@ export async function getProjectHostParallelOpsLimit({
     throw Error("host_id is required");
   }
   const base = worker.getLimitSnapshot();
-  const default_limit = base.default_limit ?? base.effective_limit;
+  let default_limit = base.default_limit ?? base.effective_limit;
+  if (
+    effectiveHostId &&
+    (worker_kind === "project-rootfs-publish-host" ||
+      worker_kind === "project-host-backup-execution")
+  ) {
+    default_limit = await getProjectHostDefaultParallelLimit({
+      host_id: effectiveHostId,
+    });
+  }
   if (default_limit == null) {
     throw Error(`worker '${worker_kind}' does not define a default limit`);
   }

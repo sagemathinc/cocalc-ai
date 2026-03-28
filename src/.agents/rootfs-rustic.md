@@ -173,8 +173,9 @@ RootFS publish uses an even simpler path:
 
 Current RootFS publish admission model:
 
-- global RootFS publish cap: `100`
-- per-host RootFS publish cap: `1`
+- global RootFS publish cap: `250`
+- per-host RootFS publish cap:
+  `min(max(1, floor(ncpus / 2)), 32)`
 - debug fuse for all workers: `COCALC_PARALLEL_OPS_DEBUG_CAP`
 
 The intended meaning is:
@@ -372,14 +373,12 @@ This cleanup has not been finished yet.
 
 ## Ordered Next Steps
 
-1. Benchmark same-host RootFS publish concurrency at `1/2/3` and decide
-   whether the per-host default should move above `1`.
-2. Extend the verification matrix to `conda`, `pnpm`, `pip`, mixed scientific,
+1. Extend the verification matrix to `conda`, `pnpm`, `pip`, mixed scientific,
    and additional synthetic fixtures.
-3. Implement cross-region replication.
-4. Implement self-hosted RootFS via `rest-server`.
-5. Remove the remaining btrfs delta complexity and UI/storage leftovers.
-6. Benchmark the clone-plus-restore optimization and keep it only if it gives
+2. Implement cross-region replication.
+3. Implement self-hosted RootFS via `rest-server`.
+4. Remove the remaining btrfs delta complexity and UI/storage leftovers.
+5. Benchmark the clone-plus-restore optimization and keep it only if it gives
    clear space/time wins.
 
 ## Exit Criteria
