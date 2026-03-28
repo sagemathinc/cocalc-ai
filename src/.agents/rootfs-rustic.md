@@ -13,11 +13,14 @@ Managed RootFS is now substantially on the rustic design:
 - managed releases use the rustic `snapshot_id` as their immutable identity,
 - project-hosts publish directly from the merged overlay view,
 - managed images restore from rustic-backed cache entries and work cross-host,
+- btrfs quota mutations are now decoupled through a durable sqlite-backed queue,
+- RootFS publish temp snapshots/clones skip quota bookkeeping entirely,
 - initial exact-manifest verification passed on real workloads,
 - RootFS publish now has:
   - a high global cap, and
   - a separate per-host cap.
-- same-host publish scaling data now exists on the current small host.
+- same-host publish scaling data now exists on both a small host and a larger
+  16-vCPU host.
 
 The biggest remaining work is no longer "basic migration". It is:
 
@@ -42,6 +45,10 @@ The biggest remaining work is no longer "basic migration". It is:
 - RootFS publish also has a separate per-host admission cap.
 - A single debug env cap can force all parallel-op limits down during bug
   hunting.
+- Btrfs quota work now goes through a durable sqlite-backed serialized queue.
+- Snapshot creation no longer blocks on quota completion.
+- Runtime posture surfaces quota queue backlog/failures for observability.
+- RootFS publish staging snapshots/clones now bypass quota entirely.
 
 ### Partially Implemented
 
@@ -130,6 +137,36 @@ Btrfs still matters locally for:
 
 Btrfs is no longer the main network distribution format for managed RootFS.
 
+### Quota Model Now
+
+Normal project quota bookkeeping is now explicitly asynchronous:
+
+- create qgroup
+- assign snapshot qgroup
+- set qgroup limit
+
+These mutations are now:
+
+- written to the project-host sqlite database,
+- processed by a durable serialized host-local worker,
+- executed with `btrfs quota rescan -W` barriers,
+- retried when safe,
+- and surfaced through runtime posture logging.
+
+That means:
+
+- snapshot creation no longer blocks on quota completion,
+- crash recovery replays only the small pending queue,
+- and quota remains an eventual-consistency guardrail rather than a correctness
+  blocker.
+
+RootFS publish uses an even simpler path:
+
+- the temporary publish snapshot and its writable clone do not participate in
+  quota bookkeeping at all
+- so the quota queue protects normal project snapshotting while staying out of
+  the RootFS publish hot path
+
 ## Parallelism
 
 ### Current Settings
@@ -162,49 +199,99 @@ That proved:
 - `global = 1` was too restrictive,
 - unrelated hosts should not be serialized by the hub.
 
-### Same-Host Sweep On The Current Small Host
+### Historical Small-Host Result
 
-We now have direct same-host RootFS publish scaling data on the current small
-test host (`rootfs-test-2`) with four real projects on the same host:
-
-- per-host `1`: `572.11s`, all `4/4` succeeded
-- per-host `2`: `256.83s`, all `4/4` succeeded
-- per-host `3`: `173.84s`, only `2/4` succeeded
-- per-host `4`: `235.53s`, only `3/4` succeeded
-
-The failures at `3` and `4` were not rustic failures. They were host-local
-btrfs qgroup errors during snapshot staging:
+The first same-host sweep on `rootfs-test-2` exposed the qgroup contention bug
+that originally blocked higher RootFS publish concurrency:
 
 - `ERROR: quota rescan failed: Operation now in progress`
 
-That means:
+That result was important because it revealed a real project-snapshot quota
+robustness problem.
 
-- `1` is clearly too conservative on this host
-- `2` is currently the highest clean measured setting
-- `3+` is not safe on this host until the qgroup concurrency issue is fixed or
-  the staging path is redesigned
+However, it is no longer the current RootFS publish limit because:
 
-Detailed results:
+- normal quota work is now queued asynchronously, and
+- RootFS publish staging snapshots/clones now skip quota entirely.
+
+So the earlier small-host publish numbers should now be read as historical bug
+discovery data, not as the current rustic publish ceiling.
+
+Historical data:
 
 - [rootfs-rustic-same-host-publish-sweep-2026-03-27.md](/home/wstein/build/cocalc-lite2/src/.agents/rootfs-benchmarks/rootfs-rustic-same-host-publish-sweep-2026-03-27.md)
 - [rootfs-rustic-same-host-publish-sweep-2026-03-27.json](/home/wstein/build/cocalc-lite2/src/.agents/rootfs-benchmarks/rootfs-rustic-same-host-publish-sweep-2026-03-27.json)
+
+### Same-Host Sweeps On bench
+
+We now have direct same-host RootFS publish scaling data on `bench`, a
+16-vCPU / 64-GB host, with progressively larger same-host publish backlogs.
+
+8 queued publishes:
+
+- per-host `1`: `181.73s` wall
+- per-host `2`: `46.35s` wall
+- per-host `3`: `34.29s` wall
+- per-host `4`: `20.24s` wall
+- per-host `6`: `18.19s` wall
+- per-host `8`: `18.18s` wall
+
+16 queued publishes:
+
+- per-host `4`: `87.01s` wall
+- per-host `8`: `30.37s` wall
+- per-host `12`: `34.40s` wall
+- per-host `16`: `22.31s` wall
+
+32 queued publishes:
+
+- per-host `16`: `50.88s` wall
+- per-host `24`: `62.72s` wall
+- per-host `32`: `38.61s` wall
+
+What this proves:
+
+- `bench` stayed clean all the way up to `32` concurrent publishes
+- there was no repeat of the old qgroup failure
+- for raw throughput under heavy backlog, `32` was best in the current stress
+  run
+- for a more conservative balance between throughput and per-op runtime, `16`
+  looks like the better starting point on this host class
+
+One important caveat:
+
+- the current RootFS publish worker refills capacity on a `5s` tick
+- that means runs with backlog larger than the cap are partly measuring host
+  capacity and partly measuring worker refill cadence
+- this is why some intermediate caps, such as `12` or `24`, look worse than
+  lower or higher caps
+
+Detailed results:
+
+- [rootfs-rustic-same-host-publish-sweep-bench-2026-03-28.md](/home/wstein/build/cocalc-lite2/src/.agents/rootfs-benchmarks/rootfs-rustic-same-host-publish-sweep-bench-2026-03-28.md)
+- [rootfs-rustic-same-host-publish-sweep-bench-2026-03-28-8-projects.json](/home/wstein/build/cocalc-lite2/src/.agents/rootfs-benchmarks/rootfs-rustic-same-host-publish-sweep-bench-2026-03-28-8-projects.json)
+- [rootfs-rustic-same-host-publish-sweep-bench-2026-03-28-16-projects.json](/home/wstein/build/cocalc-lite2/src/.agents/rootfs-benchmarks/rootfs-rustic-same-host-publish-sweep-bench-2026-03-28-16-projects.json)
+- [rootfs-rustic-same-host-publish-sweep-bench-2026-03-28-32-projects.json](/home/wstein/build/cocalc-lite2/src/.agents/rootfs-benchmarks/rootfs-rustic-same-host-publish-sweep-bench-2026-03-28-32-projects.json)
 
 ### What We Still Do Not Have
 
 We still do **not** have:
 
-- same-host scaling data on a larger CPU host
-- data beyond `4` on a bigger machine
+- a final per-host default chosen for each host class
+- end-to-end user-visible latency analysis under sustained queue depth
+- cross-region throughput measurements
 - measurements that separate CPU, disk, and network saturation directly
 
 ### Next Parallelism Question
 
 The next concrete tuning tasks are:
 
-- consider raising the per-host default from `1` to `2` on the current class of
-  host
-- fix or understand the qgroup concurrency failure before considering `3+`
-- repeat the sweep on a larger CPU host
+- decide whether the first larger-host default should be `16`, `24`, or `32`
+  for this host class
+- benchmark on an even larger backlog if we want to force a harder limit than
+  `32`
+- consider making RootFS publish refill capacity immediately on completion,
+  instead of only on the worker tick
 
 ## Verification
 

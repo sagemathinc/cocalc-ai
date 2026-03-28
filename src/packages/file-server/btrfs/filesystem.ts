@@ -23,6 +23,7 @@ import { FileSync } from "./sync";
 import bees from "./bees";
 import { type ChildProcess } from "node:child_process";
 import { install } from "@cocalc/backend/sandbox/install";
+import { getBtrfsQuotaQueueStatus, startBtrfsQuotaQueue } from "./quota-queue";
 
 import getLogger from "@cocalc/backend/logger";
 
@@ -94,6 +95,7 @@ export class Filesystem {
     await btrfs({
       args: ["quota", "enable", this.opts.mount],
     });
+    startBtrfsQuotaQueue();
     try {
       await this.initRustic();
     } catch (err) {
@@ -141,6 +143,10 @@ export class Filesystem {
       restartPending: this.beesRestartTimer != null,
       lastExit: this.beesLastExit,
     };
+  };
+
+  getQuotaQueueStatus = () => {
+    return getBtrfsQuotaQueueStatus(this.opts.mount);
   };
 
   private scheduleBeesRestart(reason: string) {

@@ -1,0 +1,471 @@
+{
+  "started_at": "2026-03-28T03:43:59.007Z",
+  "host_id": "0ec9acaf-432a-4c3c-a76e-8cec615f0fe5",
+  "host_name": "bench",
+  "worker_kind": "project-rootfs-publish-host",
+  "parallel_values": [1, 2, 3, 4, 6, 8],
+  "project_count": 8,
+  "projects": [
+    {
+      "id": "bench-rustic-1",
+      "project_id": "3ce9a179-cd95-49d0-83dc-8b8ae018a176"
+    },
+    {
+      "id": "bench-rustic-2",
+      "project_id": "052c9309-3a7f-49a1-803c-5ae131bd4db6"
+    },
+    {
+      "id": "bench-rustic-3",
+      "project_id": "50736700-ba06-4f58-aaca-c824bec39803"
+    },
+    {
+      "id": "bench-rustic-4",
+      "project_id": "e1b51431-5552-4326-b9a5-7d67164c0b44"
+    },
+    {
+      "id": "bench-rustic-5",
+      "project_id": "696dea00-22f6-4104-aca9-06c10c376aa4"
+    },
+    {
+      "id": "bench-rustic-6",
+      "project_id": "7306dc88-639e-4e95-972d-38b0829cf829"
+    },
+    {
+      "id": "bench-rustic-7",
+      "project_id": "1c038b6c-0c90-4bbb-b118-1b315a07493b"
+    },
+    {
+      "id": "bench-rustic-8",
+      "project_id": "7c6bffff-e449-47aa-a548-f084732071f4"
+    }
+  ],
+  "runs": [
+    {
+      "parallel": 1,
+      "total_wall_ms": 181727,
+      "ok": true,
+      "operations": [
+        {
+          "id": "bench-rustic-1",
+          "project_id": "3ce9a179-cd95-49d0-83dc-8b8ae018a176",
+          "op_id": "079703ae-d244-4ec3-acde-836bdf5ef7b6",
+          "status": "succeeded",
+          "duration_ms": 6069,
+          "image": "cocalc.local/rootfs/28e0f4770755f74ea4f85986412b261e613541663bb65259a3f9b11808515167"
+        },
+        {
+          "id": "bench-rustic-2",
+          "project_id": "052c9309-3a7f-49a1-803c-5ae131bd4db6",
+          "op_id": "0d2b4d30-193e-4f84-96d9-6ba56dc9ac16",
+          "status": "succeeded",
+          "duration_ms": 5882,
+          "image": "cocalc.local/rootfs/94b2ca87593bc80b19deae667a94ee17a7af2cf6751b9d602e460e620f8957b1"
+        },
+        {
+          "id": "bench-rustic-3",
+          "project_id": "50736700-ba06-4f58-aaca-c824bec39803",
+          "op_id": "62995958-5fee-468d-8810-c8a7a847a931",
+          "status": "succeeded",
+          "duration_ms": 5707,
+          "image": "cocalc.local/rootfs/edd7431bc9f9cac4aac9f18a10e4af060e9668f202dca1bb76e2885883147b51"
+        },
+        {
+          "id": "bench-rustic-4",
+          "project_id": "e1b51431-5552-4326-b9a5-7d67164c0b44",
+          "op_id": "6761321d-1a21-4a20-971d-5c14a9e83f81",
+          "status": "succeeded",
+          "duration_ms": 5734,
+          "image": "cocalc.local/rootfs/b95f15fbdc2846c88e9e43461917d6ae6a04c4b6dec75367cb58bb16069c97fe"
+        },
+        {
+          "id": "bench-rustic-5",
+          "project_id": "696dea00-22f6-4104-aca9-06c10c376aa4",
+          "op_id": "b3324fac-c3f2-4655-bd98-320929fe6f8e",
+          "status": "succeeded",
+          "duration_ms": 6124,
+          "image": "cocalc.local/rootfs/22ea54621e4ad4f342b3807acb86fe5dc7b524dce8a0d9e32906e846212346d0"
+        },
+        {
+          "id": "bench-rustic-6",
+          "project_id": "7306dc88-639e-4e95-972d-38b0829cf829",
+          "op_id": "78b18a57-22e1-4814-9ce3-05495a1f1378",
+          "status": "succeeded",
+          "duration_ms": 5707,
+          "image": "cocalc.local/rootfs/2bdaed99bb10ddf6f1e9f008c78987df2831d6af0a40f57e2903c3e451971461"
+        },
+        {
+          "id": "bench-rustic-7",
+          "project_id": "1c038b6c-0c90-4bbb-b118-1b315a07493b",
+          "op_id": "276b52d8-c1f1-4711-ab00-bc57583899e0",
+          "status": "succeeded",
+          "duration_ms": 5778,
+          "image": "cocalc.local/rootfs/470dda03bf5e16303ab44f6a1c601de7f897221efa90ad313a0c278fc3bad8b6"
+        },
+        {
+          "id": "bench-rustic-8",
+          "project_id": "7c6bffff-e449-47aa-a548-f084732071f4",
+          "op_id": "c09c7626-6552-4349-a79c-af365ce8336e",
+          "status": "succeeded",
+          "duration_ms": 5826,
+          "image": "cocalc.local/rootfs/068acfbd95c63a528d4cbccc9a729eed601c90ae5686b3a5d16de67db93527c9"
+        }
+      ]
+    },
+    {
+      "parallel": 2,
+      "total_wall_ms": 46349,
+      "ok": true,
+      "operations": [
+        {
+          "id": "bench-rustic-1",
+          "project_id": "3ce9a179-cd95-49d0-83dc-8b8ae018a176",
+          "op_id": "01aa32f2-b79e-4e8e-86d9-80e4233d487f",
+          "status": "succeeded",
+          "duration_ms": 5566,
+          "image": "cocalc.local/rootfs/256f769f497da87db090fcd9e037480056f1df582a3a7b9c61dde12c7385fac4"
+        },
+        {
+          "id": "bench-rustic-2",
+          "project_id": "052c9309-3a7f-49a1-803c-5ae131bd4db6",
+          "op_id": "b66d9e48-ea84-4fdf-8ab4-3546d1b736f4",
+          "status": "succeeded",
+          "duration_ms": 5648,
+          "image": "cocalc.local/rootfs/c85f53406c0716930c03d85fd2e0c85f1473a3004b75d8dce9149656cdda6d36"
+        },
+        {
+          "id": "bench-rustic-3",
+          "project_id": "50736700-ba06-4f58-aaca-c824bec39803",
+          "op_id": "51fc44a4-deb3-4441-932b-c1b41ccb8432",
+          "status": "succeeded",
+          "duration_ms": 5632,
+          "image": "cocalc.local/rootfs/2d97677220c115409c37c4ab09325fd92a904a024309741badf6d81f6f0222b9"
+        },
+        {
+          "id": "bench-rustic-4",
+          "project_id": "e1b51431-5552-4326-b9a5-7d67164c0b44",
+          "op_id": "50a1bd75-c21b-4b7a-b8b8-0928436fb979",
+          "status": "succeeded",
+          "duration_ms": 5726,
+          "image": "cocalc.local/rootfs/8a17c051bfc5e5bb6466db86d11e928b8e433423d2f786576c692472b7df704f"
+        },
+        {
+          "id": "bench-rustic-5",
+          "project_id": "696dea00-22f6-4104-aca9-06c10c376aa4",
+          "op_id": "a9e4c280-0571-4ad4-8b49-5cb4df562828",
+          "status": "succeeded",
+          "duration_ms": 5740,
+          "image": "cocalc.local/rootfs/12fcc2de23caed89d0b6375a9ec639b82910fa3c55bda1e033c0d5aacf88059b"
+        },
+        {
+          "id": "bench-rustic-6",
+          "project_id": "7306dc88-639e-4e95-972d-38b0829cf829",
+          "op_id": "a24e5889-1235-4aaa-9369-1913270618ae",
+          "status": "succeeded",
+          "duration_ms": 5905,
+          "image": "cocalc.local/rootfs/c3881ce08f11ec5b79327597adef4a01347169a5512260380264f1e92419236a"
+        },
+        {
+          "id": "bench-rustic-7",
+          "project_id": "1c038b6c-0c90-4bbb-b118-1b315a07493b",
+          "op_id": "08625b90-88dd-4b4b-9b37-ee98cef157d8",
+          "status": "succeeded",
+          "duration_ms": 6035,
+          "image": "cocalc.local/rootfs/81a278abe7fdb91a14afc4057ebd4adcfd729feb81809497fc631c74098b1249"
+        },
+        {
+          "id": "bench-rustic-8",
+          "project_id": "7c6bffff-e449-47aa-a548-f084732071f4",
+          "op_id": "e9c9c1a0-c4b8-4c2f-acf2-4b1f382ef7c4",
+          "status": "succeeded",
+          "duration_ms": 5622,
+          "image": "cocalc.local/rootfs/7660ff4606529e54a281d42d639aba5568244dfa88d24a5f8882074d674e9b8e"
+        }
+      ]
+    },
+    {
+      "parallel": 3,
+      "total_wall_ms": 34293,
+      "ok": true,
+      "operations": [
+        {
+          "id": "bench-rustic-1",
+          "project_id": "3ce9a179-cd95-49d0-83dc-8b8ae018a176",
+          "op_id": "c8942cac-9130-400d-80d6-a928c0ebcfa2",
+          "status": "succeeded",
+          "duration_ms": 6775,
+          "image": "cocalc.local/rootfs/f564eb09cc6fe02a957207c668859d13e71c373956d9f6f77fafd43f49d87c55"
+        },
+        {
+          "id": "bench-rustic-2",
+          "project_id": "052c9309-3a7f-49a1-803c-5ae131bd4db6",
+          "op_id": "3332696a-e292-40d0-afb0-85ed0c4d1c21",
+          "status": "succeeded",
+          "duration_ms": 5941,
+          "image": "cocalc.local/rootfs/a8bed60750cd7e42e2d7031ff281e8c694cfdf6b23d8bff0f7789b39307b60e0"
+        },
+        {
+          "id": "bench-rustic-3",
+          "project_id": "50736700-ba06-4f58-aaca-c824bec39803",
+          "op_id": "b269b353-4ffc-4908-8007-09608b25679f",
+          "status": "succeeded",
+          "duration_ms": 6879,
+          "image": "cocalc.local/rootfs/a602f40688e3a3d4a4e727e95bd1cf9e6e1ff20cb3ce13d7561d576006070536"
+        },
+        {
+          "id": "bench-rustic-4",
+          "project_id": "e1b51431-5552-4326-b9a5-7d67164c0b44",
+          "op_id": "94b50f6b-5486-479b-9c93-ee2b3ccd3612",
+          "status": "succeeded",
+          "duration_ms": 6088,
+          "image": "cocalc.local/rootfs/74b591192e93e613952128ba47d159dfbe8cde6b2bd0bacbd81797000fef960f"
+        },
+        {
+          "id": "bench-rustic-5",
+          "project_id": "696dea00-22f6-4104-aca9-06c10c376aa4",
+          "op_id": "54f38c2a-511c-4579-a4a5-2987463deaa2",
+          "status": "succeeded",
+          "duration_ms": 6603,
+          "image": "cocalc.local/rootfs/51cfd49250d6dcf7e876b05e8881a45d2eb01c6243e45a51bc1f72fb295b2074"
+        },
+        {
+          "id": "bench-rustic-6",
+          "project_id": "7306dc88-639e-4e95-972d-38b0829cf829",
+          "op_id": "c9c03401-e7e3-4ed7-b229-e0400f51b826",
+          "status": "succeeded",
+          "duration_ms": 7025,
+          "image": "cocalc.local/rootfs/cc87f4754fe216e1f1c590cb19b393ac9768454b82e323bbc265227d9a04f4ae"
+        },
+        {
+          "id": "bench-rustic-7",
+          "project_id": "1c038b6c-0c90-4bbb-b118-1b315a07493b",
+          "op_id": "64689c7b-a458-44d6-889c-77601a25c2b2",
+          "status": "succeeded",
+          "duration_ms": 5762,
+          "image": "cocalc.local/rootfs/7c18241e8c7e7b8374ce1d62139a1e4531a6276fdd0c3a68cfd845dc57336834"
+        },
+        {
+          "id": "bench-rustic-8",
+          "project_id": "7c6bffff-e449-47aa-a548-f084732071f4",
+          "op_id": "14347a1d-c920-4bb5-8752-9c71dadaa777",
+          "status": "succeeded",
+          "duration_ms": 6126,
+          "image": "cocalc.local/rootfs/2fc4319a02c77b1bed157f5d8b08ac2c45fa924f5a1619effbcbfaf5e43027d5"
+        }
+      ]
+    },
+    {
+      "parallel": 4,
+      "total_wall_ms": 20244,
+      "ok": true,
+      "operations": [
+        {
+          "id": "bench-rustic-1",
+          "project_id": "3ce9a179-cd95-49d0-83dc-8b8ae018a176",
+          "op_id": "edd11592-0ed7-4866-9c80-37df83c5d027",
+          "status": "succeeded",
+          "duration_ms": 7705,
+          "image": "cocalc.local/rootfs/9252b570e5d5f161bcef2669fa83e20e9436aa6df6315c73e970dcee699d2bcc"
+        },
+        {
+          "id": "bench-rustic-2",
+          "project_id": "052c9309-3a7f-49a1-803c-5ae131bd4db6",
+          "op_id": "1dc91954-6c45-44a9-9349-4b5df0349543",
+          "status": "succeeded",
+          "duration_ms": 8139,
+          "image": "cocalc.local/rootfs/592f30d631863a67eb1541e9a9a8c6ec602d2e6e6eef3b256f439fd6fccb0352"
+        },
+        {
+          "id": "bench-rustic-3",
+          "project_id": "50736700-ba06-4f58-aaca-c824bec39803",
+          "op_id": "30d0e999-850e-474f-a132-1a1531eb1846",
+          "status": "succeeded",
+          "duration_ms": 7829,
+          "image": "cocalc.local/rootfs/980ba50a9fd84a627d5e16a1ca05b248506bf6fd23d34054fc63c02399baa86a"
+        },
+        {
+          "id": "bench-rustic-4",
+          "project_id": "e1b51431-5552-4326-b9a5-7d67164c0b44",
+          "op_id": "8e8a43e6-c029-4b55-97b5-16af1e7009c1",
+          "status": "succeeded",
+          "duration_ms": 7803,
+          "image": "cocalc.local/rootfs/529bb2e3e0fef0103a35ecbfbacf72ec5034910a67913e272b1f0fcca4cebd2f"
+        },
+        {
+          "id": "bench-rustic-5",
+          "project_id": "696dea00-22f6-4104-aca9-06c10c376aa4",
+          "op_id": "6ca0adfc-ea20-4dc4-a918-4996dda2fdfe",
+          "status": "succeeded",
+          "duration_ms": 7854,
+          "image": "cocalc.local/rootfs/88df28e5708c9aa262a2bf76f43f567fd1363793ac609eb6f79db541a1c12d1e"
+        },
+        {
+          "id": "bench-rustic-6",
+          "project_id": "7306dc88-639e-4e95-972d-38b0829cf829",
+          "op_id": "5361bfbf-c6b6-48db-8300-451fb73cc0c5",
+          "status": "succeeded",
+          "duration_ms": 7735,
+          "image": "cocalc.local/rootfs/2374489eb78dc318d664acd8aa0951b9e9ba1a9b98fad102849fdf081a0c572d"
+        },
+        {
+          "id": "bench-rustic-7",
+          "project_id": "1c038b6c-0c90-4bbb-b118-1b315a07493b",
+          "op_id": "4569a5bb-c105-48e4-aa1e-d2d68eb5a2ad",
+          "status": "succeeded",
+          "duration_ms": 6840,
+          "image": "cocalc.local/rootfs/c5b269b122248cbabdd740432007b3718d358cae0b5af434bcccbb9b8d2ab905"
+        },
+        {
+          "id": "bench-rustic-8",
+          "project_id": "7c6bffff-e449-47aa-a548-f084732071f4",
+          "op_id": "960d25f2-5751-4665-bcd8-271673e25db9",
+          "status": "succeeded",
+          "duration_ms": 6729,
+          "image": "cocalc.local/rootfs/b999c3611bd2df07b37bb5016248396b255e1e968733d2aab9e567c289da40de"
+        }
+      ]
+    },
+    {
+      "parallel": 6,
+      "total_wall_ms": 18189,
+      "ok": true,
+      "operations": [
+        {
+          "id": "bench-rustic-1",
+          "project_id": "3ce9a179-cd95-49d0-83dc-8b8ae018a176",
+          "op_id": "7aa62230-f51f-4880-84f9-9d933ec773b7",
+          "status": "succeeded",
+          "duration_ms": 8841,
+          "image": "cocalc.local/rootfs/74c6435063d7342ba173d50f74da2f0f0c7c47354e4aa29261e94133b2c6ac82"
+        },
+        {
+          "id": "bench-rustic-2",
+          "project_id": "052c9309-3a7f-49a1-803c-5ae131bd4db6",
+          "op_id": "7cb609ba-c80b-40b9-bcb9-33c5bbe90db3",
+          "status": "succeeded",
+          "duration_ms": 8983,
+          "image": "cocalc.local/rootfs/9a1e8d84b7bdc04ef976002d8cdc3bbda0d4f06df4c62547dd75dfa9b6997037"
+        },
+        {
+          "id": "bench-rustic-3",
+          "project_id": "50736700-ba06-4f58-aaca-c824bec39803",
+          "op_id": "6eb85528-2dc4-4fb9-b79e-e683731bb43e",
+          "status": "succeeded",
+          "duration_ms": 9224,
+          "image": "cocalc.local/rootfs/90c18e29539cb4a3438895c11f8c1b2c2b79d84b718040e33feba2dbc889326e"
+        },
+        {
+          "id": "bench-rustic-4",
+          "project_id": "e1b51431-5552-4326-b9a5-7d67164c0b44",
+          "op_id": "cd3e6d24-8b79-47ad-a715-a979a0a6f5b3",
+          "status": "succeeded",
+          "duration_ms": 9479,
+          "image": "cocalc.local/rootfs/8fdee729866006e9dcd37612d754d6158ff3c2f85103d4732ccacbf32f6f035d"
+        },
+        {
+          "id": "bench-rustic-5",
+          "project_id": "696dea00-22f6-4104-aca9-06c10c376aa4",
+          "op_id": "8eb3eb09-a8bf-4804-a58e-f30cfffec1c8",
+          "status": "succeeded",
+          "duration_ms": 9000,
+          "image": "cocalc.local/rootfs/a019093acbfd8c880a3c5d2043677f4b82136c5690ec3e3a423671b14accfbe7"
+        },
+        {
+          "id": "bench-rustic-6",
+          "project_id": "7306dc88-639e-4e95-972d-38b0829cf829",
+          "op_id": "ab6cc253-900c-4a31-8b4b-d2ff5797c927",
+          "status": "succeeded",
+          "duration_ms": 9008,
+          "image": "cocalc.local/rootfs/fda96e7ee3ce7ce82daad50c731968a94018b16ff640c6c7e8ee05a672e2bbb5"
+        },
+        {
+          "id": "bench-rustic-7",
+          "project_id": "1c038b6c-0c90-4bbb-b118-1b315a07493b",
+          "op_id": "6f163311-00a9-4c79-94e4-9743414120d8",
+          "status": "succeeded",
+          "duration_ms": 8908,
+          "image": "cocalc.local/rootfs/fef02ce028e21811acd33b5f660c8c95c518e6c921e49bb082ba4dc1156a86f9"
+        },
+        {
+          "id": "bench-rustic-8",
+          "project_id": "7c6bffff-e449-47aa-a548-f084732071f4",
+          "op_id": "6f5c3ddb-4cce-4ec1-b4ff-79f4f9402111",
+          "status": "succeeded",
+          "duration_ms": 8949,
+          "image": "cocalc.local/rootfs/f4f5b2a0136a6753fb55f48875675242d4e3beb2fce2f7c9cc36540e1b0a917c"
+        }
+      ]
+    },
+    {
+      "parallel": 8,
+      "total_wall_ms": 18178,
+      "ok": true,
+      "operations": [
+        {
+          "id": "bench-rustic-1",
+          "project_id": "3ce9a179-cd95-49d0-83dc-8b8ae018a176",
+          "op_id": "833c3250-b351-4472-9b25-346241fb1cef",
+          "status": "succeeded",
+          "duration_ms": 11465,
+          "image": "cocalc.local/rootfs/d170e24235d57bcbcb8b2e46a0ee7af5f2abff3de162a55e849edea41b98244b"
+        },
+        {
+          "id": "bench-rustic-2",
+          "project_id": "052c9309-3a7f-49a1-803c-5ae131bd4db6",
+          "op_id": "cddb0762-f3e2-4d92-b0c9-68631d5a0ee8",
+          "status": "succeeded",
+          "duration_ms": 11756,
+          "image": "cocalc.local/rootfs/a1fcbae8f23e0cf0c7ef9b62690f070be6e1213c69f4f6110d4a9c1ed7700f9a"
+        },
+        {
+          "id": "bench-rustic-3",
+          "project_id": "50736700-ba06-4f58-aaca-c824bec39803",
+          "op_id": "5e7259ea-a41f-4aa1-9cca-8c9f7d3b54e9",
+          "status": "succeeded",
+          "duration_ms": 11787,
+          "image": "cocalc.local/rootfs/900c95885a56e0ca4d1941f003e6c7bc9bc9a582ed09cb2a5d964dd9538e764c"
+        },
+        {
+          "id": "bench-rustic-4",
+          "project_id": "e1b51431-5552-4326-b9a5-7d67164c0b44",
+          "op_id": "0c0c0d72-ef0d-45f0-9b33-b1463f274014",
+          "status": "succeeded",
+          "duration_ms": 11868,
+          "image": "cocalc.local/rootfs/690119394b687308ead4d160ba64145a28919a78c69b1aca0da229b95887882b"
+        },
+        {
+          "id": "bench-rustic-5",
+          "project_id": "696dea00-22f6-4104-aca9-06c10c376aa4",
+          "op_id": "bd62897f-40c1-4114-a6d9-a2d1708fd1fc",
+          "status": "succeeded",
+          "duration_ms": 12010,
+          "image": "cocalc.local/rootfs/7403a87ccaca46d48ecaa0596fabe313e5ea58f592246ad84251650eb146ae92"
+        },
+        {
+          "id": "bench-rustic-6",
+          "project_id": "7306dc88-639e-4e95-972d-38b0829cf829",
+          "op_id": "1a433c48-a56d-4de4-a14e-b7a2da4a702a",
+          "status": "succeeded",
+          "duration_ms": 11575,
+          "image": "cocalc.local/rootfs/4ce6450ad358b9b56884e16752dd9c7a377079e519282cc563825a43cc39552a"
+        },
+        {
+          "id": "bench-rustic-7",
+          "project_id": "1c038b6c-0c90-4bbb-b118-1b315a07493b",
+          "op_id": "7ec86fe6-8719-4cd0-96a7-114a23b59446",
+          "status": "succeeded",
+          "duration_ms": 10608,
+          "image": "cocalc.local/rootfs/163f8c5af774f0b4eba67195986b1fa2cf0b4c4423941bd6f8e78a981b60ac80"
+        },
+        {
+          "id": "bench-rustic-8",
+          "project_id": "7c6bffff-e449-47aa-a548-f084732071f4",
+          "op_id": "6b730d43-bf09-4adc-bc53-b4113b06ed48",
+          "status": "succeeded",
+          "duration_ms": 11899,
+          "image": "cocalc.local/rootfs/67edd9b8c375b78852468afa0e55ef28609bccc4b63a160339a0c28aa3ec8df3"
+        }
+      ]
+    }
+  ],
+  "finished_at": "2026-03-28T03:49:17.998Z"
+}
