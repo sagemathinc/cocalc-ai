@@ -17,8 +17,11 @@ import { TestLLMAdmin } from "./llm/admin-llm-test";
 import { SoftwareLicensesAdmin } from "./software-licenses";
 import { RootfsAdmin } from "./rootfs";
 import { NewsAdminPage } from "./news/page";
-import type { AdminRoute } from "./routing";
-import { getAdminUrlPath } from "./routing";
+import {
+  getAdminUrlPath,
+  normalizeAdminRoute,
+  type AdminRoute,
+} from "./routing";
 import { useActions } from "@cocalc/frontend/app-framework";
 import { set_url_with_search } from "@cocalc/frontend/history";
 
@@ -30,6 +33,7 @@ export function AdminPage({
 }: {
   route?: AdminRoute;
 }) {
+  route = normalizeAdminRoute(route);
   const pageActions = useActions("page");
   const [activeKey, setActiveKey] = useState<string[]>([]);
 

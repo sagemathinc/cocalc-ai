@@ -8,6 +8,15 @@ export type AdminRoute =
   | { kind: "news-list" }
   | { kind: "news-editor"; id: string };
 
+type AdminRouteLike =
+  | AdminRoute
+  | {
+      get?: (key: string) => unknown;
+      toJS?: () => unknown;
+    }
+  | null
+  | undefined;
+
 export function parseAdminRoute(
   input: string | readonly string[],
 ): AdminRoute | undefined {
@@ -33,17 +42,52 @@ export function parseAdminRoute(
   }
 }
 
-export function getAdminTargetPath(route: AdminRoute): string {
-  switch (route.kind) {
+export function normalizeAdminRoute(route: AdminRouteLike): AdminRoute {
+  if (route == null) {
+    return { kind: "index" };
+  }
+  let normalized: unknown = route;
+  const routeObject = route as {
+    get?: (key: string) => unknown;
+    toJS?: () => unknown;
+  };
+  if (typeof routeObject.toJS === "function") {
+    normalized = routeObject.toJS();
+  } else if (typeof routeObject.get === "function") {
+    normalized = {
+      kind: routeObject.get("kind"),
+      id: routeObject.get("id"),
+    };
+  }
+
+  switch (normalized?.["kind"]) {
+    case "news-list":
+      return { kind: "news-list" };
+    case "news-editor": {
+      const id = normalized?.["id"];
+      if (typeof id === "string" && id) {
+        return { kind: "news-editor", id };
+      }
+      return { kind: "news-list" };
+    }
+    case "index":
+    default:
+      return { kind: "index" };
+  }
+}
+
+export function getAdminTargetPath(route: AdminRouteLike): string {
+  const normalized = normalizeAdminRoute(route);
+  switch (normalized.kind) {
     case "index":
       return "admin";
     case "news-list":
       return "admin/news";
     case "news-editor":
-      return `admin/news/${route.id}`;
+      return `admin/news/${normalized.id}`;
   }
 }
 
-export function getAdminUrlPath(route: AdminRoute): string {
+export function getAdminUrlPath(route: AdminRouteLike): string {
   return `/${getAdminTargetPath(route)}`;
 }

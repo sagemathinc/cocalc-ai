@@ -19,7 +19,10 @@ import { session_manager } from "@cocalc/frontend/session";
 import { once } from "@cocalc/util/async-utils";
 import { PageState } from "./store";
 import { lite, project_id } from "@cocalc/frontend/lite";
-import { getAdminTargetPath } from "@cocalc/frontend/admin/routing";
+import {
+  getAdminTargetPath,
+  normalizeAdminRoute,
+} from "@cocalc/frontend/admin/routing";
 
 const LITE_TABS = new Set(["account", "admin", "ssh"]);
 
@@ -196,9 +199,9 @@ export class PageActions extends Actions<PageState> {
         return;
       case "admin":
         if (change_history) {
-          const admin_route = this.redux
-            .getStore("page")
-            .get("admin_route") ?? { kind: "index" };
+          const admin_route = normalizeAdminRoute(
+            this.redux.getStore("page").get("admin_route"),
+          );
           set_url(`/${getAdminTargetPath(admin_route)}`);
         }
         set_window_title(intl.formatMessage(labels.admin));

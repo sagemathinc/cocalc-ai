@@ -6,6 +6,7 @@
 import { AccountPage } from "@cocalc/frontend/account/account-page";
 import { AdminPage } from "@cocalc/frontend/admin";
 import { Alert } from "@cocalc/frontend/antd-bootstrap";
+import { normalizeAdminRoute } from "@cocalc/frontend/admin/routing";
 import {
   CSS,
   React,
@@ -187,7 +188,7 @@ export const ActiveContent: React.FC = React.memo(() => {
         overlay = renderLayer(
           "admin",
           true,
-          <AdminPage route={admin_route ?? { kind: "index" }} />,
+          <AdminPage route={normalizeAdminRoute(admin_route)} />,
         );
         break;
       case undefined:
