@@ -5,6 +5,11 @@
 
 import { deep_copy } from "@cocalc/util/misc";
 import { SCHEMA } from "@cocalc/util/schema";
+import target from "@cocalc/frontend/client/handle-target";
+import {
+  getInitialAccountPageState,
+  parsePageTarget,
+} from "@cocalc/frontend/page-routing";
 import { webapp_client } from "../webapp-client";
 import { AccountActions } from "./actions";
 import { AccountStore } from "./store";
@@ -19,6 +24,13 @@ export function init(redux) {
   // Register account store
   // Use the database defaults for all account info until this gets set after they login
   const init = deep_copy(SCHEMA.accounts.user_query?.get?.fields) ?? {};
+  const initialAccountPageState = getInitialAccountPageState(
+    parsePageTarget(target),
+  );
+  if (initialAccountPageState != null) {
+    init.active_page = initialAccountPageState.active_page;
+    init.active_sub_tab = initialAccountPageState.active_sub_tab;
+  }
   // ... except for show_global_info2 (null or a timestamp)
   // REGISTER and STRATEGIES are injected in app.html via the /customize endpoint -- do not delete them!
   init.token = global["REGISTER"];

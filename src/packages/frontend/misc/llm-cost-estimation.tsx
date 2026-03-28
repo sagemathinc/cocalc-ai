@@ -97,7 +97,7 @@ export function LLMUsageHelpContent() {
       </Paragraph>
       <Paragraph>
         Upgrade your membership for higher limits.{" "}
-        <A href="/store/membership">View membership tiers</A>.
+        <A href="/settings/store">Open the Store</A>.
       </Paragraph>
     </>
   );

@@ -8,7 +8,7 @@
 # The script expects pnpm v8+ and Node 18+ (Node 24 for runtime).
 # It builds Launchpad plus its runtime dependencies, bundles the CLI entry
 # point (packages/launchpad/bin/start.js), and copies static assets,
-# Next api/v2 handlers, and PGlite assets.
+# public assets, http-api handlers, and PGlite assets.
 
 set -euo pipefail
 
@@ -51,31 +51,15 @@ echo "- Build Launchpad runtime dependencies"
 pnpm --filter @cocalc/launchpad run build
 pnpm --filter @cocalc/database run build
 pnpm --filter @cocalc/server run build
+pnpm --filter @cocalc/http-api run build
 pnpm --filter @cocalc/hub run build
-pnpm --filter @cocalc/next run ts-build
-
-echo "- Prepare Next lib alias for bundler"
-NEXT_DIST="$ROOT/packages/next/dist"
-NEXT_LIB_ALIAS_CREATED=""
-if [ -d "$NEXT_DIST" ]; then
-  mkdir -p "$NEXT_DIST/node_modules"
-  if [ ! -e "$NEXT_DIST/node_modules/lib" ]; then
-    ln -s ../lib "$NEXT_DIST/node_modules/lib"
-    NEXT_LIB_ALIAS_CREATED="1"
-  fi
-fi
 
 echo "- Bundle entry point with @vercel/ncc"
-NODE_PATH="${NODE_PATH:+$NODE_PATH:}$ROOT/packages/next/dist" \
 ncc build packages/launchpad/bin/start.js \
   -o "$OUT"/bundle \
   --external @electric-sql/pglite \
   --external bufferutil \
   --external utf-8-validate
-
-if [ "$NEXT_LIB_ALIAS_CREATED" = "1" ]; then
-  rm -f "$NEXT_DIST/node_modules/lib"
-fi
 
 copy_native_pkg() {
   local pkg="$1"
@@ -140,15 +124,16 @@ rsync -a --delete \
   --exclude 'embed-*.js' \
   packages/static/dist/ "$OUT/static/"
 
-echo "- Copy Next api/v2 handlers"
-mkdir -p "$OUT"/next-dist
+echo "- Copy public assets"
+mkdir -p "$OUT"/public
 rsync -a --delete \
-  --include '/lib/***' \
-  --include '/pages/' \
-  --include '/pages/api/' \
-  --include '/pages/api/v2/***' \
-  --exclude '*' \
-  packages/next/dist/ "$OUT/next-dist/"
+  packages/next/public/ "$OUT/public/"
+
+echo "- Copy http-api handlers"
+mkdir -p "$OUT"/http-api-dist
+rsync -a --delete \
+  --exclude '*.map' \
+  packages/http-api/dist/ "$OUT/http-api-dist/"
 
 echo "- Copy bootstrap.py"
 BOOTSTRAP_PY="$ROOT/packages/server/cloud/bootstrap/bootstrap.py"

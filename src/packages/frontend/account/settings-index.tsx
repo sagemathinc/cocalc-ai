@@ -14,11 +14,7 @@ import AIAvatar from "@cocalc/frontend/components/ai-avatar";
 import { labels } from "@cocalc/frontend/i18n";
 import { lite } from "@cocalc/frontend/lite";
 import { COLORS } from "@cocalc/util/theme";
-import {
-  VALID_PREFERENCES_SUB_TYPES,
-  type NavigatePath,
-  type PreferencesSubTabType,
-} from "@cocalc/util/types/settings";
+import type { NavigatePath } from "@cocalc/util/types/settings";
 import { APPEARANCE_ICON_NAME } from "./account-preferences-appearance";
 import { COMMUNICATION_ICON_NAME } from "./account-preferences-communication";
 import { EDITOR_ICON_NAME } from "./account-preferences-editor";
@@ -26,6 +22,10 @@ import { KEYBOARD_ICON_NAME } from "./account-preferences-keyboard";
 import { OTHER_ICON_NAME } from "./account-preferences-other";
 import { ACCOUNT_PROFILE_ICON_NAME } from "./account-preferences-profile";
 import { KEYS_ICON_NAME } from "./account-preferences-security";
+import {
+  applyAccountSettingsRoute,
+  parseAccountSettingsRoute,
+} from "./settings-routing";
 
 const MESSAGES = defineMessages({
   title: {
@@ -148,31 +148,9 @@ export function SettingsOverview() {
   const zendesk = !!useTypedRedux("customize", "zendesk");
 
   function handleNavigate(path: NavigatePath) {
-    // Use the same navigation pattern as the account page
-    const segments = path.split("/").filter(Boolean);
-    if (segments[0] === "settings") {
-      if (segments[1] === "profile") {
-        redux.getActions("account").setState({
-          active_page: "profile",
-          active_sub_tab: undefined,
-        });
-        redux.getActions("account").push_state(`/profile`);
-      } else if (segments[1] === "preferences" && segments[2]) {
-        // Handle preferences sub-tabs
-        const subTab = segments[2] as PreferencesSubTabType;
-        if (VALID_PREFERENCES_SUB_TYPES.includes(subTab)) {
-          const subTabKey = `preferences-${subTab}` as const;
-          redux.getActions("account").setState({
-            active_page: "preferences",
-            active_sub_tab: subTabKey,
-          });
-          redux.getActions("account").push_state(`/preferences/${subTab}`);
-        }
-      } else {
-        // Handle other settings pages
-        redux.getActions("account").set_active_tab(segments[1]);
-        redux.getActions("account").push_state(`/${segments[1]}`);
-      }
+    const route = parseAccountSettingsRoute(path);
+    if (route) {
+      applyAccountSettingsRoute(redux.getActions("account"), route);
     }
   }
 

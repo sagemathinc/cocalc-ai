@@ -1,5 +1,6 @@
 import { type CustomizeState } from "@cocalc/frontend/customize";
 import { ACCOUNT_ID_COOKIE } from "@cocalc/frontend/client/client";
+import target from "@cocalc/frontend/client/handle-target";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import {
   FALLBACK_PROJECT_UUID,
@@ -12,11 +13,36 @@ export let lite = false;
 export let project_id: string = "";
 export let account_id: string = "";
 
+function getLiteInitialProjectState(
+  targetPath: string,
+  defaultProjectId: string,
+): { switch_to: boolean; target: string } {
+  const segments = targetPath.split("/").filter(Boolean);
+  if (segments[0] === "projects") {
+    if (segments[1] === defaultProjectId) {
+      const projectTarget = segments.slice(2).join("/");
+      return {
+        switch_to: true,
+        target: projectTarget || "project-home",
+      };
+    }
+    return {
+      switch_to: true,
+      target: "project-home",
+    };
+  }
+  return {
+    switch_to: false,
+    target: "project-home",
+  };
+}
+
 export function init(redux, configuration: CustomizeState) {
   // console.log("Initializing CoCalc Lite!");
   lite = true;
   ({ account_id = FALLBACK_ACCOUNT_UUID, project_id = FALLBACK_PROJECT_UUID } =
     configuration);
+  const initialProjectState = getLiteInitialProjectState(target, project_id);
   const previousAccountId = webapp_client.account_id;
   Cookies.remove(ACCOUNT_ID_COOKIE);
   webapp_client.account_id = account_id;
@@ -32,8 +58,8 @@ export function init(redux, configuration: CustomizeState) {
     .getActions("projects")
     .open_project({
       project_id,
-      target: "project-home",
-      switch_to: true,
+      target: initialProjectState.target,
+      switch_to: initialProjectState.switch_to,
       restore_session: false,
     })
     .catch((err) => {

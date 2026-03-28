@@ -5,6 +5,7 @@ import type { LroSummary } from "@cocalc/conat/hub/api/lro";
 import getPool from "@cocalc/database/pool";
 import { getEffectiveParallelOpsLimit } from "@cocalc/server/lro/worker-config";
 import { getParallelOpsWorkerRegistration } from "@cocalc/server/lro/worker-registry";
+import { getProjectHostDefaultParallelLimits } from "@cocalc/server/lro/project-host-defaults";
 import {
   ensureLroSchema,
   touchLro,
@@ -40,7 +41,7 @@ const HEARTBEAT_MS = 15_000;
 const TICK_MS = 5_000;
 const DEFAULT_MAX_PARALLEL = Math.max(
   1,
-  Math.min(100, envToInt("COCALC_BACKUP_LRO_MAX_PARALLEL", 10)),
+  Math.min(250, envToInt("COCALC_BACKUP_LRO_MAX_PARALLEL", 250)),
 );
 const MAX_BACKUPS_PER_PROJECT = 30;
 const HOST_LOCAL_BACKUP_WORKER_KIND = "project-host-backup-execution";
@@ -351,17 +352,23 @@ async function claimBackupLroOps({
     const hostRegistration = getParallelOpsWorkerRegistration(
       HOST_LOCAL_BACKUP_WORKER_KIND,
     );
-    const defaultHostLimit =
-      hostRegistration?.getLimitSnapshot().default_limit ??
-      DEFAULT_MAX_PARALLEL;
     const reportedHostIds = new Set(
       hostStatuses.rows.map(({ host_id }) => host_id),
     );
+    const fallbackHostIds: string[] = [];
     for (const { id } of await listActiveProjectHosts()) {
       if (reportedHostIds.has(id)) continue;
+      fallbackHostIds.push(id);
+    }
+    const defaultHostLimits = await getProjectHostDefaultParallelLimits({
+      host_ids: fallbackHostIds,
+    });
+    const defaultFallbackLimit =
+      hostRegistration?.getLimitSnapshot().default_limit ?? 1;
+    for (const id of fallbackHostIds) {
       const { value } = await getEffectiveParallelOpsLimit({
         worker_kind: HOST_LOCAL_BACKUP_WORKER_KIND,
-        default_limit: defaultHostLimit,
+        default_limit: defaultHostLimits.get(id) ?? defaultFallbackLimit,
         scope_type: "project_host",
         scope_id: id,
       });

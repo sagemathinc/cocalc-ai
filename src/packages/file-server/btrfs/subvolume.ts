@@ -10,6 +10,7 @@ import { SNAPSHOTS } from "@cocalc/util/consts/snapshots";
 import { SubvolumeRustic } from "./subvolume-rustic";
 import { SubvolumeSnapshots } from "./subvolume-snapshots";
 import { SubvolumeQuota } from "./subvolume-quota";
+import { queueCreateSubvolumeQgroup } from "./quota-queue";
 import { SandboxedFilesystem } from "@cocalc/backend/sandbox";
 import { exists } from "@cocalc/backend/misc/async-utils-node";
 import { btrfs, sudo } from "./util";
@@ -90,36 +91,11 @@ export class Subvolume {
   };
 
   private ensureQgroup = async () => {
-    const id = await this.getSubvolumeId();
-    const tryCreate = async () => {
-      await btrfs({ args: ["qgroup", "create", `1/${id}`, this.path] });
-    };
-    try {
-      await tryCreate();
-    } catch (err: any) {
-      const stderr =
-        typeof err?.stderr === "string" ? err.stderr : `${err?.message ?? err}`;
-      if (stderr.includes("quota not enabled")) {
-        // quotas are disabled on the mount; enable and retry once
-        await btrfs({
-          args: ["quota", "enable", this.filesystem.opts.mount],
-        });
-        await tryCreate().catch((retryErr: any) => {
-          const retryStderr =
-            typeof retryErr?.stderr === "string"
-              ? retryErr.stderr
-              : `${retryErr?.message ?? retryErr}`;
-          if (retryStderr.toLowerCase().includes("exist")) {
-            return;
-          }
-          throw retryErr;
-        });
-      } else if (stderr.toLowerCase().includes("exist")) {
-        return;
-      } else {
-        throw err;
-      }
-    }
+    await queueCreateSubvolumeQgroup({
+      mount: this.filesystem.opts.mount,
+      path: this.path,
+      wait: true,
+    });
   };
 
   private ensureSnapshotsDir = async () => {

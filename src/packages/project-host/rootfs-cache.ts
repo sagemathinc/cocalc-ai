@@ -424,6 +424,7 @@ async function downloadManagedRootfsArtifact({
     await cleanupManagedRootfsTempDir(tempDir);
   }
   if (access.artifact_format === "rustic") {
+    await mkdir(IMAGE_CACHE, { recursive: true });
     const tempDir = await mkdtemp(
       join(IMAGE_CACHE, ".managed-rootfs-rustic-restore-"),
     );

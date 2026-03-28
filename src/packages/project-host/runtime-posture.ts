@@ -135,6 +135,7 @@ async function postureSweep(context: "startup" | "periodic"): Promise<void> {
 
     const fileServerStatus = getFileServerRuntimeStatus();
     const bees = fileServerStatus?.bees;
+    const quotaQueue = fileServerStatus?.quota_queue;
     if (!fileServerStatus || !bees) {
       logger.debug("runtime posture: file-server not initialized yet", {
         context,
@@ -153,6 +154,27 @@ async function postureSweep(context: "startup" | "periodic"): Promise<void> {
       logger.debug("runtime posture: BEES dedup running", {
         context,
         status: bees,
+      });
+    }
+
+    if (!quotaQueue) {
+      logger.debug("runtime posture: quota queue not initialized yet", {
+        context,
+      });
+    } else if (quotaQueue.failed_count > 0) {
+      logger.warn("runtime posture: btrfs quota queue has failed work", {
+        context,
+        status: quotaQueue,
+      });
+    } else if (quotaQueue.queued_count > 0 || quotaQueue.running_count > 0) {
+      logger.info("runtime posture: btrfs quota queue backlog", {
+        context,
+        status: quotaQueue,
+      });
+    } else {
+      logger.debug("runtime posture: btrfs quota queue idle", {
+        context,
+        status: quotaQueue,
       });
     }
   } catch (err) {

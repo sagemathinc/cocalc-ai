@@ -6,8 +6,9 @@ import { type SnapshotCounts, updateRollingSnapshots } from "./snapshots";
 import { ConatError } from "@cocalc/conat/core/client";
 import { type SnapshotUsage } from "@cocalc/conat/files/file-server";
 import { SNAPSHOTS } from "@cocalc/util/consts/snapshots";
-import { getSubvolumeField, getSubvolumeId } from "./subvolume";
+import { getSubvolumeField } from "./subvolume";
 import { parsePlainQgroupShow } from "./subvolume-quota";
+import { queueAssignSnapshotQgroup } from "./quota-queue";
 
 const logger = getLogger("file-server:btrfs:subvolume-snapshots");
 
@@ -33,7 +34,16 @@ export class SubvolumeSnapshots {
     await this.subvolume.fs.chmod(SNAPSHOTS, "0700");
   };
 
-  create = async (name?: string, { limit }: { limit?: number } = {}) => {
+  create = async (
+    name?: string,
+    {
+      limit,
+      quotaMode = "sync",
+    }: {
+      limit?: number;
+      quotaMode?: "sync" | "async" | "skip";
+    } = {},
+  ) => {
     if (name?.startsWith(".")) {
       throw Error("snapshot name must not start with '.'");
     }
@@ -61,17 +71,16 @@ export class SubvolumeSnapshots {
 
     await btrfs({ args });
 
-    // also add snapshot to the snapshot quota group
-    const snapshotId = await getSubvolumeId(snapshotPath);
-    const subvolumeId = await this.subvolume.getSubvolumeId();
-    await btrfs({
-      args: [
-        "qgroup",
-        "assign",
-        `0/${snapshotId}`,
-        `1/${subvolumeId}`,
-        this.subvolume.path,
-      ],
+    if (quotaMode === "skip") {
+      return;
+    }
+
+    const wait = quotaMode === "sync";
+    await queueAssignSnapshotQgroup({
+      mount: this.subvolume.filesystem.opts.mount,
+      snapshotPath,
+      subvolumePath: this.subvolume.path,
+      wait,
     });
   };
 

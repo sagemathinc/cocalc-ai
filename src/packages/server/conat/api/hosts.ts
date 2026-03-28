@@ -468,6 +468,11 @@ function parseRow(
     starred?: boolean;
   } = {},
 ): Host {
+  const parsePositiveInt = (value: unknown): number | undefined => {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed <= 0) return undefined;
+    return Math.floor(parsed);
+  };
   const metadata = row.metadata ?? {};
   const software = metadata.software ?? {};
   const machine: HostMachine | undefined = metadata.machine;
@@ -495,6 +500,8 @@ function parseRow(
     owner: metadata.owner ?? "",
     region: row.region ?? "",
     size: metadata.size ?? "",
+    host_cpu_count: parsePositiveInt(metadata.host_cpu_count),
+    host_ram_gb: parsePositiveInt(metadata.host_ram_gb),
     gpu: !!metadata.gpu,
     status: normalizedStatus as HostStatus,
     reprovision_required: !!metadata.reprovision_required,

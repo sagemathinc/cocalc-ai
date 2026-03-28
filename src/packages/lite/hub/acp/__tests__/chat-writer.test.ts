@@ -1138,8 +1138,8 @@ describe("ChatStreamWriter", () => {
     expect((writer as any).content).toContain(
       "You have reached your 5-hour LLM usage limit.",
     );
-    expect((writer as any).content).toContain("/store/membership");
-    expect((writer as any).content).toContain("/preferences/ai");
+    expect((writer as any).content).toContain("/settings/store");
+    expect((writer as any).content).toContain("/settings/preferences/ai");
     expect((writer as any).content).not.toContain(
       "The cgroupv2 manager is set to systemd",
     );

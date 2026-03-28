@@ -47,7 +47,6 @@ import {
   KUCALC_ON_PREMISES,
 } from "@cocalc/util/db-schema/site-defaults";
 import { COLORS } from "@cocalc/util/theme";
-import { VALID_PREFERENCES_SUB_TYPES } from "@cocalc/util/types/settings";
 import { AccountPreferencesAI } from "./account-preferences-ai";
 import {
   AccountPreferencesAppearance,
@@ -82,6 +81,11 @@ import { I18NSelector } from "./i18n-selector";
 import { LicensesPage } from "./licenses/licenses-page";
 import { PublicPaths } from "./public-paths/public-paths";
 import { SettingsOverview } from "./settings-index";
+import {
+  applyAccountSettingsRoute,
+  createPreferencesSubTabKey,
+  isAccountSettingsTab,
+} from "./settings-routing";
 import MembershipBadge from "./membership-badge";
 import { lite, project_id } from "@cocalc/frontend/lite";
 
@@ -96,17 +100,6 @@ type MenuKey =
   | "profile"
   | PreferencesSubTabKey
   | string;
-
-// Utility function to safely create preferences sub-tab key
-function createPreferencesSubTabKey(
-  subTab: string,
-): PreferencesSubTabKey | null {
-  if (VALID_PREFERENCES_SUB_TYPES.includes(subTab as PreferencesSubTabType)) {
-    const validSubTab = subTab as PreferencesSubTabType;
-    return `preferences-${validSubTab}`;
-  }
-  return null;
-}
 
 // give up on trying to load account info and redirect to landing page.
 // Do NOT make too short, since loading account info might takes ~10 seconds, e,g., due
@@ -139,22 +132,14 @@ export const AccountPage: React.FC = () => {
   useEffect(() => {
     if (!lite) return;
     if (active_page !== "admin") return;
-    redux.getActions("account").setState({
-      active_page: "index",
-      active_sub_tab: undefined,
-    });
-    redux.getActions("account").push_state(`/settings/index`);
+    applyAccountSettingsRoute(redux.getActions("account"), { kind: "index" });
   }, [active_page]);
 
   function handle_select(key: MenuKey): void {
+    const accountActions = redux.getActions("account");
     switch (key) {
       case "settings":
-        // Handle settings overview page
-        redux.getActions("account").setState({
-          active_page: "index",
-          active_sub_tab: undefined,
-        });
-        redux.getActions("account").push_state(`/settings/index`);
+        applyAccountSettingsRoute(accountActions, { kind: "index" });
         return;
       case "billing":
         redux.getActions("billing").update_customer();
@@ -164,12 +149,7 @@ export const AccountPage: React.FC = () => {
       case "signout":
         return;
       case "profile":
-        // Handle profile as standalone page
-        redux.getActions("account").setState({
-          active_page: "profile",
-          active_sub_tab: undefined,
-        });
-        redux.getActions("account").push_state(`/profile`);
+        applyAccountSettingsRoute(accountActions, { kind: "profile" });
         return;
     }
 
@@ -178,18 +158,18 @@ export const AccountPage: React.FC = () => {
       const subTab = key.replace("preferences-", "");
       const subTabKey = createPreferencesSubTabKey(subTab);
       if (subTabKey) {
-        redux.getActions("account").setState({
-          active_sub_tab: subTabKey,
-          active_page: "preferences",
+        applyAccountSettingsRoute(accountActions, {
+          kind: "preferences",
+          subTab: subTab as PreferencesSubTabType,
+          subTabKey,
         });
-        // Update URL to settings/preferences/[sub-tab]
-        redux.getActions("account").push_state(`/preferences/${subTab}`);
       }
       return;
     }
 
-    redux.getActions("account").set_active_tab(key);
-    redux.getActions("account").push_state(`/${key}`);
+    if (typeof key === "string" && isAccountSettingsTab(key)) {
+      applyAccountSettingsRoute(accountActions, { kind: "tab", page: key });
+    }
   }
 
   function getTabs(): any[] {

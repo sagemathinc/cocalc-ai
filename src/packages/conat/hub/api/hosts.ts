@@ -218,6 +218,8 @@ export interface Host {
   owner: string; // account_id
   region: string;
   size: string; // ui preset label/key
+  host_cpu_count?: number;
+  host_ram_gb?: number;
   gpu: boolean;
   status: HostStatus;
   reprovision_required?: boolean;

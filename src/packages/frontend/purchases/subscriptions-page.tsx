@@ -1,5 +1,4 @@
 import Subscriptions from "./subscriptions";
-import Next from "@cocalc/frontend/components/next";
 import { UseBalance } from "@cocalc/frontend/account/other-settings";
 import { Button, Flex } from "antd";
 import { useState } from "react";
@@ -22,9 +21,6 @@ export default function SubscriptionsPage() {
         onClose={() => setMembershipOpen(false)}
       />
       <Subscriptions />
-      <div style={{ margin: "15px 0" }}>
-        <Next href="/billing/subscriptions">Legacy Subscriptions Page...</Next>
-      </div>
     </div>
   );
 }

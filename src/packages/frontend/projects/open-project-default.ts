@@ -6,12 +6,17 @@
 export function defaultOpenProjectTarget({
   target,
   activeProjectTab,
+  switchTo = true,
 }: {
   target?: string;
   activeProjectTab?: string;
+  switchTo?: boolean;
 }): string | undefined {
   if (target != null && target !== "") {
     return target;
+  }
+  if (!switchTo) {
+    return undefined;
   }
   if (activeProjectTab == null || activeProjectTab === "files") {
     return "files/";

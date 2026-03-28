@@ -7,7 +7,6 @@ import { zIndexPayAsGo } from "../zindex";
 import Cost, { getCost } from "./cost";
 import { isPurchaseAllowed, studentPay } from "../api";
 import { redux } from "@cocalc/frontend/app-framework";
-import PayLink from "./pay-link";
 import Transfer from "./transfer";
 import StripePayment from "@cocalc/frontend/purchases/stripe-payment";
 import type { LineItem } from "@cocalc/util/stripe/types";
@@ -168,7 +167,6 @@ export default function PayNow({
       )}
       <Divider>Other Options</Divider>
       <Space orientation="vertical">
-        <PayLink project_id={project_id} />
         <Transfer project_id={project_id} />
         <Button
           onClick={() => {

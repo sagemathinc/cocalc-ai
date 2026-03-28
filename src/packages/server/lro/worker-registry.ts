@@ -121,9 +121,9 @@ export const parallelOpsWorkerRegistry: ParallelOpsWorkerRegistration[] = [
       "Per-project-host RootFS publish limits are reported separately.",
     ],
     getLimitSnapshot: () => ({
-      default_limit: 100,
-      configured_limit: 100,
-      effective_limit: 100,
+      default_limit: 250,
+      configured_limit: 250,
+      effective_limit: 250,
       config_source: "constant",
     }),
   },
@@ -135,7 +135,7 @@ export const parallelOpsWorkerRegistry: ParallelOpsWorkerRegistration[] = [
     lease_ms: 120_000,
     notes: [
       "This reports host-local admission usage for RootFS publish.",
-      "The default is intentionally conservative until same-host publish scaling is benchmarked.",
+      "The effective per-host default is CPU-based and can be overridden per host.",
     ],
     getLimitSnapshot: () => ({
       default_limit: 1,
@@ -186,10 +186,10 @@ export const parallelOpsWorkerRegistry: ParallelOpsWorkerRegistration[] = [
     getLimitSnapshot: () => {
       const configured = Math.max(
         1,
-        Math.min(100, envToInt("COCALC_BACKUP_LRO_MAX_PARALLEL", 10)),
+        Math.min(250, envToInt("COCALC_BACKUP_LRO_MAX_PARALLEL", 250)),
       );
       return {
-        default_limit: 10,
+        default_limit: 250,
         configured_limit: configured,
         effective_limit: configured,
         config_source: "env-legacy",
@@ -204,9 +204,10 @@ export const parallelOpsWorkerRegistry: ParallelOpsWorkerRegistration[] = [
     notes: [
       "This reports host-local backup slot usage on reachable project-hosts.",
       "running_count is the number of backup slots in use, and queued_count is the number of host-local waiters.",
+      "The effective per-host default is CPU-based and can be overridden per host.",
     ],
     getLimitSnapshot: () => ({
-      default_limit: 10,
+      default_limit: 1,
       configured_limit: null,
       effective_limit: null,
       config_source: "env-legacy",

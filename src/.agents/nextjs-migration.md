@@ -31,15 +31,22 @@ This means:
 ### Immediate scope decisions
 
 - the **share server** can be deleted immediately for the new stack
+- the generic **token-action** system should be deleted, not ported
 - the old **store** should not be ported
 - the only purchase flows that matter in the new system are:
   - membership upgrades
   - vouchers
   - a public `/redeem` flow with in-page sign in/up
   - admin-assisted purchases for memberships and vouchers
-  - student pay (second round after Next.js removal)
+  - dedicated third-party student/course payment (second round after Next.js removal)
   - user-owned hosts (second round after Next.js removal)
   - team/organization memberships (second round after Next.js removal)
+
+### Current status
+
+- `api/v2` and `api/conat` are already off Next
+- the active hub/launchpad stack no longer boots a Next runtime
+- share-server support is removed from the active stack
 
 ### Round-one commerce scope
 
@@ -54,6 +61,8 @@ Round two is explicitly deferred until the Next.js runtime is out of the
 active stack:
 
 - focused student memberships
+- a dedicated third-party student/course payment page that replaces the old
+  token link flow
 - user-owned-host billing under `/hosts`
 - team/organization membership purchasing
 
@@ -445,13 +454,12 @@ store model.
 
 - memberships
 - vouchers
-- student pay
-- user-owned hosts
 
 ### Delete
 
 - shopping cart complexity
 - general store navigation
+- generic token-action links such as `/token/*`
 - unrelated product catalog flows
 
 ### Tasks
@@ -461,6 +469,9 @@ store model.
 - create app-native voucher detail/admin screens
 - port only necessary APIs
 - connect simplified billing UX to existing purchases APIs or their replacements
+- defer third-party student/course payment to a dedicated follow-up flow
+  instead of keeping the generic token system
+- defer user-owned-host billing until the second round
 
 ### Acceptance criteria
 

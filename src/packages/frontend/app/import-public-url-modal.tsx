@@ -7,6 +7,10 @@ import { useEffect, useMemo, useState } from "react";
 import { Alert, Button, Input, Modal, Radio, Space } from "antd";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { QueryParams } from "@cocalc/frontend/misc/query-params";
+import {
+  buildProjectFilesTarget,
+  getProjectUrlPath,
+} from "@cocalc/frontend/project-routing";
 import { SelectProject } from "@cocalc/frontend/projects/select-project";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
@@ -42,7 +46,10 @@ function encodeProjectPath(path: string): string {
 }
 
 function importedFileHref(projectId: string, path: string): string {
-  return `${appBasePath.replace(/\/+$/, "")}/projects/${projectId}/files/${encodeProjectPath(path)}`;
+  const localTarget = buildProjectFilesTarget(path, false, {
+    encodeRelativePath: encodeProjectPath,
+  });
+  return `${appBasePath.replace(/\/+$/, "")}${getProjectUrlPath(projectId, localTarget)}`;
 }
 
 export function ImportPublicUrlModal() {

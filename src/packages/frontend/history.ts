@@ -50,28 +50,18 @@ The URI schema handled by the single page app is as follows:
 import { join } from "path";
 
 import { redux } from "@cocalc/frontend/app-framework";
+import {
+  applyAccountSettingsRoute,
+  getAccountSettingsRouteFromState,
+} from "@cocalc/frontend/account/settings-routing";
 import { IS_EMBEDDED } from "@cocalc/frontend/client/handle-target";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
-import Fragment from "@cocalc/frontend/misc/fragment-id";
-import type { AuthView } from "@cocalc/frontend/auth/types";
 import {
-  type PreferencesSubTabKey,
-  type PreferencesSubTabType,
-  VALID_PREFERENCES_SUB_TYPES,
-  VALID_SETTINGS_PAGES,
-  type SettingsPageType,
-} from "@cocalc/util/types/settings";
+  parsePageTarget,
+  type ParsedPageTarget,
+} from "@cocalc/frontend/page-routing";
+import Fragment from "@cocalc/frontend/misc/fragment-id";
 import { getNotificationFilterFromFragment } from "./notifications/fragment";
-
-// Utility function to safely create preferences sub-tab key
-function createPreferencesSubTabKey(
-  subTab: string,
-): PreferencesSubTabKey | null {
-  if (VALID_PREFERENCES_SUB_TYPES.includes(subTab as PreferencesSubTabType)) {
-    return `preferences-${subTab}` as PreferencesSubTabKey;
-  }
-  return null;
-}
 
 // Determine query params part of URL based on state of the project store.
 // This also leaves unchanged any *other* params already there (i.e., not
@@ -90,18 +80,6 @@ function params(): string {
     }
   }
   return u.search;
-}
-
-function parseAuthView(value?: string): AuthView {
-  switch (value) {
-    case "sign-up":
-      return "sign-up";
-    case "password-reset":
-      return "password-reset";
-    case "sign-in":
-    default:
-      return "sign-in";
-  }
 }
 
 // The last explicitly set url.
@@ -156,103 +134,77 @@ export function load_target(
   if (!target) {
     return;
   }
-  const segments = target.split("/");
+  if (target === "help" || target.startsWith("help/")) {
+    redux.getActions("page").set_active_tab("about", change_history);
+    return;
+  }
+  const parsed = parsePageTarget(target);
   if (
     !redux.getStore("account").get("is_logged_in") &&
-    segments[0] !== "auth"
+    parsed.page !== "auth"
   ) {
     // this will redirect to the sign in page after a brief pause
     redux.getActions("page").set_active_tab("account", false);
     return;
   }
-  switch (segments[0]) {
-    case "help":
-      redux.getActions("page").set_active_tab("about", change_history);
+  switch (parsed.page) {
+    case "project":
+      redux
+        .getActions("projects")
+        .load_target(
+          parsed.target,
+          true,
+          ignore_kiosk,
+          change_history,
+          Fragment.get(),
+        );
       break;
 
     case "projects":
-      if (segments.length > 1) {
-        redux
-          .getActions("projects")
-          .load_target(
-            segments.slice(1).join("/"),
-            true,
-            ignore_kiosk,
-            change_history,
-            Fragment.get(),
-          );
-      } else {
-        redux.getActions("page").set_active_tab("projects", change_history);
-      }
+      redux.getActions("page").set_active_tab("projects", change_history);
       break;
 
-    case "settings":
+    case "account":
       redux.getActions("page").set_active_tab("account", false);
-      const actions = redux.getActions("account");
-      if (!segments[1] || segments[1] === "" || segments[1] === "index") {
-        // Handle settings overview: settings/, settings, or settings/index
-        actions.setState({
-          active_page: "index",
-          active_sub_tab: undefined,
-        });
-      } else if (segments[1] === "profile") {
-        // Handle profile: settings/profile
-        actions.setState({
-          active_page: "profile",
-          active_sub_tab: undefined,
-        });
-      } else if (segments[1] === "preferences" && segments[2]) {
-        // Handle preferences sub-tabs: settings/preferences/[sub-tab]
-        const subTabKey = createPreferencesSubTabKey(segments[2]);
-        if (subTabKey) {
-          actions.setState({
-            active_page: "preferences",
-            active_sub_tab: subTabKey,
-          });
-        } else {
-          // Invalid sub-tab, default to appearance
-          actions.setState({
-            active_page: "preferences",
-            active_sub_tab: "preferences-appearance" as PreferencesSubTabKey,
-          });
-        }
-      } else if (segments[1]) {
-        // Handle main tabs: settings/[tab]
-        actions.set_active_tab(segments[1]);
-      } else {
-        // No specific tab provided, default to index: settings/ -> settings/index
-        actions.setState({
-          active_page: "index",
-          active_sub_tab: undefined,
-        });
-      }
-      actions.setFragment(Fragment.decode(hash));
-
+      applyAccountSettingsRoute(
+        redux.getActions("account"),
+        getAccountSettingsRouteFromState({
+          active_page: parsed.tab,
+          active_sub_tab: parsed.sub_tab,
+        }),
+        { pushHistory: change_history },
+      );
+      redux.getActions("account").setFragment(Fragment.decode(hash));
       break;
 
-    case "notifications":
+    case "notifications": {
       const { filter, id } = getNotificationFilterFromFragment(hash);
       redux.getActions("mentions").set_filter(filter, id);
       redux.getActions("page").set_active_tab("notifications", change_history);
       break;
+    }
 
     case "hosts":
       redux.getActions("page").set_active_tab("hosts", change_history);
       break;
 
+    case "ssh":
+      redux.getActions("page").set_active_tab("ssh", change_history);
+      break;
+
     case "auth":
       redux.getActions("page").setState({
         active_top_tab: "auth",
-        auth_view: parseAuthView(segments[1]),
+        auth_view: parsed.view,
       });
       break;
 
     case "file-use":
-      // not implemented
+      redux.getActions("page").set_active_tab("file-use", change_history);
       break;
 
     case "admin":
-      redux.getActions("page").set_active_tab(segments[0], change_history);
+      redux.getActions("page").set_active_tab("admin", change_history);
       break;
   }
 }
@@ -269,96 +221,6 @@ window.onpopstate = (_) => {
   );
 };
 
-export function parse_target(target?: string):
-  | {
-      page:
-        | "projects"
-        | "help"
-        | "file-use"
-        | "notifications"
-        | "admin"
-        | "hosts"
-        | "ssh";
-    }
-  | { page: "project"; target: string }
-  | { page: "profile" | "settings" }
-  | {
-      page: "preferences";
-      sub_tab?: PreferencesSubTabKey;
-    }
-  | {
-      page: "account";
-      tab: Exclude<SettingsPageType, "index" | "profile">;
-    }
-  | {
-      page: "notifications";
-      tab: "mentions";
-    }
-  | {
-      page: "auth";
-      view: AuthView;
-    } {
-  if (target == undefined) {
-    return { page: "profile" };
-  }
-  const segments = target.split("/");
-  switch (segments[0]) {
-    case "projects":
-      if (segments.length < 2 || (segments.length == 2 && segments[1] == "")) {
-        return { page: "projects" };
-      } else {
-        return { page: "project", target: segments.slice(1).join("/") };
-      }
-    case "settings":
-      switch (segments[1]) {
-        case undefined:
-        case "":
-        case "index":
-          return { page: "settings" };
-        case "profile":
-          return { page: "profile" };
-        case "preferences":
-          if (segments[2]) {
-            // Handle sub-tabs: settings/preferences/[sub-tab]
-            const subTabKey = createPreferencesSubTabKey(segments[2]);
-            return {
-              page: "preferences",
-              sub_tab: subTabKey ?? "preferences-appearance", // Default to appearance if invalid
-            };
-          } else {
-            return { page: "preferences" };
-          }
-        default:
-          if (
-            VALID_SETTINGS_PAGES.includes(segments[1] as SettingsPageType) &&
-            segments[1] !== "index" &&
-            segments[1] !== "profile"
-          ) {
-            return {
-              page: "account",
-              tab: segments[1] as Exclude<
-                SettingsPageType,
-                "index" | "profile"
-              >,
-            };
-          }
-          return { page: "profile" };
-      }
-    case "notifications":
-      return { page: "notifications" };
-    case "help":
-      return { page: "help" };
-    case "file-use":
-      return { page: "file-use" };
-    case "admin":
-      return { page: "admin" };
-    case "hosts":
-      return { page: "hosts" };
-    case "ssh":
-      return { page: "ssh" };
-    case "auth":
-      return { page: "auth", view: parseAuthView(segments[1]) };
-    default:
-      return { page: "profile" };
-  }
+export function parse_target(target?: string): ParsedPageTarget {
+  return parsePageTarget(target);
 }

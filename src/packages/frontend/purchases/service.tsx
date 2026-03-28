@@ -7,7 +7,7 @@ Show tag for each service
 import { Tag, Tooltip } from "antd";
 import { useState } from "react";
 
-import { redux } from "@cocalc/frontend/app-framework";
+import { openAccountSettings } from "@cocalc/frontend/account/settings-routing";
 import {
   QUOTA_SPEC,
   Service,
@@ -66,8 +66,7 @@ export default function ServiceTag({
     tag = (
       <a
         onClick={() => {
-          redux.getActions("page").set_active_tab("account");
-          redux.getActions("account").set_active_tab("vouchers");
+          openAccountSettings({ kind: "tab", page: "vouchers" });
         }}
       >
         {tag}

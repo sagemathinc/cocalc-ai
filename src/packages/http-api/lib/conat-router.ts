@@ -34,7 +34,6 @@ function resolveConatApiRoot(override?: string): string {
         "api",
         "conat",
       ),
-      join(bundleDir, "next-dist", "pages", "api", "conat"),
     ];
     for (const bundled of bundledCandidates) {
       if (existsSync(bundled)) {

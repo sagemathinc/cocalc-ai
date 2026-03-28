@@ -21,7 +21,6 @@ import isValidAccount from "@cocalc/server/accounts/is-valid-account";
 import createCredit from "./create-credit";
 import getLogger from "@cocalc/backend/logger";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
-import { markTokenActionPaid } from "@cocalc/server/token-actions/make-payment";
 import { moneyToCurrency, stripeToMoney, toDecimal } from "@cocalc/util/money";
 import { decimalToStripe } from "@cocalc/util/stripe/calc";
 
@@ -257,11 +256,6 @@ export async function createCreditFromPaidStripeInvoice(
     invoice_id: invoice.id,
     amount: amountValue,
   });
-
-  const { token } = metadata;
-  if (token) {
-    await markTokenActionPaid(token);
-  }
 
   return true;
 }
