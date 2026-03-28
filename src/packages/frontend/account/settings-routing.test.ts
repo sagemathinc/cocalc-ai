@@ -5,6 +5,7 @@ import {
   getAccountSettingsState,
   getSettingsPushStatePath,
   getSettingsTargetPath,
+  getSettingsUrlPath,
   parseAccountSettingsRoute,
 } from "./settings-routing";
 
@@ -37,6 +38,7 @@ describe("settings-routing", () => {
         subTabKey: "preferences-appearance",
       }),
     ).toBe("settings/preferences/appearance");
+    expect(getSettingsUrlPath({ kind: "profile" })).toBe("/settings/profile");
     expect(getSettingsPushStatePath({ kind: "profile" })).toBe("/profile");
   });
 

@@ -1,6 +1,8 @@
 import {
   getInitialAccountPageState,
+  getPageTargetPath,
   getPageTopTab,
+  getPageUrlPath,
   parsePageTarget,
 } from "./page-routing";
 
@@ -51,5 +53,22 @@ describe("page-routing", () => {
       tab: "preferences",
       sub_tab: "preferences-editor",
     });
+  });
+
+  it("builds canonical paths from shared page routes", () => {
+    expect(getPageTargetPath({ page: "projects" })).toBe("projects");
+    expect(
+      getPageTargetPath({
+        page: "account",
+        tab: "preferences",
+        sub_tab: "preferences-keyboard",
+      }),
+    ).toBe("settings/preferences/keyboard");
+    expect(getPageUrlPath({ page: "auth", view: "sign-up" })).toBe(
+      "/auth/sign-up",
+    );
+    expect(getPageUrlPath({ page: "project", target: "abc/files" })).toBe(
+      "/projects/abc/files",
+    );
   });
 });

@@ -5,7 +5,9 @@
 
 import type { AuthView } from "@cocalc/frontend/auth/types";
 import {
+  getAccountSettingsRouteFromState,
   getAccountSettingsState,
+  getSettingsTargetPath,
   parseAccountSettingsRoute,
 } from "@cocalc/frontend/account/settings-routing";
 import type {
@@ -120,4 +122,36 @@ export function getInitialAccountPageState(parsed: ParsedPageTarget):
     active_page: parsed.tab,
     active_sub_tab: parsed.sub_tab,
   };
+}
+
+export function getPageTargetPath(parsed: ParsedPageTarget): string {
+  switch (parsed.page) {
+    case "projects":
+      return "projects";
+    case "project":
+      return `projects/${parsed.target}`;
+    case "account":
+      return getSettingsTargetPath(
+        getAccountSettingsRouteFromState({
+          active_page: parsed.tab,
+          active_sub_tab: parsed.sub_tab,
+        }),
+      );
+    case "notifications":
+      return "notifications";
+    case "file-use":
+      return "file-use";
+    case "admin":
+      return "admin";
+    case "hosts":
+      return "hosts";
+    case "ssh":
+      return "ssh";
+    case "auth":
+      return `auth/${parsed.view}`;
+  }
+}
+
+export function getPageUrlPath(parsed: ParsedPageTarget): string {
+  return `/${getPageTargetPath(parsed)}`;
 }

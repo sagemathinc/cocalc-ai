@@ -14,12 +14,18 @@ import track from "@cocalc/frontend/user-tracking";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { once } from "@cocalc/util/async-utils";
 import { define, required } from "@cocalc/util/fill";
-import { encode_path } from "@cocalc/util/misc";
 import { Actions } from "@cocalc/util/redux/Actions";
+import type { SettingsPageType } from "@cocalc/util/types/settings";
 import { show_announce_end, show_announce_start } from "./dates";
 import { AccountStore } from "./store";
 import { AccountState } from "./types";
 import { lite } from "@cocalc/frontend/lite";
+import {
+  getAccountSettingsRouteFromState,
+  getSettingsPushStatePath,
+  getSettingsUrlPath,
+  parseAccountSettingsRoute,
+} from "./settings-routing";
 
 // Define account actions
 export class AccountActions extends Actions<AccountState> {
@@ -131,14 +137,22 @@ export class AccountActions extends Actions<AccountState> {
     if (url == null) {
       url = "";
     }
-    this._last_history_state = url;
-    set_url("/settings" + encode_path(url));
+    const route = parseAccountSettingsRoute(url) ?? { kind: "index" };
+    this._last_history_state = getSettingsPushStatePath(route);
+    set_url(getSettingsUrlPath(route));
   }
 
   public set_active_tab(tab: string): void {
     track("settings", { tab });
     this.setState({ active_page: tab });
-    this.push_state("/" + tab);
+    this.push_state(
+      getSettingsPushStatePath(
+      getAccountSettingsRouteFromState({
+          active_page: tab as SettingsPageType | "preferences",
+          active_sub_tab: undefined,
+        }),
+      ),
+    );
   }
 
   // Add an ssh key for this user, with the given fingerprint,

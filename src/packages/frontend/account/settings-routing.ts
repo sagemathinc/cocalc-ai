@@ -163,8 +163,12 @@ export function getSettingsTargetPath(
   }
 }
 
+export function getSettingsUrlPath(route: AccountSettingsRoute): string {
+  return `/${getSettingsTargetPath(route)}`;
+}
+
 export function getSettingsPushStatePath(route: AccountSettingsRoute): string {
-  return `/${getSettingsTargetPath(route).split("/").slice(1).join("/")}`;
+  return `/${getSettingsTargetPath(route).replace(/^settings\/?/, "")}`;
 }
 
 export function applyAccountSettingsRoute(

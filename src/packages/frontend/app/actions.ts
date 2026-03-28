@@ -13,6 +13,7 @@ import {
   isFullscreen,
   requestFullscreen,
 } from "@cocalc/frontend/misc/fullscreen";
+import { getPageUrlPath } from "@cocalc/frontend/page-routing";
 import { disconnect_from_project } from "@cocalc/frontend/project/websocket/connect";
 import { session_manager } from "@cocalc/frontend/session";
 import { once } from "@cocalc/util/async-utils";
@@ -175,7 +176,7 @@ export class PageActions extends Actions<PageState> {
     switch (key) {
       case "projects":
         if (change_history) {
-          set_url("/projects");
+          set_url(getPageUrlPath({ page: "projects" }));
         }
         set_window_title(intl.formatMessage(labels.projects));
         return;
@@ -188,31 +189,31 @@ export class PageActions extends Actions<PageState> {
         return;
       case "file-use": // this doesn't actually get used currently
         if (change_history) {
-          set_url("/file-use");
+          set_url(getPageUrlPath({ page: "file-use" }));
         }
         set_window_title("File Usage");
         return;
       case "admin":
         if (change_history) {
-          set_url("/admin");
+          set_url(getPageUrlPath({ page: "admin" }));
         }
         set_window_title(intl.formatMessage(labels.admin));
         return;
       case "hosts":
         if (change_history) {
-          set_url("/hosts");
+          set_url(getPageUrlPath({ page: "hosts" }));
         }
         set_window_title(`${projectLabel} Hosts`);
         return;
       case "ssh":
         if (change_history) {
-          set_url("/ssh");
+          set_url(getPageUrlPath({ page: "ssh" }));
         }
         set_window_title("SSH Sessions");
         return;
       case "notifications":
         if (change_history) {
-          set_url("/notifications");
+          set_url(getPageUrlPath({ page: "notifications" }));
         }
         set_window_title(intl.formatMessage(labels.messages_title));
         return;
@@ -220,13 +221,7 @@ export class PageActions extends Actions<PageState> {
         if (change_history) {
           const auth_view =
             this.redux.getStore("page").get("auth_view") ?? "sign-in";
-          const auth_path =
-            auth_view === "sign-up"
-              ? "/auth/sign-up"
-              : auth_view === "password-reset"
-                ? "/auth/password-reset"
-                : "/auth/sign-in";
-          set_url(auth_path);
+          set_url(getPageUrlPath({ page: "auth", view: auth_view }));
         }
         set_window_title("Sign in");
         return;
