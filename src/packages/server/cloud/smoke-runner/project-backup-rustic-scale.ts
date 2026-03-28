@@ -22,6 +22,13 @@ bulk throughput.
 
 import { spawn } from "node:child_process";
 import getLogger from "@cocalc/backend/logger";
+import getPool from "@cocalc/database/pool";
+import { getServerSettings } from "@cocalc/database/settings/server-settings";
+import {
+  DEFAULT_R2_REGION,
+  mapCloudRegionToR2Region,
+  parseR2Region,
+} from "@cocalc/util/consts";
 
 const logger = getLogger("server:cloud:smoke-runner:project-backup-rustic");
 
@@ -30,6 +37,20 @@ export type RusticScaleLayout =
   | { kind: "shared" }
   | { kind: "sharded"; shard_count: number };
 
+export type RusticScaleBackend =
+  | { kind: "local"; password?: string }
+  | {
+      kind: "r2";
+      endpoint: string;
+      bucket: string;
+      access_key_id: string;
+      secret_access_key: string;
+      root_prefix: string;
+      password?: string;
+    };
+
+export type RusticScaleCacheMode = "shared" | "per-project";
+
 export type RusticScaleBenchmarkOptions = {
   host: string;
   user?: string;
@@ -37,6 +58,9 @@ export type RusticScaleBenchmarkOptions = {
   port?: number;
   identity?: string;
   workdir?: string;
+  backend?: RusticScaleBackend;
+  cache_mode?: RusticScaleCacheMode;
+  cold_measurements?: boolean;
   layouts?: RusticScaleLayout[];
   project_counts?: number[];
   snapshots_per_project?: number;
@@ -87,6 +111,9 @@ export type RusticScaleBenchmarkResult = {
 
 type RemoteOptions = {
   workdir: string;
+  backend: RusticScaleBackend;
+  cache_mode: RusticScaleCacheMode;
+  cold_measurements: boolean;
   layouts: RusticScaleLayout[];
   project_counts: number[];
   snapshots_per_project: number;
@@ -94,6 +121,117 @@ type RemoteOptions = {
   common_file_size_bytes: number;
   target_project_index: number;
 };
+
+type ProjectBackupBucketRow = {
+  id: string;
+  name: string;
+  region: string | null;
+  endpoint: string | null;
+  access_key_id: string | null;
+  secret_access_key: string | null;
+  status: string | null;
+};
+
+async function resolveHostR2Region(host_id?: string): Promise<string> {
+  if (!host_id) {
+    return DEFAULT_R2_REGION;
+  }
+  const { rows } = await getPool("medium").query<{ region: string | null }>(
+    "SELECT region FROM project_hosts WHERE id=$1",
+    [host_id],
+  );
+  const hostRegion = `${rows[0]?.region ?? ""}`.trim();
+  const explicit = parseR2Region(hostRegion);
+  if (explicit) return explicit;
+  return mapCloudRegionToR2Region(hostRegion || DEFAULT_R2_REGION);
+}
+
+async function loadProjectBackupBucketForRegion(
+  region: string,
+): Promise<ProjectBackupBucketRow | null> {
+  const { rows } = await getPool("medium").query<ProjectBackupBucketRow>(
+    `SELECT
+      id,
+      name,
+      region,
+      endpoint,
+      access_key_id,
+      secret_access_key,
+      status
+    FROM buckets
+    WHERE provider='r2'
+      AND purpose='project-backups'
+      AND region=$1
+      AND (status IS NULL OR status != 'disabled')
+    ORDER BY created DESC
+    LIMIT 1`,
+    [region],
+  );
+  return rows[0] ?? null;
+}
+
+async function loadAnyProjectBackupBucket(): Promise<ProjectBackupBucketRow | null> {
+  const { rows } = await getPool("medium").query<ProjectBackupBucketRow>(
+    `SELECT
+      id,
+      name,
+      region,
+      endpoint,
+      access_key_id,
+      secret_access_key,
+      status
+    FROM buckets
+    WHERE provider='r2'
+      AND purpose='project-backups'
+      AND (status IS NULL OR status != 'disabled')
+    ORDER BY created DESC
+    LIMIT 1`,
+  );
+  return rows[0] ?? null;
+}
+
+export async function resolveProjectBackupR2BenchmarkBackend({
+  host_id,
+  root_prefix,
+}: {
+  host_id?: string;
+  root_prefix?: string;
+} = {}): Promise<Extract<RusticScaleBackend, { kind: "r2" }>> {
+  const settings = await getServerSettings();
+  const region = await resolveHostR2Region(host_id);
+  const bucket =
+    (await loadProjectBackupBucketForRegion(region)) ??
+    (await loadAnyProjectBackupBucket());
+  if (!bucket) {
+    throw new Error("no active project-backups bucket is configured");
+  }
+  const accountId = `${settings.r2_account_id ?? ""}`.trim() || undefined;
+  const accessKey =
+    `${settings.r2_access_key_id ?? ""}`.trim() ||
+    `${bucket.access_key_id ?? ""}`.trim();
+  const secretKey =
+    `${settings.r2_secret_access_key ?? ""}`.trim() ||
+    `${bucket.secret_access_key ?? ""}`.trim();
+  const endpoint =
+    ((accountId
+      ? `https://${accountId}.r2.cloudflarestorage.com`
+      : undefined) ??
+      `${bucket.endpoint ?? ""}`.trim()) ||
+    undefined;
+  if (!accessKey || !secretKey || !endpoint) {
+    throw new Error("missing R2 benchmark credentials or endpoint");
+  }
+  return {
+    kind: "r2",
+    endpoint,
+    bucket: bucket.name,
+    access_key_id: accessKey,
+    secret_access_key: secretKey,
+    root_prefix:
+      root_prefix ??
+      `rustic-scale-bench/${new Date().toISOString().replace(/[:.]/g, "-")}`,
+  };
+}
 
 function sshTarget({ user, host }: { user: string; host: string }): string {
   return `${user}@${host}`;
@@ -113,7 +251,8 @@ from pathlib import Path
 
 OPTIONS = json.loads(${JSON.stringify(optionsJson)})
 RUSTIC = "/opt/cocalc/tools/current/rustic"
-PASSWORD = "cocalc-rustic-bench"
+BACKEND = OPTIONS["backend"]
+PASSWORD = BACKEND.get("password") or "cocalc-rustic-bench"
 ENV = os.environ.copy()
 ENV["RUSTIC_NO_PROGRESS"] = "true"
 ENV["RUSTIC_LOG_LEVEL"] = "error"
@@ -143,16 +282,103 @@ def timed(cmd, *, cwd=None):
     return proc, (end - start) * 1000.0
 
 
-def rustic_cmd(repo_path):
-    return [RUSTIC, "-r", f"local:{repo_path}", "--password", PASSWORD]
+def repo_key_for(layout, name):
+    kind = layout["kind"]
+    if kind == "per-project":
+        return f"{kind}/{name}"
+    if kind == "shared":
+        return f"{kind}/region"
+    if kind == "sharded":
+        shard = shard_index(name, int(layout["shard_count"]))
+        return f"{kind}/shard-{shard:02d}"
+    raise RuntimeError(f"unsupported layout {kind}")
+
+def scoped_repo_key(scenario_key, repo_key):
+    return f"{scenario_key}/{repo_key}"
+
+def local_repo_path(repo_key, repos_root):
+    return repos_root / repo_key
 
 
-def init_repo(repo_path):
-    repo_path.mkdir(parents=True, exist_ok=True)
-    config_file = repo_path / "config"
-    if config_file.exists():
+def cache_dir_for(cache_root, scope, project_name=None):
+    if scope == "shared":
+        return cache_root / "shared"
+    if scope == "per-project":
+        if not project_name:
+            raise RuntimeError("project_name required for per-project cache scope")
+        return cache_root / project_name
+    raise RuntimeError(f"unsupported cache scope {scope}")
+
+
+def cache_dir_for_measurement(cache_root, op_name, target_host):
+    if OPTIONS["cold_measurements"]:
+        return cache_root / "measurements" / f"{op_name}-{target_host}-{time.time_ns()}"
+    return cache_dir_for(cache_root, OPTIONS["cache_mode"], target_host)
+
+
+def profile_path_for_repo(repo_key, profiles_root):
+    safe = repo_key.replace("/", "__")
+    return profiles_root / f"{safe}.toml"
+
+
+def ensure_profile(repo_key, profiles_root):
+    if BACKEND["kind"] != "r2":
+        return None
+    profiles_root.mkdir(parents=True, exist_ok=True)
+    profile = profile_path_for_repo(repo_key, profiles_root)
+    if profile.exists():
+        return profile
+    root = f"{BACKEND['root_prefix'].rstrip('/')}/{repo_key}"
+    profile.write_text(
+        "\\n".join(
+            [
+                "[repository]",
+                'repository = "opendal:s3"',
+                f'password = "{PASSWORD}"',
+                "",
+                "[repository.options]",
+                f'endpoint = "{BACKEND["endpoint"]}"',
+                'region = "auto"',
+                f'bucket = "{BACKEND["bucket"]}"',
+                f'root = "{root}"',
+                f'access_key_id = "{BACKEND["access_key_id"]}"',
+                f'secret_access_key = "{BACKEND["secret_access_key"]}"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    return profile
+
+
+def rustic_cmd(repo_key, repos_root, profiles_root, cache_dir=None):
+    if BACKEND["kind"] == "local":
+        repo_path = local_repo_path(repo_key, repos_root)
+        repo_path.mkdir(parents=True, exist_ok=True)
+        args = [RUSTIC, "-r", f"local:{repo_path}", "--password", PASSWORD]
+    elif BACKEND["kind"] == "r2":
+        profile = ensure_profile(repo_key, profiles_root)
+        args = [RUSTIC, "-P", str(profile.with_suffix(""))]
+    else:
+        raise RuntimeError(f"unsupported backend {BACKEND['kind']}")
+    if cache_dir is not None:
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        args.extend(["--cache-dir", str(cache_dir)])
+    return args
+
+
+def init_repo(repo_key, repos_root, profiles_root, cache_dir):
+    if BACKEND["kind"] == "local":
+        repo_path = local_repo_path(repo_key, repos_root)
+        config_file = repo_path / "config"
+        if config_file.exists():
+            return
+        run(rustic_cmd(repo_key, repos_root, profiles_root, cache_dir) + ["init"])
         return
-    run(rustic_cmd(repo_path) + ["init"])
+    try:
+        run(rustic_cmd(repo_key, repos_root, profiles_root, cache_dir) + ["repoinfo"])
+    except Exception:
+        run(rustic_cmd(repo_key, repos_root, profiles_root, cache_dir) + ["init"])
 
 
 def list_repo_dirs(root):
@@ -180,20 +406,6 @@ def project_name(index):
 def shard_index(name, shard_count):
     digest = hashlib.sha256(name.encode("utf-8")).digest()
     return int.from_bytes(digest[:4], "big") % shard_count
-
-
-def repo_path_for(layout, name, repos_root):
-    kind = layout["kind"]
-    if kind == "per-project":
-        return repos_root / kind / name
-    if kind == "shared":
-        return repos_root / kind / "region"
-    if kind == "sharded":
-        shard = shard_index(name, int(layout["shard_count"]))
-        return repos_root / kind / f"shard-{shard:02d}"
-    raise RuntimeError(f"unsupported layout {kind}")
-
-
 def prepare_common_payload(fixtures_root, count, size_bytes):
     fixtures_root.mkdir(parents=True, exist_ok=True)
     payload = (b"0123456789abcdef" * ((size_bytes // 16) + 1))[:size_bytes]
@@ -220,8 +432,8 @@ def mutate_project(project_root, snapshot_round):
         out.write(f"round={snapshot_round}\\n")
 
 
-def backup_project(repo_path, project_root, name):
-    cmd = rustic_cmd(repo_path) + [
+def backup_project(repo_key, repos_root, profiles_root, cache_dir, project_root, name):
+    cmd = rustic_cmd(repo_key, repos_root, profiles_root, cache_dir) + [
         "backup",
         "--json",
         "--no-scan",
@@ -233,9 +445,9 @@ def backup_project(repo_path, project_root, name):
     return json.loads(proc.stdout)
 
 
-def latest_snapshot_for_host(repo_path, host_name):
+def latest_snapshot_for_host(repo_key, repos_root, profiles_root, cache_dir, host_name):
     proc = run(
-        rustic_cmd(repo_path) + [
+        rustic_cmd(repo_key, repos_root, profiles_root, cache_dir) + [
             "snapshots",
             "--json",
             "--filter-host",
@@ -246,11 +458,11 @@ def latest_snapshot_for_host(repo_path, host_name):
     snapshots = flatten_snapshot_groups(parsed)
     snapshots.sort(key=lambda entry: entry.get("time", ""))
     if not snapshots:
-        raise RuntimeError(f"no snapshots found for {host_name} in {repo_path}")
+        raise RuntimeError(f"no snapshots found for {host_name} in {repo_key}")
     return snapshots[-1]["id"], len(snapshots)
 
 
-def measure_repo(repo_path, target_host, target_snapshot_id, target_project_root):
+def measure_repo(repo_key, repos_root, profiles_root, cache_root, target_host, target_snapshot_id, target_project_root):
     result = {
         "timings_ms": {},
         "outputs": {
@@ -261,7 +473,13 @@ def measure_repo(repo_path, target_host, target_snapshot_id, target_project_root
     }
 
     proc, ms = timed(
-        rustic_cmd(repo_path) + [
+        rustic_cmd(
+            repo_key,
+            repos_root,
+            profiles_root,
+            cache_dir_for_measurement(cache_root, "filter-host", target_host),
+        )
+        + [
             "snapshots",
             "--json",
             "--filter-host",
@@ -273,7 +491,15 @@ def measure_repo(repo_path, target_host, target_snapshot_id, target_project_root
     result["timings_ms"]["snapshots_filter_host"] = ms
     result["outputs"]["filter_host_snapshot_count"] = len(filtered)
 
-    proc, ms = timed(rustic_cmd(repo_path) + ["snapshots", "--json"])
+    proc, ms = timed(
+        rustic_cmd(
+            repo_key,
+            repos_root,
+            profiles_root,
+            cache_dir_for_measurement(cache_root, "wrapper-scan", target_host),
+        )
+        + ["snapshots", "--json"]
+    )
     parsed = json.loads(proc.stdout or "[]")
     flattened = flatten_snapshot_groups(parsed)
     found = next((snap for snap in flattened if snap.get("id") == target_snapshot_id), None)
@@ -284,7 +510,13 @@ def measure_repo(repo_path, target_host, target_snapshot_id, target_project_root
     result["outputs"]["all_snapshots_stdout_bytes"] = len(proc.stdout.encode("utf-8"))
 
     proc, ms = timed(
-        rustic_cmd(repo_path) + ["snapshots", "--json", target_snapshot_id]
+        rustic_cmd(
+            repo_key,
+            repos_root,
+            profiles_root,
+            cache_dir_for_measurement(cache_root, "direct-id", target_host),
+        )
+        + ["snapshots", "--json", target_snapshot_id]
     )
     parsed = json.loads(proc.stdout or "[]")
     direct = flatten_snapshot_groups(parsed)
@@ -292,12 +524,26 @@ def measure_repo(repo_path, target_host, target_snapshot_id, target_project_root
         raise RuntimeError(f"direct snapshot lookup failed for {target_snapshot_id}")
     result["timings_ms"]["snapshot_lookup_direct_id"] = ms
 
-    _, ms = timed(rustic_cmd(repo_path) + ["repoinfo", "--json"])
+    _, ms = timed(
+        rustic_cmd(
+            repo_key,
+            repos_root,
+            profiles_root,
+            cache_dir_for_measurement(cache_root, "repoinfo", target_host),
+        )
+        + ["repoinfo", "--json"]
+    )
     result["timings_ms"]["repoinfo"] = ms
 
     mutate_project(target_project_root, 999999)
     _, ms = timed(
-        rustic_cmd(repo_path) + [
+        rustic_cmd(
+            repo_key,
+            repos_root,
+            profiles_root,
+            cache_dir_for_measurement(cache_root, "backup-after-change", target_host),
+        )
+        + [
             "backup",
             "--json",
             "--no-scan",
@@ -322,7 +568,10 @@ def repo_count_for_layout(layout, project_names):
 def benchmark_layout(layout, project_count, base_root):
     projects_root = base_root / "projects"
     repos_root = base_root / "repos"
+    profiles_root = base_root / "profiles"
+    cache_root = base_root / "cache"
     fixtures_root = base_root / "fixtures"
+    scenario_key = base_root.name
     prepare_common_payload(
         fixtures_root,
         int(OPTIONS["common_file_count"]),
@@ -332,8 +581,14 @@ def benchmark_layout(layout, project_count, base_root):
         shutil.rmtree(projects_root)
     if repos_root.exists():
         shutil.rmtree(repos_root)
+    if profiles_root.exists():
+        shutil.rmtree(profiles_root)
+    if cache_root.exists():
+        shutil.rmtree(cache_root)
     projects_root.mkdir(parents=True, exist_ok=True)
     repos_root.mkdir(parents=True, exist_ok=True)
+    profiles_root.mkdir(parents=True, exist_ok=True)
+    cache_root.mkdir(parents=True, exist_ok=True)
 
     project_names = [project_name(i) for i in range(project_count)]
     snapshots_per_project = int(OPTIONS["snapshots_per_project"])
@@ -342,20 +597,40 @@ def benchmark_layout(layout, project_count, base_root):
         materialize_project(projects_root / name, name, fixtures_root)
 
     for name in project_names:
-        repo_path = repo_path_for(layout, name, repos_root)
-        init_repo(repo_path)
+        repo_key = scoped_repo_key(scenario_key, repo_key_for(layout, name))
+        cache_dir = cache_dir_for(cache_root, OPTIONS["cache_mode"], name)
+        init_repo(repo_key, repos_root, profiles_root, cache_dir)
         project_root = projects_root / name
         for snapshot_round in range(snapshots_per_project):
             if snapshot_round:
                 mutate_project(project_root, snapshot_round)
-            backup_project(repo_path, project_root, name)
+            backup_project(
+                repo_key,
+                repos_root,
+                profiles_root,
+                cache_dir,
+                project_root,
+                name,
+            )
 
     target_idx = min(int(OPTIONS["target_project_index"]), project_count - 1)
     target_host = project_names[target_idx]
-    target_repo = repo_path_for(layout, target_host, repos_root)
-    target_snapshot_id, filtered_count = latest_snapshot_for_host(target_repo, target_host)
+    target_repo_key = scoped_repo_key(
+        scenario_key, repo_key_for(layout, target_host)
+    )
+    target_cache_dir = cache_dir_for(cache_root, OPTIONS["cache_mode"], target_host)
+    target_snapshot_id, filtered_count = latest_snapshot_for_host(
+        target_repo_key,
+        repos_root,
+        profiles_root,
+        target_cache_dir,
+        target_host,
+    )
     measurements = measure_repo(
-        target_repo,
+        target_repo_key,
+        repos_root,
+        profiles_root,
+        cache_root,
         target_host,
         target_snapshot_id,
         projects_root / target_host,
@@ -492,6 +767,10 @@ export async function runProjectBackupRusticScaleBenchmark(
   const workdir =
     opts.workdir ??
     `/tmp/cocalc-project-backup-rustic-scale-${Date.now().toString(36)}`;
+  const backend =
+    opts.backend ?? ({ kind: "local" } satisfies RusticScaleBackend);
+  const cache_mode = opts.cache_mode ?? "shared";
+  const cold_measurements = opts.cold_measurements ?? false;
   const layouts =
     opts.layouts ??
     ([
@@ -534,6 +813,9 @@ export async function runProjectBackupRusticScaleBenchmark(
       identity: opts.identity,
       script: remotePythonProgram({
         workdir,
+        backend,
+        cache_mode,
+        cold_measurements,
         layouts,
         project_counts,
         snapshots_per_project,

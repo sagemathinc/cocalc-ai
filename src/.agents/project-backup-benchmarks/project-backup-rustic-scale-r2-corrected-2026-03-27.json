@@ -1,0 +1,67 @@
+{
+  "date": "2026-03-27",
+  "host": "bench",
+  "host_id": "0ec9acaf-432a-4c3c-a76e-8cec615f0fe5",
+  "backend": "r2",
+  "cache_mode": "per-project",
+  "cold_measurements": true,
+  "fixture": {
+    "common_file_count": 0,
+    "common_file_size_bytes": 0,
+    "notes": "Each synthetic project only contains notes.txt to minimize upload cost and isolate remote metadata/index behavior."
+  },
+  "notes": [
+    "Measured directly against completed corrected scenario repos after fixing the harness bug where different scenario sizes shared one remote repo namespace.",
+    "Each scenario has one extra target-project snapshot because the benchmark's backup-after-change step creates a second snapshot for the target host."
+  ],
+  "measurements": [
+    {
+      "scenario": "shared-count-16",
+      "layout_kind": "shared",
+      "shard_count": null,
+      "target_snapshot_id": "e73bb0beaee87c2720f3304cbfbfbb7643406902267a7dc8d774f04570c19ef2",
+      "filter_host_snapshot_count": 2,
+      "wrapper_all_snapshot_count": 17,
+      "all_snapshots_stdout_bytes": 36409,
+      "direct_id_snapshot_count": 1,
+      "timings_ms": {
+        "snapshots_filter_host": 1110.7407619992955,
+        "snapshot_lookup_wrapper_scan": 999.3482699992455,
+        "snapshot_lookup_direct_id": 771.6914759994324,
+        "repoinfo": 1499.5250949996262
+      }
+    },
+    {
+      "scenario": "shared-count-32",
+      "layout_kind": "shared",
+      "shard_count": null,
+      "target_snapshot_id": "9266110b3a27b889b82306f6cc7e86c1e3a70b9a2589e3d693c96996a8a06387",
+      "filter_host_snapshot_count": 2,
+      "wrapper_all_snapshot_count": 33,
+      "all_snapshots_stdout_bytes": 70666,
+      "direct_id_snapshot_count": 1,
+      "timings_ms": {
+        "snapshots_filter_host": 1124.9914110003374,
+        "snapshot_lookup_wrapper_scan": 1273.3126109997102,
+        "snapshot_lookup_direct_id": 693.0065320002541,
+        "repoinfo": 1857.718289999866
+      }
+    },
+    {
+      "scenario": "sharded-count-16",
+      "layout_kind": "sharded",
+      "shard_count": 16,
+      "target_snapshot_id": "8221aa455ef36afe311a8969b214e49ab3c5258c0aeb99c5ee8e92427dfc481b",
+      "filter_host_snapshot_count": 2,
+      "wrapper_all_snapshot_count": 4,
+      "all_snapshots_stdout_bytes": 8608,
+      "direct_id_snapshot_count": 1,
+      "timings_ms": {
+        "snapshots_filter_host": 1127.0103410006413,
+        "snapshot_lookup_wrapper_scan": 903.0429779995757,
+        "snapshot_lookup_direct_id": 860.0564090002081,
+        "repoinfo": 1356.6787350000595
+      }
+    }
+  ]
+}
