@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Alert, Button, Modal, Select, Space } from "antd";
+import { Alert, Button, Modal, Space } from "antd";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useIntl } from "react-intl";
 
@@ -12,17 +12,12 @@ import { Icon, VisibleMDLG } from "@cocalc/frontend/components";
 import AIAvatar from "@cocalc/frontend/components/ai-avatar";
 import { labels } from "@cocalc/frontend/i18n";
 import * as LS from "@cocalc/frontend/misc/local-storage-typed";
-import { DEFAULT_CODEX_MODELS } from "@cocalc/util/ai/codex";
 import { COLORS } from "@cocalc/util/theme";
 import { BaseEditorActions as Actions } from "../base-editor/actions-base";
-import {
-  DEFAULT_ASSISTANT_CODEX_MODEL,
-  Options,
-  resolveAssistantCodexModel,
-} from "./create-chat";
+import { DEFAULT_ASSISTANT_CODEX_MODEL, Options } from "./create-chat";
 import { PopupAgentComposer } from "./popup-agent-composer";
 
-const TITLE_BAR_CODEX_LABEL = "Codex";
+const TITLE_BAR_AGENT_LABEL = "Agent";
 
 interface Props {
   id: string;
@@ -59,24 +54,12 @@ export default function LanguageModelTitleBarButton({
   const [querying, setQuerying] = useState<boolean>(false);
   const [command, setCommand] = useState<string>("");
 
-  const modelLsKey = `AI-CODEX-ASSISTANT-MODEL:v1:${project_id}`;
   const promptLsKey = `AI-CODEX-ASSISTANT-PROMPT:v1:${project_id}:${path}:${type}`;
-  const [model, setModelState] = useState<string>(() =>
-    resolveAssistantCodexModel(
-      LS.get(modelLsKey) ?? DEFAULT_ASSISTANT_CODEX_MODEL,
-    ),
-  );
 
   const canSubmit = useMemo(
     () => command.trim().length > 0 && !querying,
     [command, querying],
   );
-
-  function setModel(next: string) {
-    const resolved = resolveAssistantCodexModel(next);
-    setModelState(resolved);
-    LS.set(modelLsKey, resolved);
-  }
 
   function closeDialog() {
     setShowDialog(false);
@@ -88,8 +71,7 @@ export default function LanguageModelTitleBarButton({
     if (!showDialog) return;
     setError("");
     setCommand(LS.get(promptLsKey) ?? "");
-    setModel(LS.get(modelLsKey) ?? DEFAULT_ASSISTANT_CODEX_MODEL);
-  }, [showDialog]);
+  }, [showDialog, promptLsKey]);
 
   useEffect(() => {
     if (!command.trim()) {
@@ -140,7 +122,7 @@ export default function LanguageModelTitleBarButton({
         command: resolvedCommand,
         codegen: false,
         allowEmpty: true,
-        model,
+        model: DEFAULT_ASSISTANT_CODEX_MODEL,
         tag: "custom",
       });
     } finally {
@@ -169,7 +151,7 @@ export default function LanguageModelTitleBarButton({
             ""
           ) : (
             <VisibleMDLG>
-              <span style={{ marginLeft: "5px" }}>{TITLE_BAR_CODEX_LABEL}</span>
+              <span style={{ marginLeft: "5px" }}>{TITLE_BAR_AGENT_LABEL}</span>
             </VisibleMDLG>
           )}
         </span>
@@ -178,7 +160,7 @@ export default function LanguageModelTitleBarButton({
         title={
           <Space align="center" size="small">
             <AIAvatar size={18} iconColor="currentColor" />
-            <span>{TITLE_BAR_CODEX_LABEL}</span>
+            <span>{TITLE_BAR_AGENT_LABEL}</span>
           </Space>
         }
         open={Boolean(visible && showDialog)}
@@ -189,28 +171,16 @@ export default function LanguageModelTitleBarButton({
         maskClosable={!querying}
       >
         <Space direction="vertical" size="middle" style={{ width: "100%" }}>
-          <Select
-            value={model}
-            onChange={setModel}
-            style={{ width: "100%" }}
-            popupMatchSelectWidth={false}
-            options={DEFAULT_CODEX_MODELS.map((item) => ({
-              value: item.name,
-              label: item.description
-                ? `${item.name} - ${item.description}`
-                : item.name,
-            }))}
-          />
           <PopupAgentComposer
             value={command}
             onChange={setCommand}
             onSubmit={(value) => void doIt(value)}
-            placeholder="What should Codex do..."
+            placeholder="What should the agent do..."
             cacheId={`popup-agent:${project_id}:${path}:${type}`}
             autoFocus
           />
           <div style={{ color: COLORS.GRAY_D }}>
-            Codex will continue the work in the workspace agent thread.
+            The agent will continue the work in the workspace agent thread.
           </div>
           {error ? <Alert type="error" title={error} /> : undefined}
           <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
@@ -226,7 +196,7 @@ export default function LanguageModelTitleBarButton({
                 name={querying ? "spinner" : "paper-plane"}
                 spin={querying}
               />{" "}
-              Send to Codex
+              Send to Agent
             </Button>
           </div>
         </Space>
