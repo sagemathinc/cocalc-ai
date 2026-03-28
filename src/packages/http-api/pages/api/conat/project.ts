@@ -1,26 +1,13 @@
 /*
-This is a bridge to call the Conat rpc api that is offered by projects.
+This is a bridge to call the Conat RPC API that is offered by projects.
 This is meant to be called by either a user account or a project, so API
-keys that resolves to either work.
-
-For security reasons this is ONLY usable via an API key -- using an account
-is not allowed, since that opens us to XSS attacks.
-
-Here is an example of how this would be used:
-
-key=sk-...02
-
-curl -sk -u $key: -H 'Content-Type: application/json' \
-   -d '{TODO}' \
-   http://localhost:9000/api/conat/project
-
-The api is defined in packages/conat/project/api/
+keys that resolve to either are allowed.
 */
 
-import projectBridge from "@cocalc/server/api/project-bridge";
-import getParams from "lib/api/get-params";
 import { getAccountFromApiKey } from "@cocalc/server/auth/api";
+import projectBridge from "@cocalc/server/api/project-bridge";
 import isCollaborator from "@cocalc/server/projects/is-collaborator";
+import getParams from "@cocalc/http-api/lib/api/get-params";
 
 export default async function handle(req, res) {
   try {
@@ -34,13 +21,11 @@ export default async function handle(req, res) {
       throw Error("must specify project_id or use project-specific api key");
     }
     if (project_id0) {
-      // auth via project_id
       if (project_id0 != project_id) {
         throw Error("project specific api key must match requested project");
       }
     }
     if (account_id) {
-      // account_id based auth
       if (!(await isCollaborator({ account_id, project_id }))) {
         throw Error("user must be a collaborator on the project");
       }
