@@ -305,19 +305,13 @@ async function startServer(): Promise<void> {
     }
   }
 
-  if (
-    program.conatServer ||
-    program.proxyServer ||
-    program.nextServer ||
-    program.conatApi
-  ) {
+  if (program.conatServer || program.proxyServer || program.conatApi) {
     const { router, httpServer } = await initExpressApp({
       isPersonal: program.personal,
       projectControl,
       conatServer: !!program.conatServer,
       proxyServer: true, // always
       projectProxyHandlersPromise,
-      nextServer: !!program.nextServer,
       cert: program.httpsCert,
       key: program.httpsKey,
     });
@@ -390,7 +384,7 @@ async function main(): Promise<void> {
     .usage("options")
     .option(
       "--all",
-      "runs all of the servers: websocket, proxy, next (so you don't have to pass all those opts separately), and also mentions updator and updates db schema on startup; use this in situations where there is a single hub that serves everything (instead of a microservice situation like kucalc)",
+      "runs all of the servers: websocket, proxy, public web, and also mentions updator and updates db schema on startup; use this in situations where there is a single hub that serves everything (instead of a microservice situation like kucalc)",
     )
     .option(
       "--conat-server",
@@ -413,10 +407,6 @@ async function main(): Promise<void> {
       "run a hub that connects to conat-router and provides persistence for streams (e.g., key for sync editing).  There must be at least one of these, and they need access to common shared disk to store sqlite files.  Only one server uses a given sqlite file at a time.  You can increase or decrease the number of these servers with no coordination needed.",
     )
     .option("--proxy-server", "run a proxy server in this process")
-    .option(
-      "--next-server",
-      "run a nextjs server (landing pages, share server, etc.) in this process",
-    )
     .option(
       "--https-key [string]",
       "serve over https.  argument should be a key filename (both https-key and https-cert must be specified)",
@@ -481,7 +471,6 @@ async function main(): Promise<void> {
   if (program.all) {
     program.conatServer =
       program.proxyServer =
-      program.nextServer =
       program.mentions =
       program.updateDatabaseSchema =
         true;
@@ -492,10 +481,6 @@ async function main(): Promise<void> {
     program.blobMaintenance = false;
     program.updateStats = false;
   }
-  if (process.env.COCALC_DISABLE_NEXT) {
-    program.nextServer = false;
-  }
-
   //console.log("got opts", opts);
 
   try {

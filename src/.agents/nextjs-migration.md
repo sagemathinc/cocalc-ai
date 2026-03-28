@@ -42,6 +42,12 @@ This means:
   - user-owned hosts (second round after Next.js removal)
   - team/organization memberships (second round after Next.js removal)
 
+### Current status
+
+- `api/v2` and `api/conat` are already off Next
+- the active hub/launchpad stack no longer boots a Next runtime
+- share-server support is removed from the active stack
+
 ### Round-one commerce scope
 
 Round one replaces the active Next-owned commerce routes with:
