@@ -47,6 +47,11 @@ import { HostParallelOpsPanel } from "./host-parallel-ops-panel";
 import { HostProjectStatus } from "./host-project-status";
 import { HostProjectsBrowser } from "./host-projects-browser";
 import { HostRootfsCachePanel } from "./host-rootfs-cache-panel";
+import {
+  getHostCpuCount,
+  getHostRamGb,
+  getHostSizeDisplay,
+} from "../utils/format";
 
 type HostDrawerViewModel = {
   open: boolean;
@@ -349,16 +354,11 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
     parallelOps,
   } = vm;
   const isSelfHost = host?.machine?.cloud === "self-host";
-  const readPositive = (value: unknown) => {
-    const parsed = Number(value);
-    if (!Number.isFinite(parsed) || parsed <= 0) return undefined;
-    return Math.floor(parsed);
-  };
-  const selfHostCpu = readPositive(host?.machine?.metadata?.cpu);
-  const selfHostRam = readPositive(host?.machine?.metadata?.ram_gb);
-  const selfHostDisk = readPositive(host?.machine?.disk_gb);
-  const showSelfHostResources =
-    isSelfHost && (selfHostCpu || selfHostRam || selfHostDisk);
+  const hostCpu = host ? getHostCpuCount(host) : undefined;
+  const hostRam = host ? getHostRamGb(host) : undefined;
+  const hostDisk = host?.machine?.disk_gb;
+  const showHostResources = !!host && (hostCpu || hostRam || hostDisk);
+  const size = host ? getHostSizeDisplay(host) : undefined;
   const connectorOnline =
     !isSelfHost ||
     !selfHost?.isConnectorOnline ||
@@ -524,7 +524,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
             <Tag>{connectorLabel}</Tag>
             {backupRegionLabel && <Tag>Backup region: {backupRegionLabel}</Tag>}
             {connectorStatusTag}
-            <Tag>{host.size}</Tag>
+            <Tag>{size?.primary ?? host.size}</Tag>
             {host.gpu && <Tag color="purple">GPU</Tag>}
             {host.reprovision_required && (
               <Tooltip title="Host config changed while stopped; will reprovision on next start.">
@@ -577,10 +577,10 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                 GPU type: {host.machine.gpu_type}
               </Typography.Text>
             )}
-            {showSelfHostResources && (
+            {showHostResources && (
               <Typography.Text>
-                Resources: {selfHostCpu ?? "?"} vCPU / {selfHostRam ?? "?"} GB
-                RAM / {selfHostDisk ?? "?"} GB disk
+                Resources: {hostCpu ?? "?"} vCPU / {hostRam ?? "?"} GB RAM /{" "}
+                {hostDisk ?? "?"} GB disk
               </Typography.Text>
             )}
             {isSelfHost && host.machine?.metadata?.self_host_ssh_target && (

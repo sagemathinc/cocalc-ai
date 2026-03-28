@@ -35,6 +35,7 @@ import {
   confirmHostStop,
 } from "./host-confirm";
 import { COLORS } from "@cocalc/util/theme";
+import { getHostSizeDisplay } from "../utils/format";
 
 type HostCardProps = {
   host: Host;
@@ -86,6 +87,7 @@ export const HostCard: React.FC<HostCardProps> = ({
   const showStaleTag = host.status === "running" && !hostOnline;
   const showSpinner = isHostTransitioning(host.status);
   const statusLabel = host.deleted ? "deleted" : host.status;
+  const size = getHostSizeDisplay(host);
   const hostOpActive = isHostOpActive(hostOp);
   const startDisabled =
     isDeleted ||
@@ -323,7 +325,10 @@ export const HostCard: React.FC<HostCardProps> = ({
         <Typography.Text>
           {isSelfHost ? "Connector" : "Region"}: {host.region}
         </Typography.Text>
-        <Typography.Text>Size: {host.size}</Typography.Text>
+        <Typography.Text>
+          Size: {size.primary}
+          {size.secondary ? ` · ${size.secondary}` : ""}
+        </Typography.Text>
         <Typography.Text>GPU: {host.gpu ? "Yes" : "No"}</Typography.Text>
         {host.last_action && (
           <Typography.Text type="secondary">

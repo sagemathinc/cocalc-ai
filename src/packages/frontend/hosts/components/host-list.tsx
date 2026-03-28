@@ -57,6 +57,7 @@ import type {
   HostDeleteOptions,
   HostDrainOptions,
 } from "../types";
+import { getHostSizeDisplay } from "../utils/format";
 
 const STATUS_ORDER = [
   "running",
@@ -359,12 +360,15 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
     return hosts.filter((host) => {
       const statusLabel = host.deleted ? "deleted" : host.status;
       const selfHostDetail = getSelfHostDetail(host);
+      const size = getHostSizeDisplay(host);
       const haystack = [
         host.name,
         getProviderLabel(host),
         selfHostDetail,
         host.region,
         host.size,
+        size.primary,
+        size.secondary,
         statusLabel,
       ]
         .filter(Boolean)
@@ -691,6 +695,16 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
             ? "ascend"
             : "descend"
           : undefined,
+      render: (_: string, host: Host) => {
+        const size = getHostSizeDisplay(host);
+        if (!size.secondary) return size.primary;
+        return (
+          <Space orientation="vertical" size={0}>
+            <span>{size.primary}</span>
+            <Typography.Text type="secondary">{size.secondary}</Typography.Text>
+          </Space>
+        );
+      },
     },
     {
       title: "GPU",
