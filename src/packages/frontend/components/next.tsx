@@ -1,4 +1,4 @@
-/* A link to the @cocalc/next site */
+/* Historical same-origin link helper. */
 
 import { A } from "./A";
 import { join } from "path";

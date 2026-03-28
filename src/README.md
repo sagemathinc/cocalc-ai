@@ -160,9 +160,9 @@ The Hub is CoCalc's backend node.js server. You can start it from its package di
 
 That will ensure the latest version of the hub Typescript and Coffeescript gets compiled, and start a new hub running in the foreground logging what is happening to the console _**and also logging to files in**_ `cocalc/src/data/logs/hub` . Hit Control\+C to terminate this server. If you change any code in `packages/hub`, you have to stop the hub, then start it again as above in order for the changes to take effect.
 
-The hub itself is running two copies of webpack along with two separate "Hot Module Replacement" servers, etc. One is for the `/static` endpoint \(see packages/static and packages/frontend\) and the other is for the nextjs server \(see packages/next\).
-
-If you want a lightweight dev server without Next.js, you can run the hub with `COCALC_DISABLE_NEXT=1`. This skips Next entirely, but still serves all `/api/v2` endpoints via an Express router that loads the compiled handlers, which is useful for fast local dev and lightweight control-plane deployments. In this mode, the SPA also handles `/auth/sign-in`, `/auth/sign-up`, and `/auth/password-reset`.
+The hub serves the `/static` bundles directly, including the public web entry
+points built from `packages/static` and `packages/frontend`. In development,
+Rspack hot reloading is provided through that integrated static pipeline.
 
 ### 3. Building only what has changed
 

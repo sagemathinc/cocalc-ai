@@ -38,4 +38,15 @@ describe("parse_target", () => {
       sub_tab: undefined,
     });
   });
+
+  it("recognizes admin news routes on direct loads", () => {
+    expect(parse_target("admin/news")).toEqual({
+      page: "admin",
+      route: { kind: "news-list" },
+    });
+    expect(parse_target("admin/news/new?channel=event")).toEqual({
+      page: "admin",
+      route: { kind: "news-editor", id: "new" },
+    });
+  });
 });

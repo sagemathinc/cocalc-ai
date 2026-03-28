@@ -6,6 +6,7 @@
 import { send as sendManifest } from "@cocalc/hub/manifest";
 import { WebappConfiguration } from "@cocalc/hub/webapp-configuration";
 import getAccount from "@cocalc/server/auth/get-account";
+import userIsInGroup from "@cocalc/server/accounts/is-in-group";
 import { getDatabase } from "../database";
 
 function headerString(value: unknown): string | undefined {
@@ -51,7 +52,11 @@ export default function init(router, isPersonal: boolean) {
       cloudflareLatitude,
       cloudflareLongitude,
     });
-    config.configuration.is_authenticated = !!(await getAccount(req));
+    const accountId = await getAccount(req);
+    config.configuration.is_authenticated = !!accountId;
+    config.configuration.is_admin = accountId
+      ? await userIsInGroup(accountId, "admin")
+      : false;
     if (isPersonal) {
       config.configuration.is_personal = true;
     }

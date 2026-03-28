@@ -6,6 +6,7 @@
 import { AccountPage } from "@cocalc/frontend/account/account-page";
 import { AdminPage } from "@cocalc/frontend/admin";
 import { Alert } from "@cocalc/frontend/antd-bootstrap";
+import { normalizeAdminRoute } from "@cocalc/frontend/admin/routing";
 import {
   CSS,
   React,
@@ -66,6 +67,7 @@ export const ActiveContent: React.FC = React.memo(() => {
   const page_actions = useActions("page");
 
   const active_top_tab = useTypedRedux("page", "active_top_tab");
+  const admin_route = useTypedRedux("page", "admin_route");
   const fullscreen = useTypedRedux("page", "fullscreen");
   const get_api_key = useTypedRedux("page", "get_api_key");
   const open_projects = useTypedRedux("projects", "open_projects");
@@ -183,7 +185,11 @@ export const ActiveContent: React.FC = React.memo(() => {
         overlay = renderLayer("notifications", true, <NotificationPage />);
         break;
       case "admin":
-        overlay = renderLayer("admin", true, <AdminPage />);
+        overlay = renderLayer(
+          "admin",
+          true,
+          <AdminPage route={normalizeAdminRoute(admin_route)} />,
+        );
         break;
       case undefined:
         overlay = renderLayer(

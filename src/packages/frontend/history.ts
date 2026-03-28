@@ -57,6 +57,7 @@ import {
 import { IS_EMBEDDED } from "@cocalc/frontend/client/handle-target";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import {
+  getPageUrlPath,
   parsePageTarget,
   type ParsedPageTarget,
 } from "@cocalc/frontend/page-routing";
@@ -96,12 +97,20 @@ export function update_params() {
 
 // the url must already be URI encoded, e.g., "a/b ? c.md" should be encoded as 'a/b%20?%20c.md'
 export function set_url(url: string, hash?: string) {
+  set_url_with_search(url, undefined, hash);
+}
+
+export function set_url_with_search(
+  url: string,
+  search?: string,
+  hash?: string,
+) {
   if (IS_EMBEDDED) {
     // no need to mess with url in embedded mode.
     return;
   }
   last_url = url;
-  const query_params = params();
+  const query_params = search ?? params();
   const full_url = join(
     appBasePath,
     url + query_params + (hash ?? location.hash),
@@ -204,7 +213,11 @@ export function load_target(
       break;
 
     case "admin":
-      redux.getActions("page").set_active_tab("admin", change_history);
+      redux.getActions("page").set_active_tab("admin", false);
+      redux.getActions("page").setState({ admin_route: parsed.route });
+      if (change_history) {
+        set_url(getPageUrlPath(parsed));
+      }
       break;
   }
 }

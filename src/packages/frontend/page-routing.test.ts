@@ -37,6 +37,17 @@ describe("page-routing", () => {
     expect(parsePageTarget("ssh")).toEqual({ page: "ssh" });
   });
 
+  it("parses admin subroutes and ignores query strings", () => {
+    expect(parsePageTarget("admin/news")).toEqual({
+      page: "admin",
+      route: { kind: "news-list" },
+    });
+    expect(parsePageTarget("admin/news/new?channel=event")).toEqual({
+      page: "admin",
+      route: { kind: "news-editor", id: "new" },
+    });
+  });
+
   it("normalizes settings overview and preferences routes", () => {
     expect(parsePageTarget("settings")).toEqual({
       page: "account",
@@ -90,6 +101,12 @@ describe("page-routing", () => {
     expect(getPageUrlPath({ page: "auth", view: "sign-up" })).toBe(
       "/auth/sign-up",
     );
+    expect(
+      getPageUrlPath({
+        page: "admin",
+        route: { kind: "news-editor", id: "17" },
+      }),
+    ).toBe("/admin/news/17");
     expect(getPageUrlPath({ page: "project", target: "abc/files" })).toBe(
       "/projects/abc/files",
     );

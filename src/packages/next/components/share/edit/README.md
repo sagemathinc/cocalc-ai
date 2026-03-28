@@ -1,1 +1,0 @@
-Editing the parameters of a public path

@@ -63,6 +63,7 @@ describe("PublicHomeApp", () => {
             "https://software.cocalc.ai/software/cocalc-launchpad/index.html",
         ),
     ).toBe(true);
+    expect(screen.getByRole("link", { name: "All news..." })).not.toBeNull();
   });
 
   it("shows direct app actions when authenticated", () => {

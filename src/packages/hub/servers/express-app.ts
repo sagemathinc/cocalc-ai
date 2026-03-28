@@ -409,9 +409,9 @@ function resolvePublicAssetsPath(): string | undefined {
     candidates.push(join(process.env.COCALC_BUNDLE_DIR, "public"));
   }
   candidates.push(
-    join(process.cwd(), "packages", "next", "public"),
-    join(process.cwd(), "..", "packages", "next", "public"),
-    join(__dirname, "..", "..", "next", "public"),
+    join(process.cwd(), "packages", "assets", "public"),
+    join(process.cwd(), "..", "packages", "assets", "public"),
+    join(__dirname, "..", "..", "assets", "public"),
   );
   for (const candidate of candidates) {
     if (existsSync(candidate)) {

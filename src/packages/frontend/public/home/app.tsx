@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { type ReactNode, useEffect } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 
 import { Button, Col, Flex, Row, Tag, Typography } from "antd";
 
@@ -19,7 +19,7 @@ import {
   PublicSectionCard,
 } from "@cocalc/frontend/public/ui/shell";
 import PublicTopNav from "@cocalc/frontend/public/ui/top-nav";
-import { SITE_NAME } from "@cocalc/util/theme";
+import { COLORS, SITE_NAME } from "@cocalc/util/theme";
 import { slugURL } from "@cocalc/util/news";
 import type { NewsItem } from "@cocalc/util/types/news";
 import { joinUrlPath } from "@cocalc/util/url-path";
@@ -66,6 +66,8 @@ const HOME_FEATURE_PRIORITY = [
   "linux",
   "whiteboard",
 ] as const;
+
+const NEWS_BANNER_ROTATE_DELAY_MS = 15_000;
 
 function appPath(path: string): string {
   return joinUrlPath(appBasePath, path);
@@ -149,28 +151,60 @@ function truncate(text: string, max = 220): string {
   return `${text.slice(0, max - 1).trimEnd()}…`;
 }
 
-function HeadlineStrip({ items }: { items: NewsItem[] }) {
-  if (items.length === 0) return null;
+function NewsBanner({ items }: { items: NewsItem[] }) {
+  const headlines = items.slice(0, 5);
+  const [index, setIndex] = useState(() =>
+    headlines.length > 0 ? Math.floor(Date.now() / 1000) % headlines.length : 0,
+  );
+
+  useEffect(() => {
+    if (headlines.length <= 1) return;
+    const id = window.setInterval(() => {
+      setIndex((current) => (current + 1) % headlines.length);
+    }, NEWS_BANNER_ROTATE_DELAY_MS);
+    return () => window.clearInterval(id);
+  }, [headlines.length]);
+
+  useEffect(() => {
+    setIndex((current) =>
+      headlines.length > 0 ? current % headlines.length : 0,
+    );
+  }, [headlines.length]);
+
+  const item = headlines[index];
+  if (item == null) return null;
+
   return (
-    <div style={{ display: "grid", gap: 12, marginBottom: 24 }}>
-      <Text strong type="secondary">
-        LATEST
-      </Text>
-      <Flex wrap gap={12}>
-        {items.map((item) => (
-          <a
-            key={`${item.id}`}
-            href={appPath(slugURL(item))}
-            style={{ textDecoration: "none" }}
-          >
-            <Tag
-              color="blue"
-              style={{ padding: "8px 12px", cursor: "pointer" }}
-            >
-              {item.title}
-            </Tag>
-          </a>
+    <div
+      style={{
+        background: COLORS.YELL_LL,
+        borderRadius: 16,
+        marginBottom: 24,
+        padding: "12px 16px",
+      }}
+    >
+      <Flex align="center" gap={12} justify="center" wrap>
+        <Text strong type="secondary">
+          {formatNewsDate(item.date)}
+        </Text>
+        <a
+          href={appPath(slugURL(item))}
+          style={{
+            color: COLORS.BLUE_D,
+            fontWeight: 700,
+            textDecoration: "none",
+          }}
+        >
+          {item.title}
+        </a>
+        {item.tags?.map((tag) => (
+          <Tag color="purple" key={tag}>
+            {tag}
+          </Tag>
         ))}
+        <Button href={appPath("news")} type="link" style={{ paddingInline: 0 }}>
+          All news...
+        </Button>
       </Flex>
     </div>
   );
@@ -554,7 +588,7 @@ export default function PublicHomeApp({
         showPolicies={!!config?.show_policies}
         siteName={siteName}
       />
-      <HeadlineStrip items={(initialNews ?? []).slice(0, 3)} />
+      <NewsBanner items={initialNews ?? []} />
       <PublicHero
         eyebrow="COLLABORATIVE TECHNICAL COMPUTING"
         title={siteName}

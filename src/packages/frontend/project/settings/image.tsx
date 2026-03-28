@@ -63,7 +63,7 @@ export default function ProjectImage({ avatarImage, onChange }: Props) {
             false,
           );
           if (typeof file != "object") {
-            // see comment in src/packages/next/components/account/config/account/avatar.tsx
+            // `Upload` sometimes gives us a non-Blob wrapper before the actual file lands.
             console.warn(
               "WARNING: unable to read, since image is assumed to be a Blob",
             );

@@ -6,6 +6,7 @@
 import {
   Channel,
   EVENT_CHANNEL,
+  NewsAdminListItem,
   NewsItem,
   NewsPrevNext,
   RecentHeadline,
@@ -22,7 +23,7 @@ export function clearCache(): void {
 // feed clear
 const Q_FEED = `
 SELECT
-  id, channel, title, text, url,
+  id, channel, title, text, url, tags,
   extract(epoch from date::timestamp)::integer as date,
   extract(epoch from until::timestamp)::integer as until
 FROM news
@@ -125,6 +126,29 @@ export async function getIndex(
   offset: number,
 ): Promise<NewsItem[]> {
   return await C.query<NewsItem>(Q_INDEX, [limit, offset]);
+}
+
+const Q_ADMIN_INDEX = `
+SELECT
+  id, channel, title, text, url, hide, tags, history,
+  date >= NOW() as future,
+  until IS NOT NULL AND until <= NOW() as expired,
+  extract(epoch from date::timestamptz)::INTEGER as date,
+  extract(epoch from until::timestamptz)::INTEGER as until
+FROM news
+ORDER BY date DESC
+LIMIT $1
+OFFSET $2`;
+
+export async function getAdminIndex(
+  limit: number,
+  offset: number,
+): Promise<NewsAdminListItem[]> {
+  return await C.query<NewsAdminListItem>(
+    Q_ADMIN_INDEX,
+    [limit, offset],
+    false,
+  );
 }
 
 // get the most recent news item (excluding events)
