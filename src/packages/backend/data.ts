@@ -455,8 +455,11 @@ export let conatChangefeedServerCount = parseInt(
 // Dedicated socket.io port used by the standalone Conat server. In clustered
 // mode it is the base port for the local cluster; otherwise it is the single
 // standalone port proxied by the hub at /conat.
+//
+// Launchpad already uses PORT+1 for its local sshd endpoint, so default Conat
+// to PORT+2 to avoid colliding with the normal self-host layout.
 export let conatClusterPort = parseInt(
-  process.env.CONAT_CLUSTER_PORT ?? `${port + 1}`,
+  process.env.CONAT_CLUSTER_PORT ?? `${port + 2}`,
 );
 // if set, a simple http server will be started listening on conatClusterHealthPort
 // which returns an error only if the socketio server is not "healthy".

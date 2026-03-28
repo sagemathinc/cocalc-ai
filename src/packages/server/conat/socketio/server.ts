@@ -89,9 +89,10 @@ export async function init(
   logger.debug("init");
   const { kucalc, ...options } = options0;
 
-  // In development mode, check if port is available to prevent multiple servers
+  // In development mode, check if the dedicated Conat port is available to
+  // prevent multiple standalone servers.
   if (process.env.NODE_ENV !== "production" && !kucalc) {
-    await checkPortAvailable(port);
+    await checkPortAvailable(conatClusterPort);
   }
 
   if (kucalc) {
