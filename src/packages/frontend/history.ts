@@ -52,7 +52,7 @@ import { join } from "path";
 import { redux } from "@cocalc/frontend/app-framework";
 import {
   applyAccountSettingsRoute,
-  parseAccountSettingsRoute,
+  getAccountSettingsRouteFromState,
 } from "@cocalc/frontend/account/settings-routing";
 import { IS_EMBEDDED } from "@cocalc/frontend/client/handle-target";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
@@ -61,7 +61,6 @@ import {
   type ParsedPageTarget,
 } from "@cocalc/frontend/page-routing";
 import Fragment from "@cocalc/frontend/misc/fragment-id";
-import type { AuthView } from "@cocalc/frontend/auth/types";
 import { getNotificationFilterFromFragment } from "./notifications/fragment";
 
 // Determine query params part of URL based on state of the project store.
@@ -81,18 +80,6 @@ function params(): string {
     }
   }
   return u.search;
-}
-
-function parseAuthView(value?: string): AuthView {
-  switch (value) {
-    case "sign-up":
-      return "sign-up";
-    case "password-reset":
-      return "password-reset";
-    case "sign-in":
-    default:
-      return "sign-in";
-  }
 }
 
 // The last explicitly set url.
@@ -147,70 +134,77 @@ export function load_target(
   if (!target) {
     return;
   }
-  const segments = target.split("/");
+  if (target === "help" || target.startsWith("help/")) {
+    redux.getActions("page").set_active_tab("about", change_history);
+    return;
+  }
+  const parsed = parsePageTarget(target);
   if (
     !redux.getStore("account").get("is_logged_in") &&
-    segments[0] !== "auth"
+    parsed.page !== "auth"
   ) {
     // this will redirect to the sign in page after a brief pause
     redux.getActions("page").set_active_tab("account", false);
     return;
   }
-  switch (segments[0]) {
-    case "help":
-      redux.getActions("page").set_active_tab("about", change_history);
+  switch (parsed.page) {
+    case "project":
+      redux
+        .getActions("projects")
+        .load_target(
+          parsed.target,
+          true,
+          ignore_kiosk,
+          change_history,
+          Fragment.get(),
+        );
       break;
 
     case "projects":
-      if (segments.length > 1) {
-        redux
-          .getActions("projects")
-          .load_target(
-            segments.slice(1).join("/"),
-            true,
-            ignore_kiosk,
-            change_history,
-            Fragment.get(),
-          );
-      } else {
-        redux.getActions("page").set_active_tab("projects", change_history);
-      }
+      redux.getActions("page").set_active_tab("projects", change_history);
       break;
 
-    case "settings":
+    case "account":
       redux.getActions("page").set_active_tab("account", false);
       applyAccountSettingsRoute(
         redux.getActions("account"),
-        parseAccountSettingsRoute(segments.slice(1)) ?? { kind: "index" },
+        getAccountSettingsRouteFromState({
+          active_page: parsed.tab,
+          active_sub_tab: parsed.sub_tab,
+        }),
         { pushHistory: change_history },
       );
       redux.getActions("account").setFragment(Fragment.decode(hash));
-
       break;
 
-    case "notifications":
+    case "notifications": {
       const { filter, id } = getNotificationFilterFromFragment(hash);
       redux.getActions("mentions").set_filter(filter, id);
       redux.getActions("page").set_active_tab("notifications", change_history);
       break;
+    }
 
     case "hosts":
       redux.getActions("page").set_active_tab("hosts", change_history);
       break;
 
+    case "ssh":
+      redux.getActions("page").set_active_tab("ssh", change_history);
+      break;
+
     case "auth":
       redux.getActions("page").setState({
         active_top_tab: "auth",
-        auth_view: parseAuthView(segments[1]),
+        auth_view: parsed.view,
       });
       break;
 
     case "file-use":
-      // not implemented
+      redux.getActions("page").set_active_tab("file-use", change_history);
       break;
 
     case "admin":
-      redux.getActions("page").set_active_tab(segments[0], change_history);
+      redux.getActions("page").set_active_tab("admin", change_history);
       break;
   }
 }

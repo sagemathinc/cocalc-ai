@@ -118,6 +118,36 @@ export function getAccountSettingsState(
   }
 }
 
+export function getAccountSettingsRouteFromState(
+  state: AccountSettingsState,
+): AccountSettingsRoute {
+  switch (state.active_page) {
+    case "index":
+      return { kind: "index" };
+    case "profile":
+      return { kind: "profile" };
+    case "preferences": {
+      const subTab =
+        state.active_sub_tab?.replace(/^preferences-/, "") ?? "appearance";
+      const normalizedSubTab = VALID_PREFERENCES_SUB_TYPES.includes(
+        subTab as PreferencesSubTabType,
+      )
+        ? (subTab as PreferencesSubTabType)
+        : "appearance";
+      return {
+        kind: "preferences",
+        subTab: normalizedSubTab,
+        subTabKey: createPreferencesSubTabKey(normalizedSubTab)!,
+      };
+    }
+    default:
+      if (isAccountSettingsTab(state.active_page)) {
+        return { kind: "tab", page: state.active_page };
+      }
+      return { kind: "index" };
+  }
+}
+
 export function getSettingsTargetPath(
   route: AccountSettingsRoute,
 ): SettingsTargetPath {

@@ -27,6 +27,14 @@ describe("page-routing", () => {
     });
   });
 
+  it("parses auth and ssh routes explicitly", () => {
+    expect(parsePageTarget("auth/password-reset")).toEqual({
+      page: "auth",
+      view: "password-reset",
+    });
+    expect(parsePageTarget("ssh")).toEqual({ page: "ssh" });
+  });
+
   it("normalizes settings overview and preferences routes", () => {
     expect(parsePageTarget("settings")).toEqual({
       page: "account",

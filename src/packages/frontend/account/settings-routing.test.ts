@@ -1,6 +1,7 @@
 import {
   applyAccountSettingsRoute,
   createPreferencesSubTabKey,
+  getAccountSettingsRouteFromState,
   getAccountSettingsState,
   getSettingsPushStatePath,
   getSettingsTargetPath,
@@ -54,6 +55,22 @@ describe("settings-routing", () => {
       active_page: "support",
       active_sub_tab: undefined,
     });
+    expect(
+      getAccountSettingsRouteFromState({
+        active_page: "preferences",
+        active_sub_tab: "preferences-keyboard",
+      }),
+    ).toEqual({
+      kind: "preferences",
+      subTab: "keyboard",
+      subTabKey: "preferences-keyboard",
+    });
+    expect(
+      getAccountSettingsRouteFromState({
+        active_page: "support",
+        active_sub_tab: undefined,
+      }),
+    ).toEqual({ kind: "tab", page: "support" });
   });
 
   it("applies routes with or without history changes", () => {
