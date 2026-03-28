@@ -1,6 +1,7 @@
 import { useActions, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { SiteName } from "@cocalc/frontend/customize";
 import { set_url } from "@cocalc/frontend/history";
+import { getPageUrlPath } from "@cocalc/frontend/page-routing";
 import { SITE_NAME } from "@cocalc/util/theme";
 import PublicAuthPageShell from "@cocalc/frontend/public/auth/page-shell";
 import type { AuthView } from "./types";
@@ -20,18 +21,6 @@ function viewTitle(view: AuthView, siteName: string): string {
   }
 }
 
-function viewPath(view: AuthView): string {
-  switch (view) {
-    case "sign-up":
-      return "/auth/sign-up";
-    case "password-reset":
-      return "/auth/password-reset";
-    case "sign-in":
-    default:
-      return "/auth/sign-in";
-  }
-}
-
 export default function AuthPage() {
   const page_actions = useActions("page");
   const auth_view = useTypedRedux("page", "auth_view") ?? "sign-in";
@@ -39,7 +28,7 @@ export default function AuthPage() {
 
   function onNavigate(next: AuthView) {
     page_actions.setState({ active_top_tab: "auth", auth_view: next });
-    set_url(viewPath(next));
+    set_url(getPageUrlPath({ page: "auth", view: next }));
   }
 
   return (

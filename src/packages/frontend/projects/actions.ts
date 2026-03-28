@@ -27,6 +27,7 @@ import { load_all_projects, switch_to_project } from "./table";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import { defaultOpenProjectTarget } from "./open-project-default";
 import { evaluateHostOperational, hostLabel } from "./host-operational";
+import { getProjectUrlPath } from "@cocalc/frontend/project-routing";
 import {
   buildOfflineMoveConfirmationDialog,
   parseOfflineMoveConfirmationError,
@@ -714,7 +715,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
     });
 
     const title = store.get_title(project_id);
-    const link2proj = `https://${window.location.hostname}/projects/${project_id}/`;
+    const link2proj = `https://${window.location.hostname}${getProjectUrlPath(project_id, undefined)}/`;
     // convert body from markdown to html, which is what the backend expects
     const email = body != null ? markdown_to_html(body) : undefined;
 
@@ -759,7 +760,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
       const name = this.redux.getStore("account").get_fullname();
       body = `Please collaborate with me using CoCalc on '${title}'.\n\n\n--\n${name}`;
     }
-    const link2proj = `https://${window.location.hostname}/projects/${project_id}/`;
+    const link2proj = `https://${window.location.hostname}${getProjectUrlPath(project_id, undefined)}/`;
     const email = markdown_to_html(body);
 
     try {

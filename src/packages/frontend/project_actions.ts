@@ -128,6 +128,7 @@ import { canonicalSyncPath } from "@cocalc/frontend/project/sync-path";
 import { createInitialIpynbContent } from "@cocalc/frontend/jupyter/new-notebook";
 import {
   buildProjectFilesTarget,
+  getProjectUrlPath,
   buildProjectScopedTarget,
   parseProjectTarget,
 } from "@cocalc/frontend/project-routing";
@@ -700,7 +701,9 @@ export class ProjectActions extends Actions<ProjectStoreState> {
   }
 
   _url_in_project(local_url): string {
-    return `/projects/${this.project_id}/${misc.encode_path(local_url)}`;
+    return getProjectUrlPath(this.project_id, local_url, {
+      encodeProjectTarget: misc.encode_path,
+    });
   }
 
   push_state(local_url?: string, hash?: string): void {

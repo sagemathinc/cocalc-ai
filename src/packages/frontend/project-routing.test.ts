@@ -1,6 +1,8 @@
 import {
   buildProjectFilesTarget,
   buildProjectScopedTarget,
+  getProjectTargetPath,
+  getProjectUrlPath,
   parseProjectTarget,
 } from "./project-routing";
 
@@ -28,6 +30,12 @@ describe("project-routing", () => {
     expect(
       buildProjectScopedTarget("search", "/", { encodeRelativePath }),
     ).toBe("search/");
+    expect(getProjectTargetPath("project-1", "files/work/notes.md")).toBe(
+      "projects/project-1/files/work/notes.md",
+    );
+    expect(getProjectUrlPath("project-1", undefined)).toBe(
+      "/projects/project-1",
+    );
   });
 
   it("parses file and directory targets", () => {

@@ -25,6 +25,10 @@ type PathEncoder = {
   encodeRelativePath: (path: string) => string;
 };
 
+type TargetEncoder = {
+  encodeProjectTarget: (target: string) => string;
+};
+
 type PathDecoder = {
   decodeDirectoryPath: (path: string) => string;
 };
@@ -48,6 +52,26 @@ export function buildProjectScopedTarget(
 ): string {
   const relativePath = opts.encodeRelativePath(path);
   return relativePath.length === 0 ? `${tab}/` : `${tab}/${relativePath}`;
+}
+
+export function getProjectTargetPath(
+  projectId: string,
+  localTarget: string | undefined,
+  opts?: TargetEncoder,
+): string {
+  if (!localTarget) {
+    return `projects/${projectId}`;
+  }
+  const encodeProjectTarget = opts?.encodeProjectTarget ?? ((target) => target);
+  return `projects/${projectId}/${encodeProjectTarget(localTarget)}`;
+}
+
+export function getProjectUrlPath(
+  projectId: string,
+  localTarget: string | undefined,
+  opts?: TargetEncoder,
+): string {
+  return `/${getProjectTargetPath(projectId, localTarget, opts)}`;
 }
 
 export function parseProjectTarget(
