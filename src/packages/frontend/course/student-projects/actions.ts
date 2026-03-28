@@ -571,7 +571,6 @@ export class StudentProjectsActions {
         await delay(0);
       }
       await this.set_all_student_project_course_info();
-      await projectsActions.load_all_projects();
     } catch (err) {
       this.course_actions.set_error(
         `Error changing student project RootFS images - ${err}`,

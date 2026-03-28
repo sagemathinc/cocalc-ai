@@ -35,9 +35,27 @@ This means:
 - the only purchase flows that matter in the new system are:
   - membership upgrades
   - vouchers
-  - student pay (not clearly defined yet)
-  - user-owned hosts (not implemented at all yet)
-  - team/organization memberships (not clearly defined yet)
+  - a public `/redeem` flow with in-page sign in/up
+  - admin-assisted purchases for memberships and vouchers
+  - student pay (second round after Next.js removal)
+  - user-owned hosts (second round after Next.js removal)
+  - team/organization memberships (second round after Next.js removal)
+
+### Round-one commerce scope
+
+Round one replaces the active Next-owned commerce routes with:
+
+- an app-native `Store` page in settings
+- an app-native `Voucher Center` page in settings
+- public `/redeem` with an embedded sign-in/sign-up flow
+- admin-assisted purchase UI for memberships and vouchers
+
+Round two is explicitly deferred until the Next.js runtime is out of the
+active stack:
+
+- focused student memberships
+- user-owned-host billing under `/hosts`
+- team/organization membership purchasing
 
 ### Non-goal
 
@@ -143,8 +161,10 @@ Keep as the authenticated product app.
 
 Add only what naturally belongs there:
 
+- store tab
 - voucher center
 - simplified purchase flows
+- admin-assisted purchases
 - user-owned hosts billing surfaces
 - any account/settings surfaces already app-native
 
@@ -183,7 +203,7 @@ Add only what naturally belongs there:
 - `/account/*`
 - `/billing/*`
 - `/hosts/*`
-- vouchers and simplified purchase management once ported
+- store, vouchers, and simplified purchase management
 
 ## Server-only routes
 

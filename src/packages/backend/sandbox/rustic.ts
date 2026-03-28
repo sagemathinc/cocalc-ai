@@ -405,7 +405,7 @@ export async function getSnapshot({
   const common = getCommonArgs(repo);
   const { stdout } = await exec({
     cmd: rusticPath,
-    safety: [...common, "snapshots", "--json"],
+    safety: [...common, "snapshots", "--json", id],
   });
   if (!stdout) {
     throw Error(`no snapshot with id ${id}`);

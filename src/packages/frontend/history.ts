@@ -58,6 +58,8 @@ import {
   type PreferencesSubTabKey,
   type PreferencesSubTabType,
   VALID_PREFERENCES_SUB_TYPES,
+  VALID_SETTINGS_PAGES,
+  type SettingsPageType,
 } from "@cocalc/util/types/settings";
 import { getNotificationFilterFromFragment } from "./notifications/fragment";
 
@@ -286,7 +288,7 @@ export function parse_target(target?: string):
     }
   | {
       page: "account";
-      tab: "billing" | "licenses" | "support";
+      tab: Exclude<SettingsPageType, "index" | "profile">;
     }
   | {
       page: "notifications";
@@ -326,14 +328,20 @@ export function parse_target(target?: string):
           } else {
             return { page: "preferences" };
           }
-        case "billing":
-        case "licenses":
-        case "support":
-          return {
-            page: "account",
-            tab: segments[1] as "billing" | "licenses" | "support",
-          };
         default:
+          if (
+            VALID_SETTINGS_PAGES.includes(segments[1] as SettingsPageType) &&
+            segments[1] !== "index" &&
+            segments[1] !== "profile"
+          ) {
+            return {
+              page: "account",
+              tab: segments[1] as Exclude<
+                SettingsPageType,
+                "index" | "profile"
+              >,
+            };
+          }
           return { page: "profile" };
       }
     case "notifications":

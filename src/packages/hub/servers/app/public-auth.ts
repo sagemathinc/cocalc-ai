@@ -21,6 +21,8 @@ export default function initPublicAuth(router: Router): void {
     "/auth/password-reset-done/*",
     "/auth/verify",
     "/auth/verify/*",
+    "/redeem",
+    "/redeem/*",
     "/sso",
     "/sso/*",
   ];

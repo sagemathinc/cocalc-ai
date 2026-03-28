@@ -22,6 +22,7 @@ const HOST_ROOT_ONLY_ROUTES = [
   "billing",
   "blobs",
   "lang",
+  "redeem",
   "register",
   "software",
 ] as const;

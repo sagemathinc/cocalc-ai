@@ -5,8 +5,9 @@ import {
 } from "@cocalc/frontend/project/new/navigator-intents";
 import { trunc, trunc_left, trunc_middle } from "@cocalc/util/misc";
 import { CUTOFF } from "./consts";
-import { modelToMention } from "./llm-selector";
 import shortenError from "./shorten-error";
+
+const DEFAULT_HELP_ME_FIX_AGENT_MODEL = "gpt-5.4-mini";
 
 export interface GetHelpOptions {
   project_id: string;
@@ -20,7 +21,7 @@ export interface GetHelpOptions {
   extraFileInfo?: string;
   redux: any;
   prioritize?: "start" | "start-end" | "end";
-  model: string;
+  model?: string;
   isHint?: boolean;
 }
 
@@ -33,7 +34,7 @@ export interface CreateMessageOpts {
   language?: string;
   extraFileInfo?: string;
   prioritize?: "start" | "start-end" | "end";
-  model: string;
+  model?: string;
   open: boolean;
   full: boolean;
   isHint?: boolean;
@@ -52,7 +53,6 @@ export async function getHelp({
   extraFileInfo,
   redux: _redux,
   prioritize,
-  model,
   isHint = false,
 }: GetHelpOptions) {
   const messageText = createMessage({
@@ -62,12 +62,10 @@ export async function getHelp({
     input,
     language,
     extraFileInfo,
-    model,
     prioritize,
     open: true,
     full: true,
     isHint,
-    includeModelMention: false,
   });
 
   try {
@@ -79,7 +77,6 @@ export async function getHelp({
       message: messageText,
       project_id,
       path,
-      model,
       isHint,
       sourceTag: `help-me-fix-${tagSuffix}${tag ? `:${tag}` : ""}`,
     });
@@ -113,23 +110,20 @@ export function createMessage({
   line,
   language,
   input,
-  model,
   task,
   extraFileInfo,
   prioritize,
   open,
   full,
   isHint = false,
-  includeModelMention = full,
 }: CreateMessageOpts): string {
   const message: string[] = [];
-  const prefix = includeModelMention ? modelToMention(model) + " " : "";
   if (isHint) {
     message.push(
-      `${prefix}Please give me a hint to help me fix my code. Do not provide the complete solution - just point me in the right direction.`,
+      "Please give me a hint to help me fix my code. Do not provide the complete solution - just point me in the right direction.",
     );
   } else {
-    message.push(`${prefix}Help me fix my code.`);
+    message.push("Help me fix my code.");
   }
 
   if (full)
@@ -152,8 +146,6 @@ export function createMessage({
     message.push(`${delimL}${language}\n${line}\n${delimL}`);
   }
 
-  // We put the input last, since it could be huge and get truncated.
-  // It's much more important to show the error, obviously.
   if (input) {
     if (input.length < CUTOFF) {
       message.push(`My ${extraFileInfo ?? ""} contains:`);
@@ -190,7 +182,7 @@ interface CreateNavigatorIntentMessageOpts {
   message: string;
   project_id: string;
   path: string;
-  model: string;
+  model?: string;
   isHint: boolean;
   sourceTag: string;
 }
@@ -199,7 +191,6 @@ export function createNavigatorIntentMessage({
   message,
   project_id,
   path,
-  model,
   isHint,
   sourceTag,
 }: CreateNavigatorIntentMessageOpts): string {
@@ -212,7 +203,7 @@ export function createNavigatorIntentMessage({
     context: {
       project_id,
       path,
-      preferred_model: model,
+      codex_model: DEFAULT_HELP_ME_FIX_AGENT_MODEL,
       source_tag: sourceTag,
     },
     mutation_mode: "in-place-edit",
@@ -234,11 +225,8 @@ export function createNavigatorIntentMessage({
 
 function trimStr(s: string, language): string {
   if (s.length > 3000) {
-    // 3000 is about 500 tokens
-    // This uses structure:
     s = shortenError(s, language);
     if (s.length > 3000) {
-      // this just puts ... in the middle.
       s = trunc_middle(s, 3000);
     }
   }

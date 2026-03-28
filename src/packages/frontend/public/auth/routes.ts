@@ -11,12 +11,17 @@ export type PublicAuthRoute =
   | { kind: "auth-password-reset-done" }
   | { kind: "auth-password-reset-redeem"; passwordResetId: string }
   | { email?: string; kind: "auth-verify-email"; token: string }
+  | { code?: string; kind: "redeem" }
   | { kind: "sso-detail"; id: string }
   | { kind: "sso-index" };
 
 function getRouteParts(pathname: string): string[] {
   const parts = pathname.split("/").filter(Boolean);
-  const explicitIndex = Math.max(parts.indexOf("auth"), parts.indexOf("sso"));
+  const explicitIndex = Math.max(
+    parts.indexOf("auth"),
+    parts.indexOf("sso"),
+    parts.indexOf("redeem"),
+  );
   if (explicitIndex >= 0) {
     return parts.slice(explicitIndex);
   }
@@ -56,6 +61,12 @@ export function pathForSSO(id?: string): string {
   return id ? `${base}/sso/${id}` : `${base}/sso`;
 }
 
+export function pathForRedeem(code?: string): string {
+  const base = basePathPrefix();
+  const normalized = `${code ?? ""}`.trim().replace(/^\/+/, "");
+  return normalized ? `${base}/redeem/${normalized}` : `${base}/redeem`;
+}
+
 export function getPublicAuthRouteFromPath(
   pathname: string,
   search?: string,
@@ -93,6 +104,13 @@ export function getPublicAuthRouteFromPath(
       email: url.searchParams.get("email") ?? undefined,
       kind: "auth-verify-email",
       token: routeParts[2] ?? url.searchParams.get("token") ?? "",
+    };
+  }
+
+  if (routeParts[0] === "redeem") {
+    return {
+      code: routeParts[1] ?? undefined,
+      kind: "redeem",
     };
   }
 
