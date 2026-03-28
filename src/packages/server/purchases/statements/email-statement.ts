@@ -12,7 +12,6 @@ import dayjs from "dayjs";
 import { statementToMarkdown, purchasesToMarkdown } from "./to-email";
 import { getServerSettings } from "@cocalc/database/settings";
 import siteURL from "@cocalc/database/settings/site-url";
-import { disableDailyStatements } from "@cocalc/server/token-actions/create";
 import { getTotalBalance } from "../get-balance";
 import getLogger from "@cocalc/backend/logger";
 import send, { support } from "@cocalc/server/messages/send";
@@ -67,11 +66,10 @@ export default async function emailStatement(opts: {
     statement.interval == "day" ? "Daily" : "Monthly"
   } Statement - ${new Date(statement.time).toDateString()}`;
 
-  const link = `${await siteURL()}/settings/statements`;
+  const statementsUrl = `${await siteURL()}/settings/statements`;
   let stop;
   if (statement.interval == "day") {
-    const url = await disableDailyStatements(account_id);
-    stop = `\n\n[Disable Daily Statements (you will still receive monthly statements)...](${url})\n\n\n`;
+    stop = `\n\n[Manage daily statement email settings in the statements page...](${statementsUrl})\n\n\n`;
   } else {
     stop = "";
   }
@@ -84,7 +82,7 @@ Dear ${name},
 Your ${
     statement.interval == "day" ? "Daily" : "Monthly"
   } statement is below.  You can also [browse an interactive
-version of all statements](${link}) in your local timezone and download
+version of all statements](${statementsUrl}) in your local timezone and download
 your transactions as a CSV or JSON file.
 
 ${pay}
