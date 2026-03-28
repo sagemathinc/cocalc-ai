@@ -301,9 +301,8 @@ export default async function init(opts: Options): Promise<{
   });
 
   if (opts.conatServer) {
-    logger.info(`initializing the Conat Server`);
+    logger.info(`initializing the standalone Conat server`);
     initConatServer({
-      httpServer,
       ssl: !!opts.cert,
       strictCloudflareProxy: () => strictCloudflareProxy,
     });
@@ -323,11 +322,10 @@ export default async function init(opts: Options): Promise<{
       httpServer,
       app,
       projectProxyHandlersPromise: opts.projectProxyHandlersPromise,
-      // enable proxy server for /conat if:
-      //  (1) we are not running conat at all from here, or
-      //  (2) we are running socketio in cluster mode, hence
-      //      on a different port
-      proxyConat: !opts.conatServer || (conatSocketioCount ?? 1) >= 2,
+      localConatServer: !!opts.conatServer,
+      // /conat is always proxied now, whether the target is the local
+      // standalone Conat server or an upstream hub.
+      proxyConat: true,
     });
   }
 

@@ -1,6 +1,5 @@
 // Websocket support
 
-import { getEventListeners } from "node:events";
 import getLogger from "@cocalc/hub/logger";
 import stripRememberMeCookie from "./strip-remember-me-cookie";
 import { versionCheckFails } from "./version";
@@ -14,81 +13,38 @@ import {
   maybeRewritePublicAppSubdomainRequest,
 } from "./public-app-subdomain";
 
-const LISTENERS_HACK = true;
-
 const logger = getLogger("proxy:handle-upgrade");
 
 export default function initUpgrade(
   {
-    httpServer,
     proxyConat,
+    localConatServer,
     isPersonal,
     projectProxyHandlersPromise,
-  }: { httpServer; proxyConat; projectProxyHandlersPromise?; isPersonal },
+  }: {
+    proxyConat;
+    localConatServer;
+    projectProxyHandlersPromise?;
+    isPersonal;
+  },
   proxy_regexp: string,
 ) {
   const re = new RegExp(proxy_regexp);
-
-  let socketioUpgrade: undefined | Function = undefined;
 
   async function handleProxyUpgradeRequest(req, socket, head): Promise<void> {
     await maybeRewritePublicAppSubdomainRequest(req);
     const allowPublicSubdomainBypass = isPublicAppSubdomainRequest(req);
     let remember_me: string | undefined = undefined;
     let api_key: string | undefined = undefined;
-    let removedSocketioThisCall = false;
-    if (LISTENERS_HACK) {
-      const v = getEventListeners(httpServer, "upgrade");
-      if (v.length > 1) {
-        // Nodejs basically assumes that there is only one listener for the "upgrade" handler,
-        // but depending on how you run CoCalc, an extra Conat/socket.io server
-        // listener may get added. We check if anything extra got added and if so,
-        // identify the socket.io handler using a brittle source-code heuristic and
-        // remove it until we decide whether to delegate this specific request.
-        for (const f of v) {
-          if (f === handler) {
-            // it's us -- leave it alone
-            continue;
-          }
-          const source = `${f}`;
-          //logger.debug(`found extra listener`, { f, source });
-          if (source.includes("destroyUpgrade")) {
-            // WARNING/BRITTLE! the socketio source code for the upgrade handler has a destroyUpgrade
-            // option it checks for, whereas the nextjs one doesn't.
-            if (socketioUpgrade === undefined) {
-              socketioUpgrade = f;
-            } else {
-              logger.debug(
-                "WARNING! discovered unknown upgrade listener!",
-                source,
-              );
-            }
-            removedSocketioThisCall = true;
-          } else {
-            logger.debug("WARNING! discovered unknown upgrade listener!", {
-              source,
-            });
-          }
-          logger.debug(
-            `found extra listener -- detected and removed 'upgrade' listener`,
-          );
-          httpServer.removeListener("upgrade", f);
-        }
-      }
-    }
 
     if (proxyConat && isConatUpgradePath(req.url)) {
-      proxyConatWebsocket(req, socket, head);
+      proxyConatWebsocket(req, socket, head, {
+        localConatServer,
+      });
       return;
     }
 
     if (!req.url.match(re)) {
-      if (socketioUpgrade !== undefined && isConatUpgradePath(req.url)) {
-        if (!removedSocketioThisCall) {
-          socketioUpgrade(req, socket, head);
-        }
-        return;
-      }
       logger.debug("denying unexpected websocket upgrade", { url: req.url });
       denyUpgrade(socket);
       return;

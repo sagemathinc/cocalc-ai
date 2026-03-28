@@ -452,9 +452,12 @@ export let conatChangefeedServerCount = parseInt(
   process.env.CONAT_CHANGEFEED_SERVER_COUNT ?? "1",
 );
 
-// if configured, will create a socketio cluster using
-// the cluster adapter, listening on the given port.
-export let conatClusterPort = parseInt(process.env.CONAT_CLUSTER_PORT ?? "0");
+// Dedicated socket.io port used by the standalone Conat server. In clustered
+// mode it is the base port for the local cluster; otherwise it is the single
+// standalone port proxied by the hub at /conat.
+export let conatClusterPort = parseInt(
+  process.env.CONAT_CLUSTER_PORT ?? `${port + 1}`,
+);
 // if set, a simple http server will be started listening on conatClusterHealthPort
 // which returns an error only if the socketio server is not "healthy".
 export let conatClusterHealthPort = parseInt(

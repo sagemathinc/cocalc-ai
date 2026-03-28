@@ -3,7 +3,8 @@ To start this standalone
 
    s = await require('@cocalc/server/conat/socketio').initConatServer()
 
-It will also get run integrated with the hub if the --conat-server option is passed in.
+When the hub runs with --conat-server, it now starts this on a dedicated port
+and proxies /conat traffic to it.
 
 How to make a cluster of two servers:
 
@@ -133,7 +134,12 @@ export async function init(
   }
 
   if ((conatSocketioCount ?? 1) <= 1) {
-    return createConatServer(opts);
+    return createConatServer({
+      ...opts,
+      ssl: false,
+      httpServer: undefined,
+      port: conatClusterPort,
+    });
   } else {
     return createConatServer({
       ...opts,

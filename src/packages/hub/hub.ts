@@ -388,7 +388,7 @@ async function main(): Promise<void> {
     )
     .option(
       "--conat-server",
-      "run a hub that provides a single-core conat server (i.e., conat-router but integrated with the http server), api, and persistence, fileserver, along with an http server. This is for dev and small deployments of cocalc (and if given, do not bother with --conat-[core|api|persist] below.)",
+      "run a hub that provides a standalone conat server behind the hub /conat proxy, plus api and persistence. This is for dev and small deployments of cocalc (and if given, do not bother with --conat-[core|api|persist] below.)",
     )
     .option(
       "--conat-router",
