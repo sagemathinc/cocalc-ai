@@ -1,8 +1,6 @@
 /*
-Conat WebSocket proxy -- this primarily just directly proxied the conats
-socketio websocket server, so outside browsers can connect to it.
-So far I'm only using this for testing, but it could be useful in a non-kubernetes
-setting, where we need certain types of scalability.
+Proxy /conat traffic to a standalone Conat server. This covers both the
+socket.io websocket transport and the plain HTTP request path.
 */
 
 import { createProxyServer, type ProxyServer } from "http-proxy-3";
@@ -20,42 +18,78 @@ const logger = getLogger("hub:proxy-conat");
 
 const ADDRESS_UPDATE_INTERVAL = 30_000;
 
-export async function proxyConatWebsocket(req, socket, head) {
-  const i = req.url.lastIndexOf("/conat");
-  const target = randomServer() + req.url.slice(i);
+type ProxyConatOptions = {
+  localConatServer: boolean;
+};
+
+export async function proxyConatWebsocket(
+  req,
+  socket,
+  head,
+  opts: ProxyConatOptions,
+) {
+  const target = randomServer(opts) + extractConatPath(req.url);
   logger.debug(`conat proxy -- proxying a WEBSOCKET connection to ${target}`);
-  // TODO: allowing no cookie, since some project clients don't set one yet.
-  // make the proxy server
-  const proxy: ProxyServer = createProxyServer({
-    ws: true,
-    secure: false,
-    target,
-  });
+  const proxy = createConatProxy(target);
   proxy.on("error", (err) => {
     logger.debug(`WARNING: conat websocket proxy error -- ${err}`);
   });
-
-  // connect the client's socket to conat via the proxy server:
   proxy.ws(req, socket, head);
+}
+
+export async function proxyConatRequest(req, res, opts: ProxyConatOptions) {
+  const target =
+    randomServer(opts) + extractConatPath(req.originalUrl ?? req.url);
+  logger.debug(`conat proxy -- proxying an HTTP request to ${target}`);
+  const proxy = createConatProxy(target);
+  proxy.on("error", (err) => {
+    logger.debug(`WARNING: conat http proxy error -- ${err}`);
+    if (!res.headersSent) {
+      res.statusCode = 502;
+    }
+    try {
+      res.end("Bad Gateway");
+    } catch {}
+  });
+  proxy.web(req, res);
 }
 
 let client: Client | null = null;
 let addresses: string[] = [];
-function randomServer(): string {
+function randomServer(opts: ProxyConatOptions): string {
   if (client == null) {
     addressUpdateLoop();
   }
   if (addresses.length == 0) {
     addresses.push(
-      conatServer0
-        ? conatServer0
-        : `http://localhost:${conatClusterPort}${basePath.length > 1 ? basePath : ""}`,
+      opts.localConatServer ? localConatServerAddress() : conatServer0,
     );
     return addresses[0];
   }
   // random choice
   const i = Math.floor(Math.random() * addresses.length);
   return addresses[i];
+}
+
+function createConatProxy(target: string): ProxyServer {
+  return createProxyServer({
+    ws: true,
+    secure: false,
+    target,
+  });
+}
+
+function localConatServerAddress(): string {
+  return `http://localhost:${conatClusterPort}${basePath.length > 1 ? basePath : ""}`;
+}
+
+function extractConatPath(rawUrl: string | undefined): string {
+  const url = `${rawUrl ?? "/"}`;
+  const i = url.lastIndexOf("/conat");
+  if (i === -1) {
+    throw new Error(`invalid conat proxy path: ${url}`);
+  }
+  return url.slice(i);
 }
 
 async function addressUpdateLoop() {

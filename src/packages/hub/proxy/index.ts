@@ -8,6 +8,7 @@ import getLogger from "../logger";
 import initRequest from "./handle-request";
 import initUpgrade from "./handle-upgrade";
 import { maybeRewritePublicAppSubdomainRequest } from "./public-app-subdomain";
+import { proxyConatRequest } from "./proxy-conat";
 import base_path from "@cocalc/backend/base-path";
 import { ProjectControlFunction } from "@cocalc/server/projects/control";
 
@@ -19,6 +20,7 @@ interface Options {
   projectControl: ProjectControlFunction; // controls projects
   isPersonal: boolean; // if true, disables all access controls
   proxyConat: boolean;
+  localConatServer: boolean;
   projectProxyHandlersPromise?;
 }
 
@@ -26,6 +28,7 @@ export default function initProxy(opts: Options) {
   const proxy_regexp = `^${
     base_path.length <= 1 ? "" : base_path
   }\/[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}\/*`;
+  const conat_regexp = `^${base_path.length <= 1 ? "" : base_path}\\/conat(?:\\/|$)`;
   logger.info("creating proxy server with proxy_regexp", proxy_regexp);
 
   // tcp connections:
@@ -33,6 +36,14 @@ export default function initProxy(opts: Options) {
 
   // websocket upgrades:
   const handleUpgrade = initUpgrade(opts, proxy_regexp);
+
+  if (opts.proxyConat) {
+    opts.app.all(new RegExp(conat_regexp), async (req, res) => {
+      await proxyConatRequest(req, res, {
+        localConatServer: opts.localConatServer,
+      });
+    });
+  }
 
   // Host-based public app subdomains are rewritten to canonical project paths.
   opts.app.all("*", async (req, res, next) => {

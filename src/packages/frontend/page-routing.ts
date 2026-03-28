@@ -10,6 +10,7 @@ import {
   getSettingsTargetPath,
   parseAccountSettingsRoute,
 } from "@cocalc/frontend/account/settings-routing";
+import { getLegacyCommerceTargetPath } from "@cocalc/util/routing/legacy-commerce";
 import type {
   PreferencesSubTabKey,
   SettingsPageType,
@@ -63,7 +64,8 @@ export function parsePageTarget(target?: string): ParsedPageTarget {
   if (target == undefined) {
     return { page: "account", tab: "index" };
   }
-  const segments = target.split("/");
+  const normalizedTarget = getLegacyCommerceTargetPath(target) ?? target;
+  const segments = normalizedTarget.split("/");
   switch (segments[0]) {
     case "projects":
       if (segments.length < 2 || (segments.length == 2 && segments[1] == "")) {

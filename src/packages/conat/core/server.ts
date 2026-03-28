@@ -334,7 +334,11 @@ export class ConatServer extends EventEmitter {
       this.io = new Server(httpServer, socketioOptions);
     } else {
       this.io = new Server(port, socketioOptions);
-      this.log(`listening on port ${port}`);
+      const address = this.io.httpServer?.address();
+      if (typeof address === "object" && address?.port) {
+        this.options.port = address.port;
+      }
+      this.log(`listening on port ${this.options.port}`);
     }
     this.initUsage();
     this.io.on("connection", this.handleSocket);
@@ -1270,7 +1274,9 @@ export class ConatServer extends EventEmitter {
         this.log(
           `cluster scan added ${x.count} links -- will scan again in ${this.options.autoscanInterval}`,
         );
-        await unrefDelay(this.options.autoscanInterval ?? DEFAULT_AUTOSCAN_INTERVAL);
+        await unrefDelay(
+          this.options.autoscanInterval ?? DEFAULT_AUTOSCAN_INTERVAL,
+        );
       } else {
         this.log(
           `cluster scan found no new links -- waiting ${this.options.longAutoscanInterval}ms before next scan`,

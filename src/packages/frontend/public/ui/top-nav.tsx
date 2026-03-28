@@ -14,6 +14,7 @@ const { Text } = Typography;
 type PublicNavKey =
   | "home"
   | "features"
+  | "pricing"
   | "support"
   | "news"
   | "about"
@@ -38,6 +39,7 @@ export default function PublicTopNav({
   const items: Array<{ href: string; key: PublicNavKey; label: string }> = [
     { href: appPath(""), key: "home", label: "Home" },
     { href: appPath("features"), key: "features", label: "Features" },
+    { href: appPath("pricing"), key: "pricing", label: "Pricing" },
     { href: appPath("support"), key: "support", label: "Support" },
     { href: appPath("news"), key: "news", label: "News" },
     { href: appPath("about"), key: "about", label: "About" },

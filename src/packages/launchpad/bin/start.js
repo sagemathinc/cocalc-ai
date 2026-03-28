@@ -35,8 +35,9 @@ function prependPath(dir) {
     const bundledRootCandidate = join(__dirname, "..", "..", "..");
     const bundleDir =
       process.env.COCALC_BUNDLE_DIR ??
-      (existsSync(join(bundledRootCandidate, "pglite")) ||
-      existsSync(join(bundledRootCandidate, "next-dist"))
+      (existsSync(join(bundledRootCandidate, "bundle")) ||
+      existsSync(join(bundledRootCandidate, "http-api-dist")) ||
+      existsSync(join(bundledRootCandidate, "public"))
         ? bundledRootCandidate
         : process.cwd());
     process.env.COCALC_BUNDLE_DIR ??= bundleDir;
@@ -72,7 +73,6 @@ function prependPath(dir) {
         "api",
         "v2",
       ),
-      join(bundleDir, "next-dist", "pages", "api", "v2"),
     ];
     if (!process.env.COCALC_API_V2_ROOT) {
       for (const apiRoot of apiRootCandidates) {

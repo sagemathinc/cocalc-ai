@@ -125,31 +125,29 @@ import handler118 from "../pages/api/v2/purchases/stripe/get-payments";
 import handler119 from "../pages/api/v2/purchases/stripe/process-payment-intents";
 import handler120 from "../pages/api/v2/purchases/stripe/set-customer";
 import handler121 from "../pages/api/v2/purchases/stripe/set-default-payment-method";
-import handler122 from "../pages/api/v2/purchases/student-pay-link";
-import handler123 from "../pages/api/v2/purchases/student-pay-transfer";
-import handler124 from "../pages/api/v2/purchases/student-pay";
-import handler125 from "../pages/api/v2/purchases/sync-subscription";
-import handler126 from "../pages/api/v2/salesloft/money";
-import handler127 from "../pages/api/v2/shopping/cart/add";
-import handler128 from "../pages/api/v2/shopping/cart/checked";
-import handler129 from "../pages/api/v2/shopping/cart/delete";
-import handler130 from "../pages/api/v2/shopping/cart/edit";
-import handler131 from "../pages/api/v2/shopping/cart/get";
-import handler132 from "../pages/api/v2/shopping/cart/processing";
-import handler133 from "../pages/api/v2/shopping/cart/recent-purchases";
-import handler134 from "../pages/api/v2/shopping/cart/remove";
-import handler135 from "../pages/api/v2/software/activate";
-import handler136 from "../pages/api/v2/software/status";
-import handler137 from "../pages/api/v2/support/create-ticket";
-import handler138 from "../pages/api/v2/support/tickets";
-import handler139 from "../pages/api/v2/token-action";
-import handler140 from "../pages/api/v2/user-query";
-import handler141 from "../pages/api/v2/vouchers/charge-for-unpaid-vouchers";
-import handler142 from "../pages/api/v2/vouchers/create";
-import handler143 from "../pages/api/v2/vouchers/get-voucher-codes";
-import handler144 from "../pages/api/v2/vouchers/recent-vouchers";
-import handler145 from "../pages/api/v2/vouchers/redeem";
-import handler146 from "../pages/api/v2/vouchers/set-voucher-code-notes";
+import handler122 from "../pages/api/v2/purchases/student-pay-transfer";
+import handler123 from "../pages/api/v2/purchases/student-pay";
+import handler124 from "../pages/api/v2/purchases/sync-subscription";
+import handler125 from "../pages/api/v2/salesloft/money";
+import handler126 from "../pages/api/v2/shopping/cart/add";
+import handler127 from "../pages/api/v2/shopping/cart/checked";
+import handler128 from "../pages/api/v2/shopping/cart/delete";
+import handler129 from "../pages/api/v2/shopping/cart/edit";
+import handler130 from "../pages/api/v2/shopping/cart/get";
+import handler131 from "../pages/api/v2/shopping/cart/processing";
+import handler132 from "../pages/api/v2/shopping/cart/recent-purchases";
+import handler133 from "../pages/api/v2/shopping/cart/remove";
+import handler134 from "../pages/api/v2/software/activate";
+import handler135 from "../pages/api/v2/software/status";
+import handler136 from "../pages/api/v2/support/create-ticket";
+import handler137 from "../pages/api/v2/support/tickets";
+import handler138 from "../pages/api/v2/user-query";
+import handler139 from "../pages/api/v2/vouchers/charge-for-unpaid-vouchers";
+import handler140 from "../pages/api/v2/vouchers/create";
+import handler141 from "../pages/api/v2/vouchers/get-voucher-codes";
+import handler142 from "../pages/api/v2/vouchers/recent-vouchers";
+import handler143 from "../pages/api/v2/vouchers/redeem";
+import handler144 from "../pages/api/v2/vouchers/set-voucher-code-notes";
 
 export type ApiV2Handler = (req: Request, res: Response) => any;
 
@@ -266,7 +264,10 @@ export const apiV2Manifest: ApiV2ManifestEntry[] = [
   { path: "/purchases/stripe/cancel-payment-intent", handler: handler107 },
   { path: "/purchases/stripe/create-payment-intent", handler: handler108 },
   { path: "/purchases/stripe/create-setup-intent", handler: handler109 },
-  { path: "/purchases/stripe/create-subscription-payment", handler: handler110 },
+  {
+    path: "/purchases/stripe/create-subscription-payment",
+    handler: handler110,
+  },
   { path: "/purchases/stripe/delete-payment-method", handler: handler111 },
   { path: "/purchases/stripe/get-checkout-session", handler: handler112 },
   { path: "/purchases/stripe/get-customer-session", handler: handler113 },
@@ -278,29 +279,27 @@ export const apiV2Manifest: ApiV2ManifestEntry[] = [
   { path: "/purchases/stripe/process-payment-intents", handler: handler119 },
   { path: "/purchases/stripe/set-customer", handler: handler120 },
   { path: "/purchases/stripe/set-default-payment-method", handler: handler121 },
-  { path: "/purchases/student-pay-link", handler: handler122 },
-  { path: "/purchases/student-pay-transfer", handler: handler123 },
-  { path: "/purchases/student-pay", handler: handler124 },
-  { path: "/purchases/sync-subscription", handler: handler125 },
-  { path: "/salesloft/money", handler: handler126 },
-  { path: "/shopping/cart/add", handler: handler127 },
-  { path: "/shopping/cart/checked", handler: handler128 },
-  { path: "/shopping/cart/delete", handler: handler129 },
-  { path: "/shopping/cart/edit", handler: handler130 },
-  { path: "/shopping/cart/get", handler: handler131 },
-  { path: "/shopping/cart/processing", handler: handler132 },
-  { path: "/shopping/cart/recent-purchases", handler: handler133 },
-  { path: "/shopping/cart/remove", handler: handler134 },
-  { path: "/software/activate", handler: handler135 },
-  { path: "/software/status", handler: handler136 },
-  { path: "/support/create-ticket", handler: handler137 },
-  { path: "/support/tickets", handler: handler138 },
-  { path: "/token-action", handler: handler139 },
-  { path: "/user-query", handler: handler140 },
-  { path: "/vouchers/charge-for-unpaid-vouchers", handler: handler141 },
-  { path: "/vouchers/create", handler: handler142 },
-  { path: "/vouchers/get-voucher-codes", handler: handler143 },
-  { path: "/vouchers/recent-vouchers", handler: handler144 },
-  { path: "/vouchers/redeem", handler: handler145 },
-  { path: "/vouchers/set-voucher-code-notes", handler: handler146 },
+  { path: "/purchases/student-pay-transfer", handler: handler122 },
+  { path: "/purchases/student-pay", handler: handler123 },
+  { path: "/purchases/sync-subscription", handler: handler124 },
+  { path: "/salesloft/money", handler: handler125 },
+  { path: "/shopping/cart/add", handler: handler126 },
+  { path: "/shopping/cart/checked", handler: handler127 },
+  { path: "/shopping/cart/delete", handler: handler128 },
+  { path: "/shopping/cart/edit", handler: handler129 },
+  { path: "/shopping/cart/get", handler: handler130 },
+  { path: "/shopping/cart/processing", handler: handler131 },
+  { path: "/shopping/cart/recent-purchases", handler: handler132 },
+  { path: "/shopping/cart/remove", handler: handler133 },
+  { path: "/software/activate", handler: handler134 },
+  { path: "/software/status", handler: handler135 },
+  { path: "/support/create-ticket", handler: handler136 },
+  { path: "/support/tickets", handler: handler137 },
+  { path: "/user-query", handler: handler138 },
+  { path: "/vouchers/charge-for-unpaid-vouchers", handler: handler139 },
+  { path: "/vouchers/create", handler: handler140 },
+  { path: "/vouchers/get-voucher-codes", handler: handler141 },
+  { path: "/vouchers/recent-vouchers", handler: handler142 },
+  { path: "/vouchers/redeem", handler: handler143 },
+  { path: "/vouchers/set-voucher-code-notes", handler: handler144 },
 ];
