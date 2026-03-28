@@ -2,7 +2,9 @@
 
 ## Goal
 
-Eliminate the `@cocalc/next` package from the active CoCalc application stack.
+Eliminate the `@cocalc/next` package from the active CoCalc application stack,
+then delete `src/packages/next` from this repository once the last real
+dependency on it is gone.
 
 Route inventory freeze:
 
@@ -14,8 +16,8 @@ This means:
 - no Next.js requirement for auth, support, news, policies, about, features,
   vouchers, or `api/v2`
 - no share-server dependency on Next.js
-- a clear path to later remove `@cocalc/next` from `cocalc.com` after the
-  August 2026 cutover
+- no need to keep `src/packages/next` around as an archive once migration is
+  complete; git history is sufficient
 
 ## Rollout Constraints
 
@@ -48,6 +50,9 @@ This means:
 - the active hub/launchpad stack no longer boots a Next runtime
 - share-server support is removed from the active stack
 - news creation/editing is now handled by the logged-in admin app instead of a Next page
+- the remaining package-level blocker is that Launchpad still stages raw
+  `/public/...` assets from `packages/next/public`; this is a static asset
+  location problem, not a Next runtime dependency
 
 ### Round-one commerce scope
 
@@ -94,7 +99,8 @@ The highest-leverage plan is:
 3. move auth/support/news/policies/about/features to that web layer
 4. move vouchers and the simplified purchasing flows into the main app
 5. delete share-server code instead of porting it
-6. keep `cocalc.com` on the old stack until the new stack is fully proven
+6. remove the last `packages/next`-owned asset and route dependencies, then
+   delete the package
 
 ## Architectural Direction
 
