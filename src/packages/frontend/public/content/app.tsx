@@ -44,6 +44,9 @@ import {
 } from "./team-data";
 
 const Markdown = lazy(() => import("@cocalc/frontend/markdown/component"));
+const StaticMarkdown = lazy(
+  () => import("@cocalc/frontend/editors/slate/static-markdown"),
+);
 const { Paragraph, Text, Title } = Typography;
 
 interface ContentConfig {
@@ -155,15 +158,6 @@ function titleForRoute(route: PublicContentRoute, siteName: string): string {
   }
 }
 
-function stripMarkdown(text?: string): string {
-  return `${text ?? ""}`
-    .replace(/!\[[^\]]*\]\([^)]+\)/g, " ")
-    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
-    .replace(/[`*_>#-]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
 function formatNewsDate(value?: number | Date): string {
   if (value == null) return "";
   const date = value instanceof Date ? value : new Date(Number(value) * 1000);
@@ -180,11 +174,6 @@ function formatDateTime(value?: number | Date): string {
   const date = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(date.valueOf())) return "";
   return date.toLocaleString();
-}
-
-function truncate(text: string, max = 260): string {
-  if (text.length <= max) return text;
-  return `${text.slice(0, max - 1).trimEnd()}…`;
 }
 
 function MarkdownCard({ value }: { value: string }) {
@@ -1192,8 +1181,27 @@ function StructuredPolicyPage({ slug }: { slug?: string }) {
   );
 }
 
+function NewsMarkdown({
+  value,
+  preview,
+}: {
+  value: string;
+  preview?: boolean;
+}) {
+  return (
+    <Suspense fallback={<div>Loading content…</div>}>
+      <StaticMarkdown
+        style={{
+          fontSize: preview ? "0.98rem" : undefined,
+          overflowX: "auto",
+        }}
+        value={value}
+      />
+    </Suspense>
+  );
+}
+
 function NewsCard({ item }: { item: NewsItem }) {
-  const body = truncate(stripMarkdown(item.text));
   return (
     <PublicSectionCard>
       <Flex wrap gap={8}>
@@ -1203,7 +1211,7 @@ function NewsCard({ item }: { item: NewsItem }) {
       <Title level={3} style={{ margin: 0 }}>
         {item.title}
       </Title>
-      <Paragraph style={{ margin: 0 }}>{body}</Paragraph>
+      <NewsMarkdown preview value={item.text} />
       {item.tags?.length ? (
         <Flex wrap gap={8}>
           {item.tags.map((tag) => (
@@ -1372,9 +1380,7 @@ function NewsDetailPage({ route }: { route: PublicContentRoute }) {
             ))}
           </Flex>
         ) : null}
-        <Suspense fallback={<div>Loading content…</div>}>
-          <Markdown value={news.text} />
-        </Suspense>
+        <NewsMarkdown value={news.text} />
       </PublicSectionCard>
       <Flex wrap gap={12}>
         {!payload.history && payload.prev ? (

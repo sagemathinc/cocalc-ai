@@ -349,6 +349,42 @@ describe("PublicContentApp", () => {
     expect(screen.getByText("#launchpad")).not.toBeNull();
   });
 
+  it("renders rich markdown in public news cards", async () => {
+    const initialNews: NewsItem[] = [
+      {
+        channel: "feature",
+        date: 1710000000,
+        id: "1",
+        text: [
+          "This is a test.",
+          "",
+          "- foo",
+          "- bar",
+          "",
+          "![Image](/blobs/example.png?uuid=test-uuid)",
+        ].join("\n"),
+        title: "Markdown update",
+      },
+    ];
+    global.fetch = jest.fn().mockResolvedValue({
+      json: async () => initialNews,
+    }) as typeof fetch;
+
+    render(
+      <PublicContentApp
+        config={{ site_name: "Launchpad" }}
+        initialNews={initialNews}
+        initialRoute={{ view: "news" }}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByRole("img", { name: "Image" })).not.toBeNull(),
+    );
+    expect(screen.getByText("foo")).not.toBeNull();
+    expect(screen.getByText("bar")).not.toBeNull();
+  });
+
   it("shows admin news actions on the public news page for admins", () => {
     const initialNews: NewsItem[] = [
       {
