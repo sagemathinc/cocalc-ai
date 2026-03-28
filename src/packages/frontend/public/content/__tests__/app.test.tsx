@@ -1,6 +1,6 @@
 /** @jest-environment jsdom */
 
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 
 import type { NewsItem } from "@cocalc/util/types/news";
 import PublicContentApp from "../app";
@@ -9,6 +9,18 @@ import {
   getContentRouteFromPath,
   isPublicContentTarget,
 } from "../routes";
+
+const originalFetch = global.fetch;
+
+beforeEach(() => {
+  global.fetch = jest.fn().mockResolvedValue({
+    json: async () => [],
+  }) as typeof fetch;
+});
+
+afterEach(() => {
+  global.fetch = originalFetch;
+});
 
 describe("getContentRouteFromPath", () => {
   it("supports deeper content routes under a base path", () => {
@@ -358,6 +370,48 @@ describe("PublicContentApp", () => {
     expect(screen.getByRole("link", { name: "Manage news" })).not.toBeNull();
     expect(screen.getByRole("link", { name: "Create post" })).not.toBeNull();
     expect(screen.getByRole("link", { name: "Create event" })).not.toBeNull();
+  });
+
+  it("refreshes the public news list even when bootstrap data is stale", async () => {
+    const fetchMock = jest.fn().mockResolvedValue({
+      json: async () => [
+        {
+          channel: "feature",
+          date: 1710001000,
+          id: "2",
+          tags: ["fresh"],
+          text: "Fresh body",
+          title: "Fresh update",
+        },
+      ],
+    });
+    const originalFetch = global.fetch;
+    global.fetch = fetchMock as typeof fetch;
+
+    try {
+      render(
+        <PublicContentApp
+          config={{ site_name: "Launchpad" }}
+          initialNews={[
+            {
+              channel: "feature",
+              date: 1710000000,
+              id: "1",
+              text: "Stale body",
+              title: "Stale update",
+            },
+          ]}
+          initialRoute={{ view: "news" }}
+        />,
+      );
+
+      await waitFor(() =>
+        expect(screen.getByText("Fresh update")).not.toBeNull(),
+      );
+      expect(screen.queryByText("Stale update")).toBeNull();
+    } finally {
+      global.fetch = originalFetch;
+    }
   });
 
   it("renders the cocalc plus page", () => {

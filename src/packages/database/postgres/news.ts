@@ -23,7 +23,7 @@ export function clearCache(): void {
 // feed clear
 const Q_FEED = `
 SELECT
-  id, channel, title, text, url,
+  id, channel, title, text, url, tags,
   extract(epoch from date::timestamp)::integer as date,
   extract(epoch from until::timestamp)::integer as until
 FROM news

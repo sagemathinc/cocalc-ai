@@ -213,9 +213,24 @@ function useOpenAdminRoute() {
   );
 }
 
+type AdminAccessState = "allowed" | "loading" | "denied";
+
+function useAdminAccessState(): AdminAccessState {
+  const isAdmin = !!useTypedRedux("account", "is_admin");
+  const isReady = !!useTypedRedux("account", "is_ready");
+  const userType = useTypedRedux("account", "user_type");
+  if (isAdmin) {
+    return "allowed";
+  }
+  if (userType === "signing_in" || (userType === "signed_in" && !isReady)) {
+    return "loading";
+  }
+  return "denied";
+}
+
 function NewsAdminListPage() {
   const openAdminRoute = useOpenAdminRoute();
-  const isAdmin = !!useTypedRedux("account", "is_admin");
+  const adminAccess = useAdminAccessState();
   const [items, setItems] = useState<NewsAdminListItem[]>([]);
   const [error, setError] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(true);
@@ -234,10 +249,17 @@ function NewsAdminListPage() {
   }, []);
 
   useEffect(() => {
+    if (adminAccess !== "allowed") {
+      return;
+    }
     void load();
-  }, [load]);
+  }, [adminAccess, load]);
 
-  if (!isAdmin) {
+  if (adminAccess === "loading") {
+    return <Card loading />;
+  }
+
+  if (adminAccess === "denied") {
     return <Alert message="Not authorized" showIcon type="error" />;
   }
 
@@ -266,8 +288,7 @@ function NewsAdminListPage() {
         <Button onClick={() => void load()}>Refresh</Button>
       </Space>
       <Paragraph type="secondary" style={{ marginBottom: 0 }}>
-        Manage news and event posts inside the app. This replaces the old
-        Next.js editor at <Text code>/news/edit/*</Text>.
+        Manage news and event posts
       </Paragraph>
       {error ? <Alert message={error} type="error" showIcon /> : null}
       <Table<NewsAdminListItem>
@@ -380,7 +401,7 @@ function NewsEditorPage({
   route: Extract<AdminRoute, { kind: "news-editor" }>;
 }) {
   const openAdminRoute = useOpenAdminRoute();
-  const isAdmin = !!useTypedRedux("account", "is_admin");
+  const adminAccess = useAdminAccessState();
   const isNew = route.id === "new";
   const [draft, setDraft] = useState<NewsEditorDraft>(createEmptyDraft());
   const [error, setError] = useState<string>("");
@@ -390,6 +411,9 @@ function NewsEditorPage({
   const [saving, setSaving] = useState<boolean>(false);
 
   useEffect(() => {
+    if (adminAccess !== "allowed") {
+      return;
+    }
     let canceled = false;
     setError("");
     setLastImageUrl("");
@@ -419,7 +443,7 @@ function NewsEditorPage({
     return () => {
       canceled = true;
     };
-  }, [isNew, route.id]);
+  }, [adminAccess, isNew, route.id]);
 
   const previewNews = useMemo<NewsItem>(() => {
     return {
@@ -448,7 +472,7 @@ function NewsEditorPage({
     !!draft.text.trim() &&
     !saving &&
     !loading &&
-    isAdmin;
+    adminAccess === "allowed";
 
   async function save() {
     if (!canSave) return;
@@ -483,7 +507,11 @@ function NewsEditorPage({
     }
   }
 
-  if (!isAdmin) {
+  if (adminAccess === "loading") {
+    return <Card loading />;
+  }
+
+  if (adminAccess === "denied") {
     return <Alert message="Not authorized" showIcon type="error" />;
   }
 
@@ -665,7 +693,6 @@ function NewsEditorPage({
                     autoGrowMaxHeight={360}
                     enableMentions={false}
                     enableUpload
-                    fixedMode="editor"
                     height="280px"
                     input={draft.text}
                     isFocused

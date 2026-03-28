@@ -1233,8 +1233,10 @@ function NewsListPage({
   const [loading, setLoading] = useState(initialNews == null);
 
   useEffect(() => {
-    if (initialNews != null) return;
     let canceled = false;
+    if (initialNews == null) {
+      setLoading(true);
+    }
     void fetchJson<NewsItem[]>(joinUrlPath(appBasePath, "api/v2/news/list"))
       .then((payload) => {
         if (!canceled) setItems(Array.isArray(payload) ? payload : []);

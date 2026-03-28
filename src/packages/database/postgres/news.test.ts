@@ -222,6 +222,7 @@ describe("news queries", () => {
       newsIds.announcement,
       newsIds.oldFeature,
     ]);
+    expect(results[0]?.tags).toEqual(["announcement"]);
   });
 
   it("getNewsItem returns hidden items for editing", async () => {
@@ -304,6 +305,7 @@ describe("news queries", () => {
       newsIds.recentFeature,
       newsIds.platformUpdate,
     ]);
+    expect(headlines?.[0]?.tags).toEqual(["announcement"]);
   });
 
   it("getUpcomingNewsChannelItems returns future items for a channel", async () => {
