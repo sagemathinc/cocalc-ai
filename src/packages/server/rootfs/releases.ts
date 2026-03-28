@@ -14,15 +14,9 @@ import { data, secrets } from "@cocalc/backend/data";
 import getLogger from "@cocalc/backend/logger";
 import rustic from "@cocalc/backend/sandbox/rustic";
 import type { HostMachine } from "@cocalc/conat/hub/api/hosts";
-import { ONPREM_REST_TUNNEL_LOCAL_PORT } from "@cocalc/conat/project-host/api";
 import getPool from "@cocalc/database/pool";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
-import { getLaunchpadLocalConfig } from "@cocalc/server/launchpad/mode";
-import {
-  getLaunchpadRestAuth,
-  getLaunchpadRestPort,
-} from "@cocalc/server/launchpad/onprem-sshd";
-import { maybeStartLaunchpadOnPremServices } from "@cocalc/server/launchpad/onprem-sshd";
+import { buildLaunchpadRestRusticRepoConfig } from "@cocalc/server/launchpad/rest-repo";
 import {
   deleteObject,
   uploadObjectFromBuffer,
@@ -618,38 +612,16 @@ type RootfsRusticRepoConfig = {
 };
 
 async function buildSelfHostRootfsRusticRepoConfig(): Promise<RootfsRusticRepoConfig> {
-  await maybeStartLaunchpadOnPremServices();
-  const config = getLaunchpadLocalConfig("local");
-  const restPort = getLaunchpadRestPort() ?? config.rest_port;
-  if (!restPort || !config.backup_root) {
+  const repo = await buildLaunchpadRestRusticRepoConfig({
+    root: ROOTFS_RUSTIC_REPO_ROOT,
+    password: await getRootfsRusticSharedSecret(),
+  });
+  if (!repo) {
     throw new Error("self-host local rest-server is not configured");
   }
-  try {
-    await mkdir(join(config.backup_root, ROOTFS_RUSTIC_REPO_ROOT), {
-      recursive: true,
-    });
-  } catch {
-    // rustic will surface a clearer error later if this path is unusable
-  }
-  const password = await getRootfsRusticSharedSecret();
-  const auth = await getLaunchpadRestAuth();
-  const authPrefix = auth
-    ? `${encodeURIComponent(auth.user)}:${encodeURIComponent(auth.password)}@`
-    : "";
-  const tunnelLocalPort =
-    Number.parseInt(
-      process.env.COCALC_ONPREM_REST_TUNNEL_LOCAL_PORT ?? "",
-      10,
-    ) || ONPREM_REST_TUNNEL_LOCAL_PORT;
-  const endpoint = `http://${authPrefix}127.0.0.1:${tunnelLocalPort}/${ROOTFS_RUSTIC_REPO_ROOT}`;
   return {
-    repo_toml: [
-      "[repository]",
-      `repository = "rest:${endpoint}"`,
-      `password = "${password}"`,
-      "",
-    ].join("\n"),
-    repo_selector: "rest:rootfs-images",
+    repo_toml: repo.repo_toml,
+    repo_selector: repo.repo_selector,
     artifact_backend: "rest",
   };
 }

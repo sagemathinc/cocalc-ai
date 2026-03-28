@@ -58,11 +58,13 @@ The biggest remaining work is no longer "basic migration". It is:
   codepaths still need simplification/removal.
 - A simplified btrfs fallback still exists and has not yet been pruned down to
   the final intended scope.
+- The self-hosted `rest-server` repo-config path now exists and shares the same
+  launchpad helper used by project backups, but it still needs live end-to-end
+  verification with actual self-hosted project-hosts.
 
 ### Not Implemented Yet
 
 - Cross-region RootFS snapshot replication.
-- Self-hosted RootFS via `rest-server`.
 - Full verification matrix for `conda`, `pnpm`, `pip`, mixed scientific images,
   and cross-region restore.
 - Final deletion of the old btrfs delta model.
