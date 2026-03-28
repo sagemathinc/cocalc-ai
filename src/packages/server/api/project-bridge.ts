@@ -1,4 +1,4 @@
-// See packages/next/pages/api/hub.ts
+// Bridge project calls through the server-side Conat client.
 
 import { projectSubject } from "@cocalc/conat/names";
 import { conat } from "@cocalc/backend/conat";

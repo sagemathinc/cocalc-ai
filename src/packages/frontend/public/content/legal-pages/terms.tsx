@@ -64,7 +64,7 @@ export default function TermsOfServicePage() {
                 <A href="/policies/terms">https://cocalc.com/policies/terms</A>{" "}
                 or through other communications. You can track complete details
                 regarding every change{" "}
-                <A href="https://github.com/sagemathinc/cocalc/tree/master/src/packages/next/pages/policies">
+                <A href="https://github.com/sagemathinc/cocalc/tree/master/src/packages/frontend/public/content/legal-pages">
                   on GitHub
                 </A>
                 . It’s important that you review the Terms whenever we modify

@@ -17,11 +17,7 @@ import argparse, json, os, platform, shutil, subprocess, sys, time
 from typing import Any, Optional, Callable, List
 
 MAX_PACKAGE_LOCK_SIZE_MB = 5
-RETIRED_WORKSPACES = {
-    # The package stays in-tree for legacy reference work, but it is no longer
-    # part of the active build/test path.
-    'packages/next'
-}
+RETIRED_WORKSPACES = set()
 
 
 def newest_file(path: str) -> str:

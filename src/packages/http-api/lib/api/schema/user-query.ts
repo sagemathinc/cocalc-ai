@@ -58,7 +58,7 @@ export const UserQueryInputSchema = z
       GenericUserQuerySchema.describe(
         `Many other generic queries are supported; you can learn more about this endpoint 
         by viewing the corresponding CoCalc source code at 
-        https://github.com/sagemathinc/cocalc/blob/master/src/packages/next/pages/api/v2/user-query.ts.`,
+        https://github.com/sagemathinc/cocalc/blob/master/src/packages/http-api/pages/api/v2/user-query.ts.`,
       ),
     ]),
   })
@@ -82,7 +82,7 @@ export const UserQueryOutputSchema = z.union([
         `Generally, the object returned from this request mimics the structure of the 
         input query with fields populated as applicable. For more information on this 
         request, check out the corresponding CoCalc source code at
-        https://github.com/sagemathinc/cocalc/blob/master/src/packages/next/pages/api/v2/user-query.ts.`,
+        https://github.com/sagemathinc/cocalc/blob/master/src/packages/http-api/pages/api/v2/user-query.ts.`,
       ),
     ]),
   }),

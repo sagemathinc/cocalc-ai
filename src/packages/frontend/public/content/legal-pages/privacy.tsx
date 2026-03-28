@@ -1290,9 +1290,9 @@ export default function PrivacyPage() {
                 <p>
                   {" "}
                   A revision control history for this web page can be found at
-                  <A href="https://github.com/sagemathinc/cocalc/commits/master/src/packages/next/pages/policies/privacy.tsx">
+                  <A href="https://github.com/sagemathinc/cocalc/commits/master/src/packages/frontend/public/content/legal-pages/privacy.tsx">
                     {" "}
-                    github.com/sagemathinc/cocalc/commits/master/src/packages/next/pages/policies/privacy.tsx
+                    github.com/sagemathinc/cocalc/commits/master/src/packages/frontend/public/content/legal-pages/privacy.tsx
                   </A>
                   .{" "}
                 </p>{" "}

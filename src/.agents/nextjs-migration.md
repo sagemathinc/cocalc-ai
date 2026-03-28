@@ -50,9 +50,10 @@ This means:
 - the active hub/launchpad stack no longer boots a Next runtime
 - share-server support is removed from the active stack
 - news creation/editing is now handled by the logged-in admin app instead of a Next page
-- the remaining package-level blocker is that Launchpad still stages raw
-  `/public/...` assets from `packages/next/public`; this is a static asset
-  location problem, not a Next runtime dependency
+- Launchpad and the hub now stage `/public/...` assets from
+  `packages/assets/public` instead of `packages/next/public`
+- `src/packages/next` is no longer part of the workspace or build, and can be
+  deleted from the repository without breaking `pnpm build`
 
 ### Round-one commerce scope
 
