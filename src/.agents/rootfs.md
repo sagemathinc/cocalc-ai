@@ -33,6 +33,8 @@ of truth is [rootfs-rustic.md](/home/wstein/build/cocalc-lite2/src/.agents/rootf
 - Users can publish current RootFS state from a project.
 - Publish runs as an LRO with visible progress.
 - Managed releases restore into host cache and can be used on other hosts.
+- Cross-region rustic replica registration and region-local release resolution
+  now work, with a first Europe-host smoke passing.
 - Host UI shows cache inventory and allows pull/delete operations.
 - Instructors choosing RootFS for student projects is now implemented.
 - Hosted RootFS publish/restore has initial exact-manifest and hardlink
@@ -54,13 +56,12 @@ of truth is [rootfs-rustic.md](/home/wstein/build/cocalc-lite2/src/.agents/rootf
 
 ### Remaining Gaps
 
-- Cross-region RootFS snapshot replication.
 - Broader verification matrix for more real workloads:
   - `conda`
   - `pnpm`
   - `pip`
   - mixed scientific stacks
-  - cross-region restore
+  - additional cross-region workloads
 - Catalog/admin lifecycle polish for official/public/collaborator images.
 - Cleanup/removal of the remaining old btrfs delta assumptions and legacy
   storage-era codepaths.
@@ -129,8 +130,9 @@ The host UI must show:
 
 1. Expand verification to more real package-manager workloads.
 2. Keep self-hosted `rest-server` RootFS smoke in the ongoing regression mix.
-3. Finish official-image/admin lifecycle polish.
-4. Add cross-region replication.
+3. Keep cross-region replication in the live regression mix once the dev hub
+   route is healthy again.
+4. Finish official-image/admin lifecycle polish.
 5. Remove remaining btrfs-delta-era complexity.
 
 ## Document Relationship

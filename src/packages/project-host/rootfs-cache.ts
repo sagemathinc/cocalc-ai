@@ -39,7 +39,9 @@ import {
 import {
   isManagedRootfsImageName,
   normalizeRootfsImageName,
+  type RootfsArtifactTransferTarget,
   type RootfsReleaseArtifactAccess,
+  type RootfsUploadedArtifactResult,
 } from "@cocalc/util/rootfs-images";
 
 import { listProjects } from "./sqlite/projects";
@@ -309,6 +311,117 @@ async function restoreManagedRootfsRustic({
   });
 }
 
+async function backupManagedRootfsToRustic({
+  sourcePath,
+  image,
+  upload,
+}: {
+  sourcePath: string;
+  image: string;
+  upload: Extract<RootfsArtifactTransferTarget, { backend: "rustic" }>;
+}): Promise<Extract<RootfsUploadedArtifactResult, { backend: "rustic" }>> {
+  const repoProfile = await ensureRootfsRusticRepoProfile({
+    repo_selector: upload.repo_selector,
+    repo_toml: upload.repo_toml,
+  });
+  const profileArg = repoProfile.endsWith(".toml")
+    ? repoProfile.slice(0, -5)
+    : repoProfile;
+  const { stdout } = await executeCode({
+    verbose: false,
+    err_on_exit: true,
+    timeout: 6 * 60 * 60,
+    command: "sudo",
+    args: [
+      "-n",
+      STORAGE_WRAPPER,
+      "rootfs-rustic-backup",
+      sourcePath,
+      profileArg,
+      image,
+      "--tag",
+      "rootfs-release",
+      "--tag",
+      "rootfs-replica",
+    ],
+  });
+  const parsed = JSON.parse(`${stdout ?? "{}"}`);
+  const snapshot_id = `${parsed?.id ?? ""}`.trim();
+  if (!snapshot_id) {
+    throw new Error("rustic backup did not return a snapshot id");
+  }
+  const summary = parsed?.summary ?? {};
+  const packedBytes =
+    Number(summary?.data_added_packed) ||
+    Number(summary?.data_added) ||
+    Number(summary?.total_bytes_processed) ||
+    0;
+  return {
+    ok: true,
+    backend: "rustic",
+    artifact_kind: "full",
+    artifact_format: "rustic",
+    artifact_backend: upload.artifact_backend,
+    artifact_sha256: snapshot_id,
+    artifact_bytes: packedBytes,
+    artifact_path: snapshot_id,
+    snapshot_id,
+    repo_selector: upload.repo_selector,
+    region: upload.region,
+    bucket_id: upload.bucket_id,
+    bucket_name: upload.bucket_name,
+    bucket_purpose: upload.bucket_purpose,
+  };
+}
+
+async function maybeReplicateManagedRootfsRustic({
+  access,
+  sourcePath,
+}: {
+  access: Extract<RootfsReleaseArtifactAccess, { artifact_format: "rustic" }>;
+  sourcePath: string;
+}): Promise<void> {
+  const target = access.regional_replication_target;
+  if (!target) {
+    return;
+  }
+  logger.info("replicating managed RootFS rustic snapshot to local region", {
+    image: access.image,
+    release_id: access.release_id,
+    content_key: access.content_key,
+    source_region: access.region,
+    target_region: target.region,
+  });
+  try {
+    const upload = await backupManagedRootfsToRustic({
+      sourcePath,
+      image: access.image,
+      upload: target,
+    });
+    await hubApi.hosts.recordManagedRootfsReleaseReplica({
+      image: access.image,
+      upload,
+    });
+    logger.info("replicated managed RootFS rustic snapshot to local region", {
+      image: access.image,
+      release_id: access.release_id,
+      content_key: access.content_key,
+      source_region: access.region,
+      target_region: target.region,
+      snapshot_id: upload.snapshot_id,
+    });
+  } catch (err) {
+    logger.warn("failed replicating managed RootFS rustic snapshot", {
+      image: access.image,
+      release_id: access.release_id,
+      content_key: access.content_key,
+      source_region: access.region,
+      target_region: target.region,
+      err: `${err}`,
+    });
+  }
+}
+
 async function findManagedRootfsReceiveTemps(image: string): Promise<string[]> {
   if (!(await exists(IMAGE_CACHE))) {
     return [];
@@ -411,6 +524,12 @@ async function downloadManagedRootfsArtifact({
       if (access.inspect_data && !(await exists(finalInspectPath))) {
         await writeFile(finalInspectPath, JSON.stringify(access.inspect_data));
       }
+      if (access.artifact_format === "rustic") {
+        await maybeReplicateManagedRootfsRustic({
+          access,
+          sourcePath: finalPath,
+        });
+      }
       return;
     }
   }
@@ -468,6 +587,10 @@ async function downloadManagedRootfsArtifact({
         release_id: access.release_id,
         content_key: access.content_key,
         total_elapsed_ms: Date.now() - started,
+      });
+      await maybeReplicateManagedRootfsRustic({
+        access,
+        sourcePath: finalPath,
       });
       return;
     } finally {

@@ -96,6 +96,36 @@ export function wireSystemApi(): void {
     });
   };
 
+  hubApi.hosts.recordManagedRootfsReleaseReplica = async (opts: {
+    host_id?: string;
+    image: string;
+    upload: {
+      ok: true;
+      backend: "rustic";
+      artifact_kind?: "full" | "delta";
+      artifact_format: "rustic";
+      artifact_backend: "hub-local" | "r2" | "rest";
+      artifact_sha256: string;
+      artifact_bytes: number;
+      artifact_path: string;
+      snapshot_id: string;
+      repo_selector: string;
+      region?: string;
+      bucket_id?: string;
+      bucket_name?: string;
+      bucket_purpose?: string | null;
+      phase_timings_ms?: Record<string, number>;
+    };
+  }) => {
+    const scope = defaultHostScope();
+    return await callHub({
+      client: requireMasterClient("hosts.recordManagedRootfsReleaseReplica"),
+      name: "hosts.recordManagedRootfsReleaseReplica",
+      args: [opts],
+      ...(scope?.host_id ? { host_id: scope.host_id } : {}),
+    });
+  };
+
   hubApi.hosts.listManagedRootfsReleaseLifecycle = async (opts: {
     host_id?: string;
     images: string[];

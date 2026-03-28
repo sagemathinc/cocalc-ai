@@ -13,6 +13,8 @@ Managed RootFS is now substantially on the rustic design:
 - managed releases use the rustic `snapshot_id` as their immutable identity,
 - project-hosts publish directly from the merged overlay view,
 - managed images restore from rustic-backed cache entries and work cross-host,
+- cross-region replica registration and region-local release resolution now
+  work,
 - self-hosted `rest-server` publish/restore has now passed a live two-host
   Multipass smoke,
 - btrfs quota mutations are now decoupled through a durable sqlite-backed queue,
@@ -27,7 +29,7 @@ Managed RootFS is now substantially on the rustic design:
 The biggest remaining work is no longer "basic migration". It is:
 
 - broader verification,
-- cross-region replication,
+- admin/catalog polish,
 - cleanup/removal of the remaining btrfs-delta assumptions and UI leftovers.
 
 ## Status
@@ -40,6 +42,9 @@ The biggest remaining work is no longer "basic migration". It is:
 - Project-host publish goes directly from the merged overlay view to rustic.
 - Managed RootFS restore/cache works from rustic-backed releases.
 - Cross-host publish/create/start smoke tests succeeded.
+- Cross-region replica registration and region-local release resolution work.
+- A live Europe-host replication smoke has passed, including restore from the
+  replicated Europe snapshot.
 - Self-hosted `rest-server` publish/create/start smoke has now succeeded on two
   local self-hosted Multipass VMs.
 - Manifest-based verification tooling exists and is integrated.
@@ -61,12 +66,14 @@ The biggest remaining work is no longer "basic migration". It is:
   codepaths still need simplification/removal.
 - A simplified btrfs fallback still exists and has not yet been pruned down to
   the final intended scope.
+- Automatic host-triggered cross-region replication still needs a clean live
+  smoke once the dev hub route is healthy again. The direct host/data-path
+  smoke has passed.
 
 ### Not Implemented Yet
 
-- Cross-region RootFS snapshot replication.
 - Full verification matrix for `conda`, `pnpm`, `pip`, mixed scientific images,
-  and cross-region restore.
+  and additional cross-region workload coverage.
 - Final deletion of the old btrfs delta model.
 - Benchmarking and possible enablement of clone-plus-restore optimization on
   destination hosts.
@@ -132,6 +139,37 @@ other rustic paths already use, the live self-hosted rerun succeeded.
 Recorded run:
 
 - [rootfs-rustic-self-host-verification-2026-03-28.md](/home/wstein/build/cocalc-lite2/src/.agents/rootfs-benchmarks/rootfs-rustic-self-host-verification-2026-03-28.md)
+
+### Cross-Region Replication Path
+
+Current hosted cross-region behavior:
+
+1. resolve the nearest available rustic snapshot for the requesting host,
+2. if the host must pull from another region and no local-region replica exists,
+   include a local-region `regional_replication_target`,
+3. after restore on the destination host, back up the restored tree into the
+   target region using the same rustic machinery,
+4. register that replica in `rootfs_release_artifacts`,
+5. future release resolution prefers the same-region replica.
+
+This is intentionally implemented using the existing restore + backup paths,
+not direct repo-to-repo copying.
+
+The first live Europe smoke passed with:
+
+- source region: `wnam`
+- target region: `weur`
+- source snapshot:
+  `e6ef9499a6bfd36d1e1fc514f5b7cf7839a2d8a2444794ba89a19da7715cc82a`
+- replica snapshot:
+  `0afd68dda206040fcd12de4c4d264a46357b961d329037b4db3ee70ed3a9635c`
+- post-registration Europe resolution switched to the `weur` snapshot
+- restore from the `weur` replica also passed
+- hardlink topology remained intact with `3` hardlink groups on both restores
+
+Recorded run:
+
+- [rootfs-rustic-cross-region-replication-2026-03-28.md](/home/wstein/build/cocalc-lite2/src/.agents/rootfs-benchmarks/rootfs-rustic-cross-region-replication-2026-03-28.md)
 
 ### Identity Model
 
@@ -342,8 +380,8 @@ Still required:
 - `pnpm` / Node.js image
 - Python / `pip` image
 - mixed scientific stack image
-- cross-region restore after replication
-- self-hosted restore via `rest-server`
+- more cross-region workloads beyond the first Europe smoke
+- self-hosted restore via `rest-server` in the ongoing regression mix
 
 Synthetic fixtures should continue to cover:
 
@@ -370,7 +408,8 @@ large CoCalc image families with modest incremental updates.
 
 ## Self-Hosted Direction
 
-This has not been implemented yet, but the target remains:
+This is now implemented and has passed a first live smoke. The direction
+remains:
 
 - do not use the old ad hoc hub-local btrfs-stream HTTP path,
 - use the same rustic snapshot model,
@@ -392,10 +431,10 @@ This cleanup has not been finished yet.
 
 1. Extend the verification matrix to `conda`, `pnpm`, `pip`, mixed scientific,
    and additional synthetic fixtures.
-2. Implement cross-region replication.
-3. Implement self-hosted RootFS via `rest-server`.
-4. Remove the remaining btrfs delta complexity and UI/storage leftovers.
-5. Benchmark the clone-plus-restore optimization and keep it only if it gives
+2. Keep hosted cross-region replication in the live regression mix once the dev
+   hub route is healthy again.
+3. Remove the remaining btrfs delta complexity and UI/storage leftovers.
+4. Benchmark the clone-plus-restore optimization and keep it only if it gives
    clear space/time wins.
 
 ## Exit Criteria

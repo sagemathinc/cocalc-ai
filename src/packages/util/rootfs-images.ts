@@ -263,6 +263,10 @@ export type RootfsReleaseArtifactAccess =
       repo_selector: string;
       repo_toml: string;
       region?: string;
+      regional_replication_target?: Extract<
+        RootfsArtifactTransferTarget,
+        { backend: "rustic" }
+      >;
       inspect_data?: Record<string, any>;
     };
 
