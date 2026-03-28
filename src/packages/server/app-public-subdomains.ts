@@ -10,7 +10,6 @@ import siteUrl from "@cocalc/database/settings/site-url";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import {
   deleteAppSubdomainDns,
-  ensureAppSubdomainDns,
   getCnameTargetForHostname,
   hasDns,
 } from "@cocalc/server/cloud/dns";
@@ -120,22 +119,6 @@ function normalizeHostHeader(host?: string): string {
   const raw = `${host ?? ""}`.trim().toLowerCase();
   if (!raw) return "";
   return raw.split(":")[0] ?? "";
-}
-
-function buildHostname({
-  label,
-  suffix,
-  dns_domain,
-}: {
-  label: string;
-  suffix: string;
-  dns_domain: string;
-}): string {
-  const parts = dns_domain.split(".").filter(Boolean);
-  const root = parts.length > 2 ? parts.slice(-2).join(".") : dns_domain;
-  const prefix = parts.length > 2 ? parts.slice(0, -2).join("-") : "";
-  const hostLabel = [label, suffix, prefix].filter(Boolean).join("-");
-  return `${hostLabel}.${root}`;
 }
 
 async function getProjectHostCloudProvider(
@@ -250,63 +233,6 @@ export async function getProjectAppPublicPolicy(
   };
 }
 
-async function reserveWithLabel(opts: {
-  project_id: string;
-  app_id: string;
-  base_path: string;
-  ttl_s: number;
-  label: string;
-  hostname: string;
-}): Promise<{
-  hostname: string;
-  label: string;
-  base_path: string;
-  ttl_s: number;
-  previous?: { hostname?: string; dns_record_id?: string };
-  dns_record_id?: string;
-}> {
-  const pool = getPool();
-  const current = await pool.query(
-    `SELECT hostname, dns_record_id FROM ${TABLE} WHERE project_id=$1 AND app_id=$2`,
-    [opts.project_id, opts.app_id],
-  );
-  const previous = current.rows[0] as
-    | { hostname?: string; dns_record_id?: string }
-    | undefined;
-  const { rows } = await pool.query(
-    `
-      INSERT INTO ${TABLE}
-        (project_id, app_id, label, hostname, base_path, ttl_s, updated_at)
-      VALUES ($1,$2,$3,$4,$5,$6,NOW())
-      ON CONFLICT (project_id, app_id)
-      DO UPDATE SET
-        label=EXCLUDED.label,
-        hostname=EXCLUDED.hostname,
-        base_path=EXCLUDED.base_path,
-        ttl_s=EXCLUDED.ttl_s,
-        updated_at=NOW()
-      RETURNING hostname, label, base_path, ttl_s, dns_record_id
-    `,
-    [
-      opts.project_id,
-      opts.app_id,
-      opts.label,
-      opts.hostname,
-      opts.base_path,
-      opts.ttl_s,
-    ],
-  );
-  const row = rows[0];
-  return {
-    hostname: row.hostname,
-    label: row.label,
-    base_path: row.base_path,
-    ttl_s: row.ttl_s,
-    dns_record_id: row.dns_record_id ?? undefined,
-    previous,
-  };
-}
-
 export async function reserveProjectAppPublicSubdomain(opts: {
   project_id: string;
   app_id: string;
@@ -321,121 +247,53 @@ export async function reserveProjectAppPublicSubdomain(opts: {
   if (!project_id) throw new Error("project_id required");
   if (!app_id) throw new Error("app_id required");
   const base_path = normalizeBasePath(opts.base_path);
-  const ttl_s = Math.max(60, Math.floor(Number(opts.ttl_s) || 0));
 
   const policy = await getProjectAppPublicPolicy(project_id);
-  // Public app subdomains must target the owning project-host directly in the
-  // normal Launchpad/Cloudflare case. The hub may participate in the control
-  // plane, but it must not sit in the hot data path for public app traffic.
-  const dnsTargetHostname = policy.host_hostname;
-  if (!policy.enabled || !policy.dns_domain || !dnsTargetHostname) {
+  const hostHostname = policy.host_hostname;
+  if (!policy.enabled || !hostHostname) {
     throw new Error(
       policy.warnings[0] ??
-        "public app subdomains are not available; cloudflare dns and project-host public hostname are required",
+        "public app exposure is not available; cloudflare dns and project-host public hostname are required",
     );
   }
-
+  const pool = getPool();
+  const { rows } = await pool.query(
+    `DELETE FROM ${TABLE}
+      WHERE project_id=$1 AND app_id=$2
+      RETURNING hostname, dns_record_id`,
+    [project_id, app_id],
+  );
+  const stale = rows[0] as
+    | { hostname?: string; dns_record_id?: string }
+    | undefined;
+  if (stale?.dns_record_id) {
+    await deleteAppSubdomainDns({ record_id: stale.dns_record_id });
+  }
+  if (stale?.hostname) {
+    hostCache.delete(`${stale.hostname}`.toLowerCase());
+  }
   const explicitLabel = normalizeLabel(opts.preferred_label);
   const randomEnabled = opts.random_subdomain !== false;
-  let reserved:
-    | {
-        hostname: string;
-        label: string;
-        base_path: string;
-        ttl_s: number;
-        previous?: { hostname?: string; dns_record_id?: string };
-        dns_record_id?: string;
-      }
-    | undefined;
-
-  if (explicitLabel) {
-    const hostname = buildHostname({
-      label: explicitLabel,
-      suffix: policy.subdomain_suffix,
-      dns_domain: policy.dns_domain,
-    });
-    try {
-      reserved = await reserveWithLabel({
-        project_id,
-        app_id,
-        base_path,
-        ttl_s,
-        label: explicitLabel,
-        hostname,
-      });
-    } catch (err: any) {
-      if (`${err?.code ?? ""}` === "23505") {
-        throw new Error(`subdomain label '${explicitLabel}' is already in use`);
-      }
-      throw err;
-    }
-  } else {
-    const maxAttempts = randomEnabled ? 16 : 1;
-    let lastErr: any;
-    for (let i = 0; i < maxAttempts; i++) {
-      const fallbackLabel = normalizeLabel(app_id);
-      if (!randomEnabled && !fallbackLabel) {
-        throw new Error(
-          "app_id is not a valid subdomain label; use --subdomain-label or enable random subdomain",
-        );
-      }
-      const label = randomEnabled ? randomLabel() : fallbackLabel!;
-      const hostname = buildHostname({
-        label,
-        suffix: policy.subdomain_suffix,
-        dns_domain: policy.dns_domain,
-      });
-      try {
-        reserved = await reserveWithLabel({
-          project_id,
-          app_id,
-          base_path,
-          ttl_s,
-          label,
-          hostname,
-        });
-        break;
-      } catch (err: any) {
-        // unique violation on hostname collision; retry random labels.
-        if (`${err?.code ?? ""}` !== "23505") {
-          throw err;
-        }
-        lastErr = err;
-      }
-    }
-    if (!reserved) {
-      throw lastErr ?? new Error("failed to allocate random app subdomain");
-    }
-  }
-
-  const dnsTarget = await resolvePublicAppDnsTarget(dnsTargetHostname);
-  const dns = await ensureAppSubdomainDns({
-    hostname: reserved.hostname,
-    target_hostname: dnsTarget,
-    record_id: reserved.dns_record_id,
-  });
-
-  const pool = getPool();
-  await pool.query(
-    `UPDATE ${TABLE} SET dns_record_id=$3, updated_at=NOW() WHERE project_id=$1 AND app_id=$2`,
-    [project_id, app_id, dns.record_id],
-  );
-  if (
-    reserved.previous?.hostname &&
-    reserved.previous.hostname !== reserved.hostname
-  ) {
-    await deleteAppSubdomainDns({ record_id: reserved.previous.dns_record_id });
-  }
-  hostCache.delete(reserved.hostname.toLowerCase());
-  if (reserved.previous?.hostname) {
-    hostCache.delete(reserved.previous.hostname.toLowerCase());
-  }
+  const fallbackLabel = normalizeLabel(app_id);
+  const label =
+    explicitLabel ??
+    (randomEnabled
+      ? randomLabel()
+      : (fallbackLabel ??
+        (() => {
+          throw new Error(
+            "app_id is not a valid public label; use --subdomain-label or enable random subdomain",
+          );
+        })()));
   return {
-    hostname: reserved.hostname,
-    label: reserved.label,
+    hostname: hostHostname,
+    label,
     base_path,
-    url_public: `https://${reserved.hostname}`,
-    warnings: policy.warnings,
+    url_public: `https://${hostHostname}/${project_id}${base_path}`,
+    warnings: [
+      ...policy.warnings,
+      "Public app traffic is served directly from the owning project-host using a host path URL.",
+    ],
   };
 }
 

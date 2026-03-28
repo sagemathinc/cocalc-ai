@@ -32,6 +32,21 @@ export type GlobalAuthOptions = {
 
 const DEFAULT_PROFILE = "default";
 
+function normalizeApiScope(value: string | undefined): string | undefined {
+  const raw = `${value ?? ""}`.trim();
+  if (!raw) return undefined;
+  try {
+    const url = new URL(
+      raw.startsWith("http://") || raw.startsWith("https://")
+        ? raw
+        : `http://${raw}`,
+    );
+    return url.origin;
+  } catch {
+    return undefined;
+  }
+}
+
 export function authConfigPath(env = process.env): string {
   const explicit = env.COCALC_CLI_CONFIG?.trim();
   if (explicit) return explicit;
@@ -120,10 +135,18 @@ export function applyAuthProfile(
   }
 
   const resolved: GlobalAuthOptions = { ...globals };
+  const requestedApiScope =
+    normalizeApiScope(globals.api) ?? normalizeApiScope(env.COCALC_API_URL);
+  const profileApiScope = normalizeApiScope(data.api);
+  const allowSecretInheritance =
+    !requestedApiScope ||
+    !profileApiScope ||
+    requestedApiScope === profileApiScope;
   if (!resolved.api && !env.COCALC_API_URL && data.api) {
     resolved.api = data.api;
   }
   if (
+    allowSecretInheritance &&
     !resolved.accountId &&
     !resolved.account_id &&
     !env.COCALC_ACCOUNT_ID &&
@@ -131,16 +154,31 @@ export function applyAuthProfile(
   ) {
     resolved.accountId = data.account_id;
   }
-  if (!resolved.apiKey && !env.COCALC_API_KEY && data.api_key) {
+  if (
+    allowSecretInheritance &&
+    !resolved.apiKey &&
+    !env.COCALC_API_KEY &&
+    data.api_key
+  ) {
     resolved.apiKey = data.api_key;
   }
-  if (!resolved.cookie && data.cookie) {
+  if (allowSecretInheritance && !resolved.cookie && data.cookie) {
     resolved.cookie = data.cookie;
   }
-  if (!resolved.bearer && !env.COCALC_BEARER_TOKEN && data.bearer) {
+  if (
+    allowSecretInheritance &&
+    !resolved.bearer &&
+    !env.COCALC_BEARER_TOKEN &&
+    data.bearer
+  ) {
     resolved.bearer = data.bearer;
   }
-  if (!resolved.hubPassword && !env.COCALC_HUB_PASSWORD && data.hub_password) {
+  if (
+    allowSecretInheritance &&
+    !resolved.hubPassword &&
+    !env.COCALC_HUB_PASSWORD &&
+    data.hub_password
+  ) {
     resolved.hubPassword = data.hub_password;
   }
   return { globals: resolved, profile, fromProfile: true };

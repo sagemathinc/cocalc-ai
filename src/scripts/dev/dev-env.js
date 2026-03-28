@@ -473,8 +473,14 @@ function getBrowserId({ apiUrl, bearer, accountId, mode, hubPassword }) {
   for (const attempt of attempts) {
     const args = ["--json", "--api", apiUrl];
     const env = { ...process.env };
+    env.CONAT_SERVER = apiUrl;
     if (attempt.bearer) args.push("--bearer", attempt.bearer);
     if (!attempt.bearer) env.COCALC_BEARER_TOKEN = " ";
+    if (mode === "hub") {
+      env.COCALC_AGENT_TOKEN = "";
+      env.COCALC_CLI_AGENT_MODE = "";
+      env.COCALC_PROJECT_INFO_SCOPE = "";
+    }
     if (attempt.accountId) args.push("--account-id", attempt.accountId);
     if (hubPassword) args.push("--hub-password", hubPassword);
     args.push("browser", "session", "list");
@@ -598,6 +604,7 @@ function main() {
 
   const exportsMap = {
     COCALC_API_URL: apiUrl,
+    CONAT_SERVER: apiUrl,
     COCALC_BEARER_TOKEN: bearerExport,
     COCALC_ACCOUNT_ID: accountId,
     COCALC_PROJECT_ID: projectId,
@@ -615,6 +622,11 @@ function main() {
   }
   if (mode === "hub" && hubPassword) {
     exportsMap.COCALC_HUB_PASSWORD = hubPassword;
+    // Clear stale Lite/agent env so hub CLI commands do not silently
+    // connect to the wrong local service.
+    exportsMap.COCALC_AGENT_TOKEN = "";
+    exportsMap.COCALC_CLI_AGENT_MODE = "";
+    exportsMap.COCALC_PROJECT_INFO_SCOPE = "";
   }
 
   const payload = {

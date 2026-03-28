@@ -267,23 +267,13 @@ function extractArtifactVersion(
 }
 
 function buildAppPublicWildcardHostname({
-  dnsDomain,
-  suffix,
+  hostHostname,
 }: {
-  dnsDomain?: string;
-  suffix?: string;
+  hostHostname?: string;
 }): string | undefined {
-  const raw = `${dnsDomain ?? ""}`.trim().toLowerCase();
+  const raw = `${hostHostname ?? ""}`.trim().toLowerCase();
   if (!raw) return undefined;
-  const parts = raw.split(".").filter(Boolean);
-  if (!parts.length) return undefined;
-  const root = parts.length > 2 ? parts.slice(-2).join(".") : raw;
-  const prefix = parts.length > 2 ? parts.slice(0, -2).join("-") : "";
-  const normalizedSuffix = `${suffix ?? ""}`.trim().toLowerCase() || "app";
-  const wildcardLabel = ["*", normalizedSuffix, prefix]
-    .filter(Boolean)
-    .join("-");
-  return `${wildcardLabel}.${root}`;
+  return `*.${raw}`;
 }
 
 export type BootstrapScripts = {
@@ -618,11 +608,8 @@ export async function buildBootstrapScripts(
   if (tlsEnabled) {
     envLines.push(`COCALC_PROJECT_HOST_HTTPS_HOSTNAME=${tlsHostname}`);
   }
-  const serverSettings = await getServerSettings();
-
   const appPublicWildcard = buildAppPublicWildcardHostname({
-    dnsDomain: serverSettings.project_hosts_dns,
-    suffix: serverSettings.project_hosts_app_public_subdomain_suffix,
+    hostHostname: tunnel?.hostname,
   });
 
   const cloudflaredConfig: BootstrapScripts["cloudflaredConfig"] = (() => {

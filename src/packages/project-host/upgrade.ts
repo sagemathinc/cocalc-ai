@@ -133,9 +133,12 @@ async function runCommandCapture(
   );
 }
 
-async function fetchText(url: string): Promise<string> {
+async function fetchText(
+  url: string,
+  headers?: Record<string, string>,
+): Promise<string> {
   try {
-    const res = await fetch(url);
+    const res = await fetch(url, headers ? { headers } : undefined);
     if (!res.ok) {
       throw new Error(`fetch ${url} failed (${res.status})`);
     }
@@ -145,7 +148,12 @@ async function fetchText(url: string): Promise<string> {
       url,
       err: describeError(err),
     });
-    const { stdout } = await runCommandCapture("curl", ["-fsSL", url]);
+    const args = ["-fsSL"];
+    for (const [key, value] of Object.entries(headers ?? {})) {
+      args.push("-H", `${key}: ${value}`);
+    }
+    args.push(url);
+    const { stdout } = await runCommandCapture("curl", args);
     return stdout;
   }
 }
