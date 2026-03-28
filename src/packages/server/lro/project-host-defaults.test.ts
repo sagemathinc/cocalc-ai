@@ -14,6 +14,12 @@ describe("project-host default parallelism", () => {
   it("infers cpu count from common project-host metadata shapes", () => {
     expect(
       inferProjectHostCpuCount({
+        metadata: { host_cpu_count: 16 },
+      }),
+    ).toBe(16);
+
+    expect(
+      inferProjectHostCpuCount({
         metadata: { size: "t2d-standard-16" },
       }),
     ).toBe(16);

@@ -71,6 +71,8 @@ export function inferProjectHostCpuCount({
   const machineMetadata = machine.metadata ?? {};
   const runtimeMetadata = metadata?.runtime?.metadata ?? {};
   return (
+    parsePositiveInt(metadata?.host_cpu_count) ??
+    parsePositiveInt(metadata?.cpu_count) ??
     parsePositiveInt(capacity?.cpu) ??
     parsePositiveInt(capacity?.cpus) ??
     parsePositiveInt(capacity?.vcpus) ??

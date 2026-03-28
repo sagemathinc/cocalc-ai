@@ -2,7 +2,7 @@ import { createServiceClient } from "@cocalc/conat/service/typed";
 import getLogger from "@cocalc/backend/logger";
 import { randomUUID } from "crypto";
 import { promises as fsPromises } from "node:fs";
-import { homedir, userInfo } from "node:os";
+import { availableParallelism, homedir, userInfo } from "node:os";
 import { dirname, join } from "node:path";
 import { getRow, upsertRow } from "@cocalc/lite/hub/sqlite/database";
 import { createHostControlService } from "@cocalc/conat/project-host/api";
@@ -749,6 +749,7 @@ export async function startMasterRegistration({
     sshpiperd_public_key: sshpiperdKey.publicKey,
     metadata: {
       runnerId,
+      host_cpu_count: availableParallelism(),
     },
   };
 
