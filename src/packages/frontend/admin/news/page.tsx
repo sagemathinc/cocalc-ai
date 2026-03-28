@@ -220,10 +220,6 @@ function NewsAdminListPage() {
   const [error, setError] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(true);
 
-  if (!isAdmin) {
-    return <Alert message="Not authorized" showIcon type="error" />;
-  }
-
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
@@ -240,6 +236,10 @@ function NewsAdminListPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  if (!isAdmin) {
+    return <Alert message="Not authorized" showIcon type="error" />;
+  }
 
   return (
     <Space direction="vertical" size="large" style={{ width: "100%" }}>

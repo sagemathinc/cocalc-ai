@@ -337,6 +337,29 @@ describe("PublicContentApp", () => {
     expect(screen.getByText("#launchpad")).not.toBeNull();
   });
 
+  it("shows admin news actions on the public news page for admins", () => {
+    const initialNews: NewsItem[] = [
+      {
+        channel: "feature",
+        date: 1710000000,
+        id: "1",
+        text: "Body",
+        title: "Launchpad update",
+      },
+    ];
+    render(
+      <PublicContentApp
+        config={{ is_admin: true, site_name: "Launchpad" }}
+        initialNews={initialNews}
+        initialRoute={{ view: "news" }}
+      />,
+    );
+
+    expect(screen.getByRole("link", { name: "Manage news" })).not.toBeNull();
+    expect(screen.getByRole("link", { name: "Create post" })).not.toBeNull();
+    expect(screen.getByRole("link", { name: "Create event" })).not.toBeNull();
+  });
+
   it("renders the cocalc plus page", () => {
     render(
       <PublicContentApp

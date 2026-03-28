@@ -15,6 +15,7 @@ import { getContentRouteFromPath, isPublicContentTarget } from "./routes";
 interface CustomizePayload {
   configuration?: {
     help_email?: string;
+    is_admin?: boolean;
     imprint?: string;
     is_authenticated?: boolean;
     on_cocalc_com?: boolean;

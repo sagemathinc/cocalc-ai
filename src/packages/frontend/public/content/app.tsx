@@ -48,6 +48,7 @@ const { Paragraph, Text, Title } = Typography;
 
 interface ContentConfig {
   help_email?: string;
+  is_admin?: boolean;
   imprint?: string;
   is_authenticated?: boolean;
   on_cocalc_com?: boolean;
@@ -1220,7 +1221,13 @@ function NewsCard({ item }: { item: NewsItem }) {
   );
 }
 
-function NewsListPage({ initialNews }: { initialNews?: NewsItem[] }) {
+function NewsListPage({
+  initialNews,
+  isAdmin,
+}: {
+  initialNews?: NewsItem[];
+  isAdmin?: boolean;
+}) {
   const [channel, setChannel] = useState<Channel | "all">("all");
   const [items, setItems] = useState<NewsItem[]>(initialNews ?? []);
   const [loading, setLoading] = useState(initialNews == null);
@@ -1252,6 +1259,21 @@ function NewsListPage({ initialNews }: { initialNews?: NewsItem[] }) {
         <LinkButton href={contentPath("news/rss.xml")}>RSS</LinkButton> or{" "}
         <LinkButton href={contentPath("news/feed.json")}>JSON Feed</LinkButton>.
       </Paragraph>
+      {isAdmin ? (
+        <div style={{ marginTop: 16 }}>
+          <PublicSectionCard>
+            <Flex wrap gap={12}>
+              <LinkButton href={appPath("admin/news")}>Manage news</LinkButton>
+              <LinkButton href={appPath("admin/news/new")}>
+                Create post
+              </LinkButton>
+              <LinkButton href={appPath("admin/news/new?channel=event")}>
+                Create event
+              </LinkButton>
+            </Flex>
+          </PublicSectionCard>
+        </div>
+      ) : null}
       <div style={{ marginTop: 12 }}>
         <Segmented
           block
@@ -1537,7 +1559,7 @@ export default function PublicContentApp({
         subtitle={`News and release notes for ${siteName}.`}
         title={title}
       >
-        <NewsListPage initialNews={initialNews} />
+        <NewsListPage initialNews={initialNews} isAdmin={!!config?.is_admin} />
       </PageShell>
     );
   }
