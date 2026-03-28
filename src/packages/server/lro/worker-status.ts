@@ -12,7 +12,9 @@ import {
 import {
   getEffectiveParallelOpsLimit,
   getEffectiveParallelOpsLimits,
+  getEffectiveParallelOpsLimitsByDefaultMap,
 } from "./worker-config";
+import { getProjectHostDefaultParallelLimits } from "./project-host-defaults";
 import {
   listHostLocalBackupStatuses,
   type HostLocalBackupStatusRow,
@@ -338,9 +340,11 @@ export function summarizeHostLocalBackupStatus({
 
   const uniqueLimits = Array.from(new Set(rows.map((row) => row.max_parallel)));
   if (uniqueLimits.length === 1) {
+    status.default_limit = uniqueLimits[0];
     status.configured_limit = uniqueLimits[0];
     status.effective_limit = uniqueLimits[0];
   } else if (uniqueLimits.length > 1) {
+    status.default_limit = null;
     status.configured_limit = null;
     status.effective_limit = null;
     status.notes.push(
@@ -466,9 +470,11 @@ export function summarizeMoveRoleWorkerStatus({
     ),
   );
   if (uniqueLimits.length === 1) {
+    status.default_limit = uniqueLimits[0] ?? null;
     status.configured_limit = uniqueLimits[0] ?? null;
     status.effective_limit = uniqueLimits[0] ?? null;
   } else if (uniqueLimits.length > 1) {
+    status.default_limit = null;
     status.configured_limit = null;
     status.effective_limit = null;
     status.notes.push("Hosts currently report mixed move-admission limits.");
@@ -590,9 +596,11 @@ export function summarizeProjectHostLroWorkerStatus({
     ),
   );
   if (uniqueLimits.length === 1) {
+    status.default_limit = uniqueLimits[0] ?? null;
     status.configured_limit = uniqueLimits[0] ?? null;
     status.effective_limit = uniqueLimits[0] ?? null;
   } else if (uniqueLimits.length > 1) {
+    status.default_limit = null;
     status.configured_limit = null;
     status.effective_limit = null;
     status.notes.push("Hosts currently report mixed RootFS publish limits.");
@@ -716,9 +724,6 @@ export async function getParallelOpsStatus(): Promise<
   const moveDestinationWorker = parallelOpsWorkerRegistryByKind.get(
     MOVE_DESTINATION_HOST_WORKER_KIND,
   );
-  const rootfsPublishHostWorker = parallelOpsWorkerRegistryByKind.get(
-    ROOTFS_PUBLISH_HOST_WORKER_KIND,
-  );
   const cloudWorker = parallelOpsWorkerRegistryByKind.get("cloud-vm-work");
   const cloudProviderIds = Array.from(
     new Set(
@@ -748,6 +753,10 @@ export async function getParallelOpsStatus(): Promise<
         .filter(Boolean) as string[],
     ),
   );
+  const rootfsPublishHostDefaultLimits =
+    await getProjectHostDefaultParallelLimits({
+      host_ids: rootfsPublishHostIds,
+    });
   const [
     cloudProviderLimits,
     sourceHostLimits,
@@ -774,12 +783,10 @@ export async function getParallelOpsStatus(): Promise<
       scope_type: "project_host",
       scope_ids: moveDestinationHostIds,
     }),
-    getEffectiveParallelOpsLimits({
+    getEffectiveParallelOpsLimitsByDefaultMap({
       worker_kind: ROOTFS_PUBLISH_HOST_WORKER_KIND,
-      default_limit:
-        rootfsPublishHostWorker?.getLimitSnapshot().default_limit ?? 1,
+      default_limits: rootfsPublishHostDefaultLimits,
       scope_type: "project_host",
-      scope_ids: rootfsPublishHostIds,
     }),
   ]);
 

@@ -867,9 +867,11 @@ async function deleteSubvolumeTree(pathToDelete?: string): Promise<void> {
 async function createSnapshotRestoreClone({
   project_id,
   snapshot,
+  applyQuota = true,
 }: {
   project_id: string;
   snapshot: string;
+  applyQuota?: boolean;
 }): Promise<{ path: string }> {
   if (fs == null) {
     throw Error("file server not initialized");
@@ -890,7 +892,7 @@ async function createSnapshotRestoreClone({
     verbose: false,
   });
   const { size } = await vol.quota.get();
-  if (size) {
+  if (applyQuota && size) {
     const rel = path.relative(resolveProjectMountRoot(), stagedPath);
     const stagedSubvolume = await subvolume({
       filesystem: fs,
@@ -1070,12 +1072,14 @@ export function getFileServerRuntimeStatus():
   | {
       mount: string;
       bees: ReturnType<Filesystem["getBeesStatus"]>;
+      quota_queue: ReturnType<Filesystem["getQuotaQueueStatus"]>;
     }
   | undefined {
   if (fs == null) return undefined;
   return {
     mount: fs.opts.mount,
     bees: fs.getBeesStatus(),
+    quota_queue: fs.getQuotaQueueStatus(),
   };
 }
 
@@ -1546,13 +1550,15 @@ async function createSnapshot({
   project_id,
   name,
   limit,
+  quotaMode = "async",
 }: {
   project_id: string;
   name?: string;
   limit?: number;
+  quotaMode?: "sync" | "async" | "skip";
 }) {
   const vol = await getVolume(project_id);
-  await vol.snapshots.create(name, { limit });
+  await vol.snapshots.create(name, { limit, quotaMode });
 }
 
 async function deleteSnapshot({
@@ -1570,13 +1576,15 @@ async function updateSnapshots({
   project_id,
   counts,
   limit,
+  quotaMode = "async",
 }: {
   project_id: string;
   counts?: Partial<SnapshotCounts>;
   limit?: number;
+  quotaMode?: "sync" | "async" | "skip";
 }): Promise<void> {
   const vol = await getVolume(project_id);
-  await vol.snapshots.update(counts, { limit });
+  await vol.snapshots.update(counts, { limit, quotaMode });
 }
 
 async function allSnapshotUsage({
@@ -1779,6 +1787,7 @@ async function publishRootfsImage({
       await createSnapshot({
         project_id,
         name: snapshotName,
+        quotaMode: "skip",
       });
     });
   }
@@ -1795,6 +1804,7 @@ async function publishRootfsImage({
     return await createSnapshotRestoreClone({
       project_id,
       snapshot: snapshotName,
+      applyQuota: false,
     });
   });
   const rootfsPath = join(staged.path, PROJECT_IMAGE_PATH);

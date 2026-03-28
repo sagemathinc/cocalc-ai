@@ -274,3 +274,55 @@ export async function getEffectiveParallelOpsLimits({
   }
   return result;
 }
+
+export async function getEffectiveParallelOpsLimitsByDefaultMap({
+  worker_kind,
+  default_limits,
+  scope_type,
+}: {
+  worker_kind: string;
+  default_limits: Map<string, number>;
+  scope_type: Exclude<ParallelOpsLimitScopeType, "global">;
+}): Promise<
+  Map<string, { value: number; source: EffectiveParallelOpsLimitSource }>
+> {
+  const normalizedDefaults = new Map<string, number>();
+  for (const [scopeId, defaultLimit] of default_limits) {
+    const normalizedScopeId = normalizeScopeId(scope_type, scopeId);
+    if (!normalizedScopeId) continue;
+    normalizedDefaults.set(normalizedScopeId, defaultLimit);
+  }
+  const result = new Map<
+    string,
+    { value: number; source: EffectiveParallelOpsLimitSource }
+  >();
+  if (normalizedDefaults.size === 0) {
+    return result;
+  }
+  await ensureParallelOpsLimitSchema();
+  const normalizedIds = Array.from(normalizedDefaults.keys());
+  const { rows } = await pool().query<ParallelOpsLimitOverride>(
+    `
+      SELECT worker_kind, scope_type, scope_id, limit_value, enabled, updated_at, updated_by, note
+      FROM parallel_ops_limits
+      WHERE worker_kind=$1
+        AND scope_type=$2
+        AND scope_id = ANY($3::text[])
+    `,
+    [worker_kind, scope_type, normalizedIds],
+  );
+  const overrideByScopeId = new Map(
+    rows.map((row) => [row.scope_id, row] as const),
+  );
+  for (const [scope_id, default_limit] of normalizedDefaults) {
+    const row = overrideByScopeId.get(scope_id);
+    result.set(
+      scope_id,
+      applyDebugCap({
+        value: row?.enabled ? row.limit_value : default_limit,
+        source: row?.enabled ? "db-override" : "default",
+      }),
+    );
+  }
+  return result;
+}

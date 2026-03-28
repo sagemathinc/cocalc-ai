@@ -267,8 +267,11 @@ describe("parallel ops worker config", () => {
   });
 
   it("resolves multiple per-project-host limits in one query", async () => {
-    const { getEffectiveParallelOpsLimits, setParallelOpsLimitOverride } =
-      await import("./worker-config");
+    const {
+      getEffectiveParallelOpsLimits,
+      getEffectiveParallelOpsLimitsByDefaultMap,
+      setParallelOpsLimitOverride,
+    } = await import("./worker-config");
 
     await setParallelOpsLimitOverride({
       worker_kind: "project-move-source-host",
@@ -287,6 +290,22 @@ describe("parallel ops worker config", () => {
     ).resolves.toEqual(
       new Map([
         ["host-a", { value: 1, source: "default" }],
+        ["host-b", { value: 3, source: "db-override" }],
+      ]),
+    );
+
+    await expect(
+      getEffectiveParallelOpsLimitsByDefaultMap({
+        worker_kind: "project-move-source-host",
+        default_limits: new Map([
+          ["host-a", 2],
+          ["host-b", 4],
+        ]),
+        scope_type: "project_host",
+      }),
+    ).resolves.toEqual(
+      new Map([
+        ["host-a", { value: 2, source: "default" }],
         ["host-b", { value: 3, source: "db-override" }],
       ]),
     );
