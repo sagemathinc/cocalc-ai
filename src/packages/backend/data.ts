@@ -461,6 +461,9 @@ export let conatChangefeedServerCount = parseInt(
 export let conatClusterPort = parseInt(
   process.env.CONAT_CLUSTER_PORT ?? `${port + 2}`,
 );
+export function setConatClusterPort(value: number): void {
+  conatClusterPort = value;
+}
 // if set, a simple http server will be started listening on conatClusterHealthPort
 // which returns an error only if the socketio server is not "healthy".
 export let conatClusterHealthPort = parseInt(

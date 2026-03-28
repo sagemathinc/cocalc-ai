@@ -44,6 +44,7 @@ import {
   conatClusterPort,
   conatPassword,
   conatSocketioCount,
+  setConatClusterPort,
 } from "@cocalc/backend/data";
 import { getLogger } from "@cocalc/backend/logger";
 import { secureRandomString } from "@cocalc/backend/misc";
@@ -83,17 +84,38 @@ async function checkPortAvailable(port: number): Promise<void> {
   });
 }
 
+async function resolveStandalonePort(): Promise<number> {
+  const explicitPort = process.env.CONAT_CLUSTER_PORT != null;
+  try {
+    await checkPortAvailable(conatClusterPort);
+    return conatClusterPort;
+  } catch (err) {
+    if (
+      explicitPort ||
+      (conatSocketioCount ?? 1) > 1 ||
+      !(err instanceof Error)
+    ) {
+      throw err;
+    }
+    logger.warn(
+      `preferred Conat port ${conatClusterPort} is unavailable; falling back to a random localhost port`,
+    );
+    return 0;
+  }
+}
+
+function publishStandalonePort(server: ConatServer): void {
+  const actual = Number.parseInt(new URL(server.address()).port, 10);
+  if (Number.isFinite(actual) && actual > 0) {
+    setConatClusterPort(actual);
+  }
+}
+
 export async function init(
   options0: Partial<Options> & { kucalc?: boolean } = {},
 ) {
   logger.debug("init");
   const { kucalc, ...options } = options0;
-
-  // In development mode, check if the dedicated Conat port is available to
-  // prevent multiple standalone servers.
-  if (process.env.NODE_ENV !== "production" && !kucalc) {
-    await checkPortAvailable(conatClusterPort);
-  }
 
   if (kucalc) {
   }
@@ -135,12 +157,15 @@ export async function init(
   }
 
   if ((conatSocketioCount ?? 1) <= 1) {
-    return createConatServer({
+    const standalonePort = await resolveStandalonePort();
+    const server = createConatServer({
       ...opts,
       ssl: false,
       httpServer: undefined,
-      port: conatClusterPort,
+      port: standalonePort,
     });
+    publishStandalonePort(server);
+    return server;
   } else {
     return createConatServer({
       ...opts,
