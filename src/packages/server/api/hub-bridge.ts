@@ -1,4 +1,4 @@
-// See packages/next/pages/api/hub.ts
+// Bridge hub calls through the server-side Conat client.
 
 import { conat } from "@cocalc/backend/conat";
 import { type Client as ConatClient } from "@cocalc/conat/core/client";

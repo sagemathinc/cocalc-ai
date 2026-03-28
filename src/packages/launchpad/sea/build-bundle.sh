@@ -127,7 +127,7 @@ rsync -a --delete \
 echo "- Copy public assets"
 mkdir -p "$OUT"/public
 rsync -a --delete \
-  packages/next/public/ "$OUT/public/"
+  packages/assets/public/ "$OUT/public/"
 
 echo "- Copy http-api handlers"
 mkdir -p "$OUT"/http-api-dist

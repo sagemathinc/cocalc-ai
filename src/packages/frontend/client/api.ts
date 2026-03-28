@@ -1,6 +1,6 @@
 /*
 Use the api v2 endpoint from the app frontend.  This is everything defined
-in @cocalc/next/pages/api/v2
+in @cocalc/http-api/pages/api/v2
 
 We always use POST requests here.
 

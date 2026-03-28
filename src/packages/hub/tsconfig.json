@@ -11,7 +11,6 @@
     { "path": "../backend" },
     { "path": "../database" },
     { "path": "../frontend" },
-    { "path": "../next/tsconfig-dist.json" },
     { "path": "../server" },
     { "path": "../static" },
     { "path": "../util" },

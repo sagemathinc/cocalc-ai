@@ -61,8 +61,8 @@ export default async function editNews(opts: NewsItem) {
       until,
     });
     const { rows } = await pool.query(
-      `INSERT INTO news (title, text, url, date, channel, tags, until) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
-      [title, text, url, date, channel, tags, until],
+      `INSERT INTO news (title, text, url, date, channel, tags, hide, until) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
+      [title, text, url, date, channel, tags, hide, until],
     );
     id = rows[0].id;
   }

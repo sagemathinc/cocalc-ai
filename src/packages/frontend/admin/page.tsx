@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Collapse, CollapseProps } from "antd";
+import { Button, Collapse, CollapseProps, Space, Typography } from "antd";
 import { useState } from "react";
 
 import { Icon, Title } from "@cocalc/frontend/components";
@@ -16,11 +16,30 @@ import AIAvatar from "@cocalc/frontend/components/ai-avatar";
 import { TestLLMAdmin } from "./llm/admin-llm-test";
 import { SoftwareLicensesAdmin } from "./software-licenses";
 import { RootfsAdmin } from "./rootfs";
+import { NewsAdminPage } from "./news/page";
+import {
+  getAdminUrlPath,
+  normalizeAdminRoute,
+  type AdminRoute,
+} from "./routing";
+import { useActions } from "@cocalc/frontend/app-framework";
+import { set_url_with_search } from "@cocalc/frontend/history";
 
 const headerStyle = { fontSize: "12pt" } as const;
+const { Paragraph, Text } = Typography;
 
-export function AdminPage() {
+export function AdminPage({
+  route = { kind: "index" },
+}: {
+  route?: AdminRoute;
+}) {
+  route = normalizeAdminRoute(route);
+  const pageActions = useActions("page");
   const [activeKey, setActiveKey] = useState<string[]>([]);
+
+  if (route.kind !== "index") {
+    return <NewsAdminPage route={route} />;
+  }
 
   const items: CollapseProps["items"] = [
     {
@@ -31,6 +50,68 @@ export function AdminPage() {
         </div>
       ),
       children: <UserSearch />,
+    },
+    {
+      key: "news",
+      label: (
+        <div style={headerStyle}>
+          <Icon name="file-alt" style={{ marginRight: "8px" }} /> News
+        </div>
+      ),
+      children: (
+        <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+          <Paragraph style={{ marginBottom: 0 }}>
+            Create and edit public news items and events in the app with the new
+            markdown editor, image paste/upload support, and live preview.
+          </Paragraph>
+          <Space wrap>
+            <Button
+              type="primary"
+              onClick={() => {
+                pageActions.set_active_tab("admin", false);
+                pageActions.setState({
+                  admin_route: { kind: "news-list" },
+                });
+                set_url_with_search(getAdminUrlPath({ kind: "news-list" }), "");
+              }}
+            >
+              Open news manager
+            </Button>
+            <Button
+              onClick={() => {
+                pageActions.set_active_tab("admin", false);
+                pageActions.setState({
+                  admin_route: { kind: "news-editor", id: "new" },
+                });
+                set_url_with_search(
+                  getAdminUrlPath({ kind: "news-editor", id: "new" }),
+                  "",
+                );
+              }}
+            >
+              Create news item
+            </Button>
+            <Button
+              onClick={() => {
+                pageActions.set_active_tab("admin", false);
+                pageActions.setState({
+                  admin_route: { kind: "news-editor", id: "new" },
+                });
+                set_url_with_search(
+                  getAdminUrlPath({ kind: "news-editor", id: "new" }),
+                  "?channel=event",
+                );
+              }}
+            >
+              Create event
+            </Button>
+          </Space>
+          <Text type="secondary">
+            Legacy <Text code>/news/edit/*</Text> links now redirect into this
+            admin flow.
+          </Text>
+        </Space>
+      ),
     },
     {
       key: "site-settings",
