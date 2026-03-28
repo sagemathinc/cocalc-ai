@@ -3,7 +3,7 @@
 This document is the current status of the RootFS-to-rustic work, not just the
 original migration plan.
 
-Last refreshed: March 27, 2026
+Last refreshed: March 28, 2026
 
 ## Executive Summary
 
@@ -17,6 +17,7 @@ Managed RootFS is now substantially on the rustic design:
 - RootFS publish now has:
   - a high global cap, and
   - a separate per-host cap.
+- same-host publish scaling data now exists on the current small host.
 
 The biggest remaining work is no longer "basic migration". It is:
 
@@ -161,31 +162,49 @@ That proved:
 - `global = 1` was too restrictive,
 - unrelated hosts should not be serialized by the hub.
 
-### What We Do Not Yet Have
+### Same-Host Sweep On The Current Small Host
 
-We do **not** yet have direct same-host RootFS publish scaling data for:
+We now have direct same-host RootFS publish scaling data on the current small
+test host (`rootfs-test-2`) with four real projects on the same host:
 
-- per-host `1`
-- per-host `2`
-- per-host `3`
-- larger same-host concurrency sweeps on bigger machines
+- per-host `1`: `572.11s`, all `4/4` succeeded
+- per-host `2`: `256.83s`, all `4/4` succeeded
+- per-host `3`: `173.84s`, only `2/4` succeeded
+- per-host `4`: `235.53s`, only `3/4` succeeded
 
-So there is currently no evidence-based reason to say that the per-host limit
-should already be `2` or `3`.
+The failures at `3` and `4` were not rustic failures. They were host-local
+btrfs qgroup errors during snapshot staging:
 
-The current conservative default of `1` is still reasonable until we run:
+- `ERROR: quota rescan failed: Operation now in progress`
 
-1. same-host publish sweep at `1/2/3` on the current small test host,
-2. the same sweep on a larger CPU host,
-3. measurement of wall clock, per-op latency, CPU, disk, and network pressure.
+That means:
+
+- `1` is clearly too conservative on this host
+- `2` is currently the highest clean measured setting
+- `3+` is not safe on this host until the qgroup concurrency issue is fixed or
+  the staging path is redesigned
+
+Detailed results:
+
+- [rootfs-rustic-same-host-publish-sweep-2026-03-27.md](/home/wstein/build/cocalc-lite2/src/.agents/rootfs-benchmarks/rootfs-rustic-same-host-publish-sweep-2026-03-27.md)
+- [rootfs-rustic-same-host-publish-sweep-2026-03-27.json](/home/wstein/build/cocalc-lite2/src/.agents/rootfs-benchmarks/rootfs-rustic-same-host-publish-sweep-2026-03-27.json)
+
+### What We Still Do Not Have
+
+We still do **not** have:
+
+- same-host scaling data on a larger CPU host
+- data beyond `4` on a bigger machine
+- measurements that separate CPU, disk, and network saturation directly
 
 ### Next Parallelism Question
 
-The next concrete tuning task is:
+The next concrete tuning tasks are:
 
-- benchmark same-host RootFS publish concurrency,
-- then decide whether the per-host default should move from `1` to `2` or
-  higher.
+- consider raising the per-host default from `1` to `2` on the current class of
+  host
+- fix or understand the qgroup concurrency failure before considering `3+`
+- repeat the sweep on a larger CPU host
 
 ## Verification
 
