@@ -828,8 +828,16 @@ case "$cmd" in
     if [[ "$repo_profile" == *.toml ]]; then
       repo_profile="${repo_profile%.toml}"
     fi
+    rustic_cmd=(/opt/cocalc/tools/current/rustic -P "$repo_profile")
+    if ! "${rustic_cmd[@]}" repoinfo >/dev/null 2>&1; then
+      if ! "${rustic_cmd[@]}" --no-progress init >/dev/null 2>&1; then
+        # Another process may have initialized the repo concurrently; accept
+        # that case and only fail if the repository is still unusable.
+        "${rustic_cmd[@]}" repoinfo >/dev/null 2>&1
+      fi
+    fi
     cd "$src"
-    exec /opt/cocalc/tools/current/rustic -P "$repo_profile" backup --json --no-scan --host "$host_name" "$@" .
+    exec "${rustic_cmd[@]}" backup --json --no-scan --host "$host_name" "$@" .
     ;;
   rootfs-rustic-restore)
     if [ "$#" -lt 3 ]; then

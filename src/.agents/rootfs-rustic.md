@@ -13,6 +13,8 @@ Managed RootFS is now substantially on the rustic design:
 - managed releases use the rustic `snapshot_id` as their immutable identity,
 - project-hosts publish directly from the merged overlay view,
 - managed images restore from rustic-backed cache entries and work cross-host,
+- self-hosted `rest-server` publish/restore has now passed a live two-host
+  Multipass smoke,
 - btrfs quota mutations are now decoupled through a durable sqlite-backed queue,
 - RootFS publish temp snapshots/clones skip quota bookkeeping entirely,
 - initial exact-manifest verification passed on real workloads,
@@ -26,7 +28,6 @@ The biggest remaining work is no longer "basic migration". It is:
 
 - broader verification,
 - cross-region replication,
-- self-hosted `rest-server` support,
 - cleanup/removal of the remaining btrfs-delta assumptions and UI leftovers.
 
 ## Status
@@ -39,6 +40,8 @@ The biggest remaining work is no longer "basic migration". It is:
 - Project-host publish goes directly from the merged overlay view to rustic.
 - Managed RootFS restore/cache works from rustic-backed releases.
 - Cross-host publish/create/start smoke tests succeeded.
+- Self-hosted `rest-server` publish/create/start smoke has now succeeded on two
+  local self-hosted Multipass VMs.
 - Manifest-based verification tooling exists and is integrated.
 - Initial exact-manifest cross-host verification passed.
 - RootFS publish exposes a real global concurrency cap.
@@ -58,9 +61,6 @@ The biggest remaining work is no longer "basic migration". It is:
   codepaths still need simplification/removal.
 - A simplified btrfs fallback still exists and has not yet been pruned down to
   the final intended scope.
-- The self-hosted `rest-server` repo-config path now exists and shares the same
-  launchpad helper used by project backups, but it still needs live end-to-end
-  verification with actual self-hosted project-hosts.
 
 ### Not Implemented Yet
 
@@ -117,6 +117,21 @@ Current behavior:
 4. mount it as a lowerdir for projects.
 
 Cross-host restores are working in the current hosted dev setup.
+
+Self-hosted restores are now also working through the launchpad local
+`rest-server` path.
+
+The first live self-hosted smoke exposed one real bug:
+
+- the privileged `cocalc-runtime-storage rootfs-rustic-backup` wrapper did not
+  lazily initialize a `rest:` rustic repository on first use
+
+After fixing that wrapper to do the same `repoinfo`/`init` bootstrap dance that
+other rustic paths already use, the live self-hosted rerun succeeded.
+
+Recorded run:
+
+- [rootfs-rustic-self-host-verification-2026-03-28.md](/home/wstein/build/cocalc-lite2/src/.agents/rootfs-benchmarks/rootfs-rustic-self-host-verification-2026-03-28.md)
 
 ### Identity Model
 
