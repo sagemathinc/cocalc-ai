@@ -9,6 +9,7 @@ describe("routing/app", () => {
     expect(hasHostAbsoluteRoutePrefix("/redeem/ABC12345")).toBe(true);
     expect(hasHostAbsoluteRoutePrefix("/software")).toBe(true);
     expect(hasHostAbsoluteRoutePrefix("/billing?tab=upgrade")).toBe(true);
+    expect(hasHostAbsoluteRoutePrefix("/store/membership")).toBe(true);
     expect(hasHostAbsoluteRoutePrefix("/home/wstein/x.txt")).toBe(false);
     expect(hasHostAbsoluteRoutePrefix("/tmp/authors.txt")).toBe(false);
   });
@@ -19,6 +20,7 @@ describe("routing/app", () => {
     expect(APP_BASE_PATH_ROUTE_MARKERS).toContain("/lang");
     expect(APP_BASE_PATH_ROUTE_MARKERS).toContain("/redeem");
     expect(APP_BASE_PATH_ROUTE_MARKERS).toContain("/ssh");
+    expect(APP_BASE_PATH_ROUTE_MARKERS).toContain("/store");
   });
 
   it("does not need separate top-level markers for project subroutes", () => {

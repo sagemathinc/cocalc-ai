@@ -55,6 +55,29 @@ describe("page-routing", () => {
     });
   });
 
+  it("maps legacy billing and store aliases onto canonical settings pages", () => {
+    expect(parsePageTarget("billing/cards")).toEqual({
+      page: "account",
+      tab: "payment-methods",
+      sub_tab: undefined,
+    });
+    expect(parsePageTarget("billing/receipts")).toEqual({
+      page: "account",
+      tab: "statements",
+      sub_tab: undefined,
+    });
+    expect(parsePageTarget("store/membership")).toEqual({
+      page: "account",
+      tab: "store",
+      sub_tab: undefined,
+    });
+    expect(parsePageTarget("store/vouchers")).toEqual({
+      page: "account",
+      tab: "store",
+      sub_tab: undefined,
+    });
+  });
+
   it("builds canonical paths from shared page routes", () => {
     expect(getPageTargetPath({ page: "projects" })).toBe("projects");
     expect(
