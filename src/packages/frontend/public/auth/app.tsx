@@ -19,6 +19,7 @@ import {
   PublicSignUpForm,
 } from "./forms";
 import PublicAuthPageShell from "./page-shell";
+import PublicRedeemVoucherView from "./redeem-view";
 import {
   getPublicAuthRouteFromPath,
   pathForAuthView,
@@ -57,6 +58,8 @@ function titleForRoute(route: PublicAuthRoute, siteName: string): string {
       return `Choose a new ${siteName} password`;
     case "auth-verify-email":
       return `Verify your ${siteName} email`;
+    case "redeem":
+      return `Redeem voucher for ${siteName}`;
     case "sso-detail":
     case "sso-index":
       return `${siteName} single sign-on`;
@@ -72,6 +75,8 @@ function subtitleForRoute(route: PublicAuthRoute, siteName: string): string {
       return `Single sign-on for ${siteName}`;
     case "auth-password-reset-done":
       return siteName;
+    case "redeem":
+      return `Sign in or create an account to apply voucher credit to your ${siteName} account.`;
     default:
       return siteName;
   }
@@ -87,6 +92,8 @@ function cardWidthForRoute(route: PublicAuthRoute): string | undefined {
     case "auth-password-reset-done":
     case "auth-verify-email":
       return "min(560px, 96vw)";
+    case "redeem":
+      return "min(720px, 96vw)";
     default:
       return undefined;
   }
@@ -154,6 +161,13 @@ export default function PublicAuthApp({
       )}
       {route.kind === "auth-verify-email" && (
         <PublicVerifyEmailView email={route.email} token={route.token} />
+      )}
+      {route.kind === "redeem" && (
+        <PublicRedeemVoucherView
+          initialCode={route.code}
+          isAuthenticated={isAuthenticated}
+          onNavigate={onNavigate}
+        />
       )}
       {route.kind === "sso-index" && (
         <PublicSSOIndexView initialStrategies={initialSSOStrategies} />

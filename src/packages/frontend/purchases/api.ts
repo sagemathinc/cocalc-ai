@@ -496,12 +496,6 @@ export async function studentPay(project_id: string) {
   return await api("purchases/student-pay", { project_id });
 }
 
-export async function studentPayLink(
-  project_id: string,
-): Promise<{ url: string }> {
-  return await api("purchases/student-pay-link", { project_id });
-}
-
 export async function studentPayTransfer(opts: {
   project_id: string;
   paid_project_id: string;

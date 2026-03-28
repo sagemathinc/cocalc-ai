@@ -237,10 +237,6 @@ const ACP_LOG_PERSIST_SLOW_MS = envNumber(
   "COCALC_ACP_LOG_PERSIST_SLOW_MS",
   150,
 );
-const ACP_LOG_CHECKPOINT_PERSIST_SLOW_MS = envNumber(
-  "COCALC_ACP_LOG_CHECKPOINT_PERSIST_SLOW_MS",
-  250,
-);
 const ACP_LIVE_LOG_PUBLISH_SLOW_MS = envNumber(
   "COCALC_ACP_LIVE_LOG_PUBLISH_SLOW_MS",
   100,
@@ -264,22 +260,6 @@ const ACP_LIVE_LOG_BATCH_LATENCY_MULTIPLIER = envNumber(
 const ACP_LIVE_LOG_BATCH_MAX_EVENTS = envNumber(
   "COCALC_ACP_LIVE_LOG_BATCH_MAX_EVENTS",
   128,
-);
-const ACP_LOG_CHECKPOINT_BATCH_MIN_MS = envNumber(
-  "COCALC_ACP_LOG_CHECKPOINT_BATCH_MS",
-  5_000,
-);
-const ACP_LOG_CHECKPOINT_BATCH_MAX_MS = envNumber(
-  "COCALC_ACP_LOG_CHECKPOINT_BATCH_MAX_MS",
-  30_000,
-);
-const ACP_LOG_CHECKPOINT_BATCH_EWMA_ALPHA = envNumber(
-  "COCALC_ACP_LOG_CHECKPOINT_BATCH_EWMA_ALPHA",
-  0.25,
-);
-const ACP_LOG_CHECKPOINT_BATCH_LATENCY_MULTIPLIER = envNumber(
-  "COCALC_ACP_LOG_CHECKPOINT_BATCH_LATENCY_MULTIPLIER",
-  3,
 );
 const ACP_LIVE_LOG_MAX_BYTES = envNumber(
   "COCALC_ACP_LIVE_LOG_MAX_BYTES",
@@ -1589,8 +1569,6 @@ export class ChatStreamWriter {
     AStream<AcpStreamMessage | AcpStreamMessage[]>
   >;
   private liveLogBatcher!: AdaptiveAsyncBatcher<AcpStreamMessage>;
-  private checkpointPersistBatcher!: AdaptiveAsyncBatcher<number>;
-  private lastPersistedLogSeq = -1;
   private client: ConatClient;
   private timeTravel?: AgentTimeTravelRecorder;
   private integritySnapshot: ChatIntegritySnapshot = {
@@ -1939,7 +1917,6 @@ export class ChatStreamWriter {
     this.logSubject = refs.subject;
     this.liveLogStreamName = refs.liveStream;
     this.liveLogBatcher = this.createLiveLogBatcher();
-    this.checkpointPersistBatcher = this.createCheckpointPersistBatcher();
     // ensure initialization rejections are observed immediately
     this.ready = this.initialize();
     this.waitUntilReady();
@@ -2131,9 +2108,6 @@ export class ChatStreamWriter {
       // the first text event".
       this.events = appendStreamMessage(this.events, payload);
       this.publishLiveLog(payload);
-      if (persist) {
-        this.scheduleCheckpointPersist(payload);
-      }
       this.commitNow(true);
       return;
     }
@@ -2145,9 +2119,6 @@ export class ChatStreamWriter {
     }
     this.events = appendStreamMessage(this.events, payload);
     this.publishLiveLog(payload);
-    if (persist) {
-      this.scheduleCheckpointPersist(payload);
-    }
     if (payload.type === "event") {
       this.handleAgentEvent(payload.event);
       if (this.interruptNotified) {
@@ -2811,11 +2782,6 @@ export class ChatStreamWriter {
         // ignore
       }
       try {
-        await this.checkpointPersistBatcher.close();
-      } catch {
-        // ignore
-      }
-      try {
         await this.persistLog();
       } catch {
         // ignore
@@ -3137,46 +3103,6 @@ export class ChatStreamWriter {
     });
   }
 
-  private createCheckpointPersistBatcher(): AdaptiveAsyncBatcher<number> {
-    return createAdaptiveAsyncBatcher<number>({
-      minDelayMs: ACP_LOG_CHECKPOINT_BATCH_MIN_MS,
-      maxDelayMs: ACP_LOG_CHECKPOINT_BATCH_MAX_MS,
-      ewmaAlpha: ACP_LOG_CHECKPOINT_BATCH_EWMA_ALPHA,
-      latencyMultiplier: ACP_LOG_CHECKPOINT_BATCH_LATENCY_MULTIPLIER,
-      maxItems: 256,
-      flush: async (batch) => {
-        if (this.closed || this.events.length === 0) return;
-        const latestScheduledSeq = Math.max(...batch);
-        const latestActualSeq = Number(this.events.at(-1)?.seq ?? -1);
-        const latestSeq = Math.max(latestScheduledSeq, latestActualSeq);
-        if (latestSeq <= this.lastPersistedLogSeq) return;
-        await this.persistLog("checkpoint");
-      },
-      onFlushComplete: ({
-        batchSize,
-        durationMs,
-        nextDelayMs,
-        estimatedLatencyMs,
-      }) => {
-        if (durationMs < ACP_LOG_CHECKPOINT_PERSIST_SLOW_MS) {
-          return;
-        }
-        logger.warn("acp live checkpoint persist slow", {
-          chatKey: this.chatKey,
-          path: this.metadata.path,
-          events: this.events.length,
-          batchSize,
-          durationMs: roundMs(durationMs),
-          nextDelayMs,
-          estimatedLatencyMs:
-            estimatedLatencyMs == null
-              ? undefined
-              : roundMs(estimatedLatencyMs),
-        });
-      },
-    });
-  }
-
   private publishLiveLog(event: AcpStreamMessage): void {
     if (this.closed) return;
     const shouldFlushNow =
@@ -3188,52 +3114,24 @@ export class ChatStreamWriter {
     });
   }
 
-  private scheduleCheckpointPersist(payload: AcpStreamMessage): void {
-    if (this.closed || this.finished || this.events.length === 0) return;
-    if (payload.type === "summary" || payload.type === "error") return;
-    const latestSeq = Number(this.events.at(-1)?.seq ?? payload.seq ?? -1);
-    if (!Number.isFinite(latestSeq) || latestSeq <= this.lastPersistedLogSeq) {
-      return;
-    }
-    // Flush the very first visible event quickly so restart/reconnect paths can
-    // show "working" instead of an indefinite "starting" badge, then back off.
-    this.checkpointPersistBatcher.add(latestSeq, {
-      flush: this.lastPersistedLogSeq < 0 && this.events.length <= 1,
-    });
-  }
-
   private async waitForLiveLogFlush(): Promise<void> {
     await this.liveLogBatcher.flush();
   }
 
-  private async persistLog(
-    kind: "checkpoint" | "final" = "final",
-  ): Promise<void> {
+  private async persistLog(): Promise<void> {
     if (this.events.length === 0) return;
     try {
       const started = performance.now();
       const store = this.getLogStore();
       await store.set(this.logKey, this.events);
-      const latestSeq = Number(this.events.at(-1)?.seq ?? -1);
-      if (Number.isFinite(latestSeq)) {
-        this.lastPersistedLogSeq = Math.max(
-          this.lastPersistedLogSeq,
-          latestSeq,
-        );
-      }
       const durationMs = performance.now() - started;
       if (durationMs >= ACP_LOG_PERSIST_SLOW_MS) {
-        logger.warn(
-          kind === "final"
-            ? "acp final log persist slow"
-            : "acp checkpoint log persist slow",
-          {
-            chatKey: this.chatKey,
-            path: this.metadata.path,
-            events: this.events.length,
-            durationMs: roundMs(durationMs),
-          },
-        );
+        logger.warn("acp final log persist slow", {
+          chatKey: this.chatKey,
+          path: this.metadata.path,
+          events: this.events.length,
+          durationMs: roundMs(durationMs),
+        });
       }
     } catch (err) {
       logger.warn("failed to persist acp log", err);
@@ -3417,8 +3315,8 @@ function formatUserFacingAcpError(error: string): string {
     cleaned,
     "",
     "Try one of these:",
-    "- [Upgrade your membership](/store/membership)",
-    "- [Open AI settings](/preferences/ai) to connect a ChatGPT Plan or your own OpenAI API key",
+    "- [Upgrade your membership](/settings/store)",
+    "- [Open AI settings](/settings/preferences/ai) to connect a ChatGPT Plan or your own OpenAI API key",
   ].join("\n");
 }
 

@@ -59,8 +59,6 @@ import { History, HistoryFooter, HistoryTitle } from "./history";
 import { resolveAgentSessionIdForThread } from "./thread-session";
 import ChatInput from "./input";
 import { FeedbackLLM } from "./llm-msg-feedback";
-import { RegenerateLLM } from "./llm-msg-regenerate";
-import { SummarizeThread } from "./llm-msg-summarize";
 import { Name } from "./name";
 import { Time } from "./time";
 import { ChatMessageTyped, Mode, SubmitMentionsFn } from "./types";
@@ -448,10 +446,6 @@ export default function Message({
 }: Props) {
   const intl = useIntl();
   const editorTheme = useEffectiveEditorThemeForPath(project_id, path);
-
-  const showAISummarize = redux
-    .getStore("projects")
-    .hasLanguageModelEnabled(project_id, "chat-summarize");
 
   const [edited_message, set_edited_message] = useState<string>(
     newest_content(message),
@@ -1250,14 +1244,6 @@ export default function Message({
       );
     }
 
-    if (showAISummarize && is_thread && !threadViewMode) {
-      buttons.push(
-        <span key="summarize">
-          <SummarizeThread message={message} actions={actions} />
-        </span>,
-      );
-    }
-
     const historySize = history_size;
     if (historySize > 1) {
       buttons.push(
@@ -1337,11 +1323,6 @@ export default function Message({
     }
 
     if (isLLMThread && msgWrittenByLLM) {
-      buttons.push(
-        <span key="regenerate">
-          <RegenerateLLM actions={actions} date={date} model={isLLMThread} />
-        </span>,
-      );
       buttons.push(
         <span key="feedback-llm">
           <FeedbackLLM actions={actions} message={message} />

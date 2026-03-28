@@ -40,6 +40,9 @@ export const RESUME_SUBSCRIPTION = "resume-subscription";
 // change membership tiers directly in-app
 export const MEMBERSHIP_CHANGE = "membership-change";
 
+// purchase account credit vouchers directly
+export const VOUCHER_PURCHASE = "voucher-purchase";
+
 // for paying a statement the purpose is `statement-${statement_id}`
 // (Maybe we should be usig metadata for this though?)
 
@@ -66,9 +69,11 @@ export type Service = ComputeService;
 
 export interface Membership {
   type: "membership";
-  subscription_id: number;
+  subscription_id?: number | null;
   class: MembershipClass;
   interval: "month" | "year";
+  admin_assigned?: boolean;
+  assigned_by?: string;
 }
 
 export interface StudentPayPurchase {

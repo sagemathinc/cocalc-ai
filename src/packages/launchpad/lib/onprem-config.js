@@ -161,7 +161,6 @@ function findArgValue(flag) {
 
 async function applyLaunchpadDefaults() {
   process.env.COCALC_DB ??= "pglite";
-  process.env.COCALC_DISABLE_NEXT ??= "1";
   process.env.COCALC_PRODUCT ??= "launchpad";
 
   const dataDir = resolveDataDir();
@@ -211,19 +210,16 @@ async function applyLaunchpadDefaults() {
   const pair = await checkPortPairAvailable(basePort, sshdPort);
   if (!pair.ok) {
     const mode = source === "auto" ? "auto-selected" : source;
-    fail(
-      `selected ports are unavailable (${mode})`,
-      {
-        basePort,
-        sshdPort,
-        http: pair.httpCheck,
-        sshd: pair.sshCheck,
-        hint:
-          source === "saved"
-            ? "Set COCALC_BASE_PORT/COCALC_HTTP_PORT/PORT to override saved port, or free the saved port."
-            : "Set COCALC_BASE_PORT/COCALC_HTTP_PORT/PORT and COCALC_SSHD_PORT to free ports.",
-      },
-    );
+    fail(`selected ports are unavailable (${mode})`, {
+      basePort,
+      sshdPort,
+      http: pair.httpCheck,
+      sshd: pair.sshCheck,
+      hint:
+        source === "saved"
+          ? "Set COCALC_BASE_PORT/COCALC_HTTP_PORT/PORT to override saved port, or free the saved port."
+          : "Set COCALC_BASE_PORT/COCALC_HTTP_PORT/PORT and COCALC_SSHD_PORT to free ports.",
+    });
   }
 
   process.env.COCALC_HTTP_PORT = String(basePort);

@@ -7,7 +7,7 @@ Show tag for each service
 import { Tag, Tooltip } from "antd";
 import { useState } from "react";
 
-import Next from "@cocalc/frontend/components/next";
+import { openAccountSettings } from "@cocalc/frontend/account/settings-routing";
 import {
   QUOTA_SPEC,
   Service,
@@ -63,7 +63,15 @@ export default function ServiceTag({
   );
 
   if (service == "voucher") {
-    tag = <Next href={"vouchers"}>{tag}</Next>;
+    tag = (
+      <a
+        onClick={() => {
+          openAccountSettings({ kind: "tab", page: "vouchers" });
+        }}
+      >
+        {tag}
+      </a>
+    );
   }
 
   if (spec?.description) {

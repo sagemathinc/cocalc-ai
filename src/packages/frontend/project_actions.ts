@@ -126,6 +126,12 @@ import {
 import { isJupyterPath } from "@cocalc/util/jupyter/names";
 import { canonicalSyncPath } from "@cocalc/frontend/project/sync-path";
 import { createInitialIpynbContent } from "@cocalc/frontend/jupyter/new-notebook";
+import {
+  buildProjectFilesTarget,
+  getProjectUrlPath,
+  buildProjectScopedTarget,
+  parseProjectTarget,
+} from "@cocalc/frontend/project-routing";
 
 const { defaults, required } = misc;
 
@@ -660,11 +666,10 @@ export class ProjectActions extends Actions<ProjectStoreState> {
   };
 
   private toUrlPath = (path: string, isDirectory: boolean): string => {
-    const { relativePath } = this.getPathRoute(path);
-    if (relativePath.length === 0) {
-      return "files/";
-    }
-    return `files/${relativePath}${isDirectory ? "/" : ""}`;
+    return buildProjectFilesTarget(path, isDirectory, {
+      encodeRelativePath: (nextPath) =>
+        this.getPathRoute(nextPath).relativePath,
+    });
   };
 
   private fromUrlDirectoryPath = (path: string): string => {
@@ -685,8 +690,10 @@ export class ProjectActions extends Actions<ProjectStoreState> {
   };
 
   private toAuxTabPath = (tab: "new" | "search", path: string): string => {
-    const { relativePath } = this.getPathRoute(path);
-    return relativePath.length === 0 ? `${tab}/` : `${tab}/${relativePath}`;
+    return buildProjectScopedTarget(tab, path, {
+      encodeRelativePath: (nextPath) =>
+        this.getPathRoute(nextPath).relativePath,
+    });
   };
 
   set_url_to_path(current_path, hash?: string): void {
@@ -694,7 +701,9 @@ export class ProjectActions extends Actions<ProjectStoreState> {
   }
 
   _url_in_project(local_url): string {
-    return `/projects/${this.project_id}/${misc.encode_path(local_url)}`;
+    return getProjectUrlPath(this.project_id, local_url, {
+      encodeProjectTarget: misc.encode_path,
+    });
   }
 
   push_state(local_url?: string, hash?: string): void {
@@ -1713,7 +1722,12 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       .foreground_project(this.project_id, change_history);
   };
 
-  open_directory = async (path, change_history = true, show_files = true) => {
+  open_directory = async (
+    path,
+    change_history = true,
+    show_files = true,
+    foreground_project = true,
+  ) => {
     path = normalize(path);
     // Be forgiving if a route-like path is passed here.
     if (path === "files") {
@@ -1723,7 +1737,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       path = rel.length === 0 ? "/" : `/${rel}`;
     }
     try {
-      await this.ensureProjectIsOpen();
+      await this.ensureProjectIsOpen(foreground_project);
     } catch (err) {
       console.warn(
         "error opening directory in project: ",
@@ -1737,7 +1751,9 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       path = path.slice(0, -1);
     }
     const nextPathAbs = this.toAbsoluteCurrentPath(path);
-    this.foreground_project(change_history);
+    if (foreground_project) {
+      this.foreground_project(change_history);
+    }
     this.set_current_path(nextPathAbs);
     const store = this.get_store();
     if (store == undefined) {
@@ -2981,98 +2997,75 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     change_history = true,
     fragmentId?: FragmentId,
   ): Promise<void> => {
-    const segments = target.split("/");
-    const main_segment = segments[0] as FixedTab | "project-home" | "apps";
-    const hasScopedPathSource =
-      (main_segment === "new" || main_segment === "search") &&
-      segments[1] === "files";
-    const scopedPathIndex = hasScopedPathSource ? 2 : 1;
-    const full_path = this.fromUrlDirectoryPath(segments.slice(1).join("/"));
-    const parent_path = this.fromUrlDirectoryPath(
-      segments.slice(1, segments.length - 1).join("/"),
-    );
-    if (main_segment === "files") {
-      if (target.endsWith("/")) {
-        this.open_directory(parent_path, change_history);
-        return;
-      }
-      const store = this.get_store();
-      if (store == null) {
-        return; // project closed already
-      }
-      // Provisional directory context to avoid flashing "/" while stat is in flight.
-      // If this turns out to be a file, use its parent directory context.
-      if (this.isDirViaCache(full_path) !== false) {
-        this.set_current_path(parent_path);
-        this.set_active_tab("files", {
-          update_file_listing: false,
-          change_history: false,
-        });
-      }
-      const isDir = await this.isDir(full_path);
-      if (isDir) {
-        this.open_directory(full_path, change_history);
-      } else {
-        this.open_file({
-          path: full_path,
-          foreground,
-          foreground_project: foreground,
-          ignore_kiosk,
-          change_history,
-          fragmentId,
-        });
-      }
+    const route = parseProjectTarget(target, {
+      decodeDirectoryPath: (path) => this.fromUrlDirectoryPath(path),
+    });
+    if (route == null) {
+      console.warn(`project/load_target: don't know segment ${target}`);
       return;
     }
-    switch (main_segment) {
-      case "active":
-        console.warn(
-          "there is no 'active files' page – those are the tabs in the projec",
-        );
+
+    switch (route.kind) {
+      case "directory":
+        this.open_directory(route.path, change_history, true, foreground);
         return;
 
+      case "file": {
+        const store = this.get_store();
+        if (store == null) {
+          return; // project closed already
+        }
+        // Provisional directory context to avoid flashing "/" while stat is in flight.
+        // If this turns out to be a file, use its parent directory context.
+        if (this.isDirViaCache(route.path) !== false) {
+          this.set_current_path(route.parentPath);
+          this.set_active_tab("files", {
+            update_file_listing: false,
+            change_history: false,
+          });
+        }
+        const isDir = await this.isDir(route.path);
+        if (isDir) {
+          this.open_directory(route.path, change_history, true, foreground);
+        } else {
+          this.open_file({
+            path: route.path,
+            foreground,
+            foreground_project: foreground,
+            ignore_kiosk,
+            change_history,
+            fragmentId,
+          });
+        }
+        return;
+      }
+
       case "new": // ignore foreground for these and below, since would be nonsense
-        this.set_current_path(
-          this.fromUrlDirectoryPath(segments.slice(scopedPathIndex).join("/")),
-        );
+        this.set_current_path(route.path);
         this.set_active_tab("new", { change_history: change_history });
         break;
 
-      case "log":
-        this.set_active_tab("log", { change_history: change_history });
-        break;
-
-      case "project-home":
-        this.set_active_tab("home", { change_history: change_history });
-        break;
-
-      case "settings":
-        this.set_active_tab("settings", { change_history: change_history });
+      case "tab":
+        if (route.tab === "project-home") {
+          this.set_active_tab("home", { change_history: change_history });
+          break;
+        }
+        this.set_active_tab(route.tab as FixedTab, {
+          change_history: change_history,
+        });
         break;
 
       case "search":
-        this.set_current_path(
-          this.fromUrlDirectoryPath(segments.slice(scopedPathIndex).join("/")),
-        );
+        this.set_current_path(route.path);
         this.set_active_tab("search", { change_history: change_history });
         break;
 
-      case "agents":
-        this.set_active_tab("agents", { change_history: change_history });
-        break;
-
-      case "workspaces":
-        this.set_active_tab("workspaces", { change_history: change_history });
-        break;
-
-      case "apps":
-        if (segments.length > 1 && segments[1]) {
+      case "app":
+        if (route.path) {
           try {
             const rawUrl =
-              withProjectHostBase(
-                this.project_id,
-                `/apps/${segments.slice(1).join("/")}`,
-              ) ?? `/apps/${segments.slice(1).join("/")}`;
+              withProjectHostBase(this.project_id, `/apps/${route.path}`) ??
+              `/apps/${route.path}`;
             const authedUrl =
               await webapp_client.conat_client.addProjectHostAuthToUrl({
                 project_id: this.project_id,
@@ -3088,24 +3081,6 @@ export class ProjectActions extends Actions<ProjectStoreState> {
         }
         this.set_active_tab("servers", { change_history: change_history });
         break;
-
-      case "servers":
-        this.set_active_tab("servers", { change_history: change_history });
-        break;
-
-      case "info":
-        this.set_active_tab("info", { change_history: change_history });
-        break;
-
-      case "users":
-        this.set_active_tab("users", {
-          change_history: change_history,
-        });
-        break;
-
-      default:
-        misc.unreachable(main_segment);
-        console.warn(`project/load_target: don't know segment ${main_segment}`);
     }
   };
 

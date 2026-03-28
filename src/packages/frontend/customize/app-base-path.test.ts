@@ -9,7 +9,9 @@ describe("inferAppBasePath", () => {
   it("infers a subpath from refreshed app routes", () => {
     expect(inferAppBasePath("/projects")).toBe("/");
     expect(inferAppBasePath("/lang")).toBe("/");
+    expect(inferAppBasePath("/redeem/ABC12345")).toBe("/");
     expect(inferAppBasePath("/base/lang/de")).toBe("/base");
+    expect(inferAppBasePath("/base/redeem/ABC12345")).toBe("/base");
     expect(inferAppBasePath("/de")).toBe("/");
     expect(inferAppBasePath("/base/de")).toBe("/base");
     expect(

@@ -22,8 +22,10 @@ const HOST_ROOT_ONLY_ROUTES = [
   "billing",
   "blobs",
   "lang",
+  "redeem",
   "register",
   "software",
+  "store",
 ] as const;
 
 export const HOST_ABSOLUTE_ROUTE_PREFIXES: readonly string[] = Array.from(

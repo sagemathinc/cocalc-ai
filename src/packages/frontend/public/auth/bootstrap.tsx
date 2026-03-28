@@ -30,7 +30,10 @@ async function loadCustomize(): Promise<CustomizePayload | undefined> {
 export async function init(): Promise<void> {
   const target = new URLSearchParams(window.location.search).get("target");
   const initialPath =
-    target && (target.includes("/auth") || target.includes("/sso"))
+    target &&
+    (target.includes("/auth") ||
+      target.includes("/sso") ||
+      target.includes("/redeem"))
       ? target
       : window.location.pathname + window.location.search;
   const payload = await loadCustomize();
@@ -67,7 +70,12 @@ export async function init(): Promise<void> {
     render(window.location.pathname, window.location.search),
   );
   render(initialUrl.pathname, initialUrl.search);
-  if (target && (target.includes("/auth") || target.includes("/sso"))) {
+  if (
+    target &&
+    (target.includes("/auth") ||
+      target.includes("/sso") ||
+      target.includes("/redeem"))
+  ) {
     window.history.replaceState({}, "", target);
   }
 }

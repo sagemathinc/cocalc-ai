@@ -63,4 +63,21 @@ describe("defaultOpenProjectTarget", () => {
       }),
     ).toBe("files/");
   });
+
+  it("does not invent a default target for background opens", () => {
+    expect(
+      defaultOpenProjectTarget({
+        target: undefined,
+        activeProjectTab: "files",
+        switchTo: false,
+      }),
+    ).toBeUndefined();
+    expect(
+      defaultOpenProjectTarget({
+        target: undefined,
+        activeProjectTab: undefined,
+        switchTo: false,
+      }),
+    ).toBeUndefined();
+  });
 });

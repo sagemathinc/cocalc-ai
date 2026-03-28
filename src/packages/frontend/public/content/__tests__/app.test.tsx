@@ -28,6 +28,12 @@ describe("getContentRouteFromPath", () => {
       teamSlug: "william-stein",
       view: "about-team-member",
     });
+    expect(getContentRouteFromPath(contentPath("pricing"))).toEqual({
+      view: "pricing",
+    });
+    expect(getContentRouteFromPath(contentPath("pricing/courses"))).toEqual({
+      view: "pricing",
+    });
     expect(getContentRouteFromPath(contentPath("policies/imprint"))).toEqual({
       view: "policies-imprint",
     });
@@ -67,6 +73,7 @@ describe("getContentRouteFromPath", () => {
   it("recognizes software routes when booting from a static content entry", () => {
     expect(isPublicContentTarget("/software/cocalc-plus")).toBe(true);
     expect(isPublicContentTarget("/base/software/cocalc-plus")).toBe(true);
+    expect(isPublicContentTarget("/pricing")).toBe(true);
     expect(isPublicContentTarget("/features/jupyter-notebook")).toBe(false);
   });
 });
@@ -98,6 +105,41 @@ describe("PublicContentApp", () => {
 
     expect(screen.getByRole("link", { name: "Projects" })).not.toBeNull();
     expect(screen.getByRole("link", { name: "Settings" })).not.toBeNull();
+  });
+
+  it("renders the pricing page from live membership tier data", () => {
+    render(
+      <PublicContentApp
+        config={{ is_authenticated: true, site_name: "Launchpad" }}
+        initialMembershipTiers={[
+          {
+            id: "member",
+            label: "Member",
+            llm_limits: { units_5h: 150, units_7d: 500 },
+            price_monthly: 25,
+            price_yearly: 225,
+            priority: 20,
+            project_defaults: {
+              disk_quota: 10000,
+              memory: 8000,
+              mintime: 3600,
+            },
+            store_visible: true,
+          },
+        ]}
+        initialRoute={{ view: "pricing" }}
+      />,
+    );
+
+    expect(
+      screen.getByRole("heading", { name: "Launchpad pricing" }),
+    ).not.toBeNull();
+    expect(screen.getByText("Membership-first pricing")).not.toBeNull();
+    expect(screen.getByText("Member")).not.toBeNull();
+    expect(screen.getAllByRole("link", { name: "Open Store" }).length).toBe(2);
+    expect(
+      screen.getByText(/the one planned pay-as-you-go exception/i),
+    ).not.toBeNull();
   });
 
   it("hides the shared Policies nav item when public policies are disabled", () => {

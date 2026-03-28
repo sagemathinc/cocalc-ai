@@ -17,6 +17,11 @@ import argparse, json, os, platform, shutil, subprocess, sys, time
 from typing import Any, Optional, Callable, List
 
 MAX_PACKAGE_LOCK_SIZE_MB = 5
+RETIRED_WORKSPACES = {
+    # The package stays in-tree for legacy reference work, but it is no longer
+    # part of the active build/test path.
+    'packages/next'
+}
 
 
 def newest_file(path: str) -> str:
@@ -132,16 +137,17 @@ def all_packages() -> List[str]:
         'packages/cli',
         'packages/launchpad',
         'packages/cloud',
-        'packages/server',  # packages/next assumes this is built
-        'packages/database',  # packages/next also assumes database is built (or at least the coffeescript in it is)
+        'packages/server',
+        'packages/database',
         'packages/project-proxy',
         'packages/file-server',
-        'packages/next',
-        'packages/hub',  # hub won't build if next isn't already built
+        'packages/hub',
         'packages/test'
     ]
     for x in os.listdir('packages'):
         path = os.path.join("packages", x)
+        if path in RETIRED_WORKSPACES:
+            continue
         if path not in v and os.path.isdir(path) and os.path.exists(
                 os.path.join(path, 'package.json')):
             v.append(path)
@@ -554,10 +560,7 @@ def tsc(args) -> None:
 
     def f(path: str) -> None:
         package_path = os.path.join(CUR, path)
-        if (path.endswith('next')):
-            cmd("pnpm ts-build", package_path)
-            return
-        if (path.endswith('packages/') or path.endswith('next')):
+        if path.endswith('packages/'):
             return
         if not os.path.exists(os.path.join(package_path, 'tsconfig.json')):
             return

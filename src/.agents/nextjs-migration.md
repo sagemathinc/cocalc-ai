@@ -31,13 +31,40 @@ This means:
 ### Immediate scope decisions
 
 - the **share server** can be deleted immediately for the new stack
+- the generic **token-action** system should be deleted, not ported
 - the old **store** should not be ported
 - the only purchase flows that matter in the new system are:
   - membership upgrades
   - vouchers
-  - student pay (not clearly defined yet)
-  - user-owned hosts (not implemented at all yet)
-  - team/organization memberships (not clearly defined yet)
+  - a public `/redeem` flow with in-page sign in/up
+  - admin-assisted purchases for memberships and vouchers
+  - dedicated third-party student/course payment (second round after Next.js removal)
+  - user-owned hosts (second round after Next.js removal)
+  - team/organization memberships (second round after Next.js removal)
+
+### Current status
+
+- `api/v2` and `api/conat` are already off Next
+- the active hub/launchpad stack no longer boots a Next runtime
+- share-server support is removed from the active stack
+
+### Round-one commerce scope
+
+Round one replaces the active Next-owned commerce routes with:
+
+- an app-native `Store` page in settings
+- an app-native `Voucher Center` page in settings
+- public `/redeem` with an embedded sign-in/sign-up flow
+- admin-assisted purchase UI for memberships and vouchers
+
+Round two is explicitly deferred until the Next.js runtime is out of the
+active stack:
+
+- focused student memberships
+- a dedicated third-party student/course payment page that replaces the old
+  token link flow
+- user-owned-host billing under `/hosts`
+- team/organization membership purchasing
 
 ### Non-goal
 
@@ -143,8 +170,10 @@ Keep as the authenticated product app.
 
 Add only what naturally belongs there:
 
+- store tab
 - voucher center
 - simplified purchase flows
+- admin-assisted purchases
 - user-owned hosts billing surfaces
 - any account/settings surfaces already app-native
 
@@ -183,7 +212,7 @@ Add only what naturally belongs there:
 - `/account/*`
 - `/billing/*`
 - `/hosts/*`
-- vouchers and simplified purchase management once ported
+- store, vouchers, and simplified purchase management
 
 ## Server-only routes
 
@@ -425,13 +454,12 @@ store model.
 
 - memberships
 - vouchers
-- student pay
-- user-owned hosts
 
 ### Delete
 
 - shopping cart complexity
 - general store navigation
+- generic token-action links such as `/token/*`
 - unrelated product catalog flows
 
 ### Tasks
@@ -441,6 +469,9 @@ store model.
 - create app-native voucher detail/admin screens
 - port only necessary APIs
 - connect simplified billing UX to existing purchases APIs or their replacements
+- defer third-party student/course payment to a dedicated follow-up flow
+  instead of keeping the generic token system
+- defer user-owned-host billing until the second round
 
 ### Acceptance criteria
 

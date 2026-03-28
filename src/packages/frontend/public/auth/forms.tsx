@@ -168,8 +168,10 @@ function NavLink(props: { children: ReactNode; onClick: () => void }) {
 
 export function PublicSignInForm({
   onNavigate,
+  redirectToPath,
 }: {
   onNavigate: (view: AuthView) => void;
+  redirectToPath?: string | (() => string);
 }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -187,7 +189,11 @@ export function PublicSignInForm({
     setSigningIn(true);
     try {
       await api("auth/sign-in", { email, password });
-      window.location.href = appUrl("app?sign-in");
+      const redirectTarget =
+        typeof redirectToPath === "function"
+          ? redirectToPath()
+          : redirectToPath;
+      window.location.href = redirectTarget ?? appUrl("app?sign-in");
     } catch (err) {
       setError(`${err}`);
     } finally {
@@ -304,9 +310,11 @@ export function PublicPasswordResetForm({
 export function PublicSignUpForm({
   initialRequiresToken,
   onNavigate,
+  redirectToPath,
 }: {
   initialRequiresToken?: boolean;
   onNavigate: (view: AuthView) => void;
+  redirectToPath?: string | (() => string);
 }) {
   const [requiresToken, setRequiresToken] = useState(initialRequiresToken);
   const [registrationToken, setRegistrationToken] = useState(
@@ -387,7 +395,11 @@ export function PublicSignUpForm({
         setIssues(result.issues);
         return;
       }
-      window.location.href = appUrl("app?sign-in");
+      const redirectTarget =
+        typeof redirectToPath === "function"
+          ? redirectToPath()
+          : redirectToPath;
+      window.location.href = redirectTarget ?? appUrl("app?sign-in");
     } catch (err) {
       setError(`${err}`);
     } finally {

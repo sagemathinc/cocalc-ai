@@ -9,6 +9,7 @@ import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { joinUrlPath } from "@cocalc/util/url-path";
 import type { NewsItem } from "@cocalc/util/types/news";
 import PublicContentApp from "./app";
+import type { PublicMembershipTier } from "./pricing-page";
 import { getContentRouteFromPath, isPublicContentTarget } from "./routes";
 
 interface CustomizePayload {
@@ -43,19 +44,41 @@ async function loadNews(): Promise<NewsItem[] | undefined> {
   }
 }
 
+async function loadMembershipTiers(): Promise<
+  PublicMembershipTier[] | undefined
+> {
+  try {
+    const resp = await fetch(
+      joinUrlPath(appBasePath, "api/v2/purchases/get-membership-tiers"),
+    );
+    const payload = await resp.json();
+    return Array.isArray(payload?.tiers) ? payload.tiers : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export async function init(): Promise<void> {
   const target = new URLSearchParams(window.location.search).get("target");
   const initialPath = isPublicContentTarget(target)
     ? target
     : window.location.pathname;
+  const initialRoute = getContentRouteFromPath(initialPath);
 
-  const [customize, news] = await Promise.all([loadCustomize(), loadNews()]);
+  const [customize, news, membershipTiers] = await Promise.all([
+    loadCustomize(),
+    loadNews(),
+    initialRoute.view === "pricing"
+      ? loadMembershipTiers()
+      : Promise.resolve(undefined),
+  ]);
   const root = createRoot(document.getElementById("cocalc-webapp-container")!);
 
   function render(pathname = window.location.pathname): void {
     root.render(
       <PublicContentApp
         config={customize?.configuration}
+        initialMembershipTiers={membershipTiers}
         initialNews={news}
         initialRoute={getContentRouteFromPath(pathname)}
       />,

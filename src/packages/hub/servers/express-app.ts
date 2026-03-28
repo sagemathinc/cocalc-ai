@@ -6,12 +6,11 @@ import cookieParser from "cookie-parser";
 import express from "express";
 import { existsSync } from "fs";
 import ms from "ms";
-import { dirname, join } from "path";
+import { join } from "path";
 import { parse as parseURL } from "url";
 import * as Module from "module";
 import { path as WEBAPP_PATH } from "@cocalc/assets";
 import { path as CDN_PATH } from "@cocalc/cdn/path";
-import vhostShare from "@cocalc/next/lib/share/virtual-hosts";
 import { path as STATIC_PATH } from "@cocalc/static";
 import { setup_health_checks as setupHealthChecks } from "../health-checks";
 import { getLogger } from "../logger";
@@ -22,6 +21,7 @@ import initBlobUpload from "./app/blob-upload";
 import initUpload from "./app/upload";
 import initBlobs from "./app/blobs";
 import initCustomize from "./app/customize";
+import initLegacyCommerceRedirects from "./app/legacy-commerce-redirects";
 import initPublicAuth from "./app/public-auth";
 import initPublicContent from "./app/public-content";
 import initPublicFeatures from "./app/public-features";
@@ -40,7 +40,7 @@ import getServerSettings from "./server-settings";
 import basePath from "@cocalc/backend/base-path";
 import { initConatServer } from "@cocalc/server/conat/socketio";
 import { conatSocketioCount, root } from "@cocalc/backend/data";
-import { createApiV2Router } from "@cocalc/http-api";
+import { createApiV2Router, createConatRouter } from "@cocalc/http-api";
 import { ensureBootstrapAdminToken } from "@cocalc/server/auth/bootstrap-admin";
 import {
   getLicenseStatus,
@@ -110,7 +110,6 @@ function isTrustedCloudflareProxyPeer(ip?: string): boolean {
 interface Options {
   projectControl;
   isPersonal: boolean;
-  nextServer: boolean;
   proxyServer: boolean;
   conatServer: boolean;
   cert?: string;
@@ -163,12 +162,6 @@ export default async function init(opts: Options): Promise<{
 
   // now, we build the router for some other endpoints
   const router = express.Router();
-
-  // This must go very early - we handle virtual hosts, like wstein.org
-  // before any other routes or middleware interfere.
-  if (opts.nextServer) {
-    app.use(vhostShare());
-  }
 
   app.use(cookieParser());
   app.use(applyBaselineSecurityHeaders);
@@ -261,15 +254,14 @@ export default async function init(opts: Options): Promise<{
   initUpload(router);
   initCustomize(router, opts.isPersonal);
   initStats(router);
-  if (!opts.nextServer) {
-    initLanding(router);
-    initPublicAuth(router);
-    initPublicContent(router);
-    initPublicFeatures(router);
-    initPublicLang(router);
-    initPublicSupport(router);
-  }
-  if (!opts.nextServer && isLaunchpadMode() && isLicenseRequired()) {
+  initLegacyCommerceRedirects(router);
+  initLanding(router);
+  initPublicAuth(router);
+  initPublicContent(router);
+  initPublicFeatures(router);
+  initPublicLang(router);
+  initPublicSupport(router);
+  if (isLaunchpadMode() && isLicenseRequired()) {
     initLaunchpadActivationGate(router);
   }
   initAppRedirect(router, { includeAuth: false });
@@ -277,11 +269,9 @@ export default async function init(opts: Options): Promise<{
   initProjectHostSoftware(router);
   initRootfsManifest(router);
   initSelfHostConnector(router);
-
-  if (!opts.nextServer) {
-    logger.info("enabling api/v2 express router (nextjs disabled)");
-    router.use("/api/v2", createApiV2Router());
-  }
+  router.use("/api/conat", createConatRouter());
+  logger.info("enabling api/v2 express router");
+  router.use("/api/v2", createApiV2Router());
 
   if (opts.proxyServer) {
     app.all("*", async (req, _res, next) => {
@@ -311,9 +301,8 @@ export default async function init(opts: Options): Promise<{
   });
 
   if (opts.conatServer) {
-    logger.info(`initializing the Conat Server`);
+    logger.info(`initializing the standalone Conat server`);
     initConatServer({
-      httpServer,
       ssl: !!opts.cert,
       strictCloudflareProxy: () => strictCloudflareProxy,
     });
@@ -333,25 +322,13 @@ export default async function init(opts: Options): Promise<{
       httpServer,
       app,
       projectProxyHandlersPromise: opts.projectProxyHandlersPromise,
-      // enable proxy server for /conat if:
-      //  (1) we are not running conat at all from here, or
-      //  (2) we are running socketio in cluster mode, hence
-      //      on a different port
-      proxyConat: !opts.conatServer || (conatSocketioCount ?? 1) >= 2,
+      localConatServer: !!opts.conatServer,
+      // /conat is always proxied now, whether the target is the local
+      // standalone Conat server or an upstream hub.
+      proxyConat: true,
     });
   }
 
-  // IMPORTANT:
-  // The nextjs server must be **LAST** (!), since it takes
-  // all routes not otherwise handled above.
-  if (opts.nextServer) {
-    // The Next.js server
-    const initNextModule = lazyRequire("./app/next") as {
-      default?: (app: express.Application) => Promise<void>;
-    };
-    const initNext = initNextModule.default ?? (initNextModule as any);
-    await initNext(app);
-  }
   return { httpServer, router };
 }
 
@@ -423,15 +400,13 @@ function resolveStaticPath(): string {
   return STATIC_PATH;
 }
 
-function resolveNextPublicPath(): string | undefined {
+function resolvePublicAssetsPath(): string | undefined {
   const candidates: string[] = [];
-  try {
-    const nextInitPath = moduleRequire?.resolve?.("@cocalc/next/init");
-    if (nextInitPath) {
-      candidates.push(join(dirname(dirname(nextInitPath)), "public"));
-    }
-  } catch {
-    // ignore and continue with repository-local fallbacks
+  if (process.env.COCALC_PUBLIC_ASSETS_PATH) {
+    candidates.push(process.env.COCALC_PUBLIC_ASSETS_PATH);
+  }
+  if (process.env.COCALC_BUNDLE_DIR) {
+    candidates.push(join(process.env.COCALC_BUNDLE_DIR, "public"));
   }
   candidates.push(
     join(process.cwd(), "packages", "next", "public"),
@@ -453,14 +428,14 @@ async function initStatic(router) {
   } else {
     staticLogger.info("serving static assets", { staticPath });
   }
-  const nextPublicPath = resolveNextPublicPath();
-  if (!nextPublicPath) {
-    staticLogger.warn("next public assets not found");
+  const publicAssetsPath = resolvePublicAssetsPath();
+  if (!publicAssetsPath) {
+    staticLogger.warn("public assets not found");
   } else {
-    staticLogger.info("serving next public assets", { nextPublicPath });
+    staticLogger.info("serving public assets", { publicAssetsPath });
     router.use(
       "/public",
-      express.static(nextPublicPath, { setHeaders: cacheLongTerm }),
+      express.static(publicAssetsPath, { setHeaders: cacheLongTerm }),
     );
   }
   let compiler: any = null;

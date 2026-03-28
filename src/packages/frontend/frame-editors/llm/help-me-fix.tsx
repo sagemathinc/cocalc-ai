@@ -4,9 +4,8 @@ If Codex is disabled or not available it renders as null.
 */
 
 import { Alert, Space } from "antd";
-import { CSSProperties, useEffect, useRef, useState } from "react";
+import { CSSProperties, useState } from "react";
 
-import { useLanguageModelSetting } from "@cocalc/frontend/account/useLanguageModelSetting";
 import { AIAvatar } from "@cocalc/frontend/components";
 import { useCodexPaymentSource } from "@cocalc/frontend/chat/use-codex-payment-source";
 import { useFrameContext } from "@cocalc/frontend/frame-editors/frame-tree/frame-context";
@@ -16,7 +15,6 @@ import {
 } from "@cocalc/frontend/project/new/navigator-intents";
 import type { ProjectsStore } from "@cocalc/frontend/projects/store";
 import HelpMeFixButton from "./help-me-fix-button";
-import { getHelpMeFixTokenCounts } from "./help-me-fix-tokens";
 import {
   createMessage,
   createNavigatorIntentMessage,
@@ -30,21 +28,20 @@ function getVisibleHelpPrompt(mode: "solution" | "hint"): string {
     : "Diagnose this problem and fix it.";
 }
 
-// Re-export getHelp for backward compatibility
 export { getHelp } from "./help-me-fix-utils";
 
 interface Props {
-  error: string | (() => string); // the error it produced. This is viewed as code.
-  line?: string | (() => string); // the line content where the error was produced, if available
-  input?: string | (() => string); // the input, e.g., code you ran
-  task?: string; // what you're doing, e.g., "ran a cell in a Jupyter notebook" or "ran a code formatter"
+  error: string | (() => string);
+  line?: string | (() => string);
+  input?: string | (() => string);
+  task?: string;
   tag?: string;
   language?: string;
   extraFileInfo?: string;
   style?: CSSProperties;
   outerStyle?: CSSProperties;
   size?;
-  prioritize?: "start" | "start-end" | "end"; // start: truncate right, start-end: truncate middle, end: truncate left.
+  prioritize?: "start" | "start-end" | "end";
 }
 
 function get(f: undefined | string | (() => string)): string {
@@ -70,10 +67,6 @@ export default function HelpMeFix({
   const [gettingHelp, setGettingHelp] = useState<boolean>(false);
   const [errorGettingHelp, setErrorGettingHelp] = useState<string>("");
   const projectsStore: ProjectsStore = redux.getStore("projects");
-  const [model, setModel] = useLanguageModelSetting(project_id);
-  const [solutionTokens, setSolutionTokens] = useState<number>(0);
-  const [hintTokens, setHintTokens] = useState<number>(0);
-  const tokenRequestIdRef = useRef(0);
   const canGetHintLegacy = projectsStore.hasLanguageModelEnabled(
     project_id,
     "help-me-fix-hint",
@@ -104,8 +97,6 @@ export default function HelpMeFix({
   const disableSomeChatGPTInProject =
     !!studentProjectSettings?.get("disableSomeChatGPT");
 
-  // Keep existing policy limits, but allow Codex availability as an alternate
-  // capability signal when legacy LLM-vendor checks are false.
   const canGetHint =
     !disableAIForAccount &&
     !disableChatGPTInProject &&
@@ -129,37 +120,12 @@ export default function HelpMeFix({
       input: get(input),
       language,
       extraFileInfo,
-      model,
       prioritize,
       open: true,
       full,
       isHint: mode === "hint",
-      includeModelMention: false,
     });
   }
-
-  const solutionText = createMessageMode("solution");
-  const hintText = createMessageMode("hint");
-
-  useEffect(() => {
-    const requestId = tokenRequestIdRef.current + 1;
-    tokenRequestIdRef.current = requestId;
-    if (!shouldRender) {
-      setSolutionTokens(0);
-      setHintTokens(0);
-      return;
-    }
-    (async () => {
-      const { solutionTokens, hintTokens } = await getHelpMeFixTokenCounts({
-        hintText,
-        model,
-        solutionText,
-      });
-      if (tokenRequestIdRef.current !== requestId) return;
-      setSolutionTokens(solutionTokens);
-      setHintTokens(hintTokens);
-    })();
-  }, [model, solutionText, hintText, shouldRender]);
 
   if (!shouldRender) {
     return null;
@@ -176,7 +142,6 @@ export default function HelpMeFix({
         message: inputText,
         project_id,
         path,
-        model,
         isHint: mode === "hint",
         sourceTag,
       });
@@ -215,11 +180,7 @@ export default function HelpMeFix({
         {canGetSolution && (
           <HelpMeFixButton
             mode="solution"
-            model={model}
-            setModel={setModel}
-            project_id={project_id}
-            inputText={solutionText}
-            tokens={solutionTokens}
+            inputText={createMessageMode("solution")}
             size={size}
             style={style}
             gettingHelp={gettingHelp}
@@ -229,11 +190,7 @@ export default function HelpMeFix({
         {canGetHint && (
           <HelpMeFixButton
             mode="hint"
-            model={model}
-            setModel={setModel}
-            project_id={project_id}
-            inputText={hintText}
-            tokens={hintTokens}
+            inputText={createMessageMode("hint")}
             size={size}
             style={style}
             gettingHelp={gettingHelp}

@@ -67,11 +67,7 @@ export default function createApiV2Router(
 }
 
 function shouldUseManifest(): boolean {
-  if (process.env.COCALC_USE_API_V2_MANIFEST) {
-    return true;
-  }
-  const disabled = process.env.COCALC_DISABLE_NEXT;
-  return disabled === "1" || disabled === "true";
+  return !!process.env.COCALC_USE_API_V2_MANIFEST;
 }
 
 function resolveApiRoot(override?: string): string {
@@ -96,7 +92,6 @@ function resolveApiRoot(override?: string): string {
         "api",
         "v2",
       ),
-      join(bundleDir, "next-dist", "pages", "api", "v2"),
     ];
     for (const bundled of bundledCandidates) {
       if (existsSync(bundled)) {

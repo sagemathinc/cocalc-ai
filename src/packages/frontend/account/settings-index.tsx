@@ -14,11 +14,7 @@ import AIAvatar from "@cocalc/frontend/components/ai-avatar";
 import { labels } from "@cocalc/frontend/i18n";
 import { lite } from "@cocalc/frontend/lite";
 import { COLORS } from "@cocalc/util/theme";
-import {
-  VALID_PREFERENCES_SUB_TYPES,
-  type NavigatePath,
-  type PreferencesSubTabType,
-} from "@cocalc/util/types/settings";
+import type { NavigatePath } from "@cocalc/util/types/settings";
 import { APPEARANCE_ICON_NAME } from "./account-preferences-appearance";
 import { COMMUNICATION_ICON_NAME } from "./account-preferences-communication";
 import { EDITOR_ICON_NAME } from "./account-preferences-editor";
@@ -26,6 +22,10 @@ import { KEYBOARD_ICON_NAME } from "./account-preferences-keyboard";
 import { OTHER_ICON_NAME } from "./account-preferences-other";
 import { ACCOUNT_PROFILE_ICON_NAME } from "./account-preferences-profile";
 import { KEYS_ICON_NAME } from "./account-preferences-security";
+import {
+  applyAccountSettingsRoute,
+  parseAccountSettingsRoute,
+} from "./settings-routing";
 
 const MESSAGES = defineMessages({
   title: {
@@ -71,6 +71,16 @@ const MESSAGES = defineMessages({
     id: "account.settings.overview.billing",
     defaultMessage:
       "Manage memberships, subscriptions, and billing information.",
+  },
+  store: {
+    id: "account.settings.overview.store",
+    defaultMessage:
+      "Buy memberships and vouchers, then jump directly to project host billing.",
+  },
+  vouchers: {
+    id: "account.settings.overview.vouchers",
+    defaultMessage:
+      "Browse voucher batches, redeemed codes, admin notes, and redeem links.",
   },
   subscriptions: {
     id: "account.settings.overview.subscriptions",
@@ -134,34 +144,13 @@ const FLEX_PROPS = {
 export function SettingsOverview() {
   const intl = useIntl();
   const is_commercial = useTypedRedux("customize", "is_commercial");
+  const isAdmin = !!useTypedRedux("account", "is_admin");
   const zendesk = !!useTypedRedux("customize", "zendesk");
 
   function handleNavigate(path: NavigatePath) {
-    // Use the same navigation pattern as the account page
-    const segments = path.split("/").filter(Boolean);
-    if (segments[0] === "settings") {
-      if (segments[1] === "profile") {
-        redux.getActions("account").setState({
-          active_page: "profile",
-          active_sub_tab: undefined,
-        });
-        redux.getActions("account").push_state(`/profile`);
-      } else if (segments[1] === "preferences" && segments[2]) {
-        // Handle preferences sub-tabs
-        const subTab = segments[2] as PreferencesSubTabType;
-        if (VALID_PREFERENCES_SUB_TYPES.includes(subTab)) {
-          const subTabKey = `preferences-${subTab}` as const;
-          redux.getActions("account").setState({
-            active_page: "preferences",
-            active_sub_tab: subTabKey,
-          });
-          redux.getActions("account").push_state(`/preferences/${subTab}`);
-        }
-      } else {
-        // Handle other settings pages
-        redux.getActions("account").set_active_tab(segments[1]);
-        redux.getActions("account").push_state(`/${segments[1]}`);
-      }
+    const route = parseAccountSettingsRoute(path);
+    if (route) {
+      applyAccountSettingsRoute(redux.getActions("account"), route);
     }
   }
 
@@ -267,7 +256,7 @@ export function SettingsOverview() {
         </Card>
       </Flex>
 
-      {is_commercial && (
+      {(is_commercial || isAdmin) && (
         <>
           <Divider plain>
             <Icon name="money-check" /> {intl.formatMessage(labels.billing)}
@@ -294,45 +283,69 @@ export function SettingsOverview() {
               />
             </Card>
             <Card
-              {...CARD_PROPS}
-              onClick={() => handleNavigate("settings/payg")}
+              {...HIGHLIGHTED_CARD_PROPS}
+              onClick={() => handleNavigate("settings/store")}
             >
               <Card.Meta
-                avatar={<Icon name="line-chart" />}
-                title={intl.formatMessage(labels.pay_as_you_go)}
-                description={intl.formatMessage(MESSAGES.payg)}
+                avatar={<Icon name="shopping-cart" />}
+                title="Store"
+                description={intl.formatMessage(MESSAGES.store)}
               />
             </Card>
             <Card
               {...CARD_PROPS}
-              onClick={() => handleNavigate("settings/purchases")}
+              onClick={() => handleNavigate("settings/vouchers")}
             >
               <Card.Meta
-                avatar={<Icon name="money-check" />}
-                title={intl.formatMessage(labels.purchases)}
-                description={intl.formatMessage(MESSAGES.purchases)}
+                avatar={<Icon name="gift" />}
+                title="Voucher Center"
+                description={intl.formatMessage(MESSAGES.vouchers)}
               />
             </Card>
-            <Card
-              {...CARD_PROPS}
-              onClick={() => handleNavigate("settings/payments")}
-            >
-              <Card.Meta
-                avatar={<Icon name="credit-card" />}
-                title={intl.formatMessage(labels.payments)}
-                description={intl.formatMessage(MESSAGES.payments)}
-              />
-            </Card>
-            <Card
-              {...CARD_PROPS}
-              onClick={() => handleNavigate("settings/statements")}
-            >
-              <Card.Meta
-                avatar={<Icon name="calendar-week" />}
-                title={intl.formatMessage(labels.statements)}
-                description={intl.formatMessage(MESSAGES.statements)}
-              />
-            </Card>
+            {is_commercial && (
+              <>
+                <Card
+                  {...CARD_PROPS}
+                  onClick={() => handleNavigate("settings/payg")}
+                >
+                  <Card.Meta
+                    avatar={<Icon name="line-chart" />}
+                    title={intl.formatMessage(labels.pay_as_you_go)}
+                    description={intl.formatMessage(MESSAGES.payg)}
+                  />
+                </Card>
+                <Card
+                  {...CARD_PROPS}
+                  onClick={() => handleNavigate("settings/purchases")}
+                >
+                  <Card.Meta
+                    avatar={<Icon name="money-check" />}
+                    title={intl.formatMessage(labels.purchases)}
+                    description={intl.formatMessage(MESSAGES.purchases)}
+                  />
+                </Card>
+                <Card
+                  {...CARD_PROPS}
+                  onClick={() => handleNavigate("settings/payments")}
+                >
+                  <Card.Meta
+                    avatar={<Icon name="credit-card" />}
+                    title={intl.formatMessage(labels.payments)}
+                    description={intl.formatMessage(MESSAGES.payments)}
+                  />
+                </Card>
+                <Card
+                  {...CARD_PROPS}
+                  onClick={() => handleNavigate("settings/statements")}
+                >
+                  <Card.Meta
+                    avatar={<Icon name="calendar-week" />}
+                    title={intl.formatMessage(labels.statements)}
+                    description={intl.formatMessage(MESSAGES.statements)}
+                  />
+                </Card>
+              </>
+            )}
           </Flex>
         </>
       )}

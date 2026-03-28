@@ -1,6 +1,5 @@
 // Websocket support
 
-import { getEventListeners } from "node:events";
 import getLogger from "@cocalc/hub/logger";
 import stripRememberMeCookie from "./strip-remember-me-cookie";
 import { versionCheckFails } from "./version";
@@ -14,99 +13,40 @@ import {
   maybeRewritePublicAppSubdomainRequest,
 } from "./public-app-subdomain";
 
-const LISTENERS_HACK = true;
-
 const logger = getLogger("proxy:handle-upgrade");
 
 export default function initUpgrade(
   {
-    httpServer,
     proxyConat,
+    localConatServer,
     isPersonal,
     projectProxyHandlersPromise,
-  }: { httpServer; proxyConat; projectProxyHandlersPromise?; isPersonal },
+  }: {
+    proxyConat;
+    localConatServer;
+    projectProxyHandlersPromise?;
+    isPersonal;
+  },
   proxy_regexp: string,
 ) {
   const re = new RegExp(proxy_regexp);
-
-  let nextUpgrade: undefined | Function = undefined;
-  let socketioUpgrade: undefined | Function = undefined;
 
   async function handleProxyUpgradeRequest(req, socket, head): Promise<void> {
     await maybeRewritePublicAppSubdomainRequest(req);
     const allowPublicSubdomainBypass = isPublicAppSubdomainRequest(req);
     let remember_me: string | undefined = undefined;
     let api_key: string | undefined = undefined;
-    let removedSocketioThisCall = false;
-    let removedNextThisCall = false;
-    if (LISTENERS_HACK) {
-      const v = getEventListeners(httpServer, "upgrade");
-      if (v.length > 1) {
-        // Nodejs basically assumes that there is only one listener for the "upgrade" handler,
-        // but depending on how you run CoCalc, two others may get added:
-        //    - a socketio server
-        //    - a nextjs server
-        // We check if anything extra got added and if so, identify it and properly
-        // use it.  We identify the handle using `${f}` and using a heuristic for the
-        // code. That's the best I can do and it's obviously brittle.
-        // Note: rspack for the static app doesn't use a websocket, instead using SSE, so
-        // fortunately it's not relevant and hmr works fine.  HMR for the nextjs server
-        // tends to just refresh the page, probably because we're using rspack there too.
-        for (const f of v) {
-          if (f === handler) {
-            // it's us -- leave it alone
-            continue;
-          }
-          const source = `${f}`;
-          //logger.debug(`found extra listener`, { f, source });
-          if (source.includes("destroyUpgrade")) {
-            // WARNING/BRITTLE! the socketio source code for the upgrade handler has a destroyUpgrade
-            // option it checks for, whereas the nextjs one doesn't.
-            if (socketioUpgrade === undefined) {
-              socketioUpgrade = f;
-            } else {
-              logger.debug(
-                "WARNING! discovered unknown upgrade listener!",
-                source,
-              );
-            }
-            removedSocketioThisCall = true;
-          } else {
-            if (nextUpgrade === undefined) {
-              nextUpgrade = f;
-            } else {
-              logger.debug(
-                "WARNING! discovered unknown upgrade listener!",
-                source,
-              );
-            }
-            removedNextThisCall = true;
-          }
-          logger.debug(
-            `found extra listener -- detected, saved and removed 'upgrade' listener`,
-            //source,
-          );
-          httpServer.removeListener("upgrade", f);
-        }
-      }
-    }
 
-    if (proxyConat && useSocketio(req.url)) {
-      proxyConatWebsocket(req, socket, head);
+    if (proxyConat && isConatUpgradePath(req.url)) {
+      proxyConatWebsocket(req, socket, head, {
+        localConatServer,
+      });
       return;
     }
 
     if (!req.url.match(re)) {
-      // it's to be handled by socketio or next
-      if (socketioUpgrade !== undefined && useSocketio(req.url)) {
-        if (!removedSocketioThisCall) {
-          socketioUpgrade(req, socket, head);
-        }
-        return;
-      }
-      if (nextUpgrade && !removedNextThisCall) {
-        nextUpgrade(req, socket, head);
-      }
+      logger.debug("denying unexpected websocket upgrade", { url: req.url });
+      denyUpgrade(socket);
       return;
     }
     const projectProxyHandlers = await projectProxyHandlersPromise;
@@ -176,7 +116,7 @@ function denyUpgrade(socket) {
   socket.destroy();
 }
 
-function useSocketio(url: string) {
+function isConatUpgradePath(url: string) {
   const u = new URL(url, "http://cocalc.com");
   let pathname = u.pathname;
   if (basePath.length > 1) {
