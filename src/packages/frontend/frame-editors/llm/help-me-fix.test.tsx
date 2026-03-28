@@ -1,7 +1,5 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import HelpMeFix from "./help-me-fix";
-
-const getHelpMeFixTokenCounts = jest.fn();
 
 let languageModelEnabled = true;
 
@@ -12,10 +10,6 @@ jest.mock("antd", () => {
     Space: Div,
   };
 });
-
-jest.mock("@cocalc/frontend/account/useLanguageModelSetting", () => ({
-  useLanguageModelSetting: () => ["gpt-5", jest.fn()],
-}));
 
 jest.mock("@cocalc/frontend/components", () => ({
   AIAvatar: () => null,
@@ -55,8 +49,8 @@ jest.mock("@cocalc/frontend/project/new/navigator-intents", () => ({
 
 jest.mock("./help-me-fix-button", () => ({
   __esModule: true,
-  default: ({ mode, tokens }: any) => (
-    <div data-testid={mode}>{String(tokens)}</div>
+  default: ({ mode, inputText }: any) => (
+    <div data-testid={mode}>{String(inputText)}</div>
   ),
 }));
 
@@ -67,31 +61,13 @@ jest.mock("./help-me-fix-utils", () => ({
   getHelp: jest.fn(),
 }));
 
-jest.mock("./help-me-fix-tokens", () => ({
-  getHelpMeFixTokenCounts: (...args: any[]) => getHelpMeFixTokenCounts(...args),
-}));
-
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((res) => {
-    resolve = res;
-  });
-  return { promise, resolve };
-}
-
 describe("HelpMeFix", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     languageModelEnabled = true;
   });
 
-  it("ignores stale token loads after rendering is temporarily disabled", async () => {
-    const first = deferred<{ solutionTokens: number; hintTokens: number }>();
-    const second = deferred<{ solutionTokens: number; hintTokens: number }>();
-    getHelpMeFixTokenCounts
-      .mockReturnValueOnce(first.promise)
-      .mockReturnValueOnce(second.promise);
-
+  it("recomputes visible prompts when rendering is temporarily disabled", async () => {
     const { rerender } = render(<HelpMeFix error="first error" />);
 
     languageModelEnabled = false;
@@ -100,24 +76,11 @@ describe("HelpMeFix", () => {
     languageModelEnabled = true;
     rerender(<HelpMeFix error="second error" />);
 
-    await act(async () => {
-      second.resolve({ solutionTokens: 12, hintTokens: 3 });
-      await second.promise;
-    });
-
     await waitFor(() => {
-      expect(screen.getByTestId("solution").textContent).toBe("12");
-      expect(screen.getByTestId("hint").textContent).toBe("3");
-    });
-
-    await act(async () => {
-      first.resolve({ solutionTokens: 999, hintTokens: 888 });
-      await first.promise;
-    });
-
-    await waitFor(() => {
-      expect(screen.getByTestId("solution").textContent).toBe("12");
-      expect(screen.getByTestId("hint").textContent).toBe("3");
+      expect(screen.getByTestId("solution").textContent).toBe(
+        "solution:second error",
+      );
+      expect(screen.getByTestId("hint").textContent).toBe("hint:second error");
     });
   });
 });

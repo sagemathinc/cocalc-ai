@@ -1,0 +1,261 @@
+{
+  "measured_at": "2026-03-28T01:25:06.690Z",
+  "account_id": "81e787c4-8705-46c5-86df-9d07bc424a01",
+  "host_id": "18521f3d-1d43-4663-aec3-91fc7374d114",
+  "machine_note": "same-host sweep on current dev host (expected 4 vCPU)",
+  "workloads": [
+    {
+      "id": "lean-image",
+      "project_id": "1993cb86-3947-47c3-a895-c115c81d514b",
+      "label": "same-host lean-image"
+    },
+    {
+      "id": "apt-jupyter",
+      "project_id": "82b2655e-ffd0-4085-99ce-331a32b04147",
+      "label": "same-host apt-jupyter"
+    },
+    {
+      "id": "conda2",
+      "project_id": "e1f1974c-5b5d-4225-9790-b499afcff847",
+      "label": "same-host conda2"
+    },
+    {
+      "id": "conda14-local-smoke",
+      "project_id": "bd51a488-96ba-4f58-8e9b-4eacd3b5b6aa",
+      "label": "same-host conda14"
+    }
+  ],
+  "runs": [
+    {
+      "parallel": 1,
+      "ok": true,
+      "total_wall_ms": 572113,
+      "operations": [
+        {
+          "workload_id": "lean-image",
+          "project_id": "1993cb86-3947-47c3-a895-c115c81d514b",
+          "op_id": "dab36b2a-515a-420e-9999-0562b0c58b2f",
+          "status": "succeeded",
+          "duration_ms": 10752,
+          "image": "cocalc.local/rootfs/45960d4355ee5674ce86552f8869d1af120cf3a1700c97ff0b742903dde90b55",
+          "publish_phase_timings_ms": {
+            "upload_rustic": 9280,
+            "clone_snapshot": 228,
+            "create_snapshot": 131,
+            "extract_base_image": 0
+          }
+        },
+        {
+          "workload_id": "apt-jupyter",
+          "project_id": "82b2655e-ffd0-4085-99ce-331a32b04147",
+          "op_id": "f2768e17-a9a8-45f2-ac15-6a4a7e164bb6",
+          "status": "succeeded",
+          "duration_ms": 16490,
+          "image": "cocalc.local/rootfs/26c9853d31943d4d15c920d4964fddf869187f664a90ad1a302b797a7c6f2011",
+          "publish_phase_timings_ms": {
+            "upload_rustic": 14096,
+            "clone_snapshot": 225,
+            "create_snapshot": 132,
+            "extract_base_image": 1
+          }
+        },
+        {
+          "workload_id": "conda2",
+          "project_id": "e1f1974c-5b5d-4225-9790-b499afcff847",
+          "op_id": "1d17fa53-18d4-4c2f-8bee-8609a7d8049c",
+          "status": "succeeded",
+          "duration_ms": 345591,
+          "image": "cocalc.local/rootfs/7b6ccc1b1a58bc7c1874afdc2fc30d27a94d19f6cbcc764cc7abc0bce09f85d5",
+          "publish_phase_timings_ms": {
+            "upload_rustic": 343162,
+            "clone_snapshot": 227,
+            "create_snapshot": 120,
+            "extract_base_image": 0
+          }
+        },
+        {
+          "workload_id": "conda14-local-smoke",
+          "project_id": "bd51a488-96ba-4f58-8e9b-4eacd3b5b6aa",
+          "op_id": "f4ca1b52-9682-4e99-b901-fb72724c0ddd",
+          "status": "succeeded",
+          "duration_ms": 166649,
+          "image": "cocalc.local/rootfs/ed4681117ccb51cefb99d4088982e7e7699677d6ad8745ffb187983b089a0e7e",
+          "publish_phase_timings_ms": {
+            "upload_rustic": 165864,
+            "clone_snapshot": 222,
+            "create_snapshot": 112,
+            "extract_base_image": 0
+          }
+        }
+      ]
+    },
+    {
+      "parallel": 2,
+      "ok": true,
+      "total_wall_ms": 256833,
+      "operations": [
+        {
+          "workload_id": "lean-image",
+          "project_id": "1993cb86-3947-47c3-a895-c115c81d514b",
+          "op_id": "4d8a0992-07db-4c1c-851b-a5106afcd063",
+          "status": "succeeded",
+          "duration_ms": 11553,
+          "image": "cocalc.local/rootfs/fc14aaed86ab7d1ede003b9d6a12e1ac37bac6364bae7406a3517e9a22508083",
+          "publish_phase_timings_ms": {
+            "upload_rustic": 10170,
+            "clone_snapshot": 220,
+            "create_snapshot": 112,
+            "extract_base_image": 1
+          }
+        },
+        {
+          "workload_id": "apt-jupyter",
+          "project_id": "82b2655e-ffd0-4085-99ce-331a32b04147",
+          "op_id": "e5832f47-8933-47da-91dd-38ee7e4e51aa",
+          "status": "succeeded",
+          "duration_ms": 30126,
+          "image": "cocalc.local/rootfs/97c17cd5c5e11ef7d11fb6d11d14b1c7a8610dbd40f4ad3b5678d07925144cdc",
+          "publish_phase_timings_ms": {
+            "upload_rustic": 25818,
+            "clone_snapshot": 486,
+            "create_snapshot": 260,
+            "extract_base_image": 0
+          }
+        },
+        {
+          "workload_id": "conda2",
+          "project_id": "e1f1974c-5b5d-4225-9790-b499afcff847",
+          "op_id": "d245ed12-043e-40e9-b3bd-1f1fceb1c5a0",
+          "status": "succeeded",
+          "duration_ms": 220007,
+          "image": "cocalc.local/rootfs/ae1481df1f265d3779bb68b1b86b9cefdab9d88d770c15292986bb05d448342f",
+          "publish_phase_timings_ms": {
+            "upload_rustic": 217766,
+            "clone_snapshot": 316,
+            "create_snapshot": 185,
+            "extract_base_image": 1
+          }
+        },
+        {
+          "workload_id": "conda14-local-smoke",
+          "project_id": "bd51a488-96ba-4f58-8e9b-4eacd3b5b6aa",
+          "op_id": "76a10077-98c5-46ab-be55-2a484ddcc13f",
+          "status": "succeeded",
+          "duration_ms": 222838,
+          "image": "cocalc.local/rootfs/53949f0061c3695b02c5a7966078ff9fec1223c346c34919ae2d3112f695101e",
+          "publish_phase_timings_ms": {
+            "upload_rustic": 221973,
+            "clone_snapshot": 243,
+            "create_snapshot": 129,
+            "extract_base_image": 0
+          }
+        }
+      ]
+    },
+    {
+      "parallel": 3,
+      "ok": false,
+      "total_wall_ms": 173841,
+      "operations": [
+        {
+          "workload_id": "lean-image",
+          "project_id": "1993cb86-3947-47c3-a895-c115c81d514b",
+          "op_id": "cc0d6ab7-c291-4fda-9801-123cd93cf924",
+          "status": "failed",
+          "error": "Error: command 'sudo' (args=-n /usr/local/sbin/cocalc-runtime-storage btrfs qgroup assign 0/664 1/636 /mnt/cocalc/project-1993cb86-3947-47c3-a895-c115c81d514b) exited with nonzero code 255 -- stderr='ERROR: quota rescan failed: Operation now in progress\n'"
+        },
+        {
+          "workload_id": "apt-jupyter",
+          "project_id": "82b2655e-ffd0-4085-99ce-331a32b04147",
+          "op_id": "e126b3dc-f14b-426e-9366-3cfd9c20769a",
+          "status": "succeeded",
+          "duration_ms": 20018,
+          "image": "cocalc.local/rootfs/96bfa18e1d048722c76f7537310992c29bcb895cfde8f805f4548f2e78cd3025",
+          "publish_phase_timings_ms": {
+            "upload_rustic": 17382,
+            "clone_snapshot": 208,
+            "create_snapshot": 138,
+            "extract_base_image": 0
+          }
+        },
+        {
+          "workload_id": "conda2",
+          "project_id": "e1f1974c-5b5d-4225-9790-b499afcff847",
+          "op_id": "6eadd882-e6f2-4384-b32f-9a80947f8b89",
+          "status": "succeeded",
+          "duration_ms": 166999,
+          "image": "cocalc.local/rootfs/437f4d1fcfcb308550de5e00801a02557282c6bf9e5c7783834ae5c6e4c50ec5",
+          "publish_phase_timings_ms": {
+            "upload_rustic": 164188,
+            "clone_snapshot": 316,
+            "create_snapshot": 401,
+            "extract_base_image": 1
+          }
+        },
+        {
+          "workload_id": "conda14-local-smoke",
+          "project_id": "bd51a488-96ba-4f58-8e9b-4eacd3b5b6aa",
+          "op_id": "84990646-a1db-41b7-b3a1-0d627eaecc66",
+          "status": "failed",
+          "error": "Error: command 'sudo' (args=-n /usr/local/sbin/cocalc-runtime-storage btrfs qgroup assign 0/667 1/501 /mnt/cocalc/project-bd51a488-96ba-4f58-8e9b-4eacd3b5b6aa) exited with nonzero code 255 -- stderr='ERROR: quota rescan failed: Operation now in progress\n'"
+        }
+      ]
+    },
+    {
+      "parallel": 4,
+      "ok": false,
+      "total_wall_ms": 235533,
+      "operations": [
+        {
+          "workload_id": "lean-image",
+          "project_id": "1993cb86-3947-47c3-a895-c115c81d514b",
+          "op_id": "bf7d3cff-16d0-47b6-9865-c8cf26a1f718",
+          "status": "succeeded",
+          "duration_ms": 19567,
+          "image": "cocalc.local/rootfs/afab49b3718b5be0a91d4bb9067a6de4121e4d055681895386a584ea21dbc256",
+          "publish_phase_timings_ms": {
+            "upload_rustic": 17780,
+            "clone_snapshot": 261,
+            "create_snapshot": 143,
+            "extract_base_image": 1
+          }
+        },
+        {
+          "workload_id": "apt-jupyter",
+          "project_id": "82b2655e-ffd0-4085-99ce-331a32b04147",
+          "op_id": "801dd37e-eae8-4c6c-a35c-a590700b6d93",
+          "status": "failed",
+          "error": "Error: command 'sudo' (args=-n /usr/local/sbin/cocalc-runtime-storage btrfs qgroup assign 0/670 1/555 /mnt/cocalc/project-82b2655e-ffd0-4085-99ce-331a32b04147) exited with nonzero code 255 -- stderr='ERROR: quota rescan failed: Operation now in progress\n'"
+        },
+        {
+          "workload_id": "conda2",
+          "project_id": "e1f1974c-5b5d-4225-9790-b499afcff847",
+          "op_id": "5884dbb6-2bbc-4f1c-9226-146103156795",
+          "status": "succeeded",
+          "duration_ms": 233067,
+          "image": "cocalc.local/rootfs/a89725e5541917c8c86a6466d828c210ea5e9f1dce7e3ba0d0e403d3ae004aef",
+          "publish_phase_timings_ms": {
+            "upload_rustic": 231147,
+            "clone_snapshot": 244,
+            "create_snapshot": 147,
+            "extract_base_image": 0
+          }
+        },
+        {
+          "workload_id": "conda14-local-smoke",
+          "project_id": "bd51a488-96ba-4f58-8e9b-4eacd3b5b6aa",
+          "op_id": "090acbfd-656b-46b6-8e0d-dec15778f856",
+          "status": "succeeded",
+          "duration_ms": 227163,
+          "image": "cocalc.local/rootfs/ce0d9e318a743cbf0403367adbd805d8735f3399f06baa20970417981e921a85",
+          "publish_phase_timings_ms": {
+            "upload_rustic": 226031,
+            "clone_snapshot": 386,
+            "create_snapshot": 232,
+            "extract_base_image": 1
+          }
+        }
+      ]
+    }
+  ]
+}

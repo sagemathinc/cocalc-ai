@@ -6,7 +6,6 @@ describe("createNavigatorIntentMessage", () => {
       message: "Help me fix this.",
       project_id: "project-1",
       path: "/tmp/test.ipynb",
-      model: "gpt-5.4-mini",
       isHint: false,
       sourceTag: "help-me-fix:solution",
     });
@@ -17,5 +16,6 @@ describe("createNavigatorIntentMessage", () => {
     expect(prompt).toContain(
       "Do not rely on the filesystem copy being current; use live document APIs when available.",
     );
+    expect(prompt).toContain('"codex_model": "gpt-5.4-mini"');
   });
 });

@@ -207,7 +207,7 @@ async function claimRootfsPublishLroOps({
   }
 
   await ensureLroSchema();
-  const client = await getPool("medium").connect();
+  const client = await getPool().connect();
   try {
     await client.query("BEGIN");
     const { rows } = await client.query<RootfsPublishClaimCandidateRecord>(
