@@ -10,6 +10,11 @@ import {
   getSettingsTargetPath,
   parseAccountSettingsRoute,
 } from "@cocalc/frontend/account/settings-routing";
+import {
+  getAdminTargetPath,
+  parseAdminRoute,
+  type AdminRoute,
+} from "@cocalc/frontend/admin/routing";
 import { getLegacyCommerceTargetPath } from "@cocalc/util/routing/legacy-commerce";
 import type {
   PreferencesSubTabKey,
@@ -40,7 +45,7 @@ export type ParsedPageTarget =
       tab?: "mentions";
     }
   | { page: "file-use" }
-  | { page: "admin" }
+  | { page: "admin"; route: AdminRoute }
   | { page: "hosts" }
   | { page: "ssh" }
   | {
@@ -65,7 +70,8 @@ export function parsePageTarget(target?: string): ParsedPageTarget {
     return { page: "account", tab: "index" };
   }
   const normalizedTarget = getLegacyCommerceTargetPath(target) ?? target;
-  const segments = normalizedTarget.split("/");
+  const cleanTarget = normalizedTarget.split(/[?#]/)[0];
+  const segments = cleanTarget.split("/");
   switch (segments[0]) {
     case "projects":
       if (segments.length < 2 || (segments.length == 2 && segments[1] == "")) {
@@ -88,7 +94,10 @@ export function parsePageTarget(target?: string): ParsedPageTarget {
     case "file-use":
       return { page: "file-use" };
     case "admin":
-      return { page: "admin" };
+      return {
+        page: "admin",
+        route: parseAdminRoute(segments) ?? { kind: "index" },
+      };
     case "hosts":
       return { page: "hosts" };
     case "ssh":
@@ -144,7 +153,7 @@ export function getPageTargetPath(parsed: ParsedPageTarget): string {
     case "file-use":
       return "file-use";
     case "admin":
-      return "admin";
+      return getAdminTargetPath(parsed.route);
     case "hosts":
       return "hosts";
     case "ssh":

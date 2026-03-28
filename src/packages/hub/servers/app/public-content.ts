@@ -44,6 +44,18 @@ function redirectCompatibility(target: string) {
   };
 }
 
+function redirectCompatibilityPreserveSearch(
+  getTarget: string | ((req: Request) => string),
+) {
+  return function (req: Request, res: Response): void {
+    const search = req.url.includes("?")
+      ? req.url.slice(req.url.indexOf("?"))
+      : "";
+    const target = typeof getTarget === "function" ? getTarget(req) : getTarget;
+    res.redirect(307, joinUrlPath(basePath, target) + search);
+  };
+}
+
 function stripMarkdown(text?: string): string {
   return `${text ?? ""}`
     .replace(/!\[[^\]]*\]\([^)]+\)/g, " ")
@@ -165,6 +177,18 @@ export default function initPublicContent(router: Router): void {
     redirectCompatibility("about/status"),
   );
   router.get(["/info/run", "/info/run/"], redirectCompatibility("software"));
+  router.get(
+    ["/news/edit", "/news/edit/"],
+    redirectCompatibilityPreserveSearch("admin/news"),
+  );
+  router.get(
+    ["/news/edit/new", "/news/edit/new/"],
+    redirectCompatibilityPreserveSearch("admin/news/new"),
+  );
+  router.get(
+    /^\/news\/edit\/([^/]+)\/?$/,
+    redirectCompatibilityPreserveSearch((req) => `admin/news/${req.params[0]}`),
+  );
 
   router.get("/news/rss.xml", async (req, res) => {
     try {

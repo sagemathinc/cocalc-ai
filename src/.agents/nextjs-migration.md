@@ -47,6 +47,7 @@ This means:
 - `api/v2` and `api/conat` are already off Next
 - the active hub/launchpad stack no longer boots a Next runtime
 - share-server support is removed from the active stack
+- news creation/editing is now handled by the logged-in admin app instead of a Next page
 
 ### Round-one commerce scope
 

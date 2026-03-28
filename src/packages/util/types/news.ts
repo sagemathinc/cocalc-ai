@@ -23,6 +23,11 @@ export interface NewsItem extends NewsProto {
   };
 }
 
+export interface NewsAdminListItem extends NewsItem {
+  future: boolean;
+  expired?: boolean;
+}
+
 // NewsProto but without hide, text, and url
 export type RecentHeadline = Omit<NewsProto, "hide" | "text" | "url">;
 

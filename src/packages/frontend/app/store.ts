@@ -4,6 +4,7 @@
  */
 
 import { redux, Store, TypedMap } from "@cocalc/frontend/app-framework";
+import type { AdminRoute } from "@cocalc/frontend/admin/routing";
 import target from "@cocalc/frontend/client/handle-target";
 import type { AuthView } from "@cocalc/frontend/auth/types";
 import type { ConatConnectionStatus } from "@cocalc/frontend/conat/client";
@@ -23,6 +24,7 @@ export type ConnectionStatus = "disconnected" | "connecting" | "connected";
 
 export interface PageState {
   active_top_tab: TopTab; // key of the active tab
+  admin_route?: AdminRoute;
   auth_view?: AuthView;
   show_connection: boolean;
   ping?: number;
@@ -65,6 +67,7 @@ export function init_store() {
   const parsed = parsePageTarget(target);
   const DEFAULT_STATE: PageState = {
     active_top_tab: getPageTopTab(parsed) as TopTab,
+    admin_route: parsed.page === "admin" ? parsed.route : undefined,
     auth_view: parsed.page === "auth" ? parsed.view : undefined,
     show_connection: false,
     connection_status: "connecting",
