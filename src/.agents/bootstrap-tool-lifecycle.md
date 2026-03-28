@@ -568,12 +568,16 @@ Reason:
 
 If lifecycle complexity grows later, migrate to sqlite.
 
+USER: JSON
+
 ### 2. How much reconcile should run on every boot?
 
 My recommendation:
 
 - always refresh desired state and run reconcile
 - reconcile should be cheap when nothing changed
+
+USER: agree
 
 ### 3. Should reconcile run periodically while the host stays up?
 
@@ -583,12 +587,14 @@ already have:
 - every-boot reconcile
 - explicit hub-triggered reconcile
 
-### 4. Should self-hosted hosts fetch desired state from the hub or from a local
+USER: agree -- not needed yet
 
-launchpad service?
+### 4\. Should self-hosted hosts fetch desired state from the hub or from a local launchpad service?
 
 Either is fine as long as the contract is the same. The important thing is that
 self-hosted hosts are not left with a separate ad hoc upgrade path.
+
+USER: hub so it's the same (less complexity)
 
 ## Acceptance Criteria
 
