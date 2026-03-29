@@ -2,9 +2,9 @@
 // install the page as a local webapp.  It's part of being a "progressive
 // web app", as was started in this PR: https://github.com/sagemathinc/cocalc/pull/5254
 
-import { Helmet } from "react-helmet";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { joinUrlPath } from "@cocalc/util/url-path";
+import HeadTags from "./head";
 declare var DEBUG;
 
 function shouldRegisterWebappManifest(): boolean {
@@ -38,11 +38,16 @@ export default function Manifest() {
     return null;
   }
   return (
-    <Helmet>
-      <link
-        rel="manifest"
-        href={joinUrlPath(appBasePath, "customize?type=manifest")}
-      />
-    </Helmet>
+    <HeadTags
+      tags={[
+        {
+          tag: "link",
+          attrs: {
+            rel: "manifest",
+            href: joinUrlPath(appBasePath, "customize?type=manifest"),
+          },
+        },
+      ]}
+    />
   );
 }

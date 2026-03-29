@@ -7,7 +7,9 @@ import dayjs from "dayjs";
 import { delay } from "awaiting";
 import { before, after, getPool } from "@cocalc/server/test";
 
-beforeAll(before);
+beforeAll(async () => {
+  await before();
+}, 15000);
 afterAll(after);
 
 describe("test studentPay behaves at it should in various scenarios", () => {

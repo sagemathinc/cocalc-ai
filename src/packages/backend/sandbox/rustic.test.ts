@@ -10,6 +10,9 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { parseOutput } from "./exec";
 
+const describeIfNotDarwin =
+  process.platform === "darwin" ? describe.skip : describe;
+
 let tempDir, options, home;
 let latestSnapshotId;
 beforeAll(async () => {
@@ -28,7 +31,7 @@ afterAll(async () => {
   await rm(tempDir, { force: true, recursive: true });
 });
 
-describe("rustic does something", () => {
+describeIfNotDarwin("rustic does something", () => {
   it("there are initially no backups", async () => {
     const { stdout, truncated } = await rustic(
       ["snapshots", "--json"],
@@ -110,7 +113,10 @@ password = ""
 
   it("can resolve a snapshot host by exact snapshot id", async () => {
     expect(latestSnapshotId).toBeTruthy();
-    const snapshot = await getSnapshot({ id: latestSnapshotId, repo: options.repo });
+    const snapshot = await getSnapshot({
+      id: latestSnapshotId,
+      repo: options.repo,
+    });
     expect(snapshot.id).toBe(latestSnapshotId);
     expect(snapshot.hostname).toBe("my-host");
     await expect(

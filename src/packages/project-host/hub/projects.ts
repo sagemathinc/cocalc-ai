@@ -55,7 +55,10 @@ import { clearProjectHostConatAuthCaches } from "../conat-auth";
 import { rehydrateAcpAutomationsForProject } from "@cocalc/lite/hub/acp";
 import { getImage } from "@cocalc/project-runner/run/podman";
 import { isManagedRootfsImageName } from "@cocalc/util/rootfs-images";
-import { pullRootfsCacheEntry } from "../rootfs-cache";
+import {
+  pullRootfsCacheEntry,
+  type RootfsCachePullProgress,
+} from "../rootfs-cache";
 
 const logger = getLogger("project-host:hub:projects");
 export const PROJECT_RUNNER_RPC_TIMEOUT_MS = 60 * 60 * 1000;
@@ -352,12 +355,51 @@ async function getRunnerConfig(
 
 async function ensureManagedRootfsCached(
   config?: Configuration,
+  onProgress?: (update: RootfsCachePullProgress) => void,
 ): Promise<void> {
   const image = getImage(config);
   if (!isManagedRootfsImageName(image)) {
     return;
   }
-  await pullRootfsCacheEntry(image);
+  await pullRootfsCacheEntry(image, onProgress);
+}
+
+function publishStartProgress({
+  project_id,
+  op_id,
+  phase,
+  progress,
+  message,
+  detail,
+}: {
+  project_id: string;
+  op_id: string;
+  phase: string;
+  progress: number;
+  message: string;
+  detail?: any;
+}): void {
+  void publishLroEvent({
+    scope_type: "project",
+    scope_id: project_id,
+    op_id,
+    event: {
+      type: "progress",
+      ts: Date.now(),
+      phase,
+      message,
+      progress,
+      detail,
+    },
+  }).catch(() => {});
+}
+
+function scaleStartCacheProgress(progress?: number): number {
+  if (!Number.isFinite(progress)) {
+    return 25;
+  }
+  const clamped = Math.max(0, Math.min(100, Math.round(progress ?? 0)));
+  return 25 + Math.round((clamped * 55) / 100);
 }
 
 export function wireProjectsApi(runnerApi: RunnerApi) {
@@ -453,9 +495,23 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
       opts: { authorized_keys, run_quota, image },
       state: "starting",
     });
+    publishStartProgress({
+      project_id,
+      op_id,
+      phase: "apply_pending_copies",
+      progress: 5,
+      message: "preparing project state",
+    });
     try {
       await timings.measure("apply_pending_copies", async () => {
         await applyPendingCopies({ project_id });
+      });
+      publishStartProgress({
+        project_id,
+        op_id,
+        phase: "prepare_config",
+        progress: 15,
+        message: "preparing project runtime",
       });
       const config = await timings.measure("prepare_config", async () => {
         return await getRunnerConfig(project_id, {
@@ -466,8 +522,33 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
           lro_op_id: op_id,
         });
       });
+      publishStartProgress({
+        project_id,
+        op_id,
+        phase: "cache_rootfs",
+        progress: 25,
+        message: isManagedRootfsImageName(getImage(config))
+          ? "checking RootFS cache"
+          : "checking RootFS image",
+      });
       await timings.measure("cache_rootfs", async () => {
-        await ensureManagedRootfsCached(config);
+        await ensureManagedRootfsCached(config, (update) => {
+          publishStartProgress({
+            project_id,
+            op_id,
+            phase: "cache_rootfs",
+            progress: scaleStartCacheProgress(update.progress),
+            message: update.message,
+            detail: update.detail,
+          });
+        });
+      });
+      publishStartProgress({
+        project_id,
+        op_id,
+        phase: "runner_start",
+        progress: 85,
+        message: "starting project runtime",
       });
       const status = await timings.measure("runner_start", async () => {
         return await runnerApi.start({
@@ -485,18 +566,41 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
       // During move/restore the destination project root may not exist until
       // runnerApi.start has created or restored it, so ACP rehydrate must wait.
       kickOffAcpRehydrate(project_id, "start: post-start");
+      publishStartProgress({
+        project_id,
+        op_id,
+        phase: "refresh_authorized_keys",
+        progress: 96,
+        message: "refreshing project access",
+      });
       await timings.measure("refresh_authorized_keys", async () => {
         await refreshAuthorizedKeys(project_id, authorized_keys);
       });
       timings.phase_timings_ms.total = Object.values(
         timings.phase_timings_ms,
       ).reduce((sum, value) => sum + value, 0);
+      publishStartProgress({
+        project_id,
+        op_id,
+        phase: "done",
+        progress: 100,
+        message: "project ready",
+        detail: { phase_timings_ms: timings.phase_timings_ms },
+      });
     } catch (err) {
       // Fall back to stopped if startup fails so UI reflects failure.
       ensureProjectRow({
         project_id,
         opts: { authorized_keys, run_quota, image },
         state: "opened",
+      });
+      publishStartProgress({
+        project_id,
+        op_id,
+        phase: "failed",
+        progress: 100,
+        message: "project start failed",
+        detail: { error: `${err}` },
       });
       throw err;
     }

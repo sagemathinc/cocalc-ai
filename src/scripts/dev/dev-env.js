@@ -544,6 +544,8 @@ function main() {
   const source = mode === "lite" ? getLiteEnvValues() : getHubEnvValues();
   const hubStatusInfo =
     mode === "hub" ? parseHubStatusInfo(daemon.statusText) : undefined;
+  const hubPostgresConnection =
+    mode === "hub" ? resolveHubPostgresConnection(hubStatusInfo) : undefined;
   const hubDbContext =
     mode === "hub" ? resolveHubProjectAndAccount(hubStatusInfo) : {};
   const hubPassword = mode === "hub" ? resolveHubPassword(hubStatusInfo) : "";
@@ -628,6 +630,11 @@ function main() {
     exportsMap.COCALC_CLI_AGENT_MODE = "";
     exportsMap.COCALC_PROJECT_INFO_SCOPE = "";
   }
+  if (mode === "hub" && hubPostgresConnection?.pgHost) {
+    exportsMap.PGHOST = hubPostgresConnection.pgHost;
+    exportsMap.PGUSER = hubPostgresConnection.pgUser || "smc";
+    exportsMap.PGDATABASE = hubPostgresConnection.pgDatabase || "smc";
+  }
 
   const payload = {
     mode,
@@ -641,6 +648,9 @@ function main() {
     browser_id: browserId || undefined,
     cli_bin: exportsMap.COCALC_CLI_BIN || undefined,
     path_prepend: prependPath || undefined,
+    pg_host: hubPostgresConnection?.pgHost || undefined,
+    pg_user: hubPostgresConnection?.pgUser || undefined,
+    pg_database: hubPostgresConnection?.pgDatabase || undefined,
     exports: exportsMap,
     auth_config_path: auth.path,
   };
@@ -671,6 +681,8 @@ if (require.main === module) {
 }
 
 module.exports = {
+  parseHubStatusInfo,
+  resolveHubPostgresConnection,
   hubPasswordCandidates,
   resolveHubPassword,
 };

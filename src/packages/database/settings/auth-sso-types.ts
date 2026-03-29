@@ -47,8 +47,6 @@ export type LoginInfoKeys = "id" | "first_name" | "last_name" | "emails";
 export const PassportTypesList = [
   "email", // special case, always included by default, not a passport strategy
   "activedirectory",
-  "apple",
-  "azuread",
   "gitlab2",
   "oauth1",
   "oauth2",

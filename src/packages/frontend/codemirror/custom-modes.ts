@@ -5,7 +5,7 @@
 
 // Multiplex'd worksheet mode
 
-import { clone, object } from "underscore";
+import { fromPairs } from "lodash";
 import CodeMirror from "./codemirror";
 import "codemirror/addon/mode/multiplex";
 import "./multiplex";
@@ -166,7 +166,7 @@ CodeMirror.defineMode("mojo", (config) => {
 CodeMirror.defineMode("rmd", function (config) {
   // derived from the decorated modes with some additions
   let mode, open;
-  const modes = clone(object(decorator_modes));
+  const modes = fromPairs(decorator_modes) as Record<string, string>;
   modes["fortran95"] = modes["fortran"];
   modes["octave"] = "octave";
   modes["bash"] = modes["sh"];

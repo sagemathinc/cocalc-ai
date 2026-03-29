@@ -4,7 +4,11 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 
-const { resolveHubPassword } = require("./dev-env.js");
+const {
+  parseHubStatusInfo,
+  resolveHubPassword,
+  resolveHubPostgresConnection,
+} = require("./dev-env.js");
 
 test("resolveHubPassword prefers the active postgres data-dir secret over legacy data secrets", async () => {
   const root = await fs.promises.mkdtemp(
@@ -39,4 +43,32 @@ test("resolveHubPassword prefers the active postgres data-dir secret over legacy
   } finally {
     await fs.promises.rm(root, { recursive: true, force: true });
   }
+});
+
+test("parseHubStatusInfo extracts postgres connection details from hub status output", () => {
+  const statusText = `
+running (pid 123)
+postgres socket (PGHOST): /tmp/cocalc-postgres/socket
+postgres user   (PGUSER): smc
+postgres data dir: /tmp/cocalc-postgres/data
+`;
+  assert.deepEqual(parseHubStatusInfo(statusText), {
+    pgHost: "/tmp/cocalc-postgres/socket",
+    pgUser: "smc",
+    pgDataDir: "/tmp/cocalc-postgres/data",
+  });
+});
+
+test("resolveHubPostgresConnection prefers status-derived postgres connection details", () => {
+  assert.deepEqual(
+    resolveHubPostgresConnection({
+      pgHost: "/tmp/cocalc-postgres/socket",
+      pgUser: "alice",
+    }),
+    {
+      pgHost: "/tmp/cocalc-postgres/socket",
+      pgUser: "alice",
+      pgDatabase: "smc",
+    },
+  );
 });

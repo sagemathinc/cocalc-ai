@@ -42,6 +42,11 @@ import {
 } from "@cocalc/frontend/projects/host-operational";
 import MoveProject from "@cocalc/frontend/project/settings/move-project";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import {
+  formatProgressDetail,
+  clampProgressPercent,
+} from "./explorer/lro-timeline-utils";
+import { progressBarStatus } from "@cocalc/frontend/lro/utils";
 
 const STYLE: CSSProperties = {
   fontSize: "40px",
@@ -335,6 +340,7 @@ export function StartButton({
           </Tooltip>
           {moveActive && moveLro && <MoveProgressInline moveLro={moveLro} />}
         </Space>
+        {starting && startLro && <StartProgressInline startLro={startLro} />}
         {startFailed && startLroSummary && (
           <Alert
             style={{ marginTop: "10px", maxWidth: "720px" }}
@@ -468,6 +474,55 @@ export function StartButton({
       {state == null && redux.getStore("account")?.get("is_admin")
         ? render_admin_view()
         : render_normal_view()}
+    </div>
+  );
+}
+
+const START_PHASE_LABELS: Record<string, string> = {
+  queued: "Queued",
+  apply_pending_copies: "Preparing project state",
+  prepare_config: "Preparing runtime",
+  cache_rootfs: "Pulling RootFS image",
+  runner_start: "Starting runtime",
+  refresh_authorized_keys: "Refreshing access",
+  done: "Project ready",
+  failed: "Start failed",
+};
+
+function StartProgressInline({ startLro }: { startLro: StartLroState }) {
+  const phase =
+    `${startLro.last_progress?.phase ?? startLro.summary?.progress_summary?.phase ?? ""}`
+      .trim()
+      .toLowerCase() || "queued";
+  const phaseLabel = START_PHASE_LABELS[phase] ?? capitalize(phase);
+  const rawMessage = `${startLro.last_progress?.message ?? ""}`.trim();
+  const detailText = formatProgressDetail(startLro.last_progress?.detail);
+  const percent = clampProgressPercent(startLro.last_progress?.progress);
+  const status = startLro.summary?.status;
+  const message =
+    rawMessage && rawMessage.toLowerCase() !== phase
+      ? `${phaseLabel}: ${rawMessage}`
+      : phaseLabel;
+
+  return (
+    <div style={{ marginTop: "6px" }}>
+      <Space size="small" align="center" wrap>
+        <span style={{ fontSize: "11px", color: COLORS.GRAY_M }}>
+          {message}
+          {detailText ? ` · ${detailText}` : ""}
+        </span>
+        {percent == null ? (
+          <Spin size="small" />
+        ) : (
+          <Progress
+            percent={percent}
+            size="small"
+            showInfo={false}
+            status={progressBarStatus(status)}
+            style={{ width: "180px" }}
+          />
+        )}
+      </Space>
     </div>
   );
 }

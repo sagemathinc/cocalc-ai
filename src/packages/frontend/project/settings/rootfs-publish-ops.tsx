@@ -1,5 +1,5 @@
-import { Button, Popover, Progress, Space, Tag } from "antd";
-import { useState } from "react";
+import { Button, Popover, Progress, Space, Spin, Tag, Timeline } from "antd";
+import { useMemo, useRef, useState } from "react";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { TimeAgo } from "@cocalc/frontend/components";
 import {
@@ -7,16 +7,68 @@ import {
   progressBarStatus,
 } from "@cocalc/frontend/lro/utils";
 import type { RootfsPublishLroState } from "@cocalc/frontend/project/rootfs-publish-ops";
+import { User } from "@cocalc/frontend/users/user";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
-import type { LroStatus } from "@cocalc/conat/hub/api/lro";
+import {
+  clampProgressPercent,
+  formatProgressDetail,
+  lroPhaseColor,
+  lroStatusColor,
+  lroUpdatedAt,
+} from "../explorer/lro-timeline-utils";
 
-const PHASE_LABELS: Record<string, string> = {
-  queued: "Queued",
-  validate: "Validate",
-  snapshot: "Snapshot",
-  publish: "Publish",
-  catalog: "Catalog",
-  done: "Done",
+const ROOTFS_PUBLISH_PHASES = [
+  {
+    key: "queued",
+    label: "Queued",
+    description: "Operation accepted and waiting for a publish slot",
+  },
+  {
+    key: "validate",
+    label: "Validate",
+    description: "Resolve the source project and publish destination",
+  },
+  {
+    key: "snapshot",
+    label: "Snapshot",
+    description: "Capture a publishable filesystem snapshot",
+  },
+  {
+    key: "publish",
+    label: "Assemble",
+    description: "Prepare the merged RootFS tree for release",
+  },
+  {
+    key: "upload",
+    label: "Upload",
+    description: "Save the RootFS release into rustic storage",
+  },
+  {
+    key: "catalog",
+    label: "Catalog",
+    description: "Register the published RootFS image in the catalog",
+  },
+  {
+    key: "done",
+    label: "Complete",
+    description: "Publish completed and metadata persisted",
+  },
+] as const;
+
+type RootfsPublishPhaseKey = (typeof ROOTFS_PUBLISH_PHASES)[number]["key"];
+
+const ROOTFS_PHASE_SET = new Set<RootfsPublishPhaseKey>(
+  ROOTFS_PUBLISH_PHASES.map((phase) => phase.key),
+);
+
+const PHASE_BASELINE: Record<RootfsPublishPhaseKey, number> = {
+  queued: 0,
+  validate: 5,
+  snapshot: 15,
+  publish: 45,
+  upload: 70,
+  catalog: 96,
+  done: 100,
 };
 
 export default function RootfsPublishOps({
@@ -31,7 +83,7 @@ export default function RootfsPublishOps({
   if (!visible.length) {
     return null;
   }
-  visible.sort((a, b) => updatedAt(b) - updatedAt(a));
+  visible.sort((a, b) => lroUpdatedAt(b.summary) - lroUpdatedAt(a.summary));
 
   return (
     <div
@@ -54,23 +106,27 @@ export default function RootfsPublishOps({
 }
 
 function RootfsPublishRow({ op }: { op: RootfsPublishLroState }) {
+  const summary = op.summary;
   const [detailsOpen, setDetailsOpen] = useState<boolean>(false);
   const [dismissed, setDismissed] = useState<boolean>(false);
-  const [copied, setCopied] = useState<boolean>(false);
   const percent = progressPercent(op);
-  const status = op.summary?.status;
-  const phase = phaseLabel(op);
-  const message = op.last_progress?.message ?? statusLabel(status);
+  const status = summary?.status;
+  const progress = op.last_progress;
+  const detail = formatProgressDetail(progress?.detail);
+  const lastDetailRef = useRef<string | undefined>(undefined);
+  if (detail) {
+    lastDetailRef.current = detail;
+  }
+  const statusText = formatStatusLine(op, detail ?? lastDetailRef.current);
   const progressStatus = progressBarStatus(status);
-  const requestedLabel = `${op.summary?.input?.label ?? ""}`.trim();
-  const resultImage = `${op.summary?.result?.image ?? ""}`.trim();
+  const requestedLabel = `${summary?.input?.label ?? ""}`.trim();
+  const resultImage = `${summary?.result?.image ?? ""}`.trim();
   const durationMs = Number(
-    op.summary?.result?.duration_ms ??
-      op.summary?.progress_summary?.duration_ms,
+    summary?.result?.duration_ms ?? summary?.progress_summary?.duration_ms,
   );
-  const phaseTimings = op.summary?.result?.phase_timings_ms;
-  const errorText = `${op.summary?.error ?? ""}`.trim();
+  const phaseTimings = summary?.result?.phase_timings_ms;
   const dismissible = !!status && LRO_TERMINAL_STATUSES.has(status);
+
   async function dismissOp() {
     await webapp_client.conat_client.hub.lro.dismiss({
       op_id: op.op_id,
@@ -83,39 +139,52 @@ function RootfsPublishRow({ op }: { op: RootfsPublishLroState }) {
   }
 
   return (
-    <div
-      style={{
-        marginBottom: "8px",
-        padding: "8px",
-        border: "1px solid #eee",
-        borderRadius: "4px",
-      }}
-    >
-      <div style={{ fontSize: "12px", fontWeight: 600, marginBottom: "4px" }}>
+    <div style={{ marginBottom: "6px" }}>
+      <div style={{ fontSize: "12px", marginBottom: "2px" }}>
         {requestedLabel || "Publish current project RootFS state"}
       </div>
-      <div style={{ marginBottom: "6px" }}>
-        <Progress
-          percent={percent}
-          status={progressStatus}
-          size="small"
-          style={{ width: "100%", maxWidth: "320px" }}
-        />
-      </div>
-      <Space size="small" align="center" wrap style={{ marginBottom: "4px" }}>
-        <span style={{ fontSize: "11px", color: "#666" }}>
-          {phase}
-          {message ? `: ${message}` : ""}
-        </span>
-        {status ? <Tag color={statusColor(status)}>{status}</Tag> : null}
-        {op.summary?.updated_at ? (
+      <Space size="small" align="center" wrap>
+        {percent == null ? (
+          <Spin size="small" />
+        ) : (
+          <Progress
+            percent={percent}
+            status={progressStatus}
+            size="small"
+            style={{ width: "220px" }}
+          />
+        )}
+        <span style={{ fontSize: "11px", color: "#666" }}>{statusText}</span>
+        {status ? <Tag color={lroStatusColor(status)}>{status}</Tag> : null}
+        {summary?.updated_at ? (
           <span style={{ fontSize: "11px", color: "#999" }}>
-            <TimeAgo date={op.summary.updated_at} />
+            <TimeAgo date={summary.updated_at} />
           </span>
+        ) : null}
+        <Popover
+          trigger="click"
+          open={detailsOpen}
+          onOpenChange={setDetailsOpen}
+          placement="bottomLeft"
+          overlayInnerStyle={{
+            maxHeight: "75vh",
+            overflowY: "auto",
+            maxWidth: "min(92vw, 560px)",
+          }}
+          content={<RootfsPublishTimeline op={op} onDismiss={dismissOp} />}
+        >
+          <Button type="link" size="small">
+            Timeline
+          </Button>
+        </Popover>
+        {dismissible ? (
+          <Button type="link" size="small" onClick={() => void dismissOp()}>
+            Dismiss
+          </Button>
         ) : null}
       </Space>
       {resultImage ? (
-        <div style={{ fontSize: "11px", color: "#444", marginBottom: "4px" }}>
+        <div style={{ fontSize: "11px", color: "#444", marginTop: "4px" }}>
           <span style={{ color: "#666" }}>Image:</span>{" "}
           <code
             style={{
@@ -129,68 +198,58 @@ function RootfsPublishRow({ op }: { op: RootfsPublishLroState }) {
         </div>
       ) : null}
       {Number.isFinite(durationMs) || phaseTimings ? (
-        <div style={{ fontSize: "11px", color: "#666", marginBottom: "4px" }}>
+        <div style={{ fontSize: "11px", color: "#666", marginTop: "2px" }}>
           {formatTimingSummary(durationMs, phaseTimings)}
         </div>
       ) : null}
-      <Space size="small" align="center" wrap>
-        <Popover
-          trigger="click"
-          open={detailsOpen}
-          onOpenChange={setDetailsOpen}
-          placement="bottomLeft"
-          content={
-            <RootfsPublishDetails
-              op={op}
-              copied={copied}
-              setCopied={setCopied}
-              errorText={errorText}
-              dismissible={dismissible}
-              onDismiss={dismissOp}
-            />
-          }
-        >
-          <Button type="link" size="small">
-            Details
-          </Button>
-        </Popover>
-        {dismissible ? (
-          <Button type="link" size="small" onClick={dismissOp}>
-            Dismiss
-          </Button>
-        ) : null}
-      </Space>
     </div>
   );
 }
 
-function RootfsPublishDetails({
+function RootfsPublishTimeline({
   op,
-  copied,
-  setCopied,
-  errorText,
-  dismissible,
   onDismiss,
 }: {
   op: RootfsPublishLroState;
-  copied: boolean;
-  setCopied: (value: boolean) => void;
-  errorText: string;
-  dismissible: boolean;
   onDismiss: () => Promise<void>;
 }) {
-  const requestedLabel = `${op.summary?.input?.label ?? ""}`.trim();
-  const result = op.summary?.result ?? {};
-  const resultImage = `${result.image ?? ""}`.trim();
+  const summary = op.summary;
+  const status = summary?.status;
+  const detailText = formatProgressDetail(op.last_progress?.detail);
+  const statusText = formatStatusLine(op);
+  const phase = phaseFromOp(op);
+  const activeIndex = phase != null ? phaseIndex(phase) : 0;
+  const [copied, setCopied] = useState<boolean>(false);
+  const requestedLabel = `${summary?.input?.label ?? ""}`.trim();
+  const resultImage = `${summary?.result?.image ?? ""}`.trim();
   const durationMs = Number(
-    result.duration_ms ?? op.summary?.progress_summary?.duration_ms,
+    summary?.result?.duration_ms ?? summary?.progress_summary?.duration_ms,
   );
-  const phaseTimings = result.phase_timings_ms;
+  const phaseTimings = summary?.result?.phase_timings_ms;
+  const errorText = `${summary?.error ?? ""}`.trim();
+  const dismissible = !!status && LRO_TERMINAL_STATUSES.has(status);
+
+  const timelineItems = useMemo(() => {
+    return ROOTFS_PUBLISH_PHASES.map((entry, index) => ({
+      color: lroPhaseColor({ index, activeIndex, status }),
+      children: (
+        <div>
+          <div style={{ fontWeight: 600 }}>{entry.label}</div>
+          <div style={{ color: "#666", fontSize: "11px" }}>
+            {entry.description}
+          </div>
+        </div>
+      ),
+    }));
+  }, [activeIndex, status]);
 
   return (
-    <div style={{ width: "640px", maxWidth: "80vw" }}>
+    <div style={{ width: "520px", maxWidth: "80vw" }}>
       <Space direction="vertical" size={8} style={{ width: "100%" }}>
+        <div style={{ fontWeight: 600 }}>RootFS publish lifecycle</div>
         <Space wrap size={[6, 6]}>
+          <Tag color={lroStatusColor(status)}>{status ?? "running"}</Tag>
+          {detailText ? <Tag>{detailText}</Tag> : null}
           <Tag>
             Operation ID: <code>{op.op_id}</code>
           </Tag>
@@ -205,6 +264,29 @@ function RootfsPublishDetails({
           >
             {copied ? "Copied" : "Copy ID"}
           </Button>
+        </Space>
+        <div style={{ fontSize: "12px", color: "#666" }}>{statusText}</div>
+        <Space size="small" wrap style={{ fontSize: "12px" }}>
+          {summary?.created_by ? (
+            <span>
+              Initiated by{" "}
+              <User
+                account_id={summary.created_by}
+                show_avatar
+                avatarSize={16}
+              />
+            </span>
+          ) : null}
+          {summary?.created_at ? (
+            <span>
+              Started <TimeAgo date={summary.created_at} />
+            </span>
+          ) : null}
+          {summary?.updated_at ? (
+            <span>
+              Updated <TimeAgo date={summary.updated_at} />
+            </span>
+          ) : null}
         </Space>
         {requestedLabel ? (
           <div style={{ fontSize: "12px" }}>
@@ -242,6 +324,7 @@ function RootfsPublishDetails({
             {errorText}
           </div>
         ) : null}
+        <Timeline items={timelineItems} />
         {dismissible ? (
           <Button size="small" onClick={() => void onDismiss()}>
             Dismiss
@@ -252,60 +335,61 @@ function RootfsPublishDetails({
   );
 }
 
-function progressPercent(op: RootfsPublishLroState): number {
-  const progress = Number(op.last_progress?.progress);
-  if (Number.isFinite(progress)) {
-    return Math.max(0, Math.min(100, Math.round(progress)));
+function phaseFromOp(
+  op: RootfsPublishLroState,
+): RootfsPublishPhaseKey | undefined {
+  const phaseRaw =
+    op.last_progress?.phase ??
+    op.summary?.progress_summary?.phase ??
+    op.last_progress?.message;
+  if (typeof phaseRaw !== "string" || !phaseRaw.trim()) return;
+  const lower = phaseRaw.trim().toLowerCase();
+  if (ROOTFS_PHASE_SET.has(lower as RootfsPublishPhaseKey)) {
+    return lower as RootfsPublishPhaseKey;
   }
+}
+
+function phaseIndex(phase: RootfsPublishPhaseKey): number {
+  const index = ROOTFS_PUBLISH_PHASES.findIndex((entry) => entry.key === phase);
+  return index >= 0 ? index : 0;
+}
+
+function formatStatusLine(
+  op: RootfsPublishLroState,
+  detailOverride?: string,
+): string {
+  const phase = phaseFromOp(op);
+  const phaseLabel =
+    phase != null
+      ? (ROOTFS_PUBLISH_PHASES.find((entry) => entry.key === phase)?.label ??
+        phase)
+      : "Running";
+  const message = `${op.last_progress?.message ?? ""}`.trim();
+  const detail =
+    detailOverride ?? formatProgressDetail(op.last_progress?.detail);
+  const parts = [phaseLabel];
+  if (message && message.toLowerCase() !== phase) {
+    parts.push(message);
+  }
+  if (detail) {
+    parts.push(detail);
+  }
+  return parts.join(" · ");
+}
+
+function progressPercent(op: RootfsPublishLroState): number | undefined {
   const status = op.summary?.status;
   if (status === "succeeded") return 100;
-  if (LRO_TERMINAL_STATUSES.has(status ?? "queued")) return 100;
-  return 0;
-}
-
-function phaseLabel(op: RootfsPublishLroState): string {
-  const phase =
-    `${op.last_progress?.phase ?? op.summary?.progress_summary?.phase ?? ""}`
-      .trim()
-      .toLowerCase() || "queued";
-  return PHASE_LABELS[phase] ?? phase;
-}
-
-function updatedAt(op: RootfsPublishLroState): number {
-  const date =
-    op.summary?.updated_at ?? op.summary?.started_at ?? op.summary?.created_at;
-  const ts = new Date(date as any).getTime();
-  return Number.isFinite(ts) ? ts : 0;
-}
-
-function statusLabel(status?: LroStatus): string {
-  switch (status) {
-    case "failed":
-      return "failed";
-    case "canceled":
-      return "canceled";
-    case "expired":
-      return "expired";
-    case "succeeded":
-      return "complete";
-    case "running":
-      return "running";
-    default:
-      return "waiting for worker";
+  if (status && LRO_TERMINAL_STATUSES.has(status)) return 100;
+  const phase = phaseFromOp(op);
+  const direct = clampProgressPercent(op.last_progress?.progress);
+  if (phase === "upload" && direct != null) {
+    return 70 + Math.round((direct * 22) / 100);
   }
-}
-
-function statusColor(status: LroStatus): string {
-  switch (status) {
-    case "succeeded":
-      return "green";
-    case "failed":
-    case "canceled":
-    case "expired":
-      return "red";
-    default:
-      return "blue";
+  if (direct != null) {
+    return direct;
   }
+  return phase ? PHASE_BASELINE[phase] : 0;
 }
 
 function formatTimingSummary(
@@ -316,7 +400,7 @@ function formatTimingSummary(
   if (Number.isFinite(durationMs)) {
     parts.push(`total ${formatDurationMs(durationMs)}`);
   }
-  for (const key of ["publish", "upload", "replicate", "catalog_entry"]) {
+  for (const key of ["validate", "publish", "catalog_entry", "upload"]) {
     const value = Number(phaseTimings?.[key]);
     if (Number.isFinite(value) && value > 0) {
       parts.push(`${keyLabel(key)} ${formatDurationMs(value)}`);

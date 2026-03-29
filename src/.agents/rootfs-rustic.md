@@ -13,6 +13,10 @@ Managed RootFS is now substantially on the rustic design:
 - managed releases use the rustic `snapshot_id` as their immutable identity,
 - project-hosts publish directly from the merged overlay view,
 - managed images restore from rustic-backed cache entries and work cross-host,
+- cross-region replica registration and region-local release resolution now
+  work,
+- self-hosted `rest-server` publish/restore has now passed a live two-host
+  Multipass smoke,
 - btrfs quota mutations are now decoupled through a durable sqlite-backed queue,
 - RootFS publish temp snapshots/clones skip quota bookkeeping entirely,
 - initial exact-manifest verification passed on real workloads,
@@ -25,9 +29,9 @@ Managed RootFS is now substantially on the rustic design:
 The biggest remaining work is no longer "basic migration". It is:
 
 - broader verification,
-- cross-region replication,
-- self-hosted `rest-server` support,
-- cleanup/removal of the remaining btrfs-delta assumptions and UI leftovers.
+- admin/catalog polish,
+- project-start and publish-progress UX,
+- clarifying the rustic lifecycle/compaction story.
 
 ## Status
 
@@ -39,6 +43,11 @@ The biggest remaining work is no longer "basic migration". It is:
 - Project-host publish goes directly from the merged overlay view to rustic.
 - Managed RootFS restore/cache works from rustic-backed releases.
 - Cross-host publish/create/start smoke tests succeeded.
+- Cross-region replica registration and region-local release resolution work.
+- A live Europe-host replication smoke has passed, including restore from the
+  replicated Europe snapshot.
+- Self-hosted `rest-server` publish/create/start smoke has now succeeded on two
+  local self-hosted Multipass VMs.
 - Manifest-based verification tooling exists and is integrated.
 - Initial exact-manifest cross-host verification passed.
 - RootFS publish exposes a real global concurrency cap.
@@ -52,22 +61,20 @@ The biggest remaining work is no longer "basic migration". It is:
 
 ### Partially Implemented
 
-- The data model already supports rustic-backed managed releases, but there is
-  still cleanup to do around legacy btrfs-stream-oriented fields and logic.
-- The RootFS UI behavior is working, but some storage-era concepts and
-  codepaths still need simplification/removal.
-- A simplified btrfs fallback still exists and has not yet been pruned down to
-  the final intended scope.
-- The self-hosted `rest-server` repo-config path now exists and shares the same
-  launchpad helper used by project backups, but it still needs live end-to-end
-  verification with actual self-hosted project-hosts.
+- Automatic host-triggered cross-region replication still needs a clean live
+  smoke once the dev hub route is healthy again. The direct host/data-path
+  smoke has passed.
+- The frontend is functional but not yet polished:
+  - project start does not clearly surface RootFS pull status,
+  - RootFS publish progress is still split between coarse LRO phase updates and
+    rustic progress instead of one cohesive timeline view.
+- Release deletion and cache cleanup exist, but the repo-level rustic
+  prune/compaction story is still more implicit than it should be.
 
 ### Not Implemented Yet
 
-- Cross-region RootFS snapshot replication.
 - Full verification matrix for `conda`, `pnpm`, `pip`, mixed scientific images,
-  and cross-region restore.
-- Final deletion of the old btrfs delta model.
+  and additional cross-region workload coverage.
 - Benchmarking and possible enablement of clone-plus-restore optimization on
   destination hosts.
 
@@ -79,8 +86,7 @@ These decisions still look correct:
 2. Hosted deployment should use one shared rustic repo per region.
 3. Self-hosted deployment should use `rest-server`.
 4. `full` versus `delta` should not be part of the RootFS product story.
-5. The btrfs delta path should be removed rather than preserved.
-6. Encryption is not a RootFS product requirement.
+5. Encryption is not a RootFS product requirement.
 
 One important new data point strengthens this direction:
 
@@ -117,6 +123,52 @@ Current behavior:
 4. mount it as a lowerdir for projects.
 
 Cross-host restores are working in the current hosted dev setup.
+
+Self-hosted restores are now also working through the launchpad local
+`rest-server` path.
+
+The first live self-hosted smoke exposed one real bug:
+
+- the privileged `cocalc-runtime-storage rootfs-rustic-backup` wrapper did not
+  lazily initialize a `rest:` rustic repository on first use
+
+After fixing that wrapper to do the same `repoinfo`/`init` bootstrap dance that
+other rustic paths already use, the live self-hosted rerun succeeded.
+
+Recorded run:
+
+- [rootfs-rustic-self-host-verification-2026-03-28.md](/home/wstein/build/cocalc-lite2/src/.agents/rootfs-benchmarks/rootfs-rustic-self-host-verification-2026-03-28.md)
+
+### Cross-Region Replication Path
+
+Current hosted cross-region behavior:
+
+1. resolve the nearest available rustic snapshot for the requesting host,
+2. if the host must pull from another region and no local-region replica exists,
+   include a local-region `regional_replication_target`,
+3. after restore on the destination host, back up the restored tree into the
+   target region using the same rustic machinery,
+4. register that replica in `rootfs_release_artifacts`,
+5. future release resolution prefers the same-region replica.
+
+This is intentionally implemented using the existing restore + backup paths,
+not direct repo-to-repo copying.
+
+The first live Europe smoke passed with:
+
+- source region: `wnam`
+- target region: `weur`
+- source snapshot:
+  `e6ef9499a6bfd36d1e1fc514f5b7cf7839a2d8a2444794ba89a19da7715cc82a`
+- replica snapshot:
+  `0afd68dda206040fcd12de4c4d264a46357b961d329037b4db3ee70ed3a9635c`
+- post-registration Europe resolution switched to the `weur` snapshot
+- restore from the `weur` replica also passed
+- hardlink topology remained intact with `3` hardlink groups on both restores
+
+Recorded run:
+
+- [rootfs-rustic-cross-region-replication-2026-03-28.md](/home/wstein/build/cocalc-lite2/src/.agents/rootfs-benchmarks/rootfs-rustic-cross-region-replication-2026-03-28.md)
 
 ### Identity Model
 
@@ -327,8 +379,8 @@ Still required:
 - `pnpm` / Node.js image
 - Python / `pip` image
 - mixed scientific stack image
-- cross-region restore after replication
-- self-hosted restore via `rest-server`
+- more cross-region workloads beyond the first Europe smoke
+- self-hosted restore via `rest-server` in the ongoing regression mix
 
 Synthetic fixtures should continue to cover:
 
@@ -355,7 +407,8 @@ large CoCalc image families with modest incremental updates.
 
 ## Self-Hosted Direction
 
-This has not been implemented yet, but the target remains:
+This is now implemented and has passed a first live smoke. The direction
+remains:
 
 - do not use the old ad hoc hub-local btrfs-stream HTTP path,
 - use the same rustic snapshot model,
@@ -363,23 +416,28 @@ This has not been implemented yet, but the target remains:
 
 That keeps hosted and self-hosted RootFS conceptually aligned.
 
-## Btrfs Cleanup Still Pending
+## Btrfs Cleanup
 
-The current plan remains:
+This is now done for managed RootFS distribution:
 
-- do not preserve the old btrfs delta publish model,
-- simplify the remaining btrfs backend aggressively,
-- if any btrfs fallback remains, keep it full-stream-only and clearly secondary.
+- new publishes are rustic-only,
+- restore/access is rustic-only,
+- the old hub-local btrfs artifact HTTP path is gone,
+- the legacy btrfs delta transport logic has been removed.
 
-This cleanup has not been finished yet.
+Btrfs still matters locally for host filesystems, snapshots, overlays, and
+cached lowerdirs. It is no longer part of the managed RootFS network storage
+story.
 
 ## Ordered Next Steps
 
 1. Extend the verification matrix to `conda`, `pnpm`, `pip`, mixed scientific,
    and additional synthetic fixtures.
-2. Implement cross-region replication.
-3. Implement self-hosted RootFS via `rest-server`.
-4. Remove the remaining btrfs delta complexity and UI/storage leftovers.
+2. Keep hosted cross-region replication in the live regression mix once the dev
+   hub route is healthy again.
+3. Improve project-start and publish-progress UX so RootFS pull/publish status
+   is visible and coherent.
+4. Decide how rustic prune/compaction should be run, observed, and documented.
 5. Benchmark the clone-plus-restore optimization and keep it only if it gives
    clear space/time wins.
 
@@ -391,5 +449,4 @@ This RootFS-rustic transition should be considered complete when:
 - cross-region restore works,
 - self-hosted RootFS uses `rest-server`,
 - the verification matrix passes on meaningful real workloads,
-- `full` versus `delta` no longer appears in the RootFS product surface,
-- the old btrfs delta path is gone.
+- `full` versus `delta` no longer appears in the RootFS product surface.

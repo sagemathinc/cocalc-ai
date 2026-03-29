@@ -6,6 +6,7 @@ import {
 import type {
   RootfsReleaseArtifactAccess,
   RootfsReleaseGcStatus,
+  RootfsUploadedArtifactResult,
 } from "@cocalc/util/rootfs-images";
 
 export type HostStatus =
@@ -397,6 +398,7 @@ export const hosts = {
   recordCodexSiteUsage: authFirstRequireHost,
   issueProjectHostAgentAuthToken: authFirstRequireHost,
   getManagedRootfsReleaseArtifact: authFirstRequireHost,
+  recordManagedRootfsReleaseReplica: authFirstRequireHost,
   listManagedRootfsReleaseLifecycle: authFirstRequireHost,
   issueProjectHostAuthToken: authFirstRequireAccount,
 };
@@ -567,6 +569,21 @@ export interface Hosts {
     host_id?: string;
     image: string;
   }) => Promise<RootfsReleaseArtifactAccess>;
+  recordManagedRootfsReleaseReplica: (opts: {
+    host_id?: string;
+    image: string;
+    upload: Extract<RootfsUploadedArtifactResult, { backend: "rustic" }>;
+  }) => Promise<{
+    artifact_id: string;
+    release_id: string;
+    content_key: string;
+    backend: string;
+    region?: string | null;
+    artifact_path: string;
+    artifact_sha256: string;
+    artifact_bytes: number;
+    status: string;
+  }>;
   listManagedRootfsReleaseLifecycle: (opts: {
     host_id?: string;
     images: string[];

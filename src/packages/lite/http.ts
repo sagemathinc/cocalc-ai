@@ -160,7 +160,7 @@ export async function initApp({ app, conatClient, AUTH_TOKEN, isHttps }) {
   });
 
   // file download
-  app.get(`/${project_id}/files/*`, async (req, res) => {
+  app.get(`/${project_id}/files/*path`, async (req, res) => {
     await handleFileDownload({ req, res });
   });
 
@@ -177,7 +177,7 @@ export async function initApp({ app, conatClient, AUTH_TOKEN, isHttps }) {
 
   initProjectProxyHttp({ app });
 
-  app.get("*", (req, res) => {
+  app.get(/.*/, (req, res) => {
     if (req.url.endsWith("__webpack_hmr")) return;
     logger.debug("redirecting", req.url);
     const rawUrl = req.originalUrl || req.url || "";

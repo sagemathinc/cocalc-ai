@@ -108,10 +108,14 @@ import {
 import { syncProjectUsersOnHost } from "@cocalc/server/project-host/control";
 import { moveProjectToHost } from "@cocalc/server/projects/move";
 import { notifyProjectHostUpdate } from "@cocalc/server/conat/route-project";
-import { issueRootfsReleaseArtifactAccess } from "@cocalc/server/rootfs/releases";
+import {
+  issueRootfsReleaseArtifactAccess,
+  recordManagedRootfsRusticReplica,
+} from "@cocalc/server/rootfs/releases";
 import {
   isManagedRootfsImageName,
   type RootfsReleaseGcStatus,
+  type RootfsUploadedArtifactResult,
 } from "@cocalc/util/rootfs-images";
 import { buildCloudInitStartupScript } from "@cocalc/server/cloud/bootstrap-host";
 function pool() {
@@ -913,6 +917,21 @@ export async function getManagedRootfsReleaseArtifact({
     host_id,
     image,
   });
+}
+
+export async function recordManagedRootfsReleaseReplica({
+  host_id,
+  image,
+  upload,
+}: {
+  host_id?: string;
+  image: string;
+  upload: Extract<RootfsUploadedArtifactResult, { backend: "rustic" }>;
+}) {
+  if (!host_id) {
+    throw new Error("host_id must be specified");
+  }
+  return await recordManagedRootfsRusticReplica({ image, upload });
 }
 
 export async function listManagedRootfsReleaseLifecycle({

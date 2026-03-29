@@ -33,11 +33,11 @@ Table({
     },
     parent_release_id: {
       type: "uuid",
-      desc: "Optional parent immutable RootFS release when this release is stored as a delta.",
+      desc: "Optional parent immutable RootFS release. Kept for historical rows from older formats.",
     },
     depth: {
       type: "number",
-      desc: "Delta ancestry depth for this release. Full releases have depth 0.",
+      desc: "Historical ancestry depth field. Rustic-managed releases use depth 0.",
     },
     arch: {
       type: "string",
@@ -51,17 +51,17 @@ Table({
     artifact_kind: {
       type: "string",
       pg_type: "VARCHAR(32)",
-      desc: "Artifact kind for this release (full, delta).",
+      desc: "Artifact kind for this release (currently full).",
     },
     artifact_format: {
       type: "string",
       pg_type: "VARCHAR(32)",
-      desc: "Artifact encoding used for transport (currently btrfs-send).",
+      desc: "Artifact encoding used for transport (currently rustic).",
     },
     artifact_backend: {
       type: "string",
       pg_type: "VARCHAR(32)",
-      desc: "Storage backend where the artifact lives (currently hub-local).",
+      desc: "Storage backend where the artifact lives (r2 or rest).",
     },
     artifact_path: {
       type: "string",

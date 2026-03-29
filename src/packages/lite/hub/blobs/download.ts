@@ -39,7 +39,7 @@ export default function init(app, conatClient) {
   const blobStore = getBlobstore(conatClient);
   logger.debug("initialized blob download service");
 
-  app.get("/blobs/*", async (req, res) => {
+  app.get("/blobs/*path", async (req, res) => {
     logger.debug(`${JSON.stringify(req.query)}, ${req.path}`);
     const uuid = `${req.query.uuid}`;
     if (req.headers["if-none-match"] === uuid) {
