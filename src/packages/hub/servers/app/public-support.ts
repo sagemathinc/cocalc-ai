@@ -15,9 +15,9 @@ export default function initPublicSupport(router: Router): void {
     "/support/community",
     "/support/community/",
     "/support/new",
-    "/support/new/*",
+    "/support/new/*rest",
     "/support/tickets",
-    "/support/tickets/*",
+    "/support/tickets/*rest",
   ];
 
   router.get(supportPaths, (req, res) => {

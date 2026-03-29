@@ -73,11 +73,21 @@ function chatMessageKey(record: any): string | undefined {
   return `message:${messageId}`;
 }
 
+function hasExplicitChatRowAcpState(record: any): boolean {
+  return (
+    record != null &&
+    Object.prototype.hasOwnProperty.call(record as object, "acp_state")
+  );
+}
+
 function applyChatRowAcpState(
   acpState: any,
   record: any,
   getThreadStateRecord?: (threadId: string) => any,
 ): any {
+  if (!hasExplicitChatRowAcpState(record)) {
+    return acpState;
+  }
   const mapped = chatRowToAcpState({
     record,
     getThreadStateRecord,
@@ -98,8 +108,6 @@ export function initFromSyncDB({ syncdb, store }: { syncdb: any; store: any }) {
   for (const row of rows) {
     if ((row as any)?.event === THREAD_STATE_EVENT) {
       const mapped = threadStateToAcpState((row as any)?.state);
-      const messageMapped =
-        (row as any)?.state === "running" ? mapped : undefined;
       const byThreadId = threadStateKey(row);
       const byMessageId = threadStateActiveMessageKey(row);
       if (mapped) {
@@ -107,9 +115,7 @@ export function initFromSyncDB({ syncdb, store }: { syncdb: any; store: any }) {
           acpState = acpState.set(byThreadId, mapped);
         }
         if (byMessageId) {
-          acpState = messageMapped
-            ? acpState.set(byMessageId, messageMapped)
-            : acpState.delete(byMessageId);
+          acpState = acpState.set(byMessageId, mapped);
         }
       } else {
         if (byThreadId) {
@@ -170,20 +176,48 @@ function reconcileThreadChatRowAcpState({
 }): any {
   const normalized = `${threadId ?? ""}`.trim();
   if (!normalized) return acpState;
+  // Chat syncdb uses ImmerDB, so `get(...)` returns plain JS rows rather than
+  // Immutable.js collections. Keep this path strict so we do not paper over
+  // unexpected types with ad hoc `toJS()` fallbacks.
   const rows =
     typeof syncdb?.get === "function"
       ? syncdb.get({ event: CHAT_EVENT, thread_id: normalized })
       : [];
-  const records = Array.isArray(rows)
-    ? rows
-    : typeof rows?.toJS === "function"
-      ? rows.toJS()
-      : [];
+  if (!Array.isArray(rows)) return acpState;
   let next = acpState;
-  for (const record of records) {
+  for (const record of rows) {
     next = applyChatRowAcpState(next, record, (id) =>
       getThreadStateRecord(syncdb, id),
     );
+  }
+  return next;
+}
+
+function clearThreadMessageAcpStateWithoutExplicitRows({
+  acpState,
+  syncdb,
+  threadId,
+  keepMessageId,
+}: {
+  acpState: any;
+  syncdb: any;
+  threadId?: string;
+  keepMessageId?: string;
+}): any {
+  const normalized = `${threadId ?? ""}`.trim();
+  if (!normalized) return acpState;
+  const rows =
+    typeof syncdb?.get === "function"
+      ? syncdb.get({ event: CHAT_EVENT, thread_id: normalized })
+      : [];
+  if (!Array.isArray(rows)) return acpState;
+  let next = acpState;
+  for (const record of rows) {
+    if (hasExplicitChatRowAcpState(record)) continue;
+    const key = chatMessageKey(record);
+    if (!key) continue;
+    if (key === `message:${keepMessageId ?? ""}`) continue;
+    next = next.delete(key);
   }
   return next;
 }
@@ -254,8 +288,6 @@ export function handleSyncDBChange({
 
     if (event === THREAD_STATE_EVENT) {
       const mapped = threadStateToAcpState((record as any)?.state);
-      const messageMapped =
-        (record as any)?.state === "running" ? mapped : undefined;
       const byThreadId = threadStateKey(record ?? obj);
       const byMessageId = threadStateActiveMessageKey(record ?? obj);
       const acpState = store.get("acpState") ?? iMap();
@@ -264,8 +296,8 @@ export function handleSyncDBChange({
         next = mapped ? next.set(byThreadId, mapped) : next.delete(byThreadId);
       }
       if (byMessageId) {
-        next = messageMapped
-          ? next.set(byMessageId, messageMapped)
+        next = mapped
+          ? next.set(byMessageId, mapped)
           : next.delete(byMessageId);
       }
       next = reconcileThreadChatRowAcpState({
@@ -273,6 +305,14 @@ export function handleSyncDBChange({
         syncdb,
         threadId: (record ?? obj)?.thread_id,
       });
+      if ((record ?? obj)?.state === "running") {
+        next = clearThreadMessageAcpStateWithoutExplicitRows({
+          acpState: next,
+          syncdb,
+          threadId: (record ?? obj)?.thread_id,
+          keepMessageId: (record ?? obj)?.active_message_id,
+        });
+      }
       store.setState({
         acpState: next,
       });

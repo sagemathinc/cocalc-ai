@@ -18,7 +18,7 @@ export default function init(
   const v: string[] = [];
   const routes = new Set(APP_ROUTES);
   for (const path of routes) {
-    v.push(`/${path}*`);
+    v.push(`/${path}{*rest}`);
   }
   if (opts.includeAuth) {
     // Only client-side auth pages should route through the SPA.  Everything
@@ -26,9 +26,9 @@ export default function init(
     // server-side handlers registered later.
     v.push("/auth");
     v.push("/auth/");
-    v.push("/auth/sign-in*");
-    v.push("/auth/sign-up*");
-    v.push("/auth/password-reset*");
+    v.push("/auth/sign-in{*rest}");
+    v.push("/auth/sign-up{*rest}");
+    v.push("/auth/password-reset{*rest}");
   }
   router.get(v, (req, res, next) => {
     if (opts.includeAuth && req.path.startsWith("/auth/")) {

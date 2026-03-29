@@ -28,7 +28,10 @@ export default function initProxy(opts: Options) {
   const proxy_regexp = `^${
     base_path.length <= 1 ? "" : base_path
   }\/[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}\/*`;
-  const conat_regexp = `^${base_path.length <= 1 ? "" : base_path}\\/conat(?:\\/|$)`;
+  const proxy_route_regexp = new RegExp(proxy_regexp);
+  const conat_regexp = new RegExp(
+    `^${base_path.length <= 1 ? "" : base_path}\\/conat(?:\\/|$)`,
+  );
   logger.info("creating proxy server with proxy_regexp", proxy_regexp);
 
   // tcp connections:
@@ -38,7 +41,7 @@ export default function initProxy(opts: Options) {
   const handleUpgrade = initUpgrade(opts, proxy_regexp);
 
   if (opts.proxyConat) {
-    opts.app.all(new RegExp(conat_regexp), async (req, res) => {
+    opts.app.all(conat_regexp, async (req, res) => {
       await proxyConatRequest(req, res, {
         localConatServer: opts.localConatServer,
       });
@@ -62,7 +65,7 @@ export default function initProxy(opts: Options) {
     }
   });
 
-  opts.app.all(proxy_regexp, handleProxy);
+  opts.app.all(proxy_route_regexp, handleProxy);
 
   opts.httpServer.on("upgrade", handleUpgrade);
 }

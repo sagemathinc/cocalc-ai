@@ -120,6 +120,11 @@ function appendMarkdownImage(
   return `${prefix}![${label}](${url})\n`;
 }
 
+async function waitForSupportModalVisibilityChange(): Promise<void> {
+  if (typeof window === "undefined") return;
+  await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+}
+
 async function captureScreenshotBlob(): Promise<Blob> {
   const mediaDevices = navigator?.mediaDevices as MediaDevices | undefined;
   if (typeof mediaDevices?.getDisplayMedia !== "function") {
@@ -334,11 +339,22 @@ export default function SupportCreateModal() {
     return `${window.location.origin}${window.location.pathname}${window.location.search}`;
   }, [initialOptions.url]);
 
+  async function captureSupportScreenshotBlob(): Promise<Blob> {
+    pageActions?.setState?.({ supportModalHidden: true });
+    await waitForSupportModalVisibilityChange();
+    try {
+      return await captureScreenshotBlob();
+    } finally {
+      pageActions?.setState?.({ supportModalHidden: false });
+      await waitForSupportModalVisibilityChange();
+    }
+  }
+
   async function attachScreenshot(input: string): Promise<string> {
     if (!includeScreenshot) {
       return input;
     }
-    const screenshot = await captureScreenshotBlob();
+    const screenshot = await captureSupportScreenshotBlob();
     const { url } = await uploadBlobImage({
       file: screenshot,
       filename: `support-screenshot-${Date.now()}.png`,
