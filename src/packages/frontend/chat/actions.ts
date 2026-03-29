@@ -5,6 +5,7 @@
 
 import { fromJS } from "immutable";
 import { debounce } from "lodash";
+import { alert_message } from "@cocalc/frontend/alerts";
 import { setDefaultLLM } from "@cocalc/frontend/account/useLanguageModelSetting";
 import { Actions, redux } from "@cocalc/frontend/app-framework";
 import { History as LanguageModelHistory } from "@cocalc/frontend/client/types";
@@ -447,6 +448,7 @@ export class ChatActions extends Actions<ChatState> {
     string,
     { count: number; messageId: string; at: Date }
   > = new Map();
+  private lastSyncdbNotReadyAlertAt = 0;
 
   set_syncdb = (
     syncdb: ImmerDB,
@@ -533,8 +535,29 @@ export class ChatActions extends Actions<ChatState> {
     return typeof record?.get === "function" ? record : fromJS(record);
   }
 
-  private setSyncdb = (obj: any): void => {
+  isSyncdbReady = (): boolean => {
+    if (this.syncdb == null) return false;
+    const state = this.syncdb.get_state?.();
+    return state == null || state === "ready";
+  };
+
+  private warnSyncdbNotReady = (): void => {
+    const now = Date.now();
+    if (now - this.lastSyncdbNotReadyAlertAt < 2000) return;
+    this.lastSyncdbNotReadyAlertAt = now;
+    alert_message({
+      type: "warning",
+      message: "Chat is still loading. Please wait a moment, then try again.",
+    });
+  };
+
+  private setSyncdb = (obj: any): boolean => {
+    if (!this.isSyncdbReady()) {
+      this.warnSyncdbNotReady();
+      return false;
+    }
     this.syncdb?.set(obj);
+    return true;
   };
 
   private getSyncdbOne(where: Record<string, unknown>): any | null {
@@ -554,12 +577,8 @@ export class ChatActions extends Actions<ChatState> {
     if (state != null && state !== "ready") return [];
     try {
       const rows = this.syncdb.get(where);
-      if (rows == null) return [];
+      // Chat syncdb is ImmerDB, so `get(...)` returns plain JS rows.
       if (Array.isArray(rows)) return rows;
-      if (typeof (rows as any)?.toJS === "function") {
-        const js = (rows as any).toJS();
-        return Array.isArray(js) ? js : [];
-      }
     } catch {
       // ignore and return empty
     }
@@ -801,6 +820,10 @@ export class ChatActions extends Actions<ChatState> {
       // WARNING: give an error or try again later?
       return "";
     }
+    if (!this.isSyncdbReady()) {
+      this.warnSyncdbNotReady();
+      return "";
+    }
     const time_stamp: Date = nextChatMessageDate(this);
     const time_stamp_str = time_stamp.toISOString();
     const message_id = uuid();
@@ -871,7 +894,9 @@ export class ChatActions extends Actions<ChatState> {
     if (trimmedName && !explicitReplyThreadId) {
       (message as any).name = trimmedName;
     }
-    this.setSyncdb(message);
+    if (!this.setSyncdb(message)) {
+      return "";
+    }
     if (!explicitReplyThreadId) {
       const threadKey = thread_id;
       const {
@@ -1198,7 +1223,9 @@ export class ChatActions extends Actions<ChatState> {
       parent_message_id: `${message.message_id ?? ""}`.trim() || undefined,
       noNotification,
     });
-    this.deleteDraft(stableDraftKeyFromThreadKey(reply_thread_id));
+    if (time_stamp_str) {
+      this.deleteDraft(stableDraftKeyFromThreadKey(reply_thread_id));
+    }
     return time_stamp_str;
   };
 

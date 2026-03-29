@@ -176,17 +176,16 @@ function reconcileThreadChatRowAcpState({
 }): any {
   const normalized = `${threadId ?? ""}`.trim();
   if (!normalized) return acpState;
+  // Chat syncdb uses ImmerDB, so `get(...)` returns plain JS rows rather than
+  // Immutable.js collections. Keep this path strict so we do not paper over
+  // unexpected types with ad hoc `toJS()` fallbacks.
   const rows =
     typeof syncdb?.get === "function"
       ? syncdb.get({ event: CHAT_EVENT, thread_id: normalized })
       : [];
-  const records = Array.isArray(rows)
-    ? rows
-    : typeof rows?.toJS === "function"
-      ? rows.toJS()
-      : [];
+  if (!Array.isArray(rows)) return acpState;
   let next = acpState;
-  for (const record of records) {
+  for (const record of rows) {
     next = applyChatRowAcpState(next, record, (id) =>
       getThreadStateRecord(syncdb, id),
     );
@@ -211,13 +210,9 @@ function clearThreadMessageAcpStateWithoutExplicitRows({
     typeof syncdb?.get === "function"
       ? syncdb.get({ event: CHAT_EVENT, thread_id: normalized })
       : [];
-  const records = Array.isArray(rows)
-    ? rows
-    : typeof rows?.toJS === "function"
-      ? rows.toJS()
-      : [];
+  if (!Array.isArray(rows)) return acpState;
   let next = acpState;
-  for (const record of records) {
+  for (const record of rows) {
     if (hasExplicitChatRowAcpState(record)) continue;
     const key = chatMessageKey(record);
     if (!key) continue;

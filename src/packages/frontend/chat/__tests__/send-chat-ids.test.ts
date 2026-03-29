@@ -3,10 +3,15 @@
 import { CHAT_THREAD_META_ROW_DATE } from "@cocalc/chat";
 import { ChatActions } from "../actions";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import { alert_message } from "@cocalc/frontend/alerts";
 
 jest.mock("@cocalc/frontend/user-tracking", () => ({
   __esModule: true,
   default: jest.fn(),
+}));
+
+jest.mock("@cocalc/frontend/alerts", () => ({
+  alert_message: jest.fn(),
 }));
 
 function makeActions(messages: Map<string, any> = new Map()): any {
@@ -570,16 +575,46 @@ describe("thread-config by thread_id", () => {
     const actions = makeActions();
     bindRealDeleteDraft(actions);
     actions.syncdb.get_state = () => "loading";
+    actions.syncdb.set.mockImplementation(() => {
+      throw Error("must be ready -- set");
+    });
     actions.syncdb.delete.mockImplementation(() => {
       throw Error("must be ready -- delete");
     });
 
-    expect(() => {
-      actions.sendChat({ input: "hello after restart" });
-    }).not.toThrow();
+    expect(actions.sendChat({ input: "hello after restart" })).toBe("");
 
     await Promise.resolve();
+    expect(actions.syncdb.set).not.toHaveBeenCalled();
+    expect(actions.syncdb.commit).not.toHaveBeenCalled();
     expect(actions.syncdb.delete).not.toHaveBeenCalled();
+    expect(alert_message).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "warning",
+      }),
+    );
+  });
+
+  it("does not clear a reply draft when sendReply happens before syncdb is ready", () => {
+    const actions = makeActions();
+    actions.syncdb.get_state = () => "loading";
+    actions.syncdb.set.mockImplementation(() => {
+      throw Error("must be ready -- set");
+    });
+    actions.deleteDraft = jest.fn();
+
+    const sent = actions.sendReply({
+      message: {
+        date: "2026-02-21T18:00:00.000Z",
+        thread_id: "thread-1",
+        message_id: "message-1",
+      },
+      reply: "hello reply",
+    });
+
+    expect(sent).toBe("");
+    expect(actions.syncdb.set).not.toHaveBeenCalled();
+    expect(actions.deleteDraft).not.toHaveBeenCalled();
   });
 
   it("updates thread-config by UUID thread key with a canonical thread row key", () => {

@@ -1843,11 +1843,10 @@ export default function Message({
 
   function sendReply(reply?: string) {
     if (actions == null) return;
-    setReplying(false);
     if (!reply && !replyMentionsRef.current?.(undefined, true)) {
       reply = replyMessageRef.current;
     }
-    actions.sendReply({
+    const sent = actions.sendReply({
       message:
         typeof (message as any)?.toJS === "function"
           ? (message as any).toJS()
@@ -1855,6 +1854,10 @@ export default function Message({
       reply,
       submitMentionsRef: replyMentionsRef,
     });
+    if (!sent) {
+      return;
+    }
+    setReplying(false);
     actions.scrollToIndex(index);
   }
 
