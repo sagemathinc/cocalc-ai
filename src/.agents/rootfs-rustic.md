@@ -29,7 +29,9 @@ Managed RootFS is now substantially on the rustic design:
 The biggest remaining work is no longer "basic migration". It is:
 
 - broader verification,
-- admin/catalog polish.
+- admin/catalog polish,
+- project-start and publish-progress UX,
+- clarifying the rustic lifecycle/compaction story.
 
 ## Status
 
@@ -62,6 +64,12 @@ The biggest remaining work is no longer "basic migration". It is:
 - Automatic host-triggered cross-region replication still needs a clean live
   smoke once the dev hub route is healthy again. The direct host/data-path
   smoke has passed.
+- The frontend is functional but not yet polished:
+  - project start does not clearly surface RootFS pull status,
+  - RootFS publish progress is still split between coarse LRO phase updates and
+    rustic progress instead of one cohesive timeline view.
+- Release deletion and cache cleanup exist, but the repo-level rustic
+  prune/compaction story is still more implicit than it should be.
 
 ### Not Implemented Yet
 
@@ -427,7 +435,10 @@ story.
    and additional synthetic fixtures.
 2. Keep hosted cross-region replication in the live regression mix once the dev
    hub route is healthy again.
-3. Benchmark the clone-plus-restore optimization and keep it only if it gives
+3. Improve project-start and publish-progress UX so RootFS pull/publish status
+   is visible and coherent.
+4. Decide how rustic prune/compaction should be run, observed, and documented.
+5. Benchmark the clone-plus-restore optimization and keep it only if it gives
    clear space/time wins.
 
 ## Exit Criteria

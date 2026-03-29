@@ -56,6 +56,11 @@ of truth is [rootfs-rustic.md](/home/wstein/build/cocalc-lite2/src/.agents/rootf
 
 ### Remaining Gaps
 
+- Frontend/UX polish:
+  - starting a project does not yet surface RootFS pull progress clearly,
+  - RootFS publish progress is still split between generic LRO phase updates
+    and rustic progress instead of one cohesive timeline-style view,
+  - catalog/admin flows likely still have smaller cleanup gaps.
 - Broader verification matrix for more real workloads:
   - `conda`
   - `pnpm`
@@ -63,6 +68,10 @@ of truth is [rootfs-rustic.md](/home/wstein/build/cocalc-lite2/src/.agents/rootf
   - mixed scientific stacks
   - additional cross-region workloads
 - Catalog/admin lifecycle polish for official/public/collaborator images.
+- Storage lifecycle polish:
+  - release GC / `forget` exists,
+  - but the repo prune/compaction/operational story should be made more
+    explicit.
 - Vulnerability scan metadata integration for official images.
 
 ## Launch-Critical Product Requirements
@@ -130,7 +139,9 @@ The host UI must show:
 2. Keep self-hosted `rest-server` RootFS smoke in the ongoing regression mix.
 3. Keep cross-region replication in the live regression mix once the dev hub
    route is healthy again.
-4. Finish official-image/admin lifecycle polish.
+4. Finish project-start and publish-progress UX around RootFS pulls/publishes.
+5. Finish official-image/admin lifecycle polish.
+6. Decide how rustic prune/compaction should be run and surfaced.
 
 ## Document Relationship
 
