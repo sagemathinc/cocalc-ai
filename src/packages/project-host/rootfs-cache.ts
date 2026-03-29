@@ -24,6 +24,10 @@ import type {
 } from "@cocalc/conat/hub/api/hosts";
 import type { HostRootfsCacheEntry } from "@cocalc/conat/project-host/api";
 import { hubApi } from "@cocalc/lite/hub/api";
+import {
+  createRusticProgressHandler,
+  type RusticProgressUpdate,
+} from "@cocalc/file-server/btrfs/rustic-progress";
 import { isBtrfsSubvolume } from "@cocalc/file-server/btrfs/subvolume";
 import { btrfs, sudo } from "@cocalc/file-server/btrfs/util";
 import {
@@ -39,6 +43,7 @@ import {
   type RootfsReleaseArtifactAccess,
   type RootfsUploadedArtifactResult,
 } from "@cocalc/util/rootfs-images";
+import type { ExecuteCodeStreamEvent } from "@cocalc/util/types/execute-code";
 
 import { listProjects } from "./sqlite/projects";
 import { ensureRootfsRusticRepoProfile } from "./rootfs-rustic";
@@ -50,6 +55,62 @@ type RootfsUsage = {
   project_ids: string[];
   running_project_ids: string[];
 };
+
+export type RootfsCachePullProgress = {
+  message: string;
+  progress?: number;
+  detail?: any;
+};
+
+function reportPullProgress(
+  onProgress: ((update: RootfsCachePullProgress) => void) | undefined,
+  update: RootfsCachePullProgress,
+): void {
+  onProgress?.(update);
+}
+
+function createRusticStreamHooks({
+  onProgress,
+  mapUpdate,
+}: {
+  onProgress?: (update: RootfsCachePullProgress) => void;
+  mapUpdate: (update: RusticProgressUpdate) => RootfsCachePullProgress;
+}): {
+  env?: Record<string, string>;
+  streamCB?: (event: ExecuteCodeStreamEvent) => void;
+} {
+  if (!onProgress) {
+    return {};
+  }
+  const progressHandler = createRusticProgressHandler({
+    onProgress: (update) => onProgress(mapUpdate(update)),
+  });
+  let stderrBuffer = "";
+  return {
+    env: { RUSTIC_PROGRESS_INTERVAL: "1s" },
+    streamCB: (event) => {
+      if (event.type === "stderr" && typeof event.data === "string") {
+        stderrBuffer += event.data.replace(/\r/g, "\n");
+        const parts = stderrBuffer.split("\n");
+        stderrBuffer = parts.pop() ?? "";
+        for (const part of parts) {
+          const line = part.trim();
+          if (line) {
+            progressHandler(line);
+          }
+        }
+        return;
+      }
+      if (event.type === "done") {
+        const line = stderrBuffer.trim();
+        stderrBuffer = "";
+        if (line) {
+          progressHandler(line);
+        }
+      }
+    },
+  };
+}
 
 function decodeInspectFileImage(name: string): string | undefined {
   if (!name.startsWith(".") || !name.endsWith(".json")) {
@@ -224,9 +285,11 @@ async function snapshotManagedRootfsReadonly({
 async function restoreManagedRootfsRustic({
   access,
   destPath,
+  onProgress,
 }: {
   access: Extract<RootfsReleaseArtifactAccess, { artifact_format: "rustic" }>;
   destPath: string;
+  onProgress?: (update: RootfsCachePullProgress) => void;
 }): Promise<void> {
   const repoProfile = await ensureRootfsRusticRepoProfile({
     repo_selector: access.repo_selector,
@@ -249,6 +312,17 @@ async function restoreManagedRootfsRustic({
       destPath,
       "--delete",
     ],
+    ...createRusticStreamHooks({
+      onProgress,
+      mapUpdate: (update) => ({
+        message: update.message,
+        progress:
+          update.progress == null
+            ? undefined
+            : 12 + (update.progress * 70) / 100,
+        detail: update.detail,
+      }),
+    }),
   });
 }
 
@@ -256,10 +330,12 @@ async function backupManagedRootfsToRustic({
   sourcePath,
   image,
   upload,
+  onProgress,
 }: {
   sourcePath: string;
   image: string;
   upload: Extract<RootfsArtifactTransferTarget, { backend: "rustic" }>;
+  onProgress?: (update: RootfsCachePullProgress) => void;
 }): Promise<Extract<RootfsUploadedArtifactResult, { backend: "rustic" }>> {
   const repoProfile = await ensureRootfsRusticRepoProfile({
     repo_selector: upload.repo_selector,
@@ -285,6 +361,17 @@ async function backupManagedRootfsToRustic({
       "--tag",
       "rootfs-replica",
     ],
+    ...createRusticStreamHooks({
+      onProgress,
+      mapUpdate: (update) => ({
+        message: update.message,
+        progress:
+          update.progress == null
+            ? undefined
+            : 90 + (update.progress * 8) / 100,
+        detail: update.detail,
+      }),
+    }),
   });
   const parsed = JSON.parse(`${stdout ?? "{}"}`);
   const snapshot_id = `${parsed?.id ?? ""}`.trim();
@@ -318,14 +405,24 @@ async function backupManagedRootfsToRustic({
 async function maybeReplicateManagedRootfsRustic({
   access,
   sourcePath,
+  onProgress,
 }: {
   access: Extract<RootfsReleaseArtifactAccess, { artifact_format: "rustic" }>;
   sourcePath: string;
+  onProgress?: (update: RootfsCachePullProgress) => void;
 }): Promise<void> {
   const target = access.regional_replication_target;
   if (!target) {
     return;
   }
+  reportPullProgress(onProgress, {
+    message: `replicating RootFS to ${target.region}`,
+    progress: 90,
+    detail: {
+      source_region: access.region,
+      target_region: target.region,
+    },
+  });
   logger.info("replicating managed RootFS rustic snapshot to local region", {
     image: access.image,
     release_id: access.release_id,
@@ -338,6 +435,7 @@ async function maybeReplicateManagedRootfsRustic({
       sourcePath,
       image: access.image,
       upload: target,
+      onProgress,
     });
     await hubApi.hosts.recordManagedRootfsReleaseReplica({
       image: access.image,
@@ -410,10 +508,16 @@ async function deleteCachedManagedRootfs({
 
 async function downloadManagedRootfsArtifact({
   image,
+  onProgress,
 }: {
   image: string;
+  onProgress?: (update: RootfsCachePullProgress) => void;
 }): Promise<void> {
   const started = Date.now();
+  reportPullProgress(onProgress, {
+    message: "resolving RootFS release",
+    progress: 2,
+  });
   const access = await hubApi.hosts.getManagedRootfsReleaseArtifact({
     image,
   });
@@ -436,6 +540,14 @@ async function downloadManagedRootfsArtifact({
         reason: "cached image is missing expected rootfs directories",
       });
     } else {
+      reportPullProgress(onProgress, {
+        message: "RootFS already cached on this host",
+        progress: access.regional_replication_target ? 88 : 100,
+        detail: {
+          image,
+          release_id: access.release_id,
+        },
+      });
       logger.info("managed RootFS artifact already cached", {
         image,
         release_id: access.release_id,
@@ -447,6 +559,15 @@ async function downloadManagedRootfsArtifact({
       await maybeReplicateManagedRootfsRustic({
         access,
         sourcePath: finalPath,
+        onProgress,
+      });
+      reportPullProgress(onProgress, {
+        message: "RootFS ready on host",
+        progress: 100,
+        detail: {
+          image,
+          release_id: access.release_id,
+        },
       });
       return;
     }
@@ -466,11 +587,28 @@ async function downloadManagedRootfsArtifact({
   );
   const stagedRootfsPath = join(tempDir, "rootfs");
   try {
+    reportPullProgress(onProgress, {
+      message: "preparing RootFS cache",
+      progress: 8,
+      detail: {
+        image,
+        release_id: access.release_id,
+      },
+    });
     await createManagedRootfsRestoreSubvolume(stagedRootfsPath);
     const restoreStarted = Date.now();
+    reportPullProgress(onProgress, {
+      message: "restoring RootFS image from rustic",
+      progress: 12,
+      detail: {
+        image,
+        release_id: access.release_id,
+      },
+    });
     await restoreManagedRootfsRustic({
       access,
       destPath: stagedRootfsPath,
+      onProgress,
     });
     logger.info("restored managed RootFS rustic snapshot", {
       image,
@@ -480,6 +618,14 @@ async function downloadManagedRootfsArtifact({
       elapsed_ms: Date.now() - restoreStarted,
     });
     try {
+      reportPullProgress(onProgress, {
+        message: "finalizing RootFS cache entry",
+        progress: 84,
+        detail: {
+          image,
+          release_id: access.release_id,
+        },
+      });
       await snapshotManagedRootfsReadonly({
         source: stagedRootfsPath,
         dest: finalPath,
@@ -505,6 +651,15 @@ async function downloadManagedRootfsArtifact({
     await maybeReplicateManagedRootfsRustic({
       access,
       sourcePath: finalPath,
+      onProgress,
+    });
+    reportPullProgress(onProgress, {
+      message: "RootFS ready on host",
+      progress: 100,
+      detail: {
+        image,
+        release_id: access.release_id,
+      },
     });
   } finally {
     await deleteCachedRootfsPath(stagedRootfsPath).catch(() => {});
@@ -588,13 +743,14 @@ export async function listRootfsCacheEntries(): Promise<
 
 export async function pullRootfsCacheEntry(
   image: string,
+  onProgress?: (update: RootfsCachePullProgress) => void,
 ): Promise<HostRootfsCacheEntry> {
   const trimmed = normalizeRootfsImageName(image);
   if (!trimmed) {
     throw new Error("image must be specified");
   }
   if (isManagedRootfsImageName(trimmed)) {
-    await downloadManagedRootfsArtifact({ image: trimmed });
+    await downloadManagedRootfsArtifact({ image: trimmed, onProgress });
   } else {
     await extractBaseImage(trimmed);
   }
