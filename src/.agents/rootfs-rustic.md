@@ -441,6 +441,8 @@ story.
 5. Benchmark the clone-plus-restore optimization and keep it only if it gives
    clear space/time wins.
 
+[ ] ADDED: Check for **sufficient disk space** on the target filesystem before attempting a rootfs pull.
+
 ## Exit Criteria
 
 This RootFS-rustic transition should be considered complete when:
