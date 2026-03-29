@@ -46,7 +46,7 @@ export default function initProxy(opts: Options) {
   }
 
   // Host-based public app subdomains are rewritten to canonical project paths.
-  opts.app.all("*", async (req, res, next) => {
+  opts.app.all(/.*/, async (req, res, next) => {
     try {
       if (!(await maybeRewritePublicAppSubdomainRequest(req))) {
         return next();
