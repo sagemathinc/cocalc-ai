@@ -272,6 +272,63 @@ function storageLabel(location: RootfsStorageLocation): string {
   );
 }
 
+function storageFormatLabel(
+  locations: RootfsStorageLocation[],
+): string | undefined {
+  const formats = Array.from(
+    new Set(
+      locations.map(
+        (location) => `${location.artifact_format}:${location.backend}`,
+      ),
+    ),
+  );
+  if (formats.length !== 1) return "mixed";
+  if (formats[0] === "rustic:r2" || formats[0] === "rustic:rest") {
+    return "rustic";
+  }
+  if (formats[0] === "btrfs-send:r2" || formats[0] === "btrfs-send:hub-local") {
+    return "legacy btrfs";
+  }
+  return formats[0].replace(":", " ");
+}
+
+function storageLocationLabel(location: RootfsStorageLocation): string {
+  if (location.region) {
+    return `${location.role === "primary" ? "Primary" : "Replica"} ${location.region}`;
+  }
+  if (location.backend === "rest") {
+    return `${location.role === "primary" ? "Primary" : "Replica"} self-host`;
+  }
+  if (location.bucket_name) {
+    return `${location.role === "primary" ? "Primary" : "Replica"} ${location.bucket_name}`;
+  }
+  return `${location.role === "primary" ? "Primary" : "Replica"} ${storageLabel(location)}`;
+}
+
+function storageTooltip(location: RootfsStorageLocation): React.ReactNode {
+  return (
+    <Space direction="vertical" size={0}>
+      <Typography.Text code style={{ fontSize: 12 }}>
+        {storageLabel(location)}
+      </Typography.Text>
+      {location.bucket_name ? (
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          bucket: {location.bucket_name}
+          {location.bucket_purpose ? ` (${location.bucket_purpose})` : ""}
+        </Typography.Text>
+      ) : null}
+      <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+        {location.artifact_path}
+      </Typography.Text>
+      {location.status && location.status !== "ready" ? (
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          status: {location.status}
+        </Typography.Text>
+      ) : null}
+    </Space>
+  );
+}
+
 function storageSummary(entry: RootfsAdminCatalogEntry): React.ReactNode {
   if (!entry.release_id) {
     return (
@@ -287,30 +344,36 @@ function storageSummary(entry: RootfsAdminCatalogEntry): React.ReactNode {
       </Typography.Text>
     );
   }
+  const formatLabel = storageFormatLabel(entry.storage_locations);
   return (
-    <Space direction="vertical" size={0}>
+    <Space wrap size={[4, 4]}>
+      {formatLabel ? (
+        <Tag color={formatLabel === "legacy btrfs" ? "orange" : "purple"}>
+          {formatLabel}
+        </Tag>
+      ) : null}
       {entry.storage_locations.map((location, index) => (
-        <Space
+        <Tooltip
           key={`${location.role}-${location.backend}-${location.region ?? "site"}-${location.artifact_path}-${index}`}
-          direction="vertical"
-          size={0}
-          style={{ width: "100%" }}
+          title={storageTooltip(location)}
+          placement="topLeft"
         >
-          <Space wrap size={[4, 0]}>
-            <Tag color={location.role === "primary" ? "blue" : "default"}>
-              {location.role === "primary" ? "Primary" : "Replica"}
-            </Tag>
-            <Typography.Text code style={{ fontSize: 12 }}>
-              {storageLabel(location)}
-            </Typography.Text>
-            {location.bucket_name ? <Tag>{location.bucket_name}</Tag> : null}
-            {storageStatusTag(location.status)}
-          </Space>
-          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-            {location.artifact_path}
-          </Typography.Text>
-        </Space>
+          <Tag color={location.role === "primary" ? "blue" : "default"}>
+            {storageLocationLabel(location)}
+          </Tag>
+        </Tooltip>
       ))}
+      {entry.storage_locations.map((location, index) => {
+        const status = storageStatusTag(location.status);
+        if (!status) return null;
+        return (
+          <React.Fragment
+            key={`status-${location.role}-${location.status ?? "ready"}-${location.region ?? "site"}-${index}`}
+          >
+            {status}
+          </React.Fragment>
+        );
+      })}
     </Space>
   );
 }
