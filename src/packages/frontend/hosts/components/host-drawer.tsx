@@ -47,6 +47,7 @@ import { HostParallelOpsPanel } from "./host-parallel-ops-panel";
 import { HostProjectStatus } from "./host-project-status";
 import { HostProjectsBrowser } from "./host-projects-browser";
 import { HostRootfsCachePanel } from "./host-rootfs-cache-panel";
+import { HostCurrentMetrics } from "./host-current-metrics";
 import {
   getHostCpuCount,
   getHostRamGb,
@@ -595,6 +596,9 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
               Browse projects
             </Button>
           </Space>
+          <Card size="small" title="Current metrics">
+            <HostCurrentMetrics host={host} />
+          </Card>
           {parallelOps ? (
             <HostParallelOpsPanel
               host_id={host.id}
