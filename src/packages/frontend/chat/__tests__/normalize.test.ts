@@ -543,4 +543,59 @@ describe("initFromSyncDB", () => {
       "running",
     );
   });
+
+  it("clears stale local queued state once thread-state starts a different active message", () => {
+    const store = new MockStore();
+    store.state.acpState = iMap().set("message:msg-user-queued", "queue");
+    const syncdb = new MockSyncDB([
+      {
+        event: "chat",
+        sender_id: "user-1",
+        date: "2024-01-02T03:04:05.000Z",
+        message_id: "msg-user-queued",
+        thread_id: "thread-running",
+        history: [],
+        editing: {},
+        feedback: {},
+        schema_version: CURRENT_CHAT_MESSAGE_VERSION,
+      },
+      {
+        event: "chat",
+        sender_id: "assistant-1",
+        date: "2024-01-02T03:04:06.000Z",
+        message_id: "msg-assistant-running",
+        thread_id: "thread-running",
+        history: [],
+        editing: {},
+        feedback: {},
+        schema_version: CURRENT_CHAT_MESSAGE_VERSION,
+      },
+      {
+        event: "chat-thread-state",
+        sender_id: "__thread_state__",
+        date: "2024-01-02T03:04:07.000Z",
+        thread_id: "thread-running",
+        active_message_id: "msg-assistant-running",
+        state: "running",
+      },
+    ]);
+
+    handleSyncDBChange({
+      syncdb,
+      store,
+      changes: [
+        {
+          event: "chat-thread-state",
+          sender_id: "__thread_state__",
+          date: "2024-01-02T03:04:07.000Z",
+        },
+      ],
+    });
+    expect(
+      store.state.acpState?.get("message:msg-user-queued"),
+    ).toBeUndefined();
+    expect(store.state.acpState?.get("message:msg-assistant-running")).toBe(
+      "running",
+    );
+  });
 });

@@ -73,15 +73,19 @@ function chatMessageKey(record: any): string | undefined {
   return `message:${messageId}`;
 }
 
+function hasExplicitChatRowAcpState(record: any): boolean {
+  return (
+    record != null &&
+    Object.prototype.hasOwnProperty.call(record as object, "acp_state")
+  );
+}
+
 function applyChatRowAcpState(
   acpState: any,
   record: any,
   getThreadStateRecord?: (threadId: string) => any,
 ): any {
-  const hasExplicitAcpState =
-    record != null &&
-    Object.prototype.hasOwnProperty.call(record as object, "acp_state");
-  if (!hasExplicitAcpState) {
+  if (!hasExplicitChatRowAcpState(record)) {
     return acpState;
   }
   const mapped = chatRowToAcpState({
@@ -190,6 +194,39 @@ function reconcileThreadChatRowAcpState({
   return next;
 }
 
+function clearThreadMessageAcpStateWithoutExplicitRows({
+  acpState,
+  syncdb,
+  threadId,
+  keepMessageId,
+}: {
+  acpState: any;
+  syncdb: any;
+  threadId?: string;
+  keepMessageId?: string;
+}): any {
+  const normalized = `${threadId ?? ""}`.trim();
+  if (!normalized) return acpState;
+  const rows =
+    typeof syncdb?.get === "function"
+      ? syncdb.get({ event: CHAT_EVENT, thread_id: normalized })
+      : [];
+  const records = Array.isArray(rows)
+    ? rows
+    : typeof rows?.toJS === "function"
+      ? rows.toJS()
+      : [];
+  let next = acpState;
+  for (const record of records) {
+    if (hasExplicitChatRowAcpState(record)) continue;
+    const key = chatMessageKey(record);
+    if (!key) continue;
+    if (key === `message:${keepMessageId ?? ""}`) continue;
+    next = next.delete(key);
+  }
+  return next;
+}
+
 const ignoredChatEvents = new Set(["chat-thread", "chat-thread-config"]);
 const warnedUnknownEvents = new Set<string>();
 
@@ -273,6 +310,14 @@ export function handleSyncDBChange({
         syncdb,
         threadId: (record ?? obj)?.thread_id,
       });
+      if ((record ?? obj)?.state === "running") {
+        next = clearThreadMessageAcpStateWithoutExplicitRows({
+          acpState: next,
+          syncdb,
+          threadId: (record ?? obj)?.thread_id,
+          keepMessageId: (record ?? obj)?.active_message_id,
+        });
+      }
       store.setState({
         acpState: next,
       });
