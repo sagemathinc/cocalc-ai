@@ -50,7 +50,7 @@
     "he": "^1.2.0",
     "immutable": "^4.3.8",
     "jsonfile": "^6.1.0",
-    "lodash": "^4.17.21",
+    "lodash": "^4.17.23",
     "lru-cache": "^7.18.3",
     "mkdirp": "^1.0.4",
     "node-cleanup": "^2.1.2",

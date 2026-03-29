@@ -45,7 +45,7 @@
     "@vscode/vscode-languagedetection": "^1.0.22",
     "base-64": "^1.0.0",
     "express": "^4.21.2",
-    "lodash": "^4.17.21",
+    "lodash": "^4.17.23",
     "lru-cache": "^7.18.3",
     "next-rest-framework": "6.1.1",
     "password-hash": "^1.2.2",

@@ -18,24 +18,20 @@ overrides:
   '@types/node-fetch@2.6.12': 2.6.13
   axios@<1.13.5: '>=1.13.5'
   tmp@<0.2.4: ^0.2.4
-  next@>=0.9.9 <5.1.0: '>=5.1.0'
   got@<11.8.5: '>=11.8.5'
-  next@>=0.9.9 <11.1.0: '>=11.1.0'
   loader-utils@<1.4.1: '>=1.4.1'
-  next@>=0.9.9 <13.4.20-canary.13: '>=13.4.20-canary.13'
   json5@<1.0.2: '>=1.0.2'
-  next@>=0.9.9 <11.1.3: '>=11.1.3'
   cookie@<0.7.0: '>=0.7.0'
-  next@>=0.9.9 <14.2.31: '>=14.2.31'
-  next@>=0.9.9 <14.2.32: '>=14.2.32'
-  next@>=0.9.9 <9.3.2: '>=9.3.2'
-  next@>=0.9.9 <14.2.24: '>=14.2.24'
   min-document@<=2.19.0: '>=2.19.1'
   js-yaml@<3.14.2: '>=3.14.2'
   js-yaml@>=4.0.0 <4.1.1: '>=4.1.1'
   glob@>=10.2.0 <10.5.0: '>=10.5.0'
   glob@>=11.0.0 <11.1.0: '>=11.1.0'
-  node-forge@<1.3.2: '>=1.3.2'
+  node-forge@<1.4.0: '>=1.4.0'
+  lodash@<4.17.23: '>=4.17.23'
+  lodash-es@<4.17.23: '>=4.17.23'
+  handlebars@<4.7.9: '>=4.7.9'
+  dompurify@<3.3.2: '>=3.3.2'
   nodemailer@<=7.0.10: '>=7.0.11'
   mdast-util-to-hast@>=13.0.0 <13.2.1: '>=13.2.1'
   ai@<5.0.52: '>=5.0.52'
@@ -223,8 +219,8 @@ importers:
         specifier: ^11.3.1
         version: 11.3.2
       lodash:
-        specifier: ^4.17.21
-        version: 4.17.21
+        specifier: ^4.17.23
+        version: 4.17.23
       lru-cache:
         specifier: ^7.18.3
         version: 7.18.3
@@ -426,8 +422,8 @@ importers:
         specifier: ^1.0.1
         version: 1.3.0
       lodash:
-        specifier: ^4.17.21
-        version: 4.17.21
+        specifier: ^4.17.23
+        version: 4.17.23
       mime-types:
         specifier: ^3.0.1
         version: 3.0.1
@@ -484,8 +480,8 @@ importers:
         specifier: ^4.3.8
         version: 4.3.8
       lodash:
-        specifier: ^4.17.21
-        version: 4.17.21
+        specifier: ^4.17.23
+        version: 4.17.23
       lru-cache:
         specifier: ^7.18.3
         version: 7.18.3
@@ -836,8 +832,8 @@ importers:
         specifier: 3.0.3
         version: 3.0.3
       lodash:
-        specifier: ^4.17.21
-        version: 4.17.21
+        specifier: ^4.17.23
+        version: 4.17.23
       lru-cache:
         specifier: ^7.18.3
         version: 7.18.3
@@ -857,11 +853,11 @@ importers:
         specifier: ^5.1.1
         version: 5.2.1
       mermaid:
-        specifier: ^11.10.0
+        specifier: ^11.12.1
         version: 11.12.1
       node-forge:
-        specifier: '>=1.3.2'
-        version: 1.3.3
+        specifier: ^1.4.0
+        version: 1.4.0
       onecolor:
         specifier: ^3.1.0
         version: 3.1.0
@@ -995,7 +991,7 @@ importers:
         specifier: ^4.21.2
         version: 4.22.1
       lodash:
-        specifier: ^4.17.21
+        specifier: ^4.17.23
         version: 4.17.23
       lru-cache:
         specifier: ^7.18.3
@@ -1092,8 +1088,8 @@ importers:
         specifier: ^1.23.2
         version: 1.23.2
       lodash:
-        specifier: ^4.17.21
-        version: 4.17.21
+        specifier: ^4.17.23
+        version: 4.17.23
       lru-cache:
         specifier: ^7.18.3
         version: 7.18.3
@@ -1165,8 +1161,8 @@ importers:
         specifier: ^6.1.0
         version: 6.2.0
       lodash:
-        specifier: ^4.17.21
-        version: 4.17.21
+        specifier: ^4.17.23
+        version: 4.17.23
       lru-cache:
         specifier: ^7.18.3
         version: 7.18.3
@@ -1269,8 +1265,8 @@ importers:
         specifier: ^1.23.2
         version: 1.23.2
       lodash:
-        specifier: ^4.17.21
-        version: 4.17.21
+        specifier: ^4.17.23
+        version: 4.17.23
       selfsigned:
         specifier: ^3.0.1
         version: 3.0.1
@@ -1385,8 +1381,8 @@ importers:
         specifier: ^1.23.2
         version: 1.23.2
       lodash:
-        specifier: ^4.17.21
-        version: 4.17.21
+        specifier: ^4.17.23
+        version: 4.17.23
       node-pty:
         specifier: 1.2.0-beta.11
         version: 1.2.0-beta.11
@@ -1632,8 +1628,8 @@ importers:
         specifier: ^3.1.2
         version: 3.1.2
       lodash:
-        specifier: ^4.17.21
-        version: 4.17.21
+        specifier: ^4.17.23
+        version: 4.17.23
       lru-cache:
         specifier: ^7.18.3
         version: 7.18.3
@@ -1843,11 +1839,11 @@ importers:
         specifier: ^5.2.0
         version: 5.2.0(eslint@8.57.1)
       handlebars:
-        specifier: ^4.7.7
-        version: 4.7.8
+        specifier: ^4.7.9
+        version: 4.7.9
       handlebars-loader:
         specifier: ^1.7.1
-        version: 1.7.3(handlebars@4.7.8)
+        version: 1.7.3(handlebars@4.7.9)
       html-loader:
         specifier: ^2.1.2
         version: 2.1.2(webpack@5.102.1)
@@ -1960,8 +1956,8 @@ importers:
         specifier: ^1.0.1
         version: 1.3.0
       lodash:
-        specifier: ^4.17.21
-        version: 4.17.21
+        specifier: ^4.17.23
+        version: 4.17.23
       patchflow:
         specifier: ^0.7.2
         version: 0.7.2
@@ -2101,8 +2097,8 @@ importers:
         specifier: ^1.0.1
         version: 1.0.1
       lodash:
-        specifier: ^4.17.21
-        version: 4.17.21
+        specifier: ^4.17.23
+        version: 4.17.23
       lru-cache:
         specifier: ^7.18.3
         version: 7.18.3
@@ -7115,8 +7111,8 @@ packages:
     resolution: {integrity: sha512-cgwlv/1iFQiFnU96XXgROh8xTeetsnJiDsTc7TYCLFd9+/WNkIqPTxiM/8pSd8VIrhXGTf1Ny1q1hquVqDJB5w==}
     engines: {node: '>= 4'}
 
-  dompurify@3.3.0:
-    resolution: {integrity: sha512-r+f6MYR1gGN1eJv0TVQbhA7if/U7P87cdPl3HN5rikqaBSBxLiCb/b9O+2eG0cxz0ghyU+mU1QkbsOwERMYlWQ==}
+  dompurify@3.3.3:
+    resolution: {integrity: sha512-Oj6pzI2+RqBfFG+qOaOLbFXLQ90ARpcGG6UePL82bJLtdsa6CYJD7nmiU8MW9nQNOtCHV3lZ/Bzq1X0QYbBZCA==}
 
   domutils@2.8.0:
     resolution: {integrity: sha512-w96Cjofp72M5IIhpjgobBimYEfoPjx1Vx0BSX9P30WBdZW2WIKU0T1Bd0kz2eNZ9ikjKgHbEyKx8BB6H1L3h3A==}
@@ -8025,10 +8021,10 @@ packages:
   handlebars-loader@1.7.3:
     resolution: {integrity: sha512-dDb+8D51vE3OTSE2wuGPWRAegtsEuw8Mk8hCjtRu/pNcBfN5q+M8ZG3kVJxBuOeBrVElpFStipGmaxSBTRR1mQ==}
     peerDependencies:
-      handlebars: '>= 1.3.0 < 5'
+      handlebars: '>=4.7.9'
 
-  handlebars@4.7.8:
-    resolution: {integrity: sha512-vafaFqs8MZkRrSX7sFVUdo3ap/eNiLnb4IakshzvP56X5Nr1iGKAIqdX6tMlm6HcNRIkr6AxO5jFEoJzzpT8aQ==}
+  handlebars@4.7.9:
+    resolution: {integrity: sha512-4E71E0rpOaQuJR2A3xDZ+GM1HyWYv1clR58tC8emQNeQe3RH7MAzSbat+V0wG78LQBo6m6bzSG/L4pBuCsgnUQ==}
     engines: {node: '>=0.4.7'}
     hasBin: true
 
@@ -9390,8 +9386,8 @@ packages:
     resolution: {integrity: sha512-iPZK6eYjbxRu3uB4/WZ3EsEIMJFMqAoopl3R+zuq0UjcAm/MO6KCweDgPfP3elTztoKP3KtnVHxTn2NHBSDVUw==}
     engines: {node: '>=10'}
 
-  lodash-es@4.17.21:
-    resolution: {integrity: sha512-mKnC+QJ9pWVzv+C4/U3rRsHapFfHvQFoFB92e52xeyGMcX6/OlIl78je1u8vePzYZSkkogMPJ2yjxxsb89cxyw==}
+  lodash-es@4.17.23:
+    resolution: {integrity: sha512-kVI48u3PZr38HdYz98UmfPnXl2DXrpdctLrFLCd3kOx1xUkOmpFPx7gCWWM5MPkL/fD8zb+Ph0QzjGFs4+hHWg==}
 
   lodash.camelcase@4.3.0:
     resolution: {integrity: sha512-TwuEnCnxbc3rAvhf/LbG7tJUDzhqXyFnv3dtzLOPgCG/hODL7WFnsbwktkD7yUV0RrreP/l1PALq/YSg6VvjlA==}
@@ -9437,9 +9433,6 @@ packages:
 
   lodash.upperfirst@4.3.1:
     resolution: {integrity: sha512-sReKOYJIJf74dhJONhU4e0/shzi1trVbSWDOhKYE5XV2O+H7Sb2Dihwuc7xWxVl+DgFPyTqIN3zMfT9cq5iWDg==}
-
-  lodash@4.17.21:
-    resolution: {integrity: sha512-v2kDEe57lecTulaDIuNTPy3Ry4gLGJ6Z1O3vE1krgXZNrsQ+LFTGHVxVjcXPs17LhbZVGedAJv8XZ1tvj5FvSg==}
 
   lodash@4.17.23:
     resolution: {integrity: sha512-LgVTMpQtIopCi79SJeDiP0TfWi5CNEc/L/aRdTh3yIvmZXTnheWpKjSZhnvMl8iXbC1tFg9gdHHDMLoV7CnG+w==}
@@ -9901,8 +9894,8 @@ packages:
       encoding:
         optional: true
 
-  node-forge@1.3.3:
-    resolution: {integrity: sha512-rLvcdSyRCyouf6jcOIPe/BgwG/d7hKjzMKOas33/pHEr6gbq18IK9zV7DiPvzsz0oBJPme6qr6H6kGZuI9/DZg==}
+  node-forge@1.4.0:
+    resolution: {integrity: sha512-LarFH0+6VfriEhqMMcLX2F7SwSXeWwnEAJEsYm5QKWchiVYVvJyV9v7UDvUv+w5HO23ZpQTXDv/GxdDdMyOuoQ==}
     engines: {node: '>= 6.13.0'}
 
   node-gyp-build@4.8.4:
@@ -13490,12 +13483,12 @@ snapshots:
     dependencies:
       '@chevrotain/gast': 11.0.3
       '@chevrotain/types': 11.0.3
-      lodash-es: 4.17.21
+      lodash-es: 4.17.23
 
   '@chevrotain/gast@11.0.3':
     dependencies:
       '@chevrotain/types': 11.0.3
-      lodash-es: 4.17.21
+      lodash-es: 4.17.23
 
   '@chevrotain/regexp-to-ast@11.0.3': {}
 
@@ -15896,7 +15889,7 @@ snapshots:
       json-schema-merge-allof: 0.8.1
       jsonpointer: 5.0.1
       lodash: 4.17.23
-      lodash-es: 4.17.21
+      lodash-es: 4.17.23
       react: 19.2.1
       react-is: 18.3.1
 
@@ -18064,7 +18057,7 @@ snapshots:
   chevrotain-allstar@0.3.1(chevrotain@11.0.3):
     dependencies:
       chevrotain: 11.0.3
-      lodash-es: 4.17.21
+      lodash-es: 4.17.23
 
   chevrotain@11.0.3:
     dependencies:
@@ -18073,7 +18066,7 @@ snapshots:
       '@chevrotain/regexp-to-ast': 11.0.3
       '@chevrotain/types': 11.0.3
       '@chevrotain/utils': 11.0.3
-      lodash-es: 4.17.21
+      lodash-es: 4.17.23
 
   chokidar@3.6.0:
     dependencies:
@@ -18809,7 +18802,7 @@ snapshots:
   dagre-d3-es@7.0.13:
     dependencies:
       d3: 7.9.0
-      lodash-es: 4.17.21
+      lodash-es: 4.17.23
 
   darkreader@4.9.117:
     dependencies:
@@ -19069,7 +19062,7 @@ snapshots:
     dependencies:
       domelementtype: 2.3.0
 
-  dompurify@3.3.0:
+  dompurify@3.3.3:
     optionalDependencies:
       '@types/trusted-types': 2.0.7
 
@@ -20392,15 +20385,15 @@ snapshots:
 
   handle-thing@2.0.1: {}
 
-  handlebars-loader@1.7.3(handlebars@4.7.8):
+  handlebars-loader@1.7.3(handlebars@4.7.9):
     dependencies:
       async: 3.2.6
       fastparse: 1.1.2
-      handlebars: 4.7.8
+      handlebars: 4.7.9
       loader-utils: 1.4.2
       object-assign: 4.1.1
 
-  handlebars@4.7.8:
+  handlebars@4.7.9:
     dependencies:
       minimist: 1.2.8
       neo-async: 2.6.2
@@ -22629,7 +22622,7 @@ snapshots:
     dependencies:
       p-locate: 5.0.0
 
-  lodash-es@4.17.21: {}
+  lodash-es@4.17.23: {}
 
   lodash.camelcase@4.3.0: {}
 
@@ -22660,8 +22653,6 @@ snapshots:
   lodash.truncate@4.4.2: {}
 
   lodash.upperfirst@4.3.1: {}
-
-  lodash@4.17.21: {}
 
   lodash@4.17.23: {}
 
@@ -22911,10 +22902,10 @@ snapshots:
       d3-sankey: 0.12.3
       dagre-d3-es: 7.0.13
       dayjs: 1.11.19
-      dompurify: 3.3.0
+      dompurify: 3.3.3
       katex: 0.16.25
       khroma: 2.1.0
-      lodash-es: 4.17.21
+      lodash-es: 4.17.23
       marked: 16.4.1
       roughjs: 4.6.6
       stylis: 4.3.6
@@ -23069,7 +23060,7 @@ snapshots:
 
   mlly@1.8.0:
     dependencies:
-      acorn: 8.15.0
+      acorn: 8.16.0
       pathe: 2.0.3
       pkg-types: 1.3.1
       ufo: 1.6.1
@@ -23169,7 +23160,7 @@ snapshots:
       chalk: 4.1.2
       commander: 10.0.1
       formidable: 3.5.4
-      lodash: 4.17.21
+      lodash: 4.17.23
       prettier: 3.0.2
       qs: 6.14.1
 
@@ -23200,7 +23191,7 @@ snapshots:
     optionalDependencies:
       encoding: 0.1.13
 
-  node-forge@1.3.3: {}
+  node-forge@1.4.0: {}
 
   node-gyp-build@4.8.4: {}
 
@@ -23228,7 +23219,7 @@ snapshots:
       es6-promise: 4.2.8
       lodash: 4.17.23
       long: 5.3.2
-      node-forge: 1.3.3
+      node-forge: 1.4.0
       pako: 2.1.0
       process: 0.11.10
       uuid: 9.0.1
@@ -24188,7 +24179,7 @@ snapshots:
     dependencies:
       '@icons/material': 0.2.4(react@19.2.1)
       lodash: 4.17.23
-      lodash-es: 4.17.21
+      lodash-es: 4.17.23
       material-colors: 1.2.6
       prop-types: 15.8.1
       react: 19.2.1
@@ -24719,11 +24710,11 @@ snapshots:
   selfsigned@2.4.1:
     dependencies:
       '@types/node-forge': 1.3.14
-      node-forge: 1.3.3
+      node-forge: 1.4.0
 
   selfsigned@3.0.1:
     dependencies:
-      node-forge: 1.3.3
+      node-forge: 1.4.0
 
   semver-compare@1.0.0: {}
 
@@ -25526,7 +25517,7 @@ snapshots:
     dependencies:
       bs-logger: 0.2.6
       fast-json-stable-stringify: 2.1.0
-      handlebars: 4.7.8
+      handlebars: 4.7.9
       jest: 30.0.5(@types/node@22.19.1)(ts-node@10.9.2(@types/node@22.19.1)(typescript@5.9.3))
       json5: 2.2.3
       lodash.memoize: 4.1.2
@@ -25546,7 +25537,7 @@ snapshots:
     dependencies:
       bs-logger: 0.2.6
       fast-json-stable-stringify: 2.1.0
-      handlebars: 4.7.8
+      handlebars: 4.7.9
       jest: 30.2.0(@types/node@22.19.15)(ts-node@10.9.2(@types/node@22.19.15)(typescript@5.9.3))
       json5: 2.2.3
       lodash.memoize: 4.1.2
@@ -25566,7 +25557,7 @@ snapshots:
     dependencies:
       bs-logger: 0.2.6
       fast-json-stable-stringify: 2.1.0
-      handlebars: 4.7.8
+      handlebars: 4.7.9
       jest: 30.3.0(@types/node@22.18.13)(ts-node@10.9.2(@types/node@22.18.13)(typescript@5.9.3))
       json5: 2.2.3
       lodash.memoize: 4.1.2
@@ -25586,7 +25577,7 @@ snapshots:
     dependencies:
       bs-logger: 0.2.6
       fast-json-stable-stringify: 2.1.0
-      handlebars: 4.7.8
+      handlebars: 4.7.9
       jest: 30.3.0(@types/node@22.19.1)(ts-node@10.9.2(@types/node@22.19.1)(typescript@5.9.3))
       json5: 2.2.3
       lodash.memoize: 4.1.2
@@ -25606,7 +25597,7 @@ snapshots:
     dependencies:
       bs-logger: 0.2.6
       fast-json-stable-stringify: 2.1.0
-      handlebars: 4.7.8
+      handlebars: 4.7.9
       jest: 30.3.0(@types/node@22.19.15)(ts-node@10.9.2(@types/node@22.19.15)(typescript@5.9.3))
       json5: 2.2.3
       lodash.memoize: 4.1.2

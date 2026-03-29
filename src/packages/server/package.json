@@ -86,7 +86,7 @@
     "express": "^4.21.2",
     "express-session": "^1.18.1",
     "jwt-decode": "^3.1.2",
-    "lodash": "^4.17.21",
+    "lodash": "^4.17.23",
     "lru-cache": "^7.18.3",
     "markdown-it": "^14.1.1",
     "micro-key-producer": "^0.8.2",
