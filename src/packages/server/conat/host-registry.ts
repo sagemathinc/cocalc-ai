@@ -11,6 +11,7 @@ import {
   createProjectHostMasterConatToken,
   verifyProjectHostToken,
 } from "@cocalc/server/project-host/bootstrap-token";
+import { notifyProjectHostUpdate } from "./route-project";
 
 const logger = getLogger("server:conat:host-registry");
 const pool = () => getPool();
@@ -18,6 +19,11 @@ const pool = () => getPool();
 export interface HostRegistration extends ProjectHostRecord {
   sshpiperd_public_key?: string;
   project_host_auth_public_key?: string;
+}
+
+function getHostSessionId(metadata: any): string | undefined {
+  const value = `${metadata?.host_session_id ?? ""}`.trim();
+  return value || undefined;
 }
 
 export interface HostRegistryApi {
@@ -139,11 +145,21 @@ export async function initHostRegistryService() {
           public_url: sanitized.public_url,
           internal_url: sanitized.internal_url,
         });
+        const { rows: previousRows } = await pool().query<{ metadata: any }>(
+          "SELECT metadata FROM project_hosts WHERE id=$1 AND deleted IS NULL",
+          [info.id],
+        );
+        const previousSessionId = getHostSessionId(previousRows[0]?.metadata);
+        const nextSessionId = getHostSessionId(sanitized.metadata);
         await upsertProjectHost({
           ...sanitized,
           status: "running",
           last_seen: new Date(),
+          host_session_id: nextSessionId,
         });
+        if (previousRows[0] && previousSessionId !== nextSessionId) {
+          await notifyProjectHostUpdate({ host_id: info.id });
+        }
         await publishKey(info);
       },
       async heartbeat(info: HostRegistration) {
@@ -170,6 +186,7 @@ export async function initHostRegistryService() {
           ...sanitized,
           status: "running",
           last_seen: new Date(),
+          host_session_id: getHostSessionId(sanitized.metadata),
         });
         await publishKey(info);
       },

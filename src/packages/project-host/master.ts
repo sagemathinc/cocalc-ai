@@ -749,6 +749,8 @@ export async function startMasterRegistration({
     sshpiperd_public_key: sshpiperdKey.publicKey,
     metadata: {
       runnerId,
+      host_session_id: randomUUID(),
+      host_session_started_at: new Date().toISOString(),
       host_cpu_count: availableParallelism(),
       host_ram_gb: Math.max(1, Math.round(totalmem() / 1024 ** 3)),
     },
