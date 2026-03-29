@@ -217,6 +217,21 @@ function splitUnifiedDiffByFile(
   return blocks;
 }
 
+function normalizeActivityPathKey(
+  rawPath: string | undefined,
+  cwd?: string,
+): string | undefined {
+  const trimmed = `${rawPath ?? ""}`.trim();
+  if (!trimmed) return undefined;
+  if (path.isAbsolute(trimmed)) {
+    return path.normalize(trimmed);
+  }
+  if (cwd) {
+    return path.normalize(path.resolve(cwd, trimmed));
+  }
+  return path.normalize(trimmed);
+}
+
 function getCoCalcRuntimeGuidanceHeader(cliCommand: string): string {
   return [
     "[CoCalc runtime capabilities]",
@@ -1254,8 +1269,14 @@ export class CodexAppServerAgent implements AcpAgent {
                 const eventKey = `${item.id ?? "file"}:${change.path}`;
                 if (emittedFileWrites.has(eventKey)) continue;
                 const diff = getFileChangeLineDiff(change);
+                const normalizedPathKey = normalizeActivityPathKey(
+                  change.path,
+                  cwd,
+                );
                 emittedFileWrites.add(eventKey);
-                emittedFileWritePaths.add(change.path);
+                if (normalizedPathKey) {
+                  emittedFileWritePaths.add(normalizedPathKey);
+                }
                 if (diff) {
                   await stream({
                     type: "event",
@@ -1288,9 +1309,16 @@ export class CodexAppServerAgent implements AcpAgent {
         const diffText = `${latestTurnDiffText ?? ""}`.trim();
         if (!diffText) return;
         for (const block of splitUnifiedDiffByFile(diffText)) {
-          if (!block.path || emittedFileWritePaths.has(block.path)) continue;
+          const normalizedPathKey = normalizeActivityPathKey(block.path, cwd);
+          if (
+            !block.path ||
+            !normalizedPathKey ||
+            emittedFileWritePaths.has(normalizedPathKey)
+          ) {
+            continue;
+          }
           const diff = lineDiffFromUnifiedPatch(block.diffText);
-          emittedFileWritePaths.add(block.path);
+          emittedFileWritePaths.add(normalizedPathKey);
           if (diff) {
             await stream({
               type: "event",

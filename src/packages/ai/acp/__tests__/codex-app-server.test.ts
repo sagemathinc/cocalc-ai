@@ -487,6 +487,106 @@ describe("CodexAppServerAgent", () => {
     );
   });
 
+  it("does not duplicate turn diff fallback when completed file changes use absolute paths", async () => {
+    const proc = new FakeCodexAppServerProc((fake, message) => {
+      switch (message.method) {
+        case "initialize":
+          fake.sendResponse(message.id, { ok: true });
+          break;
+        case "thread/start":
+          fake.sendResponse(message.id, {
+            thread: { id: "thr-turn-diff-dup-1" },
+          });
+          break;
+        case "turn/start":
+          fake.sendResponse(message.id, {
+            turn: { id: "turn-turn-diff-dup-1" },
+          });
+          setImmediate(() => {
+            fake.sendNotification("turn/started", {
+              turn: { id: "turn-turn-diff-dup-1", status: "inProgress" },
+            });
+            fake.sendNotification("item/completed", {
+              threadId: "thr-turn-diff-dup-1",
+              turnId: "turn-turn-diff-dup-1",
+              item: {
+                type: "fileChange",
+                id: "file-change-1",
+                status: "completed",
+                changes: [
+                  {
+                    path: "/tmp/project/squares.py",
+                    kind: { type: "add" },
+                    diff: 'print("hi")\n',
+                  },
+                ],
+              },
+            });
+            fake.sendNotification("turn/diff/updated", {
+              threadId: "thr-turn-diff-dup-1",
+              turnId: "turn-turn-diff-dup-1",
+              diff: [
+                "diff --git a/squares.py b/squares.py",
+                "new file mode 100644",
+                "index 0000000..1111111",
+                "--- /dev/null",
+                "+++ b/squares.py",
+                "@@ -0,0 +1 @@",
+                '+print("hi")',
+              ].join("\n"),
+            });
+            fake.sendNotification("turn/completed", {
+              turn: { id: "turn-turn-diff-dup-1", status: "completed" },
+            });
+          });
+          break;
+        default:
+          if (typeof message.id === "number") {
+            fake.sendResponse(message.id, {});
+          }
+      }
+    });
+
+    setCodexProjectSpawner({
+      spawnCodexExec: async () => {
+        throw new Error("unexpected codex exec spawn");
+      },
+      spawnCodexAppServer: async () => ({
+        proc: proc as any,
+        cmd: "fake-codex",
+        args: ["app-server"],
+        cwd: "/tmp/project",
+      }),
+    });
+
+    const agent = new CodexAppServerAgent();
+    const streamPayloads: any[] = [];
+    await agent.evaluate({
+      project_id: "00000000-0000-4000-8000-000000000000",
+      account_id: "00000000-0000-4000-8000-000000000001",
+      prompt: "create a file",
+      stream: async (payload) => {
+        if (payload) {
+          streamPayloads.push(payload);
+        }
+      },
+      config: {
+        workingDirectory: "/tmp/project",
+      } as any,
+    });
+
+    const squaresDiffEvents = streamPayloads.filter(
+      (payload) =>
+        payload?.type === "event" &&
+        payload?.event?.type === "diff" &&
+        (payload?.event?.path === "/tmp/project/squares.py" ||
+          payload?.event?.path === "squares.py"),
+    );
+
+    expect(squaresDiffEvents).toHaveLength(1);
+    expect(squaresDiffEvents[0]?.event?.path).toBe("/tmp/project/squares.py");
+  });
+
   it("sends local images as LocalImage turn inputs", async () => {
     let turnStartParams: any;
     const proc = new FakeCodexAppServerProc((fake, message) => {
