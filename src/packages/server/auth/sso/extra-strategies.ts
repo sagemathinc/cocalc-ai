@@ -6,7 +6,6 @@
 import { Strategy as SAMLStrategyNew } from "@node-saml/passport-saml";
 import { Strategy as NextOAuth2 } from "@passport-next/passport-oauth2";
 import { Strategy as ADStrategy } from "passport-activedirectory";
-import { OIDCStrategy as AzureAdStrategy } from "passport-azure-ad";
 import { Strategy as Gitlab2Strategy } from "passport-gitlab2";
 import * as oauth from "passport-oauth"; // this is a wrapper containing version 1 and 2
 import { Strategy as OidcStrategy } from "passport-openidconnect";
@@ -52,8 +51,6 @@ export function getExtraStrategyConstructor(
       return SAMLStrategyNew;
     case "oidc":
       return OidcStrategy;
-    case "azuread":
-      return AzureAdStrategy;
     case "activedirectory":
       return ADStrategy;
     case "gitlab2":
