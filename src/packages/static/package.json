@@ -90,7 +90,6 @@
     "raw-loader": "^4.0.2",
     "react": "^19.2.1",
     "react-dom": "^19.2.1",
-    "react-helmet": "^6.1.0",
     "react-refresh": "^0.17.0",
     "react-test-renderer": "^19.1.0",
     "sass": "^1.89.2",
