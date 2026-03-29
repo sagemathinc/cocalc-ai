@@ -166,6 +166,11 @@ function RootfsPublishRow({ op }: { op: RootfsPublishLroState }) {
           open={detailsOpen}
           onOpenChange={setDetailsOpen}
           placement="bottomLeft"
+          overlayInnerStyle={{
+            maxHeight: "75vh",
+            overflowY: "auto",
+            maxWidth: "min(92vw, 560px)",
+          }}
           content={<RootfsPublishTimeline op={op} onDismiss={dismissOp} />}
         >
           <Button type="link" size="small">
@@ -373,6 +378,9 @@ function formatStatusLine(
 }
 
 function progressPercent(op: RootfsPublishLroState): number | undefined {
+  const status = op.summary?.status;
+  if (status === "succeeded") return 100;
+  if (status && LRO_TERMINAL_STATUSES.has(status)) return 100;
   const phase = phaseFromOp(op);
   const direct = clampProgressPercent(op.last_progress?.progress);
   if (phase === "upload" && direct != null) {
@@ -381,9 +389,6 @@ function progressPercent(op: RootfsPublishLroState): number | undefined {
   if (direct != null) {
     return direct;
   }
-  const status = op.summary?.status;
-  if (status === "succeeded") return 100;
-  if (status && LRO_TERMINAL_STATUSES.has(status)) return 100;
   return phase ? PHASE_BASELINE[phase] : 0;
 }
 
