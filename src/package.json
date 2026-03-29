@@ -8,7 +8,7 @@
   "scripts": {
     "build": "./workspaces.py install && ./workspaces.py build && pnpm python-api",
     "build:dev": "./workspaces.py install && ./workspaces.py build --dev && pnpm python-api",
-    "build:lite": "./workspaces.py install && ./workspaces.py build --exclude=hub,server,next,file-server",
+    "build:lite": "./workspaces.py install && ./workspaces.py build --exclude=hub,server,file-server",
     "clean": "rm -rf packages/node_modules && ./workspaces.py clean ",
     "hub": "pnpm --dir packages/hub app",
     "hub:postgres": "pnpm --dir packages/hub app:postgres",

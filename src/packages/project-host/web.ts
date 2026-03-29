@@ -52,7 +52,7 @@ export async function initHttp({
 }
 
 export function addCatchAll(app: express.Application) {
-  app.get("*", (req, res) => {
+  app.get(/.*/, (req, res) => {
     if (req.url.endsWith("__webpack_hmr")) return;
     logger.debug("no static frontend available for", req.url);
     res.status(404).json({

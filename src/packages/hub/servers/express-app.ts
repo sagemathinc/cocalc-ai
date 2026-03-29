@@ -247,6 +247,12 @@ export default async function init(opts: Options): Promise<{
     res.redirect(join(basePath, "static/app.html") + query);
   });
 
+  router.get("/.well-known/change-password", (_req, res) => {
+    const target =
+      basePath === "/" ? "/settings/profile" : `${basePath}/settings/profile`;
+    res.redirect(target);
+  });
+
   router.use("/api/python", express.static(PYTHON_API_PATH));
 
   initBlobs(router);
@@ -274,7 +280,7 @@ export default async function init(opts: Options): Promise<{
   router.use("/api/v2", createApiV2Router());
 
   if (opts.proxyServer) {
-    app.all("*", async (req, _res, next) => {
+    app.all(/.*/, async (req, _res, next) => {
       try {
         await maybeRewritePublicAppSubdomainRequest(req);
       } catch (err) {

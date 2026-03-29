@@ -1,6 +1,6 @@
 {
   "name": "@cocalc/ai",
-  "version": "0.0.1",
+  "version": "6.0.0",
   "description": "AI helpers (LangChain, LLM) shared between server and lite",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

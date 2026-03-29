@@ -30,7 +30,7 @@
     "@cocalc/backend": "workspace:*",
     "@cocalc/util": "workspace:*",
     "@isaacs/ttlcache": "^1.4.1",
-    "express": "^4.21.2",
+    "express": "^5.2.1",
     "http-proxy-3": "^1.23.2",
     "micro-key-producer": "^0.8.2"
   },

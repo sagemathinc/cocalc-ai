@@ -50,6 +50,7 @@ This means:
 - the active hub/launchpad stack no longer boots a Next runtime
 - share-server support is removed from the active stack
 - news creation/editing is now handled by the logged-in admin app instead of a Next page
+- `/.well-known/change-password` is now a server redirect to `/settings/profile`
 - Launchpad and the hub now stage `/public/...` assets from
   `packages/assets/public` instead of `packages/next/public`
 - `src/packages/next` is no longer part of the workspace or build, and can be
@@ -79,6 +80,11 @@ Do **not** migrate the old Next.js app router semantics into the old desktop
 frontend router.
 
 That would keep the wrong architecture alive.
+
+### Explicit deletions
+
+- the old `config/*` route family is intentionally gone
+- the old `stars` page is intentionally gone
 
 ## Executive Summary
 

@@ -99,7 +99,12 @@ generated and returned in the response.\
 const misc = require("./misc");
 const { defaults } = misc;
 const { required } = defaults;
-const _ = require("underscore");
+
+function mapValues(obj, fn) {
+  return Object.fromEntries(
+    Object.entries(obj).map(([key, value]) => [key, fn(value, key)]),
+  );
+}
 
 function message(obj) {
   exports[obj.event] = function (opts, strict) {
@@ -135,10 +140,10 @@ function message2(obj) {
   }
 
   // reassembling a version 1 message from a version 2 message
-  const mesg_v1 = _.mapObject(obj.fields, (val) => val.init);
+  const mesg_v1 = mapValues(obj.fields, (val) => val.init);
   mesg_v1.event = obj.event;
   // extracting description for the documentation
-  const fdesc = _.mapObject(obj.fields, mk_desc);
+  const fdesc = mapValues(obj.fields, mk_desc);
   exports.documentation.events[obj.event] = {
     description: obj.desc != null ? obj.desc : "",
     fields: fdesc,

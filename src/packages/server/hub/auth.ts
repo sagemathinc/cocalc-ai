@@ -557,14 +557,6 @@ export class PassportManager {
           done(undefined, profile);
         };
 
-      case "azuread":
-        return (_iss, _sub, profile, _accessToken, _refreshToken, done) => {
-          if (!profile.oid) {
-            return done(new Error("No oid found"), null);
-          }
-          done(undefined, profile);
-        };
-
       case "oidc":
         return (_issuer, profile, done) => {
           return done(undefined, profile);
