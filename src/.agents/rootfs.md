@@ -63,8 +63,6 @@ of truth is [rootfs-rustic.md](/home/wstein/build/cocalc-lite2/src/.agents/rootf
   - mixed scientific stacks
   - additional cross-region workloads
 - Catalog/admin lifecycle polish for official/public/collaborator images.
-- Cleanup/removal of the remaining old btrfs delta assumptions and legacy
-  storage-era codepaths.
 - Vulnerability scan metadata integration for official images.
 
 ## Launch-Critical Product Requirements
@@ -133,7 +131,6 @@ The host UI must show:
 3. Keep cross-region replication in the live regression mix once the dev hub
    route is healthy again.
 4. Finish official-image/admin lifecycle polish.
-5. Remove remaining btrfs-delta-era complexity.
 
 ## Document Relationship
 

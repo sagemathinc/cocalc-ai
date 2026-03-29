@@ -3,13 +3,10 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { spawn } from "node:child_process";
-import { createReadStream, createWriteStream } from "node:fs";
 import {
   access as fsAccess,
   mkdir,
   mkdtemp,
-  open,
   readdir,
   readFile,
   rm,
@@ -17,7 +14,6 @@ import {
   writeFile,
 } from "fs/promises";
 import { join } from "node:path";
-import { pipeline } from "node:stream/promises";
 
 import { executeCode } from "@cocalc/backend/execute-code";
 import getLogger from "@cocalc/backend/logger";
@@ -49,8 +45,6 @@ import { ensureRootfsRusticRepoProfile } from "./rootfs-rustic";
 
 const logger = getLogger("project-host:rootfs-cache");
 const STORAGE_WRAPPER = "/usr/local/sbin/cocalc-runtime-storage";
-const ROOTFS_R2_MULTIPART_DOWNLOAD_PART_BYTES = 64 * 1024 * 1024;
-const ROOTFS_R2_MULTIPART_DOWNLOAD_CONCURRENCY = 8;
 
 type RootfsUsage = {
   project_ids: string[];
@@ -155,59 +149,6 @@ async function buildEntry(
     project_ids: usage.project_ids,
     running_project_ids: usage.running_project_ids,
   };
-}
-
-async function btrfsReceiveFromFile({
-  artifactPath,
-  destDir,
-}: {
-  artifactPath: string;
-  destDir: string;
-}): Promise<void> {
-  const child = spawn(
-    "sudo",
-    ["-n", STORAGE_WRAPPER, "btrfs", "receive", destDir],
-    {
-      stdio: ["pipe", "ignore", "pipe"],
-    },
-  );
-  let stderr = "";
-  child.stderr.on("data", (chunk) => {
-    stderr += chunk.toString();
-  });
-  const pipePromise = pipeline(
-    createReadStream(artifactPath),
-    child.stdin as any,
-  );
-  const exitPromise = new Promise<void>((resolve, reject) => {
-    child.on("error", reject);
-    child.on("close", (code) => {
-      if (code === 0) {
-        resolve();
-        return;
-      }
-      reject(
-        new Error(
-          `btrfs receive exited with code ${code}: ${stderr.trim() || "unknown error"}`,
-        ),
-      );
-    });
-  });
-  await Promise.all([pipePromise, exitPromise]);
-}
-
-async function receivedUuid(path: string): Promise<string | undefined> {
-  if (!(await exists(path)) || !(await isBtrfsSubvolume(path))) {
-    return undefined;
-  }
-  const { stdout } = await btrfs({
-    args: ["subvolume", "show", path],
-    err_on_exit: true,
-    verbose: false,
-  });
-  const match = `${stdout}`.match(/^\s*Received UUID:\s*(.+)$/m);
-  const value = match?.[1]?.trim();
-  return value && value !== "-" ? value : undefined;
 }
 
 async function looksLikeUsableManagedRootfs(path: string): Promise<boolean> {
@@ -422,25 +363,24 @@ async function maybeReplicateManagedRootfsRustic({
   }
 }
 
-async function findManagedRootfsReceiveTemps(image: string): Promise<string[]> {
+async function findManagedRootfsRestoreTemps(): Promise<string[]> {
   if (!(await exists(IMAGE_CACHE))) {
     return [];
   }
-  const encoded = encodeURIComponent(image);
   const candidates: Array<{ tempDir: string; mtimeMs: number }> = [];
   for (const entry of await readdir(IMAGE_CACHE, { withFileTypes: true })) {
     if (
       !entry.isDirectory() ||
-      !entry.name.startsWith(".managed-rootfs-receive-")
+      !entry.name.startsWith(".managed-rootfs-rustic-restore-")
     ) {
       continue;
     }
     const tempDir = join(IMAGE_CACHE, entry.name);
-    const receivedPath = join(tempDir, "receive", encoded);
-    if (!(await exists(receivedPath))) {
+    const restorePath = join(tempDir, "rootfs");
+    if (!(await exists(restorePath))) {
       continue;
     }
-    const stats = await stat(receivedPath).catch(() => undefined);
+    const stats = await stat(restorePath).catch(() => undefined);
     candidates.push({
       tempDir,
       mtimeMs: stats?.mtimeMs ?? 0,
@@ -468,24 +408,6 @@ async function deleteCachedManagedRootfs({
   await rm(finalInspectPath, { force: true }).catch(() => {});
 }
 
-async function ensureIncrementalParentCacheReady(image: string): Promise<void> {
-  const path = imageCachePath(image);
-  if (!(await exists(path))) {
-    await downloadManagedRootfsArtifact({ image });
-    return;
-  }
-  const parentReceivedUuid = await receivedUuid(path).catch(() => undefined);
-  if (parentReceivedUuid) {
-    return;
-  }
-  await deleteCachedManagedRootfs({
-    image,
-    reason:
-      "cached parent is missing Btrfs received UUID required for incremental receive",
-  });
-  await downloadManagedRootfsArtifact({ image });
-}
-
 async function downloadManagedRootfsArtifact({
   image,
 }: {
@@ -501,8 +423,6 @@ async function downloadManagedRootfsArtifact({
     content_key: access.content_key,
     artifact_bytes: access.artifact_bytes,
     artifact_backend: access.artifact_backend,
-    parent_image:
-      access.artifact_format === "btrfs-send" ? access.parent_image : undefined,
   });
   const finalPath = imageCachePath(image);
   const finalInspectPath = inspectFilePath(image);
@@ -524,17 +444,15 @@ async function downloadManagedRootfsArtifact({
       if (access.inspect_data && !(await exists(finalInspectPath))) {
         await writeFile(finalInspectPath, JSON.stringify(access.inspect_data));
       }
-      if (access.artifact_format === "rustic") {
-        await maybeReplicateManagedRootfsRustic({
-          access,
-          sourcePath: finalPath,
-        });
-      }
+      await maybeReplicateManagedRootfsRustic({
+        access,
+        sourcePath: finalPath,
+      });
       return;
     }
   }
-  for (const tempDir of await findManagedRootfsReceiveTemps(image)) {
-    logger.warn("removing stale managed RootFS receive temp dir", {
+  for (const tempDir of await findManagedRootfsRestoreTemps()) {
+    logger.warn("removing stale managed RootFS restore temp dir", {
       image,
       release_id: access.release_id,
       content_key: access.content_key,
@@ -542,233 +460,58 @@ async function downloadManagedRootfsArtifact({
     });
     await cleanupManagedRootfsTempDir(tempDir);
   }
-  if (access.artifact_format === "rustic") {
-    await mkdir(IMAGE_CACHE, { recursive: true });
-    const tempDir = await mkdtemp(
-      join(IMAGE_CACHE, ".managed-rootfs-rustic-restore-"),
-    );
-    const stagedRootfsPath = join(tempDir, "rootfs");
-    try {
-      await createManagedRootfsRestoreSubvolume(stagedRootfsPath);
-      const restoreStarted = Date.now();
-      await restoreManagedRootfsRustic({
-        access,
-        destPath: stagedRootfsPath,
-      });
-      logger.info("restored managed RootFS rustic snapshot", {
-        image,
-        release_id: access.release_id,
-        content_key: access.content_key,
-        artifact_bytes: access.artifact_bytes,
-        elapsed_ms: Date.now() - restoreStarted,
-      });
-      try {
-        await snapshotManagedRootfsReadonly({
-          source: stagedRootfsPath,
-          dest: finalPath,
-        });
-        if (access.inspect_data) {
-          await writeFile(
-            finalInspectPath,
-            JSON.stringify(access.inspect_data),
-          );
-        }
-      } catch (err) {
-        if (await exists(finalPath)) {
-          await deleteCachedManagedRootfs({
-            image,
-            reason: `failed while finalizing restored rustic snapshot: ${err}`,
-          });
-        }
-        throw err;
-      }
-      logger.info("cached managed RootFS from rustic snapshot", {
-        image,
-        release_id: access.release_id,
-        content_key: access.content_key,
-        total_elapsed_ms: Date.now() - started,
-      });
-      await maybeReplicateManagedRootfsRustic({
-        access,
-        sourcePath: finalPath,
-      });
-      return;
-    } finally {
-      await deleteCachedRootfsPath(stagedRootfsPath).catch(() => {});
-      await rm(tempDir, { recursive: true, force: true, maxRetries: 3 }).catch(
-        () => {},
-      );
-    }
-  }
-  if (access.parent_image?.trim()) {
-    const parentImage = access.parent_image.trim();
-    await ensureIncrementalParentCacheReady(parentImage);
-  }
-
   await mkdir(IMAGE_CACHE, { recursive: true });
-  const tempDir = await mkdtemp(join(IMAGE_CACHE, ".managed-rootfs-receive-"));
-  const artifactPath = join(tempDir, "release.btrfs");
-
+  const tempDir = await mkdtemp(
+    join(IMAGE_CACHE, ".managed-rootfs-rustic-restore-"),
+  );
+  const stagedRootfsPath = join(tempDir, "rootfs");
   try {
-    const downloadStarted = Date.now();
-    if (
-      access.artifact_backend === "r2" &&
-      access.artifact_bytes > ROOTFS_R2_MULTIPART_DOWNLOAD_PART_BYTES
-    ) {
-      try {
-        await downloadRootfsArtifactMultipart({
-          access,
-          artifactPath,
-        });
-      } catch (err) {
-        logger.warn(
-          "multipart managed RootFS download failed; retrying single stream",
-          {
-            image,
-            release_id: access.release_id,
-            content_key: access.content_key,
-            err: `${err}`,
-          },
-        );
-        await rm(artifactPath, { force: true }).catch(() => {});
-        await downloadRootfsArtifactSingle({
-          access,
-          artifactPath,
-        });
-      }
-    } else {
-      await downloadRootfsArtifactSingle({
-        access,
-        artifactPath,
-      });
-    }
-    const artifactStats = await stat(artifactPath);
-    logger.info("downloaded managed RootFS artifact", {
+    await createManagedRootfsRestoreSubvolume(stagedRootfsPath);
+    const restoreStarted = Date.now();
+    await restoreManagedRootfsRustic({
+      access,
+      destPath: stagedRootfsPath,
+    });
+    logger.info("restored managed RootFS rustic snapshot", {
       image,
       release_id: access.release_id,
       content_key: access.content_key,
-      bytes: artifactStats.size,
-      elapsed_ms: Date.now() - downloadStarted,
+      artifact_bytes: access.artifact_bytes,
+      elapsed_ms: Date.now() - restoreStarted,
     });
-    const receiveStarted = Date.now();
     try {
-      await btrfsReceiveFromFile({
-        artifactPath,
-        destDir: IMAGE_CACHE,
+      await snapshotManagedRootfsReadonly({
+        source: stagedRootfsPath,
+        dest: finalPath,
       });
-      logger.info("received managed RootFS artifact", {
-        image,
-        release_id: access.release_id,
-        content_key: access.content_key,
-        elapsed_ms: Date.now() - receiveStarted,
-      });
-      if (!(await exists(finalPath))) {
-        throw new Error(`received RootFS image '${image}' was not created`);
-      }
       if (access.inspect_data) {
         await writeFile(finalInspectPath, JSON.stringify(access.inspect_data));
       }
-      logger.info("cached managed RootFS artifact", {
-        image,
-        release_id: access.release_id,
-        content_key: access.content_key,
-        total_elapsed_ms: Date.now() - started,
-      });
     } catch (err) {
       if (await exists(finalPath)) {
         await deleteCachedManagedRootfs({
           image,
-          reason: `failed while receiving managed artifact: ${err}`,
+          reason: `failed while finalizing restored rustic snapshot: ${err}`,
         });
       }
       throw err;
     }
+    logger.info("cached managed RootFS from rustic snapshot", {
+      image,
+      release_id: access.release_id,
+      content_key: access.content_key,
+      total_elapsed_ms: Date.now() - started,
+    });
+    await maybeReplicateManagedRootfsRustic({
+      access,
+      sourcePath: finalPath,
+    });
   } finally {
-    await cleanupManagedRootfsTempDir(tempDir);
-  }
-}
-
-async function downloadRootfsArtifactSingle({
-  access,
-  artifactPath,
-}: {
-  access: Extract<
-    RootfsReleaseArtifactAccess,
-    { artifact_format: "btrfs-send" }
-  >;
-  artifactPath: string;
-}): Promise<void> {
-  const response = await fetch(access.download_url, {
-    headers: access.download_headers,
-    signal: AbortSignal.timeout(15 * 60 * 1000),
-  });
-  if (!response.ok || !response.body) {
-    throw new Error(
-      `artifact download failed (${response.status} ${response.statusText})`,
+    await deleteCachedRootfsPath(stagedRootfsPath).catch(() => {});
+    await rm(tempDir, { recursive: true, force: true, maxRetries: 3 }).catch(
+      () => {},
     );
   }
-  await pipeline(response.body as any, createWriteStream(artifactPath));
-}
-
-async function downloadRootfsArtifactMultipart({
-  access,
-  artifactPath,
-}: {
-  access: Extract<
-    RootfsReleaseArtifactAccess,
-    { artifact_format: "btrfs-send" }
-  >;
-  artifactPath: string;
-}): Promise<void> {
-  const partBytes = ROOTFS_R2_MULTIPART_DOWNLOAD_PART_BYTES;
-  const totalParts = Math.max(1, Math.ceil(access.artifact_bytes / partBytes));
-  const workerCount = Math.min(
-    ROOTFS_R2_MULTIPART_DOWNLOAD_CONCURRENCY,
-    totalParts,
-  );
-  const file = await open(artifactPath, "w");
-  try {
-    await file.truncate(access.artifact_bytes);
-  } finally {
-    await file.close();
-  }
-  let nextPart = 0;
-  await Promise.all(
-    Array.from({ length: workerCount }, async () => {
-      while (true) {
-        const current = nextPart;
-        nextPart += 1;
-        if (current >= totalParts) return;
-        const start = current * partBytes;
-        const end = Math.min(access.artifact_bytes, start + partBytes) - 1;
-        const response = await fetch(access.download_url, {
-          headers: {
-            ...(access.download_headers ?? {}),
-            Range: `bytes=${start}-${end}`,
-          },
-          signal: AbortSignal.timeout(15 * 60 * 1000),
-        });
-        if (
-          !(
-            response.status === 206 ||
-            (response.status === 200 && totalParts === 1)
-          ) ||
-          !response.body
-        ) {
-          throw new Error(
-            `artifact ranged download failed (${response.status} ${response.statusText}) for bytes=${start}-${end}`,
-          );
-        }
-        await pipeline(
-          response.body as any,
-          createWriteStream(artifactPath, {
-            flags: "r+",
-            start,
-          }),
-        );
-      }
-    }),
-  );
 }
 
 async function deleteCachedRootfsPath(path: string): Promise<void> {

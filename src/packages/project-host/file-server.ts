@@ -2,10 +2,8 @@
 // This allows users to browse and generally use the filesystem of any project,
 // without having to run that project.
 
-import { createHash, randomUUID } from "node:crypto";
-import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
-import { createReadStream, createWriteStream } from "node:fs";
 import {
   chmod,
   mkdir,
@@ -59,7 +57,6 @@ import { exists } from "@cocalc/backend/misc/async-utils-node";
 import { type SnapshotCounts } from "@cocalc/util/db-schema/projects";
 import { PROJECT_IMAGE_PATH } from "@cocalc/util/db-schema/defaults";
 import {
-  managedRootfsContentKey,
   managedRootfsImageName,
   isManagedRootfsImageName,
   type RootfsImageArch,
@@ -117,13 +114,6 @@ import { isMissingRusticRepositoryError } from "./backup-index-errors";
 import { btrfs, sudo } from "@cocalc/file-server/btrfs/util";
 import { subvolume } from "@cocalc/file-server/btrfs/subvolume";
 import { ensureRootfsRusticRepoProfile } from "./rootfs-rustic";
-import { pipeline } from "node:stream/promises";
-import {
-  abortMultipartUpload,
-  beginMultipartUpload,
-  completeMultipartUpload,
-  uploadMultipartPartFromFile,
-} from "@cocalc/backend/r2-multipart";
 
 type SshTarget = { type: "project"; project_id: string };
 
@@ -400,11 +390,6 @@ async function createSnapshotRestoreTempPath(prefix: string): Promise<string> {
   return join(root, `${prefix}${randomUUID()}`);
 }
 
-async function createImageCacheTempPath(prefix: string): Promise<string> {
-  await mkdir(IMAGE_CACHE, { recursive: true });
-  return await mkdtemp(join(IMAGE_CACHE, prefix));
-}
-
 async function createImageCacheTempSubvolume(prefix: string): Promise<string> {
   await mkdir(IMAGE_CACHE, { recursive: true });
   const path = join(IMAGE_CACHE, `${prefix}${randomUUID()}`);
@@ -652,167 +637,6 @@ async function backupRootfsTreeToRustic({
     bucket_purpose: upload.bucket_purpose,
     phase_timings_ms: timings?.phase_timings_ms,
   };
-}
-
-async function btrfsSendToFile({
-  source,
-  dest,
-  parent,
-}: {
-  source: string;
-  dest: string;
-  parent?: string;
-}): Promise<void> {
-  await mkdir(dirname(dest), { recursive: true });
-  const args = ["-n", STORAGE_WRAPPER, "btrfs", "send"];
-  if (parent) {
-    args.push("-p", parent);
-  }
-  args.push(source);
-  const child = spawn("sudo", args, {
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  let stderr = "";
-  child.stderr.on("data", (chunk) => {
-    stderr += chunk.toString();
-  });
-  const output = createWriteStream(dest);
-  const pipePromise = pipeline(child.stdout, output);
-  const exitPromise = new Promise<void>((resolve, reject) => {
-    child.on("error", reject);
-    child.on("close", (code) => {
-      if (code === 0) {
-        resolve();
-        return;
-      }
-      reject(
-        new Error(
-          `btrfs send exited with code ${code}: ${stderr.trim() || "unknown error"}`,
-        ),
-      );
-    });
-  });
-  try {
-    await Promise.all([pipePromise, exitPromise]);
-  } catch (err) {
-    await rm(dest, { force: true }).catch(() => {});
-    throw err;
-  }
-}
-
-async function fileSha256(pathToHash: string): Promise<string> {
-  const hash = createHash("sha256");
-  const input = createReadStream(pathToHash);
-  for await (const chunk of input) {
-    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-    hash.update(buffer);
-  }
-  return hash.digest("hex");
-}
-
-async function uploadRootfsArtifactFile({
-  path,
-  upload,
-}: {
-  path: string;
-  upload: Exclude<RootfsArtifactTransferTarget, { backend: "rustic" }>;
-}): Promise<void> {
-  const info = await stat(path);
-  if (upload.backend === "r2") {
-    const partBytes = Math.max(
-      5 * 1024 * 1024,
-      Math.floor(Number(upload.multipart_part_bytes ?? 0) || 0),
-    );
-    const maxConcurrency = Math.max(
-      1,
-      Math.floor(Number(upload.multipart_concurrency ?? 0) || 0),
-    );
-    const totalParts = Math.max(1, Math.ceil(info.size / partBytes));
-    const auth = {
-      endpoint: upload.endpoint,
-      accessKey: upload.access_key_id,
-      secretKey: upload.secret_access_key,
-      bucket: upload.bucket_name,
-      key: upload.artifact_path,
-    };
-    const { uploadId } = await beginMultipartUpload(auth);
-    const completedParts: Array<{ partNumber: number; etag: string }> = [];
-    let nextPart = 0;
-    try {
-      const workerCount = Math.min(maxConcurrency, totalParts);
-      await Promise.all(
-        Array.from({ length: workerCount }, async () => {
-          while (true) {
-            const current = nextPart;
-            nextPart += 1;
-            if (current >= totalParts) return;
-            const start = current * partBytes;
-            const endInclusive = Math.min(info.size, start + partBytes) - 1;
-            const result = await uploadMultipartPartFromFile({
-              ...auth,
-              uploadId,
-              partNumber: current + 1,
-              filePath: path,
-              start,
-              endInclusive,
-            });
-            completedParts[current] = result;
-          }
-        }),
-      );
-      await completeMultipartUpload({
-        auth,
-        uploadId,
-        parts: completedParts,
-      });
-      return;
-    } catch (err) {
-      await abortMultipartUpload({ auth, uploadId }).catch(() => {});
-      throw err;
-    }
-  }
-  const chunkBytes = Math.max(
-    0,
-    Math.floor(Number(upload.chunk_bytes ?? 0) || 0),
-  );
-  const totalParts =
-    chunkBytes > 0 ? Math.max(1, Math.ceil(info.size / chunkBytes)) : 1;
-  const uploadId = totalParts > 1 ? randomUUID() : undefined;
-
-  for (let part = 0; part < totalParts; part += 1) {
-    const start = chunkBytes > 0 ? part * chunkBytes : 0;
-    const endExclusive =
-      chunkBytes > 0 ? Math.min(info.size, start + chunkBytes) : info.size;
-    const partSize = endExclusive - start;
-    const stream = createReadStream(path, {
-      ...(chunkBytes > 0 ? { start, end: endExclusive - 1 } : {}),
-    });
-    try {
-      const url = new URL(upload.url);
-      if (uploadId) {
-        url.searchParams.set("upload_id", uploadId);
-        url.searchParams.set("part", `${part}`);
-        url.searchParams.set("parts", `${totalParts}`);
-      }
-      const response = await fetch(url, {
-        method: upload.method,
-        headers: {
-          ...(upload.headers ?? {}),
-          "content-length": `${partSize}`,
-        },
-        body: stream as any,
-        duplex: "half",
-      } as any);
-      if (!response.ok) {
-        const message = `${(await response.text().catch(() => "")).trim()}`;
-        throw new Error(
-          `artifact upload failed (${response.status} ${response.statusText})${message ? `: ${message}` : ""}`,
-        );
-      }
-    } finally {
-      stream.destroy();
-    }
-  }
 }
 
 async function btrfsSnapshotReadonly({
@@ -1811,7 +1635,6 @@ async function publishRootfsImage({
   let mergedPath: string | undefined;
   let workdirPath: string | undefined;
   let stagedRootfsPath: string | undefined;
-  let parentImage: string | undefined;
   try {
     const currentImagePath = join(rootfsPath, "current-image.txt");
     const sourceImage = `${await readFile(currentImagePath, "utf8")}`.trim();
@@ -1923,7 +1746,6 @@ async function publishRootfsImage({
           (await exists(managedParentPath)) &&
           (await isBtrfsSubvolume(managedParentPath))
         ) {
-          parentImage = sourceImage;
           await mkdir(IMAGE_CACHE, { recursive: true });
           stagedRootfsPath = join(
             IMAGE_CACHE,
@@ -2014,13 +1836,7 @@ async function publishRootfsImage({
       snapshot: snapshotName,
       created_snapshot: createdSnapshot,
       source_image: sourceImage,
-      artifact_kind:
-        upload?.backend === "rustic" ? "full" : parentImage ? "delta" : "full",
-      parent_image: upload?.backend === "rustic" ? undefined : parentImage,
-      parent_content_key:
-        upload?.backend === "rustic"
-          ? undefined
-          : managedRootfsContentKey(parentImage),
+      artifact_kind: "full",
       inspect_data: publishedInspectData,
       upload_result: uploadResult,
       phase_timings_ms: timings.phase_timings_ms,
@@ -2039,13 +1855,11 @@ async function publishRootfsImage({
 async function uploadRootfsReleaseArtifact({
   image,
   upload,
-  parent_image,
   lro,
 }: {
   project_id: string;
   image: string;
   upload: RootfsArtifactTransferTarget;
-  parent_image?: string;
   lro?: LroRef;
 }): Promise<RootfsUploadedArtifactResult> {
   const timings = createPhaseTimingRecorder();
@@ -2056,108 +1870,13 @@ async function uploadRootfsReleaseArtifact({
     );
   }
 
-  if (upload.backend === "rustic") {
-    return await backupRootfsTreeToRustic({
-      sourcePath: finalPath,
-      backupHost: image,
-      upload,
-      lro,
-      timings,
-    });
-  }
-
-  const tempDir = await createImageCacheTempPath(".rootfs-artifact-upload-");
-  const artifactPath = join(tempDir, "release.btrfs");
-  let stagedSourcePath: string | undefined;
-  let readonlySendSourcePath: string | undefined;
-  let parentPath: string | undefined;
-  try {
-    let sendSource = finalPath;
-    if (!(await isBtrfsSubvolume(finalPath))) {
-      stagedSourcePath = await createImageCacheTempSubvolume(
-        ".rootfs-artifact-stage-",
-      );
-      await timings.measure("stage_send_source", async () => {
-        const stagedSource = stagedSourcePath!;
-        await rsyncTree({
-          src: finalPath,
-          dest: stagedSource,
-        });
-        readonlySendSourcePath = join(
-          tempDir,
-          `.rootfs-artifact-send-${randomUUID()}`,
-        );
-        await btrfsSnapshotReadonly({
-          source: stagedSource,
-          dest: readonlySendSourcePath!,
-        });
-      });
-      sendSource = readonlySendSourcePath!;
-    }
-    if (parent_image && sendSource === finalPath) {
-      const candidateParent = imageCachePath(parent_image);
-      if (
-        (await exists(candidateParent)) &&
-        (await isBtrfsSubvolume(candidateParent))
-      ) {
-        parentPath = candidateParent;
-      }
-    }
-    await timings.measure("btrfs_send", async () => {
-      await btrfsSendToFile({
-        source: sendSource,
-        dest: artifactPath,
-        parent: parentPath,
-      });
-    });
-    if (upload.backend === "r2") {
-      const info = await stat(artifactPath);
-      const artifact_sha256 = await timings.measure(
-        "hash_artifact",
-        async () => {
-          return await fileSha256(artifactPath);
-        },
-      );
-      await timings.measure("upload_artifact", async () => {
-        await uploadRootfsArtifactFile({
-          path: artifactPath,
-          upload,
-        });
-      });
-      if (!upload.region || !upload.bucket_name || !upload.artifact_path) {
-        throw new Error("direct R2 RootFS upload target is missing metadata");
-      }
-      return {
-        ok: true,
-        backend: "r2",
-        artifact_kind: parentPath ? "delta" : "full",
-        artifact_sha256,
-        artifact_bytes: info.size,
-        region: upload.region,
-        bucket_id: upload.bucket_id,
-        bucket_name: upload.bucket_name,
-        bucket_purpose: upload.bucket_purpose,
-        artifact_path: upload.artifact_path,
-        phase_timings_ms: timings.phase_timings_ms,
-      };
-    }
-    await timings.measure("upload_artifact", async () => {
-      await uploadRootfsArtifactFile({
-        path: artifactPath,
-        upload,
-      });
-    });
-    return {
-      ok: true,
-      backend: "hub-local",
-      artifact_kind: parentPath ? "delta" : "full",
-      phase_timings_ms: timings.phase_timings_ms,
-    };
-  } finally {
-    await deleteSubvolumeTree(readonlySendSourcePath).catch(() => {});
-    await deleteSubvolumeTree(stagedSourcePath).catch(() => {});
-    await removeDirectoryTree(tempDir).catch(() => {});
-  }
+  return await backupRootfsTreeToRustic({
+    sourcePath: finalPath,
+    backupHost: image,
+    upload,
+    lro,
+    timings,
+  });
 }
 
 function createLroRusticReporter(

@@ -29,8 +29,7 @@ Managed RootFS is now substantially on the rustic design:
 The biggest remaining work is no longer "basic migration". It is:
 
 - broader verification,
-- admin/catalog polish,
-- cleanup/removal of the remaining btrfs-delta assumptions and UI leftovers.
+- admin/catalog polish.
 
 ## Status
 
@@ -60,12 +59,6 @@ The biggest remaining work is no longer "basic migration". It is:
 
 ### Partially Implemented
 
-- The data model already supports rustic-backed managed releases, but there is
-  still cleanup to do around legacy btrfs-stream-oriented fields and logic.
-- The RootFS UI behavior is working, but some storage-era concepts and
-  codepaths still need simplification/removal.
-- A simplified btrfs fallback still exists and has not yet been pruned down to
-  the final intended scope.
 - Automatic host-triggered cross-region replication still needs a clean live
   smoke once the dev hub route is healthy again. The direct host/data-path
   smoke has passed.
@@ -74,7 +67,6 @@ The biggest remaining work is no longer "basic migration". It is:
 
 - Full verification matrix for `conda`, `pnpm`, `pip`, mixed scientific images,
   and additional cross-region workload coverage.
-- Final deletion of the old btrfs delta model.
 - Benchmarking and possible enablement of clone-plus-restore optimization on
   destination hosts.
 
@@ -86,8 +78,7 @@ These decisions still look correct:
 2. Hosted deployment should use one shared rustic repo per region.
 3. Self-hosted deployment should use `rest-server`.
 4. `full` versus `delta` should not be part of the RootFS product story.
-5. The btrfs delta path should be removed rather than preserved.
-6. Encryption is not a RootFS product requirement.
+5. Encryption is not a RootFS product requirement.
 
 One important new data point strengthens this direction:
 
@@ -417,15 +408,18 @@ remains:
 
 That keeps hosted and self-hosted RootFS conceptually aligned.
 
-## Btrfs Cleanup Still Pending
+## Btrfs Cleanup
 
-The current plan remains:
+This is now done for managed RootFS distribution:
 
-- do not preserve the old btrfs delta publish model,
-- simplify the remaining btrfs backend aggressively,
-- if any btrfs fallback remains, keep it full-stream-only and clearly secondary.
+- new publishes are rustic-only,
+- restore/access is rustic-only,
+- the old hub-local btrfs artifact HTTP path is gone,
+- the legacy btrfs delta transport logic has been removed.
 
-This cleanup has not been finished yet.
+Btrfs still matters locally for host filesystems, snapshots, overlays, and
+cached lowerdirs. It is no longer part of the managed RootFS network storage
+story.
 
 ## Ordered Next Steps
 
@@ -433,8 +427,7 @@ This cleanup has not been finished yet.
    and additional synthetic fixtures.
 2. Keep hosted cross-region replication in the live regression mix once the dev
    hub route is healthy again.
-3. Remove the remaining btrfs delta complexity and UI/storage leftovers.
-4. Benchmark the clone-plus-restore optimization and keep it only if it gives
+3. Benchmark the clone-plus-restore optimization and keep it only if it gives
    clear space/time wins.
 
 ## Exit Criteria
@@ -445,5 +438,4 @@ This RootFS-rustic transition should be considered complete when:
 - cross-region restore works,
 - self-hosted RootFS uses `rest-server`,
 - the verification matrix passes on meaningful real workloads,
-- `full` versus `delta` no longer appears in the RootFS product surface,
-- the old btrfs delta path is gone.
+- `full` versus `delta` no longer appears in the RootFS product surface.

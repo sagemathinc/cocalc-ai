@@ -102,9 +102,9 @@ export function wireSystemApi(): void {
     upload: {
       ok: true;
       backend: "rustic";
-      artifact_kind?: "full" | "delta";
+      artifact_kind?: "full";
       artifact_format: "rustic";
-      artifact_backend: "hub-local" | "r2" | "rest";
+      artifact_backend: "r2" | "rest";
       artifact_sha256: string;
       artifact_bytes: number;
       artifact_path: string;

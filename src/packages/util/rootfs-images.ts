@@ -149,126 +149,61 @@ export type PublishProjectRootfsArtifact = {
   created_snapshot: boolean;
   source_image: string;
   artifact_kind?: RootfsReleaseArtifactKind;
-  parent_image?: string;
-  parent_content_key?: string;
   inspect_data?: Record<string, any>;
   upload_result?: RootfsUploadedArtifactResult;
   phase_timings_ms?: RootfsPhaseTimings;
 };
 
-export type RootfsReleaseArtifactKind = "full" | "delta";
-export type RootfsReleaseArtifactFormat = "btrfs-send" | "rustic";
-export type RootfsReleaseArtifactBackend = "hub-local" | "r2" | "rest";
+export type RootfsReleaseArtifactKind = "full";
+export type RootfsReleaseArtifactFormat = "rustic";
+export type RootfsReleaseArtifactBackend = "r2" | "rest";
 
-export type RootfsArtifactTransferTarget =
-  | {
-      backend: "hub-local";
-      url: string;
-      method: "PUT";
-      headers?: Record<string, string>;
-      chunk_bytes?: number;
-    }
-  | {
-      backend: "r2";
-      method: "PUT";
-      region: string;
-      bucket_id?: string;
-      bucket_name: string;
-      bucket_purpose?: string | null;
-      artifact_path: string;
-      endpoint: string;
-      access_key_id: string;
-      secret_access_key: string;
-      multipart_part_bytes: number;
-      multipart_concurrency: number;
-    }
-  | {
-      backend: "rustic";
-      repo_toml: string;
-      repo_selector: string;
-      artifact_backend: RootfsReleaseArtifactBackend;
-      region?: string;
-      bucket_id?: string;
-      bucket_name?: string;
-      bucket_purpose?: string | null;
-    };
+export type RootfsArtifactTransferTarget = {
+  backend: "rustic";
+  repo_toml: string;
+  repo_selector: string;
+  artifact_backend: RootfsReleaseArtifactBackend;
+  region?: string;
+  bucket_id?: string;
+  bucket_name?: string;
+  bucket_purpose?: string | null;
+};
 
-export type RootfsUploadedArtifactResult =
-  | {
-      ok: true;
-      backend: "hub-local";
-      artifact_kind?: RootfsReleaseArtifactKind;
-      phase_timings_ms?: RootfsPhaseTimings;
-    }
-  | {
-      ok: true;
-      backend: "r2";
-      artifact_kind?: RootfsReleaseArtifactKind;
-      artifact_sha256: string;
-      artifact_bytes: number;
-      region: string;
-      bucket_id?: string;
-      bucket_name: string;
-      bucket_purpose?: string | null;
-      artifact_path: string;
-      phase_timings_ms?: RootfsPhaseTimings;
-    }
-  | {
-      ok: true;
-      backend: "rustic";
-      artifact_kind?: RootfsReleaseArtifactKind;
-      artifact_format: "rustic";
-      artifact_backend: RootfsReleaseArtifactBackend;
-      artifact_sha256: string;
-      artifact_bytes: number;
-      artifact_path: string;
-      snapshot_id: string;
-      repo_selector: string;
-      region?: string;
-      bucket_id?: string;
-      bucket_name?: string;
-      bucket_purpose?: string | null;
-      phase_timings_ms?: RootfsPhaseTimings;
-    };
+export type RootfsUploadedArtifactResult = {
+  ok: true;
+  backend: "rustic";
+  artifact_kind?: RootfsReleaseArtifactKind;
+  artifact_format: "rustic";
+  artifact_backend: RootfsReleaseArtifactBackend;
+  artifact_sha256: string;
+  artifact_bytes: number;
+  artifact_path: string;
+  snapshot_id: string;
+  repo_selector: string;
+  region?: string;
+  bucket_id?: string;
+  bucket_name?: string;
+  bucket_purpose?: string | null;
+  phase_timings_ms?: RootfsPhaseTimings;
+};
 
-export type RootfsReleaseArtifactAccess =
-  | {
-      release_id: string;
-      image: string;
-      content_key: string;
-      artifact_kind: RootfsReleaseArtifactKind;
-      artifact_format: "btrfs-send";
-      artifact_backend: RootfsReleaseArtifactBackend;
-      artifact_sha256: string;
-      artifact_bytes: number;
-      artifact_path?: string;
-      parent_release_id?: string;
-      parent_image?: string;
-      parent_content_key?: string;
-      download_url: string;
-      download_headers?: Record<string, string>;
-      inspect_data?: Record<string, any>;
-    }
-  | {
-      release_id: string;
-      image: string;
-      content_key: string;
-      artifact_kind: "full";
-      artifact_format: "rustic";
-      artifact_backend: RootfsReleaseArtifactBackend;
-      artifact_sha256: string;
-      artifact_bytes: number;
-      artifact_path: string;
-      snapshot_id: string;
-      repo_selector: string;
-      repo_toml: string;
-      region?: string;
-      regional_replication_target?: Extract<
-        RootfsArtifactTransferTarget,
-        { backend: "rustic" }
-      >;
-      inspect_data?: Record<string, any>;
-    };
+export type RootfsReleaseArtifactAccess = {
+  release_id: string;
+  image: string;
+  content_key: string;
+  artifact_kind: "full";
+  artifact_format: "rustic";
+  artifact_backend: RootfsReleaseArtifactBackend;
+  artifact_sha256: string;
+  artifact_bytes: number;
+  artifact_path: string;
+  snapshot_id: string;
+  repo_selector: string;
+  repo_toml: string;
+  region?: string;
+  regional_replication_target?: RootfsArtifactTransferTarget;
+  inspect_data?: Record<string, any>;
+};
 
 export type RootfsDeleteBlockers = {
   projects_using_release: number;

@@ -275,21 +275,7 @@ function storageLabel(location: RootfsStorageLocation): string {
 function storageFormatLabel(
   locations: RootfsStorageLocation[],
 ): string | undefined {
-  const formats = Array.from(
-    new Set(
-      locations.map(
-        (location) => `${location.artifact_format}:${location.backend}`,
-      ),
-    ),
-  );
-  if (formats.length !== 1) return "mixed";
-  if (formats[0] === "rustic:r2" || formats[0] === "rustic:rest") {
-    return "rustic";
-  }
-  if (formats[0] === "btrfs-send:r2" || formats[0] === "btrfs-send:hub-local") {
-    return "legacy btrfs";
-  }
-  return formats[0].replace(":", " ");
+  return locations.length > 0 ? "rustic" : undefined;
 }
 
 function storageLocationLabel(location: RootfsStorageLocation): string {
@@ -347,11 +333,7 @@ function storageSummary(entry: RootfsAdminCatalogEntry): React.ReactNode {
   const formatLabel = storageFormatLabel(entry.storage_locations);
   return (
     <Space wrap size={[4, 4]}>
-      {formatLabel ? (
-        <Tag color={formatLabel === "legacy btrfs" ? "orange" : "purple"}>
-          {formatLabel}
-        </Tag>
-      ) : null}
+      {formatLabel ? <Tag color="purple">{formatLabel}</Tag> : null}
       {entry.storage_locations.map((location, index) => (
         <Tooltip
           key={`${location.role}-${location.backend}-${location.region ?? "site"}-${location.artifact_path}-${index}`}
