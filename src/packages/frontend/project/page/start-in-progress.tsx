@@ -58,6 +58,17 @@ const START_PHASE_SET = new Set<StartPhaseKey>(
   START_PHASES.map(({ key }) => key),
 );
 
+function normalizeStartPhaseKey(phase?: string): StartPhaseKey {
+  const normalized = `${phase ?? ""}`.trim().toLowerCase();
+  if (normalized === "start-project") {
+    return "runner_start";
+  }
+  if (START_PHASE_SET.has(normalized as StartPhaseKey)) {
+    return normalized as StartPhaseKey;
+  }
+  return "queued";
+}
+
 function toTimestamp(value?: Date | string | null): number | undefined {
   if (!value) return undefined;
   const date = new Date(value as any);
@@ -75,14 +86,10 @@ function isStartActive(startLro?: StartLroState): boolean {
 }
 
 function phaseFromStart(startLro?: StartLroState): StartPhaseKey {
-  const phaseRaw =
-    `${startLro?.last_progress?.phase ?? startLro?.summary?.progress_summary?.phase ?? ""}`
-      .trim()
-      .toLowerCase() || "queued";
-  if (START_PHASE_SET.has(phaseRaw as StartPhaseKey)) {
-    return phaseRaw as StartPhaseKey;
-  }
-  return "queued";
+  return normalizeStartPhaseKey(
+    startLro?.last_progress?.phase ??
+      startLro?.summary?.progress_summary?.phase,
+  );
 }
 
 function progressPercent(startLro?: StartLroState): number | undefined {
