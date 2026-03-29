@@ -78,6 +78,12 @@ function applyChatRowAcpState(
   record: any,
   getThreadStateRecord?: (threadId: string) => any,
 ): any {
+  const hasExplicitAcpState =
+    record != null &&
+    Object.prototype.hasOwnProperty.call(record as object, "acp_state");
+  if (!hasExplicitAcpState) {
+    return acpState;
+  }
   const mapped = chatRowToAcpState({
     record,
     getThreadStateRecord,
