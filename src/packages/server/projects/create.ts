@@ -33,6 +33,7 @@ import { createLro, updateLro } from "@cocalc/server/lro/lro-db";
 import { publishLroEvent, publishLroSummary } from "@cocalc/conat/lro/stream";
 import type { LroSummary } from "@cocalc/conat/hub/api/lro";
 import { takeStartProjectPhaseTimings } from "@cocalc/server/project-host/control";
+import { mirrorStartLroProgress } from "@cocalc/server/projects/start-lro-progress";
 
 const log = getLogger("server:projects:create");
 const HOST_ONLINE_WINDOW_MS = 2 * 60 * 1000;
@@ -470,8 +471,17 @@ async function startNewProject(
   }
 
   await setLroStatus("running", {
+    progress_summary: {
+      phase: "queued",
+      message: "queued",
+      progress: 0,
+    },
     error: null,
     context: "createProject: start running",
+  });
+  const stopProgressMirror = await mirrorStartLroProgress({
+    project_id,
+    op_id: op?.op_id,
   });
   try {
     await project.start({ account_id, lro_op_id: op?.op_id });
@@ -531,5 +541,7 @@ async function startNewProject(
         err: `${stateErr}`,
       });
     }
+  } finally {
+    await stopProgressMirror();
   }
 }

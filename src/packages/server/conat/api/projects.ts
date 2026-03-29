@@ -16,6 +16,7 @@ import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import { createHostControlClient } from "@cocalc/conat/project-host/api";
 import { updateAuthorizedKeysOnHost as updateAuthorizedKeysOnHostControl } from "@cocalc/server/project-host/control";
 import { getProject } from "@cocalc/server/projects/control";
+import { mirrorStartLroProgress } from "@cocalc/server/projects/start-lro-progress";
 import { conatWithProjectRouting } from "@cocalc/server/conat/route-client";
 import { resolveOnPremHost } from "@cocalc/server/onprem";
 import { posix } from "path";
@@ -690,6 +691,11 @@ export async function start({
     const running = await updateLro({
       op_id: op.op_id,
       status: "running",
+      progress_summary: {
+        phase: "queued",
+        message: "queued",
+        progress: 0,
+      },
       error: null,
     });
     if (running) {
@@ -700,6 +706,10 @@ export async function start({
         context: "start: running",
       });
     }
+    const stopProgressMirror = await mirrorStartLroProgress({
+      project_id,
+      op_id: op.op_id,
+    });
     try {
       await project.start({
         lro_op_id: op.op_id,
@@ -746,6 +756,8 @@ export async function start({
         });
       }
       throw err;
+    } finally {
+      await stopProgressMirror();
     }
   };
 

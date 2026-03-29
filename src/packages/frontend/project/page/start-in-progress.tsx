@@ -91,6 +91,12 @@ function progressPercent(startLro?: StartLroState): number | undefined {
   if (direct != null) {
     return direct;
   }
+  const summaryDirect = clampProgressPercent(
+    startLro?.summary?.progress_summary?.progress,
+  );
+  if (summaryDirect != null) {
+    return summaryDirect;
+  }
   const phase = phaseFromStart(startLro);
   const index = START_PHASES.findIndex((entry) => entry.key === phase);
   if (index < 0) return 0;
@@ -168,8 +174,15 @@ export default function StartInProgress({
     START_PHASES.findIndex((entry) => entry.key === phase),
   );
   const percent = progressPercent(startLro);
-  const detailText = formatProgressDetail(startLro?.last_progress?.detail);
-  const rawMessage = `${startLro?.last_progress?.message ?? ""}`.trim();
+  const detailText = formatProgressDetail(
+    startLro?.last_progress?.detail ??
+      startLro?.summary?.progress_summary?.detail,
+  );
+  const rawMessage = `${
+    startLro?.last_progress?.message ??
+    startLro?.summary?.progress_summary?.message ??
+    ""
+  }`.trim();
   const phaseLabel = START_PHASES[current]?.label ?? "Starting";
   const message =
     rawMessage && rawMessage.toLowerCase() !== phase

@@ -10,6 +10,7 @@ let initializeProjectRootfsStatesMock: jest.Mock;
 let cloneProjectRootfsStatesMock: jest.Mock;
 let takeStartProjectPhaseTimingsMock: jest.Mock;
 let delayMock: jest.Mock;
+let mirrorStartLroProgressMock: jest.Mock;
 
 async function flushBackgroundStartTask() {
   for (let i = 0; i < 6; i += 1) {
@@ -89,6 +90,12 @@ jest.mock("@cocalc/server/project-host/control", () => ({
     takeStartProjectPhaseTimingsMock(...args),
 }));
 
+jest.mock("@cocalc/server/projects/start-lro-progress", () => ({
+  __esModule: true,
+  mirrorStartLroProgress: (...args: any[]) =>
+    mirrorStartLroProgressMock(...args),
+}));
+
 jest.mock("awaiting", () => ({
   __esModule: true,
   delay: (...args: any[]) => delayMock(...args),
@@ -148,6 +155,7 @@ describe("projects.createProject start LRO", () => {
     cloneProjectRootfsStatesMock = jest.fn(async () => undefined);
     takeStartProjectPhaseTimingsMock = jest.fn(() => ({ cache_rootfs: 1234 }));
     delayMock = jest.fn(async () => undefined);
+    mirrorStartLroProgressMock = jest.fn(async () => async () => undefined);
   });
 
   it("creates and updates a project-start LRO for create-with-start", async () => {
