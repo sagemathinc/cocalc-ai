@@ -91,6 +91,17 @@ describe("appendStreamMessage", () => {
     );
   });
 
+  test("does not insert a space inside inline code spans", () => {
+    const events = [textEvent("message", "`src/.", 1)];
+    const merged = appendStreamMessage(
+      events,
+      textEvent("message", "agents`", 2),
+    );
+
+    expect(merged).toHaveLength(1);
+    expect((merged[0] as any).event.text).toBe("`src/.agents`");
+  });
+
   test("inserts a paragraph break between large app-server chunks", () => {
     const events = [
       textEvent(

@@ -64,9 +64,20 @@ function streamJoinSeparator(
   previousText: string,
   nextText: string,
 ): "" | " " | "\n\n" {
+  if (hasOpenMarkdownCodeFence(previousText)) return "";
   if (needsTextBoundaryParagraph(previousText, nextText)) return "\n\n";
   if (needsTextBoundarySpace(previousText, nextText)) return " ";
   return "";
+}
+
+function hasOpenMarkdownCodeFence(text: string): boolean {
+  let backticks = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    if (text[i] !== "`") continue;
+    if (i > 0 && text[i - 1] === "\\") continue;
+    backticks += 1;
+  }
+  return backticks % 2 === 1;
 }
 
 function needsTextBoundaryParagraph(
