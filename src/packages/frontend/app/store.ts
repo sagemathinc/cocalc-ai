@@ -58,6 +58,7 @@ export interface PageState {
 
   settingsModal?: string;
   supportModalOptions?: SupportOpenOptions;
+  supportModalHidden?: boolean;
   conat?: TypedMap<ConatConnectionStatus>;
 }
 
