@@ -301,6 +301,18 @@ export type RootfsImageEvent = {
   created: string;
 };
 
+export type RootfsStorageLocation = {
+  role: "primary" | "replica";
+  backend: RootfsReleaseArtifactBackend;
+  artifact_format: RootfsReleaseArtifactFormat;
+  artifact_path: string;
+  repo_selector?: string;
+  region?: string;
+  bucket_name?: string;
+  bucket_purpose?: string | null;
+  status?: string;
+};
+
 export type RootfsAdminCatalogEntry = RootfsImageEntry & {
   deleted?: boolean;
   deleted_reason?: string;
@@ -316,6 +328,7 @@ export type RootfsAdminCatalogEntry = RootfsImageEntry & {
   scan_tool?: string;
   scanned_at?: string;
   events?: RootfsImageEvent[];
+  storage_locations?: RootfsStorageLocation[];
 };
 
 export type ProjectRootfsStateEntry = {

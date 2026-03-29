@@ -22,6 +22,7 @@ import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type {
   RootfsAdminCatalogEntry,
   RootfsImageEvent,
+  RootfsStorageLocation,
 } from "@cocalc/util/rootfs-images";
 import { plural } from "@cocalc/util/misc";
 
@@ -254,6 +255,66 @@ function recentEvents(entry: RootfsAdminCatalogEntry): React.ReactNode {
   );
 }
 
+function storageStatusTag(status?: string): React.ReactNode {
+  if (!status || status === "ready") return null;
+  if (status === "failed") {
+    return <Tag color="red">failed</Tag>;
+  }
+  if (status === "pending") {
+    return <Tag color="orange">pending</Tag>;
+  }
+  return <Tag>{status}</Tag>;
+}
+
+function storageLabel(location: RootfsStorageLocation): string {
+  return (
+    location.repo_selector ?? `${location.backend}:${location.artifact_format}`
+  );
+}
+
+function storageSummary(entry: RootfsAdminCatalogEntry): React.ReactNode {
+  if (!entry.release_id) {
+    return (
+      <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+        External or builtin image
+      </Typography.Text>
+    );
+  }
+  if (!entry.storage_locations?.length) {
+    return (
+      <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+        Managed release without storage metadata
+      </Typography.Text>
+    );
+  }
+  return (
+    <Space direction="vertical" size={0}>
+      {entry.storage_locations.map((location, index) => (
+        <Space
+          key={`${location.role}-${location.backend}-${location.region ?? "site"}-${location.artifact_path}-${index}`}
+          direction="vertical"
+          size={0}
+          style={{ width: "100%" }}
+        >
+          <Space wrap size={[4, 0]}>
+            <Tag color={location.role === "primary" ? "blue" : "default"}>
+              {location.role === "primary" ? "Primary" : "Replica"}
+            </Tag>
+            <Typography.Text code style={{ fontSize: 12 }}>
+              {storageLabel(location)}
+            </Typography.Text>
+            {location.bucket_name ? <Tag>{location.bucket_name}</Tag> : null}
+            {storageStatusTag(location.status)}
+          </Space>
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            {location.artifact_path}
+          </Typography.Text>
+        </Space>
+      ))}
+    </Space>
+  );
+}
+
 export function RootfsAdmin() {
   const hub = webapp_client.conat_client.hub;
   const [rows, setRows] = React.useState<RootfsAdminCatalogEntry[]>([]);
@@ -294,6 +355,16 @@ export function RootfsAdmin() {
         entry.owner_id,
         entry.visibility,
         ...(entry.tags ?? []),
+        ...(entry.storage_locations ?? []).flatMap((location) => [
+          location.repo_selector,
+          location.region,
+          location.bucket_name,
+          location.bucket_purpose,
+          location.backend,
+          location.artifact_format,
+          location.artifact_path,
+          location.status,
+        ]),
       ]
         .filter(Boolean)
         .some((value) => `${value}`.toLowerCase().includes(needle)),
@@ -401,7 +472,7 @@ export function RootfsAdmin() {
       <Space wrap>
         <Input.Search
           allowClear
-          placeholder="Search label, image, owner, visibility, or tags"
+          placeholder="Search label, image, owner, visibility, tags, or storage"
           style={{ width: 420, maxWidth: "100%" }}
           value={search}
           onChange={(event) => setSearch(event.target.value)}
@@ -477,6 +548,11 @@ export function RootfsAdmin() {
                   {lifecycleHistory(entry)}
                 </Space>
               ),
+            },
+            {
+              title: "Storage",
+              key: "storage",
+              render: (_, entry) => storageSummary(entry),
             },
             {
               title: "Delete blockers",

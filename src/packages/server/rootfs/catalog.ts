@@ -21,7 +21,10 @@ import type {
   RootfsImageEntry,
   RootfsImageManifest,
   RootfsImageSection,
+  RootfsReleaseArtifactBackend,
+  RootfsReleaseArtifactFormat,
   RootfsImageTheme,
+  RootfsStorageLocation,
   RootfsImageVisibility,
   RootfsImageWarning,
   RootfsReleaseGcStatus,
@@ -77,6 +80,26 @@ type RootfsImageRow = {
   scan_tool: string | null;
   scanned_at: Date | null;
   scan_summary: RootfsScanSummary | null;
+  artifact_backend: RootfsReleaseArtifactBackend | null;
+  artifact_format: RootfsReleaseArtifactFormat | null;
+  artifact_path: string | null;
+};
+
+type RootfsReplicaStorageRow = {
+  release_id: string;
+  backend: RootfsReleaseArtifactBackend;
+  region: string | null;
+  bucket_name: string | null;
+  bucket_purpose: string | null;
+  artifact_format: RootfsReleaseArtifactFormat;
+  artifact_path: string;
+  status: string;
+};
+
+type RootfsRusticArtifactPath = {
+  artifact_backend: RootfsReleaseArtifactBackend;
+  region?: string;
+  snapshot_id: string;
 };
 
 type RootfsLifecycleSnapshot = {
@@ -127,6 +150,110 @@ function fullName(row: RootfsImageRow): string | undefined {
   const last = trimString(row.owner_last_name);
   const name = [first, last].filter(Boolean).join(" ").trim();
   return name || undefined;
+}
+
+function decodeRusticArtifactPath(
+  artifact_path?: string | null,
+): RootfsRusticArtifactPath | null {
+  const parts = `${artifact_path ?? ""}`.split("/").map((part) => {
+    try {
+      return decodeURIComponent(part);
+    } catch {
+      return part;
+    }
+  });
+  if (parts.length !== 4 || parts[0] !== "rustic") {
+    return null;
+  }
+  const [_, artifact_backend, region, snapshot_id] = parts;
+  if (!artifact_backend || !snapshot_id) {
+    return null;
+  }
+  return {
+    artifact_backend: artifact_backend as RootfsReleaseArtifactBackend,
+    region: region === "site" ? undefined : region,
+    snapshot_id,
+  };
+}
+
+function rootfsStorageRepoSelector({
+  backend,
+  artifact_format,
+  artifact_path,
+  region,
+}: {
+  backend: RootfsReleaseArtifactBackend;
+  artifact_format: RootfsReleaseArtifactFormat;
+  artifact_path?: string | null;
+  region?: string | null;
+}): string | undefined {
+  if (artifact_format !== "rustic") return;
+  const rustic =
+    decodeRusticArtifactPath(artifact_path) ??
+    (region || backend === "rest"
+      ? {
+          artifact_backend: backend,
+          region: region ?? undefined,
+          snapshot_id: "",
+        }
+      : null);
+  if (!rustic) return;
+  if (rustic.artifact_backend === "rest") {
+    return "rest:rootfs-images";
+  }
+  if (rustic.artifact_backend === "r2") {
+    return `r2:rootfs-images:${rustic.region ?? "site"}`;
+  }
+  return `${rustic.artifact_backend}:rootfs-images`;
+}
+
+function primaryStorageLocation(row: RootfsImageRow): RootfsStorageLocation[] {
+  if (
+    !row.release_id ||
+    !row.artifact_backend ||
+    !row.artifact_format ||
+    !row.artifact_path
+  ) {
+    return [];
+  }
+  const rustic = decodeRusticArtifactPath(row.artifact_path);
+  return [
+    {
+      role: "primary",
+      backend: row.artifact_backend,
+      artifact_format: row.artifact_format,
+      artifact_path: row.artifact_path,
+      repo_selector: rootfsStorageRepoSelector({
+        backend: row.artifact_backend,
+        artifact_format: row.artifact_format,
+        artifact_path: row.artifact_path,
+        region: rustic?.region,
+      }),
+      region: rustic?.region,
+    },
+  ];
+}
+
+function replicaStorageLocation(
+  row: RootfsReplicaStorageRow,
+): RootfsStorageLocation {
+  const rustic = decodeRusticArtifactPath(row.artifact_path);
+  return {
+    role: "replica",
+    backend: row.backend,
+    artifact_format: row.artifact_format,
+    artifact_path: row.artifact_path,
+    repo_selector: rootfsStorageRepoSelector({
+      backend: row.backend,
+      artifact_format: row.artifact_format,
+      artifact_path: row.artifact_path,
+      region: row.region ?? rustic?.region,
+    }),
+    region: row.region ?? rustic?.region,
+    bucket_name: row.bucket_name ?? undefined,
+    bucket_purpose: row.bucket_purpose ?? undefined,
+    status: row.status,
+  };
 }
 
 function sectionFor({
@@ -295,6 +422,7 @@ function rowToAdminEntry({
     scan_status: (row.scan_status as any) ?? undefined,
     scan_tool: row.scan_tool ?? undefined,
     scanned_at: row.scanned_at?.toISOString(),
+    storage_locations: primaryStorageLocation(row),
   };
 }
 
@@ -386,13 +514,48 @@ async function queryRootfsRows(): Promise<RootfsImageRow[]> {
       rel.scan_status,
       rel.scan_tool,
       rel.scanned_at,
-      rel.scan_summary
+      rel.scan_summary,
+      rel.artifact_backend,
+      rel.artifact_format,
+      rel.artifact_path
     FROM rootfs_images AS r
     LEFT JOIN accounts AS a ON a.account_id = r.owner_id
     LEFT JOIN rootfs_releases AS rel ON rel.release_id = r.release_id
     ORDER BY r.official DESC, COALESCE(r.updated, r.created) DESC, r.label ASC`,
   );
   return rows;
+}
+
+async function queryReplicaStorageRows(
+  release_ids: string[],
+): Promise<Map<string, RootfsStorageLocation[]>> {
+  if (!release_ids.length) {
+    return new Map();
+  }
+  const pool = getPool("medium");
+  const { rows } = await pool.query<RootfsReplicaStorageRow>(
+    `SELECT
+      release_id::TEXT AS release_id,
+      backend,
+      region,
+      bucket_name,
+      bucket_purpose,
+      artifact_format,
+      artifact_path,
+      status
+    FROM rootfs_release_artifacts
+    WHERE release_id::TEXT = ANY($1::TEXT[])
+      AND COALESCE(status, 'ready') <> 'deleted'
+    ORDER BY created ASC, artifact_id ASC`,
+    [release_ids],
+  );
+  const byReleaseId = new Map<string, RootfsStorageLocation[]>();
+  for (const row of rows) {
+    const locations = byReleaseId.get(row.release_id) ?? [];
+    locations.push(replicaStorageLocation(row));
+    byReleaseId.set(row.release_id, locations);
+  }
+  return byReleaseId;
 }
 
 export async function listVisibleRootfsImages(
@@ -426,6 +589,21 @@ export async function listRootfsImagesAdmin(
   const entries = rows.map((row) =>
     rowToAdminEntry({ row, account_id, admin: true }),
   );
+  const replicasByReleaseId = await queryReplicaStorageRows(
+    rows
+      .map((row) => row.release_id)
+      .filter((release_id): release_id is string => !!release_id),
+  );
+  for (let i = 0; i < entries.length; i++) {
+    const release_id = rows[i].release_id;
+    if (!release_id) continue;
+    const replicas = replicasByReleaseId.get(release_id) ?? [];
+    if (!replicas.length) continue;
+    entries[i].storage_locations = [
+      ...(entries[i].storage_locations ?? []),
+      ...replicas,
+    ];
+  }
   await Promise.all(
     entries.map(async (entry) => {
       if (
