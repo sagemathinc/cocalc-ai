@@ -98,8 +98,6 @@ export function initFromSyncDB({ syncdb, store }: { syncdb: any; store: any }) {
   for (const row of rows) {
     if ((row as any)?.event === THREAD_STATE_EVENT) {
       const mapped = threadStateToAcpState((row as any)?.state);
-      const messageMapped =
-        (row as any)?.state === "running" ? mapped : undefined;
       const byThreadId = threadStateKey(row);
       const byMessageId = threadStateActiveMessageKey(row);
       if (mapped) {
@@ -107,9 +105,7 @@ export function initFromSyncDB({ syncdb, store }: { syncdb: any; store: any }) {
           acpState = acpState.set(byThreadId, mapped);
         }
         if (byMessageId) {
-          acpState = messageMapped
-            ? acpState.set(byMessageId, messageMapped)
-            : acpState.delete(byMessageId);
+          acpState = acpState.set(byMessageId, mapped);
         }
       } else {
         if (byThreadId) {
@@ -254,8 +250,6 @@ export function handleSyncDBChange({
 
     if (event === THREAD_STATE_EVENT) {
       const mapped = threadStateToAcpState((record as any)?.state);
-      const messageMapped =
-        (record as any)?.state === "running" ? mapped : undefined;
       const byThreadId = threadStateKey(record ?? obj);
       const byMessageId = threadStateActiveMessageKey(record ?? obj);
       const acpState = store.get("acpState") ?? iMap();
@@ -264,8 +258,8 @@ export function handleSyncDBChange({
         next = mapped ? next.set(byThreadId, mapped) : next.delete(byThreadId);
       }
       if (byMessageId) {
-        next = messageMapped
-          ? next.set(byMessageId, messageMapped)
+        next = mapped
+          ? next.set(byMessageId, mapped)
           : next.delete(byMessageId);
       }
       next = reconcileThreadChatRowAcpState({
