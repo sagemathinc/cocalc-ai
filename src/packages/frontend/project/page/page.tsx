@@ -66,6 +66,7 @@ import MoveProject from "@cocalc/frontend/project/settings/move-project";
 import { workspaceStrongThemeChrome } from "../workspaces/strong-theme";
 import type { MoveLroState } from "@cocalc/frontend/project/move-ops";
 import MoveInProgress from "./move-in-progress";
+import StartInProgress from "./start-in-progress";
 import {
   PROJECT_PAGE_ATTRIBUTE,
   handleProjectNavigationKeydown,
@@ -595,6 +596,7 @@ You can wait for this host to become available again, or move this project to an
           overflowX: "auto",
         }}
       >
+        <StartInProgress project_id={project_id} />
         {START_BANNER && <StartButton />}
         <div
           style={{

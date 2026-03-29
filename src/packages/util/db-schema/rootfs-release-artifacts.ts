@@ -26,7 +26,7 @@ Table({
     },
     backend: {
       type: "string",
-      desc: "Storage backend for this artifact replica (hub-local, r2).",
+      desc: "Storage backend for this artifact replica (r2 or rest).",
     },
     region: {
       type: "string",
@@ -46,11 +46,11 @@ Table({
     },
     artifact_kind: {
       type: "string",
-      desc: "Artifact kind for this replica (full, delta).",
+      desc: "Artifact kind for this replica (currently full).",
     },
     artifact_format: {
       type: "string",
-      desc: "Artifact format for this replica (currently btrfs-send).",
+      desc: "Artifact format for this replica (currently rustic).",
     },
     artifact_path: {
       type: "string",
