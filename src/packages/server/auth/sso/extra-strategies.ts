@@ -6,7 +6,6 @@
 import { Strategy as SAMLStrategyNew } from "@node-saml/passport-saml";
 import { Strategy as NextOAuth2 } from "@passport-next/passport-oauth2";
 import { Strategy as ADStrategy } from "passport-activedirectory";
-import { Strategy as AppleStrategy } from "passport-apple";
 import { OIDCStrategy as AzureAdStrategy } from "passport-azure-ad";
 import { Strategy as Gitlab2Strategy } from "passport-gitlab2";
 import * as oauth from "passport-oauth"; // this is a wrapper containing version 1 and 2
@@ -59,8 +58,6 @@ export function getExtraStrategyConstructor(
       return ADStrategy;
     case "gitlab2":
       return Gitlab2Strategy;
-    case "apple":
-      return AppleStrategy;
     case "email":
       throw new Error("email is a special case, not a strategy");
     default:
