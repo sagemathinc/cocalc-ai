@@ -392,6 +392,104 @@ describe("CodexAppServerAgent", () => {
     ).toBe(false);
   });
 
+  it("turns in-progress app-server file changes into live diff activity events", async () => {
+    const proc = new FakeCodexAppServerProc((fake, message) => {
+      switch (message.method) {
+        case "initialize":
+          fake.sendResponse(message.id, { ok: true });
+          break;
+        case "thread/start":
+          fake.sendResponse(message.id, {
+            thread: { id: "thr-file-diff-live-1" },
+          });
+          break;
+        case "turn/start":
+          fake.sendResponse(message.id, {
+            turn: { id: "turn-file-diff-live-1" },
+          });
+          setImmediate(() => {
+            fake.sendNotification("turn/started", {
+              turn: { id: "turn-file-diff-live-1", status: "inProgress" },
+            });
+            fake.sendNotification("item/started", {
+              threadId: "thr-file-diff-live-1",
+              turnId: "turn-file-diff-live-1",
+              item: {
+                type: "fileChange",
+                id: "file-change-live-1",
+                status: "inProgress",
+                changes: [
+                  {
+                    path: "primes.py",
+                    kind: { type: "add" },
+                    diff: [
+                      "def count_primes_up_to(n):",
+                      "    return 0",
+                      "",
+                    ].join("\n"),
+                  },
+                ],
+              },
+            });
+            fake.sendNotification("turn/completed", {
+              turn: { id: "turn-file-diff-live-1", status: "completed" },
+            });
+          });
+          break;
+        default:
+          if (typeof message.id === "number") {
+            fake.sendResponse(message.id, {});
+          }
+      }
+    });
+
+    setCodexProjectSpawner({
+      spawnCodexExec: async () => {
+        throw new Error("unexpected codex exec spawn");
+      },
+      spawnCodexAppServer: async () => ({
+        proc: proc as any,
+        cmd: "fake-codex",
+        args: ["app-server"],
+        cwd: "/tmp/project",
+      }),
+    });
+
+    const agent = new CodexAppServerAgent();
+    const streamPayloads: any[] = [];
+    await agent.evaluate({
+      project_id: "00000000-0000-4000-8000-000000000000",
+      account_id: "00000000-0000-4000-8000-000000000001",
+      prompt: "create a file",
+      stream: async (payload) => {
+        if (payload) {
+          streamPayloads.push(payload);
+        }
+      },
+      config: {
+        workingDirectory: "/tmp/project",
+      } as any,
+    });
+
+    expect(streamPayloads).toEqual(
+      expect.arrayContaining([
+        {
+          type: "event",
+          event: {
+            type: "diff",
+            path: "primes.py",
+            diff: {
+              lines: ["def count_primes_up_to(n):", "    return 0"],
+              types: [1, 1],
+              gutters: ["            1  +", "            2  +"],
+              chunkBoundaries: [1],
+            },
+          },
+        },
+      ]),
+    );
+  });
+
   it("falls back to the turn diff snapshot when file changes never complete", async () => {
     const proc = new FakeCodexAppServerProc((fake, message) => {
       switch (message.method) {

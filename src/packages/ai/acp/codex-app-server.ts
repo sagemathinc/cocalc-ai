@@ -1263,7 +1263,11 @@ export class CodexAppServerAgent implements AcpAgent {
             break;
           }
           case "fileChange":
-            if (item.status === "completed" && Array.isArray(item.changes)) {
+            if (
+              item.status !== "failed" &&
+              item.status !== "declined" &&
+              Array.isArray(item.changes)
+            ) {
               for (const change of item.changes) {
                 if (!change?.path) continue;
                 const eventKey = `${item.id ?? "file"}:${change.path}`;
