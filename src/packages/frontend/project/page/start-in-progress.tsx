@@ -1,4 +1,4 @@
-import { Progress, Space, Steps, Tag } from "antd";
+import { Progress, Space, Spin, Steps, Tag } from "antd";
 import { useEffect, useMemo, useState } from "react";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { TimeAgo } from "@cocalc/frontend/components";
@@ -102,16 +102,43 @@ export default function StartInProgress({
 }: {
   project_id: string;
 }) {
+  const projectMap = useTypedRedux("projects", "project_map");
   const startLroRecord = useTypedRedux({ project_id }, "start_lro");
   const startLro = useMemo(
     () => startLroRecord?.toJS() as StartLroState | undefined,
     [startLroRecord],
   );
-  const active = isStartActive(startLro);
-  const startTs = toTimestamp(
+  const startLroActive = isStartActive(startLro);
+  const lifecycleState = `${
+    projectMap?.getIn([project_id, "state", "state"]) ?? ""
+  }`
+    .trim()
+    .toLowerCase();
+  const lifecycleActive =
+    lifecycleState === "starting" || lifecycleState === "opening";
+  const active = startLroActive || lifecycleActive;
+  const actionRequestTime = toTimestamp(
+    projectMap?.getIn([project_id, "action_request", "time"]) as
+      | Date
+      | string
+      | null
+      | undefined,
+  );
+  const startTsFromLro = toTimestamp(
     startLro?.summary?.started_at ?? startLro?.summary?.created_at,
   );
+  const [detectedStartTs, setDetectedStartTs] = useState<number | undefined>();
   const [visible, setVisible] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (!active) {
+      setDetectedStartTs(undefined);
+      return;
+    }
+    setDetectedStartTs((current) => current ?? Date.now());
+  }, [active, project_id, startLro?.op_id]);
+
+  const startTs = startTsFromLro ?? actionRequestTime ?? detectedStartTs;
 
   useEffect(() => {
     if (!active) {
@@ -147,7 +174,9 @@ export default function StartInProgress({
   const message =
     rawMessage && rawMessage.toLowerCase() !== phase
       ? rawMessage
-      : (START_PHASES[current]?.description ?? "Starting project");
+      : !startLroActive && lifecycleActive
+        ? "Project is starting. Detailed startup progress has not arrived yet."
+        : (START_PHASES[current]?.description ?? "Starting project");
 
   return (
     <div
@@ -178,7 +207,14 @@ export default function StartInProgress({
           {message}
           {detailText ? ` · ${detailText}` : ""}
         </div>
-        {percent == null ? null : (
+        {percent == null ? (
+          <Space size="small" align="center">
+            <Spin size="small" />
+            <span style={{ color: COLORS.GRAY_M, fontSize: "12px" }}>
+              Waiting for detailed startup progress…
+            </span>
+          </Space>
+        ) : (
           <Progress
             percent={percent}
             showInfo={false}
