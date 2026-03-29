@@ -132,4 +132,39 @@ describe("server/conat route-client", () => {
     );
     expect(second?.client).toBe(routed2);
   });
+
+  it("recreates routed clients when the host session changes", async () => {
+    const central = createFakeClient();
+    const routed1 = createFakeClient();
+    const routed2 = createFakeClient();
+    connectMock
+      .mockImplementationOnce(() => central)
+      .mockImplementationOnce(() => routed1)
+      .mockImplementationOnce(() => routed2);
+    routeProjectSubjectMock
+      .mockReturnValueOnce({
+        host_id: "host-1",
+        host_session_id: "session-1",
+        address: "https://host-1.example",
+      })
+      .mockReturnValueOnce({
+        host_id: "host-1",
+        host_session_id: "session-2",
+        address: "https://host-1.example",
+      });
+
+    const { conatWithProjectRouting } = await import("./route-client");
+    const client = conatWithProjectRouting() as any;
+
+    const first = client.routeSubject(
+      "project.12345678-1234-1234-1234-123456789012.api",
+    );
+    const second = client.routeSubject(
+      "project.12345678-1234-1234-1234-123456789012.api",
+    );
+
+    expect(first?.client).toBe(routed1);
+    expect(second?.client).toBe(routed2);
+    expect(routed1.close).toHaveBeenCalled();
+  });
 });

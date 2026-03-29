@@ -229,6 +229,8 @@ export interface Host {
   project_bundle_version?: string;
   project_bundle_build_id?: string;
   tools_version?: string;
+  host_session_id?: string;
+  host_session_started_at?: string;
   machine?: HostMachine;
   public_ip?: string;
   last_error?: string;

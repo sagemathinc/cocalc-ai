@@ -29,6 +29,7 @@ const log = getLogger("server:conat:route-client");
 type RoutedHubClientState = {
   address: string;
   client: Client;
+  host_session_id?: string;
   token?: string;
   expiresAt?: number;
   inFlight?: Promise<string>;
@@ -95,12 +96,17 @@ async function getHubRouteToken(
 function getOrCreateRoutedHubClient({
   host_id,
   address,
+  host_session_id,
 }: {
   host_id: string;
   address: string;
+  host_session_id?: string;
 }): Client {
   const existing = routedHubClients[host_id];
-  if (existing?.address === address) {
+  if (
+    existing?.address === address &&
+    existing?.host_session_id === host_session_id
+  ) {
     return existing.client;
   }
   if (existing) {
@@ -108,6 +114,7 @@ function getOrCreateRoutedHubClient({
   }
   const state: RoutedHubClientState = {
     address,
+    host_session_id,
     client: connect({
       address,
       inboxPrefix: inboxPrefix({ hub_id: "hub" }),
@@ -191,6 +198,7 @@ export function conatWithProjectRouting(options?: ClientOptions): Client {
             client: getOrCreateRoutedHubClient({
               host_id: routed.host_id,
               address: routed.address,
+              host_session_id: routed.host_session_id,
             }),
           };
         }
@@ -205,6 +213,7 @@ export function conatWithProjectRouting(options?: ClientOptions): Client {
             client: getOrCreateRoutedHubClient({
               host_id: routed.host_id,
               address: routed.address,
+              host_session_id: routed.host_session_id,
             }),
           };
         };

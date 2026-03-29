@@ -7,6 +7,7 @@ let publishLroSummaryMock: jest.Mock;
 let publishLroEventMock: jest.Mock;
 let getProjectMock: jest.Mock;
 let projectStartMock: jest.Mock;
+let mirrorStartLroProgressMock: jest.Mock;
 
 jest.mock("@cocalc/server/projects/create", () => ({
   __esModule: true,
@@ -75,6 +76,12 @@ jest.mock("@cocalc/server/lro/lro-db", () => ({
   updateLro: (...args: any[]) => updateLroMock(...args),
 }));
 
+jest.mock("@cocalc/server/projects/start-lro-progress", () => ({
+  __esModule: true,
+  mirrorStartLroProgress: (...args: any[]) =>
+    mirrorStartLroProgressMock(...args),
+}));
+
 jest.mock("@cocalc/conat/lro/stream", () => ({
   __esModule: true,
   publishLroEvent: (...args: any[]) => publishLroEventMock(...args),
@@ -117,6 +124,7 @@ describe("projects.start", () => {
     publishLroSummaryMock = jest.fn(() => new Promise(() => {}));
     publishLroEventMock = jest.fn(async () => undefined);
     projectStartMock = jest.fn(async () => undefined);
+    mirrorStartLroProgressMock = jest.fn(async () => async () => undefined);
     getProjectMock = jest.fn(async () => ({
       start: projectStartMock,
     }));

@@ -8,6 +8,12 @@ import { materializeProjectHostTarget } from "./route-project";
 
 let routedClient: Client | undefined;
 
+type FileserverServiceClient = Fileserver & {
+  conat?: {
+    ping: (opts?: { maxWait?: number }) => Promise<void>;
+  };
+};
+
 function getRoutedClient(): Client {
   routedClient ??= conatWithProjectRouting();
   return routedClient;
@@ -43,4 +49,26 @@ export async function getProjectFileServerClient({
     timeout,
     waitForInterest: true,
   });
+}
+
+export async function ensureProjectFileServerClientReady({
+  project_id,
+  client,
+  maxWait = 30_000,
+}: {
+  project_id: string;
+  client: Fileserver;
+  maxWait?: number;
+}): Promise<void> {
+  const serviceClient = client as FileserverServiceClient;
+  if (typeof serviceClient?.conat?.ping !== "function") {
+    return;
+  }
+  try {
+    await serviceClient.conat.ping({ maxWait });
+  } catch (err) {
+    throw new Error(
+      `project file-server service for ${project_id} is not responding: ${err}`,
+    );
+  }
 }

@@ -29,9 +29,38 @@ import {
   mapCloudRegionToR2Region,
   parseR2Region,
 } from "@cocalc/util/consts";
+import { createLro, updateLro } from "@cocalc/server/lro/lro-db";
+import { publishLroEvent, publishLroSummary } from "@cocalc/conat/lro/stream";
+import type { LroSummary } from "@cocalc/conat/hub/api/lro";
+import { takeStartProjectPhaseTimings } from "@cocalc/server/project-host/control";
+import { mirrorStartLroProgress } from "@cocalc/server/projects/start-lro-progress";
 
 const log = getLogger("server:projects:create");
 const HOST_ONLINE_WINDOW_MS = 2 * 60 * 1000;
+
+function publishStartLroSummaryBestEffort({
+  scope_type,
+  scope_id,
+  summary,
+  context,
+}: {
+  scope_type: LroSummary["scope_type"];
+  scope_id: string;
+  summary: LroSummary;
+  context: string;
+}): void {
+  void publishLroSummary({
+    scope_type,
+    scope_id,
+    summary,
+  }).catch((err) => {
+    log.warn(`${context}: unable to publish LRO summary`, {
+      op_id: summary.op_id,
+      scope_id,
+      err: `${err}`,
+    });
+  });
+}
 
 function isHostRunningAndOnline(row: any): {
   ok: boolean;
@@ -359,8 +388,103 @@ async function startNewProject(
   account_id?: string,
 ) {
   log.debug("startNewProject", { project_id });
+  let op: LroSummary | undefined;
   try {
-    await project.start({ account_id });
+    const createdOp = await createLro({
+      kind: "project-start",
+      scope_type: "project",
+      scope_id: project_id,
+      created_by: account_id,
+      routing: "hub",
+      input: { project_id },
+      status: "queued",
+    });
+    op = createdOp;
+    publishStartLroSummaryBestEffort({
+      scope_type: createdOp.scope_type,
+      scope_id: createdOp.scope_id,
+      summary: createdOp,
+      context: "createProject: start initial",
+    });
+    void publishLroEvent({
+      scope_type: createdOp.scope_type,
+      scope_id: createdOp.scope_id,
+      op_id: createdOp.op_id,
+      event: {
+        type: "progress",
+        ts: Date.now(),
+        phase: "queued",
+        message: "queued",
+        progress: 0,
+      },
+    }).catch((err) => {
+      log.warn("createProject: unable to publish queued start event", {
+        project_id,
+        op_id: op?.op_id,
+        err: `${err}`,
+      });
+    });
+  } catch (err) {
+    log.warn("createProject: unable to initialize start LRO", {
+      project_id,
+      err: `${err}`,
+    });
+  }
+
+  async function setLroStatus(
+    status: "running" | "succeeded" | "failed",
+    opts?: {
+      progress_summary?: any;
+      result?: any;
+      error?: string | null;
+      context?: string;
+    },
+  ): Promise<void> {
+    const currentOp = op;
+    if (!currentOp?.op_id) {
+      return;
+    }
+    try {
+      const updated = await updateLro({
+        op_id: currentOp.op_id,
+        status,
+        progress_summary: opts?.progress_summary,
+        result: opts?.result,
+        error: opts?.error,
+      });
+      if (updated) {
+        publishStartLroSummaryBestEffort({
+          scope_type: updated.scope_type,
+          scope_id: updated.scope_id,
+          summary: updated,
+          context: opts?.context ?? `createProject: start ${status}`,
+        });
+      }
+    } catch (err) {
+      log.warn("createProject: unable to update start LRO", {
+        project_id,
+        op_id: currentOp.op_id,
+        status,
+        err: `${err}`,
+      });
+    }
+  }
+
+  await setLroStatus("running", {
+    progress_summary: {
+      phase: "queued",
+      message: "queued",
+      progress: 0,
+    },
+    error: null,
+    context: "createProject: start running",
+  });
+  const stopProgressMirror = await mirrorStartLroProgress({
+    project_id,
+    op_id: op?.op_id,
+  });
+  try {
+    await project.start({ account_id, lro_op_id: op?.op_id });
     // Keep a conservative retry for slow host bring-up, but only if the
     // project still is not active after a short settle window.
     await delay(5000);
@@ -378,11 +502,32 @@ async function startNewProject(
         project_id,
         state,
       });
-      await project.start({ account_id });
+      await project.start({ account_id, lro_op_id: op?.op_id });
     }
+    const phase_timings_ms = takeStartProjectPhaseTimings(op?.op_id);
+    const progress_summary = {
+      done: 1,
+      total: 1,
+      failed: 0,
+      queued: 0,
+      expired: 0,
+      applying: 0,
+      canceled: 0,
+      phase_timings_ms,
+    };
+    await setLroStatus("succeeded", {
+      progress_summary,
+      result: progress_summary,
+      error: null,
+      context: "createProject: start succeeded",
+    });
   } catch (err) {
     log.warn(`problem starting new project -- ${err}`, {
       project_id,
+    });
+    await setLroStatus("failed", {
+      error: `${err}`,
+      context: "createProject: start failed",
     });
     try {
       await project.saveStateToDatabase({
@@ -396,5 +541,7 @@ async function startNewProject(
         err: `${stateErr}`,
       });
     }
+  } finally {
+    await stopProgressMirror();
   }
 }

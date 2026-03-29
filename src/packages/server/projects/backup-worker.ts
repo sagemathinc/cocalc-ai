@@ -12,7 +12,10 @@ import {
   updateLro,
 } from "@cocalc/server/lro/lro-db";
 import { publishLroEvent, publishLroSummary } from "@cocalc/conat/lro/stream";
-import { getProjectFileServerClient } from "@cocalc/server/conat/file-server-client";
+import {
+  ensureProjectFileServerClientReady,
+  getProjectFileServerClient,
+} from "@cocalc/server/conat/file-server-client";
 import { withTimeout } from "@cocalc/util/async-utils";
 import {
   computeHostAvailableBackupSlots,
@@ -45,6 +48,7 @@ const DEFAULT_MAX_PARALLEL = Math.max(
 );
 const MAX_BACKUPS_PER_PROJECT = 30;
 const HOST_LOCAL_BACKUP_WORKER_KIND = "project-host-backup-execution";
+const FILE_SERVER_READY_TIMEOUT_MS = 60_000;
 
 const WORKER_ID = randomUUID();
 
@@ -240,6 +244,11 @@ async function handleBackupOp(op: LroSummary): Promise<void> {
           const client = await getProjectFileServerClient({
             project_id,
             timeout: BACKUP_TIMEOUT_MS,
+          });
+          await ensureProjectFileServerClientReady({
+            project_id,
+            client,
+            maxWait: FILE_SERVER_READY_TIMEOUT_MS,
           });
           return await client.createBackup({
             project_id,
