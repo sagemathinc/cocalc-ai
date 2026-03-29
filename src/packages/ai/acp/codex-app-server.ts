@@ -170,6 +170,53 @@ function getFileChangeLineDiff(change: any): LineDiffResult | undefined {
   return lineDiffFromUnifiedPatch(diffText);
 }
 
+function patchPathFromHeaderLine(line: string): string | undefined {
+  const diffMatch = /^diff --git a\/(.+?) b\/(.+)$/.exec(line);
+  if (diffMatch) {
+    return diffMatch[2] || diffMatch[1];
+  }
+  const plusMatch = /^\+\+\+ (?:b\/)?(.+)$/.exec(line);
+  if (plusMatch && plusMatch[1] !== "/dev/null") {
+    return plusMatch[1];
+  }
+  const minusMatch = /^--- (?:a\/)?(.+)$/.exec(line);
+  if (minusMatch && minusMatch[1] !== "/dev/null") {
+    return minusMatch[1];
+  }
+  return undefined;
+}
+
+function splitUnifiedDiffByFile(
+  diffText: string,
+): Array<{ path: string; diffText: string }> {
+  const lines = normalizeDiffLines(diffText);
+  const blocks: Array<{ path: string; diffText: string }> = [];
+  let currentPath: string | undefined;
+  let currentLines: string[] = [];
+
+  const flush = () => {
+    if (!currentPath || currentLines.length === 0) return;
+    blocks.push({
+      path: currentPath,
+      diffText: currentLines.join("\n"),
+    });
+  };
+
+  for (const line of lines) {
+    if (line.startsWith("diff --git ")) {
+      flush();
+      currentLines = [line];
+      currentPath = patchPathFromHeaderLine(line);
+      continue;
+    }
+    currentLines.push(line);
+    currentPath ||= patchPathFromHeaderLine(line);
+  }
+
+  flush();
+  return blocks;
+}
+
 function getCoCalcRuntimeGuidanceHeader(cliCommand: string): string {
   return [
     "[CoCalc runtime capabilities]",
@@ -905,6 +952,8 @@ export class CodexAppServerAgent implements AcpAgent {
     const terminalOutputs = new Map<string, string>();
     const startedTerminalIds = new Set<string>();
     const emittedFileWrites = new Set<string>();
+    const emittedFileWritePaths = new Set<string>();
+    let latestTurnDiffText: string | undefined;
     const siteKeyGovernor = getCodexSiteKeyGovernor();
     const siteKeyEnforced =
       spawned.authSource === "site-api-key" &&
@@ -1206,6 +1255,7 @@ export class CodexAppServerAgent implements AcpAgent {
                 if (emittedFileWrites.has(eventKey)) continue;
                 const diff = getFileChangeLineDiff(change);
                 emittedFileWrites.add(eventKey);
+                emittedFileWritePaths.add(change.path);
                 if (diff) {
                   await stream({
                     type: "event",
@@ -1231,6 +1281,36 @@ export class CodexAppServerAgent implements AcpAgent {
             break;
           default:
             break;
+        }
+      };
+
+      const emitMissingTurnDiffEvents = async (): Promise<void> => {
+        const diffText = `${latestTurnDiffText ?? ""}`.trim();
+        if (!diffText) return;
+        for (const block of splitUnifiedDiffByFile(diffText)) {
+          if (!block.path || emittedFileWritePaths.has(block.path)) continue;
+          const diff = lineDiffFromUnifiedPatch(block.diffText);
+          emittedFileWritePaths.add(block.path);
+          if (diff) {
+            await stream({
+              type: "event",
+              event: {
+                type: "diff",
+                path: block.path,
+                diff,
+              },
+            });
+            continue;
+          }
+          await stream({
+            type: "event",
+            event: {
+              type: "file",
+              path: block.path,
+              operation: "write",
+              cwd,
+            },
+          });
         }
       };
 
@@ -1296,6 +1376,13 @@ export class CodexAppServerAgent implements AcpAgent {
           case "item/updated":
             await handleItem(notification.params?.item);
             break;
+          case "turn/diff/updated": {
+            const diff = notification.params?.diff;
+            if (typeof diff === "string" && diff.trim().length > 0) {
+              latestTurnDiffText = diff;
+            }
+            break;
+          }
           case "thread/tokenUsage/updated": {
             const usage = notification.params?.tokenUsage?.last;
             if (usage) {
@@ -1359,6 +1446,7 @@ export class CodexAppServerAgent implements AcpAgent {
       })();
 
       await pendingNotificationLoop;
+      await emitMissingTurnDiffEvents();
       if (quotaPollTimer) {
         clearInterval(quotaPollTimer);
       }
