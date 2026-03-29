@@ -109,6 +109,27 @@ Why:
 - host saturation
 - placement decisions
 - understanding when OCI/RootFS activity is CPU-bound
+- giving users better information about which shared host to select, or whether
+  they want a dedicated host
+- giving admins a better sense of shared-host resource utilization
+
+### GPU
+
+For hosts with one or more GPUs, add GPU metrics as part of the current
+snapshot and history model.
+
+- `gpu_count`
+- `gpu_util_percent[]`
+- `gpu_memory_used_bytes[]`
+- `gpu_memory_total_bytes[]`
+- optionally `gpu_temperature_c[]` later
+
+Why:
+
+- GPU hosts are expensive and should be monitored explicitly
+- users need better information about which shared GPU host to choose
+- admins need visibility into whether GPU hosts are actually utilized
+- memory pressure on GPU hosts is often as important as CPU or RAM pressure
 
 ### Memory
 
@@ -203,6 +224,7 @@ Suggested data sources:
   - later prefer a machine-readable command if available
 - Project counts:
   - local sqlite project table
+  - later add “RAM used by each running project” as a local-only detailed view
 - RootFS cache:
   - existing cache inventory code
 - Storage reservations:
@@ -455,8 +477,15 @@ Expected policy:
 - retry reservation once
 - otherwise fail cleanly
 
-This should start with GCP only.
-Other providers can be added after their resize semantics are verified.
+The initial implementation should start with GCP only.
+
+Operational policy:
+
+- likely early production providers are GCP and Nebius
+- implement and enable guarded auto-grow on GCP first
+- add Nebius only after its resize semantics are verified
+- if a provider requires reboot for disk growth, keep larger headroom and use
+  stricter thresholds there instead of pretending it behaves like GCP
 
 ## Implementation Phases
 
@@ -540,17 +569,26 @@ Deliverable:
 - DB outage during metrics ingest
 - malformed Btrfs output
 
+## Initial Decisions
+
+- treat Ubuntu as the primary supported environment for the first Btrfs metrics
+  collector
+- keep raw one-minute samples for 7 days, then roll up
+- defer `rootfs_cache_bytes` and `podman_image_store_bytes` until after current
+  disk and metadata metrics land
+- use growth-rate-derived risk in placement as soon as we have enough history
+  to compute a coarse, conservative signal
+- when host-local reservations survive a host restart in an uncertain state,
+  surface an explicit unstable reservation tag with a popover explanation in UI
+  and CLI
+
 ## Open Questions
 
-- Which Btrfs command gives the most stable machine-readable output across our
-  supported distros?
-- Do we want raw one-minute samples for 30 days, or early rollups after 7 days?
-- Should rootfs cache bytes and podman image-store bytes be part of V1, or wait
-  until after current disk and metadata metrics land?
-- Do we want placement to use growth-rate-derived risk in V1, or only current
-  watermarks?
-- How should host-local reservations be surfaced to admins when a host restarts
-  mid-operation?
+- Which Btrfs command and parser shape are the most stable for Ubuntu across
+  the versions we actually deploy?
+- What is the best low-overhead source for per-project RAM usage on running
+  projects?
+- Does Nebius disk growth require reboot in the configurations we plan to run?
 
 ## Recommendation
 
