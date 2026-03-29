@@ -30,7 +30,6 @@
     "@cocalc/sync": "workspace:*",
     "@cocalc/sync-client": "workspace:*",
     "@cocalc/util": "workspace:*",
-    "@types/jest": "^30.0.0",
     "awaiting": "^3.0.0",
     "commander": "^14.0.1",
     "daemonize-process": "^3.0.0",
@@ -48,6 +47,7 @@
   },
   "devDependencies": {
     "@types/express": "^5.0.6",
+    "@types/jest": "^30.0.0",
     "@types/lodash": "^4.17.20",
     "@types/node": "^22.10.10",
     "@types/primus": "^7.3.9",

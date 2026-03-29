@@ -1152,9 +1152,6 @@ importers:
       events:
         specifier: 3.3.0
         version: 3.3.0
-      expect:
-        specifier: ^26.6.2
-        version: 26.6.2
       he:
         specifier: ^1.2.0
         version: 1.2.0
@@ -1192,6 +1189,9 @@ importers:
       '@types/node-cleanup':
         specifier: ^2.1.2
         version: 2.1.5
+      expect:
+        specifier: ^26.6.2
+        version: 26.6.2
 
   launchpad:
     dependencies:
@@ -1360,9 +1360,6 @@ importers:
       '@cocalc/util':
         specifier: workspace:*
         version: link:../util
-      '@types/jest':
-        specifier: ^30.0.0
-        version: 30.0.0
       awaiting:
         specifier: ^3.0.0
         version: 3.0.0
@@ -1409,6 +1406,9 @@ importers:
       '@types/express':
         specifier: ^5.0.6
         version: 5.0.6
+      '@types/jest':
+        specifier: ^30.0.0
+        version: 30.0.0
       '@types/lodash':
         specifier: ^4.17.20
         version: 4.17.20
