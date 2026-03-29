@@ -105,6 +105,9 @@ function needsTextBoundarySpace(
   }
   const leftLast = left[left.length - 1];
   const rightFirst = right[0];
+  if (leftLast === "]" && rightFirst === "(") {
+    return false;
+  }
   if (/[.!?;:]/.test(leftLast) && /[A-Za-z0-9`"'([{]/.test(rightFirst)) {
     return true;
   }
