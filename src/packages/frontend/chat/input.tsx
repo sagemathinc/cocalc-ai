@@ -36,6 +36,7 @@ interface Props {
   input?: string;
   on_paste?: (e) => void;
   height?: string;
+  autoGrowMinHeight?: number;
   autoGrowMaxHeight?: number;
   submitMentionsRef?: SubmitMentionsRef;
   fontSize?: number;
@@ -79,6 +80,7 @@ export default function ChatInput({
   editBarStyle,
   fontSize,
   height,
+  autoGrowMinHeight,
   input: propsInput,
   on_send,
   onBlur,
@@ -334,6 +336,7 @@ export default function ChatInput({
       undoMode="local"
       redoMode="local"
       height={height}
+      autoGrowMinHeight={autoGrowMinHeight}
       autoGrowMaxHeight={autoGrowMaxHeight}
       clampAutoGrowToHost
       placeholder={getPlaceholder()}

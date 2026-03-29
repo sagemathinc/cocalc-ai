@@ -87,6 +87,8 @@ import { setChatOverlayOpen } from "./drawer-overlay-state";
 import { formatTurnDuration } from "./turn-duration";
 import { CodexQuotaHelp } from "./codex-quota-help";
 
+const EDIT_MARKDOWN_MIN_HEIGHT = 120;
+
 const BLANK_COLUMN = (xs) => <Col key={"blankcolumn"} xs={xs}></Col>;
 
 const MARKDOWN_STYLE = undefined;
@@ -1816,6 +1818,7 @@ export default function Message({
           submitMentionsRef={submitMentionsRef}
           on_send={(value) => saveEditedMessage(value)}
           height={"auto"}
+          autoGrowMinHeight={EDIT_MARKDOWN_MIN_HEIGHT}
           syncdb={actions.syncdb}
           date={date}
           onChange={(value) => {
