@@ -325,13 +325,15 @@ export async function after() {
     try {
       closeConatClientForTests();
     } catch {}
-    while (true) {
-      try {
-        await rm(tempDir, { force: true, recursive: true });
-        break;
-      } catch (err) {
-        console.log(err);
-        await delay(1000);
+    if (tempDir != null) {
+      while (true) {
+        try {
+          await rm(tempDir, { force: true, recursive: true });
+          break;
+        } catch (err) {
+          console.log(err);
+          await delay(1000);
+        }
       }
     }
     try {
