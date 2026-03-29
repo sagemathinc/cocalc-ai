@@ -288,6 +288,110 @@ describe("CodexAppServerAgent", () => {
     ]);
   });
 
+  it("turns completed app-server file changes into diff activity events", async () => {
+    const proc = new FakeCodexAppServerProc((fake, message) => {
+      switch (message.method) {
+        case "initialize":
+          fake.sendResponse(message.id, { ok: true });
+          break;
+        case "thread/start":
+          fake.sendResponse(message.id, {
+            thread: { id: "thr-file-diff-1" },
+          });
+          break;
+        case "turn/start":
+          fake.sendResponse(message.id, { turn: { id: "turn-file-diff-1" } });
+          setImmediate(() => {
+            fake.sendNotification("turn/started", {
+              turn: { id: "turn-file-diff-1", status: "inProgress" },
+            });
+            fake.sendNotification("item/completed", {
+              threadId: "thr-file-diff-1",
+              turnId: "turn-file-diff-1",
+              item: {
+                type: "fileChange",
+                id: "file-change-1",
+                status: "completed",
+                changes: [
+                  {
+                    path: "src/app.ts",
+                    kind: { type: "update", movePath: null },
+                    diff: [
+                      "--- a/src/app.ts",
+                      "+++ b/src/app.ts",
+                      "@@ -1 +1 @@",
+                      "-const x = 1;",
+                      "+const x = 2;",
+                    ].join("\n"),
+                  },
+                ],
+              },
+            });
+            fake.sendNotification("turn/completed", {
+              turn: { id: "turn-file-diff-1", status: "completed" },
+            });
+          });
+          break;
+        default:
+          if (typeof message.id === "number") {
+            fake.sendResponse(message.id, {});
+          }
+      }
+    });
+
+    setCodexProjectSpawner({
+      spawnCodexExec: async () => {
+        throw new Error("unexpected codex exec spawn");
+      },
+      spawnCodexAppServer: async () => ({
+        proc: proc as any,
+        cmd: "fake-codex",
+        args: ["app-server"],
+        cwd: "/tmp/project",
+      }),
+    });
+
+    const agent = new CodexAppServerAgent();
+    const streamPayloads: any[] = [];
+    await agent.evaluate({
+      project_id: "00000000-0000-4000-8000-000000000000",
+      account_id: "00000000-0000-4000-8000-000000000001",
+      prompt: "change a file",
+      stream: async (payload) => {
+        if (payload) {
+          streamPayloads.push(payload);
+        }
+      },
+      config: {
+        workingDirectory: "/tmp/project",
+      } as any,
+    });
+
+    expect(streamPayloads).toEqual(
+      expect.arrayContaining([
+        {
+          type: "event",
+          event: {
+            type: "diff",
+            path: "src/app.ts",
+            diff: {
+              lines: ["const x = 1;", "const x = 2;"],
+              types: [-1, 1],
+              gutters: ["     1         -", "            1  +"],
+              chunkBoundaries: [1],
+            },
+          },
+        },
+      ]),
+    );
+    expect(
+      streamPayloads.some(
+        (payload) =>
+          payload?.type === "event" && payload?.event?.type === "file",
+      ),
+    ).toBe(false);
+  });
+
   it("sends local images as LocalImage turn inputs", async () => {
     let turnStartParams: any;
     const proc = new FakeCodexAppServerProc((fake, message) => {
