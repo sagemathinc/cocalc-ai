@@ -132,7 +132,7 @@ describe("projects.createProject start LRO", () => {
       status: "queued",
     }));
     updateLroMock = jest.fn(
-      async ({ op_id, status }: { op_id: string; status: string }) => ({
+      async ({ status }: { op_id: string; status: string }) => ({
         op_id: "op-1",
         kind: "project-start",
         scope_type: "project",

@@ -20,7 +20,6 @@
     { "path": "./jupyter" },
     { "path": "./launchpad" },
     { "path": "./lite" },
-    { "path": "./next" },
     { "path": "./plus" },
     { "path": "./project" },
     { "path": "./project-host" },
