@@ -180,9 +180,6 @@ importers:
       jquery:
         specifier: ^3.6.0
         version: 3.7.1
-      url-loader:
-        specifier: ^4.1.1
-        version: 4.1.1(webpack@5.102.1(uglify-js@3.19.3))
     devDependencies:
       '@cocalc/backend':
         specifier: workspace:*
@@ -1113,12 +1110,6 @@ importers:
       validator:
         specifier: '>=13.15.22'
         version: 13.15.23
-      webpack-dev-middleware:
-        specifier: ^7.4.2
-        version: 7.4.5(webpack@5.102.1(uglify-js@3.19.3))
-      webpack-hot-middleware:
-        specifier: ^2.26.1
-        version: 2.26.1
     devDependencies:
       '@types/express':
         specifier: ^5.0.6
@@ -1126,6 +1117,12 @@ importers:
       '@types/node':
         specifier: ^22.10.10
         version: 22.19.1
+      webpack-dev-middleware:
+        specifier: ^7.4.2
+        version: 7.4.5(webpack@5.102.1(uglify-js@3.19.3))
+      webpack-hot-middleware:
+        specifier: ^2.26.1
+        version: 2.26.1
 
   jupyter:
     dependencies:
@@ -12031,16 +12028,6 @@ packages:
 
   uri-js@4.4.1:
     resolution: {integrity: sha512-7rKUyy33Q1yc98pQ1DAmLtwX109F7TIfWlW1Ydo8Wl1ii1SeHieeh0HHfPeL2fMXK6z0s8ecKs9frCuLJvndBg==}
-
-  url-loader@4.1.1:
-    resolution: {integrity: sha512-3BTV812+AVHHOJQO8O5MkWgZ5aosP7GnROJwvzLS9hWDj00lZ6Z0wNak423Lp9PBZN05N+Jk/N5Si8jRAlGyWA==}
-    engines: {node: '>= 10.13.0'}
-    peerDependencies:
-      file-loader: '*'
-      webpack: ^4.0.0 || ^5.0.0
-    peerDependenciesMeta:
-      file-loader:
-        optional: true
 
   url-parse@1.5.10:
     resolution: {integrity: sha512-WypcfiRhfeUP9vvF0j6rw0J3hrWrw6iZv3+22h6iRMJ/8z1Tj6XfLP4DsUix5MhMPnXpiHDoKyoZ/bdCkwBCiQ==}
@@ -25192,6 +25179,7 @@ snapshots:
       webpack: 5.102.1(uglify-js@3.19.3)
     optionalDependencies:
       uglify-js: 3.19.3
+    optional: true
 
   terser-webpack-plugin@5.4.0(webpack@5.102.1):
     dependencies:
@@ -25714,13 +25702,6 @@ snapshots:
     dependencies:
       punycode: 2.3.1
 
-  url-loader@4.1.1(webpack@5.102.1(uglify-js@3.19.3)):
-    dependencies:
-      loader-utils: 2.0.4
-      mime-types: 2.1.35
-      schema-utils: 3.3.0
-      webpack: 5.102.1(uglify-js@3.19.3)
-
   url-parse@1.5.10:
     dependencies:
       querystringify: 2.2.0
@@ -26109,6 +26090,7 @@ snapshots:
       - '@swc/core'
       - esbuild
       - uglify-js
+    optional: true
 
   websocket-driver@0.7.4:
     dependencies:
