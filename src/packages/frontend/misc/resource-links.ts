@@ -28,7 +28,7 @@ export function resource_links(
   const vers = (name) => (with_version ? `-${versions[name]}` : "");
   return [
     {
-      href: `${prefix}${CDN}/bootstrap${vers("bootstrap")}/bootstrap.min.css`,
+      href: `${prefix}public/cocalc-content.css`,
       rel: "stylesheet",
     },
     {

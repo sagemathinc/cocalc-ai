@@ -13,8 +13,6 @@ export * from "./cookies";
 export * from "./tracking";
 export * from "./show-react-modal";
 
-import "./bootstrap-fixes";
-
 export {
   set_local_storage,
   get_local_storage,
