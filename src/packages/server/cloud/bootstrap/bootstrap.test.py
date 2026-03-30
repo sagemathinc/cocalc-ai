@@ -3,6 +3,7 @@
 import json
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 
 import bootstrap
@@ -180,6 +181,97 @@ class BootstrapOwnershipScopeTest(unittest.TestCase):
                 (["chown", "missing-runtime-user:missing-runtime-user", "/mnt/cocalc/data"], "chown /mnt/cocalc/data"),
                 recorded,
             )
+
+    def test_configure_podman_chowns_rootless_storage_children(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            recorded = []
+
+            original_run_best_effort = bootstrap.run_best_effort
+            original_runtime_home = bootstrap.runtime_home
+            original_mkdir = Path.mkdir
+            original_write_text = Path.write_text
+            try:
+                bootstrap.run_best_effort = (
+                    lambda _cfg, args, desc: recorded.append((args, desc))
+                )
+                bootstrap.runtime_home = lambda _cfg: str(Path(tmpdir) / "home")
+                Path.mkdir = lambda self, parents=False, exist_ok=False: None  # type: ignore[method-assign]
+                Path.write_text = lambda self, _text, encoding="utf-8": 0  # type: ignore[method-assign]
+                bootstrap.configure_podman(cfg)
+            finally:
+                bootstrap.run_best_effort = original_run_best_effort
+                bootstrap.runtime_home = original_runtime_home
+                Path.mkdir = original_mkdir  # type: ignore[method-assign]
+                Path.write_text = original_write_text  # type: ignore[method-assign]
+
+            self.assertIn(
+                (
+                    [
+                        "chown",
+                        "missing-runtime-user:missing-runtime-user",
+                        str(Path(tmpdir) / "home" / ".config" / "containers"),
+                        "/mnt/cocalc/data/containers/rootless/missing-runtime-user",
+                        "/mnt/cocalc/data/containers/rootless/missing-runtime-user/storage",
+                        "/mnt/cocalc/data/containers/rootless/missing-runtime-user/run",
+                    ],
+                    "chown rootless podman paths",
+                ),
+                recorded,
+            )
+
+    def test_reconcile_cloudflared_installs_binary_when_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = replace(
+                make_cfg(tmpdir),
+                cloudflared=bootstrap.CloudflaredSpec(
+                    True,
+                    hostname="host.example.test",
+                    port=9002,
+                    ssh_hostname="ssh.example.test",
+                    ssh_port=2222,
+                    token="token",
+                ),
+            )
+            recorded = []
+
+            original_run_cmd = bootstrap.run_cmd
+            original_which = bootstrap.shutil.which
+            original_mkdir = Path.mkdir
+            original_write_text = Path.write_text
+            original_chmod = bootstrap.os.chmod
+            try:
+                bootstrap.run_cmd = (
+                    lambda _cfg, args, desc, **kwargs: recorded.append((args, desc))
+                )
+                bootstrap.shutil.which = lambda name: None if name == "cloudflared" else original_which(name)
+                Path.mkdir = lambda self, parents=False, exist_ok=False: None  # type: ignore[method-assign]
+                Path.write_text = lambda self, _text, encoding="utf-8": 0  # type: ignore[method-assign]
+                bootstrap.os.chmod = lambda *_args, **_kwargs: None
+                bootstrap.configure_cloudflared_with_options(
+                    cfg, install_package=False
+                )
+            finally:
+                bootstrap.run_cmd = original_run_cmd
+                bootstrap.shutil.which = original_which
+                Path.mkdir = original_mkdir  # type: ignore[method-assign]
+                Path.write_text = original_write_text  # type: ignore[method-assign]
+                bootstrap.os.chmod = original_chmod
+
+            self.assertIn(
+                (
+                    [
+                        "curl",
+                        "-fsSL",
+                        "-o",
+                        "/tmp/cloudflared.deb",
+                        "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb",
+                    ],
+                    "download cloudflared",
+                ),
+                recorded,
+            )
+            self.assertIn((["dpkg", "-i", "/tmp/cloudflared.deb"], "install cloudflared"), recorded)
 
 
 class BootstrapModesTest(unittest.TestCase):

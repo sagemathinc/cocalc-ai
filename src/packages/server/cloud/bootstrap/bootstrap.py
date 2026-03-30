@@ -1383,6 +1383,9 @@ def configure_podman(cfg: BootstrapConfig) -> None:
     if cfg.ssh_user != "root":
         user_config_root = Path(runtime_home(cfg)) / ".config"
         user_config = user_config_root / "containers"
+        rootless_root = Path(f"/mnt/cocalc/data/containers/rootless/{cfg.ssh_user}")
+        rootless_storage = rootless_root / "storage"
+        rootless_run = rootless_root / "run"
         user_config_root.mkdir(parents=True, exist_ok=True)
         run_best_effort(
             cfg,
@@ -1390,18 +1393,25 @@ def configure_podman(cfg: BootstrapConfig) -> None:
             "chown user config",
         )
         user_config.mkdir(parents=True, exist_ok=True)
-        Path(f"/mnt/cocalc/data/containers/rootless/{cfg.ssh_user}/storage").mkdir(parents=True, exist_ok=True)
-        Path(f"/mnt/cocalc/data/containers/rootless/{cfg.ssh_user}/run").mkdir(parents=True, exist_ok=True)
+        rootless_storage.mkdir(parents=True, exist_ok=True)
+        rootless_run.mkdir(parents=True, exist_ok=True)
         run_best_effort(
             cfg,
-            ["chown", f"{cfg.ssh_user}:{cfg.ssh_user}", f"/mnt/cocalc/data/containers/rootless/{cfg.ssh_user}"],
-            "chown rootless storage root",
+            [
+                "chown",
+                f"{cfg.ssh_user}:{cfg.ssh_user}",
+                str(user_config),
+                str(rootless_root),
+                str(rootless_storage),
+                str(rootless_run),
+            ],
+            "chown rootless podman paths",
         )
         (user_config / "storage.conf").write_text(
             '[storage]\n'
             'driver = "overlay"\n'
-            f'runroot = "/mnt/cocalc/data/containers/rootless/{cfg.ssh_user}/run"\n'
-            f'graphroot = "/mnt/cocalc/data/containers/rootless/{cfg.ssh_user}/storage"\n',
+            f'runroot = "{rootless_run}"\n'
+            f'graphroot = "{rootless_storage}"\n',
             encoding="utf-8",
         )
         run_best_effort(cfg, ["chown", f"{cfg.ssh_user}:{cfg.ssh_user}", str(user_config / "storage.conf")], "chown storage.conf")
@@ -2146,7 +2156,8 @@ def configure_cloudflared_with_options(
 ) -> None:
     if not cfg.cloudflared.enabled:
         return
-    if install_package:
+    cloudflared_missing = shutil.which("cloudflared") is None
+    if install_package or cloudflared_missing:
         log_line(cfg, "bootstrap: installing cloudflared")
         arch = cfg.expected_arch
         deb_name = f"cloudflared-linux-{arch}.deb"
