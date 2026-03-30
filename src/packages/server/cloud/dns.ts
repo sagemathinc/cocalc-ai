@@ -94,7 +94,11 @@ async function cloudflareRequest<T>(
 
 function isNotFoundError(err: unknown): boolean {
   const message = String((err as Error)?.message ?? err).toLowerCase();
-  return message.includes("not found") || message.includes("404");
+  return (
+    message.includes("not found") ||
+    message.includes("404") ||
+    message.includes("does not exist")
+  );
 }
 
 async function getZoneId(token: string, dns: string) {

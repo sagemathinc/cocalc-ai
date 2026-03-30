@@ -49,6 +49,7 @@ import {
 } from "../core/auth-config";
 import {
   buildCookieHeader,
+  cookieNameFor,
   normalizeSecretValue,
   resolveProjectScopedAuth,
 } from "../core/auth-cookies";
@@ -411,7 +412,17 @@ function defaultApiBaseUrl(): string {
 function defaultConatAddress(apiBaseUrl: string): string {
   const fromEnv = `${process.env.CONAT_SERVER ?? ""}`.trim();
   if (fromEnv) {
-    return normalizeUrl(fromEnv);
+    const normalized = normalizeUrl(fromEnv);
+    // In local hub dev, stale Lite CONAT_SERVER values are a common source of
+    // misleading auth/session failures. Prefer the requested API target.
+    if (
+      process.env.COCALC_DEV_ENV_MODE === "hub" &&
+      isLoopbackApiBaseUrl(apiBaseUrl) &&
+      normalized !== normalizeUrl(apiBaseUrl)
+    ) {
+      return apiBaseUrl;
+    }
+    return normalized;
   }
   return apiBaseUrl;
 }
@@ -576,6 +587,142 @@ function normalizeOptionalSecret(
   return trimmed;
 }
 
+function getSetCookieHeaders(response: Response): string[] {
+  const headers = response.headers as Headers & {
+    getSetCookie?: () => string[];
+  };
+  if (typeof headers.getSetCookie === "function") {
+    return headers.getSetCookie();
+  }
+  const single = response.headers.get("set-cookie");
+  return single ? [single] : [];
+}
+
+function extractCookieFromHeaders(
+  headers: string[],
+  cookieName: string,
+): string | undefined {
+  for (const header of headers) {
+    const value = extractCookie(header, cookieName);
+    if (value) return value;
+  }
+  return undefined;
+}
+
+function buildRememberMeCookieHeader(
+  apiBaseUrl: string,
+  rememberMeCookie: string,
+): string {
+  const value = `${rememberMeCookie ?? ""}`.trim();
+  const names = Array.from(
+    new Set([cookieNameFor(apiBaseUrl, "remember_me"), "remember_me"]),
+  ).filter(Boolean);
+  return names.map((name) => `${name}=${value}`).join("; ");
+}
+
+function parseEnvFile(text: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const raw of `${text ?? ""}`.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || line.startsWith("#")) continue;
+    const body = line.replace(/^export\s+/, "");
+    const idx = body.indexOf("=");
+    if (idx <= 0) continue;
+    out[body.slice(0, idx).trim()] = body.slice(idx + 1).trim();
+  }
+  return out;
+}
+
+function isLoopbackApiBaseUrl(apiBaseUrl: string): boolean {
+  try {
+    return isLoopbackHostName(new URL(apiBaseUrl).hostname);
+  } catch {
+    return false;
+  }
+}
+
+async function maybeCreateLocalDevRememberMeCookie({
+  globals,
+  apiBaseUrl,
+  requestedAccountId,
+}: {
+  globals: GlobalOptions;
+  apiBaseUrl: string;
+  requestedAccountId: string;
+}): Promise<string | undefined> {
+  if (!isLoopbackApiBaseUrl(apiBaseUrl)) {
+    return;
+  }
+  const hubPasswordRaw = `${
+    globals.hubPassword ?? process.env.COCALC_HUB_PASSWORD ?? ""
+  }`.trim();
+  if (!hubPasswordRaw || !existsSync(hubPasswordRaw)) {
+    return;
+  }
+  const secretsDir = join(hubPasswordRaw, "..");
+  const postgresDir = join(secretsDir, "..");
+  const repoRoot = join(postgresDir, "..", "..", "..");
+  const localPostgresEnv = join(postgresDir, "local-postgres.env");
+  const rememberMeModule = join(
+    repoRoot,
+    "packages",
+    "server",
+    "dist",
+    "auth",
+    "remember-me.js",
+  );
+  if (!existsSync(localPostgresEnv) || !existsSync(rememberMeModule)) {
+    return;
+  }
+  const vars = parseEnvFile(readFileSync(localPostgresEnv, "utf8"));
+  const prev = {
+    PGHOST: process.env.PGHOST,
+    PGUSER: process.env.PGUSER,
+    PGDATABASE: process.env.PGDATABASE,
+    BASE_PATH: process.env.BASE_PATH,
+    API_SERVER: process.env.API_SERVER,
+    COCALC_PROJECT_ID: process.env.COCALC_PROJECT_ID,
+    COCALC_PRODUCT: process.env.COCALC_PRODUCT,
+  };
+  try {
+    if (vars.PGHOST) process.env.PGHOST = vars.PGHOST;
+    if (vars.PGUSER) process.env.PGUSER = vars.PGUSER;
+    if (vars.PGDATABASE) process.env.PGDATABASE = vars.PGDATABASE;
+    delete process.env.BASE_PATH;
+    delete process.env.API_SERVER;
+    delete process.env.COCALC_PROJECT_ID;
+    process.env.COCALC_PRODUCT = "launchpad";
+    const mod = requireCjs(rememberMeModule) as {
+      createRememberMeCookie?: (
+        account_id: string,
+        ttl_s?: number,
+      ) => Promise<{ value?: string }>;
+    };
+    const { value } =
+      (await mod.createRememberMeCookie?.(
+        requestedAccountId,
+        Math.floor(LOCAL_DEV_SIGN_IN_COOKIE_MAX_AGE_MS / 1000),
+      )) ?? {};
+    return typeof value === "string" && value.trim() ? value.trim() : undefined;
+  } finally {
+    if (prev.PGHOST === undefined) delete process.env.PGHOST;
+    else process.env.PGHOST = prev.PGHOST;
+    if (prev.PGUSER === undefined) delete process.env.PGUSER;
+    else process.env.PGUSER = prev.PGUSER;
+    if (prev.PGDATABASE === undefined) delete process.env.PGDATABASE;
+    else process.env.PGDATABASE = prev.PGDATABASE;
+    if (prev.BASE_PATH === undefined) delete process.env.BASE_PATH;
+    else process.env.BASE_PATH = prev.BASE_PATH;
+    if (prev.API_SERVER === undefined) delete process.env.API_SERVER;
+    else process.env.API_SERVER = prev.API_SERVER;
+    if (prev.COCALC_PROJECT_ID === undefined)
+      delete process.env.COCALC_PROJECT_ID;
+    else process.env.COCALC_PROJECT_ID = prev.COCALC_PROJECT_ID;
+    if (prev.COCALC_PRODUCT === undefined) delete process.env.COCALC_PRODUCT;
+    else process.env.COCALC_PRODUCT = prev.COCALC_PRODUCT;
+  }
+}
+
 type LiteConnectionInfo = {
   url?: string;
   protocol?: string;
@@ -584,6 +731,8 @@ type LiteConnectionInfo = {
   agent_token?: string;
   account_id?: string;
 };
+
+const LOCAL_DEV_SIGN_IN_COOKIE_MAX_AGE_MS = 12 * 3600 * 1000;
 
 function isLoopbackHostName(hostname: string): boolean {
   const host = `${hostname ?? ""}`.trim().toLowerCase();
@@ -752,18 +901,6 @@ async function connectRemote({
   const effectiveBearer = bearer ?? process.env.COCALC_AGENT_TOKEN;
   const projectScopedAuth = resolveProjectScopedAuth(process.env);
   const agentProjectId = `${process.env.COCALC_PROJECT_ID ?? ""}`.trim();
-  cliDebug("connectRemote", {
-    apiBaseUrl,
-    timeoutMs,
-    signInTimeoutMs,
-    hasCookie: !!cookie,
-    hasBearer: !!effectiveBearer?.trim(),
-    hasProjectScopedAuth: !!projectScopedAuth,
-    hasAgentProjectId: isValidUUID(agentProjectId),
-    hasApiKey: !!(globals.apiKey ?? process.env.COCALC_API_KEY),
-    hasHubPassword: hasHubPassword(globals),
-  });
-
   const client = connectConat({
     address: conatAddress,
     noCache: true,
@@ -952,6 +1089,109 @@ function resolveAccountIdFromRemote(
   return undefined;
 }
 
+async function maybeReconnectAsRequestedAccount({
+  globals,
+  apiBaseUrl,
+  timeoutMs,
+  remote,
+}: {
+  globals: GlobalOptions;
+  apiBaseUrl: string;
+  timeoutMs: number;
+  remote: RemoteConnection;
+}): Promise<
+  | {
+      globals: GlobalOptions;
+      remote: RemoteConnection;
+    }
+  | undefined
+> {
+  const requestedAccountId =
+    getExplicitAccountId(globals) ?? process.env.COCALC_ACCOUNT_ID;
+  if (!isValidUUID(requestedAccountId)) {
+    return;
+  }
+  const cleanRequestedAccountId = requestedAccountId as string;
+  const signedInAccountId = resolveAccountIdFromRemote(remote);
+  if (
+    !isValidUUID(signedInAccountId) ||
+    signedInAccountId === cleanRequestedAccountId
+  ) {
+    return;
+  }
+  if (!hasHubPassword(globals)) {
+    return;
+  }
+  if (
+    normalizeOptionalSecret(globals.cookie) ||
+    normalizeOptionalSecret(globals.bearer) ||
+    normalizeOptionalSecret(globals.apiKey) ||
+    normalizeOptionalSecret(process.env.COCALC_BEARER_TOKEN) ||
+    normalizeOptionalSecret(process.env.COCALC_API_KEY)
+  ) {
+    return;
+  }
+
+  const authToken = (await callHub({
+    client: remote.client,
+    account_id: signedInAccountId,
+    name: "system.generateUserAuthToken",
+    args: [{ user_account_id: cleanRequestedAccountId }],
+    timeout: Math.min(timeoutMs, MAX_TRANSPORT_TIMEOUT_MS),
+  }).catch(async (err) => {
+    const rememberMeCookie = await maybeCreateLocalDevRememberMeCookie({
+      globals,
+      apiBaseUrl,
+      requestedAccountId: cleanRequestedAccountId,
+    });
+    if (rememberMeCookie) {
+      return { rememberMeCookie };
+    }
+    throw err;
+  })) as string | { rememberMeCookie?: string };
+
+  let rememberMeCookie: string | undefined;
+  if (typeof authToken === "string") {
+    const url = new URL("/auth/impersonate", apiBaseUrl);
+    url.searchParams.set("auth_token", authToken);
+    const response = await fetch(url.toString(), {
+      redirect: "manual",
+    });
+    const cookieHeaders = getSetCookieHeaders(response);
+    rememberMeCookie =
+      extractCookieFromHeaders(
+        cookieHeaders,
+        cookieNameFor(apiBaseUrl, "remember_me"),
+      ) ?? extractCookieFromHeaders(cookieHeaders, "remember_me");
+  } else {
+    rememberMeCookie = authToken.rememberMeCookie;
+  }
+  if (!rememberMeCookie) {
+    throw new Error(
+      "failed to bootstrap remember_me cookie for requested account",
+    );
+  }
+
+  try {
+    remote.client.close();
+  } catch {
+    // ignore
+  }
+
+  const nextGlobals: GlobalOptions = {
+    ...globals,
+    cookie: buildRememberMeCookieHeader(apiBaseUrl, rememberMeCookie),
+    hubPassword: "",
+  };
+  const nextRemote = await connectRemote({
+    globals: nextGlobals,
+    apiBaseUrl,
+    timeoutMs,
+  });
+
+  return { globals: nextGlobals, remote: nextRemote };
+}
+
 async function contextForGlobals(
   globals: GlobalOptions,
 ): Promise<CommandContext> {
@@ -975,16 +1215,26 @@ async function contextForGlobals(
     globals: effectiveGlobals,
     apiBaseUrl,
   });
-  const remote = await connectRemote({
+  let remote = await connectRemote({
     globals: effectiveGlobals,
     apiBaseUrl,
     timeoutMs,
   });
+  const bootstrapped = await maybeReconnectAsRequestedAccount({
+    globals: effectiveGlobals,
+    apiBaseUrl,
+    timeoutMs,
+    remote,
+  });
+  if (bootstrapped) {
+    effectiveGlobals = bootstrapped.globals;
+    remote = bootstrapped.remote;
+  }
 
   let accountId =
     getExplicitAccountId(effectiveGlobals) ??
-    process.env.COCALC_ACCOUNT_ID ??
-    resolveAccountIdFromRemote(remote);
+    resolveAccountIdFromRemote(remote) ??
+    process.env.COCALC_ACCOUNT_ID;
 
   if (!accountId && hasHubPassword(effectiveGlobals)) {
     accountId = await resolveDefaultAdminAccountId({ remote, timeoutMs });

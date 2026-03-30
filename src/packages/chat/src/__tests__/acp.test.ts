@@ -78,6 +78,30 @@ describe("appendStreamMessage", () => {
     expect((merged[0] as any).event.text).toBe("commit. I found a follow-up");
   });
 
+  test("does not insert a space inside markdown links", () => {
+    const events = [textEvent("message", "[messages.txt]", 1)];
+    const merged = appendStreamMessage(
+      events,
+      textEvent("message", "(/home/wstein/messages.txt)", 2),
+    );
+
+    expect(merged).toHaveLength(1);
+    expect((merged[0] as any).event.text).toBe(
+      "[messages.txt](/home/wstein/messages.txt)",
+    );
+  });
+
+  test("does not insert a space inside inline code spans", () => {
+    const events = [textEvent("message", "`src/.", 1)];
+    const merged = appendStreamMessage(
+      events,
+      textEvent("message", "agents`", 2),
+    );
+
+    expect(merged).toHaveLength(1);
+    expect((merged[0] as any).event.text).toBe("`src/.agents`");
+  });
+
   test("inserts a paragraph break between large app-server chunks", () => {
     const events = [
       textEvent(

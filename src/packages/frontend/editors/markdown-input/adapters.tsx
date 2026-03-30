@@ -33,6 +33,7 @@ interface MarkdownTextAdapterProps {
   cmOptions?: { [key: string]: any };
   height?: string;
   autoGrow?: boolean;
+  autoGrowMinHeight?: number;
   autoGrowMaxHeight?: number;
   clampAutoGrowToHost?: boolean;
   chromeLayout?: "internal" | "external";
@@ -81,6 +82,7 @@ export function MarkdownTextAdapter({
   cmOptions,
   height,
   autoGrow,
+  autoGrowMinHeight,
   autoGrowMaxHeight,
   clampAutoGrowToHost,
   chromeLayout,
@@ -129,6 +131,7 @@ export function MarkdownTextAdapter({
       cmOptions={cmOptions}
       height={height}
       autoGrow={autoGrow ?? height === "auto"}
+      autoGrowMinHeight={autoGrowMinHeight}
       autoGrowMaxHeight={autoGrowMaxHeight}
       clampAutoGrowToHost={clampAutoGrowToHost}
       chromeLayout={chromeLayout}

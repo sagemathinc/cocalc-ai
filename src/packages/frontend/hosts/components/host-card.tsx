@@ -36,6 +36,7 @@ import {
 } from "./host-confirm";
 import { COLORS } from "@cocalc/util/theme";
 import { getHostSizeDisplay } from "../utils/format";
+import { HostCurrentMetrics } from "./host-current-metrics";
 
 type HostCardProps = {
   host: Host;
@@ -329,6 +330,7 @@ export const HostCard: React.FC<HostCardProps> = ({
           Size: {size.primary}
           {size.secondary ? ` · ${size.secondary}` : ""}
         </Typography.Text>
+        <HostCurrentMetrics host={host} compact />
         <Typography.Text>GPU: {host.gpu ? "Yes" : "No"}</Typography.Text>
         {host.last_action && (
           <Typography.Text type="secondary">

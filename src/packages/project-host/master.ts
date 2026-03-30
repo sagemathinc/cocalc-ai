@@ -42,6 +42,7 @@ import {
 import { assertSecureUrlOrLocal } from "@cocalc/backend/network/policy";
 import { isValidUUID } from "@cocalc/util/misc";
 import { inspectStaticAppRequest } from "./static-apps";
+import { startHostMetricsCollector } from "./host-metrics";
 
 const logger = getLogger("project-host:master");
 
@@ -766,13 +767,23 @@ export async function startMasterRegistration({
     },
   });
 
+  const hostMetrics = startHostMetricsCollector();
+
   const buildPayload = (): HostRegistration => {
     const versions = getSoftwareVersions();
+    const currentMetrics = hostMetrics.getCurrentSnapshot();
     return {
       ...basePayload,
       version: versions.project_host ?? basePayload.version,
       metadata: {
         ...(basePayload.metadata ?? {}),
+        ...(currentMetrics
+          ? {
+              metrics: {
+                current: currentMetrics,
+              },
+            }
+          : {}),
         software: versions,
       },
     };

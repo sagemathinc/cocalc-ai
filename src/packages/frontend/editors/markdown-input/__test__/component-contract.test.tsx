@@ -487,4 +487,21 @@ describe("MarkdownInput CodeMirror wrapper contract", () => {
     expect(wrapper.style.height).toBe("108px");
     expect(host.scrollTop).toBe(0);
   });
+
+  it("honors an explicit auto-grow minimum height for taller edit surfaces", () => {
+    render(
+      <MarkdownInput
+        value="short"
+        onChange={() => {}}
+        saveDebounceMs={0}
+        autoGrow
+        autoGrowMinHeight={120}
+      />,
+    );
+
+    const wrapper = latestEditor.getWrapperElement() as HTMLElement;
+    expect(latestEditor.setSize).toHaveBeenLastCalledWith(null, 120);
+    expect(wrapper.style.height).toBe("120px");
+    expect(wrapper.style.minHeight).toBe("120px");
+  });
 });

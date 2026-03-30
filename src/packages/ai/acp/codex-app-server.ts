@@ -9,6 +9,7 @@ import { Readable } from "node:stream";
 import getLogger from "@cocalc/backend/logger";
 import { argsJoin } from "@cocalc/util/args";
 import type { CodexSessionConfig } from "@cocalc/util/ai/codex";
+import type { LineDiffResult } from "@cocalc/util/line-diff";
 import { resolveCodexSessionMode } from "@cocalc/util/ai/codex";
 import type { AcpAgent, AcpEvaluateRequest, AcpStreamUsage } from "./types";
 import {
@@ -41,6 +42,195 @@ const IMMEDIATE_SEND_GUIDANCE = [
 ].join(" ");
 
 const ANSI_ESCAPE_RE = /\u001b\[[0-9;]*m/g;
+
+function normalizeDiffLines(text: string): string[] {
+  const lines = `${text ?? ""}`.replace(/\r\n/g, "\n").split("\n");
+  if (lines.length > 0 && lines[lines.length - 1] === "") {
+    lines.pop();
+  }
+  return lines;
+}
+
+function formatDiffGutter(
+  left: number | undefined,
+  right: number | undefined,
+  sign: string,
+): string {
+  const leftLabel = left == null ? "" : `${left}`;
+  const rightLabel = right == null ? "" : `${right}`;
+  return `${leftLabel.padStart(6)} ${rightLabel.padStart(6)}  ${sign}`;
+}
+
+function lineDiffFromRawChangeText(
+  text: string,
+  op: -1 | 1,
+): LineDiffResult | undefined {
+  const lines = normalizeDiffLines(text);
+  if (!lines.length) return undefined;
+  return {
+    lines,
+    types: lines.map(() => op),
+    gutters: lines.map((_line, i) =>
+      op === 1
+        ? formatDiffGutter(undefined, i + 1, "+")
+        : formatDiffGutter(i + 1, undefined, "-"),
+    ),
+    chunkBoundaries: [lines.length - 1],
+  };
+}
+
+function lineDiffFromUnifiedPatch(
+  diffText: string,
+): LineDiffResult | undefined {
+  const lines = normalizeDiffLines(diffText);
+  const diffLines: string[] = [];
+  const types: Array<-1 | 0 | 1> = [];
+  const gutters: string[] = [];
+  const chunkBoundaries: number[] = [];
+  let leftLine = 0;
+  let rightLine = 0;
+  let sawHunk = false;
+
+  const pushBoundary = () => {
+    const last = diffLines.length - 1;
+    if (last < 0) return;
+    if (chunkBoundaries[chunkBoundaries.length - 1] === last) return;
+    chunkBoundaries.push(last);
+  };
+
+  for (const line of lines) {
+    const header = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
+    if (header) {
+      pushBoundary();
+      leftLine = Math.max(0, Number(header[1]) - 1);
+      rightLine = Math.max(0, Number(header[2]) - 1);
+      sawHunk = true;
+      continue;
+    }
+    if (!sawHunk) continue;
+    if (line.startsWith("--- ") || line.startsWith("+++ ")) continue;
+    if (line.startsWith("diff --git ") || line.startsWith("index ")) continue;
+    if (
+      line.startsWith("new file mode ") ||
+      line.startsWith("deleted file mode ") ||
+      line.startsWith("rename from ") ||
+      line.startsWith("rename to ")
+    ) {
+      continue;
+    }
+    if (line.startsWith("\\ No newline at end of file")) {
+      diffLines.push(line);
+      types.push(0);
+      gutters.push(formatDiffGutter(undefined, undefined, " "));
+      continue;
+    }
+    if (line.startsWith("+")) {
+      rightLine += 1;
+      diffLines.push(line.slice(1));
+      types.push(1);
+      gutters.push(formatDiffGutter(undefined, rightLine, "+"));
+      continue;
+    }
+    if (line.startsWith("-")) {
+      leftLine += 1;
+      diffLines.push(line.slice(1));
+      types.push(-1);
+      gutters.push(formatDiffGutter(leftLine, undefined, "-"));
+      continue;
+    }
+    if (line.startsWith(" ")) {
+      leftLine += 1;
+      rightLine += 1;
+      diffLines.push(line.slice(1));
+      types.push(0);
+      gutters.push(formatDiffGutter(leftLine, rightLine, " "));
+      continue;
+    }
+    diffLines.push(line);
+    types.push(0);
+    gutters.push(formatDiffGutter(undefined, undefined, " "));
+  }
+
+  pushBoundary();
+  if (!diffLines.length) return undefined;
+  return { lines: diffLines, types, gutters, chunkBoundaries };
+}
+
+function getFileChangeLineDiff(change: any): LineDiffResult | undefined {
+  const diffText = typeof change?.diff === "string" ? change.diff : "";
+  if (!diffText.trim()) return undefined;
+  const changeKind =
+    `${change?.kind?.type ?? change?.kind ?? ""}`.toLowerCase();
+  if (changeKind === "add") {
+    return lineDiffFromRawChangeText(diffText, 1);
+  }
+  if (changeKind === "delete") {
+    return lineDiffFromRawChangeText(diffText, -1);
+  }
+  return lineDiffFromUnifiedPatch(diffText);
+}
+
+function patchPathFromHeaderLine(line: string): string | undefined {
+  const diffMatch = /^diff --git a\/(.+?) b\/(.+)$/.exec(line);
+  if (diffMatch) {
+    return diffMatch[2] || diffMatch[1];
+  }
+  const plusMatch = /^\+\+\+ (?:b\/)?(.+)$/.exec(line);
+  if (plusMatch && plusMatch[1] !== "/dev/null") {
+    return plusMatch[1];
+  }
+  const minusMatch = /^--- (?:a\/)?(.+)$/.exec(line);
+  if (minusMatch && minusMatch[1] !== "/dev/null") {
+    return minusMatch[1];
+  }
+  return undefined;
+}
+
+function splitUnifiedDiffByFile(
+  diffText: string,
+): Array<{ path: string; diffText: string }> {
+  const lines = normalizeDiffLines(diffText);
+  const blocks: Array<{ path: string; diffText: string }> = [];
+  let currentPath: string | undefined;
+  let currentLines: string[] = [];
+
+  const flush = () => {
+    if (!currentPath || currentLines.length === 0) return;
+    blocks.push({
+      path: currentPath,
+      diffText: currentLines.join("\n"),
+    });
+  };
+
+  for (const line of lines) {
+    if (line.startsWith("diff --git ")) {
+      flush();
+      currentLines = [line];
+      currentPath = patchPathFromHeaderLine(line);
+      continue;
+    }
+    currentLines.push(line);
+    currentPath ||= patchPathFromHeaderLine(line);
+  }
+
+  flush();
+  return blocks;
+}
+
+function normalizeActivityPathKey(
+  rawPath: string | undefined,
+  cwd?: string,
+): string | undefined {
+  const trimmed = `${rawPath ?? ""}`.trim();
+  if (!trimmed) return undefined;
+  if (path.isAbsolute(trimmed)) {
+    return path.normalize(trimmed);
+  }
+  if (cwd) {
+    return path.normalize(path.resolve(cwd, trimmed));
+  }
+  return path.normalize(trimmed);
+}
 
 function getCoCalcRuntimeGuidanceHeader(cliCommand: string): string {
   return [
@@ -777,6 +967,8 @@ export class CodexAppServerAgent implements AcpAgent {
     const terminalOutputs = new Map<string, string>();
     const startedTerminalIds = new Set<string>();
     const emittedFileWrites = new Set<string>();
+    const emittedFileWritePaths = new Set<string>();
+    let latestTurnDiffText: string | undefined;
     const siteKeyGovernor = getCodexSiteKeyGovernor();
     const siteKeyEnforced =
       spawned.authSource === "site-api-key" &&
@@ -1071,12 +1263,35 @@ export class CodexAppServerAgent implements AcpAgent {
             break;
           }
           case "fileChange":
-            if (item.status === "completed" && Array.isArray(item.changes)) {
+            if (
+              item.status !== "failed" &&
+              item.status !== "declined" &&
+              Array.isArray(item.changes)
+            ) {
               for (const change of item.changes) {
                 if (!change?.path) continue;
                 const eventKey = `${item.id ?? "file"}:${change.path}`;
                 if (emittedFileWrites.has(eventKey)) continue;
+                const diff = getFileChangeLineDiff(change);
+                const normalizedPathKey = normalizeActivityPathKey(
+                  change.path,
+                  cwd,
+                );
                 emittedFileWrites.add(eventKey);
+                if (normalizedPathKey) {
+                  emittedFileWritePaths.add(normalizedPathKey);
+                }
+                if (diff) {
+                  await stream({
+                    type: "event",
+                    event: {
+                      type: "diff",
+                      path: change.path,
+                      diff,
+                    },
+                  });
+                  continue;
+                }
                 await stream({
                   type: "event",
                   event: {
@@ -1091,6 +1306,43 @@ export class CodexAppServerAgent implements AcpAgent {
             break;
           default:
             break;
+        }
+      };
+
+      const emitMissingTurnDiffEvents = async (): Promise<void> => {
+        const diffText = `${latestTurnDiffText ?? ""}`.trim();
+        if (!diffText) return;
+        for (const block of splitUnifiedDiffByFile(diffText)) {
+          const normalizedPathKey = normalizeActivityPathKey(block.path, cwd);
+          if (
+            !block.path ||
+            !normalizedPathKey ||
+            emittedFileWritePaths.has(normalizedPathKey)
+          ) {
+            continue;
+          }
+          const diff = lineDiffFromUnifiedPatch(block.diffText);
+          emittedFileWritePaths.add(normalizedPathKey);
+          if (diff) {
+            await stream({
+              type: "event",
+              event: {
+                type: "diff",
+                path: block.path,
+                diff,
+              },
+            });
+            continue;
+          }
+          await stream({
+            type: "event",
+            event: {
+              type: "file",
+              path: block.path,
+              operation: "write",
+              cwd,
+            },
+          });
         }
       };
 
@@ -1156,6 +1408,13 @@ export class CodexAppServerAgent implements AcpAgent {
           case "item/updated":
             await handleItem(notification.params?.item);
             break;
+          case "turn/diff/updated": {
+            const diff = notification.params?.diff;
+            if (typeof diff === "string" && diff.trim().length > 0) {
+              latestTurnDiffText = diff;
+            }
+            break;
+          }
           case "thread/tokenUsage/updated": {
             const usage = notification.params?.tokenUsage?.last;
             if (usage) {
@@ -1219,6 +1478,7 @@ export class CodexAppServerAgent implements AcpAgent {
       })();
 
       await pendingNotificationLoop;
+      await emitMissingTurnDiffEvents();
       if (quotaPollTimer) {
         clearInterval(quotaPollTimer);
       }

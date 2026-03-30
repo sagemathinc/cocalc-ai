@@ -1,7 +1,7 @@
 # CoCalc HTTP Proxying and Public App Traffic
 
 This note summarizes the intended routing model for project-host HTTP traffic,
-managed apps, and public app subdomains.
+managed apps, and public app URLs.
 
 It is not just a description of current code. It also records a hard product
 constraint that future changes must preserve.
@@ -14,7 +14,7 @@ through the central hub in the steady state.
 That means:
 
 - Private app traffic should go directly to the owning `project-host`.
-- Public app subdomains must resolve directly to the owning `project-host`.
+- Public app traffic should go directly to the owning `project-host`.
 - The central hub may participate in control-plane decisions:
   - project placement
   - DNS reservation
@@ -53,13 +53,30 @@ Current status:
 
 ### Public app traffic
 
-- Browser requests `https://<label>-app-<env>.<root>/...`
-- Cloudflare DNS points that hostname at the owning `project-host` hostname
+Hosted Launchpad design:
+
+- Browser requests a direct path on the owning `project-host`, e.g.
+  `https://host-0ca6029e-9bbf-4c68-bda7-150368f2dd61-dev.cocalc.ai/<project-id>/apps/code-server`
 - Browser connects directly to `project-host`
-- `project-host` maps `Host:` to `(project_id, app_id, base_path)`
-- `project-host` rewrites the request to the canonical internal app path
+- `project-host` authorizes the path using the app exposure state
 - `project-host` serves static/public-viewer apps directly or proxies dynamic
   traffic to the project container
+
+Why not per-app hostnames?
+
+- We tried host-qualified public app hostnames such as
+  `https://demo-app.host-<host-id>-dev.cocalc.ai/`
+- Cloudflare DNS and tunnel routing can point those hostnames at the owning
+  `project-host`
+- however, current Cloudflare TLS coverage does not terminate certificates for
+  those host-qualified per-app wildcard names in our setup
+- that makes the hostname design non-viable today for hosted Launchpad
+
+So the current hosted target is:
+
+- direct project-host path URLs for public apps
+- no central hub in the data path
+- no per-app shared-tunnel config churn
 
 This keeps the control plane centralized while keeping the traffic path local to
 the owning host.
@@ -83,20 +100,18 @@ flowchart LR
 ```mermaid
 flowchart LR
     Browser["Browser / client"]
-    DNS["Cloudflare DNS"]
     Host["Owning project-host"]
     Container["Project container internal HTTP proxy or static app handler"]
     Hub["Central hub control plane"]
 
-    Browser -->|app hostname| DNS
-    DNS -->|direct to owning host| Host
-    Host -->|host-header lookup + rewrite| Container
-    Host -.lookup/cache miss only.-> Hub
+    Browser -->|host path URL| Host
+    Host -->|path authorization + rewrite| Container
+    Host -.control-plane metadata only.-> Hub
 ```
 
 Important:
 
-- the public app flow must not be `Browser -> DNS -> Hub -> project-host`
+- the public app flow must not be `Browser -> Hub -> project-host`
 - the private app flow should also not be `Browser -> Hub -> project-host` in
   the final design
 - if a design requires restarting the shared central `cloudflared` instance when
@@ -126,12 +141,11 @@ Therefore:
 
 - project placement lookup
 - control-plane APIs for app exposure metadata
-- public app hostname lookup APIs used by `project-host`
 - auth minting and coordination
 
 ### Project-host
 
-- public app hostname routing
+- public app path routing
 - public app auth / policy enforcement
 - static app serving
 - Public Viewer Mode serving and redirects
@@ -139,16 +153,17 @@ Therefore:
 
 ### Cloudflare
 
-- public DNS only
-- stable tunnel / host entrypoints
+- stable host entrypoints
 - optional caching for public static content
 
 ## Design notes
 
-- Public app DNS should target the owning `project-host` hostname, not the
-  central site hostname.
-- `project-host` should treat public app hostnames as a first-class input, not
-  as a special hub-only feature.
+- Public app URLs should use the owning `project-host` hostname plus an exposed
+  app path, not the central site hostname.
+- Public app exposure metadata still belongs in the control plane even though
+  the data path is direct-to-host.
+- `project-host` should treat public app paths as a first-class input, not as a
+  special hub-only feature.
 - Public Viewer raw-domain traffic follows the same principle: centralized
   control plane is fine, but the content-serving path should avoid unnecessary
   hub bottlenecks.

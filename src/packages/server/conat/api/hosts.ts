@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { randomUUID } from "crypto";
 import type {
   Host,
@@ -20,6 +21,7 @@ import type {
   HostManagedRootfsReleaseLifecycle,
   HostRootfsGcResult,
   HostRootfsImage,
+  HostCurrentMetrics,
 } from "@cocalc/conat/hub/api/hosts";
 import type {
   ProjectCopyRow,
@@ -58,7 +60,10 @@ import { createHostControlClient } from "@cocalc/conat/project-host/api";
 import { conatWithProjectRouting } from "@cocalc/server/conat/route-client";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import siteURL from "@cocalc/database/settings/site-url";
-import { revokeProjectHostTokensForHost } from "@cocalc/server/project-host/bootstrap-token";
+import {
+  createProjectHostBootstrapToken,
+  revokeProjectHostTokensForHost,
+} from "@cocalc/server/project-host/bootstrap-token";
 import {
   claimPendingCopies as claimPendingCopiesDb,
   updateCopyStatus as updateCopyStatusDb,
@@ -113,6 +118,7 @@ import {
   type RootfsReleaseGcStatus,
   type RootfsUploadedArtifactResult,
 } from "@cocalc/util/rootfs-images";
+import { buildCloudInitStartupScript } from "@cocalc/server/cloud/bootstrap-host";
 function pool() {
   return getPool();
 }
@@ -146,6 +152,133 @@ type RootfsReleaseLifecycleRow = {
   runtime_image: string;
   gc_status: RootfsReleaseGcStatus | null;
 };
+
+async function runSshScript({
+  target,
+  script,
+}: {
+  target: string;
+  script: string;
+}): Promise<{ stdout: string; stderr: string }> {
+  const args = [
+    "-o",
+    "BatchMode=yes",
+    "-o",
+    "StrictHostKeyChecking=accept-new",
+    "-o",
+    "ConnectTimeout=10",
+    target,
+    "bash",
+    "-se",
+  ];
+  return await new Promise((resolve, reject) => {
+    const child = spawn("ssh", args, { stdio: ["pipe", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk.toString();
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code === 0) {
+        resolve({ stdout, stderr });
+      } else {
+        reject(
+          new Error(
+            `ssh ${target} failed with code ${code ?? "?"}: ${stderr || stdout}`,
+          ),
+        );
+      }
+    });
+    child.stdin.end(script);
+  });
+}
+
+function cloudHostSshTarget(row: {
+  metadata?: Record<string, any>;
+}): string | undefined {
+  const runtime = row.metadata?.runtime ?? {};
+  const machine = row.metadata?.machine ?? {};
+  const publicIp =
+    `${runtime.public_ip ?? machine.metadata?.public_ip ?? ""}`.trim();
+  if (!publicIp) return undefined;
+  const sshUser =
+    `${runtime.ssh_user ?? machine.metadata?.ssh_user ?? "ubuntu"}`.trim();
+  if (!sshUser) return undefined;
+  return `${sshUser}@${publicIp}`;
+}
+
+async function reconcileCloudHostBootstrapOverSsh(opts: {
+  host_id: string;
+  row: any;
+}): Promise<void> {
+  const target = cloudHostSshTarget(opts.row);
+  if (!target) {
+    logger.debug(
+      "host upgrade: skip bootstrap reconcile (missing ssh target)",
+      {
+        host_id: opts.host_id,
+      },
+    );
+    return;
+  }
+  const bootstrapBaseUrl = await siteURL();
+  const bootstrapToken = await createProjectHostBootstrapToken(opts.host_id);
+  const bootstrapScript = await buildCloudInitStartupScript(
+    opts.row,
+    bootstrapToken.token,
+    bootstrapBaseUrl,
+  );
+  const encodedBootstrapScript = Buffer.from(bootstrapScript, "utf8").toString(
+    "base64",
+  );
+  const script = `
+set -euo pipefail
+BOOTSTRAP_DIR=""
+for candidate in /home/ubuntu/cocalc-host/bootstrap /root/cocalc-host/bootstrap
+do
+  if [ -d "$candidate" ]; then
+    BOOTSTRAP_DIR="$candidate"
+    break
+  fi
+done
+if [ -z "$BOOTSTRAP_DIR" ]; then
+  echo "bootstrap directory not found" >&2
+  exit 1
+fi
+BOOTSTRAP_SH="$BOOTSTRAP_DIR/bootstrap.sh"
+python3 - "$BOOTSTRAP_SH" <<'PY'
+import base64, sys
+body = base64.b64decode("""${encodedBootstrapScript}""")
+with open(sys.argv[1], "wb") as handle:
+    handle.write(body)
+PY
+chmod 700 "$BOOTSTRAP_SH"
+sudo bash "$BOOTSTRAP_SH"
+`;
+  logger.info("host upgrade: reconciling host bootstrap over ssh", {
+    host_id: opts.host_id,
+    target,
+  });
+  const { stdout, stderr } = await runSshScript({ target, script });
+  if (stdout.trim()) {
+    logger.info("host upgrade: bootstrap reconcile stdout", {
+      host_id: opts.host_id,
+      target,
+      stdout,
+    });
+  }
+  if (stderr.trim()) {
+    logger.info("host upgrade: bootstrap reconcile stderr", {
+      host_id: opts.host_id,
+      target,
+      stderr,
+    });
+  }
+}
 
 function logStatusUpdate(id: string, status: string, source: string) {
   const stack = new Error().stack;
@@ -345,9 +478,245 @@ function parseRow(
     if (!Number.isFinite(parsed) || parsed <= 0) return undefined;
     return Math.floor(parsed);
   };
+  const parseNonNegativeNumber = (value: unknown): number | undefined => {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed < 0) return undefined;
+    return parsed;
+  };
   const metadata = row.metadata ?? {};
   const software = metadata.software ?? {};
   const machine: HostMachine | undefined = metadata.machine;
+  const rawCurrentMetrics = metadata.metrics?.current;
+  const currentMetrics: HostCurrentMetrics | undefined =
+    rawCurrentMetrics && typeof rawCurrentMetrics === "object"
+      ? {
+          ...(typeof rawCurrentMetrics.collected_at === "string"
+            ? { collected_at: rawCurrentMetrics.collected_at }
+            : {}),
+          ...(parseNonNegativeNumber(rawCurrentMetrics.cpu_percent) != null
+            ? {
+                cpu_percent: parseNonNegativeNumber(
+                  rawCurrentMetrics.cpu_percent,
+                ),
+              }
+            : {}),
+          ...(parseNonNegativeNumber(rawCurrentMetrics.load_1) != null
+            ? { load_1: parseNonNegativeNumber(rawCurrentMetrics.load_1) }
+            : {}),
+          ...(parseNonNegativeNumber(rawCurrentMetrics.load_5) != null
+            ? { load_5: parseNonNegativeNumber(rawCurrentMetrics.load_5) }
+            : {}),
+          ...(parseNonNegativeNumber(rawCurrentMetrics.load_15) != null
+            ? { load_15: parseNonNegativeNumber(rawCurrentMetrics.load_15) }
+            : {}),
+          ...(parseNonNegativeNumber(rawCurrentMetrics.memory_total_bytes) !=
+          null
+            ? {
+                memory_total_bytes: parseNonNegativeNumber(
+                  rawCurrentMetrics.memory_total_bytes,
+                ),
+              }
+            : {}),
+          ...(parseNonNegativeNumber(rawCurrentMetrics.memory_used_bytes) !=
+          null
+            ? {
+                memory_used_bytes: parseNonNegativeNumber(
+                  rawCurrentMetrics.memory_used_bytes,
+                ),
+              }
+            : {}),
+          ...(parseNonNegativeNumber(
+            rawCurrentMetrics.memory_available_bytes,
+          ) != null
+            ? {
+                memory_available_bytes: parseNonNegativeNumber(
+                  rawCurrentMetrics.memory_available_bytes,
+                ),
+              }
+            : {}),
+          ...(parseNonNegativeNumber(rawCurrentMetrics.memory_used_percent) !=
+          null
+            ? {
+                memory_used_percent: parseNonNegativeNumber(
+                  rawCurrentMetrics.memory_used_percent,
+                ),
+              }
+            : {}),
+          ...(parseNonNegativeNumber(rawCurrentMetrics.swap_total_bytes) != null
+            ? {
+                swap_total_bytes: parseNonNegativeNumber(
+                  rawCurrentMetrics.swap_total_bytes,
+                ),
+              }
+            : {}),
+          ...(parseNonNegativeNumber(rawCurrentMetrics.swap_used_bytes) != null
+            ? {
+                swap_used_bytes: parseNonNegativeNumber(
+                  rawCurrentMetrics.swap_used_bytes,
+                ),
+              }
+            : {}),
+          ...(parseNonNegativeNumber(
+            rawCurrentMetrics.disk_device_total_bytes,
+          ) != null
+            ? {
+                disk_device_total_bytes: parseNonNegativeNumber(
+                  rawCurrentMetrics.disk_device_total_bytes,
+                ),
+              }
+            : {}),
+          ...(parseNonNegativeNumber(
+            rawCurrentMetrics.disk_device_used_bytes,
+          ) != null
+            ? {
+                disk_device_used_bytes: parseNonNegativeNumber(
+                  rawCurrentMetrics.disk_device_used_bytes,
+                ),
+              }
+            : {}),
+          ...(parseNonNegativeNumber(
+            rawCurrentMetrics.disk_unallocated_bytes,
+          ) != null
+            ? {
+                disk_unallocated_bytes: parseNonNegativeNumber(
+                  rawCurrentMetrics.disk_unallocated_bytes,
+                ),
+              }
+            : {}),
+          ...(parseNonNegativeNumber(
+            rawCurrentMetrics.btrfs_data_total_bytes,
+          ) != null
+            ? {
+                btrfs_data_total_bytes: parseNonNegativeNumber(
+                  rawCurrentMetrics.btrfs_data_total_bytes,
+                ),
+              }
+            : {}),
+          ...(parseNonNegativeNumber(rawCurrentMetrics.btrfs_data_used_bytes) !=
+          null
+            ? {
+                btrfs_data_used_bytes: parseNonNegativeNumber(
+                  rawCurrentMetrics.btrfs_data_used_bytes,
+                ),
+              }
+            : {}),
+          ...(parseNonNegativeNumber(
+            rawCurrentMetrics.btrfs_metadata_total_bytes,
+          ) != null
+            ? {
+                btrfs_metadata_total_bytes: parseNonNegativeNumber(
+                  rawCurrentMetrics.btrfs_metadata_total_bytes,
+                ),
+              }
+            : {}),
+          ...(parseNonNegativeNumber(
+            rawCurrentMetrics.btrfs_metadata_used_bytes,
+          ) != null
+            ? {
+                btrfs_metadata_used_bytes: parseNonNegativeNumber(
+                  rawCurrentMetrics.btrfs_metadata_used_bytes,
+                ),
+              }
+            : {}),
+          ...(parseNonNegativeNumber(
+            rawCurrentMetrics.btrfs_system_total_bytes,
+          ) != null
+            ? {
+                btrfs_system_total_bytes: parseNonNegativeNumber(
+                  rawCurrentMetrics.btrfs_system_total_bytes,
+                ),
+              }
+            : {}),
+          ...(parseNonNegativeNumber(
+            rawCurrentMetrics.btrfs_system_used_bytes,
+          ) != null
+            ? {
+                btrfs_system_used_bytes: parseNonNegativeNumber(
+                  rawCurrentMetrics.btrfs_system_used_bytes,
+                ),
+              }
+            : {}),
+          ...(parseNonNegativeNumber(
+            rawCurrentMetrics.btrfs_global_reserve_total_bytes,
+          ) != null
+            ? {
+                btrfs_global_reserve_total_bytes: parseNonNegativeNumber(
+                  rawCurrentMetrics.btrfs_global_reserve_total_bytes,
+                ),
+              }
+            : {}),
+          ...(parseNonNegativeNumber(
+            rawCurrentMetrics.btrfs_global_reserve_used_bytes,
+          ) != null
+            ? {
+                btrfs_global_reserve_used_bytes: parseNonNegativeNumber(
+                  rawCurrentMetrics.btrfs_global_reserve_used_bytes,
+                ),
+              }
+            : {}),
+          ...(parseNonNegativeNumber(
+            rawCurrentMetrics.disk_available_conservative_bytes,
+          ) != null
+            ? {
+                disk_available_conservative_bytes: parseNonNegativeNumber(
+                  rawCurrentMetrics.disk_available_conservative_bytes,
+                ),
+              }
+            : {}),
+          ...(parseNonNegativeNumber(
+            rawCurrentMetrics.disk_available_for_admission_bytes,
+          ) != null
+            ? {
+                disk_available_for_admission_bytes: parseNonNegativeNumber(
+                  rawCurrentMetrics.disk_available_for_admission_bytes,
+                ),
+              }
+            : {}),
+          ...(parseNonNegativeNumber(rawCurrentMetrics.reservation_bytes) !=
+          null
+            ? {
+                reservation_bytes: parseNonNegativeNumber(
+                  rawCurrentMetrics.reservation_bytes,
+                ),
+              }
+            : {}),
+          ...(parseNonNegativeNumber(
+            rawCurrentMetrics.assigned_project_count,
+          ) != null
+            ? {
+                assigned_project_count: parseNonNegativeNumber(
+                  rawCurrentMetrics.assigned_project_count,
+                ),
+              }
+            : {}),
+          ...(parseNonNegativeNumber(rawCurrentMetrics.running_project_count) !=
+          null
+            ? {
+                running_project_count: parseNonNegativeNumber(
+                  rawCurrentMetrics.running_project_count,
+                ),
+              }
+            : {}),
+          ...(parseNonNegativeNumber(
+            rawCurrentMetrics.starting_project_count,
+          ) != null
+            ? {
+                starting_project_count: parseNonNegativeNumber(
+                  rawCurrentMetrics.starting_project_count,
+                ),
+              }
+            : {}),
+          ...(parseNonNegativeNumber(
+            rawCurrentMetrics.stopping_project_count,
+          ) != null
+            ? {
+                stopping_project_count: parseNonNegativeNumber(
+                  rawCurrentMetrics.stopping_project_count,
+                ),
+              }
+            : {}),
+        }
+      : undefined;
   const rawBootstrap = metadata.bootstrap;
   const bootstrap: HostBootstrapStatus | undefined =
     rawBootstrap && typeof rawBootstrap === "object"
@@ -384,6 +753,7 @@ function parseRow(
     tools_version: software.tools,
     host_session_id: metadata.host_session_id,
     host_session_started_at: metadata.host_session_started_at,
+    metrics: currentMetrics ? { current: currentMetrics } : undefined,
     machine,
     public_ip: metadata.runtime?.public_ip,
     last_error: metadata.last_error,
@@ -4149,6 +4519,9 @@ export async function upgradeHostSoftwareInternal({
     base_url: effectiveBaseUrl,
   });
   const results = response.results ?? [];
+  const requestedProjectHostUpgrade = targets.some(
+    (target) => target.artifact === "project-host",
+  );
   if (results.length) {
     const metadata = row.metadata ?? {};
     const software = { ...(metadata.software ?? {}) } as Record<string, string>;
@@ -4164,6 +4537,9 @@ export async function upgradeHostSoftwareInternal({
       `UPDATE project_hosts SET metadata=$2, version=$3, updated=NOW() WHERE id=$1 AND deleted IS NULL`,
       [row.id, nextMetadata, nextVersion],
     );
+  }
+  if (requestedProjectHostUpgrade) {
+    await reconcileCloudHostBootstrapOverSsh({ host_id: id, row });
   }
   return response;
 }

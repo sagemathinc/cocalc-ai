@@ -87,6 +87,8 @@ import { setChatOverlayOpen } from "./drawer-overlay-state";
 import { formatTurnDuration } from "./turn-duration";
 import { CodexQuotaHelp } from "./codex-quota-help";
 
+const EDIT_MARKDOWN_MIN_HEIGHT = 120;
+
 const BLANK_COLUMN = (xs) => <Col key={"blankcolumn"} xs={xs}></Col>;
 
 const MARKDOWN_STYLE = undefined;
@@ -726,6 +728,8 @@ export default function Message({
       store: derived?.store,
       key: derived?.key,
       subject: derived?.subject,
+      liveStream: derived?.liveStream,
+      previewStream: derived?.previewStream,
     };
   }, [message, project_id, path, messageThreadId]);
 
@@ -756,10 +760,19 @@ export default function Message({
     [message, fallbackLogRefs.subject],
   );
   const liveLogStream = useMemo(
-    () => field<string>(message, "acp_live_log_stream"),
-    [message],
+    () =>
+      field<string>(message, "acp_live_log_stream") ??
+      fallbackLogRefs.liveStream,
+    [message, fallbackLogRefs.liveStream],
   );
-  const loadLogBody = useMemo(() => {
+  const livePreviewStream = useMemo(() => {
+    const preview = field<string>(message, "acp_live_preview_stream");
+    if (preview) return preview;
+    const full = field<string>(message, "acp_live_log_stream");
+    if (full) return full;
+    return fallbackLogRefs.previewStream;
+  }, [message, fallbackLogRefs.previewStream]);
+  const loadPreviewBody = useMemo(() => {
     if (!showCodexActivity || !project_id) return false;
     if (effectiveGenerating) return true;
     if (acpInterrupted) return true;
@@ -771,41 +784,41 @@ export default function Message({
     acpInterrupted,
     rowMessageValue,
   ]);
-  const codexBodyLog = useCodexLog({
+  const codexPreviewLog = useCodexLog({
     projectId: project_id,
     logStore,
     logKey,
     logSubject,
-    liveLogStream,
+    liveLogStream: livePreviewStream,
     generating: effectiveGenerating,
-    enabled: loadLogBody,
+    enabled: loadPreviewBody,
   });
   const codexBodyValue = useMemo(() => {
     if (
-      !Array.isArray(codexBodyLog.events) ||
-      codexBodyLog.events.length === 0
+      !Array.isArray(codexPreviewLog.events) ||
+      codexPreviewLog.events.length === 0
     ) {
       return undefined;
     }
     if (effectiveGenerating) {
-      return getLiveResponseMarkdown(codexBodyLog.events as any);
+      return getLiveResponseMarkdown(codexPreviewLog.events as any);
     }
     if (acpInterrupted) {
       return getInterruptedResponseMarkdown(
-        codexBodyLog.events as any,
+        codexPreviewLog.events as any,
         acpInterruptedText,
       );
     }
-    return getBestResponseText(codexBodyLog.events as any);
+    return getBestResponseText(codexPreviewLog.events as any);
   }, [
     acpInterrupted,
     acpInterruptedText,
-    codexBodyLog.events,
+    codexPreviewLog.events,
     effectiveGenerating,
   ]);
   const lastCodexActivityAtMs = useMemo(
-    () => getLatestCodexActivityAtMs(codexBodyLog.events),
-    [codexBodyLog.events],
+    () => getLatestCodexActivityAtMs(codexPreviewLog.events),
+    [codexPreviewLog.events],
   );
   const renderedMessageValue = useMemo(
     () =>
@@ -1467,8 +1480,7 @@ export default function Message({
           inlineCodeLinks={
             Array.isArray(inlineCodeLinks) ? inlineCodeLinks : undefined
           }
-          logEvents={codexBodyLog.events as any}
-          deleteLog={codexBodyLog.deleteLog}
+          deleteLog={codexPreviewLog.deleteLog}
           openDrawerToken={openActivityDrawerToken}
           jumpText={activityJumpText}
           jumpToken={activityJumpToken}
@@ -1816,6 +1828,7 @@ export default function Message({
           submitMentionsRef={submitMentionsRef}
           on_send={(value) => saveEditedMessage(value)}
           height={"auto"}
+          autoGrowMinHeight={EDIT_MARKDOWN_MIN_HEIGHT}
           syncdb={actions.syncdb}
           date={date}
           onChange={(value) => {

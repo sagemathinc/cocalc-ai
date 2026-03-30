@@ -101,6 +101,7 @@ type RecordedSet = {
   acp_log_key?: string;
   acp_log_subject?: string;
   acp_live_log_stream?: string;
+  acp_live_preview_stream?: string;
   message_id?: string;
 };
 
@@ -326,6 +327,7 @@ describe("ChatStreamWriter", () => {
     expect(placeholder?.acp_log_key).toBeTruthy();
     expect(placeholder?.acp_log_subject).toBeTruthy();
     expect(placeholder?.acp_live_log_stream).toBeTruthy();
+    expect(placeholder?.acp_live_preview_stream).toBeTruthy();
     (writer as any).dispose?.(true);
   });
 
@@ -939,6 +941,106 @@ describe("ChatStreamWriter", () => {
     expect(liveEvents).toHaveLength(2);
     expect(liveEvents[0]).toMatchObject({ seq: 0, type: "event" });
     expect(liveEvents[1]).toMatchObject({ seq: 1, type: "event" });
+    (writer as any).dispose?.(true);
+  });
+
+  it("publishes only preview-relevant payloads to the preview stream", async () => {
+    const livePayloads: Array<AcpStreamMessage | AcpStreamMessage[]> = [];
+    const previewPayloads: Array<AcpStreamMessage | AcpStreamMessage[]> = [];
+    const { syncdb } = makeFakeSyncDB();
+    const writer: any = new ChatStreamWriter({
+      metadata: baseMetadata,
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      syncdbOverride: syncdb as any,
+      logStoreFactory: () =>
+        ({
+          set: async () => {},
+        }) as any,
+      liveLogStreamFactory: () =>
+        ({
+          publish: async (payload: AcpStreamMessage | AcpStreamMessage[]) => {
+            livePayloads.push(payload);
+            return { seq: livePayloads.length, time: Date.now() };
+          },
+          close: () => {},
+        }) as any,
+      livePreviewStreamFactory: () =>
+        ({
+          publish: async (payload: AcpStreamMessage | AcpStreamMessage[]) => {
+            previewPayloads.push(payload);
+            return { seq: previewPayloads.length, time: Date.now() };
+          },
+          close: () => {},
+        }) as any,
+    });
+
+    await writer.handle({
+      type: "status",
+      state: "running",
+      threadId: "thread-0",
+      seq: 0,
+      time: 1000,
+    } as AcpStreamMessage);
+    await writer.handle({
+      type: "event",
+      event: { type: "message", text: "Checking the code path." } as any,
+      seq: 1,
+      time: 1100,
+    } as AcpStreamMessage);
+    await writer.handle({
+      type: "event",
+      event: {
+        type: "file",
+        path: "src/example.ts",
+        operation: "write",
+      } as any,
+      seq: 2,
+      time: 3500,
+    } as AcpStreamMessage);
+    await writer.handle({
+      type: "summary",
+      finalResponse: "done",
+      seq: 3,
+      time: 3600,
+    } as AcpStreamMessage);
+    await flush(writer);
+    await writer.waitForLiveLogFlush();
+    await writer.waitForLivePreviewFlush();
+
+    const liveEvents = flattenLivePayloads(livePayloads);
+    const previewEvents = flattenLivePayloads(previewPayloads);
+    expect(liveEvents.some((event) => event.type === "event")).toBe(true);
+    expect(
+      previewEvents.some(
+        (event) => event.type === "event" && event.event.type === "file",
+      ),
+    ).toBe(false);
+    expect(previewEvents).toEqual([
+      expect.objectContaining({
+        type: "status",
+        state: "running",
+        seq: 0,
+      }),
+      expect.objectContaining({
+        type: "event",
+        seq: 1,
+        event: expect.objectContaining({
+          type: "message",
+          text: "Checking the code path.",
+        }),
+      }),
+      expect.objectContaining({
+        type: "status",
+        state: "running",
+        seq: 2,
+      }),
+      expect.objectContaining({
+        type: "summary",
+        seq: 3,
+        finalResponse: "done",
+      }),
+    ]);
     (writer as any).dispose?.(true);
   });
 

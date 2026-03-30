@@ -35,9 +35,9 @@ describe("app expose launchpad reservation", () => {
       warnings: [],
     }));
     const reserve = jest.fn(async () => ({
-      hostname: "abcd-app.dev.cocalc.ai",
+      hostname: "abcd-app.host-123.dev.cocalc.ai",
       label: "abcd",
-      url_public: "https://abcd-app.dev.cocalc.ai",
+      url_public: "https://abcd-app.host-123.dev.cocalc.ai",
       warnings: [],
     }));
 
@@ -92,7 +92,9 @@ describe("app expose launchpad reservation", () => {
       preferred_label: undefined,
       random_subdomain: true,
     });
-    expect(exposed.exposure?.public_url).toBe("https://abcd-app.dev.cocalc.ai");
+    expect(exposed.exposure?.public_url).toBe(
+      "https://abcd-app.host-123.dev.cocalc.ai",
+    );
 
     await deleteApp(id);
     await statusApp(id).catch(() => undefined);
