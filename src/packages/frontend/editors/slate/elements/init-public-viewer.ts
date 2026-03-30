@@ -3,5 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import "./types-public-viewer";
+
 export * from "./register";
-export * from "./types-public-viewer";
+export { isElementOfType } from "./types-public-viewer";
