@@ -30,6 +30,18 @@ const DEFAULT_METADATA_MAX_USED_PERCENT = Math.max(
     Number(process.env.COCALC_STORAGE_METADATA_MAX_USED_PERCENT ?? 92),
   ),
 );
+const METADATA_WARNING_UNALLOCATED_BYTES = Math.max(
+  GiB,
+  Number(
+    process.env.COCALC_STORAGE_METADATA_WARNING_UNALLOCATED_BYTES ?? 20 * GiB,
+  ),
+);
+const METADATA_CRITICAL_UNALLOCATED_BYTES = Math.max(
+  GiB,
+  Number(
+    process.env.COCALC_STORAGE_METADATA_CRITICAL_UNALLOCATED_BYTES ?? 8 * GiB,
+  ),
+);
 const DEFAULT_OCI_UNKNOWN_BYTES = Math.max(
   GiB,
   Number(process.env.COCALC_STORAGE_OCI_UNKNOWN_BYTES ?? 20 * GiB),
@@ -232,6 +244,45 @@ function metadataUsedPercent(
   return (used / total) * 100;
 }
 
+function metadataAllocationHeadroomBytes(
+  storage: Partial<HostCurrentMetrics>,
+): number | undefined {
+  const unallocated = storage.disk_unallocated_bytes;
+  if (unallocated != null && Number.isFinite(unallocated)) {
+    return unallocated;
+  }
+  const conservative = storage.disk_available_conservative_bytes;
+  if (conservative != null && Number.isFinite(conservative)) {
+    return conservative;
+  }
+  return undefined;
+}
+
+function metadataPressureLevel(
+  storage: Partial<HostCurrentMetrics>,
+  usedPercent: number | undefined,
+  criticalPercent: number,
+): "healthy" | "warning" | "critical" {
+  if (usedPercent == null || !Number.isFinite(usedPercent)) return "healthy";
+  const headroom = metadataAllocationHeadroomBytes(storage);
+  if (headroom == null || !Number.isFinite(headroom)) {
+    return usedPercent >= criticalPercent ? "critical" : "healthy";
+  }
+  if (
+    usedPercent >= criticalPercent &&
+    headroom <= METADATA_CRITICAL_UNALLOCATED_BYTES
+  ) {
+    return "critical";
+  }
+  if (
+    usedPercent >= criticalPercent &&
+    headroom <= METADATA_WARNING_UNALLOCATED_BYTES
+  ) {
+    return "warning";
+  }
+  return "healthy";
+}
+
 export async function acquireStorageReservation({
   kind,
   estimated_bytes,
@@ -258,17 +309,22 @@ export async function acquireStorageReservation({
     });
   }
   const metadataPercent = metadataUsedPercent(storage);
+  const metadataHeadroom = metadataAllocationHeadroomBytes(storage);
   if (
-    metadataPercent != null &&
-    Number.isFinite(metadataPercent) &&
-    metadataPercent >= metadata_max_used_percent
+    metadataPressureLevel(
+      storage,
+      metadataPercent,
+      metadata_max_used_percent,
+    ) === "critical"
   ) {
     throw new StorageReservationError({
       kind,
       estimated_bytes: estimated,
       available_bytes: available,
       metadata_used_percent: metadataPercent,
-      message: `host storage reservation denied for ${kindLabel(kind)}: Btrfs metadata usage is ${metadataPercent.toFixed(1)}%, above the ${metadata_max_used_percent.toFixed(1)}% safety limit`,
+      message:
+        `host storage reservation denied for ${kindLabel(kind)}: Btrfs metadata usage is ${metadataPercent?.toFixed(1)}% ` +
+        `and device unallocated headroom is only ${formatBinaryBytes(metadataHeadroom ?? 0)}, below the safety limit`,
     });
   }
   const now = Date.now();

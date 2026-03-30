@@ -57,12 +57,28 @@ describe("storage reservations", () => {
         estimated_bytes: 2 * 1024 ** 3,
         current_storage: {
           disk_available_conservative_bytes: 40 * 1024 ** 3,
+          disk_unallocated_bytes: 4 * 1024 ** 3,
           btrfs_metadata_total_bytes: 10 * 1024 ** 3,
           btrfs_metadata_used_bytes: 9.5 * 1024 ** 3,
         },
         metadata_max_used_percent: 90,
       }),
     ).rejects.toThrow(/metadata usage/i);
+  });
+
+  it("allows high metadata usage when device unallocated headroom is still ample", async () => {
+    const reservation = await acquireStorageReservation({
+      kind: "rootfs-pull",
+      estimated_bytes: 2 * 1024 ** 3,
+      current_storage: {
+        disk_available_conservative_bytes: 80 * 1024 ** 3,
+        disk_unallocated_bytes: 48 * 1024 ** 3,
+        btrfs_metadata_total_bytes: 10 * 1024 ** 3,
+        btrfs_metadata_used_bytes: 9.5 * 1024 ** 3,
+      },
+      metadata_max_used_percent: 90,
+    });
+    expect(reservation.kind).toBe("rootfs-pull");
   });
 
   it("expires stale reservations from the ledger", async () => {

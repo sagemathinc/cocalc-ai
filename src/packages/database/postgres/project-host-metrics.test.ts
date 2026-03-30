@@ -135,7 +135,40 @@ describe("project host metrics history", () => {
     expect(entry?.points[0].btrfs_metadata_used_bytes).toBeUndefined();
     expect(entry?.points[0].disk_used_percent).toBeCloseTo(25.1, 1);
     expect(entry?.derived?.metadata.level).toBe("healthy");
-    expect(entry?.derived?.metadata.available_bytes).toBeUndefined();
+    expect(entry?.derived?.metadata.available_bytes).toBe(160854908928);
+    expect(entry?.derived?.admission_allowed).toBe(true);
+  });
+
+  it("does not warn on high metadata chunk usage when device unallocated headroom is ample", async () => {
+    const host_id = uuid();
+    await insertProjectHost(host_id);
+    const collected_at = new Date().toISOString();
+
+    await recordProjectHostMetricsSample({
+      host_id,
+      metrics: {
+        collected_at,
+        disk_device_total_bytes: 200 * 1024 ** 3,
+        disk_device_used_bytes: 60 * 1024 ** 3,
+        disk_available_conservative_bytes: 140 * 1024 ** 3,
+        disk_unallocated_bytes: 120 * 1024 ** 3,
+        btrfs_metadata_total_bytes: 10 * 1024 ** 3,
+        btrfs_metadata_used_bytes: Math.floor(8.6 * 1024 ** 3),
+      },
+    });
+
+    const history = await loadProjectHostMetricsHistory({
+      host_ids: [host_id],
+      window_minutes: 60,
+      max_points: 60,
+    });
+    const entry = history.get(host_id);
+    expect(entry).toBeDefined();
+    expect(entry?.derived?.metadata.level).toBe("healthy");
+    expect(entry?.derived?.metadata.available_bytes).toBeCloseTo(
+      121.4 * 1024 ** 3,
+      0,
+    );
     expect(entry?.derived?.admission_allowed).toBe(true);
   });
 });

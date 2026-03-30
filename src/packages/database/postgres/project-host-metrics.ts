@@ -20,6 +20,10 @@ const DISK_WARNING_PERCENT = 85;
 const DISK_CRITICAL_PERCENT = 93;
 const METADATA_WARNING_PERCENT = 80;
 const METADATA_CRITICAL_PERCENT = 90;
+const METADATA_WARNING_AVAILABLE_BYTES = 8 * GIB;
+const METADATA_CRITICAL_AVAILABLE_BYTES = 2 * GIB;
+const METADATA_WARNING_UNALLOCATED_BYTES = 20 * GIB;
+const METADATA_CRITICAL_UNALLOCATED_BYTES = 8 * GIB;
 const WARNING_HOURS_TO_EXHAUSTION = 24;
 const CRITICAL_HOURS_TO_EXHAUSTION = 6;
 let schemaReady: Promise<void> | undefined;
@@ -329,6 +333,133 @@ function riskState(opts: {
   };
 }
 
+function computeMetadataAvailableBytes(
+  current: HostMetricsHistoryPoint,
+): number | undefined {
+  const allocatedAvailable =
+    current.btrfs_metadata_total_bytes != null &&
+    current.btrfs_metadata_used_bytes != null
+      ? current.btrfs_metadata_total_bytes - current.btrfs_metadata_used_bytes
+      : undefined;
+  const unallocated = current.disk_unallocated_bytes;
+  if (unallocated != null && Number.isFinite(unallocated)) {
+    return Math.max(0, (allocatedAvailable ?? 0) + unallocated);
+  }
+  const conservative = current.disk_available_conservative_bytes;
+  if (conservative != null && Number.isFinite(conservative)) {
+    return Math.max(allocatedAvailable ?? 0, conservative);
+  }
+  return allocatedAvailable;
+}
+
+function metadataPercentLevel(
+  used_percent: number | undefined,
+  allocation_headroom_bytes: number | undefined,
+): HostMetricsRiskLevel {
+  if (used_percent == null || !Number.isFinite(used_percent)) {
+    return "healthy";
+  }
+  if (
+    allocation_headroom_bytes == null ||
+    !Number.isFinite(allocation_headroom_bytes)
+  ) {
+    if (used_percent >= METADATA_CRITICAL_PERCENT) return "critical";
+    if (used_percent >= METADATA_WARNING_PERCENT) return "warning";
+    return "healthy";
+  }
+  if (
+    used_percent >= METADATA_CRITICAL_PERCENT &&
+    allocation_headroom_bytes <= METADATA_CRITICAL_UNALLOCATED_BYTES
+  ) {
+    return "critical";
+  }
+  if (
+    used_percent >= METADATA_WARNING_PERCENT &&
+    allocation_headroom_bytes <= METADATA_WARNING_UNALLOCATED_BYTES
+  ) {
+    return "warning";
+  }
+  return "healthy";
+}
+
+function computeMetadataRisk(
+  current: HostMetricsHistoryPoint,
+  growth?: HostMetricsHistoryGrowth,
+): HostMetricsRiskState {
+  const allocationHeadroom = current.disk_unallocated_bytes;
+  const effectiveAvailableBytes = computeMetadataAvailableBytes(current);
+  const hoursToExhaustion = computeHoursToExhaustion(
+    effectiveAvailableBytes,
+    growth?.metadata_used_bytes_per_hour,
+  );
+  let level: HostMetricsRiskLevel = "healthy";
+  const reasons: string[] = [];
+
+  if (
+    effectiveAvailableBytes != null &&
+    effectiveAvailableBytes <= METADATA_CRITICAL_AVAILABLE_BYTES
+  ) {
+    level = worstLevel(level, "critical");
+    reasons.push("Metadata growth headroom is critically low");
+  } else if (
+    effectiveAvailableBytes != null &&
+    effectiveAvailableBytes <= METADATA_WARNING_AVAILABLE_BYTES
+  ) {
+    level = worstLevel(level, "warning");
+    reasons.push("Metadata growth headroom is low");
+  }
+
+  const percentLevel = metadataPercentLevel(
+    current.metadata_used_percent,
+    allocationHeadroom,
+  );
+  if (percentLevel === "critical") {
+    level = worstLevel(level, "critical");
+    reasons.push(
+      "Metadata usage is critically high and device unallocated headroom is low",
+    );
+  } else if (percentLevel === "warning") {
+    level = worstLevel(level, "warning");
+    reasons.push(
+      "Metadata usage is high and device unallocated headroom is getting low",
+    );
+  }
+
+  if (
+    hoursToExhaustion != null &&
+    Number.isFinite(hoursToExhaustion) &&
+    hoursToExhaustion <= CRITICAL_HOURS_TO_EXHAUSTION
+  ) {
+    level = worstLevel(level, "critical");
+    reasons.push(
+      `Metadata could exhaust within ${CRITICAL_HOURS_TO_EXHAUSTION}h`,
+    );
+  } else if (
+    hoursToExhaustion != null &&
+    Number.isFinite(hoursToExhaustion) &&
+    hoursToExhaustion <= WARNING_HOURS_TO_EXHAUSTION
+  ) {
+    level = worstLevel(level, "warning");
+    reasons.push(
+      `Metadata could exhaust within ${WARNING_HOURS_TO_EXHAUSTION}h`,
+    );
+  }
+
+  return {
+    level,
+    ...(current.metadata_used_percent != null
+      ? { used_percent: current.metadata_used_percent }
+      : {}),
+    ...(effectiveAvailableBytes != null
+      ? { available_bytes: effectiveAvailableBytes }
+      : {}),
+    ...(hoursToExhaustion != null
+      ? { hours_to_exhaustion: hoursToExhaustion }
+      : {}),
+    ...(reasons.length ? { reason: reasons[0] } : {}),
+  };
+}
+
 function computeDerived(
   points: HostMetricsHistoryPoint[],
   window_minutes: number,
@@ -340,15 +471,6 @@ function computeDerived(
     current.disk_available_conservative_bytes,
     growth?.disk_used_bytes_per_hour,
   );
-  const metadataAvailableBytes =
-    current.btrfs_metadata_total_bytes != null &&
-    current.btrfs_metadata_used_bytes != null
-      ? current.btrfs_metadata_total_bytes - current.btrfs_metadata_used_bytes
-      : undefined;
-  const metadataHoursToExhaustion = computeHoursToExhaustion(
-    metadataAvailableBytes,
-    growth?.metadata_used_bytes_per_hour,
-  );
   const disk = riskState({
     label: "Disk",
     used_percent: current.disk_used_percent,
@@ -359,14 +481,7 @@ function computeDerived(
     warning_available_bytes: DISK_WARNING_AVAILABLE_BYTES,
     critical_available_bytes: DISK_CRITICAL_AVAILABLE_BYTES,
   });
-  const metadata = riskState({
-    label: "Metadata",
-    used_percent: current.metadata_used_percent,
-    available_bytes: metadataAvailableBytes,
-    hours_to_exhaustion: metadataHoursToExhaustion,
-    warning_percent: METADATA_WARNING_PERCENT,
-    critical_percent: METADATA_CRITICAL_PERCENT,
-  });
+  const metadata = computeMetadataRisk(current, growth);
   const alerts: HostMetricsDerived["alerts"] = [];
   if (disk.level !== "healthy") {
     alerts.push({
