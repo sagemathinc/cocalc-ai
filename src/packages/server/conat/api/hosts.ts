@@ -3913,7 +3913,6 @@ export async function updateHostMachine({
       auto_grow: nextAutoGrow,
     };
     changed = true;
-    nonDiskChange = true;
   }
 
   if (!changed) {
@@ -3968,7 +3967,12 @@ export async function updateHostMachine({
     );
   }
 
-  if (!isSelfHost && nextDisk == null && !requiresReprovision) {
+  if (
+    !isSelfHost &&
+    nextDisk == null &&
+    !requiresReprovision &&
+    !autoGrowChanged
+  ) {
     return parseRow(row);
   }
 

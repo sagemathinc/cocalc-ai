@@ -648,7 +648,7 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
             />
           </Form.Item>
         )}
-        {canEditMachine && showAutoGrowControls && (
+        {showAutoGrowControls && (
           <Collapse ghost style={{ marginBottom: 8 }} defaultActiveKey={[]}>
             <Collapse.Panel header="Auto-grow" key="auto-grow">
               <Alert
