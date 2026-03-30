@@ -15,7 +15,7 @@ import { ButtonGroup } from "@cocalc/frontend/antd-bootstrap";
 import { Button, Dropdown, Input, InputNumber, Popover, Tooltip } from "antd";
 import type { MenuProps } from "antd/lib";
 import { List } from "immutable";
-import { useMemo, useRef } from "react";
+import { lazy, Suspense, useMemo, useRef } from "react";
 import { useIntl } from "react-intl";
 import {
   CSS,
@@ -35,11 +35,10 @@ import {
 import { DropdownMenu } from "@cocalc/frontend/components/dropdown-menu";
 import { useStudentProjectFunctionality } from "@cocalc/frontend/course";
 import { IS_MOBILE } from "@cocalc/frontend/feature";
-import { NotebookFrameActions } from "@cocalc/frontend/frame-editors/jupyter-editor/cell-notebook/actions";
+import type { NotebookFrameActions } from "@cocalc/frontend/frame-editors/jupyter-editor/cell-notebook/actions";
 import { IntlMessage, isIntlMessage, labels } from "@cocalc/frontend/i18n";
-import { JupyterActions } from "@cocalc/frontend/jupyter/browser-actions";
+import type { JupyterActions } from "@cocalc/frontend/jupyter/browser-actions";
 import { ACTIVITY_BAR_TOGGLE_LABELS } from "@cocalc/frontend/project/page/activity-bar-consts";
-import { AIGenerateDocumentModal } from "@cocalc/frontend/project/page/home-page/ai-generate-document";
 import { isSupportedExtension } from "@cocalc/frontend/project/page/home-page/ai-generate-examples";
 import { AvailableFeatures } from "@cocalc/frontend/project_configuration";
 import userTracking from "@cocalc/frontend/user-tracking";
@@ -134,6 +133,12 @@ const CONNECTION_STATUS_STYLE: CSS = {
   fontSize: "10pt",
   float: "right",
 } as const;
+
+const LazyAIGenerateDocumentModal = lazy(async () => {
+  const { AIGenerateDocumentModal } =
+    await import("@cocalc/frontend/project/page/home-page/ai-generate-document");
+  return { default: AIGenerateDocumentModal };
+});
 
 function connection_status_color(status: ConnectionStatus): string {
   switch (status) {
@@ -613,16 +618,18 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
   function renderNewAI() {
     const { path, project_id } = props;
     const ext = filename_extension(path);
-    if (!isSupportedExtension(ext)) return;
+    if (!showNewAI || !isSupportedExtension(ext)) return;
 
     return (
-      <AIGenerateDocumentModal
-        key={"new-ai"}
-        ext={ext}
-        show={showNewAI}
-        setShow={setShowNewAI}
-        project_id={project_id}
-      />
+      <Suspense fallback={null}>
+        <LazyAIGenerateDocumentModal
+          key={"new-ai"}
+          ext={ext}
+          show={showNewAI}
+          setShow={setShowNewAI}
+          project_id={project_id}
+        />
+      </Suspense>
     );
   }
 

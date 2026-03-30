@@ -125,7 +125,6 @@ import {
 } from "@cocalc/frontend/project/action-paths";
 import { isJupyterPath } from "@cocalc/util/jupyter/names";
 import { canonicalSyncPath } from "@cocalc/frontend/project/sync-path";
-import { createInitialIpynbContent } from "@cocalc/frontend/jupyter/new-notebook";
 import {
   buildProjectFilesTarget,
   getProjectUrlPath,
@@ -2823,7 +2822,9 @@ export class ProjectActions extends Actions<ProjectStoreState> {
         : undefined;
     const content =
       ext === "ipynb"
-        ? await createInitialIpynbContent(this.project_id, preferredKernel)
+        ? await (
+            await import("@cocalc/frontend/jupyter/new-notebook")
+          ).createInitialIpynbContent(this.project_id, preferredKernel)
         : getFileTemplate(ext);
     await this.ensureContainingDirectoryExists(path);
     const fs = this.fs();

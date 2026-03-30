@@ -23,7 +23,7 @@ import {
 } from "antd";
 import { delay } from "awaiting";
 import { debounce, isEmpty, throttle } from "lodash";
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 
 import { useLanguageModelSetting } from "@cocalc/frontend/account/useLanguageModelSetting";
@@ -46,7 +46,6 @@ import {
 } from "@cocalc/frontend/components";
 import AIAvatar from "@cocalc/frontend/components/ai-avatar";
 import ProgressEstimate from "@cocalc/frontend/components/progress-estimate";
-import SelectKernel from "@cocalc/frontend/components/run-button/select-kernel";
 import { Tip } from "@cocalc/frontend/components/tip";
 import { file_options } from "@cocalc/frontend/editor-tmp";
 import type { Actions as CodeEditorActions } from "@cocalc/frontend/frame-editors/code-editor/actions";
@@ -60,9 +59,6 @@ import LLMSelector, {
 import { useLLMHistory } from "@cocalc/frontend/frame-editors/llm/use-llm-history";
 import type { Actions as RmdActions } from "@cocalc/frontend/frame-editors/rmd-editor/actions";
 import { dialogs, labels } from "@cocalc/frontend/i18n";
-import getKernelSpec from "@cocalc/frontend/jupyter/kernelspecs";
-import { splitCells } from "@cocalc/frontend/jupyter/llm/split-cells";
-import NBViewer from "@cocalc/frontend/jupyter/nbviewer/nbviewer";
 import { LLMCostEstimation } from "@cocalc/frontend/misc/llm-cost-estimation";
 import { LLMEvent } from "@cocalc/frontend/project/history/types";
 import { DELAY_SHOW_MS } from "@cocalc/frontend/project/new/consts";
@@ -71,7 +67,7 @@ import { ensure_project_running } from "@cocalc/frontend/project/project-start-w
 import { StartButton } from "@cocalc/frontend/project/start-button";
 import track from "@cocalc/frontend/user-tracking";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
-import { JupyterActions } from "@cocalc/jupyter/redux/actions";
+import type { JupyterActions } from "@cocalc/jupyter/redux/actions";
 import type { KernelSpec } from "@cocalc/jupyter/types";
 import {
   getLLMServiceStatusCheckMD,
@@ -103,6 +99,14 @@ import {
 
 const TAG = AI_GENERATE_DOC_TAG;
 const TAG_TMPL = `${TAG}-template`;
+
+const NBViewer = lazy(
+  () => import("@cocalc/frontend/jupyter/nbviewer/nbviewer"),
+);
+
+const SelectKernel = lazy(
+  () => import("@cocalc/frontend/components/run-button/select-kernel"),
+);
 
 export const PREVIEW_BOX: CSS = {
   border: `1px solid ${COLORS.GRAY}`,
@@ -212,6 +216,8 @@ function AIGenerateDocument({
   ]);
 
   useEffect(() => {
+    let isCancelled = false;
+    if (!show) return;
     if (projectState != "running") {
       setKernelSpecs("start");
       return;
@@ -219,6 +225,8 @@ function AIGenerateDocument({
     (async () => {
       try {
         setKernelSpecs(null);
+        const { default: getKernelSpec } =
+          await import("@cocalc/frontend/jupyter/kernelspecs");
         let X = await getKernelSpec({ project_id });
         if (ext === "ipynb-sagemath") {
           // only SageMath KernelSpecs
@@ -234,6 +242,7 @@ function AIGenerateDocument({
           return -cmp(ap, bp) || an.localeCompare(bn);
         });
 
+        if (isCancelled) return;
         setKernelSpecs(X);
 
         if (spec == null && ext !== "ipynb-sagemath") {
@@ -243,6 +252,7 @@ function AIGenerateDocument({
           if (name != null) {
             for (const a of X) {
               if (a.name == name) {
+                if (isCancelled) return;
                 setSpec(a);
                 return;
               }
@@ -253,13 +263,16 @@ function AIGenerateDocument({
         // not found? either we pick the top priority sagemath or just the first one
         if (spec == null) {
           if (X.length > 0) {
+            if (isCancelled) return;
             setSpec(X[0]);
           } else {
+            if (isCancelled) return;
             setSpec(null);
           }
         }
       } catch (err) {
         console.log(err);
+        if (isCancelled) return;
         setKernelSpecs(
           intl.formatMessage({
             id: "ai-generate-document.loading_kernels.error_message",
@@ -269,9 +282,15 @@ function AIGenerateDocument({
         );
       }
     })();
-  }, [project_id, projectState]);
+    return () => {
+      isCancelled = true;
+    };
+  }, [ext, intl, projectState, project_id, show]);
 
   const cancel = useRef<boolean>(false);
+  const splitCellsRef = useRef<
+    null | typeof import("@cocalc/frontend/jupyter/llm/split-cells").splitCells
+  >(null);
   // only used for ipynb
   const [ipynb, setIpynb] = useState<null | Ipynb>(null);
 
@@ -357,6 +376,14 @@ function AIGenerateDocument({
     try {
       cancel.current = false;
       setQuerying(true);
+      if (
+        (ext === "ipynb" || ext === "ipynb-sagemath") &&
+        splitCellsRef.current == null
+      ) {
+        const { splitCells } =
+          await import("@cocalc/frontend/jupyter/llm/split-cells");
+        splitCellsRef.current = splitCells;
+      }
 
       const llmStream = webapp_client.openai_client.queryStream({
         input,
@@ -450,6 +477,10 @@ function AIGenerateDocument({
     if (spec == null) {
       // this happens e.g., if the user closes the modal dialog
       throw new Error("processAnswerIpynb: spec is null");
+    }
+    const splitCells = splitCellsRef.current;
+    if (splitCells == null) {
+      throw new Error("processAnswerIpynb: split-cells is not loaded");
     }
     const cells = splitCells(answer, (line) => line.startsWith("filename:"));
     return { cells, metadata: { kernelspec: spec } };
@@ -779,25 +810,27 @@ function AIGenerateDocument({
           <Paragraph strong>
             {intl.formatMessage(labels.select_a_kernel)}
             {": "}
-            <SelectKernel
-              placeholder={`${intl.formatMessage(labels.select_a_kernel)}...`}
-              size="middle"
-              disabled={querying}
-              project_id={project_id}
-              kernelSpecs={kernelSpecs}
-              style={{ width: "100%", maxWidth: "350px" }}
-              onSelect={(value) => {
-                if (kernelSpecs == null || typeof kernelSpecs != "object")
-                  return;
-                for (const spec of kernelSpecs) {
-                  if (spec.name == value) {
-                    setSpec(spec);
-                    break;
+            <Suspense fallback={<Loading />}>
+              <SelectKernel
+                placeholder={`${intl.formatMessage(labels.select_a_kernel)}...`}
+                size="middle"
+                disabled={querying}
+                project_id={project_id}
+                kernelSpecs={kernelSpecs}
+                style={{ width: "100%", maxWidth: "350px" }}
+                onSelect={(value) => {
+                  if (kernelSpecs == null || typeof kernelSpecs != "object")
+                    return;
+                  for (const spec of kernelSpecs) {
+                    if (spec.name == value) {
+                      setSpec(spec);
+                      break;
+                    }
                   }
-                }
-              }}
-              kernel={spec?.name}
-            />
+                }}
+                kernel={spec?.name}
+              />
+            </Suspense>
           </Paragraph>
         ) : undefined}
       </>
@@ -952,17 +985,19 @@ function AIGenerateDocument({
         if (ipynb == null || spec == null) return <Loading />;
         // TODO: figure out how to replace this by the "CellList" component (which requires a bunch of special objects)
         return (
-          <NBViewer
-            content={JSON.stringify(ipynb, null, 2)}
-            fontSize={undefined}
-            style={PREVIEW_BOX}
-            cellListStyle={{
-              transform: "scale(0.9)",
-              transformOrigin: "top left",
-              width: "110%",
-            }}
-            scrollBottom={true}
-          />
+          <Suspense fallback={<Loading />}>
+            <NBViewer
+              content={JSON.stringify(ipynb, null, 2)}
+              fontSize={undefined}
+              style={PREVIEW_BOX}
+              cellListStyle={{
+                transform: "scale(0.9)",
+                transformOrigin: "top left",
+                width: "110%",
+              }}
+              scrollBottom={true}
+            />
+          </Suspense>
         );
       default:
         return (
@@ -1228,13 +1263,15 @@ export function AIGenerateDocumentButton({
           </Space>
         </Button>
       </Tip>
-      <AIGenerateDocumentModal
-        ext={ext}
-        show={show}
-        setShow={setShow}
-        project_id={project_id}
-        filename={filename}
-      />
+      {show ? (
+        <AIGenerateDocumentModal
+          ext={ext}
+          show={show}
+          setShow={setShow}
+          project_id={project_id}
+          filename={filename}
+        />
+      ) : null}
     </>
   );
 }

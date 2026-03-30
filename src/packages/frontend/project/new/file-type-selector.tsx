@@ -5,6 +5,7 @@
 
 import { Col, Flex, Row, Tag } from "antd";
 import { Gutter } from "antd/es/grid/row";
+import { lazy, Suspense } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { Available } from "@cocalc/comm/project-configuration";
 import { CSS } from "@cocalc/frontend/app-framework";
@@ -17,8 +18,12 @@ import { Ext } from "@cocalc/frontend/project/page/home-page/ai-generate-example
 import { ProjectActions } from "@cocalc/frontend/project_actions";
 import { AIGenerateDocumentButton } from "../page/home-page/ai-generate-document";
 import { DELAY_SHOW_MS, NEW_FILETYPE_ICONS } from "./consts";
-import { JupyterNotebookButtons } from "./jupyter-buttons";
 import { NewFileButton } from "./new-file-button";
+
+const LazyJupyterNotebookButtons = lazy(async () => {
+  const { JupyterNotebookButtons } = await import("./jupyter-buttons");
+  return { default: JupyterNotebookButtons };
+});
 
 interface DisabledFeatures {
   linux?: boolean;
@@ -127,21 +132,23 @@ export function FileTypeSelector({
               </Tip>
             </Col>
           )}
-          <JupyterNotebookButtons
-            mode={mode}
-            availableFeatures={availableFeatures}
-            create_file={create_file}
-            btnSize={btnSize}
-            btnActive={btnActive}
-            grid={[sm, md]}
-            filename={filename}
-            filenameChanged={filenameChanged}
-            makeNewFilename={() => makeNewFilename?.("ipynb")}
-            after={
-              /* Those come after the main button, then the additional jupyter notebooks – to avoid jumpyness */
-              [renderTerminal(), renderLaTeX()]
-            }
-          />
+          <Suspense fallback={null}>
+            <LazyJupyterNotebookButtons
+              mode={mode}
+              availableFeatures={availableFeatures}
+              create_file={create_file}
+              btnSize={btnSize}
+              btnActive={btnActive}
+              grid={[sm, md]}
+              filename={filename}
+              filenameChanged={filenameChanged}
+              makeNewFilename={() => makeNewFilename?.("ipynb")}
+              after={
+                /* Those come after the main button, then the additional jupyter notebooks – to avoid jumpyness */
+                [renderTerminal(), renderLaTeX()]
+              }
+            />
+          </Suspense>
         </Row>
       </>
     );
