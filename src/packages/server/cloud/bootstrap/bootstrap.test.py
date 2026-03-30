@@ -146,6 +146,41 @@ class BootstrapStateFilesTest(unittest.TestCase):
 
 
 class BootstrapOwnershipScopeTest(unittest.TestCase):
+    def test_ensure_bootstrap_paths_does_not_recurse_over_bootstrap_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            recorded = []
+
+            original_run_best_effort = bootstrap.run_best_effort
+            original_geteuid = bootstrap.os.geteuid
+            try:
+                bootstrap.run_best_effort = (
+                    lambda _cfg, args, desc: recorded.append((args, desc))
+                )
+                bootstrap.os.geteuid = lambda: 0
+                bootstrap.ensure_bootstrap_paths(cfg)
+            finally:
+                bootstrap.run_best_effort = original_run_best_effort
+                bootstrap.os.geteuid = original_geteuid
+
+            self.assertTrue(recorded)
+            for args, _desc in recorded:
+                self.assertNotIn("-R", args)
+            self.assertIn(
+                (
+                    [
+                        "chown",
+                        "ubuntu:ubuntu",
+                        cfg.bootstrap_root,
+                        cfg.bootstrap_dir,
+                        cfg.bootstrap_tmp,
+                        str(Path(cfg.log_file).parent),
+                    ],
+                    "chown bootstrap-owner dirs",
+                ),
+                recorded,
+            )
+
     def test_ensure_btrfs_data_does_not_recurse_over_entire_tree(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             cfg = make_cfg(tmpdir)
@@ -216,6 +251,62 @@ class BootstrapOwnershipScopeTest(unittest.TestCase):
                         "/mnt/cocalc/data/containers/rootless/missing-runtime-user/run",
                     ],
                     "chown rootless podman paths",
+                ),
+                recorded,
+            )
+
+    def test_write_helpers_chowns_only_targeted_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            recorded = []
+
+            original_run_best_effort = bootstrap.run_best_effort
+            original_runtime_root = bootstrap.project_host_runtime_root
+            original_geteuid = bootstrap.os.geteuid
+            try:
+                bootstrap.run_best_effort = (
+                    lambda _cfg, args, desc: recorded.append((args, desc))
+                )
+                bootstrap.project_host_runtime_root = lambda _cfg: Path(tmpdir) / "runtime-root"
+                bootstrap.os.geteuid = lambda: 0
+                bootstrap.write_helpers(cfg)
+            finally:
+                bootstrap.run_best_effort = original_run_best_effort
+                bootstrap.project_host_runtime_root = original_runtime_root
+                bootstrap.os.geteuid = original_geteuid
+
+            self.assertTrue(recorded)
+            for args, _desc in recorded:
+                self.assertNotIn("-R", args)
+            runtime_bin = Path(tmpdir) / "runtime-root" / "bin"
+            self.assertIn(
+                (
+                    [
+                        "chown",
+                        "missing-runtime-user:missing-runtime-user",
+                        str(runtime_bin),
+                        str(runtime_bin / "ctl"),
+                        str(runtime_bin / "start-project-host"),
+                        str(runtime_bin / "logs"),
+                        str(runtime_bin / "acp-status"),
+                        str(runtime_bin / "acp-logs"),
+                        str(runtime_bin / "logs-cf"),
+                        str(runtime_bin / "ctl-cf"),
+                    ],
+                    "chown runtime helper scripts",
+                ),
+                recorded,
+            )
+            self.assertIn(
+                (
+                    [
+                        "chown",
+                        "missing-runtime-user:missing-runtime-user",
+                        str(runtime_bin / "fetch-project-bundle.sh"),
+                        str(runtime_bin / "fetch-project-host.sh"),
+                        str(runtime_bin / "fetch-tools.sh"),
+                    ],
+                    "chown runtime fetch helpers",
                 ),
                 recorded,
             )

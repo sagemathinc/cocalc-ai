@@ -633,6 +633,28 @@ def project_host_runtime_root(cfg: BootstrapConfig) -> Path:
     return Path(cfg.bootstrap_root)
 
 
+def chown_paths_best_effort(
+    cfg: BootstrapConfig,
+    owner: str,
+    paths: list[str | Path],
+    desc: str,
+    *,
+    recursive: bool = False,
+) -> None:
+    normalized = [str(path) for path in paths if path]
+    if not normalized:
+        return
+    args = ["chown"]
+    if recursive:
+        args.append("-R")
+    args.append(f"{owner}:{owner}")
+    args.extend(normalized)
+    if os.geteuid() == 0:
+        run_best_effort(cfg, args, desc)
+        return
+    run_best_effort(cfg, ["sudo", *args], f"sudo {desc}")
+
+
 def ensure_bootstrap_paths(cfg: BootstrapConfig) -> None:
     Path(cfg.bootstrap_root).mkdir(parents=True, exist_ok=True)
     Path(cfg.bootstrap_dir).mkdir(parents=True, exist_ok=True)
@@ -645,24 +667,12 @@ def ensure_bootstrap_paths(cfg: BootstrapConfig) -> None:
             cfg.bootstrap_tmp,
             str(Path(cfg.log_file).parent),
         ]
-        if os.geteuid() == 0:
-            run_best_effort(
-                cfg,
-                ["chown", "-R", f"{cfg.bootstrap_user}:{cfg.bootstrap_user}", *owner_paths],
-                "chown bootstrap-owner dirs",
-            )
-        else:
-            run_best_effort(
-                cfg,
-                [
-                    "sudo",
-                    "chown",
-                    "-R",
-                    f"{cfg.bootstrap_user}:{cfg.bootstrap_user}",
-                    *owner_paths,
-                ],
-                "sudo chown bootstrap-owner dirs",
-            )
+        chown_paths_best_effort(
+            cfg,
+            cfg.bootstrap_user,
+            owner_paths,
+            "chown bootstrap-owner dirs",
+        )
     if not cfg.ssh_user or cfg.ssh_user == "root":
         return
     runtime_paths = [
@@ -2000,9 +2010,19 @@ esac
     ]:
         (bin_dir / name).chmod(0o755)
     if cfg.ssh_user and cfg.ssh_user != "root":
-        run_best_effort(
+        helper_paths = [
+            bin_dir / "ctl",
+            bin_dir / "start-project-host",
+            bin_dir / "logs",
+            bin_dir / "acp-status",
+            bin_dir / "acp-logs",
+            bin_dir / "logs-cf",
+            bin_dir / "ctl-cf",
+        ]
+        chown_paths_best_effort(
             cfg,
-            ["chown", "-R", f"{cfg.ssh_user}:{cfg.ssh_user}", str(bin_dir)],
+            cfg.ssh_user,
+            [bin_dir, *helper_paths],
             "chown runtime helper scripts",
         )
 
@@ -2027,9 +2047,15 @@ exec python3 "{bootstrap_py}" --config "{config_path}" --only tools_bundle
     for name in ["fetch-project-bundle.sh", "fetch-project-host.sh", "fetch-tools.sh"]:
         (bin_dir / name).chmod(0o755)
     if cfg.ssh_user and cfg.ssh_user != "root":
-        run_best_effort(
+        fetch_paths = [
+            bin_dir / "fetch-project-bundle.sh",
+            bin_dir / "fetch-project-host.sh",
+            bin_dir / "fetch-tools.sh",
+        ]
+        chown_paths_best_effort(
             cfg,
-            ["chown", "-R", f"{cfg.ssh_user}:{cfg.ssh_user}", str(bin_dir)],
+            cfg.ssh_user,
+            fetch_paths,
             "chown runtime fetch helpers",
         )
 
@@ -2063,9 +2089,22 @@ exec python3 "{bootstrap_py}" --config "{config_path}" --only tools_bundle
             target.write_text(script, encoding="utf-8")
             target.chmod(0o755)
         if cfg.bootstrap_user and cfg.bootstrap_user != "root":
-            run_best_effort(
+            admin_paths = [
+                admin_bin / "ctl",
+                admin_bin / "start-project-host",
+                admin_bin / "logs",
+                admin_bin / "acp-status",
+                admin_bin / "acp-logs",
+                admin_bin / "logs-cf",
+                admin_bin / "ctl-cf",
+                admin_bin / "fetch-project-bundle.sh",
+                admin_bin / "fetch-project-host.sh",
+                admin_bin / "fetch-tools.sh",
+            ]
+            chown_paths_best_effort(
                 cfg,
-                ["chown", "-R", f"{cfg.bootstrap_user}:{cfg.bootstrap_user}", str(admin_bin)],
+                cfg.bootstrap_user,
+                [admin_bin, *admin_paths],
                 "chown admin helper scripts",
             )
 
