@@ -49,16 +49,16 @@ import ProgressEstimate from "@cocalc/frontend/components/progress-estimate";
 import SelectKernel from "@cocalc/frontend/components/run-button/select-kernel";
 import { Tip } from "@cocalc/frontend/components/tip";
 import { file_options } from "@cocalc/frontend/editor-tmp";
-import { Actions as CodeEditorActions } from "@cocalc/frontend/frame-editors/code-editor/actions";
-import { JupyterEditorActions } from "@cocalc/frontend/frame-editors/jupyter-editor/actions";
-import { Actions as LatexActions } from "@cocalc/frontend/frame-editors/latex-editor/actions";
+import type { Actions as CodeEditorActions } from "@cocalc/frontend/frame-editors/code-editor/actions";
+import type { JupyterEditorActions } from "@cocalc/frontend/frame-editors/jupyter-editor/actions";
+import type { Actions as LatexActions } from "@cocalc/frontend/frame-editors/latex-editor/actions";
 import { LLMHistorySelector } from "@cocalc/frontend/frame-editors/llm/llm-history-selector";
 import { LLMQueryDropdownButton } from "@cocalc/frontend/frame-editors/llm/llm-query-dropdown";
 import LLMSelector, {
   modelToName,
 } from "@cocalc/frontend/frame-editors/llm/llm-selector";
 import { useLLMHistory } from "@cocalc/frontend/frame-editors/llm/use-llm-history";
-import { Actions as RmdActions } from "@cocalc/frontend/frame-editors/rmd-editor/actions";
+import type { Actions as RmdActions } from "@cocalc/frontend/frame-editors/rmd-editor/actions";
 import { dialogs, labels } from "@cocalc/frontend/i18n";
 import getKernelSpec from "@cocalc/frontend/jupyter/kernelspecs";
 import { splitCells } from "@cocalc/frontend/jupyter/llm/split-cells";
