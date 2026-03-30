@@ -279,6 +279,7 @@ function buildAppPublicWildcardHostname({
 export type BootstrapScripts = {
   expectedOs: string;
   expectedArch: string;
+  bootstrapSelector: string;
   bootstrapPyUrl: string;
   bootstrapPyShaUrl: string;
   publicUrl: string;
@@ -645,6 +646,7 @@ export async function buildBootstrapScripts(
   return {
     expectedOs: targetPlatform.os,
     expectedArch: targetPlatform.arch,
+    bootstrapSelector,
     bootstrapPyUrl,
     bootstrapPyShaUrl,
     publicUrl,
@@ -841,6 +843,8 @@ cat <<EOF_COCALC_BOOTSTRAP_CONFIG > "$BOOTSTRAP_DIR/bootstrap-config.json"
   "env_file": "${scripts.envFile}",
   "env_lines": ${envLinesJson},
   "node_version": "${scripts.nodeVersion}",
+  "bootstrap_selector": "${scripts.bootstrapSelector}",
+  "bootstrap_py_url": "${scripts.bootstrapPyUrl}",
   "project_host_bundle": {
     "url": "${scripts.projectHostBundleUrl}",
     "sha256": "${scripts.projectHostBundleSha256}",
@@ -925,8 +929,8 @@ else
 fi
 
 if [ "$BOOTSTRAP_ALREADY_DONE" = "1" ]; then
-  echo "bootstrap: already complete; reconciling cloudflared"
-  python3 "$BOOTSTRAP_DIR/bootstrap.py" --config "$BOOTSTRAP_DIR/bootstrap-config.json" --only cloudflared || true
+  echo "bootstrap: already complete; reconciling host software"
+  python3 "$BOOTSTRAP_DIR/bootstrap.py" reconcile --config "$BOOTSTRAP_DIR/bootstrap-config.json"
   exit 0
 fi
 

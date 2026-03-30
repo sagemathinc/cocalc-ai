@@ -207,4 +207,169 @@ describe("guarded host auto-grow", () => {
     expect(result.reason).toMatch(/not enabled/i);
     expect(getProviderContextMock).not.toHaveBeenCalled();
   });
+
+  it("recommends background auto-grow for sustained low disk headroom", async () => {
+    const { _test } = await import("./auto-grow");
+    const decision = _test.shouldAutoGrowForBackgroundPressure({
+      window_minutes: 6,
+      point_count: 4,
+      points: [
+        {
+          collected_at: "2026-03-30T02:00:00.000Z",
+          disk_available_conservative_bytes: 20 * 1024 ** 3,
+          disk_used_percent: 90,
+        },
+        {
+          collected_at: "2026-03-30T02:01:00.000Z",
+          disk_available_conservative_bytes: 19 * 1024 ** 3,
+          disk_used_percent: 90.5,
+        },
+        {
+          collected_at: "2026-03-30T02:02:00.000Z",
+          disk_available_conservative_bytes: 18 * 1024 ** 3,
+          disk_used_percent: 91,
+        },
+      ],
+      growth: {
+        window_minutes: 6,
+        disk_used_bytes_per_hour: 2 * 1024 ** 3,
+      },
+      derived: {
+        window_minutes: 6,
+        disk: {
+          level: "warning",
+          available_bytes: 18 * 1024 ** 3,
+          hours_to_exhaustion: 9,
+          reason: "Disk could exhaust within 24h",
+        },
+        metadata: { level: "healthy" },
+        alerts: [],
+        admission_allowed: true,
+        auto_grow_recommended: true,
+      },
+    });
+
+    expect(decision).toEqual({
+      recommended: true,
+      reason: "Disk could exhaust within 24h",
+    });
+  });
+
+  it("grows a host for background disk pressure when metrics justify it", async () => {
+    const resizeDiskMock = jest.fn(async () => undefined);
+    const growBtrfsMock = jest.fn(async () => ({ ok: true }));
+    getProviderContextMock = jest.fn(async () => ({
+      entry: {
+        provider: {
+          resizeDisk: resizeDiskMock,
+        },
+      },
+      creds: {},
+    }));
+    createHostControlClientMock = jest.fn(() => ({
+      growBtrfs: growBtrfsMock,
+    }));
+
+    queryMock = jest.fn(async (sql: string, params: any[]) => {
+      if (sql.includes("FROM project_hosts")) {
+        return {
+          rows: [
+            {
+              id: "host-2",
+              name: "Host 2",
+              region: "us-west1",
+              status: "running",
+              metadata: {
+                runtime: { instance_id: "instance-2" },
+                machine: {
+                  cloud: "gcp",
+                  disk_gb: 200,
+                  storage_mode: "persistent",
+                  metadata: {
+                    auto_grow: {
+                      enabled: true,
+                      max_disk_gb: 500,
+                      growth_step_gb: 50,
+                      min_grow_interval_minutes: 60,
+                    },
+                  },
+                },
+              },
+            },
+          ],
+        };
+      }
+      if (sql.includes("UPDATE project_hosts")) {
+        expect(params[0]).toBe("host-2");
+        expect(params[1].machine.disk_gb).toBe(250);
+        return { rows: [] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { maybeAutoGrowHostDiskForBackgroundPressure } =
+      await import("./auto-grow");
+    const result = await maybeAutoGrowHostDiskForBackgroundPressure({
+      host_id: "host-2",
+      history: {
+        window_minutes: 6,
+        point_count: 4,
+        points: [
+          {
+            collected_at: "2026-03-30T02:00:00.000Z",
+            disk_available_conservative_bytes: 20 * 1024 ** 3,
+            disk_used_percent: 90,
+          },
+          {
+            collected_at: "2026-03-30T02:01:00.000Z",
+            disk_available_conservative_bytes: 19 * 1024 ** 3,
+            disk_used_percent: 90.5,
+          },
+          {
+            collected_at: "2026-03-30T02:02:00.000Z",
+            disk_available_conservative_bytes: 18 * 1024 ** 3,
+            disk_used_percent: 91,
+          },
+        ],
+        growth: {
+          window_minutes: 6,
+          disk_used_bytes_per_hour: 2 * 1024 ** 3,
+        },
+        derived: {
+          window_minutes: 6,
+          disk: {
+            level: "warning",
+            available_bytes: 18 * 1024 ** 3,
+            hours_to_exhaustion: 9,
+            reason: "Disk could exhaust within 24h",
+          },
+          metadata: { level: "healthy" },
+          alerts: [],
+          admission_allowed: true,
+          auto_grow_recommended: true,
+        },
+      },
+    });
+
+    expect(result).toEqual({
+      grown: true,
+      next_disk_gb: 250,
+    });
+    expect(resizeDiskMock).toHaveBeenCalledWith(
+      expect.objectContaining({ instance_id: "instance-2" }),
+      250,
+      {},
+    );
+    expect(growBtrfsMock).toHaveBeenCalledWith({ disk_gb: 250 });
+    expect(logCloudVmEventMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        vm_id: "host-2",
+        action: "resize",
+        status: "success",
+        spec: expect.objectContaining({
+          trigger: "background_low_headroom",
+        }),
+      }),
+    );
+  });
 });

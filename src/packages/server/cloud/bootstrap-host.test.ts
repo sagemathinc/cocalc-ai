@@ -71,4 +71,18 @@ describe("bootstrap-host shell templates", () => {
     expect(source).toContain(`bash "$BOOTSTRAP_PAYLOAD"`);
     expect(source).not.toContain(`-o "$BOOTSTRAP_DIR/bootstrap.sh"`);
   });
+
+  it("runs explicit reconcile mode after bootstrap is already complete", () => {
+    const source = fs.readFileSync(
+      path.join(__dirname, "bootstrap-host.ts"),
+      "utf8",
+    );
+
+    expect(source).toContain(
+      `python3 "$BOOTSTRAP_DIR/bootstrap.py" reconcile --config "$BOOTSTRAP_DIR/bootstrap-config.json"`,
+    );
+    expect(source).not.toContain(
+      `python3 "$BOOTSTRAP_DIR/bootstrap.py" --config "$BOOTSTRAP_DIR/bootstrap-config.json" --only cloudflared`,
+    );
+  });
 });

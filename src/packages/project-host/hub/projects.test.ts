@@ -7,6 +7,9 @@ const getProject = jest.fn();
 const getOrCreateProjectLocalSecretToken = jest.fn();
 const reportProjectStateToMaster = jest.fn();
 const writeManagedAuthorizedKeys = jest.fn();
+const withOciPullReservationIfNeeded = jest.fn(
+  async ({ fn }: { fn: () => Promise<any> }) => await fn(),
+);
 
 jest.mock("@cocalc/lite/hub/api", () => ({ hubApi: { projects: {} as any } }));
 jest.mock("@cocalc/backend/data", () => ({
@@ -58,6 +61,10 @@ jest.mock("../pending-copies", () => ({
 jest.mock("@cocalc/lite/hub/acp", () => ({
   rehydrateAcpAutomationsForProject: (...args: any[]) =>
     rehydrateAcpAutomationsForProject(...args),
+}));
+jest.mock("../storage-reservations", () => ({
+  withOciPullReservationIfNeeded: (...args: any[]) =>
+    withOciPullReservationIfNeeded(...args),
 }));
 
 describe("project host start ACP rehydrate ordering", () => {
