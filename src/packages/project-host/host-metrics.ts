@@ -263,21 +263,19 @@ function parseDfOutput(output: string): Partial<HostCurrentMetrics> {
 async function readDiskMetrics(
   mount: string,
 ): Promise<Partial<HostCurrentMetrics>> {
-  const btrfsOutput = await runCommand("sudo", [
-    "-n",
-    "btrfs",
-    "filesystem",
-    "usage",
-    "-b",
-    mount,
-  ]);
-  if (btrfsOutput) {
-    const parsed = parseBtrfsUsageOutput(btrfsOutput);
-    if (
-      parsed.disk_device_total_bytes != null ||
-      parsed.btrfs_metadata_total_bytes != null
-    ) {
-      return parsed;
+  for (const [command, args] of [
+    ["btrfs", ["filesystem", "usage", "-b", mount]],
+    ["sudo", ["-n", "btrfs", "filesystem", "usage", "-b", mount]],
+  ] as const) {
+    const btrfsOutput = await runCommand(command, [...args]);
+    if (btrfsOutput) {
+      const parsed = parseBtrfsUsageOutput(btrfsOutput);
+      if (
+        parsed.disk_device_total_bytes != null ||
+        parsed.btrfs_metadata_total_bytes != null
+      ) {
+        return parsed;
+      }
     }
   }
 
