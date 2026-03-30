@@ -1,5 +1,6 @@
 import getPool from "@cocalc/database/pool";
 import type { Pool } from "pg";
+import { recordProjectHostMetricsSample } from "./project-host-metrics";
 
 export interface ProjectHostRecord {
   id: string;
@@ -76,4 +77,8 @@ export async function upsertProjectHost({
       now,
     ],
   );
+  await recordProjectHostMetricsSample({
+    host_id: id,
+    metrics: metadata?.metrics?.current,
+  });
 }

@@ -22,6 +22,7 @@ import type {
   HostRootfsGcResult,
   HostRootfsImage,
   HostCurrentMetrics,
+  HostMetricsHistory,
 } from "@cocalc/conat/hub/api/hosts";
 import type {
   ProjectCopyRow,
@@ -93,6 +94,7 @@ import {
   ensureSelfHostReverseTunnel,
   runConnectorInstallOverSsh,
 } from "@cocalc/server/self-host/ssh-target";
+import { loadProjectHostMetricsHistory } from "@cocalc/database/postgres/project-host-metrics";
 import {
   deleteCloudflareTunnel,
   hasCloudflareTunnel,
@@ -471,6 +473,7 @@ function parseRow(
     reason_unavailable?: string;
     backup_status?: HostBackupStatus;
     starred?: boolean;
+    metrics_history?: HostMetricsHistory;
   } = {},
 ): Host {
   const parsePositiveInt = (value: unknown): number | undefined => {
@@ -753,7 +756,13 @@ function parseRow(
     tools_version: software.tools,
     host_session_id: metadata.host_session_id,
     host_session_started_at: metadata.host_session_started_at,
-    metrics: currentMetrics ? { current: currentMetrics } : undefined,
+    metrics:
+      currentMetrics || opts.metrics_history
+        ? {
+            ...(currentMetrics ? { current: currentMetrics } : {}),
+            ...(opts.metrics_history ? { history: opts.metrics_history } : {}),
+          }
+        : undefined,
     machine,
     public_ip: metadata.runtime?.public_ip,
     last_error: metadata.last_error,
@@ -2013,7 +2022,14 @@ export async function listHosts({
   const membership = await loadMembership(owner);
   const userTier = getUserHostTier(membership.entitlements);
 
-  const result: Host[] = [];
+  const visibleRows: Array<{
+    row: any;
+    scope: Host["scope"];
+    can_place: boolean;
+    can_start: boolean;
+    reason_unavailable?: string;
+    starred: boolean;
+  }> = [];
   for (const row of rows) {
     const metadata = row.metadata ?? {};
     const rowOwner = metadata.owner ?? "";
@@ -2053,7 +2069,23 @@ export async function listHosts({
       continue;
     }
 
-    result.push(
+    visibleRows.push({
+      row,
+      scope,
+      can_place,
+      can_start,
+      reason_unavailable,
+      starred,
+    });
+  }
+  const metricsHistory = await loadProjectHostMetricsHistory({
+    host_ids: visibleRows.map(({ row }) => row.id),
+    window_minutes: 60,
+    max_points: 60,
+  });
+
+  return visibleRows.map(
+    ({ row, scope, can_place, can_start, reason_unavailable, starred }) =>
       parseRow(row, {
         scope,
         can_place,
@@ -2061,10 +2093,9 @@ export async function listHosts({
         reason_unavailable,
         backup_status: backupStatus.get(row.id),
         starred,
+        metrics_history: metricsHistory.get(row.id),
       }),
-    );
-  }
-  return result;
+  );
 }
 
 export async function resolveHostConnection({
@@ -2446,6 +2477,32 @@ export async function getHostRuntimeLog({
     lines: response.lines,
     text: response.text,
   };
+}
+
+export async function getHostMetricsHistory({
+  account_id,
+  id,
+  window_minutes,
+  max_points,
+}: {
+  account_id?: string;
+  id: string;
+  window_minutes?: number;
+  max_points?: number;
+}): Promise<HostMetricsHistory> {
+  const host = await loadHostForListing(id, account_id);
+  const history = await loadProjectHostMetricsHistory({
+    host_ids: [host.id],
+    window_minutes,
+    max_points,
+  });
+  return (
+    history.get(host.id) ?? {
+      window_minutes: Math.max(5, Math.floor(Number(window_minutes ?? 60))),
+      point_count: 0,
+      points: [],
+    }
+  );
 }
 
 export async function listHostRootfsImages({

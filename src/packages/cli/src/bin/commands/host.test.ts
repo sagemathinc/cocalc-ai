@@ -21,6 +21,11 @@ function makeDeps(
               capture.upgrades.push(id);
               return { op_id: `op-${id}` };
             },
+            getHostMetricsHistory: async (opts) => ({
+              window_minutes: opts?.window_minutes ?? 60,
+              point_count: 0,
+              points: [],
+            }),
           },
         },
       };
@@ -134,4 +139,39 @@ test("host upgrade --all-online --wait returns all successful hosts", async () =
   assert.equal(capture.data.status, "succeeded");
   assert.equal(capture.data.count, 2);
   assert.equal(capture.data.hosts.length, 2);
+});
+
+test("host metrics returns current metrics and history", async () => {
+  const capture: { data?: any; upgrades: string[] } = { upgrades: [] };
+  const deps = makeDeps(capture, {
+    resolveHost: async () => ({
+      id: "host-1",
+      name: "host-1",
+      status: "running",
+      last_seen: new Date().toISOString(),
+      metrics: {
+        current: {
+          cpu_percent: 55,
+        },
+      },
+    }),
+  });
+  const program = new Command();
+  registerHostCommand(program, deps);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "host",
+    "metrics",
+    "host-1",
+    "--window",
+    "24h",
+    "--points",
+    "120",
+  ]);
+
+  assert.equal(capture.data.host_id, "host-1");
+  assert.equal(capture.data.current.cpu_percent, 55);
+  assert.equal(capture.data.history.window_minutes, 24 * 60);
 });

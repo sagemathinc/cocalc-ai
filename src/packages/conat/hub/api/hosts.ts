@@ -239,8 +239,27 @@ export interface HostCurrentMetrics {
   stopping_project_count?: number;
 }
 
+export interface HostMetricsHistoryPoint extends HostCurrentMetrics {
+  disk_used_percent?: number;
+  metadata_used_percent?: number;
+}
+
+export interface HostMetricsHistoryGrowth {
+  window_minutes: number;
+  disk_used_bytes_per_hour?: number;
+  metadata_used_bytes_per_hour?: number;
+}
+
+export interface HostMetricsHistory {
+  window_minutes: number;
+  point_count: number;
+  points: HostMetricsHistoryPoint[];
+  growth?: HostMetricsHistoryGrowth;
+}
+
 export interface HostMetrics {
   current?: HostCurrentMetrics;
+  history?: HostMetricsHistory;
 }
 
 export interface HostCatalog {
@@ -402,6 +421,7 @@ export const hosts = {
   updateCloudCatalog: authFirstRequireAccount,
   getHostLog: authFirstRequireAccount,
   getHostRuntimeLog: authFirstRequireAccount,
+  getHostMetricsHistory: authFirstRequireAccount,
   listHostRootfsImages: authFirstRequireAccount,
   pullHostRootfsImage: authFirstRequireAccount,
   deleteHostRootfsImage: authFirstRequireAccount,
@@ -484,6 +504,12 @@ export interface Hosts {
     id: string;
     lines?: number;
   }) => Promise<HostRuntimeLog>;
+  getHostMetricsHistory: (opts: {
+    account_id?: string;
+    id: string;
+    window_minutes?: number;
+    max_points?: number;
+  }) => Promise<HostMetricsHistory>;
   listHostRootfsImages: (opts: {
     account_id?: string;
     id: string;

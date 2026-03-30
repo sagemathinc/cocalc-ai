@@ -2,6 +2,7 @@ import { Progress, Space, Tag, Typography } from "antd";
 import { React } from "@cocalc/frontend/app-framework";
 import type { Host } from "@cocalc/conat/hub/api/hosts";
 import { human_readable_size } from "@cocalc/util/misc";
+import { COLORS } from "@cocalc/util/theme";
 
 type HostCurrentMetricsProps = {
   host: Host;
@@ -13,6 +14,8 @@ type MetricBarProps = {
   percent?: number;
   detail?: string;
   compact?: boolean;
+  historyValues?: number[];
+  color?: string;
 };
 
 function formatBytes(value?: number): string | undefined {
@@ -23,6 +26,29 @@ function formatBytes(value?: number): string | undefined {
 function normalizePercent(value?: number): number | undefined {
   if (value == null || !Number.isFinite(value)) return undefined;
   return Math.max(0, Math.min(100, value));
+}
+
+function sparklinePoints(values: number[], width = 180, height = 24): string {
+  if (values.length === 0) return "";
+  if (values.length === 1) {
+    return `0,${height / 2} ${width},${height / 2}`;
+  }
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const y = (value: number) => {
+    if (max === min) return height / 2;
+    return height - ((value - min) / (max - min)) * (height - 4) - 2;
+  };
+  const dx = width / (values.length - 1);
+  return values
+    .map((value, i) => `${(i * dx).toFixed(2)},${y(value).toFixed(2)}`)
+    .join(" ");
+}
+
+function formatGrowthBytesPerHour(value?: number): string | undefined {
+  if (value == null || !Number.isFinite(value)) return undefined;
+  const prefix = value > 0 ? "+" : value < 0 ? "-" : "";
+  return `${prefix}${human_readable_size(Math.abs(value))}/h`;
 }
 
 function progressStatus(percent?: number): "normal" | "active" | "exception" {
@@ -66,8 +92,19 @@ function getMetadataUsedPercent(host: Host): number | undefined {
   return normalizePercent((used / total) * 100);
 }
 
-function MetricBar({ label, percent, detail, compact }: MetricBarProps) {
+function MetricBar({
+  label,
+  percent,
+  detail,
+  compact,
+  historyValues,
+  color,
+}: MetricBarProps) {
   const displayPercent = normalizePercent(percent);
+  const trendValues = (historyValues ?? []).filter(
+    (value) => Number.isFinite(value) && value >= 0,
+  );
+  const chartWidth = compact ? 180 : 320;
   return (
     <Space
       orientation="vertical"
@@ -109,6 +146,22 @@ function MetricBar({ label, percent, detail, compact }: MetricBarProps) {
           n/a
         </Typography.Text>
       )}
+      {trendValues.length >= 2 && (
+        <svg
+          width="100%"
+          height={compact ? 24 : 28}
+          viewBox={`0 0 ${chartWidth} ${compact ? 24 : 28}`}
+          preserveAspectRatio="none"
+        >
+          <polyline
+            fill="none"
+            stroke={color ?? COLORS.BLUE_D}
+            strokeWidth="2"
+            points={sparklinePoints(trendValues, chartWidth, compact ? 24 : 28)}
+            strokeLinecap="round"
+          />
+        </svg>
+      )}
     </Space>
   );
 }
@@ -118,6 +171,7 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
   compact,
 }) => {
   const metrics = host.metrics?.current;
+  const history = host.metrics?.history;
   if (!metrics) {
     return compact ? (
       <Typography.Text type="secondary">metrics pending</Typography.Text>
@@ -138,6 +192,28 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
   const diskTotal = formatBytes(metrics.disk_device_total_bytes);
   const metadataUsed = formatBytes(metrics.btrfs_metadata_used_bytes);
   const metadataTotal = formatBytes(metrics.btrfs_metadata_total_bytes);
+  const cpuHistory =
+    history?.points
+      ?.map((point) => normalizePercent(point.cpu_percent))
+      .filter((value): value is number => value != null) ?? [];
+  const memoryHistory =
+    history?.points
+      ?.map((point) => normalizePercent(point.memory_used_percent))
+      .filter((value): value is number => value != null) ?? [];
+  const diskHistory =
+    history?.points
+      ?.map((point) => normalizePercent(point.disk_used_percent))
+      .filter((value): value is number => value != null) ?? [];
+  const metadataHistory =
+    history?.points
+      ?.map((point) => normalizePercent(point.metadata_used_percent))
+      .filter((value): value is number => value != null) ?? [];
+  const diskTrend = formatGrowthBytesPerHour(
+    history?.growth?.disk_used_bytes_per_hour,
+  );
+  const metadataTrend = formatGrowthBytesPerHour(
+    history?.growth?.metadata_used_bytes_per_hour,
+  );
   const load =
     metrics.load_1 != null || metrics.load_5 != null || metrics.load_15 != null
       ? [metrics.load_1, metrics.load_5, metrics.load_15]
@@ -155,6 +231,8 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
           percent={cpuPercent}
           detail={load ? `load ${load}` : undefined}
           compact
+          historyValues={cpuHistory}
+          color={COLORS.BLUE_D}
         />
         <MetricBar
           label="RAM"
@@ -165,12 +243,16 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
               : undefined
           }
           compact
+          historyValues={memoryHistory}
+          color={COLORS.ANTD_GREEN_D}
         />
         <MetricBar
           label="Disk"
           percent={diskPercent}
           detail={diskFree ? `${diskFree} free` : diskTotal}
           compact
+          historyValues={diskHistory}
+          color={COLORS.ANTD_ORANGE}
         />
         <Tag>
           Projects {metrics.running_project_count ?? 0}/
@@ -186,6 +268,8 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
         label="CPU"
         percent={cpuPercent}
         detail={load ? `load ${load}` : undefined}
+        historyValues={cpuHistory}
+        color={COLORS.BLUE_D}
       />
       <MetricBar
         label="Memory"
@@ -195,6 +279,8 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
             ? `${memoryUsed} / ${memoryTotal}`
             : undefined
         }
+        historyValues={memoryHistory}
+        color={COLORS.ANTD_GREEN_D}
       />
       <MetricBar
         label="Disk"
@@ -204,6 +290,8 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
             ? `${diskFree} conservative free${diskTotal ? ` / ${diskTotal}` : ""}`
             : diskTotal
         }
+        historyValues={diskHistory}
+        color={COLORS.ANTD_ORANGE}
       />
       <MetricBar
         label="Metadata"
@@ -213,7 +301,19 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
             ? `${metadataUsed} / ${metadataTotal}`
             : undefined
         }
+        historyValues={metadataHistory}
+        color={COLORS.ANTD_RED}
       />
+      {(diskTrend || metadataTrend) && (
+        <Typography.Text type="secondary">
+          {diskTrend ? `Disk trend ${diskTrend}` : ""}
+          {diskTrend && metadataTrend ? " · " : ""}
+          {metadataTrend ? `Metadata trend ${metadataTrend}` : ""}
+          {history?.window_minutes
+            ? ` over last ${history.window_minutes}m`
+            : ""}
+        </Typography.Text>
+      )}
       <Typography.Text>
         Projects: {metrics.running_project_count ?? 0} running,{" "}
         {metrics.starting_project_count ?? 0} starting,{" "}

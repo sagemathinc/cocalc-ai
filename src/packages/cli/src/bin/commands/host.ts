@@ -98,6 +98,23 @@ function isHostOnlineForUpgrade(host: {
   return Date.now() - ts <= HOST_ONLINE_WINDOW_MS;
 }
 
+function parseMetricsWindowMinutes(window?: string): number {
+  const raw = `${window ?? "1h"}`.trim().toLowerCase();
+  if (!raw) return 60;
+  const match = /^([0-9]+)(m|h|d)?$/u.exec(raw);
+  if (!match) {
+    throw new Error("--window must look like 30m, 1h, or 7d");
+  }
+  const value = Number(match[1]);
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new Error("--window must be positive");
+  }
+  const unit = match[2] ?? "m";
+  if (unit === "m") return value;
+  if (unit === "h") return value * 60;
+  return value * 24 * 60;
+}
+
 export function registerHostCommand(
   program: Command,
   deps: HostCommandDeps,
@@ -241,6 +258,38 @@ export function registerHostCommand(
         };
       });
     });
+
+  host
+    .command("metrics <host>")
+    .description("show current and recent host metrics")
+    .option("--window <window>", "history window: 30m, 1h, 24h", "1h")
+    .option("--points <n>", "maximum history points", "60")
+    .action(
+      async (
+        hostIdentifier: string,
+        opts: { window?: string; points?: string },
+        command: Command,
+      ) => {
+        await withContext(command, "host metrics", async (ctx) => {
+          const h = await resolveHost(ctx, hostIdentifier);
+          const max_points = Math.max(
+            10,
+            Math.min(1440, Number(opts.points ?? "60") || 60),
+          );
+          const history = await ctx.hub.hosts.getHostMetricsHistory({
+            id: h.id,
+            window_minutes: parseMetricsWindowMinutes(opts.window),
+            max_points,
+          });
+          return {
+            host_id: h.id,
+            name: h.name,
+            current: h.metrics?.current ?? null,
+            history,
+          };
+        });
+      },
+    );
 
   host
     .command("logs <host>")
