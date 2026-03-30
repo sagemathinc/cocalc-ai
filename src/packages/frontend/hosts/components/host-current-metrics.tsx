@@ -1,8 +1,8 @@
 import { Progress, Space, Tag, Typography } from "antd";
 import { React } from "@cocalc/frontend/app-framework";
 import type { Host } from "@cocalc/conat/hub/api/hosts";
-import { human_readable_size } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
+import { formatBinaryBytes } from "../utils/format";
 
 type HostCurrentMetricsProps = {
   host: Host;
@@ -21,16 +21,11 @@ type MetricBarProps = {
 };
 
 function formatBytes(value?: number): string | undefined {
-  if (value == null || !Number.isFinite(value)) return undefined;
-  return human_readable_size(value);
+  return formatBinaryBytes(value);
 }
 
 function formatBytesCompact(value?: number): string | undefined {
-  if (value == null || !Number.isFinite(value)) return undefined;
-  if (value < 1000) return `${Math.ceil(value)} bytes`;
-  if (value < 1000000) return `${Math.ceil(value / 1000)} KB`;
-  if (value < 1000000000) return `${Math.ceil(value / 1000000)} MB`;
-  return `${Math.ceil(value / 1000000000)} GB`;
+  return formatBinaryBytes(value, { compact: true });
 }
 
 function normalizePercent(value?: number): number | undefined {
@@ -58,7 +53,8 @@ function sparklinePoints(values: number[], width = 180, height = 24): string {
 function formatGrowthBytesPerHour(value?: number): string | undefined {
   if (value == null || !Number.isFinite(value)) return undefined;
   const prefix = value > 0 ? "+" : value < 0 ? "-" : "";
-  return `${prefix}${human_readable_size(Math.abs(value))}/h`;
+  const formatted = formatBinaryBytes(Math.abs(value));
+  return formatted ? `${prefix}${formatted}/h` : undefined;
 }
 
 function progressStatus(percent?: number): "normal" | "active" | "exception" {
