@@ -390,6 +390,7 @@ export function FileTab(props: Readonly<Props>) {
         style={{
           textAlign: "center",
           width: "100%",
+          boxSizing: "border-box",
           paddingLeft: "8px",
           paddingRight: "8px",
           paddingTop: props.extraSpacing ?? "0",

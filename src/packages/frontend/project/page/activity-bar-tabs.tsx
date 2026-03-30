@@ -362,10 +362,12 @@ export function VerticalFixedTabs({
             <div
               style={{
                 display: "flex",
+                flexDirection: showActBarLabels ? "column" : undefined,
                 alignItems: "center",
-                justifyContent: showActBarLabels ? "flex-start" : "center",
-                gap: showActBarLabels ? "15px" : undefined,
+                justifyContent: "center",
+                gap: showActBarLabels ? "4px" : undefined,
                 minHeight: condensed ? "36px" : "40px",
+                width: "100%",
               }}
             >
               <Icon
