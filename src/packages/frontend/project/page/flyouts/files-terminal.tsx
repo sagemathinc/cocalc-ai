@@ -19,8 +19,8 @@ import {
 import { ConnectionStatus } from "@cocalc/frontend/app/store";
 import { useStudentProjectFunctionality } from "@cocalc/frontend/course";
 import { DEFAULT_TERM_ENV } from "@cocalc/frontend/frame-editors/code-editor/const";
-import { Terminal } from "@cocalc/frontend/frame-editors/terminal-editor/connected-terminal";
-import { ConnectedTerminalInterface } from "@cocalc/frontend/frame-editors/terminal-editor/connected-terminal-interface";
+import type { Terminal } from "@cocalc/frontend/frame-editors/terminal-editor/connected-terminal";
+import type { ConnectedTerminalInterface } from "@cocalc/frontend/frame-editors/terminal-editor/connected-terminal-interface";
 import { background_color } from "@cocalc/frontend/frame-editors/terminal-editor/themes";
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
@@ -30,6 +30,17 @@ import { sha1 } from "@cocalc/util/misc";
 import { BACKUPS } from "@cocalc/util/consts/backups";
 import { SNAPSHOTS } from "@cocalc/util/consts/snapshots";
 import { FLYOUT_PADDING } from "./consts";
+
+let connectedTerminalPromise:
+  | Promise<
+      typeof import("@cocalc/frontend/frame-editors/terminal-editor/connected-terminal")
+    >
+  | undefined;
+
+async function getConnectedTerminalModule() {
+  return (connectedTerminalPromise ??=
+    import("@cocalc/frontend/frame-editors/terminal-editor/connected-terminal"));
+}
 
 interface TerminalFlyoutProps {
   project_id: string;
@@ -98,6 +109,7 @@ export function TerminalFlyout({
   const terminal = useTypedRedux("account", "terminal");
   const terminalRef = useRef<Terminal | undefined>(undefined);
   const terminalDOMRef = useRef<HTMLDivElement>(null);
+  const terminalLoadTokenRef = useRef(0);
   const isMountedRef = useIsMountedRef();
   const student_project_functionality =
     useStudentProjectFunctionality(project_id);
@@ -144,6 +156,7 @@ export function TerminalFlyout({
   const id = `flyout::${hash}`; // TODO what exactly is the ID? arbitrary or a path?
 
   function delete_terminal(): void {
+    terminalLoadTokenRef.current += 1;
     if (terminalRef.current == null) return; // already deleted or never created
     setConectionStatus("");
     terminalRef.current.element?.remove();
@@ -214,7 +227,11 @@ export function TerminalFlyout({
     };
   }
 
-  function getTerminal(id: string, parent: HTMLElement): Terminal {
+  async function getTerminal(
+    id: string,
+    parent: HTMLElement,
+  ): Promise<Terminal> {
+    const { Terminal } = await getConnectedTerminalModule();
     const newTerminal = new Terminal(
       getMockTerminalActions() as any, // this is "fine" because of the shared ConnectedTerminalInterface
       0,
@@ -229,20 +246,34 @@ export function TerminalFlyout({
     return newTerminal;
   }
 
-  function init_terminal(): void {
+  async function init_terminal(): Promise<void> {
     if (!is_visible) return;
     const node = terminalDOMRef.current;
     if (node == null) {
       // happens, e.g., when terminals are disabled.
       return;
     }
+    const token = ++terminalLoadTokenRef.current;
     try {
-      terminalRef.current = getTerminal(id, node);
+      terminalRef.current = await getTerminal(id, node);
       setTerminalExists(true);
     } catch (err) {
       return; // not yet ready -- might be ok
     }
-    if (terminalRef.current == null) return; // should be impossible.
+    if (
+      terminalRef.current == null ||
+      !isMountedRef.current ||
+      terminalLoadTokenRef.current !== token ||
+      terminalDOMRef.current !== node
+    ) {
+      terminalRef.current?.element?.remove();
+      if (terminalRef.current != null) {
+        terminalRef.current.is_visible = false;
+      }
+      terminalRef.current = undefined;
+      setTerminalExists(false);
+      return;
+    }
     terminalRef.current.is_visible = true;
     set_font_size();
     measure_size();
@@ -272,7 +303,9 @@ export function TerminalFlyout({
     if (terminalRef.current != null || !is_visible) return;
     // wait until is actually in the DOM before trying to render,
     // or it will crash for sure (due to changes in @xterm)
-    setTimeout(init_terminal, 0);
+    setTimeout(() => {
+      void init_terminal();
+    }, 0);
   }, [is_visible]);
 
   useEffect(() => {
@@ -280,7 +313,9 @@ export function TerminalFlyout({
     if (terminalRef.current == null) return;
     delete_terminal();
     // see comment about regarding the setTimeout
-    setTimeout(init_terminal, 0);
+    setTimeout(() => {
+      void init_terminal();
+    }, 0);
   }, [id]);
 
   // resize is a counter, increases with debouncing, if size change.

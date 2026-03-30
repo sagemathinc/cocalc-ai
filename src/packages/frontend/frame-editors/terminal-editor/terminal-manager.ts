@@ -13,7 +13,29 @@ import {
 } from "../base-editor/actions-base";
 import * as tree_ops from "../frame-tree/tree-ops";
 import { close, len } from "@cocalc/util/misc";
-import { Terminal } from "./connected-terminal";
+import type { Terminal } from "./connected-terminal";
+
+type TerminalCtor<T extends CodeEditorState = CodeEditorState> = new (
+  actions: Actions<T>,
+  number: number,
+  id: string,
+  parent: HTMLElement,
+  command?: string,
+  args?: string[],
+  workingDir?: string,
+  terminalThemeOverride?: string | null,
+) => Terminal<T>;
+
+let connectedTerminalPromise:
+  | Promise<typeof import("./connected-terminal")>
+  | undefined;
+
+async function getTerminalCtor<
+  T extends CodeEditorState = CodeEditorState,
+>(): Promise<TerminalCtor<T>> {
+  const mod = (connectedTerminalPromise ??= import("./connected-terminal"));
+  return (await mod).Terminal as TerminalCtor<T>;
+}
 
 function normalizeTerminalCommand(command: any): string | undefined {
   return typeof command === "string" ? command : undefined;
@@ -37,6 +59,7 @@ function normalizeTerminalArgs(args: any): string[] | undefined {
 
 export class TerminalManager<T extends CodeEditorState = CodeEditorState> {
   private terminals: { [key: string]: Terminal<T> } = {};
+  private terminalLoads: { [key: string]: Promise<Terminal<T>> } = {};
   private actions: Actions<T>;
 
   constructor(actions: Actions<T>) {
@@ -91,44 +114,62 @@ export class TerminalManager<T extends CodeEditorState = CodeEditorState> {
     id: string,
     parent: HTMLElement,
     terminalThemeOverride?: string | null,
-  ): undefined | Terminal<T> {
+  ): Promise<undefined | Terminal<T>> {
     if (this.actions == null) {
-      return undefined;
+      return Promise.resolve(undefined);
     }
     const node = this.actions._get_frame_node(id);
 
     if (this.terminals[id] != null) {
       parent.appendChild(this.terminals[id].element);
       this.terminals[id].set_terminal_theme_override(terminalThemeOverride);
-    } else {
-      let command: string | undefined = undefined;
-      let args: string[] | undefined = undefined;
+      return Promise.resolve(this.terminals[id]);
+    }
+
+    if (this.terminalLoads[id] == null) {
+      this.terminalLoads[id] = (async () => {
+        try {
+          let command: string | undefined = undefined;
+          let args: string[] | undefined = undefined;
+          if (node != null) {
+            command = normalizeTerminalCommand(node.get("command"));
+            args = normalizeTerminalArgs(node.get("args"));
+          }
+          const Terminal = await getTerminalCtor<T>();
+          const terminal = new Terminal(
+            this.actions,
+            this._node_number(id),
+            id,
+            parent,
+            command,
+            args,
+            undefined,
+            terminalThemeOverride,
+          );
+          terminal.connect();
+          this.terminals[id] = terminal;
+          return terminal;
+        } finally {
+          delete this.terminalLoads[id];
+        }
+      })();
+    }
+
+    return this.terminalLoads[id].then((terminal) => {
+      if (terminal.element.parentElement !== parent) {
+        parent.appendChild(terminal.element);
+      }
+      terminal.set_terminal_theme_override(terminalThemeOverride);
+      // pause: sync local view state with terminal state
       if (node != null) {
-        command = normalizeTerminalCommand(node.get("command"));
-        args = normalizeTerminalArgs(node.get("args"));
+        if (node.get("is_paused")) {
+          terminal.pause();
+        } else {
+          terminal.unpause();
+        }
       }
-      this.terminals[id] = new Terminal<T>(
-        this.actions,
-        this._node_number(id),
-        id,
-        parent,
-        command,
-        args,
-        undefined,
-        terminalThemeOverride,
-      );
-      this.terminals[id].connect();
-    }
-    const terminal = this.terminals[id];
-    // pause: sync local view state with terminal state
-    if (node != null) {
-      if (node.get("is_paused")) {
-        terminal.pause();
-      } else {
-        terminal.unpause();
-      }
-    }
-    return terminal;
+      return terminal;
+    });
   }
 
   // write data to this terminal
