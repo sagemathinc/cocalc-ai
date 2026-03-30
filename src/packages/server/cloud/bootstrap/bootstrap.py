@@ -2116,6 +2116,19 @@ def configure_autostart(cfg: BootstrapConfig) -> None:
     Path("/etc/cron.d/cocalc-project-host").write_text(cron_line + "\n", encoding="utf-8")
     os.chmod("/etc/cron.d/cocalc-project-host", 0o644)
     run_best_effort(cfg, ["systemctl", "enable", "--now", "cron"], "enable cron")
+    run_best_effort(
+        cfg,
+        [
+            "sudo",
+            "-u",
+            cfg.ssh_user,
+            "-H",
+            "/bin/bash",
+            "-lc",
+            f"{runtime_root}/bin/start-project-host",
+        ],
+        "start project-host now",
+    )
 
 
 def configure_runtime_sudoers(cfg: BootstrapConfig) -> None:

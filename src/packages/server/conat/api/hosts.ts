@@ -4818,24 +4818,58 @@ export async function upgradeHostSoftwareInternal({
   const HOST_UPGRADE_RPC_TIMEOUT_MS = 10 * 60 * 1000;
   const row = await loadHostForStartStop(id, account_id);
   assertHostRunningForUpgrade(row);
+  const availability = computeHostOperationalAvailability(row);
+  const requestedProjectHostUpgrade = targets.some(
+    (target) => target.artifact === "project-host",
+  );
+  const supportsBootstrapFallback =
+    requestedProjectHostUpgrade &&
+    targets.every(
+      (target) =>
+        !target.version &&
+        ((target.channel ?? "latest") as HostSoftwareChannel) === "latest",
+    );
   const resolvedBaseUrl = await resolveHostSoftwareBaseUrl(base_url);
   const effectiveBaseUrl = await resolveReachableUpgradeBaseUrl({
     row,
     baseUrl: resolvedBaseUrl,
   });
+  if (!availability.online && supportsBootstrapFallback) {
+    logger.warn(
+      "host upgrade: host heartbeat is stale; using bootstrap reconcile fallback",
+      {
+        host_id: id,
+        targets,
+        reason: availability.reason_unavailable,
+      },
+    );
+    await reconcileCloudHostBootstrapOverSsh({ host_id: id, row });
+    return { results: [] };
+  }
   const client = createHostControlClient({
     host_id: id,
     client: conatWithProjectRouting(),
     timeout: HOST_UPGRADE_RPC_TIMEOUT_MS,
   });
-  const response = await client.upgradeSoftware({
-    targets,
-    base_url: effectiveBaseUrl,
-  });
+  let response: HostSoftwareUpgradeResponse;
+  try {
+    response = await client.upgradeSoftware({
+      targets,
+      base_url: effectiveBaseUrl,
+    });
+  } catch (err) {
+    if (!supportsBootstrapFallback) {
+      throw err;
+    }
+    logger.warn("host upgrade: host control upgrade failed; retry via ssh", {
+      host_id: id,
+      targets,
+      err: `${err}`,
+    });
+    await reconcileCloudHostBootstrapOverSsh({ host_id: id, row });
+    return { results: [] };
+  }
   const results = response.results ?? [];
-  const requestedProjectHostUpgrade = targets.some(
-    (target) => target.artifact === "project-host",
-  );
   if (results.length) {
     const metadata = row.metadata ?? {};
     const software = { ...(metadata.software ?? {}) } as Record<string, string>;

@@ -311,6 +311,67 @@ class BootstrapOwnershipScopeTest(unittest.TestCase):
                 recorded,
             )
 
+    def test_configure_autostart_starts_project_host_immediately(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            runtime_root = Path(tmpdir) / "runtime-root"
+            recorded = []
+            writes = []
+
+            original_run_best_effort = bootstrap.run_best_effort
+            original_runtime_root = bootstrap.project_host_runtime_root
+            original_write_text = bootstrap.Path.write_text
+            original_chmod = bootstrap.os.chmod
+            try:
+                bootstrap.run_best_effort = (
+                    lambda _cfg, args, desc: recorded.append((args, desc))
+                )
+                bootstrap.project_host_runtime_root = lambda _cfg: runtime_root
+                bootstrap.Path.write_text = (
+                    lambda self, data, encoding="utf-8": writes.append(
+                        (str(self), data, encoding)
+                    )
+                    or len(data)
+                )
+                bootstrap.os.chmod = lambda *_args, **_kwargs: None
+                bootstrap.configure_autostart(cfg)
+            finally:
+                bootstrap.run_best_effort = original_run_best_effort
+                bootstrap.project_host_runtime_root = original_runtime_root
+                bootstrap.Path.write_text = original_write_text
+                bootstrap.os.chmod = original_chmod
+
+            self.assertIn(
+                (
+                    "/etc/cron.d/cocalc-project-host",
+                    f"@reboot {cfg.ssh_user} /bin/bash -lc '{runtime_root}/bin/start-project-host'\n",
+                    "utf-8",
+                ),
+                writes,
+            )
+            self.assertIn(
+                (
+                    ["systemctl", "enable", "--now", "cron"],
+                    "enable cron",
+                ),
+                recorded,
+            )
+            self.assertIn(
+                (
+                    [
+                        "sudo",
+                        "-u",
+                        cfg.ssh_user,
+                        "-H",
+                        "/bin/bash",
+                        "-lc",
+                        f"{runtime_root}/bin/start-project-host",
+                    ],
+                    "start project-host now",
+                ),
+                recorded,
+            )
+
     def test_reconcile_cloudflared_installs_binary_when_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             cfg = replace(
