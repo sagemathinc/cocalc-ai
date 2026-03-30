@@ -42,8 +42,14 @@ import { SimpleInputMerge } from "@cocalc/sync/editor/generic/simple-input-merge
 
 type EventHandlerFunction = (cm: CodeMirror.Editor) => void;
 
-// This code depends on codemirror being initialized.
-import "@cocalc/frontend/codemirror/init";
+let codemirrorInitPromise: Promise<void> | undefined;
+
+async function ensureCodeMirrorInit(): Promise<void> {
+  codemirrorInitPromise ??= import("@cocalc/frontend/codemirror/init").then(
+    () => {},
+  );
+  await codemirrorInitPromise;
+}
 
 export const BLURED_STYLE: CSSProperties = {
   border: "1px solid rgb(204,204,204)", // focused will be rgb(112, 178, 230);
@@ -500,290 +506,303 @@ export function MarkdownInput(props: Props) {
   }, [handleAutoGrowContentChange, isAutoGrow]);
 
   useEffect(() => {
+    let cancelled = false;
+
     // initialize the codemirror editor
     const node = textarea_ref.current;
     if (node == null) {
       // maybe unmounted right as this happened.
       return;
     }
-    const extraKeys: CodeMirror.KeyMap = {};
-    const shiftEnterHandler =
-      onShiftEnter != null ? (cm) => onShiftEnter(cm.getValue()) : undefined;
-    const altEnterHandler =
-      onAltEnter != null
-        ? (cm) => {
-            const pos = cm.getCursor();
-            onAltEnter(cm.getValue(), pos);
-          }
-        : undefined;
-    if (shiftEnterHandler != null) {
-      extraKeys["Shift-Enter"] = shiftEnterHandler;
-      extraKeys["Ctrl-Enter"] = shiftEnterHandler;
-      if (altEnterHandler == null) {
-        extraKeys["Alt-Enter"] = shiftEnterHandler;
-        extraKeys["Cmd-Enter"] = shiftEnterHandler;
+    void (async () => {
+      await ensureCodeMirrorInit();
+      if (cancelled || textarea_ref.current !== node) {
+        return;
       }
-    }
-    if (altEnterHandler != null) {
-      extraKeys["Alt-Enter"] = altEnterHandler;
-      extraKeys["Cmd-Enter"] = altEnterHandler;
-    }
-    if (onEscape != null) {
-      extraKeys["Esc"] = () => {
+
+      const extraKeys: CodeMirror.KeyMap = {};
+      const shiftEnterHandler =
+        onShiftEnter != null ? (cm) => onShiftEnter(cm.getValue()) : undefined;
+      const altEnterHandler =
+        onAltEnter != null
+          ? (cm) => {
+              const pos = cm.getCursor();
+              onAltEnter(cm.getValue(), pos);
+            }
+          : undefined;
+      if (shiftEnterHandler != null) {
+        extraKeys["Shift-Enter"] = shiftEnterHandler;
+        extraKeys["Ctrl-Enter"] = shiftEnterHandler;
+        if (altEnterHandler == null) {
+          extraKeys["Alt-Enter"] = shiftEnterHandler;
+          extraKeys["Cmd-Enter"] = shiftEnterHandler;
+        }
+      }
+      if (altEnterHandler != null) {
+        extraKeys["Alt-Enter"] = altEnterHandler;
+        extraKeys["Cmd-Enter"] = altEnterHandler;
+      }
+      if (onEscape != null) {
+        extraKeys["Esc"] = () => {
+          if (mentions_cursor_ref.current == null) {
+            onEscape();
+          }
+        };
+      }
+      extraKeys["Enter"] = (cm) => {
+        // We only allow enter when mentions isn't in use
         if (mentions_cursor_ref.current == null) {
-          onEscape();
+          cm.execCommand("newlineAndIndent");
         }
       };
-    }
-    extraKeys["Enter"] = (cm) => {
-      // We only allow enter when mentions isn't in use
-      if (mentions_cursor_ref.current == null) {
-        cm.execCommand("newlineAndIndent");
-      }
-    };
 
-    if (onCursorTop != null) {
-      extraKeys["Up"] = (cm) => {
-        const cur = cm.getCursor();
-        if (cur?.line === cm.firstLine() && cur?.ch === 0) {
-          onCursorTop();
-        } else {
-          CodeMirror.commands.goLineUp(cm);
-        }
-      };
-    }
-    if (onCursorBottom != null) {
-      extraKeys["Down"] = (cm) => {
-        const cur = cm.getCursor();
-        const n = cm.lastLine();
-        const cur_line = cur?.line;
-        const cur_ch = cur?.ch;
-        const line = cm.getLine(n);
-        const line_length = line?.length;
-        if (cur_line === n && cur_ch === line_length) {
-          onCursorBottom();
-        } else {
-          CodeMirror.commands.goLineDown(cm);
-        }
-      };
-    }
-
-    cm.current = CodeMirror.fromTextArea(node, {
-      ...options,
-      // dragDrop=false: instead of useless codemirror dnd, we upload file and make link.
-      // Note that for the md editor or other full code editors, we DO want dragDrop true,
-      // since, e.g., you can select some text, then drag it around, which is useful. For
-      // a simple chat message or tiny bit of markdown (like this is for), that's not so
-      // useful and drag-n-drop file upload is way better.
-      dragDrop: false,
-      // IMPORTANT: there is a useEffect involving options below
-      // where the following four properties must be explicitly excluded!
-      inputStyle: "contenteditable" as "contenteditable", // needed for spellcheck to work!
-      spellcheck: true,
-      mode: { name: "gfm" },
-    });
-    // gives this highest precedence:
-    cm.current.addKeyMap(extraKeys);
-
-    if (getValueRef != null) {
-      getValueRef.current = cm.current.getValue.bind(cm.current);
-    }
-    // UNCOMMENT FOR DEBUGGING ONLY
-    // (window as any).cm = cm.current;
-    cm.current.setValue(value ?? "");
-    cm.current.on("change", saveValue);
-    if (dirtyRef != null) {
-      cm.current.on("change", () => {
-        dirtyRef.current = true;
-      });
-    }
-
-    if (onBlur != null) {
-      cm.current.on("blur", (editor) => onBlur(editor.getValue()));
-    }
-    if (onFocus != null) {
-      cm.current.on("focus", onFocus);
-    }
-
-    cm.current.on("blur", () => {
-      isFocusedRef.current = false;
-      setIsFocusedStyle(false);
-    });
-    cm.current.on("focus", () => {
-      isFocusedRef.current = true;
-      setIsFocusedStyle(true);
-      syncCodeMirrorLayout({ ensureCaret: true });
-    });
-    if (onCursors != null) {
-      cm.current.on("cursorActivity", () => {
-        if (cm.current == null || !isFocusedRef.current) return;
-        if (ignoreChangeRef.current) return;
-        onCursors(
-          cm.current
-            .getDoc()
-            .listSelections()
-            .map((c) => ({ x: c.anchor.ch, y: c.anchor.line })),
-        );
-      });
-    }
-
-    if (externalUndo != null) {
-      cm.current.undo = () => {
-        if (cm.current == null) return;
-        saveValue();
-        externalUndo();
-      };
-    }
-    if (externalRedo != null) {
-      cm.current.redo = () => {
-        if (cm.current == null) return;
-        saveValue();
-        externalRedo();
-      };
-    }
-    if (onSave != null) {
-      // This funny cocalc_actions is just how this is setup
-      // elsewhere in cocalc... Basically the global
-      //    CodeMirror.commands.save
-      // is set to use this at the bottom of src/packages/frontend/frame-editors/code-editor/codemirror-editor.tsx
-      // @ts-ignore
-      cm.current.cocalc_actions = { save: onSave };
-    }
-
-    if (enableUpload) {
-      // as any because the @types for codemirror are WRONG in this case.
-      cm.current.on("paste", handle_paste_event as any);
-    }
-
-    const e: any = cm.current.getWrapperElement();
-    const fixedHeight = !isAutoGrow ? "100%" : undefined;
-    const baseHeight = fixedHeight ?? `${initialMinHeight}px`;
-    let s = `height:${baseHeight}; font-family:sans-serif !important;`;
-    if (compact) {
-      s += "padding:0";
-    } else {
-      s += !options.lineNumbers ? `padding:${PADDING_TOP}px 12px` : "";
-    }
-    if (!isAutoGrow) {
-      const h = fixedHeight ?? "100%";
-      s += `;min-height:${h};max-height:${h};overflow:auto;`;
-    }
-    e.setAttribute("style", s);
-    syncCodeMirrorLayout();
-
-    if (enableMentions) {
-      cm.current.on("change", (cm, changeObj) => {
-        if (changeObj.text[0] == "@") {
-          const before = cm
-            .getLine(changeObj.to.line)
-            .slice(changeObj.to.ch - 1, changeObj.to.ch)
-            ?.trim();
-          // If previous character is whitespace or nothing, then activate mentions:
-          if (!before || before == "(" || before == "[") {
-            show_mentions();
-          }
-        }
-      });
-    }
-
-    if (submitMentionsRef != null) {
-      submitMentionsRef.current = (
-        fragmentId?: FragmentId,
-        onlyValue = false,
-      ) => {
-        if (project_id == null || path == null) {
-          throw Error(
-            "project_id and path must be set if enableMentions is set.",
-          );
-        }
-        const fragment_id = Fragment.encode(fragmentId);
-        const mentions: {
-          account_id: string;
-          description: string;
-          fragment_id: string;
-        }[] = [];
-        if (cm.current == null) return;
-        // Get lines here, since we modify the doc as we go below.
-        const doc = (cm.current.getDoc() as any).linkedDoc();
-        doc.unlinkDoc(cm.current.getDoc());
-        const marks = cm.current.getAllMarks();
-        marks.reverse();
-        for (const mark of marks) {
-          if (mark == null) continue;
-          const { attributes } = mark as any;
-          if (attributes == null) continue; // some other sort of mark?
-          const { account_id } = attributes;
-          if (account_id == null) continue;
-          const loc = mark.find();
-          if (loc == null) continue;
-          let from, to;
-          if (loc["from"]) {
-            // @ts-ignore
-            ({ from, to } = loc);
+      if (onCursorTop != null) {
+        extraKeys["Up"] = (cm) => {
+          const cur = cm.getCursor();
+          if (cur?.line === cm.firstLine() && cur?.ch === 0) {
+            onCursorTop();
           } else {
-            from = to = loc;
+            CodeMirror.commands.goLineUp(cm);
           }
-          const text = `<span class="user-mention" account-id=${account_id} >${cm.current.getRange(
-            from,
-            to,
-          )}</span>`;
-          const description = trunc(cm.current.getLine(from.line).trim(), 160);
-          doc.replaceRange(text, from, to);
-          mentions.push({ account_id, description, fragment_id });
-        }
-        const value = doc.getValue();
-        if (!onlyValue) {
-          submit_mentions(project_id, path, mentions);
-        }
-        return value;
-      };
-    }
-
-    if (autoFocus) {
-      cm.current.focus();
-    }
-
-    if (selectionRef != null) {
-      selectionRef.current = {
-        isSelectionReady: () => cm.current != null,
-        setSelection: (selection: any) => {
-          cm.current?.setSelections(selection);
-        },
-        getSelection: () => {
-          return cm.current?.listSelections();
-        },
-        focus: () => {
-          if (cm.current == null) {
-            return false;
+        };
+      }
+      if (onCursorBottom != null) {
+        extraKeys["Down"] = (cm) => {
+          const cur = cm.getCursor();
+          const n = cm.lastLine();
+          const cur_line = cur?.line;
+          const cur_ch = cur?.ch;
+          const line = cm.getLine(n);
+          const line_length = line?.length;
+          if (cur_line === n && cur_ch === line_length) {
+            onCursorBottom();
+          } else {
+            CodeMirror.commands.goLineDown(cm);
           }
-          cm.current.focus();
-          return true;
-        },
-      };
-    }
-    emitSelectionReady();
+        };
+      }
 
-    if (registerEditor != null) {
-      registerEditor({
-        set_cursor: (pos: { x?: number; y?: number }) => {
-          if (cm.current == null) return;
-          let { x = 0, y = 0 } = pos; // must be defined!
-          if (y < 0) {
-            // for getting last line...
-            y += cm.current.lastLine() + 1;
-          }
-          cm.current.setCursor({ line: y, ch: x });
-        },
-        get_cursor: () => {
-          if (cm.current == null) return { x: 0, y: 0 };
-          const { line, ch } = cm.current.getCursor();
-          return { y: line, x: ch };
-        },
+      cm.current = CodeMirror.fromTextArea(node, {
+        ...options,
+        // dragDrop=false: instead of useless codemirror dnd, we upload file and make link.
+        // Note that for the md editor or other full code editors, we DO want dragDrop true,
+        // since, e.g., you can select some text, then drag it around, which is useful. For
+        // a simple chat message or tiny bit of markdown (like this is for), that's not so
+        // useful and drag-n-drop file upload is way better.
+        dragDrop: false,
+        // IMPORTANT: there is a useEffect involving options below
+        // where the following four properties must be explicitly excluded!
+        inputStyle: "contenteditable" as "contenteditable", // needed for spellcheck to work!
+        spellcheck: true,
+        mode: { name: "gfm" },
       });
-    }
+      // gives this highest precedence:
+      cm.current.addKeyMap(extraKeys);
+
+      if (getValueRef != null) {
+        getValueRef.current = cm.current.getValue.bind(cm.current);
+      }
+      // UNCOMMENT FOR DEBUGGING ONLY
+      // (window as any).cm = cm.current;
+      cm.current.setValue(value ?? "");
+      cm.current.on("change", saveValue);
+      if (dirtyRef != null) {
+        cm.current.on("change", () => {
+          dirtyRef.current = true;
+        });
+      }
+
+      if (onBlur != null) {
+        cm.current.on("blur", (editor) => onBlur(editor.getValue()));
+      }
+      if (onFocus != null) {
+        cm.current.on("focus", onFocus);
+      }
+
+      cm.current.on("blur", () => {
+        isFocusedRef.current = false;
+        setIsFocusedStyle(false);
+      });
+      cm.current.on("focus", () => {
+        isFocusedRef.current = true;
+        setIsFocusedStyle(true);
+        syncCodeMirrorLayout({ ensureCaret: true });
+      });
+      if (onCursors != null) {
+        cm.current.on("cursorActivity", () => {
+          if (cm.current == null || !isFocusedRef.current) return;
+          if (ignoreChangeRef.current) return;
+          onCursors(
+            cm.current
+              .getDoc()
+              .listSelections()
+              .map((c) => ({ x: c.anchor.ch, y: c.anchor.line })),
+          );
+        });
+      }
+
+      if (externalUndo != null) {
+        cm.current.undo = () => {
+          if (cm.current == null) return;
+          saveValue();
+          externalUndo();
+        };
+      }
+      if (externalRedo != null) {
+        cm.current.redo = () => {
+          if (cm.current == null) return;
+          saveValue();
+          externalRedo();
+        };
+      }
+      if (onSave != null) {
+        // This funny cocalc_actions is just how this is setup
+        // elsewhere in cocalc... Basically the global
+        //    CodeMirror.commands.save
+        // is set to use this at the bottom of src/packages/frontend/frame-editors/code-editor/codemirror-editor.tsx
+        // @ts-ignore
+        cm.current.cocalc_actions = { save: onSave };
+      }
+
+      if (enableUpload) {
+        // as any because the @types for codemirror are WRONG in this case.
+        cm.current.on("paste", handle_paste_event as any);
+      }
+
+      const e: any = cm.current.getWrapperElement();
+      const fixedHeight = !isAutoGrow ? "100%" : undefined;
+      const baseHeight = fixedHeight ?? `${initialMinHeight}px`;
+      let s = `height:${baseHeight}; font-family:sans-serif !important;`;
+      if (compact) {
+        s += "padding:0";
+      } else {
+        s += !options.lineNumbers ? `padding:${PADDING_TOP}px 12px` : "";
+      }
+      if (!isAutoGrow) {
+        const h = fixedHeight ?? "100%";
+        s += `;min-height:${h};max-height:${h};overflow:auto;`;
+      }
+      e.setAttribute("style", s);
+      syncCodeMirrorLayout();
+
+      if (enableMentions) {
+        cm.current.on("change", (cm, changeObj) => {
+          if (changeObj.text[0] == "@") {
+            const before = cm
+              .getLine(changeObj.to.line)
+              .slice(changeObj.to.ch - 1, changeObj.to.ch)
+              ?.trim();
+            // If previous character is whitespace or nothing, then activate mentions:
+            if (!before || before == "(" || before == "[") {
+              show_mentions();
+            }
+          }
+        });
+      }
+
+      if (submitMentionsRef != null) {
+        submitMentionsRef.current = (
+          fragmentId?: FragmentId,
+          onlyValue = false,
+        ) => {
+          if (project_id == null || path == null) {
+            throw Error(
+              "project_id and path must be set if enableMentions is set.",
+            );
+          }
+          const fragment_id = Fragment.encode(fragmentId);
+          const mentions: {
+            account_id: string;
+            description: string;
+            fragment_id: string;
+          }[] = [];
+          if (cm.current == null) return;
+          // Get lines here, since we modify the doc as we go below.
+          const doc = (cm.current.getDoc() as any).linkedDoc();
+          doc.unlinkDoc(cm.current.getDoc());
+          const marks = cm.current.getAllMarks();
+          marks.reverse();
+          for (const mark of marks) {
+            if (mark == null) continue;
+            const { attributes } = mark as any;
+            if (attributes == null) continue; // some other sort of mark?
+            const { account_id } = attributes;
+            if (account_id == null) continue;
+            const loc = mark.find();
+            if (loc == null) continue;
+            let from, to;
+            if (loc["from"]) {
+              // @ts-ignore
+              ({ from, to } = loc);
+            } else {
+              from = to = loc;
+            }
+            const text = `<span class="user-mention" account-id=${account_id} >${cm.current.getRange(
+              from,
+              to,
+            )}</span>`;
+            const description = trunc(
+              cm.current.getLine(from.line).trim(),
+              160,
+            );
+            doc.replaceRange(text, from, to);
+            mentions.push({ account_id, description, fragment_id });
+          }
+          const value = doc.getValue();
+          if (!onlyValue) {
+            submit_mentions(project_id, path, mentions);
+          }
+          return value;
+        };
+      }
+
+      if (autoFocus) {
+        cm.current.focus();
+      }
+
+      if (selectionRef != null) {
+        selectionRef.current = {
+          isSelectionReady: () => cm.current != null,
+          setSelection: (selection: any) => {
+            cm.current?.setSelections(selection);
+          },
+          getSelection: () => {
+            return cm.current?.listSelections();
+          },
+          focus: () => {
+            if (cm.current == null) {
+              return false;
+            }
+            cm.current.focus();
+            return true;
+          },
+        };
+      }
+      emitSelectionReady();
+
+      if (registerEditor != null) {
+        registerEditor({
+          set_cursor: (pos: { x?: number; y?: number }) => {
+            if (cm.current == null) return;
+            let { x = 0, y = 0 } = pos; // must be defined!
+            if (y < 0) {
+              // for getting last line...
+              y += cm.current.lastLine() + 1;
+            }
+            cm.current.setCursor({ line: y, ch: x });
+          },
+          get_cursor: () => {
+            if (cm.current == null) return { x: 0, y: 0 };
+            const { line, ch } = cm.current.getCursor();
+            return { y: line, x: ch };
+          },
+        });
+      }
+    })();
 
     // clean up
     return () => {
+      cancelled = true;
       if (cm.current == null) return;
       cm.current.off("change", saveValue);
       cm.current.off("paste", handle_paste_event as any);

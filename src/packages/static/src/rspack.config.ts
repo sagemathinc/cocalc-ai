@@ -94,6 +94,7 @@ export default function getConfig({ middleware }: Options = {}): Configuration {
   const NODE_ENV = process.env.NODE_ENV || "development";
   const PRODMODE = NODE_ENV == "production";
   const { MEASURE } = process.env;
+  const MEASURE_ENABLED = !!MEASURE && MEASURE !== "0" && MEASURE !== "false";
   const date = new Date();
   const BUILD_DATE = date.toISOString();
   const BUILD_TS = date.getTime();
@@ -169,9 +170,23 @@ export default function getConfig({ middleware }: Options = {}): Configuration {
     }),
   );
 
-  if (MEASURE) {
-    // see https://rspack.dev/guide/optimization/analysis
-    throw Error("measure: not implemented");
+  if (MEASURE_ENABLED) {
+    // Emit a static treemap report plus stats.json for repeatable bundle analysis.
+    // Using the plugin directly avoids the CLI default server mode, which is less
+    // useful in automated or headless workflows.
+    const { BundleAnalyzerPlugin } = require("webpack-bundle-analyzer");
+    registerPlugin(
+      "BundleAnalyzerPlugin -- generate static bundle report and stats.json",
+      new BundleAnalyzerPlugin({
+        analyzerMode: "static",
+        openAnalyzer: false,
+        reportFilename: "bundle-report.html",
+        defaultSizes: "parsed",
+        generateStatsFile: true,
+        statsFilename: "stats.json",
+        statsOptions: { source: false },
+      }),
+    );
   }
 
   if (RSPACK_DEV_SERVER) {
@@ -194,6 +209,7 @@ export default function getConfig({ middleware }: Options = {}): Configuration {
       /formItemNode = ReactDOM.findDOMNode/,
     ],
     devtool: PRODMODE ? undefined : "eval-cheap-module-source-map",
+    profile: MEASURE_ENABLED,
     mode: PRODMODE
       ? ("production" as "production")
       : ("development" as "development"),

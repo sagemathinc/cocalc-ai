@@ -331,7 +331,7 @@ export function FileTab(props: Readonly<Props>) {
 
   // how to read: default color -> style for component -> override color if there is activity
   const icon_style: CSSProperties = {
-    marginRight: "2px",
+    marginRight: isFixedTab ? 0 : "2px",
     color: COLORS.FILE_ICON,
     ...props.iconStyle,
     ...(has_activity ? { color: "orange" } : undefined),
@@ -390,6 +390,7 @@ export function FileTab(props: Readonly<Props>) {
         style={{
           textAlign: "center",
           width: "100%",
+          boxSizing: "border-box",
           paddingLeft: "8px",
           paddingRight: "8px",
           paddingTop: props.extraSpacing ?? "0",
@@ -410,31 +411,50 @@ export function FileTab(props: Readonly<Props>) {
     }
   }
 
-  const btnLeft = (
+  const iconNode = image ? (
+    <img
+      src={image}
+      alt={typeof label === "string" ? label : "workspace"}
+      style={{
+        display: condensed ? "inline-block" : undefined,
+        width: condensed ? 18 : 24,
+        height: condensed ? 18 : 24,
+        marginRight: isFixedTab ? 0 : "2px",
+        borderRadius: 6,
+        objectFit: "cover",
+        verticalAlign: "middle",
+      }}
+    />
+  ) : (
+    <Icon
+      style={{
+        display: condensed ? "inline-block" : undefined,
+        ...icon_style,
+      }}
+      name={icon}
+    />
+  );
+
+  const btnLeft = isFixedTab ? (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: showLabel ? "4px" : undefined,
+        width: "100%",
+      }}
+    >
+      {iconNode}
+      {showLabel ? (
+        <DisplayedLabel path={path} label={label} inline={false} />
+      ) : null}
+      {tags}
+    </div>
+  ) : (
     <>
-      {image ? (
-        <img
-          src={image}
-          alt={typeof label === "string" ? label : "workspace"}
-          style={{
-            display: condensed ? "inline-block" : undefined,
-            width: condensed ? 18 : 24,
-            height: condensed ? 18 : 24,
-            marginRight: "2px",
-            borderRadius: 6,
-            objectFit: "cover",
-            verticalAlign: "middle",
-          }}
-        />
-      ) : (
-        <Icon
-          style={{
-            display: condensed ? "inline-block" : undefined,
-            ...icon_style,
-          }}
-          name={icon}
-        />
-      )}
+      {iconNode}
       {showLabel ? (
         <DisplayedLabel path={path} label={label} inline={!isFixedTab} />
       ) : null}
