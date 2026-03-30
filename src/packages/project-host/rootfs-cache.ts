@@ -47,6 +47,10 @@ import type { ExecuteCodeStreamEvent } from "@cocalc/util/types/execute-code";
 
 import { listProjects } from "./sqlite/projects";
 import { ensureRootfsRusticRepoProfile } from "./rootfs-rustic";
+import {
+  estimateManagedRootfsPullReservationBytes,
+  withStorageReservation,
+} from "./storage-reservations";
 
 const logger = getLogger("project-host:rootfs-cache");
 const STORAGE_WRAPPER = "/usr/local/sbin/cocalc-runtime-storage";
@@ -581,92 +585,117 @@ async function downloadManagedRootfsArtifact({
     });
     await cleanupManagedRootfsTempDir(tempDir);
   }
-  await mkdir(IMAGE_CACHE, { recursive: true });
-  const tempDir = await mkdtemp(
-    join(IMAGE_CACHE, ".managed-rootfs-rustic-restore-"),
-  );
-  const stagedRootfsPath = join(tempDir, "rootfs");
-  try {
-    reportPullProgress(onProgress, {
-      message: "preparing RootFS cache",
-      progress: 8,
-      detail: {
-        image,
-        release_id: access.release_id,
-      },
-    });
-    await createManagedRootfsRestoreSubvolume(stagedRootfsPath);
-    const restoreStarted = Date.now();
-    reportPullProgress(onProgress, {
-      message: "restoring RootFS image from rustic",
-      progress: 12,
-      detail: {
-        image,
-        release_id: access.release_id,
-      },
-    });
-    await restoreManagedRootfsRustic({
-      access,
-      destPath: stagedRootfsPath,
-      onProgress,
-    });
-    logger.info("restored managed RootFS rustic snapshot", {
+  const estimated_bytes = estimateManagedRootfsPullReservationBytes(access);
+  reportPullProgress(onProgress, {
+    message: "reserving host storage for RootFS pull",
+    progress: 4,
+    detail: {
       image,
       release_id: access.release_id,
-      content_key: access.content_key,
-      artifact_bytes: access.artifact_bytes,
-      elapsed_ms: Date.now() - restoreStarted,
-    });
-    try {
-      reportPullProgress(onProgress, {
-        message: "finalizing RootFS cache entry",
-        progress: 84,
-        detail: {
+      estimated_bytes,
+    },
+  });
+  await withStorageReservation(
+    {
+      kind: "rootfs-pull",
+      resource_id: image,
+      estimated_bytes,
+    },
+    async () => {
+      await mkdir(IMAGE_CACHE, { recursive: true });
+      const tempDir = await mkdtemp(
+        join(IMAGE_CACHE, ".managed-rootfs-rustic-restore-"),
+      );
+      const stagedRootfsPath = join(tempDir, "rootfs");
+      try {
+        reportPullProgress(onProgress, {
+          message: "preparing RootFS cache",
+          progress: 8,
+          detail: {
+            image,
+            release_id: access.release_id,
+          },
+        });
+        await createManagedRootfsRestoreSubvolume(stagedRootfsPath);
+        const restoreStarted = Date.now();
+        reportPullProgress(onProgress, {
+          message: "restoring RootFS image from rustic",
+          progress: 12,
+          detail: {
+            image,
+            release_id: access.release_id,
+          },
+        });
+        await restoreManagedRootfsRustic({
+          access,
+          destPath: stagedRootfsPath,
+          onProgress,
+        });
+        logger.info("restored managed RootFS rustic snapshot", {
           image,
           release_id: access.release_id,
-        },
-      });
-      await snapshotManagedRootfsReadonly({
-        source: stagedRootfsPath,
-        dest: finalPath,
-      });
-      if (access.inspect_data) {
-        await writeFile(finalInspectPath, JSON.stringify(access.inspect_data));
-      }
-    } catch (err) {
-      if (await exists(finalPath)) {
-        await deleteCachedManagedRootfs({
-          image,
-          reason: `failed while finalizing restored rustic snapshot: ${err}`,
+          content_key: access.content_key,
+          artifact_bytes: access.artifact_bytes,
+          size_bytes: access.size_bytes,
+          elapsed_ms: Date.now() - restoreStarted,
         });
+        try {
+          reportPullProgress(onProgress, {
+            message: "finalizing RootFS cache entry",
+            progress: 84,
+            detail: {
+              image,
+              release_id: access.release_id,
+            },
+          });
+          await snapshotManagedRootfsReadonly({
+            source: stagedRootfsPath,
+            dest: finalPath,
+          });
+          if (access.inspect_data) {
+            await writeFile(
+              finalInspectPath,
+              JSON.stringify(access.inspect_data),
+            );
+          }
+        } catch (err) {
+          if (await exists(finalPath)) {
+            await deleteCachedManagedRootfs({
+              image,
+              reason: `failed while finalizing restored rustic snapshot: ${err}`,
+            });
+          }
+          throw err;
+        }
+        logger.info("cached managed RootFS from rustic snapshot", {
+          image,
+          release_id: access.release_id,
+          content_key: access.content_key,
+          total_elapsed_ms: Date.now() - started,
+        });
+        await maybeReplicateManagedRootfsRustic({
+          access,
+          sourcePath: finalPath,
+          onProgress,
+        });
+        reportPullProgress(onProgress, {
+          message: "RootFS ready on host",
+          progress: 100,
+          detail: {
+            image,
+            release_id: access.release_id,
+          },
+        });
+      } finally {
+        await deleteCachedRootfsPath(stagedRootfsPath).catch(() => {});
+        await rm(tempDir, {
+          recursive: true,
+          force: true,
+          maxRetries: 3,
+        }).catch(() => {});
       }
-      throw err;
-    }
-    logger.info("cached managed RootFS from rustic snapshot", {
-      image,
-      release_id: access.release_id,
-      content_key: access.content_key,
-      total_elapsed_ms: Date.now() - started,
-    });
-    await maybeReplicateManagedRootfsRustic({
-      access,
-      sourcePath: finalPath,
-      onProgress,
-    });
-    reportPullProgress(onProgress, {
-      message: "RootFS ready on host",
-      progress: 100,
-      detail: {
-        image,
-        release_id: access.release_id,
-      },
-    });
-  } finally {
-    await deleteCachedRootfsPath(stagedRootfsPath).catch(() => {});
-    await rm(tempDir, { recursive: true, force: true, maxRetries: 3 }).catch(
-      () => {},
-    );
-  }
+    },
+  );
 }
 
 async function deleteCachedRootfsPath(path: string): Promise<void> {

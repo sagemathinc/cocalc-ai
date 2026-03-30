@@ -1007,6 +1007,7 @@ async function resolveRootfsRusticAccess({
     release_id: release.release_id,
     image: release.runtime_image,
     content_key: release.content_key,
+    size_bytes: release.size_bytes ?? undefined,
     artifact_kind: "full",
     artifact_format: "rustic",
     artifact_backend: best.artifact_backend,

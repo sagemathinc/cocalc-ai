@@ -1,5 +1,6 @@
 import { hubApi } from "@cocalc/lite/hub/api";
 import { account_id } from "@cocalc/backend/data";
+import { exists } from "@cocalc/backend/misc/async-utils-node";
 import { uuid, isValidUUID } from "@cocalc/util/misc";
 import {
   getProject,
@@ -54,11 +55,16 @@ import { pushSubscriptionAuthToRegistry } from "../codex/codex-auth-registry";
 import { clearProjectHostConatAuthCaches } from "../conat-auth";
 import { rehydrateAcpAutomationsForProject } from "@cocalc/lite/hub/acp";
 import { getImage } from "@cocalc/project-runner/run/podman";
+import {
+  imageCachePath,
+  inspectFilePath,
+} from "@cocalc/project-runner/run/rootfs-base";
 import { isManagedRootfsImageName } from "@cocalc/util/rootfs-images";
 import {
   pullRootfsCacheEntry,
   type RootfsCachePullProgress,
 } from "../rootfs-cache";
+import { withOciPullReservationIfNeeded } from "../storage-reservations";
 
 const logger = getLogger("project-host:hub:projects");
 export const PROJECT_RUNNER_RPC_TIMEOUT_MS = 60 * 60 * 1000;
@@ -364,6 +370,44 @@ async function ensureManagedRootfsCached(
   await pullRootfsCacheEntry(image, onProgress);
 }
 
+async function startRunnerWithStorageReservation<T>({
+  project_id,
+  image,
+  op_id,
+  onProgress,
+  fn,
+}: {
+  project_id: string;
+  image: string;
+  op_id?: string;
+  onProgress?: (update: {
+    message: string;
+    detail?: Record<string, any>;
+  }) => void;
+  fn: () => Promise<T>;
+}): Promise<T> {
+  if (isManagedRootfsImageName(image)) {
+    return await fn();
+  }
+  const cached =
+    (await exists(imageCachePath(image))) &&
+    (await exists(inspectFilePath(image)));
+  if (cached) {
+    return await fn();
+  }
+  return await withOciPullReservationIfNeeded({
+    image,
+    project_id,
+    op_id,
+    onProgress: (estimate) =>
+      onProgress?.({
+        message: "reserving host storage for OCI image pull",
+        detail: estimate,
+      }),
+    fn,
+  });
+}
+
 function publishStartProgress({
   project_id,
   op_id,
@@ -448,9 +492,14 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
       });
       const config = await getRunnerConfig(project_id, opts);
       await ensureManagedRootfsCached(config);
-      const status = await runnerApi.start({
+      const status = await startRunnerWithStorageReservation({
         project_id,
-        config,
+        image: getImage(config),
+        fn: async () =>
+          await runnerApi.start({
+            project_id,
+            config,
+          }),
       });
       ensureProjectRow({
         project_id,
@@ -551,9 +600,24 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
         message: "starting project runtime",
       });
       const status = await timings.measure("runner_start", async () => {
-        return await runnerApi.start({
+        return await startRunnerWithStorageReservation({
           project_id,
-          config,
+          image: getImage(config),
+          op_id,
+          onProgress: ({ message, detail }) =>
+            publishStartProgress({
+              project_id,
+              op_id,
+              phase: "runner_start",
+              progress: 86,
+              message,
+              detail,
+            }),
+          fn: async () =>
+            await runnerApi.start({
+              project_id,
+              config,
+            }),
         });
       });
       ensureProjectRow({
