@@ -36,6 +36,8 @@ const DEFAULT_STATE: RuntimeStateV1 = {
   running_services: {},
 };
 
+let stateMutationQueue: Promise<void> = Promise.resolve();
+
 function appsDir(): string {
   const home = process.env.HOME ?? ".";
   return join(home, ".local", "share", "cocalc", "apps");
@@ -164,6 +166,34 @@ async function writeStateRaw(state: RuntimeStateV1): Promise<void> {
   await rename(tmp, path);
 }
 
+async function mutateState<T>(
+  f: (
+    state: RuntimeStateV1,
+  ) =>
+    | T
+    | { result: T; changed?: boolean }
+    | Promise<T | { result: T; changed?: boolean }>,
+): Promise<T> {
+  const run = async (): Promise<T> => {
+    const state = await readStateRaw();
+    const out = await f(state);
+    const wrapped =
+      out && typeof out === "object" && !Array.isArray(out) && "result" in out
+        ? (out as { result: T; changed?: boolean })
+        : { result: out as T, changed: true };
+    if (wrapped.changed !== false) {
+      await writeStateRaw(state);
+    }
+    return wrapped.result;
+  };
+  const next = stateMutationQueue.then(run, run);
+  stateMutationQueue = next.then(
+    () => undefined,
+    () => undefined,
+  );
+  return next;
+}
+
 function isExpired(exposure: AppExposureState, now = Date.now()): boolean {
   if (exposure.mode !== "public") return false;
   if (!Number.isFinite(exposure.expires_at_ms)) return false;
@@ -185,8 +215,10 @@ export async function getAppExposureState(
   const exposure = state.exposures[app_id];
   if (!exposure) return;
   if (isExpired(exposure)) {
-    delete state.exposures[app_id];
-    await writeStateRaw(state);
+    await mutateState((state) => {
+      delete state.exposures[app_id];
+      return { result: undefined };
+    });
     return;
   }
   return exposure;
@@ -204,7 +236,14 @@ export async function listAppExposureStates(): Promise<
     }
   }
   if (changed) {
-    await writeStateRaw(state);
+    await mutateState((latest) => {
+      for (const [app_id, exposure] of Object.entries(latest.exposures)) {
+        if (isExpired(exposure)) {
+          delete latest.exposures[app_id];
+        }
+      }
+      return { result: latest.exposures };
+    });
   }
   return state.exposures;
 }
@@ -215,16 +254,20 @@ export async function setRunningServicePort(
 ): Promise<void> {
   const n = Number(port);
   if (!Number.isInteger(n) || n <= 0) return;
-  const state = await readStateRaw();
-  state.running_services[app_id] = { port: n };
-  await writeStateRaw(state);
+  await mutateState<void>((state) => {
+    state.running_services[app_id] = { port: n };
+    return undefined;
+  });
 }
 
 export async function clearRunningServicePort(app_id: string): Promise<void> {
-  const state = await readStateRaw();
-  if (!(app_id in state.running_services)) return;
-  delete state.running_services[app_id];
-  await writeStateRaw(state);
+  await mutateState<void>((state) => {
+    if (!(app_id in state.running_services)) {
+      return { result: undefined, changed: false };
+    }
+    delete state.running_services[app_id];
+    return undefined;
+  });
 }
 
 export async function appIdForRunningServicePort(
@@ -272,18 +315,19 @@ export async function exposeApp({
     public_url,
     token: auth_front === "token" ? randomToken() : undefined,
   };
-  const state = await readStateRaw();
-  state.exposures[app_id] = exposure;
-  await writeStateRaw(state);
+  await mutateState<void>((state) => {
+    state.exposures[app_id] = exposure;
+    return undefined;
+  });
   return exposure;
 }
 
 export async function unexposeApp(app_id: string): Promise<boolean> {
-  const state = await readStateRaw();
-  const existed = state.exposures[app_id] != null;
-  if (existed) {
-    delete state.exposures[app_id];
-    await writeStateRaw(state);
-  }
-  return existed;
+  return await mutateState<boolean>((state) => {
+    const existed = state.exposures[app_id] != null;
+    if (existed) {
+      delete state.exposures[app_id];
+    }
+    return { result: existed, changed: existed };
+  });
 }

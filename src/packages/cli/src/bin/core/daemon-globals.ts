@@ -45,11 +45,17 @@ export function effectiveDaemonGlobals<T extends DaemonGlobalAuthOptions>(
   }
 
   if (!next.bearer) {
-    const bearer = `${
-      env.COCALC_BEARER_TOKEN ?? env.COCALC_AGENT_TOKEN ?? ""
-    }`.trim();
-    if (bearer) {
-      next.bearer = bearer;
+    const rawBearer = env.COCALC_BEARER_TOKEN;
+    if (rawBearer !== undefined) {
+      const bearer = `${rawBearer}`.trim();
+      if (bearer) {
+        next.bearer = bearer;
+      }
+    } else {
+      const bearer = `${env.COCALC_AGENT_TOKEN ?? ""}`.trim();
+      if (bearer) {
+        next.bearer = bearer;
+      }
     }
   }
 
