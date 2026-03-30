@@ -74,7 +74,7 @@ export function getHostCpuCount(host: Host): number | undefined {
 export function getHostRamGiB(host: Host): number | undefined {
   const observed = host.metrics?.current?.memory_total_bytes;
   if (observed != null && Number.isFinite(observed) && observed > 0) {
-    return Math.max(1, Math.round(observed / GIB));
+    return Math.max(1, Math.ceil(observed / GIB));
   }
   return (
     readPositiveInt(host.host_ram_gb) ??
