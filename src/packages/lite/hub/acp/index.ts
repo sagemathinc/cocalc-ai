@@ -266,6 +266,10 @@ const ACP_LIVE_LOG_MAX_BYTES = envNumber(
   8 * 1024 * 1024,
 );
 const ACP_LIVE_LOG_MAX_MSGS = envNumber("COCALC_ACP_LIVE_LOG_MAX_MSGS", 5_000);
+const ACP_PREVIEW_ACTIVITY_TICK_MIN_MS = envNumber(
+  "COCALC_ACP_PREVIEW_ACTIVITY_TICK_MS",
+  2_000,
+);
 const ACP_PATCHFLOW_COMMIT_TARGET = envNumber(
   "COCALC_ACP_PATCHFLOW_COMMIT_TARGET",
   6,
@@ -1569,6 +1573,13 @@ export class ChatStreamWriter {
     AStream<AcpStreamMessage | AcpStreamMessage[]>
   >;
   private liveLogBatcher!: AdaptiveAsyncBatcher<AcpStreamMessage>;
+  private livePreviewStream?: AStream<AcpStreamMessage | AcpStreamMessage[]>;
+  private livePreviewStreamName: string;
+  private livePreviewInitPromise?: Promise<
+    AStream<AcpStreamMessage | AcpStreamMessage[]>
+  >;
+  private livePreviewBatcher!: AdaptiveAsyncBatcher<AcpStreamMessage>;
+  private lastPreviewActivityTickMs = 0;
   private client: ConatClient;
   private timeTravel?: AgentTimeTravelRecorder;
   private integritySnapshot: ChatIntegritySnapshot = {
@@ -1846,6 +1857,7 @@ export class ChatStreamWriter {
     syncdbOverride,
     logStoreFactory,
     liveLogStreamFactory,
+    livePreviewStreamFactory,
   }: {
     metadata: AcpChatContext;
     client: ConatClient;
@@ -1856,6 +1868,9 @@ export class ChatStreamWriter {
     syncdbOverride?: any;
     logStoreFactory?: () => AKV<AcpStreamMessage[]>;
     liveLogStreamFactory?: () => AStream<AcpStreamMessage | AcpStreamMessage[]>;
+    livePreviewStreamFactory?: () => AStream<
+      AcpStreamMessage | AcpStreamMessage[]
+    >;
   }) {
     if (`${metadata.message_id ?? ""}`.trim().length === 0) {
       throw new Error("acp chat metadata is missing required message_id");
@@ -1916,7 +1931,9 @@ export class ChatStreamWriter {
     this.logKey = refs.key;
     this.logSubject = refs.subject;
     this.liveLogStreamName = refs.liveStream;
+    this.livePreviewStreamName = refs.previewStream;
     this.liveLogBatcher = this.createLiveLogBatcher();
+    this.livePreviewBatcher = this.createLivePreviewBatcher();
     // ensure initialization rejections are observed immediately
     this.ready = this.initialize();
     this.waitUntilReady();
@@ -1925,6 +1942,9 @@ export class ChatStreamWriter {
     }
     if (liveLogStreamFactory) {
       this.liveLogStream = liveLogStreamFactory();
+    }
+    if (livePreviewStreamFactory) {
+      this.livePreviewStream = livePreviewStreamFactory();
     }
     if (workspaceRoot) {
       this.timeTravel = new AgentTimeTravelRecorder({
@@ -1996,6 +2016,7 @@ export class ChatStreamWriter {
         acp_log_key: this.logKey,
         acp_log_subject: this.logSubject,
         acp_live_log_stream: this.liveLogStreamName,
+        acp_live_preview_stream: this.livePreviewStreamName,
         message_id: this.metadata.message_id,
         thread_id: this.metadata.thread_id,
         parent_message_id: (this.metadata as any).parent_message_id,
@@ -2062,6 +2083,7 @@ export class ChatStreamWriter {
       message.type === "summary" || message.type === "error" || this.finished;
     if (isLastMessage) {
       await this.waitForLiveLogFlush();
+      await this.waitForLivePreviewFlush();
       await this.persistLog();
       // Live turn output is rendered from the ACP log/DKV path. Reserve
       // durable .chat writes for terminal state so patchflow history stays
@@ -2108,6 +2130,7 @@ export class ChatStreamWriter {
       // the first text event".
       this.events = appendStreamMessage(this.events, payload);
       this.publishLiveLog(payload);
+      this.publishLivePreview(payload);
       this.commitNow(true);
       return;
     }
@@ -2119,6 +2142,7 @@ export class ChatStreamWriter {
     }
     this.events = appendStreamMessage(this.events, payload);
     this.publishLiveLog(payload);
+    this.publishLivePreview(payload);
     if (payload.type === "event") {
       this.handleAgentEvent(payload.event);
       if (this.interruptNotified) {
@@ -2268,6 +2292,9 @@ export class ChatStreamWriter {
       acp_log_key: this.logKey,
       acp_log_subject: this.logSubject,
       acp_live_log_stream: generating ? this.liveLogStreamName : undefined,
+      acp_live_preview_stream: generating
+        ? this.livePreviewStreamName
+        : undefined,
       acp_thread_id: this.threadId,
       acp_started_at_ms:
         Number(this.metadata.started_at_ms) > 0
@@ -2309,6 +2336,10 @@ export class ChatStreamWriter {
       acp_log_store: this.logStoreName,
       acp_log_key: this.logKey,
       acp_log_subject: this.logSubject,
+      acp_live_log_stream: generating ? this.liveLogStreamName : undefined,
+      acp_live_preview_stream: generating
+        ? this.livePreviewStreamName
+        : undefined,
       acp_thread_id: this.threadId,
       acp_started_at_ms:
         Number(this.metadata.started_at_ms) > 0
@@ -2782,6 +2813,11 @@ export class ChatStreamWriter {
         // ignore
       }
       try {
+        await this.livePreviewBatcher.close();
+      } catch {
+        // ignore
+      }
+      try {
         await this.persistLog();
       } catch {
         // ignore
@@ -2790,6 +2826,11 @@ export class ChatStreamWriter {
         this.liveLogStream?.close();
       } catch (err) {
         logger.warn("failed to close live acp log stream", err);
+      }
+      try {
+        this.livePreviewStream?.close();
+      } catch (err) {
+        logger.warn("failed to close live acp preview stream", err);
       }
       try {
         await this.waitForScheduledSyncdbSaves();
@@ -3056,6 +3097,33 @@ export class ChatStreamWriter {
     }
   }
 
+  private async getLivePreviewStream(): Promise<
+    AStream<AcpStreamMessage | AcpStreamMessage[]>
+  > {
+    if (this.livePreviewStream) return this.livePreviewStream;
+    if (this.livePreviewInitPromise) return await this.livePreviewInitPromise;
+    this.livePreviewInitPromise = (async () => {
+      const stream = astream<AcpStreamMessage>({
+        project_id: this.metadata.project_id,
+        name: this.livePreviewStreamName,
+        client: this.client,
+        ephemeral: true,
+      });
+      await stream.config({
+        max_bytes: ACP_LIVE_LOG_MAX_BYTES,
+        max_msgs: ACP_LIVE_LOG_MAX_MSGS,
+        discard_policy: "old",
+      });
+      this.livePreviewStream = stream;
+      return stream;
+    })();
+    try {
+      return await this.livePreviewInitPromise;
+    } finally {
+      this.livePreviewInitPromise = undefined;
+    }
+  }
+
   private createLiveLogBatcher(): AdaptiveAsyncBatcher<AcpStreamMessage> {
     return createAdaptiveAsyncBatcher<AcpStreamMessage>({
       minDelayMs: ACP_LIVE_LOG_BATCH_MIN_MS,
@@ -3103,6 +3171,53 @@ export class ChatStreamWriter {
     });
   }
 
+  private createLivePreviewBatcher(): AdaptiveAsyncBatcher<AcpStreamMessage> {
+    return createAdaptiveAsyncBatcher<AcpStreamMessage>({
+      minDelayMs: ACP_LIVE_LOG_BATCH_MIN_MS,
+      maxDelayMs: ACP_LIVE_LOG_BATCH_MAX_MS,
+      ewmaAlpha: ACP_LIVE_LOG_BATCH_EWMA_ALPHA,
+      latencyMultiplier: ACP_LIVE_LOG_BATCH_LATENCY_MULTIPLIER,
+      maxItems: ACP_LIVE_LOG_BATCH_MAX_EVENTS,
+      flush: async (batch) => {
+        try {
+          const stream = await this.getLivePreviewStream();
+          await stream.publish(batch.length === 1 ? batch[0] : batch);
+        } catch (err) {
+          logger.debug("failed to publish live acp preview event", {
+            chatKey: this.chatKey,
+            path: this.metadata.path,
+            seqStart: batch[0]?.seq,
+            seqEnd: batch.at(-1)?.seq,
+            batchSize: batch.length,
+            err,
+          });
+        }
+      },
+      onFlushComplete: ({
+        batchSize,
+        durationMs,
+        nextDelayMs,
+        estimatedLatencyMs,
+      }) => {
+        if (durationMs < ACP_LIVE_LOG_PUBLISH_SLOW_MS) {
+          return;
+        }
+        logger.warn("acp live preview publish slow", {
+          chatKey: this.chatKey,
+          path: this.metadata.path,
+          events: this.events.length,
+          batchSize,
+          durationMs: roundMs(durationMs),
+          nextDelayMs,
+          estimatedLatencyMs:
+            estimatedLatencyMs == null
+              ? undefined
+              : roundMs(estimatedLatencyMs),
+        });
+      },
+    });
+  }
+
   private publishLiveLog(event: AcpStreamMessage): void {
     if (this.closed) return;
     const shouldFlushNow =
@@ -3114,8 +3229,62 @@ export class ChatStreamWriter {
     });
   }
 
+  private publishLivePreview(event: AcpStreamMessage): void {
+    if (this.closed) return;
+    if (event.type === "summary" || event.type === "error") {
+      this.livePreviewBatcher.add(event, { flush: true });
+      return;
+    }
+    if (event.type === "status") {
+      this.livePreviewBatcher.add(event, { flush: true });
+      return;
+    }
+    if (
+      event.type === "event" &&
+      (event.event.type === "message" || event.event.type === "thinking")
+    ) {
+      this.livePreviewBatcher.add(event);
+      return;
+    }
+    if (event.type === "event" && this.shouldEmitPreviewActivityTick(event)) {
+      this.livePreviewBatcher.add(
+        {
+          type: "status",
+          state: "running",
+          threadId: this.threadId ?? undefined,
+          seq: event.seq,
+          time: event.time,
+        },
+        { flush: true },
+      );
+    }
+  }
+
+  private shouldEmitPreviewActivityTick(event: AcpStreamMessage): boolean {
+    if (event.type !== "event") return false;
+    if (event.event.type === "message" || event.event.type === "thinking") {
+      return false;
+    }
+    const nowMs =
+      typeof event.time === "number" && Number.isFinite(event.time)
+        ? event.time
+        : Date.now();
+    if (
+      nowMs - this.lastPreviewActivityTickMs <
+      ACP_PREVIEW_ACTIVITY_TICK_MIN_MS
+    ) {
+      return false;
+    }
+    this.lastPreviewActivityTickMs = nowMs;
+    return true;
+  }
+
   private async waitForLiveLogFlush(): Promise<void> {
     await this.liveLogBatcher.flush();
+  }
+
+  private async waitForLivePreviewFlush(): Promise<void> {
+    await this.livePreviewBatcher.flush();
   }
 
   private async persistLog(): Promise<void> {

@@ -33,6 +33,7 @@ export default function MultiMarkdownInput({
   extraHelp,
   fixedMode,
   fontSize,
+  autoGrowMinHeight,
   autoGrowMaxHeight,
   clampAutoGrowToHost,
   getValueRef,
@@ -332,6 +333,7 @@ export default function MultiMarkdownInput({
             cmOptions={cmOptions}
             height={editorHeight}
             autoGrow={autoGrow ?? height === "auto"}
+            autoGrowMinHeight={autoGrowMinHeight}
             autoGrowMaxHeight={autoGrowMaxHeight}
             clampAutoGrowToHost={clampAutoGrowToHost}
             chromeLayout={showToolbarModeSwitch ? "external" : "internal"}
