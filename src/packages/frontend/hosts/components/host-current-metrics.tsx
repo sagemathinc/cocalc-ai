@@ -7,6 +7,7 @@ import { COLORS } from "@cocalc/util/theme";
 type HostCurrentMetricsProps = {
   host: Host;
   compact?: boolean;
+  dense?: boolean;
 };
 
 type MetricBarProps = {
@@ -14,6 +15,7 @@ type MetricBarProps = {
   percent?: number;
   detail?: string;
   compact?: boolean;
+  dense?: boolean;
   historyValues?: number[];
   color?: string;
 };
@@ -97,6 +99,7 @@ function MetricBar({
   percent,
   detail,
   compact,
+  dense,
   historyValues,
   color,
 }: MetricBarProps) {
@@ -105,6 +108,73 @@ function MetricBar({
     (value) => Number.isFinite(value) && value >= 0,
   );
   const chartWidth = compact ? 180 : 320;
+  if (compact && dense) {
+    return (
+      <Space orientation="vertical" size={2} style={{ width: 190 }}>
+        <Space
+          size={8}
+          style={{
+            justifyContent: "space-between",
+            width: "100%",
+          }}
+        >
+          <Typography.Text style={{ fontSize: 12 }}>
+            {label}
+            {displayPercent != null ? ` ${Math.round(displayPercent)}%` : ""}
+          </Typography.Text>
+          {detail && (
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              {detail}
+            </Typography.Text>
+          )}
+        </Space>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            width: "100%",
+          }}
+        >
+          <div style={{ flex: "0 0 30%" }}>
+            {displayPercent != null ? (
+              <Progress
+                percent={Math.round(displayPercent)}
+                size="small"
+                status={progressStatus(displayPercent)}
+                showInfo={false}
+              />
+            ) : (
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                n/a
+              </Typography.Text>
+            )}
+          </div>
+          <div style={{ flex: 1 }}>
+            {trendValues.length >= 2 ? (
+              <svg
+                width="100%"
+                height={20}
+                viewBox={`0 0 ${chartWidth} 20`}
+                preserveAspectRatio="none"
+              >
+                <polyline
+                  fill="none"
+                  stroke={color ?? COLORS.BLUE_D}
+                  strokeWidth="2"
+                  points={sparklinePoints(trendValues, chartWidth, 20)}
+                  strokeLinecap="round"
+                />
+              </svg>
+            ) : (
+              <div style={{ height: 20 }} />
+            )}
+          </div>
+        </div>
+      </Space>
+    );
+  }
+
   return (
     <Space
       orientation="vertical"
@@ -169,6 +239,7 @@ function MetricBar({
 export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
   host,
   compact,
+  dense,
 }) => {
   const metrics = host.metrics?.current;
   const history = host.metrics?.history;
@@ -231,6 +302,7 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
           percent={cpuPercent}
           detail={load ? `load ${load}` : undefined}
           compact
+          dense={dense}
           historyValues={cpuHistory}
           color={COLORS.BLUE_D}
         />
@@ -243,6 +315,7 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
               : undefined
           }
           compact
+          dense={dense}
           historyValues={memoryHistory}
           color={COLORS.ANTD_GREEN_D}
         />
@@ -251,6 +324,7 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
           percent={diskPercent}
           detail={diskFree ? `${diskFree} free` : diskTotal}
           compact
+          dense={dense}
           historyValues={diskHistory}
           color={COLORS.ANTD_ORANGE}
         />

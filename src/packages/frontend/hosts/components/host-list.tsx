@@ -716,7 +716,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
       title: "Resources",
       key: "resources",
       render: (_: string, host: Host) => (
-        <HostCurrentMetrics host={host} compact />
+        <HostCurrentMetrics host={host} compact dense />
       ),
     },
     {
