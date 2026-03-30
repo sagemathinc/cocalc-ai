@@ -6,6 +6,7 @@ import { notifyProjectHostUpdate } from "../conat/route-project";
 import { conatWithProjectRouting } from "../conat/route-client";
 import { normalizeHostTier } from "./placement";
 import { machineHasGpu } from "../cloud/host-gpu";
+import { maybeAutoGrowHostDiskForReservationFailure } from "./auto-grow";
 
 const log = getLogger("server:project-host:control");
 // Project starts can include large restores, so allow a long RPC timeout.
@@ -346,10 +347,34 @@ export async function startProjectOnHost(
         startProjectPhaseTimings.set(opts.lro_op_id, response.phase_timings_ms);
       }
     } catch (err) {
+      const autoGrow = await maybeAutoGrowHostDiskForReservationFailure({
+        host_id: placement.host_id,
+        err,
+      });
+      if (autoGrow.grown) {
+        log.info("retrying project start after guarded auto-grow", {
+          project_id,
+          host_id: placement.host_id,
+          next_disk_gb: autoGrow.next_disk_gb,
+        });
+        const retry = await client.startProject({
+          project_id,
+          authorized_keys: meta.authorized_keys,
+          run_quota,
+          image: meta.image,
+          restore,
+          lro_op_id: opts?.lro_op_id,
+        });
+        if (opts?.lro_op_id && retry.phase_timings_ms) {
+          startProjectPhaseTimings.set(opts.lro_op_id, retry.phase_timings_ms);
+        }
+        return;
+      }
       log.warn("startProjectOnHost failed", {
         project_id,
         host: placement,
         err,
+        auto_grow_reason: autoGrow.reason,
       });
       throw err;
     }

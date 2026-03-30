@@ -37,6 +37,7 @@ import {
   computePlacementPermission,
   getUserHostTier,
 } from "@cocalc/server/project-host/placement";
+import { maybeAutoGrowHostDiskForReservationFailure } from "@cocalc/server/project-host/auto-grow";
 import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
 import {
   enqueueCloudVmWork,
@@ -2550,7 +2551,18 @@ export async function pullHostRootfsImage({
     client: conatWithProjectRouting(),
     timeout: HOST_ROOTFS_RPC_TIMEOUT_MS,
   });
-  return await client.pullRootfsImage({ image });
+  try {
+    return await client.pullRootfsImage({ image });
+  } catch (err) {
+    const autoGrow = await maybeAutoGrowHostDiskForReservationFailure({
+      host_id: id,
+      err,
+    });
+    if (autoGrow.grown) {
+      return await client.pullRootfsImage({ image });
+    }
+    throw err;
+  }
 }
 
 export async function deleteHostRootfsImage({
