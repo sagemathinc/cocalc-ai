@@ -3,14 +3,13 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import type { CSSProperties } from "react";
 import { Text } from "slate";
-
-import { CSS } from "@cocalc/frontend/app-framework";
 import { useFileContext } from "@cocalc/frontend/lib/file-context";
 import { dict } from "@cocalc/util/misc";
 import { register, SlateElement } from "../register";
 
-export const LINK_STYLE: CSS = {
+export const LINK_STYLE: CSSProperties = {
   backgroundColor: "var(--cocalc-slate-link-chip-bg, white)",
   border: "1px solid var(--cocalc-slate-link-chip-border, transparent)",
   padding: "1px",
@@ -32,7 +31,7 @@ register({
     const node = element as Link;
     let { url, title } = node;
     const { AnchorTagComponent, urlTransform, anchorStyle } = useFileContext();
-    const style: CSS = { ...LINK_STYLE, ...anchorStyle };
+    const style: CSSProperties = { ...LINK_STYLE, ...anchorStyle };
     if (AnchorTagComponent != null) {
       return (
         <AnchorTagComponent
