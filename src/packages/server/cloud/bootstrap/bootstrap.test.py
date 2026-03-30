@@ -144,6 +144,44 @@ class BootstrapStateFilesTest(unittest.TestCase):
             self.assertIn("installed", state)
 
 
+class BootstrapOwnershipScopeTest(unittest.TestCase):
+    def test_ensure_btrfs_data_does_not_recurse_over_entire_tree(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            recorded = []
+
+            original_run_best_effort = bootstrap.run_best_effort
+            original_run_cmd = bootstrap.run_cmd
+            try:
+                bootstrap.run_best_effort = (
+                    lambda _cfg, args, desc: recorded.append((args, desc))
+                )
+                bootstrap.run_cmd = lambda *args, **kwargs: None
+                # The function targets absolute paths, so just assert on the commands
+                # it would have run rather than trying to mount a fake tree.
+                original_exists = Path.exists
+                original_mkdir = Path.mkdir
+                original_chmod = bootstrap.os.chmod
+                Path.exists = lambda self: True  # type: ignore[method-assign]
+                Path.mkdir = lambda self, parents=False, exist_ok=False: None  # type: ignore[method-assign]
+                bootstrap.os.chmod = lambda *_args, **_kwargs: None
+                bootstrap.ensure_btrfs_data(cfg)
+            finally:
+                bootstrap.run_best_effort = original_run_best_effort
+                bootstrap.run_cmd = original_run_cmd
+                Path.exists = original_exists  # type: ignore[method-assign]
+                Path.mkdir = original_mkdir  # type: ignore[method-assign]
+                bootstrap.os.chmod = original_chmod
+
+            self.assertTrue(recorded)
+            for args, _desc in recorded:
+                self.assertNotIn("-R", args)
+            self.assertIn(
+                (["chown", "missing-runtime-user:missing-runtime-user", "/mnt/cocalc/data"], "chown /mnt/cocalc/data"),
+                recorded,
+            )
+
+
 class BootstrapModesTest(unittest.TestCase):
     def test_reconcile_mode_records_success(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -579,7 +579,7 @@ def ensure_runtime_user(cfg: BootstrapConfig) -> None:
         pw = pwd.getpwnam(user)
     home = pw.pw_dir or f"/home/{user}"
     Path(home).mkdir(parents=True, exist_ok=True)
-    run_best_effort(cfg, ["chown", "-R", f"{user}:{user}", home], "chown runtime home")
+    run_best_effort(cfg, ["chown", f"{user}:{user}", home], "chown runtime home")
 
 
 def ensure_subuids(cfg: BootstrapConfig) -> None:
@@ -598,7 +598,7 @@ def prepare_dirs(cfg: BootstrapConfig) -> None:
     log_line(cfg, "bootstrap: preparing cocalc directories")
     for path in ["/opt/cocalc", "/var/lib/cocalc", "/etc/cocalc", "/mnt/cocalc"]:
         Path(path).mkdir(parents=True, exist_ok=True)
-    run_best_effort(cfg, ["chown", "-R", f"{cfg.ssh_user}:{cfg.ssh_user}", "/opt/cocalc", "/var/lib/cocalc"], "chown cocalc dirs")
+    run_best_effort(cfg, ["chown", f"{cfg.ssh_user}:{cfg.ssh_user}", "/opt/cocalc", "/var/lib/cocalc"], "chown cocalc dirs")
 
 
 def ensure_legacy_btrfs_link(cfg: BootstrapConfig) -> None:
@@ -676,14 +676,14 @@ def ensure_bootstrap_paths(cfg: BootstrapConfig) -> None:
     if os.geteuid() == 0:
         run_best_effort(
             cfg,
-            ["chown", "-R", f"{cfg.ssh_user}:{cfg.ssh_user}", *runtime_paths],
-            "chown runtime dirs",
+            ["chown", f"{cfg.ssh_user}:{cfg.ssh_user}", *runtime_paths],
+            "chown runtime dir roots",
         )
     else:
         run_best_effort(
             cfg,
-            ["sudo", "chown", "-R", f"{cfg.ssh_user}:{cfg.ssh_user}", *runtime_paths],
-            "sudo chown runtime dirs",
+            ["sudo", "chown", f"{cfg.ssh_user}:{cfg.ssh_user}", *runtime_paths],
+            "sudo chown runtime dir roots",
         )
 
 
@@ -1360,7 +1360,12 @@ def ensure_btrfs_data(cfg: BootstrapConfig) -> None:
     Path("/mnt/cocalc/data/secrets").mkdir(parents=True, exist_ok=True)
     Path("/mnt/cocalc/data/tmp").mkdir(parents=True, exist_ok=True)
     os.chmod("/mnt/cocalc/data/tmp", 0o1777)
-    run_best_effort(cfg, ["chown", "-R", f"{cfg.ssh_user}:{cfg.ssh_user}", "/mnt/cocalc/data"], "chown btrfs data")
+    for path in ["/mnt/cocalc/data", "/mnt/cocalc/data/secrets", "/mnt/cocalc/data/tmp"]:
+        run_best_effort(
+            cfg,
+            ["chown", f"{cfg.ssh_user}:{cfg.ssh_user}", path],
+            f"chown {path}",
+        )
 
 
 def configure_podman(cfg: BootstrapConfig) -> None:
@@ -1381,13 +1386,17 @@ def configure_podman(cfg: BootstrapConfig) -> None:
         user_config_root.mkdir(parents=True, exist_ok=True)
         run_best_effort(
             cfg,
-            ["chown", "-R", f"{cfg.ssh_user}:{cfg.ssh_user}", str(user_config_root)],
+            ["chown", f"{cfg.ssh_user}:{cfg.ssh_user}", str(user_config_root)],
             "chown user config",
         )
         user_config.mkdir(parents=True, exist_ok=True)
         Path(f"/mnt/cocalc/data/containers/rootless/{cfg.ssh_user}/storage").mkdir(parents=True, exist_ok=True)
         Path(f"/mnt/cocalc/data/containers/rootless/{cfg.ssh_user}/run").mkdir(parents=True, exist_ok=True)
-        run_best_effort(cfg, ["chown", "-R", f"{cfg.ssh_user}:{cfg.ssh_user}", f"/mnt/cocalc/data/containers/rootless/{cfg.ssh_user}"], "chown rootless storage")
+        run_best_effort(
+            cfg,
+            ["chown", f"{cfg.ssh_user}:{cfg.ssh_user}", f"/mnt/cocalc/data/containers/rootless/{cfg.ssh_user}"],
+            "chown rootless storage root",
+        )
         (user_config / "storage.conf").write_text(
             '[storage]\n'
             'driver = "overlay"\n'
@@ -1747,8 +1756,8 @@ def extract_bundle(cfg: BootstrapConfig, bundle: BundleSpec) -> BundleSpec:
     if cfg.ssh_user and cfg.ssh_user != "root":
         run_best_effort(
             cfg,
-            ["chown", "-R", f"{cfg.ssh_user}:{cfg.ssh_user}", bundle.root],
-            f"chown {bundle.root}",
+            ["chown", "-R", f"{cfg.ssh_user}:{cfg.ssh_user}", bundle.dir],
+            f"chown {bundle.dir}",
         )
     if current_path.is_symlink() or current_path.exists():
         if current_path.is_dir() and not current_path.is_symlink():
@@ -1796,8 +1805,8 @@ node "{bundle_entry}" "$@"
     if cfg.ssh_user and cfg.ssh_user != "root":
         run_best_effort(
             cfg,
-            ["chown", "-R", f"{cfg.ssh_user}:{cfg.ssh_user}", str(host_dir)],
-            "chown project-host runtime root",
+            ["chown", f"{cfg.ssh_user}:{cfg.ssh_user}", str(bin_dir), str(wrapper_path)],
+            "chown project-host wrapper",
         )
 
 
