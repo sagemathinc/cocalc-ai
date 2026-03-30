@@ -4,9 +4,9 @@ import { Alert, Button } from "antd";
 import { useMemo } from "react";
 
 import { file_associations } from "@cocalc/frontend/file-associations";
+import StaticCodeBlock from "@cocalc/frontend/components/static-code-block";
 import { useFrameContext } from "@cocalc/frontend/frame-editors/frame-tree/frame-context";
 import HelpMeFix from "@cocalc/frontend/frame-editors/llm/help-me-fix";
-import { CodeMirrorStatic } from "@cocalc/frontend/jupyter/codemirror-static";
 import { Ansi, is_ansi } from "@cocalc/frontend/jupyter/output-messages/ansi";
 
 interface Props {
@@ -76,15 +76,16 @@ export default function FormatError({ formatError, formatInput }: Props) {
                 <Ansi>{formatError}</Ansi>
               </div>
             ) : (
-              <CodeMirrorStatic
+              <StaticCodeBlock
                 style={{
                   padding: "15px",
                   maxHeight: "200px",
                   overflowY: "auto",
                   flex: 1,
                 }}
+                borderless
                 value={formatError}
-                options={{ mode }}
+                info={mode}
               />
             )}
           </div>

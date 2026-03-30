@@ -1,7 +1,7 @@
 import { CSS } from "@cocalc/frontend/app-framework";
+import StaticCodeBlock from "@cocalc/frontend/components/static-code-block";
 import infoToMode from "@cocalc/frontend/editors/slate/elements/code-block/info-to-mode";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
-import { CodeMirrorStatic } from "@cocalc/frontend/jupyter/codemirror-static";
 import { trunc_middle } from "@cocalc/util/misc";
 
 const FONT_SIZE = 10;
@@ -36,13 +36,12 @@ export default function Context({ value, info }) {
     );
   } else {
     return (
-      <CodeMirrorStatic
+      <StaticCodeBlock
         style={CONTEXT_STYLE}
-        font_size={FONT_SIZE}
-        options={{
-          mode: infoToMode(info),
-        }}
+        fontSize={`${FONT_SIZE}pt`}
+        borderless
         value={trunc_middle(value, MAX_SIZE, MISSING)}
+        info={infoToMode(info)}
       />
     );
   }

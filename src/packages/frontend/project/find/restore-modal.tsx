@@ -1,7 +1,6 @@
 import { Alert, Button, Modal, Space, Typography } from "antd";
-import { CodeMirrorStatic } from "@cocalc/frontend/jupyter/codemirror-static";
 import { Loading } from "@cocalc/frontend/components";
-import { codemirrorMode } from "@cocalc/frontend/file-extensions";
+import StaticCodeBlock from "@cocalc/frontend/components/static-code-block";
 import { filename_extension } from "@cocalc/util/misc";
 
 export default function FindRestoreModal({
@@ -35,7 +34,6 @@ export default function FindRestoreModal({
   onCancel: () => void;
 }) {
   const ext = filename_extension(path).toLowerCase();
-  const mode = codemirrorMode(ext) ?? { name: "text/plain" };
   return (
     <Modal
       title={title}
@@ -88,10 +86,11 @@ export default function FindRestoreModal({
                   background: "#fff",
                 }}
               >
-                <CodeMirrorStatic
+                <StaticCodeBlock
                   value={preview.content}
-                  options={{ mode, lineNumbers: true, lineWrapping: false }}
-                  style={{ border: 0, padding: 0 }}
+                  info={ext}
+                  borderless
+                  noWrap
                 />
                 {preview.truncated ? (
                   <Alert

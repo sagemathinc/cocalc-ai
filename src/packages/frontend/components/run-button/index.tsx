@@ -15,16 +15,15 @@ import {
 import TimeAgo from "react-timeago";
 import { projectApiClient } from "@cocalc/conat/project/api";
 import { Icon } from "@cocalc/frontend/components/icon";
+import StaticCodeBlock from "@cocalc/frontend/components/static-code-block";
 import infoToMode from "@cocalc/frontend/editors/slate/elements/code-block/info-to-mode";
-import { CodeMirrorStatic } from "@cocalc/frontend/jupyter/codemirror-static";
 import Logo from "@cocalc/frontend/jupyter/logo";
-import "@cocalc/frontend/jupyter/output-messages/mime-types/init-nbviewer";
 import { useFileContext } from "@cocalc/frontend/lib/file-context";
+import { AsyncComponent } from "@cocalc/frontend/misc/async-component";
 import { path_split, plural } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 import getKernel from "./get-kernel";
 import { kernelDisplayName, kernelLanguage } from "./kernel-info";
-import Output from "./output";
 import SelectKernel from "./select-kernel";
 import LRU from "lru-cache";
 
@@ -46,6 +45,8 @@ export interface Props {
   setInfo?: (info: string) => void;
   timeout?: number;
 }
+
+const Output = AsyncComponent(async () => (await import("./output")).default);
 
 // definitely never show run buttons for text formats that can't possibly be run.
 // TODO: This sort of stuff should be in a spec file, like file associations
@@ -278,14 +279,16 @@ export default function RunButton({
                   {plural(history.length, "cell")} above with the same info
                   string will always be run first:
                   <div style={{ height: "5px" }} />
-                  <CodeMirrorStatic
+                  <StaticCodeBlock
                     style={{
                       maxHeight: "75px",
                       overflowY: "auto",
                       margin: "5px",
                     }}
-                    options={{ mode: infoToMode(info) }}
                     value={history.join("\n\n")}
+                    info={info}
+                    compact
+                    borderless
                   />
                 </>
               )}
