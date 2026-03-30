@@ -1,6 +1,9 @@
-import { Progress, Space, Tag, Typography } from "antd";
+import { Progress, Space, Tag, Tooltip, Typography } from "antd";
 import { React } from "@cocalc/frontend/app-framework";
-import type { Host } from "@cocalc/conat/hub/api/hosts";
+import type {
+  Host,
+  HostMetricsHistoryPoint,
+} from "@cocalc/conat/hub/api/hosts";
 import { COLORS } from "@cocalc/util/theme";
 import { formatBinaryBytes } from "../utils/format";
 
@@ -16,8 +19,13 @@ type MetricBarProps = {
   detail?: string;
   compact?: boolean;
   dense?: boolean;
-  historyValues?: number[];
+  historyPoints?: SparklinePoint[];
   color?: string;
+};
+
+type SparklinePoint = {
+  value: number;
+  tooltip: React.ReactNode;
 };
 
 function formatBytes(value?: number): string | undefined {
@@ -48,6 +56,28 @@ function sparklinePoints(values: number[], width = 180, height = 24): string {
   return values
     .map((value, i) => `${(i * dx).toFixed(2)},${y(value).toFixed(2)}`)
     .join(" ");
+}
+
+function sparklineCoordinates(
+  values: number[],
+  width = 180,
+  height = 24,
+): { x: number; y: number }[] {
+  if (values.length === 0) return [];
+  if (values.length === 1) {
+    return [{ x: width / 2, y: height / 2 }];
+  }
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const y = (value: number) => {
+    if (max === min) return height / 2;
+    return height - ((value - min) / (max - min)) * (height - 4) - 2;
+  };
+  const dx = width / (values.length - 1);
+  return values.map((value, i) => ({
+    x: i * dx,
+    y: y(value),
+  }));
 }
 
 function formatGrowthBytesPerHour(value?: number): string | undefined {
@@ -98,20 +128,175 @@ function getMetadataUsedPercent(host: Host): number | undefined {
   return normalizePercent((used / total) * 100);
 }
 
+function formatTimestamp(value?: string): string | undefined {
+  if (!value) return undefined;
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return undefined;
+  return date.toLocaleTimeString([], {
+    hour: "numeric",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
+function formatPercent(value?: number): string | undefined {
+  if (value == null || !Number.isFinite(value)) return undefined;
+  return `${value.toFixed(1)}%`;
+}
+
+function formatSignedBytes(value?: number): string | undefined {
+  if (value == null || !Number.isFinite(value)) return undefined;
+  const prefix = value > 0 ? "+" : value < 0 ? "-" : "";
+  const formatted = formatBinaryBytes(Math.abs(value));
+  return formatted ? `${prefix}${formatted}` : undefined;
+}
+
+function tooltipContent(
+  title: string,
+  point: HostMetricsHistoryPoint,
+  lines: Array<string | undefined>,
+): React.ReactNode {
+  const timestamp = formatTimestamp(point.collected_at);
+  const visibleLines = lines.filter(
+    (line): line is string => typeof line === "string" && line.length > 0,
+  );
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+      <div style={{ fontWeight: 600 }}>{title}</div>
+      {timestamp && <div>{timestamp}</div>}
+      {visibleLines.map((line, i) => (
+        <div key={`${title}-${i}`}>{line}</div>
+      ))}
+    </div>
+  );
+}
+
+function buildHistoryPoints(
+  points: HostMetricsHistoryPoint[] | undefined,
+  getValue: (point: HostMetricsHistoryPoint) => number | undefined,
+  renderTooltip: (
+    point: HostMetricsHistoryPoint,
+    prev?: HostMetricsHistoryPoint,
+  ) => React.ReactNode,
+): SparklinePoint[] {
+  return (points ?? []).flatMap((point, index, all) => {
+    const value = getValue(point);
+    if (value == null || !Number.isFinite(value) || value < 0) {
+      return [];
+    }
+    return [
+      {
+        value,
+        tooltip: renderTooltip(point, index > 0 ? all[index - 1] : undefined),
+      },
+    ];
+  });
+}
+
+function Sparkline({
+  points,
+  color,
+  compact,
+}: {
+  points: SparklinePoint[];
+  color?: string;
+  compact?: boolean;
+}) {
+  const [hoveredIndex, setHoveredIndex] = React.useState<number | null>(null);
+  const chartWidth = compact ? 180 : 320;
+  const chartHeight = compact ? 24 : 28;
+  if (points.length < 2) {
+    return <div style={{ height: chartHeight }} />;
+  }
+  const values = points.map((point) => point.value);
+  const coordinates = sparklineCoordinates(values, chartWidth, chartHeight);
+  const hoveredPoint =
+    hoveredIndex != null ? coordinates[hoveredIndex] : undefined;
+  return (
+    <div
+      style={{
+        position: "relative",
+        width: "100%",
+        height: chartHeight,
+        cursor: "crosshair",
+      }}
+      onMouseLeave={() => setHoveredIndex(null)}
+      onMouseMove={(event) => {
+        const rect = event.currentTarget.getBoundingClientRect();
+        if (rect.width <= 0) return;
+        const relativeX = Math.max(
+          0,
+          Math.min(1, (event.clientX - rect.left) / rect.width),
+        );
+        setHoveredIndex(Math.round(relativeX * (points.length - 1)));
+      }}
+    >
+      <svg
+        width="100%"
+        height={chartHeight}
+        viewBox={`0 0 ${chartWidth} ${chartHeight}`}
+        preserveAspectRatio="none"
+      >
+        <polyline
+          fill="none"
+          stroke={color ?? COLORS.BLUE_D}
+          strokeWidth="2"
+          points={sparklinePoints(values, chartWidth, chartHeight)}
+          strokeLinecap="round"
+        />
+        {hoveredPoint && (
+          <>
+            <line
+              x1={hoveredPoint.x}
+              x2={hoveredPoint.x}
+              y1={0}
+              y2={chartHeight}
+              stroke={color ?? COLORS.BLUE_D}
+              strokeOpacity="0.25"
+              strokeWidth="1"
+              strokeDasharray="3 3"
+            />
+            <circle
+              cx={hoveredPoint.x}
+              cy={hoveredPoint.y}
+              r="3.5"
+              fill={color ?? COLORS.BLUE_D}
+              stroke="white"
+              strokeWidth="1.5"
+            />
+          </>
+        )}
+      </svg>
+      {hoveredPoint && hoveredIndex != null && (
+        <div
+          style={{
+            position: "absolute",
+            left: `${(hoveredPoint.x / chartWidth) * 100}%`,
+            top: `${(hoveredPoint.y / chartHeight) * 100}%`,
+            transform: "translate(-50%, -50%)",
+            pointerEvents: "none",
+          }}
+        >
+          <Tooltip open title={points[hoveredIndex].tooltip} placement="top">
+            <div style={{ width: 1, height: 1 }} />
+          </Tooltip>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function MetricBar({
   label,
   percent,
   detail,
   compact,
   dense,
-  historyValues,
+  historyPoints,
   color,
 }: MetricBarProps) {
   const displayPercent = normalizePercent(percent);
-  const trendValues = (historyValues ?? []).filter(
-    (value) => Number.isFinite(value) && value >= 0,
-  );
-  const chartWidth = compact ? 180 : 320;
+  const trendPoints = historyPoints ?? [];
   if (compact && dense) {
     return (
       <Space orientation="vertical" size={2} style={{ width: 190 }}>
@@ -155,24 +340,7 @@ function MetricBar({
             )}
           </div>
           <div style={{ flex: 1 }}>
-            {trendValues.length >= 2 ? (
-              <svg
-                width="100%"
-                height={20}
-                viewBox={`0 0 ${chartWidth} 20`}
-                preserveAspectRatio="none"
-              >
-                <polyline
-                  fill="none"
-                  stroke={color ?? COLORS.BLUE_D}
-                  strokeWidth="2"
-                  points={sparklinePoints(trendValues, chartWidth, 20)}
-                  strokeLinecap="round"
-                />
-              </svg>
-            ) : (
-              <div style={{ height: 20 }} />
-            )}
+            <Sparkline points={trendPoints} color={color} compact />
           </div>
         </div>
       </Space>
@@ -220,22 +388,7 @@ function MetricBar({
           n/a
         </Typography.Text>
       )}
-      {trendValues.length >= 2 && (
-        <svg
-          width="100%"
-          height={compact ? 24 : 28}
-          viewBox={`0 0 ${chartWidth} ${compact ? 24 : 28}`}
-          preserveAspectRatio="none"
-        >
-          <polyline
-            fill="none"
-            stroke={color ?? COLORS.BLUE_D}
-            strokeWidth="2"
-            points={sparklinePoints(trendValues, chartWidth, compact ? 24 : 28)}
-            strokeLinecap="round"
-          />
-        </svg>
-      )}
+      <Sparkline points={trendPoints} color={color} compact={compact} />
     </Space>
   );
 }
@@ -275,22 +428,97 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
     : formatBytes(metrics.disk_device_total_bytes);
   const metadataUsed = formatBytes(metrics.btrfs_metadata_used_bytes);
   const metadataTotal = formatBytes(metrics.btrfs_metadata_total_bytes);
-  const cpuHistory =
-    history?.points
-      ?.map((point) => normalizePercent(point.cpu_percent))
-      .filter((value): value is number => value != null) ?? [];
-  const memoryHistory =
-    history?.points
-      ?.map((point) => normalizePercent(point.memory_used_percent))
-      .filter((value): value is number => value != null) ?? [];
-  const diskHistory =
-    history?.points
-      ?.map((point) => normalizePercent(point.disk_used_percent))
-      .filter((value): value is number => value != null) ?? [];
-  const metadataHistory =
-    history?.points
-      ?.map((point) => normalizePercent(point.metadata_used_percent))
-      .filter((value): value is number => value != null) ?? [];
+  const cpuHistory = buildHistoryPoints(
+    history?.points,
+    (point) => normalizePercent(point.cpu_percent),
+    (point) =>
+      tooltipContent("CPU", point, [
+        point.cpu_percent != null
+          ? `CPU ${formatPercent(point.cpu_percent)}`
+          : undefined,
+        point.load_1 != null || point.load_5 != null || point.load_15 != null
+          ? `Load ${[point.load_1, point.load_5, point.load_15]
+              .map((value) =>
+                value == null || !Number.isFinite(value)
+                  ? "?"
+                  : value.toFixed(2),
+              )
+              .join(" / ")}`
+          : undefined,
+      ]),
+  );
+  const memoryHistory = buildHistoryPoints(
+    history?.points,
+    (point) => normalizePercent(point.memory_used_percent),
+    (point, prev) => {
+      const delta =
+        point.memory_used_bytes != null && prev?.memory_used_bytes != null
+          ? point.memory_used_bytes - prev.memory_used_bytes
+          : undefined;
+      return tooltipContent("RAM", point, [
+        point.memory_used_bytes != null && point.memory_total_bytes != null
+          ? `${formatBytes(point.memory_used_bytes)} / ${formatBytes(point.memory_total_bytes)}`
+          : undefined,
+        point.memory_used_percent != null
+          ? `Used ${formatPercent(point.memory_used_percent)}`
+          : undefined,
+        delta != null ? `Δ used ${formatSignedBytes(delta)}` : undefined,
+      ]);
+    },
+  );
+  const diskHistory = buildHistoryPoints(
+    history?.points,
+    (point) => normalizePercent(point.disk_used_percent),
+    (point, prev) => {
+      const currentUsed =
+        point.disk_device_total_bytes != null &&
+        point.disk_available_conservative_bytes != null
+          ? point.disk_device_total_bytes -
+            point.disk_available_conservative_bytes
+          : undefined;
+      const previousUsed =
+        prev?.disk_device_total_bytes != null &&
+        prev.disk_available_conservative_bytes != null
+          ? prev.disk_device_total_bytes -
+            prev.disk_available_conservative_bytes
+          : undefined;
+      const delta =
+        currentUsed != null && previousUsed != null
+          ? currentUsed - previousUsed
+          : undefined;
+      return tooltipContent("Disk", point, [
+        point.disk_available_conservative_bytes != null &&
+        point.disk_device_total_bytes != null
+          ? `Free ${formatBytes(point.disk_available_conservative_bytes)} / ${formatBytes(point.disk_device_total_bytes)}`
+          : undefined,
+        point.disk_used_percent != null
+          ? `Used ${formatPercent(point.disk_used_percent)}`
+          : undefined,
+        delta != null ? `Δ used ${formatSignedBytes(delta)}` : undefined,
+      ]);
+    },
+  );
+  const metadataHistory = buildHistoryPoints(
+    history?.points,
+    (point) => normalizePercent(point.metadata_used_percent),
+    (point, prev) => {
+      const delta =
+        point.btrfs_metadata_used_bytes != null &&
+        prev?.btrfs_metadata_used_bytes != null
+          ? point.btrfs_metadata_used_bytes - prev.btrfs_metadata_used_bytes
+          : undefined;
+      return tooltipContent("Metadata", point, [
+        point.btrfs_metadata_used_bytes != null &&
+        point.btrfs_metadata_total_bytes != null
+          ? `${formatBytes(point.btrfs_metadata_used_bytes)} / ${formatBytes(point.btrfs_metadata_total_bytes)}`
+          : undefined,
+        point.metadata_used_percent != null
+          ? `Used ${formatPercent(point.metadata_used_percent)}`
+          : undefined,
+        delta != null ? `Δ used ${formatSignedBytes(delta)}` : undefined,
+      ]);
+    },
+  );
   const diskTrend = formatGrowthBytesPerHour(
     history?.growth?.disk_used_bytes_per_hour,
   );
@@ -315,7 +543,7 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
           detail={load ? `load ${load}` : undefined}
           compact
           dense={dense}
-          historyValues={cpuHistory}
+          historyPoints={cpuHistory}
           color={COLORS.BLUE_D}
         />
         <MetricBar
@@ -328,7 +556,7 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
           }
           compact
           dense={dense}
-          historyValues={memoryHistory}
+          historyPoints={memoryHistory}
           color={COLORS.ANTD_GREEN_D}
         />
         <MetricBar
@@ -339,7 +567,7 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
           }
           compact
           dense={dense}
-          historyValues={diskHistory}
+          historyPoints={diskHistory}
           color={COLORS.ANTD_ORANGE}
         />
         <Tag>
@@ -356,7 +584,7 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
         label="CPU"
         percent={cpuPercent}
         detail={load ? `load ${load}` : undefined}
-        historyValues={cpuHistory}
+        historyPoints={cpuHistory}
         color={COLORS.BLUE_D}
       />
       <MetricBar
@@ -367,7 +595,7 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
             ? `${memoryUsed} / ${memoryTotal}`
             : undefined
         }
-        historyValues={memoryHistory}
+        historyPoints={memoryHistory}
         color={COLORS.ANTD_GREEN_D}
       />
       <MetricBar
@@ -376,7 +604,7 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
         detail={
           diskFree && diskTotal ? `${diskFree} / ${diskTotal}` : diskTotal
         }
-        historyValues={diskHistory}
+        historyPoints={diskHistory}
         color={COLORS.ANTD_ORANGE}
       />
       <MetricBar
@@ -387,7 +615,7 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
             ? `${metadataUsed} / ${metadataTotal}`
             : undefined
         }
-        historyValues={metadataHistory}
+        historyPoints={metadataHistory}
         color={COLORS.ANTD_RED}
       />
       {(diskTrend || metadataTrend) && (
