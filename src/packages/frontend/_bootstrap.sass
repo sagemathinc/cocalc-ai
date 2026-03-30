@@ -3,8 +3,6 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-@use 'colors'
-
 // There is a bootstrap css that is setting font-weight for label to 700. This
 // sets the font-weight back to the normal default:
 label
@@ -28,53 +26,3 @@ label
 pre
   border: inherit
   background: inherit
-
-
-.smc-toggle-show
-  border-bottom : 1px solid grey
-
-#cocalc-idle-notification
-  z-index    : 9999
-  position   : fixed
-  margin     : 0
-  padding    : 0
-  top        : 0
-  bottom     : 0
-  left       : 0
-  right      : 0
-  background : rgba(150, 150, 150, 0.5)
-  cursor     : pointer
-  div
-    color            : white
-    position         : absolute
-    background-color : colors.$COL_BLUE_D
-    min-height       : 100px
-    width            : 350px
-    border-radius    : 5px
-    padding          : 15px
-    text-align       : center
-    position         : absolute
-    margin           : auto
-    top              : 100px
-    left             : 0
-    right            : 0
-    cursor           : pointer
-    h1, h2, h3, h4
-      color     : white
-    h1, h2
-      font-size : 22px
-    h3
-      font-size : 20px
-    h4
-      font-size : 16px
-    img.logo-square,
-    img.logo-rectangular
-      display: block
-      margin : 0 auto 10px auto
-      padding: 0
-    img.logo-square
-      width  : 200px
-      height : 200px
-    img.logo-rectangular
-      width  : 150px
-      height : auto

@@ -278,7 +278,9 @@ export function Assignment({
               <Row>
                 <Col md={10}>{render_peer_button()}</Col>
                 <Col md={14}>
-                  <span className="pull-right">{render_delete_button()}</span>
+                  <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                    {render_delete_button()}
+                  </div>
                 </Col>
               </Row>
             </Col>

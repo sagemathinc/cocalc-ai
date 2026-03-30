@@ -122,8 +122,8 @@ export function NewFileDropdown({
     case "project":
       return (
         <span
-          className={"pull-right dropdown-splitbutton-left"}
-          style={{ marginRight: "5px" }}
+          className={"dropdown-splitbutton-left"}
+          style={{ display: "inline-flex", marginRight: "5px" }}
         >
           <Space.Compact>
             <Button size="large" onClick={() => create_file()}>

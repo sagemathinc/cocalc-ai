@@ -178,12 +178,10 @@ export const PasswordSetting: React.FC = () => {
       label={intl.formatMessage(labels.account_password)}
       style={{ marginBottom: "15px" }}
     >
-      <div style={{ height: "30px" }}>
-        <Button
-          className="pull-right"
-          disabled={state !== "view"}
-          onClick={change_password}
-        >
+      <div
+        style={{ height: "30px", display: "flex", justifyContent: "flex-end" }}
+      >
+        <Button disabled={state !== "view"} onClick={change_password}>
           {intl.formatMessage(labels.account_password_change)}...
         </Button>
       </div>

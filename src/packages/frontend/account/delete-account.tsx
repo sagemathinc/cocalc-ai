@@ -29,10 +29,11 @@ export function DeleteAccount(props: Props) {
 
   return (
     <div>
-      <div style={{ height: "26px" }}>
+      <div
+        style={{ height: "26px", display: "flex", justifyContent: "flex-end" }}
+      >
         <Button
           disabled={props.show_confirmation}
-          className="pull-right"
           style={props.style}
           onClick={props.initial_click}
         >

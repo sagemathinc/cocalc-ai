@@ -477,16 +477,27 @@ export function FileRow({
             "16px" /* otherwise cloud download is too close to edge or cut off */,
         }}
       >
-        <VisibleXS>
-          <span style={{ marginLeft: "16px" }} />
-        </VisibleXS>
-        {render_timestamp()}
-        {!isDir && (
-          <span className="pull-right" style={{ color: COLORS.GRAY_M }}>
-            {render_download_button(url)}
-            {render_view_button(url, name)}
-          </span>
-        )}
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: "8px",
+          }}
+        >
+          <div>
+            <VisibleXS>
+              <span style={{ marginLeft: "16px" }} />
+            </VisibleXS>
+            {render_timestamp()}
+          </div>
+          {!isDir && (
+            <span style={{ color: COLORS.GRAY_M, flex: "0 0 auto" }}>
+              {render_download_button(url)}
+              {render_view_button(url, name)}
+            </span>
+          )}
+        </div>
       </Col>
     </Row>
   );
