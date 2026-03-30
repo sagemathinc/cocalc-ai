@@ -4,6 +4,8 @@ import type {
   Host,
   HostBackupStatus,
   HostBootstrapStatus,
+  HostBootstrapLifecycle,
+  HostBootstrapLifecycleItem,
   HostConnectionInfo,
   HostDrainResult,
   HostMachine,
@@ -736,6 +738,159 @@ function parseRow(
             : {}),
         }
       : undefined;
+  const rawBootstrapLifecycle = metadata.bootstrap_lifecycle;
+  const bootstrapLifecycle: HostBootstrapLifecycle | undefined =
+    rawBootstrapLifecycle && typeof rawBootstrapLifecycle === "object"
+      ? (() => {
+          const parseLifecycleValue = (
+            value: unknown,
+          ): string | boolean | number | null | undefined => {
+            if (typeof value === "string") {
+              const trimmed = value.trim();
+              return trimmed || undefined;
+            }
+            if (typeof value === "boolean") return value;
+            if (typeof value === "number" && Number.isFinite(value)) {
+              return value;
+            }
+            if (value === null) return null;
+            return undefined;
+          };
+          const parseLifecycleStatus = (
+            value: unknown,
+          ):
+            | HostBootstrapLifecycle["summary_status"]
+            | HostBootstrapLifecycleItem["status"]
+            | undefined => {
+            const status = `${value ?? ""}`.trim();
+            if (
+              status === "in_sync" ||
+              status === "drifted" ||
+              status === "reconciling" ||
+              status === "error" ||
+              status === "unknown" ||
+              status === "match" ||
+              status === "drift" ||
+              status === "missing" ||
+              status === "disabled"
+            ) {
+              return status as
+                | HostBootstrapLifecycle["summary_status"]
+                | HostBootstrapLifecycleItem["status"];
+            }
+            return undefined;
+          };
+          const items = Array.isArray(rawBootstrapLifecycle.items)
+            ? rawBootstrapLifecycle.items
+                .map((item): HostBootstrapLifecycleItem | undefined => {
+                  if (!item || typeof item !== "object") return undefined;
+                  const key =
+                    typeof item.key === "string" ? item.key.trim() : "";
+                  const label =
+                    typeof item.label === "string" ? item.label.trim() : "";
+                  const status = parseLifecycleStatus(item.status);
+                  if (!key || !label || !status) return undefined;
+                  return {
+                    key,
+                    label,
+                    status: status as HostBootstrapLifecycleItem["status"],
+                    ...(parseLifecycleValue(item.desired) !== undefined
+                      ? { desired: parseLifecycleValue(item.desired) }
+                      : {}),
+                    ...(parseLifecycleValue(item.installed) !== undefined
+                      ? { installed: parseLifecycleValue(item.installed) }
+                      : {}),
+                    ...(typeof item.message === "string" && item.message.trim()
+                      ? { message: item.message.trim() }
+                      : {}),
+                  };
+                })
+                .filter(
+                  (item): item is HostBootstrapLifecycleItem =>
+                    item !== undefined,
+                )
+            : [];
+          const summaryStatus = parseLifecycleStatus(
+            rawBootstrapLifecycle.summary_status,
+          ) as HostBootstrapLifecycle["summary_status"] | undefined;
+          if (!summaryStatus) return undefined;
+          return {
+            ...(typeof rawBootstrapLifecycle.bootstrap_dir === "string" &&
+            rawBootstrapLifecycle.bootstrap_dir.trim()
+              ? { bootstrap_dir: rawBootstrapLifecycle.bootstrap_dir.trim() }
+              : {}),
+            ...(typeof rawBootstrapLifecycle.desired_recorded_at === "string"
+              ? {
+                  desired_recorded_at:
+                    rawBootstrapLifecycle.desired_recorded_at,
+                }
+              : {}),
+            ...(typeof rawBootstrapLifecycle.installed_recorded_at === "string"
+              ? {
+                  installed_recorded_at:
+                    rawBootstrapLifecycle.installed_recorded_at,
+                }
+              : {}),
+            ...(typeof rawBootstrapLifecycle.current_operation === "string"
+              ? { current_operation: rawBootstrapLifecycle.current_operation }
+              : {}),
+            ...(typeof rawBootstrapLifecycle.last_provision_result === "string"
+              ? {
+                  last_provision_result:
+                    rawBootstrapLifecycle.last_provision_result,
+                }
+              : {}),
+            ...(typeof rawBootstrapLifecycle.last_provision_started_at ===
+            "string"
+              ? {
+                  last_provision_started_at:
+                    rawBootstrapLifecycle.last_provision_started_at,
+                }
+              : {}),
+            ...(typeof rawBootstrapLifecycle.last_provision_finished_at ===
+            "string"
+              ? {
+                  last_provision_finished_at:
+                    rawBootstrapLifecycle.last_provision_finished_at,
+                }
+              : {}),
+            ...(typeof rawBootstrapLifecycle.last_reconcile_result === "string"
+              ? {
+                  last_reconcile_result:
+                    rawBootstrapLifecycle.last_reconcile_result,
+                }
+              : {}),
+            ...(typeof rawBootstrapLifecycle.last_reconcile_started_at ===
+            "string"
+              ? {
+                  last_reconcile_started_at:
+                    rawBootstrapLifecycle.last_reconcile_started_at,
+                }
+              : {}),
+            ...(typeof rawBootstrapLifecycle.last_reconcile_finished_at ===
+            "string"
+              ? {
+                  last_reconcile_finished_at:
+                    rawBootstrapLifecycle.last_reconcile_finished_at,
+                }
+              : {}),
+            ...(typeof rawBootstrapLifecycle.last_error === "string" &&
+            rawBootstrapLifecycle.last_error.trim()
+              ? { last_error: rawBootstrapLifecycle.last_error.trim() }
+              : {}),
+            summary_status: summaryStatus,
+            ...(typeof rawBootstrapLifecycle.summary_message === "string" &&
+            rawBootstrapLifecycle.summary_message.trim()
+              ? {
+                  summary_message: rawBootstrapLifecycle.summary_message.trim(),
+                }
+              : {}),
+            drift_count:
+              parseNonNegativeNumber(rawBootstrapLifecycle.drift_count) ?? 0,
+            items,
+          };
+        })()
+      : undefined;
   const rawStatus = String(row.status ?? "");
   const normalizedStatus =
     rawStatus === "active" ? "running" : rawStatus || "off";
@@ -786,6 +941,7 @@ function parseRow(
     deleted: row.deleted ? new Date(row.deleted).toISOString() : undefined,
     backup_status: opts.backup_status,
     bootstrap,
+    bootstrap_lifecycle: bootstrapLifecycle,
   };
 }
 

@@ -255,6 +255,23 @@ export function registerHostCommand(
           project_bundle_version: h.project_bundle_version ?? null,
           tools_version: h.tools_version ?? null,
           bootstrap: h.bootstrap ?? null,
+          bootstrap_lifecycle: h.bootstrap_lifecycle ?? null,
+        };
+      });
+    });
+
+  host
+    .command("bootstrap-status <host>")
+    .description("show desired vs installed bootstrap/tool lifecycle state")
+    .action(async (hostIdentifier: string, command: Command) => {
+      await withContext(command, "host bootstrap-status", async (ctx) => {
+        const h = await resolveHost(ctx, hostIdentifier);
+        return {
+          host_id: h.id,
+          name: h.name,
+          status: h.status ?? "",
+          bootstrap: h.bootstrap ?? null,
+          bootstrap_lifecycle: h.bootstrap_lifecycle ?? null,
         };
       });
     });

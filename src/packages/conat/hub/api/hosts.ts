@@ -161,6 +161,47 @@ export interface HostBootstrapStatus {
   message?: string;
 }
 
+export type HostBootstrapLifecycleSummaryStatus =
+  | "in_sync"
+  | "drifted"
+  | "reconciling"
+  | "error"
+  | "unknown";
+
+export type HostBootstrapLifecycleItemStatus =
+  | "match"
+  | "drift"
+  | "missing"
+  | "disabled"
+  | "unknown";
+
+export interface HostBootstrapLifecycleItem {
+  key: string;
+  label: string;
+  desired?: string | boolean | number | null;
+  installed?: string | boolean | number | null;
+  status: HostBootstrapLifecycleItemStatus;
+  message?: string;
+}
+
+export interface HostBootstrapLifecycle {
+  bootstrap_dir?: string;
+  desired_recorded_at?: string;
+  installed_recorded_at?: string;
+  current_operation?: string;
+  last_provision_result?: string;
+  last_provision_started_at?: string;
+  last_provision_finished_at?: string;
+  last_reconcile_result?: string;
+  last_reconcile_started_at?: string;
+  last_reconcile_finished_at?: string;
+  last_error?: string;
+  summary_status: HostBootstrapLifecycleSummaryStatus;
+  summary_message?: string;
+  drift_count: number;
+  items: HostBootstrapLifecycleItem[];
+}
+
 export interface HostProjectRow {
   project_id: string;
   title: string;
@@ -343,6 +384,7 @@ export interface Host {
   deleted?: string;
   backup_status?: HostBackupStatus;
   bootstrap?: HostBootstrapStatus;
+  bootstrap_lifecycle?: HostBootstrapLifecycle;
 }
 
 export interface HostConnectionInfo {

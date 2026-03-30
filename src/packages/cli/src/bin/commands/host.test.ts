@@ -193,3 +193,46 @@ test("host metrics returns current metrics and history", async () => {
   assert.equal(capture.data.history.window_minutes, 24 * 60);
   assert.equal(capture.data.derived.metadata.level, "warning");
 });
+
+test("host bootstrap-status returns lifecycle drift data", async () => {
+  const capture: { data?: any; upgrades: string[] } = { upgrades: [] };
+  const deps = makeDeps(capture, {
+    resolveHost: async () => ({
+      id: "host-1",
+      name: "host-1",
+      status: "running",
+      bootstrap: {
+        status: "done",
+        message: "Host software reconciled",
+      },
+      bootstrap_lifecycle: {
+        summary_status: "drifted",
+        summary_message: "2 drift items detected",
+        drift_count: 2,
+        items: [
+          {
+            key: "project_bundle",
+            label: "Project bundle",
+            desired: "20260330T010000Z",
+            installed: "20260329T230000Z",
+            status: "drift",
+          },
+        ],
+      },
+    }),
+  });
+  const program = new Command();
+  registerHostCommand(program, deps);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "host",
+    "bootstrap-status",
+    "host-1",
+  ]);
+
+  assert.equal(capture.data.host_id, "host-1");
+  assert.equal(capture.data.bootstrap_lifecycle.summary_status, "drifted");
+  assert.equal(capture.data.bootstrap_lifecycle.drift_count, 2);
+});
