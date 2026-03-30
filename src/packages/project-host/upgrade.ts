@@ -263,9 +263,18 @@ async function runCommand(cmd: string, args: string[]): Promise<void> {
   await runCommandCapture(cmd, args);
 }
 
+async function ensureDirWriteAccess(dir: string): Promise<void> {
+  await fs.promises.access(dir, fs.constants.W_OK | fs.constants.X_OK);
+}
+
 async function ensureWritableDir(dir: string): Promise<void> {
   try {
     await fs.promises.mkdir(dir, { recursive: true });
+  } catch (err: any) {
+    if (err?.code !== "EACCES") throw err;
+  }
+  try {
+    await ensureDirWriteAccess(dir);
     return;
   } catch (err: any) {
     if (err?.code !== "EACCES") throw err;
@@ -277,11 +286,11 @@ async function ensureWritableDir(dir: string): Promise<void> {
     "-n",
     STORAGE_WRAPPER,
     "chown",
-    "-R",
     `${user}:${user}`,
     dir,
   ]);
   await fs.promises.mkdir(dir, { recursive: true });
+  await ensureDirWriteAccess(dir);
 }
 
 async function safeRemove(dir: string): Promise<void> {
@@ -429,6 +438,7 @@ async function downloadAndInstall(
     };
   }
   await ensureWritableDir(resolved.root);
+  await ensureWritableDir(path.dirname(resolved.currentLink));
   const downloadsRoot = resolveDownloadsRoot();
   const archivePath = path.join(
     downloadsRoot,
@@ -565,3 +575,7 @@ export async function upgradeSoftware(
     throw err;
   }
 }
+
+export const __test__ = {
+  downloadAndInstall,
+};
