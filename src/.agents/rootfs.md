@@ -73,6 +73,10 @@ of truth is [rootfs-rustic.md](/home/wstein/build/cocalc-lite2/src/.agents/rootf
   - but the repo prune/compaction/operational story should be made more
     explicit.
 - Vulnerability scan metadata integration for official images.
+- [ ] Improve the UX around moving projects:
+  - the nice "Starting project" banner is maybe hidden by project move...
+  - it's confusing when moving the project also involves pulling a rootfs
+  - but it works perfectly in the end.
 
 ## Launch-Critical Product Requirements
 
