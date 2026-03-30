@@ -353,18 +353,28 @@ export function VerticalFixedTabs({
             transitionName=""
             onOpenChange={(next) => setMoreOpen(next)}
           >
-            <Button
-              size="small"
-              type="text"
-              block
+            <button
+              type="button"
               style={{
+                display: "block",
+                width: "100%",
+                margin: 0,
+                padding: 0,
+                cursor: "pointer",
+                borderTop: 0,
+                borderRight: 0,
+                borderBottom: 0,
                 borderLeft: `4px solid ${
                   isActive ? COLORS.PROJECT.FIXED_LEFT_ACTIVE : "transparent"
                 }`,
+                borderRadius: 0,
+                outline: "none",
                 background: isActive
                   ? COLORS.BLUE_LLLL
                   : workspaceChrome?.activityBarBackground,
                 color: isActive ? COLORS.PROJECT.FIXED_LEFT_ACTIVE : undefined,
+                textAlign: "inherit",
+                font: "inherit",
               }}
             >
               <div
@@ -385,7 +395,7 @@ export function VerticalFixedTabs({
                 />
                 {showActBarLabels ? <span>More</span> : null}
               </div>
-            </Button>
+            </button>
           </Dropdown>
         </div>
       </Tooltip>
