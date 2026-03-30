@@ -38,7 +38,9 @@ export class StartOpsManager {
       kind: START_LRO_KIND,
       scope_type: "project",
       scope_id: opts.project_id,
-      include_completed: false,
+      // Keep the latest start attempt summary even after completion so a
+      // stale older running op never outranks a later succeeded/failed start.
+      include_completed: true,
       retainTerminal: true,
       refreshMs: 30_000,
       listLro: opts.listLro,

@@ -191,6 +191,7 @@ export type RootfsReleaseArtifactAccess = {
   release_id: string;
   image: string;
   content_key: string;
+  size_bytes?: number;
   artifact_kind: "full";
   artifact_format: "rustic";
   artifact_backend: RootfsReleaseArtifactBackend;

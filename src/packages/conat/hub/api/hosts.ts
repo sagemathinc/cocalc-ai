@@ -76,6 +76,16 @@ export interface HostMachine {
   metadata?: Record<string, any>;
 }
 
+export interface HostAutoGrowConfig {
+  enabled?: boolean;
+  max_disk_gb?: number;
+  growth_step_gb?: number;
+  min_grow_interval_minutes?: number;
+  last_grow_at?: string;
+  last_grow_from_disk_gb?: number;
+  last_grow_to_disk_gb?: number;
+}
+
 export interface HostCatalogRegion {
   name: string;
   status?: string | null;
@@ -239,8 +249,53 @@ export interface HostCurrentMetrics {
   stopping_project_count?: number;
 }
 
+export interface HostMetricsHistoryPoint extends HostCurrentMetrics {
+  disk_used_percent?: number;
+  metadata_used_percent?: number;
+}
+
+export interface HostMetricsHistoryGrowth {
+  window_minutes: number;
+  disk_used_bytes_per_hour?: number;
+  metadata_used_bytes_per_hour?: number;
+}
+
+export type HostMetricsRiskLevel = "healthy" | "warning" | "critical";
+
+export interface HostMetricsRiskState {
+  level: HostMetricsRiskLevel;
+  reason?: string;
+  used_percent?: number;
+  available_bytes?: number;
+  hours_to_exhaustion?: number;
+}
+
+export interface HostMetricsAlert {
+  kind: "disk" | "metadata";
+  level: Exclude<HostMetricsRiskLevel, "healthy">;
+  message: string;
+}
+
+export interface HostMetricsDerived {
+  window_minutes: number;
+  disk: HostMetricsRiskState;
+  metadata: HostMetricsRiskState;
+  alerts: HostMetricsAlert[];
+  admission_allowed: boolean;
+  auto_grow_recommended: boolean;
+}
+
+export interface HostMetricsHistory {
+  window_minutes: number;
+  point_count: number;
+  points: HostMetricsHistoryPoint[];
+  growth?: HostMetricsHistoryGrowth;
+  derived?: HostMetricsDerived;
+}
+
 export interface HostMetrics {
   current?: HostCurrentMetrics;
+  history?: HostMetricsHistory;
 }
 
 export interface HostCatalog {
@@ -402,6 +457,7 @@ export const hosts = {
   updateCloudCatalog: authFirstRequireAccount,
   getHostLog: authFirstRequireAccount,
   getHostRuntimeLog: authFirstRequireAccount,
+  getHostMetricsHistory: authFirstRequireAccount,
   listHostRootfsImages: authFirstRequireAccount,
   pullHostRootfsImage: authFirstRequireAccount,
   deleteHostRootfsImage: authFirstRequireAccount,
@@ -484,6 +540,12 @@ export interface Hosts {
     id: string;
     lines?: number;
   }) => Promise<HostRuntimeLog>;
+  getHostMetricsHistory: (opts: {
+    account_id?: string;
+    id: string;
+    window_minutes?: number;
+    max_points?: number;
+  }) => Promise<HostMetricsHistory>;
   listHostRootfsImages: (opts: {
     account_id?: string;
     id: string;
@@ -713,6 +775,10 @@ export interface Hosts {
     self_host_ssh_target?: string;
     region?: string;
     zone?: string;
+    auto_grow_enabled?: boolean;
+    auto_grow_max_disk_gb?: number;
+    auto_grow_growth_step_gb?: number;
+    auto_grow_min_grow_interval_minutes?: number;
   }) => Promise<Host>;
   upgradeHostSoftware: (opts: {
     account_id?: string;

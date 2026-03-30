@@ -336,47 +336,68 @@ export function VerticalFixedTabs({
     });
     return (
       <Tooltip title="More" placement="rightTop">
-        <Dropdown
-          menu={{ items }}
-          trigger={["click"]}
-          placement="topLeft"
-          transitionName=""
-          onOpenChange={(next) => setMoreOpen(next)}
+        <div
+          style={{
+            width: "100%",
+            boxSizing: "border-box",
+            paddingLeft: "8px",
+            paddingRight: "8px",
+            paddingTop: showActBarLabels ? "8px" : "2px",
+            paddingBottom: "2px",
+          }}
         >
-          <Button
-            size="small"
-            type="text"
-            block
-            style={{
-              marginTop: "2px",
-              marginBottom: "2px",
-              borderLeft: `4px solid ${
-                isActive ? COLORS.PROJECT.FIXED_LEFT_ACTIVE : "transparent"
-              }`,
-              background: isActive
-                ? COLORS.BLUE_LLLL
-                : workspaceChrome?.activityBarBackground,
-              color: isActive ? COLORS.PROJECT.FIXED_LEFT_ACTIVE : undefined,
-            }}
+          <Dropdown
+            menu={{ items }}
+            trigger={["click"]}
+            placement="topLeft"
+            transitionName=""
+            onOpenChange={(next) => setMoreOpen(next)}
           >
-            <div
+            <button
+              type="button"
               style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: showActBarLabels ? "flex-start" : "center",
-                gap: showActBarLabels ? "15px" : undefined,
-                minHeight: condensed ? "36px" : "40px",
+                display: "block",
+                width: "100%",
+                margin: 0,
+                padding: 0,
+                cursor: "pointer",
+                borderTop: 0,
+                borderRight: 0,
+                borderBottom: 0,
+                borderLeft: `4px solid ${
+                  isActive ? COLORS.PROJECT.FIXED_LEFT_ACTIVE : "transparent"
+                }`,
+                borderRadius: 0,
+                outline: "none",
+                background: isActive
+                  ? COLORS.BLUE_LLLL
+                  : workspaceChrome?.activityBarBackground,
+                color: isActive ? COLORS.PROJECT.FIXED_LEFT_ACTIVE : undefined,
+                textAlign: "inherit",
+                font: "inherit",
               }}
             >
-              <Icon
-                name="ellipsis"
-                rotate="90"
-                style={{ fontSize: condensed ? "18px" : "24px" }}
-              />
-              {showActBarLabels ? <span>More</span> : null}
-            </div>
-          </Button>
-        </Dropdown>
+              <div
+                style={{
+                  display: "flex",
+                  flexDirection: showActBarLabels ? "column" : undefined,
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: showActBarLabels ? "4px" : undefined,
+                  minHeight: condensed ? "36px" : "40px",
+                  width: "100%",
+                }}
+              >
+                <Icon
+                  name="ellipsis"
+                  rotate="90"
+                  style={{ fontSize: condensed ? "18px" : "24px" }}
+                />
+                {showActBarLabels ? <span>More</span> : null}
+              </div>
+            </button>
+          </Dropdown>
+        </div>
       </Tooltip>
     );
   }

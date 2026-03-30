@@ -884,7 +884,7 @@ export function FilesHeader({
                         },
                       ] as MenuItems
                     }
-                    title={<Icon name="life-ring" />}
+                    title={<Icon name="disk-snapshot" />}
                   />
                 </span>
               </Tooltip>

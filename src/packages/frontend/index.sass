@@ -96,9 +96,17 @@ body.cc-frame-dragging
   text-align : center
 
 body
+  margin     : 0
   padding-top: 0
   width      : 100vw
   overflow-x : hidden
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif
+  font-size: 14px
+  line-height: 1.42857143
+  color: colors.$COL_GRAY_DD
+
+button, input, select, textarea
+  font: inherit
 
 .cc-explorer-hover-icon
   visibility: hidden
@@ -217,6 +225,114 @@ input[type="text"], select, input[type="email"], select, input[type="password"],
   color            : #fff
   background-color : #000000
   border-color     : #000000
+
+.pull-right
+  float: right !important
+
+.pull-left
+  float: left !important
+
+.dropdown
+  position: relative
+
+.open > .dropdown-menu
+  display: block
+
+.dropdown-menu
+  position: absolute
+  top: 100%
+  left: 0
+  z-index: 1000
+  display: none
+  float: left
+  min-width: 160px
+  padding: 5px 0
+  margin: 2px 0 0
+  list-style: none
+  background: white
+  border: 1px solid rgba(0, 0, 0, 0.15)
+  border-radius: 6px
+  box-shadow: 0 6px 12px rgba(0, 0, 0, 0.175)
+  background-clip: padding-box
+
+.dropdown-menu > li > a
+  display: block
+  padding: 3px 20px
+  clear: both
+  color: colors.$COL_GRAY_DD
+  text-decoration: none
+  white-space: nowrap
+
+.dropdown-menu > li > a:hover,
+.dropdown-menu > li > a:focus
+  background: colors.$COL_BLUE_LLLL
+  color: colors.$COL_GRAY_DD
+  outline: none
+
+.dropdown-menu > .disabled > a,
+.dropdown-menu > .disabled > a:hover,
+.dropdown-menu > .disabled > a:focus
+  color: colors.$COL_GRAY
+  background: transparent
+  cursor: default
+
+.dropdown-header
+  display: block
+  padding: 3px 20px
+  font-size: 12px
+  line-height: 1.42857143
+  color: colors.$COL_GRAY_M
+  white-space: nowrap
+
+.dropdown-menu > .divider
+  height: 1px
+  margin: 9px 0
+  overflow: hidden
+  background: colors.$COL_GRAY_L
+
+.caret
+  display: inline-block
+  width: 0
+  height: 0
+  margin-left: 2px
+  vertical-align: middle
+  border-top: 4px dashed
+  border-right: 4px solid transparent
+  border-left: 4px solid transparent
+
+.table
+  width: 100%
+  max-width: 100%
+  margin-bottom: 20px
+  border-spacing: 0
+  border-collapse: collapse
+  background: transparent
+
+.table > thead > tr > th,
+.table > tbody > tr > th,
+.table > tfoot > tr > th,
+.table > thead > tr > td,
+.table > tbody > tr > td,
+.table > tfoot > tr > td
+  padding: 8px
+  line-height: 1.42857143
+  vertical-align: top
+  border-top: 1px solid colors.$COL_GRAY_L
+
+.table > thead > tr > th
+  vertical-align: bottom
+  border-bottom: 2px solid colors.$COL_GRAY_L
+
+.table > caption + thead > tr:first-child > th,
+.table > colgroup + thead > tr:first-child > th,
+.table > thead:first-child > tr:first-child > th,
+.table > caption + thead > tr:first-child > td,
+.table > colgroup + thead > tr:first-child > td,
+.table > thead:first-child > tr:first-child > td
+  border-top: 0
+
+.table > tbody + tbody
+  border-top: 2px solid colors.$COL_GRAY_L
 
 a[role="button"]
   +mixins.disable-user-select

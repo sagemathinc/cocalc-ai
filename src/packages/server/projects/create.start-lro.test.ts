@@ -11,6 +11,7 @@ let cloneProjectRootfsStatesMock: jest.Mock;
 let takeStartProjectPhaseTimingsMock: jest.Mock;
 let delayMock: jest.Mock;
 let mirrorStartLroProgressMock: jest.Mock;
+let supersedeOlderProjectStartLrosMock: jest.Mock;
 
 async function flushBackgroundStartTask() {
   for (let i = 0; i < 6; i += 1) {
@@ -96,6 +97,12 @@ jest.mock("@cocalc/server/projects/start-lro-progress", () => ({
     mirrorStartLroProgressMock(...args),
 }));
 
+jest.mock("@cocalc/server/projects/start-lro-cleanup", () => ({
+  __esModule: true,
+  supersedeOlderProjectStartLros: (...args: any[]) =>
+    supersedeOlderProjectStartLrosMock(...args),
+}));
+
 jest.mock("awaiting", () => ({
   __esModule: true,
   delay: (...args: any[]) => delayMock(...args),
@@ -156,6 +163,7 @@ describe("projects.createProject start LRO", () => {
     takeStartProjectPhaseTimingsMock = jest.fn(() => ({ cache_rootfs: 1234 }));
     delayMock = jest.fn(async () => undefined);
     mirrorStartLroProgressMock = jest.fn(async () => async () => undefined);
+    supersedeOlderProjectStartLrosMock = jest.fn(async () => undefined);
   });
 
   it("creates and updates a project-start LRO for create-with-start", async () => {
@@ -205,6 +213,10 @@ describe("projects.createProject start LRO", () => {
         }),
       }),
     );
+    expect(supersedeOlderProjectStartLrosMock).toHaveBeenCalledWith({
+      project_id,
+      keep_op_id: "op-1",
+    });
     expect(publishLroEventMock).toHaveBeenCalledWith(
       expect.objectContaining({
         scope_type: "project",

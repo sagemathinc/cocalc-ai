@@ -9,31 +9,15 @@ import { Buffer } from "buffer";
 // this must come before anything that touches event handling, etc.
 import "./webapp-error-reporter";
 
-// Bootstrap must go early, since a lot of our CSS overrides it.
-// TODO: get rid of bootstrap!  We intend to switch to antd entirely!
-import "bootstrap/dist/css/bootstrap.min.css";
-
 // jQuery plugins
 // this is a require since it must happen after window.jQuery above (and imports happen before code).
 import "jquery-tooltip/jquery.tooltip";
-
-// // Hack we wrote to make jQuery hide and show not break with Bootstrap 3
-import "@cocalc/assets/jquery/plugins/bootstrap_hide_show";
 
 // Timeago jQuery plugin
 import "timeago";
 
 // Scroll into view plugin
 import "jquery.scrollintoview/jquery.scrollintoview";
-
-// Bootstrap
-import "bootstrap";
-
-// Bootbox: usable dialogs for bootstrap
-import "script-loader!bootbox/bootbox.min"; // loads from @cocalc/frontend/node_modules
-
-// Bootstrap Colorpicker Plugin
-import "bootstrap-colorpicker";
 
 // XTerm terminal emulator
 import "script-loader!@cocalc/assets/term/term.js";

@@ -57,10 +57,6 @@ export interface Props {
   */
   smc_image_scaling?: boolean;
 
-  // if true, highlight some <code class='language-r'> </code> blocks.
-  // this uses a jquery plugin that I wrote that uses codemirror.
-  highlight_code?: boolean;
-
   id?: string;
 
   onClick?: (event?: any) => void;
@@ -81,7 +77,6 @@ export function HTML({
   content_editable,
   reload_images,
   smc_image_scaling,
-  highlight_code = true,
   id,
   onClick,
   onDoubleClick,
@@ -139,13 +134,6 @@ export function HTML({
     }
   }
 
-  function update_code(): void {
-    if (isMountedRef.current && highlight_code) {
-      // note that the highlight_code plugin might not be defined.
-      jq()?.highlight_code?.();
-    }
-  }
-
   function do_updates(): void {
     if (is_share_server()) {
       return;
@@ -153,7 +141,6 @@ export function HTML({
     update_mathjax();
     update_links();
     update_tables();
-    update_code();
     update_images();
   }
 
@@ -186,9 +173,6 @@ export function HTML({
         elt.katex({ preProcess: preProcessMath ?? true });
       }
       elt.find("table").addClass("table");
-      if (highlight_code) {
-        elt.highlight_code();
-      }
       elt.process_smc_links({
         project_id,
         file_path,

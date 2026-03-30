@@ -1004,6 +1004,10 @@ export const useHostsPageViewModel = () => {
         region?: string;
         zone?: string;
         self_host_ssh_target?: string;
+        auto_grow_enabled?: boolean;
+        auto_grow_max_disk_gb?: number;
+        auto_grow_growth_step_gb?: number;
+        auto_grow_min_grow_interval_minutes?: number;
       },
     ) => {
       setSavingEdit(true);
@@ -1016,6 +1020,22 @@ export const useHostsPageViewModel = () => {
         const isDeprovisioned = editingHost.status === "deprovisioned";
         const isStopped = editingHost.status === "off";
         const canEditMachine = isDeprovisioned || isStopped;
+        const currentAutoGrow = (editingHost.machine?.metadata?.auto_grow ??
+          {}) as Record<string, any>;
+        const nextProvider = (values.provider ??
+          (editingHost.machine?.cloud as HostProvider | undefined) ??
+          "none") as HostProvider;
+        const nextStorageMode =
+          values.storage_mode ??
+          editingHost.machine?.storage_mode ??
+          "persistent";
+        const supportsAutoGrowConfig =
+          nextProvider === "gcp" && nextStorageMode !== "ephemeral";
+        const parsePositive = (value: unknown) => {
+          const parsed = Number(value);
+          if (!Number.isFinite(parsed) || parsed <= 0) return undefined;
+          return Math.floor(parsed);
+        };
         if (isDeprovisioned) {
           const provider = (values.provider ??
             (editingHost.machine?.cloud as HostProvider | undefined) ??
@@ -1058,24 +1078,56 @@ export const useHostsPageViewModel = () => {
           if (typeof metadata.self_host_ssh_target === "string") {
             update.self_host_ssh_target = metadata.self_host_ssh_target;
           }
+          if (supportsAutoGrowConfig) {
+            if (
+              typeof values.auto_grow_enabled === "boolean" &&
+              values.auto_grow_enabled !== currentAutoGrow.enabled
+            ) {
+              update.auto_grow_enabled = values.auto_grow_enabled;
+            }
+            const nextAutoGrowMaxDisk = parsePositive(
+              values.auto_grow_max_disk_gb,
+            );
+            if (
+              nextAutoGrowMaxDisk != null &&
+              nextAutoGrowMaxDisk !== currentAutoGrow.max_disk_gb
+            ) {
+              update.auto_grow_max_disk_gb = nextAutoGrowMaxDisk;
+            }
+            const nextAutoGrowGrowthStep = parsePositive(
+              values.auto_grow_growth_step_gb,
+            );
+            if (
+              nextAutoGrowGrowthStep != null &&
+              nextAutoGrowGrowthStep !== currentAutoGrow.growth_step_gb
+            ) {
+              update.auto_grow_growth_step_gb = nextAutoGrowGrowthStep;
+            }
+            const nextAutoGrowMinInterval = parsePositive(
+              values.auto_grow_min_grow_interval_minutes,
+            );
+            if (
+              nextAutoGrowMinInterval != null &&
+              nextAutoGrowMinInterval !==
+                currentAutoGrow.min_grow_interval_minutes
+            ) {
+              update.auto_grow_min_grow_interval_minutes =
+                nextAutoGrowMinInterval;
+            }
+          }
           if (Object.keys(update).length > 0) {
             await updateHostMachine(id, update);
           }
           return;
         }
         const update: Record<string, any> = {};
-        const toPositive = (value: unknown) => {
-          const parsed = Number(value);
-          if (!Number.isFinite(parsed) || parsed <= 0) return undefined;
-          return Math.floor(parsed);
-        };
 
         const currentCpu = Number(editingHost.machine?.metadata?.cpu);
         const currentRam = Number(editingHost.machine?.metadata?.ram_gb);
         const currentDisk = Number(editingHost.machine?.disk_gb);
-        const nextCpu = toPositive(values.cpu);
-        const nextRam = toPositive(values.ram_gb);
-        const nextDisk = toPositive(values.disk_gb);
+        const nextCpu = parsePositive(values.cpu);
+        const nextRam = parsePositive(values.ram_gb);
+        const nextDisk = parsePositive(values.disk_gb);
         if (isSelfHost) {
           if (nextCpu && nextCpu !== currentCpu) update.cpu = nextCpu;
           if (nextRam && nextRam !== currentRam) update.ram_gb = nextRam;
@@ -1131,6 +1183,43 @@ export const useHostsPageViewModel = () => {
             ) {
               update.disk_type = values.disk_type;
             }
+          }
+        }
+        if (supportsAutoGrowConfig) {
+          if (
+            typeof values.auto_grow_enabled === "boolean" &&
+            values.auto_grow_enabled !== currentAutoGrow.enabled
+          ) {
+            update.auto_grow_enabled = values.auto_grow_enabled;
+          }
+          const nextAutoGrowMaxDisk = parsePositive(
+            values.auto_grow_max_disk_gb,
+          );
+          if (
+            nextAutoGrowMaxDisk != null &&
+            nextAutoGrowMaxDisk !== currentAutoGrow.max_disk_gb
+          ) {
+            update.auto_grow_max_disk_gb = nextAutoGrowMaxDisk;
+          }
+          const nextAutoGrowGrowthStep = parsePositive(
+            values.auto_grow_growth_step_gb,
+          );
+          if (
+            nextAutoGrowGrowthStep != null &&
+            nextAutoGrowGrowthStep !== currentAutoGrow.growth_step_gb
+          ) {
+            update.auto_grow_growth_step_gb = nextAutoGrowGrowthStep;
+          }
+          const nextAutoGrowMinInterval = parsePositive(
+            values.auto_grow_min_grow_interval_minutes,
+          );
+          if (
+            nextAutoGrowMinInterval != null &&
+            nextAutoGrowMinInterval !==
+              currentAutoGrow.min_grow_interval_minutes
+          ) {
+            update.auto_grow_min_grow_interval_minutes =
+              nextAutoGrowMinInterval;
           }
         }
 

@@ -17,6 +17,7 @@ import { createHostControlClient } from "@cocalc/conat/project-host/api";
 import { updateAuthorizedKeysOnHost as updateAuthorizedKeysOnHostControl } from "@cocalc/server/project-host/control";
 import { getProject } from "@cocalc/server/projects/control";
 import { mirrorStartLroProgress } from "@cocalc/server/projects/start-lro-progress";
+import { supersedeOlderProjectStartLros } from "@cocalc/server/projects/start-lro-cleanup";
 import { conatWithProjectRouting } from "@cocalc/server/conat/route-client";
 import { resolveOnPremHost } from "@cocalc/server/onprem";
 import { posix } from "path";
@@ -741,6 +742,10 @@ export async function start({
           context: "start: succeeded",
         });
       }
+      await supersedeOlderProjectStartLros({
+        project_id,
+        keep_op_id: op.op_id,
+      });
     } catch (err) {
       const updated = await updateLro({
         op_id: op.op_id,

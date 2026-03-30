@@ -49,8 +49,9 @@ import { HostProjectsBrowser } from "./host-projects-browser";
 import { HostRootfsCachePanel } from "./host-rootfs-cache-panel";
 import { HostCurrentMetrics } from "./host-current-metrics";
 import {
+  formatBinaryBytes,
   getHostCpuCount,
-  getHostRamGb,
+  getHostRamGiB,
   getHostSizeDisplay,
 } from "../utils/format";
 
@@ -356,8 +357,13 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
   } = vm;
   const isSelfHost = host?.machine?.cloud === "self-host";
   const hostCpu = host ? getHostCpuCount(host) : undefined;
-  const hostRam = host ? getHostRamGb(host) : undefined;
-  const hostDisk = host?.machine?.disk_gb;
+  const hostRam = host ? getHostRamGiB(host) : undefined;
+  const hostDisk = formatBinaryBytes(
+    host?.metrics?.current?.disk_device_total_bytes,
+    {
+      compact: true,
+    },
+  );
   const showHostResources = !!host && (hostCpu || hostRam || hostDisk);
   const size = host ? getHostSizeDisplay(host) : undefined;
   const connectorOnline =
@@ -580,8 +586,8 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
             )}
             {showHostResources && (
               <Typography.Text>
-                Resources: {hostCpu ?? "?"} vCPU / {hostRam ?? "?"} GB RAM /{" "}
-                {hostDisk ?? "?"} GB disk
+                Resources: {hostCpu ?? "?"} vCPU / {hostRam ?? "?"} GiB RAM /{" "}
+                {hostDisk ?? "?"} disk
               </Typography.Text>
             )}
             {isSelfHost && host.machine?.metadata?.self_host_ssh_target && (

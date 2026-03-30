@@ -1,4 +1,9 @@
-import { resolveBootstrapImageSizeGb } from "./bootstrap-host";
+import fs from "node:fs";
+import path from "node:path";
+
+import * as bootstrapHost from "./bootstrap-host";
+
+const { resolveBootstrapImageSizeGb } = bootstrapHost;
 
 describe("resolveBootstrapImageSizeGb", () => {
   it("uses auto sizing for Lambda hosts", () => {
@@ -39,5 +44,31 @@ describe("resolveBootstrapImageSizeGb", () => {
         diskGb: 10,
       }),
     ).toBe("20");
+  });
+});
+
+describe("bootstrap-host shell templates", () => {
+  it("keeps carriage-return stripping as a literal backslash-r sequence", () => {
+    const source = fs.readFileSync(
+      path.join(__dirname, "bootstrap-host.ts"),
+      "utf8",
+    );
+
+    expect(source).toContain(`tr -d '\\\\r'`);
+    expect(source).not.toContain("tr -d '\r'");
+  });
+
+  it("downloads the bootstrap payload to a separate file instead of self-overwriting", () => {
+    const source = fs.readFileSync(
+      path.join(__dirname, "bootstrap-host.ts"),
+      "utf8",
+    );
+
+    expect(source).toContain(
+      `BOOTSTRAP_PAYLOAD="$BOOTSTRAP_DIR/bootstrap.payload.sh"`,
+    );
+    expect(source).toContain(`-o "$BOOTSTRAP_PAYLOAD"`);
+    expect(source).toContain(`bash "$BOOTSTRAP_PAYLOAD"`);
+    expect(source).not.toContain(`-o "$BOOTSTRAP_DIR/bootstrap.sh"`);
   });
 });

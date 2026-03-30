@@ -1,12 +1,16 @@
 import type { Host } from "@cocalc/conat/hub/api/hosts";
 
+const KIB = 1024;
+const MIB = 1024 * KIB;
+const GIB = 1024 * MIB;
+
 export const formatCpuRamLabel = (
   cpu?: number | null,
-  ramGb?: number | null,
+  ramGiB?: number | null,
 ): string => {
   const cpuLabel = cpu != null ? String(cpu) : "?";
-  const ramLabel = ramGb != null ? String(ramGb) : "?";
-  return `${cpuLabel} vCPU / ${ramLabel} GB`;
+  const ramLabel = ramGiB != null ? String(ramGiB) : "?";
+  return `${cpuLabel} vCPU / ${ramLabel} GiB`;
 };
 
 export const formatGpuLabel = (
@@ -37,6 +41,27 @@ function readPositiveInt(value: unknown): number | undefined {
   return Math.floor(parsed);
 }
 
+export function formatBinaryBytes(
+  value: number | null | undefined,
+  opts?: { compact?: boolean },
+): string | undefined {
+  if (value == null || !Number.isFinite(value) || value < 0) return undefined;
+  const compact = !!opts?.compact;
+  if (value < KIB) {
+    return compact ? `${Math.ceil(value)} B` : `${Math.round(value)} B`;
+  }
+  if (value < MIB) {
+    const amount = value / KIB;
+    return compact ? `${Math.ceil(amount)} KiB` : `${amount.toFixed(1)} KiB`;
+  }
+  if (value < GIB) {
+    const amount = value / MIB;
+    return compact ? `${Math.ceil(amount)} MiB` : `${amount.toFixed(1)} MiB`;
+  }
+  const amount = value / GIB;
+  return compact ? `${Math.ceil(amount)} GiB` : `${amount.toFixed(1)} GiB`;
+}
+
 export function getHostCpuCount(host: Host): number | undefined {
   return (
     readPositiveInt(host.host_cpu_count) ??
@@ -46,7 +71,11 @@ export function getHostCpuCount(host: Host): number | undefined {
   );
 }
 
-export function getHostRamGb(host: Host): number | undefined {
+export function getHostRamGiB(host: Host): number | undefined {
+  const observed = host.metrics?.current?.memory_total_bytes;
+  if (observed != null && Number.isFinite(observed) && observed > 0) {
+    return Math.max(1, Math.ceil(observed / GIB));
+  }
   return (
     readPositiveInt(host.host_ram_gb) ??
     readPositiveInt(host.machine?.metadata?.ram_gb) ??
@@ -60,12 +89,12 @@ export function getHostSizeDisplay(host: Host): {
   secondary?: string;
 } {
   const cpu = getHostCpuCount(host);
-  const ramGb = getHostRamGb(host);
+  const ramGiB = getHostRamGiB(host);
   const fallback = host.size || host.machine?.machine_type || "n/a";
-  if (cpu == null && ramGb == null) {
+  if (cpu == null && ramGiB == null) {
     return { primary: fallback };
   }
-  const primary = formatCpuRamLabel(cpu, ramGb);
+  const primary = formatCpuRamLabel(cpu, ramGiB);
   const secondary =
     fallback && fallback !== primary ? fallback : host.machine?.machine_type;
   return secondary ? { primary, secondary } : { primary };

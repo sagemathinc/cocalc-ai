@@ -37,7 +37,6 @@ export function Markdown(props: Props) {
       safeHTML={props.safeHTML ?? true}
       reload_images={props.reload_images}
       smc_image_scaling={props.smc_image_scaling}
-      highlight_code={props.highlight_code ?? true}
       content_editable={props.content_editable}
       onClick={props.onClick}
       onDoubleClick={props.onDoubleClick}

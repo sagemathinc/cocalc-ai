@@ -802,7 +802,7 @@ report_status() {
 
 bootstrap_log_tail() {
   if [ -f "$BOOTSTRAP_DIR/bootstrap.log" ]; then
-    tail -n 80 "$BOOTSTRAP_DIR/bootstrap.log" 2>/dev/null | tr -d '\r'
+    tail -n 80 "$BOOTSTRAP_DIR/bootstrap.log" 2>/dev/null | tr -d '\\r'
   fi
 }
 
@@ -1292,6 +1292,7 @@ if [ -z "$BOOTSTRAP_HOME" ]; then
 fi
 ${sshKeysBlock}
 BOOTSTRAP_DIR="$BOOTSTRAP_HOME/cocalc-host/bootstrap"
+BOOTSTRAP_PAYLOAD="$BOOTSTRAP_DIR/bootstrap.payload.sh"
 BOOTSTRAP_HOST="$(echo "$BOOTSTRAP_URL" | awk -F/ '{print $3}')"
 if [[ "$BOOTSTRAP_HOST" == \\[*\\]* ]]; then
   BOOTSTRAP_HOST="\${BOOTSTRAP_HOST#\\[}"
@@ -1339,7 +1340,7 @@ download_bootstrap() {
   local i=1
   while [ "$i" -le "$attempts" ]; do
     local http_code
-    http_code="$(curl -sS $CURL_CACERT_ARG -w "%{http_code}" -o "$BOOTSTRAP_DIR/bootstrap.sh" -H "Authorization: Bearer $BOOTSTRAP_TOKEN" "$BOOTSTRAP_URL" || true)"
+    http_code="$(curl -sS $CURL_CACERT_ARG -w "%{http_code}" -o "$BOOTSTRAP_PAYLOAD" -H "Authorization: Bearer $BOOTSTRAP_TOKEN" "$BOOTSTRAP_URL" || true)"
     if [ "$http_code" = "200" ]; then
       return 0
     fi
@@ -1383,7 +1384,7 @@ if ! download_bootstrap; then
   report_status "error" "bootstrap download failed"
   exit 1
 fi
-if ! bash "$BOOTSTRAP_DIR/bootstrap.sh" 2>&1 | tee "$BOOTSTRAP_DIR/bootstrap.log"; then
+if ! bash "$BOOTSTRAP_PAYLOAD" 2>&1 | tee "$BOOTSTRAP_DIR/bootstrap.log"; then
   tail_msg="$(bootstrap_log_tail)"
   if [ -n "$tail_msg" ]; then
     report_status "error" "bootstrap execution failed; tail: $tail_msg"

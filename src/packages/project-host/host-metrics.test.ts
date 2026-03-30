@@ -41,6 +41,39 @@ System,DUP: Size:33554432, Used:16384 (0.05%)
     expect(parsed.disk_available_conservative_bytes).toBe(248127594496);
   });
 
+  it("parses unprivileged btrfs usage output with a warning banner", () => {
+    const parsed = _test.parseBtrfsUsageOutput(`
+WARNING: cannot read detailed chunk info, per-device usage will not be shown, run as root
+Overall:
+    Device size:                   214748364800
+    Device allocated:               63375933440
+    Device unallocated:            151372431360
+    Device missing:                        0
+    Device slack:                          0
+    Used:                         53000417280
+    Free (estimated):            160845189120      (min: 85158973440)
+    Free (statfs, df):           160844140544
+    Data ratio:                         1.00
+    Metadata ratio:                     2.00
+    Global reserve:               133873664      (used: 0)
+    Multiple profiles:                    no
+
+Data,single: Size:56916705280, Used:47443947520 (83.36%)
+   /dev/sdb   56916705280
+
+Metadata,DUP: Size:3221225472, Used:2778218496 (86.25%)
+   /dev/sdb   6442450944
+
+System,DUP: Size:8388608, Used:16384 (0.20%)
+   /dev/sdb     16777216
+`);
+
+    expect(parsed.disk_device_total_bytes).toBe(214748364800);
+    expect(parsed.btrfs_metadata_total_bytes).toBe(3221225472);
+    expect(parsed.btrfs_metadata_used_bytes).toBe(2778218496);
+    expect(parsed.disk_available_conservative_bytes).toBe(85158973440);
+  });
+
   it("parses df output fallback", () => {
     const parsed = _test.parseDfOutput(`
      1B-blocks           Used      Avail

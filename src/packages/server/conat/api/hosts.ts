@@ -22,6 +22,7 @@ import type {
   HostRootfsGcResult,
   HostRootfsImage,
   HostCurrentMetrics,
+  HostMetricsHistory,
 } from "@cocalc/conat/hub/api/hosts";
 import type {
   ProjectCopyRow,
@@ -36,6 +37,7 @@ import {
   computePlacementPermission,
   getUserHostTier,
 } from "@cocalc/server/project-host/placement";
+import { maybeAutoGrowHostDiskForReservationFailure } from "@cocalc/server/project-host/auto-grow";
 import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
 import {
   enqueueCloudVmWork,
@@ -93,6 +95,7 @@ import {
   ensureSelfHostReverseTunnel,
   runConnectorInstallOverSsh,
 } from "@cocalc/server/self-host/ssh-target";
+import { loadProjectHostMetricsHistory } from "@cocalc/database/postgres/project-host-metrics";
 import {
   deleteCloudflareTunnel,
   hasCloudflareTunnel,
@@ -471,6 +474,7 @@ function parseRow(
     reason_unavailable?: string;
     backup_status?: HostBackupStatus;
     starred?: boolean;
+    metrics_history?: HostMetricsHistory;
   } = {},
 ): Host {
   const parsePositiveInt = (value: unknown): number | undefined => {
@@ -753,7 +757,13 @@ function parseRow(
     tools_version: software.tools,
     host_session_id: metadata.host_session_id,
     host_session_started_at: metadata.host_session_started_at,
-    metrics: currentMetrics ? { current: currentMetrics } : undefined,
+    metrics:
+      currentMetrics || opts.metrics_history
+        ? {
+            ...(currentMetrics ? { current: currentMetrics } : {}),
+            ...(opts.metrics_history ? { history: opts.metrics_history } : {}),
+          }
+        : undefined,
     machine,
     public_ip: metadata.runtime?.public_ip,
     last_error: metadata.last_error,
@@ -2013,7 +2023,14 @@ export async function listHosts({
   const membership = await loadMembership(owner);
   const userTier = getUserHostTier(membership.entitlements);
 
-  const result: Host[] = [];
+  const visibleRows: Array<{
+    row: any;
+    scope: Host["scope"];
+    can_place: boolean;
+    can_start: boolean;
+    reason_unavailable?: string;
+    starred: boolean;
+  }> = [];
   for (const row of rows) {
     const metadata = row.metadata ?? {};
     const rowOwner = metadata.owner ?? "";
@@ -2053,7 +2070,23 @@ export async function listHosts({
       continue;
     }
 
-    result.push(
+    visibleRows.push({
+      row,
+      scope,
+      can_place,
+      can_start,
+      reason_unavailable,
+      starred,
+    });
+  }
+  const metricsHistory = await loadProjectHostMetricsHistory({
+    host_ids: visibleRows.map(({ row }) => row.id),
+    window_minutes: 60,
+    max_points: 60,
+  });
+
+  return visibleRows.map(
+    ({ row, scope, can_place, can_start, reason_unavailable, starred }) =>
       parseRow(row, {
         scope,
         can_place,
@@ -2061,10 +2094,9 @@ export async function listHosts({
         reason_unavailable,
         backup_status: backupStatus.get(row.id),
         starred,
+        metrics_history: metricsHistory.get(row.id),
       }),
-    );
-  }
-  return result;
+  );
 }
 
 export async function resolveHostConnection({
@@ -2448,6 +2480,32 @@ export async function getHostRuntimeLog({
   };
 }
 
+export async function getHostMetricsHistory({
+  account_id,
+  id,
+  window_minutes,
+  max_points,
+}: {
+  account_id?: string;
+  id: string;
+  window_minutes?: number;
+  max_points?: number;
+}): Promise<HostMetricsHistory> {
+  const host = await loadHostForListing(id, account_id);
+  const history = await loadProjectHostMetricsHistory({
+    host_ids: [host.id],
+    window_minutes,
+    max_points,
+  });
+  return (
+    history.get(host.id) ?? {
+      window_minutes: Math.max(5, Math.floor(Number(window_minutes ?? 60))),
+      point_count: 0,
+      points: [],
+    }
+  );
+}
+
 export async function listHostRootfsImages({
   account_id,
   id,
@@ -2493,7 +2551,18 @@ export async function pullHostRootfsImage({
     client: conatWithProjectRouting(),
     timeout: HOST_ROOTFS_RPC_TIMEOUT_MS,
   });
-  return await client.pullRootfsImage({ image });
+  try {
+    return await client.pullRootfsImage({ image });
+  } catch (err) {
+    const autoGrow = await maybeAutoGrowHostDiskForReservationFailure({
+      host_id: id,
+      err,
+    });
+    if (autoGrow.grown) {
+      return await client.pullRootfsImage({ image });
+    }
+    throw err;
+  }
 }
 
 export async function deleteHostRootfsImage({
@@ -3585,6 +3654,10 @@ export async function updateHostMachine({
   region,
   zone,
   self_host_ssh_target,
+  auto_grow_enabled,
+  auto_grow_max_disk_gb,
+  auto_grow_growth_step_gb,
+  auto_grow_min_grow_interval_minutes,
 }: {
   account_id?: string;
   id: string;
@@ -3600,6 +3673,10 @@ export async function updateHostMachine({
   region?: string;
   zone?: string;
   self_host_ssh_target?: string;
+  auto_grow_enabled?: boolean;
+  auto_grow_max_disk_gb?: number;
+  auto_grow_growth_step_gb?: number;
+  auto_grow_min_grow_interval_minutes?: number;
 }): Promise<Host> {
   const row = await loadOwnedHost(id, account_id);
   const metadata = row.metadata ?? {};
@@ -3639,6 +3716,7 @@ export async function updateHostMachine({
     disk_gb: specMachine.disk_gb ?? null,
     disk_type: specMachine.disk_type ?? null,
     storage_mode: specMachine.storage_mode ?? null,
+    auto_grow: specMachine.metadata?.auto_grow ?? null,
   });
   const beforeSpec = buildConfigSpec(machine, row.region);
 
@@ -3650,11 +3728,34 @@ export async function updateHostMachine({
     }
     return Math.floor(parsed);
   };
+  const parseBooleanLike = (value: unknown, label: string) => {
+    if (value == null) return undefined;
+    if (typeof value === "boolean") return value;
+    if (value === 1 || value === "1" || value === "true") return true;
+    if (value === 0 || value === "0" || value === "false") return false;
+    throw new Error(`${label} must be a boolean`);
+  };
 
   const nextCpu = parsePositiveInt(cpu, "cpu");
   const nextRam = parsePositiveInt(ram_gb, "ram_gb");
   const nextDisk = parsePositiveInt(disk_gb, "disk_gb");
   const nextGpuCount = parsePositiveInt(gpu_count, "gpu_count");
+  const nextAutoGrowEnabled = parseBooleanLike(
+    auto_grow_enabled,
+    "auto_grow_enabled",
+  );
+  const nextAutoGrowMaxDisk = parsePositiveInt(
+    auto_grow_max_disk_gb,
+    "auto_grow_max_disk_gb",
+  );
+  const nextAutoGrowGrowthStep = parsePositiveInt(
+    auto_grow_growth_step_gb,
+    "auto_grow_growth_step_gb",
+  );
+  const nextAutoGrowMinInterval = parsePositiveInt(
+    auto_grow_min_grow_interval_minutes,
+    "auto_grow_min_grow_interval_minutes",
+  );
 
   if (cloudChanged) {
     if (!isDeprovisioned) {
@@ -3761,6 +3862,58 @@ export async function updateHostMachine({
     nonDiskChange = true;
     regionChanged = true;
   }
+  const currentAutoGrow = {
+    ...((machine.metadata?.auto_grow ?? {}) as Record<string, any>),
+  };
+  const nextAutoGrow = {
+    ...((nextMachine.metadata?.auto_grow ?? {}) as Record<string, any>),
+  };
+  let autoGrowChanged = false;
+  if (
+    nextAutoGrowEnabled !== undefined &&
+    nextAutoGrowEnabled !== currentAutoGrow.enabled
+  ) {
+    nextAutoGrow.enabled = nextAutoGrowEnabled;
+    autoGrowChanged = true;
+  }
+  if (
+    nextAutoGrowMaxDisk != null &&
+    nextAutoGrowMaxDisk !== currentAutoGrow.max_disk_gb
+  ) {
+    nextAutoGrow.max_disk_gb = nextAutoGrowMaxDisk;
+    autoGrowChanged = true;
+  }
+  if (
+    nextAutoGrowGrowthStep != null &&
+    nextAutoGrowGrowthStep !== currentAutoGrow.growth_step_gb
+  ) {
+    nextAutoGrow.growth_step_gb = nextAutoGrowGrowthStep;
+    autoGrowChanged = true;
+  }
+  if (
+    nextAutoGrowMinInterval != null &&
+    nextAutoGrowMinInterval !== currentAutoGrow.min_grow_interval_minutes
+  ) {
+    nextAutoGrow.min_grow_interval_minutes = nextAutoGrowMinInterval;
+    autoGrowChanged = true;
+  }
+  if (autoGrowChanged) {
+    const effectiveDisk = nextDisk ?? nextMachine.disk_gb;
+    if (
+      nextAutoGrow.max_disk_gb != null &&
+      effectiveDisk != null &&
+      nextAutoGrow.max_disk_gb < effectiveDisk
+    ) {
+      throw new Error(
+        "auto-grow max disk must be at least the configured disk",
+      );
+    }
+    nextMachine.metadata = {
+      ...(nextMachine.metadata ?? {}),
+      auto_grow: nextAutoGrow,
+    };
+    changed = true;
+  }
 
   if (!changed) {
     return parseRow(row);
@@ -3814,7 +3967,12 @@ export async function updateHostMachine({
     );
   }
 
-  if (!isSelfHost && nextDisk == null && !requiresReprovision) {
+  if (
+    !isSelfHost &&
+    nextDisk == null &&
+    !requiresReprovision &&
+    !autoGrowChanged
+  ) {
     return parseRow(row);
   }
 
