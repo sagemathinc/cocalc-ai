@@ -19,10 +19,6 @@ import "timeago";
 // Scroll into view plugin
 import "jquery.scrollintoview/jquery.scrollintoview";
 
-// XTerm terminal emulator
-import "script-loader!@cocalc/assets/term/term.js";
-import "script-loader!@cocalc/assets/term/color_themes.js";
-
 import "@cocalc/frontend/set-version-cookie.js";
 
 import "./webapp-css";
