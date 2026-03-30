@@ -182,7 +182,7 @@ print_bootstrap_signup_url() {
 
 usage() {
   cat <<EOF
-Usage: $(basename "$0") <init|start|stop|restart|status|logs|env>
+Usage: $(basename "$0") <init|start|stop|restart|build|status|logs|env>
 
 Config file: $CONFIG_FILE
 State dir:   $STATE_DIR
@@ -469,6 +469,20 @@ start_daemon() {
   return 1
 }
 
+build_daemon() {
+  load_config
+  (
+    cd "$SRC_DIR"
+    pnpm build
+    pnpm --dir "$SRC_DIR/packages/project-host" build:bundle
+    pnpm --dir "$SRC_DIR/packages/project" build:bundle
+    stop_daemon 1
+    start_daemon
+    eval "$(pnpm -s dev:env:hub)"
+    cocalc host upgrade --hub-source --wait --all-online
+  )
+}
+
 stop_daemon() {
   local keep_cloudflared="${1:-0}"
   load_config
@@ -600,6 +614,9 @@ case "$cmd" in
   restart)
     stop_daemon 1
     start_daemon
+    ;;
+  build)
+    build_daemon
     ;;
   status)
     show_status
