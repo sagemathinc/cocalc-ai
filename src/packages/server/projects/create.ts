@@ -33,6 +33,7 @@ import { createLro, updateLro } from "@cocalc/server/lro/lro-db";
 import { publishLroEvent, publishLroSummary } from "@cocalc/conat/lro/stream";
 import type { LroSummary } from "@cocalc/conat/hub/api/lro";
 import { takeStartProjectPhaseTimings } from "@cocalc/server/project-host/control";
+import { supersedeOlderProjectStartLros } from "@cocalc/server/projects/start-lro-cleanup";
 import { mirrorStartLroProgress } from "@cocalc/server/projects/start-lro-progress";
 
 const log = getLogger("server:projects:create");
@@ -520,6 +521,10 @@ async function startNewProject(
       result: progress_summary,
       error: null,
       context: "createProject: start succeeded",
+    });
+    await supersedeOlderProjectStartLros({
+      project_id,
+      keep_op_id: op?.op_id,
     });
   } catch (err) {
     log.warn(`problem starting new project -- ${err}`, {

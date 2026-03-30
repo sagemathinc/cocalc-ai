@@ -8,6 +8,13 @@ let publishLroEventMock: jest.Mock;
 let getProjectMock: jest.Mock;
 let projectStartMock: jest.Mock;
 let mirrorStartLroProgressMock: jest.Mock;
+let supersedeOlderProjectStartLrosMock: jest.Mock;
+
+async function flushBackgroundStartTask() {
+  for (let i = 0; i < 6; i += 1) {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+}
 
 jest.mock("@cocalc/server/projects/create", () => ({
   __esModule: true,
@@ -57,6 +64,7 @@ jest.mock("@cocalc/database", () => ({
 jest.mock("@cocalc/server/project-host/control", () => ({
   __esModule: true,
   updateAuthorizedKeysOnHost: jest.fn(),
+  takeStartProjectPhaseTimings: jest.fn(() => undefined),
 }));
 
 jest.mock("@cocalc/server/projects/control", () => ({
@@ -80,6 +88,12 @@ jest.mock("@cocalc/server/projects/start-lro-progress", () => ({
   __esModule: true,
   mirrorStartLroProgress: (...args: any[]) =>
     mirrorStartLroProgressMock(...args),
+}));
+
+jest.mock("@cocalc/server/projects/start-lro-cleanup", () => ({
+  __esModule: true,
+  supersedeOlderProjectStartLros: (...args: any[]) =>
+    supersedeOlderProjectStartLrosMock(...args),
 }));
 
 jest.mock("@cocalc/conat/lro/stream", () => ({
@@ -125,6 +139,7 @@ describe("projects.start", () => {
     publishLroEventMock = jest.fn(async () => undefined);
     projectStartMock = jest.fn(async () => undefined);
     mirrorStartLroProgressMock = jest.fn(async () => async () => undefined);
+    supersedeOlderProjectStartLrosMock = jest.fn(async () => undefined);
     getProjectMock = jest.fn(async () => ({
       start: projectStartMock,
     }));
@@ -138,8 +153,7 @@ describe("projects.start", () => {
       wait: false,
     });
 
-    await Promise.resolve();
-    await Promise.resolve();
+    await flushBackgroundStartTask();
 
     expect(response).toEqual({
       op_id: "op-1",
@@ -151,6 +165,10 @@ describe("projects.start", () => {
     expect(projectStartMock).toHaveBeenCalledWith({
       lro_op_id: "op-1",
       account_id: "acct-1",
+    });
+    expect(supersedeOlderProjectStartLrosMock).toHaveBeenCalledWith({
+      project_id: "proj-1",
+      keep_op_id: "op-1",
     });
     expect(publishLroSummaryMock).toHaveBeenCalled();
   });
