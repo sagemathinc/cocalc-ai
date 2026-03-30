@@ -41,6 +41,11 @@ type HubClient = {
       storage_mode?: "ephemeral" | "persistent";
       region?: string;
       zone?: string;
+      self_host_ssh_target?: string;
+      auto_grow_enabled?: boolean;
+      auto_grow_max_disk_gb?: number;
+      auto_grow_growth_step_gb?: number;
+      auto_grow_min_grow_interval_minutes?: number;
     }) => Promise<unknown>;
   };
 };
@@ -182,6 +187,11 @@ export const useHostActions = ({
       storage_mode?: "ephemeral" | "persistent";
       region?: string;
       zone?: string;
+      self_host_ssh_target?: string;
+      auto_grow_enabled?: boolean;
+      auto_grow_max_disk_gb?: number;
+      auto_grow_growth_step_gb?: number;
+      auto_grow_min_grow_interval_minutes?: number;
     },
   ) => {
     if (!hub.hosts.updateHostMachine) {

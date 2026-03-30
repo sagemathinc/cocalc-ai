@@ -76,6 +76,16 @@ export interface HostMachine {
   metadata?: Record<string, any>;
 }
 
+export interface HostAutoGrowConfig {
+  enabled?: boolean;
+  max_disk_gb?: number;
+  growth_step_gb?: number;
+  min_grow_interval_minutes?: number;
+  last_grow_at?: string;
+  last_grow_from_disk_gb?: number;
+  last_grow_to_disk_gb?: number;
+}
+
 export interface HostCatalogRegion {
   name: string;
   status?: string | null;
@@ -765,6 +775,10 @@ export interface Hosts {
     self_host_ssh_target?: string;
     region?: string;
     zone?: string;
+    auto_grow_enabled?: boolean;
+    auto_grow_max_disk_gb?: number;
+    auto_grow_growth_step_gb?: number;
+    auto_grow_min_grow_interval_minutes?: number;
   }) => Promise<Host>;
   upgradeHostSoftware: (opts: {
     account_id?: string;

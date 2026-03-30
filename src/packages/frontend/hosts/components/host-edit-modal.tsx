@@ -1,6 +1,19 @@
-import { Alert, Collapse, Form, Input, InputNumber, Modal, Select } from "antd";
+import {
+  Alert,
+  Collapse,
+  Form,
+  Input,
+  InputNumber,
+  Modal,
+  Select,
+  Switch,
+} from "antd";
 import { React, useTypedRedux } from "@cocalc/frontend/app-framework";
-import type { Host, HostCatalog } from "@cocalc/conat/hub/api/hosts";
+import type {
+  Host,
+  HostAutoGrowConfig,
+  HostCatalog,
+} from "@cocalc/conat/hub/api/hosts";
 import type { HostProvider } from "../types";
 import { getDiskTypeOptions } from "../constants";
 import { HostCreateForm } from "./host-create-form";
@@ -40,6 +53,10 @@ type HostEditModalProps = {
       region?: string;
       zone?: string;
       self_host_ssh_target?: string;
+      auto_grow_enabled?: boolean;
+      auto_grow_max_disk_gb?: number;
+      auto_grow_growth_step_gb?: number;
+      auto_grow_min_grow_interval_minutes?: number;
     },
   ) => Promise<void> | void;
   onProviderChange?: (provider: HostProvider) => void;
@@ -273,6 +290,34 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
   const showDiskFields = isSelfHost
     ? !isDirect
     : isDeprovisioned || (supportsDiskResize && storageMode !== "ephemeral");
+  const currentAutoGrow = React.useMemo(() => {
+    const metadata = (host?.machine?.metadata ?? {}) as Record<string, any>;
+    const nested = (metadata.auto_grow ?? {}) as HostAutoGrowConfig;
+    return {
+      enabled:
+        nested.enabled ??
+        (typeof metadata.auto_grow_enabled === "boolean"
+          ? metadata.auto_grow_enabled
+          : false),
+      max_disk_gb: readPositive(
+        nested.max_disk_gb ?? metadata.auto_grow_max_disk_gb,
+      ),
+      growth_step_gb: readPositive(
+        nested.growth_step_gb ?? metadata.auto_grow_growth_step_gb,
+      ),
+      min_grow_interval_minutes: readPositive(
+        nested.min_grow_interval_minutes ??
+          metadata.auto_grow_min_grow_interval_minutes,
+      ),
+    };
+  }, [host]);
+  const autoGrowDefaultMaxDisk = Math.max(currentDisk ?? 100, 500);
+  const showAutoGrowControls =
+    providerId === "gcp" &&
+    (isDeprovisioned
+      ? selectedStorageMode !== "ephemeral" && storageSupport.growable
+      : showDiskFields && storageMode !== "ephemeral");
+  const watchedAutoGrowEnabled = Form.useWatch("auto_grow_enabled", form);
   const showAdvancedSection =
     isDeprovisioned &&
     ((providerDescriptor && fieldSchema.advanced.length > 0) ||
@@ -306,9 +351,20 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
       storage_mode: storageMode,
       disk_type: host.machine?.disk_type,
       self_host_ssh_target: host.machine?.metadata?.self_host_ssh_target,
+      auto_grow_enabled: currentAutoGrow.enabled,
+      auto_grow_max_disk_gb:
+        currentAutoGrow.max_disk_gb ?? autoGrowDefaultMaxDisk,
+      auto_grow_growth_step_gb: currentAutoGrow.growth_step_gb ?? 50,
+      auto_grow_min_grow_interval_minutes:
+        currentAutoGrow.min_grow_interval_minutes ?? 60,
     });
   }, [
+    autoGrowDefaultMaxDisk,
     currentCpu,
+    currentAutoGrow.enabled,
+    currentAutoGrow.growth_step_gb,
+    currentAutoGrow.max_disk_gb,
+    currentAutoGrow.min_grow_interval_minutes,
     currentDisk,
     currentRam,
     form,
@@ -591,6 +647,103 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
               }}
             />
           </Form.Item>
+        )}
+        {canEditMachine && showAutoGrowControls && (
+          <Collapse ghost style={{ marginBottom: 8 }} defaultActiveKey={[]}>
+            <Collapse.Panel header="Auto-grow" key="auto-grow">
+              <Alert
+                type="info"
+                showIcon
+                style={{ marginBottom: 12 }}
+                message="Guarded auto-grow"
+                description="If a large OCI or RootFS pull is denied by storage reservations, CoCalc can grow this host's persistent disk once and retry. This is currently intended for GCP hosts."
+              />
+              <Form.Item
+                label="Enable guarded auto-grow"
+                name="auto_grow_enabled"
+                valuePropName="checked"
+                extra="Only used after an explicit storage reservation failure. Growth is capped and rate-limited."
+              >
+                <Switch />
+              </Form.Item>
+              {watchedAutoGrowEnabled && (
+                <>
+                  <Form.Item
+                    label="Maximum disk size (GB)"
+                    name="auto_grow_max_disk_gb"
+                    dependencies={["disk_gb"]}
+                    rules={[
+                      ({ getFieldValue }) => ({
+                        validator(_, value) {
+                          const parsed = Number(value);
+                          if (!Number.isFinite(parsed) || parsed <= 0) {
+                            return Promise.reject(
+                              new Error(
+                                "Enter the largest disk size this host may auto-grow to",
+                              ),
+                            );
+                          }
+                          const currentConfiguredDisk = Number(
+                            getFieldValue("disk_gb") ?? currentDisk ?? 0,
+                          );
+                          if (
+                            Number.isFinite(currentConfiguredDisk) &&
+                            currentConfiguredDisk > 0 &&
+                            parsed < currentConfiguredDisk
+                          ) {
+                            return Promise.reject(
+                              new Error(
+                                `Maximum disk must be at least ${currentConfiguredDisk} GB`,
+                              ),
+                            );
+                          }
+                          return Promise.resolve();
+                        },
+                      }),
+                    ]}
+                    extra="The disk will never auto-grow past this limit."
+                  >
+                    <InputNumber
+                      min={diskMinAdjusted}
+                      max={10000}
+                      style={{ width: "100%" }}
+                    />
+                  </Form.Item>
+                  <Form.Item
+                    label="Growth step (GB)"
+                    name="auto_grow_growth_step_gb"
+                    rules={[
+                      {
+                        required: true,
+                        message: "Enter how much to grow the disk per step",
+                      },
+                    ]}
+                    extra="Each auto-grow increases the disk by this amount before retrying once."
+                  >
+                    <InputNumber min={1} max={2000} style={{ width: "100%" }} />
+                  </Form.Item>
+                  <Form.Item
+                    label="Minimum minutes between grows"
+                    name="auto_grow_min_grow_interval_minutes"
+                    rules={[
+                      {
+                        required: true,
+                        message:
+                          "Enter the cooldown between auto-grow attempts",
+                      },
+                    ]}
+                    extra="Prevents repeated disk expansions when a host is under pressure."
+                  >
+                    <InputNumber
+                      min={1}
+                      max={7 * 24 * 60}
+                      style={{ width: "100%" }}
+                    />
+                  </Form.Item>
+                </>
+              )}
+            </Collapse.Panel>
+          </Collapse>
         )}
         {!isDeprovisioned && showAdvancedSection && !hideAdvanced && (
           <Collapse ghost style={{ marginBottom: 8 }}>

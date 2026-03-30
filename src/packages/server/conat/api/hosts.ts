@@ -3654,6 +3654,10 @@ export async function updateHostMachine({
   region,
   zone,
   self_host_ssh_target,
+  auto_grow_enabled,
+  auto_grow_max_disk_gb,
+  auto_grow_growth_step_gb,
+  auto_grow_min_grow_interval_minutes,
 }: {
   account_id?: string;
   id: string;
@@ -3669,6 +3673,10 @@ export async function updateHostMachine({
   region?: string;
   zone?: string;
   self_host_ssh_target?: string;
+  auto_grow_enabled?: boolean;
+  auto_grow_max_disk_gb?: number;
+  auto_grow_growth_step_gb?: number;
+  auto_grow_min_grow_interval_minutes?: number;
 }): Promise<Host> {
   const row = await loadOwnedHost(id, account_id);
   const metadata = row.metadata ?? {};
@@ -3708,6 +3716,7 @@ export async function updateHostMachine({
     disk_gb: specMachine.disk_gb ?? null,
     disk_type: specMachine.disk_type ?? null,
     storage_mode: specMachine.storage_mode ?? null,
+    auto_grow: specMachine.metadata?.auto_grow ?? null,
   });
   const beforeSpec = buildConfigSpec(machine, row.region);
 
@@ -3719,11 +3728,34 @@ export async function updateHostMachine({
     }
     return Math.floor(parsed);
   };
+  const parseBooleanLike = (value: unknown, label: string) => {
+    if (value == null) return undefined;
+    if (typeof value === "boolean") return value;
+    if (value === 1 || value === "1" || value === "true") return true;
+    if (value === 0 || value === "0" || value === "false") return false;
+    throw new Error(`${label} must be a boolean`);
+  };
 
   const nextCpu = parsePositiveInt(cpu, "cpu");
   const nextRam = parsePositiveInt(ram_gb, "ram_gb");
   const nextDisk = parsePositiveInt(disk_gb, "disk_gb");
   const nextGpuCount = parsePositiveInt(gpu_count, "gpu_count");
+  const nextAutoGrowEnabled = parseBooleanLike(
+    auto_grow_enabled,
+    "auto_grow_enabled",
+  );
+  const nextAutoGrowMaxDisk = parsePositiveInt(
+    auto_grow_max_disk_gb,
+    "auto_grow_max_disk_gb",
+  );
+  const nextAutoGrowGrowthStep = parsePositiveInt(
+    auto_grow_growth_step_gb,
+    "auto_grow_growth_step_gb",
+  );
+  const nextAutoGrowMinInterval = parsePositiveInt(
+    auto_grow_min_grow_interval_minutes,
+    "auto_grow_min_grow_interval_minutes",
+  );
 
   if (cloudChanged) {
     if (!isDeprovisioned) {
@@ -3829,6 +3861,59 @@ export async function updateHostMachine({
     changed = true;
     nonDiskChange = true;
     regionChanged = true;
+  }
+  const currentAutoGrow = {
+    ...((machine.metadata?.auto_grow ?? {}) as Record<string, any>),
+  };
+  const nextAutoGrow = {
+    ...((nextMachine.metadata?.auto_grow ?? {}) as Record<string, any>),
+  };
+  let autoGrowChanged = false;
+  if (
+    nextAutoGrowEnabled !== undefined &&
+    nextAutoGrowEnabled !== currentAutoGrow.enabled
+  ) {
+    nextAutoGrow.enabled = nextAutoGrowEnabled;
+    autoGrowChanged = true;
+  }
+  if (
+    nextAutoGrowMaxDisk != null &&
+    nextAutoGrowMaxDisk !== currentAutoGrow.max_disk_gb
+  ) {
+    nextAutoGrow.max_disk_gb = nextAutoGrowMaxDisk;
+    autoGrowChanged = true;
+  }
+  if (
+    nextAutoGrowGrowthStep != null &&
+    nextAutoGrowGrowthStep !== currentAutoGrow.growth_step_gb
+  ) {
+    nextAutoGrow.growth_step_gb = nextAutoGrowGrowthStep;
+    autoGrowChanged = true;
+  }
+  if (
+    nextAutoGrowMinInterval != null &&
+    nextAutoGrowMinInterval !== currentAutoGrow.min_grow_interval_minutes
+  ) {
+    nextAutoGrow.min_grow_interval_minutes = nextAutoGrowMinInterval;
+    autoGrowChanged = true;
+  }
+  if (autoGrowChanged) {
+    const effectiveDisk = nextDisk ?? nextMachine.disk_gb;
+    if (
+      nextAutoGrow.max_disk_gb != null &&
+      effectiveDisk != null &&
+      nextAutoGrow.max_disk_gb < effectiveDisk
+    ) {
+      throw new Error(
+        "auto-grow max disk must be at least the configured disk",
+      );
+    }
+    nextMachine.metadata = {
+      ...(nextMachine.metadata ?? {}),
+      auto_grow: nextAutoGrow,
+    };
+    changed = true;
+    nonDiskChange = true;
   }
 
   if (!changed) {
