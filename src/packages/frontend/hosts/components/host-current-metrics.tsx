@@ -1,4 +1,4 @@
-import { Space, Tag, Typography } from "antd";
+import { Progress, Space, Tag, Typography } from "antd";
 import { React } from "@cocalc/frontend/app-framework";
 import type { Host } from "@cocalc/conat/hub/api/hosts";
 import { human_readable_size } from "@cocalc/util/misc";
@@ -8,24 +8,31 @@ type HostCurrentMetricsProps = {
   compact?: boolean;
 };
 
-function formatPercent(value?: number): string | undefined {
-  if (value == null || !Number.isFinite(value)) return undefined;
-  return `${Math.round(value)}%`;
-}
+type MetricBarProps = {
+  label: string;
+  percent?: number;
+  detail?: string;
+  compact?: boolean;
+};
 
 function formatBytes(value?: number): string | undefined {
   if (value == null || !Number.isFinite(value)) return undefined;
   return human_readable_size(value);
 }
 
-function metricTagColor(percent?: number): string | undefined {
-  if (percent == null || !Number.isFinite(percent)) return undefined;
-  if (percent >= 90) return "red";
-  if (percent >= 75) return "orange";
-  return undefined;
+function normalizePercent(value?: number): number | undefined {
+  if (value == null || !Number.isFinite(value)) return undefined;
+  return Math.max(0, Math.min(100, value));
 }
 
-function diskTagColor(host: Host): string | undefined {
+function progressStatus(percent?: number): "normal" | "active" | "exception" {
+  if (percent == null || !Number.isFinite(percent)) return "normal";
+  if (percent >= 90) return "exception";
+  if (percent >= 75) return "active";
+  return "normal";
+}
+
+function getDiskUsedPercent(host: Host): number | undefined {
   const metrics = host.metrics?.current;
   if (!metrics) return undefined;
   const available = metrics.disk_available_conservative_bytes;
@@ -39,13 +46,10 @@ function diskTagColor(host: Host): string | undefined {
   ) {
     return undefined;
   }
-  const ratio = available / total;
-  if (ratio <= 0.1) return "red";
-  if (ratio <= 0.2) return "orange";
-  return undefined;
+  return normalizePercent(((total - available) / total) * 100);
 }
 
-function formatMetadataPercent(host: Host): string | undefined {
+function getMetadataUsedPercent(host: Host): number | undefined {
   const metrics = host.metrics?.current;
   if (!metrics) return undefined;
   const used = metrics.btrfs_metadata_used_bytes;
@@ -59,7 +63,54 @@ function formatMetadataPercent(host: Host): string | undefined {
   ) {
     return undefined;
   }
-  return `${Math.round((used / total) * 100)}%`;
+  return normalizePercent((used / total) * 100);
+}
+
+function MetricBar({ label, percent, detail, compact }: MetricBarProps) {
+  const displayPercent = normalizePercent(percent);
+  return (
+    <Space
+      orientation="vertical"
+      size={2}
+      style={{ width: compact ? 180 : "100%" }}
+    >
+      <Space
+        size={8}
+        style={{
+          justifyContent: "space-between",
+          width: "100%",
+        }}
+      >
+        <Typography.Text style={{ fontSize: compact ? 12 : undefined }}>
+          {label}
+          {displayPercent != null ? ` ${Math.round(displayPercent)}%` : ""}
+        </Typography.Text>
+        {detail && (
+          <Typography.Text
+            type="secondary"
+            style={{ fontSize: compact ? 12 : undefined }}
+          >
+            {detail}
+          </Typography.Text>
+        )}
+      </Space>
+      {displayPercent != null ? (
+        <Progress
+          percent={Math.round(displayPercent)}
+          size="small"
+          status={progressStatus(displayPercent)}
+          showInfo={false}
+        />
+      ) : (
+        <Typography.Text
+          type="secondary"
+          style={{ fontSize: compact ? 12 : undefined }}
+        >
+          n/a
+        </Typography.Text>
+      )}
+    </Space>
+  );
 }
 
 export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
@@ -77,15 +128,16 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
     );
   }
 
-  const cpuPercent = formatPercent(metrics.cpu_percent);
-  const memoryPercent = formatPercent(metrics.memory_used_percent);
+  const cpuPercent = normalizePercent(metrics.cpu_percent);
+  const memoryPercent = normalizePercent(metrics.memory_used_percent);
+  const diskPercent = getDiskUsedPercent(host);
+  const metadataPercent = getMetadataUsedPercent(host);
   const diskFree = formatBytes(metrics.disk_available_conservative_bytes);
   const memoryUsed = formatBytes(metrics.memory_used_bytes);
   const memoryTotal = formatBytes(metrics.memory_total_bytes);
   const diskTotal = formatBytes(metrics.disk_device_total_bytes);
   const metadataUsed = formatBytes(metrics.btrfs_metadata_used_bytes);
   const metadataTotal = formatBytes(metrics.btrfs_metadata_total_bytes);
-  const metadataPercent = formatMetadataPercent(host);
   const load =
     metrics.load_1 != null || metrics.load_5 != null || metrics.load_15 != null
       ? [metrics.load_1, metrics.load_5, metrics.load_15]
@@ -97,55 +149,71 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
 
   if (compact) {
     return (
-      <Space wrap size={[4, 4]}>
-        {cpuPercent && (
-          <Tag color={metricTagColor(metrics.cpu_percent)}>
-            CPU {cpuPercent}
-          </Tag>
-        )}
-        {memoryPercent && (
-          <Tag color={metricTagColor(metrics.memory_used_percent)}>
-            RAM {memoryPercent}
-          </Tag>
-        )}
-        {diskFree && <Tag color={diskTagColor(host)}>Disk {diskFree} free</Tag>}
-        {(metrics.running_project_count != null ||
-          metrics.assigned_project_count != null) && (
-          <Tag>
-            Projects {metrics.running_project_count ?? 0}/
-            {metrics.assigned_project_count ?? 0} running
-          </Tag>
-        )}
+      <Space orientation="vertical" size={4}>
+        <MetricBar
+          label="CPU"
+          percent={cpuPercent}
+          detail={load ? `load ${load}` : undefined}
+          compact
+        />
+        <MetricBar
+          label="RAM"
+          percent={memoryPercent}
+          detail={
+            memoryUsed && memoryTotal
+              ? `${memoryUsed} / ${memoryTotal}`
+              : undefined
+          }
+          compact
+        />
+        <MetricBar
+          label="Disk"
+          percent={diskPercent}
+          detail={diskFree ? `${diskFree} free` : diskTotal}
+          compact
+        />
+        <Tag>
+          Projects {metrics.running_project_count ?? 0}/
+          {metrics.assigned_project_count ?? 0} running
+        </Tag>
       </Space>
     );
   }
 
   return (
-    <Space orientation="vertical" size={4}>
-      <Typography.Text>
-        CPU: {cpuPercent ?? "n/a"}
-        {load ? `  |  load ${load}` : ""}
-      </Typography.Text>
-      <Typography.Text>
-        Memory:{" "}
-        {memoryUsed && memoryTotal
-          ? `${memoryUsed} / ${memoryTotal} (${memoryPercent ?? "n/a"})`
-          : "n/a"}
-      </Typography.Text>
-      <Typography.Text>
-        Disk:{" "}
-        {diskFree
-          ? `${diskFree} conservative free${
-              diskTotal ? ` / ${diskTotal} total` : ""
-            }`
-          : "n/a"}
-      </Typography.Text>
-      <Typography.Text>
-        Metadata:{" "}
-        {metadataUsed && metadataTotal
-          ? `${metadataUsed} / ${metadataTotal} (${metadataPercent ?? "n/a"})`
-          : "n/a"}
-      </Typography.Text>
+    <Space orientation="vertical" size={6} style={{ width: "100%" }}>
+      <MetricBar
+        label="CPU"
+        percent={cpuPercent}
+        detail={load ? `load ${load}` : undefined}
+      />
+      <MetricBar
+        label="Memory"
+        percent={memoryPercent}
+        detail={
+          memoryUsed && memoryTotal
+            ? `${memoryUsed} / ${memoryTotal}`
+            : undefined
+        }
+      />
+      <MetricBar
+        label="Disk"
+        percent={diskPercent}
+        detail={
+          diskFree
+            ? `${diskFree} conservative free${diskTotal ? ` / ${diskTotal}` : ""}`
+            : diskTotal
+        }
+      />
+      <MetricBar
+        label="Metadata"
+        percent={metadataPercent}
+        detail={
+          metadataUsed && metadataTotal
+            ? `${metadataUsed} / ${metadataTotal}`
+            : undefined
+        }
+      />
       <Typography.Text>
         Projects: {metrics.running_project_count ?? 0} running,{" "}
         {metrics.starting_project_count ?? 0} starting,{" "}
