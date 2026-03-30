@@ -153,7 +153,7 @@ export function MiscSideButtons({
         items={recoveryMenuItems}
         title={
           <span style={{ whiteSpace: "nowrap" }}>
-            <Icon name="life-ring" />{" "}
+            <Icon name="disk-snapshot" />{" "}
             <VisibleLG>
               <span style={{ fontSize: 12 }}>Recovery</span>
             </VisibleLG>

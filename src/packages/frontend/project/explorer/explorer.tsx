@@ -375,8 +375,11 @@ export function Explorer() {
   }, [actions, visibleListing?.length]);
 
   useEffect(() => {
+    // Local explorer filters should update the visible listing immediately,
+    // not show the deferred "Refresh" affordance that we reserve for incoming
+    // filesystem changes.
     allowNextListingUpdate();
-  }, [file_search, allowNextListingUpdate]);
+  }, [file_search, showHidden, allowNextListingUpdate]);
 
   useEffect(() => {
     let cancelled = false;
