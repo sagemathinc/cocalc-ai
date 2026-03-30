@@ -548,9 +548,15 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
   const memoryPercent = normalizePercent(metrics.memory_used_percent);
   const diskPercent = getDiskUsedPercent(host);
   const metadataPercent = getMetadataUsedPercent(host);
-  const diskFree = compact
-    ? formatBytesCompact(metrics.disk_available_conservative_bytes)
-    : formatBytes(metrics.disk_available_conservative_bytes);
+  const diskUsedBytes =
+    metrics.disk_device_total_bytes != null &&
+    metrics.disk_available_conservative_bytes != null
+      ? metrics.disk_device_total_bytes -
+        metrics.disk_available_conservative_bytes
+      : undefined;
+  const diskUsed = compact
+    ? formatBytesCompact(diskUsedBytes)
+    : formatBytes(diskUsedBytes);
   const memoryUsed = compact
     ? formatBytesCompact(metrics.memory_used_bytes)
     : formatBytes(metrics.memory_used_bytes);
@@ -623,7 +629,7 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
       return tooltipContent("Disk", point, [
         point.disk_available_conservative_bytes != null &&
         point.disk_device_total_bytes != null
-          ? `Free ${formatBytes(point.disk_available_conservative_bytes)} / ${formatBytes(point.disk_device_total_bytes)}`
+          ? `Used ${formatBytes(currentUsed)} / ${formatBytes(point.disk_device_total_bytes)}`
           : undefined,
         point.disk_used_percent != null
           ? `Used ${formatPercent(point.disk_used_percent)}`
@@ -705,7 +711,7 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
           label="Disk"
           percent={diskPercent}
           detail={
-            diskFree && diskTotal ? `${diskFree} / ${diskTotal}` : diskTotal
+            diskUsed && diskTotal ? `${diskUsed} / ${diskTotal}` : diskTotal
           }
           compact
           dense={dense}
@@ -744,7 +750,7 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
         label="Disk"
         percent={diskPercent}
         detail={
-          diskFree && diskTotal ? `${diskFree} / ${diskTotal}` : diskTotal
+          diskUsed && diskTotal ? `${diskUsed} / ${diskTotal}` : diskTotal
         }
         historyPoints={diskHistory}
         color={COLORS.ANTD_ORANGE}
