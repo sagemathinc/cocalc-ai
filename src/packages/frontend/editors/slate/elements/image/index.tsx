@@ -3,10 +3,9 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { load } from "cheerio";
-
 import { useFileContext } from "@cocalc/frontend/lib/file-context";
 import { dict } from "@cocalc/util/misc";
+import { parseFragmentElement } from "../../markdown-to-slate/util";
 import { register, SlateElement } from "../register";
 
 export interface Image extends SlateElement {
@@ -28,19 +27,17 @@ export function toSlate({ type, children, token }) {
     case "html_block":
       // token.content will be a string like this:
       //    <img src='https://wstein.org/bella-and-william.jpg' width=200px title='my pup' />
-      // easiest way to parse this is with jquery style api but via cheerio (not by hand).
-      const $ = load("");
-      const elt = $(token.content);
+      const elt = parseFragmentElement(token.content);
       const node = {
         type: "image",
         children,
         isInline: true,
         isVoid: true,
-        src: elt.attr("src") ?? "",
-        alt: elt.attr("alt") ?? "",
-        title: elt.attr("title") ?? "",
-        width: elt.attr("width"),
-        height: elt.attr("height"),
+        src: elt?.getAttribute("src") ?? "",
+        alt: elt?.getAttribute("alt") ?? "",
+        title: elt?.getAttribute("title") ?? "",
+        width: elt?.getAttribute("width") ?? undefined,
+        height: elt?.getAttribute("height") ?? undefined,
       } as any;
       if (type == "html_inline") {
         return node;
