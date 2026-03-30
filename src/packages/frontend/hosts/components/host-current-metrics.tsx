@@ -25,6 +25,14 @@ function formatBytes(value?: number): string | undefined {
   return human_readable_size(value);
 }
 
+function formatBytesCompact(value?: number): string | undefined {
+  if (value == null || !Number.isFinite(value)) return undefined;
+  if (value < 1000) return `${Math.ceil(value)} bytes`;
+  if (value < 1000000) return `${Math.ceil(value / 1000)} KB`;
+  if (value < 1000000000) return `${Math.ceil(value / 1000000)} MB`;
+  return `${Math.ceil(value / 1000000000)} GB`;
+}
+
 function normalizePercent(value?: number): number | undefined {
   if (value == null || !Number.isFinite(value)) return undefined;
   return Math.max(0, Math.min(100, value));
@@ -257,10 +265,18 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
   const memoryPercent = normalizePercent(metrics.memory_used_percent);
   const diskPercent = getDiskUsedPercent(host);
   const metadataPercent = getMetadataUsedPercent(host);
-  const diskFree = formatBytes(metrics.disk_available_conservative_bytes);
-  const memoryUsed = formatBytes(metrics.memory_used_bytes);
-  const memoryTotal = formatBytes(metrics.memory_total_bytes);
-  const diskTotal = formatBytes(metrics.disk_device_total_bytes);
+  const diskFree = compact
+    ? formatBytesCompact(metrics.disk_available_conservative_bytes)
+    : formatBytes(metrics.disk_available_conservative_bytes);
+  const memoryUsed = compact
+    ? formatBytesCompact(metrics.memory_used_bytes)
+    : formatBytes(metrics.memory_used_bytes);
+  const memoryTotal = compact
+    ? formatBytesCompact(metrics.memory_total_bytes)
+    : formatBytes(metrics.memory_total_bytes);
+  const diskTotal = compact
+    ? formatBytesCompact(metrics.disk_device_total_bytes)
+    : formatBytes(metrics.disk_device_total_bytes);
   const metadataUsed = formatBytes(metrics.btrfs_metadata_used_bytes);
   const metadataTotal = formatBytes(metrics.btrfs_metadata_total_bytes);
   const cpuHistory =
@@ -322,7 +338,9 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
         <MetricBar
           label="Disk"
           percent={diskPercent}
-          detail={diskFree ? `${diskFree} free` : diskTotal}
+          detail={
+            diskFree && diskTotal ? `${diskFree} / ${diskTotal}` : diskTotal
+          }
           compact
           dense={dense}
           historyValues={diskHistory}
@@ -360,9 +378,7 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
         label="Disk"
         percent={diskPercent}
         detail={
-          diskFree
-            ? `${diskFree} conservative free${diskTotal ? ` / ${diskTotal}` : ""}`
-            : diskTotal
+          diskFree && diskTotal ? `${diskFree} / ${diskTotal}` : diskTotal
         }
         historyValues={diskHistory}
         color={COLORS.ANTD_ORANGE}
