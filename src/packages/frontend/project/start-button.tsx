@@ -483,6 +483,7 @@ const START_PHASE_LABELS: Record<string, string> = {
   apply_pending_copies: "Preparing project state",
   prepare_config: "Preparing runtime",
   cache_rootfs: "Pulling RootFS image",
+  "start-project": "Starting runtime",
   runner_start: "Starting runtime",
   refresh_authorized_keys: "Refreshing access",
   done: "Project ready",
