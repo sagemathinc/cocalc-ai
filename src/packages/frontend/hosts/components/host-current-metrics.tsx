@@ -2,7 +2,9 @@ import { Progress, Space, Tag, Tooltip, Typography } from "antd";
 import { React } from "@cocalc/frontend/app-framework";
 import type {
   Host,
+  HostMetricsDerived,
   HostMetricsHistoryPoint,
+  HostMetricsRiskLevel,
 } from "@cocalc/conat/hub/api/hosts";
 import { COLORS } from "@cocalc/util/theme";
 import { formatBinaryBytes } from "../utils/format";
@@ -149,6 +151,138 @@ function formatSignedBytes(value?: number): string | undefined {
   const prefix = value > 0 ? "+" : value < 0 ? "-" : "";
   const formatted = formatBinaryBytes(Math.abs(value));
   return formatted ? `${prefix}${formatted}` : undefined;
+}
+
+function formatHours(value?: number): string | undefined {
+  if (value == null || !Number.isFinite(value)) return undefined;
+  if (value < 1) {
+    return `${Math.round(value * 60)}m`;
+  }
+  if (value < 24) {
+    return `${value.toFixed(1)}h`;
+  }
+  return `${Math.round(value)}h`;
+}
+
+function riskColor(level: HostMetricsRiskLevel): string | undefined {
+  switch (level) {
+    case "critical":
+      return "red";
+    case "warning":
+      return "orange";
+    default:
+      return undefined;
+  }
+}
+
+function riskLabel(
+  kind: "disk" | "metadata",
+  level: HostMetricsRiskLevel,
+): string {
+  return `${kind} ${level}`;
+}
+
+function riskTooltip(
+  title: string,
+  opts: {
+    reason?: string;
+    used_percent?: number;
+    available_bytes?: number;
+    hours_to_exhaustion?: number;
+  },
+): React.ReactNode {
+  const lines: string[] = [];
+  if (opts.reason) lines.push(opts.reason);
+  if (opts.used_percent != null) {
+    lines.push(`Used ${formatPercent(opts.used_percent)}`);
+  }
+  if (opts.available_bytes != null) {
+    lines.push(`Available ${formatBytes(opts.available_bytes)}`);
+  }
+  if (opts.hours_to_exhaustion != null) {
+    lines.push(`Exhaustion forecast ${formatHours(opts.hours_to_exhaustion)}`);
+  }
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+      <div style={{ fontWeight: 600 }}>{title}</div>
+      {lines.map((line, i) => (
+        <div key={`${title}-risk-${i}`}>{line}</div>
+      ))}
+    </div>
+  );
+}
+
+function renderDerivedRiskTags(
+  derived: HostMetricsDerived | undefined,
+): React.ReactNode {
+  if (!derived) return null;
+  const tags: React.ReactNode[] = [];
+  if (derived.disk.level !== "healthy") {
+    const tag = (
+      <Tag color={riskColor(derived.disk.level)}>
+        {riskLabel("disk", derived.disk.level)}
+      </Tag>
+    );
+    tags.push(
+      derived.disk.reason ? (
+        <Tooltip
+          key="disk-risk"
+          title={riskTooltip("Disk risk", derived.disk)}
+          placement="top"
+        >
+          {tag}
+        </Tooltip>
+      ) : (
+        <React.Fragment key="disk-risk">{tag}</React.Fragment>
+      ),
+    );
+  }
+  if (derived.metadata.level !== "healthy") {
+    const tag = (
+      <Tag color={riskColor(derived.metadata.level)}>
+        {riskLabel("metadata", derived.metadata.level)}
+      </Tag>
+    );
+    tags.push(
+      derived.metadata.reason ? (
+        <Tooltip
+          key="metadata-risk"
+          title={riskTooltip("Metadata risk", derived.metadata)}
+          placement="top"
+        >
+          {tag}
+        </Tooltip>
+      ) : (
+        <React.Fragment key="metadata-risk">{tag}</React.Fragment>
+      ),
+    );
+  }
+  if (!derived.admission_allowed) {
+    tags.push(
+      <Tooltip
+        key="admission-blocked"
+        title="Storage-heavy admissions should be blocked until the host recovers."
+      >
+        <Tag color="red">admission blocked</Tag>
+      </Tooltip>,
+    );
+  }
+  if (derived.auto_grow_recommended) {
+    tags.push(
+      <Tooltip
+        key="auto-grow-recommended"
+        title="The host is approaching a disk limit where guarded disk growth would likely help."
+      >
+        <Tag color="gold">auto-grow suggested</Tag>
+      </Tooltip>,
+    );
+  }
+  if (!tags.length) return null;
+  return (
+    <Space size={[4, 4]} wrap>
+      {tags}
+    </Space>
+  );
 }
 
 function tooltipContent(
@@ -525,6 +659,13 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
   const metadataTrend = formatGrowthBytesPerHour(
     history?.growth?.metadata_used_bytes_per_hour,
   );
+  const derived = history?.derived;
+  const riskTags = renderDerivedRiskTags(derived);
+  const riskSummary = derived
+    ? `Risk: disk ${derived.disk.level}, metadata ${derived.metadata.level} · ${
+        derived.admission_allowed ? "admission allowed" : "admission blocked"
+      }${derived.auto_grow_recommended ? " · auto-grow suggested" : ""}`
+    : undefined;
   const load =
     metrics.load_1 != null || metrics.load_5 != null || metrics.load_15 != null
       ? [metrics.load_1, metrics.load_5, metrics.load_15]
@@ -537,6 +678,7 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
   if (compact) {
     return (
       <Space orientation="vertical" size={4}>
+        {riskTags}
         <MetricBar
           label="CPU"
           percent={cpuPercent}
@@ -618,6 +760,7 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
         historyPoints={metadataHistory}
         color={COLORS.ANTD_RED}
       />
+      {riskTags}
       {(diskTrend || metadataTrend) && (
         <Typography.Text type="secondary">
           {diskTrend ? `Disk trend ${diskTrend}` : ""}
@@ -627,6 +770,9 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
             ? ` over last ${history.window_minutes}m`
             : ""}
         </Typography.Text>
+      )}
+      {riskSummary && (
+        <Typography.Text type="secondary">{riskSummary}</Typography.Text>
       )}
       <Typography.Text>
         Projects: {metrics.running_project_count ?? 0} running,{" "}

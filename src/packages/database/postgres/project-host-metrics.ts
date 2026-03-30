@@ -1,15 +1,27 @@
 import getPool from "@cocalc/database/pool";
 import type {
   HostCurrentMetrics,
+  HostMetricsDerived,
   HostMetricsHistory,
   HostMetricsHistoryGrowth,
   HostMetricsHistoryPoint,
+  HostMetricsRiskLevel,
+  HostMetricsRiskState,
 } from "@cocalc/conat/hub/api/hosts";
 import type { Pool } from "pg";
 
 const SAMPLE_INTERVAL_MS = 60_000;
 const DEFAULT_WINDOW_MINUTES = 60;
 const DEFAULT_MAX_POINTS = 60;
+const GIB = 1024 * 1024 * 1024;
+const DISK_WARNING_AVAILABLE_BYTES = 25 * GIB;
+const DISK_CRITICAL_AVAILABLE_BYTES = 10 * GIB;
+const DISK_WARNING_PERCENT = 85;
+const DISK_CRITICAL_PERCENT = 93;
+const METADATA_WARNING_PERCENT = 80;
+const METADATA_CRITICAL_PERCENT = 90;
+const WARNING_HOURS_TO_EXHAUSTION = 24;
+const CRITICAL_HOURS_TO_EXHAUSTION = 6;
 let schemaReady: Promise<void> | undefined;
 
 type ProjectHostMetricsSampleRow = {
@@ -206,6 +218,183 @@ function computeGrowth(
   };
 }
 
+function severity(level: HostMetricsRiskLevel): number {
+  switch (level) {
+    case "critical":
+      return 2;
+    case "warning":
+      return 1;
+    default:
+      return 0;
+  }
+}
+
+function worstLevel(
+  a: HostMetricsRiskLevel,
+  b: HostMetricsRiskLevel,
+): HostMetricsRiskLevel {
+  return severity(a) >= severity(b) ? a : b;
+}
+
+function computeHoursToExhaustion(
+  remainingBytes: number | undefined,
+  growthBytesPerHour: number | undefined,
+): number | undefined {
+  if (
+    remainingBytes == null ||
+    growthBytesPerHour == null ||
+    !Number.isFinite(remainingBytes) ||
+    !Number.isFinite(growthBytesPerHour)
+  ) {
+    return undefined;
+  }
+  if (remainingBytes <= 0) return 0;
+  if (growthBytesPerHour <= 0) return undefined;
+  return remainingBytes / growthBytesPerHour;
+}
+
+function riskState(opts: {
+  used_percent?: number;
+  available_bytes?: number;
+  hours_to_exhaustion?: number;
+  warning_percent: number;
+  critical_percent: number;
+  warning_available_bytes?: number;
+  critical_available_bytes?: number;
+  label: string;
+}): HostMetricsRiskState {
+  let level: HostMetricsRiskLevel = "healthy";
+  const reasons: string[] = [];
+  if (
+    opts.critical_available_bytes != null &&
+    opts.available_bytes != null &&
+    opts.available_bytes <= opts.critical_available_bytes
+  ) {
+    level = worstLevel(level, "critical");
+    reasons.push(`${opts.label} headroom is critically low`);
+  } else if (
+    opts.warning_available_bytes != null &&
+    opts.available_bytes != null &&
+    opts.available_bytes <= opts.warning_available_bytes
+  ) {
+    level = worstLevel(level, "warning");
+    reasons.push(`${opts.label} headroom is low`);
+  }
+  if (
+    opts.used_percent != null &&
+    Number.isFinite(opts.used_percent) &&
+    opts.used_percent >= opts.critical_percent
+  ) {
+    level = worstLevel(level, "critical");
+    reasons.push(`${opts.label} usage is critically high`);
+  } else if (
+    opts.used_percent != null &&
+    Number.isFinite(opts.used_percent) &&
+    opts.used_percent >= opts.warning_percent
+  ) {
+    level = worstLevel(level, "warning");
+    reasons.push(`${opts.label} usage is high`);
+  }
+  if (
+    opts.hours_to_exhaustion != null &&
+    Number.isFinite(opts.hours_to_exhaustion) &&
+    opts.hours_to_exhaustion <= CRITICAL_HOURS_TO_EXHAUSTION
+  ) {
+    level = worstLevel(level, "critical");
+    reasons.push(
+      `${opts.label} could exhaust within ${CRITICAL_HOURS_TO_EXHAUSTION}h`,
+    );
+  } else if (
+    opts.hours_to_exhaustion != null &&
+    Number.isFinite(opts.hours_to_exhaustion) &&
+    opts.hours_to_exhaustion <= WARNING_HOURS_TO_EXHAUSTION
+  ) {
+    level = worstLevel(level, "warning");
+    reasons.push(
+      `${opts.label} could exhaust within ${WARNING_HOURS_TO_EXHAUSTION}h`,
+    );
+  }
+  return {
+    level,
+    ...(opts.used_percent != null ? { used_percent: opts.used_percent } : {}),
+    ...(opts.available_bytes != null
+      ? { available_bytes: opts.available_bytes }
+      : {}),
+    ...(opts.hours_to_exhaustion != null
+      ? { hours_to_exhaustion: opts.hours_to_exhaustion }
+      : {}),
+    ...(reasons.length ? { reason: reasons[0] } : {}),
+  };
+}
+
+function computeDerived(
+  points: HostMetricsHistoryPoint[],
+  window_minutes: number,
+  growth?: HostMetricsHistoryGrowth,
+): HostMetricsDerived | undefined {
+  const current = points[points.length - 1];
+  if (!current) return undefined;
+  const diskHoursToExhaustion = computeHoursToExhaustion(
+    current.disk_available_conservative_bytes,
+    growth?.disk_used_bytes_per_hour,
+  );
+  const metadataAvailableBytes =
+    current.btrfs_metadata_total_bytes != null &&
+    current.btrfs_metadata_used_bytes != null
+      ? current.btrfs_metadata_total_bytes - current.btrfs_metadata_used_bytes
+      : undefined;
+  const metadataHoursToExhaustion = computeHoursToExhaustion(
+    metadataAvailableBytes,
+    growth?.metadata_used_bytes_per_hour,
+  );
+  const disk = riskState({
+    label: "Disk",
+    used_percent: current.disk_used_percent,
+    available_bytes: current.disk_available_conservative_bytes,
+    hours_to_exhaustion: diskHoursToExhaustion,
+    warning_percent: DISK_WARNING_PERCENT,
+    critical_percent: DISK_CRITICAL_PERCENT,
+    warning_available_bytes: DISK_WARNING_AVAILABLE_BYTES,
+    critical_available_bytes: DISK_CRITICAL_AVAILABLE_BYTES,
+  });
+  const metadata = riskState({
+    label: "Metadata",
+    used_percent: current.metadata_used_percent,
+    available_bytes: metadataAvailableBytes,
+    hours_to_exhaustion: metadataHoursToExhaustion,
+    warning_percent: METADATA_WARNING_PERCENT,
+    critical_percent: METADATA_CRITICAL_PERCENT,
+  });
+  const alerts: HostMetricsDerived["alerts"] = [];
+  if (disk.level !== "healthy") {
+    alerts.push({
+      kind: "disk",
+      level: disk.level,
+      message: disk.reason ?? "disk pressure is elevated",
+    });
+  }
+  if (metadata.level !== "healthy") {
+    alerts.push({
+      kind: "metadata",
+      level: metadata.level,
+      message: metadata.reason ?? "metadata pressure is elevated",
+    });
+  }
+  return {
+    window_minutes,
+    disk,
+    metadata,
+    alerts,
+    admission_allowed:
+      disk.level !== "critical" && metadata.level !== "critical",
+    auto_grow_recommended:
+      disk.level === "critical" ||
+      (disk.level === "warning" &&
+        disk.hours_to_exhaustion != null &&
+        disk.hours_to_exhaustion <= 12),
+  };
+}
+
 export async function ensureProjectHostMetricsSamplesSchema(): Promise<void> {
   if (!schemaReady) {
     schemaReady = (async () => {
@@ -381,11 +570,13 @@ export async function loadProjectHostMetricsHistory({
   for (const host_id of hostIds) {
     const allPoints = grouped.get(host_id) ?? [];
     const points = compactPoints(allPoints, maxPoints);
+    const growth = computeGrowth(allPoints, windowMinutes);
     result.set(host_id, {
       window_minutes: windowMinutes,
       point_count: allPoints.length,
       points,
-      growth: computeGrowth(allPoints, windowMinutes),
+      growth,
+      derived: computeDerived(allPoints, windowMinutes, growth),
     });
   }
   return result;

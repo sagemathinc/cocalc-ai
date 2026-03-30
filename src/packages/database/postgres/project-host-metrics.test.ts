@@ -99,5 +99,10 @@ describe("project host metrics history", () => {
     expect(entry?.points[1].disk_used_percent).toBe(70);
     expect(entry?.growth?.disk_used_bytes_per_hour).toBeCloseTo(9000, 4);
     expect(entry?.growth?.metadata_used_bytes_per_hour).toBeCloseTo(600, 4);
+    expect(entry?.derived?.disk.level).toBe("critical");
+    expect(entry?.derived?.metadata.level).toBe("critical");
+    expect(entry?.derived?.admission_allowed).toBe(false);
+    expect(entry?.derived?.alerts).toHaveLength(2);
+    expect(entry?.derived?.disk.hours_to_exhaustion).toBeCloseTo(300 / 9000, 4);
   });
 });

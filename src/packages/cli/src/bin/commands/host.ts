@@ -286,6 +286,7 @@ export function registerHostCommand(
             name: h.name,
             current: h.metrics?.current ?? null,
             history,
+            derived: history?.derived ?? null,
           };
         });
       },

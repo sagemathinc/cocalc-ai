@@ -250,11 +250,37 @@ export interface HostMetricsHistoryGrowth {
   metadata_used_bytes_per_hour?: number;
 }
 
+export type HostMetricsRiskLevel = "healthy" | "warning" | "critical";
+
+export interface HostMetricsRiskState {
+  level: HostMetricsRiskLevel;
+  reason?: string;
+  used_percent?: number;
+  available_bytes?: number;
+  hours_to_exhaustion?: number;
+}
+
+export interface HostMetricsAlert {
+  kind: "disk" | "metadata";
+  level: Exclude<HostMetricsRiskLevel, "healthy">;
+  message: string;
+}
+
+export interface HostMetricsDerived {
+  window_minutes: number;
+  disk: HostMetricsRiskState;
+  metadata: HostMetricsRiskState;
+  alerts: HostMetricsAlert[];
+  admission_allowed: boolean;
+  auto_grow_recommended: boolean;
+}
+
 export interface HostMetricsHistory {
   window_minutes: number;
   point_count: number;
   points: HostMetricsHistoryPoint[];
   growth?: HostMetricsHistoryGrowth;
+  derived?: HostMetricsDerived;
 }
 
 export interface HostMetrics {

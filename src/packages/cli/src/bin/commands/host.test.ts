@@ -25,6 +25,23 @@ function makeDeps(
               window_minutes: opts?.window_minutes ?? 60,
               point_count: 0,
               points: [],
+              derived: {
+                window_minutes: opts?.window_minutes ?? 60,
+                disk: { level: "healthy" },
+                metadata: {
+                  level: "warning",
+                  reason: "metadata usage is high",
+                },
+                alerts: [
+                  {
+                    kind: "metadata",
+                    level: "warning",
+                    message: "metadata usage is high",
+                  },
+                ],
+                admission_allowed: true,
+                auto_grow_recommended: false,
+              },
             }),
           },
         },
@@ -174,4 +191,5 @@ test("host metrics returns current metrics and history", async () => {
   assert.equal(capture.data.host_id, "host-1");
   assert.equal(capture.data.current.cpu_percent, 55);
   assert.equal(capture.data.history.window_minutes, 24 * 60);
+  assert.equal(capture.data.derived.metadata.level, "warning");
 });
