@@ -179,14 +179,17 @@ export const EmailAddressSetting = ({
       label={label}
       style={disabled ? { color: COLORS.GRAY_M } : undefined}
     >
-      <div>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "flex-start",
+          justifyContent: "space-between",
+          gap: "10px",
+        }}
+      >
         {email_address}
         {state === "view" ? (
-          <Button
-            disabled={disabled}
-            className="pull-right"
-            onClick={start_editing}
-          >
+          <Button disabled={disabled} onClick={start_editing}>
             {button_label()}...
           </Button>
         ) : undefined}

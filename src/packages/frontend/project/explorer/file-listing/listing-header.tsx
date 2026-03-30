@@ -80,11 +80,18 @@ export function ListingHeader({ active_file_sort, sort_by }: Props) {
       <Col sm={10} xs={24}>
         {render_sort_link("name", "Name", "-4px")}
       </Col>
-      <Col sm={7} xs={12}>
+      <Col
+        sm={7}
+        xs={12}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: "8px",
+        }}
+      >
         {render_sort_link("time", "Date Modified", "2px")}
-        <span className="pull-right">
-          {render_sort_link("size", "Size/Download/View")}
-        </span>
+        {render_sort_link("size", "Size/Download/View")}
       </Col>
     </Row>
   );

@@ -103,8 +103,13 @@ export const Notification: React.FC<Props> = React.memo((props: Props) => {
             showZero
             color={count == 0 ? COLORS.GRAY : undefined}
             count={count}
-            className={count > 0 ? "smc-bell-notification" : ""}
-          />
+          >
+            <Icon
+              style={{ fontSize: fontSizeIcons }}
+              className={count > 0 ? "smc-bell-notification" : ""}
+              name="bell"
+            />
+          </Badge>
         );
 
       case "notifications":

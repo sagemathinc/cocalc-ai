@@ -239,7 +239,7 @@ export function MiscSideButtons({
   }
 
   return (
-    <Space className="pull-right">
+    <Space style={{ display: "inline-flex" }}>
       {(effective_current_path == SNAPSHOTS ||
         effective_current_path.startsWith(SNAPSHOTS + "/")) && (
         <Snapshots onCreated={refreshSnapshots} />
@@ -257,14 +257,12 @@ export function MiscSideButtons({
         </Space.Compact>
       )}
       <Space.Compact>{render_upload_button()}</Space.Compact>
-      <div className="pull-right">
-        <Space.Compact>
-          {render_hidden_toggle()}
-          {!lite && render_recovery()}
-          {!lite && <CloneProject project_id={project_id} />}
-          {!lite && <TourButton project_id={project_id} />}
-        </Space.Compact>
-      </div>
+      <Space.Compact>
+        {render_hidden_toggle()}
+        {!lite && render_recovery()}
+        {!lite && <CloneProject project_id={project_id} />}
+        {!lite && <TourButton project_id={project_id} />}
+      </Space.Compact>
     </Space>
   );
 }

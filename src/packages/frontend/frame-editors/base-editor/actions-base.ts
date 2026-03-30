@@ -158,7 +158,7 @@ import "../generic/codemirror-plugins";
 import languageModelCreateChat, { Options } from "../llm/create-chat";
 import type { Scope as LanguageModelScope } from "../llm/types";
 import { SettingsObject } from "../settings/types";
-import { Terminal } from "../terminal-editor/connected-terminal";
+import type { Terminal } from "../terminal-editor/connected-terminal";
 import { TerminalManager } from "../terminal-editor/terminal-manager";
 import type { TimeTravelActions } from "../time-travel-editor/actions";
 import {
@@ -1934,7 +1934,7 @@ export class BaseEditorActions<
     id: string,
     parent: HTMLElement,
     terminalThemeOverride?: string | null,
-  ): undefined | Terminal<CodeEditorState> {
+  ): Promise<undefined | Terminal<CodeEditorState>> {
     return this.terminals.get_terminal(id, parent, terminalThemeOverride);
   }
 

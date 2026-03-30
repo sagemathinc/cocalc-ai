@@ -4,7 +4,7 @@
  */
 
 import { codemirrorMode } from "@cocalc/frontend/file-extensions";
-import { CodeMirrorStatic } from "@cocalc/frontend/jupyter/codemirror-static";
+import StaticCodeBlock from "@cocalc/frontend/components/static-code-block";
 import { Element } from "../../types";
 
 export default function InputStatic({
@@ -16,11 +16,15 @@ export default function InputStatic({
 }) {
   // TODO: falling back to python for the mode below; will happen on share server or before things have fully loaded.
   // Instead, this should be stored cached in the file.
+  const modeName =
+    typeof mode === "string"
+      ? mode
+      : (mode?.name ?? codemirrorMode("py")?.name ?? "python");
   return (
-    <CodeMirrorStatic
+    <StaticCodeBlock
       value={element.str ?? ""}
-      font_size={element.data?.fontSize}
-      options={{ lineNumbers: false, mode: mode ?? codemirrorMode("py") }}
+      fontSize={element.data?.fontSize}
+      info={modeName}
     />
   );
 }

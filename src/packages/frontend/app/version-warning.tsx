@@ -80,21 +80,31 @@ export default function VersionWarning() {
 
   function render_suggested() {
     return (
-      <>
-        <Icon name={"refresh"} /> New Version Available: upgrade by <Gap />
-        <a
-          onClick={() => window.location.reload()}
-          style={{
-            cursor: "pointer",
-            fontWeight: "bold",
-            color: style.color,
-            textDecoration: "underline",
-          }}
-        >
-          reloading this page
-        </a>
-        .{render_close()}
-      </>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "flex-start",
+          justifyContent: "space-between",
+          gap: "10px",
+        }}
+      >
+        <div style={{ flex: "1 1 auto" }}>
+          <Icon name={"refresh"} /> New Version Available: upgrade by <Gap />
+          <a
+            onClick={() => window.location.reload()}
+            style={{
+              cursor: "pointer",
+              fontWeight: "bold",
+              color: style.color,
+              textDecoration: "underline",
+            }}
+          >
+            reloading this page
+          </a>
+          .
+        </div>
+        {render_close()}
+      </div>
     );
   }
 
@@ -103,8 +113,7 @@ export default function VersionWarning() {
       return (
         <Icon
           name="times"
-          className="pull-right"
-          style={{ cursor: "pointer", marginTop: "5px" }}
+          style={{ cursor: "pointer", marginTop: "5px", flex: "0 0 auto" }}
           onClick={() => setClosed(true)}
         />
       );

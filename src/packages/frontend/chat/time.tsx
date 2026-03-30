@@ -15,8 +15,10 @@ export function Time({ message, edit }: Props) {
   return (
     <span
       onClick={IS_TOUCH && edit != null ? edit : undefined}
-      className="pull-right small"
+      className="small"
       style={{
+        display: "inline-block",
+        flex: "0 0 auto",
         maxWidth: "20%",
         whiteSpace: "nowrap",
         overflow: "hidden",

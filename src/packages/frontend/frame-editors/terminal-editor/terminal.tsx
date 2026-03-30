@@ -19,7 +19,7 @@ import {
 import { useStudentProjectFunctionality } from "@cocalc/frontend/course";
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import { effectiveTerminalColorScheme } from "@cocalc/frontend/project/workspaces/terminal-theme";
-import { Terminal } from "./connected-terminal";
+import type { Terminal } from "./connected-terminal";
 import { background_color } from "./themes";
 import useResizeObserver from "use-resize-observer";
 
@@ -51,6 +51,7 @@ export const TerminalFrame: React.FC<Props> = React.memo((props: Props) => {
   const { workspaces } = useProjectContext();
   const terminalRef = useRef<Terminal | undefined>(undefined);
   const terminalDOMRef = useRef<any>(null);
+  const terminalLoadTokenRef = useRef(0);
   const resize = useResizeObserver({ ref: terminalDOMRef });
   const isMountedRef = useIsMountedRef();
   const student_project_functionality = useStudentProjectFunctionality(
@@ -74,14 +75,14 @@ export const TerminalFrame: React.FC<Props> = React.memo((props: Props) => {
     // or switches to being visible and was not initialized.
     // See https://github.com/sagemathinc/cocalc/issues/5133
     if (terminalRef.current != null || !props.is_visible) return;
-    init_terminal();
+    void init_terminal();
   }, [props.is_visible]);
 
   useEffect(() => {
     // yes, this can change!! -- see https://github.com/sagemathinc/cocalc/issues/3819
     if (terminalRef.current == null) return;
     delete_terminal();
-    init_terminal();
+    void init_terminal();
   }, [props.id]);
 
   useEffect(() => {
@@ -101,30 +102,44 @@ export const TerminalFrame: React.FC<Props> = React.memo((props: Props) => {
   }, [props.resize, resize]);
 
   function delete_terminal(): void {
+    terminalLoadTokenRef.current += 1;
     if (terminalRef.current == null) return; // already deleted or never created
     terminalRef.current.element?.remove();
     terminalRef.current.is_visible = false;
     terminalRef.current = undefined;
   }
 
-  function init_terminal(): void {
+  async function init_terminal(): Promise<void> {
     if (!props.is_visible) return;
     const node: any = terminalDOMRef.current;
     if (node == null) {
       // happens, e.g., when terminals are disabled.
       return;
     }
-    terminalRef.current = props.actions._get_terminal(
+    const token = ++terminalLoadTokenRef.current;
+    const terminal = await props.actions._get_terminal(
       props.id,
       node,
       workspaceRecord?.terminal_theme,
     );
-    if (terminalRef.current == null) return; // should be impossible.
-    terminalRef.current.is_visible = true;
+    if (
+      terminal == null ||
+      !isMountedRef.current ||
+      terminalLoadTokenRef.current !== token ||
+      terminalDOMRef.current !== node
+    ) {
+      terminal?.element?.remove();
+      if (terminal != null) {
+        terminal.is_visible = false;
+      }
+      return;
+    }
+    terminalRef.current = terminal;
+    terminal.is_visible = true;
     set_font_size();
     measureSize();
     if (props.is_current) {
-      terminalRef.current.focus();
+      terminal.focus();
     }
     // Get rid of browser context menu, which makes no sense on a canvas.
     // See https://stackoverflow.com/questions/10864249/disabling-right-click-context-menu-on-a-html-canvas
