@@ -105,4 +105,37 @@ describe("project host metrics history", () => {
     expect(entry?.derived?.alerts).toHaveLength(2);
     expect(entry?.derived?.disk.hours_to_exhaustion).toBeCloseTo(300 / 9000, 4);
   });
+
+  it("treats missing btrfs metadata fields as unavailable instead of zero", async () => {
+    const host_id = uuid();
+    await insertProjectHost(host_id);
+    const collected_at = new Date().toISOString();
+
+    await recordProjectHostMetricsSample({
+      host_id,
+      metrics: {
+        collected_at,
+        cpu_percent: 5,
+        disk_device_total_bytes: 214748364800,
+        disk_device_used_bytes: 53123457024,
+        disk_available_conservative_bytes: 160854908928,
+        running_project_count: 10,
+      },
+    });
+
+    const history = await loadProjectHostMetricsHistory({
+      host_ids: [host_id],
+      window_minutes: 60,
+      max_points: 60,
+    });
+    const entry = history.get(host_id);
+    expect(entry).toBeDefined();
+    expect(entry?.points).toHaveLength(1);
+    expect(entry?.points[0].btrfs_metadata_total_bytes).toBeUndefined();
+    expect(entry?.points[0].btrfs_metadata_used_bytes).toBeUndefined();
+    expect(entry?.points[0].disk_used_percent).toBeCloseTo(25.1, 1);
+    expect(entry?.derived?.metadata.level).toBe("healthy");
+    expect(entry?.derived?.metadata.available_bytes).toBeUndefined();
+    expect(entry?.derived?.admission_allowed).toBe(true);
+  });
 });

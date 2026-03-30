@@ -62,12 +62,14 @@ function pool(): Pool {
 }
 
 function toFloat(value: unknown): number | undefined {
+  if (value == null || value === "") return undefined;
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return undefined;
   return parsed;
 }
 
 function toInteger(value: unknown): number | undefined {
+  if (value == null || value === "") return undefined;
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return undefined;
   return Math.max(0, Math.floor(parsed));
