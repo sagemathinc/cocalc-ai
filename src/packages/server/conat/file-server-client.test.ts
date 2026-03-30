@@ -3,6 +3,7 @@ export {};
 let materializeProjectHostTargetMock: jest.Mock;
 let fileServerClientMock: jest.Mock;
 let conatWithProjectRoutingMock: jest.Mock;
+let pingMock: jest.Mock;
 
 jest.mock("./route-project", () => ({
   __esModule: true,
@@ -29,7 +30,11 @@ describe("conat/file-server-client", () => {
       host_id: "host-1",
     }));
     conatWithProjectRoutingMock = jest.fn(() => ({ id: "routed-client" }));
-    fileServerClientMock = jest.fn(() => ({ createBackup: jest.fn() }));
+    pingMock = jest.fn(async () => undefined);
+    fileServerClientMock = jest.fn(() => ({
+      createBackup: jest.fn(),
+      conat: { ping: pingMock },
+    }));
   });
 
   it("materializes route before creating project file-server client", async () => {
@@ -80,5 +85,41 @@ describe("conat/file-server-client", () => {
       timeout: undefined,
       waitForInterest: true,
     });
+  });
+
+  it("pings the file-server service when explicitly asked to ensure readiness", async () => {
+    const { ensureProjectFileServerClientReady, getProjectFileServerClient } =
+      await import("./file-server-client");
+    const client = await getProjectFileServerClient({
+      project_id: "44444444-4444-4444-4444-444444444444",
+    });
+
+    await ensureProjectFileServerClientReady({
+      project_id: "44444444-4444-4444-4444-444444444444",
+      client,
+      maxWait: 4321,
+    });
+
+    expect(pingMock).toHaveBeenCalledWith({ maxWait: 4321 });
+  });
+
+  it("wraps readiness ping failures in a clearer project-scoped error", async () => {
+    pingMock = jest.fn(async () => {
+      throw new Error("timed out waiting for file-server pong");
+    });
+    fileServerClientMock = jest.fn(() => ({
+      createBackup: jest.fn(),
+      conat: { ping: pingMock },
+    }));
+    const { ensureProjectFileServerClientReady, getProjectFileServerClient } =
+      await import("./file-server-client");
+    const project_id = "55555555-5555-5555-5555-555555555555";
+    const client = await getProjectFileServerClient({ project_id });
+
+    await expect(
+      ensureProjectFileServerClientReady({ project_id, client }),
+    ).rejects.toThrow(
+      `project file-server service for ${project_id} is not responding`,
+    );
   });
 });

@@ -115,6 +115,7 @@ interface Props {
   // When true, grow/shrink the editor height up to a cap. Defaults to false to
   // preserve fixed-height consumers (e.g., task editor).
   autoGrow?: boolean;
+  autoGrowMinHeight?: number; // px floor for autoGrow (defaults to single-line composer size)
   autoGrowMaxHeight?: number; // px cap for autoGrow (defaults to 50vh behavior)
   clampAutoGrowToHost?: boolean;
   chromeLayout?: "internal" | "external";
@@ -123,6 +124,7 @@ interface Props {
 export function MarkdownInput(props: Props) {
   const {
     autoFocus,
+    autoGrowMinHeight,
     autoGrowMaxHeight,
     clampAutoGrowToHost = false,
     cmOptions,
@@ -256,6 +258,13 @@ export function MarkdownInput(props: Props) {
 
   const initialMinHeight = useMemo(() => {
     if (
+      autoGrowMinHeight != null &&
+      Number.isFinite(autoGrowMinHeight) &&
+      autoGrowMinHeight > 0
+    ) {
+      return Math.max(MIN_INPUT_HEIGHT, Math.round(autoGrowMinHeight));
+    }
+    if (
       explicitEditorHeight != null &&
       explicitEditorHeight > 0 &&
       explicitEditorHeight < 2000
@@ -263,7 +272,7 @@ export function MarkdownInput(props: Props) {
       return explicitEditorHeight;
     }
     return MIN_INPUT_HEIGHT;
-  }, [explicitEditorHeight]);
+  }, [autoGrowMinHeight, explicitEditorHeight]);
 
   const maxHeightRef = useRef<number>(initialMinHeight * 2);
 

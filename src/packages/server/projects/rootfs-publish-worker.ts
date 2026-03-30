@@ -2,7 +2,10 @@ import { randomUUID } from "node:crypto";
 import getLogger from "@cocalc/backend/logger";
 import type { LroSummary } from "@cocalc/conat/hub/api/lro";
 import getPool from "@cocalc/database/pool";
-import { getProjectFileServerClient } from "@cocalc/server/conat/file-server-client";
+import {
+  ensureProjectFileServerClientReady,
+  getProjectFileServerClient,
+} from "@cocalc/server/conat/file-server-client";
 import {
   ensureLroSchema,
   touchLro,
@@ -35,6 +38,7 @@ const HEARTBEAT_MS = 15_000;
 const TICK_MS = 5_000;
 const DEFAULT_MAX_PARALLEL = 250;
 const ROOTFS_PUBLISH_TIMEOUT_MS = 6 * 60 * 60 * 1000;
+const FILE_SERVER_READY_TIMEOUT_MS = 60_000;
 
 const WORKER_ID = randomUUID();
 
@@ -394,6 +398,13 @@ async function handleRootfsPublishOp(op: LroSummary): Promise<void> {
       return await getProjectFileServerClient({
         project_id,
         timeout: ROOTFS_PUBLISH_TIMEOUT_MS,
+      });
+    });
+    await timings.measure("validate_file_server", async () => {
+      await ensureProjectFileServerClientReady({
+        project_id,
+        client,
+        maxWait: FILE_SERVER_READY_TIMEOUT_MS,
       });
     });
 

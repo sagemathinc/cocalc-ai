@@ -37,6 +37,26 @@ function recentLogCacheKey({
   projectId,
   logStore,
   logKey,
+  liveLogStream,
+  generating,
+}: {
+  projectId?: string;
+  logStore?: string | null;
+  logKey?: string | null;
+  liveLogStream?: string | null;
+  generating?: boolean;
+}): string | undefined {
+  if (!projectId || !logStore || !logKey) return undefined;
+  if (generating && liveLogStream) {
+    return `${projectId}:${logStore}:${logKey}:${liveLogStream}`;
+  }
+  return `${projectId}:${logStore}:${logKey}`;
+}
+
+function recentLogCachePrefix({
+  projectId,
+  logStore,
+  logKey,
 }: {
   projectId?: string;
   logStore?: string | null;
@@ -90,7 +110,18 @@ export function useCodexLog({
   enabled = true,
 }: CodexLogOptions): CodexLogResult {
   const hasLogRef = Boolean(logStore && logKey);
-  const cacheKey = recentLogCacheKey({ projectId, logStore, logKey });
+  const cacheKey = recentLogCacheKey({
+    projectId,
+    logStore,
+    logKey,
+    liveLogStream,
+    generating,
+  });
+  const cachePrefix = recentLogCachePrefix({
+    projectId,
+    logStore,
+    logKey,
+  });
 
   const [fetchedLog, setFetchedLog] = useState<any[] | null>(() => {
     if (!cacheKey) return null;
@@ -383,8 +414,12 @@ export function useCodexLog({
     } catch (err) {
       console.warn("failed to delete acp log", err);
     }
-    if (cacheKey) {
-      recentLogCache.delete(cacheKey);
+    if (cachePrefix) {
+      for (const key of recentLogCache.keys()) {
+        if (key === cachePrefix || key.startsWith(`${cachePrefix}:`)) {
+          recentLogCache.delete(key);
+        }
+      }
     }
     setFetchedLog(null);
     setLiveLog([]);

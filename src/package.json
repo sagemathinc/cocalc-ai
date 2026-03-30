@@ -55,6 +55,7 @@
     "hub:daemon:start": "bash ./scripts/dev/hub-daemon.sh start",
     "hub:daemon:stop": "bash ./scripts/dev/hub-daemon.sh stop",
     "hub:daemon:restart": "bash ./scripts/dev/hub-daemon.sh restart",
+    "hub:daemon:build": "bash ./scripts/dev/hub-daemon.sh build",
     "hub:daemon:status": "bash ./scripts/dev/hub-daemon.sh status",
     "hub:daemon:logs": "bash ./scripts/dev/hub-daemon.sh logs",
     "bench:codex-thread": "node ./scripts/dev/codex-thread-benchmark.mjs",

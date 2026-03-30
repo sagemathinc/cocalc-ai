@@ -207,6 +207,42 @@ export interface HostManagedRootfsReleaseLifecycle {
   gc_status?: RootfsReleaseGcStatus;
 }
 
+export interface HostCurrentMetrics {
+  collected_at?: string;
+  cpu_percent?: number;
+  load_1?: number;
+  load_5?: number;
+  load_15?: number;
+  memory_total_bytes?: number;
+  memory_used_bytes?: number;
+  memory_available_bytes?: number;
+  memory_used_percent?: number;
+  swap_total_bytes?: number;
+  swap_used_bytes?: number;
+  disk_device_total_bytes?: number;
+  disk_device_used_bytes?: number;
+  disk_unallocated_bytes?: number;
+  btrfs_data_total_bytes?: number;
+  btrfs_data_used_bytes?: number;
+  btrfs_metadata_total_bytes?: number;
+  btrfs_metadata_used_bytes?: number;
+  btrfs_system_total_bytes?: number;
+  btrfs_system_used_bytes?: number;
+  btrfs_global_reserve_total_bytes?: number;
+  btrfs_global_reserve_used_bytes?: number;
+  disk_available_conservative_bytes?: number;
+  disk_available_for_admission_bytes?: number;
+  reservation_bytes?: number;
+  assigned_project_count?: number;
+  running_project_count?: number;
+  starting_project_count?: number;
+  stopping_project_count?: number;
+}
+
+export interface HostMetrics {
+  current?: HostCurrentMetrics;
+}
+
 export interface HostCatalog {
   provider: string;
   entries: HostCatalogEntry[];
@@ -229,6 +265,9 @@ export interface Host {
   project_bundle_version?: string;
   project_bundle_build_id?: string;
   tools_version?: string;
+  host_session_id?: string;
+  host_session_started_at?: string;
+  metrics?: HostMetrics;
   machine?: HostMachine;
   public_ip?: string;
   last_error?: string;

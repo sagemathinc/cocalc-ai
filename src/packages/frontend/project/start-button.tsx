@@ -483,6 +483,7 @@ const START_PHASE_LABELS: Record<string, string> = {
   apply_pending_copies: "Preparing project state",
   prepare_config: "Preparing runtime",
   cache_rootfs: "Pulling RootFS image",
+  "start-project": "Starting runtime",
   runner_start: "Starting runtime",
   refresh_authorized_keys: "Refreshing access",
   done: "Project ready",
@@ -495,9 +496,18 @@ function StartProgressInline({ startLro }: { startLro: StartLroState }) {
       .trim()
       .toLowerCase() || "queued";
   const phaseLabel = START_PHASE_LABELS[phase] ?? capitalize(phase);
-  const rawMessage = `${startLro.last_progress?.message ?? ""}`.trim();
-  const detailText = formatProgressDetail(startLro.last_progress?.detail);
-  const percent = clampProgressPercent(startLro.last_progress?.progress);
+  const rawMessage = `${
+    startLro.last_progress?.message ??
+    startLro.summary?.progress_summary?.message ??
+    ""
+  }`.trim();
+  const detailText = formatProgressDetail(
+    startLro.last_progress?.detail ??
+      startLro.summary?.progress_summary?.detail,
+  );
+  const percent =
+    clampProgressPercent(startLro.last_progress?.progress) ??
+    clampProgressPercent(startLro.summary?.progress_summary?.progress);
   const status = startLro.summary?.status;
   const message =
     rawMessage && rawMessage.toLowerCase() !== phase

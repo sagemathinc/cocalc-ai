@@ -14,6 +14,7 @@ export interface ProjectHostRecord {
   capacity?: any;
   metadata?: any;
   last_seen?: Date;
+  host_session_id?: string;
 }
 
 function pool(): Pool {
@@ -33,11 +34,13 @@ export async function upsertProjectHost({
   metadata,
   last_seen,
   sshpiperd_public_key,
+  host_session_id,
 }: ProjectHostRecord): Promise<void> {
   const now = last_seen ?? new Date();
   const mergedMetadata = {
     ...(metadata ?? {}),
     ...(sshpiperd_public_key ? { sshpiperd_public_key } : {}),
+    ...(host_session_id ? { host_session_id } : {}),
   };
   await pool().query(
     `

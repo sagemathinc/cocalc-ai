@@ -48,6 +48,7 @@ import {
 import { isHostOpActive } from "../hooks/use-host-ops";
 import { UpgradeConfirmContent } from "./upgrade-confirmation";
 import { HostParallelOpsSummary } from "./host-parallel-ops-summary";
+import { HostCurrentMetrics } from "./host-current-metrics";
 import { search_match, search_split } from "@cocalc/util/misc";
 import type {
   HostListViewMode,
@@ -710,6 +711,13 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
       title: "GPU",
       key: "gpu",
       render: (_: string, host: Host) => (host.gpu ? "Yes" : "No"),
+    },
+    {
+      title: "Resources",
+      key: "resources",
+      render: (_: string, host: Host) => (
+        <HostCurrentMetrics host={host} compact />
+      ),
     },
     {
       title: "Status",

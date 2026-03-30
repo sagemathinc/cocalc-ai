@@ -122,6 +122,7 @@ export function ChatRoomModals({
     isAI: boolean;
   } | null>(null);
   const [forkName, setForkName] = useState<string>("");
+  const [forkRunning, setForkRunning] = useState<boolean>(false);
   const loadThreadSettings = useCallback(
     (
       threadKey: string,
@@ -338,12 +339,13 @@ export function ChatRoomModals({
   );
 
   const closeForkModal = () => {
+    setForkRunning(false);
     setForkThread(null);
     setForkName("");
   };
 
   const handleForkThread = async () => {
-    if (!forkThread) return;
+    if (!forkThread || forkRunning) return;
     if (!actions?.forkThread) {
       antdMessage.error("Forking chats is not available.");
       return;
@@ -351,6 +353,7 @@ export function ChatRoomModals({
     const title =
       forkName.trim() || `Fork of ${forkThread.label || "chat"}`.trim();
     try {
+      setForkRunning(true);
       await actions.forkThread({
         threadKey: forkThread.key,
         title,
@@ -363,6 +366,8 @@ export function ChatRoomModals({
     } catch (err) {
       console.error("failed to fork chat", err);
       antdMessage.error("Failed to fork chat.");
+    } finally {
+      setForkRunning(false);
     }
   };
 
@@ -696,6 +701,8 @@ export function ChatRoomModals({
         onCancel={closeForkModal}
         onOk={handleForkThread}
         okText="Fork"
+        okButtonProps={{ loading: forkRunning, disabled: forkRunning }}
+        cancelButtonProps={{ disabled: forkRunning }}
         destroyOnHidden
       >
         <Space orientation="vertical" size={10} style={{ width: "100%" }}>
@@ -704,6 +711,7 @@ export function ChatRoomModals({
               New chat name
             </div>
             <Input
+              disabled={forkRunning}
               value={forkName}
               onChange={(e) => setForkName(e.target.value)}
               onPressEnter={handleForkThread}

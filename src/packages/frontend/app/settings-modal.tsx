@@ -20,12 +20,14 @@ import "@cocalc/frontend/billing/actions";
 export default function SettingsModal({}) {
   const actions = useActions("page");
   const name = useRedux("page", "settingsModal");
+  const supportModalHidden = useRedux("page", "supportModalHidden") === true;
 
   if (!name) {
     return null;
   }
 
   const { Component, hideFooter, title, width } = getDescription(name);
+  const hideRoot = name === "support-ticket" && supportModalHidden;
 
   const close = () => {
     actions.settings("");
@@ -46,6 +48,7 @@ export default function SettingsModal({}) {
       }
       footer={hideFooter ? null : undefined}
       okText={hideFooter ? undefined : "Close"}
+      styles={hideRoot ? { root: { display: "none" } } : undefined}
     >
       {hideFooter ? null : <br />}
       {Component != null ? <Component /> : undefined}

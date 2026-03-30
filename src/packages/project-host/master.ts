@@ -42,6 +42,7 @@ import {
 import { assertSecureUrlOrLocal } from "@cocalc/backend/network/policy";
 import { isValidUUID } from "@cocalc/util/misc";
 import { inspectStaticAppRequest } from "./static-apps";
+import { startHostMetricsCollector } from "./host-metrics";
 
 const logger = getLogger("project-host:master");
 
@@ -749,6 +750,8 @@ export async function startMasterRegistration({
     sshpiperd_public_key: sshpiperdKey.publicKey,
     metadata: {
       runnerId,
+      host_session_id: randomUUID(),
+      host_session_started_at: new Date().toISOString(),
       host_cpu_count: availableParallelism(),
       host_ram_gb: Math.max(1, Math.round(totalmem() / 1024 ** 3)),
     },
@@ -764,13 +767,23 @@ export async function startMasterRegistration({
     },
   });
 
+  const hostMetrics = startHostMetricsCollector();
+
   const buildPayload = (): HostRegistration => {
     const versions = getSoftwareVersions();
+    const currentMetrics = hostMetrics.getCurrentSnapshot();
     return {
       ...basePayload,
       version: versions.project_host ?? basePayload.version,
       metadata: {
         ...(basePayload.metadata ?? {}),
+        ...(currentMetrics
+          ? {
+              metrics: {
+                current: currentMetrics,
+              },
+            }
+          : {}),
         software: versions,
       },
     };

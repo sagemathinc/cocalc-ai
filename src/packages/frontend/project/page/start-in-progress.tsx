@@ -1,4 +1,5 @@
-import { Progress, Space, Spin, Steps, Tag } from "antd";
+import { CloseOutlined } from "@ant-design/icons";
+import { Button, Progress, Space, Spin, Steps, Tag } from "antd";
 import { useEffect, useMemo, useState } from "react";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { TimeAgo } from "@cocalc/frontend/components";
@@ -57,6 +58,17 @@ const START_PHASE_SET = new Set<StartPhaseKey>(
   START_PHASES.map(({ key }) => key),
 );
 
+function normalizeStartPhaseKey(phase?: string): StartPhaseKey {
+  const normalized = `${phase ?? ""}`.trim().toLowerCase();
+  if (normalized === "start-project") {
+    return "runner_start";
+  }
+  if (START_PHASE_SET.has(normalized as StartPhaseKey)) {
+    return normalized as StartPhaseKey;
+  }
+  return "queued";
+}
+
 function toTimestamp(value?: Date | string | null): number | undefined {
   if (!value) return undefined;
   const date = new Date(value as any);
@@ -74,14 +86,10 @@ function isStartActive(startLro?: StartLroState): boolean {
 }
 
 function phaseFromStart(startLro?: StartLroState): StartPhaseKey {
-  const phaseRaw =
-    `${startLro?.last_progress?.phase ?? startLro?.summary?.progress_summary?.phase ?? ""}`
-      .trim()
-      .toLowerCase() || "queued";
-  if (START_PHASE_SET.has(phaseRaw as StartPhaseKey)) {
-    return phaseRaw as StartPhaseKey;
-  }
-  return "queued";
+  return normalizeStartPhaseKey(
+    startLro?.last_progress?.phase ??
+      startLro?.summary?.progress_summary?.phase,
+  );
 }
 
 function progressPercent(startLro?: StartLroState): number | undefined {
@@ -90,6 +98,12 @@ function progressPercent(startLro?: StartLroState): number | undefined {
   const direct = clampProgressPercent(startLro?.last_progress?.progress);
   if (direct != null) {
     return direct;
+  }
+  const summaryDirect = clampProgressPercent(
+    startLro?.summary?.progress_summary?.progress,
+  );
+  if (summaryDirect != null) {
+    return summaryDirect;
   }
   const phase = phaseFromStart(startLro);
   const index = START_PHASES.findIndex((entry) => entry.key === phase);
@@ -129,6 +143,7 @@ export default function StartInProgress({
   );
   const [detectedStartTs, setDetectedStartTs] = useState<number | undefined>();
   const [visible, setVisible] = useState<boolean>(false);
+  const [dismissedKey, setDismissedKey] = useState<string | undefined>();
 
   useEffect(() => {
     if (!active) {
@@ -139,10 +154,16 @@ export default function StartInProgress({
   }, [active, project_id, startLro?.op_id]);
 
   const startTs = startTsFromLro ?? actionRequestTime ?? detectedStartTs;
+  const activeKey =
+    startLro?.op_id ??
+    (active
+      ? `${project_id}:${startTs ?? "no-start-ts"}:${lifecycleState || "active"}`
+      : undefined);
 
   useEffect(() => {
     if (!active) {
       setVisible(false);
+      setDismissedKey(undefined);
       return;
     }
     const elapsed = startTs == null ? 0 : Math.max(0, Date.now() - startTs);
@@ -158,7 +179,7 @@ export default function StartInProgress({
     return () => window.clearTimeout(timer);
   }, [active, startTs, startLro?.op_id]);
 
-  if (!active || !visible) {
+  if (!active || !visible || (activeKey && dismissedKey === activeKey)) {
     return null;
   }
 
@@ -168,8 +189,15 @@ export default function StartInProgress({
     START_PHASES.findIndex((entry) => entry.key === phase),
   );
   const percent = progressPercent(startLro);
-  const detailText = formatProgressDetail(startLro?.last_progress?.detail);
-  const rawMessage = `${startLro?.last_progress?.message ?? ""}`.trim();
+  const detailText = formatProgressDetail(
+    startLro?.last_progress?.detail ??
+      startLro?.summary?.progress_summary?.detail,
+  );
+  const rawMessage = `${
+    startLro?.last_progress?.message ??
+    startLro?.summary?.progress_summary?.message ??
+    ""
+  }`.trim();
   const phaseLabel = START_PHASES[current]?.label ?? "Starting";
   const message =
     rawMessage && rawMessage.toLowerCase() !== phase
@@ -190,19 +218,37 @@ export default function StartInProgress({
       }}
     >
       <Space direction="vertical" size={10} style={{ width: "100%" }}>
-        <Space wrap size={[8, 8]} align="center">
-          <span style={{ fontSize: "18px", fontWeight: 600 }}>
-            Starting project
-          </span>
-          <Tag color={lroStatusColor(startLro?.summary?.status)}>
-            {phaseLabel}
-          </Tag>
-          {startTs != null ? (
-            <span style={{ color: COLORS.GRAY_M, fontSize: "12px" }}>
-              Started <TimeAgo date={new Date(startTs)} />
+        <div
+          style={{
+            alignItems: "flex-start",
+            display: "flex",
+            gap: "8px",
+            justifyContent: "space-between",
+          }}
+        >
+          <Space wrap size={[8, 8]} align="center">
+            <span style={{ fontSize: "18px", fontWeight: 600 }}>
+              Starting project
             </span>
-          ) : null}
-        </Space>
+            <Tag color={lroStatusColor(startLro?.summary?.status)}>
+              {phaseLabel}
+            </Tag>
+            {startTs != null ? (
+              <span style={{ color: COLORS.GRAY_M, fontSize: "12px" }}>
+                Started <TimeAgo date={new Date(startTs)} />
+              </span>
+            ) : null}
+          </Space>
+          <Button
+            aria-label="Dismiss startup banner"
+            icon={<CloseOutlined />}
+            onClick={() => setDismissedKey(activeKey ?? `${project_id}:active`)}
+            size="small"
+            type="text"
+          >
+            Dismiss
+          </Button>
+        </div>
         <div style={{ color: COLORS.GRAY_D, fontSize: "13px" }}>
           {message}
           {detailText ? ` · ${detailText}` : ""}

@@ -465,7 +465,11 @@ export class PageActions extends Actions<PageState> {
 
   settings = async (name) => {
     if (!name) {
-      this.setState({ settingsModal: "", supportModalOptions: undefined });
+      this.setState({
+        settingsModal: "",
+        supportModalOptions: undefined,
+        supportModalHidden: false,
+      });
       this.settingsModalIsOpen = false;
       return;
     }

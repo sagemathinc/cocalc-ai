@@ -7,6 +7,7 @@ import SupportCreateModal from "./create-modal";
 import { openSupportTicketsPage } from "./open";
 
 const mockSettings = jest.fn();
+const mockPageSetState = jest.fn();
 const mockOpenSupportTicketsPage = openSupportTicketsPage as jest.Mock;
 const mockedApi = api as jest.Mock;
 const mockedUploadBlobImage = uploadBlobImage as jest.Mock;
@@ -16,6 +17,7 @@ let supportModalOptions: any = {};
 jest.mock("@cocalc/frontend/app-framework", () => ({
   useActions: () => ({
     settings: mockSettings,
+    setState: mockPageSetState,
   }),
   useTypedRedux: (store: string, key: string) => {
     if (store === "account" && key === "email_address") {
@@ -91,6 +93,7 @@ describe("SupportCreateModal", () => {
       url: "http://localhost:9100/projects/abc/files/test.ipynb",
     };
     mockSettings.mockReset();
+    mockPageSetState.mockReset();
     mockOpenSupportTicketsPage.mockReset();
     mockedApi.mockReset();
     mockedUploadBlobImage.mockReset();
@@ -190,6 +193,12 @@ describe("SupportCreateModal", () => {
           ),
         }),
       });
+    });
+    expect(mockPageSetState).toHaveBeenNthCalledWith(1, {
+      supportModalHidden: true,
+    });
+    expect(mockPageSetState).toHaveBeenNthCalledWith(2, {
+      supportModalHidden: false,
     });
   });
 

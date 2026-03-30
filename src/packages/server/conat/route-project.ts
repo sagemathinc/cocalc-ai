@@ -13,6 +13,7 @@ const CHANNEL = "project_host_update";
 export interface ProjectHostRouteTarget {
   address: string;
   host_id: string;
+  host_session_id?: string;
 }
 
 const cache = new LRU<string, ProjectHostRouteTarget>({
@@ -51,7 +52,11 @@ function extractProjectId(subject: string): string | undefined {
 
 function cacheRouteTarget(
   project_id: string,
-  route?: { address?: string | null; host_id?: string | null },
+  route?: {
+    address?: string | null;
+    host_id?: string | null;
+    host_session_id?: string | null;
+  },
 ) {
   const address = route?.address;
   const host_id = route?.host_id;
@@ -59,7 +64,11 @@ function cacheRouteTarget(
     cache.delete(project_id);
     return;
   }
-  cache.set(project_id, { address, host_id });
+  cache.set(project_id, {
+    address,
+    host_id,
+    host_session_id: route?.host_session_id ?? undefined,
+  });
 }
 
 async function fetchHostAddress(
@@ -97,10 +106,13 @@ async function fetchHostAddress(
         );
         const hostRow = hostRows[0];
         const directTunnel = onPremTunnelAddress(hostRow?.metadata);
+        const host_session_id =
+          `${hostRow?.metadata?.host_session_id ?? ""}`.trim() || undefined;
         if (directTunnel) {
           cacheRouteTarget(project_id, {
             address: directTunnel,
             host_id: row.host_id,
+            host_session_id,
           });
           return;
         }
@@ -124,12 +136,14 @@ async function fetchHostAddress(
           cacheRouteTarget(project_id, {
             address: addr,
             host_id: row.host_id,
+            host_session_id,
           });
           return;
         }
         cacheRouteTarget(project_id, {
           address: hostRow?.internal_url ?? hostRow?.public_url,
           host_id: row.host_id,
+          host_session_id,
         });
         return;
       }
@@ -145,7 +159,9 @@ async function fetchHostAddress(
 
 export function routeProjectSubject(
   subject: string,
-): { address?: string; host_id?: string } | undefined {
+):
+  | { address?: string; host_id?: string; host_session_id?: string }
+  | undefined {
   const project_id = extractProjectId(subject);
   if (!project_id) {
     // log.debug("routeProjectSubject: not a project subject", subject);
@@ -170,10 +186,19 @@ async function handleNotification(msg: {
   if (msg.channel !== CHANNEL || !msg.payload) return;
   try {
     const payload = JSON.parse(msg.payload);
-    const { project_id } = payload;
-    if (!project_id || !isValidUUID(project_id)) return;
-    cache.delete(project_id);
-    void fetchHostAddress(project_id);
+    const project_id = `${payload?.project_id ?? ""}`.trim();
+    const host_id = `${payload?.host_id ?? ""}`.trim();
+    if (project_id && isValidUUID(project_id)) {
+      cache.delete(project_id);
+      void fetchHostAddress(project_id);
+    }
+    if (host_id && isValidUUID(host_id)) {
+      for (const [cachedProjectId, target] of cache.entries()) {
+        if (target.host_id === host_id) {
+          cache.delete(cachedProjectId);
+        }
+      }
+    }
   } catch (err) {
     log.debug("handleNotification parse failed", { err, payload: msg.payload });
   }
@@ -229,7 +254,7 @@ export async function listenForUpdates() {
 }
 
 export async function notifyProjectHostUpdate(opts: {
-  project_id: string;
+  project_id?: string;
   host_id?: string;
 }) {
   try {

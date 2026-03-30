@@ -257,7 +257,12 @@ async function ensurePlacement(project_id: string): Promise<HostPlacement> {
     title: meta.title,
     users: meta.users,
     image: meta.image,
-    start: true,
+    // Register the project on the chosen host first, then persist placement
+    // before doing any long-running runtime start. Large OCI image pulls can
+    // take minutes, and they must happen on the explicit startProject RPC with
+    // its long timeout so we never lose host placement on a createProject
+    // timeout.
+    start: false,
     authorized_keys: meta.authorized_keys,
     run_quota,
   });

@@ -81,6 +81,23 @@ function createHostProgressReporter(ctx: {
   };
 }
 
+const HOST_ONLINE_WINDOW_MS = 2 * 60 * 1000;
+
+function isHostOnlineForUpgrade(host: {
+  status?: string | null;
+  last_seen?: string | null;
+}): boolean {
+  const status = `${host.status ?? ""}`.trim().toLowerCase();
+  if (status !== "running" && status !== "active") {
+    return false;
+  }
+  const lastSeen = `${host.last_seen ?? ""}`.trim();
+  if (!lastSeen) return false;
+  const ts = Date.parse(lastSeen);
+  if (!Number.isFinite(ts)) return false;
+  return Date.now() - ts <= HOST_ONLINE_WINDOW_MS;
+}
+
 export function registerHostCommand(
   program: Command,
   deps: HostCommandDeps,
@@ -326,7 +343,7 @@ export function registerHostCommand(
     );
 
   host
-    .command("upgrade <host>")
+    .command("upgrade [host]")
     .description("upgrade host software")
     .option(
       "--artifact <artifact...>",
@@ -339,22 +356,29 @@ export function registerHostCommand(
       "use this CoCalc site's /software endpoint as base URL",
     )
     .option("--base-url <url>", "software base url override")
+    .option("--all-online", "upgrade all online hosts")
     .option("--wait", "wait for completion")
     .action(
       async (
-        hostIdentifier: string,
+        hostIdentifier: string | undefined,
         opts: {
           artifact?: string[];
           channel?: string;
           version?: string;
           hubSource?: boolean;
           baseUrl?: string;
+          allOnline?: boolean;
           wait?: boolean;
         },
         command: Command,
       ) => {
         await withContext(command, "host upgrade", async (ctx) => {
-          const h = await resolveHost(ctx, hostIdentifier);
+          if (hostIdentifier && opts.allOnline) {
+            throw new Error("use either <host> or --all-online, not both");
+          }
+          if (!hostIdentifier && !opts.allOnline) {
+            throw new Error("specify <host> or use --all-online");
+          }
           const artifacts = parseHostSoftwareArtifactsOption(opts.artifact);
           const channelRaw = `${opts.channel ?? "latest"}`.trim().toLowerCase();
           const channel: HostSoftwareChannel =
@@ -373,38 +397,102 @@ export function registerHostCommand(
             artifact,
             ...(version ? { version } : { channel }),
           }));
-          const op = await ctx.hub.hosts.upgradeHostSoftware({
-            id: h.id,
-            targets,
-            base_url: baseUrl,
-          });
-          if (!opts.wait) {
+          const hosts = opts.allOnline
+            ? (
+                (await listHosts(ctx, {
+                  include_deleted: false,
+                  catalog: false,
+                  admin_view: true,
+                })) as HostRow[]
+              ).filter(isHostOnlineForUpgrade)
+            : [await resolveHost(ctx, hostIdentifier)];
+
+          if (hosts.length === 0) {
             return {
-              host_id: h.id,
-              op_id: op.op_id,
+              status: "skipped",
+              reason: "no online hosts matched",
+              targets,
+              hosts: [],
+            };
+          }
+
+          const queued = await Promise.all(
+            hosts.map(async (h) => {
+              const op = await ctx.hub.hosts.upgradeHostSoftware({
+                id: h.id,
+                targets,
+                base_url: baseUrl,
+              });
+              return {
+                host_id: h.id,
+                name: h.name,
+                op_id: op.op_id,
+                status: "queued",
+              };
+            }),
+          );
+
+          if (!opts.wait) {
+            if (queued.length === 1) {
+              return {
+                host_id: queued[0].host_id,
+                op_id: queued[0].op_id,
+                status: queued[0].status,
+                targets,
+              };
+            }
+            return {
               status: "queued",
+              count: queued.length,
+              targets,
+              hosts: queued,
+            };
+          }
+
+          const waited = await Promise.all(
+            queued.map(async (entry) => {
+              const summary = await waitForLro(ctx, entry.op_id, {
+                timeoutMs: ctx.timeoutMs,
+                pollMs: ctx.pollMs,
+              });
+              return {
+                ...entry,
+                status: summary.status,
+                timed_out: !!summary.timedOut,
+                error: summary.error ?? undefined,
+              };
+            }),
+          );
+
+          const failures = waited.filter(
+            (entry) => entry.timed_out || entry.status !== "succeeded",
+          );
+          if (failures.length > 0) {
+            throw new Error(
+              failures
+                .map((entry) => {
+                  if (entry.timed_out) {
+                    return `${entry.name ?? entry.host_id}: timed out (op=${entry.op_id}, last_status=${entry.status})`;
+                  }
+                  return `${entry.name ?? entry.host_id}: status=${entry.status} error=${entry.error ?? "unknown"}`;
+                })
+                .join("; "),
+            );
+          }
+
+          if (waited.length === 1) {
+            return {
+              host_id: waited[0].host_id,
+              op_id: waited[0].op_id,
+              status: waited[0].status,
               targets,
             };
           }
-          const summary = await waitForLro(ctx, op.op_id, {
-            timeoutMs: ctx.timeoutMs,
-            pollMs: ctx.pollMs,
-          });
-          if (summary.timedOut) {
-            throw new Error(
-              `host upgrade timed out (op=${op.op_id}, last_status=${summary.status})`,
-            );
-          }
-          if (summary.status !== "succeeded") {
-            throw new Error(
-              `host upgrade failed: status=${summary.status} error=${summary.error ?? "unknown"}`,
-            );
-          }
           return {
-            host_id: h.id,
-            op_id: op.op_id,
-            status: summary.status,
+            status: "succeeded",
+            count: waited.length,
             targets,
+            hosts: waited,
           };
         });
       },

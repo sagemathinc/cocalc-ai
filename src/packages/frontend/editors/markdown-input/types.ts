@@ -53,6 +53,7 @@ export interface MultiMarkdownInputProps {
   fontSize?: number;
   height?: string;
   autoGrow?: boolean;
+  autoGrowMinHeight?: number;
   autoGrowMaxHeight?: number;
   clampAutoGrowToHost?: boolean;
   style?: CSSProperties;

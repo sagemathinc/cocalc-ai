@@ -21,6 +21,7 @@ import type {
   HostManagedRootfsReleaseLifecycle,
   HostRootfsGcResult,
   HostRootfsImage,
+  HostCurrentMetrics,
 } from "@cocalc/conat/hub/api/hosts";
 import type {
   ProjectCopyRow,
@@ -477,9 +478,245 @@ function parseRow(
     if (!Number.isFinite(parsed) || parsed <= 0) return undefined;
     return Math.floor(parsed);
   };
+  const parseNonNegativeNumber = (value: unknown): number | undefined => {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed < 0) return undefined;
+    return parsed;
+  };
   const metadata = row.metadata ?? {};
   const software = metadata.software ?? {};
   const machine: HostMachine | undefined = metadata.machine;
+  const rawCurrentMetrics = metadata.metrics?.current;
+  const currentMetrics: HostCurrentMetrics | undefined =
+    rawCurrentMetrics && typeof rawCurrentMetrics === "object"
+      ? {
+          ...(typeof rawCurrentMetrics.collected_at === "string"
+            ? { collected_at: rawCurrentMetrics.collected_at }
+            : {}),
+          ...(parseNonNegativeNumber(rawCurrentMetrics.cpu_percent) != null
+            ? {
+                cpu_percent: parseNonNegativeNumber(
+                  rawCurrentMetrics.cpu_percent,
+                ),
+              }
+            : {}),
+          ...(parseNonNegativeNumber(rawCurrentMetrics.load_1) != null
+            ? { load_1: parseNonNegativeNumber(rawCurrentMetrics.load_1) }
+            : {}),
+          ...(parseNonNegativeNumber(rawCurrentMetrics.load_5) != null
+            ? { load_5: parseNonNegativeNumber(rawCurrentMetrics.load_5) }
+            : {}),
+          ...(parseNonNegativeNumber(rawCurrentMetrics.load_15) != null
+            ? { load_15: parseNonNegativeNumber(rawCurrentMetrics.load_15) }
+            : {}),
+          ...(parseNonNegativeNumber(rawCurrentMetrics.memory_total_bytes) !=
+          null
+            ? {
+                memory_total_bytes: parseNonNegativeNumber(
+                  rawCurrentMetrics.memory_total_bytes,
+                ),
+              }
+            : {}),
+          ...(parseNonNegativeNumber(rawCurrentMetrics.memory_used_bytes) !=
+          null
+            ? {
+                memory_used_bytes: parseNonNegativeNumber(
+                  rawCurrentMetrics.memory_used_bytes,
+                ),
+              }
+            : {}),
+          ...(parseNonNegativeNumber(
+            rawCurrentMetrics.memory_available_bytes,
+          ) != null
+            ? {
+                memory_available_bytes: parseNonNegativeNumber(
+                  rawCurrentMetrics.memory_available_bytes,
+                ),
+              }
+            : {}),
+          ...(parseNonNegativeNumber(rawCurrentMetrics.memory_used_percent) !=
+          null
+            ? {
+                memory_used_percent: parseNonNegativeNumber(
+                  rawCurrentMetrics.memory_used_percent,
+                ),
+              }
+            : {}),
+          ...(parseNonNegativeNumber(rawCurrentMetrics.swap_total_bytes) != null
+            ? {
+                swap_total_bytes: parseNonNegativeNumber(
+                  rawCurrentMetrics.swap_total_bytes,
+                ),
+              }
+            : {}),
+          ...(parseNonNegativeNumber(rawCurrentMetrics.swap_used_bytes) != null
+            ? {
+                swap_used_bytes: parseNonNegativeNumber(
+                  rawCurrentMetrics.swap_used_bytes,
+                ),
+              }
+            : {}),
+          ...(parseNonNegativeNumber(
+            rawCurrentMetrics.disk_device_total_bytes,
+          ) != null
+            ? {
+                disk_device_total_bytes: parseNonNegativeNumber(
+                  rawCurrentMetrics.disk_device_total_bytes,
+                ),
+              }
+            : {}),
+          ...(parseNonNegativeNumber(
+            rawCurrentMetrics.disk_device_used_bytes,
+          ) != null
+            ? {
+                disk_device_used_bytes: parseNonNegativeNumber(
+                  rawCurrentMetrics.disk_device_used_bytes,
+                ),
+              }
+            : {}),
+          ...(parseNonNegativeNumber(
+            rawCurrentMetrics.disk_unallocated_bytes,
+          ) != null
+            ? {
+                disk_unallocated_bytes: parseNonNegativeNumber(
+                  rawCurrentMetrics.disk_unallocated_bytes,
+                ),
+              }
+            : {}),
+          ...(parseNonNegativeNumber(
+            rawCurrentMetrics.btrfs_data_total_bytes,
+          ) != null
+            ? {
+                btrfs_data_total_bytes: parseNonNegativeNumber(
+                  rawCurrentMetrics.btrfs_data_total_bytes,
+                ),
+              }
+            : {}),
+          ...(parseNonNegativeNumber(rawCurrentMetrics.btrfs_data_used_bytes) !=
+          null
+            ? {
+                btrfs_data_used_bytes: parseNonNegativeNumber(
+                  rawCurrentMetrics.btrfs_data_used_bytes,
+                ),
+              }
+            : {}),
+          ...(parseNonNegativeNumber(
+            rawCurrentMetrics.btrfs_metadata_total_bytes,
+          ) != null
+            ? {
+                btrfs_metadata_total_bytes: parseNonNegativeNumber(
+                  rawCurrentMetrics.btrfs_metadata_total_bytes,
+                ),
+              }
+            : {}),
+          ...(parseNonNegativeNumber(
+            rawCurrentMetrics.btrfs_metadata_used_bytes,
+          ) != null
+            ? {
+                btrfs_metadata_used_bytes: parseNonNegativeNumber(
+                  rawCurrentMetrics.btrfs_metadata_used_bytes,
+                ),
+              }
+            : {}),
+          ...(parseNonNegativeNumber(
+            rawCurrentMetrics.btrfs_system_total_bytes,
+          ) != null
+            ? {
+                btrfs_system_total_bytes: parseNonNegativeNumber(
+                  rawCurrentMetrics.btrfs_system_total_bytes,
+                ),
+              }
+            : {}),
+          ...(parseNonNegativeNumber(
+            rawCurrentMetrics.btrfs_system_used_bytes,
+          ) != null
+            ? {
+                btrfs_system_used_bytes: parseNonNegativeNumber(
+                  rawCurrentMetrics.btrfs_system_used_bytes,
+                ),
+              }
+            : {}),
+          ...(parseNonNegativeNumber(
+            rawCurrentMetrics.btrfs_global_reserve_total_bytes,
+          ) != null
+            ? {
+                btrfs_global_reserve_total_bytes: parseNonNegativeNumber(
+                  rawCurrentMetrics.btrfs_global_reserve_total_bytes,
+                ),
+              }
+            : {}),
+          ...(parseNonNegativeNumber(
+            rawCurrentMetrics.btrfs_global_reserve_used_bytes,
+          ) != null
+            ? {
+                btrfs_global_reserve_used_bytes: parseNonNegativeNumber(
+                  rawCurrentMetrics.btrfs_global_reserve_used_bytes,
+                ),
+              }
+            : {}),
+          ...(parseNonNegativeNumber(
+            rawCurrentMetrics.disk_available_conservative_bytes,
+          ) != null
+            ? {
+                disk_available_conservative_bytes: parseNonNegativeNumber(
+                  rawCurrentMetrics.disk_available_conservative_bytes,
+                ),
+              }
+            : {}),
+          ...(parseNonNegativeNumber(
+            rawCurrentMetrics.disk_available_for_admission_bytes,
+          ) != null
+            ? {
+                disk_available_for_admission_bytes: parseNonNegativeNumber(
+                  rawCurrentMetrics.disk_available_for_admission_bytes,
+                ),
+              }
+            : {}),
+          ...(parseNonNegativeNumber(rawCurrentMetrics.reservation_bytes) !=
+          null
+            ? {
+                reservation_bytes: parseNonNegativeNumber(
+                  rawCurrentMetrics.reservation_bytes,
+                ),
+              }
+            : {}),
+          ...(parseNonNegativeNumber(
+            rawCurrentMetrics.assigned_project_count,
+          ) != null
+            ? {
+                assigned_project_count: parseNonNegativeNumber(
+                  rawCurrentMetrics.assigned_project_count,
+                ),
+              }
+            : {}),
+          ...(parseNonNegativeNumber(rawCurrentMetrics.running_project_count) !=
+          null
+            ? {
+                running_project_count: parseNonNegativeNumber(
+                  rawCurrentMetrics.running_project_count,
+                ),
+              }
+            : {}),
+          ...(parseNonNegativeNumber(
+            rawCurrentMetrics.starting_project_count,
+          ) != null
+            ? {
+                starting_project_count: parseNonNegativeNumber(
+                  rawCurrentMetrics.starting_project_count,
+                ),
+              }
+            : {}),
+          ...(parseNonNegativeNumber(
+            rawCurrentMetrics.stopping_project_count,
+          ) != null
+            ? {
+                stopping_project_count: parseNonNegativeNumber(
+                  rawCurrentMetrics.stopping_project_count,
+                ),
+              }
+            : {}),
+        }
+      : undefined;
   const rawBootstrap = metadata.bootstrap;
   const bootstrap: HostBootstrapStatus | undefined =
     rawBootstrap && typeof rawBootstrap === "object"
@@ -514,6 +751,9 @@ function parseRow(
     project_bundle_version: software.project_bundle,
     project_bundle_build_id: software.project_bundle_build_id,
     tools_version: software.tools,
+    host_session_id: metadata.host_session_id,
+    host_session_started_at: metadata.host_session_started_at,
+    metrics: currentMetrics ? { current: currentMetrics } : undefined,
     machine,
     public_ip: metadata.runtime?.public_ip,
     last_error: metadata.last_error,

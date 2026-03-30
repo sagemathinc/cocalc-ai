@@ -20,6 +20,7 @@ export type AcpLogRefs = Readonly<{
   key: string;
   subject: string;
   liveStream: string;
+  previewStream: string;
 }>;
 
 export function deriveAcpLogStoreName(
@@ -44,5 +45,6 @@ export function deriveAcpLogRefs(opts: {
   const key = `${thread}:${turn}`;
   const subject = `project.${project_id}.acp-log.${thread}.${turn}`;
   const liveStream = join("acp-live-log", path, thread, turn);
-  return { store, thread, turn, key, subject, liveStream };
+  const previewStream = join("acp-preview-log", path, thread, turn);
+  return { store, thread, turn, key, subject, liveStream, previewStream };
 }
