@@ -117,7 +117,10 @@ const PROJECT_HOST_TOKEN_TTL_LEEWAY_MS = 60_000;
 
 type RoutedHubClientState = {
   address: string;
+  host_session_id?: string;
   client: ReturnType<typeof connectToConat>;
+  reconnectTimer?: ReturnType<typeof setTimeout>;
+  reconnectAttempts: number;
 };
 
 type ProjectHostTokenState = {
@@ -261,19 +264,11 @@ export class ConatClient extends EventEmitter {
     return hostInfo;
   }
 
-  private getProjectRoutingInfo(
-    project_id: string,
-  ): undefined | { host_id: string; address: string } {
-    // [ ] TODO: need a ttl cache, since otherwise this gets called
-    // on literally every packet sent to the project!
-    const project_map = redux.getStore("projects")?.get("project_map");
-    const host_id = project_map?.getIn([project_id, "host_id"]) as
-      | string
-      | undefined;
-    if (!host_id) {
-      // Fallback: no host yet, so stay on the default connection.
-      return;
-    }
+  private getHostRoutingInfo(
+    host_id: string,
+  ):
+    | undefined
+    | { host_id: string; address: string; host_session_id?: string } {
     const hostInfo = this.getHostInfo(host_id);
     if (!hostInfo) {
       return;
@@ -290,12 +285,37 @@ export class ConatClient extends EventEmitter {
     if (!address || address === this.address) {
       return;
     }
-    return { host_id, address };
+    const host_session_id = `${hostInfo.get("host_session_id") ?? ""}`.trim();
+    return {
+      host_id,
+      address,
+      ...(host_session_id ? { host_session_id } : {}),
+    };
+  }
+
+  private getProjectRoutingInfo(
+    project_id: string,
+  ):
+    | undefined
+    | { host_id: string; address: string; host_session_id?: string } {
+    // [ ] TODO: need a ttl cache, since otherwise this gets called
+    // on literally every packet sent to the project!
+    const project_map = redux.getStore("projects")?.get("project_map");
+    const host_id = project_map?.getIn([project_id, "host_id"]) as
+      | string
+      | undefined;
+    if (!host_id) {
+      // Fallback: no host yet, so stay on the default connection.
+      return;
+    }
+    return this.getHostRoutingInfo(host_id);
   }
 
   private ensureProjectRoutingInfo = async (
     project_id: string,
-  ): Promise<undefined | { host_id: string; address: string }> => {
+  ): Promise<
+    undefined | { host_id: string; address: string; host_session_id?: string }
+  > => {
     const initial = this.getProjectRoutingInfo(project_id);
     if (initial) return initial;
     const project_map = redux.getStore("projects")?.get("project_map");
@@ -305,6 +325,15 @@ export class ConatClient extends EventEmitter {
     if (!host_id) return;
     await redux.getActions("projects")?.ensure_host_info(host_id);
     return this.getProjectRoutingInfo(project_id);
+  };
+
+  private refreshHostRoutingInfo = async (
+    host_id: string,
+  ): Promise<
+    undefined | { host_id: string; address: string; host_session_id?: string }
+  > => {
+    await redux.getActions("projects")?.ensure_host_info(host_id, true);
+    return this.getHostRoutingInfo(host_id);
   };
 
   private isProjectHostAuthError = (err: any): boolean => {
@@ -324,6 +353,10 @@ export class ConatClient extends EventEmitter {
   private removeRoutedHubClient = (host_id: string) => {
     const current = this.routedHubClients[host_id];
     if (!current) return;
+    if (current.reconnectTimer != null) {
+      clearTimeout(current.reconnectTimer);
+      delete current.reconnectTimer;
+    }
     try {
       current.client.close();
     } catch (err) {
@@ -449,74 +482,124 @@ export class ConatClient extends EventEmitter {
   private getOrCreateRoutedHubClient = ({
     host_id,
     address,
+    host_session_id,
     project_id,
   }: {
     host_id: string;
     address: string;
+    host_session_id?: string;
     project_id?: string;
   }): ReturnType<typeof connectToConat> => {
     const current = this.routedHubClients[host_id];
-    if (current && current.address === address) {
+    if (
+      current &&
+      current.address === address &&
+      current.host_session_id === host_session_id
+    ) {
       return current.client;
     }
     if (current) {
       this.removeRoutedHubClient(host_id);
     }
+    const state: RoutedHubClientState = {
+      address,
+      host_session_id,
+      reconnectAttempts: 0,
+      client: connectToConat({
+        address,
+        inboxPrefix: inboxPrefix({ account_id: this.client.account_id }),
+        auth: async (cb) => {
+          try {
+            const token = await this.getProjectHostToken({
+              host_id,
+              project_id,
+            });
+            cb({ bearer: token });
+          } catch (err) {
+            console.warn(
+              `failed issuing project-host auth token for host ${host_id}`,
+              err,
+            );
+            cb({});
+          }
+        },
+        reconnection: false,
+        forceNew: true,
+      }),
+    };
     const reconnectRouted = () => {
       if (this.permanentlyDisconnected) {
         return;
       }
-      for (const delayMs of [1_000, 3_500, 10_000]) {
-        setTimeout(() => {
-          if (this.permanentlyDisconnected) {
-            return;
-          }
-          if (this.routedHubClients[host_id]?.client !== routed) {
-            return;
-          }
-          if (routed.conn?.connected) {
-            return;
-          }
-          try {
-            routed.connect();
-          } catch (err) {
-            console.warn(
-              `failed reconnecting routed hub client for host ${host_id}`,
-              err,
-            );
-          }
-        }, delayMs);
+      if (state.reconnectTimer != null) {
+        return;
       }
-    };
-    const routed = connectToConat({
-      address,
-      inboxPrefix: inboxPrefix({ account_id: this.client.account_id }),
-      auth: async (cb) => {
+      const delays = [1_000, 3_500, 10_000];
+      const delayMs =
+        delays[Math.min(state.reconnectAttempts, delays.length - 1)];
+      state.reconnectAttempts += 1;
+      state.reconnectTimer = setTimeout(async () => {
+        delete state.reconnectTimer;
+        if (this.permanentlyDisconnected) {
+          return;
+        }
+        if (this.routedHubClients[host_id]?.client !== state.client) {
+          return;
+        }
+        const refreshed = await this.refreshHostRoutingInfo(host_id);
+        if (this.permanentlyDisconnected) {
+          return;
+        }
+        if (this.routedHubClients[host_id]?.client !== state.client) {
+          return;
+        }
+        if (
+          refreshed &&
+          (refreshed.address !== state.address ||
+            refreshed.host_session_id !== state.host_session_id)
+        ) {
+          this.invalidateProjectHostToken(host_id);
+          this.removeRoutedHubClient(host_id);
+          const replacement = this.getOrCreateRoutedHubClient({
+            ...refreshed,
+            project_id,
+          });
+          if (!replacement.conn?.connected) {
+            replacement.connect();
+          }
+          return;
+        }
+        if (state.client.conn?.connected) {
+          return;
+        }
         try {
-          const token = await this.getProjectHostToken({ host_id, project_id });
-          cb({ bearer: token });
+          state.client.connect();
         } catch (err) {
           console.warn(
-            `failed issuing project-host auth token for host ${host_id}`,
+            `failed reconnecting routed hub client for host ${host_id}`,
             err,
           );
-          cb({});
+          reconnectRouted();
         }
-      },
-      reconnection: false,
+      }, delayMs);
+    };
+    state.client.on("connected", () => {
+      state.reconnectAttempts = 0;
+      if (state.reconnectTimer != null) {
+        clearTimeout(state.reconnectTimer);
+        delete state.reconnectTimer;
+      }
     });
-    routed.on("disconnected", () => {
+    state.client.on("disconnected", () => {
       this.invalidateProjectHostToken(host_id);
       reconnectRouted();
     });
-    routed.conn.on("connect_error", (err) => {
-      if (this.isProjectHostAuthError(err)) {
-        this.invalidateProjectHostToken(host_id);
-      }
+    state.client.conn.on("connect_error", (_err) => {
+      this.invalidateProjectHostToken(host_id);
       reconnectRouted();
     });
-    this.routedHubClients[host_id] = { address, client: routed };
-    return routed;
+    this.routedHubClients[host_id] = state;
+    return state.client;
   };
 
   private permanentlyDisconnected = false;

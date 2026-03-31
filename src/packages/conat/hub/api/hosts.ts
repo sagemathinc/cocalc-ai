@@ -393,6 +393,7 @@ export interface HostConnectionInfo {
   name?: string | null;
   ssh_server?: string | null;
   connect_url?: string | null;
+  host_session_id?: string;
   local_proxy?: boolean;
   ready?: boolean;
   status?: HostStatus | null;
