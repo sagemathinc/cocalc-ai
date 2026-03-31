@@ -21,6 +21,9 @@ function makeDeps(
               capture.upgrades.push(id);
               return { op_id: `op-${id}` };
             },
+            reconcileHostSoftware: async ({ id }) => ({
+              op_id: `reconcile-${id}`,
+            }),
             getHostMetricsHistory: async (opts) => ({
               window_minutes: opts?.window_minutes ?? 60,
               point_count: 0,
@@ -235,4 +238,23 @@ test("host bootstrap-status returns lifecycle drift data", async () => {
   assert.equal(capture.data.host_id, "host-1");
   assert.equal(capture.data.bootstrap_lifecycle.summary_status, "drifted");
   assert.equal(capture.data.bootstrap_lifecycle.drift_count, 2);
+});
+
+test("host reconcile queues and waits for completion", async () => {
+  const capture: { data?: any; upgrades: string[] } = { upgrades: [] };
+  const program = new Command();
+  registerHostCommand(program, makeDeps(capture));
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "host",
+    "reconcile",
+    "host-1",
+    "--wait",
+  ]);
+
+  assert.equal(capture.data.host_id, "host-1");
+  assert.equal(capture.data.op_id, "reconcile-host-1");
+  assert.equal(capture.data.status, "succeeded");
 });

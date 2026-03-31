@@ -157,4 +157,51 @@ describe("bootstrap lifecycle reporting", () => {
       status: "drift",
     });
   });
+
+  it("surfaces runtime wrapper helpers from bootstrap state", () => {
+    const base = fs.mkdtempSync(
+      path.join(os.tmpdir(), "cocalc-bootstrap-lifecycle-runtime-"),
+    );
+    const bootstrapDir = path.join(base, "bootstrap");
+    const runtimeRoot = path.join(base, "project-host-runtime");
+    fs.mkdirSync(path.join(runtimeRoot, "bin"), { recursive: true });
+    fs.mkdirSync(bootstrapDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(runtimeRoot, "bin", "project-host"),
+      "#!/bin/sh\n",
+    );
+    fs.writeFileSync(path.join(runtimeRoot, "bin", "ctl"), "#!/bin/sh\n");
+    fs.writeFileSync(
+      path.join(bootstrapDir, "bootstrap-desired-state.json"),
+      JSON.stringify({
+        project_host_bundle: {
+          root: path.join(runtimeRoot, "bundles"),
+        },
+        cloudflared: { enabled: false },
+      }),
+    );
+    fs.writeFileSync(
+      path.join(bootstrapDir, "bootstrap-host-facts.json"),
+      JSON.stringify({
+        bootstrap_root: runtimeRoot,
+        project_host_bundle_root: path.join(runtimeRoot, "bundles"),
+      }),
+    );
+
+    process.env.COCALC_PROJECT_HOST_BOOTSTRAP_DIR = bootstrapDir;
+
+    const lifecycle = getBootstrapLifecycle();
+    expect(
+      lifecycle?.items.find((item) => item.key === "project_host_wrapper"),
+    ).toMatchObject({
+      status: "match",
+      installed: true,
+    });
+    expect(
+      lifecycle?.items.find((item) => item.key === "project_host_ctl"),
+    ).toMatchObject({
+      status: "match",
+      installed: true,
+    });
+  });
 });

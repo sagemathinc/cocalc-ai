@@ -133,6 +133,7 @@ const HOST_START_LRO_KIND = "host-start";
 const HOST_STOP_LRO_KIND = "host-stop";
 const HOST_RESTART_LRO_KIND = "host-restart";
 const HOST_DRAIN_LRO_KIND = "host-drain";
+const HOST_RECONCILE_LRO_KIND = "host-reconcile-software";
 const HOST_UPGRADE_LRO_KIND = "host-upgrade-software";
 const HOST_DEPROVISION_LRO_KIND = "host-deprovision";
 const HOST_DELETE_LRO_KIND = "host-delete";
@@ -214,6 +215,20 @@ function cloudHostSshTarget(row: {
     `${runtime.ssh_user ?? machine.metadata?.ssh_user ?? "ubuntu"}`.trim();
   if (!sshUser) return undefined;
   return `${sshUser}@${publicIp}`;
+}
+
+function assertCloudHostBootstrapReconcileSupported(row: any): void {
+  const machineCloud = normalizeProviderId(row?.metadata?.machine?.cloud);
+  if (!machineCloud || machineCloud === "self-host") {
+    throw new Error(
+      "bootstrap reconcile is only supported for cloud hosts with ssh access",
+    );
+  }
+  if (!cloudHostSshTarget(row)) {
+    throw new Error(
+      "bootstrap reconcile requires a reachable cloud ssh target for this host",
+    );
+  }
 }
 
 async function reconcileCloudHostBootstrapOverSsh(opts: {
@@ -4272,6 +4287,25 @@ export async function upgradeHostSoftware({
   });
 }
 
+export async function reconcileHostSoftware({
+  account_id,
+  id,
+}: {
+  account_id?: string;
+  id: string;
+}): Promise<HostLroResponse> {
+  const row = await loadHostForStartStop(id, account_id);
+  assertHostRunningForUpgrade(row);
+  assertCloudHostBootstrapReconcileSupported(row);
+  return await createHostLro({
+    kind: HOST_RECONCILE_LRO_KIND,
+    row,
+    account_id,
+    input: { id: row.id, account_id },
+    dedupe_key: `${HOST_RECONCILE_LRO_KIND}:${row.id}`,
+  });
+}
+
 export async function upgradeHostConnector({
   account_id,
   id,
@@ -4318,6 +4352,19 @@ export async function upgradeHostConnector({
     ssh_port: reversePort,
     version: connectorVersion,
   });
+}
+
+export async function reconcileHostSoftwareInternal({
+  account_id,
+  id,
+}: {
+  account_id?: string;
+  id: string;
+}): Promise<void> {
+  const row = await loadHostForStartStop(id, account_id);
+  assertHostRunningForUpgrade(row);
+  assertCloudHostBootstrapReconcileSupported(row);
+  await reconcileCloudHostBootstrapOverSsh({ host_id: id, row });
 }
 
 function assertHostRunningForUpgrade(row: any) {

@@ -382,6 +382,30 @@ export const useHostsPageViewModel = () => {
     },
     [runUpgrade],
   );
+  const reconcileHostSoftware = React.useCallback(
+    async (host: Host) => {
+      if (!hub.hosts.reconcileHostSoftware) {
+        return;
+      }
+      try {
+        const op = await hub.hosts.reconcileHostSoftware({
+          id: host.id,
+        });
+        trackHostOp(host.id, op);
+        await refresh();
+      } catch (err) {
+        alert_message({
+          type: "error",
+          message: `Failed to reconcile ${host.name}: ${
+            err instanceof Error ? err.message : `${err}`
+          }`,
+          timeout: 20,
+        });
+        console.error(err);
+      }
+    },
+    [hub, refresh, trackHostOp],
+  );
   const cancelHostOp = React.useCallback(
     async (op_id: string) => {
       try {
@@ -954,6 +978,7 @@ export const useHostsPageViewModel = () => {
     onClose: closeDetails,
     onEdit: openEdit,
     onUpgrade: isAdmin ? upgradeHostSoftware : undefined,
+    onReconcile: isAdmin ? reconcileHostSoftware : undefined,
     onUpgradeFromHub: isAdmin ? upgradeHostSoftwareFromHub : undefined,
     onUpgradeArtifact: isAdmin ? upgradeHostArtifact : undefined,
     canUpgrade: isAdmin,

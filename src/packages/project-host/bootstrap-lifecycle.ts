@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, readdirSync, realpathSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import type {
   HostBootstrapLifecycle,
   HostBootstrapLifecycleItem,
@@ -106,6 +106,30 @@ function cloudflaredBinaryPresent(): boolean {
   );
 }
 
+function cloudflaredServicePresent(): boolean {
+  return (
+    existsSync("/usr/local/sbin/cocalc-cloudflared-ctl") &&
+    (existsSync("/etc/systemd/system/cocalc-cloudflared.service") ||
+      existsSync("/lib/systemd/system/cocalc-cloudflared.service"))
+  );
+}
+
+function projectHostRuntimeRoot(opts: {
+  desired: JsonRecord;
+  facts: JsonRecord;
+}): string | undefined {
+  const bundleRoot = stringOrUndefined(
+    opts.desired.project_host_bundle?.root ??
+      opts.facts.project_host_bundle_root,
+  );
+  if (bundleRoot) {
+    return basename(bundleRoot) === "bundles"
+      ? dirname(bundleRoot)
+      : bundleRoot;
+  }
+  return stringOrUndefined(opts.facts.bootstrap_root);
+}
+
 function makeItem(opts: {
   key: string;
   label: string;
@@ -138,9 +162,11 @@ function buildBootstrapLifecycleItems(opts: {
   bootstrapDir: string;
   desired: JsonRecord;
   installedState: JsonRecord;
+  facts: JsonRecord;
 }): HostBootstrapLifecycleItem[] {
   const desired = opts.desired;
   const installedState = opts.installedState;
+  const facts = opts.facts;
   const runtimeVersions = getSoftwareVersions();
   const desiredBootstrap = desired.bootstrap ?? {};
   const installedBootstrap = installedState.bootstrap ?? {};
@@ -205,6 +231,31 @@ function buildBootstrapLifecycleItems(opts: {
       installed: nonEmptyValue(installedState.runtime_wrapper_version),
     }),
   ];
+  const runtimeRoot = projectHostRuntimeRoot({ desired, facts });
+  if (runtimeRoot) {
+    const projectHostWrapperPath = join(runtimeRoot, "bin", "project-host");
+    const projectHostCtlPath = join(runtimeRoot, "bin", "ctl");
+    items.push(
+      makeItem({
+        key: "project_host_wrapper",
+        label: "Project-host wrapper",
+        desired: true,
+        installed: existsSync(projectHostWrapperPath),
+        status: existsSync(projectHostWrapperPath) ? "match" : "missing",
+        message: projectHostWrapperPath,
+      }),
+    );
+    items.push(
+      makeItem({
+        key: "project_host_ctl",
+        label: "Project-host ctl helper",
+        desired: true,
+        installed: existsSync(projectHostCtlPath),
+        status: existsSync(projectHostCtlPath) ? "match" : "missing",
+        message: projectHostCtlPath,
+      }),
+    );
+  }
 
   const cloudflaredEnabled = desired.cloudflared?.enabled === true;
   items.push(
@@ -222,6 +273,24 @@ function buildBootstrapLifecycleItems(opts: {
         ? cloudflaredBinaryPresent()
           ? "cloudflared binary present"
           : "cloudflared enabled but binary missing"
+        : "cloudflared disabled for this host",
+    }),
+  );
+  items.push(
+    makeItem({
+      key: "cloudflared_service",
+      label: "Cloudflared service",
+      desired: cloudflaredEnabled,
+      installed: cloudflaredEnabled ? cloudflaredServicePresent() : undefined,
+      status: cloudflaredEnabled
+        ? cloudflaredServicePresent()
+          ? "match"
+          : "missing"
+        : "disabled",
+      message: cloudflaredEnabled
+        ? cloudflaredServicePresent()
+          ? "cloudflared service helpers present"
+          : "cloudflared enabled but service helpers missing"
         : "cloudflared disabled for this host",
     }),
   );
@@ -297,6 +366,7 @@ export function getBootstrapLifecycle(): HostBootstrapLifecycle | undefined {
     bootstrapDir,
     desired: desired ?? {},
     installedState: installedState ?? {},
+    facts: facts ?? {},
   });
   const summary = buildSummary({
     items,

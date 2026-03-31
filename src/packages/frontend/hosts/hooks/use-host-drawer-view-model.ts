@@ -20,6 +20,7 @@ type UseHostDrawerViewModelArgs = {
   onClose: () => void;
   onEdit: (host: Host) => void;
   onUpgrade?: (host: Host) => void;
+  onReconcile?: (host: Host) => void;
   onUpgradeFromHub?: (host: Host) => void;
   onUpgradeArtifact?: (opts: {
     host: Host;
@@ -86,6 +87,7 @@ export const useHostDrawerViewModel = ({
   onClose,
   onEdit,
   onUpgrade,
+  onReconcile,
   onUpgradeFromHub,
   onUpgradeArtifact,
   canUpgrade,
@@ -105,6 +107,7 @@ export const useHostDrawerViewModel = ({
     onClose,
     onEdit,
     onUpgrade,
+    onReconcile,
     onUpgradeFromHub,
     onUpgradeArtifact,
     canUpgrade,

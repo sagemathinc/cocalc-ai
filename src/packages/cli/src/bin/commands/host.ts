@@ -566,6 +566,48 @@ export function registerHostCommand(
     );
 
   host
+    .command("reconcile <host>")
+    .description("run bootstrap/software reconcile on one host")
+    .option("--wait", "wait for completion")
+    .action(
+      async (
+        hostIdentifier: string,
+        opts: { wait?: boolean },
+        command: Command,
+      ) => {
+        await withContext(command, "host reconcile", async (ctx) => {
+          const h = await resolveHost(ctx, hostIdentifier);
+          const op = await ctx.hub.hosts.reconcileHostSoftware({
+            id: h.id,
+          });
+          if (!opts.wait) {
+            return {
+              host_id: h.id,
+              op_id: op.op_id,
+              status: "queued",
+            };
+          }
+          const summary = await waitForLro(ctx, op.op_id, {
+            timeoutMs: ctx.timeoutMs,
+            pollMs: ctx.pollMs,
+          });
+          if (summary.timedOut || summary.status !== "succeeded") {
+            throw new Error(
+              summary.timedOut
+                ? `${h.name ?? h.id}: timed out (op=${op.op_id}, last_status=${summary.status})`
+                : `${h.name ?? h.id}: status=${summary.status} error=${summary.error ?? "unknown"}`,
+            );
+          }
+          return {
+            host_id: h.id,
+            op_id: op.op_id,
+            status: summary.status,
+          };
+        });
+      },
+    );
+
+  host
     .command("ssh <host>")
     .description("ssh into host (owner-only key install supported)")
     .option("--user <user>", "ssh username", "ubuntu")

@@ -18,6 +18,7 @@ import {
   deleteHostInternal,
   drainHostInternal,
   forceDeprovisionHostInternal,
+  reconcileHostSoftwareInternal,
   removeSelfHostConnectorInternal,
   restartHostInternal,
   startHostInternal,
@@ -45,6 +46,7 @@ const HOST_OP_KINDS = [
   "host-stop",
   "host-restart",
   "host-drain",
+  "host-reconcile-software",
   "host-upgrade-software",
   "host-deprovision",
   "host-delete",
@@ -465,6 +467,8 @@ function opLabel(kind: HostOpKind, input: any): string {
       return input?.mode === "hard" ? "Hard restart" : "Restart";
     case "host-drain":
       return input?.force ? "Force drain" : "Drain";
+    case "host-reconcile-software":
+      return "Reconcile";
     case "host-upgrade-software":
       return "Upgrade";
     case "host-deprovision":
@@ -514,6 +518,12 @@ function waitConfig(kind: HostOpKind) {
         ],
         failOn: [],
         message: "finalizing host drain",
+      };
+    case "host-reconcile-software":
+      return {
+        desired: ["running"],
+        failOn: ["error", "off", "deprovisioned"],
+        message: "waiting for host to reconnect",
       };
     case "host-deprovision":
       return {
@@ -606,6 +616,9 @@ async function runHostAction(
           );
         },
       });
+    case "host-reconcile-software":
+      await reconcileHostSoftwareInternal({ account_id, id: host_id });
+      return undefined;
     case "host-deprovision":
     case "host-delete":
       await deleteHostInternal({ account_id, id: host_id });
@@ -783,6 +796,42 @@ async function handleOp(op: LroSummary): Promise<void> {
       await progressStep("done", "upgrade complete", {
         host_id,
         results: response.results ?? [],
+      });
+      return;
+    }
+
+    if (kind === "host-reconcile-software") {
+      const reconcileStartedAt = Date.now();
+      await progressStep("waiting", "running reconcile", {
+        host_id,
+      });
+      await reconcileHostSoftwareInternal({
+        account_id,
+        id: host_id,
+      });
+      await progressStep("waiting", "waiting for host to return", {
+        host_id,
+      });
+      await waitForHostHeartbeat({
+        host_id,
+        since: reconcileStartedAt,
+      });
+      const updated = await updateLro({
+        op_id,
+        status: "succeeded",
+        progress_summary: {
+          phase: "done",
+          host_id,
+          action: "reconcile",
+        },
+        result: { host_id, action: "reconcile" },
+        error: null,
+      });
+      if (updated) {
+        await publishSummary(updated);
+      }
+      await progressStep("done", "reconcile complete", {
+        host_id,
       });
       return;
     }

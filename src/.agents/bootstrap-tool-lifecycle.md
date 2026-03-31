@@ -80,12 +80,23 @@ The following are already implemented:
 - bundle reuse / non-destructive `current` switching is in place
 - host heartbeat now reports bootstrap desired-vs-installed lifecycle state
 - `/hosts` and `cocalc host bootstrap-status` surface drift visibility
+- `master-conat-token.ts` now prefers split desired-state bootstrap connection
+  data and only falls back to `bootstrap-config.json`
+- explicit reconcile actions now exist in:
+  - `cocalc host reconcile <host>`
+  - the host details UI
+- lifecycle reporting now includes concrete wrapper/service presence in
+  addition to bundle/version drift:
+  - `project-host` runtime wrapper
+  - `ctl` helper
+  - cloudflared binary/service helpers
 
 The main remaining slices are:
 
-- migrate remaining compatibility consumers off `bootstrap-config.json`
 - expand reconcile ownership further where helper/runtime artifacts still rely
   on legacy assumptions
+- eventually remove the remaining compatibility fallback to
+  `bootstrap-config.json`
 - later consider periodic background reconcile for long-lived hosts
 
 ## Why This Was Needed
@@ -202,12 +213,14 @@ These are exactly the artifacts that should be covered by recurring reconcile.
 
 ### Compatibility constraint already visible in code
 
-Current project-host token recovery still reads
-`~/cocalc-host/bootstrap/bootstrap-config.json` from a fixed list of paths:
+Current project-host token recovery now prefers split desired-state bootstrap
+connection data and only falls back to `bootstrap-config.json` for older
+hosts:
 
 - [master-conat-token.ts](/home/wstein/build/cocalc-lite2/src/packages/project-host/master-conat-token.ts)
 
-So we cannot simply remove `bootstrap-config.json` in the first pass.
+So `bootstrap-config.json` still exists as a compatibility artifact, but it is
+no longer the primary source for project-host bootstrap connection recovery.
 
 ## Core Problems To Solve
 
@@ -678,30 +691,37 @@ Status: partially done
 - version helper schema and wrapper schema explicitly
 - surface drift when helpers/wrappers are behind desired state
 
+What is done now:
+
+- helper schema and runtime wrapper versions are recorded in desired/installed
+  state
+- lifecycle visibility now includes wrapper/helper presence beyond bundle
+  versions
+
+What remains:
+
+- make helper/runtime ownership even more explicit in desired state where some
+  artifacts are still inferred rather than directly declared
+
 ## Phase 6: Hub-visible state and explicit reconcile action
 
-Status: partially done
+Status: done
 
 - add desired vs installed bundle versions to host status
 - add last reconcile result / timestamp
 - add explicit "reconcile bootstrap/software" action in host UI and CLI
 
-What is done now:
-
 - host heartbeat reports desired-vs-installed lifecycle state
 - `/hosts` surfaces drift / reconcile status
 - `cocalc host bootstrap-status` exposes the same lifecycle block
-
-What remains:
-
-- an explicit user-facing reconcile action instead of going through
-  `cocalc host upgrade`
-- potentially richer service-level status such as wrapper health and service
-  presence beyond bundle/version drift
+- `cocalc host reconcile <host>` is available
+- the host details UI exposes an explicit reconcile action
+- lifecycle reporting includes wrapper/service presence in addition to bundle
+  drift
 
 ## Phase 7: Cleanup
 
-Status: not started
+Status: partially done
 
 - remove obsolete assumptions that `.bootstrap_done` means "software layer is
   permanently current"
@@ -713,14 +733,14 @@ Status: not started
 
 The next narrow slice should be:
 
-1. migrate [master-conat-token.ts](/home/wstein/build/cocalc-lite2/src/packages/project-host/master-conat-token.ts)
-   off `bootstrap-config.json`
-2. expose an explicit reconcile action in host UI and CLI
-3. broaden lifecycle visibility from bundle/version drift to service and
-   wrapper health where practical
+1. remove the remaining compatibility fallback to `bootstrap-config.json`
+   after older hosts no longer depend on it
+2. continue moving helper/runtime artifact ownership out of implicit inference
+   and into explicit desired state
+3. consider periodic background reconcile for long-lived hosts
 
-That keeps the next work focused on removing compatibility debt and making
-reconcile more explicit operationally.
+That keeps the next work focused on eliminating compatibility debt and making
+reconcile fully self-describing.
 
 ## Open Questions
 

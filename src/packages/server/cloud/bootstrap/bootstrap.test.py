@@ -122,6 +122,25 @@ class BootstrapStateFilesTest(unittest.TestCase):
     def test_writes_split_state_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             cfg = make_cfg(tmpdir)
+            cfg = replace(
+                cfg,
+                conat_url="https://hub.example.invalid/conat/master-token",
+                status_url="https://hub.example.invalid/bootstrap/status",
+                bootstrap_token="bootstrap-secret",
+                ca_cert_path="/etc/ssl/cocalc-ca.pem",
+                project_host_bundle=replace(
+                    cfg.project_host_bundle,
+                    root="/opt/cocalc/project-host/bundles",
+                ),
+                project_bundle=replace(
+                    cfg.project_bundle,
+                    root="/opt/cocalc/project/bundles",
+                ),
+                tools_bundle=replace(
+                    cfg.tools_bundle,
+                    root="/opt/cocalc/tools",
+                ),
+            )
             bootstrap.write_bootstrap_state_files(cfg)
 
             facts = json.loads(
@@ -142,6 +161,18 @@ class BootstrapStateFilesTest(unittest.TestCase):
 
             self.assertEqual(facts["runtime_user"], "missing-runtime-user")
             self.assertEqual(desired["bootstrap"]["selector"], "latest")
+            self.assertEqual(
+                desired["bootstrap_connection"]["conat_url"],
+                "https://hub.example.invalid/conat/master-token",
+            )
+            self.assertEqual(
+                desired["bootstrap_connection"]["bootstrap_token"],
+                "bootstrap-secret",
+            )
+            self.assertEqual(
+                desired["project_host_bundle"]["root"],
+                "/opt/cocalc/project-host/bundles",
+            )
             self.assertIn("installed", state)
 
 

@@ -1,5 +1,5 @@
 import { readFileSync, writeFileSync, readdirSync, existsSync } from "fs";
-import { dirname } from "path";
+import { dirname, join } from "path";
 import { mkdirSync } from "fs";
 import { request as httpRequest } from "http";
 import { request as httpsRequest } from "https";
@@ -8,6 +8,14 @@ import { URL } from "url";
 const DEFAULT_MASTER_CONAT_TOKEN_PATH =
   "/mnt/cocalc/data/secrets/master-conat-token";
 const LEGACY_MASTER_CONAT_TOKEN_PATH = "/btrfs/data/secrets/master-conat-token";
+const BOOTSTRAP_CONFIG_BASENAME = "bootstrap-config.json";
+const BOOTSTRAP_DESIRED_STATE_BASENAME = "bootstrap-desired-state.json";
+
+type BootstrapConnectionRecord = {
+  bootstrap_token?: string;
+  conat_url?: string;
+  ca_cert_path?: string;
+};
 
 export function getProjectHostMasterConatTokenPath(): string {
   const configured = `${
@@ -50,19 +58,27 @@ export function writeProjectHostMasterConatToken(token: string): void {
   writeFileSync(tokenPath, `${value}\n`, { encoding: "utf8", mode: 0o600 });
 }
 
-function bootstrapConfigCandidates(): string[] {
-  const fromEnv = `${process.env.COCALC_BOOTSTRAP_CONFIG_PATH ?? ""}`.trim();
+function bootstrapDirCandidates(): string[] {
   const candidates = new Set<string>();
-  if (fromEnv) {
-    candidates.add(fromEnv);
+  const explicitDir =
+    `${process.env.COCALC_PROJECT_HOST_BOOTSTRAP_DIR ?? ""}`.trim();
+  if (explicitDir) {
+    candidates.add(explicitDir);
   }
-  candidates.add("/root/cocalc-host/bootstrap/bootstrap-config.json");
-  candidates.add("/home/ubuntu/cocalc-host/bootstrap/bootstrap-config.json");
+  const explicitConfigPath =
+    `${process.env.COCALC_BOOTSTRAP_CONFIG_PATH ?? ""}`.trim();
+  if (explicitConfigPath) {
+    candidates.add(dirname(explicitConfigPath));
+  }
+  const home = `${process.env.HOME ?? ""}`.trim();
+  if (home) {
+    candidates.add(join(home, "cocalc-host", "bootstrap"));
+  }
+  candidates.add("/root/cocalc-host/bootstrap");
+  candidates.add("/home/ubuntu/cocalc-host/bootstrap");
   try {
     for (const user of readdirSync("/home")) {
-      candidates.add(
-        `/home/${user}/cocalc-host/bootstrap/bootstrap-config.json`,
-      );
+      candidates.add(`/home/${user}/cocalc-host/bootstrap`);
     }
   } catch {
     // ignore missing /home etc.
@@ -70,21 +86,41 @@ function bootstrapConfigCandidates(): string[] {
   return [...candidates];
 }
 
+function readJsonObject(path: string): Record<string, any> | undefined {
+  try {
+    const raw = readFileSync(path, "utf8");
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed;
+    }
+  } catch {
+    // keep trying candidates
+  }
+  return undefined;
+}
+
+function readBootstrapConnection(): BootstrapConnectionRecord | undefined {
+  for (const dir of bootstrapDirCandidates()) {
+    const desired = readJsonObject(join(dir, BOOTSTRAP_DESIRED_STATE_BASENAME));
+    const connection = desired?.bootstrap_connection;
+    if (connection && typeof connection === "object") {
+      return connection as BootstrapConnectionRecord;
+    }
+    const config = readJsonObject(join(dir, BOOTSTRAP_CONFIG_BASENAME));
+    if (config) {
+      return config as BootstrapConnectionRecord;
+    }
+  }
+  return undefined;
+}
+
 export function getProjectHostBootstrapToken(): string | undefined {
   const fromEnv =
     `${process.env.COCALC_PROJECT_HOST_BOOTSTRAP_TOKEN ?? ""}`.trim();
   if (fromEnv) return fromEnv;
-  for (const path of bootstrapConfigCandidates()) {
-    try {
-      const raw = readFileSync(path, "utf8");
-      const parsed = JSON.parse(raw) as { bootstrap_token?: string };
-      const token = `${parsed?.bootstrap_token ?? ""}`.trim();
-      if (token) return token;
-    } catch {
-      // keep trying candidates
-    }
-  }
-  return undefined;
+  const parsed = readBootstrapConnection();
+  const token = `${parsed?.bootstrap_token ?? ""}`.trim();
+  return token || undefined;
 }
 
 export type ProjectHostBootstrapConatSource = {
@@ -92,24 +128,6 @@ export type ProjectHostBootstrapConatSource = {
   conat_url: string;
   ca_cert_path?: string;
 };
-
-function readBootstrapConfig():
-  | {
-      bootstrap_token?: string;
-      conat_url?: string;
-      ca_cert_path?: string;
-    }
-  | undefined {
-  for (const path of bootstrapConfigCandidates()) {
-    try {
-      const raw = readFileSync(path, "utf8");
-      return JSON.parse(raw);
-    } catch {
-      // keep trying candidates
-    }
-  }
-  return undefined;
-}
 
 export function getProjectHostBootstrapConatSource(opts?: {
   fallbackConatUrl?: string;
@@ -131,7 +149,7 @@ export function getProjectHostBootstrapConatSource(opts?: {
       ...(fromEnvCaPath ? { ca_cert_path: fromEnvCaPath } : {}),
     };
   }
-  const parsed = readBootstrapConfig();
+  const parsed = readBootstrapConnection();
   const bootstrap_token = `${parsed?.bootstrap_token ?? ""}`.trim();
   const conat_url = `${parsed?.conat_url ?? ""}`.trim();
   const ca_cert_path = `${parsed?.ca_cert_path ?? ""}`.trim();

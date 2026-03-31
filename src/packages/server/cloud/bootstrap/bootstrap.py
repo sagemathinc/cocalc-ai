@@ -307,6 +307,15 @@ def build_host_facts(cfg: BootstrapConfig) -> dict[str, Any]:
     }
 
 
+def build_bootstrap_connection(cfg: BootstrapConfig) -> dict[str, Any]:
+    return {
+        "conat_url": cfg.conat_url,
+        "status_url": cfg.status_url,
+        "bootstrap_token": cfg.bootstrap_token,
+        "ca_cert_path": cfg.ca_cert_path,
+    }
+
+
 def build_desired_state(cfg: BootstrapConfig) -> dict[str, Any]:
     return {
         "schema_version": STATE_SCHEMA_VERSION,
@@ -319,21 +328,25 @@ def build_desired_state(cfg: BootstrapConfig) -> dict[str, Any]:
         "helper_schema_version": HELPER_SCHEMA_VERSION,
         "runtime_wrapper_version": RUNTIME_WRAPPER_VERSION,
         "node_version": cfg.node_version,
+        "bootstrap_connection": build_bootstrap_connection(cfg),
         "project_host_bundle": {
             "url": cfg.project_host_bundle.url,
             "version": cfg.project_host_bundle.version,
+            "root": cfg.project_host_bundle.root,
             "dir": cfg.project_host_bundle.dir,
             "current": cfg.project_host_bundle.current,
         },
         "project_bundle": {
             "url": cfg.project_bundle.url,
             "version": cfg.project_bundle.version,
+            "root": cfg.project_bundle.root,
             "dir": cfg.project_bundle.dir,
             "current": cfg.project_bundle.current,
         },
         "tools_bundle": {
             "url": cfg.tools_bundle.url,
             "version": cfg.tools_bundle.version,
+            "root": cfg.tools_bundle.root,
             "dir": cfg.tools_bundle.dir,
             "current": cfg.tools_bundle.current,
             "manifest_url": cfg.tools_bundle.manifest_url,
