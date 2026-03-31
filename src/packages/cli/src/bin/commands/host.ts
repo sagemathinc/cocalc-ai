@@ -566,42 +566,111 @@ export function registerHostCommand(
     );
 
   host
-    .command("reconcile <host>")
-    .description("run bootstrap/software reconcile on one host")
+    .command("reconcile [host]")
+    .description("run bootstrap/software reconcile on one or more hosts")
+    .option("--all-online", "reconcile all online hosts")
     .option("--wait", "wait for completion")
     .action(
       async (
-        hostIdentifier: string,
-        opts: { wait?: boolean },
+        hostIdentifier: string | undefined,
+        opts: { allOnline?: boolean; wait?: boolean },
         command: Command,
       ) => {
         await withContext(command, "host reconcile", async (ctx) => {
-          const h = await resolveHost(ctx, hostIdentifier);
-          const op = await ctx.hub.hosts.reconcileHostSoftware({
-            id: h.id,
-          });
-          if (!opts.wait) {
+          if (hostIdentifier && opts.allOnline) {
+            throw new Error("use either <host> or --all-online, not both");
+          }
+          if (!hostIdentifier && !opts.allOnline) {
+            throw new Error("specify <host> or use --all-online");
+          }
+          const hosts = opts.allOnline
+            ? (
+                (await listHosts(ctx, {
+                  include_deleted: false,
+                  catalog: false,
+                  admin_view: true,
+                })) as HostRow[]
+              ).filter(isHostOnlineForUpgrade)
+            : [await resolveHost(ctx, hostIdentifier)];
+
+          if (hosts.length === 0) {
             return {
-              host_id: h.id,
-              op_id: op.op_id,
-              status: "queued",
+              status: "skipped",
+              reason: "no online hosts matched",
+              hosts: [],
             };
           }
-          const summary = await waitForLro(ctx, op.op_id, {
-            timeoutMs: ctx.timeoutMs,
-            pollMs: ctx.pollMs,
-          });
-          if (summary.timedOut || summary.status !== "succeeded") {
+
+          const queued = await Promise.all(
+            hosts.map(async (h) => {
+              const op = await ctx.hub.hosts.reconcileHostSoftware({
+                id: h.id,
+              });
+              return {
+                host_id: h.id,
+                name: h.name,
+                op_id: op.op_id,
+                status: "queued",
+              };
+            }),
+          );
+
+          if (!opts.wait) {
+            if (queued.length === 1) {
+              return {
+                host_id: queued[0].host_id,
+                op_id: queued[0].op_id,
+                status: queued[0].status,
+              };
+            }
+            return {
+              status: "queued",
+              count: queued.length,
+              hosts: queued,
+            };
+          }
+
+          const waited = await Promise.all(
+            queued.map(async (entry) => {
+              const summary = await waitForLro(ctx, entry.op_id, {
+                timeoutMs: ctx.timeoutMs,
+                pollMs: ctx.pollMs,
+              });
+              return {
+                ...entry,
+                status: summary.status,
+                timed_out: !!summary.timedOut,
+                error: summary.error ?? undefined,
+              };
+            }),
+          );
+
+          const failures = waited.filter(
+            (entry) => entry.timed_out || entry.status !== "succeeded",
+          );
+          if (failures.length > 0) {
             throw new Error(
-              summary.timedOut
-                ? `${h.name ?? h.id}: timed out (op=${op.op_id}, last_status=${summary.status})`
-                : `${h.name ?? h.id}: status=${summary.status} error=${summary.error ?? "unknown"}`,
+              failures
+                .map((entry) => {
+                  if (entry.timed_out) {
+                    return `${entry.name ?? entry.host_id}: timed out (op=${entry.op_id}, last_status=${entry.status})`;
+                  }
+                  return `${entry.name ?? entry.host_id}: status=${entry.status} error=${entry.error ?? "unknown"}`;
+                })
+                .join("; "),
             );
           }
+          if (waited.length === 1) {
+            return {
+              host_id: waited[0].host_id,
+              op_id: waited[0].op_id,
+              status: waited[0].status,
+            };
+          }
           return {
-            host_id: h.id,
-            op_id: op.op_id,
-            status: summary.status,
+            status: "succeeded",
+            count: waited.length,
+            hosts: waited,
           };
         });
       },
