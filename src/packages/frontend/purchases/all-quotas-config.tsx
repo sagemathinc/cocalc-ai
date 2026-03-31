@@ -167,7 +167,7 @@ export default function AllQuotasConfig() {
               })),
             }}
             trigger={["click"]}
-            overlayStyle={{ minWidth: "100px" }}
+            styles={{ root: { minWidth: "100px" } }}
           >
             <div style={{ display: "flex" }}>
               <InputNumber

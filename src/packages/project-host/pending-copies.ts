@@ -150,6 +150,7 @@ async function reportCopyStatus(
       name: "hosts.updateCopyStatus",
       args: [
         {
+          copy_id: row.copy_id,
           src_project_id: row.src_project_id,
           src_path: row.src_path,
           dest_project_id: row.dest_project_id,
@@ -171,12 +172,12 @@ export async function applyPendingCopies({
 }: {
   project_id?: string;
   limit?: number;
-} = {}): Promise<void> {
+} = {}): Promise<number> {
   const client = getMasterConatClient();
   const hostId = getLocalHostId();
   if (!client || !hostId) {
     logger.debug("pending copies skipped (no master client or host id)");
-    return;
+    return 0;
   }
 
   let rows: ProjectCopyRow[] = [];
@@ -190,7 +191,7 @@ export async function applyPendingCopies({
     });
   } catch (err) {
     logger.warn("failed to claim pending copies", { err: `${err}` });
-    return;
+    return 0;
   }
 
   for (const row of rows) {
@@ -206,6 +207,7 @@ export async function applyPendingCopies({
       await reportCopyStatus(row, "failed", `${err}`);
     }
   }
+  return rows.length;
 }
 
 export function startCopyWorker(intervalMs = 30_000): () => void {

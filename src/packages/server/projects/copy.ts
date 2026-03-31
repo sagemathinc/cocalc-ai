@@ -1,6 +1,7 @@
 import path from "node:path";
 import getLogger from "@cocalc/backend/logger";
 import { conat } from "@cocalc/backend/conat";
+import { createHostControlClient } from "@cocalc/conat/project-host/api";
 import getPool from "@cocalc/database/pool";
 import { waitForCompletion as waitForLroCompletion } from "@cocalc/conat/lro/client";
 import { type Fileserver } from "@cocalc/conat/files/file-server";
@@ -24,6 +25,7 @@ type CopyProgress = (update: CopyStep) => void;
 
 type CopySource = { project_id: string; path: string | string[] };
 type CopyDest = { project_id: string; path: string };
+type CopyDestWithHost = CopyDest & { host_id: string };
 type QueueMode = "upsert" | "insert";
 
 export const COPY_CANCELED_CODE = "copy-canceled";
@@ -135,6 +137,30 @@ function normalizeBackupPath({
   return normalized;
 }
 
+function isProjectRootCopyDest(destPath: string): boolean {
+  const canonical =
+    destPath === "/"
+      ? "/"
+      : destPath.replace(/\/+$/, "") || (destPath.startsWith("/") ? "/" : "");
+  return canonical === "" || canonical === "/" || canonical === "/root";
+}
+
+function resolveRemoteSingleDestPath({
+  srcPath,
+  destPath,
+}: {
+  srcPath: string;
+  destPath: string;
+}): string {
+  if (!srcPath || !isProjectRootCopyDest(destPath)) {
+    return destPath;
+  }
+  return normalizeCopyPath(
+    path.posix.join("/root", path.posix.basename(srcPath)),
+    "dest.path",
+  );
+}
+
 async function getHostIds(project_ids: string[]): Promise<Map<string, string>> {
   const { rows } = await getPool().query<{
     project_id: string;
@@ -159,6 +185,107 @@ async function getHostIds(project_ids: string[]): Promise<Map<string, string>> {
     }
   }
   return map;
+}
+
+async function getProjectBackupFreshness({
+  project_id,
+}: {
+  project_id: string;
+}): Promise<{ last_edited: Date | null; last_backup: Date | null }> {
+  const { rows } = await getPool().query<{
+    last_edited: Date | null;
+    last_backup: Date | null;
+  }>(
+    `
+      SELECT last_edited, last_backup
+      FROM projects
+      WHERE project_id = $1
+    `,
+    [project_id],
+  );
+  return {
+    last_edited: rows[0]?.last_edited ?? null,
+    last_backup: rows[0]?.last_backup ?? null,
+  };
+}
+
+const BACKUP_REUSE_SKEW_MS = 5_000;
+
+async function findReusableBackupSnapshot({
+  client,
+  project_id,
+}: {
+  client: Fileserver;
+  project_id: string;
+}): Promise<{ id: string; time?: string } | undefined> {
+  const { last_edited, last_backup } = await getProjectBackupFreshness({
+    project_id,
+  });
+  if (!last_backup) {
+    return;
+  }
+  const lastEditedMs = last_edited ? new Date(last_edited).getTime() : 0;
+  const lastBackupMs = new Date(last_backup).getTime();
+  if (
+    Number.isFinite(lastEditedMs) &&
+    Number.isFinite(lastBackupMs) &&
+    lastEditedMs > lastBackupMs + BACKUP_REUSE_SKEW_MS
+  ) {
+    return;
+  }
+
+  const backups = await client.getBackups({
+    project_id,
+    indexed_only: true,
+  });
+  if (!backups.length) {
+    return;
+  }
+  const latest = backups[backups.length - 1];
+  const latestMs = latest?.time ? new Date(latest.time).getTime() : NaN;
+  if (!Number.isFinite(latestMs)) {
+    return;
+  }
+  if (latestMs + BACKUP_REUSE_SKEW_MS < lastBackupMs) {
+    return;
+  }
+  return {
+    id: latest.id,
+    time:
+      latest.time instanceof Date
+        ? latest.time.toISOString()
+        : `${latest.time}`,
+  };
+}
+
+async function triggerRemoteCopyApply({
+  queuedByHost,
+  timeout_ms,
+}: {
+  queuedByHost: Map<string, number>;
+  timeout_ms: number;
+}): Promise<void> {
+  if (!queuedByHost.size) return;
+  const client = conat();
+  await Promise.all(
+    Array.from(queuedByHost.entries()).map(async ([host_id, queued]) => {
+      try {
+        await createHostControlClient({
+          host_id,
+          client,
+          timeout: Math.max(5_000, Math.min(timeout_ms, 30_000)),
+        }).applyPendingCopies({
+          limit: Math.max(queued, 10),
+        });
+      } catch (err) {
+        logger.warn("copyProjectFiles: immediate remote copy trigger failed", {
+          host_id,
+          queued,
+          err: `${err}`,
+        });
+      }
+    }),
+  );
 }
 
 async function assertBackupContainsPath({
@@ -266,13 +393,13 @@ export async function copyProjectFiles({
   });
 
   const localDests: CopyDest[] = [];
-  const remoteDests: CopyDest[] = [];
+  const remoteDests: CopyDestWithHost[] = [];
   for (const dest of normalizedDests) {
     const destHostId = hostIds.get(dest.project_id)!;
     if (destHostId === srcHostId) {
       localDests.push(dest);
     } else {
-      remoteDests.push(dest);
+      remoteDests.push({ ...dest, host_id: destHostId });
     }
   }
 
@@ -303,14 +430,35 @@ export async function copyProjectFiles({
     ];
     const backupClient = srcProjectClient;
     let createdBackup = false;
+    let reusedBackup = false;
     if (!snapshot_id) {
-      const backup = await createBackupAndWait({
-        account_id,
+      const reusableBackup = await findReusableBackupSnapshot({
+        client: backupClient,
         project_id: src.project_id,
-        tags,
+      }).catch((err) => {
+        logger.warn("copyProjectFiles: reusable backup lookup failed", {
+          project_id: src.project_id,
+          err: `${err}`,
+        });
+        return undefined;
       });
-      snapshot_id = backup.id;
-      createdBackup = true;
+      if (reusableBackup?.id) {
+        snapshot_id = reusableBackup.id;
+        reusedBackup = true;
+        report(progress, {
+          step: "backup",
+          message: "reusing recent backup",
+          detail: { snapshot_id, time: reusableBackup.time },
+        });
+      } else {
+        const backup = await createBackupAndWait({
+          account_id,
+          project_id: src.project_id,
+          tags,
+        });
+        snapshot_id = backup.id;
+        createdBackup = true;
+      }
     }
     if (!snapshot_id) {
       throw new Error("backup creation failed (missing snapshot id)");
@@ -319,16 +467,39 @@ export async function copyProjectFiles({
       throw copyCanceledError();
     }
     try {
-      for (const srcPath of backupSrcPaths) {
-        if (shouldAbort && (await shouldAbort())) {
-          throw copyCanceledError();
+      const assertSnapshotContainsSources = async () => {
+        for (const srcPath of backupSrcPaths) {
+          if (shouldAbort && (await shouldAbort())) {
+            throw copyCanceledError();
+          }
+          await assertBackupContainsPath({
+            project_id: src.project_id,
+            snapshot_id: snapshot_id!,
+            path: srcPath,
+            client: backupClient,
+          });
         }
-        await assertBackupContainsPath({
-          project_id: src.project_id,
-          snapshot_id: snapshot_id,
-          path: srcPath,
-          client: backupClient,
+      };
+      try {
+        await assertSnapshotContainsSources();
+      } catch (err) {
+        if (!reusedBackup) {
+          throw err;
+        }
+        report(progress, {
+          step: "backup",
+          message: "recent backup missing requested path; creating new backup",
+          detail: { snapshot_id },
         });
+        const backup = await createBackupAndWait({
+          account_id,
+          project_id: src.project_id,
+          tags,
+        });
+        snapshot_id = backup.id;
+        reusedBackup = false;
+        createdBackup = true;
+        await assertSnapshotContainsSources();
       }
 
       report(progress, {
@@ -337,6 +508,7 @@ export async function copyProjectFiles({
         detail: { snapshot_id, destinations: remoteDests.length },
       });
       const expiresAt = new Date(Date.now() + COPY_TTL_MS);
+      const queuedByHost = new Map<string, number>();
 
       for (const dest of remoteDests) {
         if (shouldAbort && (await shouldAbort())) {
@@ -373,16 +545,24 @@ export async function copyProjectFiles({
                   });
             if (queue_mode === "upsert" || inserted) {
               queuedCount += 1;
+              queuedByHost.set(
+                dest.host_id,
+                (queuedByHost.get(dest.host_id) ?? 0) + 1,
+              );
             }
           }
         } else {
+          const destPath = resolveRemoteSingleDestPath({
+            srcPath: backupSrcPaths[0],
+            destPath: dest.path,
+          });
           const inserted =
             queue_mode === "insert"
               ? await insertCopyRowIfMissing({
                   src_project_id: src.project_id,
                   src_path: backupSrcPaths[0],
                   dest_project_id: dest.project_id,
-                  dest_path: dest.path,
+                  dest_path: destPath,
                   op_id,
                   snapshot_id,
                   options,
@@ -392,7 +572,7 @@ export async function copyProjectFiles({
                   src_project_id: src.project_id,
                   src_path: backupSrcPaths[0],
                   dest_project_id: dest.project_id,
-                  dest_path: dest.path,
+                  dest_path: destPath,
                   op_id,
                   snapshot_id,
                   options,
@@ -400,6 +580,10 @@ export async function copyProjectFiles({
                 });
           if (queue_mode === "upsert" || inserted) {
             queuedCount += 1;
+            queuedByHost.set(
+              dest.host_id,
+              (queuedByHost.get(dest.host_id) ?? 0) + 1,
+            );
           }
         }
       }
@@ -413,6 +597,7 @@ export async function copyProjectFiles({
           total: queuedCount + localCount,
         },
       });
+      await triggerRemoteCopyApply({ queuedByHost, timeout_ms });
     } catch (err) {
       if (createdBackup && snapshot_id) {
         try {

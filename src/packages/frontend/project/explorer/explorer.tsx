@@ -5,8 +5,7 @@
 
 import * as _ from "lodash";
 import { UsersViewing } from "@cocalc/frontend/account/avatar/users-viewing";
-import { Button, Space } from "antd";
-import { Col, Row } from "@cocalc/frontend/antd-bootstrap";
+import { Alert, Button, Space } from "antd";
 import {
   type CSSProperties,
   useCallback,
@@ -15,7 +14,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { useIntl } from "react-intl";
+import { FormattedMessage, useIntl } from "react-intl";
 import {
   ActivityDisplay,
   ErrorDisplay,
@@ -30,7 +29,6 @@ import AskNewFilename from "../ask-filename";
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import { selectionForPath } from "@cocalc/frontend/project/workspaces/state";
 import { ActionBar } from "./action-bar";
-import { ActionBox } from "./action-box";
 import BackupOps from "./backup-ops";
 import CopyOps from "./copy-ops";
 import MoveOps from "./move-ops";
@@ -110,6 +108,11 @@ const ERROR_STYLE: CSSProperties = {
   right: "5px",
   boxShadow: "5px 5px 5px grey",
 } as const;
+
+function isMissingProjectVolumeError(error: unknown): boolean {
+  const text = `${(error as any)?.message ?? error ?? ""}`.toLowerCase();
+  return text.includes("project volume does not exist");
+}
 
 function sortDesc(active_file_sort?): {
   sortField: SortField;
@@ -619,6 +622,8 @@ export function Explorer() {
   const suppressProjectError =
     (hostUnavailable && isHostRoutingUnavailableError(error)) ||
     shouldSuppressTransientRoutingError({ error, moveLro });
+  const shouldShowStartProjectWarning =
+    !project_is_running && isMissingProjectVolumeError(listingError);
 
   if (hostUnavailable && !project_is_running) {
     return (
@@ -934,56 +939,77 @@ You can either wait for this host to become available again, or move this ${proj
                   />
                 </div>
               </div>
-              {checked_files.size > 0 && file_action != undefined ? (
-                <Row>
-                  <Col sm={12}>
-                    <ActionBox
-                      file_action={file_action}
-                      checked_files={checked_files}
-                      current_path={effective_current_path}
-                      project_id={project_id}
-                      actions={actions}
-                      onUserFilesystemChange={allowNextListingUpdate}
-                    />
-                  </Col>
-                </Row>
-              ) : undefined}
             </div>
 
-            {listingError && !suppressRoutingError && (
-              <div style={{ margin: "30px auto", textAlign: "center" }}>
-                <ShowError error={listingError} style={{ textAlign: "left" }} />
-                <br />
-                <Space.Compact>
-                  <Button
-                    size="large"
-                    style={{ margin: "auto" }}
-                    onClick={refresh}
-                  >
-                    <Icon name="refresh" /> Refresh
-                  </Button>
-                  {listingError.code == "ENOENT" && (
+            {shouldShowStartProjectWarning && (
+              <Alert
+                type="info"
+                showIcon
+                style={{ margin: "16px auto", maxWidth: "720px" }}
+                message={
+                  <FormattedMessage
+                    id="project.explorer.start_project.warning"
+                    defaultMessage={
+                      "To see the files in this directory, you must <a>start this project</a>."
+                    }
+                    values={{
+                      a: (chunks) => (
+                        <a
+                          onClick={(e) => {
+                            e.preventDefault();
+                            redux
+                              .getActions("projects")
+                              .start_project(project_id);
+                          }}
+                        >
+                          {chunks}
+                        </a>
+                      ),
+                    }}
+                  />
+                }
+              />
+            )}
+
+            {listingError &&
+              !suppressRoutingError &&
+              !shouldShowStartProjectWarning && (
+                <div style={{ margin: "30px auto", textAlign: "center" }}>
+                  <ShowError
+                    error={listingError}
+                    style={{ textAlign: "left" }}
+                  />
+                  <br />
+                  <Space.Compact>
                     <Button
                       size="large"
                       style={{ margin: "auto" }}
-                      onClick={async () => {
-                        const fs = actions?.fs();
-                        try {
-                          await fs.mkdir(effective_current_path, {
-                            recursive: true,
-                          });
-                          refresh();
-                        } catch (err) {
-                          actions?.setState({ error: err });
-                        }
-                      }}
+                      onClick={refresh}
                     >
-                      <Icon name="folder-open" /> Create Directory
+                      <Icon name="refresh" /> Refresh
                     </Button>
-                  )}
-                </Space.Compact>
-              </div>
-            )}
+                    {listingError.code == "ENOENT" && (
+                      <Button
+                        size="large"
+                        style={{ margin: "auto" }}
+                        onClick={async () => {
+                          const fs = actions?.fs();
+                          try {
+                            await fs.mkdir(effective_current_path, {
+                              recursive: true,
+                            });
+                            refresh();
+                          } catch (err) {
+                            actions?.setState({ error: err });
+                          }
+                        }}
+                      >
+                        <Icon name="folder-open" /> Create Directory
+                      </Button>
+                    )}
+                  </Space.Compact>
+                </div>
+              )}
 
             {!listingError && (
               <>

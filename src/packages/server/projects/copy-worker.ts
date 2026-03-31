@@ -198,6 +198,19 @@ async function handleCopyOp(op: LroSummary): Promise<void> {
 
     const hasRemote = result.queued > 0 || existing.length > 0;
     if (hasRemote) {
+      const current = await getLro(op_id);
+      if (
+        current?.status === "succeeded" ||
+        current?.status === "failed" ||
+        current?.status === "canceled" ||
+        current?.status === "expired"
+      ) {
+        await publishSummarySafe(current, {
+          op_id,
+          when: "preserve-terminal-status",
+        });
+        return;
+      }
       const updated = await updateLro({
         op_id,
         status: "running",

@@ -8,7 +8,7 @@ import {
 
 function decodeDirectoryPath(path: string): string {
   if (!path) {
-    return "/";
+    return "/home/user";
   }
   return path.startsWith("/") ? path : `/${path}`;
 }
@@ -41,7 +41,7 @@ describe("project-routing", () => {
   it("parses file and directory targets", () => {
     expect(parseProjectTarget("files/", { decodeDirectoryPath })).toEqual({
       kind: "directory",
-      path: "/",
+      path: "/home/user",
     });
     expect(
       parseProjectTarget("files/work/notes.md", { decodeDirectoryPath }),

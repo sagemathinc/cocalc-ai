@@ -533,6 +533,7 @@ function ActionBarEnabled({
         names={action_buttons}
         current_path={current_path}
         actions={actions}
+        selectedPaths={checked_files.toArray()}
         label="Actions"
       />
     );

@@ -131,6 +131,10 @@ export interface HostControlApi {
     project_id: string;
     users?: any;
   }) => Promise<void>;
+  applyPendingCopies: (opts: {
+    project_id?: string;
+    limit?: number;
+  }) => Promise<{ claimed: number }>;
   deleteProjectData: (opts: { project_id: string }) => Promise<void>;
   upgradeSoftware: (
     opts: UpgradeSoftwareRequest,

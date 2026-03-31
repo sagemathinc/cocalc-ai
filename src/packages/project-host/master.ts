@@ -44,6 +44,7 @@ import { assertSecureUrlOrLocal } from "@cocalc/backend/network/policy";
 import { isValidUUID } from "@cocalc/util/misc";
 import { inspectStaticAppRequest } from "./static-apps";
 import { startHostMetricsCollector } from "./host-metrics";
+import { applyPendingCopies } from "./pending-copies";
 
 const logger = getLogger("project-host:master");
 
@@ -671,6 +672,10 @@ export async function startMasterRegistration({
           project_id,
           users,
         });
+      },
+      async applyPendingCopies({ project_id, limit }) {
+        const claimed = await applyPendingCopies({ project_id, limit });
+        return { claimed };
       },
       async deleteProjectData({ project_id }) {
         await deleteVolume(project_id);

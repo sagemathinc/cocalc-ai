@@ -46,11 +46,18 @@ export default function DescriptionEditor({
   }, [task_id]);
   const commit = useDebouncedCallback(commit0, SAVE_DEBOUNCE_MS);
 
-  const saveAndClose = useCallback(() => {
-    commit0();
-    host.enableKeyHandler();
-    actions.stop_editing_desc(task_id);
-  }, [commit0, host, actions, task_id]);
+  const saveAndClose = useCallback(
+    (value?: string) => {
+      const nextValue = value ?? getValueRef.current();
+      commit.cancel();
+      setLocalValue(nextValue);
+      actions.set_desc(task_id, nextValue, true);
+      mergeHelperRef.current.noteSaved(nextValue);
+      host.enableKeyHandler();
+      actions.stop_editing_desc(task_id);
+    },
+    [commit, host, actions, task_id],
+  );
 
   const getValueRef = useRef<() => string>(() => "");
 
@@ -83,6 +90,7 @@ export default function DescriptionEditor({
         getValueRef={getValueRef}
         fontSize={font_size}
         onShiftEnter={saveAndClose}
+        onBlur={saveAndClose}
         onFocus={host.disableKeyHandler}
         enableUpload={true}
         enableMentions={true}
@@ -118,7 +126,7 @@ export default function DescriptionEditor({
         }}
       />
       <Button
-        onClick={saveAndClose}
+        onClick={() => saveAndClose()}
         size="small"
         type="link"
         style={{ marginTop: "5px" }}

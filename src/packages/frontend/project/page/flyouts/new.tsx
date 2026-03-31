@@ -346,12 +346,7 @@ export function NewFlyout({
     const name: IconName = isNewFiletypeIconName(ext)
       ? NEW_FILETYPE_ICONS[ext!]
       : (file_options(`foo.${ext}`)?.icon ?? "file");
-    return (
-      <Icon
-        name={name}
-        style={{ fontSize: "150%", marginRight: FLYOUT_PADDING }}
-      />
-    );
+    return <Icon name={name} style={{ fontSize: "150%" }} />;
   }
 
   function handleOnClick(nextExt: string) {
@@ -523,20 +518,24 @@ export function NewFlyout({
             className={"cc-project-flyout-path-navigator"}
           />
         </Space>
-        <Input
-          allowClear
-          placeholder={intl.formatMessage({
-            id: "project.page.flyouts.new.filename.placeholder",
-            defaultMessage: "Filename (optional)",
-          })}
-          value={filename}
-          onChange={onChangeHandler}
-          onKeyUp={onKeyUpHandler}
-          onFocus={inputOnFocus}
-          style={{ width: "100%", ...padding }}
-          addonBefore={fileIcon()}
-          addonAfter={renderExtAddon()}
-        />
+        <Space.Compact block style={padding}>
+          <Button disabled tabIndex={-1}>
+            {fileIcon()}
+          </Button>
+          <Input
+            allowClear
+            placeholder={intl.formatMessage({
+              id: "project.page.flyouts.new.filename.placeholder",
+              defaultMessage: "Filename (optional)",
+            })}
+            value={filename}
+            onChange={onChangeHandler}
+            onKeyUp={onKeyUpHandler}
+            onFocus={inputOnFocus}
+            style={{ width: "100%" }}
+          />
+          {renderExtAddon()}
+        </Space.Compact>
         <div
           style={{
             display: "flex",

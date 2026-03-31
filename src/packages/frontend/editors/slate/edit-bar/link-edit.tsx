@@ -8,7 +8,7 @@ import { useState } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components";
 import { Editor } from "slate";
 import { open_new_tab } from "@cocalc/frontend/misc";
-import { Input } from "antd";
+import { Input, Space } from "antd";
 import { setLinkURL } from "./link-url";
 
 interface Props {
@@ -33,29 +33,33 @@ export const LinkEdit: React.FC<Props> = ({ linkURL, editor }) => {
   }
   if (edit) {
     return (
-      <Input
-        autoFocus
+      <Space.Compact
+        size="small"
         style={{
           width: "100%",
           maxWidth: "50ex",
         }}
-        addonBefore={icon}
-        addonAfter={
-          saveValue == linkURL ? (
-            <Icon name={"check"} style={{ width: "2em", color: "#5cb85c" }} />
+      >
+        {icon}
+        <Input
+          autoFocus
+          size="small"
+          placeholder="Link target..."
+          defaultValue={linkURL}
+          onChange={(e) => {
+            setLinkURL(editor, e.target.value);
+            setSaveValue(e.target.value);
+          }}
+          onBlur={() => setEdit(false)}
+        />
+        <span style={{ width: "2em", textAlign: "center" }}>
+          {saveValue == linkURL ? (
+            <Icon name={"check"} style={{ color: "#5cb85c" }} />
           ) : (
-            <span style={{ width: "2em" }}>...</span>
-          )
-        }
-        size="small"
-        placeholder="Link target..."
-        defaultValue={linkURL}
-        onChange={(e) => {
-          setLinkURL(editor, e.target.value);
-          setSaveValue(e.target.value);
-        }}
-        onBlur={() => setEdit(false)}
-      />
+            "..."
+          )}
+        </span>
+      </Space.Compact>
     );
   } else {
     return (

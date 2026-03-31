@@ -340,6 +340,9 @@ function AiGenFormula({ mode, text = "", project_id, locale, cb }: Props) {
           />
         </div>
         <Space.Compact style={{ width: "100%" }}>
+          <Button disabled tabIndex={-1}>
+            <Icon name="fx" />
+          </Button>
           <Input
             allowClear
             disabled={generating}
@@ -351,7 +354,6 @@ function AiGenFormula({ mode, text = "", project_id, locale, cb }: Props) {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onPressEnter={doGenerate}
-            addonBefore={<Icon name="fx" />}
           />
           <LLMHistorySelector
             prompts={historyPrompts}

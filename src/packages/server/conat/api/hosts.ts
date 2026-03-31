@@ -97,7 +97,10 @@ import {
   ensureSelfHostReverseTunnel,
   runConnectorInstallOverSsh,
 } from "@cocalc/server/self-host/ssh-target";
-import { loadProjectHostMetricsHistory } from "@cocalc/database/postgres/project-host-metrics";
+import {
+  clearProjectHostMetrics,
+  loadProjectHostMetricsHistory,
+} from "@cocalc/database/postgres/project-host-metrics";
 import {
   deleteCloudflareTunnel,
   hasCloudflareTunnel,
@@ -1210,6 +1213,7 @@ async function markHostDeprovisioned(row: any, action: string) {
   delete nextMetadata.runtime;
   delete nextMetadata.dns;
   delete nextMetadata.cloudflare_tunnel;
+  delete nextMetadata.metrics;
 
   logStatusUpdate(row.id, "deprovisioned", "api");
   await revokeProjectHostTokensForHost(row.id, { purpose: "bootstrap" });
@@ -1236,9 +1240,10 @@ async function markHostDeprovisioned(row: any, action: string) {
            last_seen=$3,
            metadata=$4,
            updated=NOW()
-     WHERE id=$1 AND deleted IS NULL`,
+    WHERE id=$1 AND deleted IS NULL`,
     [row.id, "deprovisioned", new Date(), nextMetadata],
   );
+  await clearProjectHostMetrics({ host_id: row.id });
   await logCloudVmEvent({
     vm_id: row.id,
     action,
@@ -1392,6 +1397,7 @@ export async function claimPendingCopies({
 
 export async function updateCopyStatus({
   host_id,
+  copy_id,
   src_project_id,
   src_path,
   dest_project_id,
@@ -1400,18 +1406,31 @@ export async function updateCopyStatus({
   last_error,
 }: {
   host_id?: string;
-  src_project_id: string;
-  src_path: string;
-  dest_project_id: string;
-  dest_path: string;
+  copy_id?: string;
+  src_project_id?: string;
+  src_path?: string;
+  dest_project_id?: string;
+  dest_path?: string;
   status: ProjectCopyState;
   last_error?: string;
 }): Promise<void> {
   if (!host_id) {
     throw new Error("host_id must be specified");
   }
+  if (
+    !copy_id &&
+    (!src_project_id || !src_path || !dest_project_id || !dest_path)
+  ) {
+    throw new Error("copy_id or copy key must be specified");
+  }
   await updateCopyStatusDb({
-    key: { src_project_id, src_path, dest_project_id, dest_path },
+    copy_id,
+    key: {
+      src_project_id: src_project_id ?? "",
+      src_path: src_path ?? "",
+      dest_project_id: dest_project_id ?? "",
+      dest_path: dest_path ?? "",
+    },
     status,
     last_error,
   });

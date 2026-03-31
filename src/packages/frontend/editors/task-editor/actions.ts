@@ -733,7 +733,28 @@ export class TaskActions extends Actions<TaskState> {
   }
 
   public focus_find_box(): void {
+    const local = this.getFrameData("local_task_state") ?? fromJS({});
+    let nextLocal = local;
+    local.forEach((state, taskId) => {
+      let nextState = state;
+      if (state.get("editing_desc")) {
+        nextState = nextState.set("editing_desc", false);
+      }
+      if (state.get("editing_due_date")) {
+        nextState = nextState.set("editing_due_date", false);
+      }
+      if (nextState !== state) {
+        nextLocal = nextLocal.set(taskId, nextState);
+      }
+    });
     this.disable_key_handler();
+    if (nextLocal !== local) {
+      this.setFrameData({
+        focus_find_box: true,
+        local_task_state: nextLocal,
+      });
+      return;
+    }
     this.setFrameData({ focus_find_box: true });
   }
 
