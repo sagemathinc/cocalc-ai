@@ -1163,6 +1163,24 @@ describeIfLinux("rootfs option sandbox", () => {
     expect(await fs.realpath("/tmp/from-root.txt")).toBe("/tmp/from-root.txt");
   });
 
+  it("canonicalSyncFsPath returns the mounted host path for rootfs files", async () => {
+    if (fs == null) {
+      home = join(tempDir, "test-rootfs-home-canonical");
+      rootfs = join(tempDir, "test-rootfs-mounted-canonical");
+      await mkdir(home, { recursive: true });
+      await mkdir(rootfs, { recursive: true });
+      fs = new SandboxedFilesystem(home, { rootfs });
+      await fs.mkdir("/tmp");
+      await fs.writeFile("/tmp/from-root.txt", "from-root");
+    }
+    expect(await (fs as any).canonicalSyncFsPath("/tmp/from-root.txt")).toBe(
+      join(rootfs, "tmp", "from-root.txt"),
+    );
+    expect(
+      await (fs as any).canonicalSyncIdentityPath("/tmp/from-root.txt"),
+    ).toBe("/tmp/from-root.txt");
+  });
+
   it("realpath preserves /root absolute style for home files", async () => {
     expect(await fs.realpath("/root/home-abs.txt")).toBe("/root/home-abs.txt");
   });
