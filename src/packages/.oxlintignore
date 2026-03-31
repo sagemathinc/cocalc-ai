@@ -1,8 +1,1 @@
 # Existing frontend hook-rule debt. Keep this list shrinking.
-frontend/app-framework/index.ts
-frontend/editors/slate/block-edit-bar.tsx
-frontend/editors/slate/editable-markdown.tsx
-frontend/editors/slate/playwright/harness.tsx
-frontend/frame-editors/whiteboard-editor/canvas.tsx
-frontend/project/new/new-file-page.tsx
-frontend/project/page/home-page/ai-generate-document.tsx

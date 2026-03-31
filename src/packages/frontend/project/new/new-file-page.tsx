@@ -146,9 +146,6 @@ export default function NewFilePage(props: Props) {
     { project_id },
     "file_creation_error",
   );
-  if (actions == null) {
-    return <Loading theme="medium" />;
-  }
 
   const projectLauncherDefaults = getProjectLauncherDefaults(project_launcher);
   const siteLauncherDefaults = getSiteLauncherDefaults({
@@ -256,6 +253,10 @@ export default function NewFilePage(props: Props) {
   }
 
   const [creatingFile, setCreatingFile] = useState<string>("");
+
+  if (actions == null) {
+    return <Loading theme="medium" />;
+  }
 
   async function createFile(ext?: string, overrideFilename?: string) {
     const filename = overrideFilename ?? inputRef.current?.input.value;

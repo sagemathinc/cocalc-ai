@@ -173,6 +173,391 @@ function Harness(): React.JSX.Element {
       ? decodeURIComponent(searchParams.get("md") || "")
       : "a";
 
+  if (blockMode) {
+    return <BlockHarness initialMarkdown={initialMarkdown} />;
+  }
+  if (collabBlockMode) {
+    return <CollabBlockHarness />;
+  }
+  if (editableMode) {
+    return <EditableHarness initialMarkdown={initialMarkdown} />;
+  }
+  if (collabMode) {
+    return <CollabHarness />;
+  }
+  return <DefaultHarness autoformatMode={autoformatMode} />;
+}
+
+class FakeSyncstring {
+  value: string;
+  listeners: Set<() => void>;
+
+  constructor(initial: string) {
+    this.value = initial;
+    this.listeners = new Set();
+  }
+
+  to_str() {
+    return this.value;
+  }
+
+  set(value: string) {
+    this.value = value;
+    this.emit();
+  }
+
+  on(event: string, cb: () => void) {
+    if (event === "change") {
+      this.listeners.add(cb);
+    }
+  }
+
+  removeListener(event: string, cb: () => void) {
+    if (event === "change") {
+      this.listeners.delete(cb);
+    }
+  }
+
+  emit() {
+    for (const cb of this.listeners) {
+      cb();
+    }
+  }
+}
+
+function BlockHarness({
+  initialMarkdown,
+}: {
+  initialMarkdown: string;
+}): React.JSX.Element {
+  const getValueRef = useRef<() => string>(() => "");
+  const controlRef = useRef<any>(null);
+
+  useEffect(() => {
+    const api: Window["__slateBlockTest"] = {
+      getMarkdown: () => getValueRef.current?.() ?? "",
+      setMarkdown: (value: string) => {
+        controlRef.current?.setMarkdown?.(value);
+      },
+      setSelection: (index: number, position: "start" | "end" = "start") => {
+        return controlRef.current?.setSelectionInBlock?.(index, position);
+      },
+      getSelection: () => {
+        return controlRef.current?.getSelectionInBlock?.();
+      },
+      getSelectionForBlock: (index: number) => {
+        return controlRef.current?.getSelectionForBlock?.(index);
+      },
+      getSelectionOffsetForBlock: (index: number) => {
+        return controlRef.current?.getSelectionOffsetForBlock?.(index) ?? null;
+      },
+      getBlocks: () => {
+        return controlRef.current?.getBlocks?.() ?? [];
+      },
+      getFocusedIndex: () => {
+        return controlRef.current?.getFocusedIndex?.() ?? null;
+      },
+      setSelectionFromMarkdownPosition: (pos: { line: number; ch: number }) => {
+        return (
+          controlRef.current?.setSelectionFromMarkdownPosition?.(pos) ?? false
+        );
+      },
+    };
+    window.__slateBlockTest = api;
+  }, []);
+
+  return (
+    <HarnessErrorBoundary>
+      <div style={{ padding: 16, width: 520, height: 320 }}>
+        <BlockMarkdownEditor
+          value={initialMarkdown}
+          read_only={false}
+          hidePath={true}
+          minimal={true}
+          height="300px"
+          noVfill={true}
+          actions={{}}
+          getValueRef={getValueRef}
+          controlRef={controlRef}
+          disableVirtualization={true}
+        />
+      </div>
+    </HarnessErrorBoundary>
+  );
+}
+
+function CollabBlockHarness(): React.JSX.Element {
+  const [markdown, setMarkdown] = useState<string>(
+    "alpha\n\nbeta\n\ncharlie\n",
+  );
+  const syncRef = useRef(new FakeSyncstring(markdown));
+  const getValueRefA = useRef<() => string>(() => "");
+  const getValueRefB = useRef<() => string>(() => "");
+  const controlRefA = useRef<any>(null);
+  const controlRefB = useRef<any>(null);
+
+  useEffect(() => {
+    window.__slateCollabTest = {
+      getMarkdownA: () => getValueRefA.current?.() ?? "",
+      getMarkdownB: () => getValueRefB.current?.() ?? "",
+      setRemote: (value) => {
+        syncRef.current.set(value);
+      },
+      setSelectionA: (index, position = "start") => {
+        return (
+          controlRefA.current?.setSelectionInBlock?.(index, position) ?? false
+        );
+      },
+      setSelectionB: (index, position = "start") => {
+        return (
+          controlRefB.current?.setSelectionInBlock?.(index, position) ?? false
+        );
+      },
+      getBlocksA: () => controlRefA.current?.getBlocks?.() ?? [],
+      getBlocksB: () => controlRefB.current?.getBlocks?.() ?? [],
+      getSelectionA: () =>
+        controlRefA.current?.getSelectionInBlock?.()?.selection ?? null,
+      getSelectionB: () =>
+        controlRefB.current?.getSelectionInBlock?.()?.selection ?? null,
+    };
+  }, []);
+
+  const actions = {
+    _syncstring: syncRef.current,
+    set_value: (value: string) => {
+      syncRef.current.set(value);
+      setMarkdown(value);
+    },
+    syncstring_commit: () => undefined,
+  };
+
+  return (
+    <HarnessErrorBoundary>
+      <FrameContext.Provider value={defaultFrameContext}>
+        <div
+          style={{
+            padding: 16,
+            width: 640,
+            height: 360,
+            display: "flex",
+            gap: 16,
+          }}
+        >
+          <div style={{ width: 300 }} data-testid="collab-editor-a">
+            <BlockMarkdownEditor
+              value={markdown}
+              actions={actions}
+              minimal={true}
+              height="320px"
+              noVfill={true}
+              hidePath={true}
+              ignoreRemoteMergesWhileFocused={false}
+              remoteMergeIdleMs={150}
+              getValueRef={getValueRefA}
+              controlRef={controlRefA}
+            />
+          </div>
+          <div style={{ width: 300 }} data-testid="collab-editor-b">
+            <BlockMarkdownEditor
+              value={markdown}
+              actions={actions}
+              minimal={true}
+              height="320px"
+              noVfill={true}
+              hidePath={true}
+              ignoreRemoteMergesWhileFocused={false}
+              remoteMergeIdleMs={150}
+              getValueRef={getValueRefB}
+              controlRef={controlRefB}
+            />
+          </div>
+        </div>
+      </FrameContext.Provider>
+    </HarnessErrorBoundary>
+  );
+}
+
+function EditableHarness({
+  initialMarkdown,
+}: {
+  initialMarkdown: string;
+}): React.JSX.Element {
+  const [markdown, setMarkdown] = useState<string>(initialMarkdown);
+  const syncRef = useRef(new FakeSyncstring(markdown));
+  const controlRef = useRef<any>(null);
+  const getValueRef = useRef<() => string>(() => "");
+
+  useEffect(() => {
+    window.__slateEditableTest = {
+      getMarkdown: () => getValueRef.current?.() ?? "",
+      setMarkdown: (value: string) => {
+        syncRef.current.set(value);
+        setMarkdown(value);
+      },
+      setSelection: (range: Range) => {
+        return controlRef.current?.setSelection?.(range) ?? false;
+      },
+      getSelection: () => {
+        return controlRef.current?.getSelection?.() ?? null;
+      },
+      setSelectionFromMarkdownPosition: (pos: { line: number; ch: number }) => {
+        return (
+          controlRef.current?.setSelectionFromMarkdownPosition?.(pos) ?? false
+        );
+      },
+      getSelectionMarkdownPos: () => {
+        return controlRef.current?.getMarkdownPositionForSelection?.() ?? null;
+      },
+      getValue: () => {
+        return controlRef.current?.getValue?.() ?? [];
+      },
+    };
+  }, []);
+
+  const actions = {
+    _syncstring: syncRef.current,
+    set_value: (value: string) => {
+      syncRef.current.set(value);
+      setMarkdown(value);
+    },
+    syncstring_commit: () => undefined,
+  };
+
+  return (
+    <HarnessErrorBoundary>
+      <FrameContext.Provider value={defaultFrameContext}>
+        <div style={{ padding: 16, width: 460, height: 320 }}>
+          <EditableMarkdown
+            value={markdown}
+            actions={actions}
+            minimal={true}
+            height="300px"
+            noVfill={true}
+            hidePath={true}
+            disableWindowing={true}
+            controlRef={controlRef}
+            getValueRef={getValueRef}
+          />
+        </div>
+      </FrameContext.Provider>
+    </HarnessErrorBoundary>
+  );
+}
+
+function CollabHarness(): React.JSX.Element {
+  const [markdown, setMarkdown] = useState<string>(
+    "alpha\n\nbeta\n\ncharlie\n",
+  );
+  const syncRef = useRef(new FakeSyncstring(markdown));
+  const getValueRefA = useRef<() => string>(() => "");
+  const getValueRefB = useRef<() => string>(() => "");
+  const controlRefA = useRef<any>(null);
+  const controlRefB = useRef<any>(null);
+  const selectionRefA = useRef<{
+    setSelection: (range: Range) => void;
+    getSelection: () => Range | null;
+  } | null>(null);
+  const selectionRefB = useRef<{
+    setSelection: (range: Range) => void;
+    getSelection: () => Range | null;
+  } | null>(null);
+
+  useEffect(() => {
+    window.__slateCollabTest = {
+      getMarkdownA: () => getValueRefA.current?.() ?? "",
+      getMarkdownB: () => getValueRefB.current?.() ?? "",
+      setRemote: (value) => {
+        syncRef.current.set(value);
+      },
+      setSelectionA: (range) => {
+        if (typeof range === "number") return false;
+        selectionRefA.current?.setSelection(range);
+        return true;
+      },
+      setSelectionB: (range) => {
+        if (typeof range === "number") return false;
+        selectionRefB.current?.setSelection(range);
+        return true;
+      },
+      setSelectionFromMarkdownA: (pos) => {
+        return (
+          controlRefA.current?.setSelectionFromMarkdownPosition?.(pos) ?? false
+        );
+      },
+      setSelectionFromMarkdownB: (pos) => {
+        return (
+          controlRefB.current?.setSelectionFromMarkdownPosition?.(pos) ?? false
+        );
+      },
+      getSelectionA: () => selectionRefA.current?.getSelection() ?? null,
+      getSelectionB: () => selectionRefB.current?.getSelection() ?? null,
+    };
+  }, []);
+
+  const actions = {
+    _syncstring: syncRef.current,
+    set_value: (value: string) => {
+      syncRef.current.set(value);
+      setMarkdown(value);
+    },
+    syncstring_commit: () => undefined,
+  };
+
+  return (
+    <HarnessErrorBoundary>
+      <FrameContext.Provider value={defaultFrameContext}>
+        <div
+          style={{
+            padding: 16,
+            width: 640,
+            height: 320,
+            display: "flex",
+            gap: 16,
+          }}
+        >
+          <div style={{ width: 300 }} data-testid="collab-editor-a">
+            <EditableMarkdown
+              value={markdown}
+              actions={actions}
+              minimal={true}
+              height="300px"
+              noVfill={true}
+              hidePath={true}
+              disableWindowing={true}
+              ignoreRemoteMergesWhileFocused={false}
+              remoteMergeIdleMs={150}
+              controlRef={controlRefA}
+              selectionRef={selectionRefA}
+              getValueRef={getValueRefA}
+            />
+          </div>
+          <div style={{ width: 300 }} data-testid="collab-editor-b">
+            <EditableMarkdown
+              value={markdown}
+              actions={actions}
+              minimal={true}
+              height="300px"
+              noVfill={true}
+              hidePath={true}
+              disableWindowing={true}
+              ignoreRemoteMergesWhileFocused={false}
+              remoteMergeIdleMs={150}
+              controlRef={controlRefB}
+              selectionRef={selectionRefB}
+              getValueRef={getValueRefB}
+            />
+          </div>
+        </div>
+      </FrameContext.Provider>
+    </HarnessErrorBoundary>
+  );
+}
+
+function DefaultHarness({
+  autoformatMode,
+}: {
+  autoformatMode: boolean;
+}): React.JSX.Element {
   const editor = useMemo(() => {
     const base = withIsInline(withIsVoid(withReact(createEditor())));
     if (autoformatMode) {
@@ -242,423 +627,6 @@ function Harness(): React.JSX.Element {
       }),
     };
   }, [editor]);
-
-  if (blockMode) {
-    const getValueRef = useRef<() => string>(() => "");
-    const controlRef = useRef<any>(null);
-    useEffect(() => {
-      const api: Window["__slateBlockTest"] = {
-        getMarkdown: () => getValueRef.current?.() ?? "",
-        setMarkdown: (value: string) => {
-          controlRef.current?.setMarkdown?.(value);
-        },
-        setSelection: (index: number, position: "start" | "end" = "start") => {
-          return controlRef.current?.setSelectionInBlock?.(index, position);
-        },
-        getSelection: () => {
-          return controlRef.current?.getSelectionInBlock?.();
-        },
-        getSelectionForBlock: (index: number) => {
-          return controlRef.current?.getSelectionForBlock?.(index);
-        },
-        getSelectionOffsetForBlock: (index: number) => {
-          return (
-            controlRef.current?.getSelectionOffsetForBlock?.(index) ?? null
-          );
-        },
-        getBlocks: () => {
-          return controlRef.current?.getBlocks?.() ?? [];
-        },
-        getFocusedIndex: () => {
-          return controlRef.current?.getFocusedIndex?.() ?? null;
-        },
-        setSelectionFromMarkdownPosition: (pos: {
-          line: number;
-          ch: number;
-        }) => {
-          return (
-            controlRef.current?.setSelectionFromMarkdownPosition?.(pos) ?? false
-          );
-        },
-      };
-      window.__slateBlockTest = api;
-    }, []);
-    return (
-      <HarnessErrorBoundary>
-        <div style={{ padding: 16, width: 520, height: 320 }}>
-          <BlockMarkdownEditor
-            value={initialMarkdown}
-            read_only={false}
-            hidePath={true}
-            minimal={true}
-            height="300px"
-            noVfill={true}
-            actions={{}}
-            getValueRef={getValueRef}
-            controlRef={controlRef}
-            disableVirtualization={true}
-          />
-        </div>
-      </HarnessErrorBoundary>
-    );
-  }
-
-  if (collabBlockMode) {
-    class FakeSyncstring {
-      value: string;
-      listeners: Set<() => void>;
-      constructor(initial: string) {
-        this.value = initial;
-        this.listeners = new Set();
-      }
-      to_str() {
-        return this.value;
-      }
-      set(value: string) {
-        this.value = value;
-        this.emit();
-      }
-      on(event: string, cb: () => void) {
-        if (event === "change") {
-          this.listeners.add(cb);
-        }
-      }
-      removeListener(event: string, cb: () => void) {
-        if (event === "change") {
-          this.listeners.delete(cb);
-        }
-      }
-      emit() {
-        for (const cb of this.listeners) {
-          cb();
-        }
-      }
-    }
-
-    const [markdown, setMarkdown] = useState<string>(
-      "alpha\n\nbeta\n\ncharlie\n",
-    );
-    const syncRef = useRef(new FakeSyncstring(markdown));
-    const getValueRefA = useRef<() => string>(() => "");
-    const getValueRefB = useRef<() => string>(() => "");
-    const controlRefA = useRef<any>(null);
-    const controlRefB = useRef<any>(null);
-
-    useEffect(() => {
-      window.__slateCollabTest = {
-        getMarkdownA: () => getValueRefA.current?.() ?? "",
-        getMarkdownB: () => getValueRefB.current?.() ?? "",
-        setRemote: (value) => {
-          syncRef.current.set(value);
-        },
-        setSelectionA: (index, position = "start") => {
-          return (
-            controlRefA.current?.setSelectionInBlock?.(index, position) ?? false
-          );
-        },
-        setSelectionB: (index, position = "start") => {
-          return (
-            controlRefB.current?.setSelectionInBlock?.(index, position) ?? false
-          );
-        },
-        getBlocksA: () => controlRefA.current?.getBlocks?.() ?? [],
-        getBlocksB: () => controlRefB.current?.getBlocks?.() ?? [],
-        getSelectionA: () =>
-          controlRefA.current?.getSelectionInBlock?.()?.selection ?? null,
-        getSelectionB: () =>
-          controlRefB.current?.getSelectionInBlock?.()?.selection ?? null,
-      };
-    }, []);
-
-    const actions = {
-      _syncstring: syncRef.current,
-      set_value: (value: string) => {
-        syncRef.current.set(value);
-        setMarkdown(value);
-      },
-      syncstring_commit: () => undefined,
-    };
-
-    return (
-      <HarnessErrorBoundary>
-        <FrameContext.Provider value={defaultFrameContext}>
-          <div
-            style={{
-              padding: 16,
-              width: 640,
-              height: 360,
-              display: "flex",
-              gap: 16,
-            }}
-          >
-            <div style={{ width: 300 }} data-testid="collab-editor-a">
-              <BlockMarkdownEditor
-                value={markdown}
-                actions={actions}
-                minimal={true}
-                height="320px"
-                noVfill={true}
-                hidePath={true}
-                ignoreRemoteMergesWhileFocused={false}
-                remoteMergeIdleMs={150}
-                getValueRef={getValueRefA}
-                controlRef={controlRefA}
-              />
-            </div>
-            <div style={{ width: 300 }} data-testid="collab-editor-b">
-              <BlockMarkdownEditor
-                value={markdown}
-                actions={actions}
-                minimal={true}
-                height="320px"
-                noVfill={true}
-                hidePath={true}
-                ignoreRemoteMergesWhileFocused={false}
-                remoteMergeIdleMs={150}
-                getValueRef={getValueRefB}
-                controlRef={controlRefB}
-              />
-            </div>
-          </div>
-        </FrameContext.Provider>
-      </HarnessErrorBoundary>
-    );
-  }
-
-  if (editableMode) {
-    class FakeSyncstring {
-      value: string;
-      listeners: Set<() => void>;
-      constructor(initial: string) {
-        this.value = initial;
-        this.listeners = new Set();
-      }
-      to_str() {
-        return this.value;
-      }
-      set(value: string) {
-        this.value = value;
-        this.emit();
-      }
-      on(event: string, cb: () => void) {
-        if (event === "change") this.listeners.add(cb);
-      }
-      removeListener(event: string, cb: () => void) {
-        if (event === "change") this.listeners.delete(cb);
-      }
-      emit() {
-        for (const cb of this.listeners) cb();
-      }
-    }
-
-    const [markdown, setMarkdown] = useState<string>(initialMarkdown);
-    const syncRef = useRef(new FakeSyncstring(markdown));
-    const controlRef = useRef<any>(null);
-    const getValueRef = useRef<() => string>(() => "");
-
-    useEffect(() => {
-      window.__slateEditableTest = {
-        getMarkdown: () => getValueRef.current?.() ?? "",
-        setMarkdown: (value: string) => {
-          syncRef.current.set(value);
-          setMarkdown(value);
-        },
-        setSelection: (range: Range) => {
-          return controlRef.current?.setSelection?.(range) ?? false;
-        },
-        getSelection: () => {
-          return controlRef.current?.getSelection?.() ?? null;
-        },
-        setSelectionFromMarkdownPosition: (pos: {
-          line: number;
-          ch: number;
-        }) => {
-          return (
-            controlRef.current?.setSelectionFromMarkdownPosition?.(pos) ?? false
-          );
-        },
-        getSelectionMarkdownPos: () => {
-          return (
-            controlRef.current?.getMarkdownPositionForSelection?.() ?? null
-          );
-        },
-        getValue: () => {
-          return controlRef.current?.getValue?.() ?? [];
-        },
-      };
-    }, []);
-
-    const actions = {
-      _syncstring: syncRef.current,
-      set_value: (value: string) => {
-        syncRef.current.set(value);
-        setMarkdown(value);
-      },
-      syncstring_commit: () => undefined,
-    };
-
-    return (
-      <HarnessErrorBoundary>
-        <FrameContext.Provider value={defaultFrameContext}>
-          <div style={{ padding: 16, width: 460, height: 320 }}>
-            <EditableMarkdown
-              value={markdown}
-              actions={actions}
-              minimal={true}
-              height="300px"
-              noVfill={true}
-              hidePath={true}
-              disableWindowing={true}
-              controlRef={controlRef}
-              getValueRef={getValueRef}
-            />
-          </div>
-        </FrameContext.Provider>
-      </HarnessErrorBoundary>
-    );
-  }
-
-  if (collabMode) {
-    class FakeSyncstring {
-      value: string;
-      listeners: Set<() => void>;
-      constructor(initial: string) {
-        this.value = initial;
-        this.listeners = new Set();
-      }
-      to_str() {
-        return this.value;
-      }
-      set(value: string) {
-        this.value = value;
-        this.emit();
-      }
-      on(event: string, cb: () => void) {
-        if (event === "change") {
-          this.listeners.add(cb);
-        }
-      }
-      removeListener(event: string, cb: () => void) {
-        if (event === "change") {
-          this.listeners.delete(cb);
-        }
-      }
-      emit() {
-        for (const cb of this.listeners) {
-          cb();
-        }
-      }
-    }
-
-    const [markdown, setMarkdown] = useState<string>(
-      "alpha\n\nbeta\n\ncharlie\n",
-    );
-    const syncRef = useRef(new FakeSyncstring(markdown));
-    const getValueRefA = useRef<() => string>(() => "");
-    const getValueRefB = useRef<() => string>(() => "");
-    const controlRefA = useRef<any>(null);
-    const controlRefB = useRef<any>(null);
-    const selectionRefA = useRef<{
-      setSelection: (range: Range) => void;
-      getSelection: () => Range | null;
-    } | null>(null);
-    const selectionRefB = useRef<{
-      setSelection: (range: Range) => void;
-      getSelection: () => Range | null;
-    } | null>(null);
-
-    useEffect(() => {
-      window.__slateCollabTest = {
-        getMarkdownA: () => getValueRefA.current?.() ?? "",
-        getMarkdownB: () => getValueRefB.current?.() ?? "",
-        setRemote: (value) => {
-          syncRef.current.set(value);
-        },
-        setSelectionA: (range) => {
-          if (typeof range === "number") return false;
-          selectionRefA.current?.setSelection(range);
-          return true;
-        },
-        setSelectionB: (range) => {
-          if (typeof range === "number") return false;
-          selectionRefB.current?.setSelection(range);
-          return true;
-        },
-        setSelectionFromMarkdownA: (pos) => {
-          return (
-            controlRefA.current?.setSelectionFromMarkdownPosition?.(pos) ??
-            false
-          );
-        },
-        setSelectionFromMarkdownB: (pos) => {
-          return (
-            controlRefB.current?.setSelectionFromMarkdownPosition?.(pos) ??
-            false
-          );
-        },
-        getSelectionA: () => selectionRefA.current?.getSelection() ?? null,
-        getSelectionB: () => selectionRefB.current?.getSelection() ?? null,
-      };
-    }, []);
-
-    const actions = {
-      _syncstring: syncRef.current,
-      set_value: (value: string) => {
-        syncRef.current.set(value);
-        setMarkdown(value);
-      },
-      syncstring_commit: () => undefined,
-    };
-
-    return (
-      <HarnessErrorBoundary>
-        <FrameContext.Provider value={defaultFrameContext}>
-          <div
-            style={{
-              padding: 16,
-              width: 640,
-              height: 320,
-              display: "flex",
-              gap: 16,
-            }}
-          >
-            <div style={{ width: 300 }} data-testid="collab-editor-a">
-              <EditableMarkdown
-                value={markdown}
-                actions={actions}
-                minimal={true}
-                height="300px"
-                noVfill={true}
-                hidePath={true}
-                disableWindowing={true}
-                ignoreRemoteMergesWhileFocused={false}
-                remoteMergeIdleMs={150}
-                controlRef={controlRefA}
-                selectionRef={selectionRefA}
-                getValueRef={getValueRefA}
-              />
-            </div>
-            <div style={{ width: 300 }} data-testid="collab-editor-b">
-              <EditableMarkdown
-                value={markdown}
-                actions={actions}
-                minimal={true}
-                height="300px"
-                noVfill={true}
-                hidePath={true}
-                disableWindowing={true}
-                ignoreRemoteMergesWhileFocused={false}
-                remoteMergeIdleMs={150}
-                controlRef={controlRefB}
-                selectionRef={selectionRefB}
-                getValueRef={getValueRefB}
-              />
-            </div>
-          </div>
-        </FrameContext.Provider>
-      </HarnessErrorBoundary>
-    );
-  }
 
   const onKeyDown = useCallback(
     (event: React.KeyboardEvent) => {

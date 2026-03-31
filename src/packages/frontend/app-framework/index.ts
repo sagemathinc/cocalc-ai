@@ -22,7 +22,7 @@ let rclass: <P extends object>(
 
 import React from "react";
 import createReactClass from "create-react-class";
-import { Provider, connect, useSelector } from "react-redux";
+import { Provider, connect } from "react-redux";
 import json_stable from "json-stable-stringify";
 
 import { Store } from "@cocalc/util/redux/Store";
@@ -136,29 +136,6 @@ export class AppRedux extends AppReduxBase {
       throw Error(`getTable: table "${name}" not registered`);
     }
     return this._tables[name];
-  }
-
-  /**
-   * A React Hook to connect a function component to a project store.
-   * Opposed to `getProjectStore`, the project store will not initialize
-   * if it's not defined already.
-   *
-   * @param selectFrom selector to run on the store.
-   *    The result will be compared to the previous result to determine
-   *    if the component should rerender
-   * @param project_id id of the project to connect to
-   */
-  useProjectStore<T>(
-    selectFrom: (store?: ProjectStore) => T,
-    project_id?: string,
-  ): T {
-    return useSelector<any, T>((_) => {
-      let projectStore = undefined;
-      if (project_id) {
-        projectStore = this.getStore(project_redux_name(project_id)) as any;
-      }
-      return selectFrom(projectStore);
-    });
   }
 
   // getProject... is safe to call any time. All structures will be created
