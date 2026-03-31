@@ -435,6 +435,7 @@ export function ChatPanel({
   );
   const [composerFocused, setComposerFocused] = useState(false);
   const [composerSession, setComposerSession] = useState(0);
+  const accountOtherSettings = useTypedRedux("account", "other_settings");
   const workspaceWorkingDirectory = useWorkspaceChatWorkingDirectory(path);
   const defaultNewThreadSetup = useMemo<NewThreadSetup>(() => {
     const title = asTrimmedString(
@@ -463,7 +464,7 @@ export function ChatPanel({
           defaultWorkingDirectoryForChat(path, workspaceWorkingDirectory),
       },
     };
-  }, [desc, path, workspaceWorkingDirectory]);
+  }, [accountOtherSettings, desc, path, workspaceWorkingDirectory]);
   const [newThreadSetup, setNewThreadSetup] = useState<NewThreadSetup>(
     defaultNewThreadSetup,
   );
