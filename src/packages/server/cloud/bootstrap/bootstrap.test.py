@@ -529,8 +529,9 @@ class BootstrapModesTest(unittest.TestCase):
     def test_reconcile_mode_records_success(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             cfg = make_cfg(tmpdir)
-            config_path = Path(tmpdir) / "bootstrap-config.json"
-            config_path.write_text(
+            bootstrap_dir = Path(cfg.bootstrap_dir)
+            bootstrap_dir.mkdir(parents=True, exist_ok=True)
+            (bootstrap_dir / "bootstrap-host-facts.json").write_text(
                 json.dumps(
                     {
                         "bootstrap_user": cfg.bootstrap_user,
@@ -541,19 +542,37 @@ class BootstrapModesTest(unittest.TestCase):
                         "log_file": cfg.log_file,
                         "expected_os": cfg.expected_os,
                         "expected_arch": cfg.expected_arch,
-                        "image_size_gb_raw": cfg.image_size_gb_raw,
                         "data_disk_devices": cfg.data_disk_devices,
                         "data_disk_candidates": cfg.data_disk_candidates,
-                        "apt_packages": cfg.apt_packages,
                         "has_gpu": cfg.has_gpu,
-                        "ssh_user": cfg.ssh_user,
+                        "runtime_user": cfg.ssh_user,
                         "env_file": cfg.env_file,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (bootstrap_dir / "bootstrap-desired-state.json").write_text(
+                json.dumps(
+                    {
+                        "image_size_gb_raw": cfg.image_size_gb_raw,
+                        "root_reserve_gb_raw": cfg.root_reserve_gb_raw,
+                        "apt_packages": cfg.apt_packages,
                         "env_lines": cfg.env_lines,
                         "node_version": cfg.node_version,
-                        "bootstrap_selector": cfg.bootstrap_selector,
-                        "bootstrap_py_url": cfg.bootstrap_py_url,
+                        "bootstrap_done_paths": [],
+                        "bootstrap": {
+                            "selector": cfg.bootstrap_selector,
+                            "url": cfg.bootstrap_py_url,
+                        },
+                        "bootstrap_connection": {
+                            "conat_url": None,
+                            "status_url": None,
+                            "bootstrap_token": None,
+                            "ca_cert_path": None,
+                        },
                         "project_host_bundle": {
                             "url": "",
+                            "sha256": None,
                             "remote": "",
                             "root": str(Path(tmpdir) / "project-host"),
                             "dir": str(Path(tmpdir) / "project-host" / "v1"),
@@ -561,6 +580,7 @@ class BootstrapModesTest(unittest.TestCase):
                         },
                         "project_bundle": {
                             "url": "",
+                            "sha256": None,
                             "remote": "",
                             "root": str(Path(tmpdir) / "project"),
                             "dir": str(Path(tmpdir) / "project" / "v1"),
@@ -568,17 +588,13 @@ class BootstrapModesTest(unittest.TestCase):
                         },
                         "tools_bundle": {
                             "url": "",
+                            "sha256": None,
                             "remote": "",
                             "root": str(Path(tmpdir) / "tools"),
                             "dir": str(Path(tmpdir) / "tools" / "v1"),
                             "current": str(Path(tmpdir) / "tools" / "current"),
                         },
                         "cloudflared": {"enabled": False},
-                        "conat_url": None,
-                        "status_url": None,
-                        "bootstrap_token": None,
-                        "ca_cert_path": None,
-                        "bootstrap_done_paths": [],
                     }
                 ),
                 encoding="utf-8",
@@ -612,7 +628,9 @@ class BootstrapModesTest(unittest.TestCase):
             patch("report_bootstrap_status", lambda _cfg, _status, _message=None: None)
 
             try:
-                result = bootstrap.main(["reconcile", "--config", str(config_path)])
+                result = bootstrap.main(
+                    ["reconcile", "--bootstrap-dir", str(bootstrap_dir)]
+                )
             finally:
                 for name, original in originals.items():
                     setattr(bootstrap, name, original)

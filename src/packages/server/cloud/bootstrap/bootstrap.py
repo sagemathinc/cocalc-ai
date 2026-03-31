@@ -2,7 +2,7 @@
 """Python-first project-host bootstrap.
 
 This script replaces the legacy monolithic shell bootstrap. It is stdlib-only
-and driven by a JSON config written by bootstrap-host.ts.
+and driven by split bootstrap state files written by bootstrap-host.ts.
 
 High-level responsibilities:
   1) Sanity checks (OS/arch, required tools) and logging bootstrap state.
@@ -124,40 +124,83 @@ def _ensure_list(value: Any, name: str) -> list[Any]:
     raise RuntimeError(f"{name} must be list")
 
 
-def load_config(path: str) -> BootstrapConfig:
-    with open(path, "r", encoding="utf-8") as handle:
-        raw: dict[str, Any] = json.load(handle)
-    bundle_host = raw.get("project_host_bundle") or {}
-    bundle_project = raw.get("project_bundle") or {}
-    bundle_tools = raw.get("tools_bundle") or {}
-    cloudflared = raw.get("cloudflared") or {}
+def load_config(bootstrap_dir: str) -> BootstrapConfig:
+    facts_path = Path(bootstrap_dir) / "bootstrap-host-facts.json"
+    desired_path = Path(bootstrap_dir) / "bootstrap-desired-state.json"
+    facts = json_load(facts_path)
+    desired = json_load(desired_path)
+    _require(bool(facts), f"missing bootstrap host facts: {facts_path}")
+    _require(bool(desired), f"missing bootstrap desired state: {desired_path}")
+    bundle_host = desired.get("project_host_bundle") or {}
+    bundle_project = desired.get("project_bundle") or {}
+    bundle_tools = desired.get("tools_bundle") or {}
+    cloudflared = desired.get("cloudflared") or {}
+    bootstrap_meta = desired.get("bootstrap") or {}
+    bootstrap_connection = desired.get("bootstrap_connection") or {}
     return BootstrapConfig(
-        bootstrap_user=_ensure_str(raw.get("bootstrap_user"), "bootstrap_user"),
-        bootstrap_home=_ensure_str(raw.get("bootstrap_home"), "bootstrap_home"),
-        bootstrap_root=_ensure_str(raw.get("bootstrap_root"), "bootstrap_root"),
-        bootstrap_dir=_ensure_str(raw.get("bootstrap_dir"), "bootstrap_dir"),
-        bootstrap_tmp=_ensure_str(raw.get("bootstrap_tmp"), "bootstrap_tmp"),
-        log_file=_ensure_str(raw.get("log_file"), "log_file"),
-        expected_os=_ensure_str(raw.get("expected_os"), "expected_os"),
-        expected_arch=_ensure_str(raw.get("expected_arch"), "expected_arch"),
-        image_size_gb_raw=_ensure_str(raw.get("image_size_gb_raw"), "image_size_gb_raw"),
+        bootstrap_user=_ensure_str(
+            facts.get("bootstrap_user"), "bootstrap-host-facts.bootstrap_user"
+        ),
+        bootstrap_home=_ensure_str(
+            facts.get("bootstrap_home"), "bootstrap-host-facts.bootstrap_home"
+        ),
+        bootstrap_root=_ensure_str(
+            facts.get("bootstrap_root"), "bootstrap-host-facts.bootstrap_root"
+        ),
+        bootstrap_dir=_ensure_str(
+            facts.get("bootstrap_dir"), "bootstrap-host-facts.bootstrap_dir"
+        ),
+        bootstrap_tmp=_ensure_str(
+            facts.get("bootstrap_tmp"), "bootstrap-host-facts.bootstrap_tmp"
+        ),
+        log_file=_ensure_str(facts.get("log_file"), "bootstrap-host-facts.log_file"),
+        expected_os=_ensure_str(
+            facts.get("expected_os"), "bootstrap-host-facts.expected_os"
+        ),
+        expected_arch=_ensure_str(
+            facts.get("expected_arch"), "bootstrap-host-facts.expected_arch"
+        ),
+        image_size_gb_raw=_ensure_str(
+            desired.get("image_size_gb_raw") or "auto",
+            "bootstrap-desired-state.image_size_gb_raw",
+        ),
         root_reserve_gb_raw=_ensure_str(
-            raw.get("root_reserve_gb_raw") or "15", "root_reserve_gb_raw"
+            desired.get("root_reserve_gb_raw") or "15",
+            "bootstrap-desired-state.root_reserve_gb_raw",
         ),
         data_disk_devices=_ensure_str(
-            raw.get("data_disk_devices") or "", "data_disk_devices"
+            facts.get("data_disk_devices") or "",
+            "bootstrap-host-facts.data_disk_devices",
         ),
         data_disk_candidates=_ensure_str(
-            raw.get("data_disk_candidates") or "", "data_disk_candidates"
+            facts.get("data_disk_candidates") or "",
+            "bootstrap-host-facts.data_disk_candidates",
         ),
-        apt_packages=[str(p) for p in _ensure_list(raw.get("apt_packages"), "apt_packages")],
-        has_gpu=_ensure_bool(raw.get("has_gpu"), "has_gpu"),
-        ssh_user=_ensure_str(raw.get("ssh_user"), "ssh_user"),
-        env_file=_ensure_str(raw.get("env_file"), "env_file"),
-        env_lines=[str(line) for line in _ensure_list(raw.get("env_lines"), "env_lines")],
-        node_version=_ensure_str(raw.get("node_version"), "node_version"),
-        bootstrap_selector=(raw.get("bootstrap_selector") or None),
-        bootstrap_py_url=(raw.get("bootstrap_py_url") or None),
+        apt_packages=[
+            str(p)
+            for p in _ensure_list(
+                desired.get("apt_packages") or [],
+                "bootstrap-desired-state.apt_packages",
+            )
+        ],
+        has_gpu=_ensure_bool(facts.get("has_gpu"), "bootstrap-host-facts.has_gpu"),
+        ssh_user=_ensure_str(
+            facts.get("runtime_user") or facts.get("ssh_user"),
+            "bootstrap-host-facts.runtime_user",
+        ),
+        env_file=_ensure_str(facts.get("env_file"), "bootstrap-host-facts.env_file"),
+        env_lines=[
+            str(line)
+            for line in _ensure_list(
+                desired.get("env_lines") or [],
+                "bootstrap-desired-state.env_lines",
+            )
+        ],
+        node_version=_ensure_str(
+            desired.get("node_version"), "bootstrap-desired-state.node_version"
+        ),
+        bootstrap_selector=(bootstrap_meta.get("selector") or None),
+        bootstrap_py_url=(bootstrap_meta.get("url") or None),
         project_host_bundle=BundleSpec(
             url=_ensure_str(bundle_host.get("url"), "project_host_bundle.url"),
             sha256=bundle_host.get("sha256") or None,
@@ -201,11 +244,17 @@ def load_config(path: str) -> BootstrapConfig:
             tunnel_id=cloudflared.get("tunnelId") or cloudflared.get("tunnel_id"),
             creds_json=cloudflared.get("credsJson") or cloudflared.get("creds_json"),
         ),
-        conat_url=raw.get("conat_url"),
-        status_url=raw.get("status_url"),
-        bootstrap_token=raw.get("bootstrap_token"),
-        ca_cert_path=raw.get("ca_cert_path"),
-        bootstrap_done_paths=[str(p) for p in _ensure_list(raw.get("bootstrap_done_paths"), "bootstrap_done_paths")],
+        conat_url=bootstrap_connection.get("conat_url") or None,
+        status_url=bootstrap_connection.get("status_url") or None,
+        bootstrap_token=bootstrap_connection.get("bootstrap_token") or None,
+        ca_cert_path=bootstrap_connection.get("ca_cert_path") or None,
+        bootstrap_done_paths=[
+            str(p)
+            for p in _ensure_list(
+                desired.get("bootstrap_done_paths") or [],
+                "bootstrap-desired-state.bootstrap_done_paths",
+            )
+        ],
     )
 
 
@@ -300,6 +349,7 @@ def build_host_facts(cfg: BootstrapConfig) -> dict[str, Any]:
         "bootstrap_root": cfg.bootstrap_root,
         "bootstrap_dir": cfg.bootstrap_dir,
         "bootstrap_tmp": cfg.bootstrap_tmp,
+        "log_file": cfg.log_file,
         "runtime_user": cfg.ssh_user,
         "expected_os": cfg.expected_os,
         "expected_arch": cfg.expected_arch,
@@ -334,9 +384,16 @@ def build_desired_state(cfg: BootstrapConfig) -> dict[str, Any]:
         "helper_schema_version": HELPER_SCHEMA_VERSION,
         "runtime_wrapper_version": RUNTIME_WRAPPER_VERSION,
         "node_version": cfg.node_version,
+        "image_size_gb_raw": cfg.image_size_gb_raw,
+        "root_reserve_gb_raw": cfg.root_reserve_gb_raw,
+        "apt_packages": cfg.apt_packages,
+        "env_lines": cfg.env_lines,
+        "bootstrap_done_paths": cfg.bootstrap_done_paths,
         "bootstrap_connection": build_bootstrap_connection(cfg),
         "project_host_bundle": {
             "url": cfg.project_host_bundle.url,
+            "sha256": cfg.project_host_bundle.sha256,
+            "remote": cfg.project_host_bundle.remote,
             "version": cfg.project_host_bundle.version,
             "root": cfg.project_host_bundle.root,
             "dir": cfg.project_host_bundle.dir,
@@ -344,6 +401,8 @@ def build_desired_state(cfg: BootstrapConfig) -> dict[str, Any]:
         },
         "project_bundle": {
             "url": cfg.project_bundle.url,
+            "sha256": cfg.project_bundle.sha256,
+            "remote": cfg.project_bundle.remote,
             "version": cfg.project_bundle.version,
             "root": cfg.project_bundle.root,
             "dir": cfg.project_bundle.dir,
@@ -351,6 +410,8 @@ def build_desired_state(cfg: BootstrapConfig) -> dict[str, Any]:
         },
         "tools_bundle": {
             "url": cfg.tools_bundle.url,
+            "sha256": cfg.tools_bundle.sha256,
+            "remote": cfg.tools_bundle.remote,
             "version": cfg.tools_bundle.version,
             "root": cfg.tools_bundle.root,
             "dir": cfg.tools_bundle.dir,
@@ -2149,19 +2210,18 @@ esac
         )
 
     bootstrap_dir = Path(cfg.bootstrap_dir)
-    config_path = bootstrap_dir / "bootstrap-config.json"
     bootstrap_py = bootstrap_dir / "bootstrap.py"
     fetch_project_bundle = f"""#!/usr/bin/env bash
 set -euo pipefail
-exec python3 "{bootstrap_py}" --config "{config_path}" --only project_bundle
+exec python3 "{bootstrap_py}" --bootstrap-dir "{bootstrap_dir}" --only project_bundle
 """
     fetch_project_host = f"""#!/usr/bin/env bash
 set -euo pipefail
-exec python3 "{bootstrap_py}" --config "{config_path}" --only project_host_bundle
+exec python3 "{bootstrap_py}" --bootstrap-dir "{bootstrap_dir}" --only project_host_bundle
 """
     fetch_tools = f"""#!/usr/bin/env bash
 set -euo pipefail
-exec python3 "{bootstrap_py}" --config "{config_path}" --only tools_bundle
+exec python3 "{bootstrap_py}" --bootstrap-dir "{bootstrap_dir}" --only tools_bundle
 """
     (bin_dir / "fetch-project-bundle.sh").write_text(fetch_project_bundle, encoding="utf-8")
     (bin_dir / "fetch-project-host.sh").write_text(fetch_project_host, encoding="utf-8")
@@ -2605,13 +2665,19 @@ def main(argv: list[str]) -> int:
         default="bootstrap",
         choices=["bootstrap", "provision", "reconcile", "status"],
     )
-    parser.add_argument("--config", required=True)
+    parser.add_argument("--bootstrap-dir")
+    parser.add_argument("--config", help=argparse.SUPPRESS)
     parser.add_argument(
         "--only",
         help="Comma-separated subset (project_bundle, project_host_bundle, tools_bundle, cloudflared)",
     )
     args = parser.parse_args(argv)
-    cfg = load_config(args.config)
+    bootstrap_dir = args.bootstrap_dir
+    if not bootstrap_dir and args.config:
+        bootstrap_dir = str(Path(args.config).resolve().parent)
+    if not bootstrap_dir:
+        parser.error("one of --bootstrap-dir or --config is required")
+    cfg = load_config(bootstrap_dir)
     only = parse_only(args.only)
     log_line(cfg, "bootstrap: starting python bootstrap")
     log_line(cfg, f"bootstrap: user={cfg.bootstrap_user} home={cfg.bootstrap_home} root={cfg.bootstrap_root}")

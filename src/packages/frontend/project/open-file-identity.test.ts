@@ -6,6 +6,7 @@ import {
   log_file_open,
   log_opened_time,
   mark_open_phase,
+  resolveSyncPath,
 } from "./open-file";
 import { termPath } from "@cocalc/util/terminal/names";
 import { redux } from "@cocalc/frontend/app-framework";
@@ -76,6 +77,35 @@ describe("findOpenDisplayPathForSyncPath", () => {
     expect(
       findOpenDisplayPathForSyncPath(actions, "/root/real.txt"),
     ).toBeUndefined();
+  });
+});
+
+describe("resolveSyncPath", () => {
+  const HOME = "/root";
+
+  it("uses canonicalSyncIdentityPath for sync identity resolution", async () => {
+    const fs = {
+      canonicalSyncIdentityPath: jest.fn().mockResolvedValue("/x/a.txt"),
+    };
+    await expect(resolveSyncPath(fs, "/x/a.txt", HOME)).resolves.toBe(
+      "/x/a.txt",
+    );
+    expect(fs.canonicalSyncIdentityPath).toHaveBeenCalledWith("/x/a.txt");
+  });
+
+  it("fails closed when canonical sync identity support is unavailable", async () => {
+    await expect(resolveSyncPath({}, "/root/link.txt", HOME)).rejects.toThrow(
+      "canonicalSyncIdentityPath",
+    );
+  });
+
+  it("fails closed when canonical sync identity resolution throws", async () => {
+    const fs = {
+      canonicalSyncIdentityPath: jest.fn().mockRejectedValue(new Error("boom")),
+    };
+    await expect(resolveSyncPath(fs, "/root/link.txt", HOME)).rejects.toThrow(
+      "boom",
+    );
   });
 });
 
