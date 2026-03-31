@@ -11,6 +11,9 @@ export const HostBootstrapProgress: React.FC<HostBootstrapProgressProps> = ({
   host,
   compact = false,
 }) => {
+  if (host.deleted || host.status === "deprovisioned") {
+    return null;
+  }
   const message = `${host.bootstrap?.message ?? ""}`.trim();
   const status = `${host.bootstrap?.status ?? ""}`.trim().toLowerCase();
   if (!message) return null;
