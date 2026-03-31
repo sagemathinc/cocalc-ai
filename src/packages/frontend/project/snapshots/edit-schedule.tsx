@@ -32,10 +32,6 @@ export default function EditSchedule() {
     };
   }, [open]);
 
-  if (project == null) {
-    return null;
-  }
-
   useEffect(() => {
     if (!openSchedule || !project) return;
     setSchedule({
@@ -45,6 +41,10 @@ export default function EditSchedule() {
     setOpen(true);
     actions?.setState({ open_snapshot_schedule: false });
   }, [actions, openSchedule, project]);
+
+  if (project == null) {
+    return null;
+  }
 
   const schedule = schedule0!;
   async function saveSchedule() {

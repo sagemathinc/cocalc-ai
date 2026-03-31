@@ -288,6 +288,34 @@ export function ServerLink({
   const student_project_functionality =
     useStudentProjectFunctionality(project_id);
   const available = useAvailableFeatures(project_id);
+  const ready = appStatus.status?.ready === true;
+  const running = appStatus.status?.state === "running";
+  const [appUrl, setAppUrl] = useState<string | undefined>(undefined);
+  useEffect(() => {
+    let canceled = false;
+    void (async () => {
+      const rawUrl =
+        ready && appStatus.status?.url
+          ? withProjectHostBase(project_id, appStatus.status.url)
+          : undefined;
+      if (!rawUrl) {
+        if (!canceled) setAppUrl(undefined);
+        return;
+      }
+      const authed = await webapp_client.conat_client.addProjectHostAuthToUrl({
+        project_id,
+        url: rawUrl,
+      });
+      if (!canceled) {
+        setAppUrl(authed);
+      }
+    })().catch((_err) => {
+      if (!canceled) setAppUrl(undefined);
+    });
+    return () => {
+      canceled = true;
+    };
+  }, [appStatus.status?.url, project_id, ready]);
 
   if (
     name === "jupyterlab" &&
@@ -317,35 +345,6 @@ export function ServerLink({
   ) {
     return null;
   }
-
-  const ready = appStatus.status?.ready === true;
-  const running = appStatus.status?.state === "running";
-  const [appUrl, setAppUrl] = useState<string | undefined>(undefined);
-  useEffect(() => {
-    let canceled = false;
-    void (async () => {
-      const rawUrl =
-        ready && appStatus.status?.url
-          ? withProjectHostBase(project_id, appStatus.status.url)
-          : undefined;
-      if (!rawUrl) {
-        if (!canceled) setAppUrl(undefined);
-        return;
-      }
-      const authed = await webapp_client.conat_client.addProjectHostAuthToUrl({
-        project_id,
-        url: rawUrl,
-      });
-      if (!canceled) {
-        setAppUrl(authed);
-      }
-    })().catch((_err) => {
-      if (!canceled) setAppUrl(undefined);
-    });
-    return () => {
-      canceled = true;
-    };
-  }, [appStatus.status?.url, project_id, ready]);
 
   if (!appUrl) {
     if (running) {

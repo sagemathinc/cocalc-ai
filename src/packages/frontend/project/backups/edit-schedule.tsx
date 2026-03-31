@@ -28,8 +28,6 @@ export default function EditBackupSchedule() {
     return () => actions?.setState({ disableExplorerKeyhandler: false });
   }, [open]);
 
-  if (project == null) return null;
-
   useEffect(() => {
     if (!openSchedule || !project) return;
     setSchedule({
@@ -39,6 +37,8 @@ export default function EditBackupSchedule() {
     setOpen(true);
     actions?.setState({ open_backup_schedule: false });
   }, [actions, openSchedule, project]);
+
+  if (project == null) return null;
 
   const schedule = schedule0!;
 

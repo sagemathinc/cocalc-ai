@@ -22,14 +22,14 @@ export function ButtonBar({
 }): React.JSX.Element {
   return (
     <div style={{ margin: "1px" }}>
-      {timeTravelButton(actions)}
+      <TimeTravelButton actions={actions} />
       <Gap />
       {undoRedoGroup(actions)}
     </div>
   );
 }
 
-function timeTravelButton(actions: TimeActions): Rendered {
+function TimeTravelButton({ actions }: { actions: TimeActions }): Rendered {
   const intl = useIntl();
 
   return (
