@@ -3,7 +3,7 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import { UnknownEditor } from "./editor";
 
-const exec = jest.fn();
+const describeFile = jest.fn();
 const actions = {
   open_directory: jest.fn(),
   close_file: jest.fn(),
@@ -22,8 +22,12 @@ jest.mock("../../app-framework", () => {
 
 jest.mock("../../webapp-client", () => ({
   webapp_client: {
-    project_client: {
-      exec: (...args: any[]) => exec(...args),
+    conat_client: {
+      conat: () => ({
+        fs: () => ({
+          describeFile: (...args: any[]) => describeFile(...args),
+        }),
+      }),
     },
   },
 }));
@@ -62,25 +66,17 @@ beforeAll(() => {
 
 describe("UnknownEditor", () => {
   beforeEach(() => {
-    exec.mockReset();
+    describeFile.mockReset();
     actions.open_directory.mockReset();
     actions.close_file.mockReset();
     actions.open_file.mockReset();
   });
 
-  it("falls back cleanly when the file probe command is unavailable", async () => {
-    exec
-      .mockResolvedValueOnce({
-        stdout: "",
-        stderr:
-          '{"errno":-2,"code":"ENOENT","syscall":"spawn file","path":"file"}',
-        exit_code: 1,
-      })
-      .mockResolvedValueOnce({
-        stdout: "hello there\nthis is text\n",
-        stderr: "",
-        exit_code: 0,
-      });
+  it("renders cleanly from the files service description", async () => {
+    describeFile.mockResolvedValue({
+      mime: "text/plain",
+      snippet: "hello there\nthis is text\n",
+    });
 
     render(<UnknownEditor project_id="p" path="foo" />);
 

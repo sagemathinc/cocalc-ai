@@ -10,7 +10,7 @@ import { Button, Alert, Typography, Row, Col } from "antd";
 const { Text } = Typography;
 import { register_file_editor } from "../../frame-editors/frame-tree/register";
 import { filename_extension_notilde, path_split } from "@cocalc/util/misc";
-import type { ExecOutput } from "@cocalc/util/db-schema/projects";
+import type { FileDescription } from "@cocalc/conat/files/fs";
 import { Loading } from "../../components";
 import { Editor as CodeEditor } from "../../frame-editors/code-editor/editor";
 import { Actions as CodeEditorActions } from "../../frame-editors/code-editor/actions";
@@ -26,122 +26,31 @@ interface Props {
   project_id: string;
 }
 
-function isMissingCommandFailure(stderr?: string): boolean {
-  const text = `${stderr ?? ""}`.toLowerCase();
-  return (
-    text.includes("enoent") ||
-    text.includes("not found") ||
-    text.includes("command not found")
-  );
+function normalizeSnippet(raw: string): string {
+  return raw.trim().slice(0, 20 * 80);
 }
 
-function normalizeTextSnippet(raw: string): string {
-  return raw
-    .trim()
-    .slice(0, 20 * 80)
-    .split(/(.{0,80})/g)
-    .filter((x) => !!x)
-    .join("");
-}
-
-function looksLikeTextPreview(raw: string): boolean {
-  if (!raw) return true;
-  let suspicious = 0;
-  let total = 0;
-  for (const ch of raw) {
-    const code = ch.charCodeAt(0);
-    total += 1;
-    if (code === 0) {
-      return false;
-    }
-    if (code < 32 && code !== 9 && code !== 10 && code !== 13) {
-      suspicious += 1;
-    }
-  }
-  return suspicious / Math.max(total, 1) < 0.1;
-}
-
-function previewMimeFromContent(mime: string, raw: string): string {
-  if (mime) {
-    return mime;
-  }
-  return looksLikeTextPreview(raw) ? "text/plain" : "application/octet-stream";
-}
-
-function parseMime(raw: string): string {
-  return raw.split("\n")[0].trim();
-}
-
-function formatExecError(
-  label: string,
-  resp: Pick<ExecOutput, "exit_code" | "stderr">,
-): string {
-  const stderr = `${resp.stderr ?? ""}`.trim();
-  if (!stderr) {
-    return `Error: ${label} probe exited with code ${resp.exit_code}`;
-  }
-  return `Error: ${label} probe exited with code ${resp.exit_code} -- ${stderr}`;
-}
-
-async function get_mime({ project_id, path, set_mime, set_err, set_snippet }) {
+async function get_mime({
+  project_id,
+  path,
+  set_mime,
+  set_err,
+  set_snippet,
+}: {
+  project_id: string;
+  path: string;
+  set_mime: (mime: string) => void;
+  set_err: (err: string) => void;
+  set_snippet: (snippet: string) => void;
+}) {
   try {
-    let mime = "";
-    const mimeProbe = await webapp_client.project_client.exec({
-      project_id,
-      command: "file",
-      args: ["-b", "--mime-type", path],
-      filesystem: true,
-    });
-    if (mimeProbe.exit_code === 0) {
-      mime = parseMime(mimeProbe.stdout);
-      set_mime(mime);
-    }
-
-    // limit number of bytes – it could be a "one-line" monster file.
-    // We *ONLY* limit by number of bytes, because limiting by both
-    // bytes and lines isn't supported in POSIX (e.g., macos), even though
-    // it works in Linux.
-    const previewProbe = await webapp_client.project_client.exec({
-      project_id,
-      command: "head",
-      args: ["-c", "2000", path],
-      filesystem: true,
-    });
-    if (previewProbe.exit_code !== 0) {
-      if (isMissingCommandFailure(previewProbe.stderr)) {
-        set_mime(mime || "application/octet-stream");
-        return;
-      }
-      set_err(formatExecError("preview", previewProbe));
-      return;
-    }
-
-    const effectiveMime = previewMimeFromContent(mime, previewProbe.stdout);
-    if (!mime) {
-      mime = effectiveMime;
-      set_mime(mime);
-    }
-
-    if (
-      effectiveMime.startsWith("text/") ||
-      effectiveMime === "inode/x-empty"
-    ) {
-      set_snippet(normalizeTextSnippet(previewProbe.stdout));
-      return;
-    }
-
-    const hexdumpProbe = await webapp_client.project_client.exec({
-      project_id,
-      command: "hexdump",
-      args: ["-C", "-n", "512", path],
-      filesystem: true,
-    });
-    if (hexdumpProbe.exit_code === 0) {
-      set_snippet(hexdumpProbe.stdout);
-      return;
-    }
-    if (!isMissingCommandFailure(hexdumpProbe.stderr)) {
-      set_err(formatExecError("binary preview", hexdumpProbe));
+    const fs = webapp_client.conat_client.conat().fs({ project_id });
+    const { mime, snippet }: FileDescription = await fs.describeFile(path);
+    set_mime(mime);
+    if (snippet) {
+      set_snippet(
+        mime.startsWith("text/") ? normalizeSnippet(snippet) : snippet,
+      );
     }
   } catch (err) {
     set_err(err.toString());
