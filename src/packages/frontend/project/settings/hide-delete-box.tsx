@@ -126,7 +126,7 @@ export function HideDeleteBox(props: Readonly<Props>) {
             { projectLabel: projectLabelLower },
           )}
           cancelText={intl.formatMessage(labels.cancel)}
-          overlayStyle={{ maxWidth: "400px" }}
+          styles={{ root: { maxWidth: "400px" } }}
           icon={<Icon name="trash" />}
         >
           <Button

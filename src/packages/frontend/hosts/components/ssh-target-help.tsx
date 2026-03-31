@@ -29,7 +29,7 @@ export const SshTargetLabel: React.FC<SshTargetLabelProps> = ({
     <Popover
       title="Remote host requirements"
       content={HELP_CONTENT}
-      overlayStyle={{ maxWidth: 420 }}
+      styles={{ root: { maxWidth: 420 } }}
     >
       <span
         style={{

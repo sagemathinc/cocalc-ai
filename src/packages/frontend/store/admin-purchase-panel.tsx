@@ -296,26 +296,34 @@ export default function AdminPurchasePanel() {
           <Space direction="vertical" size="small" style={{ width: "100%" }}>
             <Text strong>Voucher details</Text>
             <Flex gap="middle" wrap="wrap">
-              <InputNumber
-                addonBefore="$"
-                max={MAX_VOUCHER_VALUE}
-                min={1}
-                precision={2}
-                step={5}
-                value={voucherAmount}
-                onChange={(value) =>
-                  setVoucherAmount(typeof value === "number" ? value : 25)
-                }
-              />
-              <InputNumber
-                addonAfter={`voucher${voucherCount === 1 ? "" : "s"}`}
-                max={MAX_VOUCHERS.admin}
-                min={1}
-                value={voucherCount}
-                onChange={(value) =>
-                  setVoucherCount(typeof value === "number" ? value : 1)
-                }
-              />
+              <Space.Compact>
+                <Button disabled tabIndex={-1}>
+                  $
+                </Button>
+                <InputNumber
+                  max={MAX_VOUCHER_VALUE}
+                  min={1}
+                  precision={2}
+                  step={5}
+                  value={voucherAmount}
+                  onChange={(value) =>
+                    setVoucherAmount(typeof value === "number" ? value : 25)
+                  }
+                />
+              </Space.Compact>
+              <Space.Compact>
+                <InputNumber
+                  max={MAX_VOUCHERS.admin}
+                  min={1}
+                  value={voucherCount}
+                  onChange={(value) =>
+                    setVoucherCount(typeof value === "number" ? value : 1)
+                  }
+                />
+                <Button disabled tabIndex={-1}>
+                  {`voucher${voucherCount === 1 ? "" : "s"}`}
+                </Button>
+              </Space.Compact>
             </Flex>
             <Input
               placeholder="Voucher title"
@@ -340,25 +348,33 @@ export default function AdminPurchasePanel() {
                 setDiscountPercent(typeof value === "number" ? value : 0)
               }
             />
-            <InputNumber
-              addonBefore="$"
-              max={MAX_VOUCHER_VALUE * MAX_VOUCHERS.admin}
-              min={0}
-              value={discountAmount}
-              onChange={(value) =>
-                setDiscountAmount(typeof value === "number" ? value : 0)
-              }
-            />
-            <InputNumber
-              addonBefore="$"
-              max={MAX_VOUCHER_VALUE * MAX_VOUCHERS.admin}
-              min={0}
-              placeholder="Custom price"
-              value={customPrice ?? undefined}
-              onChange={(value) =>
-                setCustomPrice(typeof value === "number" ? value : null)
-              }
-            />
+            <Space.Compact>
+              <Button disabled tabIndex={-1}>
+                $
+              </Button>
+              <InputNumber
+                max={MAX_VOUCHER_VALUE * MAX_VOUCHERS.admin}
+                min={0}
+                value={discountAmount}
+                onChange={(value) =>
+                  setDiscountAmount(typeof value === "number" ? value : 0)
+                }
+              />
+            </Space.Compact>
+            <Space.Compact>
+              <Button disabled tabIndex={-1}>
+                $
+              </Button>
+              <InputNumber
+                max={MAX_VOUCHER_VALUE * MAX_VOUCHERS.admin}
+                min={0}
+                placeholder="Custom price"
+                value={customPrice ?? undefined}
+                onChange={(value) =>
+                  setCustomPrice(typeof value === "number" ? value : null)
+                }
+              />
+            </Space.Compact>
           </Flex>
           <Text type="secondary">
             Base {currency(basePrice ?? 0)} → Final{" "}

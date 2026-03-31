@@ -265,7 +265,7 @@ export function Complete({
         open
         trigger={["click", "hover"]}
         placement="top" // always on top, and paddingBottom makes the entire line visible
-        overlayStyle={{ paddingBottom: "1em" }}
+        styles={{ root: { paddingBottom: "1em" } }}
       >
         <span />
       </Dropdown>

@@ -8,7 +8,7 @@ Customization and selection of the build command.
 */
 
 import { SaveOutlined } from "@ant-design/icons";
-import { Alert, Form, Input, Select } from "antd";
+import { Alert, Form, Input, Select, Space } from "antd";
 import { List } from "immutable";
 
 import { Button } from "@cocalc/frontend/antd-bootstrap";
@@ -144,31 +144,33 @@ export const BuildCommand: React.FC<Props> = React.memo((props: Props) => {
 
   function render_input() {
     return (
-      <Input
-        style={{
-          fontFamily: "monospace",
-          fontSize: font_size,
-          textOverflow: "ellipsis",
-        }}
-        value={build_command}
-        disabled={build_command_hardcoded}
-        onChange={(e) => handle_command_line_change((e.target as any).value)}
-        onFocus={() => set_focus(true)}
-        onKeyDown={(evt) => {
-          if (
-            evt.keyCode == 13 ||
-            ((evt.metaKey || evt.ctrlKey) &&
-              String.fromCharCode(evt.which).toLowerCase() == "s")
-          ) {
+      <Space.Compact block>
+        <BuildControls actions={actions} narrow={true} />
+        <Input
+          style={{
+            fontFamily: "monospace",
+            fontSize: font_size,
+            textOverflow: "ellipsis",
+          }}
+          value={build_command}
+          disabled={build_command_hardcoded}
+          onChange={(e) => handle_command_line_change((e.target as any).value)}
+          onFocus={() => set_focus(true)}
+          onKeyDown={(evt) => {
+            if (
+              evt.keyCode == 13 ||
+              ((evt.metaKey || evt.ctrlKey) &&
+                String.fromCharCode(evt.which).toLowerCase() == "s")
+            ) {
+              handle_build_change();
+              evt.preventDefault();
+            }
+          }}
+          onBlur={() => {
             handle_build_change();
-            evt.preventDefault();
-          }
-        }}
-        onBlur={() => {
-          handle_build_change();
-        }}
-        addonBefore={<BuildControls actions={actions} narrow={true} />}
-      />
+          }}
+        />
+      </Space.Compact>
     );
   }
 

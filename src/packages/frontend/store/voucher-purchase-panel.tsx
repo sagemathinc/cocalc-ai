@@ -144,26 +144,34 @@ export default function VoucherPurchasePanel({
         teammates. Vouchers redeem into account credit and do not expire.
       </Paragraph>
       <Flex gap="middle" wrap="wrap">
-        <InputNumber
-          addonBefore="$"
-          max={MAX_VOUCHER_VALUE}
-          min={1}
-          precision={2}
-          step={5}
-          value={amount}
-          onChange={(value) => {
-            setAmount(typeof value === "number" ? value : DEFAULT_AMOUNT);
-          }}
-        />
-        <InputNumber
-          addonAfter={`voucher${count === 1 ? "" : "s"}`}
-          max={MAX_VOUCHERS.now}
-          min={1}
-          value={count}
-          onChange={(value) => {
-            setCount(typeof value === "number" ? value : DEFAULT_COUNT);
-          }}
-        />
+        <Space.Compact>
+          <Button disabled tabIndex={-1}>
+            $
+          </Button>
+          <InputNumber
+            max={MAX_VOUCHER_VALUE}
+            min={1}
+            precision={2}
+            step={5}
+            value={amount}
+            onChange={(value) => {
+              setAmount(typeof value === "number" ? value : DEFAULT_AMOUNT);
+            }}
+          />
+        </Space.Compact>
+        <Space.Compact>
+          <InputNumber
+            max={MAX_VOUCHERS.now}
+            min={1}
+            value={count}
+            onChange={(value) => {
+              setCount(typeof value === "number" ? value : DEFAULT_COUNT);
+            }}
+          />
+          <Button disabled tabIndex={-1}>
+            {`voucher${count === 1 ? "" : "s"}`}
+          </Button>
+        </Space.Compact>
         <Input
           placeholder="Voucher title"
           style={{ minWidth: "240px" }}
