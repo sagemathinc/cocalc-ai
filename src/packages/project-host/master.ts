@@ -703,7 +703,9 @@ export async function startMasterRegistration({
         return await listRootfsCacheEntries();
       },
       async pullRootfsImage({ image }) {
-        return await pullRootfsCacheEntry(image);
+        return await pullRootfsCacheEntry(image, {
+          awaitRegionalReplication: true,
+        });
       },
       async deleteRootfsImage({ image }) {
         return await deleteRootfsCacheEntry(image);
