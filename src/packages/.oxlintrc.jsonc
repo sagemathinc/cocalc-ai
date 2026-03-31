@@ -1,0 +1,32 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+
+  // Start with the highest-signal React correctness rule. The existing
+  // frontend has a backlog of legacy violations tracked in .oxlintignore.
+  "env": {
+    "browser": true,
+    "es2022": true,
+  },
+  "plugins": ["react"],
+  "categories": {
+    "correctness": "off",
+    "suspicious": "off",
+    "pedantic": "off",
+    "perf": "off",
+    "style": "off",
+    "restriction": "off",
+    "nursery": "off",
+  },
+  "rules": {
+    "react/rules-of-hooks": "error",
+  },
+  "ignorePatterns": [
+    "frontend/dist/**",
+    "frontend/node_modules/**",
+    "frontend/codemirror/mode/**",
+    "frontend/e2e/**",
+    "frontend/playwright-report/**",
+    "frontend/test-results/**",
+    "**/*.d.ts",
+  ],
+}
