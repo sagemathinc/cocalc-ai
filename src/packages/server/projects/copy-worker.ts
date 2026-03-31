@@ -33,6 +33,9 @@ const progressSteps: Record<string, number> = {
 
 let running = false;
 let inFlight = 0;
+let tickFn: (() => Promise<void>) | undefined;
+let tickRunning = false;
+let tickRequested = false;
 
 function publishSummary(summary: LroSummary) {
   return publishLroSummary({
@@ -344,12 +347,36 @@ export function startCopyLroWorker({
         });
     }
   };
+  tickFn = tick;
 
   const timer = setInterval(() => {
-    void tick();
+    triggerCopyLroWorker();
   }, intervalMs);
   timer.unref?.();
-  void tick();
+  triggerCopyLroWorker();
 
-  return () => clearInterval(timer);
+  return () => {
+    running = false;
+    tickFn = undefined;
+    tickRunning = false;
+    tickRequested = false;
+    clearInterval(timer);
+  };
+}
+
+export function triggerCopyLroWorker(): void {
+  if (!running || !tickFn) return;
+  tickRequested = true;
+  if (tickRunning) return;
+  tickRunning = true;
+  void (async () => {
+    try {
+      while (tickRequested && running && tickFn) {
+        tickRequested = false;
+        await tickFn();
+      }
+    } finally {
+      tickRunning = false;
+    }
+  })();
 }

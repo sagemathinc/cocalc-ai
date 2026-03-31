@@ -6,6 +6,7 @@ import getPool from "@cocalc/database/pool";
 import { waitForCompletion as waitForLroCompletion } from "@cocalc/conat/lro/client";
 import { type Fileserver } from "@cocalc/conat/files/file-server";
 import { type CopyOptions } from "@cocalc/conat/files/fs";
+import { conatWithProjectRouting } from "@cocalc/server/conat/route-client";
 import { createBackup as createBackupLro } from "@cocalc/server/conat/api/project-backups";
 import { getProjectFileServerClient } from "@cocalc/server/conat/file-server-client";
 import { insertCopyRowIfMissing, upsertCopyRow } from "./copy-db";
@@ -210,14 +211,113 @@ async function getProjectBackupFreshness({
 }
 
 const BACKUP_REUSE_SKEW_MS = 5_000;
+const BACKUP_FILE_MTIME_SKEW_MS = 2_000;
 
-async function findReusableBackupSnapshot({
+async function latestIndexedBackup({
   client,
   project_id,
 }: {
   client: Fileserver;
   project_id: string;
 }): Promise<{ id: string; time?: string } | undefined> {
+  const backups = await client.getBackups({
+    project_id,
+    indexed_only: true,
+  });
+  if (!backups.length) {
+    return;
+  }
+  const latest = backups[backups.length - 1];
+  return {
+    id: latest.id,
+    time:
+      latest.time instanceof Date
+        ? latest.time.toISOString()
+        : `${latest.time}`,
+  };
+}
+
+async function snapshotMatchesCurrentSourceFiles({
+  client,
+  project_id,
+  src_paths,
+  backup_src_paths,
+  snapshot_id,
+}: {
+  client: Fileserver;
+  project_id: string;
+  src_paths: string[];
+  backup_src_paths: string[];
+  snapshot_id: string;
+}): Promise<boolean> {
+  if (
+    src_paths.length === 0 ||
+    src_paths.length !== backup_src_paths.length ||
+    backup_src_paths.some((p) => !p)
+  ) {
+    return false;
+  }
+  const fs = conatWithProjectRouting().fs({ project_id });
+  for (let i = 0; i < src_paths.length; i += 1) {
+    const srcPath = src_paths[i];
+    const backupPath = backup_src_paths[i];
+    const stat = await fs.stat(srcPath).catch(() => undefined);
+    if (!stat?.isFile()) {
+      return false;
+    }
+    const parent = path.posix.dirname(backupPath);
+    const base = path.posix.basename(backupPath);
+    const listing = await client.getBackupFiles({
+      project_id,
+      id: snapshot_id,
+      path: parent === "." ? "" : parent,
+    });
+    const entry = listing.find((item) => item.name === base);
+    if (!entry || entry.isDir) {
+      return false;
+    }
+    if (entry.size !== stat.size) {
+      return false;
+    }
+    if (
+      Math.abs(Number(entry.mtime ?? 0) - Math.floor(stat.mtimeMs)) >
+      BACKUP_FILE_MTIME_SKEW_MS
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+async function findReusableBackupSnapshot({
+  client,
+  project_id,
+  src_paths,
+  backup_src_paths,
+}: {
+  client: Fileserver;
+  project_id: string;
+  src_paths?: string[];
+  backup_src_paths?: string[];
+}): Promise<{ id: string; time?: string } | undefined> {
+  const latest = await latestIndexedBackup({ client, project_id });
+  if (!latest?.id) {
+    return;
+  }
+  if (
+    src_paths?.length &&
+    backup_src_paths?.length &&
+    (await snapshotMatchesCurrentSourceFiles({
+      client,
+      project_id,
+      src_paths,
+      backup_src_paths,
+      snapshot_id: latest.id,
+    }))
+  ) {
+    return latest;
+  }
+
   const { last_edited, last_backup } = await getProjectBackupFreshness({
     project_id,
   });
@@ -233,15 +333,6 @@ async function findReusableBackupSnapshot({
   ) {
     return;
   }
-
-  const backups = await client.getBackups({
-    project_id,
-    indexed_only: true,
-  });
-  if (!backups.length) {
-    return;
-  }
-  const latest = backups[backups.length - 1];
   const latestMs = latest?.time ? new Date(latest.time).getTime() : NaN;
   if (!Number.isFinite(latestMs)) {
     return;
@@ -249,13 +340,7 @@ async function findReusableBackupSnapshot({
   if (latestMs + BACKUP_REUSE_SKEW_MS < lastBackupMs) {
     return;
   }
-  return {
-    id: latest.id,
-    time:
-      latest.time instanceof Date
-        ? latest.time.toISOString()
-        : `${latest.time}`,
-  };
+  return latest;
 }
 
 async function triggerRemoteCopyApply({
@@ -435,6 +520,8 @@ export async function copyProjectFiles({
       const reusableBackup = await findReusableBackupSnapshot({
         client: backupClient,
         project_id: src.project_id,
+        src_paths: srcPaths,
+        backup_src_paths: backupSrcPaths,
       }).catch((err) => {
         logger.warn("copyProjectFiles: reusable backup lookup failed", {
           project_id: src.project_id,

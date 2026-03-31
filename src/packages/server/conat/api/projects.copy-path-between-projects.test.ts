@@ -4,6 +4,7 @@ let assertCollabMock: jest.Mock;
 let createLroMock: jest.Mock;
 let publishLroSummaryMock: jest.Mock;
 let publishLroEventMock: jest.Mock;
+let triggerCopyLroWorkerMock: jest.Mock;
 
 jest.mock("@cocalc/server/projects/create", () => ({
   __esModule: true,
@@ -66,6 +67,11 @@ jest.mock("@cocalc/server/projects/copy-db", () => ({
   listCopiesForProject: jest.fn(async () => []),
 }));
 
+jest.mock("@cocalc/server/projects/copy-worker", () => ({
+  __esModule: true,
+  triggerCopyLroWorker: (...args: any[]) => triggerCopyLroWorkerMock(...args),
+}));
+
 jest.mock("@cocalc/server/lro/lro-db", () => ({
   __esModule: true,
   createLro: (...args: any[]) => createLroMock(...args),
@@ -104,6 +110,7 @@ describe("projects.copyPathBetweenProjects", () => {
     }));
     publishLroSummaryMock = jest.fn(async () => undefined);
     publishLroEventMock = jest.fn(async () => undefined);
+    triggerCopyLroWorkerMock = jest.fn();
   });
 
   it("requires a signed-in user", async () => {
@@ -175,6 +182,7 @@ describe("projects.copyPathBetweenProjects", () => {
     );
     expect(publishLroSummaryMock).toHaveBeenCalledTimes(1);
     expect(publishLroEventMock).toHaveBeenCalledTimes(1);
+    expect(triggerCopyLroWorkerMock).toHaveBeenCalledTimes(1);
     expect(result).toEqual({
       op_id: "op-1",
       scope_type: "project",

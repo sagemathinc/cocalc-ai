@@ -37,6 +37,7 @@ import {
   cancelCopy as cancelCopyDb,
   listCopiesForProject,
 } from "@cocalc/server/projects/copy-db";
+import { triggerCopyLroWorker } from "@cocalc/server/projects/copy-worker";
 import { createLro, updateLro } from "@cocalc/server/lro/lro-db";
 import { publishLroEvent, publishLroSummary } from "@cocalc/conat/lro/stream";
 import { lroStreamName } from "@cocalc/conat/lro/names";
@@ -148,6 +149,7 @@ export async function copyPathBetweenProjects({
       },
     );
   });
+  triggerCopyLroWorker();
   return {
     op_id: op.op_id,
     scope_type: "project",

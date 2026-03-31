@@ -12,6 +12,7 @@ import { lroStreamName } from "@cocalc/conat/lro/names";
 import { SERVICE as PERSIST_SERVICE } from "@cocalc/conat/persist/util";
 import { getProjectFileServerClient } from "@cocalc/server/conat/file-server-client";
 import { backupLroDedupeKey } from "@cocalc/server/projects/backup-lro";
+import { triggerBackupLroWorker } from "@cocalc/server/projects/backup-worker";
 
 // just *some* limit to avoid bugs/abuse
 
@@ -105,6 +106,7 @@ export async function createBackup(
     project_id,
     kind: "project-backup",
   });
+  triggerBackupLroWorker();
   return {
     op_id: op.op_id,
     scope_type: "project",

@@ -11,6 +11,7 @@ let waitLroMock: jest.Mock;
 let getProjectFileServerClientMock: jest.Mock;
 let applyPendingCopiesMock: jest.Mock;
 let createHostControlClientMock: jest.Mock;
+let statMock: jest.Mock;
 
 type ProjectMeta = {
   host_id?: string | null;
@@ -38,6 +39,15 @@ jest.mock("@cocalc/conat/project-host/api", () => ({
   __esModule: true,
   createHostControlClient: (...args: any[]) =>
     createHostControlClientMock(...args),
+}));
+
+jest.mock("@cocalc/server/conat/route-client", () => ({
+  __esModule: true,
+  conatWithProjectRouting: jest.fn(() => ({
+    fs: jest.fn(() => ({
+      stat: (...args: any[]) => statMock(...args),
+    })),
+  })),
 }));
 
 jest.mock("@cocalc/server/conat/api/project-backups", () => ({
@@ -98,6 +108,11 @@ describe("projects.copyProjectFiles", () => {
   beforeEach(() => {
     jest.resetModules();
     cpMock = jest.fn(async () => undefined);
+    statMock = jest.fn(async () => ({
+      size: 12,
+      mtimeMs: Date.parse("2026-03-31T19:59:56.000Z"),
+      isFile: () => true,
+    }));
     getBackupFilesMock = jest.fn(async () => []);
     deleteBackupMock = jest.fn(async () => undefined);
     const getBackupsMock = jest.fn(async () => []);
@@ -299,13 +314,13 @@ describe("projects.copyProjectFiles", () => {
     );
   });
 
-  it("reuses the latest indexed backup when it is newer than last_edited", async () => {
+  it("reuses the latest indexed backup when the source file matches the indexed backup", async () => {
     const lastBackup = new Date("2026-03-31T19:59:55.000Z");
     queryMock = makeProjectQuery({
       src: {
         host_id: "h1",
         last_backup: lastBackup,
-        last_edited: new Date("2026-03-31T19:59:53.000Z"),
+        last_edited: new Date("2026-03-31T20:01:53.000Z"),
       },
       dest: "h2",
     });
@@ -321,7 +336,14 @@ describe("projects.copyProjectFiles", () => {
         },
       ]),
     }));
-    getBackupFilesMock.mockResolvedValue([{ name: "a.txt" }]);
+    getBackupFilesMock.mockResolvedValue([
+      {
+        name: "a.txt",
+        isDir: false,
+        size: 12,
+        mtime: Date.parse("2026-03-31T19:59:56.000Z"),
+      },
+    ]);
 
     const { copyProjectFiles } = await import("./copy");
     const result = await copyProjectFiles({
@@ -342,6 +364,61 @@ describe("projects.copyProjectFiles", () => {
         snapshot_id: "snap-reuse",
       }),
     );
+  });
+
+  it("creates a fresh backup when the source file changed since the indexed backup", async () => {
+    queryMock = makeProjectQuery({
+      src: {
+        host_id: "h1",
+        last_backup: new Date("2026-03-31T19:59:55.000Z"),
+        last_edited: new Date("2026-03-31T20:01:53.000Z"),
+      },
+      dest: "h2",
+    });
+    getProjectFileServerClientMock = jest.fn(async () => ({
+      cp: (...args: any[]) => cpMock(...args),
+      getBackupFiles: (...args: any[]) => getBackupFilesMock(...args),
+      deleteBackup: (...args: any[]) => deleteBackupMock(...args),
+      getBackups: jest.fn(async () => [
+        {
+          id: "snap-reuse",
+          time: new Date("2026-03-31T19:59:56.000Z"),
+          summary: {},
+        },
+      ]),
+    }));
+    statMock = jest.fn(async () => ({
+      size: 99,
+      mtimeMs: Date.parse("2026-03-31T20:01:56.000Z"),
+      isFile: () => true,
+    }));
+    getBackupFilesMock.mockResolvedValue([
+      {
+        name: "a.txt",
+        isDir: false,
+        size: 12,
+        mtime: Date.parse("2026-03-31T19:59:56.000Z"),
+      },
+    ]);
+    waitLroMock = jest.fn(async () => ({
+      status: "succeeded",
+      result: { id: "snap-new" },
+    }));
+
+    const { copyProjectFiles } = await import("./copy");
+    const result = await copyProjectFiles({
+      account_id: "acct",
+      timeout_ms: 0,
+      src: { project_id: "src", path: "/root/a.txt" },
+      dests: [{ project_id: "dest", path: "/root/b.txt" }],
+    });
+
+    expect(result).toEqual({
+      queued: 1,
+      local: 0,
+      snapshot_id: "snap-new",
+    });
+    expect(createBackupMock).toHaveBeenCalledTimes(1);
   });
 
   it("falls back to creating a new backup when the reused snapshot lacks the requested path", async () => {
@@ -368,6 +445,7 @@ describe("projects.copyProjectFiles", () => {
       getBackups: getBackupsMock,
     }));
     getBackupFilesMock
+      .mockResolvedValueOnce([])
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([{ name: "a.txt" }]);
     waitLroMock = jest.fn(async () => ({

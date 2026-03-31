@@ -60,6 +60,9 @@ const progressSteps: Record<string, number> = {
 
 let running = false;
 let inFlight = 0;
+let tickFn: (() => Promise<void>) | undefined;
+let tickRunning = false;
+let tickRequested = false;
 
 type BackupClaimCandidateRow = LroSummary & {
   host_id: string | null;
@@ -521,16 +524,37 @@ export function startBackupLroWorker({
         });
     }
   };
+  tickFn = tick;
 
   const timer = setInterval(() => {
-    void tick();
+    triggerBackupLroWorker();
   }, intervalMs);
   timer.unref?.();
 
-  void tick();
+  triggerBackupLroWorker();
 
   return () => {
     running = false;
+    tickFn = undefined;
+    tickRunning = false;
+    tickRequested = false;
     clearInterval(timer);
   };
+}
+
+export function triggerBackupLroWorker(): void {
+  if (!running || !tickFn) return;
+  tickRequested = true;
+  if (tickRunning) return;
+  tickRunning = true;
+  void (async () => {
+    try {
+      while (tickRequested && running && tickFn) {
+        tickRequested = false;
+        await tickFn();
+      }
+    } finally {
+      tickRunning = false;
+    }
+  })();
 }
