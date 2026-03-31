@@ -77,6 +77,33 @@ export function findOpenDisplayPathForSyncPath(
   return found;
 }
 
+type SyncIdentityFs = {
+  canonicalSyncIdentityPath?: (path: string) => Promise<string>;
+};
+
+export async function resolveSyncPath(
+  fs: SyncIdentityFs,
+  displayPath: string,
+  projectHome: string,
+): Promise<string> {
+  if (typeof fs.canonicalSyncIdentityPath !== "function") {
+    throw new Error(
+      "backend does not provide canonicalSyncIdentityPath; refusing to open file unsafely",
+    );
+  }
+  // In launchpad/sandbox mode, this preserves the user-facing canonical sync
+  // identity instead of leaking container-internal realpaths.
+  const syncPath = await fs.canonicalSyncIdentityPath(displayPath);
+  if (typeof syncPath !== "string" || syncPath.length === 0) {
+    throw new Error(
+      `backend returned invalid canonical sync identity for '${displayPath}'`,
+    );
+  }
+  // Map resolved paths to canonical sync identities used by specific editors
+  // (e.g. ipynb syncdb path, terminal path key).
+  return canonicalPath(syncPath, projectHome);
+}
+
 export async function open_file(
   actions: ProjectActions,
   opts: OpenFileOpts,
@@ -189,17 +216,25 @@ export async function open_file(
     return;
   }
 
-  let syncPath = displayPath;
+  let syncPath: string;
   try {
-    const fs = actions.fs();
-    // Resolve once on open for sync identity. Keep display path unchanged.
-    syncPath = await fs.realpath(displayPath);
-  } catch (_) {
-    // TODO: old projects will not have the new realpath api call -- can delete this try/catch at some point.
+    syncPath = await resolveSyncPath(
+      actions.fs() as SyncIdentityFs,
+      displayPath,
+      projectHome,
+    );
+  } catch (err) {
+    if (!alreadyOpened && actions.open_files?.has(displayPath)) {
+      actions.open_files.delete(displayPath);
+      redux.getActions("page").save_session();
+    }
+    alert_message({
+      type: "error",
+      message: `Cannot safely open "${displayPath}" because canonical sync identity resolution failed: ${err}`,
+      timeout: 10,
+    });
+    return;
   }
-  // Map resolved paths to canonical sync identities used by specific editors
-  // (e.g. ipynb syncdb path, terminal path key).
-  syncPath = canonicalPath(syncPath, projectHome);
   if (!tabIsOpened()) {
     return;
   }
