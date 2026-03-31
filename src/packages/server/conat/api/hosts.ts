@@ -2344,6 +2344,11 @@ export async function resolveHostConnection({
     name: row.name ?? null,
     ssh_server,
     connect_url,
+    host_session_id:
+      typeof metadata?.host_session_id === "string" &&
+      metadata.host_session_id.trim()
+        ? metadata.host_session_id.trim()
+        : undefined,
     local_proxy,
     ready,
     status: normalizedStatus,

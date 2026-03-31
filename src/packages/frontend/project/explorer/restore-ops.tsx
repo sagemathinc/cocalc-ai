@@ -139,12 +139,12 @@ export default function RestoreOps({ project_id }: { project_id: string }) {
 
 function RestoreOpRow({ op }: { op: RestoreLroState }) {
   const summary = op.summary;
+  const lastDetailRef = useRef<string | undefined>(undefined);
+  const [detailsOpen, setDetailsOpen] = useState<boolean>(false);
   if (summary && HIDE_STATUSES.has(summary.status)) {
     return null;
   }
   const restoreKind = getRestoreKind(op);
-  const lastDetailRef = useRef<string | undefined>(undefined);
-  const [detailsOpen, setDetailsOpen] = useState<boolean>(false);
   const percent = progressPercent(op);
   const progress = op.last_progress;
   const detail = formatProgressDetail(progress?.detail);

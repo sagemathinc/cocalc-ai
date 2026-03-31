@@ -59,7 +59,7 @@ const PLUGINS = [
   [mentionPlugin],
 ];
 
-function usePlugins(m, plugins) {
+function applyPlugins(m, plugins) {
   for (const [plugin, options] of plugins) {
     m.use(plugin, options);
   }
@@ -75,7 +75,7 @@ function addBlankLineRenderer(m: MarkdownIt): void {
 }
 
 export const markdown_it = new MarkdownIt(OPTIONS);
-usePlugins(markdown_it, PLUGINS);
+applyPlugins(markdown_it, PLUGINS);
 markdown_it.use(blankLinesPlugin);
 addBlankLineRenderer(markdown_it);
 markdown_it.linkify.set({
@@ -86,7 +86,7 @@ markdown_it.linkify.set({
 
 // Parser used for Slate roundtrips; includes extra tokens for blank lines.
 export const markdown_it_slate = new MarkdownIt(OPTIONS);
-usePlugins(markdown_it_slate, PLUGINS);
+applyPlugins(markdown_it_slate, PLUGINS);
 markdown_it_slate.use(blankLinesPlugin);
 markdown_it_slate.linkify.set({
   fuzzyLink: false,
@@ -97,7 +97,7 @@ markdown_it_slate.linkify.set({
 /*
 export function markdownParser() {
   const m = new MarkdownIt(OPTIONS);
-  usePlugins(m, PLUGINS);
+  applyPlugins(m, PLUGINS);
   return m;
 }*/
 
@@ -125,7 +125,7 @@ function inject_linenumbers_plugin(md) {
 }
 const markdown_it_line_numbers = new MarkdownIt(OPTIONS);
 markdown_it_line_numbers.use(inject_linenumbers_plugin);
-usePlugins(markdown_it_line_numbers, PLUGINS);
+applyPlugins(markdown_it_line_numbers, PLUGINS);
 markdown_it_line_numbers.use(blankLinesPlugin);
 markdown_it_line_numbers.linkify.set({
   fuzzyLink: false,

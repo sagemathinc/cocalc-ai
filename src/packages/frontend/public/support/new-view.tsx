@@ -453,16 +453,6 @@ export default function SupportNew({
     body.trim().length >= MIN_BODY_LENGTH &&
     hasRequired;
 
-  if (!config.zendesk) {
-    return (
-      <Alert
-        showIcon
-        type="error"
-        message="Support ticket creation is not configured."
-      />
-    );
-  }
-
   async function submit() {
     if (!canSubmit) {
       return;
@@ -538,6 +528,16 @@ export default function SupportNew({
       canceled = true;
     };
   }, [email]);
+
+  if (!config.zendesk) {
+    return (
+      <Alert
+        showIcon
+        type="error"
+        message="Support ticket creation is not configured."
+      />
+    );
+  }
 
   return (
     <Space direction="vertical" size="large" style={{ width: "100%" }}>

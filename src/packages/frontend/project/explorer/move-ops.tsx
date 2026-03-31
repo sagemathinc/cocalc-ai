@@ -46,6 +46,7 @@ export default function MoveOps({ project_id }: { project_id: string }) {
   const moveOp = useTypedRedux({ project_id }, "move_lro")?.toJS() as
     | MoveLroState
     | undefined;
+  const [detailsOpen, setDetailsOpen] = useState<boolean>(false);
   if (!moveOp) {
     return null;
   }
@@ -63,7 +64,6 @@ export default function MoveOps({ project_id }: { project_id: string }) {
   const percent = progressPercent(moveOp);
   const statusText = formatStatusLine(moveOp);
   const progressStatus = progressBarStatus(summary?.status);
-  const [detailsOpen, setDetailsOpen] = useState<boolean>(false);
 
   return (
     <div

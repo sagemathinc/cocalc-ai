@@ -1287,17 +1287,15 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
   // especially if the document is large. By debouncing, we only do this when
   // the user pauses typing for a moment. Also, this avoids making too many commits.
   // For tiny documents, user can make this small or even 0 to not debounce.
-  const saveValueDebounce =
-    saveDebounceMs != null && !saveDebounceMs
-      ? () => editor.saveValue()
-      : useMemo(
-          () =>
-            debounce(
-              () => editor.saveValue(),
-              saveDebounceMs ?? SAVE_DEBOUNCE_MS,
-            ),
-          [],
-        );
+  const saveValueDebounce = useMemo(() => {
+    if (saveDebounceMs != null && !saveDebounceMs) {
+      return () => editor.saveValue();
+    }
+    return debounce(
+      () => editor.saveValue(),
+      saveDebounceMs ?? SAVE_DEBOUNCE_MS,
+    );
+  }, [editor, saveDebounceMs]);
 
   const getTopLevelJupyterCell = useCallback(() => {
     const path = editor.selection?.focus?.path;
@@ -2764,8 +2762,18 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
       />
     </ChangeContext.Provider>
   );
-  return enableUpload ? useUpload(editor, body) : body;
+  return enableUpload ? <UploadBody editor={editor} body={body} /> : body;
 });
+
+function UploadBody({
+  editor,
+  body,
+}: {
+  editor: SlateEditor;
+  body: React.JSX.Element;
+}): React.JSX.Element {
+  return useUpload(editor, body);
+}
 
 export const EditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
   if (props.disableBlockEditor) {

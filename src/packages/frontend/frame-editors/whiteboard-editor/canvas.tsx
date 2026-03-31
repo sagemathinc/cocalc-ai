@@ -1002,18 +1002,16 @@ export default function Canvas({
     }
   }
 
-  const saveViewport = isNavigator
-    ? () => {}
-    : useMemo(() => {
-        if (!isBoard) return () => {};
-        return throttle(() => {
-          const viewport = getViewportData();
-          if (viewport) {
-            lastViewport.current = viewport;
-            frame.actions.saveViewport(frame.id, viewport);
-          }
-        }, 100);
-      }, []);
+  const saveViewport = useMemo(() => {
+    if (isNavigator || !isBoard) return () => {};
+    return throttle(() => {
+      const viewport = getViewportData();
+      if (viewport) {
+        lastViewport.current = viewport;
+        frame.actions.saveViewport(frame.id, viewport);
+      }
+    }, 100);
+  }, [isBoard, isNavigator]);
 
   const onMouseDown = (e) => {
     if (wacomEraseRef.current) {

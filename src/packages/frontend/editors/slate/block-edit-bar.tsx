@@ -42,6 +42,26 @@ export const BlockEditBar: React.FC<{
       />
     );
   }
+  return (
+    <ActiveBlockEditBar
+      editor={editor}
+      isCurrent={isCurrent}
+      updateSignal={updateSignal}
+      hideSearch={hideSearch}
+      onHelp={onHelp}
+      searchHook={searchHook}
+    />
+  );
+};
+
+const ActiveBlockEditBar: React.FC<{
+  editor: SlateEditor;
+  isCurrent: boolean;
+  updateSignal: number;
+  hideSearch?: boolean;
+  onHelp?: () => void;
+  searchHook?: SearchHook;
+}> = ({ editor, isCurrent, updateSignal, hideSearch, onHelp, searchHook }) => {
   const search = searchHook ?? EMPTY_SEARCH;
   const { marks, updateMarks } = useMarks(editor);
   const { linkURL, updateLinkURL } = useLinkURL(editor);

@@ -265,8 +265,48 @@ function parseIgnoreRules(raw?: string | null) {
   return extractIgnoreRules(raw);
 }
 
+const SshRemoteTargetNotice = React.memo(
+  ({ sshRemoteTarget }: { sshRemoteTarget: string }) => {
+    return (
+      <div style={PAGE_STYLE}>
+        <Space style={TITLE_STYLE} size={12} align="center">
+          {lite && (
+            <Button
+              size="small"
+              onClick={() => {
+                redux.getActions("page").set_active_tab(project_id);
+              }}
+            >
+              Back
+            </Button>
+          )}
+          <Typography.Title level={4} style={{ margin: 0 }}>
+            Remote SSH Session
+          </Typography.Title>
+        </Space>
+        <Typography.Paragraph>
+          SSH session management is disabled in this remote instance.
+        </Typography.Paragraph>
+        <Typography.Paragraph>
+          Target:{" "}
+          <Typography.Text code copyable={{ text: sshRemoteTarget }}>
+            {sshRemoteTarget}
+          </Typography.Text>
+        </Typography.Paragraph>
+      </div>
+    );
+  },
+);
+
 export const SshPage: React.FC = React.memo(() => {
   const sshRemoteTarget = useTypedRedux("customize", "ssh_remote_target");
+  if (sshRemoteTarget) {
+    return <SshRemoteTargetNotice sshRemoteTarget={sshRemoteTarget} />;
+  }
+  return <SshPageEnabled />;
+});
+
+const SshPageEnabled: React.FC = React.memo(() => {
   const [rows, setRows] = useState<SshSessionRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -375,37 +415,6 @@ export const SshPage: React.FC = React.memo(() => {
       </Space>
     </div>
   );
-
-  if (sshRemoteTarget) {
-    return (
-      <div style={PAGE_STYLE}>
-        <Space style={TITLE_STYLE} size={12} align="center">
-          {lite && (
-            <Button
-              size="small"
-              onClick={() => {
-                redux.getActions("page").set_active_tab(project_id);
-              }}
-            >
-              Back
-            </Button>
-          )}
-          <Typography.Title level={4} style={{ margin: 0 }}>
-            Remote SSH Session
-          </Typography.Title>
-        </Space>
-        <Typography.Paragraph>
-          SSH session management is disabled in this remote instance.
-        </Typography.Paragraph>
-        <Typography.Paragraph>
-          Target:{" "}
-          <Typography.Text code copyable={{ text: sshRemoteTarget }}>
-            {sshRemoteTarget}
-          </Typography.Text>
-        </Typography.Paragraph>
-      </div>
-    );
-  }
 
   const ensureReflectState = (target: string): ReflectTargetState => {
     return (

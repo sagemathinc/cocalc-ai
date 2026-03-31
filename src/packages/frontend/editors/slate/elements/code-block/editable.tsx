@@ -32,11 +32,16 @@ import { Editor, Transforms } from "slate";
 import { markdown_to_slate } from "../../markdown-to-slate";
 import { insertPlainTextInCodeBlock } from "../../format/auto-format";
 import type { CodeBlock } from "./types";
+import type { JupyterCodeCell } from "../jupyter-code-cell/types";
 import { getCodeBlockLineCount, getCodeBlockText } from "./utils";
 import { CodeBlockBody, CodeLineElement } from "./code-like";
 import { guessPopularLanguage } from "@cocalc/frontend/misc/detect-language";
 import { pointAtPath } from "../../slate-util";
 import { useJupyterCellContext } from "../../jupyter-cell-context";
+
+type CodeLikeRenderElementProps = Omit<RenderElementProps, "element"> & {
+  element: CodeBlock | JupyterCodeCell;
+};
 
 interface FloatingActionMenuProps {
   info: string;
@@ -251,6 +256,22 @@ export function CodeLikeEditor({
   if (element.type != "code_block" && element.type != "jupyter_code_cell") {
     throw Error("bug");
   }
+  return (
+    <CodeBlockEditor
+      {...({
+        attributes,
+        children,
+        element,
+      } as CodeLikeRenderElementProps)}
+    />
+  );
+}
+
+function CodeBlockEditor({
+  attributes,
+  children,
+  element,
+}: CodeLikeRenderElementProps) {
   const isJupyterCodeCell = element.type === "jupyter_code_cell";
   const {
     renderOutput: renderJupyterOutput,

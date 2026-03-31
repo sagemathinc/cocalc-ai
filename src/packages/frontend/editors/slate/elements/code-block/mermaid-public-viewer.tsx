@@ -20,10 +20,6 @@ export default function PublicViewerMermaid({ value, style }: Props) {
   const [id] = useState<string>("a" + replace_all(uuid(), "-", ""));
   const { getMermaid } = useFileContext();
 
-  if (getMermaid == null) {
-    return <div style={style}>Mermaid not available</div>;
-  }
-
   const waitUntilNotProcessing = async () => {
     let d = 1;
     while (processingRef.current) {
@@ -33,6 +29,7 @@ export default function PublicViewerMermaid({ value, style }: Props) {
   };
 
   useEffect(() => {
+    if (getMermaid == null) return;
     const elt = mermaidRef.current;
     if (!elt) return;
     if (!value.trim()) {
@@ -53,7 +50,11 @@ export default function PublicViewerMermaid({ value, style }: Props) {
         processingRef.current = false;
       }
     })();
-  }, [value]);
+  }, [getMermaid, id, value]);
+
+  if (getMermaid == null) {
+    return <div style={style}>Mermaid not available</div>;
+  }
 
   return (
     <div style={style}>

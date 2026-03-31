@@ -10,7 +10,13 @@ import { register } from "../register";
 import PublicViewerMermaid from "./mermaid-public-viewer";
 import { highlightCodeHtml } from "./prism";
 import { CodeLineElement } from "./code-like";
+import type { JupyterCodeCell } from "../jupyter-code-cell/types";
+import type { CodeBlock } from "./types";
 import { getCodeBlockLineCount, getCodeBlockText, toCodeLines } from "./utils";
+
+type CodeLikeRenderElementProps = Omit<RenderElementProps, "element"> & {
+  element: CodeBlock | JupyterCodeCell;
+};
 
 const COLLAPSE_THRESHOLD_LINES = 6;
 const COLLAPSE_THRESHOLD_CHARS = 1200;
@@ -40,11 +46,8 @@ function getCollapsedPreview(value: string): string {
   return `${trimmed}...`;
 }
 
-const StaticElement: React.FC<RenderElementProps> = ({
-  attributes,
-  element,
-  children,
-}) => {
+const StaticElement: React.FC<RenderElementProps> = (props) => {
+  const { attributes, element, children } = props;
   if (element.type === "code_line") {
     return (
       <CodeLineElement attributes={attributes}>{children}</CodeLineElement>
@@ -53,8 +56,15 @@ const StaticElement: React.FC<RenderElementProps> = ({
   if (element.type != "code_block" && element.type != "jupyter_code_cell") {
     throw Error("bug");
   }
+  return <StaticCodeBlockElement {...(props as CodeLikeRenderElementProps)} />;
+};
 
+function StaticCodeBlockElement({
+  attributes,
+  element,
+}: CodeLikeRenderElementProps) {
   const value = getCodeBlockText(element as any);
+  const [expanded, setExpanded] = useState<boolean>(false);
   const isMermaid = element.info == "mermaid";
   if (isMermaid) {
     return (
@@ -79,7 +89,6 @@ const StaticElement: React.FC<RenderElementProps> = ({
       : hiddenChars > 0
         ? `${hiddenChars} ${hiddenChars === 1 ? "character" : "characters"} hidden`
         : "collapsed";
-  const [expanded, setExpanded] = useState<boolean>(false);
   const isCollapsed = shouldCollapse && !expanded;
 
   return (
@@ -132,7 +141,7 @@ const StaticElement: React.FC<RenderElementProps> = ({
       )}
     </div>
   );
-};
+}
 
 function toSlate({ token }) {
   let value = token.content;

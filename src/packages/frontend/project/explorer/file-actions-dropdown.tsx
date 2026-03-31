@@ -36,8 +36,8 @@ export function FileActionsDropdown({
   activateFilesTab,
 }: Props) {
   const intl = useIntl();
-  if (!actions) return null;
   const items = useMemo<MenuItems>(() => {
+    if (!actions) return [];
     return names.flatMap((name) => {
       if (isSnapshotPath(current_path) && isDisabledSnapshots(name)) {
         return [];
@@ -65,6 +65,7 @@ export function FileActionsDropdown({
     });
   }, [actions, activateFilesTab, current_path, hideFlyout, intl, names]);
 
+  if (!actions) return null;
   if (!items.length) return null;
 
   const title = iconOnly ? (

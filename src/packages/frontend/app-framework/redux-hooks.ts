@@ -99,43 +99,6 @@ export function useReduxNamedStore(path: string[]) {
   return value;
 }
 
-function useReduxProjectStore(path: string[], project_id: string) {
-  const [value, set_value] = React.useState(() =>
-    redux
-      .getProjectStore(project_id)
-      .getIn(path as [string, string, string, string, string]),
-  );
-
-  useEffect(() => {
-    const store = redux.getProjectStore(project_id);
-    let last_value = value;
-    const f = (obj) => {
-      if (obj == null || !f.is_mounted) return; // see comment for useReduxNamedStore
-      const new_value = obj.getIn(path);
-      if (last_value !== new_value) {
-        /*
-        console.log("useReduxProjectStore change ", {
-          path: JSON.stringify(path),
-          new_value,
-          last_value,
-        });
-        */
-        last_value = new_value;
-        set_value(new_value);
-      }
-    };
-    f.is_mounted = true;
-    store.on("change", f);
-    f(store);
-    return () => {
-      f.is_mounted = false;
-      store.removeListener("change", f);
-    };
-  }, [...path, project_id]);
-
-  return value;
-}
-
 function useReduxEditorStore(
   path: string[],
   project_id: string,
@@ -223,24 +186,23 @@ export function useTypedRedux(
   a: keyof StoreStates | { project_id: string },
   field: string,
 ) {
-  if (typeof a == "string") {
-    return useRedux([a, field]);
-  }
-  return useRedux(a.project_id, field);
+  const path = typeof a == "string" ? [a, field] : [field];
+  const projectId = typeof a == "string" ? undefined : a.project_id;
+  return useRedux(path, projectId);
 }
 
 export function useEditorRedux<State>(editor: {
   project_id: string;
   path: string;
 }) {
-  function f<S extends keyof State>(field: S): State[S] {
+  function useField<S extends keyof State>(field: S): State[S] {
     return useReduxEditorStore(
       [field as string],
       editor.project_id,
       editor.path,
     ) as any;
   }
-  return f;
+  return useField;
 }
 
 /*
@@ -273,6 +235,41 @@ export function useRedux(
   project_id?: string,
   filename?: string,
 ) {
+  const resolved = resolveReduxPath(path, project_id, filename);
+  const [value, set_value] = React.useState(() => getReduxValue(resolved));
+
+  useEffect(() => {
+    let last_value = getReduxValue(resolved);
+    set_value(last_value);
+
+    const update = (next_value) => {
+      if (!update.is_mounted) return;
+      if (last_value !== next_value) {
+        last_value = next_value;
+        set_value(next_value);
+      }
+    };
+    update.is_mounted = true;
+    const unsubscribe = subscribeReduxValue(resolved, update);
+    return () => {
+      update.is_mounted = false;
+      unsubscribe();
+    };
+  }, getReduxDeps(resolved));
+
+  return value;
+}
+
+type ResolvedReduxPath =
+  | { kind: "named"; path: string[] }
+  | { kind: "project"; path: string[]; projectId: string }
+  | { kind: "editor"; path: string[]; projectId: string; filename: string };
+
+function resolveReduxPath(
+  path: string | string[],
+  project_id?: string,
+  filename?: string,
+): ResolvedReduxPath {
   if (typeof path == "string") {
     // good typed version!! -- path specifies store
     if (typeof project_id != "string" || typeof filename != "undefined") {
@@ -281,23 +278,126 @@ export function useRedux(
       );
     }
     if (is_valid_uuid_string(path)) {
-      return useRedux([project_id], path);
-    } else {
-      return useRedux([path, project_id]);
+      return { kind: "project", path: [project_id], projectId: path };
     }
+    return { kind: "named", path: [path, project_id] };
   }
   if (project_id == null) {
-    return useReduxNamedStore(typeof path == "string" ? [path] : path);
+    return { kind: "named", path };
   }
   if (filename == null) {
     if (!is_valid_uuid_string(project_id)) {
       // this is used a lot by frame-tree editors right now.
-      return useReduxNamedStore([project_id].concat(path));
-    } else {
-      return useReduxProjectStore(path, project_id);
+      return { kind: "named", path: [project_id].concat(path) };
+    }
+    return { kind: "project", path, projectId: project_id };
+  }
+  return { kind: "editor", path, projectId: project_id, filename };
+}
+
+function getReduxValue(resolved: ResolvedReduxPath) {
+  switch (resolved.kind) {
+    case "named": {
+      const [name, ...subpath] = resolved.path;
+      if (!name) return undefined;
+      return redux.getStore(name)?.getIn(subpath as any) as any;
+    }
+    case "project":
+      return redux
+        .getProjectStore(resolved.projectId)
+        .getIn(resolved.path as [string, string, string, string, string]);
+    case "editor":
+      return redux
+        .getEditorStore(resolved.projectId, resolved.filename)
+        ?.getIn(resolved.path as [string, string, string, string, string]);
+  }
+}
+
+function getReduxDeps(resolved: ResolvedReduxPath): string[] {
+  switch (resolved.kind) {
+    case "named":
+      return resolved.path;
+    case "project":
+      return [...resolved.path, resolved.projectId];
+    case "editor":
+      return [...resolved.path, resolved.projectId, resolved.filename];
+  }
+}
+
+function subscribeReduxValue(
+  resolved: ResolvedReduxPath,
+  onValue: (value: any) => void,
+) {
+  switch (resolved.kind) {
+    case "named": {
+      const [name, ...subpath] = resolved.path;
+      if (!name) {
+        return () => {};
+      }
+      const store = redux.getStore(name);
+      if (store == null) {
+        console.warn(`store "${name}" must exist; path=`, resolved.path);
+        return () => {};
+      }
+      const handleChange = () => {
+        onValue(store.getIn(subpath as any));
+      };
+      store.on("change", handleChange);
+      handleChange();
+      return () => {
+        store.removeListener("change", handleChange);
+      };
+    }
+    case "project": {
+      const store = redux.getProjectStore(resolved.projectId);
+      const handleChange = (obj) => {
+        if (obj == null) return;
+        onValue(
+          obj.getIn(resolved.path as [string, string, string, string, string]),
+        );
+      };
+      store.on("change", handleChange);
+      handleChange(store);
+      return () => {
+        store.removeListener("change", handleChange);
+      };
+    }
+    case "editor": {
+      let active = true;
+      let store = redux.getEditorStore(resolved.projectId, resolved.filename);
+      const handleChange = (obj) => {
+        if (obj == null || !active) return;
+        onValue(
+          obj.getIn(resolved.path as [string, string, string, string, string]),
+        );
+      };
+      handleChange(store);
+      if (store != null) {
+        store.on("change", handleChange);
+        return () => {
+          active = false;
+          store?.removeListener("change", handleChange);
+        };
+      }
+      const unsubscribe = redux.reduxStore.subscribe(() => {
+        if (!active) {
+          unsubscribe();
+          return;
+        }
+        store = redux.getEditorStore(resolved.projectId, resolved.filename);
+        if (store != null) {
+          unsubscribe();
+          handleChange(store);
+          store.on("change", handleChange);
+        }
+      });
+      return () => {
+        active = false;
+        unsubscribe();
+        store?.removeListener("change", handleChange);
+      };
     }
   }
-  return useReduxEditorStore(path, project_id, filename);
 }
 
 /*
