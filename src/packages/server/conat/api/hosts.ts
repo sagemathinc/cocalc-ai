@@ -97,7 +97,10 @@ import {
   ensureSelfHostReverseTunnel,
   runConnectorInstallOverSsh,
 } from "@cocalc/server/self-host/ssh-target";
-import { loadProjectHostMetricsHistory } from "@cocalc/database/postgres/project-host-metrics";
+import {
+  clearProjectHostMetrics,
+  loadProjectHostMetricsHistory,
+} from "@cocalc/database/postgres/project-host-metrics";
 import {
   deleteCloudflareTunnel,
   hasCloudflareTunnel,
@@ -1210,6 +1213,7 @@ async function markHostDeprovisioned(row: any, action: string) {
   delete nextMetadata.runtime;
   delete nextMetadata.dns;
   delete nextMetadata.cloudflare_tunnel;
+  delete nextMetadata.metrics;
 
   logStatusUpdate(row.id, "deprovisioned", "api");
   await revokeProjectHostTokensForHost(row.id, { purpose: "bootstrap" });
@@ -1236,9 +1240,10 @@ async function markHostDeprovisioned(row: any, action: string) {
            last_seen=$3,
            metadata=$4,
            updated=NOW()
-     WHERE id=$1 AND deleted IS NULL`,
+    WHERE id=$1 AND deleted IS NULL`,
     [row.id, "deprovisioned", new Date(), nextMetadata],
   );
+  await clearProjectHostMetrics({ host_id: row.id });
   await logCloudVmEvent({
     vm_id: row.id,
     action,

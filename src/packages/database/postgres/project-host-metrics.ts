@@ -687,6 +687,22 @@ export async function recordProjectHostMetricsSample({
   );
 }
 
+export async function clearProjectHostMetrics({
+  host_id,
+}: {
+  host_id: string;
+}): Promise<void> {
+  if (!host_id) return;
+  await ensureProjectHostMetricsSamplesSchema();
+  await pool().query(
+    `
+      DELETE FROM project_host_metrics_samples
+      WHERE host_id = $1
+    `,
+    [host_id],
+  );
+}
+
 export async function loadProjectHostMetricsHistory({
   host_ids,
   window_minutes,

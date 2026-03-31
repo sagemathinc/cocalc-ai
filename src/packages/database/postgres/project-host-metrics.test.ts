@@ -7,6 +7,7 @@ import getPool, { initEphemeralDatabase } from "@cocalc/database/pool";
 import { testCleanup } from "@cocalc/database/test-utils";
 import { uuid } from "@cocalc/util/misc";
 import {
+  clearProjectHostMetrics,
   loadProjectHostMetricsHistory,
   recordProjectHostMetricsSample,
 } from "./project-host-metrics";
@@ -247,5 +248,34 @@ describe("project host metrics history", () => {
     expect(entry).toBeDefined();
     expect(entry?.growth?.disk_used_bytes_per_hour).toBeGreaterThan(0);
     expect(entry?.derived?.disk.hours_to_exhaustion).toBeGreaterThan(0);
+  });
+
+  it("clears stored metrics history for a host", async () => {
+    const host_id = uuid();
+    await insertProjectHost(host_id);
+
+    await recordProjectHostMetricsSample({
+      host_id,
+      metrics: {
+        collected_at: new Date().toISOString(),
+        cpu_percent: 1,
+        disk_device_total_bytes: 1000,
+        disk_device_used_bytes: 10,
+        disk_available_conservative_bytes: 990,
+      },
+    });
+
+    await clearProjectHostMetrics({ host_id });
+
+    const history = await loadProjectHostMetricsHistory({
+      host_ids: [host_id],
+      window_minutes: 60,
+      max_points: 60,
+    });
+    const entry = history.get(host_id);
+    expect(entry?.point_count).toBe(0);
+    expect(entry?.points).toEqual([]);
+    expect(entry?.growth).toBeUndefined();
+    expect(entry?.derived).toBeUndefined();
   });
 });
