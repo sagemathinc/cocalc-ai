@@ -1217,7 +1217,7 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
       <Dropdown
         trigger={["contextMenu"]}
         menu={{ items }}
-        overlayStyle={{ maxWidth: "400px" }}
+        styles={{ root: { maxWidth: "400px" } }}
       >
         {bar}
       </Dropdown>
