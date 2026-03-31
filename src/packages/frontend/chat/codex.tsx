@@ -28,6 +28,7 @@ import {
 import type { CodexPaymentSourceInfo } from "@cocalc/conat/hub/api/system";
 import {
   DEFAULT_CODEX_MODELS,
+  normalizeCodexSessionId,
   resolveCodexSessionMode,
   type CodexReasoningLevel,
   type CodexReasoningId,
@@ -37,6 +38,7 @@ import { COLORS } from "@cocalc/util/theme";
 import type { CodexThreadConfig } from "@cocalc/chat";
 import type { ChatActions } from "./actions";
 import { getDefaultCodexSessionMode } from "./codex-defaults";
+import { getLatestAcpThreadIdForThread } from "./thread-session";
 import {
   getCodexPaymentSourceShortLabel,
   getCodexPaymentSourceTooltip,
@@ -167,7 +169,13 @@ export function CodexConfigButton({
       sessionMode: defaultSessionMode,
     };
     const saved = threadConfig ?? actions?.getCodexConfig?.(threadId);
+    const liveSessionId = getLatestAcpThreadIdForThread({
+      actions,
+      threadId,
+    });
     const merged: CodexThreadConfig = { ...defaults, ...saved };
+    merged.sessionId =
+      normalizeCodexSessionId(merged.sessionId) ?? liveSessionId ?? "";
     const model = models.some((m) => m.value === merged.model)
       ? merged.model
       : baseModel;
@@ -226,6 +234,7 @@ export function CodexConfigButton({
       normalizeSessionMode(values) ?? defaultSessionMode;
     const finalValues = {
       ...values,
+      sessionId: normalizeCodexSessionId(values?.sessionId),
       sessionMode,
       allowWrite: sessionMode !== "read-only",
     };
@@ -244,6 +253,7 @@ export function CodexConfigButton({
       normalizeSessionMode(next) ?? defaultSessionMode;
     const finalValues = {
       ...next,
+      sessionId: normalizeCodexSessionId(next?.sessionId),
       sessionMode,
       allowWrite: sessionMode !== "read-only",
     };

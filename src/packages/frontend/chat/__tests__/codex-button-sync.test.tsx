@@ -3,12 +3,13 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { CodexConfigButton } from "../codex";
 
+const stableForm = {
+  resetFields: jest.fn(),
+  setFieldsValue: jest.fn(),
+  getFieldsValue: jest.fn(() => ({})),
+};
+
 jest.mock("antd", () => {
-  const stableForm = {
-    resetFields: jest.fn(),
-    setFieldsValue: jest.fn(),
-    getFieldsValue: jest.fn(() => ({})),
-  };
   return {
     __esModule: true,
     Alert: ({ children }: any) => <div>{children}</div>,
@@ -74,6 +75,13 @@ jest.mock("../use-codex-payment-source", () => ({
 }));
 
 describe("CodexConfigButton", () => {
+  beforeEach(() => {
+    stableForm.resetFields.mockClear();
+    stableForm.setFieldsValue.mockClear();
+    stableForm.getFieldsValue.mockClear();
+    stableForm.getFieldsValue.mockReturnValue({});
+  });
+
   it("updates the closed top bar when thread config arrives after mount", async () => {
     const actions = {
       getCodexConfig: jest.fn(() => undefined),
@@ -135,5 +143,34 @@ describe("CodexConfigButton", () => {
     expect(usageLink.getAttribute("href")).toBe(
       "https://chatgpt.com/codex/settings/usage",
     );
+  });
+
+  it("prefills the modal session id from the latest live assistant row", async () => {
+    const actions = {
+      getCodexConfig: jest.fn(() => undefined),
+      getMessagesInThread: jest.fn(() => [
+        {
+          acp_thread_id: "thr-live-1",
+        },
+      ]),
+      setCodexConfig: jest.fn(),
+    } as any;
+
+    render(
+      <CodexConfigButton
+        threadKey="thread-1"
+        chatPath="foo.chat"
+        actions={actions}
+        threadConfig={null}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(stableForm.setFieldsValue).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sessionId: "thr-live-1",
+        }),
+      );
+    });
   });
 });

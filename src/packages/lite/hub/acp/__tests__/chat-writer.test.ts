@@ -92,16 +92,22 @@ jest.mock("@cocalc/backend/chat-store/sqlite-offload", () => ({
 }));
 
 type RecordedSet = {
+  event?: string;
+  thread_id?: string;
   generating?: boolean;
   content?: string;
   history?: unknown;
   acp_account_id?: string;
+  acp_thread_id?: string;
   acp_started_at_ms?: number;
   acp_log_store?: string;
   acp_log_key?: string;
   acp_log_subject?: string;
   acp_live_log_stream?: string;
   acp_live_preview_stream?: string;
+  acp_config?: {
+    sessionId?: string;
+  };
   message_id?: string;
 };
 
@@ -1364,15 +1370,18 @@ describe("ChatStreamWriter", () => {
     await flush(writer);
 
     expect((writer as any).getKnownThreadIds()).toContain("thread-live-1");
-    expect(getVersions() - versionsBefore).toBe(1);
+    expect(getVersions() - versionsBefore).toBe(2);
     const metadataUpdate = sets.find(
       (row: any) =>
         row.message_id === "msg-0" && row.acp_thread_id === "thread-live-1",
     );
+    const threadCfgUpdate = sets.find(
+      (row: any) =>
+        row.event === "chat-thread-config" &&
+        row.thread_id === baseMetadata.thread_id,
+    );
     expect(metadataUpdate).toBeTruthy();
-    expect(
-      sets.find((row: any) => row.event === "chat-thread-config"),
-    ).toBeUndefined();
+    expect(threadCfgUpdate?.acp_config?.sessionId).toBe("thread-live-1");
     (writer as any).dispose?.(true);
   });
 

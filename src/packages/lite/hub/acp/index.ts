@@ -37,7 +37,10 @@ import type {
   AcpForkSessionRequest,
   AcpInterruptRequest,
 } from "@cocalc/conat/ai/acp/types";
-import { resolveCodexSessionMode } from "@cocalc/util/ai/codex";
+import {
+  normalizeCodexSessionId,
+  resolveCodexSessionMode,
+} from "@cocalc/util/ai/codex";
 import { isValidUUID } from "@cocalc/util/misc";
 import { type Client as ConatClient } from "@cocalc/conat/core/client";
 import type {
@@ -2122,8 +2125,14 @@ export class ChatStreamWriter {
     }
     if (payload.type === "status") {
       if (payload.threadId != null) {
-        this.threadId = payload.threadId;
-        this.registerThreadKey(payload.threadId);
+        const liveThreadId = normalizeCodexSessionId(payload.threadId);
+        if (liveThreadId) {
+          this.threadId = liveThreadId;
+          this.registerThreadKey(liveThreadId);
+          void this.persistSessionId(liveThreadId).catch((err) => {
+            logger.debug("persistSessionId(status) failed", err);
+          });
+        }
       }
       // Preserve status updates in the visible ACP log so the frontend can
       // distinguish "turn acknowledged and running" from "still waiting for
@@ -2251,9 +2260,15 @@ export class ChatStreamWriter {
         this.usage = payload.usage;
       }
       if (payload.threadId != null) {
-        this.threadId = payload.threadId;
-        this.registerThreadKey(payload.threadId);
-        this.timeTravel?.setThreadId(payload.threadId);
+        const liveThreadId = normalizeCodexSessionId(payload.threadId);
+        if (liveThreadId) {
+          this.threadId = liveThreadId;
+          this.registerThreadKey(liveThreadId);
+          this.timeTravel?.setThreadId(liveThreadId);
+          void this.persistSessionId(liveThreadId).catch((err) => {
+            logger.debug("persistSessionId(summary) failed", err);
+          });
+        }
       }
       clearAcpPayloads(this.metadata);
       this.finished = true;

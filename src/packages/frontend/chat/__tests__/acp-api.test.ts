@@ -286,7 +286,7 @@ describe("processAcpLLM", () => {
     expect(arg.session_id).toBe("thread-1");
   });
 
-  it("reuses latest acp_thread_id when thread-config sessionId is not yet persisted", async () => {
+  it("reuses latest acp_thread_id when thread-config sessionId is blank or not yet persisted", async () => {
     jest.spyOn(Date, "now").mockReturnValue(2000);
     jest.spyOn(global, "setTimeout").mockImplementation(((fn: any) => {
       fn();
@@ -329,7 +329,10 @@ describe("processAcpLLM", () => {
           acp_thread_id: "codex-session-123",
         },
       ]),
-      getCodexConfig: jest.fn(() => ({ model: "gpt-5.3-codex" })),
+      getCodexConfig: jest.fn(() => ({
+        model: "gpt-5.3-codex",
+        sessionId: "",
+      })),
       sendReply: jest.fn(),
     };
 
