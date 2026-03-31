@@ -8,3 +8,5 @@ packages:
   - "!**/cdn/dist/**"
   # exclude generated build artifacts that can confuse workspace discovery
   - "!**/build/**"
+
+minimumReleaseAge: 4320
