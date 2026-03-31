@@ -22,7 +22,7 @@ const DEFAULT_BUNDLE_ROOT = "/opt/cocalc/project-bundles";
 const DEFAULT_TOOLS_ROOT = "/opt/cocalc/tools";
 const PROJECT_HOST_ROOT = "/opt/cocalc/project-host";
 const STORAGE_WRAPPER = "/usr/local/sbin/cocalc-runtime-storage";
-const BUNDLE_RETENTION_COUNT = 5;
+const BUNDLE_RETENTION_COUNT = 3;
 
 type CanonicalArtifact = "project-host" | "project" | "tools";
 

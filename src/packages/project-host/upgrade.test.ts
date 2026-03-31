@@ -114,7 +114,7 @@ describe("project host upgrade installer", () => {
         .filter((entry) => entry.isDirectory() && entry.name !== "current")
         .map((entry) => entry.name)
         .sort();
-      expect(versions).toEqual(["v2", "v3", "v4", "v5", "v6"]);
+      expect(versions).toEqual(["v4", "v5", "v6"]);
     } finally {
       await served.close();
       fs.rmSync(base, { recursive: true, force: true });
