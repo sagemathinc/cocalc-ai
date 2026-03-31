@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import Markdown from "@cocalc/frontend/editors/slate/static-markdown";
+import Markdown from "@cocalc/frontend/editors/slate/static-markdown-public";
 
 export default function AccessibilityContent() {
   return <Markdown value={value} />;
