@@ -496,12 +496,12 @@ export function LauncherCustomizeModal({
           )}
           <Divider style={{ margin: "10px 0" }} />
           <Typography.Text type="secondary">
-            Add more file types
+            Search more available launchers
           </Typography.Text>
           <Select<string>
             showSearch
             allowClear
-            placeholder="Search file types..."
+            placeholder="Search more launchers..."
             style={{ width: "100%", marginTop: "6px" }}
             value={undefined}
             options={(() => {
