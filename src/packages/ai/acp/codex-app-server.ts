@@ -8,7 +8,10 @@ import { DatabaseSync } from "node:sqlite";
 import { Readable } from "node:stream";
 import getLogger from "@cocalc/backend/logger";
 import { argsJoin } from "@cocalc/util/args";
-import type { CodexSessionConfig } from "@cocalc/util/ai/codex";
+import {
+  normalizeCodexSessionId,
+  type CodexSessionConfig,
+} from "@cocalc/util/ai/codex";
 import type { LineDiffResult } from "@cocalc/util/line-diff";
 import { resolveCodexSessionMode } from "@cocalc/util/ai/codex";
 import type { AcpAgent, AcpEvaluateRequest, AcpStreamUsage } from "./types";
@@ -1098,7 +1101,10 @@ export class CodexAppServerAgent implements AcpAgent {
       await stream({ type: "status", state: "queued" });
 
       let threadResult: any;
-      const resumeId = `${config?.sessionId ?? session_id ?? ""}`.trim();
+      const requestedSessionKey =
+        normalizeCodexSessionId(config?.sessionId) ??
+        normalizeCodexSessionId(session_id);
+      const resumeId = requestedSessionKey ? session.sessionId : undefined;
       const threadParams = {
         cwd,
         model: config?.model ?? this.opts.model,
@@ -1131,7 +1137,11 @@ export class CodexAppServerAgent implements AcpAgent {
         throw new Error(`app-server did not return a thread id`);
       }
       setRunningKey(actualThreadId);
-      this.sessions.set(actualThreadId, { sessionId: actualThreadId, cwd });
+      const sessionEntry = { sessionId: actualThreadId, cwd };
+      this.sessions.set(actualThreadId, sessionEntry);
+      if (requestedSessionKey && requestedSessionKey !== actualThreadId) {
+        this.sessions.set(requestedSessionKey, sessionEntry);
+      }
 
       await stream({
         type: "status",
@@ -1610,7 +1620,9 @@ export class CodexAppServerAgent implements AcpAgent {
     sessionId: string | undefined,
     config?: CodexSessionConfig,
   ): SessionStoreEntry {
-    const key = `${config?.sessionId ?? sessionId ?? ""}`.trim();
+    const key =
+      normalizeCodexSessionId(config?.sessionId) ??
+      normalizeCodexSessionId(sessionId);
     if (key && this.sessions.has(key)) {
       return this.sessions.get(key)!;
     }

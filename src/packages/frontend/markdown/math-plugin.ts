@@ -157,6 +157,13 @@ const texmath = {
           post,
         },
         {
+          // Standard LaTeX inline math delimiters.
+          name: "math_inline",
+          rex: /\\\(([\s\S]*?[^\\])\\\)/gmy,
+          tag: "\\(",
+          displayMode: false,
+        },
+        {
           // using \begin/\end as part of inline markdown...
           name: "math_inline_double",
           rex: /(\\(?:begin)(\{[a-z]*\*?\})[\s\S]*?\\(?:end)\2)/gmy,
@@ -165,12 +172,24 @@ const texmath = {
           pre,
           post,
         },
+        {
+          // Standard LaTeX display math delimiters.
+          name: "math_inline_double",
+          rex: /\\\[([\s\S]*?[^\\])\\\]/gmy,
+          tag: "\\[",
+          displayMode: true,
+        },
       ],
       block: [
         {
           name: "math_block",
           rex: /\${2}([^$]*?[^\\])\${2}/gmy,
           tag: "$$",
+        },
+        {
+          name: "math_block",
+          rex: /\\\[([\s\S]*?[^\\])\\\]/gmy,
+          tag: "\\[",
         },
         {
           name: "math_block",

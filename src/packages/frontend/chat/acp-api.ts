@@ -9,6 +9,7 @@ import type {
 import {
   DEFAULT_CODEX_MODEL_NAME,
   DEFAULT_CODEX_MODELS,
+  normalizeCodexSessionId,
   resolveCodexSessionMode,
   type CodexSessionConfig,
 } from "@cocalc/util/ai/codex";
@@ -241,7 +242,8 @@ export async function processAcpLLM({
     }
     return undefined;
   })();
-  const effectiveSessionId = config.sessionId ?? inferredSessionId;
+  const effectiveSessionId =
+    normalizeCodexSessionId(config.sessionId) ?? inferredSessionId;
   // Backend chat writer must own a distinct assistant row for this turn.
   // Reusing the user's message_id can cause backend updates to overwrite the
   // input message history instead of writing assistant output.
@@ -642,8 +644,9 @@ function buildAcpConfig({
   if (config?.codexPathOverride) {
     opts.codexPathOverride = config.codexPathOverride;
   }
-  if (config?.sessionId) {
-    opts.sessionId = config.sessionId;
+  const sessionId = normalizeCodexSessionId(config?.sessionId);
+  if (sessionId) {
+    opts.sessionId = sessionId;
   }
   return opts;
 }

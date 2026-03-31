@@ -43,6 +43,12 @@ function normalizePercent(value?: number): number | undefined {
   return Math.max(0, Math.min(100, value));
 }
 
+function parseTimestampMs(value?: string): number | undefined {
+  if (!value) return undefined;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
 function sparklinePoints(values: number[], width = 180, height = 24): string {
   if (values.length === 0) return "";
   if (values.length === 1) {
@@ -96,21 +102,49 @@ function progressStatus(percent?: number): "normal" | "active" | "exception" {
   return "normal";
 }
 
-function getDiskUsedPercent(host: Host): number | undefined {
-  const metrics = host.metrics?.current;
-  if (!metrics) return undefined;
-  const available = metrics.disk_available_conservative_bytes;
-  const total = metrics.disk_device_total_bytes;
+type DiskUsageSource = {
+  disk_device_total_bytes?: number;
+  disk_device_used_bytes?: number;
+  disk_available_conservative_bytes?: number;
+};
+
+function getDisplayedDiskUsedBytes(
+  source: DiskUsageSource | undefined,
+): number | undefined {
+  if (!source) return undefined;
+  const used = source.disk_device_used_bytes;
+  if (used != null && Number.isFinite(used) && used >= 0) {
+    return used;
+  }
+  const available = source.disk_available_conservative_bytes;
+  const total = source.disk_device_total_bytes;
   if (
     available == null ||
     total == null ||
     !Number.isFinite(available) ||
+    !Number.isFinite(total)
+  ) {
+    return undefined;
+  }
+  return Math.max(0, total - available);
+}
+
+function getDisplayedDiskUsedPercent(
+  source: DiskUsageSource | undefined,
+): number | undefined {
+  if (!source) return undefined;
+  const total = source.disk_device_total_bytes;
+  const used = getDisplayedDiskUsedBytes(source);
+  if (
+    used == null ||
+    total == null ||
+    !Number.isFinite(used) ||
     !Number.isFinite(total) ||
     total <= 0
   ) {
     return undefined;
   }
-  return normalizePercent(((total - available) / total) * 100);
+  return normalizePercent((used / total) * 100);
 }
 
 function getMetadataUsedPercent(host: Host): number | undefined {
@@ -162,6 +196,33 @@ function formatHours(value?: number): string | undefined {
     return `${value.toFixed(1)}h`;
   }
   return `${Math.round(value)}h`;
+}
+
+function getMetricsStaleness(host: Host): {
+  stale: boolean;
+  message?: string;
+} {
+  const collectedAt = parseTimestampMs(host.metrics?.current?.collected_at);
+  if (collectedAt == null) {
+    return { stale: false };
+  }
+  const lastActionAt = parseTimestampMs(host.last_action_at);
+  if (lastActionAt != null && collectedAt + 5_000 < lastActionAt) {
+    const action = host.last_action ? ` ${host.last_action}` : "";
+    return {
+      stale: true,
+      message: `Current metrics were sampled at ${new Date(collectedAt).toLocaleString()}, before the last host action${action} at ${new Date(lastActionAt).toLocaleString()}.`,
+    };
+  }
+  const lastSeenAt = parseTimestampMs(host.last_seen);
+  if (lastSeenAt != null && lastSeenAt - collectedAt > 90_000) {
+    return {
+      stale: true,
+      message:
+        "The host heartbeat is newer than the current metrics sample, so these values may be out of date.",
+    };
+  }
+  return { stale: false };
 }
 
 function riskColor(level: HostMetricsRiskLevel): string | undefined {
@@ -546,14 +607,9 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
 
   const cpuPercent = normalizePercent(metrics.cpu_percent);
   const memoryPercent = normalizePercent(metrics.memory_used_percent);
-  const diskPercent = getDiskUsedPercent(host);
+  const diskPercent = getDisplayedDiskUsedPercent(metrics);
   const metadataPercent = getMetadataUsedPercent(host);
-  const diskUsedBytes =
-    metrics.disk_device_total_bytes != null &&
-    metrics.disk_available_conservative_bytes != null
-      ? metrics.disk_device_total_bytes -
-        metrics.disk_available_conservative_bytes
-      : undefined;
+  const diskUsedBytes = getDisplayedDiskUsedBytes(metrics);
   const diskUsed = compact
     ? formatBytesCompact(diskUsedBytes)
     : formatBytes(diskUsedBytes);
@@ -608,31 +664,22 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
   );
   const diskHistory = buildHistoryPoints(
     history?.points,
-    (point) => normalizePercent(point.disk_used_percent),
+    (point) => getDisplayedDiskUsedPercent(point),
     (point, prev) => {
-      const currentUsed =
-        point.disk_device_total_bytes != null &&
-        point.disk_available_conservative_bytes != null
-          ? point.disk_device_total_bytes -
-            point.disk_available_conservative_bytes
-          : undefined;
-      const previousUsed =
-        prev?.disk_device_total_bytes != null &&
-        prev.disk_available_conservative_bytes != null
-          ? prev.disk_device_total_bytes -
-            prev.disk_available_conservative_bytes
-          : undefined;
+      const currentUsed = getDisplayedDiskUsedBytes(point);
+      const previousUsed = getDisplayedDiskUsedBytes(prev);
       const delta =
         currentUsed != null && previousUsed != null
           ? currentUsed - previousUsed
           : undefined;
+      const displayedPercent = getDisplayedDiskUsedPercent(point);
       return tooltipContent("Disk", point, [
         point.disk_available_conservative_bytes != null &&
         point.disk_device_total_bytes != null
           ? `Used ${formatBytes(currentUsed)} / ${formatBytes(point.disk_device_total_bytes)}`
           : undefined,
-        point.disk_used_percent != null
-          ? `Used ${formatPercent(point.disk_used_percent)}`
+        displayedPercent != null
+          ? `Used ${formatPercent(displayedPercent)}`
           : undefined,
         delta != null ? `Δ used ${formatSignedBytes(delta)}` : undefined,
       ]);
@@ -667,6 +714,12 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
   );
   const derived = history?.derived;
   const riskTags = renderDerivedRiskTags(derived);
+  const metricsStaleness = getMetricsStaleness(host);
+  const staleMetricsTag = metricsStaleness.stale ? (
+    <Tooltip title={metricsStaleness.message} placement="top">
+      <Tag color="orange">metrics stale</Tag>
+    </Tooltip>
+  ) : null;
   const riskSummary = derived
     ? `Risk: disk ${derived.disk.level}, metadata ${derived.metadata.level} · ${
         derived.admission_allowed ? "admission allowed" : "admission blocked"
@@ -684,6 +737,7 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
   if (compact) {
     return (
       <Space orientation="vertical" size={4}>
+        {staleMetricsTag}
         {riskTags}
         <MetricBar
           label="CPU"
@@ -728,6 +782,7 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
 
   return (
     <Space orientation="vertical" size={6} style={{ width: "100%" }}>
+      {staleMetricsTag}
       <MetricBar
         label="CPU"
         percent={cpuPercent}

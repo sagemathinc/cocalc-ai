@@ -716,9 +716,12 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
     {
       title: "Resources",
       key: "resources",
-      render: (_: string, host: Host) => (
-        <HostCurrentMetrics host={host} compact dense />
-      ),
+      render: (_: string, host: Host) =>
+        host.deleted || host.status === "deprovisioned" ? (
+          <Typography.Text type="secondary">-</Typography.Text>
+        ) : (
+          <HostCurrentMetrics host={host} compact dense />
+        ),
     },
     {
       title: "Status",

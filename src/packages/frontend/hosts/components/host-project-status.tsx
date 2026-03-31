@@ -14,6 +14,11 @@ function formatProjectStatus(host: Host, compact: boolean): string | null {
   if (assignedVal === 0 && provisionedVal === 0 && runningVal === 0) {
     return null;
   }
+  if (host.deleted || host.status === "deprovisioned") {
+    return compact
+      ? `Projects ${assignedVal} assigned`
+      : `Projects: ${assignedVal} assigned`;
+  }
   if (compact) {
     return `Projects ${assignedVal} assigned · ${provisionedVal} provisioned · ${runningVal} running`;
   }

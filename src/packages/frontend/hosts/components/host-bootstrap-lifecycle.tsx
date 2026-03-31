@@ -64,6 +64,9 @@ export const HostBootstrapLifecycle: React.FC<HostBootstrapLifecycleProps> = ({
   compact = false,
   detailed = false,
 }) => {
+  if (host.deleted || host.status === "deprovisioned") {
+    return null;
+  }
   const lifecycle = host.bootstrap_lifecycle;
   if (!lifecycle) return null;
   const driftItems = lifecycle.items.filter(

@@ -844,43 +844,6 @@ export class SandboxedFilesystem {
     return await this.safeAbsPath(path);
   };
 
-  private toAbsoluteSyncFsPath = ({
-    pathInSandbox,
-    sandboxBasePath,
-    absoluteScratchAlias,
-    compareBasePath,
-  }: {
-    pathInSandbox: string;
-    sandboxBasePath: string;
-    absoluteScratchAlias: boolean;
-    compareBasePath?: string;
-  }): string => {
-    const rel = this.toSandboxRelativePath(
-      pathInSandbox,
-      sandboxBasePath,
-      compareBasePath,
-    );
-    if (sandboxBasePath === this.path) {
-      const basePath = compareBasePath ?? sandboxBasePath;
-      if (rel === "") {
-        return basePath;
-      }
-      if (rel.startsWith("/")) {
-        return rel;
-      }
-      return join(basePath, rel);
-    }
-    if (absoluteScratchAlias) {
-      if (rel === "" || rel === "/") {
-        return "/scratch";
-      }
-      return rel.startsWith("/")
-        ? `/scratch/${rel.slice(1)}`
-        : `/scratch/${rel}`;
-    }
-    return rel.startsWith("/") ? rel : join(this.path, rel);
-  };
-
   private toSyncIdentityPath = ({
     pathInSandbox,
     sandboxBasePath,
@@ -917,7 +880,7 @@ export class SandboxedFilesystem {
   };
 
   canonicalSyncFsPath = async (path: string): Promise<string> => {
-    const { pathInSandbox, sandboxBasePath, absoluteScratchAlias } =
+    const { pathInSandbox, sandboxBasePath } =
       await this.resolvePathInSandbox(path);
     const compareBase = this.unsafeMode
       ? undefined
@@ -935,14 +898,12 @@ export class SandboxedFilesystem {
             `realpath of '${path}' resolves to a path outside of sandbox`,
           );
         }
-        const canonicalInSandbox =
+        // This path is consumed by backend sync-fs watchers/reconcile logic,
+        // which runs on the host and must read/watch the mounted host path,
+        // not the sandbox-visible alias such as /tmp/foo inside rootfs mode.
+        const canonicalOnHost =
           suffix.length === 0 ? resolved : join(resolved, ...suffix);
-        return this.toAbsoluteSyncFsPath({
-          pathInSandbox: canonicalInSandbox,
-          sandboxBasePath,
-          absoluteScratchAlias,
-          compareBasePath: compareBase ?? sandboxBasePath,
-        });
+        return canonicalOnHost;
       } catch (err: any) {
         if (err?.code !== "ENOENT" && err?.code !== "ENOTDIR") {
           throw err;
@@ -950,12 +911,7 @@ export class SandboxedFilesystem {
       }
       const parent = dirname(candidate);
       if (parent === candidate) {
-        return this.toAbsoluteSyncFsPath({
-          pathInSandbox,
-          sandboxBasePath,
-          absoluteScratchAlias,
-          compareBasePath: compareBase ?? sandboxBasePath,
-        });
+        return pathInSandbox;
       }
       suffix.unshift(basename(candidate));
       candidate = parent;

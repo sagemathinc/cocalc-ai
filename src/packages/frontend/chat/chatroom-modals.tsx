@@ -31,6 +31,7 @@ import { path_split } from "@cocalc/util/misc";
 import {
   DEFAULT_CODEX_MODEL_NAME,
   DEFAULT_CODEX_MODELS,
+  normalizeCodexSessionId,
   resolveCodexSessionMode,
   type CodexReasoningId,
   type CodexSessionMode,
@@ -254,7 +255,7 @@ export function ChatRoomModals({
         workingDirectory:
           renameCodexConfig.workingDirectory?.trim() ||
           defaultWorkingDir(path, workspaceWorkingDirectory),
-        sessionId: renameCodexConfig.sessionId?.trim(),
+        sessionId: normalizeCodexSessionId(renameCodexConfig.sessionId),
       });
     }
     antdMessage.success("Behavior saved.");
