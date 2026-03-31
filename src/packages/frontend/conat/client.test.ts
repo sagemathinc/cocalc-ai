@@ -349,6 +349,9 @@ describe("ConatClient routed project-host reconnect", () => {
       },
       { address: "http://hub", remote: true },
     ) as any;
+    const reconnectSpy = jest
+      .spyOn(client, "reconnect")
+      .mockImplementation(() => undefined);
 
     client.getOrCreateRoutedHubClient({
       host_id: "host-1",
@@ -367,6 +370,8 @@ describe("ConatClient routed project-host reconnect", () => {
     expect(close1).toHaveBeenCalledTimes(1);
     expect(connect2).toHaveBeenCalledTimes(1);
     expect(client.routedHubClients["host-1"].host_session_id).toBe("session-2");
+    jest.advanceTimersByTime(50);
+    expect(reconnectSpy).toHaveBeenCalledTimes(1);
 
     jest.useRealTimers();
   });

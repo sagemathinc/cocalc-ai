@@ -137,6 +137,7 @@ export class ConatClient extends EventEmitter {
   private _conatClient: null | ReturnType<typeof connectToConat>;
   private routedHubClients: { [host_id: string]: RoutedHubClientState } = {};
   private projectHostTokens: { [host_id: string]: ProjectHostTokenState } = {};
+  private routedHostRecoveryTimer?: ReturnType<typeof setTimeout>;
   private browserSessionAutomation: BrowserSessionAutomation;
   public numConnectionAttempts = 0;
   private automaticallyReconnect;
@@ -365,6 +366,22 @@ export class ConatClient extends EventEmitter {
     delete this.routedHubClients[host_id];
   };
 
+  private scheduleRoutedHostRecovery = () => {
+    if (this.permanentlyDisconnected) {
+      return;
+    }
+    if (this.routedHostRecoveryTimer != null) {
+      return;
+    }
+    this.routedHostRecoveryTimer = setTimeout(() => {
+      delete this.routedHostRecoveryTimer;
+      if (this.permanentlyDisconnected) {
+        return;
+      }
+      this.reconnect();
+    }, 50);
+  };
+
   refreshProjectHostRouting = ({
     source_host_id,
     dest_host_id,
@@ -567,6 +584,10 @@ export class ConatClient extends EventEmitter {
           if (!replacement.conn?.connected) {
             replacement.connect();
           }
+          // Long-lived terminal/file sockets are attached to the main browser
+          // client and only rebuild when that client reconnects. Trigger that
+          // rebuild when the routed host endpoint/session changed.
+          this.scheduleRoutedHostRecovery();
           return;
         }
         if (state.client.conn?.connected) {
@@ -739,6 +760,10 @@ export class ConatClient extends EventEmitter {
     // @ts-ignore
     this.automaticallyReconnect = false;
     void this.browserSessionAutomation.stop();
+    if (this.routedHostRecoveryTimer != null) {
+      clearTimeout(this.routedHostRecoveryTimer);
+      delete this.routedHostRecoveryTimer;
+    }
     for (const host_id in this.routedHubClients) {
       try {
         this.routedHubClients[host_id]?.client?.close();
