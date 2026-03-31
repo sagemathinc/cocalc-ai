@@ -77,6 +77,33 @@ export function findOpenDisplayPathForSyncPath(
   return found;
 }
 
+type SyncIdentityFs = {
+  canonicalSyncIdentityPath?: (path: string) => Promise<string>;
+  realpath?: (path: string) => Promise<string>;
+};
+
+export async function resolveSyncPath(
+  fs: SyncIdentityFs,
+  displayPath: string,
+  projectHome: string,
+): Promise<string> {
+  let syncPath = displayPath;
+  try {
+    if (typeof fs.canonicalSyncIdentityPath === "function") {
+      // In launchpad/sandbox mode, this preserves the user-facing canonical
+      // sync identity instead of leaking container-internal realpaths.
+      syncPath = await fs.canonicalSyncIdentityPath(displayPath);
+    } else if (typeof fs.realpath === "function") {
+      syncPath = await fs.realpath(displayPath);
+    }
+  } catch (_) {
+    // Older backends may not expose canonical sync identity helpers yet.
+  }
+  // Map resolved paths to canonical sync identities used by specific editors
+  // (e.g. ipynb syncdb path, terminal path key).
+  return canonicalPath(syncPath, projectHome);
+}
+
 export async function open_file(
   actions: ProjectActions,
   opts: OpenFileOpts,
@@ -189,17 +216,11 @@ export async function open_file(
     return;
   }
 
-  let syncPath = displayPath;
-  try {
-    const fs = actions.fs();
-    // Resolve once on open for sync identity. Keep display path unchanged.
-    syncPath = await fs.realpath(displayPath);
-  } catch (_) {
-    // TODO: old projects will not have the new realpath api call -- can delete this try/catch at some point.
-  }
-  // Map resolved paths to canonical sync identities used by specific editors
-  // (e.g. ipynb syncdb path, terminal path key).
-  syncPath = canonicalPath(syncPath, projectHome);
+  const syncPath = await resolveSyncPath(
+    actions.fs() as SyncIdentityFs,
+    displayPath,
+    projectHome,
+  );
   if (!tabIsOpened()) {
     return;
   }

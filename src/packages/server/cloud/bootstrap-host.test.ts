@@ -103,11 +103,22 @@ describe("bootstrap-host shell templates", () => {
     );
 
     expect(source).toContain(
-      `python3 "$BOOTSTRAP_DIR/bootstrap.py" reconcile --config "$BOOTSTRAP_DIR/bootstrap-config.json"`,
+      `python3 "$BOOTSTRAP_DIR/bootstrap.py" reconcile --bootstrap-dir "$BOOTSTRAP_DIR"`,
     );
     expect(source).not.toContain(
       `python3 "$BOOTSTRAP_DIR/bootstrap.py" --config "$BOOTSTRAP_DIR/bootstrap-config.json" --only cloudflared`,
     );
+  });
+
+  it("writes split bootstrap host facts and desired state instead of bootstrap-config.json", () => {
+    const source = fs.readFileSync(
+      path.join(__dirname, "bootstrap-host.ts"),
+      "utf8",
+    );
+
+    expect(source).toContain(`> "$BOOTSTRAP_DIR/bootstrap-host-facts.json"`);
+    expect(source).toContain(`> "$BOOTSTRAP_DIR/bootstrap-desired-state.json"`);
+    expect(source).not.toContain(`> "$BOOTSTRAP_DIR/bootstrap-config.json"`);
   });
 
   it("does not make bootstrap execution depend on tee writing the log file", () => {
