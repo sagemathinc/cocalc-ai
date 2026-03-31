@@ -73,6 +73,7 @@ export default function StripePayment({
   const [hasPaymentMethods, setHasPaymentMethods] = useState<boolean | null>(
     null,
   );
+  const safeLineItems = lineItems ?? [];
 
   useEffect(() => {
     (async () => {
@@ -83,19 +84,19 @@ export default function StripePayment({
     })();
   }, []);
 
-  if (lineItems == null || lineItems.length == 0) {
+  useEffect(() => {
+    setRequiresPayment(false);
+  }, [JSON.stringify(safeLineItems)]);
+
+  if (safeLineItems.length == 0) {
     // no payment needed.
     return null;
   }
 
   let totalStripe = 0;
-  for (const lineItem of lineItems) {
+  for (const lineItem of safeLineItems) {
     totalStripe += moneyToStripe(lineItem.amount);
   }
-
-  useEffect(() => {
-    setRequiresPayment(false);
-  }, [JSON.stringify(lineItems)]);
 
   const showOneClick =
     (hasPaymentMethods === true || hasPaymentMethods == null) &&
@@ -108,7 +109,7 @@ export default function StripePayment({
         <b>{description}</b>
       </div>
       <LineItemsTable
-        lineItems={lineItems.concat({
+        lineItems={safeLineItems.concat({
           description: "Amount due (excluding tax)",
           amount: stripeToMoney(totalStripe).toNumber(),
           extra: true,
@@ -132,7 +133,7 @@ export default function StripePayment({
                       setLoading(true);
                       await createPaymentIntent({
                         description,
-                        lineItems,
+                        lineItems: safeLineItems,
                         purpose,
                         metadata,
                       });

@@ -81,11 +81,9 @@ export function StartButton({
   const projectsLabel = intl.formatMessage(labels.projects);
   const { project_id: contextProjectId } = useProjectContext();
   const project_id = projectIdProp ?? contextProjectId;
-  if (!project_id) {
-    return null;
-  }
+  const resolvedProjectId = project_id ?? "";
   const project_map = useTypedRedux("projects", "project_map");
-  const host_id = project_map?.get(project_id)?.get("host_id") as
+  const host_id = project_map?.get(resolvedProjectId)?.get("host_id") as
     | string
     | undefined;
   const hostInfo = useHostInfo(host_id);
@@ -98,9 +96,15 @@ export function StartButton({
     hostOperational.reason ?? "Assigned host is unavailable.";
   const assignedHostLabel = hostLabel(hostInfo, host_id);
   const lastNotRunningRef = useRef<null | number>(null);
-  const allowed = useAllowedFreeProjectToRun(project_id);
-  const startLroRecord = useTypedRedux({ project_id }, "start_lro");
-  const moveLroRecord = useTypedRedux({ project_id }, "move_lro");
+  const allowed = useAllowedFreeProjectToRun(resolvedProjectId);
+  const startLroRecord = useTypedRedux(
+    { project_id: resolvedProjectId },
+    "start_lro",
+  );
+  const moveLroRecord = useTypedRedux(
+    { project_id: resolvedProjectId },
+    "move_lro",
+  );
   const startLro = useMemo(
     () => startLroRecord?.toJS() as StartLroState | undefined,
     [startLroRecord],
@@ -130,7 +134,7 @@ export function StartButton({
       moveLro.summary.status === "running");
 
   const state = useMemo(() => {
-    const rawState = project_map?.get(project_id)?.get("state");
+    const rawState = project_map?.get(resolvedProjectId)?.get("state");
     const displayState = normalizeProjectStateForDisplay({
       projectState: rawState?.get?.("state"),
       hostId: host_id,
@@ -145,7 +149,7 @@ export function StartButton({
         state.get("state") === "running" ? null : Date.now();
     }
     return state;
-  }, [project_map, project_id, host_id, hostInfo]);
+  }, [project_map, resolvedProjectId, host_id, hostInfo]);
 
   // start_requested is true precisely if a start of this project
   // is currently requested, and obviously didn't get done.
@@ -157,7 +161,7 @@ export function StartButton({
       return true;
     if (lifecycleState === "running") return false;
     const action_request = (
-      project_map?.getIn([project_id, "action_request"]) as any
+      project_map?.getIn([resolvedProjectId, "action_request"]) as any
     )?.toJS() as any;
     if (action_request == null) {
       return startLroActive && lifecycleState == null;
@@ -177,7 +181,11 @@ export function StartButton({
     // action is start and it didn't quite get taken care of yet by backend server,
     // but keep disabled so the user doesn't keep making the request.
     return true;
-  }, [project_map, project_id, startLroActive, state]);
+  }, [project_map, resolvedProjectId, startLroActive, state]);
+
+  if (!project_id) {
+    return null;
+  }
 
   // in lite mode cocalc *is* being served directly from the project so it makes no sense
   // to start or stop the project.

@@ -34,18 +34,19 @@ interface Props {
 }
 
 export function TableOfContents(props: Props) {
-  if (props.contents == null) {
-    return <Loading theme="medium" />;
-  }
+  const contents = props.contents;
+  const renderedContents = useMemo(() => {
+    if (contents == null) {
+      return <Loading theme="medium" />;
+    }
 
-  if (props.contents.size === 0 && props.ifEmpty != null) {
-    return <>{props.ifEmpty}</>;
-  }
+    if (contents.size === 0 && props.ifEmpty != null) {
+      return <>{props.ifEmpty}</>;
+    }
 
-  return useMemo(() => {
     const entries: React.JSX.Element[] = [];
-    for (const entry of props.contents ?? []) {
-      entries.push(<Entry {...props} entry={entry} />);
+    for (const entry of contents) {
+      entries.push(<Entry {...props} key={entry.get("id")} entry={entry} />);
     }
     return (
       <div
@@ -59,7 +60,18 @@ export function TableOfContents(props: Props) {
         {entries}
       </div>
     );
-  }, [props.showNumbers, props.contents, props.fontSizes, props.fontSize]);
+  }, [
+    contents,
+    props.contents,
+    props.fontSize,
+    props.fontSizes,
+    props.ifEmpty,
+    props.scrollTo,
+    props.showNumbers,
+    props.style,
+  ]);
+
+  return renderedContents;
 }
 
 function Entry({

@@ -1,9 +1,6 @@
 # Existing frontend hook-rule debt. Keep this list shrinking.
-frontend/account/membership-status.tsx
-frontend/admin/site-settings/render-row.tsx
 frontend/app-framework/index.ts
 frontend/app-framework/redux-hooks.ts
-frontend/components/table-of-contents.tsx
 frontend/editors/slate/block-edit-bar.tsx
 frontend/editors/slate/editable-markdown.tsx
 frontend/editors/slate/elements/code-block/editable.tsx
@@ -16,7 +13,6 @@ frontend/editors/stopwatch/button-bar.tsx
 frontend/frame-editors/latex-editor/hooks.ts
 frontend/frame-editors/whiteboard-editor/canvas.tsx
 frontend/jupyter/cell-list.tsx
-frontend/jupyter/history-viewer.tsx
 frontend/markdown/index.ts
 frontend/project/backups/create.tsx
 frontend/project/backups/edit-schedule.tsx
@@ -32,9 +28,5 @@ frontend/project/page/home-page/ai-generate-document.tsx
 frontend/project/settings/ssh.tsx
 frontend/project/snapshots/create.tsx
 frontend/project/snapshots/edit-schedule.tsx
-frontend/project/start-button.tsx
-frontend/project/use-available-features.ts
 frontend/public/support/new-view.tsx
-frontend/purchases/license-editor.tsx
-frontend/purchases/stripe-payment.tsx
 frontend/ssh/ssh-page.tsx
