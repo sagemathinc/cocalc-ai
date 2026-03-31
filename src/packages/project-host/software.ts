@@ -51,11 +51,37 @@ function getToolsVersion(): string | undefined {
   return versionFromCurrentPath(toolsPath);
 }
 
+function runtimeProjectHostVersion(): string | undefined {
+  const runtimeRoot = path.resolve(__dirname, "..");
+  const bundleRoot = path.dirname(runtimeRoot);
+  const marker = path.basename(bundleRoot);
+  if (marker !== "bundles" && marker !== "versions") return undefined;
+  const version = path.basename(runtimeRoot);
+  return version && version !== "current" ? version : undefined;
+}
+
+function readRuntimeBuildId(): string | undefined {
+  try {
+    const runtimeRoot = path.resolve(__dirname, "..");
+    const raw = fs.readFileSync(
+      path.join(runtimeRoot, "build-identity.json"),
+      "utf8",
+    );
+    const parsed = JSON.parse(raw);
+    const build_id = `${parsed?.build_id ?? ""}`.trim();
+    return build_id || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function getProjectHostVersion(): string | undefined {
   const current =
     process.env.COCALC_PROJECT_HOST_CURRENT ?? DEFAULT_PROJECT_HOST_CURRENT;
+  const fromRuntime = runtimeProjectHostVersion();
   const fromLink = versionFromCurrentPath(current);
   return (
+    fromRuntime ??
     fromLink ??
     process.env.COCALC_PROJECT_HOST_VERSION ??
     process.env.npm_package_version ??
@@ -71,7 +97,8 @@ export function getSoftwareVersions(): SoftwareVersions {
   const projectBundleCurrent = path.join(projectBundlesRoot, "current");
   return {
     project_host: getProjectHostVersion(),
-    project_host_build_id: readBuildIdFromCurrentPath(projectHostCurrent),
+    project_host_build_id:
+      readRuntimeBuildId() ?? readBuildIdFromCurrentPath(projectHostCurrent),
     project_bundle: getProjectBundleVersion(),
     project_bundle_build_id: readBuildIdFromCurrentPath(projectBundleCurrent),
     tools: getToolsVersion(),
