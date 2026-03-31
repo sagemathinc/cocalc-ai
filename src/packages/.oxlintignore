@@ -13,15 +13,11 @@ frontend/editors/stopwatch/button-bar.tsx
 frontend/frame-editors/latex-editor/hooks.ts
 frontend/frame-editors/whiteboard-editor/canvas.tsx
 frontend/jupyter/cell-list.tsx
-frontend/markdown/index.ts
 frontend/project/backups/create.tsx
 frontend/project/backups/edit-schedule.tsx
-frontend/project/explorer/action-bar.tsx
-frontend/project/explorer/backup-ops.tsx
 frontend/project/explorer/explorer.tsx
 frontend/project/explorer/file-actions-dropdown.tsx
 frontend/project/explorer/move-ops.tsx
-frontend/project/explorer/restore-ops.tsx
 frontend/project/named-server-panel.tsx
 frontend/project/new/new-file-page.tsx
 frontend/project/page/home-page/ai-generate-document.tsx
@@ -29,4 +25,3 @@ frontend/project/settings/ssh.tsx
 frontend/project/snapshots/create.tsx
 frontend/project/snapshots/edit-schedule.tsx
 frontend/public/support/new-view.tsx
-frontend/ssh/ssh-page.tsx

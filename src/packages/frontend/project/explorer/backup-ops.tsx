@@ -95,11 +95,11 @@ export default function BackupOps({ project_id }: { project_id: string }) {
 
 function BackupOpRow({ op }: { op: BackupLroState }) {
   const summary = op.summary;
+  const lastDetailRef = useRef<string | undefined>(undefined);
+  const [detailsOpen, setDetailsOpen] = useState<boolean>(false);
   if (summary && HIDE_STATUSES.has(summary.status)) {
     return null;
   }
-  const lastDetailRef = useRef<string | undefined>(undefined);
-  const [detailsOpen, setDetailsOpen] = useState<boolean>(false);
   const percent = progressPercent(op);
   const progress = op.last_progress;
   const detail = formatProgressDetail(progress?.detail);

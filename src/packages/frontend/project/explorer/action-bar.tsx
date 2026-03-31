@@ -53,7 +53,17 @@ interface Props {
   onToggleAutoUpdate?: (checked: boolean) => void;
 }
 
-export function ActionBar({
+export function ActionBar(props: Props) {
+  const studentProjectFunctionality = useStudentProjectFunctionality(
+    props.actions.project_id,
+  );
+  if (studentProjectFunctionality.disableActions) {
+    return <div></div>;
+  }
+  return <ActionBarEnabled {...props} />;
+}
+
+function ActionBarEnabled({
   project_id,
   checked_files,
   listing,
@@ -68,12 +78,6 @@ export function ActionBar({
   const intl = useIntl();
   const currentParts = current_path.split("/").filter(Boolean);
   const inBackups = isBackupsPath(current_path);
-  const student_project_functionality = useStudentProjectFunctionality(
-    actions.project_id,
-  );
-  if (student_project_functionality.disableActions) {
-    return <div></div>;
-  }
 
   const [backupsMeta, setBackupsMeta] = useState<BackupMeta[] | null>(null);
   const [backupsLoading, setBackupsLoading] = useState<boolean>(false);
