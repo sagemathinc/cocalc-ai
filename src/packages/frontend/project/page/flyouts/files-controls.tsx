@@ -486,6 +486,7 @@ export function FilesSelectedControls({
           names={names}
           current_path={effective_current_path}
           actions={actions}
+          selectedPaths={checked_files.toArray()}
           label="Actions"
           size="small"
           hideFlyout

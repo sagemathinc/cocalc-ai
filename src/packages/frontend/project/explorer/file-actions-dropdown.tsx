@@ -16,6 +16,7 @@ interface Props {
   names: readonly FileAction[];
   current_path: string;
   actions?: ProjectActions;
+  selectedPaths?: string[];
   label?: string;
   size?: "small" | "middle" | "large";
   iconOnly?: boolean;
@@ -28,6 +29,7 @@ export function FileActionsDropdown({
   names,
   current_path,
   actions,
+  selectedPaths,
   label = "Actions",
   size,
   iconOnly,
@@ -55,15 +57,41 @@ export function FileActionsDropdown({
             </span>
           ),
           onClick: () => {
+            const action = name as FileAction;
+            const paths = selectedPaths?.filter(Boolean) ?? [];
+            if (paths.length > 0) {
+              if (typeof actions.showFileActionPanelForPaths === "function") {
+                void actions.showFileActionPanelForPaths({
+                  paths,
+                  action,
+                });
+                return;
+              }
+              if (
+                paths.length === 1 &&
+                typeof actions.showFileActionPanel === "function"
+              ) {
+                void actions.showFileActionPanel({ path: paths[0], action });
+                return;
+              }
+            }
             if (activateFilesTab) {
               actions.set_active_tab("files");
             }
-            actions.set_file_action(name);
+            actions.set_file_action(action);
           },
         },
       ];
     });
-  }, [actions, activateFilesTab, current_path, hideFlyout, intl, names]);
+  }, [
+    actions,
+    activateFilesTab,
+    current_path,
+    hideFlyout,
+    intl,
+    names,
+    selectedPaths,
+  ]);
 
   if (!actions) return null;
   if (!items.length) return null;
