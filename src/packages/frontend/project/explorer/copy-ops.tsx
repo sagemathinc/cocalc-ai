@@ -23,10 +23,12 @@ import { TimeAgo } from "@cocalc/frontend/components";
 import { User } from "@cocalc/frontend/users/user";
 import {
   clampProgressPercent,
+  formatDurationMs,
   formatProgressDetail,
   lroPhaseColor,
   lroStatusColor,
   lroUpdatedAt,
+  toLroTimestamp,
 } from "./lro-timeline-utils";
 
 const COPY_PHASES = [
@@ -201,6 +203,32 @@ function CopyOpTimeline({ op }: { op: CopyLroState }) {
     : summary?.input?.dest
       ? 1
       : 0;
+  const totalDurationMs = useMemo(
+    () => getTotalDurationMs(summary),
+    [summary?.created_at, summary?.finished_at, summary?.updated_at],
+  );
+  const queueDurationMs = useMemo(
+    () => getQueueDurationMs(summary),
+    [summary?.created_at, summary?.started_at],
+  );
+  const runDurationMs = useMemo(
+    () => getRunDurationMs(summary),
+    [
+      summary?.created_at,
+      summary?.started_at,
+      summary?.finished_at,
+      summary?.updated_at,
+    ],
+  );
+  const phaseTimingMap = useMemo(
+    () => buildPhaseTimingMap(op),
+    [
+      op.progress_events,
+      summary?.created_at,
+      summary?.finished_at,
+      summary?.updated_at,
+    ],
+  );
 
   const timelineItems = useMemo(() => {
     return COPY_PHASES.map((phase, index) => ({
@@ -215,10 +243,15 @@ function CopyOpTimeline({ op }: { op: CopyLroState }) {
           <div style={{ color: "#666", fontSize: "11px" }}>
             {phase.description}
           </div>
+          {phaseTimingMap[phase.key] ? (
+            <div style={{ color: "#999", fontSize: "11px" }}>
+              {formatPhaseTiming(phaseTimingMap[phase.key])}
+            </div>
+          ) : null}
         </div>
       ),
     }));
-  }, [activeIndex, status]);
+  }, [activeIndex, phaseTimingMap, status]);
 
   return (
     <div style={{ width: "460px", maxWidth: "80vw" }}>
@@ -248,6 +281,22 @@ function CopyOpTimeline({ op }: { op: CopyLroState }) {
             </span>
           ) : null}
         </Space>
+        {totalDurationMs != null ? (
+          <div style={{ fontSize: "12px" }}>
+            <strong>Timings:</strong>{" "}
+            {[
+              `total ${formatDurationMs(totalDurationMs)}`,
+              queueDurationMs != null
+                ? `queue ${formatDurationMs(queueDurationMs)}`
+                : null,
+              runDurationMs != null
+                ? `run ${formatDurationMs(runDurationMs)}`
+                : null,
+            ]
+              .filter(Boolean)
+              .join(" · ")}
+          </div>
+        ) : null}
         <div style={{ fontSize: "12px" }}>
           {sourceCount > 0 ? (
             <span>
@@ -264,11 +313,102 @@ function CopyOpTimeline({ op }: { op: CopyLroState }) {
   );
 }
 
+function buildPhaseTimingMap(
+  op: CopyLroState,
+): Partial<
+  Record<
+    CopyPhaseKey,
+    { enteredMs?: number; offsetMs?: number; durationMs?: number }
+  >
+> {
+  const summary = op.summary;
+  const startedMs = toLroTimestamp(summary?.created_at);
+  if (!startedMs) {
+    return {};
+  }
+  const finishedMs = toLroTimestamp(
+    summary?.finished_at ?? summary?.updated_at,
+  );
+  const firstEntered = new Map<CopyPhaseKey, number>();
+  firstEntered.set("queued", startedMs);
+  for (const event of op.progress_events ?? []) {
+    const phase = phaseFromRaw(event.phase ?? event.message);
+    if (!phase || firstEntered.has(phase)) continue;
+    firstEntered.set(phase, event.ts);
+  }
+  const keys = COPY_PHASES.map((phase) => phase.key).filter((key) =>
+    firstEntered.has(key),
+  );
+  const map: Partial<
+    Record<
+      CopyPhaseKey,
+      { enteredMs?: number; offsetMs?: number; durationMs?: number }
+    >
+  > = {};
+  for (let i = 0; i < keys.length; i += 1) {
+    const key = keys[i];
+    const enteredMs = firstEntered.get(key);
+    if (!enteredMs) continue;
+    const nextKey = keys[i + 1];
+    const nextEnteredMs = nextKey ? firstEntered.get(nextKey) : undefined;
+    const endMs =
+      nextEnteredMs ?? (finishedMs > enteredMs ? finishedMs : undefined);
+    map[key] = {
+      enteredMs,
+      offsetMs: Math.max(0, enteredMs - startedMs),
+      durationMs:
+        endMs != null && endMs >= enteredMs
+          ? Math.max(0, endMs - enteredMs)
+          : undefined,
+    };
+  }
+  return map;
+}
+
+function formatPhaseTiming(timing?: {
+  offsetMs?: number;
+  durationMs?: number;
+}): string | undefined {
+  if (!timing) return undefined;
+  const parts: string[] = [];
+  const offset = formatDurationMs(timing.offsetMs);
+  if (offset) parts.push(`at +${offset}`);
+  const duration = formatDurationMs(timing.durationMs);
+  if (duration) parts.push(duration);
+  return parts.length ? parts.join(" · ") : undefined;
+}
+
+function getTotalDurationMs(summary?: LroSummary): number | undefined {
+  const createdMs = toLroTimestamp(summary?.created_at);
+  const endMs = toLroTimestamp(summary?.finished_at ?? summary?.updated_at);
+  if (!createdMs || !endMs || endMs < createdMs) return undefined;
+  return endMs - createdMs;
+}
+
+function getQueueDurationMs(summary?: LroSummary): number | undefined {
+  const createdMs = toLroTimestamp(summary?.created_at);
+  const startedMs = toLroTimestamp(summary?.started_at);
+  if (!createdMs || !startedMs || startedMs < createdMs) return undefined;
+  return startedMs - createdMs;
+}
+
+function getRunDurationMs(summary?: LroSummary): number | undefined {
+  const createdMs = toLroTimestamp(summary?.created_at);
+  const startedMs = toLroTimestamp(summary?.started_at) || createdMs;
+  const endMs = toLroTimestamp(summary?.finished_at ?? summary?.updated_at);
+  if (!startedMs || !endMs || endMs < startedMs) return undefined;
+  return endMs - startedMs;
+}
+
 function phaseFromOp(op: CopyLroState): CopyPhaseKey | undefined {
   const phaseRaw =
     op.last_progress?.phase ??
     op.summary?.progress_summary?.phase ??
     op.last_progress?.message;
+  return phaseFromRaw(phaseRaw);
+}
+
+function phaseFromRaw(phaseRaw?: string): CopyPhaseKey | undefined {
   if (typeof phaseRaw !== "string" || !phaseRaw.trim()) return;
   const lower = phaseRaw.trim().toLowerCase();
   if (COPY_PHASE_SET.has(lower as CopyPhaseKey)) {

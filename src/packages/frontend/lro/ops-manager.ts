@@ -246,6 +246,7 @@ export class SingleLroOpsManager {
       summary: this.state?.summary,
       last_progress: this.state?.last_progress,
       last_event: this.state?.last_event,
+      progress_events: this.state?.progress_events,
     });
     if (isDismissed(updates.summary)) {
       this.clearState();
@@ -501,6 +502,7 @@ export class MultiLroOpsManager {
       summary: this.state[op_id]?.summary,
       last_progress: this.state[op_id]?.last_progress,
       last_event: this.state[op_id]?.last_event,
+      progress_events: this.state[op_id]?.progress_events,
     });
     if (isDismissed(updates.summary)) {
       this.removeOp(op_id);

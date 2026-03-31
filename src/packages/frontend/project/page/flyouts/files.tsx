@@ -81,6 +81,7 @@ import { useFlyoutNavigation } from "./use-flyout-navigation";
 import { sortedTypeFilterOptions } from "@cocalc/frontend/project/explorer/file-listing/utils";
 import {
   fileListingFingerprint,
+  refreshListingAfterUserAction,
   useDeferredListing,
 } from "@cocalc/frontend/project/explorer/use-deferred-listing";
 
@@ -390,8 +391,17 @@ export function FilesFlyout({
     fingerprint: fileListingFingerprint,
   });
   useEffect(() => {
-    return registerUserFilesystemChangeHandler(allowNextListingUpdate);
-  }, [allowNextListingUpdate, registerUserFilesystemChangeHandler]);
+    return registerUserFilesystemChangeHandler(() =>
+      refreshListingAfterUserAction({
+        allowNextUpdate: allowNextListingUpdate,
+        refresh: effectiveRefresh,
+      }),
+    );
+  }, [
+    allowNextListingUpdate,
+    effectiveRefresh,
+    registerUserFilesystemChangeHandler,
+  ]);
 
   const directoryFiles =
     deferredDirectoryFiles ?? liveDirectoryFiles ?? EMPTY_DIRECTORY_FILES;

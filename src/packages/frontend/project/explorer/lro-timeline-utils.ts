@@ -44,9 +44,7 @@ export function clampProgressPercent(
 export function lroUpdatedAt(summary?: {
   updated_at?: Date | string | null;
 }): number {
-  if (!summary?.updated_at) return 0;
-  const date = new Date(summary.updated_at as any);
-  return Number.isFinite(date.getTime()) ? date.getTime() : 0;
+  return toLroTimestamp(summary?.updated_at);
 }
 
 export function formatProgressDetail(detail?: any): string | undefined {
@@ -77,4 +75,27 @@ function formatEta(eta?: number): string | undefined {
   if (eta < 1000) return `${Math.round(eta)} ms`;
   if (eta < 60_000) return `${Math.round(eta / 1000)} s`;
   return `${Math.round(eta / 1000 / 60)} min`;
+}
+
+export function toLroTimestamp(value?: Date | string | number | null): number {
+  if (value == null) return 0;
+  const date = new Date(value as any);
+  const ts = date.getTime();
+  return Number.isFinite(ts) ? ts : 0;
+}
+
+export function formatDurationMs(value?: number | null): string | undefined {
+  if (value == null || !Number.isFinite(value)) return undefined;
+  const ms = Math.max(0, value);
+  if (ms < 1000) return `${Math.round(ms)} ms`;
+  if (ms < 10_000) return `${(ms / 1000).toFixed(1)} s`;
+  if (ms < 60_000) return `${Math.round(ms / 1000)} s`;
+  if (ms < 3_600_000) {
+    const minutes = Math.floor(ms / 60_000);
+    const seconds = Math.round((ms % 60_000) / 1000);
+    return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`;
+  }
+  const hours = Math.floor(ms / 3_600_000);
+  const minutes = Math.round((ms % 3_600_000) / 60_000);
+  return minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`;
 }

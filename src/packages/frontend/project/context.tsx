@@ -47,6 +47,10 @@ import {
 } from "./workspaces/state";
 import type { ProjectWorkspaceState } from "./workspaces/types";
 import { path_to_tab, tab_to_path } from "@cocalc/util/misc";
+import {
+  notifyProjectFilesystemChange,
+  registerProjectFilesystemChangeHandler,
+} from "./user-filesystem-change";
 
 export interface ProjectContextState {
   actions?: ProjectActions;
@@ -206,7 +210,6 @@ export function useProjectContextProvider({
   ]);
 
   const [contentSize, setContentSize] = useState({ width: 0, height: 0 });
-  const filesystemChangeHandlersRef = useRef<Set<() => void>>(new Set());
   const workspaces = useProjectWorkspaces(account_id, project_id);
   const previousWorkspaceSelectionRef = useRef<string>("all");
   const previousActivePathRef = useRef<string>("");
@@ -398,21 +401,14 @@ export function useProjectContextProvider({
   }, [active_project_tab, open_files_order]);
 
   const registerUserFilesystemChangeHandler = useCallback(
-    (handler: (() => void) | null | undefined) => {
-      if (!handler) return () => {};
-      filesystemChangeHandlersRef.current.add(handler);
-      return () => {
-        filesystemChangeHandlersRef.current.delete(handler);
-      };
-    },
-    [],
+    (handler: (() => void) | null | undefined) =>
+      registerProjectFilesystemChangeHandler({ project_id, handler }),
+    [project_id],
   );
 
   const notifyUserFilesystemChange = useCallback(() => {
-    for (const handler of filesystemChangeHandlersRef.current) {
-      handler();
-    }
-  }, []);
+    notifyProjectFilesystemChange(project_id);
+  }, [project_id]);
 
   return {
     actions,

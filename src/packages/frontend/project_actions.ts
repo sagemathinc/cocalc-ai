@@ -118,6 +118,7 @@ import { EditorLoadError } from "./file-editors-error";
 import { lite } from "@cocalc/frontend/lite";
 import { normalizeAbsolutePath } from "@cocalc/util/path-model";
 import { normalizeCpSourcePath } from "@cocalc/frontend/project/copy-paths";
+import { notifyProjectFilesystemChange } from "@cocalc/frontend/project/user-filesystem-change";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 import {
   moveDestinationPath,
@@ -2368,6 +2369,8 @@ export class ProjectActions extends Actions<ProjectStoreState> {
         },
       });
       if (summary.status === "succeeded") {
+        notifyProjectFilesystemChange(opts.src.project_id);
+        notifyProjectFilesystemChange(opts.dest.project_id);
         const withSlashes = await this.appendSlashToDirectoryPaths(files);
         this.log({
           event: "file_action",

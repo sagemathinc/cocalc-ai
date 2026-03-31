@@ -335,8 +335,13 @@ export function Explorer() {
   });
   const visibleListing = displayListing ?? listing;
   useEffect(() => {
-    return registerUserFilesystemChangeHandler(allowNextListingUpdate);
-  }, [allowNextListingUpdate, registerUserFilesystemChangeHandler]);
+    return registerUserFilesystemChangeHandler(() =>
+      refreshListingAfterUserAction({
+        allowNextUpdate: allowNextListingUpdate,
+        refresh,
+      }),
+    );
+  }, [allowNextListingUpdate, refresh, registerUserFilesystemChangeHandler]);
 
   const refreshSnapshotsAfterUserAction = useCallback(() => {
     refreshListingAfterUserAction({
