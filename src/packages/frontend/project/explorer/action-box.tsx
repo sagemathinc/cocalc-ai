@@ -17,7 +17,7 @@ import {
   Row,
   Well,
 } from "@cocalc/frontend/antd-bootstrap";
-import { useRedux, useTypedRedux } from "@cocalc/frontend/app-framework";
+import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon, LoginLink } from "@cocalc/frontend/components";
 import { labels } from "@cocalc/frontend/i18n";
 import { useRunQuota } from "@cocalc/frontend/project/settings/run-quota/hooks";
@@ -73,7 +73,7 @@ export function ActionBox({
   const intl = useIntl();
   const projectLabel = intl.formatMessage(labels.project);
   const runQuota = useRunQuota(project_id, null);
-  const get_user_type: () => string = useRedux("account", "get_user_type");
+  const user_type = useTypedRedux("account", "user_type");
   const dnd_copy_dest = useTypedRedux(
     { project_id },
     "copy_destination_project_id",
@@ -468,7 +468,7 @@ export function ActionBox({
 
   function render_copy() {
     const { size } = checked_files;
-    const signed_in = get_user_type() === "signed_in";
+    const signed_in = user_type === "signed_in";
     if (!signed_in) {
       return (
         <div>
