@@ -39,7 +39,6 @@ import {
   is_only_downloadable,
   keys,
 } from "@cocalc/util/misc";
-import type { NamedServerName } from "@cocalc/util/types/servers";
 import { PathNavigator } from "../explorer/path-navigator";
 import { useAvailableFeatures } from "../use-available-features";
 import { NewFileButton } from "./new-file-button";
@@ -49,9 +48,7 @@ import { QUICK_CREATE_MAP } from "./launcher-catalog";
 import { file_options } from "@cocalc/frontend/editor-tmp";
 import {
   LAUNCHER_GLOBAL_DEFAULTS,
-  LAUNCHER_SITE_REMOVE_APPS_KEY,
   LAUNCHER_SITE_REMOVE_QUICK_KEY,
-  LAUNCHER_SITE_DEFAULTS_APPS_KEY,
   LAUNCHER_SITE_DEFAULTS_QUICK_KEY,
   LAUNCHER_SETTINGS_KEY,
   getProjectLauncherDefaults,
@@ -100,17 +97,9 @@ export default function NewFilePage(props: Props) {
     "customize",
     LAUNCHER_SITE_DEFAULTS_QUICK_KEY,
   );
-  const site_launcher_apps = useTypedRedux(
-    "customize",
-    LAUNCHER_SITE_DEFAULTS_APPS_KEY,
-  );
   const site_remove_quick = useTypedRedux(
     "customize",
     LAUNCHER_SITE_REMOVE_QUICK_KEY,
-  );
-  const site_remove_apps = useTypedRedux(
-    "customize",
-    LAUNCHER_SITE_REMOVE_APPS_KEY,
   );
   const project_launcher = useRedux([
     "projects",
@@ -155,9 +144,7 @@ export default function NewFilePage(props: Props) {
   const projectLauncherDefaults = getProjectLauncherDefaults(project_launcher);
   const siteLauncherDefaults = getSiteLauncherDefaults({
     quickCreate: site_launcher_quick,
-    apps: site_launcher_apps,
     hiddenQuickCreate: site_remove_quick,
-    hiddenApps: site_remove_apps,
   });
   const userLauncherLayers = getUserLauncherLayers(
     other_settings?.get?.(LAUNCHER_SETTINGS_KEY),
@@ -659,12 +646,8 @@ export default function NewFilePage(props: Props) {
         open={showCustomizeModal}
         onClose={() => setShowCustomizeModal(false)}
         initialQuickCreate={mergedLauncher.quickCreate}
-        initialApps={mergedLauncher.apps as NamedServerName[]}
         userBaseQuickCreate={inheritedForProjectUser.quickCreate}
-        userBaseApps={inheritedForProjectUser.apps as NamedServerName[]}
         projectBaseQuickCreate={inheritedForProjectDefaults.quickCreate}
-        projectBaseApps={inheritedForProjectDefaults.apps as NamedServerName[]}
-        globalDefaults={siteLauncherDefaults}
         onSaveUser={saveUserLauncherPrefs}
         onSaveProject={saveProjectLauncherDefaults}
         canEditProjectDefaults={can_edit_project_defaults}
@@ -673,39 +656,30 @@ export default function NewFilePage(props: Props) {
             key: "built-in",
             title: "Built-in defaults",
             quickCreateAdd: LAUNCHER_GLOBAL_DEFAULTS.quickCreate,
-            appsAdd: LAUNCHER_GLOBAL_DEFAULTS.apps,
           },
           {
             key: "site",
             title: "Site defaults",
             quickCreateAdd: siteLauncherDefaults.quickCreate,
             quickCreateRemove: siteLauncherDefaults.hiddenQuickCreate,
-            appsAdd: siteLauncherDefaults.apps,
-            appsRemove: siteLauncherDefaults.hiddenApps,
           },
           {
             key: "project",
             title: "Project defaults",
             quickCreateAdd: projectLauncherDefaults.quickCreate,
             quickCreateRemove: projectLauncherDefaults.hiddenQuickCreate,
-            appsAdd: projectLauncherDefaults.apps,
-            appsRemove: projectLauncherDefaults.hiddenApps,
           },
           {
             key: "account",
             title: "Your account overrides",
             quickCreateAdd: userLauncherLayers.account.quickCreate,
             quickCreateRemove: userLauncherLayers.account.hiddenQuickCreate,
-            appsAdd: userLauncherLayers.account.apps,
-            appsRemove: userLauncherLayers.account.hiddenApps,
           },
           {
             key: "project-user",
             title: "This project overrides",
             quickCreateAdd: userLauncherLayers.project.quickCreate,
             quickCreateRemove: userLauncherLayers.project.hiddenQuickCreate,
-            appsAdd: userLauncherLayers.project.apps,
-            appsRemove: userLauncherLayers.project.hiddenApps,
           },
         ]}
       />

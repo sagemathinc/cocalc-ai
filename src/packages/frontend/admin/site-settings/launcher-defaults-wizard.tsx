@@ -6,7 +6,6 @@
 import { Alert, Modal, Select, Space, Typography } from "antd";
 import { useEffect, useMemo, useState } from "react";
 import {
-  APP_CATALOG,
   QUICK_CREATE_CATALOG,
   QUICK_CREATE_MAP,
 } from "@cocalc/frontend/project/new/launcher-catalog";
@@ -61,19 +60,6 @@ function extensionOptions(): Option[] {
   }
   return out;
 }
-
-function appOptions(): Option[] {
-  return APP_CATALOG.map((spec) => ({
-    value: spec.id,
-    label: (
-      <span>
-        <Icon name={spec.icon} /> {spec.label}{" "}
-        <span style={{ opacity: 0.65 }}>({spec.id})</span>
-      </span>
-    ),
-  }));
-}
-
 export default function LauncherDefaultsWizard({
   open,
   onClose,
@@ -82,26 +68,19 @@ export default function LauncherDefaultsWizard({
 }: WizardProps) {
   const [addQuick, setAddQuick] = useState<string[]>([]);
   const [removeQuick, setRemoveQuick] = useState<string[]>([]);
-  const [addApps, setAddApps] = useState<string[]>([]);
-  const [removeApps, setRemoveApps] = useState<string[]>([]);
 
   useEffect(() => {
     if (!open) return;
     setAddQuick(parseCsv(data.launcher_default_quick_create));
     setRemoveQuick(parseCsv(data.launcher_remove_quick_create));
-    setAddApps(parseCsv(data.launcher_default_apps));
-    setRemoveApps(parseCsv(data.launcher_remove_apps));
   }, [open, data]);
 
   const quickOptions = useMemo(extensionOptions, []);
-  const appsOptions = useMemo(appOptions, []);
 
   async function apply() {
     await onApply({
       launcher_default_quick_create: toCsv(addQuick),
       launcher_remove_quick_create: toCsv(removeQuick),
-      launcher_default_apps: toCsv(addApps),
-      launcher_remove_apps: toCsv(removeApps),
     });
     onClose();
   }
@@ -113,13 +92,13 @@ export default function LauncherDefaultsWizard({
       onOk={apply}
       okText="Apply"
       title="Launcher Defaults Wizard"
-      width={920}
+      width={720}
     >
       <Space orientation="vertical" style={{ width: "100%" }} size={14}>
         <Alert
           type="info"
           showIcon
-          title="Launcher defaults are additive."
+          title="Quick Create defaults are additive."
           description="Layers are merged in order: built-in, site, project, account, project-user. Add lists append; remove lists explicitly hide inherited entries."
         />
         <div>
@@ -144,30 +123,6 @@ export default function LauncherDefaultsWizard({
             options={quickOptions}
             tokenSeparators={[",", " "]}
             placeholder="Remove inherited quick-create ids/extensions"
-          />
-        </div>
-        <div>
-          <Typography.Text strong>Apps: add</Typography.Text>
-          <Select
-            mode="tags"
-            style={{ width: "100%", marginTop: "6px" }}
-            value={addApps}
-            onChange={(values) => setAddApps(unique(values))}
-            options={appsOptions}
-            tokenSeparators={[",", " "]}
-            placeholder="Add app ids (e.g. jupyterlab,code)"
-          />
-        </div>
-        <div>
-          <Typography.Text strong>Apps: remove</Typography.Text>
-          <Select
-            mode="tags"
-            style={{ width: "100%", marginTop: "6px" }}
-            value={removeApps}
-            onChange={(values) => setRemoveApps(unique(values))}
-            options={appsOptions}
-            tokenSeparators={[",", " "]}
-            placeholder="Remove inherited app ids"
           />
         </div>
       </Space>

@@ -5,9 +5,6 @@
 
 import type { IconName } from "@cocalc/frontend/components/icon";
 import { NEW_FILETYPE_ICONS } from "./consts";
-import { SPEC } from "../named-server-panel";
-import { R_IDE } from "@cocalc/util/consts/ui";
-import type { NamedServerName } from "@cocalc/util/types/servers";
 
 export type QuickCreateId = string;
 
@@ -52,25 +49,3 @@ export const QUICK_CREATE_MAP: Record<string, QuickCreateSpec> =
     },
     {} as Record<string, QuickCreateSpec>,
   );
-
-export interface AppSpec {
-  id: NamedServerName;
-  label: string;
-  icon: IconName;
-}
-
-export const APP_CATALOG: AppSpec[] = [
-  { id: "jupyterlab", label: "JupyterLab", icon: SPEC.jupyterlab.icon },
-  { id: "code", label: "VS Code", icon: SPEC.code.icon },
-  { id: "jupyter", label: "Jupyter Classic", icon: SPEC.jupyter.icon },
-  { id: "pluto", label: "Pluto (Julia)", icon: SPEC.pluto.icon },
-  { id: "rserver", label: R_IDE, icon: SPEC.rserver.icon },
-];
-
-export const APP_MAP: Record<string, AppSpec> = APP_CATALOG.reduce(
-  (acc, spec) => {
-    acc[spec.id] = spec;
-    return acc;
-  },
-  {} as Record<string, AppSpec>,
-);

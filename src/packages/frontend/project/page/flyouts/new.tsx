@@ -27,7 +27,6 @@ import ProgressEstimate from "@cocalc/frontend/components/progress-estimate";
 import { file_options } from "@cocalc/frontend/editor-tmp";
 import { file_associations } from "@cocalc/frontend/file-associations";
 import { PathNavigator } from "@cocalc/frontend/project/explorer/path-navigator";
-import type { NamedServerName } from "@cocalc/util/types/servers";
 import {
   NEW_FILETYPE_ICONS,
   isNewFiletypeIconName,
@@ -37,9 +36,7 @@ import { NewFileDropdown } from "@cocalc/frontend/project/new/new-file-dropdown"
 import { LauncherCustomizeModal } from "@cocalc/frontend/project/new/launcher-customize-modal";
 import {
   LAUNCHER_GLOBAL_DEFAULTS,
-  LAUNCHER_SITE_REMOVE_APPS_KEY,
   LAUNCHER_SITE_REMOVE_QUICK_KEY,
-  LAUNCHER_SITE_DEFAULTS_APPS_KEY,
   LAUNCHER_SITE_DEFAULTS_QUICK_KEY,
   LAUNCHER_SETTINGS_KEY,
   getProjectLauncherDefaults,
@@ -93,17 +90,9 @@ export function NewFlyout({
     "customize",
     LAUNCHER_SITE_DEFAULTS_QUICK_KEY,
   );
-  const site_launcher_apps = useTypedRedux(
-    "customize",
-    LAUNCHER_SITE_DEFAULTS_APPS_KEY,
-  );
   const site_remove_quick = useTypedRedux(
     "customize",
     LAUNCHER_SITE_REMOVE_QUICK_KEY,
-  );
-  const site_remove_apps = useTypedRedux(
-    "customize",
-    LAUNCHER_SITE_REMOVE_APPS_KEY,
   );
   const project_launcher = useTypedRedux("projects", "project_map")?.getIn([
     project_id,
@@ -143,9 +132,7 @@ export function NewFlyout({
   const projectLauncherDefaults = getProjectLauncherDefaults(project_launcher);
   const siteLauncherDefaults = getSiteLauncherDefaults({
     quickCreate: site_launcher_quick,
-    apps: site_launcher_apps,
     hiddenQuickCreate: site_remove_quick,
-    hiddenApps: site_remove_apps,
   });
   const userLauncherLayers = getUserLauncherLayers(
     other_settings?.get?.(LAUNCHER_SETTINGS_KEY),
@@ -662,12 +649,8 @@ export function NewFlyout({
         open={showCustomizeModal}
         onClose={() => setShowCustomizeModal(false)}
         initialQuickCreate={mergedLauncher.quickCreate}
-        initialApps={mergedLauncher.apps as NamedServerName[]}
         userBaseQuickCreate={inheritedForProjectUser.quickCreate}
-        userBaseApps={inheritedForProjectUser.apps as NamedServerName[]}
         projectBaseQuickCreate={inheritedForProjectDefaults.quickCreate}
-        projectBaseApps={inheritedForProjectDefaults.apps as NamedServerName[]}
-        globalDefaults={siteLauncherDefaults}
         onSaveUser={saveUserLauncherPrefs}
         onSaveProject={saveProjectLauncherDefaults}
         canEditProjectDefaults={can_edit_project_defaults}
@@ -676,39 +659,30 @@ export function NewFlyout({
             key: "built-in",
             title: "Built-in defaults",
             quickCreateAdd: LAUNCHER_GLOBAL_DEFAULTS.quickCreate,
-            appsAdd: LAUNCHER_GLOBAL_DEFAULTS.apps,
           },
           {
             key: "site",
             title: "Site defaults",
             quickCreateAdd: siteLauncherDefaults.quickCreate,
             quickCreateRemove: siteLauncherDefaults.hiddenQuickCreate,
-            appsAdd: siteLauncherDefaults.apps,
-            appsRemove: siteLauncherDefaults.hiddenApps,
           },
           {
             key: "project",
             title: "Project defaults",
             quickCreateAdd: projectLauncherDefaults.quickCreate,
             quickCreateRemove: projectLauncherDefaults.hiddenQuickCreate,
-            appsAdd: projectLauncherDefaults.apps,
-            appsRemove: projectLauncherDefaults.hiddenApps,
           },
           {
             key: "account",
             title: "Your account overrides",
             quickCreateAdd: userLauncherLayers.account.quickCreate,
             quickCreateRemove: userLauncherLayers.account.hiddenQuickCreate,
-            appsAdd: userLauncherLayers.account.apps,
-            appsRemove: userLauncherLayers.account.hiddenApps,
           },
           {
             key: "project-user",
             title: "This project overrides",
             quickCreateAdd: userLauncherLayers.project.quickCreate,
             quickCreateRemove: userLauncherLayers.project.hiddenQuickCreate,
-            appsAdd: userLauncherLayers.project.apps,
-            appsRemove: userLauncherLayers.project.hiddenApps,
           },
         ]}
       />

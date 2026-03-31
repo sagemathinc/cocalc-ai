@@ -11,17 +11,14 @@ import type { IconName } from "@cocalc/frontend/components/icon";
 import type { Project } from "./types";
 import {
   LAUNCHER_GLOBAL_DEFAULTS,
-  LAUNCHER_SITE_REMOVE_APPS_KEY,
   LAUNCHER_SITE_REMOVE_QUICK_KEY,
-  LAUNCHER_SITE_DEFAULTS_APPS_KEY,
   LAUNCHER_SITE_DEFAULTS_QUICK_KEY,
   getProjectLauncherDefaults,
   getSiteLauncherDefaults,
   mergeLauncherSettings,
 } from "../new/launcher-preferences";
 import { LauncherCustomizeModal } from "../new/launcher-customize-modal";
-import type { NamedServerName } from "@cocalc/util/types/servers";
-import { APP_CATALOG, QUICK_CREATE_MAP } from "../new/launcher-catalog";
+import { QUICK_CREATE_MAP } from "../new/launcher-catalog";
 import { file_options } from "@cocalc/frontend/editor-tmp";
 
 interface Props {
@@ -35,23 +32,13 @@ export function LauncherDefaults({ project_id, project }: Props) {
     "customize",
     LAUNCHER_SITE_DEFAULTS_QUICK_KEY,
   );
-  const site_launcher_apps = useTypedRedux(
-    "customize",
-    LAUNCHER_SITE_DEFAULTS_APPS_KEY,
-  );
   const site_remove_quick = useTypedRedux(
     "customize",
     LAUNCHER_SITE_REMOVE_QUICK_KEY,
   );
-  const site_remove_apps = useTypedRedux(
-    "customize",
-    LAUNCHER_SITE_REMOVE_APPS_KEY,
-  );
   const siteLauncherDefaults = getSiteLauncherDefaults({
     quickCreate: site_launcher_quick,
-    apps: site_launcher_apps,
     hiddenQuickCreate: site_remove_quick,
-    hiddenApps: site_remove_apps,
   });
 
   const launcher_settings = project.get("launcher");
@@ -68,7 +55,6 @@ export function LauncherDefaults({ project_id, project }: Props) {
     projectDefaults,
   });
   const effectiveQuickCreate = effective.quickCreate;
-  const effectiveApps = effective.apps;
 
   const quickCreateSpecs = useMemo((): {
     id: string;
@@ -88,22 +74,6 @@ export function LauncherDefaults({ project_id, project }: Props) {
       };
     });
   }, [effectiveQuickCreate]);
-
-  const appSpecs = useMemo((): {
-    id: string;
-    label: string;
-    icon: IconName;
-  }[] => {
-    return effectiveApps
-      .map((id) => {
-        const spec = APP_CATALOG.find((item) => item.id === id);
-        if (spec) {
-          return { id, label: spec.label, icon: spec.icon };
-        }
-        return null;
-      })
-      .filter(Boolean) as { id: string; label: string; icon: IconName }[];
-  }, [effectiveApps]);
 
   return (
     <SettingBox title="Project Launcher Defaults" icon="rocket">
@@ -135,27 +105,12 @@ export function LauncherDefaults({ project_id, project }: Props) {
             ))}
           </Space>
         </div>
-        <div style={{ marginTop: "12px" }}>
-          <Typography.Text strong style={{ display: "block" }}>
-            Apps
-          </Typography.Text>
-          <Space style={{ flexWrap: "wrap" }}>
-            {appSpecs.map((spec) => (
-              <Tag key={`proj-app-${spec.id}`}>
-                <Icon name={spec.icon} /> {spec.label}
-              </Tag>
-            ))}
-          </Space>
-        </div>
       </Space>
       <LauncherCustomizeModal
         open={showProjectModal}
         onClose={() => setShowProjectModal(false)}
         initialQuickCreate={effectiveQuickCreate}
-        initialApps={effectiveApps as NamedServerName[]}
         projectBaseQuickCreate={inheritedForProjectDefaults.quickCreate}
-        projectBaseApps={inheritedForProjectDefaults.apps as NamedServerName[]}
-        globalDefaults={siteLauncherDefaults}
         onSaveProject={(prefs) =>
           redux.getActions("projects").set_project_launcher(project_id, prefs)
         }
@@ -165,23 +120,18 @@ export function LauncherDefaults({ project_id, project }: Props) {
             key: "built-in",
             title: "Built-in defaults",
             quickCreateAdd: LAUNCHER_GLOBAL_DEFAULTS.quickCreate,
-            appsAdd: LAUNCHER_GLOBAL_DEFAULTS.apps,
           },
           {
             key: "site",
             title: "Site defaults",
             quickCreateAdd: siteLauncherDefaults.quickCreate,
             quickCreateRemove: siteLauncherDefaults.hiddenQuickCreate,
-            appsAdd: siteLauncherDefaults.apps,
-            appsRemove: siteLauncherDefaults.hiddenApps,
           },
           {
             key: "project",
             title: "Project defaults",
             quickCreateAdd: projectDefaults.quickCreate,
             quickCreateRemove: projectDefaults.hiddenQuickCreate,
-            appsAdd: projectDefaults.apps,
-            appsRemove: projectDefaults.hiddenApps,
           },
         ]}
       />
