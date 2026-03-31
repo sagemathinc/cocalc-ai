@@ -3,6 +3,8 @@
     "preinstall": "npx only-allow pnpm",
     "build": "echo 'nothing yet'",
     "check-deps": "check-dependency-version-consistency --ignore-dep entities .",
+    "lint:frontend": "oxlint --config .oxlintrc.jsonc --ignore-path .oxlintignore frontend",
+    "lint:frontend:all": "oxlint --config .oxlintrc.jsonc frontend",
     "tsc:build": "tsc --build tsconfig.solution.json",
     "tsc:watch": "tsc --build --watch --pretty --preserveWatchOutput tsconfig.solution.json"
   },
@@ -12,6 +14,7 @@
     "depcheck": "^1.4.7",
     "jest": "^30.0.5",
     "jest-junit": "^16.0.0",
+    "oxlint": "^1.57.0",
     "prettier": "3.8.1",
     "ts-jest": "^29.4.5",
     "typescript": "^5.9.2"

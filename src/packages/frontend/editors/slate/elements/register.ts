@@ -6,10 +6,10 @@
 import type { RenderElementProps } from "../slate-react";
 export type { RenderElementProps } from "../slate-react";
 import React from "react";
-import { Descendant, Element } from "slate";
-import { State as MarkdownParserState, Token } from "../markdown-to-slate";
-import { Info } from "../slate-to-markdown";
-import { ChildInfo } from "../element-to-markdown";
+import type { Descendant, Element } from "slate";
+import type { State as MarkdownParserState, Token } from "../markdown-to-slate";
+import type { Info } from "../slate-to-markdown";
+import type { ChildInfo } from "../element-to-markdown";
 
 export interface SlateElement {
   children: Descendant[];

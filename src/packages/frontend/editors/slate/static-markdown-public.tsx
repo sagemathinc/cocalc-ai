@@ -1,2 +1,2 @@
-import "./elements/init-ssr";
+import "./elements/init-public-viewer";
 export { default } from "./static-markdown-core";

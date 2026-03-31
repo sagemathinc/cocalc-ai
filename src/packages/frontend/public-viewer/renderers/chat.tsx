@@ -5,7 +5,7 @@
 
 import type { CSSProperties, JSX } from "react";
 import type { IFileContext } from "@cocalc/frontend/lib/file-context";
-import Markdown from "@cocalc/frontend/editors/slate/static-markdown";
+import Markdown from "@cocalc/frontend/editors/slate/static-markdown-public";
 import { withViewerFileContext } from "../viewer-file-context";
 
 type ChatRow = {

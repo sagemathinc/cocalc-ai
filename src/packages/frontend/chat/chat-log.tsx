@@ -23,7 +23,7 @@ import { VirtuosoHandle } from "react-virtuoso";
 import StatefulVirtuoso from "@cocalc/frontend/components/stateful-virtuoso";
 import { chatBotName, isChatBot } from "@cocalc/frontend/account/chatbot";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
-import { DivTempHeight } from "@cocalc/frontend/jupyter/cell-list";
+import { DivTempHeight } from "@cocalc/frontend/jupyter/div-temp-height";
 import { cmp } from "@cocalc/util/misc";
 import type { ChatActions } from "./actions";
 import Composing from "./composing";

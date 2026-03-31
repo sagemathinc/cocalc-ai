@@ -1,4 +1,4 @@
-import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
+import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown-public";
 
 export default function Generic({ element }) {
   return (

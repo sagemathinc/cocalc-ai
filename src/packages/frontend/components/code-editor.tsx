@@ -1,34 +1,39 @@
 /*
-A lightweight react code editor component that can be
-used in Next.js.
+A lightweight code editor fallback for static/public notebook views.
 
-You have to have this line in nextjs's _app.tsx:
-
-import "@uiw/react-textarea-code-editor/dist.css";
-
-And it also has to be somewhere in the frontend code, so
-this will work there.
-
-TODO: To make this editable I just used a quick Input component from antd,
-which sucks compared to what codemirror provides.  But it's only temporary.
-Codemirror is harder due to compat with nextjs and we'll do that later.
+This is intentionally just a styled textarea.  The heavy lifting for syntax
+highlighting is handled elsewhere by CodeMirrorStatic/Prism when rendering
+read-only content, and callers only need a simple editable surface here.
 */
 
-import { ElementType, useEffect, useState } from "react";
+import type { CSSProperties, TextareaHTMLAttributes } from "react";
 
-export default function CodeEditor(props) {
-  const [Editor, setEditor] = useState<ElementType | null>(null);
+type Language = string | { name?: string };
 
-  // We lazy load the Editor because we want to support using this in nextjs.
-  useEffect(() => {
-    (async () => {
-      setEditor((await import("@uiw/react-textarea-code-editor")).default);
-    })();
-  }, []);
+type Props = TextareaHTMLAttributes<HTMLTextAreaElement> & {
+  language?: Language;
+};
 
-  if (Editor == null) {
-    return <div>Loading...</div>;
-  }
+const DEFAULT_STYLE: CSSProperties = {
+  width: "100%",
+  minHeight: "5em",
+  resize: "vertical",
+  boxSizing: "border-box",
+  tabSize: 2,
+  whiteSpace: "pre",
+  overflowWrap: "normal",
+  overflowX: "auto",
+  background: "transparent",
+};
 
-  return <Editor {...props} />;
+export default function CodeEditor({ style, language, ...props }: Props) {
+  const dataLanguage = typeof language === "string" ? language : language?.name;
+  return (
+    <textarea
+      {...props}
+      spellCheck={false}
+      data-language={dataLanguage}
+      style={{ ...DEFAULT_STYLE, ...style }}
+    />
+  );
 }

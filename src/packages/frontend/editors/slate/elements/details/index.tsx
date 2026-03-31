@@ -3,11 +3,11 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { CSSProperties } from "react";
-import { load } from "cheerio";
+import type { CSSProperties } from "react";
 
 import { register, SlateElement } from "../register";
 import { dict } from "@cocalc/util/misc";
+import { parseFragmentElement } from "../../markdown-to-slate/util";
 
 export const STYLE = {
   cursor: "pointer",
@@ -43,9 +43,9 @@ register({
 
   toSlate: ({ children, state, token }) => {
     const attrs = dict(state.attrs as any);
-    const $ = load("");
-    const x = $(token.content);
-    const summary = x.find("summary").text().trim();
+    const element = parseFragmentElement(token.content);
+    const summary =
+      element?.querySelector("summary")?.textContent?.trim() ?? "";
     return {
       type: "details",
       children,
