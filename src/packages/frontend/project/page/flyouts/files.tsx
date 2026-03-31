@@ -84,6 +84,7 @@ import {
   refreshListingAfterUserAction,
   useDeferredListing,
 } from "@cocalc/frontend/project/explorer/use-deferred-listing";
+import DiskUsage from "@cocalc/frontend/project/disk-usage/disk-usage";
 
 type PartialClickEvent = Pick<
   React.MouseEvent | React.KeyboardEvent,
@@ -946,6 +947,12 @@ export function FilesFlyout({
         onRefreshListing={flushListingUpdate}
         onTerminalCommand={allowNextListingUpdate}
       />
+      {!lite && (
+        <DiskUsage
+          project_id={project_id}
+          style={{ margin: "0 10px 8px 10px" }}
+        />
+      )}
       {disableUploads ? (
         renderListing()
       ) : (

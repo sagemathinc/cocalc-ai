@@ -1,11 +1,33 @@
-import useDiskUsage from "./use-disk-usage";
-import { Alert, Button, Modal, Progress, Spin } from "antd";
+import useDiskUsage, { type StorageVisibleSummary } from "./use-disk-usage";
+import {
+  Alert,
+  Button,
+  Modal,
+  Progress,
+  Segmented,
+  Space,
+  Spin,
+  Tag,
+  Typography,
+} from "antd";
 import ShowError from "@cocalc/frontend/components/error";
 import { human_readable_size } from "@cocalc/util/misc";
 import { useState } from "react";
 import { Icon } from "@cocalc/frontend/components";
 import { redux } from "@cocalc/frontend/app-framework";
-import { dirname } from "path";
+import { dirname, posix } from "path";
+import { COLORS } from "@cocalc/util/theme";
+
+const { Text } = Typography;
+
+function bucketPercent(bytes: number, total: number): number {
+  if (total <= 0) return 0;
+  return Math.round((100 * bytes) / total);
+}
+
+function relativeLabel(bucket: StorageVisibleSummary): string {
+  return bucket.key === "home" ? "/root" : bucket.label;
+}
 
 export default function DiskUsage({
   project_id,
@@ -15,62 +37,86 @@ export default function DiskUsage({
   style?;
 }) {
   const [expand, setExpand] = useState<boolean>(false);
-  const { usage, loading, error, setError, refresh, quota } = useDiskUsage({
+  const { visible, loading, error, setError, refresh, quotas } = useDiskUsage({
     project_id,
   });
+  const quota = quotas[0] ?? null;
+  const [selectedBucketKey, setSelectedBucketKey] = useState<
+    "home" | "scratch"
+  >("home");
 
-  if (!quota?.size) {
-    return null;
-  }
+  const selectedBucket =
+    visible.find((bucket) => bucket.key === selectedBucketKey) ?? visible[0];
 
   const percent =
-    usage == null || quota == null
+    quota == null || quota.size <= 0
       ? 0
-      : Math.round((100 * usage.bytes) / quota?.size);
-  const status = percent > 80 ? "exception" : undefined;
+      : Math.round((100 * quota.used) / quota.size);
+  const quotaStatus = percent > 80 ? "exception" : undefined;
+  const visibleTotal = Math.max(
+    visible.reduce((sum, bucket) => sum + bucket.usage.bytes, 0),
+    1,
+  );
 
-  const btn = (
+  const summary = (
     <Button
       onClick={() => {
         refresh();
         setExpand(!expand);
       }}
-      style={style}
+      style={{
+        ...style,
+        alignItems: "center",
+        display: "flex",
+        gap: "10px",
+        height: "auto",
+        justifyContent: "flex-start",
+        padding: "6px 10px",
+        textAlign: "left",
+      }}
     >
       <Icon name="disk-round" />
-      {usage != null && (
-        <Progress
-          style={{ width: "40px" }}
-          percent={percent}
-          status={status}
-          showInfo={false}
-        />
-      )}
-      {usage == null ? <Spin delay={1000} /> : undefined}
-      {usage != null && loading && <Spin delay={1000} />}
+      <Space size={10} wrap>
+        <Text strong>Project quota</Text>
+        {quota != null ? (
+          <>
+            <Progress
+              style={{ width: "60px", marginBottom: 0 }}
+              percent={percent}
+              status={quotaStatus}
+              showInfo={false}
+            />
+            <Text>
+              {human_readable_size(quota.used)} /{" "}
+              {human_readable_size(quota.size)}
+            </Text>
+          </>
+        ) : (
+          <Spin delay={1000} />
+        )}
+        {visible.map((bucket) => (
+          <Tag key={bucket.key}>
+            {relativeLabel(bucket)} {human_readable_size(bucket.usage.bytes)}
+          </Tag>
+        ))}
+        {loading && <Spin delay={1000} />}
+      </Space>
     </Button>
   );
 
-  const total = Math.max(usage?.bytes ?? 1, 1);
   return (
     <>
-      {btn}
+      {summary}
       {expand && (
         <Modal
           onOk={() => setExpand(false)}
           onCancel={() => setExpand(false)}
           open
-          width={600}
+          width={700}
         >
           <ShowError error={error} setError={setError} />
           <h5 style={{ marginTop: 0 }}>
-            <Icon name="disk-round" /> Disk Usage:{" "}
-            {usage == null ? (
-              <Spin delay={1000} />
-            ) : (
-              human_readable_size(usage.bytes)
-            )}
-            {quota != null && <> out of {human_readable_size(quota.size)} </>}
+            <Icon name="disk-round" /> Project storage overview
             <Button
               onClick={() => refresh()}
               style={{ float: "right", marginRight: "30px" }}
@@ -78,86 +124,126 @@ export default function DiskUsage({
               Reload
             </Button>
           </h5>
-          {usage != null && quota != null && (
-            <div style={{ textAlign: "center" }}>
-              <Progress
-                type="circle"
-                percent={percent}
-                status={status}
-                format={() => `${percent}%`}
-              />
-            </div>
+          {quota != null && (
+            <>
+              <div style={{ textAlign: "center" }}>
+                <Progress
+                  type="circle"
+                  percent={percent}
+                  status={quotaStatus}
+                  format={() => `${percent}%`}
+                />
+              </div>
+              <div style={{ marginTop: "15px" }}>
+                <b>{quota.label}:</b> {human_readable_size(quota.used)} out of{" "}
+                {human_readable_size(quota.size)}
+                <div style={{ color: COLORS.GRAY_M, marginTop: "8px" }}>
+                  Counted quota usage may differ from visible file sizes because
+                  compression, deduplication, snapshots, and storage accounting
+                  do not have the same semantics as browsing `/root` or
+                  `/scratch`.
+                </div>
+              </div>
+            </>
           )}
           {percent >= 100 && (
             <Alert
               style={{ margin: "15px 0" }}
               showIcon
-              title="OVER QUOTA"
+              message="OVER QUOTA"
               description="Delete files or increase your quota."
               type="error"
             />
           )}
-          {usage != null && (
-            <div>
+          {visible.length > 0 && (
+            <>
               <hr />
-              {usage.children
-                .filter((x) => x.bytes / total > 0.01)
-                .map(({ path, bytes }) => {
-                  return (
-                    <div key={path} style={{ width: "100%", display: "flex" }}>
-                      <Progress
-                        style={{ flex: 1, marginRight: "30px" }}
-                        percent={Math.round((100 * bytes) / total)}
-                      />{" "}
-                      <a
-                        style={{ flex: 1 }}
-                        onClick={async () => {
-                          const actions = redux.getProjectActions(project_id);
-                          const fs = actions.fs();
-                          const stats = await fs.stat(path);
-                          const p = stats.isDirectory() ? path : dirname(path);
-                          actions.set_current_path(p);
-                          setExpand(false);
-                        }}
-                      >
-                        {" "}
-                        {path}
-                      </a>
-                    </div>
-                  );
-                })}
-            </div>
-          )}
-          {quota != null && (
-            <div>
-              <hr />
-              <div style={{ display: "flex" }}>
-                <div style={{ marginRight: "30px" }}>
-                  <b>Hard Quota:</b>
-                </div>
-                <Progress
-                  style={{ flex: 1 }}
-                  percent={Math.round(
-                    (100 * quota.used) / Math.max(quota.size, 1),
-                  )}
-                  status={
-                    quota.used / Math.max(quota.size, 1) > 0.6
-                      ? "exception"
-                      : quota.used / Math.max(quota.size, 1) < 0.4
-                        ? "success"
-                        : undefined
-                  }
-                />
+              <div style={{ marginBottom: "10px" }}>
+                <b>Visible storage</b>
               </div>
-              You are using {human_readable_size(quota.used)} out of{" "}
-              {human_readable_size(quota.size)}.{" "}
-              <span style={{ color: "#666" }}>
-                The value {human_readable_size(quota.used)} may be much lower
-                than the total space you are using, due to compression,
-                deduplication, accounting lag, and other factors, and gives you
-                flexibility to remove files before running out of space.
-              </span>
-            </div>
+              {visible.map((bucket) => (
+                <div
+                  key={bucket.key}
+                  style={{
+                    alignItems: "center",
+                    display: "flex",
+                    gap: "10px",
+                    marginBottom: "8px",
+                  }}
+                >
+                  <div style={{ minWidth: "70px" }}>
+                    <Text strong>{relativeLabel(bucket)}</Text>
+                  </div>
+                  <Progress
+                    style={{ flex: 1, marginBottom: 0 }}
+                    percent={bucketPercent(bucket.usage.bytes, visibleTotal)}
+                    showInfo={false}
+                  />
+                  <div style={{ minWidth: "120px", textAlign: "right" }}>
+                    {human_readable_size(bucket.usage.bytes)}
+                  </div>
+                </div>
+              ))}
+            </>
+          )}
+          {selectedBucket != null && (
+            <>
+              <hr />
+              <div style={{ marginBottom: "10px" }}>
+                <Space size={12} wrap>
+                  <b>Find space in</b>
+                  <Segmented
+                    options={visible.map((bucket) => ({
+                      label: relativeLabel(bucket),
+                      value: bucket.key,
+                    }))}
+                    onChange={(value) =>
+                      setSelectedBucketKey(value as "home" | "scratch")
+                    }
+                    value={selectedBucket.key}
+                  />
+                </Space>
+              </div>
+              <div>
+                {selectedBucket.usage.children
+                  .filter(
+                    ({ bytes }) =>
+                      bytes / Math.max(selectedBucket.usage.bytes, 1) > 0.01,
+                  )
+                  .map(({ path, bytes }) => {
+                    const absolutePath = posix.join(selectedBucket.path, path);
+                    return (
+                      <div
+                        key={`${selectedBucket.key}:${path}`}
+                        style={{ width: "100%", display: "flex" }}
+                      >
+                        <Progress
+                          style={{ flex: 1, marginRight: "30px" }}
+                          percent={bucketPercent(
+                            bytes,
+                            Math.max(selectedBucket.usage.bytes, 1),
+                          )}
+                        />
+                        <a
+                          style={{ flex: 1 }}
+                          onClick={async () => {
+                            const actions = redux.getProjectActions(project_id);
+                            const fs = actions.fs();
+                            const stats = await fs.stat(absolutePath);
+                            const nextPath = stats.isDirectory()
+                              ? absolutePath
+                              : dirname(absolutePath);
+                            actions.set_current_path(nextPath);
+                            setExpand(false);
+                          }}
+                        >
+                          {absolutePath}
+                        </a>
+                      </div>
+                    );
+                  })}
+              </div>
+            </>
           )}
         </Modal>
       )}

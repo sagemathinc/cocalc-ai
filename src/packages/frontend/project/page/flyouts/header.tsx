@@ -17,8 +17,6 @@ import { FIXED_TABS_BG_COLOR } from "../activity-bar-tabs";
 import { ActiveHeader } from "./active-header";
 import { FLYOUT_PADDING } from "./consts";
 import { LogHeader } from "./log-header";
-import DiskUsage from "@cocalc/frontend/project/disk-usage/disk-usage";
-import { lite } from "@cocalc/frontend/lite";
 import { useFlyoutNavigation } from "./use-flyout-navigation";
 
 interface Props {
@@ -117,30 +115,22 @@ export function FlyoutHeader(_: Readonly<Props>) {
       case "files":
         return (
           <div style={{ width: "100%" }}>
-            <div style={{ display: "flex" }}>
-              <PathNavigator
-                style={{ flex: 1 }}
-                mode={"flyout"}
-                project_id={project_id}
-                showSourceSelector
-                className={"cc-project-flyout-path-navigator"}
-                currentPath={flyoutNavigation.flyoutPath}
-                historyPath={flyoutNavigation.flyoutHistory}
-                onNavigate={flyoutNavigation.navigateFlyout}
-                canGoBack={flyoutNavigation.canGoBack}
-                canGoForward={flyoutNavigation.canGoForward}
-                onGoBack={flyoutNavigation.goBack}
-                onGoForward={flyoutNavigation.goForward}
-                backHistory={flyoutNavigation.backHistory}
-                forwardHistory={flyoutNavigation.forwardHistory}
-              />
-              {!lite && (
-                <DiskUsage
-                  project_id={project_id}
-                  style={{ marginTop: "-5px" }}
-                />
-              )}
-            </div>
+            <PathNavigator
+              style={{ flex: 1 }}
+              mode={"flyout"}
+              project_id={project_id}
+              showSourceSelector
+              className={"cc-project-flyout-path-navigator"}
+              currentPath={flyoutNavigation.flyoutPath}
+              historyPath={flyoutNavigation.flyoutHistory}
+              onNavigate={flyoutNavigation.navigateFlyout}
+              canGoBack={flyoutNavigation.canGoBack}
+              canGoForward={flyoutNavigation.canGoForward}
+              onGoBack={flyoutNavigation.goBack}
+              onGoForward={flyoutNavigation.goForward}
+              backHistory={flyoutNavigation.backHistory}
+              forwardHistory={flyoutNavigation.forwardHistory}
+            />
           </div>
         );
       case "log":
