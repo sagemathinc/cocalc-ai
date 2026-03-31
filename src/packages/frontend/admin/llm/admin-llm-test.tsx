@@ -433,25 +433,25 @@ export function TestLLMAdmin() {
       </Paragraph>
       <Paragraph>
         <Space>
-          <Input
-            value={test != null ? PROMPTS[test].prompt : ""}
-            disabled={true || querying}
-            onChange={(e) => setTest(parseInt(e.target.value))}
-            placeholder="Enter a query..."
-            addonAfter={
-              <Select
-                onSelect={setTest}
-                defaultValue={0}
-                popupMatchSelectWidth={false}
-              >
-                {PROMPTS.map((p, i) => (
-                  <Select.Option key={i} value={i}>
-                    {trunc_middle(p.prompt, 25)}
-                  </Select.Option>
-                ))}
-              </Select>
-            }
-          />
+          <Space.Compact>
+            <Input
+              value={test != null ? PROMPTS[test].prompt : ""}
+              disabled={true || querying}
+              onChange={(e) => setTest(parseInt(e.target.value))}
+              placeholder="Enter a query..."
+            />
+            <Select
+              onSelect={setTest}
+              defaultValue={0}
+              popupMatchSelectWidth={false}
+            >
+              {PROMPTS.map((p, i) => (
+                <Select.Option key={i} value={i}>
+                  {trunc_middle(p.prompt, 25)}
+                </Select.Option>
+              ))}
+            </Select>
+          </Space.Compact>
           <Button
             type="primary"
             onClick={runSequentialTests}

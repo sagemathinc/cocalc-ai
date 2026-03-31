@@ -409,7 +409,7 @@ export function Full(props: Readonly<Props>): React.JSX.Element {
           placement="bottomRight"
           content={render_help_content()}
           title="Help"
-          overlayStyle={{ maxWidth: "620px" }}
+          styles={{ root: { maxWidth: "620px" } }}
         >
           <Button
             type="text"

@@ -288,6 +288,133 @@ describe("CodexAppServerAgent", () => {
     ]);
   });
 
+  it("resumes the actual Codex thread when repeated turns use the chat-thread alias", async () => {
+    const appServerCalls: Array<{
+      spawn: number;
+      method: string;
+      params: any;
+    }> = [];
+    let spawnCount = 0;
+
+    const makeProc = (spawn: number) =>
+      new FakeCodexAppServerProc((fake, message) => {
+        appServerCalls.push({
+          spawn,
+          method: message.method,
+          params: message.params,
+        });
+        switch (message.method) {
+          case "initialize":
+            fake.sendResponse(message.id, { ok: true });
+            break;
+          case "thread/start":
+            fake.sendResponse(message.id, {
+              thread: { id: "thr-live-1" },
+            });
+            break;
+          case "thread/resume":
+            if (spawn === 1) {
+              fake.stdout.write(
+                `${JSON.stringify({
+                  id: message.id,
+                  error: { message: "thread not found" },
+                })}\n`,
+              );
+            } else {
+              fake.sendResponse(message.id, {
+                thread: { id: message.params?.threadId ?? "thr-live-1" },
+              });
+            }
+            break;
+          case "turn/start": {
+            const turnId = `turn-${spawn}`;
+            fake.sendResponse(message.id, { turn: { id: turnId } });
+            setImmediate(() => {
+              fake.sendNotification("turn/started", {
+                turn: { id: turnId, status: "inProgress" },
+              });
+              fake.sendNotification("item/agentMessage/delta", {
+                threadId: "thr-live-1",
+                turnId,
+                itemId: `msg-${spawn}`,
+                delta: `hello-${spawn}`,
+              });
+              fake.sendNotification("item/completed", {
+                threadId: "thr-live-1",
+                turnId,
+                item: {
+                  type: "agentMessage",
+                  id: `msg-${spawn}`,
+                  text: `hello-${spawn}`,
+                  phase: null,
+                },
+              });
+              fake.sendNotification("turn/completed", {
+                turn: { id: turnId, status: "completed" },
+              });
+            });
+            break;
+          }
+          default:
+            if (typeof message.id === "number") {
+              fake.sendResponse(message.id, {});
+            }
+        }
+      });
+
+    setCodexProjectSpawner({
+      spawnCodexExec: async () => {
+        throw new Error("unexpected codex exec spawn");
+      },
+      spawnCodexAppServer: async () => ({
+        proc: makeProc(++spawnCount) as any,
+        cmd: "fake-codex",
+        args: ["app-server"],
+        cwd: "/tmp/project",
+      }),
+    });
+
+    const agent = new CodexAppServerAgent();
+    const baseRequest = {
+      project_id: "00000000-0000-4000-8000-000000000000",
+      account_id: "00000000-0000-4000-8000-000000000001",
+      session_id: "chat-thread-1",
+      config: {
+        workingDirectory: "/tmp/project",
+      } as any,
+      stream: async () => {},
+    };
+
+    await agent.evaluate({
+      ...baseRequest,
+      prompt: "first turn",
+    });
+    await agent.evaluate({
+      ...baseRequest,
+      prompt: "second turn",
+    });
+
+    expect(
+      appServerCalls.filter((call) => call.method === "thread/start"),
+    ).toHaveLength(1);
+    expect(
+      appServerCalls.filter((call) => call.method === "thread/resume"),
+    ).toEqual([
+      expect.objectContaining({
+        spawn: 1,
+        params: expect.objectContaining({
+          threadId: "chat-thread-1",
+        }),
+      }),
+      expect.objectContaining({
+        spawn: 2,
+        params: expect.objectContaining({
+          threadId: "thr-live-1",
+        }),
+      }),
+    ]);
+  });
+
   it("turns completed app-server file changes into diff activity events", async () => {
     const proc = new FakeCodexAppServerProc((fake, message) => {
       switch (message.method) {

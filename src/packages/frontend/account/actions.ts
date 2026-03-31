@@ -147,7 +147,7 @@ export class AccountActions extends Actions<AccountState> {
     this.setState({ active_page: tab });
     this.push_state(
       getSettingsPushStatePath(
-      getAccountSettingsRouteFromState({
+        getAccountSettingsRouteFromState({
           active_page: tab as SettingsPageType | "preferences",
           active_sub_tab: undefined,
         }),
@@ -216,7 +216,11 @@ export class AccountActions extends Actions<AccountState> {
   }
 
   public set_other_settings(name: string, value: any): void {
-    this.set_account_table({ other_settings: { [name]: value } });
+    const current =
+      this.redux.getStore("account")?.get("other_settings")?.toJS?.() ?? {};
+    this.redux
+      .getTable("account")
+      .set({ other_settings: { ...current, [name]: value } }, "shallow");
   }
 
   set_editor_settings = (name: string, value) => {

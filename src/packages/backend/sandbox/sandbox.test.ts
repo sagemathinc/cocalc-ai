@@ -128,6 +128,46 @@ describeIfLinux("baseline mutator parity behavior", () => {
   });
 });
 
+describe("describeFile", () => {
+  let home;
+  let fs;
+
+  beforeEach(async () => {
+    home = await mkdtemp(join(tempDir, "describe-file-"));
+    fs = new SandboxedFilesystem(home);
+  });
+
+  it("detects directories and empty files", async () => {
+    await mkdir(join(home, "dir"));
+    await writeFile(join(home, "empty.txt"), "");
+
+    expect(await fs.describeFile("dir")).toEqual({
+      mime: "inode/directory",
+    });
+    expect(await fs.describeFile("empty.txt")).toEqual({
+      mime: "inode/x-empty",
+    });
+  });
+
+  it("returns a text preview for textual files", async () => {
+    await writeFile(join(home, "plain.txt"), "hello there\nmore text\n");
+
+    await expect(fs.describeFile("plain.txt")).resolves.toMatchObject({
+      mime: "text/plain",
+      snippet: "hello there\nmore text\n",
+    });
+  });
+
+  it("returns a hex preview for binary files", async () => {
+    await writeFile(join(home, "blob.bin"), Buffer.from([0, 1, 2, 65, 66, 67]));
+
+    await expect(fs.describeFile("blob.bin")).resolves.toMatchObject({
+      mime: "application/octet-stream",
+      snippet: expect.stringContaining("00000000"),
+    });
+  });
+});
+
 describe("sync-fs watch identity canonicalization", () => {
   let home;
   let fs;
@@ -1161,6 +1201,24 @@ describeIfLinux("rootfs option sandbox", () => {
 
   it("realpath returns absolute style paths when rootfs mode is active", async () => {
     expect(await fs.realpath("/tmp/from-root.txt")).toBe("/tmp/from-root.txt");
+  });
+
+  it("canonicalSyncFsPath returns the mounted host path for rootfs files", async () => {
+    if (fs == null) {
+      home = join(tempDir, "test-rootfs-home-canonical");
+      rootfs = join(tempDir, "test-rootfs-mounted-canonical");
+      await mkdir(home, { recursive: true });
+      await mkdir(rootfs, { recursive: true });
+      fs = new SandboxedFilesystem(home, { rootfs });
+      await fs.mkdir("/tmp");
+      await fs.writeFile("/tmp/from-root.txt", "from-root");
+    }
+    expect(await (fs as any).canonicalSyncFsPath("/tmp/from-root.txt")).toBe(
+      join(rootfs, "tmp", "from-root.txt"),
+    );
+    expect(
+      await (fs as any).canonicalSyncIdentityPath("/tmp/from-root.txt"),
+    ).toBe("/tmp/from-root.txt");
   });
 
   it("realpath preserves /root absolute style for home files", async () => {

@@ -67,6 +67,7 @@ const PADDING_TOP = 6;
 const MIN_INPUT_HEIGHT = IS_MOBILE ? 44 : 38;
 const MODE_SWITCH_OVERLAY_HEIGHT = 22;
 const INSTRUCTIONS_HEIGHT = 24;
+const AUTO_GROW_SHRINK_DELAY_MS = 120;
 
 const MENTION_CSS =
   "color:#7289da; background:rgba(114,137,218,.1); border-radius: 3px; padding: 0 2px;";
@@ -281,6 +282,20 @@ export function MarkdownInput(props: Props) {
   }, [autoGrowMinHeight, explicitEditorHeight]);
 
   const maxHeightRef = useRef<number>(initialMinHeight * 2);
+  const appliedAutoGrowHeightRef = useRef<number | null>(null);
+  const lastAutoGrowGrowthAtRef = useRef<number>(0);
+  const pendingAutoGrowShrinkRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
+  const pendingAutoGrowShrinkTargetRef = useRef<number | null>(null);
+
+  const clearPendingAutoGrowShrink = useCallback(() => {
+    if (pendingAutoGrowShrinkRef.current != null) {
+      clearTimeout(pendingAutoGrowShrinkRef.current);
+      pendingAutoGrowShrinkRef.current = null;
+    }
+    pendingAutoGrowShrinkTargetRef.current = null;
+  }, []);
 
   const refreshMaxHeight = useCallback(() => {
     let nextMaxHeight: number;
@@ -344,6 +359,15 @@ export function MarkdownInput(props: Props) {
     return Number.isFinite(height) && height > 0 ? height : null;
   }, [editorHostRef]);
 
+  const applyAutoGrowOverflow = useCallback(
+    (editor: CodeMirror.Editor, allowInternalScroll: boolean) => {
+      const scroller = editor.getScrollerElement?.() as HTMLElement | null;
+      if (scroller == null) return;
+      scroller.style.overflowY = allowInternalScroll ? "auto" : "hidden";
+    },
+    [],
+  );
+
   const ensureCaretVisibleIfNeeded = useCallback(
     (editor: CodeMirror.Editor) => {
       const scrollInfo = editor.getScrollInfo();
@@ -403,19 +427,53 @@ export function MarkdownInput(props: Props) {
         const appliedMinHeight = Math.min(initialMinHeight, clamped);
         const appliedMaxHeight =
           availableHeight != null ? Math.min(maxHeight, clamped) : maxHeight;
-        editor.setSize(null, clamped);
-        applyWrapperDimensions(editor, {
-          height: `${clamped}px`,
-          minHeight: `${appliedMinHeight}px`,
-          maxHeight: `${appliedMaxHeight}px`,
-        });
+        const allowInternalScroll = desired > clamped + 1;
+        const applyHeight = () => {
+          editor.setSize(null, clamped);
+          applyWrapperDimensions(editor, {
+            height: `${clamped}px`,
+            minHeight: `${appliedMinHeight}px`,
+            maxHeight: `${appliedMaxHeight}px`,
+          });
+          applyAutoGrowOverflow(editor, allowInternalScroll);
+          appliedAutoGrowHeightRef.current = clamped;
+        };
+        const currentHeight = appliedAutoGrowHeightRef.current;
+        if (currentHeight == null || clamped > currentHeight) {
+          clearPendingAutoGrowShrink();
+          lastAutoGrowGrowthAtRef.current = Date.now();
+          applyHeight();
+        } else if (clamped < currentHeight) {
+          const shouldDeferShrink =
+            explicitEditorHeight == null && availableHeight == null;
+          const elapsed = Date.now() - lastAutoGrowGrowthAtRef.current;
+          if (!shouldDeferShrink || elapsed >= AUTO_GROW_SHRINK_DELAY_MS) {
+            clearPendingAutoGrowShrink();
+            applyHeight();
+          } else if (pendingAutoGrowShrinkTargetRef.current !== clamped) {
+            clearPendingAutoGrowShrink();
+            pendingAutoGrowShrinkTargetRef.current = clamped;
+            pendingAutoGrowShrinkRef.current = setTimeout(() => {
+              pendingAutoGrowShrinkRef.current = null;
+              pendingAutoGrowShrinkTargetRef.current = null;
+              syncCodeMirrorLayout();
+            }, AUTO_GROW_SHRINK_DELAY_MS - elapsed);
+          }
+          applyAutoGrowOverflow(editor, false);
+        } else {
+          clearPendingAutoGrowShrink();
+          applyAutoGrowOverflow(editor, allowInternalScroll);
+        }
       } else {
+        clearPendingAutoGrowShrink();
+        appliedAutoGrowHeightRef.current = null;
         editor.setSize(null, "100%");
         applyWrapperDimensions(editor, {
           height: "100%",
           minHeight: "100%",
           maxHeight: "100%",
         });
+        applyAutoGrowOverflow(editor, true);
       }
 
       editor.refresh();
@@ -426,8 +484,11 @@ export function MarkdownInput(props: Props) {
       }
     },
     [
+      applyAutoGrowOverflow,
       applyWrapperDimensions,
+      clearPendingAutoGrowShrink,
       ensureCaretVisibleIfNeeded,
+      explicitEditorHeight,
       initialMinHeight,
       isAutoGrow,
       clampAutoGrowToHost,
@@ -504,6 +565,12 @@ export function MarkdownInput(props: Props) {
       cmInstance.off("change", handleAutoGrowContentChange);
     };
   }, [handleAutoGrowContentChange, isAutoGrow]);
+
+  useEffect(() => {
+    return () => {
+      clearPendingAutoGrowShrink();
+    };
+  }, [clearPendingAutoGrowShrink]);
 
   useEffect(() => {
     let cancelled = false;
@@ -906,8 +973,11 @@ export function MarkdownInput(props: Props) {
       mergeHelperRef.current.reset(value ?? "");
     } else {
       const saver: any = saveValue;
-      if (typeof saver?.flush === "function") {
-        saver.flush();
+      if (typeof saver?.cancel === "function") {
+        // External value changes are authoritative. Flushing a pending debounced
+        // local save here can replay stale editor contents back into the parent
+        // right as the parent is clearing or replacing the value.
+        saver.cancel();
       }
       mergeHelperRef.current.handleRemote({
         remote: value ?? "",

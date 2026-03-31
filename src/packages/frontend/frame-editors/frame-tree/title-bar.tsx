@@ -575,10 +575,7 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
     return (
       <Button
         key={"time-travel-button"}
-        style={{
-          ...button_style(),
-          ...(!darkMode ? { color: "#333", background: "#5bc0de" } : undefined),
-        }}
+        style={button_style()}
         size={button_size()}
         onClick={(event) => {
           try {
@@ -688,7 +685,6 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
           props.editor_actions.save(true);
           props.actions.focus(props.id);
         }}
-        type={darkMode ? "default" : undefined}
       />
     );
   }
@@ -1217,7 +1213,7 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
       <Dropdown
         trigger={["contextMenu"]}
         menu={{ items }}
-        overlayStyle={{ maxWidth: "400px" }}
+        styles={{ root: { maxWidth: "400px" } }}
       >
         {bar}
       </Dropdown>
@@ -1363,9 +1359,9 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
   style = copy(title_bar_style);
   style.background = is_active ? COL_BAR_BACKGROUND : COL_BAR_BACKGROUND_DARK;
   if (!props.is_only && !props.is_full) {
-    style.maxHeight = "34px";
+    style.maxHeight = "30px";
   } else {
-    style.maxHeight = "38px";
+    style.maxHeight = "34px";
   }
   // position relative, so we can absolute position the
   // frame controls to the right

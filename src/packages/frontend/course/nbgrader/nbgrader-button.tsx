@@ -186,7 +186,7 @@ function SyncGrades({ actions, assignment_id, running }: SyncGradesProps) {
           commit: true,
         });
       }}
-      overlayStyle={{ maxWidth: "500px" }}
+      styles={{ root: { maxWidth: "500px" } }}
     >
       <Button
         style={{

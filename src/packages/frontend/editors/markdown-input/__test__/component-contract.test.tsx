@@ -25,6 +25,7 @@ async function renderMarkdownInput(element: Parameters<typeof render>[0]) {
 function createMockEditor(node?: HTMLTextAreaElement | null) {
   const handlers: HandlerMap = {};
   let currentValue = "";
+  let renderedHeightOverride: number | null = null;
   let currentCursor = { line: 0, ch: 0 };
   let currentSelections = [
     {
@@ -42,11 +43,15 @@ function createMockEditor(node?: HTMLTextAreaElement | null) {
   sizer.getBoundingClientRect = () =>
     ({
       top: 0,
-      bottom: Math.max(20, currentValue.split("\n").length * 20),
+      bottom:
+        renderedHeightOverride ??
+        Math.max(20, currentValue.split("\n").length * 20),
       left: 0,
       right: 300,
       width: 300,
-      height: Math.max(20, currentValue.split("\n").length * 20),
+      height:
+        renderedHeightOverride ??
+        Math.max(20, currentValue.split("\n").length * 20),
       x: 0,
       y: 0,
       toJSON: () => undefined,
@@ -82,6 +87,9 @@ function createMockEditor(node?: HTMLTextAreaElement | null) {
     },
     __setValue(value: string) {
       currentValue = value;
+    },
+    __setRenderedHeight(height: number | null) {
+      renderedHeightOverride = height;
     },
     __setScrollInfo(info: Partial<typeof currentScrollInfo>) {
       currentScrollInfo = { ...currentScrollInfo, ...info };
@@ -366,6 +374,27 @@ describe("MarkdownInput CodeMirror wrapper contract", () => {
     ]);
   });
 
+  it("does not flush stale local text back upstream when props clear the editor", async () => {
+    const onChange = jest.fn();
+    const { rerender } = await renderMarkdownInput(
+      <MarkdownInput value="hello" onChange={onChange} saveDebounceMs={100} />,
+    );
+
+    act(() => {
+      latestEditor.__setValue("hello");
+      latestEditor.__trigger("change");
+    });
+    expect(onChange).not.toHaveBeenCalled();
+
+    rerender(
+      <MarkdownInput value="" onChange={onChange} saveDebounceMs={100} />,
+    );
+
+    expect(onChange).not.toHaveBeenCalledWith("hello");
+    expect(latestEditor.setValue).toHaveBeenCalledWith("");
+    expect(latestEditor.getValue()).toBe("");
+  });
+
   it("keeps undo and redo local when explicit local ownership is requested", async () => {
     await renderMarkdownInput(
       <MarkdownInput
@@ -518,5 +547,68 @@ describe("MarkdownInput CodeMirror wrapper contract", () => {
     expect(latestEditor.setSize).toHaveBeenLastCalledWith(null, 120);
     expect(wrapper.style.height).toBe("120px");
     expect(wrapper.style.minHeight).toBe("120px");
+  });
+
+  it("delays auto-grow shrink decisions to avoid resize flicker", async () => {
+    const { rerender } = await renderMarkdownInput(
+      <MarkdownInput
+        value={"1\n2\n3\n4\n5\n6"}
+        onChange={() => {}}
+        saveDebounceMs={0}
+        autoGrow
+      />,
+    );
+
+    expect(latestEditor.setSize).toHaveBeenLastCalledWith(null, 132);
+
+    act(() => {
+      latestEditor.__setRenderedHeight(20);
+    });
+
+    rerender(
+      <MarkdownInput
+        value={"1\n2\n3\n4\n5\n6"}
+        onChange={() => {}}
+        saveDebounceMs={0}
+        autoGrow
+        refresh={1}
+      />,
+    );
+
+    expect(latestEditor.setSize).toHaveBeenLastCalledWith(null, 132);
+
+    act(() => {
+      jest.advanceTimersByTime(120);
+    });
+
+    expect(latestEditor.setSize).toHaveBeenLastCalledWith(null, 38);
+  });
+
+  it("hides the auto-grow scrollbar until the editor is capped", async () => {
+    const { rerender } = await renderMarkdownInput(
+      <MarkdownInput
+        value={"1\n2\n3"}
+        onChange={() => {}}
+        saveDebounceMs={0}
+        autoGrow
+      />,
+    );
+
+    const scroller = latestEditor.getScrollerElement() as HTMLElement;
+    expect(scroller.style.overflowY).toBe("hidden");
+
+    rerender(
+      <MarkdownInput
+        value={"1\n2\n3\n4\n5\n6\n7\n8\n9\n10"}
+        onChange={() => {}}
+        saveDebounceMs={0}
+        autoGrow
+        autoGrowMaxHeight={80}
+        refresh={1}
+      />,
+    );
+
+    expect(latestEditor.setSize).toHaveBeenLastCalledWith(null, 80);
+    expect(scroller.style.overflowY).toBe("auto");
   });
 });

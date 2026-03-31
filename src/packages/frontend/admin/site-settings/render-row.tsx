@@ -260,7 +260,7 @@ function RowHelp({ help }: { help?: string }) {
       }
       trigger={["hover", "click"]}
       placement="right"
-      overlayStyle={{ maxWidth: "500px" }}
+      styles={{ root: { maxWidth: "500px" } }}
     >
       <Icon style={{ color: COLORS.GRAY }} name="question-circle" />
     </Popover>

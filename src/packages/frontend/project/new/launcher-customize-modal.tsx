@@ -15,7 +15,6 @@ import {
 } from "antd";
 import { useEffect, useState, type ReactNode } from "react";
 import { Icon } from "@cocalc/frontend/components";
-import type { NamedServerName } from "@cocalc/util/types/servers";
 import {
   DragHandle,
   SortableItem,
@@ -23,13 +22,8 @@ import {
 } from "@cocalc/frontend/components/sortable-list";
 import { file_associations } from "@cocalc/frontend/file-associations";
 import { file_options } from "@cocalc/frontend/editor-tmp";
-import { keys } from "@cocalc/util/misc";
-import {
-  APP_CATALOG,
-  APP_MAP,
-  QUICK_CREATE_CATALOG,
-  QUICK_CREATE_MAP,
-} from "./launcher-catalog";
+import { capitalize, keys } from "@cocalc/util/misc";
+import { QUICK_CREATE_CATALOG, QUICK_CREATE_MAP } from "./launcher-catalog";
 import {
   LauncherProjectDefaults,
   LauncherUserPrefs,
@@ -48,16 +42,16 @@ function reorder<T>(list: T[], oldIndex: number, newIndex: number): T[] {
   return move(list, oldIndex, newIndex - oldIndex);
 }
 
+function launcherLabel(value?: string): string {
+  return capitalize(value ?? "");
+}
+
 interface Props {
   open: boolean;
   onClose: () => void;
   initialQuickCreate: string[];
-  initialApps: NamedServerName[];
   userBaseQuickCreate?: string[];
-  userBaseApps?: NamedServerName[];
   projectBaseQuickCreate?: string[];
-  projectBaseApps?: NamedServerName[];
-  globalDefaults?: LauncherProjectDefaults;
   onSaveUser?: (prefs: LauncherUserPrefs | null) => void;
   onSaveProject?: (prefs: LauncherProjectDefaults) => void;
   canEditProjectDefaults?: boolean;
@@ -70,19 +64,14 @@ export interface LauncherContributionLayer {
   title: string;
   quickCreateAdd?: string[];
   quickCreateRemove?: string[];
-  appsAdd?: string[];
-  appsRemove?: string[];
 }
 
 export function LauncherCustomizeModal({
   open,
   onClose,
   initialQuickCreate,
-  initialApps,
   userBaseQuickCreate,
-  userBaseApps,
   projectBaseQuickCreate,
-  projectBaseApps,
   onSaveUser,
   onSaveProject,
   canEditProjectDefaults = false,
@@ -90,19 +79,15 @@ export function LauncherCustomizeModal({
   contributions = [],
 }: Props) {
   const [quickCreate, setQuickCreate] = useState<string[]>([]);
-  const [apps, setApps] = useState<NamedServerName[]>([]);
   const [showMergeDetails, setShowMergeDetails] = useState<boolean>(false);
   const userBaseQuick = userBaseQuickCreate ?? initialQuickCreate;
-  const userBaseAppList = userBaseApps ?? initialApps;
   const projectBaseQuick = projectBaseQuickCreate ?? userBaseQuick;
-  const projectBaseAppList = projectBaseApps ?? userBaseApps ?? initialApps;
 
   useEffect(() => {
     if (!open) return;
     setQuickCreate(initialQuickCreate);
-    setApps(initialApps);
     setShowMergeDetails(false);
-  }, [open, initialQuickCreate, initialApps]);
+  }, [open, initialQuickCreate]);
 
   function toggleQuickCreate(id: string, checked: boolean) {
     if (checked) {
@@ -114,16 +99,6 @@ export function LauncherCustomizeModal({
     }
   }
 
-  function toggleApp(id: NamedServerName, checked: boolean) {
-    if (checked) {
-      if (!apps.includes(id)) {
-        setApps([...apps, id]);
-      }
-    } else {
-      setApps(apps.filter((item) => item !== id));
-    }
-  }
-
   function saveUser() {
     if (!onSaveUser) {
       onClose();
@@ -131,13 +106,10 @@ export function LauncherCustomizeModal({
     }
     const addQuick = quickCreate.filter((id) => !userBaseQuick.includes(id));
     const removeQuick = userBaseQuick.filter((id) => !quickCreate.includes(id));
-    const addApps = apps.filter((id) => !userBaseAppList.includes(id));
-    const removeApps = userBaseAppList.filter((id) => !apps.includes(id));
     onSaveUser({
       quickCreate: addQuick,
-      apps: addApps,
       hiddenQuickCreate: removeQuick,
-      hiddenApps: removeApps,
+      quickCreateOrder: quickCreate,
     });
     onClose();
   }
@@ -156,13 +128,10 @@ export function LauncherCustomizeModal({
     const removeQuick = projectBaseQuick.filter(
       (id) => !quickCreate.includes(id),
     );
-    const addApps = apps.filter((id) => !projectBaseAppList.includes(id));
-    const removeApps = projectBaseAppList.filter((id) => !apps.includes(id));
     onSaveProject?.({
       quickCreate: addQuick,
-      apps: addApps as string[],
       hiddenQuickCreate: removeQuick,
-      hiddenApps: removeApps,
+      quickCreateOrder: quickCreate,
     });
     onClose();
   }
@@ -181,7 +150,6 @@ export function LauncherCustomizeModal({
   const hiddenQuick = QUICK_CREATE_CATALOG.filter(
     (spec) => !quickCreate.includes(spec.id),
   );
-  const hiddenApps = APP_CATALOG.filter((spec) => !apps.includes(spec.id));
 
   function renderQuickRow(
     id: string,
@@ -195,7 +163,7 @@ export function LauncherCustomizeModal({
         const data = file_options(`x.${id}`);
         return {
           icon: data.icon ?? "file",
-          label: data.name ?? id,
+          label: launcherLabel(data.name ?? id),
         };
       })();
     return (
@@ -232,59 +200,11 @@ export function LauncherCustomizeModal({
     );
   }
 
-  function renderAppRow(
-    id: NamedServerName,
-    checked: boolean,
-    draggable: boolean,
-    clickable: boolean,
-  ) {
-    const spec = APP_MAP[id];
-    if (!spec) return null;
-    return (
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          padding: "4px 0",
-          cursor: clickable ? "pointer" : undefined,
-        }}
-        onClick={
-          clickable
-            ? () => {
-                toggleApp(id, true);
-              }
-            : undefined
-        }
-      >
-        <Space>
-          {draggable ? (
-            <DragHandle id={id} />
-          ) : (
-            <span style={{ width: "18px", display: "inline-block" }} />
-          )}
-          <Icon name={spec.icon} />
-          <span>{spec.label}</span>
-        </Space>
-        <Checkbox
-          checked={checked}
-          onChange={(e) => toggleApp(id, e.target.checked)}
-        />
-      </div>
-    );
-  }
-
   function quickLabel(id: string): string {
     const spec = QUICK_CREATE_MAP[id];
     if (spec) return spec.label;
     const data = file_options(`x.${id}`);
-    return data.name ?? id;
-  }
-
-  function appLabel(id: string): string {
-    const spec = APP_MAP[id as NamedServerName];
-    if (spec) return spec.label;
-    return id;
+    return launcherLabel(data.name ?? id);
   }
 
   function renderTags(
@@ -361,7 +281,7 @@ export function LauncherCustomizeModal({
       {showMergeDetails && (
         <div style={{ marginBottom: "14px" }}>
           <Typography.Paragraph style={{ marginBottom: "6px" }}>
-            Launcher items are merged additively in this order: built-in
+            Quick Create entries are merged additively in this order: built-in
             defaults, site defaults, project defaults, account defaults, then
             project-user overrides.
           </Typography.Paragraph>
@@ -409,28 +329,12 @@ export function LauncherCustomizeModal({
                     `${layer.key}-qremove`,
                   )}
                 </div>
-                <div style={{ marginTop: "4px" }}>
-                  <Typography.Text type="secondary">Apps + </Typography.Text>
-                  {renderTags(
-                    layer.appsAdd,
-                    "green",
-                    appLabel,
-                    `${layer.key}-aadd`,
-                  )}
-                </div>
-                <div style={{ marginTop: "4px" }}>
-                  <Typography.Text type="secondary">Apps - </Typography.Text>
-                  {renderTags(
-                    layer.appsRemove,
-                    "red",
-                    appLabel,
-                    `${layer.key}-aremove`,
-                  )}
-                </div>
               </div>
             ))}
             <div>
-              <Typography.Text strong>Effective launcher state</Typography.Text>
+              <Typography.Text strong>
+                Effective quick create state
+              </Typography.Text>
               <div style={{ marginTop: "4px" }}>
                 <Typography.Text type="secondary">
                   Quick Create:{" "}
@@ -441,10 +345,6 @@ export function LauncherCustomizeModal({
                   quickLabel,
                   "effective-quick",
                 )}
-              </div>
-              <div style={{ marginTop: "4px" }}>
-                <Typography.Text type="secondary">Apps: </Typography.Text>
-                {renderTags(apps, "success", appLabel, "effective-apps")}
               </div>
             </div>
           </div>
@@ -476,24 +376,18 @@ export function LauncherCustomizeModal({
               </SortableItem>
             ))}
           </SortableList>
-          {hiddenQuick.length > 0 && (
-            <div style={{ marginTop: "8px" }}>
-              <Typography.Text type="secondary">Available</Typography.Text>
-              {hiddenQuick.map((spec) => (
-                <div key={spec.id}>
-                  {renderQuickRow(spec.id, false, false, true)}
-                </div>
-              ))}
-            </div>
-          )}
-          <Divider style={{ margin: "10px 0" }} />
+        </div>
+        <div>
+          <Typography.Title level={5} style={{ marginBottom: "6px" }}>
+            Available
+          </Typography.Title>
           <Typography.Text type="secondary">
-            Add more file types
+            Search more available launchers
           </Typography.Text>
           <Select<string>
             showSearch
             allowClear
-            placeholder="Search file types..."
+            placeholder="Search more launchers..."
             style={{ width: "100%", marginTop: "6px" }}
             value={undefined}
             options={(() => {
@@ -514,7 +408,8 @@ export function LauncherCustomizeModal({
                   value,
                   label: (
                     <span>
-                      <Icon name={info.icon ?? "file"} /> {info.name ?? value}{" "}
+                      <Icon name={info.icon ?? "file"} />{" "}
+                      {launcherLabel(info.name ?? value)}{" "}
                       <span style={{ opacity: 0.6 }}>({value})</span>
                     </span>
                   ),
@@ -528,36 +423,12 @@ export function LauncherCustomizeModal({
               }
             }}
           />
-        </div>
-        <div>
-          <Typography.Title level={5} style={{ marginBottom: "6px" }}>
-            Apps
-          </Typography.Title>
-          <SortableList
-            items={apps}
-            onDragStop={(oldIndex, newIndex) =>
-              setApps(reorder(apps, oldIndex, newIndex) as NamedServerName[])
-            }
-            Item={({ id }: { id: string }) =>
-              renderAppRow(id as NamedServerName, true, true, false)
-            }
-          >
-            {apps.map((id) => (
-              <SortableItem key={id} id={id}>
-                {renderAppRow(id, true, true, false)}
-              </SortableItem>
-            ))}
-          </SortableList>
-          {hiddenApps.length > 0 && (
-            <div style={{ marginTop: "8px" }}>
-              <Typography.Text type="secondary">Available</Typography.Text>
-              {hiddenApps.map((spec) => (
-                <div key={spec.id}>
-                  {renderAppRow(spec.id, false, false, true)}
-                </div>
-              ))}
+          <Divider style={{ margin: "10px 0" }} />
+          {hiddenQuick.map((spec) => (
+            <div key={spec.id}>
+              {renderQuickRow(spec.id, false, false, true)}
             </div>
-          )}
+          ))}
         </div>
       </div>
     </Modal>

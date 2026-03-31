@@ -30,6 +30,13 @@ export interface CodexSessionConfig {
   codexPathOverride?: string;
 }
 
+export function normalizeCodexSessionId(
+  sessionId?: string | null,
+): string | undefined {
+  const trimmed = `${sessionId ?? ""}`.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
 export function resolveCodexSessionMode(
   config?: CodexSessionConfig,
 ): CodexSessionMode {

@@ -653,13 +653,16 @@ export class ProjectActions extends Actions<ProjectStoreState> {
         relativePath: normalized.replace(/^\/+/, "").replace(/\/+$/, ""),
       };
     }
-    if (normalized === "/") {
-      return { relativePath: "" };
-    }
-    const absolute = normalizeAbsolutePath(
-      normalized,
+    const homeDirectory = normalizeAbsolutePath(
       this.getHomeDirectoryForPaths(),
     );
+    if (
+      normalized === "/" ||
+      normalizeAbsolutePath(normalized, homeDirectory) === homeDirectory
+    ) {
+      return { relativePath: "" };
+    }
+    const absolute = normalizeAbsolutePath(normalized, homeDirectory);
     return {
       relativePath: absolute === "/" ? "" : absolute.slice(1),
     };
@@ -681,12 +684,15 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       normalized = trimmed.slice("files/".length);
     }
     if (normalized === "" || normalized === "." || normalized === "/") {
-      return "/";
+      return this.getHomeDirectoryForPaths();
     }
     if (this.isVirtualListingPath(normalized)) {
       return normalized;
     }
-    return normalizeAbsolutePath(`/${normalized}`);
+    return normalizeAbsolutePath(
+      `/${normalized}`,
+      this.getHomeDirectoryForPaths(),
+    );
   };
 
   private toAuxTabPath = (tab: "new" | "search", path: string): string => {
@@ -694,6 +700,56 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       encodeRelativePath: (nextPath) =>
         this.getPathRoute(nextPath).relativePath,
     });
+  };
+
+  private replaceFallbackRootWithHome = (homeDirectory: string): void => {
+    const store = this.get_store();
+    if (store == null) return;
+    const normalizedHome = normalizeAbsolutePath(homeDirectory);
+    if (normalizedHome === "/") return;
+
+    const nextState: Partial<ProjectStoreState> = {};
+    const pathKeys: (keyof ProjectStoreState)[] = [
+      "current_path_abs",
+      "history_path_abs",
+      "explorer_browsing_path_abs",
+      "explorer_history_path_abs",
+      "flyout_browsing_path_abs",
+      "flyout_history_path_abs",
+      "new_page_path_abs",
+      "flyout_new_path_abs",
+    ];
+
+    for (const key of pathKeys) {
+      if (store.get(key) === "/") {
+        nextState[key] = normalizedHome as any;
+      }
+    }
+
+    if (Object.keys(nextState).length > 0) {
+      this.setState(nextState);
+    }
+  };
+
+  private resolveConcreteHomeDirectory = async (): Promise<string> => {
+    const knownHome = normalizeAbsolutePath(this.getHomeDirectoryForPaths());
+    if (knownHome !== "/") {
+      return knownHome;
+    }
+    try {
+      await this.init_configuration("main");
+    } catch (err) {
+      console.warn(
+        "project_actions::resolveConcreteHomeDirectory failed",
+        err,
+        this.project_id,
+      );
+    }
+    const resolvedHome = normalizeAbsolutePath(this.getHomeDirectoryForPaths());
+    if (resolvedHome !== "/") {
+      this.replaceFallbackRootWithHome(resolvedHome);
+    }
+    return resolvedHome;
   };
 
   set_url_to_path(current_path, hash?: string): void {
@@ -832,11 +888,11 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     const change: any = { active_project_tab: key };
     switch (key) {
       case "files":
-        // From project-home, opening Explorer should default to HOME instead of "/".
-        // Keep "/" if user already explicitly navigated there.
+        // Treat "/" as a fallback state. Re-entering the files tab should land in
+        // HOME unless the user is already on a concrete filesystem path.
         const currentPathAbs = store.get("current_path_abs") ?? "/";
         const filesPathAbs =
-          prev_active_project_tab === "home" && currentPathAbs === "/"
+          currentPathAbs === "/"
             ? this.getHomeDirectoryForPaths()
             : currentPathAbs;
         if (filesPathAbs !== currentPathAbs) {
@@ -844,6 +900,21 @@ export class ProjectActions extends Actions<ProjectStoreState> {
         }
         if (opts.change_history) {
           this.set_url_to_path(filesPathAbs, "");
+        }
+        if (filesPathAbs === "/") {
+          void this.resolveConcreteHomeDirectory().then((resolvedHome) => {
+            const latestStore = this.get_store();
+            if (
+              resolvedHome !== "/" &&
+              latestStore?.get("active_project_tab") === "files" &&
+              latestStore.get("current_path_abs") === "/"
+            ) {
+              this.set_current_path(resolvedHome);
+              if (opts.change_history) {
+                this.set_url_to_path(resolvedHome, "");
+              }
+            }
+          });
         }
         break;
 
@@ -1731,10 +1802,10 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     path = normalize(path);
     // Be forgiving if a route-like path is passed here.
     if (path === "files") {
-      path = "/";
+      path = this.getHomeDirectoryForPaths();
     } else if (path.startsWith("files/")) {
       const rel = path.replace(/^files\/+/, "");
-      path = rel.length === 0 ? "/" : `/${rel}`;
+      path = rel.length === 0 ? this.getHomeDirectoryForPaths() : `/${rel}`;
     }
     try {
       await this.ensureProjectIsOpen(foreground_project);
@@ -2073,6 +2144,28 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     this.set_file_action(action);
   };
 
+  showFileActionPanelForPaths = async ({
+    paths,
+    action,
+  }: {
+    paths: string[];
+    action: FileAction;
+  }) => {
+    const uniquePaths = Array.from(new Set(paths.filter(Boolean)));
+    if (uniquePaths.length === 0) {
+      return;
+    }
+    if (uniquePaths.length === 1) {
+      await this.showFileActionPanel({ path: uniquePaths[0], action });
+      return;
+    }
+
+    this.set_all_files_unchecked();
+    await this.open_directory(misc.path_split(uniquePaths[0]).head);
+    this.set_file_list_checked(uniquePaths);
+    this.set_file_action(action);
+  };
+
   private async get_from_web(opts: {
     url: string;
     dest?: string;
@@ -2248,6 +2341,8 @@ export class ProjectActions extends Actions<ProjectStoreState> {
         return;
       }
 
+      const previousHomeDirectory = this.getHomeDirectoryForPaths();
+
       this.setState(
         fromJS({
           configuration: next,
@@ -2256,12 +2351,17 @@ export class ProjectActions extends Actions<ProjectStoreState> {
         } as any),
       );
 
-      // Keep project-home aligned with HOME once capabilities arrive.
-      if (store.get("active_project_tab") === "home") {
-        const homeDirectory = (next.get("main") as any)?.capabilities
-          ?.homeDirectory;
-        if (typeof homeDirectory === "string" && homeDirectory.length > 0) {
-          this.set_current_path(homeDirectory);
+      const homeDirectory = (next.get("main") as any)?.capabilities
+        ?.homeDirectory;
+      if (typeof homeDirectory === "string" && homeDirectory.length > 0) {
+        const normalizedHomeDirectory = normalizeAbsolutePath(homeDirectory);
+        if (previousHomeDirectory === "/" && normalizedHomeDirectory !== "/") {
+          this.replaceFallbackRootWithHome(normalizedHomeDirectory);
+        }
+
+        // Keep project-home aligned with HOME once capabilities arrive.
+        if (store.get("active_project_tab") === "home") {
+          this.set_current_path(normalizedHomeDirectory);
         }
       }
 
@@ -3001,12 +3101,22 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     change_history = true,
     fragmentId?: FragmentId,
   ): Promise<void> => {
-    const route = parseProjectTarget(target, {
+    let route = parseProjectTarget(target, {
       decodeDirectoryPath: (path) => this.fromUrlDirectoryPath(path),
     });
     if (route == null) {
       console.warn(`project/load_target: don't know segment ${target}`);
       return;
+    }
+
+    if (
+      route.kind === "directory" &&
+      (target === "files" || target === "files/")
+    ) {
+      const homeDirectory = await this.resolveConcreteHomeDirectory();
+      if (homeDirectory !== "/") {
+        route = { kind: "directory", path: homeDirectory };
+      }
     }
 
     switch (route.kind) {

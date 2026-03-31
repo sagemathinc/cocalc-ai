@@ -165,9 +165,7 @@ export interface CustomizeState {
   project_hosts_self_host_alpha_enabled?: boolean;
   project_hosts_dns?: string;
   launcher_default_quick_create?: List<string>;
-  launcher_default_apps?: List<string>;
   launcher_remove_quick_create?: List<string>;
-  launcher_remove_apps?: List<string>;
   project_rootfs_default_image?: string;
   project_rootfs_default_image_gpu?: string;
   project_rootfs_prepull_images?: string;

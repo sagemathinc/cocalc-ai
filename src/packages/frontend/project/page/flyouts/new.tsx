@@ -27,7 +27,6 @@ import ProgressEstimate from "@cocalc/frontend/components/progress-estimate";
 import { file_options } from "@cocalc/frontend/editor-tmp";
 import { file_associations } from "@cocalc/frontend/file-associations";
 import { PathNavigator } from "@cocalc/frontend/project/explorer/path-navigator";
-import type { NamedServerName } from "@cocalc/util/types/servers";
 import {
   NEW_FILETYPE_ICONS,
   isNewFiletypeIconName,
@@ -37,9 +36,7 @@ import { NewFileDropdown } from "@cocalc/frontend/project/new/new-file-dropdown"
 import { LauncherCustomizeModal } from "@cocalc/frontend/project/new/launcher-customize-modal";
 import {
   LAUNCHER_GLOBAL_DEFAULTS,
-  LAUNCHER_SITE_REMOVE_APPS_KEY,
   LAUNCHER_SITE_REMOVE_QUICK_KEY,
-  LAUNCHER_SITE_DEFAULTS_APPS_KEY,
   LAUNCHER_SITE_DEFAULTS_QUICK_KEY,
   LAUNCHER_SETTINGS_KEY,
   getProjectLauncherDefaults,
@@ -52,7 +49,12 @@ import { QUICK_CREATE_MAP } from "@cocalc/frontend/project/new/launcher-catalog"
 import { useAvailableFeatures } from "@cocalc/frontend/project/use-available-features";
 import { NewFilenameFamilies } from "@cocalc/frontend/project/utils";
 import { DEFAULT_NEW_FILENAMES, NEW_FILENAMES } from "@cocalc/util/db-schema";
-import { keys, separate_file_extension, trunc_middle } from "@cocalc/util/misc";
+import {
+  capitalize,
+  keys,
+  separate_file_extension,
+  trunc_middle,
+} from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 import { FIX_BORDER } from "../common";
 import { DEFAULT_EXT, FLYOUT_PADDING } from "./consts";
@@ -62,6 +64,10 @@ function getFileExtension(filename: string): string | null {
     return null; // null signals no extension
   }
   return separate_file_extension(filename).ext;
+}
+
+function launcherLabel(value?: string): string {
+  return capitalize(value ?? "");
 }
 
 function isFile(fn: string) {
@@ -84,17 +90,9 @@ export function NewFlyout({
     "customize",
     LAUNCHER_SITE_DEFAULTS_QUICK_KEY,
   );
-  const site_launcher_apps = useTypedRedux(
-    "customize",
-    LAUNCHER_SITE_DEFAULTS_APPS_KEY,
-  );
   const site_remove_quick = useTypedRedux(
     "customize",
     LAUNCHER_SITE_REMOVE_QUICK_KEY,
-  );
-  const site_remove_apps = useTypedRedux(
-    "customize",
-    LAUNCHER_SITE_REMOVE_APPS_KEY,
   );
   const project_launcher = useTypedRedux("projects", "project_map")?.getIn([
     project_id,
@@ -134,9 +132,7 @@ export function NewFlyout({
   const projectLauncherDefaults = getProjectLauncherDefaults(project_launcher);
   const siteLauncherDefaults = getSiteLauncherDefaults({
     quickCreate: site_launcher_quick,
-    apps: site_launcher_apps,
     hiddenQuickCreate: site_remove_quick,
-    hiddenApps: site_remove_apps,
   });
   const userLauncherLayers = getUserLauncherLayers(
     other_settings?.get?.(LAUNCHER_SETTINGS_KEY),
@@ -197,7 +193,7 @@ export function NewFlyout({
       return {
         id,
         ext: id,
-        label: data.name ?? id,
+        label: launcherLabel(data.name ?? id),
         icon: data.icon ?? "file",
       };
     });
@@ -219,7 +215,7 @@ export function NewFlyout({
         value,
         label: (
           <span>
-            <Icon name={icon} /> {info.name ?? value}{" "}
+            <Icon name={icon} /> {launcherLabel(info.name ?? value)}{" "}
             <span style={{ opacity: 0.6 }}>({value})</span>
           </span>
         ),
@@ -350,12 +346,7 @@ export function NewFlyout({
     const name: IconName = isNewFiletypeIconName(ext)
       ? NEW_FILETYPE_ICONS[ext!]
       : (file_options(`foo.${ext}`)?.icon ?? "file");
-    return (
-      <Icon
-        name={name}
-        style={{ fontSize: "150%", marginRight: FLYOUT_PADDING }}
-      />
-    );
+    return <Icon name={name} style={{ fontSize: "150%" }} />;
   }
 
   function handleOnClick(nextExt: string) {
@@ -527,20 +518,24 @@ export function NewFlyout({
             className={"cc-project-flyout-path-navigator"}
           />
         </Space>
-        <Input
-          allowClear
-          placeholder={intl.formatMessage({
-            id: "project.page.flyouts.new.filename.placeholder",
-            defaultMessage: "Filename (optional)",
-          })}
-          value={filename}
-          onChange={onChangeHandler}
-          onKeyUp={onKeyUpHandler}
-          onFocus={inputOnFocus}
-          style={{ width: "100%", ...padding }}
-          addonBefore={fileIcon()}
-          addonAfter={renderExtAddon()}
-        />
+        <Space.Compact block style={padding}>
+          <Button disabled tabIndex={-1}>
+            {fileIcon()}
+          </Button>
+          <Input
+            allowClear
+            placeholder={intl.formatMessage({
+              id: "project.page.flyouts.new.filename.placeholder",
+              defaultMessage: "Filename (optional)",
+            })}
+            value={filename}
+            onChange={onChangeHandler}
+            onKeyUp={onKeyUpHandler}
+            onFocus={inputOnFocus}
+            style={{ width: "100%" }}
+          />
+          {renderExtAddon()}
+        </Space.Compact>
         <div
           style={{
             display: "flex",
@@ -653,12 +648,8 @@ export function NewFlyout({
         open={showCustomizeModal}
         onClose={() => setShowCustomizeModal(false)}
         initialQuickCreate={mergedLauncher.quickCreate}
-        initialApps={mergedLauncher.apps as NamedServerName[]}
         userBaseQuickCreate={inheritedForProjectUser.quickCreate}
-        userBaseApps={inheritedForProjectUser.apps as NamedServerName[]}
         projectBaseQuickCreate={inheritedForProjectDefaults.quickCreate}
-        projectBaseApps={inheritedForProjectDefaults.apps as NamedServerName[]}
-        globalDefaults={siteLauncherDefaults}
         onSaveUser={saveUserLauncherPrefs}
         onSaveProject={saveProjectLauncherDefaults}
         canEditProjectDefaults={can_edit_project_defaults}
@@ -667,39 +658,30 @@ export function NewFlyout({
             key: "built-in",
             title: "Built-in defaults",
             quickCreateAdd: LAUNCHER_GLOBAL_DEFAULTS.quickCreate,
-            appsAdd: LAUNCHER_GLOBAL_DEFAULTS.apps,
           },
           {
             key: "site",
             title: "Site defaults",
             quickCreateAdd: siteLauncherDefaults.quickCreate,
             quickCreateRemove: siteLauncherDefaults.hiddenQuickCreate,
-            appsAdd: siteLauncherDefaults.apps,
-            appsRemove: siteLauncherDefaults.hiddenApps,
           },
           {
             key: "project",
             title: "Project defaults",
             quickCreateAdd: projectLauncherDefaults.quickCreate,
             quickCreateRemove: projectLauncherDefaults.hiddenQuickCreate,
-            appsAdd: projectLauncherDefaults.apps,
-            appsRemove: projectLauncherDefaults.hiddenApps,
           },
           {
             key: "account",
             title: "Your account overrides",
             quickCreateAdd: userLauncherLayers.account.quickCreate,
             quickCreateRemove: userLauncherLayers.account.hiddenQuickCreate,
-            appsAdd: userLauncherLayers.account.apps,
-            appsRemove: userLauncherLayers.account.hiddenApps,
           },
           {
             key: "project-user",
             title: "This project overrides",
             quickCreateAdd: userLauncherLayers.project.quickCreate,
             quickCreateRemove: userLauncherLayers.project.hiddenQuickCreate,
-            appsAdd: userLauncherLayers.project.apps,
-            appsRemove: userLauncherLayers.project.hiddenApps,
           },
         ]}
       />

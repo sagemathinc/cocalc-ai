@@ -403,12 +403,13 @@ file_associations["term"] = {
 };
 
 // This is just for the "Create" menu in files.
-file_associations["x11"] = {
-  editor: "x11",
-  icon: "window-restore",
-  opts: {},
-  name: "Linux Graphical X11 Desktop",
-};
+// x11 is gone in cocalc-ai
+// file_associations["x11"] = {
+//   editor: "x11",
+//   icon: "window-restore",
+//   opts: {},
+//   name: "Linux Graphical X11 Desktop",
+// };
 
 file_associations["ipynb"] = {
   editor: "ipynb",

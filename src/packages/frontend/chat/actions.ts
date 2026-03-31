@@ -55,6 +55,7 @@ import {
 } from "@cocalc/chat";
 import {
   DEFAULT_CODEX_MODEL_NAME,
+  normalizeCodexSessionId,
   resolveCodexSessionMode,
   isCodexModelName,
   type CodexSessionMode,
@@ -2332,11 +2333,19 @@ export class ChatActions extends Actions<ChatState> {
       throw Error(`setCodexConfig: invalid threadKey ${threadKey}`);
     }
     const model = config.model ?? DEFAULT_CODEX_MODEL_NAME;
+    const sessionId = normalizeCodexSessionId(config.sessionId);
+    const nextConfig: CodexThreadConfig = {
+      ...config,
+      ...(sessionId ? { sessionId } : {}),
+    };
+    if (!sessionId) {
+      delete (nextConfig as any).sessionId;
+    }
     if (
       !this.setThreadConfigRecord(
         threadKey,
         {
-          acp_config: config,
+          acp_config: nextConfig,
           agent_kind: "acp",
           agent_model: model,
           agent_mode: "interactive",
@@ -2445,18 +2454,20 @@ export class ChatActions extends Actions<ChatState> {
       isAI || sourceMetadata.agent_kind === "acp" || sourceConfig != null;
     let nextConfig: CodexThreadConfig | undefined = undefined;
     if (shouldForkAcp) {
+      const sourceSessionId = normalizeCodexSessionId(sourceConfig?.sessionId);
       const config =
-        sourceConfig?.sessionId == null && inferredSourceSessionId
+        !sourceSessionId && inferredSourceSessionId
           ? { ...(sourceConfig ?? {}), sessionId: inferredSourceSessionId }
           : sourceConfig;
-      if (config?.sessionId && this.store) {
+      const configSessionId = normalizeCodexSessionId(config?.sessionId);
+      if (configSessionId && this.store) {
         const project_id = this.store.get("project_id");
         if (!project_id) {
           throw new Error("Missing project id for ACP fork");
         }
         const { sessionId } = await webapp_client.conat_client.forkAcpSession({
           project_id,
-          sessionId: config.sessionId,
+          sessionId: configSessionId,
         });
         nextConfig = { ...config, sessionId };
       } else if (config) {
