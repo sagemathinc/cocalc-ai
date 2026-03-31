@@ -30,7 +30,10 @@ import { computeLineDiff } from "@cocalc/util/line-diff";
 import { argsJoin } from "@cocalc/util/args";
 import LRUCache from "lru-cache";
 import type { CodexSessionConfig } from "@cocalc/util/ai/codex";
-import { resolveCodexSessionMode } from "@cocalc/util/ai/codex";
+import {
+  normalizeCodexSessionId,
+  resolveCodexSessionMode,
+} from "@cocalc/util/ai/codex";
 import { trackProcessRoot } from "@cocalc/backend/process-tracker";
 import type { AcpEvaluateRequest, AcpAgent, AcpStreamHandler } from "./types";
 import {
@@ -223,7 +226,9 @@ export class CodexExecAgent implements AcpAgent {
     const { prompt, stream, session_id, config } = request;
     const session = this.resolveSession(session_id);
     const cwd = this.resolveCwd(config);
-    const resumeId = config?.sessionId ?? session_id;
+    const resumeId =
+      normalizeCodexSessionId(config?.sessionId) ??
+      normalizeCodexSessionId(session_id);
     if (resumeId) {
       await this.tryEnsureSessionConfig(resumeId, cwd, config);
     }
@@ -658,7 +663,7 @@ export class CodexExecAgent implements AcpAgent {
 
   // Helpers
   private resolveSession(sessionId?: string): SessionStoreEntry {
-    const key = sessionId?.trim();
+    const key = normalizeCodexSessionId(sessionId);
     if (key && this.sessions.has(key)) {
       return this.sessions.get(key)!;
     }
@@ -698,8 +703,9 @@ export class CodexExecAgent implements AcpAgent {
     if (reasoning) {
       args.push("--config", `model_reasoning_effort="${reasoning}"`);
     }
-    if (config?.sessionId) {
-      args.push("resume", config.sessionId);
+    const sessionId = normalizeCodexSessionId(config?.sessionId);
+    if (sessionId) {
+      args.push("resume", sessionId);
     }
     return args;
   }
