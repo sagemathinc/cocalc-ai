@@ -23,6 +23,7 @@ export type ProjectCopyState =
   | "expired";
 
 export interface ProjectCopyRow {
+  copy_id: string;
   src_project_id: string;
   src_path: string;
   dest_project_id: string;

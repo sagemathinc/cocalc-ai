@@ -654,10 +654,11 @@ export interface Hosts {
   }) => Promise<ProjectCopyRow[]>;
   updateCopyStatus: (opts: {
     host_id?: string;
-    src_project_id: string;
-    src_path: string;
-    dest_project_id: string;
-    dest_path: string;
+    copy_id?: string;
+    src_project_id?: string;
+    src_path?: string;
+    dest_project_id?: string;
+    dest_path?: string;
     status: ProjectCopyState;
     last_error?: string;
   }) => Promise<void>;

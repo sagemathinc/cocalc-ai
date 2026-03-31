@@ -113,6 +113,7 @@ const pool = () => getPool();
 export async function ensureCopySchema(): Promise<void> {
   await pool().query(`
     CREATE TABLE IF NOT EXISTS project_copies (
+      copy_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       src_project_id UUID NOT NULL,
       src_path TEXT NOT NULL,
       dest_project_id UUID NOT NULL,
@@ -126,9 +127,39 @@ export async function ensureCopySchema(): Promise<void> {
       last_attempt_at TIMESTAMPTZ,
       created_at TIMESTAMPTZ DEFAULT now(),
       updated_at TIMESTAMPTZ DEFAULT now(),
-      expires_at TIMESTAMPTZ NOT NULL,
-      PRIMARY KEY (src_project_id, src_path, dest_project_id, dest_path)
+      expires_at TIMESTAMPTZ NOT NULL
     )
+  `);
+  await pool().query(
+    "ALTER TABLE project_copies ADD COLUMN IF NOT EXISTS copy_id UUID DEFAULT gen_random_uuid()",
+  );
+  await pool().query(
+    "UPDATE project_copies SET copy_id = gen_random_uuid() WHERE copy_id IS NULL",
+  );
+  await pool().query(`
+    DO $$
+    BEGIN
+      IF EXISTS (
+        SELECT 1
+        FROM pg_constraint c
+        JOIN pg_class t ON t.oid = c.conrelid
+        WHERE t.relname = 'project_copies'
+          AND c.contype = 'p'
+          AND pg_get_constraintdef(c.oid) <> 'PRIMARY KEY (copy_id)'
+      ) THEN
+        ALTER TABLE project_copies DROP CONSTRAINT project_copies_pkey;
+      END IF;
+      IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint c
+        JOIN pg_class t ON t.oid = c.conrelid
+        WHERE t.relname = 'project_copies'
+          AND c.contype = 'p'
+          AND pg_get_constraintdef(c.oid) = 'PRIMARY KEY (copy_id)'
+      ) THEN
+        ALTER TABLE project_copies ADD PRIMARY KEY (copy_id);
+      END IF;
+    END $$;
   `);
   await pool().query(
     "ALTER TABLE project_copies ADD COLUMN IF NOT EXISTS op_id UUID",
@@ -147,6 +178,12 @@ export async function ensureCopySchema(): Promise<void> {
   );
   await pool().query(
     "CREATE INDEX IF NOT EXISTS project_copies_expires_idx ON project_copies(expires_at)",
+  );
+  await pool().query(
+    "CREATE INDEX IF NOT EXISTS project_copies_dest_status_created_idx ON project_copies(dest_project_id, dest_path, status, created_at, updated_at)",
+  );
+  await pool().query(
+    "CREATE UNIQUE INDEX IF NOT EXISTS project_copies_op_key_idx ON project_copies(op_id, src_project_id, src_path, dest_project_id, dest_path)",
   );
 }
 
@@ -241,12 +278,13 @@ export async function upsertCopyRow(
     `
       SELECT snapshot_id
       FROM project_copies
-      WHERE src_project_id=$1
-        AND src_path=$2
-        AND dest_project_id=$3
-        AND dest_path=$4
+      WHERE op_id IS NOT DISTINCT FROM $1
+        AND src_project_id=$2
+        AND src_path=$3
+        AND dest_project_id=$4
+        AND dest_path=$5
     `,
-    [src_project_id, src_path, dest_project_id, dest_path],
+    [op_id ?? null, src_project_id, src_path, dest_project_id, dest_path],
   );
   const prevSnapshot = existing.rows[0]?.snapshot_id;
   const { rows } = await pool().query(
@@ -254,7 +292,7 @@ export async function upsertCopyRow(
       INSERT INTO project_copies
         (src_project_id, src_path, dest_project_id, dest_path, op_id, snapshot_id, options, status, attempt, last_attempt_at, expires_at)
       VALUES ($1,$2,$3,$4,$5,$6,$7,'queued',0,NULL,$8)
-      ON CONFLICT (src_project_id, src_path, dest_project_id, dest_path) DO UPDATE
+      ON CONFLICT (op_id, src_project_id, src_path, dest_project_id, dest_path) DO UPDATE
         SET op_id=EXCLUDED.op_id,
             snapshot_id=EXCLUDED.snapshot_id,
             options=EXCLUDED.options,
@@ -262,7 +300,6 @@ export async function upsertCopyRow(
             last_error=NULL,
             attempt=0,
             last_attempt_at=NULL,
-            created_at=now(),
             updated_at=now(),
             expires_at=EXCLUDED.expires_at
       RETURNING *
@@ -307,7 +344,7 @@ export async function insertCopyRowIfMissing(
       INSERT INTO project_copies
         (src_project_id, src_path, dest_project_id, dest_path, op_id, snapshot_id, options, status, attempt, last_attempt_at, expires_at)
       VALUES ($1,$2,$3,$4,$5,$6,$7,'queued',0,NULL,$8)
-      ON CONFLICT (src_project_id, src_path, dest_project_id, dest_path) DO NOTHING
+      ON CONFLICT (op_id, src_project_id, src_path, dest_project_id, dest_path) DO NOTHING
       RETURNING *
     `,
     [
@@ -376,16 +413,24 @@ export async function cancelCopy(
   const { src_project_id, src_path, dest_project_id, dest_path } = key;
   const { rows } = await pool().query(
     `
-      UPDATE project_copies
+      WITH candidate AS (
+        SELECT copy_id
+        FROM project_copies
+        WHERE src_project_id=$1
+          AND src_path=$2
+          AND dest_project_id=$3
+          AND dest_path=$4
+          AND status <> ALL($5::text[])
+        ORDER BY created_at
+        LIMIT 1
+      )
+      UPDATE project_copies pc
       SET status='canceled',
           last_error=COALESCE(last_error, 'canceled'),
           updated_at=now()
-      WHERE src_project_id=$1
-        AND src_path=$2
-        AND dest_project_id=$3
-        AND dest_path=$4
-        AND status <> ALL($5::text[])
-      RETURNING *
+      FROM candidate
+      WHERE pc.copy_id = candidate.copy_id
+      RETURNING pc.*
     `,
     [src_project_id, src_path, dest_project_id, dest_path, TERMINAL_STATUSES],
   );
@@ -464,16 +509,48 @@ export async function claimPendingCopies({
     values.push(limit);
     const { rows } = await client.query(
       `
-        SELECT pc.*
-        FROM project_copies pc
-        JOIN projects p ON p.project_id = pc.dest_project_id
-        WHERE p.host_id=$1
-          AND pc.status = ANY($2::text[])
-          AND pc.expires_at > now()
-          ${projectFilter}
-        ORDER BY pc.updated_at
-        FOR UPDATE SKIP LOCKED
-        LIMIT $${limitIndex}
+        WITH candidates AS (
+          SELECT pc.copy_id
+          FROM project_copies pc
+          JOIN projects p ON p.project_id = pc.dest_project_id
+          WHERE p.host_id=$1
+            AND pc.status = ANY($2::text[])
+            AND pc.expires_at > now()
+            ${projectFilter}
+            AND NOT EXISTS (
+              SELECT 1
+              FROM project_copies blocker
+              WHERE blocker.dest_project_id = pc.dest_project_id
+                AND blocker.dest_path = pc.dest_path
+                AND blocker.status = 'applying'
+            )
+            AND NOT EXISTS (
+              SELECT 1
+              FROM project_copies earlier
+              WHERE earlier.dest_project_id = pc.dest_project_id
+                AND earlier.dest_path = pc.dest_path
+                AND earlier.status = ANY($2::text[])
+                AND earlier.expires_at > now()
+                AND (
+                  earlier.created_at < pc.created_at
+                  OR (
+                    earlier.created_at = pc.created_at
+                    AND earlier.copy_id < pc.copy_id
+                  )
+                )
+            )
+          ORDER BY pc.updated_at, pc.created_at, pc.copy_id
+          FOR UPDATE OF pc SKIP LOCKED
+          LIMIT $${limitIndex}
+        )
+        UPDATE project_copies pc
+        SET status='applying',
+            attempt=attempt+1,
+            last_attempt_at=now(),
+            updated_at=now()
+        FROM candidates
+        WHERE pc.copy_id = candidates.copy_id
+        RETURNING pc.*
       `,
       values,
     );
@@ -481,35 +558,9 @@ export async function claimPendingCopies({
       await client.query("COMMIT");
       return [];
     }
-    const keyValues: any[] = [];
-    const tuples = rows.map((row, idx) => {
-      const offset = idx * 4;
-      keyValues.push(
-        row.src_project_id,
-        row.src_path,
-        row.dest_project_id,
-        row.dest_path,
-      );
-      return `($${offset + 1},$${offset + 2},$${offset + 3},$${offset + 4})`;
-    });
-    const updated = await client.query(
-      `
-        UPDATE project_copies
-        SET status='applying',
-            attempt=attempt+1,
-            last_attempt_at=now(),
-            updated_at=now()
-        WHERE (src_project_id, src_path, dest_project_id, dest_path) IN (${tuples.join(
-          ",",
-        )})
-          AND status = ANY($${keyValues.length + 1}::text[])
-        RETURNING *
-      `,
-      [...keyValues, ["queued", "failed"]],
-    );
     await client.query("COMMIT");
     const opIds = new Set<string>();
-    for (const row of updated.rows as ProjectCopyRow[]) {
+    for (const row of rows as ProjectCopyRow[]) {
       if (row.op_id) {
         opIds.add(row.op_id);
       }
@@ -517,7 +568,7 @@ export async function claimPendingCopies({
     for (const op_id of opIds) {
       await refreshCopyOperation(op_id);
     }
-    return updated.rows as ProjectCopyRow[];
+    return rows as ProjectCopyRow[];
   } catch (err) {
     await client.query("ROLLBACK");
     logger.warn("claimPendingCopies failed", { err });
@@ -528,10 +579,12 @@ export async function claimPendingCopies({
 }
 
 export async function updateCopyStatus({
+  copy_id,
   key,
   status,
   last_error,
 }: {
+  copy_id?: string;
   key: ProjectCopyKey;
   status: ProjectCopyState;
   last_error?: string;
@@ -540,15 +593,38 @@ export async function updateCopyStatus({
   const { src_project_id, src_path, dest_project_id, dest_path } = key;
   const { rows } = await pool().query(
     `
-      UPDATE project_copies
+      WITH candidate AS (
+        SELECT copy_id
+        FROM project_copies
+        WHERE (
+              copy_id = $7
+              OR (
+                $7::uuid IS NULL
+                AND src_project_id=$1
+                AND src_path=$2
+                AND dest_project_id=$3
+                AND dest_path=$4
+                AND status <> ALL($8::text[])
+              )
+            )
+        ORDER BY
+          CASE
+            WHEN copy_id = $7 THEN 0
+            WHEN status = 'applying' THEN 1
+            WHEN status = 'queued' THEN 2
+            WHEN status = 'failed' THEN 3
+            ELSE 4
+          END,
+          created_at
+        LIMIT 1
+      )
+      UPDATE project_copies pc
       SET status=$5,
           last_error=$6,
           updated_at=now()
-      WHERE src_project_id=$1
-        AND src_path=$2
-        AND dest_project_id=$3
-        AND dest_path=$4
-      RETURNING *
+      FROM candidate
+      WHERE pc.copy_id = candidate.copy_id
+      RETURNING pc.*
     `,
     [
       src_project_id,
@@ -557,6 +633,8 @@ export async function updateCopyStatus({
       dest_path,
       status,
       last_error ?? null,
+      copy_id ?? null,
+      TERMINAL_STATUSES,
     ],
   );
   const updated = rows[0] as ProjectCopyRow | undefined;
