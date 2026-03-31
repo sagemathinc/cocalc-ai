@@ -125,11 +125,17 @@ export interface CopyOptions {
   timeout?: number;
 }
 
+export interface FileDescription {
+  mime: string;
+  snippet?: string;
+}
+
 export interface Filesystem {
   appendFile: (path: string, data: string | Buffer, encoding?) => Promise<void>;
   chmod: (path: string, mode: string | number) => Promise<void>;
   constants: () => Promise<{ [key: string]: number }>;
   copyFile: (src: string, dest: string) => Promise<void>;
+  describeFile: (path: string) => Promise<FileDescription>;
 
   cp: (
     // NOTE!: we also support any array of src's unlike node's cp;
@@ -456,6 +462,9 @@ export async function fsServer({
     async copyFile(src: string, dest: string) {
       await (await fs(this.subject)).copyFile(src, dest);
       void reportMutation(this.subject, "copyFile", dest);
+    },
+    async describeFile(path: string): Promise<FileDescription> {
+      return await (await fs(this.subject)).describeFile(path);
     },
     async cp(src: string | string[], dest: string, options?) {
       await (await fs(this.subject)).cp(src, dest, options);

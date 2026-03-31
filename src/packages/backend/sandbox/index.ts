@@ -78,6 +78,7 @@ import ouch, { type OuchOptions } from "./ouch";
 import cpExec from "./cp";
 import {
   type CopyOptions,
+  type FileDescription,
   type PatchWriteRequest,
 } from "@cocalc/conat/files/fs";
 export { type CopyOptions };
@@ -189,6 +190,50 @@ const writeFileByFd = (
     }
     (writeFileFdCallback as any)(fd, data as any, options as any, cb);
   });
+
+const DEFAULT_FILE_DESCRIPTION_TEXT_BYTES = 2000;
+const DEFAULT_FILE_DESCRIPTION_HEX_BYTES = 512;
+
+function looksLikeTextBuffer(buffer: Buffer): boolean {
+  if (buffer.length === 0) return true;
+  let suspicious = 0;
+  for (const byte of buffer) {
+    if (byte === 0) return false;
+    if (
+      (byte < 32 && byte !== 9 && byte !== 10 && byte !== 13) ||
+      byte === 127
+    ) {
+      suspicious += 1;
+    }
+  }
+  const text = buffer.toString("utf8");
+  const replacementCount = Array.from(text).reduce(
+    (count, ch) => count + (ch === "\uFFFD" ? 1 : 0),
+    0,
+  );
+  return (
+    suspicious / Math.max(buffer.length, 1) < 0.1 &&
+    replacementCount / Math.max(text.length, 1) < 0.02
+  );
+}
+
+function formatHexSnippet(buffer: Buffer): string {
+  const lines: string[] = [];
+  for (let offset = 0; offset < buffer.length; offset += 16) {
+    const chunk = buffer.subarray(offset, offset + 16);
+    const hex = Array.from(chunk, (byte) => byte.toString(16).padStart(2, "0"));
+    const paddedHex = Array.from({ length: 16 }, (_, idx) => hex[idx] ?? "  ");
+    const left = paddedHex.slice(0, 8).join(" ");
+    const right = paddedHex.slice(8).join(" ");
+    const ascii = Array.from(chunk, (byte) =>
+      byte >= 32 && byte <= 126 ? String.fromCharCode(byte) : ".",
+    ).join("");
+    lines.push(
+      `${offset.toString(16).padStart(8, "0")}  ${left}  ${right}  |${ascii.padEnd(16, ".")}|`,
+    );
+  }
+  return lines.join("\n");
+}
 
 const toTimespecNs = (value: number | string | Date): number => {
   const seconds =
@@ -1692,6 +1737,49 @@ export class SandboxedFilesystem {
     });
     try {
       return await handle.readFile(encoding);
+    } finally {
+      await handle.close();
+    }
+  };
+
+  describeFile = async (path: string): Promise<FileDescription> => {
+    const stats = await this.stat(path);
+    if (stats.isDirectory()) {
+      return { mime: "inode/directory" };
+    }
+    if (!stats.isFile()) {
+      return { mime: "application/octet-stream" };
+    }
+    if (stats.size === 0) {
+      return { mime: "inode/x-empty" };
+    }
+    const bytesToRead = Math.min(
+      stats.size,
+      DEFAULT_FILE_DESCRIPTION_TEXT_BYTES,
+    );
+    const { handle } = await this.openVerifiedHandle({
+      path,
+      flags: constants.O_RDONLY,
+    });
+    try {
+      const buffer = Buffer.alloc(bytesToRead);
+      const { bytesRead } = await handle.read(buffer, 0, bytesToRead, 0);
+      const sample = buffer.subarray(0, bytesRead);
+      if (sample.length === 0) {
+        return { mime: "inode/x-empty" };
+      }
+      if (looksLikeTextBuffer(sample)) {
+        return {
+          mime: "text/plain",
+          snippet: sample.toString("utf8"),
+        };
+      }
+      return {
+        mime: "application/octet-stream",
+        snippet: formatHexSnippet(
+          sample.subarray(0, DEFAULT_FILE_DESCRIPTION_HEX_BYTES),
+        ),
+      };
     } finally {
       await handle.close();
     }

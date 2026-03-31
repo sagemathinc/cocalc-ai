@@ -10,6 +10,7 @@ import { Button, Alert, Typography, Row, Col } from "antd";
 const { Text } = Typography;
 import { register_file_editor } from "../../frame-editors/frame-tree/register";
 import { filename_extension_notilde, path_split } from "@cocalc/util/misc";
+import type { FileDescription } from "@cocalc/conat/files/fs";
 import { Loading } from "../../components";
 import { Editor as CodeEditor } from "../../frame-editors/code-editor/editor";
 import { Actions as CodeEditorActions } from "../../frame-editors/code-editor/actions";
@@ -25,60 +26,31 @@ interface Props {
   project_id: string;
 }
 
-async function get_mime({ project_id, path, set_mime, set_err, set_snippet }) {
+function normalizeSnippet(raw: string): string {
+  return raw.trim().slice(0, 20 * 80);
+}
+
+async function get_mime({
+  project_id,
+  path,
+  set_mime,
+  set_err,
+  set_snippet,
+}: {
+  project_id: string;
+  path: string;
+  set_mime: (mime: string) => void;
+  set_err: (err: string) => void;
+  set_snippet: (snippet: string) => void;
+}) {
   try {
-    let mime = "";
-    const { stdout: mime_raw, exit_code: exit_code1 } =
-      await webapp_client.project_client.exec({
-        project_id,
-        command: "file",
-        args: ["-b", "--mime-type", path],
-        filesystem: true,
-      });
-    if (exit_code1 != 0) {
-      set_err(`Error: exit_code1 = ${exit_code1}`);
-    } else {
-      mime = mime_raw.split("\n")[0].trim();
-      set_mime(mime);
-    }
-
-    const is_binary = !mime.startsWith("text/");
-    // limit number of bytes – it could be a "one-line" monster file.
-    // We *ONLY* limit by number of bytes, because limiting by both
-    // bytes and lines isn't supported in POSIX (e.g., macos), even though
-    // it works in Linux.
-    const content_cmd = is_binary
-      ? {
-          command: "hexdump",
-          args: ["-C", "-n", "512", path],
-        }
-      : {
-          command: "head",
-          args: ["-c", "2000", path],
-        };
-
-    const { stdout: raw, exit_code: exit_code2 } =
-      await webapp_client.project_client.exec({
-        project_id,
-        ...content_cmd,
-        filesystem: true,
-      });
-    if (exit_code2 != 0) {
-      set_err(`Error: exit_code2 = ${exit_code2}`);
-    } else {
-      if (is_binary) {
-        set_snippet(raw);
-      } else {
-        set_snippet(
-          // 80 char line break and limit overall length
-          raw
-            .trim()
-            .slice(0, 20 * 80)
-            .split(/(.{0,80})/g)
-            .filter((x) => !!x)
-            .join(""),
-        );
-      }
+    const fs = webapp_client.conat_client.conat().fs({ project_id });
+    const { mime, snippet }: FileDescription = await fs.describeFile(path);
+    set_mime(mime);
+    if (snippet) {
+      set_snippet(
+        mime.startsWith("text/") ? normalizeSnippet(snippet) : snippet,
+      );
     }
   } catch (err) {
     set_err(err.toString());

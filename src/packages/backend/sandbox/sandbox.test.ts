@@ -128,6 +128,46 @@ describeIfLinux("baseline mutator parity behavior", () => {
   });
 });
 
+describe("describeFile", () => {
+  let home;
+  let fs;
+
+  beforeEach(async () => {
+    home = await mkdtemp(join(tempDir, "describe-file-"));
+    fs = new SandboxedFilesystem(home);
+  });
+
+  it("detects directories and empty files", async () => {
+    await mkdir(join(home, "dir"));
+    await writeFile(join(home, "empty.txt"), "");
+
+    expect(await fs.describeFile("dir")).toEqual({
+      mime: "inode/directory",
+    });
+    expect(await fs.describeFile("empty.txt")).toEqual({
+      mime: "inode/x-empty",
+    });
+  });
+
+  it("returns a text preview for textual files", async () => {
+    await writeFile(join(home, "plain.txt"), "hello there\nmore text\n");
+
+    await expect(fs.describeFile("plain.txt")).resolves.toMatchObject({
+      mime: "text/plain",
+      snippet: "hello there\nmore text\n",
+    });
+  });
+
+  it("returns a hex preview for binary files", async () => {
+    await writeFile(join(home, "blob.bin"), Buffer.from([0, 1, 2, 65, 66, 67]));
+
+    await expect(fs.describeFile("blob.bin")).resolves.toMatchObject({
+      mime: "application/octet-stream",
+      snippet: expect.stringContaining("00000000"),
+    });
+  });
+});
+
 describe("sync-fs watch identity canonicalization", () => {
   let home;
   let fs;
