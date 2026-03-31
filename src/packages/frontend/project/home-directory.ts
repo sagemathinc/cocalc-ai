@@ -20,7 +20,7 @@ function readHomeFromProjectStore(projectId?: string): string | undefined {
     features?.get?.("homeDirectory") ?? features?.homeDirectory,
   );
   if (fromFeatures) return fromFeatures;
-  return normalizeHome(
+  const fromConfiguration = normalizeHome(
     store.getIn?.([
       "configuration",
       "main",
@@ -28,6 +28,28 @@ function readHomeFromProjectStore(projectId?: string): string | undefined {
       "homeDirectory",
     ]) as any,
   );
+  if (fromConfiguration) return fromConfiguration;
+
+  const candidatePaths = [
+    store.get("current_path_abs"),
+    store.get("explorer_browsing_path_abs"),
+    store.get("flyout_browsing_path_abs"),
+    ...(store.get("open_files_order")?.toArray?.() ?? []),
+  ];
+  for (const candidate of candidatePaths) {
+    const normalizedCandidate = normalizeHome(candidate);
+    if (!normalizedCandidate || normalizedCandidate === "/") continue;
+    if (
+      normalizedCandidate === "/root" ||
+      normalizedCandidate.startsWith("/root/")
+    ) {
+      return "/root";
+    }
+    const homeMatch = normalizedCandidate.match(/^\/home\/[^/]+/);
+    if (homeMatch) {
+      return homeMatch[0];
+    }
+  }
 }
 
 // Frontend canonical HOME for path normalization.
@@ -40,7 +62,12 @@ export function getProjectHomeDirectory(projectId?: string): string {
   const resolved = readHomeFromProjectStore(projectId);
   if (resolved) {
     HOME_CACHE.set(cacheKey, resolved);
+    HOME_CACHE.set("__default__", resolved);
     return resolved;
+  }
+  if (cacheKey !== "__default__") {
+    const fallbackCached = HOME_CACHE.get("__default__");
+    if (fallbackCached) return fallbackCached;
   }
   // Do not cache fallback so a later capabilities update can populate cache.
   return LITE_FALLBACK_HOME;
