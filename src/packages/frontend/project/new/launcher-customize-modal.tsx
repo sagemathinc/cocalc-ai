@@ -23,7 +23,7 @@ import {
 } from "@cocalc/frontend/components/sortable-list";
 import { file_associations } from "@cocalc/frontend/file-associations";
 import { file_options } from "@cocalc/frontend/editor-tmp";
-import { keys } from "@cocalc/util/misc";
+import { capitalize, keys } from "@cocalc/util/misc";
 import {
   APP_CATALOG,
   APP_MAP,
@@ -46,6 +46,10 @@ function move<T>(list: T[], index: number, delta: number): T[] {
 
 function reorder<T>(list: T[], oldIndex: number, newIndex: number): T[] {
   return move(list, oldIndex, newIndex - oldIndex);
+}
+
+function launcherLabel(value?: string): string {
+  return capitalize(value ?? "");
 }
 
 interface Props {
@@ -199,7 +203,7 @@ export function LauncherCustomizeModal({
         const data = file_options(`x.${id}`);
         return {
           icon: data.icon ?? "file",
-          label: data.name ?? id,
+          label: launcherLabel(data.name ?? id),
         };
       })();
     return (
@@ -282,7 +286,7 @@ export function LauncherCustomizeModal({
     const spec = QUICK_CREATE_MAP[id];
     if (spec) return spec.label;
     const data = file_options(`x.${id}`);
-    return data.name ?? id;
+    return launcherLabel(data.name ?? id);
   }
 
   function appLabel(id: string): string {
@@ -518,7 +522,8 @@ export function LauncherCustomizeModal({
                   value,
                   label: (
                     <span>
-                      <Icon name={info.icon ?? "file"} /> {info.name ?? value}{" "}
+                      <Icon name={info.icon ?? "file"} />{" "}
+                      {launcherLabel(info.name ?? value)}{" "}
                       <span style={{ opacity: 0.6 }}>({value})</span>
                     </span>
                   ),

@@ -34,6 +34,7 @@ import { special_filenames_with_no_extension } from "@cocalc/frontend/project-fi
 import { getValidActivityBarOption } from "@cocalc/frontend/project/page/activity-bar";
 import { ACTIVITY_BAR_KEY } from "@cocalc/frontend/project/page/activity-bar-consts";
 import {
+  capitalize,
   filename_extension,
   is_only_downloadable,
   keys,
@@ -74,6 +75,10 @@ interface Props {
 }
 
 export default function NewFilePage(props: Props) {
+  function launcherLabel(value?: string): string {
+    return capitalize(value ?? "");
+  }
+
   const intl = useIntl();
   const { project_id, initialFilename, autoFocusFilename = true } = props;
   const inputRef = useRef<any>(null);
@@ -201,7 +206,7 @@ export default function NewFilePage(props: Props) {
       return {
         id,
         ext: id,
-        label: data.name ?? id,
+        label: launcherLabel(data.name ?? id),
         icon: data.icon ?? "file",
       };
     })
@@ -225,7 +230,7 @@ export default function NewFilePage(props: Props) {
         value,
         label: (
           <span>
-            <Icon name={icon} /> {info.name ?? value}{" "}
+            <Icon name={icon} /> {launcherLabel(info.name ?? value)}{" "}
             <span style={{ opacity: 0.6 }}>({value})</span>
           </span>
         ),

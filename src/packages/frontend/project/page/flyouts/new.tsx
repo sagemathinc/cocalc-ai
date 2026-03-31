@@ -52,7 +52,12 @@ import { QUICK_CREATE_MAP } from "@cocalc/frontend/project/new/launcher-catalog"
 import { useAvailableFeatures } from "@cocalc/frontend/project/use-available-features";
 import { NewFilenameFamilies } from "@cocalc/frontend/project/utils";
 import { DEFAULT_NEW_FILENAMES, NEW_FILENAMES } from "@cocalc/util/db-schema";
-import { keys, separate_file_extension, trunc_middle } from "@cocalc/util/misc";
+import {
+  capitalize,
+  keys,
+  separate_file_extension,
+  trunc_middle,
+} from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 import { FIX_BORDER } from "../common";
 import { DEFAULT_EXT, FLYOUT_PADDING } from "./consts";
@@ -62,6 +67,10 @@ function getFileExtension(filename: string): string | null {
     return null; // null signals no extension
   }
   return separate_file_extension(filename).ext;
+}
+
+function launcherLabel(value?: string): string {
+  return capitalize(value ?? "");
 }
 
 function isFile(fn: string) {
@@ -197,7 +206,7 @@ export function NewFlyout({
       return {
         id,
         ext: id,
-        label: data.name ?? id,
+        label: launcherLabel(data.name ?? id),
         icon: data.icon ?? "file",
       };
     });
@@ -219,7 +228,7 @@ export function NewFlyout({
         value,
         label: (
           <span>
-            <Icon name={icon} /> {info.name ?? value}{" "}
+            <Icon name={icon} /> {launcherLabel(info.name ?? value)}{" "}
             <span style={{ opacity: 0.6 }}>({value})</span>
           </span>
         ),
