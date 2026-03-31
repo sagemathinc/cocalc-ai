@@ -12,7 +12,14 @@ export interface BlockQuote extends SlateElement {
 }
 
 const Element = ({ attributes, children }) => {
-  return <blockquote {...attributes}>{children}</blockquote>;
+  const className = [attributes.className, "cocalc-slate-blockquote"]
+    .filter(Boolean)
+    .join(" ");
+  return (
+    <blockquote {...attributes} className={className}>
+      {children}
+    </blockquote>
+  );
 };
 
 register({
