@@ -2072,6 +2072,28 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     this.set_file_action(action);
   };
 
+  showFileActionPanelForPaths = async ({
+    paths,
+    action,
+  }: {
+    paths: string[];
+    action: FileAction;
+  }) => {
+    const uniquePaths = Array.from(new Set(paths.filter(Boolean)));
+    if (uniquePaths.length === 0) {
+      return;
+    }
+    if (uniquePaths.length === 1) {
+      await this.showFileActionPanel({ path: uniquePaths[0], action });
+      return;
+    }
+
+    this.set_all_files_unchecked();
+    await this.open_directory(misc.path_split(uniquePaths[0]).head);
+    this.set_file_list_checked(uniquePaths);
+    this.set_file_action(action);
+  };
+
   private async get_from_web(opts: {
     url: string;
     dest?: string;

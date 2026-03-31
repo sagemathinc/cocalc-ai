@@ -13,6 +13,7 @@ export interface TasksMarkdownEditorProps {
   getValueRef?: MutableRefBox<MarkdownValueGetter>;
   fontSize?: number;
   onShiftEnter?: () => void;
+  onBlur?: (value: string) => void;
   onFocus?: () => void;
   enableUpload?: boolean;
   enableMentions?: boolean;

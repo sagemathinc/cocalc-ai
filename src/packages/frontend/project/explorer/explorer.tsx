@@ -6,7 +6,6 @@
 import * as _ from "lodash";
 import { UsersViewing } from "@cocalc/frontend/account/avatar/users-viewing";
 import { Button, Space } from "antd";
-import { Col, Row } from "@cocalc/frontend/antd-bootstrap";
 import {
   type CSSProperties,
   useCallback,
@@ -30,7 +29,6 @@ import AskNewFilename from "../ask-filename";
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import { selectionForPath } from "@cocalc/frontend/project/workspaces/state";
 import { ActionBar } from "./action-bar";
-import { ActionBox } from "./action-box";
 import BackupOps from "./backup-ops";
 import CopyOps from "./copy-ops";
 import MoveOps from "./move-ops";
@@ -934,20 +932,6 @@ You can either wait for this host to become available again, or move this ${proj
                   />
                 </div>
               </div>
-              {checked_files.size > 0 && file_action != undefined ? (
-                <Row>
-                  <Col sm={12}>
-                    <ActionBox
-                      file_action={file_action}
-                      checked_files={checked_files}
-                      current_path={effective_current_path}
-                      project_id={project_id}
-                      actions={actions}
-                      onUserFilesystemChange={allowNextListingUpdate}
-                    />
-                  </Col>
-                </Row>
-              ) : undefined}
             </div>
 
             {listingError && !suppressRoutingError && (
