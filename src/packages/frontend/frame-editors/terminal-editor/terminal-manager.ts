@@ -59,7 +59,8 @@ function normalizeTerminalArgs(args: any): string[] | undefined {
 
 export class TerminalManager<T extends CodeEditorState = CodeEditorState> {
   private terminals: { [key: string]: Terminal<T> } = {};
-  private terminalLoads: { [key: string]: Promise<Terminal<T>> } = {};
+  private terminalLoads: { [key: string]: Promise<undefined | Terminal<T>> } =
+    {};
   private actions: Actions<T>;
 
   constructor(actions: Actions<T>) {
@@ -127,6 +128,7 @@ export class TerminalManager<T extends CodeEditorState = CodeEditorState> {
     }
 
     if (this.terminalLoads[id] == null) {
+      const terminalLoads = this.terminalLoads;
       this.terminalLoads[id] = (async () => {
         try {
           let command: string | undefined = undefined;
@@ -136,8 +138,17 @@ export class TerminalManager<T extends CodeEditorState = CodeEditorState> {
             args = normalizeTerminalArgs(node.get("args"));
           }
           const Terminal = await getTerminalCtor<T>();
+          const actions = this.actions;
+          const terminals = this.terminals;
+          if (
+            actions == null ||
+            terminals == null ||
+            this.terminalLoads !== terminalLoads
+          ) {
+            return undefined;
+          }
           const terminal = new Terminal(
-            this.actions,
+            actions,
             this._node_number(id),
             id,
             parent,
@@ -147,15 +158,24 @@ export class TerminalManager<T extends CodeEditorState = CodeEditorState> {
             terminalThemeOverride,
           );
           terminal.connect();
-          this.terminals[id] = terminal;
+          if (this.terminals !== terminals) {
+            terminal.close();
+            return undefined;
+          }
+          terminals[id] = terminal;
           return terminal;
         } finally {
-          delete this.terminalLoads[id];
+          if (this.terminalLoads === terminalLoads) {
+            delete terminalLoads[id];
+          }
         }
       })();
     }
 
     return this.terminalLoads[id].then((terminal) => {
+      if (terminal == null) {
+        return undefined;
+      }
       if (terminal.element.parentElement !== parent) {
         parent.appendChild(terminal.element);
       }
