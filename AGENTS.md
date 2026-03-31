@@ -17,6 +17,7 @@ Guidance for Claude Code, Gemini CLI, and OpenAI Codex when working in this repo
   - Lite: `cd src && pnpm dev:env:lite` to print the environment for lite development and browser automation, including the correct `COCALC_API_URL` (typically port `7001`), browser session, and PATH updates. Use `eval "$(pnpm -s dev:env:lite)"` to apply it to the current shell.
   - Hub / full multi-user launchpad: `cd src && pnpm dev:env:hub` to print the corresponding environment for hub-backed development. Use `eval "$(pnpm -s dev:env:hub)"` to apply it to the current shell.
 - Prettier (repo-pinned): `pnpm -C src prettier --write <file>`
+- Frontend lint (fast): `pnpm -C src lint:frontend`
 - Package typecheck (fast): `cd src/packages/<pkg> && pnpm tsc --build`
 - Package build: `cd src/packages/<pkg> && pnpm build`
 - For `next` / `static`: use `pnpm -C src build:dev` instead of `pnpm -C src build`
@@ -62,6 +63,7 @@ EOF
 - For new source files that use the standard CoCalc file header comment, set the copyright year to the current year.
 - Before finishing a change-set, run relevant typecheck/tests for touched packages.
 - Run `pnpm -C src prettier --write <file>` on modified files as needed.
+- For frontend changes, also run `pnpm -C src lint:frontend`. Treat frontend lint failures the same way as test or typecheck failures.
 
 ## Docs
 
