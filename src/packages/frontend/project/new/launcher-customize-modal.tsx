@@ -138,6 +138,8 @@ export function LauncherCustomizeModal({
       apps: addApps,
       hiddenQuickCreate: removeQuick,
       hiddenApps: removeApps,
+      quickCreateOrder: quickCreate,
+      appsOrder: apps,
     });
     onClose();
   }
@@ -163,6 +165,8 @@ export function LauncherCustomizeModal({
       apps: addApps as string[],
       hiddenQuickCreate: removeQuick,
       hiddenApps: removeApps,
+      quickCreateOrder: quickCreate,
+      appsOrder: apps,
     });
     onClose();
   }

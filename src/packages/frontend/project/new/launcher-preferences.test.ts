@@ -6,6 +6,7 @@
 import {
   getUserLauncherLayers,
   mergeLauncherSettings,
+  updateUserLauncherPrefs,
 } from "./launcher-preferences";
 
 describe("launcher additive merge", () => {
@@ -71,6 +72,28 @@ describe("launcher additive merge", () => {
       "rserver",
     ]);
   });
+
+  test("user and project layers can persist explicit ordering", () => {
+    const merged = mergeLauncherSettings({
+      accountUserPrefs: {
+        quickCreateOrder: ["term", "chat", "ipynb", "md", "tex"],
+        appsOrder: ["rserver", "jupyterlab", "code", "jupyter", "pluto"],
+      },
+      projectUserPrefs: {
+        quickCreateOrder: ["md", "term", "chat", "ipynb", "tex"],
+        appsOrder: ["code", "rserver", "jupyterlab", "jupyter", "pluto"],
+      },
+    });
+
+    expect(merged.quickCreate).toEqual(["md", "term", "chat", "ipynb", "tex"]);
+    expect(merged.apps).toEqual([
+      "code",
+      "rserver",
+      "jupyterlab",
+      "jupyter",
+      "pluto",
+    ]);
+  });
 });
 
 describe("getUserLauncherLayers", () => {
@@ -95,12 +118,39 @@ describe("getUserLauncherLayers", () => {
       hiddenQuickCreate: ["tex"],
       apps: ["jupyter"],
       hiddenApps: ["code"],
+      quickCreateOrder: [],
+      appsOrder: [],
     });
     expect(project).toEqual({
       quickCreate: ["worksheet"],
       hiddenQuickCreate: ["course"],
       apps: ["pluto"],
       hiddenApps: ["jupyter"],
+      quickCreateOrder: [],
+      appsOrder: [],
     });
+  });
+
+  test("round-trips persisted ordering through per-project prefs", () => {
+    const settings = updateUserLauncherPrefs({}, "p1", {
+      quickCreateOrder: ["term", "chat", "ipynb", "md", "tex"],
+      appsOrder: ["code", "jupyterlab", "jupyter", "pluto", "rserver"],
+    });
+    const { project } = getUserLauncherLayers(settings, "p1");
+
+    expect(project.quickCreateOrder).toEqual([
+      "term",
+      "chat",
+      "ipynb",
+      "md",
+      "tex",
+    ]);
+    expect(project.appsOrder).toEqual([
+      "code",
+      "jupyterlab",
+      "jupyter",
+      "pluto",
+      "rserver",
+    ]);
   });
 });
