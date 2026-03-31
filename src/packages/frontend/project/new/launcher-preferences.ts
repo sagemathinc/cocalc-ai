@@ -3,22 +3,18 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { APP_MAP } from "./launcher-catalog";
-
 export const LAUNCHER_SETTINGS_KEY = "launcher";
 
 export interface LauncherProjectDefaults {
   quickCreate?: string[];
-  apps?: string[];
   hiddenQuickCreate?: string[];
-  hiddenApps?: string[];
+  quickCreateOrder?: string[];
 }
 
 export interface LauncherUserPrefs {
   quickCreate?: string[];
-  apps?: string[];
   hiddenQuickCreate?: string[];
-  hiddenApps?: string[];
+  quickCreateOrder?: string[];
 }
 
 export interface LauncherUserPrefsStore extends LauncherUserPrefs {
@@ -27,20 +23,16 @@ export interface LauncherUserPrefsStore extends LauncherUserPrefs {
 
 export interface LauncherMerged {
   quickCreate: string[];
-  apps: string[];
 }
 
 export const LAUNCHER_GLOBAL_DEFAULTS: Required<LauncherProjectDefaults> = {
   quickCreate: ["chat", "ipynb", "md", "tex", "term"],
-  apps: ["jupyterlab", "code", "jupyter", "pluto", "rserver"],
   hiddenQuickCreate: [],
-  hiddenApps: [],
+  quickCreateOrder: [],
 };
 
 export const LAUNCHER_SITE_DEFAULTS_QUICK_KEY = "launcher_default_quick_create";
-export const LAUNCHER_SITE_DEFAULTS_APPS_KEY = "launcher_default_apps";
 export const LAUNCHER_SITE_REMOVE_QUICK_KEY = "launcher_remove_quick_create";
-export const LAUNCHER_SITE_REMOVE_APPS_KEY = "launcher_remove_apps";
 
 function normalizeList(value: unknown): string[] {
   if (value == null) return [];
@@ -81,41 +73,31 @@ export function getProjectLauncherDefaults(
 ): LauncherProjectDefaults {
   const obj = normalizeObject<LauncherProjectDefaults>(settings);
   const quickCreate = normalizeList(obj.quickCreate);
-  const apps = normalizeList(obj.apps);
   const hiddenQuickCreate = normalizeList(obj.hiddenQuickCreate);
-  const hiddenApps = normalizeList(obj.hiddenApps);
+  const quickCreateOrder = normalizeList(obj.quickCreateOrder);
   return {
     quickCreate: quickCreate.length ? quickCreate : undefined,
-    apps: apps.length ? apps : undefined,
     hiddenQuickCreate: hiddenQuickCreate.length ? hiddenQuickCreate : undefined,
-    hiddenApps: hiddenApps.length ? hiddenApps : undefined,
+    quickCreateOrder: quickCreateOrder.length ? quickCreateOrder : undefined,
   };
 }
 
 export function getSiteLauncherDefaults({
   quickCreate,
-  apps,
   hiddenQuickCreate,
-  hiddenApps,
 }: {
   quickCreate?: unknown;
-  apps?: unknown;
   hiddenQuickCreate?: unknown;
-  hiddenApps?: unknown;
 }): LauncherProjectDefaults {
   const normalizedQuickCreate = normalizeList(quickCreate);
-  const normalizedApps = normalizeList(apps);
   const normalizedHiddenQuickCreate = normalizeList(hiddenQuickCreate);
-  const normalizedHiddenApps = normalizeList(hiddenApps);
   return {
     quickCreate: normalizedQuickCreate.length
       ? normalizedQuickCreate
       : undefined,
-    apps: normalizedApps.length ? normalizedApps : undefined,
     hiddenQuickCreate: normalizedHiddenQuickCreate.length
       ? normalizedHiddenQuickCreate
       : undefined,
-    hiddenApps: normalizedHiddenApps.length ? normalizedHiddenApps : undefined,
   };
 }
 
@@ -129,9 +111,8 @@ export function getUserLauncherLayers(
   const obj = normalizeObject<LauncherUserPrefsStore>(settings);
   const account: LauncherUserPrefs = {
     quickCreate: normalizeList(obj.quickCreate),
-    apps: normalizeList(obj.apps),
     hiddenQuickCreate: normalizeList(obj.hiddenQuickCreate),
-    hiddenApps: normalizeList(obj.hiddenApps),
+    quickCreateOrder: normalizeList(obj.quickCreateOrder),
   };
   const projectObj =
     project_id && obj.perProject && obj.perProject[project_id]
@@ -139,9 +120,8 @@ export function getUserLauncherLayers(
       : {};
   const project: LauncherUserPrefs = {
     quickCreate: normalizeList(projectObj.quickCreate),
-    apps: normalizeList(projectObj.apps),
     hiddenQuickCreate: normalizeList(projectObj.hiddenQuickCreate),
-    hiddenApps: normalizeList(projectObj.hiddenApps),
+    quickCreateOrder: normalizeList(projectObj.quickCreateOrder),
   };
   return { account, project };
 }
@@ -156,13 +136,12 @@ export function getUserLauncherPrefs(
       quickCreate: project.quickCreate?.length
         ? project.quickCreate
         : account.quickCreate,
-      apps: project.apps?.length ? project.apps : account.apps,
       hiddenQuickCreate: project.hiddenQuickCreate?.length
         ? project.hiddenQuickCreate
         : account.hiddenQuickCreate,
-      hiddenApps: project.hiddenApps?.length
-        ? project.hiddenApps
-        : account.hiddenApps,
+      quickCreateOrder: project.quickCreateOrder?.length
+        ? project.quickCreateOrder
+        : account.quickCreateOrder,
     };
   }
   return account;
@@ -174,23 +153,26 @@ export function updateUserLauncherPrefs(
   prefs: LauncherUserPrefs | null,
 ): LauncherUserPrefsStore {
   const obj = normalizeObject<LauncherUserPrefsStore>(settings);
+  const rest = {
+    ...(obj as Record<string, unknown>),
+  } as LauncherUserPrefsStore;
+  delete (rest as Record<string, unknown>).apps;
+  delete (rest as Record<string, unknown>).hiddenApps;
+  delete (rest as Record<string, unknown>).appsOrder;
   if (!project_id) {
     if (prefs == null) {
       const {
         quickCreate: _quickCreate,
-        apps: _apps,
         hiddenQuickCreate: _hiddenQuickCreate,
-        hiddenApps: _hiddenApps,
-        ...rest
-      } = obj;
+        quickCreateOrder: _quickCreateOrder,
+      } = rest;
       return rest as LauncherUserPrefsStore;
     }
     return {
-      ...obj,
+      ...rest,
       quickCreate: prefs.quickCreate ?? [],
-      apps: prefs.apps ?? [],
       hiddenQuickCreate: prefs.hiddenQuickCreate ?? [],
-      hiddenApps: prefs.hiddenApps ?? [],
+      quickCreateOrder: prefs.quickCreateOrder ?? [],
     };
   }
   const perProject = {
@@ -202,16 +184,9 @@ export function updateUserLauncherPrefs(
     perProject[project_id] = prefs;
   }
   return {
-    ...obj,
+    ...rest,
     perProject,
   };
-}
-
-function filterKnown(
-  list: string[],
-  catalog: Record<string, unknown>,
-): string[] {
-  return list.filter((id) => catalog[id] != null);
 }
 
 function uniqNonEmpty(list: string[]): string[] {
@@ -240,6 +215,21 @@ function applyLayer({
   return next.filter((id) => !removed.has(id));
 }
 
+function applyOrder({
+  base,
+  order,
+}: {
+  base: string[];
+  order?: string[];
+}): string[] {
+  const normalizedOrder = uniqNonEmpty(order ?? []);
+  if (!normalizedOrder.length) return base;
+  const prioritized = normalizedOrder.filter((id) => base.includes(id));
+  const seen = new Set(prioritized);
+  const remainder = base.filter((id) => !seen.has(id));
+  return [...prioritized, ...remainder];
+}
+
 export function mergeLauncherSettings({
   projectDefaults,
   accountUserPrefs,
@@ -252,52 +242,42 @@ export function mergeLauncherSettings({
   globalDefaults?: LauncherProjectDefaults;
 }): LauncherMerged {
   let quickCreate = uniqNonEmpty(LAUNCHER_GLOBAL_DEFAULTS.quickCreate);
-  let apps = uniqNonEmpty(LAUNCHER_GLOBAL_DEFAULTS.apps);
 
   quickCreate = applyLayer({
     base: quickCreate,
     add: globalDefaults?.quickCreate,
     remove: globalDefaults?.hiddenQuickCreate,
   });
-  apps = applyLayer({
-    base: apps,
-    add: globalDefaults?.apps,
-    remove: globalDefaults?.hiddenApps,
-  });
   quickCreate = applyLayer({
     base: quickCreate,
     add: projectDefaults?.quickCreate,
     remove: projectDefaults?.hiddenQuickCreate,
   });
-  apps = applyLayer({
-    base: apps,
-    add: projectDefaults?.apps,
-    remove: projectDefaults?.hiddenApps,
+  quickCreate = applyOrder({
+    base: quickCreate,
+    order: projectDefaults?.quickCreateOrder,
   });
   quickCreate = applyLayer({
     base: quickCreate,
     add: accountUserPrefs?.quickCreate,
     remove: accountUserPrefs?.hiddenQuickCreate,
   });
-  apps = applyLayer({
-    base: apps,
-    add: accountUserPrefs?.apps,
-    remove: accountUserPrefs?.hiddenApps,
+  quickCreate = applyOrder({
+    base: quickCreate,
+    order: accountUserPrefs?.quickCreateOrder,
   });
   quickCreate = applyLayer({
     base: quickCreate,
     add: projectUserPrefs?.quickCreate,
     remove: projectUserPrefs?.hiddenQuickCreate,
   });
-  apps = applyLayer({
-    base: apps,
-    add: projectUserPrefs?.apps,
-    remove: projectUserPrefs?.hiddenApps,
+  quickCreate = applyOrder({
+    base: quickCreate,
+    order: projectUserPrefs?.quickCreateOrder,
   });
 
   return {
     quickCreate: quickCreate,
-    apps: uniqNonEmpty(filterKnown(apps, APP_MAP)),
   };
 }
 

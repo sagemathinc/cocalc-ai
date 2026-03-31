@@ -6,6 +6,7 @@
 import {
   getUserLauncherLayers,
   mergeLauncherSettings,
+  updateUserLauncherPrefs,
 } from "./launcher-preferences";
 
 describe("launcher additive merge", () => {
@@ -14,25 +15,18 @@ describe("launcher additive merge", () => {
       globalDefaults: {
         quickCreate: ["course"],
         hiddenQuickCreate: ["tex"],
-        apps: ["xpra"],
-        hiddenApps: ["jupyter"],
       },
       projectDefaults: {
         quickCreate: ["paper"],
         hiddenQuickCreate: ["chat"],
-        apps: ["jupyter"],
       },
       accountUserPrefs: {
         quickCreate: ["codex"],
         hiddenQuickCreate: ["term"],
-        apps: ["pluto"],
-        hiddenApps: ["xpra"],
       },
       projectUserPrefs: {
         quickCreate: ["worksheet"],
         hiddenQuickCreate: ["course"],
-        apps: ["code"],
-        hiddenApps: ["jupyterlab"],
       },
     });
 
@@ -43,14 +37,12 @@ describe("launcher additive merge", () => {
       "codex",
       "worksheet",
     ]);
-    expect(merged.apps).toEqual(["code", "pluto", "rserver", "jupyter"]);
   });
 
-  test("quick create allows arbitrary extensions, apps remain validated", () => {
+  test("quick create allows arbitrary extensions", () => {
     const merged = mergeLauncherSettings({
       globalDefaults: {
         quickCreate: ["course", "codex", "totally-custom"],
-        apps: ["not-a-real-app"],
       },
     });
     expect(merged.quickCreate).toEqual([
@@ -63,13 +55,19 @@ describe("launcher additive merge", () => {
       "codex",
       "totally-custom",
     ]);
-    expect(merged.apps).toEqual([
-      "jupyterlab",
-      "code",
-      "jupyter",
-      "pluto",
-      "rserver",
-    ]);
+  });
+
+  test("user and project layers can persist explicit ordering", () => {
+    const merged = mergeLauncherSettings({
+      accountUserPrefs: {
+        quickCreateOrder: ["term", "chat", "ipynb", "md", "tex"],
+      },
+      projectUserPrefs: {
+        quickCreateOrder: ["md", "term", "chat", "ipynb", "tex"],
+      },
+    });
+
+    expect(merged.quickCreate).toEqual(["md", "term", "chat", "ipynb", "tex"]);
   });
 });
 
@@ -78,14 +76,10 @@ describe("getUserLauncherLayers", () => {
     const settings = {
       quickCreate: ["course"],
       hiddenQuickCreate: ["tex"],
-      apps: ["jupyter"],
-      hiddenApps: ["code"],
       perProject: {
         p1: {
           quickCreate: ["worksheet"],
           hiddenQuickCreate: ["course"],
-          apps: ["pluto"],
-          hiddenApps: ["jupyter"],
         },
       },
     };
@@ -93,14 +87,47 @@ describe("getUserLauncherLayers", () => {
     expect(account).toEqual({
       quickCreate: ["course"],
       hiddenQuickCreate: ["tex"],
-      apps: ["jupyter"],
-      hiddenApps: ["code"],
+      quickCreateOrder: [],
     });
     expect(project).toEqual({
       quickCreate: ["worksheet"],
       hiddenQuickCreate: ["course"],
-      apps: ["pluto"],
-      hiddenApps: ["jupyter"],
+      quickCreateOrder: [],
+    });
+  });
+
+  test("round-trips persisted ordering through per-project prefs", () => {
+    const settings = updateUserLauncherPrefs({}, "p1", {
+      quickCreateOrder: ["term", "chat", "ipynb", "md", "tex"],
+    });
+    const { project } = getUserLauncherLayers(settings, "p1");
+
+    expect(project.quickCreateOrder).toEqual([
+      "term",
+      "chat",
+      "ipynb",
+      "md",
+      "tex",
+    ]);
+  });
+
+  test("updating account prefs strips legacy launcher app fields", () => {
+    const settings = updateUserLauncherPrefs(
+      {
+        apps: ["jupyterlab"],
+        hiddenApps: ["code"],
+        appsOrder: ["jupyterlab"],
+      },
+      undefined,
+      {
+        quickCreate: ["course"],
+      },
+    );
+
+    expect(settings).toEqual({
+      quickCreate: ["course"],
+      hiddenQuickCreate: [],
+      quickCreateOrder: [],
     });
   });
 });

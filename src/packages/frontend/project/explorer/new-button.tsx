@@ -9,9 +9,7 @@ import { React, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { DropdownMenu, Icon } from "@cocalc/frontend/components";
 import { labels } from "@cocalc/frontend/i18n";
 import {
-  LAUNCHER_SITE_REMOVE_APPS_KEY,
   LAUNCHER_SITE_REMOVE_QUICK_KEY,
-  LAUNCHER_SITE_DEFAULTS_APPS_KEY,
   LAUNCHER_SITE_DEFAULTS_QUICK_KEY,
   LAUNCHER_SETTINGS_KEY,
   getProjectLauncherDefaults,
@@ -51,17 +49,9 @@ export const NewButton: React.FC<Props> = ({
     "customize",
     LAUNCHER_SITE_DEFAULTS_QUICK_KEY,
   );
-  const site_launcher_apps = useTypedRedux(
-    "customize",
-    LAUNCHER_SITE_DEFAULTS_APPS_KEY,
-  );
   const site_remove_quick = useTypedRedux(
     "customize",
     LAUNCHER_SITE_REMOVE_QUICK_KEY,
-  );
-  const site_remove_apps = useTypedRedux(
-    "customize",
-    LAUNCHER_SITE_REMOVE_APPS_KEY,
   );
   const project_launcher = useTypedRedux("projects", "project_map")?.getIn([
     project_id,
@@ -69,9 +59,7 @@ export const NewButton: React.FC<Props> = ({
   ]);
   const siteLauncherDefaults = getSiteLauncherDefaults({
     quickCreate: site_launcher_quick,
-    apps: site_launcher_apps,
     hiddenQuickCreate: site_remove_quick,
-    hiddenApps: site_remove_apps,
   });
   const userLauncherLayers = getUserLauncherLayers(
     other_settings?.get?.(LAUNCHER_SETTINGS_KEY),
