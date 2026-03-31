@@ -575,10 +575,7 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
     return (
       <Button
         key={"time-travel-button"}
-        style={{
-          ...button_style(),
-          ...(!darkMode ? { color: "#333", background: "#5bc0de" } : undefined),
-        }}
+        style={button_style()}
         size={button_size()}
         onClick={(event) => {
           try {
@@ -688,7 +685,6 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
           props.editor_actions.save(true);
           props.actions.focus(props.id);
         }}
-        type={darkMode ? "default" : undefined}
       />
     );
   }

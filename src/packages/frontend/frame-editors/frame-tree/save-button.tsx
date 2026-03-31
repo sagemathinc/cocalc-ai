@@ -28,7 +28,6 @@ interface Props {
   show_uncommitted_changes?: boolean;
   set_show_uncommitted_changes?: Function;
   style?: CSSProperties;
-  type?: "default"; // only used to turn off color in case of dark mode right now
 }
 
 const CONNECTING_INDICATOR_DELAY_MS = 2000;
@@ -46,7 +45,6 @@ export function SaveButton({
   show_uncommitted_changes,
   set_show_uncommitted_changes,
   style,
-  type,
 }: Props) {
   const intl = useIntl();
   const [showConnecting, setShowConnecting] = useState(false);
@@ -113,10 +111,6 @@ export function SaveButton({
       disabled={disabled}
       onClick={onClick}
       style={{
-        ...(type == "default"
-          ? undefined
-          : { background: "#5cb85c", color: "#333" }),
-        opacity: disabled ? 0.65 : undefined,
         whiteSpace: "nowrap",
         ...style,
       }}
