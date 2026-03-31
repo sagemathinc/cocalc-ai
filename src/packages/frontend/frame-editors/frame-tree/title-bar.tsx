@@ -1363,9 +1363,9 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
   style = copy(title_bar_style);
   style.background = is_active ? COL_BAR_BACKGROUND : COL_BAR_BACKGROUND_DARK;
   if (!props.is_only && !props.is_full) {
-    style.maxHeight = "34px";
+    style.maxHeight = "30px";
   } else {
-    style.maxHeight = "38px";
+    style.maxHeight = "34px";
   }
   // position relative, so we can absolute position the
   // frame controls to the right
