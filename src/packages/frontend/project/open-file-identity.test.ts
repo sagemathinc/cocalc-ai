@@ -83,28 +83,29 @@ describe("findOpenDisplayPathForSyncPath", () => {
 describe("resolveSyncPath", () => {
   const HOME = "/root";
 
-  it("prefers canonicalSyncIdentityPath over raw realpath", async () => {
+  it("uses canonicalSyncIdentityPath for sync identity resolution", async () => {
     const fs = {
       canonicalSyncIdentityPath: jest.fn().mockResolvedValue("/x/a.txt"),
-      realpath: jest
-        .fn()
-        .mockResolvedValue("/var/lib/containers/storage/overlay/x/a.txt"),
     };
     await expect(resolveSyncPath(fs, "/x/a.txt", HOME)).resolves.toBe(
       "/x/a.txt",
     );
     expect(fs.canonicalSyncIdentityPath).toHaveBeenCalledWith("/x/a.txt");
-    expect(fs.realpath).not.toHaveBeenCalled();
   });
 
-  it("falls back to realpath when canonical sync identity is unavailable", async () => {
-    const fs = {
-      realpath: jest.fn().mockResolvedValue("/root/link-target.txt"),
-    };
-    await expect(resolveSyncPath(fs, "/root/link.txt", HOME)).resolves.toBe(
-      "/root/link-target.txt",
+  it("fails closed when canonical sync identity support is unavailable", async () => {
+    await expect(resolveSyncPath({}, "/root/link.txt", HOME)).rejects.toThrow(
+      "canonicalSyncIdentityPath",
     );
-    expect(fs.realpath).toHaveBeenCalledWith("/root/link.txt");
+  });
+
+  it("fails closed when canonical sync identity resolution throws", async () => {
+    const fs = {
+      canonicalSyncIdentityPath: jest.fn().mockRejectedValue(new Error("boom")),
+    };
+    await expect(resolveSyncPath(fs, "/root/link.txt", HOME)).rejects.toThrow(
+      "boom",
+    );
   });
 });
 

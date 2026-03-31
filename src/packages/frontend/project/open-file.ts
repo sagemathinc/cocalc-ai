@@ -79,7 +79,6 @@ export function findOpenDisplayPathForSyncPath(
 
 type SyncIdentityFs = {
   canonicalSyncIdentityPath?: (path: string) => Promise<string>;
-  realpath?: (path: string) => Promise<string>;
 };
 
 export async function resolveSyncPath(
@@ -87,17 +86,18 @@ export async function resolveSyncPath(
   displayPath: string,
   projectHome: string,
 ): Promise<string> {
-  let syncPath = displayPath;
-  try {
-    if (typeof fs.canonicalSyncIdentityPath === "function") {
-      // In launchpad/sandbox mode, this preserves the user-facing canonical
-      // sync identity instead of leaking container-internal realpaths.
-      syncPath = await fs.canonicalSyncIdentityPath(displayPath);
-    } else if (typeof fs.realpath === "function") {
-      syncPath = await fs.realpath(displayPath);
-    }
-  } catch (_) {
-    // Older backends may not expose canonical sync identity helpers yet.
+  if (typeof fs.canonicalSyncIdentityPath !== "function") {
+    throw new Error(
+      "backend does not provide canonicalSyncIdentityPath; refusing to open file unsafely",
+    );
+  }
+  // In launchpad/sandbox mode, this preserves the user-facing canonical sync
+  // identity instead of leaking container-internal realpaths.
+  const syncPath = await fs.canonicalSyncIdentityPath(displayPath);
+  if (typeof syncPath !== "string" || syncPath.length === 0) {
+    throw new Error(
+      `backend returned invalid canonical sync identity for '${displayPath}'`,
+    );
   }
   // Map resolved paths to canonical sync identities used by specific editors
   // (e.g. ipynb syncdb path, terminal path key).
@@ -216,11 +216,25 @@ export async function open_file(
     return;
   }
 
-  const syncPath = await resolveSyncPath(
-    actions.fs() as SyncIdentityFs,
-    displayPath,
-    projectHome,
-  );
+  let syncPath: string;
+  try {
+    syncPath = await resolveSyncPath(
+      actions.fs() as SyncIdentityFs,
+      displayPath,
+      projectHome,
+    );
+  } catch (err) {
+    if (!alreadyOpened && actions.open_files?.has(displayPath)) {
+      actions.open_files.delete(displayPath);
+      redux.getActions("page").save_session();
+    }
+    alert_message({
+      type: "error",
+      message: `Cannot safely open "${displayPath}" because canonical sync identity resolution failed: ${err}`,
+      timeout: 10,
+    });
+    return;
+  }
   if (!tabIsOpened()) {
     return;
   }
