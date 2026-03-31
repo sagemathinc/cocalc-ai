@@ -57,17 +57,20 @@ export const Notification: React.FC<Props> = React.memo((props: Props) => {
   }, [count, news_unread]);
 
   const outer_style: CSS = {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    cursor: "pointer",
     padding: `${topPaddingIcons} ${sidePaddingIcons}`,
     height: `${pageStyle.height}px`,
     ...(active ? { backgroundColor: COLORS.TOP_BAR.ACTIVE } : {}),
   };
 
   const inner_style: CSS = {
-    cursor: "pointer",
-    position: "relative",
-    ...(type === "notifications"
-      ? { top: Math.floor(pageStyle.height / 10) + 1 } // bit offset to make room for the badge
-      : { top: 1 }),
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    lineHeight: 0,
   };
 
   function onClick(e) {
