@@ -103,12 +103,16 @@ export default function ChatInput({
   const intl = useIntl();
   const controlRef = useRef<any>(null);
   const [input, setInput] = useState<string>(propsInput ?? "");
+  const [editorResetEpoch, setEditorResetEpoch] = useState(0);
   const [mode, setMode] = useState<"markdown" | "editor">(
     fixedMode ?? "editor",
   );
   const mountedRef = useRef<boolean>(true);
   const currentSessionTokenRef = useRef<number | undefined>(sessionToken);
   const previousSessionTokenRef = useRef<number | undefined>(sessionToken);
+  const previousEditorSessionTokenRef = useRef<number | undefined>(
+    sessionToken,
+  );
   const currentInputRef = useRef<string>(propsInput ?? "");
   const previousPropsInputRef = useRef<string>(propsInput ?? "");
   const sentEchoGuardRef = useRef<SentEchoGuard>(null);
@@ -145,6 +149,16 @@ export default function ChatInput({
       setInput(next);
     }
   }, [propsInput, input]);
+
+  useEffect(() => {
+    const previousSessionToken = previousEditorSessionTokenRef.current;
+    previousEditorSessionTokenRef.current = sessionToken;
+    if (sessionToken == null || previousSessionToken == null) return;
+    if (sessionToken === previousSessionToken) return;
+    if ((propsInput ?? "").length > 0) return;
+    setInput("");
+    setEditorResetEpoch((epoch) => epoch + 1);
+  }, [propsInput, sessionToken]);
 
   const resolvedPresenceThreadKey = useMemo((): string | null | undefined => {
     if (presenceThreadKey === undefined) return undefined;
@@ -276,7 +290,7 @@ export default function ChatInput({
 
   return (
     <MarkdownInput
-      key={`chat-input-session-${sessionToken ?? "default"}`}
+      key={`chat-input-session-${sessionToken ?? "default"}-${editorResetEpoch}`}
       fixedMode={fixedMode}
       slateExternalMultilinePasteAsCodeBlock={externalMultilinePasteAsCodeBlock}
       autoFocus={autoFocus}
