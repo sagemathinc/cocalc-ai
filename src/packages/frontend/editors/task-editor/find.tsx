@@ -55,7 +55,7 @@ export function Find({
           })
         }
         onBlur={() => actions.blur_find_box()}
-        onFocus={() => actions.disable_key_handler()}
+        onFocus={() => actions.focus_find_box()}
         onKeyDown={(evt) => {
           if (evt.which === 27) {
             actions.set_local_view_state({ search: "" });

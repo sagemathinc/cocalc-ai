@@ -54,7 +54,7 @@ describe("task filter keyboard boundary", () => {
           {
             set_local_view_state: jest.fn(),
             blur_find_box: jest.fn(),
-            disable_key_handler: jest.fn(),
+            focus_find_box: jest.fn(),
             enable_key_handler: jest.fn(),
           } as any
         }
@@ -69,5 +69,25 @@ describe("task filter keyboard boundary", () => {
     fireEvent.focus(screen.getByTestId("task-filter-input"));
 
     expect(mockEraseActiveKeyHandler).toHaveBeenCalledTimes(1);
+  });
+
+  it("routes mouse focus through focus_find_box", () => {
+    const actions = {
+      set_local_view_state: jest.fn(),
+      blur_find_box: jest.fn(),
+      focus_find_box: jest.fn(),
+      enable_key_handler: jest.fn(),
+    } as any;
+
+    render(
+      <Find
+        actions={actions}
+        local_view_state={fromJS({ search: "" }) as any}
+      />,
+    );
+
+    fireEvent.focus(screen.getByTestId("task-filter-input"));
+
+    expect(actions.focus_find_box).toHaveBeenCalledTimes(1);
   });
 });
