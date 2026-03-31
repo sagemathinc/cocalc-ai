@@ -28,6 +28,7 @@ import { isHostOpActive, type HostLroState } from "../hooks/use-host-ops";
 import { getHostOpPhase, HostOpProgress } from "./host-op-progress";
 import { HostBackupStatus } from "./host-backup-status";
 import { HostBootstrapProgress } from "./host-bootstrap-progress";
+import { HostBootstrapLifecycle } from "./host-bootstrap-lifecycle";
 import { HostProjectStatus } from "./host-project-status";
 import {
   confirmHostDeprovision,
@@ -313,6 +314,7 @@ export const HostCard: React.FC<HostCardProps> = ({
         )}
         <HostOpProgress op={hostOp} compact />
         <HostBootstrapProgress host={host} />
+        <HostBootstrapLifecycle host={host} />
         <HostProjectStatus host={host} fontSize={14} />
         <HostBackupStatus host={host} />
         <Typography.Text>

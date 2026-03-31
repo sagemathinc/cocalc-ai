@@ -4,6 +4,8 @@ import type {
   Host,
   HostBackupStatus,
   HostBootstrapStatus,
+  HostBootstrapLifecycle,
+  HostBootstrapLifecycleItem,
   HostConnectionInfo,
   HostDrainResult,
   HostMachine,
@@ -131,6 +133,7 @@ const HOST_START_LRO_KIND = "host-start";
 const HOST_STOP_LRO_KIND = "host-stop";
 const HOST_RESTART_LRO_KIND = "host-restart";
 const HOST_DRAIN_LRO_KIND = "host-drain";
+const HOST_RECONCILE_LRO_KIND = "host-reconcile-software";
 const HOST_UPGRADE_LRO_KIND = "host-upgrade-software";
 const HOST_DEPROVISION_LRO_KIND = "host-deprovision";
 const HOST_DELETE_LRO_KIND = "host-delete";
@@ -214,6 +217,20 @@ function cloudHostSshTarget(row: {
   return `${sshUser}@${publicIp}`;
 }
 
+function assertCloudHostBootstrapReconcileSupported(row: any): void {
+  const machineCloud = normalizeProviderId(row?.metadata?.machine?.cloud);
+  if (!machineCloud || machineCloud === "self-host") {
+    throw new Error(
+      "bootstrap reconcile is only supported for cloud hosts with ssh access",
+    );
+  }
+  if (!cloudHostSshTarget(row)) {
+    throw new Error(
+      "bootstrap reconcile requires a reachable cloud ssh target for this host",
+    );
+  }
+}
+
 async function reconcileCloudHostBootstrapOverSsh(opts: {
   host_id: string;
   row: any;
@@ -241,7 +258,7 @@ async function reconcileCloudHostBootstrapOverSsh(opts: {
   const script = `
 set -euo pipefail
 BOOTSTRAP_DIR=""
-for candidate in /home/ubuntu/cocalc-host/bootstrap /root/cocalc-host/bootstrap
+for candidate in /mnt/cocalc/data/.host-bootstrap/bootstrap /home/ubuntu/cocalc-host/bootstrap /root/cocalc-host/bootstrap
 do
   if [ -d "$candidate" ]; then
     BOOTSTRAP_DIR="$candidate"
@@ -736,6 +753,159 @@ function parseRow(
             : {}),
         }
       : undefined;
+  const rawBootstrapLifecycle = metadata.bootstrap_lifecycle;
+  const bootstrapLifecycle: HostBootstrapLifecycle | undefined =
+    rawBootstrapLifecycle && typeof rawBootstrapLifecycle === "object"
+      ? (() => {
+          const parseLifecycleValue = (
+            value: unknown,
+          ): string | boolean | number | null | undefined => {
+            if (typeof value === "string") {
+              const trimmed = value.trim();
+              return trimmed || undefined;
+            }
+            if (typeof value === "boolean") return value;
+            if (typeof value === "number" && Number.isFinite(value)) {
+              return value;
+            }
+            if (value === null) return null;
+            return undefined;
+          };
+          const parseLifecycleStatus = (
+            value: unknown,
+          ):
+            | HostBootstrapLifecycle["summary_status"]
+            | HostBootstrapLifecycleItem["status"]
+            | undefined => {
+            const status = `${value ?? ""}`.trim();
+            if (
+              status === "in_sync" ||
+              status === "drifted" ||
+              status === "reconciling" ||
+              status === "error" ||
+              status === "unknown" ||
+              status === "match" ||
+              status === "drift" ||
+              status === "missing" ||
+              status === "disabled"
+            ) {
+              return status as
+                | HostBootstrapLifecycle["summary_status"]
+                | HostBootstrapLifecycleItem["status"];
+            }
+            return undefined;
+          };
+          const items = Array.isArray(rawBootstrapLifecycle.items)
+            ? rawBootstrapLifecycle.items
+                .map((item): HostBootstrapLifecycleItem | undefined => {
+                  if (!item || typeof item !== "object") return undefined;
+                  const key =
+                    typeof item.key === "string" ? item.key.trim() : "";
+                  const label =
+                    typeof item.label === "string" ? item.label.trim() : "";
+                  const status = parseLifecycleStatus(item.status);
+                  if (!key || !label || !status) return undefined;
+                  return {
+                    key,
+                    label,
+                    status: status as HostBootstrapLifecycleItem["status"],
+                    ...(parseLifecycleValue(item.desired) !== undefined
+                      ? { desired: parseLifecycleValue(item.desired) }
+                      : {}),
+                    ...(parseLifecycleValue(item.installed) !== undefined
+                      ? { installed: parseLifecycleValue(item.installed) }
+                      : {}),
+                    ...(typeof item.message === "string" && item.message.trim()
+                      ? { message: item.message.trim() }
+                      : {}),
+                  };
+                })
+                .filter(
+                  (item): item is HostBootstrapLifecycleItem =>
+                    item !== undefined,
+                )
+            : [];
+          const summaryStatus = parseLifecycleStatus(
+            rawBootstrapLifecycle.summary_status,
+          ) as HostBootstrapLifecycle["summary_status"] | undefined;
+          if (!summaryStatus) return undefined;
+          return {
+            ...(typeof rawBootstrapLifecycle.bootstrap_dir === "string" &&
+            rawBootstrapLifecycle.bootstrap_dir.trim()
+              ? { bootstrap_dir: rawBootstrapLifecycle.bootstrap_dir.trim() }
+              : {}),
+            ...(typeof rawBootstrapLifecycle.desired_recorded_at === "string"
+              ? {
+                  desired_recorded_at:
+                    rawBootstrapLifecycle.desired_recorded_at,
+                }
+              : {}),
+            ...(typeof rawBootstrapLifecycle.installed_recorded_at === "string"
+              ? {
+                  installed_recorded_at:
+                    rawBootstrapLifecycle.installed_recorded_at,
+                }
+              : {}),
+            ...(typeof rawBootstrapLifecycle.current_operation === "string"
+              ? { current_operation: rawBootstrapLifecycle.current_operation }
+              : {}),
+            ...(typeof rawBootstrapLifecycle.last_provision_result === "string"
+              ? {
+                  last_provision_result:
+                    rawBootstrapLifecycle.last_provision_result,
+                }
+              : {}),
+            ...(typeof rawBootstrapLifecycle.last_provision_started_at ===
+            "string"
+              ? {
+                  last_provision_started_at:
+                    rawBootstrapLifecycle.last_provision_started_at,
+                }
+              : {}),
+            ...(typeof rawBootstrapLifecycle.last_provision_finished_at ===
+            "string"
+              ? {
+                  last_provision_finished_at:
+                    rawBootstrapLifecycle.last_provision_finished_at,
+                }
+              : {}),
+            ...(typeof rawBootstrapLifecycle.last_reconcile_result === "string"
+              ? {
+                  last_reconcile_result:
+                    rawBootstrapLifecycle.last_reconcile_result,
+                }
+              : {}),
+            ...(typeof rawBootstrapLifecycle.last_reconcile_started_at ===
+            "string"
+              ? {
+                  last_reconcile_started_at:
+                    rawBootstrapLifecycle.last_reconcile_started_at,
+                }
+              : {}),
+            ...(typeof rawBootstrapLifecycle.last_reconcile_finished_at ===
+            "string"
+              ? {
+                  last_reconcile_finished_at:
+                    rawBootstrapLifecycle.last_reconcile_finished_at,
+                }
+              : {}),
+            ...(typeof rawBootstrapLifecycle.last_error === "string" &&
+            rawBootstrapLifecycle.last_error.trim()
+              ? { last_error: rawBootstrapLifecycle.last_error.trim() }
+              : {}),
+            summary_status: summaryStatus,
+            ...(typeof rawBootstrapLifecycle.summary_message === "string" &&
+            rawBootstrapLifecycle.summary_message.trim()
+              ? {
+                  summary_message: rawBootstrapLifecycle.summary_message.trim(),
+                }
+              : {}),
+            drift_count:
+              parseNonNegativeNumber(rawBootstrapLifecycle.drift_count) ?? 0,
+            items,
+          };
+        })()
+      : undefined;
   const rawStatus = String(row.status ?? "");
   const normalizedStatus =
     rawStatus === "active" ? "running" : rawStatus || "off";
@@ -786,6 +956,7 @@ function parseRow(
     deleted: row.deleted ? new Date(row.deleted).toISOString() : undefined,
     backup_status: opts.backup_status,
     bootstrap,
+    bootstrap_lifecycle: bootstrapLifecycle,
   };
 }
 
@@ -4116,6 +4287,25 @@ export async function upgradeHostSoftware({
   });
 }
 
+export async function reconcileHostSoftware({
+  account_id,
+  id,
+}: {
+  account_id?: string;
+  id: string;
+}): Promise<HostLroResponse> {
+  const row = await loadHostForStartStop(id, account_id);
+  assertHostRunningForUpgrade(row);
+  assertCloudHostBootstrapReconcileSupported(row);
+  return await createHostLro({
+    kind: HOST_RECONCILE_LRO_KIND,
+    row,
+    account_id,
+    input: { id: row.id, account_id },
+    dedupe_key: `${HOST_RECONCILE_LRO_KIND}:${row.id}`,
+  });
+}
+
 export async function upgradeHostConnector({
   account_id,
   id,
@@ -4162,6 +4352,19 @@ export async function upgradeHostConnector({
     ssh_port: reversePort,
     version: connectorVersion,
   });
+}
+
+export async function reconcileHostSoftwareInternal({
+  account_id,
+  id,
+}: {
+  account_id?: string;
+  id: string;
+}): Promise<void> {
+  const row = await loadHostForStartStop(id, account_id);
+  assertHostRunningForUpgrade(row);
+  assertCloudHostBootstrapReconcileSupported(row);
+  await reconcileCloudHostBootstrapOverSsh({ host_id: id, row });
 }
 
 function assertHostRunningForUpgrade(row: any) {
@@ -4662,24 +4865,58 @@ export async function upgradeHostSoftwareInternal({
   const HOST_UPGRADE_RPC_TIMEOUT_MS = 10 * 60 * 1000;
   const row = await loadHostForStartStop(id, account_id);
   assertHostRunningForUpgrade(row);
+  const availability = computeHostOperationalAvailability(row);
+  const requestedProjectHostUpgrade = targets.some(
+    (target) => target.artifact === "project-host",
+  );
+  const supportsBootstrapFallback =
+    requestedProjectHostUpgrade &&
+    targets.every(
+      (target) =>
+        !target.version &&
+        ((target.channel ?? "latest") as HostSoftwareChannel) === "latest",
+    );
   const resolvedBaseUrl = await resolveHostSoftwareBaseUrl(base_url);
   const effectiveBaseUrl = await resolveReachableUpgradeBaseUrl({
     row,
     baseUrl: resolvedBaseUrl,
   });
+  if (!availability.online && supportsBootstrapFallback) {
+    logger.warn(
+      "host upgrade: host heartbeat is stale; using bootstrap reconcile fallback",
+      {
+        host_id: id,
+        targets,
+        reason: availability.reason_unavailable,
+      },
+    );
+    await reconcileCloudHostBootstrapOverSsh({ host_id: id, row });
+    return { results: [] };
+  }
   const client = createHostControlClient({
     host_id: id,
     client: conatWithProjectRouting(),
     timeout: HOST_UPGRADE_RPC_TIMEOUT_MS,
   });
-  const response = await client.upgradeSoftware({
-    targets,
-    base_url: effectiveBaseUrl,
-  });
+  let response: HostSoftwareUpgradeResponse;
+  try {
+    response = await client.upgradeSoftware({
+      targets,
+      base_url: effectiveBaseUrl,
+    });
+  } catch (err) {
+    if (!supportsBootstrapFallback) {
+      throw err;
+    }
+    logger.warn("host upgrade: host control upgrade failed; retry via ssh", {
+      host_id: id,
+      targets,
+      err: `${err}`,
+    });
+    await reconcileCloudHostBootstrapOverSsh({ host_id: id, row });
+    return { results: [] };
+  }
   const results = response.results ?? [];
-  const requestedProjectHostUpgrade = targets.some(
-    (target) => target.artifact === "project-host",
-  );
   if (results.length) {
     const metadata = row.metadata ?? {};
     const software = { ...(metadata.software ?? {}) } as Record<string, string>;

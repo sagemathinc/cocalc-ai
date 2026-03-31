@@ -171,4 +171,81 @@ describe("project host metrics history", () => {
     );
     expect(entry?.derived?.admission_allowed).toBe(true);
   });
+
+  it("ignores reservation-backed pull spikes when computing growth forecasts", async () => {
+    const host_id = uuid();
+    await insertProjectHost(host_id);
+    const start = new Date(Date.now() - 10 * 60 * 1000);
+    const gib = 1024 ** 3;
+    const samples = [
+      { minute: 0, used: 40 * gib, avail: 160 * gib, reservation: 0 },
+      { minute: 1, used: 42 * gib, avail: 158 * gib, reservation: 20 * gib },
+      { minute: 2, used: 80 * gib, avail: 120 * gib, reservation: 20 * gib },
+      { minute: 3, used: 110 * gib, avail: 90 * gib, reservation: 20 * gib },
+      { minute: 4, used: 110 * gib, avail: 90 * gib, reservation: 0 },
+      { minute: 5, used: 110 * gib, avail: 90 * gib, reservation: 0 },
+      { minute: 6, used: 110 * gib, avail: 90 * gib, reservation: 0 },
+      { minute: 7, used: 110 * gib, avail: 90 * gib, reservation: 0 },
+    ];
+
+    for (const sample of samples) {
+      await recordProjectHostMetricsSample({
+        host_id,
+        metrics: {
+          collected_at: new Date(
+            start.getTime() + sample.minute * 61 * 1000,
+          ).toISOString(),
+          disk_device_total_bytes: 200 * gib,
+          disk_device_used_bytes: sample.used,
+          disk_available_conservative_bytes: sample.avail,
+          reservation_bytes: sample.reservation,
+        },
+      });
+    }
+
+    const history = await loadProjectHostMetricsHistory({
+      host_ids: [host_id],
+      window_minutes: 60,
+      max_points: 60,
+    });
+    const entry = history.get(host_id);
+    expect(entry).toBeDefined();
+    expect(entry?.growth?.disk_used_bytes_per_hour).toBeUndefined();
+    expect(entry?.derived?.disk.hours_to_exhaustion).toBeUndefined();
+    expect(entry?.derived?.disk.level).toBe("healthy");
+    expect(entry?.derived?.admission_allowed).toBe(true);
+  });
+
+  it("still forecasts sustained non-reservation disk growth", async () => {
+    const host_id = uuid();
+    await insertProjectHost(host_id);
+    const start = new Date(Date.now() - 10 * 60 * 1000);
+    const gib = 1024 ** 3;
+
+    for (let minute = 0; minute < 8; minute += 1) {
+      const used = (60 + minute * 5) * gib;
+      await recordProjectHostMetricsSample({
+        host_id,
+        metrics: {
+          collected_at: new Date(
+            start.getTime() + minute * 61 * 1000,
+          ).toISOString(),
+          disk_device_total_bytes: 100 * gib,
+          disk_device_used_bytes: used,
+          disk_available_conservative_bytes: 100 * gib - used,
+          reservation_bytes: 0,
+        },
+      });
+    }
+
+    const history = await loadProjectHostMetricsHistory({
+      host_ids: [host_id],
+      window_minutes: 60,
+      max_points: 60,
+    });
+    const entry = history.get(host_id);
+    expect(entry).toBeDefined();
+    expect(entry?.growth?.disk_used_bytes_per_hour).toBeGreaterThan(0);
+    expect(entry?.derived?.disk.hours_to_exhaustion).toBeGreaterThan(0);
+  });
 });

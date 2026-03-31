@@ -66,6 +66,13 @@ export type RootfsCachePullProgress = {
   detail?: any;
 };
 
+type PullRootfsCacheOptions = {
+  onProgress?: (update: RootfsCachePullProgress) => void;
+  awaitRegionalReplication?: boolean;
+};
+
+const managedRootfsReplicationInFlight = new Map<string, Promise<void>>();
+
 function reportPullProgress(
   onProgress: ((update: RootfsCachePullProgress) => void) | undefined,
   update: RootfsCachePullProgress,
@@ -465,6 +472,43 @@ async function maybeReplicateManagedRootfsRustic({
   }
 }
 
+function replicationKey(
+  access: Extract<RootfsReleaseArtifactAccess, { artifact_format: "rustic" }>,
+): string | undefined {
+  const target = access.regional_replication_target;
+  if (!target) return undefined;
+  return `${access.content_key}:${target.region}`;
+}
+
+function scheduleManagedRootfsReplication({
+  access,
+  sourcePath,
+}: {
+  access: Extract<RootfsReleaseArtifactAccess, { artifact_format: "rustic" }>;
+  sourcePath: string;
+}): void {
+  const key = replicationKey(access);
+  if (!key) return;
+  if (managedRootfsReplicationInFlight.has(key)) {
+    logger.debug("managed RootFS regional replication already in flight", {
+      image: access.image,
+      release_id: access.release_id,
+      content_key: access.content_key,
+      target_region: access.regional_replication_target?.region,
+    });
+    return;
+  }
+  const task = (async () => {
+    await maybeReplicateManagedRootfsRustic({
+      access,
+      sourcePath,
+    });
+  })().finally(() => {
+    managedRootfsReplicationInFlight.delete(key);
+  });
+  managedRootfsReplicationInFlight.set(key, task);
+}
+
 async function findManagedRootfsRestoreTemps(): Promise<string[]> {
   if (!(await exists(IMAGE_CACHE))) {
     return [];
@@ -513,9 +557,11 @@ async function deleteCachedManagedRootfs({
 async function downloadManagedRootfsArtifact({
   image,
   onProgress,
+  awaitRegionalReplication = true,
 }: {
   image: string;
   onProgress?: (update: RootfsCachePullProgress) => void;
+  awaitRegionalReplication?: boolean;
 }): Promise<void> {
   const started = Date.now();
   reportPullProgress(onProgress, {
@@ -560,11 +606,18 @@ async function downloadManagedRootfsArtifact({
       if (access.inspect_data && !(await exists(finalInspectPath))) {
         await writeFile(finalInspectPath, JSON.stringify(access.inspect_data));
       }
-      await maybeReplicateManagedRootfsRustic({
-        access,
-        sourcePath: finalPath,
-        onProgress,
-      });
+      if (awaitRegionalReplication) {
+        await maybeReplicateManagedRootfsRustic({
+          access,
+          sourcePath: finalPath,
+          onProgress,
+        });
+      } else {
+        scheduleManagedRootfsReplication({
+          access,
+          sourcePath: finalPath,
+        });
+      }
       reportPullProgress(onProgress, {
         message: "RootFS ready on host",
         progress: 100,
@@ -673,11 +726,18 @@ async function downloadManagedRootfsArtifact({
           content_key: access.content_key,
           total_elapsed_ms: Date.now() - started,
         });
-        await maybeReplicateManagedRootfsRustic({
-          access,
-          sourcePath: finalPath,
-          onProgress,
-        });
+        if (awaitRegionalReplication) {
+          await maybeReplicateManagedRootfsRustic({
+            access,
+            sourcePath: finalPath,
+            onProgress,
+          });
+        } else {
+          scheduleManagedRootfsReplication({
+            access,
+            sourcePath: finalPath,
+          });
+        }
         reportPullProgress(onProgress, {
           message: "RootFS ready on host",
           progress: 100,
@@ -772,14 +832,18 @@ export async function listRootfsCacheEntries(): Promise<
 
 export async function pullRootfsCacheEntry(
   image: string,
-  onProgress?: (update: RootfsCachePullProgress) => void,
+  opts: PullRootfsCacheOptions = {},
 ): Promise<HostRootfsCacheEntry> {
   const trimmed = normalizeRootfsImageName(image);
   if (!trimmed) {
     throw new Error("image must be specified");
   }
   if (isManagedRootfsImageName(trimmed)) {
-    await downloadManagedRootfsArtifact({ image: trimmed, onProgress });
+    await downloadManagedRootfsArtifact({
+      image: trimmed,
+      onProgress: opts.onProgress,
+      awaitRegionalReplication: opts.awaitRegionalReplication ?? true,
+    });
   } else {
     await extractBaseImage(trimmed);
   }

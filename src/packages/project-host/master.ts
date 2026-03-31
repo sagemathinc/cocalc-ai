@@ -15,6 +15,7 @@ import { ensureSshpiperdKey } from "./ssh/sshpiperd-key";
 import { updateAuthorizedKeys, updateProjectUsers } from "./hub/projects";
 import { deleteVolume, getBackupExecutionStatus } from "./file-server";
 import { getSoftwareVersions } from "./software";
+import { getBootstrapLifecycle } from "./bootstrap-lifecycle";
 import { upgradeSoftware } from "./upgrade";
 import { executeCode } from "@cocalc/backend/execute-code";
 import { deleteProjectLocal } from "./sqlite/projects";
@@ -702,7 +703,9 @@ export async function startMasterRegistration({
         return await listRootfsCacheEntries();
       },
       async pullRootfsImage({ image }) {
-        return await pullRootfsCacheEntry(image);
+        return await pullRootfsCacheEntry(image, {
+          awaitRegionalReplication: true,
+        });
       },
       async deleteRootfsImage({ image }) {
         return await deleteRootfsCacheEntry(image);
@@ -772,6 +775,7 @@ export async function startMasterRegistration({
   const buildPayload = (): HostRegistration => {
     const versions = getSoftwareVersions();
     const currentMetrics = hostMetrics.getCurrentSnapshot();
+    const bootstrapLifecycle = getBootstrapLifecycle();
     return {
       ...basePayload,
       version: versions.project_host ?? basePayload.version,
@@ -782,6 +786,11 @@ export async function startMasterRegistration({
               metrics: {
                 current: currentMetrics,
               },
+            }
+          : {}),
+        ...(bootstrapLifecycle
+          ? {
+              bootstrap_lifecycle: bootstrapLifecycle,
             }
           : {}),
         software: versions,

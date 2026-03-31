@@ -2,7 +2,7 @@
 
 Last refreshed: March 30, 2026
 
-Status: active planning document; implementation not started
+Status: active implementation document; early and middle slices are now in place
 
 This document is the working plan for fixing the long-term lifecycle of
 project-host bootstrap, helper scripts, runtime wrappers, and installed
@@ -18,12 +18,12 @@ problems, but the underlying issue is broader:
 - small fixes to the bootstrap layer still require awkward host upgrades or
   reprovisioning.
 
-The current model is still effectively:
+The old model was effectively:
 
 - provision once,
 - patch ad hoc later.
 
-The target model should be:
+The target model remains:
 
 - provision once,
 - reconcile forever.
@@ -62,7 +62,44 @@ Instead we should have separate on-host files for:
 while keeping `bootstrap-config.json` temporarily as a compatibility artifact
 until the existing helper and token-recovery code no longer depend on it.
 
-## Why This Is Needed Now
+## Implemented So Far
+
+The following are already implemented:
+
+- split on-host state files:
+  - `bootstrap-host-facts.json`
+  - `bootstrap-desired-state.json`
+  - `bootstrap-state.json`
+- explicit `bootstrap.py` modes:
+  - `bootstrap`
+  - `provision`
+  - `reconcile`
+  - `status`
+- later boot runs `reconcile` instead of `--only cloudflared`
+- `cocalc host upgrade` now runs that same reconcile path
+- bundle reuse / non-destructive `current` switching is in place
+- host heartbeat now reports bootstrap desired-vs-installed lifecycle state
+- `/hosts` and `cocalc host bootstrap-status` surface drift visibility
+- `master-conat-token.ts` now prefers split desired-state bootstrap connection
+  data and only falls back to `bootstrap-config.json`
+- explicit reconcile actions now exist in:
+  - `cocalc host reconcile <host>`
+  - the host details UI
+- lifecycle reporting now includes concrete wrapper/service presence in
+  addition to bundle/version drift:
+  - `project-host` runtime wrapper
+  - `ctl` helper
+  - cloudflared binary/service helpers
+
+The main remaining slices are:
+
+- expand reconcile ownership further where helper/runtime artifacts still rely
+  on legacy assumptions
+- eventually remove the remaining compatibility fallback to
+  `bootstrap-config.json`
+- later consider periodic background reconcile for long-lived hosts
+
+## Why This Was Needed
 
 Recent work made the mismatch more obvious:
 
@@ -72,11 +109,11 @@ Recent work made the mismatch more obvious:
 - privileged wrappers such as `cocalc-runtime-storage`,
   `cocalc-grow-btrfs`, and `cocalc-cloudflared-*` are also bootstrap-owned
   long-lived artifacts.
-- the current post-bootstrap path only reconciles `cloudflared`, not the
-  broader software layer.
-- the current host upgrade path over SSH reuses the same startup stub, so it
-  also does not perform a real general reconcile once `.bootstrap_done`
-  exists.
+- until recently the post-bootstrap path only reconciled `cloudflared`, not
+  the broader software layer.
+- until recently the host upgrade path over SSH re-used that same limited
+  branch, so it also did not perform a real general reconcile once
+  `.bootstrap_done` existed.
 
 In short: bootstrap is not just a first-boot installer. It is part of the
 ongoing host control plane.
@@ -121,14 +158,13 @@ That full path performs:
 After `.bootstrap_done` exists, the same startup stub currently does:
 
 - download current `bootstrap.py`,
-- run only:
+- run:
 
 ```bash
-python3 "$BOOTSTRAP_DIR/bootstrap.py" --config "$BOOTSTRAP_DIR/bootstrap-config.json" --only cloudflared
+python3 "$BOOTSTRAP_DIR/bootstrap.py" reconcile --config "$BOOTSTRAP_DIR/bootstrap-config.json"
 ```
 
-So later boots are not doing a general software reconcile. They are only doing
-a narrow cloudflared refresh.
+So later boots now perform a real general software reconcile.
 
 ### Host upgrade today
 
@@ -137,9 +173,8 @@ a narrow cloudflared refresh.
 - pushes a freshly generated startup bootstrap shell payload over SSH,
 - runs that payload as root.
 
-This sounds like "reconcile bootstrap/software", but in practice it still
-depends on the same `.bootstrap_done` branching above. So on an already
-bootstrapped host, it is also effectively only reconciling `cloudflared`.
+This now exercises the same reconcile path as later boot, so host upgrade is a
+real software reconcile instead of a cloudflared-only refresh.
 
 ### bootstrap.py mode surface today
 
@@ -152,8 +187,9 @@ bootstrapped host, it is also effectively only reconciling `cloudflared`.
   - `--only tools_bundle`
   - `--only cloudflared`
 
-It does not yet have first-class top-level modes such as:
+It now has first-class top-level modes:
 
+- `bootstrap`
 - `provision`
 - `reconcile`
 - `status`
@@ -177,12 +213,14 @@ These are exactly the artifacts that should be covered by recurring reconcile.
 
 ### Compatibility constraint already visible in code
 
-Current project-host token recovery still reads
-`~/cocalc-host/bootstrap/bootstrap-config.json` from a fixed list of paths:
+Current project-host token recovery now prefers split desired-state bootstrap
+connection data and only falls back to `bootstrap-config.json` for older
+hosts:
 
 - [master-conat-token.ts](/home/wstein/build/cocalc-lite2/src/packages/project-host/master-conat-token.ts)
 
-So we cannot simply remove `bootstrap-config.json` in the first pass.
+So `bootstrap-config.json` still exists as a compatibility artifact, but it is
+no longer the primary source for project-host bootstrap connection recovery.
 
 ## Core Problems To Solve
 
@@ -226,9 +264,9 @@ the same model:
 - installed state,
 - reconcile.
 
-### 5. Drift is not centrally visible
+### 5. Drift was not centrally visible
 
-Today it is too hard to answer:
+This has now been partially addressed, but it was a core problem:
 
 - what bootstrap version is this host effectively running?
 - which helper schema is installed?
@@ -594,6 +632,8 @@ breaking current hosts or helper consumers.
 
 ## Phase 1: Introduce split state without breaking current hosts
 
+Status: done
+
 - add:
   - `bootstrap-host-facts.json`
   - `bootstrap-desired-state.json`
@@ -605,6 +645,8 @@ breaking current hosts or helper consumers.
 This phase is mostly about creating the model safely.
 
 ## Phase 2: Add explicit `reconcile` mode to `bootstrap.py`
+
+Status: done
 
 - add top-level `provision`, `reconcile`, and `status`
 - keep legacy `--only ...` support temporarily
@@ -620,6 +662,8 @@ run repeatedly.
 
 ## Phase 3: Make every later boot run real reconcile
 
+Status: done
+
 - change the cloud-init later-boot branch from:
   - `--only cloudflared`
 - to:
@@ -628,6 +672,8 @@ run repeatedly.
 This is the first behavioral phase that actually fixes host drift on reboot.
 
 ## Phase 4: Make SSH host upgrade run real reconcile
+
+Status: done
 
 - stop relying on the old `.bootstrap_done -> cloudflared-only` path
 - use the same desired-state + reconcile contract over SSH
@@ -639,17 +685,43 @@ refresh tool.
 
 ## Phase 5: Move helper and wrapper ownership entirely under reconcile
 
+Status: partially done
+
 - stop treating helper refresh as an accidental side effect of bootstrap
 - version helper schema and wrapper schema explicitly
 - surface drift when helpers/wrappers are behind desired state
 
+What is done now:
+
+- helper schema and runtime wrapper versions are recorded in desired/installed
+  state
+- lifecycle visibility now includes wrapper/helper presence beyond bundle
+  versions
+
+What remains:
+
+- make helper/runtime ownership even more explicit in desired state where some
+  artifacts are still inferred rather than directly declared
+
 ## Phase 6: Hub-visible state and explicit reconcile action
+
+Status: done
 
 - add desired vs installed bundle versions to host status
 - add last reconcile result / timestamp
 - add explicit "reconcile bootstrap/software" action in host UI and CLI
 
+- host heartbeat reports desired-vs-installed lifecycle state
+- `/hosts` surfaces drift / reconcile status
+- `cocalc host bootstrap-status` exposes the same lifecycle block
+- `cocalc host reconcile <host>` is available
+- the host details UI exposes an explicit reconcile action
+- lifecycle reporting includes wrapper/service presence in addition to bundle
+  drift
+
 ## Phase 7: Cleanup
+
+Status: partially done
 
 - remove obsolete assumptions that `.bootstrap_done` means "software layer is
   permanently current"
@@ -657,16 +729,18 @@ refresh tool.
 - eventually retire `bootstrap-config.json` once compatibility consumers are
   migrated
 
-## Recommended First Code Changes
+## Recommended Next Code Changes
 
-The first implementation slice should be intentionally narrow:
+The next narrow slice should be:
 
-1. Introduce split state files while still writing `bootstrap-config.json`.
-2. Add explicit `reconcile` mode to `bootstrap.py`.
-3. Make later boot call `reconcile` instead of `--only cloudflared`.
+1. remove the remaining compatibility fallback to `bootstrap-config.json`
+   after older hosts no longer depend on it
+2. continue moving helper/runtime artifact ownership out of implicit inference
+   and into explicit desired state
+3. consider periodic background reconcile for long-lived hosts
 
-That slice is high-value and low-risk because it immediately fixes the biggest
-drift problem without yet redesigning every helper consumer.
+That keeps the next work focused on eliminating compatibility debt and making
+reconcile fully self-describing.
 
 ## Open Questions
 

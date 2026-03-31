@@ -35,6 +35,7 @@ const HOST_OP_LRO_KINDS = [
   "host-stop",
   "host-restart",
   "host-drain",
+  "host-reconcile-software",
   "host-upgrade-software",
   "host-deprovision",
   "host-delete",
