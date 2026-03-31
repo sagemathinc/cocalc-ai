@@ -135,6 +135,30 @@ function normalizeBackupPath({
   return normalized;
 }
 
+function isProjectRootCopyDest(destPath: string): boolean {
+  const canonical =
+    destPath === "/"
+      ? "/"
+      : destPath.replace(/\/+$/, "") || (destPath.startsWith("/") ? "/" : "");
+  return canonical === "" || canonical === "/" || canonical === "/root";
+}
+
+function resolveRemoteSingleDestPath({
+  srcPath,
+  destPath,
+}: {
+  srcPath: string;
+  destPath: string;
+}): string {
+  if (!srcPath || !isProjectRootCopyDest(destPath)) {
+    return destPath;
+  }
+  return normalizeCopyPath(
+    path.posix.join("/root", path.posix.basename(srcPath)),
+    "dest.path",
+  );
+}
+
 async function getHostIds(project_ids: string[]): Promise<Map<string, string>> {
   const { rows } = await getPool().query<{
     project_id: string;
@@ -376,13 +400,17 @@ export async function copyProjectFiles({
             }
           }
         } else {
+          const destPath = resolveRemoteSingleDestPath({
+            srcPath: backupSrcPaths[0],
+            destPath: dest.path,
+          });
           const inserted =
             queue_mode === "insert"
               ? await insertCopyRowIfMissing({
                   src_project_id: src.project_id,
                   src_path: backupSrcPaths[0],
                   dest_project_id: dest.project_id,
-                  dest_path: dest.path,
+                  dest_path: destPath,
                   op_id,
                   snapshot_id,
                   options,
@@ -392,7 +420,7 @@ export async function copyProjectFiles({
                   src_project_id: src.project_id,
                   src_path: backupSrcPaths[0],
                   dest_project_id: dest.project_id,
-                  dest_path: dest.path,
+                  dest_path: destPath,
                   op_id,
                   snapshot_id,
                   options,
