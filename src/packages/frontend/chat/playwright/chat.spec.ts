@@ -30,6 +30,18 @@ async function expectComposerInput(page, value: string) {
     .toBe(value);
 }
 
+async function expectVisibleCodeMirrorValue(page, value: string) {
+  await expect
+    .poll(async () => {
+      return await page.evaluate(() => {
+        const cmNode = document.querySelector(".CodeMirror");
+        const cm = cmNode && (cmNode as any).CodeMirror;
+        return cm?.getValue?.() ?? null;
+      });
+    })
+    .toBe(value);
+}
+
 async function expectComposerInputAfterSwitch(
   page,
   previous: string,
@@ -227,9 +239,11 @@ test("composer mode: shift+enter sends and clears without blur", async ({
 
   await typeInCodeMirror(page, "quick-send");
   await expectComposerInput(page, "quick-send");
+  await expectVisibleCodeMirrorValue(page, "quick-send");
   await page.keyboard.press("Shift+Enter");
 
   await expectComposerInput(page, "");
+  await expectVisibleCodeMirrorValue(page, "");
   await expect
     .poll(async () => {
       return await page.evaluate(
