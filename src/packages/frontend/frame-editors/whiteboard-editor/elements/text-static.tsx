@@ -1,6 +1,6 @@
 import { CSSProperties } from "react";
 import { Element } from "../types";
-import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
+import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown-public";
 import { DEFAULT_FONT_SIZE, DEFAULT_FONT_FAMILY } from "../tools/defaults";
 
 interface Props {

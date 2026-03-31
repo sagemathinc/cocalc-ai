@@ -11,7 +11,7 @@ import { Element, ElementsMap, MainFrameType } from "../types";
 import { Map as iMap, fromJS } from "immutable";
 import Grid from "../elements/grid";
 import SlideBackground from "../elements/slide-background";
-import Render from "../elements/render-static";
+import Render from "./render";
 import Edge from "../elements/edge";
 import { getPosition, getTransforms, Transforms } from "../math";
 import Position from "../position";
