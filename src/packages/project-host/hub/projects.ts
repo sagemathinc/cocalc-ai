@@ -367,7 +367,10 @@ async function ensureManagedRootfsCached(
   if (!isManagedRootfsImageName(image)) {
     return;
   }
-  await pullRootfsCacheEntry(image, onProgress);
+  await pullRootfsCacheEntry(image, {
+    onProgress,
+    awaitRegionalReplication: false,
+  });
 }
 
 async function startRunnerWithStorageReservation<T>({

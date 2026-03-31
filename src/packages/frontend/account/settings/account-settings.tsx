@@ -259,7 +259,13 @@ export function AccountSettings(props: Readonly<Props>) {
         }}
       >
         <Col xs={12}>
-          <div className="pull-right">
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "flex-end",
+              alignItems: "center",
+            }}
+          >
             <SignOut everywhere={false} highlight={true} />
             <Gap />
             <SignOut everywhere={true} />

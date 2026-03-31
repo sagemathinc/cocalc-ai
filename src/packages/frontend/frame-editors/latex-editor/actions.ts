@@ -74,7 +74,6 @@ import {
   latexmk,
 } from "./latexmk";
 import { PDFWatcher } from "./pdf-watcher";
-import { forgetDocument, url_to_pdf } from "./pdfjs-doc-cache";
 import { pythontex, pythontex_errors } from "./pythontex";
 import { sagetex, sagetex_errors, sagetex_hash } from "./sagetex";
 import * as synctex from "./synctex";
@@ -712,13 +711,15 @@ export class Actions extends BaseActions<LatexEditorState> {
   }
 
   _forget_pdf_document(): void {
-    forgetDocument(
-      url_to_pdf(
-        this.project_id,
-        this.path,
-        this.store.unsafe_getIn(["reload", VIEWERS[0]]),
-      ),
-    );
+    void import("./pdfjs-doc-cache").then(({ forgetDocument, url_to_pdf }) => {
+      forgetDocument(
+        url_to_pdf(
+          this.project_id,
+          this.path,
+          this.store.unsafe_getIn(["reload", VIEWERS[0]]),
+        ),
+      );
+    });
   }
 
   close(): void {

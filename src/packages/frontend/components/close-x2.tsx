@@ -13,6 +13,8 @@ interface Props {
 }
 
 const DEFAULT_STYLE: CSS = {
+  display: "inline-flex",
+  alignItems: "center",
   cursor: "pointer",
   fontSize: "13pt",
 };
@@ -25,15 +27,26 @@ function isSame(prev, next) {
 }
 
 export const CloseX2: React.FC<Props> = React.memo((props: Props) => {
-  const { close = undefined, style = DEFAULT_STYLE } = props;
+  const { close = undefined, style } = props;
+  const mergedStyle = { ...DEFAULT_STYLE, ...style };
 
   if (!close) {
     return null;
   } else {
     return (
-      <div className={"pull-right lighten"} style={style} onClick={close}>
+      <button
+        type="button"
+        className={"lighten"}
+        style={{
+          ...mergedStyle,
+          background: "transparent",
+          border: 0,
+          padding: 0,
+        }}
+        onClick={close}
+      >
         <Icon name={"times"} />
-      </div>
+      </button>
     );
   }
 }, isSame);

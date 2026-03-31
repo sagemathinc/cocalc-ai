@@ -41,7 +41,7 @@ jest.mock("@cocalc/frontend/components/stateful-virtuoso", () => {
   });
 });
 
-jest.mock("@cocalc/frontend/jupyter/cell-list", () => ({
+jest.mock("@cocalc/frontend/jupyter/div-temp-height", () => ({
   DivTempHeight: ({ children }: any) => <>{children}</>,
 }));
 

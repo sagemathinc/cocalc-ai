@@ -152,6 +152,8 @@ function resolveEnv(index: number): {
   dataDir: string;
   logPath: string;
   pidPath: string;
+  httpPort?: number;
+  sshPort?: number;
 } {
   const fileEnv = loadEnvFromFile(DEFAULT_ENV_FILE);
   const env = { ...fileEnv, ...normalizeEnv(process.env) };
@@ -178,7 +180,14 @@ function resolveEnv(index: number): {
   if (!env.DEBUG_CONSOLE) {
     env.DEBUG_CONSOLE = "no";
   }
-  return { env, dataDir, logPath, pidPath };
+  return {
+    env,
+    dataDir,
+    logPath,
+    pidPath,
+    httpPort: parsePort(env.PORT),
+    sshPort: parsePort(env.PROJECT_HOST_SSH_SERVER ?? env.COCALC_SSH_SERVER),
+  };
 }
 
 function isRunning(pid: number): boolean {
@@ -188,6 +197,105 @@ function isRunning(pid: number): boolean {
   } catch {
     return false;
   }
+}
+
+function parsePort(value: string | undefined): number | undefined {
+  if (!value) return undefined;
+  const trimmed = value.trim();
+  const idx = trimmed.lastIndexOf(":");
+  const raw = idx >= 0 ? trimmed.slice(idx + 1) : trimmed;
+  const port = Number(raw);
+  return Number.isInteger(port) && port > 0 ? port : undefined;
+}
+
+function readProcFile(file: string): Buffer | undefined {
+  try {
+    return fs.readFileSync(file);
+  } catch {
+    return undefined;
+  }
+}
+
+function readProcCmdline(pid: number): string[] {
+  const data = readProcFile(`/proc/${pid}/cmdline`);
+  if (!data?.length) return [];
+  return data
+    .toString("utf8")
+    .split("\u0000")
+    .map((x) => x.trim())
+    .filter(Boolean);
+}
+
+function readProcEnv(pid: number): Record<string, string> {
+  const data = readProcFile(`/proc/${pid}/environ`);
+  const env: Record<string, string> = {};
+  if (!data?.length) return env;
+  for (const entry of data.toString("utf8").split("\u0000")) {
+    const idx = entry.indexOf("=");
+    if (idx <= 0) continue;
+    env[entry.slice(0, idx)] = entry.slice(idx + 1);
+  }
+  return env;
+}
+
+function listProcPids(): number[] {
+  if (process.platform !== "linux") return [];
+  try {
+    return fs
+      .readdirSync("/proc", { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && /^\d+$/.test(entry.name))
+      .map((entry) => Number(entry.name))
+      .filter((pid) => Number.isInteger(pid) && pid > 0);
+  } catch {
+    return [];
+  }
+}
+
+function matchesProjectHostCmdline(cmdline: string[]): boolean {
+  return cmdline.some(
+    (arg) =>
+      arg.includes("/project-host/bundles/") &&
+      (arg.endsWith("/main/index.js") || arg.endsWith("/dist/main.js")),
+  );
+}
+
+function matchesSshpiperdCmdline(cmdline: string[], port: number): boolean {
+  return (
+    cmdline.some((arg) => /(?:^|\/)sshpiperd$/.test(arg)) &&
+    cmdline.includes(`--port=${port}`)
+  );
+}
+
+function matchingProjectHostPids(dataDir: string, httpPort?: number): number[] {
+  const matches: number[] = [];
+  for (const pid of listProcPids()) {
+    if (pid === process.pid) continue;
+    const cmdline = readProcCmdline(pid);
+    if (!matchesProjectHostCmdline(cmdline)) continue;
+    const env = readProcEnv(pid);
+    const procData = env.COCALC_DATA ?? env.DATA;
+    const procPort = Number(env.PORT);
+    if (
+      procData === dataDir ||
+      (httpPort != null && procPort === httpPort) ||
+      (!procData && !Number.isFinite(procPort))
+    ) {
+      matches.push(pid);
+    }
+  }
+  return matches;
+}
+
+function matchingSshpiperdPids(sshPort?: number): number[] {
+  if (sshPort == null) return [];
+  const matches: number[] = [];
+  for (const pid of listProcPids()) {
+    if (pid === process.pid) continue;
+    if (matchesSshpiperdCmdline(readProcCmdline(pid), sshPort)) {
+      matches.push(pid);
+    }
+  }
+  return matches;
 }
 
 function ensureNotAlreadyRunning(pidPath: string): void {
@@ -221,6 +329,74 @@ function waitForExit(pid: number, timeoutMs: number, pollMs: number): boolean {
     sleepMs(pollMs);
   }
   return !isRunning(pid);
+}
+
+function terminatePids(pids: number[], label: string): number[] {
+  const unique = [...new Set(pids)].filter(
+    (pid) => Number.isInteger(pid) && pid > 0,
+  );
+  if (!unique.length) return [];
+  for (const pid of unique) {
+    try {
+      process.kill(pid, "SIGTERM");
+    } catch {
+      // ignore already-dead processes
+    }
+  }
+  const timeoutMs = getPositiveIntEnv(
+    "COCALC_PROJECT_HOST_DAEMON_STOP_TIMEOUT_MS",
+    15_000,
+  );
+  const pollMs = getPositiveIntEnv(
+    "COCALC_PROJECT_HOST_DAEMON_STOP_POLL_MS",
+    100,
+  );
+  const killTimeoutMs = getPositiveIntEnv(
+    "COCALC_PROJECT_HOST_DAEMON_KILL_TIMEOUT_MS",
+    5_000,
+  );
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const alive = unique.filter(isRunning);
+    if (!alive.length) {
+      return unique;
+    }
+    sleepMs(pollMs);
+  }
+  for (const pid of unique.filter(isRunning)) {
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {
+      // ignore already-dead processes
+    }
+  }
+  const killDeadline = Date.now() + killTimeoutMs;
+  while (Date.now() < killDeadline) {
+    const alive = unique.filter(isRunning);
+    if (!alive.length) {
+      return unique;
+    }
+    sleepMs(pollMs);
+  }
+  throw new Error(
+    `failed to stop stray ${label} process(es): ${unique.filter(isRunning).join(", ")}`,
+  );
+}
+
+function cleanupStrayProcesses(
+  dataDir: string,
+  httpPort?: number,
+  sshPort?: number,
+): number {
+  const projectHostPids = terminatePids(
+    matchingProjectHostPids(dataDir, httpPort),
+    "project-host",
+  );
+  const sshpiperdPids = terminatePids(
+    matchingSshpiperdPids(sshPort),
+    "sshpiperd",
+  );
+  return projectHostPids.length + sshpiperdPids.length;
 }
 
 function resolveExec(root: string): { command: string; args: string[] } {
@@ -280,8 +456,13 @@ export function startDaemon(index = 0): void {
 }
 
 export function stopDaemon(index = 0): void {
-  const { pidPath } = resolveEnv(index);
+  const { pidPath, dataDir, httpPort, sshPort } = resolveEnv(index);
   if (!fs.existsSync(pidPath)) {
+    const cleaned = cleanupStrayProcesses(dataDir, httpPort, sshPort);
+    if (cleaned > 0) {
+      console.log(`Stopped ${cleaned} stray project-host process(es).`);
+      return;
+    }
     // Nothing to stop; treat as success for idempotent callers.
     console.warn(`No pid file found at ${pidPath}; nothing to stop.`);
     return;
@@ -289,6 +470,13 @@ export function stopDaemon(index = 0): void {
   const pid = Number(fs.readFileSync(pidPath, "utf8"));
   if (!pid || !isRunning(pid)) {
     fs.rmSync(pidPath, { force: true });
+    const cleaned = cleanupStrayProcesses(dataDir, httpPort, sshPort);
+    if (cleaned > 0) {
+      console.log(
+        `Removed stale pid file and stopped ${cleaned} stray project-host process(es).`,
+      );
+      return;
+    }
     throw new Error(`No running process for pid ${pid}; removed ${pidPath}`);
   }
   const stopTimeoutMs = getPositiveIntEnv(
@@ -314,6 +502,7 @@ export function stopDaemon(index = 0): void {
     console.log(`Sent SIGTERM to project-host (pid ${pid}).`);
   }
   fs.rmSync(pidPath, { force: true });
+  cleanupStrayProcesses(dataDir, httpPort, sshPort);
 }
 
 export function handleDaemonCli(argv: string[]): boolean {
@@ -328,3 +517,10 @@ export function handleDaemonCli(argv: string[]): boolean {
   }
   return true;
 }
+
+export const __test__ = {
+  cleanupStrayProcesses,
+  matchingProjectHostPids,
+  matchingSshpiperdPids,
+  parsePort,
+};

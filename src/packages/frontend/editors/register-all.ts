@@ -27,9 +27,3 @@ import "./unknown/register";
 
 // Ensure that we load all the codemirror plugins, modes, etc.
 import "@cocalc/frontend/codemirror/init";
-
-// CSS for the lightweight (< 1MB) nextjs friendly CodeEditor
-// component (in components/code-editor).
-// This is only for making this editor work in this frontend app.
-// This dist.css is only 7K.
-import "@uiw/react-textarea-code-editor/dist.css";

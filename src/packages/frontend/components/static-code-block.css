@@ -1,0 +1,23 @@
+.cocalc-static-code-block .cocalc-slate-code-block {
+  margin-bottom: 0;
+  font-size: var(--cocalc-static-code-font-size, 14px);
+}
+
+.cocalc-static-code-block--compact .cocalc-slate-code-block {
+  font-size: 12px;
+  line-height: 1.35;
+  padding: 4px 8px;
+}
+
+.cocalc-static-code-block--borderless .cocalc-slate-code-block {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.cocalc-static-code-block--nowrap .cocalc-slate-code-block {
+  white-space: pre;
+  overflow-wrap: normal;
+  overflow-x: auto;
+}

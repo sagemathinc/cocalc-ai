@@ -3,7 +3,8 @@ import path from "node:path";
 
 import * as bootstrapHost from "./bootstrap-host";
 
-const { resolveBootstrapImageSizeGb } = bootstrapHost;
+const { resolveBootstrapImageSizeGb, resolveBootstrapRootReserveGb } =
+  bootstrapHost;
 
 describe("resolveBootstrapImageSizeGb", () => {
   it("uses auto sizing for Lambda hosts", () => {
@@ -47,6 +48,17 @@ describe("resolveBootstrapImageSizeGb", () => {
   });
 });
 
+describe("resolveBootstrapRootReserveGb", () => {
+  it("defaults to a 15 GiB root reserve", () => {
+    expect(resolveBootstrapRootReserveGb()).toBe("15");
+  });
+
+  it("accepts explicit positive overrides", () => {
+    expect(resolveBootstrapRootReserveGb(24)).toBe("24");
+    expect(resolveBootstrapRootReserveGb("32")).toBe("32");
+  });
+});
+
 describe("bootstrap-host shell templates", () => {
   it("keeps carriage-return stripping as a literal backslash-r sequence", () => {
     const source = fs.readFileSync(
@@ -70,5 +82,44 @@ describe("bootstrap-host shell templates", () => {
     expect(source).toContain(`-o "$BOOTSTRAP_PAYLOAD"`);
     expect(source).toContain(`bash "$BOOTSTRAP_PAYLOAD"`);
     expect(source).not.toContain(`-o "$BOOTSTRAP_DIR/bootstrap.sh"`);
+  });
+
+  it("uses a btrfs-backed bootstrap state root for reconcile when available", () => {
+    const source = fs.readFileSync(
+      path.join(__dirname, "bootstrap-host.ts"),
+      "utf8",
+    );
+
+    expect(source).toContain(
+      `BOOTSTRAP_STATE_ROOT="/mnt/cocalc/data/.host-bootstrap"`,
+    );
+    expect(source).toContain(`BOOTSTRAP_LOG="$BOOTSTRAP_DIR/bootstrap.log"`);
+  });
+
+  it("runs explicit reconcile mode after bootstrap is already complete", () => {
+    const source = fs.readFileSync(
+      path.join(__dirname, "bootstrap-host.ts"),
+      "utf8",
+    );
+
+    expect(source).toContain(
+      `python3 "$BOOTSTRAP_DIR/bootstrap.py" reconcile --config "$BOOTSTRAP_DIR/bootstrap-config.json"`,
+    );
+    expect(source).not.toContain(
+      `python3 "$BOOTSTRAP_DIR/bootstrap.py" --config "$BOOTSTRAP_DIR/bootstrap-config.json" --only cloudflared`,
+    );
+  });
+
+  it("does not make bootstrap execution depend on tee writing the log file", () => {
+    const source = fs.readFileSync(
+      path.join(__dirname, "bootstrap-host.ts"),
+      "utf8",
+    );
+
+    expect(source).toContain(`if ! bash "$BOOTSTRAP_PAYLOAD"; then`);
+    expect(source).not.toContain(
+      `if ! bash "$BOOTSTRAP_PAYLOAD" 2>&1 | tee "$BOOTSTRAP_DIR/bootstrap.log"; then`,
+    );
+    expect(source).toContain(`bootstrap_log_tail() {`);
   });
 });

@@ -5,7 +5,7 @@
 
 import type { CSSProperties, JSX } from "react";
 import type { IFileContext } from "@cocalc/frontend/lib/file-context";
-import JupyterNotebook from "@cocalc/frontend/jupyter/nbviewer/nbviewer";
+import JupyterNotebook from "@cocalc/frontend/jupyter/nbviewer/public-nbviewer";
 import { withViewerFileContext } from "../viewer-file-context";
 
 export default function PublicViewerIpynbRenderer({

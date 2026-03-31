@@ -1850,7 +1850,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
     }
   }
 
-  function useDetectedPort(portValue: number) {
+  function applyDetectedPort(portValue: number) {
     setPresetKey("");
     const nextId = `${appId ?? ""}`.trim() || `app-${portValue}`;
     setKind("service");
@@ -2600,7 +2600,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                     <Button
                       size="small"
                       onClick={() => {
-                        useDetectedPort(item.port);
+                        applyDetectedPort(item.port);
                         setCreatorOpen(true);
                       }}
                     >

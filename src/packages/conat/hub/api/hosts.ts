@@ -24,6 +24,7 @@ export const HOST_LRO_KINDS = [
   "host-stop",
   "host-restart",
   "host-drain",
+  "host-reconcile-software",
   "host-upgrade-software",
   "host-deprovision",
   "host-delete",
@@ -159,6 +160,47 @@ export interface HostBootstrapStatus {
   status?: string;
   updated_at?: string;
   message?: string;
+}
+
+export type HostBootstrapLifecycleSummaryStatus =
+  | "in_sync"
+  | "drifted"
+  | "reconciling"
+  | "error"
+  | "unknown";
+
+export type HostBootstrapLifecycleItemStatus =
+  | "match"
+  | "drift"
+  | "missing"
+  | "disabled"
+  | "unknown";
+
+export interface HostBootstrapLifecycleItem {
+  key: string;
+  label: string;
+  desired?: string | boolean | number | null;
+  installed?: string | boolean | number | null;
+  status: HostBootstrapLifecycleItemStatus;
+  message?: string;
+}
+
+export interface HostBootstrapLifecycle {
+  bootstrap_dir?: string;
+  desired_recorded_at?: string;
+  installed_recorded_at?: string;
+  current_operation?: string;
+  last_provision_result?: string;
+  last_provision_started_at?: string;
+  last_provision_finished_at?: string;
+  last_reconcile_result?: string;
+  last_reconcile_started_at?: string;
+  last_reconcile_finished_at?: string;
+  last_error?: string;
+  summary_status: HostBootstrapLifecycleSummaryStatus;
+  summary_message?: string;
+  drift_count: number;
+  items: HostBootstrapLifecycleItem[];
 }
 
 export interface HostProjectRow {
@@ -343,6 +385,7 @@ export interface Host {
   deleted?: string;
   backup_status?: HostBackupStatus;
   bootstrap?: HostBootstrapStatus;
+  bootstrap_lifecycle?: HostBootstrapLifecycle;
 }
 
 export interface HostConnectionInfo {
@@ -477,6 +520,7 @@ export const hosts = {
   updateHostMachine: authFirstRequireAccount,
   deleteHost: authFirstRequireAccount,
   upgradeHostSoftware: authFirstRequireAccount,
+  reconcileHostSoftware: authFirstRequireAccount,
   upgradeHostConnector: authFirstRequireAccount,
   setHostStar: authFirstRequireAccount,
   getBackupConfig: authFirstRequireHost,
@@ -785,6 +829,10 @@ export interface Hosts {
     id: string;
     targets: HostSoftwareUpgradeTarget[];
     base_url?: string;
+  }) => Promise<HostLroResponse>;
+  reconcileHostSoftware: (opts: {
+    account_id?: string;
+    id: string;
   }) => Promise<HostLroResponse>;
   upgradeHostConnector: (opts: {
     account_id?: string;

@@ -7,6 +7,21 @@ type HandlerMap = Record<string, Array<(...args: any[]) => void>>;
 
 let latestEditor: any = null;
 
+async function waitForEditor() {
+  await act(async () => {
+    for (let i = 0; i < 5 && latestEditor == null; i++) {
+      await Promise.resolve();
+    }
+  });
+  expect(latestEditor).toBeTruthy();
+}
+
+async function renderMarkdownInput(element: Parameters<typeof render>[0]) {
+  const renderResult = render(element);
+  await waitForEditor();
+  return renderResult;
+}
+
 function createMockEditor(node?: HTMLTextAreaElement | null) {
   const handlers: HandlerMap = {};
   let currentValue = "";
@@ -237,8 +252,8 @@ describe("MarkdownInput CodeMirror wrapper contract", () => {
     jest.useRealTimers();
   });
 
-  it("focuses and blurs the underlying input when isFocused changes", () => {
-    const { rerender } = render(
+  it("focuses and blurs the underlying input when isFocused changes", async () => {
+    const { rerender } = await renderMarkdownInput(
       <MarkdownInput
         value=""
         onChange={() => {}}
@@ -272,11 +287,11 @@ describe("MarkdownInput CodeMirror wrapper contract", () => {
     expect(inputField.blur).toHaveBeenCalled();
   });
 
-  it("exposes selection and cursor control via selectionRef and registerEditor", () => {
+  it("exposes selection and cursor control via selectionRef and registerEditor", async () => {
     const selectionRef = { current: null as any };
     const registerEditor = jest.fn();
 
-    render(
+    await renderMarkdownInput(
       <MarkdownInput
         value="abc"
         onChange={() => {}}
@@ -311,7 +326,7 @@ describe("MarkdownInput CodeMirror wrapper contract", () => {
     expect(editorApi.get_cursor()).toEqual({ x: 9, y: 7 });
   });
 
-  it("flushes the local value before delegating undo and redo", () => {
+  it("flushes the local value before delegating undo and redo", async () => {
     const callOrder: string[] = [];
     const onChange = jest.fn((value: string) => {
       callOrder.push(`change:${value}`);
@@ -323,7 +338,7 @@ describe("MarkdownInput CodeMirror wrapper contract", () => {
       callOrder.push("redo");
     });
 
-    render(
+    await renderMarkdownInput(
       <MarkdownInput
         value="start"
         onChange={onChange}
@@ -351,8 +366,8 @@ describe("MarkdownInput CodeMirror wrapper contract", () => {
     ]);
   });
 
-  it("keeps undo and redo local when explicit local ownership is requested", () => {
-    render(
+  it("keeps undo and redo local when explicit local ownership is requested", async () => {
+    await renderMarkdownInput(
       <MarkdownInput
         value="start"
         onChange={() => {}}
@@ -368,9 +383,9 @@ describe("MarkdownInput CodeMirror wrapper contract", () => {
     expect(latestEditor.redo).toBeUndefined();
   });
 
-  it("reclamps the markdown wrapper height when an auto-grow editor is resized smaller", () => {
+  it("reclamps the markdown wrapper height when an auto-grow editor is resized smaller", async () => {
     const value = "a\n\nb\n\nc\n\nd";
-    const { rerender } = render(
+    const { rerender } = await renderMarkdownInput(
       <MarkdownInput
         value={value}
         onChange={() => {}}
@@ -445,8 +460,8 @@ describe("MarkdownInput CodeMirror wrapper contract", () => {
     ).not.toThrow();
   });
 
-  it("clamps auto-grow to the allocated host height and clears stale host scroll", () => {
-    const { rerender } = render(
+  it("clamps auto-grow to the allocated host height and clears stale host scroll", async () => {
+    const { rerender } = await renderMarkdownInput(
       <MarkdownInput
         value={"1\n2\n3\n4\n5\n6\n7\n8\n9\n10"}
         onChange={() => {}}
@@ -488,8 +503,8 @@ describe("MarkdownInput CodeMirror wrapper contract", () => {
     expect(host.scrollTop).toBe(0);
   });
 
-  it("honors an explicit auto-grow minimum height for taller edit surfaces", () => {
-    render(
+  it("honors an explicit auto-grow minimum height for taller edit surfaces", async () => {
+    await renderMarkdownInput(
       <MarkdownInput
         value="short"
         onChange={() => {}}

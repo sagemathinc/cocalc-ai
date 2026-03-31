@@ -4,20 +4,6 @@
  */
 
 @use 'colors'
-@use 'mixins'
-
-.navbar-default
-  background-color: colors.$COL_TOP_BAR_BG
-  border-color:     colors.$COL_TOP_BAR_BG
-  border-width:     0 0 0 0
-
-=nav-tab-button-styles
-  padding : 0px
-  +mixins.disable-user-select
-  color: colors.$COL_TOP_BAR_TEXT
-  &:hover
-    color: colors.$COL_TOP_BAR_TEXT
-
 
 .smc-top-bar
   position        : relative
@@ -31,55 +17,6 @@
   border-radius   : 0
   width           : 100%
   background-color: colors.$COL_GRAY_L0
-  > ul > li > a
-    +nav-tab-button-styles
-
-.smc-project-tab-sorter > li > a
-    +nav-tab-button-styles
-
-.smc-top-bar.navbar-default .navbar-nav>.active>a,
-.smc-top-bar.navbar-default .navbar-nav>.active>a:focus,
-.smc-top-bar.navbar-default .navbar-nav>li>a:focus,
-.smc-top-bar.navbar-default .navbar-nav>.active>a:hover
-  background-color : colors.$COL_TOP_BAR_ACTIVE
-  color            : colors.$COL_TOP_BAR_TEXT_ACTIVE
-
-.smc-top-bar.navbar-default .navbar-nav>li>a:hover
-  background-color : colors.$COL_TOP_BAR_HOVER
-  color            : colors.$COL_TOP_BAR_TEXT
-
-.smc-project-tab-floating
-  background-color    : rgb(255, 255, 255)
-  border              : dotted 1px #9a9a9a
-  display             : block
-  line-height         : normal
-  list-style-image    : none
-  list-style-position : outside
-  list-style-type     : none
-  z-index             : 100
-
-  > a
-    color               : rgb(85, 85, 85)
-    display             : block
-    height              : 51px
-    line-height         : 20px
-    list-style-image    : none
-    list-style-position : outside
-    list-style-type     : none
-    outline-color       : rgb(85, 85, 85)
-    outline-style       : none
-    outline-width       : 0px
-    padding             : 0px
-
-.smc-projects-tabs
-    padding: 10px
-
-.smc-dropdown-projects>li>ul
-  width: 100%
-  >li>a
-    display: flex !important
-    height: 39px !important
-    padding: 2px 10px !important
 
 .cocalc-top-bar-element:hover
   background-color: colors.$COL_TOP_BAR_HOVER

@@ -45,7 +45,7 @@ import {
 
 const Markdown = lazy(() => import("@cocalc/frontend/markdown/component"));
 const StaticMarkdown = lazy(
-  () => import("@cocalc/frontend/editors/slate/static-markdown"),
+  () => import("@cocalc/frontend/editors/slate/static-markdown-public"),
 );
 const { Paragraph, Text, Title } = Typography;
 

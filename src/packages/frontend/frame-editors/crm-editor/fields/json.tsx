@@ -1,15 +1,15 @@
 import { render } from "./register";
-import { CodeMirrorStatic } from "@cocalc/frontend/jupyter/codemirror-static";
+import StaticCodeBlock from "@cocalc/frontend/components/static-code-block";
 import infoToMode from "@cocalc/frontend/editors/slate/elements/code-block/info-to-mode";
 
 render({ type: "json" }, ({ field, obj }) => {
   const json = obj[field];
   if (!json) return null;
   return (
-    <CodeMirrorStatic
+    <StaticCodeBlock
       style={{ maxHeight: "10em", overflow: "auto" }}
       value={JSON.stringify(obj[field], undefined, 2)}
-      options={{ mode: infoToMode("js") }}
+      info={infoToMode("js")}
     />
   );
 });
@@ -24,10 +24,10 @@ render({ type: "json-string" }, ({ field, obj }) => {
     parsed = obj[field];
   }
   return (
-    <CodeMirrorStatic
+    <StaticCodeBlock
       style={{ maxHeight: "10em", overflow: "auto" }}
       value={JSON.stringify(parsed, undefined, 2)}
-      options={{ mode: infoToMode("js") }}
+      info={infoToMode("js")}
     />
   );
 });

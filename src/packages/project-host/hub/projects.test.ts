@@ -7,6 +7,10 @@ const getProject = jest.fn();
 const getOrCreateProjectLocalSecretToken = jest.fn();
 const reportProjectStateToMaster = jest.fn();
 const writeManagedAuthorizedKeys = jest.fn();
+const pullRootfsCacheEntry = jest.fn(async () => undefined);
+const withOciPullReservationIfNeeded = jest.fn(
+  async ({ fn }: { fn: () => Promise<any> }) => await fn(),
+);
 
 jest.mock("@cocalc/lite/hub/api", () => ({ hubApi: { projects: {} as any } }));
 jest.mock("@cocalc/backend/data", () => ({
@@ -55,9 +59,16 @@ jest.mock("../file-server", () => ({
 jest.mock("../pending-copies", () => ({
   applyPendingCopies: (...args: any[]) => applyPendingCopies(...args),
 }));
+jest.mock("../rootfs-cache", () => ({
+  pullRootfsCacheEntry: (...args: any[]) => pullRootfsCacheEntry(...args),
+}));
 jest.mock("@cocalc/lite/hub/acp", () => ({
   rehydrateAcpAutomationsForProject: (...args: any[]) =>
     rehydrateAcpAutomationsForProject(...args),
+}));
+jest.mock("../storage-reservations", () => ({
+  withOciPullReservationIfNeeded: (...args: any[]) =>
+    withOciPullReservationIfNeeded(...args),
 }));
 
 describe("project host start ACP rehydrate ordering", () => {
@@ -75,6 +86,7 @@ describe("project host start ACP rehydrate ordering", () => {
     getOrCreateProjectLocalSecretToken.mockReturnValue("secret");
     applyPendingCopies.mockResolvedValue(undefined);
     writeManagedAuthorizedKeys.mockResolvedValue(undefined);
+    pullRootfsCacheEntry.mockResolvedValue(undefined);
   });
 
   it("does not rehydrate ACP automations before runner start on start()", async () => {
@@ -215,6 +227,34 @@ describe("project host start ACP rehydrate ordering", () => {
     expect(runnerApi.start).toHaveBeenCalledWith({
       project_id,
       config: expect.objectContaining({ image: customImage }),
+    });
+  });
+
+  it("does not block project start on regional RootFS replication", async () => {
+    const managedImage =
+      "cocalc.local/rootfs/f3426fdb7f1395f052b65ba218ce8c315045fba3817ab8deec6fd163d24b5997";
+    const runnerApi = {
+      start: jest.fn(async () => ({
+        state: "running",
+        http_port: 1234,
+        ssh_port: 2222,
+      })),
+      stop: jest.fn(),
+    } as any;
+    getProject.mockReturnValue({ image: managedImage, run_quota: undefined });
+
+    const { wireProjectsApi } = await import("./projects");
+    wireProjectsApi(runnerApi);
+
+    await hubApi.projects.start({ project_id });
+
+    expect(pullRootfsCacheEntry).toHaveBeenCalledWith(managedImage, {
+      onProgress: expect.any(Function),
+      awaitRegionalReplication: false,
+    });
+    expect(runnerApi.start).toHaveBeenCalledWith({
+      project_id,
+      config: expect.objectContaining({ image: managedImage }),
     });
   });
 });

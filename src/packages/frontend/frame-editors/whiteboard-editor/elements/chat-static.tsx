@@ -4,7 +4,7 @@ import { Icon } from "@cocalc/frontend/components/icon";
 import { Comment } from "@ant-design/compatible";
 import { Element } from "../types";
 import { cmp } from "@cocalc/util/misc";
-import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
+import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown-public";
 import useWheel from "./scroll-wheel";
 import { is_valid_uuid_string as isUUID } from "@cocalc/util/misc";
 

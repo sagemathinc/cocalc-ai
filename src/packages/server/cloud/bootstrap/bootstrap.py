@@ -34,6 +34,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+STATE_SCHEMA_VERSION = 1
+HELPER_SCHEMA_VERSION = "20260330-v1"
+RUNTIME_WRAPPER_VERSION = "20260330-v1"
+BOOTSTRAP_LOG_MAX_BYTES = 4 * 1024 * 1024
+BUNDLE_RETENTION_COUNT = 3
+
 
 @dataclass(frozen=True)
 class BundleSpec:
@@ -71,6 +77,7 @@ class BootstrapConfig:
     expected_os: str
     expected_arch: str
     image_size_gb_raw: str
+    root_reserve_gb_raw: str
     data_disk_devices: str
     data_disk_candidates: str
     apt_packages: list[str]
@@ -79,6 +86,8 @@ class BootstrapConfig:
     env_file: str
     env_lines: list[str]
     node_version: str
+    bootstrap_selector: str | None
+    bootstrap_py_url: str | None
     project_host_bundle: BundleSpec
     project_bundle: BundleSpec
     tools_bundle: BundleSpec
@@ -132,6 +141,9 @@ def load_config(path: str) -> BootstrapConfig:
         expected_os=_ensure_str(raw.get("expected_os"), "expected_os"),
         expected_arch=_ensure_str(raw.get("expected_arch"), "expected_arch"),
         image_size_gb_raw=_ensure_str(raw.get("image_size_gb_raw"), "image_size_gb_raw"),
+        root_reserve_gb_raw=_ensure_str(
+            raw.get("root_reserve_gb_raw") or "15", "root_reserve_gb_raw"
+        ),
         data_disk_devices=_ensure_str(
             raw.get("data_disk_devices") or "", "data_disk_devices"
         ),
@@ -144,6 +156,8 @@ def load_config(path: str) -> BootstrapConfig:
         env_file=_ensure_str(raw.get("env_file"), "env_file"),
         env_lines=[str(line) for line in _ensure_list(raw.get("env_lines"), "env_lines")],
         node_version=_ensure_str(raw.get("node_version"), "node_version"),
+        bootstrap_selector=(raw.get("bootstrap_selector") or None),
+        bootstrap_py_url=(raw.get("bootstrap_py_url") or None),
         project_host_bundle=BundleSpec(
             url=_ensure_str(bundle_host.get("url"), "project_host_bundle.url"),
             sha256=bundle_host.get("sha256") or None,
@@ -204,6 +218,213 @@ def parse_only(arg: str | None) -> set[str] | None:
     return set(parts)
 
 
+def now_iso() -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def bootstrap_host_facts_path(cfg: BootstrapConfig) -> Path:
+    return Path(cfg.bootstrap_dir) / "bootstrap-host-facts.json"
+
+
+def bootstrap_desired_state_path(cfg: BootstrapConfig) -> Path:
+    return Path(cfg.bootstrap_dir) / "bootstrap-desired-state.json"
+
+
+def bootstrap_state_path(cfg: BootstrapConfig) -> Path:
+    return Path(cfg.bootstrap_dir) / "bootstrap-state.json"
+
+
+def current_bootstrap_sha256() -> str | None:
+    try:
+        path = Path(__file__).resolve()
+        h = hashlib.sha256()
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                h.update(chunk)
+        return h.hexdigest()
+    except Exception:
+        return None
+
+
+def json_write_atomic(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def json_load(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            return data
+    except Exception:
+        pass
+    return {}
+
+
+def symlink_version(path: str) -> str | None:
+    current = Path(path)
+    try:
+        if current.is_symlink():
+            target = os.readlink(current)
+            return Path(target).name or None
+        if current.exists():
+            return current.name or None
+    except Exception:
+        return None
+    return None
+
+
+def helper_schema_installed(cfg: BootstrapConfig) -> str | None:
+    path = project_host_runtime_root(cfg) / "bin" / "fetch-tools.sh"
+    return HELPER_SCHEMA_VERSION if path.exists() else None
+
+
+def runtime_wrapper_version_installed() -> str | None:
+    return (
+        RUNTIME_WRAPPER_VERSION
+        if Path("/usr/local/sbin/cocalc-runtime-storage").exists()
+        else None
+    )
+
+
+def build_host_facts(cfg: BootstrapConfig) -> dict[str, Any]:
+    return {
+        "schema_version": STATE_SCHEMA_VERSION,
+        "recorded_at": now_iso(),
+        "bootstrap_user": cfg.bootstrap_user,
+        "bootstrap_home": cfg.bootstrap_home,
+        "bootstrap_root": cfg.bootstrap_root,
+        "bootstrap_dir": cfg.bootstrap_dir,
+        "bootstrap_tmp": cfg.bootstrap_tmp,
+        "runtime_user": cfg.ssh_user,
+        "expected_os": cfg.expected_os,
+        "expected_arch": cfg.expected_arch,
+        "has_gpu": cfg.has_gpu,
+        "env_file": cfg.env_file,
+        "data_disk_devices": cfg.data_disk_devices,
+        "data_disk_candidates": cfg.data_disk_candidates,
+        "project_host_bundle_root": cfg.project_host_bundle.root,
+        "project_bundle_root": cfg.project_bundle.root,
+        "tools_root": cfg.tools_bundle.root,
+    }
+
+
+def build_bootstrap_connection(cfg: BootstrapConfig) -> dict[str, Any]:
+    return {
+        "conat_url": cfg.conat_url,
+        "status_url": cfg.status_url,
+        "bootstrap_token": cfg.bootstrap_token,
+        "ca_cert_path": cfg.ca_cert_path,
+    }
+
+
+def build_desired_state(cfg: BootstrapConfig) -> dict[str, Any]:
+    return {
+        "schema_version": STATE_SCHEMA_VERSION,
+        "recorded_at": now_iso(),
+        "bootstrap": {
+            "selector": cfg.bootstrap_selector,
+            "url": cfg.bootstrap_py_url,
+            "sha256": current_bootstrap_sha256(),
+        },
+        "helper_schema_version": HELPER_SCHEMA_VERSION,
+        "runtime_wrapper_version": RUNTIME_WRAPPER_VERSION,
+        "node_version": cfg.node_version,
+        "bootstrap_connection": build_bootstrap_connection(cfg),
+        "project_host_bundle": {
+            "url": cfg.project_host_bundle.url,
+            "version": cfg.project_host_bundle.version,
+            "root": cfg.project_host_bundle.root,
+            "dir": cfg.project_host_bundle.dir,
+            "current": cfg.project_host_bundle.current,
+        },
+        "project_bundle": {
+            "url": cfg.project_bundle.url,
+            "version": cfg.project_bundle.version,
+            "root": cfg.project_bundle.root,
+            "dir": cfg.project_bundle.dir,
+            "current": cfg.project_bundle.current,
+        },
+        "tools_bundle": {
+            "url": cfg.tools_bundle.url,
+            "version": cfg.tools_bundle.version,
+            "root": cfg.tools_bundle.root,
+            "dir": cfg.tools_bundle.dir,
+            "current": cfg.tools_bundle.current,
+            "manifest_url": cfg.tools_bundle.manifest_url,
+        },
+        "cloudflared": {
+            "enabled": cfg.cloudflared.enabled,
+            "hostname": cfg.cloudflared.hostname,
+            "app_public_wildcard": cfg.cloudflared.app_public_wildcard,
+            "port": cfg.cloudflared.port,
+            "ssh_hostname": cfg.cloudflared.ssh_hostname,
+            "ssh_port": cfg.cloudflared.ssh_port,
+            "tunnel_id": cfg.cloudflared.tunnel_id,
+        },
+    }
+
+
+def refresh_installed_state(cfg: BootstrapConfig, base: dict[str, Any] | None = None) -> dict[str, Any]:
+    state = dict(base or {})
+    state["schema_version"] = STATE_SCHEMA_VERSION
+    state["recorded_at"] = now_iso()
+    state["bootstrap"] = {
+        "sha256": current_bootstrap_sha256(),
+        "url": cfg.bootstrap_py_url,
+        "selector": cfg.bootstrap_selector,
+    }
+    state["helper_schema_version"] = helper_schema_installed(cfg)
+    state["runtime_wrapper_version"] = runtime_wrapper_version_installed()
+    state["installed"] = {
+        "project_host_bundle_version": symlink_version(cfg.project_host_bundle.current),
+        "project_bundle_version": symlink_version(cfg.project_bundle.current),
+        "tools_bundle_version": symlink_version(cfg.tools_bundle.current),
+    }
+    return state
+
+
+def write_bootstrap_state_files(cfg: BootstrapConfig) -> None:
+    json_write_atomic(bootstrap_host_facts_path(cfg), build_host_facts(cfg))
+    json_write_atomic(bootstrap_desired_state_path(cfg), build_desired_state(cfg))
+    state = refresh_installed_state(cfg, json_load(bootstrap_state_path(cfg)))
+    json_write_atomic(bootstrap_state_path(cfg), state)
+
+
+def record_operation_start(cfg: BootstrapConfig, operation: str) -> None:
+    write_bootstrap_state_files(cfg)
+    state = refresh_installed_state(cfg, json_load(bootstrap_state_path(cfg)))
+    state[f"last_{operation}_started_at"] = now_iso()
+    state[f"last_{operation}_result"] = "running"
+    state["current_operation"] = operation
+    state["last_error"] = None
+    json_write_atomic(bootstrap_state_path(cfg), state)
+
+
+def record_operation_success(cfg: BootstrapConfig, operation: str) -> None:
+    state = refresh_installed_state(cfg, json_load(bootstrap_state_path(cfg)))
+    state[f"last_{operation}_finished_at"] = now_iso()
+    state[f"last_{operation}_result"] = "success"
+    state["current_operation"] = None
+    state["last_error"] = None
+    if operation == "provision":
+        state["provisioned"] = True
+    json_write_atomic(bootstrap_state_path(cfg), state)
+
+
+def record_operation_failure(cfg: BootstrapConfig, operation: str, error: str) -> None:
+    state = refresh_installed_state(cfg, json_load(bootstrap_state_path(cfg)))
+    state[f"last_{operation}_finished_at"] = now_iso()
+    state[f"last_{operation}_result"] = "error"
+    state["current_operation"] = None
+    state["last_error"] = error
+    json_write_atomic(bootstrap_state_path(cfg), state)
+
+
 def log_line(cfg: BootstrapConfig, message: str) -> None:
     ts = time.strftime("%Y-%m-%dT%H:%M:%S%z")
     line = f"{ts} {message}\n"
@@ -216,6 +437,21 @@ def log_line(cfg: BootstrapConfig, message: str) -> None:
                 handle.write(line)
         except PermissionError:
             pass
+
+
+def rotate_bootstrap_log(cfg: BootstrapConfig) -> None:
+    if not cfg.log_file:
+        return
+    log_path = Path(cfg.log_file)
+    try:
+        if not log_path.exists() or log_path.stat().st_size <= BOOTSTRAP_LOG_MAX_BYTES:
+            return
+        rotated = log_path.with_name(f"{log_path.name}.1")
+        if rotated.exists():
+            rotated.unlink()
+        log_path.rename(rotated)
+    except OSError:
+        pass
 
 
 def run_cmd(
@@ -270,6 +506,14 @@ def ensure_platform(cfg: BootstrapConfig) -> None:
         raise RuntimeError(f"unsupported architecture {arch} (expected {cfg.expected_arch})")
 
 
+def compute_root_reserve_gb(cfg: BootstrapConfig) -> int:
+    raw = cfg.root_reserve_gb_raw
+    try:
+        return max(1, int(raw))
+    except (TypeError, ValueError):
+        return 15
+
+
 def compute_image_size(cfg: BootstrapConfig) -> int:
     raw = cfg.image_size_gb_raw
     if raw and raw != "auto":
@@ -279,10 +523,14 @@ def compute_image_size(cfg: BootstrapConfig) -> int:
             pass
     usage = shutil.disk_usage("/")
     total_gb = int(usage.total / (1024**3))
-    target = total_gb - 15
+    reserve_gb = compute_root_reserve_gb(cfg)
+    target = total_gb - reserve_gb
     if target < 5:
         target = 5
-    log_line(cfg, f"bootstrap: computed btrfs image size {target}G (disk {total_gb}G)")
+    log_line(
+        cfg,
+        f"bootstrap: computed btrfs image size {target}G (disk {total_gb}G, reserve {reserve_gb}G)",
+    )
     return target
 
 
@@ -377,7 +625,7 @@ def ensure_runtime_user(cfg: BootstrapConfig) -> None:
         pw = pwd.getpwnam(user)
     home = pw.pw_dir or f"/home/{user}"
     Path(home).mkdir(parents=True, exist_ok=True)
-    run_best_effort(cfg, ["chown", "-R", f"{user}:{user}", home], "chown runtime home")
+    run_best_effort(cfg, ["chown", f"{user}:{user}", home], "chown runtime home")
 
 
 def ensure_subuids(cfg: BootstrapConfig) -> None:
@@ -396,7 +644,7 @@ def prepare_dirs(cfg: BootstrapConfig) -> None:
     log_line(cfg, "bootstrap: preparing cocalc directories")
     for path in ["/opt/cocalc", "/var/lib/cocalc", "/etc/cocalc", "/mnt/cocalc"]:
         Path(path).mkdir(parents=True, exist_ok=True)
-    run_best_effort(cfg, ["chown", "-R", f"{cfg.ssh_user}:{cfg.ssh_user}", "/opt/cocalc", "/var/lib/cocalc"], "chown cocalc dirs")
+    run_best_effort(cfg, ["chown", f"{cfg.ssh_user}:{cfg.ssh_user}", "/opt/cocalc", "/var/lib/cocalc"], "chown cocalc dirs")
 
 
 def ensure_legacy_btrfs_link(cfg: BootstrapConfig) -> None:
@@ -431,11 +679,34 @@ def project_host_runtime_root(cfg: BootstrapConfig) -> Path:
     return Path(cfg.bootstrap_root)
 
 
+def chown_paths_best_effort(
+    cfg: BootstrapConfig,
+    owner: str,
+    paths: list[str | Path],
+    desc: str,
+    *,
+    recursive: bool = False,
+) -> None:
+    normalized = [str(path) for path in paths if path]
+    if not normalized:
+        return
+    args = ["chown"]
+    if recursive:
+        args.append("-R")
+    args.append(f"{owner}:{owner}")
+    args.extend(normalized)
+    if os.geteuid() == 0:
+        run_best_effort(cfg, args, desc)
+        return
+    run_best_effort(cfg, ["sudo", *args], f"sudo {desc}")
+
+
 def ensure_bootstrap_paths(cfg: BootstrapConfig) -> None:
     Path(cfg.bootstrap_root).mkdir(parents=True, exist_ok=True)
     Path(cfg.bootstrap_dir).mkdir(parents=True, exist_ok=True)
     Path(cfg.bootstrap_tmp).mkdir(parents=True, exist_ok=True)
     Path(cfg.log_file).parent.mkdir(parents=True, exist_ok=True)
+    rotate_bootstrap_log(cfg)
     if cfg.bootstrap_user and cfg.bootstrap_user != "root":
         owner_paths = [
             cfg.bootstrap_root,
@@ -443,26 +714,67 @@ def ensure_bootstrap_paths(cfg: BootstrapConfig) -> None:
             cfg.bootstrap_tmp,
             str(Path(cfg.log_file).parent),
         ]
-        if os.geteuid() == 0:
-            run_best_effort(
-                cfg,
-                ["chown", "-R", f"{cfg.bootstrap_user}:{cfg.bootstrap_user}", *owner_paths],
-                "chown bootstrap-owner dirs",
-            )
-        else:
-            run_best_effort(
-                cfg,
-                [
-                    "sudo",
-                    "chown",
-                    "-R",
-                    f"{cfg.bootstrap_user}:{cfg.bootstrap_user}",
-                    *owner_paths,
-                ],
-                "sudo chown bootstrap-owner dirs",
-            )
+        chown_paths_best_effort(
+            cfg,
+            cfg.bootstrap_user,
+            owner_paths,
+            "chown bootstrap-owner dirs",
+        )
     if not cfg.ssh_user or cfg.ssh_user == "root":
         return
+
+
+def prune_bundle_versions(
+    cfg: BootstrapConfig,
+    bundle: BundleSpec,
+    *,
+    keep: int = BUNDLE_RETENTION_COUNT,
+) -> None:
+    root = Path(bundle.root)
+    if not root.is_dir():
+        return
+    keep_resolved: set[Path] = set()
+    desired_dir = Path(bundle.dir)
+    if desired_dir.exists() and desired_dir.is_dir():
+        keep_resolved.add(desired_dir.resolve())
+    current_path = Path(bundle.current)
+    try:
+        if current_path.is_symlink() or current_path.exists():
+            resolved = current_path.resolve()
+            if resolved.exists() and resolved.is_dir():
+                keep_resolved.add(resolved)
+    except Exception:
+        pass
+    candidates: list[Path] = []
+    for child in root.iterdir():
+        if child.name.startswith(".") or child.name == "current":
+            continue
+        try:
+            if child.is_symlink() or not child.is_dir():
+                continue
+        except OSError:
+            continue
+        candidates.append(child)
+    candidates.sort(
+        key=lambda child: (
+            child.stat().st_mtime if child.exists() else 0,
+            child.name,
+        ),
+        reverse=True,
+    )
+    for child in candidates:
+        try:
+            resolved = child.resolve()
+        except Exception:
+            resolved = child
+        if resolved in keep_resolved:
+            continue
+        if len(keep_resolved) < keep:
+            if resolved.exists():
+                keep_resolved.add(resolved)
+            continue
+        log_line(cfg, f"bootstrap: pruning old bundle dir {child}")
+        shutil.rmtree(child, ignore_errors=True)
     runtime_paths = [
         cfg.project_host_bundle.root,
         cfg.project_bundle.root,
@@ -474,14 +786,14 @@ def ensure_bootstrap_paths(cfg: BootstrapConfig) -> None:
     if os.geteuid() == 0:
         run_best_effort(
             cfg,
-            ["chown", "-R", f"{cfg.ssh_user}:{cfg.ssh_user}", *runtime_paths],
-            "chown runtime dirs",
+            ["chown", f"{cfg.ssh_user}:{cfg.ssh_user}", *runtime_paths],
+            "chown runtime dir roots",
         )
     else:
         run_best_effort(
             cfg,
-            ["sudo", "chown", "-R", f"{cfg.ssh_user}:{cfg.ssh_user}", *runtime_paths],
-            "sudo chown runtime dirs",
+            ["sudo", "chown", f"{cfg.ssh_user}:{cfg.ssh_user}", *runtime_paths],
+            "sudo chown runtime dir roots",
         )
 
 
@@ -615,6 +927,22 @@ if [ "$MOUNT_SOURCE" = "$IMAGE" ] || [ "${MOUNT_SOURCE#/dev/loop}" != "$MOUNT_SO
     exit 0
   fi
   if [ -z "$TARGET_GB" ] && [ -f "$ENV_FILE" ]; then
+    AUTO_MODE="$(grep -E '^COCALC_BTRFS_IMAGE_AUTO=' "$ENV_FILE" | tail -n1 | cut -d= -f2 || true)"
+    if [ "$AUTO_MODE" = "1" ]; then
+      ROOT_TOTAL_GB="$(df -BG / | awk 'NR==2 {gsub(/G/, "", $2); print $2}' || true)"
+      RESERVE_GB="$(grep -E '^COCALC_BTRFS_ROOT_RESERVE_GB=' "$ENV_FILE" | tail -n1 | cut -d= -f2 || true)"
+      if ! echo "$RESERVE_GB" | grep -Eq '^[0-9]+$'; then
+        RESERVE_GB=15
+      fi
+      if echo "$ROOT_TOTAL_GB" | grep -Eq '^[0-9]+$'; then
+        TARGET_GB="$((ROOT_TOTAL_GB - RESERVE_GB))"
+        if [ "$TARGET_GB" -lt 5 ]; then
+          TARGET_GB=5
+        fi
+      fi
+    fi
+  fi
+  if [ -z "$TARGET_GB" ] && [ -f "$ENV_FILE" ]; then
     TARGET_GB="$(grep -E '^COCALC_BTRFS_IMAGE_GB=' "$ENV_FILE" | tail -n1 | cut -d= -f2 || true)"
   fi
   if [ -z "$TARGET_GB" ] || ! echo "$TARGET_GB" | grep -Eq '^[0-9]+$'; then
@@ -638,6 +966,20 @@ btrfs filesystem resize max "$MOUNTPOINT" >/dev/null 2>&1 || true
     helper_path = Path("/usr/local/sbin/cocalc-grow-btrfs")
     helper_path.write_text(helper, encoding="utf-8")
     helper_path.chmod(0o755)
+
+
+def ensure_cocalc_mount(cfg: BootstrapConfig) -> None:
+    if Path("/mnt/cocalc").is_mount():
+        return
+    log_line(cfg, "bootstrap: ensuring /mnt/cocalc is mounted")
+    if Path("/usr/local/sbin/cocalc-mount-data").exists():
+        run_best_effort(
+            cfg,
+            ["/usr/local/sbin/cocalc-mount-data"],
+            "mount /mnt/cocalc via cocalc-mount-data",
+        )
+    if not Path("/mnt/cocalc").is_mount():
+        run_best_effort(cfg, ["mount", "/mnt/cocalc"], "mount /mnt/cocalc")
 
 
 def install_privileged_wrappers(cfg: BootstrapConfig) -> None:
@@ -1144,7 +1486,12 @@ def ensure_btrfs_data(cfg: BootstrapConfig) -> None:
     Path("/mnt/cocalc/data/secrets").mkdir(parents=True, exist_ok=True)
     Path("/mnt/cocalc/data/tmp").mkdir(parents=True, exist_ok=True)
     os.chmod("/mnt/cocalc/data/tmp", 0o1777)
-    run_best_effort(cfg, ["chown", "-R", f"{cfg.ssh_user}:{cfg.ssh_user}", "/mnt/cocalc/data"], "chown btrfs data")
+    for path in ["/mnt/cocalc/data", "/mnt/cocalc/data/secrets", "/mnt/cocalc/data/tmp"]:
+        run_best_effort(
+            cfg,
+            ["chown", f"{cfg.ssh_user}:{cfg.ssh_user}", path],
+            f"chown {path}",
+        )
 
 
 def configure_podman(cfg: BootstrapConfig) -> None:
@@ -1162,21 +1509,35 @@ def configure_podman(cfg: BootstrapConfig) -> None:
     if cfg.ssh_user != "root":
         user_config_root = Path(runtime_home(cfg)) / ".config"
         user_config = user_config_root / "containers"
+        rootless_root = Path(f"/mnt/cocalc/data/containers/rootless/{cfg.ssh_user}")
+        rootless_storage = rootless_root / "storage"
+        rootless_run = rootless_root / "run"
         user_config_root.mkdir(parents=True, exist_ok=True)
         run_best_effort(
             cfg,
-            ["chown", "-R", f"{cfg.ssh_user}:{cfg.ssh_user}", str(user_config_root)],
+            ["chown", f"{cfg.ssh_user}:{cfg.ssh_user}", str(user_config_root)],
             "chown user config",
         )
         user_config.mkdir(parents=True, exist_ok=True)
-        Path(f"/mnt/cocalc/data/containers/rootless/{cfg.ssh_user}/storage").mkdir(parents=True, exist_ok=True)
-        Path(f"/mnt/cocalc/data/containers/rootless/{cfg.ssh_user}/run").mkdir(parents=True, exist_ok=True)
-        run_best_effort(cfg, ["chown", "-R", f"{cfg.ssh_user}:{cfg.ssh_user}", f"/mnt/cocalc/data/containers/rootless/{cfg.ssh_user}"], "chown rootless storage")
+        rootless_storage.mkdir(parents=True, exist_ok=True)
+        rootless_run.mkdir(parents=True, exist_ok=True)
+        run_best_effort(
+            cfg,
+            [
+                "chown",
+                f"{cfg.ssh_user}:{cfg.ssh_user}",
+                str(user_config),
+                str(rootless_root),
+                str(rootless_storage),
+                str(rootless_run),
+            ],
+            "chown rootless podman paths",
+        )
         (user_config / "storage.conf").write_text(
             '[storage]\n'
             'driver = "overlay"\n'
-            f'runroot = "/mnt/cocalc/data/containers/rootless/{cfg.ssh_user}/run"\n'
-            f'graphroot = "/mnt/cocalc/data/containers/rootless/{cfg.ssh_user}/storage"\n',
+            f'runroot = "{rootless_run}"\n'
+            f'graphroot = "{rootless_storage}"\n',
             encoding="utf-8",
         )
         run_best_effort(cfg, ["chown", f"{cfg.ssh_user}:{cfg.ssh_user}", str(user_config / "storage.conf")], "chown storage.conf")
@@ -1193,8 +1554,12 @@ def write_env(cfg: BootstrapConfig, image_size_gb: int) -> None:
         Path(runtime_dir).mkdir(parents=True, exist_ok=True)
         run_best_effort(cfg, ["chown", f"{cfg.ssh_user}:{cfg.ssh_user}", runtime_dir], "chown runtime dir")
         upsert_env(cfg.env_file, "COCALC_PODMAN_RUNTIME_DIR", runtime_dir)
+    upsert_env(cfg.env_file, "COCALC_BTRFS_ROOT_RESERVE_GB", str(compute_root_reserve_gb(cfg)))
     if cfg.image_size_gb_raw == "auto":
+        upsert_env(cfg.env_file, "COCALC_BTRFS_IMAGE_AUTO", "1")
         upsert_env(cfg.env_file, "COCALC_BTRFS_IMAGE_GB", str(image_size_gb))
+    else:
+        upsert_env(cfg.env_file, "COCALC_BTRFS_IMAGE_AUTO", "0")
 
 
 PODMAN_BASHRC_BLOCK_START = "# >>> CoCalc project-host podman env >>>"
@@ -1490,7 +1855,7 @@ def resolve_bundle_spec(cfg: BootstrapConfig, bundle: BundleSpec) -> BundleSpec:
     return resolved
 
 
-def extract_bundle(cfg: BootstrapConfig, bundle: BundleSpec) -> None:
+def extract_bundle(cfg: BootstrapConfig, bundle: BundleSpec) -> BundleSpec:
     bundle = resolve_bundle_spec(cfg, bundle)
     Path(cfg.bootstrap_tmp).mkdir(parents=True, exist_ok=True)
     if cfg.bootstrap_user and cfg.bootstrap_user != "root":
@@ -1499,26 +1864,50 @@ def extract_bundle(cfg: BootstrapConfig, bundle: BundleSpec) -> None:
             ["chown", f"{cfg.bootstrap_user}:{cfg.bootstrap_user}", cfg.bootstrap_tmp],
             "chown bootstrap tmp",
         )
-    download_file(cfg, bundle.url, bundle.remote)
-    verify_sha256(cfg, bundle.remote, bundle.sha256)
     Path(bundle.root).mkdir(parents=True, exist_ok=True)
-    if Path(bundle.dir).exists():
-        shutil.rmtree(bundle.dir)
-    Path(bundle.dir).mkdir(parents=True, exist_ok=True)
-    run_cmd(cfg, ["tar", "-xJf", bundle.remote, "--strip-components=1", "-C", bundle.dir], f"extract {bundle.url}")
+    desired_dir = Path(bundle.dir)
+    current_path = Path(bundle.current)
+    if desired_dir.exists():
+        if current_path.is_symlink():
+            try:
+                if current_path.resolve() == desired_dir.resolve():
+                    log_line(
+                        cfg,
+                        f"bootstrap: bundle already current version={bundle.version or desired_dir.name} root={bundle.root}",
+                    )
+                    prune_bundle_versions(cfg, bundle)
+                    return bundle
+            except Exception:
+                pass
+        log_line(
+            cfg,
+            f"bootstrap: reusing existing bundle version={bundle.version or desired_dir.name} root={bundle.root}",
+        )
+    else:
+        download_file(cfg, bundle.url, bundle.remote)
+        verify_sha256(cfg, bundle.remote, bundle.sha256)
+        if desired_dir.exists():
+            shutil.rmtree(desired_dir)
+        desired_dir.mkdir(parents=True, exist_ok=True)
+        run_cmd(
+            cfg,
+            ["tar", "-xJf", bundle.remote, "--strip-components=1", "-C", bundle.dir],
+            f"extract {bundle.url}",
+        )
     if cfg.ssh_user and cfg.ssh_user != "root":
         run_best_effort(
             cfg,
-            ["chown", "-R", f"{cfg.ssh_user}:{cfg.ssh_user}", bundle.root],
-            f"chown {bundle.root}",
+            ["chown", "-R", f"{cfg.ssh_user}:{cfg.ssh_user}", bundle.dir],
+            f"chown {bundle.dir}",
         )
-    current_path = Path(bundle.current)
     if current_path.is_symlink() or current_path.exists():
         if current_path.is_dir() and not current_path.is_symlink():
             shutil.rmtree(current_path)
         else:
             current_path.unlink()
-    current_path.symlink_to(Path(bundle.dir), target_is_directory=True)
+    current_path.symlink_to(desired_dir, target_is_directory=True)
+    prune_bundle_versions(cfg, bundle)
+    return bundle
 
 
 def install_node(cfg: BootstrapConfig) -> None:
@@ -1558,8 +1947,8 @@ node "{bundle_entry}" "$@"
     if cfg.ssh_user and cfg.ssh_user != "root":
         run_best_effort(
             cfg,
-            ["chown", "-R", f"{cfg.ssh_user}:{cfg.ssh_user}", str(host_dir)],
-            "chown project-host runtime root",
+            ["chown", f"{cfg.ssh_user}:{cfg.ssh_user}", str(bin_dir), str(wrapper_path)],
+            "chown project-host wrapper",
         )
 
 
@@ -1743,9 +2132,19 @@ esac
     ]:
         (bin_dir / name).chmod(0o755)
     if cfg.ssh_user and cfg.ssh_user != "root":
-        run_best_effort(
+        helper_paths = [
+            bin_dir / "ctl",
+            bin_dir / "start-project-host",
+            bin_dir / "logs",
+            bin_dir / "acp-status",
+            bin_dir / "acp-logs",
+            bin_dir / "logs-cf",
+            bin_dir / "ctl-cf",
+        ]
+        chown_paths_best_effort(
             cfg,
-            ["chown", "-R", f"{cfg.ssh_user}:{cfg.ssh_user}", str(bin_dir)],
+            cfg.ssh_user,
+            [bin_dir, *helper_paths],
             "chown runtime helper scripts",
         )
 
@@ -1770,9 +2169,15 @@ exec python3 "{bootstrap_py}" --config "{config_path}" --only tools_bundle
     for name in ["fetch-project-bundle.sh", "fetch-project-host.sh", "fetch-tools.sh"]:
         (bin_dir / name).chmod(0o755)
     if cfg.ssh_user and cfg.ssh_user != "root":
-        run_best_effort(
+        fetch_paths = [
+            bin_dir / "fetch-project-bundle.sh",
+            bin_dir / "fetch-project-host.sh",
+            bin_dir / "fetch-tools.sh",
+        ]
+        chown_paths_best_effort(
             cfg,
-            ["chown", "-R", f"{cfg.ssh_user}:{cfg.ssh_user}", str(bin_dir)],
+            cfg.ssh_user,
+            fetch_paths,
             "chown runtime fetch helpers",
         )
 
@@ -1806,9 +2211,22 @@ exec python3 "{bootstrap_py}" --config "{config_path}" --only tools_bundle
             target.write_text(script, encoding="utf-8")
             target.chmod(0o755)
         if cfg.bootstrap_user and cfg.bootstrap_user != "root":
-            run_best_effort(
+            admin_paths = [
+                admin_bin / "ctl",
+                admin_bin / "start-project-host",
+                admin_bin / "logs",
+                admin_bin / "acp-status",
+                admin_bin / "acp-logs",
+                admin_bin / "logs-cf",
+                admin_bin / "ctl-cf",
+                admin_bin / "fetch-project-bundle.sh",
+                admin_bin / "fetch-project-host.sh",
+                admin_bin / "fetch-tools.sh",
+            ]
+            chown_paths_best_effort(
                 cfg,
-                ["chown", "-R", f"{cfg.bootstrap_user}:{cfg.bootstrap_user}", str(admin_bin)],
+                cfg.bootstrap_user,
+                [admin_bin, *admin_paths],
                 "chown admin helper scripts",
             )
 
@@ -1820,6 +2238,19 @@ def configure_autostart(cfg: BootstrapConfig) -> None:
     Path("/etc/cron.d/cocalc-project-host").write_text(cron_line + "\n", encoding="utf-8")
     os.chmod("/etc/cron.d/cocalc-project-host", 0o644)
     run_best_effort(cfg, ["systemctl", "enable", "--now", "cron"], "enable cron")
+    run_best_effort(
+        cfg,
+        [
+            "sudo",
+            "-u",
+            cfg.ssh_user,
+            "-H",
+            "/bin/bash",
+            "-lc",
+            f"{runtime_root}/bin/start-project-host",
+        ],
+        "start project-host now",
+    )
 
 
 def configure_runtime_sudoers(cfg: BootstrapConfig) -> None:
@@ -1899,7 +2330,8 @@ def configure_cloudflared_with_options(
 ) -> None:
     if not cfg.cloudflared.enabled:
         return
-    if install_package:
+    cloudflared_missing = shutil.which("cloudflared") is None
+    if install_package or cloudflared_missing:
         log_line(cfg, "bootstrap: installing cloudflared")
         arch = cfg.expected_arch
         deb_name = f"cloudflared-linux-{arch}.deb"
@@ -2087,35 +2519,13 @@ def touch_paths(paths: list[str]) -> None:
             pass
 
 
-def main(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--config", required=True)
-    parser.add_argument(
-        "--only",
-        help="Comma-separated subset (project_bundle, project_host_bundle, tools_bundle, cloudflared)",
-    )
-    args = parser.parse_args(argv)
-    cfg = load_config(args.config)
-    only = parse_only(args.only)
-    log_line(cfg, "bootstrap: starting python bootstrap")
-    log_line(cfg, f"bootstrap: user={cfg.bootstrap_user} home={cfg.bootstrap_home} root={cfg.bootstrap_root}")
+def run_provision(cfg: BootstrapConfig) -> int:
+    log_line(cfg, "bootstrap: starting provision")
+    report_bootstrap_status(cfg, "running", "Preparing bootstrap environment")
+    record_operation_start(cfg, "provision")
     try:
-        report_bootstrap_status(cfg, "running", "Preparing bootstrap environment")
         ensure_runtime_user(cfg)
         ensure_bootstrap_paths(cfg)
-        if only:
-            log_line(cfg, f"bootstrap: running subset {sorted(only)}")
-            if "project_host_bundle" in only:
-                extract_bundle(cfg, cfg.project_host_bundle)
-                write_wrapper(cfg)
-                write_helpers(cfg)
-            if "project_bundle" in only:
-                extract_bundle(cfg, cfg.project_bundle)
-            if "tools_bundle" in only:
-                extract_bundle(cfg, cfg.tools_bundle)
-            if "cloudflared" in only:
-                configure_cloudflared_with_options(cfg, install_package=False)
-            return 0
         ensure_platform(cfg)
         image_size_gb = compute_image_size(cfg)
         disable_unattended(cfg)
@@ -2129,8 +2539,25 @@ def main(argv: list[str]) -> int:
         enable_linger(cfg)
         prepare_dirs(cfg)
         setup_btrfs(cfg, image_size_gb)
+        record_operation_success(cfg, "provision")
+        log_line(cfg, "bootstrap: provision completed successfully")
+        return 0
+    except Exception as exc:
+        record_operation_failure(cfg, "provision", str(exc))
+        raise
+
+
+def run_reconcile(cfg: BootstrapConfig) -> int:
+    log_line(cfg, "bootstrap: starting reconcile")
+    report_bootstrap_status(cfg, "running", "Reconciling host software")
+    record_operation_start(cfg, "reconcile")
+    try:
+        ensure_runtime_user(cfg)
+        ensure_bootstrap_paths(cfg)
+        image_size_gb = compute_image_size(cfg)
         install_btrfs_helper(cfg)
         install_privileged_wrappers(cfg)
+        ensure_cocalc_mount(cfg)
         ensure_btrfs_data(cfg)
         configure_podman(cfg)
         write_env(cfg, image_size_gb)
@@ -2146,15 +2573,78 @@ def main(argv: list[str]) -> int:
         write_helpers(cfg)
         configure_runtime_sudoers(cfg)
         verify_runtime_sudoers(cfg)
-        configure_cloudflared(cfg)
+        configure_cloudflared_with_options(cfg, install_package=False)
         configure_autostart(cfg)
-        report_bootstrap_status(cfg, "running", "Starting project-host services")
-        start_project_host(cfg)
-        report_bootstrap_status(cfg, "running", "Finalizing bootstrap")
-        reenable_unattended(cfg)
-        touch_paths(cfg.bootstrap_done_paths)
-        log_line(cfg, "bootstrap: completed successfully")
+        record_operation_success(cfg, "reconcile")
+        report_bootstrap_status(cfg, "done", "Host software reconciled")
+        log_line(cfg, "bootstrap: reconcile completed successfully")
         return 0
+    except Exception as exc:
+        record_operation_failure(cfg, "reconcile", str(exc))
+        raise
+
+
+def run_bootstrap(cfg: BootstrapConfig) -> int:
+    run_provision(cfg)
+    run_reconcile(cfg)
+    report_bootstrap_status(cfg, "running", "Starting project-host services")
+    start_project_host(cfg)
+    report_bootstrap_status(cfg, "running", "Finalizing bootstrap")
+    reenable_unattended(cfg)
+    touch_paths(cfg.bootstrap_done_paths)
+    write_bootstrap_state_files(cfg)
+    log_line(cfg, "bootstrap: completed successfully")
+    return 0
+
+
+def main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "mode",
+        nargs="?",
+        default="bootstrap",
+        choices=["bootstrap", "provision", "reconcile", "status"],
+    )
+    parser.add_argument("--config", required=True)
+    parser.add_argument(
+        "--only",
+        help="Comma-separated subset (project_bundle, project_host_bundle, tools_bundle, cloudflared)",
+    )
+    args = parser.parse_args(argv)
+    cfg = load_config(args.config)
+    only = parse_only(args.only)
+    log_line(cfg, "bootstrap: starting python bootstrap")
+    log_line(cfg, f"bootstrap: user={cfg.bootstrap_user} home={cfg.bootstrap_home} root={cfg.bootstrap_root}")
+    try:
+        if only:
+            ensure_runtime_user(cfg)
+            ensure_bootstrap_paths(cfg)
+            write_bootstrap_state_files(cfg)
+            log_line(cfg, f"bootstrap: running subset {sorted(only)}")
+            if "project_host_bundle" in only:
+                extract_bundle(cfg, cfg.project_host_bundle)
+                write_wrapper(cfg)
+                write_helpers(cfg)
+            if "project_bundle" in only:
+                extract_bundle(cfg, cfg.project_bundle)
+            if "tools_bundle" in only:
+                extract_bundle(cfg, cfg.tools_bundle)
+            if "cloudflared" in only:
+                configure_cloudflared_with_options(cfg, install_package=False)
+            write_bootstrap_state_files(cfg)
+            return 0
+        if args.mode == "status":
+            write_bootstrap_state_files(cfg)
+            sys.stdout.write(
+                json.dumps(json_load(bootstrap_state_path(cfg)), indent=2, sort_keys=True)
+                + "\n"
+            )
+            return 0
+        if args.mode == "provision":
+            return run_provision(cfg)
+        if args.mode == "reconcile":
+            return run_reconcile(cfg)
+        return run_bootstrap(cfg)
     except Exception as exc:
         log_line(cfg, f"bootstrap: failed: {exc}")
         return 1

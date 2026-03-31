@@ -1022,7 +1022,15 @@ function DiffPreview({
   fontSize: number;
   languageHint: string;
 }) {
-  if (!diff?.lines?.length) {
+  const lines = diff?.lines ?? [];
+  const codeFontSize = Math.max(11, fontSize - 1);
+  const chunkEnds = new Set(diff.chunkBoundaries ?? []);
+  const lineMetas = useMemo(() => buildPrismLineMetasFromPlain(lines), [lines]);
+  const highlightedByLine = useMemo(
+    () => highlightPrismLines(lineMetas, languageHint),
+    [lineMetas, languageHint],
+  );
+  if (lines.length === 0) {
     // ?'s for old input
     return (
       <Text type="secondary" style={{ fontSize: Math.max(11, fontSize - 2) }}>
@@ -1030,16 +1038,6 @@ function DiffPreview({
       </Text>
     );
   }
-  const codeFontSize = Math.max(11, fontSize - 1);
-  const chunkEnds = new Set(diff.chunkBoundaries ?? []);
-  const lineMetas = useMemo(
-    () => buildPrismLineMetasFromPlain(diff.lines),
-    [diff.lines],
-  );
-  const highlightedByLine = useMemo(
-    () => highlightPrismLines(lineMetas, languageHint),
-    [lineMetas, languageHint],
-  );
   return (
     <div
       className="cocalc-slate-code-block"
@@ -1052,7 +1050,7 @@ function DiffPreview({
         overflow: "hidden",
       }}
     >
-      {diff.lines.map((_line, i) => {
+      {lines.map((_line, i) => {
         const op = diff.types[i] ?? 0;
         const gutter = diff.gutters[i] ?? "";
         const background =

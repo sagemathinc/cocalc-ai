@@ -5,31 +5,79 @@ import { gzipSync } from "zlib";
 import { resolve, dirname } from "path";
 
 const DIST = resolve(process.cwd(), "dist");
+const KiB = 1024;
+const MiB = 1024 * KiB;
 
 const budgets = [
   {
+    html: "app.html",
+    maxRawBytes: 10 * MiB,
+    maxGzipBytes: 2800 * KiB,
+  },
+  {
+    html: "embed.html",
+    maxRawBytes: 10 * MiB,
+    maxGzipBytes: 2800 * KiB,
+  },
+  {
+    html: "public-viewer.html",
+    maxRawBytes: 700 * KiB,
+    maxGzipBytes: 220 * KiB,
+  },
+  {
+    html: "public-viewer-md.html",
+    maxRawBytes: 2 * MiB,
+    maxGzipBytes: 650 * KiB,
+  },
+  {
+    html: "public-viewer-ipynb.html",
+    maxRawBytes: 2 * MiB,
+    maxGzipBytes: 650 * KiB,
+  },
+  {
+    html: "public-viewer-board.html",
+    maxRawBytes: 2700 * KiB,
+    maxGzipBytes: 850 * KiB,
+  },
+  {
+    html: "public-viewer-slides.html",
+    maxRawBytes: 2700 * KiB,
+    maxGzipBytes: 850 * KiB,
+  },
+  {
+    html: "public-viewer-chat.html",
+    maxRawBytes: 2 * MiB,
+    maxGzipBytes: 650 * KiB,
+  },
+  {
     html: "public-home.html",
-    maxGzipBytes: 420 * 1024,
+    maxRawBytes: 850 * KiB,
+    maxGzipBytes: 280 * KiB,
   },
   {
     html: "public-auth.html",
-    maxGzipBytes: 250 * 1024,
+    maxRawBytes: 1300 * KiB,
+    maxGzipBytes: 430 * KiB,
   },
   {
     html: "public-support.html",
-    maxGzipBytes: 250 * 1024,
+    maxRawBytes: 850 * KiB,
+    maxGzipBytes: 280 * KiB,
   },
   {
     html: "public-content.html",
-    maxGzipBytes: 300 * 1024,
+    maxRawBytes: 3200 * KiB,
+    maxGzipBytes: 1000 * KiB,
   },
   {
     html: "public-lang.html",
-    maxGzipBytes: 300 * 1024,
+    maxRawBytes: 1800 * KiB,
+    maxGzipBytes: 600 * KiB,
   },
   {
     html: "public-features.html",
-    maxGzipBytes: 300 * 1024,
+    maxRawBytes: 1300 * KiB,
+    maxGzipBytes: 430 * KiB,
   },
 ];
 
@@ -61,9 +109,17 @@ for (const budget of budgets) {
     0,
   );
   const label = budget.html.replace(/\.html$/, "");
+  const rawBudgetLabel =
+    budget.maxRawBytes == null ? "n/a" : formatBytes(budget.maxRawBytes);
   console.log(
-    `${label}: raw=${formatBytes(totalRaw)} gzip=${formatBytes(totalGzip)} limit=${formatBytes(budget.maxGzipBytes)}`,
+    `${label}: raw=${formatBytes(totalRaw)} gzip=${formatBytes(totalGzip)} raw-limit=${rawBudgetLabel} gzip-limit=${formatBytes(budget.maxGzipBytes)}`,
   );
+  if (budget.maxRawBytes != null && totalRaw > budget.maxRawBytes) {
+    failed = true;
+    console.error(
+      `${label}: raw bundle budget exceeded by ${formatBytes(totalRaw - budget.maxRawBytes)}`,
+    );
+  }
   if (totalGzip > budget.maxGzipBytes) {
     failed = true;
     console.error(

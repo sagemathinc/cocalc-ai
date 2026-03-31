@@ -1,170 +1,298 @@
 # Project-Host Bootstrap And Tool Lifecycle Plan
 
-Last refreshed: March 28, 2026
+Last refreshed: March 30, 2026
 
-This document is a design plan for fixing the long-term lifecycle of
-project-host bootstrap, helper scripts, and installed software bundles.
+Status: active implementation document; early and middle slices are now in place
 
-It is intentionally separate from the RootFS work. RootFS exposed several
-bootstrap-adjacent problems, but the underlying issue is broader:
+This document is the working plan for fixing the long-term lifecycle of
+project-host bootstrap, helper scripts, runtime wrappers, and installed
+software bundles.
 
-- bootstrap logic is treated as one-time setup,
-- helper scripts and runtime wrappers continue depending on on-disk bootstrap
-  state after bootstrap,
-- tools / project / project-host bundles evolve regularly,
-- small fixes to the bootstrap layer often need to reach already-bootstrapped
-  hosts.
+It is intentionally separate from RootFS. RootFS exposed several lifecycle
+problems, but the underlying issue is broader:
 
-The current model is "bootstrap once, then mostly leave it alone". The target
-model should be:
+- bootstrap logic is still treated mostly as one-time setup,
+- helper scripts and privileged wrappers continue depending on bootstrap-owned
+  on-disk state after first boot,
+- `project-host`, `project`, `tools`, and `bootstrap.py` all evolve regularly,
+- small fixes to the bootstrap layer still require awkward host upgrades or
+  reprovisioning.
+
+The old model was effectively:
+
+- provision once,
+- patch ad hoc later.
+
+The target model remains:
 
 - provision once,
 - reconcile forever.
 
 ## Executive Summary
 
-We should split the current host lifecycle into two different systems:
+We should split project-host lifecycle into two explicit systems:
 
-1. Provisioning
+1. Provision
 
 - destructive or semi-destructive one-time host initialization
 - disk setup, base packages, podman/btrfs layout, users, sudoers, base env
 
-2. Reconcile / Upgrade
+2. Reconcile
 
-- safe, idempotent, recurring host maintenance
-- refresh bootstrap code and desired state
-- rewrite helper scripts and wrappers
-- update tools bundle, project bundle, and project-host bundle
-- reconcile supporting services such as cloudflared and launchpad local
-  rest-server glue
+- safe, idempotent recurring host maintenance
+- refresh desired software state
+- update bundles and helper scripts
+- update privileged wrappers
+- update cloudflared and related host-local glue
+- record desired vs installed state
 
 The key technical change is that we should stop treating
-`bootstrap-config.json` as one giant mixed blob of both:
+`bootstrap-config.json` as one giant mixed blob containing both:
 
-- stable host facts
-- dynamic desired software state
+- stable host facts,
+- dynamic desired software state,
+- and implicitly inferred installed state.
 
-Instead, split it into:
+Instead we should have separate on-host files for:
 
-- stable host facts
-- dynamic desired state
-- observed installed state
+- stable host facts,
+- desired state,
+- installed state,
 
-Then make every host start run a lightweight reconcile step that is allowed to
-update the mutable pieces without re-running destructive provisioning.
+while keeping `bootstrap-config.json` temporarily as a compatibility artifact
+until the existing helper and token-recovery code no longer depend on it.
 
-## Why This Is Needed
+## Implemented So Far
 
-Recent work exposed the mismatch clearly:
+The following are already implemented:
+
+- split on-host state files:
+  - `bootstrap-host-facts.json`
+  - `bootstrap-desired-state.json`
+  - `bootstrap-state.json`
+- explicit `bootstrap.py` modes:
+  - `bootstrap`
+  - `provision`
+  - `reconcile`
+  - `status`
+- later boot runs `reconcile` instead of `--only cloudflared`
+- `cocalc host upgrade` now runs that same reconcile path
+- bundle reuse / non-destructive `current` switching is in place
+- host heartbeat now reports bootstrap desired-vs-installed lifecycle state
+- `/hosts` and `cocalc host bootstrap-status` surface drift visibility
+- `master-conat-token.ts` now prefers split desired-state bootstrap connection
+  data and only falls back to `bootstrap-config.json`
+- explicit reconcile actions now exist in:
+  - `cocalc host reconcile <host>`
+  - the host details UI
+- lifecycle reporting now includes concrete wrapper/service presence in
+  addition to bundle/version drift:
+  - `project-host` runtime wrapper
+  - `ctl` helper
+  - cloudflared binary/service helpers
+
+The main remaining slices are:
+
+- expand reconcile ownership further where helper/runtime artifacts still rely
+  on legacy assumptions
+- eventually remove the remaining compatibility fallback to
+  `bootstrap-config.json`
+- later consider periodic background reconcile for long-lived hosts
+
+## Why This Was Needed
+
+Recent work made the mismatch more obvious:
 
 - `bootstrap.py` is published separately and is expected to change over time.
-- helper scripts such as `fetch-tools.sh` call the on-disk `bootstrap.py` and
-  on-disk `bootstrap-config.json`.
-- after `.bootstrap_done`, startup currently downloads `bootstrap.py` again,
-  but then only runs a narrow subset instead of a general reconcile pass.
-- self-hosted `rest-server` RootFS publish found a real bug in the privileged
-  runtime wrapper that only existed on already-bootstrapped hosts.
-- tools bundle selection had a stale pinned-URL problem because bootstrap state
-  baked in too much dynamic information.
+- helper scripts such as `fetch-project-host.sh` and `fetch-tools.sh` are
+  generated by bootstrap and live far beyond first boot.
+- privileged wrappers such as `cocalc-runtime-storage`,
+  `cocalc-grow-btrfs`, and `cocalc-cloudflared-*` are also bootstrap-owned
+  long-lived artifacts.
+- until recently the post-bootstrap path only reconciled `cloudflared`, not
+  the broader software layer.
+- until recently the host upgrade path over SSH re-used that same limited
+  branch, so it also did not perform a real general reconcile once
+  `.bootstrap_done` existed.
 
 In short: bootstrap is not just a first-boot installer. It is part of the
 ongoing host control plane.
 
-## Current State
+## Current Reality In Code
 
-Today, the important pieces are:
+This section reflects the code as of March 30, 2026.
+
+### Current entrypoints
 
 - [bootstrap-host.ts](/home/wstein/build/cocalc-lite2/src/packages/server/cloud/bootstrap-host.ts)
-  builds a startup script and writes `bootstrap-config.json`.
+  builds:
+  - the cloud-init startup payload,
+  - the SSH-triggered bootstrap reconcile script used by `cocalc host upgrade`,
+  - the current monolithic `bootstrap-config.json`.
 - [bootstrap.py](/home/wstein/build/cocalc-lite2/src/packages/server/cloud/bootstrap/bootstrap.py)
-  performs the actual install/configure work.
-- helper scripts such as `fetch-project-host.sh` and `fetch-tools.sh` are
-  generated by `bootstrap.py` and call back into the same `bootstrap.py` with
-  `--only ...`.
-- a `.bootstrap_done` sentinel prevents the full bootstrap path from running
-  again.
-- cloud hosts download `bootstrap.py` again on boot, but after bootstrap is
-  done they currently only run a very small reconciliation path.
+  performs the actual host install and helper generation.
 
-This gives us some upgrade surface, but not a coherent lifecycle.
+### First boot today
 
-## Problems To Solve
+Cloud-init startup does the following:
+
+1. choose bootstrap user / home,
+2. write `bootstrap-config.json`,
+3. download current published `bootstrap.py`,
+4. run full `python3 bootstrap.py --config ...`,
+5. mark `.bootstrap_done`.
+
+That full path performs:
+
+- apt setup,
+- storage and btrfs initialization,
+- podman setup,
+- env file generation,
+- bundle download and extraction,
+- helper and wrapper generation,
+- cloudflared setup,
+- project-host start.
+
+### Later boot today
+
+After `.bootstrap_done` exists, the same startup stub currently does:
+
+- download current `bootstrap.py`,
+- run:
+
+```bash
+python3 "$BOOTSTRAP_DIR/bootstrap.py" reconcile --config "$BOOTSTRAP_DIR/bootstrap-config.json"
+```
+
+So later boots now perform a real general software reconcile.
+
+### Host upgrade today
+
+`cocalc host upgrade` currently:
+
+- pushes a freshly generated startup bootstrap shell payload over SSH,
+- runs that payload as root.
+
+This now exercises the same reconcile path as later boot, so host upgrade is a
+real software reconcile instead of a cloudflared-only refresh.
+
+### bootstrap.py mode surface today
+
+`bootstrap.py` currently exposes:
+
+- full bootstrap when run with no `--only`,
+- subset mode via:
+  - `--only project_host_bundle`
+  - `--only project_bundle`
+  - `--only tools_bundle`
+  - `--only cloudflared`
+
+It now has first-class top-level modes:
+
+- `bootstrap`
+- `provision`
+- `reconcile`
+- `status`
+
+### Long-lived artifacts managed by bootstrap today
+
+Bootstrap owns more than bundles. It also writes and maintains:
+
+- `fetch-project-bundle.sh`
+- `fetch-project-host.sh`
+- `fetch-tools.sh`
+- `start-project-host`
+- runtime sudoers entries
+- `cocalc-runtime-storage`
+- `cocalc-grow-btrfs`
+- `cocalc-cloudflared-ctl`
+- `cocalc-cloudflared-logs`
+- optional GPU helper wrappers
+
+These are exactly the artifacts that should be covered by recurring reconcile.
+
+### Compatibility constraint already visible in code
+
+Current project-host token recovery now prefers split desired-state bootstrap
+connection data and only falls back to `bootstrap-config.json` for older
+hosts:
+
+- [master-conat-token.ts](/home/wstein/build/cocalc-lite2/src/packages/project-host/master-conat-token.ts)
+
+So `bootstrap-config.json` still exists as a compatibility artifact, but it is
+no longer the primary source for project-host bootstrap connection recovery.
+
+## Core Problems To Solve
 
 ### 1. Mixed stable and dynamic bootstrap state
 
 The existing `bootstrap-config.json` mixes together:
 
-- stable paths and user info
-- provision-time settings
-- dynamic bundle versions and URLs
-- helper/wrapper behavior
+- stable paths and user info,
+- provision-time settings,
+- dynamic bundle versions and URLs,
+- helper / wrapper behavior,
+- token recovery data.
 
-That makes it too easy for already-bootstrapped hosts to drift.
+That makes already-bootstrapped hosts drift too easily.
 
-### 2. Helper scripts outlive bootstrap assumptions
-
-Helper scripts are not just temporary install artifacts. They become part of
-normal operations:
-
-- fetching tools
-- fetching project bundle
-- fetching project-host bundle
-- some runtime wrappers and privileged glue
-
-That means they need an upgrade story.
-
-### 3. No first-class "host reconcile" concept
+### 2. No first-class "host reconcile" concept
 
 There is no clear contract for:
 
 - "bring this already-bootstrapped host to the desired software state"
 
-Instead, we have a mixture of:
+Instead we have a mixture of:
 
-- initial bootstrap
-- ad hoc helper scripts
-- bundle-specific refresh logic
-- manual fixes
+- initial bootstrap,
+- ad hoc helper scripts,
+- a cloudflared-only later-boot path,
+- and host-upgrade SSH scripts that sound broader than they actually are.
+
+### 3. Helper scripts outlive bootstrap assumptions
+
+Helper scripts and wrappers are not temporary install artifacts. They are part
+of normal operations and must have their own upgrade story.
 
 ### 4. Self-hosted and cloud need the same software lifecycle
 
-Cloud and self-hosted differ in provisioning details, but their ongoing
-software lifecycle should be the same:
+Provisioning details differ, but ongoing software lifecycle should converge on
+the same model:
 
-- same bundle update story
-- same helper regeneration story
-- same desired-state model
-- same observability
+- host facts,
+- desired state,
+- installed state,
+- reconcile.
 
-### 5. We lack good visibility into drift
+### 5. Drift was not centrally visible
 
-Today it is too hard to answer:
+This has now been partially addressed, but it was a core problem:
 
 - what bootstrap version is this host effectively running?
 - which helper schema is installed?
-- which desired bundle versions does the hub want?
+- which bundle versions are desired?
 - which bundle versions are actually installed?
 - when did reconcile last run and fail?
 
-## Goals
+## Design Goals
 
 - Treat bootstrap as a managed host subsystem, not a one-shot installer.
 - Make recurring reconcile safe, idempotent, and cheap.
 - Make helper scripts and runtime wrappers upgradeable.
 - Use the same lifecycle model for cloud and self-hosted hosts.
-- Keep destructive provisioning steps isolated from normal reconcile.
-- Make desired vs installed versions visible in logs and host status.
+- Keep destructive provisioning isolated from normal reconcile.
+- Make desired vs installed versions visible in logs and hub status.
 - Support explicit "reconcile this host now" actions from the hub.
 
 ## Non-Goals
 
-- Replacing the whole bootstrap stack right now.
-- Folding this work into RootFS.
-- Making project-host startup depend on a giant full bootstrap rerun.
-- Adding a heavy dependency system to bootstrap runtime.
+- Replacing the whole bootstrap stack immediately.
+- Folding this into RootFS.
+- Re-running destructive storage setup on every boot.
+- Removing `bootstrap-config.json` immediately before compatibility consumers are
+  migrated.
 
-## Proposed Architecture
+## Proposed Lifecycle Model
 
 ## 1. Split lifecycle into Provision and Reconcile
 
@@ -172,35 +300,36 @@ Today it is too hard to answer:
 
 Provision is responsible for one-time or rarely-repeated host preparation:
 
-- base apt packages
-- storage layout and data-disk setup
-- `/mnt/cocalc` and btrfs initialization
-- podman storage layout
-- runtime users and sudoers
-- base env files
-- first install of bundles/helpers
+- base apt packages,
+- storage layout and data-disk setup,
+- `/mnt/cocalc` and btrfs initialization,
+- podman storage layout,
+- runtime users and sudoers,
+- base env files,
+- first install of bundles, helpers, and wrappers.
 
-Provision may be guarded by a persistent sentinel, but only for provision.
+Provision remains guarded by a persistent sentinel.
 
 ### Reconcile
 
 Reconcile is responsible for safe recurring maintenance:
 
-- refresh bootstrap code
-- refresh desired state
-- install/update tools bundle
-- install/update project bundle
-- install/update project-host bundle
-- rewrite helper scripts
-- rewrite privileged runtime wrappers
-- reconcile cloudflared / launchpad local rest-server glue
-- publish status and version info
+- refresh bootstrap code,
+- refresh desired state,
+- install/update project-host bundle,
+- install/update project bundle,
+- install/update tools bundle,
+- rewrite helper scripts,
+- rewrite privileged runtime wrappers,
+- reconcile cloudflared / launchpad-local glue,
+- record success/failure in installed state,
+- surface desired vs installed versions.
 
 Reconcile should run:
 
-- on every host boot
-- on explicit hub request
-- optionally on a timer for long-lived hosts
+- on every host boot,
+- on explicit hub request,
+- later, optionally on a timer for long-lived hosts.
 
 ## 2. Split bootstrap data into three layers
 
@@ -208,103 +337,112 @@ Reconcile should run:
 
 Stable facts that rarely change:
 
-- runtime user
-- bootstrap root paths
-- SSH user
-- architecture / OS
-- whether the host is cloud or self-hosted
-- storage mode
-- provider / region identifiers
+- runtime user,
+- bootstrap root paths,
+- SSH user,
+- OS / architecture,
+- whether the host is cloud or self-hosted,
+- storage mode,
+- provider / region identifiers.
 
 Suggested file:
 
 - `bootstrap-host-facts.json`
 
-This is written once and updated only when truly necessary.
-
 ### B. Desired state
 
 Dynamic, hub-owned desired software state:
 
-- bootstrap selector / version
-- helper schema version
-- project-host bundle spec
-- project bundle spec
-- tools bundle spec or manifest URL
-- optional runtime wrapper version
-- optional cloudflared config generation
-- desired reconcile policy flags
+- bootstrap selector / version,
+- helper schema version,
+- project-host bundle spec,
+- project bundle spec,
+- tools bundle spec or manifest URL,
+- runtime wrapper version,
+- cloudflared desired config,
+- reconcile policy flags.
 
 Suggested file:
 
 - `bootstrap-desired-state.json`
 
-This should be refreshed on every boot and on explicit reconcile.
-
 ### C. Installed state
 
 Observed local state:
 
-- last successful provision timestamp
-- last successful reconcile timestamp
-- current bootstrap version
-- installed bundle versions
-- helper schema version installed
-- last reconcile error
-- last reconcile duration
-- whether a reconcile is currently in progress
+- provisioned boolean,
+- last provision timestamp,
+- last reconcile start / finish,
+- last reconcile result,
+- last reconcile error,
+- current bootstrap version,
+- current helper schema version,
+- current runtime wrapper version,
+- installed project-host bundle version,
+- installed project bundle version,
+- installed tools version,
+- whether reconcile is currently running.
 
 Suggested file:
 
 - `bootstrap-state.json`
 
-This is the local truth used for observability and drift detection.
+### Compatibility artifact
+
+Keep writing:
+
+- `bootstrap-config.json`
+
+for now, but make it clearly derived from the three real layers above. This
+lets existing helpers and token-recovery code keep working during migration.
 
 ## 3. Add explicit bootstrap modes
 
-`bootstrap.py` should have explicit top-level modes instead of relying mostly on
-`--only ...` subsets.
+`bootstrap.py` should grow explicit top-level modes instead of expressing the
+main lifecycle almost entirely through `--only`.
 
-Suggested modes:
+Target modes:
 
 - `provision`
 - `reconcile`
+- `status`
+
+Optional sub-steps under reconcile:
+
 - `ensure bundle project-host`
 - `ensure bundle project`
 - `ensure bundle tools`
 - `ensure helpers`
 - `ensure runtime-wrappers`
 - `ensure cloudflared`
-- `status`
 
-The existing `--only ...` subsets can remain as implementation detail, but the
-main lifecycle should be expressed in terms of provision and reconcile.
+Legacy `--only ...` subsets can remain temporarily as implementation detail.
 
-## 4. Reconcile should be idempotent and non-destructive
+## 4. Reconcile must be idempotent and non-destructive
 
 Reconcile must not:
 
-- recreate disks
-- reformat storage
-- reinstall whole host prerequisites unless needed
-- clobber currently working symlinks before staging a new version
+- recreate disks,
+- reformat storage,
+- rerun destructive storage initialization,
+- clobber working `current` symlinks before staging a new version.
 
-Instead:
+Instead it should:
 
-- stage downloads into versioned directories
-- verify checksums
-- atomically switch `current` symlinks
-- rewrite scripts/wrappers atomically
-- record success or failure in installed state
+- stage downloads into versioned directories,
+- verify checksums,
+- atomically switch `current` symlinks,
+- rewrite scripts and wrappers atomically,
+- record success or failure in installed state.
 
-## Detailed Lifecycle
+## Concrete Desired Behavior
 
 ## First Boot
 
 1. Tiny startup stub runs.
-2. Download current `bootstrap.py`.
-3. Write or refresh `bootstrap-host-facts.json`.
-4. Fetch desired state from hub/software endpoint.
+2. Download current published `bootstrap.py`.
+3. Write or refresh host facts.
+4. Fetch desired state.
 5. Run `bootstrap.py provision`.
 6. Run `bootstrap.py reconcile`.
 7. Mark provision complete.
@@ -312,13 +450,13 @@ Instead:
 ## Every Later Boot
 
 1. Tiny startup stub runs.
-2. Download current `bootstrap.py`.
+2. Download current published `bootstrap.py`.
 3. Refresh desired state.
 4. Run `bootstrap.py reconcile`.
 5. Start project-host using the reconciled `current` bundle.
 
-This is the crucial behavioral change. A host that is "already bootstrapped"
-must still reconcile dynamic software state.
+This is the critical behavioral change. A host that is "already
+bootstrapped" must still reconcile dynamic software state.
 
 ## Explicit Hub-Initiated Reconcile
 
@@ -335,58 +473,47 @@ That should:
 
 This should work for both cloud and self-hosted hosts.
 
-## Helper Script Strategy
+## Helper And Wrapper Strategy
 
-The current helper scripts are useful, but they should not be treated as static
-forever-once-installed artifacts.
+Helper scripts and wrappers should be treated as generated artifacts derived
+from:
 
-### Proposed rule
-
-Helper scripts are generated artifacts derived from:
-
-- current bootstrap code
-- current helper schema version
-- current desired state
+- current bootstrap code,
+- current helper schema version,
+- current desired state.
 
 Therefore:
 
-- reconcile should always be allowed to rewrite them
-- installed state should record which helper schema version is currently active
+- reconcile should always be allowed to rewrite them,
+- installed state should record which helper schema and wrapper version are
+  active.
 
-### Important scripts
-
-At minimum, reconcile should manage:
+At minimum reconcile should own:
 
 - `fetch-project-bundle.sh`
 - `fetch-project-host.sh`
 - `fetch-tools.sh`
 - `start-project-host`
-- any privileged runtime wrappers written by bootstrap
-
-### Wrapper generation
-
-The RootFS self-host `rest:` repo init bug showed that wrapper logic can evolve
-independently of bundle versions. We should therefore treat wrapper generation
-as a first-class reconcile step, not an accidental side effect of first boot.
+- privileged runtime wrappers under `/usr/local/sbin`
 
 ## Bundle Lifecycle
 
 ## Project-host bundle
 
-The project-host bundle should be managed as:
+Managed as:
 
-- versioned install roots
-- one `current` symlink
-- optional retention of a small number of old versions for rollback/debugging
+- versioned install roots,
+- one `current` symlink,
+- optional retention of a small number of old versions.
 
 Reconcile should:
 
-1. determine desired version
-2. download if missing
-3. verify checksum
-4. stage extract
-5. atomically switch `current`
-6. record installed version
+1. determine desired version,
+2. download if missing,
+3. verify checksum,
+4. stage extract,
+5. atomically switch `current`,
+6. record installed version.
 
 ## Project bundle
 
@@ -394,29 +521,13 @@ Same shape as project-host bundle.
 
 ## Tools bundle
 
-The tools bundle should continue to prefer manifest-based resolution, not stale
-pinned tarball URLs. Reconcile should:
+The tools bundle should continue preferring manifest-based resolution rather
+than stale pinned tarball URLs. Reconcile should:
 
-- refresh desired manifest URL
-- resolve desired version
-- install versioned tools root
-- atomically update `current`
-
-## Runtime Wrapper Lifecycle
-
-Not everything that matters lives in a bundle. Some important behavior is
-generated onto the host itself:
-
-- helper shell scripts
-- privileged wrappers
-- launchpad local support files
-
-These should have their own small version domain:
-
-- `helper_schema_version`
-- `runtime_wrapper_version`
-
-This avoids pretending bundle version changes are the only kind of host change.
+- refresh desired manifest URL,
+- resolve desired version,
+- install versioned tools root,
+- atomically update `current`.
 
 ## Self-Hosted Considerations
 
@@ -424,59 +535,54 @@ Self-hosted hosts should share the same reconcile model.
 
 Differences from cloud:
 
-- initial provisioning may be lighter or partially manual
-- storage choices may differ
-- there may be no cloud-init
+- initial provisioning may be lighter or partially manual,
+- storage choices may differ,
+- there may be no cloud-init.
 
 But once a host is registered, the software lifecycle should still use:
 
-- host facts
-- desired state
-- installed state
-- reconcile
-
-This is especially important because self-hosted sites are exactly where manual
-drift accumulates fastest.
+- host facts,
+- desired state,
+- installed state,
+- reconcile.
 
 ## Observability
-
-We should surface bootstrap lifecycle state centrally.
 
 ### On-host state
 
 Installed state should record at least:
 
-- provisioned boolean
-- last provision time
-- last reconcile start / end
-- last reconcile result
-- last reconcile error
-- current bootstrap version
-- current helper schema version
-- current runtime wrapper version
-- current project-host bundle version
-- current project bundle version
-- current tools version
+- provisioned boolean,
+- last provision time,
+- last reconcile start / end,
+- last reconcile result,
+- last reconcile error,
+- current bootstrap version,
+- current helper schema version,
+- current runtime wrapper version,
+- current project-host bundle version,
+- current project bundle version,
+- current tools version.
 
 ### Hub-visible state
 
 Host status in the hub/UI should expose:
 
-- desired vs installed project-host bundle version
-- desired vs installed tools version
-- desired vs installed bootstrap version
-- last reconcile time
-- last reconcile status
-- current drift indicator
+- desired vs installed project-host bundle version,
+- desired vs installed tools version,
+- desired vs installed bootstrap version,
+- last reconcile time,
+- last reconcile status,
+- current drift indicator.
 
 ### Logging
 
-Reconcile logs should make it easy to see:
+Reconcile logs should show:
 
-- what changed
-- what was already up to date
-- what failed
-- what version transition was attempted
+- what changed,
+- what was already current,
+- what failed,
+- what version transition was attempted.
 
 ## Concurrency And Safety
 
@@ -484,17 +590,14 @@ Reconcile should be host-serialized.
 
 Suggested rule:
 
-- only one reconcile or helper-regeneration pass at a time per host
-
-This can be implemented with a simple lock file or bootstrap-local mutex.
+- only one reconcile / helper-regeneration pass at a time per host.
 
 Important safety rules:
 
-- never switch `current` before a staged version verifies
-- if reconcile fails, keep the old working `current`
-- helper/wrapper rewrites should be atomic
-- startup should be able to continue using the last known good install if
-  reconcile fails
+- never switch `current` before staged content verifies,
+- if reconcile fails, keep the old working `current`,
+- helper and wrapper rewrites should be atomic,
+- startup should continue using the last known good install if reconcile fails.
 
 ## Failure Handling
 
@@ -502,121 +605,212 @@ Important safety rules:
 
 If reconcile fails:
 
-- mark failure in installed state
-- keep current working versions
-- surface error in hub/UI
-- allow explicit retry
+- mark failure in installed state,
+- keep current working versions,
+- surface error in hub/UI,
+- allow explicit retry.
 
 ### Partial install
 
 If a download or extract is interrupted:
 
-- leave staged temp paths behind only in scoped temp directories
-- clean them on next reconcile start
+- leave only scoped temp paths behind,
+- clean them on the next reconcile start.
 
 ### Missing desired-state endpoint
 
-If the hub/software endpoint is unavailable:
+If desired-state refresh fails:
 
-- continue using the last known desired state
-- record that desired-state refresh failed
-- do not block host startup if current install is healthy
+- continue using the last known desired state,
+- record refresh failure,
+- do not block host startup if the current install is healthy.
 
-## Proposed Rollout Plan
+## Implementation Plan
 
-## Phase 1: Introduce the model without changing behavior too much
+The important change here is to sequence this so we improve lifecycle without
+breaking current hosts or helper consumers.
 
-- add the new document/state model conceptually
-- split host facts, desired state, and installed state on disk
-- add explicit reconcile entrypoint
+## Phase 1: Introduce split state without breaking current hosts
 
-## Phase 2: Make every boot run reconcile
+Status: done
 
-- on both cloud and self-hosted paths
-- keep provision sentinel only for provision
+- add:
+  - `bootstrap-host-facts.json`
+  - `bootstrap-desired-state.json`
+  - `bootstrap-state.json`
+- keep writing `bootstrap-config.json` as a derived compatibility file
+- make no destructive behavior changes yet
+- start recording installed helper / wrapper / bundle versions locally
 
-## Phase 3: Move helper scripts and wrappers under reconcile ownership
+This phase is mostly about creating the model safely.
 
-- helper schema version
-- wrapper generation step
-- drift reporting
+## Phase 2: Add explicit `reconcile` mode to `bootstrap.py`
 
-## Phase 4: Add hub-triggered reconcile and host UI visibility
+Status: done
 
-- "reconcile bootstrap/software" action
-- visible desired vs installed versions
-- last reconcile status
+- add top-level `provision`, `reconcile`, and `status`
+- keep legacy `--only ...` support temporarily
+- move:
+  - bundle ensures,
+  - helper generation,
+  - wrapper generation,
+  - cloudflared reconcile
+    under `reconcile`
 
-## Phase 5: Cleanup
+At the end of this phase, `bootstrap.py reconcile` should be cheap and safe to
+run repeatedly.
+
+## Phase 3: Make every later boot run real reconcile
+
+Status: done
+
+- change the cloud-init later-boot branch from:
+  - `--only cloudflared`
+- to:
+  - `reconcile`
+
+This is the first behavioral phase that actually fixes host drift on reboot.
+
+## Phase 4: Make SSH host upgrade run real reconcile
+
+Status: done
+
+- stop relying on the old `.bootstrap_done -> cloudflared-only` path
+- use the same desired-state + reconcile contract over SSH
+- surface success/failure as "bootstrap/software reconcile" rather than generic
+  bootstrap shell success
+
+This is the phase that turns `cocalc host upgrade` into a genuine host software
+refresh tool.
+
+## Phase 5: Move helper and wrapper ownership entirely under reconcile
+
+Status: partially done
+
+- stop treating helper refresh as an accidental side effect of bootstrap
+- version helper schema and wrapper schema explicitly
+- surface drift when helpers/wrappers are behind desired state
+
+What is done now:
+
+- helper schema and runtime wrapper versions are recorded in desired/installed
+  state
+- lifecycle visibility now includes wrapper/helper presence beyond bundle
+  versions
+
+What remains:
+
+- make helper/runtime ownership even more explicit in desired state where some
+  artifacts are still inferred rather than directly declared
+
+## Phase 6: Hub-visible state and explicit reconcile action
+
+Status: done
+
+- add desired vs installed bundle versions to host status
+- add last reconcile result / timestamp
+- add explicit "reconcile bootstrap/software" action in host UI and CLI
+
+- host heartbeat reports desired-vs-installed lifecycle state
+- `/hosts` surfaces drift / reconcile status
+- `cocalc host bootstrap-status` exposes the same lifecycle block
+- `cocalc host reconcile <host>` is available
+- the host details UI exposes an explicit reconcile action
+- lifecycle reporting includes wrapper/service presence in addition to bundle
+  drift
+
+## Phase 7: Cleanup
+
+Status: partially done
 
 - remove obsolete assumptions that `.bootstrap_done` means "software layer is
   permanently current"
 - simplify ad hoc helper refresh paths that become redundant
+- eventually retire `bootstrap-config.json` once compatibility consumers are
+  migrated
+
+## Recommended Next Code Changes
+
+The next narrow slice should be:
+
+1. remove the remaining compatibility fallback to `bootstrap-config.json`
+   after older hosts no longer depend on it
+2. continue moving helper/runtime artifact ownership out of implicit inference
+   and into explicit desired state
+3. consider periodic background reconcile for long-lived hosts
+
+That keeps the next work focused on eliminating compatibility debt and making
+reconcile fully self-describing.
 
 ## Open Questions
 
 ### 1. State format: JSON or sqlite?
 
-My current recommendation:
+Recommendation:
 
-- JSON for bootstrap-local installed state
+- JSON for bootstrap-local state.
 
 Reason:
 
-- bootstrap runs before much of the rest of the stack is active
-- JSON is simple, inspectable, and sufficient for one-host local state
+- bootstrap runs before much of the rest of the stack is active,
+- JSON is simple, inspectable, and sufficient for one-host local state.
 
-If lifecycle complexity grows later, migrate to sqlite.
+Decision:
 
-USER: JSON
+- JSON.
 
 ### 2. How much reconcile should run on every boot?
 
-My recommendation:
+Recommendation:
 
-- always refresh desired state and run reconcile
-- reconcile should be cheap when nothing changed
+- always refresh desired state and run reconcile,
+- reconcile should be cheap when nothing changed.
 
-USER: agree
+Decision:
+
+- agree.
 
 ### 3. Should reconcile run periodically while the host stays up?
 
-Probably yes, later. But it is not required for the first implementation if we
+Probably yes later, but it is not required for the first implementation if we
 already have:
 
-- every-boot reconcile
-- explicit hub-triggered reconcile
+- every-boot reconcile,
+- explicit hub-triggered reconcile.
 
-USER: agree -- not needed yet
+Decision:
 
-### 4\. Should self-hosted hosts fetch desired state from the hub or from a local launchpad service?
+- agree, not needed first.
 
-Either is fine as long as the contract is the same. The important thing is that
-self-hosted hosts are not left with a separate ad hoc upgrade path.
+### 4. Should self-hosted hosts fetch desired state from the hub or from a local launchpad service?
 
-USER: hub so it's the same (less complexity)
+Recommendation:
+
+- fetch from the hub so the contract stays the same.
+
+Decision:
+
+- hub.
 
 ## Acceptance Criteria
 
 This work is done when all of the following are true:
 
 - a host provisioned weeks ago can receive helper/bootstrap fixes without
-  manual patching
+  manual patching,
 - startup no longer assumes `.bootstrap_done` means "skip all software
-  reconciliation"
-- desired vs installed bundle versions are visible
-- helper scripts and runtime wrappers are versioned and reconcile-owned
-- both cloud and self-hosted hosts use the same recurring reconcile model
-- the system can upgrade tools/project/project-host bundles and helper logic
-  without requiring host reprovisioning
+  reconciliation",
+- desired vs installed versions are visible,
+- helper scripts and runtime wrappers are versioned and reconcile-owned,
+- both cloud and self-hosted hosts use the same recurring reconcile model,
+- the system can upgrade bundles and helper logic without requiring host
+  reprovisioning,
+- `cocalc host upgrade` performs a real general reconcile, not just a
+  cloudflared refresh.
 
 ## Relationship To Current Work
 
-This should not be done before the current RootFS track is wrapped up.
-
-But once RootFS is in a good place, this is a strong next host-lifecycle task,
-because it directly reduces the need for:
-
-- manual host patching
-- reprovisioning just to pick up small bootstrap fixes
-- ambiguous drift between hub intent and host reality
+This is now a reasonable follow-on host lifecycle project. RootFS and host
+metrics work exposed the need, and recent work such as `cocalc-grow-btrfs`,
+background auto-grow, and project-host upgrade flow makes it more important
+that long-lived bootstrap-owned host artifacts have a proper reconcile story.

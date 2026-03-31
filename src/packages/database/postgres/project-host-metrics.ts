@@ -26,6 +26,8 @@ const METADATA_WARNING_UNALLOCATED_BYTES = 20 * GIB;
 const METADATA_CRITICAL_UNALLOCATED_BYTES = 8 * GIB;
 const WARNING_HOURS_TO_EXHAUSTION = 24;
 const CRITICAL_HOURS_TO_EXHAUSTION = 6;
+const GROWTH_RECENT_INTERVALS = 15;
+const GROWTH_MIN_POSITIVE_INTERVALS = 3;
 let schemaReady: Promise<void> | undefined;
 
 type ProjectHostMetricsSampleRow = {
@@ -190,23 +192,55 @@ function computeGrowthRate(
   field: keyof HostMetricsHistoryPoint,
 ): number | undefined {
   if (points.length < 2) return undefined;
-  const first = points[0];
-  const last = points[points.length - 1];
-  const firstAt = Date.parse(first.collected_at ?? "");
-  const lastAt = Date.parse(last.collected_at ?? "");
+  const intervalRates: number[] = [];
+  for (let i = 1; i < points.length; i += 1) {
+    const prev = points[i - 1];
+    const next = points[i];
+    if (
+      (prev.reservation_bytes ?? 0) > 0 ||
+      (next.reservation_bytes ?? 0) > 0
+    ) {
+      continue;
+    }
+    const prevAt = Date.parse(prev.collected_at ?? "");
+    const nextAt = Date.parse(next.collected_at ?? "");
+    if (
+      !Number.isFinite(prevAt) ||
+      !Number.isFinite(nextAt) ||
+      nextAt <= prevAt
+    ) {
+      continue;
+    }
+    const prevValue = toFloat(prev[field]);
+    const nextValue = toFloat(next[field]);
+    if (prevValue == null || nextValue == null) continue;
+    const hours = (nextAt - prevAt) / (60 * 60 * 1000);
+    if (!(hours > 0)) continue;
+    intervalRates.push((nextValue - prevValue) / hours);
+  }
+  if (intervalRates.length === 0) return undefined;
+  if (intervalRates.length <= 2) {
+    const positive = intervalRates.filter((rate) => rate > 0);
+    return positive.length > 0 ? positive[positive.length - 1] : undefined;
+  }
+  const recent = intervalRates.slice(-GROWTH_RECENT_INTERVALS);
+  const recentTail = recent.slice(-3);
+  if (recentTail.length > 0 && recentTail.every((rate) => rate <= 0)) {
+    return undefined;
+  }
+  const positive = recent.filter((rate) => rate > 0);
   if (
-    !Number.isFinite(firstAt) ||
-    !Number.isFinite(lastAt) ||
-    lastAt <= firstAt
+    positive.length < Math.min(GROWTH_MIN_POSITIVE_INTERVALS, recent.length) ||
+    positive.length < Math.ceil(recent.length / 3)
   ) {
     return undefined;
   }
-  const firstValue = toFloat(first[field]);
-  const lastValue = toFloat(last[field]);
-  if (firstValue == null || lastValue == null) return undefined;
-  const hours = (lastAt - firstAt) / (60 * 60 * 1000);
-  if (!(hours > 0)) return undefined;
-  return (lastValue - firstValue) / hours;
+  const sorted = [...positive].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  if (sorted.length % 2 === 1) {
+    return sorted[mid];
+  }
+  return (sorted[mid - 1] + sorted[mid]) / 2;
 }
 
 function computeGrowth(

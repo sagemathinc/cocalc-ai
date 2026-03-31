@@ -14,7 +14,6 @@ in other code directly, e.g, in supporting use of the slate editor.
 export * from "./types";
 export * from "./table-of-contents";
 
-import * as cheerio from "cheerio";
 import MarkdownIt from "markdown-it";
 import emojiPlugin from "markdown-it-emoji";
 import { checkboxPlugin } from "./checkbox-plugin";
@@ -205,8 +204,4 @@ export function markdown_to_html_frontmatter(s: string): MD2html {
 
 export function markdown_to_html(s: string, options?: Options): string {
   return process(s, "default", options).html;
-}
-
-export function markdown_to_cheerio(s: string, options?: Options) {
-  return cheerio.load(`<div>${markdown_to_html(s, options)}</div>`);
 }

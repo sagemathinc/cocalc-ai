@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 
+import json
+import os
 import tempfile
 import unittest
+from collections import namedtuple
+from dataclasses import replace
 from pathlib import Path
 
 import bootstrap
@@ -19,6 +23,7 @@ def make_cfg(tmpdir: str) -> bootstrap.BootstrapConfig:
         expected_os="linux",
         expected_arch="amd64",
         image_size_gb_raw="10",
+        root_reserve_gb_raw="15",
         data_disk_devices="",
         data_disk_candidates="",
         apt_packages=[],
@@ -27,6 +32,8 @@ def make_cfg(tmpdir: str) -> bootstrap.BootstrapConfig:
         env_file=str(base / "project-host.env"),
         env_lines=[],
         node_version="20",
+        bootstrap_selector="latest",
+        bootstrap_py_url="https://example.invalid/software/bootstrap/latest/bootstrap.py",
         project_host_bundle=bootstrap.BundleSpec("", None, "", "", "", ""),
         project_bundle=bootstrap.BundleSpec("", None, "", "", "", ""),
         tools_bundle=bootstrap.BundleSpec("", None, "", "", "", ""),
@@ -112,6 +119,511 @@ class BootstrapBundleManifestResolutionTest(unittest.TestCase):
                 resolved.manifest_url,
                 "https://example.invalid/software/tools/latest-linux-amd64.json",
             )
+
+
+class BootstrapSizingTest(unittest.TestCase):
+    def test_compute_image_size_respects_configured_root_reserve(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            cfg = replace(cfg, image_size_gb_raw="auto", root_reserve_gb_raw="24")
+
+            original_disk_usage = bootstrap.shutil.disk_usage
+            DiskUsage = namedtuple("usage", ["total", "used", "free"])
+            bootstrap.shutil.disk_usage = lambda _path: DiskUsage(
+                100 * (1024**3), 0, 100 * (1024**3)
+            )
+            try:
+                self.assertEqual(bootstrap.compute_image_size(cfg), 76)
+            finally:
+                bootstrap.shutil.disk_usage = original_disk_usage
+
+
+class BootstrapStateFilesTest(unittest.TestCase):
+    def test_writes_split_state_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            cfg = replace(
+                cfg,
+                conat_url="https://hub.example.invalid/conat/master-token",
+                status_url="https://hub.example.invalid/bootstrap/status",
+                bootstrap_token="bootstrap-secret",
+                ca_cert_path="/etc/ssl/cocalc-ca.pem",
+                project_host_bundle=replace(
+                    cfg.project_host_bundle,
+                    root="/opt/cocalc/project-host/bundles",
+                ),
+                project_bundle=replace(
+                    cfg.project_bundle,
+                    root="/opt/cocalc/project/bundles",
+                ),
+                tools_bundle=replace(
+                    cfg.tools_bundle,
+                    root="/opt/cocalc/tools",
+                ),
+            )
+            bootstrap.write_bootstrap_state_files(cfg)
+
+            facts = json.loads(
+                (Path(cfg.bootstrap_dir) / "bootstrap-host-facts.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            desired = json.loads(
+                (Path(cfg.bootstrap_dir) / "bootstrap-desired-state.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            state = json.loads(
+                (Path(cfg.bootstrap_dir) / "bootstrap-state.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+
+            self.assertEqual(facts["runtime_user"], "missing-runtime-user")
+            self.assertEqual(desired["bootstrap"]["selector"], "latest")
+            self.assertEqual(
+                desired["bootstrap_connection"]["conat_url"],
+                "https://hub.example.invalid/conat/master-token",
+            )
+            self.assertEqual(
+                desired["bootstrap_connection"]["bootstrap_token"],
+                "bootstrap-secret",
+            )
+            self.assertEqual(
+                desired["project_host_bundle"]["root"],
+                "/opt/cocalc/project-host/bundles",
+            )
+            self.assertIn("installed", state)
+
+
+class BootstrapLogRotationTest(unittest.TestCase):
+    def test_rotates_large_bootstrap_log(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            log_path = Path(cfg.log_file)
+            log_path.write_text("x" * (bootstrap.BOOTSTRAP_LOG_MAX_BYTES + 1), encoding="utf-8")
+
+            bootstrap.rotate_bootstrap_log(cfg)
+
+            self.assertFalse(log_path.exists())
+            self.assertTrue(log_path.with_name("bootstrap.log.1").exists())
+
+
+class BootstrapBundleRetentionTest(unittest.TestCase):
+    def test_prunes_old_bundle_versions_but_keeps_current_and_desired(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            root = Path(tmpdir) / "bundles"
+            root.mkdir(parents=True, exist_ok=True)
+            created: list[Path] = []
+            for index in range(1, 8):
+                version_dir = root / f"v{index}"
+                version_dir.mkdir()
+                (version_dir / "README.txt").write_text(f"v{index}\n", encoding="utf-8")
+                os.utime(version_dir, (index, index))
+                created.append(version_dir)
+            current = root / "current"
+            current.symlink_to(created[5], target_is_directory=True)
+            bundle = bootstrap.BundleSpec(
+                url="",
+                sha256=None,
+                remote="",
+                root=str(root),
+                dir=str(created[6]),
+                current=str(current),
+                version="v7",
+            )
+
+            bootstrap.prune_bundle_versions(cfg, bundle, keep=3)
+
+            remaining = sorted(
+                child.name
+                for child in root.iterdir()
+                if child.is_dir() and not child.is_symlink()
+            )
+            self.assertEqual(remaining, ["v5", "v6", "v7"])
+
+
+class BootstrapOwnershipScopeTest(unittest.TestCase):
+    def test_ensure_bootstrap_paths_does_not_recurse_over_bootstrap_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            recorded = []
+
+            original_run_best_effort = bootstrap.run_best_effort
+            original_geteuid = bootstrap.os.geteuid
+            try:
+                bootstrap.run_best_effort = (
+                    lambda _cfg, args, desc: recorded.append((args, desc))
+                )
+                bootstrap.os.geteuid = lambda: 0
+                bootstrap.ensure_bootstrap_paths(cfg)
+            finally:
+                bootstrap.run_best_effort = original_run_best_effort
+                bootstrap.os.geteuid = original_geteuid
+
+            self.assertTrue(recorded)
+            for args, _desc in recorded:
+                self.assertNotIn("-R", args)
+            self.assertIn(
+                (
+                    [
+                        "chown",
+                        "ubuntu:ubuntu",
+                        cfg.bootstrap_root,
+                        cfg.bootstrap_dir,
+                        cfg.bootstrap_tmp,
+                        str(Path(cfg.log_file).parent),
+                    ],
+                    "chown bootstrap-owner dirs",
+                ),
+                recorded,
+            )
+
+    def test_ensure_btrfs_data_does_not_recurse_over_entire_tree(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            recorded = []
+
+            original_run_best_effort = bootstrap.run_best_effort
+            original_run_cmd = bootstrap.run_cmd
+            try:
+                bootstrap.run_best_effort = (
+                    lambda _cfg, args, desc: recorded.append((args, desc))
+                )
+                bootstrap.run_cmd = lambda *args, **kwargs: None
+                # The function targets absolute paths, so just assert on the commands
+                # it would have run rather than trying to mount a fake tree.
+                original_exists = Path.exists
+                original_mkdir = Path.mkdir
+                original_chmod = bootstrap.os.chmod
+                Path.exists = lambda self: True  # type: ignore[method-assign]
+                Path.mkdir = lambda self, parents=False, exist_ok=False: None  # type: ignore[method-assign]
+                bootstrap.os.chmod = lambda *_args, **_kwargs: None
+                bootstrap.ensure_btrfs_data(cfg)
+            finally:
+                bootstrap.run_best_effort = original_run_best_effort
+                bootstrap.run_cmd = original_run_cmd
+                Path.exists = original_exists  # type: ignore[method-assign]
+                Path.mkdir = original_mkdir  # type: ignore[method-assign]
+                bootstrap.os.chmod = original_chmod
+
+            self.assertTrue(recorded)
+            for args, _desc in recorded:
+                self.assertNotIn("-R", args)
+            self.assertIn(
+                (["chown", "missing-runtime-user:missing-runtime-user", "/mnt/cocalc/data"], "chown /mnt/cocalc/data"),
+                recorded,
+            )
+
+    def test_configure_podman_chowns_rootless_storage_children(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            recorded = []
+
+            original_run_best_effort = bootstrap.run_best_effort
+            original_runtime_home = bootstrap.runtime_home
+            original_mkdir = Path.mkdir
+            original_write_text = Path.write_text
+            try:
+                bootstrap.run_best_effort = (
+                    lambda _cfg, args, desc: recorded.append((args, desc))
+                )
+                bootstrap.runtime_home = lambda _cfg: str(Path(tmpdir) / "home")
+                Path.mkdir = lambda self, parents=False, exist_ok=False: None  # type: ignore[method-assign]
+                Path.write_text = lambda self, _text, encoding="utf-8": 0  # type: ignore[method-assign]
+                bootstrap.configure_podman(cfg)
+            finally:
+                bootstrap.run_best_effort = original_run_best_effort
+                bootstrap.runtime_home = original_runtime_home
+                Path.mkdir = original_mkdir  # type: ignore[method-assign]
+                Path.write_text = original_write_text  # type: ignore[method-assign]
+
+            self.assertIn(
+                (
+                    [
+                        "chown",
+                        "missing-runtime-user:missing-runtime-user",
+                        str(Path(tmpdir) / "home" / ".config" / "containers"),
+                        "/mnt/cocalc/data/containers/rootless/missing-runtime-user",
+                        "/mnt/cocalc/data/containers/rootless/missing-runtime-user/storage",
+                        "/mnt/cocalc/data/containers/rootless/missing-runtime-user/run",
+                    ],
+                    "chown rootless podman paths",
+                ),
+                recorded,
+            )
+
+    def test_write_helpers_chowns_only_targeted_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            recorded = []
+
+            original_run_best_effort = bootstrap.run_best_effort
+            original_runtime_root = bootstrap.project_host_runtime_root
+            original_geteuid = bootstrap.os.geteuid
+            try:
+                bootstrap.run_best_effort = (
+                    lambda _cfg, args, desc: recorded.append((args, desc))
+                )
+                bootstrap.project_host_runtime_root = lambda _cfg: Path(tmpdir) / "runtime-root"
+                bootstrap.os.geteuid = lambda: 0
+                bootstrap.write_helpers(cfg)
+            finally:
+                bootstrap.run_best_effort = original_run_best_effort
+                bootstrap.project_host_runtime_root = original_runtime_root
+                bootstrap.os.geteuid = original_geteuid
+
+            self.assertTrue(recorded)
+            for args, _desc in recorded:
+                self.assertNotIn("-R", args)
+            runtime_bin = Path(tmpdir) / "runtime-root" / "bin"
+            self.assertIn(
+                (
+                    [
+                        "chown",
+                        "missing-runtime-user:missing-runtime-user",
+                        str(runtime_bin),
+                        str(runtime_bin / "ctl"),
+                        str(runtime_bin / "start-project-host"),
+                        str(runtime_bin / "logs"),
+                        str(runtime_bin / "acp-status"),
+                        str(runtime_bin / "acp-logs"),
+                        str(runtime_bin / "logs-cf"),
+                        str(runtime_bin / "ctl-cf"),
+                    ],
+                    "chown runtime helper scripts",
+                ),
+                recorded,
+            )
+            self.assertIn(
+                (
+                    [
+                        "chown",
+                        "missing-runtime-user:missing-runtime-user",
+                        str(runtime_bin / "fetch-project-bundle.sh"),
+                        str(runtime_bin / "fetch-project-host.sh"),
+                        str(runtime_bin / "fetch-tools.sh"),
+                    ],
+                    "chown runtime fetch helpers",
+                ),
+                recorded,
+            )
+
+    def test_configure_autostart_starts_project_host_immediately(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            runtime_root = Path(tmpdir) / "runtime-root"
+            recorded = []
+            writes = []
+
+            original_run_best_effort = bootstrap.run_best_effort
+            original_runtime_root = bootstrap.project_host_runtime_root
+            original_write_text = bootstrap.Path.write_text
+            original_chmod = bootstrap.os.chmod
+            try:
+                bootstrap.run_best_effort = (
+                    lambda _cfg, args, desc: recorded.append((args, desc))
+                )
+                bootstrap.project_host_runtime_root = lambda _cfg: runtime_root
+                bootstrap.Path.write_text = (
+                    lambda self, data, encoding="utf-8": writes.append(
+                        (str(self), data, encoding)
+                    )
+                    or len(data)
+                )
+                bootstrap.os.chmod = lambda *_args, **_kwargs: None
+                bootstrap.configure_autostart(cfg)
+            finally:
+                bootstrap.run_best_effort = original_run_best_effort
+                bootstrap.project_host_runtime_root = original_runtime_root
+                bootstrap.Path.write_text = original_write_text
+                bootstrap.os.chmod = original_chmod
+
+            self.assertIn(
+                (
+                    "/etc/cron.d/cocalc-project-host",
+                    f"@reboot {cfg.ssh_user} /bin/bash -lc '{runtime_root}/bin/start-project-host'\n",
+                    "utf-8",
+                ),
+                writes,
+            )
+            self.assertIn(
+                (
+                    ["systemctl", "enable", "--now", "cron"],
+                    "enable cron",
+                ),
+                recorded,
+            )
+            self.assertIn(
+                (
+                    [
+                        "sudo",
+                        "-u",
+                        cfg.ssh_user,
+                        "-H",
+                        "/bin/bash",
+                        "-lc",
+                        f"{runtime_root}/bin/start-project-host",
+                    ],
+                    "start project-host now",
+                ),
+                recorded,
+            )
+
+    def test_reconcile_cloudflared_installs_binary_when_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = replace(
+                make_cfg(tmpdir),
+                cloudflared=bootstrap.CloudflaredSpec(
+                    True,
+                    hostname="host.example.test",
+                    port=9002,
+                    ssh_hostname="ssh.example.test",
+                    ssh_port=2222,
+                    token="token",
+                ),
+            )
+            recorded = []
+
+            original_run_cmd = bootstrap.run_cmd
+            original_which = bootstrap.shutil.which
+            original_mkdir = Path.mkdir
+            original_write_text = Path.write_text
+            original_chmod = bootstrap.os.chmod
+            try:
+                bootstrap.run_cmd = (
+                    lambda _cfg, args, desc, **kwargs: recorded.append((args, desc))
+                )
+                bootstrap.shutil.which = lambda name: None if name == "cloudflared" else original_which(name)
+                Path.mkdir = lambda self, parents=False, exist_ok=False: None  # type: ignore[method-assign]
+                Path.write_text = lambda self, _text, encoding="utf-8": 0  # type: ignore[method-assign]
+                bootstrap.os.chmod = lambda *_args, **_kwargs: None
+                bootstrap.configure_cloudflared_with_options(
+                    cfg, install_package=False
+                )
+            finally:
+                bootstrap.run_cmd = original_run_cmd
+                bootstrap.shutil.which = original_which
+                Path.mkdir = original_mkdir  # type: ignore[method-assign]
+                Path.write_text = original_write_text  # type: ignore[method-assign]
+                bootstrap.os.chmod = original_chmod
+
+            self.assertIn(
+                (
+                    [
+                        "curl",
+                        "-fsSL",
+                        "-o",
+                        "/tmp/cloudflared.deb",
+                        "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb",
+                    ],
+                    "download cloudflared",
+                ),
+                recorded,
+            )
+            self.assertIn((["dpkg", "-i", "/tmp/cloudflared.deb"], "install cloudflared"), recorded)
+
+
+class BootstrapModesTest(unittest.TestCase):
+    def test_reconcile_mode_records_success(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            config_path = Path(tmpdir) / "bootstrap-config.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "bootstrap_user": cfg.bootstrap_user,
+                        "bootstrap_home": cfg.bootstrap_home,
+                        "bootstrap_root": cfg.bootstrap_root,
+                        "bootstrap_dir": cfg.bootstrap_dir,
+                        "bootstrap_tmp": cfg.bootstrap_tmp,
+                        "log_file": cfg.log_file,
+                        "expected_os": cfg.expected_os,
+                        "expected_arch": cfg.expected_arch,
+                        "image_size_gb_raw": cfg.image_size_gb_raw,
+                        "data_disk_devices": cfg.data_disk_devices,
+                        "data_disk_candidates": cfg.data_disk_candidates,
+                        "apt_packages": cfg.apt_packages,
+                        "has_gpu": cfg.has_gpu,
+                        "ssh_user": cfg.ssh_user,
+                        "env_file": cfg.env_file,
+                        "env_lines": cfg.env_lines,
+                        "node_version": cfg.node_version,
+                        "bootstrap_selector": cfg.bootstrap_selector,
+                        "bootstrap_py_url": cfg.bootstrap_py_url,
+                        "project_host_bundle": {
+                            "url": "",
+                            "remote": "",
+                            "root": str(Path(tmpdir) / "project-host"),
+                            "dir": str(Path(tmpdir) / "project-host" / "v1"),
+                            "current": str(Path(tmpdir) / "project-host" / "current"),
+                        },
+                        "project_bundle": {
+                            "url": "",
+                            "remote": "",
+                            "root": str(Path(tmpdir) / "project"),
+                            "dir": str(Path(tmpdir) / "project" / "v1"),
+                            "current": str(Path(tmpdir) / "project" / "current"),
+                        },
+                        "tools_bundle": {
+                            "url": "",
+                            "remote": "",
+                            "root": str(Path(tmpdir) / "tools"),
+                            "dir": str(Path(tmpdir) / "tools" / "v1"),
+                            "current": str(Path(tmpdir) / "tools" / "current"),
+                        },
+                        "cloudflared": {"enabled": False},
+                        "conat_url": None,
+                        "status_url": None,
+                        "bootstrap_token": None,
+                        "ca_cert_path": None,
+                        "bootstrap_done_paths": [],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            originals = {}
+
+            def patch(name: str, replacement) -> None:
+                originals[name] = getattr(bootstrap, name)
+                setattr(bootstrap, name, replacement)
+
+            patch("ensure_runtime_user", lambda _cfg: None)
+            patch("ensure_bootstrap_paths", lambda _cfg: None)
+            patch("compute_image_size", lambda _cfg: 10)
+            patch("install_btrfs_helper", lambda _cfg: None)
+            patch("install_privileged_wrappers", lambda _cfg: None)
+            patch("ensure_cocalc_mount", lambda _cfg: None)
+            patch("ensure_btrfs_data", lambda _cfg: None)
+            patch("configure_podman", lambda _cfg: None)
+            patch("write_env", lambda _cfg, _size: None)
+            patch("configure_runtime_shell_env", lambda _cfg: None)
+            patch("setup_master_conat_token", lambda _cfg: None)
+            patch("extract_bundle", lambda _cfg, bundle: bundle)
+            patch("install_node", lambda _cfg: None)
+            patch("write_wrapper", lambda _cfg: None)
+            patch("write_helpers", lambda _cfg: None)
+            patch("configure_runtime_sudoers", lambda _cfg: None)
+            patch("verify_runtime_sudoers", lambda _cfg: None)
+            patch("configure_cloudflared_with_options", lambda _cfg, install_package=False: None)
+            patch("configure_autostart", lambda _cfg: None)
+            patch("report_bootstrap_status", lambda _cfg, _status, _message=None: None)
+
+            try:
+                result = bootstrap.main(["reconcile", "--config", str(config_path)])
+            finally:
+                for name, original in originals.items():
+                    setattr(bootstrap, name, original)
+
+            self.assertEqual(result, 0)
+            state = json.loads(
+                (Path(cfg.bootstrap_dir) / "bootstrap-state.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual(state["last_reconcile_result"], "success")
 
 
 if __name__ == "__main__":

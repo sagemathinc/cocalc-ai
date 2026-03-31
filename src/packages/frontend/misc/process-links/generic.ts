@@ -30,7 +30,7 @@ type LoadTargetFunction = (
 ) => void;
 
 interface Options {
-  $: jQueryAPI; // something with jquery api -- might be cheerio or jQuery itself.
+  $: jQueryAPI; // something with a jQuery-like API.
   urlTransform?: (url: string, tag?: string) => string | undefined;
   projectId?: string;
   filePath?: string;

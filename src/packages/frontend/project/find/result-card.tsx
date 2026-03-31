@@ -3,9 +3,9 @@ import type { ReactNode } from "react";
 import { Icon } from "@cocalc/frontend/components";
 import { IconName, isIconName } from "@cocalc/frontend/components/icon";
 import CopyButton from "@cocalc/frontend/components/copy-button";
+import StaticCodeBlock from "@cocalc/frontend/components/static-code-block";
 import infoToMode from "@cocalc/frontend/editors/slate/elements/code-block/info-to-mode";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
-import { CodeMirrorStatic } from "@cocalc/frontend/jupyter/codemirror-static";
 import { file_associations } from "@cocalc/frontend/file-associations";
 import { filename_extension, trunc_middle } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
@@ -34,10 +34,12 @@ function FindSnippet({
   }
   const mode = infoToMode(ext, { value });
   return (
-    <CodeMirrorStatic
-      no_border
-      options={{ mode, lineWrapping: !noWrap }}
+    <StaticCodeBlock
       value={value}
+      info={mode}
+      compact
+      borderless
+      noWrap={noWrap}
       style={style}
     />
   );

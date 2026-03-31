@@ -47,6 +47,7 @@ import { SITE_NAME as TITLE } from "@cocalc/util/theme";
 import moduleRules from "./module-rules";
 import appLoaderPlugin from "./plugins/app-loader";
 import bannerPlugin from "./plugins/banner";
+import chunkStatsPlugin from "./plugins/chunk-stats";
 import cleanPlugin from "./plugins/clean";
 import defineConstantsPlugin from "./plugins/define-constants";
 import hotModuleReplacementPlugin, { getHotMiddlewareUrl } from "./plugins/hot";
@@ -187,6 +188,7 @@ export default function getConfig({ middleware }: Options = {}): Configuration {
         statsOptions: { source: false },
       }),
     );
+    chunkStatsPlugin(registerPlugin);
   }
 
   if (RSPACK_DEV_SERVER) {

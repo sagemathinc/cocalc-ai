@@ -10,7 +10,6 @@ import { Available } from "@cocalc/comm/project-configuration";
 import { default_filename } from "@cocalc/frontend/account";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Tip } from "@cocalc/frontend/components/tip";
-import { createInitialIpynbContent } from "@cocalc/frontend/jupyter/new-notebook";
 import { useJupyterKernelsInfo } from "@cocalc/frontend/jupyter/use-kernels-info";
 import { useProjectContext } from "@cocalc/frontend/project//context";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
@@ -121,6 +120,8 @@ export function JupyterNotebookButtons({
       | { name: string; display_name: string; language: string }
       | undefined;
     if (kernelspec == null) return;
+    const { createInitialIpynbContent } =
+      await import("@cocalc/frontend/jupyter/new-notebook");
     const nb = await createInitialIpynbContent(
       project_id,
       kernelspec.name,

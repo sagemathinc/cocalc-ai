@@ -134,7 +134,6 @@ import { List, Map, fromJS, Set as iSet } from "immutable";
 import { debounce } from "lodash";
 import { set_account_table } from "../../account/util";
 import { default_opts } from "../codemirror/cm-options";
-import { print_code } from "../frame-tree/print-code";
 import * as tree_ops from "../frame-tree/tree-ops";
 import {
   ConnectionStatus,
@@ -158,7 +157,7 @@ import "../generic/codemirror-plugins";
 import languageModelCreateChat, { Options } from "../llm/create-chat";
 import type { Scope as LanguageModelScope } from "../llm/types";
 import { SettingsObject } from "../settings/types";
-import { Terminal } from "../terminal-editor/connected-terminal";
+import type { Terminal } from "../terminal-editor/connected-terminal";
 import { TerminalManager } from "../terminal-editor/terminal-manager";
 import type { TimeTravelActions } from "../time-travel-editor/actions";
 import {
@@ -1934,7 +1933,7 @@ export class BaseEditorActions<
     id: string,
     parent: HTMLElement,
     terminalThemeOverride?: string | null,
-  ): undefined | Terminal<CodeEditorState> {
+  ): Promise<undefined | Terminal<CodeEditorState>> {
     return this.terminals.get_terminal(id, parent, terminalThemeOverride);
   }
 
@@ -2470,17 +2469,23 @@ export class BaseEditorActions<
     // for the tab) than where the codemirror editor is.
     // Thus in case of a subframe code editor, the font size
     // is always the default when printing.
-    try {
-      print_code({
-        value: cm.getValue(),
-        options: cm.options,
-        path: this.path,
-        font_size: node != null ? node.get("font_size") : undefined,
-      });
-    } catch (err) {
-      this.set_error(err);
-    }
-    return cm.focus();
+    const value = cm.getValue();
+    const options = cm.options;
+    const font_size = node != null ? node.get("font_size") : undefined;
+    void (async () => {
+      try {
+        const { print_code } = await import("../frame-tree/print-code");
+        print_code({
+          value,
+          options,
+          path: this.path,
+          font_size,
+        });
+      } catch (err) {
+        this.set_error(err);
+      }
+    })();
+    cm.focus();
   }
 
   // returns the path, unless we aim to spellcheck for a related file (e.g. rnw, rtex)

@@ -7,8 +7,13 @@ import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import { createHostControlClient } from "@cocalc/conat/project-host/api";
-import type { HostMachine } from "@cocalc/conat/hub/api/hosts";
+import type {
+  HostMachine,
+  HostMetricsHistory,
+  HostMetricsHistoryPoint,
+} from "@cocalc/conat/hub/api/hosts";
 import { normalizeProviderId } from "@cocalc/cloud";
+import { loadProjectHostMetricsHistory } from "@cocalc/database/postgres/project-host-metrics";
 import { logCloudVmEvent } from "@cocalc/server/cloud";
 import {
   getProviderContext,
@@ -31,6 +36,18 @@ const DEFAULT_MIN_GROW_INTERVAL_MINUTES = Math.max(
   1,
   Math.floor(
     Number(process.env.COCALC_HOST_AUTO_GROW_MIN_INTERVAL_MINUTES ?? 60),
+  ),
+);
+const BACKGROUND_WARNING_AVAILABLE_BYTES = 25 * GIB;
+const BACKGROUND_CRITICAL_AVAILABLE_BYTES = 10 * GIB;
+const BACKGROUND_WARNING_USED_PERCENT = 85;
+const BACKGROUND_CRITICAL_USED_PERCENT = 93;
+const BACKGROUND_WARNING_HOURS_TO_EXHAUSTION = 24;
+const BACKGROUND_CRITICAL_HOURS_TO_EXHAUSTION = 6;
+const BACKGROUND_MIN_RECENT_SAMPLES = Math.max(
+  2,
+  Math.floor(
+    Number(process.env.COCALC_HOST_AUTO_GROW_BACKGROUND_MIN_SAMPLES ?? 3),
   ),
 );
 const ENABLED_PROVIDERS = new Set(
@@ -62,6 +79,11 @@ export type AutoGrowResult = {
   reason?: string;
 };
 
+type BackgroundAutoGrowDecision = {
+  recommended: boolean;
+  reason?: string;
+};
+
 const pool = () => getPool();
 
 function parseBooleanLike(value: unknown): boolean | undefined {
@@ -83,6 +105,84 @@ function reservationErrorText(err: unknown): string {
   if (typeof err === "string") return err;
   if (err instanceof Error) return err.message;
   return `${err ?? ""}`;
+}
+
+function pointAtOrAboveWarningPressure(
+  point: HostMetricsHistoryPoint,
+): boolean {
+  return (
+    (point.disk_available_conservative_bytes != null &&
+      point.disk_available_conservative_bytes <=
+        BACKGROUND_WARNING_AVAILABLE_BYTES) ||
+    (point.disk_used_percent != null &&
+      point.disk_used_percent >= BACKGROUND_WARNING_USED_PERCENT)
+  );
+}
+
+function pointAtOrAboveCriticalPressure(
+  point: HostMetricsHistoryPoint,
+): boolean {
+  return (
+    (point.disk_available_conservative_bytes != null &&
+      point.disk_available_conservative_bytes <=
+        BACKGROUND_CRITICAL_AVAILABLE_BYTES) ||
+    (point.disk_used_percent != null &&
+      point.disk_used_percent >= BACKGROUND_CRITICAL_USED_PERCENT)
+  );
+}
+
+function shouldAutoGrowForBackgroundPressure(
+  history?: HostMetricsHistory,
+): BackgroundAutoGrowDecision {
+  const derived = history?.derived;
+  const points = history?.points ?? [];
+  const current = points[points.length - 1];
+  if (!derived || !current) {
+    return {
+      recommended: false,
+      reason: "host metrics history is unavailable",
+    };
+  }
+  const disk = derived.disk;
+  const criticalHours =
+    disk.hours_to_exhaustion != null &&
+    disk.hours_to_exhaustion <= BACKGROUND_CRITICAL_HOURS_TO_EXHAUSTION;
+  if (
+    pointAtOrAboveCriticalPressure(current) ||
+    disk.level === "critical" ||
+    criticalHours
+  ) {
+    return {
+      recommended: true,
+      reason:
+        disk.reason ??
+        "disk pressure is already at a critical level for this host",
+    };
+  }
+  const recent = points.slice(-BACKGROUND_MIN_RECENT_SAMPLES);
+  const warningHours =
+    disk.hours_to_exhaustion != null &&
+    disk.hours_to_exhaustion <= BACKGROUND_WARNING_HOURS_TO_EXHAUSTION;
+  if (
+    recent.length < BACKGROUND_MIN_RECENT_SAMPLES ||
+    !recent.every(pointAtOrAboveWarningPressure)
+  ) {
+    return {
+      recommended: false,
+      reason: "recent metrics do not show sustained low disk headroom",
+    };
+  }
+  if (disk.level === "warning" || warningHours) {
+    return {
+      recommended: true,
+      reason:
+        disk.reason ?? "recent host metrics show sustained low disk headroom",
+    };
+  }
+  return {
+    recommended: false,
+    reason: "disk pressure is not high enough to justify background auto-grow",
+  };
 }
 
 export function isStorageReservationDeniedError(err: unknown): boolean {
@@ -221,6 +321,10 @@ async function ensureRuntimeForResize(
 async function performAutoGrow(
   row: HostRow,
   config: AutoGrowConfig,
+  opts?: {
+    trigger?: "reservation_failure" | "background_low_headroom";
+    reason?: string;
+  },
 ): Promise<AutoGrowResult> {
   const machine: HostMachine = row.metadata?.machine ?? {};
   const currentDisk = currentDiskGb(row);
@@ -302,6 +406,8 @@ async function performAutoGrow(
     provider: providerId,
     spec: {
       auto_grow: true,
+      trigger: opts?.trigger ?? "reservation_failure",
+      reason: opts?.reason,
       from_disk_gb: currentDisk,
       to_disk_gb: nextDisk,
     },
@@ -343,7 +449,10 @@ export async function maybeAutoGrowHostDiskForReservationFailure({
       config,
     });
     try {
-      return await performAutoGrow(row, config);
+      return await performAutoGrow(row, config, {
+        trigger: "reservation_failure",
+        reason: reservationErrorText(err),
+      });
     } catch (growErr) {
       log.warn("guarded host auto-grow failed", {
         host_id,
@@ -362,9 +471,71 @@ export async function maybeAutoGrowHostDiskForReservationFailure({
   }
 }
 
+export async function maybeAutoGrowHostDiskForBackgroundPressure({
+  host_id,
+  history,
+}: {
+  host_id: string;
+  history?: HostMetricsHistory;
+}): Promise<AutoGrowResult> {
+  const decision = shouldAutoGrowForBackgroundPressure(history);
+  if (!decision.recommended) {
+    return { grown: false, reason: decision.reason };
+  }
+  const existing = autoGrowInFlight.get(host_id);
+  if (existing) return await existing;
+  const task = (async (): Promise<AutoGrowResult> => {
+    const row = await loadHostRow(host_id);
+    if (!row) return { grown: false, reason: "host not found" };
+    const config = resolveAutoGrowConfig(row);
+    if (!config) {
+      return {
+        grown: false,
+        reason: "guarded auto-grow is not enabled for this host",
+      };
+    }
+    log.info("attempting background host auto-grow", {
+      host_id,
+      reason: decision.reason,
+      config,
+    });
+    try {
+      return await performAutoGrow(row, config, {
+        trigger: "background_low_headroom",
+        reason: decision.reason,
+      });
+    } catch (growErr) {
+      log.warn("background host auto-grow failed", {
+        host_id,
+        err: growErr,
+      });
+      return { grown: false, reason: reservationErrorText(growErr) };
+    }
+  })();
+  autoGrowInFlight.set(host_id, task);
+  try {
+    return await task;
+  } finally {
+    if (autoGrowInFlight.get(host_id) === task) {
+      autoGrowInFlight.delete(host_id);
+    }
+  }
+}
+
+export async function loadBackgroundAutoGrowHistory(
+  host_ids: string[],
+): Promise<Map<string, HostMetricsHistory>> {
+  return await loadProjectHostMetricsHistory({
+    host_ids,
+    window_minutes: Math.max(5, BACKGROUND_MIN_RECENT_SAMPLES * 2),
+    max_points: Math.max(10, BACKGROUND_MIN_RECENT_SAMPLES * 3),
+  });
+}
+
 export const _test = {
   resolveAutoGrowConfig,
   nextDiskSizeGb,
   canAutoGrowNow,
   currentDiskGb,
+  shouldAutoGrowForBackgroundPressure,
 };

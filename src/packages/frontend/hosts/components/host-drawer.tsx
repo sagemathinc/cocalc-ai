@@ -43,6 +43,7 @@ import { getProviderDescriptor, isKnownProvider } from "../providers/registry";
 import { getHostOpPhase, HostOpProgress } from "./host-op-progress";
 import { UpgradeConfirmContent } from "./upgrade-confirmation";
 import { HostBootstrapProgress } from "./host-bootstrap-progress";
+import { HostBootstrapLifecycle } from "./host-bootstrap-lifecycle";
 import { HostParallelOpsPanel } from "./host-parallel-ops-panel";
 import { HostProjectStatus } from "./host-project-status";
 import { HostProjectsBrowser } from "./host-projects-browser";
@@ -62,6 +63,7 @@ type HostDrawerViewModel = {
   onClose: () => void;
   onEdit: (host: Host) => void;
   onUpgrade?: (host: Host) => void;
+  onReconcile?: (host: Host) => void;
   onUpgradeFromHub?: (host: Host) => void;
   onUpgradeArtifact?: (opts: {
     host: Host;
@@ -343,6 +345,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
     onClose,
     onEdit,
     onUpgrade,
+    onReconcile,
     onUpgradeFromHub,
     onUpgradeArtifact,
     canUpgrade,
@@ -417,7 +420,9 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
     !!activeOp?.op_id && hostOpActive && opPhase === "backups" && !!onCancelOp;
   const showUpgradeProgress =
     activeOp?.summary?.kind === "host-upgrade-software" ||
-    activeOp?.kind === "host-upgrade-software";
+    activeOp?.kind === "host-upgrade-software" ||
+    activeOp?.summary?.kind === "host-reconcile-software" ||
+    activeOp?.kind === "host-reconcile-software";
   const upgradeConfirmContent = upgradeTitle({
     label: "all software",
     source: "the configured source",
@@ -450,6 +455,13 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
     ) : null;
   const canForceDeprovision =
     !!host && isSelfHost && !host.deleted && host.status !== "deprovisioned";
+  const canReconcile =
+    !!host &&
+    !host.deleted &&
+    host.status === "running" &&
+    !!onReconcile &&
+    !!host.machine?.cloud &&
+    host.machine.cloud !== "self-host";
   const softwareSummary = React.useMemo(() => {
     if (!host) {
       return { upToDate: 0, updatesAvailable: 0, unknown: 0 };
@@ -543,6 +555,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
             <Space orientation="vertical" size="small">
               <HostOpProgress op={activeOp} />
               <HostBootstrapProgress host={host} />
+              <HostBootstrapLifecycle host={host} detailed />
               {canCancelBackups && (
                 <Popconfirm
                   title="Cancel backups for this host?"
@@ -865,6 +878,19 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                 })}
               </Space>
               <Space wrap>
+                {canReconcile && host && onReconcile && (
+                  <Popconfirm
+                    title="Run bootstrap/software reconcile on this host?"
+                    okText="Reconcile"
+                    cancelText="Cancel"
+                    onConfirm={() => onReconcile(host)}
+                    disabled={hostOpActive}
+                  >
+                    <Button size="small" disabled={hostOpActive}>
+                      Reconcile
+                    </Button>
+                  </Popconfirm>
+                )}
                 {canUpgrade && host && !host.deleted && onUpgrade && (
                   <Popconfirm
                     title={upgradeConfirmContent}

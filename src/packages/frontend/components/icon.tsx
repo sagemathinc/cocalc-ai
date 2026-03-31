@@ -6,8 +6,7 @@
 declare var DEBUG: boolean; // comes from static webpack; not defined in other contexts.
 
 import React from "react";
-
-import { CSS } from "@cocalc/frontend/app-framework";
+import type { CSSProperties } from "react";
 import useOnFrontend from "./use-on-frontend";
 
 import {
@@ -723,7 +722,7 @@ interface Props {
   pulse?: boolean;
   stack?: "1x" | "2x";
   inverse?: boolean;
-  style?: CSS;
+  style?: CSSProperties;
   onClick?: (event?: React.MouseEvent) => void; // https://fettblog.eu/typescript-react/events/
   onMouseOver?: () => void;
   onMouseOut?: () => void;
