@@ -77,6 +77,7 @@ class BootstrapConfig:
     expected_os: str
     expected_arch: str
     image_size_gb_raw: str
+    root_reserve_gb_raw: str
     data_disk_devices: str
     data_disk_candidates: str
     apt_packages: list[str]
@@ -140,6 +141,9 @@ def load_config(path: str) -> BootstrapConfig:
         expected_os=_ensure_str(raw.get("expected_os"), "expected_os"),
         expected_arch=_ensure_str(raw.get("expected_arch"), "expected_arch"),
         image_size_gb_raw=_ensure_str(raw.get("image_size_gb_raw"), "image_size_gb_raw"),
+        root_reserve_gb_raw=_ensure_str(
+            raw.get("root_reserve_gb_raw") or "15", "root_reserve_gb_raw"
+        ),
         data_disk_devices=_ensure_str(
             raw.get("data_disk_devices") or "", "data_disk_devices"
         ),
@@ -502,6 +506,14 @@ def ensure_platform(cfg: BootstrapConfig) -> None:
         raise RuntimeError(f"unsupported architecture {arch} (expected {cfg.expected_arch})")
 
 
+def compute_root_reserve_gb(cfg: BootstrapConfig) -> int:
+    raw = cfg.root_reserve_gb_raw
+    try:
+        return max(1, int(raw))
+    except (TypeError, ValueError):
+        return 15
+
+
 def compute_image_size(cfg: BootstrapConfig) -> int:
     raw = cfg.image_size_gb_raw
     if raw and raw != "auto":
@@ -511,10 +523,14 @@ def compute_image_size(cfg: BootstrapConfig) -> int:
             pass
     usage = shutil.disk_usage("/")
     total_gb = int(usage.total / (1024**3))
-    target = total_gb - 15
+    reserve_gb = compute_root_reserve_gb(cfg)
+    target = total_gb - reserve_gb
     if target < 5:
         target = 5
-    log_line(cfg, f"bootstrap: computed btrfs image size {target}G (disk {total_gb}G)")
+    log_line(
+        cfg,
+        f"bootstrap: computed btrfs image size {target}G (disk {total_gb}G, reserve {reserve_gb}G)",
+    )
     return target
 
 
@@ -909,6 +925,22 @@ MOUNT_SOURCE="$(findmnt -n -o SOURCE "$MOUNTPOINT" 2>/dev/null || true)"
 if [ "$MOUNT_SOURCE" = "$IMAGE" ] || [ "${MOUNT_SOURCE#/dev/loop}" != "$MOUNT_SOURCE" ]; then
   if [ ! -f "$IMAGE" ]; then
     exit 0
+  fi
+  if [ -z "$TARGET_GB" ] && [ -f "$ENV_FILE" ]; then
+    AUTO_MODE="$(grep -E '^COCALC_BTRFS_IMAGE_AUTO=' "$ENV_FILE" | tail -n1 | cut -d= -f2 || true)"
+    if [ "$AUTO_MODE" = "1" ]; then
+      ROOT_TOTAL_GB="$(df -BG / | awk 'NR==2 {gsub(/G/, "", $2); print $2}' || true)"
+      RESERVE_GB="$(grep -E '^COCALC_BTRFS_ROOT_RESERVE_GB=' "$ENV_FILE" | tail -n1 | cut -d= -f2 || true)"
+      if ! echo "$RESERVE_GB" | grep -Eq '^[0-9]+$'; then
+        RESERVE_GB=15
+      fi
+      if echo "$ROOT_TOTAL_GB" | grep -Eq '^[0-9]+$'; then
+        TARGET_GB="$((ROOT_TOTAL_GB - RESERVE_GB))"
+        if [ "$TARGET_GB" -lt 5 ]; then
+          TARGET_GB=5
+        fi
+      fi
+    fi
   fi
   if [ -z "$TARGET_GB" ] && [ -f "$ENV_FILE" ]; then
     TARGET_GB="$(grep -E '^COCALC_BTRFS_IMAGE_GB=' "$ENV_FILE" | tail -n1 | cut -d= -f2 || true)"
@@ -1522,8 +1554,12 @@ def write_env(cfg: BootstrapConfig, image_size_gb: int) -> None:
         Path(runtime_dir).mkdir(parents=True, exist_ok=True)
         run_best_effort(cfg, ["chown", f"{cfg.ssh_user}:{cfg.ssh_user}", runtime_dir], "chown runtime dir")
         upsert_env(cfg.env_file, "COCALC_PODMAN_RUNTIME_DIR", runtime_dir)
+    upsert_env(cfg.env_file, "COCALC_BTRFS_ROOT_RESERVE_GB", str(compute_root_reserve_gb(cfg)))
     if cfg.image_size_gb_raw == "auto":
+        upsert_env(cfg.env_file, "COCALC_BTRFS_IMAGE_AUTO", "1")
         upsert_env(cfg.env_file, "COCALC_BTRFS_IMAGE_GB", str(image_size_gb))
+    else:
+        upsert_env(cfg.env_file, "COCALC_BTRFS_IMAGE_AUTO", "0")
 
 
 PODMAN_BASHRC_BLOCK_START = "# >>> CoCalc project-host podman env >>>"

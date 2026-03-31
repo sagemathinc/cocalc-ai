@@ -4,6 +4,7 @@ import json
 import os
 import tempfile
 import unittest
+from collections import namedtuple
 from dataclasses import replace
 from pathlib import Path
 
@@ -22,6 +23,7 @@ def make_cfg(tmpdir: str) -> bootstrap.BootstrapConfig:
         expected_os="linux",
         expected_arch="amd64",
         image_size_gb_raw="10",
+        root_reserve_gb_raw="15",
         data_disk_devices="",
         data_disk_candidates="",
         apt_packages=[],
@@ -117,6 +119,23 @@ class BootstrapBundleManifestResolutionTest(unittest.TestCase):
                 resolved.manifest_url,
                 "https://example.invalid/software/tools/latest-linux-amd64.json",
             )
+
+
+class BootstrapSizingTest(unittest.TestCase):
+    def test_compute_image_size_respects_configured_root_reserve(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            cfg = replace(cfg, image_size_gb_raw="auto", root_reserve_gb_raw="24")
+
+            original_disk_usage = bootstrap.shutil.disk_usage
+            DiskUsage = namedtuple("usage", ["total", "used", "free"])
+            bootstrap.shutil.disk_usage = lambda _path: DiskUsage(
+                100 * (1024**3), 0, 100 * (1024**3)
+            )
+            try:
+                self.assertEqual(bootstrap.compute_image_size(cfg), 76)
+            finally:
+                bootstrap.shutil.disk_usage = original_disk_usage
 
 
 class BootstrapStateFilesTest(unittest.TestCase):

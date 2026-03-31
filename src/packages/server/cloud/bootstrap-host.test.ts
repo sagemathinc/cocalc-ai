@@ -3,7 +3,8 @@ import path from "node:path";
 
 import * as bootstrapHost from "./bootstrap-host";
 
-const { resolveBootstrapImageSizeGb } = bootstrapHost;
+const { resolveBootstrapImageSizeGb, resolveBootstrapRootReserveGb } =
+  bootstrapHost;
 
 describe("resolveBootstrapImageSizeGb", () => {
   it("uses auto sizing for Lambda hosts", () => {
@@ -44,6 +45,17 @@ describe("resolveBootstrapImageSizeGb", () => {
         diskGb: 10,
       }),
     ).toBe("20");
+  });
+});
+
+describe("resolveBootstrapRootReserveGb", () => {
+  it("defaults to a 15 GiB root reserve", () => {
+    expect(resolveBootstrapRootReserveGb()).toBe("15");
+  });
+
+  it("accepts explicit positive overrides", () => {
+    expect(resolveBootstrapRootReserveGb(24)).toBe("24");
+    expect(resolveBootstrapRootReserveGb("32")).toBe("32");
   });
 });
 

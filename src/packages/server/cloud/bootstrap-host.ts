@@ -289,6 +289,7 @@ export type BootstrapScripts = {
   runtimeUser: string;
   hasGpu: boolean;
   imageSizeGb: string;
+  rootReserveGb: string;
   dataDiskDevices: string;
   dataDiskCandidates: string;
   envFile: string;
@@ -343,6 +344,16 @@ export function resolveBootstrapImageSizeGb({
   }
   const parsed = Number(diskGb ?? 100);
   return String(Math.max(20, Number.isFinite(parsed) ? parsed : 100));
+}
+
+export function resolveBootstrapRootReserveGb(raw?: unknown): string {
+  const parsed = Number(
+    raw ?? process.env.COCALC_PROJECT_HOST_BOOTSTRAP_ROOT_RESERVE_GB ?? "",
+  );
+  if (Number.isFinite(parsed) && parsed > 0) {
+    return String(Math.max(1, Math.floor(parsed)));
+  }
+  return "15";
 }
 
 export async function buildBootstrapScripts(
@@ -506,6 +517,11 @@ export async function buildBootstrapScripts(
     isSelfHost,
     diskGb: spec.disk_gb,
   });
+  const rootReserveGb = resolveBootstrapRootReserveGb(
+    metadata.bootstrap_root_reserve_gb ??
+      machine.metadata?.bootstrap_root_reserve_gb ??
+      machine.metadata?.root_reserve_gb,
+  );
   const onPremPortRaw = process.env.COCALC_PROJECT_HOST_PORT ?? "";
   const onPremPort = Number.isFinite(Number.parseInt(onPremPortRaw, 10))
     ? Number.parseInt(onPremPortRaw, 10)
@@ -580,6 +596,7 @@ export async function buildBootstrapScripts(
     `COCALC_BIN_PATH=${toolsRoot}/current`,
     `COCALC_SYNC_PROJECTS=/mnt/cocalc/project-[project_id]/.local/share/cocalc/persist`,
     `COCALC_BTRFS_IMAGE_GB=${imageSizeGb}`,
+    `COCALC_BTRFS_ROOT_RESERVE_GB=${rootReserveGb}`,
     `COCALC_PROJECT_HOST_SOFTWARE_BASE_URL=${softwareBaseUrl}`,
     `COCALC_PROJECT_HOST_BUNDLE_ROOT=${projectHostBundlesRoot}`,
     `COCALC_PROJECT_HOST_CURRENT=${projectHostCurrent}`,
@@ -656,6 +673,7 @@ export async function buildBootstrapScripts(
     runtimeUser,
     hasGpu,
     imageSizeGb,
+    rootReserveGb,
     dataDiskDevices,
     dataDiskCandidates,
     envFile,
@@ -839,6 +857,7 @@ cat <<EOF_COCALC_BOOTSTRAP_CONFIG > "$BOOTSTRAP_DIR/bootstrap-config.json"
   "expected_os": "${scripts.expectedOs}",
   "expected_arch": "${scripts.expectedArch}",
   "image_size_gb_raw": "${scripts.imageSizeGb}",
+  "root_reserve_gb_raw": "${scripts.rootReserveGb}",
   "data_disk_devices": "${scripts.dataDiskDevices}",
   "data_disk_candidates": "${scripts.dataDiskCandidates}",
   "apt_packages": ${aptPackagesJson},
