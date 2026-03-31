@@ -150,6 +150,7 @@ async function reportCopyStatus(
       name: "hosts.updateCopyStatus",
       args: [
         {
+          copy_id: row.copy_id,
           src_project_id: row.src_project_id,
           src_path: row.src_path,
           dest_project_id: row.dest_project_id,

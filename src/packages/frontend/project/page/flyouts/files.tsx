@@ -14,6 +14,7 @@ import {
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { FormattedMessage } from "react-intl";
 import { Loading, TimeAgo } from "@cocalc/frontend/components";
 import StatefulVirtuoso from "@cocalc/frontend/components/stateful-virtuoso";
 import { useStudentProjectFunctionality } from "@cocalc/frontend/course";
@@ -89,6 +90,11 @@ type PartialClickEvent = Pick<
 >;
 
 const EMPTY_DIRECTORY_FILES: DirectoryListing = [];
+
+function isMissingProjectVolumeError(error: unknown): boolean {
+  const text = `${(error as any)?.message ?? error ?? ""}`.toLowerCase();
+  return text.includes("project volume does not exist");
+}
 
 export interface ActiveFileSort {
   column_name: string;
@@ -249,6 +255,8 @@ export function FilesFlyout({
   }, [backupOps, refreshBackups]);
   const effectiveListing = inBackupsPath ? backupsListing : directoryListing;
   const effectiveError = inBackupsPath ? backupsError : listingError;
+  const shouldShowStartProjectWarning =
+    !projectIsRunning && isMissingProjectVolumeError(effectiveError);
   const suppressRoutingError =
     (hostUnavailable && isHostRoutingUnavailableError(effectiveError)) ||
     shouldSuppressTransientRoutingError({ error: effectiveError, moveLro });
@@ -762,6 +770,35 @@ export function FilesFlyout({
   function renderLoadingOrStartProject(): React.JSX.Element {
     if (projectIsRunning) {
       return <Loading theme="medium" transparent />;
+    } else if (shouldShowStartProjectWarning) {
+      return (
+        <Alert
+          type="info"
+          banner
+          showIcon={false}
+          style={{ padding: FLYOUT_PADDING, margin: 0 }}
+          description={
+            <FormattedMessage
+              id="project.explorer.start_project.warning"
+              defaultMessage={
+                "To see the files in this directory, you must <a>start this project</a>."
+              }
+              values={{
+                a: (chunks) => (
+                  <a
+                    onClick={(e) => {
+                      e.preventDefault();
+                      redux.getActions("projects").start_project(project_id);
+                    }}
+                  >
+                    {chunks}
+                  </a>
+                ),
+              }}
+            />
+          }
+        />
+      );
     } else if (hostUnavailable) {
       return (
         <Alert
@@ -861,7 +898,7 @@ export function FilesFlyout({
       ref={rootRef}
       style={{ flex: "1 0 auto", flexDirection: "column", display: "flex" }}
     >
-      {!suppressRoutingError && (
+      {!suppressRoutingError && !shouldShowStartProjectWarning && (
         <ShowError error={effectiveError} setError={effectiveRefresh} />
       )}
       <FilesHeader

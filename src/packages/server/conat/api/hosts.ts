@@ -1397,6 +1397,7 @@ export async function claimPendingCopies({
 
 export async function updateCopyStatus({
   host_id,
+  copy_id,
   src_project_id,
   src_path,
   dest_project_id,
@@ -1405,18 +1406,31 @@ export async function updateCopyStatus({
   last_error,
 }: {
   host_id?: string;
-  src_project_id: string;
-  src_path: string;
-  dest_project_id: string;
-  dest_path: string;
+  copy_id?: string;
+  src_project_id?: string;
+  src_path?: string;
+  dest_project_id?: string;
+  dest_path?: string;
   status: ProjectCopyState;
   last_error?: string;
 }): Promise<void> {
   if (!host_id) {
     throw new Error("host_id must be specified");
   }
+  if (
+    !copy_id &&
+    (!src_project_id || !src_path || !dest_project_id || !dest_path)
+  ) {
+    throw new Error("copy_id or copy key must be specified");
+  }
   await updateCopyStatusDb({
-    key: { src_project_id, src_path, dest_project_id, dest_path },
+    copy_id,
+    key: {
+      src_project_id: src_project_id ?? "",
+      src_path: src_path ?? "",
+      dest_project_id: dest_project_id ?? "",
+      dest_path: dest_path ?? "",
+    },
     status,
     last_error,
   });
