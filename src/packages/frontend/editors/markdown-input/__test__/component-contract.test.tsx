@@ -366,6 +366,27 @@ describe("MarkdownInput CodeMirror wrapper contract", () => {
     ]);
   });
 
+  it("does not flush stale local text back upstream when props clear the editor", async () => {
+    const onChange = jest.fn();
+    const { rerender } = await renderMarkdownInput(
+      <MarkdownInput value="hello" onChange={onChange} saveDebounceMs={100} />,
+    );
+
+    act(() => {
+      latestEditor.__setValue("hello");
+      latestEditor.__trigger("change");
+    });
+    expect(onChange).not.toHaveBeenCalled();
+
+    rerender(
+      <MarkdownInput value="" onChange={onChange} saveDebounceMs={100} />,
+    );
+
+    expect(onChange).not.toHaveBeenCalledWith("hello");
+    expect(latestEditor.setValue).toHaveBeenCalledWith("");
+    expect(latestEditor.getValue()).toBe("");
+  });
+
   it("keeps undo and redo local when explicit local ownership is requested", async () => {
     await renderMarkdownInput(
       <MarkdownInput

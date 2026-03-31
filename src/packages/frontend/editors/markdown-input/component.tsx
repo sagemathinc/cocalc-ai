@@ -906,8 +906,11 @@ export function MarkdownInput(props: Props) {
       mergeHelperRef.current.reset(value ?? "");
     } else {
       const saver: any = saveValue;
-      if (typeof saver?.flush === "function") {
-        saver.flush();
+      if (typeof saver?.cancel === "function") {
+        // External value changes are authoritative. Flushing a pending debounced
+        // local save here can replay stale editor contents back into the parent
+        // right as the parent is clearing or replacing the value.
+        saver.cancel();
       }
       mergeHelperRef.current.handleRemote({
         remote: value ?? "",
