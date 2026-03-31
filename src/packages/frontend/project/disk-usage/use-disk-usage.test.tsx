@@ -1,4 +1,5 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
+import { redux } from "@cocalc/frontend/app-framework";
 import useDiskUsage from "./use-disk-usage";
 import dust from "./dust";
 import getQuota from "./quota";
@@ -36,9 +37,17 @@ function TestComponent({ project_id }: { project_id: string }) {
 describe("useDiskUsage", () => {
   const dustMock = dust as jest.Mock;
   const quotaMock = getQuota as jest.Mock;
+  let getStoreSpy: jest.SpyInstance;
 
   beforeEach(() => {
     jest.clearAllMocks();
+    getStoreSpy = jest
+      .spyOn(redux, "getStore")
+      .mockReturnValue(undefined as any);
+  });
+
+  afterEach(() => {
+    getStoreSpy.mockRestore();
   });
 
   it("ignores stale disk-usage responses after the target changes", async () => {
@@ -81,6 +90,40 @@ describe("useDiskUsage", () => {
     render(<TestComponent project_id="project-1" />);
 
     await waitFor(() => {
+      expect(screen.getByTestId("usage").textContent).toBe("111");
+      expect(screen.getByTestId("quota").textContent).toBe("17");
+    });
+  });
+
+  it("includes environment changes for rootfs-backed projects", async () => {
+    getStoreSpy.mockImplementation((name: string) => {
+      if (name !== "projects") return undefined as any;
+      return {
+        get: (key: string) => {
+          if (key !== "project_map") return undefined;
+          return {
+            getIn: (path: string[]) =>
+              path[0] === "project-1" && path[1] === "rootfs_image"
+                ? "sage"
+                : undefined,
+          };
+        },
+      } as any;
+    });
+    dustMock
+      .mockResolvedValueOnce({ bytes: 111, children: [] })
+      .mockResolvedValueOnce({ bytes: 22, children: [] })
+      .mockResolvedValueOnce({ bytes: 33, children: [] });
+    quotaMock.mockResolvedValue({ used: 17, size: 100 });
+
+    render(<TestComponent project_id="project-1" />);
+
+    await waitFor(() => {
+      expect(dustMock).toHaveBeenCalledTimes(3);
+      expect(dustMock.mock.calls[2][0]).toMatchObject({
+        path: "/root/.local/share/cocalc/rootfs",
+        project_id: "project-1",
+      });
       expect(screen.getByTestId("usage").textContent).toBe("111");
       expect(screen.getByTestId("quota").textContent).toBe("17");
     });

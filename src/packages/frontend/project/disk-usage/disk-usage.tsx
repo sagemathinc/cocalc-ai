@@ -26,7 +26,8 @@ function bucketPercent(bytes: number, total: number): number {
 }
 
 function relativeLabel(bucket: StorageVisibleSummary): string {
-  return bucket.key === "home" ? "/root" : bucket.label;
+  if (bucket.key === "home") return "/root";
+  return bucket.label;
 }
 
 export default function DiskUsage({
@@ -42,7 +43,7 @@ export default function DiskUsage({
   });
   const quota = quotas[0] ?? null;
   const [selectedBucketKey, setSelectedBucketKey] = useState<
-    "home" | "scratch"
+    "home" | "scratch" | "environment"
   >("home");
 
   const selectedBucket =
@@ -143,6 +144,14 @@ export default function DiskUsage({
                   do not have the same semantics as browsing `/root` or
                   `/scratch`.
                 </div>
+                {visible.some((bucket) => bucket.key === "environment") && (
+                  <div style={{ color: COLORS.GRAY_M, marginTop: "8px" }}>
+                    This project uses a root filesystem image. Environment
+                    changes measure writable overlay modifications stored under{" "}
+                    <code>{"/root/.local/share/cocalc/rootfs"}</code>, not the
+                    shared base image itself.
+                  </div>
+                )}
               </div>
             </>
           )}
@@ -198,7 +207,9 @@ export default function DiskUsage({
                       value: bucket.key,
                     }))}
                     onChange={(value) =>
-                      setSelectedBucketKey(value as "home" | "scratch")
+                      setSelectedBucketKey(
+                        value as "home" | "scratch" | "environment",
+                      )
                     }
                     value={selectedBucket.key}
                   />

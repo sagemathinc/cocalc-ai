@@ -1,8 +1,10 @@
 import dust, { key } from "./dust";
 import getQuota from "./quota";
-import { useAsyncEffect } from "@cocalc/frontend/app-framework";
+import { redux, useAsyncEffect } from "@cocalc/frontend/app-framework";
 import { useRef, useState } from "react";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
+import { PROJECT_IMAGE_PATH } from "@cocalc/util/db-schema/defaults";
+import { posix } from "path";
 
 export type DiskUsageTree = {
   bytes: number;
@@ -17,7 +19,7 @@ export type StorageQuotaSummary = {
 };
 
 export type StorageVisibleSummary = {
-  key: "home" | "scratch";
+  key: "home" | "scratch" | "environment";
   label: string;
   path: string;
   usage: DiskUsageTree;
@@ -40,41 +42,60 @@ export default function useDiskUsage({ project_id }: { project_id: string }) {
   const [loading, setLoading] = useState<boolean>(false);
   const [quotas, setQuotas] = useState<StorageQuotaSummary[]>([]);
   const homePath = getProjectHomeDirectory(project_id);
-  const currentRef = useRef<any>(
-    `${project_id}-${homePath}-0::${project_id}-0-/scratch`,
-  );
-  currentRef.current = `${key({ project_id, path: homePath })}::${key({ project_id, path: "/scratch" })}`;
+  const projectMap = redux.getStore("projects")?.get?.("project_map");
+  const rootfsImage =
+    `${projectMap?.getIn?.([project_id, "rootfs_image"]) ?? ""}`.trim() || "";
+  const environmentPath = posix.join(homePath, PROJECT_IMAGE_PATH);
+  const requestKey = [
+    key({ project_id, path: homePath }),
+    key({ project_id, path: "/scratch" }),
+    rootfsImage ? key({ project_id, path: environmentPath }) : "",
+  ]
+    .filter(Boolean)
+    .join("::");
+  const currentRef = useRef<any>(requestKey);
+  currentRef.current = requestKey;
 
   useAsyncEffect(async () => {
     try {
       setError(null);
       setLoading(true);
       const cache = counter == lastCounterRef.current;
-      const [homeUsage, scratchUsage, nextQuota] = await Promise.all([
-        dust({
-          project_id,
-          path: homePath,
-          cache,
-        }),
-        dust({
-          project_id,
-          path: "/scratch",
-          cache,
-        }).catch((err) => {
-          if (isOptionalScratchError(err)) {
-            return null;
-          }
-          throw err;
-        }),
-        getQuota({
-          project_id,
-          cache,
-        }),
-      ]);
-      if (
-        `${key({ project_id, path: homePath })}::${key({ project_id, path: "/scratch" })}` !==
-        currentRef.current
-      ) {
+      const [homeUsage, scratchUsage, environmentUsage, nextQuota] =
+        await Promise.all([
+          dust({
+            project_id,
+            path: homePath,
+            cache,
+          }),
+          dust({
+            project_id,
+            path: "/scratch",
+            cache,
+          }).catch((err) => {
+            if (isOptionalScratchError(err)) {
+              return null;
+            }
+            throw err;
+          }),
+          rootfsImage
+            ? dust({
+                project_id,
+                path: environmentPath,
+                cache,
+              }).catch((err) => {
+                if (isOptionalScratchError(err)) {
+                  return null;
+                }
+                throw err;
+              })
+            : Promise.resolve(null),
+          getQuota({
+            project_id,
+            cache,
+          }),
+        ]);
+      if (requestKey !== currentRef.current) {
         return;
       }
       const nextVisible: StorageVisibleSummary[] = [
@@ -93,6 +114,14 @@ export default function useDiskUsage({ project_id }: { project_id: string }) {
           usage: scratchUsage,
         });
       }
+      if (environmentUsage != null) {
+        nextVisible.push({
+          key: "environment",
+          label: "Environment changes",
+          path: environmentPath,
+          usage: environmentUsage,
+        });
+      }
       setVisible(nextVisible);
       setQuotas([
         {
@@ -108,7 +137,7 @@ export default function useDiskUsage({ project_id }: { project_id: string }) {
       setLoading(false);
     }
     lastCounterRef.current = counter;
-  }, [project_id, homePath, counter]);
+  }, [project_id, homePath, rootfsImage, environmentPath, requestKey, counter]);
 
   return {
     quotas,
