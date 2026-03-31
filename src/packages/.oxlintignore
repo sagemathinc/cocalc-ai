@@ -1,10 +1,7 @@
 # Existing frontend hook-rule debt. Keep this list shrinking.
 frontend/app-framework/index.ts
-frontend/app-framework/redux-hooks.ts
 frontend/editors/slate/block-edit-bar.tsx
 frontend/editors/slate/editable-markdown.tsx
-frontend/editors/slate/elements/code-block/editable.tsx
-frontend/editors/slate/elements/code-block/index.tsx
 frontend/editors/slate/elements/code-block/mermaid-public-viewer.tsx
 frontend/editors/slate/elements/code-block/mermaid.tsx
 frontend/editors/slate/elements/code-block/public-viewer.tsx
@@ -12,10 +9,8 @@ frontend/editors/slate/playwright/harness.tsx
 frontend/editors/stopwatch/button-bar.tsx
 frontend/frame-editors/latex-editor/hooks.ts
 frontend/frame-editors/whiteboard-editor/canvas.tsx
-frontend/jupyter/cell-list.tsx
 frontend/project/backups/create.tsx
 frontend/project/backups/edit-schedule.tsx
-frontend/project/explorer/explorer.tsx
 frontend/project/explorer/file-actions-dropdown.tsx
 frontend/project/explorer/move-ops.tsx
 frontend/project/named-server-panel.tsx

@@ -19,7 +19,13 @@ import { isEqual } from "lodash";
 import Mermaid from "./mermaid";
 import { highlightCodeHtml } from "./prism";
 import { CodeLineElement } from "./code-like";
+import type { JupyterCodeCell } from "../jupyter-code-cell/types";
+import type { CodeBlock } from "./types";
 import { getCodeBlockLineCount, getCodeBlockText, toCodeLines } from "./utils";
+
+type CodeLikeRenderElementProps = Omit<RenderElementProps, "element"> & {
+  element: CodeBlock | JupyterCodeCell;
+};
 
 interface FloatingActionMenuProps {
   editing: boolean;
@@ -192,11 +198,8 @@ function FloatingActionMenu({
   );
 }
 
-export const StaticElement: React.FC<RenderElementProps> = ({
-  attributes,
-  element,
-  children,
-}) => {
+export const StaticElement: React.FC<RenderElementProps> = (props) => {
+  const { attributes, element, children } = props;
   if (element.type === "code_line") {
     return (
       <CodeLineElement attributes={attributes}>{children}</CodeLineElement>
@@ -205,7 +208,13 @@ export const StaticElement: React.FC<RenderElementProps> = ({
   if (element.type != "code_block" && element.type != "jupyter_code_cell") {
     throw Error("bug");
   }
+  return <StaticCodeBlockElement {...(props as CodeLikeRenderElementProps)} />;
+};
 
+function StaticCodeBlockElement({
+  attributes,
+  element,
+}: CodeLikeRenderElementProps) {
   const { disableMarkdownCodebar, project_id } = useFileContext();
 
   // we need both a ref and state, because editing is used both for the UI
@@ -454,7 +463,7 @@ export const StaticElement: React.FC<RenderElementProps> = ({
       )}
     </div>
   );
-};
+}
 
 export function toSlate({ token }) {
   // fence =block of code with ``` around it, but not indented.

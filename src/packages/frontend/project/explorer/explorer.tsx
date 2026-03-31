@@ -496,6 +496,32 @@ export function Explorer() {
     navigateExplorer,
   ]);
 
+  const transientRoutingRetryRef = useRef<string>("");
+  useEffect(() => {
+    if (!listingError) return;
+    if (
+      !shouldSuppressTransientRoutingError({ error: listingError, moveLro })
+    ) {
+      return;
+    }
+    const msg = `${(listingError as any)?.message ?? listingError}`;
+    const token = `${effective_current_path}|${msg}`;
+    if (transientRoutingRetryRef.current === token) return;
+    transientRoutingRetryRef.current = token;
+    const timer = setTimeout(() => refresh(), 1200);
+    return () => clearTimeout(timer);
+  }, [listingError, moveLro, effective_current_path, refresh]);
+
+  const clearedTransientProjectErrorRef = useRef<string>("");
+  useEffect(() => {
+    if (!error) return;
+    if (!shouldSuppressTransientRoutingError({ error, moveLro })) return;
+    const msg = `${(error as any)?.message ?? error}`;
+    if (clearedTransientProjectErrorRef.current === msg) return;
+    clearedTransientProjectErrorRef.current = msg;
+    actions?.setState({ error: "" });
+  }, [error, moveLro, actions]);
+
   if (actions == null) {
     return <Loading />;
   }
@@ -593,32 +619,6 @@ export function Explorer() {
   const suppressProjectError =
     (hostUnavailable && isHostRoutingUnavailableError(error)) ||
     shouldSuppressTransientRoutingError({ error, moveLro });
-
-  const transientRoutingRetryRef = useRef<string>("");
-  useEffect(() => {
-    if (!listingError) return;
-    if (
-      !shouldSuppressTransientRoutingError({ error: listingError, moveLro })
-    ) {
-      return;
-    }
-    const msg = `${(listingError as any)?.message ?? listingError}`;
-    const token = `${effective_current_path}|${msg}`;
-    if (transientRoutingRetryRef.current === token) return;
-    transientRoutingRetryRef.current = token;
-    const timer = setTimeout(() => refresh(), 1200);
-    return () => clearTimeout(timer);
-  }, [listingError, moveLro, effective_current_path, refresh]);
-
-  const clearedTransientProjectErrorRef = useRef<string>("");
-  useEffect(() => {
-    if (!error) return;
-    if (!shouldSuppressTransientRoutingError({ error, moveLro })) return;
-    const msg = `${(error as any)?.message ?? error}`;
-    if (clearedTransientProjectErrorRef.current === msg) return;
-    clearedTransientProjectErrorRef.current = msg;
-    actions?.setState({ error: "" });
-  }, [error, moveLro, actions]);
 
   if (hostUnavailable && !project_is_running) {
     return (

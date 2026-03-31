@@ -93,7 +93,35 @@ interface CellListProps {
   runCellOverlays?: immutable.Map<string, immutable.Map<string, any>>;
 }
 
+function renderLoading() {
+  return (
+    <div
+      style={{
+        fontSize: "32pt",
+        color: "#888",
+        textAlign: "center",
+        marginTop: "15px",
+      }}
+    >
+      <Loading />
+    </div>
+  );
+}
+
+type LoadedCellListProps = CellListProps & {
+  cell_list: immutable.List<string>;
+};
+
 export const CellList: React.FC<CellListProps> = (props: CellListProps) => {
+  if (props.cell_list == null) {
+    return renderLoading();
+  }
+  return <LoadedCellList {...props} cell_list={props.cell_list} />;
+};
+
+const LoadedCellList: React.FC<LoadedCellListProps> = (
+  props: LoadedCellListProps,
+) => {
   const {
     actions,
     cell_list,
@@ -177,10 +205,6 @@ export const CellList: React.FC<CellListProps> = (props: CellListProps) => {
     cellListDivRef.current = node;
     frameActions.current?.set_cell_list_div(node);
   }, []);
-
-  if (cell_list == null) {
-    return render_loading();
-  }
 
   const lazyRenderEnabled = true;
   const lazyHydratedIdsRef = useRef<Set<string>>(new Set());
@@ -345,21 +369,6 @@ export const CellList: React.FC<CellListProps> = (props: CellListProps) => {
         node.scrollTop(node.scrollTop() + node.height() * 0.9);
         break;
     }
-  }
-
-  function render_loading() {
-    return (
-      <div
-        style={{
-          fontSize: "32pt",
-          color: "#888",
-          textAlign: "center",
-          marginTop: "15px",
-        }}
-      >
-        <Loading />
-      </div>
-    );
   }
 
   function on_click(e): void {
