@@ -81,4 +81,43 @@ describe("project host upgrade installer", () => {
       fs.rmSync(base, { recursive: true, force: true });
     }
   });
+
+  it("prunes old version directories after switching current", async () => {
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), "cocalc-upgrade-test-"));
+    const archivePath = createArchive(base);
+    const served = await serveFile(archivePath);
+    try {
+      process.env.COCALC_DATA = path.join(base, "data");
+      const bundlesRoot = path.join(base, "project-host-bundles");
+      fs.mkdirSync(bundlesRoot, { recursive: true });
+      for (const version of ["v1", "v2", "v3", "v4", "v5"]) {
+        const dir = path.join(bundlesRoot, version);
+        fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(path.join(dir, "README.txt"), `${version}\n`);
+      }
+      const currentLink = path.join(bundlesRoot, "current");
+      fs.symlinkSync(path.join(bundlesRoot, "v5"), currentLink);
+      const versionDir = path.join(bundlesRoot, "v6");
+      await __test__.downloadAndInstall({
+        artifact: "project-host",
+        canonicalArtifact: "project-host",
+        version: "v6",
+        url: served.url,
+        stripComponents: 1,
+        root: bundlesRoot,
+        versionDir,
+        currentLink,
+      } as any);
+
+      const versions = fs
+        .readdirSync(bundlesRoot, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory() && entry.name !== "current")
+        .map((entry) => entry.name)
+        .sort();
+      expect(versions).toEqual(["v2", "v3", "v4", "v5", "v6"]);
+    } finally {
+      await served.close();
+      fs.rmSync(base, { recursive: true, force: true });
+    }
+  });
 });

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import json
+import os
 import tempfile
 import unittest
 from dataclasses import replace
@@ -174,6 +175,54 @@ class BootstrapStateFilesTest(unittest.TestCase):
                 "/opt/cocalc/project-host/bundles",
             )
             self.assertIn("installed", state)
+
+
+class BootstrapLogRotationTest(unittest.TestCase):
+    def test_rotates_large_bootstrap_log(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            log_path = Path(cfg.log_file)
+            log_path.write_text("x" * (bootstrap.BOOTSTRAP_LOG_MAX_BYTES + 1), encoding="utf-8")
+
+            bootstrap.rotate_bootstrap_log(cfg)
+
+            self.assertFalse(log_path.exists())
+            self.assertTrue(log_path.with_name("bootstrap.log.1").exists())
+
+
+class BootstrapBundleRetentionTest(unittest.TestCase):
+    def test_prunes_old_bundle_versions_but_keeps_current_and_desired(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            root = Path(tmpdir) / "bundles"
+            root.mkdir(parents=True, exist_ok=True)
+            created: list[Path] = []
+            for index in range(1, 8):
+                version_dir = root / f"v{index}"
+                version_dir.mkdir()
+                (version_dir / "README.txt").write_text(f"v{index}\n", encoding="utf-8")
+                os.utime(version_dir, (index, index))
+                created.append(version_dir)
+            current = root / "current"
+            current.symlink_to(created[5], target_is_directory=True)
+            bundle = bootstrap.BundleSpec(
+                url="",
+                sha256=None,
+                remote="",
+                root=str(root),
+                dir=str(created[6]),
+                current=str(current),
+                version="v7",
+            )
+
+            bootstrap.prune_bundle_versions(cfg, bundle, keep=3)
+
+            remaining = sorted(
+                child.name
+                for child in root.iterdir()
+                if child.is_dir() and not child.is_symlink()
+            )
+            self.assertEqual(remaining, ["v5", "v6", "v7"])
 
 
 class BootstrapOwnershipScopeTest(unittest.TestCase):

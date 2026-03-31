@@ -72,6 +72,18 @@ describe("bootstrap-host shell templates", () => {
     expect(source).not.toContain(`-o "$BOOTSTRAP_DIR/bootstrap.sh"`);
   });
 
+  it("uses a btrfs-backed bootstrap state root for reconcile when available", () => {
+    const source = fs.readFileSync(
+      path.join(__dirname, "bootstrap-host.ts"),
+      "utf8",
+    );
+
+    expect(source).toContain(
+      `BOOTSTRAP_STATE_ROOT="/mnt/cocalc/data/.host-bootstrap"`,
+    );
+    expect(source).toContain(`BOOTSTRAP_LOG="$BOOTSTRAP_DIR/bootstrap.log"`);
+  });
+
   it("runs explicit reconcile mode after bootstrap is already complete", () => {
     const source = fs.readFileSync(
       path.join(__dirname, "bootstrap-host.ts"),
@@ -84,5 +96,18 @@ describe("bootstrap-host shell templates", () => {
     expect(source).not.toContain(
       `python3 "$BOOTSTRAP_DIR/bootstrap.py" --config "$BOOTSTRAP_DIR/bootstrap-config.json" --only cloudflared`,
     );
+  });
+
+  it("does not make bootstrap execution depend on tee writing the log file", () => {
+    const source = fs.readFileSync(
+      path.join(__dirname, "bootstrap-host.ts"),
+      "utf8",
+    );
+
+    expect(source).toContain(`if ! bash "$BOOTSTRAP_PAYLOAD"; then`);
+    expect(source).not.toContain(
+      `if ! bash "$BOOTSTRAP_PAYLOAD" 2>&1 | tee "$BOOTSTRAP_DIR/bootstrap.log"; then`,
+    );
+    expect(source).toContain(`bootstrap_log_tail() {`);
   });
 });

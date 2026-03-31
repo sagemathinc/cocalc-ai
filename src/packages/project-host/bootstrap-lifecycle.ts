@@ -38,6 +38,7 @@ function bootstrapDirCandidates(): string[] {
   if (home) {
     candidates.add(join(home, "cocalc-host", "bootstrap"));
   }
+  candidates.add("/mnt/cocalc/data/.host-bootstrap/bootstrap");
   candidates.add("/root/cocalc-host/bootstrap");
   candidates.add("/home/ubuntu/cocalc-host/bootstrap");
   try {

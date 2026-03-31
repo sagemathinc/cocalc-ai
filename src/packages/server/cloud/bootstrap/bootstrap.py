@@ -37,6 +37,8 @@ from typing import Any
 STATE_SCHEMA_VERSION = 1
 HELPER_SCHEMA_VERSION = "20260330-v1"
 RUNTIME_WRAPPER_VERSION = "20260330-v1"
+BOOTSTRAP_LOG_MAX_BYTES = 4 * 1024 * 1024
+BUNDLE_RETENTION_COUNT = 5
 
 
 @dataclass(frozen=True)
@@ -433,6 +435,21 @@ def log_line(cfg: BootstrapConfig, message: str) -> None:
             pass
 
 
+def rotate_bootstrap_log(cfg: BootstrapConfig) -> None:
+    if not cfg.log_file:
+        return
+    log_path = Path(cfg.log_file)
+    try:
+        if not log_path.exists() or log_path.stat().st_size <= BOOTSTRAP_LOG_MAX_BYTES:
+            return
+        rotated = log_path.with_name(f"{log_path.name}.1")
+        if rotated.exists():
+            rotated.unlink()
+        log_path.rename(rotated)
+    except OSError:
+        pass
+
+
 def run_cmd(
     cfg: BootstrapConfig,
     args: list[str],
@@ -673,6 +690,7 @@ def ensure_bootstrap_paths(cfg: BootstrapConfig) -> None:
     Path(cfg.bootstrap_dir).mkdir(parents=True, exist_ok=True)
     Path(cfg.bootstrap_tmp).mkdir(parents=True, exist_ok=True)
     Path(cfg.log_file).parent.mkdir(parents=True, exist_ok=True)
+    rotate_bootstrap_log(cfg)
     if cfg.bootstrap_user and cfg.bootstrap_user != "root":
         owner_paths = [
             cfg.bootstrap_root,
@@ -688,6 +706,59 @@ def ensure_bootstrap_paths(cfg: BootstrapConfig) -> None:
         )
     if not cfg.ssh_user or cfg.ssh_user == "root":
         return
+
+
+def prune_bundle_versions(
+    cfg: BootstrapConfig,
+    bundle: BundleSpec,
+    *,
+    keep: int = BUNDLE_RETENTION_COUNT,
+) -> None:
+    root = Path(bundle.root)
+    if not root.is_dir():
+        return
+    keep_resolved: set[Path] = set()
+    desired_dir = Path(bundle.dir)
+    if desired_dir.exists() and desired_dir.is_dir():
+        keep_resolved.add(desired_dir.resolve())
+    current_path = Path(bundle.current)
+    try:
+        if current_path.is_symlink() or current_path.exists():
+            resolved = current_path.resolve()
+            if resolved.exists() and resolved.is_dir():
+                keep_resolved.add(resolved)
+    except Exception:
+        pass
+    candidates: list[Path] = []
+    for child in root.iterdir():
+        if child.name.startswith(".") or child.name == "current":
+            continue
+        try:
+            if child.is_symlink() or not child.is_dir():
+                continue
+        except OSError:
+            continue
+        candidates.append(child)
+    candidates.sort(
+        key=lambda child: (
+            child.stat().st_mtime if child.exists() else 0,
+            child.name,
+        ),
+        reverse=True,
+    )
+    for child in candidates:
+        try:
+            resolved = child.resolve()
+        except Exception:
+            resolved = child
+        if resolved in keep_resolved:
+            continue
+        if len(keep_resolved) < keep:
+            if resolved.exists():
+                keep_resolved.add(resolved)
+            continue
+        log_line(cfg, f"bootstrap: pruning old bundle dir {child}")
+        shutil.rmtree(child, ignore_errors=True)
     runtime_paths = [
         cfg.project_host_bundle.root,
         cfg.project_bundle.root,
@@ -1768,6 +1839,7 @@ def extract_bundle(cfg: BootstrapConfig, bundle: BundleSpec) -> BundleSpec:
                         cfg,
                         f"bootstrap: bundle already current version={bundle.version or desired_dir.name} root={bundle.root}",
                     )
+                    prune_bundle_versions(cfg, bundle)
                     return bundle
             except Exception:
                 pass
@@ -1798,6 +1870,7 @@ def extract_bundle(cfg: BootstrapConfig, bundle: BundleSpec) -> BundleSpec:
         else:
             current_path.unlink()
     current_path.symlink_to(desired_dir, target_is_directory=True)
+    prune_bundle_versions(cfg, bundle)
     return bundle
 
 

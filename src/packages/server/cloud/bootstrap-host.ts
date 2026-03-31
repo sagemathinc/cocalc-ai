@@ -768,7 +768,18 @@ fi
 if [ -z "$BOOTSTRAP_HOME" ]; then
   BOOTSTRAP_HOME="/root"
 fi
-BOOTSTRAP_DIR="$BOOTSTRAP_HOME/cocalc-host/bootstrap"
+BOOTSTRAP_ROOT="$BOOTSTRAP_HOME/cocalc-host"
+BOOTSTRAP_STATE_ROOT="$BOOTSTRAP_ROOT"
+BOOTSTRAP_ALREADY_DONE=0
+if [ -f /var/lib/cocalc/.bootstrap_done ] || [ -f /mnt/cocalc/data/.bootstrap_done ]; then
+  BOOTSTRAP_ALREADY_DONE=1
+fi
+if [ "$BOOTSTRAP_ALREADY_DONE" = "1" ] && [ -d /mnt/cocalc/data ] && [ -w /mnt/cocalc/data ]; then
+  BOOTSTRAP_STATE_ROOT="/mnt/cocalc/data/.host-bootstrap"
+fi
+BOOTSTRAP_DIR="$BOOTSTRAP_STATE_ROOT/bootstrap"
+BOOTSTRAP_TMP="$BOOTSTRAP_STATE_ROOT/tmp"
+BOOTSTRAP_LOG="$BOOTSTRAP_DIR/bootstrap.log"
 BOOTSTRAP_PY_URL="${scripts.bootstrapPyUrl}"
 BOOTSTRAP_PY_SHA_URL="${scripts.bootstrapPyShaUrl}"
 BOOTSTRAP_PY_FALLBACK_URL="${baseUrl}/project-host/bootstrap.py"
@@ -803,8 +814,8 @@ report_status() {
 }
 
 bootstrap_log_tail() {
-  if [ -f "$BOOTSTRAP_DIR/bootstrap.log" ]; then
-    tail -n 80 "$BOOTSTRAP_DIR/bootstrap.log" 2>/dev/null | tr -d '\\r'
+  if [ -f "$BOOTSTRAP_LOG" ]; then
+    tail -n 80 "$BOOTSTRAP_LOG" 2>/dev/null | tr -d '\\r'
   fi
 }
 
@@ -815,14 +826,7 @@ on_error() {
 }
 trap 'on_error "$?" "$LINENO"' ERR
 
-BOOTSTRAP_ROOT="$BOOTSTRAP_HOME/cocalc-host"
-BOOTSTRAP_TMP="$BOOTSTRAP_ROOT/tmp"
-
-mkdir -p "$BOOTSTRAP_DIR"
-BOOTSTRAP_ALREADY_DONE=0
-if [ -f /var/lib/cocalc/.bootstrap_done ] || [ -f /mnt/cocalc/data/.bootstrap_done ]; then
-  BOOTSTRAP_ALREADY_DONE=1
-fi
+mkdir -p "$BOOTSTRAP_DIR" "$BOOTSTRAP_TMP"
 
 cat <<EOF_COCALC_BOOTSTRAP_CONFIG > "$BOOTSTRAP_DIR/bootstrap-config.json"
 {
@@ -831,7 +835,7 @@ cat <<EOF_COCALC_BOOTSTRAP_CONFIG > "$BOOTSTRAP_DIR/bootstrap-config.json"
   "bootstrap_root": "$BOOTSTRAP_ROOT",
   "bootstrap_dir": "$BOOTSTRAP_DIR",
   "bootstrap_tmp": "$BOOTSTRAP_TMP",
-  "log_file": "$BOOTSTRAP_DIR/bootstrap.log",
+  "log_file": "$BOOTSTRAP_LOG",
   "expected_os": "${scripts.expectedOs}",
   "expected_arch": "${scripts.expectedArch}",
   "image_size_gb_raw": "${scripts.imageSizeGb}",
@@ -1295,7 +1299,15 @@ if [ -z "$BOOTSTRAP_HOME" ]; then
   BOOTSTRAP_HOME="/root"
 fi
 ${sshKeysBlock}
-BOOTSTRAP_DIR="$BOOTSTRAP_HOME/cocalc-host/bootstrap"
+BOOTSTRAP_ROOT="$BOOTSTRAP_HOME/cocalc-host"
+BOOTSTRAP_STATE_ROOT="$BOOTSTRAP_ROOT"
+if [ -f /var/lib/cocalc/.bootstrap_done ] || [ -f /mnt/cocalc/data/.bootstrap_done ]; then
+  if [ -d /mnt/cocalc/data ] && [ -w /mnt/cocalc/data ]; then
+    BOOTSTRAP_STATE_ROOT="/mnt/cocalc/data/.host-bootstrap"
+  fi
+fi
+BOOTSTRAP_DIR="$BOOTSTRAP_STATE_ROOT/bootstrap"
+BOOTSTRAP_LOG="$BOOTSTRAP_DIR/bootstrap.log"
 BOOTSTRAP_PAYLOAD="$BOOTSTRAP_DIR/bootstrap.payload.sh"
 BOOTSTRAP_HOST="$(echo "$BOOTSTRAP_URL" | awk -F/ '{print $3}')"
 if [[ "$BOOTSTRAP_HOST" == \\[*\\]* ]]; then
@@ -1336,6 +1348,12 @@ report_status() {
   curl -fsSL $CURL_CACERT_ARG -X POST -H "Authorization: Bearer $BOOTSTRAP_TOKEN" -H "Content-Type: application/json" \
     --data "$payload" \
     "$STATUS_URL" >/dev/null || true
+}
+
+bootstrap_log_tail() {
+  if [ -f "$BOOTSTRAP_LOG" ]; then
+    tail -n 80 "$BOOTSTRAP_LOG" 2>/dev/null | tr -d '\\r'
+  fi
 }
 
 download_bootstrap() {
@@ -1388,7 +1406,7 @@ if ! download_bootstrap; then
   report_status "error" "bootstrap download failed"
   exit 1
 fi
-if ! bash "$BOOTSTRAP_PAYLOAD" 2>&1 | tee "$BOOTSTRAP_DIR/bootstrap.log"; then
+if ! bash "$BOOTSTRAP_PAYLOAD"; then
   tail_msg="$(bootstrap_log_tail)"
   if [ -n "$tail_msg" ]; then
     report_status "error" "bootstrap execution failed; tail: $tail_msg"

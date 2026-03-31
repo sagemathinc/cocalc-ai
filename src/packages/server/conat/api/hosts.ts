@@ -258,7 +258,7 @@ async function reconcileCloudHostBootstrapOverSsh(opts: {
   const script = `
 set -euo pipefail
 BOOTSTRAP_DIR=""
-for candidate in /home/ubuntu/cocalc-host/bootstrap /root/cocalc-host/bootstrap
+for candidate in /mnt/cocalc/data/.host-bootstrap/bootstrap /home/ubuntu/cocalc-host/bootstrap /root/cocalc-host/bootstrap
 do
   if [ -d "$candidate" ]; then
     BOOTSTRAP_DIR="$candidate"

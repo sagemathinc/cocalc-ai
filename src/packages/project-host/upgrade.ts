@@ -22,6 +22,7 @@ const DEFAULT_BUNDLE_ROOT = "/opt/cocalc/project-bundles";
 const DEFAULT_TOOLS_ROOT = "/opt/cocalc/tools";
 const PROJECT_HOST_ROOT = "/opt/cocalc/project-host";
 const STORAGE_WRAPPER = "/usr/local/sbin/cocalc-runtime-storage";
+const BUNDLE_RETENTION_COUNT = 5;
 
 type CanonicalArtifact = "project-host" | "project" | "tools";
 
@@ -319,6 +320,70 @@ async function replaceSymlink(linkPath: string, target: string) {
   await fs.promises.rename(tmp, linkPath);
 }
 
+async function pruneVersionDirs(opts: {
+  root: string;
+  currentLink: string;
+  desiredDir: string;
+  keep?: number;
+}) {
+  const keep = opts.keep ?? BUNDLE_RETENTION_COUNT;
+  const entries = await fs.promises.readdir(opts.root, { withFileTypes: true });
+  const keepRealPaths = new Set<string>();
+  try {
+    keepRealPaths.add(await fs.promises.realpath(opts.desiredDir));
+  } catch {
+    // ignore
+  }
+  try {
+    keepRealPaths.add(await fs.promises.realpath(opts.currentLink));
+  } catch {
+    // ignore
+  }
+  const dirs = await Promise.all(
+    entries
+      .filter(
+        (entry) =>
+          entry.name !== "current" &&
+          !entry.name.startsWith(".") &&
+          entry.isDirectory() &&
+          !entry.isSymbolicLink(),
+      )
+      .map(async (entry) => {
+        const dir = path.join(opts.root, entry.name);
+        try {
+          const stat = await fs.promises.stat(dir);
+          return { dir, mtimeMs: stat.mtimeMs, name: entry.name };
+        } catch {
+          return undefined;
+        }
+      }),
+  );
+  const sorted = dirs
+    .filter(
+      (entry): entry is { dir: string; mtimeMs: number; name: string } =>
+        entry != null,
+    )
+    .sort((a, b) => b.mtimeMs - a.mtimeMs || b.name.localeCompare(a.name));
+  for (const entry of sorted) {
+    let real = entry.dir;
+    try {
+      real = await fs.promises.realpath(entry.dir);
+    } catch {
+      // keep raw path
+    }
+    if (keepRealPaths.has(real)) continue;
+    if (keepRealPaths.size < keep) {
+      keepRealPaths.add(real);
+      continue;
+    }
+    logger.info("upgrade: pruning old bundle dir", {
+      root: opts.root,
+      dir: entry.dir,
+    });
+    await safeRemove(entry.dir);
+  }
+}
+
 async function resolveArtifact(
   target: SoftwareUpgradeTarget,
   baseUrl: string,
@@ -488,6 +553,11 @@ async function downloadAndInstall(
     dir: resolved.versionDir,
   });
   await replaceSymlink(resolved.currentLink, resolved.versionDir);
+  await pruneVersionDirs({
+    root: resolved.root,
+    currentLink: resolved.currentLink,
+    desiredDir: resolved.versionDir,
+  });
   logger.info("upgrade: updated current symlink", {
     artifact: resolved.artifact,
     version: resolved.version,
@@ -578,4 +648,5 @@ export async function upgradeSoftware(
 
 export const __test__ = {
   downloadAndInstall,
+  pruneVersionDirs,
 };
