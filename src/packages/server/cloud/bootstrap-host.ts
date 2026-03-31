@@ -846,7 +846,7 @@ trap 'on_error "$?" "$LINENO"' ERR
 
 mkdir -p "$BOOTSTRAP_DIR" "$BOOTSTRAP_TMP"
 
-cat <<EOF_COCALC_BOOTSTRAP_CONFIG > "$BOOTSTRAP_DIR/bootstrap-config.json"
+cat <<EOF_COCALC_BOOTSTRAP_HOST_FACTS > "$BOOTSTRAP_DIR/bootstrap-host-facts.json"
 {
   "bootstrap_user": "$BOOTSTRAP_USER",
   "bootstrap_home": "$BOOTSTRAP_HOME",
@@ -856,18 +856,35 @@ cat <<EOF_COCALC_BOOTSTRAP_CONFIG > "$BOOTSTRAP_DIR/bootstrap-config.json"
   "log_file": "$BOOTSTRAP_LOG",
   "expected_os": "${scripts.expectedOs}",
   "expected_arch": "${scripts.expectedArch}",
-  "image_size_gb_raw": "${scripts.imageSizeGb}",
-  "root_reserve_gb_raw": "${scripts.rootReserveGb}",
+  "has_gpu": ${scripts.hasGpu ? "true" : "false"},
+  "runtime_user": "${scripts.runtimeUser}",
+  "env_file": "${scripts.envFile}",
   "data_disk_devices": "${scripts.dataDiskDevices}",
   "data_disk_candidates": "${scripts.dataDiskCandidates}",
+  "project_host_bundle_root": "${scripts.projectHostBundlesRoot}",
+  "project_bundle_root": "${scripts.projectBundlesRoot}",
+  "tools_root": "${scripts.toolsRoot}"
+}
+EOF_COCALC_BOOTSTRAP_HOST_FACTS
+
+cat <<EOF_COCALC_BOOTSTRAP_DESIRED_STATE > "$BOOTSTRAP_DIR/bootstrap-desired-state.json"
+{
+  "image_size_gb_raw": "${scripts.imageSizeGb}",
+  "root_reserve_gb_raw": "${scripts.rootReserveGb}",
   "apt_packages": ${aptPackagesJson},
-  "has_gpu": ${scripts.hasGpu ? "true" : "false"},
-  "ssh_user": "${scripts.runtimeUser}",
-  "env_file": "${scripts.envFile}",
   "env_lines": ${envLinesJson},
   "node_version": "${scripts.nodeVersion}",
-  "bootstrap_selector": "${scripts.bootstrapSelector}",
-  "bootstrap_py_url": "${scripts.bootstrapPyUrl}",
+  "bootstrap_done_paths": ["/mnt/cocalc/data/.bootstrap_done", "/var/lib/cocalc/.bootstrap_done"],
+  "bootstrap": {
+    "selector": "${scripts.bootstrapSelector}",
+    "url": "${scripts.bootstrapPyUrl}"
+  },
+  "bootstrap_connection": {
+    "conat_url": "$CONAT_URL",
+    "status_url": "$STATUS_URL",
+    "bootstrap_token": "$BOOTSTRAP_TOKEN",
+    "ca_cert_path": "$BOOTSTRAP_CACERT_PATH"
+  },
   "project_host_bundle": {
     "url": "${scripts.projectHostBundleUrl}",
     "sha256": "${scripts.projectHostBundleSha256}",
@@ -896,15 +913,9 @@ cat <<EOF_COCALC_BOOTSTRAP_CONFIG > "$BOOTSTRAP_DIR/bootstrap-config.json"
     "current": "${scripts.toolsRoot}/current",
     "version": "${scripts.toolsVersion}"
   },
-  "cloudflared": ${cloudflaredJson},
-  "conat_url": "$CONAT_URL",
-  "status_url": "$STATUS_URL",
-  "bootstrap_token": "$BOOTSTRAP_TOKEN",
-  "ca_cert_path": "$BOOTSTRAP_CACERT_PATH",
-  "parallel": true,
-  "bootstrap_done_paths": ["/mnt/cocalc/data/.bootstrap_done", "/var/lib/cocalc/.bootstrap_done"]
+  "cloudflared": ${cloudflaredJson}
 }
-EOF_COCALC_BOOTSTRAP_CONFIG
+EOF_COCALC_BOOTSTRAP_DESIRED_STATE
 
 download_bootstrap_py() {
   local target="$BOOTSTRAP_DIR/bootstrap.py"
@@ -953,12 +964,12 @@ fi
 
 if [ "$BOOTSTRAP_ALREADY_DONE" = "1" ]; then
   echo "bootstrap: already complete; reconciling host software"
-  python3 "$BOOTSTRAP_DIR/bootstrap.py" reconcile --config "$BOOTSTRAP_DIR/bootstrap-config.json"
+  python3 "$BOOTSTRAP_DIR/bootstrap.py" reconcile --bootstrap-dir "$BOOTSTRAP_DIR"
   exit 0
 fi
 
 report_status "running" "Preparing bootstrap environment"
-python3 "$BOOTSTRAP_DIR/bootstrap.py" --config "$BOOTSTRAP_DIR/bootstrap-config.json"
+python3 "$BOOTSTRAP_DIR/bootstrap.py" --bootstrap-dir "$BOOTSTRAP_DIR"
 report_status "done" "Bootstrap completed"
 cat <<'EOF_COCALC_DEPROVISION' > "$BOOTSTRAP_ROOT/bin/deprovision.sh"
 #!/usr/bin/env bash

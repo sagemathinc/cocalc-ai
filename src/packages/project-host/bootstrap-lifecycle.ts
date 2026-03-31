@@ -30,10 +30,6 @@ function bootstrapDirCandidates(): string[] {
   if (explicitDir) {
     candidates.add(explicitDir);
   }
-  const configPath = `${process.env.COCALC_BOOTSTRAP_CONFIG_PATH ?? ""}`.trim();
-  if (configPath) {
-    candidates.add(dirname(configPath));
-  }
   const home = `${process.env.HOME ?? ""}`.trim();
   if (home) {
     candidates.add(join(home, "cocalc-host", "bootstrap"));
@@ -55,8 +51,7 @@ function resolveBootstrapDir(): string | undefined {
   for (const candidate of bootstrapDirCandidates()) {
     if (
       existsSync(join(candidate, "bootstrap-desired-state.json")) ||
-      existsSync(join(candidate, "bootstrap-state.json")) ||
-      existsSync(join(candidate, "bootstrap-config.json"))
+      existsSync(join(candidate, "bootstrap-state.json"))
     ) {
       return candidate;
     }

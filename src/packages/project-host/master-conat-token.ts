@@ -8,7 +8,6 @@ import { URL } from "url";
 const DEFAULT_MASTER_CONAT_TOKEN_PATH =
   "/mnt/cocalc/data/secrets/master-conat-token";
 const LEGACY_MASTER_CONAT_TOKEN_PATH = "/btrfs/data/secrets/master-conat-token";
-const BOOTSTRAP_CONFIG_BASENAME = "bootstrap-config.json";
 const BOOTSTRAP_DESIRED_STATE_BASENAME = "bootstrap-desired-state.json";
 
 type BootstrapConnectionRecord = {
@@ -65,11 +64,6 @@ function bootstrapDirCandidates(): string[] {
   if (explicitDir) {
     candidates.add(explicitDir);
   }
-  const explicitConfigPath =
-    `${process.env.COCALC_BOOTSTRAP_CONFIG_PATH ?? ""}`.trim();
-  if (explicitConfigPath) {
-    candidates.add(dirname(explicitConfigPath));
-  }
   const home = `${process.env.HOME ?? ""}`.trim();
   if (home) {
     candidates.add(join(home, "cocalc-host", "bootstrap"));
@@ -106,10 +100,6 @@ function readBootstrapConnection(): BootstrapConnectionRecord | undefined {
     const connection = desired?.bootstrap_connection;
     if (connection && typeof connection === "object") {
       return connection as BootstrapConnectionRecord;
-    }
-    const config = readJsonObject(join(dir, BOOTSTRAP_CONFIG_BASENAME));
-    if (config) {
-      return config as BootstrapConnectionRecord;
     }
   }
   return undefined;

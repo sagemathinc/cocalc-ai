@@ -9,7 +9,6 @@ import {
 function withBootstrapEnv<T>(bootstrapDir: string, fn: () => T): T {
   const envKeys = [
     "COCALC_PROJECT_HOST_BOOTSTRAP_DIR",
-    "COCALC_BOOTSTRAP_CONFIG_PATH",
     "COCALC_PROJECT_HOST_BOOTSTRAP_TOKEN",
     "COCALC_PROJECT_HOST_BOOTSTRAP_CONAT_URL",
     "COCALC_PROJECT_HOST_BOOTSTRAP_MASTER_CONAT_URL",
@@ -19,7 +18,6 @@ function withBootstrapEnv<T>(bootstrapDir: string, fn: () => T): T {
     envKeys.map((key) => [key, process.env[key]]),
   ) as Record<(typeof envKeys)[number], string | undefined>;
   process.env.COCALC_PROJECT_HOST_BOOTSTRAP_DIR = bootstrapDir;
-  delete process.env.COCALC_BOOTSTRAP_CONFIG_PATH;
   delete process.env.COCALC_PROJECT_HOST_BOOTSTRAP_TOKEN;
   delete process.env.COCALC_PROJECT_HOST_BOOTSTRAP_CONAT_URL;
   delete process.env.COCALC_PROJECT_HOST_BOOTSTRAP_MASTER_CONAT_URL;
@@ -57,18 +55,6 @@ describe("master-conat-token bootstrap source", () => {
         2,
       ),
     );
-    writeFileSync(
-      join(bootstrapDir, "bootstrap-config.json"),
-      JSON.stringify(
-        {
-          bootstrap_token: "legacy-token",
-          conat_url: "https://legacy.example.invalid/master-token",
-          ca_cert_path: "/legacy/ca.pem",
-        },
-        null,
-        2,
-      ),
-    );
 
     withBootstrapEnv(bootstrapDir, () => {
       expect(getProjectHostBootstrapToken()).toBe("split-token");
@@ -80,32 +66,18 @@ describe("master-conat-token bootstrap source", () => {
     });
   });
 
-  it("falls back to bootstrap-config when split desired state is missing", () => {
+  it("returns undefined when split desired state is missing", () => {
     const root = mkdtempSync(join(tmpdir(), "cocalc-bootstrap-"));
     const bootstrapDir = join(root, "bootstrap");
     mkdirSync(bootstrapDir, { recursive: true });
-    writeFileSync(
-      join(bootstrapDir, "bootstrap-config.json"),
-      JSON.stringify(
-        {
-          bootstrap_token: "legacy-token",
-          conat_url: "https://legacy.example.invalid/master-token",
-        },
-        null,
-        2,
-      ),
-    );
 
     withBootstrapEnv(bootstrapDir, () => {
-      expect(getProjectHostBootstrapToken()).toBe("legacy-token");
+      expect(getProjectHostBootstrapToken()).toBeUndefined();
       expect(
         getProjectHostBootstrapConatSource({
           fallbackConatUrl: "https://fallback.example.invalid/master-token",
         }),
-      ).toEqual({
-        bootstrap_token: "legacy-token",
-        conat_url: "https://legacy.example.invalid/master-token",
-      });
+      ).toBeUndefined();
     });
   });
 });
