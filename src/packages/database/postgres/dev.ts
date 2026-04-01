@@ -1,6 +1,7 @@
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import {
   chmodSync,
+  chownSync,
   existsSync,
   mkdirSync,
   readFileSync,
@@ -22,6 +23,7 @@ type LocalPostgresInfo = {
   database: string;
   pidFile: string;
   child: ChildProcess;
+  osUser?: OsUser;
 };
 
 type PgBinaries = {
@@ -32,6 +34,13 @@ type PgBinaries = {
   createdb: string;
   pgIsReady?: string;
   pgCtl?: string;
+};
+
+type OsUser = {
+  name: string;
+  uid: number;
+  gid: number;
+  home: string;
 };
 
 let running: LocalPostgresInfo | null = null;
@@ -85,17 +94,60 @@ function resolvePgBinaries(): PgBinaries {
   };
 }
 
-function resolveDataDir(): string {
-  const data = process.env.DATA ?? join(process.cwd(), "data");
-  return join(data, "postgres");
+function hashPath(path: string): string {
+  return createHash("sha256").update(path).digest("hex").slice(0, 8);
 }
 
-function resolveSocketDir(dataDir: string): string {
+function resolveRootRunAsUser(): OsUser | undefined {
+  if (typeof process.getuid !== "function" || process.getuid() !== 0) {
+    return undefined;
+  }
+  const name = process.env.COCALC_LOCAL_PG_OS_USER ?? "postgres";
+  const res = spawnSync("getent", ["passwd", name], {
+    encoding: "utf8",
+  });
+  if (res.status !== 0) {
+    throw new Error(
+      `running CoCalc as root requires Unix user '${name}' for local postgres; set COCALC_LOCAL_PG_OS_USER to override`,
+    );
+  }
+  const line = res.stdout.trim();
+  const [resolvedName, , uid, gid, , home] = line.split(":");
+  if (!resolvedName || !uid || !gid || !home) {
+    throw new Error(`could not parse passwd entry for '${name}'`);
+  }
+  return {
+    name: resolvedName,
+    uid: Number(uid),
+    gid: Number(gid),
+    home,
+  };
+}
+
+function resolveDataDir(runAsUser?: OsUser): string {
+  const override = process.env.COCALC_LOCAL_PG_DATA_DIR;
+  if (override) return override;
+  const data = process.env.DATA ?? join(process.cwd(), "data");
+  const requested = join(data, "postgres");
+  if (!runAsUser) return requested;
+  return join(
+    runAsUser.home,
+    ".cache",
+    "cocalc",
+    `pg-${hashPath(requested)}`,
+    "data",
+  );
+}
+
+function resolveSocketDir(dataDir: string, runAsUser?: OsUser): string {
   const override = process.env.COCALC_LOCAL_PG_SOCKET_DIR;
   if (override) return override;
+  if (runAsUser) {
+    return join(dirname(dataDir), "socket");
+  }
   const runtime = process.env.XDG_RUNTIME_DIR;
   const base = runtime ?? join(homedir(), ".local", "share");
-  const suffix = createHash("sha256").update(dataDir).digest("hex").slice(0, 8);
+  const suffix = hashPath(dataDir);
   return join(base, "cocalc", `pg-${suffix}`);
 }
 
@@ -160,9 +212,37 @@ function ensureDir(path: string, mode = 0o700): void {
   }
 }
 
-function runSync(cmd: string, args: string[], env?: NodeJS.ProcessEnv): void {
+function ensureOwnedDir(path: string, owner: OsUser, mode = 0o700): void {
+  const base = owner.home;
+  if (!existsSync(base)) {
+    throw new Error(
+      `local postgres Unix user '${owner.name}' has missing home directory '${base}'`,
+    );
+  }
+  if (!path.startsWith(`${base}/`)) {
+    ensureDir(path, mode);
+    chownSync(path, owner.uid, owner.gid);
+    return;
+  }
+  let current = base;
+  for (const segment of path.slice(base.length + 1).split("/")) {
+    current = join(current, segment);
+    ensureDir(current, mode);
+    chownSync(current, owner.uid, owner.gid);
+  }
+}
+
+type CommandOptions = {
+  env?: NodeJS.ProcessEnv;
+  uid?: number;
+  gid?: number;
+};
+
+function runSync(cmd: string, args: string[], opts?: CommandOptions): void {
   const res = spawnSync(cmd, args, {
-    env: { ...process.env, ...env },
+    env: { ...process.env, ...opts?.env },
+    ...(opts?.uid != null ? { uid: opts.uid } : undefined),
+    ...(opts?.gid != null ? { gid: opts.gid } : undefined),
     stdio: "inherit",
   });
   if (res.status !== 0) {
@@ -170,13 +250,11 @@ function runSync(cmd: string, args: string[], env?: NodeJS.ProcessEnv): void {
   }
 }
 
-function runQuiet(
-  cmd: string,
-  args: string[],
-  env?: NodeJS.ProcessEnv,
-): string {
+function runQuiet(cmd: string, args: string[], opts?: CommandOptions): string {
   const res = spawnSync(cmd, args, {
-    env: { ...process.env, ...env },
+    env: { ...process.env, ...opts?.env },
+    ...(opts?.uid != null ? { uid: opts.uid } : undefined),
+    ...(opts?.gid != null ? { gid: opts.gid } : undefined),
     encoding: "utf8",
   });
   if (res.status !== 0) {
@@ -305,7 +383,14 @@ function stopLocalPostgres(): void {
   try {
     const pgCtl = which("pg_ctl");
     if (pgCtl) {
-      spawnSync(pgCtl, ["-D", running.dataDir, "-m", "fast", "stop"]);
+      spawnSync(pgCtl, ["-D", running.dataDir, "-m", "fast", "stop"], {
+        ...(running.osUser?.uid != null
+          ? { uid: running.osUser.uid }
+          : undefined),
+        ...(running.osUser?.gid != null
+          ? { gid: running.osUser.gid }
+          : undefined),
+      });
     } else {
       running.child.kill("SIGTERM");
     }
@@ -326,10 +411,20 @@ export async function ensureLocalPostgres(opts?: {
   if (process.env.COCALC_ROCKET_CONTROL_PLANE === "yes") return null;
 
   const bins = resolvePgBinaries();
+  const osUser = resolveRootRunAsUser();
 
-  const dataDir = resolveDataDir();
-  let socketDir = resolveSocketDir(dataDir);
-  ensureDir(dataDir, 0o700);
+  const dataDir = resolveDataDir(osUser);
+  let socketDir = resolveSocketDir(dataDir, osUser);
+  if (osUser) {
+    logger.info("running local postgres as non-root subprocess", {
+      osUser: osUser.name,
+      dataDir,
+      socketDir,
+    });
+    ensureOwnedDir(dataDir, osUser, 0o700);
+  } else {
+    ensureDir(dataDir, 0o700);
+  }
 
   const adminUser = process.env.USER ?? "postgres";
   const pgVersionFile = join(dataDir, "PG_VERSION");
@@ -342,7 +437,11 @@ export async function ensureLocalPostgres(opts?: {
       });
       socketDir = altSocketDir;
     }
-    ensureDir(socketDir, 0o700);
+    if (osUser) {
+      ensureOwnedDir(socketDir, osUser, 0o700);
+    } else {
+      ensureDir(socketDir, 0o700);
+    }
     const entries = readdirSync(dataDir).filter(
       (entry) => entry !== "lost+found",
     );
@@ -356,15 +455,25 @@ export async function ensureLocalPostgres(opts?: {
       }
     }
     logger.info("initializing local postgres", { dataDir });
-    runSync(bins.initdb, ["-D", dataDir, "-U", adminUser, "--auth=trust"]);
+    runSync(
+      bins.initdb,
+      ["-D", dataDir, "-U", adminUser, "--auth=trust"],
+      osUser,
+    );
     ensureConfig(dataDir, socketDir);
   } else {
-    ensureDir(socketDir, 0o700);
+    if (osUser) {
+      ensureOwnedDir(socketDir, osUser, 0o700);
+    } else {
+      ensureDir(socketDir, 0o700);
+    }
     ensureConfig(dataDir, socketDir);
   }
 
   logger.info("starting local postgres", { dataDir, socketDir });
   const child = spawn(bins.postgres, ["-D", dataDir, "-k", socketDir], {
+    ...(osUser?.uid != null ? { uid: osUser.uid } : undefined),
+    ...(osUser?.gid != null ? { gid: osUser.gid } : undefined),
     stdio: "ignore",
   });
 
@@ -397,6 +506,7 @@ export async function ensureLocalPostgres(opts?: {
     database: "smc",
     pidFile: join(dataDir, "postmaster.pid"),
     child,
+    osUser,
   };
   running = info;
 
