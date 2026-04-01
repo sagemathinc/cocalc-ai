@@ -49,7 +49,12 @@ export class LocalExecutor implements AcpExecutor {
 
   async exec(
     cmd: string,
-    opts?: { cwd?: string; timeoutMs?: number; env?: Record<string, string> },
+    opts?: {
+      cwd?: string;
+      timeoutMs?: number;
+      env?: Record<string, string>;
+      maxOutputBytes?: number;
+    },
   ): Promise<{
     stdout: string;
     stderr: string;
@@ -78,13 +83,18 @@ export class LocalExecutor implements AcpExecutor {
     command: string,
     args: string[] | undefined,
     cwd: string,
-    opts?: { timeoutMs?: number; env?: Record<string, string> },
+    opts?: {
+      timeoutMs?: number;
+      env?: Record<string, string>;
+      maxOutputBytes?: number;
+    },
   ): Promise<{
     stdout: string;
     stderr: string;
     exitCode: number | null;
     signal?: string;
   }> {
+    const maxBuffer = Math.max(1024, opts?.maxOutputBytes ?? 10 * 1024 * 1024);
     try {
       if (args) {
         const { stdout, stderr } = await execFile(command, args, {
@@ -92,7 +102,7 @@ export class LocalExecutor implements AcpExecutor {
           env: { ...process.env, ...(opts?.env ?? {}) },
           timeout: opts?.timeoutMs ?? DEFAULT_TERMINAL_TIMEOUT_MS,
           killSignal: "SIGKILL",
-          maxBuffer: 10 * 1024 * 1024,
+          maxBuffer,
         });
         return {
           stdout: stdout?.toString?.() ?? stdout ?? "",
@@ -105,7 +115,7 @@ export class LocalExecutor implements AcpExecutor {
         env: { ...process.env, ...(opts?.env ?? {}) },
         timeout: opts?.timeoutMs ?? DEFAULT_TERMINAL_TIMEOUT_MS,
         killSignal: "SIGKILL",
-        maxBuffer: 10 * 1024 * 1024,
+        maxBuffer,
       });
       return {
         stdout: stdout?.toString?.() ?? stdout ?? "",
@@ -113,15 +123,9 @@ export class LocalExecutor implements AcpExecutor {
         exitCode: 0,
       };
     } catch (err: any) {
-      // Propagate failures for callers that expect rejection on nonzero exit.
-      if (typeof err?.code === "number") {
-        throw new Error(
-          err?.stderr?.toString?.() ?? err?.message ?? "exec failed",
-        );
-      }
       return {
-        stdout: err?.stdout ?? "",
-        stderr: err?.stderr ?? err?.message ?? "",
+        stdout: err?.stdout?.toString?.() ?? err?.stdout ?? "",
+        stderr: err?.stderr?.toString?.() ?? err?.stderr ?? err?.message ?? "",
         exitCode: typeof err?.code === "number" ? err.code : null,
         signal: err?.signal,
       };

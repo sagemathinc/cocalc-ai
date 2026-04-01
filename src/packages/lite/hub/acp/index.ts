@@ -21,9 +21,11 @@ import { init as initConatAcp } from "@cocalc/conat/ai/acp/server";
 import type {
   AcpAutomationRequest,
   AcpAutomationResponse,
+  AcpCommandRequest,
   AcpAutomationRecord,
   AcpControlRequest,
   AcpControlResponse,
+  AcpJobRequest,
   AcpRequest,
   AcpStreamPayload,
   AcpStreamMessage,
@@ -56,7 +58,14 @@ import { buildAutomationAcpConfig } from "./automation-request-config";
 import {
   computeNextAutomationRunAt,
   normalizeAcpAutomationConfig,
+  AUTOMATION_DEFAULT_COMMAND_MAX_OUTPUT_BYTES,
+  AUTOMATION_DEFAULT_COMMAND_TIMEOUT_MS,
 } from "./automation-schedule";
+import {
+  captureCommandAutomationOutput,
+  formatCommandAutomationMarkdown,
+  resolveAutomationCommandCwd,
+} from "./command-automation";
 import { ensureLoopContractPrompt } from "./loop-contract";
 import {
   preferContainerExecutor,
@@ -5281,7 +5290,8 @@ function automationMessageLabel(
   manual: boolean,
 ): string {
   const base = `${row.title ?? ""}`.trim() || "Automation";
-  return manual ? `Manual run: ${base}` : `Scheduled run: ${base}`;
+  const kind = row.run_kind === "command" ? "command run" : "run";
+  return manual ? `Manual ${kind}: ${base}` : `Scheduled ${kind}: ${base}`;
 }
 
 async function enqueueAutomationRun(
@@ -5291,7 +5301,11 @@ async function enqueueAutomationRun(
   if (!conatClient) {
     throw new Error("conat client must be initialized");
   }
-  if (!row.prompt?.trim()) {
+  if (row.run_kind === "command") {
+    if (!row.command?.trim()) {
+      throw new Error("automation is missing a command");
+    }
+  } else if (!row.prompt?.trim()) {
     throw new Error("automation is missing a prompt");
   }
   if (row.status === "running") {
@@ -5339,23 +5353,39 @@ async function enqueueAutomationRun(
     },
   });
 
-  const request: AcpRequest = {
+  const chat: AcpChatContext = {
     project_id: row.project_id,
-    account_id: row.account_id,
-    prompt: row.prompt,
-    config: automationConfig,
-    chat: {
-      project_id: row.project_id,
-      path: row.path,
-      sender_id: automationSenderId,
-      thread_id: row.thread_id,
-      parent_message_id: user_message_id,
-      message_id: assistant_message_id,
-      message_date: assistantDate,
-      automation_id: row.automation_id,
-      automation_title: row.title ?? undefined,
-    },
+    path: row.path,
+    sender_id: automationSenderId,
+    thread_id: row.thread_id,
+    parent_message_id: user_message_id,
+    message_id: assistant_message_id,
+    message_date: assistantDate,
+    automation_id: row.automation_id,
+    automation_title: row.title ?? undefined,
   };
+  const request: AcpJobRequest =
+    row.run_kind === "command"
+      ? {
+          request_kind: "command",
+          project_id: row.project_id,
+          account_id: row.account_id,
+          command: `${row.command ?? ""}`.trim(),
+          cwd: row.command_cwd ?? undefined,
+          timeout_ms:
+            row.command_timeout_ms ?? AUTOMATION_DEFAULT_COMMAND_TIMEOUT_MS,
+          max_output_bytes:
+            row.command_max_output_bytes ??
+            AUTOMATION_DEFAULT_COMMAND_MAX_OUTPUT_BYTES,
+          chat,
+        }
+      : {
+          project_id: row.project_id,
+          account_id: row.account_id,
+          prompt: row.prompt ?? "",
+          config: automationConfig,
+          chat,
+        };
 
   const job = enqueueAcpJob(request);
   await persistQueuedUserMessageProjection({
@@ -5574,7 +5604,12 @@ async function handleAcpAutomationRequest(
       account_id: existing?.account_id ?? request.account_id,
       enabled,
       title: config.title ?? null,
+      run_kind: config.run_kind ?? "codex",
       prompt: config.prompt ?? null,
+      command: config.command ?? null,
+      command_cwd: config.command_cwd ?? null,
+      command_timeout_ms: config.command_timeout_ms ?? null,
+      command_max_output_bytes: config.command_max_output_bytes ?? null,
       schedule_type: config.schedule_type ?? "daily",
       days_of_week: config.days_of_week ?? null,
       local_time: config.local_time ?? null,
@@ -6042,6 +6077,171 @@ async function writeQueuedJobFailureToChat({
   }
 }
 
+async function writeQueuedCommandResultToChat({
+  request,
+  content,
+}: {
+  request: AcpCommandRequest;
+  content: string;
+}): Promise<void> {
+  if (!request.chat || !conatClient) return;
+  const sender_id =
+    `${request.chat.sender_id ?? DEFAULT_AUTOMATION_CHAT_SENDER_ID}`.trim() ||
+    DEFAULT_AUTOMATION_CHAT_SENDER_ID;
+  await withChatSyncDB({
+    client: conatClient,
+    project_id: request.chat.project_id,
+    path: request.chat.path,
+    fn: async (syncdb) => {
+      syncdb.set(
+        buildChatMessage({
+          sender_id,
+          date: request.chat?.message_date ?? new Date().toISOString(),
+          prevHistory: [],
+          content,
+          generating: false,
+          message_id: request.chat?.message_id,
+          thread_id: request.chat?.thread_id,
+          parent_message_id: request.chat?.parent_message_id,
+        }),
+      );
+      syncdb.commit();
+      await syncdb.save();
+    },
+  });
+}
+
+async function runQueuedCommandJob({
+  job,
+  request,
+}: {
+  job: AcpJobRow;
+  request: AcpCommandRequest;
+}): Promise<void> {
+  if (!conatClient) {
+    throw new Error("conat client must be initialized");
+  }
+  const projectId =
+    `${request.chat?.project_id ?? request.project_id ?? ""}`.trim();
+  if (!projectId) {
+    throw new Error("command automation is missing project id");
+  }
+  const command = `${request.command ?? ""}`.trim();
+  if (!command) {
+    throw new Error("command automation is missing command");
+  }
+  const cwd = resolveAutomationCommandCwd({
+    chatPath: `${request.chat?.path ?? job.path ?? ""}`.trim(),
+    commandCwd: request.cwd,
+  });
+  const workspaceRoot = path.isAbsolute(cwd)
+    ? cwd
+    : resolveWorkspaceRoot(undefined);
+  const executor: AcpExecutor = preferContainerExecutor()
+    ? new ContainerExecutor({
+        projectId,
+        workspaceRoot,
+        conatClient,
+      })
+    : new LocalExecutor(workspaceRoot);
+  const timeoutMs = Math.max(
+    1_000,
+    Number(request.timeout_ms ?? AUTOMATION_DEFAULT_COMMAND_TIMEOUT_MS),
+  );
+  const maxOutputBytes = Math.max(
+    1_024,
+    Number(
+      request.max_output_bytes ?? AUTOMATION_DEFAULT_COMMAND_MAX_OUTPUT_BYTES,
+    ),
+  );
+
+  try {
+    const result = await executor.exec(command, {
+      cwd,
+      timeoutMs,
+      maxOutputBytes,
+    });
+    const captured = captureCommandAutomationOutput({
+      stdout: result.stdout ?? "",
+      stderr: result.stderr ?? "",
+      maxOutputBytes,
+      preferStderr: (result.exitCode ?? 0) !== 0 || !!result.signal,
+    });
+    await writeQueuedCommandResultToChat({
+      request,
+      content: formatCommandAutomationMarkdown({
+        command,
+        cwd,
+        timeoutMs,
+        exitCode: result.exitCode,
+        signal: result.signal,
+        stdout: captured.stdout,
+        stderr: captured.stderr,
+        truncated: captured.truncated,
+        maxOutputBytes,
+      }),
+    });
+    const terminalState =
+      (result.exitCode ?? 0) === 0 && !result.signal ? "completed" : "error";
+    await finalizeAutomationRun({
+      automation_id: request.chat?.automation_id,
+      terminalState,
+      last_job_op_id: job.op_id,
+      last_message_id: request.chat?.message_id,
+      error:
+        terminalState === "error"
+          ? `command exited with ${
+              result.signal
+                ? `signal ${result.signal}`
+                : `code ${result.exitCode ?? "unknown"}`
+            }`
+          : undefined,
+    });
+    setAcpJobState({
+      op_id: job.op_id,
+      state: terminalState,
+      error:
+        terminalState === "error"
+          ? `command exited with ${
+              result.signal
+                ? `signal ${result.signal}`
+                : `code ${result.exitCode ?? "unknown"}`
+            }`
+          : undefined,
+      worker_id: job.worker_id ?? currentDetachedWorkerContext?.worker_id,
+    });
+  } catch (err) {
+    const error = `Command automation failed: ${(err as Error)?.message ?? err}`;
+    logger.warn("queued command automation failed", {
+      op_id: job.op_id,
+      err,
+    });
+    await writeQueuedCommandResultToChat({
+      request,
+      content: formatCommandAutomationMarkdown({
+        command,
+        cwd,
+        timeoutMs,
+        stderr: error,
+        maxOutputBytes,
+      }),
+    });
+    await finalizeAutomationRun({
+      automation_id: request.chat?.automation_id,
+      terminalState: "error",
+      last_job_op_id: job.op_id,
+      last_message_id: request.chat?.message_id,
+      error,
+    });
+    setAcpJobState({
+      op_id: job.op_id,
+      state: "error",
+      error,
+      worker_id: job.worker_id ?? currentDetachedWorkerContext?.worker_id,
+    });
+  }
+}
+
 async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
   const request = decodeAcpJobRequest(job);
   const project_id = `${job.project_id}`.trim();
@@ -6083,6 +6283,11 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
       user_message_id,
       err,
     });
+  }
+
+  if (request.request_kind === "command") {
+    await runQueuedCommandJob({ job, request });
+    return;
   }
 
   request.prompt = maybeDecorateQueuedPromptForJob({

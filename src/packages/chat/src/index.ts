@@ -66,7 +66,12 @@ export interface ChatThreadAutomationConfig {
   enabled?: boolean;
   automation_id?: string;
   title?: string;
+  run_kind?: "codex" | "command";
   prompt?: string;
+  command?: string;
+  command_cwd?: string;
+  command_timeout_ms?: number;
+  command_max_output_bytes?: number;
   schedule_type?: "daily" | "interval";
   days_of_week?: number[];
   local_time?: string;

@@ -22,6 +22,8 @@ const DEFAULT_INTERVAL_MINUTES = 120;
 const DEFAULT_WINDOW_START_LOCAL_TIME = "06:00";
 const DEFAULT_WINDOW_END_LOCAL_TIME = "20:00";
 const DEFAULT_PAUSE_AFTER_RUNS = 7;
+const DEFAULT_COMMAND_TIMEOUT_MS = 10 * 60_000;
+const DEFAULT_COMMAND_MAX_OUTPUT_BYTES = 250_000;
 
 const ALL_DAYS = [0, 1, 2, 3, 4, 5, 6] as const;
 const DAY_SHORT_LABELS = ["S", "M", "T", "W", "T", "F", "S"] as const;
@@ -97,7 +99,11 @@ export function hasAutomationConfigContent(
     config &&
     (config.automation_id ||
       config.prompt ||
+      config.command ||
       config.title ||
+      config.command_cwd ||
+      config.command_timeout_ms ||
+      config.command_max_output_bytes ||
       config.local_time ||
       config.interval_minutes ||
       config.window_start_local_time ||
@@ -134,12 +140,15 @@ export function describeAutomationSchedule(
 export function getDefaultAutomationConfig({
   enabled = true,
   prompt,
+  runKind = "codex",
 }: {
   enabled?: boolean;
   prompt?: string;
+  runKind?: "codex" | "command";
 } = {}): AcpAutomationConfig {
   return {
     enabled,
+    run_kind: runKind,
     schedule_type: "daily",
     days_of_week: [...ALL_DAYS],
     local_time: DEFAULT_LOCAL_TIME,
@@ -149,6 +158,8 @@ export function getDefaultAutomationConfig({
     timezone: resolvedTimezone(),
     pause_after_unacknowledged_runs: DEFAULT_PAUSE_AFTER_RUNS,
     prompt,
+    command_timeout_ms: DEFAULT_COMMAND_TIMEOUT_MS,
+    command_max_output_bytes: DEFAULT_COMMAND_MAX_OUTPUT_BYTES,
   };
 }
 
@@ -156,18 +167,24 @@ export function buildAutomationDraft({
   config,
   enabled = true,
   promptFallback,
+  allowCodexRunKind = true,
 }: {
   config?: AcpAutomationConfig;
   enabled?: boolean;
   promptFallback?: string;
+  allowCodexRunKind?: boolean;
 } = {}): AcpAutomationConfig {
   const base = getDefaultAutomationConfig({
     enabled,
     prompt: promptFallback,
+    runKind: allowCodexRunKind ? "codex" : "command",
   });
+  const run_kind =
+    !allowCodexRunKind || config?.run_kind === "command" ? "command" : "codex";
   return {
     ...base,
     ...(config ?? {}),
+    run_kind,
     days_of_week: normalizeDaysOfWeek(config?.days_of_week),
   };
 }
@@ -175,12 +192,18 @@ export function buildAutomationDraft({
 export function normalizeAutomationConfigForSave({
   draft,
   automationId,
+  allowCodexRunKind = true,
 }: {
   draft?: AcpAutomationConfig;
   automationId?: string;
+  allowCodexRunKind?: boolean;
 }): AcpAutomationConfig | undefined {
   if (!draft) return undefined;
+  const run_kind =
+    !allowCodexRunKind || draft.run_kind === "command" ? "command" : "codex";
   const prompt = `${draft.prompt ?? ""}`.trim();
+  const command = `${draft.command ?? ""}`.trim();
+  const command_cwd = `${draft.command_cwd ?? ""}`.trim() || undefined;
   const timezone = `${draft.timezone ?? ""}`.trim() || resolvedTimezone();
   const days_of_week = normalizeDaysOfWeek(draft.days_of_week);
   const pause_after_unacknowledged_runs = Number(
@@ -188,7 +211,12 @@ export function normalizeAutomationConfigForSave({
   );
   const schedule_type =
     draft.schedule_type === "interval" ? "interval" : "daily";
-  if (!prompt || !timezone) {
+  if (!timezone) {
+    return undefined;
+  }
+  if (run_kind === "command") {
+    if (!command) return undefined;
+  } else if (!prompt) {
     return undefined;
   }
   if (schedule_type === "interval") {
@@ -208,7 +236,39 @@ export function normalizeAutomationConfigForSave({
       enabled: draft.enabled !== false,
       automation_id: automationId,
       title: `${draft.title ?? ""}`.trim() || undefined,
-      prompt,
+      run_kind,
+      prompt: run_kind === "codex" ? prompt : undefined,
+      command: run_kind === "command" ? command : undefined,
+      command_cwd,
+      command_timeout_ms:
+        run_kind === "command"
+          ? Math.max(
+              1_000,
+              Math.min(
+                24 * 60 * 60_000,
+                Math.round(
+                  Number(
+                    draft.command_timeout_ms ?? DEFAULT_COMMAND_TIMEOUT_MS,
+                  ),
+                ),
+              ),
+            )
+          : undefined,
+      command_max_output_bytes:
+        run_kind === "command"
+          ? Math.max(
+              1_024,
+              Math.min(
+                10 * 1024 * 1024,
+                Math.round(
+                  Number(
+                    draft.command_max_output_bytes ??
+                      DEFAULT_COMMAND_MAX_OUTPUT_BYTES,
+                  ),
+                ),
+              ),
+            )
+          : undefined,
       schedule_type,
       days_of_week,
       interval_minutes: Math.max(
@@ -234,7 +294,37 @@ export function normalizeAutomationConfigForSave({
     enabled: draft.enabled !== false,
     automation_id: automationId,
     title: `${draft.title ?? ""}`.trim() || undefined,
-    prompt,
+    run_kind,
+    prompt: run_kind === "codex" ? prompt : undefined,
+    command: run_kind === "command" ? command : undefined,
+    command_cwd,
+    command_timeout_ms:
+      run_kind === "command"
+        ? Math.max(
+            1_000,
+            Math.min(
+              24 * 60 * 60_000,
+              Math.round(
+                Number(draft.command_timeout_ms ?? DEFAULT_COMMAND_TIMEOUT_MS),
+              ),
+            ),
+          )
+        : undefined,
+    command_max_output_bytes:
+      run_kind === "command"
+        ? Math.max(
+            1_024,
+            Math.min(
+              10 * 1024 * 1024,
+              Math.round(
+                Number(
+                  draft.command_max_output_bytes ??
+                    DEFAULT_COMMAND_MAX_OUTPUT_BYTES,
+                ),
+              ),
+            ),
+          )
+        : undefined,
     schedule_type: "daily",
     days_of_week,
     local_time,
@@ -280,6 +370,7 @@ interface AutomationConfigFieldsProps {
   onChange: (patch: Partial<AcpAutomationConfig>) => void;
   disabled?: boolean;
   showEnableToggle?: boolean;
+  allowCodexRunKind?: boolean;
   enableLabel?: string;
   titlePlaceholder?: string;
   promptPlaceholder?: string;
@@ -290,14 +381,17 @@ export function AutomationConfigFields({
   onChange,
   disabled = false,
   showEnableToggle = true,
+  allowCodexRunKind = true,
   enableLabel = "Enable scheduled automation for this thread",
   titlePlaceholder = "Daily project status",
   promptPlaceholder = "What should Codex do on each scheduled run?",
 }: AutomationConfigFieldsProps) {
-  const value = buildAutomationDraft({ config: draft });
+  const value = buildAutomationDraft({ config: draft, allowCodexRunKind });
   const selectedDays = normalizeDaysOfWeek(value.days_of_week);
   const scheduleType =
     value.schedule_type === "interval" ? "interval" : "daily";
+  const runKind =
+    !allowCodexRunKind || value.run_kind === "command" ? "command" : "codex";
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -318,14 +412,102 @@ export function AutomationConfigFields({
         placeholder={titlePlaceholder}
         onChange={(e) => onChange({ title: e.target.value })}
       />
-      <label>Prompt</label>
-      <Input.TextArea
-        autoSize={{ minRows: 4, maxRows: 10 }}
-        value={value.prompt ?? ""}
-        disabled={disabled}
-        placeholder={promptPlaceholder}
-        onChange={(e) => onChange({ prompt: e.target.value })}
-      />
+      {allowCodexRunKind ? (
+        <>
+          <label>Run type</label>
+          <Select
+            value={runKind}
+            disabled={disabled}
+            options={[
+              { label: "Codex prompt", value: "codex" },
+              { label: "Bash command", value: "command" },
+            ]}
+            onChange={(next) =>
+              onChange({
+                run_kind: next === "command" ? "command" : "codex",
+              })
+            }
+          />
+        </>
+      ) : null}
+      {runKind === "command" ? (
+        <>
+          <label>Command</label>
+          <Input.TextArea
+            autoSize={{ minRows: 3, maxRows: 8 }}
+            value={value.command ?? ""}
+            disabled={disabled}
+            placeholder="What bash command should run on each scheduled run?"
+            onChange={(e) => onChange({ command: e.target.value })}
+          />
+          <label>Working directory</label>
+          <Input
+            value={value.command_cwd ?? ""}
+            disabled={disabled}
+            placeholder="Defaults to the chat directory"
+            onChange={(e) => onChange({ command_cwd: e.target.value })}
+          />
+          <label>Timeout (seconds)</label>
+          <InputNumber
+            min={1}
+            max={24 * 60 * 60}
+            disabled={disabled}
+            style={{ width: "100%" }}
+            value={Math.max(
+              1,
+              Math.round(
+                Number(value.command_timeout_ms ?? DEFAULT_COMMAND_TIMEOUT_MS) /
+                  1000,
+              ),
+            )}
+            onChange={(next) =>
+              onChange({
+                command_timeout_ms:
+                  Math.max(
+                    1,
+                    Number(next ?? DEFAULT_COMMAND_TIMEOUT_MS / 1000),
+                  ) * 1000,
+              })
+            }
+          />
+          <label>Max output to capture (KB)</label>
+          <InputNumber
+            min={1}
+            max={10 * 1024}
+            disabled={disabled}
+            style={{ width: "100%" }}
+            value={Math.max(
+              1,
+              Math.round(
+                Number(
+                  value.command_max_output_bytes ??
+                    DEFAULT_COMMAND_MAX_OUTPUT_BYTES,
+                ) / 1000,
+              ),
+            )}
+            onChange={(next) =>
+              onChange({
+                command_max_output_bytes:
+                  Math.max(
+                    1,
+                    Number(next ?? DEFAULT_COMMAND_MAX_OUTPUT_BYTES / 1000),
+                  ) * 1000,
+              })
+            }
+          />
+        </>
+      ) : (
+        <>
+          <label>Prompt</label>
+          <Input.TextArea
+            autoSize={{ minRows: 4, maxRows: 10 }}
+            value={value.prompt ?? ""}
+            disabled={disabled}
+            placeholder={promptPlaceholder}
+            onChange={(e) => onChange({ prompt: e.target.value })}
+          />
+        </>
+      )}
       <label>Schedule</label>
       <Select
         value={scheduleType}

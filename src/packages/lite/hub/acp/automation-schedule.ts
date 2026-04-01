@@ -9,13 +9,20 @@ export const AUTOMATION_ALL_DAYS = [0, 1, 2, 3, 4, 5, 6] as const;
 export const AUTOMATION_DEFAULT_INTERVAL_MINUTES = 120;
 export const AUTOMATION_DEFAULT_WINDOW_START_LOCAL_TIME = "06:00";
 export const AUTOMATION_DEFAULT_WINDOW_END_LOCAL_TIME = "20:00";
+export const AUTOMATION_DEFAULT_COMMAND_TIMEOUT_MS = 10 * 60_000;
+export const AUTOMATION_DEFAULT_COMMAND_MAX_OUTPUT_BYTES = 250_000;
 
 type AutomationConfigLike =
   | {
       enabled?: boolean | null;
       automation_id?: string | null;
       title?: string | null;
+      run_kind?: "codex" | "command" | null;
       prompt?: string | null;
+      command?: string | null;
+      command_cwd?: string | null;
+      command_timeout_ms?: number | null;
+      command_max_output_bytes?: number | null;
       schedule_type?: "daily" | "interval" | null;
       days_of_week?: unknown;
       local_time?: string | null;
@@ -123,12 +130,20 @@ export function normalizeAcpAutomationConfig(
 ): AcpAutomationConfig | undefined {
   if (!config) return undefined;
   const enabled = config.enabled !== false;
+  const run_kind = config.run_kind === "command" ? "command" : "codex";
   const prompt = `${config.prompt ?? ""}`.trim();
+  const command = `${config.command ?? ""}`.trim();
+  const command_cwd = `${config.command_cwd ?? ""}`.trim() || undefined;
   const timezone =
     normalizeAutomationTimezone(config.timezone ?? undefined) ??
     defaultTimezone ??
     Intl.DateTimeFormat().resolvedOptions().timeZone;
-  if (!prompt || !timezone) return undefined;
+  if (!timezone) return undefined;
+  if (run_kind === "command") {
+    if (!command) return undefined;
+  } else if (!prompt) {
+    return undefined;
+  }
 
   const schedule_type =
     config.schedule_type === "interval" ? "interval" : "daily";
@@ -154,7 +169,28 @@ export function normalizeAcpAutomationConfig(
       enabled,
       automation_id: `${config.automation_id ?? ""}`.trim() || undefined,
       title: `${config.title ?? ""}`.trim() || undefined,
-      prompt,
+      run_kind,
+      prompt: run_kind === "codex" ? prompt : undefined,
+      command: run_kind === "command" ? command : undefined,
+      command_cwd,
+      command_timeout_ms:
+        run_kind === "command"
+          ? clampNumber(
+              config.command_timeout_ms,
+              AUTOMATION_DEFAULT_COMMAND_TIMEOUT_MS,
+              1_000,
+              24 * 60 * 60_000,
+            )
+          : undefined,
+      command_max_output_bytes:
+        run_kind === "command"
+          ? clampNumber(
+              config.command_max_output_bytes,
+              AUTOMATION_DEFAULT_COMMAND_MAX_OUTPUT_BYTES,
+              1_024,
+              10 * 1024 * 1024,
+            )
+          : undefined,
       schedule_type,
       days_of_week,
       interval_minutes: clampNumber(
@@ -183,7 +219,28 @@ export function normalizeAcpAutomationConfig(
     enabled,
     automation_id: `${config.automation_id ?? ""}`.trim() || undefined,
     title: `${config.title ?? ""}`.trim() || undefined,
-    prompt,
+    run_kind,
+    prompt: run_kind === "codex" ? prompt : undefined,
+    command: run_kind === "command" ? command : undefined,
+    command_cwd,
+    command_timeout_ms:
+      run_kind === "command"
+        ? clampNumber(
+            config.command_timeout_ms,
+            AUTOMATION_DEFAULT_COMMAND_TIMEOUT_MS,
+            1_000,
+            24 * 60 * 60_000,
+          )
+        : undefined,
+    command_max_output_bytes:
+      run_kind === "command"
+        ? clampNumber(
+            config.command_max_output_bytes,
+            AUTOMATION_DEFAULT_COMMAND_MAX_OUTPUT_BYTES,
+            1_024,
+            10 * 1024 * 1024,
+          )
+        : undefined,
     schedule_type,
     days_of_week,
     local_time,

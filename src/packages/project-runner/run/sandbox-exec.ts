@@ -15,6 +15,7 @@ export interface SandboxExecOptions {
   script: string;
   cwd?: string;
   timeoutMs?: number;
+  maxOutputBytes?: number;
   /**
    * When true, start a fresh one-off container instead of exec'ing into the
    * existing project container. This is useful when the main container is not
@@ -62,6 +63,7 @@ export async function sandboxExec({
   script,
   cwd,
   timeoutMs,
+  maxOutputBytes,
   useEphemeral,
   noNetwork,
 }: SandboxExecOptions): Promise<SandboxExecResult> {
@@ -89,7 +91,7 @@ export async function sandboxExec({
         args,
         {
           timeout: timeoutMs,
-          maxBuffer: 10 * 1024 * 1024,
+          maxBuffer: Math.max(1024, maxOutputBytes ?? 10 * 1024 * 1024),
           killSignal: "SIGKILL",
         },
         // eslint-disable-next-line @typescript-eslint/no-explicit-any

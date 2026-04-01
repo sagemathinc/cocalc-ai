@@ -1,4 +1,4 @@
-import type { AcpRequest } from "@cocalc/conat/ai/acp/types";
+import type { AcpJobRequest } from "@cocalc/conat/ai/acp/types";
 import { getDatabase } from "./database";
 
 const TABLE = "acp_jobs";
@@ -92,14 +92,18 @@ function ensureInit(): void {
   }
 }
 
-function normalizeRequest(request: AcpRequest): AcpRequest {
+function normalizeRequest(request: AcpJobRequest): AcpJobRequest {
+  if (request.request_kind === "command") {
+    return request;
+  }
   return {
     ...request,
+    request_kind: request.request_kind ?? "codex",
     runtime_env: undefined,
   };
 }
 
-function assertChatIdentity(request: AcpRequest): {
+function assertChatIdentity(request: AcpJobRequest): {
   project_id: string;
   path: string;
   thread_id: string;
@@ -130,7 +134,7 @@ function assertChatIdentity(request: AcpRequest): {
   };
 }
 
-export function enqueueAcpJob(request: AcpRequest): AcpJobRow {
+export function enqueueAcpJob(request: AcpJobRequest): AcpJobRow {
   ensureInit();
   const db = getDatabase();
   const {
@@ -162,7 +166,7 @@ export function enqueueAcpJob(request: AcpRequest): AcpJobRow {
     user_message_id,
     assistant_message_id,
     assistant_message_date,
-    request.session_id ?? null,
+    request.request_kind === "command" ? null : request.session_id ?? null,
     send_mode,
     priority,
     request_json,
@@ -501,10 +505,14 @@ export function markRunningAcpJobsInterrupted(reason = "server restart"): void {
   ).run(reason, now, now);
 }
 
-export function decodeAcpJobRequest(row: AcpJobRow): AcpRequest {
-  const parsed = JSON.parse(row.request_json ?? "{}") as AcpRequest;
+export function decodeAcpJobRequest(row: AcpJobRow): AcpJobRequest {
+  const parsed = JSON.parse(row.request_json ?? "{}") as AcpJobRequest;
+  if (parsed.request_kind === "command") {
+    return parsed;
+  }
   return {
     ...parsed,
+    request_kind: parsed.request_kind ?? "codex",
     runtime_env: undefined,
   };
 }

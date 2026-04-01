@@ -68,4 +68,37 @@ describe("ACP automation schedule helpers", () => {
       ),
     ).toBeUndefined();
   });
+
+  it("normalizes command automations with defaults and output cap", () => {
+    expect(
+      normalizeAcpAutomationConfig(
+        {
+          run_kind: "command",
+          command: "git status --short",
+          command_cwd: "/work/repo",
+          schedule_type: "daily",
+          local_time: "6:00",
+          timezone: "UTC",
+        },
+        {
+          defaultPauseAfterRuns: 7,
+        },
+      ),
+    ).toEqual({
+      enabled: true,
+      automation_id: undefined,
+      title: undefined,
+      run_kind: "command",
+      prompt: undefined,
+      command: "git status --short",
+      command_cwd: "/work/repo",
+      command_timeout_ms: 600000,
+      command_max_output_bytes: 250000,
+      schedule_type: "daily",
+      days_of_week: [0, 1, 2, 3, 4, 5, 6],
+      local_time: "06:00",
+      timezone: "UTC",
+      pause_after_unacknowledged_runs: 7,
+    });
+  });
 });

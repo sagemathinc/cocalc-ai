@@ -782,6 +782,7 @@ export function ChatRoomThreadPanel({
     const automationDraft = buildAutomationDraft({
       config: newThreadSetup.automationConfig,
       enabled: newThreadSetup.automationConfig?.enabled === true,
+      allowCodexRunKind: newThreadSetup.agentMode === "codex",
     });
     const automationEnabled = automationDraft.enabled === true;
     return (
@@ -811,7 +812,6 @@ export function ChatRoomThreadPanel({
               </span>
               <Switch
                 checked={automationEnabled}
-                disabled={newThreadSetup.agentMode !== "codex"}
                 onChange={(checked) =>
                   update({
                     automationConfig: {
@@ -860,6 +860,12 @@ export function ChatRoomThreadPanel({
                           : DEFAULT_CODEX_MODEL;
                         update({
                           agentMode: mode,
+                          automationConfig: buildAutomationDraft({
+                            config: newThreadSetup.automationConfig,
+                            enabled:
+                              newThreadSetup.automationConfig?.enabled === true,
+                            allowCodexRunKind: true,
+                          }),
                           model,
                           codexConfig: {
                             ...newThreadSetup.codexConfig,
@@ -876,7 +882,15 @@ export function ChatRoomThreadPanel({
                         });
                         return;
                       }
-                      update({ agentMode: mode });
+                      update({
+                        agentMode: mode,
+                        automationConfig: buildAutomationDraft({
+                          config: newThreadSetup.automationConfig,
+                          enabled:
+                            newThreadSetup.automationConfig?.enabled === true,
+                          allowCodexRunKind: false,
+                        }),
+                      });
                     }}
                     options={[
                       { value: "codex", label: "Codex (agent)" },
@@ -1086,13 +1100,14 @@ export function ChatRoomThreadPanel({
               New automation setup
             </div>
             <div style={{ color: "#666", marginBottom: 14, fontSize: 13 }}>
-              Configure the next new Codex chat as a scheduled automation. Once
-              created, it will live in the Automations section and can still be
-              edited from thread settings later.
+              Configure the next new chat as a scheduled automation. Codex
+              threads can run prompts or commands; non-Codex threads can run
+              commands. Once created, it will live in the Automations section
+              and can still be edited from thread settings later.
             </div>
             <AutomationConfigFields
               draft={automationDraft}
-              disabled={newThreadSetup.agentMode !== "codex"}
+              allowCodexRunKind={newThreadSetup.agentMode === "codex"}
               showEnableToggle={false}
               onChange={(patch) =>
                 update({
