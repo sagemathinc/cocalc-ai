@@ -5,6 +5,7 @@ import { useProjectContext } from "@cocalc/frontend/project/context";
 import { ProjectSearchBody } from "@cocalc/frontend/project/search/body";
 import { lite } from "@cocalc/frontend/lite";
 import { normalizeAbsolutePath } from "@cocalc/util/path-model";
+import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 import { FindScopeBar } from "./find-scope-bar";
 import { FilesTab } from "./find-tab-files";
 import { SnapshotsTab } from "./find-tab-snapshots";
@@ -23,13 +24,13 @@ export const ProjectFind: React.FC<{ mode: "project" | "flyout" }> = ({
   const currentPathAbs = useTypedRedux({ project_id }, "current_path_abs");
   const currentPath = currentPathAbs ?? "/";
   const availableFeatures = useTypedRedux({ project_id }, "available_features");
-  const liteHome = availableFeatures?.get("homeDirectory");
   const homePath = useMemo(() => {
-    if (lite && typeof liteHome === "string" && liteHome.length > 0) {
-      return normalizeAbsolutePath(liteHome);
+    const resolvedHome = availableFeatures?.get("homeDirectory");
+    if (typeof resolvedHome === "string" && resolvedHome.length > 0) {
+      return normalizeAbsolutePath(resolvedHome);
     }
-    return "/root";
-  }, [liteHome]);
+    return getProjectHomeDirectory(project_id);
+  }, [availableFeatures, project_id]);
   const storedTab = useTypedRedux({ project_id }, "find_tab") as
     | FindTab
     | undefined;

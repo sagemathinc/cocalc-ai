@@ -626,8 +626,8 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     }
   }
 
-  // In launchpad mode HOME is currently stable (/root), while in lite mode it
-  // depends on runtime environment and should come from available_features.
+  // Canonical HOME comes from project runtime capabilities instead of a
+  // launchpad-specific hardcoded path.
   private getHomeDirectoryForPaths = (): string => {
     return getProjectHomeDirectory(this.project_id);
   };

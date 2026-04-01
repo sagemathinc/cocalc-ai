@@ -33,6 +33,7 @@ import getUrlTransform from "@cocalc/frontend/project/page/url-transform";
 import SideChat from "@cocalc/frontend/chat/side-chat";
 import { path_split } from "@cocalc/util/misc";
 import { normalizeAbsolutePath } from "@cocalc/util/path-model";
+import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 import {
   NAVIGATOR_SUBMIT_PROMPT_EVENT,
   queueNavigatorPromptIntent,
@@ -74,16 +75,6 @@ function navigatorChatPath(accountId?: string): string {
   }
   const key = sanitizeAccountId(accountId?.trim() || "unknown-account");
   return `.local/share/cocalc/navigator-${key}.chat`;
-}
-
-function getLiteHomeDirectory(availableFeatures: any): string {
-  const homeFromFeatures =
-    availableFeatures?.homeDirectory ??
-    availableFeatures?.get?.("homeDirectory");
-  if (typeof homeFromFeatures === "string" && homeFromFeatures.length > 0) {
-    return normalizeAbsolutePath(homeFromFeatures);
-  }
-  return "/";
 }
 
 function latestThreadKey(actions?: ChatActions): string | null {
@@ -305,11 +296,12 @@ export function NavigatorShell({
   );
 
   const homeDirectory = useMemo(() => {
-    if (!lite) {
-      return "/root";
+    const resolvedHome = available_features?.get?.("homeDirectory");
+    if (typeof resolvedHome === "string" && resolvedHome.length > 0) {
+      return normalizeAbsolutePath(resolvedHome);
     }
-    return getLiteHomeDirectory(available_features);
-  }, [available_features]);
+    return getProjectHomeDirectory(project_id);
+  }, [available_features, project_id]);
 
   const navigatorPath = useMemo(() => {
     if (!lite && typeof account_id !== "string") {

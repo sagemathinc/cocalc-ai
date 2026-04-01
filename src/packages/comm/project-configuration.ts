@@ -4,6 +4,12 @@ configuration information.
 */
 
 import type { ConfigurationAspect } from "@cocalc/comm/websocket/types";
+import {
+  DEFAULT_PROJECT_RUNTIME_GID,
+  DEFAULT_PROJECT_RUNTIME_HOME,
+  DEFAULT_PROJECT_RUNTIME_UID,
+  DEFAULT_PROJECT_RUNTIME_USER,
+} from "@cocalc/util/project-runtime";
 
 export type { ConfigurationAspect };
 
@@ -42,6 +48,10 @@ export interface MainCapabilities {
   vscode: boolean; // "code-server"
   julia: boolean; // julia programming language + Pluto package is installed (we assume it)
   homeDirectory: string | null; // the home directory of the project
+  runtimeUser?: string | null;
+  runtimeUid?: number | null;
+  runtimeGid?: number | null;
+  sudoAvailable?: boolean;
 }
 
 export interface Available {
@@ -62,6 +72,10 @@ export interface Available {
   julia: boolean;
   formatting: Capabilities | boolean;
   homeDirectory: string | null;
+  runtimeUser?: string | null;
+  runtimeUid?: number | null;
+  runtimeGid?: number | null;
+  sudoAvailable?: boolean;
 }
 
 export const NO_AVAIL: Readonly<Available> = {
@@ -82,6 +96,10 @@ export const NO_AVAIL: Readonly<Available> = {
   vscode: false,
   julia: false,
   homeDirectory: null,
+  runtimeUser: null,
+  runtimeUid: null,
+  runtimeGid: null,
+  sudoAvailable: false,
 } as const;
 
 export const ALL_AVAIL: Readonly<Available> = {
@@ -101,5 +119,9 @@ export const ALL_AVAIL: Readonly<Available> = {
   pandoc: true,
   vscode: true,
   julia: true,
-  homeDirectory: "/home/user", // sane default
+  homeDirectory: DEFAULT_PROJECT_RUNTIME_HOME,
+  runtimeUser: DEFAULT_PROJECT_RUNTIME_USER,
+  runtimeUid: DEFAULT_PROJECT_RUNTIME_UID,
+  runtimeGid: DEFAULT_PROJECT_RUNTIME_GID,
+  sudoAvailable: true,
 } as const;

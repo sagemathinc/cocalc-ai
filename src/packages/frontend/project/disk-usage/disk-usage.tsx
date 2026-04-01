@@ -24,6 +24,7 @@ import type {
   ProjectStorageHistoryPoint,
 } from "@cocalc/conat/hub/api/projects";
 import { human_readable_size } from "@cocalc/util/misc";
+import { DEFAULT_PROJECT_RUNTIME_HOME } from "@cocalc/util/project-runtime";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "@cocalc/frontend/components";
 import { redux, useAsyncEffect } from "@cocalc/frontend/app-framework";
@@ -796,7 +797,8 @@ export default function DiskUsage({
     setReloadStatus("");
     try {
       const homePath =
-        visible.find((bucket) => bucket.key === "home")?.path ?? "/root";
+        visible.find((bucket) => bucket.key === "home")?.path ??
+        DEFAULT_PROJECT_RUNTIME_HOME;
       await getStorageOverview({
         project_id,
         home: homePath,

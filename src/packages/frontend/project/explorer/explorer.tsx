@@ -61,6 +61,7 @@ import useCounter from "@cocalc/frontend/app-framework/counter-hook";
 import DiskUsage from "@cocalc/frontend/project/disk-usage/disk-usage";
 import { lite } from "@cocalc/frontend/lite";
 import { normalizeAbsolutePath } from "@cocalc/util/path-model";
+import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 import { useHostInfo } from "@cocalc/frontend/projects/host-info";
 import {
   evaluateHostOperational,
@@ -220,9 +221,9 @@ export function Explorer() {
   const inBackupsPath = isBackupsPath(effective_current_path);
   const inSnapshotsPath = isSnapshotsPath(effective_current_path);
   const homePath =
-    lite && typeof available_features?.homeDirectory === "string"
+    typeof available_features?.homeDirectory === "string"
       ? normalizeAbsolutePath(available_features.homeDirectory)
-      : "/root";
+      : getProjectHomeDirectory(project_id);
   const listingPath =
     inSnapshotsPath && !effective_current_path.startsWith("/")
       ? normalizeAbsolutePath(effective_current_path, homePath)

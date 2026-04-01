@@ -23,6 +23,7 @@ import { isBackupsPath } from "@cocalc/util/consts/backups";
 import { isSnapshotsPath } from "@cocalc/util/consts/snapshots";
 import { trunc_middle } from "@cocalc/util/misc";
 import { normalizeAbsolutePath } from "@cocalc/util/path-model";
+import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 import { lite } from "@cocalc/frontend/lite";
 import { createPathSegmentLink } from "./path-segment-link";
 
@@ -219,11 +220,11 @@ export const PathNavigator: React.FC<Props> = React.memo(
       { project_id },
       "available_features",
     );
-    const liteHome = availableFeatures?.get("homeDirectory");
+    const resolvedHome = availableFeatures?.get("homeDirectory");
     const homePath =
-      lite && typeof liteHome === "string" && liteHome.length > 0
-        ? normalizeAbsolutePath(liteHome)
-        : "/root";
+      typeof resolvedHome === "string" && resolvedHome.length > 0
+        ? normalizeAbsolutePath(resolvedHome)
+        : getProjectHomeDirectory(project_id);
     const navigate = (path: string) => {
       if (onNavigate) {
         onNavigate(path);
