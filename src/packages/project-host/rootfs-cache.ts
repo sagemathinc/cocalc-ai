@@ -35,7 +35,15 @@ import {
   extractBaseImage,
   imageCachePath,
   inspectFilePath,
+  normalizationFilePath,
 } from "@cocalc/project-runner/run/rootfs-base";
+import {
+  loadRootfsNormalizationMetadata,
+  normalizeRootfsInPlace,
+  ROOTFS_NORMALIZER_VERSION,
+  requireCurrentRootfsNormalizationMetadata,
+  writeRootfsNormalizationMetadata,
+} from "@cocalc/project-runner/run/rootfs-normalize";
 import {
   isManagedRootfsImageName,
   normalizeRootfsImageName,
@@ -220,6 +228,16 @@ async function buildEntry(
     running_project_count: usage.running_project_ids.length,
     project_ids: usage.project_ids,
     running_project_ids: usage.running_project_ids,
+  };
+}
+
+function rootfsUsageCounts(usage?: RootfsUsage): {
+  project_count: number;
+  running: number;
+} {
+  return {
+    project_count: usage?.project_ids.length ?? 0,
+    running: usage?.running_project_ids.length ?? 0,
   };
 }
 
@@ -545,6 +563,7 @@ async function deleteCachedManagedRootfs({
 }): Promise<void> {
   const finalPath = imageCachePath(image);
   const finalInspectPath = inspectFilePath(image);
+  const finalNormalizationPath = normalizationFilePath(image);
   logger.warn("removing cached managed RootFS entry", {
     image,
     reason,
@@ -552,6 +571,7 @@ async function deleteCachedManagedRootfs({
   });
   await deleteCachedRootfsPath(finalPath).catch(() => {});
   await rm(finalInspectPath, { force: true }).catch(() => {});
+  await rm(finalNormalizationPath, { force: true }).catch(() => {});
 }
 
 async function downloadManagedRootfsArtifact({
@@ -580,6 +600,8 @@ async function downloadManagedRootfsArtifact({
   });
   const finalPath = imageCachePath(image);
   const finalInspectPath = inspectFilePath(image);
+  const finalNormalizationPath = normalizationFilePath(image);
+  const usage = rootfsUsageByImage().get(image);
   if (await exists(finalPath)) {
     const usable = await looksLikeUsableManagedRootfs(finalPath).catch(
       () => false,
@@ -590,44 +612,71 @@ async function downloadManagedRootfsArtifact({
         reason: "cached image is missing expected rootfs directories",
       });
     } else {
-      reportPullProgress(onProgress, {
-        message: "RootFS already cached on this host",
-        progress: access.regional_replication_target ? 88 : 100,
-        detail: {
+      const normalization = await loadRootfsNormalizationMetadata(
+        finalNormalizationPath,
+      );
+      if (
+        normalization == null ||
+        normalization.version !== ROOTFS_NORMALIZER_VERSION
+      ) {
+        const counts = rootfsUsageCounts(usage);
+        if (counts.project_count > 0 || counts.running > 0) {
+          throw new Error(
+            `cached managed RootFS '${image}' does not match CoCalc runtime contract v${ROOTFS_NORMALIZER_VERSION} and is currently in use by ${counts.project_count} project(s); reprovision the host or flush the RootFS cache before using this image`,
+          );
+        }
+        await deleteCachedManagedRootfs({
           image,
-          release_id: access.release_id,
-        },
-      });
-      logger.info("managed RootFS artifact already cached", {
-        image,
-        release_id: access.release_id,
-        content_key: access.content_key,
-      });
-      if (access.inspect_data && !(await exists(finalInspectPath))) {
-        await writeFile(finalInspectPath, JSON.stringify(access.inspect_data));
-      }
-      if (awaitRegionalReplication) {
-        await maybeReplicateManagedRootfsRustic({
-          access,
-          sourcePath: finalPath,
-          onProgress,
+          reason:
+            "cached image is missing or outdated RootFS normalization metadata; refreshing cache entry",
         });
       } else {
-        scheduleManagedRootfsReplication({
-          access,
-          sourcePath: finalPath,
+        requireCurrentRootfsNormalizationMetadata({
+          image,
+          metadataPath: finalNormalizationPath,
+          metadata: normalization,
         });
       }
-      reportPullProgress(onProgress, {
-        message: "RootFS ready on host",
-        progress: 100,
-        detail: {
-          image,
-          release_id: access.release_id,
-        },
-      });
-      return;
     }
+  }
+  if (await exists(finalPath)) {
+    reportPullProgress(onProgress, {
+      message: "RootFS already cached on this host",
+      progress: access.regional_replication_target ? 88 : 100,
+      detail: {
+        image,
+        release_id: access.release_id,
+      },
+    });
+    logger.info("managed RootFS artifact already cached", {
+      image,
+      release_id: access.release_id,
+      content_key: access.content_key,
+    });
+    if (access.inspect_data && !(await exists(finalInspectPath))) {
+      await writeFile(finalInspectPath, JSON.stringify(access.inspect_data));
+    }
+    if (awaitRegionalReplication) {
+      await maybeReplicateManagedRootfsRustic({
+        access,
+        sourcePath: finalPath,
+        onProgress,
+      });
+    } else {
+      scheduleManagedRootfsReplication({
+        access,
+        sourcePath: finalPath,
+      });
+    }
+    reportPullProgress(onProgress, {
+      message: "RootFS ready on host",
+      progress: 100,
+      detail: {
+        image,
+        release_id: access.release_id,
+      },
+    });
+    return;
   }
   for (const tempDir of await findManagedRootfsRestoreTemps()) {
     logger.warn("removing stale managed RootFS restore temp dir", {
@@ -692,10 +741,29 @@ async function downloadManagedRootfsArtifact({
           size_bytes: access.size_bytes,
           elapsed_ms: Date.now() - restoreStarted,
         });
+        reportPullProgress(onProgress, {
+          message: "normalizing RootFS runtime contract",
+          progress: 84,
+          detail: {
+            image,
+            release_id: access.release_id,
+          },
+        });
+        const normalized = await normalizeRootfsInPlace({
+          image,
+          rootfsPath: stagedRootfsPath,
+          onProgress: ({ message, detail }) => {
+            reportPullProgress(onProgress, {
+              message,
+              progress: 88,
+              detail,
+            });
+          },
+        });
         try {
           reportPullProgress(onProgress, {
             message: "finalizing RootFS cache entry",
-            progress: 84,
+            progress: 90,
             detail: {
               image,
               release_id: access.release_id,
@@ -711,6 +779,13 @@ async function downloadManagedRootfsArtifact({
               JSON.stringify(access.inspect_data),
             );
           }
+          await writeRootfsNormalizationMetadata({
+            metadataPath: finalNormalizationPath,
+            metadata: {
+              ...normalized,
+              rootfs_path: finalPath,
+            },
+          });
         } catch (err) {
           if (await exists(finalPath)) {
             await deleteCachedManagedRootfs({
@@ -873,6 +948,7 @@ export async function deleteRootfsCacheEntry(image: string): Promise<{
   }
   const cache_path = imageCachePath(trimmed);
   const inspect_path = inspectFilePath(trimmed);
+  const normalization_path = normalizationFilePath(trimmed);
   let removed = false;
   if (await exists(cache_path)) {
     await deleteCachedRootfsPath(cache_path);
@@ -880,6 +956,10 @@ export async function deleteRootfsCacheEntry(image: string): Promise<{
   }
   if (await exists(inspect_path)) {
     await rm(inspect_path, { force: true, maxRetries: 3 });
+    removed = true;
+  }
+  if (await exists(normalization_path)) {
+    await rm(normalization_path, { force: true, maxRetries: 3 });
     removed = true;
   }
   return { removed };

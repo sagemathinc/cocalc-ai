@@ -7,6 +7,12 @@ import { readFile, rm, writeFile } from "fs/promises";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import { isManagedRootfsImageName } from "@cocalc/util/rootfs-images";
 import pullImage from "./pull-image";
+import {
+  loadRootfsNormalizationMetadata,
+  normalizeRootfsInPlace,
+  requireCurrentRootfsNormalizationMetadata,
+  writeRootfsNormalizationMetadata,
+} from "./rootfs-normalize";
 import { shiftProgress } from "@cocalc/conat/lro/progress";
 import { PROGRESS_ARGS, rsyncProgressReporter } from "./rsync-progress";
 import getLogger from "@cocalc/backend/logger";
@@ -45,6 +51,10 @@ export function inspectFilePath(image: string): string {
   return join(IMAGE_CACHE, `.${imagePathComponent(image)}.json`);
 }
 
+export function normalizationFilePath(image: string): string {
+  return join(IMAGE_CACHE, `.${imagePathComponent(image)}.normalized.json`);
+}
+
 // this should error if the image isn't available and extracted.  I.e., it should always
 // be either very fast or throw an error.  Clients that use it should make sure to do
 // extractBaseImage before using this.  The reason is to ensure that users have visibility
@@ -71,12 +81,17 @@ export const extractBaseImage = reuseInFlight(async (image: string) => {
 
   try {
     const baseImagePath = imageCachePath(image);
+    const normalizedPath = normalizationFilePath(image);
     reportProgress({ progress: 0, desc: `checking for ${image}...` });
     if (
       (await exists(inspectFilePath(image))) &&
       (await exists(baseImagePath))
     ) {
-      // already exist
+      requireCurrentRootfsNormalizationMetadata({
+        image,
+        metadataPath: normalizedPath,
+        metadata: await loadRootfsNormalizationMetadata(normalizedPath),
+      });
       reportProgress({ progress: 100, desc: `${image} available` });
       return baseImagePath;
     }
@@ -173,21 +188,56 @@ export const extractBaseImage = reuseInFlight(async (image: string) => {
           recursive: true,
           maxRetries: 3,
         });
+        await rm(inspectFilePath(image), { force: true });
+        await rm(normalizedPath, { force: true });
         await executeCode({ command: "podman", args: ["image", "rm", image] });
       } catch {}
       reportProgress({ progress: 100, desc: `extracting ${image} failed` });
       throw err;
     }
-    // success -- write out "podman image inspect" in json format to:
-    //   (1) signal success, and (2) it is useful for getting information about
-    // the image (environment, sha256, etc.), without having to download it again.
-    await writeFile(inspectFilePath(image), inspect);
-    // remove the image to save space, in case it isn't used by
-    // anything else.  we will not need it again, since we already
-    // have a copy of it.
-    await executeCode({ command: "podman", args: ["image", "rm", image] });
-    reportProgress({ progress: 100, desc: `pulled and extracted ${image}` });
-    return baseImagePath;
+    try {
+      const normalized = await normalizeRootfsInPlace({
+        image,
+        rootfsPath: baseImagePath,
+        onProgress: ({ message }) => {
+          reportProgress({
+            progress: 96,
+            desc: `${message} (${image})`,
+          });
+        },
+      });
+
+      // success -- write out "podman image inspect" in json format to:
+      //   (1) signal success, and (2) it is useful for getting information about
+      // the image (environment, sha256, etc.), without having to download it again.
+      await writeFile(inspectFilePath(image), inspect);
+      await writeRootfsNormalizationMetadata({
+        metadataPath: normalizedPath,
+        metadata: normalized,
+      });
+      // remove the image to save space, in case it isn't used by
+      // anything else.  we will not need it again, since we already
+      // have a copy of it.
+      await executeCode({ command: "podman", args: ["image", "rm", image] });
+      reportProgress({ progress: 100, desc: `pulled and extracted ${image}` });
+      return baseImagePath;
+    } catch (err) {
+      reportProgress({
+        progress: 100,
+        desc: `normalizing ${image} failed`,
+      });
+      try {
+        await rm(baseImagePath, {
+          force: true,
+          recursive: true,
+          maxRetries: 3,
+        });
+        await rm(inspectFilePath(image), { force: true });
+        await rm(normalizedPath, { force: true });
+        await executeCode({ command: "podman", args: ["image", "rm", image] });
+      } catch {}
+      throw err;
+    }
   } finally {
     delete progressWatchers[image];
   }

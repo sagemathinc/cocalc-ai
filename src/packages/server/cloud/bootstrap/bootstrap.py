@@ -36,7 +36,7 @@ from typing import Any
 
 STATE_SCHEMA_VERSION = 1
 HELPER_SCHEMA_VERSION = "20260330-v1"
-RUNTIME_WRAPPER_VERSION = "20260331-v1"
+RUNTIME_WRAPPER_VERSION = "20260401-v1"
 BOOTSTRAP_LOG_MAX_BYTES = 4 * 1024 * 1024
 BUNDLE_RETENTION_COUNT = 3
 
@@ -1227,6 +1227,191 @@ case "$cmd" in
     # inode identity comes from overlayfs, which corrupts published child
     # RootFS trees.
     exec /usr/bin/rsync -aAX --numeric-ids "$src"/ "$dest"/
+    ;;
+  normalize-rootfs)
+    if [ "$#" -ne 1 ]; then
+      echo "usage: cocalc-runtime-storage normalize-rootfs <rootfs>" >&2
+      exit 2
+    fi
+    rootfs="$1"
+    check_args "$rootfs"
+    if [ ! -d "$rootfs" ]; then
+      deny "rootfs-not-found" "$rootfs"
+    fi
+    shell_path=""
+    if [ -x "$rootfs/bin/bash" ]; then
+      shell_path="/bin/bash"
+    elif [ -x "$rootfs/bin/sh" ]; then
+      shell_path="/bin/sh"
+    else
+      deny "rootfs-shell-missing" "$rootfs"
+    fi
+    normalize_script="$(cat <<'EOF_COCALC_NORMALIZE_ROOTFS'
+set -euo pipefail
+export DEBIAN_FRONTEND=noninteractive
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+want_user="user"
+want_uid="1000"
+want_gid="1000"
+want_home="/home/user"
+want_shell="/bin/bash"
+if [ ! -x "$want_shell" ] && [ -x /bin/sh ]; then
+  want_shell="/bin/sh"
+fi
+
+fail() {
+  echo "$1" >&2
+  exit "${2:-1}"
+}
+
+mkdir -p /home /tmp /var/tmp
+chmod 1777 /tmp /var/tmp || true
+
+if [ ! -w /etc ] || [ ! -w /home ] || [ ! -w /tmp ] || [ ! -w /var/tmp ]; then
+  fail "rootfs contract failed: /etc, /home, /tmp, and /var/tmp must be writable" 41
+fi
+if [ ! -x /bin/bash ] && [ ! -x /bin/sh ]; then
+  fail "rootfs contract failed: no usable shell at /bin/bash or /bin/sh" 42
+fi
+if command -v getconf >/dev/null 2>&1; then
+  if ! getconf GNU_LIBC_VERSION >/dev/null 2>&1; then
+    fail "rootfs contract failed: glibc is required" 43
+  fi
+elif [ ! -e /lib64/ld-linux-x86-64.so.2 ] && \
+     [ ! -e /lib/x86_64-linux-gnu/libc.so.6 ] && \
+     [ ! -e /lib/ld-linux-aarch64.so.1 ] && \
+     [ ! -e /lib64/ld-linux-aarch64.so.1 ] && \
+     [ ! -e /lib/aarch64-linux-gnu/libc.so.6 ]; then
+  fail "rootfs contract failed: glibc is required" 43
+fi
+
+distro_family=""
+package_manager=""
+if [ -r /etc/os-release ]; then
+  . /etc/os-release
+fi
+if command -v apt-get >/dev/null 2>&1; then
+  distro_family="debian"
+  package_manager="apt-get"
+elif command -v dnf >/dev/null 2>&1; then
+  distro_family="rhel"
+  package_manager="dnf"
+elif command -v microdnf >/dev/null 2>&1; then
+  distro_family="rhel"
+  package_manager="microdnf"
+elif command -v yum >/dev/null 2>&1; then
+  distro_family="rhel"
+  package_manager="yum"
+elif command -v zypper >/dev/null 2>&1; then
+  distro_family="sles"
+  package_manager="zypper"
+else
+  fail "rootfs contract failed: unsupported distro family or package manager" 44
+fi
+
+for cmd_name in getent id useradd usermod groupadd groupmod; do
+  command -v "$cmd_name" >/dev/null 2>&1 || \
+    fail "rootfs contract failed: required user management tool '$cmd_name' is missing" 45
+done
+
+case "$package_manager" in
+  apt-get)
+    apt-get update
+    apt-get install -y --no-install-recommends sudo ca-certificates curl
+    rm -rf /var/lib/apt/lists/*
+    ;;
+  dnf)
+    dnf install -y sudo ca-certificates curl
+    dnf clean all || true
+    ;;
+  microdnf)
+    microdnf install -y sudo ca-certificates curl
+    microdnf clean all || true
+    ;;
+  yum)
+    yum install -y sudo ca-certificates curl
+    yum clean all || true
+    ;;
+  zypper)
+    zypper --non-interactive --gpg-auto-import-keys refresh || true
+    zypper --non-interactive install --no-recommends sudo ca-certificates curl
+    zypper clean --all || true
+    ;;
+esac
+
+if command -v update-ca-certificates >/dev/null 2>&1; then
+  update-ca-certificates || true
+fi
+if command -v update-ca-trust >/dev/null 2>&1; then
+  update-ca-trust || true
+fi
+
+existing_gid_group="$(getent group "$want_gid" | cut -d: -f1 || true)"
+if getent group "$want_user" >/dev/null 2>&1; then
+  current_gid="$(getent group "$want_user" | cut -d: -f3)"
+  if [ "$current_gid" != "$want_gid" ]; then
+    if [ -n "$existing_gid_group" ] && [ "$existing_gid_group" != "$want_user" ]; then
+      fail "rootfs contract failed: conflicting existing group for gid 1000 ($existing_gid_group)" 51
+    fi
+    groupmod -g "$want_gid" "$want_user"
+  fi
+else
+  if [ -n "$existing_gid_group" ]; then
+    groupmod -n "$want_user" "$existing_gid_group"
+  else
+    groupadd -g "$want_gid" "$want_user"
+  fi
+fi
+
+existing_uid_user="$(getent passwd "$want_uid" | cut -d: -f1 || true)"
+if id "$want_user" >/dev/null 2>&1; then
+  current_uid="$(id -u "$want_user")"
+  if [ "$current_uid" != "$want_uid" ]; then
+    if [ -n "$existing_uid_user" ] && [ "$existing_uid_user" != "$want_user" ]; then
+      fail "rootfs contract failed: conflicting existing user for uid 1000 ($existing_uid_user)" 52
+    fi
+    usermod -u "$want_uid" "$want_user"
+  fi
+else
+  if [ -n "$existing_uid_user" ]; then
+    usermod -l "$want_user" "$existing_uid_user"
+  else
+    useradd -m -u "$want_uid" -g "$want_user" -d "$want_home" -s "$want_shell" "$want_user"
+  fi
+fi
+
+usermod -g "$want_user" -d "$want_home" -m -s "$want_shell" "$want_user"
+mkdir -p "$want_home"
+chown "$want_uid:$want_gid" "$want_home"
+
+mkdir -p /etc/sudoers.d
+printf '%s ALL=(ALL) NOPASSWD:ALL\n' "$want_user" >/etc/sudoers.d/cocalc-user
+chmod 0440 /etc/sudoers.d/cocalc-user
+if command -v visudo >/dev/null 2>&1; then
+  visudo -cf /etc/sudoers.d/cocalc-user >/dev/null
+fi
+
+id "$want_user" >/dev/null 2>&1 || fail "rootfs contract failed: 'id user' did not succeed" 61
+getent passwd "$want_user" >/dev/null 2>&1 || fail "rootfs contract failed: 'getent passwd user' did not succeed" 62
+[ "$(su - "$want_user" -c 'whoami')" = "$want_user" ] || fail "rootfs contract failed: 'su - user -c whoami' did not return user" 63
+[ "$(su - "$want_user" -c 'printf %s \"$HOME\"" )" = "$want_home" ] || fail "rootfs contract failed: user home is not /home/user" 64
+su - "$want_user" -c 'sudo -n true' >/dev/null 2>&1 || fail "rootfs contract failed: passwordless sudo is not working for user" 65
+command -v sudo >/dev/null 2>&1 || fail "rootfs contract failed: sudo is not installed" 66
+command -v curl >/dev/null 2>&1 || fail "rootfs contract failed: curl is not installed" 67
+if [ ! -d /etc/ssl/certs ] && \
+   [ ! -f /etc/ssl/cert.pem ] && \
+   [ ! -f /etc/pki/tls/certs/ca-bundle.crt ] && \
+   [ ! -f /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem ] && \
+   [ ! -f /etc/ssl/ca-bundle.pem ]; then
+  fail "rootfs contract failed: system CA certificates are not configured" 68
+fi
+
+printf '{"ok":true,"distro_family":"%s","package_manager":"%s","shell":"%s","glibc":true,"sudo":true,"ca_certificates":true,"curl":true,"runtime_user":"%s","runtime_uid":%s,"runtime_gid":%s,"runtime_home":"%s"}\n' \
+  "$distro_family" "$package_manager" "$want_shell" "$want_user" "$want_uid" "$want_gid" "$want_home"
+EOF_COCALC_NORMALIZE_ROOTFS
+)"
+    exec /usr/bin/podman run --rm --network host --user 0:0 --security-opt label=disable --rootfs "$rootfs" "$shell_path" -lc "$normalize_script"
     ;;
   rootfs-rustic-backup)
     if [ "$#" -lt 3 ]; then

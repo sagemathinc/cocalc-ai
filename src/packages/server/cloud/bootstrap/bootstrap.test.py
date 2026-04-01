@@ -2,6 +2,7 @@
 
 import json
 import os
+import subprocess
 import tempfile
 import unittest
 from collections import namedtuple
@@ -382,6 +383,11 @@ class BootstrapWrapperScriptTest(unittest.TestCase):
             self.assertIn("metacopy=on,redirect_dir=on,index=on", script)
             self.assertIn("project-rustic-backup)", script)
             self.assertIn("project-rustic-restore)", script)
+            self.assertIn("normalize-rootfs)", script)
+            self.assertIn('podman run --rm --network host --user 0:0', script)
+            wrapper_path = Path(tmpdir) / "cocalc-runtime-storage"
+            wrapper_path.write_text(script, encoding="utf-8")
+            subprocess.run(["bash", "-n", str(wrapper_path)], check=True)
 
     def test_write_helpers_chowns_only_targeted_paths(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
