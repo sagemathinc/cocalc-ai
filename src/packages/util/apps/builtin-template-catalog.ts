@@ -76,6 +76,76 @@ function withTemplateTheme(
   };
 }
 
+function makePublicViewerBootstrapCommand({
+  title,
+  description,
+  fileTypes,
+}: {
+  title: string;
+  description: string;
+  fileTypes: string[];
+}): string {
+  return `mkdir -p "$APP_STATIC_ROOT" && python3 - <<'PY'
+import json
+import os
+import pathlib
+import re
+
+root = pathlib.Path(os.environ["APP_STATIC_ROOT"]).resolve()
+manifest = root / "index.json"
+if manifest.exists():
+    raise SystemExit(0)
+
+viewer_file_types = {${fileTypes.map((ext) => JSON.stringify(ext.toLowerCase())).join(", ")}}
+viewer_type_map = {
+    ".md": "markdown",
+    ".ipynb": "notebook",
+    ".slides": "slides",
+    ".board": "board",
+}
+skip_names = {"index.json", "index.html"}
+
+def titleize(name: str) -> str:
+    text = re.sub(r"[_-]+", " ", name).strip()
+    return text[:1].upper() + text[1:] if text else name
+
+entries = []
+for path in sorted(root.rglob("*")):
+    if not path.is_file():
+        continue
+    rel = path.relative_to(root)
+    if any(part.startswith(".") for part in rel.parts):
+        continue
+    rel_posix = rel.as_posix()
+    if rel_posix in skip_names:
+        continue
+    suffix = path.suffix.lower()
+    entries.append(
+        {
+            "path": rel_posix,
+            "title": titleize(path.stem),
+            "type": viewer_type_map.get(suffix, "file"),
+            "render": "viewer" if suffix in viewer_file_types else "raw",
+        }
+    )
+
+manifest.write_text(
+    json.dumps(
+        {
+            "version": 1,
+            "kind": "cocalc-public-viewer-index",
+            "title": ${JSON.stringify(title)},
+            "description": ${JSON.stringify(description)},
+            "entries": entries,
+        },
+        indent=2,
+    )
+    + "\\n",
+    encoding="utf-8",
+)
+PY`;
+}
+
 export const BUILTIN_APP_TEMPLATE_CATALOG: AppTemplateCatalogV1 = {
   version: 1,
   kind: "cocalc-app-template-catalog",
@@ -925,6 +995,117 @@ exec "$quarto_bin" preview index.qmd --no-browser --host "\${HOST:-127.0.0.1}" -
         service_open_mode: "proxy",
         command:
           "node -e \"const http=require('http');const host=process.env.HOST||'127.0.0.1';const port=Number(process.env.PORT||8080);http.createServer((req,res)=>{const body='hello from node\\\\n';res.writeHead(200,{'content-type':'text/plain; charset=utf-8','content-length':Buffer.byteLength(body)});res.end(body);}).listen(port,host,()=>console.log('listening on http://'+host+':'+port));\"",
+      },
+    },
+    {
+      id: "cocalc-public-viewer",
+      title: "CoCalc Public Viewer",
+      short_label: "Public viewer",
+      category: "publishing",
+      priority: 76,
+      description:
+        "Share notebooks, markdown, slides, and boards from a directory with the read-only CoCalc public viewer.",
+      theme: withTemplateTheme(
+        "book",
+        PUBLISHING_TEMPLATE_THEME,
+        "Public Viewer",
+        "Notes, notebooks, slides",
+      ),
+      preset: {
+        id: "cocalc-public-viewer",
+        title: "CoCalc Public Viewer",
+        kind: "static",
+        static_root_relative: "public-viewer",
+        static_index: "index.html",
+        static_cache_control: "public,max-age=300",
+        static_refresh_command: makePublicViewerBootstrapCommand({
+          title: "CoCalc Public Viewer",
+          description:
+            "Edit index.json to curate this public directory, or add index.html for a custom landing page.",
+          fileTypes: [".md", ".ipynb", ".slides", ".board"],
+        }),
+        static_refresh_stale_after: "3600",
+        static_refresh_timeout: "120",
+        static_refresh_on_hit: true,
+        static_integration_mode: "cocalc-public-viewer",
+        static_integration_file_types: [".md", ".ipynb", ".slides", ".board"],
+        static_integration_manifest: "index.json",
+        static_integration_auto_refresh_s: 0,
+        note: "Bootstraps an index.json manifest on first/stale hit if one is missing. Edit index.json to curate the listing or add index.html for a custom landing page.",
+      },
+    },
+    {
+      id: "public-notes",
+      title: "Public Notes Directory",
+      short_label: "Public notes",
+      category: "publishing",
+      priority: 75,
+      description:
+        "Share markdown and Jupyter notebooks from a directory with a generated public listing.",
+      theme: withTemplateTheme(
+        "ipynb",
+        PUBLISHING_TEMPLATE_THEME,
+        "Public Notes",
+        "Markdown and notebooks",
+      ),
+      preset: {
+        id: "public-notes",
+        title: "Public Notes Directory",
+        kind: "static",
+        static_root_relative: "public-notes",
+        static_index: "index.html",
+        static_cache_control: "public,max-age=300",
+        static_refresh_command: makePublicViewerBootstrapCommand({
+          title: "Public Notes",
+          description:
+            "Edit index.json to curate this public notebook/notes directory, or add index.html for a custom landing page.",
+          fileTypes: [".md", ".ipynb"],
+        }),
+        static_refresh_stale_after: "3600",
+        static_refresh_timeout: "120",
+        static_refresh_on_hit: true,
+        static_integration_mode: "cocalc-public-viewer",
+        static_integration_file_types: [".md", ".ipynb"],
+        static_integration_manifest: "index.json",
+        static_integration_auto_refresh_s: 0,
+        note: "Best for course notes, notebooks, and markdown docs. Bootstraps index.json if missing.",
+      },
+    },
+    {
+      id: "public-slides",
+      title: "Public Slides and Boards",
+      short_label: "Public slides",
+      category: "publishing",
+      priority: 74,
+      description:
+        "Share slides, whiteboards, and supporting markdown from a directory with the read-only CoCalc viewer.",
+      theme: withTemplateTheme(
+        "layout",
+        PUBLISHING_TEMPLATE_THEME,
+        "Public Slides",
+        "Slides and whiteboards",
+      ),
+      preset: {
+        id: "public-slides",
+        title: "Public Slides and Boards",
+        kind: "static",
+        static_root_relative: "public-slides",
+        static_index: "index.html",
+        static_cache_control: "public,max-age=300",
+        static_refresh_command: makePublicViewerBootstrapCommand({
+          title: "Public Slides and Boards",
+          description:
+            "Edit index.json to curate this public slides/boards directory, or add index.html for a custom landing page.",
+          fileTypes: [".slides", ".board", ".md"],
+        }),
+        static_refresh_stale_after: "3600",
+        static_refresh_timeout: "120",
+        static_refresh_on_hit: true,
+        static_integration_mode: "cocalc-public-viewer",
+        static_integration_file_types: [".slides", ".board", ".md"],
+        static_integration_manifest: "index.json",
+        static_integration_auto_refresh_s: 0,
+        note: "Best for presentations, teaching material, and whiteboards. Bootstraps index.json if missing.",
       },
     },
     {
