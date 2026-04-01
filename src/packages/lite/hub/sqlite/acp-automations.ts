@@ -21,8 +21,12 @@ export interface AcpAutomationRow {
   enabled: boolean;
   title?: string | null;
   prompt?: string | null;
-  schedule_type?: "daily" | null;
+  schedule_type?: "daily" | "interval" | null;
+  days_of_week?: number[] | null;
   local_time?: string | null;
+  interval_minutes?: number | null;
+  window_start_local_time?: string | null;
+  window_end_local_time?: string | null;
   timezone?: string | null;
   pause_after_unacknowledged_runs?: number | null;
   status: "active" | "running" | "paused" | "error";
@@ -52,7 +56,11 @@ function init(): void {
       title TEXT,
       prompt TEXT,
       schedule_type TEXT,
+      days_of_week TEXT,
       local_time TEXT,
+      interval_minutes INTEGER,
+      window_start_local_time TEXT,
+      window_end_local_time TEXT,
       timezone TEXT,
       pause_after_unacknowledged_runs INTEGER,
       status TEXT NOT NULL,
@@ -76,6 +84,23 @@ function init(): void {
   db.exec(
     `CREATE INDEX IF NOT EXISTS acp_automations_project_idx ON ${TABLE}(project_id, path, thread_id)`,
   );
+  const columns = db.prepare(`PRAGMA table_info(${TABLE})`).all() as Array<{
+    name: string;
+  }>;
+  const hasColumn = (name: string): boolean =>
+    columns.some((x) => x?.name === name);
+  if (!hasColumn("days_of_week")) {
+    db.exec(`ALTER TABLE ${TABLE} ADD COLUMN days_of_week TEXT`);
+  }
+  if (!hasColumn("interval_minutes")) {
+    db.exec(`ALTER TABLE ${TABLE} ADD COLUMN interval_minutes INTEGER`);
+  }
+  if (!hasColumn("window_start_local_time")) {
+    db.exec(`ALTER TABLE ${TABLE} ADD COLUMN window_start_local_time TEXT`);
+  }
+  if (!hasColumn("window_end_local_time")) {
+    db.exec(`ALTER TABLE ${TABLE} ADD COLUMN window_end_local_time TEXT`);
+  }
 }
 
 let initialized = false;
@@ -96,10 +121,13 @@ function decodeRow(row: any): AcpAutomationRow | undefined {
   return {
     ...row,
     enabled: !!row.enabled,
+    days_of_week: decodeDaysOfWeek(row.days_of_week) ?? null,
     pause_after_unacknowledged_runs:
       row.pause_after_unacknowledged_runs == null
         ? null
         : Number(row.pause_after_unacknowledged_runs),
+    interval_minutes:
+      row.interval_minutes == null ? null : Number(row.interval_minutes),
     next_run_at: row.next_run_at == null ? null : Number(row.next_run_at),
     last_run_started_at:
       row.last_run_started_at == null ? null : Number(row.last_run_started_at),
@@ -115,6 +143,26 @@ function decodeRow(row: any): AcpAutomationRow | undefined {
     created_at: Number(row.created_at),
     updated_at: Number(row.updated_at),
   } as AcpAutomationRow;
+}
+
+function encodeDaysOfWeek(value?: number[] | null): string | null {
+  return Array.isArray(value) && value.length > 0
+    ? JSON.stringify(value)
+    : null;
+}
+
+function decodeDaysOfWeek(value?: string | null): number[] | undefined {
+  if (!value) return undefined;
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed)
+      ? parsed
+          .map((day) => Number(day))
+          .filter((day) => Number.isInteger(day) && day >= 0 && day <= 6)
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 export function getAcpAutomationByThread(opts: {
@@ -158,8 +206,8 @@ export function upsertAcpAutomation(
   const created_at = row.created_at ?? now;
   db.prepare(
     `INSERT INTO ${TABLE}
-      (automation_id, project_id, path, thread_id, account_id, enabled, title, prompt, schedule_type, local_time, timezone, pause_after_unacknowledged_runs, status, next_run_at, last_run_started_at, last_run_finished_at, last_acknowledged_at, unacknowledged_runs, paused_reason, last_error, last_job_op_id, last_message_id, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (automation_id, project_id, path, thread_id, account_id, enabled, title, prompt, schedule_type, days_of_week, local_time, interval_minutes, window_start_local_time, window_end_local_time, timezone, pause_after_unacknowledged_runs, status, next_run_at, last_run_started_at, last_run_finished_at, last_acknowledged_at, unacknowledged_runs, paused_reason, last_error, last_job_op_id, last_message_id, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(automation_id) DO UPDATE SET
         project_id=excluded.project_id,
         path=excluded.path,
@@ -169,7 +217,11 @@ export function upsertAcpAutomation(
         title=excluded.title,
         prompt=excluded.prompt,
         schedule_type=excluded.schedule_type,
+        days_of_week=excluded.days_of_week,
         local_time=excluded.local_time,
+        interval_minutes=excluded.interval_minutes,
+        window_start_local_time=excluded.window_start_local_time,
+        window_end_local_time=excluded.window_end_local_time,
         timezone=excluded.timezone,
         pause_after_unacknowledged_runs=excluded.pause_after_unacknowledged_runs,
         status=excluded.status,
@@ -193,7 +245,11 @@ export function upsertAcpAutomation(
     row.title ?? null,
     row.prompt ?? null,
     row.schedule_type ?? null,
+    encodeDaysOfWeek(row.days_of_week),
     row.local_time ?? null,
+    row.interval_minutes ?? null,
+    row.window_start_local_time ?? null,
+    row.window_end_local_time ?? null,
     row.timezone ?? null,
     row.pause_after_unacknowledged_runs ?? null,
     row.status,
@@ -294,7 +350,11 @@ export function toAutomationConfig(
     title: row.title ?? undefined,
     prompt: row.prompt ?? undefined,
     schedule_type: row.schedule_type ?? undefined,
+    days_of_week: row.days_of_week ?? undefined,
     local_time: row.local_time ?? undefined,
+    interval_minutes: row.interval_minutes ?? undefined,
+    window_start_local_time: row.window_start_local_time ?? undefined,
+    window_end_local_time: row.window_end_local_time ?? undefined,
     timezone: row.timezone ?? undefined,
     pause_after_unacknowledged_runs:
       row.pause_after_unacknowledged_runs ?? undefined,
@@ -333,7 +393,11 @@ export function toAutomationRecord(
     title: row.title ?? undefined,
     prompt: row.prompt ?? undefined,
     schedule_type: row.schedule_type ?? undefined,
+    days_of_week: row.days_of_week ?? undefined,
     local_time: row.local_time ?? undefined,
+    interval_minutes: row.interval_minutes ?? undefined,
+    window_start_local_time: row.window_start_local_time ?? undefined,
+    window_end_local_time: row.window_end_local_time ?? undefined,
     timezone: row.timezone ?? undefined,
     pause_after_unacknowledged_runs:
       row.pause_after_unacknowledged_runs ?? undefined,

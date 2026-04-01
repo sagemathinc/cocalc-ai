@@ -78,6 +78,44 @@ describe("ACP automation sqlite lifecycle", () => {
     });
   });
 
+  it("round-trips interval scheduling details", () => {
+    const row = upsertAcpAutomation({
+      automation_id: "automation-interval-1",
+      project_id: "project-1",
+      path: "/root/interval.chat",
+      thread_id: "thread-interval-1",
+      account_id: "account-1",
+      enabled: true,
+      title: "Frequent status",
+      prompt: "Check activity.",
+      schedule_type: "interval",
+      days_of_week: [1, 2, 3, 4, 5],
+      local_time: null,
+      interval_minutes: 120,
+      window_start_local_time: "06:00",
+      window_end_local_time: "20:00",
+      timezone: "America/Los_Angeles",
+      pause_after_unacknowledged_runs: 7,
+      status: "active",
+      next_run_at: 501,
+      unacknowledged_runs: 0,
+      created_at: 10,
+      updated_at: 20,
+    });
+
+    expect(toAutomationRecord(row)).toEqual(
+      expect.objectContaining({
+        automation_id: "automation-interval-1",
+        schedule_type: "interval",
+        days_of_week: [1, 2, 3, 4, 5],
+        interval_minutes: 120,
+        window_start_local_time: "06:00",
+        window_end_local_time: "20:00",
+        local_time: undefined,
+      }),
+    );
+  });
+
   it("cleans all automation rows for a removed project", () => {
     upsertAcpAutomation({
       automation_id: "automation-1",

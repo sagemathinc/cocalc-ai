@@ -55,8 +55,12 @@ export interface AcpAutomationConfig {
   automation_id?: string;
   title?: string;
   prompt?: string;
-  schedule_type?: "daily";
+  schedule_type?: "daily" | "interval";
+  days_of_week?: number[];
   local_time?: string;
+  interval_minutes?: number;
+  window_start_local_time?: string;
+  window_end_local_time?: string;
   timezone?: string;
   pause_after_unacknowledged_runs?: number;
 }
@@ -83,8 +87,12 @@ export interface AcpAutomationRecord {
   account_id?: string;
   title?: string;
   prompt?: string;
-  schedule_type?: "daily";
+  schedule_type?: "daily" | "interval";
+  days_of_week?: number[];
   local_time?: string;
+  interval_minutes?: number;
+  window_start_local_time?: string;
+  window_end_local_time?: string;
   timezone?: string;
   pause_after_unacknowledged_runs?: number;
   status?: "active" | "running" | "paused" | "error";

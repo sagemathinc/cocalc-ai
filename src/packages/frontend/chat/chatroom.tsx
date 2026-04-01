@@ -67,7 +67,9 @@ import {
 import {
   AutomationConfigFields,
   buildAutomationDraft,
+  describeAutomationSchedule,
   formatAutomationPausedReason,
+  hasAutomationConfigContent,
   normalizeAutomationConfigForSave,
 } from "./automation-form";
 import {
@@ -138,14 +140,7 @@ export function enabledLoopConfig(
 function visibleAutomationConfig(
   config?: AcpAutomationConfig,
 ): AcpAutomationConfig | undefined {
-  if (!config) return undefined;
-  if (
-    !config.automation_id &&
-    !config.prompt &&
-    !config.title &&
-    !config.local_time &&
-    !config.timezone
-  ) {
+  if (!hasAutomationConfigContent(config)) {
     return undefined;
   }
   return config;
@@ -1685,12 +1680,9 @@ export function ChatPanel({
                   ? "paused"
                   : "active")}
             </Tag>
-            {selectedThreadAutomationConfig.local_time ? (
+            {describeAutomationSchedule(selectedThreadAutomationConfig) ? (
               <span>
-                Daily at {selectedThreadAutomationConfig.local_time}
-                {selectedThreadAutomationConfig.timezone
-                  ? ` ${selectedThreadAutomationConfig.timezone}`
-                  : ""}
+                {describeAutomationSchedule(selectedThreadAutomationConfig)}
               </span>
             ) : null}
             {selectedThreadAutomationState?.next_run_at_ms ? (
