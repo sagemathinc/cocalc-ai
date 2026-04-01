@@ -385,6 +385,8 @@ class BootstrapWrapperScriptTest(unittest.TestCase):
             self.assertIn("project-rustic-restore)", script)
             self.assertIn("normalize-rootfs)", script)
             self.assertIn('podman run --rm --network host --user 0:0', script)
+            self.assertIn('--user 1000:1000', script)
+            self.assertNotIn("su - \"$want_user\"", script)
             wrapper_path = Path(tmpdir) / "cocalc-runtime-storage"
             wrapper_path.write_text(script, encoding="utf-8")
             subprocess.run(["bash", "-n", str(wrapper_path)], check=True)

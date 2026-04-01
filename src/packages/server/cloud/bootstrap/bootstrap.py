@@ -36,7 +36,7 @@ from typing import Any
 
 STATE_SCHEMA_VERSION = 1
 HELPER_SCHEMA_VERSION = "20260330-v1"
-RUNTIME_WRAPPER_VERSION = "20260401-v1"
+RUNTIME_WRAPPER_VERSION = "20260401-v2"
 BOOTSTRAP_LOG_MAX_BYTES = 4 * 1024 * 1024
 BUNDLE_RETENTION_COUNT = 3
 
@@ -1394,9 +1394,9 @@ fi
 
 id "$want_user" >/dev/null 2>&1 || fail "rootfs contract failed: 'id user' did not succeed" 61
 getent passwd "$want_user" >/dev/null 2>&1 || fail "rootfs contract failed: 'getent passwd user' did not succeed" 62
-[ "$(su - "$want_user" -c 'whoami')" = "$want_user" ] || fail "rootfs contract failed: 'su - user -c whoami' did not return user" 63
-[ "$(su - "$want_user" -c 'printf %s \"$HOME\"" )" = "$want_home" ] || fail "rootfs contract failed: user home is not /home/user" 64
-su - "$want_user" -c 'sudo -n true' >/dev/null 2>&1 || fail "rootfs contract failed: passwordless sudo is not working for user" 65
+[ "$(id -u "$want_user")" = "$want_uid" ] || fail "rootfs contract failed: user uid is not 1000" 63
+[ "$(id -g "$want_user")" = "$want_gid" ] || fail "rootfs contract failed: user gid is not 1000" 64
+[ "$(getent passwd "$want_user" | cut -d: -f6)" = "$want_home" ] || fail "rootfs contract failed: user home is not /home/user" 65
 command -v sudo >/dev/null 2>&1 || fail "rootfs contract failed: sudo is not installed" 66
 command -v curl >/dev/null 2>&1 || fail "rootfs contract failed: curl is not installed" 67
 if [ ! -d /etc/ssl/certs ] && \
@@ -1411,7 +1411,41 @@ printf '{"ok":true,"distro_family":"%s","package_manager":"%s","shell":"%s","gli
   "$distro_family" "$package_manager" "$want_shell" "$want_user" "$want_uid" "$want_gid" "$want_home"
 EOF_COCALC_NORMALIZE_ROOTFS
 )"
-    exec /usr/bin/podman run --rm --network host --user 0:0 --security-opt label=disable --rootfs "$rootfs" "$shell_path" -lc "$normalize_script"
+    validate_runtime_user_script="$(cat <<'EOF_COCALC_VALIDATE_RUNTIME_USER'
+set -euo pipefail
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+want_user="user"
+want_uid="1000"
+want_gid="1000"
+want_home="/home/user"
+
+fail() {
+  echo "$1" >&2
+  exit "${2:-1}"
+}
+
+[ "$(whoami)" = "$want_user" ] || fail "rootfs contract failed: runtime user process did not run as user" 71
+[ "$(id -u)" = "$want_uid" ] || fail "rootfs contract failed: runtime uid is not 1000" 72
+[ "$(id -g)" = "$want_gid" ] || fail "rootfs contract failed: runtime gid is not 1000" 73
+[ "${HOME:-}" = "$want_home" ] || fail "rootfs contract failed: runtime HOME is not /home/user" 74
+command -v sudo >/dev/null 2>&1 || fail "rootfs contract failed: sudo is not installed" 75
+sudo -n true >/dev/null 2>&1 || fail "rootfs contract failed: passwordless sudo is not working for user" 76
+EOF_COCALC_VALIDATE_RUNTIME_USER
+)"
+    normalize_result="$(
+      /usr/bin/podman run --rm --network host --user 0:0 --security-opt label=disable --rootfs "$rootfs" "$shell_path" -lc "$normalize_script"
+    )"
+    /usr/bin/podman run --rm --network host \
+      --user 1000:1000 \
+      --workdir /home/user \
+      -e HOME=/home/user \
+      -e USER=user \
+      -e LOGNAME=user \
+      --security-opt label=disable \
+      --rootfs "$rootfs" "$shell_path" -lc "$validate_runtime_user_script" >/dev/null
+    printf '%s\n' "$normalize_result"
+    exit 0
     ;;
   rootfs-rustic-backup)
     if [ "$#" -lt 3 ]; then
