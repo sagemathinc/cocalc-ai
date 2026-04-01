@@ -71,6 +71,7 @@ import {
   formatAutomationPausedReason,
   hasAutomationConfigContent,
   normalizeAutomationConfigForSave,
+  shouldShowAutomationNextRun,
 } from "./automation-form";
 import {
   upsertAgentSessionRecord,
@@ -1685,7 +1686,12 @@ export function ChatPanel({
                 {describeAutomationSchedule(selectedThreadAutomationConfig)}.
               </span>
             ) : null}
-            {selectedThreadAutomationState?.next_run_at_ms ? (
+            {selectedThreadAutomationState?.next_run_at_ms != null &&
+            shouldShowAutomationNextRun({
+              enabled: selectedThreadAutomationConfig.enabled,
+              status: selectedThreadAutomationState?.status,
+              next_run_at_ms: selectedThreadAutomationState.next_run_at_ms,
+            }) ? (
               <span>
                 Next run{" "}
                 <TimeAgo

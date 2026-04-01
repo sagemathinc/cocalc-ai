@@ -12,7 +12,10 @@ import {
   Switch,
   Tooltip,
 } from "antd";
-import type { AcpAutomationConfig } from "@cocalc/conat/ai/acp/types";
+import type {
+  AcpAutomationConfig,
+  AcpAutomationState,
+} from "@cocalc/conat/ai/acp/types";
 
 const DEFAULT_LOCAL_TIME = "05:00";
 const DEFAULT_INTERVAL_MINUTES = 120;
@@ -255,6 +258,21 @@ export function formatAutomationPausedReason(
     default:
       return pausedReason ?? undefined;
   }
+}
+
+export function shouldShowAutomationNextRun({
+  enabled,
+  status,
+  next_run_at_ms,
+}: Pick<AcpAutomationConfig, "enabled"> &
+  Pick<AcpAutomationState, "status" | "next_run_at_ms">): boolean {
+  if (!next_run_at_ms) {
+    return false;
+  }
+  if (enabled === false) {
+    return false;
+  }
+  return status !== "paused";
 }
 
 interface AutomationConfigFieldsProps {

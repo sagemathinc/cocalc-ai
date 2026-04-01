@@ -43,6 +43,7 @@ import type { AcpAutomationRecord } from "@cocalc/conat/ai/acp/types";
 import {
   describeAutomationSchedule,
   formatAutomationPausedReason,
+  shouldShowAutomationNextRun,
 } from "@cocalc/frontend/chat/automation-form";
 import { watchAutomationsForProject } from "@cocalc/frontend/chat/automation-index";
 import {
@@ -1333,7 +1334,8 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
                 {describeAutomationSchedule(record)}
               </Typography.Text>
             ) : null}
-            {record.next_run_at_ms ? (
+            {record.next_run_at_ms != null &&
+            shouldShowAutomationNextRun(record) ? (
               <Typography.Text type="secondary">
                 Next run{" "}
                 <TimeAgo

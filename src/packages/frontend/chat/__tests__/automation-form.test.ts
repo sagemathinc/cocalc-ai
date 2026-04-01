@@ -3,6 +3,7 @@
 import {
   describeAutomationSchedule,
   normalizeAutomationConfigForSave,
+  shouldShowAutomationNextRun,
 } from "../automation-form";
 
 describe("automation form helpers", () => {
@@ -48,5 +49,25 @@ describe("automation form helpers", () => {
         timezone: "America/Los_Angeles",
       }),
     ).toBe("Mon-Fri Every 2 hours from 06:00 to 20:00 America/Los_Angeles");
+  });
+
+  it("hides next run when the automation is paused", () => {
+    expect(
+      shouldShowAutomationNextRun({
+        enabled: true,
+        status: "paused",
+        next_run_at_ms: Date.now() - 60_000,
+      }),
+    ).toBe(false);
+  });
+
+  it("shows next run when the automation is active", () => {
+    expect(
+      shouldShowAutomationNextRun({
+        enabled: true,
+        status: "active",
+        next_run_at_ms: Date.now() + 60_000,
+      }),
+    ).toBe(true);
   });
 });
