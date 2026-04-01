@@ -35,7 +35,8 @@ list spacing collapses.
   text-underline-offset: 0.12em;
 }
 
-.cocalc-slate-render blockquote {
+.cocalc-slate-render blockquote,
+.cocalc-slate-blockquote {
   margin: 0 0 1em;
   padding: 0.45em 0.9em;
   border-left: 4px solid
@@ -45,11 +46,13 @@ list spacing collapses.
   color: var(--cocalc-slate-blockquote-fg, inherit);
 }
 
-.cocalc-slate-render blockquote > :first-child {
+.cocalc-slate-render blockquote > :first-child,
+.cocalc-slate-blockquote > :first-child {
   margin-top: 0;
 }
 
-.cocalc-slate-render blockquote > :last-child {
+.cocalc-slate-render blockquote > :last-child,
+.cocalc-slate-blockquote > :last-child {
   margin-bottom: 0;
 }
 

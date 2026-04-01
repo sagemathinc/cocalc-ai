@@ -2619,7 +2619,12 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
         <Editable
           placeholder={placeholder}
           autoFocus={autoFocus}
-          className={useWindowing && height != "auto" ? "smc-vfill" : undefined}
+          className={[
+            "cocalc-slate-render",
+            useWindowing && height != "auto" ? "smc-vfill" : undefined,
+          ]
+            .filter(Boolean)
+            .join(" ")}
           readOnly={read_only}
           renderElement={renderElement}
           renderLeaf={Leaf}
