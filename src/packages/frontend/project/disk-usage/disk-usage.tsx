@@ -216,7 +216,16 @@ function collectHistorySeries(
     if (value == null || !Number.isFinite(value)) continue;
     result.push({ collected_at: point.collected_at, value });
   }
-  return result;
+  return result.sort((left, right) => {
+    const leftAt = Date.parse(left.collected_at);
+    const rightAt = Date.parse(right.collected_at);
+    if (Number.isFinite(leftAt) && Number.isFinite(rightAt)) {
+      return leftAt - rightAt;
+    }
+    if (Number.isFinite(leftAt)) return -1;
+    if (Number.isFinite(rightAt)) return 1;
+    return left.collected_at.localeCompare(right.collected_at);
+  });
 }
 
 function historyMetricAvailable(
@@ -226,14 +235,10 @@ function historyMetricAvailable(
   return collectHistorySeries(history, metric).length > 0;
 }
 
-function historyLinePoints(
-  values: number[],
-  width = 560,
-  height = 160,
-): string {
-  if (values.length === 0) return "";
+function chartYCoordinates(values: number[], height: number): number[] {
+  if (values.length === 0) return [];
   if (values.length === 1) {
-    return `0,${height / 2} ${width},${height / 2}`;
+    return [height / 2];
   }
   const min = Math.min(...values);
   const max = Math.max(...values);
@@ -241,32 +246,71 @@ function historyLinePoints(
     if (max === min) return height / 2;
     return height - ((value - min) / (max - min)) * (height - 12) - 6;
   };
-  const dx = width / (values.length - 1);
-  return values
-    .map((value, i) => `${(i * dx).toFixed(2)},${y(value).toFixed(2)}`)
-    .join(" ");
+  return values.map((value) => y(value));
 }
 
-function historyLineCoordinates(
-  values: number[],
+function chartXCoordinates(timestamps: number[], width = 560): number[] {
+  if (timestamps.length === 0) return [];
+  if (timestamps.length === 1) return [width / 2];
+  const valid = timestamps.filter((timestamp) => Number.isFinite(timestamp));
+  if (valid.length !== timestamps.length) {
+    return timestamps.map(
+      (_, i) => (i * width) / Math.max(1, timestamps.length - 1),
+    );
+  }
+  const min = Math.min(...valid);
+  const max = Math.max(...valid);
+  if (max <= min) {
+    return timestamps.map(
+      (_, i) => (i * width) / Math.max(1, timestamps.length - 1),
+    );
+  }
+  return timestamps.map(
+    (timestamp) => ((timestamp - min) / (max - min)) * width,
+  );
+}
+
+export function historyLineCoordinates(
+  points: HistorySeriesPoint[],
   width = 560,
   height = 160,
 ): { x: number; y: number }[] {
-  if (values.length === 0) return [];
-  if (values.length === 1) {
-    return [{ x: width / 2, y: height / 2 }];
-  }
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const y = (value: number) => {
-    if (max === min) return height / 2;
-    return height - ((value - min) / (max - min)) * (height - 12) - 6;
-  };
-  const dx = width / (values.length - 1);
-  return values.map((value, i) => ({
-    x: i * dx,
-    y: y(value),
+  if (points.length === 0) return [];
+  const xCoordinates = chartXCoordinates(
+    points.map((point) => Date.parse(point.collected_at)),
+    width,
+  );
+  const yCoordinates = chartYCoordinates(
+    points.map((point) => point.value),
+    height,
+  );
+  return points.map((_, i) => ({
+    x: xCoordinates[i],
+    y: yCoordinates[i],
   }));
+}
+
+function historyLinePoints(coordinates: { x: number; y: number }[]): string {
+  return coordinates
+    .map((point) => `${point.x.toFixed(2)},${point.y.toFixed(2)}`)
+    .join(" ");
+}
+
+export function nearestCoordinateIndex(
+  x: number,
+  coordinates: { x: number; y: number }[],
+): number | null {
+  if (coordinates.length === 0) return null;
+  let bestIndex = 0;
+  let bestDistance = Math.abs(coordinates[0].x - x);
+  for (let i = 1; i < coordinates.length; i += 1) {
+    const distance = Math.abs(coordinates[i].x - x);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestIndex = i;
+    }
+  }
+  return bestIndex;
 }
 
 function formatSignedSize(bytes: number): string {
@@ -340,8 +384,7 @@ function HistorySparkline({
   const chartWidth = 560;
   const chartHeight = 160;
   if (points.length < 2) return null;
-  const values = points.map((point) => point.value);
-  const coordinates = historyLineCoordinates(values, chartWidth, chartHeight);
+  const coordinates = historyLineCoordinates(points, chartWidth, chartHeight);
   const hoveredPoint =
     hoveredIndex != null ? coordinates[hoveredIndex] : undefined;
   return (
@@ -363,7 +406,9 @@ function HistorySparkline({
           0,
           Math.min(1, (event.clientX - rect.left) / rect.width),
         );
-        setHoveredIndex(Math.round(relativeX * (points.length - 1)));
+        setHoveredIndex(
+          nearestCoordinateIndex(relativeX * chartWidth, coordinates),
+        );
       }}
     >
       <svg
@@ -375,7 +420,7 @@ function HistorySparkline({
       >
         <polyline
           fill="none"
-          points={historyLinePoints(values, chartWidth, chartHeight)}
+          points={historyLinePoints(coordinates)}
           stroke={historyMetricColor(metric)}
           strokeLinecap="round"
           strokeLinejoin="round"

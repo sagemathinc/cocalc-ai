@@ -1,4 +1,9 @@
-import { getStorageAnnotation, suggestFindSpaceSelection } from "./disk-usage";
+import {
+  getStorageAnnotation,
+  historyLineCoordinates,
+  nearestCoordinateIndex,
+  suggestFindSpaceSelection,
+} from "./disk-usage";
 import type { StorageVisibleSummary } from "./use-disk-usage";
 
 function bucket(
@@ -77,5 +82,38 @@ describe("disk usage find-space helpers", () => {
     );
     expect(annotation?.label).toBe("Cache-like data");
     expect(annotation?.tone).toBe("info");
+  });
+});
+
+describe("disk usage history chart helpers", () => {
+  it("spaces history points by actual elapsed time", () => {
+    const coordinates = historyLineCoordinates(
+      [
+        { collected_at: "2026-04-01T13:39:15.000Z", value: 100 },
+        { collected_at: "2026-04-01T14:19:26.000Z", value: 10 },
+        { collected_at: "2026-04-01T14:19:59.000Z", value: 10 },
+      ],
+      560,
+      160,
+    );
+    expect(coordinates).toHaveLength(3);
+    expect(coordinates[0].x).toBeCloseTo(0, 1);
+    expect(coordinates[1].x).toBeGreaterThan(540);
+    expect(coordinates[2].x).toBeCloseTo(560, 1);
+  });
+
+  it("finds the nearest history point using actual x coordinates", () => {
+    const coordinates = historyLineCoordinates(
+      [
+        { collected_at: "2026-04-01T13:39:15.000Z", value: 100 },
+        { collected_at: "2026-04-01T14:19:26.000Z", value: 10 },
+        { collected_at: "2026-04-01T14:19:59.000Z", value: 10 },
+      ],
+      560,
+      160,
+    );
+    expect(nearestCoordinateIndex(100, coordinates)).toBe(0);
+    expect(nearestCoordinateIndex(552, coordinates)).toBe(1);
+    expect(nearestCoordinateIndex(559, coordinates)).toBe(2);
   });
 });
