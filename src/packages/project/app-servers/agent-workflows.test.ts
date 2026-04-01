@@ -177,6 +177,7 @@ describe("app server agent workflows", () => {
 
   test("detect surfaces unmanaged listeners and distinguishes managed apps", async () => {
     const id = appId("detect");
+    const unmanagedId = appId("unmanaged");
     await upsertAppSpec({
       version: 1,
       id,
@@ -219,6 +220,59 @@ describe("app server agent workflows", () => {
       });
       expect(unmanagedOnly.some((x) => x.port === unmanagedPort)).toBe(true);
       expect(unmanagedOnly.some((x) => x.port === managedPort)).toBe(false);
+
+      await upsertAppSpec({
+        version: 1,
+        id: unmanagedId,
+        kind: "service",
+        title: "Detected Unmanaged Server",
+        command: {
+          exec: "bash",
+          args: [
+            "-lc",
+            "echo 'This app is unmanaged. Start it outside CoCalc.' >&2; exit 1",
+          ],
+        },
+        lifecycle: {
+          mode: "unmanaged",
+        },
+        network: {
+          listen_host: "127.0.0.1",
+          port: unmanagedPort,
+          protocol: "http",
+        },
+        proxy: {
+          base_path: `/apps/${unmanagedId}`,
+          strip_prefix: true,
+          websocket: false,
+        },
+        wake: { enabled: false, keep_warm_s: 0, startup_timeout_s: 0 },
+      });
+
+      const unmanagedStatus = await statusApp(unmanagedId);
+      expect(unmanagedStatus.lifecycle_mode).toBe("unmanaged");
+      expect(unmanagedStatus.state).toBe("running");
+      expect(unmanagedStatus.ready).toBe(true);
+      expect(unmanagedStatus.port).toBe(unmanagedPort);
+      expect(unmanagedStatus.url).toBe(`/apps/${unmanagedId}/`);
+
+      const tracked = await detectApps({
+        include_managed: true,
+        limit: 1000,
+      });
+      const trackedRow = tracked.find((x) => x.port === unmanagedPort);
+      expect(trackedRow?.managed).toBe(true);
+      expect(trackedRow?.managed_app_ids).toContain(unmanagedId);
+
+      const unmanagedOnlyAfterAdopt = await detectApps({
+        include_managed: false,
+        limit: 1000,
+      });
+      expect(
+        unmanagedOnlyAfterAdopt.some((x) => x.port === unmanagedPort),
+      ).toBe(false);
+
+      await expect(stopApp(unmanagedId)).rejects.toThrow(/unmanaged/);
     } finally {
       await new Promise<void>((resolve) =>
         unmanagedServer.close(() => resolve()),

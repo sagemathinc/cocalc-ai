@@ -58,6 +58,7 @@ export interface ManagedAppStatus {
   id: string;
   state: "running" | "stopped";
   kind?: "service" | "static";
+  lifecycle_mode?: "managed" | "unmanaged";
   title?: string;
   path?: string;
   mtime?: number;

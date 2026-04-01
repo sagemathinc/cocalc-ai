@@ -213,7 +213,7 @@ export async function startProxyServer({
         if (!target) {
           return;
         }
-        if (!hasValidInternalProxySecret(req)) {
+        if (target.requireInternalSecret && !hasValidInternalProxySecret(req)) {
           res.writeHead(403, { "Content-Type": "text/plain" });
           res.end("Forbidden\n");
           return;
@@ -235,7 +235,7 @@ export async function startProxyServer({
         if (!target) {
           throw Error("not matched");
         }
-        if (!hasValidInternalProxySecret(req)) {
+        if (target.requireInternalSecret && !hasValidInternalProxySecret(req)) {
           socket.write("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
           socket.destroy();
           return;
@@ -291,7 +291,7 @@ export function attachProxyServer({
         if (!target) {
           return;
         }
-        if (!hasValidInternalProxySecret(req)) {
+        if (target.requireInternalSecret && !hasValidInternalProxySecret(req)) {
           res.writeHead(403, { "Content-Type": "text/plain" });
           res.end("Forbidden\n");
           return;
@@ -312,7 +312,10 @@ export function attachProxyServer({
           if (!target) {
             return;
           }
-          if (!hasValidInternalProxySecret(req)) {
+          if (
+            target.requireInternalSecret &&
+            !hasValidInternalProxySecret(req)
+          ) {
             socket.write("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
             socket.destroy();
             return;
@@ -368,6 +371,9 @@ function createProxyResolver({
   base_url: string;
   host: string;
 }) {
+  type ProxyTarget =
+    | { port: number; host: string; requireInternalSecret: boolean }
+    | undefined;
   const base = normalizeBase(base_url);
   const serverPattern = buildPattern(base, "server");
   const proxyPattern = buildPattern(base, "proxy");
@@ -1051,7 +1057,7 @@ ${entries}
   async function getTarget(
     req: http.IncomingMessage,
     res?: http.ServerResponse,
-  ) {
+  ): Promise<ProxyTarget> {
     const url = req.url ?? "";
     const mPort = portPattern.exec(url);
     if (mPort) {
@@ -1066,7 +1072,7 @@ ${entries}
           bytes_received: getRequestBytes(req),
         } satisfies AppMetricsContext;
       }
-      return { port, host };
+      return { port, host, requireInternalSecret: true };
     }
     const mServer = serverPattern.exec(url) || proxyPattern.exec(url);
     if (mServer) {
@@ -1084,7 +1090,7 @@ ${entries}
       }
       // Rewrite path by mutating req.url before proxying
       req.url = rest;
-      return { port, host };
+      return { port, host, requireInternalSecret: true };
     }
 
     const appTarget = await resolveAppProxyTarget({
@@ -1120,7 +1126,11 @@ ${entries}
       }
       (req as any)[APP_METRICS_CONTEXT] = metricsContext;
       req.url = appTarget.rewritePath;
-      return { port: appTarget.port, host };
+      return {
+        port: appTarget.port,
+        host,
+        requireInternalSecret: false,
+      };
     }
 
     logger.debug("URL not matched", { url });
