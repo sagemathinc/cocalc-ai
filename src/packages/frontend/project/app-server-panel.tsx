@@ -346,6 +346,12 @@ function defaultBasePath(appId: string): string {
   return id ? `/apps/${id}` : "/apps/my-app";
 }
 
+function preferredDetectedListenHost(hosts: string[]): string {
+  if (hosts.includes("127.0.0.1")) return "127.0.0.1";
+  if (hosts.includes("::1")) return "::1";
+  return hosts[0] || "127.0.0.1";
+}
+
 function tailLines(text: string, maxLines = 30, maxChars = 4000): string {
   const raw = `${text ?? ""}`.trimEnd();
   if (!raw) return "";
@@ -986,6 +992,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
         row.id,
         row.title,
         row.kind,
+        row.lifecycle_mode,
         row.state,
         row.exposure?.public_url,
         row.exposure?.public_hostname,
@@ -1065,12 +1072,22 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
 
   const startableRows = useMemo(
     () =>
-      rows.filter((row) => row.kind === "service" && row.state !== "running"),
+      rows.filter(
+        (row) =>
+          row.kind === "service" &&
+          row.lifecycle_mode !== "unmanaged" &&
+          row.state !== "running",
+      ),
     [rows],
   );
   const stoppableRows = useMemo(
     () =>
-      rows.filter((row) => row.kind === "service" && row.state === "running"),
+      rows.filter(
+        (row) =>
+          row.kind === "service" &&
+          row.lifecycle_mode !== "unmanaged" &&
+          row.state === "running",
+      ),
     [rows],
   );
 
@@ -1375,28 +1392,35 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
         }
       }
       const declaredBasePath = `${spec?.proxy?.base_path ?? ""}`.trim();
+      const unmanagedBasePath =
+        status.lifecycle_mode === "unmanaged" ? `/apps/${status.id}` : "";
       const basePathLocal = declaredBasePath
         ? declaredBasePath.startsWith(`/${project_id}/`) ||
           declaredBasePath === `/${project_id}`
           ? declaredBasePath
           : `/${project_id}${declaredBasePath.startsWith("/") ? declaredBasePath : `/${declaredBasePath}`}`
-        : undefined;
+        : unmanagedBasePath
+          ? `/${project_id}${unmanagedBasePath}`
+          : undefined;
       const serviceOpenMode: AppServiceOpenMode =
         spec?.kind === "service" && spec?.proxy?.open_mode === "port"
           ? "port"
           : "proxy";
       const serviceLocal = translateServiceOpenUrl(status.url, serviceOpenMode);
-      const preferredLocal =
-        spec?.kind === "static"
-          ? basePathLocal || serviceLocal
-          : serviceLocal || basePathLocal;
+      const preferredLocal = basePathLocal || serviceLocal;
       if (!preferredLocal) return;
       const local =
         withProjectHostBase(project_id, preferredLocal) ?? preferredLocal;
-      url = await webapp_client.conat_client.addProjectHostAuthToUrl({
-        project_id,
-        url: local,
-      });
+      const shouldSkipProjectHostAuth =
+        preferredLocal === basePathLocal &&
+        !!siteOrigin &&
+        local.startsWith(siteOrigin);
+      url = shouldSkipProjectHostAuth
+        ? local
+        : await webapp_client.conat_client.addProjectHostAuthToUrl({
+            project_id,
+            url: local,
+          });
     }
     if (!url) return;
     window.open(url, "_blank", "noopener,noreferrer");
@@ -1514,6 +1538,49 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
     };
   }
 
+  function buildUnmanagedSpecFromDetected(item: DetectedAppPort): AppSpec {
+    const existingIds = new Set(rows.map((row) => row.id));
+    let id = `unmanaged-${item.port}`;
+    let suffix = 2;
+    while (existingIds.has(id)) {
+      id = `unmanaged-${item.port}-${suffix}`;
+      suffix += 1;
+    }
+    return {
+      version: 1 as const,
+      id,
+      title: `Port ${item.port}`,
+      kind: "service" as const,
+      command: {
+        exec: "bash",
+        args: [
+          "-lc",
+          "echo 'This app is unmanaged. Start it outside CoCalc.' >&2; exit 1",
+        ],
+      },
+      lifecycle: {
+        mode: "unmanaged" as const,
+      },
+      network: {
+        listen_host: preferredDetectedListenHost(item.hosts),
+        port: item.port,
+        protocol: "http" as const,
+      },
+      proxy: {
+        base_path: defaultBasePath(id),
+        strip_prefix: true,
+        websocket: true,
+        open_mode: "proxy" as const,
+        readiness_timeout_s: 45,
+      },
+      wake: {
+        enabled: false,
+        keep_warm_s: 0,
+        startup_timeout_s: 0,
+      },
+    };
+  }
+
   async function onCreate() {
     let createdId: string | undefined;
     const creatingService = kind === "service" && startNow;
@@ -1562,6 +1629,20 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
       }
     } finally {
       setFormSubmitting(false);
+    }
+  }
+
+  async function onCreateUnmanagedFromDetected(item: DetectedAppPort) {
+    try {
+      setSubmitting(true);
+      setError(undefined);
+      const spec = buildUnmanagedSpecFromDetected(item);
+      await api.apps.upsertAppSpec(spec);
+      await refresh();
+    } catch (err) {
+      setError(normalizeError(err));
+    } finally {
+      setSubmitting(false);
     }
   }
 
@@ -1984,6 +2065,9 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
     const basePath = `${spec?.proxy?.base_path ?? ""}`.trim();
     if (basePath) out.push(`base_path=${basePath}`);
     if (spec.kind === "service") {
+      if (spec?.lifecycle?.mode === "unmanaged") {
+        out.push("lifecycle=unmanaged");
+      }
       const cmd = spec?.command?.exec
         ? [spec.command.exec, ...(spec.command.args ?? [])].join(" ")
         : "";
@@ -2049,11 +2133,11 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
     <div style={{ display: "grid", gap: "12px" }}>
       <div>
         <div style={{ fontSize: "20px", fontWeight: 700, marginBottom: "4px" }}>
-          Managed Applications
+          Applications
         </div>
         <Paragraph style={{ color: "#666", marginBottom: 0 }}>
-          Run, expose, and troubleshoot project apps without mixing this page
-          with normal file-creation workflows.
+          Run, expose, adopt, and troubleshoot project apps without mixing this
+          page with normal file-creation workflows.
         </Paragraph>
       </div>
       <input
@@ -2592,11 +2676,19 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                     </div>
                     <div style={{ opacity: 0.8 }}>
                       {item.managed
-                        ? `managed by ${item.managed_app_ids.join(", ")}`
-                        : "not managed"}
+                        ? `tracked by ${item.managed_app_ids.join(", ")}`
+                        : "not tracked yet"}
                     </div>
                   </div>
                   <Space wrap>
+                    <Button
+                      size="small"
+                      type="primary"
+                      disabled={submitting || item.managed}
+                      onClick={() => void onCreateUnmanagedFromDetected(item)}
+                    >
+                      Create unmanaged app
+                    </Button>
                     <Button
                       size="small"
                       onClick={() => {
@@ -2613,15 +2705,12 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
           </Space>
         </Card>
       ) : null}
-      <Card
-        size="small"
-        title={`Managed Applications (${summaryCounts.total})`}
-      >
+      <Card size="small" title={`Applications (${summaryCounts.total})`}>
         {loading ? <Spin /> : null}
         {!loading && rows.length === 0 ? (
           <Empty
             image={Empty.PRESENTED_IMAGE_SIMPLE}
-            description="No managed applications yet."
+            description="No apps yet."
           />
         ) : null}
         {!loading && rows.length > 0 ? (
@@ -2678,6 +2767,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
           {filteredRows.map((row) => {
             const isRunning = row.state === "running";
             const isPublic = isPublicExposure(row);
+            const isUnmanaged = row.lifecycle_mode === "unmanaged";
             const spec = specById[row.id];
             const metrics = metricsById[row.id];
             const specSummary = summarizeSpec(spec);
@@ -2749,6 +2839,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                         {row.title || row.id}
                       </span>
                       <Tag>{row.kind || "service"}</Tag>
+                      {isUnmanaged ? <Tag color="purple">unmanaged</Tag> : null}
                       <Tag color={isRunning ? "green" : "default"}>
                         {isRunning ? "running" : "stopped"}
                       </Tag>
@@ -2784,14 +2875,14 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                     <Button
                       size="small"
                       onClick={() => void onStart(row.id)}
-                      disabled={submitting || isRunning}
+                      disabled={submitting || isRunning || isUnmanaged}
                     >
                       Start
                     </Button>
                     <Button
                       size="small"
                       onClick={() => void onStop(row.id)}
-                      disabled={submitting || !isRunning}
+                      disabled={submitting || !isRunning || isUnmanaged}
                     >
                       Stop
                     </Button>

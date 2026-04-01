@@ -17,6 +17,7 @@ import { getLogger } from "@cocalc/project/logger";
 import type { AppTemplateCatalogEntry } from "@cocalc/conat/project/api/apps";
 import {
   type AppStaticSpec,
+  type AppServiceLifecycleMode,
   type AppServiceSpec,
   type AppSpec,
   deleteAppSpec,
@@ -91,6 +92,7 @@ export interface AppStatus {
   id: string;
   state: "running" | "stopped";
   kind?: AppSpec["kind"];
+  lifecycle_mode?: AppServiceLifecycleMode;
   title?: string;
   path?: string;
   mtime?: number;
@@ -572,6 +574,14 @@ function assertServiceSpec(spec: AppSpec): AppServiceSpec {
   return spec;
 }
 
+function serviceLifecycleMode(spec: AppServiceSpec): AppServiceLifecycleMode {
+  return spec.lifecycle?.mode === "unmanaged" ? "unmanaged" : "managed";
+}
+
+function isUnmanagedServiceSpec(spec: AppServiceSpec): boolean {
+  return serviceLifecycleMode(spec) === "unmanaged";
+}
+
 function assertStaticSpec(spec: AppSpec): AppStaticSpec {
   if (spec.kind !== "static") {
     throw new Error(
@@ -605,6 +615,10 @@ function toStatusFromRecord(record: AppSpecRecord): AppStatus {
     id: spec.id,
     state: "stopped",
     kind: spec.kind,
+    lifecycle_mode:
+      spec.kind === "service"
+        ? serviceLifecycleMode(assertServiceSpec(spec))
+        : undefined,
     title: spec.title,
     path: record.path,
     mtime: record.mtime,
@@ -855,6 +869,11 @@ export async function startApp(
   opts?: StartAppOptions,
 ): Promise<AppStatus> {
   const spec = assertServiceSpec(await getAppSpec(id));
+  if (isUnmanagedServiceSpec(spec)) {
+    throw new Error(
+      `app '${spec.id}' is unmanaged; start the server outside CoCalc`,
+    );
+  }
   const existing = children[spec.id];
   if (existing) {
     const running = isChildRunning(existing.child);
@@ -916,6 +935,11 @@ export async function startApp(
 
 export async function stopApp(id: string): Promise<void> {
   const spec = await getAppSpec(id);
+  if (spec.kind === "service" && isUnmanagedServiceSpec(spec)) {
+    throw new Error(
+      `app '${spec.id}' is unmanaged; stop the server outside CoCalc`,
+    );
+  }
   const running = children[spec.id];
   if (!running || !isChildRunning(running.child)) {
     await clearRunningServicePort(spec.id);
@@ -940,6 +964,10 @@ export async function statusApp(id: string): Promise<AppStatus> {
     id: spec.id,
     state: "stopped",
     kind: spec.kind,
+    lifecycle_mode:
+      spec.kind === "service"
+        ? serviceLifecycleMode(assertServiceSpec(spec))
+        : undefined,
     title: spec.title,
     exposure: await getAppExposureState(spec.id),
   };
@@ -954,6 +982,27 @@ export async function statusApp(id: string): Promise<AppStatus> {
     if (refreshState?.stderr?.length) status.stderr = refreshState.stderr;
     if (warnings.length > 0) status.warnings = warnings;
     return status;
+  }
+
+  const serviceSpec = assertServiceSpec(spec);
+  if (isUnmanagedServiceSpec(serviceSpec)) {
+    const port = serviceSpec.network.port!;
+    const ready = await isServerReady(port, serviceSpec.network.listen_host);
+    const canonicalUrl = serviceSpec.proxy.base_path
+      ? normalizePrefix(serviceSpec.proxy.base_path)
+      : getProxyUrl(port);
+    return {
+      ...status,
+      state: ready ? "running" : "stopped",
+      ready,
+      port,
+      url: canonicalUrl,
+      warnings: [
+        ready
+          ? "Process lifecycle is unmanaged. CoCalc can open and expose this app, but it does not start or stop the server."
+          : "Process lifecycle is unmanaged. Start the server outside CoCalc to use this app.",
+      ],
+    };
   }
 
   const running = children[spec.id];
@@ -1031,6 +1080,13 @@ export async function ensureRunning(
   const spec = await getAppSpec(id);
   if (spec.kind === "static") {
     return await statusApp(id);
+  }
+  if (isUnmanagedServiceSpec(spec)) {
+    const status = await statusApp(id);
+    if (status.state === "running" && status.ready) return status;
+    throw new Error(
+      `app '${id}' is unmanaged and is not listening on port ${spec.network.port}`,
+    );
   }
   await startApp(id, {
     preferredPort: opts?.preferredPort,
@@ -1208,7 +1264,20 @@ export async function managedServiceAppForPort(
   port: number,
 ): Promise<{ app_id: string; kind: "service" } | undefined> {
   const app_id = await appIdForRunningServicePort(port);
-  return app_id ? { app_id, kind: "service" } : undefined;
+  if (app_id) return { app_id, kind: "service" };
+  const specs = await listAppSpecs();
+  for (const row of specs) {
+    const spec = row.spec;
+    if (!spec || spec.kind !== "service") continue;
+    const serviceSpec = assertServiceSpec(spec);
+    if (
+      isUnmanagedServiceSpec(serviceSpec) &&
+      serviceSpec.network.port === port
+    ) {
+      return { app_id: serviceSpec.id, kind: "service" };
+    }
+  }
+  return undefined;
 }
 
 async function restartServiceForExposureMode(
@@ -1249,7 +1318,9 @@ export async function exposeApp({
   const spec = await getAppSpec(id);
   const warnings: string[] = [];
   const publicRestart =
-    spec.kind === "service" ? assertServiceSpec(spec) : undefined;
+    spec.kind === "service" && !isUnmanagedServiceSpec(assertServiceSpec(spec))
+      ? assertServiceSpec(spec)
+      : undefined;
   let preferredServicePort: number | undefined;
   let restartIntoPublicMode = false;
   let reserved:
@@ -1339,7 +1410,9 @@ export async function exposeApp({
 export async function unexposeApp(id: string): Promise<AppStatus> {
   const spec = await getAppSpec(id);
   const publicRestart =
-    spec.kind === "service" ? assertServiceSpec(spec) : undefined;
+    spec.kind === "service" && !isUnmanagedServiceSpec(assertServiceSpec(spec))
+      ? assertServiceSpec(spec)
+      : undefined;
   const current = publicRestart ? await statusApp(id) : undefined;
   const preferredServicePort = current?.port ?? publicRestart?.network.port;
   try {

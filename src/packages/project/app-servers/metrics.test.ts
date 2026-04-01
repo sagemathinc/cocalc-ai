@@ -62,11 +62,9 @@ async function killIfRunning(pid?: number): Promise<void> {
 async function killDirectChildrenForTests(): Promise<void> {
   let raw = "";
   try {
-    raw = execFileSync(
-      "ps",
-      ["-o", "pid=", "--ppid", String(process.pid)],
-      { encoding: "utf8" },
-    );
+    raw = execFileSync("ps", ["-o", "pid=", "--ppid", String(process.pid)], {
+      encoding: "utf8",
+    });
   } catch {
     return;
   }
@@ -135,8 +133,7 @@ describe("managed app metrics", () => {
       ensureRunning,
       resetAppMetricsForTests,
       upsertAppSpec,
-    } =
-      await import("./control");
+    } = await import("./control");
 
     expect(secretToken).toBeTruthy();
 
@@ -159,7 +156,10 @@ describe("managed app metrics", () => {
     let appPid: number | undefined;
 
     try {
-      const running = await ensureRunning(id, { timeout: 10_000, interval: 100 });
+      const running = await ensureRunning(id, {
+        timeout: 10_000,
+        interval: 100,
+      });
       appPid = running.pid;
 
       const privateRes = await httpGet(
@@ -275,7 +275,8 @@ describe("managed app metrics", () => {
     const { project_id, secretToken } = await import("@cocalc/project/data");
     const { startProxyServer } =
       await import("@cocalc/project/servers/proxy/proxy");
-    const { deleteApp, ensureRunning, upsertAppSpec } = await import("./control");
+    const { deleteApp, ensureRunning, upsertAppSpec } =
+      await import("./control");
 
     expect(secretToken).toBeTruthy();
 
@@ -384,6 +385,53 @@ describe("managed app metrics", () => {
       expect(summary.totals.private_requests).toBe(1);
       expect(summary.totals.bytes_sent).toBeGreaterThan(0);
       expect(summary.last_hit_ms).toBeGreaterThan(0);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await deleteApp(id);
+      await killIfRunning(appPid);
+      await killDirectChildrenForTests();
+    }
+  });
+
+  test("serves canonical /apps service routes without the internal proxy header", async () => {
+    jest.resetModules();
+    const { project_id } = await import("@cocalc/project/data");
+    const { startProxyServer } =
+      await import("@cocalc/project/servers/proxy/proxy");
+    const { deleteApp, ensureRunning, upsertAppSpec } =
+      await import("./control");
+
+    const id = appId("metrics-app-route");
+    await upsertAppSpec({
+      version: 1,
+      id,
+      kind: "service",
+      command: { exec: process.execPath, args: ["-e", SERVICE_SCRIPT] },
+      network: { listen_host: "127.0.0.1", protocol: "http" },
+      proxy: { base_path: `/apps/${id}`, strip_prefix: true, websocket: false },
+      wake: { enabled: true, keep_warm_s: 300, startup_timeout_s: 15 },
+    });
+
+    const server = await startProxyServer({ port: 0, host: "127.0.0.1" });
+    const address = server.address();
+    const proxyPort =
+      address && typeof address === "object" ? address.port : undefined;
+    expect(proxyPort).toBeGreaterThan(0);
+    let appPid: number | undefined;
+
+    try {
+      const running = await ensureRunning(id, {
+        timeout: 10_000,
+        interval: 100,
+      });
+      appPid = running.pid;
+
+      const directAppRoute = await httpGet(
+        `http://127.0.0.1:${proxyPort}/${project_id}/apps/${id}/`,
+        {},
+      );
+      expect(directAppRoute.statusCode).toBe(200);
+      expect(directAppRoute.body).toContain("metrics-ok");
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
       await deleteApp(id);

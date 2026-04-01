@@ -24,6 +24,7 @@ const SUPPORT_FILES = new Set(["runtime-state.json", "metrics-state.json"]);
 
 export type AppSpecKind = "service" | "static";
 export type AppServiceOpenMode = "proxy" | "port";
+export type AppServiceLifecycleMode = "managed" | "unmanaged";
 
 export interface AppCommandSpec {
   exec: string;
@@ -38,6 +39,9 @@ export interface AppServiceSpec {
   title?: string;
   kind: "service";
   command: AppCommandSpec;
+  lifecycle: {
+    mode: AppServiceLifecycleMode;
+  };
   network: {
     listen_host: string;
     port?: number;
@@ -141,6 +145,18 @@ function asOptionalPositiveInt(
   return value;
 }
 
+function asOptionalNonNegativeInt(
+  input: unknown,
+  context: string,
+): number | undefined {
+  if (input == null || input === "") return undefined;
+  const value = Number(input);
+  if (!Number.isInteger(value) || value < 0) {
+    throw new Error(`${context} must be a non-negative integer`);
+  }
+  return value;
+}
+
 function asOptionalBoolean(input: unknown, defaultValue: boolean): boolean {
   if (input == null) return defaultValue;
   if (typeof input === "boolean") return input;
@@ -220,8 +236,23 @@ function normalizeLegacyJupyterLabServiceSpec(
 function normalizeServiceSpec(input: Record<string, any>): AppServiceSpec {
   const id = assertAppId(asString(input.id, "spec.id"));
   const title = asOptionalString(input.title);
+  const lifecycleIn = asObject(input.lifecycle ?? {}, "spec.lifecycle");
+  const modeRaw = asOptionalString(lifecycleIn.mode) ?? "managed";
+  const lifecycle = {
+    mode:
+      modeRaw === "unmanaged" ? ("unmanaged" as const) : ("managed" as const),
+  };
 
-  const command = normalizeCommandSpec(input.command, "spec.command");
+  const command =
+    input.command == null && lifecycle.mode === "unmanaged"
+      ? {
+          exec: "bash",
+          args: [
+            "-lc",
+            "echo 'This app is unmanaged. Start it outside CoCalc.' >&2; exit 1",
+          ],
+        }
+      : normalizeCommandSpec(input.command, "spec.command");
 
   const networkIn = asObject(input.network ?? {}, "spec.network");
   const protocolRaw = asOptionalString(networkIn.protocol) ?? "http";
@@ -233,6 +264,9 @@ function normalizeServiceSpec(input: Record<string, any>): AppServiceSpec {
     port: asOptionalPositiveInt(networkIn.port, "spec.network.port"),
     protocol,
   };
+  if (lifecycle.mode === "unmanaged" && !network.port) {
+    throw new Error("spec.network.port is required for unmanaged service apps");
+  }
 
   const proxyIn = asObject(input.proxy ?? {}, "spec.proxy");
   const openModeRaw = asOptionalString(proxyIn.open_mode) ?? "proxy";
@@ -255,13 +289,23 @@ function normalizeServiceSpec(input: Record<string, any>): AppServiceSpec {
   const wake = {
     enabled: asOptionalBoolean(wakeIn.enabled, true),
     keep_warm_s:
-      asOptionalPositiveInt(wakeIn.keep_warm_s, "spec.wake.keep_warm_s") ??
-      1800,
+      lifecycle.mode === "unmanaged"
+        ? (asOptionalNonNegativeInt(
+            wakeIn.keep_warm_s,
+            "spec.wake.keep_warm_s",
+          ) ?? 0)
+        : (asOptionalPositiveInt(wakeIn.keep_warm_s, "spec.wake.keep_warm_s") ??
+          1800),
     startup_timeout_s:
-      asOptionalPositiveInt(
-        wakeIn.startup_timeout_s,
-        "spec.wake.startup_timeout_s",
-      ) ?? 120,
+      lifecycle.mode === "unmanaged"
+        ? (asOptionalNonNegativeInt(
+            wakeIn.startup_timeout_s,
+            "spec.wake.startup_timeout_s",
+          ) ?? 0)
+        : (asOptionalPositiveInt(
+            wakeIn.startup_timeout_s,
+            "spec.wake.startup_timeout_s",
+          ) ?? 120),
   };
 
   return normalizeLegacyJupyterLabServiceSpec({
@@ -270,6 +314,7 @@ function normalizeServiceSpec(input: Record<string, any>): AppServiceSpec {
     title,
     kind: "service",
     command,
+    lifecycle,
     network,
     proxy,
     wake,
