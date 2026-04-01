@@ -665,6 +665,7 @@ class BootstrapModesTest(unittest.TestCase):
             patch("verify_runtime_sudoers", lambda _cfg: None)
             patch("configure_cloudflared_with_options", lambda _cfg, install_package=False: None)
             patch("configure_autostart", lambda _cfg: None)
+            patch("start_project_host", lambda _cfg: None)
             patch("report_bootstrap_status", lambda _cfg, _status, _message=None: None)
 
             try:

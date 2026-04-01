@@ -2938,6 +2938,8 @@ def run_reconcile(cfg: BootstrapConfig) -> int:
         verify_runtime_sudoers(cfg)
         configure_cloudflared_with_options(cfg, install_package=False)
         configure_autostart(cfg)
+        report_bootstrap_status(cfg, "running", "Restarting project-host services")
+        start_project_host(cfg)
         record_operation_success(cfg, "reconcile")
         report_bootstrap_status(cfg, "done", "Host software reconciled")
         log_line(cfg, "bootstrap: reconcile completed successfully")
