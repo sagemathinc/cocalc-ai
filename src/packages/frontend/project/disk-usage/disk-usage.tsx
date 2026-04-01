@@ -80,7 +80,7 @@ export default function DiskUsage({
     >
       <Icon name="disk-round" />
       {compact ? (
-        <div style={{ minWidth: 0, flex: 1 }}>
+        <div style={{ minWidth: 0, flex: 1, overflow: "hidden" }}>
           <Space size={8} wrap>
             <Text strong>Project quota</Text>
             {quota != null ? (
@@ -108,6 +108,10 @@ export default function DiskUsage({
                 fontSize: "12px",
                 lineHeight: 1.35,
                 marginTop: "2px",
+                maxWidth: "100%",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
               }}
             >
               {[
