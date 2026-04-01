@@ -169,9 +169,11 @@ export async function ensureProjectStorageHistorySamplesSchema(): Promise<void> 
 export async function recordProjectStorageHistorySample({
   project_id,
   overview,
+  force = false,
 }: {
   project_id: string;
   overview?: ProjectStorageOverview | null;
+  force?: boolean;
 }): Promise<void> {
   if (!project_id || !overview) return;
   await ensureProjectStorageHistorySamplesSchema();
@@ -182,6 +184,34 @@ export async function recordProjectStorageHistorySample({
       : new Date();
   const snapshotBytes =
     overview.counted.find((entry) => entry.key === "snapshots")?.bytes ?? null;
+  if (force) {
+    await pool().query(
+      `
+        INSERT INTO project_storage_history_samples (
+          project_id,
+          collected_at,
+          quota_used_bytes,
+          quota_size_bytes,
+          home_visible_bytes,
+          scratch_visible_bytes,
+          environment_visible_bytes,
+          snapshot_counted_bytes
+        )
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+      `,
+      [
+        project_id,
+        collected_at,
+        quota?.used ?? null,
+        quota?.size ?? null,
+        valueForKey(overview, "home"),
+        valueForKey(overview, "scratch"),
+        valueForKey(overview, "environment"),
+        snapshotBytes,
+      ],
+    );
+    return;
+  }
   await pool().query(
     `
       INSERT INTO project_storage_history_samples (

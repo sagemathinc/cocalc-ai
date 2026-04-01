@@ -622,6 +622,7 @@ export interface Projects {
     account_id?: string;
     project_id: string;
     home?: string;
+    force_sample?: boolean;
   }) => Promise<ProjectStorageOverview>;
 
   getStorageBreakdown: (opts: {

@@ -608,15 +608,19 @@ export async function getStorageOverview({
   account_id,
   project_id,
   home,
+  force_sample,
 }: {
   account_id: string;
   project_id: string;
   home?: string;
+  force_sample?: boolean;
 }): Promise<ProjectStorageOverview> {
   await assertCollab({ account_id, project_id });
   const homePath = normalizeStoragePath(home || "/root");
   const cacheKey = storageOverviewCacheKey({ project_id, home: homePath });
-  const cached = projectStorageOverviewCache.get(cacheKey);
+  const cached = force_sample
+    ? undefined
+    : projectStorageOverviewCache.get(cacheKey);
   if (cached) return cached;
 
   const environmentPath = posix.join(homePath, PROJECT_IMAGE_PATH);
@@ -723,7 +727,11 @@ export async function getStorageOverview({
     counted,
   };
   try {
-    await recordProjectStorageHistorySample({ project_id, overview });
+    await recordProjectStorageHistorySample({
+      project_id,
+      overview,
+      force: !!force_sample,
+    });
   } catch (err) {
     log.warn("getStorageOverview: unable to record storage history sample", {
       project_id,
