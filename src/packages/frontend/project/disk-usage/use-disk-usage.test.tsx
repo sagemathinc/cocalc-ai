@@ -3,6 +3,7 @@ import { redux } from "@cocalc/frontend/app-framework";
 import useDiskUsage from "./use-disk-usage";
 import dust from "./dust";
 import getQuota from "./quota";
+import getSnapshotUsage from "./snapshot-usage";
 
 jest.mock("./dust", () => ({
   __esModule: true,
@@ -16,6 +17,12 @@ jest.mock("./quota", () => ({
   default: jest.fn(),
 }));
 
+jest.mock("./snapshot-usage", () => ({
+  __esModule: true,
+  default: jest.fn(),
+  key: ({ project_id }: { project_id: string }) => `${project_id}-0`,
+}));
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((res) => {
@@ -25,11 +32,12 @@ function deferred<T>() {
 }
 
 function TestComponent({ project_id }: { project_id: string }) {
-  const { visible, quotas } = useDiskUsage({ project_id });
+  const { visible, quotas, counted } = useDiskUsage({ project_id });
   return (
     <div>
       <span data-testid="usage">{visible[0]?.usage.bytes ?? ""}</span>
       <span data-testid="quota">{quotas[0]?.used ?? ""}</span>
+      <span data-testid="counted">{counted[0]?.bytes ?? ""}</span>
     </div>
   );
 }
@@ -37,6 +45,7 @@ function TestComponent({ project_id }: { project_id: string }) {
 describe("useDiskUsage", () => {
   const dustMock = dust as jest.Mock;
   const quotaMock = getQuota as jest.Mock;
+  const snapshotUsageMock = getSnapshotUsage as jest.Mock;
   let getStoreSpy: jest.SpyInstance;
 
   beforeEach(() => {
@@ -58,6 +67,7 @@ describe("useDiskUsage", () => {
       .mockResolvedValueOnce(null)
       .mockReturnValueOnce(second.promise)
       .mockResolvedValueOnce(null);
+    snapshotUsageMock.mockResolvedValue([]);
     quotaMock.mockResolvedValue({ used: 17, size: 100 });
 
     const { rerender } = render(<TestComponent project_id="project-1" />);
@@ -85,6 +95,7 @@ describe("useDiskUsage", () => {
     dustMock
       .mockResolvedValueOnce({ bytes: 111, children: [] })
       .mockRejectedValueOnce(new Error("scratch is not mounted"));
+    snapshotUsageMock.mockResolvedValue([]);
     quotaMock.mockResolvedValue({ used: 17, size: 100 });
 
     render(<TestComponent project_id="project-1" />);
@@ -114,6 +125,7 @@ describe("useDiskUsage", () => {
       .mockResolvedValueOnce({ bytes: 111, children: [] })
       .mockResolvedValueOnce({ bytes: 22, children: [] })
       .mockResolvedValueOnce({ bytes: 33, children: [] });
+    snapshotUsageMock.mockResolvedValue([]);
     quotaMock.mockResolvedValue({ used: 17, size: 100 });
 
     render(<TestComponent project_id="project-1" />);
@@ -126,6 +138,33 @@ describe("useDiskUsage", () => {
       });
       expect(screen.getByTestId("usage").textContent).toBe("111");
       expect(screen.getByTestId("quota").textContent).toBe("17");
+    });
+  });
+
+  it("includes snapshot-exclusive bytes as counted storage when nontrivial", async () => {
+    dustMock
+      .mockResolvedValueOnce({ bytes: 111, children: [] })
+      .mockResolvedValueOnce({ bytes: 22, children: [] });
+    snapshotUsageMock.mockResolvedValue([
+      {
+        name: "2026-03-31T12:00:00Z",
+        used: 4_000_000,
+        exclusive: 2_500_000,
+        quota: 20_000_000,
+      },
+      {
+        name: "2026-03-31T13:00:00Z",
+        used: 5_000_000,
+        exclusive: 1_500_000,
+        quota: 20_000_000,
+      },
+    ]);
+    quotaMock.mockResolvedValue({ used: 17, size: 100 });
+
+    render(<TestComponent project_id="project-1" />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("counted").textContent).toBe("4000000");
     });
   });
 });

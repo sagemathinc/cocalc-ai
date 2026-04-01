@@ -38,9 +38,10 @@ export default function DiskUsage({
   style?;
 }) {
   const [expand, setExpand] = useState<boolean>(false);
-  const { visible, loading, error, setError, refresh, quotas } = useDiskUsage({
-    project_id,
-  });
+  const { visible, counted, loading, error, setError, refresh, quotas } =
+    useDiskUsage({
+      project_id,
+    });
   const quota = quotas[0] ?? null;
   const [selectedBucketKey, setSelectedBucketKey] = useState<
     "home" | "scratch" | "environment"
@@ -100,6 +101,11 @@ export default function DiskUsage({
             {relativeLabel(bucket)} {human_readable_size(bucket.usage.bytes)}
           </Tag>
         ))}
+        {counted.map((bucket) => (
+          <Tag key={bucket.key}>
+            {bucket.label} {human_readable_size(bucket.bytes)}
+          </Tag>
+        ))}
         {loading && <Spin delay={1000} />}
       </Space>
     </Button>
@@ -153,6 +159,30 @@ export default function DiskUsage({
                   </div>
                 )}
               </div>
+            </>
+          )}
+          {counted.length > 0 && (
+            <>
+              <hr />
+              <div style={{ marginBottom: "10px" }}>
+                <b>Counted storage</b>
+              </div>
+              {counted.map((bucket) => (
+                <div
+                  key={bucket.key}
+                  style={{ marginBottom: "10px", color: COLORS.GRAY_D }}
+                >
+                  <div>
+                    <Text strong>{bucket.label}</Text>:{" "}
+                    {human_readable_size(bucket.bytes)}
+                  </div>
+                  {bucket.detail ? (
+                    <div style={{ color: COLORS.GRAY_M, marginTop: "4px" }}>
+                      {bucket.detail}
+                    </div>
+                  ) : null}
+                </div>
+              ))}
             </>
           )}
           {percent >= 100 && (
