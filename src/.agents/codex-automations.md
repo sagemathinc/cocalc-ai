@@ -793,7 +793,7 @@ Responsibilities:
 
 First-pass output format should be simple and robust:
 
-````md
+```md
 Command: `git fetch --all --prune && git status --short`
 
 Exit code: `0`
@@ -804,13 +804,12 @@ Duration: `12.4s`
 ```text
 ...
 ```
-
 ## stderr
 
 ```text
 ...
 ```
-````
+```
 
 If one stream is empty, omit that section.
 
@@ -1027,14 +1026,18 @@ execution branch in the detached worker.
 - whether the synthetic scheduled-run row should be a normal chat row with a
   special sender or a dedicated event type
   - ANS: I think normal chat row - that means it is automatically searchable (which could be useful) and it is just a message after all.
+  - USER: agree
 - whether `Run now` should preserve the normal daily anchor or reset the next
   run relative to "now"
   - ANS: I think preserve. If use wants to change params, they can just change them directly.
+  - USER: agree, definitely; it's often a test or a way to run something more frequently.
 - whether "unacknowledged" should reset only on explicit acknowledgment or also
   on any human reply in the thread
   - ANS: any human reply; the goal is just preventing pointless work that is never used
+  - USER: I think any human reply to the thread.  This has bugged me already, since right now with codex it has to be explicit. The point of acknowledge is just to stop running things that are _forgotten_ .  If there is any human interaction with the thread, then it's clearly not forgotten. 
 - whether a thread should ever support more than one automation
   - ANS: I think no. It's easy to have lots of threads. If you really needed more than one in a thread, there's probably better ways to share that context (e.g., a shared markdown file) or put in a conditional.
+  - USER: i agree -- definitely one per thread.  It's super easy to have lots of threads.
 
 ## Recommendation
 

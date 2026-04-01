@@ -98,6 +98,7 @@ import {
   nearestMarkdownPositionForSlatePoint,
 } from "./sync";
 import { ensureRange, pointAtPath } from "./slate-util";
+import { handleForcedPlainTextPaste } from "./clipboard";
 import {
   applyBlockDiffPatch,
   diffBlockSignatures,
@@ -2632,6 +2633,9 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
           onCopy={handleJupyterCellCopy}
           onCut={handleJupyterCellCut}
           onPaste={(event) => {
+            if (handleForcedPlainTextPaste({ editor: editor as any, event })) {
+              return;
+            }
             if (handleJupyterCellPaste(event)) return;
             handleMarkdownClipboardPaste(event);
           }}
