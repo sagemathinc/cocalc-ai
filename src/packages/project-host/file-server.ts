@@ -66,6 +66,7 @@ import {
   type RootfsUploadedArtifactResult,
 } from "@cocalc/util/rootfs-images";
 import { init as initSshServer } from "@cocalc/project-proxy/ssh-server";
+import { DEFAULT_PROJECT_RUNTIME_USER } from "@cocalc/util/project-runtime";
 import { type MutagenSyncSession } from "@cocalc/conat/project/mutagen/types";
 import { fsServer, DEFAULT_FILE_SERVICE } from "@cocalc/conat/files/fs";
 import { SandboxedFilesystem } from "@cocalc/backend/sandbox";
@@ -3243,6 +3244,9 @@ export async function initFileServer({
 
       return keys.join("\n");
     };
+    const getSshUser = async (): Promise<string> =>
+      `${process.env.COCALC_LAUNCHPAD_SSHD_USER ?? process.env.COCALC_RUNTIME_USER ?? DEFAULT_PROJECT_RUNTIME_USER}`.trim() ||
+      DEFAULT_PROJECT_RUNTIME_USER;
 
     logger.debug("initFileServer: start ssh server");
 
@@ -3250,6 +3254,7 @@ export async function initFileServer({
       proxyHandlers: true,
       getSshdPort,
       getAuthorizedKeys,
+      getSshUser,
       hostKeyPath,
     });
   }
