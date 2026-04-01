@@ -484,6 +484,11 @@ export default function DiskUsage({
   const [historyCounter, setHistoryCounter] = useState<number>(0);
   const lastHistoryCounterRef = useRef<number>(0);
   const historyRequestKeyRef = useRef<string>("");
+  const [reloadPending, setReloadPending] = useState<boolean>(false);
+  const [reloadStatus, setReloadStatus] = useState<string>("");
+  const reloadStatusTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
   const prevExpandRef = useRef<boolean>(false);
   const quota = quotas[0] ?? null;
 
@@ -678,6 +683,15 @@ export default function DiskUsage({
     }
   }, [historyMetric, historyMetricOptions]);
 
+  useEffect(() => {
+    return () => {
+      if (reloadStatusTimeoutRef.current != null) {
+        clearTimeout(reloadStatusTimeoutRef.current);
+        reloadStatusTimeoutRef.current = null;
+      }
+    };
+  }, []);
+
   async function handleBrowsePath(path: string) {
     const actions = redux.getProjectActions(project_id);
     actions.set_current_path(path);
@@ -705,6 +719,13 @@ export default function DiskUsage({
   }
 
   async function handleReload() {
+    if (reloadPending) return;
+    if (reloadStatusTimeoutRef.current != null) {
+      clearTimeout(reloadStatusTimeoutRef.current);
+      reloadStatusTimeoutRef.current = null;
+    }
+    setReloadPending(true);
+    setReloadStatus("");
     try {
       const homePath =
         visible.find((bucket) => bucket.key === "home")?.path ?? "/root";
@@ -717,8 +738,16 @@ export default function DiskUsage({
       refresh();
       setDrillCounter((prev) => prev + 1);
       setHistoryCounter((prev) => prev + 1);
+      setReloadStatus("Updated just now.");
+      reloadStatusTimeoutRef.current = setTimeout(() => {
+        setReloadStatus("");
+        reloadStatusTimeoutRef.current = null;
+      }, 4000);
     } catch (err) {
       setError(err);
+      setReloadStatus("");
+    } finally {
+      setReloadPending(false);
     }
   }
 
@@ -827,15 +856,39 @@ export default function DiskUsage({
           {activePanel === "history" && (
             <ShowError error={historyError} setError={setHistoryError} />
           )}
-          <h5 style={{ marginTop: 0 }}>
-            <Icon name="disk-round" /> Project storage overview
-            <Button
-              onClick={() => handleReload()}
-              style={{ float: "right", marginRight: "30px" }}
+          <div
+            style={{
+              alignItems: "flex-start",
+              display: "flex",
+              gap: "16px",
+              justifyContent: "space-between",
+              marginBottom: "16px",
+            }}
+          >
+            <h5 style={{ margin: 0 }}>
+              <Icon name="disk-round" /> Project storage overview
+            </h5>
+            <div
+              style={{
+                alignItems: "flex-end",
+                display: "flex",
+                flexDirection: "column",
+                gap: "4px",
+              }}
             >
-              Reload
-            </Button>
-          </h5>
+              <Button
+                loading={reloadPending}
+                onClick={() => void handleReload()}
+              >
+                Reload
+              </Button>
+              {reloadStatus ? (
+                <Text type="secondary" style={{ fontSize: "12px" }}>
+                  {reloadStatus}
+                </Text>
+              ) : null}
+            </div>
+          </div>
           <div style={{ marginBottom: "16px" }}>
             <Segmented
               options={[
