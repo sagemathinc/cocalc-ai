@@ -354,6 +354,35 @@ class BootstrapOwnershipScopeTest(unittest.TestCase):
                 recorded,
             )
 
+
+class BootstrapWrapperScriptTest(unittest.TestCase):
+    def test_storage_wrapper_uses_xattr_overlay_mounts_and_project_rustic_commands(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            captured: dict[str, str] = {}
+
+            original_write_text = bootstrap.Path.write_text
+            original_chmod = bootstrap.os.chmod
+
+            def capture_write(self, data, encoding="utf-8"):
+                captured[str(self)] = data
+                return len(data)
+
+            try:
+                bootstrap.Path.write_text = capture_write
+                bootstrap.os.chmod = lambda *_args, **_kwargs: None
+                bootstrap.install_privileged_wrappers(cfg)
+            finally:
+                bootstrap.Path.write_text = original_write_text
+                bootstrap.os.chmod = original_chmod
+
+            script = captured["/usr/local/sbin/cocalc-runtime-storage"]
+            self.assertIn("metacopy=on,redirect_dir=on,index=on", script)
+            self.assertIn("project-rustic-backup)", script)
+            self.assertIn("project-rustic-restore)", script)
+
     def test_write_helpers_chowns_only_targeted_paths(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             cfg = make_cfg(tmpdir)

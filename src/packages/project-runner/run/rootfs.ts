@@ -278,8 +278,9 @@ async function mountOverlayFs({ upperdir, workdir, merged, lowerdir }) {
       "-n",
       STORAGE_WRAPPER,
       "mount-overlay-project",
-      // CRITICAL: wrapper hardcodes xino=off,metacopy=off,redirect_dir=off to
-      // disable xattr-dependent overlay behaviors in this rootless workflow.
+      // CRITICAL: wrapper hardcodes the xattr-capable overlay options. Project
+      // backup and restore now preserve trusted.overlay.* metadata via the
+      // dedicated privileged rustic wrapper path.
       lowerdir,
       upperdir,
       workdir,

@@ -36,7 +36,7 @@ from typing import Any
 
 STATE_SCHEMA_VERSION = 1
 HELPER_SCHEMA_VERSION = "20260330-v1"
-RUNTIME_WRAPPER_VERSION = "20260330-v1"
+RUNTIME_WRAPPER_VERSION = "20260331-v1"
 BOOTSTRAP_LOG_MAX_BYTES = 4 * 1024 * 1024
 BUNDLE_RETENTION_COUNT = 3
 
@@ -1151,7 +1151,7 @@ case "$cmd" in
     lowerdir_escaped="$(escape_overlay_path "$lowerdir")"
     upperdir_escaped="$(escape_overlay_path "$upperdir")"
     workdir_escaped="$(escape_overlay_path "$workdir")"
-    exec /bin/mount -t overlay overlay -o "lowerdir=${lowerdir_escaped},upperdir=${upperdir_escaped},workdir=${workdir_escaped},xino=off,metacopy=off,redirect_dir=off" "$merged"
+    exec /bin/mount -t overlay overlay -o "lowerdir=${lowerdir_escaped},upperdir=${upperdir_escaped},workdir=${workdir_escaped},xino=off,metacopy=on,redirect_dir=on,index=on" "$merged"
     ;;
   umount-overlay-project)
     if [ "$#" -ne 1 ]; then
@@ -1256,6 +1256,67 @@ case "$cmd" in
       repo_profile="${repo_profile%.toml}"
     fi
     exec /opt/cocalc/tools/current/rustic -P "$repo_profile" restore "$@" "$snapshot" "$dest"
+    ;;
+  project-rustic-backup)
+    if [ "$#" -lt 3 ]; then
+      echo "usage: cocalc-runtime-storage project-rustic-backup <src> <repo-profile> <host> [--tag <tag>]..." >&2
+      exit 2
+    fi
+    src="$1"
+    repo_profile="$2"
+    host_name="$3"
+    shift 3
+    check_args "$src" "$repo_profile"
+    case "$host_name" in
+      -*)
+        deny "project-rustic-backup-bad-host" "$host_name"
+        ;;
+    esac
+    tag_args=()
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        --tag)
+          if [ "$#" -lt 2 ]; then
+            deny "project-rustic-backup-bad-args" "missing-tag-value"
+          fi
+          tag_args+=("$1" "$2")
+          shift 2
+          ;;
+        *)
+          deny "project-rustic-backup-bad-args" "$1"
+          ;;
+      esac
+    done
+    if [[ "$repo_profile" == *.toml ]]; then
+      repo_profile="${repo_profile%.toml}"
+    fi
+    rustic_cmd=(/opt/cocalc/tools/current/rustic -P "$repo_profile")
+    if ! "${rustic_cmd[@]}" repoinfo >/dev/null 2>&1; then
+      if ! "${rustic_cmd[@]}" --no-progress init >/dev/null 2>&1; then
+        "${rustic_cmd[@]}" repoinfo >/dev/null 2>&1
+      fi
+    fi
+    cd "$src"
+    exec "${rustic_cmd[@]}" backup -x --json --no-scan --host "$host_name" "${tag_args[@]}" .
+    ;;
+  project-rustic-restore)
+    if [ "$#" -ne 3 ]; then
+      echo "usage: cocalc-runtime-storage project-rustic-restore <repo-profile> <snapshot> <dest>" >&2
+      exit 2
+    fi
+    repo_profile="$1"
+    snapshot="$2"
+    dest="$3"
+    check_args "$repo_profile" "$dest"
+    case "$snapshot" in
+      -*)
+        deny "project-rustic-restore-bad-snapshot" "$snapshot"
+        ;;
+    esac
+    if [[ "$repo_profile" == *.toml ]]; then
+      repo_profile="${repo_profile%.toml}"
+    fi
+    exec /opt/cocalc/tools/current/rustic -P "$repo_profile" restore "$snapshot" "$dest"
     ;;
   rootfs-manifest)
     if [ "$#" -ne 1 ]; then
