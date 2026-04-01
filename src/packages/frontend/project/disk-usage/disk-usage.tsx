@@ -892,6 +892,7 @@ export default function DiskUsage({
       {summary}
       {expand && (
         <Modal
+          closable={false}
           onOk={() => setExpand(false)}
           onCancel={() => setExpand(false)}
           open
@@ -921,12 +922,20 @@ export default function DiskUsage({
                 gap: "4px",
               }}
             >
-              <Button
-                loading={reloadPending}
-                onClick={() => void handleReload()}
-              >
-                Reload
-              </Button>
+              <div style={{ display: "flex", gap: "8px" }}>
+                <Button
+                  loading={reloadPending}
+                  onClick={() => void handleReload()}
+                >
+                  Reload
+                </Button>
+                <Button
+                  aria-label="Close storage overview"
+                  icon={<Icon name="times" />}
+                  onClick={() => setExpand(false)}
+                  type="text"
+                />
+              </div>
               {reloadStatus ? (
                 <Text type="secondary" style={{ fontSize: "12px" }}>
                   {reloadStatus}
