@@ -626,6 +626,7 @@ export default function DiskUsage({
     () => collectHistorySeries(history, historyMetric),
     [history, historyMetric],
   );
+  const historyMetricPointCount = historySeries.length;
   const latestHistoryPoint = historySeries.at(-1);
   const firstHistoryPoint = historySeries[0];
   const historyDelta =
@@ -1076,8 +1077,9 @@ export default function DiskUsage({
                     />
                   )}
                   <div style={{ color: COLORS.GRAY_M, marginTop: "10px" }}>
-                    Showing {history.point_count} sampled points over{" "}
-                    {formatHistoryWindow(history.window_minutes)}.
+                    {historyMetricPointCount === history.point_count
+                      ? `Showing ${history.point_count} sampled points over ${formatHistoryWindow(history.window_minutes)}.`
+                      : `Showing ${historyMetricPointCount} ${historyMetricLabel(historyMetric).toLowerCase()} samples out of ${history.point_count} total storage samples over ${formatHistoryWindow(history.window_minutes)}.`}
                   </div>
                 </>
               )}

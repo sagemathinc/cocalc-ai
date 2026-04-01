@@ -183,7 +183,7 @@ export async function recordProjectStorageHistorySample({
       ? new Date(overview.collected_at)
       : new Date();
   const snapshotBytes =
-    overview.counted.find((entry) => entry.key === "snapshots")?.bytes ?? null;
+    overview.counted.find((entry) => entry.key === "snapshots")?.bytes ?? 0;
   if (force) {
     await pool().query(
       `

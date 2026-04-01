@@ -248,4 +248,61 @@ describe("project storage history", () => {
     expect(history.points[0].quota_used_bytes).toBe(12);
     expect(history.points[1].quota_used_bytes).toBe(34);
   });
+
+  it("records zero snapshot usage when snapshots are no longer counted", async () => {
+    const project_id = uuid();
+    await insertProject(project_id);
+    const first = new Date();
+    const second = new Date(first.getTime() + 30 * 1000);
+
+    await recordProjectStorageHistorySample({
+      project_id,
+      overview: {
+        collected_at: first.toISOString(),
+        quotas: [
+          {
+            key: "project",
+            label: "Project quota",
+            used: 12,
+            size: 1000,
+          },
+        ],
+        visible: [],
+        counted: [
+          {
+            key: "snapshots",
+            label: "Snapshots",
+            bytes: 99,
+          },
+        ],
+      },
+    });
+
+    await recordProjectStorageHistorySample({
+      project_id,
+      force: true,
+      overview: {
+        collected_at: second.toISOString(),
+        quotas: [
+          {
+            key: "project",
+            label: "Project quota",
+            used: 34,
+            size: 1000,
+          },
+        ],
+        visible: [],
+        counted: [],
+      },
+    });
+
+    const history = await loadProjectStorageHistory({
+      project_id,
+      window_minutes: 24 * 60,
+      max_points: 60,
+    });
+    expect(history.points).toHaveLength(2);
+    expect(history.points[0].snapshot_counted_bytes).toBe(99);
+    expect(history.points[1].snapshot_counted_bytes).toBe(0);
+  });
 });
