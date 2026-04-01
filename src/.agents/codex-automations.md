@@ -568,6 +568,460 @@ Possible additions:
 
 Do not start with cron syntax.
 
+## Detailed Plan: Command Automations
+
+Goal: extend the existing thread-attached automation system so a scheduled run
+can either:
+
+- run Codex with a stored prompt
+- or run an explicit bash command in the project
+
+This should work in both Codex and non-Codex chat threads. The schedule,
+banner, acknowledgment policy, Agents-panel listing, sqlite durability, and
+thread delivery surface should stay the same.
+
+### Why This Should Be A First-Class Mode
+
+Asking Codex to run a bash command works, but it has important drawbacks:
+
+- it consumes model tokens for a task that does not need a model
+- it is less deterministic than directly executing the command
+- it is slower
+- it makes stdout/stderr formatting and exit-code reporting indirect
+- it forces command automations to live only in Codex threads
+
+Command automations should therefore be an explicit automation mode, not a
+prompting trick layered on top of Codex.
+
+### Chosen Architecture
+
+Do not build a second scheduler.
+
+Do not build a second attention/acknowledgment system.
+
+Do not create a separate "automation inbox".
+
+Instead:
+
+- keep `acp_automations` as the durable schedule and runtime-state table
+- keep thread metadata as the authoritative project-scoped definition
+- reuse the same detached ACP worker / queue ownership model
+- generalize queued execution from "Codex only" to "automation run"
+
+Concretely:
+
+- the scheduler still polls `acp_automations`
+- when a run is due, it enqueues a durable job
+- the job payload says whether the run is `codex` or `command`
+- the detached worker claims the job and dispatches accordingly
+
+This keeps restart recovery, queue ordering, interrupt semantics, and host
+ownership in one place.
+
+### Product Model
+
+Extend the automation definition with an explicit run kind:
+
+```ts
+type AutomationRunKind = "codex" | "command";
+```
+
+For `codex`:
+
+- use the existing `prompt`
+- continue to inherit the thread's persisted Codex session config
+
+For `command`:
+
+- store an explicit bash command string
+- run it directly in the project
+- write the results back into the thread without involving Codex
+
+Recommended config shape:
+
+```ts
+export interface ChatThreadAutomationConfig {
+  enabled?: boolean;
+  automation_id?: string;
+  title?: string;
+  run_kind?: "codex" | "command";
+
+  // codex mode
+  prompt?: string;
+
+  // command mode
+  command?: string;
+  command_cwd?: string;
+  command_timeout_ms?: number;
+
+  // shared schedule
+  schedule_type?: "daily" | "interval";
+  days_of_week?: number[];
+  local_time?: string;
+  interval_minutes?: number;
+  window_start_local_time?: string;
+  window_end_local_time?: string;
+  timezone?: string;
+  pause_after_unacknowledged_runs?: number;
+}
+```
+
+Notes:
+
+- `command_cwd` should default to the chat's containing directory.
+- `command_timeout_ms` should default to something conservative such as
+  `10 * 60_000`.
+- do not add arbitrary env editing in the first pass.
+- do not add streaming terminal emulation in the first pass.
+- do not try to support interactive stdin in the first pass.
+
+### Thread Eligibility Rules
+
+Command automations should be allowed in any chat thread.
+
+Codex automations should remain restricted to threads that are configured to
+use Codex / ACP.
+
+UI policy:
+
+- in a Codex thread, show a mode selector:
+  - `Codex`
+  - `Command`
+- in a non-Codex thread, show only `Command`
+- if a user converts a thread from Codex to non-Codex later, preserve the
+  stored automation config but block `run_kind = "codex"` until the thread is
+  Codex-capable again
+
+### Durable Data Model Changes
+
+#### Thread Metadata
+
+Extend:
+
+- `src/packages/chat/src/index.ts`
+- `src/packages/conat/ai/acp/types.ts`
+
+with the new command-automation fields:
+
+- `run_kind`
+- `command`
+- `command_cwd`
+- `command_timeout_ms`
+
+#### Scheduler Table
+
+Extend:
+
+- `src/packages/lite/hub/sqlite/acp-automations.ts`
+
+with matching durable columns:
+
+- `run_kind TEXT NOT NULL DEFAULT 'codex'`
+- `command TEXT`
+- `command_cwd TEXT`
+- `command_timeout_ms INTEGER`
+
+Validation rules:
+
+- `run_kind = 'codex'` requires non-empty `prompt`
+- `run_kind = 'command'` requires non-empty `command`
+- only one of `prompt` / `command` should be semantically active at a time
+
+### Execution Queue Design
+
+Keep the existing durable queue ownership model, but generalize the queued
+request type from "ACP request" to "queued automation run request".
+
+Recommended first implementation:
+
+- keep the current `acp_jobs` table for now to minimize churn
+- widen the stored request payload into a discriminated union
+
+Example:
+
+```ts
+type QueuedAutomationRequest =
+  | (AcpRequest & { request_kind?: "codex" })
+  | {
+      request_kind: "command";
+      project_id: string;
+      account_id: string;
+      chat: AcpChatContext;
+      command: string;
+      command_cwd?: string;
+      command_timeout_ms?: number;
+    };
+```
+
+This means:
+
+- existing Codex queued turns continue to work with `request_kind` omitted or
+  equal to `"codex"`
+- command automations enqueue a durable `"command"` request into the same queue
+- the detached worker claims jobs exactly as it does now
+- worker dispatch becomes:
+  - `codex` -> existing ACP execution path
+  - `command` -> new command execution path
+
+Do not rename `acp_jobs` in the first pass. The table name is imperfect but the
+blast radius of a rename is not worth it initially.
+
+### Command Execution Path
+
+Add a new backend helper, likely under:
+
+- `src/packages/lite/hub/acp/command-automation.ts`
+
+Responsibilities:
+
+1. Resolve the effective command cwd:
+   - `command_cwd` if provided
+   - otherwise the chat directory
+2. Resolve the existing executor:
+   - reuse `ContainerExecutor` / `LocalExecutor`
+   - reuse the same workspace-root and host/runtime logic already used by ACP
+3. Execute:
+   - `/bin/bash -lc <command>`
+4. Enforce timeout:
+   - kill the subprocess if it exceeds `command_timeout_ms`
+5. Capture:
+   - stdout
+   - stderr
+   - exit code
+   - runtime duration
+6. Post a normal assistant-like automation result into the chat thread
+
+First-pass output format should be simple and robust:
+
+````md
+Command: `git fetch --all --prune && git status --short`
+
+Exit code: `0`
+Duration: `12.4s`
+
+## stdout
+
+```text
+...
+```
+
+## stderr
+
+```text
+...
+```
+````
+
+If one stream is empty, omit that section.
+
+If output is very large:
+
+- cap persisted output to a reasonable size
+- note that truncation occurred
+- optionally attach/store the full log later as a follow-up enhancement
+
+### Chat Attribution
+
+Do not attribute command automations to the human user.
+
+Add a dedicated synthetic sender identity, similar to scheduled Codex runs,
+for example:
+
+- `cocalc-automation-command`
+
+This should render:
+
+- on the left side
+- with a stable automation/system visual identity
+- not as a viewer message
+
+Recommended message pattern when a run fires:
+
+1. synthetic compact kickoff row:
+   - `Scheduled command run: Nightly git health check`
+2. result row with stdout/stderr/exit code
+
+This keeps parity with Codex automations and preserves thread readability.
+
+### Interrupt and Restart Semantics
+
+For the first pass:
+
+- support pause/resume/run-now exactly as existing automations do
+- do not support mid-command interrupt from the chat UI yet unless it is
+  already easy through the executor abstraction
+- if the host restarts during a running command automation, treat it the same
+  way as a detached-worker interruption:
+  - mark the run interrupted/error
+  - keep the automation definition
+  - compute the next future run normally
+
+The command automation must never disappear because the process restarted.
+
+### Frontend Changes
+
+#### Automation Form
+
+Extend:
+
+- `src/packages/frontend/chat/automation-form.tsx`
+
+Add:
+
+- run-kind segmented control or radio group
+- `Command` textarea/input when `run_kind = "command"`
+- optional cwd input
+- optional timeout input
+
+Behavior:
+
+- if `run_kind = "codex"`, keep the current prompt field
+- if `run_kind = "command"`, hide the Codex prompt field
+- preserve shared schedule fields exactly as they are now
+
+#### Thread Banner
+
+Extend:
+
+- `src/packages/frontend/chat/chatroom.tsx`
+
+to clarify what kind of automation is configured:
+
+- `Scheduled Codex automation. Every 2 hours from 06:00 to 20:00.`
+- `Scheduled command automation. Daily at 05:00.`
+
+#### Agents Panel
+
+Extend:
+
+- `src/packages/frontend/project/page/flyouts/agents.tsx`
+
+so the automation list shows:
+
+- title
+- run kind
+- next run
+- last run
+- last error
+- thread link
+
+### Backend API Changes
+
+Extend the automation request/response shapes in:
+
+- `src/packages/conat/ai/acp/types.ts`
+
+so `run_kind`, `command`, `command_cwd`, and `command_timeout_ms` round-trip
+between:
+
+- frontend form
+- thread metadata
+- sqlite scheduler table
+- Agents panel projection
+
+### Validation Plan
+
+Add focused tests in:
+
+- `src/packages/lite/hub/acp/__tests__/automation-schedule.test.ts`
+  - unchanged scheduling behavior for command automations
+- `src/packages/lite/hub/acp/__tests__/acp-automations.test.ts`
+  - sqlite round-trip for `run_kind = "command"`
+- new test, likely:
+  - `src/packages/lite/hub/acp/__tests__/command-automation.test.ts`
+
+Core cases:
+
+1. command automation config persists and reloads
+2. due command automation enqueues a durable queued request
+3. worker executes `/bin/bash -lc`
+4. stdout/stderr/exit code are written to chat
+5. attention policy still increments / pauses correctly
+6. non-Codex threads can own command automations
+7. host restart leaves the automation definition intact
+
+Frontend tests:
+
+- `src/packages/frontend/chat/__tests__/automation-form.test.ts`
+  - mode switch
+  - validation rules
+  - command-specific fields
+
+### Suggested Implementation Order
+
+#### Step 1: Type and sqlite plumbing
+
+- extend automation config/state types
+- extend `acp_automations` sqlite schema and normalization
+- keep frontend hidden for the moment
+
+#### Step 2: Backend execution branch
+
+- add `request_kind = "command"` queue payload
+- add command execution helper using the existing executor abstraction
+- add chat result formatting
+
+#### Step 3: Automation scheduler integration
+
+- make due automations enqueue either Codex or command runs
+- make `Run now` use the same branching logic
+
+#### Step 4: Frontend form and thread UX
+
+- expose the run-kind selector
+- expose command input / cwd / timeout
+- update the banner and Agents panel labels
+
+#### Step 5: Non-Codex thread enablement
+
+- lift any remaining frontend gating that assumes automations are Codex-only
+- keep Codex mode hidden unless the thread is Codex-capable
+
+### Explicit Non-Goals for the First Pass
+
+Do not include these initially:
+
+- interactive shell sessions
+- streamed terminal output into chat while the command is running
+- arbitrary env var editing
+- cron syntax
+- multiple commands as structured steps
+- approval prompts during command execution
+- interrupt/cancel support if it complicates the worker model
+
+### Example MVP Scenarios
+
+#### Morning Repo Status
+
+- thread type: ordinary chat
+- title: `Morning repo status`
+- run kind: `command`
+- command:
+  `git fetch --all --prune && git status --short && git log --oneline -5`
+- schedule: daily at `06:00`
+
+Result: the chat gets a compact kickoff row and a left-side result row with the
+command output.
+
+#### Security Check Script
+
+- thread type: ordinary chat
+- title: `Daily security check`
+- run kind: `command`
+- command: `./scripts/security-check.sh`
+- cwd: project root
+- schedule: weekdays at `05:00`
+
+Result: the same automation scheduler and acknowledgment policy are reused,
+without involving Codex.
+
+### Recommendation
+
+Implement command automations as a new `run_kind` on the existing thread
+automation system, not as a separate feature. Keep scheduling and attention
+policy shared, generalize the durable job payload, and add a direct command
+execution branch in the detached worker.
+
 ## Open Questions
 
 - whether the synthetic scheduled-run row should be a normal chat row with a
