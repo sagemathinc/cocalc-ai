@@ -2127,8 +2127,11 @@ esac
 set -euo pipefail
 RUNTIME_ROOT="__RUNTIME_ROOT__"
 CTL="$RUNTIME_ROOT/bin/ctl"
+WATCHDOG_LOG="/mnt/cocalc/data/logs/project-host-watchdog.log"
 for attempt in $(seq 1 60); do
   if mountpoint -q /mnt/cocalc; then
+    mkdir -p "$(dirname "$WATCHDOG_LOG")"
+    exec >>"$WATCHDOG_LOG" 2>&1
     if [ -x /usr/local/sbin/cocalc-runtime-storage ]; then
       sudo -n /usr/local/sbin/cocalc-runtime-storage grow-btrfs || true
     fi
@@ -2365,9 +2368,14 @@ exec python3 "{bootstrap_py}" --bootstrap-dir "{bootstrap_dir}" --only tools_bun
 def configure_autostart(cfg: BootstrapConfig) -> None:
     log_line(cfg, "bootstrap: configuring project-host autostart")
     runtime_root = project_host_runtime_root(cfg)
+    watchdog_log = "/mnt/cocalc/data/logs/project-host-watchdog.log"
     cron_lines = [
         f"@reboot {cfg.ssh_user} /bin/bash -lc '{runtime_root}/bin/start-project-host'",
-        f"* * * * * {cfg.ssh_user} /bin/bash -lc 'mountpoint -q /mnt/cocalc && {runtime_root}/bin/ctl ensure || true'",
+        (
+            f"* * * * * {cfg.ssh_user} /bin/bash -lc "
+            f"'if mountpoint -q /mnt/cocalc; then mkdir -p /mnt/cocalc/data/logs; "
+            f"{runtime_root}/bin/ctl ensure >> {watchdog_log} 2>&1; fi'"
+        ),
     ]
     Path("/etc/cron.d/cocalc-project-host").write_text(
         "\n".join(cron_lines) + "\n", encoding="utf-8"

@@ -324,6 +324,18 @@ function sleepMs(ms: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
+function pidFileAgeMs(pidPath: string): number | undefined {
+  try {
+    const stats = fs.statSync(pidPath);
+    if (!Number.isFinite(stats.mtimeMs)) {
+      return;
+    }
+    return Math.max(0, Date.now() - stats.mtimeMs);
+  } catch {
+    return;
+  }
+}
+
 function waitForExit(pid: number, timeoutMs: number, pollMs: number): boolean {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -513,6 +525,17 @@ export function ensureDaemon(index = 0): void {
   if (pid && isRunning(pid)) {
     if (checkHealthSync(env, httpPort)) {
       console.log(`project-host healthy (pid ${pid})`);
+      return;
+    }
+    const warmupMs = getPositiveIntEnv(
+      "COCALC_PROJECT_HOST_DAEMON_STARTUP_GRACE_MS",
+      30_000,
+    );
+    const ageMs = pidFileAgeMs(pidPath);
+    if (ageMs != null && ageMs < warmupMs) {
+      console.warn(
+        `project-host pid ${pid} is still warming up (${Math.floor(ageMs / 1000)}s < ${Math.floor(warmupMs / 1000)}s); deferring restart.`,
+      );
       return;
     }
     console.warn(

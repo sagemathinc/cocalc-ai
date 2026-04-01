@@ -474,7 +474,7 @@ class BootstrapWrapperScriptTest(unittest.TestCase):
                     "/etc/cron.d/cocalc-project-host",
                     (
                         f"@reboot {cfg.ssh_user} /bin/bash -lc '{runtime_root}/bin/start-project-host'\n"
-                        f"* * * * * {cfg.ssh_user} /bin/bash -lc 'mountpoint -q /mnt/cocalc && {runtime_root}/bin/ctl ensure || true'\n"
+                        f"* * * * * {cfg.ssh_user} /bin/bash -lc 'if mountpoint -q /mnt/cocalc; then mkdir -p /mnt/cocalc/data/logs; {runtime_root}/bin/ctl ensure >> /mnt/cocalc/data/logs/project-host-watchdog.log 2>&1; fi'\n"
                     ),
                     "utf-8",
                 ),
