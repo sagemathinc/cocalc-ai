@@ -125,6 +125,7 @@ function PublicViewerApp({
       try {
         const response = await fetch(config.rawUrl, {
           credentials: "include",
+          cache: "no-store",
         });
         if (!response.ok) {
           throw new Error(`Unable to load ${config.path} (${response.status})`);
