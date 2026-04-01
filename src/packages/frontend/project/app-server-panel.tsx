@@ -1393,8 +1393,8 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
       }
       const declaredBasePath = `${spec?.proxy?.base_path ?? ""}`.trim();
       const unmanagedBasePath =
-        status.lifecycle_mode === "unmanaged" ? `/apps/${status.id}` : "";
-      const basePathLocal = declaredBasePath
+        status.lifecycle_mode === "unmanaged" ? `/apps/${status.id}/` : "";
+      let basePathLocal = declaredBasePath
         ? declaredBasePath.startsWith(`/${project_id}/`) ||
           declaredBasePath === `/${project_id}`
           ? declaredBasePath
@@ -1402,6 +1402,13 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
         : unmanagedBasePath
           ? `/${project_id}${unmanagedBasePath}`
           : undefined;
+      if (
+        status.lifecycle_mode === "unmanaged" &&
+        basePathLocal &&
+        !basePathLocal.endsWith("/")
+      ) {
+        basePathLocal = `${basePathLocal}/`;
+      }
       const serviceOpenMode: AppServiceOpenMode =
         spec?.kind === "service" && spec?.proxy?.open_mode === "port"
           ? "port"

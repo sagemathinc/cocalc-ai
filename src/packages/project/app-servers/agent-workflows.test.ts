@@ -254,7 +254,7 @@ describe("app server agent workflows", () => {
       expect(unmanagedStatus.state).toBe("running");
       expect(unmanagedStatus.ready).toBe(true);
       expect(unmanagedStatus.port).toBe(unmanagedPort);
-      expect(unmanagedStatus.url).toBe(`/apps/${unmanagedId}`);
+      expect(unmanagedStatus.url).toBe(`/apps/${unmanagedId}/`);
 
       const tracked = await detectApps({
         include_managed: true,

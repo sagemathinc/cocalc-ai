@@ -989,7 +989,7 @@ export async function statusApp(id: string): Promise<AppStatus> {
     const port = serviceSpec.network.port!;
     const ready = await isServerReady(port, serviceSpec.network.listen_host);
     const canonicalUrl = serviceSpec.proxy.base_path
-      ? normalizePrefix(serviceSpec.proxy.base_path)
+      ? ensureTrailingSlash(normalizePrefix(serviceSpec.proxy.base_path))
       : getProxyUrl(port);
     return {
       ...status,
@@ -1173,6 +1173,10 @@ export async function deleteApp(
 function normalizePrefix(value: string): string {
   const withLeading = value.startsWith("/") ? value : `/${value}`;
   return withLeading.replace(/\/+$/, "") || "/";
+}
+
+function ensureTrailingSlash(value: string): string {
+  return value.endsWith("/") ? value : `${value}/`;
 }
 
 async function specsForRouting(): Promise<AppSpec[]> {
