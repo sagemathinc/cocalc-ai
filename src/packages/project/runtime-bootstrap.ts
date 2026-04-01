@@ -134,11 +134,23 @@ async function configureSudo(runtime: RuntimeIdentity): Promise<void> {
     return;
   }
   const sudoersDir = "/etc/sudoers.d";
-  await mkdir(sudoersDir, { recursive: true });
   const sudoersPath = `${sudoersDir}/cocalc-project-runtime`;
   const content = `${runtime.user} ALL=(ALL) NOPASSWD:ALL\n`;
-  await writeFile(sudoersPath, content, { mode: 0o440 });
-  await chmod(sudoersPath, 0o440);
+  try {
+    const current = await readFile(sudoersPath, "utf8").catch(() => null);
+    if (current === content) {
+      return;
+    }
+    await mkdir(sudoersDir, { recursive: true });
+    await writeFile(sudoersPath, content, { mode: 0o440 });
+    await chmod(sudoersPath, 0o440);
+  } catch (err) {
+    logger.warn("unable to configure sudo during runtime bootstrap", {
+      user: runtime.user,
+      path: sudoersPath,
+      err: `${err}`,
+    });
+  }
 }
 
 async function ensureRuntimeFiles(runtime: RuntimeIdentity): Promise<void> {
