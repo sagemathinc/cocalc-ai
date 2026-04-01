@@ -3,6 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { posix } from "path";
 import type { ExecOutput } from "@cocalc/conat/files/fs";
 import type { ProjectStorageBreakdown } from "@cocalc/conat/hub/api/projects";
 
@@ -39,14 +40,14 @@ export function parseDustOutput(
       `Disk usage scan for '${path}' returned invalid data. Try again or browse into a smaller folder.`,
     );
   }
-  const absolutePath = parsed.name;
-  const prefixLength = absolutePath.length + 1;
+  const requestedPath = posix.normalize(path);
+  const scannedRoot = posix.normalize(parsed.name);
   return {
-    path: absolutePath,
+    path: requestedPath,
     bytes: parseInt(parsed.size.slice(0, -1)),
     children: (parsed.children ?? []).map(({ size, name }) => ({
       bytes: parseInt(size.slice(0, -1)),
-      path: name.slice(prefixLength),
+      path: posix.relative(scannedRoot, posix.normalize(name)),
     })),
     collected_at: new Date().toISOString(),
   };

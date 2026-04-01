@@ -51,4 +51,38 @@ describe("storage-breakdown.parseDustOutput", () => {
       collected_at: expect.any(String),
     });
   });
+
+  it("maps host-side dust paths back to project-visible paths", () => {
+    const result = parseDustOutput(
+      {
+        stdout: Buffer.from(
+          JSON.stringify({
+            size: "123b",
+            name: "/mnt/cocalc/project-abc",
+            children: [
+              { size: "100b", name: "/mnt/cocalc/project-abc/cocalc-ai" },
+              {
+                size: "23b",
+                name: "/mnt/cocalc/project-abc/.local/share/cocalc",
+              },
+            ],
+          }),
+        ),
+        stderr: Buffer.from(""),
+        code: 0,
+        truncated: false,
+      },
+      "/root",
+    );
+
+    expect(result).toEqual({
+      path: "/root",
+      bytes: 123,
+      children: [
+        { bytes: 100, path: "cocalc-ai" },
+        { bytes: 23, path: ".local/share/cocalc" },
+      ],
+      collected_at: expect.any(String),
+    });
+  });
 });
