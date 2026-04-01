@@ -1682,7 +1682,7 @@ export function ChatPanel({
             </Tag>
             {describeAutomationSchedule(selectedThreadAutomationConfig) ? (
               <span>
-                {describeAutomationSchedule(selectedThreadAutomationConfig)}
+                {describeAutomationSchedule(selectedThreadAutomationConfig)}.
               </span>
             ) : null}
             {selectedThreadAutomationState?.next_run_at_ms ? (
@@ -1691,6 +1691,7 @@ export function ChatPanel({
                 <TimeAgo
                   date={new Date(selectedThreadAutomationState.next_run_at_ms)}
                 />
+                .
               </span>
             ) : null}
             {selectedThreadAutomationState?.last_run_finished_at_ms ? (
@@ -1703,6 +1704,7 @@ export function ChatPanel({
                     )
                   }
                 />
+                .
               </span>
             ) : null}
             {typeof selectedThreadAutomationState?.unacknowledged_runs ===
