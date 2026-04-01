@@ -15,6 +15,7 @@ import initKucalc from "./init-kucalc";
 import { getOptions } from "./init-program";
 import { cleanup as cleanupEnvironmentVariables } from "./project-setup";
 import initPublicPaths from "./public-paths";
+import { maybeActivateRuntimeUser } from "./runtime-bootstrap";
 import initServers from "./servers/init";
 
 import { getLogger } from "./logger";
@@ -36,6 +37,7 @@ function checkEnvVariables() {
 }
 
 export async function main() {
+  await maybeActivateRuntimeUser();
   const options = getOptions();
   if (options.daemon) {
     logger.info(`daemonize the process pid=${process.pid}`);

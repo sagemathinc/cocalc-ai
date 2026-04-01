@@ -256,6 +256,8 @@ interface Options {
   // optional path to treat as /scratch when mounted/available.
   // if /scratch is requested but this is unavailable, operations fail.
   scratch?: string;
+  // absolute paths to treat as aliases for the project home mount.
+  homeAliases?: string[];
   host?: string;
   rusticRepo?: string;
   // Explicitly allow hard link creation in safe mode.
@@ -266,6 +268,23 @@ interface Options {
 
 const HOME_ROOT = "/root";
 
+function normalizeHomeAliases(homeAliases?: string[]): string[] {
+  const normalized = new Set<string>();
+  for (const alias of homeAliases ?? [HOME_ROOT]) {
+    if (typeof alias !== "string") continue;
+    const trimmed = alias.trim();
+    if (!trimmed.startsWith("/")) continue;
+    normalized.add(resolve("/", trimmed));
+  }
+  if (normalized.size === 0) {
+    normalized.add(HOME_ROOT);
+  }
+  if (!normalized.has(HOME_ROOT)) {
+    normalized.add(HOME_ROOT);
+  }
+  return [...normalized];
+}
+
 // If you add any methods below that are NOT for the public api
 // be sure to exclude them here!
 const INTERNAL_METHODS = new Set([
@@ -273,6 +292,8 @@ const INTERNAL_METHODS = new Set([
   "safeAbsPaths",
   "constructor",
   "path",
+  "homeAliases",
+  "resolveHomeAlias",
   "unsafeMode",
   "readonly",
   "rootfs",
@@ -313,6 +334,7 @@ const INTERNAL_METHODS = new Set([
 ]);
 
 export class SandboxedFilesystem {
+  public readonly homeAliases: string[];
   public readonly unsafeMode: boolean;
   public readonly readonly: boolean;
   public readonly rootfs?: string;
@@ -344,12 +366,14 @@ export class SandboxedFilesystem {
       readonly = false,
       rootfs,
       scratch,
+      homeAliases,
       host = "global",
       rusticRepo: repo,
       allowSafeModeHardlink = false,
       allowSafeModeSymlink = false,
     }: Options = {},
   ) {
+    this.homeAliases = normalizeHomeAliases(homeAliases);
     this.unsafeMode = !!unsafeMode;
     this.readonly = !!readonly;
     this.rootfs = rootfs;
@@ -404,6 +428,15 @@ export class SandboxedFilesystem {
         }
       };
     }
+  }
+
+  private resolveHomeAlias(resolvedInput: string): string | undefined {
+    for (const alias of this.homeAliases) {
+      if (resolvedInput === alias || resolvedInput.startsWith(`${alias}/`)) {
+        return alias;
+      }
+    }
+    return;
   }
 
   private isSecurityDenial(err: any): boolean {
@@ -734,30 +767,31 @@ export class SandboxedFilesystem {
   private async resolvePathInSandbox(path: string): Promise<{
     pathInSandbox: string;
     sandboxBasePath: string;
-    absoluteHomeAlias: boolean;
+    absoluteHomeAlias?: string;
     absoluteScratchAlias: boolean;
   }> {
     const resolvedInput = resolve("/", path);
     const isAbsoluteInput = path.startsWith("/");
-    const isAbsoluteHomeAlias =
-      isAbsoluteInput &&
-      (resolvedInput == HOME_ROOT || resolvedInput.startsWith(`${HOME_ROOT}/`));
+    const absoluteHomeAlias = isAbsoluteInput
+      ? this.resolveHomeAlias(resolvedInput)
+      : undefined;
     const isAbsoluteScratchAlias =
       isAbsoluteInput &&
       (resolvedInput == "/scratch" || resolvedInput.startsWith("/scratch/"));
 
-    // Relative paths (and absolute /root paths) are always interpreted relative
-    // to the project home mount `path`, even when rootfs mode is enabled.
-    if (!isAbsoluteInput || isAbsoluteHomeAlias) {
-      const rel = isAbsoluteHomeAlias
-        ? resolvedInput == HOME_ROOT
+    // Relative paths (and absolute home alias paths) are always interpreted
+    // relative to the project home mount `path`, even when rootfs mode is
+    // enabled.
+    if (!isAbsoluteInput || absoluteHomeAlias) {
+      const rel = absoluteHomeAlias
+        ? resolvedInput == absoluteHomeAlias
           ? ""
-          : resolvedInput.slice(HOME_ROOT.length + 1)
+          : resolvedInput.slice(absoluteHomeAlias.length + 1)
         : resolvedInput.slice(1);
       return {
         pathInSandbox: join(this.path, rel),
         sandboxBasePath: this.path,
-        absoluteHomeAlias: isAbsoluteHomeAlias,
+        absoluteHomeAlias,
         absoluteScratchAlias: false,
       };
     }
@@ -772,7 +806,7 @@ export class SandboxedFilesystem {
       return {
         pathInSandbox: join(scratchBase, rel),
         sandboxBasePath: scratchBase,
-        absoluteHomeAlias: false,
+        absoluteHomeAlias: undefined,
         absoluteScratchAlias: true,
       };
     }
@@ -783,7 +817,7 @@ export class SandboxedFilesystem {
     return {
       pathInSandbox: join(rootBase, resolvedInput),
       sandboxBasePath: rootBase,
-      absoluteHomeAlias: false,
+      absoluteHomeAlias: undefined,
       absoluteScratchAlias: false,
     };
   }
@@ -853,7 +887,7 @@ export class SandboxedFilesystem {
   }: {
     pathInSandbox: string;
     sandboxBasePath: string;
-    absoluteHomeAlias: boolean;
+    absoluteHomeAlias?: string;
     absoluteScratchAlias: boolean;
     compareBasePath?: string;
   }): string => {
@@ -864,9 +898,11 @@ export class SandboxedFilesystem {
     );
     if (absoluteHomeAlias) {
       if (rel === "") {
-        return HOME_ROOT;
+        return absoluteHomeAlias;
       }
-      return rel.startsWith("/") ? `${HOME_ROOT}${rel}` : `${HOME_ROOT}/${rel}`;
+      return rel.startsWith("/")
+        ? `${absoluteHomeAlias}${rel}`
+        : `${absoluteHomeAlias}/${rel}`;
     }
     if (absoluteScratchAlias) {
       if (rel === "" || rel === "/") {
@@ -1883,9 +1919,9 @@ export class SandboxedFilesystem {
     const rel = this.toSandboxRelativePath(x, sandboxBasePath);
     if (absoluteHomeAlias) {
       if (rel === "") {
-        return HOME_ROOT;
+        return absoluteHomeAlias;
       }
-      return `${HOME_ROOT}/${rel}`;
+      return `${absoluteHomeAlias}/${rel}`;
     }
     if (absoluteScratchAlias) {
       if (rel === "" || rel === "/") {

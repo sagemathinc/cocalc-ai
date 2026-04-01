@@ -4,6 +4,12 @@ import base_path from "@cocalc/backend/base-path";
 import { COCALC_SRC, COCALC_BIN, COCALC_BIN2 } from "./mounts";
 import getLogger from "@cocalc/backend/logger";
 import { inspect } from "./rootfs-base";
+import {
+  DEFAULT_PROJECT_RUNTIME_GID,
+  DEFAULT_PROJECT_RUNTIME_HOME,
+  DEFAULT_PROJECT_RUNTIME_UID,
+  DEFAULT_PROJECT_RUNTIME_USER,
+} from "@cocalc/util/project-runtime";
 
 // where the project places all its data, relative to HOME. This used by ".smc"
 export const COCALC_PROJECT_CACHE = ".cache/cocalc/project";
@@ -58,7 +64,7 @@ export async function getEnvironment({
 
   const imageEnv = await getImageEnv(image);
 
-  const USER = "root";
+  const USER = DEFAULT_PROJECT_RUNTIME_USER;
   const DATA = dataPath(HOME);
   // NOTE: we put ${COCALC_SRC}/packages/backend/node_modules/.bin ahead of the system-wide
   // paths, since otherwise, e.g., the 'open' command and other things will get shadowed by
@@ -87,8 +93,14 @@ export async function getEnvironment({
     DEBUG_CONSOLE: "yes",
     // important to explicitly set the COCALC_ vars since server env has own in a project
     COCALC_PROJECT_ID: project_id,
+    COCALC_RUNTIME_BOOTSTRAP: "1",
+    COCALC_RUNTIME_USER: DEFAULT_PROJECT_RUNTIME_USER,
+    COCALC_RUNTIME_UID: `${DEFAULT_PROJECT_RUNTIME_UID}`,
+    COCALC_RUNTIME_GID: `${DEFAULT_PROJECT_RUNTIME_GID}`,
+    COCALC_RUNTIME_HOME: DEFAULT_PROJECT_RUNTIME_HOME,
     COCALC_USERNAME: USER,
     USER,
+    LOGNAME: USER,
     COCALC_EXTRA_ENV: extra_env,
     PATH,
     // Project containers connect to host-local conat through podman networking.
@@ -99,6 +111,6 @@ export async function getEnvironment({
     BASE_PATH: base_path,
     DEBIAN_FRONTEND: "noninteractive",
     COCALC_PROXY_HOST: "0.0.0.0",
-    COCALC_PROXY_PORT: "80",
+    COCALC_PROXY_PORT: "8080",
   };
 }

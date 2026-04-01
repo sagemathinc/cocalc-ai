@@ -9,6 +9,14 @@ import { mountArg } from "@cocalc/backend/podman";
 import { getEnvironment } from "./env";
 import { join } from "node:path";
 import { getCoCalcMounts } from "./mounts";
+import {
+  DEFAULT_PROJECT_RUNTIME_GID,
+  DEFAULT_PROJECT_RUNTIME_HOME,
+  DEFAULT_PROJECT_RUNTIME_UID,
+  DEFAULT_PROJECT_RUNTIME_USER,
+} from "@cocalc/util/project-runtime";
+
+const LEGACY_PROJECT_RUNTIME_HOME: string = "/root";
 
 export interface SandboxExecOptions {
   project_id: string;
@@ -75,7 +83,7 @@ export async function sandboxExec({
     timeoutMs,
   });
   const args: string[] = [];
-  const HOME = "/root";
+  const HOME = DEFAULT_PROJECT_RUNTIME_HOME;
   const getWorkdir = () => {
     if (cwd?.startsWith("/")) {
       return cwd;
@@ -127,6 +135,13 @@ export async function sandboxExec({
       // Build a one-off container run.
       args.push("run", "--runtime", "/usr/bin/crun", "--rm", "-i");
       args.push("--security-opt", "no-new-privileges");
+      args.push(
+        `--userns=keep-id:uid=${DEFAULT_PROJECT_RUNTIME_UID},gid=${DEFAULT_PROJECT_RUNTIME_GID}`,
+      );
+      args.push(
+        "--user",
+        `${DEFAULT_PROJECT_RUNTIME_UID}:${DEFAULT_PROJECT_RUNTIME_GID}`,
+      );
       // execFile timeout still applies; podman itself doesn't have a timeout flag.
       if (!noNetwork) {
         args.push(networkArgument());
@@ -138,6 +153,11 @@ export async function sandboxExec({
       }
 
       args.push(mountArg({ source: home, target: HOME }));
+      if (HOME !== LEGACY_PROJECT_RUNTIME_HOME) {
+        args.push(
+          mountArg({ source: home, target: LEGACY_PROJECT_RUNTIME_HOME }),
+        );
+      }
       if (scratch) {
         args.push(mountArg({ source: scratch, target: "/scratch" }));
       }
@@ -158,6 +178,14 @@ export async function sandboxExec({
       args.push(
         "exec",
         "-i",
+        "-u",
+        `${DEFAULT_PROJECT_RUNTIME_UID}:${DEFAULT_PROJECT_RUNTIME_GID}`,
+        "-e",
+        `HOME=${HOME}`,
+        "-e",
+        `USER=${DEFAULT_PROJECT_RUNTIME_USER}`,
+        "-e",
+        `LOGNAME=${DEFAULT_PROJECT_RUNTIME_USER}`,
         "--workdir",
         getWorkdir(),
         `project-${project_id}`,

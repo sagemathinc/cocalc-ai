@@ -2,7 +2,7 @@
 
 Last refreshed: March 31, 2026
 
-Status: design and migration plan
+Status: phase 0 complete; phase 1/2 implementation in progress
 
 This document is the concrete plan for changing launchpad project runtimes from
 the current:
@@ -378,6 +378,10 @@ Deliverables:
 - frontend home-directory lookup no longer hardcodes non-lite `/root`
 - tests for path normalization against `/home/user`
 
+Status:
+
+- complete
+
 ### Phase 1: Runtime Account Bootstrap
 
 Make project startup guarantee the existence of:
@@ -391,6 +395,10 @@ Deliverables:
 - startup/setup code that materializes the runtime account in the writable
   overlay when needed
 - explicit tests against OCI images without a preexisting `user`
+
+Status:
+
+- in progress
 
 ### Phase 2: Container Launch Semantics
 
@@ -406,6 +414,10 @@ Deliverables:
 - validated Podman idmap / keep-id configuration
 - no recurring recursive `chown`
 - project processes run as `user`
+
+Status:
+
+- in progress
 
 ### Phase 3: SSH and Startup Scripts
 
