@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "crypto";
+import { delay } from "awaiting";
 import type {
   Host,
   HostBackupStatus,
@@ -154,6 +155,8 @@ const HOST_ROOTFS_RPC_TIMEOUT_MS = 30 * 60 * 1000;
 const HOST_DRAIN_DEFAULT_PARALLEL = 10;
 const HOST_DRAIN_OWNER_MAX_PARALLEL = 15;
 const HOST_ONLINE_WINDOW_MS = 2 * 60 * 1000;
+const HOST_BOOTSTRAP_RECONCILE_TIMEOUT_MS = 20 * 60 * 1000;
+const HOST_BOOTSTRAP_RECONCILE_POLL_MS = 5_000;
 const HOST_RUNNING_STATUSES = new Set(["running", "active"]);
 
 type RootfsReleaseLifecycleRow = {
@@ -206,6 +209,142 @@ async function runSshScript({
   });
 }
 
+type HostBootstrapReconcileState = {
+  deleted: boolean;
+  status: string;
+  bootstrap_status?: string;
+  bootstrap_updated_at?: string;
+  bootstrap_message?: string;
+  lifecycle_summary_status?: string;
+  lifecycle_summary_message?: string;
+  lifecycle_current_operation?: string;
+  lifecycle_last_error?: string;
+  lifecycle_last_reconcile_started_at?: string;
+  lifecycle_last_reconcile_finished_at?: string;
+};
+
+async function loadHostBootstrapReconcileState(
+  host_id: string,
+): Promise<HostBootstrapReconcileState | undefined> {
+  const { rows } = await pool().query(
+    `SELECT status, deleted, metadata FROM project_hosts WHERE id=$1 LIMIT 1`,
+    [host_id],
+  );
+  const row = rows[0];
+  if (!row) return undefined;
+  const metadata = row.metadata ?? {};
+  const bootstrap = metadata.bootstrap ?? {};
+  const lifecycle = metadata.bootstrap_lifecycle ?? {};
+  return {
+    deleted: !!row.deleted,
+    status: `${row.status ?? ""}`.trim(),
+    bootstrap_status: `${bootstrap.status ?? ""}`.trim() || undefined,
+    bootstrap_updated_at: `${bootstrap.updated_at ?? ""}`.trim() || undefined,
+    bootstrap_message: `${bootstrap.message ?? ""}`.trim() || undefined,
+    lifecycle_summary_status:
+      `${lifecycle.summary_status ?? ""}`.trim() || undefined,
+    lifecycle_summary_message:
+      `${lifecycle.summary_message ?? ""}`.trim() || undefined,
+    lifecycle_current_operation:
+      `${lifecycle.current_operation ?? ""}`.trim() || undefined,
+    lifecycle_last_error: `${lifecycle.last_error ?? ""}`.trim() || undefined,
+    lifecycle_last_reconcile_started_at:
+      `${lifecycle.last_reconcile_started_at ?? ""}`.trim() || undefined,
+    lifecycle_last_reconcile_finished_at:
+      `${lifecycle.last_reconcile_finished_at ?? ""}`.trim() || undefined,
+  };
+}
+
+function hostBootstrapActivityChanged(
+  baseline: HostBootstrapReconcileState,
+  current: HostBootstrapReconcileState,
+): boolean {
+  return (
+    current.bootstrap_status !== baseline.bootstrap_status ||
+    current.bootstrap_updated_at !== baseline.bootstrap_updated_at ||
+    current.bootstrap_message !== baseline.bootstrap_message ||
+    current.lifecycle_summary_status !== baseline.lifecycle_summary_status ||
+    current.lifecycle_summary_message !== baseline.lifecycle_summary_message ||
+    current.lifecycle_current_operation !==
+      baseline.lifecycle_current_operation ||
+    current.lifecycle_last_error !== baseline.lifecycle_last_error ||
+    current.lifecycle_last_reconcile_started_at !==
+      baseline.lifecycle_last_reconcile_started_at ||
+    current.lifecycle_last_reconcile_finished_at !==
+      baseline.lifecycle_last_reconcile_finished_at
+  );
+}
+
+function hostBootstrapReconcileSucceeded(
+  state: HostBootstrapReconcileState,
+): boolean {
+  if (state.lifecycle_summary_status === "in_sync") {
+    return true;
+  }
+  return state.bootstrap_status === "done";
+}
+
+function hostBootstrapReconcileFailure(
+  state: HostBootstrapReconcileState,
+): string | undefined {
+  if (state.bootstrap_status === "error") {
+    return (
+      state.bootstrap_message ??
+      state.lifecycle_last_error ??
+      "bootstrap reconcile failed"
+    );
+  }
+  if (state.lifecycle_summary_status === "error") {
+    return (
+      state.lifecycle_last_error ??
+      state.lifecycle_summary_message ??
+      "bootstrap reconcile failed"
+    );
+  }
+  if (
+    state.lifecycle_summary_status === "drifted" &&
+    state.bootstrap_status === "done" &&
+    state.lifecycle_current_operation !== "reconcile"
+  ) {
+    return (
+      state.lifecycle_summary_message ??
+      state.lifecycle_last_error ??
+      "host software remains drifted after reconcile"
+    );
+  }
+  return undefined;
+}
+
+async function waitForHostBootstrapReconcile({
+  host_id,
+  baseline,
+}: {
+  host_id: string;
+  baseline: HostBootstrapReconcileState;
+}): Promise<void> {
+  const startedAt = Date.now();
+  let sawActivity = false;
+  while (Date.now() - startedAt < HOST_BOOTSTRAP_RECONCILE_TIMEOUT_MS) {
+    const state = await loadHostBootstrapReconcileState(host_id);
+    if (!state) {
+      throw new Error("host not found");
+    }
+    if (state.deleted) {
+      throw new Error("host deleted during bootstrap reconcile");
+    }
+    sawActivity ||= hostBootstrapActivityChanged(baseline, state);
+    const failure = hostBootstrapReconcileFailure(state);
+    if (failure) {
+      throw new Error(failure);
+    }
+    if (sawActivity && hostBootstrapReconcileSucceeded(state)) {
+      return;
+    }
+    await delay(HOST_BOOTSTRAP_RECONCILE_POLL_MS);
+  }
+  throw new Error("timeout waiting for host bootstrap reconcile");
+}
+
 function cloudHostSshTarget(row: {
   metadata?: Record<string, any>;
 }): string | undefined {
@@ -255,6 +394,10 @@ async function reconcileCloudHostBootstrapOverSsh(opts: {
     bootstrapToken.token,
     bootstrapBaseUrl,
   );
+  const baseline = await loadHostBootstrapReconcileState(opts.host_id);
+  if (!baseline) {
+    throw new Error("host not found");
+  }
   const encodedBootstrapScript = Buffer.from(bootstrapScript, "utf8").toString(
     "base64",
   );
@@ -280,7 +423,13 @@ with open(sys.argv[1], "wb") as handle:
     handle.write(body)
 PY
 chmod 700 "$BOOTSTRAP_SH"
-sudo bash "$BOOTSTRAP_SH"
+LOG_DIR="/mnt/cocalc/data/logs"
+mkdir -p "$LOG_DIR"
+BOOTSTRAP_LOG="$LOG_DIR/bootstrap-reconcile.log"
+nohup sudo -n bash "$BOOTSTRAP_SH" >>"$BOOTSTRAP_LOG" 2>&1 </dev/null &
+BOOTSTRAP_PID=$!
+disown "$BOOTSTRAP_PID" 2>/dev/null || true
+echo "started bootstrap reconcile pid=$BOOTSTRAP_PID log=$BOOTSTRAP_LOG"
 `;
   logger.info("host upgrade: reconciling host bootstrap over ssh", {
     host_id: opts.host_id,
@@ -301,6 +450,10 @@ sudo bash "$BOOTSTRAP_SH"
       stderr,
     });
   }
+  await waitForHostBootstrapReconcile({
+    host_id: opts.host_id,
+    baseline,
+  });
 }
 
 function logStatusUpdate(id: string, status: string, source: string) {
