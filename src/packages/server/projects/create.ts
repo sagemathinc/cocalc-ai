@@ -487,16 +487,31 @@ async function startNewProject(
   try {
     await project.start({ account_id, lro_op_id: op?.op_id });
     // Keep a conservative retry for slow host bring-up, but only if the
-    // project still is not active after a short settle window.
+    // persisted project state still is not active after a short settle window.
+    // Do not verify via project.state() here: in project-host deployments that
+    // goes through the runner control subject (`project.<id>.run`), which can
+    // lag or time out even after the project row has already been updated to
+    // running and the project is usable.
     await delay(5000);
     let state: string | undefined;
     try {
-      state = (await project.state())?.state;
+      const { rows } = await getPool().query<{ state: any }>(
+        "SELECT state FROM projects WHERE project_id=$1",
+        [project_id],
+      );
+      const rawState = rows[0]?.state;
+      const parsedState =
+        typeof rawState === "string" ? JSON.parse(rawState) : rawState;
+      const nextState = parsedState?.state;
+      state = typeof nextState === "string" ? nextState : undefined;
     } catch (err) {
-      log.debug("startNewProject: unable to verify post-start state", {
-        project_id,
-        err: `${err}`,
-      });
+      log.debug(
+        "startNewProject: unable to verify persisted post-start state",
+        {
+          project_id,
+          err: `${err}`,
+        },
+      );
     }
     if (state != null && state !== "running" && state !== "starting") {
       log.debug("startNewProject: retrying start after non-active state", {
