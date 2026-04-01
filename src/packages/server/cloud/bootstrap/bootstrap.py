@@ -2284,13 +2284,24 @@ def write_wrapper(cfg: BootstrapConfig) -> None:
     if not bundle_root:
         bundle_root = str(host_dir / "bundles" / "current")
     bundle_entry = f"{bundle_root}/bundle/index.js"
+    runtime_home_dir = runtime_home(cfg)
+    node_bin = f"{runtime_home_dir}/.nvm/versions/node/v{cfg.node_version}/bin/node"
     wrapper = f"""#!/usr/bin/env bash
 set -euo pipefail
-export NVM_DIR="$HOME/.nvm"
+RUNTIME_HOME="{runtime_home_dir}"
+export NVM_DIR="$RUNTIME_HOME/.nvm"
 if [ -s "$NVM_DIR/nvm.sh" ]; then
   . "$NVM_DIR/nvm.sh"
 fi
-node "{bundle_entry}" "$@"
+if command -v node >/dev/null 2>&1; then
+  NODE_BIN="$(command -v node)"
+elif [ -x "{node_bin}" ]; then
+  NODE_BIN="{node_bin}"
+else
+  echo "node not found for project-host wrapper (looked in PATH and {node_bin})" >&2
+  exit 127
+fi
+exec "$NODE_BIN" "{bundle_entry}" "$@"
 """
     wrapper_path = bin_dir / "project-host"
     wrapper_path.write_text(wrapper, encoding="utf-8")

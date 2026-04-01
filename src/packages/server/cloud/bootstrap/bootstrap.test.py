@@ -447,6 +447,39 @@ class BootstrapWrapperScriptTest(unittest.TestCase):
                 recorded,
             )
 
+    def test_write_wrapper_uses_runtime_home_for_node_lookup(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            captured = {}
+
+            original_runtime_root = bootstrap.project_host_runtime_root
+            original_write_text = bootstrap.Path.write_text
+            original_chmod = bootstrap.Path.chmod
+            original_run_best_effort = bootstrap.run_best_effort
+            try:
+                bootstrap.project_host_runtime_root = lambda _cfg: Path(tmpdir) / "runtime-root"
+                bootstrap.Path.write_text = (
+                    lambda self, data, encoding="utf-8": captured.__setitem__(str(self), data)
+                    or len(data)
+                )
+                bootstrap.Path.chmod = lambda *_args, **_kwargs: None
+                bootstrap.run_best_effort = lambda *_args, **_kwargs: None
+                bootstrap.write_wrapper(cfg)
+            finally:
+                bootstrap.project_host_runtime_root = original_runtime_root
+                bootstrap.Path.write_text = original_write_text
+                bootstrap.Path.chmod = original_chmod
+                bootstrap.run_best_effort = original_run_best_effort
+
+            script = captured[str(Path(tmpdir) / "runtime-root" / "bin" / "project-host")]
+            self.assertIn(f'RUNTIME_HOME="{cfg.bootstrap_home}"', script)
+            self.assertIn('export NVM_DIR="$RUNTIME_HOME/.nvm"', script)
+            self.assertIn(
+                f'elif [ -x "{cfg.bootstrap_home}/.nvm/versions/node/v20/bin/node" ]; then',
+                script,
+            )
+            self.assertIn('exec "$NODE_BIN"', script)
+
     def test_configure_autostart_starts_project_host_immediately(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             cfg = make_cfg(tmpdir)
