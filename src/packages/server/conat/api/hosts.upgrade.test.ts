@@ -219,7 +219,9 @@ describe("hosts.reconcileHostSoftwareInternal", () => {
       expect.arrayContaining(["ubuntu@34.11.143.149", "bash", "-se"]),
       expect.any(Object),
     );
-    expect(ssh.getScript()).toContain('nohup sudo -n bash "$BOOTSTRAP_SH"');
+    expect(ssh.getScript()).toContain(
+      "BOOTSTRAP_PID=\"$(sudo -n bash -lc 'nohup bash \"$1\" >>\"$2\" 2>&1 </dev/null & echo $!' -- \"$BOOTSTRAP_SH\" \"$BOOTSTRAP_LOG\")\"",
+    );
     expect(delayMock).toHaveBeenCalledTimes(1);
   });
 });

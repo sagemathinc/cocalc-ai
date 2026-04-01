@@ -427,10 +427,7 @@ LOG_DIR="/mnt/cocalc/data/logs"
 BOOTSTRAP_LOG="$LOG_DIR/bootstrap-reconcile.log"
 sudo -n install -d -m 0755 "$LOG_DIR"
 sudo -n touch "$BOOTSTRAP_LOG"
-sudo -n chown "$(id -un)":"$(id -gn)" "$BOOTSTRAP_LOG"
-nohup sudo -n bash "$BOOTSTRAP_SH" >>"$BOOTSTRAP_LOG" 2>&1 </dev/null &
-BOOTSTRAP_PID=$!
-disown "$BOOTSTRAP_PID" 2>/dev/null || true
+BOOTSTRAP_PID="$(sudo -n bash -lc 'nohup bash "$1" >>"$2" 2>&1 </dev/null & echo $!' -- "$BOOTSTRAP_SH" "$BOOTSTRAP_LOG")"
 echo "started bootstrap reconcile pid=$BOOTSTRAP_PID log=$BOOTSTRAP_LOG"
 `;
   logger.info("host upgrade: reconciling host bootstrap over ssh", {
