@@ -424,8 +424,10 @@ with open(sys.argv[1], "wb") as handle:
 PY
 chmod 700 "$BOOTSTRAP_SH"
 LOG_DIR="/mnt/cocalc/data/logs"
-mkdir -p "$LOG_DIR"
 BOOTSTRAP_LOG="$LOG_DIR/bootstrap-reconcile.log"
+sudo -n install -d -m 0755 "$LOG_DIR"
+sudo -n touch "$BOOTSTRAP_LOG"
+sudo -n chown "$(id -un)":"$(id -gn)" "$BOOTSTRAP_LOG"
 nohup sudo -n bash "$BOOTSTRAP_SH" >>"$BOOTSTRAP_LOG" 2>&1 </dev/null &
 BOOTSTRAP_PID=$!
 disown "$BOOTSTRAP_PID" 2>/dev/null || true
