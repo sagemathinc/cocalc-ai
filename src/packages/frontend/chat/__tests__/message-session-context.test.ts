@@ -1,6 +1,7 @@
 /** @jest-environment jsdom */
 
 import {
+  resolveMessageGitBrowserRequest,
   resolveForkThreadNavigation,
   resolveThreadMetadataLookup,
 } from "../message";
@@ -79,6 +80,38 @@ describe("resolveForkThreadNavigation", () => {
       threadKey: undefined,
       fragment: `${new Date(rootDate).valueOf()}`,
       title: undefined,
+    });
+  });
+});
+
+describe("resolveMessageGitBrowserRequest", () => {
+  it("targets the canonical thread id and first mentioned commit when present", () => {
+    expect(
+      resolveMessageGitBrowserRequest({
+        messageThreadId: "thread-abc",
+        date: 1700000000000,
+        activityBasePath: "/work/repo",
+        renderedMessageValue: "Please inspect commit abcdef1234567 next.",
+      }),
+    ).toEqual({
+      threadKey: "thread-abc",
+      cwdOverride: "/work/repo",
+      commitHash: "abcdef1234567",
+    });
+  });
+
+  it("falls back to HEAD and the row date when thread metadata is missing", () => {
+    expect(
+      resolveMessageGitBrowserRequest({
+        messageThreadId: undefined,
+        date: 1700000000000,
+        activityBasePath: undefined,
+        renderedMessageValue: "No commit hash here.",
+      }),
+    ).toEqual({
+      threadKey: "1700000000000",
+      cwdOverride: undefined,
+      commitHash: "HEAD",
     });
   });
 });

@@ -231,6 +231,11 @@ interface ChatRoomThreadPanelProps {
   activityJumpDate?: string;
   activityJumpToken?: number;
   shortcutEnabled?: boolean;
+  onOpenGitBrowser?: (request: {
+    threadKey: string;
+    cwdOverride?: string;
+    commitHash: string;
+  }) => void;
 }
 
 export function ChatRoomThreadPanel({
@@ -264,6 +269,7 @@ export function ChatRoomThreadPanel({
   activityJumpDate,
   activityJumpToken,
   shortcutEnabled = true,
+  onOpenGitBrowser,
 }: ChatRoomThreadPanelProps) {
   const defaultSessionMode = getDefaultCodexSessionMode();
   const accountOtherSettings = useTypedRedux("account", "other_settings");
@@ -1878,6 +1884,7 @@ export function ChatRoomThreadPanel({
         onAtTopStateChange={setThreadNearTop}
         activityJumpDate={activityJumpDate}
         activityJumpToken={activityJumpToken}
+        onOpenGitBrowser={onOpenGitBrowser}
       />
     </div>
   );

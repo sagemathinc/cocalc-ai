@@ -126,6 +126,31 @@ export function resolveThreadMetadataLookup({
   };
 }
 
+export function resolveMessageGitBrowserRequest({
+  messageThreadId,
+  date,
+  activityBasePath,
+  renderedMessageValue,
+  commitHash,
+}: {
+  messageThreadId?: string;
+  date: number;
+  activityBasePath?: string;
+  renderedMessageValue: string;
+  commitHash?: string;
+}): {
+  threadKey: string;
+  cwdOverride?: string;
+  commitHash: string;
+} {
+  return {
+    threadKey: messageThreadId ?? `${date}`,
+    cwdOverride: activityBasePath,
+    commitHash:
+      commitHash ?? extractFirstCommitMention(renderedMessageValue) ?? HEAD_REF,
+  };
+}
+
 export function resolveForkThreadNavigation({
   actions,
   message,
@@ -330,6 +355,11 @@ interface Props {
   searchHighlight?: string;
   openActivityToken?: number;
   onOverlayOpenChange?: (open: boolean) => void;
+  onOpenGitBrowser?: (request: {
+    threadKey: string;
+    cwdOverride?: string;
+    commitHash: string;
+  }) => void;
 }
 
 export function resolveEditedMessageForSave(
@@ -445,6 +475,7 @@ export default function Message({
   searchHighlight,
   openActivityToken,
   onOverlayOpenChange,
+  onOpenGitBrowser,
 }: Props) {
   const intl = useIntl();
   const editorTheme = useEffectiveEditorThemeForPath(project_id, path);
@@ -623,7 +654,9 @@ export default function Message({
     return `${minutes}:${pad(seconds)}`;
   }, [elapsedMs]);
 
-  const anyOverlayOpen = isActivityDrawerOpen || openCommitHash != null;
+  const localGitBrowserOpen =
+    onOpenGitBrowser == null && openCommitHash != null;
+  const anyOverlayOpen = isActivityDrawerOpen || localGitBrowserOpen;
   const overlayKey = `${project_id ?? "no-project"}:${path ?? "no-path"}:${date}`;
 
   useEffect(() => {
@@ -1203,8 +1236,17 @@ export default function Message({
   }
 
   function openGitBrowserFromMessage() {
-    const hash = extractFirstCommitMention(renderedMessageValue);
-    setOpenCommitHash(hash ?? HEAD_REF);
+    const request = resolveMessageGitBrowserRequest({
+      messageThreadId,
+      date,
+      activityBasePath,
+      renderedMessageValue,
+    });
+    if (onOpenGitBrowser) {
+      onOpenGitBrowser(request);
+      return;
+    }
+    setOpenCommitHash(request.commitHash);
   }
 
   function renderHeaderActions() {
@@ -1432,6 +1474,18 @@ export default function Message({
       if (!hash) return;
       e.preventDefault();
       e.stopPropagation();
+      if (onOpenGitBrowser) {
+        onOpenGitBrowser(
+          resolveMessageGitBrowserRequest({
+            messageThreadId,
+            date,
+            activityBasePath,
+            renderedMessageValue,
+            commitHash: hash,
+          }),
+        );
+        return;
+      }
       setOpenCommitHash(hash);
     };
     const openActivityFromParagraph = (e: any) => {
@@ -1535,6 +1589,18 @@ export default function Message({
       if (!hash) return;
       e.preventDefault();
       e.stopPropagation();
+      if (onOpenGitBrowser) {
+        onOpenGitBrowser(
+          resolveMessageGitBrowserRequest({
+            messageThreadId,
+            date,
+            activityBasePath,
+            renderedMessageValue,
+            commitHash: hash,
+          }),
+        );
+        return;
+      }
       setOpenCommitHash(hash);
     };
     return (
@@ -2125,19 +2191,21 @@ export default function Message({
     >
       {renderCols()}
       {renderZenMessageDrawer()}
-      <GitCommitDrawer
-        projectId={project_id}
-        sourcePath={path}
-        cwdOverride={activityBasePath}
-        commitHash={openCommitHash}
-        open={openCommitHash != null}
-        onClose={() => setOpenCommitHash(undefined)}
-        fontSize={font_size}
-        onRequestAgentTurn={sendGitBrowserAgentPrompt}
-        onDirectCommitLogged={logGitBrowserDirectCommit}
-        onFindInChat={findCommitInCurrentChat}
-        onOpenActivityLog={openActivityFromGitBrowser}
-      />
+      {onOpenGitBrowser == null ? (
+        <GitCommitDrawer
+          projectId={project_id}
+          sourcePath={path}
+          cwdOverride={activityBasePath}
+          commitHash={openCommitHash}
+          open={openCommitHash != null}
+          onClose={() => setOpenCommitHash(undefined)}
+          fontSize={font_size}
+          onRequestAgentTurn={sendGitBrowserAgentPrompt}
+          onDirectCommitLogged={logGitBrowserDirectCommit}
+          onFindInChat={findCommitInCurrentChat}
+          onOpenActivityLog={openActivityFromGitBrowser}
+        />
+      ) : null}
       {acpStateToRender ? (
         <div style={{ width: "100%" }}>
           <Divider>{renderAcpState()}</Divider>

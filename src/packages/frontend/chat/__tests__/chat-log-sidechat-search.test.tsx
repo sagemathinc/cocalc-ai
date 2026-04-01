@@ -46,6 +46,7 @@ jest.mock("@cocalc/frontend/jupyter/div-temp-height", () => ({
 }));
 
 jest.mock("../drawer-overlay-state", () => ({
+  setChatOverlayOpen: jest.fn(),
   useAnyChatOverlayOpen: () => false,
 }));
 

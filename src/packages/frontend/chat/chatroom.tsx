@@ -85,7 +85,10 @@ import type {
   AcpLoopConfig,
   AcpLoopState,
 } from "@cocalc/conat/ai/acp/types";
-import { useAnyChatOverlayOpen } from "./drawer-overlay-state";
+import {
+  setChatOverlayOpen,
+  useAnyChatOverlayOpen,
+} from "./drawer-overlay-state";
 import type { CodexThreadConfig } from "@cocalc/chat";
 import {
   defaultWorkingDirectoryForChat,
@@ -504,6 +507,10 @@ export function ChatPanel({
   );
   const [activityJumpToken, setActivityJumpToken] = useState<number>(0);
   const anyOverlayOpen = useAnyChatOverlayOpen();
+  const gitBrowserOverlayKey = useMemo(
+    () => `${project_id ?? "no-project"}:${path ?? "no-path"}:git-browser`,
+    [project_id, path],
+  );
   const combinedComposerTargetStorage = useMemo(
     () => combinedComposerTargetStorageKey(project_id, path),
     [project_id, path],
@@ -528,6 +535,12 @@ export function ChatPanel({
       path,
       composerDraftKey,
     });
+  useEffect(() => {
+    setChatOverlayOpen(gitBrowserOverlayKey, gitBrowserOpen);
+    return () => {
+      setChatOverlayOpen(gitBrowserOverlayKey, false);
+    };
+  }, [gitBrowserOpen, gitBrowserOverlayKey]);
   const inputRef = useRef<string>(input);
   const composerSessionRef = useRef<number>(composerSession);
   const pendingThreadDraftTransferRef = useRef<{
@@ -1517,6 +1530,30 @@ export function ChatPanel({
     ],
   );
 
+  const openGitBrowserFromMessage = useCallback(
+    ({
+      threadKey,
+      cwdOverride,
+      commitHash,
+    }: {
+      threadKey: string;
+      cwdOverride?: string;
+      commitHash: string;
+    }) => {
+      const normalizedThreadKey = `${threadKey ?? ""}`.trim();
+      if (!normalizedThreadKey) return;
+      setGitBrowserCwd(
+        typeof cwdOverride === "string" && cwdOverride.trim()
+          ? cwdOverride.trim()
+          : undefined,
+      );
+      setGitBrowserThreadKey(normalizedThreadKey);
+      setGitBrowserCommitHash(`${commitHash ?? ""}`.trim() || undefined);
+      setGitBrowserOpen(true);
+    },
+    [],
+  );
+
   const sendGitBrowserAgentPrompt = useCallback(
     async (prompt: string) => {
       const trimmed = `${prompt ?? ""}`.trim();
@@ -1833,6 +1870,7 @@ export function ChatPanel({
         activityJumpDate={activityJumpDate}
         activityJumpToken={activityJumpToken}
         shortcutEnabled={isVisible && tabIsVisible}
+        onOpenGitBrowser={openGitBrowserFromMessage}
       />
       {loopBanner}
       {automationBanner}

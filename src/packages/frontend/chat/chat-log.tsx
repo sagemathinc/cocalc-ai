@@ -123,6 +123,11 @@ interface Props {
   onAtTopStateChange?: (atTop: boolean) => void;
   activityJumpDate?: string;
   activityJumpToken?: number;
+  onOpenGitBrowser?: (request: {
+    threadKey: string;
+    cwdOverride?: string;
+    commitHash: string;
+  }) => void;
 }
 
 export function ChatLog({
@@ -149,6 +154,7 @@ export function ChatLog({
   onAtTopStateChange,
   activityJumpDate,
   activityJumpToken,
+  onOpenGitBrowser,
 }: Props) {
   const singleThreadView = selectedThread != null;
   const messages = messagesProp ?? new Map();
@@ -359,6 +365,7 @@ export function ChatLog({
           activityJumpDate,
           activityJumpToken,
           anyOverlayOpen,
+          onOpenGitBrowser,
         }}
       />
       <Composing
@@ -541,6 +548,7 @@ export function MessageList({
   activityJumpDate,
   activityJumpToken,
   anyOverlayOpen = false,
+  onOpenGitBrowser,
 }: {
   messages: ChatMessages;
   account_id: string;
@@ -570,6 +578,11 @@ export function MessageList({
   activityJumpDate?: string;
   activityJumpToken?: number;
   anyOverlayOpen?: boolean;
+  onOpenGitBrowser?: (request: {
+    threadKey: string;
+    cwdOverride?: string;
+    commitHash: string;
+  }) => void;
 }) {
   const virtuosoHeightsRef = useRef<{ [index: number]: number }>({});
   const listContainerRef = useRef<HTMLDivElement | null>(null);
@@ -753,6 +766,7 @@ export function MessageList({
             openActivityToken={
               activityJumpDate === date ? activityJumpToken : undefined
             }
+            onOpenGitBrowser={onOpenGitBrowser}
           />
         </DivTempHeight>
       </div>

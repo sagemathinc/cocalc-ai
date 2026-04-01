@@ -96,6 +96,7 @@ jest.mock("../use-codex-payment-source", () => ({
 }));
 
 jest.mock("../drawer-overlay-state", () => ({
+  setChatOverlayOpen: jest.fn(),
   useAnyChatOverlayOpen: () => false,
 }));
 
