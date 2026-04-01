@@ -25,19 +25,22 @@ jest.mock("./snapshot-usage", () => ({
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((res) => {
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
     resolve = res;
+    reject = rej;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 
 function TestComponent({ project_id }: { project_id: string }) {
-  const { visible, quotas, counted } = useDiskUsage({ project_id });
+  const { visible, quotas, counted, error } = useDiskUsage({ project_id });
   return (
     <div>
       <span data-testid="usage">{visible[0]?.usage.bytes ?? ""}</span>
       <span data-testid="quota">{quotas[0]?.used ?? ""}</span>
       <span data-testid="counted">{counted[0]?.bytes ?? ""}</span>
+      <span data-testid="error">{error ? `${error}` : ""}</span>
     </div>
   );
 }
@@ -165,6 +168,39 @@ describe("useDiskUsage", () => {
 
     await waitFor(() => {
       expect(screen.getByTestId("counted").textContent).toBe("4000000");
+    });
+  });
+
+  it("ignores stale errors after the target changes", async () => {
+    const first = deferred<any>();
+    const second = deferred<any>();
+    dustMock
+      .mockReturnValueOnce(first.promise)
+      .mockResolvedValueOnce(null)
+      .mockReturnValueOnce(second.promise)
+      .mockResolvedValueOnce(null);
+    snapshotUsageMock.mockResolvedValue([]);
+    quotaMock.mockResolvedValue({ used: 17, size: 100 });
+
+    const { rerender } = render(<TestComponent project_id="project-1" />);
+
+    rerender(<TestComponent project_id="project-2" />);
+
+    await act(async () => {
+      second.resolve({ bytes: 200, children: [] });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("usage").textContent).toBe("200");
+    });
+
+    await act(async () => {
+      first.reject(new Error("disk usage scan returned invalid JSON"));
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("usage").textContent).toBe("200");
+      expect(screen.getByTestId("error").textContent).toBe("");
     });
   });
 });

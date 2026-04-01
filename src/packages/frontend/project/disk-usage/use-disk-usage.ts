@@ -5,6 +5,7 @@ import { redux, useAsyncEffect } from "@cocalc/frontend/app-framework";
 import { useRef, useState } from "react";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 import { PROJECT_IMAGE_PATH } from "@cocalc/util/db-schema/defaults";
+import { human_readable_size } from "@cocalc/util/misc";
 import { posix } from "path";
 
 export type DiskUsageTree = {
@@ -31,6 +32,7 @@ export type StorageCountedSummary = {
   label: string;
   bytes: number;
   detail?: string;
+  compactLabel?: string;
 };
 
 const MIN_COUNTED_BUCKET_BYTES = 1 << 20;
@@ -69,9 +71,12 @@ export default function useDiskUsage({ project_id }: { project_id: string }) {
   currentRef.current = requestKey;
 
   useAsyncEffect(async () => {
+    const activeRequestKey = requestKey;
     try {
-      setError(null);
-      setLoading(true);
+      if (activeRequestKey === currentRef.current) {
+        setError(null);
+        setLoading(true);
+      }
       const cache = counter == lastCounterRef.current;
       const [
         homeUsage,
@@ -116,7 +121,7 @@ export default function useDiskUsage({ project_id }: { project_id: string }) {
           cache,
         }),
       ]);
-      if (requestKey !== currentRef.current) {
+      if (activeRequestKey !== currentRef.current) {
         return;
       }
       const nextVisible: StorageVisibleSummary[] = [
@@ -150,14 +155,20 @@ export default function useDiskUsage({ project_id }: { project_id: string }) {
       const nextCounted: StorageCountedSummary[] = [];
       if (snapshotExclusiveBytes >= MIN_COUNTED_BUCKET_BYTES) {
         const snapshotCount = snapshotUsage.length;
+        const largestExclusiveBytes = snapshotUsage.reduce(
+          (max, snapshot) =>
+            Math.max(max, Math.max(0, snapshot.exclusive ?? 0)),
+          0,
+        );
         nextCounted.push({
           key: "snapshots",
           label: "Snapshots",
           bytes: snapshotExclusiveBytes,
+          compactLabel: "Snapshots",
           detail:
-            snapshotCount === 1
-              ? "Deleting the current snapshot would free about this much counted storage."
-              : `Deleting old snapshots could free about this much counted storage across ${snapshotCount} snapshots.`,
+            snapshotCount <= 1
+              ? "This snapshot currently holds counted storage that would be freed if it is deleted."
+              : `Across ${snapshotCount} snapshots, this is storage referenced only by snapshots. The largest single snapshot currently has about ${human_readable_size(largestExclusiveBytes)} of exclusive data, and exact savings from deleting one snapshot depend on overlap.`,
         });
       }
       setVisible(nextVisible);
@@ -171,9 +182,13 @@ export default function useDiskUsage({ project_id }: { project_id: string }) {
         },
       ]);
     } catch (err) {
-      setError(err);
+      if (activeRequestKey === currentRef.current) {
+        setError(err);
+      }
     } finally {
-      setLoading(false);
+      if (activeRequestKey === currentRef.current) {
+        setLoading(false);
+      }
     }
     lastCounterRef.current = counter;
   }, [project_id, homePath, rootfsImage, environmentPath, requestKey, counter]);

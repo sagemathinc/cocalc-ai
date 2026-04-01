@@ -33,9 +33,11 @@ function relativeLabel(bucket: StorageVisibleSummary): string {
 export default function DiskUsage({
   project_id,
   style,
+  compact = false,
 }: {
   project_id: string;
   style?;
+  compact?: boolean;
 }) {
   const [expand, setExpand] = useState<boolean>(false);
   const { visible, counted, loading, error, setError, refresh, quotas } =
@@ -63,51 +65,96 @@ export default function DiskUsage({
   const summary = (
     <Button
       onClick={() => {
-        refresh();
         setExpand(!expand);
       }}
       style={{
         ...style,
         alignItems: "center",
         display: "flex",
-        gap: "10px",
+        gap: compact ? "8px" : "10px",
         height: "auto",
         justifyContent: "flex-start",
-        padding: "6px 10px",
+        padding: compact ? "4px 8px" : "6px 10px",
         textAlign: "left",
       }}
     >
       <Icon name="disk-round" />
-      <Space size={10} wrap>
-        <Text strong>Project quota</Text>
-        {quota != null ? (
-          <>
-            <Progress
-              style={{ width: "60px", marginBottom: 0 }}
-              percent={percent}
-              status={quotaStatus}
-              showInfo={false}
-            />
-            <Text>
-              {human_readable_size(quota.used)} /{" "}
-              {human_readable_size(quota.size)}
-            </Text>
-          </>
-        ) : (
-          <Spin delay={1000} />
-        )}
-        {visible.map((bucket) => (
-          <Tag key={bucket.key}>
-            {relativeLabel(bucket)} {human_readable_size(bucket.usage.bytes)}
-          </Tag>
-        ))}
-        {counted.map((bucket) => (
-          <Tag key={bucket.key}>
-            {bucket.label} {human_readable_size(bucket.bytes)}
-          </Tag>
-        ))}
-        {loading && <Spin delay={1000} />}
-      </Space>
+      {compact ? (
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <Space size={8} wrap>
+            <Text strong>Project quota</Text>
+            {quota != null ? (
+              <>
+                <Progress
+                  style={{ width: "52px", marginBottom: 0 }}
+                  percent={percent}
+                  status={quotaStatus}
+                  showInfo={false}
+                />
+                <Text>
+                  {human_readable_size(quota.used)} /{" "}
+                  {human_readable_size(quota.size)}
+                </Text>
+              </>
+            ) : (
+              <Spin delay={1000} />
+            )}
+            {loading && <Spin delay={1000} size="small" />}
+          </Space>
+          {(visible.length > 0 || counted.length > 0) && (
+            <div
+              style={{
+                color: COLORS.GRAY_D,
+                fontSize: "12px",
+                lineHeight: 1.35,
+                marginTop: "2px",
+              }}
+            >
+              {[
+                ...visible.map(
+                  (bucket) =>
+                    `${relativeLabel(bucket)} ${human_readable_size(bucket.usage.bytes)}`,
+                ),
+                ...counted.map(
+                  (bucket) =>
+                    `${bucket.compactLabel ?? bucket.label} ${human_readable_size(bucket.bytes)}`,
+                ),
+              ].join(" • ")}
+            </div>
+          )}
+        </div>
+      ) : (
+        <Space size={10} wrap>
+          <Text strong>Project quota</Text>
+          {quota != null ? (
+            <>
+              <Progress
+                style={{ width: "60px", marginBottom: 0 }}
+                percent={percent}
+                status={quotaStatus}
+                showInfo={false}
+              />
+              <Text>
+                {human_readable_size(quota.used)} /{" "}
+                {human_readable_size(quota.size)}
+              </Text>
+            </>
+          ) : (
+            <Spin delay={1000} />
+          )}
+          {visible.map((bucket) => (
+            <Tag key={bucket.key}>
+              {relativeLabel(bucket)} {human_readable_size(bucket.usage.bytes)}
+            </Tag>
+          ))}
+          {counted.map((bucket) => (
+            <Tag key={bucket.key}>
+              {bucket.label} {human_readable_size(bucket.bytes)}
+            </Tag>
+          ))}
+          {loading && <Spin delay={1000} />}
+        </Space>
+      )}
     </Button>
   );
 

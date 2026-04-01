@@ -31,18 +31,27 @@ export default async function dust({
     return dustCache.get(k);
   }
   const fs = redux.getProjectActions(project_id).fs();
-  const { stdout, stderr, code } = await fs.dust(path, {
+  const { stdout, stderr, code, truncated } = await fs.dust(path, {
     options: ["-j", "-x", "-d", "1", "-s", "-o", "b"],
     timeout: 3000,
   });
   if (code) {
     throw Error(Buffer.from(stderr).toString());
   }
-  let {
-    size,
-    name: abspath,
-    children,
-  } = JSON.parse(Buffer.from(stdout).toString());
+  const text = Buffer.from(stdout).toString();
+  if (truncated || !text.trim()) {
+    const errText = Buffer.from(stderr).toString().trim();
+    throw Error(
+      errText || `disk usage scan for '${path}' returned incomplete data`,
+    );
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch (err) {
+    throw Error(`disk usage scan for '${path}' returned invalid JSON`);
+  }
+  let { size, name: abspath, children } = parsed;
   const n = abspath.length + 1;
   children = children.map(({ size, name }) => {
     return { bytes: parseInt(size.slice(0, -1)), path: name.slice(n) };
