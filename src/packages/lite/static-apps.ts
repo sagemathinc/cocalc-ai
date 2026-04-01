@@ -7,6 +7,7 @@ import { createReadStream } from "node:fs";
 import { readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { finished } from "node:stream/promises";
+import { spawn } from "node:child_process";
 import type { Request, Response } from "express";
 import getLogger from "@cocalc/backend/logger";
 import { project_id } from "@cocalc/project/data";
@@ -38,6 +39,17 @@ interface AppSpec {
     root?: string;
     index?: string;
     cache_control?: string;
+    refresh?: {
+      command?: {
+        exec?: string;
+        args?: string[];
+        cwd?: string;
+        env?: Record<string, string>;
+      };
+      timeout_s?: number;
+      stale_after_s?: number;
+      trigger_on_hit?: boolean;
+    };
   };
   integration?: AppStaticIntegrationSpec;
 }
@@ -48,6 +60,14 @@ interface StaticAppMatch {
 }
 
 let cachedSpecs: { value: AppSpec[]; expires: number } | undefined;
+type StaticRefreshState = {
+  running?: Promise<void>;
+  last_success_ms?: number;
+  last_error?: string;
+  stdout: Buffer;
+  stderr: Buffer;
+};
+const staticRefresh: Record<string, StaticRefreshState> = Object.create(null);
 
 const MIME_BY_EXT: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -277,6 +297,137 @@ function contentTypeForFile(filePath: string): string {
   );
 }
 
+function appendLimited(
+  current: Buffer,
+  chunk: Buffer,
+  limit = 32 * 1024,
+): Buffer {
+  if (limit <= 0) return Buffer.alloc(0);
+  if (chunk.length >= limit) return chunk.subarray(chunk.length - limit);
+  const merged =
+    current.length === 0
+      ? chunk
+      : Buffer.concat([current, chunk], current.length + chunk.length);
+  return merged.length > limit
+    ? merged.subarray(merged.length - limit)
+    : merged;
+}
+
+function getStaticRefreshState(id: string): StaticRefreshState {
+  if (!staticRefresh[id]) {
+    staticRefresh[id] = {
+      stdout: Buffer.alloc(0),
+      stderr: Buffer.alloc(0),
+    };
+  }
+  return staticRefresh[id];
+}
+
+async function runStaticRefresh(spec: AppSpec): Promise<void> {
+  const refresh = spec.static?.refresh;
+  const exec = `${refresh?.command?.exec ?? ""}`.trim();
+  if (!exec) return;
+  const root = resolveStaticRoot(spec.static?.root);
+  if (!root) return;
+  const state = getStaticRefreshState(spec.id);
+  if (state.running) {
+    await state.running;
+    return;
+  }
+  const timeoutMs = Math.max(1, Number(refresh?.timeout_s ?? 120)) * 1000;
+  const args = refresh?.command?.args ?? [];
+  const cwd = refresh?.command?.cwd ?? root;
+  const env = {
+    ...process.env,
+    ...(refresh?.command?.env ?? {}),
+    APP_ID: spec.id,
+    APP_STATIC_ROOT: root,
+    APP_BASE_PATH: spec.proxy?.base_path ?? `/apps/${spec.id}`,
+  };
+  const run = (async () => {
+    state.stdout = Buffer.alloc(0);
+    state.stderr = Buffer.alloc(0);
+    state.last_error = undefined;
+    const child = spawn(exec, args, {
+      cwd,
+      env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    child.stdout?.on("data", (chunk: Buffer) => {
+      state.stdout = appendLimited(state.stdout, chunk);
+    });
+    child.stderr?.on("data", (chunk: Buffer) => {
+      state.stderr = appendLimited(state.stderr, chunk);
+    });
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill("SIGTERM");
+      setTimeout(() => {
+        if (child.exitCode == null && child.signalCode == null) {
+          child.kill("SIGKILL");
+        }
+      }, 1000);
+    }, timeoutMs);
+    const result = await new Promise<{
+      code: number | null;
+      signal: NodeJS.Signals | null;
+    }>((resolve) => {
+      child.once("close", (code, signal) => resolve({ code, signal }));
+      child.once("error", () => resolve({ code: 1, signal: null }));
+    });
+    clearTimeout(timer);
+    if (timedOut) {
+      state.last_error = `timed out after ${refresh?.timeout_s ?? 120}s`;
+      logger.warn("lite static refresh timed out", { app_id: spec.id });
+      return;
+    }
+    if (result.code === 0) {
+      state.last_success_ms = Date.now();
+      state.last_error = undefined;
+      return;
+    }
+    state.last_error = `exit code ${result.code ?? "unknown"}${result.signal ? ` (signal ${result.signal})` : ""}`;
+    logger.warn("lite static refresh failed", {
+      app_id: spec.id,
+      code: result.code,
+      signal: result.signal,
+      stderr: state.stderr.toString("utf8").slice(-1000),
+    });
+  })();
+  state.running = run;
+  try {
+    await run;
+  } finally {
+    state.running = undefined;
+  }
+}
+
+async function maybeRefreshStaticOnHit(spec: AppSpec): Promise<void> {
+  const refresh = spec.static?.refresh;
+  if (!refresh?.trigger_on_hit || !refresh.command?.exec) return;
+  const state = getStaticRefreshState(spec.id);
+  if (state.running) {
+    await state.running;
+    return;
+  }
+  const staleAfterMs =
+    Math.max(1, Number(refresh.stale_after_s ?? 3600)) * 1000;
+  const shouldRun =
+    state.last_success_ms == null ||
+    Date.now() - state.last_success_ms >= staleAfterMs;
+  if (!shouldRun) return;
+  try {
+    await runStaticRefresh(spec);
+  } catch (err) {
+    state.last_error = `${err}`;
+    logger.warn("lite static refresh on-hit failed", {
+      app_id: spec.id,
+      err: `${err}`,
+    });
+  }
+}
+
 async function buildViewerRedirectUrl({
   req,
   sourcePath,
@@ -412,6 +563,8 @@ export async function maybeHandleLiteStaticAppRequest({
     res.status(500).type("text/plain").send("Static app root is invalid\n");
     return true;
   }
+
+  await maybeRefreshStaticOnHit(match.spec);
 
   const integration = match.spec.integration;
   const parsed = new URL(match.requestPath, "http://lite.local");
