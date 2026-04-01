@@ -49,6 +49,10 @@ import type {
   TerminalStartOptions,
 } from "@cocalc/ai/acp/adapters";
 import { type AcpExecutor, ContainerExecutor, LocalExecutor } from "./executor";
+import {
+  DEFAULT_AUTOMATION_CHAT_SENDER_ID,
+  resolveAutomationChatSenderId,
+} from "./automation-chat-sender";
 import { ensureLoopContractPrompt } from "./loop-contract";
 import {
   preferContainerExecutor,
@@ -5454,19 +5458,24 @@ async function enqueueAutomationRun(
   const assistant_message_id = randomUUID();
   const userDate = new Date(now).toISOString();
   const assistantDate = new Date(now + 1).toISOString();
+  let automationSenderId = DEFAULT_AUTOMATION_CHAT_SENDER_ID;
 
   await withChatSyncDB({
     client: conatClient,
     project_id: row.project_id,
     path: row.path,
     fn: async (syncdb) => {
+      const threadConfig = preferredThreadConfigRow(syncdb, row.thread_id);
+      automationSenderId = resolveAutomationChatSenderId(
+        syncdbField<string>(threadConfig, "agent_model"),
+      );
       const parent_message_id = latestThreadMessageIdInSyncDB({
         syncdb,
         threadId: row.thread_id,
       });
       syncdb.set(
         buildChatMessage({
-          sender_id: row.account_id,
+          sender_id: automationSenderId,
           date: userDate,
           prevHistory: [],
           content: automationMessageLabel(row, opts.manual),
@@ -5488,7 +5497,7 @@ async function enqueueAutomationRun(
     chat: {
       project_id: row.project_id,
       path: row.path,
-      sender_id: row.account_id,
+      sender_id: automationSenderId,
       thread_id: row.thread_id,
       parent_message_id: user_message_id,
       message_id: assistant_message_id,
