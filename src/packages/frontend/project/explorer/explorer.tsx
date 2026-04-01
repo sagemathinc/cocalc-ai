@@ -911,6 +911,7 @@ You can either wait for this host to become available again, or move this ${proj
                 >
                   {!lite && (
                     <DiskUsage
+                      current_path={effective_current_path}
                       style={{ marginBottom: "10px", marginRight: "5px" }}
                       project_id={project_id}
                     />
