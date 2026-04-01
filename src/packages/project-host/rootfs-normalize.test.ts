@@ -116,4 +116,40 @@ describe("rootfs normalization metadata", () => {
       }),
     ).rejects.toThrow(/unexpected contract result/);
   });
+
+  it("accepts normalizer output with package-manager log lines before the final JSON", async () => {
+    executeCode.mockResolvedValue({
+      stdout: [
+        "Hit:1 http://archive.ubuntu.com/ubuntu noble InRelease",
+        "Reading package lists...",
+        JSON.stringify({
+          ok: true,
+          distro_family: "debian",
+          package_manager: "apt-get",
+          shell: "/bin/bash",
+          glibc: true,
+          sudo: true,
+          ca_certificates: true,
+          curl: true,
+          runtime_user: "user",
+          runtime_uid: 1000,
+          runtime_gid: 1000,
+          runtime_home: "/home/user",
+        }),
+      ].join("\n"),
+    });
+
+    const mod = await import("../project-runner/run/rootfs-normalize");
+    await expect(
+      mod.normalizeRootfsInPlace({
+        image: "docker.io/library/buildpack-deps:noble-scm",
+        rootfsPath: "/mnt/cocalc/data/cache/images/example",
+      }),
+    ).resolves.toMatchObject({
+      image: "docker.io/library/buildpack-deps:noble-scm",
+      distro_family: "debian",
+      package_manager: "apt-get",
+      runtime_user: "user",
+    });
+  });
 });

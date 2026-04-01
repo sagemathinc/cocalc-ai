@@ -46,13 +46,32 @@ type RootfsNormalizationProgress = (update: {
   detail?: Record<string, unknown>;
 }) => void;
 
+function parseNormalizationOutput(stdout: string): unknown {
+  const trimmed = `${stdout ?? ""}`.trim();
+  if (!trimmed) {
+    return {};
+  }
+  const lines = trimmed
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    const line = lines[i];
+    if (!line.startsWith("{") || !line.endsWith("}")) continue;
+    try {
+      return JSON.parse(line);
+    } catch {
+      // keep scanning earlier lines
+    }
+  }
+  return JSON.parse(trimmed);
+}
+
 function nowIso(): string {
   return new Date().toISOString();
 }
 
-function isCurrentMetadata(
-  metadata?: RootfsNormalizationMetadata,
-): boolean {
+function isCurrentMetadata(metadata?: RootfsNormalizationMetadata): boolean {
   return (
     metadata?.version === ROOTFS_NORMALIZER_VERSION &&
     metadata.runtime_user === DEFAULT_PROJECT_RUNTIME_USER &&
@@ -203,7 +222,7 @@ export async function normalizeRootfsInPlace({
     normalized_at: nowIso(),
     image,
     rootfs_path: rootfsPath,
-    ...validateNormalizationResult(JSON.parse(stdout || "{}")),
+    ...validateNormalizationResult(parseNormalizationOutput(stdout)),
   };
   onProgress?.({
     message: "validated RootFS runtime contract",
