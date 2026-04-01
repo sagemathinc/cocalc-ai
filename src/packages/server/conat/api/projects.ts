@@ -86,9 +86,10 @@ import {
   loadProjectStorageHistory,
   recordProjectStorageHistorySample,
 } from "@cocalc/database/postgres/project-storage-history";
-import type { ExecOutput } from "@cocalc/conat/files/fs";
+import { parseDustOutput } from "./storage-breakdown";
 
 const PROJECT_STORAGE_CACHE_TTL_MS = 30_000;
+const PROJECT_STORAGE_BREAKDOWN_TIMEOUT_MS = 10_000;
 const projectStorageOverviewCache = new TTLCache<
   string,
   ProjectStorageOverview
@@ -134,46 +135,6 @@ async function projectFs(project_id: string) {
   return conatWithProjectRouting().fs({ project_id });
 }
 
-function parseDustOutput(
-  output: ExecOutput,
-  path: string,
-): ProjectStorageBreakdown {
-  const { stdout, stderr, code, truncated } = output;
-  if (code) {
-    throw new Error(
-      Buffer.from(stderr).toString() || `dust failed for ${path}`,
-    );
-  }
-  const text = Buffer.from(stdout).toString();
-  if (truncated || !text.trim()) {
-    const errText = Buffer.from(stderr).toString().trim();
-    throw new Error(
-      errText || `disk usage scan for '${path}' returned incomplete data`,
-    );
-  }
-  let parsed: {
-    size: string;
-    name: string;
-    children?: { size: string; name: string }[];
-  };
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    throw new Error(`disk usage scan for '${path}' returned invalid JSON`);
-  }
-  const absolutePath = parsed.name;
-  const prefixLength = absolutePath.length + 1;
-  return {
-    path: absolutePath,
-    bytes: parseInt(parsed.size.slice(0, -1)),
-    children: (parsed.children ?? []).map(({ size, name }) => ({
-      bytes: parseInt(size.slice(0, -1)),
-      path: name.slice(prefixLength),
-    })),
-    collected_at: new Date().toISOString(),
-  };
-}
-
 async function getStorageBreakdownImpl({
   project_id,
   path,
@@ -191,8 +152,8 @@ async function getStorageBreakdownImpl({
   const fs = await projectFs(project_id);
   const breakdown = parseDustOutput(
     await fs.dust(normalizedPath, {
-      options: ["-j", "-x", "-d", "1", "-s", "-o", "b"],
-      timeout: 3_000,
+      options: ["-j", "-x", "-d", "1", "-s", "-o", "b", "-P"],
+      timeout: PROJECT_STORAGE_BREAKDOWN_TIMEOUT_MS,
     }),
     normalizedPath,
   );

@@ -345,6 +345,28 @@ function historyMetricColor(metric: StorageHistoryMetricKey): string {
   }
 }
 
+function renderDrillError(
+  error: any,
+  setError?: (error: any) => void,
+): ReactNode {
+  if (!error) return null;
+  const message = `${error}`.replace(/Error:/g, "").trim();
+  if (/disk usage scan .* took too long/i.test(message)) {
+    return (
+      <Alert
+        closable={setError != null}
+        description={message}
+        message="Folder too large for a quick scan"
+        onClose={() => setError?.("")}
+        showIcon
+        style={{ marginBottom: "12px" }}
+        type="warning"
+      />
+    );
+  }
+  return <ShowError error={error} setError={setError} />;
+}
+
 function historyTooltip({
   metric,
   point,
@@ -1288,7 +1310,7 @@ export default function DiskUsage({
                         description={drillSummaryAnnotation.detail}
                       />
                     )}
-                    <ShowError error={drillError} setError={setDrillError} />
+                    {renderDrillError(drillError, setDrillError)}
                     {drillLoading && drillUsage == null ? (
                       <div style={{ padding: "18px 0", textAlign: "center" }}>
                         <Spin />
