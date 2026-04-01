@@ -29,6 +29,7 @@ import { Icon } from "@cocalc/frontend/components";
 import { redux, useAsyncEffect } from "@cocalc/frontend/app-framework";
 import { dirname, posix } from "path";
 import { COLORS } from "@cocalc/util/theme";
+import { SNAPSHOTS } from "@cocalc/util/consts/snapshots";
 
 const { Text } = Typography;
 type VisibleBucketKey = StorageVisibleSummary["key"];
@@ -697,6 +698,12 @@ export default function DiskUsage({
     await handleBrowsePath(dirname(absolutePath));
   }
 
+  async function handleOpenSnapshots() {
+    const actions = redux.getProjectActions(project_id);
+    await actions.open_directory(SNAPSHOTS);
+    setExpand(false);
+  }
+
   async function handleReload() {
     try {
       const homePath =
@@ -1012,6 +1019,21 @@ export default function DiskUsage({
                       {bucket.detail ? (
                         <div style={{ color: COLORS.GRAY_M, marginTop: "4px" }}>
                           {bucket.detail}
+                        </div>
+                      ) : null}
+                      {bucket.key === "snapshots" ? (
+                        <div style={{ color: COLORS.GRAY_M, marginTop: "6px" }}>
+                          Delete snapshot folders under{" "}
+                          <code>~/.snapshots</code> in the usual way to free
+                          this space.{" "}
+                          <Button
+                            onClick={() => void handleOpenSnapshots()}
+                            size="small"
+                            style={{ padding: 0, height: "auto" }}
+                            type="link"
+                          >
+                            Open Snapshots
+                          </Button>
                         </div>
                       ) : null}
                     </div>
