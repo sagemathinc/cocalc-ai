@@ -62,6 +62,7 @@ import { buildCodeBlockDecorations } from "./elements/code-block/prism";
 import type { CodeBlock } from "./elements/code-block/types";
 import { debugSyncLog } from "./block-sync-utils";
 import { normalizeBlockMarkdown } from "./block-markdown-utils";
+import { handleForcedPlainTextPaste } from "./clipboard";
 import useUpload from "./upload";
 
 const USE_BLOCK_GAP_CURSOR = false;
@@ -1288,6 +1289,9 @@ export const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
               }}
               onBlur={onBlur}
               onKeyDown={handleKeyDown}
+              onPaste={(event) => {
+                handleForcedPlainTextPaste({ editor: editor as any, event });
+              }}
               style={{
                 position: "relative",
                 width: "100%",
