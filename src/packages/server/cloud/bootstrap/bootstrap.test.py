@@ -480,7 +480,7 @@ class BootstrapWrapperScriptTest(unittest.TestCase):
             )
             self.assertIn('exec "$NODE_BIN"', script)
 
-    def test_configure_autostart_starts_project_host_immediately(self) -> None:
+    def test_configure_autostart_only_writes_cron_and_enables_service(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             cfg = make_cfg(tmpdir)
             runtime_root = Path(tmpdir) / "runtime-root"
@@ -528,7 +528,7 @@ class BootstrapWrapperScriptTest(unittest.TestCase):
                 ),
                 recorded,
             )
-            self.assertIn(
+            self.assertNotIn(
                 (
                     [
                         "sudo",

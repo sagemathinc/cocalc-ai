@@ -2612,21 +2612,6 @@ def configure_autostart(cfg: BootstrapConfig) -> None:
     )
     os.chmod("/etc/cron.d/cocalc-project-host", 0o644)
     run_best_effort(cfg, ["systemctl", "enable", "--now", "cron"], "enable cron")
-    run_best_effort(
-        cfg,
-        [
-            "sudo",
-            "-u",
-            cfg.ssh_user,
-            "-H",
-            "/bin/bash",
-            "-lc",
-            f"{runtime_root}/bin/start-project-host",
-        ],
-        "start project-host now",
-    )
-
-
 def configure_runtime_sudoers(cfg: BootstrapConfig) -> None:
     user = cfg.ssh_user
     if not user or user == "root":
