@@ -2095,7 +2095,7 @@ RUNTIME_ROOT="__RUNTIME_ROOT__"
 bin="$RUNTIME_ROOT/bin/project-host"
 pid_file="/mnt/cocalc/data/daemon.pid"
 case "${cmd}" in
-  start|stop)
+  start|stop|ensure)
     "${bin}" daemon "${cmd}"
     ;;
   restart)
@@ -2117,7 +2117,7 @@ case "${cmd}" in
     fi
     ;;
   *)
-    echo "usage: ${0} {start|stop|restart|status}" >&2
+    echo "usage: ${0} {start|stop|restart|ensure|status}" >&2
     exit 2
     ;;
 esac
@@ -2132,7 +2132,7 @@ for attempt in $(seq 1 60); do
     if [ -x /usr/local/sbin/cocalc-runtime-storage ]; then
       sudo -n /usr/local/sbin/cocalc-runtime-storage grow-btrfs || true
     fi
-    exec "$CTL" start
+    exec "$CTL" ensure
   fi
   echo "waiting for /mnt/cocalc mount (attempt $attempt/60)"
   sudo -n /usr/local/sbin/cocalc-mount-data || true
@@ -2365,8 +2365,13 @@ exec python3 "{bootstrap_py}" --bootstrap-dir "{bootstrap_dir}" --only tools_bun
 def configure_autostart(cfg: BootstrapConfig) -> None:
     log_line(cfg, "bootstrap: configuring project-host autostart")
     runtime_root = project_host_runtime_root(cfg)
-    cron_line = f"@reboot {cfg.ssh_user} /bin/bash -lc '{runtime_root}/bin/start-project-host'"
-    Path("/etc/cron.d/cocalc-project-host").write_text(cron_line + "\n", encoding="utf-8")
+    cron_lines = [
+        f"@reboot {cfg.ssh_user} /bin/bash -lc '{runtime_root}/bin/start-project-host'",
+        f"* * * * * {cfg.ssh_user} /bin/bash -lc 'mountpoint -q /mnt/cocalc && {runtime_root}/bin/ctl ensure || true'",
+    ]
+    Path("/etc/cron.d/cocalc-project-host").write_text(
+        "\n".join(cron_lines) + "\n", encoding="utf-8"
+    )
     os.chmod("/etc/cron.d/cocalc-project-host", 0o644)
     run_best_effort(cfg, ["systemctl", "enable", "--now", "cron"], "enable cron")
     run_best_effort(
