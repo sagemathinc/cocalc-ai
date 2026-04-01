@@ -1,4 +1,5 @@
 import dust from "./dust";
+import getStorageHistory from "./storage-history";
 import useDiskUsage, {
   type DiskUsageTree,
   type StorageVisibleSummary,
@@ -16,6 +17,10 @@ import {
   Typography,
 } from "antd";
 import ShowError from "@cocalc/frontend/components/error";
+import type {
+  ProjectStorageHistory,
+  ProjectStorageHistoryPoint,
+} from "@cocalc/conat/hub/api/projects";
 import { human_readable_size } from "@cocalc/util/misc";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "@cocalc/frontend/components";
@@ -31,6 +36,20 @@ type StorageAnnotation = {
   detail: string;
   tone?: "warning" | "info";
 };
+type StorageHistoryMetricKey =
+  | "quota"
+  | "home"
+  | "scratch"
+  | "environment"
+  | "snapshots";
+type HistorySeriesPoint = { collected_at: string; value: number };
+
+const HISTORY_MAX_POINTS = 96;
+const HISTORY_WINDOW_OPTIONS = [
+  { label: "6h", value: 6 * 60 },
+  { label: "24h", value: 24 * 60 },
+  { label: "7d", value: 7 * 24 * 60 },
+] as const;
 
 function bucketPercent(bytes: number, total: number): number {
   if (total <= 0) return 0;
@@ -150,6 +169,113 @@ function labelForSegment(bucket: StorageVisibleSummary, path: string): string {
   return posix.basename(path);
 }
 
+function historyMetricLabel(metric: StorageHistoryMetricKey): string {
+  switch (metric) {
+    case "quota":
+      return "Quota";
+    case "home":
+      return "Home";
+    case "scratch":
+      return "Scratch";
+    case "environment":
+      return "Environment";
+    case "snapshots":
+      return "Snapshots";
+  }
+}
+
+function historyMetricValue(
+  point: ProjectStorageHistoryPoint,
+  metric: StorageHistoryMetricKey,
+): number | undefined {
+  switch (metric) {
+    case "quota":
+      return point.quota_used_bytes;
+    case "home":
+      return point.home_visible_bytes;
+    case "scratch":
+      return point.scratch_visible_bytes;
+    case "environment":
+      return point.environment_visible_bytes;
+    case "snapshots":
+      return point.snapshot_counted_bytes;
+  }
+}
+
+function collectHistorySeries(
+  history: ProjectStorageHistory | null,
+  metric: StorageHistoryMetricKey,
+): HistorySeriesPoint[] {
+  if (!history) return [];
+  const result: HistorySeriesPoint[] = [];
+  for (const point of history.points) {
+    const value = historyMetricValue(point, metric);
+    if (value == null || !Number.isFinite(value)) continue;
+    result.push({ collected_at: point.collected_at, value });
+  }
+  return result;
+}
+
+function historyMetricAvailable(
+  history: ProjectStorageHistory | null,
+  metric: StorageHistoryMetricKey,
+): boolean {
+  return collectHistorySeries(history, metric).length > 0;
+}
+
+function historyLinePoints(
+  values: number[],
+  width = 560,
+  height = 160,
+): string {
+  if (values.length === 0) return "";
+  if (values.length === 1) {
+    return `0,${height / 2} ${width},${height / 2}`;
+  }
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const y = (value: number) => {
+    if (max === min) return height / 2;
+    return height - ((value - min) / (max - min)) * (height - 12) - 6;
+  };
+  const dx = width / (values.length - 1);
+  return values
+    .map((value, i) => `${(i * dx).toFixed(2)},${y(value).toFixed(2)}`)
+    .join(" ");
+}
+
+function formatSignedSize(bytes: number): string {
+  const sign = bytes > 0 ? "+" : bytes < 0 ? "-" : "";
+  return `${sign}${human_readable_size(Math.abs(bytes))}`;
+}
+
+function formatHistoryWindow(windowMinutes: number): string {
+  if (windowMinutes % (24 * 60) === 0) {
+    const days = windowMinutes / (24 * 60);
+    return days === 1 ? "24 hours" : `${days} days`;
+  }
+  if (windowMinutes % 60 === 0) {
+    const hours = windowMinutes / 60;
+    return hours === 1 ? "1 hour" : `${hours} hours`;
+  }
+  return `${windowMinutes} minutes`;
+}
+
+function historyMetricColor(metric: StorageHistoryMetricKey): string {
+  switch (metric) {
+    case "quota":
+      return COLORS.BLUE_D;
+    case "home":
+      return COLORS.BS_GREEN_D;
+    case "scratch":
+      return COLORS.BLUE;
+    case "environment":
+      return COLORS.ORANGE_WARN;
+    case "snapshots":
+      return COLORS.ANTD_RED;
+  }
+}
+
 export default function DiskUsage({
   project_id,
   style,
@@ -162,6 +288,9 @@ export default function DiskUsage({
   current_path?: string;
 }) {
   const [expand, setExpand] = useState<boolean>(false);
+  const [activePanel, setActivePanel] = useState<"overview" | "history">(
+    "overview",
+  );
   const { visible, counted, loading, error, setError, refresh, quotas } =
     useDiskUsage({
       project_id,
@@ -177,6 +306,15 @@ export default function DiskUsage({
   const [drillCounter, setDrillCounter] = useState<number>(0);
   const lastDrillCounterRef = useRef<number>(0);
   const drillRequestKeyRef = useRef<string>("");
+  const [historyWindow, setHistoryWindow] = useState<number>(24 * 60);
+  const [historyMetric, setHistoryMetric] =
+    useState<StorageHistoryMetricKey>("quota");
+  const [history, setHistory] = useState<ProjectStorageHistory | null>(null);
+  const [historyLoading, setHistoryLoading] = useState<boolean>(false);
+  const [historyError, setHistoryError] = useState<any>(null);
+  const [historyCounter, setHistoryCounter] = useState<number>(0);
+  const lastHistoryCounterRef = useRef<number>(0);
+  const historyRequestKeyRef = useRef<string>("");
   const prevExpandRef = useRef<boolean>(false);
   const quota = quotas[0] ?? null;
 
@@ -225,6 +363,51 @@ export default function DiskUsage({
     visible.reduce((sum, bucket) => sum + bucket.summaryBytes, 0),
     1,
   );
+  const historyMetricOptions = useMemo(
+    () =>
+      (
+        [
+          "quota",
+          "home",
+          "scratch",
+          "environment",
+          "snapshots",
+        ] as StorageHistoryMetricKey[]
+      )
+        .filter((metric) => historyMetricAvailable(history, metric))
+        .map((metric) => ({
+          label: historyMetricLabel(metric),
+          value: metric,
+        })),
+    [history],
+  );
+  const historySeries = useMemo(
+    () => collectHistorySeries(history, historyMetric),
+    [history, historyMetric],
+  );
+  const historyValues = historySeries.map((point) => point.value);
+  const latestHistoryPoint = historySeries.at(-1);
+  const firstHistoryPoint = historySeries[0];
+  const historyDelta =
+    latestHistoryPoint != null && firstHistoryPoint != null
+      ? latestHistoryPoint.value - firstHistoryPoint.value
+      : undefined;
+  const historyGrowth =
+    historyMetric === "quota"
+      ? history?.growth?.quota_used_bytes_per_hour
+      : latestHistoryPoint != null &&
+          firstHistoryPoint != null &&
+          Date.parse(latestHistoryPoint.collected_at) >
+            Date.parse(firstHistoryPoint.collected_at)
+        ? (latestHistoryPoint.value - firstHistoryPoint.value) /
+          ((Date.parse(latestHistoryPoint.collected_at) -
+            Date.parse(firstHistoryPoint.collected_at)) /
+            (60 * 60 * 1000))
+        : undefined;
+  const historyLine = useMemo(
+    () => historyLinePoints(historyValues),
+    [historyValues],
+  );
 
   useAsyncEffect(async () => {
     if (!expand || selectedBucket == null || selectedDrillPath == null) {
@@ -261,6 +444,39 @@ export default function DiskUsage({
     }
   }, [expand, project_id, selectedBucket, selectedDrillPath, drillCounter]);
 
+  useAsyncEffect(async () => {
+    if (!expand || activePanel !== "history") {
+      setHistoryLoading(false);
+      return;
+    }
+    const requestKey = `${project_id}:${historyWindow}:${historyCounter}`;
+    historyRequestKeyRef.current = requestKey;
+    try {
+      setHistoryLoading(true);
+      setHistoryError(null);
+      const cache = historyCounter === lastHistoryCounterRef.current;
+      const nextHistory = await getStorageHistory({
+        project_id,
+        window_minutes: historyWindow,
+        max_points: HISTORY_MAX_POINTS,
+        cache,
+      });
+      if (historyRequestKeyRef.current !== requestKey) {
+        return;
+      }
+      setHistory(nextHistory);
+    } catch (err) {
+      if (historyRequestKeyRef.current === requestKey) {
+        setHistoryError(err);
+      }
+    } finally {
+      if (historyRequestKeyRef.current === requestKey) {
+        setHistoryLoading(false);
+      }
+      lastHistoryCounterRef.current = historyCounter;
+    }
+  }, [expand, activePanel, project_id, historyWindow, historyCounter]);
+
   useEffect(() => {
     if (expand && !prevExpandRef.current) {
       prevExpandRef.current = true;
@@ -288,6 +504,17 @@ export default function DiskUsage({
     }
   }, [currentBucketSelection, expand, selectedBucketKey]);
 
+  useEffect(() => {
+    if (
+      historyMetricOptions.length > 0 &&
+      !historyMetricOptions.some((option) => option.value === historyMetric)
+    ) {
+      setHistoryMetric(
+        historyMetricOptions[0].value as StorageHistoryMetricKey,
+      );
+    }
+  }, [historyMetric, historyMetricOptions]);
+
   async function handleBrowsePath(path: string) {
     const actions = redux.getProjectActions(project_id);
     actions.set_current_path(path);
@@ -306,6 +533,12 @@ export default function DiskUsage({
       return;
     }
     await handleBrowsePath(dirname(absolutePath));
+  }
+
+  function handleReload() {
+    refresh();
+    setDrillCounter((prev) => prev + 1);
+    setHistoryCounter((prev) => prev + 1);
   }
 
   const summary = (
@@ -410,303 +643,479 @@ export default function DiskUsage({
           width={700}
         >
           <ShowError error={error} setError={setError} />
+          {activePanel === "history" && (
+            <ShowError error={historyError} setError={setHistoryError} />
+          )}
           <h5 style={{ marginTop: 0 }}>
             <Icon name="disk-round" /> Project storage overview
             <Button
-              onClick={() => refresh()}
+              onClick={() => handleReload()}
               style={{ float: "right", marginRight: "30px" }}
             >
               Reload
             </Button>
           </h5>
-          {quota != null && (
-            <>
-              <div style={{ textAlign: "center" }}>
-                <Progress
-                  type="circle"
-                  percent={percent}
-                  status={quotaStatus}
-                  format={() => `${percent}%`}
-                />
-              </div>
-              <div style={{ marginTop: "15px" }}>
-                <b>{quota.label}:</b> {human_readable_size(quota.used)} out of{" "}
-                {human_readable_size(quota.size)}
-                {quota.warning ? (
-                  <Alert
-                    style={{ marginTop: "12px" }}
-                    showIcon
-                    type="warning"
-                    message="Quota accounting warning"
-                    description={quota.warning}
-                  />
-                ) : null}
-                <div style={{ color: COLORS.GRAY_M, marginTop: "8px" }}>
-                  Counted quota usage may differ from visible file sizes because
-                  compression, deduplication, snapshots, and storage accounting
-                  do not have the same semantics as browsing `/root` or
-                  `/scratch`.
-                </div>
-                {visible.some((bucket) => bucket.key === "environment") && (
-                  <div style={{ color: COLORS.GRAY_M, marginTop: "8px" }}>
-                    This project uses a root filesystem image. Environment
-                    changes measure writable overlay modifications stored under{" "}
-                    <code>
-                      {
-                        visible.find((bucket) => bucket.key === "environment")
-                          ?.path
-                      }
-                    </code>
-                    , not the shared base image itself.
-                  </div>
-                )}
-              </div>
-            </>
-          )}
-          {counted.length > 0 && (
-            <>
-              <hr />
-              <div style={{ marginBottom: "10px" }}>
-                <b>Counted storage</b>
-              </div>
-              {counted.map((bucket) => (
-                <div
-                  key={bucket.key}
-                  style={{ marginBottom: "10px", color: COLORS.GRAY_D }}
-                >
-                  <div>
-                    <Text strong>{bucket.label}</Text>:{" "}
-                    {human_readable_size(bucket.bytes)}
-                  </div>
-                  {bucket.detail ? (
-                    <div style={{ color: COLORS.GRAY_M, marginTop: "4px" }}>
-                      {bucket.detail}
-                    </div>
-                  ) : null}
-                </div>
-              ))}
-            </>
-          )}
-          {percent >= 100 && (
-            <Alert
-              style={{ margin: "15px 0" }}
-              showIcon
-              message="OVER QUOTA"
-              description="Delete files or increase your quota."
-              type="error"
+          <div style={{ marginBottom: "16px" }}>
+            <Segmented
+              options={[
+                { label: "Overview", value: "overview" },
+                { label: "History", value: "history" },
+              ]}
+              onChange={(value) =>
+                setActivePanel(value as "overview" | "history")
+              }
+              value={activePanel}
             />
-          )}
-          {visible.length > 0 && (
+          </div>
+          {activePanel === "history" ? (
             <>
-              <hr />
-              <div style={{ marginBottom: "10px" }}>
-                <b>Visible storage</b>
-              </div>
-              {visible.some((bucket) => bucket.key === "environment") && (
-                <div style={{ color: COLORS.GRAY_M, marginBottom: "10px" }}>
-                  Home excludes writable rootfs overlay data, which is shown
-                  separately as Environment.
-                </div>
-              )}
-              {visible.map((bucket) => (
-                <div
-                  key={bucket.key}
-                  style={{
-                    alignItems: "center",
-                    display: "flex",
-                    gap: "10px",
-                    marginBottom: "8px",
-                  }}
-                >
-                  <div style={{ minWidth: "70px" }}>
-                    <Text strong>{relativeLabel(bucket)}</Text>
-                  </div>
-                  <Progress
-                    style={{ flex: 1, marginBottom: 0 }}
-                    percent={bucketPercent(bucket.summaryBytes, visibleTotal)}
-                    showInfo={false}
-                  />
-                  <div style={{ minWidth: "120px", textAlign: "right" }}>
-                    {human_readable_size(bucket.summaryBytes)}
-                  </div>
-                </div>
-              ))}
-            </>
-          )}
-          {selectedBucket != null && (
-            <>
-              <hr />
-              <div style={{ marginBottom: "10px" }}>
+              <div style={{ marginBottom: "14px" }}>
                 <Space size={12} wrap>
-                  <b>Find space in</b>
+                  <Text strong>Range</Text>
                   <Segmented
-                    options={visible.map((bucket) => ({
-                      label: relativeLabel(bucket),
-                      value: bucket.key,
+                    options={HISTORY_WINDOW_OPTIONS.map((option) => ({
+                      label: option.label,
+                      value: option.value,
                     }))}
-                    onChange={(value) =>
-                      setSelectedBucketKey(value as VisibleBucketKey)
-                    }
-                    value={selectedBucket.key}
+                    onChange={(value) => setHistoryWindow(value as number)}
+                    value={historyWindow}
                   />
-                  {currentFolderPath != null && (
-                    <Button
-                      onClick={() =>
-                        setDrillPathByBucket((prev) => ({
-                          ...prev,
-                          [selectedBucket.key]: currentFolderPath,
-                        }))
-                      }
-                      size="small"
-                    >
-                      Current folder
-                    </Button>
+                  {historyMetricOptions.length > 1 && (
+                    <>
+                      <Text strong>Metric</Text>
+                      <Segmented
+                        options={historyMetricOptions}
+                        onChange={(value) =>
+                          setHistoryMetric(value as StorageHistoryMetricKey)
+                        }
+                        value={historyMetric}
+                      />
+                    </>
                   )}
-                  {selectedDrillPath !== selectedBucket.path && (
-                    <Button
-                      onClick={() =>
-                        setDrillPathByBucket((prev) => ({
-                          ...prev,
-                          [selectedBucket.key]: selectedBucket.path,
-                        }))
-                      }
-                      size="small"
-                    >
-                      {relativeLabel(selectedBucket)} root
-                    </Button>
-                  )}
-                  <Button
-                    onClick={() => setDrillCounter((prev) => prev + 1)}
-                    size="small"
-                  >
-                    Refresh
-                  </Button>
                 </Space>
               </div>
-              <div>
-                {selectedDrillPath != null && (
-                  <div style={{ marginBottom: "10px" }}>
-                    <Breadcrumb
-                      items={breadcrumbPaths.map((path) => ({
-                        title: (
-                          <a
-                            onClick={() =>
-                              setDrillPathByBucket((prev) => ({
-                                ...prev,
-                                [selectedBucket.key]: path,
-                              }))
-                            }
-                          >
-                            {labelForSegment(selectedBucket, path)}
-                          </a>
-                        ),
-                      }))}
-                    />
-                    <div style={{ marginTop: "8px" }}>
-                      <Button
-                        onClick={() => handleBrowsePath(selectedDrillPath)}
-                        size="small"
-                      >
-                        Browse this folder
-                      </Button>
+              <div style={{ color: COLORS.GRAY_M, marginBottom: "12px" }}>
+                Storage history is sampled when the backend refreshes project
+                storage overview data, so quiet projects may have gaps.
+              </div>
+              {historyLoading && history == null ? (
+                <div style={{ padding: "24px 0", textAlign: "center" }}>
+                  <Spin />
+                </div>
+              ) : history == null || history.point_count === 0 ? (
+                <Alert
+                  showIcon
+                  type="info"
+                  message="No storage history yet"
+                  description="Storage history starts once the backend has recorded storage overview samples for this project."
+                />
+              ) : (
+                <>
+                  <Space
+                    size={24}
+                    wrap
+                    style={{ display: "flex", marginBottom: "16px" }}
+                  >
+                    <div>
+                      <Text strong>
+                        Current {historyMetricLabel(historyMetric)}
+                      </Text>
+                      <div style={{ fontSize: "20px", marginTop: "4px" }}>
+                        {latestHistoryPoint == null
+                          ? "?"
+                          : historyMetric === "quota"
+                            ? `${human_readable_size(latestHistoryPoint.value)} / ${human_readable_size(history.points.at(-1)?.quota_size_bytes ?? quota?.size ?? 0)}`
+                            : human_readable_size(latestHistoryPoint.value)}
+                      </div>
                     </div>
-                  </div>
-                )}
-                {drillSummaryAnnotation != null && (
-                  <Alert
-                    style={{ marginBottom: "12px" }}
-                    showIcon
-                    type={
-                      drillSummaryAnnotation.tone === "warning"
-                        ? "warning"
-                        : "info"
-                    }
-                    message={drillSummaryAnnotation.label}
-                    description={drillSummaryAnnotation.detail}
-                  />
-                )}
-                <ShowError error={drillError} setError={setDrillError} />
-                {drillLoading && drillUsage == null ? (
-                  <div style={{ padding: "18px 0", textAlign: "center" }}>
-                    <Spin />
-                  </div>
-                ) : drillUsage == null ? null : drillChildren.length === 0 ? (
-                  <Text type="secondary">No child entries to show here.</Text>
-                ) : (
-                  drillChildren.map(({ path, bytes }) => {
-                    const absolutePath = posix.join(selectedDrillPath!, path);
-                    const annotation = getStorageAnnotation(
-                      selectedBucket,
-                      absolutePath,
-                    );
-                    return (
+                    <div>
+                      <Text strong>
+                        Change over{" "}
+                        {formatHistoryWindow(history.window_minutes)}
+                      </Text>
+                      <div style={{ fontSize: "20px", marginTop: "4px" }}>
+                        {historyDelta == null
+                          ? "?"
+                          : formatSignedSize(historyDelta)}
+                      </div>
+                    </div>
+                    <div>
+                      <Text strong>Recent slope</Text>
+                      <div style={{ fontSize: "20px", marginTop: "4px" }}>
+                        {historyGrowth == null
+                          ? "?"
+                          : `${formatSignedSize(historyGrowth)}/h`}
+                      </div>
+                    </div>
+                  </Space>
+                  {historySeries.length < 2 ? (
+                    <Alert
+                      showIcon
+                      type="info"
+                      message="Need more samples for a trend"
+                      description="Only one storage sample is available so far. Reopen this later after the project has been active for a while."
+                    />
+                  ) : (
+                    <div
+                      style={{
+                        border: `1px solid ${COLORS.GRAY_LL}`,
+                        borderRadius: "8px",
+                        marginBottom: "12px",
+                        padding: "14px",
+                      }}
+                    >
+                      <svg
+                        aria-label={`${historyMetricLabel(historyMetric)} history`}
+                        height="160"
+                        style={{ display: "block", width: "100%" }}
+                        viewBox="0 0 560 160"
+                      >
+                        <polyline
+                          fill="none"
+                          points={historyLine}
+                          stroke={historyMetricColor(historyMetric)}
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth="3"
+                        />
+                      </svg>
                       <div
-                        key={`${selectedBucket.key}:${absolutePath}`}
                         style={{
-                          borderBottom: `1px solid ${COLORS.GRAY_L}`,
+                          color: COLORS.GRAY_M,
                           display: "flex",
-                          gap: "12px",
-                          padding: "10px 0",
+                          fontSize: "12px",
+                          justifyContent: "space-between",
+                          marginTop: "4px",
                         }}
                       >
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div
-                            style={{
-                              alignItems: "center",
-                              display: "flex",
-                              flexWrap: "wrap",
-                              gap: "8px",
-                            }}
-                          >
-                            <Button
-                              onClick={() =>
-                                handleDrillEntryClick(absolutePath)
-                              }
-                              style={{ padding: 0 }}
-                              type="link"
-                            >
-                              {absolutePath}
-                            </Button>
-                            {annotation != null && (
-                              <Tag
-                                color={
-                                  annotation.tone === "warning"
-                                    ? "gold"
-                                    : "blue"
+                        <span>
+                          {new Date(
+                            firstHistoryPoint?.collected_at ?? "",
+                          ).toLocaleString()}
+                        </span>
+                        <span>
+                          {new Date(
+                            latestHistoryPoint?.collected_at ?? "",
+                          ).toLocaleString()}
+                        </span>
+                      </div>
+                    </div>
+                  )}
+                  <div style={{ color: COLORS.GRAY_M }}>
+                    Showing {history.point_count} sampled points over{" "}
+                    {formatHistoryWindow(history.window_minutes)}.
+                  </div>
+                </>
+              )}
+            </>
+          ) : (
+            <>
+              {quota != null && (
+                <>
+                  <div style={{ textAlign: "center" }}>
+                    <Progress
+                      type="circle"
+                      percent={percent}
+                      status={quotaStatus}
+                      format={() => `${percent}%`}
+                    />
+                  </div>
+                  <div style={{ marginTop: "15px" }}>
+                    <b>{quota.label}:</b> {human_readable_size(quota.used)} out
+                    of {human_readable_size(quota.size)}
+                    {quota.warning ? (
+                      <Alert
+                        style={{ marginTop: "12px" }}
+                        showIcon
+                        type="warning"
+                        message="Quota accounting warning"
+                        description={quota.warning}
+                      />
+                    ) : null}
+                    <div style={{ color: COLORS.GRAY_M, marginTop: "8px" }}>
+                      Counted quota usage may differ from visible file sizes
+                      because compression, deduplication, snapshots, and storage
+                      accounting do not have the same semantics as browsing
+                      `/root` or `/scratch`.
+                    </div>
+                    {visible.some((bucket) => bucket.key === "environment") && (
+                      <div style={{ color: COLORS.GRAY_M, marginTop: "8px" }}>
+                        This project uses a root filesystem image. Environment
+                        changes measure writable overlay modifications stored
+                        under{" "}
+                        <code>
+                          {
+                            visible.find(
+                              (bucket) => bucket.key === "environment",
+                            )?.path
+                          }
+                        </code>
+                        , not the shared base image itself.
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
+              {counted.length > 0 && (
+                <>
+                  <hr />
+                  <div style={{ marginBottom: "10px" }}>
+                    <b>Counted storage</b>
+                  </div>
+                  {counted.map((bucket) => (
+                    <div
+                      key={bucket.key}
+                      style={{ marginBottom: "10px", color: COLORS.GRAY_D }}
+                    >
+                      <div>
+                        <Text strong>{bucket.label}</Text>:{" "}
+                        {human_readable_size(bucket.bytes)}
+                      </div>
+                      {bucket.detail ? (
+                        <div style={{ color: COLORS.GRAY_M, marginTop: "4px" }}>
+                          {bucket.detail}
+                        </div>
+                      ) : null}
+                    </div>
+                  ))}
+                </>
+              )}
+              {percent >= 100 && (
+                <Alert
+                  style={{ margin: "15px 0" }}
+                  showIcon
+                  message="OVER QUOTA"
+                  description="Delete files or increase your quota."
+                  type="error"
+                />
+              )}
+              {visible.length > 0 && (
+                <>
+                  <hr />
+                  <div style={{ marginBottom: "10px" }}>
+                    <b>Visible storage</b>
+                  </div>
+                  {visible.some((bucket) => bucket.key === "environment") && (
+                    <div style={{ color: COLORS.GRAY_M, marginBottom: "10px" }}>
+                      Home excludes writable rootfs overlay data, which is shown
+                      separately as Environment.
+                    </div>
+                  )}
+                  {visible.map((bucket) => (
+                    <div
+                      key={bucket.key}
+                      style={{
+                        alignItems: "center",
+                        display: "flex",
+                        gap: "10px",
+                        marginBottom: "8px",
+                      }}
+                    >
+                      <div style={{ minWidth: "70px" }}>
+                        <Text strong>{relativeLabel(bucket)}</Text>
+                      </div>
+                      <Progress
+                        style={{ flex: 1, marginBottom: 0 }}
+                        percent={bucketPercent(
+                          bucket.summaryBytes,
+                          visibleTotal,
+                        )}
+                        showInfo={false}
+                      />
+                      <div style={{ minWidth: "120px", textAlign: "right" }}>
+                        {human_readable_size(bucket.summaryBytes)}
+                      </div>
+                    </div>
+                  ))}
+                </>
+              )}
+              {selectedBucket != null && (
+                <>
+                  <hr />
+                  <div style={{ marginBottom: "10px" }}>
+                    <Space size={12} wrap>
+                      <b>Find space in</b>
+                      <Segmented
+                        options={visible.map((bucket) => ({
+                          label: relativeLabel(bucket),
+                          value: bucket.key,
+                        }))}
+                        onChange={(value) =>
+                          setSelectedBucketKey(value as VisibleBucketKey)
+                        }
+                        value={selectedBucket.key}
+                      />
+                      {currentFolderPath != null && (
+                        <Button
+                          onClick={() =>
+                            setDrillPathByBucket((prev) => ({
+                              ...prev,
+                              [selectedBucket.key]: currentFolderPath,
+                            }))
+                          }
+                          size="small"
+                        >
+                          Current folder
+                        </Button>
+                      )}
+                      {selectedDrillPath !== selectedBucket.path && (
+                        <Button
+                          onClick={() =>
+                            setDrillPathByBucket((prev) => ({
+                              ...prev,
+                              [selectedBucket.key]: selectedBucket.path,
+                            }))
+                          }
+                          size="small"
+                        >
+                          {relativeLabel(selectedBucket)} root
+                        </Button>
+                      )}
+                      <Button
+                        onClick={() => setDrillCounter((prev) => prev + 1)}
+                        size="small"
+                      >
+                        Refresh
+                      </Button>
+                    </Space>
+                  </div>
+                  <div>
+                    {selectedDrillPath != null && (
+                      <div style={{ marginBottom: "10px" }}>
+                        <Breadcrumb
+                          items={breadcrumbPaths.map((path) => ({
+                            title: (
+                              <a
+                                onClick={() =>
+                                  setDrillPathByBucket((prev) => ({
+                                    ...prev,
+                                    [selectedBucket.key]: path,
+                                  }))
                                 }
                               >
-                                {annotation.label}
-                              </Tag>
-                            )}
-                          </div>
-                          <Progress
-                            percent={bucketPercent(
-                              bytes,
-                              Math.max(drillUsage.bytes, 1),
-                            )}
-                            showInfo={false}
-                            style={{ marginBottom: "4px", maxWidth: "360px" }}
-                          />
-                          {annotation?.detail && (
-                            <div
-                              style={{
-                                color: COLORS.GRAY_M,
-                                fontSize: "12px",
-                                lineHeight: 1.45,
-                              }}
-                            >
-                              {annotation.detail}
-                            </div>
-                          )}
-                        </div>
-                        <div style={{ minWidth: "110px", textAlign: "right" }}>
-                          {human_readable_size(bytes)}
+                                {labelForSegment(selectedBucket, path)}
+                              </a>
+                            ),
+                          }))}
+                        />
+                        <div style={{ marginTop: "8px" }}>
+                          <Button
+                            onClick={() => handleBrowsePath(selectedDrillPath)}
+                            size="small"
+                          >
+                            Browse this folder
+                          </Button>
                         </div>
                       </div>
-                    );
-                  })
-                )}
-              </div>
+                    )}
+                    {drillSummaryAnnotation != null && (
+                      <Alert
+                        style={{ marginBottom: "12px" }}
+                        showIcon
+                        type={
+                          drillSummaryAnnotation.tone === "warning"
+                            ? "warning"
+                            : "info"
+                        }
+                        message={drillSummaryAnnotation.label}
+                        description={drillSummaryAnnotation.detail}
+                      />
+                    )}
+                    <ShowError error={drillError} setError={setDrillError} />
+                    {drillLoading && drillUsage == null ? (
+                      <div style={{ padding: "18px 0", textAlign: "center" }}>
+                        <Spin />
+                      </div>
+                    ) : drillUsage == null ? null : drillChildren.length ===
+                      0 ? (
+                      <Text type="secondary">
+                        No child entries to show here.
+                      </Text>
+                    ) : (
+                      drillChildren.map(({ path, bytes }) => {
+                        const absolutePath = posix.join(
+                          selectedDrillPath!,
+                          path,
+                        );
+                        const annotation = getStorageAnnotation(
+                          selectedBucket,
+                          absolutePath,
+                        );
+                        return (
+                          <div
+                            key={`${selectedBucket.key}:${absolutePath}`}
+                            style={{
+                              borderBottom: `1px solid ${COLORS.GRAY_L}`,
+                              display: "flex",
+                              gap: "12px",
+                              padding: "10px 0",
+                            }}
+                          >
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div
+                                style={{
+                                  alignItems: "center",
+                                  display: "flex",
+                                  flexWrap: "wrap",
+                                  gap: "8px",
+                                }}
+                              >
+                                <Button
+                                  onClick={() =>
+                                    handleDrillEntryClick(absolutePath)
+                                  }
+                                  style={{ padding: 0 }}
+                                  type="link"
+                                >
+                                  {absolutePath}
+                                </Button>
+                                {annotation != null && (
+                                  <Tag
+                                    color={
+                                      annotation.tone === "warning"
+                                        ? "gold"
+                                        : "blue"
+                                    }
+                                  >
+                                    {annotation.label}
+                                  </Tag>
+                                )}
+                              </div>
+                              <Progress
+                                percent={bucketPercent(
+                                  bytes,
+                                  Math.max(drillUsage.bytes, 1),
+                                )}
+                                showInfo={false}
+                                style={{
+                                  marginBottom: "4px",
+                                  maxWidth: "360px",
+                                }}
+                              />
+                              {annotation?.detail && (
+                                <div
+                                  style={{
+                                    color: COLORS.GRAY_M,
+                                    fontSize: "12px",
+                                    lineHeight: 1.45,
+                                  }}
+                                >
+                                  {annotation.detail}
+                                </div>
+                              )}
+                            </div>
+                            <div
+                              style={{ minWidth: "110px", textAlign: "right" }}
+                            >
+                              {human_readable_size(bytes)}
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                </>
+              )}
             </>
           )}
         </Modal>

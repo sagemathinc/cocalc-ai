@@ -65,11 +65,12 @@ import type {
   PublicPathInspectionResult,
   ProjectCopyRow,
   ProjectRuntimeLog,
-  WorkspaceSshConnectionInfo,
+  ProjectStorageCountedSummary,
   ProjectStorageBreakdown,
+  ProjectStorageHistory,
   ProjectStorageOverview,
   ProjectStorageVisibleSummary,
-  ProjectStorageCountedSummary,
+  WorkspaceSshConnectionInfo,
 } from "@cocalc/conat/hub/api/projects";
 import {
   deleteChatStoreData,
@@ -81,6 +82,10 @@ import {
   searchChatStoreArchived,
   vacuumChatStore,
 } from "@cocalc/backend/chat-store/sqlite-offload";
+import {
+  loadProjectStorageHistory,
+  recordProjectStorageHistorySample,
+} from "@cocalc/database/postgres/project-storage-history";
 import type { ExecOutput } from "@cocalc/conat/files/fs";
 
 const PROJECT_STORAGE_CACHE_TTL_MS = 30_000;
@@ -717,6 +722,14 @@ export async function getStorageOverview({
     visible,
     counted,
   };
+  try {
+    await recordProjectStorageHistorySample({ project_id, overview });
+  } catch (err) {
+    log.warn("getStorageOverview: unable to record storage history sample", {
+      project_id,
+      err,
+    });
+  }
   projectStorageOverviewCache.set(cacheKey, overview);
   return overview;
 }
@@ -732,6 +745,25 @@ export async function getStorageBreakdown({
 }): Promise<ProjectStorageBreakdown> {
   await assertCollab({ account_id, project_id });
   return await getStorageBreakdownImpl({ project_id, path });
+}
+
+export async function getStorageHistory({
+  account_id,
+  project_id,
+  window_minutes,
+  max_points,
+}: {
+  account_id: string;
+  project_id: string;
+  window_minutes?: number;
+  max_points?: number;
+}): Promise<ProjectStorageHistory> {
+  await assertCollab({ account_id, project_id });
+  return await loadProjectStorageHistory({
+    project_id,
+    window_minutes,
+    max_points,
+  });
 }
 
 export async function exec({

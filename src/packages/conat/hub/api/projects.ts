@@ -145,6 +145,29 @@ export interface ProjectStorageOverview {
   counted: ProjectStorageCountedSummary[];
 }
 
+export interface ProjectStorageHistoryPoint {
+  collected_at: string;
+  quota_used_bytes?: number;
+  quota_size_bytes?: number;
+  quota_used_percent?: number;
+  home_visible_bytes?: number;
+  scratch_visible_bytes?: number;
+  environment_visible_bytes?: number;
+  snapshot_counted_bytes?: number;
+}
+
+export interface ProjectStorageHistoryGrowth {
+  window_minutes: number;
+  quota_used_bytes_per_hour?: number;
+}
+
+export interface ProjectStorageHistory {
+  window_minutes: number;
+  point_count: number;
+  points: ProjectStorageHistoryPoint[];
+  growth?: ProjectStorageHistoryGrowth;
+}
+
 // "cloudflare-access-tcp" is kept temporarily for compatibility with older
 // servers/clients. The route is a Cloudflare-published SSH/TCP endpoint; it
 // may still use the `cloudflared access ssh` client shim, but it is not
@@ -347,6 +370,7 @@ export const projects = {
   getDiskQuota: authFirstRequireAccount,
   getStorageOverview: authFirstRequireAccount,
   getStorageBreakdown: authFirstRequireAccount,
+  getStorageHistory: authFirstRequireAccount,
   exec: authFirstRequireAccount,
   getRuntimeLog: authFirstRequireAccount,
   resolveWorkspaceSshConnection: authFirstRequireAccount,
@@ -605,6 +629,13 @@ export interface Projects {
     project_id: string;
     path: string;
   }) => Promise<ProjectStorageBreakdown>;
+
+  getStorageHistory: (opts: {
+    account_id?: string;
+    project_id: string;
+    window_minutes?: number;
+    max_points?: number;
+  }) => Promise<ProjectStorageHistory>;
 
   exec: (opts: {
     account_id?: string;
