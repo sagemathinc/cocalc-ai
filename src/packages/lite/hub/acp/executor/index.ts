@@ -4,7 +4,12 @@ export interface AcpExecutor {
   writeTextFile(relativePath: string, content: string): Promise<void>;
   exec(
     cmd: string,
-    opts?: { cwd?: string; timeoutMs?: number; env?: Record<string, string> },
+    opts?: {
+      cwd?: string;
+      timeoutMs?: number;
+      env?: Record<string, string>;
+      maxOutputBytes?: number;
+    },
   ): Promise<{
     stdout: string;
     stderr: string;

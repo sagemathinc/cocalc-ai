@@ -54,9 +54,18 @@ export interface AcpAutomationConfig {
   enabled?: boolean;
   automation_id?: string;
   title?: string;
+  run_kind?: "codex" | "command";
   prompt?: string;
-  schedule_type?: "daily";
+  command?: string;
+  command_cwd?: string;
+  command_timeout_ms?: number;
+  command_max_output_bytes?: number;
+  schedule_type?: "daily" | "interval";
+  days_of_week?: number[];
   local_time?: string;
+  interval_minutes?: number;
+  window_start_local_time?: string;
+  window_end_local_time?: string;
   timezone?: string;
   pause_after_unacknowledged_runs?: number;
 }
@@ -82,9 +91,18 @@ export interface AcpAutomationRecord {
   thread_id: string;
   account_id?: string;
   title?: string;
+  run_kind?: "codex" | "command";
   prompt?: string;
-  schedule_type?: "daily";
+  command?: string;
+  command_cwd?: string;
+  command_timeout_ms?: number;
+  command_max_output_bytes?: number;
+  schedule_type?: "daily" | "interval";
+  days_of_week?: number[];
   local_time?: string;
+  interval_minutes?: number;
+  window_start_local_time?: string;
+  window_end_local_time?: string;
   timezone?: string;
   pause_after_unacknowledged_runs?: number;
   status?: "active" | "running" | "paused" | "error";
@@ -133,6 +151,7 @@ export interface AcpChatContext {
 }
 
 export type AcpRequest = {
+  request_kind?: "codex";
   project_id: string;
   account_id: string;
   prompt: string;
@@ -141,6 +160,19 @@ export type AcpRequest = {
   runtime_env?: Record<string, string>;
   chat?: AcpChatContext;
 };
+
+export type AcpCommandRequest = {
+  request_kind: "command";
+  project_id: string;
+  account_id: string;
+  command: string;
+  cwd?: string;
+  timeout_ms?: number;
+  max_output_bytes?: number;
+  chat?: AcpChatContext;
+};
+
+export type AcpJobRequest = AcpRequest | AcpCommandRequest;
 
 export type AcpInterruptRequest = {
   project_id: string;

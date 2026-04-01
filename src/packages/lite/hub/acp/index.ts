@@ -19,12 +19,13 @@ import {
 import { AgentTimeTravelRecorder } from "@cocalc/ai/sync";
 import { init as initConatAcp } from "@cocalc/conat/ai/acp/server";
 import type {
-  AcpAutomationConfig,
   AcpAutomationRequest,
   AcpAutomationResponse,
+  AcpCommandRequest,
   AcpAutomationRecord,
   AcpControlRequest,
   AcpControlResponse,
+  AcpJobRequest,
   AcpRequest,
   AcpStreamPayload,
   AcpStreamMessage,
@@ -49,6 +50,22 @@ import type {
   TerminalStartOptions,
 } from "@cocalc/ai/acp/adapters";
 import { type AcpExecutor, ContainerExecutor, LocalExecutor } from "./executor";
+import {
+  DEFAULT_AUTOMATION_CHAT_SENDER_ID,
+  resolveAutomationChatSenderId,
+} from "./automation-chat-sender";
+import { buildAutomationAcpConfig } from "./automation-request-config";
+import {
+  computeNextAutomationRunAt,
+  normalizeAcpAutomationConfig,
+  AUTOMATION_DEFAULT_COMMAND_MAX_OUTPUT_BYTES,
+  AUTOMATION_DEFAULT_COMMAND_TIMEOUT_MS,
+} from "./automation-schedule";
+import {
+  captureCommandAutomationOutput,
+  formatCommandAutomationMarkdown,
+  resolveAutomationCommandCwd,
+} from "./command-automation";
 import { ensureLoopContractPrompt } from "./loop-contract";
 import {
   preferContainerExecutor,
@@ -647,166 +664,6 @@ function normalizeLoopConfig(
       60_000,
     ),
   };
-}
-
-function normalizeAutomationLocalTime(value?: string): string | undefined {
-  const raw = `${value ?? ""}`.trim();
-  const match = /^(\d{1,2}):(\d{2})$/.exec(raw);
-  if (!match) return undefined;
-  const hour = Number(match[1]);
-  const minute = Number(match[2]);
-  if (!Number.isInteger(hour) || hour < 0 || hour > 23) return undefined;
-  if (!Number.isInteger(minute) || minute < 0 || minute > 59) return undefined;
-  return `${hour.toString().padStart(2, "0")}:${minute
-    .toString()
-    .padStart(2, "0")}`;
-}
-
-function normalizeAutomationTimezone(value?: string): string | undefined {
-  const raw = `${value ?? ""}`.trim();
-  if (!raw) return undefined;
-  try {
-    Intl.DateTimeFormat("en-US", { timeZone: raw }).format(new Date());
-    return raw;
-  } catch {
-    return undefined;
-  }
-}
-
-function normalizeAcpAutomationConfig(
-  config?: AcpAutomationConfig | ChatThreadAutomationConfig | null,
-): AcpAutomationConfig | undefined {
-  if (!config) return undefined;
-  const enabled = config.enabled !== false;
-  const prompt = `${config.prompt ?? ""}`.trim();
-  const local_time = normalizeAutomationLocalTime(config.local_time);
-  const timezone =
-    normalizeAutomationTimezone(config.timezone) ??
-    Intl.DateTimeFormat().resolvedOptions().timeZone;
-  if (!prompt || !local_time || !timezone) return undefined;
-  return {
-    enabled,
-    automation_id: `${config.automation_id ?? ""}`.trim() || undefined,
-    title: `${config.title ?? ""}`.trim() || undefined,
-    prompt,
-    schedule_type: "daily",
-    local_time,
-    timezone,
-    pause_after_unacknowledged_runs: clampLoopNumber(
-      config.pause_after_unacknowledged_runs,
-      AUTOMATION_DEFAULT_UNACK_LIMIT,
-      1,
-      365,
-    ),
-  };
-}
-
-function zonedParts(
-  date: Date,
-  timeZone: string,
-): {
-  year: number;
-  month: number;
-  day: number;
-  hour: number;
-  minute: number;
-  second: number;
-} {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone,
-    hour12: false,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  }).formatToParts(date);
-  const get = (type: string) =>
-    Number(parts.find((x) => x.type === type)?.value ?? "0");
-  return {
-    year: get("year"),
-    month: get("month"),
-    day: get("day"),
-    hour: get("hour"),
-    minute: get("minute"),
-    second: get("second"),
-  };
-}
-
-function zonedEpochMs(opts: {
-  year: number;
-  month: number;
-  day: number;
-  hour: number;
-  minute: number;
-  timeZone: string;
-}): number {
-  let candidate = Date.UTC(
-    opts.year,
-    opts.month - 1,
-    opts.day,
-    opts.hour,
-    opts.minute,
-    0,
-    0,
-  );
-  for (let i = 0; i < 4; i++) {
-    const parts = zonedParts(new Date(candidate), opts.timeZone);
-    const asUtc = Date.UTC(
-      parts.year,
-      parts.month - 1,
-      parts.day,
-      parts.hour,
-      parts.minute,
-      parts.second,
-      0,
-    );
-    const targetUtc = Date.UTC(
-      opts.year,
-      opts.month - 1,
-      opts.day,
-      opts.hour,
-      opts.minute,
-      0,
-      0,
-    );
-    candidate += targetUtc - asUtc;
-  }
-  return candidate;
-}
-
-function computeNextAutomationRunAt(opts: {
-  local_time: string;
-  timezone: string;
-  nowMs?: number;
-}): number {
-  const now = new Date(opts.nowMs ?? Date.now());
-  const [hour, minute] = opts.local_time.split(":").map((x) => Number(x));
-  const nowParts = zonedParts(now, opts.timezone);
-  const candidateToday = zonedEpochMs({
-    year: nowParts.year,
-    month: nowParts.month,
-    day: nowParts.day,
-    hour,
-    minute,
-    timeZone: opts.timezone,
-  });
-  if (candidateToday > now.getTime()) {
-    return candidateToday;
-  }
-  const tomorrowUtc = new Date(
-    Date.UTC(nowParts.year, nowParts.month - 1, nowParts.day + 1, 12, 0, 0),
-  );
-  const tomorrowParts = zonedParts(tomorrowUtc, opts.timezone);
-  return zonedEpochMs({
-    year: tomorrowParts.year,
-    month: tomorrowParts.month,
-    day: tomorrowParts.day,
-    hour,
-    minute,
-    timeZone: opts.timezone,
-  });
 }
 
 function normalizeLoopDecision(
@@ -5433,7 +5290,8 @@ function automationMessageLabel(
   manual: boolean,
 ): string {
   const base = `${row.title ?? ""}`.trim() || "Automation";
-  return manual ? `Manual run: ${base}` : `Scheduled run: ${base}`;
+  const kind = row.run_kind === "command" ? "command run" : "run";
+  return manual ? `Manual ${kind}: ${base}` : `Scheduled ${kind}: ${base}`;
 }
 
 async function enqueueAutomationRun(
@@ -5443,7 +5301,11 @@ async function enqueueAutomationRun(
   if (!conatClient) {
     throw new Error("conat client must be initialized");
   }
-  if (!row.prompt?.trim()) {
+  if (row.run_kind === "command") {
+    if (!row.command?.trim()) {
+      throw new Error("automation is missing a command");
+    }
+  } else if (!row.prompt?.trim()) {
     throw new Error("automation is missing a prompt");
   }
   if (row.status === "running") {
@@ -5454,19 +5316,29 @@ async function enqueueAutomationRun(
   const assistant_message_id = randomUUID();
   const userDate = new Date(now).toISOString();
   const assistantDate = new Date(now + 1).toISOString();
+  let automationSenderId = DEFAULT_AUTOMATION_CHAT_SENDER_ID;
+  let automationConfig = buildAutomationAcpConfig({ chatPath: row.path });
 
   await withChatSyncDB({
     client: conatClient,
     project_id: row.project_id,
     path: row.path,
     fn: async (syncdb) => {
+      const threadConfig = preferredThreadConfigRow(syncdb, row.thread_id);
+      automationSenderId = resolveAutomationChatSenderId(
+        syncdbField<string>(threadConfig, "agent_model"),
+      );
+      automationConfig = buildAutomationAcpConfig({
+        chatPath: row.path,
+        config: syncdbField(threadConfig, "acp_config"),
+      });
       const parent_message_id = latestThreadMessageIdInSyncDB({
         syncdb,
         threadId: row.thread_id,
       });
       syncdb.set(
         buildChatMessage({
-          sender_id: row.account_id,
+          sender_id: automationSenderId,
           date: userDate,
           prevHistory: [],
           content: automationMessageLabel(row, opts.manual),
@@ -5481,22 +5353,39 @@ async function enqueueAutomationRun(
     },
   });
 
-  const request: AcpRequest = {
+  const chat: AcpChatContext = {
     project_id: row.project_id,
-    account_id: row.account_id,
-    prompt: row.prompt,
-    chat: {
-      project_id: row.project_id,
-      path: row.path,
-      sender_id: row.account_id,
-      thread_id: row.thread_id,
-      parent_message_id: user_message_id,
-      message_id: assistant_message_id,
-      message_date: assistantDate,
-      automation_id: row.automation_id,
-      automation_title: row.title ?? undefined,
-    },
+    path: row.path,
+    sender_id: automationSenderId,
+    thread_id: row.thread_id,
+    parent_message_id: user_message_id,
+    message_id: assistant_message_id,
+    message_date: assistantDate,
+    automation_id: row.automation_id,
+    automation_title: row.title ?? undefined,
   };
+  const request: AcpJobRequest =
+    row.run_kind === "command"
+      ? {
+          request_kind: "command",
+          project_id: row.project_id,
+          account_id: row.account_id,
+          command: `${row.command ?? ""}`.trim(),
+          cwd: row.command_cwd ?? undefined,
+          timeout_ms:
+            row.command_timeout_ms ?? AUTOMATION_DEFAULT_COMMAND_TIMEOUT_MS,
+          max_output_bytes:
+            row.command_max_output_bytes ??
+            AUTOMATION_DEFAULT_COMMAND_MAX_OUTPUT_BYTES,
+          chat,
+        }
+      : {
+          project_id: row.project_id,
+          account_id: row.account_id,
+          prompt: row.prompt ?? "",
+          config: automationConfig,
+          chat,
+        };
 
   const job = enqueueAcpJob(request);
   await persistQueuedUserMessageProjection({
@@ -5562,15 +5451,13 @@ async function finalizeAutomationRun(opts: {
     status = current.enabled ? "active" : "paused";
   }
   const next_run_at =
-    current.enabled &&
-    status !== "paused" &&
-    current.local_time &&
-    current.timezone
-      ? computeNextAutomationRunAt({
-          local_time: current.local_time,
-          timezone: current.timezone,
+    current.enabled && status !== "paused"
+      ? (computeNextAutomationRunAt(current, {
           nowMs: now,
-        })
+          defaultPauseAfterRuns: AUTOMATION_DEFAULT_UNACK_LIMIT,
+        }) ??
+        current.next_run_at ??
+        null)
       : (current.next_run_at ?? null);
   const updated = upsertAcpAutomation({
     ...current,
@@ -5697,7 +5584,9 @@ async function handleAcpAutomationRequest(
     return { ok: true, config: null, state: null, record: null };
   }
   if (request.action === "upsert") {
-    const config = normalizeAcpAutomationConfig(request.config);
+    const config = normalizeAcpAutomationConfig(request.config, {
+      defaultPauseAfterRuns: AUTOMATION_DEFAULT_UNACK_LIMIT,
+    });
     if (!config) {
       throw new Error("invalid automation config");
     }
@@ -5715,21 +5604,28 @@ async function handleAcpAutomationRequest(
       account_id: existing?.account_id ?? request.account_id,
       enabled,
       title: config.title ?? null,
+      run_kind: config.run_kind ?? "codex",
       prompt: config.prompt ?? null,
-      schedule_type: "daily",
+      command: config.command ?? null,
+      command_cwd: config.command_cwd ?? null,
+      command_timeout_ms: config.command_timeout_ms ?? null,
+      command_max_output_bytes: config.command_max_output_bytes ?? null,
+      schedule_type: config.schedule_type ?? "daily",
+      days_of_week: config.days_of_week ?? null,
       local_time: config.local_time ?? null,
+      interval_minutes: config.interval_minutes ?? null,
+      window_start_local_time: config.window_start_local_time ?? null,
+      window_end_local_time: config.window_end_local_time ?? null,
       timezone: config.timezone ?? null,
       pause_after_unacknowledged_runs:
         config.pause_after_unacknowledged_runs ??
         AUTOMATION_DEFAULT_UNACK_LIMIT,
       status: enabled ? "active" : "paused",
-      next_run_at:
-        enabled && config.local_time && config.timezone
-          ? computeNextAutomationRunAt({
-              local_time: config.local_time,
-              timezone: config.timezone,
-            })
-          : null,
+      next_run_at: enabled
+        ? (computeNextAutomationRunAt(config, {
+            defaultPauseAfterRuns: AUTOMATION_DEFAULT_UNACK_LIMIT,
+          }) ?? null)
+        : null,
       last_run_started_at: existing?.last_run_started_at ?? null,
       last_run_finished_at: existing?.last_run_finished_at ?? null,
       last_acknowledged_at: existing?.last_acknowledged_at ?? null,
@@ -5791,12 +5687,11 @@ async function handleAcpAutomationRequest(
       status: "active",
       paused_reason: null,
       next_run_at:
-        existing.local_time && existing.timezone
-          ? computeNextAutomationRunAt({
-              local_time: existing.local_time,
-              timezone: existing.timezone,
-            })
-          : (existing.next_run_at ?? null),
+        computeNextAutomationRunAt(existing, {
+          defaultPauseAfterRuns: AUTOMATION_DEFAULT_UNACK_LIMIT,
+        }) ??
+        existing.next_run_at ??
+        null,
       updated_at: Date.now(),
     });
     await patchThreadAutomationProjection({
@@ -5889,17 +5784,26 @@ function normalizeAcpAutomationRecord(
   if (!automation_id || !project_id || !path || !thread_id || !account_id) {
     return undefined;
   }
-  const config = normalizeAcpAutomationConfig({
-    enabled: record.enabled,
-    automation_id,
-    title: record.title,
-    prompt: record.prompt,
-    schedule_type: record.schedule_type,
-    local_time: record.local_time,
-    timezone: record.timezone,
-    pause_after_unacknowledged_runs:
-      record.pause_after_unacknowledged_runs ?? undefined,
-  });
+  const config = normalizeAcpAutomationConfig(
+    {
+      enabled: record.enabled,
+      automation_id,
+      title: record.title,
+      prompt: record.prompt,
+      schedule_type: record.schedule_type,
+      days_of_week: record.days_of_week,
+      local_time: record.local_time,
+      interval_minutes: record.interval_minutes,
+      window_start_local_time: record.window_start_local_time,
+      window_end_local_time: record.window_end_local_time,
+      timezone: record.timezone,
+      pause_after_unacknowledged_runs:
+        record.pause_after_unacknowledged_runs ?? undefined,
+    },
+    {
+      defaultPauseAfterRuns: AUTOMATION_DEFAULT_UNACK_LIMIT,
+    },
+  );
   if (!config) {
     return undefined;
   }
@@ -5926,14 +5830,12 @@ function normalizeAcpAutomationRecord(
         : enabled
           ? "active"
           : "paused";
-  const next_run_at =
-    enabled && config.local_time && config.timezone
-      ? (parseMs(record.next_run_at_ms) ??
-        computeNextAutomationRunAt({
-          local_time: config.local_time,
-          timezone: config.timezone,
-        }))
-      : null;
+  const next_run_at = enabled
+    ? (parseMs(record.next_run_at_ms) ??
+      computeNextAutomationRunAt(config, {
+        defaultPauseAfterRuns: AUTOMATION_DEFAULT_UNACK_LIMIT,
+      }))
+    : null;
   return {
     automation_id,
     project_id,
@@ -5943,8 +5845,12 @@ function normalizeAcpAutomationRecord(
     enabled,
     title: config.title ?? null,
     prompt: config.prompt ?? null,
-    schedule_type: "daily",
+    schedule_type: config.schedule_type ?? "daily",
+    days_of_week: config.days_of_week ?? null,
     local_time: config.local_time ?? null,
+    interval_minutes: config.interval_minutes ?? null,
+    window_start_local_time: config.window_start_local_time ?? null,
+    window_end_local_time: config.window_end_local_time ?? null,
     timezone: config.timezone ?? null,
     pause_after_unacknowledged_runs:
       config.pause_after_unacknowledged_runs ?? AUTOMATION_DEFAULT_UNACK_LIMIT,
@@ -6171,6 +6077,171 @@ async function writeQueuedJobFailureToChat({
   }
 }
 
+async function writeQueuedCommandResultToChat({
+  request,
+  content,
+}: {
+  request: AcpCommandRequest;
+  content: string;
+}): Promise<void> {
+  if (!request.chat || !conatClient) return;
+  const sender_id =
+    `${request.chat.sender_id ?? DEFAULT_AUTOMATION_CHAT_SENDER_ID}`.trim() ||
+    DEFAULT_AUTOMATION_CHAT_SENDER_ID;
+  await withChatSyncDB({
+    client: conatClient,
+    project_id: request.chat.project_id,
+    path: request.chat.path,
+    fn: async (syncdb) => {
+      syncdb.set(
+        buildChatMessage({
+          sender_id,
+          date: request.chat?.message_date ?? new Date().toISOString(),
+          prevHistory: [],
+          content,
+          generating: false,
+          message_id: request.chat?.message_id,
+          thread_id: request.chat?.thread_id,
+          parent_message_id: request.chat?.parent_message_id,
+        }),
+      );
+      syncdb.commit();
+      await syncdb.save();
+    },
+  });
+}
+
+async function runQueuedCommandJob({
+  job,
+  request,
+}: {
+  job: AcpJobRow;
+  request: AcpCommandRequest;
+}): Promise<void> {
+  if (!conatClient) {
+    throw new Error("conat client must be initialized");
+  }
+  const projectId =
+    `${request.chat?.project_id ?? request.project_id ?? ""}`.trim();
+  if (!projectId) {
+    throw new Error("command automation is missing project id");
+  }
+  const command = `${request.command ?? ""}`.trim();
+  if (!command) {
+    throw new Error("command automation is missing command");
+  }
+  const cwd = resolveAutomationCommandCwd({
+    chatPath: `${request.chat?.path ?? job.path ?? ""}`.trim(),
+    commandCwd: request.cwd,
+  });
+  const workspaceRoot = path.isAbsolute(cwd)
+    ? cwd
+    : resolveWorkspaceRoot(undefined);
+  const executor: AcpExecutor = preferContainerExecutor()
+    ? new ContainerExecutor({
+        projectId,
+        workspaceRoot,
+        conatClient,
+      })
+    : new LocalExecutor(workspaceRoot);
+  const timeoutMs = Math.max(
+    1_000,
+    Number(request.timeout_ms ?? AUTOMATION_DEFAULT_COMMAND_TIMEOUT_MS),
+  );
+  const maxOutputBytes = Math.max(
+    1_024,
+    Number(
+      request.max_output_bytes ?? AUTOMATION_DEFAULT_COMMAND_MAX_OUTPUT_BYTES,
+    ),
+  );
+
+  try {
+    const result = await executor.exec(command, {
+      cwd,
+      timeoutMs,
+      maxOutputBytes,
+    });
+    const captured = captureCommandAutomationOutput({
+      stdout: result.stdout ?? "",
+      stderr: result.stderr ?? "",
+      maxOutputBytes,
+      preferStderr: (result.exitCode ?? 0) !== 0 || !!result.signal,
+    });
+    await writeQueuedCommandResultToChat({
+      request,
+      content: formatCommandAutomationMarkdown({
+        command,
+        cwd,
+        timeoutMs,
+        exitCode: result.exitCode,
+        signal: result.signal,
+        stdout: captured.stdout,
+        stderr: captured.stderr,
+        truncated: captured.truncated,
+        maxOutputBytes,
+      }),
+    });
+    const terminalState =
+      (result.exitCode ?? 0) === 0 && !result.signal ? "completed" : "error";
+    await finalizeAutomationRun({
+      automation_id: request.chat?.automation_id,
+      terminalState,
+      last_job_op_id: job.op_id,
+      last_message_id: request.chat?.message_id,
+      error:
+        terminalState === "error"
+          ? `command exited with ${
+              result.signal
+                ? `signal ${result.signal}`
+                : `code ${result.exitCode ?? "unknown"}`
+            }`
+          : undefined,
+    });
+    setAcpJobState({
+      op_id: job.op_id,
+      state: terminalState,
+      error:
+        terminalState === "error"
+          ? `command exited with ${
+              result.signal
+                ? `signal ${result.signal}`
+                : `code ${result.exitCode ?? "unknown"}`
+            }`
+          : undefined,
+      worker_id: job.worker_id ?? currentDetachedWorkerContext?.worker_id,
+    });
+  } catch (err) {
+    const error = `Command automation failed: ${(err as Error)?.message ?? err}`;
+    logger.warn("queued command automation failed", {
+      op_id: job.op_id,
+      err,
+    });
+    await writeQueuedCommandResultToChat({
+      request,
+      content: formatCommandAutomationMarkdown({
+        command,
+        cwd,
+        timeoutMs,
+        stderr: error,
+        maxOutputBytes,
+      }),
+    });
+    await finalizeAutomationRun({
+      automation_id: request.chat?.automation_id,
+      terminalState: "error",
+      last_job_op_id: job.op_id,
+      last_message_id: request.chat?.message_id,
+      error,
+    });
+    setAcpJobState({
+      op_id: job.op_id,
+      state: "error",
+      error,
+      worker_id: job.worker_id ?? currentDetachedWorkerContext?.worker_id,
+    });
+  }
+}
+
 async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
   const request = decodeAcpJobRequest(job);
   const project_id = `${job.project_id}`.trim();
@@ -6212,6 +6283,11 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
       user_message_id,
       err,
     });
+  }
+
+  if (request.request_kind === "command") {
+    await runQueuedCommandJob({ job, request });
+    return;
   }
 
   request.prompt = maybeDecorateQueuedPromptForJob({

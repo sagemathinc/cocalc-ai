@@ -51,6 +51,7 @@ type ContainerExec = (opts: {
   script: string;
   cwd?: string;
   timeoutMs?: number;
+  maxOutputBytes?: number;
 }) => Promise<{
   stdout: string;
   stderr: string;
@@ -125,7 +126,12 @@ export class ContainerExecutor {
   // Run a command inside the project container using podman.
   async exec(
     cmd: string,
-    opts?: { cwd?: string; timeoutMs?: number; env?: Record<string, string> },
+    opts?: {
+      cwd?: string;
+      timeoutMs?: number;
+      env?: Record<string, string>;
+      maxOutputBytes?: number;
+    },
   ): Promise<{
     stdout: string;
     stderr: string;
@@ -155,6 +161,7 @@ export class ContainerExecutor {
       script,
       cwd,
       timeoutMs,
+      maxOutputBytes: opts?.maxOutputBytes,
     });
     logger.debug("podman exec result", {
       code,

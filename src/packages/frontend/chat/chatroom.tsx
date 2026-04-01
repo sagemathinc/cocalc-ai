@@ -67,8 +67,11 @@ import {
 import {
   AutomationConfigFields,
   buildAutomationDraft,
+  describeAutomationSchedule,
   formatAutomationPausedReason,
+  hasAutomationConfigContent,
   normalizeAutomationConfigForSave,
+  shouldShowAutomationNextRun,
 } from "./automation-form";
 import {
   upsertAgentSessionRecord,
@@ -88,7 +91,10 @@ import {
   defaultWorkingDirectoryForChat,
   useWorkspaceChatWorkingDirectory,
 } from "@cocalc/frontend/project/workspaces/chat-defaults";
-import { resolveCodexSessionMode } from "@cocalc/util/ai/codex";
+import {
+  isCodexModelName,
+  resolveCodexSessionMode,
+} from "@cocalc/util/ai/codex";
 import { persistExternalSideChatSelectedThreadKey } from "./external-side-chat-selection";
 import {
   combinedComposerTargetStorageKey,
@@ -138,17 +144,24 @@ export function enabledLoopConfig(
 function visibleAutomationConfig(
   config?: AcpAutomationConfig,
 ): AcpAutomationConfig | undefined {
-  if (!config) return undefined;
-  if (
-    !config.automation_id &&
-    !config.prompt &&
-    !config.title &&
-    !config.local_time &&
-    !config.timezone
-  ) {
+  if (!hasAutomationConfigContent(config)) {
     return undefined;
   }
   return config;
+}
+
+function threadSupportsCodexAutomation(
+  metadata?: {
+    agent_kind?: string | null;
+    agent_model?: string | null;
+    acp_config?: unknown;
+  } | null,
+): boolean {
+  if (!metadata) return false;
+  if (metadata.agent_kind === "acp" || metadata.acp_config != null) {
+    return true;
+  }
+  return isCodexModelName(`${metadata.agent_model ?? ""}`.trim());
 }
 
 export function clearThreadLoopRuntime(
@@ -578,7 +591,7 @@ export function ChatPanel({
     [actions, selectedThreadKey, selectedThreadId, docVersion],
   );
   const isSelectedThreadCodex =
-    selectedThreadMetadata?.agent_kind === "acp" ||
+    threadSupportsCodexAutomation(selectedThreadMetadata) ||
     (isSelectedThreadAI &&
       typeof selectedThreadMetadata?.agent_model === "string" &&
       `${selectedThreadMetadata.agent_model}`.toLowerCase().includes("codex"));
@@ -614,6 +627,10 @@ export function ChatPanel({
   const automationModalConfig = useMemo(
     () => visibleAutomationConfig(automationModalMetadata?.automation_config),
     [automationModalMetadata?.automation_config],
+  );
+  const automationModalAllowsCodex = useMemo(
+    () => threadSupportsCodexAutomation(automationModalMetadata),
+    [automationModalMetadata],
   );
   const selectedThreadLoopState = useMemo(
     () => selectedThreadMetadata?.loop_state as AcpLoopState | undefined,
@@ -768,12 +785,10 @@ export function ChatPanel({
     setSelectedThreadKey(threadKey);
     setNewThreadSetup(defaultNewThreadSetup);
 
-    const newThreadAutomationConfig =
-      newThreadSetup.agentMode === "codex"
-        ? normalizeAutomationConfigForSave({
-            draft: newThreadSetup.automationConfig,
-          })
-        : undefined;
+    const newThreadAutomationConfig = normalizeAutomationConfigForSave({
+      draft: newThreadSetup.automationConfig,
+      allowCodexRunKind: newThreadSetup.agentMode === "codex",
+    });
     if (
       newThreadSetup.automationConfig?.enabled === true &&
       newThreadAutomationConfig
@@ -803,15 +818,17 @@ export function ChatPanel({
       buildAutomationDraft({
         config: automationModalConfig,
         enabled: automationModalConfig?.enabled !== false,
+        allowCodexRunKind: automationModalAllowsCodex,
       }),
     );
-  }, [automationModalConfig, automationModalOpen]);
+  }, [automationModalAllowsCodex, automationModalConfig, automationModalOpen]);
 
   const handleAutomationModalSave = useCallback(async () => {
     if (!automationModalThreadId) return;
     const config = normalizeAutomationConfigForSave({
       draft: automationDraft,
       automationId: automationModalConfig?.automation_id,
+      allowCodexRunKind: automationModalAllowsCodex,
     });
     if (!config) return;
     setAutomationSaving(true);
@@ -826,6 +843,7 @@ export function ChatPanel({
     }
   }, [
     automationDraft,
+    automationModalAllowsCodex,
     automationModalConfig?.automation_id,
     automationModalThreadId,
     handleAutomationSave,
@@ -1385,12 +1403,12 @@ export function ChatPanel({
             return threadId?.trim() || null;
           })()
         : null;
-    const newThreadAutomationConfig =
-      !reply_thread_id && newThreadSetup.agentMode === "codex"
-        ? normalizeAutomationConfigForSave({
-            draft: newThreadSetup.automationConfig,
-          })
-        : undefined;
+    const newThreadAutomationConfig = !reply_thread_id
+      ? normalizeAutomationConfigForSave({
+          draft: newThreadSetup.automationConfig,
+          allowCodexRunKind: newThreadSetup.agentMode === "codex",
+        })
+      : undefined;
     if (
       !reply_thread_id &&
       threadKey &&
@@ -1656,130 +1674,129 @@ export function ChatPanel({
     />
   ) : null;
 
-  const automationBanner =
-    isSelectedThreadCodex && selectedThreadAutomationConfig ? (
-      <Alert
-        type={
-          selectedThreadAutomationState?.status === "error"
-            ? "error"
-            : selectedThreadAutomationState?.status === "paused"
-              ? "warning"
-              : "info"
-        }
-        style={{ margin: "8px 8px 0 8px" }}
-        title={
-          <Space size="small" wrap>
-            <strong>
-              {selectedThreadAutomationConfig.title?.trim() ||
-                "Scheduled automation"}
-            </strong>
-            <Tag
-              color={
-                selectedThreadAutomationConfig.enabled === false
-                  ? "default"
-                  : "blue"
-              }
-            >
-              {selectedThreadAutomationState?.status ??
-                (selectedThreadAutomationConfig.enabled === false
-                  ? "paused"
-                  : "active")}
+  const automationBanner = selectedThreadAutomationConfig ? (
+    <Alert
+      type={
+        selectedThreadAutomationState?.status === "error"
+          ? "error"
+          : selectedThreadAutomationState?.status === "paused"
+            ? "warning"
+            : "info"
+      }
+      style={{ margin: "8px 8px 0 8px" }}
+      title={
+        <Space size="small" wrap>
+          <strong>
+            {selectedThreadAutomationConfig.title?.trim() ||
+              "Scheduled automation"}
+          </strong>
+          <Tag
+            color={
+              selectedThreadAutomationConfig.enabled === false
+                ? "default"
+                : "blue"
+            }
+          >
+            {selectedThreadAutomationState?.status ??
+              (selectedThreadAutomationConfig.enabled === false
+                ? "paused"
+                : "active")}
+          </Tag>
+          {describeAutomationSchedule(selectedThreadAutomationConfig) ? (
+            <span>
+              {describeAutomationSchedule(selectedThreadAutomationConfig)}.
+            </span>
+          ) : null}
+          {selectedThreadAutomationState?.next_run_at_ms != null &&
+          shouldShowAutomationNextRun({
+            enabled: selectedThreadAutomationConfig.enabled,
+            status: selectedThreadAutomationState?.status,
+            next_run_at_ms: selectedThreadAutomationState.next_run_at_ms,
+          }) ? (
+            <span>
+              Next run{" "}
+              <TimeAgo
+                date={new Date(selectedThreadAutomationState.next_run_at_ms)}
+              />
+              .
+            </span>
+          ) : null}
+          {selectedThreadAutomationState?.last_run_finished_at_ms ? (
+            <span>
+              Last run{" "}
+              <TimeAgo
+                date={
+                  new Date(
+                    selectedThreadAutomationState.last_run_finished_at_ms,
+                  )
+                }
+              />
+              .
+            </span>
+          ) : null}
+          {typeof selectedThreadAutomationState?.unacknowledged_runs ===
+            "number" &&
+          selectedThreadAutomationState.unacknowledged_runs > 0 ? (
+            <Tag color="orange">
+              {selectedThreadAutomationState.unacknowledged_runs} unacknowledged
             </Tag>
-            {selectedThreadAutomationConfig.local_time ? (
-              <span>
-                Daily at {selectedThreadAutomationConfig.local_time}
-                {selectedThreadAutomationConfig.timezone
-                  ? ` ${selectedThreadAutomationConfig.timezone}`
-                  : ""}
-              </span>
-            ) : null}
-            {selectedThreadAutomationState?.next_run_at_ms ? (
-              <span>
-                Next run{" "}
-                <TimeAgo
-                  date={new Date(selectedThreadAutomationState.next_run_at_ms)}
-                />
-              </span>
-            ) : null}
-            {selectedThreadAutomationState?.last_run_finished_at_ms ? (
-              <span>
-                Last run{" "}
-                <TimeAgo
-                  date={
-                    new Date(
-                      selectedThreadAutomationState.last_run_finished_at_ms,
-                    )
-                  }
-                />
-              </span>
-            ) : null}
-            {typeof selectedThreadAutomationState?.unacknowledged_runs ===
-              "number" &&
-            selectedThreadAutomationState.unacknowledged_runs > 0 ? (
-              <Tag color="orange">
-                {selectedThreadAutomationState.unacknowledged_runs}{" "}
-                unacknowledged
-              </Tag>
-            ) : null}
-          </Space>
-        }
-        description={
-          <Space size="small" wrap>
-            {selectedThreadAutomationState?.paused_reason ? (
-              <span>
-                {formatAutomationPausedReason(
-                  selectedThreadAutomationState.paused_reason,
-                )}
-              </span>
-            ) : null}
-            {selectedThreadAutomationState?.last_error ? (
-              <span>{selectedThreadAutomationState.last_error}</span>
-            ) : null}
-            <Button size="small" onClick={() => void handleAutomationRunNow()}>
-              Run now
+          ) : null}
+        </Space>
+      }
+      description={
+        <Space size="small" wrap>
+          {selectedThreadAutomationState?.paused_reason ? (
+            <span>
+              {formatAutomationPausedReason(
+                selectedThreadAutomationState.paused_reason,
+              )}
+            </span>
+          ) : null}
+          {selectedThreadAutomationState?.last_error ? (
+            <span>{selectedThreadAutomationState.last_error}</span>
+          ) : null}
+          <Button size="small" onClick={() => void handleAutomationRunNow()}>
+            Run now
+          </Button>
+          {selectedThreadAutomationState?.status === "paused" ||
+          selectedThreadAutomationConfig.enabled === false ? (
+            <Button size="small" onClick={() => void handleAutomationResume()}>
+              Resume
             </Button>
-            {selectedThreadAutomationState?.status === "paused" ||
-            selectedThreadAutomationConfig.enabled === false ? (
-              <Button
-                size="small"
-                onClick={() => void handleAutomationResume()}
-              >
-                Resume
-              </Button>
-            ) : (
-              <Button size="small" onClick={() => void handleAutomationPause()}>
-                Pause
-              </Button>
-            )}
+          ) : (
+            <Button size="small" onClick={() => void handleAutomationPause()}>
+              Pause
+            </Button>
+          )}
+          <Button
+            size="small"
+            onClick={() => void handleAutomationAcknowledge()}
+          >
+            Acknowledge
+          </Button>
+          {selectedThreadKey ? (
             <Button
               size="small"
-              onClick={() => void handleAutomationAcknowledge()}
+              onClick={() => openAutomationModalForThread(selectedThreadKey)}
             >
-              Acknowledge
+              Edit
             </Button>
-            {selectedThreadKey ? (
-              <Button
-                size="small"
-                onClick={() => openAutomationModalForThread(selectedThreadKey)}
-              >
-                Edit
-              </Button>
-            ) : null}
-            <Popconfirm
-              title="Delete scheduled automation?"
-              description="This removes the schedule from this chat thread."
-              okText="Delete"
-              cancelText="Cancel"
-              onConfirm={() => void handleAutomationDelete()}
-            >
-              <Button danger size="small">
-                Delete schedule
-              </Button>
-            </Popconfirm>
-          </Space>
-        }
-      />
-    ) : null;
+          ) : null}
+          <Popconfirm
+            title="Delete scheduled automation?"
+            description="This removes the schedule from this chat thread."
+            okText="Delete"
+            cancelText="Cancel"
+            onConfirm={() => void handleAutomationDelete()}
+          >
+            <Button danger size="small">
+              Delete schedule
+            </Button>
+          </Popconfirm>
+        </Space>
+      }
+    />
+  ) : null;
 
   const renderChatContent = () => (
     <div className="smc-vfill" style={GRID_STYLE}>
@@ -1848,7 +1865,7 @@ export function ChatPanel({
         onLoopConfigChange={handleLoopConfigChange}
       />
       <Modal
-        title="Codex Automation"
+        title="Thread automation"
         open={automationModalOpen}
         destroyOnHidden
         onCancel={() => setAutomationModalOpen(false)}
@@ -1860,6 +1877,7 @@ export function ChatPanel({
       >
         <AutomationConfigFields
           draft={automationDraft}
+          allowCodexRunKind={automationModalAllowsCodex}
           onChange={(patch) =>
             setAutomationDraft((prev) => ({ ...prev, ...patch }))
           }

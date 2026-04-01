@@ -78,6 +78,83 @@ describe("ACP automation sqlite lifecycle", () => {
     });
   });
 
+  it("round-trips interval scheduling details", () => {
+    const row = upsertAcpAutomation({
+      automation_id: "automation-interval-1",
+      project_id: "project-1",
+      path: "/root/interval.chat",
+      thread_id: "thread-interval-1",
+      account_id: "account-1",
+      enabled: true,
+      title: "Frequent status",
+      prompt: "Check activity.",
+      schedule_type: "interval",
+      days_of_week: [1, 2, 3, 4, 5],
+      local_time: null,
+      interval_minutes: 120,
+      window_start_local_time: "06:00",
+      window_end_local_time: "20:00",
+      timezone: "America/Los_Angeles",
+      pause_after_unacknowledged_runs: 7,
+      status: "active",
+      next_run_at: 501,
+      unacknowledged_runs: 0,
+      created_at: 10,
+      updated_at: 20,
+    });
+
+    expect(toAutomationRecord(row)).toEqual(
+      expect.objectContaining({
+        automation_id: "automation-interval-1",
+        schedule_type: "interval",
+        days_of_week: [1, 2, 3, 4, 5],
+        interval_minutes: 120,
+        window_start_local_time: "06:00",
+        window_end_local_time: "20:00",
+        local_time: undefined,
+      }),
+    );
+  });
+
+  it("round-trips command automation details", () => {
+    const row = upsertAcpAutomation({
+      automation_id: "automation-command-1",
+      project_id: "project-1",
+      path: "/root/command.chat",
+      thread_id: "thread-command-1",
+      account_id: "account-1",
+      enabled: true,
+      title: "Repo status",
+      run_kind: "command",
+      prompt: null,
+      command: "git status --short",
+      command_cwd: "/work/repo",
+      command_timeout_ms: 90_000,
+      command_max_output_bytes: 250_000,
+      schedule_type: "daily",
+      local_time: "07:00",
+      timezone: "America/Los_Angeles",
+      pause_after_unacknowledged_runs: 7,
+      status: "active",
+      next_run_at: 601,
+      unacknowledged_runs: 0,
+      created_at: 10,
+      updated_at: 20,
+    });
+
+    expect(toAutomationRecord(row)).toEqual(
+      expect.objectContaining({
+        automation_id: "automation-command-1",
+        run_kind: "command",
+        prompt: undefined,
+        command: "git status --short",
+        command_cwd: "/work/repo",
+        command_timeout_ms: 90_000,
+        command_max_output_bytes: 250_000,
+      }),
+    );
+  });
+
   it("cleans all automation rows for a removed project", () => {
     upsertAcpAutomation({
       automation_id: "automation-1",

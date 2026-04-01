@@ -61,8 +61,8 @@ describe("LocalExecutor", () => {
   });
 
   it("surfaces failing commands with stderr", async () => {
-    await expect(
-      exec.exec("ls does-not-exist && echo should-not-run"),
-    ).rejects.toThrow(/does-not-exist/);
+    const result = await exec.exec("ls does-not-exist && echo should-not-run");
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stderr).toMatch(/does-not-exist/);
   });
 });

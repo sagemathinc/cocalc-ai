@@ -8,7 +8,9 @@ import {
 import {
   claimNextQueuedAcpJobForThread,
   countRunningAcpJobsForWorker,
+  decodeAcpJobRequest,
   enqueueAcpJob,
+  getAcpJob,
   listQueuedAcpJobs,
   listQueuedAcpJobsForThread,
   reprioritizeAcpJobImmediate,
@@ -184,5 +186,51 @@ describe("acp job queue ordering", () => {
     });
     expect(afterFinish?.op_id).toBe(second.op_id);
     expect(afterFinish?.worker_id).toBe("worker-b");
+  });
+
+  it("round-trips command automation jobs without a codex session id", () => {
+    const job = enqueueAcpJob({
+      request_kind: "command",
+      project_id: "00000000-1000-4000-8000-000000000000",
+      account_id: "00000000-1000-4000-8000-000000000001",
+      command: "git status --short",
+      cwd: "/work/repo",
+      timeout_ms: 90_000,
+      max_output_bytes: 250_000,
+      chat: {
+        project_id: "00000000-1000-4000-8000-000000000000",
+        path: "/tmp/acp-jobs-order.chat",
+        thread_id: "thread-1",
+        parent_message_id: "user-command-1",
+        message_id: "assistant-command-1",
+        message_date: "2026-03-08T00:00:03.000Z",
+        sender_id: "openai-codex-agent",
+      },
+    });
+    expect(job.session_id).toBeNull();
+    const stored = getAcpJob({
+      project_id: job.project_id,
+      path: job.path,
+      user_message_id: job.user_message_id,
+    });
+    expect(stored?.session_id).toBeNull();
+    expect(stored ? decodeAcpJobRequest(stored) : undefined).toEqual({
+      request_kind: "command",
+      project_id: "00000000-1000-4000-8000-000000000000",
+      account_id: "00000000-1000-4000-8000-000000000001",
+      command: "git status --short",
+      cwd: "/work/repo",
+      timeout_ms: 90_000,
+      max_output_bytes: 250_000,
+      chat: {
+        project_id: "00000000-1000-4000-8000-000000000000",
+        path: "/tmp/acp-jobs-order.chat",
+        thread_id: "thread-1",
+        parent_message_id: "user-command-1",
+        message_id: "assistant-command-1",
+        message_date: "2026-03-08T00:00:03.000Z",
+        sender_id: "openai-codex-agent",
+      },
+    });
   });
 });

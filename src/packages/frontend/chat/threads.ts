@@ -7,6 +7,7 @@ import type { Map as ImmutableMap } from "immutable";
 
 import type { ChatMessageTyped, ChatMessages } from "./types";
 import type { ThreadIndexEntry } from "./message-cache";
+import { hasAutomationConfigContent } from "./automation-form";
 import { getMessageByLookup, newest_content } from "./utils";
 import { field } from "./access";
 import type { ChatActions } from "./actions";
@@ -287,14 +288,7 @@ export function useThreadSections({
         threadColor || threadAccentColor || threadIcon || threadImage,
       );
       const automationConfig = threadMeta?.automation_config;
-      const isAutomation = !!(
-        automationConfig &&
-        (automationConfig.automation_id ||
-          automationConfig.prompt ||
-          automationConfig.title ||
-          automationConfig.local_time ||
-          automationConfig.timezone)
-      );
+      const isAutomation = hasAutomationConfigContent(automationConfig);
       const displayLabel = storedName || thread.label;
       const isPinned = threadMeta?.pin ?? false;
       const isArchived = threadMeta?.archived ?? false;
