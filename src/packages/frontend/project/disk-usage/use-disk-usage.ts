@@ -23,7 +23,9 @@ export type StorageQuotaSummary = {
 export type StorageVisibleSummary = {
   key: "home" | "scratch" | "environment";
   label: string;
+  summaryLabel: string;
   path: string;
+  summaryBytes: number;
   usage: DiskUsageTree;
 };
 
@@ -128,7 +130,12 @@ export default function useDiskUsage({ project_id }: { project_id: string }) {
         {
           key: "home",
           label: homePath,
+          summaryLabel: "Home",
           path: homePath,
+          summaryBytes: Math.max(
+            0,
+            homeUsage.bytes - Math.max(0, environmentUsage?.bytes ?? 0),
+          ),
           usage: homeUsage,
         },
       ];
@@ -136,7 +143,9 @@ export default function useDiskUsage({ project_id }: { project_id: string }) {
         nextVisible.push({
           key: "scratch",
           label: "/scratch",
+          summaryLabel: "Scratch",
           path: "/scratch",
+          summaryBytes: scratchUsage.bytes,
           usage: scratchUsage,
         });
       }
@@ -144,7 +153,9 @@ export default function useDiskUsage({ project_id }: { project_id: string }) {
         nextVisible.push({
           key: "environment",
           label: "Environment changes",
+          summaryLabel: "Environment",
           path: environmentPath,
+          summaryBytes: environmentUsage.bytes,
           usage: environmentUsage,
         });
       }

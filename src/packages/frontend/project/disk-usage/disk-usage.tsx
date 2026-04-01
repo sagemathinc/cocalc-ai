@@ -26,8 +26,7 @@ function bucketPercent(bytes: number, total: number): number {
 }
 
 function relativeLabel(bucket: StorageVisibleSummary): string {
-  if (bucket.key === "home") return "/root";
-  return bucket.label;
+  return bucket.summaryLabel;
 }
 
 export default function DiskUsage({
@@ -57,8 +56,11 @@ export default function DiskUsage({
       ? 0
       : Math.round((100 * quota.used) / quota.size);
   const quotaStatus = percent > 80 ? "exception" : undefined;
+  const summaryVisible = visible.filter(
+    (bucket) => bucket.key !== "environment",
+  );
   const visibleTotal = Math.max(
-    visible.reduce((sum, bucket) => sum + bucket.usage.bytes, 0),
+    visible.reduce((sum, bucket) => sum + bucket.summaryBytes, 0),
     1,
   );
 
@@ -82,7 +84,7 @@ export default function DiskUsage({
       {compact ? (
         <div style={{ minWidth: 0, flex: 1, overflow: "hidden" }}>
           <Space size={8} wrap>
-            <Text strong>Project quota</Text>
+            <Text strong>Disk</Text>
             {quota != null ? (
               <>
                 <Progress
@@ -115,13 +117,9 @@ export default function DiskUsage({
               }}
             >
               {[
-                ...visible.map(
+                ...summaryVisible.map(
                   (bucket) =>
-                    `${relativeLabel(bucket)} ${human_readable_size(bucket.usage.bytes)}`,
-                ),
-                ...counted.map(
-                  (bucket) =>
-                    `${bucket.compactLabel ?? bucket.label} ${human_readable_size(bucket.bytes)}`,
+                    `${relativeLabel(bucket)} ${human_readable_size(bucket.summaryBytes)}`,
                 ),
               ].join(" • ")}
             </div>
@@ -129,7 +127,7 @@ export default function DiskUsage({
         </div>
       ) : (
         <Space size={10} wrap>
-          <Text strong>Project quota</Text>
+          <Text strong>Disk</Text>
           {quota != null ? (
             <>
               <Progress
@@ -146,14 +144,9 @@ export default function DiskUsage({
           ) : (
             <Spin delay={1000} />
           )}
-          {visible.map((bucket) => (
+          {summaryVisible.map((bucket) => (
             <Tag key={bucket.key}>
-              {relativeLabel(bucket)} {human_readable_size(bucket.usage.bytes)}
-            </Tag>
-          ))}
-          {counted.map((bucket) => (
-            <Tag key={bucket.key}>
-              {bucket.label} {human_readable_size(bucket.bytes)}
+              {relativeLabel(bucket)} {human_readable_size(bucket.summaryBytes)}
             </Tag>
           ))}
           {loading && <Spin delay={1000} />}
@@ -251,6 +244,12 @@ export default function DiskUsage({
               <div style={{ marginBottom: "10px" }}>
                 <b>Visible storage</b>
               </div>
+              {visible.some((bucket) => bucket.key === "environment") && (
+                <div style={{ color: COLORS.GRAY_M, marginBottom: "10px" }}>
+                  Home excludes writable rootfs overlay data, which is shown
+                  separately as Environment.
+                </div>
+              )}
               {visible.map((bucket) => (
                 <div
                   key={bucket.key}
@@ -266,11 +265,11 @@ export default function DiskUsage({
                   </div>
                   <Progress
                     style={{ flex: 1, marginBottom: 0 }}
-                    percent={bucketPercent(bucket.usage.bytes, visibleTotal)}
+                    percent={bucketPercent(bucket.summaryBytes, visibleTotal)}
                     showInfo={false}
                   />
                   <div style={{ minWidth: "120px", textAlign: "right" }}>
-                    {human_readable_size(bucket.usage.bytes)}
+                    {human_readable_size(bucket.summaryBytes)}
                   </div>
                 </div>
               ))}

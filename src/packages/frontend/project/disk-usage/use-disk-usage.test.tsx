@@ -38,6 +38,8 @@ function TestComponent({ project_id }: { project_id: string }) {
   return (
     <div>
       <span data-testid="usage">{visible[0]?.usage.bytes ?? ""}</span>
+      <span data-testid="summary-usage">{visible[0]?.summaryBytes ?? ""}</span>
+      <span data-testid="summary-label">{visible[0]?.summaryLabel ?? ""}</span>
       <span data-testid="quota">{quotas[0]?.used ?? ""}</span>
       <span data-testid="counted">{counted[0]?.bytes ?? ""}</span>
       <span data-testid="error">{error ? `${error}` : ""}</span>
@@ -140,6 +142,8 @@ describe("useDiskUsage", () => {
         project_id: "project-1",
       });
       expect(screen.getByTestId("usage").textContent).toBe("111");
+      expect(screen.getByTestId("summary-usage").textContent).toBe("78");
+      expect(screen.getByTestId("summary-label").textContent).toBe("Home");
       expect(screen.getByTestId("quota").textContent).toBe("17");
     });
   });
