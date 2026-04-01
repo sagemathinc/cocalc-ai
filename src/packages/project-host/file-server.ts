@@ -111,6 +111,11 @@ import {
   getCachedBackupExecutionLimit,
 } from "./backup-execution-limit";
 import { isMissingRusticRepositoryError } from "./backup-index-errors";
+import {
+  ProjectRusticUnsupportedError,
+  projectRusticBackup,
+  projectRusticRestore,
+} from "./project-rustic";
 import { btrfs, sudo } from "@cocalc/file-server/btrfs/util";
 import { subvolume } from "@cocalc/file-server/btrfs/subvolume";
 import { ensureRootfsRusticRepoProfile } from "./rootfs-rustic";
@@ -123,6 +128,7 @@ const SNAPSHOT_RESTORE_STAGING_ROOT = ".snapshot-restore-staging";
 const MAX_TEXT_PREVIEW_BYTES = 10 * 1024 * 1024;
 const ROOTFS_PUBLISH_TIMEOUT_S = 60 * 60;
 const STORAGE_WRAPPER = "/usr/local/sbin/cocalc-runtime-storage";
+const PROJECT_RUSTIC_TIMEOUT_MS = 30 * 60 * 1000;
 const PROJECT_ROOTS_CACHE = join(data, "cache", "project-roots");
 const SSH_WAKE_TIMEOUT_MS = Math.max(
   5_000,
@@ -953,6 +959,62 @@ function isSubPath(parent: string, child: string): boolean {
   return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
 }
 
+function normalizeProjectRelativePath(rawPath: string): string {
+  const normalized = path.posix.normalize(rawPath.replace(/\\/g, "/"));
+  if (normalized === "." || normalized === "/" || normalized === "/root") {
+    return "";
+  }
+  if (normalized.startsWith("/root/")) {
+    return path.posix.relative("/root", normalized);
+  }
+  return normalized.replace(/^\/+/, "");
+}
+
+function isProjectRootfsRelativePath(rawPath: string): boolean {
+  const relativePath = normalizeProjectRelativePath(rawPath);
+  return (
+    relativePath === PROJECT_IMAGE_PATH ||
+    relativePath.startsWith(`${PROJECT_IMAGE_PATH}/`)
+  );
+}
+
+function needsPrivilegedProjectRestore({
+  root,
+  scratch,
+  restorePath,
+  relDest,
+}: {
+  root: string;
+  scratch: string;
+  restorePath: string;
+  relDest: string;
+}): boolean {
+  if (!restorePath) {
+    return root !== scratch;
+  }
+  if (isProjectRootfsRelativePath(restorePath)) {
+    return true;
+  }
+  if (root === scratch) {
+    return false;
+  }
+  return relDest.length > 0 && isProjectRootfsRelativePath(relDest);
+}
+
+async function assertBackupSnapshotExists({
+  project_id,
+  id,
+}: {
+  project_id: string;
+  id: string;
+}): Promise<void> {
+  const vol = await getVolumeForBackup(project_id);
+  const snapshots = await vol.rustic.snapshots();
+  if (!snapshots.some((snapshot) => snapshot.id === id)) {
+    throw new Error(`backup ${id} not found for project ${project_id}`);
+  }
+}
+
 const backupConfigCache = new Map<
   string,
   { toml: string; expiresAt: number; path: string }
@@ -1274,6 +1336,9 @@ async function getQuota({
 }): Promise<{
   size: number;
   used: number;
+  qgroupid?: string;
+  scope?: "tracking" | "subvolume";
+  warning?: string;
 }> {
   logger.debug("getQuota", { project_id, scratch });
   const volName = volumeName(project_id, scratch);
@@ -2463,12 +2528,40 @@ async function createBackup({
         run: async () => {
           const vol = await getVolume(project_id);
           vol.fs.rusticRepo = await resolveRusticRepo(project_id);
-          return await vol.rustic.backup({
-            limit,
-            tags,
-            progress,
-            index: { project_id },
-          });
+          try {
+            return await vol.rustic.backup({
+              limit,
+              tags,
+              progress,
+              index: { project_id },
+              runner: async ({ src, host, timeout, tags, progress }) =>
+                await projectRusticBackup({
+                  src,
+                  repoProfile: vol.fs.rusticRepo,
+                  host,
+                  timeoutMs: timeout,
+                  tags,
+                  progress,
+                }),
+            });
+          } catch (err) {
+            if (!(err instanceof ProjectRusticUnsupportedError)) {
+              throw err;
+            }
+            logger.warn(
+              "project rustic wrapper unavailable; falling back to unprivileged backup path",
+              {
+                project_id,
+                err: `${err}`,
+              },
+            );
+            return await vol.rustic.backup({
+              limit,
+              tags,
+              progress,
+              index: { project_id },
+            });
+          }
         },
       }),
   });
@@ -2577,16 +2670,51 @@ async function restoreBackup({
         });
 
   const progress = createLroRusticReporter(lro, "restore");
-  await restoreFs.rustic(
-    ["restore", `${id}${restorePath ? ":" + restorePath : ""}`, relDest],
-    {
-      timeout: 30 * 60 * 1000,
-      env: lro ? { RUSTIC_PROGRESS_INTERVAL: "1s" } : undefined,
-      onStderrLine: progress
-        ? createRusticProgressHandler({ onProgress: progress })
-        : undefined,
-    },
-  );
+  const absoluteDest = relDest ? path.join(root, relDest) : root;
+  const requiresPrivilegedRestore = needsPrivilegedProjectRestore({
+    root,
+    scratch,
+    restorePath,
+    relDest,
+  });
+  if (requiresPrivilegedRestore) {
+    await assertBackupSnapshotExists({ project_id, id });
+    try {
+      await vol.rustic.restore({
+        id,
+        path: restorePath,
+        dest: absoluteDest,
+        timeout: PROJECT_RUSTIC_TIMEOUT_MS,
+        progress,
+        runner: async ({ snapshot, dest, timeout, progress }) =>
+          await projectRusticRestore({
+            repoProfile: vol.fs.rusticRepo,
+            snapshot,
+            dest,
+            timeoutMs: timeout,
+            progress,
+          }),
+      });
+    } catch (err) {
+      if (err instanceof ProjectRusticUnsupportedError) {
+        throw new Error(
+          "host runtime storage wrapper is too old for xattr-preserving restore; reconcile or upgrade the host first",
+        );
+      }
+      throw err;
+    }
+  } else {
+    await restoreFs.rustic(
+      ["restore", `${id}${restorePath ? ":" + restorePath : ""}`, relDest],
+      {
+        timeout: PROJECT_RUSTIC_TIMEOUT_MS,
+        env: lro ? { RUSTIC_PROGRESS_INTERVAL: "1s" } : undefined,
+        onStderrLine: progress
+          ? createRusticProgressHandler({ onProgress: progress })
+          : undefined,
+      },
+    );
+  }
   void touchProjectLastEdited(project_id, "restore-backup");
 }
 

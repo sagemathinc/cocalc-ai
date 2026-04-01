@@ -467,7 +467,13 @@ export async function getDiskQuota({
 }: {
   account_id: string;
   project_id: string;
-}): Promise<{ used: number; size: number }> {
+}): Promise<{
+  used: number;
+  size: number;
+  qgroupid?: string;
+  scope?: "tracking" | "subvolume";
+  warning?: string;
+}> {
   await assertCollab({ account_id, project_id });
   const client = await getProjectFileServerClient({ project_id });
   return await client.getQuota({ project_id });

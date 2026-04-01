@@ -948,7 +948,12 @@ export function FilesFlyout({
         onTerminalCommand={allowNextListingUpdate}
       />
       {!lite && (
-        <DiskUsage compact project_id={project_id} style={{ margin: "5px" }} />
+        <DiskUsage
+          compact
+          current_path={effective_current_path}
+          project_id={project_id}
+          style={{ margin: "5px" }}
+        />
       )}
       {disableUploads ? (
         renderListing()

@@ -2,7 +2,7 @@
 
 Last refreshed: March 31, 2026
 
-Status: planning document; current implementation is a placeholder proof of concept
+Status: active plan; phases 1-2 are implemented, and phase 3 is in progress
 
 This document is the working plan for replacing the current launchpad project
 disk-usage widget with a more accurate, useful, and performant storage UX.
@@ -725,7 +725,7 @@ My bias is:
 - not in the primary summary
 - optionally in the drilldown if it matters operationally
 
-User: I can't remember how we implement /tmp in our projects.  Is it a ramdisk?  Is it just part of scratch or something else?  We should decide based on what it is.  I checked - it's a tmpfs (so a ram disk). 
+User: I can't remember how we implement /tmp in our projects. Is it a ramdisk? Is it just part of scratch or something else? We should decide based on what it is. I checked - it's a tmpfs (so a ram disk).
 
 ## Immediate Next Slice
 
@@ -737,4 +737,3 @@ If we implement this plan incrementally, the first slice should be:
 4. stop using `/` as the default visible-usage root
 
 That delivers the biggest product improvement with the least architectural risk.
-

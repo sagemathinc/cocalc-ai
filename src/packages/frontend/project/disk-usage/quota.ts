@@ -1,7 +1,15 @@
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import TTLCache from "@isaacs/ttlcache";
 
-const quotaCache = new TTLCache<string, { size: number; used: number }>({
+export type DiskQuota = {
+  used: number;
+  size: number;
+  qgroupid?: string;
+  scope?: "tracking" | "subvolume";
+  warning?: string;
+};
+
+const quotaCache = new TTLCache<string, DiskQuota>({
   ttl: 1000 * 60,
 });
 
@@ -15,13 +23,7 @@ export default async function quota({
 }: {
   project_id: string;
   cache?: boolean;
-}): Promise<{
-  // bytes used of HARD quota (= 100% instantly strict, but after compression)
-  used: number;
-  // bytes of HARD quota
-  size: number;
-  cache?: boolean;
-}> {
+}): Promise<DiskQuota> {
   const k = key({ project_id });
   if (cache && quotaCache.has(k)) {
     return quotaCache.get(k)!;

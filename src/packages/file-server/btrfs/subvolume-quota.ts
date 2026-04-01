@@ -14,6 +14,14 @@ type QgroupShowRow = {
   path?: string;
 };
 
+export type SubvolumeQuotaInfo = {
+  size: number;
+  used: number;
+  qgroupid?: string;
+  scope?: "tracking" | "subvolume";
+  warning?: string;
+};
+
 function parseRawQgroupValue(value: string): number | "none" {
   const normalized = value.trim().toLowerCase();
   if (!normalized || normalized === "none") {
@@ -36,6 +44,22 @@ export function parsePlainQgroupShow(stdout: string): QgroupShowRow[] {
       trimmed.startsWith("Qgroupid") ||
       trimmed.startsWith("--------")
     ) {
+      continue;
+    }
+    const parentChildMatch = trimmed.match(
+      /^(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)(?:\s+(.*))?$/,
+    );
+    if (parentChildMatch) {
+      const [, qgroupid, referenced, exclusive, maxReferenced, , , path] =
+        parentChildMatch;
+      rows.push({
+        qgroupid,
+        referenced: Number.parseInt(referenced, 10),
+        exclusive: Number.parseInt(exclusive, 10),
+        max_referenced: parseRawQgroupValue(maxReferenced),
+        max_exclusive: "none",
+        path: path?.trim() || undefined,
+      });
       continue;
     }
     const match = trimmed.match(
@@ -63,53 +87,72 @@ export function parsePlainQgroupShow(stdout: string): QgroupShowRow[] {
   return rows;
 }
 
+function quotaWarning(stderr?: string): string | undefined {
+  const text = `${stderr ?? ""}`.trim();
+  if (!text) return;
+  if (text.toLowerCase().includes("qgroup data inconsistent")) {
+    return "Btrfs quota accounting is currently inconsistent on this host, so counted quota usage may be inaccurate until it is repaired.";
+  }
+  return text;
+}
+
+function selectQgroup(
+  groups: QgroupShowRow[],
+  id: number,
+): {
+  match?: QgroupShowRow;
+  scope?: "tracking" | "subvolume";
+} {
+  const tracking = groups.find((g) => g.qgroupid === `1/${id}`);
+  if (tracking) {
+    return { match: tracking, scope: "tracking" };
+  }
+  const leaf = groups.find((g) => g.qgroupid === `0/${id}`);
+  if (leaf) {
+    return { match: leaf, scope: "subvolume" };
+  }
+  if (groups[0] != null) {
+    return { match: groups[0], scope: "subvolume" };
+  }
+  return {};
+}
+
 export class SubvolumeQuota {
   constructor(public subvolume: Subvolume) {}
 
   private qgroup = async () => {
     const id = await this.subvolume.getSubvolumeId();
     let groups: QgroupShowRow[];
-    try {
-      const { stdout } = await btrfs({
-        verbose: false,
-        args: ["--format=json", "qgroup", "show", "-reF", this.subvolume.path],
-      });
-      const x = JSON.parse(stdout);
-      groups = x["qgroup-show"] ?? [];
-    } catch (err: any) {
-      const stderr =
-        typeof err?.stderr === "string" ? err.stderr : `${err?.message ?? err}`;
-      if (!stderr.includes("unrecognized option '--format=json'")) {
-        throw err;
-      }
-      const { stdout } = await btrfs({
-        verbose: false,
-        args: ["qgroup", "show", "-reF", "--raw", this.subvolume.path],
-      });
-      groups = parsePlainQgroupShow(stdout);
-    }
-    // Prefer the subvolume's own qgroups (0/id or 1/id); fall back to first entry.
-    const match =
-      groups.find((g) => g.qgroupid === `0/${id}`) ??
-      groups.find((g) => g.qgroupid === `1/${id}`) ??
-      groups[0];
+    const path = this.subvolume.filesystem.opts.mount;
+    const result = await btrfs({
+      verbose: false,
+      args: ["qgroup", "show", "-prc", "--raw", path],
+    });
+    groups = parsePlainQgroupShow(result.stdout);
+    const warning = quotaWarning(result.stderr);
+    const { match, scope } = selectQgroup(groups, id);
     if (!match) {
       throw Error(`no qgroup info for ${this.subvolume.path}`);
     }
-    return match;
+    return { match, scope, warning };
   };
 
-  get = async (): Promise<{
-    size: number;
-    used: number;
-  }> => {
-    let { max_referenced: size, referenced: used } = await this.qgroup();
+  get = async (): Promise<SubvolumeQuotaInfo> => {
+    const {
+      match: { max_referenced: rawSize, referenced: used, qgroupid },
+      scope,
+      warning,
+    } = await this.qgroup();
+    let size = rawSize;
     if (size == "none") {
       size = 0;
     }
     return {
       used,
       size,
+      qgroupid,
+      scope,
+      warning,
     };
   };
 

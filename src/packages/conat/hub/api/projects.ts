@@ -543,10 +543,13 @@ export interface Projects {
     always_running?: number;
   }) => Promise<void>;
 
-  getDiskQuota: (opts: {
-    account_id?: string;
-    project_id: string;
-  }) => Promise<{ used: number; size: number }>;
+  getDiskQuota: (opts: { account_id?: string; project_id: string }) => Promise<{
+    used: number;
+    size: number;
+    qgroupid?: string;
+    scope?: "tracking" | "subvolume";
+    warning?: string;
+  }>;
 
   exec: (opts: {
     account_id?: string;

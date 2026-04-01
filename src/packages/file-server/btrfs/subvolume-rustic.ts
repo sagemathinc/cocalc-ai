@@ -56,6 +56,25 @@ interface Snapshot {
   index_path?: string;
 }
 
+export type RusticBackupRunner = (opts: {
+  src: string;
+  host: string;
+  timeout: number;
+  tags?: string[];
+  progress?: (update: RusticProgressUpdate) => void;
+}) => Promise<{
+  time: string | Date;
+  id: string;
+  summary: { [key: string]: string | number };
+}>;
+
+export type RusticRestoreRunner = (opts: {
+  snapshot: string;
+  dest: string;
+  timeout: number;
+  progress?: (update: RusticProgressUpdate) => void;
+}) => Promise<void>;
+
 export class SubvolumeRustic {
   constructor(public readonly subvolume: Subvolume) {}
 
@@ -78,12 +97,14 @@ export class SubvolumeRustic {
     tags,
     progress,
     index,
+    runner,
   }: {
     timeout?: number;
     limit?: number;
     tags?: string[];
     progress?: (update: RusticProgressUpdate) => void;
     index?: { project_id: string; enabled?: boolean };
+    runner?: RusticBackupRunner;
   } = {}): Promise<Snapshot> => {
     if (limit != null && (await this.snapshots()).length >= limit) {
       // 507 = "insufficient storage" for http
@@ -106,21 +127,33 @@ export class SubvolumeRustic {
       // Backup the snapshot path directly (no bind mounts). The project tree
       // already includes persistent metadata under ~/.local/share/cocalc/persist.
       logger.debug(`backup: backing up ${tempSnapshot} using rustic`);
-      const { stdout } = parseOutput(
-        await this.subvolume.fs.rustic(
-          ["backup", "-x", "--json", ...tagArgs, "."],
-          {
+      const backupResult = runner
+        ? await runner({
+            src: snapshotPath,
+            host: this.subvolume.name,
             timeout,
-            cwd: target,
-            env: progress ? { RUSTIC_PROGRESS_INTERVAL: "1s" } : undefined,
-            onStderrLine: progress
-              ? createRusticProgressHandler({ onProgress: progress })
-              : undefined,
-          },
-        ),
-      );
-      const { time, id, summary } = JSON.parse(stdout);
-      const backupTime = new Date(time);
+            tags,
+            progress,
+          })
+        : JSON.parse(
+            parseOutput(
+              await this.subvolume.fs.rustic(
+                ["backup", "-x", "--json", ...tagArgs, "."],
+                {
+                  timeout,
+                  cwd: target,
+                  env: progress
+                    ? { RUSTIC_PROGRESS_INTERVAL: "1s" }
+                    : undefined,
+                  onStderrLine: progress
+                    ? createRusticProgressHandler({ onProgress: progress })
+                    : undefined,
+                },
+              ),
+            ).stdout,
+          );
+      const { time, id, summary } = backupResult;
+      const backupTime = time instanceof Date ? time : new Date(time);
       let indexSnapshotId: string | undefined;
       let indexPath: string | undefined;
       if (index?.project_id && index.enabled !== false) {
@@ -170,26 +203,30 @@ export class SubvolumeRustic {
     dest,
     timeout = 30 * 60 * 1000,
     progress,
+    runner,
   }: {
     id: string;
     path?: string;
     dest?: string;
     timeout?: number;
     progress?: (update: RusticProgressUpdate) => void;
+    runner?: RusticRestoreRunner;
   }) => {
     logger.debug("restore", { id, path, dest });
     dest ??= path;
+    const snapshot = `${id}${path ? ":" + path : ""}`;
+    if (runner) {
+      await runner({ snapshot, dest, timeout, progress });
+      return "";
+    }
     const { stdout } = parseOutput(
-      await this.subvolume.fs.rustic(
-        ["restore", `${id}${path != null ? ":" + path : ""}`, dest],
-        {
-          timeout,
-          env: progress ? { RUSTIC_PROGRESS_INTERVAL: "1s" } : undefined,
-          onStderrLine: progress
-            ? createRusticProgressHandler({ onProgress: progress })
-            : undefined,
-        },
-      ),
+      await this.subvolume.fs.rustic(["restore", snapshot, dest], {
+        timeout,
+        env: progress ? { RUSTIC_PROGRESS_INTERVAL: "1s" } : undefined,
+        onStderrLine: progress
+          ? createRusticProgressHandler({ onProgress: progress })
+          : undefined,
+      }),
     );
     return stdout;
   };
