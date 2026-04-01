@@ -154,6 +154,46 @@ function makeItem(opts: {
   };
 }
 
+function compareNumericVersionLike(
+  desired: unknown,
+  installed: unknown,
+): number | undefined {
+  if (typeof desired !== "string" || typeof installed !== "string") {
+    return undefined;
+  }
+  const desiredTrimmed = desired.trim();
+  const installedTrimmed = installed.trim();
+  if (!/^\d+$/.test(desiredTrimmed) || !/^\d+$/.test(installedTrimmed)) {
+    return undefined;
+  }
+  const desiredValue = BigInt(desiredTrimmed);
+  const installedValue = BigInt(installedTrimmed);
+  if (installedValue === desiredValue) return 0;
+  return installedValue > desiredValue ? 1 : -1;
+}
+
+function makeBundleItem(opts: {
+  key: string;
+  label: string;
+  desired?: string | boolean | number | null;
+  installed?: string | boolean | number | null;
+}): HostBootstrapLifecycleItem {
+  const versionComparison = compareNumericVersionLike(
+    opts.desired,
+    opts.installed,
+  );
+  if (versionComparison != null && versionComparison >= 0) {
+    return makeItem({
+      ...opts,
+      status: "match",
+      ...(versionComparison > 0
+        ? { message: "installed bundle is newer than desired" }
+        : {}),
+    });
+  }
+  return makeItem(opts);
+}
+
 function buildBootstrapLifecycleItems(opts: {
   bootstrapDir: string;
   desired: JsonRecord;
@@ -190,7 +230,7 @@ function buildBootstrapLifecycleItems(opts: {
       desired: desiredBootstrapId,
       installed: installedBootstrapId,
     }),
-    makeItem({
+    makeBundleItem({
       key: "project_host_bundle",
       label: "Project host bundle",
       desired: nonEmptyValue(desired.project_host_bundle?.version),
@@ -198,7 +238,7 @@ function buildBootstrapLifecycleItems(opts: {
         nonEmptyValue(runtimeVersions.project_host) ??
         nonEmptyValue(installedState.installed?.project_host_bundle_version),
     }),
-    makeItem({
+    makeBundleItem({
       key: "project_bundle",
       label: "Project bundle",
       desired: nonEmptyValue(desired.project_bundle?.version),
@@ -206,7 +246,7 @@ function buildBootstrapLifecycleItems(opts: {
         nonEmptyValue(runtimeVersions.project_bundle) ??
         nonEmptyValue(installedState.installed?.project_bundle_version),
     }),
-    makeItem({
+    makeBundleItem({
       key: "tools_bundle",
       label: "Tools bundle",
       desired: nonEmptyValue(desired.tools_bundle?.version),
