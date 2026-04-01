@@ -1151,6 +1151,16 @@ case "$cmd" in
     lowerdir_escaped="$(escape_overlay_path "$lowerdir")"
     upperdir_escaped="$(escape_overlay_path "$upperdir")"
     workdir_escaped="$(escape_overlay_path "$workdir")"
+    # Use the xattr-capable OverlayFS mode:
+    # - metacopy=on avoids copying full file contents into upperdir for
+    #   metadata-only changes, which keeps environment overlays smaller.
+    # - redirect_dir=on makes lowerdir-backed directory renames behave normally
+    #   instead of forcing expensive EXDEV-style fallbacks.
+    # - index=on keeps origin metadata for copied-up objects and is part of the
+    #   fully featured overlay metadata model.
+    # Tradeoff: overlay state now depends on trusted.overlay.* xattrs, so
+    # backup/restore of project overlay data must preserve those xattrs via the
+    # dedicated privileged rustic wrapper path.
     exec /bin/mount -t overlay overlay -o "lowerdir=${lowerdir_escaped},upperdir=${upperdir_escaped},workdir=${workdir_escaped},xino=off,metacopy=on,redirect_dir=on,index=on" "$merged"
     ;;
   umount-overlay-project)
