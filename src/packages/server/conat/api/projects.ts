@@ -21,6 +21,9 @@ import { supersedeOlderProjectStartLros } from "@cocalc/server/projects/start-lr
 import { conatWithProjectRouting } from "@cocalc/server/conat/route-client";
 import { resolveOnPremHost } from "@cocalc/server/onprem";
 import { posix } from "path";
+import TTLCache from "@isaacs/ttlcache";
+import { PROJECT_IMAGE_PATH } from "@cocalc/util/db-schema/defaults";
+import { human_readable_size } from "@cocalc/util/misc";
 import type {
   ExecuteCodeOptions,
   ExecuteCodeOutput,
@@ -62,6 +65,11 @@ import type {
   PublicPathInspectionResult,
   ProjectCopyRow,
   ProjectRuntimeLog,
+  ProjectStorageCountedSummary,
+  ProjectStorageBreakdown,
+  ProjectStorageHistory,
+  ProjectStorageOverview,
+  ProjectStorageVisibleSummary,
   WorkspaceSshConnectionInfo,
 } from "@cocalc/conat/hub/api/projects";
 import {
@@ -74,6 +82,123 @@ import {
   searchChatStoreArchived,
   vacuumChatStore,
 } from "@cocalc/backend/chat-store/sqlite-offload";
+import {
+  loadProjectStorageHistory,
+  recordProjectStorageHistorySample,
+} from "@cocalc/database/postgres/project-storage-history";
+import type { ExecOutput } from "@cocalc/conat/files/fs";
+
+const PROJECT_STORAGE_CACHE_TTL_MS = 30_000;
+const projectStorageOverviewCache = new TTLCache<
+  string,
+  ProjectStorageOverview
+>({
+  ttl: PROJECT_STORAGE_CACHE_TTL_MS,
+});
+const projectStorageBreakdownCache = new TTLCache<
+  string,
+  ProjectStorageBreakdown
+>({
+  ttl: PROJECT_STORAGE_CACHE_TTL_MS,
+});
+
+function normalizeStoragePath(path?: string): string {
+  const normalized = posix.normalize(`${path ?? ""}`.trim() || "/");
+  if (!normalized.startsWith("/")) {
+    throw new Error(`storage path must be absolute: ${path}`);
+  }
+  return normalized;
+}
+
+function storageOverviewCacheKey({
+  project_id,
+  home,
+}: {
+  project_id: string;
+  home: string;
+}): string {
+  return `${project_id}:${home}`;
+}
+
+function storageBreakdownCacheKey({
+  project_id,
+  path,
+}: {
+  project_id: string;
+  path: string;
+}): string {
+  return `${project_id}:${path}`;
+}
+
+async function projectFs(project_id: string) {
+  return conatWithProjectRouting().fs({ project_id });
+}
+
+function parseDustOutput(
+  output: ExecOutput,
+  path: string,
+): ProjectStorageBreakdown {
+  const { stdout, stderr, code, truncated } = output;
+  if (code) {
+    throw new Error(
+      Buffer.from(stderr).toString() || `dust failed for ${path}`,
+    );
+  }
+  const text = Buffer.from(stdout).toString();
+  if (truncated || !text.trim()) {
+    const errText = Buffer.from(stderr).toString().trim();
+    throw new Error(
+      errText || `disk usage scan for '${path}' returned incomplete data`,
+    );
+  }
+  let parsed: {
+    size: string;
+    name: string;
+    children?: { size: string; name: string }[];
+  };
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new Error(`disk usage scan for '${path}' returned invalid JSON`);
+  }
+  const absolutePath = parsed.name;
+  const prefixLength = absolutePath.length + 1;
+  return {
+    path: absolutePath,
+    bytes: parseInt(parsed.size.slice(0, -1)),
+    children: (parsed.children ?? []).map(({ size, name }) => ({
+      bytes: parseInt(size.slice(0, -1)),
+      path: name.slice(prefixLength),
+    })),
+    collected_at: new Date().toISOString(),
+  };
+}
+
+async function getStorageBreakdownImpl({
+  project_id,
+  path,
+}: {
+  project_id: string;
+  path: string;
+}): Promise<ProjectStorageBreakdown> {
+  const normalizedPath = normalizeStoragePath(path);
+  const cacheKey = storageBreakdownCacheKey({
+    project_id,
+    path: normalizedPath,
+  });
+  const cached = projectStorageBreakdownCache.get(cacheKey);
+  if (cached) return cached;
+  const fs = await projectFs(project_id);
+  const breakdown = parseDustOutput(
+    await fs.dust(normalizedPath, {
+      options: ["-j", "-x", "-d", "1", "-s", "-o", "b"],
+      timeout: 3_000,
+    }),
+    normalizedPath,
+  );
+  projectStorageBreakdownCache.set(cacheKey, breakdown);
+  return breakdown;
+}
 
 export async function copyPathBetweenProjects({
   src,
@@ -477,6 +602,168 @@ export async function getDiskQuota({
   await assertCollab({ account_id, project_id });
   const client = await getProjectFileServerClient({ project_id });
   return await client.getQuota({ project_id });
+}
+
+export async function getStorageOverview({
+  account_id,
+  project_id,
+  home,
+}: {
+  account_id: string;
+  project_id: string;
+  home?: string;
+}): Promise<ProjectStorageOverview> {
+  await assertCollab({ account_id, project_id });
+  const homePath = normalizeStoragePath(home || "/root");
+  const cacheKey = storageOverviewCacheKey({ project_id, home: homePath });
+  const cached = projectStorageOverviewCache.get(cacheKey);
+  if (cached) return cached;
+
+  const environmentPath = posix.join(homePath, PROJECT_IMAGE_PATH);
+  const fileServer = await getProjectFileServerClient({ project_id });
+  const [quota, homeUsage, scratchUsage, environmentUsage, snapshotUsage] =
+    await Promise.all([
+      fileServer.getQuota({ project_id }),
+      getStorageBreakdownImpl({ project_id, path: homePath }),
+      getStorageBreakdownImpl({ project_id, path: "/scratch" }).catch((err) => {
+        const text = `${err ?? ""}`.toLowerCase();
+        if (
+          text.includes("scratch is not mounted") ||
+          text.includes("no such file") ||
+          text.includes("not found")
+        ) {
+          return null;
+        }
+        throw err;
+      }),
+      getStorageBreakdownImpl({
+        project_id,
+        path: environmentPath,
+      }).catch((err) => {
+        const text = `${err ?? ""}`.toLowerCase();
+        if (text.includes("no such file") || text.includes("not found")) {
+          return null;
+        }
+        throw err;
+      }),
+      fileServer.allSnapshotUsage({ project_id }),
+    ]);
+
+  const visible: ProjectStorageVisibleSummary[] = [
+    {
+      key: "home",
+      label: homePath,
+      summaryLabel: "Home",
+      path: homePath,
+      summaryBytes: Math.max(
+        0,
+        homeUsage.bytes - Math.max(0, environmentUsage?.bytes ?? 0),
+      ),
+      usage: homeUsage,
+    },
+  ];
+  if (scratchUsage != null) {
+    visible.push({
+      key: "scratch",
+      label: "/scratch",
+      summaryLabel: "Scratch",
+      path: "/scratch",
+      summaryBytes: scratchUsage.bytes,
+      usage: scratchUsage,
+    });
+  }
+  if (environmentUsage != null) {
+    visible.push({
+      key: "environment",
+      label: "Environment changes",
+      summaryLabel: "Environment",
+      path: environmentPath,
+      summaryBytes: environmentUsage.bytes,
+      usage: environmentUsage,
+    });
+  }
+
+  const snapshotExclusiveBytes = snapshotUsage.reduce(
+    (sum, snapshot) => sum + Math.max(0, snapshot.exclusive ?? 0),
+    0,
+  );
+  const counted: ProjectStorageCountedSummary[] = [];
+  if (snapshotExclusiveBytes >= 1 << 20) {
+    const snapshotCount = snapshotUsage.length;
+    const largestExclusiveBytes = snapshotUsage.reduce(
+      (max, snapshot) => Math.max(max, Math.max(0, snapshot.exclusive ?? 0)),
+      0,
+    );
+    counted.push({
+      key: "snapshots",
+      label: "Snapshots",
+      bytes: snapshotExclusiveBytes,
+      compactLabel: "Snapshots",
+      detail:
+        snapshotCount <= 1
+          ? "This snapshot currently holds counted storage that would be freed if it is deleted."
+          : `Across ${snapshotCount} snapshots, this is storage referenced only by snapshots. The largest single snapshot currently has about ${human_readable_size(largestExclusiveBytes)} of exclusive data, and exact savings from deleting one snapshot depend on overlap.`,
+    });
+  }
+
+  const overview: ProjectStorageOverview = {
+    collected_at: new Date().toISOString(),
+    quotas: [
+      {
+        key: "project",
+        label: "Project quota",
+        used: quota.used,
+        size: quota.size,
+        qgroupid: quota.qgroupid,
+        scope: quota.scope,
+        warning: quota.warning,
+      },
+    ],
+    visible,
+    counted,
+  };
+  try {
+    await recordProjectStorageHistorySample({ project_id, overview });
+  } catch (err) {
+    log.warn("getStorageOverview: unable to record storage history sample", {
+      project_id,
+      err,
+    });
+  }
+  projectStorageOverviewCache.set(cacheKey, overview);
+  return overview;
+}
+
+export async function getStorageBreakdown({
+  account_id,
+  project_id,
+  path,
+}: {
+  account_id: string;
+  project_id: string;
+  path: string;
+}): Promise<ProjectStorageBreakdown> {
+  await assertCollab({ account_id, project_id });
+  return await getStorageBreakdownImpl({ project_id, path });
+}
+
+export async function getStorageHistory({
+  account_id,
+  project_id,
+  window_minutes,
+  max_points,
+}: {
+  account_id: string;
+  project_id: string;
+  window_minutes?: number;
+  max_points?: number;
+}): Promise<ProjectStorageHistory> {
+  await assertCollab({ account_id, project_id });
+  return await loadProjectStorageHistory({
+    project_id,
+    window_minutes,
+    max_points,
+  });
 }
 
 export async function exec({

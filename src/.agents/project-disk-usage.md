@@ -1,8 +1,10 @@
 # Project Disk Usage Plan
 
-Last refreshed: March 31, 2026
+Last refreshed: April 1, 2026
 
-Status: active plan; phases 1-2 are implemented, and phase 3 is in progress
+Status: active plan; phases 1-4 first pass are implemented. Remaining work is
+hardening the backend for very large projects, better quota/enforcement
+diagnostics, and smarter cleanup guidance.
 
 This document is the working plan for replacing the current launchpad project
 disk-usage widget with a more accurate, useful, and performant storage UX.
@@ -671,6 +673,14 @@ Deliverable:
 
 - users can tell whether usage is stable, growing, or spiking
 
+Status:
+
+- first pass implemented
+- sampled backend history now powers a `History` tab with range selection,
+  recent slope, and quota/storage trend data
+- current implementation is opportunistic and only samples when backend storage
+  overview is refreshed
+
 ### Phase 5: Smarter Cleanup Guidance
 
 - recommend safe cleanup areas
@@ -737,3 +747,73 @@ If we implement this plan incrementally, the first slice should be:
 4. stop using `/` as the default visible-usage root
 
 That delivers the biggest product improvement with the least architectural risk.
+
+## Follow-Up Tasks From Stress Testing
+
+These are important issues discovered while pushing the current storage system
+hard. They are not blockers for the current UX work, but they should be
+tracked explicitly as follow-up work.
+
+### 1. Large-project breakdown scans still fail badly
+
+Projects with many files can still time out during backend `dust` breakdown
+scans, and the UI currently surfaces raw progress output such as:
+
+- `Indexing: /mnt/cocalc/project-... 14961 files, 65032452668B ...`
+
+Follow-up work:
+
+- detect `dust` timeout / partial-output cases explicitly
+- keep showing the last good cached breakdown instead of raw stderr/progress
+- degrade gracefully for huge trees, potentially with lower default depth,
+  higher backend timeout, or precomputed directory summaries
+
+### 2. Quota enforcement needs host-level auditing
+
+Stress test:
+
+- project `60709c68-ea73-439d-ae1f-adc11b8f029c` on `rootfs-test-1`
+- `git clone https://github.com/chromium/chromium` succeeded even though the
+  project quota was nominally `20 GB`
+
+Follow-up work:
+
+- audit qgroup enforcement and accuracy on `rootfs-test-1`
+- confirm whether this is a host-specific qgroup problem or a broader
+  enforcement gap
+- improve diagnostics so the UI can distinguish "quota accounting looks fine"
+  from "host quota enforcement is suspect"
+
+### 3. Quota exhaustion should not destabilize project start or host behavior
+
+Stress test:
+
+- project `201e2e79-a81d-4751-ae7b-e8751e21f4f7` on `rootfs-test-2`
+- heavy `fio` activity pushed the project into quota exhaustion
+- project start later failed with `Unknown system error -122` while opening
+  `.../.local/share/cocalc/rootfs/current-image.txt`
+- user also observed correct `Disk quota exceeded (os error 122)` behavior in
+  the UI, and cleanup via the stopped-project file browser worked well
+
+Follow-up work:
+
+- make quota-exhaustion startup failures report `disk quota exceeded`
+  explicitly instead of opaque `EIO` / errno text
+- audit whether project-host or runner processes can die or wedge under quota
+  exhaustion
+- make rootfs metadata reads and startup paths degrade more cleanly when the
+  subvolume is full
+
+### 4. Sparse-file policy must be made explicit
+
+Open question:
+
+- users can trivially create giant sparse files via `truncate`
+- rustic currently does not preserve sparse-file semantics
+
+Follow-up work:
+
+- decide and document product behavior for sparse files in projects
+- test quota accounting, backup, restore, and UI behavior for sparse files
+- ensure sparse files do not silently turn into catastrophic full-space usage on
+  restore
