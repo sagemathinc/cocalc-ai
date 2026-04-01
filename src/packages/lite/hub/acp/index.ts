@@ -52,6 +52,7 @@ import {
   DEFAULT_AUTOMATION_CHAT_SENDER_ID,
   resolveAutomationChatSenderId,
 } from "./automation-chat-sender";
+import { buildAutomationAcpConfig } from "./automation-request-config";
 import {
   computeNextAutomationRunAt,
   normalizeAcpAutomationConfig,
@@ -5302,6 +5303,7 @@ async function enqueueAutomationRun(
   const userDate = new Date(now).toISOString();
   const assistantDate = new Date(now + 1).toISOString();
   let automationSenderId = DEFAULT_AUTOMATION_CHAT_SENDER_ID;
+  let automationConfig = buildAutomationAcpConfig({ chatPath: row.path });
 
   await withChatSyncDB({
     client: conatClient,
@@ -5312,6 +5314,10 @@ async function enqueueAutomationRun(
       automationSenderId = resolveAutomationChatSenderId(
         syncdbField<string>(threadConfig, "agent_model"),
       );
+      automationConfig = buildAutomationAcpConfig({
+        chatPath: row.path,
+        config: syncdbField(threadConfig, "acp_config"),
+      });
       const parent_message_id = latestThreadMessageIdInSyncDB({
         syncdb,
         threadId: row.thread_id,
@@ -5337,6 +5343,7 @@ async function enqueueAutomationRun(
     project_id: row.project_id,
     account_id: row.account_id,
     prompt: row.prompt,
+    config: automationConfig,
     chat: {
       project_id: row.project_id,
       path: row.path,
