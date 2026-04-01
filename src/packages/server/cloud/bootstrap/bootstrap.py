@@ -1411,6 +1411,76 @@ printf '{"ok":true,"distro_family":"%s","package_manager":"%s","shell":"%s","gli
   "$distro_family" "$package_manager" "$want_shell" "$want_user" "$want_uid" "$want_gid" "$want_home"
 EOF_COCALC_NORMALIZE_ROOTFS
 )"
+    rewrite_rootfs_ids_script="$(mktemp)"
+    rewrite_uid_map_file="$(mktemp)"
+    rewrite_gid_map_file="$(mktemp)"
+    cat >"$rewrite_rootfs_ids_script" <<'EOF_COCALC_REWRITE_ROOTFS_IDS'
+#!/usr/bin/env python3
+import os
+import stat
+import sys
+
+rootfs = sys.argv[1]
+runtime_uid = int(sys.argv[2])
+runtime_gid = int(sys.argv[3])
+uid_map_path = sys.argv[4]
+gid_map_path = sys.argv[5]
+
+def parse_map(path: str) -> list[tuple[int, int, int]]:
+    ranges: list[tuple[int, int, int]] = []
+    with open(path, encoding="utf-8") as handle:
+        for line in handle:
+            parts = line.split()
+            if len(parts) != 3:
+                continue
+            ranges.append((int(parts[0]), int(parts[1]), int(parts[2])))
+    if not ranges:
+        raise RuntimeError(f"missing uid/gid map in {path}")
+    return ranges
+
+uid_ranges = parse_map(uid_map_path)
+gid_ranges = parse_map(gid_map_path)
+
+def map_keep_id(identifier: int, runtime_id: int) -> int:
+    if identifier < 0:
+        return identifier
+    if identifier < runtime_id:
+        return identifier + 1
+    if identifier == runtime_id:
+        return 0
+    return identifier
+
+def intermediate_to_host(identifier: int, ranges: list[tuple[int, int, int]]) -> int:
+    for ns_start, host_start, length in ranges:
+        if ns_start <= identifier < ns_start + length:
+            return host_start + (identifier - ns_start)
+    raise RuntimeError(f"id {identifier} is not covered by the rootless podman map")
+
+def remap(path: str) -> None:
+    st = os.lstat(path)
+    mapped_uid = intermediate_to_host(
+        map_keep_id(st.st_uid, runtime_uid),
+        uid_ranges,
+    )
+    mapped_gid = intermediate_to_host(
+        map_keep_id(st.st_gid, runtime_gid),
+        gid_ranges,
+    )
+    if mapped_uid == st.st_uid and mapped_gid == st.st_gid:
+        pass
+    else:
+        mode = stat.S_IMODE(st.st_mode)
+        os.lchown(path, mapped_uid, mapped_gid)
+        if not stat.S_ISLNK(st.st_mode) and (st.st_mode & 0o6000):
+            os.chmod(path, mode, follow_symlinks=False)
+    if stat.S_ISDIR(st.st_mode):
+        with os.scandir(path) as entries:
+            for entry in entries:
+                remap(entry.path)
+
+remap(rootfs)
+EOF_COCALC_REWRITE_ROOTFS_IDS
+    chmod 0755 "$rewrite_rootfs_ids_script"
     validate_runtime_user_script="$(cat <<'EOF_COCALC_VALIDATE_RUNTIME_USER'
 set -euo pipefail
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
@@ -1433,17 +1503,42 @@ command -v sudo >/dev/null 2>&1 || fail "rootfs contract failed: sudo is not ins
 sudo -n true >/dev/null 2>&1 || fail "rootfs contract failed: passwordless sudo is not working for user" 76
 EOF_COCALC_VALIDATE_RUNTIME_USER
 )"
+    cleanup_rewrite_script() {
+      rm -f "$rewrite_rootfs_ids_script"
+      rm -f "$rewrite_uid_map_file"
+      rm -f "$rewrite_gid_map_file"
+    }
+    trap cleanup_rewrite_script EXIT
+    podman_user="${SUDO_USER:-}"
+    if [ -z "$podman_user" ]; then
+      fail "rootfs contract failed: normalize-rootfs must be invoked via sudo from the rootless podman user" 77
+    fi
     normalize_result="$(
       /usr/bin/podman run --rm --network host --user 0:0 --security-opt label=disable --rootfs "$rootfs" "$shell_path" -lc "$normalize_script"
     )"
-    /usr/bin/podman run --rm --network host \
-      --user 1000:1000 \
-      --workdir /home/user \
-      -e HOME=/home/user \
-      -e USER=user \
-      -e LOGNAME=user \
-      --security-opt label=disable \
-      --rootfs "$rootfs" "$shell_path" -lc "$validate_runtime_user_script" >/dev/null
+    /usr/bin/sudo -u "$podman_user" -H bash -lc "cd ~ && /usr/bin/podman unshare cat /proc/self/uid_map" >"$rewrite_uid_map_file"
+    /usr/bin/sudo -u "$podman_user" -H bash -lc "cd ~ && /usr/bin/podman unshare cat /proc/self/gid_map" >"$rewrite_gid_map_file"
+    /usr/bin/python3 "$rewrite_rootfs_ids_script" \
+      "$rootfs" \
+      "1000" \
+      "1000" \
+      "$rewrite_uid_map_file" \
+      "$rewrite_gid_map_file"
+    printf '%s\n' "$validate_runtime_user_script" | \
+      /usr/bin/sudo -u "$podman_user" -H bash -lc "
+        cd ~ &&
+        /usr/bin/podman run --rm --network host \
+          --userns=keep-id:uid=1000,gid=1000 \
+          --user 1000:1000 \
+          --workdir /home/user \
+          -e HOME=/home/user \
+          -e USER=user \
+          -e LOGNAME=user \
+          --security-opt label=disable \
+          --rootfs '$rootfs' '$shell_path' -s
+      " >/dev/null
+    trap - EXIT
+    cleanup_rewrite_script
     printf '%s\n' "$normalize_result"
     exit 0
     ;;

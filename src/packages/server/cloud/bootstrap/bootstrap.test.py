@@ -384,6 +384,8 @@ class BootstrapWrapperScriptTest(unittest.TestCase):
             self.assertIn("project-rustic-backup)", script)
             self.assertIn("project-rustic-restore)", script)
             self.assertIn("normalize-rootfs)", script)
+            self.assertIn("podman unshare cat /proc/self/uid_map", script)
+            self.assertIn("--userns=keep-id:uid=1000,gid=1000", script)
             self.assertIn('podman run --rm --network host --user 0:0', script)
             self.assertIn('--user 1000:1000', script)
             self.assertNotIn("su - \"$want_user\"", script)

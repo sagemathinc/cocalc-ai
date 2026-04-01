@@ -854,7 +854,8 @@ export async function start({
     const args: string[] = [];
     args.push("run");
     args.push("--runtime", "/usr/bin/crun");
-    args.push("--security-opt", "no-new-privileges");
+    // Leave setuid/setgid working inside the project so passwordless sudo can
+    // elevate to container root under the rootless user namespace.
     args.push(
       `--userns=keep-id:uid=${DEFAULT_PROJECT_RUNTIME_UID},gid=${DEFAULT_PROJECT_RUNTIME_GID}`,
     );

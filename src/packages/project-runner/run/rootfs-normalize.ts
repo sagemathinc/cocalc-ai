@@ -16,7 +16,7 @@ import {
 const logger = getLogger("project-runner:rootfs-normalize");
 const STORAGE_WRAPPER = "/usr/local/sbin/cocalc-runtime-storage";
 
-export const ROOTFS_NORMALIZER_VERSION = 1;
+export const ROOTFS_NORMALIZER_VERSION = 2;
 
 export type RootfsNormalizationMetadata = {
   version: number;

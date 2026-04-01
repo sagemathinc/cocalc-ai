@@ -134,7 +134,8 @@ export async function sandboxExec({
 
       // Build a one-off container run.
       args.push("run", "--runtime", "/usr/bin/crun", "--rm", "-i");
-      args.push("--security-opt", "no-new-privileges");
+      // Match the main project runtime so sudo and setuid helpers behave the
+      // same way in ephemeral sidecars.
       args.push(
         `--userns=keep-id:uid=${DEFAULT_PROJECT_RUNTIME_UID},gid=${DEFAULT_PROJECT_RUNTIME_GID}`,
       );
