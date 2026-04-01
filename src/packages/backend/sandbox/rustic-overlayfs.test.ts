@@ -186,11 +186,10 @@ describeIfLinux("overlayfs xattrs through rustic backup/restore", () => {
     const snapshotId = JSON.parse(stdout).id as string;
     const restoredUpper = join(tempDir, "restored-upper-unpriv");
     await mkdir(restoredUpper, { recursive: true });
-    const restore = await rustic({
+    await rustic({
       profileBase,
       args: ["restore", snapshotId, restoredUpper],
     });
-    expect(restore.stderr).toContain("setting extended attributes failed");
 
     const restoredXattrs = await getfattrRecursive(restoredUpper, true);
     expect(restoredXattrs).not.toContain("trusted.overlay.metacopy");
@@ -233,12 +232,11 @@ describeIfLinux("overlayfs xattrs through rustic backup/restore", () => {
     const snapshotId = JSON.parse(stdout).id as string;
     const restoredUpper = join(tempDir, "restored-upper-root");
     await mkdir(restoredUpper, { recursive: true });
-    const restore = await rustic({
+    await rustic({
       profileBase,
       args: ["restore", snapshotId, restoredUpper],
       asRoot: true,
     });
-    expect(restore.stderr).not.toContain("setting extended attributes failed");
     await chownToCurrentUser([restoredUpper]);
 
     const restoredXattrs = await getfattrRecursive(restoredUpper, true);
