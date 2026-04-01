@@ -41,6 +41,7 @@ function TestComponent({ project_id }: { project_id: string }) {
       <span data-testid="summary-usage">{visible[0]?.summaryBytes ?? ""}</span>
       <span data-testid="summary-label">{visible[0]?.summaryLabel ?? ""}</span>
       <span data-testid="quota">{quotas[0]?.used ?? ""}</span>
+      <span data-testid="quota-warning">{quotas[0]?.warning ?? ""}</span>
       <span data-testid="counted">{counted[0]?.bytes ?? ""}</span>
       <span data-testid="error">{error ? `${error}` : ""}</span>
     </div>
@@ -172,6 +173,26 @@ describe("useDiskUsage", () => {
 
     await waitFor(() => {
       expect(screen.getByTestId("counted").textContent).toBe("4000000");
+    });
+  });
+
+  it("passes through quota warnings", async () => {
+    dustMock
+      .mockResolvedValueOnce({ bytes: 111, children: [] })
+      .mockResolvedValueOnce({ bytes: 22, children: [] });
+    snapshotUsageMock.mockResolvedValue([]);
+    quotaMock.mockResolvedValue({
+      used: 17,
+      size: 100,
+      warning: "Btrfs quota accounting is inconsistent on this host.",
+    });
+
+    render(<TestComponent project_id="project-1" />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("quota-warning").textContent).toContain(
+        "inconsistent",
+      );
     });
   });
 

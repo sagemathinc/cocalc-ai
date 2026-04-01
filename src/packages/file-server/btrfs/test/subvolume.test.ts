@@ -190,6 +190,32 @@ describe("the filesystem operations", () => {
   });
 });
 
+describe("snapshot-aware quota accounting", () => {
+  let vol: Subvolume;
+
+  it("reports quota from the tracking qgroup when snapshots retain data", async () => {
+    vol = await fs.subvolumes.ensure("quota-with-snapshots");
+    await vol.quota.set("100M");
+    await vol.fs.writeFile("held.bin", randomBytes(4 * 1024 * 1024));
+    await vol.snapshots.create("snap1", { quotaMode: "sync" });
+    await vol.fs.unlink("held.bin");
+    await fs.sync();
+
+    const id = await vol.getSubvolumeId();
+    await wait({
+      until: async () => {
+        const { used, qgroupid } = await vol.quota.get();
+        return qgroupid === `1/${id}` && used > 0;
+      },
+    });
+
+    const { used, qgroupid, scope } = await vol.quota.get();
+    expect(qgroupid).toBe(`1/${id}`);
+    expect(scope).toBe("tracking");
+    expect(used).toBeGreaterThan(0);
+  });
+});
+
 describe("test snapshots", () => {
   let vol: Subvolume;
 

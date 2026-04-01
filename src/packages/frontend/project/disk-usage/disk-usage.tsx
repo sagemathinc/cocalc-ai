@@ -188,6 +188,15 @@ export default function DiskUsage({
               <div style={{ marginTop: "15px" }}>
                 <b>{quota.label}:</b> {human_readable_size(quota.used)} out of{" "}
                 {human_readable_size(quota.size)}
+                {quota.warning ? (
+                  <Alert
+                    style={{ marginTop: "12px" }}
+                    showIcon
+                    type="warning"
+                    message="Quota accounting warning"
+                    description={quota.warning}
+                  />
+                ) : null}
                 <div style={{ color: COLORS.GRAY_M, marginTop: "8px" }}>
                   Counted quota usage may differ from visible file sizes because
                   compression, deduplication, snapshots, and storage accounting

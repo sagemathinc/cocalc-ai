@@ -1,5 +1,5 @@
 import dust, { key } from "./dust";
-import getQuota from "./quota";
+import getQuota, { type DiskQuota } from "./quota";
 import getSnapshotUsage, { key as snapshotUsageKey } from "./snapshot-usage";
 import { redux, useAsyncEffect } from "@cocalc/frontend/app-framework";
 import { useRef, useState } from "react";
@@ -18,6 +18,9 @@ export type StorageQuotaSummary = {
   label: string;
   used: number;
   size: number;
+  qgroupid?: string;
+  scope?: DiskQuota["scope"];
+  warning?: string;
 };
 
 export type StorageVisibleSummary = {
@@ -190,6 +193,9 @@ export default function useDiskUsage({ project_id }: { project_id: string }) {
           label: "Project quota",
           used: nextQuota.used,
           size: nextQuota.size,
+          qgroupid: nextQuota.qgroupid,
+          scope: nextQuota.scope,
+          warning: nextQuota.warning,
         },
       ]);
     } catch (err) {

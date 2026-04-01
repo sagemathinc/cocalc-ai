@@ -52,6 +52,9 @@ describe("create basic mocked file server and test it out", () => {
       }): Promise<{
         size: number;
         used: number;
+        qgroupid?: string;
+        scope?: "tracking" | "subvolume";
+        warning?: string;
       }> => {
         return { size: quotaSize[project_id] ?? 0, used: 0 };
       },

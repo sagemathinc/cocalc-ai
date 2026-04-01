@@ -1274,6 +1274,9 @@ async function getQuota({
 }): Promise<{
   size: number;
   used: number;
+  qgroupid?: string;
+  scope?: "tracking" | "subvolume";
+  warning?: string;
 }> {
   logger.debug("getQuota", { project_id, scratch });
   const volName = volumeName(project_id, scratch);

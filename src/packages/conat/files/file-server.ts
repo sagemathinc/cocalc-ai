@@ -112,6 +112,9 @@ export interface Fileserver {
   }) => Promise<{
     size: number;
     used: number;
+    qgroupid?: string;
+    scope?: "tracking" | "subvolume";
+    warning?: string;
   }>;
 
   setQuota: (opts: {
