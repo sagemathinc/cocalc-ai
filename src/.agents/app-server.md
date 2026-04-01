@@ -1,8 +1,8 @@
 # App Server and Extensible Secure Project Proxies (A1.4)
 
-Status: active implementation spec; materially further along as of March 22, 2026.
+Status: active implementation spec; materially further along as of April 1, 2026.
 
-Recent product note (March 22, 2026):
+Recent product note (April 1, 2026):
 
 1. `Install with Codex` from the Apps UI is now good enough for real use on tested templates.
 2. New navigator threads created by install/audit handoff now get explicit titles instead of inheriting the full prompt body.
@@ -14,6 +14,10 @@ Recent product note (March 22, 2026):
 8. Public Viewer now supports the dedicated raw/public origin path (`public_viewer_dns`), markdown/notebooks, launchpad + Lite serving, authenticated import/copy-back, and additional renderer routing for slides/boards/chat.
 9. Public Viewer is still pre-hardening for broad release: cache-policy tuning, stricter CSP/session review, nicer public URL shape, and renderer-polish/end-to-end validation remain.
 10. Browser-session spawn/auth reliability for agent-driven QA is materially better again: spawned sessions now bootstrap account sign-in correctly even in local hub/hub-password-driven dev flows.
+11. Hosted app routing has been re-aligned around a hard architectural requirement: app traffic should go directly to the owning `project-host`, not through the central hub, in normal Launchpad/Cloudflare deployments.
+12. In hosted mode, public app URLs now use direct project-host path URLs instead of per-app public hostnames; the per-app-hostname direction proved incompatible with the current Cloudflare/TLS/tunnel constraints and encouraged bad tunnel-config churn.
+13. Running-HTTP detection can now adopt a discovered listener as an explicit `unmanaged` app so users can open/expose/inspect a server they started themselves without asking CoCalc to own the process lifecycle.
+14. Public Viewer/static frontend entrypoints were slimmed down substantially in the static build pipeline, but this needs broader browser-level validation before we should consider that optimization fully baked.
 
 ## 1. Purpose
 
@@ -28,14 +32,14 @@ Define a single, extensible app/proxy system for CoCalc Lite and Launchpad that 
 
 This should replace ad hoc per-app special cases over time.
 
-## 1.1 Current Implementation Status (March 22, 2026)
+## 1.1 Current Implementation Status (April 1, 2026)
 
 ### Done
 
 1. App spec schema + validation and runtime state machinery are implemented.
 2. Service app lifecycle API is implemented (`upsert/start/stop/status/restart/ensure-running/logs`).
 3. Wake-on-demand for service apps is implemented.
-4. Public expose/unexpose plumbing is implemented with TTL, random subdomain support, and optional front token auth.
+4. Public expose/unexpose plumbing is implemented with TTL and optional front token auth; hosted/public exposure now uses direct project-host path URLs instead of per-app subdomains.
 5. Metered-egress warnings/policy hints (notably GCP) are implemented.
 6. CLI surface for `project app` lifecycle is implemented and agent-usable in JSON mode.
 7. Public-readiness audit command/prompt path is implemented (backend + CLI).
@@ -44,6 +48,12 @@ This should replace ad hoc per-app special cases over time.
 10. Detection is split in the main UI between running HTTP-app discovery and installed-template discovery.
 11. The Apps page now has real operational controls: filter/search, bulk start/stop, row-local startup failures, and a direct `Audit with Codex` action.
 12. `Install with Codex` is implemented from the Apps UI, with preset-aware prompts, explicit new-thread titles, and stronger preference for curated install recipes when available.
+13. Hosted routing is now documented and implemented around direct project-host traffic, with the hub acting as control-plane only in the target hosted architecture.
+14. Private app opens now have a direct-project-host path story instead of assuming the hub should stay in the hot data path forever.
+15. Running-HTTP detection can create an `unmanaged` app, giving a canonical `/apps/<id>/` route plus open/expose/status behavior for a process that CoCalc did not start.
+16. A small real-world matrix has been manually validated across the current architecture:
+    - private: `code-server`, `jupyterlab`, `static` / `static-hello`,
+    - public/exposed path mode: `code-server`, `static` / `static-hello`.
 
 ### Partial
 
@@ -53,13 +63,16 @@ This should replace ad hoc per-app special cases over time.
 4. Static refresh jobs are implemented in an activity-driven first slice (run on first/stale hit with timeout + logs), but sandbox-ephemeral execution mode and richer scheduling policies are still pending.
 5. App portability is partially implemented/planned: project clone should already carry app specs because they live in the project filesystem, and explicit CLI export/import/clone flows are being added; dedicated frontend download/upload UX is still pending.
 6. Public Viewer works end-to-end in Launchpad and Lite with the real frontend viewer bundle, the dedicated raw/public origin path, authenticated import/copy, and renderer routing for markdown/notebooks/slides/boards/chat; release-hardening, cache-policy tuning, URL polish, and renderer validation are still pending.
+7. The path-based hosted public-app architecture is implemented, but it still needs broader websocket/browser validation beyond the current small matrix.
+8. The slimmer public-viewer/static entrypoint bundles are promising, but browser-level coverage and regression confidence are still lagging behind the implementation work.
 
 ### Not Done
 
 1. Finalized static-mode smoke matrix (lite + launchpad, large-file/static cache cases).
-2. Broader install coverage and post-install polish for `Install with Codex` across more templates/images.
-3. Broader template catalog and stronger embed/open integration polish.
-4. Dedicated agent/docs/skill guidance for apps/public-viewer workflows.
+2. Easier authoring/publishing for CoCalc-native static sharing so users do not have to hand-edit app specs/manifests for common notebook/slides/whiteboard cases.
+3. Broader install coverage and post-install polish for `Install with Codex` across more templates/images.
+4. Broader template catalog and stronger embed/open integration polish.
+5. Dedicated agent/docs/skill guidance for apps/public-viewer workflows.
 
 ## 2. Product Goals
 
@@ -197,7 +210,6 @@ exposure:
   public:
     provider: cloudflare
     ttl_s: 86400
-    random_subdomain: true
 static:
   root: /home/user/project/site
   index: index.html
@@ -283,7 +295,7 @@ Public exposure is explicit and reversible.
 3. TTL required (auto-expire unless renewed).
 4. Revoke is immediate from UI/CLI.
 5. Optional front token auth for convenience.
-6. Randomized subdomain by default (defense-in-depth).
+6. In hosted Launchpad mode, the public URL should resolve directly to the owning `project-host` using a host-path URL, not by routing traffic through the central hub.
 7. Optional "Audit with Codex" action in expose flow:
    - Launches an agent turn with a security/deployment checklist prompt.
    - Prompt includes CoCalc architecture context (proxy, token auth, base path, public URL scope, wake behavior).
@@ -408,7 +420,7 @@ Detection must be split into two distinct workflows:
    - show candidate user applications that appear to be serving HTTP,
    - exclude infrastructure/system ports such as SSH and the project proxy itself,
    - ideally verify HTTP response before surfacing,
-   - prompt: "We detected a running HTTP service on :XXXX. Create managed app?"
+   - prompt: "We detected a running HTTP service on :XXXX. Create unmanaged app?"
 2. detect installed template apps:
    - check whether known templates are installed and runnable,
    - examples: JupyterLab, code-server, Pluto, RStudio, Streamlit, Gradio, TensorBoard,
@@ -1483,7 +1495,7 @@ Existing components to reuse where possible:
 ### Phase 1: Public Alpha-Safe Slice (Status: effectively done)
 
 1. public exposure with required TTL + revoke
-2. random subdomain default
+2. direct project-host hosted public URLs
 3. optional front token auth
 4. metered-egress guardrails + warnings
 5. static site mode + cache presets
@@ -1496,7 +1508,7 @@ Existing components to reuse where possible:
 3. end-to-end tests for agent-driven startup/exposure/recovery
 4. expand and polish the existing `Install with Codex` / `Audit with Codex` UI handoff actions
 
-### Phase 3: UI Expansion (after backend confidence) (Status: not started)
+### Phase 3: UI Expansion (after backend confidence) (Status: materially underway)
 
 1. Apps page becomes the single managed-app surface
 2. remove duplicated app-launch UI from `+New` and flyout
@@ -1534,7 +1546,7 @@ Existing components to reuse where possible:
 3. `[done]` Implement private proxy registration and lifecycle API.
 4. `[done]` Implement wake-on-demand start path with readiness checks.
 5. `[done]` Add CLI lifecycle commands with stable JSON output (agent-first).
-6. `[done]` Add public exposure controls (TTL/revoke/random subdomain + optional front token).
+6. `[done]` Add public exposure controls (TTL/revoke + optional front token, with hosted direct-project-host public URLs).
 7. `[partial]` Add host-aware cost guardrails (especially metered-egress behavior). (NOTE: egress is the primary special-cost driver here.)
 8. `[partial]` Add static file serving mode with cache presets.
 9. `[done]` Add Codex app audit prompt/action path for public expose (backend, CLI, and Apps-page action are implemented).
@@ -1543,6 +1555,7 @@ Existing components to reuse where possible:
 12. `[done]` Make Apps page the single managed-app surface and remove duplicated app-launch UI from `+New` and flyout.
 13. `[done]` Remove legacy top-row server launcher UI and map JupyterLab/code-server/etc. to managed-app presets.
 14. `[done]` Split detection into running-HTTP discovery vs installed-template discovery.
+    14.1. `[done]` Allow running-HTTP detection to adopt a listener as an explicit unmanaged app with a canonical `/apps/<id>/` route.
 15. `[done]` Add filter/search plus bulk actions (`start all`, `stop all`, later selection-based actions).
 16. `[done]` Move startup errors/logs/actions to the corresponding app row/card instead of global top-of-page alerts.
 17. `[partial]` Add "Install with Codex" from app presets and app rows (implemented with template-aware prompts, explicit thread titles, and live-tested launchpad template installs; broader template coverage, snapshot polish, and post-install automation are still pending).
@@ -1573,16 +1586,22 @@ Existing components to reuse where possible:
 
 26. `[todo]` Expand the curated template catalog substantially and keep template/recipe growth data-first.
 27. `[todo]` Add explicit docs and/or a dedicated agent skill so agents know how to use apps for install, lifecycle, expose/audit, and public publishing workflows.
+28. `[todo]` Make CoCalc-native static sharing materially easier from the Apps/public-viewer UI:
+
+- choose a directory and get the right static/public-viewer app spec without manual YAML editing,
+- bootstrap a good `index.json` / landing page for notebooks/slides/boards/markdown,
+- surface obvious presets such as "Public notebook/notes directory" instead of forcing users to start from a generic static app.
 
 ## 19.1 Next Execution Order
 
-1. Run and harden launchpad `apps-static` smoke in live cloud loop, then broaden the static/cache/large-file matrix now that Lite parity is in.
-2. Rename `Servers` to `Apps` and use `Managed Applications` as the primary page language.
-3. Collapse Apps / `+New` / flyout app entry points into one Apps-first surface.
-4. Remove legacy top-row server launcher UI and map built-ins to managed-app presets.
-5. Split detection into running-HTTP discovery vs installed-template discovery.
-6. Add filter/search/bulk-actions and row-local error handling.
-7. Add pre-expose "Audit with Codex" UI action, likely using the same style/pattern as the new in-progress agentized Help-me-fix flow.
+1. Make CoCalc-native static sharing/public-viewer authoring much easier:
+   - directory-first setup,
+   - obvious presets,
+   - manifest/index bootstrap,
+   - minimal or no manual spec editing.
+2. Run and harden launchpad `apps-static` smoke in the live cloud loop, then broaden the static/cache/large-file matrix now that Lite parity is in.
+3. Validate the slimmer public-viewer/static entrypoints in real browser smokes so the size win is backed by confidence.
+4. Continue expanding and validating the template catalog.
 
 ## 19.2 Strict Remaining Queue
 
@@ -1609,12 +1628,10 @@ These are the remaining items that matter most to calling A1.4 effectively finis
    - done: trim project-host `/customize` so it no longer exposes `account_id`,
    - done: explicitly choose the same-project trust model for private apps and document it in `docs/security/private-app-trust-model.md`,
    - next: harden static HTML serving assumptions accordingly.
-4. change Cloudflare public-app routing so traffic bypasses the central hub and goes directly to the target project-host:
-   - the current implementation points public app hostnames at the same Cloudflare/site target as the main site and then relies on hub-side hostname rewrite + proxying,
-   - this is a blocker because it adds unnecessary latency and, on metered providers such as GCP, can double backhaul traffic and create unacceptable egress cost,
-   - public app DNS/tunnel resolution should instead target the owning project-host directly,
-   - the project-host should remain responsible for host-based public-app auth/routing without requiring the central hub in the request data path,
-   - verify both HTTP and websocket traffic follow the direct project-host path.
+4. finish validating direct project-host hosted routing across a broader matrix:
+   - verify both HTTP and websocket traffic follow the direct project-host path,
+   - keep canonical hub entry URLs only as redirects/control-plane entrypoints where helpful,
+   - do not regress into hub-in-the-middle traffic for hosted mode.
 
 ### Post-alpha
 
@@ -1639,9 +1656,16 @@ The clearest remaining workstreams after the current backend/public-viewer progr
    - Finish hardening and browser-level validation of the authenticated `Import from public CoCalc URL` / `Copy to my project` flow.
 
 2. Public Viewer completion.
-   - Markdown and notebooks are in good shape.
-   - Slides, whiteboards, and chat should get the same level of end-to-end validation and renderer polish.
-   - The Codex-assisted `publish this directory` workflow still needs implementation and repeated testing until reliable.
+
+- Markdown and notebooks are in good shape.
+- Slides, whiteboards, and chat should get the same level of end-to-end validation and renderer polish.
+- The Codex-assisted `publish this directory` workflow still needs implementation and repeated testing until reliable.
+
+  2.5. Easier CoCalc-native static sharing.
+
+- The current public-viewer/static machinery is powerful but still too manual for common use.
+- Users should be able to point at a directory of notebooks/slides/boards/markdown and get a good public result without editing generic static specs by hand.
+- This should likely become the next focused product project after the current routing/runtime cleanup.
 
 3. Template catalog expansion and live validation.
    - This remains one of the highest-leverage product improvements.
@@ -1663,6 +1687,201 @@ The clearest remaining workstreams after the current backend/public-viewer progr
 6. Lite/browser-QA reliability follow-through.
    - Lite parity is implemented, but the spawned browser-session path and other agent QA flows should keep getting exercised in both Lite and hub-backed environments.
    - Treat QA tooling reliability as part of the product surface, since it directly affects whether agents can help users successfully.
+
+## 19.2.2 Detailed Finish Plan
+
+This section converts the remaining checklist into a concrete phased execution
+plan. The goal is not just to accumulate features, but to reach a point where:
+
+1. the hosted routing/security model is internally coherent,
+2. the small validated app matrix is trustworthy,
+3. CoCalc-native static sharing becomes easy enough for normal users,
+4. Public Viewer is hardened enough to expose confidently,
+5. the Apps surface feels like a product instead of a proof-of-concept.
+
+Recommended sequencing:
+
+1. finish correctness and security before adding more surface area,
+2. make CoCalc-native static sharing easy before adding more viewer polish,
+3. expand catalog/UI only after the publish/open/expose foundation is solid.
+
+### Phase A: Hosted Routing, Auth, and Security Closure
+
+This phase closes the remaining architecture and security gaps around direct
+project-host traffic.
+
+Deliverables:
+
+1. Re-validate the direct project-host traffic model end-to-end for both Lite
+   and Launchpad:
+   - private app open,
+   - public/exposed app open,
+   - refresh/reconnect,
+   - websocket traffic,
+   - wake-on-demand transitions.
+2. Keep canonical hub URLs only as redirects/control-plane entrypoints where
+   they are useful; do not allow hosted app traffic to regress into hub-in-the-
+   middle routing.
+3. Complete the focused XSS/origin-isolation audit for managed apps:
+   - confirm which cookies/headers can reach upstream apps,
+   - keep auth/bootstrap material stripped after validation,
+   - harden static HTML serving assumptions accordingly.
+4. Add regression tests for:
+   - project-host session scoping,
+   - cookie stripping,
+   - direct private/public path routing,
+   - websocket upgrades on the validated app matrix.
+5. Expand the current validated matrix from the initial three apps to the core
+   hosted baseline:
+   - `code-server`,
+   - `jupyterlab`,
+   - `static` / `static-hello`,
+   - one websocket-heavy or base-path-sensitive app once the baseline is
+     solid.
+
+Exit criteria:
+
+1. Hosted private and public app traffic is demonstrably direct-to-host in both
+   HTTP and websocket cases.
+2. The project-host auth/session boundary is documented and regression-tested.
+3. The small baseline matrix passes in both Lite and Launchpad.
+
+### Phase B: Make CoCalc-Native Static Sharing Easy
+
+This is the next product project and should remove the current requirement that
+users understand generic static app specs and hand-edit manifests.
+
+Deliverables:
+
+1. Add obvious Apps/public-viewer presets for CoCalc-native sharing, e.g.:
+   - `Public notebook/notes directory`,
+   - `Public slides/boards directory`,
+   - `CoCalc Public Viewer`.
+2. Add a directory-first creation flow:
+   - choose a directory,
+   - infer whether it looks like a public-viewer/static directory,
+   - create the right app spec without manual YAML editing.
+3. Add manifest/bootstrap helpers:
+   - generate `index.json`,
+   - optionally generate a minimal landing page,
+   - infer sensible entries for notebooks, markdown, slides, boards, and raw
+     files.
+4. Make the UX clear about the difference between:
+   - generic static site hosting,
+   - live CoCalc Public Viewer mode,
+   - future durable exported publishing/share workflows.
+5. Ensure the created app opens/exposes correctly immediately after setup.
+
+Exit criteria:
+
+1. A user can publish a directory of CoCalc-native files without hand-editing
+   an app spec.
+2. The resulting public surface is coherent enough by default to share with
+   someone else immediately.
+
+### Phase C: Public Viewer Hardening and Completion
+
+Once creation is easier, harden the public viewer path so it is trustworthy for
+real use.
+
+Deliverables:
+
+1. Finish cache-policy and header hardening:
+   - shell HTML caching,
+   - raw/static file caching,
+   - manifest caching,
+   - `ETag` / revalidation behavior.
+2. Finish CSP/session review for the dedicated raw/public origin.
+3. Polish the public URL presentation so users are not exposed to awkward
+   implementation details.
+4. Validate renderer behavior end-to-end for:
+   - markdown,
+   - notebooks,
+   - slides,
+   - boards,
+   - chat.
+5. Validate the slimmer static/public-viewer rspack entrypoints in real browser
+   smokes so the size optimization is backed by confidence.
+6. Finish directory import/copy polish:
+   - browser-level validation of `Copy to my project`,
+   - directory-size communication,
+   - large-copy warnings,
+   - manifest-driven preview behavior.
+7. Implement and repeatedly test `Have Codex help publish this directory of
+files`.
+
+Exit criteria:
+
+1. Public Viewer is safe enough to expose broadly.
+2. The optimized viewer bundles are browser-tested, not just smaller on disk.
+3. Import/copy-back and publish-with-Codex flows are reliable enough for normal
+   users.
+
+### Phase D: App Platform Completeness
+
+This phase broadens the app platform now that the routing/public-viewer
+foundation is stable.
+
+Deliverables:
+
+1. Expand the curated template catalog substantially and keep it data-first.
+2. Increase `Install with Codex` coverage and post-install polish across more
+   images/templates.
+3. Add missing platform features that remove current sharp edges:
+   - SSH port-forward fallback,
+   - app portability workflows (CLI export/import/clone plus frontend follow-up),
+   - scoped per-app metrics in CLI/UI.
+4. Continue Apps page product polish:
+   - preset presentation,
+   - theme-aware visuals,
+   - advanced workflow clarity,
+   - better row details for errors/status/usage.
+5. Validate the broader template matrix in Launchpad before calling new
+   templates production-ready.
+
+Exit criteria:
+
+1. The Apps page covers the common app lifecycle without users dropping to ad
+   hoc workarounds.
+2. The main curated templates are actually tested, not just present in the UI.
+
+### Phase E: Agent, Docs, and Operator Follow-Through
+
+This phase makes the system teachable and maintainable.
+
+Deliverables:
+
+1. Add explicit agent/docs/skill guidance for:
+   - install,
+   - lifecycle,
+   - expose/audit,
+   - Public Viewer publishing,
+   - import/copy flows.
+2. Keep browser-QA reliability under active test in Lite and hub-backed mode so
+   agents can validate real user workflows reliably.
+3. Continue host-aware cost/egress work beyond warnings where needed.
+4. Extend static refresh policies and sandbox-ephemeral execution as needed for
+   generated-public-content workflows.
+5. Document the final hosted routing model and security assumptions in one
+   place, with app-server, http-proxy, and security docs all consistent.
+
+Exit criteria:
+
+1. Agents can reliably help users through the main apps/public-viewer flows.
+2. The docs describe the real system, not a stale design target.
+
+### Suggested Blocking Order
+
+If focus has to stay tight, the best order is:
+
+1. Phase A
+2. Phase B
+3. Phase C
+4. selected Phase D items that remove immediate user pain
+5. Phase E as the cross-cutting finish layer
+
+That order optimizes for correctness first, then the highest-leverage product
+improvement for the next project: making CoCalc-native static sharing easy.
 
 ## 19.3 MVP Metrics Plan
 
@@ -1785,7 +2004,7 @@ This is the strict minimum public model to launch confidently without over-build
 
 1. Private-by-default app proxy with centralized token/session auth.
 2. Public exposure requires explicit action, required TTL, and immediate revoke.
-3. Random subdomain default and clear warning copy.
+3. Hosted public URLs go directly to the owning project-host, with clear warning copy and no hub-in-the-middle traffic.
 4. Wake-on-demand with bounded startup timeout and clear error states.
 5. Static mode with cache presets for public content.
 6. Host-aware egress warning/guardrail for metered providers.
