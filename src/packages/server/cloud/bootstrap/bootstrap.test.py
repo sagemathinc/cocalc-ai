@@ -472,7 +472,10 @@ class BootstrapWrapperScriptTest(unittest.TestCase):
             self.assertIn(
                 (
                     "/etc/cron.d/cocalc-project-host",
-                    f"@reboot {cfg.ssh_user} /bin/bash -lc '{runtime_root}/bin/start-project-host'\n",
+                    (
+                        f"@reboot {cfg.ssh_user} /bin/bash -lc '{runtime_root}/bin/start-project-host'\n"
+                        f"* * * * * {cfg.ssh_user} /bin/bash -lc 'mountpoint -q /mnt/cocalc && {runtime_root}/bin/ctl ensure || true'\n"
+                    ),
                     "utf-8",
                 ),
                 writes,

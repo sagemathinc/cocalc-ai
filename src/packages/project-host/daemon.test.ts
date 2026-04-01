@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { stopDaemon } from "./daemon";
+import { __test__, ensureDaemon, stopDaemon } from "./daemon";
 
 describe("project-host daemon stop", () => {
   const originalEnv = { ...process.env };
@@ -180,5 +180,86 @@ describe("project-host daemon stop", () => {
     expect(killSpy).toHaveBeenCalledWith(111, "SIGTERM");
     expect(killSpy).toHaveBeenCalledWith(222, "SIGTERM");
     expect(fs.existsSync(pidPath)).toBe(false);
+  });
+
+  it("does nothing when the daemon is healthy", () => {
+    const dataDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "cocalc-project-host-daemon-"),
+    );
+    const pidPath = path.join(dataDir, "daemon.pid");
+    fs.writeFileSync(pidPath, "7373");
+    process.env.COCALC_DATA = dataDir;
+    process.env.PORT = "9002";
+
+    const killSpy = jest.spyOn(process, "kill").mockImplementation(((
+      pid: number,
+      signal?: NodeJS.Signals | number,
+    ) => {
+      expect(pid).toBe(7373);
+      if (signal === 0 || signal === undefined) {
+        return true;
+      }
+      throw new Error(`unexpected signal ${signal}`);
+    }) as typeof process.kill);
+    const healthSpy = jest
+      .spyOn(__test__.processRuntime, "spawnSync")
+      .mockReturnValue({ status: 0 } as any);
+    const logSpy = jest.spyOn(console, "log").mockImplementation(() => {});
+
+    ensureDaemon(0);
+
+    expect(healthSpy).toHaveBeenCalled();
+    expect(killSpy).toHaveBeenCalledWith(7373, 0);
+    expect(killSpy).not.toHaveBeenCalledWith(7373, "SIGTERM");
+    expect(logSpy).toHaveBeenCalledWith("project-host healthy (pid 7373)");
+  });
+
+  it("restarts the daemon when the pid is running but health checks fail", () => {
+    const dataDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "cocalc-project-host-daemon-"),
+    );
+    const pidPath = path.join(dataDir, "daemon.pid");
+    fs.writeFileSync(pidPath, "8484");
+    process.env.COCALC_DATA = dataDir;
+    process.env.PORT = "9002";
+    process.env.COCALC_PROJECT_HOST_DAEMON_STOP_TIMEOUT_MS = "20";
+    process.env.COCALC_PROJECT_HOST_DAEMON_STOP_POLL_MS = "1";
+
+    let running = true;
+    const killSpy = jest.spyOn(process, "kill").mockImplementation(((
+      pid: number,
+      signal?: NodeJS.Signals | number,
+    ) => {
+      if (signal === 0 || signal === undefined) {
+        if (pid === 8484 && running) {
+          return true;
+        }
+        throw new Error("not running");
+      }
+      if (pid === 8484 && signal === "SIGTERM") {
+        running = false;
+        return true;
+      }
+      throw new Error(`unexpected signal ${signal}`);
+    }) as typeof process.kill);
+    jest
+      .spyOn(__test__.processRuntime, "spawnSync")
+      .mockReturnValue({ status: 1 } as any);
+    const spawnSpy = jest
+      .spyOn(__test__.processRuntime, "spawn")
+      .mockReturnValue({ pid: 9494, unref: () => {} } as any);
+    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
+    const logSpy = jest.spyOn(console, "log").mockImplementation(() => {});
+
+    ensureDaemon(0);
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      "project-host pid 8484 is running but unhealthy; restarting.",
+    );
+    expect(killSpy).toHaveBeenCalledWith(8484, "SIGTERM");
+    expect(spawnSpy).toHaveBeenCalled();
+    expect(logSpy).toHaveBeenCalledWith(
+      "project-host started (pid 9494); log=" + path.join(dataDir, "log"),
+    );
   });
 });

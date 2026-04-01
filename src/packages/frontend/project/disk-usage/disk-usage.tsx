@@ -1,5 +1,6 @@
 import dust from "./dust";
 import getStorageHistory from "./storage-history";
+import getStorageOverview from "./storage-overview";
 import useDiskUsage, {
   type DiskUsageTree,
   type StorageVisibleSummary,
@@ -14,6 +15,7 @@ import {
   Space,
   Spin,
   Tag,
+  Tooltip,
   Typography,
 } from "antd";
 import ShowError from "@cocalc/frontend/components/error";
@@ -22,11 +24,12 @@ import type {
   ProjectStorageHistoryPoint,
 } from "@cocalc/conat/hub/api/projects";
 import { human_readable_size } from "@cocalc/util/misc";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "@cocalc/frontend/components";
 import { redux, useAsyncEffect } from "@cocalc/frontend/app-framework";
 import { dirname, posix } from "path";
 import { COLORS } from "@cocalc/util/theme";
+import { SNAPSHOTS } from "@cocalc/util/consts/snapshots";
 
 const { Text } = Typography;
 type VisibleBucketKey = StorageVisibleSummary["key"];
@@ -213,7 +216,16 @@ function collectHistorySeries(
     if (value == null || !Number.isFinite(value)) continue;
     result.push({ collected_at: point.collected_at, value });
   }
-  return result;
+  return result.sort((left, right) => {
+    const leftAt = Date.parse(left.collected_at);
+    const rightAt = Date.parse(right.collected_at);
+    if (Number.isFinite(leftAt) && Number.isFinite(rightAt)) {
+      return leftAt - rightAt;
+    }
+    if (Number.isFinite(leftAt)) return -1;
+    if (Number.isFinite(rightAt)) return 1;
+    return left.collected_at.localeCompare(right.collected_at);
+  });
 }
 
 function historyMetricAvailable(
@@ -223,14 +235,10 @@ function historyMetricAvailable(
   return collectHistorySeries(history, metric).length > 0;
 }
 
-function historyLinePoints(
-  values: number[],
-  width = 560,
-  height = 160,
-): string {
-  if (values.length === 0) return "";
+function chartYCoordinates(values: number[], height: number): number[] {
+  if (values.length === 0) return [];
   if (values.length === 1) {
-    return `0,${height / 2} ${width},${height / 2}`;
+    return [height / 2];
   }
   const min = Math.min(...values);
   const max = Math.max(...values);
@@ -238,10 +246,71 @@ function historyLinePoints(
     if (max === min) return height / 2;
     return height - ((value - min) / (max - min)) * (height - 12) - 6;
   };
-  const dx = width / (values.length - 1);
-  return values
-    .map((value, i) => `${(i * dx).toFixed(2)},${y(value).toFixed(2)}`)
+  return values.map((value) => y(value));
+}
+
+function chartXCoordinates(timestamps: number[], width = 560): number[] {
+  if (timestamps.length === 0) return [];
+  if (timestamps.length === 1) return [width / 2];
+  const valid = timestamps.filter((timestamp) => Number.isFinite(timestamp));
+  if (valid.length !== timestamps.length) {
+    return timestamps.map(
+      (_, i) => (i * width) / Math.max(1, timestamps.length - 1),
+    );
+  }
+  const min = Math.min(...valid);
+  const max = Math.max(...valid);
+  if (max <= min) {
+    return timestamps.map(
+      (_, i) => (i * width) / Math.max(1, timestamps.length - 1),
+    );
+  }
+  return timestamps.map(
+    (timestamp) => ((timestamp - min) / (max - min)) * width,
+  );
+}
+
+export function historyLineCoordinates(
+  points: HistorySeriesPoint[],
+  width = 560,
+  height = 160,
+): { x: number; y: number }[] {
+  if (points.length === 0) return [];
+  const xCoordinates = chartXCoordinates(
+    points.map((point) => Date.parse(point.collected_at)),
+    width,
+  );
+  const yCoordinates = chartYCoordinates(
+    points.map((point) => point.value),
+    height,
+  );
+  return points.map((_, i) => ({
+    x: xCoordinates[i],
+    y: yCoordinates[i],
+  }));
+}
+
+function historyLinePoints(coordinates: { x: number; y: number }[]): string {
+  return coordinates
+    .map((point) => `${point.x.toFixed(2)},${point.y.toFixed(2)}`)
     .join(" ");
+}
+
+export function nearestCoordinateIndex(
+  x: number,
+  coordinates: { x: number; y: number }[],
+): number | null {
+  if (coordinates.length === 0) return null;
+  let bestIndex = 0;
+  let bestDistance = Math.abs(coordinates[0].x - x);
+  for (let i = 1; i < coordinates.length; i += 1) {
+    const distance = Math.abs(coordinates[i].x - x);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestIndex = i;
+    }
+  }
+  return bestIndex;
 }
 
 function formatSignedSize(bytes: number): string {
@@ -274,6 +343,173 @@ function historyMetricColor(metric: StorageHistoryMetricKey): string {
     case "snapshots":
       return COLORS.ANTD_RED;
   }
+}
+
+function renderDrillError(
+  error: any,
+  setError?: (error: any) => void,
+): ReactNode {
+  if (!error) return null;
+  const message = `${error}`.replace(/Error:/g, "").trim();
+  if (/disk usage scan .* took too long/i.test(message)) {
+    return (
+      <Alert
+        closable={setError != null}
+        description={message}
+        message="Folder too large for a quick scan"
+        onClose={() => setError?.("")}
+        showIcon
+        style={{ marginBottom: "12px" }}
+        type="warning"
+      />
+    );
+  }
+  return <ShowError error={error} setError={setError} />;
+}
+
+function historyTooltip({
+  metric,
+  point,
+  quotaSizeBytes,
+}: {
+  metric: StorageHistoryMetricKey;
+  point: HistorySeriesPoint;
+  quotaSizeBytes?: number;
+}): ReactNode {
+  return (
+    <div>
+      <div style={{ fontWeight: 600 }}>{historyMetricLabel(metric)}</div>
+      <div>{human_readable_size(point.value)}</div>
+      {metric === "quota" &&
+        quotaSizeBytes != null &&
+        Number.isFinite(quotaSizeBytes) && (
+          <div>
+            {Math.round((100 * point.value) / Math.max(1, quotaSizeBytes))}% of{" "}
+            {human_readable_size(quotaSizeBytes)}
+          </div>
+        )}
+      <div>{new Date(point.collected_at).toLocaleString()}</div>
+    </div>
+  );
+}
+
+function HistorySparkline({
+  metric,
+  points,
+  quotaSizeBytes,
+}: {
+  metric: StorageHistoryMetricKey;
+  points: HistorySeriesPoint[];
+  quotaSizeBytes?: number;
+}) {
+  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
+  const chartWidth = 560;
+  const chartHeight = 160;
+  if (points.length < 2) return null;
+  const coordinates = historyLineCoordinates(points, chartWidth, chartHeight);
+  const hoveredPoint =
+    hoveredIndex != null ? coordinates[hoveredIndex] : undefined;
+  return (
+    <div
+      style={{
+        border: `1px solid ${COLORS.GRAY_LL}`,
+        borderRadius: "8px",
+        marginBottom: "12px",
+        padding: "14px",
+        position: "relative",
+        width: "100%",
+        cursor: "crosshair",
+      }}
+      onMouseLeave={() => setHoveredIndex(null)}
+      onMouseMove={(event) => {
+        const rect = event.currentTarget.getBoundingClientRect();
+        if (rect.width <= 0) return;
+        const relativeX = Math.max(
+          0,
+          Math.min(1, (event.clientX - rect.left) / rect.width),
+        );
+        setHoveredIndex(
+          nearestCoordinateIndex(relativeX * chartWidth, coordinates),
+        );
+      }}
+    >
+      <svg
+        aria-label={`${historyMetricLabel(metric)} history`}
+        height="160"
+        style={{ display: "block", width: "100%" }}
+        viewBox={`0 0 ${chartWidth} ${chartHeight}`}
+        preserveAspectRatio="none"
+      >
+        <polyline
+          fill="none"
+          points={historyLinePoints(coordinates)}
+          stroke={historyMetricColor(metric)}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth="3"
+        />
+        {hoveredPoint && (
+          <>
+            <line
+              x1={hoveredPoint.x}
+              x2={hoveredPoint.x}
+              y1={0}
+              y2={chartHeight}
+              stroke={historyMetricColor(metric)}
+              strokeOpacity="0.25"
+              strokeWidth="1"
+              strokeDasharray="3 3"
+            />
+            <circle
+              cx={hoveredPoint.x}
+              cy={hoveredPoint.y}
+              r="4"
+              fill={historyMetricColor(metric)}
+              stroke="white"
+              strokeWidth="1.5"
+            />
+          </>
+        )}
+      </svg>
+      <div
+        style={{
+          color: COLORS.GRAY_M,
+          display: "flex",
+          fontSize: "12px",
+          justifyContent: "space-between",
+          marginTop: "4px",
+        }}
+      >
+        <span>{new Date(points[0].collected_at).toLocaleString()}</span>
+        <span>
+          {new Date(points.at(-1)?.collected_at ?? "").toLocaleString()}
+        </span>
+      </div>
+      {hoveredPoint && hoveredIndex != null && (
+        <div
+          style={{
+            position: "absolute",
+            left: `${(hoveredPoint.x / chartWidth) * 100}%`,
+            top: `${(hoveredPoint.y / chartHeight) * 100}%`,
+            transform: "translate(-50%, -50%)",
+            pointerEvents: "none",
+          }}
+        >
+          <Tooltip
+            open
+            title={historyTooltip({
+              metric,
+              point: points[hoveredIndex],
+              quotaSizeBytes,
+            })}
+            placement="top"
+          >
+            <div style={{ width: 1, height: 1 }} />
+          </Tooltip>
+        </div>
+      )}
+    </div>
+  );
 }
 
 export default function DiskUsage({
@@ -315,6 +551,11 @@ export default function DiskUsage({
   const [historyCounter, setHistoryCounter] = useState<number>(0);
   const lastHistoryCounterRef = useRef<number>(0);
   const historyRequestKeyRef = useRef<string>("");
+  const [reloadPending, setReloadPending] = useState<boolean>(false);
+  const [reloadStatus, setReloadStatus] = useState<string>("");
+  const reloadStatusTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
   const prevExpandRef = useRef<boolean>(false);
   const quota = quotas[0] ?? null;
 
@@ -385,7 +626,7 @@ export default function DiskUsage({
     () => collectHistorySeries(history, historyMetric),
     [history, historyMetric],
   );
-  const historyValues = historySeries.map((point) => point.value);
+  const historyMetricPointCount = historySeries.length;
   const latestHistoryPoint = historySeries.at(-1);
   const firstHistoryPoint = historySeries[0];
   const historyDelta =
@@ -404,11 +645,6 @@ export default function DiskUsage({
             Date.parse(firstHistoryPoint.collected_at)) /
             (60 * 60 * 1000))
         : undefined;
-  const historyLine = useMemo(
-    () => historyLinePoints(historyValues),
-    [historyValues],
-  );
-
   useAsyncEffect(async () => {
     if (!expand || selectedBucket == null || selectedDrillPath == null) {
       setDrillUsage(null);
@@ -515,6 +751,15 @@ export default function DiskUsage({
     }
   }, [historyMetric, historyMetricOptions]);
 
+  useEffect(() => {
+    return () => {
+      if (reloadStatusTimeoutRef.current != null) {
+        clearTimeout(reloadStatusTimeoutRef.current);
+        reloadStatusTimeoutRef.current = null;
+      }
+    };
+  }, []);
+
   async function handleBrowsePath(path: string) {
     const actions = redux.getProjectActions(project_id);
     actions.set_current_path(path);
@@ -535,10 +780,43 @@ export default function DiskUsage({
     await handleBrowsePath(dirname(absolutePath));
   }
 
-  function handleReload() {
-    refresh();
-    setDrillCounter((prev) => prev + 1);
-    setHistoryCounter((prev) => prev + 1);
+  async function handleOpenSnapshots() {
+    const actions = redux.getProjectActions(project_id);
+    await actions.open_directory(SNAPSHOTS);
+    setExpand(false);
+  }
+
+  async function handleReload() {
+    if (reloadPending) return;
+    if (reloadStatusTimeoutRef.current != null) {
+      clearTimeout(reloadStatusTimeoutRef.current);
+      reloadStatusTimeoutRef.current = null;
+    }
+    setReloadPending(true);
+    setReloadStatus("");
+    try {
+      const homePath =
+        visible.find((bucket) => bucket.key === "home")?.path ?? "/root";
+      await getStorageOverview({
+        project_id,
+        home: homePath,
+        cache: false,
+        force_sample: true,
+      });
+      refresh();
+      setDrillCounter((prev) => prev + 1);
+      setHistoryCounter((prev) => prev + 1);
+      setReloadStatus("Updated just now.");
+      reloadStatusTimeoutRef.current = setTimeout(() => {
+        setReloadStatus("");
+        reloadStatusTimeoutRef.current = null;
+      }, 4000);
+    } catch (err) {
+      setError(err);
+      setReloadStatus("");
+    } finally {
+      setReloadPending(false);
+    }
   }
 
   const summary = (
@@ -637,6 +915,7 @@ export default function DiskUsage({
       {summary}
       {expand && (
         <Modal
+          closable={false}
           onOk={() => setExpand(false)}
           onCancel={() => setExpand(false)}
           open
@@ -646,15 +925,47 @@ export default function DiskUsage({
           {activePanel === "history" && (
             <ShowError error={historyError} setError={setHistoryError} />
           )}
-          <h5 style={{ marginTop: 0 }}>
-            <Icon name="disk-round" /> Project storage overview
-            <Button
-              onClick={() => handleReload()}
-              style={{ float: "right", marginRight: "30px" }}
+          <div
+            style={{
+              alignItems: "flex-start",
+              display: "flex",
+              gap: "16px",
+              justifyContent: "space-between",
+              marginBottom: "16px",
+            }}
+          >
+            <h5 style={{ margin: 0 }}>
+              <Icon name="disk-round" /> Project storage overview
+            </h5>
+            <div
+              style={{
+                alignItems: "flex-end",
+                display: "flex",
+                flexDirection: "column",
+                gap: "4px",
+              }}
             >
-              Reload
-            </Button>
-          </h5>
+              <div style={{ display: "flex", gap: "8px" }}>
+                <Button
+                  loading={reloadPending}
+                  onClick={() => void handleReload()}
+                >
+                  Reload
+                </Button>
+                <Button
+                  aria-label="Close storage overview"
+                  icon={<Icon name="times" />}
+                  onClick={() => setExpand(false)}
+                  type="text"
+                />
+              </div>
+              {reloadStatus ? (
+                <Text type="secondary" style={{ fontSize: "12px" }}>
+                  {reloadStatus}
+                </Text>
+              ) : null}
+            </div>
+          </div>
           <div style={{ marginBottom: "16px" }}>
             <Segmented
               options={[
@@ -696,7 +1007,8 @@ export default function DiskUsage({
               </div>
               <div style={{ color: COLORS.GRAY_M, marginBottom: "12px" }}>
                 Storage history is sampled when the backend refreshes project
-                storage overview data, so quiet projects may have gaps.
+                storage overview data, so quiet projects may have gaps. Reload
+                also forces a fresh sample immediately.
               </div>
               {historyLoading && history == null ? (
                 <div style={{ padding: "24px 0", textAlign: "center" }}>
@@ -756,54 +1068,18 @@ export default function DiskUsage({
                       description="Only one storage sample is available so far. Reopen this later after the project has been active for a while."
                     />
                   ) : (
-                    <div
-                      style={{
-                        border: `1px solid ${COLORS.GRAY_LL}`,
-                        borderRadius: "8px",
-                        marginBottom: "12px",
-                        padding: "14px",
-                      }}
-                    >
-                      <svg
-                        aria-label={`${historyMetricLabel(historyMetric)} history`}
-                        height="160"
-                        style={{ display: "block", width: "100%" }}
-                        viewBox="0 0 560 160"
-                      >
-                        <polyline
-                          fill="none"
-                          points={historyLine}
-                          stroke={historyMetricColor(historyMetric)}
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth="3"
-                        />
-                      </svg>
-                      <div
-                        style={{
-                          color: COLORS.GRAY_M,
-                          display: "flex",
-                          fontSize: "12px",
-                          justifyContent: "space-between",
-                          marginTop: "4px",
-                        }}
-                      >
-                        <span>
-                          {new Date(
-                            firstHistoryPoint?.collected_at ?? "",
-                          ).toLocaleString()}
-                        </span>
-                        <span>
-                          {new Date(
-                            latestHistoryPoint?.collected_at ?? "",
-                          ).toLocaleString()}
-                        </span>
-                      </div>
-                    </div>
+                    <HistorySparkline
+                      metric={historyMetric}
+                      points={historySeries}
+                      quotaSizeBytes={
+                        history.points.at(-1)?.quota_size_bytes ?? quota?.size
+                      }
+                    />
                   )}
-                  <div style={{ color: COLORS.GRAY_M }}>
-                    Showing {history.point_count} sampled points over{" "}
-                    {formatHistoryWindow(history.window_minutes)}.
+                  <div style={{ color: COLORS.GRAY_M, marginTop: "10px" }}>
+                    {historyMetricPointCount === history.point_count
+                      ? `Showing ${history.point_count} sampled points over ${formatHistoryWindow(history.window_minutes)}.`
+                      : `Showing ${historyMetricPointCount} ${historyMetricLabel(historyMetric).toLowerCase()} samples out of ${history.point_count} total storage samples over ${formatHistoryWindow(history.window_minutes)}.`}
                   </div>
                 </>
               )}
@@ -874,6 +1150,21 @@ export default function DiskUsage({
                       {bucket.detail ? (
                         <div style={{ color: COLORS.GRAY_M, marginTop: "4px" }}>
                           {bucket.detail}
+                        </div>
+                      ) : null}
+                      {bucket.key === "snapshots" ? (
+                        <div style={{ color: COLORS.GRAY_M, marginTop: "6px" }}>
+                          Delete snapshot folders under{" "}
+                          <code>~/.snapshots</code> in the usual way to free
+                          this space.{" "}
+                          <Button
+                            onClick={() => void handleOpenSnapshots()}
+                            size="small"
+                            style={{ padding: 0, height: "auto" }}
+                            type="link"
+                          >
+                            Open Snapshots
+                          </Button>
                         </div>
                       ) : null}
                     </div>
@@ -1021,7 +1312,7 @@ export default function DiskUsage({
                         description={drillSummaryAnnotation.detail}
                       />
                     )}
-                    <ShowError error={drillError} setError={setDrillError} />
+                    {renderDrillError(drillError, setDrillError)}
                     {drillLoading && drillUsage == null ? (
                       <div style={{ padding: "18px 0", textAlign: "center" }}>
                         <Spin />

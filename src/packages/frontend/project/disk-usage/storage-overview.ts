@@ -20,10 +20,12 @@ export default async function getStorageOverview({
   project_id,
   home,
   cache = true,
+  force_sample = false,
 }: {
   project_id: string;
   home: string;
   cache?: boolean;
+  force_sample?: boolean;
 }): Promise<ProjectStorageOverview> {
   const k = key({ project_id, home });
   if (cache && storageOverviewCache.has(k)) {
@@ -33,6 +35,7 @@ export default async function getStorageOverview({
     await webapp_client.conat_client.hub.projects.getStorageOverview({
       project_id,
       home,
+      force_sample,
     });
   storageOverviewCache.set(k, overview);
   return overview;

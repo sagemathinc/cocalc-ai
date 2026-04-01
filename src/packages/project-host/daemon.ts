@@ -1,8 +1,8 @@
-import { spawn } from "node:child_process";
+import * as childProcess from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
-type DaemonAction = "start" | "stop";
+type DaemonAction = "start" | "stop" | "ensure";
 
 type DaemonCommand = {
   action: DaemonAction;
@@ -10,6 +10,10 @@ type DaemonCommand = {
 };
 
 const DEFAULT_ENV_FILE = "/etc/cocalc/project-host.env";
+const processRuntime = {
+  spawn: childProcess.spawn,
+  spawnSync: childProcess.spawnSync,
+};
 
 function parseIndex(arg: string | undefined): number {
   if (arg == null) {
@@ -29,14 +33,14 @@ function parseDaemonArgs(args: string[]): DaemonCommand | null {
     return null;
   }
   const [first, second, third] = args;
-  if (first === "start" || first === "stop") {
+  if (first === "start" || first === "stop" || first === "ensure") {
     return { action: first, index: parseIndex(second) };
   }
   const daemonIndex = args.indexOf("daemon");
   if (daemonIndex >= 0) {
     const action = args[daemonIndex + 1];
     const indexArg = args[daemonIndex + 2];
-    if (action === "start" || action === "stop") {
+    if (action === "start" || action === "stop" || action === "ensure") {
       return { action, index: parseIndex(indexArg) };
     }
     if (action != null) {
@@ -48,7 +52,7 @@ function parseDaemonArgs(args: string[]): DaemonCommand | null {
     if (second == null) {
       return { action: "start", index: 0 };
     }
-    if (second === "start" || second === "stop") {
+    if (second === "start" || second === "stop" || second === "ensure") {
       return { action: second, index: parseIndex(third) };
     }
     return { action: "start", index: parseIndex(second) };
@@ -331,6 +335,52 @@ function waitForExit(pid: number, timeoutMs: number, pollMs: number): boolean {
   return !isRunning(pid);
 }
 
+function healthCheckUrl(
+  env: Record<string, string>,
+  httpPort?: number,
+): string {
+  const base = `${env.PROJECT_HOST_INTERNAL_URL ?? ""}`.trim();
+  if (base) {
+    return `${base.replace(/\/+$/, "")}/healthz`;
+  }
+  const host = `${env.HOST ?? ""}`.trim() || "127.0.0.1";
+  const port = httpPort ?? parsePort(env.PORT) ?? 9002;
+  return `http://${host}:${port}/healthz`;
+}
+
+function checkHealthSync(
+  env: Record<string, string>,
+  httpPort?: number,
+): boolean {
+  const url = healthCheckUrl(env, httpPort);
+  const timeoutSeconds = String(
+    getPositiveIntEnv("COCALC_PROJECT_HOST_DAEMON_HEALTH_TIMEOUT_SEC", 5),
+  );
+  const script = [
+    "import json, sys, urllib.request",
+    "url = sys.argv[1]",
+    "timeout = float(sys.argv[2])",
+    "with urllib.request.urlopen(url, timeout=timeout) as response:",
+    "    body = response.read().decode('utf-8', 'replace').strip()",
+    "    if response.status != 200:",
+    "        raise SystemExit(1)",
+    "    try:",
+    "        payload = json.loads(body) if body else {}",
+    "    except Exception:",
+    "        payload = {}",
+    "    if payload.get('ok') is False:",
+    "        raise SystemExit(1)",
+  ].join("\n");
+  const result = processRuntime.spawnSync(
+    "python3",
+    ["-c", script, url, timeoutSeconds],
+    {
+      stdio: "ignore",
+    },
+  );
+  return result.status === 0;
+}
+
 function terminatePids(pids: number[], label: string): number[] {
   const unique = [...new Set(pids)].filter(
     (pid) => Number.isInteger(pid) && pid > 0,
@@ -439,7 +489,7 @@ export function startDaemon(index = 0): void {
   }
   const root = path.join(__dirname, "..");
   const { command, args } = resolveExec(root);
-  const child = spawn(command, args, {
+  const child = processRuntime.spawn(command, args, {
     cwd: root,
     env,
     detached: true,
@@ -453,6 +503,38 @@ export function startDaemon(index = 0): void {
     // best effort
   }
   console.log(`project-host started (pid ${child.pid}); log=${logPath}`);
+}
+
+export function ensureDaemon(index = 0): void {
+  const { env, dataDir, pidPath, httpPort, sshPort } = resolveEnv(index);
+  const pid = fs.existsSync(pidPath)
+    ? Number(fs.readFileSync(pidPath, "utf8"))
+    : undefined;
+  if (pid && isRunning(pid)) {
+    if (checkHealthSync(env, httpPort)) {
+      console.log(`project-host healthy (pid ${pid})`);
+      return;
+    }
+    console.warn(
+      `project-host pid ${pid} is running but unhealthy; restarting.`,
+    );
+    stopDaemon(index);
+    startDaemon(index);
+    return;
+  }
+  if (fs.existsSync(pidPath)) {
+    console.warn(`project-host pid file is stale at ${pidPath}; recovering.`);
+  } else {
+    console.warn("project-host is not running; starting it.");
+  }
+  fs.rmSync(pidPath, { force: true });
+  const cleaned = cleanupStrayProcesses(dataDir, httpPort, sshPort);
+  if (cleaned > 0) {
+    console.warn(
+      `Stopped ${cleaned} stray project-host process(es) before restart.`,
+    );
+  }
+  startDaemon(index);
 }
 
 export function stopDaemon(index = 0): void {
@@ -512,15 +594,20 @@ export function handleDaemonCli(argv: string[]): boolean {
   }
   if (cmd.action === "start") {
     startDaemon(cmd.index);
-  } else {
+  } else if (cmd.action === "stop") {
     stopDaemon(cmd.index);
+  } else {
+    ensureDaemon(cmd.index);
   }
   return true;
 }
 
 export const __test__ = {
+  checkHealthSync,
   cleanupStrayProcesses,
+  healthCheckUrl,
   matchingProjectHostPids,
   matchingSshpiperdPids,
   parsePort,
+  processRuntime,
 };
