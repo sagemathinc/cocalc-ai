@@ -2,7 +2,8 @@
 
 Last refreshed: March 31, 2026
 
-Status: active plan; phases 1-2 are implemented, and phase 3 is in progress
+Status: active plan; phases 1-3 UX are implemented, and the backend
+overview/breakdown API migration is in progress
 
 This document is the working plan for replacing the current launchpad project
 disk-usage widget with a more accurate, useful, and performant storage UX.

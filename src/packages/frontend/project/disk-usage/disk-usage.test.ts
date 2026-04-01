@@ -10,7 +10,12 @@ function bucket(
     summaryLabel: "Home",
     path: "/home/user",
     summaryBytes: 100,
-    usage: { bytes: 100, children: [] },
+    usage: {
+      path: "/home/user",
+      bytes: 100,
+      children: [],
+      collected_at: "2026-03-31T12:00:00.000Z",
+    },
     ...overrides,
   };
 }
