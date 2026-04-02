@@ -185,6 +185,31 @@ export class ProjectsActions extends Actions<ProjectsState> {
     } as ProjectsState);
   };
 
+  private setProjectLocalSshKey = (
+    project_id: string,
+    account_id: string | undefined,
+    fingerprint: string,
+    value: {
+      title: string;
+      value: string;
+      creation_date: number;
+    } | null,
+  ): void => {
+    if (!account_id) return;
+    const project_map = store.get("project_map");
+    if (project_map == null || !project_map.has(project_id)) {
+      return;
+    }
+    const keyPath = [project_id, "users", account_id, "ssh_keys", fingerprint];
+    const nextProjectMap =
+      value == null
+        ? project_map.deleteIn(keyPath)
+        : project_map.setIn(keyPath, fromJS(value));
+    this.setState({
+      project_map: nextProjectMap,
+    } as ProjectsState);
+  };
+
   private updateProjectScalarField = async (
     project_id: string,
     field: "title" | "description" | "name",
@@ -330,13 +355,24 @@ export class ProjectsActions extends Actions<ProjectsState> {
     value: string;
   }): Promise<void> => {
     const { project_id } = opts;
+    const creation_date = Date.now();
     await webapp_client.conat_client.hub.projects.setProjectSshKey({
       project_id,
       fingerprint: opts.fingerprint,
       title: opts.title,
       value: opts.value,
-      creation_date: Date.now(),
+      creation_date,
     });
+    this.setProjectLocalSshKey(
+      project_id,
+      webapp_client.account_id,
+      opts.fingerprint,
+      {
+        title: opts.title,
+        value: opts.value,
+        creation_date,
+      },
+    );
     await this.updateAuthorizedKeys(project_id);
   };
 
@@ -349,6 +385,12 @@ export class ProjectsActions extends Actions<ProjectsState> {
       project_id,
       fingerprint: opts.fingerprint,
     });
+    this.setProjectLocalSshKey(
+      project_id,
+      webapp_client.account_id,
+      opts.fingerprint,
+      null,
+    );
     await this.updateAuthorizedKeys(project_id);
   };
 
