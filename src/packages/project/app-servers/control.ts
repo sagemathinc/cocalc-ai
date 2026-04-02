@@ -26,7 +26,12 @@ import {
   type AppSpecRecord,
   upsertAppSpec as upsertAppSpecRaw,
 } from "./specs";
-import type { AppStaticIntegrationSpec } from "./public-viewer";
+import {
+  COCALC_PUBLIC_VIEWER_MODE,
+  isLegacyPublicViewerBootstrapRefreshCommand,
+  syncPublicViewerManifest,
+  type AppStaticIntegrationSpec,
+} from "./public-viewer";
 import {
   appIdForRunningServicePort,
   clearRunningServicePort,
@@ -748,6 +753,38 @@ async function runStaticRefresh(
     state.last_error = undefined;
     state.stdout = Buffer.alloc(0);
     state.stderr = Buffer.alloc(0);
+    if (
+      spec.integration?.mode === COCALC_PUBLIC_VIEWER_MODE &&
+      isLegacyPublicViewerBootstrapRefreshCommand(refreshSpec.command)
+    ) {
+      try {
+        const synced = await syncPublicViewerManifest({
+          root: spec.static.root,
+          manifest: spec.integration.manifest,
+          fileTypes: spec.integration.file_types,
+          fallbackTitle: spec.title ?? "CoCalc Public Viewer",
+          fallbackDescription:
+            "Edit index.json to curate this public directory, or add index.html for a custom landing page.",
+        });
+        state.last_finished_ms = Date.now();
+        state.last_success_ms = Date.now();
+        state.stdout = Buffer.from(
+          `synced ${spec.integration.manifest} (${synced.entries.length} entries)\n`,
+          "utf8",
+        );
+        state.stderr = Buffer.alloc(0);
+        return;
+      } catch (err) {
+        state.last_finished_ms = Date.now();
+        state.last_error = `${err}`;
+        logger.warn("legacy public viewer manifest sync failed", {
+          id: spec.id,
+          reason,
+          err: `${err}`,
+        });
+        return;
+      }
+    }
     logger.debug("start static refresh", {
       id: spec.id,
       reason,

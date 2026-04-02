@@ -3,6 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { readdir, readFile, writeFile } from "node:fs/promises";
 import * as path from "node:path";
 
 export const COCALC_PUBLIC_VIEWER_MODE = "cocalc-public-viewer" as const;
@@ -35,6 +36,11 @@ export interface AppStaticPublicViewerIntegrationSpec {
 }
 
 export type AppStaticIntegrationSpec = AppStaticPublicViewerIntegrationSpec;
+
+interface AppStaticRefreshCommandLike {
+  exec?: string;
+  args?: string[];
+}
 
 export interface PublicViewerManifestTheme {
   layout?: string;
@@ -185,6 +191,18 @@ function normalizeRelativePath(value: string, context: string): string {
     throw new Error(`${context} must stay within the static root`);
   }
   return normalized;
+}
+
+function titleizePublicViewerEntry(entryPath: string): string {
+  const base = path.posix.basename(
+    entryPath,
+    path.posix.extname(entryPath) || undefined,
+  );
+  const text = base.replace(/[_-]+/g, " ").trim();
+  if (text === "") {
+    return entryPath;
+  }
+  return text.slice(0, 1).toUpperCase() + text.slice(1);
 }
 
 export function normalizePublicViewerManifestPath(input: unknown): string {
@@ -354,4 +372,106 @@ export function parsePublicViewerManifest(
     theme,
     entries,
   };
+}
+
+async function listVisiblePublicViewerFiles(
+  root: string,
+  relativeDir = "",
+): Promise<string[]> {
+  const entries = await readdir(path.join(root, relativeDir), {
+    withFileTypes: true,
+  });
+  entries.sort((a, b) => a.name.localeCompare(b.name));
+  const out: string[] = [];
+  for (const entry of entries) {
+    if (entry.name.startsWith(".")) continue;
+    const relativePath = relativeDir
+      ? path.posix.join(relativeDir, entry.name)
+      : entry.name;
+    if (entry.isDirectory()) {
+      out.push(...(await listVisiblePublicViewerFiles(root, relativePath)));
+      continue;
+    }
+    if (entry.isFile()) {
+      out.push(relativePath);
+    }
+  }
+  return out;
+}
+
+export function isLegacyPublicViewerBootstrapRefreshCommand(
+  command?: AppStaticRefreshCommandLike,
+): boolean {
+  if (`${command?.exec ?? ""}`.trim() !== "bash") return false;
+  const script = `${command?.args?.[1] ?? ""}`;
+  return (
+    script.includes("manifest.exists()") &&
+    script.includes("cocalc-public-viewer-index")
+  );
+}
+
+export async function syncPublicViewerManifest({
+  root,
+  manifest,
+  fileTypes,
+  fallbackTitle,
+  fallbackDescription,
+}: {
+  root: string;
+  manifest: string;
+  fileTypes?: string[];
+  fallbackTitle?: string;
+  fallbackDescription?: string;
+}): Promise<PublicViewerManifest> {
+  const manifestPath = normalizePublicViewerManifestPath(manifest);
+  const manifestFsPath = path.join(root, manifestPath);
+  let existing: PublicViewerManifest | undefined;
+  try {
+    existing = parsePublicViewerManifest(
+      await readFile(manifestFsPath, "utf8"),
+      {
+        file_types: fileTypes,
+      },
+    );
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException)?.code !== "ENOENT") {
+      throw err;
+    }
+  }
+
+  const existingEntries = new Map(
+    (existing?.entries ?? []).map((entry) => [entry.path, entry] as const),
+  );
+  const manifestSkip = new Set<string>([manifestPath, "index.html"]);
+  const files = (await listVisiblePublicViewerFiles(root)).filter(
+    (entryPath) => !manifestSkip.has(entryPath),
+  );
+
+  const next: PublicViewerManifest = {
+    version: 1,
+    kind: PUBLIC_VIEWER_MANIFEST_KIND,
+    title: existing?.title ?? asOptionalString(fallbackTitle),
+    description: existing?.description ?? asOptionalString(fallbackDescription),
+    theme: existing?.theme,
+    entries: files.map((entryPath) => {
+      const previous = existingEntries.get(entryPath);
+      const defaultRender = isPublicViewerRenderablePath(entryPath, {
+        file_types: fileTypes,
+      })
+        ? "viewer"
+        : "raw";
+      return {
+        path: entryPath,
+        title: previous?.title ?? titleizePublicViewerEntry(entryPath),
+        description: previous?.description,
+        type: previous?.type ?? inferPublicViewerEntryType(entryPath),
+        render: previous?.render ?? defaultRender,
+        order: previous?.order,
+        tags: previous?.tags,
+      };
+    }),
+  };
+
+  await writeFile(manifestFsPath, `${JSON.stringify(next, null, 2)}\n`, "utf8");
+  return next;
 }

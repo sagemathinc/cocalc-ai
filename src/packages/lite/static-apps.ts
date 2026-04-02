@@ -15,8 +15,12 @@ import type { AppStaticIntegrationSpec } from "@cocalc/project/app-servers/publi
 import {
   COCALC_PUBLIC_VIEWER_MODE,
   PUBLIC_VIEWER_DEFAULT_CACHE_MODE,
+  PUBLIC_VIEWER_DEFAULT_MANIFEST,
+  isLegacyPublicViewerBootstrapRefreshCommand,
   isPublicViewerRenderablePath,
+  normalizePublicViewerManifestPath,
   parsePublicViewerManifest,
+  syncPublicViewerManifest,
   type PublicViewerManifest,
   type PublicViewerManifestEntry,
 } from "@cocalc/project/app-servers/public-viewer";
@@ -35,6 +39,7 @@ const MAX_PUBLIC_VIEWER_MANIFEST_BYTES = 1 * 1024 * 1024;
 interface AppSpec {
   id: string;
   kind: "service" | "static";
+  title?: string;
   proxy?: { base_path?: string; strip_prefix?: boolean };
   static?: {
     root?: string;
@@ -314,6 +319,35 @@ function appendLimited(
     : merged;
 }
 
+function isPublicViewerManifestPath(
+  relativePath: string,
+  integration?: AppStaticIntegrationSpec,
+): boolean {
+  if (integration?.mode !== COCALC_PUBLIC_VIEWER_MODE) return false;
+  const manifestName = path.posix.basename(
+    normalizePublicViewerManifestPath(
+      integration.manifest ?? PUBLIC_VIEWER_DEFAULT_MANIFEST,
+    ),
+  );
+  return path.posix.basename(relativePath || "") === manifestName;
+}
+
+function resolvePublicViewerManifestCacheControl(
+  integration?: AppStaticIntegrationSpec,
+  fallback = STATIC_CACHE_CONTROL_DEFAULT,
+): string {
+  if (integration?.mode !== COCALC_PUBLIC_VIEWER_MODE) return fallback;
+  switch (integration.cache_mode ?? PUBLIC_VIEWER_DEFAULT_CACHE_MODE) {
+    case "live-editing":
+      return "no-store";
+    case "balanced":
+      return "max-age=0, must-revalidate";
+    case "published":
+    default:
+      return fallback;
+  }
+}
+
 function getStaticRefreshState(id: string): StaticRefreshState {
   if (!staticRefresh[id]) {
     staticRefresh[id] = {
@@ -349,6 +383,36 @@ async function runStaticRefresh(spec: AppSpec): Promise<void> {
     state.stdout = Buffer.alloc(0);
     state.stderr = Buffer.alloc(0);
     state.last_error = undefined;
+    if (
+      spec.integration?.mode === COCALC_PUBLIC_VIEWER_MODE &&
+      isLegacyPublicViewerBootstrapRefreshCommand(refresh?.command)
+    ) {
+      try {
+        const synced = await syncPublicViewerManifest({
+          root,
+          manifest: spec.integration.manifest,
+          fileTypes: spec.integration.file_types,
+          fallbackTitle: spec.title ?? "CoCalc Public Viewer",
+          fallbackDescription:
+            "Edit index.json to curate this public directory, or add index.html for a custom landing page.",
+        });
+        state.last_success_ms = Date.now();
+        state.last_error = undefined;
+        state.stdout = Buffer.from(
+          `synced ${spec.integration.manifest} (${synced.entries.length} entries)\n`,
+          "utf8",
+        );
+        state.stderr = Buffer.alloc(0);
+        return;
+      } catch (err) {
+        state.last_error = `${err}`;
+        logger.warn("lite legacy public viewer manifest sync failed", {
+          app_id: spec.id,
+          err: `${err}`,
+        });
+        return;
+      }
+    }
     const child = spawn(exec, args, {
       cwd,
       env,
@@ -589,6 +653,12 @@ export async function maybeHandleLiteStaticAppRequest({
   }
 
   if (resolvedStat.isFile()) {
+    const cacheControl = isPublicViewerManifestPath(relativePath, integration)
+      ? resolvePublicViewerManifestCacheControl(
+          integration,
+          match.spec.static?.cache_control,
+        )
+      : match.spec.static?.cache_control;
     if (
       integration?.mode === COCALC_PUBLIC_VIEWER_MODE &&
       isPublicViewerRenderablePath(relativePath, {
@@ -606,7 +676,7 @@ export async function maybeHandleLiteStaticAppRequest({
       res.redirect(location);
       return true;
     }
-    await streamFile(res, resolvedPath, match.spec.static?.cache_control);
+    await streamFile(res, resolvedPath, cacheControl);
     return true;
   }
 
@@ -680,6 +750,13 @@ export async function maybeHandleLiteStaticAppRequest({
     const manifest = parsePublicViewerManifest(raw, {
       file_types: integration.file_types,
     });
+    res.setHeader(
+      "Cache-Control",
+      resolvePublicViewerManifestCacheControl(
+        integration,
+        match.spec.static?.cache_control,
+      ),
+    );
     res
       .status(200)
       .type("text/html; charset=utf-8")

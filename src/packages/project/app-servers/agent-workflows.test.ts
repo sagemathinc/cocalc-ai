@@ -449,6 +449,78 @@ describe("app server agent workflows", () => {
     expect(readFileSync(indexPath, "utf8").trim()).toBe("refresh-2");
   });
 
+  test("manual refresh updates legacy public viewer manifests that already exist", async () => {
+    const id = appId("viewer-refresh-manual");
+    const root = mkdtempSync(join(testHome, "viewer-refresh-manual-"));
+    const manifestPath = join(root, "index.json");
+    writeFileSync(join(root, "a.ipynb"), "{}", "utf8");
+    writeFileSync(join(root, "b.md"), "# hello\n", "utf8");
+    writeFileSync(
+      manifestPath,
+      `${JSON.stringify(
+        {
+          version: 1,
+          kind: "cocalc-public-viewer-index",
+          title: "Custom Viewer",
+          entries: [
+            {
+              path: "a.ipynb",
+              title: "Notebook A",
+              render: "viewer",
+            },
+          ],
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+
+    await upsertAppSpec({
+      version: 1,
+      id,
+      kind: "static",
+      title: "Legacy Viewer Refresh",
+      static: {
+        root,
+        index: "index.html",
+        cache_control: "public, max-age=60",
+        refresh: {
+          command: {
+            exec: "bash",
+            args: [
+              "-lc",
+              `python3 - <<'PY'\nimport json\nimport os\nimport pathlib\nroot = pathlib.Path(os.environ["APP_STATIC_ROOT"]).resolve()\nmanifest = root / "index.json"\nif manifest.exists():\n    raise SystemExit(0)\nmanifest.write_text(json.dumps({"version": 1, "kind": "cocalc-public-viewer-index", "entries": []}, indent=2) + "\\n", encoding="utf-8")\nPY`,
+            ],
+          },
+          timeout_s: 10,
+          stale_after_s: 3600,
+          trigger_on_hit: true,
+        },
+      },
+      integration: {
+        mode: "cocalc-public-viewer",
+        file_types: [".md", ".ipynb", ".slides", ".board"],
+        manifest: "index.json",
+        auto_refresh_s: 0,
+        cache_mode: "balanced",
+        directory_listing: "manifest-only",
+      },
+      proxy: { base_path: `/apps/${id}`, strip_prefix: true, websocket: false },
+      wake: { enabled: false, keep_warm_s: 0, startup_timeout_s: 0 },
+    });
+
+    const status = await refreshApp(id);
+    expect(status.state).toBe("running");
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+    expect(manifest.title).toBe("Custom Viewer");
+    expect(manifest.entries.map((entry) => entry.path)).toEqual([
+      "a.ipynb",
+      "b.md",
+    ]);
+    expect(manifest.entries[0].title).toBe("Notebook A");
+  });
+
   test("failed service startup keeps stderr visible in app logs", async () => {
     const id = appId("start-fail");
     await upsertAppSpec({
