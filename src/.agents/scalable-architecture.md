@@ -224,6 +224,162 @@ It should *not* contain:
 - per-user browser changefeed fanout
 - project lifecycle state beyond placement pointers
 
+## `cocalc-cli` As A First-Class Control Plane Client
+
+The scalable architecture must treat `cocalc-cli` as a first-class operator and
+automation surface, not as an afterthought.
+
+This is important for:
+
+- human operations
+- scripting and automation
+- incident response
+- smoke tests
+- Codex-assisted operations
+
+The existing CLI in
+[src/packages/cli](/home/wstein/build/cocalc-lite4/src/packages/cli) already
+has broad support for project, host, snapshot, codex, and admin workflows. The
+cell architecture should extend that model rather than creating a separate
+operations surface that only exists in the web UI.
+
+### Design Rule
+
+Every important control-plane operation must be available through
+`cocalc-cli` with machine-readable output.
+
+That includes:
+
+- inspecting cells
+- placing and draining cells
+- viewing cell load/capacity
+- viewing home-cell and owning-cell mappings
+- moving projects between cells
+- checking backup and restore health
+- triggering or fencing restores
+- inspecting inter-cell replication lag
+- viewing host pools and host assignment by cell
+
+### Architectural Implication
+
+The control plane should expose stable API methods specifically designed to be
+consumed by:
+
+- the web frontend
+- `cocalc-cli`
+- Codex/agent workflows
+
+This means:
+
+- do not build cell administration only into ad-hoc web pages
+- do not require direct SQL access for routine operational tasks
+- do not require Kubernetes access for ordinary control-plane workflows
+
+Those may still exist for emergencies, but they must not be the primary
+operational interface.
+
+### Cell-Aware CLI Routing
+
+The CLI should follow the same routing model as the browser:
+
+- authenticate once
+- resolve account home cell and project owning cell through the directory
+- route commands to the correct cell automatically
+
+Examples:
+
+- `cocalc project open ...` should resolve the owning cell
+- `cocalc project move --cell <dest>` should route to the source owning cell and
+  destination owning cell as needed
+- `cocalc cell list` should talk to the global directory/control surface
+- `cocalc cell backup status <cell>` should route to the relevant cell
+
+This keeps CLI behavior aligned with the architecture and avoids hidden
+"special admin backdoors" that only work in one deployment mode.
+
+### Suggested Command Families
+
+The exact command names can evolve, but the architecture should assume command
+families like:
+
+- `cocalc cell list`
+- `cocalc cell show <cell-id>`
+- `cocalc cell create`
+- `cocalc cell cordon <cell-id>`
+- `cocalc cell drain <cell-id>`
+- `cocalc cell uncordon <cell-id>`
+- `cocalc cell load <cell-id>`
+- `cocalc cell backups <cell-id>`
+- `cocalc cell restore <cell-id>`
+- `cocalc project where <project-id>`
+- `cocalc project move --cell <dest-cell-id>`
+- `cocalc account where <account-id>`
+- `cocalc host list --cell <cell-id>`
+- `cocalc host show <host-id>`
+- `cocalc replication lag [--cell <cell-id>]`
+
+These commands should support:
+
+- human-readable output by default
+- `--json` or `--jsonl` for automation
+- stable exit codes
+
+### Credentials And Scopes
+
+The architecture should support CLI credentials with explicit scopes for:
+
+- account-level operations
+- org-level operations
+- admin/operator cell operations
+- backup/restore operations
+
+This is especially useful for Codex-assisted workflows, because it makes it
+possible to grant exact operational capabilities without handing out raw cloud
+credentials or database access.
+
+### Launchpad And Rocket Compatibility
+
+Launchpad should use the same CLI commands as Rocket.
+
+In one-cell mode:
+
+- `cocalc cell list` returns one cell
+- cell commands still work
+- backup and restore commands still work
+- routing logic collapses to local dispatch
+
+This is another reason that Launchpad should be treated as one-cell Rocket,
+since it ensures the operational surface is exercised continuously.
+
+### Backup And Restore Visibility
+
+Backup design is only operationally useful if it is visible through the CLI.
+
+At minimum, operators should be able to do things like:
+
+- view latest successful backup set for a cell
+- view WAL/archive freshness
+- list restore points
+- launch a fenced restore
+- inspect current restore state
+- verify whether a cell is safe to un-fence
+
+This must not require browsing R2 manually.
+
+### Why This Matters For Codex
+
+Codex and agent workflows are dramatically more useful when the primary
+operational surface is scriptable and typed.
+
+If the cell architecture is CLI-native, then Codex can:
+
+- inspect cell placement
+- reason about ownership and routing
+- view backup health
+- initiate or monitor safe operational workflows
+
+without requiring fragile browser-only automation.
+
 ## Global Tables
 
 These can live in a small global database.
