@@ -388,6 +388,9 @@ class BootstrapWrapperScriptTest(unittest.TestCase):
             self.assertIn("--userns=keep-id:uid=1000,gid=1000", script)
             self.assertIn('podman run --rm --network host --user 0:0', script)
             self.assertIn('--user 1000:1000', script)
+            self.assertIn("sudo su is not working for user", script)
+            self.assertIn('find "$dir" -xdev -type f', script)
+            self.assertIn("-e COCALC_RUNTIME_OWNER_UID='$podman_uid'", script)
             self.assertNotIn("su - \"$want_user\"", script)
             wrapper_path = Path(tmpdir) / "cocalc-runtime-storage"
             wrapper_path.write_text(script, encoding="utf-8")

@@ -115,11 +115,28 @@ export const extractBaseImage = reuseInFlight(async (image: string) => {
     const inspectPath = inspectFilePath(image);
     reportProgress({ progress: 0, desc: `checking for ${image}...` });
     if ((await exists(inspectPath)) && (await exists(baseImagePath))) {
-      requireCurrentRootfsNormalizationMetadata({
-        image,
-        metadataPath: normalizedPath,
-        metadata: await loadRootfsNormalizationMetadata(normalizedPath),
-      });
+      try {
+        requireCurrentRootfsNormalizationMetadata({
+          image,
+          metadataPath: normalizedPath,
+          metadata: await loadRootfsNormalizationMetadata(normalizedPath),
+        });
+      } catch (err) {
+        if (isManagedRootfsImageName(image)) {
+          throw err;
+        }
+        reportProgress({
+          progress: 2,
+          desc: `refreshing stale cached ${image}...`,
+        });
+        await cleanupImageCacheArtifacts([
+          baseImagePath,
+          inspectPath,
+          normalizedPath,
+        ]);
+      }
+    }
+    if ((await exists(inspectPath)) && (await exists(baseImagePath))) {
       reportProgress({ progress: 100, desc: `${image} available` });
       return baseImagePath;
     }

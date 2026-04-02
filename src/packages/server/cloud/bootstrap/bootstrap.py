@@ -36,7 +36,7 @@ from typing import Any
 
 STATE_SCHEMA_VERSION = 1
 HELPER_SCHEMA_VERSION = "20260330-v1"
-RUNTIME_WRAPPER_VERSION = "20260401-v2"
+RUNTIME_WRAPPER_VERSION = "20260401-v3"
 BOOTSTRAP_LOG_MAX_BYTES = 4 * 1024 * 1024
 BUNDLE_RETENTION_COUNT = 3
 
@@ -1480,7 +1480,7 @@ def remap(path: str) -> None:
 
 remap(rootfs)
 EOF_COCALC_REWRITE_ROOTFS_IDS
-    chmod 0755 "$rewrite_rootfs_ids_script"
+chmod 0755 "$rewrite_rootfs_ids_script"
     validate_runtime_user_script="$(cat <<'EOF_COCALC_VALIDATE_RUNTIME_USER'
 set -euo pipefail
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
@@ -1501,6 +1501,8 @@ fail() {
 [ "${HOME:-}" = "$want_home" ] || fail "rootfs contract failed: runtime HOME is not /home/user" 74
 command -v sudo >/dev/null 2>&1 || fail "rootfs contract failed: sudo is not installed" 75
 sudo -n true >/dev/null 2>&1 || fail "rootfs contract failed: passwordless sudo is not working for user" 76
+su_whoami="$(timeout 15s sudo -n su -c 'whoami' </dev/null 2>/dev/null || true)"
+[ "$su_whoami" = "root" ] || fail "rootfs contract failed: sudo su is not working for user" 78
 EOF_COCALC_VALIDATE_RUNTIME_USER
 )"
     cleanup_rewrite_script() {
@@ -1513,6 +1515,25 @@ EOF_COCALC_VALIDATE_RUNTIME_USER
     if [ -z "$podman_user" ]; then
       fail "rootfs contract failed: normalize-rootfs must be invoked via sudo from the rootless podman user" 77
     fi
+    podman_uid="$(id -u "$podman_user")"
+    podman_gid="$(id -g "$podman_user")"
+    fix_setid_runtime_helpers_script="$(cat <<'EOF_COCALC_FIX_SETID_RUNTIME_HELPERS'
+set -euo pipefail
+runtime_owner_uid="${COCALC_RUNTIME_OWNER_UID:?}"
+runtime_owner_gid="${COCALC_RUNTIME_OWNER_GID:?}"
+for dir in /bin /sbin /usr/bin /usr/sbin /usr/local/bin /usr/local/sbin /usr/libexec; do
+  [ -d "$dir" ] || continue
+  find "$dir" -xdev -type f '(' -perm -4000 -o -perm -2000 ')' \
+    -uid "$runtime_owner_uid" -gid "$runtime_owner_gid" -print0 |
+  while IFS= read -r -d '' path; do
+    mode="$(stat -c '%a' "$path")"
+    chown root:root "$path"
+    chmod "$mode" "$path"
+  done
+done
+EOF_COCALC_FIX_SETID_RUNTIME_HELPERS
+)"
+    fix_setid_runtime_helpers_escaped="$(printf '%q' "$fix_setid_runtime_helpers_script")"
     normalize_result="$(
       /usr/bin/podman run --rm --network host --user 0:0 --security-opt label=disable --rootfs "$rootfs" "$shell_path" -lc "$normalize_script"
     )"
@@ -1524,6 +1545,17 @@ EOF_COCALC_VALIDATE_RUNTIME_USER
       "1000" \
       "$rewrite_uid_map_file" \
       "$rewrite_gid_map_file"
+    /usr/bin/sudo -u "$podman_user" -H bash -lc "
+        cd ~ &&
+        /usr/bin/podman run --rm --network host \
+          --userns=keep-id:uid=1000,gid=1000 \
+          --user 0:0 \
+          --workdir / \
+          -e COCALC_RUNTIME_OWNER_UID='$podman_uid' \
+          -e COCALC_RUNTIME_OWNER_GID='$podman_gid' \
+          --security-opt label=disable \
+          --rootfs '$rootfs' '$shell_path' -lc $fix_setid_runtime_helpers_escaped
+      " >/dev/null
     printf '%s\n' "$validate_runtime_user_script" | \
       /usr/bin/sudo -u "$podman_user" -H bash -lc "
         cd ~ &&
