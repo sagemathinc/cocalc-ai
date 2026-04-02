@@ -30,11 +30,13 @@ import type {
   InstalledAppTemplate,
   ManagedAppStatus,
 } from "@cocalc/conat/project/api/apps";
+import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Paragraph } from "@cocalc/frontend/components";
 import ShowError from "@cocalc/frontend/components/error";
 import { Icon, type IconName } from "@cocalc/frontend/components/icon";
 import { TimeAgo } from "@cocalc/frontend/components/time-ago";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
+import DirectorySelector from "@cocalc/frontend/project/directory-selector";
 import {
   dispatchNavigatorPromptIntent,
   submitNavigatorPromptToCurrentThread,
@@ -44,6 +46,7 @@ import {
   resolveProjectHomeDirectory,
 } from "@cocalc/frontend/project/home-directory";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import { displayPath } from "@cocalc/util/path-model";
 import { COLORS } from "@cocalc/util/theme";
 import {
   appServerPresetsFromCatalogEntries,
@@ -51,6 +54,13 @@ import {
   type AppServerPreset,
   type AppServiceOpenMode,
 } from "./app-template-catalog";
+import {
+  inferStaticSharingFromDirectory,
+  suggestAppIdFromDirectory,
+  suggestStaticDirectoryFromProjectPath,
+  type StaticDirectoryInference,
+  type StaticSharingSuggestionKey,
+} from "./static-sharing-inference";
 import { withProjectHostBase } from "./host-url";
 
 type AppKind = "service" | "static";
@@ -81,6 +91,11 @@ interface InstallWithCodexTarget {
   templateDetails?: string;
   appId?: string;
   action?: "create" | "start" | "start-after-save";
+}
+
+interface StaticDirectoryInspectionState {
+  path: string;
+  inference: StaticDirectoryInference;
 }
 
 interface PortableAppSpecBundle {
@@ -814,11 +829,39 @@ function shouldAutoAdjustPublicViewerRefreshStaleAfter(value: string): boolean {
   );
 }
 
+function humanizeDirectoryName(path: string): string {
+  const leaf = `${path ?? ""}`
+    .replace(/\/+$/, "")
+    .split("/")
+    .filter(Boolean)
+    .pop();
+  if (!leaf) return "Public Content";
+  return leaf
+    .replace(/[-_.]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (ch) => ch.toUpperCase());
+}
+
 export function AppServerPanel({ project_id }: { project_id: string }) {
+  const currentPathAbs = useTypedRedux({ project_id }, "current_path_abs");
+  const explorerBrowsingPathAbs = useTypedRedux(
+    { project_id },
+    "explorer_browsing_path_abs",
+  );
   const [resolvedHomeDirectory, setResolvedHomeDirectory] = useState<string>(
     () => getProjectHomeDirectory(project_id),
   );
   const homeDirectory = resolvedHomeDirectory;
+  const suggestedStaticDirectory = useMemo(
+    () =>
+      suggestStaticDirectoryFromProjectPath(
+        `${explorerBrowsingPathAbs ?? currentPathAbs ?? ""}`.trim() ||
+          homeDirectory,
+        homeDirectory,
+      ),
+    [currentPathAbs, explorerBrowsingPathAbs, homeDirectory],
+  );
   const fallbackPresets = useMemo(
     () => builtinAppServerPresets(homeDirectory),
     [homeDirectory],
@@ -861,6 +904,17 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
   const [staticViewerCacheMode, setStaticViewerCacheMode] = useState<
     "live-editing" | "balanced" | "published"
   >("balanced");
+  const [staticDirectorySelectorOpen, setStaticDirectorySelectorOpen] =
+    useState<boolean>(false);
+  const [pendingStaticDirectory, setPendingStaticDirectory] =
+    useState<string>("");
+  const [staticDirectoryInspecting, setStaticDirectoryInspecting] =
+    useState<boolean>(false);
+  const [staticDirectoryInspection, setStaticDirectoryInspection] = useState<
+    StaticDirectoryInspectionState | undefined
+  >(undefined);
+  const [staticDirectoryInspectError, setStaticDirectoryInspectError] =
+    useState<string>("");
   const [startNow, setStartNow] = useState<boolean>(true);
   const [openWhenReady, setOpenWhenReady] = useState<boolean>(true);
   const [exposeTtlHours, setExposeTtlHours] = useState<string>("24");
@@ -1233,6 +1287,8 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
   function applyPreset(nextKey: string) {
     const preset = presets.find((x) => x.key === nextKey);
     if (!preset) return;
+    setStaticDirectoryInspection(undefined);
+    setStaticDirectoryInspectError("");
     setPresetKey(nextKey);
     setKind(preset.kind);
     setAppId(preset.id);
@@ -1296,6 +1352,105 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
     setStaticViewerCacheMode("balanced");
     setStartNow(true);
     setOpenWhenReady(true);
+    setStaticDirectoryInspection(undefined);
+    setStaticDirectoryInspectError("");
+  }
+
+  async function inspectStaticDirectory(nextPath?: string) {
+    const path = `${nextPath ?? staticRoot ?? ""}`.trim();
+    if (!path) {
+      setStaticDirectoryInspection(undefined);
+      setStaticDirectoryInspectError("");
+      return;
+    }
+    try {
+      setStaticDirectoryInspecting(true);
+      setStaticDirectoryInspectError("");
+      const { files } = await webapp_client.project_client.directory_listing({
+        project_id,
+        path,
+        hidden: false,
+      });
+      setStaticDirectoryInspection({
+        path,
+        inference: inferStaticSharingFromDirectory(files),
+      });
+    } catch (err) {
+      setStaticDirectoryInspection(undefined);
+      setStaticDirectoryInspectError(
+        normalizeError(err).message || "Unable to inspect directory.",
+      );
+    } finally {
+      setStaticDirectoryInspecting(false);
+    }
+  }
+
+  function applyStaticDirectorySuggestion(
+    suggestionKey: StaticSharingSuggestionKey,
+    inspectedPath: string,
+    inference?: StaticDirectoryInference,
+  ) {
+    const previousAppId = `${appId ?? ""}`.trim();
+    const previousTitle = `${title ?? ""}`.trim();
+    const previousBasePath = `${basePath ?? ""}`.trim();
+    const nextId = suggestAppIdFromDirectory(
+      inspectedPath,
+      suggestionKey === "generic-static" ? "public-site" : "public-viewer",
+    );
+    const nextTitle = humanizeDirectoryName(inspectedPath);
+    if (suggestionKey === "generic-static") {
+      setPresetKey("");
+      setKind("static");
+      if (!previousAppId || previousAppId === "cocalc-public-viewer") {
+        setAppId(nextId);
+        if (
+          !previousBasePath ||
+          previousBasePath === defaultBasePath(previousAppId)
+        ) {
+          setBasePath(defaultBasePath(nextId));
+        }
+      }
+      if (!previousTitle || previousTitle === "CoCalc Public Viewer") {
+        setTitle(nextTitle);
+      }
+      setStaticRoot(inspectedPath);
+      setStaticIndex(inference?.hasIndexHtml ? "index.html" : staticIndex);
+      setStaticRefreshCommand("");
+      setStaticRefreshStaleAfter("3600");
+      setStaticRefreshTimeout("120");
+      setStaticRefreshOnHit(false);
+      setStaticIntegrationMode("");
+      setStartNow(false);
+      setOpenWhenReady(false);
+      return;
+    }
+
+    const preset = presets.find((item) => item.key === suggestionKey);
+    if (!preset) return;
+    applyPreset(suggestionKey);
+    setStaticRoot(inspectedPath);
+    if (!previousAppId || previousAppId === preset.id) {
+      setAppId(nextId);
+      if (
+        !previousBasePath ||
+        previousBasePath === defaultBasePath(preset.id)
+      ) {
+        setBasePath(defaultBasePath(nextId));
+      }
+    }
+    if (!previousTitle || previousTitle === preset.title) {
+      setTitle(nextTitle);
+    }
+    if ((inference?.viewerFileTypes.length ?? 0) > 0) {
+      setStaticViewerFileTypes(inference?.viewerFileTypes.join(",") ?? "");
+    }
+  }
+
+  function openStaticDirectorySelector() {
+    setPendingStaticDirectory(
+      `${staticRoot ?? ""}`.trim() || suggestedStaticDirectory,
+    );
+    setStaticDirectorySelectorOpen(true);
   }
 
   function focusPresetSelector() {
@@ -2310,6 +2465,33 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
         }}
       />
       <ShowError error={error} setError={() => setError(undefined)} />
+      <Modal
+        open={staticDirectorySelectorOpen}
+        destroyOnHidden
+        width={860}
+        title="Choose Static Content Directory"
+        okText="Use this directory"
+        onOk={() => {
+          const next = `${pendingStaticDirectory ?? ""}`.trim();
+          if (!next) return;
+          setStaticRoot(next);
+          setStaticDirectoryInspection(undefined);
+          setStaticDirectoryInspectError("");
+          setStaticDirectorySelectorOpen(false);
+          void inspectStaticDirectory(next);
+        }}
+        onCancel={() => setStaticDirectorySelectorOpen(false)}
+      >
+        <DirectorySelector
+          project_id={project_id}
+          startingPath={pendingStaticDirectory || staticRoot || homeDirectory}
+          onSelect={(path) => setPendingStaticDirectory(path)}
+          style={{ width: "100%" }}
+          bodyStyle={{ maxHeight: 360 }}
+          closable={false}
+          allowAbsolutePaths
+        />
+      </Modal>
       <Card
         size="small"
         style={{ background: "#fafafa", borderColor: "#efefef" }}
@@ -2638,11 +2820,154 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                           style={{ width: "100%" }}
                           size={8}
                         >
-                          <Input
-                            value={staticRoot}
-                            placeholder="Static root path (e.g. /home/user/project/site)"
-                            onChange={(e) => setStaticRoot(e.target.value)}
-                          />
+                          <Space.Compact style={{ width: "100%" }}>
+                            <Input
+                              value={staticRoot}
+                              placeholder="Static root path (e.g. /home/user/project/site)"
+                              onChange={(e) => {
+                                setStaticRoot(e.target.value);
+                                setStaticDirectoryInspection(undefined);
+                                setStaticDirectoryInspectError("");
+                              }}
+                            />
+                            <Button
+                              onClick={() => {
+                                const next = suggestedStaticDirectory;
+                                setStaticRoot(next);
+                                setStaticDirectoryInspection(undefined);
+                                setStaticDirectoryInspectError("");
+                                void inspectStaticDirectory(next);
+                              }}
+                            >
+                              Current dir
+                            </Button>
+                            <Button onClick={openStaticDirectorySelector}>
+                              Browse...
+                            </Button>
+                            <Button
+                              loading={staticDirectoryInspecting}
+                              onClick={() => void inspectStaticDirectory()}
+                            >
+                              Inspect
+                            </Button>
+                          </Space.Compact>
+                          <Paragraph
+                            style={{
+                              color: "#666",
+                              margin: 0,
+                              fontSize: "12px",
+                            }}
+                          >
+                            Start with a directory, then inspect it to infer
+                            whether it looks like a static site or a CoCalc
+                            public-viewer directory. Current files path:{" "}
+                            <code>
+                              {displayPath(
+                                suggestedStaticDirectory,
+                                homeDirectory,
+                              )}
+                            </code>
+                          </Paragraph>
+                          {staticDirectoryInspectError ? (
+                            <Alert
+                              type="warning"
+                              showIcon
+                              title={staticDirectoryInspectError}
+                            />
+                          ) : null}
+                          {staticDirectoryInspection &&
+                          staticDirectoryInspection.path ===
+                            `${staticRoot ?? ""}`.trim() ? (
+                            <Alert
+                              type={
+                                staticDirectoryInspection.inference.suggestions
+                                  .length > 0
+                                  ? "info"
+                                  : "warning"
+                              }
+                              showIcon
+                              title={
+                                staticDirectoryInspection.inference
+                                  .suggestions[0]?.reason ??
+                                "No obvious static-sharing setup detected yet."
+                              }
+                              description={
+                                <Space
+                                  direction="vertical"
+                                  size={8}
+                                  style={{ width: "100%" }}
+                                >
+                                  <Space wrap>
+                                    <Tag>
+                                      {staticDirectoryInspection.inference
+                                        .fileCount === 1
+                                        ? "1 file"
+                                        : `${staticDirectoryInspection.inference.fileCount} files`}
+                                    </Tag>
+                                    <Tag>
+                                      {staticDirectoryInspection.inference
+                                        .directoryCount === 1
+                                        ? "1 subdirectory"
+                                        : `${staticDirectoryInspection.inference.directoryCount} subdirectories`}
+                                    </Tag>
+                                    {staticDirectoryInspection.inference
+                                      .hasIndexHtml ? (
+                                      <Tag color="blue">index.html</Tag>
+                                    ) : null}
+                                    {staticDirectoryInspection.inference
+                                      .hasManifest ? (
+                                      <Tag color="gold">index.json</Tag>
+                                    ) : null}
+                                    {staticDirectoryInspection.inference.viewerFileTypes.map(
+                                      (fileType) => (
+                                        <Tag key={fileType} color="purple">
+                                          {fileType}
+                                        </Tag>
+                                      ),
+                                    )}
+                                  </Space>
+                                  {staticDirectoryInspection.inference
+                                    .suggestions.length > 0 ? (
+                                    <Space wrap>
+                                      {staticDirectoryInspection.inference.suggestions.map(
+                                        (suggestion, idx) => (
+                                          <Button
+                                            key={suggestion.key}
+                                            type={
+                                              idx === 0 ? "primary" : "default"
+                                            }
+                                            onClick={() =>
+                                              applyStaticDirectorySuggestion(
+                                                suggestion.key,
+                                                staticDirectoryInspection.path,
+                                                staticDirectoryInspection.inference,
+                                              )
+                                            }
+                                          >
+                                            {suggestion.label}
+                                            {idx === 0 ? " (Recommended)" : ""}
+                                          </Button>
+                                        ),
+                                      )}
+                                    </Space>
+                                  ) : (
+                                    <Paragraph
+                                      style={{
+                                        color: "#666",
+                                        margin: 0,
+                                        fontSize: "12px",
+                                      }}
+                                    >
+                                      Add an <code>index.html</code> for a
+                                      generic static site, or add notebooks,
+                                      markdown, slides, or boards for CoCalc
+                                      Public Viewer mode.
+                                    </Paragraph>
+                                  )}
+                                </Space>
+                              }
+                            />
+                          ) : null}
                           <Space.Compact style={{ width: "100%" }}>
                             <Input
                               value={staticIndex}
