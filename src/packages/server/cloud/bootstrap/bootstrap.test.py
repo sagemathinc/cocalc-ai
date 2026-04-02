@@ -139,6 +139,52 @@ class BootstrapSizingTest(unittest.TestCase):
                 bootstrap.shutil.disk_usage = original_disk_usage
 
 
+class BootstrapRootfsOwnershipRemapTest(unittest.TestCase):
+    def test_remaps_extracted_root_uid_into_runtime_root_mapping(self) -> None:
+        ranges = [
+            (0, 1002, 1),
+            (1, 100000, 65536),
+            (65537, 231072, 65536),
+        ]
+        self.assertEqual(
+            bootstrap.remap_extracted_host_id_for_keep_id(1002, 1000, ranges),
+            100000,
+        )
+
+    def test_remaps_extracted_runtime_user_uid_into_keep_id_owner(self) -> None:
+        ranges = [
+            (0, 1002, 1),
+            (1, 100000, 65536),
+            (65537, 231072, 65536),
+        ]
+        self.assertEqual(
+            bootstrap.remap_extracted_host_id_for_keep_id(100999, 1000, ranges),
+            1002,
+        )
+
+    def test_preserves_high_ids_already_covered_by_the_current_userns_map(self) -> None:
+        ranges = [
+            (0, 1002, 1),
+            (1, 100000, 65536),
+            (65537, 231072, 65536),
+        ]
+        self.assertEqual(
+            bootstrap.remap_extracted_host_id_for_keep_id(266536, 1000, ranges),
+            266536,
+        )
+
+    def test_accepts_literal_namespace_ids_in_mixed_extracted_trees(self) -> None:
+        ranges = [
+            (0, 1002, 1),
+            (1, 100000, 65536),
+            (65537, 231072, 65536),
+        ]
+        self.assertEqual(
+            bootstrap.remap_extracted_host_id_for_keep_id(0, 1000, ranges),
+            100000,
+        )
+
+
 class BootstrapStateFilesTest(unittest.TestCase):
     def test_writes_split_state_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -389,8 +435,9 @@ class BootstrapWrapperScriptTest(unittest.TestCase):
             self.assertIn('podman run --rm --network host --user 0:0', script)
             self.assertIn('--user 1000:1000', script)
             self.assertIn("sudo su is not working for user", script)
-            self.assertIn('find "$dir" -xdev -type f', script)
-            self.assertIn("-e COCALC_RUNTIME_OWNER_UID='$podman_uid'", script)
+            self.assertIn("$validate_runtime_user_escaped", script)
+            self.assertNotIn('find "$dir" -xdev -type f', script)
+            self.assertNotIn("COCALC_RUNTIME_OWNER_UID", script)
             self.assertNotIn("su - \"$want_user\"", script)
             wrapper_path = Path(tmpdir) / "cocalc-runtime-storage"
             wrapper_path.write_text(script, encoding="utf-8")

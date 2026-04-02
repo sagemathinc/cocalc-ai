@@ -694,6 +694,57 @@ def ensure_subuids(cfg: BootstrapConfig) -> None:
     run_best_effort(cfg, ["usermod", "--add-subuids", "100000-165535", "--add-subgids", "100000-165535", cfg.ssh_user], "usermod subuids")
 
 
+def namespace_id_to_host_id(
+    identifier: int, ranges: list[tuple[int, int, int]]
+) -> int:
+    for ns_start, host_start, length in ranges:
+        if ns_start <= identifier < ns_start + length:
+            return host_start + (identifier - ns_start)
+    raise RuntimeError(f"id {identifier} is not covered by the rootless podman map")
+
+
+def host_id_to_namespace_id(
+    identifier: int, ranges: list[tuple[int, int, int]]
+) -> int:
+    for ns_start, host_start, length in ranges:
+        if host_start <= identifier < host_start + length:
+            return ns_start + (identifier - host_start)
+    raise RuntimeError(f"id {identifier} is not covered by the current rootless podman host map")
+
+
+def map_keep_id_namespace_id(identifier: int, runtime_id: int) -> int:
+    if identifier < 0:
+        return identifier
+    if identifier < runtime_id:
+        return identifier + 1
+    if identifier == runtime_id:
+        return 0
+    return identifier
+
+
+def extracted_id_to_namespace_id(
+    identifier: int, ranges: list[tuple[int, int, int]]
+) -> int:
+    try:
+        return host_id_to_namespace_id(identifier, ranges)
+    except RuntimeError:
+        # Extracted trees can be mixed: most entries come from the current
+        # rootless podman host mapping, but some still carry literal
+        # namespace/container ids (for example root-owned paths as uid 0).
+        return identifier
+
+
+def remap_extracted_host_id_for_keep_id(
+    identifier: int, runtime_id: int, ranges: list[tuple[int, int, int]]
+) -> int:
+    return namespace_id_to_host_id(
+        map_keep_id_namespace_id(
+            extracted_id_to_namespace_id(identifier, ranges), runtime_id
+        ),
+        ranges,
+    )
+
+
 def enable_linger(cfg: BootstrapConfig) -> None:
     log_line(cfg, f"bootstrap: enabling linger for {cfg.ssh_user}")
     if shutil.which("loginctl") is None:
@@ -1450,6 +1501,18 @@ def map_keep_id(identifier: int, runtime_id: int) -> int:
         return 0
     return identifier
 
+def host_to_intermediate(identifier: int, ranges: list[tuple[int, int, int]]) -> int:
+    for ns_start, host_start, length in ranges:
+        if host_start <= identifier < host_start + length:
+            return ns_start + (identifier - host_start)
+    raise RuntimeError(f"id {identifier} is not covered by the current rootless podman host map")
+
+def extracted_to_intermediate(identifier: int, ranges: list[tuple[int, int, int]]) -> int:
+    try:
+        return host_to_intermediate(identifier, ranges)
+    except RuntimeError:
+        return identifier
+
 def intermediate_to_host(identifier: int, ranges: list[tuple[int, int, int]]) -> int:
     for ns_start, host_start, length in ranges:
         if ns_start <= identifier < ns_start + length:
@@ -1459,11 +1522,11 @@ def intermediate_to_host(identifier: int, ranges: list[tuple[int, int, int]]) ->
 def remap(path: str) -> None:
     st = os.lstat(path)
     mapped_uid = intermediate_to_host(
-        map_keep_id(st.st_uid, runtime_uid),
+        map_keep_id(extracted_to_intermediate(st.st_uid, uid_ranges), runtime_uid),
         uid_ranges,
     )
     mapped_gid = intermediate_to_host(
-        map_keep_id(st.st_gid, runtime_gid),
+        map_keep_id(extracted_to_intermediate(st.st_gid, gid_ranges), runtime_gid),
         gid_ranges,
     )
     if mapped_uid == st.st_uid and mapped_gid == st.st_gid:
@@ -1515,25 +1578,7 @@ EOF_COCALC_VALIDATE_RUNTIME_USER
     if [ -z "$podman_user" ]; then
       fail "rootfs contract failed: normalize-rootfs must be invoked via sudo from the rootless podman user" 77
     fi
-    podman_uid="$(id -u "$podman_user")"
-    podman_gid="$(id -g "$podman_user")"
-    fix_setid_runtime_helpers_script="$(cat <<'EOF_COCALC_FIX_SETID_RUNTIME_HELPERS'
-set -euo pipefail
-runtime_owner_uid="${COCALC_RUNTIME_OWNER_UID:?}"
-runtime_owner_gid="${COCALC_RUNTIME_OWNER_GID:?}"
-for dir in /bin /sbin /usr/bin /usr/sbin /usr/local/bin /usr/local/sbin /usr/libexec; do
-  [ -d "$dir" ] || continue
-  find "$dir" -xdev -type f '(' -perm -4000 -o -perm -2000 ')' \
-    -uid "$runtime_owner_uid" -gid "$runtime_owner_gid" -print0 |
-  while IFS= read -r -d '' path; do
-    mode="$(stat -c '%a' "$path")"
-    chown root:root "$path"
-    chmod "$mode" "$path"
-  done
-done
-EOF_COCALC_FIX_SETID_RUNTIME_HELPERS
-)"
-    fix_setid_runtime_helpers_escaped="$(printf '%q' "$fix_setid_runtime_helpers_script")"
+    validate_runtime_user_escaped="$(printf '%q' "$validate_runtime_user_script")"
     normalize_result="$(
       /usr/bin/podman run --rm --network host --user 0:0 --security-opt label=disable --rootfs "$rootfs" "$shell_path" -lc "$normalize_script"
     )"
@@ -1549,25 +1594,13 @@ EOF_COCALC_FIX_SETID_RUNTIME_HELPERS
         cd ~ &&
         /usr/bin/podman run --rm --network host \
           --userns=keep-id:uid=1000,gid=1000 \
-          --user 0:0 \
-          --workdir / \
-          -e COCALC_RUNTIME_OWNER_UID='$podman_uid' \
-          -e COCALC_RUNTIME_OWNER_GID='$podman_gid' \
-          --security-opt label=disable \
-          --rootfs '$rootfs' '$shell_path' -lc $fix_setid_runtime_helpers_escaped
-      " >/dev/null
-    printf '%s\n' "$validate_runtime_user_script" | \
-      /usr/bin/sudo -u "$podman_user" -H bash -lc "
-        cd ~ &&
-        /usr/bin/podman run --rm --network host \
-          --userns=keep-id:uid=1000,gid=1000 \
           --user 1000:1000 \
           --workdir /home/user \
           -e HOME=/home/user \
           -e USER=user \
           -e LOGNAME=user \
           --security-opt label=disable \
-          --rootfs '$rootfs' '$shell_path' -s
+          --rootfs '$rootfs' '$shell_path' -lc $validate_runtime_user_escaped
       " >/dev/null
     trap - EXIT
     cleanup_rewrite_script
