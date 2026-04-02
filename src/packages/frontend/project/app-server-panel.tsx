@@ -39,7 +39,10 @@ import {
   dispatchNavigatorPromptIntent,
   submitNavigatorPromptToCurrentThread,
 } from "@cocalc/frontend/project/new/navigator-intents";
-import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
+import {
+  getProjectHomeDirectory,
+  resolveProjectHomeDirectory,
+} from "@cocalc/frontend/project/home-directory";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { COLORS } from "@cocalc/util/theme";
 import {
@@ -792,10 +795,10 @@ function parseViewerFileTypes(value: string): string[] {
 }
 
 export function AppServerPanel({ project_id }: { project_id: string }) {
-  const homeDirectory = useMemo(
+  const [resolvedHomeDirectory, setResolvedHomeDirectory] = useState<string>(
     () => getProjectHomeDirectory(project_id),
-    [project_id],
   );
+  const homeDirectory = resolvedHomeDirectory;
   const fallbackPresets = useMemo(
     () => builtinAppServerPresets(homeDirectory),
     [homeDirectory],
@@ -1087,6 +1090,19 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
     () => presets.filter((preset) => quickPresetKeys.includes(preset.key)),
     [presets, quickPresetKeys],
   );
+
+  useEffect(() => {
+    let cancelled = false;
+    void resolveProjectHomeDirectory(project_id).then((nextHome) => {
+      if (cancelled) return;
+      if (nextHome && nextHome !== resolvedHomeDirectory) {
+        setResolvedHomeDirectory(nextHome);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [project_id, resolvedHomeDirectory]);
 
   useEffect(() => {
     let cancelled = false;
