@@ -12,6 +12,7 @@ import type { Request, Response } from "express";
 import getLogger from "@cocalc/backend/logger";
 import { project_id } from "@cocalc/project/data";
 import type { AppStaticIntegrationSpec } from "@cocalc/project/app-servers/public-viewer";
+import { projectRuntimeHomeRelativePath } from "@cocalc/util/project-runtime";
 import {
   COCALC_PUBLIC_VIEWER_MODE,
   PUBLIC_VIEWER_DEFAULT_CACHE_MODE,
@@ -288,8 +289,9 @@ function resolveStaticRoot(root?: string): string | undefined {
   const trimmed = `${root ?? ""}`.trim();
   if (!trimmed) return;
   const home = `${process.env.HOME ?? ""}`.trim();
-  if (home && (trimmed === "/root" || trimmed.startsWith("/root/"))) {
-    return path.join(home, path.posix.relative("/root", trimmed));
+  const runtimeRelative = projectRuntimeHomeRelativePath(trimmed);
+  if (home && runtimeRelative != null) {
+    return runtimeRelative ? path.join(home, runtimeRelative) : home;
   }
   return path.isAbsolute(trimmed)
     ? path.normalize(trimmed)

@@ -66,7 +66,11 @@ import {
   type RootfsUploadedArtifactResult,
 } from "@cocalc/util/rootfs-images";
 import { init as initSshServer } from "@cocalc/project-proxy/ssh-server";
-import { DEFAULT_PROJECT_RUNTIME_USER } from "@cocalc/util/project-runtime";
+import {
+  DEFAULT_PROJECT_RUNTIME_HOME,
+  DEFAULT_PROJECT_RUNTIME_USER,
+  projectRuntimeHomeRelativePath,
+} from "@cocalc/util/project-runtime";
 import { type MutagenSyncSession } from "@cocalc/conat/project/mutagen/types";
 import { fsServer, DEFAULT_FILE_SERVICE } from "@cocalc/conat/files/fs";
 import { SandboxedFilesystem } from "@cocalc/backend/sandbox";
@@ -962,11 +966,12 @@ function isSubPath(parent: string, child: string): boolean {
 
 function normalizeProjectRelativePath(rawPath: string): string {
   const normalized = path.posix.normalize(rawPath.replace(/\\/g, "/"));
-  if (normalized === "." || normalized === "/" || normalized === "/root") {
+  if (normalized === "." || normalized === "/") {
     return "";
   }
-  if (normalized.startsWith("/root/")) {
-    return path.posix.relative("/root", normalized);
+  const runtimeRelative = projectRuntimeHomeRelativePath(normalized);
+  if (runtimeRelative != null) {
+    return runtimeRelative;
   }
   return normalized.replace(/^\/+/, "");
 }
@@ -1210,8 +1215,9 @@ export async function resolveRusticRepo(project_id?: string): Promise<string> {
   return profilePath;
 }
 
-// Map a container path (relative to /root) to an absolute host path inside the
-// project's btrfs subvolume. Throws if the path escapes the project root.
+// Map a container path (relative to the runtime home) to an absolute host path
+// inside the project's btrfs subvolume. Throws if the path escapes the project
+// root or if an absolute path is outside the runtime home.
 // Returns both the resolved path and the project base for additional checks.
 function projectHostPath(
   project_id: string,
@@ -1219,9 +1225,15 @@ function projectHostPath(
 ): { hostPath: string; base: string } {
   // absolute host path to project root
   const base = projectMountpoint(project_id);
-  const rel = path.posix.isAbsolute(containerPath)
-    ? path.posix.relative("/root", containerPath)
-    : containerPath;
+  const runtimeRelative = path.posix.isAbsolute(containerPath)
+    ? projectRuntimeHomeRelativePath(containerPath)
+    : undefined;
+  if (path.posix.isAbsolute(containerPath) && runtimeRelative == null) {
+    throw Error(
+      `container path must be within project runtime home (${DEFAULT_PROJECT_RUNTIME_HOME}): ${containerPath}`,
+    );
+  }
+  const rel = runtimeRelative ?? containerPath;
   const joined = path.normalize(path.join(base, rel));
   if (!joined.startsWith(base)) {
     throw Error(`path escapes project root: ${containerPath}`);
@@ -2621,9 +2633,10 @@ async function restoreBackup({
 
   if (destPath && path.isAbsolute(destPath)) {
     const containerDest = path.posix.normalize(destPath);
-    if (containerDest === "/root" || containerDest.startsWith("/root/")) {
+    const runtimeRelative = projectRuntimeHomeRelativePath(containerDest);
+    if (runtimeRelative != null) {
       root = home;
-      relDest = path.posix.relative("/root", containerDest);
+      relDest = runtimeRelative;
     } else if (
       containerDest === "/scratch" ||
       containerDest.startsWith("/scratch/")

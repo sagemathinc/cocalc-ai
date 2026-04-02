@@ -101,11 +101,20 @@ describe("CodexExecAgent pre-content path heuristics", () => {
     ).resolves.toBeNull();
   });
 
-  it("maps /root and /scratch paths to host mounts in project-host mode", async () => {
+  it("maps runtime-home aliases and /scratch paths to host mounts in project-host mode", async () => {
     const statSpy = jest.spyOn(fs, "stat").mockResolvedValue({
       isFile: () => true,
       size: 123,
     } as any);
+    await expect(
+      (agent as any).statRegularFile("/home/user/work/foo.tex", {
+        containerPathMap: {
+          rootHostPath: "/host/home",
+          scratchHostPath: "/host/scratch",
+        },
+      }),
+    ).resolves.toEqual({ size: 123 });
+    expect(statSpy).toHaveBeenCalledWith("/host/home/work/foo.tex");
     await expect(
       (agent as any).statRegularFile("/root/work/foo.tex", {
         containerPathMap: {

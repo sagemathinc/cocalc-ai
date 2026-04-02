@@ -116,7 +116,7 @@ describe("static app serving", () => {
       req: makeRequest("/hello.txt"),
       res: res as unknown as http.ServerResponse,
       project_id,
-      match: makeMatch("/root/public", "/hello.txt"),
+      match: makeMatch("/home/user/public", "/hello.txt"),
     });
 
     expect(handled).toBe(true);

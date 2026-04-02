@@ -28,6 +28,7 @@ import { brotliCompressSync, brotliDecompressSync } from "node:zlib";
 import getLogger from "@cocalc/backend/logger";
 import { computeLineDiff } from "@cocalc/util/line-diff";
 import { argsJoin } from "@cocalc/util/args";
+import { projectRuntimeHomeRelativePath } from "@cocalc/util/project-runtime";
 import LRUCache from "lru-cache";
 import type { CodexSessionConfig } from "@cocalc/util/ai/codex";
 import {
@@ -1586,11 +1587,11 @@ export class CodexExecAgent implements AcpAgent {
   ): string | undefined {
     if (!containerPathMap) return pathAbs;
     const normalized = path.posix.normalize(pathAbs);
-    if (normalized === "/root" || normalized.startsWith("/root/")) {
+    const runtimeRelative = projectRuntimeHomeRelativePath(normalized);
+    if (runtimeRelative != null) {
       if (!containerPathMap.rootHostPath) return undefined;
-      const suffix = normalized.slice("/root".length).replace(/^\/+/, "");
-      return suffix
-        ? path.join(containerPathMap.rootHostPath, suffix)
+      return runtimeRelative
+        ? path.join(containerPathMap.rootHostPath, runtimeRelative)
         : containerPathMap.rootHostPath;
     }
     if (normalized === "/scratch" || normalized.startsWith("/scratch/")) {

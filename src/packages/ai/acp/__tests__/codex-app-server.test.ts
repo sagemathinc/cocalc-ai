@@ -1513,7 +1513,7 @@ describe("CodexAppServerAgent", () => {
         proc: proc as any,
         cmd: "fake-codex",
         args: ["app-server"],
-        cwd: "/root",
+        cwd: "/home/user",
         authSource: "site-api-key",
         containerPathMap: {
           rootHostPath,
@@ -1537,7 +1537,7 @@ describe("CodexAppServerAgent", () => {
           project_id: "00000000-0000-4000-8000-000000000000",
         } as any,
         config: {
-          workingDirectory: "/root",
+          workingDirectory: "/home/user",
           model: "gpt-5.4",
         } as any,
       });
@@ -1655,7 +1655,7 @@ describe("CodexAppServerAgent", () => {
         proc: proc as any,
         cmd: "fake-codex",
         args: ["app-server"],
-        cwd: "/root",
+        cwd: "/home/user",
         containerPathMap: {
           rootHostPath,
         },
@@ -1677,7 +1677,7 @@ describe("CodexAppServerAgent", () => {
           if (payload) streamPayloads.push(payload);
         },
         config: {
-          workingDirectory: "/root",
+          workingDirectory: "/home/user",
         } as any,
       });
 

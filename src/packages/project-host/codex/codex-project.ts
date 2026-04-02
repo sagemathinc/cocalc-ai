@@ -12,6 +12,7 @@ import {
   DEFAULT_PROJECT_RUNTIME_HOME,
   DEFAULT_PROJECT_RUNTIME_UID,
   DEFAULT_PROJECT_RUNTIME_USER,
+  projectRuntimeHomeRelativePath,
 } from "@cocalc/util/project-runtime";
 import type {
   CodexAppServerLoginHint,
@@ -169,9 +170,11 @@ function normalizeProjectRuntimePath(pathValue?: string): string {
 function normalizeProjectRuntimeCwd(cwd?: string): string {
   const trimmed = `${cwd ?? ""}`.trim();
   if (!trimmed) return PROJECT_RUNTIME_HOME;
-  if (trimmed === "/root") return PROJECT_RUNTIME_HOME;
-  if (trimmed.startsWith("/root/")) {
-    return join(PROJECT_RUNTIME_HOME, trimmed.slice("/root/".length));
+  const runtimeRelative = projectRuntimeHomeRelativePath(trimmed);
+  if (runtimeRelative != null) {
+    return runtimeRelative
+      ? join(PROJECT_RUNTIME_HOME, runtimeRelative)
+      : PROJECT_RUNTIME_HOME;
   }
   if (trimmed.startsWith("/")) return trimmed;
   return join(PROJECT_RUNTIME_HOME, trimmed);

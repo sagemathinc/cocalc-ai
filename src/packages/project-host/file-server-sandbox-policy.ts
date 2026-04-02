@@ -1,7 +1,5 @@
 import { SandboxedFilesystem } from "@cocalc/backend/sandbox";
-import { DEFAULT_PROJECT_RUNTIME_HOME } from "@cocalc/util/project-runtime";
-
-const LEGACY_PROJECT_RUNTIME_HOME = "/root";
+import { PROJECT_RUNTIME_HOME_ALIASES } from "@cocalc/util/project-runtime";
 
 export function createProjectSandboxFilesystem({
   project_id,
@@ -18,6 +16,6 @@ export function createProjectSandboxFilesystem({
     host: project_id,
     rootfs,
     scratch,
-    homeAliases: [DEFAULT_PROJECT_RUNTIME_HOME, LEGACY_PROJECT_RUNTIME_HOME],
+    homeAliases: [...PROJECT_RUNTIME_HOME_ALIASES],
   });
 }

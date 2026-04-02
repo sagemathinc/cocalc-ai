@@ -14,9 +14,16 @@ describe("resolveWorkspaceRoot", () => {
 
     it("uses the provided container working dir verbatim", () => {
       const root = resolveWorkspaceRoot({
+        workingDirectory: "/home/user/custom",
+      } as any);
+      expect(root).toBe("/home/user/custom");
+    });
+
+    it("canonicalizes the legacy /root alias to the runtime home", () => {
+      const root = resolveWorkspaceRoot({
         workingDirectory: "/root/custom",
       } as any);
-      expect(root).toBe("/root/custom");
+      expect(root).toBe("/home/user/custom");
     });
 
     it("preserves scratch roots instead of rebasing them under /root", () => {
@@ -35,7 +42,7 @@ describe("resolveWorkspaceRoot", () => {
 
     it("falls back to project root when unset", () => {
       const root = resolveWorkspaceRoot(undefined);
-      expect(root).toBe("/root");
+      expect(root).toBe("/home/user");
     });
   });
 
