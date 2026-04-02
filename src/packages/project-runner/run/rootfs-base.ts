@@ -7,11 +7,18 @@ import { readFile, rm, writeFile } from "fs/promises";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import { isManagedRootfsImageName } from "@cocalc/util/rootfs-images";
 import pullImage from "./pull-image";
+import {
+  loadRootfsNormalizationMetadata,
+  normalizeRootfsInPlace,
+  requireCurrentRootfsNormalizationMetadata,
+  writeRootfsNormalizationMetadata,
+} from "./rootfs-normalize";
 import { shiftProgress } from "@cocalc/conat/lro/progress";
 import { PROGRESS_ARGS, rsyncProgressReporter } from "./rsync-progress";
 import getLogger from "@cocalc/backend/logger";
 
 const logger = getLogger("project-runner:rootfs-base");
+const STORAGE_WRAPPER = "/usr/local/sbin/cocalc-runtime-storage";
 
 export const IMAGE_CACHE =
   process.env.COCALC_IMAGE_CACHE ?? join(data, "cache", "images");
@@ -45,6 +52,39 @@ export function inspectFilePath(image: string): string {
   return join(IMAGE_CACHE, `.${imagePathComponent(image)}.json`);
 }
 
+export function normalizationFilePath(image: string): string {
+  return join(IMAGE_CACHE, `.${imagePathComponent(image)}.normalized.json`);
+}
+
+export async function cleanupImageCacheArtifact(path: string): Promise<void> {
+  if (!(await exists(path))) return;
+  try {
+    await rm(path, {
+      force: true,
+      recursive: true,
+      maxRetries: 3,
+    });
+    return;
+  } catch (err) {
+    logger.warn("regular cached image cleanup failed; retrying with wrapper", {
+      path,
+      err: `${err}`,
+    });
+  }
+  await executeCode({
+    command: "sudo",
+    args: ["-n", STORAGE_WRAPPER, "rm", "-rf", path],
+    err_on_exit: true,
+    verbose: false,
+  });
+}
+
+async function cleanupImageCacheArtifacts(paths: string[]): Promise<void> {
+  for (const path of paths) {
+    await cleanupImageCacheArtifact(path);
+  }
+}
+
 // this should error if the image isn't available and extracted.  I.e., it should always
 // be either very fast or throw an error.  Clients that use it should make sure to do
 // extractBaseImage before using this.  The reason is to ensure that users have visibility
@@ -71,14 +111,50 @@ export const extractBaseImage = reuseInFlight(async (image: string) => {
 
   try {
     const baseImagePath = imageCachePath(image);
+    const normalizedPath = normalizationFilePath(image);
+    const inspectPath = inspectFilePath(image);
     reportProgress({ progress: 0, desc: `checking for ${image}...` });
-    if (
-      (await exists(inspectFilePath(image))) &&
-      (await exists(baseImagePath))
-    ) {
-      // already exist
+    if ((await exists(inspectPath)) && (await exists(baseImagePath))) {
+      try {
+        requireCurrentRootfsNormalizationMetadata({
+          image,
+          metadataPath: normalizedPath,
+          metadata: await loadRootfsNormalizationMetadata(normalizedPath),
+        });
+      } catch (err) {
+        if (isManagedRootfsImageName(image)) {
+          throw err;
+        }
+        reportProgress({
+          progress: 2,
+          desc: `refreshing stale cached ${image}...`,
+        });
+        await cleanupImageCacheArtifacts([
+          baseImagePath,
+          inspectPath,
+          normalizedPath,
+        ]);
+      }
+    }
+    if ((await exists(inspectPath)) && (await exists(baseImagePath))) {
       reportProgress({ progress: 100, desc: `${image} available` });
       return baseImagePath;
+    }
+    if (
+      !isManagedRootfsImageName(image) &&
+      ((await exists(baseImagePath)) ||
+        (await exists(inspectPath)) ||
+        (await exists(normalizedPath)))
+    ) {
+      reportProgress({
+        progress: 2,
+        desc: `cleaning incomplete cached ${image}...`,
+      });
+      await cleanupImageCacheArtifacts([
+        baseImagePath,
+        inspectPath,
+        normalizedPath,
+      ]);
     }
     if (isManagedRootfsImageName(image)) {
       reportProgress({
@@ -168,26 +244,57 @@ export const extractBaseImage = reuseInFlight(async (image: string) => {
         desc: "image extract failed: cleaning up",
       });
       try {
-        await rm(baseImagePath, {
-          force: true,
-          recursive: true,
-          maxRetries: 3,
-        });
+        await cleanupImageCacheArtifacts([
+          baseImagePath,
+          inspectPath,
+          normalizedPath,
+        ]);
         await executeCode({ command: "podman", args: ["image", "rm", image] });
       } catch {}
       reportProgress({ progress: 100, desc: `extracting ${image} failed` });
       throw err;
     }
-    // success -- write out "podman image inspect" in json format to:
-    //   (1) signal success, and (2) it is useful for getting information about
-    // the image (environment, sha256, etc.), without having to download it again.
-    await writeFile(inspectFilePath(image), inspect);
-    // remove the image to save space, in case it isn't used by
-    // anything else.  we will not need it again, since we already
-    // have a copy of it.
-    await executeCode({ command: "podman", args: ["image", "rm", image] });
-    reportProgress({ progress: 100, desc: `pulled and extracted ${image}` });
-    return baseImagePath;
+    try {
+      const normalized = await normalizeRootfsInPlace({
+        image,
+        rootfsPath: baseImagePath,
+        onProgress: ({ message }) => {
+          reportProgress({
+            progress: 96,
+            desc: `${message} (${image})`,
+          });
+        },
+      });
+
+      // success -- write out "podman image inspect" in json format to:
+      //   (1) signal success, and (2) it is useful for getting information about
+      // the image (environment, sha256, etc.), without having to download it again.
+      await writeFile(inspectFilePath(image), inspect);
+      await writeRootfsNormalizationMetadata({
+        metadataPath: normalizedPath,
+        metadata: normalized,
+      });
+      // remove the image to save space, in case it isn't used by
+      // anything else.  we will not need it again, since we already
+      // have a copy of it.
+      await executeCode({ command: "podman", args: ["image", "rm", image] });
+      reportProgress({ progress: 100, desc: `pulled and extracted ${image}` });
+      return baseImagePath;
+    } catch (err) {
+      reportProgress({
+        progress: 100,
+        desc: `normalizing ${image} failed`,
+      });
+      try {
+        await cleanupImageCacheArtifacts([
+          baseImagePath,
+          inspectPath,
+          normalizedPath,
+        ]);
+        await executeCode({ command: "podman", args: ["image", "rm", image] });
+      } catch {}
+      throw err;
+    }
   } finally {
     delete progressWatchers[image];
   }

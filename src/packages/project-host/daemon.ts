@@ -324,6 +324,18 @@ function sleepMs(ms: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
+function pidFileAgeMs(pidPath: string): number | undefined {
+  try {
+    const stats = fs.statSync(pidPath);
+    if (!Number.isFinite(stats.mtimeMs)) {
+      return;
+    }
+    return Math.max(0, Date.now() - stats.mtimeMs);
+  } catch {
+    return;
+  }
+}
+
 function waitForExit(pid: number, timeoutMs: number, pollMs: number): boolean {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -339,13 +351,20 @@ function healthCheckUrl(
   env: Record<string, string>,
   httpPort?: number,
 ): string {
-  const base = `${env.PROJECT_HOST_INTERNAL_URL ?? ""}`.trim();
-  if (base) {
-    return `${base.replace(/\/+$/, "")}/healthz`;
+  const explicit = `${env.COCALC_PROJECT_HOST_DAEMON_HEALTH_URL ?? ""}`.trim();
+  if (explicit) {
+    return explicit.endsWith("/healthz")
+      ? explicit
+      : `${explicit.replace(/\/+$/, "")}/healthz`;
   }
+  // The daemon watchdog runs on the host itself, so it must not depend on the
+  // externally routed project-host URL. Fresh hosts can legitimately serve
+  // /healthz on localhost before Cloudflare/DNS/public routing settles.
   const host = `${env.HOST ?? ""}`.trim() || "127.0.0.1";
+  const localHost =
+    host === "0.0.0.0" || host === "::" || host === "[::]" ? "127.0.0.1" : host;
   const port = httpPort ?? parsePort(env.PORT) ?? 9002;
-  return `http://${host}:${port}/healthz`;
+  return `http://${localHost}:${port}/healthz`;
 }
 
 function checkHealthSync(
@@ -513,6 +532,17 @@ export function ensureDaemon(index = 0): void {
   if (pid && isRunning(pid)) {
     if (checkHealthSync(env, httpPort)) {
       console.log(`project-host healthy (pid ${pid})`);
+      return;
+    }
+    const warmupMs = getPositiveIntEnv(
+      "COCALC_PROJECT_HOST_DAEMON_STARTUP_GRACE_MS",
+      30_000,
+    );
+    const ageMs = pidFileAgeMs(pidPath);
+    if (ageMs != null && ageMs < warmupMs) {
+      console.warn(
+        `project-host pid ${pid} is still warming up (${Math.floor(ageMs / 1000)}s < ${Math.floor(warmupMs / 1000)}s); deferring restart.`,
+      );
       return;
     }
     console.warn(

@@ -5,7 +5,7 @@ import { type VirtuosoGridHandle } from "react-virtuoso";
 import { useActions, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Loading, SearchInput } from "@cocalc/frontend/components";
 import { useProjectContext } from "@cocalc/frontend/project/context";
-import { lite } from "@cocalc/frontend/lite";
+import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { BACKUPS } from "@cocalc/util/consts/backups";
 import { isAbsolutePath, normalizeAbsolutePath } from "@cocalc/util/path-model";
@@ -79,19 +79,19 @@ export function SnapshotsTab({
     { project_id },
     "available_features",
   );
-  const homeFromFeatures =
-    (available_features as any)?.homeDirectory ??
-    (available_features as any)?.get?.("homeDirectory");
   const fs = useMemo(
     () => webapp_client.conat_client.conat().fs({ project_id }),
     [project_id],
   );
   const homeDirectory = useMemo(() => {
-    if (lite && typeof homeFromFeatures === "string") {
+    const homeFromFeatures =
+      (available_features as any)?.homeDirectory ??
+      (available_features as any)?.get?.("homeDirectory");
+    if (typeof homeFromFeatures === "string" && homeFromFeatures.length > 0) {
       return normalizeAbsolutePath(homeFromFeatures);
     }
-    return "/root";
-  }, [homeFromFeatures]);
+    return getProjectHomeDirectory(project_id);
+  }, [available_features, project_id]);
   const archiveScopePath = useMemo(() => {
     if (!scopePath) return "";
     if (!isAbsolutePath(scopePath)) return stripDotSlash(scopePath);

@@ -18,6 +18,7 @@ import {
 } from "@cocalc/comm/project-configuration";
 import { syntax2tool, Tool as FormatTool } from "@cocalc/util/code-formatter";
 import { copy } from "@cocalc/util/misc";
+import { basename } from "path";
 import { exec as child_process_exec } from "child_process";
 import { realpath } from "fs/promises";
 import { promisify } from "util";
@@ -246,6 +247,32 @@ async function get_homeDirectory(): Promise<string | null> {
   }
 }
 
+async function get_runtimeInfo(): Promise<{
+  homeDirectory: string | null;
+  runtimeUser: string | null;
+  runtimeUid: number | null;
+  runtimeGid: number | null;
+  sudoAvailable: boolean;
+}> {
+  const homeDirectory = await get_homeDirectory();
+  const runtimeUid =
+    typeof process.getuid === "function" ? process.getuid() : null;
+  const runtimeGid =
+    typeof process.getgid === "function" ? process.getgid() : null;
+  const envUser =
+    `${process.env.COCALC_RUNTIME_USER ?? process.env.USER ?? process.env.LOGNAME ?? ""}`.trim();
+  const runtimeUser =
+    envUser || (homeDirectory ? basename(homeDirectory) : "") || null;
+  const sudoAvailable = runtimeUid === 0 || (await have("sudo"));
+  return {
+    homeDirectory,
+    runtimeUser,
+    runtimeUid,
+    runtimeGid,
+    sudoAvailable,
+  };
+}
+
 // assemble capabilities object
 // no matter what, never run this more than once very this many MS.
 // I have at least one project in production that gets DOS'd due to
@@ -287,7 +314,7 @@ const capabilities = reuseInFlight(async (): Promise<MainCapabilities> => {
       qmd,
       vscode,
       julia,
-      homeDirectory,
+      runtime,
       rserver,
     ] = await Promise.all([
       get_formatting(),
@@ -302,7 +329,7 @@ const capabilities = reuseInFlight(async (): Promise<MainCapabilities> => {
       get_quarto(),
       get_vscode(),
       get_julia(),
-      get_homeDirectory(),
+      get_runtimeInfo(),
       get_rserver(),
     ]);
     const caps: MainCapabilities = {
@@ -323,7 +350,11 @@ const capabilities = reuseInFlight(async (): Promise<MainCapabilities> => {
       pandoc,
       vscode,
       julia,
-      homeDirectory,
+      homeDirectory: runtime.homeDirectory,
+      runtimeUser: runtime.runtimeUser,
+      runtimeUid: runtime.runtimeUid,
+      runtimeGid: runtime.runtimeGid,
+      sudoAvailable: runtime.sudoAvailable,
     };
     const sage = await sage_info_future;
     caps.sage = sage.exists;

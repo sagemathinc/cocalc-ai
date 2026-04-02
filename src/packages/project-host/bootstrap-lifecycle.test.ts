@@ -158,6 +158,71 @@ describe("bootstrap lifecycle reporting", () => {
     });
   });
 
+  it("treats a newer numeric installed bundle version as aligned", () => {
+    const base = fs.mkdtempSync(
+      path.join(os.tmpdir(), "cocalc-bootstrap-lifecycle-newer-"),
+    );
+    const bootstrapDir = path.join(base, "bootstrap");
+    const projectHostRoot = path.join(base, "project-host");
+    const projectBundlesRoot = path.join(base, "project-bundles");
+    const toolsRoot = path.join(base, "tools");
+    fs.mkdirSync(bootstrapDir, { recursive: true });
+    makeVersionedCurrent(projectHostRoot, "1775078762855");
+    makeVersionedCurrent(projectBundlesRoot, "1775065103641");
+    makeVersionedCurrent(toolsRoot, "1774742740349");
+    fs.writeFileSync(
+      path.join(bootstrapDir, "bootstrap.py"),
+      "#!/usr/bin/env python3\n",
+    );
+    fs.writeFileSync(
+      path.join(bootstrapDir, "bootstrap-desired-state.json"),
+      JSON.stringify({
+        recorded_at: "2026-04-01T21:18:07Z",
+        bootstrap: { selector: "latest" },
+        helper_schema_version: "20260330-v1",
+        runtime_wrapper_version: "20260401-v2",
+        project_host_bundle: { version: "1775077665698" },
+        project_bundle: { version: "1775065103641" },
+        tools_bundle: { version: "1774742740349" },
+        cloudflared: { enabled: false },
+      }),
+    );
+    fs.writeFileSync(
+      path.join(bootstrapDir, "bootstrap-state.json"),
+      JSON.stringify({
+        recorded_at: "2026-04-01T21:18:41Z",
+        helper_schema_version: "20260330-v1",
+        runtime_wrapper_version: "20260401-v2",
+        installed: {
+          project_host_bundle_version: "1775078762855",
+          project_bundle_version: "1775065103641",
+          tools_bundle_version: "1774742740349",
+        },
+        last_reconcile_result: "success",
+      }),
+    );
+
+    process.env.COCALC_PROJECT_HOST_BOOTSTRAP_DIR = bootstrapDir;
+    process.env.COCALC_PROJECT_HOST_CURRENT = path.join(
+      projectHostRoot,
+      "current",
+    );
+    process.env.COCALC_PROJECT_BUNDLES = projectBundlesRoot;
+    process.env.COCALC_PROJECT_TOOLS = path.join(toolsRoot, "current");
+
+    const lifecycle = getBootstrapLifecycle();
+    expect(lifecycle?.summary_status).toBe("in_sync");
+    expect(lifecycle?.drift_count).toBe(0);
+    expect(
+      lifecycle?.items.find((item) => item.key === "project_host_bundle"),
+    ).toMatchObject({
+      desired: "1775077665698",
+      installed: "1775078762855",
+      status: "match",
+      message: "installed bundle is newer than desired",
+    });
+  });
+
   it("surfaces runtime wrapper helpers from bootstrap state", () => {
     const base = fs.mkdtempSync(
       path.join(os.tmpdir(), "cocalc-bootstrap-lifecycle-runtime-"),

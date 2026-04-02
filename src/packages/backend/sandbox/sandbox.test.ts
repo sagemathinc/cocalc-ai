@@ -1158,15 +1158,24 @@ describeIfLinux("rootfs option sandbox", () => {
     expect(await readFile(outsidePath, "utf8")).toBe("outside-secret");
   });
 
-  it("keeps /root and relative paths mapped to home path when rootfs exists", async () => {
-    await fs.writeFile("/root/home-abs.txt", "from-home-abs");
+  it("supports canonical and legacy home aliases when rootfs exists", async () => {
+    const fsWithAliases = new SandboxedFilesystem(home, {
+      rootfs,
+      homeAliases: ["/home/user", "/root"],
+    });
+    await fsWithAliases.writeFile("/home/user/home-abs.txt", "from-home-abs");
     await fs.writeFile("home-rel.txt", "from-home-rel");
-    expect(await fs.readFile("/root/home-abs.txt", "utf8")).toBe(
+    expect(
+      await fsWithAliases.readFile("/home/user/home-abs.txt", "utf8"),
+    ).toBe("from-home-abs");
+    expect(await fsWithAliases.readFile("/root/home-abs.txt", "utf8")).toBe(
       "from-home-abs",
     );
     expect(await fs.readFile("home-rel.txt", "utf8")).toBe("from-home-rel");
-    const rootListing = (await fs.readdir("/root")) as string[];
+    const rootListing = (await fsWithAliases.readdir("/root")) as string[];
+    const homeListing = (await fsWithAliases.readdir("/home/user")) as string[];
     expect(rootListing).toContain("home-abs.txt");
+    expect(homeListing).toContain("home-abs.txt");
     expect(await readFile(join(home, "home-abs.txt"), "utf8")).toBe(
       "from-home-abs",
     );
@@ -1221,8 +1230,17 @@ describeIfLinux("rootfs option sandbox", () => {
     ).toBe("/tmp/from-root.txt");
   });
 
-  it("realpath preserves /root absolute style for home files", async () => {
-    expect(await fs.realpath("/root/home-abs.txt")).toBe("/root/home-abs.txt");
+  it("realpath preserves the requested home alias style for home files", async () => {
+    const fsWithAliases = new SandboxedFilesystem(home, {
+      rootfs,
+      homeAliases: ["/home/user", "/root"],
+    });
+    expect(await fsWithAliases.realpath("/root/home-abs.txt")).toBe(
+      "/root/home-abs.txt",
+    );
+    expect(await fsWithAliases.realpath("/home/user/home-abs.txt")).toBe(
+      "/home/user/home-abs.txt",
+    );
   });
 
   it("safe mode still blocks symlink escape outside rootfs", async () => {

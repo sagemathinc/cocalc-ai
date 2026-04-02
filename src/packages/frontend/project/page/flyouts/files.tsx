@@ -64,6 +64,7 @@ import { useSpecialPathPreview } from "@cocalc/frontend/project/explorer/use-spe
 import { useFlyoutSettings } from "@cocalc/frontend/project/explorer/use-explorer-settings";
 import { lite } from "@cocalc/frontend/lite";
 import { normalizeAbsolutePath } from "@cocalc/util/path-model";
+import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 import { selectionForPath } from "@cocalc/frontend/project/workspaces/state";
 import { useHostInfo } from "@cocalc/frontend/projects/host-info";
 import {
@@ -200,9 +201,9 @@ export function FilesFlyout({
   const inBackupsPath = isBackupsPath(effective_current_path);
   const inSnapshotsPath = isSnapshotsPath(effective_current_path);
   const homePath =
-    lite && typeof available_features?.homeDirectory === "string"
+    typeof available_features?.homeDirectory === "string"
       ? normalizeAbsolutePath(available_features.homeDirectory)
-      : "/root";
+      : getProjectHomeDirectory(project_id);
   const listingPath =
     inSnapshotsPath && !effective_current_path.startsWith("/")
       ? normalizeAbsolutePath(effective_current_path, homePath)

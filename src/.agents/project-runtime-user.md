@@ -1,8 +1,9 @@
 # Project Runtime User Migration Plan
 
-Last refreshed: March 31, 2026
+Last refreshed: April 1, 2026
 
-Status: design and migration plan
+Status: phase 0 complete; phase 1/2 implemented for greenfield hosts; RootFS
+normalization specified and planned next
 
 This document is the concrete plan for changing launchpad project runtimes from
 the current:
@@ -242,11 +243,12 @@ better than per-start recursive `chown`.
 
 ## OCI Image Strategy
 
-OCI images will vary wildly:
+OCI images will vary widely:
 
 - some define `USER root`
 - some define another user
 - many have no `user` account at all
+- some are extremely minimal and omit basic admin/user-management tooling
 
 CoCalc should standardize the interactive runtime user regardless of image
 defaults.
@@ -263,24 +265,175 @@ This keeps the product consistent across:
 
 - Ubuntu-style images
 - Debian-style images
+- RHEL-compatible images
+- SLES-compatible images
 - language-toolchain images
-- custom OCI images
+- custom OCI images that meet the CoCalc contract
 
-### Account Bootstrap Requirements
+### Rootfs Contract
 
-For images that do not already define `user`, startup must ensure:
+This is the concrete minimum contract for a RootFS image to be considered
+usable for CoCalc interactive projects.
 
-- `/home/user` exists
-- `/etc/passwd` contains a `user` entry
-- `/etc/group` contains a `user` group
-- `sudo` is configured for passwordless elevation for `user`
-- ownership and writable paths are correct for `user`
+#### Hard Requirements
 
-This should happen during controlled runtime setup, not by asking end users to
-repair their image.
+- Linux userspace with `glibc`
+- a working `node` runtime compatible with the project bundle
+- writable `/etc`
+- writable `/home`
+- writable `/tmp`
+- writable `/var/tmp`
+- a shell available at `/bin/bash` or `/bin/sh`
+- CA certificates installed and usable for TLS
+- a functioning `user` account with:
+  - username `user`
+  - uid `1000`
+  - gid `1000`
+  - home `/home/user`
+- passwordless `sudo` for `user`
+- NSS identity lookups for `user` must work
+  - `getent passwd user` or equivalent lookup behavior
+  - `id user` must succeed
+- the image must tolerate running the main project workload as uid/gid `1000`
+- the image must tolerate explicit privileged commands through `sudo`
 
-The preferred implementation is to materialize these changes in the writable
-overlay, not mutate the shared base image.
+#### Nice-To-Have But Not Required
+
+- `curl`
+- `git`
+- `procps`
+- `psmisc`
+- distro package manager metadata already initialized
+
+These are useful for product quality, but only `sudo`, CA certs, and the
+runtime user are part of the core contract.
+
+#### Explicitly Unsupported
+
+- musl-only images such as Alpine
+- distroless images with no package/user-management tooling
+- images where `/etc` or `/home` cannot be modified during normalization
+- images where `sudo` cannot be installed or configured
+- images where uid/gid `1000` is fundamentally incompatible with the runtime
+
+Rationale:
+
+- CoCalc already ships a glibc-based Node runtime
+- scientific/computing images are overwhelmingly Debian/Ubuntu/RHEL/SLES-like
+- compatibility and predictability matter more than minimal image size
+
+### Rootfs Normalization Policy
+
+We should go all-in on one-time RootFS normalization now.
+
+The normalization step runs once when an image is first accepted into CoCalc as
+a usable RootFS. It is not a per-project startup action.
+
+The normalized RootFS must satisfy the contract above before any project is
+allowed to use it.
+
+#### What Normalization Must Do
+
+Normalization must, at minimum:
+
+- ensure `user` exists with uid/gid `1000`
+- ensure `/home/user` exists and is owned by `1000:1000`
+- ensure `sudo` is installed
+- install a passwordless sudoers entry for `user`
+- ensure CA certificates are present and initialized
+- optionally install `curl` if we decide it is part of the launchpad baseline
+- validate the result with explicit checks
+
+Minimum post-normalization validation:
+
+- `id user`
+- `getent passwd user` or a robust fallback check
+- `su - user -c 'whoami'` returns `user`
+- `su - user -c 'echo $HOME'` returns `/home/user`
+- `su - user -c 'sudo -n true'` succeeds
+- `node -e 'console.log(process.getuid())'` can run in the image
+- TLS validation works using system CA certs
+
+If any of these fail, the image is rejected as unusable for CoCalc.
+
+#### Supported Distro Families
+
+The normalizer should explicitly support:
+
+- Debian / Ubuntu
+- RHEL / Rocky / Alma / Fedora / UBI
+- SLES / openSUSE Leap
+
+Detection should be by `/etc/os-release` plus package-manager presence.
+
+Initial package-manager support:
+
+- `apt-get`
+- `dnf`
+- `yum`
+- `microdnf`
+- `zypper`
+
+If no supported family is detected, the image is rejected.
+
+### Normalization Script Requirements
+
+The normalization script should be:
+
+- minimal
+- deterministic
+- idempotent when run on a fresh or already-normalized image of the same
+  contract version
+- conservative about what it installs
+
+It should not:
+
+- do full system upgrades
+- replace arbitrary base packages
+- rewrite unrelated config files
+- depend on project-specific state
+
+It is acceptable to install only the smallest set of packages needed to meet
+the contract.
+
+### Mutation Policy
+
+This is the one place where the product needs to be opinionated.
+
+The normalizer is allowed to mutate the image snapshot that CoCalc has decided
+to use as the RootFS lower layer. It is not required to preserve a pristine
+"original upstream image" if doing so would create substantial storage or
+performance overhead.
+
+What must be true:
+
+- normalization happens before the image is put into use by projects
+- once a normalized RootFS is in use as a lower layer, we do not re-run the
+  rootfs normalizer in place
+- if the contract ever changes later, that must be handled by:
+  - a new normalized RootFS version for future projects, or
+  - a separate runtime migration step executed inside projects that already
+    depend on the old lower layer
+
+This avoids breaking existing overlays while still allowing us to keep the
+normalization path simple and fast.
+
+### Versioning Rule
+
+The RootFS normalizer must have its own explicit version, for example:
+
+- `rootfs_normalizer_version = 1`
+
+That version becomes part of the meaning of a cached/managed RootFS.
+
+If the normalizer changes incompatibly in the future:
+
+- do not re-run it against already-in-use RootFS lower layers
+- instead produce a new managed RootFS version for new projects
+- use explicit per-project startup migrations only for additive follow-up fixes
+  that are safe on an existing overlay
+
+This is the key rule that keeps future changes from corrupting old projects.
 
 ## SSH Model
 
@@ -378,9 +531,14 @@ Deliverables:
 - frontend home-directory lookup no longer hardcodes non-lite `/root`
 - tests for path normalization against `/home/user`
 
+Status:
+
+- complete
+
 ### Phase 1: Runtime Account Bootstrap
 
-Make project startup guarantee the existence of:
+Introduce a one-time RootFS normalization step that guarantees the existence
+of:
 
 - `user`
 - `/home/user`
@@ -388,9 +546,15 @@ Make project startup guarantee the existence of:
 
 Deliverables:
 
-- startup/setup code that materializes the runtime account in the writable
-  overlay when needed
-- explicit tests against OCI images without a preexisting `user`
+- rootfs normalizer that enforces the RootFS contract before an image is
+  accepted for project use
+- explicit validation against OCI images without a preexisting `user`
+- package-manager support for the supported distro families
+- clear rejection of unsupported images
+
+Status:
+
+- planned next
 
 ### Phase 2: Container Launch Semantics
 
@@ -406,8 +570,14 @@ Deliverables:
 - validated Podman idmap / keep-id configuration
 - no recurring recursive `chown`
 - project processes run as `user`
+- a temporary compatibility path for images that are already normalized and in
+  use
 
-### Phase 3: SSH and Startup Scripts
+Status:
+
+- implemented in greenfield form; still being hardened
+
+### Phase 3: SSH and Runtime Cleanup
 
 Redesign SSH/bootstrap scripts so that:
 
@@ -503,6 +673,17 @@ The following must pass before switching the default:
 - disk usage surfaces still classify `Home`, `Scratch`, and `Environment`
   correctly
 
+### RootFS Normalization
+
+- a supported Debian-family image normalizes successfully
+- a supported RHEL-family image normalizes successfully
+- a supported SLES-family image normalizes successfully
+- an Alpine/musl image is rejected clearly
+- an image without a supported package manager is rejected clearly
+- rerunning the normalizer on an already-normalized image is idempotent
+- already-in-use normalized lower layers are not mutated by later contract
+  changes
+
 ## Open Questions
 
 ### 1. Exact Podman User Namespace Configuration
@@ -510,13 +691,16 @@ The following must pass before switching the default:
 The preferred solution is clear in spirit, but the exact supported Podman flags
 must be validated on our deployment kernels and images.
 
-### 2. Best Way To Materialize `user`
+### 2. Exact Normalizer Package Matrix
 
-We need to decide whether account bootstrap is done by:
+We have decided to use one-time RootFS normalization. The remaining question is
+the exact per-family package/install matrix:
 
-- overlaying generated passwd/group/sudoers files
-- running a root setup step inside the container
-- or another minimal mechanism
+- Debian / Ubuntu
+- RHEL / Rocky / Alma / Fedora / UBI
+- SLES / openSUSE Leap
+
+This is now an implementation detail, not a product-direction question.
 
 ### 3. SSH Product Surface
 

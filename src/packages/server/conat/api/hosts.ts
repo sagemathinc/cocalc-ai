@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "crypto";
+import { delay } from "awaiting";
 import type {
   Host,
   HostBackupStatus,
@@ -154,6 +155,8 @@ const HOST_ROOTFS_RPC_TIMEOUT_MS = 30 * 60 * 1000;
 const HOST_DRAIN_DEFAULT_PARALLEL = 10;
 const HOST_DRAIN_OWNER_MAX_PARALLEL = 15;
 const HOST_ONLINE_WINDOW_MS = 2 * 60 * 1000;
+const HOST_BOOTSTRAP_RECONCILE_TIMEOUT_MS = 20 * 60 * 1000;
+const HOST_BOOTSTRAP_RECONCILE_POLL_MS = 5_000;
 const HOST_RUNNING_STATUSES = new Set(["running", "active"]);
 
 type RootfsReleaseLifecycleRow = {
@@ -206,6 +209,173 @@ async function runSshScript({
   });
 }
 
+type HostBootstrapReconcileState = {
+  deleted: boolean;
+  status: string;
+  bootstrap_status?: string;
+  bootstrap_updated_at?: string;
+  bootstrap_message?: string;
+  lifecycle_summary_status?: string;
+  lifecycle_summary_message?: string;
+  lifecycle_current_operation?: string;
+  lifecycle_last_error?: string;
+  lifecycle_last_reconcile_started_at?: string;
+  lifecycle_last_reconcile_finished_at?: string;
+};
+
+function parseTimestampMs(value?: string): number | undefined {
+  const text = `${value ?? ""}`.trim();
+  if (!text) return undefined;
+  const ms = new Date(text).getTime();
+  return Number.isFinite(ms) ? ms : undefined;
+}
+
+function bootstrapErrorIsStale(state: HostBootstrapReconcileState): boolean {
+  if (state.bootstrap_status !== "error") return false;
+  const bootstrapUpdatedMs = parseTimestampMs(state.bootstrap_updated_at);
+  if (state.lifecycle_summary_status === "in_sync") {
+    const finishedMs = parseTimestampMs(
+      state.lifecycle_last_reconcile_finished_at,
+    );
+    return (
+      finishedMs != null &&
+      (bootstrapUpdatedMs == null || bootstrapUpdatedMs <= finishedMs)
+    );
+  }
+  if (state.lifecycle_summary_status === "reconciling") {
+    const startedMs = parseTimestampMs(
+      state.lifecycle_last_reconcile_started_at,
+    );
+    return (
+      startedMs != null &&
+      (bootstrapUpdatedMs == null || bootstrapUpdatedMs < startedMs)
+    );
+  }
+  return false;
+}
+
+async function loadHostBootstrapReconcileState(
+  host_id: string,
+): Promise<HostBootstrapReconcileState | undefined> {
+  const { rows } = await pool().query(
+    `SELECT status, deleted, metadata FROM project_hosts WHERE id=$1 LIMIT 1`,
+    [host_id],
+  );
+  const row = rows[0];
+  if (!row) return undefined;
+  const metadata = row.metadata ?? {};
+  const bootstrap = metadata.bootstrap ?? {};
+  const lifecycle = metadata.bootstrap_lifecycle ?? {};
+  return {
+    deleted: !!row.deleted,
+    status: `${row.status ?? ""}`.trim(),
+    bootstrap_status: `${bootstrap.status ?? ""}`.trim() || undefined,
+    bootstrap_updated_at: `${bootstrap.updated_at ?? ""}`.trim() || undefined,
+    bootstrap_message: `${bootstrap.message ?? ""}`.trim() || undefined,
+    lifecycle_summary_status:
+      `${lifecycle.summary_status ?? ""}`.trim() || undefined,
+    lifecycle_summary_message:
+      `${lifecycle.summary_message ?? ""}`.trim() || undefined,
+    lifecycle_current_operation:
+      `${lifecycle.current_operation ?? ""}`.trim() || undefined,
+    lifecycle_last_error: `${lifecycle.last_error ?? ""}`.trim() || undefined,
+    lifecycle_last_reconcile_started_at:
+      `${lifecycle.last_reconcile_started_at ?? ""}`.trim() || undefined,
+    lifecycle_last_reconcile_finished_at:
+      `${lifecycle.last_reconcile_finished_at ?? ""}`.trim() || undefined,
+  };
+}
+
+function hostBootstrapActivityChanged(
+  baseline: HostBootstrapReconcileState,
+  current: HostBootstrapReconcileState,
+): boolean {
+  return (
+    current.bootstrap_status !== baseline.bootstrap_status ||
+    current.bootstrap_updated_at !== baseline.bootstrap_updated_at ||
+    current.bootstrap_message !== baseline.bootstrap_message ||
+    current.lifecycle_summary_status !== baseline.lifecycle_summary_status ||
+    current.lifecycle_summary_message !== baseline.lifecycle_summary_message ||
+    current.lifecycle_current_operation !==
+      baseline.lifecycle_current_operation ||
+    current.lifecycle_last_error !== baseline.lifecycle_last_error ||
+    current.lifecycle_last_reconcile_started_at !==
+      baseline.lifecycle_last_reconcile_started_at ||
+    current.lifecycle_last_reconcile_finished_at !==
+      baseline.lifecycle_last_reconcile_finished_at
+  );
+}
+
+function hostBootstrapReconcileSucceeded(
+  state: HostBootstrapReconcileState,
+): boolean {
+  if (state.lifecycle_summary_status === "in_sync") {
+    return true;
+  }
+  return state.bootstrap_status === "done";
+}
+
+function hostBootstrapReconcileFailure(
+  state: HostBootstrapReconcileState,
+): string | undefined {
+  if (state.bootstrap_status === "error" && !bootstrapErrorIsStale(state)) {
+    return (
+      state.bootstrap_message ??
+      state.lifecycle_last_error ??
+      "bootstrap reconcile failed"
+    );
+  }
+  if (state.lifecycle_summary_status === "error") {
+    return (
+      state.lifecycle_last_error ??
+      state.lifecycle_summary_message ??
+      "bootstrap reconcile failed"
+    );
+  }
+  if (
+    state.lifecycle_summary_status === "drifted" &&
+    state.bootstrap_status === "done" &&
+    state.lifecycle_current_operation !== "reconcile"
+  ) {
+    return (
+      state.lifecycle_summary_message ??
+      state.lifecycle_last_error ??
+      "host software remains drifted after reconcile"
+    );
+  }
+  return undefined;
+}
+
+async function waitForHostBootstrapReconcile({
+  host_id,
+  baseline,
+}: {
+  host_id: string;
+  baseline: HostBootstrapReconcileState;
+}): Promise<void> {
+  const startedAt = Date.now();
+  let sawActivity = false;
+  while (Date.now() - startedAt < HOST_BOOTSTRAP_RECONCILE_TIMEOUT_MS) {
+    const state = await loadHostBootstrapReconcileState(host_id);
+    if (!state) {
+      throw new Error("host not found");
+    }
+    if (state.deleted) {
+      throw new Error("host deleted during bootstrap reconcile");
+    }
+    sawActivity ||= hostBootstrapActivityChanged(baseline, state);
+    const failure = hostBootstrapReconcileFailure(state);
+    if (failure) {
+      throw new Error(failure);
+    }
+    if (sawActivity && hostBootstrapReconcileSucceeded(state)) {
+      return;
+    }
+    await delay(HOST_BOOTSTRAP_RECONCILE_POLL_MS);
+  }
+  throw new Error("timeout waiting for host bootstrap reconcile");
+}
+
 function cloudHostSshTarget(row: {
   metadata?: Record<string, any>;
 }): string | undefined {
@@ -255,6 +425,10 @@ async function reconcileCloudHostBootstrapOverSsh(opts: {
     bootstrapToken.token,
     bootstrapBaseUrl,
   );
+  const baseline = await loadHostBootstrapReconcileState(opts.host_id);
+  if (!baseline) {
+    throw new Error("host not found");
+  }
   const encodedBootstrapScript = Buffer.from(bootstrapScript, "utf8").toString(
     "base64",
   );
@@ -280,7 +454,12 @@ with open(sys.argv[1], "wb") as handle:
     handle.write(body)
 PY
 chmod 700 "$BOOTSTRAP_SH"
-sudo bash "$BOOTSTRAP_SH"
+LOG_DIR="/mnt/cocalc/data/logs"
+BOOTSTRAP_LOG="$LOG_DIR/bootstrap-reconcile.log"
+sudo -n install -d -m 0755 "$LOG_DIR"
+sudo -n touch "$BOOTSTRAP_LOG"
+BOOTSTRAP_PID="$(sudo -n bash -lc 'nohup bash "$1" >>"$2" 2>&1 </dev/null & echo $!' -- "$BOOTSTRAP_SH" "$BOOTSTRAP_LOG")"
+echo "started bootstrap reconcile pid=$BOOTSTRAP_PID log=$BOOTSTRAP_LOG"
 `;
   logger.info("host upgrade: reconciling host bootstrap over ssh", {
     host_id: opts.host_id,
@@ -301,6 +480,10 @@ sudo bash "$BOOTSTRAP_SH"
       stderr,
     });
   }
+  await waitForHostBootstrapReconcile({
+    host_id: opts.host_id,
+    baseline,
+  });
 }
 
 function logStatusUpdate(id: string, status: string, source: string) {
@@ -506,6 +689,51 @@ function parseRow(
     const parsed = Number(value);
     if (!Number.isFinite(parsed) || parsed < 0) return undefined;
     return parsed;
+  };
+  const normalizeBootstrap = (
+    bootstrap: HostBootstrapStatus | undefined,
+    lifecycle: HostBootstrapLifecycle | undefined,
+  ): HostBootstrapStatus | undefined => {
+    if (!bootstrap || !lifecycle) return bootstrap;
+    const bootstrapUpdatedMs = parseTimestampMs(bootstrap.updated_at);
+    const lifecycleStartedMs = parseTimestampMs(
+      lifecycle.last_reconcile_started_at,
+    );
+    const lifecycleFinishedMs = parseTimestampMs(
+      lifecycle.last_reconcile_finished_at,
+    );
+    if (
+      lifecycle.summary_status === "in_sync" &&
+      lifecycleFinishedMs != null &&
+      (bootstrapUpdatedMs == null || bootstrapUpdatedMs <= lifecycleFinishedMs)
+    ) {
+      return {
+        ...bootstrap,
+        status: "done",
+        updated_at:
+          lifecycle.last_reconcile_finished_at ?? bootstrap.updated_at,
+        message:
+          lifecycle.summary_message ??
+          bootstrap.message ??
+          "Host software is in sync",
+      };
+    }
+    if (
+      lifecycle.summary_status === "reconciling" &&
+      lifecycleStartedMs != null &&
+      (bootstrapUpdatedMs == null || bootstrapUpdatedMs < lifecycleStartedMs)
+    ) {
+      return {
+        ...bootstrap,
+        status: "running",
+        updated_at: lifecycle.last_reconcile_started_at ?? bootstrap.updated_at,
+        message:
+          lifecycle.summary_message ??
+          bootstrap.message ??
+          "Reconciling host software",
+      };
+    }
+    return bootstrap;
   };
   const metadata = row.metadata ?? {};
   const software = metadata.software ?? {};
@@ -912,6 +1140,7 @@ function parseRow(
   const rawStatus = String(row.status ?? "");
   const normalizedStatus =
     rawStatus === "active" ? "running" : rawStatus || "off";
+  const normalizedBootstrap = normalizeBootstrap(bootstrap, bootstrapLifecycle);
   return {
     id: row.id,
     name: row.name ?? "Host",
@@ -958,7 +1187,7 @@ function parseRow(
     provider_observed_at: metadata.runtime?.observed_at,
     deleted: row.deleted ? new Date(row.deleted).toISOString() : undefined,
     backup_status: opts.backup_status,
-    bootstrap,
+    bootstrap: normalizedBootstrap,
     bootstrap_lifecycle: bootstrapLifecycle,
   };
 }

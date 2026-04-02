@@ -9,6 +9,12 @@ import { mountArg } from "@cocalc/backend/podman";
 import { getEnvironment } from "./env";
 import { join } from "node:path";
 import { getCoCalcMounts } from "./mounts";
+import {
+  DEFAULT_PROJECT_RUNTIME_GID,
+  DEFAULT_PROJECT_RUNTIME_HOME,
+  DEFAULT_PROJECT_RUNTIME_UID,
+  DEFAULT_PROJECT_RUNTIME_USER,
+} from "@cocalc/util/project-runtime";
 
 export interface SandboxExecOptions {
   project_id: string;
@@ -75,12 +81,21 @@ export async function sandboxExec({
     timeoutMs,
   });
   const args: string[] = [];
-  const HOME = "/root";
+  const HOME = DEFAULT_PROJECT_RUNTIME_HOME;
+  const normalizeRuntimePath = (value?: string): string | undefined => {
+    if (!value?.startsWith("/")) return value;
+    if (value === "/root") return HOME;
+    if (value.startsWith("/root/")) {
+      return join(HOME, value.slice("/root/".length));
+    }
+    return value;
+  };
   const getWorkdir = () => {
-    if (cwd?.startsWith("/")) {
-      return cwd;
+    const normalized = normalizeRuntimePath(cwd);
+    if (normalized?.startsWith("/")) {
+      return normalized;
     } else {
-      return cwd ? join(HOME, cwd) : HOME;
+      return normalized ? join(HOME, normalized) : HOME;
     }
   };
 
@@ -126,7 +141,15 @@ export async function sandboxExec({
 
       // Build a one-off container run.
       args.push("run", "--runtime", "/usr/bin/crun", "--rm", "-i");
-      args.push("--security-opt", "no-new-privileges");
+      // Match the main project runtime so sudo and setuid helpers behave the
+      // same way in ephemeral sidecars.
+      args.push(
+        `--userns=keep-id:uid=${DEFAULT_PROJECT_RUNTIME_UID},gid=${DEFAULT_PROJECT_RUNTIME_GID}`,
+      );
+      args.push(
+        "--user",
+        `${DEFAULT_PROJECT_RUNTIME_UID}:${DEFAULT_PROJECT_RUNTIME_GID}`,
+      );
       // execFile timeout still applies; podman itself doesn't have a timeout flag.
       if (!noNetwork) {
         args.push(networkArgument());
@@ -158,6 +181,14 @@ export async function sandboxExec({
       args.push(
         "exec",
         "-i",
+        "-u",
+        `${DEFAULT_PROJECT_RUNTIME_UID}:${DEFAULT_PROJECT_RUNTIME_GID}`,
+        "-e",
+        `HOME=${HOME}`,
+        "-e",
+        `USER=${DEFAULT_PROJECT_RUNTIME_USER}`,
+        "-e",
+        `LOGNAME=${DEFAULT_PROJECT_RUNTIME_USER}`,
         "--workdir",
         getWorkdir(),
         `project-${project_id}`,

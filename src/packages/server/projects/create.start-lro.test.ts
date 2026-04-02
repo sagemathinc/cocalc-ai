@@ -131,11 +131,13 @@ describe("projects.createProject start LRO", () => {
       if (sql.startsWith("INSERT INTO projects ")) {
         return { rowCount: 1 };
       }
+      if (sql === "SELECT state FROM projects WHERE project_id=$1") {
+        return { rows: [{ state: { state: "running" } }] };
+      }
       throw new Error(`unexpected query: ${sql}`);
     });
     getProjectMock = jest.fn(() => ({
       start: jest.fn(async () => undefined),
-      state: jest.fn(async () => ({ state: "running" })),
       saveStateToDatabase: jest.fn(async () => undefined),
     }));
     createLroMock = jest.fn(async ({ scope_id }: { scope_id: string }) => ({
@@ -194,6 +196,10 @@ describe("projects.createProject start LRO", () => {
       account_id: ACCOUNT_ID,
       lro_op_id: "op-1",
     });
+    expect(queryMock).toHaveBeenCalledWith(
+      "SELECT state FROM projects WHERE project_id=$1",
+      [project_id],
+    );
     expect(updateLroMock).toHaveBeenCalledWith(
       expect.objectContaining({
         op_id: "op-1",

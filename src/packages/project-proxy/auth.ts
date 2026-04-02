@@ -42,11 +42,13 @@ export async function ensureProxyKey() {
 export async function init({
   getSshdPort,
   getAuthorizedKeys,
+  getSshUser,
   base_url,
   port,
 }: {
   getSshdPort: (target: SshTarget) => Promise<number | null> | number | null;
   getAuthorizedKeys: (target: SshTarget) => Promise<string>;
+  getSshUser?: (target: SshTarget) => Promise<string> | string;
   // as an extra level of security, it is recommended to
   // make the base_url a secure random string.
   base_url?: string;
@@ -70,6 +72,7 @@ export async function init({
         getSshdPort,
         getAuthorizedKeys,
       );
+      const sshUser = (await getSshUser?.(target)) || "root";
       logger.debug({ authorizedKeys, target, port });
 
       if (!port) {
@@ -80,7 +83,7 @@ export async function init({
 
       const resp = {
         privateKey: sshKey.privateKey,
-        user: "root",
+        user: sshUser,
         host: `localhost:${port}`,
         authorizedKeys,
       };

@@ -1,6 +1,11 @@
 import { createPublicKey } from "crypto";
+import { mkdirSync, writeFileSync } from "fs";
+import { dirname } from "path";
 import getLogger from "@cocalc/backend/logger";
-import { getConfiguredProjectHostAuthTokenPublicKey } from "@cocalc/backend/data";
+import {
+  getConfiguredProjectHostAuthTokenPublicKey,
+  projectHostAuthTokenPublicKeyPath,
+} from "@cocalc/backend/data";
 
 const logger = getLogger("project-host:auth-public-key");
 
@@ -19,9 +24,19 @@ export function setProjectHostAuthPublicKey(publicKey?: string) {
   }
   try {
     distributedPublicKey = normalizePublicKey(value);
+    mkdirSync(dirname(projectHostAuthTokenPublicKeyPath), {
+      recursive: true,
+      mode: 0o700,
+    });
+    writeFileSync(
+      projectHostAuthTokenPublicKeyPath,
+      `${distributedPublicKey}\n`,
+      { mode: 0o644 },
+    );
   } catch (err) {
     logger.warn("ignoring invalid distributed project-host auth public key", {
       err,
+      path: projectHostAuthTokenPublicKeyPath,
     });
   }
 }

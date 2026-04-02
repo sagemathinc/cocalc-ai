@@ -35,6 +35,7 @@ import useFiles, {
   getCacheId,
 } from "@cocalc/frontend/project/listing/use-files";
 import { normalizeAbsolutePath } from "@cocalc/util/path-model";
+import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 import { lite } from "@cocalc/frontend/lite";
 
 const NEW_FOLDER = "New Folder";
@@ -150,11 +151,11 @@ export default function DirectorySelector({
   const frameContext = useFrameContext(); // optionally used to define project_id and startingPath, when in a frame
   project_id ??= frameContext.project_id;
   const availableFeatures = useTypedRedux({ project_id }, "available_features");
-  const liteHome = availableFeatures?.get("homeDirectory");
+  const resolvedHome = availableFeatures?.get("homeDirectory");
   const homePath =
-    lite && typeof liteHome === "string" && liteHome.length > 0
-      ? normalizeAbsolutePath(liteHome)
-      : "/root";
+    typeof resolvedHome === "string" && resolvedHome.length > 0
+      ? normalizeAbsolutePath(resolvedHome)
+      : getProjectHomeDirectory(project_id);
   const initialPath = startingPath ?? frameContext.path ?? "";
   const normalizedInitialAbs = normalizeAbsolutePath(
     initialPath || homePath,

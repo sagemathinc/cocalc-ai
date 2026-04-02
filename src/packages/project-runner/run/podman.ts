@@ -53,6 +53,11 @@ import getLogger from "@cocalc/backend/logger";
 import { writeStartupScripts } from "./startup-scripts";
 import { podman } from "@cocalc/backend/podman";
 import getPort from "@cocalc/backend/get-port";
+import {
+  DEFAULT_PROJECT_RUNTIME_GID,
+  DEFAULT_PROJECT_RUNTIME_HOME,
+  DEFAULT_PROJECT_RUNTIME_UID,
+} from "@cocalc/util/project-runtime";
 
 const logger = getLogger("project-runner:podman");
 // Restores can be large; allow the RPC to stay open while rustic runs.
@@ -763,7 +768,7 @@ export async function start({
     const env = await getEnvironment({
       project_id,
       env: config?.env,
-      HOME: "/root",
+      HOME: DEFAULT_PROJECT_RUNTIME_HOME,
       image,
     });
 
@@ -847,8 +852,11 @@ export async function start({
     const args: string[] = [];
     args.push("run");
     args.push("--runtime", "/usr/bin/crun");
-    args.push("--security-opt", "no-new-privileges");
-    //args.push("--user", "1000:1000");
+    // Leave setuid/setgid working inside the project so passwordless sudo can
+    // elevate to container root under the rootless user namespace.
+    args.push(
+      `--userns=keep-id:uid=${DEFAULT_PROJECT_RUNTIME_UID},gid=${DEFAULT_PROJECT_RUNTIME_GID}`,
+    );
     args.push("--user", "0:0");
     args.push("--detach");
     args.push("--label", `project_id=${project_id}`, "--label", `role=project`);
@@ -951,7 +959,10 @@ export async function start({
     }
     const publishHostValue = publishHost();
     args.push("-p", `${publishHostValue}:${ssh_port}:22`);
-    args.push("-p", `${publishHostValue}:${http_port}:80`);
+    args.push(
+      "-p",
+      `${publishHostValue}:${http_port}:${env.COCALC_PROXY_PORT ?? "8080"}`,
+    );
     if (config.gpu) {
       args.push("--device", "nvidia.com/gpu=all");
       args.push("--security-opt", "label=disable");
@@ -1198,7 +1209,15 @@ export function getImage(config?: Configuration): string {
 }
 
 export async function initSshServer(name: string) {
-  await podman(["exec", name, "bash", "-c", join("/root", START_PROJECT_SSH)]);
+  await podman([
+    "exec",
+    "--user",
+    "0:0",
+    name,
+    "bash",
+    "-c",
+    join(DEFAULT_PROJECT_RUNTIME_HOME, START_PROJECT_SSH),
+  ]);
 }
 
 // Placeholder: saving is a no-op now that sync sidecars are gone.

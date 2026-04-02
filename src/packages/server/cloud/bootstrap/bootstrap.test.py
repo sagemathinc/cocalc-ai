@@ -2,6 +2,7 @@
 
 import json
 import os
+import subprocess
 import tempfile
 import unittest
 from collections import namedtuple
@@ -136,6 +137,52 @@ class BootstrapSizingTest(unittest.TestCase):
                 self.assertEqual(bootstrap.compute_image_size(cfg), 76)
             finally:
                 bootstrap.shutil.disk_usage = original_disk_usage
+
+
+class BootstrapRootfsOwnershipRemapTest(unittest.TestCase):
+    def test_remaps_extracted_root_uid_into_runtime_root_mapping(self) -> None:
+        ranges = [
+            (0, 1002, 1),
+            (1, 100000, 65536),
+            (65537, 231072, 65536),
+        ]
+        self.assertEqual(
+            bootstrap.remap_extracted_host_id_for_keep_id(1002, 1000, ranges),
+            100000,
+        )
+
+    def test_remaps_extracted_runtime_user_uid_into_keep_id_owner(self) -> None:
+        ranges = [
+            (0, 1002, 1),
+            (1, 100000, 65536),
+            (65537, 231072, 65536),
+        ]
+        self.assertEqual(
+            bootstrap.remap_extracted_host_id_for_keep_id(100999, 1000, ranges),
+            1002,
+        )
+
+    def test_preserves_high_ids_already_covered_by_the_current_userns_map(self) -> None:
+        ranges = [
+            (0, 1002, 1),
+            (1, 100000, 65536),
+            (65537, 231072, 65536),
+        ]
+        self.assertEqual(
+            bootstrap.remap_extracted_host_id_for_keep_id(266536, 1000, ranges),
+            266536,
+        )
+
+    def test_accepts_literal_namespace_ids_in_mixed_extracted_trees(self) -> None:
+        ranges = [
+            (0, 1002, 1),
+            (1, 100000, 65536),
+            (65537, 231072, 65536),
+        ]
+        self.assertEqual(
+            bootstrap.remap_extracted_host_id_for_keep_id(0, 1000, ranges),
+            100000,
+        )
 
 
 class BootstrapStateFilesTest(unittest.TestCase):
@@ -382,6 +429,19 @@ class BootstrapWrapperScriptTest(unittest.TestCase):
             self.assertIn("metacopy=on,redirect_dir=on,index=on", script)
             self.assertIn("project-rustic-backup)", script)
             self.assertIn("project-rustic-restore)", script)
+            self.assertIn("normalize-rootfs)", script)
+            self.assertIn("podman unshare cat /proc/self/uid_map", script)
+            self.assertIn("--userns=keep-id:uid=1000,gid=1000", script)
+            self.assertIn('podman run --rm --network host --user 0:0', script)
+            self.assertIn('--user 1000:1000', script)
+            self.assertIn("sudo su is not working for user", script)
+            self.assertIn("$validate_runtime_user_escaped", script)
+            self.assertNotIn('find "$dir" -xdev -type f', script)
+            self.assertNotIn("COCALC_RUNTIME_OWNER_UID", script)
+            self.assertNotIn("su - \"$want_user\"", script)
+            wrapper_path = Path(tmpdir) / "cocalc-runtime-storage"
+            wrapper_path.write_text(script, encoding="utf-8")
+            subprocess.run(["bash", "-n", str(wrapper_path)], check=True)
 
     def test_write_helpers_chowns_only_targeted_paths(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -439,7 +499,40 @@ class BootstrapWrapperScriptTest(unittest.TestCase):
                 recorded,
             )
 
-    def test_configure_autostart_starts_project_host_immediately(self) -> None:
+    def test_write_wrapper_uses_runtime_home_for_node_lookup(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            captured = {}
+
+            original_runtime_root = bootstrap.project_host_runtime_root
+            original_write_text = bootstrap.Path.write_text
+            original_chmod = bootstrap.Path.chmod
+            original_run_best_effort = bootstrap.run_best_effort
+            try:
+                bootstrap.project_host_runtime_root = lambda _cfg: Path(tmpdir) / "runtime-root"
+                bootstrap.Path.write_text = (
+                    lambda self, data, encoding="utf-8": captured.__setitem__(str(self), data)
+                    or len(data)
+                )
+                bootstrap.Path.chmod = lambda *_args, **_kwargs: None
+                bootstrap.run_best_effort = lambda *_args, **_kwargs: None
+                bootstrap.write_wrapper(cfg)
+            finally:
+                bootstrap.project_host_runtime_root = original_runtime_root
+                bootstrap.Path.write_text = original_write_text
+                bootstrap.Path.chmod = original_chmod
+                bootstrap.run_best_effort = original_run_best_effort
+
+            script = captured[str(Path(tmpdir) / "runtime-root" / "bin" / "project-host")]
+            self.assertIn(f'RUNTIME_HOME="{cfg.bootstrap_home}"', script)
+            self.assertIn('export NVM_DIR="$RUNTIME_HOME/.nvm"', script)
+            self.assertIn(
+                f'elif [ -x "{cfg.bootstrap_home}/.nvm/versions/node/v20/bin/node" ]; then',
+                script,
+            )
+            self.assertIn('exec "$NODE_BIN"', script)
+
+    def test_configure_autostart_only_writes_cron_and_enables_service(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             cfg = make_cfg(tmpdir)
             runtime_root = Path(tmpdir) / "runtime-root"
@@ -474,7 +567,7 @@ class BootstrapWrapperScriptTest(unittest.TestCase):
                     "/etc/cron.d/cocalc-project-host",
                     (
                         f"@reboot {cfg.ssh_user} /bin/bash -lc '{runtime_root}/bin/start-project-host'\n"
-                        f"* * * * * {cfg.ssh_user} /bin/bash -lc 'mountpoint -q /mnt/cocalc && {runtime_root}/bin/ctl ensure || true'\n"
+                        f"* * * * * {cfg.ssh_user} /bin/bash -lc 'if mountpoint -q /mnt/cocalc; then mkdir -p /mnt/cocalc/data/logs; {runtime_root}/bin/ctl ensure >> /mnt/cocalc/data/logs/project-host-watchdog.log 2>&1; fi'\n"
                     ),
                     "utf-8",
                 ),
@@ -487,7 +580,7 @@ class BootstrapWrapperScriptTest(unittest.TestCase):
                 ),
                 recorded,
             )
-            self.assertIn(
+            self.assertNotIn(
                 (
                     [
                         "sudo",
@@ -657,6 +750,7 @@ class BootstrapModesTest(unittest.TestCase):
             patch("verify_runtime_sudoers", lambda _cfg: None)
             patch("configure_cloudflared_with_options", lambda _cfg, install_package=False: None)
             patch("configure_autostart", lambda _cfg: None)
+            patch("start_project_host", lambda _cfg: None)
             patch("report_bootstrap_status", lambda _cfg, _status, _message=None: None)
 
             try:

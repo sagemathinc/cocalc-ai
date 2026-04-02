@@ -136,6 +136,10 @@ export function is_available(configuration?: ProjectConfiguration): Available {
       julia: capabilities.julia ?? true,
       formatting,
       homeDirectory: capabilities.homeDirectory,
+      runtimeUser: capabilities.runtimeUser,
+      runtimeUid: capabilities.runtimeUid,
+      runtimeGid: capabilities.runtimeGid,
+      sudoAvailable: capabilities.sudoAvailable,
     };
   } else {
     return NO_AVAIL;

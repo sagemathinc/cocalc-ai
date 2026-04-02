@@ -220,6 +220,8 @@ describe("project-host daemon stop", () => {
     );
     const pidPath = path.join(dataDir, "daemon.pid");
     fs.writeFileSync(pidPath, "8484");
+    const old = new Date(Date.now() - 120_000);
+    fs.utimesSync(pidPath, old, old);
     process.env.COCALC_DATA = dataDir;
     process.env.PORT = "9002";
     process.env.COCALC_PROJECT_HOST_DAEMON_STOP_TIMEOUT_MS = "20";
@@ -261,5 +263,75 @@ describe("project-host daemon stop", () => {
     expect(logSpy).toHaveBeenCalledWith(
       "project-host started (pid 9494); log=" + path.join(dataDir, "log"),
     );
+  });
+
+  it("does not restart an unhealthy daemon during the startup grace window", () => {
+    const dataDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "cocalc-project-host-daemon-"),
+    );
+    const pidPath = path.join(dataDir, "daemon.pid");
+    fs.writeFileSync(pidPath, "8585");
+    process.env.COCALC_DATA = dataDir;
+    process.env.PORT = "9002";
+    process.env.COCALC_PROJECT_HOST_DAEMON_STARTUP_GRACE_MS = "60000";
+
+    const killSpy = jest.spyOn(process, "kill").mockImplementation(((
+      pid: number,
+      signal?: NodeJS.Signals | number,
+    ) => {
+      expect(pid).toBe(8585);
+      if (signal === 0 || signal === undefined) {
+        return true;
+      }
+      throw new Error(`unexpected signal ${signal}`);
+    }) as typeof process.kill);
+    jest
+      .spyOn(__test__.processRuntime, "spawnSync")
+      .mockReturnValue({ status: 1 } as any);
+    const spawnSpy = jest
+      .spyOn(__test__.processRuntime, "spawn")
+      .mockReturnValue({ pid: 9595, unref: () => {} } as any);
+    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
+
+    ensureDaemon(0);
+
+    expect(killSpy).not.toHaveBeenCalledWith(8585, "SIGTERM");
+    expect(spawnSpy).not.toHaveBeenCalled();
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("project-host pid 8585 is still warming up"),
+    );
+  });
+
+  it("uses localhost for health checks instead of the public internal url", () => {
+    expect(
+      __test__.healthCheckUrl(
+        {
+          HOST: "0.0.0.0",
+          PORT: "9002",
+          PROJECT_HOST_INTERNAL_URL: "https://host-example-lite2.cocalc.ai",
+        },
+        9002,
+      ),
+    ).toBe("http://127.0.0.1:9002/healthz");
+  });
+
+  it("honors an explicit daemon health url override", () => {
+    expect(
+      __test__.healthCheckUrl(
+        {
+          COCALC_PROJECT_HOST_DAEMON_HEALTH_URL: "http://127.0.0.1:9100/custom",
+        },
+        9002,
+      ),
+    ).toBe("http://127.0.0.1:9100/custom/healthz");
+    expect(
+      __test__.healthCheckUrl(
+        {
+          COCALC_PROJECT_HOST_DAEMON_HEALTH_URL:
+            "http://127.0.0.1:9100/healthz",
+        },
+        9002,
+      ),
+    ).toBe("http://127.0.0.1:9100/healthz");
   });
 });

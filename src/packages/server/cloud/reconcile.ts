@@ -492,7 +492,9 @@ async function reconcileProvider(provider: Provider) {
 
     const desiredStatus =
       entry.provider.mapStatus?.(remote.status) ?? row.status;
-    const bootstrapDone = row.metadata?.bootstrap?.status === "done";
+    const bootstrapDone =
+      row.metadata?.bootstrap?.status === "done" ||
+      row.metadata?.bootstrap_lifecycle?.summary_status === "in_sync";
     const nextStatus =
       desiredStatus === "starting" && bootstrapDone ? "running" : desiredStatus;
     await updateHost(row, {

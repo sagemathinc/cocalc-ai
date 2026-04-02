@@ -60,4 +60,28 @@ describe("getProjectHomeDirectory", () => {
     expect(getProjectHomeDirectory("project-1")).toBe("/root");
     expect(getProjectHomeDirectory("project-2")).toBe("/root");
   });
+
+  it("reads runtime home and user from capabilities", () => {
+    getProjectStore.mockReturnValue({
+      get: (key: string) => {
+        if (key === "available_features") {
+          return {
+            get: (feature: string) => {
+              if (feature === "homeDirectory") return "/home/user";
+              if (feature === "runtimeUser") return "user";
+            },
+          };
+        }
+        return undefined;
+      },
+      getIn: () => undefined,
+    });
+
+    const {
+      getProjectHomeDirectory,
+      getProjectRuntimeUser,
+    } = require("./home-directory");
+    expect(getProjectHomeDirectory("project-1")).toBe("/home/user");
+    expect(getProjectRuntimeUser("project-1")).toBe("user");
+  });
 });

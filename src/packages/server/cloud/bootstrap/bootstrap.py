@@ -36,7 +36,7 @@ from typing import Any
 
 STATE_SCHEMA_VERSION = 1
 HELPER_SCHEMA_VERSION = "20260330-v1"
-RUNTIME_WRAPPER_VERSION = "20260331-v1"
+RUNTIME_WRAPPER_VERSION = "20260401-v3"
 BOOTSTRAP_LOG_MAX_BYTES = 4 * 1024 * 1024
 BUNDLE_RETENTION_COUNT = 3
 
@@ -694,6 +694,57 @@ def ensure_subuids(cfg: BootstrapConfig) -> None:
     run_best_effort(cfg, ["usermod", "--add-subuids", "100000-165535", "--add-subgids", "100000-165535", cfg.ssh_user], "usermod subuids")
 
 
+def namespace_id_to_host_id(
+    identifier: int, ranges: list[tuple[int, int, int]]
+) -> int:
+    for ns_start, host_start, length in ranges:
+        if ns_start <= identifier < ns_start + length:
+            return host_start + (identifier - ns_start)
+    raise RuntimeError(f"id {identifier} is not covered by the rootless podman map")
+
+
+def host_id_to_namespace_id(
+    identifier: int, ranges: list[tuple[int, int, int]]
+) -> int:
+    for ns_start, host_start, length in ranges:
+        if host_start <= identifier < host_start + length:
+            return ns_start + (identifier - host_start)
+    raise RuntimeError(f"id {identifier} is not covered by the current rootless podman host map")
+
+
+def map_keep_id_namespace_id(identifier: int, runtime_id: int) -> int:
+    if identifier < 0:
+        return identifier
+    if identifier < runtime_id:
+        return identifier + 1
+    if identifier == runtime_id:
+        return 0
+    return identifier
+
+
+def extracted_id_to_namespace_id(
+    identifier: int, ranges: list[tuple[int, int, int]]
+) -> int:
+    try:
+        return host_id_to_namespace_id(identifier, ranges)
+    except RuntimeError:
+        # Extracted trees can be mixed: most entries come from the current
+        # rootless podman host mapping, but some still carry literal
+        # namespace/container ids (for example root-owned paths as uid 0).
+        return identifier
+
+
+def remap_extracted_host_id_for_keep_id(
+    identifier: int, runtime_id: int, ranges: list[tuple[int, int, int]]
+) -> int:
+    return namespace_id_to_host_id(
+        map_keep_id_namespace_id(
+            extracted_id_to_namespace_id(identifier, ranges), runtime_id
+        ),
+        ranges,
+    )
+
+
 def enable_linger(cfg: BootstrapConfig) -> None:
     log_line(cfg, f"bootstrap: enabling linger for {cfg.ssh_user}")
     if shutil.which("loginctl") is None:
@@ -1227,6 +1278,334 @@ case "$cmd" in
     # inode identity comes from overlayfs, which corrupts published child
     # RootFS trees.
     exec /usr/bin/rsync -aAX --numeric-ids "$src"/ "$dest"/
+    ;;
+  normalize-rootfs)
+    if [ "$#" -ne 1 ]; then
+      echo "usage: cocalc-runtime-storage normalize-rootfs <rootfs>" >&2
+      exit 2
+    fi
+    rootfs="$1"
+    check_args "$rootfs"
+    if [ ! -d "$rootfs" ]; then
+      deny "rootfs-not-found" "$rootfs"
+    fi
+    shell_path=""
+    if [ -x "$rootfs/bin/bash" ]; then
+      shell_path="/bin/bash"
+    elif [ -x "$rootfs/bin/sh" ]; then
+      shell_path="/bin/sh"
+    else
+      deny "rootfs-shell-missing" "$rootfs"
+    fi
+    normalize_script="$(cat <<'EOF_COCALC_NORMALIZE_ROOTFS'
+set -euo pipefail
+export DEBIAN_FRONTEND=noninteractive
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+want_user="user"
+want_uid="1000"
+want_gid="1000"
+want_home="/home/user"
+want_shell="/bin/bash"
+if [ ! -x "$want_shell" ] && [ -x /bin/sh ]; then
+  want_shell="/bin/sh"
+fi
+
+fail() {
+  echo "$1" >&2
+  exit "${2:-1}"
+}
+
+mkdir -p /home /tmp /var/tmp
+chmod 1777 /tmp /var/tmp || true
+
+if [ ! -w /etc ] || [ ! -w /home ] || [ ! -w /tmp ] || [ ! -w /var/tmp ]; then
+  fail "rootfs contract failed: /etc, /home, /tmp, and /var/tmp must be writable" 41
+fi
+if [ ! -x /bin/bash ] && [ ! -x /bin/sh ]; then
+  fail "rootfs contract failed: no usable shell at /bin/bash or /bin/sh" 42
+fi
+if command -v getconf >/dev/null 2>&1; then
+  if ! getconf GNU_LIBC_VERSION >/dev/null 2>&1; then
+    fail "rootfs contract failed: glibc is required" 43
+  fi
+elif [ ! -e /lib64/ld-linux-x86-64.so.2 ] && \
+     [ ! -e /lib/x86_64-linux-gnu/libc.so.6 ] && \
+     [ ! -e /lib/ld-linux-aarch64.so.1 ] && \
+     [ ! -e /lib64/ld-linux-aarch64.so.1 ] && \
+     [ ! -e /lib/aarch64-linux-gnu/libc.so.6 ]; then
+  fail "rootfs contract failed: glibc is required" 43
+fi
+
+distro_family=""
+package_manager=""
+if [ -r /etc/os-release ]; then
+  . /etc/os-release
+fi
+if command -v apt-get >/dev/null 2>&1; then
+  distro_family="debian"
+  package_manager="apt-get"
+elif command -v dnf >/dev/null 2>&1; then
+  distro_family="rhel"
+  package_manager="dnf"
+elif command -v microdnf >/dev/null 2>&1; then
+  distro_family="rhel"
+  package_manager="microdnf"
+elif command -v yum >/dev/null 2>&1; then
+  distro_family="rhel"
+  package_manager="yum"
+elif command -v zypper >/dev/null 2>&1; then
+  distro_family="sles"
+  package_manager="zypper"
+else
+  fail "rootfs contract failed: unsupported distro family or package manager" 44
+fi
+
+for cmd_name in getent id useradd usermod groupadd groupmod; do
+  command -v "$cmd_name" >/dev/null 2>&1 || \
+    fail "rootfs contract failed: required user management tool '$cmd_name' is missing" 45
+done
+
+case "$package_manager" in
+  apt-get)
+    apt-get update
+    apt-get install -y --no-install-recommends sudo ca-certificates curl
+    rm -rf /var/lib/apt/lists/*
+    ;;
+  dnf)
+    dnf install -y sudo ca-certificates curl
+    dnf clean all || true
+    ;;
+  microdnf)
+    microdnf install -y sudo ca-certificates curl
+    microdnf clean all || true
+    ;;
+  yum)
+    yum install -y sudo ca-certificates curl
+    yum clean all || true
+    ;;
+  zypper)
+    zypper --non-interactive --gpg-auto-import-keys refresh || true
+    zypper --non-interactive install --no-recommends sudo ca-certificates curl
+    zypper clean --all || true
+    ;;
+esac
+
+if command -v update-ca-certificates >/dev/null 2>&1; then
+  update-ca-certificates || true
+fi
+if command -v update-ca-trust >/dev/null 2>&1; then
+  update-ca-trust || true
+fi
+
+existing_gid_group="$(getent group "$want_gid" | cut -d: -f1 || true)"
+if getent group "$want_user" >/dev/null 2>&1; then
+  current_gid="$(getent group "$want_user" | cut -d: -f3)"
+  if [ "$current_gid" != "$want_gid" ]; then
+    if [ -n "$existing_gid_group" ] && [ "$existing_gid_group" != "$want_user" ]; then
+      fail "rootfs contract failed: conflicting existing group for gid 1000 ($existing_gid_group)" 51
+    fi
+    groupmod -g "$want_gid" "$want_user"
+  fi
+else
+  if [ -n "$existing_gid_group" ]; then
+    groupmod -n "$want_user" "$existing_gid_group"
+  else
+    groupadd -g "$want_gid" "$want_user"
+  fi
+fi
+
+existing_uid_user="$(getent passwd "$want_uid" | cut -d: -f1 || true)"
+if id "$want_user" >/dev/null 2>&1; then
+  current_uid="$(id -u "$want_user")"
+  if [ "$current_uid" != "$want_uid" ]; then
+    if [ -n "$existing_uid_user" ] && [ "$existing_uid_user" != "$want_user" ]; then
+      fail "rootfs contract failed: conflicting existing user for uid 1000 ($existing_uid_user)" 52
+    fi
+    usermod -u "$want_uid" "$want_user"
+  fi
+else
+  if [ -n "$existing_uid_user" ]; then
+    usermod -l "$want_user" "$existing_uid_user"
+  else
+    useradd -m -u "$want_uid" -g "$want_user" -d "$want_home" -s "$want_shell" "$want_user"
+  fi
+fi
+
+usermod -g "$want_user" -d "$want_home" -m -s "$want_shell" "$want_user"
+mkdir -p "$want_home"
+chown "$want_uid:$want_gid" "$want_home"
+
+mkdir -p /etc/sudoers.d
+printf '%s ALL=(ALL) NOPASSWD:ALL\n' "$want_user" >/etc/sudoers.d/cocalc-user
+chmod 0440 /etc/sudoers.d/cocalc-user
+if command -v visudo >/dev/null 2>&1; then
+  visudo -cf /etc/sudoers.d/cocalc-user >/dev/null
+fi
+
+id "$want_user" >/dev/null 2>&1 || fail "rootfs contract failed: 'id user' did not succeed" 61
+getent passwd "$want_user" >/dev/null 2>&1 || fail "rootfs contract failed: 'getent passwd user' did not succeed" 62
+[ "$(id -u "$want_user")" = "$want_uid" ] || fail "rootfs contract failed: user uid is not 1000" 63
+[ "$(id -g "$want_user")" = "$want_gid" ] || fail "rootfs contract failed: user gid is not 1000" 64
+[ "$(getent passwd "$want_user" | cut -d: -f6)" = "$want_home" ] || fail "rootfs contract failed: user home is not /home/user" 65
+command -v sudo >/dev/null 2>&1 || fail "rootfs contract failed: sudo is not installed" 66
+command -v curl >/dev/null 2>&1 || fail "rootfs contract failed: curl is not installed" 67
+if [ ! -d /etc/ssl/certs ] && \
+   [ ! -f /etc/ssl/cert.pem ] && \
+   [ ! -f /etc/pki/tls/certs/ca-bundle.crt ] && \
+   [ ! -f /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem ] && \
+   [ ! -f /etc/ssl/ca-bundle.pem ]; then
+  fail "rootfs contract failed: system CA certificates are not configured" 68
+fi
+
+printf '{"ok":true,"distro_family":"%s","package_manager":"%s","shell":"%s","glibc":true,"sudo":true,"ca_certificates":true,"curl":true,"runtime_user":"%s","runtime_uid":%s,"runtime_gid":%s,"runtime_home":"%s"}\n' \
+  "$distro_family" "$package_manager" "$want_shell" "$want_user" "$want_uid" "$want_gid" "$want_home"
+EOF_COCALC_NORMALIZE_ROOTFS
+)"
+    rewrite_rootfs_ids_script="$(mktemp)"
+    rewrite_uid_map_file="$(mktemp)"
+    rewrite_gid_map_file="$(mktemp)"
+    cat >"$rewrite_rootfs_ids_script" <<'EOF_COCALC_REWRITE_ROOTFS_IDS'
+#!/usr/bin/env python3
+import os
+import stat
+import sys
+
+rootfs = sys.argv[1]
+runtime_uid = int(sys.argv[2])
+runtime_gid = int(sys.argv[3])
+uid_map_path = sys.argv[4]
+gid_map_path = sys.argv[5]
+
+def parse_map(path: str) -> list[tuple[int, int, int]]:
+    ranges: list[tuple[int, int, int]] = []
+    with open(path, encoding="utf-8") as handle:
+        for line in handle:
+            parts = line.split()
+            if len(parts) != 3:
+                continue
+            ranges.append((int(parts[0]), int(parts[1]), int(parts[2])))
+    if not ranges:
+        raise RuntimeError(f"missing uid/gid map in {path}")
+    return ranges
+
+uid_ranges = parse_map(uid_map_path)
+gid_ranges = parse_map(gid_map_path)
+
+def map_keep_id(identifier: int, runtime_id: int) -> int:
+    if identifier < 0:
+        return identifier
+    if identifier < runtime_id:
+        return identifier + 1
+    if identifier == runtime_id:
+        return 0
+    return identifier
+
+def host_to_intermediate(identifier: int, ranges: list[tuple[int, int, int]]) -> int:
+    for ns_start, host_start, length in ranges:
+        if host_start <= identifier < host_start + length:
+            return ns_start + (identifier - host_start)
+    raise RuntimeError(f"id {identifier} is not covered by the current rootless podman host map")
+
+def extracted_to_intermediate(identifier: int, ranges: list[tuple[int, int, int]]) -> int:
+    try:
+        return host_to_intermediate(identifier, ranges)
+    except RuntimeError:
+        return identifier
+
+def intermediate_to_host(identifier: int, ranges: list[tuple[int, int, int]]) -> int:
+    for ns_start, host_start, length in ranges:
+        if ns_start <= identifier < ns_start + length:
+            return host_start + (identifier - ns_start)
+    raise RuntimeError(f"id {identifier} is not covered by the rootless podman map")
+
+def remap(path: str) -> None:
+    st = os.lstat(path)
+    mapped_uid = intermediate_to_host(
+        map_keep_id(extracted_to_intermediate(st.st_uid, uid_ranges), runtime_uid),
+        uid_ranges,
+    )
+    mapped_gid = intermediate_to_host(
+        map_keep_id(extracted_to_intermediate(st.st_gid, gid_ranges), runtime_gid),
+        gid_ranges,
+    )
+    if mapped_uid == st.st_uid and mapped_gid == st.st_gid:
+        pass
+    else:
+        mode = stat.S_IMODE(st.st_mode)
+        os.lchown(path, mapped_uid, mapped_gid)
+        if not stat.S_ISLNK(st.st_mode) and (st.st_mode & 0o6000):
+            os.chmod(path, mode, follow_symlinks=False)
+    if stat.S_ISDIR(st.st_mode):
+        with os.scandir(path) as entries:
+            for entry in entries:
+                remap(entry.path)
+
+remap(rootfs)
+EOF_COCALC_REWRITE_ROOTFS_IDS
+chmod 0755 "$rewrite_rootfs_ids_script"
+    validate_runtime_user_script="$(cat <<'EOF_COCALC_VALIDATE_RUNTIME_USER'
+set -euo pipefail
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+want_user="user"
+want_uid="1000"
+want_gid="1000"
+want_home="/home/user"
+
+fail() {
+  echo "$1" >&2
+  exit "${2:-1}"
+}
+
+[ "$(whoami)" = "$want_user" ] || fail "rootfs contract failed: runtime user process did not run as user" 71
+[ "$(id -u)" = "$want_uid" ] || fail "rootfs contract failed: runtime uid is not 1000" 72
+[ "$(id -g)" = "$want_gid" ] || fail "rootfs contract failed: runtime gid is not 1000" 73
+[ "${HOME:-}" = "$want_home" ] || fail "rootfs contract failed: runtime HOME is not /home/user" 74
+command -v sudo >/dev/null 2>&1 || fail "rootfs contract failed: sudo is not installed" 75
+sudo -n true >/dev/null 2>&1 || fail "rootfs contract failed: passwordless sudo is not working for user" 76
+su_whoami="$(timeout 15s sudo -n su -c 'whoami' </dev/null 2>/dev/null || true)"
+[ "$su_whoami" = "root" ] || fail "rootfs contract failed: sudo su is not working for user" 78
+EOF_COCALC_VALIDATE_RUNTIME_USER
+)"
+    cleanup_rewrite_script() {
+      rm -f "$rewrite_rootfs_ids_script"
+      rm -f "$rewrite_uid_map_file"
+      rm -f "$rewrite_gid_map_file"
+    }
+    trap cleanup_rewrite_script EXIT
+    podman_user="${SUDO_USER:-}"
+    if [ -z "$podman_user" ]; then
+      fail "rootfs contract failed: normalize-rootfs must be invoked via sudo from the rootless podman user" 77
+    fi
+    validate_runtime_user_escaped="$(printf '%q' "$validate_runtime_user_script")"
+    normalize_result="$(
+      /usr/bin/podman run --rm --network host --user 0:0 --security-opt label=disable --rootfs "$rootfs" "$shell_path" -lc "$normalize_script"
+    )"
+    /usr/bin/sudo -u "$podman_user" -H bash -lc "cd ~ && /usr/bin/podman unshare cat /proc/self/uid_map" >"$rewrite_uid_map_file"
+    /usr/bin/sudo -u "$podman_user" -H bash -lc "cd ~ && /usr/bin/podman unshare cat /proc/self/gid_map" >"$rewrite_gid_map_file"
+    /usr/bin/python3 "$rewrite_rootfs_ids_script" \
+      "$rootfs" \
+      "1000" \
+      "1000" \
+      "$rewrite_uid_map_file" \
+      "$rewrite_gid_map_file"
+    /usr/bin/sudo -u "$podman_user" -H bash -lc "
+        cd ~ &&
+        /usr/bin/podman run --rm --network host \
+          --userns=keep-id:uid=1000,gid=1000 \
+          --user 1000:1000 \
+          --workdir /home/user \
+          -e HOME=/home/user \
+          -e USER=user \
+          -e LOGNAME=user \
+          --security-opt label=disable \
+          --rootfs '$rootfs' '$shell_path' -lc $validate_runtime_user_escaped
+      " >/dev/null
+    trap - EXIT
+    cleanup_rewrite_script
+    printf '%s\n' "$normalize_result"
+    exit 0
     ;;
   rootfs-rustic-backup)
     if [ "$#" -lt 3 ]; then
@@ -2065,13 +2444,24 @@ def write_wrapper(cfg: BootstrapConfig) -> None:
     if not bundle_root:
         bundle_root = str(host_dir / "bundles" / "current")
     bundle_entry = f"{bundle_root}/bundle/index.js"
+    runtime_home_dir = runtime_home(cfg)
+    node_bin = f"{runtime_home_dir}/.nvm/versions/node/v{cfg.node_version}/bin/node"
     wrapper = f"""#!/usr/bin/env bash
 set -euo pipefail
-export NVM_DIR="$HOME/.nvm"
+RUNTIME_HOME="{runtime_home_dir}"
+export NVM_DIR="$RUNTIME_HOME/.nvm"
 if [ -s "$NVM_DIR/nvm.sh" ]; then
   . "$NVM_DIR/nvm.sh"
 fi
-node "{bundle_entry}" "$@"
+if command -v node >/dev/null 2>&1; then
+  NODE_BIN="$(command -v node)"
+elif [ -x "{node_bin}" ]; then
+  NODE_BIN="{node_bin}"
+else
+  echo "node not found for project-host wrapper (looked in PATH and {node_bin})" >&2
+  exit 127
+fi
+exec "$NODE_BIN" "{bundle_entry}" "$@"
 """
     wrapper_path = bin_dir / "project-host"
     wrapper_path.write_text(wrapper, encoding="utf-8")
@@ -2127,8 +2517,11 @@ esac
 set -euo pipefail
 RUNTIME_ROOT="__RUNTIME_ROOT__"
 CTL="$RUNTIME_ROOT/bin/ctl"
+WATCHDOG_LOG="/mnt/cocalc/data/logs/project-host-watchdog.log"
 for attempt in $(seq 1 60); do
   if mountpoint -q /mnt/cocalc; then
+    mkdir -p "$(dirname "$WATCHDOG_LOG")"
+    exec >>"$WATCHDOG_LOG" 2>&1
     if [ -x /usr/local/sbin/cocalc-runtime-storage ]; then
       sudo -n /usr/local/sbin/cocalc-runtime-storage grow-btrfs || true
     fi
@@ -2365,30 +2758,20 @@ exec python3 "{bootstrap_py}" --bootstrap-dir "{bootstrap_dir}" --only tools_bun
 def configure_autostart(cfg: BootstrapConfig) -> None:
     log_line(cfg, "bootstrap: configuring project-host autostart")
     runtime_root = project_host_runtime_root(cfg)
+    watchdog_log = "/mnt/cocalc/data/logs/project-host-watchdog.log"
     cron_lines = [
         f"@reboot {cfg.ssh_user} /bin/bash -lc '{runtime_root}/bin/start-project-host'",
-        f"* * * * * {cfg.ssh_user} /bin/bash -lc 'mountpoint -q /mnt/cocalc && {runtime_root}/bin/ctl ensure || true'",
+        (
+            f"* * * * * {cfg.ssh_user} /bin/bash -lc "
+            f"'if mountpoint -q /mnt/cocalc; then mkdir -p /mnt/cocalc/data/logs; "
+            f"{runtime_root}/bin/ctl ensure >> {watchdog_log} 2>&1; fi'"
+        ),
     ]
     Path("/etc/cron.d/cocalc-project-host").write_text(
         "\n".join(cron_lines) + "\n", encoding="utf-8"
     )
     os.chmod("/etc/cron.d/cocalc-project-host", 0o644)
     run_best_effort(cfg, ["systemctl", "enable", "--now", "cron"], "enable cron")
-    run_best_effort(
-        cfg,
-        [
-            "sudo",
-            "-u",
-            cfg.ssh_user,
-            "-H",
-            "/bin/bash",
-            "-lc",
-            f"{runtime_root}/bin/start-project-host",
-        ],
-        "start project-host now",
-    )
-
-
 def configure_runtime_sudoers(cfg: BootstrapConfig) -> None:
     user = cfg.ssh_user
     if not user or user == "root":
@@ -2711,6 +3094,8 @@ def run_reconcile(cfg: BootstrapConfig) -> int:
         verify_runtime_sudoers(cfg)
         configure_cloudflared_with_options(cfg, install_package=False)
         configure_autostart(cfg)
+        report_bootstrap_status(cfg, "running", "Restarting project-host services")
+        start_project_host(cfg)
         record_operation_success(cfg, "reconcile")
         report_bootstrap_status(cfg, "done", "Host software reconciled")
         log_line(cfg, "bootstrap: reconcile completed successfully")

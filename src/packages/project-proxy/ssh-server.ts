@@ -143,6 +143,7 @@ async function waitForStartup(
 export async function init({
   getSshdPort,
   getAuthorizedKeys,
+  getSshUser,
   port = sshServer.port,
   proxyHandlers,
   exitOnFail = true,
@@ -150,6 +151,7 @@ export async function init({
 }: {
   getSshdPort: (target: SshTarget) => Promise<number | null> | number | null;
   getAuthorizedKeys: (target: SshTarget) => Promise<string>;
+  getSshUser?: (target: SshTarget) => Promise<string> | string;
   port?: number;
   proxyHandlers?: boolean;
   exitOnFail?: boolean;
@@ -161,7 +163,11 @@ export async function init({
   const projectProxyHandlers = proxyHandlers
     ? createProxyHandlers()
     : await startProxyServer();
-  const { url, publicKey } = await initAuth({ getSshdPort, getAuthorizedKeys });
+  const { url, publicKey } = await initAuth({
+    getSshdPort,
+    getAuthorizedKeys,
+    getSshUser,
+  });
   const hostKey = hostKeyPath ?? join(secretsPath(), "host_key");
   await mkdir(dirname(hostKey), { recursive: true });
   const restBinary = `${sshpiper}-rest`;
