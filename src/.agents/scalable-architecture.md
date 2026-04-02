@@ -39,6 +39,58 @@ The correct architecture is:
 
 Launchpad should become exactly one cell with no cross-cell routing.
 
+## High-Level Diagram
+
+```mermaid
+flowchart LR
+  Browser["Browser"]
+
+  subgraph Global["Global Services"]
+    Auth["Auth / Sessions / Billing"]
+    Dir["Directory / Placement"]
+  end
+
+  subgraph HomeA["Home Cell A"]
+    AHub["Control Hub / Browser Conat"]
+    AProj["Account Projections"]
+    ADb["Cell Postgres"]
+  end
+
+  subgraph OwnerP["Owning Cell P"]
+    PHub["Project Control API"]
+    PAuth["Authoritative Project State"]
+    POut["Outbox / Workers"]
+    PDb["Cell Postgres"]
+  end
+
+  subgraph HomeB["Home Cell B"]
+    BHub["Control Hub / Browser Conat"]
+    BProj["Account Projections"]
+    BDb["Cell Postgres"]
+  end
+
+  Host["Project Host"]
+
+  Browser -->|login / bootstrap| Auth
+  Auth --> Dir
+  Browser <-->|control-plane Conat| AHub
+  AHub -->|lookup home / owner / host| Dir
+  AHub --> AProj
+  AProj --> ADb
+
+  AHub -->|project-scoped RPC| PHub
+  PHub --> PAuth
+  PAuth --> PDb
+  PAuth -->|start / stop / metrics / placement| Host
+  Browser <-->|notebook / terminal / sync / codex| Host
+
+  PAuth --> POut
+  POut -->|replicated project events| AHub
+  POut -->|replicated project events| BHub
+  BHub --> BProj
+  BProj --> BDb
+```
+
 ## Why The Current Model Will Not Scale
 
 The current control plane relies heavily on:
