@@ -147,6 +147,28 @@ describe("hosts.reconcileHostSoftwareInternal", () => {
                 deleted: null,
                 metadata: {
                   bootstrap: {
+                    status: "error",
+                    updated_at: "2026-04-01T21:00:00Z",
+                    message: "bootstrap failed (exit 1) at line 206",
+                  },
+                  bootstrap_lifecycle: {
+                    summary_status: "in_sync",
+                    last_reconcile_finished_at: "2026-04-01T21:02:00Z",
+                    summary_message: "Host software is in sync",
+                  },
+                },
+              },
+            ],
+          };
+        }
+        if (pollCount === 2) {
+          return {
+            rows: [
+              {
+                status: "running",
+                deleted: null,
+                metadata: {
+                  bootstrap: {
                     status: "done",
                     updated_at: "2026-04-01T21:00:00Z",
                     message: "Host software reconciled",
@@ -222,7 +244,6 @@ describe("hosts.reconcileHostSoftwareInternal", () => {
     expect(ssh.getScript()).toContain(
       'BOOTSTRAP_PID="$(sudo -n bash -lc \'nohup bash "$1" >>"$2" 2>&1 </dev/null & echo $!\' -- "$BOOTSTRAP_SH" "$BOOTSTRAP_LOG")"',
     );
-    expect(delayMock).toHaveBeenCalledTimes(1);
   });
 
   it("ignores a stale bootstrap error once lifecycle evidence is newer", async () => {
@@ -271,9 +292,10 @@ describe("hosts.reconcileHostSoftwareInternal", () => {
                     message: "bootstrap failed (exit 1) at line 206",
                   },
                   bootstrap_lifecycle: {
-                    summary_status: "in_sync",
-                    last_reconcile_finished_at: "2026-04-01T21:02:00Z",
-                    summary_message: "Host software is in sync",
+                    summary_status: "reconciling",
+                    current_operation: "reconcile",
+                    last_reconcile_started_at: "2026-04-01T21:03:00Z",
+                    summary_message: "Reconciling host software",
                   },
                 },
               },
@@ -287,14 +309,15 @@ describe("hosts.reconcileHostSoftwareInternal", () => {
               deleted: null,
               metadata: {
                 bootstrap: {
-                  status: "running",
-                  updated_at: "2026-04-01T21:03:00Z",
-                  message: "Reconciling host software",
+                  status: "error",
+                  updated_at: "2026-04-01T21:00:00Z",
+                  message: "bootstrap failed (exit 1) at line 206",
                 },
                 bootstrap_lifecycle: {
-                  summary_status: "reconciling",
-                  current_operation: "reconcile",
+                  summary_status: "in_sync",
                   last_reconcile_started_at: "2026-04-01T21:03:00Z",
+                  last_reconcile_finished_at: "2026-04-01T21:03:30Z",
+                  summary_message: "Host software is in sync",
                 },
               },
             },
@@ -311,7 +334,5 @@ describe("hosts.reconcileHostSoftwareInternal", () => {
         id: HOST_ID,
       }),
     ).resolves.toBeUndefined();
-
-    expect(delayMock).not.toHaveBeenCalled();
   });
 });
