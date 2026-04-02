@@ -1,9 +1,10 @@
-import { readFileSync, writeFileSync, readdirSync, existsSync } from "fs";
+import { readFileSync, writeFileSync, existsSync } from "fs";
 import { dirname, join } from "path";
 import { mkdirSync } from "fs";
 import { request as httpRequest } from "http";
 import { request as httpsRequest } from "https";
 import { URL } from "url";
+import { projectHostBootstrapDirCandidates } from "./bootstrap-paths";
 
 const DEFAULT_MASTER_CONAT_TOKEN_PATH =
   "/mnt/cocalc/data/secrets/master-conat-token";
@@ -57,30 +58,6 @@ export function writeProjectHostMasterConatToken(token: string): void {
   writeFileSync(tokenPath, `${value}\n`, { encoding: "utf8", mode: 0o600 });
 }
 
-function bootstrapDirCandidates(): string[] {
-  const candidates = new Set<string>();
-  const explicitDir =
-    `${process.env.COCALC_PROJECT_HOST_BOOTSTRAP_DIR ?? ""}`.trim();
-  if (explicitDir) {
-    candidates.add(explicitDir);
-  }
-  const home = `${process.env.HOME ?? ""}`.trim();
-  if (home) {
-    candidates.add(join(home, "cocalc-host", "bootstrap"));
-  }
-  candidates.add("/mnt/cocalc/data/.host-bootstrap/bootstrap");
-  candidates.add("/root/cocalc-host/bootstrap");
-  candidates.add("/home/ubuntu/cocalc-host/bootstrap");
-  try {
-    for (const user of readdirSync("/home")) {
-      candidates.add(`/home/${user}/cocalc-host/bootstrap`);
-    }
-  } catch {
-    // ignore missing /home etc.
-  }
-  return [...candidates];
-}
-
 function readJsonObject(path: string): Record<string, any> | undefined {
   try {
     const raw = readFileSync(path, "utf8");
@@ -95,7 +72,7 @@ function readJsonObject(path: string): Record<string, any> | undefined {
 }
 
 function readBootstrapConnection(): BootstrapConnectionRecord | undefined {
-  for (const dir of bootstrapDirCandidates()) {
+  for (const dir of projectHostBootstrapDirCandidates()) {
     const desired = readJsonObject(join(dir, BOOTSTRAP_DESIRED_STATE_BASENAME));
     const connection = desired?.bootstrap_connection;
     if (connection && typeof connection === "object") {

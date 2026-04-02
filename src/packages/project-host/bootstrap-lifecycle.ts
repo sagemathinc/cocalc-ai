@@ -1,11 +1,12 @@
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, readdirSync, realpathSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import type {
   HostBootstrapLifecycle,
   HostBootstrapLifecycleItem,
   HostBootstrapLifecycleItemStatus,
 } from "@cocalc/conat/hub/api/hosts";
+import { projectHostBootstrapDirCandidates } from "./bootstrap-paths";
 import { getSoftwareVersions } from "./software";
 
 type JsonRecord = Record<string, any>;
@@ -23,32 +24,8 @@ function readJson(path: string): JsonRecord | undefined {
   return undefined;
 }
 
-function bootstrapDirCandidates(): string[] {
-  const candidates = new Set<string>();
-  const explicitDir =
-    `${process.env.COCALC_PROJECT_HOST_BOOTSTRAP_DIR ?? ""}`.trim();
-  if (explicitDir) {
-    candidates.add(explicitDir);
-  }
-  const home = `${process.env.HOME ?? ""}`.trim();
-  if (home) {
-    candidates.add(join(home, "cocalc-host", "bootstrap"));
-  }
-  candidates.add("/mnt/cocalc/data/.host-bootstrap/bootstrap");
-  candidates.add("/root/cocalc-host/bootstrap");
-  candidates.add("/home/ubuntu/cocalc-host/bootstrap");
-  try {
-    for (const user of readdirSync("/home")) {
-      candidates.add(`/home/${user}/cocalc-host/bootstrap`);
-    }
-  } catch {
-    // ignore missing /home
-  }
-  return [...candidates];
-}
-
 function resolveBootstrapDir(): string | undefined {
-  for (const candidate of bootstrapDirCandidates()) {
+  for (const candidate of projectHostBootstrapDirCandidates()) {
     if (
       existsSync(join(candidate, "bootstrap-desired-state.json")) ||
       existsSync(join(candidate, "bootstrap-state.json"))

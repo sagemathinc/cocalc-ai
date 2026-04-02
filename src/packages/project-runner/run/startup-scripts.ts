@@ -1,4 +1,5 @@
 import {
+  INTERNAL_SSH_CONFIG,
   SSHD_CONFIG,
   START_PROJECT_SSH,
 } from "@cocalc/conat/project/runner/constants";
@@ -20,13 +21,21 @@ export async function writeStartupScripts(home: string) {
 const START_PROJECT_SSH_SERVER_SH = `#!/usr/bin/env bash
 set -ev
 
-mkdir -p /etc/dropbear
 RUNTIME_HOME="\${COCALC_RUNTIME_HOME:-${DEFAULT_PROJECT_RUNTIME_HOME}}"
-mkdir -p "$RUNTIME_HOME/.ssh"
+RUNTIME_SSH_DIR="$RUNTIME_HOME/.ssh"
+RUNTIME_MANAGED_SSH_DIR="$RUNTIME_HOME/${INTERNAL_SSH_CONFIG}"
+RUNTIME_SSHD_DIR="$RUNTIME_HOME/${SSHD_CONFIG}"
 
-chmod og-rwx -R "$RUNTIME_HOME/.ssh"
+mkdir -p /etc/dropbear
+mkdir -p "$RUNTIME_SSH_DIR" "$RUNTIME_MANAGED_SSH_DIR" "$RUNTIME_SSHD_DIR"
 
-dropbear -p \${COCALC_SSHD_PORT:=22} -e -s -a -R -D "$RUNTIME_HOME/${SSHD_CONFIG}"
+chmod 700 "$RUNTIME_SSH_DIR" "$RUNTIME_MANAGED_SSH_DIR" "$RUNTIME_SSHD_DIR"
+chmod og-rwx -R "$RUNTIME_SSH_DIR"
 
-ln -sf $(which sftp-server) /usr/libexec/sftp-server || true
+dropbear -p \${COCALC_SSHD_PORT:=22} -e -s -a -R -D "$RUNTIME_SSHD_DIR"
+
+SFTP_SERVER="$(command -v sftp-server || true)"
+if [ -n "$SFTP_SERVER" ]; then
+  ln -sf "$SFTP_SERVER" /usr/libexec/sftp-server
+fi
 `;
