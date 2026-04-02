@@ -24,7 +24,15 @@ function normalizeUser(user: string | undefined): string | undefined {
 
 function getProjectStore(projectId?: string): any {
   if (!projectId) return;
-  return redux.getProjectStore(projectId);
+  const getter = (redux as any)?.getProjectStore;
+  if (typeof getter !== "function") return;
+  try {
+    return getter(projectId);
+  } catch {
+    // Best effort only. Some tests and lightweight call sites pass synthetic
+    // ids or mock only a subset of the redux API.
+    return;
+  }
 }
 
 function readExactHomeFromStore(store: any): string | undefined {
@@ -79,8 +87,7 @@ function readHomeFromProjectStore(projectId?: string): string | undefined {
 function readRuntimeUserFromProjectStore(
   projectId?: string,
 ): string | undefined {
-  if (!projectId) return;
-  const store = redux.getProjectStore(projectId);
+  const store = getProjectStore(projectId);
   if (!store) return;
   const features = store.get("available_features") as any;
   const fromFeatures = normalizeUser(
