@@ -4,9 +4,11 @@ import {
   upsertRow,
 } from "@cocalc/lite/hub/sqlite/database";
 import { account_id } from "@cocalc/backend/data";
+import { clearActiveStorageReservations } from "../storage-reservations";
 
 export function initSqlite() {
   initDatabase();
+  clearActiveStorageReservations();
   ensureAccountRow();
 }
 
