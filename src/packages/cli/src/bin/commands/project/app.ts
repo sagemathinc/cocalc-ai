@@ -1336,6 +1336,34 @@ export function registerProjectAppCommands(
     );
 
   app
+    .command("refresh <appId>")
+    .description("run a static app refresh job immediately")
+    .option("-w, --project <project>", "project id or name")
+    .action(
+      async (appId: string, opts: { project?: string }, command: Command) => {
+        await withContext(command, "project app refresh", async (ctx) => {
+          const { project: ws, api } = await resolveProjectProjectApi(
+            ctx,
+            opts.project,
+          );
+          const status = await api.apps.refreshApp(appId);
+          const stdout = Buffer.isBuffer(status.stdout)
+            ? status.stdout.toString("utf8")
+            : status.stdout;
+          const stderr = Buffer.isBuffer(status.stderr)
+            ? status.stderr.toString("utf8")
+            : status.stderr;
+          return {
+            project_id: ws.project_id,
+            ...status,
+            stdout,
+            stderr,
+          };
+        });
+      },
+    );
+
+  app
     .command("restart <appId>")
     .description("restart app process")
     .option("-w, --project <project>", "project id or name")

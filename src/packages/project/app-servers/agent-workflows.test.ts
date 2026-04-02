@@ -17,6 +17,7 @@ import {
   ensureRunning,
   exposeApp,
   listAppSpecs,
+  refreshApp,
   resolveAppProxyTarget,
   statusApp,
   stopApp,
@@ -400,6 +401,50 @@ describe("app server agent workflows", () => {
       base: "/project-test",
       url: `http://project.local/project-test/apps/${id}/`,
     });
+    expect(readFileSync(counterPath, "utf8").trim()).toBe("2");
+    expect(readFileSync(indexPath, "utf8").trim()).toBe("refresh-2");
+  });
+
+  test("static refresh command can run manually before the stale window", async () => {
+    const id = appId("static-refresh-manual");
+    const root = mkdtempSync(join(testHome, "static-refresh-manual-"));
+    const counterPath = join(root, "counter.txt");
+    const indexPath = join(root, "index.html");
+
+    await upsertAppSpec({
+      version: 1,
+      id,
+      kind: "static",
+      title: "Static Refresh Manual Test",
+      static: {
+        root,
+        index: "index.html",
+        cache_control: "public, max-age=60",
+        refresh: {
+          command: {
+            exec: "bash",
+            args: [
+              "-lc",
+              `n=0; [ -f '${counterPath}' ] && n=$(cat '${counterPath}'); n=$((n+1)); echo \"$n\" > '${counterPath}'; echo \"refresh-$n\" > '${indexPath}'`,
+            ],
+          },
+          timeout_s: 10,
+          stale_after_s: 3600,
+          trigger_on_hit: true,
+        },
+      },
+      proxy: { base_path: `/apps/${id}`, strip_prefix: true, websocket: false },
+      wake: { enabled: false, keep_warm_s: 0, startup_timeout_s: 0 },
+    });
+
+    await resolveAppProxyTarget({
+      base: "/project-test",
+      url: `http://project.local/project-test/apps/${id}/`,
+    });
+    expect(readFileSync(counterPath, "utf8").trim()).toBe("1");
+
+    const status = await refreshApp(id);
+    expect(status.state).toBe("running");
     expect(readFileSync(counterPath, "utf8").trim()).toBe("2");
     expect(readFileSync(indexPath, "utf8").trim()).toBe("refresh-2");
   });

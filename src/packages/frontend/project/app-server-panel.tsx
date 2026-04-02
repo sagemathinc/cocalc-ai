@@ -55,7 +55,7 @@ import { withProjectHostBase } from "./host-url";
 
 type AppKind = "service" | "static";
 type AppStatusFilter = "all" | "running" | "stopped" | "error" | "public";
-type AppRowAction = "expose" | "unexpose" | "audit";
+type AppRowAction = "expose" | "unexpose" | "audit" | "refresh";
 
 interface PublicAppPolicy {
   enabled: boolean;
@@ -794,6 +794,26 @@ function parseViewerFileTypes(value: string): string[] {
   );
 }
 
+function defaultPublicViewerRefreshStaleAfter(
+  cacheMode: "live-editing" | "balanced" | "published",
+): string {
+  switch (cacheMode) {
+    case "live-editing":
+      return "1";
+    case "balanced":
+      return "60";
+    case "published":
+      return "3600";
+  }
+}
+
+function shouldAutoAdjustPublicViewerRefreshStaleAfter(value: string): boolean {
+  const trimmed = `${value ?? ""}`.trim();
+  return (
+    trimmed === "" || trimmed === "1" || trimmed === "60" || trimmed === "3600"
+  );
+}
+
 export function AppServerPanel({ project_id }: { project_id: string }) {
   const [resolvedHomeDirectory, setResolvedHomeDirectory] = useState<string>(
     () => getProjectHomeDirectory(project_id),
@@ -1226,11 +1246,17 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
       setStartNow(true);
       setOpenWhenReady(true);
     } else {
+      const viewerCacheMode = preset.staticViewerCacheMode ?? "balanced";
       setStaticRoot(preset.staticRoot ?? "");
       setStaticIndex(preset.staticIndex ?? "index.html");
       setStaticCacheControl(preset.staticCacheControl ?? "public,max-age=3600");
       setStaticRefreshCommand(preset.staticRefreshCommand ?? "");
-      setStaticRefreshStaleAfter(preset.staticRefreshStaleAfter ?? "3600");
+      setStaticRefreshStaleAfter(
+        preset.staticRefreshStaleAfter ??
+          (preset.staticIntegrationMode === "cocalc-public-viewer"
+            ? defaultPublicViewerRefreshStaleAfter(viewerCacheMode)
+            : "3600"),
+      );
       setStaticRefreshTimeout(preset.staticRefreshTimeout ?? "120");
       setStaticRefreshOnHit(preset.staticRefreshOnHit ?? true);
       setStaticIntegrationMode(preset.staticIntegrationMode ?? "");
@@ -1239,7 +1265,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
       );
       setStaticViewerManifest(preset.staticViewerManifest ?? "index.json");
       setStaticViewerAutoRefresh(preset.staticViewerAutoRefresh ?? "0");
-      setStaticViewerCacheMode(preset.staticViewerCacheMode ?? "balanced");
+      setStaticViewerCacheMode(viewerCacheMode);
       setServiceOpenMode("proxy");
       setStartNow(false);
       setOpenWhenReady(false);
@@ -1601,6 +1627,10 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
         );
       }
     }
+    const defaultRefreshStaleAfter =
+      staticIntegrationMode === "cocalc-public-viewer"
+        ? Number(defaultPublicViewerRefreshStaleAfter(staticViewerCacheMode))
+        : 3600;
     return {
       version: 1 as const,
       id,
@@ -1616,7 +1646,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                 exec: "bash",
                 args: ["-lc", refreshCommand],
               },
-              stale_after_s: refreshStaleAfter ?? 3600,
+              stale_after_s: refreshStaleAfter ?? defaultRefreshStaleAfter,
               timeout_s: refreshTimeout ?? 120,
               trigger_on_hit: staticRefreshOnHit,
             }
@@ -1846,6 +1876,22 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
       setRowAction({ appId: id, action: "unexpose" });
       setError(undefined);
       await api.apps.unexposeApp(id);
+      await refresh();
+    } catch (err) {
+      setError(normalizeError(err));
+    } finally {
+      setSubmitting(false);
+      setRowAction(null);
+    }
+  }
+
+  async function onRefreshNow(id: string) {
+    try {
+      setSubmitting(true);
+      setRowAction({ appId: id, action: "refresh" });
+      setError(undefined);
+      setStartupFailures((prev) => ({ ...prev, [id]: undefined }));
+      await api.apps.refreshApp(id);
       await refresh();
     } catch (err) {
       setError(normalizeError(err));
@@ -2090,6 +2136,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
     row: ManagedAppStatus,
     action:
       | "tunnel"
+      | "refresh"
       | "expose"
       | "unexpose"
       | "audit"
@@ -2101,6 +2148,9 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
     switch (action) {
       case "tunnel":
         onTunnelLocally(row);
+        return;
+      case "refresh":
+        void onRefreshNow(row.id);
         return;
       case "expose":
         void onExpose(row.id);
@@ -2611,11 +2661,24 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                             checked={
                               staticIntegrationMode === "cocalc-public-viewer"
                             }
-                            onChange={(e) =>
+                            onChange={(e) => {
+                              const enabled = e.target.checked;
                               setStaticIntegrationMode(
-                                e.target.checked ? "cocalc-public-viewer" : "",
-                              )
-                            }
+                                enabled ? "cocalc-public-viewer" : "",
+                              );
+                              if (
+                                enabled &&
+                                shouldAutoAdjustPublicViewerRefreshStaleAfter(
+                                  staticRefreshStaleAfter,
+                                )
+                              ) {
+                                setStaticRefreshStaleAfter(
+                                  defaultPublicViewerRefreshStaleAfter(
+                                    staticViewerCacheMode,
+                                  ),
+                                );
+                              }
+                            }}
                           >
                             Enable CoCalc Public Viewer rendering for supported
                             file types
@@ -2657,9 +2720,18 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                               </Space.Compact>
                               <Select<"live-editing" | "balanced" | "published">
                                 value={staticViewerCacheMode}
-                                onChange={(value) =>
-                                  setStaticViewerCacheMode(value)
-                                }
+                                onChange={(value) => {
+                                  setStaticViewerCacheMode(value);
+                                  setStaticRefreshStaleAfter((prev) =>
+                                    shouldAutoAdjustPublicViewerRefreshStaleAfter(
+                                      prev,
+                                    )
+                                      ? defaultPublicViewerRefreshStaleAfter(
+                                          value,
+                                        )
+                                      : prev,
+                                  );
+                                }}
                                 options={[
                                   {
                                     value: "live-editing",
@@ -2691,7 +2763,8 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                                 missing, some presets can bootstrap it on first
                                 hit. Cache mode controls how aggressively the
                                 viewer reuses cached source files in the
-                                browser.
+                                browser, and the default manifest refresh
+                                cadence follows the same mode.
                               </Paragraph>
                             </Space>
                           ) : null}
@@ -2705,7 +2778,13 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                           <Space.Compact style={{ width: "100%" }}>
                             <Input
                               value={staticRefreshStaleAfter}
-                              placeholder="Refresh stale-after seconds (default 3600)"
+                              placeholder={`Refresh stale-after seconds (default ${
+                                staticIntegrationMode === "cocalc-public-viewer"
+                                  ? defaultPublicViewerRefreshStaleAfter(
+                                      staticViewerCacheMode,
+                                    )
+                                  : "3600"
+                              })`}
                               onChange={(e) =>
                                 setStaticRefreshStaleAfter(e.target.value)
                               }
@@ -2970,6 +3049,14 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
             const startupFailure = startupFailures[row.id];
             const isExpanded = !!expandedRows[row.id] || !!startupFailure;
             const rowMenuItems = [
+              ...(row.kind === "static"
+                ? [
+                    {
+                      key: "refresh",
+                      label: "Refresh now",
+                    },
+                  ]
+                : []),
               ...(row.kind === "service"
                 ? [
                     {
@@ -3091,6 +3178,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                             row,
                             key as
                               | "tunnel"
+                              | "refresh"
                               | "expose"
                               | "unexpose"
                               | "audit"
@@ -3106,7 +3194,8 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                         loading={
                           submitting &&
                           rowAction?.appId === row.id &&
-                          (rowAction.action === "expose" ||
+                          (rowAction.action === "refresh" ||
+                            rowAction.action === "expose" ||
                             rowAction.action === "unexpose" ||
                             rowAction.action === "audit")
                         }

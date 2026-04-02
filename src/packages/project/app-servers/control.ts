@@ -74,7 +74,7 @@ interface StaticRefreshState {
   last_finished_ms?: number;
   last_success_ms?: number;
   last_error?: string;
-  last_reason?: "first-hit" | "stale-hit";
+  last_reason?: "first-hit" | "stale-hit" | "manual";
   stdout: Buffer;
   stderr: Buffer;
 }
@@ -722,7 +722,7 @@ async function waitForChildExit(
 
 async function runStaticRefresh(
   spec: AppStaticSpec,
-  reason: "first-hit" | "stale-hit",
+  reason: "first-hit" | "stale-hit" | "manual",
 ): Promise<void> {
   const refreshSpec = spec.static.refresh;
   if (!refreshSpec) return;
@@ -956,6 +956,18 @@ export async function stopApp(id: string): Promise<void> {
     await waitForChildExit(running.child, 2000);
   }
   await clearRunningServicePort(spec.id);
+}
+
+export async function refreshApp(id: string): Promise<AppStatus> {
+  const spec = await getAppSpec(id);
+  if (spec.kind !== "static") {
+    throw new Error(`app '${id}' is not a static app`);
+  }
+  if (!spec.static.refresh) {
+    throw new Error(`app '${id}' has no static refresh job configured`);
+  }
+  await runStaticRefresh(spec, "manual");
+  return await statusApp(id);
 }
 
 export async function statusApp(id: string): Promise<AppStatus> {
@@ -1592,8 +1604,7 @@ export async function auditAppPublicReadiness(
         level: "warning",
         status: "warn",
         message: "Static refresh job is configured but trigger_on_hit=false.",
-        suggestion:
-          "Enable trigger_on_hit or run refresh manually to keep generated content current.",
+        suggestion: `Enable trigger_on_hit or run 'cocalc project app refresh ${id}' to keep generated content current.`,
       });
     } else {
       add({
