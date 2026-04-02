@@ -236,6 +236,59 @@ function shouldForceEphemeralAppServerAuthStorage(
   }
 }
 
+async function scrubBrokenProjectCodexAuthArtifacts(
+  projectHome: string,
+  authRuntime: CodexAuthRuntime,
+): Promise<void> {
+  if (!shouldForceEphemeralAppServerAuthStorage(authRuntime)) return;
+  const codexHome = join(projectHome, ".codex");
+  let projectHomeStat;
+  try {
+    projectHomeStat = await fs.stat(projectHome);
+  } catch {
+    return;
+  }
+  for (const name of ["auth.json", "config.toml"]) {
+    const filePath = join(codexHome, name);
+    let stat;
+    try {
+      stat = await fs.stat(filePath);
+    } catch {
+      continue;
+    }
+    if (!stat.isFile()) continue;
+    const mismatchedOwner =
+      stat.uid !== projectHomeStat.uid || stat.gid !== projectHomeStat.gid;
+    const unreadableByOwner = (stat.mode & 0o400) === 0;
+    const emptyPlaceholder = stat.size === 0;
+    if (!(mismatchedOwner || unreadableByOwner || emptyPlaceholder)) {
+      continue;
+    }
+    try {
+      await fs.unlink(filePath);
+      logger.info("codex project runtime: removed broken local auth artifact", {
+        projectHome,
+        filePath,
+        auth: redactCodexAuthRuntime(authRuntime),
+        size: stat.size,
+        uid: stat.uid,
+        gid: stat.gid,
+        mode: stat.mode & 0o777,
+      });
+    } catch (err) {
+      logger.warn(
+        "codex project runtime: failed removing local auth artifact",
+        {
+          projectHome,
+          filePath,
+          auth: redactCodexAuthRuntime(authRuntime),
+          err: `${err}`,
+        },
+      );
+    }
+  }
+}
+
 function redactPodmanArgs(args: string[]): string {
   const redacted = [...args];
   for (let i = 0; i < redacted.length - 1; i++) {
@@ -1196,6 +1249,7 @@ async function spawnCodexAppServerInProjectRuntime({
   });
   await ensureProjectContainerRunning(projectId);
   const { home, scratch } = await localPath({ project_id: projectId });
+  await scrubBrokenProjectCodexAuthArtifacts(home, authRuntime);
   const name = projectContainerName(projectId);
 
   const execArgs: string[] = [

@@ -494,6 +494,98 @@ describe("initCodexProjectRunner", () => {
     );
   });
 
+  it("removes broken local codex auth artifacts before app-server startup", async () => {
+    spawnMock.mockReturnValue(new FakeProc());
+    execFileMock.mockImplementation((_cmd, args, _opts, cb) => {
+      if (args[0] === "inspect" && args[1] === "-f") {
+        cb(null, "true\n", "");
+        return;
+      }
+      cb(null, "", "");
+    });
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "codex-project-test-"));
+    const bin = path.join(tmp, "bin");
+    await fs.mkdir(bin, { recursive: true });
+    await fs.writeFile(path.join(bin, "codex"), "");
+    const home = path.join(tmp, "home");
+    const codexHome = path.join(home, ".codex");
+    await fs.mkdir(codexHome, { recursive: true });
+    await fs.writeFile(path.join(codexHome, "config.toml"), "");
+    await fs.writeFile(path.join(codexHome, "auth.json"), "");
+    const imageFile = path.join(tmp, "image-name.txt");
+    await fs.writeFile(imageFile, "buildpack-deps:noble-scm\n");
+    filesystem.localPath.mockResolvedValue({ home, scratch: undefined });
+    auth.resolveCodexAuthRuntime.mockResolvedValue({
+      source: "subscription",
+      contextId: "subscription-1234",
+      codexHome: path.join(tmp, "subscription-home"),
+      env: {},
+    });
+    process.env.COCALC_BIN_PATH = bin;
+
+    const { initCodexProjectRunner } = await import("./codex/codex-project");
+    initCodexProjectRunner();
+    const spawner = getCodexProjectSpawner();
+    await spawner!.spawnCodexAppServer!({
+      projectId: "6bc2c387-4c80-4a79-aa68-65d8e68a6a52",
+      accountId: "00000000-0000-4000-8000-000000000001",
+      cwd: "/root",
+    });
+
+    await expect(
+      fs.stat(path.join(codexHome, "config.toml")),
+    ).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    await expect(
+      fs.stat(path.join(codexHome, "auth.json")),
+    ).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it("keeps non-empty local codex config before app-server startup", async () => {
+    spawnMock.mockReturnValue(new FakeProc());
+    execFileMock.mockImplementation((_cmd, args, _opts, cb) => {
+      if (args[0] === "inspect" && args[1] === "-f") {
+        cb(null, "true\n", "");
+        return;
+      }
+      cb(null, "", "");
+    });
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "codex-project-test-"));
+    const bin = path.join(tmp, "bin");
+    await fs.mkdir(bin, { recursive: true });
+    await fs.writeFile(path.join(bin, "codex"), "");
+    const home = path.join(tmp, "home");
+    const codexHome = path.join(home, ".codex");
+    await fs.mkdir(codexHome, { recursive: true });
+    const configPath = path.join(codexHome, "config.toml");
+    await fs.writeFile(configPath, 'model = "gpt-5"\n');
+    const imageFile = path.join(tmp, "image-name.txt");
+    await fs.writeFile(imageFile, "buildpack-deps:noble-scm\n");
+    filesystem.localPath.mockResolvedValue({ home, scratch: undefined });
+    auth.resolveCodexAuthRuntime.mockResolvedValue({
+      source: "account-api-key",
+      contextId: "account-key-1234",
+      env: { OPENAI_API_KEY: "secret-key" },
+    });
+    process.env.COCALC_BIN_PATH = bin;
+
+    const { initCodexProjectRunner } = await import("./codex/codex-project");
+    initCodexProjectRunner();
+    const spawner = getCodexProjectSpawner();
+    await spawner!.spawnCodexAppServer!({
+      projectId: "6bc2c387-4c80-4a79-aa68-65d8e68a6a52",
+      accountId: "00000000-0000-4000-8000-000000000001",
+      cwd: "/root",
+    });
+
+    await expect(fs.readFile(configPath, "utf8")).resolves.toBe(
+      'model = "gpt-5"\n',
+    );
+  });
+
   it("re-reads the latest host auth.json on app-server token refresh", async () => {
     spawnMock.mockReturnValue(new FakeProc());
     execFileMock.mockImplementation((_cmd, args, _opts, cb) => {
