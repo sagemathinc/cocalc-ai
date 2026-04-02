@@ -111,12 +111,6 @@ export interface ProjectStoreState {
   type_filter?: string;
   show_directory_tree?: boolean;
   copy_destination_project_id?: string;
-  explorer_browsing_path_abs?: string;
-  explorer_history_path_abs?: string;
-  flyout_browsing_path_abs?: string;
-  flyout_history_path_abs?: string;
-  new_page_path_abs?: string;
-  flyout_new_path_abs?: string;
   error?: string;
   checked_files: immutable.Set<string>;
 
@@ -330,13 +324,6 @@ export class ProjectStore extends Store<ProjectStoreState> {
       },
       show_directory_tree: false,
       hide_masked_files: false,
-      explorer_browsing_path_abs: initialPath,
-      explorer_history_path_abs: initialPath,
-      flyout_browsing_path_abs: initialPath,
-      flyout_history_path_abs: initialPath,
-      new_page_path_abs: initialPath,
-      flyout_new_path_abs: initialPath,
-
       // Project New
       downloading_file: false,
 

@@ -64,9 +64,11 @@ describe("NoFiles", () => {
   it("opens the new page in the current folder", () => {
     const setState = jest.fn();
     const setActiveTab = jest.fn();
+    const setCurrentPath = jest.fn();
     getProjectActionsMock.mockReturnValue({
       setState,
       set_active_tab: setActiveTab,
+      set_current_path: setCurrentPath,
       set_file_search: jest.fn(),
     });
 
@@ -75,16 +77,18 @@ describe("NoFiles", () => {
     );
     fireEvent.click(screen.getByText("+New"));
 
-    expect(setState).toHaveBeenCalledWith({ new_page_path_abs: "/tmp" });
+    expect(setCurrentPath).toHaveBeenCalledWith("/tmp");
     expect(setActiveTab).toHaveBeenCalledWith("new");
   });
 
   it("prefills the new page filename from the current filter", () => {
     const setState = jest.fn();
     const setActiveTab = jest.fn();
+    const setCurrentPath = jest.fn();
     getProjectActionsMock.mockReturnValue({
       setState,
       set_active_tab: setActiveTab,
+      set_current_path: setCurrentPath,
       set_file_search: jest.fn(),
     });
 
@@ -97,9 +101,9 @@ describe("NoFiles", () => {
     );
     fireEvent.click(screen.getByText("+New"));
 
+    expect(setCurrentPath).toHaveBeenCalledWith("/tmp");
     expect(setActiveTab).toHaveBeenCalledWith("new");
     expect(setState).toHaveBeenCalledWith({
-      new_page_path_abs: "/tmp",
       default_filename: "a.txt",
     });
   });

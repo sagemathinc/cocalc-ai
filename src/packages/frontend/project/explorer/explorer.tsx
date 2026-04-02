@@ -158,18 +158,9 @@ export function Explorer() {
   const checked_files = useTypedRedux({ project_id }, "checked_files");
   const configuration = useTypedRedux({ project_id }, "configuration");
   const current_path_abs = useTypedRedux({ project_id }, "current_path_abs");
-  const explorer_browsing_path_abs = useTypedRedux(
-    { project_id },
-    "explorer_browsing_path_abs",
-  );
-  const explorer_history_path_abs = useTypedRedux(
-    { project_id },
-    "explorer_history_path_abs",
-  );
-  const effective_current_path =
-    explorer_browsing_path_abs ?? current_path_abs ?? "/";
-  const effective_history_path =
-    explorer_history_path_abs ?? effective_current_path;
+  const history_path_abs = useTypedRedux({ project_id }, "history_path_abs");
+  const effective_current_path = current_path_abs ?? "/";
+  const effective_history_path = history_path_abs ?? effective_current_path;
   const error = useTypedRedux({ project_id }, "error");
   const ext_selection = useTypedRedux({ project_id }, "ext_selection");
   const file_action = useTypedRedux({ project_id }, "file_action");
@@ -288,15 +279,9 @@ export function Explorer() {
   const flyout = useTypedRedux({ project_id }, "flyout");
   const navigateExplorerRaw = useCallback(
     (path: string) => {
-      navigateBrowsingPath(
-        project_id,
-        path,
-        effective_history_path,
-        "explorer_browsing_path_abs",
-        "explorer_history_path_abs",
-      );
+      navigateBrowsingPath(project_id, path, { updateUrl: true });
     },
-    [effective_history_path, project_id],
+    [project_id],
   );
   const navHistory = useNavigationHistory(
     project_id,

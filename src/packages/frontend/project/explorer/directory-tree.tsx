@@ -162,12 +162,8 @@ const DirectoryTreeNodeTitle = React.memo(function DirectoryTreeNodeTitle({
   isStarred: boolean;
   onToggleStar: (path: string, starred: boolean) => void;
 }) {
-  const explorerBrowsingPathAbs = useTypedRedux(
-    { project_id },
-    "explorer_browsing_path_abs",
-  );
   const currentPathAbs = useTypedRedux({ project_id }, "current_path_abs");
-  const effectiveCurrentPath = explorerBrowsingPathAbs ?? currentPathAbs ?? "/";
+  const effectiveCurrentPath = currentPathAbs ?? "/";
   const isSelected = effectiveCurrentPath === path;
   const enableDnD = !isRoot;
   const { dragRef, dragListeners, dragAttributes, isDragging } = useFileDrag(

@@ -118,8 +118,7 @@ export default function NewFilePage(props: Props) {
   const can_edit_project_defaults = !!is_admin || user_group === "owner";
   const [extensionWarning, setExtensionWarning] = useState<boolean>(false);
   const current_path_abs = useTypedRedux({ project_id }, "current_path_abs");
-  const new_page_path_abs = useTypedRedux({ project_id }, "new_page_path_abs");
-  const effective_current_path = new_page_path_abs ?? current_path_abs ?? "/";
+  const effective_current_path = current_path_abs ?? "/";
   const filename0 = useTypedRedux({ project_id }, "default_filename");
   const fallbackFilename = filename0
     ? filename0
@@ -461,9 +460,10 @@ export default function NewFilePage(props: Props) {
             style={{ display: "inline-block", fontSize: "20px" }}
             currentPath={effective_current_path}
             historyPath={effective_current_path}
-            onNavigate={(path) =>
-              actions?.setState({ new_page_path_abs: path } as any)
-            }
+            onNavigate={(path) => {
+              actions?.set_current_path(path);
+              actions?.set_active_tab("new");
+            }}
           />
         </div>
       }

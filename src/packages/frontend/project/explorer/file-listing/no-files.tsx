@@ -19,7 +19,10 @@ export default function NoFiles({
   project_id,
 }: Props) {
   let actions:
-    | Pick<ProjectActions, "setState" | "set_file_search" | "set_active_tab">
+    | Pick<
+        ProjectActions,
+        "setState" | "set_file_search" | "set_active_tab" | "set_current_path"
+      >
     | undefined;
   let type_filter: string | null = null;
   try {
@@ -30,9 +33,9 @@ export default function NoFiles({
   }
 
   function openNewPage() {
+    actions?.set_current_path(current_path);
     actions?.set_active_tab("new");
     actions?.setState({
-      new_page_path_abs: current_path,
       ...(file_search.trim()
         ? { default_filename: file_search.trim() }
         : undefined),

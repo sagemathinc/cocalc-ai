@@ -47,12 +47,7 @@ export function MiscSideButtons({
   const { actions, project_id } = useProjectContext();
   const show_hidden = useTypedRedux({ project_id }, "show_hidden");
   const current_path_abs = useTypedRedux({ project_id }, "current_path_abs");
-  const explorer_browsing_path_abs = useTypedRedux(
-    { project_id },
-    "explorer_browsing_path_abs",
-  );
-  const effective_current_path =
-    explorer_browsing_path_abs ?? current_path_abs ?? "/";
+  const effective_current_path = current_path_abs ?? "/";
   const available_features = useTypedRedux(
     { project_id },
     "available_features",

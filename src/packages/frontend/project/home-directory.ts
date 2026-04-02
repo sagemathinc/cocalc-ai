@@ -41,8 +41,6 @@ function readHomeFromProjectStore(projectId?: string): string | undefined {
 
   const candidatePaths = [
     store.get("current_path_abs"),
-    store.get("explorer_browsing_path_abs"),
-    store.get("flyout_browsing_path_abs"),
     ...(store.get("open_files_order")?.toArray?.() ?? []),
   ];
   for (const candidate of candidatePaths) {

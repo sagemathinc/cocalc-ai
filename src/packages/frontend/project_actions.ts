@@ -712,12 +712,6 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     const pathKeys: (keyof ProjectStoreState)[] = [
       "current_path_abs",
       "history_path_abs",
-      "explorer_browsing_path_abs",
-      "explorer_history_path_abs",
-      "flyout_browsing_path_abs",
-      "flyout_history_path_abs",
-      "new_page_path_abs",
-      "flyout_new_path_abs",
     ];
 
     for (const key of pathKeys) {
@@ -1008,22 +1002,6 @@ export class ProjectActions extends Actions<ProjectStoreState> {
         }
         const fileDir = misc.path_split(path).head;
         this.set_current_path(fileDir);
-        this.setState({
-          new_page_path_abs: fileDir,
-          flyout_new_path_abs: fileDir,
-        });
-        if (
-          redux
-            .getStore("account")
-            ?.getIn(["other_settings", "follow_current_path"])
-        ) {
-          this.setState({
-            explorer_browsing_path_abs: fileDir,
-            explorer_history_path_abs: fileDir,
-            flyout_browsing_path_abs: fileDir,
-            flyout_history_path_abs: fileDir,
-          });
-        }
 
         const info = store.get("open_files").getIn([path, "component"]) as any;
         if (info == null) {
@@ -1829,14 +1807,6 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     const store = this.get_store();
     if (store == undefined) {
       return;
-    }
-    if (show_files) {
-      this.setState({
-        explorer_browsing_path_abs: nextPathAbs,
-        explorer_history_path_abs: nextPathAbs,
-        new_page_path_abs: nextPathAbs,
-        flyout_new_path_abs: nextPathAbs,
-      });
     }
     if (show_files) {
       this.set_active_tab("files", {

@@ -24,29 +24,17 @@ interface FlyoutNavigation extends NavigationHistory {
 export function useFlyoutNavigation(project_id: string): FlyoutNavigation {
   const current_path_abs =
     useTypedRedux({ project_id }, "current_path_abs") ?? "/";
-  const flyout_browsing_path_abs = useTypedRedux(
-    { project_id },
-    "flyout_browsing_path_abs",
-  );
-  const flyout_history_path_abs = useTypedRedux(
-    { project_id },
-    "flyout_history_path_abs",
-  );
+  const history_path_abs =
+    useTypedRedux({ project_id }, "history_path_abs") ?? current_path_abs;
 
-  const flyoutPath = flyout_browsing_path_abs ?? current_path_abs;
-  const flyoutHistory = flyout_history_path_abs ?? flyoutPath;
+  const flyoutPath = current_path_abs;
+  const flyoutHistory = history_path_abs;
 
   const navigateFlyoutRaw = useCallback(
     (path: string) => {
-      navigateBrowsingPath(
-        project_id,
-        path,
-        flyoutHistory,
-        "flyout_browsing_path_abs",
-        "flyout_history_path_abs",
-      );
+      navigateBrowsingPath(project_id, path);
     },
-    [flyoutHistory, project_id],
+    [project_id],
   );
 
   const navHistory = useNavigationHistory(
