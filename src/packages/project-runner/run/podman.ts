@@ -59,8 +59,6 @@ import {
   DEFAULT_PROJECT_RUNTIME_UID,
 } from "@cocalc/util/project-runtime";
 
-const LEGACY_PROJECT_RUNTIME_HOME: string = "/root";
-
 const logger = getLogger("project-runner:podman");
 // Restores can be large; allow the RPC to stay open while rustic runs.
 const RESTORE_RPC_TIMEOUT_MS = 6 * 60 * 60 * 1000;
@@ -980,11 +978,6 @@ export async function start({
       );
     }
     args.push(mountArg({ source: home, target: env.HOME }));
-    if (env.HOME !== LEGACY_PROJECT_RUNTIME_HOME) {
-      args.push(
-        mountArg({ source: home, target: LEGACY_PROJECT_RUNTIME_HOME }),
-      );
-    }
     if (scratch) {
       args.push(mountArg({ source: scratch, target: "/scratch" }));
     }

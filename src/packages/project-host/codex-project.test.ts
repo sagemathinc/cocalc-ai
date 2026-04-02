@@ -197,10 +197,16 @@ describe("initCodexProjectRunner", () => {
       expect.arrayContaining([
         "exec",
         "-i",
+        "-u",
+        "1000:1000",
         "--workdir",
-        "/root",
+        "/home/user",
         "-e",
-        "HOME=/root",
+        "HOME=/home/user",
+        "-e",
+        "USER=user",
+        "-e",
+        "LOGNAME=user",
         "-e",
         "COCALC_BEARER_TOKEN=issued-project-host-token",
         "-e",
@@ -724,7 +730,7 @@ describe("getBuiltinLaunchpadSkillMounts", () => {
     await expect(getBuiltinLaunchpadSkillMounts(projectHome)).resolves.toEqual([
       {
         source: hostSkill,
-        target: "/root/.codex/skills/cocalc",
+        target: "/home/user/.codex/skills/cocalc",
         readOnly: true,
       },
     ]);

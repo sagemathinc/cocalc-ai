@@ -16,8 +16,6 @@ import {
   DEFAULT_PROJECT_RUNTIME_USER,
 } from "@cocalc/util/project-runtime";
 
-const LEGACY_PROJECT_RUNTIME_HOME: string = "/root";
-
 export interface SandboxExecOptions {
   project_id: string;
   script: string;
@@ -84,11 +82,20 @@ export async function sandboxExec({
   });
   const args: string[] = [];
   const HOME = DEFAULT_PROJECT_RUNTIME_HOME;
+  const normalizeRuntimePath = (value?: string): string | undefined => {
+    if (!value?.startsWith("/")) return value;
+    if (value === "/root") return HOME;
+    if (value.startsWith("/root/")) {
+      return join(HOME, value.slice("/root/".length));
+    }
+    return value;
+  };
   const getWorkdir = () => {
-    if (cwd?.startsWith("/")) {
-      return cwd;
+    const normalized = normalizeRuntimePath(cwd);
+    if (normalized?.startsWith("/")) {
+      return normalized;
     } else {
-      return cwd ? join(HOME, cwd) : HOME;
+      return normalized ? join(HOME, normalized) : HOME;
     }
   };
 
@@ -154,11 +161,6 @@ export async function sandboxExec({
       }
 
       args.push(mountArg({ source: home, target: HOME }));
-      if (HOME !== LEGACY_PROJECT_RUNTIME_HOME) {
-        args.push(
-          mountArg({ source: home, target: LEGACY_PROJECT_RUNTIME_HOME }),
-        );
-      }
       if (scratch) {
         args.push(mountArg({ source: scratch, target: "/scratch" }));
       }

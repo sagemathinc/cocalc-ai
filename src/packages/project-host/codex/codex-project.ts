@@ -7,6 +7,12 @@ import getLogger from "@cocalc/backend/logger";
 import { podmanEnv } from "@cocalc/backend/podman/env";
 import { argsJoin } from "@cocalc/util/args";
 import { RefcountLeaseManager } from "@cocalc/util/refcount/lease";
+import {
+  DEFAULT_PROJECT_RUNTIME_GID,
+  DEFAULT_PROJECT_RUNTIME_HOME,
+  DEFAULT_PROJECT_RUNTIME_UID,
+  DEFAULT_PROJECT_RUNTIME_USER,
+} from "@cocalc/util/project-runtime";
 import type {
   CodexAppServerLoginHint,
   CodexAppServerRequest,
@@ -82,6 +88,8 @@ const API_KEY_PROVIDER_ID = "cocalc-openai-api-key";
 const API_KEY_PROVIDER_CONFIG = `model_providers.${API_KEY_PROVIDER_ID}={name="OpenAI",base_url="https://api.openai.com/v1",env_key="OPENAI_API_KEY",wire_api="responses",requires_openai_auth=false}`;
 const API_KEY_PROVIDER_SELECT = `model_provider="${API_KEY_PROVIDER_ID}"`;
 const EPHEMERAL_AUTH_STORE_CONFIG = 'cli_auth_credentials_store="ephemeral"';
+const PROJECT_RUNTIME_HOME = DEFAULT_PROJECT_RUNTIME_HOME;
+const PROJECT_RUNTIME_CODEX_HOME = join(PROJECT_RUNTIME_HOME, ".codex");
 // Security-critical: app-server must be exec'd via the exact trusted Codex
 // binary we installed into the project runtime image. Do not resolve this via
 // PATH or any user-controlled fallback, since that could let a project replace
@@ -133,6 +141,7 @@ function normalizeApiUrl(
 function normalizeProjectRuntimePath(pathValue?: string): string {
   const seen = new Set<string>();
   const ordered = [
+    `${PROJECT_RUNTIME_HOME}/.local/bin`,
     "/root/.local/bin",
     "/opt/cocalc/bin",
     "/opt/cocalc/bin2",
@@ -155,6 +164,17 @@ function normalizeProjectRuntimePath(pathValue?: string): string {
     normalized.push(part);
   }
   return normalized.join(":");
+}
+
+function normalizeProjectRuntimeCwd(cwd?: string): string {
+  const trimmed = `${cwd ?? ""}`.trim();
+  if (!trimmed) return PROJECT_RUNTIME_HOME;
+  if (trimmed === "/root") return PROJECT_RUNTIME_HOME;
+  if (trimmed.startsWith("/root/")) {
+    return join(PROJECT_RUNTIME_HOME, trimmed.slice("/root/".length));
+  }
+  if (trimmed.startsWith("/")) return trimmed;
+  return join(PROJECT_RUNTIME_HOME, trimmed);
 }
 
 function applyProjectRuntimeCliEnv(
@@ -334,7 +354,7 @@ export async function getBuiltinLaunchpadSkillMounts(
     }
     mounts.push({
       source,
-      target: `/root/.codex/skills/${skillName}`,
+      target: join(PROJECT_RUNTIME_CODEX_HOME, "skills", skillName),
       readOnly: true,
     });
   }
@@ -784,17 +804,24 @@ async function ensureContainer({
   const args: string[] = [];
   args.push("run", "--runtime", "/usr/bin/crun", "--detach", "--rm");
   // Codex should see the same sudo-capable project environment as terminals.
+  args.push(
+    `--userns=keep-id:uid=${DEFAULT_PROJECT_RUNTIME_UID},gid=${DEFAULT_PROJECT_RUNTIME_GID}`,
+  );
+  args.push(
+    "--user",
+    `${DEFAULT_PROJECT_RUNTIME_UID}:${DEFAULT_PROJECT_RUNTIME_GID}`,
+  );
   args.push(networkArgument());
   if (hasGpu) {
     args.push("--device", "nvidia.com/gpu=all");
     args.push("--security-opt", "label=disable");
   }
   args.push("--name", name, "--hostname", name);
-  args.push("--workdir", "/root");
+  args.push("--workdir", PROJECT_RUNTIME_HOME);
 
   const env = await getEnvironment({
     project_id: projectId,
-    HOME: "/root",
+    HOME: PROJECT_RUNTIME_HOME,
     image,
   });
   if (!env.OPENAI_API_KEY?.trim()) {
@@ -839,7 +866,7 @@ async function ensureContainer({
     args.push("-e", `${key}=${env[key]}`);
   }
 
-  args.push(mountArg({ source: home, target: "/root" }));
+  args.push(mountArg({ source: home, target: PROJECT_RUNTIME_HOME }));
   try {
     await fs.mkdir(projectCodexHome, { recursive: true, mode: 0o700 });
   } catch {
@@ -868,7 +895,9 @@ async function ensureContainer({
     try {
       const stat = await fs.stat(codexHome);
       if (stat.isDirectory()) {
-        args.push(mountArg({ source: codexHome, target: "/root/.codex" }));
+        args.push(
+          mountArg({ source: codexHome, target: PROJECT_RUNTIME_CODEX_HOME }),
+        );
       }
     } catch {
       // ignore if codex home missing
@@ -876,7 +905,7 @@ async function ensureContainer({
   }
   if (codexHome && authRuntime.source === "subscription") {
     // Subscription auth should not live in project storage. Mount only the auth
-    // files from secrets, while keeping /root/.codex/sessions in the project.
+    // files from secrets, while keeping project-local sessions in the runtime home.
     const authPath = join(codexHome, "auth.json");
     const configPath = join(codexHome, "config.toml");
     try {
@@ -885,7 +914,7 @@ async function ensureContainer({
         args.push(
           mountArg({
             source: authPath,
-            target: "/root/.codex/auth.json",
+            target: join(PROJECT_RUNTIME_CODEX_HOME, "auth.json"),
           }),
         );
       }
@@ -899,7 +928,7 @@ async function ensureContainer({
         args.push(
           mountArg({
             source: configPath,
-            target: "/root/.codex/config.toml",
+            target: join(PROJECT_RUNTIME_CODEX_HOME, "config.toml"),
           }),
         );
       }
@@ -1048,10 +1077,16 @@ export async function spawnCodexInProjectContainer({
   const execArgs: string[] = [
     "exec",
     "-i",
+    "-u",
+    `${DEFAULT_PROJECT_RUNTIME_UID}:${DEFAULT_PROJECT_RUNTIME_GID}`,
     "--workdir",
-    cwd && cwd.startsWith("/") ? cwd : "/root",
+    normalizeProjectRuntimeCwd(cwd),
     "-e",
-    "HOME=/root",
+    `HOME=${PROJECT_RUNTIME_HOME}`,
+    "-e",
+    `USER=${DEFAULT_PROJECT_RUNTIME_USER}`,
+    "-e",
+    `LOGNAME=${DEFAULT_PROJECT_RUNTIME_USER}`,
   ];
   const execEnv = { ...authRuntime.env, ...toStringEnv(extraEnv) };
   const cliBearer = await resolveProjectCliBearer({
@@ -1166,10 +1201,16 @@ async function spawnCodexAppServerInProjectRuntime({
   const execArgs: string[] = [
     "exec",
     "-i",
+    "-u",
+    `${DEFAULT_PROJECT_RUNTIME_UID}:${DEFAULT_PROJECT_RUNTIME_GID}`,
     "--workdir",
-    cwd && cwd.startsWith("/") ? cwd : "/root",
+    normalizeProjectRuntimeCwd(cwd),
     "-e",
-    "HOME=/root",
+    `HOME=${PROJECT_RUNTIME_HOME}`,
+    "-e",
+    `USER=${DEFAULT_PROJECT_RUNTIME_USER}`,
+    "-e",
+    `LOGNAME=${DEFAULT_PROJECT_RUNTIME_USER}`,
   ];
   const execEnv = toStringEnv(extraEnv);
   const cliBearer = await resolveProjectCliBearer({
