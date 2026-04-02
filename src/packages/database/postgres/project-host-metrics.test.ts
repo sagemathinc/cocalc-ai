@@ -36,9 +36,9 @@ describe("project host metrics history", () => {
   it("stores at most one sample per minute and loads history with growth", async () => {
     const host_id = uuid();
     await insertProjectHost(host_id);
-    const first = new Date(Date.now() - 2 * 60 * 1000);
+    const first = new Date(Date.now() - 25 * 60 * 1000);
     const second = new Date(first.getTime() + 30 * 1000);
-    const third = new Date(first.getTime() + 2 * 60 * 1000);
+    const third = new Date(first.getTime() + 20 * 60 * 1000);
 
     await recordProjectHostMetricsSample({
       host_id,
@@ -98,13 +98,13 @@ describe("project host metrics history", () => {
     expect(entry?.points[1].cpu_percent).toBe(30);
     expect(entry?.points[0].disk_used_percent).toBe(40);
     expect(entry?.points[1].disk_used_percent).toBe(70);
-    expect(entry?.growth?.disk_used_bytes_per_hour).toBeCloseTo(9000, 4);
-    expect(entry?.growth?.metadata_used_bytes_per_hour).toBeCloseTo(600, 4);
+    expect(entry?.growth?.disk_used_bytes_per_hour).toBeCloseTo(900, 4);
+    expect(entry?.growth?.metadata_used_bytes_per_hour).toBeCloseTo(60, 4);
     expect(entry?.derived?.disk.level).toBe("critical");
     expect(entry?.derived?.metadata.level).toBe("critical");
     expect(entry?.derived?.admission_allowed).toBe(false);
     expect(entry?.derived?.alerts).toHaveLength(2);
-    expect(entry?.derived?.disk.hours_to_exhaustion).toBeCloseTo(300 / 9000, 4);
+    expect(entry?.derived?.disk.hours_to_exhaustion).toBeCloseTo(300 / 900, 4);
   });
 
   it("treats missing btrfs metadata fields as unavailable instead of zero", async () => {
@@ -220,7 +220,7 @@ describe("project host metrics history", () => {
   it("still forecasts sustained non-reservation disk growth", async () => {
     const host_id = uuid();
     await insertProjectHost(host_id);
-    const start = new Date(Date.now() - 10 * 60 * 1000);
+    const start = new Date(Date.now() - 30 * 60 * 1000);
     const gib = 1024 ** 3;
 
     for (let minute = 0; minute < 8; minute += 1) {
@@ -229,7 +229,7 @@ describe("project host metrics history", () => {
         host_id,
         metrics: {
           collected_at: new Date(
-            start.getTime() + minute * 61 * 1000,
+            start.getTime() + minute * 3 * 60 * 1000,
           ).toISOString(),
           disk_device_total_bytes: 100 * gib,
           disk_device_used_bytes: used,
@@ -248,6 +248,98 @@ describe("project host metrics history", () => {
     expect(entry).toBeDefined();
     expect(entry?.growth?.disk_used_bytes_per_hour).toBeGreaterThan(0);
     expect(entry?.derived?.disk.hours_to_exhaustion).toBeGreaterThan(0);
+  });
+
+  it("does not forecast growth from only a few minutes of fresh-host samples", async () => {
+    const host_id = uuid();
+    await insertProjectHost(host_id);
+    const start = new Date(Date.now() - 8 * 60 * 1000);
+    const mib = 1024 ** 2;
+
+    const samples = [
+      {
+        minute: 0,
+        disk_used: 1 * mib,
+        disk_avail: 50 * 1024 ** 3,
+        metadata_used: 144 * 1024,
+        reservation: 0,
+      },
+      {
+        minute: 1,
+        disk_used: 7 * mib,
+        disk_avail: 49.99 * 1024 ** 3,
+        metadata_used: 320 * 1024,
+        reservation: 0,
+      },
+      {
+        minute: 2.5,
+        disk_used: 290 * mib,
+        disk_avail: 50.25 * 1024 ** 3,
+        metadata_used: 9 * mib,
+        reservation: 5 * 1024 ** 3,
+      },
+      {
+        minute: 3.5,
+        disk_used: 287 * mib,
+        disk_avail: 50.22 * 1024 ** 3,
+        metadata_used: 9.2 * mib,
+        reservation: 0,
+      },
+      {
+        minute: 5,
+        disk_used: 1335 * mib,
+        disk_avail: 49.25 * 1024 ** 3,
+        metadata_used: 9.2 * mib,
+        reservation: 0,
+      },
+      {
+        minute: 6,
+        disk_used: 1488 * mib,
+        disk_avail: 49.06 * 1024 ** 3,
+        metadata_used: 16.8 * mib,
+        reservation: 0,
+      },
+      {
+        minute: 7.5,
+        disk_used: 1388 * mib,
+        disk_avail: 49.17 * 1024 ** 3,
+        metadata_used: 13.7 * mib,
+        reservation: 0,
+      },
+    ];
+
+    for (const sample of samples) {
+      await recordProjectHostMetricsSample({
+        host_id,
+        metrics: {
+          collected_at: new Date(
+            start.getTime() + sample.minute * 60 * 1000,
+          ).toISOString(),
+          disk_device_total_bytes: 100 * 1024 ** 3,
+          disk_device_used_bytes: Math.round(sample.disk_used),
+          disk_available_conservative_bytes: Math.round(sample.disk_avail),
+          btrfs_metadata_total_bytes: 1 * 1024 ** 3,
+          btrfs_metadata_used_bytes: Math.round(sample.metadata_used),
+          reservation_bytes: sample.reservation,
+        },
+      });
+    }
+
+    const history = await loadProjectHostMetricsHistory({
+      host_ids: [host_id],
+      window_minutes: 60,
+      max_points: 60,
+    });
+    const entry = history.get(host_id);
+    expect(entry).toBeDefined();
+    expect(entry?.growth?.disk_used_bytes_per_hour).toBeUndefined();
+    expect(entry?.growth?.metadata_used_bytes_per_hour).toBeUndefined();
+    expect(entry?.derived?.disk.hours_to_exhaustion).toBeUndefined();
+    expect(entry?.derived?.metadata.hours_to_exhaustion).toBeUndefined();
+    expect(entry?.derived?.disk.level).toBe("healthy");
+    expect(entry?.derived?.metadata.level).toBe("healthy");
+    expect(entry?.derived?.admission_allowed).toBe(true);
+    expect(entry?.derived?.auto_grow_recommended).toBe(false);
   });
 
   it("clears stored metrics history for a host", async () => {

@@ -1,6 +1,12 @@
-import { closeDatabase, initDatabase } from "@cocalc/lite/hub/sqlite/database";
+import * as executeCodeModule from "@cocalc/backend/execute-code";
+import {
+  closeDatabase,
+  getDatabase,
+  initDatabase,
+} from "@cocalc/lite/hub/sqlite/database";
 import {
   acquireStorageReservation,
+  clearActiveStorageReservations,
   cleanupExpiredStorageReservations,
   getActiveStorageReservationSummary,
   releaseStorageReservation,
@@ -18,6 +24,7 @@ describe("storage reservations", () => {
   afterEach(() => {
     closeDatabase();
     delete process.env.COCALC_LITE_SQLITE_FILENAME;
+    delete process.env.COCALC_STORAGE_ORPHANED_PULL_GRACE_MS;
   });
 
   it("acquires and releases reservations against conservative free space", async () => {
@@ -95,6 +102,66 @@ describe("storage reservations", () => {
     expect(
       getActiveStorageReservationSummary(reservation.expires_at + 1).count,
     ).toBe(0);
+  });
+
+  it("can clear all active reservations from the ledger", async () => {
+    await acquireStorageReservation({
+      kind: "oci-pull",
+      estimated_bytes: 4 * 1024 ** 3,
+      current_storage: {
+        disk_available_conservative_bytes: 64 * 1024 ** 3,
+      },
+    });
+    await acquireStorageReservation({
+      kind: "rootfs-pull",
+      estimated_bytes: 3 * 1024 ** 3,
+      current_storage: {
+        disk_available_conservative_bytes: 64 * 1024 ** 3,
+      },
+    });
+    expect(getActiveStorageReservationSummary().count).toBe(2);
+    expect(clearActiveStorageReservations()).toBe(2);
+    expect(getActiveStorageReservationSummary().count).toBe(0);
+  });
+
+  it("reclaims orphaned pull reservations before denying a new admission", async () => {
+    const podmanSpy = jest
+      .spyOn(executeCodeModule, "executeCode")
+      .mockResolvedValue({
+        exit_code: 0,
+        stdout: "",
+        stderr: "",
+      } as any);
+    const oldReservation = await acquireStorageReservation({
+      kind: "oci-pull",
+      estimated_bytes: 20 * 1024 ** 3,
+      current_storage: {
+        disk_available_conservative_bytes: 30 * 1024 ** 3,
+      },
+      ttl_ms: 60 * 60 * 1000,
+      min_free_bytes: 8 * 1024 ** 3,
+    });
+    getDatabase()
+      .prepare(
+        "UPDATE storage_reservations SET created_at = ?, expires_at = ? WHERE reservation_id = ?",
+      )
+      .run(
+        Date.now() - 11 * 60 * 1000,
+        Date.now() + 60 * 60 * 1000,
+        oldReservation.reservation_id,
+      );
+    expect(getActiveStorageReservationSummary().count).toBe(1);
+    const reservation = await acquireStorageReservation({
+      kind: "rootfs-pull",
+      estimated_bytes: 5 * 1024 ** 3,
+      current_storage: {
+        disk_available_conservative_bytes: 30 * 1024 ** 3,
+      },
+      min_free_bytes: 8 * 1024 ** 3,
+    });
+    expect(reservation.kind).toBe("rootfs-pull");
+    expect(getActiveStorageReservationSummary().count).toBe(1);
+    expect(podmanSpy).toHaveBeenCalled();
   });
 
   it("estimates managed rootfs reservations conservatively", () => {

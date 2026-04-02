@@ -63,6 +63,10 @@ const DEFAULT_OCI_COMPRESSED_MULTIPLIER = Math.max(
   Number(process.env.COCALC_STORAGE_OCI_COMPRESSED_MULTIPLIER ?? 3),
 );
 const OCI_ESTIMATE_CACHE_MS = 15 * 60 * 1000;
+const DEFAULT_ORPHANED_PULL_GRACE_MS = Math.max(
+  60_000,
+  Number(process.env.COCALC_STORAGE_ORPHANED_PULL_GRACE_MS ?? 10 * 60 * 1000),
+);
 
 type ReservationState = "active";
 
@@ -191,6 +195,82 @@ export function cleanupExpiredStorageReservations(now = Date.now()): number {
     )
     .run(now) as { changes?: number };
   return Number(result?.changes ?? 0);
+}
+
+export function clearActiveStorageReservations(): number {
+  ensureStorageReservationsTable();
+  const db = getDatabase();
+  const result = db
+    .prepare(`DELETE FROM ${TABLE} WHERE state='active'`)
+    .run() as {
+    changes?: number;
+  };
+  return Number(result?.changes ?? 0);
+}
+
+async function hostHasProjectContainers(): Promise<boolean> {
+  try {
+    const result = await executeCode({
+      command: "podman",
+      args: ["ps", "-aq", "--filter", "name=project-"],
+      timeout: 15,
+      err_on_exit: false,
+      verbose: false,
+      env: {
+        ...process.env,
+        LC_ALL: "C.UTF-8",
+        LANG: "C.UTF-8",
+      },
+    });
+    if (result.exit_code !== 0) {
+      logger.debug("unable to inspect project containers for reservation gc", {
+        exit_code: result.exit_code,
+        stderr: result.stderr,
+      });
+      return true;
+    }
+    return (
+      `${result.stdout ?? ""}`
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean).length > 0
+    );
+  } catch (err) {
+    logger.debug("project container inspection failed for reservation gc", {
+      err: `${err}`,
+    });
+    return true;
+  }
+}
+
+async function reclaimOrphanedPullReservations(
+  rows: StorageReservationRow[],
+  now = Date.now(),
+): Promise<number> {
+  const orphaned = rows.filter(
+    (row) =>
+      (row.kind === "oci-pull" || row.kind === "rootfs-pull") &&
+      now - row.created_at >= DEFAULT_ORPHANED_PULL_GRACE_MS,
+  );
+  if (!orphaned.length) return 0;
+  if (await hostHasProjectContainers()) return 0;
+  ensureStorageReservationsTable();
+  const db = getDatabase();
+  const placeholders = orphaned.map(() => "?").join(", ");
+  const result = db
+    .prepare(`DELETE FROM ${TABLE} WHERE reservation_id IN (${placeholders})`)
+    .run(...orphaned.map((row) => row.reservation_id)) as {
+    changes?: number;
+  };
+  const deleted = Number(result?.changes ?? 0);
+  if (deleted > 0) {
+    logger.warn("reclaimed orphaned pull storage reservations", {
+      count: deleted,
+      reservation_ids: orphaned.map((row) => row.reservation_id),
+      kinds: [...new Set(orphaned.map((row) => row.kind))],
+    });
+  }
+  return deleted;
 }
 
 export function listActiveStorageReservations(
@@ -328,9 +408,16 @@ export async function acquireStorageReservation({
     });
   }
   const now = Date.now();
-  const summary = getActiveStorageReservationSummary(now);
-  const availableForAdmission = Math.max(0, available - summary.total_bytes);
+  let summary = getActiveStorageReservationSummary(now);
+  let availableForAdmission = Math.max(0, available - summary.total_bytes);
   const requiredWithHeadroom = estimated + Math.max(0, min_free_bytes);
+  if (availableForAdmission < requiredWithHeadroom && summary.count > 0) {
+    const reclaimed = await reclaimOrphanedPullReservations(summary.rows, now);
+    if (reclaimed > 0) {
+      summary = getActiveStorageReservationSummary(now);
+      availableForAdmission = Math.max(0, available - summary.total_bytes);
+    }
+  }
   if (availableForAdmission < requiredWithHeadroom) {
     throw new StorageReservationError({
       kind,
@@ -564,6 +651,8 @@ export function estimateManagedRootfsPullReservationBytes(
 }
 
 export const _test = {
+  hostHasProjectContainers,
   metadataUsedPercent,
+  reclaimOrphanedPullReservations,
   estimateManagedRootfsPullReservationBytes,
 };

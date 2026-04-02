@@ -28,6 +28,7 @@ const WARNING_HOURS_TO_EXHAUSTION = 24;
 const CRITICAL_HOURS_TO_EXHAUSTION = 6;
 const GROWTH_RECENT_INTERVALS = 15;
 const GROWTH_MIN_POSITIVE_INTERVALS = 3;
+const GROWTH_MIN_OBSERVATION_HOURS = 0.25;
 let schemaReady: Promise<void> | undefined;
 
 type ProjectHostMetricsSampleRow = {
@@ -193,6 +194,7 @@ function computeGrowthRate(
 ): number | undefined {
   if (points.length < 2) return undefined;
   const intervalRates: number[] = [];
+  let observedHours = 0;
   for (let i = 1; i < points.length; i += 1) {
     const prev = points[i - 1];
     const next = points[i];
@@ -216,9 +218,13 @@ function computeGrowthRate(
     if (prevValue == null || nextValue == null) continue;
     const hours = (nextAt - prevAt) / (60 * 60 * 1000);
     if (!(hours > 0)) continue;
+    observedHours += hours;
     intervalRates.push((nextValue - prevValue) / hours);
   }
   if (intervalRates.length === 0) return undefined;
+  if (observedHours < GROWTH_MIN_OBSERVATION_HOURS) {
+    return undefined;
+  }
   if (intervalRates.length <= 2) {
     const positive = intervalRates.filter((rate) => rate > 0);
     return positive.length > 0 ? positive[positive.length - 1] : undefined;
