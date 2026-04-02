@@ -30,7 +30,7 @@ import type {
   InstalledAppTemplate,
   ManagedAppStatus,
 } from "@cocalc/conat/project/api/apps";
-import { useTypedRedux } from "@cocalc/frontend/app-framework";
+import { useRedux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Paragraph } from "@cocalc/frontend/components";
 import ShowError from "@cocalc/frontend/components/error";
 import { Icon, type IconName } from "@cocalc/frontend/components/icon";
@@ -845,10 +845,10 @@ function humanizeDirectoryName(path: string): string {
 
 export function AppServerPanel({ project_id }: { project_id: string }) {
   const currentPathAbs = useTypedRedux({ project_id }, "current_path_abs");
-  const explorerBrowsingPathAbs = useTypedRedux(
-    { project_id },
-    "explorer_browsing_path_abs",
-  );
+  const explorerBrowsingPathAbs = useRedux(
+    ["explorer_browsing_path_abs"],
+    project_id,
+  ) as string | undefined;
   const [resolvedHomeDirectory, setResolvedHomeDirectory] = useState<string>(
     () => getProjectHomeDirectory(project_id),
   );
