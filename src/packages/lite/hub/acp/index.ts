@@ -337,6 +337,23 @@ const ACP_JOB_WITHOUT_LEASE_RECOVERY_GRACE_MS = envNumber(
 const WORKER_INTERRUPTED_NOTICE =
   "**Conversation interrupted because the ACP worker stopped unexpectedly.**";
 
+function interruptedNoticeForRecoveryReason(recoveryReason: string): string {
+  const normalized = `${recoveryReason ?? ""}`.trim().toLowerCase();
+  if (
+    normalized === "backend server restarted" ||
+    normalized.includes("server restart")
+  ) {
+    return RESTART_INTERRUPTED_NOTICE;
+  }
+  if (
+    normalized === "backend lost live codex turn" ||
+    normalized.includes("lost live codex turn")
+  ) {
+    return STALE_TURN_INTERRUPTED_NOTICE;
+  }
+  return WORKER_INTERRUPTED_NOTICE;
+}
+
 type DetachedWorkerContext = {
   worker_id: string;
   host_id: string;
@@ -4332,12 +4349,12 @@ export async function recoverDetachedWorkerStartupState(
   const restartReason = opts.restartReason ?? "worker restart";
   const recoveryReason =
     workerContext != null
-      ? "ACP worker stopped unexpectedly"
+      ? restartReason || "ACP worker stopped unexpectedly"
       : "ACP worker stopped before turn startup";
   if (workerContext) {
     await recoverOrphanedAcpTurns(client, {
       liveOwnerIds: liveWorkerOwnerIds(workerContext.host_id),
-      interruptedNotice: WORKER_INTERRUPTED_NOTICE,
+      interruptedNotice: interruptedNoticeForRecoveryReason(recoveryReason),
       recoveryReason,
     });
   } else {

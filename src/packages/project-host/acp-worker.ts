@@ -121,6 +121,9 @@ export async function main(): Promise<void> {
   );
   const pidFile = readRequiredEnv("COCALC_PROJECT_HOST_ACP_WORKER_PID_FILE");
   const conatServer = readRequiredEnv("CONAT_SERVER");
+  const restartReason =
+    `${process.env.COCALC_PROJECT_HOST_ACP_WORKER_RESTART_REASON ?? ""}`.trim() ||
+    undefined;
   setConatPassword(conatPassword);
   initSqlite();
   configureProjectHostAcpRuntime();
@@ -165,6 +168,7 @@ export async function main(): Promise<void> {
   try {
     await runDetachedAcpQueueWorker(client, {
       idleExitMs: null,
+      restartReason,
     });
   } finally {
     setMasterConatClient(undefined);

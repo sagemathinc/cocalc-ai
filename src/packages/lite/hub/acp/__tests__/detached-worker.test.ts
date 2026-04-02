@@ -5,6 +5,9 @@ import {
   shouldStopDetachedWorkerForIdle,
   turnNeedsInterruptedRepair,
 } from "../index";
+import * as turns from "../../sqlite/acp-turns";
+import * as workers from "../../sqlite/acp-workers";
+import * as chatServer from "@cocalc/chat/server";
 import {
   closeDatabase,
   getDatabase,
@@ -59,6 +62,13 @@ jest.mock("../../sqlite/acp-turns", () => ({
   updateAcpTurnLeaseSessionId: jest.fn(),
   listRunningAcpTurnLeases: jest.fn(() => []),
 }));
+jest.mock("../../sqlite/acp-workers", () => ({
+  getAcpWorker: jest.fn(),
+  heartbeatAcpWorker: jest.fn(),
+  listLiveAcpWorkers: jest.fn(() => []),
+  stopAcpWorker: jest.fn(),
+  upsertAcpWorker: jest.fn(),
+}));
 jest.mock("@cocalc/chat/server", () => ({
   acquireChatSyncDB: jest.fn(),
   releaseChatSyncDB: jest.fn(),
@@ -93,6 +103,12 @@ beforeAll(() => {
 
 beforeEach(() => {
   getDatabase().prepare("DELETE FROM acp_jobs").run();
+  (turns.listRunningAcpTurnLeases as any)?.mockReset?.();
+  (turns.listRunningAcpTurnLeases as any)?.mockImplementation?.(() => []);
+  (workers.listLiveAcpWorkers as any)?.mockReset?.();
+  (workers.listLiveAcpWorkers as any)?.mockImplementation?.(() => []);
+  (chatServer.acquireChatSyncDB as any)?.mockReset?.();
+  (chatServer.releaseChatSyncDB as any)?.mockReset?.();
 });
 
 afterAll(() => {
@@ -155,6 +171,85 @@ describe("recoverDetachedWorkerStartupState", () => {
     expect(after?.state).toBe("queued");
     expect(after?.worker_id ?? null).toBeNull();
     expect(after?.error).toBe("ACP worker stopped before turn startup");
+  });
+
+  it("reports host-managed startup recovery as a backend restart", async () => {
+    const rows: any[] = [
+      {
+        event: "chat",
+        date: "2026-04-02T14:00:00.000Z",
+        sender_id: "openai-codex-agent",
+        message_id: "assistant-1",
+        thread_id: "thread-1",
+        generating: true,
+        history: [
+          {
+            author_id: "openai-codex-agent",
+            content: "partial answer",
+            date: "2026-04-02T14:00:00.000Z",
+          },
+        ],
+      },
+    ];
+    const sets: any[] = [];
+    const syncdb: any = {
+      isReady: () => true,
+      get: (where: any) =>
+        rows.filter((row) =>
+          Object.entries(where ?? {}).every(([k, v]) => row[k] === v),
+        ),
+      get_one: (where: any) =>
+        rows.find((row) =>
+          Object.entries(where ?? {}).every(([k, v]) => row[k] === v),
+        ),
+      set: (val: any) => {
+        sets.push(val);
+        const idx = rows.findIndex(
+          (row) =>
+            row.event === val.event &&
+            row.date === val.date &&
+            row.sender_id === val.sender_id,
+        );
+        if (idx >= 0) {
+          rows[idx] = { ...rows[idx], ...val };
+        } else {
+          rows.push({ ...val });
+        }
+      },
+      commit: jest.fn(),
+      save: jest.fn(async () => {}),
+      close: async () => {},
+    };
+    (chatServer.acquireChatSyncDB as any).mockResolvedValue(syncdb);
+    (turns.listRunningAcpTurnLeases as any).mockReturnValue([
+      {
+        project_id: "00000000-1000-4000-8000-000000000000",
+        path: "/tmp/detached-worker.chat",
+        message_date: "2026-04-02T14:00:00.000Z",
+        sender_id: "openai-codex-agent",
+        message_id: "assistant-1",
+        thread_id: "thread-1",
+        owner_instance_id: "worker-old",
+      },
+    ]);
+
+    await recoverDetachedWorkerStartupState({} as ConatClient, {
+      workerContext: {
+        worker_id: "worker-new",
+        host_id: "host-1",
+        bundle_version: "bundle-1",
+        bundle_path: "/bundle",
+        state: "active",
+      },
+      restartReason: "backend server restarted",
+    });
+
+    const repaired = sets.find(
+      (row: any) => row.event === "chat" && row.generating === false,
+    );
+    expect(repaired?.acp_interrupted_text).toContain(
+      "backend server restarted",
+    );
   });
 });
 

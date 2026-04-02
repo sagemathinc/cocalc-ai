@@ -421,7 +421,11 @@ async function reconcileProjectHostAcpWorkers(): Promise<number | undefined> {
   return;
 }
 
-function spawnProjectHostAcpWorker(): boolean {
+function spawnProjectHostAcpWorker({
+  restartReason,
+}: {
+  restartReason?: string;
+} = {}): boolean {
   if (!`${conatPassword ?? ""}`.trim()) {
     logger.warn("skipping ACP worker spawn: conat password is not initialized");
     clearWorkerPidFile();
@@ -451,6 +455,9 @@ function spawnProjectHostAcpWorker(): boolean {
     COCALC_PROJECT_HOST_ACP_WORKER_BUNDLE_PATH: bundle_path,
     COCALC_PROJECT_HOST_ACP_WORKER_STATE: "active",
     COCALC_ACP_INSTANCE_ID: worker_id,
+    ...(restartReason
+      ? { COCALC_PROJECT_HOST_ACP_WORKER_RESTART_REASON: restartReason }
+      : {}),
   };
   const child = spawn(command, args, {
     cwd: process.cwd(),
@@ -488,20 +495,28 @@ function spawnProjectHostAcpWorker(): boolean {
   return true;
 }
 
-async function ensureProjectHostAcpWorkerRunningOnce(): Promise<boolean> {
+async function ensureProjectHostAcpWorkerRunningOnce({
+  restartReason,
+}: {
+  restartReason?: string;
+} = {}): Promise<boolean> {
   const existingPid =
     (await reconcileProjectHostAcpWorkers()) ?? readWorkerPid();
   if (isPidAlive(existingPid)) {
     return true;
   }
-  return spawnProjectHostAcpWorker();
+  return spawnProjectHostAcpWorker({ restartReason });
 }
 
-export async function ensureProjectHostAcpWorkerRunning(): Promise<boolean> {
+export async function ensureProjectHostAcpWorkerRunning({
+  restartReason,
+}: {
+  restartReason?: string;
+} = {}): Promise<boolean> {
   if (ensureWorkerPromise != null) {
     return await ensureWorkerPromise;
   }
-  const promise = ensureProjectHostAcpWorkerRunningOnce();
+  const promise = ensureProjectHostAcpWorkerRunningOnce({ restartReason });
   ensureWorkerPromise = promise;
   try {
     return await promise;
