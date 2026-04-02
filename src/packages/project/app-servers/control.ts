@@ -26,7 +26,12 @@ import {
   type AppSpecRecord,
   upsertAppSpec as upsertAppSpecRaw,
 } from "./specs";
-import type { AppStaticIntegrationSpec } from "./public-viewer";
+import {
+  COCALC_PUBLIC_VIEWER_MODE,
+  isLegacyPublicViewerBootstrapRefreshCommand,
+  syncPublicViewerManifest,
+  type AppStaticIntegrationSpec,
+} from "./public-viewer";
 import {
   appIdForRunningServicePort,
   clearRunningServicePort,
@@ -74,7 +79,7 @@ interface StaticRefreshState {
   last_finished_ms?: number;
   last_success_ms?: number;
   last_error?: string;
-  last_reason?: "first-hit" | "stale-hit";
+  last_reason?: "first-hit" | "stale-hit" | "manual";
   stdout: Buffer;
   stderr: Buffer;
 }
@@ -722,7 +727,7 @@ async function waitForChildExit(
 
 async function runStaticRefresh(
   spec: AppStaticSpec,
-  reason: "first-hit" | "stale-hit",
+  reason: "first-hit" | "stale-hit" | "manual",
 ): Promise<void> {
   const refreshSpec = spec.static.refresh;
   if (!refreshSpec) return;
@@ -748,6 +753,38 @@ async function runStaticRefresh(
     state.last_error = undefined;
     state.stdout = Buffer.alloc(0);
     state.stderr = Buffer.alloc(0);
+    if (
+      spec.integration?.mode === COCALC_PUBLIC_VIEWER_MODE &&
+      isLegacyPublicViewerBootstrapRefreshCommand(refreshSpec.command)
+    ) {
+      try {
+        const synced = await syncPublicViewerManifest({
+          root: spec.static.root,
+          manifest: spec.integration.manifest,
+          fileTypes: spec.integration.file_types,
+          fallbackTitle: spec.title ?? "CoCalc Public Viewer",
+          fallbackDescription:
+            "Edit index.json to curate this public directory, or add index.html for a custom landing page.",
+        });
+        state.last_finished_ms = Date.now();
+        state.last_success_ms = Date.now();
+        state.stdout = Buffer.from(
+          `synced ${spec.integration.manifest} (${synced.entries.length} entries)\n`,
+          "utf8",
+        );
+        state.stderr = Buffer.alloc(0);
+        return;
+      } catch (err) {
+        state.last_finished_ms = Date.now();
+        state.last_error = `${err}`;
+        logger.warn("legacy public viewer manifest sync failed", {
+          id: spec.id,
+          reason,
+          err: `${err}`,
+        });
+        return;
+      }
+    }
     logger.debug("start static refresh", {
       id: spec.id,
       reason,
@@ -956,6 +993,18 @@ export async function stopApp(id: string): Promise<void> {
     await waitForChildExit(running.child, 2000);
   }
   await clearRunningServicePort(spec.id);
+}
+
+export async function refreshApp(id: string): Promise<AppStatus> {
+  const spec = await getAppSpec(id);
+  if (spec.kind !== "static") {
+    throw new Error(`app '${id}' is not a static app`);
+  }
+  if (!spec.static.refresh) {
+    throw new Error(`app '${id}' has no static refresh job configured`);
+  }
+  await runStaticRefresh(spec, "manual");
+  return await statusApp(id);
 }
 
 export async function statusApp(id: string): Promise<AppStatus> {
@@ -1592,8 +1641,7 @@ export async function auditAppPublicReadiness(
         level: "warning",
         status: "warn",
         message: "Static refresh job is configured but trigger_on_hit=false.",
-        suggestion:
-          "Enable trigger_on_hit or run refresh manually to keep generated content current.",
+        suggestion: `Enable trigger_on_hit or run 'cocalc project app refresh ${id}' to keep generated content current.`,
       });
     } else {
       add({

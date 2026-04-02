@@ -7,14 +7,20 @@ import { createReadStream } from "node:fs";
 import { readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { finished } from "node:stream/promises";
+import { spawn } from "node:child_process";
 import type { Request, Response } from "express";
 import getLogger from "@cocalc/backend/logger";
 import { project_id } from "@cocalc/project/data";
 import type { AppStaticIntegrationSpec } from "@cocalc/project/app-servers/public-viewer";
 import {
   COCALC_PUBLIC_VIEWER_MODE,
+  PUBLIC_VIEWER_DEFAULT_CACHE_MODE,
+  PUBLIC_VIEWER_DEFAULT_MANIFEST,
+  isLegacyPublicViewerBootstrapRefreshCommand,
   isPublicViewerRenderablePath,
+  normalizePublicViewerManifestPath,
   parsePublicViewerManifest,
+  syncPublicViewerManifest,
   type PublicViewerManifest,
   type PublicViewerManifestEntry,
 } from "@cocalc/project/app-servers/public-viewer";
@@ -33,11 +39,23 @@ const MAX_PUBLIC_VIEWER_MANIFEST_BYTES = 1 * 1024 * 1024;
 interface AppSpec {
   id: string;
   kind: "service" | "static";
+  title?: string;
   proxy?: { base_path?: string; strip_prefix?: boolean };
   static?: {
     root?: string;
     index?: string;
     cache_control?: string;
+    refresh?: {
+      command?: {
+        exec?: string;
+        args?: string[];
+        cwd?: string;
+        env?: Record<string, string>;
+      };
+      timeout_s?: number;
+      stale_after_s?: number;
+      trigger_on_hit?: boolean;
+    };
   };
   integration?: AppStaticIntegrationSpec;
 }
@@ -48,6 +66,14 @@ interface StaticAppMatch {
 }
 
 let cachedSpecs: { value: AppSpec[]; expires: number } | undefined;
+type StaticRefreshState = {
+  running?: Promise<void>;
+  last_success_ms?: number;
+  last_error?: string;
+  stdout: Buffer;
+  stderr: Buffer;
+};
+const staticRefresh: Record<string, StaticRefreshState> = Object.create(null);
 
 const MIME_BY_EXT: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -277,16 +303,208 @@ function contentTypeForFile(filePath: string): string {
   );
 }
 
+function appendLimited(
+  current: Buffer,
+  chunk: Buffer,
+  limit = 32 * 1024,
+): Buffer {
+  if (limit <= 0) return Buffer.alloc(0);
+  if (chunk.length >= limit) return chunk.subarray(chunk.length - limit);
+  const merged =
+    current.length === 0
+      ? chunk
+      : Buffer.concat([current, chunk], current.length + chunk.length);
+  return merged.length > limit
+    ? merged.subarray(merged.length - limit)
+    : merged;
+}
+
+function isPublicViewerManifestPath(
+  relativePath: string,
+  integration?: AppStaticIntegrationSpec,
+): boolean {
+  if (integration?.mode !== COCALC_PUBLIC_VIEWER_MODE) return false;
+  const manifestName = path.posix.basename(
+    normalizePublicViewerManifestPath(
+      integration.manifest ?? PUBLIC_VIEWER_DEFAULT_MANIFEST,
+    ),
+  );
+  return path.posix.basename(relativePath || "") === manifestName;
+}
+
+function resolvePublicViewerManifestCacheControl(
+  integration?: AppStaticIntegrationSpec,
+  fallback = STATIC_CACHE_CONTROL_DEFAULT,
+): string {
+  if (integration?.mode !== COCALC_PUBLIC_VIEWER_MODE) return fallback;
+  switch (integration.cache_mode ?? PUBLIC_VIEWER_DEFAULT_CACHE_MODE) {
+    case "live-editing":
+      return "no-store";
+    case "balanced":
+      return "max-age=0, must-revalidate";
+    case "published":
+    default:
+      return fallback;
+  }
+}
+
+function getStaticRefreshState(id: string): StaticRefreshState {
+  if (!staticRefresh[id]) {
+    staticRefresh[id] = {
+      stdout: Buffer.alloc(0),
+      stderr: Buffer.alloc(0),
+    };
+  }
+  return staticRefresh[id];
+}
+
+async function runStaticRefresh(spec: AppSpec): Promise<void> {
+  const refresh = spec.static?.refresh;
+  const exec = `${refresh?.command?.exec ?? ""}`.trim();
+  if (!exec) return;
+  const root = resolveStaticRoot(spec.static?.root);
+  if (!root) return;
+  const state = getStaticRefreshState(spec.id);
+  if (state.running) {
+    await state.running;
+    return;
+  }
+  const timeoutMs = Math.max(1, Number(refresh?.timeout_s ?? 120)) * 1000;
+  const args = refresh?.command?.args ?? [];
+  const cwd = refresh?.command?.cwd ?? root;
+  const env = {
+    ...process.env,
+    ...(refresh?.command?.env ?? {}),
+    APP_ID: spec.id,
+    APP_STATIC_ROOT: root,
+    APP_BASE_PATH: spec.proxy?.base_path ?? `/apps/${spec.id}`,
+  };
+  const run = (async () => {
+    state.stdout = Buffer.alloc(0);
+    state.stderr = Buffer.alloc(0);
+    state.last_error = undefined;
+    if (
+      spec.integration?.mode === COCALC_PUBLIC_VIEWER_MODE &&
+      isLegacyPublicViewerBootstrapRefreshCommand(refresh?.command)
+    ) {
+      try {
+        const synced = await syncPublicViewerManifest({
+          root,
+          manifest: spec.integration.manifest,
+          fileTypes: spec.integration.file_types,
+          fallbackTitle: spec.title ?? "CoCalc Public Viewer",
+          fallbackDescription:
+            "Edit index.json to curate this public directory, or add index.html for a custom landing page.",
+        });
+        state.last_success_ms = Date.now();
+        state.last_error = undefined;
+        state.stdout = Buffer.from(
+          `synced ${spec.integration.manifest} (${synced.entries.length} entries)\n`,
+          "utf8",
+        );
+        state.stderr = Buffer.alloc(0);
+        return;
+      } catch (err) {
+        state.last_error = `${err}`;
+        logger.warn("lite legacy public viewer manifest sync failed", {
+          app_id: spec.id,
+          err: `${err}`,
+        });
+        return;
+      }
+    }
+    const child = spawn(exec, args, {
+      cwd,
+      env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    child.stdout?.on("data", (chunk: Buffer) => {
+      state.stdout = appendLimited(state.stdout, chunk);
+    });
+    child.stderr?.on("data", (chunk: Buffer) => {
+      state.stderr = appendLimited(state.stderr, chunk);
+    });
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill("SIGTERM");
+      setTimeout(() => {
+        if (child.exitCode == null && child.signalCode == null) {
+          child.kill("SIGKILL");
+        }
+      }, 1000);
+    }, timeoutMs);
+    const result = await new Promise<{
+      code: number | null;
+      signal: NodeJS.Signals | null;
+    }>((resolve) => {
+      child.once("close", (code, signal) => resolve({ code, signal }));
+      child.once("error", () => resolve({ code: 1, signal: null }));
+    });
+    clearTimeout(timer);
+    if (timedOut) {
+      state.last_error = `timed out after ${refresh?.timeout_s ?? 120}s`;
+      logger.warn("lite static refresh timed out", { app_id: spec.id });
+      return;
+    }
+    if (result.code === 0) {
+      state.last_success_ms = Date.now();
+      state.last_error = undefined;
+      return;
+    }
+    state.last_error = `exit code ${result.code ?? "unknown"}${result.signal ? ` (signal ${result.signal})` : ""}`;
+    logger.warn("lite static refresh failed", {
+      app_id: spec.id,
+      code: result.code,
+      signal: result.signal,
+      stderr: state.stderr.toString("utf8").slice(-1000),
+    });
+  })();
+  state.running = run;
+  try {
+    await run;
+  } finally {
+    state.running = undefined;
+  }
+}
+
+async function maybeRefreshStaticOnHit(spec: AppSpec): Promise<void> {
+  const refresh = spec.static?.refresh;
+  if (!refresh?.trigger_on_hit || !refresh.command?.exec) return;
+  const state = getStaticRefreshState(spec.id);
+  if (state.running) {
+    await state.running;
+    return;
+  }
+  const staleAfterMs =
+    Math.max(1, Number(refresh.stale_after_s ?? 3600)) * 1000;
+  const shouldRun =
+    state.last_success_ms == null ||
+    Date.now() - state.last_success_ms >= staleAfterMs;
+  if (!shouldRun) return;
+  try {
+    await runStaticRefresh(spec);
+  } catch (err) {
+    state.last_error = `${err}`;
+    logger.warn("lite static refresh on-hit failed", {
+      app_id: spec.id,
+      err: `${err}`,
+    });
+  }
+}
+
 async function buildViewerRedirectUrl({
   req,
   sourcePath,
   title,
   autoRefreshS,
+  cacheMode,
 }: {
   req: Request;
   sourcePath: string;
   title: string;
   autoRefreshS?: number;
+  cacheMode?: string;
 }): Promise<string> {
   const requestUrl = new URL(
     req.originalUrl || req.url || "/",
@@ -303,6 +521,10 @@ async function buildViewerRedirectUrl({
   if ((autoRefreshS ?? 0) > 0) {
     viewer.searchParams.set("refresh", `${autoRefreshS}`);
   }
+  viewer.searchParams.set(
+    "cache",
+    `${cacheMode ?? ""}`.trim() || PUBLIC_VIEWER_DEFAULT_CACHE_MODE,
+  );
   return viewer.toString();
 }
 
@@ -413,6 +635,8 @@ export async function maybeHandleLiteStaticAppRequest({
     return true;
   }
 
+  await maybeRefreshStaticOnHit(match.spec);
+
   const integration = match.spec.integration;
   const parsed = new URL(match.requestPath, "http://lite.local");
   const requestPath = decodeURIComponent(parsed.pathname || "/");
@@ -429,6 +653,12 @@ export async function maybeHandleLiteStaticAppRequest({
   }
 
   if (resolvedStat.isFile()) {
+    const cacheControl = isPublicViewerManifestPath(relativePath, integration)
+      ? resolvePublicViewerManifestCacheControl(
+          integration,
+          match.spec.static?.cache_control,
+        )
+      : match.spec.static?.cache_control;
     if (
       integration?.mode === COCALC_PUBLIC_VIEWER_MODE &&
       isPublicViewerRenderablePath(relativePath, {
@@ -441,11 +671,12 @@ export async function maybeHandleLiteStaticAppRequest({
         sourcePath: relativePath,
         title: path.posix.basename(relativePath) || "CoCalc Public Viewer",
         autoRefreshS: integration.auto_refresh_s,
+        cacheMode: integration.cache_mode,
       });
       res.redirect(location);
       return true;
     }
-    await streamFile(res, resolvedPath, match.spec.static?.cache_control);
+    await streamFile(res, resolvedPath, cacheControl);
     return true;
   }
 
@@ -478,6 +709,7 @@ export async function maybeHandleLiteStaticAppRequest({
           title:
             path.posix.basename(indexRelativePath) || "CoCalc Public Viewer",
           autoRefreshS: integration.auto_refresh_s,
+          cacheMode: integration.cache_mode,
         });
         res.redirect(location);
         return true;
@@ -518,6 +750,13 @@ export async function maybeHandleLiteStaticAppRequest({
     const manifest = parsePublicViewerManifest(raw, {
       file_types: integration.file_types,
     });
+    res.setHeader(
+      "Cache-Control",
+      resolvePublicViewerManifestCacheControl(
+        integration,
+        match.spec.static?.cache_control,
+      ),
+    );
     res
       .status(200)
       .type("text/html; charset=utf-8")

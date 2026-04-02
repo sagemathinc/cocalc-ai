@@ -4,6 +4,7 @@
  */
 
 const getProjectStore = jest.fn();
+const configuration = jest.fn();
 
 jest.mock("@cocalc/frontend/app-framework", () => ({
   redux: {
@@ -15,10 +16,24 @@ jest.mock("@cocalc/frontend/lite", () => ({
   lite: true,
 }));
 
+jest.mock("@cocalc/frontend/webapp-client", () => ({
+  webapp_client: {
+    project_client: {
+      configuration: (...args) => configuration(...args),
+    },
+  },
+}));
+
+jest.mock("@cocalc/util/project-runtime", () => ({
+  DEFAULT_PROJECT_RUNTIME_HOME: "/home/user",
+  DEFAULT_PROJECT_RUNTIME_USER: "user",
+}), { virtual: true });
+
 describe("getProjectHomeDirectory", () => {
   beforeEach(() => {
     jest.resetModules();
     getProjectStore.mockReset();
+    configuration.mockReset();
   });
 
   it("infers lite home from open file tabs before capabilities load", () => {
@@ -83,5 +98,36 @@ describe("getProjectHomeDirectory", () => {
     } = require("./home-directory");
     expect(getProjectHomeDirectory("project-1")).toBe("/home/user");
     expect(getProjectRuntimeUser("project-1")).toBe("user");
+  });
+
+  it("resolves lite home from project configuration when store heuristics are stale", async () => {
+    getProjectStore.mockReturnValue({
+      get: (key: string) => {
+        if (key === "open_files_order") {
+          return {
+            toArray: () => ["/home/wstein/public-viewer/index.json"],
+          };
+        }
+        return undefined;
+      },
+      getIn: () => undefined,
+    });
+    configuration.mockResolvedValue({
+      capabilities: {
+        homeDirectory: "/home/wstein/scratch/cocalc-lite-daemon1",
+      },
+    });
+
+    const {
+      getProjectHomeDirectory,
+      resolveProjectHomeDirectory,
+    } = require("./home-directory");
+    expect(getProjectHomeDirectory("project-1")).toBe("/home/wstein");
+    await expect(resolveProjectHomeDirectory("project-1")).resolves.toBe(
+      "/home/wstein/scratch/cocalc-lite-daemon1",
+    );
+    expect(getProjectHomeDirectory("project-1")).toBe(
+      "/home/wstein/scratch/cocalc-lite-daemon1",
+    );
   });
 });

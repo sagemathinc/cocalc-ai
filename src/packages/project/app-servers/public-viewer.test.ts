@@ -99,6 +99,7 @@ describe("static public viewer mode", () => {
       mode: "cocalc-public-viewer",
       file_types: [".md", ".ipynb", ".slides", ".board"],
       auto_refresh_s: 0,
+      cache_mode: "balanced",
       manifest: "index.json",
       directory_listing: "manifest-only",
       viewer_bundle: undefined,

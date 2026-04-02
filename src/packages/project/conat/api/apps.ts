@@ -13,6 +13,7 @@ export {
   upsertAppSpec,
   startApp,
   stopApp,
+  refreshApp,
   statusApp,
   waitForAppState,
   ensureRunning,

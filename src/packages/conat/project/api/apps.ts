@@ -11,6 +11,7 @@ export const apps = {
   deleteApp: true,
   startApp: true,
   stopApp: true,
+  refreshApp: true,
   statusApp: true,
   waitForAppState: true,
   ensureRunning: true,
@@ -192,6 +193,7 @@ export interface Apps {
 
   startApp: (id: string) => Promise<ManagedAppStatus>;
   stopApp: (id: string) => Promise<void>;
+  refreshApp: (id: string) => Promise<ManagedAppStatus>;
   statusApp: (id: string) => Promise<ManagedAppStatus>;
   waitForAppState: (
     id: string,
