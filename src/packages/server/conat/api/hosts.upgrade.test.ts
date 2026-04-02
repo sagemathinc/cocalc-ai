@@ -220,8 +220,98 @@ describe("hosts.reconcileHostSoftwareInternal", () => {
       expect.any(Object),
     );
     expect(ssh.getScript()).toContain(
-      "BOOTSTRAP_PID=\"$(sudo -n bash -lc 'nohup bash \"$1\" >>\"$2\" 2>&1 </dev/null & echo $!' -- \"$BOOTSTRAP_SH\" \"$BOOTSTRAP_LOG\")\"",
+      'BOOTSTRAP_PID="$(sudo -n bash -lc \'nohup bash "$1" >>"$2" 2>&1 </dev/null & echo $!\' -- "$BOOTSTRAP_SH" "$BOOTSTRAP_LOG")"',
     );
     expect(delayMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores a stale bootstrap error once lifecycle evidence is newer", async () => {
+    const ssh = makeSshChild();
+    spawnMock = jest.fn(() => ssh.child);
+
+    let pollCount = 0;
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("SELECT * FROM project_hosts WHERE id=$1")) {
+        return {
+          rows: [
+            {
+              id: HOST_ID,
+              status: "running",
+              metadata: {
+                owner: ACCOUNT_ID,
+                runtime: { public_ip: "34.11.143.149", ssh_user: "ubuntu" },
+                machine: { cloud: "gcp" },
+                bootstrap: {
+                  status: "error",
+                  updated_at: "2026-04-01T21:00:00Z",
+                  message: "bootstrap failed (exit 1) at line 206",
+                },
+                bootstrap_lifecycle: {
+                  summary_status: "in_sync",
+                  last_reconcile_finished_at: "2026-04-01T21:02:00Z",
+                  summary_message: "Host software is in sync",
+                },
+              },
+            },
+          ],
+        };
+      }
+      if (sql.includes("SELECT status, deleted, metadata FROM project_hosts")) {
+        pollCount += 1;
+        if (pollCount === 1) {
+          return {
+            rows: [
+              {
+                status: "running",
+                deleted: null,
+                metadata: {
+                  bootstrap: {
+                    status: "error",
+                    updated_at: "2026-04-01T21:00:00Z",
+                    message: "bootstrap failed (exit 1) at line 206",
+                  },
+                  bootstrap_lifecycle: {
+                    summary_status: "in_sync",
+                    last_reconcile_finished_at: "2026-04-01T21:02:00Z",
+                    summary_message: "Host software is in sync",
+                  },
+                },
+              },
+            ],
+          };
+        }
+        return {
+          rows: [
+            {
+              status: "running",
+              deleted: null,
+              metadata: {
+                bootstrap: {
+                  status: "running",
+                  updated_at: "2026-04-01T21:03:00Z",
+                  message: "Reconciling host software",
+                },
+                bootstrap_lifecycle: {
+                  summary_status: "reconciling",
+                  current_operation: "reconcile",
+                  last_reconcile_started_at: "2026-04-01T21:03:00Z",
+                },
+              },
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { reconcileHostSoftwareInternal } = await import("./hosts");
+    await expect(
+      reconcileHostSoftwareInternal({
+        account_id: ACCOUNT_ID,
+        id: HOST_ID,
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(delayMock).not.toHaveBeenCalled();
   });
 });

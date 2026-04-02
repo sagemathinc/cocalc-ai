@@ -223,6 +223,37 @@ type HostBootstrapReconcileState = {
   lifecycle_last_reconcile_finished_at?: string;
 };
 
+function parseTimestampMs(value?: string): number | undefined {
+  const text = `${value ?? ""}`.trim();
+  if (!text) return undefined;
+  const ms = new Date(text).getTime();
+  return Number.isFinite(ms) ? ms : undefined;
+}
+
+function bootstrapErrorIsStale(state: HostBootstrapReconcileState): boolean {
+  if (state.bootstrap_status !== "error") return false;
+  const bootstrapUpdatedMs = parseTimestampMs(state.bootstrap_updated_at);
+  if (state.lifecycle_summary_status === "in_sync") {
+    const finishedMs = parseTimestampMs(
+      state.lifecycle_last_reconcile_finished_at,
+    );
+    return (
+      finishedMs != null &&
+      (bootstrapUpdatedMs == null || bootstrapUpdatedMs <= finishedMs)
+    );
+  }
+  if (state.lifecycle_summary_status === "reconciling") {
+    const startedMs = parseTimestampMs(
+      state.lifecycle_last_reconcile_started_at,
+    );
+    return (
+      startedMs != null &&
+      (bootstrapUpdatedMs == null || bootstrapUpdatedMs < startedMs)
+    );
+  }
+  return false;
+}
+
 async function loadHostBootstrapReconcileState(
   host_id: string,
 ): Promise<HostBootstrapReconcileState | undefined> {
@@ -287,7 +318,7 @@ function hostBootstrapReconcileSucceeded(
 function hostBootstrapReconcileFailure(
   state: HostBootstrapReconcileState,
 ): string | undefined {
-  if (state.bootstrap_status === "error") {
+  if (state.bootstrap_status === "error" && !bootstrapErrorIsStale(state)) {
     return (
       state.bootstrap_message ??
       state.lifecycle_last_error ??
@@ -658,6 +689,51 @@ function parseRow(
     const parsed = Number(value);
     if (!Number.isFinite(parsed) || parsed < 0) return undefined;
     return parsed;
+  };
+  const normalizeBootstrap = (
+    bootstrap: HostBootstrapStatus | undefined,
+    lifecycle: HostBootstrapLifecycle | undefined,
+  ): HostBootstrapStatus | undefined => {
+    if (!bootstrap || !lifecycle) return bootstrap;
+    const bootstrapUpdatedMs = parseTimestampMs(bootstrap.updated_at);
+    const lifecycleStartedMs = parseTimestampMs(
+      lifecycle.last_reconcile_started_at,
+    );
+    const lifecycleFinishedMs = parseTimestampMs(
+      lifecycle.last_reconcile_finished_at,
+    );
+    if (
+      lifecycle.summary_status === "in_sync" &&
+      lifecycleFinishedMs != null &&
+      (bootstrapUpdatedMs == null || bootstrapUpdatedMs <= lifecycleFinishedMs)
+    ) {
+      return {
+        ...bootstrap,
+        status: "done",
+        updated_at:
+          lifecycle.last_reconcile_finished_at ?? bootstrap.updated_at,
+        message:
+          lifecycle.summary_message ??
+          bootstrap.message ??
+          "Host software is in sync",
+      };
+    }
+    if (
+      lifecycle.summary_status === "reconciling" &&
+      lifecycleStartedMs != null &&
+      (bootstrapUpdatedMs == null || bootstrapUpdatedMs < lifecycleStartedMs)
+    ) {
+      return {
+        ...bootstrap,
+        status: "running",
+        updated_at: lifecycle.last_reconcile_started_at ?? bootstrap.updated_at,
+        message:
+          lifecycle.summary_message ??
+          bootstrap.message ??
+          "Reconciling host software",
+      };
+    }
+    return bootstrap;
   };
   const metadata = row.metadata ?? {};
   const software = metadata.software ?? {};
@@ -1064,6 +1140,7 @@ function parseRow(
   const rawStatus = String(row.status ?? "");
   const normalizedStatus =
     rawStatus === "active" ? "running" : rawStatus || "off";
+  const normalizedBootstrap = normalizeBootstrap(bootstrap, bootstrapLifecycle);
   return {
     id: row.id,
     name: row.name ?? "Host",
@@ -1110,7 +1187,7 @@ function parseRow(
     provider_observed_at: metadata.runtime?.observed_at,
     deleted: row.deleted ? new Date(row.deleted).toISOString() : undefined,
     backup_status: opts.backup_status,
-    bootstrap,
+    bootstrap: normalizedBootstrap,
     bootstrap_lifecycle: bootstrapLifecycle,
   };
 }

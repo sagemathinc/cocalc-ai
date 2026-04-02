@@ -3,6 +3,8 @@ export {};
 let queryMock: jest.Mock;
 let isAdminMock: jest.Mock;
 let moveProjectToHostMock: jest.Mock;
+let resolveMembershipForAccountMock: jest.Mock;
+let loadProjectHostMetricsHistoryMock: jest.Mock;
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
@@ -17,6 +19,19 @@ jest.mock("@cocalc/server/accounts/is-admin", () => ({
 jest.mock("@cocalc/server/projects/move", () => ({
   __esModule: true,
   moveProjectToHost: (...args: any[]) => moveProjectToHostMock(...args),
+}));
+
+jest.mock("@cocalc/server/membership/resolve", () => ({
+  __esModule: true,
+  resolveMembershipForAccount: (...args: any[]) =>
+    resolveMembershipForAccountMock(...args),
+}));
+
+jest.mock("@cocalc/database/postgres/project-host-metrics", () => ({
+  __esModule: true,
+  clearProjectHostMetrics: jest.fn(async () => undefined),
+  loadProjectHostMetricsHistory: (...args: any[]) =>
+    loadProjectHostMetricsHistoryMock(...args),
 }));
 
 const HOST_ID = "host-123";
@@ -82,6 +97,10 @@ describe("hosts.listHostProjects", () => {
     jest.resetModules();
     isAdminMock = jest.fn(async () => true);
     moveProjectToHostMock = jest.fn();
+    resolveMembershipForAccountMock = jest.fn(async () => ({
+      entitlements: {},
+    }));
+    loadProjectHostMetricsHistoryMock = jest.fn(async () => new Map());
     queryMock = jest.fn(async (sql: string, params: any[]) => {
       if (sql.includes("FROM project_hosts")) {
         return {
@@ -170,6 +189,63 @@ describe("hosts.listHostProjects", () => {
     const baseCount = (baseSql.match(/last_backup IS NULL/g) || []).length;
     const riskCount = (riskSql.match(/last_backup IS NULL/g) || []).length;
     expect(riskCount).toBeGreaterThan(baseCount);
+  });
+});
+
+describe("hosts.listHosts bootstrap normalization", () => {
+  beforeEach(() => {
+    jest.resetModules();
+    isAdminMock = jest.fn(async () => true);
+    moveProjectToHostMock = jest.fn();
+    resolveMembershipForAccountMock = jest.fn(async () => ({
+      entitlements: {},
+    }));
+    loadProjectHostMetricsHistoryMock = jest.fn(async () => new Map());
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("SELECT * FROM project_hosts")) {
+        return {
+          rows: [
+            {
+              id: HOST_ID,
+              status: "running",
+              deleted: null,
+              last_seen: new Date("2026-04-01T21:03:00Z"),
+              metadata: {
+                owner: ACCOUNT_ID,
+                bootstrap: {
+                  status: "error",
+                  updated_at: "2026-04-01T20:50:00Z",
+                  message: "bootstrap failed (exit 1) at line 206",
+                },
+                bootstrap_lifecycle: {
+                  summary_status: "in_sync",
+                  summary_message: "Host software is in sync",
+                  last_reconcile_finished_at: "2026-04-01T21:02:00Z",
+                  drift_count: 0,
+                  items: [],
+                },
+              },
+            },
+          ],
+        };
+      }
+      if (sql.includes("COUNT(*) AS total")) {
+        return { rows: [] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+  });
+
+  it("prefers newer lifecycle success over stale bootstrap failure", async () => {
+    const { listHosts } = await import("./hosts");
+    const hosts = await listHosts({
+      account_id: ACCOUNT_ID,
+      admin_view: true,
+      include_deleted: true,
+    });
+    expect(hosts).toHaveLength(1);
+    expect(hosts[0].bootstrap?.status).toBe("done");
+    expect(hosts[0].bootstrap?.message).toBe("Host software is in sync");
   });
 });
 
