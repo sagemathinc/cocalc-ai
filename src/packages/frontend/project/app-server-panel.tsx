@@ -771,6 +771,26 @@ function isPositiveIntegerText(value: string): boolean {
   return Number.isInteger(n) && n > 0;
 }
 
+function isNonNegativeIntegerText(value: string): boolean {
+  const text = `${value ?? ""}`.trim();
+  if (!text) return false;
+  const n = Number(text);
+  return Number.isInteger(n) && n >= 0;
+}
+
+function parseViewerFileTypes(value: string): string[] {
+  return Array.from(
+    new Set(
+      `${value ?? ""}`
+        .split(",")
+        .map((part) => part.trim())
+        .filter(Boolean)
+        .map((part) => (part.startsWith(".") ? part : `.${part}`))
+        .map((part) => part.toLowerCase()),
+    ),
+  );
+}
+
 export function AppServerPanel({ project_id }: { project_id: string }) {
   const homeDirectory = useMemo(
     () => getProjectHomeDirectory(project_id),
@@ -805,6 +825,16 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
   const [staticRefreshTimeout, setStaticRefreshTimeout] =
     useState<string>("120");
   const [staticRefreshOnHit, setStaticRefreshOnHit] = useState<boolean>(true);
+  const [staticIntegrationMode, setStaticIntegrationMode] = useState<
+    "" | "cocalc-public-viewer"
+  >("");
+  const [staticViewerFileTypes, setStaticViewerFileTypes] = useState<string>(
+    ".md,.ipynb,.slides,.board",
+  );
+  const [staticViewerManifest, setStaticViewerManifest] =
+    useState<string>("index.json");
+  const [staticViewerAutoRefresh, setStaticViewerAutoRefresh] =
+    useState<string>("0");
   const [startNow, setStartNow] = useState<boolean>(true);
   const [openWhenReady, setOpenWhenReady] = useState<boolean>(true);
   const [exposeTtlHours, setExposeTtlHours] = useState<string>("24");
@@ -963,6 +993,12 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
       if (staleText && !isPositiveIntegerText(staleText)) return false;
       if (timeoutText && !isPositiveIntegerText(timeoutText)) return false;
     }
+    if (staticIntegrationMode === "cocalc-public-viewer") {
+      if (parseViewerFileTypes(staticViewerFileTypes).length === 0)
+        return false;
+      const refreshText = `${staticViewerAutoRefresh ?? ""}`.trim();
+      if (refreshText && !isNonNegativeIntegerText(refreshText)) return false;
+    }
     return true;
   }, [
     appId,
@@ -973,6 +1009,9 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
     staticRefreshStaleAfter,
     staticRefreshTimeout,
     staticRoot,
+    staticIntegrationMode,
+    staticViewerAutoRefresh,
+    staticViewerFileTypes,
   ]);
 
   const filteredRows = useMemo(() => {
@@ -1033,9 +1072,9 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
     () => [
       "jupyterlab",
       "code-server",
-      "pluto",
-      "rstudio",
-      "python-hello",
+      "cocalc-public-viewer",
+      "public-notes",
+      "public-slides",
       "static-hello",
     ],
     [],
@@ -1174,6 +1213,12 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
       setStaticRefreshStaleAfter(preset.staticRefreshStaleAfter ?? "3600");
       setStaticRefreshTimeout(preset.staticRefreshTimeout ?? "120");
       setStaticRefreshOnHit(preset.staticRefreshOnHit ?? true);
+      setStaticIntegrationMode(preset.staticIntegrationMode ?? "");
+      setStaticViewerFileTypes(
+        preset.staticViewerFileTypes?.join(",") ?? ".md,.ipynb,.slides,.board",
+      );
+      setStaticViewerManifest(preset.staticViewerManifest ?? "index.json");
+      setStaticViewerAutoRefresh(preset.staticViewerAutoRefresh ?? "0");
       setServiceOpenMode("proxy");
       setStartNow(false);
       setOpenWhenReady(false);
@@ -1197,6 +1242,10 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
     setStaticRefreshStaleAfter("3600");
     setStaticRefreshTimeout("120");
     setStaticRefreshOnHit(true);
+    setStaticIntegrationMode("");
+    setStaticViewerFileTypes(".md,.ipynb,.slides,.board");
+    setStaticViewerManifest("index.json");
+    setStaticViewerAutoRefresh("0");
     setStartNow(true);
     setOpenWhenReady(true);
   }
@@ -1510,6 +1559,26 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
         throw new Error("Static refresh timeout must be a positive integer.");
       }
     }
+    const viewerFileTypes = parseViewerFileTypes(staticViewerFileTypes);
+    const viewerAutoRefresh =
+      `${staticViewerAutoRefresh ?? ""}`.trim().length > 0
+        ? Number(staticViewerAutoRefresh)
+        : undefined;
+    if (staticIntegrationMode === "cocalc-public-viewer") {
+      if (viewerFileTypes.length === 0) {
+        throw new Error(
+          "CoCalc Public Viewer file types must include at least one extension.",
+        );
+      }
+      if (
+        viewerAutoRefresh != null &&
+        (!Number.isInteger(viewerAutoRefresh) || viewerAutoRefresh < 0)
+      ) {
+        throw new Error(
+          "CoCalc Public Viewer auto-refresh seconds must be a non-negative integer.",
+        );
+      }
+    }
     return {
       version: 1 as const,
       id,
@@ -1537,6 +1606,15 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
         websocket: false,
         readiness_timeout_s: 45,
       },
+      integration:
+        staticIntegrationMode === "cocalc-public-viewer"
+          ? {
+              mode: "cocalc-public-viewer" as const,
+              file_types: viewerFileTypes,
+              manifest: `${staticViewerManifest ?? ""}`.trim() || undefined,
+              auto_refresh_s: viewerAutoRefresh ?? 0,
+            }
+          : undefined,
       wake: {
         enabled: false,
         keep_warm_s: 0,
@@ -2506,6 +2584,69 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                               }
                             />
                           </Space.Compact>
+                          <Checkbox
+                            checked={
+                              staticIntegrationMode === "cocalc-public-viewer"
+                            }
+                            onChange={(e) =>
+                              setStaticIntegrationMode(
+                                e.target.checked ? "cocalc-public-viewer" : "",
+                              )
+                            }
+                          >
+                            Enable CoCalc Public Viewer rendering for supported
+                            file types
+                          </Checkbox>
+                          {staticIntegrationMode === "cocalc-public-viewer" ? (
+                            <Space
+                              direction="vertical"
+                              style={{
+                                width: "100%",
+                                padding: "10px 12px",
+                                border: "1px solid #f0e2b2",
+                                borderRadius: "10px",
+                                background: COLORS.YELL_LLL,
+                              }}
+                              size={8}
+                            >
+                              <Space.Compact style={{ width: "100%" }}>
+                                <Input
+                                  value={staticViewerFileTypes}
+                                  placeholder=".md,.ipynb,.slides,.board"
+                                  onChange={(e) =>
+                                    setStaticViewerFileTypes(e.target.value)
+                                  }
+                                />
+                                <Input
+                                  value={staticViewerManifest}
+                                  placeholder="index.json"
+                                  onChange={(e) =>
+                                    setStaticViewerManifest(e.target.value)
+                                  }
+                                />
+                                <Input
+                                  value={staticViewerAutoRefresh}
+                                  placeholder="Auto-refresh seconds"
+                                  onChange={(e) =>
+                                    setStaticViewerAutoRefresh(e.target.value)
+                                  }
+                                />
+                              </Space.Compact>
+                              <Paragraph
+                                style={{
+                                  color: "#666",
+                                  margin: 0,
+                                  fontSize: "12px",
+                                }}
+                              >
+                                Supported file types render through the
+                                read-only CoCalc Public Viewer. The manifest
+                                file controls directory listings; if it is
+                                missing, some presets can bootstrap it on first
+                                hit.
+                              </Paragraph>
+                            </Space>
+                          ) : null}
                           <Input
                             value={staticRefreshCommand}
                             placeholder="Refresh command (optional, runs on first/stale hit)"

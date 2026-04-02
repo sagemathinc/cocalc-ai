@@ -1,5 +1,6 @@
 export type AppTemplateKind = "service" | "static";
 export type AppTemplateServiceOpenMode = "proxy" | "port";
+export type AppTemplateStaticIntegrationMode = "cocalc-public-viewer";
 import builtinCatalog from "./builtin-template-catalog";
 
 export interface AppTemplateDetectV1 {
@@ -41,6 +42,10 @@ export interface AppTemplatePresetV1 {
   static_refresh_stale_after?: string;
   static_refresh_timeout?: string;
   static_refresh_on_hit?: boolean;
+  static_integration_mode?: AppTemplateStaticIntegrationMode;
+  static_integration_file_types?: string[];
+  static_integration_manifest?: string;
+  static_integration_auto_refresh_s?: number;
   note?: string;
 }
 

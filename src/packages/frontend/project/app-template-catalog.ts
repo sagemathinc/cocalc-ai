@@ -28,6 +28,10 @@ export interface AppServerPreset {
   staticRefreshStaleAfter?: string;
   staticRefreshTimeout?: string;
   staticRefreshOnHit?: boolean;
+  staticIntegrationMode?: "cocalc-public-viewer";
+  staticViewerFileTypes?: string[];
+  staticViewerManifest?: string;
+  staticViewerAutoRefresh?: string;
   note?: string;
   installCommand?: string;
   installHint?: string;
@@ -76,6 +80,13 @@ function toPreset(
     staticRefreshStaleAfter: preset.static_refresh_stale_after,
     staticRefreshTimeout: preset.static_refresh_timeout,
     staticRefreshOnHit: preset.static_refresh_on_hit,
+    staticIntegrationMode: preset.static_integration_mode,
+    staticViewerFileTypes: preset.static_integration_file_types,
+    staticViewerManifest: preset.static_integration_manifest,
+    staticViewerAutoRefresh:
+      preset.static_integration_auto_refresh_s != null
+        ? `${preset.static_integration_auto_refresh_s}`
+        : undefined,
     note: preset.note,
     installCommand: template.install?.command,
     installHint: template.install?.hint,
