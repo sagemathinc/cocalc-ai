@@ -1084,7 +1084,10 @@ describeIfLinux("rootfs option sandbox", () => {
     home = join(tempDir, "test-rootfs-home");
     rootfs = join(tempDir, "test-rootfs-missing");
     await mkdir(home);
-    fs = new SandboxedFilesystem(home, { rootfs });
+    fs = new SandboxedFilesystem(home, {
+      rootfs,
+      homeAliases: ["/home/user"],
+    });
     const err = await expectRejectsWithError(
       fs.writeFile("/alpha.txt", "from-home"),
     );
@@ -1092,9 +1095,9 @@ describeIfLinux("rootfs option sandbox", () => {
       "rootfs is not mounted; cannot access absolute path '/alpha.txt'. Start the workspace and try again.",
     );
     expect(err.message).not.toContain(rootfs);
-    await fs.writeFile("/root/home-ok.txt", "ok");
+    await fs.writeFile("/home/user/home-ok.txt", "ok");
     await fs.writeFile("relative-ok.txt", "ok");
-    expect(await fs.readFile("/root/home-ok.txt", "utf8")).toBe("ok");
+    expect(await fs.readFile("/home/user/home-ok.txt", "utf8")).toBe("ok");
     expect(await fs.readFile("relative-ok.txt", "utf8")).toBe("ok");
   });
 
@@ -1191,20 +1194,20 @@ describeIfLinux("rootfs option sandbox", () => {
   });
 
   it("fails closed for move across home/rootfs base boundary", async () => {
-    await fs.writeFile("/root/move-home.txt", "home");
+    await fs.writeFile("/home/user/move-home.txt", "home");
     await fs.writeFile("/tmp/move-rootfs.txt", "rootfs");
 
     await expect(
-      fs.move("/root/move-home.txt", "/tmp/move-home.txt"),
+      fs.move("/home/user/move-home.txt", "/tmp/move-home.txt"),
     ).rejects.toMatchObject({
       code: "EXDEV",
     });
     await expect(
-      fs.move("/tmp/move-rootfs.txt", "/root/move-rootfs.txt"),
+      fs.move("/tmp/move-rootfs.txt", "/home/user/move-rootfs.txt"),
     ).rejects.toMatchObject({
       code: "EXDEV",
     });
-    expect(await fs.readFile("/root/move-home.txt", "utf8")).toBe("home");
+    expect(await fs.readFile("/home/user/move-home.txt", "utf8")).toBe("home");
     expect(await fs.readFile("/tmp/move-rootfs.txt", "utf8")).toBe("rootfs");
   });
 
@@ -1307,6 +1310,7 @@ describeIfLinux("rootfs option sandbox", () => {
     const fsMissingScratch = new SandboxedFilesystem(home, {
       rootfs,
       scratch: join(tempDir, "scratch-missing"),
+      homeAliases: ["/home/user"],
     });
     await expect(
       fsMissingScratch.writeFile("/scratch/blocked.txt", "blocked"),
@@ -1317,9 +1321,9 @@ describeIfLinux("rootfs option sandbox", () => {
     expect(await fsMissingScratch.readFile("/tmp/rootfs-ok.txt", "utf8")).toBe(
       "rootfs-ok",
     );
-    await fsMissingScratch.writeFile("/root/home-still-ok.txt", "home-ok");
+    await fsMissingScratch.writeFile("/home/user/home-still-ok.txt", "home-ok");
     expect(
-      await fsMissingScratch.readFile("/root/home-still-ok.txt", "utf8"),
+      await fsMissingScratch.readFile("/home/user/home-still-ok.txt", "utf8"),
     ).toBe("home-ok");
   });
 });

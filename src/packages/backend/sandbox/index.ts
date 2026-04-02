@@ -266,21 +266,13 @@ interface Options {
   allowSafeModeSymlink?: boolean;
 }
 
-const HOME_ROOT = "/root";
-
 function normalizeHomeAliases(homeAliases?: string[]): string[] {
   const normalized = new Set<string>();
-  for (const alias of homeAliases ?? [HOME_ROOT]) {
+  for (const alias of homeAliases ?? []) {
     if (typeof alias !== "string") continue;
     const trimmed = alias.trim();
     if (!trimmed.startsWith("/")) continue;
     normalized.add(resolve("/", trimmed));
-  }
-  if (normalized.size === 0) {
-    normalized.add(HOME_ROOT);
-  }
-  if (!normalized.has(HOME_ROOT)) {
-    normalized.add(HOME_ROOT);
   }
   return [...normalized];
 }
@@ -1502,7 +1494,6 @@ export class SandboxedFilesystem {
     if (
       destInputDir !== "." &&
       destInputDir !== "/" &&
-      destInputDir !== HOME_ROOT &&
       !(await this.exists(destInputDir))
     ) {
       await this.mkdir(destInputDir, { recursive: true });

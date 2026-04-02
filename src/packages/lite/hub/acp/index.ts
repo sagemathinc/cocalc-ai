@@ -4568,15 +4568,11 @@ function buildExecutorAdapters(
   hostRoot: string,
 ): ExecutorAdapters {
   // In container mode we expect:
-  // - container paths to live under /root (workspaceRoot is the container path)
-  // - host paths to point to the bind mount on the host (never /root)
+  // - container paths to live under the in-container workspace root
+  // - host paths to point to the bind mount on the host
   // This lets us distinguish whether an incoming absolute path is host-side or
   // container-side. Warn early if we can't tell the difference.
-  if (
-    workspaceRoot.startsWith("/root") &&
-    hostRoot.startsWith("/root") &&
-    workspaceRoot !== hostRoot
-  ) {
+  if (workspaceRoot === hostRoot && workspaceRoot !== "/") {
     logger.warn("hostRoot unexpectedly looks like a container path", {
       workspaceRoot,
       hostRoot,

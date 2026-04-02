@@ -182,7 +182,7 @@ describe("initCodexProjectRunner", () => {
     const spawned = await spawner!.spawnCodexAppServer!({
       projectId: "6bc2c387-4c80-4a79-aa68-65d8e68a6a52",
       accountId: "00000000-0000-4000-8000-000000000001",
-      cwd: "/root",
+      cwd: "/home/user",
       env: {
         FOO: "bar",
         COCALC_API_URL: "http://localhost:7103",
@@ -289,7 +289,7 @@ describe("initCodexProjectRunner", () => {
       const spawned = await spawner!.spawnCodexAppServer!({
         projectId: "6bc2c387-4c80-4a79-aa68-65d8e68a6a52",
         accountId: "00000000-0000-4000-8000-000000000001",
-        cwd: "/root",
+        cwd: "/home/user",
         env: {
           FOO: "bar",
         },
@@ -351,7 +351,7 @@ describe("initCodexProjectRunner", () => {
     const spawned = await spawner!.spawnCodexAppServer!({
       projectId: "6bc2c387-4c80-4a79-aa68-65d8e68a6a52",
       accountId: "00000000-0000-4000-8000-000000000001",
-      cwd: "/root",
+      cwd: "/home/user",
       env: {
         COCALC_API_URL: "https://lite3.cocalc.ai",
       },
@@ -399,7 +399,7 @@ describe("initCodexProjectRunner", () => {
     await spawner!.spawnCodexAppServer!({
       projectId: "6bc2c387-4c80-4a79-aa68-65d8e68a6a52",
       accountId: "00000000-0000-4000-8000-000000000001",
-      cwd: "/root",
+      cwd: "/home/user",
       env: {},
     });
 
@@ -462,7 +462,7 @@ describe("initCodexProjectRunner", () => {
     const spawned = await spawner!.spawnCodexAppServer!({
       projectId: "6bc2c387-4c80-4a79-aa68-65d8e68a6a52",
       accountId: "00000000-0000-4000-8000-000000000001",
-      cwd: "/root",
+      cwd: "/home/user",
     });
 
     expect(spawned.authSource).toBe("subscription");
@@ -529,7 +529,7 @@ describe("initCodexProjectRunner", () => {
     await spawner!.spawnCodexAppServer!({
       projectId: "6bc2c387-4c80-4a79-aa68-65d8e68a6a52",
       accountId: "00000000-0000-4000-8000-000000000001",
-      cwd: "/root",
+      cwd: "/home/user",
     });
 
     await expect(
@@ -578,7 +578,7 @@ describe("initCodexProjectRunner", () => {
     await spawner!.spawnCodexAppServer!({
       projectId: "6bc2c387-4c80-4a79-aa68-65d8e68a6a52",
       accountId: "00000000-0000-4000-8000-000000000001",
-      cwd: "/root",
+      cwd: "/home/user",
     });
 
     await expect(fs.readFile(configPath, "utf8")).resolves.toBe(
@@ -638,7 +638,7 @@ describe("initCodexProjectRunner", () => {
     const spawned = await spawner!.spawnCodexAppServer!({
       projectId: "6bc2c387-4c80-4a79-aa68-65d8e68a6a52",
       accountId: "00000000-0000-4000-8000-000000000001",
-      cwd: "/root",
+      cwd: "/home/user",
     });
 
     expect(spawned.appServerLogin).toEqual({
@@ -706,7 +706,7 @@ describe("initCodexProjectRunner", () => {
     await spawner!.spawnCodexAppServer!({
       projectId: "6bc2c387-4c80-4a79-aa68-65d8e68a6a52",
       accountId: "00000000-0000-4000-8000-000000000001",
-      cwd: "/root",
+      cwd: "/home/user",
     });
 
     expect(hubApi.projects.start).toHaveBeenCalledWith({
@@ -744,7 +744,7 @@ describe("initCodexProjectRunner", () => {
     await spawner!.spawnCodexAppServer!({
       projectId: "6bc2c387-4c80-4a79-aa68-65d8e68a6a52",
       accountId: "00000000-0000-4000-8000-000000000001",
-      cwd: "/root",
+      cwd: "/home/user",
     });
 
     expect(spawnMock.mock.calls[0][1]).not.toContain(
@@ -780,7 +780,7 @@ describe("initCodexProjectRunner", () => {
     await spawner!.spawnCodexAppServer!({
       projectId: "6bc2c387-4c80-4a79-aa68-65d8e68a6a52",
       accountId: "00000000-0000-4000-8000-000000000001",
-      cwd: "/root",
+      cwd: "/home/user",
     });
 
     expect(spawnMock.mock.calls[0][1]).toContain("/tmp/debug-codex");

@@ -3,6 +3,7 @@ import { promises as fs } from "node:fs";
 import { join } from "node:path";
 import getLogger from "@cocalc/backend/logger";
 import { codexSubscriptionsPath } from "@cocalc/backend/data";
+import { DEFAULT_PROJECT_RUNTIME_HOME } from "@cocalc/util/project-runtime";
 import {
   getAccountOpenAiApiKeyFromRegistry,
   getProjectOpenAiApiKeyFromRegistry,
@@ -372,7 +373,9 @@ export async function resolveCodexAuthRuntime({
 export function resolveSharedCodexHome(): string | undefined {
   const codexHome =
     process.env.COCALC_CODEX_HOME ??
-    (process.env.HOME ? join(process.env.HOME, ".codex") : "/root/.codex");
+    (process.env.HOME
+      ? join(process.env.HOME, ".codex")
+      : join(DEFAULT_PROJECT_RUNTIME_HOME, ".codex"));
   return codexHome;
 }
 

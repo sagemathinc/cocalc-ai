@@ -9,10 +9,8 @@ export const DEFAULT_PROJECT_RUNTIME_USER = "user";
 export const DEFAULT_PROJECT_RUNTIME_UID = 1000;
 export const DEFAULT_PROJECT_RUNTIME_GID = 1000;
 export const DEFAULT_PROJECT_RUNTIME_HOME = "/home/user";
-export const LEGACY_PROJECT_RUNTIME_HOME = "/root";
 export const PROJECT_RUNTIME_HOME_ALIASES = [
   DEFAULT_PROJECT_RUNTIME_HOME,
-  LEGACY_PROJECT_RUNTIME_HOME,
 ] as const;
 
 export function projectRuntimeHomeRelativePath(
