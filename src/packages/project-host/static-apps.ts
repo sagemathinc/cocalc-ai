@@ -16,6 +16,7 @@ import {
   normalizeOriginUrl,
   resolvePublicViewerDns,
 } from "@cocalc/util/public-viewer-origin";
+import { isProjectRuntimeHomeAliasPath } from "@cocalc/util/project-runtime";
 import {
   COCALC_PUBLIC_VIEWER_MODE,
   PUBLIC_VIEWER_DEFAULT_CACHE_MODE,
@@ -623,8 +624,7 @@ async function resolveStaticRoot(
   const allowRoot =
     normalized !== "" &&
     (!path.posix.isAbsolute(normalized) ||
-      normalized === "/root" ||
-      normalized.startsWith("/root/") ||
+      isProjectRuntimeHomeAliasPath(normalized) ||
       normalized === "/scratch" ||
       normalized.startsWith("/scratch/"));
   if (!allowRoot) {

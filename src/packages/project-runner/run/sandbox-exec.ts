@@ -14,6 +14,7 @@ import {
   DEFAULT_PROJECT_RUNTIME_HOME,
   DEFAULT_PROJECT_RUNTIME_UID,
   DEFAULT_PROJECT_RUNTIME_USER,
+  projectRuntimeHomeRelativePath,
 } from "@cocalc/util/project-runtime";
 
 export interface SandboxExecOptions {
@@ -84,9 +85,9 @@ export async function sandboxExec({
   const HOME = DEFAULT_PROJECT_RUNTIME_HOME;
   const normalizeRuntimePath = (value?: string): string | undefined => {
     if (!value?.startsWith("/")) return value;
-    if (value === "/root") return HOME;
-    if (value.startsWith("/root/")) {
-      return join(HOME, value.slice("/root/".length));
+    const runtimeRelative = projectRuntimeHomeRelativePath(value);
+    if (runtimeRelative != null) {
+      return runtimeRelative ? join(HOME, runtimeRelative) : HOME;
     }
     return value;
   };

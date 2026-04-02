@@ -339,7 +339,11 @@ export async function main(
   // Local persist must exist before ACP startup so automation indexes can
   // republish into the project-scoped DKV stores on restart.
   const persistServer = createPersistServer({ client: conatClient });
-  configureAcpDetachedWorkerRunning(ensureProjectHostAcpWorkerRunning);
+  configureAcpDetachedWorkerRunning(({ force } = {}) =>
+    ensureProjectHostAcpWorkerRunning({
+      restartReason: force ? "backend server restarted" : undefined,
+    }),
+  );
   await initAcp(conatClient, { manageDetachedWorker: false });
   for (const row of listProjects()) {
     const project_id = `${row.project_id ?? ""}`.trim();
@@ -521,7 +525,9 @@ export async function main(
 
   const stopCopyWorker = startCopyWorker();
   startProjectHostAcpWorkerSupervisor();
-  await ensureProjectHostAcpWorkerRunning();
+  await ensureProjectHostAcpWorkerRunning({
+    restartReason: "backend server restarted",
+  });
 
   logger.info("project-host ready");
 

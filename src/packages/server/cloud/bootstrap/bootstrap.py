@@ -36,7 +36,7 @@ from typing import Any
 
 STATE_SCHEMA_VERSION = 1
 HELPER_SCHEMA_VERSION = "20260330-v1"
-RUNTIME_WRAPPER_VERSION = "20260401-v3"
+RUNTIME_WRAPPER_VERSION = "20260402-v4"
 BOOTSTRAP_LOG_MAX_BYTES = 4 * 1024 * 1024
 BUNDLE_RETENTION_COUNT = 3
 
@@ -1462,20 +1462,21 @@ printf '{"ok":true,"distro_family":"%s","package_manager":"%s","shell":"%s","gli
   "$distro_family" "$package_manager" "$want_shell" "$want_user" "$want_uid" "$want_gid" "$want_home"
 EOF_COCALC_NORMALIZE_ROOTFS
 )"
-    rewrite_rootfs_ids_script="$(mktemp)"
+    remap_rootfs_ids_script="$(mktemp)"
     rewrite_uid_map_file="$(mktemp)"
     rewrite_gid_map_file="$(mktemp)"
-    cat >"$rewrite_rootfs_ids_script" <<'EOF_COCALC_REWRITE_ROOTFS_IDS'
+    cat >"$remap_rootfs_ids_script" <<'EOF_COCALC_REWRITE_ROOTFS_IDS'
 #!/usr/bin/env python3
 import os
 import stat
 import sys
 
-rootfs = sys.argv[1]
-runtime_uid = int(sys.argv[2])
-runtime_gid = int(sys.argv[3])
-uid_map_path = sys.argv[4]
-gid_map_path = sys.argv[5]
+mode = sys.argv[1]
+rootfs = sys.argv[2]
+runtime_uid = int(sys.argv[3])
+runtime_gid = int(sys.argv[4])
+uid_map_path = sys.argv[5]
+gid_map_path = sys.argv[6]
 
 def parse_map(path: str) -> list[tuple[int, int, int]]:
     ranges: list[tuple[int, int, int]] = []
@@ -1501,6 +1502,15 @@ def map_keep_id(identifier: int, runtime_id: int) -> int:
         return 0
     return identifier
 
+def reverse_keep_id(identifier: int, runtime_id: int) -> int:
+    if identifier < 0:
+        return identifier
+    if identifier == 0:
+        return runtime_id
+    if 0 < identifier <= runtime_id:
+        return identifier - 1
+    return identifier
+
 def host_to_intermediate(identifier: int, ranges: list[tuple[int, int, int]]) -> int:
     for ns_start, host_start, length in ranges:
         if host_start <= identifier < host_start + length:
@@ -1519,23 +1529,36 @@ def intermediate_to_host(identifier: int, ranges: list[tuple[int, int, int]]) ->
             return host_start + (identifier - ns_start)
     raise RuntimeError(f"id {identifier} is not covered by the rootless podman map")
 
+def current_host_to_canonical(identifier: int, ranges: list[tuple[int, int, int]], runtime_id: int) -> int:
+    try:
+        intermediate = host_to_intermediate(identifier, ranges)
+    except RuntimeError:
+        return identifier
+    return reverse_keep_id(intermediate, runtime_id)
+
 def remap(path: str) -> None:
     st = os.lstat(path)
-    mapped_uid = intermediate_to_host(
-        map_keep_id(extracted_to_intermediate(st.st_uid, uid_ranges), runtime_uid),
-        uid_ranges,
-    )
-    mapped_gid = intermediate_to_host(
-        map_keep_id(extracted_to_intermediate(st.st_gid, gid_ranges), runtime_gid),
-        gid_ranges,
-    )
+    if mode == "to-canonical":
+        mapped_uid = current_host_to_canonical(st.st_uid, uid_ranges, runtime_uid)
+        mapped_gid = current_host_to_canonical(st.st_gid, gid_ranges, runtime_gid)
+    elif mode == "to-host":
+        mapped_uid = intermediate_to_host(
+            map_keep_id(extracted_to_intermediate(st.st_uid, uid_ranges), runtime_uid),
+            uid_ranges,
+        )
+        mapped_gid = intermediate_to_host(
+            map_keep_id(extracted_to_intermediate(st.st_gid, gid_ranges), runtime_gid),
+            gid_ranges,
+        )
+    else:
+        raise RuntimeError(f"unknown remap mode: {mode}")
     if mapped_uid == st.st_uid and mapped_gid == st.st_gid:
         pass
     else:
-        mode = stat.S_IMODE(st.st_mode)
+        file_mode = stat.S_IMODE(st.st_mode)
         os.lchown(path, mapped_uid, mapped_gid)
         if not stat.S_ISLNK(st.st_mode) and (st.st_mode & 0o6000):
-            os.chmod(path, mode, follow_symlinks=False)
+            os.chmod(path, file_mode, follow_symlinks=False)
     if stat.S_ISDIR(st.st_mode):
         with os.scandir(path) as entries:
             for entry in entries:
@@ -1543,7 +1566,7 @@ def remap(path: str) -> None:
 
 remap(rootfs)
 EOF_COCALC_REWRITE_ROOTFS_IDS
-chmod 0755 "$rewrite_rootfs_ids_script"
+chmod 0755 "$remap_rootfs_ids_script"
     validate_runtime_user_script="$(cat <<'EOF_COCALC_VALIDATE_RUNTIME_USER'
 set -euo pipefail
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
@@ -1569,7 +1592,7 @@ su_whoami="$(timeout 15s sudo -n su -c 'whoami' </dev/null 2>/dev/null || true)"
 EOF_COCALC_VALIDATE_RUNTIME_USER
 )"
     cleanup_rewrite_script() {
-      rm -f "$rewrite_rootfs_ids_script"
+      rm -f "$remap_rootfs_ids_script"
       rm -f "$rewrite_uid_map_file"
       rm -f "$rewrite_gid_map_file"
     }
@@ -1578,13 +1601,21 @@ EOF_COCALC_VALIDATE_RUNTIME_USER
     if [ -z "$podman_user" ]; then
       fail "rootfs contract failed: normalize-rootfs must be invoked via sudo from the rootless podman user" 77
     fi
+    /usr/bin/sudo -u "$podman_user" -H bash -lc "cd ~ && /usr/bin/podman unshare cat /proc/self/uid_map" >"$rewrite_uid_map_file"
+    /usr/bin/sudo -u "$podman_user" -H bash -lc "cd ~ && /usr/bin/podman unshare cat /proc/self/gid_map" >"$rewrite_gid_map_file"
+    /usr/bin/python3 "$remap_rootfs_ids_script" \
+      "to-canonical" \
+      "$rootfs" \
+      "1000" \
+      "1000" \
+      "$rewrite_uid_map_file" \
+      "$rewrite_gid_map_file"
     validate_runtime_user_escaped="$(printf '%q' "$validate_runtime_user_script")"
     normalize_result="$(
       /usr/bin/podman run --rm --network host --user 0:0 --security-opt label=disable --rootfs "$rootfs" "$shell_path" -lc "$normalize_script"
     )"
-    /usr/bin/sudo -u "$podman_user" -H bash -lc "cd ~ && /usr/bin/podman unshare cat /proc/self/uid_map" >"$rewrite_uid_map_file"
-    /usr/bin/sudo -u "$podman_user" -H bash -lc "cd ~ && /usr/bin/podman unshare cat /proc/self/gid_map" >"$rewrite_gid_map_file"
-    /usr/bin/python3 "$rewrite_rootfs_ids_script" \
+    /usr/bin/python3 "$remap_rootfs_ids_script" \
+      "to-host" \
       "$rootfs" \
       "1000" \
       "1000" \

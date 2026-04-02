@@ -17,6 +17,7 @@ import {
 } from "./file-server";
 import { getRootfsMountpoint } from "@cocalc/project-runner/run/rootfs";
 import type { ProjectCopyRow } from "@cocalc/conat/hub/api/projects";
+import { projectRuntimeHomeRelativePath } from "@cocalc/util/project-runtime";
 
 const logger = getLogger("project-host:pending-copies");
 
@@ -43,9 +44,9 @@ function normalizeCopyPath(raw: string, label: string): string {
 function normalizeBackupPath(raw: string): string {
   const normalized = normalizeCopyPath(raw, "src_path");
   if (!normalized) return "";
-  if (normalized === "/root") return "";
-  if (normalized.startsWith("/root/")) {
-    return normalized.slice("/root/".length);
+  const runtimeRelative = projectRuntimeHomeRelativePath(normalized);
+  if (runtimeRelative != null) {
+    return runtimeRelative;
   }
   if (path.posix.isAbsolute(normalized)) {
     return normalized.replace(/^\/+/, "");

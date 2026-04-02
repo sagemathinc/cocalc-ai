@@ -14,6 +14,7 @@ import {
 } from "@cocalc/util/ai/codex";
 import type { LineDiffResult } from "@cocalc/util/line-diff";
 import { resolveCodexSessionMode } from "@cocalc/util/ai/codex";
+import { projectRuntimeHomeRelativePath } from "@cocalc/util/project-runtime";
 import type { AcpAgent, AcpEvaluateRequest, AcpStreamUsage } from "./types";
 import {
   getCodexProjectSpawner,
@@ -588,11 +589,11 @@ function mapContainerPathToHost(
   if (!containerPathMap || !path.isAbsolute(targetPath)) {
     return targetPath;
   }
-  if (targetPath === "/root" || targetPath.startsWith("/root/")) {
-    const suffix = targetPath.slice("/root".length).replace(/^\/+/, "");
+  const runtimeRelative = projectRuntimeHomeRelativePath(targetPath);
+  if (runtimeRelative != null) {
     if (!containerPathMap.rootHostPath) return targetPath;
-    return suffix
-      ? path.join(containerPathMap.rootHostPath, suffix)
+    return runtimeRelative
+      ? path.join(containerPathMap.rootHostPath, runtimeRelative)
       : containerPathMap.rootHostPath;
   }
   if (targetPath === "/scratch" || targetPath.startsWith("/scratch/")) {

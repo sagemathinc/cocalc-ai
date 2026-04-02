@@ -24,10 +24,14 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
   },
 }));
 
-jest.mock("@cocalc/util/project-runtime", () => ({
-  DEFAULT_PROJECT_RUNTIME_HOME: "/home/user",
-  DEFAULT_PROJECT_RUNTIME_USER: "user",
-}), { virtual: true });
+jest.mock(
+  "@cocalc/util/project-runtime",
+  () => ({
+    DEFAULT_PROJECT_RUNTIME_HOME: "/home/user",
+    DEFAULT_PROJECT_RUNTIME_USER: "user",
+  }),
+  { virtual: true },
+);
 
 describe("getProjectHomeDirectory", () => {
   beforeEach(() => {
@@ -97,6 +101,19 @@ describe("getProjectHomeDirectory", () => {
       getProjectRuntimeUser,
     } = require("./home-directory");
     expect(getProjectHomeDirectory("project-1")).toBe("/home/user");
+    expect(getProjectRuntimeUser("project-1")).toBe("user");
+  });
+
+  it("falls back cleanly when project store access is unavailable", () => {
+    getProjectStore.mockImplementation(() => {
+      throw new Error("synthetic test project id");
+    });
+
+    const {
+      getProjectHomeDirectory,
+      getProjectRuntimeUser,
+    } = require("./home-directory");
+    expect(getProjectHomeDirectory("project-1")).toBe("/");
     expect(getProjectRuntimeUser("project-1")).toBe("user");
   });
 

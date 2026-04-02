@@ -12,6 +12,7 @@ import {
   DEFAULT_PROJECT_RUNTIME_HOME,
   DEFAULT_PROJECT_RUNTIME_UID,
   DEFAULT_PROJECT_RUNTIME_USER,
+  projectRuntimeHomeRelativePath,
 } from "@cocalc/util/project-runtime";
 import type {
   CodexAppServerLoginHint,
@@ -169,9 +170,11 @@ function normalizeProjectRuntimePath(pathValue?: string): string {
 function normalizeProjectRuntimeCwd(cwd?: string): string {
   const trimmed = `${cwd ?? ""}`.trim();
   if (!trimmed) return PROJECT_RUNTIME_HOME;
-  if (trimmed === "/root") return PROJECT_RUNTIME_HOME;
-  if (trimmed.startsWith("/root/")) {
-    return join(PROJECT_RUNTIME_HOME, trimmed.slice("/root/".length));
+  const runtimeRelative = projectRuntimeHomeRelativePath(trimmed);
+  if (runtimeRelative != null) {
+    return runtimeRelative
+      ? join(PROJECT_RUNTIME_HOME, runtimeRelative)
+      : PROJECT_RUNTIME_HOME;
   }
   if (trimmed.startsWith("/")) return trimmed;
   return join(PROJECT_RUNTIME_HOME, trimmed);
@@ -233,6 +236,59 @@ function shouldForceEphemeralAppServerAuthStorage(
       return true;
     case "shared-home":
       return false;
+  }
+}
+
+async function scrubBrokenProjectCodexAuthArtifacts(
+  projectHome: string,
+  authRuntime: CodexAuthRuntime,
+): Promise<void> {
+  if (!shouldForceEphemeralAppServerAuthStorage(authRuntime)) return;
+  const codexHome = join(projectHome, ".codex");
+  let projectHomeStat;
+  try {
+    projectHomeStat = await fs.stat(projectHome);
+  } catch {
+    return;
+  }
+  for (const name of ["auth.json", "config.toml"]) {
+    const filePath = join(codexHome, name);
+    let stat;
+    try {
+      stat = await fs.stat(filePath);
+    } catch {
+      continue;
+    }
+    if (!stat.isFile()) continue;
+    const mismatchedOwner =
+      stat.uid !== projectHomeStat.uid || stat.gid !== projectHomeStat.gid;
+    const unreadableByOwner = (stat.mode & 0o400) === 0;
+    const emptyPlaceholder = stat.size === 0;
+    if (!(mismatchedOwner || unreadableByOwner || emptyPlaceholder)) {
+      continue;
+    }
+    try {
+      await fs.unlink(filePath);
+      logger.info("codex project runtime: removed broken local auth artifact", {
+        projectHome,
+        filePath,
+        auth: redactCodexAuthRuntime(authRuntime),
+        size: stat.size,
+        uid: stat.uid,
+        gid: stat.gid,
+        mode: stat.mode & 0o777,
+      });
+    } catch (err) {
+      logger.warn(
+        "codex project runtime: failed removing local auth artifact",
+        {
+          projectHome,
+          filePath,
+          auth: redactCodexAuthRuntime(authRuntime),
+          err: `${err}`,
+        },
+      );
+    }
   }
 }
 
@@ -1196,6 +1252,7 @@ async function spawnCodexAppServerInProjectRuntime({
   });
   await ensureProjectContainerRunning(projectId);
   const { home, scratch } = await localPath({ project_id: projectId });
+  await scrubBrokenProjectCodexAuthArtifacts(home, authRuntime);
   const name = projectContainerName(projectId);
 
   const execArgs: string[] = [

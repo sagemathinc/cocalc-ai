@@ -83,6 +83,7 @@ export default function SSHKeyAdder({
   const [keyTitle, setKeyTitle] = useState<string>("");
   const [keyValue, setKeyValue] = useState<string>("");
   const [error, setError] = useState<string>("");
+  const [submitting, setSubmitting] = useState<boolean>(false);
 
   const button = (
     <Button size={size} onClick={() => setAdd(!add)}>
@@ -103,10 +104,11 @@ export default function SSHKeyAdder({
     setKeyTitle("");
     setKeyValue("");
     setError("");
+    setSubmitting(false);
     setAdd(false);
   }
 
-  function submit_form(e?): void {
+  async function submit_form(e?): Promise<void> {
     let title;
     e?.preventDefault();
     try {
@@ -126,7 +128,8 @@ export default function SSHKeyAdder({
 
       const { value } = validated_key;
 
-      add_ssh_key({
+      setSubmitting(true);
+      await add_ssh_key({
         title,
         value,
         fingerprint: compute_fingerprint(validated_key.pubkey),
@@ -135,6 +138,7 @@ export default function SSHKeyAdder({
       cancelAndClose();
     } catch (err) {
       setError(`${err}`);
+      setSubmitting(false);
     }
   }
 
@@ -169,7 +173,8 @@ export default function SSHKeyAdder({
             key="add"
             type="primary"
             onClick={submit_form}
-            disabled={keyValue.length < 10}
+            disabled={keyValue.length < 10 || submitting}
+            loading={submitting}
           >
             {addKey}
           </Button>,

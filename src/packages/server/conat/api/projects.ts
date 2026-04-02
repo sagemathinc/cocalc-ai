@@ -83,6 +83,10 @@ import {
   vacuumChatStore,
 } from "@cocalc/backend/chat-store/sqlite-offload";
 import {
+  deleteProjectSshKeyInDb,
+  upsertProjectSshKeyInDb,
+} from "@cocalc/server/projects/project-ssh-keys";
+import {
   loadProjectStorageHistory,
   recordProjectStorageHistorySample,
 } from "@cocalc/database/postgres/project-storage-history";
@@ -1215,6 +1219,7 @@ export async function setProjectSshKey({
   last_use_date?: number;
 }): Promise<void> {
   await assertCollab({ account_id, project_id });
+  const actor = account_id as string;
   const fp = `${fingerprint ?? ""}`.trim();
   if (!fp) {
     throw Error("fingerprint must be non-empty");
@@ -1225,20 +1230,14 @@ export async function setProjectSshKey({
     creation_date: creation_date ?? Date.now(),
     ...(last_use_date != null ? { last_use_date } : {}),
   };
-  const pool = getPool();
-  const result = await pool.query(
-    `UPDATE projects
-        SET users = jsonb_set(
-          COALESCE(users, '{}'::jsonb),
-          ARRAY[$2::text, 'ssh_keys', $3::text],
-          $4::jsonb,
-          true
-        )
-      WHERE project_id = $1
-        AND (users -> $2::text ->> 'group') IN ('owner', 'collaborator')`,
-    [project_id, account_id, fp, JSON.stringify(payload)],
-  );
-  if ((result.rowCount ?? 0) === 0) {
+  if (
+    !(await upsertProjectSshKeyInDb({
+      project_id,
+      account_id: actor,
+      fingerprint: fp,
+      payload,
+    }))
+  ) {
     throw Error("user must be a collaborator");
   }
 }
@@ -1253,24 +1252,18 @@ export async function deleteProjectSshKey({
   fingerprint: string;
 }): Promise<void> {
   await assertCollab({ account_id, project_id });
+  const actor = account_id as string;
   const fp = `${fingerprint ?? ""}`.trim();
   if (!fp) {
     throw Error("fingerprint must be non-empty");
   }
-  const pool = getPool();
-  const result = await pool.query(
-    `UPDATE projects
-        SET users = jsonb_set(
-          COALESCE(users, '{}'::jsonb),
-          ARRAY[$2::text, 'ssh_keys'],
-          COALESCE(users -> $2::text -> 'ssh_keys', '{}'::jsonb) - $3::text,
-          true
-        )
-      WHERE project_id = $1
-        AND (users -> $2::text ->> 'group') IN ('owner', 'collaborator')`,
-    [project_id, account_id, fp],
-  );
-  if ((result.rowCount ?? 0) === 0) {
+  if (
+    !(await deleteProjectSshKeyInDb({
+      project_id,
+      account_id: actor,
+      fingerprint: fp,
+    }))
+  ) {
     throw Error("user must be a collaborator");
   }
 }
