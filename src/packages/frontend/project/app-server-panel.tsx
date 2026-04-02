@@ -835,6 +835,9 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
     useState<string>("index.json");
   const [staticViewerAutoRefresh, setStaticViewerAutoRefresh] =
     useState<string>("0");
+  const [staticViewerCacheMode, setStaticViewerCacheMode] = useState<
+    "live-editing" | "balanced" | "published"
+  >("balanced");
   const [startNow, setStartNow] = useState<boolean>(true);
   const [openWhenReady, setOpenWhenReady] = useState<boolean>(true);
   const [exposeTtlHours, setExposeTtlHours] = useState<string>("24");
@@ -1011,6 +1014,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
     staticRoot,
     staticIntegrationMode,
     staticViewerAutoRefresh,
+    staticViewerCacheMode,
     staticViewerFileTypes,
   ]);
 
@@ -1219,6 +1223,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
       );
       setStaticViewerManifest(preset.staticViewerManifest ?? "index.json");
       setStaticViewerAutoRefresh(preset.staticViewerAutoRefresh ?? "0");
+      setStaticViewerCacheMode(preset.staticViewerCacheMode ?? "balanced");
       setServiceOpenMode("proxy");
       setStartNow(false);
       setOpenWhenReady(false);
@@ -1246,6 +1251,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
     setStaticViewerFileTypes(".md,.ipynb,.slides,.board");
     setStaticViewerManifest("index.json");
     setStaticViewerAutoRefresh("0");
+    setStaticViewerCacheMode("balanced");
     setStartNow(true);
     setOpenWhenReady(true);
   }
@@ -1613,6 +1619,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
               file_types: viewerFileTypes,
               manifest: `${staticViewerManifest ?? ""}`.trim() || undefined,
               auto_refresh_s: viewerAutoRefresh ?? 0,
+              cache_mode: staticViewerCacheMode,
             }
           : undefined,
       wake: {
@@ -2632,6 +2639,29 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                                   }
                                 />
                               </Space.Compact>
+                              <Select<"live-editing" | "balanced" | "published">
+                                value={staticViewerCacheMode}
+                                onChange={(value) =>
+                                  setStaticViewerCacheMode(value)
+                                }
+                                options={[
+                                  {
+                                    value: "live-editing",
+                                    label:
+                                      "Live editing: always fetch the latest source",
+                                  },
+                                  {
+                                    value: "balanced",
+                                    label:
+                                      "Balanced: refresh from the server on reload",
+                                  },
+                                  {
+                                    value: "published",
+                                    label:
+                                      "Published: honor normal browser/app caching",
+                                  },
+                                ]}
+                              />
                               <Paragraph
                                 style={{
                                   color: "#666",
@@ -2643,7 +2673,9 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                                 read-only CoCalc Public Viewer. The manifest
                                 file controls directory listings; if it is
                                 missing, some presets can bootstrap it on first
-                                hit.
+                                hit. Cache mode controls how aggressively the
+                                viewer reuses cached source files in the
+                                browser.
                               </Paragraph>
                             </Space>
                           ) : null}

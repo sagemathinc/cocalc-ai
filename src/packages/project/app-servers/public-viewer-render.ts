@@ -6,7 +6,10 @@
 import { existsSync, readFileSync } from "node:fs";
 import * as path from "node:path";
 
-import type { AppStaticPublicViewerIntegrationSpec } from "./public-viewer";
+import {
+  PUBLIC_VIEWER_DEFAULT_CACHE_MODE,
+  type AppStaticPublicViewerIntegrationSpec,
+} from "./public-viewer";
 
 export interface PublicViewerRenderedFile {
   html: string;
@@ -463,12 +466,14 @@ function buildBundleShellDocument({
   rawHref,
   assets,
   autoRefreshS,
+  cacheMode,
 }: {
   title: string;
   sourcePath: string;
   rawHref: string;
   assets: PublicViewerBundleAssets;
   autoRefreshS?: number;
+  cacheMode?: string;
 }): string {
   const refresh =
     autoRefreshS && autoRefreshS > 0
@@ -479,6 +484,7 @@ function buildBundleShellDocument({
       path: sourcePath,
       rawUrl: rawHref,
       title,
+      cacheMode: cacheMode ?? PUBLIC_VIEWER_DEFAULT_CACHE_MODE,
     }),
   );
   const styleTags = assets.styles
@@ -533,6 +539,7 @@ export function renderPublicViewerFile({
         rawHref,
         assets,
         autoRefreshS: integration.auto_refresh_s,
+        cacheMode: integration.cache_mode,
       }),
     };
   }

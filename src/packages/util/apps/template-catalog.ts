@@ -1,6 +1,10 @@
 export type AppTemplateKind = "service" | "static";
 export type AppTemplateServiceOpenMode = "proxy" | "port";
 export type AppTemplateStaticIntegrationMode = "cocalc-public-viewer";
+export type AppTemplateStaticViewerCacheMode =
+  | "live-editing"
+  | "balanced"
+  | "published";
 import builtinCatalog from "./builtin-template-catalog";
 
 export interface AppTemplateDetectV1 {
@@ -46,6 +50,7 @@ export interface AppTemplatePresetV1 {
   static_integration_file_types?: string[];
   static_integration_manifest?: string;
   static_integration_auto_refresh_s?: number;
+  static_integration_cache_mode?: AppTemplateStaticViewerCacheMode;
   note?: string;
 }
 

@@ -16,6 +16,7 @@ export const PUBLIC_VIEWER_DEFAULT_FILE_TYPES = [
 ] as const;
 export const PUBLIC_VIEWER_DEFAULT_MANIFEST = "index.json" as const;
 export const PUBLIC_VIEWER_DEFAULT_DIRECTORY_LISTING = "manifest-only" as const;
+export const PUBLIC_VIEWER_DEFAULT_CACHE_MODE = "balanced" as const;
 export const PUBLIC_VIEWER_MANIFEST_KIND =
   "cocalc-public-viewer-index" as const;
 export const PUBLIC_VIEWER_HTML_BY_EXT: Record<string, string> = {
@@ -29,6 +30,7 @@ export const PUBLIC_VIEWER_HTML_BY_EXT: Record<string, string> = {
 
 export type PublicViewerDirectoryListingPolicy =
   typeof PUBLIC_VIEWER_DEFAULT_DIRECTORY_LISTING;
+export type PublicViewerCacheMode = "live-editing" | "balanced" | "published";
 export type PublicViewerEntryRenderMode = "viewer" | "raw" | "hidden";
 
 export interface AppStaticPublicViewerIntegrationSpec {
@@ -36,6 +38,7 @@ export interface AppStaticPublicViewerIntegrationSpec {
   file_types: string[];
   viewer_bundle?: string;
   auto_refresh_s: number;
+  cache_mode: PublicViewerCacheMode;
   manifest: string;
   directory_listing: PublicViewerDirectoryListingPolicy;
 }

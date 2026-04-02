@@ -18,6 +18,37 @@ export interface PublicViewerConfig {
   rawUrl: string;
   title?: string;
   autoRefreshS?: number;
+  cacheMode?: "live-editing" | "balanced" | "published";
+}
+
+function normalizeCacheMode(
+  input: unknown,
+): "live-editing" | "balanced" | "published" | undefined {
+  const value = `${input ?? ""}`.trim().toLowerCase();
+  switch (value) {
+    case "":
+      return undefined;
+    case "live-editing":
+    case "balanced":
+    case "published":
+      return value;
+    default:
+      return undefined;
+  }
+}
+
+function fetchCacheModeForViewer(
+  cacheMode?: "live-editing" | "balanced" | "published",
+): RequestCache {
+  switch (cacheMode) {
+    case "live-editing":
+      return "no-store";
+    case "published":
+      return "default";
+    case "balanced":
+    default:
+      return "reload";
+  }
 }
 
 function normalizeAndValidateRawUrl(rawUrl: string): string {
@@ -54,6 +85,7 @@ export function parseConfig(): PublicViewerConfig {
       throw new Error("public viewer config is invalid");
     }
     parsed.rawUrl = normalizeAndValidateRawUrl(parsed.rawUrl);
+    parsed.cacheMode = normalizeCacheMode(parsed.cacheMode);
     return parsed;
   }
   const params = new URLSearchParams(window.location.search);
@@ -62,6 +94,7 @@ export function parseConfig(): PublicViewerConfig {
   const path = params.get("path")?.trim() || rawUrl || "Untitled";
   const title = params.get("title")?.trim() || undefined;
   const autoRefreshS = Number(params.get("refresh") ?? "");
+  const cacheMode = normalizeCacheMode(params.get("cache"));
   if (!rawUrl) {
     throw new Error("public viewer query config is invalid");
   }
@@ -73,6 +106,7 @@ export function parseConfig(): PublicViewerConfig {
       Number.isFinite(autoRefreshS) && autoRefreshS > 0
         ? autoRefreshS
         : undefined,
+    cacheMode,
   };
 }
 
@@ -125,7 +159,7 @@ function PublicViewerApp({
       try {
         const response = await fetch(config.rawUrl, {
           credentials: "include",
-          cache: "no-store",
+          cache: fetchCacheModeForViewer(config.cacheMode),
         });
         if (!response.ok) {
           throw new Error(`Unable to load ${config.path} (${response.status})`);
@@ -183,6 +217,12 @@ function PublicViewerApp({
           </h1>
           <div style={{ color: COLORS.GRAY_M, marginTop: "4px" }}>
             Source: <code>{config.path}</code>
+            {config.cacheMode ? (
+              <>
+                {" "}
+                · Cache mode: <code>{config.cacheMode}</code>
+              </>
+            ) : null}
           </div>
         </div>
         <div style={{ display: "flex", gap: "16px", flexWrap: "wrap" }}>

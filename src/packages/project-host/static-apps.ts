@@ -18,6 +18,7 @@ import {
 } from "@cocalc/util/public-viewer-origin";
 import {
   COCALC_PUBLIC_VIEWER_MODE,
+  PUBLIC_VIEWER_DEFAULT_CACHE_MODE,
   isPublicViewerRenderablePath,
   parsePublicViewerManifest,
   publicViewerHtmlForPath,
@@ -316,12 +317,14 @@ async function buildViewerRedirectUrl({
   sourcePath,
   title,
   autoRefreshS,
+  cacheMode,
   viewerBundle,
 }: {
   req: http.IncomingMessage;
   sourcePath: string;
   title: string;
   autoRefreshS?: number;
+  cacheMode?: string;
   viewerBundle?: string;
 }): Promise<string> {
   const requestOrigin = buildRequestOrigin(req);
@@ -343,6 +346,10 @@ async function buildViewerRedirectUrl({
   if ((autoRefreshS ?? 0) > 0) {
     viewer.searchParams.set("refresh", `${autoRefreshS}`);
   }
+  viewer.searchParams.set(
+    "cache",
+    `${cacheMode ?? ""}`.trim() || PUBLIC_VIEWER_DEFAULT_CACHE_MODE,
+  );
   return viewer.toString();
 }
 
@@ -1001,6 +1008,7 @@ export async function maybeHandleStaticAppRequest({
         title:
           path.posix.basename(pathInfo.relativePath) || "CoCalc Public Viewer",
         autoRefreshS: integration.auto_refresh_s,
+        cacheMode: integration.cache_mode,
         viewerBundle: integration.viewer_bundle,
       });
       res.writeHead(302, {
@@ -1068,6 +1076,7 @@ export async function maybeHandleStaticAppRequest({
         sourcePath: indexRelativePath,
         title: path.posix.basename(indexRelativePath) || "CoCalc Public Viewer",
         autoRefreshS: integration.auto_refresh_s,
+        cacheMode: integration.cache_mode,
         viewerBundle: integration.viewer_bundle,
       });
       res.writeHead(302, {

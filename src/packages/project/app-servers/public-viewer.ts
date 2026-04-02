@@ -14,12 +14,14 @@ export const PUBLIC_VIEWER_DEFAULT_FILE_TYPES = [
 ] as const;
 export const PUBLIC_VIEWER_DEFAULT_MANIFEST = "index.json" as const;
 export const PUBLIC_VIEWER_DEFAULT_DIRECTORY_LISTING = "manifest-only" as const;
+export const PUBLIC_VIEWER_DEFAULT_CACHE_MODE = "balanced" as const;
 export const PUBLIC_VIEWER_MANIFEST_KIND =
   "cocalc-public-viewer-index" as const;
 
 export type AppStaticIntegrationMode = typeof COCALC_PUBLIC_VIEWER_MODE;
 export type PublicViewerDirectoryListingPolicy =
   typeof PUBLIC_VIEWER_DEFAULT_DIRECTORY_LISTING;
+export type PublicViewerCacheMode = "live-editing" | "balanced" | "published";
 export type PublicViewerEntryRenderMode = "viewer" | "raw" | "hidden";
 
 export interface AppStaticPublicViewerIntegrationSpec {
@@ -27,6 +29,7 @@ export interface AppStaticPublicViewerIntegrationSpec {
   file_types: string[];
   viewer_bundle?: string;
   auto_refresh_s: number;
+  cache_mode: PublicViewerCacheMode;
   manifest: string;
   directory_listing: PublicViewerDirectoryListingPolicy;
 }
@@ -115,6 +118,24 @@ function asOptionalFiniteNumber(
   return value;
 }
 
+function normalizePublicViewerCacheMode(
+  input: unknown,
+  context: string,
+): PublicViewerCacheMode {
+  const value =
+    asOptionalString(input)?.toLowerCase() ?? PUBLIC_VIEWER_DEFAULT_CACHE_MODE;
+  switch (value) {
+    case "live-editing":
+    case "balanced":
+    case "published":
+      return value;
+    default:
+      throw new Error(
+        `${context} must be one of live-editing, balanced, published`,
+      );
+  }
+}
+
 function normalizeViewerFileType(value: string, context: string): string {
   const ext = `${value ?? ""}`.trim().toLowerCase();
   if (!ext) {
@@ -200,6 +221,10 @@ export function normalizeStaticIntegration(
         integration.auto_refresh_s,
         `${context}.auto_refresh_s`,
       ) ?? 0,
+    cache_mode: normalizePublicViewerCacheMode(
+      integration.cache_mode,
+      `${context}.cache_mode`,
+    ),
     manifest: normalizePublicViewerManifestPath(integration.manifest),
     directory_listing: PUBLIC_VIEWER_DEFAULT_DIRECTORY_LISTING,
   };

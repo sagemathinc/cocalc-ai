@@ -32,6 +32,7 @@ export interface AppServerPreset {
   staticViewerFileTypes?: string[];
   staticViewerManifest?: string;
   staticViewerAutoRefresh?: string;
+  staticViewerCacheMode?: "live-editing" | "balanced" | "published";
   note?: string;
   installCommand?: string;
   installHint?: string;
@@ -87,6 +88,7 @@ function toPreset(
       preset.static_integration_auto_refresh_s != null
         ? `${preset.static_integration_auto_refresh_s}`
         : undefined,
+    staticViewerCacheMode: preset.static_integration_cache_mode,
     note: preset.note,
     installCommand: template.install?.command,
     installHint: template.install?.hint,
