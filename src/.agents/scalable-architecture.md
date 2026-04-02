@@ -42,7 +42,7 @@ Launchpad should become exactly one cell with no cross-cell routing.
 ## High-Level Diagram
 
 ```mermaid
-flowchart LR
+flowchart TD
   Browser["Browser"]
 
   subgraph Global["Global Services"]
@@ -51,7 +51,7 @@ flowchart LR
   end
 
   subgraph HomeA["Home Cell A"]
-    AHub["Control Hub / Browser Conat"]
+    AHub["Control Hub/Browser Conat"]
     AProj["Account Projections"]
     ADb["Cell Postgres"]
   end
@@ -64,7 +64,7 @@ flowchart LR
   end
 
   subgraph HomeB["Home Cell B"]
-    BHub["Control Hub / Browser Conat"]
+    BHub["Control Hub/Browser Conat"]
     BProj["Account Projections"]
     BDb["Cell Postgres"]
   end
@@ -82,7 +82,7 @@ flowchart LR
   PHub --> PAuth
   PAuth --> PDb
   PAuth -->|start / stop / metrics / placement| Host
-  Browser <-->|notebook / terminal / sync / codex| Host
+  Browser <-->|notebook / terminal / codex| Host
 
   PAuth --> POut
   POut -->|replicated project events| AHub
@@ -726,6 +726,205 @@ Within a region:
 - keep project host pools spread across zones where practical
 
 This is orthogonal to multi-region distribution.
+
+## Backups And R2
+
+Backup and restore must be part of the cell contract from the beginning.
+
+With this architecture, there is no longer "the Postgres database". There may
+be dozens of per-cell Postgres databases plus a small global directory/auth
+database.
+
+That changes the operational model in a good way:
+
+- each cell has a much smaller blast radius
+- each cell can back up independently
+- restore can be scoped to one cell instead of the whole control plane
+- backup throughput scales horizontally as cells are added
+
+### Design Rule
+
+Every cell must continuously back itself up to R2 automatically.
+
+This includes:
+
+- the cell Postgres database
+- backup manifests and restore metadata
+- enough metadata to reattach the restored cell cleanly to the global
+  directory
+
+The global directory/auth databases must also back themselves up to R2, but
+those are separate and much smaller.
+
+### Recommended Backup Shape
+
+For each cell Postgres:
+
+- periodic full base backups to R2
+- continuous WAL archiving to R2
+- retention policies per environment
+- backup manifests written in a machine-readable format
+
+This gives:
+
+- point-in-time recovery for a cell
+- fast restore from the latest base backup
+- bounded RPO driven by WAL shipping latency
+
+Operationally this should be treated as standard PITR:
+
+- `base backup + WAL archive + restore target time`
+
+The same pattern should be used for the global directory database.
+
+### Suggested R2 Layout
+
+Suggested logical bucket layout:
+
+- `r2://cocalc-backups/global/<service>/...`
+- `r2://cocalc-backups/cells/<cell_id>/postgres/base/...`
+- `r2://cocalc-backups/cells/<cell_id>/postgres/wal/...`
+- `r2://cocalc-backups/cells/<cell_id>/manifests/...`
+
+Suggested manifest content:
+
+- `cell_id`
+- `region`
+- `backup_set_id`
+- `base_backup_started_at`
+- `base_backup_completed_at`
+- `wal_start_lsn`
+- `wal_end_lsn`
+- `postgres_version`
+- `schema_version`
+- `directory_epoch`
+- `created_at`
+
+The manifest should make it possible to automate restore selection without
+guessing.
+
+### Global Directory Metadata For Restore
+
+The global directory should track minimal backup metadata for each cell:
+
+- `cell_id`
+- `last_successful_backup_at`
+- `last_successful_wal_archive_at`
+- `latest_backup_set_id`
+- `restore_state`
+
+This is not the backup itself. It is only enough metadata so operators and
+automation know whether a cell is currently recoverable.
+
+### Restore Modes
+
+There are several restore modes to support.
+
+#### Full Cell Restore
+
+Used when a cell Postgres is lost or corrupted.
+
+Flow:
+
+1. Stop writes to the failed cell.
+2. Provision a replacement Postgres instance.
+3. Restore latest base backup from R2.
+4. Replay WAL from R2 to target time.
+5. Bring up cell services in a fenced mode.
+6. Verify data consistency and projection rebuild status.
+7. Re-enable routing to that cell in the global directory.
+
+#### Point-In-Time Cell Recovery
+
+Used for operator error or bad deployment.
+
+Flow:
+
+1. Select a restore target timestamp.
+2. Restore base backup.
+3. Replay WAL to the selected time.
+4. Start restored cell in isolation/fenced mode.
+5. Compare against current state.
+6. Either:
+   - promote restored cell into service, or
+   - extract data and replay selected fixes
+
+#### Project-Level Recovery
+
+Even though the backup unit is a whole cell database, project-level recovery
+must remain operationally possible.
+
+Flow:
+
+1. Restore the owning cell database to an isolated temporary environment.
+2. Extract the authoritative project row and related project-scoped metadata.
+3. Rehydrate the project onto a target host/cell.
+4. Write compensating events so home-cell projections converge again.
+
+This is slower than cell-wide PITR, but it is acceptable for exceptional
+recovery cases.
+
+### Interaction With Project Moves
+
+Because projects can move between cells, backup and restore must preserve
+ownership history carefully.
+
+Important rule:
+
+- the global directory is authoritative for current ownership
+- a restored old cell must not blindly overwrite newer directory state
+
+That means restore workflows need fencing:
+
+- restored cells start with routing disabled
+- they do not emit live replication events until explicitly unfenced
+- ownership mismatches are reconciled against the global directory before
+  returning the cell to service
+
+### Projection Tables After Restore
+
+Projection tables do not need to be treated as irreplaceable canonical state.
+
+They can be:
+
+- restored with the cell for faster recovery
+- or rebuilt from authoritative data plus replicated events
+
+Recommendation:
+
+- restore them normally for speed
+- retain tooling to rebuild them from authoritative tables and event history
+
+This keeps projection corruption from becoming catastrophic.
+
+### Why This Is Better Than One Giant Database
+
+With one giant database:
+
+- backups are huge
+- restore is slow
+- verification is harder
+- blast radius is total
+
+With per-cell databases:
+
+- each backup set is smaller
+- restore can be parallelized
+- a failed restore affects one slice of users/projects
+- R2 throughput can scale by adding cells
+
+This is one of the strongest operational reasons to adopt the cell model.
+
+### Launchpad
+
+Launchpad should also use the same backup model, just with one cell:
+
+- one cell Postgres backed up to R2
+- same base-backup/WAL pattern
+- same restore tooling
+
+That keeps the backup path exercised continuously, even before true Rocket
+multi-cell deployment.
 
 ## Launchpad As One-Cell Rocket
 
