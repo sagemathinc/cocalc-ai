@@ -351,13 +351,20 @@ function healthCheckUrl(
   env: Record<string, string>,
   httpPort?: number,
 ): string {
-  const base = `${env.PROJECT_HOST_INTERNAL_URL ?? ""}`.trim();
-  if (base) {
-    return `${base.replace(/\/+$/, "")}/healthz`;
+  const explicit = `${env.COCALC_PROJECT_HOST_DAEMON_HEALTH_URL ?? ""}`.trim();
+  if (explicit) {
+    return explicit.endsWith("/healthz")
+      ? explicit
+      : `${explicit.replace(/\/+$/, "")}/healthz`;
   }
+  // The daemon watchdog runs on the host itself, so it must not depend on the
+  // externally routed project-host URL. Fresh hosts can legitimately serve
+  // /healthz on localhost before Cloudflare/DNS/public routing settles.
   const host = `${env.HOST ?? ""}`.trim() || "127.0.0.1";
+  const localHost =
+    host === "0.0.0.0" || host === "::" || host === "[::]" ? "127.0.0.1" : host;
   const port = httpPort ?? parsePort(env.PORT) ?? 9002;
-  return `http://${host}:${port}/healthz`;
+  return `http://${localHost}:${port}/healthz`;
 }
 
 function checkHealthSync(

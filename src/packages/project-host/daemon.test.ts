@@ -301,4 +301,37 @@ describe("project-host daemon stop", () => {
       expect.stringContaining("project-host pid 8585 is still warming up"),
     );
   });
+
+  it("uses localhost for health checks instead of the public internal url", () => {
+    expect(
+      __test__.healthCheckUrl(
+        {
+          HOST: "0.0.0.0",
+          PORT: "9002",
+          PROJECT_HOST_INTERNAL_URL: "https://host-example-lite2.cocalc.ai",
+        },
+        9002,
+      ),
+    ).toBe("http://127.0.0.1:9002/healthz");
+  });
+
+  it("honors an explicit daemon health url override", () => {
+    expect(
+      __test__.healthCheckUrl(
+        {
+          COCALC_PROJECT_HOST_DAEMON_HEALTH_URL: "http://127.0.0.1:9100/custom",
+        },
+        9002,
+      ),
+    ).toBe("http://127.0.0.1:9100/custom/healthz");
+    expect(
+      __test__.healthCheckUrl(
+        {
+          COCALC_PROJECT_HOST_DAEMON_HEALTH_URL:
+            "http://127.0.0.1:9100/healthz",
+        },
+        9002,
+      ),
+    ).toBe("http://127.0.0.1:9100/healthz");
+  });
 });
