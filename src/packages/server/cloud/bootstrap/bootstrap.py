@@ -1308,6 +1308,12 @@ case "$cmd" in
       echo "$1" >&2
       exit "${2:-1}"
     }
+    skip_ownership_bridge=false
+    case "${COCALC_ROOTFS_SKIP_OWNERSHIP_BRIDGE:-}" in
+      1|true|TRUE|yes|YES|on|ON)
+        skip_ownership_bridge=true
+        ;;
+    esac
     remap_rootfs_ids_script="$(mktemp)"
     rewrite_uid_map_file="$(mktemp)"
     rewrite_gid_map_file="$(mktemp)"
@@ -1502,37 +1508,39 @@ EOF_COCALC_FIX_SETID_RUNTIME_HELPERS
     chmod 0755 "$rootfs/run/podman-init" || true
     : >"$rootfs/run/.containerenv"
     chmod 0644 "$rootfs/run/.containerenv" || true
-    /usr/bin/sudo -u "$podman_user" -H bash -lc "cd ~ && /usr/bin/podman unshare cat /proc/self/uid_map" >"$rewrite_uid_map_file"
-    /usr/bin/sudo -u "$podman_user" -H bash -lc "cd ~ && /usr/bin/podman unshare cat /proc/self/gid_map" >"$rewrite_gid_map_file"
-    /usr/bin/python3 "$remap_rootfs_ids_script" \
-      "to-canonical" \
-      "$rootfs" \
-      "2001" \
-      "2001" \
-      "$rewrite_uid_map_file" \
-      "$rewrite_gid_map_file"
-    /usr/bin/python3 "$remap_rootfs_ids_script" \
-      "to-host" \
-      "$rootfs" \
-      "2001" \
-      "2001" \
-      "$rewrite_uid_map_file" \
-      "$rewrite_gid_map_file"
-    fix_setid_runtime_helpers_escaped="$(printf '%q' "$fix_setid_runtime_helpers_script")"
-    /usr/bin/sudo -u "$podman_user" -H bash -lc "
-        cd ~ &&
-        /usr/bin/podman run --rm --network host \
-          --userns=keep-id:uid=2001,gid=2001 \
-          --user 0:0 \
-          --workdir / \
-          -e HOME=/root \
-          -e USER=root \
-          -e LOGNAME=root \
-          -e COCALC_RUNTIME_UID='2001' \
-          -e COCALC_RUNTIME_GID='2001' \
-          --security-opt label=disable \
-          --rootfs '$rootfs' '$shell_path' -lc $fix_setid_runtime_helpers_escaped
-      " >/dev/null
+    if [ "$skip_ownership_bridge" = false ]; then
+      /usr/bin/sudo -u "$podman_user" -H bash -lc "cd ~ && /usr/bin/podman unshare cat /proc/self/uid_map" >"$rewrite_uid_map_file"
+      /usr/bin/sudo -u "$podman_user" -H bash -lc "cd ~ && /usr/bin/podman unshare cat /proc/self/gid_map" >"$rewrite_gid_map_file"
+      /usr/bin/python3 "$remap_rootfs_ids_script" \
+        "to-canonical" \
+        "$rootfs" \
+        "2001" \
+        "2001" \
+        "$rewrite_uid_map_file" \
+        "$rewrite_gid_map_file"
+      /usr/bin/python3 "$remap_rootfs_ids_script" \
+        "to-host" \
+        "$rootfs" \
+        "2001" \
+        "2001" \
+        "$rewrite_uid_map_file" \
+        "$rewrite_gid_map_file"
+      fix_setid_runtime_helpers_escaped="$(printf '%q' "$fix_setid_runtime_helpers_script")"
+      /usr/bin/sudo -u "$podman_user" -H bash -lc "
+          cd ~ &&
+          /usr/bin/podman run --rm --network host \
+            --userns=keep-id:uid=2001,gid=2001 \
+            --user 0:0 \
+            --workdir / \
+            -e HOME=/root \
+            -e USER=root \
+            -e LOGNAME=root \
+            -e COCALC_RUNTIME_UID='2001' \
+            -e COCALC_RUNTIME_GID='2001' \
+            --security-opt label=disable \
+            --rootfs '$rootfs' '$shell_path' -lc $fix_setid_runtime_helpers_escaped
+        " >/dev/null
+    fi
     normalize_result="$(printf '{"ok":true,"distro_family":"%s","package_manager":"%s","shell":"%s","glibc":true,"sudo_present":%s,"ca_certificates_present":%s}\n' \
       "$distro_family" "$package_manager" "$shell_path" "$sudo_present" "$ca_certificates_present")"
     printf '%s\n' "$normalize_result"

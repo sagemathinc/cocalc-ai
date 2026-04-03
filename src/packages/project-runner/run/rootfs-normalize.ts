@@ -161,25 +161,35 @@ export async function preflightRootfsInPlace({
   image,
   rootfsPath,
   onProgress,
+  skipOwnershipBridge,
 }: {
   image: string;
   rootfsPath: string;
   onProgress?: RootfsPreflightProgress;
+  skipOwnershipBridge?: boolean;
 }): Promise<RootfsPreflightMetadata> {
   onProgress?.({
     message: "checking RootFS preflight prerequisites",
-    detail: { image, rootfs_path: rootfsPath },
+    detail: {
+      image,
+      rootfs_path: rootfsPath,
+      skip_ownership_bridge: skipOwnershipBridge === true,
+    },
   });
   logger.info("preflighting rootfs", {
     image,
     rootfs_path: rootfsPath,
     version: ROOTFS_PREFLIGHT_VERSION,
+    skip_ownership_bridge: skipOwnershipBridge === true,
   });
   let stdout = "";
   try {
     const result = await executeCode({
       command: "sudo",
       args: ["-n", STORAGE_WRAPPER, "normalize-rootfs", rootfsPath],
+      env: skipOwnershipBridge
+        ? { COCALC_ROOTFS_SKIP_OWNERSHIP_BRIDGE: "1" }
+        : undefined,
       err_on_exit: true,
       verbose: false,
       timeout: 45 * 60,

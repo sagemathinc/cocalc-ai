@@ -69,7 +69,6 @@ import { init as initSshServer } from "@cocalc/project-proxy/ssh-server";
 import {
   DEFAULT_PROJECT_RUNTIME_HOME,
   DEFAULT_PROJECT_RUNTIME_USER,
-  projectRuntimeRootfsContractLabels,
   projectRuntimeHomeRelativePath,
 } from "@cocalc/util/project-runtime";
 import { type MutagenSyncSession } from "@cocalc/conat/project/mutagen/types";
@@ -116,6 +115,10 @@ import {
   getBackupExecutionLimit,
   getCachedBackupExecutionLimit,
 } from "./backup-execution-limit";
+import {
+  projectRuntimeRootfsContractLabelsForCurrentHost,
+  readCurrentProjectRuntimeUsernsMapFingerprint,
+} from "./rootfs-runtime-contract";
 import { isMissingRusticRepositoryError } from "./backup-index-errors";
 import {
   ProjectRusticUnsupportedError,
@@ -1883,6 +1886,20 @@ async function publishRootfsImage({
       sizeBytes = await directorySizeBytes(finalPath);
     }
 
+    let runtimeContractLabels: Record<string, string> | undefined;
+    try {
+      runtimeContractLabels = projectRuntimeRootfsContractLabelsForCurrentHost({
+        usernsMapFingerprint:
+          await readCurrentProjectRuntimeUsernsMapFingerprint(),
+      });
+    } catch (err) {
+      logger.warn("unable to stamp RootFS runtime contract labels", {
+        project_id,
+        source_image: sourceImage,
+        err: `${err}`,
+      });
+    }
+
     const publishedInspectData = {
       ...inspectData,
       RepoTags: [image],
@@ -1893,7 +1910,7 @@ async function publishRootfsImage({
           "com.cocalc.rootfs.managed": "true",
           "com.cocalc.rootfs.content_key": contentKey,
           "com.cocalc.rootfs.source_image": sourceImage,
-          ...projectRuntimeRootfsContractLabels(),
+          ...(runtimeContractLabels ?? {}),
         },
       },
     };

@@ -137,4 +137,30 @@ describe("rootfs preflight metadata", () => {
       sudo_present: true,
     });
   });
+
+  it("passes the ownership-bridge skip hint through to the wrapper", async () => {
+    executeCode.mockResolvedValue({
+      stdout: JSON.stringify({
+        ok: true,
+        distro_family: "debian",
+        package_manager: "apt-get",
+        shell: "/bin/bash",
+        glibc: true,
+        sudo_present: true,
+        ca_certificates_present: true,
+      }),
+    });
+
+    const mod = await import("../project-runner/run/rootfs-normalize");
+    await mod.preflightRootfsInPlace({
+      image: "cocalc.local/rootfs/example",
+      rootfsPath: "/mnt/cocalc/data/cache/images/example",
+      skipOwnershipBridge: true,
+    });
+    expect(executeCode).toHaveBeenCalledWith(
+      expect.objectContaining({
+        env: { COCALC_ROOTFS_SKIP_OWNERSHIP_BRIDGE: "1" },
+      }),
+    );
+  });
 });
