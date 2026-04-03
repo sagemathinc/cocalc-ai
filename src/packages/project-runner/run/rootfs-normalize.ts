@@ -6,34 +6,23 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { executeCode } from "@cocalc/backend/execute-code";
 import getLogger from "@cocalc/backend/logger";
-import {
-  DEFAULT_PROJECT_RUNTIME_GID,
-  DEFAULT_PROJECT_RUNTIME_HOME,
-  DEFAULT_PROJECT_RUNTIME_UID,
-  DEFAULT_PROJECT_RUNTIME_USER,
-} from "@cocalc/util/project-runtime";
 
 const logger = getLogger("project-runner:rootfs-normalize");
 const STORAGE_WRAPPER = "/usr/local/sbin/cocalc-runtime-storage";
 
-export const ROOTFS_NORMALIZER_VERSION = 3;
+export const ROOTFS_NORMALIZER_VERSION = 6;
 
 export type RootfsNormalizationMetadata = {
   version: number;
   normalized_at: string;
   image: string;
   rootfs_path: string;
-  distro_family: "debian" | "rhel" | "sles";
-  package_manager: "apt-get" | "dnf" | "microdnf" | "yum" | "zypper";
+  distro_family: "debian" | "rhel" | "sles" | "unknown";
+  package_manager: "apt-get" | "dnf" | "microdnf" | "yum" | "zypper" | "none";
   shell: string;
   glibc: true;
-  sudo: true;
-  ca_certificates: true;
-  curl: true;
-  runtime_user: string;
-  runtime_uid: number;
-  runtime_gid: number;
-  runtime_home: string;
+  sudo_present: boolean;
+  ca_certificates_present: boolean;
 };
 
 type RawNormalizationResult = Omit<
@@ -73,15 +62,7 @@ function nowIso(): string {
 
 function isCurrentMetadata(metadata?: RootfsNormalizationMetadata): boolean {
   return (
-    metadata?.version === ROOTFS_NORMALIZER_VERSION &&
-    metadata.runtime_user === DEFAULT_PROJECT_RUNTIME_USER &&
-    metadata.runtime_uid === DEFAULT_PROJECT_RUNTIME_UID &&
-    metadata.runtime_gid === DEFAULT_PROJECT_RUNTIME_GID &&
-    metadata.runtime_home === DEFAULT_PROJECT_RUNTIME_HOME &&
-    metadata.glibc === true &&
-    metadata.sudo === true &&
-    metadata.ca_certificates === true &&
-    metadata.curl === true
+    metadata?.version === ROOTFS_NORMALIZER_VERSION && metadata.glibc === true
   );
 }
 
@@ -123,7 +104,7 @@ export function requireCurrentRootfsNormalizationMetadata({
   const version = metadata?.version;
   const actual = version == null ? "missing" : `v${version}`;
   throw new Error(
-    `cached RootFS image '${image}' is not normalized for CoCalc runtime contract ${current} (found ${actual} at ${metadataPath}); delete the cached image or reprovision the host`,
+    `cached RootFS image '${image}' is not normalized for CoCalc runtime preflight ${current} (found ${actual} at ${metadataPath}); delete the cached image or reprovision the host`,
   );
 }
 
@@ -135,24 +116,15 @@ function validateNormalizationResult(result: unknown): RawNormalizationResult {
   const distro_family = `${value.distro_family ?? ""}`.trim();
   const package_manager = `${value.package_manager ?? ""}`.trim();
   const shell = `${value.shell ?? ""}`.trim();
-  const runtime_user = `${value.runtime_user ?? ""}`.trim();
-  const runtime_home = `${value.runtime_home ?? ""}`.trim();
-  const runtime_uid = Number(value.runtime_uid);
-  const runtime_gid = Number(value.runtime_gid);
   if (
-    !["debian", "rhel", "sles"].includes(distro_family) ||
-    !["apt-get", "dnf", "microdnf", "yum", "zypper"].includes(
+    !["debian", "rhel", "sles", "unknown"].includes(distro_family) ||
+    !["apt-get", "dnf", "microdnf", "yum", "zypper", "none"].includes(
       package_manager,
     ) ||
     !shell.startsWith("/") ||
-    runtime_user !== DEFAULT_PROJECT_RUNTIME_USER ||
-    runtime_home !== DEFAULT_PROJECT_RUNTIME_HOME ||
-    runtime_uid !== DEFAULT_PROJECT_RUNTIME_UID ||
-    runtime_gid !== DEFAULT_PROJECT_RUNTIME_GID ||
     value.glibc !== true ||
-    value.sudo !== true ||
-    value.ca_certificates !== true ||
-    value.curl !== true
+    typeof value.sudo_present !== "boolean" ||
+    typeof value.ca_certificates_present !== "boolean"
   ) {
     throw new Error(
       `rootfs normalizer returned an unexpected contract result: ${JSON.stringify(
@@ -166,13 +138,8 @@ function validateNormalizationResult(result: unknown): RawNormalizationResult {
       package_manager as RawNormalizationResult["package_manager"],
     shell,
     glibc: true,
-    sudo: true,
-    ca_certificates: true,
-    curl: true,
-    runtime_user,
-    runtime_uid,
-    runtime_gid,
-    runtime_home,
+    sudo_present: value.sudo_present as boolean,
+    ca_certificates_present: value.ca_certificates_present as boolean,
   };
 }
 
@@ -225,7 +192,7 @@ export async function normalizeRootfsInPlace({
     ...validateNormalizationResult(parseNormalizationOutput(stdout)),
   };
   onProgress?.({
-    message: "validated RootFS runtime contract",
+    message: "validated RootFS runtime preflight",
     detail: {
       image,
       distro_family: metadata.distro_family,

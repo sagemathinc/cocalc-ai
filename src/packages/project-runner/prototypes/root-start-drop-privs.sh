@@ -11,8 +11,8 @@ Usage: root-start-drop-privs.sh --rootfs <path> --home <path>
 Prototype the simpler launch model:
 
 1. start a rootless Podman container as container root
-2. ensure sudo/ca-certificates/curl and runtime user exist
-3. drop privileges to user 1000
+2. ensure sudo/ca-certificates and runtime user exist
+3. drop privileges to user 2001
 4. verify the runtime works as that user
 5. report host-side ownership of root-owned and user-owned probe files
 
@@ -72,8 +72,8 @@ export DEBIAN_FRONTEND=noninteractive
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 want_user="user"
-want_uid="1000"
-want_gid="1000"
+want_uid="2001"
+want_gid="2001"
 want_home="/home/user"
 shell_path="${COCALC_PROTOTYPE_SHELL:?}"
 
@@ -109,33 +109,31 @@ has_ca_certificates() {
 
 install_missing_packages() {
   local need_sudo=0
-  local need_curl=0
   local need_certs=0
   command -v sudo >/dev/null 2>&1 || need_sudo=1
-  command -v curl >/dev/null 2>&1 || need_curl=1
   has_ca_certificates || need_certs=1
-  if [ "$need_sudo" = 0 ] && [ "$need_curl" = 0 ] && [ "$need_certs" = 0 ]; then
+  if [ "$need_sudo" = 0 ] && [ "$need_certs" = 0 ]; then
     return 0
   fi
 
   if command -v apt-get >/dev/null 2>&1; then
     apt-get update
-    apt-get install -y --no-install-recommends sudo ca-certificates curl
+    apt-get install -y --no-install-recommends sudo ca-certificates
     rm -rf /var/lib/apt/lists/*
     return 0
   fi
   if command -v dnf >/dev/null 2>&1; then
-    dnf install -y sudo ca-certificates curl
+    dnf install -y sudo ca-certificates
     dnf clean all
     return 0
   fi
   if command -v yum >/dev/null 2>&1; then
-    yum install -y sudo ca-certificates curl
+    yum install -y sudo ca-certificates
     yum clean all
     return 0
   fi
   if command -v zypper >/dev/null 2>&1; then
-    zypper --non-interactive install --no-recommends sudo ca-certificates curl
+    zypper --non-interactive install --no-recommends sudo ca-certificates
     zypper clean --all
     return 0
   fi
@@ -215,7 +213,7 @@ EOF
 )"
 
 podman run --rm --network host \
-  --userns=keep-id:uid=1000,gid=1000 \
+  --userns=keep-id:uid=2001,gid=2001 \
   --user 0:0 \
   --workdir / \
   -e BASH_ENV=/dev/null \
@@ -231,8 +229,8 @@ podman run --rm --network host \
 
 echo "container validation:"
 podman run --rm --network host \
-  --userns=keep-id:uid=1000,gid=1000 \
-  --user 1000:1000 \
+  --userns=keep-id:uid=2001,gid=2001 \
+  --user 2001:2001 \
   --workdir /home/user \
   -e BASH_ENV=/dev/null \
   -e ENV=/dev/null \

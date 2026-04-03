@@ -34,13 +34,8 @@ describe("rootfs normalization metadata", () => {
         package_manager: "apt-get",
         shell: "/bin/bash",
         glibc: true,
-        sudo: true,
-        ca_certificates: true,
-        curl: true,
-        runtime_user: "user",
-        runtime_uid: 1000,
-        runtime_gid: 1000,
-        runtime_home: "/home/user",
+        sudo_present: false,
+        ca_certificates_present: false,
       }),
     });
 
@@ -64,8 +59,8 @@ describe("rootfs normalization metadata", () => {
         image: "docker.io/library/ubuntu:24.04",
         distro_family: "debian",
         package_manager: "apt-get",
-        runtime_user: "user",
-        runtime_home: "/home/user",
+        sudo_present: false,
+        ca_certificates_present: false,
       });
       expect(() =>
         mod.requireCurrentRootfsNormalizationMetadata({
@@ -98,13 +93,8 @@ describe("rootfs normalization metadata", () => {
         package_manager: "apt-get",
         shell: "/bin/bash",
         glibc: true,
-        sudo: true,
-        ca_certificates: true,
-        curl: true,
-        runtime_user: "root",
-        runtime_uid: 0,
-        runtime_gid: 0,
-        runtime_home: "/root",
+        sudo_present: "yes",
+        ca_certificates_present: false,
       }),
     });
 
@@ -128,13 +118,8 @@ describe("rootfs normalization metadata", () => {
           package_manager: "apt-get",
           shell: "/bin/bash",
           glibc: true,
-          sudo: true,
-          ca_certificates: true,
-          curl: true,
-          runtime_user: "user",
-          runtime_uid: 1000,
-          runtime_gid: 1000,
-          runtime_home: "/home/user",
+          sudo_present: true,
+          ca_certificates_present: true,
         }),
       ].join("\n"),
     });
@@ -149,7 +134,7 @@ describe("rootfs normalization metadata", () => {
       image: "docker.io/library/buildpack-deps:noble-scm",
       distro_family: "debian",
       package_manager: "apt-get",
-      runtime_user: "user",
+      sudo_present: true,
     });
   });
 });
