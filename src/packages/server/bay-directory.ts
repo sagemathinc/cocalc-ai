@@ -4,7 +4,6 @@
  */
 
 import getPool from "@cocalc/database/pool";
-import userQuery from "@cocalc/database/user-query";
 import type {
   AccountBayLocation,
   BayInfo,
@@ -74,29 +73,18 @@ async function getVisibleProject({
   if (!isValidUUID(project_id)) {
     throw new Error(`invalid project id '${project_id}'`);
   }
-  const result = (await userQuery({
-    account_id,
-    query: {
-      projects_all: [
-        {
-          project_id,
-          title: null,
-          host_id: null,
-          deleted: null,
-        },
-      ],
-    },
-    options: [{ limit: 1 }],
-  })) as {
-    projects_all?: Array<{
-      project_id: string;
-      title?: string;
-      host_id?: string | null;
-      deleted?: unknown;
-    }>;
-  };
-  const row = result?.projects_all?.[0];
-  if (!row || row.deleted != null) {
+  const { rows } = await getPool().query(
+    `SELECT project_id, title, host_id
+      FROM projects
+      WHERE project_id=$1
+        AND deleted IS NOT true
+        AND users ? $2
+        AND (users#>>'{${account_id},hide}')::BOOLEAN IS NOT TRUE
+      LIMIT 1`,
+    [project_id, account_id],
+  );
+  const row = rows[0];
+  if (!row?.project_id) {
     throw new Error(`project '${project_id}' not found`);
   }
   return row;

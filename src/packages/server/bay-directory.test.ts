@@ -1,18 +1,12 @@
 export {};
 
 let queryMock: jest.Mock;
-let userQueryMock: jest.Mock;
 let isAdminMock: jest.Mock;
 let listHostsMock: jest.Mock;
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
   default: jest.fn(() => ({ query: queryMock })),
-}));
-
-jest.mock("@cocalc/database/user-query", () => ({
-  __esModule: true,
-  default: (...args: any[]) => userQueryMock(...args),
 }));
 
 jest.mock("@cocalc/server/accounts/is-admin", () => ({
@@ -50,18 +44,19 @@ describe("bay-directory", () => {
           rows: [{ account_id: params?.[0] ?? ACCOUNT_ID }],
         };
       }
+      if (sql.includes("FROM projects")) {
+        return {
+          rows: [
+            {
+              project_id: PROJECT_ID,
+              title: "Project",
+              host_id: HOST_ID,
+            },
+          ],
+        };
+      }
       throw new Error(`unexpected query: ${sql}`);
     });
-    userQueryMock = jest.fn(async () => ({
-      projects_all: [
-        {
-          project_id: PROJECT_ID,
-          title: "Project",
-          host_id: HOST_ID,
-          deleted: null,
-        },
-      ],
-    }));
     isAdminMock = jest.fn(async () => false);
     listHostsMock = jest.fn(async () => [
       {
@@ -151,7 +146,7 @@ describe("bay-directory", () => {
       title: "Project",
       source: "single-bay-default",
     });
-    expect(userQueryMock).toHaveBeenCalled();
+    expect(queryMock).toHaveBeenCalled();
   });
 
   it("resolves the bay for a visible host", async () => {
