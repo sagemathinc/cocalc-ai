@@ -1,7 +1,7 @@
 import { EventEmitter } from "events";
 import json from "json-stable-stringify";
 
-import { getLogger } from "@cocalc/conat/client";
+import { getLogger } from "@cocalc/conat/logger";
 import { ConatError } from "@cocalc/conat/core/client";
 import type { JSONValue } from "@cocalc/util/types";
 import { Metrics } from "../types";

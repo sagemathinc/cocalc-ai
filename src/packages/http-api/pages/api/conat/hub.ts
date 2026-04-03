@@ -4,6 +4,7 @@ This is meant to be called by account users, not projects, so the caller
 must provide an account API key.
 */
 
+import { conat } from "@cocalc/backend/conat";
 import { getAccountFromApiKey } from "@cocalc/server/auth/api";
 import hubBridge from "@cocalc/server/api/hub-bridge";
 import getParams from "@cocalc/http-api/lib/api/get-params";
@@ -17,7 +18,13 @@ export default async function handle(req, res) {
       );
     }
     const { name, args, timeout } = getParams(req);
-    const resp = await hubBridge({ account_id, name, args, timeout });
+    const resp = await hubBridge({
+      account_id,
+      name,
+      args,
+      timeout,
+      client: conat(),
+    });
     res.json(resp);
   } catch (err) {
     res.json({ error: err.message });

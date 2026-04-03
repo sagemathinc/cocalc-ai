@@ -17,7 +17,10 @@ import {
   PROJECT_IMAGE_PATH,
 } from "@cocalc/util/db-schema/defaults";
 import getLogger from "@cocalc/backend/logger";
-import { reportProjectStateToMaster } from "../master-status";
+import {
+  getMasterConatClient,
+  reportProjectStateToMaster,
+} from "../master-status";
 import { secretsPath as sshProxySecretsPath } from "@cocalc/project-proxy/ssh-server";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -37,7 +40,7 @@ import {
   type SnapshotRestoreMode,
 } from "@cocalc/conat/files/file-server";
 import { SERVICE as PERSIST_SERVICE } from "@cocalc/conat/persist/util";
-import { publishLroEvent, publishLroSummary } from "@cocalc/conat/lro/stream";
+import { publishLroEvent, publishLroSummary } from "../lro/stream";
 import type { LroSummary } from "@cocalc/conat/hub/api/lro";
 import { applyPendingCopies } from "../pending-copies";
 import {
@@ -215,8 +218,12 @@ async function getSshProxyPublicKey(): Promise<string | undefined> {
 
 type RunnerApi = ReturnType<typeof projectRunnerClient>;
 
-function fileServer(project_id: string) {
-  return fileServerClient({ project_id });
+function fileServer(_project_id: string) {
+  const client = getMasterConatClient();
+  if (!client) {
+    throw new Error("master Conat client is not initialized");
+  }
+  return fileServerClient({ client });
 }
 
 function createPhaseTimingRecorder() {

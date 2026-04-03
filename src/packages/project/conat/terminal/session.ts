@@ -23,6 +23,7 @@ import { SpoolWatcher } from "@cocalc/backend/spool-watcher";
 import { data } from "@cocalc/backend/data";
 import { randomId } from "@cocalc/conat/names";
 import { getOwnedProcessRegistry } from "@cocalc/project/project-info";
+import { getProjectConatClient } from "@cocalc/project/conat/runtime-client";
 import { terminalCwdForPid } from "./cwd";
 
 const logger = getLogger("project:conat:terminal:session");
@@ -134,7 +135,11 @@ export class Session {
   }) {
     logger.debug("create session ", { termPath, options });
     this.termPath = termPath;
-    this.browserApi = createBrowserClient({ project_id, termPath });
+    this.browserApi = createBrowserClient({
+      project_id,
+      termPath,
+      client: getProjectConatClient(),
+    });
     this.options = options;
     this.streamName = `terminal-${termPath}`;
     this.spoolDirectory = join(data, "term-spool", randomId());

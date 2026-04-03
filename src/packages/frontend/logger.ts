@@ -1,1 +1,1 @@
-export { getLogger } from "@cocalc/conat/client";
+export { getLogger } from "@cocalc/conat/logger";

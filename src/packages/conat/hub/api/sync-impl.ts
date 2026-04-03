@@ -1,4 +1,3 @@
-import { conat as getConatClient } from "@cocalc/conat/client";
 import { patchesStreamName } from "@cocalc/conat/sync/synctable-stream";
 import { type Patch, type HistoryInfo } from "@cocalc/conat/hub/api/sync";
 import { client_db } from "@cocalc/util/db-schema/client-db";
@@ -8,7 +7,7 @@ type AssertAccessFn = (opts: {
   project_id: string;
 }) => Promise<void> | void;
 
-function resolveConatClient(client?: any) {
+function requireExplicitConatClient(client?: any) {
   if (client?.sync != null) {
     return client;
   }
@@ -18,7 +17,7 @@ function resolveConatClient(client?: any) {
       return raw;
     }
   }
-  return getConatClient();
+  throw new Error("must provide an explicit Conat client");
 }
 
 export async function history({
@@ -40,7 +39,10 @@ export async function history({
 }): Promise<{ patches: Patch[]; info: HistoryInfo }> {
   await assertAccess?.({ account_id, project_id });
 
-  const conatClient = resolveConatClient(client);
+  // Shared sync helpers are used by both lite and server control-plane code.
+  // Require an explicit client here so backend callers do not silently route
+  // through whichever global Conat singleton happens to be initialized.
+  const conatClient = requireExplicitConatClient(client);
   const name = patchesStreamName({ path });
   const astream = conatClient.sync.astream({
     name,
@@ -85,7 +87,7 @@ export async function purgeHistory({
 }): Promise<{ deleted: number; history_epoch: number }> {
   await assertAccess?.({ account_id, project_id });
 
-  const conatClient = resolveConatClient(client);
+  const conatClient = requireExplicitConatClient(client);
   const string_id = client_db.sha1(project_id, path);
   const name = patchesStreamName({ path });
 

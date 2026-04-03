@@ -11,10 +11,9 @@ it so projects can directly use llm's... but first we need to figure out
 how paying for that would work.
 */
 
-import { conat } from "@cocalc/conat/client";
 import { isValidUUID } from "@cocalc/util/misc";
-import type { Subscription } from "@cocalc/conat/core/client";
-import { getLogger } from "@cocalc/conat/client";
+import type { Client, Subscription } from "@cocalc/conat/core/client";
+import { getLogger } from "@cocalc/conat/logger";
 
 const logger = getLogger("conat:llm:server");
 
@@ -54,8 +53,15 @@ function getUserId(subject: string): string {
 }
 
 let sub: Subscription | null = null;
-export async function init(evaluate) {
-  const cn = await conat();
+function requireClient(client: Client | undefined): Client {
+  if (client == null) {
+    throw Error("llm server init must provide an explicit Conat client");
+  }
+  return client;
+}
+
+export async function init(evaluate, client: Client) {
+  const cn = requireClient(client);
   sub = await cn.subscribe(`${SUBJECT}.*.api`, { queue: "q" });
   listen(evaluate);
 }

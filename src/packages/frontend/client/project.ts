@@ -75,7 +75,10 @@ export class ProjectClient {
       // @ts-ignore -- typescript doesn't like this at all, but it works fine.
       opts.stream = new Blob([opts.content], { type: "text/plain" }).stream();
     }
-    return await writeFile(opts);
+    return await writeFile({
+      ...opts,
+      client: this.client.conat_client.conat(),
+    });
   };
 
   // readFile -- read **arbitrarily large text or binary files**
@@ -84,7 +87,10 @@ export class ProjectClient {
   // efficiency...
   readFile = async (opts: ReadFileOptions): Promise<Buffer> => {
     const chunks: Uint8Array[] = [];
-    for await (const chunk of await readFile(opts)) {
+    for await (const chunk of await readFile({
+      ...opts,
+      client: this.client.conat_client.conat(),
+    })) {
       chunks.push(chunk);
     }
     return Buffer.concat(chunks);

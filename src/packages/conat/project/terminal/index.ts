@@ -7,7 +7,7 @@ import {
   type ConatSocketServer,
   type ServerSocket,
 } from "@cocalc/conat/socket";
-import { getLogger } from "@cocalc/conat/client";
+import { getLogger } from "@cocalc/conat/logger";
 import {
   createAdaptiveTerminalOutputThrottle,
   createTerminalFlowControl,

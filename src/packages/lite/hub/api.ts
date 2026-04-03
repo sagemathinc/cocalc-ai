@@ -44,9 +44,28 @@ import {
   startChatOffloadBackgroundMaintenance,
   stopChatOffloadBackgroundMaintenance,
 } from "./chat-offload-maintenance";
+import { getLiteConatClient } from "./runtime-client";
 
 const logger = getLogger("lite:hub:api");
 const execFile = promisify(execFileCb);
+
+function syncHistoryWithExplicitClient(
+  opts: Parameters<typeof syncHistory>[0],
+) {
+  return syncHistory({
+    ...opts,
+    client: getLiteConatClient(),
+  });
+}
+
+function syncPurgeHistoryWithExplicitClient(
+  opts: Parameters<typeof syncPurgeHistory>[0],
+) {
+  return syncPurgeHistory({
+    ...opts,
+    client: getLiteConatClient(),
+  });
+}
 
 function parseMap(raw?: string): Record<string, string> {
   if (!raw) return {};
@@ -562,7 +581,10 @@ export const hubApi: HubApi = {
   db: { touch: () => {}, userQuery },
   purchases: {},
   agent,
-  sync: { history: syncHistory, purgeHistory: syncPurgeHistory },
+  sync: {
+    history: syncHistoryWithExplicitClient,
+    purgeHistory: syncPurgeHistoryWithExplicitClient,
+  },
   jupyter: {},
   ssh,
   reflect,

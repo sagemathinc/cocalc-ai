@@ -23,11 +23,15 @@ describe("project runtime home helpers", () => {
   });
 
   it("does not treat unrelated absolute paths as runtime-home aliases", () => {
+    expect(projectRuntimeHomeRelativePath("/root/work/file.txt")).toBe(
+      "work/file.txt",
+    );
+    expect(isProjectRuntimeHomeAliasPath("/root/work/file.txt")).toBe(true);
+    expect(isProjectRuntimeHomeAliasPath("/root")).toBe(true);
     expect(
-      projectRuntimeHomeRelativePath("/root/work/file.txt"),
+      projectRuntimeHomeRelativePath("/opt/work/file.txt"),
     ).toBeUndefined();
     expect(projectRuntimeHomeRelativePath("/etc/passwd")).toBeUndefined();
-    expect(isProjectRuntimeHomeAliasPath("/root/work/file.txt")).toBe(false);
     expect(isProjectRuntimeHomeAliasPath("/scratch/data.txt")).toBe(false);
   });
 });

@@ -151,6 +151,8 @@ import {
   registerAccountCommand,
   type AccountCommandDeps,
 } from "./commands/account";
+import { registerBayCommand, type BayCommandDeps } from "./commands/bay";
+import { registerLoadCommand, type LoadCommandDeps } from "./commands/load";
 import { registerOrgCommand, type OrgCommandDeps } from "./commands/org";
 import { registerDevCommand, type DevCommandDeps } from "./commands/dev";
 import {
@@ -2427,9 +2429,23 @@ registerAdminCommand(program, adminCommandDeps);
 const accountCommandDeps = {
   withContext,
   toIso,
+  resolveAccountByIdentifier,
 } satisfies AccountCommandDeps;
 
 registerAccountCommand(program, accountCommandDeps);
+
+const bayCommandDeps = {
+  withContext,
+} satisfies BayCommandDeps;
+
+registerBayCommand(program, bayCommandDeps);
+
+const loadCommandDeps = {
+  withContext,
+  queryProjects,
+} satisfies LoadCommandDeps;
+
+registerLoadCommand(program, loadCommandDeps);
 
 const orgCommandDeps = {
   withContext,

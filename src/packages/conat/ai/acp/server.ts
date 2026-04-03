@@ -1,6 +1,5 @@
-import { conat } from "@cocalc/conat/client";
-import type { Subscription } from "@cocalc/conat/core/client";
-import { getLogger } from "@cocalc/conat/client";
+import type { Client, Subscription } from "@cocalc/conat/core/client";
+import { getLogger } from "@cocalc/conat/logger";
 import { isValidUUID } from "@cocalc/util/misc";
 import type {
   AcpAutomationRequest,
@@ -136,9 +135,11 @@ export async function init(
     control?: ControlHandler;
     automation?: AutomationHandler;
   },
-  client,
+  client: Client,
 ): Promise<void> {
-  client ??= await conat();
+  if (client == null) {
+    throw Error("acp server init must provide an explicit Conat client");
+  }
   apiSub = await client.subscribe(`${SUBJECT}.*.api`, { queue: "acp-q" });
   listenApi(handlers.evaluate);
   if (handlers.interrupt) {

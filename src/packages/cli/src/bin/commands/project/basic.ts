@@ -138,6 +138,19 @@ export function registerProjectBasicCommands(
     });
 
   project
+    .command("where")
+    .description("show the owning bay for a project (defaults to context)")
+    .option("-w, --project <project>", "project id or name")
+    .action(async (opts: { project?: string }, command: Command) => {
+      await withContext(command, "project where", async (ctx) => {
+        const ws = await resolveProjectFromArgOrContext(ctx, opts.project);
+        return await ctx.hub.system.getProjectBay({
+          project_id: ws.project_id,
+        });
+      });
+    });
+
+  project
     .command("create [name]")
     .description("create a project")
     .option("--host <host>", "host id or name")

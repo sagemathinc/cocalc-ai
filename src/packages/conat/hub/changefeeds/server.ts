@@ -1,7 +1,7 @@
 import { type Client, type ConatSocketServer } from "@cocalc/conat/core/client";
 import { uuid } from "@cocalc/util/misc";
 import { UsageMonitor } from "@cocalc/conat/monitor/usage";
-import { getLogger } from "@cocalc/conat/client";
+import { getLogger } from "@cocalc/conat/logger";
 import { isValidUUID } from "@cocalc/util/misc";
 import {
   SUBJECT,

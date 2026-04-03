@@ -1,4 +1,3 @@
-import { conat } from "@cocalc/conat/client";
 import type { Client } from "@cocalc/conat/core/client";
 import { isValidUUID } from "@cocalc/util/misc";
 import type {
@@ -23,6 +22,13 @@ interface StreamOptions {
   timeout?: number;
 }
 
+function requireExplicitConatClient(client?: Client): Client {
+  if (client != null) {
+    return client;
+  }
+  throw new Error("must provide an explicit Conat client");
+}
+
 function isNonEmptySessionId(value: string | undefined): boolean {
   return typeof value === "string" && value.trim().length > 0;
 }
@@ -42,7 +48,10 @@ export async function* streamAcp(
   }
 
   const subject = acpSubject({ project_id: request.project_id });
-  const cn = client ?? (await conat());
+  // ACP helpers are shared across frontend, CLI, and backend code paths. Do
+  // not silently grab the global singleton here; callers must choose the
+  // intended routed client explicitly.
+  const cn = requireExplicitConatClient(client);
   let seq = -1;
 
   for await (const resp of await cn.requestMany(subject, request, {
@@ -92,7 +101,7 @@ export async function interruptAcp(
     throw Error("project_id must be a valid uuid");
   }
   const subject = acpInterruptSubject({ project_id: request.project_id });
-  const cn = client ?? (await conat());
+  const cn = requireExplicitConatClient(client);
   const resp = await cn.request(subject, request, { timeout: 30 * 1000 });
   const error = resp?.data?.error;
   if (error) {
@@ -120,7 +129,7 @@ export async function forkAcpSession(
     throw Error("newSessionId must be a non-empty string");
   }
   const subject = acpForkSubject({ project_id: request.project_id });
-  const cn = client ?? (await conat());
+  const cn = requireExplicitConatClient(client);
   const resp = await cn.request(subject, request, { timeout: 30 * 1000 });
   const error = resp?.data?.error;
   if (error) {
@@ -144,7 +153,7 @@ export async function controlAcp(
     throw Error("account_id must be a valid uuid");
   }
   const subject = acpControlSubject({ project_id: request.project_id });
-  const cn = client ?? (await conat());
+  const cn = requireExplicitConatClient(client);
   const resp = await cn.request(subject, request, { timeout: 30 * 1000 });
   const error = resp?.data?.error;
   if (error) {
@@ -164,7 +173,7 @@ export async function automationAcp(
     throw Error("account_id must be a valid uuid");
   }
   const subject = acpAutomationSubject({ project_id: request.project_id });
-  const cn = client ?? (await conat());
+  const cn = requireExplicitConatClient(client);
   const resp = await cn.request(subject, request, { timeout: 30 * 1000 });
   const error = resp?.data?.error;
   if (error) {

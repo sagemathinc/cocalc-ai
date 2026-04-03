@@ -16,7 +16,7 @@ import {
   getEffectiveParallelOpsLimitsByDefaultMap,
 } from "@cocalc/server/lro/worker-config";
 import { getProjectHostDefaultParallelLimits } from "@cocalc/server/lro/project-host-defaults";
-import { publishLroEvent, publishLroSummary } from "@cocalc/conat/lro/stream";
+import { publishLroEvent, publishLroSummary } from "@cocalc/server/lro/stream";
 import { publishProjectRootfsCatalogEntry } from "@cocalc/server/rootfs/catalog";
 import { withTimeout } from "@cocalc/util/async-utils";
 import {

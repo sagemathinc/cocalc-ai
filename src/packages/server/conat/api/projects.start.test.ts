@@ -96,7 +96,7 @@ jest.mock("@cocalc/server/projects/start-lro-cleanup", () => ({
     supersedeOlderProjectStartLrosMock(...args),
 }));
 
-jest.mock("@cocalc/conat/lro/stream", () => ({
+jest.mock("@cocalc/server/lro/stream", () => ({
   __esModule: true,
   publishLroEvent: (...args: any[]) => publishLroEventMock(...args),
   publishLroSummary: (...args: any[]) => publishLroSummaryMock(...args),

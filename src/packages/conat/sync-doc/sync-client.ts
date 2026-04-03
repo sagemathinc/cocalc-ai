@@ -12,7 +12,7 @@ import { type ConatSyncTable } from "@cocalc/conat/sync/synctable";
 import { projectApiClient } from "@cocalc/conat/project/api";
 import { base64ToBuffer } from "@cocalc/util/base64";
 import callHub from "@cocalc/conat/hub/call-hub";
-import { getLogger } from "@cocalc/conat/client";
+import { getLogger } from "@cocalc/conat/logger";
 
 const logger = getLogger("conat:sync-doc:sync-client");
 
@@ -121,7 +121,7 @@ export class SyncClient extends EventEmitter implements Client0 {
     model_id: string;
     buffer_path: string;
   }): Promise<ArrayBuffer> => {
-    const api = projectApiClient({ project_id });
+    const api = projectApiClient({ project_id, client: this.client });
     const { buffer64 } = await api.jupyter.ipywidgetsGetBuffer({
       path,
       model_id,

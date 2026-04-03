@@ -14,7 +14,7 @@ import { SyncTable } from "@cocalc/sync/table/synctable";
 import { once } from "@cocalc/util/async-utils";
 import { FileWatcher } from "@cocalc/sync/editor/string/test/client-test";
 import { type Client as ConatClient } from "@cocalc/conat/core/client";
-import { getLogger } from "@cocalc/conat/client";
+import { getLogger } from "@cocalc/conat/logger";
 import { parseQueryWithOptions } from "@cocalc/sync/table/util";
 import { PubSub } from "@cocalc/conat/sync/pubsub";
 

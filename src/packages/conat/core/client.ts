@@ -234,7 +234,7 @@ import {
 export { ConatError, headerToError };
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import { once, until } from "@cocalc/util/async-utils";
-import { getLogger } from "@cocalc/conat/client";
+import { getLogger } from "@cocalc/conat/logger";
 import { refCacheSync } from "@cocalc/util/refcache";
 import jsonStableStringify from "json-stable-stringify";
 import { join } from "path";
