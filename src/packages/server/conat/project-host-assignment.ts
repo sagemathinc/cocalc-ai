@@ -5,6 +5,12 @@ function pool() {
   return getPool();
 }
 
+export const PROJECT_NOT_FOUND_ERROR = "project not found";
+export const PROJECT_HAS_NO_ASSIGNED_HOST_ERROR =
+  "project has no assigned host";
+export const PROJECT_BAY_MISMATCH_ERROR =
+  "project bay does not match assigned host";
+
 export async function getAssignedProjectHostInfo(project_id: string): Promise<{
   host_id: string;
   ssh_server: string | null;
@@ -35,13 +41,13 @@ export async function getAssignedProjectHostInfo(project_id: string): Promise<{
   );
   const row = rows[0];
   if (!row) {
-    throw new Error("workspace not found");
+    throw new Error(PROJECT_NOT_FOUND_ERROR);
   }
   if (!row.host_id) {
-    throw new Error("workspace has no assigned host");
+    throw new Error(PROJECT_HAS_NO_ASSIGNED_HOST_ERROR);
   }
   if (row.project_owning_bay_id !== row.host_bay_id) {
-    throw new Error("workspace bay does not match assigned host");
+    throw new Error(PROJECT_BAY_MISMATCH_ERROR);
   }
   return {
     host_id: row.host_id,

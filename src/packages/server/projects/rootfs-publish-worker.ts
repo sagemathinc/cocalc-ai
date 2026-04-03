@@ -27,7 +27,12 @@ import {
   issueRootfsReleaseArtifactUpload,
   upsertPublishedRootfsRelease,
 } from "@cocalc/server/rootfs/releases";
-import { getAssignedProjectHostInfo } from "@cocalc/server/conat/project-host-assignment";
+import {
+  getAssignedProjectHostInfo,
+  PROJECT_BAY_MISMATCH_ERROR,
+  PROJECT_HAS_NO_ASSIGNED_HOST_ERROR,
+  PROJECT_NOT_FOUND_ERROR,
+} from "@cocalc/server/conat/project-host-assignment";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 
 const logger = getLogger("server:projects:rootfs-publish-worker");
@@ -156,15 +161,15 @@ async function loadProjectHostId(project_id: string): Promise<string> {
     return (await getAssignedProjectHostInfo(project_id)).host_id;
   } catch (err) {
     const message = err instanceof Error ? err.message : `${err}`;
-    if (message === "workspace has no assigned host") {
+    if (message === PROJECT_HAS_NO_ASSIGNED_HOST_ERROR) {
       throw new Error(`project ${project_id} is not assigned to a host`);
     }
-    if (message === "workspace bay does not match assigned host") {
+    if (message === PROJECT_BAY_MISMATCH_ERROR) {
       throw new Error(
         `project ${project_id} assigned host does not match owning bay`,
       );
     }
-    if (message === "workspace not found") {
+    if (message === PROJECT_NOT_FOUND_ERROR) {
       throw new Error(`project ${project_id} not found`);
     }
     throw err;

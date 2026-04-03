@@ -91,7 +91,11 @@ import {
   recordProjectStorageHistorySample,
 } from "@cocalc/database/postgres/project-storage-history";
 import { parseDustOutput } from "./storage-breakdown";
-import { getAssignedProjectHostInfo } from "@cocalc/server/conat/project-host-assignment";
+import {
+  getAssignedProjectHostInfo,
+  PROJECT_BAY_MISMATCH_ERROR,
+  PROJECT_HAS_NO_ASSIGNED_HOST_ERROR,
+} from "@cocalc/server/conat/project-host-assignment";
 
 const PROJECT_STORAGE_CACHE_TTL_MS = 30_000;
 const PROJECT_STORAGE_BREAKDOWN_TIMEOUT_MS = 10_000;
@@ -760,10 +764,10 @@ export async function getRuntimeLog({
     host_id = (await getAssignedProjectHostInfo(project_id)).host_id;
   } catch (err) {
     const reason =
-      err instanceof Error ? err.message : "workspace has no assigned host";
+      err instanceof Error ? err.message : PROJECT_HAS_NO_ASSIGNED_HOST_ERROR;
     if (
-      reason === "workspace has no assigned host" ||
-      reason === "workspace bay does not match assigned host"
+      reason === PROJECT_HAS_NO_ASSIGNED_HOST_ERROR ||
+      reason === PROJECT_BAY_MISMATCH_ERROR
     ) {
       return {
         project_id,
@@ -789,7 +793,7 @@ export async function getRuntimeLog({
       found: false,
       running: false,
       available: false,
-      reason: "workspace has no assigned host",
+      reason: PROJECT_HAS_NO_ASSIGNED_HOST_ERROR,
     };
   }
   const client = createHostControlClient({

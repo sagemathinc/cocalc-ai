@@ -39,7 +39,12 @@ import {
   type HostRootfsManifest,
 } from "@cocalc/conat/project-host/api";
 import { conatWithProjectRouting } from "@cocalc/server/conat/route-client";
-import { getAssignedProjectHostInfo } from "@cocalc/server/conat/project-host-assignment";
+import {
+  getAssignedProjectHostInfo,
+  PROJECT_BAY_MISMATCH_ERROR,
+  PROJECT_HAS_NO_ASSIGNED_HOST_ERROR,
+  PROJECT_NOT_FOUND_ERROR,
+} from "@cocalc/server/conat/project-host-assignment";
 import { getLro } from "@cocalc/server/lro/lro-db";
 import {
   clearParallelOpsLimit,
@@ -259,15 +264,15 @@ async function resolveProjectHostId(project_id: string): Promise<string> {
     return (await getAssignedProjectHostInfo(project_id)).host_id;
   } catch (err) {
     const message = err instanceof Error ? err.message : `${err}`;
-    if (message === "workspace has no assigned host") {
+    if (message === PROJECT_HAS_NO_ASSIGNED_HOST_ERROR) {
       throw new Error(`project ${project_id} has no assigned host`);
     }
-    if (message === "workspace bay does not match assigned host") {
+    if (message === PROJECT_BAY_MISMATCH_ERROR) {
       throw new Error(
         `project ${project_id} assigned host does not match owning bay`,
       );
     }
-    if (message === "workspace not found") {
+    if (message === PROJECT_NOT_FOUND_ERROR) {
       throw new Error(`project ${project_id} not found`);
     }
     throw err;

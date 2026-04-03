@@ -44,7 +44,7 @@ describe("project host assignment", () => {
     const { getAssignedProjectHostInfo } =
       await import("./project-host-assignment");
     await expect(getAssignedProjectHostInfo(PROJECT_ID)).rejects.toThrow(
-      "workspace not found",
+      "project not found",
     );
   });
 
@@ -63,7 +63,7 @@ describe("project host assignment", () => {
     const { getAssignedProjectHostInfo } =
       await import("./project-host-assignment");
     await expect(getAssignedProjectHostInfo(PROJECT_ID)).rejects.toThrow(
-      "workspace has no assigned host",
+      "project has no assigned host",
     );
   });
 
@@ -82,7 +82,7 @@ describe("project host assignment", () => {
     const { getAssignedProjectHostInfo } =
       await import("./project-host-assignment");
     await expect(getAssignedProjectHostInfo(PROJECT_ID)).rejects.toThrow(
-      "workspace bay does not match assigned host",
+      "project bay does not match assigned host",
     );
   });
 });
