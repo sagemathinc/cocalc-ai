@@ -1,5 +1,5 @@
 import { isEqual } from "lodash";
-import { getLogger } from "@cocalc/conat/client";
+import { getLogger } from "@cocalc/conat/logger";
 import { EventEmitter } from "events";
 import { hash_string } from "@cocalc/util/misc";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";

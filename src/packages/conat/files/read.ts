@@ -42,7 +42,7 @@ import {
   type Client as ConatClient,
 } from "@cocalc/conat/core/client";
 import { delay } from "awaiting";
-import { getLogger } from "@cocalc/conat/client";
+import { getLogger } from "@cocalc/conat/logger";
 
 const logger = getLogger("conat:files:read");
 

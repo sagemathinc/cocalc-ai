@@ -4,7 +4,7 @@
  */
 
 import { akv, type AKV } from "@cocalc/conat/sync/akv";
-import { getLogger } from "@cocalc/conat/client";
+import { getLogger } from "@cocalc/conat/logger";
 import { projectSubject } from "@cocalc/conat/names";
 import type { Client as ConatClient } from "@cocalc/conat/core/client";
 import type {

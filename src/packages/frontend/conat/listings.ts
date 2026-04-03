@@ -18,7 +18,7 @@ import {
 } from "@cocalc/conat/service/listings";
 import { delay } from "awaiting";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
-import { getLogger } from "@cocalc/conat/client";
+import { getLogger } from "@cocalc/conat/logger";
 
 const logger = getLogger("listings");
 

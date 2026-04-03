@@ -49,7 +49,7 @@ import {
   type Inventory,
   INVENTORY_UPDATE_INTERVAL,
 } from "./inventory";
-import { getLogger } from "@cocalc/conat/client";
+import { getLogger } from "@cocalc/conat/logger";
 
 const logger = getLogger("sync:dstream");
 

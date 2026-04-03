@@ -3,7 +3,7 @@ Broadcast project status whenever it updates.
 */
 
 import { projectSubject } from "@cocalc/conat/names";
-import { getLogger } from "@cocalc/conat/client";
+import { getLogger } from "@cocalc/conat/logger";
 import type {
   Client as ConatClient,
   Subscription,

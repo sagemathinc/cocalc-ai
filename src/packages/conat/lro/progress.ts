@@ -2,7 +2,7 @@
  * Publish progress events for long-running operations (LRO) via conat streams.
  */
 import { type Client } from "@cocalc/conat/core/client";
-import { getLogger } from "@cocalc/conat/client";
+import { getLogger } from "@cocalc/conat/logger";
 import type { LroEvent } from "@cocalc/conat/hub/api/lro";
 import { lroStreamName } from "@cocalc/conat/lro/names";
 

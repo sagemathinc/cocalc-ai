@@ -11,7 +11,7 @@ an error too.
 */
 
 import { type Location } from "@cocalc/conat/types";
-import { getLogger } from "@cocalc/conat/client";
+import { getLogger } from "@cocalc/conat/logger";
 import { randomId } from "@cocalc/conat/names";
 import { EventEmitter } from "events";
 import { encodeBase64 } from "@cocalc/conat/util";

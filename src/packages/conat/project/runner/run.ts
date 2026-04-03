@@ -15,7 +15,7 @@ import type {
   SshServersFunction,
   Configuration,
 } from "./types";
-import { getLogger } from "@cocalc/conat/client";
+import { getLogger } from "@cocalc/conat/logger";
 import { isValidUUID } from "@cocalc/util/misc";
 
 const logger = getLogger("conat:project:runner:run");

@@ -1,7 +1,7 @@
 import { readFile } from "./read";
 import { once } from "events";
 import { path_split } from "@cocalc/util/misc";
-import { getLogger } from "@cocalc/conat/client";
+import { getLogger } from "@cocalc/conat/logger";
 import { type Client as ConatClient } from "@cocalc/conat/core/client";
 import mime from "mime-types";
 

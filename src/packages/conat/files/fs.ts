@@ -19,7 +19,7 @@ import listing, {
 import { isValidUUID } from "@cocalc/util/misc";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import TTL from "@isaacs/ttlcache";
-import { getLogger } from "@cocalc/conat/client";
+import { getLogger } from "@cocalc/conat/logger";
 import { make_patch } from "@cocalc/util/dmp";
 import type { CompressedPatch } from "@cocalc/util/dmp";
 import sha256js from "sha256";

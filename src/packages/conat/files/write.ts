@@ -74,7 +74,7 @@ import {
   type Client as ConatClient,
 } from "@cocalc/conat/core/client";
 import { type Readable } from "node:stream";
-import { getLogger } from "@cocalc/conat/client";
+import { getLogger } from "@cocalc/conat/logger";
 const logger = getLogger("conat:files:write");
 
 function requireExplicitConatClient(client?: ConatClient): ConatClient {

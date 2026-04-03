@@ -21,7 +21,7 @@ import { persistSubject, SERVICE, type User } from "./util";
 import { assertHasWritePermission as assertHasWritePermission0 } from "./auth";
 import { refCacheSync } from "@cocalc/util/refcache";
 import { EventEmitter } from "events";
-import { getLogger } from "@cocalc/conat/client";
+import { getLogger } from "@cocalc/conat/logger";
 import { until } from "@cocalc/util/async-utils";
 import { getPersistServerId } from "./load-balancer";
 import type { JSONValue } from "@cocalc/util/types";

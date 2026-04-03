@@ -58,7 +58,7 @@ import {
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import { until } from "@cocalc/util/async-utils";
 import { type PartialInventory } from "@cocalc/conat/persist/storage";
-import { getLogger } from "@cocalc/conat/client";
+import { getLogger } from "@cocalc/conat/logger";
 import type { JSONValue } from "@cocalc/util/types";
 
 const logger = getLogger("sync:core-stream");

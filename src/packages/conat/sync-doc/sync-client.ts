@@ -12,7 +12,7 @@ import { type ConatSyncTable } from "@cocalc/conat/sync/synctable";
 import { projectApiClient } from "@cocalc/conat/project/api";
 import { base64ToBuffer } from "@cocalc/util/base64";
 import callHub from "@cocalc/conat/hub/call-hub";
-import { getLogger } from "@cocalc/conat/client";
+import { getLogger } from "@cocalc/conat/logger";
 
 const logger = getLogger("conat:sync-doc:sync-client");
 

@@ -550,3 +550,19 @@ This removes another real hidden connection choice from the reactive browser
 path. Browser changefeeds now use the caller's active Conat client when it is
 available, instead of implicitly opening whatever global singleton happens to
 be initialized.
+
+## Completed In The Logger Decoupling Pass
+
+### `conat/logger.ts`
+
+- introduced
+  [conat/logger.ts](/home/wstein/build/cocalc-lite4/src/packages/conat/logger.ts)
+  as the standalone Conat logger registry
+- `conat/client.ts` now delegates logger registration and lookup through that
+  module instead of coupling logger lookup to the global Conat client object
+- core Conat, sync, frontend, chat, and AI modules that only needed logging now
+  import `getLogger` from `@cocalc/conat/logger` directly
+
+This does not remove the global client yet, but it removes a major structural
+reason for keeping it around. Logger access is now a separate runtime concern
+instead of piggybacking on whichever global Conat client happens to be set.

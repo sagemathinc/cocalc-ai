@@ -15,7 +15,7 @@ import { randomChoice } from "@cocalc/conat/core/server";
 import { client as projectRunnerClient, UPDATE_INTERVAL } from "./run";
 import state, { type ProjectStatus, type ProjectState } from "./state";
 import { delay } from "awaiting";
-import { getLogger } from "@cocalc/conat/client";
+import { getLogger } from "@cocalc/conat/logger";
 
 const logger = getLogger("conat:project:runner:load-balancer");
 

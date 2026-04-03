@@ -10,6 +10,12 @@ DEVELOPMENT:
 import { init, close as closeTime } from "./time";
 import { EventEmitter } from "events";
 import { type Client as ConatClient } from "@cocalc/conat/core/client";
+import {
+  FALLBACK_LOGGER,
+  setConatLoggerFactory,
+  type Logger,
+} from "./logger";
+export { getLogger } from "./logger";
 
 interface Client {
   conat: (opts?) => ConatClient;
@@ -21,21 +27,6 @@ interface Client {
 }
 
 type State = "closed" | "connected" | "connecting" | "disconnected";
-
-export interface Logger {
-  debug: (...args: unknown[]) => void;
-  info: (...args: unknown[]) => void;
-  warn: (...args: unknown[]) => void;
-  error: (...args: unknown[]) => void;
-}
-
-const FALLBACK_LOGGER = {
-  debug: () => {},
-  info: () => {},
-  warn: () => {},
-  error: () => {},
-  silly: () => {},
-} as Logger;
 
 export class ClientWithState extends EventEmitter {
   conatClient?: ConatClient;
@@ -114,6 +105,7 @@ function initTime() {
 let globalClient: null | ClientWithState = null;
 export function setConatClient(client: Client) {
   globalClient = new ClientWithState(client);
+  setConatLoggerFactory(client.getLogger);
 }
 
 export function closeConatClientForTests(): void {
@@ -126,6 +118,7 @@ export function closeConatClientForTests(): void {
     // best-effort test cleanup only
   }
   globalClient = null;
+  setConatLoggerFactory(undefined);
   closeTime();
 }
 
@@ -147,38 +140,6 @@ export function getClient(): ClientWithState {
   }
   initTime();
   return globalClient;
-}
-
-function tmpLogger(s, name, logger) {
-  return (...args) => {
-    if (globalClient == null) {
-      return;
-    }
-    const f = globalClient.getLogger(name);
-    for (const k in f) {
-      logger[k] = f[k];
-    }
-    logger[s](...args);
-  };
-}
-
-export function getLogger(name) {
-  // weird code since getLogger can get called very early, before
-  // globalClient is even initialized.
-  try {
-    if (globalClient != null) {
-      return globalClient.getLogger(name);
-    }
-  } catch {}
-  // make logger that starts working after global client is set
-  const logger: any = {};
-  for (const s of ["debug", "info", "warn", "silly"]) {
-    logger[s] = tmpLogger(s, name, logger);
-  }
-  logger.silly = (..._args) => {};
-  // to actually see silly logs...
-  // logger.silly = logger.debug;
-  return logger;
 }
 
 export function numSubscriptions(): number {

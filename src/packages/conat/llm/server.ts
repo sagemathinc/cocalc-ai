@@ -13,7 +13,7 @@ how paying for that would work.
 
 import { isValidUUID } from "@cocalc/util/misc";
 import type { Client, Subscription } from "@cocalc/conat/core/client";
-import { getLogger } from "@cocalc/conat/client";
+import { getLogger } from "@cocalc/conat/logger";
 
 const logger = getLogger("conat:llm:server");
 

@@ -1,5 +1,5 @@
 import type { Client, Subscription } from "@cocalc/conat/core/client";
-import { getLogger } from "@cocalc/conat/client";
+import { getLogger } from "@cocalc/conat/logger";
 import { isValidUUID } from "@cocalc/util/misc";
 import type {
   AcpAutomationRequest,

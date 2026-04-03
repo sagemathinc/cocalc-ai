@@ -7,7 +7,7 @@ there is no request for a while.
 */
 
 import { projectSubject } from "@cocalc/conat/names";
-import { getLogger } from "@cocalc/conat/client";
+import { getLogger } from "@cocalc/conat/logger";
 import { type Client as ConatClient } from "@cocalc/conat/core/client";
 import { type UsageInfo } from "@cocalc/util/types/project-usage-info";
 import TTL from "@isaacs/ttlcache";
