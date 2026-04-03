@@ -7,7 +7,7 @@ import { type SnapshotCounts } from "@cocalc/util/db-schema/projects";
 import getLogger from "@cocalc/backend/logger";
 import { assertCollab } from "./util";
 import { createLro } from "@cocalc/server/lro/lro-db";
-import { publishLroEvent, publishLroSummary } from "@cocalc/conat/lro/stream";
+import { publishLroEvent, publishLroSummary } from "@cocalc/server/lro/stream";
 import { lroStreamName } from "@cocalc/conat/lro/names";
 import { SERVICE as PERSIST_SERVICE } from "@cocalc/conat/persist/util";
 import { getProjectFileServerClient } from "@cocalc/server/conat/file-server-client";

@@ -183,6 +183,24 @@ This keeps the reusable request/reply service layer safe for backend and
 multi-bay reuse while preserving convenient wrapper APIs in the browser and
 project runtimes.
 
+## Completed In The LRO Stream Pass
+
+### `conat/lro/stream.ts`
+
+- removed the hidden fallback to the global Conat singleton
+- shared LRO event/summary publishers now require an explicit client
+- the natural singleton wrappers remain local:
+  - [server/lro/stream.ts](/home/wstein/build/cocalc-lite4/src/packages/server/lro/stream.ts)
+    now injects the backend hub client explicitly
+  - [project-host/lro/stream.ts](/home/wstein/build/cocalc-lite4/src/packages/project-host/lro/stream.ts)
+    now injects the project-host client explicitly
+- server and project-host code now import those local wrappers instead of the
+  shared helper directly
+
+This keeps the reusable LRO stream publisher safe for multi-bay reuse while
+preserving stable call signatures inside the current backend and project-host
+code.
+
 ## Remaining Hotspots
 
 ### Shared Helper Fallbacks
@@ -190,7 +208,6 @@ project runtimes.
 These still silently fall back to the global singleton and should be reviewed
 next:
 
-- [conat/lro/stream.ts](/home/wstein/build/cocalc-lite4/src/packages/conat/lro/stream.ts)
 - [conat/files/fs.ts](/home/wstein/build/cocalc-lite4/src/packages/conat/files/fs.ts)
 - [conat/llm/client.ts](/home/wstein/build/cocalc-lite4/src/packages/conat/llm/client.ts)
 
@@ -206,6 +223,6 @@ clients.
 
 ## Next Recommended Cleanup Pass
 
-1. continue with the remaining shared service/stream wrappers, especially
-   `conat/service/service.ts` and `conat/lro/stream.ts`
+1. continue with the remaining shared wrappers, especially
+   `conat/files/fs.ts` and `conat/llm/client.ts`
 2. keep server-side bridge/control paths ahead of broader frontend ergonomics

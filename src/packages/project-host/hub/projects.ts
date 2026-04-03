@@ -37,7 +37,7 @@ import {
   type SnapshotRestoreMode,
 } from "@cocalc/conat/files/file-server";
 import { SERVICE as PERSIST_SERVICE } from "@cocalc/conat/persist/util";
-import { publishLroEvent, publishLroSummary } from "@cocalc/conat/lro/stream";
+import { publishLroEvent, publishLroSummary } from "../lro/stream";
 import type { LroSummary } from "@cocalc/conat/hub/api/lro";
 import { applyPendingCopies } from "../pending-copies";
 import {
