@@ -491,6 +491,9 @@ class BootstrapWrapperScriptTest(unittest.TestCase):
             self.assertIn('if [ "$need_package_install" = 1 ]; then', script)
             self.assertIn('find "$dir" -xdev -type f', script)
             self.assertIn("COCALC_RUNTIME_OWNER_UID", script)
+            self.assertIn("ln -snf /proc/mounts /etc/mtab", script)
+            self.assertIn("touch /run/podman-init", script)
+            self.assertIn("touch /run/.containerenv", script)
             self.assertIn("$validate_runtime_user_escaped", script)
             self.assertNotIn("su - \"$want_user\"", script)
             wrapper_path = Path(tmpdir) / "cocalc-runtime-storage"

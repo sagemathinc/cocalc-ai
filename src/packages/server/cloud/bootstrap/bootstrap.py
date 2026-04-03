@@ -1410,6 +1410,14 @@ has_ca_certificates() {
 
 mkdir -p /home /tmp /var/tmp
 chmod 1777 /tmp /var/tmp || true
+mkdir -p /run /var/run
+chmod 0755 /run /var/run || true
+ln -snf /run /var/run
+ln -snf /proc/mounts /etc/mtab
+touch /run/podman-init
+chmod 0755 /run/podman-init || true
+touch /run/.containerenv
+chmod 0644 /run/.containerenv || true
 
 if [ ! -w /etc ] || [ ! -w /home ] || [ ! -w /tmp ] || [ ! -w /var/tmp ]; then
   fail "rootfs contract failed: /etc, /home, /tmp, and /var/tmp must be writable" 41
