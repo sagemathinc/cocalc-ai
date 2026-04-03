@@ -1,7 +1,9 @@
 import {
   DEFAULT_PROJECT_RUNTIME_HOME,
+  projectRuntimeRootfsContractLabels,
   isProjectRuntimeHomeAliasPath,
   projectRuntimeHomeRelativePath,
+  rootfsLabelsSatisfyCurrentProjectRuntimeContract,
 } from "./project-runtime";
 
 describe("project runtime home helpers", () => {
@@ -29,5 +31,29 @@ describe("project runtime home helpers", () => {
     expect(projectRuntimeHomeRelativePath("/etc/passwd")).toBeUndefined();
     expect(isProjectRuntimeHomeAliasPath("/root/work/file.txt")).toBe(false);
     expect(isProjectRuntimeHomeAliasPath("/scratch/data.txt")).toBe(false);
+  });
+
+  it("exposes stable RootFS runtime-contract labels", () => {
+    const labels = projectRuntimeRootfsContractLabels();
+    expect(labels).toMatchObject({
+      "com.cocalc.rootfs.runtime_model": "launchpad-root-start-v1",
+      "com.cocalc.rootfs.runtime_userns": "podman-keep-id-v1",
+      "com.cocalc.rootfs.runtime_user": "user",
+      "com.cocalc.rootfs.runtime_uid": "2001",
+      "com.cocalc.rootfs.runtime_gid": "2001",
+      "com.cocalc.rootfs.runtime_home": "/home/user",
+      "com.cocalc.rootfs.runtime_bootstrap": "sudo,ca-certificates",
+    });
+    expect(rootfsLabelsSatisfyCurrentProjectRuntimeContract(labels)).toBe(true);
+  });
+
+  it("rejects incomplete or stale RootFS runtime-contract labels", () => {
+    expect(rootfsLabelsSatisfyCurrentProjectRuntimeContract({})).toBe(false);
+    expect(
+      rootfsLabelsSatisfyCurrentProjectRuntimeContract({
+        ...projectRuntimeRootfsContractLabels(),
+        "com.cocalc.rootfs.runtime_uid": "1000",
+      }),
+    ).toBe(false);
   });
 });

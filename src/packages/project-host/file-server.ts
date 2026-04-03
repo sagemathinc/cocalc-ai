@@ -69,6 +69,7 @@ import { init as initSshServer } from "@cocalc/project-proxy/ssh-server";
 import {
   DEFAULT_PROJECT_RUNTIME_HOME,
   DEFAULT_PROJECT_RUNTIME_USER,
+  projectRuntimeRootfsContractLabels,
   projectRuntimeHomeRelativePath,
 } from "@cocalc/util/project-runtime";
 import { type MutagenSyncSession } from "@cocalc/conat/project/mutagen/types";
@@ -1892,6 +1893,7 @@ async function publishRootfsImage({
           "com.cocalc.rootfs.managed": "true",
           "com.cocalc.rootfs.content_key": contentKey,
           "com.cocalc.rootfs.source_image": sourceImage,
+          ...projectRuntimeRootfsContractLabels(),
         },
       },
     };

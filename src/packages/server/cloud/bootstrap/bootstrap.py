@@ -752,61 +752,6 @@ def ensure_subuids(cfg: BootstrapConfig) -> None:
         )
 
 
-def namespace_id_to_host_id(
-    identifier: int, ranges: list[tuple[int, int, int]]
-) -> int:
-    for ns_start, host_start, length in ranges:
-        if ns_start <= identifier < ns_start + length:
-            return host_start + (identifier - ns_start)
-    raise RuntimeError(
-        f"id {identifier} is not covered by the rootless podman map; the host subuid/subgid allocation is too small for this image"
-    )
-
-
-def host_id_to_namespace_id(
-    identifier: int, ranges: list[tuple[int, int, int]]
-) -> int:
-    for ns_start, host_start, length in ranges:
-        if host_start <= identifier < host_start + length:
-            return ns_start + (identifier - host_start)
-    raise RuntimeError(
-        f"id {identifier} is not covered by the current rootless podman host map; the host subuid/subgid allocation is too small for this image"
-    )
-
-
-def map_keep_id_namespace_id(identifier: int, runtime_id: int) -> int:
-    if identifier < 0:
-        return identifier
-    if identifier < runtime_id:
-        return identifier + 1
-    if identifier == runtime_id:
-        return 0
-    return identifier
-
-
-def extracted_id_to_namespace_id(
-    identifier: int, ranges: list[tuple[int, int, int]]
-) -> int:
-    try:
-        return host_id_to_namespace_id(identifier, ranges)
-    except RuntimeError:
-        # Extracted trees can be mixed: most entries come from the current
-        # rootless podman host mapping, but some still carry literal
-        # namespace/container ids (for example root-owned paths as uid 0).
-        return identifier
-
-
-def remap_extracted_host_id_for_keep_id(
-    identifier: int, runtime_id: int, ranges: list[tuple[int, int, int]]
-) -> int:
-    return namespace_id_to_host_id(
-        map_keep_id_namespace_id(
-            extracted_id_to_namespace_id(identifier, ranges), runtime_id
-        ),
-        ranges,
-    )
-
-
 def enable_linger(cfg: BootstrapConfig) -> None:
     log_line(cfg, f"bootstrap: enabling linger for {cfg.ssh_user}")
     if shutil.which("loginctl") is None:
