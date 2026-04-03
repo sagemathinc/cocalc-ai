@@ -121,7 +121,7 @@ export class SyncClient extends EventEmitter implements Client0 {
     model_id: string;
     buffer_path: string;
   }): Promise<ArrayBuffer> => {
-    const api = projectApiClient({ project_id });
+    const api = projectApiClient({ project_id, client: this.client });
     const { buffer64 } = await api.jupyter.ipywidgetsGetBuffer({
       path,
       model_id,

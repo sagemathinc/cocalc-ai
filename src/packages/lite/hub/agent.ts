@@ -67,7 +67,7 @@ function createBridge({
         },
       },
     },
-    project: projectApiClient({ project_id: projectId }),
+    project: projectApiClient({ project_id: projectId, client: conatClient }),
     fs: fsClient({
       client: conatClient,
       subject: fsSubject({ project_id: projectId }),

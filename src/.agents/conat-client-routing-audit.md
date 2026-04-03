@@ -405,3 +405,29 @@ client rather than silently attaching to global state.
 This is one of the highest-value foundation cleanups because these sync
 primitives are reused across frontend, backend, project, lite, and future
 multi-bay control-plane code.
+
+## Completed In The Project API Pass
+
+### `conat/project/api/project-client.ts`
+
+- removed the hidden fallback to the global Conat singleton
+- `projectApiClient(...)` now requires an explicit client
+- current production callers were updated to use the right local wrapper or
+  routed client explicitly:
+  - [frontend/conat/client.ts](/home/wstein/build/cocalc-lite4/src/packages/frontend/conat/client.ts)
+    remains the deliberate browser-local wrapper that injects the active
+    browser client
+  - [frontend/components/run-button/index.tsx](/home/wstein/build/cocalc-lite4/src/packages/frontend/components/run-button/index.tsx)
+    and [frontend/components/run-button/kernel-info.ts](/home/wstein/build/cocalc-lite4/src/packages/frontend/components/run-button/kernel-info.ts)
+    now go through that browser-local wrapper instead of importing the shared
+    helper directly
+  - [conat/sync-doc/sync-client.ts](/home/wstein/build/cocalc-lite4/src/packages/conat/sync-doc/sync-client.ts)
+    now injects its active sync client's Conat connection explicitly
+  - [lite/hub/agent.ts](/home/wstein/build/cocalc-lite4/src/packages/lite/hub/agent.ts)
+    now injects the Lite runtime client explicitly
+  - [lite/hub/acp/executor/container.ts](/home/wstein/build/cocalc-lite4/src/packages/lite/hub/acp/executor/container.ts)
+    now requires either an explicit Conat client or a prebuilt project API
+
+This closes another shared helper that previously looked harmless in a
+single-client world but would become an easy source of wrong-bay or
+wrong-project-host routing bugs once multiple Conat connections are normal.

@@ -4,9 +4,9 @@
  */
 
 import LRU from "lru-cache";
+import { webapp_client } from "@cocalc/frontend/client/client";
 import type { KernelSpec } from "@cocalc/jupyter/types";
 import { capitalize } from "@cocalc/util/misc";
-import { projectApiClient } from "@cocalc/conat/project/api";
 
 const kernelInfoCache = new LRU<string, KernelSpec[]>({
   ttl: 30000,
@@ -47,7 +47,7 @@ export async function getKernelInfo(
     throw new Error("project_id is required to load kernels");
   }
   // TODO: project host support would select here
-  const api = projectApiClient({ project_id });
+  const api = webapp_client.conat_client.projectApi({ project_id });
   const kernels = await api.jupyter.kernels();
   if (kernels == null) {
     throw Error("bug");

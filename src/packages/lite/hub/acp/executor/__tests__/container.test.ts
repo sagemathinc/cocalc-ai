@@ -119,4 +119,16 @@ describe("ContainerExecutor", () => {
     });
     await executor.exec("/bin/bash -lc apt-get update");
   });
+
+  it("requires an explicit project api or Conat client", () => {
+    expect(
+      () =>
+        new ContainerExecutor({
+          projectId,
+          workspaceRoot,
+        }),
+    ).toThrow(
+      "ContainerExecutor requires either a prebuilt projectApi or an explicit Conat client",
+    );
+  });
 });
