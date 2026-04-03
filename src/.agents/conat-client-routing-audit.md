@@ -531,3 +531,22 @@ same runtime-local pattern used elsewhere in Phase 0.
 This keeps project-host feature code aligned with the same pattern now used in
 project and Lite runtimes: startup owns the connection setup, but ordinary
 modules do not reach into the generic singleton path directly.
+
+## Completed In The Browser Changefeed Pass
+
+### `sync/table/changefeed-conat.ts`
+
+- added an explicit `client` option to
+  [changefeed-conat.ts](/home/wstein/build/cocalc-lite4/src/packages/sync/table/changefeed-conat.ts)
+  so the wrapper no longer has to rely on the generic global singleton path
+- browser-side callers now inject the active Conat client explicitly in:
+  - [frontend/client/query.ts](/home/wstein/build/cocalc-lite4/src/packages/frontend/client/query.ts)
+  - [sync/table/synctable.ts](/home/wstein/build/cocalc-lite4/src/packages/sync/table/synctable.ts)
+- the generic sync client interface now exposes an optional
+  `getConatClient()` hook, and the frontend client implements it in
+  [frontend/client/client.ts](/home/wstein/build/cocalc-lite4/src/packages/frontend/client/client.ts)
+
+This removes another real hidden connection choice from the reactive browser
+path. Browser changefeeds now use the caller's active Conat client when it is
+available, instead of implicitly opening whatever global singleton happens to
+be initialized.

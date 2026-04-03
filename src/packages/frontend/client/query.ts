@@ -55,6 +55,7 @@ export class QueryClient {
           account_id,
           query: opts.query,
           options: opts.options,
+          client: this.client.getConatClient?.(),
         });
         // id for canceling this changefeed
         const id = uuid();

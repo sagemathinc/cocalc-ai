@@ -105,6 +105,7 @@ export interface WebappClient extends EventEmitter {
   is_deleted: (filename: string, project_id: string) => boolean;
   set_deleted: Function;
   mark_file: (opts: any) => Promise<void>;
+  getConatClient: () => ReturnType<ConatClient["conat"]>;
   set_connected?: Function;
   version: Function;
   alert_message: Function;
@@ -177,6 +178,7 @@ class Client extends EventEmitter implements WebappClient {
 
   is_deleted: (filename: string, project_id: string) => boolean;
   mark_file: (opts: any) => Promise<void>;
+  getConatClient: () => ReturnType<ConatClient["conat"]>;
 
   idle_reset: Function;
   latency: Function;
@@ -233,6 +235,7 @@ class Client extends EventEmitter implements WebappClient {
     this.pubsub_conat = this.conat_client.pubsub;
     this.callConatService = this.conat_client.callConatService;
     this.createConatService = this.conat_client.createConatService;
+    this.getConatClient = this.conat_client.conat.bind(this.conat_client);
 
     this.query = this.query_client.query.bind(this.query_client);
     this.async_query = this.query_client.query.bind(this.query_client);

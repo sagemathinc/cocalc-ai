@@ -1,5 +1,6 @@
 import type { EventEmitter } from "events";
 import type { CB } from "@cocalc/util/types/callback";
+import type { Client as ConatCoreClient } from "@cocalc/conat/core/client";
 import type {
   CallConatServiceFunction,
   CreateConatServiceFunction,
@@ -23,6 +24,7 @@ export interface Client extends EventEmitter {
   callConatService?: CallConatServiceFunction;
   createConatService?: CreateConatServiceFunction;
   client_id?: () => string | undefined;
+  getConatClient?: () => ConatCoreClient;
 }
 
 export interface ClientFs extends Client {

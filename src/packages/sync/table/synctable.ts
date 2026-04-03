@@ -753,6 +753,7 @@ export class SyncTable extends EventEmitter {
           account_id: valid_account_id,
           query: this.query,
           options: this.options,
+          client: this.client.getConatClient?.(),
         });
         // This init_changefeed_handlers MUST be initialized here since this.changefeed might
         // get closed very soon, and missing a close event would be very, very bad.
