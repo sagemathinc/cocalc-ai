@@ -296,31 +296,20 @@ async function mountOverlayFs({ upperdir, workdir, merged, lowerdir }) {
     if (!isRecoverableOverlayMountError(err)) {
       throw err;
     }
-    logger.warn("mountOverlayFs: resetting stale overlay upperdir", {
+    logger.warn("mountOverlayFs: detected stale overlay upperdir", {
       merged,
       lowerdir,
       upperdir,
       workdir,
       error: `${err}`,
     });
-    await rm(upperdir, { recursive: true, force: true });
-    await rm(workdir, { recursive: true, force: true });
-    await mkdir(upperdir, { recursive: true });
-    await mkdir(workdir, { recursive: true });
-    await executeCode({
-      verbose: true,
-      err_on_exit: true,
-      command: "sudo",
-      args: [
-        "-n",
-        STORAGE_WRAPPER,
-        "mount-overlay-project",
-        lowerdir,
-        upperdir,
-        workdir,
-        merged,
-      ],
-    });
+    throw new Error(
+      `project RootFS overlay is incompatible with the current cached base image. ` +
+        `To recover, delete the project overlay directories and start the project again:\n` +
+        `  upperdir: ${upperdir}\n` +
+        `  workdir: ${workdir}\n` +
+        `Original mount error: ${err}`,
+    );
   }
 }
 

@@ -67,14 +67,13 @@ describe("rootfs overlay mount recovery", () => {
     executeCode.mockResolvedValue({ stdout: "" });
   });
 
-  it("resets the project overlay and retries once on stale upperdir origin errors", async () => {
+  it("fails with explicit cleanup instructions on stale upperdir origin errors", async () => {
     executeCode
       .mockRejectedValueOnce(
         new Error(
           "mount failed: Stale file handle; overlayfs: failed to verify upper root origin",
         ),
-      )
-      .mockResolvedValue({ stdout: "" });
+      );
 
     const mod = await import("./run/rootfs");
 
@@ -84,25 +83,18 @@ describe("rootfs overlay mount recovery", () => {
         home: "/mnt/cocalc/project-proj-recover",
         config: { image: "docker.io/buildpack-deps:noble-scm" } as any,
       }),
-    ).resolves.toBe("/mnt/cocalc/data/cache/project-roots/proj-recover");
+    ).rejects.toThrow(
+      /project RootFS overlay is incompatible with the current cached base image/,
+    );
 
     const upperdir =
       "/mnt/cocalc/project-proj-recover/.local/share/cocalc/rootfs/docker.io%2Fbuildpack-deps%3Anoble-scm/upperdir";
-    const workdir =
-      "/mnt/cocalc/project-proj-recover/.local/share/cocalc/rootfs/docker.io%2Fbuildpack-deps%3Anoble-scm/workdir";
 
-    expect(executeCode).toHaveBeenCalledTimes(2);
-    expect(mockedRm).toHaveBeenCalledWith(workdir, {
+    expect(executeCode).toHaveBeenCalledTimes(1);
+    expect(mockedRm).not.toHaveBeenCalledWith(upperdir, {
       recursive: true,
       force: true,
     });
-    expect(mockedRm).toHaveBeenCalledWith(upperdir, {
-      recursive: true,
-      force: true,
-    });
-    expect(mockedRm).toHaveBeenCalledTimes(3);
-    expect(mockedMkdir).toHaveBeenCalledWith(upperdir, { recursive: true });
-    expect(mockedMkdir).toHaveBeenCalledWith(workdir, { recursive: true });
   });
 
   it("does not reset the overlay for unrelated mount failures", async () => {
