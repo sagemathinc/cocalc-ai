@@ -26,6 +26,10 @@ const STORAGE_WRAPPER = "/usr/local/sbin/cocalc-runtime-storage";
 const UNMOUNT_DELAY_MS = Number(
   process.env.COCALC_SANDBOX_UNMOUNT_DELAY_MS ?? 30_000,
 );
+const RECOVERABLE_OVERLAY_MOUNT_PATTERNS = [
+  "Stale file handle",
+  "failed to verify upper root origin",
+] as const;
 
 const PROJECT_ROOTS =
   process.env.COCALC_PROJECT_ROOTS ?? join(data, "cache", "project-roots");
@@ -270,21 +274,59 @@ export async function unmountAll(project_id: string): Promise<void> {
 }
 
 async function mountOverlayFs({ upperdir, workdir, merged, lowerdir }) {
-  await executeCode({
-    verbose: true,
-    err_on_exit: true,
-    command: "sudo",
-    args: [
-      "-n",
-      STORAGE_WRAPPER,
-      "mount-overlay-project",
-      // CRITICAL: wrapper hardcodes the xattr-capable overlay options. Project
-      // backup and restore now preserve trusted.overlay.* metadata via the
-      // dedicated privileged rustic wrapper path.
+  try {
+    await executeCode({
+      verbose: true,
+      err_on_exit: true,
+      command: "sudo",
+      args: [
+        "-n",
+        STORAGE_WRAPPER,
+        "mount-overlay-project",
+        // CRITICAL: wrapper hardcodes the xattr-capable overlay options. Project
+        // backup and restore now preserve trusted.overlay.* metadata via the
+        // dedicated privileged rustic wrapper path.
+        lowerdir,
+        upperdir,
+        workdir,
+        merged,
+      ],
+    });
+  } catch (err) {
+    if (!isRecoverableOverlayMountError(err)) {
+      throw err;
+    }
+    logger.warn("mountOverlayFs: resetting stale overlay upperdir", {
+      merged,
       lowerdir,
       upperdir,
       workdir,
-      merged,
-    ],
-  });
+      error: `${err}`,
+    });
+    await rm(upperdir, { recursive: true, force: true });
+    await rm(workdir, { recursive: true, force: true });
+    await mkdir(upperdir, { recursive: true });
+    await mkdir(workdir, { recursive: true });
+    await executeCode({
+      verbose: true,
+      err_on_exit: true,
+      command: "sudo",
+      args: [
+        "-n",
+        STORAGE_WRAPPER,
+        "mount-overlay-project",
+        lowerdir,
+        upperdir,
+        workdir,
+        merged,
+      ],
+    });
+  }
+}
+
+function isRecoverableOverlayMountError(err: unknown): boolean {
+  const text = `${err}`;
+  return RECOVERABLE_OVERLAY_MOUNT_PATTERNS.some((pattern) =>
+    text.includes(pattern),
+  );
 }
