@@ -83,6 +83,24 @@ export class AccountActions extends Actions<AccountState> {
     });
   }
 
+  async refresh_home_bay(): Promise<void> {
+    const account_id = webapp_client.account_id;
+    if (!account_id) {
+      this.setState({
+        home_bay_id: undefined,
+        home_bay_source: undefined,
+      });
+      return;
+    }
+    const location = await webapp_client.conat_client.hub.system.getAccountBay({
+      user_account_id: account_id,
+    });
+    this.setState({
+      home_bay_id: location.home_bay_id,
+      home_bay_source: location.source,
+    });
+  }
+
   // deletes the account and then signs out everywhere
   public async delete_account(): Promise<void> {
     try {

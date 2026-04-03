@@ -64,16 +64,28 @@ export function init(redux) {
       // pre-sign-in state.
       await once(table, "connected");
     }
-    redux.getActions("account").set_user_type("signed_in");
+    const actions = redux.getActions("account");
+    actions.set_user_type("signed_in");
+    void actions.refresh_home_bay().catch(() => undefined);
   });
 
-  webapp_client.on("signed_out", () =>
-    redux.getActions("account").set_user_type("public"),
-  );
+  webapp_client.on("signed_out", () => {
+    const actions = redux.getActions("account");
+    actions.setState({
+      home_bay_id: undefined,
+      home_bay_source: undefined,
+    });
+    actions.set_user_type("public");
+  });
 
-  webapp_client.on("remember_me_failed", () =>
-    redux.getActions("account").set_user_type("public"),
-  );
+  webapp_client.on("remember_me_failed", () => {
+    const actions = redux.getActions("account");
+    actions.setState({
+      home_bay_id: undefined,
+      home_bay_source: undefined,
+    });
+    actions.set_user_type("public");
+  });
 
   // Autosave interval
   let _autosave_interval: NodeJS.Timeout | undefined = undefined;

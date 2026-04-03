@@ -102,6 +102,8 @@ export interface AccountState {
   sign_out_error?: string;
   show_sign_out?: boolean;
   hub?: string;
+  home_bay_id?: string;
+  home_bay_source?: "account-row" | "single-bay-default";
   remember_me?: boolean;
   has_remember_me?: boolean;
   passports?: Map<string, any>;
