@@ -431,3 +431,20 @@ multi-bay control-plane code.
 This closes another shared helper that previously looked harmless in a
 single-client world but would become an easy source of wrong-bay or
 wrong-project-host routing bugs once multiple Conat connections are normal.
+
+## Completed In The Server Bridge Pass
+
+### `server/api/hub-bridge.ts` and `server/api/project-bridge.ts`
+
+- removed the remaining backend-singleton fallback from the server-side bridge
+  wrappers
+- both bridge helpers now require an explicit backend Conat client
+- the only production callers were already easy to update:
+  - [http-api/pages/api/conat/hub.ts](/home/wstein/build/cocalc-lite4/src/packages/http-api/pages/api/conat/hub.ts)
+    now injects the backend client explicitly
+  - [http-api/pages/api/conat/project.ts](/home/wstein/build/cocalc-lite4/src/packages/http-api/pages/api/conat/project.ts)
+    now injects the backend client explicitly
+
+This removes another layer where backend routing could quietly collapse onto
+the ambient singleton even after the higher-level caller had been made
+bay-aware.
