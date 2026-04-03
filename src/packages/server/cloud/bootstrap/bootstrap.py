@@ -1480,7 +1480,7 @@ chmod 0755 "$remap_rootfs_ids_script"
     trap cleanup_rewrite_script EXIT
     podman_user="${SUDO_USER:-}"
     if [ -z "$podman_user" ]; then
-      fail "rootfs contract failed: normalize-rootfs must be invoked via sudo from the rootless podman user" 77
+      fail "rootfs preflight failed: normalize-rootfs must be invoked via sudo from the rootless podman user" 77
     fi
     fix_setid_runtime_helpers_script="$(cat <<'EOF_COCALC_FIX_SETID_RUNTIME_HELPERS'
 set -euo pipefail
@@ -1536,11 +1536,11 @@ EOF_COCALC_FIX_SETID_RUNTIME_HELPERS
        [ ! -e "$rootfs/lib/ld-linux-aarch64.so.1" ] && \
        [ ! -e "$rootfs/lib64/ld-linux-aarch64.so.1" ] && \
        [ ! -e "$rootfs/lib/aarch64-linux-gnu/libc.so.6" ]; then
-      fail "rootfs contract failed: glibc is required" 43
+      fail "rootfs preflight failed: glibc is required" 43
     fi
     if [ "$sudo_present" = false ] || [ "$ca_certificates_present" = false ]; then
       if [ "$package_manager" = "none" ]; then
-        fail "rootfs contract failed: startup bootstrap requires sudo and CA certificates, but this image has neither a supported package manager nor the required packages preinstalled" 44
+        fail "rootfs preflight failed: startup bootstrap requires sudo and CA certificates, but this image has neither a supported package manager nor the required packages preinstalled" 44
       fi
     fi
     mkdir -p "$rootfs/home" "$rootfs/home/user" "$rootfs/tmp" "$rootfs/var/tmp" "$rootfs/run" "$rootfs/etc" "$rootfs/var"
