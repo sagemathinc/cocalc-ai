@@ -42,6 +42,7 @@ import {
   getMembershipProjectDefaultsForAccount,
   mergeProjectSettingsWithMembership,
 } from "@cocalc/server/membership/project-defaults";
+import { assertLocalProjectOwnership } from "@cocalc/server/conat/project-local-access";
 export type { ProjectState, ProjectStatus };
 
 const logger = getLogger("project-control");
@@ -76,6 +77,7 @@ export class BaseProject extends EventEmitter {
   public is_ready: boolean = false;
   public is_freed: boolean = false;
   protected stateChanging: ProjectState | undefined = undefined;
+  private localOwnershipChecked?: Promise<void>;
 
   constructor(project_id: string) {
     super();
@@ -127,6 +129,13 @@ export class BaseProject extends EventEmitter {
     };
   }
 
+  private ensureLocalOwnership = async (): Promise<void> => {
+    this.localOwnershipChecked ??= assertLocalProjectOwnership({
+      project_id: this.project_id,
+    });
+    return await this.localOwnershipChecked;
+  };
+
   private projectRunner = () => {
     return projectRunnerClient({
       project_id: this.project_id,
@@ -139,6 +148,7 @@ export class BaseProject extends EventEmitter {
   state = async (): Promise<ProjectState> => {
     // rename everywhere to status?  state is a field, and status
     // is the whole object
+    await this.ensureLocalOwnership();
     const runner = this.projectRunner();
     return await runner.status({ project_id: this.project_id });
   };
@@ -152,6 +162,7 @@ export class BaseProject extends EventEmitter {
     lro_op_id?: string;
     account_id?: string;
   }): Promise<void> => {
+    await this.ensureLocalOwnership();
     await this.computeQuota(opts?.account_id);
     await startProjectOnHost(this.project_id, opts);
     await query({
@@ -167,6 +178,7 @@ export class BaseProject extends EventEmitter {
   };
 
   stop = async ({ force }: { force?: boolean } = {}): Promise<void> => {
+    await this.ensureLocalOwnership();
     if (force) {
       logger.debug("stop -- TODO -- force not implemented");
     }
@@ -208,6 +220,7 @@ export class BaseProject extends EventEmitter {
     port: number;
     secret_token: string;
   }> => {
+    await this.ensureLocalOwnership();
     const dbg = this.dbg("address");
     dbg("first ensure is running");
     await this.start();
@@ -233,6 +246,7 @@ export class BaseProject extends EventEmitter {
     (except idle_timeout) have changed, then the project is restarted.
     */
   setAllQuotas = async (): Promise<void> => {
+    await this.ensureLocalOwnership();
     const dbg = this.dbg("set_all_quotas");
     dbg();
     // 1. Get data about project from the database, namely:
@@ -283,6 +297,7 @@ export class BaseProject extends EventEmitter {
     run_quota: Quota | null,
     account_id?: string,
   ): Promise<void> => {
+    await this.ensureLocalOwnership();
     // If null we compute it based on membership + settings for the user who
     // started the project (or best available fallback).
     if (run_quota == null) {

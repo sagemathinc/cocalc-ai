@@ -6,9 +6,36 @@ export const PROJECT_COLLABORATOR_REQUIRED_ERROR =
   "user must be a collaborator on project";
 export const PROJECT_OWNED_BY_ANOTHER_BAY_ERROR =
   "project belongs to another bay";
+export const PROJECT_NOT_FOUND_ERROR = "project not found";
 
 function pool() {
   return getPool("long");
+}
+
+export async function assertLocalProjectOwnership({
+  project_id,
+}: {
+  project_id: string;
+}): Promise<void> {
+  if (!isValid(project_id)) {
+    throw Error("invalid project_id");
+  }
+  const { rows } = await pool().query<{ owning_bay_id: string | null }>(
+    `
+      SELECT COALESCE(owning_bay_id, $2) AS owning_bay_id
+      FROM projects
+      WHERE project_id=$1
+      LIMIT 1
+    `,
+    [project_id, getConfiguredBayId()],
+  );
+  const row = rows[0];
+  if (!row) {
+    throw Error(PROJECT_NOT_FOUND_ERROR);
+  }
+  if (row.owning_bay_id !== getConfiguredBayId()) {
+    throw Error(PROJECT_OWNED_BY_ANOTHER_BAY_ERROR);
+  }
 }
 
 async function loadProjectAccessRow({

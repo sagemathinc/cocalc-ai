@@ -83,4 +83,15 @@ describe("project local access", () => {
       }),
     ).rejects.toThrow(PROJECT_COLLABORATOR_REQUIRED_ERROR);
   });
+
+  it("throws for missing projects when checking local ownership", async () => {
+    queryMock = jest.fn(async () => ({ rows: [] }));
+    const { assertLocalProjectOwnership, PROJECT_NOT_FOUND_ERROR } =
+      await import("./project-local-access");
+    await expect(
+      assertLocalProjectOwnership({
+        project_id: PROJECT_ID,
+      }),
+    ).rejects.toThrow(PROJECT_NOT_FOUND_ERROR);
+  });
 });
