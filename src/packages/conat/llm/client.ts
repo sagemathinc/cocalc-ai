@@ -2,12 +2,22 @@
 Client for the conat server in server.ts.
 */
 
-import { conat } from "@cocalc/conat/client";
+import type { Client as ConatClient } from "@cocalc/conat/core/client";
 import type { ChatOptions } from "@cocalc/util/types/llm";
 import { isValidUUID } from "@cocalc/util/misc";
 import { llmSubject } from "./server";
 
-export async function llm(options: ChatOptions): Promise<string> {
+function requireClient(client?: ConatClient): ConatClient {
+  if (client == null) {
+    throw new Error("llm helper must provide an explicit Conat client");
+  }
+  return client;
+}
+
+export async function llm(
+  options: ChatOptions,
+  client?: ConatClient,
+): Promise<string> {
   if (!options.system?.trim()) {
     // I noticed in testing that for some models they just fail, so let's be clear immediately.
     throw Error("the system prompt MUST be nonempty");
@@ -19,7 +29,7 @@ export async function llm(options: ChatOptions): Promise<string> {
 
   let all = "";
   let lastSeq = -1;
-  const cn = await conat();
+  const cn = requireClient(client);
   let { stream, ...opts } = options;
   for await (const resp of await cn.requestMany(subject, opts, {
     maxWait: opts.timeout ?? 1000 * 60 * 10,

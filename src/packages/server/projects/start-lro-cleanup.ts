@@ -5,7 +5,7 @@
 
 import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
-import { publishLroSummary } from "@cocalc/conat/lro/stream";
+import { publishLroSummary } from "@cocalc/server/lro/stream";
 import { updateLro } from "@cocalc/server/lro/lro-db";
 
 const log = getLogger("server:projects:start-lro-cleanup");

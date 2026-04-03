@@ -12,7 +12,7 @@ import getPool from "@cocalc/database/pool";
 import isCollaborator from "@cocalc/server/projects/is-collaborator";
 import getParams from "@cocalc/http-api/lib/api/get-params";
 import { client as filesystemClient } from "@cocalc/conat/files/file-server";
-import "@cocalc/backend/conat";
+import { conat } from "@cocalc/backend/conat";
 
 export default async function handle(req, res) {
   const params = getParams(req);
@@ -63,7 +63,7 @@ export default async function handle(req, res) {
         throw Error("must be a collaborator on source project");
       }
     }
-    const client = filesystemClient();
+    const client = filesystemClient({ client: conat() });
     await client.cp({
       src: { project_id: src_project_id, path },
       dest: { project_id: target_project_id, path: target_path ?? path },

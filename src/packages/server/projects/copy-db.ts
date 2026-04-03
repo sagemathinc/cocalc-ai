@@ -6,7 +6,7 @@ import type {
 } from "@cocalc/conat/hub/api/projects";
 import type { LroStatus } from "@cocalc/conat/hub/api/lro";
 import { getLro, updateLro } from "@cocalc/server/lro/lro-db";
-import { publishLroSummary } from "@cocalc/conat/lro/stream";
+import { publishLroSummary } from "@cocalc/server/lro/stream";
 import { getProjectFileServerClient } from "@cocalc/server/conat/file-server-client";
 
 const logger = getLogger("server:projects:copy-db");

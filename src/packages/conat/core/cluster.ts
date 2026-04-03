@@ -3,7 +3,7 @@ import { Patterns } from "./patterns";
 import { updateInterest, type InterestUpdate } from "@cocalc/conat/core/server";
 import type { DStream } from "@cocalc/conat/sync/dstream";
 import { server as createPersistServer } from "@cocalc/conat/persist/server";
-import { getLogger } from "@cocalc/conat/client";
+import { getLogger } from "@cocalc/conat/logger";
 import { hash_string } from "@cocalc/util/misc";
 const CREATE_LINK_TIMEOUT = 45_000;
 

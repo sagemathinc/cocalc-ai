@@ -20,7 +20,6 @@ import type {
   AgentRunState,
   AgentRunStep,
 } from "@cocalc/conat/hub/api/agent";
-import { conat } from "@cocalc/conat/client";
 import { project_id as LOCAL_PROJECT_ID } from "@cocalc/project/data";
 import { isCodexModelName } from "@cocalc/util/ai/codex";
 import {
@@ -29,6 +28,7 @@ import {
   project_id as REMOTE_PROJECT_ID,
 } from "../remote";
 import { getLiteServerSettings } from "./settings";
+import { getLiteConatClient } from "./runtime-client";
 
 function getProjectId(): string {
   return REMOTE_PROJECT_ID || LOCAL_PROJECT_ID;
@@ -57,7 +57,7 @@ function createBridge({
   defaults?: { projectId?: string; accountId?: string };
 }) {
   const projectId = defaults?.projectId ?? getProjectId();
-  const conatClient = conat();
+  const conatClient = getLiteConatClient();
   return createPlusAgentSdkBridge({
     hub: {
       system: { ping, getCustomize },
@@ -67,7 +67,7 @@ function createBridge({
         },
       },
     },
-    project: projectApiClient({ project_id: projectId }),
+    project: projectApiClient({ project_id: projectId, client: conatClient }),
     fs: fsClient({
       client: conatClient,
       subject: fsSubject({ project_id: projectId }),

@@ -38,7 +38,7 @@ Type ".help" for more information.
 
 import { timeClient } from "@cocalc/conat/service/time";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
-import { getClient } from "@cocalc/conat/client";
+import type { Client as ConatCoreClient } from "@cocalc/conat/core/client";
 import { sleep } from "@cocalc/util/async-utils";
 
 // we use exponential backoff starting with a short interval
@@ -46,6 +46,34 @@ import { sleep } from "@cocalc/util/async-utils";
 const INTERVAL_START = 5 * 1000;
 const INTERVAL_GOOD = 1000 * 120;
 const TOLERANCE = 3000;
+
+type TimeSyncClientState =
+  | "closed"
+  | "connected"
+  | "connecting"
+  | "disconnected";
+
+interface TimeSyncClient {
+  conat: () => ConatCoreClient;
+  account_id?: string;
+  project_id?: string;
+  state: TimeSyncClientState;
+}
+
+let timeClientFactory: (() => TimeSyncClient) | undefined;
+
+export function setConatTimeClientFactory(
+  factory?: () => TimeSyncClient,
+): void {
+  timeClientFactory = factory;
+}
+
+function getTimeSyncClient(): TimeSyncClient {
+  if (timeClientFactory == null) {
+    throw Error("time sync must provide an explicit Conat client factory");
+  }
+  return timeClientFactory();
+}
 
 export function init() {
   syncLoop();
@@ -62,7 +90,7 @@ async function syncLoop() {
     return;
   }
   syncLoopStarted = true;
-  const client = getClient();
+  const client = getTimeSyncClient();
   let d = INTERVAL_START;
   while (state != "closed" && client.state != "closed") {
     try {
@@ -96,8 +124,12 @@ export const getSkew = reuseInFlight(async (): Promise<number> => {
   }
   try {
     const start = Date.now();
-    const client = getClient();
-    const tc = timeClient(client);
+    const client = getTimeSyncClient();
+    const tc = timeClient({
+      client: client.conat(),
+      account_id: client.account_id,
+      project_id: client.project_id,
+    });
     const serverTime = await tc.time();
     const end = Date.now();
     rtt = end - start;

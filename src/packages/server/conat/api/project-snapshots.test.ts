@@ -27,7 +27,7 @@ jest.mock("@cocalc/server/lro/lro-db", () => ({
   createLro: (...args: any[]) => createLroMock(...args),
 }));
 
-jest.mock("@cocalc/conat/lro/stream", () => ({
+jest.mock("@cocalc/server/lro/stream", () => ({
   __esModule: true,
   publishLroEvent: (...args: any[]) => publishLroEventMock(...args),
   publishLroSummary: (...args: any[]) => publishLroSummaryMock(...args),

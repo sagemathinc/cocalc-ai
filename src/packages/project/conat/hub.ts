@@ -12,6 +12,7 @@ import { getLogger } from "@cocalc/project/logger";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import { version as ourVersion } from "@cocalc/util/smc-version";
 import { project_id } from "@cocalc/project/data";
+import { getProjectConatClient } from "./runtime-client";
 
 const VERSION_CHECK_INTERVAL = 5 * 60_000;
 
@@ -37,6 +38,10 @@ async function callHub({
 
 export function hubApi(client: ConatClient) {
   return initHubApi((opts) => callHub({ ...opts, client }));
+}
+
+export function getProjectHubApi() {
+  return hubApi(getProjectConatClient());
 }
 
 export const versionCheckLoop = reuseInFlight(

@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import getLogger from "@cocalc/backend/logger";
 import type { LroSummary } from "@cocalc/conat/hub/api/lro";
-import { publishLroEvent, publishLroSummary } from "@cocalc/conat/lro/stream";
+import { publishLroEvent, publishLroSummary } from "@cocalc/server/lro/stream";
 import { getEffectiveParallelOpsLimit } from "@cocalc/server/lro/worker-config";
 import { claimLroOps, touchLro, updateLro } from "@cocalc/server/lro/lro-db";
 import {

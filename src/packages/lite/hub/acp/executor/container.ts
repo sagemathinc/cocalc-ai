@@ -82,6 +82,11 @@ export class ContainerExecutor {
       // important for security reasons, etc.
       throw Error("projectId must be set for container executor");
     }
+    if (options.projectApi == null && options.conatClient == null) {
+      throw Error(
+        "ContainerExecutor requires either a prebuilt projectApi or an explicit Conat client",
+      );
+    }
     this.api =
       options.projectApi ??
       projectApiClient({

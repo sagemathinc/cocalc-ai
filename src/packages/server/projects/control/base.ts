@@ -56,6 +56,12 @@ export type Action = "open" | "start" | "stop" | "restart";
 // collected.  These objects don't use much memory, but blocking garbage collection
 // would be bad.
 const projectCache: { [project_id: string]: WeakRef<BaseProject> } = {};
+function getProjectControlConatClient() {
+  // This one-bay control path is intentionally choosing the current backend
+  // hub client. Shared runner helpers must not silently make that routing
+  // decision via a global fallback.
+  return conat();
+}
 export function getProject(project_id: string): BaseProject {
   let project = projectCache[project_id]?.deref();
   if (project == null) {
@@ -124,7 +130,7 @@ export class BaseProject extends EventEmitter {
   private projectRunner = () => {
     return projectRunnerClient({
       project_id: this.project_id,
-      client: conat(),
+      client: getProjectControlConatClient(),
     });
   };
 

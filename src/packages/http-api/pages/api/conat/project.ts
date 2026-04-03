@@ -4,6 +4,7 @@ This is meant to be called by either a user account or a project, so API
 keys that resolve to either are allowed.
 */
 
+import { conat } from "@cocalc/backend/conat";
 import { getAccountFromApiKey } from "@cocalc/server/auth/api";
 import projectBridge from "@cocalc/server/api/project-bridge";
 import isCollaborator from "@cocalc/server/projects/is-collaborator";
@@ -35,6 +36,7 @@ export default async function handle(req, res) {
       name,
       args,
       timeout,
+      client: conat(),
     });
     res.json(resp);
   } catch (err) {

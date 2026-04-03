@@ -18,6 +18,15 @@ beforeAll(before);
 
 describe("create basic mocked project runner service and test", () => {
   let client1, client2;
+  it("requires an explicit client for project runner RPC helpers", () => {
+    expect(() =>
+      projectRunnerClient({
+        subject: "project-runner.0",
+        client: undefined as any,
+      }),
+    ).toThrow("project runner client MUST be specified");
+  });
+
   it("create two clients", () => {
     client1 = connect();
     client2 = connect();

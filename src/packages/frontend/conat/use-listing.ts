@@ -20,6 +20,7 @@ import {
 } from "@cocalc/conat/service/listings";
 import { useAsyncEffect } from "use-async-effect";
 import { useProjectContext } from "@cocalc/frontend/project/context";
+import { webapp_client } from "@cocalc/frontend/webapp-client";
 
 export default function useListing({
   path = "",
@@ -48,6 +49,7 @@ export default function useListing({
     }
     listingsRef.current = await listingsClient({
       project_id,
+      client: webapp_client.conat_client.conat(),
     });
     const handleChange = (path) => {
       if (path == pathRef.current) {

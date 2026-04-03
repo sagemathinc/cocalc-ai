@@ -13,9 +13,9 @@ import {
   useState,
 } from "react";
 import TimeAgo from "react-timeago";
-import { projectApiClient } from "@cocalc/conat/project/api";
 import { Icon } from "@cocalc/frontend/components/icon";
 import StaticCodeBlock from "@cocalc/frontend/components/static-code-block";
+import { webapp_client } from "@cocalc/frontend/client/client";
 import infoToMode from "@cocalc/frontend/editors/slate/elements/code-block/info-to-mode";
 import Logo from "@cocalc/frontend/jupyter/logo";
 import { useFileContext } from "@cocalc/frontend/lib/file-context";
@@ -191,7 +191,10 @@ export default function RunButton({
           path,
           tag,
         };
-        const api = projectApiClient({ project_id, timeout });
+        const api = webapp_client.conat_client.projectApi({
+          project_id,
+          timeout,
+        });
         messages = await api.jupyter.apiExecute(opts);
         saveInCache({ input, history, info, messages });
       } catch (err) {

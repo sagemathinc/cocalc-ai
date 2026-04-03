@@ -8,7 +8,7 @@ import {
   touchLro,
   updateLro,
 } from "@cocalc/server/lro/lro-db";
-import { publishLroEvent, publishLroSummary } from "@cocalc/conat/lro/stream";
+import { publishLroEvent, publishLroSummary } from "@cocalc/server/lro/stream";
 import { COPY_CANCELED_CODE, copyProjectFiles } from "./copy";
 import { listCopiesByOpId } from "./copy-db";
 

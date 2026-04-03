@@ -1,5 +1,6 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { fsClient } from "@cocalc/conat/files/fs";
+import { conat } from "@cocalc/conat/client";
 import { before, after } from "@cocalc/backend/conat/test/setup";
 import { uuid } from "@cocalc/util/misc";
 import {
@@ -15,7 +16,10 @@ describe("the useFiles hook", () => {
   let fs, server;
   it("creates fileserver service and fs client", async () => {
     server = await createPathFileserver();
-    fs = fsClient({ subject: `${server.service}.project-${project_id}` });
+    fs = fsClient({
+      client: conat(),
+      subject: `${server.service}.project-${project_id}`,
+    });
   });
 
   it("test useFiles and file creation", async () => {
@@ -100,6 +104,7 @@ describe("the useFiles hook", () => {
     // change fs and see the hook update
     const project_id2 = uuid();
     fs2 = fsClient({
+      client: conat(),
       subject: `${server.service}.project-${project_id2}`,
     });
     path = "";

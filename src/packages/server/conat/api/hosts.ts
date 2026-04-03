@@ -74,7 +74,7 @@ import {
   updateCopyStatus as updateCopyStatusDb,
 } from "@cocalc/server/projects/copy-db";
 import { createLro } from "@cocalc/server/lro/lro-db";
-import { publishLroEvent, publishLroSummary } from "@cocalc/conat/lro/stream";
+import { publishLroEvent, publishLroSummary } from "@cocalc/server/lro/stream";
 import { lroStreamName } from "@cocalc/conat/lro/names";
 import { SERVICE as PERSIST_SERVICE } from "@cocalc/conat/persist/util";
 import {

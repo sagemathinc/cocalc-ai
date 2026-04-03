@@ -85,7 +85,6 @@ import {
 } from "@cocalc/conat/core/client";
 import refCache from "@cocalc/util/refcache";
 import { type JSONValue } from "@cocalc/util/types";
-import { conat } from "@cocalc/conat/client";
 import {
   asyncThrottle,
   cancel_scheduled,
@@ -142,6 +141,16 @@ export interface DKVOptions {
   service?: string;
 
   initPhaseReporter?: CoreStreamInitPhaseReporter;
+}
+
+function requireDkvClient(
+  options: DKVOptions,
+  name: string,
+): DKVOptions & { client: Client } {
+  if (options.client == null) {
+    throw Error(`${name}: client must be specified`);
+  }
+  return options as DKVOptions & { client: Client };
 }
 
 export class DKV<T = any> extends EventEmitter {
@@ -855,7 +864,7 @@ export class DKV<T = any> extends EventEmitter {
           account_id,
           project_id,
           service: this.opts.service,
-          client: this.opts.client,
+          client: requireDkvClient(this.opts, "DKV.updateInventory").client,
         });
         if (this.isClosed()) {
           return;
@@ -883,20 +892,19 @@ export class DKV<T = any> extends EventEmitter {
   );
 }
 
-export const cache = refCache<DKVOptions, DKV>({
+export const cache = refCache<DKVOptions & { client: Client }, DKV>({
   name: "dkv",
   createKey: ({ name, account_id, project_id, client }) =>
     JSON.stringify({ name, account_id, project_id, id: client?.id }),
   createObject: async (opts) => {
-    if (opts.client == null) {
-      opts = { ...opts, client: await conat() };
-    }
     const k = new DKV(opts);
     await k.init();
     return k;
   },
 });
 
-export async function dkv<T>(options: DKVOptions): Promise<DKV<T>> {
-  return await cache(options);
+export async function dkv<T>(
+  options: DKVOptions & { client: Client },
+): Promise<DKV<T>> {
+  return await cache(requireDkvClient(options, "dkv"));
 }

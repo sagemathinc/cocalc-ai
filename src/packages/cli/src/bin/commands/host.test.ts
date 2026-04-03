@@ -207,6 +207,73 @@ test("host metrics returns current metrics and history", async () => {
   assert.equal(capture.data.derived.metadata.level, "warning");
 });
 
+test("host where returns the bay for the resolved host", async () => {
+  const capture: { data?: any; upgrades: string[]; reconciles: string[] } = {
+    upgrades: [],
+    reconciles: [],
+  };
+  const deps = makeDeps(capture, {
+    resolveHost: async () => ({
+      id: "44444444-4444-4444-4444-444444444444",
+      name: "host-1",
+      status: "running",
+      last_seen: new Date().toISOString(),
+    }),
+    withContext: async (_command, _label, fn) => {
+      const ctx = {
+        apiBaseUrl: "https://lite2.cocalc.ai",
+        timeoutMs: 600_000,
+        pollMs: 1,
+        globals: { json: true, output: "json" },
+        hub: {
+          system: {
+            getHostBay: async ({ host_id }) => ({
+              host_id,
+              bay_id: "bay-0",
+              name: "host-1",
+              source: "single-bay-default",
+            }),
+          },
+          hosts: {
+            upgradeHostSoftware: async ({ id }) => {
+              capture.upgrades.push(id);
+              return { op_id: `op-${id}` };
+            },
+            reconcileHostSoftware: async ({ id }) => {
+              capture.reconciles.push(id);
+              return { op_id: `reconcile-${id}` };
+            },
+            getHostMetricsHistory: async (opts) => ({
+              window_minutes: opts?.window_minutes ?? 60,
+              point_count: 0,
+              points: [],
+              derived: {
+                window_minutes: opts?.window_minutes ?? 60,
+                disk: { level: "healthy" },
+                metadata: {
+                  level: "warning",
+                  reason: "metadata usage is high",
+                },
+                alerts: [],
+                admission_allowed: true,
+                auto_grow_recommended: false,
+              },
+            }),
+          },
+        },
+      };
+      capture.data = await fn(ctx);
+    },
+  });
+  const program = new Command();
+  registerHostCommand(program, deps);
+
+  await program.parseAsync(["node", "test", "host", "where", "host-1"]);
+
+  assert.equal(capture.data.host_id, "44444444-4444-4444-4444-444444444444");
+  assert.equal(capture.data.bay_id, "bay-0");
+});
+
 test("host bootstrap-status returns lifecycle drift data", async () => {
   const capture: { data?: any; upgrades: string[]; reconciles: string[] } = {
     upgrades: [],

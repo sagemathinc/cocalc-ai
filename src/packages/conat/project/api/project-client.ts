@@ -3,7 +3,7 @@ Create a client for the project's api.  Anything that can publish to *.project-p
 */
 
 import { projectSubject } from "@cocalc/conat/names";
-import { type Client, connect } from "@cocalc/conat/core/client";
+import type { Client } from "@cocalc/conat/core/client";
 import { isValidUUID } from "@cocalc/util/misc";
 import { type ProjectApi, initProjectApi } from "./index";
 
@@ -12,7 +12,7 @@ const service = "api";
 
 export function projectApiClient({
   project_id,
-  client = connect(),
+  client,
   timeout = DEFAULT_TIMEOUT,
 }: {
   project_id: string;
@@ -21,6 +21,11 @@ export function projectApiClient({
 }): ProjectApi {
   if (!isValidUUID(project_id)) {
     throw Error(`project_id = '${project_id}' must be a valid uuid`);
+  }
+  if (client == null) {
+    throw Error(
+      "projectApiClient must provide an explicit Conat client; shared helpers must not silently fall back to a global singleton",
+    );
   }
   const subject = projectSubject({ project_id, service });
 

@@ -13,7 +13,7 @@ import {
   updateLro,
 } from "@cocalc/server/lro/lro-db";
 import { getEffectiveParallelOpsLimit } from "@cocalc/server/lro/worker-config";
-import { publishLroEvent, publishLroSummary } from "@cocalc/conat/lro/stream";
+import { publishLroEvent, publishLroSummary } from "@cocalc/server/lro/stream";
 import {
   deleteHostInternal,
   drainHostInternal,

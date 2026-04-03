@@ -15,8 +15,10 @@ export const PROJECT_RUNTIME_BOOTSTRAP_PACKAGES = [
   "sudo",
   "ca-certificates",
 ] as const;
+export const LEGACY_PROJECT_RUNTIME_HOME = "/root";
 export const PROJECT_RUNTIME_HOME_ALIASES = [
   DEFAULT_PROJECT_RUNTIME_HOME,
+  LEGACY_PROJECT_RUNTIME_HOME,
 ] as const;
 
 export function projectRuntimeRootfsContractLabels(): Record<string, string> {

@@ -5,7 +5,7 @@
 
 import { EventEmitter } from "events";
 import { changefeed, type Changefeed } from "@cocalc/conat/hub/changefeeds";
-import { conat } from "@cocalc/conat/client";
+import type { Client as ConatClient } from "@cocalc/conat/core/client";
 
 // low level debugging of changefeeds
 const LOW_LEVEL_DEBUG = false;
@@ -21,20 +21,27 @@ export class ConatChangefeed extends EventEmitter {
   private options;
   private state: "disconnected" | "connected" | "closed" = "disconnected";
   private cf?: Changefeed;
+  private client: ConatClient;
 
   constructor({
     account_id,
     query,
     options,
+    client,
   }: {
     account_id: string;
     query;
     options?;
+    client: ConatClient;
   }) {
     super();
+    if (client == null) {
+      throw Error("changefeed must provide an explicit Conat client");
+    }
     this.account_id = account_id;
     this.query = query;
     this.options = options;
+    this.client = client;
   }
 
   log = (...args) => {
@@ -45,7 +52,7 @@ export class ConatChangefeed extends EventEmitter {
   connect = async () => {
     this.log("connecting...");
     this.cf = changefeed({
-      client: await conat(),
+      client: this.client,
       account_id: this.account_id,
       query: this.query,
       options: this.options,

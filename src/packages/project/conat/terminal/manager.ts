@@ -10,6 +10,7 @@ import ensureContainingDirectoryExists from "@cocalc/backend/misc/ensure-contain
 import { Session } from "./session";
 const logger = getLogger("project:conat:terminal:manager");
 import type { CreateTerminalOptions } from "@cocalc/conat/project/api/editor";
+import { getProjectConatClient } from "@cocalc/project/conat/runtime-client";
 
 let manager: TerminalManager | null = null;
 export const createTerminalService = async (
@@ -127,7 +128,12 @@ export class TerminalManager {
         },
       };
 
-      const server = createTerminalServer({ termPath, project_id, impl });
+      const server = createTerminalServer({
+        termPath,
+        project_id,
+        impl,
+        client: getProjectConatClient(),
+      });
 
       server.on("close", () => {
         this.sessions[termPath]?.close();

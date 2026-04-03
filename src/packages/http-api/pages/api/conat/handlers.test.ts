@@ -1,6 +1,7 @@
 /** @jest-environment node */
 
 import { createMocks } from "@cocalc/http-api/lib/api/test-framework";
+import { conat } from "@cocalc/backend/conat";
 import { getAccountFromApiKey } from "@cocalc/server/auth/api";
 import hubBridge from "@cocalc/server/api/hub-bridge";
 import projectBridge from "@cocalc/server/api/project-bridge";
@@ -12,11 +13,15 @@ import projectHandler from "./project";
 jest.mock("@cocalc/server/auth/api", () => ({
   getAccountFromApiKey: jest.fn(),
 }));
+jest.mock("@cocalc/backend/conat", () => ({
+  conat: jest.fn(),
+}));
 
 jest.mock("@cocalc/server/api/hub-bridge", () => jest.fn());
 jest.mock("@cocalc/server/api/project-bridge", () => jest.fn());
 jest.mock("@cocalc/server/projects/is-collaborator", () => jest.fn());
 
+const mockConat = jest.mocked(conat);
 const mockGetAccountFromApiKey = jest.mocked(getAccountFromApiKey);
 const mockHubBridge = jest.mocked(hubBridge);
 const mockProjectBridge = jest.mocked(projectBridge);
@@ -25,6 +30,7 @@ const mockIsCollaborator = jest.mocked(isCollaborator);
 describe("/api/conat/hub", () => {
   beforeEach(() => {
     jest.resetAllMocks();
+    mockConat.mockReturnValue({ id: "backend-client" } as any);
   });
 
   test("requires an account api key", async () => {
@@ -55,6 +61,7 @@ describe("/api/conat/hub", () => {
 
     await hubHandler(req, res);
     expect(mockHubBridge).toHaveBeenCalledWith({
+      client: { id: "backend-client" },
       account_id: "acc-1",
       args: [["acc-2"]],
       name: "system.getNames",
@@ -67,6 +74,7 @@ describe("/api/conat/hub", () => {
 describe("/api/conat/project", () => {
   beforeEach(() => {
     jest.resetAllMocks();
+    mockConat.mockReturnValue({ id: "backend-client" } as any);
   });
 
   test("requires either an account or project api key", async () => {
@@ -117,6 +125,7 @@ describe("/api/conat/project", () => {
     await projectHandler(req, res);
     expect(mockIsCollaborator).not.toHaveBeenCalled();
     expect(mockProjectBridge).toHaveBeenCalledWith({
+      client: { id: "backend-client" },
       args: [],
       name: "system.ping",
       project_id: "proj-1",

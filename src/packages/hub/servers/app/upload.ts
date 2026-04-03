@@ -22,6 +22,7 @@ import { Router } from "express";
 import { getLogger } from "@cocalc/hub/logger";
 import getAccount from "@cocalc/server/auth/get-account";
 import isCollaborator from "@cocalc/server/projects/is-collaborator";
+import { conat } from "@cocalc/backend/conat";
 import formidable from "formidable";
 import { PassThrough } from "node:stream";
 import { writeFile as writeFileToProject } from "@cocalc/conat/files/write";
@@ -175,6 +176,7 @@ async function handleUploadToProject({
           project_id,
           path: join(path, fields.fullPath?.[0] ?? filename),
           maxWait: MAX_UPLOAD_TIME_MS,
+          client: conat(),
         });
         // console.log("conat: finished writing ", filename);
       } catch (err) {

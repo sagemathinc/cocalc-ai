@@ -3,6 +3,7 @@ import { mkdtemp, mkdir, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Writable } from "node:stream";
+import { DEFAULT_PROJECT_RUNTIME_HOME } from "@cocalc/util/project-runtime";
 
 import type { AppRequestMatch } from "./app-public-access";
 import { createProjectSandboxFilesystem } from "./file-server-sandbox-policy";
@@ -70,6 +71,8 @@ function makeMatch(root: string, requestPath: string): AppRequestMatch {
     requestPath,
   };
 }
+
+const PUBLIC_ROOT = `${DEFAULT_PROJECT_RUNTIME_HOME}/public`;
 
 describe("static app serving", () => {
   const project_id = "00000000-1000-4000-8000-000000000000";
@@ -150,7 +153,7 @@ describe("static app serving", () => {
       res: res as unknown as http.ServerResponse,
       project_id,
       match: {
-        ...makeMatch("/root/public", "/"),
+        ...makeMatch(PUBLIC_ROOT, "/"),
         requestPath: "/docs",
       },
     });
@@ -183,7 +186,7 @@ describe("static app serving", () => {
       req: makeRequest("/leak.txt"),
       res: res as unknown as http.ServerResponse,
       project_id,
-      match: makeMatch("/root/public", "/leak.txt"),
+      match: makeMatch(PUBLIC_ROOT, "/leak.txt"),
     });
 
     expect(handled).toBe(true);
@@ -220,12 +223,12 @@ describe("static app serving", () => {
       res: res as unknown as http.ServerResponse,
       project_id,
       match: {
-        ...makeMatch("/root/public", "/"),
+        ...makeMatch(PUBLIC_ROOT, "/"),
         spec: {
           id: "site",
           kind: "static",
           static: {
-            root: "/root/public",
+            root: PUBLIC_ROOT,
           },
           integration: {
             mode: "cocalc-public-viewer",
@@ -272,11 +275,11 @@ describe("static app serving", () => {
         res: res as unknown as http.ServerResponse,
         project_id,
         match: {
-          ...makeMatch("/root/public", "/a.md?raw=1"),
+          ...makeMatch(PUBLIC_ROOT, "/a.md?raw=1"),
           spec: {
             id: "site",
             kind: "static",
-            static: { root: "/root/public" },
+            static: { root: PUBLIC_ROOT },
             integration: {
               mode: "cocalc-public-viewer",
               manifest: "index.json",
@@ -326,12 +329,12 @@ describe("static app serving", () => {
       res: firstRes as unknown as http.ServerResponse,
       project_id,
       match: {
-        ...makeMatch("/root/public", "/a.md?raw=1"),
+        ...makeMatch(PUBLIC_ROOT, "/a.md?raw=1"),
         exposure: { mode: "public" },
         spec: {
           id: "site",
           kind: "static",
-          static: { root: "/root/public" },
+          static: { root: PUBLIC_ROOT },
           integration: {
             mode: "cocalc-public-viewer",
             manifest: "index.json",
@@ -357,12 +360,12 @@ describe("static app serving", () => {
       res: secondRes as unknown as http.ServerResponse,
       project_id,
       match: {
-        ...makeMatch("/root/public", "/a.md?raw=1"),
+        ...makeMatch(PUBLIC_ROOT, "/a.md?raw=1"),
         exposure: { mode: "public" },
         spec: {
           id: "site",
           kind: "static",
-          static: { root: "/root/public" },
+          static: { root: PUBLIC_ROOT },
           integration: {
             mode: "cocalc-public-viewer",
             manifest: "index.json",
@@ -408,12 +411,12 @@ describe("static app serving", () => {
       res: res as unknown as http.ServerResponse,
       project_id,
       match: {
-        ...makeMatch("/root/public", "/"),
+        ...makeMatch(PUBLIC_ROOT, "/"),
         exposure: { mode: "public" },
         spec: {
           id: "site",
           kind: "static",
-          static: { root: "/root/public" },
+          static: { root: PUBLIC_ROOT },
           integration: {
             mode: "cocalc-public-viewer",
             manifest: "index.json",

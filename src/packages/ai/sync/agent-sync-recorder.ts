@@ -1,8 +1,8 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 
-import { getLogger, type Logger } from "@cocalc/conat/client";
 import type { Client as ConatClient } from "@cocalc/conat/core/client";
+import { getLogger, type Logger } from "@cocalc/conat/logger";
 import { akv } from "@cocalc/conat/sync/akv";
 import {
   getSyncDocDescriptor,

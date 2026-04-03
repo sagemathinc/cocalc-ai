@@ -261,6 +261,16 @@ export function registerHostCommand(
     });
 
   host
+    .command("where <host>")
+    .description("show the bay for one host by id or name")
+    .action(async (hostIdentifier: string, command: Command) => {
+      await withContext(command, "host where", async (ctx) => {
+        const h = await resolveHost(ctx, hostIdentifier);
+        return await ctx.hub.system.getHostBay({ host_id: h.id });
+      });
+    });
+
+  host
     .command("bootstrap-status <host>")
     .description("show desired vs installed bootstrap/tool lifecycle state")
     .action(async (hostIdentifier: string, command: Command) => {

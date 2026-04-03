@@ -5,7 +5,7 @@ import { PROJECT_IMAGE_PATH } from "@cocalc/util/db-schema/defaults";
 import type { SnapshotRestoreMode } from "@cocalc/conat/files/file-server";
 import { getEffectiveParallelOpsLimit } from "@cocalc/server/lro/worker-config";
 import { claimLroOps, touchLro, updateLro } from "@cocalc/server/lro/lro-db";
-import { publishLroEvent, publishLroSummary } from "@cocalc/conat/lro/stream";
+import { publishLroEvent, publishLroSummary } from "@cocalc/server/lro/stream";
 import {
   ensureProjectFileServerClientReady,
   getProjectFileServerClient,

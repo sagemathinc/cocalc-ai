@@ -8,6 +8,7 @@ import { get, type ProjectInfo } from "@cocalc/conat/project/project-info";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useIntl } from "react-intl";
 import { labels } from "@cocalc/frontend/i18n";
+import { webapp_client } from "@cocalc/frontend/webapp-client";
 
 function isVisible(): boolean {
   if (typeof document === "undefined") return true;
@@ -50,7 +51,10 @@ export default function useProjectInfo({
   const update = useCallback(async () => {
     // console.log("update", { project_id });
     try {
-      const info = await get({ project_id });
+      const info = await get({
+        client: webapp_client.conat_client.conat(),
+        project_id,
+      });
       setInfo(info);
       setDisconnected(false);
       setError("");

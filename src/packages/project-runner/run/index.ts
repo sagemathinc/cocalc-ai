@@ -11,6 +11,7 @@ import { server as projectRunnerServer } from "@cocalc/conat/project/runner/run"
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import { init as initFilesystem, localPath, sshServers } from "./filesystem";
 import getLogger from "@cocalc/backend/logger";
+import { initConatClient } from "./conat-client";
 import { start, stop, status, save } from "./podman";
 
 const logger = getLogger("project-runner:run");
@@ -23,6 +24,7 @@ export async function init(opts: { id?: string; client?: ConatClient } = {}) {
     throw Error("you must set the PROJECT_RUNNER_NAME env variable or the id");
   }
   client = opts.client ?? conat();
+  initConatClient(client);
   initFilesystem({ client });
   return await projectRunnerServer({
     id,

@@ -36,9 +36,9 @@ import {
   type Headers,
   messageData,
   type Message,
+  type Client,
 } from "@cocalc/conat/core/client";
 import { storagePath, type User, COCALC_TOMBSTONE_HEADER } from "./core-stream";
-import { connect } from "@cocalc/conat/core/client";
 
 export class AKV<T = any> {
   private storage: StorageOptions;
@@ -56,7 +56,7 @@ export class AKV<T = any> {
       ephemeral: options.ephemeral,
       sync: options.sync,
     };
-    const client = options.client ?? connect();
+    const client = requireAkvClient(options, "AKV").client;
     this.stream = stream({
       client,
       user: this.user,
@@ -180,6 +180,16 @@ export class AKV<T = any> {
   };
 }
 
-export function akv<T>(opts: DKVOptions) {
-  return new AKV<T>(opts);
+function requireAkvClient(
+  options: DKVOptions,
+  name: string,
+): DKVOptions & { client: Client } {
+  if (options.client == null) {
+    throw Error(`${name}: client must be specified`);
+  }
+  return options as DKVOptions & { client: Client };
+}
+
+export function akv<T>(opts: DKVOptions & { client: Client }) {
+  return new AKV<T>(requireAkvClient(opts, "akv"));
 }

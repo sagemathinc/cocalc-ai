@@ -12,11 +12,10 @@ Tests are in
 
 import { type Client } from "@cocalc/conat/core/client";
 import { randomChoice } from "@cocalc/conat/core/server";
-import { conat } from "@cocalc/conat/client";
 import { client as projectRunnerClient, UPDATE_INTERVAL } from "./run";
 import state, { type ProjectStatus, type ProjectState } from "./state";
 import { delay } from "awaiting";
-import { getLogger } from "@cocalc/conat/client";
+import { getLogger } from "@cocalc/conat/logger";
 
 const logger = getLogger("conat:project:runner:load-balancer");
 
@@ -25,7 +24,7 @@ const TIMEOUT = 30 * 60 * 1000;
 
 export interface Options {
   subject?: string;
-  client?: Client;
+  client: Client;
   setState?: (opts: {
     project_id: string;
     state: ProjectState;
@@ -51,7 +50,9 @@ export async function server({
   setState,
   getConfig,
 }: Options) {
-  client ??= conat();
+  if (!client) {
+    throw Error("project runner load balancer client MUST be specified");
+  }
 
   // - [ ] get info about the runner's status (use a stream?) -- write that here.
   // - [ ] connect to database to get quota for running a project -- via a function that is passed in
@@ -261,9 +262,11 @@ export function client({
   client,
   subject,
 }: {
-  client?: Client;
+  client: Client;
   subject: string;
 }): API {
-  client ??= conat();
+  if (!client) {
+    throw Error("project runner load balancer client MUST be specified");
+  }
   return client.call<API>(subject);
 }

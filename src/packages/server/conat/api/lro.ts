@@ -11,7 +11,7 @@ import {
   listLro,
   updateLro,
 } from "@cocalc/server/lro/lro-db";
-import { publishLroSummary } from "@cocalc/conat/lro/stream";
+import { publishLroSummary } from "@cocalc/server/lro/stream";
 import { cancelCopiesByOpId } from "@cocalc/server/projects/copy-db";
 
 const DISMISSABLE_STATUSES: LroStatus[] = [

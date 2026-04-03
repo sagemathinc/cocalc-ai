@@ -18,7 +18,7 @@ import {
 } from "@cocalc/conat/service/listings";
 import { delay } from "awaiting";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
-import { getLogger } from "@cocalc/conat/client";
+import { getLogger } from "@cocalc/conat/logger";
 
 const logger = getLogger("listings");
 
@@ -39,7 +39,10 @@ export class Listings extends EventEmitter {
   constructor(project_id: string) {
     super();
     this.project_id = project_id;
-    this.api = createListingsApiClient({ project_id });
+    this.api = createListingsApiClient({
+      project_id,
+      client: webapp_client.conat_client.conat(),
+    });
     this.init();
   }
 
@@ -50,6 +53,7 @@ export class Listings extends EventEmitter {
       try {
         this.listingsClient = await listingsClient({
           project_id: this.project_id,
+          client: webapp_client.conat_client.conat(),
         });
         // success!
         return;

@@ -26,6 +26,10 @@ export const system = {
   getCustomize: noAuth,
   ping: noAuth,
   terminate: authFirst,
+  listBays: authFirst,
+  getAccountBay: authFirstRequireAccount,
+  getProjectBay: authFirstRequireAccount,
+  getHostBay: authFirstRequireAccount,
   getParallelOpsStatus: authFirst,
   getProjectHostParallelOpsLimit: authFirst,
   setParallelOpsLimit: authFirst,
@@ -244,6 +248,36 @@ export interface ReserveProjectAppPublicSubdomainResult {
   warnings: string[];
 }
 
+export interface BayInfo {
+  bay_id: string;
+  label: string;
+  region: string | null;
+  deployment_mode: "single-bay";
+  role: "combined";
+  is_default: boolean;
+}
+
+export interface AccountBayLocation {
+  account_id: string;
+  home_bay_id: string;
+  source: "single-bay-default";
+}
+
+export interface ProjectBayLocation {
+  project_id: string;
+  owning_bay_id: string;
+  host_id: string | null;
+  title: string;
+  source: "single-bay-default";
+}
+
+export interface HostBayLocation {
+  host_id: string;
+  bay_id: string;
+  name: string;
+  source: "single-bay-default";
+}
+
 export interface PublicAppHostnameTrace {
   matched: boolean;
   hostname: string;
@@ -268,6 +302,23 @@ export interface System {
   //   - only admin can do this.
   //   - useful for development
   terminate: (service: "database" | "api") => Promise<void>;
+
+  listBays: (opts?: { account_id?: string }) => Promise<BayInfo[]>;
+
+  getAccountBay: (opts?: {
+    account_id?: string;
+    user_account_id?: string;
+  }) => Promise<AccountBayLocation>;
+
+  getProjectBay: (opts: {
+    account_id?: string;
+    project_id: string;
+  }) => Promise<ProjectBayLocation>;
+
+  getHostBay: (opts: {
+    account_id?: string;
+    host_id: string;
+  }) => Promise<HostBayLocation>;
 
   getParallelOpsStatus: (opts?: {
     account_id?: string;
