@@ -208,8 +208,7 @@ code.
 These still silently fall back to the global singleton and should be reviewed
 next:
 
-- [conat/files/fs.ts](/home/wstein/build/cocalc-lite4/src/packages/conat/files/fs.ts)
-- [conat/llm/client.ts](/home/wstein/build/cocalc-lite4/src/packages/conat/llm/client.ts)
+- none in the initial audit set
 
 ### Frontend Singleton Sites
 
@@ -223,6 +222,98 @@ clients.
 
 ## Next Recommended Cleanup Pass
 
-1. continue with the remaining shared wrappers, especially
-   `conat/files/fs.ts` and `conat/llm/client.ts`
+1. review remaining intentionally-local singleton wrappers and decide which
+   should become explicit before multi-bay routing
 2. keep server-side bridge/control paths ahead of broader frontend ergonomics
+
+## Completed In The Filesystem And LLM Pass
+
+### `conat/files/fs.ts`
+
+- removed the hidden fallback to the global Conat singleton
+- both `fsServer(...)` and `fsClient(...)` now require an explicit client
+- runtime-specific wrappers remain the deliberate places that choose a default:
+  - [conat/core/client.ts](/home/wstein/build/cocalc-lite4/src/packages/conat/core/client.ts)
+    injects the caller's connected client for `client.fs(...)`
+  - [backend/conat/files/local-path.ts](/home/wstein/build/cocalc-lite4/src/packages/backend/conat/files/local-path.ts)
+    still chooses the backend client explicitly when no caller overrides it
+- remaining direct callers used outside those wrappers were updated to pass
+  their intended backend client explicitly
+
+This closes the main shared file helper that could otherwise silently route
+filesystem reads/writes/watch traffic over the wrong Conat connection.
+
+### `conat/llm/client.ts`
+
+- removed the hidden fallback to the global Conat singleton
+- `llm(...)` now requires an explicit client
+- [frontend/conat/client.ts](/home/wstein/build/cocalc-lite4/src/packages/frontend/conat/client.ts)
+  now injects the browser's active client explicitly
+- backend tests now pass the backend client explicitly
+
+This keeps the shared LLM request helper safe for future multi-bay control
+routing instead of silently attaching to an ambient singleton.
+
+## Completed In The Service Wrapper Pass
+
+### `conat/service/listings.ts`
+
+- removed the hidden fallback to the global Conat singleton
+- `createListingsApiClient(...)`, `createListingsService(...)`, and
+  `listingsClient(...)` now require an explicit client
+- directory listing DKV helpers now flow through the same explicit client
+- the cached `listingsClient(...)` path now keys by both `project_id` and core
+  Conat client identity, so separate routed clients do not accidentally share
+  one cached listing client
+- the natural singleton wrappers remain local:
+  - [frontend/conat/client.ts](/home/wstein/build/cocalc-lite4/src/packages/frontend/conat/client.ts)
+    now injects the browser client explicitly
+  - [frontend/conat/listings.ts](/home/wstein/build/cocalc-lite4/src/packages/frontend/conat/listings.ts)
+    and [frontend/conat/use-listing.ts](/home/wstein/build/cocalc-lite4/src/packages/frontend/conat/use-listing.ts)
+    now inject the active browser client explicitly
+  - [project/conat/listings.ts](/home/wstein/build/cocalc-lite4/src/packages/project/conat/listings.ts)
+    now injects the project-scoped client explicitly
+
+This keeps directory listing interest, cached listing state, and the listing
+service itself aligned to the caller's chosen routed client.
+
+### `conat/service/time.ts`
+
+- removed the hidden fallback to the global Conat singleton and ambient account
+  or project identity
+- `timeClient(...)` and `createTimeService(...)` now require an explicit client
+- the natural singleton wrappers remain local:
+  - [conat/time.ts](/home/wstein/build/cocalc-lite4/src/packages/conat/time.ts)
+    now injects the active client and current account/project identity
+  - [server/conat/index.ts](/home/wstein/build/cocalc-lite4/src/packages/server/conat/index.ts)
+    now injects the backend hub client explicitly
+
+This keeps time-sync traffic on the intended routed connection instead of
+silently attaching to whichever singleton happens to be initialized.
+
+### `conat/service/terminal.ts`
+
+- removed the hidden fallback to the global Conat singleton
+- terminal server, terminal browser, and both client helpers now require an
+  explicit client
+- the natural singleton wrappers remain local:
+  - [project/conat/terminal/manager.ts](/home/wstein/build/cocalc-lite4/src/packages/project/conat/terminal/manager.ts)
+    now injects the project-scoped client explicitly for the terminal server
+  - [project/conat/terminal/session.ts](/home/wstein/build/cocalc-lite4/src/packages/project/conat/terminal/session.ts)
+    now injects the project-scoped client explicitly for browser callbacks
+
+This keeps terminal control traffic on the same project-scoped connection
+selected by the runtime wrapper instead of hiding that choice inside the shared
+helper.
+
+### `conat/service/browser-session.ts`
+
+- removed the hidden fallback to the global Conat singleton
+- browser-session client and service registration now require an explicit client
+- current production callers were already a good fit:
+  - CLI browser/workspace commands pass their routed remote client explicitly
+  - [frontend/conat/browser-session/index.ts](/home/wstein/build/cocalc-lite4/src/packages/frontend/conat/browser-session/index.ts)
+    already injects the browser's active client explicitly
+
+This keeps browser-session automation bound to the correct control-plane
+connection instead of silently depending on ambient global state.

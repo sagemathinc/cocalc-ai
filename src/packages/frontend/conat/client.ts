@@ -26,7 +26,7 @@ import type {
 } from "@cocalc/conat/service";
 import { listingsClient } from "@cocalc/conat/service/listings";
 import getTime, { getSkew, init as initTime } from "@cocalc/conat/time";
-import { llm } from "@cocalc/conat/llm/client";
+import { llm as requestLlm } from "@cocalc/conat/llm/client";
 import * as acp from "@cocalc/conat/ai/acp/client";
 import { inventory } from "@cocalc/conat/sync/inventory";
 import { EventEmitter } from "events";
@@ -1112,7 +1112,10 @@ export class ConatClient extends EventEmitter {
   // Evaluate an llm.  This streams the result if stream is given an option,
   // AND it also always returns the result.
   llm = async (opts: ChatOptions): Promise<string> => {
-    return await llm({ account_id: this.client.account_id, ...opts });
+    return await requestLlm(
+      { account_id: this.client.account_id, ...opts },
+      this.conat(),
+    );
   };
 
   streamAcp = async (request, options?) => {
@@ -1171,7 +1174,10 @@ export class ConatClient extends EventEmitter {
   dko = dko;
 
   listings = async (opts: { project_id: string }) => {
-    return await listingsClient({ project_id: opts.project_id });
+    return await listingsClient({
+      project_id: opts.project_id,
+      client: this.conat(),
+    });
   };
 
   getTime = (): number => {

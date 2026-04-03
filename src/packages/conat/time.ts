@@ -97,7 +97,11 @@ export const getSkew = reuseInFlight(async (): Promise<number> => {
   try {
     const start = Date.now();
     const client = getClient();
-    const tc = timeClient(client);
+    const tc = timeClient({
+      client: client.conat(),
+      account_id: client.account_id,
+      project_id: client.project_id,
+    });
     const serverTime = await tc.time();
     const end = Date.now();
     rtt = end - start;

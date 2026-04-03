@@ -8,6 +8,7 @@ import { hasSpecialViewer } from "@cocalc/frontend/file-extensions";
 import { getExtension } from "./util";
 import { fsClient, fsSubject } from "@cocalc/conat/files/fs";
 import "@cocalc/backend/conat";
+import { conat } from "@cocalc/conat/client";
 
 const MB: number = 1000000;
 
@@ -68,7 +69,7 @@ export default async function getContents(
   unlisted?: boolean, // if true, higher size limits, since much less likely to be abused
 ): Promise<PathContents> {
   const obj: PathContents = {};
-  const fs = fsClient({ subject: fsSubject({ project_id }) });
+  const fs = fsClient({ client: conat(), subject: fsSubject({ project_id }) });
 
   // use lstat instead of stat so it works on symlinks too
   const stats = await fs.lstat(path);

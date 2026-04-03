@@ -6,6 +6,7 @@ import { exists } from "@cocalc/backend/misc/async-utils-node";
 import { getLogger } from "@cocalc/project/logger";
 import { rm } from "node:fs/promises";
 import { dstream, type DStream } from "@cocalc/project/conat/sync";
+import { getClient as getConatClient } from "@cocalc/conat/client";
 import {
   createBrowserClient,
   SIZE_TIMEOUT_MS,
@@ -134,7 +135,11 @@ export class Session {
   }) {
     logger.debug("create session ", { termPath, options });
     this.termPath = termPath;
-    this.browserApi = createBrowserClient({ project_id, termPath });
+    this.browserApi = createBrowserClient({
+      project_id,
+      termPath,
+      client: getConatClient().conat(),
+    });
     this.options = options;
     this.streamName = `terminal-${termPath}`;
     this.spoolDirectory = join(data, "term-spool", randomId());

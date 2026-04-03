@@ -6,7 +6,6 @@ packages/backend/conat/files/test/local-path.test.ts
 */
 
 import { type Client } from "@cocalc/conat/core/client";
-import { conat } from "@cocalc/conat/client";
 import {
   watchServer,
   watchClient,
@@ -386,7 +385,7 @@ export class Stats {
 
 interface Options {
   service: string;
-  client?: Client;
+  client: Client;
   fs: (subject?: string) => Promise<Filesystem>;
   // project-id: if given, ONLY serve files for this one project, and the
   // path must be the home of the project
@@ -406,7 +405,7 @@ export async function fsServer({
   project_id,
   onMutation,
 }: Options) {
-  client ??= conat();
+  const resolvedClient = requireClient(client, "fsServer");
   const subject = project_id
     ? `${service}.project-${project_id}`
     : `${service}.*`;
@@ -447,204 +446,207 @@ export async function fsServer({
   };
 
   logger.debug("fsServer: starting subscription to ", subject);
-  const sub = await client.service<Filesystem & { subject?: string }>(subject, {
-    async appendFile(path: string, data: string | Buffer, encoding?) {
-      await (await fs(this.subject)).appendFile(path, data, encoding);
-      void reportMutation(this.subject, "appendFile", path);
-    },
-    async chmod(path: string, mode: string | number) {
-      await (await fs(this.subject)).chmod(path, mode);
-      void reportMutation(this.subject, "chmod", path);
-    },
-    async constants(): Promise<{ [key: string]: number }> {
-      return await (await fs(this.subject)).constants();
-    },
-    async copyFile(src: string, dest: string) {
-      await (await fs(this.subject)).copyFile(src, dest);
-      void reportMutation(this.subject, "copyFile", dest);
-    },
-    async describeFile(path: string): Promise<FileDescription> {
-      return await (await fs(this.subject)).describeFile(path);
-    },
-    async cp(src: string | string[], dest: string, options?) {
-      await (await fs(this.subject)).cp(src, dest, options);
-      void reportMutation(this.subject, "cp", dest);
-    },
-    async dust(path: string, options?: DustOptions) {
-      return await (await fs(this.subject)).dust(path, options);
-    },
-    async exists(path: string): Promise<boolean> {
-      return await (await fs(this.subject)).exists(path);
-    },
-    async fd(path: string, options?: FdOptions) {
-      return await (await fs(this.subject)).fd(path, options);
-    },
-    async find(path: string, options?: FindOptions) {
-      return await (await fs(this.subject)).find(path, options);
-    },
-    async getListing(path: string) {
-      return await (await fs(this.subject)).getListing(path);
-    },
-    async link(existingPath: string, newPath: string) {
-      await (await fs(this.subject)).link(existingPath, newPath);
-      void reportMutation(this.subject, "link", newPath);
-    },
-    async lstat(path: string): Promise<IStats> {
-      return await (await fs(this.subject)).lstat(path);
-    },
-    async mkdir(path: string, options?) {
-      await (await fs(this.subject)).mkdir(path, options);
-      void reportMutation(this.subject, "mkdir", path);
-    },
-    async ouch(args: string[], options?: OuchOptions) {
-      return await (await fs(this.subject)).ouch(args, options);
-    },
-    async readFile(path: string, encoding?, lock?) {
-      return await (await fs(this.subject)).readFile(path, encoding, lock);
-    },
-    async lockFile(path: string, lock?: number) {
-      return await (await fs(this.subject)).lockFile(path, lock);
-    },
+  const sub = await resolvedClient.service<Filesystem & { subject?: string }>(
+    subject,
+    {
+      async appendFile(path: string, data: string | Buffer, encoding?) {
+        await (await fs(this.subject)).appendFile(path, data, encoding);
+        void reportMutation(this.subject, "appendFile", path);
+      },
+      async chmod(path: string, mode: string | number) {
+        await (await fs(this.subject)).chmod(path, mode);
+        void reportMutation(this.subject, "chmod", path);
+      },
+      async constants(): Promise<{ [key: string]: number }> {
+        return await (await fs(this.subject)).constants();
+      },
+      async copyFile(src: string, dest: string) {
+        await (await fs(this.subject)).copyFile(src, dest);
+        void reportMutation(this.subject, "copyFile", dest);
+      },
+      async describeFile(path: string): Promise<FileDescription> {
+        return await (await fs(this.subject)).describeFile(path);
+      },
+      async cp(src: string | string[], dest: string, options?) {
+        await (await fs(this.subject)).cp(src, dest, options);
+        void reportMutation(this.subject, "cp", dest);
+      },
+      async dust(path: string, options?: DustOptions) {
+        return await (await fs(this.subject)).dust(path, options);
+      },
+      async exists(path: string): Promise<boolean> {
+        return await (await fs(this.subject)).exists(path);
+      },
+      async fd(path: string, options?: FdOptions) {
+        return await (await fs(this.subject)).fd(path, options);
+      },
+      async find(path: string, options?: FindOptions) {
+        return await (await fs(this.subject)).find(path, options);
+      },
+      async getListing(path: string) {
+        return await (await fs(this.subject)).getListing(path);
+      },
+      async link(existingPath: string, newPath: string) {
+        await (await fs(this.subject)).link(existingPath, newPath);
+        void reportMutation(this.subject, "link", newPath);
+      },
+      async lstat(path: string): Promise<IStats> {
+        return await (await fs(this.subject)).lstat(path);
+      },
+      async mkdir(path: string, options?) {
+        await (await fs(this.subject)).mkdir(path, options);
+        void reportMutation(this.subject, "mkdir", path);
+      },
+      async ouch(args: string[], options?: OuchOptions) {
+        return await (await fs(this.subject)).ouch(args, options);
+      },
+      async readFile(path: string, encoding?, lock?) {
+        return await (await fs(this.subject)).readFile(path, encoding, lock);
+      },
+      async lockFile(path: string, lock?: number) {
+        return await (await fs(this.subject)).lockFile(path, lock);
+      },
 
-    async readdir(path: string, options?) {
-      const files = await (await fs(this.subject)).readdir(path, options);
-      if (!options?.withFileTypes) {
-        return files;
-      }
-      // Dirent - change the [Symbol(type)] field to something serializable so client can use this:
-      return files.map((x) => {
-        // @ts-ignore
-        return { ...x, type: x[Object.getOwnPropertySymbols(x)[0]] };
-      });
-    },
-    async readlink(path: string) {
-      return await (await fs(this.subject)).readlink(path);
-    },
-    async realpath(path: string) {
-      return await (await fs(this.subject)).realpath(path);
-    },
-    async canonicalSyncFsPath(path: string) {
-      const filesystem = await fs(this.subject);
-      if (typeof filesystem.canonicalSyncFsPath === "function") {
-        return await filesystem.canonicalSyncFsPath(path);
-      }
-      if (typeof filesystem.realpath === "function") {
-        try {
-          return await filesystem.realpath(path);
-        } catch {
-          return path;
+      async readdir(path: string, options?) {
+        const files = await (await fs(this.subject)).readdir(path, options);
+        if (!options?.withFileTypes) {
+          return files;
         }
-      }
-      return path;
-    },
-    async canonicalSyncIdentityPath(path: string) {
-      const filesystem = await fs(this.subject);
-      if (typeof filesystem.canonicalSyncIdentityPath === "function") {
-        return await filesystem.canonicalSyncIdentityPath(path);
-      }
-      if (typeof filesystem.realpath === "function") {
-        try {
-          return await filesystem.realpath(path);
-        } catch {
-          return path;
+        // Dirent - change the [Symbol(type)] field to something serializable so client can use this:
+        return files.map((x) => {
+          // @ts-ignore
+          return { ...x, type: x[Object.getOwnPropertySymbols(x)[0]] };
+        });
+      },
+      async readlink(path: string) {
+        return await (await fs(this.subject)).readlink(path);
+      },
+      async realpath(path: string) {
+        return await (await fs(this.subject)).realpath(path);
+      },
+      async canonicalSyncFsPath(path: string) {
+        const filesystem = await fs(this.subject);
+        if (typeof filesystem.canonicalSyncFsPath === "function") {
+          return await filesystem.canonicalSyncFsPath(path);
         }
-      }
-      return path;
+        if (typeof filesystem.realpath === "function") {
+          try {
+            return await filesystem.realpath(path);
+          } catch {
+            return path;
+          }
+        }
+        return path;
+      },
+      async canonicalSyncIdentityPath(path: string) {
+        const filesystem = await fs(this.subject);
+        if (typeof filesystem.canonicalSyncIdentityPath === "function") {
+          return await filesystem.canonicalSyncIdentityPath(path);
+        }
+        if (typeof filesystem.realpath === "function") {
+          try {
+            return await filesystem.realpath(path);
+          } catch {
+            return path;
+          }
+        }
+        return path;
+      },
+      async syncFsWatch(path: string, active: boolean = true, info?: any) {
+        return await (await fs(this.subject)).syncFsWatch(path, active, info);
+      },
+      async syncFsReconcile(path: string, info?: any) {
+        const filesystem = await fs(this.subject);
+        if (typeof filesystem.syncFsReconcile === "function") {
+          return await filesystem.syncFsReconcile(path, info);
+        }
+      },
+      async rename(oldPath: string, newPath: string) {
+        await (await fs(this.subject)).rename(oldPath, newPath);
+        void reportMutation(this.subject, "rename", newPath);
+      },
+      async move(
+        src: string | string[],
+        dest: string,
+        options?: { overwrite?: boolean },
+      ) {
+        const result = await (await fs(this.subject)).move(src, dest, options);
+        void reportMutation(this.subject, "move", dest);
+        return result;
+      },
+      async ripgrep(path: string, pattern: string, options?: RipgrepOptions) {
+        return await (await fs(this.subject)).ripgrep(path, pattern, options);
+      },
+      async rustic(args: string[]) {
+        return await (await fs(this.subject)).rustic(args);
+      },
+      async rm(path: string | string[], options?) {
+        await (await fs(this.subject)).rm(path, options);
+        void reportMutation(
+          this.subject,
+          "rm",
+          typeof path === "string" ? path : undefined,
+        );
+      },
+      async rmdir(path: string, options?) {
+        await (await fs(this.subject)).rmdir(path, options);
+        void reportMutation(this.subject, "rmdir", path);
+      },
+      async stat(path: string): Promise<IStats> {
+        const s = await (await fs(this.subject)).stat(path);
+        return {
+          ...s,
+          // for some reason these times get corrupted on transport from the nodejs datastructure,
+          // so we make them standard Date objects.
+          atime: new Date(s.atime),
+          mtime: new Date(s.mtime),
+          ctime: new Date(s.ctime),
+          birthtime: new Date(s.birthtime),
+        };
+      },
+      async symlink(target: string, path: string) {
+        await (await fs(this.subject)).symlink(target, path);
+        void reportMutation(this.subject, "symlink", path);
+      },
+      async truncate(path: string, len?: number) {
+        await (await fs(this.subject)).truncate(path, len);
+        void reportMutation(this.subject, "truncate", path);
+      },
+      async unlink(path: string) {
+        await (await fs(this.subject)).unlink(path);
+        void reportMutation(this.subject, "unlink", path);
+      },
+      async utimes(
+        path: string,
+        atime: number | string | Date,
+        mtime: number | string | Date,
+      ) {
+        await (await fs(this.subject)).utimes(path, atime, mtime);
+        void reportMutation(this.subject, "utimes", path);
+      },
+      async writeFile(
+        path: string,
+        data: string | Buffer | PatchWriteRequest,
+        saveLast?: boolean,
+      ) {
+        await (await fs(this.subject)).writeFile(path, data, saveLast);
+        void reportMutation(this.subject, "writeFile", path);
+      },
+      // @ts-ignore
+      async watch() {
+        const subject = this.subject!;
+        if (watches[subject] != null) {
+          return;
+        }
+        const f = await fs(subject);
+        watches[subject] = watchServer({
+          client: resolvedClient,
+          subject: `watch-${subject}`,
+          watch: f.watch,
+        });
+      },
     },
-    async syncFsWatch(path: string, active: boolean = true, info?: any) {
-      return await (await fs(this.subject)).syncFsWatch(path, active, info);
-    },
-    async syncFsReconcile(path: string, info?: any) {
-      const filesystem = await fs(this.subject);
-      if (typeof filesystem.syncFsReconcile === "function") {
-        return await filesystem.syncFsReconcile(path, info);
-      }
-    },
-    async rename(oldPath: string, newPath: string) {
-      await (await fs(this.subject)).rename(oldPath, newPath);
-      void reportMutation(this.subject, "rename", newPath);
-    },
-    async move(
-      src: string | string[],
-      dest: string,
-      options?: { overwrite?: boolean },
-    ) {
-      const result = await (await fs(this.subject)).move(src, dest, options);
-      void reportMutation(this.subject, "move", dest);
-      return result;
-    },
-    async ripgrep(path: string, pattern: string, options?: RipgrepOptions) {
-      return await (await fs(this.subject)).ripgrep(path, pattern, options);
-    },
-    async rustic(args: string[]) {
-      return await (await fs(this.subject)).rustic(args);
-    },
-    async rm(path: string | string[], options?) {
-      await (await fs(this.subject)).rm(path, options);
-      void reportMutation(
-        this.subject,
-        "rm",
-        typeof path === "string" ? path : undefined,
-      );
-    },
-    async rmdir(path: string, options?) {
-      await (await fs(this.subject)).rmdir(path, options);
-      void reportMutation(this.subject, "rmdir", path);
-    },
-    async stat(path: string): Promise<IStats> {
-      const s = await (await fs(this.subject)).stat(path);
-      return {
-        ...s,
-        // for some reason these times get corrupted on transport from the nodejs datastructure,
-        // so we make them standard Date objects.
-        atime: new Date(s.atime),
-        mtime: new Date(s.mtime),
-        ctime: new Date(s.ctime),
-        birthtime: new Date(s.birthtime),
-      };
-    },
-    async symlink(target: string, path: string) {
-      await (await fs(this.subject)).symlink(target, path);
-      void reportMutation(this.subject, "symlink", path);
-    },
-    async truncate(path: string, len?: number) {
-      await (await fs(this.subject)).truncate(path, len);
-      void reportMutation(this.subject, "truncate", path);
-    },
-    async unlink(path: string) {
-      await (await fs(this.subject)).unlink(path);
-      void reportMutation(this.subject, "unlink", path);
-    },
-    async utimes(
-      path: string,
-      atime: number | string | Date,
-      mtime: number | string | Date,
-    ) {
-      await (await fs(this.subject)).utimes(path, atime, mtime);
-      void reportMutation(this.subject, "utimes", path);
-    },
-    async writeFile(
-      path: string,
-      data: string | Buffer | PatchWriteRequest,
-      saveLast?: boolean,
-    ) {
-      await (await fs(this.subject)).writeFile(path, data, saveLast);
-      void reportMutation(this.subject, "writeFile", path);
-    },
-    // @ts-ignore
-    async watch() {
-      const subject = this.subject!;
-      if (watches[subject] != null) {
-        return;
-      }
-      const f = await fs(subject);
-      watches[subject] = watchServer({
-        client,
-        subject: `watch-${subject}`,
-        watch: f.watch,
-      });
-    },
-  });
+  );
   logger.debug("fsServer: created subscription to ", subject);
 
   return {
@@ -769,19 +771,28 @@ export function fsSubject({
 
 const DEFAULT_FS_CALL_TIMEOUT = 5 * 60_000;
 
+function requireClient(client: Client | undefined, context: string): Client {
+  if (client == null) {
+    throw new Error(
+      `${context} must provide an explicit Conat client for routed filesystem access`,
+    );
+  }
+  return client;
+}
+
 export function fsClient({
   client,
   subject,
   timeout = DEFAULT_FS_CALL_TIMEOUT,
   waitForInterest = true,
 }: {
-  client?: Client;
+  client: Client;
   subject: string;
   timeout?: number;
   waitForInterest?: boolean;
 }): FilesystemClient {
-  client ??= conat();
-  let call = client.call<FilesystemClient>(subject, {
+  const resolvedClient = requireClient(client, "fsClient");
+  let call = resolvedClient.call<FilesystemClient>(subject, {
     timeout,
     waitForInterest,
   });
@@ -831,7 +842,7 @@ export function fsClient({
     }
     await ensureWatchServerExists(path, options);
     return await watchClient({
-      client,
+      client: resolvedClient,
       subject: `watch-${subject}`,
       path,
       options,

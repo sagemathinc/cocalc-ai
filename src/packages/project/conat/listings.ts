@@ -39,6 +39,7 @@ import {
   type Listing,
   type Times,
 } from "@cocalc/conat/service/listings";
+import { getClient as getConatClient } from "@cocalc/conat/client";
 import { project_id } from "@cocalc/project/data";
 import { init as initClient } from "@cocalc/project/client";
 import { delay } from "awaiting";
@@ -57,6 +58,7 @@ export async function init() {
 
   service = await createListingsService({
     project_id,
+    client: getConatClient().conat(),
     impl,
   });
   const L = new Listings();
@@ -106,8 +108,9 @@ class Listings {
 
   init = async () => {
     logger.debug("Listings.init: start");
-    this.listings = await getListingsKV({ project_id });
-    this.times = await getListingsTimesKV({ project_id });
+    const client = getConatClient().conat();
+    this.listings = await getListingsKV({ project_id, client });
+    this.times = await getListingsTimesKV({ project_id, client });
     // start watching paths with recent interest
     const cutoff = Date.now() - INTEREST_CUTOFF_MS;
     const times = this.times.getAll();

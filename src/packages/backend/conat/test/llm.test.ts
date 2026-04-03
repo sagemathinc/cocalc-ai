@@ -9,6 +9,7 @@ DEVELOPMENT:
 
 // this sets client
 import "@cocalc/backend/conat";
+import { conat } from "@cocalc/conat/client";
 
 import { init, close } from "@cocalc/conat/llm/server";
 import { llm } from "@cocalc/conat/llm/client";
@@ -32,14 +33,17 @@ describe("create an llm server, client, and stub evaluator, and run an evaluatio
   it("calls the llm", async () => {
     const v: (string | null)[] = [];
     const input = "cocalc";
-    const all = await llm({
-      account_id: "00000000-0000-4000-8000-000000000000",
-      system: "in cocalc",
-      input,
-      stream: (text) => {
-        v.push(text);
+    const all = await llm(
+      {
+        account_id: "00000000-0000-4000-8000-000000000000",
+        system: "in cocalc",
+        input,
+        stream: (text) => {
+          v.push(text);
+        },
       },
-    });
+      conat(),
+    );
     expect(all).toBe(OUTPUT + input);
     expect(v[0]).toBe(OUTPUT);
     expect(v[1]).toBe(input);
@@ -68,14 +72,17 @@ describe("test an evaluate that throws an error half way through", () => {
     const input = "cocalc";
     await expect(
       async () =>
-        await llm({
-          account_id: "00000000-0000-4000-8000-000000000000",
-          system: "in cocalc",
-          input,
-          stream: (text) => {
-            v.push(text);
+        await llm(
+          {
+            account_id: "00000000-0000-4000-8000-000000000000",
+            system: "in cocalc",
+            input,
+            stream: (text) => {
+              v.push(text);
+            },
           },
-        }),
+          conat(),
+        ),
     ).rejects.toThrow(ERROR);
     expect(v[0]).toBe(OUTPUT);
     expect(v.length).toBe(1);

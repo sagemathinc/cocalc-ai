@@ -78,7 +78,7 @@ export async function initConatApi() {
   } else {
     logger.info("launchpad product: skipping project runner services");
   }
-  createTimeService();
+  createTimeService({ client: conat() });
 }
 
 export async function initConatHostRegistry() {

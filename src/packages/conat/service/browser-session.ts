@@ -9,7 +9,6 @@ import { createServiceClient, createServiceHandler } from "./typed";
 import type { ConatService } from "./typed";
 import type { Client } from "@cocalc/conat/core/client";
 import type { BrowserOpenProjectState } from "@cocalc/conat/hub/api/system";
-import { getClient } from "@cocalc/conat/client";
 
 export type BrowserOpenFileInfo = {
   project_id: string;
@@ -381,6 +380,15 @@ export interface BrowserSessionServiceApi {
 
 const SERVICE = "browser-session";
 
+function requireClient(client: Client | undefined): Client {
+  if (client == null) {
+    throw Error(
+      "browser-session service helper must provide an explicit Conat client",
+    );
+  }
+  return client;
+}
+
 export function createBrowserSessionClient({
   account_id,
   browser_id,
@@ -389,14 +397,14 @@ export function createBrowserSessionClient({
 }: {
   account_id: string;
   browser_id: string;
-  client?: Client;
+  client: Client;
   timeout?: number;
 }) {
   return createServiceClient<BrowserSessionServiceApi>({
     account_id,
     browser_id,
     service: SERVICE,
-    client: client ?? getClient().conat(),
+    client: requireClient(client),
     timeout,
   });
 }
@@ -410,7 +418,7 @@ export function createBrowserSessionService({
   account_id: string;
   browser_id: string;
   impl: BrowserSessionServiceApi;
-  client?: Client;
+  client: Client;
 }): ConatService {
   return createServiceHandler<BrowserSessionServiceApi>({
     account_id,
@@ -418,6 +426,6 @@ export function createBrowserSessionService({
     service: SERVICE,
     description: "Browser session automation service.",
     impl,
-    client: client ?? getClient().conat(),
+    client: requireClient(client),
   });
 }
