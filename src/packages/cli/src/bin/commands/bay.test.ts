@@ -64,3 +64,89 @@ test("bay show filters one bay from the hub list", async () => {
 
   assert.equal(captured?.bay_id, "bay-0");
 });
+
+test("bay backfill defaults to a dry run", async () => {
+  let captured: any;
+  const program = new Command();
+  registerBayCommand(program, {
+    withContext: async (_command, _label, fn) => {
+      const ctx = {
+        hub: {
+          system: {
+            backfillBayOwnership: async (opts: any) => {
+              captured = opts;
+              return {
+                bay_id: "bay-0",
+                dry_run: true,
+                limit_per_table: null,
+                accounts_missing: 12,
+                projects_missing: 34,
+                hosts_missing: 5,
+                accounts_updated: 0,
+                projects_updated: 0,
+                hosts_updated: 0,
+              };
+            },
+          },
+        },
+      };
+      return await fn(ctx);
+    },
+  } as any);
+
+  await program.parseAsync(["node", "test", "bay", "backfill"]);
+
+  assert.deepEqual(captured, {
+    bay_id: undefined,
+    dry_run: true,
+    limit_per_table: undefined,
+  });
+});
+
+test("bay backfill forwards write mode and limit", async () => {
+  let captured: any;
+  const program = new Command();
+  registerBayCommand(program, {
+    withContext: async (_command, _label, fn) => {
+      const ctx = {
+        hub: {
+          system: {
+            backfillBayOwnership: async (opts: any) => {
+              captured = opts;
+              return {
+                bay_id: "bay-7",
+                dry_run: false,
+                limit_per_table: 25,
+                accounts_missing: 0,
+                projects_missing: 0,
+                hosts_missing: 0,
+                accounts_updated: 3,
+                projects_updated: 4,
+                hosts_updated: 1,
+              };
+            },
+          },
+        },
+      };
+      return await fn(ctx);
+    },
+  } as any);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "bay",
+    "backfill",
+    "--write",
+    "--bay-id",
+    "bay-7",
+    "--limit-per-table",
+    "25",
+  ]);
+
+  assert.deepEqual(captured, {
+    bay_id: "bay-7",
+    dry_run: false,
+    limit_per_table: 25,
+  });
+});

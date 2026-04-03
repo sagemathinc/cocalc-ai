@@ -8,6 +8,7 @@ import {
   resolveHostBay,
   resolveProjectOwningBay,
 } from "@cocalc/server/bay-directory";
+import { backfillBayOwnership as backfillBayOwnership0 } from "@cocalc/server/bay-backfill";
 import { record_user_tracking } from "@cocalc/database/postgres/account/user-tracking";
 import { db } from "@cocalc/database";
 import manageApiKeys from "@cocalc/server/api/manage";
@@ -129,6 +130,25 @@ export async function getHostBay({
   host_id: string;
 }) {
   return await resolveHostBay({ account_id, host_id });
+}
+
+export async function backfillBayOwnership({
+  account_id,
+  bay_id,
+  dry_run = true,
+  limit_per_table,
+}: {
+  account_id?: string;
+  bay_id?: string;
+  dry_run?: boolean;
+  limit_per_table?: number;
+}) {
+  await assertAdmin(account_id);
+  return await backfillBayOwnership0({
+    bay_id,
+    dry_run,
+    limit_per_table,
+  });
 }
 
 export async function getParallelOpsStatus({
