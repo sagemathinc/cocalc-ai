@@ -1,74 +1,91 @@
-/*
- *  This file is part of CoCalc: Copyright © 2026 Sagemath, Inc.
- *  License: MS-RSL - see LICENSE.md for details
- */
+export {};
 
-let conatWithProjectRoutingMock: jest.Mock;
+let assertLocalProjectCollaboratorMock: jest.Mock;
 let materializeProjectHostMock: jest.Mock;
 let projectApiClientMock: jest.Mock;
-let execMock: jest.Mock;
-let isCollaboratorMock: jest.Mock;
+let conatWithProjectRoutingMock: jest.Mock;
+let systemExecMock: jest.Mock;
 
-jest.mock("@cocalc/server/conat/route-client", () => ({
-  conatWithProjectRouting: (...args: any[]) =>
-    conatWithProjectRoutingMock(...args),
+jest.mock("@cocalc/server/conat/project-local-access", () => ({
+  __esModule: true,
+  assertLocalProjectCollaborator: (...args: any[]) =>
+    assertLocalProjectCollaboratorMock(...args),
 }));
 
 jest.mock("@cocalc/server/conat/route-project", () => ({
+  __esModule: true,
   materializeProjectHost: (...args: any[]) =>
     materializeProjectHostMock(...args),
 }));
 
+jest.mock("@cocalc/server/conat/route-client", () => ({
+  __esModule: true,
+  conatWithProjectRouting: (...args: any[]) =>
+    conatWithProjectRoutingMock(...args),
+}));
+
 jest.mock("@cocalc/conat/project/api", () => ({
+  __esModule: true,
   projectApiClient: (...args: any[]) => projectApiClientMock(...args),
 }));
 
-jest.mock("@cocalc/server/projects/is-collaborator", () => ({
-  __esModule: true,
-  default: (...args: any[]) => isCollaboratorMock(...args),
-}));
+describe("project exec local bay access", () => {
+  const ACCOUNT_ID = "11111111-1111-4111-8111-111111111111";
+  const PROJECT_ID = "22222222-2222-4222-8222-222222222222";
 
-describe("projects.exec routing", () => {
   beforeEach(() => {
-    execMock = jest.fn(async () => ({
+    jest.resetModules();
+    assertLocalProjectCollaboratorMock = jest.fn(async () => undefined);
+    materializeProjectHostMock = jest.fn(async () => undefined);
+    conatWithProjectRoutingMock = jest.fn(() => ({ kind: "conat-client" }));
+    systemExecMock = jest.fn(async () => ({
       stdout: "ok",
       stderr: "",
       exit_code: 0,
     }));
-    conatWithProjectRoutingMock = jest.fn(() => ({ id: "routed-client" }));
-    materializeProjectHostMock = jest.fn(async () => "https://host.example");
     projectApiClientMock = jest.fn(() => ({
       system: {
-        exec: execMock,
+        exec: systemExecMock,
       },
     }));
-    isCollaboratorMock = jest.fn(async () => true);
   });
 
-  it("uses the routed conat client for project exec", async () => {
-    const execProject = (await import("./exec")).default;
-    const result = await execProject({
-      account_id: "account-1",
-      project_id: "project-1",
-      execOpts: { command: "echo", args: ["hi"], timeout: 123 },
+  it("rejects exec when the project belongs to another bay", async () => {
+    assertLocalProjectCollaboratorMock = jest.fn(async () => {
+      throw new Error("project belongs to another bay");
     });
+    const { default: execProject } = await import("./exec");
+    await expect(
+      execProject({
+        account_id: ACCOUNT_ID,
+        project_id: PROJECT_ID,
+        execOpts: { command: "pwd" },
+      }),
+    ).rejects.toThrow("project belongs to another bay");
+    expect(materializeProjectHostMock).not.toHaveBeenCalled();
+    expect(projectApiClientMock).not.toHaveBeenCalled();
+  });
 
-    expect(result).toEqual({ stdout: "ok", stderr: "", exit_code: 0 });
-    expect(isCollaboratorMock).toHaveBeenCalledWith({
-      account_id: "account-1",
-      project_id: "project-1",
+  it("executes using the routed project api for local collaborators", async () => {
+    const { default: execProject } = await import("./exec");
+    await expect(
+      execProject({
+        account_id: ACCOUNT_ID,
+        project_id: PROJECT_ID,
+        execOpts: { command: "pwd", timeout: 5 },
+      }),
+    ).resolves.toEqual({ stdout: "ok", stderr: "", exit_code: 0 });
+    expect(assertLocalProjectCollaboratorMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      project_id: PROJECT_ID,
     });
-    expect(materializeProjectHostMock).toHaveBeenCalledWith("project-1");
-    expect(conatWithProjectRoutingMock).toHaveBeenCalled();
+    expect(materializeProjectHostMock).toHaveBeenCalledWith(PROJECT_ID);
+    expect(conatWithProjectRoutingMock).toHaveBeenCalledTimes(1);
     expect(projectApiClientMock).toHaveBeenCalledWith({
-      client: { id: "routed-client" },
-      project_id: "project-1",
-      timeout: 125000,
+      client: { kind: "conat-client" },
+      project_id: PROJECT_ID,
+      timeout: 7000,
     });
-    expect(execMock).toHaveBeenCalledWith({
-      command: "echo",
-      args: ["hi"],
-      timeout: 123,
-    });
+    expect(systemExecMock).toHaveBeenCalledWith({ command: "pwd", timeout: 5 });
   });
 });

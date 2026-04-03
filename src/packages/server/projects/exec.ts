@@ -8,9 +8,9 @@ import type {
   ExecuteCodeOutput,
   ExecuteCodeOptions,
 } from "@cocalc/util/types/execute-code";
+import { assertLocalProjectCollaborator } from "@cocalc/server/conat/project-local-access";
 import { conatWithProjectRouting } from "@cocalc/server/conat/route-client";
 import { materializeProjectHost } from "@cocalc/server/conat/route-project";
-import isCollaborator from "@cocalc/server/projects/is-collaborator";
 
 // checks auth and runs code
 export default async function exec({
@@ -22,9 +22,7 @@ export default async function exec({
   project_id: string;
   execOpts: ExecuteCodeOptions;
 }): Promise<ExecuteCodeOutput> {
-  if (!(await isCollaborator({ account_id, project_id }))) {
-    throw Error("user must be collaborator on project");
-  }
+  await assertLocalProjectCollaborator({ account_id, project_id });
 
   await materializeProjectHost(project_id);
   const api = projectApiClient({

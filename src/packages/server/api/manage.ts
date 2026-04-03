@@ -13,6 +13,7 @@ they have no password, then the provided one is ignored.
 import getPool from "@cocalc/database/pool";
 import { generate } from "random-key";
 import isCollaborator from "@cocalc/server/projects/is-collaborator";
+import { assertLocalProjectCollaborator } from "@cocalc/server/conat/project-local-access";
 import passwordHash, {
   verifyPassword,
 } from "@cocalc/backend/auth/password-hash";
@@ -66,13 +67,8 @@ export default async function manageApiKeys({
   }
 
   // Now we allow the action.
-  if (
-    project_id != null &&
-    !(await isCollaborator({ account_id, project_id }))
-  ) {
-    throw Error(
-      "user must be collaborator on project to manage project_id api keys",
-    );
+  if (project_id != null) {
+    await assertLocalProjectCollaborator({ account_id, project_id });
   }
 
   return await doManageApiKeys({

@@ -5,7 +5,7 @@ Add, remove and invite collaborators on projects.
 import { db } from "@cocalc/database";
 import getPool from "@cocalc/database/pool";
 import { callback2 } from "@cocalc/util/async-utils";
-import isCollaborator from "@cocalc/server/projects/is-collaborator";
+import { assertLocalProjectCollaborator } from "@cocalc/server/conat/project-local-access";
 import type {
   AddCollaborator,
   MyCollaboratorRow,
@@ -179,9 +179,10 @@ export async function removeCollaborator({
     project_id;
   };
 }): Promise<void> {
-  if (!(await isCollaborator({ account_id, project_id: opts.project_id }))) {
-    throw Error("user must be a collaborator");
-  }
+  await assertLocalProjectCollaborator({
+    account_id,
+    project_id: opts.project_id,
+  });
   // @ts-ignore
   await callback2(db().remove_collaborator_from_project, opts);
 }
@@ -270,9 +271,7 @@ export async function createCollabInvite({
   if (invitee_account_id === account_id) {
     throw new Error("cannot invite yourself");
   }
-  if (!(await isCollaborator({ account_id, project_id }))) {
-    throw new Error("user must be a collaborator");
-  }
+  await assertLocalProjectCollaborator({ account_id, project_id });
 
   const pool = getPool();
   const includeEmail = await isAdmin(account_id);
@@ -701,9 +700,7 @@ export async function listCollaborators({
     throw new Error("user must be signed in");
   }
   ensureUuid(project_id, "project_id");
-  if (!(await isCollaborator({ account_id, project_id }))) {
-    throw new Error("user must be a collaborator");
-  }
+  await assertLocalProjectCollaborator({ account_id, project_id });
   const includeEmail = await isAdmin(account_id);
   const pool = getPool();
   const { rows } = await pool.query<ProjectCollaboratorRow>(
@@ -803,9 +800,10 @@ export async function inviteCollaborator({
     message?: string;
   };
 }): Promise<void> {
-  if (!(await isCollaborator({ account_id, project_id: opts.project_id }))) {
-    throw Error("user must be a collaborator");
-  }
+  await assertLocalProjectCollaborator({
+    account_id,
+    project_id: opts.project_id,
+  });
   const dbg = (...args) => logger.debug("inviteCollaborator", ...args);
   const database = db();
   try {
@@ -903,9 +901,10 @@ export async function inviteCollaboratorWithoutAccount({
     message?: string;
   };
 }): Promise<void> {
-  if (!(await isCollaborator({ account_id, project_id: opts.project_id }))) {
-    throw Error("user must be a collaborator");
-  }
+  await assertLocalProjectCollaborator({
+    account_id,
+    project_id: opts.project_id,
+  });
   const dbg = (...args) =>
     logger.debug("inviteCollaboratorWithoutAccount", ...args);
   const database = db();
