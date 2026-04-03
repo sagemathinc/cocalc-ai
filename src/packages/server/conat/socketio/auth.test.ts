@@ -7,10 +7,9 @@ pnpm test `pwd`/auth.test.ts
 import { getUser, isAllowed } from "./auth";
 import { inboxPrefix } from "@cocalc/conat/names";
 
-// Mock the module where isCollaborator is exported from
-jest.mock("@cocalc/server/projects/is-collaborator", () => ({
+jest.mock("@cocalc/server/conat/project-local-access", () => ({
   __esModule: true,
-  default: jest.fn(),
+  hasLocalProjectCollaboratorAccess: jest.fn(),
 }));
 
 jest.mock("@cocalc/server/conat/route-project", () => ({
@@ -23,7 +22,7 @@ jest.mock("@cocalc/server/projects/control/secret-token", () => ({
   getProjectSecretToken: jest.fn(),
 }));
 
-import isCollaborator from "@cocalc/server/projects/is-collaborator";
+import { hasLocalProjectCollaboratorAccess } from "@cocalc/server/conat/project-local-access";
 import { materializeProjectHost } from "@cocalc/server/conat/route-project";
 import { getProjectSecretToken } from "@cocalc/server/projects/control/secret-token";
 
@@ -156,7 +155,7 @@ describe("test isAllowed for common subjects for projects and accounts", () => {
     ).toBe(false);
 
     // collab or not, account can't listen to inbox for a project:
-    (isCollaborator as jest.Mock).mockResolvedValue(false);
+    (hasLocalProjectCollaboratorAccess as jest.Mock).mockResolvedValue(false);
     expect(
       await isAllowed({
         user: { account_id },
@@ -165,7 +164,7 @@ describe("test isAllowed for common subjects for projects and accounts", () => {
       }),
     ).toBe(false);
 
-    (isCollaborator as jest.Mock).mockResolvedValue(true);
+    (hasLocalProjectCollaboratorAccess as jest.Mock).mockResolvedValue(true);
     expect(
       await isAllowed({
         user: { account_id },
@@ -261,8 +260,7 @@ describe("test isAllowed for collaboration -- this is the most nontrivial one", 
   });
 
   it("verifies an account can access a project it collaborates on", async () => {
-    // Arrange: isCollaborator resolves to true
-    (isCollaborator as jest.Mock).mockResolvedValue(true);
+    (hasLocalProjectCollaboratorAccess as jest.Mock).mockResolvedValue(true);
 
     expect(
       await isAllowed({
@@ -272,12 +270,12 @@ describe("test isAllowed for collaboration -- this is the most nontrivial one", 
       }),
     ).toBe(true);
 
-    expect(isCollaborator).toHaveBeenCalled();
+    expect(hasLocalProjectCollaboratorAccess).toHaveBeenCalled();
     expect(materializeProjectHost).toHaveBeenCalledWith(project_id);
   });
 
   it("same account and project -- even if not collaborator still have permissions because of LRU cache!", async () => {
-    (isCollaborator as jest.Mock).mockResolvedValue(false);
+    (hasLocalProjectCollaboratorAccess as jest.Mock).mockResolvedValue(false);
 
     expect(
       await isAllowed({
@@ -289,7 +287,7 @@ describe("test isAllowed for collaboration -- this is the most nontrivial one", 
   });
 
   it("check on another project that not a collab on", async () => {
-    (isCollaborator as jest.Mock).mockResolvedValue(false);
+    (hasLocalProjectCollaboratorAccess as jest.Mock).mockResolvedValue(false);
 
     expect(
       await isAllowed({
@@ -301,7 +299,7 @@ describe("test isAllowed for collaboration -- this is the most nontrivial one", 
   });
 
   it("verifies an account can access a project hub subject it collaborates on", async () => {
-    (isCollaborator as jest.Mock).mockResolvedValue(true);
+    (hasLocalProjectCollaboratorAccess as jest.Mock).mockResolvedValue(true);
 
     expect(
       await isAllowed({
@@ -316,7 +314,7 @@ describe("test isAllowed for collaboration -- this is the most nontrivial one", 
 
   it("warms routing for ACP automation subjects", async () => {
     const automationProjectId = "00000000-0000-4000-8000-000000000003";
-    (isCollaborator as jest.Mock).mockResolvedValue(true);
+    (hasLocalProjectCollaboratorAccess as jest.Mock).mockResolvedValue(true);
 
     expect(
       await isAllowed({

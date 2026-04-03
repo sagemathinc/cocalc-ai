@@ -28,7 +28,7 @@ import {
   revokeExternalCredential as revokeExternalCredentialStore,
   upsertExternalCredential,
 } from "@cocalc/server/external-credentials/store";
-import isCollaborator from "@cocalc/server/projects/is-collaborator";
+import { assertLocalProjectCollaborator } from "@cocalc/server/conat/project-local-access";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import { to_bool } from "@cocalc/util/db-schema/site-defaults";
 import { is_valid_email_address } from "@cocalc/util/misc";
@@ -485,14 +485,7 @@ export async function publishProjectRootfsImage(
   if (!account_id) {
     throw Error("user must be signed in");
   }
-  if (
-    !(await isCollaborator({
-      account_id,
-      project_id,
-    }))
-  ) {
-    throw Error("user must be a collaborator on the project");
-  }
+  await assertLocalProjectCollaborator({ account_id, project_id });
   const op = await createLro({
     kind: ROOTFS_PUBLISH_LRO_KIND,
     scope_type: "project",
@@ -524,9 +517,7 @@ export async function getProjectRootfsStates(opts: {
   if (!account_id) {
     throw Error("user must be signed in");
   }
-  if (!(await isCollaborator({ account_id, project_id }))) {
-    throw Error("user must be a collaborator on the project");
-  }
+  await assertLocalProjectCollaborator({ account_id, project_id });
   return await getProjectRootfsStates0({ project_id });
 }
 
@@ -540,9 +531,7 @@ export async function setProjectRootfsImage(opts: {
   if (!account_id) {
     throw Error("user must be signed in");
   }
-  if (!(await isCollaborator({ account_id, project_id }))) {
-    throw Error("user must be a collaborator on the project");
-  }
+  await assertLocalProjectCollaborator({ account_id, project_id });
   return await setProjectRootfsImageWithRollback({
     project_id,
     image,
@@ -912,9 +901,7 @@ async function assertProjectCollaborator(
   account_id: string,
   project_id: string,
 ): Promise<void> {
-  if (!(await isCollaborator({ account_id, project_id }))) {
-    throw Error("user must be a collaborator on project");
-  }
+  await assertLocalProjectCollaborator({ account_id, project_id });
 }
 
 export async function listExternalCredentials({

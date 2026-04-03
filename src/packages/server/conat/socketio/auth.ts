@@ -1,4 +1,3 @@
-import isCollaborator from "@cocalc/server/projects/is-collaborator";
 // Central-hub auth adapter. Project-host has a sibling adapter at
 // src/packages/project-host/conat-auth.ts.
 // Both adapters intentionally share subject-policy logic from
@@ -21,6 +20,7 @@ import { getAdmins } from "@cocalc/server/accounts/is-admin";
 import getPool from "@cocalc/database/pool";
 import { verifyProjectHostToken } from "@cocalc/server/project-host/bootstrap-token";
 import { materializeProjectHost } from "@cocalc/server/conat/route-project";
+import { hasLocalProjectCollaboratorAccess } from "@cocalc/server/conat/project-local-access";
 import { getProjectHostAuthTokenPublicKey } from "@cocalc/backend/data";
 import { verifyProjectHostAuthToken } from "@cocalc/conat/auth/project-host-token";
 import { isValidUUID } from "@cocalc/util/misc";
@@ -296,7 +296,10 @@ export async function isAllowed({
       if (
         project_id &&
         project_id === agentUser.auth_project_id &&
-        (await isCollaborator({ account_id: userId, project_id }))
+        (await hasLocalProjectCollaboratorAccess({
+          account_id: userId,
+          project_id,
+        }))
       ) {
         await warmProjectRoute(project_id);
         return true;
@@ -402,7 +405,10 @@ async function isAccountAllowed({
     }
     return false;
   }
-  const allowed = await isCollaborator({ account_id, project_id });
+  const allowed = await hasLocalProjectCollaboratorAccess({
+    account_id,
+    project_id,
+  });
   if (allowed) {
     await warmProjectRoute(project_id);
   }
