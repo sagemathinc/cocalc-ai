@@ -11,6 +11,7 @@ import {
   createProjectHostMasterConatToken,
   verifyProjectHostToken,
 } from "@cocalc/server/project-host/bootstrap-token";
+import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { notifyProjectHostUpdate } from "./route-project";
 
 const logger = getLogger("server:conat:host-registry");
@@ -154,6 +155,7 @@ export async function initHostRegistryService() {
         const nextSessionId = getHostSessionId(sanitized.metadata);
         await upsertProjectHost({
           ...sanitized,
+          bay_id: getConfiguredBayId(),
           status: "running",
           last_seen: new Date(),
           host_session_id: nextSessionId,
@@ -185,6 +187,7 @@ export async function initHostRegistryService() {
           : info;
         await upsertProjectHost({
           ...sanitized,
+          bay_id: getConfiguredBayId(),
           status: "running",
           last_seen: new Date(),
           host_session_id: getHostSessionId(sanitized.metadata),

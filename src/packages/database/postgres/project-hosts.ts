@@ -4,6 +4,7 @@ import { recordProjectHostMetricsSample } from "./project-host-metrics";
 
 export interface ProjectHostRecord {
   id: string;
+  bay_id?: string;
   name?: string;
   region?: string;
   public_url?: string;
@@ -24,6 +25,7 @@ function pool(): Pool {
 
 export async function upsertProjectHost({
   id,
+  bay_id,
   name,
   region,
   public_url,
@@ -46,10 +48,11 @@ export async function upsertProjectHost({
   await pool().query(
     `
     INSERT INTO project_hosts
-      (id, name, region, public_url, internal_url, ssh_server, status, version, capacity, metadata, last_seen, created, updated)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11, NOW(), NOW())
+      (id, bay_id, name, region, public_url, internal_url, ssh_server, status, version, capacity, metadata, last_seen, created, updated)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12, NOW(), NOW())
     ON CONFLICT (id)
     DO UPDATE SET
+      bay_id = COALESCE(EXCLUDED.bay_id, project_hosts.bay_id),
       name = EXCLUDED.name,
       region = EXCLUDED.region,
       public_url = EXCLUDED.public_url,
@@ -65,6 +68,7 @@ export async function upsertProjectHost({
   `,
     [
       id,
+      bay_id ?? null,
       name ?? null,
       region ?? null,
       public_url ?? null,

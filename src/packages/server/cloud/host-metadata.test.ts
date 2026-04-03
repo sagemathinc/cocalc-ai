@@ -14,6 +14,29 @@ beforeEach(async () => {
 });
 
 describe("project host metadata updates", () => {
+  it("stores and preserves bay ownership across host upserts", async () => {
+    await upsertProjectHost({
+      id: "aaaaaaaa-1111-1111-1111-111111111111",
+      bay_id: "bay-3",
+      name: "Host Bay",
+      region: "us-west1",
+      metadata: { owner: "acct-bay" },
+    });
+
+    await upsertProjectHost({
+      id: "aaaaaaaa-1111-1111-1111-111111111111",
+      name: "Host Bay",
+      region: "us-west1",
+      status: "running",
+    });
+
+    const { rows } = await getPool().query(
+      "SELECT bay_id, metadata FROM project_hosts WHERE id='aaaaaaaa-1111-1111-1111-111111111111'",
+    );
+    expect(rows[0].bay_id).toBe("bay-3");
+    expect(rows[0].metadata).toMatchObject({ owner: "acct-bay" });
+  });
+
   it("preserves metadata when upserting without metadata fields", async () => {
     await upsertProjectHost({
       id: "11111111-1111-1111-1111-111111111111",
