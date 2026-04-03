@@ -1,4 +1,3 @@
-import { conat } from "@cocalc/conat/client";
 import type { Client } from "@cocalc/conat/core/client";
 import type { DStream } from "@cocalc/conat/sync/dstream";
 import type {
@@ -23,6 +22,13 @@ const LRO_STREAM_CONFIG: Partial<Configuration> = {
   max_bytes: 8 * 1024 * 1024,
   allow_msg_ttl: true,
 };
+
+function requireExplicitConatClient(client?: Client): Client {
+  if (client != null) {
+    return client;
+  }
+  throw new Error("must provide an explicit Conat client");
+}
 
 function scopeLocation({
   scope_type,
@@ -57,7 +63,7 @@ export async function get({
   stream_name,
   scope_type,
   scope_id,
-  client = conat(),
+  client,
 }: {
   op_id?: string;
   stream_name?: string;
@@ -70,10 +76,13 @@ export async function get({
     throw new Error("op_id or stream_name must be set");
   }
   const location = scopeLocation({ scope_type, scope_id });
+  // Require an explicit client so shared/backend callers do not silently bind
+  // to whichever global singleton happens to be initialized.
+  const resolvedClient = requireExplicitConatClient(client);
   // LRO progress streams must be ephemeral: they are high-volume, short-lived,
   // and the first client to open the stream fixes the storage mode (avoiding
   // a race that could require a project root before it exists).
-  return await client.sync.dstream<LroEvent>({
+  return await resolvedClient.sync.dstream<LroEvent>({
     ...location,
     name,
     ephemeral: true,
@@ -93,7 +102,7 @@ export async function waitForCompletion({
   stream_name,
   scope_type,
   scope_id,
-  client = conat(),
+  client,
   timeout_ms,
   onProgress,
   onSummary,
@@ -112,7 +121,7 @@ export async function waitForCompletion({
     stream_name,
     scope_type,
     scope_id,
-    client,
+    client: requireExplicitConatClient(client),
   });
   let lastIndex = 0;
   let done = false;

@@ -40,6 +40,20 @@ These still provide a default central-hub client, but now accept an explicit
 client parameter so future bay-aware callers can inject the right connection
 instead of being forced onto the singleton path.
 
+## Completed In The LRO Pass
+
+### `conat/lro/client.ts`
+
+- removed the hidden fallback to the global Conat singleton
+- `get(...)` and `waitForCompletion(...)` now require an explicit client
+- all current server callers were already explicit
+- the frontend continues to work through
+  [frontend/conat/client.ts](/home/wstein/build/cocalc-lite4/src/packages/frontend/conat/client.ts),
+  which passes the browser client explicitly
+
+This keeps the shared LRO helper safe for backend reuse without forcing the
+browser to own the singleton-vs-routed decision at every UI call site.
+
 ## Remaining Hotspots
 
 ### Shared Helper Fallbacks
@@ -47,7 +61,6 @@ instead of being forced onto the singleton path.
 These still silently fall back to the global singleton and should be reviewed
 next:
 
-- [conat/lro/client.ts](/home/wstein/build/cocalc-lite4/src/packages/conat/lro/client.ts)
 - [conat/lro/progress.ts](/home/wstein/build/cocalc-lite4/src/packages/conat/lro/progress.ts)
 - [conat/ai/acp/client.ts](/home/wstein/build/cocalc-lite4/src/packages/conat/ai/acp/client.ts)
 
@@ -78,9 +91,8 @@ clients.
 
 ## Next Recommended Cleanup Pass
 
-1. split `conat/lro/client.ts` into:
-   - browser-convenience wrapper that may use the singleton
-   - backend/shared helper that requires an explicit client
-2. do the same for `conat/ai/acp/client.ts`
+1. do the same style of cleanup for `conat/ai/acp/client.ts`
+2. decide whether `conat/lro/progress.ts` should require an explicit client or
+   gain a separate backend-only helper
 3. continue removing implicit singleton use from server-side bridge/control
    paths first, before touching broader frontend ergonomics
