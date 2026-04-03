@@ -7,14 +7,10 @@ DEVELOPMENT:
 'connected'
 */
 
-import { init, close as closeTime } from "./time";
+import { init, close as closeTime, setConatTimeClientFactory } from "./time";
 import { EventEmitter } from "events";
 import { type Client as ConatClient } from "@cocalc/conat/core/client";
-import {
-  FALLBACK_LOGGER,
-  setConatLoggerFactory,
-  type Logger,
-} from "./logger";
+import { FALLBACK_LOGGER, setConatLoggerFactory, type Logger } from "./logger";
 export { getLogger } from "./logger";
 
 interface Client {
@@ -106,6 +102,7 @@ let globalClient: null | ClientWithState = null;
 export function setConatClient(client: Client) {
   globalClient = new ClientWithState(client);
   setConatLoggerFactory(client.getLogger);
+  setConatTimeClientFactory(() => getClient());
 }
 
 export function closeConatClientForTests(): void {
@@ -119,6 +116,7 @@ export function closeConatClientForTests(): void {
   }
   globalClient = null;
   setConatLoggerFactory(undefined);
+  setConatTimeClientFactory(undefined);
   closeTime();
 }
 

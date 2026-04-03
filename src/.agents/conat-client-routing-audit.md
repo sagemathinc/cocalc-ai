@@ -291,6 +291,31 @@ service itself aligned to the caller's chosen routed client.
 This keeps time-sync traffic on the intended routed connection instead of
 silently attaching to whichever singleton happens to be initialized.
 
+### `conat/time.ts`
+
+- removed the direct import of the global Conat client
+- shared time sync now receives its runtime client through an explicit
+  registration hook, `setConatTimeClientFactory(...)`
+- [conat/client.ts](/home/wstein/build/cocalc-lite4/src/packages/conat/client.ts)
+  remains the deliberate place that wires the current runtime client into time
+  sync
+
+This keeps the shared time-sync helper reusable across runtimes without
+hard-coding a dependency on the ambient global client singleton.
+
+### `conat/sync/pubsub.ts`
+
+- removed the hidden fallback to `@cocalc/conat/core/client.getClient()`
+- `PubSub` now requires an explicit client in its constructor
+- all existing runtime wrappers already had a natural explicit client:
+  - [frontend/conat/client.ts](/home/wstein/build/cocalc-lite4/src/packages/frontend/conat/client.ts)
+  - [sync/client/conat-sync-client.ts](/home/wstein/build/cocalc-lite4/src/packages/sync/client/conat-sync-client.ts)
+  - [conat/sync-doc/sync-client.ts](/home/wstein/build/cocalc-lite4/src/packages/conat/sync-doc/sync-client.ts)
+  - [project/conat/pubsub.ts](/home/wstein/build/cocalc-lite4/src/packages/project/conat/pubsub.ts)
+
+This closes another shared sync primitive that would otherwise silently attach
+to a cached client chosen far away from the actual runtime wrapper.
+
 ### `conat/service/terminal.ts`
 
 - removed the hidden fallback to the global Conat singleton
