@@ -138,12 +138,43 @@ This closes another backend control path that would otherwise become ambiguous
 once project control traffic can target different bays or host-specific Conat
 connections.
 
+## Completed In The Project Metadata Pass
+
+### `conat/project/project-info.ts` and `conat/project/project-status.ts`
+
+- removed the hidden fallback to the global Conat singleton
+- project metadata/status readers now require an explicit client for:
+  - project info fetches
+  - project info history fetches
+  - project status subscriptions
+- project-side service registration now also requires an explicit client in the
+  shared `conat/project/project-info.ts` helper
+- current callers were updated to pass the intended routed client explicitly:
+  - browser project info hooks now inject
+    [frontend/webapp-client.ts](/home/wstein/build/cocalc-lite4/src/packages/frontend/webapp-client.ts)
+    through `webapp_client.conat_client.conat()`
+  - [frontend/project_actions.ts](/home/wstein/build/cocalc-lite4/src/packages/frontend/project_actions.ts)
+    now passes the browser client when subscribing to project status
+  - the project-local wrapper in
+    [project/project-info/project-info.ts](/home/wstein/build/cocalc-lite4/src/packages/project/project-info/project-info.ts)
+    remains the deliberate place that chooses a default project-scoped client
+    via [project/conat/connection.ts](/home/wstein/build/cocalc-lite4/src/packages/project/conat/connection.ts)
+
+This keeps shared project metadata helpers reusable across frontend, backend,
+CLI, and future bay-aware code without letting them silently attach to an
+ambient singleton.
+
 ## Remaining Hotspots
 
 ### Shared Helper Fallbacks
 
 These still silently fall back to the global singleton and should be reviewed
 next:
+
+- [conat/service/service.ts](/home/wstein/build/cocalc-lite4/src/packages/conat/service/service.ts)
+- [conat/lro/stream.ts](/home/wstein/build/cocalc-lite4/src/packages/conat/lro/stream.ts)
+- [conat/files/fs.ts](/home/wstein/build/cocalc-lite4/src/packages/conat/files/fs.ts)
+- [conat/llm/client.ts](/home/wstein/build/cocalc-lite4/src/packages/conat/llm/client.ts)
 
 ### Frontend Singleton Sites
 
@@ -157,6 +188,6 @@ clients.
 
 ## Next Recommended Cleanup Pass
 
-1. continue with project-runner and project-usage helper paths, since they are
-   the next shared backend abstractions likely to be reused across bays
+1. continue with the remaining shared service/stream wrappers, especially
+   `conat/service/service.ts` and `conat/lro/stream.ts`
 2. keep server-side bridge/control paths ahead of broader frontend ergonomics

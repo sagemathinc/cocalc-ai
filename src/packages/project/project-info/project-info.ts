@@ -11,6 +11,7 @@ import { ProjectInfoServer } from "./server";
 import { createService } from "@cocalc/conat/project/project-info";
 import { project_id } from "@cocalc/project/data";
 import type { Client as ConatClient } from "@cocalc/conat/core/client";
+import { connectToConat } from "@cocalc/project/conat/connection";
 
 // singleton, we instantiate it when we need it
 let info: ProjectInfoServer | null = null;
@@ -23,11 +24,14 @@ export function get_ProjectInfoServer(opts?: {
   if (info != null) {
     return info;
   }
+  const resolvedProjectId = opts?.project_id ?? project_id;
+  const client =
+    opts?.client ?? connectToConat({ project_id: resolvedProjectId });
   info = new ProjectInfoServer();
   service = createService({
     infoServer: info,
-    project_id: opts?.project_id ?? project_id,
-    client: opts?.client,
+    project_id: resolvedProjectId,
+    client,
   });
 
   return info;

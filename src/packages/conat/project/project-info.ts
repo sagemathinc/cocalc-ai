@@ -6,7 +6,6 @@
 import { akv, type AKV } from "@cocalc/conat/sync/akv";
 import { getLogger } from "@cocalc/conat/client";
 import { projectSubject } from "@cocalc/conat/names";
-import { conat } from "@cocalc/conat/client";
 import type { Client as ConatClient } from "@cocalc/conat/core/client";
 import type {
   Process,
@@ -134,22 +133,37 @@ interface Api {
   getHistory: (opts?: { minutes?: number }) => Promise<ProjectInfoHistory>;
 }
 
-export async function get({ project_id }: { project_id: string }) {
-  const c = await conat();
+function requireClient(client?: ConatClient): ConatClient {
+  if (client == null) {
+    throw new Error(
+      "project-info helpers must provide an explicit Conat client",
+    );
+  }
+  return client;
+}
+
+export async function get({
+  client,
+  project_id,
+}: {
+  client: ConatClient;
+  project_id: string;
+}) {
   const subject = getSubject({ project_id });
-  return await c.call(subject).get();
+  return await requireClient(client).call(subject).get();
 }
 
 export async function getHistory({
+  client,
   project_id,
   minutes,
 }: {
+  client: ConatClient;
   project_id: string;
   minutes?: number;
 }) {
-  const c = await conat();
   const subject = getSubject({ project_id });
-  return await c.call(subject).getHistory({ minutes });
+  return await requireClient(client).call(subject).getHistory({ minutes });
 }
 
 function getSubject({ project_id }: { project_id: string }) {
@@ -162,7 +176,7 @@ function getSubject({ project_id }: { project_id: string }) {
 export function createService(opts: {
   infoServer;
   project_id: string;
-  client?: ConatClient;
+  client: ConatClient;
 }) {
   return new ProjectInfoService(opts);
 }
@@ -177,7 +191,7 @@ class ProjectInfoService {
   private readonly historySampleMs: number;
   private readonly historyTTLms: number;
   private readonly historyTopN: number;
-  private readonly client?: ConatClient;
+  private readonly client: ConatClient;
   private lastHistoryBucket?: number;
   info?: ProjectInfo | null = null;
 
@@ -188,11 +202,11 @@ class ProjectInfoService {
   }: {
     infoServer;
     project_id: string;
-    client?: ConatClient;
+    client: ConatClient;
   }) {
     logger.debug("register");
     this.subject = getSubject({ project_id });
-    this.client = client;
+    this.client = requireClient(client);
     this.historyWindowMinutes = envInt(
       "COCALC_PROJECT_INFO_HISTORY_WINDOW_MINUTES",
       DEFAULT_HISTORY_WINDOW_MINUTES,
@@ -298,8 +312,7 @@ class ProjectInfoService {
 
   private createService = async () => {
     logger.debug("started project info service ", { subject: this.subject });
-    const client = this.client ?? (await conat());
-    this.service = await client.service<Api>(this.subject, {
+    this.service = await this.client.service<Api>(this.subject, {
       get: async () => {
         this.infoServer?.noteClientActivity();
         return this.info ?? null;
