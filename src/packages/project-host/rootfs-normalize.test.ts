@@ -170,6 +170,32 @@ describe("rootfs preflight metadata", () => {
     );
   });
 
+  it("passes the ownership-source hint through to the wrapper", async () => {
+    executeCode.mockResolvedValue({
+      stdout: JSON.stringify({
+        ok: true,
+        distro_family: "rhel",
+        package_manager: "dnf",
+        shell: "/bin/bash",
+        glibc: true,
+        sudo_present: false,
+        ca_certificates_present: false,
+      }),
+    });
+
+    const mod = await import("../project-runner/run/rootfs-normalize");
+    await mod.preflightRootfsInPlace({
+      image: "docker.io/library/centos:stream9",
+      rootfsPath: "/mnt/cocalc/data/cache/images/example",
+      ownershipSource: "oci-extract",
+    });
+    expect(executeCode).toHaveBeenCalledWith(
+      expect.objectContaining({
+        env: { COCALC_ROOTFS_OWNERSHIP_SOURCE: "oci-extract" },
+      }),
+    );
+  });
+
   it("probes pulled OCI images before extract", async () => {
     executeCode.mockResolvedValue({
       stdout: JSON.stringify({

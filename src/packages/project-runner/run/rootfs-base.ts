@@ -270,6 +270,7 @@ export const extractBaseImage = reuseInFlight(async (image: string) => {
       const preflight = await preflightRootfsInPlace({
         image,
         rootfsPath: baseImagePath,
+        ownershipSource: "oci-extract",
         onProgress: ({ message }) => {
           reportProgress({
             progress: progressFromPreflightMessage(message),

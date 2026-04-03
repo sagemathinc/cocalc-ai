@@ -7,6 +7,7 @@ import { spawn } from "node:child_process";
 import { constants } from "node:fs";
 import {
   access,
+  chown,
   chmod,
   mkdir,
   readFile,
@@ -384,6 +385,22 @@ async function configureSudo(runtime: RuntimeIdentity): Promise<void> {
   }
 }
 
+async function ensureRootOwnership(paths: string[]): Promise<void> {
+  for (const path of paths) {
+    if (!(await pathExists(path))) {
+      continue;
+    }
+    try {
+      await chown(path, 0, 0);
+    } catch (err) {
+      logger.warn("unable to restore root ownership during runtime bootstrap", {
+        path,
+        err: `${err}`,
+      });
+    }
+  }
+}
+
 async function ensureRuntimeFiles(runtime: RuntimeIdentity): Promise<void> {
   logger.info("runtime bootstrap: writing runtime identity files", {
     user: runtime.user,
@@ -402,9 +419,24 @@ async function ensureRuntimeFiles(runtime: RuntimeIdentity): Promise<void> {
     (current) => rewriteShadow(current, runtime),
     0o600,
   );
+  await chmod("/etc/shadow", 0o600).catch((err) => {
+    logger.warn(
+      "unable to enforce shadow permissions during runtime bootstrap",
+      {
+        err: `${err}`,
+      },
+    );
+  });
   await mkdir(runtime.home, { recursive: true });
   await mkdir(dirname(runtime.home), { recursive: true });
   await configureSudo(runtime);
+  await ensureRootOwnership([
+    "/etc/passwd",
+    "/etc/group",
+    "/etc/shadow",
+    "/etc/gshadow",
+    "/etc/sudoers.d/cocalc-project-runtime",
+  ]);
   logger.info("runtime bootstrap: runtime identity files are ready", {
     user: runtime.user,
     home: runtime.home,
