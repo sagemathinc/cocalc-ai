@@ -35,7 +35,6 @@ import { issueProjectHostAuthToken as issueProjectHostAuthTokenJwt } from "@coca
 import getLogger from "@cocalc/backend/logger";
 import { getProjectHostAuthTokenPrivateKey } from "@cocalc/backend/data";
 import getPool from "@cocalc/database/pool";
-import { isValidUUID } from "@cocalc/util/misc";
 import {
   computePlacementPermission,
   getUserHostTier,
@@ -129,6 +128,11 @@ import {
 } from "@cocalc/util/rootfs-images";
 import { buildCloudInitStartupScript } from "@cocalc/server/cloud/bootstrap-host";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import {
+  assertAccountProjectHostTokenProjectAccess,
+  assertProjectHostAgentTokenAccess,
+  hasAccountProjectHostTokenHostAccess,
+} from "./project-host-token-auth";
 function pool() {
   return getPool();
 }
@@ -1707,31 +1711,12 @@ async function assertAccountCanIssueProjectHostToken({
 
   // If project_id is supplied, require collaborator access and verify placement.
   if (project_id) {
-    const { rows } = await pool().query<{
-      host_id: string | null;
-      group: string | null;
-    }>(
-      `
-      SELECT
-        host_id,
-        users -> $2::text ->> 'group' AS "group"
-      FROM projects
-      WHERE project_id=$1
-        AND deleted IS NOT true
-      LIMIT 1
-    `,
-      [project_id, account_id],
-    );
-    const row = rows[0];
-    if (!row) {
-      throw new Error("project not found");
-    }
-    if (row.host_id !== host_id) {
-      throw new Error("project is not assigned to the requested host");
-    }
-    if (row.group === "owner" || row.group === "collaborator") {
-      return;
-    }
+    await assertAccountProjectHostTokenProjectAccess({
+      account_id,
+      host_id,
+      project_id,
+    });
+    return;
   }
 
   // Host owner/collaborator controls are also valid authorization paths.
@@ -1743,18 +1728,12 @@ async function assertAccountCanIssueProjectHostToken({
   }
 
   // Fallback: allow if this account collaborates on any project hosted here.
-  const { rowCount } = await pool().query(
-    `
-      SELECT 1
-      FROM projects
-      WHERE host_id=$1
-        AND deleted IS NOT true
-        AND (users -> $2::text ->> 'group') IN ('owner', 'collaborator')
-      LIMIT 1
-    `,
-    [host_id, account_id],
-  );
-  if (!rowCount) {
+  if (
+    !(await hasAccountProjectHostTokenHostAccess({
+      account_id,
+      host_id,
+    }))
+  ) {
     throw new Error("not authorized for project-host access token");
   }
 }
@@ -1768,30 +1747,11 @@ async function assertHostCanIssueProjectHostAgentToken({
   account_id: string;
   project_id: string;
 }) {
-  if (!isValidUUID(host_id)) {
-    throw new Error("host_id must be specified");
-  }
-  if (!isValidUUID(account_id)) {
-    throw new Error("account_id must be specified");
-  }
-  if (!isValidUUID(project_id)) {
-    throw new Error("project_id must be specified");
-  }
-  const { rowCount } = await pool().query(
-    `
-      SELECT 1
-      FROM projects
-      WHERE project_id=$1
-        AND host_id=$2
-        AND deleted IS NOT true
-        AND (users -> $3::text ->> 'group') IN ('owner', 'collaborator')
-      LIMIT 1
-    `,
-    [project_id, host_id, account_id],
-  );
-  if (!rowCount) {
-    throw new Error("not authorized for project-host agent auth token");
-  }
+  await assertProjectHostAgentTokenAccess({
+    host_id,
+    account_id,
+    project_id,
+  });
 }
 
 export async function issueProjectHostAuthToken({
