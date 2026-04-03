@@ -3,7 +3,6 @@ This is a very lightweight small subset of the hub's API for browser clients.
 */
 
 import getLogger from "@cocalc/backend/logger";
-import { conat } from "@cocalc/backend/conat";
 import { getFrontendSourceFingerprint } from "@cocalc/backend/frontend-build-fingerprint";
 import { type HubApi, getUserId, transformArgs } from "@cocalc/conat/hub/api";
 import type { CodexPaymentSourceInfo } from "@cocalc/conat/hub/api/system";
@@ -45,6 +44,7 @@ import {
   startChatOffloadBackgroundMaintenance,
   stopChatOffloadBackgroundMaintenance,
 } from "./chat-offload-maintenance";
+import { getLiteConatClient } from "./runtime-client";
 
 const logger = getLogger("lite:hub:api");
 const execFile = promisify(execFileCb);
@@ -54,7 +54,7 @@ function syncHistoryWithExplicitClient(
 ) {
   return syncHistory({
     ...opts,
-    client: conat(),
+    client: getLiteConatClient(),
   });
 }
 
@@ -63,7 +63,7 @@ function syncPurgeHistoryWithExplicitClient(
 ) {
   return syncPurgeHistory({
     ...opts,
-    client: conat(),
+    client: getLiteConatClient(),
   });
 }
 

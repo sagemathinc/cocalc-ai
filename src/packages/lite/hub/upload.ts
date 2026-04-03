@@ -1,11 +1,11 @@
 import { Router } from "express";
 import { getLogger } from "@cocalc/backend/logger";
 import { writeFile as writeFileToProject } from "@cocalc/conat/files/write";
-import { conat } from "@cocalc/backend/conat";
 import formidable from "formidable";
 import { join } from "path";
 import { PassThrough } from "node:stream";
 import { project_id as liteProjectId } from "@cocalc/project/data";
+import { getLiteConatClient } from "./runtime-client";
 
 function envNumber(name: string, fallback: number): number {
   const n = Number(process.env[name]);
@@ -136,7 +136,7 @@ async function handleUploadToProject({
           project_id,
           path: join(path, fields.fullPath?.[0] ?? filename),
           maxWait: MAX_UPLOAD_TIME_MS,
-          client: conat(),
+          client: getLiteConatClient(),
         });
       } catch (err) {
         errors[key].push(`${err}`);

@@ -484,3 +484,21 @@ direct `@cocalc/conat/client` access across unrelated modules.
 This does not change routing behavior, but it makes the runtime boundary
 clearer: server-side code now depends directly on the backend Conat runtime
 instead of reaching through the generic global-client facade.
+
+## Completed In The Lite Runtime Helper Pass
+
+### Lite-Local Conat Access
+
+- added [lite/hub/runtime-client.ts](/home/wstein/build/cocalc-lite4/src/packages/lite/hub/runtime-client.ts)
+  as the Lite-local helper that chooses the runtime Conat client
+- updated ordinary Lite feature modules to use that helper instead of
+  importing the generic global Conat client or scattered backend wrappers:
+  - [lite/hub/api.ts](/home/wstein/build/cocalc-lite4/src/packages/lite/hub/api.ts)
+  - [lite/hub/agent.ts](/home/wstein/build/cocalc-lite4/src/packages/lite/hub/agent.ts)
+  - [lite/hub/upload.ts](/home/wstein/build/cocalc-lite4/src/packages/lite/hub/upload.ts)
+  - [lite/hub/llm.ts](/home/wstein/build/cocalc-lite4/src/packages/lite/hub/llm.ts)
+
+This does not change Lite startup, and it does not remove the runtime-local
+singleton yet. It does confine Lite feature code to one local helper so future
+home-bay versus routed-client work does not have to chase direct
+`@cocalc/conat/client` imports across unrelated modules.
