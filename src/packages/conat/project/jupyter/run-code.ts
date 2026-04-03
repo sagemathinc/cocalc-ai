@@ -11,7 +11,7 @@ import {
   type ServerSocket,
 } from "@cocalc/conat/socket";
 import { EventIterator } from "@cocalc/util/event-iterator";
-import { getLogger } from "@cocalc/conat/client";
+import { getLogger } from "@cocalc/conat/logger";
 import { Throttle } from "@cocalc/util/throttle";
 import {
   canonicalJupyterLiveRunPath,

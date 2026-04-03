@@ -21,6 +21,15 @@ beforeAll(before);
 
 describe("create basic mocked project runner service and test", () => {
   let client1, client2;
+  it("requires an explicit client for load balancer RPC helpers", () => {
+    expect(() =>
+      lbClient({
+        subject: "project.test.run",
+        client: undefined as any,
+      }),
+    ).toThrow("project runner load balancer client MUST be specified");
+  });
+
   it("create two clients", () => {
     client1 = connect();
     client2 = connect();

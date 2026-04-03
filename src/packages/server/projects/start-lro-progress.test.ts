@@ -49,7 +49,7 @@ jest.mock("@cocalc/server/lro/lro-db", () => ({
   updateLro: (...args: any[]) => updateLroMock(...args),
 }));
 
-jest.mock("@cocalc/conat/lro/stream", () => ({
+jest.mock("@cocalc/server/lro/stream", () => ({
   __esModule: true,
   publishLroSummary: (...args: any[]) => publishLroSummaryMock(...args),
 }));

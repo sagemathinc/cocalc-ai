@@ -111,6 +111,7 @@ export async function initHostRegistryService() {
     }
   };
   return await createServiceHandler<HostRegistryApi>({
+    client,
     service: SUBJECT,
     subject: `${SUBJECT}.api`,
     description: "Registry/heartbeat for project-host nodes",

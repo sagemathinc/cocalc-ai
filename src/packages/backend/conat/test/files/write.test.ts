@@ -8,7 +8,11 @@ DEVELOPMENT:
 
 */
 
-import { before, after } from "@cocalc/backend/conat/test/setup";
+import {
+  before,
+  after,
+  client as testClient,
+} from "@cocalc/backend/conat/test/setup";
 
 beforeAll(before);
 
@@ -25,6 +29,7 @@ describe("do a basic test that the file writing service works", () => {
     await createServer({
       project_id,
       createWriteStream,
+      client: testClient,
     });
   });
 
@@ -49,6 +54,7 @@ describe("do a basic test that the file writing service works", () => {
       stream,
       project_id,
       path,
+      client: testClient,
     });
     expect(chunks).toBe(1);
     expect(bytes).toBe(CONTENT.length);
@@ -75,6 +81,7 @@ describe("do a more challenging test that involves a larger file that has to be 
     await createServer({
       project_id,
       createWriteStream,
+      client: testClient,
     });
   });
 
@@ -102,6 +109,7 @@ describe("do a more challenging test that involves a larger file that has to be 
       stream,
       project_id,
       path,
+      client: testClient,
     });
     expect(chunks).toBeGreaterThan(1);
     expect(bytes).toBe(CONTENT.length);

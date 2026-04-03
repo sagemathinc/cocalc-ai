@@ -144,3 +144,46 @@ test("project exec widens both command and RPC timeouts when the subcommand time
   assert.equal(observedCtxTimeoutMs, 1_205_000);
   assert.equal(observedCtxRpcTimeoutMs, 1_205_000);
 });
+
+test("project where returns the owning bay for the resolved project", async () => {
+  let captured: any;
+
+  const deps = {
+    withContext: async (_command, _label, fn) => {
+      const ctx = {
+        hub: {
+          system: {
+            getProjectBay: async ({ project_id }) => ({
+              project_id,
+              owning_bay_id: "bay-0",
+              host_id: "host-1",
+              title: "Project",
+              source: "single-bay-default",
+            }),
+          },
+        },
+      };
+      captured = await fn(ctx);
+    },
+    resolveProjectFromArgOrContext: async (_ctx, project) => ({
+      project_id: project ?? "project-id",
+      title: "Project",
+    }),
+  };
+
+  const program = new Command();
+  const project = program.command("project");
+  registerProjectBasicCommands(project, deps as any);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "project",
+    "where",
+    "--project",
+    "project-id",
+  ]);
+
+  assert.equal(captured?.project_id, "project-id");
+  assert.equal(captured?.owning_bay_id, "bay-0");
+});

@@ -3,6 +3,7 @@ Service for watching directory listings in a project.
 */
 
 import { createServiceClient, createServiceHandler } from "./typed";
+import type { Client } from "@cocalc/conat/core/client";
 import type { DirectoryListingEntry } from "@cocalc/util/types";
 import { dkv, type DKV } from "@cocalc/conat/sync/dkv";
 import { EventEmitter } from "events";
@@ -35,10 +36,37 @@ export interface ListingsApi {
 
 interface ListingsOptions {
   project_id: string;
+  client: Client;
 }
 
-export function createListingsApiClient({ project_id }: ListingsOptions) {
+function requireClient(
+  client: Client | undefined,
+  name: "createListingsApiClient" | "createListingsService" | "listingsClient",
+): Client {
+  if (client == null) {
+    throw Error(`${name} must provide an explicit Conat client`);
+  }
+  return client;
+}
+
+let nextListingsClientId = 0;
+const listingsClientIds = new WeakMap<Client, number>();
+
+function getListingsClientId(client: Client): number {
+  let id = listingsClientIds.get(client);
+  if (id == null) {
+    id = ++nextListingsClientId;
+    listingsClientIds.set(client, id);
+  }
+  return id;
+}
+
+export function createListingsApiClient({
+  project_id,
+  client,
+}: ListingsOptions) {
   return createServiceClient<ListingsApi>({
+    client: requireClient(client, "createListingsApiClient"),
     project_id,
     service: "listings",
   });
@@ -49,8 +77,10 @@ export type ListingsServiceApi = ReturnType<typeof createListingsApiClient>;
 export async function createListingsService({
   project_id,
   impl,
+  client,
 }: ListingsOptions & { impl }) {
   return await createServiceHandler<ListingsApi>({
+    client: requireClient(client, "createListingsService"),
     project_id,
     service: "listings",
     description: "Directory listing service",
@@ -101,14 +131,14 @@ export async function getListingsTimesKV(
 /* Unified interface to the above components for clients */
 
 export class ListingsClient extends EventEmitter {
-  options: { project_id: string };
+  options: ListingsOptions;
   api: Awaited<ReturnType<typeof createListingsApiClient>>;
   times?: DKV<Times>;
   listings?: DKV<Listing>;
 
-  constructor({ project_id }: { project_id: string }) {
+  constructor(options: ListingsOptions) {
     super();
-    this.options = { project_id };
+    this.options = options;
   }
 
   init = async () => {
@@ -176,6 +206,8 @@ export const listingsClient = refCache<
   ListingsClient
 >({
   name: "listings",
+  createKey: ({ project_id, client }) =>
+    `${project_id}:${getListingsClientId(requireClient(client, "listingsClient"))}`,
   createObject: async (options: ListingsOptions) => {
     const C = new ListingsClient(options);
     await C.init();

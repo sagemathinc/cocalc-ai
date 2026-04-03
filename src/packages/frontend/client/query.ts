@@ -51,10 +51,15 @@ export class QueryClient {
       }
       let changefeed;
       try {
+        const conatClient = this.client.getConatClient?.();
+        if (conatClient == null) {
+          throw Error("query changefeed must provide an explicit Conat client");
+        }
         changefeed = new ConatChangefeed({
           account_id,
           query: opts.query,
           options: opts.options,
+          client: conatClient,
         });
         // id for canceling this changefeed
         const id = uuid();

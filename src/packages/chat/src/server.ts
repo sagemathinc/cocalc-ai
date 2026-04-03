@@ -14,7 +14,7 @@ import {
   type ImmerDB,
 } from "@cocalc/conat/sync-doc/immer-db";
 import { RefcountLeaseManager } from "@cocalc/util/refcount/lease";
-import { getLogger } from "@cocalc/conat/client";
+import { getLogger } from "@cocalc/conat/logger";
 
 const logger = getLogger("chat:server");
 

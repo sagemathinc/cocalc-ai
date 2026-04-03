@@ -24,7 +24,7 @@ collaborative editing badly.
 */
 
 import { type Client } from "@cocalc/conat/core/client";
-import { getLogger } from "@cocalc/conat/client";
+import { getLogger } from "@cocalc/conat/logger";
 import { SERVICE } from "./util";
 import { hash_string } from "@cocalc/util/misc";
 import { delay } from "awaiting";

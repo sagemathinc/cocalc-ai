@@ -47,6 +47,7 @@ import { type ConatService } from "@cocalc/conat/service";
 import { MultipathWatcher } from "@cocalc/backend/path-watcher";
 import getLogger from "@cocalc/backend/logger";
 import { path_split } from "@cocalc/util/misc";
+import { getProjectConatClient } from "@cocalc/project/conat/runtime-client";
 
 const logger = getLogger("project:conat:listings");
 
@@ -57,6 +58,7 @@ export async function init() {
 
   service = await createListingsService({
     project_id,
+    client: getProjectConatClient(),
     impl,
   });
   const L = new Listings();
@@ -106,8 +108,9 @@ class Listings {
 
   init = async () => {
     logger.debug("Listings.init: start");
-    this.listings = await getListingsKV({ project_id });
-    this.times = await getListingsTimesKV({ project_id });
+    const client = getProjectConatClient();
+    this.listings = await getListingsKV({ project_id, client });
+    this.times = await getListingsTimesKV({ project_id, client });
     // start watching paths with recent interest
     const cutoff = Date.now() - INTEREST_CUTOFF_MS;
     const times = this.times.getAll();

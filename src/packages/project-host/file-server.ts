@@ -98,7 +98,7 @@ import {
   createRusticProgressHandler,
   type RusticProgressUpdate,
 } from "@cocalc/file-server/btrfs/rustic-progress";
-import { publishLroEvent } from "@cocalc/conat/lro/stream";
+import { publishLroEvent } from "./lro/stream";
 import { touchProjectLastEdited } from "./last-edited";
 import { getRootfsMountpoint } from "@cocalc/project-runner/run/rootfs";
 import {

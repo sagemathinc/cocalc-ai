@@ -20,6 +20,7 @@ import { lroProgress } from "@cocalc/conat/lro/progress";
 import { RefcountLeaseManager } from "@cocalc/util/refcount/lease";
 
 import getLogger from "@cocalc/backend/logger";
+import { getConatClient } from "./conat-client";
 
 const logger = getLogger("project-runner:overlay");
 const STORAGE_WRAPPER = "/usr/local/sbin/cocalc-runtime-storage";
@@ -162,6 +163,7 @@ export async function mount({
     void lroProgress({
       project_id,
       op_id,
+      client: getConatClient(),
       phase: event.type,
       message: event.desc,
       progress: event.progress,

@@ -90,7 +90,7 @@ function emitWithAckTimeoutUnref(
 }
 import { type ConatSocketServer } from "@cocalc/conat/socket";
 import { throttle } from "lodash";
-import { getLogger } from "@cocalc/conat/client";
+import { getLogger } from "@cocalc/conat/logger";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import { type SysConatServer, sysApiSubject, sysApi } from "./sys";
 import { forkedConatServer } from "./start-server";

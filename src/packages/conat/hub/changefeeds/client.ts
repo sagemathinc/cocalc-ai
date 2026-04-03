@@ -1,6 +1,6 @@
 import { type Client } from "@cocalc/conat/core/client";
 import { EventIterator } from "@cocalc/util/event-iterator";
-import { getLogger } from "@cocalc/conat/client";
+import { getLogger } from "@cocalc/conat/logger";
 import { SERVICE, CLIENT_KEEPALIVE, KEEPALIVE_TIMEOUT } from "./util";
 import { ConatError } from "@cocalc/conat/core/client";
 import { isValidUUID } from "@cocalc/util/misc";

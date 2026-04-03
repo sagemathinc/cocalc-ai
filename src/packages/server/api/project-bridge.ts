@@ -1,23 +1,22 @@
 // Bridge project calls through the server-side Conat client.
 
 import { projectSubject } from "@cocalc/conat/names";
-import { conat } from "@cocalc/backend/conat";
 import { type Client as ConatClient } from "@cocalc/conat/core/client";
 const DEFAULT_TIMEOUT = 15000;
 
-let client: ConatClient | null = null;
 export default async function projectBridge({
   project_id,
   name,
   args,
   timeout,
+  client,
 }: {
   project_id: string;
   name: string;
   args?: any[];
   timeout?: number;
+  client: ConatClient;
 }) {
-  client ??= conat();
   return await callProject({
     client,
     project_id,

@@ -9,7 +9,7 @@ import {
 } from "./util";
 import { ServerSocket } from "./server-socket";
 import { type Headers } from "@cocalc/conat/core/client";
-import { getLogger } from "@cocalc/conat/client";
+import { getLogger } from "@cocalc/conat/logger";
 
 const logger = getLogger("socket:server");
 

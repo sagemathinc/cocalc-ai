@@ -11,7 +11,7 @@ an error too.
 */
 
 import { type Location } from "@cocalc/conat/types";
-import { conat, getLogger } from "@cocalc/conat/client";
+import { getLogger } from "@cocalc/conat/logger";
 import { randomId } from "@cocalc/conat/names";
 import { EventEmitter } from "events";
 import { encodeBase64 } from "@cocalc/conat/util";
@@ -46,12 +46,19 @@ export interface ServiceCall extends ServiceDescription {
   // This now just uses the waitForInterest option to request.
   noRetry?: boolean;
 
-  client?: Client;
+  client: Client;
+}
+
+function requireClient(client?: Client): Client {
+  if (client == null) {
+    throw new Error("service helpers must provide an explicit Conat client");
+  }
+  return client;
 }
 
 export async function callConatService(opts: ServiceCall): Promise<any> {
   // console.log("callConatService", opts);
-  const cn = opts.client ?? (await conat());
+  const cn = requireClient(opts.client);
   const subject = serviceSubject(opts);
   let resp;
   const timeout = opts.timeout ?? DEFAULT_TIMEOUT;
@@ -78,7 +85,7 @@ export interface Options extends ServiceDescription {
   description?: string;
   version?: string;
   handler: (mesg) => Promise<any>;
-  client?: Client;
+  client: Client;
 }
 
 export function createConatService(options: Options) {
@@ -174,7 +181,7 @@ export class ConatService extends EventEmitter {
       description: this.options.description,
       version: this.options.version,
     });
-    const cn = this.options.client ?? (await conat());
+    const cn = requireClient(this.options.client);
     const queue = this.options.all ? randomId() : "0";
     // service=true so upon disconnect the socketio backend server
     // immediately stops routing traffic to this.
@@ -228,7 +235,7 @@ export class ConatService extends EventEmitter {
 }
 
 interface ServiceClientOpts {
-  options: ServiceDescription;
+  options: Omit<ServiceCall, "mesg" | "timeout" | "noRetry">;
   maxWait?: number;
   id?: string;
 }
@@ -252,10 +259,7 @@ export async function pingConatService({
 export async function waitForConatService({
   options,
   maxWait = 60000,
-}: {
-  options: ServiceDescription;
-  maxWait?: number;
-}) {
+}: ServiceClientOpts) {
   let ping: string[] = [];
   let pingMaxWait = 250;
   await until(

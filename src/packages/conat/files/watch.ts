@@ -8,7 +8,7 @@ import {
   type ServerSocket,
 } from "@cocalc/conat/socket";
 import { EventIterator } from "@cocalc/util/event-iterator";
-import { getLogger } from "@cocalc/conat/client";
+import { getLogger } from "@cocalc/conat/logger";
 import { type CompressedPatch } from "@cocalc/util/patch";
 import { Stats } from "./fs";
 

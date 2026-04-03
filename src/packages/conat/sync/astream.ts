@@ -40,7 +40,6 @@ import {
   decode,
 } from "@cocalc/conat/core/client";
 import { storagePath, type User } from "./core-stream";
-import { connect } from "@cocalc/conat/core/client";
 import { type Configuration } from "@cocalc/conat/persist/storage";
 
 export class AStream<T = any> {
@@ -60,7 +59,7 @@ export class AStream<T = any> {
       ephemeral: options.ephemeral,
       sync: options.sync,
     };
-    this.client = options.client ?? connect();
+    this.client = requireAstreamClient(options, "AStream").client;
     this.stream = stream({
       client: this.client,
       user: this.user,
@@ -219,8 +218,18 @@ export class AStream<T = any> {
   };
 }
 
-export function astream<T>(opts: DStreamOptions) {
-  return new AStream<T>(opts);
+function requireAstreamClient(
+  options: DStreamOptions,
+  name: string,
+): DStreamOptions & { client: Client } {
+  if (options.client == null) {
+    throw Error(`${name}: client must be specified`);
+  }
+  return options as DStreamOptions & { client: Client };
+}
+
+export function astream<T>(opts: DStreamOptions & { client: Client }) {
+  return new AStream<T>(requireAstreamClient(opts, "astream"));
 }
 
 function opt(seq_or_key: number | string): { seq: number } | { key: string } {

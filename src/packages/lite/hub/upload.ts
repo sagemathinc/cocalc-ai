@@ -5,6 +5,7 @@ import formidable from "formidable";
 import { join } from "path";
 import { PassThrough } from "node:stream";
 import { project_id as liteProjectId } from "@cocalc/project/data";
+import { getLiteConatClient } from "./runtime-client";
 
 function envNumber(name: string, fallback: number): number {
   const n = Number(process.env[name]);
@@ -127,11 +128,15 @@ async function handleUploadToProject({
     finished[key] = { state: false, cb: () => {} };
     void (async () => {
       try {
+        if (stream == null) {
+          throw new Error("upload stream not initialized");
+        }
         await writeFileToProject({
           stream,
           project_id,
           path: join(path, fields.fullPath?.[0] ?? filename),
           maxWait: MAX_UPLOAD_TIME_MS,
+          client: getLiteConatClient(),
         });
       } catch (err) {
         errors[key].push(`${err}`);

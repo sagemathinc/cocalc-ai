@@ -5,6 +5,7 @@ pnpm test ./time.test.ts
 */
 
 import { timeClient, createTimeService } from "@cocalc/conat/service/time";
+import { conat } from "@cocalc/conat/client";
 import time, { getSkew } from "@cocalc/conat/time";
 import { before, after } from "@cocalc/backend/conat/test/setup";
 
@@ -32,8 +33,8 @@ describe("get time from conat", () => {
 
 describe("start the time server and client and test that it works", () => {
   it("starts the time server and queries it", async () => {
-    createTimeService();
-    const client = timeClient();
+    createTimeService({ client: conat() });
+    const client = timeClient({ client: conat() });
     const t = await client.time();
     expect(Math.abs(Date.now() - t)).toBeLessThan(200);
   });

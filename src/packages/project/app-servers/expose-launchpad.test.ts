@@ -44,6 +44,9 @@ describe("app expose launchpad reservation", () => {
     jest.resetModules();
     jest.doMock("@cocalc/conat/client", () => ({
       conat: jest.fn(() => ({})),
+      getClient: jest.fn(() => ({
+        conat: jest.fn(() => ({})),
+      })),
     }));
     jest.doMock("@cocalc/project/conat/hub", () => ({
       hubApi: jest.fn(() => ({

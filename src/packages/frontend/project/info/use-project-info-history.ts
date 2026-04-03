@@ -8,6 +8,7 @@ import {
   type ProjectInfoHistory,
 } from "@cocalc/conat/project/project-info";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { webapp_client } from "@cocalc/frontend/webapp-client";
 
 function isVisible(): boolean {
   if (typeof document === "undefined") return true;
@@ -45,7 +46,11 @@ export default function useProjectInfoHistory({
 
   const update = useCallback(async () => {
     try {
-      const value = await getHistory({ project_id, minutes });
+      const value = await getHistory({
+        client: webapp_client.conat_client.conat(),
+        project_id,
+        minutes,
+      });
       setHistory(value);
       setError("");
     } catch (err) {

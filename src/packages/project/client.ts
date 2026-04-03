@@ -503,12 +503,16 @@ export class Client extends EventEmitter implements ProjectClientInterface {
   };
 
   callConatService: CallConatServiceFunction = async (options) => {
-    return await callConatService(options);
+    return await callConatService({
+      ...options,
+      client: this.conat(),
+    });
   };
 
   createConatService: CreateConatServiceFunction = (options) => {
     return createConatService({
       ...options,
+      client: this.conat(),
       project_id: this.project_id,
     });
   };

@@ -1,6 +1,7 @@
 import { link, readFile, symlink, writeFile } from "node:fs/promises";
 import { join } from "path";
 import { fsClient } from "@cocalc/conat/files/fs";
+import { conat } from "@cocalc/conat/client";
 import { randomId } from "@cocalc/conat/names";
 import { before, after } from "@cocalc/backend/conat/test/setup";
 import { uuid } from "@cocalc/util/misc";
@@ -58,7 +59,10 @@ describe("use all the standard api functions of fs", () => {
   const project_id = uuid();
   let fs;
   it("create a client", () => {
-    fs = fsClient({ subject: `${server.service}.project-${project_id}` });
+    fs = fsClient({
+      client: conat(),
+      subject: `${server.service}.project-${project_id}`,
+    });
   });
 
   it("appendFile works", async () => {
@@ -470,8 +474,14 @@ describeIfLinux("SECURITY CHECKS: dangerous symlinks can't be followed", () => {
   const project_id2 = uuid();
   let fs, fs2;
   it("create two clients", () => {
-    fs = fsClient({ subject: `${server.service}.project-${project_id}` });
-    fs2 = fsClient({ subject: `${server.service}.project-${project_id2}` });
+    fs = fsClient({
+      client: conat(),
+      subject: `${server.service}.project-${project_id}`,
+    });
+    fs2 = fsClient({
+      client: conat(),
+      subject: `${server.service}.project-${project_id2}`,
+    });
   });
 
   it("create a secret in one", async () => {

@@ -7,11 +7,7 @@ This is used, e.g., for broadcasting a user's cursors when they are editing a fi
 import { projectSubject } from "@cocalc/conat/names";
 import { State } from "@cocalc/conat/types";
 import { EventEmitter } from "events";
-import {
-  type Subscription,
-  getClient,
-  Client,
-} from "@cocalc/conat/core/client";
+import { type Subscription, Client } from "@cocalc/conat/core/client";
 
 export class PubSub extends EventEmitter {
   private subject: string;
@@ -28,10 +24,15 @@ export class PubSub extends EventEmitter {
     project_id: string;
     name: string;
     path?: string;
-    client?: Client;
+    client: Client;
   }) {
     super();
-    this.client = client ?? getClient();
+    if (client == null) {
+      throw Error("pubsub must provide an explicit Conat client");
+    }
+    // Shared pubsub helpers must not silently create or pick a cached client.
+    // The caller owns routing and must pass the intended runtime connection.
+    this.client = client;
     this.subject = projectSubject({
       project_id,
       path,

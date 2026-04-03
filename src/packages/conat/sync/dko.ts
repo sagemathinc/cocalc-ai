@@ -24,13 +24,24 @@ import { is_object } from "@cocalc/util/misc";
 import refCache from "@cocalc/util/refcache";
 import jsonStableStringify from "json-stable-stringify";
 import { isEqual } from "lodash";
+import type { Client } from "@cocalc/conat/core/client";
 
 export function userKvKey(options: DKVOptions) {
   if (!options.name) {
     throw Error("name must be specified");
   }
   const { client, ...x } = options;
-  return jsonStableStringify(x)!;
+  return jsonStableStringify({ ...x, client_id: client?.id })!;
+}
+
+function requireDkoClient(
+  options: DKVOptions,
+  name: string,
+): DKVOptions & { client: Client } {
+  if (options.client == null) {
+    throw Error(`${name}: client must be specified`);
+  }
+  return options as DKVOptions & { client: Client };
 }
 
 export class DKO<T = any> extends EventEmitter {
@@ -106,7 +117,7 @@ export class DKO<T = any> extends EventEmitter {
     }
     this.initialized = true;
     this.dkv = await createDKV<{ [key: string]: any }>({
-      ...this.opts,
+      ...requireDkoClient(this.opts, "DKO.init"),
       name: dkoPrefix(this.opts.name),
     });
     this.dkv.on("change", this.dkvOnChange);
@@ -275,7 +286,7 @@ export class DKO<T = any> extends EventEmitter {
   };
 }
 
-export const cache = refCache<DKVOptions, DKO>({
+export const cache = refCache<DKVOptions & { client: Client }, DKO>({
   name: "dko",
   createKey: userKvKey,
   createObject: async (opts) => {
@@ -292,6 +303,8 @@ function dkoPrefix(name: string): string {
   return `${DKO_PREFIX}${name}`;
 }
 
-export async function dko<T>(options: DKVOptions): Promise<DKO<T>> {
-  return await cache(options);
+export async function dko<T>(
+  options: DKVOptions & { client: Client },
+): Promise<DKO<T>> {
+  return await cache(requireDkoClient(options, "dko"));
 }

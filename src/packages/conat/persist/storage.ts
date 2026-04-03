@@ -79,7 +79,7 @@ import {
   ConatError,
 } from "@cocalc/conat/core/client";
 import TTL from "@isaacs/ttlcache";
-import { getLogger } from "@cocalc/conat/client";
+import { getLogger } from "@cocalc/conat/logger";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import { throttle } from "lodash";
 

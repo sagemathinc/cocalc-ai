@@ -15,7 +15,7 @@ import {
 } from "./util";
 import { EventIterator } from "@cocalc/util/event-iterator";
 import { keepAlive, KeepAlive } from "./keepalive";
-import { getLogger } from "@cocalc/conat/client";
+import { getLogger } from "@cocalc/conat/logger";
 import { once } from "@cocalc/util/async-utils";
 
 const logger = getLogger("socket:client");

@@ -8,7 +8,11 @@ pnpm test ./read.test.ts
 
 */
 
-import { before, after } from "@cocalc/backend/conat/test/setup";
+import {
+  before,
+  after,
+  client as testClient,
+} from "@cocalc/backend/conat/test/setup";
 
 beforeAll(before);
 
@@ -24,6 +28,7 @@ describe("do a basic test that the file read service works", () => {
     await createServer({
       project_id,
       createReadStream,
+      client: testClient,
     });
   });
 
@@ -38,7 +43,7 @@ describe("do a basic test that the file read service works", () => {
   });
 
   it("reads the file into memory", async () => {
-    const r = await readFile({ project_id, path: source });
+    const r = await readFile({ project_id, path: source, client: testClient });
     // will get just one chunk
     for await (const chunk of r) {
       expect(chunk.toString()).toEqual(CONTENT);
@@ -61,6 +66,7 @@ describe("do a larger test that involves multiple chunks and a different name", 
       project_id,
       createReadStream,
       name,
+      client: testClient,
     });
   });
 
@@ -82,6 +88,7 @@ describe("do a larger test that involves multiple chunks and a different name", 
       project_id,
       path: source,
       name,
+      client: testClient,
     });
     // will get many chunks.
     let chunks: any[] = [];
