@@ -4,6 +4,7 @@
  */
 
 import getLogger from "@cocalc/backend/logger";
+import { conat } from "@cocalc/backend/conat";
 import type { LroEvent } from "@cocalc/conat/hub/api/lro";
 import { get as getLroStream } from "@cocalc/conat/lro/client";
 import { publishLroSummary } from "@cocalc/conat/lro/stream";
@@ -40,6 +41,7 @@ export async function mirrorStartLroProgress({
       op_id,
       scope_type: "project",
       scope_id: project_id,
+      client: conat(),
     });
   } catch (err) {
     log.warn("unable to open project-start lro stream", {

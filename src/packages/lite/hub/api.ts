@@ -3,6 +3,7 @@ This is a very lightweight small subset of the hub's API for browser clients.
 */
 
 import getLogger from "@cocalc/backend/logger";
+import { conat } from "@cocalc/backend/conat";
 import { getFrontendSourceFingerprint } from "@cocalc/backend/frontend-build-fingerprint";
 import { type HubApi, getUserId, transformArgs } from "@cocalc/conat/hub/api";
 import type { CodexPaymentSourceInfo } from "@cocalc/conat/hub/api/system";
@@ -47,6 +48,24 @@ import {
 
 const logger = getLogger("lite:hub:api");
 const execFile = promisify(execFileCb);
+
+function syncHistoryWithExplicitClient(
+  opts: Parameters<typeof syncHistory>[0],
+) {
+  return syncHistory({
+    ...opts,
+    client: conat(),
+  });
+}
+
+function syncPurgeHistoryWithExplicitClient(
+  opts: Parameters<typeof syncPurgeHistory>[0],
+) {
+  return syncPurgeHistory({
+    ...opts,
+    client: conat(),
+  });
+}
 
 function parseMap(raw?: string): Record<string, string> {
   if (!raw) return {};
@@ -562,7 +581,10 @@ export const hubApi: HubApi = {
   db: { touch: () => {}, userQuery },
   purchases: {},
   agent,
-  sync: { history: syncHistory, purgeHistory: syncPurgeHistory },
+  sync: {
+    history: syncHistoryWithExplicitClient,
+    purgeHistory: syncPurgeHistoryWithExplicitClient,
+  },
   jupyter: {},
   ssh,
   reflect,
