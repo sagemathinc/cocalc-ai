@@ -38,6 +38,17 @@ export function imageCachePath(image: string): string {
 
 type ProgressFunction = (opts: { progress: number; desc: string }) => void;
 
+function progressFromPreflightMessage(message: string): number {
+  const normalized = `${message}`.trim().toLowerCase();
+  if (normalized.includes("checking rootfs preflight prerequisites")) {
+    return 92;
+  }
+  if (normalized.includes("validated rootfs bootstrap prerequisites")) {
+    return 98;
+  }
+  return 96;
+}
+
 // This is a bit complicated because extractBaseImage uses reuseInFlight,
 // and it's actually very likely MULTIPLE projects will start and need
 // to extract an image at the same time, so they should all see the progress
@@ -198,13 +209,16 @@ export const extractBaseImage = reuseInFlight(async (image: string) => {
         image,
         onProgress: ({ message }) => {
           reportProgress({
-            progress: 58,
+            progress: message.includes("validated") ? 58 : 56,
             desc: `${message} (${image})`,
           });
         },
       });
 
-      reportProgress({ progress: 59, desc: `inspecting ${image}...` });
+      reportProgress({
+        progress: 59,
+        desc: `collecting OCI image metadata for ${image}...`,
+      });
       const { stdout: inspect } = await executeCode({
         err_on_exit: true,
         verbose: true,
@@ -258,7 +272,7 @@ export const extractBaseImage = reuseInFlight(async (image: string) => {
         rootfsPath: baseImagePath,
         onProgress: ({ message }) => {
           reportProgress({
-            progress: 96,
+            progress: progressFromPreflightMessage(message),
             desc: `${message} (${image})`,
           });
         },

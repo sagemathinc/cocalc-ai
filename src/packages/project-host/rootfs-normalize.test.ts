@@ -45,9 +45,11 @@ describe("rootfs preflight metadata", () => {
     );
     try {
       const metadataPath = path.join(tmpdir, "preflight.json");
+      const messages: string[] = [];
       const metadata = await mod.preflightRootfsInPlace({
         image: "docker.io/library/ubuntu:24.04",
         rootfsPath: "/mnt/cocalc/data/cache/images/example",
+        onProgress: ({ message }) => messages.push(message),
       });
       await mod.writeRootfsPreflightMetadata({
         metadataPath,
@@ -80,6 +82,10 @@ describe("rootfs preflight metadata", () => {
           ],
         }),
       );
+      expect(messages).toEqual([
+        "checking RootFS preflight prerequisites",
+        "validated RootFS bootstrap prerequisites",
+      ]);
     } finally {
       await fs.rm(tmpdir, { recursive: true, force: true });
     }
@@ -178,9 +184,11 @@ describe("rootfs preflight metadata", () => {
     });
 
     const mod = await import("../project-runner/run/rootfs-normalize");
+    const messages: string[] = [];
     await expect(
       mod.preflightPulledOciImage({
         image: "docker.io/library/ubuntu:26.04",
+        onProgress: ({ message }) => messages.push(message),
       }),
     ).resolves.toMatchObject({
       distro_family: "debian",
@@ -202,6 +210,10 @@ describe("rootfs preflight metadata", () => {
         ]),
       }),
     );
+    expect(messages).toEqual([
+      "probing pulled OCI image bootstrap support",
+      "validated pulled OCI image bootstrap support",
+    ]);
   });
 
   it("reports unsupported pulled OCI images with the preflight error", async () => {

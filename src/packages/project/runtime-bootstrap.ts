@@ -231,6 +231,9 @@ async function detectMissingRuntimePackages(): Promise<MissingRuntimePackages> {
 }
 
 async function installMissingRuntimePackages(): Promise<void> {
+  logger.info("runtime bootstrap: checking required packages", {
+    user: process.env.COCALC_RUNTIME_USER ?? DEFAULT_PROJECT_RUNTIME_USER,
+  });
   const missing = await detectMissingRuntimePackages();
   const packages: string[] = [];
   if (missing.sudo) {
@@ -240,11 +243,16 @@ async function installMissingRuntimePackages(): Promise<void> {
     packages.push("ca-certificates");
   }
   if (!packages.length) {
+    logger.info("runtime bootstrap: required packages already present");
     return;
   }
 
   const aptGet = await findExecutable(["/usr/bin/apt-get", "/bin/apt-get"]);
   if (aptGet) {
+    logger.info("runtime bootstrap: installing required packages", {
+      packageManager: "apt-get",
+      packages,
+    });
     await runCommand(aptGet, ["update"]);
     await runCommand(aptGet, [
       "install",
@@ -267,15 +275,31 @@ async function installMissingRuntimePackages(): Promise<void> {
     const yum = await findExecutable(["/usr/bin/yum", "/bin/yum"]);
     const zypper = await findExecutable(["/usr/bin/zypper", "/bin/zypper"]);
     if (dnf) {
+      logger.info("runtime bootstrap: installing required packages", {
+        packageManager: "dnf",
+        packages,
+      });
       await runCommand(dnf, ["install", "-y", ...packages]);
       await runCommand(dnf, ["clean", "all"]).catch(() => {});
     } else if (microdnf) {
+      logger.info("runtime bootstrap: installing required packages", {
+        packageManager: "microdnf",
+        packages,
+      });
       await runCommand(microdnf, ["install", "-y", ...packages]);
       await runCommand(microdnf, ["clean", "all"]).catch(() => {});
     } else if (yum) {
+      logger.info("runtime bootstrap: installing required packages", {
+        packageManager: "yum",
+        packages,
+      });
       await runCommand(yum, ["install", "-y", ...packages]);
       await runCommand(yum, ["clean", "all"]).catch(() => {});
     } else if (zypper) {
+      logger.info("runtime bootstrap: installing required packages", {
+        packageManager: "zypper",
+        packages,
+      });
       await runCommand(zypper, [
         "--non-interactive",
         "--gpg-auto-import-keys",
@@ -320,6 +344,7 @@ async function installMissingRuntimePackages(): Promise<void> {
       `runtime bootstrap failed to provision required packages: sudo missing=${remaining.sudo}, ca-certificates missing=${remaining.caCertificates}`,
     );
   }
+  logger.info("runtime bootstrap: required packages are installed");
 }
 
 async function resolveRuntimeShell(preferred: string): Promise<string> {
@@ -360,6 +385,12 @@ async function configureSudo(runtime: RuntimeIdentity): Promise<void> {
 }
 
 async function ensureRuntimeFiles(runtime: RuntimeIdentity): Promise<void> {
+  logger.info("runtime bootstrap: writing runtime identity files", {
+    user: runtime.user,
+    uid: runtime.uid,
+    gid: runtime.gid,
+    home: runtime.home,
+  });
   await rewriteIfChanged("/etc/group", (current) =>
     rewriteGroup(current, runtime),
   );
@@ -374,6 +405,10 @@ async function ensureRuntimeFiles(runtime: RuntimeIdentity): Promise<void> {
   await mkdir(runtime.home, { recursive: true });
   await mkdir(dirname(runtime.home), { recursive: true });
   await configureSudo(runtime);
+  logger.info("runtime bootstrap: runtime identity files are ready", {
+    user: runtime.user,
+    home: runtime.home,
+  });
 }
 
 export async function maybeActivateRuntimeUser(): Promise<void> {
@@ -405,6 +440,11 @@ export async function maybeActivateRuntimeUser(): Promise<void> {
   ) {
     throw new Error("runtime user activation requires setuid/setgid support");
   }
+  logger.info("runtime bootstrap: dropping privileges", {
+    user: runtime.user,
+    uid: runtime.uid,
+    gid: runtime.gid,
+  });
   process.setgid(runtime.gid);
   process.setuid(runtime.uid);
   logger.info("runtime user activated", {
