@@ -14,6 +14,11 @@ import {
   createBrowserSessionClient,
   createBrowserSessionService,
 } from "./browser-session";
+import {
+  client as fileServerClient,
+  server as createFileServer,
+} from "../files/file-server";
+import { init as initLlmServer } from "../llm/server";
 
 describe("service helper explicit client routing", () => {
   it("rejects listings helpers without an explicit client", async () => {
@@ -82,5 +87,17 @@ describe("service helper explicit client routing", () => {
     ).toThrow(
       "browser-session service helper must provide an explicit Conat client",
     );
+  });
+
+  it("rejects shared server helpers without an explicit client", async () => {
+    expect(() => fileServerClient({} as any)).toThrow(
+      "file-server helper must provide an explicit Conat client",
+    );
+    await expect(createFileServer({} as any)).rejects.toThrow(
+      "file-server helper must provide an explicit Conat client",
+    );
+    await expect(
+      initLlmServer(async () => {}, undefined as any),
+    ).rejects.toThrow("llm server init must provide an explicit Conat client");
   });
 });

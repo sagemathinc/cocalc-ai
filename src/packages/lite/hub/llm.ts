@@ -7,6 +7,7 @@ import {
   evaluateOllama,
   heuristicNumTokens,
 } from "@cocalc/ai/llm";
+import { conat } from "@cocalc/conat/client";
 import { init as initConatLLM } from "@cocalc/conat/llm/server";
 import { isOllamaLLM } from "@cocalc/util/db-schema/llm-utils";
 import { listRows } from "./sqlite/database";
@@ -41,5 +42,5 @@ export async function init(): Promise<void> {
       return evaluateOllama(opts);
     }
     return evaluateWithLangChain(opts, context);
-  });
+  }, conat());
 }

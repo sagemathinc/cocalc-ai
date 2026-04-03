@@ -317,3 +317,48 @@ helper.
 
 This keeps browser-session automation bound to the correct control-plane
 connection instead of silently depending on ambient global state.
+
+## Completed In The Shared Server Helper Pass
+
+### `conat/files/file-server.ts`
+
+- removed the hidden fallback to the global Conat singleton
+- shared file-server server/client helpers now require an explicit client
+- the natural singleton or routed choices remain local:
+  - [server/conat/api/file-sync.ts](/home/wstein/build/cocalc-lite4/src/packages/server/conat/api/file-sync.ts)
+    now explicitly injects the backend hub client when using the generic
+    routed file-server API
+  - [http-api/pages/api/v2/projects/copy-path.ts](/home/wstein/build/cocalc-lite4/src/packages/http-api/pages/api/v2/projects/copy-path.ts)
+    now explicitly injects the backend hub client
+  - [server/conat/file-server-client.ts](/home/wstein/build/cocalc-lite4/src/packages/server/conat/file-server-client.ts),
+    [project-host/file-server.ts](/home/wstein/build/cocalc-lite4/src/packages/project-host/file-server.ts),
+    and [project-runner/run/filesystem.ts](/home/wstein/build/cocalc-lite4/src/packages/project-runner/run/filesystem.ts)
+    were already the deliberate places that choose a routed or local client
+
+This keeps the shared file-server helper reusable across hub, project-host,
+project-runner, and future multi-bay control code without silently selecting
+an ambient connection.
+
+### `conat/llm/server.ts`
+
+- removed the hidden fallback to the global Conat singleton
+- `init(...)` now requires an explicit client
+- the natural singleton wrappers remain local:
+  - [server/conat/llm.ts](/home/wstein/build/cocalc-lite4/src/packages/server/conat/llm.ts)
+    now injects the backend hub client explicitly
+  - [lite/hub/llm.ts](/home/wstein/build/cocalc-lite4/src/packages/lite/hub/llm.ts)
+    now injects the Lite runtime client explicitly
+
+This keeps the shared LLM server registration helper safe for future routed
+control-plane reuse instead of implicitly binding to a global client.
+
+### `conat/ai/acp/server.ts`
+
+- removed the hidden fallback to the global Conat singleton
+- ACP server initialization now requires an explicit client
+- the current Lite ACP runtime already had the right shape:
+  - [lite/hub/acp/index.ts](/home/wstein/build/cocalc-lite4/src/packages/lite/hub/acp/index.ts)
+    already passes its runtime-selected client explicitly
+
+This keeps ACP server registration aligned with the caller's chosen routed
+client rather than silently attaching to global state.

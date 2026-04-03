@@ -29,7 +29,6 @@ path, which can corrupt large chat logs if interrupted mid-write.
 */
 
 import { type Client } from "@cocalc/conat/core/client";
-import { conat } from "@cocalc/conat/client";
 import { type SnapshotCounts } from "@cocalc/util/consts/snapshots";
 import type {
   PublishProjectRootfsArtifact,
@@ -298,12 +297,18 @@ export interface SnapshotUsage {
 }
 
 export interface Options extends Fileserver {
-  client?: Client;
+  client: Client;
+}
+
+function requireClient(client: Client | undefined): Client {
+  if (client == null) {
+    throw Error("file-server helper must provide an explicit Conat client");
+  }
+  return client;
 }
 
 export async function server({ client, ...impl }: Options) {
-  client ??= conat();
-
+  client = requireClient(client);
   const sub = await client.service<Fileserver>(`${SUBJECT}.*`, impl);
 
   return {
@@ -319,14 +324,14 @@ export function client({
   timeout,
   waitForInterest = true,
 }: {
-  client?: Client;
+  client: Client;
   // provide project_id so that client is automatically selected to
   // be the one for the project-host that contains the project.
   project_id?: string;
   timeout?: number;
   waitForInterest?: boolean;
-} = {}): Fileserver {
-  client ??= conat();
+}): Fileserver {
+  client = requireClient(client);
   // we use this subject so that requests get routed to the
   // project-host with the given project_id via
   // src/packages/server/conat/route-client.ts

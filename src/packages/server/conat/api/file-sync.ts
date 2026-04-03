@@ -14,6 +14,7 @@ import { type Sync } from "@cocalc/conat/files/file-server";
 import { type MutagenSyncSession } from "@cocalc/conat/project/mutagen/types";
 import { assertCollab } from "./util";
 import { client as fileServerClient } from "@cocalc/conat/files/file-server";
+import { conat } from "@cocalc/backend/conat";
 import { isValidUUID } from "@cocalc/util/misc";
 import isCollaborator from "@cocalc/server/projects/is-collaborator";
 import { resolve } from "node:path";
@@ -33,6 +34,10 @@ function getProjectId(spec: string): string {
 const COMMANDS = new Set(["flush", "reset", "pause", "resume", "terminate"]);
 
 const BANNED_PATH_PREFIXES = [".local", ".cache", ".mutagen", ".snapshots"];
+
+function getFileServerClient() {
+  return fileServerClient({ client: conat() });
+}
 
 async function check({
   src,
@@ -96,14 +101,14 @@ export async function create(
   const ignores = checkPath(opts.src)
     .concat(checkPath(opts.dest))
     .concat(opts.ignores ?? []);
-  await fileServerClient().createSync({ ...opts, ignores });
+  await getFileServerClient().createSync({ ...opts, ignores });
 }
 
 export async function get(
   opts: Sync & { account_id: string },
 ): Promise<undefined | (MutagenSyncSession & Sync)> {
   await check(opts);
-  return await fileServerClient().getSync(opts);
+  return await getFileServerClient().getSync(opts);
 }
 
 export async function command(
@@ -113,7 +118,7 @@ export async function command(
   },
 ): Promise<{ stdout: string; stderr: string; exit_code: number }> {
   await check(opts);
-  return await fileServerClient().syncCommand(opts.command, opts);
+  return await getFileServerClient().syncCommand(opts.command, opts);
 }
 
 export async function getAll({
@@ -125,5 +130,5 @@ export async function getAll({
 }): Promise<(MutagenSyncSession & Sync)[]> {
   const project_id = getProjectId(name + ":");
   await assertCollab({ project_id, account_id });
-  return await fileServerClient().getAllSyncs({ name });
+  return await getFileServerClient().getAllSyncs({ name });
 }

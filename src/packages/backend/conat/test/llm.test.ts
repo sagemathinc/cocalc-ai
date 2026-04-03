@@ -27,7 +27,7 @@ describe("create an llm server, client, and stub evaluator, and run an evaluatio
   }
 
   it("creates the server", async () => {
-    await init(evaluate);
+    await init(evaluate, conat());
   });
 
   it("calls the llm", async () => {
@@ -64,7 +64,7 @@ describe("test an evaluate that throws an error half way through", () => {
   }
 
   it("creates the server", async () => {
-    await init(evaluate);
+    await init(evaluate, conat());
   });
 
   it("calls the llm", async () => {
