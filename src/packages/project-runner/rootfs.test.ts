@@ -31,6 +31,10 @@ jest.mock("@cocalc/conat/lro/progress", () => ({
   lroProgress: (...args: any[]) => lroProgress(...args),
 }));
 
+jest.mock("./run/conat-client", () => ({
+  getConatClient: jest.fn(() => ({})),
+}));
+
 jest.mock("fs/promises", () => ({
   mkdir: jest.fn(),
   readFile: jest.fn(),
@@ -68,12 +72,11 @@ describe("rootfs overlay mount recovery", () => {
   });
 
   it("fails with explicit cleanup instructions on stale upperdir origin errors", async () => {
-    executeCode
-      .mockRejectedValueOnce(
-        new Error(
-          "mount failed: Stale file handle; overlayfs: failed to verify upper root origin",
-        ),
-      );
+    executeCode.mockRejectedValueOnce(
+      new Error(
+        "mount failed: Stale file handle; overlayfs: failed to verify upper root origin",
+      ),
+    );
 
     const mod = await import("./run/rootfs");
 

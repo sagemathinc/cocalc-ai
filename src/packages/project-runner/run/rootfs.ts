@@ -285,9 +285,10 @@ async function mountOverlayFs({ upperdir, workdir, merged, lowerdir }) {
         "-n",
         STORAGE_WRAPPER,
         "mount-overlay-project",
-        // CRITICAL: wrapper hardcodes the xattr-capable overlay options. Project
-        // backup and restore now preserve trusted.overlay.* metadata via the
-        // dedicated privileged rustic wrapper path.
+        // CRITICAL: wrapper hardcodes the xattr-capable overlay options.
+        // Backup and restore must preserve trusted.overlay.* metadata, but the
+        // wrapper intentionally keeps index=off so upperdir deltas remain
+        // portable across hosts and equivalent managed lowers.
         lowerdir,
         upperdir,
         workdir,

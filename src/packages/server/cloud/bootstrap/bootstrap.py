@@ -1379,12 +1379,15 @@ case "$cmd" in
     #   metadata-only changes, which keeps environment overlays smaller.
     # - redirect_dir=on makes lowerdir-backed directory renames behave normally
     #   instead of forcing expensive EXDEV-style fallbacks.
-    # - index=on keeps origin metadata for copied-up objects and is part of the
-    #   fully featured overlay metadata model.
-    # Tradeoff: overlay state now depends on trusted.overlay.* xattrs, so
-    # backup/restore of project overlay data must preserve those xattrs via the
-    # dedicated privileged rustic wrapper path.
-    exec /bin/mount -t overlay overlay -o "lowerdir=${lowerdir_escaped},upperdir=${upperdir_escaped},workdir=${workdir_escaped},xino=off,metacopy=on,redirect_dir=on,index=on" "$merged"
+    # - index=off keeps the upperdir portable across hosts / equivalent lowers.
+    #   With index=on, overlayfs stamps trusted.overlay.origin onto the upper
+    #   root itself, which makes the entire upperdir fail to remount against a
+    #   replaced-but-equivalent lower tree with "Stale file handle".
+    # Tradeoff: copied-up lower hardlinks may lose hardlink identity, but that
+    # is preferable to making project RootFS deltas non-portable.
+    # Backup/restore of project overlay data must still preserve
+    # trusted.overlay.* xattrs via the dedicated privileged rustic wrapper path.
+    exec /bin/mount -t overlay overlay -o "lowerdir=${lowerdir_escaped},upperdir=${upperdir_escaped},workdir=${workdir_escaped},xino=off,metacopy=on,redirect_dir=on,index=off" "$merged"
     ;;
   umount-overlay-project)
     if [ "$#" -ne 1 ]; then

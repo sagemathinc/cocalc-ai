@@ -481,7 +481,7 @@ class BootstrapWrapperScriptTest(unittest.TestCase):
                 bootstrap.os.chmod = original_chmod
 
             script = captured["/usr/local/sbin/cocalc-runtime-storage"]
-            self.assertIn("metacopy=on,redirect_dir=on,index=on", script)
+            self.assertIn("metacopy=on,redirect_dir=on,index=off", script)
             self.assertIn("project-rustic-backup)", script)
             self.assertIn("project-rustic-restore)", script)
             self.assertIn("normalize-rootfs)", script)
