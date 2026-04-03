@@ -502,3 +502,32 @@ This does not change Lite startup, and it does not remove the runtime-local
 singleton yet. It does confine Lite feature code to one local helper so future
 home-bay versus routed-client work does not have to chase direct
 `@cocalc/conat/client` imports across unrelated modules.
+
+## Completed In The Backend Sync Wrapper Pass
+
+### `backend/conat/sync.ts`
+
+- replaced the remaining backend convenience-wrapper import of the generic
+  `@cocalc/conat/client` facade with the backend-local
+  [conat.ts](/home/wstein/build/cocalc-lite4/src/packages/backend/conat/conat.ts)
+  wrapper
+- backend sync helpers still keep their current convenience behavior, but that
+  default client is now chosen inside the backend runtime boundary instead of
+  reaching through the generic singleton API
+
+This does not change semantics, but it makes backend sync wrappers match the
+same runtime-local pattern used elsewhere in Phase 0.
+
+## Completed In The Project-Host Runtime Helper Pass
+
+### Project-Host Local Conat Access
+
+- added [project-host/runtime-client.ts](/home/wstein/build/cocalc-lite4/src/packages/project-host/runtime-client.ts)
+  as the project-host-local helper that reads the active runtime Conat client
+- updated [project-host/lro/stream.ts](/home/wstein/build/cocalc-lite4/src/packages/project-host/lro/stream.ts)
+  to use that helper instead of importing the generic global Conat client
+  directly
+
+This keeps project-host feature code aligned with the same pattern now used in
+project and Lite runtimes: startup owns the connection setup, but ordinary
+modules do not reach into the generic singleton path directly.

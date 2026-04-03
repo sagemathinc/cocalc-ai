@@ -1,4 +1,3 @@
-import { conat } from "@cocalc/conat/client";
 import {
   publishLroEvent as publishLroEvent0,
   publishLroSummary as publishLroSummary0,
@@ -8,6 +7,7 @@ import type {
   LroScopeType,
   LroSummary,
 } from "@cocalc/conat/hub/api/lro";
+import { getProjectHostConatClient } from "../runtime-client";
 
 export async function publishLroEvent(opts: {
   scope_type: LroScopeType;
@@ -18,7 +18,7 @@ export async function publishLroEvent(opts: {
 }): Promise<void> {
   await publishLroEvent0({
     ...opts,
-    client: conat(),
+    client: getProjectHostConatClient(),
   });
 }
 
@@ -29,6 +29,6 @@ export async function publishLroSummary(opts: {
 }): Promise<void> {
   await publishLroSummary0({
     ...opts,
-    client: conat(),
+    client: getProjectHostConatClient(),
   });
 }

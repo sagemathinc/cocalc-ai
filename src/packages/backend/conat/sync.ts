@@ -18,7 +18,7 @@ import {
   inventory as createInventory,
   type Inventory,
 } from "@cocalc/conat/sync/inventory";
-import { conat as getConatClient } from "@cocalc/conat/client";
+import { conat as getBackendConatClient } from "./conat";
 import "./index";
 
 export type { DStream, DKV, DKO, AKV };
@@ -28,35 +28,35 @@ export async function dstream<T = any>(
 ): Promise<DStream<T>> {
   return await createDstream<T>({
     ...opts,
-    client: opts.client ?? getConatClient(),
+    client: opts.client ?? getBackendConatClient(),
   });
 }
 
 export function astream<T = any>(opts: DstreamCreateOptions): AStream<T> {
   return createAStream<T>({
     ...opts,
-    client: opts.client ?? getConatClient(),
+    client: opts.client ?? getBackendConatClient(),
   });
 }
 
 export async function dkv<T = any>(opts: DKVOptions): Promise<DKV<T>> {
   return await createDKV<T>({
     ...opts,
-    client: opts.client ?? getConatClient(),
+    client: opts.client ?? getBackendConatClient(),
   });
 }
 
 export function akv<T = any>(opts: DKVOptions): AKV<T> {
   return createAKV<T>({
     ...opts,
-    client: opts.client ?? getConatClient(),
+    client: opts.client ?? getBackendConatClient(),
   });
 }
 
 export async function dko<T = any>(opts: DKVOptions): Promise<DKO<T>> {
   return await createDKO({
     ...opts,
-    client: opts.client ?? getConatClient(),
+    client: opts.client ?? getBackendConatClient(),
   });
 }
 
@@ -70,6 +70,6 @@ export async function inventory(
 ): Promise<Inventory> {
   return await createInventory({
     ...opts,
-    client: getConatClient(),
+    client: getBackendConatClient(),
   });
 }
