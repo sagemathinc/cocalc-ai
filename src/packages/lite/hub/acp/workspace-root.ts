@@ -1,9 +1,6 @@
 import path from "node:path";
 import type { CodexSessionConfig } from "@cocalc/util/ai/codex";
-import {
-  DEFAULT_PROJECT_RUNTIME_HOME,
-  projectRuntimeHomeRelativePath,
-} from "@cocalc/util/project-runtime";
+import { DEFAULT_PROJECT_RUNTIME_HOME } from "@cocalc/util/project-runtime";
 
 let preferContainerOverride: boolean | undefined;
 
@@ -25,14 +22,15 @@ export function resolveWorkspaceRoot(
   if (preferContainerExecutor()) {
     // In launchpad/project-host mode Codex now runs fully inside the project
     // container, so the provided workingDirectory is already an in-project
-    // absolute path. Canonicalize legacy runtime-home aliases and otherwise
-    // leave container paths alone.
+    // absolute path. Canonicalize the runtime home and otherwise leave
+    // container paths alone.
     if (!requested) return DEFAULT_PROJECT_RUNTIME_HOME;
-    const runtimeRelative = projectRuntimeHomeRelativePath(requested);
-    if (runtimeRelative != null) {
-      return runtimeRelative
-        ? path.posix.join(DEFAULT_PROJECT_RUNTIME_HOME, runtimeRelative)
-        : DEFAULT_PROJECT_RUNTIME_HOME;
+    const normalized = path.posix.normalize(requested);
+    if (normalized === DEFAULT_PROJECT_RUNTIME_HOME) {
+      return DEFAULT_PROJECT_RUNTIME_HOME;
+    }
+    if (normalized.startsWith(`${DEFAULT_PROJECT_RUNTIME_HOME}/`)) {
+      return normalized;
     }
     return requested;
   }

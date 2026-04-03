@@ -143,7 +143,6 @@ function normalizeProjectRuntimePath(pathValue?: string): string {
   const seen = new Set<string>();
   const ordered = [
     `${PROJECT_RUNTIME_HOME}/.local/bin`,
-    "/root/.local/bin",
     "/opt/cocalc/bin",
     "/opt/cocalc/bin2",
     "/opt/cocalc-cli/bin",

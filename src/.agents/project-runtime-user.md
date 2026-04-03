@@ -1,9 +1,10 @@
 # Project Runtime User Migration Plan
 
-Last refreshed: April 1, 2026
+Last refreshed: April 2, 2026
 
-Status: phase 0 complete; phase 1/2 implemented for greenfield hosts; RootFS
-normalization specified and planned next
+Status: phases 0-5 are substantially implemented for launchpad dev hosts.
+The remaining work is rollout validation, final `/root` compatibility cleanup,
+and RootFS normalizer hardening/performance work.
 
 This document is the concrete plan for changing launchpad project runtimes from
 the current:
@@ -437,7 +438,7 @@ This is the key rule that keeps future changes from corrupting old projects.
 
 ## SSH Model
 
-The current startup path assumes `/root/.ssh` and root-managed SSH config.
+The runtime SSH model is now implemented around `/home/user/.ssh`.
 
 Under the new model:
 
@@ -445,8 +446,10 @@ Under the new model:
 - the login shell should land as `user`
 - authorized keys should be managed for `/home/user/.ssh`
 
-This means [startup-scripts.ts](/home/wstein/build/cocalc-lite2/src/packages/project-runner/run/startup-scripts.ts)
-must be redesigned rather than superficially edited.
+Implemented in:
+
+- [startup-scripts.ts](/home/wstein/build/cocalc-lite2/src/packages/project-runner/run/startup-scripts.ts)
+- project SSH settings and authorized-key plumbing
 
 ## Codex / Agent Model
 
@@ -459,16 +462,18 @@ This is one of the strongest reasons to make the change:
 - config/state under `~/.codex`, `~/.config`, `~/.npm`, `~/.cargo`, etc. end
   up in a normal-looking home directory
 
-Implications:
+Implemented / verified:
 
 - [codex-project.ts](/home/wstein/build/cocalc-lite2/src/packages/project-host/codex/codex-project.ts)
-  needs a full `/root` to `/home/user` audit
-- PATH bootstrapping must prepend `/home/user/.local/bin`
-- shared Codex auth and mounts must remain secure when the runtime user changes
+  now uses `/home/user` as the canonical runtime home
+- PATH bootstrapping now prefers `/home/user/.local/bin`
+- shared Codex auth/config mounts work with the runtime user change
+- Codex runs successfully in launchpad projects with `HOME=/home/user`
 
 ## Frontend Semantics
 
-The frontend should stop assuming `/root` for non-lite projects.
+The frontend now prefers explicit runtime capabilities instead of assuming
+launchpad projects live under `/root`.
 
 Instead it should rely on capabilities:
 
@@ -476,7 +481,7 @@ Instead it should rely on capabilities:
 - `runtimeUser`
 - `sudoAvailable`
 
-Areas that need auditing:
+Areas audited / updated:
 
 - [home-directory.ts](/home/wstein/build/cocalc-lite2/src/packages/frontend/project/home-directory.ts)
 - path normalization and explorer defaults
@@ -554,7 +559,7 @@ Deliverables:
 
 Status:
 
-- planned next
+- complete for supported launchpad RootFS flows
 
 ### Phase 2: Container Launch Semantics
 
@@ -575,7 +580,8 @@ Deliverables:
 
 Status:
 
-- implemented in greenfield form; still being hardened
+- complete for greenfield launchpad projects; still being exercised across
+  more images
 
 ### Phase 3: SSH and Runtime Cleanup
 
@@ -584,6 +590,10 @@ Redesign SSH/bootstrap scripts so that:
 - the daemon can still start correctly
 - login lands as `user`
 - SSH keys live under `/home/user/.ssh`
+
+Status:
+
+- complete for launchpad dev hosts
 
 ### Phase 4: Frontend Path Migration
 
@@ -596,6 +606,11 @@ Audit and update all user-facing path defaults:
 - app-server presets
 - agent defaults
 
+Status:
+
+- substantially complete; remaining work is final compatibility cleanup and
+  regression testing
+
 ### Phase 5: Codex / Agent Migration
 
 Move Codex defaults from `/root` to `/home/user`:
@@ -605,6 +620,10 @@ Move Codex defaults from `/root` to `/home/user`:
 - default working directory
 - PATH assumptions
 
+Status:
+
+- complete for launchpad dev hosts
+
 ### Phase 6: File and Permission UX
 
 Make normal file operations reflect normal-user semantics:
@@ -612,6 +631,11 @@ Make normal file operations reflect normal-user semantics:
 - no silent elevation
 - clear errors for privileged paths
 - optional future explicit elevated-edit workflow
+
+Status:
+
+- core runtime semantics are complete; explicit elevated-edit UX remains out
+  of scope
 
 ### Phase 7: Rollout
 
@@ -629,6 +653,10 @@ Recommended rollout order:
 
 Because this is still greenfield, it is acceptable to avoid in-place migration
 for older dev projects and instead reprovision or recreate them.
+
+Status:
+
+- in progress
 
 ## Test Matrix
 
@@ -684,48 +712,69 @@ The following must pass before switching the default:
 - already-in-use normalized lower layers are not mutated by later contract
   changes
 
-## Open Questions
+## Remaining Follow-Up Work
 
-### 1. Exact Podman User Namespace Configuration
+The user-facing runtime migration is working. The remaining work is mostly
+around RootFS normalization quality and rollout confidence, not the core
+runtime model.
 
-The preferred solution is clear in spirit, but the exact supported Podman flags
-must be validated on our deployment kernels and images.
+### 1. Broaden the normalization matrix
 
-### 2. Exact Normalizer Package Matrix
+Test the normalizer on more than current Ubuntu OCI images, including:
 
-We have decided to use one-time RootFS normalization. The remaining question is
-the exact per-family package/install matrix:
+- older Ubuntu releases
+- Debian
+- RHEL / Rocky / Alma / UBI
+- SLES / openSUSE
 
-- Debian / Ubuntu
-- RHEL / Rocky / Alma / Fedora / UBI
-- SLES / openSUSE Leap
+This should produce a small compatibility matrix of known-good and
+known-rejected images.
 
-This is now an implementation detail, not a product-direction question.
+### 2. Reject obviously unsupported images early
 
-### 3. SSH Product Surface
+We already reject unsupported images during normalization, but we should add
+earlier cheap checks when possible, especially for:
 
-We should decide whether the UI should expose:
+- musl / Alpine-style images
+- images without a supported package manager
 
-- only normal `user` shells
-- or also an explicit "root shell" affordance
+The goal is to fail quickly before an expensive normalization attempt.
 
-My recommendation is:
+### 3. Profile and reduce normalizer cost
 
-- default to `user`
-- keep root available only through explicit elevation
+Normalization currently dominates startup time for some small images. We need
+to answer, with measurements, whether the current package-manager-based
+approach is the minimum safe option or whether some work can be replaced with
+direct file edits for already-compatible images.
 
-### 4. Backward Compatibility Window
+This should explicitly check:
 
-We should decide whether to carry temporary `/root` compatibility shims for:
+- whether any recursive ownership or mode rewrites scale poorly on large images
+- whether the slow path is package-manager I/O, ownership remap, validation, or
+  all three
+- whether a safe fast-path exists for images that already satisfy most of the
+  contract
 
-- frontend path normalization
-- Codex home fallback
-- app presets
+### 4. Improve normalization progress reporting
 
-My recommendation is:
+If normalization remains materially slower than pull/extract, startup progress
+needs better detail so users understand what is happening.
 
-- keep them minimal and temporary
-- avoid building new behavior on top of `/root`
+At minimum we should surface:
+
+- package-manager update/install stage
+- ownership remap stage
+- validation stage
+- whether the image was already normalized or required the full slow path
+
+### 5. Harden shell-based validation in the wrapper
+
+One remaining field issue was:
+
+- `rootfs contract failed: sudo su is not working for user environment: line 21: pop_var_context: head of shell_variables not a function context`
+
+This needs a focused wrapper fix so validation does not depend on fragile shell
+invocation details across images.
 
 ## Recommendation Summary
 

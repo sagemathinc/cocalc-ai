@@ -71,12 +71,6 @@ function readHomeFromProjectStore(projectId?: string): string | undefined {
   for (const candidate of candidatePaths) {
     const normalizedCandidate = normalizeHome(candidate);
     if (!normalizedCandidate || normalizedCandidate === "/") continue;
-    if (
-      normalizedCandidate === "/root" ||
-      normalizedCandidate.startsWith("/root/")
-    ) {
-      return "/root";
-    }
     const homeMatch = normalizedCandidate.match(/^\/home\/[^/]+/);
     if (homeMatch) {
       return homeMatch[0];
@@ -139,9 +133,6 @@ export function getProjectRuntimeUser(projectId?: string): string {
     return (
       home.slice("/home/".length).split("/")[0] || DEFAULT_PROJECT_RUNTIME_USER
     );
-  }
-  if (home === "/root" || home.startsWith("/root/")) {
-    return "root";
   }
   if (cacheKey !== "__default__") {
     const fallbackCached = USER_CACHE.get("__default__");

@@ -1,7 +1,6 @@
 import {
   DEFAULT_PROJECT_RUNTIME_HOME,
   isProjectRuntimeHomeAliasPath,
-  LEGACY_PROJECT_RUNTIME_HOME,
   projectRuntimeHomeRelativePath,
 } from "./project-runtime";
 
@@ -17,27 +16,18 @@ describe("project runtime home helpers", () => {
     ).toBe("work/file.txt");
   });
 
-  it("treats the legacy /root path as a runtime-home alias", () => {
-    expect(projectRuntimeHomeRelativePath(LEGACY_PROJECT_RUNTIME_HOME)).toBe(
-      "",
-    );
-    expect(projectRuntimeHomeRelativePath("/root/work/file.txt")).toBe(
-      "work/file.txt",
-    );
-    expect(isProjectRuntimeHomeAliasPath("/root/work/file.txt")).toBe(true);
-  });
-
   it("normalizes path segments before checking runtime-home aliases", () => {
-    expect(
-      projectRuntimeHomeRelativePath("/root/./work/../work/file.txt"),
-    ).toBe("work/file.txt");
     expect(
       projectRuntimeHomeRelativePath("/home/user/projects/../demo/main.ts"),
     ).toBe("demo/main.ts");
   });
 
   it("does not treat unrelated absolute paths as runtime-home aliases", () => {
+    expect(
+      projectRuntimeHomeRelativePath("/root/work/file.txt"),
+    ).toBeUndefined();
     expect(projectRuntimeHomeRelativePath("/etc/passwd")).toBeUndefined();
+    expect(isProjectRuntimeHomeAliasPath("/root/work/file.txt")).toBe(false);
     expect(isProjectRuntimeHomeAliasPath("/scratch/data.txt")).toBe(false);
   });
 });
