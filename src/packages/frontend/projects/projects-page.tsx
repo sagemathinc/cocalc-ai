@@ -441,7 +441,10 @@ export const ProjectsPage: React.FC = () => {
                     </div>
                   )}
 
-                  <div ref={inviteInboxRef}>
+                  <div
+                    ref={inviteInboxRef}
+                    style={{ maxHeight: "50vh", overflow: "auto" }}
+                  >
                     <InviteInboxPanel mode="global" />
                   </div>
 
