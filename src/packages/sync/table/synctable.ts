@@ -749,11 +749,17 @@ export class SyncTable extends EventEmitter {
           continue;
         }
         const valid_account_id = account_id as string;
+        const conatClient = this.client.getConatClient?.();
+        if (conatClient == null) {
+          throw Error(
+            `${this.table} changefeed must provide an explicit Conat client`,
+          );
+        }
         this.changefeed = new ConatChangefeed({
           account_id: valid_account_id,
           query: this.query,
           options: this.options,
-          client: this.client.getConatClient?.(),
+          client: conatClient,
         });
         // This init_changefeed_handlers MUST be initialized here since this.changefeed might
         // get closed very soon, and missing a close event would be very, very bad.

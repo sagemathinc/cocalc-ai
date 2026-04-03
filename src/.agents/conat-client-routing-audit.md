@@ -316,6 +316,17 @@ hard-coding a dependency on the ambient global client singleton.
 This closes another shared sync primitive that would otherwise silently attach
 to a cached client chosen far away from the actual runtime wrapper.
 
+### `sync/table/changefeed-conat.ts`
+
+- removed the fallback to `@cocalc/conat/client.conat()`
+- `ConatChangefeed` now requires an explicit client in its constructor
+- browser-facing callers now fail loudly if they do not expose a routed client:
+  - [frontend/client/query.ts](/home/wstein/build/cocalc-lite4/src/packages/frontend/client/query.ts)
+  - [sync/table/synctable.ts](/home/wstein/build/cocalc-lite4/src/packages/sync/table/synctable.ts)
+
+This keeps browser changefeeds on the exact connection chosen by the runtime
+wrapper instead of silently creating or reusing some ambient global client.
+
 ### `conat/service/terminal.ts`
 
 - removed the hidden fallback to the global Conat singleton
