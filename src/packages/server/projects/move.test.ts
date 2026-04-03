@@ -78,9 +78,8 @@ describe("moveProjectToHost", () => {
     };
     queryMock = jest.fn(async (sql: string) => {
       if (
-        sql.includes(
-          "SELECT project_id, host_id, region, state->>'state' AS project_state",
-        )
+        sql.includes("COALESCE(projects.owning_bay_id, $2)") &&
+        sql.includes("COALESCE(project_hosts.bay_id, $2)")
       ) {
         return {
           rows: [
@@ -93,6 +92,7 @@ describe("moveProjectToHost", () => {
               last_backup: null,
               last_edited: null,
               project_owning_bay_id: "bay-0",
+              host_bay_id: "bay-0",
             },
           ],
         };
@@ -199,5 +199,54 @@ describe("moveProjectToHost", () => {
 
     expect(savePlacementMock).not.toHaveBeenCalled();
     expect(deleteProjectDataOnHostMock).not.toHaveBeenCalled();
+  });
+
+  it("treats a bay-mismatched current host as having no valid source host", async () => {
+    queryMock = jest.fn(async (sql: string) => {
+      if (
+        sql.includes(
+          "SELECT\n        projects.project_id,\n        projects.host_id,",
+        )
+      ) {
+        return {
+          rows: [
+            {
+              project_id: PROJECT_ID,
+              host_id: SOURCE_HOST_ID,
+              region: "wnam",
+              project_state: "opened",
+              provisioned: false,
+              last_backup: null,
+              last_edited: null,
+              project_owning_bay_id: "bay-0",
+              host_bay_id: "bay-9",
+            },
+          ],
+        };
+      }
+      if (sql.includes("SELECT host_id, state->>'state' AS project_state")) {
+        return { rows: [postTimeoutState] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    selectActiveHostMock = jest.fn(async () => ({
+      id: DEST_HOST_ID,
+      bay_id: "bay-0",
+      region: "us-west1",
+    }));
+
+    const { moveProjectToHost } = await import("./move");
+    await expect(
+      moveProjectToHost({
+        project_id: PROJECT_ID,
+        account_id: "account-id",
+        allow_offline: true,
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(selectActiveHostMock).toHaveBeenCalledWith({
+      exclude_host_id: undefined,
+      bay_id: "bay-0",
+    });
   });
 });

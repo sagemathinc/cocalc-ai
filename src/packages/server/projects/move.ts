@@ -149,24 +149,47 @@ async function buildMoveProjectContext(
     last_backup: Date | null;
     last_edited: Date | null;
     project_owning_bay_id: string;
+    host_bay_id: string;
   }>(
-    "SELECT project_id, host_id, region, state->>'state' AS project_state, provisioned, last_backup, last_edited, COALESCE(owning_bay_id, $2) AS project_owning_bay_id FROM projects WHERE project_id=$1",
+    `
+      SELECT
+        projects.project_id,
+        projects.host_id,
+        projects.region,
+        projects.state->>'state' AS project_state,
+        projects.provisioned,
+        projects.last_backup,
+        projects.last_edited,
+        COALESCE(projects.owning_bay_id, $2) AS project_owning_bay_id,
+        COALESCE(project_hosts.bay_id, $2) AS host_bay_id
+      FROM projects
+      LEFT JOIN project_hosts
+        ON project_hosts.id = projects.host_id
+       AND project_hosts.deleted IS NULL
+      WHERE projects.project_id=$1
+      LIMIT 1
+    `,
     [project_id, getConfiguredBayId()],
   );
   const projectRow = projectResult.rows[0];
   if (!projectRow) {
     throw new Error(`project ${project_id} not found`);
   }
+  const source_host_id =
+    projectRow.host_id &&
+    projectRow.project_owning_bay_id === projectRow.host_bay_id
+      ? projectRow.host_id
+      : null;
   let source_host_status: string | null = null;
   let source_host_deleted = false;
   let source_host_last_seen: Date | null = null;
-  if (projectRow.host_id) {
+  if (source_host_id) {
     const hostResult = await pool.query<{
       status: string | null;
       deleted: Date | null;
       last_seen: Date | null;
     }>("SELECT status, deleted, last_seen FROM project_hosts WHERE id=$1", [
-      projectRow.host_id,
+      source_host_id,
     ]);
     const hostRow = hostResult.rows[0];
     if (hostRow) {
@@ -180,7 +203,7 @@ async function buildMoveProjectContext(
     dest_host_id != null
       ? await loadHostFromRegistry(dest_host_id)
       : await selectActiveHost({
-          exclude_host_id: projectRow.host_id ?? undefined,
+          exclude_host_id: source_host_id ?? undefined,
           bay_id: projectRow.project_owning_bay_id,
         });
   if (!destHost) {
@@ -215,7 +238,7 @@ async function buildMoveProjectContext(
     project_owning_bay_id: projectRow.project_owning_bay_id,
     project_region,
     dest_region,
-    project_host_id: projectRow.host_id,
+    project_host_id: source_host_id,
     project_state: projectRow.project_state,
     provisioned: projectRow.provisioned,
     source_host_status,
