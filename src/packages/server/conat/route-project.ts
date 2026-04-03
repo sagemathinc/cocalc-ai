@@ -4,6 +4,7 @@ import getPool, {
   isPgliteEnabled,
 } from "@cocalc/database/pool";
 import LRU from "lru-cache";
+import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { isValidUUID } from "@cocalc/util/misc";
 
 const log = getLogger("server:conat:route-project");
@@ -80,34 +81,52 @@ async function fetchHostAddress(
   }
   inflight[project_id] = (async () => {
     try {
+      const defaultBayId = getConfiguredBayId();
       const { rows } = await getPool().query<{
         host_id: string | null;
+        resolved_host_id: string | null;
+        project_owning_bay_id: string | null;
+        host_bay_id: string | null;
+        public_url?: string | null;
+        internal_url?: string | null;
+        metadata?: any;
       }>(
         `
-          SELECT host_id
+          SELECT
+            projects.host_id,
+            project_hosts.id AS resolved_host_id,
+            COALESCE(projects.owning_bay_id, $2) AS project_owning_bay_id,
+            COALESCE(project_hosts.bay_id, $2) AS host_bay_id,
+            project_hosts.public_url,
+            project_hosts.internal_url,
+            project_hosts.metadata
           FROM projects
+          LEFT JOIN project_hosts
+            ON project_hosts.id = projects.host_id
+           AND project_hosts.deleted IS NULL
           WHERE project_id=$1
         `,
-        [project_id],
+        [project_id, defaultBayId],
       );
       const row = rows[0];
       if (row?.host_id) {
-        const { rows: hostRows } = await getPool().query<{
-          public_url?: string | null;
-          internal_url?: string | null;
-          metadata?: any;
-        }>(
-          `
-            SELECT public_url, internal_url, metadata
-            FROM project_hosts
-            WHERE id=$1 AND deleted IS NULL
-          `,
-          [row.host_id],
-        );
-        const hostRow = hostRows[0];
-        const directTunnel = onPremTunnelAddress(hostRow?.metadata);
+        if (!row.resolved_host_id) {
+          cache.delete(project_id);
+          return;
+        }
+        if (row.project_owning_bay_id !== row.host_bay_id) {
+          cache.delete(project_id);
+          log.warn("refusing project route with mismatched bay ownership", {
+            project_id,
+            host_id: row.host_id,
+            project_bay_id: row.project_owning_bay_id,
+            host_bay_id: row.host_bay_id,
+          });
+          return;
+        }
+        const directTunnel = onPremTunnelAddress(row?.metadata);
         const host_session_id =
-          `${hostRow?.metadata?.host_session_id ?? ""}`.trim() || undefined;
+          `${row?.metadata?.host_session_id ?? ""}`.trim() || undefined;
         if (directTunnel) {
           cacheRouteTarget(project_id, {
             address: directTunnel,
@@ -116,7 +135,7 @@ async function fetchHostAddress(
           });
           return;
         }
-        const machine = hostRow?.metadata?.machine ?? {};
+        const machine = row?.metadata?.machine ?? {};
         const selfHostMode = machine?.metadata?.self_host_mode;
         const effectiveSelfHostMode =
           machine?.cloud === "self-host" && !selfHostMode
@@ -125,7 +144,7 @@ async function fetchHostAddress(
         const isLocalSelfHost =
           machine?.cloud === "self-host" && effectiveSelfHostMode === "local";
         if (isLocalSelfHost) {
-          const addr = onPremTunnelAddress(hostRow?.metadata);
+          const addr = onPremTunnelAddress(row?.metadata);
           if (!addr) {
             log.debug("local tunnel port missing for project", {
               project_id,
@@ -141,7 +160,7 @@ async function fetchHostAddress(
           return;
         }
         cacheRouteTarget(project_id, {
-          address: hostRow?.internal_url ?? hostRow?.public_url,
+          address: row?.internal_url ?? row?.public_url,
           host_id: row.host_id,
           host_session_id,
         });
