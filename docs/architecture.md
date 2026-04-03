@@ -48,7 +48,7 @@ At a glance: The control hub handles auth/config and keeps project placement in 
 
 - Podman container per project with overlayfs upperdir in `.local/share/overlay/` keyed by image.
 - Ports: internal HTTP proxy on 80; SSH on per-project port.
-- Rootfs image: `rootfs_image` (or legacy `compute_image`) normalized on host, cached locally.
+- Rootfs image: `rootfs_image` (or legacy `compute_image`) resolved and cached on host, with lightweight RootFS preflight before runtime bootstrap.
 - Persist store: per-project data/kv streams under `sync/projects/<project_id>` on the host.
 
 4. **Proxies**
@@ -162,7 +162,7 @@ flowchart TB
 
 - Hub loads project meta (`rootfs_image/compute_image`, run_quota, users, host_id/host).
 - If no placement, hub picks an active host and asks it to create/start the project.
-- Host normalizes image, writes sqlite row, ensures ports/quotas/authorized_keys, starts podman container, exposes conat/fs/ssh/http.
+- Host resolves the image, writes sqlite row, ensures ports/quotas/authorized_keys, prepares the cached RootFS, starts the podman container, and lets first-start runtime bootstrap finish `user`/`sudo`/CA-cert setup before dropping privileges.
 
 **User access**
 

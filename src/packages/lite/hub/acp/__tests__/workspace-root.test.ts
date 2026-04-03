@@ -19,11 +19,11 @@ describe("resolveWorkspaceRoot", () => {
       expect(root).toBe("/home/user/custom");
     });
 
-    it("canonicalizes the legacy /root alias to the runtime home", () => {
+    it("leaves non-runtime absolute paths alone", () => {
       const root = resolveWorkspaceRoot({
         workingDirectory: "/root/custom",
       } as any);
-      expect(root).toBe("/home/user/custom");
+      expect(root).toBe("/root/custom");
     });
 
     it("preserves scratch roots instead of rebasing them under /root", () => {

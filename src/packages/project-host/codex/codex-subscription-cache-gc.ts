@@ -3,8 +3,10 @@ import { promises as fs } from "node:fs";
 import { join } from "node:path";
 import getLogger from "@cocalc/backend/logger";
 import { codexSubscriptionsPath } from "@cocalc/backend/data";
+import { DEFAULT_PROJECT_RUNTIME_HOME } from "@cocalc/util/project-runtime";
 
 const logger = getLogger("project-host:codex-subscription-cache-gc");
+const PROJECT_RUNTIME_CODEX_HOME = join(DEFAULT_PROJECT_RUNTIME_HOME, ".codex");
 
 const LAST_USED_MARKER = ".last_used";
 const DEFAULT_TTL_MS = 72 * 60 * 60 * 1000;
@@ -78,7 +80,7 @@ async function getActiveSubscriptionHomes(): Promise<Set<string> | undefined> {
       const mounts = container?.Mounts;
       if (!Array.isArray(mounts)) continue;
       for (const mount of mounts) {
-        if (mount?.Destination !== "/root/.codex") continue;
+        if (mount?.Destination !== PROJECT_RUNTIME_CODEX_HOME) continue;
         if (typeof mount?.Source === "string" && mount.Source) {
           active.add(await normalizePath(mount.Source));
         }
