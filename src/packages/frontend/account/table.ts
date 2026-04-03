@@ -25,6 +25,7 @@ export class AccountTable extends Table {
       accounts: [
         {
           account_id: null,
+          home_bay_id: null,
           balance: null,
           min_balance: null,
           balance_alert: null,
@@ -73,6 +74,9 @@ export class AccountTable extends Table {
       const current =
         this.redux.getStore("account")?.get("other_settings")?.toJS?.() ?? {};
       obj.other_settings = { ...current, ...obj.other_settings };
+    }
+    if (Object.prototype.hasOwnProperty.call(obj, "home_bay_id")) {
+      obj.home_bay_source = obj.home_bay_id ? "account-row" : undefined;
     }
     actions.setState(obj);
     if (this.first_set) {

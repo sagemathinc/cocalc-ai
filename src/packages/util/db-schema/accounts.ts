@@ -471,6 +471,7 @@ Table({
           // Exactly what from the below is sync'd by default with the frontend app client is explicitly
           // listed in frontend/account/table.ts
           account_id: null,
+          home_bay_id: null,
           email_address: null,
           org: null,
           lti_id: null,

@@ -66,7 +66,6 @@ export function init(redux) {
     }
     const actions = redux.getActions("account");
     actions.set_user_type("signed_in");
-    void actions.refresh_home_bay().catch(() => undefined);
   });
 
   webapp_client.on("signed_out", () => {

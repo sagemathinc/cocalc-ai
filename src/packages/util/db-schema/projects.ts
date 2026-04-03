@@ -76,6 +76,7 @@ Table({
           invite_requests: null, // who has requested to be invited
           deleted: null,
           host_id: null,
+          owning_bay_id: null,
           provisioned: null,
           provisioned_checked_at: null,
           region: null,

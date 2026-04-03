@@ -122,6 +122,10 @@ export class ProjectsStore extends Store<ProjectsState> {
     return this.getIn(["project_map", project_id, "title"]) ?? "No Title";
   }
 
+  public get_owning_bay_id(project_id: string): string | undefined {
+    return this.getIn(["project_map", project_id, "owning_bay_id"]);
+  }
+
   public get_state(project_id: string): string | undefined {
     if (lite) return "running";
     return this.getIn(["project_map", project_id, "state", "state"]);

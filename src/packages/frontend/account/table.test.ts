@@ -6,6 +6,14 @@
 import { AccountTable } from "./table";
 
 describe("AccountTable._change", () => {
+  it("requests home_bay_id in the synced account query", () => {
+    const query = AccountTable.prototype.query.call({});
+    expect(query.accounts[0]).toMatchObject({
+      account_id: null,
+      home_bay_id: null,
+    });
+  });
+
   it("merges partial other_settings updates into the current store state", () => {
     const setState = jest.fn();
     const emit = jest.fn();
@@ -39,5 +47,33 @@ describe("AccountTable._change", () => {
     });
     expect(setState).toHaveBeenNthCalledWith(2, { is_ready: true });
     expect(emit).toHaveBeenCalledWith("is_ready");
+  });
+
+  it("derives the stored home bay source from synced account rows", () => {
+    const setState = jest.fn();
+    const emit = jest.fn();
+    const redux = {
+      getActions: () => ({ setState }),
+      getStore: () => ({
+        get: () => undefined,
+        emit,
+      }),
+    };
+
+    AccountTable.prototype._change.call(
+      { redux, first_set: false },
+      {
+        get_one: () => ({
+          toJS: () => ({
+            home_bay_id: "bay-7",
+          }),
+        }),
+      },
+    );
+
+    expect(setState).toHaveBeenCalledWith({
+      home_bay_id: "bay-7",
+      home_bay_source: "account-row",
+    });
   });
 });
