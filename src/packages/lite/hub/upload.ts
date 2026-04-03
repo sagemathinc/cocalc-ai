@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { getLogger } from "@cocalc/backend/logger";
 import { writeFile as writeFileToProject } from "@cocalc/conat/files/write";
+import { conat } from "@cocalc/backend/conat";
 import formidable from "formidable";
 import { join } from "path";
 import { PassThrough } from "node:stream";
@@ -127,11 +128,15 @@ async function handleUploadToProject({
     finished[key] = { state: false, cb: () => {} };
     void (async () => {
       try {
+        if (stream == null) {
+          throw new Error("upload stream not initialized");
+        }
         await writeFileToProject({
           stream,
           project_id,
           path: join(path, fields.fullPath?.[0] ?? filename),
           maxWait: MAX_UPLOAD_TIME_MS,
+          client: conat(),
         });
       } catch (err) {
         errors[key].push(`${err}`);

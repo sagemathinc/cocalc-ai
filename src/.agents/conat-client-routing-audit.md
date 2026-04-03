@@ -84,6 +84,22 @@ This keeps progress publication aligned with the same routed client that the
 project runner already uses for fileserver and control traffic, instead of
 quietly falling back to whichever backend singleton happens to be cached.
 
+## Completed In The File Helper Pass
+
+### `conat/files/read.ts` and `conat/files/write.ts`
+
+- removed the hidden fallback to the global Conat singleton
+- `createServer(...)`, `readFile(...)`, and `writeFile(...)` now require an
+  explicit client
+- browser-facing project wrappers now pass the browser's active Conat client
+- backend upload handlers now pass their backend Conat client explicitly
+- project-side file servers were already explicit through
+  [project/conat/connection.ts](/home/wstein/build/cocalc-lite4/src/packages/project/conat/connection.ts)
+
+This keeps file streaming on the same routed connection chosen by the caller,
+which matters once uploads/downloads can target different control-plane or
+project-host clients.
+
 ## Remaining Hotspots
 
 ### Shared Helper Fallbacks
@@ -96,8 +112,6 @@ next:
 These also have hidden singleton fallback behavior and should be audited after
 the higher-level control-plane helpers above:
 
-- [conat/files/read.ts](/home/wstein/build/cocalc-lite4/src/packages/conat/files/read.ts)
-- [conat/files/write.ts](/home/wstein/build/cocalc-lite4/src/packages/conat/files/write.ts)
 - [conat/project/usage-info.ts](/home/wstein/build/cocalc-lite4/src/packages/conat/project/usage-info.ts)
 - [conat/project/runner/run.ts](/home/wstein/build/cocalc-lite4/src/packages/conat/project/runner/run.ts)
 - [conat/project/runner/load-balancer.ts](/home/wstein/build/cocalc-lite4/src/packages/conat/project/runner/load-balancer.ts)
@@ -114,6 +128,6 @@ clients.
 
 ## Next Recommended Cleanup Pass
 
-1. continue removing implicit singleton use from project/files helpers that are
-   already shared across backend and runner code
+1. continue with project-runner and project-usage helper paths, since they are
+   the next shared backend abstractions likely to be reused across bays
 2. keep server-side bridge/control paths ahead of broader frontend ergonomics

@@ -36,8 +36,6 @@ for await (const chunk of await a.readFile({project_id:'00847397-d6a8-4cb0-96a8-
 
 
 */
-
-import { conat } from "@cocalc/conat/client";
 import { projectSubject } from "@cocalc/conat/names";
 import {
   type Subscription,
@@ -78,11 +76,18 @@ function getSubject({
   });
 }
 
+function requireExplicitConatClient(client?: ConatClient): ConatClient {
+  if (client != null) {
+    return client;
+  }
+  throw new Error("must provide an explicit Conat client");
+}
+
 export async function createServer({
   createReadStream,
   project_id,
   name = "",
-  client = conat(),
+  client,
 }: {
   createReadStream;
   project_id: string;
@@ -91,7 +96,11 @@ export async function createServer({
 }) {
   const subject = getSubject({ project_id, name });
   logger.debug("createServer", { subject });
-  const sub = await client.subscribe(subject);
+  // Shared file helpers are used from both browser and backend code. Do not
+  // silently bind them to the global singleton; callers must pass the intended
+  // routed client explicitly.
+  const cn = requireExplicitConatClient(client);
+  const sub = await cn.subscribe(subject);
   subs[subject] = sub;
   listen({ sub, createReadStream });
 }
@@ -177,7 +186,7 @@ export interface ReadFileOptions {
 }
 
 export async function* readFile({
-  client = conat(),
+  client,
   project_id,
   path,
   name = "",
@@ -185,10 +194,11 @@ export async function* readFile({
 }: ReadFileOptions) {
   logger.debug("readFile", { project_id, path });
   const subject = getSubject({ project_id, name });
+  const cn = requireExplicitConatClient(client);
   const v: any = [];
   let seq = 0;
   let bytes = 0;
-  for await (const resp of await client.requestMany(
+  for await (const resp of await cn.requestMany(
     subject,
     { path },
     {

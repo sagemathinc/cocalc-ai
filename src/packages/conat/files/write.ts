@@ -62,8 +62,6 @@ stream=require('fs').createReadStream('env.ts');
 await a.writeFile({stream, project_id, path:'/tmp/a.ts'})
 
 */
-
-import { conat } from "@cocalc/conat/client";
 import { randomId } from "@cocalc/conat/names";
 import {
   close as closeReadService,
@@ -78,6 +76,13 @@ import {
 import { type Readable } from "node:stream";
 import { getLogger } from "@cocalc/conat/client";
 const logger = getLogger("conat:files:write");
+
+function requireExplicitConatClient(client?: ConatClient): ConatClient {
+  if (client != null) {
+    return client;
+  }
+  throw new Error("must provide an explicit Conat client");
+}
 
 function getWriteSubject({ project_id }: { project_id: string }) {
   return projectSubject({
@@ -98,7 +103,7 @@ export async function close({ project_id }: { project_id: string }) {
 }
 
 export async function createServer({
-  client = conat(),
+  client,
   project_id,
   createWriteStream,
 }: {
@@ -111,26 +116,27 @@ export async function createServer({
 }) {
   const subject = getWriteSubject({ project_id });
   logger.debug("createServer", { subject });
+  const cn = requireExplicitConatClient(client);
   let sub = subs[subject];
   if (sub != null) {
     return;
   }
-  sub = await client.subscribe(subject);
+  sub = await cn.subscribe(subject);
   subs[subject] = sub;
-  listen({ sub, createWriteStream, project_id });
+  listen({ sub, createWriteStream, project_id, client: cn });
 }
 
-async function listen({ sub, createWriteStream, project_id }) {
+async function listen({ sub, createWriteStream, project_id, client }) {
   // NOTE: we just handle as many messages as we get in parallel, so this
   // could be a large number of simultaneous downloads. These are all by
   // authenticated users of the project, and the load is on the project,
   // so I think that makes sense.
   for await (const mesg of sub) {
-    handleMessage({ mesg, createWriteStream, project_id });
+    handleMessage({ mesg, createWriteStream, project_id, client });
   }
 }
 
-async function handleMessage({ mesg, createWriteStream, project_id }) {
+async function handleMessage({ mesg, createWriteStream, project_id, client }) {
   let error = "";
   let writeStream: null | Awaited<ReturnType<typeof createWriteStream>> = null;
   try {
@@ -151,6 +157,7 @@ async function handleMessage({ mesg, createWriteStream, project_id }) {
       name,
       path,
       maxWait,
+      client,
     })) {
       if (error) {
         // console.log("error", error);
@@ -181,22 +188,18 @@ export interface WriteFileOptions {
   path: string;
   stream: Readable;
   maxWait?: number;
+  client?: ConatClient;
 }
 
 export async function writeFile({
-  client = conat(),
+  client,
   project_id,
   path,
   stream,
   maxWait = 1000 * 60 * 10, // 10 minutes
-}: {
-  client?: ConatClient;
-  project_id: string;
-  path: string;
-  stream;
-  maxWait?: number;
-}): Promise<{ bytes: number; chunks: number }> {
+}: WriteFileOptions): Promise<{ bytes: number; chunks: number }> {
   logger.debug("writeFile", { project_id, path, maxWait });
+  const cn = requireExplicitConatClient(client);
   const name = randomId();
   try {
     function createReadStream() {
@@ -207,9 +210,10 @@ export async function writeFile({
       createReadStream,
       project_id,
       name,
+      client: cn,
     });
     // tell the project to start reading our file.
-    const resp = await client.request(
+    const resp = await cn.request(
       getWriteSubject({ project_id }),
       { name, path, maxWait },
       { timeout: maxWait },
