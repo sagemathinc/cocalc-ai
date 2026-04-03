@@ -27,6 +27,8 @@ import {
   issueRootfsReleaseArtifactUpload,
   upsertPublishedRootfsRelease,
 } from "@cocalc/server/rootfs/releases";
+import { getAssignedProjectHostInfo } from "@cocalc/server/conat/project-host-assignment";
+import { getConfiguredBayId } from "@cocalc/server/bay-config";
 
 const logger = getLogger("server:projects:rootfs-publish-worker");
 
@@ -150,15 +152,23 @@ function progressEvent({
 }
 
 async function loadProjectHostId(project_id: string): Promise<string> {
-  const { rows } = await getPool("medium").query<{ host_id: string | null }>(
-    "SELECT host_id FROM projects WHERE project_id=$1",
-    [project_id],
-  );
-  const host_id = `${rows[0]?.host_id ?? ""}`.trim();
-  if (!host_id) {
-    throw new Error(`project ${project_id} is not assigned to a host`);
+  try {
+    return (await getAssignedProjectHostInfo(project_id)).host_id;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : `${err}`;
+    if (message === "workspace has no assigned host") {
+      throw new Error(`project ${project_id} is not assigned to a host`);
+    }
+    if (message === "workspace bay does not match assigned host") {
+      throw new Error(
+        `project ${project_id} assigned host does not match owning bay`,
+      );
+    }
+    if (message === "workspace not found") {
+      throw new Error(`project ${project_id} not found`);
+    }
+    throw err;
   }
-  return host_id;
 }
 
 async function listFreshRunningRootfsPublishTopologyRows({
@@ -168,16 +178,26 @@ async function listFreshRunningRootfsPublishTopologyRows({
 }): Promise<RootfsPublishTopologyRow[]> {
   const { rows } = await getPool("medium").query<RootfsPublishTopologyRow>(
     `
-      SELECT COALESCE(NULLIF(l.input->>'project_host_id', ''), p.host_id::text) AS project_host_id
+      SELECT
+        CASE
+          WHEN NULLIF(l.input->>'project_host_id', '') IS NOT NULL
+            THEN NULLIF(l.input->>'project_host_id', '')
+          WHEN COALESCE(p.owning_bay_id, $3) = COALESCE(ph.bay_id, $3)
+            THEN p.host_id::text
+          ELSE NULL
+        END AS project_host_id
       FROM long_running_operations l
       JOIN projects p ON p.project_id = l.scope_id::uuid
+      LEFT JOIN project_hosts ph
+        ON ph.id = p.host_id
+       AND ph.deleted IS NULL
       WHERE l.kind = $1
         AND l.dismissed_at IS NULL
         AND l.status = 'running'
         AND l.heartbeat_at IS NOT NULL
         AND l.heartbeat_at >= now() - ($2::text || ' milliseconds')::interval
     `,
-    [ROOTFS_PUBLISH_LRO_KIND, lease_ms],
+    [ROOTFS_PUBLISH_LRO_KIND, lease_ms, getConfiguredBayId()],
   );
   return rows;
 }
@@ -214,9 +234,18 @@ async function claimRootfsPublishLroOps({
       `
         SELECT
           l.*,
-          COALESCE(NULLIF(l.input->>'project_host_id', ''), p.host_id::text) AS project_host_id
+          CASE
+            WHEN NULLIF(l.input->>'project_host_id', '') IS NOT NULL
+              THEN NULLIF(l.input->>'project_host_id', '')
+            WHEN COALESCE(p.owning_bay_id, $4) = COALESCE(ph.bay_id, $4)
+              THEN p.host_id::text
+            ELSE NULL
+          END AS project_host_id
         FROM long_running_operations l
         JOIN projects p ON p.project_id = l.scope_id::uuid
+        LEFT JOIN project_hosts ph
+          ON ph.id = p.host_id
+         AND ph.deleted IS NULL
         WHERE l.kind = $1
           AND l.dismissed_at IS NULL
           AND (
@@ -232,7 +261,12 @@ async function claimRootfsPublishLroOps({
         FOR UPDATE OF l SKIP LOCKED
         LIMIT $3
       `,
-      [ROOTFS_PUBLISH_LRO_KIND, lease_ms, Math.max(limit * 8, 50)],
+      [
+        ROOTFS_PUBLISH_LRO_KIND,
+        lease_ms,
+        Math.max(limit * 8, 50),
+        getConfiguredBayId(),
+      ],
     );
     if (rows.length === 0) {
       await client.query("ROLLBACK");
