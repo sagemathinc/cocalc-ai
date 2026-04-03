@@ -128,6 +128,7 @@ import {
   type RootfsUploadedArtifactResult,
 } from "@cocalc/util/rootfs-images";
 import { buildCloudInitStartupScript } from "@cocalc/server/cloud/bootstrap-host";
+import { getConfiguredBayId } from "@cocalc/server/bay-config";
 function pool() {
   return getPool();
 }
@@ -3262,8 +3263,8 @@ export async function createHost({
   const gpuEnabled = machineHasGpu(normalizedMachine);
 
   await pool().query(
-    `INSERT INTO project_hosts (id, name, region, status, metadata, created, updated, last_seen)
-     VALUES ($1,$2,$3,$4,$5,NOW(),NOW(),$6)`,
+    `INSERT INTO project_hosts (id, name, region, status, metadata, created, updated, last_seen, bay_id)
+     VALUES ($1,$2,$3,$4,$5,NOW(),NOW(),$6,$7)`,
     [
       id,
       name,
@@ -3287,6 +3288,7 @@ export async function createHost({
         ...(bootstrapVersion ? { bootstrap_version: bootstrapVersion } : {}),
       },
       null,
+      getConfiguredBayId(),
     ],
   );
   if (machineCloud && !isSelfHost) {

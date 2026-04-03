@@ -60,6 +60,7 @@ describe("hosts.createHost", () => {
     queryMock = jest.fn(async (sql: string, params: any[]) => {
       if (sql.startsWith("INSERT INTO project_hosts ")) {
         expect(params[5]).toBeNull();
+        expect(params[6]).toBe("bay-0");
         return { rowCount: 1 };
       }
       if (

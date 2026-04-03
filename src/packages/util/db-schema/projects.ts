@@ -50,6 +50,7 @@ Table({
       "((run_quota ->> 'always_running'))", // same reason as above
       "deleted", // in various queries we quickly fiter deleted projects
       "host_id", // project-host placement lookup
+      "owning_bay_id", // owning control-plane bay lookup
     ],
 
     crm_indexes: ["last_edited"],
@@ -234,6 +235,11 @@ Table({
         editable: true,
       },
     }, // markdown rendering possibly not implemented
+    owning_bay_id: {
+      type: "string",
+      pg_type: "VARCHAR(64)",
+      desc: "Control-plane bay that authoritatively owns this project record.",
+    },
     users: {
       title: "Collaborators",
       type: "map",

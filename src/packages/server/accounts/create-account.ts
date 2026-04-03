@@ -10,6 +10,7 @@ import accountCreationActions, {
   creationActionsDone,
 } from "./account-creation-actions";
 import { getLogger } from "@cocalc/backend/logger";
+import { getConfiguredBayId } from "@cocalc/server/bay-config";
 
 const log = getLogger("server:accounts:create");
 
@@ -58,7 +59,7 @@ export default async function createAccount({
     );
     const pool = getPool();
     await pool.query(
-      "INSERT INTO accounts (email_address, password_hash, first_name, last_name, account_id, created, tags, sign_up_usage_intent, owner_id, ephemeral, customize) VALUES($1::TEXT, $2::TEXT, $3::TEXT, $4::TEXT, $5::UUID, NOW(), $6::TEXT[], $7::TEXT, $8::UUID, $9::BIGINT, $10::JSONB)",
+      "INSERT INTO accounts (email_address, password_hash, first_name, last_name, account_id, created, tags, sign_up_usage_intent, owner_id, ephemeral, customize, home_bay_id) VALUES($1::TEXT, $2::TEXT, $3::TEXT, $4::TEXT, $5::UUID, NOW(), $6::TEXT[], $7::TEXT, $8::UUID, $9::BIGINT, $10::JSONB, $11::TEXT)",
       [
         email ? email : undefined, // can't insert "" more than once!
         password ? passwordHash(password) : undefined, // definitely don't set password_hash to hash of empty string, e.g., anonymous accounts can then NEVER switch to email/password.  This was a bug in production for a while.
@@ -70,6 +71,7 @@ export default async function createAccount({
         owner_id,
         ephemeral ?? null,
         customize ?? null,
+        getConfiguredBayId(),
       ],
     );
     await accountCreationActions({

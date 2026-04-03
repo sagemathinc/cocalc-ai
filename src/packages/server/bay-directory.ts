@@ -11,32 +11,25 @@ import type {
   ProjectBayLocation,
 } from "@cocalc/conat/hub/api/system";
 import isAdmin from "@cocalc/server/accounts/is-admin";
+import {
+  getConfiguredBayId,
+  getConfiguredBayLabel,
+  getConfiguredBayRegion,
+} from "@cocalc/server/bay-config";
 import { listHosts } from "@cocalc/server/conat/api/hosts";
 import { isValidUUID } from "@cocalc/util/misc";
 
-const DEFAULT_BAY_ID = "bay-0";
-
-function configuredBayId(): string {
-  const bayId = `${process.env.COCALC_BAY_ID ?? ""}`.trim();
-  return bayId || DEFAULT_BAY_ID;
-}
-
-function configuredBayLabel(bay_id: string): string {
-  const label = `${process.env.COCALC_BAY_LABEL ?? ""}`.trim();
-  return label || bay_id;
-}
-
-function configuredBayRegion(): string | null {
-  const region = `${process.env.COCALC_BAY_REGION ?? ""}`.trim();
-  return region || null;
+function resolveStoredBayId(value: unknown): string | undefined {
+  const bay_id = `${value ?? ""}`.trim();
+  return bay_id || undefined;
 }
 
 export function getSingleBayInfo(): BayInfo {
-  const bay_id = configuredBayId();
+  const bay_id = getConfiguredBayId();
   return {
     bay_id,
-    label: configuredBayLabel(bay_id),
-    region: configuredBayRegion(),
+    label: getConfiguredBayLabel(bay_id),
+    region: getConfiguredBayRegion(),
     deployment_mode: "single-bay",
     role: "combined",
     is_default: true,
@@ -47,12 +40,15 @@ export async function listConfiguredBays(): Promise<BayInfo[]> {
   return [getSingleBayInfo()];
 }
 
-async function ensureAccountExists(account_id: string): Promise<void> {
+async function getAccountRow(account_id: string): Promise<{
+  account_id: string;
+  home_bay_id?: string | null;
+}> {
   if (!isValidUUID(account_id)) {
     throw new Error(`invalid account id '${account_id}'`);
   }
   const { rows } = await getPool().query(
-    `SELECT account_id FROM accounts
+    `SELECT account_id, home_bay_id FROM accounts
       WHERE account_id=$1
         AND (deleted IS NULL OR deleted = FALSE)
       LIMIT 1`,
@@ -61,6 +57,7 @@ async function ensureAccountExists(account_id: string): Promise<void> {
   if (!rows[0]?.account_id) {
     throw new Error(`account '${account_id}' not found`);
   }
+  return rows[0];
 }
 
 async function getVisibleProject({
@@ -69,7 +66,12 @@ async function getVisibleProject({
 }: {
   account_id: string;
   project_id: string;
-}): Promise<{ project_id: string; title?: string; host_id?: string | null }> {
+}): Promise<{
+  project_id: string;
+  title?: string;
+  host_id?: string | null;
+  owning_bay_id?: string | null;
+}> {
   if (!isValidUUID(project_id)) {
     throw new Error(`invalid project id '${project_id}'`);
   }
@@ -78,7 +80,7 @@ async function getVisibleProject({
   // that backend code should generally avoid unless it is intentionally
   // implementing that user-query surface.
   const { rows } = await getPool().query(
-    `SELECT project_id, title, host_id
+    `SELECT project_id, title, host_id, owning_bay_id
       FROM projects
       WHERE project_id=$1
         AND deleted IS NOT true
@@ -115,11 +117,12 @@ export async function resolveAccountHomeBay({
   ) {
     throw new Error("not authorized");
   }
-  await ensureAccountExists(target_account_id);
+  const row = await getAccountRow(target_account_id);
+  const home_bay_id = resolveStoredBayId(row.home_bay_id);
   return {
     account_id: target_account_id,
-    home_bay_id: configuredBayId(),
-    source: "single-bay-default",
+    home_bay_id: home_bay_id ?? getConfiguredBayId(),
+    source: home_bay_id ? "account-row" : "single-bay-default",
   };
 }
 
@@ -138,12 +141,13 @@ export async function resolveProjectOwningBay({
     account_id: acting_account_id,
     project_id,
   });
+  const owning_bay_id = resolveStoredBayId(row.owning_bay_id);
   return {
     project_id: row.project_id,
-    owning_bay_id: configuredBayId(),
+    owning_bay_id: owning_bay_id ?? getConfiguredBayId(),
     host_id: row.host_id ?? null,
     title: row.title ?? "",
-    source: "single-bay-default",
+    source: owning_bay_id ? "project-row" : "single-bay-default",
   };
 }
 
@@ -171,10 +175,18 @@ export async function resolveHostBay({
   if (!host) {
     throw new Error(`host '${host_id}' not found`);
   }
+  const { rows } = await getPool().query(
+    `SELECT bay_id FROM project_hosts
+      WHERE id=$1
+        AND deleted IS NULL
+      LIMIT 1`,
+    [host_id],
+  );
+  const bay_id = resolveStoredBayId(rows[0]?.bay_id);
   return {
     host_id,
-    bay_id: configuredBayId(),
+    bay_id: bay_id ?? getConfiguredBayId(),
     name: host.name ?? "",
-    source: "single-bay-default",
+    source: bay_id ? "host-row" : "single-bay-default",
   };
 }

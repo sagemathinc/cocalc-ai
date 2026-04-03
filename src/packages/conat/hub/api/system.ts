@@ -260,7 +260,7 @@ export interface BayInfo {
 export interface AccountBayLocation {
   account_id: string;
   home_bay_id: string;
-  source: "single-bay-default";
+  source: "account-row" | "single-bay-default";
 }
 
 export interface ProjectBayLocation {
@@ -268,14 +268,14 @@ export interface ProjectBayLocation {
   owning_bay_id: string;
   host_id: string | null;
   title: string;
-  source: "single-bay-default";
+  source: "project-row" | "single-bay-default";
 }
 
 export interface HostBayLocation {
   host_id: string;
   bay_id: string;
   name: string;
-  source: "single-bay-default";
+  source: "host-row" | "single-bay-default";
 }
 
 export interface PublicAppHostnameTrace {

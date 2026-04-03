@@ -41,7 +41,12 @@ describe("bay-directory", () => {
     queryMock = jest.fn(async (sql: string, params?: any[]) => {
       if (sql.includes("FROM accounts")) {
         return {
-          rows: [{ account_id: params?.[0] ?? ACCOUNT_ID }],
+          rows: [
+            {
+              account_id: params?.[0] ?? ACCOUNT_ID,
+              home_bay_id: null,
+            },
+          ],
         };
       }
       if (sql.includes("FROM projects")) {
@@ -51,8 +56,14 @@ describe("bay-directory", () => {
               project_id: PROJECT_ID,
               title: "Project",
               host_id: HOST_ID,
+              owning_bay_id: null,
             },
           ],
+        };
+      }
+      if (sql.includes("FROM project_hosts")) {
+        return {
+          rows: [{ bay_id: null }],
         };
       }
       throw new Error(`unexpected query: ${sql}`);
@@ -131,6 +142,35 @@ describe("bay-directory", () => {
     });
   });
 
+  it("prefers a stored account home bay when present", async () => {
+    queryMock = jest.fn(async (sql: string, params?: any[]) => {
+      if (sql.includes("FROM accounts")) {
+        return {
+          rows: [
+            {
+              account_id: params?.[0] ?? OTHER_ACCOUNT_ID,
+              home_bay_id: "bay-7",
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    isAdminMock = jest.fn(async () => true);
+    const { resolveAccountHomeBay } = await import("./bay-directory");
+
+    await expect(
+      resolveAccountHomeBay({
+        account_id: ACCOUNT_ID,
+        user_account_id: OTHER_ACCOUNT_ID,
+      }),
+    ).resolves.toEqual({
+      account_id: OTHER_ACCOUNT_ID,
+      home_bay_id: "bay-7",
+      source: "account-row",
+    });
+  });
+
   it("resolves the owning bay for a visible project", async () => {
     const { resolveProjectOwningBay } = await import("./bay-directory");
 
@@ -149,6 +189,38 @@ describe("bay-directory", () => {
     expect(queryMock).toHaveBeenCalled();
   });
 
+  it("prefers a stored project owning bay when present", async () => {
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("FROM projects")) {
+        return {
+          rows: [
+            {
+              project_id: PROJECT_ID,
+              title: "Project",
+              host_id: HOST_ID,
+              owning_bay_id: "bay-9",
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    const { resolveProjectOwningBay } = await import("./bay-directory");
+
+    await expect(
+      resolveProjectOwningBay({
+        account_id: ACCOUNT_ID,
+        project_id: PROJECT_ID,
+      }),
+    ).resolves.toEqual({
+      project_id: PROJECT_ID,
+      owning_bay_id: "bay-9",
+      host_id: HOST_ID,
+      title: "Project",
+      source: "project-row",
+    });
+  });
+
   it("resolves the bay for a visible host", async () => {
     const { resolveHostBay } = await import("./bay-directory");
 
@@ -164,5 +236,29 @@ describe("bay-directory", () => {
       source: "single-bay-default",
     });
     expect(listHostsMock).toHaveBeenCalled();
+  });
+
+  it("prefers a stored host bay when present", async () => {
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("FROM project_hosts")) {
+        return {
+          rows: [{ bay_id: "bay-5" }],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    const { resolveHostBay } = await import("./bay-directory");
+
+    await expect(
+      resolveHostBay({
+        account_id: ACCOUNT_ID,
+        host_id: HOST_ID,
+      }),
+    ).resolves.toEqual({
+      host_id: HOST_ID,
+      bay_id: "bay-5",
+      name: "host-1",
+      source: "host-row",
+    });
   });
 });

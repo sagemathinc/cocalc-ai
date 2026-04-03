@@ -162,6 +162,11 @@ Table({
       pg_type: "inet",
       desc: "IP address that created the account.",
     },
+    home_bay_id: {
+      type: "string",
+      pg_type: "VARCHAR(64)",
+      desc: "Control-plane bay that serves this account's home/account-scoped experience.",
+    },
     creation_actions_done: {
       type: "boolean",
       desc: "Set to true after all creation actions (e.g., add to projects) associated to this account are succesfully completed.",
@@ -438,6 +443,7 @@ Table({
       "(lower(last_name)  text_pattern_ops)",
       "created_by",
       "created",
+      "home_bay_id",
       "last_active DESC NULLS LAST",
       "lti_id",
       "unlisted",

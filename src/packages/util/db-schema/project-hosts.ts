@@ -9,7 +9,7 @@ Table({
   name: "project_hosts",
   rules: {
     primary_key: "id",
-    pg_indexes: ["region", "status", "last_seen", "deleted"],
+    pg_indexes: ["region", "status", "last_seen", "deleted", "bay_id"],
   },
   fields: {
     id: {
@@ -23,6 +23,11 @@ Table({
     region: {
       type: "string",
       desc: "Location/zone identifier for placement decisions.",
+    },
+    bay_id: {
+      type: "string",
+      pg_type: "VARCHAR(64)",
+      desc: "Control-plane bay responsible for this project-host.",
     },
     public_url: {
       type: "string",

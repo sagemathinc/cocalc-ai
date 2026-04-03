@@ -134,6 +134,7 @@ describe("projects.createProject clone routing", () => {
         insertedProjectId = params[0];
         expect(params[7]).toBe(HOST_ID);
         expect(params[8]).toBe("wnam");
+        expect(params[9]).toBe("bay-0");
         return { rowCount: 1 };
       }
       if (sql.includes("INSERT INTO project_rootfs_states")) {
@@ -143,7 +144,9 @@ describe("projects.createProject clone routing", () => {
       }
       if (
         sql.includes("FROM project_rootfs_states") &&
-        sql.includes("ORDER BY CASE state_role WHEN 'current' THEN 0 ELSE 1 END")
+        sql.includes(
+          "ORDER BY CASE state_role WHEN 'current' THEN 0 ELSE 1 END",
+        )
       ) {
         expect(params).toEqual([insertedProjectId]);
         return {

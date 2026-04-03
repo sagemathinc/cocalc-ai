@@ -35,6 +35,7 @@ import type { LroSummary } from "@cocalc/conat/hub/api/lro";
 import { takeStartProjectPhaseTimings } from "@cocalc/server/project-host/control";
 import { supersedeOlderProjectStartLros } from "@cocalc/server/projects/start-lro-cleanup";
 import { mirrorStartLroProgress } from "@cocalc/server/projects/start-lro-progress";
+import { getConfiguredBayId } from "@cocalc/server/bay-config";
 
 const log = getLogger("server:projects:create");
 const HOST_ONLINE_WINDOW_MS = 2 * 60 * 1000;
@@ -282,7 +283,7 @@ export default async function createProject(opts: CreateProjectOptions) {
     account_id == null ? null : { [account_id]: { group: "owner" } };
 
   await pool.query(
-    "INSERT INTO projects (project_id, title, description, users, created, last_edited, rootfs_image, rootfs_image_id, ephemeral, host_id, region) VALUES($1, $2, $3, $4, NOW(), NOW(), $5, $6, $7::BIGINT, $8, $9)",
+    "INSERT INTO projects (project_id, title, description, users, created, last_edited, rootfs_image, rootfs_image_id, ephemeral, host_id, region, owning_bay_id) VALUES($1, $2, $3, $4, NOW(), NOW(), $5, $6, $7::BIGINT, $8, $9, $10)",
     [
       project_id,
       title ?? "No Title",
@@ -293,6 +294,7 @@ export default async function createProject(opts: CreateProjectOptions) {
       ephemeral ?? null,
       host_id ?? null,
       projectRegion,
+      getConfiguredBayId(),
     ],
   );
 
