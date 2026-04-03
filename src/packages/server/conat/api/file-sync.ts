@@ -16,7 +16,7 @@ import { assertCollab } from "./util";
 import { client as fileServerClient } from "@cocalc/conat/files/file-server";
 import { conat } from "@cocalc/backend/conat";
 import { isValidUUID } from "@cocalc/util/misc";
-import isCollaborator from "@cocalc/server/projects/is-collaborator";
+import { hasLocalProjectCollaboratorAccess } from "@cocalc/server/conat/project-local-access";
 import { resolve } from "node:path";
 
 function getProjectId(spec: string): string {
@@ -61,8 +61,14 @@ async function check({
     return;
   }
   if (
-    (await isCollaborator({ project_id: project_id0, account_id })) ||
-    (await isCollaborator({ project_id: project_id1, account_id }))
+    (await hasLocalProjectCollaboratorAccess({
+      project_id: project_id0,
+      account_id,
+    })) ||
+    (await hasLocalProjectCollaboratorAccess({
+      project_id: project_id1,
+      account_id,
+    }))
   ) {
     return;
   } else {

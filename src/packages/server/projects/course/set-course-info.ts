@@ -22,7 +22,7 @@ unfair to increase their price.
 always maintained, rather than just being deleted.
 */
 
-import isCollaborator from "@cocalc/server/projects/is-collaborator";
+import { assertLocalProjectCollaborator } from "@cocalc/server/conat/project-local-access";
 import getPool, { PoolClient } from "@cocalc/database/pool";
 import { isEqual } from "lodash";
 import type { CourseInfo } from "@cocalc/util/db-schema/projects";
@@ -42,10 +42,8 @@ export default async function setCourseInfo({
   noCheck,
   client,
 }: Options): Promise<{ course: CourseInfo }> {
-  if (!noCheck && !(await isCollaborator({ account_id, project_id }))) {
-    throw Error(
-      "you must be a collaborator on the the project to set the course info",
-    );
+  if (!noCheck) {
+    await assertLocalProjectCollaborator({ account_id, project_id });
   }
   if (typeof course != "object") {
     // just in case
@@ -65,16 +63,10 @@ export default async function setCourseInfo({
   const currentCourse: CourseInfo | undefined = rows[0].course;
   if (!noCheck && currentCourse?.project_id != null) {
     // check that account_id is a collab, so allowed to edit course field.
-    if (
-      !(await isCollaborator({
-        account_id,
-        project_id: currentCourse?.project_id,
-      }))
-    ) {
-      throw Error(
-        "you must be a collaborator on the the project the contains the course (i.e., only TA's and instructors can set the course field)",
-      );
-    }
+    await assertLocalProjectCollaborator({
+      account_id,
+      project_id: currentCourse.project_id,
+    });
   }
 
   // Maintain paid field
