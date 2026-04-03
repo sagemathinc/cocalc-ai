@@ -10,6 +10,7 @@ import {
   registerSelfHostTunnelKey,
 } from "@cocalc/server/launchpad/onprem-sshd";
 import { listAccountRevocationsSince } from "@cocalc/server/accounts/revocation";
+import { shouldDeleteHostProjectUpdate } from "./host-project-ownership";
 
 const logger = getLogger("server:conat:host-status");
 
@@ -118,14 +119,14 @@ export async function initHostStatusService() {
         // and tell the host to clean up its local copy. This prevents stale
         // hosts from flipping placement.
         if (host_id) {
-          const { rows } = await pool.query<{
-            host_id: string | null;
-          }>("SELECT host_id FROM projects WHERE project_id=$1", [project_id]);
-          const currentHost = rows[0]?.host_id ?? null;
-          if (currentHost && currentHost !== host_id) {
+          if (
+            await shouldDeleteHostProjectUpdate({
+              host_id,
+              project_id,
+            })
+          ) {
             logger.debug("ignoring state from non-owner host", {
               project_id,
-              currentHost,
               host_id,
             });
             return { action: "delete" as const };
@@ -154,14 +155,14 @@ export async function initHostStatusService() {
         }
         const pool = getPool();
         if (host_id) {
-          const { rows } = await pool.query<{
-            host_id: string | null;
-          }>("SELECT host_id FROM projects WHERE project_id=$1", [project_id]);
-          const currentHost = rows[0]?.host_id ?? null;
-          if (currentHost && currentHost !== host_id) {
+          if (
+            await shouldDeleteHostProjectUpdate({
+              host_id,
+              project_id,
+            })
+          ) {
             logger.debug("ignoring provisioned from non-owner host", {
               project_id,
-              currentHost,
               host_id,
             });
             return { action: "delete" as const };
