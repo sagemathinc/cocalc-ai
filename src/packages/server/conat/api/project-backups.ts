@@ -13,6 +13,7 @@ import { SERVICE as PERSIST_SERVICE } from "@cocalc/conat/persist/util";
 import { getProjectFileServerClient } from "@cocalc/server/conat/file-server-client";
 import { backupLroDedupeKey } from "@cocalc/server/projects/backup-lro";
 import { triggerBackupLroWorker } from "@cocalc/server/projects/backup-worker";
+import { assertPortableProjectRootfs } from "@cocalc/server/projects/rootfs-state";
 
 // just *some* limit to avoid bugs/abuse
 
@@ -80,6 +81,7 @@ export async function createBackup(
   },
   opts?: {
     skip_collab_check?: boolean;
+    skip_rootfs_portability_check?: boolean;
   },
 ): Promise<{
   op_id: string;
@@ -90,6 +92,12 @@ export async function createBackup(
 }> {
   if (!opts?.skip_collab_check) {
     await assertCollab({ account_id, project_id });
+  }
+  if (!opts?.skip_rootfs_portability_check) {
+    await assertPortableProjectRootfs({
+      project_id,
+      operation: "backup",
+    });
   }
   const op = await createLro({
     kind: "project-backup",

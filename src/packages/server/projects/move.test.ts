@@ -8,6 +8,7 @@ let savePlacementMock: jest.Mock;
 let stopProjectOnHostMock: jest.Mock;
 let startProjectLroMock: jest.Mock;
 let waitForLroCompletionMock: jest.Mock;
+let assertPortableProjectRootfsMock: jest.Mock;
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
@@ -58,6 +59,11 @@ jest.mock("./offline-move-confirmation", () => ({
 
 jest.mock("@cocalc/server/conat/file-server-client", () => ({
   getProjectFileServerClient: jest.fn(),
+}));
+
+jest.mock("./rootfs-state", () => ({
+  assertPortableProjectRootfs: (...args: any[]) =>
+    assertPortableProjectRootfsMock(...args),
 }));
 
 describe("moveProjectToHost", () => {
@@ -124,6 +130,7 @@ describe("moveProjectToHost", () => {
     waitForLroCompletionMock = jest.fn(async () => {
       throw new Error("timeout waiting for lro completion");
     });
+    assertPortableProjectRootfsMock = jest.fn(async () => undefined);
   });
 
   it("accepts a timed-out destination start wait if the project is already running on the destination host", async () => {
@@ -174,5 +181,30 @@ describe("moveProjectToHost", () => {
       project_id: PROJECT_ID,
       host_id: DEST_HOST_ID,
     });
+  });
+
+  it("rejects move before touching placement when the project RootFS is not portable", async () => {
+    assertPortableProjectRootfsMock.mockRejectedValue(
+      new Error(
+        "cannot move project while its RootFS is still backed by unsealed OCI image 'docker.io/ubuntu:26.04'",
+      ),
+    );
+    const { moveProjectToHost } = await import("./move");
+    await expect(
+      moveProjectToHost({
+        project_id: PROJECT_ID,
+        dest_host_id: DEST_HOST_ID,
+        account_id: "account-id",
+        allow_offline: true,
+      }),
+    ).rejects.toThrow(/unsealed OCI image/);
+
+    expect(assertPortableProjectRootfsMock).toHaveBeenCalledWith({
+      project_id: PROJECT_ID,
+      operation: "move",
+    });
+    expect(savePlacementMock).not.toHaveBeenCalled();
+    expect(stopProjectOnHostMock).not.toHaveBeenCalled();
+    expect(deleteProjectDataOnHostMock).not.toHaveBeenCalled();
   });
 });
