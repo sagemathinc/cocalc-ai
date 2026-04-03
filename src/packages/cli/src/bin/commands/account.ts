@@ -3,15 +3,31 @@ import { Command } from "commander";
 export type AccountCommandDeps = {
   withContext: any;
   toIso: any;
+  resolveAccountByIdentifier: any;
 };
 
 export function registerAccountCommand(
   program: Command,
   deps: AccountCommandDeps,
 ): Command {
-  const { withContext, toIso } = deps;
+  const { withContext, toIso, resolveAccountByIdentifier } = deps;
 
   const account = program.command("account").description("account operations");
+
+  account
+    .command("where [account]")
+    .description("show the home bay for an account")
+    .action(async (accountIdentifier: string | undefined, command: Command) => {
+      await withContext(command, "account where", async (ctx) => {
+        const target = accountIdentifier?.trim()
+          ? await resolveAccountByIdentifier(ctx, accountIdentifier.trim())
+          : { account_id: ctx.accountId };
+        return await ctx.hub.system.getAccountBay({
+          user_account_id: target.account_id,
+        });
+      });
+    });
+
   const accountApiKey = account
     .command("api-key")
     .description("manage account API keys");

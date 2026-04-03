@@ -2,6 +2,12 @@ import getCustomize from "@cocalc/database/settings/customize";
 export { getCustomize };
 import { getFrontendSourceFingerprint as getFrontendSourceFingerprint0 } from "@cocalc/backend/frontend-build-fingerprint";
 import getPool from "@cocalc/database/pool";
+import {
+  listConfiguredBays,
+  resolveAccountHomeBay,
+  resolveHostBay,
+  resolveProjectOwningBay,
+} from "@cocalc/server/bay-directory";
 import { record_user_tracking } from "@cocalc/database/postgres/account/user-tracking";
 import { db } from "@cocalc/database";
 import manageApiKeys from "@cocalc/server/api/manage";
@@ -90,6 +96,40 @@ export function ping() {
 }
 
 export async function terminate() {}
+
+export async function listBays() {
+  return await listConfiguredBays();
+}
+
+export async function getAccountBay({
+  account_id,
+  user_account_id,
+}: {
+  account_id?: string;
+  user_account_id?: string;
+}) {
+  return await resolveAccountHomeBay({ account_id, user_account_id });
+}
+
+export async function getProjectBay({
+  account_id,
+  project_id,
+}: {
+  account_id?: string;
+  project_id: string;
+}) {
+  return await resolveProjectOwningBay({ account_id, project_id });
+}
+
+export async function getHostBay({
+  account_id,
+  host_id,
+}: {
+  account_id?: string;
+  host_id: string;
+}) {
+  return await resolveHostBay({ account_id, host_id });
+}
 
 export async function getParallelOpsStatus({
   account_id,
