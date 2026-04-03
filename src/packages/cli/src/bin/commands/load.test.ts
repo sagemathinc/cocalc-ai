@@ -10,6 +10,8 @@ type Capture = {
   listBayCalls: number;
   projectQueryCalls: number;
   lastLimit?: number;
+  projectCollaboratorListCalls: string[];
+  myCollaboratorListCalls: number[];
   adminCreateCalls: string[];
   userSearchCalls: string[];
   createCollabCalls: Array<{ project_id: string; invitee_account_id: string }>;
@@ -60,6 +62,36 @@ function makeDeps(capture: Capture): LoadCommandDeps {
             },
           },
           projects: {
+            listCollaborators: async ({ project_id }) => {
+              capture.projectCollaboratorListCalls.push(project_id);
+              return [
+                {
+                  account_id: "owner-1",
+                  group: "owner",
+                },
+                {
+                  account_id: "collab-1",
+                  group: "collaborator",
+                },
+                {
+                  account_id: "collab-2",
+                  group: "collaborator",
+                },
+              ];
+            },
+            listMyCollaborators: async ({ limit }) => {
+              capture.myCollaboratorListCalls.push(limit);
+              return [
+                {
+                  account_id: "collab-1",
+                  shared_projects: 12,
+                },
+                {
+                  account_id: "collab-2",
+                  shared_projects: 3,
+                },
+              ];
+            },
             createCollabInvite: async ({ project_id, invitee_account_id }) => {
               capture.createCollabCalls.push({
                 project_id,
@@ -102,6 +134,8 @@ test("load bootstrap summarizes repeated control-plane calls", async () => {
     accountBayCalls: 0,
     listBayCalls: 0,
     projectQueryCalls: 0,
+    projectCollaboratorListCalls: [],
+    myCollaboratorListCalls: [],
     adminCreateCalls: [],
     userSearchCalls: [],
     createCollabCalls: [],
@@ -140,6 +174,8 @@ test("load projects respects the requested limit", async () => {
     accountBayCalls: 0,
     listBayCalls: 0,
     projectQueryCalls: 0,
+    projectCollaboratorListCalls: [],
+    myCollaboratorListCalls: [],
     adminCreateCalls: [],
     userSearchCalls: [],
     createCollabCalls: [],
@@ -176,11 +212,101 @@ test("load projects respects the requested limit", async () => {
   );
 });
 
+test("load collaborators measures project-scoped collaborator listings", async () => {
+  const capture: Capture = {
+    accountBayCalls: 0,
+    listBayCalls: 0,
+    projectQueryCalls: 0,
+    projectCollaboratorListCalls: [],
+    myCollaboratorListCalls: [],
+    adminCreateCalls: [],
+    userSearchCalls: [],
+    createCollabCalls: [],
+  };
+  const program = new Command();
+  registerLoadCommand(program, makeDeps(capture));
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "load",
+    "collaborators",
+    "--project",
+    "demo",
+    "--iterations",
+    "2",
+    "--warmup",
+    "1",
+    "--concurrency",
+    "4",
+  ]);
+
+  assert.deepEqual(capture.projectCollaboratorListCalls, [
+    "project-demo",
+    "project-demo",
+    "project-demo",
+  ]);
+  assert.equal(capture.data.scenario, "collaborators");
+  assert.equal(capture.data.iterations, 2);
+  assert.equal(capture.data.warmup, 1);
+  assert.equal(capture.data.concurrency, 3);
+  assert.equal(capture.data.successes, 2);
+  assert.equal(capture.data.failures, 0);
+  assert.equal(capture.data.last_result.project_id, "project-demo");
+  assert.equal(capture.data.last_result.collaborator_count, 3);
+  assert.equal(capture.data.last_result.owner_count, 1);
+  assert.equal(capture.data.last_result.non_owner_count, 2);
+});
+
+test("load my-collaborators respects the requested limit", async () => {
+  const capture: Capture = {
+    accountBayCalls: 0,
+    listBayCalls: 0,
+    projectQueryCalls: 0,
+    projectCollaboratorListCalls: [],
+    myCollaboratorListCalls: [],
+    adminCreateCalls: [],
+    userSearchCalls: [],
+    createCollabCalls: [],
+  };
+  const program = new Command();
+  registerLoadCommand(program, makeDeps(capture));
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "load",
+    "my-collaborators",
+    "--iterations",
+    "2",
+    "--warmup",
+    "1",
+    "--concurrency",
+    "4",
+    "--limit",
+    "25",
+  ]);
+
+  assert.deepEqual(capture.myCollaboratorListCalls, [25, 25, 25]);
+  assert.equal(capture.data.scenario, "my-collaborators");
+  assert.equal(capture.data.iterations, 2);
+  assert.equal(capture.data.warmup, 1);
+  assert.equal(capture.data.concurrency, 3);
+  assert.equal(capture.data.successes, 2);
+  assert.equal(capture.data.failures, 0);
+  assert.equal(capture.data.last_result.collaborator_count, 2);
+  assert.equal(capture.data.last_result.first_account_id, "collab-1");
+  assert.equal(capture.data.last_result.first_shared_projects, 12);
+  assert.equal(capture.data.last_result.max_shared_projects, 12);
+});
+
 test("load seed users creates or reuses accounts and adds collaborators", async () => {
   const capture: Capture = {
     accountBayCalls: 0,
     listBayCalls: 0,
     projectQueryCalls: 0,
+    projectCollaboratorListCalls: [],
+    myCollaboratorListCalls: [],
     adminCreateCalls: [],
     userSearchCalls: [],
     createCollabCalls: [],

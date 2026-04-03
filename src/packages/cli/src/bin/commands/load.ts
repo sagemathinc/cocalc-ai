@@ -317,6 +317,122 @@ export function registerLoadCommand(
       },
     );
 
+  load
+    .command("collaborators")
+    .description("measure repeated project collaborator-list queries")
+    .requiredOption("-w, --project <project>", "project id or name")
+    .option("--iterations <n>", "measured iterations", "20")
+    .option("--warmup <n>", "warmup iterations", "2")
+    .option("--concurrency <n>", "parallel workers", "1")
+    .action(
+      async (
+        opts: {
+          project?: string;
+          iterations?: string;
+          warmup?: string;
+          concurrency?: string;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "load collaborators", async (ctx) => {
+          const project = await resolveProjectFromArgOrContext(
+            ctx,
+            opts.project,
+          );
+          const iterations = parsePositiveInteger(
+            opts.iterations,
+            "--iterations",
+            20,
+          );
+          const warmup = parsePositiveInteger(opts.warmup, "--warmup", 2);
+          const concurrency = parsePositiveInteger(
+            opts.concurrency,
+            "--concurrency",
+            1,
+          );
+          return await runLoadScenario({
+            scenario: "collaborators",
+            iterations,
+            warmup,
+            concurrency,
+            execute: async () => {
+              const rows = await ctx.hub.projects.listCollaborators({
+                project_id: project.project_id,
+              });
+              const ownerCount = (rows ?? []).filter(
+                (row) => row.group === "owner",
+              ).length;
+              return {
+                project_id: project.project_id,
+                project_title: project.title,
+                collaborator_count: rows.length,
+                owner_count: ownerCount,
+                non_owner_count: rows.length - ownerCount,
+                first_account_id: rows[0]?.account_id ?? null,
+                first_group: rows[0]?.group ?? null,
+              };
+            },
+          });
+        });
+      },
+    );
+
+  load
+    .command("my-collaborators")
+    .description("measure repeated account-wide collaborator summary queries")
+    .option("--iterations <n>", "measured iterations", "20")
+    .option("--warmup <n>", "warmup iterations", "2")
+    .option("--concurrency <n>", "parallel workers", "1")
+    .option("--limit <n>", "rows to fetch per iteration", "500")
+    .action(
+      async (
+        opts: {
+          iterations?: string;
+          warmup?: string;
+          concurrency?: string;
+          limit?: string;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "load my-collaborators", async (ctx) => {
+          const iterations = parsePositiveInteger(
+            opts.iterations,
+            "--iterations",
+            20,
+          );
+          const warmup = parsePositiveInteger(opts.warmup, "--warmup", 2);
+          const concurrency = parsePositiveInteger(
+            opts.concurrency,
+            "--concurrency",
+            1,
+          );
+          const limit = parsePositiveInteger(opts.limit, "--limit", 500);
+          return await runLoadScenario({
+            scenario: "my-collaborators",
+            iterations,
+            warmup,
+            concurrency,
+            execute: async () => {
+              const rows = await ctx.hub.projects.listMyCollaborators({
+                limit,
+              });
+              return {
+                collaborator_count: rows.length,
+                first_account_id: rows[0]?.account_id ?? null,
+                first_shared_projects: rows[0]?.shared_projects ?? null,
+                max_shared_projects:
+                  rows.reduce(
+                    (acc, row) =>
+                      Math.max(acc, Number(row.shared_projects ?? 0) || 0),
+                    0,
+                  ) ?? 0,
+              };
+            },
+          });
+        });
+      },
+    );
+
   const seed = load
     .command("seed")
     .description("create deterministic synthetic load-test fixtures");
