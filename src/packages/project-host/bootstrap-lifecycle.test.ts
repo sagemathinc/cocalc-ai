@@ -57,6 +57,12 @@ describe("bootstrap lifecycle reporting", () => {
         bootstrap: { selector: "latest" },
         helper_schema_version: "20260330-v1",
         runtime_wrapper_version: "20260330-v1",
+        runtime_user_contract: {
+          identity: "cocalc-host:1002:1003",
+          subuid_ranges: ["231072:65536", "327680:4128768"],
+          subgid_ranges: ["231072:65536", "327680:4128768"],
+          fingerprint: "map-abc",
+        },
         project_host_bundle: { version: "ph-20260330" },
         project_bundle: { version: "pb-20260330" },
         tools_bundle: { version: "tools-20260330" },
@@ -69,6 +75,12 @@ describe("bootstrap lifecycle reporting", () => {
         recorded_at: "2026-03-30T20:01:00Z",
         helper_schema_version: "20260330-v1",
         runtime_wrapper_version: "20260330-v1",
+        runtime_user_contract: {
+          identity: "cocalc-host:1002:1003",
+          subuid_ranges: ["231072:65536", "327680:4128768"],
+          subgid_ranges: ["231072:65536", "327680:4128768"],
+          fingerprint: "map-abc",
+        },
         installed: {
           project_host_bundle_version: "ph-20260330",
           project_bundle_version: "pb-20260330",
@@ -92,6 +104,13 @@ describe("bootstrap lifecycle reporting", () => {
     expect(
       lifecycle?.items.find((item) => item.key === "project_bundle")?.status,
     ).toBe("match");
+    expect(
+      lifecycle?.items.find((item) => item.key === "runtime_userns_map"),
+    ).toMatchObject({
+      desired: "map-abc",
+      installed: "map-abc",
+      status: "match",
+    });
   });
 
   it("reports drift when the running bundle differs from desired state", () => {
@@ -154,6 +173,81 @@ describe("bootstrap lifecycle reporting", () => {
     ).toMatchObject({
       desired: "pb-20260330",
       installed: "pb-older",
+      status: "drift",
+    });
+  });
+
+  it("reports drift when the runtime keep-id map differs from the desired contract", () => {
+    const base = fs.mkdtempSync(
+      path.join(os.tmpdir(), "cocalc-bootstrap-lifecycle-userns-drift-"),
+    );
+    const bootstrapDir = path.join(base, "bootstrap");
+    const projectHostRoot = path.join(base, "project-host");
+    const projectBundlesRoot = path.join(base, "project-bundles");
+    const toolsRoot = path.join(base, "tools");
+    fs.mkdirSync(bootstrapDir, { recursive: true });
+    makeVersionedCurrent(projectHostRoot, "ph-20260330");
+    makeVersionedCurrent(projectBundlesRoot, "pb-20260330");
+    makeVersionedCurrent(toolsRoot, "tools-20260330");
+    fs.writeFileSync(
+      path.join(bootstrapDir, "bootstrap.py"),
+      "#!/usr/bin/env python3\n",
+    );
+    fs.writeFileSync(
+      path.join(bootstrapDir, "bootstrap-desired-state.json"),
+      JSON.stringify({
+        recorded_at: "2026-04-03T07:00:00Z",
+        bootstrap: { selector: "latest" },
+        helper_schema_version: "20260330-v1",
+        runtime_wrapper_version: "20260403-v5",
+        runtime_user_contract: {
+          identity: "cocalc-host:1002:1003",
+          subuid_ranges: ["231072:65536", "327680:4128768"],
+          subgid_ranges: ["231072:65536", "327680:4128768"],
+          fingerprint: "expected-map",
+        },
+        project_host_bundle: { version: "ph-20260330" },
+        project_bundle: { version: "pb-20260330" },
+        tools_bundle: { version: "tools-20260330" },
+        cloudflared: { enabled: false },
+      }),
+    );
+    fs.writeFileSync(
+      path.join(bootstrapDir, "bootstrap-state.json"),
+      JSON.stringify({
+        recorded_at: "2026-04-03T07:01:00Z",
+        helper_schema_version: "20260330-v1",
+        runtime_wrapper_version: "20260403-v5",
+        runtime_user_contract: {
+          identity: "cocalc-host:1002:1003",
+          subuid_ranges: ["231072:65536", "327680:4128768"],
+          subgid_ranges: ["231072:65536", "327680:4128768"],
+          fingerprint: "installed-map",
+        },
+        installed: {
+          project_host_bundle_version: "ph-20260330",
+          project_bundle_version: "pb-20260330",
+          tools_bundle_version: "tools-20260330",
+        },
+        last_reconcile_result: "success",
+      }),
+    );
+
+    process.env.COCALC_PROJECT_HOST_BOOTSTRAP_DIR = bootstrapDir;
+    process.env.COCALC_PROJECT_HOST_CURRENT = path.join(
+      projectHostRoot,
+      "current",
+    );
+    process.env.COCALC_PROJECT_BUNDLES = projectBundlesRoot;
+    process.env.COCALC_PROJECT_TOOLS = path.join(toolsRoot, "current");
+
+    const lifecycle = getBootstrapLifecycle();
+    expect(lifecycle?.summary_status).toBe("drifted");
+    expect(
+      lifecycle?.items.find((item) => item.key === "runtime_userns_map"),
+    ).toMatchObject({
+      desired: "expected-map",
+      installed: "installed-map",
       status: "drift",
     });
   });

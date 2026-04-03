@@ -138,99 +138,57 @@ class BootstrapSizingTest(unittest.TestCase):
             finally:
                 bootstrap.shutil.disk_usage = original_disk_usage
 
-
-class BootstrapRootfsOwnershipRemapTest(unittest.TestCase):
-    def test_remaps_extracted_root_uid_into_runtime_root_mapping(self) -> None:
-        ranges = [
-            (0, 1002, 1),
-            (1, 100000, 65536),
-            (65537, 231072, 65536),
-        ]
-        self.assertEqual(
-            bootstrap.remap_extracted_host_id_for_keep_id(1002, 1000, ranges),
-            100000,
-        )
-
-    def test_remaps_extracted_runtime_user_uid_into_keep_id_owner(self) -> None:
-        ranges = [
-            (0, 1002, 1),
-            (1, 100000, 65536),
-            (65537, 231072, 65536),
-        ]
-        self.assertEqual(
-            bootstrap.remap_extracted_host_id_for_keep_id(100999, 1000, ranges),
-            1002,
-        )
-
-    def test_preserves_high_ids_already_covered_by_the_current_userns_map(self) -> None:
-        ranges = [
-            (0, 1002, 1),
-            (1, 100000, 65536),
-            (65537, 231072, 65536),
-        ]
-        self.assertEqual(
-            bootstrap.remap_extracted_host_id_for_keep_id(266536, 1000, ranges),
-            266536,
-        )
-
-    def test_accepts_literal_namespace_ids_in_mixed_extracted_trees(self) -> None:
-        ranges = [
-            (0, 1002, 1),
-            (1, 100000, 65536),
-            (65537, 231072, 65536),
-        ]
-        self.assertEqual(
-            bootstrap.remap_extracted_host_id_for_keep_id(0, 1000, ranges),
-            100000,
-        )
-
-
 class BootstrapSubidAllocationTest(unittest.TestCase):
-    def test_appends_large_rootless_subid_range_for_new_user(self) -> None:
+    def test_rewrites_user_subid_ranges_to_the_exact_contract(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "subuid"
             path.write_text("ubuntu:100000:65536\n", encoding="utf-8")
 
-            changed = bootstrap.ensure_subid_file(
-                path, "cocalc-host", bootstrap.ROOTLESS_SUBID_MIN_TOTAL
+            changed = bootstrap.ensure_exact_subid_file(
+                path, "cocalc-host", bootstrap.PROJECT_HOST_RUNTIME_SUBID_RANGES
             )
 
             self.assertTrue(changed)
             lines = path.read_text(encoding="utf-8").splitlines()
             self.assertEqual(lines[0], "ubuntu:100000:65536")
-            self.assertEqual(lines[1], "cocalc-host:196608:4194304")
+            self.assertEqual(lines[1], "cocalc-host:231072:65536")
+            self.assertEqual(lines[2], "cocalc-host:327680:4128768")
 
-    def test_keeps_existing_subid_ranges_when_total_is_already_large_enough(self) -> None:
+    def test_keeps_existing_exact_subid_ranges(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "subgid"
-            path.write_text("cocalc-host:100000:4194304\n", encoding="utf-8")
+            path.write_text(
+                "cocalc-host:231072:65536\ncocalc-host:327680:4128768\n",
+                encoding="utf-8",
+            )
 
-            changed = bootstrap.ensure_subid_file(
-                path, "cocalc-host", bootstrap.ROOTLESS_SUBID_MIN_TOTAL
+            changed = bootstrap.ensure_exact_subid_file(
+                path, "cocalc-host", bootstrap.PROJECT_HOST_RUNTIME_SUBID_RANGES
             )
 
             self.assertFalse(changed)
             self.assertEqual(
                 path.read_text(encoding="utf-8"),
-                "cocalc-host:100000:4194304\n",
+                "cocalc-host:231072:65536\ncocalc-host:327680:4128768\n",
             )
 
-    def test_extends_existing_small_ranges_without_rewriting_them(self) -> None:
+    def test_replaces_non_contract_ranges_for_runtime_user(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "subuid"
             path.write_text(
-                "cocalc-host:100000:65536\ncocalc-host:231072:65536\n",
+                "ubuntu:100000:65536\ncocalc-host:100000:65536\n",
                 encoding="utf-8",
             )
 
-            changed = bootstrap.ensure_subid_file(
-                path, "cocalc-host", bootstrap.ROOTLESS_SUBID_MIN_TOTAL
+            changed = bootstrap.ensure_exact_subid_file(
+                path, "cocalc-host", bootstrap.PROJECT_HOST_RUNTIME_SUBID_RANGES
             )
 
             self.assertTrue(changed)
             lines = path.read_text(encoding="utf-8").splitlines()
-            self.assertEqual(lines[:2], ["cocalc-host:100000:65536", "cocalc-host:231072:65536"])
-            self.assertEqual(lines[2], "cocalc-host:327680:4063232")
+            self.assertEqual(lines[0], "ubuntu:100000:65536")
+            self.assertEqual(lines[1], "cocalc-host:231072:65536")
+            self.assertEqual(lines[2], "cocalc-host:327680:4128768")
 
 
 class BootstrapStateFilesTest(unittest.TestCase):
@@ -288,7 +246,56 @@ class BootstrapStateFilesTest(unittest.TestCase):
                 desired["project_host_bundle"]["root"],
                 "/opt/cocalc/project-host/bundles",
             )
+            self.assertEqual(
+                desired["runtime_user_contract"]["identity"],
+                "missing-runtime-user:1002:1003",
+            )
+            self.assertEqual(
+                desired["runtime_user_contract"]["fingerprint"],
+                bootstrap.runtime_userns_map_fingerprint(
+                    [
+                        "0 1002 1",
+                        "1 231072 65536",
+                        "65537 327680 4128768",
+                    ],
+                    [
+                        "0 1003 1",
+                        "1 231072 65536",
+                        "65537 327680 4128768",
+                    ],
+                ),
+            )
+            self.assertEqual(state["runtime_user_contract"]["user"], "missing-runtime-user")
             self.assertIn("installed", state)
+
+
+class BootstrapRuntimeUserContractTest(unittest.TestCase):
+    def test_verify_runtime_user_contract_raises_on_drift(self) -> None:
+        cfg = make_cfg(tempfile.mkdtemp())
+        original_expected = bootstrap.expected_runtime_user_contract
+        original_read = bootstrap.read_current_runtime_user_contract
+        try:
+            bootstrap.expected_runtime_user_contract = lambda _cfg: {
+                "identity": "cocalc-host:1002:1003",
+                "subuid_ranges": ["231072:65536", "327680:4128768"],
+                "subgid_ranges": ["231072:65536", "327680:4128768"],
+                "uid_map": ["0 1002 1", "1 231072 65536", "65537 327680 4128768"],
+                "gid_map": ["0 1003 1", "1 231072 65536", "65537 327680 4128768"],
+                "fingerprint": "expected",
+            }
+            bootstrap.read_current_runtime_user_contract = lambda _cfg: {
+                "identity": "cocalc-host:1002:1003",
+                "subuid_ranges": ["231072:65536", "327680:4128768"],
+                "subgid_ranges": ["231072:65536", "327680:4128768"],
+                "uid_map": ["0 1002 1", "1 231072 65536", "65537 327680 4128768"],
+                "gid_map": ["0 1003 1", "1 231072 65536", "65537 327680 4128768"],
+                "fingerprint": "different",
+            }
+            with self.assertRaisesRegex(RuntimeError, "runtime userns contract mismatch"):
+                bootstrap.verify_runtime_user_contract(cfg)
+        finally:
+            bootstrap.expected_runtime_user_contract = original_expected
+            bootstrap.read_current_runtime_user_contract = original_read
 
 
 class BootstrapLogRotationTest(unittest.TestCase):
@@ -795,7 +802,9 @@ class BootstrapModesTest(unittest.TestCase):
             patch("install_privileged_wrappers", lambda _cfg: None)
             patch("ensure_cocalc_mount", lambda _cfg: None)
             patch("ensure_btrfs_data", lambda _cfg: None)
+            patch("ensure_subuids", lambda _cfg: None)
             patch("configure_podman", lambda _cfg: None)
+            patch("verify_runtime_user_contract", lambda _cfg: None)
             patch("write_env", lambda _cfg, _size: None)
             patch("configure_runtime_shell_env", lambda _cfg: None)
             patch("setup_master_conat_token", lambda _cfg: None)

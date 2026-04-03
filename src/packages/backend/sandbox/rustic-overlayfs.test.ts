@@ -2,7 +2,8 @@
 Test overlayfs xattr preservation through rustic backup/restore.
 */
 
-import { execFile } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,8 +13,6 @@ import { rustic as rusticPath } from "./install";
 
 const execFileAsync = promisify(execFile);
 
-const describeIfLinux = process.platform === "linux" ? describe : describe.skip;
-
 const OVERLAY_OPTS = [
   "lowerdir={lower}",
   "upperdir={upper}",
@@ -22,6 +21,48 @@ const OVERLAY_OPTS = [
   "redirect_dir=on",
   "index=on",
 ].join(",");
+
+function supportsOverlayMounts(): boolean {
+  if (process.platform !== "linux") return false;
+  const base = mkdtempSync(join(tmpdir(), "cocalc-rustic-overlay-probe-"));
+  const lower = join(base, "lower");
+  const upper = join(base, "upper");
+  const work = join(base, "work");
+  const merged = join(base, "merged");
+  try {
+    mkdirSync(lower, { recursive: true });
+    mkdirSync(upper, { recursive: true });
+    mkdirSync(work, { recursive: true });
+    mkdirSync(merged, { recursive: true });
+    const opts = OVERLAY_OPTS.replace("{lower}", lower)
+      .replace("{upper}", upper)
+      .replace("{work}", work);
+    execFileSync(
+      "sudo",
+      ["-n", "mount", "-t", "overlay", "overlay", "-o", opts, merged],
+      {
+        stdio: "pipe",
+      },
+    );
+    return true;
+  } catch {
+    return false;
+  } finally {
+    try {
+      execFileSync("sudo", ["-n", "umount", "-l", merged], {
+        stdio: "pipe",
+      });
+    } catch {}
+    try {
+      rmSync(base, { recursive: true, force: true });
+    } catch {}
+  }
+}
+
+const describeIfOverlayMountsSupported =
+  process.platform === "linux" && supportsOverlayMounts()
+    ? describe
+    : describe.skip;
 
 type CommandResult = {
   stdout: string;
@@ -149,113 +190,123 @@ async function createOverlayFixture(base: string): Promise<{
   return { lower, upper, work, merged };
 }
 
-describeIfLinux("overlayfs xattrs through rustic backup/restore", () => {
-  let tempDir: string;
+describeIfOverlayMountsSupported(
+  "overlayfs xattrs through rustic backup/restore",
+  () => {
+    let tempDir: string;
 
-  beforeEach(async () => {
-    tempDir = await mkdtemp(join(tmpdir(), "cocalc-rustic-overlay-"));
-  });
+    beforeEach(async () => {
+      tempDir = await mkdtemp(join(tmpdir(), "cocalc-rustic-overlay-"));
+    });
 
-  afterEach(async () => {
-    if (tempDir) {
-      await umountOverlay(join(tempDir, "merged"));
-      await umountOverlay(join(tempDir, "merged-restored-unpriv"));
-      await umountOverlay(join(tempDir, "merged-restored-root"));
-      await runSudo(["rm", "-rf", tempDir]).catch(async () => {
-        await rm(tempDir, { recursive: true, force: true });
+    afterEach(async () => {
+      if (tempDir) {
+        await umountOverlay(join(tempDir, "merged"));
+        await umountOverlay(join(tempDir, "merged-restored-unpriv"));
+        await umountOverlay(join(tempDir, "merged-restored-root"));
+        await runSudo(["rm", "-rf", tempDir]).catch(async () => {
+          await rm(tempDir, { recursive: true, force: true });
+        });
+      }
+    });
+
+    it("loses trusted overlay xattrs through the current unprivileged backup path", async () => {
+      const { lower, upper } = await createOverlayFixture(tempDir);
+      const initialXattrs = await getfattrRecursive(upper, true);
+      expect(initialXattrs).toContain("trusted.overlay.metacopy");
+      expect(initialXattrs).toContain("trusted.overlay.redirect");
+
+      const profileBase = join(tempDir, "unpriv");
+      const repo = join(tempDir, "repo-unpriv");
+      await writeRusticProfile(profileBase, repo);
+      await rustic({ profileBase, args: ["init"] });
+
+      const { stdout } = await rustic({
+        profileBase,
+        args: [
+          "backup",
+          "--json",
+          "--no-scan",
+          "--host",
+          "overlay-unpriv",
+          ".",
+        ],
+        cwd: upper,
       });
-    }
-  });
+      const snapshotId = JSON.parse(stdout).id as string;
+      const restoredUpper = join(tempDir, "restored-upper-unpriv");
+      await mkdir(restoredUpper, { recursive: true });
+      await rustic({
+        profileBase,
+        args: ["restore", snapshotId, restoredUpper],
+      });
 
-  it("loses trusted overlay xattrs through the current unprivileged backup path", async () => {
-    const { lower, upper } = await createOverlayFixture(tempDir);
-    const initialXattrs = await getfattrRecursive(upper, true);
-    expect(initialXattrs).toContain("trusted.overlay.metacopy");
-    expect(initialXattrs).toContain("trusted.overlay.redirect");
+      const restoredXattrs = await getfattrRecursive(restoredUpper, true);
+      expect(restoredXattrs).not.toContain("trusted.overlay.metacopy");
+      expect(restoredXattrs).not.toContain("trusted.overlay.redirect");
 
-    const profileBase = join(tempDir, "unpriv");
-    const repo = join(tempDir, "repo-unpriv");
-    await writeRusticProfile(profileBase, repo);
-    await rustic({ profileBase, args: ["init"] });
-
-    const { stdout } = await rustic({
-      profileBase,
-      args: ["backup", "--json", "--no-scan", "--host", "overlay-unpriv", "."],
-      cwd: upper,
+      const restoredWork = join(tempDir, "restored-work-unpriv");
+      const restoredMerged = join(tempDir, "merged-restored-unpriv");
+      await mkdir(restoredWork, { recursive: true });
+      await mkdir(restoredMerged, { recursive: true });
+      await chownToCurrentUser([restoredUpper, restoredWork, restoredMerged]);
+      await mountOverlay({
+        lower,
+        upper: restoredUpper,
+        work: restoredWork,
+        merged: restoredMerged,
+      });
+      const restoredContent = await readFile(
+        join(restoredMerged, "dir2", "file.txt"),
+      );
+      expect(restoredContent.equals(Buffer.from("hello\n"))).toBe(false);
     });
-    const snapshotId = JSON.parse(stdout).id as string;
-    const restoredUpper = join(tempDir, "restored-upper-unpriv");
-    await mkdir(restoredUpper, { recursive: true });
-    await rustic({
-      profileBase,
-      args: ["restore", snapshotId, restoredUpper],
+
+    it("preserves trusted overlay xattrs when rustic backup and restore run as root", async () => {
+      const { lower, upper } = await createOverlayFixture(tempDir);
+      const initialXattrs = await getfattrRecursive(upper, true);
+      expect(initialXattrs).toContain("trusted.overlay.metacopy");
+      expect(initialXattrs).toContain("trusted.overlay.redirect");
+
+      const profileBase = join(tempDir, "root");
+      const repo = join(tempDir, "repo-root");
+      await writeRusticProfile(profileBase, repo);
+      await rustic({ profileBase, args: ["init"], asRoot: true });
+
+      const { stdout } = await rustic({
+        profileBase,
+        args: ["backup", "--json", "--no-scan", "--host", "overlay-root", "."],
+        cwd: upper,
+        asRoot: true,
+      });
+      const snapshotId = JSON.parse(stdout).id as string;
+      const restoredUpper = join(tempDir, "restored-upper-root");
+      await mkdir(restoredUpper, { recursive: true });
+      await rustic({
+        profileBase,
+        args: ["restore", snapshotId, restoredUpper],
+        asRoot: true,
+      });
+      await chownToCurrentUser([restoredUpper]);
+
+      const restoredXattrs = await getfattrRecursive(restoredUpper, true);
+      expect(restoredXattrs).toContain("trusted.overlay.metacopy");
+      expect(restoredXattrs).toContain("trusted.overlay.redirect");
+
+      const restoredWork = join(tempDir, "restored-work-root");
+      const restoredMerged = join(tempDir, "merged-restored-root");
+      await mkdir(restoredWork, { recursive: true });
+      await mkdir(restoredMerged, { recursive: true });
+      await chownToCurrentUser([restoredUpper, restoredWork, restoredMerged]);
+      await mountOverlay({
+        lower,
+        upper: restoredUpper,
+        work: restoredWork,
+        merged: restoredMerged,
+      });
+      await expect(
+        readFile(join(restoredMerged, "dir2", "file.txt"), "utf8"),
+      ).resolves.toBe("hello\n");
     });
-
-    const restoredXattrs = await getfattrRecursive(restoredUpper, true);
-    expect(restoredXattrs).not.toContain("trusted.overlay.metacopy");
-    expect(restoredXattrs).not.toContain("trusted.overlay.redirect");
-
-    const restoredWork = join(tempDir, "restored-work-unpriv");
-    const restoredMerged = join(tempDir, "merged-restored-unpriv");
-    await mkdir(restoredWork, { recursive: true });
-    await mkdir(restoredMerged, { recursive: true });
-    await chownToCurrentUser([restoredUpper, restoredWork, restoredMerged]);
-    await mountOverlay({
-      lower,
-      upper: restoredUpper,
-      work: restoredWork,
-      merged: restoredMerged,
-    });
-    const restoredContent = await readFile(
-      join(restoredMerged, "dir2", "file.txt"),
-    );
-    expect(restoredContent.equals(Buffer.from("hello\n"))).toBe(false);
-  });
-
-  it("preserves trusted overlay xattrs when rustic backup and restore run as root", async () => {
-    const { lower, upper } = await createOverlayFixture(tempDir);
-    const initialXattrs = await getfattrRecursive(upper, true);
-    expect(initialXattrs).toContain("trusted.overlay.metacopy");
-    expect(initialXattrs).toContain("trusted.overlay.redirect");
-
-    const profileBase = join(tempDir, "root");
-    const repo = join(tempDir, "repo-root");
-    await writeRusticProfile(profileBase, repo);
-    await rustic({ profileBase, args: ["init"], asRoot: true });
-
-    const { stdout } = await rustic({
-      profileBase,
-      args: ["backup", "--json", "--no-scan", "--host", "overlay-root", "."],
-      cwd: upper,
-      asRoot: true,
-    });
-    const snapshotId = JSON.parse(stdout).id as string;
-    const restoredUpper = join(tempDir, "restored-upper-root");
-    await mkdir(restoredUpper, { recursive: true });
-    await rustic({
-      profileBase,
-      args: ["restore", snapshotId, restoredUpper],
-      asRoot: true,
-    });
-    await chownToCurrentUser([restoredUpper]);
-
-    const restoredXattrs = await getfattrRecursive(restoredUpper, true);
-    expect(restoredXattrs).toContain("trusted.overlay.metacopy");
-    expect(restoredXattrs).toContain("trusted.overlay.redirect");
-
-    const restoredWork = join(tempDir, "restored-work-root");
-    const restoredMerged = join(tempDir, "merged-restored-root");
-    await mkdir(restoredWork, { recursive: true });
-    await mkdir(restoredMerged, { recursive: true });
-    await chownToCurrentUser([restoredUpper, restoredWork, restoredMerged]);
-    await mountOverlay({
-      lower,
-      upper: restoredUpper,
-      work: restoredWork,
-      merged: restoredMerged,
-    });
-    await expect(
-      readFile(join(restoredMerged, "dir2", "file.txt"), "utf8"),
-    ).resolves.toBe("hello\n");
-  });
-});
+  },
+);

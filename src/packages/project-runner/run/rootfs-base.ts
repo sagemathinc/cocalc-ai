@@ -9,6 +9,7 @@ import { isManagedRootfsImageName } from "@cocalc/util/rootfs-images";
 import pullImage from "./pull-image";
 import {
   loadRootfsPreflightMetadata,
+  preflightPulledOciImage,
   preflightRootfsInPlace,
   requireCurrentRootfsPreflightMetadata,
   writeRootfsPreflightMetadata,
@@ -36,6 +37,17 @@ export function imageCachePath(image: string): string {
 }
 
 type ProgressFunction = (opts: { progress: number; desc: string }) => void;
+
+function progressFromPreflightMessage(message: string): number {
+  const normalized = `${message}`.trim().toLowerCase();
+  if (normalized.includes("checking rootfs preflight prerequisites")) {
+    return 92;
+  }
+  if (normalized.includes("validated rootfs bootstrap prerequisites")) {
+    return 98;
+  }
+  return 96;
+}
 
 // This is a bit complicated because extractBaseImage uses reuseInFlight,
 // and it's actually very likely MULTIPLE projects will start and need
@@ -192,23 +204,36 @@ export const extractBaseImage = reuseInFlight(async (image: string) => {
       throw err;
     }
 
-    reportProgress({ progress: 55, desc: `inspecting ${image}...` });
-    const { stdout: inspect } = await executeCode({
-      err_on_exit: true,
-      verbose: true,
-      command: "podman",
-      args: ["image", "inspect", image, "--format", "{{json .}}"],
-    });
-
-    reportProgress({ progress: 60, desc: `extracting ${image}...` });
-
-    // TODO: an optimization on COW filesystem if we pull one image
-    // then pull another with a different tag, would be to start by
-    // initializing the target path using COW, then 'rsync ... --delete'
-    // to transform it to the result.  This could MASSIVELY save space.
-
-    // extract the image
     try {
+      await preflightPulledOciImage({
+        image,
+        onProgress: ({ message }) => {
+          reportProgress({
+            progress: message.includes("validated") ? 58 : 56,
+            desc: `${message} (${image})`,
+          });
+        },
+      });
+
+      reportProgress({
+        progress: 59,
+        desc: `collecting OCI image metadata for ${image}...`,
+      });
+      const { stdout: inspect } = await executeCode({
+        err_on_exit: true,
+        verbose: true,
+        command: "podman",
+        args: ["image", "inspect", image, "--format", "{{json .}}"],
+      });
+
+      reportProgress({ progress: 60, desc: `extracting ${image}...` });
+
+      // TODO: an optimization on COW filesystem if we pull one image
+      // then pull another with a different tag, would be to start by
+      // initializing the target path using COW, then 'rsync ... --delete'
+      // to transform it to the result.  This could MASSIVELY save space.
+
+      // extract the image
       const args = [
         "unshare",
         "bash",
@@ -242,30 +267,12 @@ export const extractBaseImage = reuseInFlight(async (image: string) => {
         progress: 90,
         desc: `cleaning up ${image}...`,
       });
-    } catch (err) {
-      // fail -- clean up the mess (hopefully)
-      reportProgress({
-        progress: 90,
-        desc: "image extract failed: cleaning up",
-      });
-      try {
-        await cleanupImageCacheArtifacts([
-          baseImagePath,
-          inspectPath,
-          preflightPath,
-        ]);
-        await executeCode({ command: "podman", args: ["image", "rm", image] });
-      } catch {}
-      reportProgress({ progress: 100, desc: `extracting ${image} failed` });
-      throw err;
-    }
-    try {
       const preflight = await preflightRootfsInPlace({
         image,
         rootfsPath: baseImagePath,
         onProgress: ({ message }) => {
           reportProgress({
-            progress: 96,
+            progress: progressFromPreflightMessage(message),
             desc: `${message} (${image})`,
           });
         },
@@ -287,8 +294,8 @@ export const extractBaseImage = reuseInFlight(async (image: string) => {
       return baseImagePath;
     } catch (err) {
       reportProgress({
-        progress: 100,
-        desc: `preflighting ${image} failed`,
+        progress: 90,
+        desc: `cleaning up failed ${image}...`,
       });
       try {
         await cleanupImageCacheArtifacts([
@@ -298,6 +305,10 @@ export const extractBaseImage = reuseInFlight(async (image: string) => {
         ]);
         await executeCode({ command: "podman", args: ["image", "rm", image] });
       } catch {}
+      reportProgress({
+        progress: 100,
+        desc: `preflighting ${image} failed`,
+      });
       throw err;
     }
   } finally {

@@ -19,6 +19,7 @@ High-level responsibilities:
 from __future__ import annotations
 
 import argparse
+import grp
 import hashlib
 import json
 import os
@@ -41,7 +42,12 @@ BOOTSTRAP_LOG_MAX_BYTES = 4 * 1024 * 1024
 BUNDLE_RETENTION_COUNT = 3
 ROOTLESS_SUBID_MIN_TOTAL = 4 * 1024 * 1024
 ROOTLESS_SUBID_ALIGNMENT = 65536
-ROOTLESS_SUBID_MIN_START = 100000
+PROJECT_HOST_RUNTIME_UID = 1002
+PROJECT_HOST_RUNTIME_GID = 1003
+PROJECT_HOST_RUNTIME_SUBID_RANGES = (
+    (231072, ROOTLESS_SUBID_ALIGNMENT),
+    (327680, ROOTLESS_SUBID_MIN_TOTAL - ROOTLESS_SUBID_ALIGNMENT),
+)
 
 
 @dataclass(frozen=True)
@@ -330,6 +336,97 @@ def symlink_version(path: str) -> str | None:
     return None
 
 
+def normalize_map_line(line: str) -> str:
+    return " ".join(line.strip().split())
+
+
+def normalize_map_lines(lines: list[str]) -> list[str]:
+    return [normalized for line in lines if (normalized := normalize_map_line(line))]
+
+
+def runtime_userns_map_fingerprint(uid_map: list[str], gid_map: list[str]) -> str:
+    payload = (
+        f"uid:{chr(10).join(normalize_map_lines(uid_map))}\n"
+        f"gid:{chr(10).join(normalize_map_lines(gid_map))}\n"
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def expected_runtime_userns_map(cfg: BootstrapConfig) -> tuple[list[str], list[str]]:
+    uid_map = [f"0 {PROJECT_HOST_RUNTIME_UID} 1"]
+    gid_map = [f"0 {PROJECT_HOST_RUNTIME_GID} 1"]
+    inside = 1
+    for start, length in PROJECT_HOST_RUNTIME_SUBID_RANGES:
+        uid_map.append(f"{inside} {start} {length}")
+        gid_map.append(f"{inside} {start} {length}")
+        inside += length
+    return uid_map, gid_map
+
+
+def expected_runtime_user_contract(cfg: BootstrapConfig) -> dict[str, Any]:
+    uid_map, gid_map = expected_runtime_userns_map(cfg)
+    subid_ranges = [f"{start}:{length}" for start, length in PROJECT_HOST_RUNTIME_SUBID_RANGES]
+    return {
+        "user": cfg.ssh_user,
+        "identity": f"{cfg.ssh_user}:{PROJECT_HOST_RUNTIME_UID}:{PROJECT_HOST_RUNTIME_GID}",
+        "host_uid": PROJECT_HOST_RUNTIME_UID,
+        "host_gid": PROJECT_HOST_RUNTIME_GID,
+        "subuid_ranges": subid_ranges,
+        "subgid_ranges": subid_ranges,
+        "uid_map": uid_map,
+        "gid_map": gid_map,
+        "fingerprint": runtime_userns_map_fingerprint(uid_map, gid_map),
+    }
+
+
+def read_user_subid_ranges(path: Path, user: str) -> list[tuple[int, int]]:
+    _raw_lines, entries = parse_subid_entries(path)
+    return [(start, length) for name, start, length in entries if name == user]
+
+
+def read_current_runtime_user_contract(cfg: BootstrapConfig) -> dict[str, Any]:
+    contract: dict[str, Any] = {"user": cfg.ssh_user}
+    try:
+        pw = pwd.getpwnam(cfg.ssh_user)
+    except KeyError:
+        return contract
+    contract["host_uid"] = pw.pw_uid
+    contract["host_gid"] = pw.pw_gid
+    contract["identity"] = f"{cfg.ssh_user}:{pw.pw_uid}:{pw.pw_gid}"
+    contract["subuid_ranges"] = [
+        f"{start}:{length}" for start, length in read_user_subid_ranges(Path("/etc/subuid"), cfg.ssh_user)
+    ]
+    contract["subgid_ranges"] = [
+        f"{start}:{length}" for start, length in read_user_subid_ranges(Path("/etc/subgid"), cfg.ssh_user)
+    ]
+    podman = shutil.which("podman")
+    if not podman:
+        return contract
+    if os.geteuid() == 0 and cfg.ssh_user != "root":
+        prefix = ["sudo", "-u", cfg.ssh_user, "-H"]
+    else:
+        prefix = []
+    uid_proc = subprocess.run(
+        prefix + ["bash", "-lc", f'cd "$HOME" && exec {podman} unshare cat /proc/self/uid_map'],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    gid_proc = subprocess.run(
+        prefix + ["bash", "-lc", f'cd "$HOME" && exec {podman} unshare cat /proc/self/gid_map'],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if uid_proc.returncode == 0 and gid_proc.returncode == 0:
+        uid_map = normalize_map_lines(uid_proc.stdout.splitlines())
+        gid_map = normalize_map_lines(gid_proc.stdout.splitlines())
+        contract["uid_map"] = uid_map
+        contract["gid_map"] = gid_map
+        contract["fingerprint"] = runtime_userns_map_fingerprint(uid_map, gid_map)
+    return contract
+
+
 def helper_schema_installed(cfg: BootstrapConfig) -> str | None:
     path = project_host_runtime_root(cfg) / "bin" / "fetch-tools.sh"
     return HELPER_SCHEMA_VERSION if path.exists() else None
@@ -360,6 +457,8 @@ def build_host_facts(cfg: BootstrapConfig) -> dict[str, Any]:
         "env_file": cfg.env_file,
         "data_disk_devices": cfg.data_disk_devices,
         "data_disk_candidates": cfg.data_disk_candidates,
+        "runtime_user_host_uid": PROJECT_HOST_RUNTIME_UID,
+        "runtime_user_host_gid": PROJECT_HOST_RUNTIME_GID,
         "project_host_bundle_root": cfg.project_host_bundle.root,
         "project_bundle_root": cfg.project_bundle.root,
         "tools_root": cfg.tools_bundle.root,
@@ -392,6 +491,7 @@ def build_desired_state(cfg: BootstrapConfig) -> dict[str, Any]:
         "apt_packages": cfg.apt_packages,
         "env_lines": cfg.env_lines,
         "bootstrap_done_paths": cfg.bootstrap_done_paths,
+        "runtime_user_contract": expected_runtime_user_contract(cfg),
         "bootstrap_connection": build_bootstrap_connection(cfg),
         "project_host_bundle": {
             "url": cfg.project_host_bundle.url,
@@ -444,6 +544,7 @@ def refresh_installed_state(cfg: BootstrapConfig, base: dict[str, Any] | None = 
     }
     state["helper_schema_version"] = helper_schema_installed(cfg)
     state["runtime_wrapper_version"] = runtime_wrapper_version_installed()
+    state["runtime_user_contract"] = read_current_runtime_user_contract(cfg)
     state["installed"] = {
         "project_host_bundle_version": symlink_version(cfg.project_host_bundle.current),
         "project_bundle_version": symlink_version(cfg.project_bundle.current),
@@ -681,12 +782,57 @@ def ensure_runtime_user(cfg: BootstrapConfig) -> None:
     user = cfg.ssh_user
     if not user or user == "root":
         return
+    desired_uid = PROJECT_HOST_RUNTIME_UID
+    desired_gid = PROJECT_HOST_RUNTIME_GID
+    try:
+        group = grp.getgrnam(user)
+        if group.gr_gid != desired_gid:
+            raise RuntimeError(
+                f"runtime group {user} has gid {group.gr_gid}, expected {desired_gid}; reprovision the host"
+            )
+    except KeyError:
+        try:
+            existing = grp.getgrgid(desired_gid)
+            raise RuntimeError(
+                f"runtime gid {desired_gid} is already owned by group {existing.gr_name}; reprovision the host"
+            )
+        except KeyError:
+            log_line(cfg, f"bootstrap: creating runtime group {user} gid={desired_gid}")
+            run_cmd(
+                cfg,
+                ["groupadd", "-g", str(desired_gid), user],
+                "create runtime group",
+            )
     try:
         pw = pwd.getpwnam(user)
     except KeyError:
-        log_line(cfg, f"bootstrap: creating runtime user {user}")
-        run_cmd(cfg, ["useradd", "-m", "-s", "/bin/bash", user], "create runtime user")
+        try:
+            existing = pwd.getpwuid(desired_uid)
+            raise RuntimeError(
+                f"runtime uid {desired_uid} is already owned by user {existing.pw_name}; reprovision the host"
+            )
+        except KeyError:
+            log_line(cfg, f"bootstrap: creating runtime user {user} uid={desired_uid} gid={desired_gid}")
+            run_cmd(
+                cfg,
+                [
+                    "useradd",
+                    "-m",
+                    "-u",
+                    str(desired_uid),
+                    "-g",
+                    str(desired_gid),
+                    "-s",
+                    "/bin/bash",
+                    user,
+                ],
+                "create runtime user",
+            )
         pw = pwd.getpwnam(user)
+    if pw.pw_uid != desired_uid or pw.pw_gid != desired_gid:
+        raise RuntimeError(
+            f"runtime user {user} has uid/gid {pw.pw_uid}:{pw.pw_gid}, expected {desired_uid}:{desired_gid}; reprovision the host"
+        )
     home = pw.pw_dir or f"/home/{user}"
     Path(home).mkdir(parents=True, exist_ok=True)
     run_best_effort(cfg, ["chown", f"{user}:{user}", home], "chown runtime home")
@@ -712,99 +858,63 @@ def parse_subid_entries(path: Path) -> tuple[list[str], list[tuple[str, int, int
     return raw_lines, entries
 
 
-def align_subid_length(length: int) -> int:
-    blocks = max(1, (length + ROOTLESS_SUBID_ALIGNMENT - 1) // ROOTLESS_SUBID_ALIGNMENT)
-    return blocks * ROOTLESS_SUBID_ALIGNMENT
-
-
-def next_subid_start(entries: list[tuple[str, int, int]]) -> int:
-    max_end = ROOTLESS_SUBID_MIN_START
-    for _name, start, length in entries:
-        max_end = max(max_end, start + length)
-    return align_subid_length(max_end)
-
-
-def ensure_subid_file(path: Path, user: str, min_total: int) -> bool:
-    raw_lines, entries = parse_subid_entries(path)
-    current_total = sum(length for name, _start, length in entries if name == user)
-    if current_total >= min_total:
+def ensure_exact_subid_file(
+    path: Path, user: str, ranges: tuple[tuple[int, int], ...]
+) -> bool:
+    raw_lines, _entries = parse_subid_entries(path)
+    preserved_lines: list[str] = []
+    user_lines: list[str] = []
+    for line in raw_lines:
+        parts = line.split(":")
+        if len(parts) == 3 and parts[0].strip() == user:
+            user_lines.append(f"{user}:{parts[1].strip()}:{parts[2].strip()}")
+            continue
+        preserved_lines.append(line)
+    expected_lines = [f"{user}:{start}:{length}" for start, length in ranges]
+    if user_lines == expected_lines:
         return False
-    needed = align_subid_length(min_total - current_total)
-    start = next_subid_start(entries)
-    new_line = f"{user}:{start}:{needed}"
-    updated_lines = [*raw_lines, new_line]
-    path.write_text("\n".join(updated_lines) + "\n", encoding="utf-8")
+    path.write_text("\n".join([*preserved_lines, *expected_lines]) + "\n", encoding="utf-8")
     return True
 
 
 def ensure_subuids(cfg: BootstrapConfig) -> None:
     log_line(cfg, f"bootstrap: ensuring subuid/subgid ranges for {cfg.ssh_user}")
-    changed_subuid = ensure_subid_file(
-        Path("/etc/subuid"), cfg.ssh_user, ROOTLESS_SUBID_MIN_TOTAL
+    changed_subuid = ensure_exact_subid_file(
+        Path("/etc/subuid"), cfg.ssh_user, PROJECT_HOST_RUNTIME_SUBID_RANGES
     )
-    changed_subgid = ensure_subid_file(
-        Path("/etc/subgid"), cfg.ssh_user, ROOTLESS_SUBID_MIN_TOTAL
+    changed_subgid = ensure_exact_subid_file(
+        Path("/etc/subgid"), cfg.ssh_user, PROJECT_HOST_RUNTIME_SUBID_RANGES
     )
     if changed_subuid or changed_subgid:
         log_line(
             cfg,
-            f"bootstrap: expanded subuid/subgid allocation for {cfg.ssh_user} to at least {ROOTLESS_SUBID_MIN_TOTAL} ids",
+            "bootstrap: set exact subuid/subgid allocation "
+            f"for {cfg.ssh_user} to "
+            + ", ".join(f"{start}:{length}" for start, length in PROJECT_HOST_RUNTIME_SUBID_RANGES),
         )
 
 
-def namespace_id_to_host_id(
-    identifier: int, ranges: list[tuple[int, int, int]]
-) -> int:
-    for ns_start, host_start, length in ranges:
-        if ns_start <= identifier < ns_start + length:
-            return host_start + (identifier - ns_start)
-    raise RuntimeError(
-        f"id {identifier} is not covered by the rootless podman map; the host subuid/subgid allocation is too small for this image"
-    )
-
-
-def host_id_to_namespace_id(
-    identifier: int, ranges: list[tuple[int, int, int]]
-) -> int:
-    for ns_start, host_start, length in ranges:
-        if host_start <= identifier < host_start + length:
-            return ns_start + (identifier - host_start)
-    raise RuntimeError(
-        f"id {identifier} is not covered by the current rootless podman host map; the host subuid/subgid allocation is too small for this image"
-    )
-
-
-def map_keep_id_namespace_id(identifier: int, runtime_id: int) -> int:
-    if identifier < 0:
-        return identifier
-    if identifier < runtime_id:
-        return identifier + 1
-    if identifier == runtime_id:
-        return 0
-    return identifier
-
-
-def extracted_id_to_namespace_id(
-    identifier: int, ranges: list[tuple[int, int, int]]
-) -> int:
-    try:
-        return host_id_to_namespace_id(identifier, ranges)
-    except RuntimeError:
-        # Extracted trees can be mixed: most entries come from the current
-        # rootless podman host mapping, but some still carry literal
-        # namespace/container ids (for example root-owned paths as uid 0).
-        return identifier
-
-
-def remap_extracted_host_id_for_keep_id(
-    identifier: int, runtime_id: int, ranges: list[tuple[int, int, int]]
-) -> int:
-    return namespace_id_to_host_id(
-        map_keep_id_namespace_id(
-            extracted_id_to_namespace_id(identifier, ranges), runtime_id
-        ),
-        ranges,
-    )
+def verify_runtime_user_contract(cfg: BootstrapConfig) -> None:
+    desired = expected_runtime_user_contract(cfg)
+    installed = read_current_runtime_user_contract(cfg)
+    mismatches: list[str] = []
+    for key in (
+        "identity",
+        "subuid_ranges",
+        "subgid_ranges",
+        "uid_map",
+        "gid_map",
+        "fingerprint",
+    ):
+        if installed.get(key) != desired.get(key):
+            mismatches.append(
+                f"{key} expected={desired.get(key)!r} installed={installed.get(key)!r}"
+            )
+    if mismatches:
+        raise RuntimeError(
+            "runtime userns contract mismatch; reprovision the host or reset "
+            f"the {cfg.ssh_user} rootless Podman state ({'; '.join(mismatches)})"
+        )
 
 
 def enable_linger(cfg: BootstrapConfig) -> None:
@@ -1363,6 +1473,12 @@ case "$cmd" in
       echo "$1" >&2
       exit "${2:-1}"
     }
+    skip_ownership_bridge=false
+    case "${COCALC_ROOTFS_SKIP_OWNERSHIP_BRIDGE:-}" in
+      1|true|TRUE|yes|YES|on|ON)
+        skip_ownership_bridge=true
+        ;;
+    esac
     remap_rootfs_ids_script="$(mktemp)"
     rewrite_uid_map_file="$(mktemp)"
     rewrite_gid_map_file="$(mktemp)"
@@ -1480,7 +1596,7 @@ chmod 0755 "$remap_rootfs_ids_script"
     trap cleanup_rewrite_script EXIT
     podman_user="${SUDO_USER:-}"
     if [ -z "$podman_user" ]; then
-      fail "rootfs contract failed: normalize-rootfs must be invoked via sudo from the rootless podman user" 77
+      fail "rootfs preflight failed: normalize-rootfs must be invoked via sudo from the rootless podman user" 77
     fi
     fix_setid_runtime_helpers_script="$(cat <<'EOF_COCALC_FIX_SETID_RUNTIME_HELPERS'
 set -euo pipefail
@@ -1536,11 +1652,11 @@ EOF_COCALC_FIX_SETID_RUNTIME_HELPERS
        [ ! -e "$rootfs/lib/ld-linux-aarch64.so.1" ] && \
        [ ! -e "$rootfs/lib64/ld-linux-aarch64.so.1" ] && \
        [ ! -e "$rootfs/lib/aarch64-linux-gnu/libc.so.6" ]; then
-      fail "rootfs contract failed: glibc is required" 43
+      fail "rootfs preflight failed: glibc is required" 43
     fi
     if [ "$sudo_present" = false ] || [ "$ca_certificates_present" = false ]; then
       if [ "$package_manager" = "none" ]; then
-        fail "rootfs contract failed: startup bootstrap requires sudo and CA certificates, but this image has neither a supported package manager nor the required packages preinstalled" 44
+        fail "rootfs preflight failed: startup bootstrap requires sudo and CA certificates, but this image has neither a supported package manager nor the required packages preinstalled" 44
       fi
     fi
     mkdir -p "$rootfs/home" "$rootfs/home/user" "$rootfs/tmp" "$rootfs/var/tmp" "$rootfs/run" "$rootfs/etc" "$rootfs/var"
@@ -1557,37 +1673,39 @@ EOF_COCALC_FIX_SETID_RUNTIME_HELPERS
     chmod 0755 "$rootfs/run/podman-init" || true
     : >"$rootfs/run/.containerenv"
     chmod 0644 "$rootfs/run/.containerenv" || true
-    /usr/bin/sudo -u "$podman_user" -H bash -lc "cd ~ && /usr/bin/podman unshare cat /proc/self/uid_map" >"$rewrite_uid_map_file"
-    /usr/bin/sudo -u "$podman_user" -H bash -lc "cd ~ && /usr/bin/podman unshare cat /proc/self/gid_map" >"$rewrite_gid_map_file"
-    /usr/bin/python3 "$remap_rootfs_ids_script" \
-      "to-canonical" \
-      "$rootfs" \
-      "2001" \
-      "2001" \
-      "$rewrite_uid_map_file" \
-      "$rewrite_gid_map_file"
-    /usr/bin/python3 "$remap_rootfs_ids_script" \
-      "to-host" \
-      "$rootfs" \
-      "2001" \
-      "2001" \
-      "$rewrite_uid_map_file" \
-      "$rewrite_gid_map_file"
-    fix_setid_runtime_helpers_escaped="$(printf '%q' "$fix_setid_runtime_helpers_script")"
-    /usr/bin/sudo -u "$podman_user" -H bash -lc "
-        cd ~ &&
-        /usr/bin/podman run --rm --network host \
-          --userns=keep-id:uid=2001,gid=2001 \
-          --user 0:0 \
-          --workdir / \
-          -e HOME=/root \
-          -e USER=root \
-          -e LOGNAME=root \
-          -e COCALC_RUNTIME_UID='2001' \
-          -e COCALC_RUNTIME_GID='2001' \
-          --security-opt label=disable \
-          --rootfs '$rootfs' '$shell_path' -lc $fix_setid_runtime_helpers_escaped
-      " >/dev/null
+    if [ "$skip_ownership_bridge" = false ]; then
+      /usr/bin/sudo -u "$podman_user" -H bash -lc "cd ~ && /usr/bin/podman unshare cat /proc/self/uid_map" >"$rewrite_uid_map_file"
+      /usr/bin/sudo -u "$podman_user" -H bash -lc "cd ~ && /usr/bin/podman unshare cat /proc/self/gid_map" >"$rewrite_gid_map_file"
+      /usr/bin/python3 "$remap_rootfs_ids_script" \
+        "to-canonical" \
+        "$rootfs" \
+        "2001" \
+        "2001" \
+        "$rewrite_uid_map_file" \
+        "$rewrite_gid_map_file"
+      /usr/bin/python3 "$remap_rootfs_ids_script" \
+        "to-host" \
+        "$rootfs" \
+        "2001" \
+        "2001" \
+        "$rewrite_uid_map_file" \
+        "$rewrite_gid_map_file"
+      fix_setid_runtime_helpers_escaped="$(printf '%q' "$fix_setid_runtime_helpers_script")"
+      /usr/bin/sudo -u "$podman_user" -H bash -lc "
+          cd ~ &&
+          /usr/bin/podman run --rm --network host \
+            --userns=keep-id:uid=2001,gid=2001 \
+            --user 0:0 \
+            --workdir / \
+            -e HOME=/root \
+            -e USER=root \
+            -e LOGNAME=root \
+            -e COCALC_RUNTIME_UID='2001' \
+            -e COCALC_RUNTIME_GID='2001' \
+            --security-opt label=disable \
+            --rootfs '$rootfs' '$shell_path' -lc $fix_setid_runtime_helpers_escaped
+        " >/dev/null
+    fi
     normalize_result="$(printf '{"ok":true,"distro_family":"%s","package_manager":"%s","shell":"%s","glibc":true,"sudo_present":%s,"ca_certificates_present":%s}\n' \
       "$distro_family" "$package_manager" "$shell_path" "$sudo_present" "$ca_certificates_present")"
     printf '%s\n' "$normalize_result"
@@ -3064,7 +3182,9 @@ def run_reconcile(cfg: BootstrapConfig) -> int:
         install_privileged_wrappers(cfg)
         ensure_cocalc_mount(cfg)
         ensure_btrfs_data(cfg)
+        ensure_subuids(cfg)
         configure_podman(cfg)
+        verify_runtime_user_contract(cfg)
         write_env(cfg, image_size_gb)
         configure_runtime_shell_env(cfg)
         setup_master_conat_token(cfg)

@@ -59,6 +59,11 @@ import {
   estimateManagedRootfsPullReservationBytes,
   withStorageReservation,
 } from "./storage-reservations";
+import {
+  inspectLabelsSatisfyCurrentProjectRuntimeContract,
+  readCurrentProjectRuntimeUsernsMapFingerprint,
+  rootfsInspectLabels,
+} from "./rootfs-runtime-contract";
 
 const logger = getLogger("project-host:rootfs-cache");
 const STORAGE_WRAPPER = "/usr/local/sbin/cocalc-runtime-storage";
@@ -747,9 +752,43 @@ async function downloadManagedRootfsArtifact({
             release_id: access.release_id,
           },
         });
+        let skipOwnershipBridge = false;
+        const inspectLabels = rootfsInspectLabels(access.inspect_data);
+        if (inspectLabels) {
+          try {
+            const usernsMapFingerprint =
+              await readCurrentProjectRuntimeUsernsMapFingerprint();
+            skipOwnershipBridge =
+              inspectLabelsSatisfyCurrentProjectRuntimeContract({
+                labels: inspectLabels,
+                usernsMapFingerprint,
+              });
+          } catch (err) {
+            logger.warn(
+              "unable to evaluate RootFS runtime-contract fast path",
+              {
+                image,
+                release_id: access.release_id,
+                err: `${err}`,
+              },
+            );
+          }
+        }
+        if (skipOwnershipBridge) {
+          reportPullProgress(onProgress, {
+            message: "reusing matching RootFS ownership mapping",
+            progress: 86,
+            detail: {
+              image,
+              release_id: access.release_id,
+              fast_path: "matching-runtime-contract",
+            },
+          });
+        }
         const preflight = await preflightRootfsInPlace({
           image,
           rootfsPath: stagedRootfsPath,
+          skipOwnershipBridge,
           onProgress: ({ message, detail }) => {
             reportPullProgress(onProgress, {
               message,
