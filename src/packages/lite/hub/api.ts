@@ -5,14 +5,26 @@ This is a very lightweight small subset of the hub's API for browser clients.
 import getLogger from "@cocalc/backend/logger";
 import { getFrontendSourceFingerprint } from "@cocalc/backend/frontend-build-fingerprint";
 import { type HubApi, getUserId, transformArgs } from "@cocalc/conat/hub/api";
-import type { CodexPaymentSourceInfo } from "@cocalc/conat/hub/api/system";
+import type {
+  AccountBayLocation,
+  BayInfo,
+  BayOwnershipBackfillResult,
+  CodexPaymentSourceInfo,
+  HostBayLocation,
+  ProjectBayLocation,
+} from "@cocalc/conat/hub/api/system";
 import userQuery, { init as initUserQuery } from "./sqlite/user-query";
 import { account_id as ACCOUNT_ID, data } from "@cocalc/backend/data";
+import { project_id as LITE_PROJECT_ID } from "@cocalc/project/data";
 import {
   FALLBACK_PROJECT_UUID,
   FALLBACK_ACCOUNT_UUID,
 } from "@cocalc/util/misc";
-import { callRemoteHub, hasRemote, project_id } from "../remote";
+import {
+  callRemoteHub,
+  hasRemote,
+  project_id as REMOTE_PROJECT_ID,
+} from "../remote";
 import { join } from "node:path";
 import { readFile } from "node:fs/promises";
 import { execFile as execFileCb } from "node:child_process";
@@ -48,6 +60,7 @@ import { getLiteConatClient } from "./runtime-client";
 
 const logger = getLogger("lite:hub:api");
 const execFile = promisify(execFileCb);
+const DEFAULT_BAY_ID = "bay-0";
 
 function syncHistoryWithExplicitClient(
   opts: Parameters<typeof syncHistory>[0],
@@ -83,6 +96,43 @@ function parseMap(raw?: string): Record<string, string> {
   } catch {
     return {};
   }
+}
+
+function getLiteBayId(): string {
+  const bay_id = `${process.env.COCALC_BAY_ID ?? ""}`.trim();
+  return bay_id || DEFAULT_BAY_ID;
+}
+
+function getLiteBayLabel(bay_id: string): string {
+  const label = `${process.env.COCALC_BAY_LABEL ?? ""}`.trim();
+  return label || bay_id;
+}
+
+function getLiteBayRegion(): string | null {
+  const region = `${process.env.COCALC_BAY_REGION ?? ""}`.trim();
+  return region || null;
+}
+
+export function getSingleLiteBayInfo(): BayInfo {
+  const bay_id = getLiteBayId();
+  return {
+    bay_id,
+    label: getLiteBayLabel(bay_id),
+    region: getLiteBayRegion(),
+    deployment_mode: "single-bay",
+    role: "combined",
+    is_default: true,
+  };
+}
+
+function resolveLiteProjectId(value?: string): string {
+  const explicit = `${value ?? ""}`.trim();
+  if (explicit) return explicit;
+  const remoteProjectId = `${REMOTE_PROJECT_ID ?? ""}`.trim();
+  if (remoteProjectId) return remoteProjectId;
+  const localProjectId = `${LITE_PROJECT_ID ?? ""}`.trim();
+  if (localProjectId) return localProjectId;
+  return FALLBACK_PROJECT_UUID;
 }
 
 function resolveLiteCodexHome(): string {
@@ -324,9 +374,9 @@ function fallbackNames(account_ids: Set<string>): {
   if (account_ids.has(ACCOUNT_ID)) {
     names[ACCOUNT_ID] = { first_name: "CoCalc", last_name: "User" };
   }
-  if (account_ids.has(project_id)) {
+  if (account_ids.has(REMOTE_PROJECT_ID)) {
     // TODO: get the actual project title (?).
-    names[project_id] = { first_name: "Remote", last_name: "Project" };
+    names[REMOTE_PROJECT_ID] = { first_name: "Remote", last_name: "Project" };
   }
   return names;
 }
@@ -353,6 +403,106 @@ async function userTracking(_opts?: { event?: string; value?: object }) {
 
 async function webappError(_opts?: object) {
   // No-op in lite mode.
+}
+
+export async function listBaysLite(opts?: {
+  account_id?: string;
+}): Promise<BayInfo[]> {
+  if (hasRemote) {
+    return await callRemoteHub({
+      name: "system.listBays",
+      args: [opts ?? {}],
+    });
+  }
+  return [getSingleLiteBayInfo()];
+}
+
+export async function getAccountBayLite(opts?: {
+  account_id?: string;
+  user_account_id?: string;
+}): Promise<AccountBayLocation> {
+  if (hasRemote) {
+    return await callRemoteHub({
+      name: "system.getAccountBay",
+      args: [opts ?? {}],
+    });
+  }
+  const account_id =
+    `${opts?.user_account_id ?? opts?.account_id ?? ACCOUNT_ID}`.trim() ||
+    ACCOUNT_ID;
+  return {
+    account_id,
+    home_bay_id: getLiteBayId(),
+    source: "single-bay-default",
+  };
+}
+
+export async function getProjectBayLite(opts?: {
+  account_id?: string;
+  project_id?: string;
+}): Promise<ProjectBayLocation> {
+  if (hasRemote) {
+    return await callRemoteHub({
+      name: "system.getProjectBay",
+      args: [opts ?? {}],
+    });
+  }
+  return {
+    project_id: resolveLiteProjectId(opts?.project_id),
+    owning_bay_id: getLiteBayId(),
+    host_id: null,
+    title: "",
+    source: "single-bay-default",
+  };
+}
+
+export async function getHostBayLite(opts?: {
+  account_id?: string;
+  host_id?: string;
+}): Promise<HostBayLocation> {
+  if (hasRemote) {
+    return await callRemoteHub({
+      name: "system.getHostBay",
+      args: [opts ?? {}],
+    });
+  }
+  const host_id = `${opts?.host_id ?? ""}`.trim();
+  if (!host_id) {
+    throw Error("host_id is required");
+  }
+  return {
+    host_id,
+    bay_id: getLiteBayId(),
+    name: host_id,
+    source: "single-bay-default",
+  };
+}
+
+export async function backfillBayOwnershipLite(opts?: {
+  account_id?: string;
+  bay_id?: string;
+  dry_run?: boolean;
+  limit_per_table?: number;
+}): Promise<BayOwnershipBackfillResult> {
+  if (hasRemote) {
+    return await callRemoteHub({
+      name: "system.backfillBayOwnership",
+      args: [opts ?? {}],
+    });
+  }
+  const bay_id = `${opts?.bay_id ?? ""}`.trim() || getLiteBayId();
+  return {
+    bay_id,
+    dry_run: opts?.dry_run ?? true,
+    limit_per_table:
+      typeof opts?.limit_per_table === "number" ? opts.limit_per_table : null,
+    accounts_missing: 0,
+    projects_missing: 0,
+    hosts_missing: 0,
+    accounts_updated: 0,
+    projects_updated: 0,
+    hosts_updated: 0,
+  };
 }
 
 async function upsertBrowserSession(opts?: {
@@ -447,6 +597,11 @@ async function issueBrowserSignInCookie(opts?: {
 export const hubApi: HubApi = {
   system: {
     getNames,
+    listBays: listBaysLite,
+    getAccountBay: getAccountBayLite,
+    getProjectBay: getProjectBayLite,
+    getHostBay: getHostBayLite,
+    backfillBayOwnership: backfillBayOwnershipLite,
     getCodexPaymentSource,
     getCodexLocalStatus,
     getFrontendSourceFingerprint: getFrontendSourceFingerprintInfo,
