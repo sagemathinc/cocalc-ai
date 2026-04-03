@@ -102,6 +102,21 @@ describe("project-backup", () => {
       if (sql === "SELECT region FROM projects WHERE project_id=$1") {
         return { rows: [{ region: settings.project_region ?? "wnam" }] };
       }
+      if (
+        typeof sql === "string" &&
+        sql.includes("COALESCE(projects.owning_bay_id, $2)")
+      ) {
+        return {
+          rows: [
+            {
+              host_id: settings.project_host_id ?? HOST_ID,
+              project_owning_bay_id:
+                settings.project_owning_bay_id ?? settings.bay_id ?? "bay-0",
+              host_bay_id: settings.host_bay_id ?? settings.bay_id ?? "bay-0",
+            },
+          ],
+        };
+      }
       if (sql === "SELECT host_id FROM projects WHERE project_id=$1") {
         return { rows: [{ host_id: settings.project_host_id ?? HOST_ID }] };
       }
@@ -241,5 +256,21 @@ describe("project-backup", () => {
     expect(updateCall).toBeDefined();
     const params = updateCall?.[1] as [string, Date];
     expect(params?.[1]?.toISOString()).toBe(when.toISOString());
+  });
+
+  it("rejects backup access when the assigned host bay mismatches the project bay", async () => {
+    settings = {
+      project_host_id: HOST_ID,
+      project_region: "wnam",
+      project_owning_bay_id: "bay-a",
+      host_bay_id: "bay-b",
+    };
+    const { recordProjectBackup } = await import("./index");
+    await expect(
+      recordProjectBackup({
+        host_id: HOST_ID,
+        project_id: PROJECT_ID,
+      }),
+    ).rejects.toThrow("project bay does not match assigned host");
   });
 });

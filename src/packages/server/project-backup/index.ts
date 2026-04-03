@@ -15,6 +15,7 @@ import { createBucket, listBuckets, R2BucketInfo } from "./r2";
 import { ensureCopySchema } from "@cocalc/server/projects/copy-db";
 import type { HostMachine } from "@cocalc/conat/hub/api/hosts";
 import { buildLaunchpadRestRusticRepoConfig } from "@cocalc/server/launchpad/rest-repo";
+import { getConfiguredBayId } from "@cocalc/server/bay-config";
 
 const DEFAULT_BACKUP_TTL_SECONDS = 60 * 60 * 12; // 12 hours
 const DEFAULT_BACKUP_ROOT = "rustic";
@@ -916,12 +917,36 @@ async function assertHostProjectAccess(host_id: string, project_id: string) {
   await ensureProjectMovesSchema();
   const { rows } = await pool().query<{
     host_id: string | null;
-  }>("SELECT host_id FROM projects WHERE project_id=$1", [project_id]);
-  const currentHost = rows[0]?.host_id ?? null;
+    project_owning_bay_id: string | null;
+    host_bay_id: string | null;
+  }>(
+    `
+      SELECT
+        projects.host_id,
+        COALESCE(projects.owning_bay_id, $2) AS project_owning_bay_id,
+        COALESCE(project_hosts.bay_id, $2) AS host_bay_id
+      FROM projects
+      LEFT JOIN project_hosts
+        ON project_hosts.id = projects.host_id
+       AND project_hosts.deleted IS NULL
+      WHERE project_id=$1
+      LIMIT 1
+    `,
+    [project_id, getConfiguredBayId()],
+  );
+  const row = rows[0];
+  const currentHost = row?.host_id ?? null;
   if (!currentHost) {
     throw new Error("project not assigned to host");
   }
-  if (currentHost === host_id) return;
+  if (currentHost === host_id) {
+    // Keep the ordinary backup path bay-consistent. Transitional move/copy
+    // access checks below intentionally remain host-based for now.
+    if (row?.project_owning_bay_id !== row?.host_bay_id) {
+      throw new Error("project bay does not match assigned host");
+    }
+    return;
+  }
 
   const { rows: moveRows } = await pool().query<{
     source_host_id: string | null;
