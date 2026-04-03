@@ -73,6 +73,10 @@ async function getVisibleProject({
   if (!isValidUUID(project_id)) {
     throw new Error(`invalid project id '${project_id}'`);
   }
+  // Use direct SQL for backend placement lookups. `userQuery` is designed for
+  // handling user-driven queries and carries extra security/policy machinery
+  // that backend code should generally avoid unless it is intentionally
+  // implementing that user-query surface.
   const { rows } = await getPool().query(
     `SELECT project_id, title, host_id
       FROM projects
