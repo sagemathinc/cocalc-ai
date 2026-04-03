@@ -36,9 +36,12 @@ from typing import Any
 
 STATE_SCHEMA_VERSION = 1
 HELPER_SCHEMA_VERSION = "20260330-v1"
-RUNTIME_WRAPPER_VERSION = "20260402-v4"
+RUNTIME_WRAPPER_VERSION = "20260403-v5"
 BOOTSTRAP_LOG_MAX_BYTES = 4 * 1024 * 1024
 BUNDLE_RETENTION_COUNT = 3
+ROOTLESS_SUBID_MIN_TOTAL = 4 * 1024 * 1024
+ROOTLESS_SUBID_ALIGNMENT = 65536
+ROOTLESS_SUBID_MIN_START = 100000
 
 
 @dataclass(frozen=True)
@@ -689,9 +692,64 @@ def ensure_runtime_user(cfg: BootstrapConfig) -> None:
     run_best_effort(cfg, ["chown", f"{user}:{user}", home], "chown runtime home")
 
 
+def parse_subid_entries(path: Path) -> tuple[list[str], list[tuple[str, int, int]]]:
+    if path.exists():
+        raw_lines = path.read_text(encoding="utf-8").splitlines()
+    else:
+        raw_lines = []
+    entries: list[tuple[str, int, int]] = []
+    for line in raw_lines:
+        parts = line.split(":")
+        if len(parts) != 3:
+            continue
+        name = parts[0].strip()
+        try:
+            start = int(parts[1])
+            length = int(parts[2])
+        except ValueError:
+            continue
+        entries.append((name, start, length))
+    return raw_lines, entries
+
+
+def align_subid_length(length: int) -> int:
+    blocks = max(1, (length + ROOTLESS_SUBID_ALIGNMENT - 1) // ROOTLESS_SUBID_ALIGNMENT)
+    return blocks * ROOTLESS_SUBID_ALIGNMENT
+
+
+def next_subid_start(entries: list[tuple[str, int, int]]) -> int:
+    max_end = ROOTLESS_SUBID_MIN_START
+    for _name, start, length in entries:
+        max_end = max(max_end, start + length)
+    return align_subid_length(max_end)
+
+
+def ensure_subid_file(path: Path, user: str, min_total: int) -> bool:
+    raw_lines, entries = parse_subid_entries(path)
+    current_total = sum(length for name, _start, length in entries if name == user)
+    if current_total >= min_total:
+        return False
+    needed = align_subid_length(min_total - current_total)
+    start = next_subid_start(entries)
+    new_line = f"{user}:{start}:{needed}"
+    updated_lines = [*raw_lines, new_line]
+    path.write_text("\n".join(updated_lines) + "\n", encoding="utf-8")
+    return True
+
+
 def ensure_subuids(cfg: BootstrapConfig) -> None:
     log_line(cfg, f"bootstrap: ensuring subuid/subgid ranges for {cfg.ssh_user}")
-    run_best_effort(cfg, ["usermod", "--add-subuids", "100000-165535", "--add-subgids", "100000-165535", cfg.ssh_user], "usermod subuids")
+    changed_subuid = ensure_subid_file(
+        Path("/etc/subuid"), cfg.ssh_user, ROOTLESS_SUBID_MIN_TOTAL
+    )
+    changed_subgid = ensure_subid_file(
+        Path("/etc/subgid"), cfg.ssh_user, ROOTLESS_SUBID_MIN_TOTAL
+    )
+    if changed_subuid or changed_subgid:
+        log_line(
+            cfg,
+            f"bootstrap: expanded subuid/subgid allocation for {cfg.ssh_user} to at least {ROOTLESS_SUBID_MIN_TOTAL} ids",
+        )
 
 
 def namespace_id_to_host_id(
@@ -700,7 +758,9 @@ def namespace_id_to_host_id(
     for ns_start, host_start, length in ranges:
         if ns_start <= identifier < ns_start + length:
             return host_start + (identifier - ns_start)
-    raise RuntimeError(f"id {identifier} is not covered by the rootless podman map")
+    raise RuntimeError(
+        f"id {identifier} is not covered by the rootless podman map; the host subuid/subgid allocation is too small for this image"
+    )
 
 
 def host_id_to_namespace_id(
@@ -709,7 +769,9 @@ def host_id_to_namespace_id(
     for ns_start, host_start, length in ranges:
         if host_start <= identifier < host_start + length:
             return ns_start + (identifier - host_start)
-    raise RuntimeError(f"id {identifier} is not covered by the current rootless podman host map")
+    raise RuntimeError(
+        f"id {identifier} is not covered by the current rootless podman host map; the host subuid/subgid allocation is too small for this image"
+    )
 
 
 def map_keep_id_namespace_id(identifier: int, runtime_id: int) -> int:
@@ -1316,6 +1378,36 @@ fail() {
   exit "${2:-1}"
 }
 
+next_free_name() {
+  local base="$1"
+  local kind="$2"
+  local candidate="$base"
+  local suffix=0
+  while true; do
+    if [ "$kind" = "user" ]; then
+      if ! getent passwd "$candidate" >/dev/null 2>&1; then
+        printf '%s' "$candidate"
+        return 0
+      fi
+    else
+      if ! getent group "$candidate" >/dev/null 2>&1; then
+        printf '%s' "$candidate"
+        return 0
+      fi
+    fi
+    suffix=$((suffix + 1))
+    candidate="${base}${suffix}"
+  done
+}
+
+has_ca_certificates() {
+  [ -d /etc/ssl/certs ] || \
+    [ -f /etc/ssl/cert.pem ] || \
+    [ -f /etc/pki/tls/certs/ca-bundle.crt ] || \
+    [ -f /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem ] || \
+    [ -f /etc/ssl/ca-bundle.pem ]
+}
+
 mkdir -p /home /tmp /var/tmp
 chmod 1777 /tmp /var/tmp || true
 
@@ -1366,36 +1458,52 @@ for cmd_name in getent id useradd usermod groupadd groupmod; do
     fail "rootfs contract failed: required user management tool '$cmd_name' is missing" 45
 done
 
-case "$package_manager" in
-  apt-get)
-    apt-get update
-    apt-get install -y --no-install-recommends sudo ca-certificates curl
-    rm -rf /var/lib/apt/lists/*
-    ;;
-  dnf)
-    dnf install -y sudo ca-certificates curl
-    dnf clean all || true
-    ;;
-  microdnf)
-    microdnf install -y sudo ca-certificates curl
-    microdnf clean all || true
-    ;;
-  yum)
-    yum install -y sudo ca-certificates curl
-    yum clean all || true
-    ;;
-  zypper)
-    zypper --non-interactive --gpg-auto-import-keys refresh || true
-    zypper --non-interactive install --no-recommends sudo ca-certificates curl
-    zypper clean --all || true
-    ;;
-esac
+need_package_install=0
+command -v sudo >/dev/null 2>&1 || need_package_install=1
+command -v curl >/dev/null 2>&1 || need_package_install=1
+has_ca_certificates || need_package_install=1
 
-if command -v update-ca-certificates >/dev/null 2>&1; then
-  update-ca-certificates || true
+if [ "$need_package_install" = 1 ]; then
+  case "$package_manager" in
+    apt-get)
+      apt-get update
+      apt-get install -y --no-install-recommends sudo ca-certificates curl
+      rm -rf /var/lib/apt/lists/*
+      ;;
+    dnf)
+      dnf install -y sudo ca-certificates curl
+      dnf clean all || true
+      ;;
+    microdnf)
+      microdnf install -y sudo ca-certificates curl
+      microdnf clean all || true
+      ;;
+    yum)
+      yum install -y sudo ca-certificates curl
+      yum clean all || true
+      ;;
+    zypper)
+      zypper --non-interactive --gpg-auto-import-keys refresh || true
+      zypper --non-interactive install --no-recommends sudo ca-certificates curl
+      zypper clean --all || true
+      ;;
+  esac
+
+  if command -v update-ca-certificates >/dev/null 2>&1; then
+    update-ca-certificates || true
+  fi
+  if command -v update-ca-trust >/dev/null 2>&1; then
+    update-ca-trust || true
+  fi
 fi
-if command -v update-ca-trust >/dev/null 2>&1; then
-  update-ca-trust || true
+
+existing_gid_group="$(getent group "$want_gid" | cut -d: -f1 || true)"
+if getent group "$want_user" >/dev/null 2>&1; then
+  current_gid="$(getent group "$want_user" | cut -d: -f3)"
+  if [ "$current_gid" != "$want_gid" ] && [ -n "$existing_gid_group" ] && [ "$existing_gid_group" != "$want_user" ]; then
+    backup_group="$(next_free_name "${want_user}-orig" group)"
+    groupmod -n "$backup_group" "$want_user"
+  fi
 fi
 
 existing_gid_group="$(getent group "$want_gid" | cut -d: -f1 || true)"
@@ -1412,6 +1520,15 @@ else
     groupmod -n "$want_user" "$existing_gid_group"
   else
     groupadd -g "$want_gid" "$want_user"
+  fi
+fi
+
+existing_uid_user="$(getent passwd "$want_uid" | cut -d: -f1 || true)"
+if id "$want_user" >/dev/null 2>&1; then
+  current_uid="$(id -u "$want_user")"
+  if [ "$current_uid" != "$want_uid" ] && [ -n "$existing_uid_user" ] && [ "$existing_uid_user" != "$want_user" ]; then
+    backup_user="$(next_free_name "${want_user}-orig" user)"
+    usermod -l "$backup_user" -d "/home/$backup_user" -m "$want_user"
   fi
 fi
 
@@ -1450,11 +1567,7 @@ getent passwd "$want_user" >/dev/null 2>&1 || fail "rootfs contract failed: 'get
 [ "$(getent passwd "$want_user" | cut -d: -f6)" = "$want_home" ] || fail "rootfs contract failed: user home is not /home/user" 65
 command -v sudo >/dev/null 2>&1 || fail "rootfs contract failed: sudo is not installed" 66
 command -v curl >/dev/null 2>&1 || fail "rootfs contract failed: curl is not installed" 67
-if [ ! -d /etc/ssl/certs ] && \
-   [ ! -f /etc/ssl/cert.pem ] && \
-   [ ! -f /etc/pki/tls/certs/ca-bundle.crt ] && \
-   [ ! -f /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem ] && \
-   [ ! -f /etc/ssl/ca-bundle.pem ]; then
+if ! has_ca_certificates; then
   fail "rootfs contract failed: system CA certificates are not configured" 68
 fi
 
@@ -1515,7 +1628,9 @@ def host_to_intermediate(identifier: int, ranges: list[tuple[int, int, int]]) ->
     for ns_start, host_start, length in ranges:
         if host_start <= identifier < host_start + length:
             return ns_start + (identifier - host_start)
-    raise RuntimeError(f"id {identifier} is not covered by the current rootless podman host map")
+    raise RuntimeError(
+        f"id {identifier} is not covered by the current rootless podman host map; the host subuid/subgid allocation is too small for this image"
+    )
 
 def extracted_to_intermediate(identifier: int, ranges: list[tuple[int, int, int]]) -> int:
     try:
@@ -1527,7 +1642,9 @@ def intermediate_to_host(identifier: int, ranges: list[tuple[int, int, int]]) ->
     for ns_start, host_start, length in ranges:
         if ns_start <= identifier < ns_start + length:
             return host_start + (identifier - ns_start)
-    raise RuntimeError(f"id {identifier} is not covered by the rootless podman map")
+    raise RuntimeError(
+        f"id {identifier} is not covered by the rootless podman map; the host subuid/subgid allocation is too small for this image"
+    )
 
 def current_host_to_canonical(identifier: int, ranges: list[tuple[int, int, int]], runtime_id: int) -> int:
     try:
@@ -1587,8 +1704,8 @@ fail() {
 [ "${HOME:-}" = "$want_home" ] || fail "rootfs contract failed: runtime HOME is not /home/user" 74
 command -v sudo >/dev/null 2>&1 || fail "rootfs contract failed: sudo is not installed" 75
 sudo -n true >/dev/null 2>&1 || fail "rootfs contract failed: passwordless sudo is not working for user" 76
-su_whoami="$(timeout 15s sudo -n su -c 'whoami' </dev/null 2>/dev/null || true)"
-[ "$su_whoami" = "root" ] || fail "rootfs contract failed: sudo su is not working for user" 78
+sudo_root_identity="$(timeout 15s sudo -n env HOME=/root USER=root LOGNAME=root /bin/sh -c 'printf "%s:%s:%s" "$(id -u)" "$(id -g)" "$(whoami)"' </dev/null 2>/dev/null || true)"
+[ "$sudo_root_identity" = "0:0:root" ] || fail "rootfs contract failed: sudo is not providing root access for user" 78
 EOF_COCALC_VALIDATE_RUNTIME_USER
 )"
     cleanup_rewrite_script() {
@@ -1601,6 +1718,24 @@ EOF_COCALC_VALIDATE_RUNTIME_USER
     if [ -z "$podman_user" ]; then
       fail "rootfs contract failed: normalize-rootfs must be invoked via sudo from the rootless podman user" 77
     fi
+    podman_uid="$(id -u "$podman_user")"
+    podman_gid="$(id -g "$podman_user")"
+    fix_setid_runtime_helpers_script="$(cat <<'EOF_COCALC_FIX_SETID_RUNTIME_HELPERS'
+set -euo pipefail
+runtime_owner_uid="${COCALC_RUNTIME_OWNER_UID:?}"
+runtime_owner_gid="${COCALC_RUNTIME_OWNER_GID:?}"
+for dir in /bin /sbin /usr/bin /usr/sbin /usr/local/bin /usr/local/sbin /usr/libexec; do
+  [ -d "$dir" ] || continue
+  find "$dir" -xdev -type f '(' -perm -4000 -o -perm -2000 ')' \
+    -uid "$runtime_owner_uid" -gid "$runtime_owner_gid" -print0 |
+  while IFS= read -r -d '' path; do
+    mode="$(stat -c '%a' "$path")"
+    chown root:root "$path"
+    chmod "$mode" "$path"
+  done
+done
+EOF_COCALC_FIX_SETID_RUNTIME_HELPERS
+)"
     /usr/bin/sudo -u "$podman_user" -H bash -lc "cd ~ && /usr/bin/podman unshare cat /proc/self/uid_map" >"$rewrite_uid_map_file"
     /usr/bin/sudo -u "$podman_user" -H bash -lc "cd ~ && /usr/bin/podman unshare cat /proc/self/gid_map" >"$rewrite_gid_map_file"
     /usr/bin/python3 "$remap_rootfs_ids_script" \
@@ -1610,10 +1745,6 @@ EOF_COCALC_VALIDATE_RUNTIME_USER
       "1000" \
       "$rewrite_uid_map_file" \
       "$rewrite_gid_map_file"
-    validate_runtime_user_escaped="$(printf '%q' "$validate_runtime_user_script")"
-    normalize_result="$(
-      /usr/bin/podman run --rm --network host --user 0:0 --security-opt label=disable --rootfs "$rootfs" "$shell_path" -lc "$normalize_script"
-    )"
     /usr/bin/python3 "$remap_rootfs_ids_script" \
       "to-host" \
       "$rootfs" \
@@ -1621,6 +1752,37 @@ EOF_COCALC_VALIDATE_RUNTIME_USER
       "1000" \
       "$rewrite_uid_map_file" \
       "$rewrite_gid_map_file"
+    normalize_script_escaped="$(printf '%q' "$normalize_script")"
+    fix_setid_runtime_helpers_escaped="$(printf '%q' "$fix_setid_runtime_helpers_script")"
+    validate_runtime_user_escaped="$(printf '%q' "$validate_runtime_user_script")"
+    normalize_result="$(
+      /usr/bin/sudo -u "$podman_user" -H bash -lc "
+        cd ~ &&
+        /usr/bin/podman run --rm --network host \
+          --userns=keep-id:uid=1000,gid=1000 \
+          --user 0:0 \
+          --workdir / \
+          -e HOME=/root \
+          -e USER=root \
+          -e LOGNAME=root \
+          --security-opt label=disable \
+          --rootfs '$rootfs' '$shell_path' -lc $normalize_script_escaped
+      "
+    )"
+    /usr/bin/sudo -u "$podman_user" -H bash -lc "
+        cd ~ &&
+        /usr/bin/podman run --rm --network host \
+          --userns=keep-id:uid=1000,gid=1000 \
+          --user 0:0 \
+          --workdir / \
+          -e HOME=/root \
+          -e USER=root \
+          -e LOGNAME=root \
+          -e COCALC_RUNTIME_OWNER_UID='$podman_uid' \
+          -e COCALC_RUNTIME_OWNER_GID='$podman_gid' \
+          --security-opt label=disable \
+          --rootfs '$rootfs' '$shell_path' -lc $fix_setid_runtime_helpers_escaped
+      " >/dev/null
     /usr/bin/sudo -u "$podman_user" -H bash -lc "
         cd ~ &&
         /usr/bin/podman run --rm --network host \

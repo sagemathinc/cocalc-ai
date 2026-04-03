@@ -22,6 +22,8 @@ const STORAGE_WRAPPER = "/usr/local/sbin/cocalc-runtime-storage";
 
 export const IMAGE_CACHE =
   process.env.COCALC_IMAGE_CACHE ?? join(data, "cache", "images");
+const ROOTFS_PULL_TMPDIR =
+  process.env.COCALC_ROOTFS_PULL_TMPDIR ?? join(data, "tmp");
 
 export function imagePathComponent(image: string): string {
   // overlayfs option parsing can break on ":" inside paths; use an encoded
@@ -176,11 +178,12 @@ export const extractBaseImage = reuseInFlight(async (image: string) => {
           reportProgress({ progress, desc, min: 5, max: 55 });
         },
         timeout: 30 * 60 * 1000, // 30 minutes
-        // ignore_chown_errors=true is needed since otherwise we
-        // have to make changes to the host system to allow more
-        // uid's, etc. for complicated images (e.g., sage);
-        // this is fine since we run everything as root anyways.
+        // Large scientific images can contain uid/gid values outside
+        // the host's configured subuid/subgid ranges. Allow Podman to
+        // ignore those during pull; we normalize ownership later on the
+        // extracted rootfs tree before runtime use.
         storageOptIgnoreChownErrors: true,
+        env: { TMPDIR: ROOTFS_PULL_TMPDIR },
       });
     } catch (err) {
       reportProgress({ progress: 100, desc: `pulling ${image} failed` });
