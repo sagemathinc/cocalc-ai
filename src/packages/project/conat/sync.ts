@@ -9,7 +9,6 @@ import {
   type DKVOptions,
 } from "@cocalc/conat/sync/dkv";
 import { dko as createDKO, type DKO } from "@cocalc/conat/sync/dko";
-import { getClient as getConatClient } from "@cocalc/conat/client";
 import { project_id } from "@cocalc/project/data";
 import {
   inventory as createInventory,
@@ -21,12 +20,13 @@ import {
   astream as createAStream,
   type AStream,
 } from "@cocalc/conat/sync/astream";
+import { getProjectConatClient } from "@cocalc/project/conat/runtime-client";
 
 export type { DStream, DKV };
 
 function clientForSync(opts?: { client?: unknown }) {
   return (
-    (opts as { client?: any } | undefined)?.client ?? getConatClient().conat()
+    (opts as { client?: any } | undefined)?.client ?? getProjectConatClient()
   );
 }
 
@@ -75,6 +75,6 @@ export async function dko<T = any>(opts: DKVOptions): Promise<DKO<T>> {
 export async function inventory(): Promise<Inventory> {
   return await createInventory({
     project_id,
-    client: getConatClient().conat(),
+    client: getProjectConatClient(),
   });
 }

@@ -6,7 +6,6 @@ import { exists } from "@cocalc/backend/misc/async-utils-node";
 import { getLogger } from "@cocalc/project/logger";
 import { rm } from "node:fs/promises";
 import { dstream, type DStream } from "@cocalc/project/conat/sync";
-import { getClient as getConatClient } from "@cocalc/conat/client";
 import {
   createBrowserClient,
   SIZE_TIMEOUT_MS,
@@ -24,6 +23,7 @@ import { SpoolWatcher } from "@cocalc/backend/spool-watcher";
 import { data } from "@cocalc/backend/data";
 import { randomId } from "@cocalc/conat/names";
 import { getOwnedProcessRegistry } from "@cocalc/project/project-info";
+import { getProjectConatClient } from "@cocalc/project/conat/runtime-client";
 import { terminalCwdForPid } from "./cwd";
 
 const logger = getLogger("project:conat:terminal:session");
@@ -138,7 +138,7 @@ export class Session {
     this.browserApi = createBrowserClient({
       project_id,
       termPath,
-      client: getConatClient().conat(),
+      client: getProjectConatClient(),
     });
     this.options = options;
     this.streamName = `terminal-${termPath}`;

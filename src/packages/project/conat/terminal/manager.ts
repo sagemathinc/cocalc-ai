@@ -1,6 +1,5 @@
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import { getLogger } from "@cocalc/project/logger";
-import { getClient as getConatClient } from "@cocalc/conat/client";
 import {
   createTerminalServer,
   type ConatService,
@@ -11,6 +10,7 @@ import ensureContainingDirectoryExists from "@cocalc/backend/misc/ensure-contain
 import { Session } from "./session";
 const logger = getLogger("project:conat:terminal:manager");
 import type { CreateTerminalOptions } from "@cocalc/conat/project/api/editor";
+import { getProjectConatClient } from "@cocalc/project/conat/runtime-client";
 
 let manager: TerminalManager | null = null;
 export const createTerminalService = async (
@@ -132,7 +132,7 @@ export class TerminalManager {
         termPath,
         project_id,
         impl,
-        client: getConatClient().conat(),
+        client: getProjectConatClient(),
       });
 
       server.on("close", () => {

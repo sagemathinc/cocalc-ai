@@ -449,6 +449,26 @@ This removes another layer where backend routing could quietly collapse onto
 the ambient singleton even after the higher-level caller had been made
 bay-aware.
 
+## Completed In The Project Runtime Helper Pass
+
+### Project-Local Conat Access
+
+- added [project/conat/runtime-client.ts](/home/wstein/build/cocalc-lite4/src/packages/project/conat/runtime-client.ts)
+  as the single project-runtime helper that reads the active Conat connection
+  from project state
+- updated project-local modules to use that helper instead of importing the
+  generic global Conat client directly:
+  - [project/app-servers/control.ts](/home/wstein/build/cocalc-lite4/src/packages/project/app-servers/control.ts)
+  - [project/conat/hub.ts](/home/wstein/build/cocalc-lite4/src/packages/project/conat/hub.ts)
+  - [project/conat/terminal/session.ts](/home/wstein/build/cocalc-lite4/src/packages/project/conat/terminal/session.ts)
+  - [project/conat/terminal/manager.ts](/home/wstein/build/cocalc-lite4/src/packages/project/conat/terminal/manager.ts)
+  - [project/conat/listings.ts](/home/wstein/build/cocalc-lite4/src/packages/project/conat/listings.ts)
+  - [project/conat/sync.ts](/home/wstein/build/cocalc-lite4/src/packages/project/conat/sync.ts)
+
+This does not eliminate the project runtime's local singleton yet, but it
+does confine that choice to one project-local helper instead of scattering
+direct `@cocalc/conat/client` access across unrelated modules.
+
 ## Completed In The Backend Client Hygiene Pass
 
 ### Server-Side HTTP and LRO Helpers

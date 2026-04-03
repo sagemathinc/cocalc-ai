@@ -10,9 +10,9 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { delay } from "awaiting";
 import basePath from "@cocalc/backend/base-path";
-import { conat } from "@cocalc/conat/client";
 import { project_id } from "@cocalc/project/data";
 import { hubApi } from "@cocalc/project/conat/hub";
+import { getProjectConatClient } from "@cocalc/project/conat/runtime-client";
 import { getLogger } from "@cocalc/project/logger";
 import type { AppTemplateCatalogEntry } from "@cocalc/conat/project/api/apps";
 import {
@@ -1400,7 +1400,7 @@ export async function exposeApp({
     }
   }
   try {
-    const hub = hubApi(conat());
+    const hub = hubApi(getProjectConatClient());
     const policy = await hub.system.getProjectAppPublicPolicy({ project_id });
     warnings.push(...(policy?.warnings ?? []));
     if (policy?.enabled) {
@@ -1436,7 +1436,7 @@ export async function exposeApp({
   } catch (err) {
     if (reserved) {
       try {
-        const hub = hubApi(conat());
+        const hub = hubApi(getProjectConatClient());
         await hub.system.releaseProjectAppPublicSubdomain({
           project_id,
           app_id: id,
@@ -1469,7 +1469,7 @@ export async function unexposeApp(id: string): Promise<AppStatus> {
   const current = publicRestart ? await statusApp(id) : undefined;
   const preferredServicePort = current?.port ?? publicRestart?.network.port;
   try {
-    const hub = hubApi(conat());
+    const hub = hubApi(getProjectConatClient());
     await hub.system.releaseProjectAppPublicSubdomain({
       project_id,
       app_id: id,
@@ -1693,7 +1693,9 @@ export async function auditAppPublicReadiness(
   const suggested_actions: string[] = [];
   if (launchpad) {
     try {
-      const policy = await hubApi(conat()).system.getProjectAppPublicPolicy({
+      const policy = await hubApi(
+        getProjectConatClient(),
+      ).system.getProjectAppPublicPolicy({
         project_id,
       });
       for (const warning of policy.warnings ?? []) {
