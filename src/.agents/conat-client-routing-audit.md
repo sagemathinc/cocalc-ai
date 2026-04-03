@@ -70,19 +70,26 @@ browser to own the singleton-vs-routed decision at every UI call site.
 This removes another shared helper that could otherwise silently bind to the
 wrong Conat connection in a multi-bay or multi-project-host world.
 
+## Completed In The LRO Progress Pass
+
+### `conat/lro/progress.ts`
+
+- removed the hidden fallback to the global Conat singleton
+- `lroProgress(...)` now requires an explicit client
+- the only current callers live in project-runner code paths, so they now
+  reuse the runner's initialized Conat client via
+  [project-runner/run/conat-client.ts](/home/wstein/build/cocalc-lite4/src/packages/project-runner/run/conat-client.ts)
+
+This keeps progress publication aligned with the same routed client that the
+project runner already uses for fileserver and control traffic, instead of
+quietly falling back to whichever backend singleton happens to be cached.
+
 ## Remaining Hotspots
 
 ### Shared Helper Fallbacks
 
 These still silently fall back to the global singleton and should be reviewed
 next:
-
-- [conat/lro/progress.ts](/home/wstein/build/cocalc-lite4/src/packages/conat/lro/progress.ts)
-
-This remaining hotspot is riskier because it is imported by both frontend and
-backend code, so the next cleanup pass should decide whether to split browser
-convenience from backend-explicit helpers or simply require explicit clients
-there as well.
 
 ### Project / Files Helpers
 
@@ -107,7 +114,6 @@ clients.
 
 ## Next Recommended Cleanup Pass
 
-1. decide whether `conat/lro/progress.ts` should require an explicit client or
-   gain a separate backend-only helper
-2. continue removing implicit singleton use from server-side bridge/control
-   paths first, before touching broader frontend ergonomics
+1. continue removing implicit singleton use from project/files helpers that are
+   already shared across backend and runner code
+2. keep server-side bridge/control paths ahead of broader frontend ergonomics

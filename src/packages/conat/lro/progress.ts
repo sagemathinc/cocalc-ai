@@ -2,7 +2,7 @@
  * Publish progress events for long-running operations (LRO) via conat streams.
  */
 import { type Client } from "@cocalc/conat/core/client";
-import { conat, getLogger } from "@cocalc/conat/client";
+import { getLogger } from "@cocalc/conat/client";
 import type { LroEvent } from "@cocalc/conat/hub/api/lro";
 import { lroStreamName } from "@cocalc/conat/lro/names";
 
@@ -25,12 +25,19 @@ export type LroProgressEvent = {
   level?: "info" | "warn" | "error";
 };
 
+function requireExplicitConatClient(client?: Client): Client {
+  if (client != null) {
+    return client;
+  }
+  throw new Error("must provide an explicit Conat client");
+}
+
 export async function lroProgress({
   op_id,
   project_id,
   account_id,
   host_id,
-  client = conat(),
+  client,
   ttl = DEFAULT_TTL,
   ...event
 }: {
@@ -44,7 +51,11 @@ export async function lroProgress({
   if (!op_id) return;
   if (!project_id && !account_id && !host_id) return;
 
-  const stream = client.sync.astream<LroEvent>({
+  // Shared LRO progress helpers are used from backend code paths. Do not
+  // silently grab the global singleton here; callers must provide the intended
+  // routed client explicitly.
+  const cn = requireExplicitConatClient(client);
+  const stream = cn.sync.astream<LroEvent>({
     project_id,
     account_id,
     host_id,

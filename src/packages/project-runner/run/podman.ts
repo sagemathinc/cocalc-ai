@@ -58,6 +58,7 @@ import {
   DEFAULT_PROJECT_RUNTIME_HOME,
   DEFAULT_PROJECT_RUNTIME_UID,
 } from "@cocalc/util/project-runtime";
+import { getConatClient } from "./conat-client";
 
 const logger = getLogger("project-runner:podman");
 // Restores can be large; allow the RPC to stay open while rustic runs.
@@ -114,6 +115,7 @@ function reportProgress({
   void lroProgress({
     project_id,
     op_id,
+    client: getConatClient(),
     phase: event.type,
     message: event.desc,
     progress: event.progress,
