@@ -54,6 +54,22 @@ instead of being forced onto the singleton path.
 This keeps the shared LRO helper safe for backend reuse without forcing the
 browser to own the singleton-vs-routed decision at every UI call site.
 
+## Completed In The ACP Pass
+
+### `conat/ai/acp/client.ts`
+
+- removed the hidden fallback to the global Conat singleton
+- `streamAcp(...)`, `interruptAcp(...)`, `forkAcpSession(...)`,
+  `controlAcp(...)`, and `automationAcp(...)` now require an explicit client
+- current callers already fit:
+  - [frontend/conat/client.ts](/home/wstein/build/cocalc-lite4/src/packages/frontend/conat/client.ts)
+    injects the browser client
+  - [project-chat.ts](/home/wstein/build/cocalc-lite4/src/packages/cli/src/bin/core/project-chat.ts)
+    passes the project-scoped CLI client explicitly
+
+This removes another shared helper that could otherwise silently bind to the
+wrong Conat connection in a multi-bay or multi-project-host world.
+
 ## Remaining Hotspots
 
 ### Shared Helper Fallbacks
@@ -62,11 +78,11 @@ These still silently fall back to the global singleton and should be reviewed
 next:
 
 - [conat/lro/progress.ts](/home/wstein/build/cocalc-lite4/src/packages/conat/lro/progress.ts)
-- [conat/ai/acp/client.ts](/home/wstein/build/cocalc-lite4/src/packages/conat/ai/acp/client.ts)
 
-These are riskier because they are imported by both frontend and backend code,
-so the next cleanup pass should separate browser-convenience wrappers from
-backend-explicit helpers.
+This remaining hotspot is riskier because it is imported by both frontend and
+backend code, so the next cleanup pass should decide whether to split browser
+convenience from backend-explicit helpers or simply require explicit clients
+there as well.
 
 ### Project / Files Helpers
 
@@ -91,8 +107,7 @@ clients.
 
 ## Next Recommended Cleanup Pass
 
-1. do the same style of cleanup for `conat/ai/acp/client.ts`
-2. decide whether `conat/lro/progress.ts` should require an explicit client or
+1. decide whether `conat/lro/progress.ts` should require an explicit client or
    gain a separate backend-only helper
-3. continue removing implicit singleton use from server-side bridge/control
+2. continue removing implicit singleton use from server-side bridge/control
    paths first, before touching broader frontend ergonomics
