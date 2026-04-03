@@ -12,8 +12,7 @@ import getPool from "@cocalc/database/pool";
 import isCollaborator from "@cocalc/server/projects/is-collaborator";
 import getParams from "@cocalc/http-api/lib/api/get-params";
 import { client as filesystemClient } from "@cocalc/conat/files/file-server";
-import { conat } from "@cocalc/conat/client";
-import "@cocalc/backend/conat";
+import { conat } from "@cocalc/backend/conat";
 
 export default async function handle(req, res) {
   const params = getParams(req);

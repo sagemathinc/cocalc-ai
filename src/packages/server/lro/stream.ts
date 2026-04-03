@@ -1,4 +1,4 @@
-import { conat } from "@cocalc/conat/client";
+import { conat } from "@cocalc/backend/conat";
 import {
   publishLroEvent as publishLroEvent0,
   publishLroSummary as publishLroSummary0,

@@ -448,3 +448,19 @@ wrong-project-host routing bugs once multiple Conat connections are normal.
 This removes another layer where backend routing could quietly collapse onto
 the ambient singleton even after the higher-level caller had been made
 bay-aware.
+
+## Completed In The Backend Client Hygiene Pass
+
+### Server-Side HTTP and LRO Helpers
+
+- replaced remaining server-side imports of the generic `@cocalc/conat/client`
+  singleton with the backend-specific
+  [@cocalc/backend/conat](/home/wstein/build/cocalc-lite4/src/packages/backend/conat/index.ts)
+  entrypoint in:
+  - [http-api/pages/api/v2/projects/copy-path.ts](/home/wstein/build/cocalc-lite4/src/packages/http-api/pages/api/v2/projects/copy-path.ts)
+  - [http-api/lib/share/get-contents.ts](/home/wstein/build/cocalc-lite4/src/packages/http-api/lib/share/get-contents.ts)
+  - [server/lro/stream.ts](/home/wstein/build/cocalc-lite4/src/packages/server/lro/stream.ts)
+
+This does not change routing behavior, but it makes the runtime boundary
+clearer: server-side code now depends directly on the backend Conat runtime
+instead of reaching through the generic global-client facade.

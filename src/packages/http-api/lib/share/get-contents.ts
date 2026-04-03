@@ -7,8 +7,7 @@ import { sortBy } from "lodash";
 import { hasSpecialViewer } from "@cocalc/frontend/file-extensions";
 import { getExtension } from "./util";
 import { fsClient, fsSubject } from "@cocalc/conat/files/fs";
-import "@cocalc/backend/conat";
-import { conat } from "@cocalc/conat/client";
+import { conat } from "@cocalc/backend/conat";
 
 const MB: number = 1000000;
 
