@@ -57,7 +57,7 @@ describe("getProjectHomeDirectory", () => {
     expect(getProjectHomeDirectory("project-1")).toBe("/home/wstein");
   });
 
-  it("reuses a resolved lite home as the default fallback for later projects", () => {
+  it("does not infer legacy /root paths as the project home", () => {
     getProjectStore
       .mockReturnValueOnce({
         get: (key: string) => {
@@ -76,8 +76,8 @@ describe("getProjectHomeDirectory", () => {
       });
 
     const { getProjectHomeDirectory } = require("./home-directory");
-    expect(getProjectHomeDirectory("project-1")).toBe("/root");
-    expect(getProjectHomeDirectory("project-2")).toBe("/root");
+    expect(getProjectHomeDirectory("project-1")).toBe("/");
+    expect(getProjectHomeDirectory("project-2")).toBe("/");
   });
 
   it("reads runtime home and user from capabilities", () => {
