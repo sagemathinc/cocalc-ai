@@ -143,7 +143,7 @@ async function runLoadScenario({
   iterations: number;
   warmup: number;
   concurrency: number;
-  execute: (index: number) => Promise<LoadScenarioResult>;
+  execute: (index: number, workerIndex: number) => Promise<LoadScenarioResult>;
 }): Promise<LoadSummary> {
   const total = iterations + warmup;
   const workerCount = Math.min(concurrency, Math.max(1, total));
@@ -156,33 +156,36 @@ async function runLoadScenario({
   let failures = 0;
   let nextIndex = 0;
 
-  const workers = Array.from({ length: workerCount }, async () => {
-    while (true) {
-      const index = nextIndex++;
-      if (index >= total) {
-        return;
-      }
-      const sampleStart = performance.now();
-      try {
-        const result = await execute(index);
-        if (index >= warmup) {
-          successes += 1;
-          lastResult = result ?? null;
+  const workers = Array.from(
+    { length: workerCount },
+    async (_, workerIndex) => {
+      while (true) {
+        const index = nextIndex++;
+        if (index >= total) {
+          return;
         }
-      } catch (err) {
-        if (index >= warmup) {
-          failures += 1;
-          if (sampleErrors.length < 5) {
-            sampleErrors.push(err instanceof Error ? err.message : `${err}`);
+        const sampleStart = performance.now();
+        try {
+          const result = await execute(index, workerIndex);
+          if (index >= warmup) {
+            successes += 1;
+            lastResult = result ?? null;
+          }
+        } catch (err) {
+          if (index >= warmup) {
+            failures += 1;
+            if (sampleErrors.length < 5) {
+              sampleErrors.push(err instanceof Error ? err.message : `${err}`);
+            }
+          }
+        } finally {
+          if (index >= warmup) {
+            latencies.push(performance.now() - sampleStart);
           }
         }
-      } finally {
-        if (index >= warmup) {
-          latencies.push(performance.now() - sampleStart);
-        }
       }
-    }
-  });
+    },
+  );
 
   await Promise.all(workers);
 
@@ -206,6 +209,28 @@ async function runLoadScenario({
     sample_errors: sampleErrors,
     last_result: lastResult ?? null,
   };
+}
+
+async function ensureProjectCollaboratorPresent({
+  ctx,
+  project_id,
+  account_id,
+}: {
+  ctx: any;
+  project_id: string;
+  account_id: string;
+}) {
+  try {
+    await ctx.hub.projects.createCollabInvite({
+      project_id,
+      invitee_account_id: account_id,
+      direct: true,
+    });
+  } catch (err) {
+    if (!isAlreadyCollaboratorError(err)) {
+      throw err;
+    }
+  }
 }
 
 export function registerLoadCommand(
@@ -426,6 +451,127 @@ export function registerLoadCommand(
                       Math.max(acc, Number(row.shared_projects ?? 0) || 0),
                     0,
                   ) ?? 0,
+              };
+            },
+          });
+        });
+      },
+    );
+
+  load
+    .command("collaborator-cycle")
+    .description(
+      "measure repeated remove-then-direct-add collaborator cycles using a seeded account pool",
+    )
+    .requiredOption("-w, --project <project>", "project id or name")
+    .requiredOption(
+      "--prefix <prefix>",
+      "email prefix used when the collaborator pool was seeded",
+    )
+    .requiredOption(
+      "--count <n>",
+      "number of seeded accounts available in the collaborator pool",
+    )
+    .option(
+      "--domain <domain>",
+      "email domain for the seeded accounts",
+      "load.test",
+    )
+    .option("--start <n>", "starting numeric suffix", "1")
+    .option("--iterations <n>", "measured iterations", "20")
+    .option("--warmup <n>", "warmup iterations", "2")
+    .option("--concurrency <n>", "parallel workers", "1")
+    .action(
+      async (
+        opts: {
+          project?: string;
+          prefix?: string;
+          count?: string;
+          domain?: string;
+          start?: string;
+          iterations?: string;
+          warmup?: string;
+          concurrency?: string;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "load collaborator-cycle", async (ctx) => {
+          const project = await resolveProjectFromArgOrContext(
+            ctx,
+            opts.project,
+          );
+          const prefix = normalizeNonEmpty(opts.prefix, "--prefix");
+          const domain = normalizeNonEmpty(opts.domain, "--domain");
+          const count = parsePositiveInteger(opts.count, "--count", 1);
+          const start = parsePositiveInteger(opts.start, "--start", 1);
+          const iterations = parsePositiveInteger(
+            opts.iterations,
+            "--iterations",
+            20,
+          );
+          const warmup = parsePositiveInteger(opts.warmup, "--warmup", 2);
+          const concurrency = parsePositiveInteger(
+            opts.concurrency,
+            "--concurrency",
+            1,
+          );
+          if (count < concurrency) {
+            throw new Error(
+              "--count must be at least as large as --concurrency for collaborator-cycle",
+            );
+          }
+          const width = Math.max(4, String(start + count - 1).length);
+          const pool = [] as Array<{
+            index: number;
+            email: string;
+            account_id: string;
+          }>;
+          for (let offset = 0; offset < count; offset += 1) {
+            const index = start + offset;
+            const email = buildSeedEmail({ prefix, domain, index, width });
+            const account = await findAccountByEmailExact(ctx, email);
+            if (!account?.account_id) {
+              throw new Error(
+                `seed account '${email}' was not found; run 'cocalc load seed users' first`,
+              );
+            }
+            await ensureProjectCollaboratorPresent({
+              ctx,
+              project_id: project.project_id,
+              account_id: account.account_id,
+            });
+            pool.push({
+              index,
+              email,
+              account_id: account.account_id,
+            });
+          }
+
+          return await runLoadScenario({
+            scenario: "collaborator-cycle",
+            iterations,
+            warmup,
+            concurrency,
+            execute: async (_sampleIndex, workerIndex) => {
+              const account = pool[workerIndex % pool.length];
+              await ctx.hub.projects.removeCollaborator({
+                opts: {
+                  project_id: project.project_id,
+                  account_id: account.account_id,
+                },
+              });
+              await ctx.hub.projects.createCollabInvite({
+                project_id: project.project_id,
+                invitee_account_id: account.account_id,
+                direct: true,
+              });
+              return {
+                project_id: project.project_id,
+                project_title: project.title,
+                account_id: account.account_id,
+                email: account.email,
+                seed_index: account.index,
+                operation: "remove-then-direct-add",
               };
             },
           });

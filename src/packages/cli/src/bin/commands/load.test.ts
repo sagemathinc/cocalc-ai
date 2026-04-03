@@ -15,6 +15,7 @@ type Capture = {
   adminCreateCalls: string[];
   userSearchCalls: string[];
   createCollabCalls: Array<{ project_id: string; invitee_account_id: string }>;
+  removeCollabCalls: Array<{ project_id: string; account_id: string }>;
 };
 
 function makeDeps(capture: Capture): LoadCommandDeps {
@@ -48,6 +49,7 @@ function makeDeps(capture: Capture): LoadCommandDeps {
             },
             userSearch: async ({ query }) => {
               capture.userSearchCalls.push(query);
+              const exact = `${query ?? ""}`.trim().toLowerCase();
               if (query === "fixture-0002@load.test") {
                 return [
                   {
@@ -55,6 +57,18 @@ function makeDeps(capture: Capture): LoadCommandDeps {
                     email_address: "fixture-0002@load.test",
                     first_name: "Load",
                     last_name: "fixture-2",
+                  },
+                ];
+              }
+              const cycleMatch = exact.match(/^cycle-(\d+)@load\.test$/);
+              if (cycleMatch) {
+                const suffix = cycleMatch[1];
+                return [
+                  {
+                    account_id: `existing-cycle-${suffix}`,
+                    email_address: exact,
+                    first_name: "Load",
+                    last_name: `cycle-${suffix}`,
                   },
                 ];
               }
@@ -107,6 +121,12 @@ function makeDeps(capture: Capture): LoadCommandDeps {
                 },
               };
             },
+            removeCollaborator: async ({ opts }) => {
+              capture.removeCollabCalls.push({
+                project_id: opts.project_id,
+                account_id: opts.account_id,
+              });
+            },
           },
         },
       };
@@ -139,6 +159,7 @@ test("load bootstrap summarizes repeated control-plane calls", async () => {
     adminCreateCalls: [],
     userSearchCalls: [],
     createCollabCalls: [],
+    removeCollabCalls: [],
   };
   const program = new Command();
   registerLoadCommand(program, makeDeps(capture));
@@ -179,6 +200,7 @@ test("load projects respects the requested limit", async () => {
     adminCreateCalls: [],
     userSearchCalls: [],
     createCollabCalls: [],
+    removeCollabCalls: [],
   };
   const program = new Command();
   registerLoadCommand(program, makeDeps(capture));
@@ -222,6 +244,7 @@ test("load collaborators measures project-scoped collaborator listings", async (
     adminCreateCalls: [],
     userSearchCalls: [],
     createCollabCalls: [],
+    removeCollabCalls: [],
   };
   const program = new Command();
   registerLoadCommand(program, makeDeps(capture));
@@ -268,6 +291,7 @@ test("load my-collaborators respects the requested limit", async () => {
     adminCreateCalls: [],
     userSearchCalls: [],
     createCollabCalls: [],
+    removeCollabCalls: [],
   };
   const program = new Command();
   registerLoadCommand(program, makeDeps(capture));
@@ -300,6 +324,65 @@ test("load my-collaborators respects the requested limit", async () => {
   assert.equal(capture.data.last_result.max_shared_projects, 12);
 });
 
+test("load collaborator-cycle uses a seeded per-worker account pool", async () => {
+  const capture: Capture = {
+    accountBayCalls: 0,
+    listBayCalls: 0,
+    projectQueryCalls: 0,
+    projectCollaboratorListCalls: [],
+    myCollaboratorListCalls: [],
+    adminCreateCalls: [],
+    userSearchCalls: [],
+    createCollabCalls: [],
+    removeCollabCalls: [],
+  };
+  const program = new Command();
+  registerLoadCommand(program, makeDeps(capture));
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "load",
+    "collaborator-cycle",
+    "--project",
+    "demo",
+    "--prefix",
+    "cycle",
+    "--count",
+    "4",
+    "--iterations",
+    "4",
+    "--warmup",
+    "1",
+    "--concurrency",
+    "2",
+  ]);
+
+  assert.deepEqual(capture.userSearchCalls, [
+    "cycle-0001@load.test",
+    "cycle-0002@load.test",
+    "cycle-0003@load.test",
+    "cycle-0004@load.test",
+  ]);
+  assert.equal(capture.removeCollabCalls.length, 5);
+  assert.equal(capture.createCollabCalls.length, 9);
+  const removeAccounts = new Set(
+    capture.removeCollabCalls.map((row) => row.account_id),
+  );
+  assert.deepEqual(
+    removeAccounts,
+    new Set(["existing-cycle-0001", "existing-cycle-0002"]),
+  );
+  assert.equal(capture.data.scenario, "collaborator-cycle");
+  assert.equal(capture.data.iterations, 4);
+  assert.equal(capture.data.warmup, 1);
+  assert.equal(capture.data.concurrency, 2);
+  assert.equal(capture.data.successes, 4);
+  assert.equal(capture.data.failures, 0);
+  assert.equal(capture.data.last_result.project_id, "project-demo");
+  assert.equal(capture.data.last_result.operation, "remove-then-direct-add");
+});
+
 test("load seed users creates or reuses accounts and adds collaborators", async () => {
   const capture: Capture = {
     accountBayCalls: 0,
@@ -310,6 +393,7 @@ test("load seed users creates or reuses accounts and adds collaborators", async 
     adminCreateCalls: [],
     userSearchCalls: [],
     createCollabCalls: [],
+    removeCollabCalls: [],
   };
   const program = new Command();
   registerLoadCommand(program, makeDeps(capture));
