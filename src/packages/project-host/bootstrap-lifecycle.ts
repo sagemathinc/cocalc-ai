@@ -171,6 +171,18 @@ function makeBundleItem(opts: {
   return makeItem(opts);
 }
 
+function runtimeContractValue(
+  value: unknown,
+): string | boolean | number | null | undefined {
+  if (Array.isArray(value)) {
+    const parts = value
+      .map((item) => (typeof item === "string" ? item.trim() : ""))
+      .filter(Boolean);
+    return parts.length ? parts.join(",") : undefined;
+  }
+  return nonEmptyValue(value);
+}
+
 function buildBootstrapLifecycleItems(opts: {
   bootstrapDir: string;
   desired: JsonRecord;
@@ -307,6 +319,66 @@ function buildBootstrapLifecycleItems(opts: {
         : "cloudflared disabled for this host",
     }),
   );
+
+  const desiredRuntimeContract = desired.runtime_user_contract ?? {};
+  const installedRuntimeContract = installedState.runtime_user_contract ?? {};
+  const desiredRuntimeIdentity = runtimeContractValue(
+    desiredRuntimeContract.identity,
+  );
+  const installedRuntimeIdentity = runtimeContractValue(
+    installedRuntimeContract.identity,
+  );
+  if (
+    desiredRuntimeIdentity !== undefined ||
+    installedRuntimeIdentity !== undefined
+  ) {
+    items.push(
+      makeItem({
+        key: "runtime_user_identity",
+        label: "Runtime host user",
+        desired: desiredRuntimeIdentity,
+        installed: installedRuntimeIdentity,
+      }),
+    );
+  }
+  const desiredRuntimeSubids =
+    runtimeContractValue(desiredRuntimeContract.subuid_ranges) ??
+    runtimeContractValue(desiredRuntimeContract.subgid_ranges);
+  const installedRuntimeSubids =
+    runtimeContractValue(installedRuntimeContract.subuid_ranges) ??
+    runtimeContractValue(installedRuntimeContract.subgid_ranges);
+  if (
+    desiredRuntimeSubids !== undefined ||
+    installedRuntimeSubids !== undefined
+  ) {
+    items.push(
+      makeItem({
+        key: "runtime_subids",
+        label: "Runtime subuid/subgid ranges",
+        desired: desiredRuntimeSubids,
+        installed: installedRuntimeSubids,
+      }),
+    );
+  }
+  const desiredRuntimeMapFingerprint = runtimeContractValue(
+    desiredRuntimeContract.fingerprint,
+  );
+  const installedRuntimeMapFingerprint = runtimeContractValue(
+    installedRuntimeContract.fingerprint,
+  );
+  if (
+    desiredRuntimeMapFingerprint !== undefined ||
+    installedRuntimeMapFingerprint !== undefined
+  ) {
+    items.push(
+      makeItem({
+        key: "runtime_userns_map",
+        label: "Runtime keep-id map",
+        desired: desiredRuntimeMapFingerprint,
+        installed: installedRuntimeMapFingerprint,
+      }),
+    );
+  }
 
   return items;
 }
