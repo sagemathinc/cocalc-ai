@@ -212,6 +212,113 @@ Important property:
 
 Rocket is many bays plus a small global layer.
 
+## Deployment Matrix
+
+Rocket should not mean Kubernetes. Rocket should mean the bay-based control
+plane architecture.
+
+Kubernetes is one deployment target for that architecture, not the
+architecture itself.
+
+This distinction matters for two reasons:
+
+- CoCalc Rocket should be easy to sell and deploy as a product
+- bay internals should not depend on Kubernetes-specific semantics for
+  correctness
+
+The recommended posture is:
+
+- VM-first deployment is the primary product path
+- Kubernetes deployment is a supported advanced packaging/operations target
+- both run the same bay contract
+
+### Bay Contract
+
+Every bay should expose the same operational contract regardless of where it
+runs:
+
+- same services
+- same configuration model
+- same health checks
+- same backup/restore hooks
+- same `cocalc-cli` operator surface
+
+That means a bay can run:
+
+- on a single VM or small VM group
+- in a Kubernetes namespace / Helm release
+
+without changing the higher-level control-plane design.
+
+### Recommended Deployment Matrix
+
+| Mode | Target | Recommended Shape | Notes |
+| --- | --- | --- | --- |
+| Plus | single machine | special-case local deployment | not the focus of bay scaling |
+| Launchpad | single machine or VM | one bay, one Postgres, one local directory mapping to `bay-0` | should exercise the same bay code paths as Rocket |
+| Rocket Small | VM fleet | tiny global layer plus 1-3 bay VMs and external project hosts | preferred first self-hosted product shape |
+| Rocket Large | VM fleet | many bay VMs plus global services and many project hosts | simplest path to large scale without Kubernetes dependency |
+| Rocket Advanced | Kubernetes | global services plus bays deployed as namespaces / Helm releases | useful for organizations already invested in Kubernetes |
+
+### Preferred Product Packaging
+
+The primary CoCalc Rocket product should be:
+
+- a bay appliance image for VMs
+- a small global control-plane appliance or VM set
+- external project-host VMs
+
+This is the easiest model to explain, operate, and sell:
+
+- customers can deploy Rocket without already operating Kubernetes
+- each bay is an obvious fault, upgrade, and backup boundary
+- capacity planning is simple because a bay is a visible unit
+- project-host operations remain aligned with the existing VM-oriented model
+
+### Kubernetes Support
+
+Kubernetes support is still valuable, but it should remain optional.
+
+Good reasons to support Kubernetes:
+
+- easier rollout automation for large internal deployments
+- natural fit for stateless global services
+- some enterprise customers will require it
+
+Bad reasons to require Kubernetes:
+
+- it makes self-hosted adoption much harder
+- it couples correctness to cluster-specific service discovery and storage
+- it creates a second architecture in practice if VM deployment is neglected
+
+### What Should Not Depend On Kubernetes
+
+These must work the same on VMs and in Kubernetes:
+
+- bay routing
+- inter-bay RPC
+- inter-bay replication
+- Postgres backup to R2
+- directory lookups
+- project move
+- future account move / rehome
+- `cocalc-cli` inspection and control workflows
+
+If any of those require direct Kubernetes API access to function, the design is
+too Kubernetes-specific.
+
+### Operational Default
+
+The default recommendation should be:
+
+- one bay per VM or VM set
+- one host belongs to one bay
+- one bay owns one Postgres database
+- one bay backs itself up to R2
+
+Kubernetes can package the same thing, but the mental model should stay the
+same.
+
 ## Global Services
 
 The global layer must be kept intentionally tiny.
