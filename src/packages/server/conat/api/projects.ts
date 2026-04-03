@@ -96,6 +96,7 @@ import {
   PROJECT_BAY_MISMATCH_ERROR,
   PROJECT_HAS_NO_ASSIGNED_HOST_ERROR,
 } from "@cocalc/server/conat/project-host-assignment";
+import { getConfiguredBayId } from "@cocalc/server/bay-config";
 
 const PROJECT_STORAGE_CACHE_TTL_MS = 30_000;
 const PROJECT_STORAGE_BREAKDOWN_TIMEOUT_MS = 10_000;
@@ -1361,16 +1362,31 @@ async function getMoveOfflinePrecheck({
 }): Promise<MoveOfflinePrecheck> {
   const pool = getPool();
   const { rows } = await pool.query<{
-    host_id: string | null;
+    source_host_id: string | null;
     last_edited: Date | null;
     last_backup: Date | null;
   }>(
-    "SELECT host_id, last_edited, last_backup FROM projects WHERE project_id=$1",
-    [project_id],
+    `
+      SELECT
+        CASE
+          WHEN COALESCE(projects.owning_bay_id, $2) = COALESCE(project_hosts.bay_id, $2)
+            THEN projects.host_id
+          ELSE NULL
+        END AS source_host_id,
+        projects.last_edited,
+        projects.last_backup
+      FROM projects
+      LEFT JOIN project_hosts
+        ON project_hosts.id = projects.host_id
+       AND project_hosts.deleted IS NULL
+      WHERE projects.project_id=$1
+      LIMIT 1
+    `,
+    [project_id, getConfiguredBayId()],
   );
   const row = rows[0];
   return {
-    source_host_id: row?.host_id ?? undefined,
+    source_host_id: row?.source_host_id ?? undefined,
     last_edited: row?.last_edited ?? null,
     last_backup: row?.last_backup ?? null,
   };

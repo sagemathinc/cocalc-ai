@@ -29,6 +29,7 @@ import {
   selectMoveClaimCandidates,
   type MoveActiveDestinationHost,
 } from "./move-admission";
+import { getConfiguredBayId } from "@cocalc/server/bay-config";
 
 const logger = getLogger("server:projects:move-worker");
 const pool = () => getPool();
@@ -366,17 +367,26 @@ async function listFreshRunningMoveTopologyRows({
   const { rows } = await pool().query<MoveTopologyRow>(
     `
       SELECT
-        COALESCE(NULLIF(l.input->>'source_host_id', ''), p.host_id::text) AS source_host_id,
+        CASE
+          WHEN NULLIF(l.input->>'source_host_id', '') IS NOT NULL
+            THEN NULLIF(l.input->>'source_host_id', '')
+          WHEN COALESCE(p.owning_bay_id, $3) = COALESCE(ph.bay_id, $3)
+            THEN p.host_id::text
+          ELSE NULL
+        END AS source_host_id,
         NULLIF(l.input->>'dest_host_id', '') AS dest_host_id
       FROM long_running_operations l
       JOIN projects p ON p.project_id = l.scope_id::uuid
+      LEFT JOIN project_hosts ph
+        ON ph.id = p.host_id
+       AND ph.deleted IS NULL
       WHERE l.kind = $1
         AND l.dismissed_at IS NULL
         AND l.status = 'running'
         AND l.heartbeat_at IS NOT NULL
         AND l.heartbeat_at >= now() - ($2::text || ' milliseconds')::interval
     `,
-    [MOVE_LRO_KIND, lease_ms],
+    [MOVE_LRO_KIND, lease_ms, getConfiguredBayId()],
   );
   return rows;
 }
@@ -441,11 +451,20 @@ async function claimMoveLroOps({
       `
         SELECT
           l.*,
-          COALESCE(NULLIF(l.input->>'source_host_id', ''), p.host_id::text) AS source_host_id,
+          CASE
+            WHEN NULLIF(l.input->>'source_host_id', '') IS NOT NULL
+              THEN NULLIF(l.input->>'source_host_id', '')
+            WHEN COALESCE(p.owning_bay_id, $4) = COALESCE(ph.bay_id, $4)
+              THEN p.host_id::text
+            ELSE NULL
+          END AS source_host_id,
           NULLIF(l.input->>'dest_host_id', '') AS dest_host_id,
           p.region AS project_region
         FROM long_running_operations l
         JOIN projects p ON p.project_id = l.scope_id::uuid
+        LEFT JOIN project_hosts ph
+          ON ph.id = p.host_id
+         AND ph.deleted IS NULL
         WHERE l.kind = $1
           AND (
             l.status = 'queued'
@@ -460,7 +479,7 @@ async function claimMoveLroOps({
         FOR UPDATE OF l SKIP LOCKED
         LIMIT $3
       `,
-      [MOVE_LRO_KIND, lease_ms, Math.max(limit * 8, 50)],
+      [MOVE_LRO_KIND, lease_ms, Math.max(limit * 8, 50), getConfiguredBayId()],
     );
     if (rows.length === 0) {
       await client.query("ROLLBACK");

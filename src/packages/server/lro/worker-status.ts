@@ -19,6 +19,7 @@ import {
   listHostLocalBackupStatuses,
   type HostLocalBackupStatusRow,
 } from "@cocalc/server/projects/backup-host-status";
+import { getConfiguredBayId } from "@cocalc/server/bay-config";
 
 const pool = () => getPool();
 
@@ -649,14 +650,24 @@ async function listRelevantMoveRows(): Promise<MoveTopologyStatusRow[]> {
         l.owner_id,
         l.heartbeat_at,
         l.created_at,
-        COALESCE(NULLIF(l.input->>'source_host_id', ''), p.host_id::text) AS source_host_id,
+        CASE
+          WHEN NULLIF(l.input->>'source_host_id', '') IS NOT NULL
+            THEN NULLIF(l.input->>'source_host_id', '')
+          WHEN COALESCE(p.owning_bay_id, $1) = COALESCE(ph.bay_id, $1)
+            THEN p.host_id::text
+          ELSE NULL
+        END AS source_host_id,
         NULLIF(l.input->>'dest_host_id', '') AS dest_host_id
       FROM long_running_operations l
       JOIN projects p ON p.project_id = l.scope_id::uuid
+      LEFT JOIN project_hosts ph
+        ON ph.id = p.host_id
+       AND ph.deleted IS NULL
       WHERE l.kind = 'project-move'
         AND l.dismissed_at IS NULL
         AND l.status IN ('queued', 'running')
     `,
+    [getConfiguredBayId()],
   );
   return rows;
 }
@@ -671,13 +682,23 @@ async function listRelevantRootfsPublishRows(): Promise<
         l.owner_id,
         l.heartbeat_at,
         l.created_at,
-        COALESCE(NULLIF(l.input->>'project_host_id', ''), p.host_id::text) AS project_host_id
+        CASE
+          WHEN NULLIF(l.input->>'project_host_id', '') IS NOT NULL
+            THEN NULLIF(l.input->>'project_host_id', '')
+          WHEN COALESCE(p.owning_bay_id, $1) = COALESCE(ph.bay_id, $1)
+            THEN p.host_id::text
+          ELSE NULL
+        END AS project_host_id
       FROM long_running_operations l
       JOIN projects p ON p.project_id = l.scope_id::uuid
+      LEFT JOIN project_hosts ph
+        ON ph.id = p.host_id
+       AND ph.deleted IS NULL
       WHERE l.kind = 'project-rootfs-publish'
         AND l.dismissed_at IS NULL
         AND l.status IN ('queued', 'running')
     `,
+    [getConfiguredBayId()],
   );
   return rows;
 }
