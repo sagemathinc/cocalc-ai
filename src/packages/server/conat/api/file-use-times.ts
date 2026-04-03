@@ -7,7 +7,7 @@ import type {
   FileUseTimesOptions,
   FileUseTimesResponse,
 } from "@cocalc/conat/hub/api/db";
-import { dstream } from "@cocalc/conat/sync/dstream";
+import { dstream } from "@cocalc/backend/conat/sync";
 import { patchesStreamName } from "@cocalc/conat/sync/synctable-stream";
 import { assertCollab } from "./util";
 

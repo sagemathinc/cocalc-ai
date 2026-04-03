@@ -37,7 +37,6 @@ import {
 } from "@cocalc/conat/core/client";
 import jsonStableStringify from "json-stable-stringify";
 import type { JSONValue } from "@cocalc/util/types";
-import { conat } from "@cocalc/conat/client";
 import { delay, map as awaitMap } from "awaiting";
 import {
   asyncThrottle,
@@ -77,6 +76,16 @@ export interface DStreamOptions {
   service?: string;
 
   initPhaseReporter?: CoreStreamInitPhaseReporter;
+}
+
+function requireDstreamClient(
+  options: DStreamOptions,
+  name: string,
+): DStreamOptions & { client: Client } {
+  if (options.client == null) {
+    throw Error(`${name}: client must be specified`);
+  }
+  return options as DStreamOptions & { client: Client };
 }
 
 export class DStream<T = any> extends EventEmitter {
@@ -554,7 +563,8 @@ export class DStream<T = any> extends EventEmitter {
           account_id,
           project_id,
           service: this.opts.service,
-          client: this.opts.client,
+          client: requireDstreamClient(this.opts, "DStream.updateInventory")
+            .client,
         });
         if (this.isClosed()) {
           return;
@@ -582,9 +592,9 @@ export class DStream<T = any> extends EventEmitter {
   );
 }
 
-export const cache = refCache<DStreamOptions, DStream>({
+export const cache = refCache<DStreamOptions & { client: Client }, DStream>({
   name: "dstream",
-  createKey: (options: DStreamOptions) => {
+  createKey: (options: DStreamOptions & { client: Client }) => {
     if (!options.name) {
       throw Error("name must be specified");
     }
@@ -592,16 +602,15 @@ export const cache = refCache<DStreamOptions, DStream>({
     const id = client?.id;
     return jsonStableStringify({ name, account_id, project_id, id })!;
   },
-  createObject: async (options: DStreamOptions) => {
-    if (options.client == null) {
-      options = { ...options, client: await conat() };
-    }
+  createObject: async (options: DStreamOptions & { client: Client }) => {
     const dstream = new DStream(options);
     await dstream.init();
     return dstream;
   },
 });
 
-export async function dstream<T>(options: DStreamOptions): Promise<DStream<T>> {
-  return await cache(options);
+export async function dstream<T>(
+  options: DStreamOptions & { client: Client },
+): Promise<DStream<T>> {
+  return await cache(requireDstreamClient(options, "dstream"));
 }

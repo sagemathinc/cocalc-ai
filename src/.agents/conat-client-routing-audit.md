@@ -362,3 +362,46 @@ control-plane reuse instead of implicitly binding to a global client.
 
 This keeps ACP server registration aligned with the caller's chosen routed
 client rather than silently attaching to global state.
+
+## Completed In The Sync Primitive Pass
+
+### `conat/sync/core-stream.ts`, `dstream.ts`, `dkv.ts`, `dko.ts`, `akv.ts`, `astream.ts`, and `inventory.ts`
+
+- removed the hidden fallback to the global Conat singleton from the shared
+  sync constructors and caches
+- removed the lower-level `connect()` fallback from `akv(...)` and
+  `astream(...)`
+- shared sync helpers now require an explicit client for:
+  - core persistent streams
+  - distributed streams / kv / key-object stores
+  - async kv / stream accessors
+  - inventory access
+- DKO cache keys now include client identity, so routed clients do not share a
+  cache entry just because the logical store name matches
+
+### Runtime-Local Sync Wrappers
+
+- the intentional singleton/default choice now lives only in runtime-local
+  wrappers:
+  - [backend/conat/sync.ts](/home/wstein/build/cocalc-lite4/src/packages/backend/conat/sync.ts)
+    now injects the backend hub client explicitly
+  - [project/conat/sync.ts](/home/wstein/build/cocalc-lite4/src/packages/project/conat/sync.ts)
+    now injects the project runtime client explicitly
+  - [frontend/conat/client.ts](/home/wstein/build/cocalc-lite4/src/packages/frontend/conat/client.ts)
+    now injects the browser client explicitly
+
+### Follow-On Production Callers
+
+- remaining production callsites that depended on the old sync fallback were
+  updated:
+  - [server/conat/api/file-use-times.ts](/home/wstein/build/cocalc-lite4/src/packages/server/conat/api/file-use-times.ts)
+    now goes through the backend sync wrapper
+  - [jupyter/redux/actions.ts](/home/wstein/build/cocalc-lite4/src/packages/jupyter/redux/actions.ts)
+    now requires an explicit runtime Conat client for blob-store and
+    runtime-state setup
+  - [jupyter/redux/runtime-state.ts](/home/wstein/build/cocalc-lite4/src/packages/jupyter/redux/runtime-state.ts)
+    now requires an explicit client in the shared runtime-state opener
+
+This is one of the highest-value foundation cleanups because these sync
+primitives are reused across frontend, backend, project, lite, and future
+multi-bay control-plane code.

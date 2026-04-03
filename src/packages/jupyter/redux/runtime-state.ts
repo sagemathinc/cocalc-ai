@@ -94,7 +94,7 @@ export async function openJupyterRuntimeState({
 }: {
   project_id: string;
   path: string;
-  client?: ConatClient;
+  client: ConatClient;
 }): Promise<JupyterRuntimeState> {
   return await dko({
     name: jupyterRuntimeStateName(path),

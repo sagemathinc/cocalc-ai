@@ -200,17 +200,20 @@ export class JupyterActions extends Actions<JupyterStoreState> {
 
     this.syncdb.on("close", this.close);
 
-    this.asyncBlobStore = akv(this.blobStoreOptions());
+    this.asyncBlobStore = akv(
+      this.blobStoreOptions(this.requireConatClient("_init")),
+    );
     this.initRuntimeState();
 
     // Hook for additional initialization.
     this.init2();
   }
 
-  protected blobStoreOptions = () => {
+  protected blobStoreOptions = (client: ConatClient) => {
     return {
       name: join("jupyter", this.path),
       project_id: this.project_id,
+      client,
       config: {
         max_bytes: MAX_BLOB_STORE_SIZE,
       },
@@ -222,6 +225,14 @@ export class JupyterActions extends Actions<JupyterStoreState> {
   protected init2(): void {
     // this can be overloaded in a derived class
   }
+
+  private requireConatClient = (action: string): ConatClient => {
+    const client = this.getConatClient();
+    if (client == null) {
+      throw Error(`JupyterActions.${action} requires an explicit Conat client`);
+    }
+    return client;
+  };
 
   private getConatClient = (): ConatClient | undefined => {
     const client = this._client as any;
@@ -248,7 +259,7 @@ export class JupyterActions extends Actions<JupyterStoreState> {
         const runtimeState = await openJupyterRuntimeState({
           project_id: this.project_id,
           path: this.path,
-          client: this.getConatClient(),
+          client: this.requireConatClient("initRuntimeState"),
         });
         if (this.is_closed()) {
           await runtimeState.close();

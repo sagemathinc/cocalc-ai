@@ -31,7 +31,6 @@ import {
 } from "@cocalc/conat/core/client";
 import { isNumericString } from "@cocalc/util/misc";
 import refCache from "@cocalc/util/refcache";
-import { conat } from "@cocalc/conat/client";
 import type { Client } from "@cocalc/conat/core/client";
 import jsonStableStringify from "json-stable-stringify";
 import type {
@@ -170,6 +169,16 @@ export interface CoreStreamOptions {
   service?: string;
 
   initPhaseReporter?: CoreStreamInitPhaseReporter;
+}
+
+function requireSyncClient<T extends { client?: Client }>(
+  options: T,
+  name: string,
+): T & { client: Client } {
+  if (options.client == null) {
+    throw Error(`${name}: client must be specified`);
+  }
+  return options as T & { client: Client };
 }
 
 export interface User {
@@ -319,7 +328,7 @@ export class CoreStream<T = any> extends EventEmitter {
     this.initStartedAtMs = Date.now();
     this.emitInitPhase("init_start");
     if (this.client == null) {
-      this.client = await conat();
+      throw Error("CoreStream.init: client must be specified");
     }
     this.persistClient = persist({
       client: this.client,
@@ -1327,12 +1336,12 @@ export interface PublishOptions {
   timeout?: number;
 }
 
-export const cache = refCache<CoreStreamOptions, CoreStream>({
+export const cache = refCache<
+  CoreStreamOptions & { client: Client },
+  CoreStream
+>({
   name: "core-stream",
-  createObject: async (options: CoreStreamOptions) => {
-    if (options.client == null) {
-      options = { ...options, client: await conat() };
-    }
+  createObject: async (options: CoreStreamOptions & { client: Client }) => {
     const cstream = new CoreStream(options);
     await cstream.init();
     return cstream;
@@ -1343,7 +1352,7 @@ export const cache = refCache<CoreStreamOptions, CoreStream>({
 });
 
 export async function cstream<T>(
-  options: CoreStreamOptions,
+  options: CoreStreamOptions & { client: Client },
 ): Promise<CoreStream<T>> {
-  return await cache(options);
+  return await cache(requireSyncClient(options, "cstream"));
 }

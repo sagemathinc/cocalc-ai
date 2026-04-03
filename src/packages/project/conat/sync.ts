@@ -9,6 +9,7 @@ import {
   type DKVOptions,
 } from "@cocalc/conat/sync/dkv";
 import { dko as createDKO, type DKO } from "@cocalc/conat/sync/dko";
+import { getClient as getConatClient } from "@cocalc/conat/client";
 import { project_id } from "@cocalc/project/data";
 import {
   inventory as createInventory,
@@ -23,28 +24,57 @@ import {
 
 export type { DStream, DKV };
 
+function clientForSync(opts?: { client?: unknown }) {
+  return (
+    (opts as { client?: any } | undefined)?.client ?? getConatClient().conat()
+  );
+}
+
 export async function dstream<T = any>(
   opts: DStreamOptions,
 ): Promise<DStream<T>> {
-  return await createDstream<T>({ project_id, ...opts });
+  return await createDstream<T>({
+    project_id,
+    ...opts,
+    client: clientForSync(opts),
+  });
 }
 
 export async function dkv<T = any>(opts: DKVOptions): Promise<DKV<T>> {
-  return await createDKV<T>({ project_id, ...opts });
+  return await createDKV<T>({
+    project_id,
+    ...opts,
+    client: clientForSync(opts),
+  });
 }
 
 export function akv<T = any>(opts: DKVOptions): AKV<T> {
-  return createAKV<T>({ project_id, ...opts });
+  return createAKV<T>({
+    project_id,
+    ...opts,
+    client: clientForSync(opts),
+  });
 }
 
 export function astream<T = any>(opts: DStreamOptions): AStream<T> {
-  return createAStream<T>({ project_id, ...opts });
+  return createAStream<T>({
+    project_id,
+    ...opts,
+    client: clientForSync(opts),
+  });
 }
 
 export async function dko<T = any>(opts: DKVOptions): Promise<DKO<T>> {
-  return await createDKO<T>({ project_id, ...opts });
+  return await createDKO<T>({
+    project_id,
+    ...opts,
+    client: clientForSync(opts),
+  });
 }
 
 export async function inventory(): Promise<Inventory> {
-  return await createInventory({ project_id });
+  return await createInventory({
+    project_id,
+    client: getConatClient().conat(),
+  });
 }

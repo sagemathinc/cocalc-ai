@@ -69,6 +69,8 @@ import type {
   LroSummary,
 } from "@cocalc/conat/hub/api/lro";
 import type { Map as ImmutableMap } from "immutable";
+import type { DStreamOptions } from "@cocalc/conat/sync/dstream";
+import type { DKVOptions } from "@cocalc/conat/sync/dkv";
 import {
   createBrowserSessionAutomation,
   type BrowserSessionAutomation,
@@ -1162,16 +1164,29 @@ export class ConatClient extends EventEmitter {
     );
   };
 
-  dstream = dstream;
-  astream = astream;
+  dstream = async <T>(opts: DStreamOptions) => {
+    return await dstream<T>({ ...opts, client: this.conat() });
+  };
+
+  astream = <T>(opts: DStreamOptions) => {
+    return astream<T>({ ...opts, client: this.conat() });
+  };
   // NOTE: this higher-level frontend wrapper exposes sync primitives directly,
   // e.g. `webapp_client.conat_client.dkv(...)`. Shared helpers in packages that
   // also run in backend/CLI should not assume this object is the low-level core
   // client from `@cocalc/conat/core/client`, which instead exposes these under
   // `client.sync.*` and is returned by `conat()`.
-  dkv = dkv;
-  akv = akv;
-  dko = dko;
+  dkv = async <T>(opts: DKVOptions) => {
+    return await dkv<T>({ ...opts, client: this.conat() });
+  };
+
+  akv = <T>(opts: DKVOptions) => {
+    return akv<T>({ ...opts, client: this.conat() });
+  };
+
+  dko = async <T>(opts: DKVOptions) => {
+    return await dko<T>({ ...opts, client: this.conat() });
+  };
 
   listings = async (opts: { project_id: string }) => {
     return await listingsClient({
@@ -1192,7 +1207,7 @@ export class ConatClient extends EventEmitter {
     account_id?: string;
     project_id?: string;
   }) => {
-    const inv = await inventory(location);
+    const inv = await inventory({ ...location, client: this.conat() });
     // @ts-ignore
     if (console.log_original != null) {
       const ls_orig = inv.ls;

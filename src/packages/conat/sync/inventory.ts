@@ -68,6 +68,16 @@ interface Options {
   client?: Client;
 }
 
+function requireInventoryClient(
+  options: Options,
+  name: string,
+): Options & { client: Client } {
+  if (options.client == null) {
+    throw Error(`${name}: client must be specified`);
+  }
+  return options as Options & { client: Client };
+}
+
 type StoreType = "stream" | "kv";
 
 export interface InventoryItem extends PartialInventory {
@@ -100,7 +110,7 @@ export class Inventory {
   init = async () => {
     this.dkv = await dkv({
       name: INVENTORY_NAME,
-      ...this.options,
+      ...requireInventoryClient(this.options, "Inventory.init"),
     });
     await waitUntilTimeAvailable();
   };
@@ -191,14 +201,18 @@ export class Inventory {
     for (const key of this.sortedKeys(all, sort)) {
       const x = all[key];
       const { desc, name, type } = x;
+      const options = requireInventoryClient(
+        this.options,
+        "Inventory.getStores",
+      );
       if (type == "kv") {
         if (name.startsWith(DKO_PREFIX)) {
-          v.push(await dko<any>({ name, ...this.options, desc }));
+          v.push(await dko<any>({ name, ...options, desc }));
         } else {
-          v.push(await dkv({ name, ...this.options, desc }));
+          v.push(await dkv({ name, ...options, desc }));
         }
       } else if (type == "stream") {
-        v.push(await dstream({ name, ...this.options, desc }));
+        v.push(await dstream({ name, ...options, desc }));
       } else {
         throw Error(`unknown store type '${type}'`);
       }
@@ -354,7 +368,10 @@ function dateToString(d: Date) {
   return d.toISOString().replace("T", " ").replace("Z", "").split(".")[0];
 }
 
-export const cache = refCache<Options & { noCache?: boolean }, Inventory>({
+export const cache = refCache<
+  Options & { noCache?: boolean; client: Client },
+  Inventory
+>({
   name: "inventory",
   createKey: ({ account_id, project_id, service, client }) =>
     JSON.stringify({
@@ -363,13 +380,15 @@ export const cache = refCache<Options & { noCache?: boolean }, Inventory>({
       service,
       client_id: client?.id,
     }),
-  createObject: async (loc) => {
+  createObject: async (loc: Options & { client: Client }) => {
     const k = new Inventory(loc);
     await k.init();
     return k;
   },
 });
 
-export async function inventory(options: Options = {}): Promise<Inventory> {
-  return await cache(options);
+export async function inventory(
+  options: Options & { client: Client },
+): Promise<Inventory> {
+  return await cache(requireInventoryClient(options, "inventory"));
 }
