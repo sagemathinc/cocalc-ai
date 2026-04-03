@@ -3143,7 +3143,30 @@ def start_project_host(cfg: BootstrapConfig) -> None:
         raise RuntimeError("project-host bundle missing entrypoint")
     if Path(bin_path).exists():
         run_cmd(cfg, [bin_path, "daemon", "stop"], "project-host stop", check=False, as_user=cfg.ssh_user)
-    run_cmd(cfg, [bin_path, "daemon", "start"], "project-host start", as_user=cfg.ssh_user)
+    result = run_cmd(
+        cfg,
+        [bin_path, "daemon", "start"],
+        "project-host start",
+        check=False,
+        as_user=cfg.ssh_user,
+    )
+    if result.returncode == 0:
+        return
+    output = result.stdout or ""
+    if "already running" in output:
+        log_line(
+            cfg,
+            "bootstrap: project-host reported already running after start; "
+            "verifying current instance with daemon ensure",
+        )
+        run_cmd(
+            cfg,
+            [bin_path, "daemon", "ensure"],
+            "project-host ensure",
+            as_user=cfg.ssh_user,
+        )
+        return
+    raise RuntimeError(f"project-host start failed with exit code {result.returncode}")
 
 
 def reenable_unattended(cfg: BootstrapConfig) -> None:

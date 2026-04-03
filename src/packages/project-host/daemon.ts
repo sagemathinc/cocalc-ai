@@ -302,19 +302,6 @@ function matchingSshpiperdPids(sshPort?: number): number[] {
   return matches;
 }
 
-function ensureNotAlreadyRunning(pidPath: string): void {
-  if (!fs.existsSync(pidPath)) {
-    return;
-  }
-  const pid = Number(fs.readFileSync(pidPath, "utf8"));
-  if (pid && isRunning(pid)) {
-    throw new Error(
-      `project-host already running (pid ${pid}); stop it first or remove ${pidPath}`,
-    );
-  }
-  fs.rmSync(pidPath, { force: true });
-}
-
 function getPositiveIntEnv(name: string, fallback: number): number {
   const raw = Number(process.env[name]);
   return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : fallback;
@@ -484,8 +471,22 @@ function resolveExec(root: string): { command: string; args: string[] } {
 }
 
 export function startDaemon(index = 0): void {
-  const { env, dataDir, logPath, pidPath } = resolveEnv(index);
-  ensureNotAlreadyRunning(pidPath);
+  const { env, dataDir, logPath, pidPath, httpPort } = resolveEnv(index);
+  if (fs.existsSync(pidPath)) {
+    const pid = Number(fs.readFileSync(pidPath, "utf8"));
+    if (pid && isRunning(pid)) {
+      if (checkHealthSync(env, httpPort)) {
+        console.log(
+          `project-host already running and healthy (pid ${pid}); leaving it running.`,
+        );
+        return;
+      }
+      throw new Error(
+        `project-host already running (pid ${pid}); stop it first or remove ${pidPath}`,
+      );
+    }
+    fs.rmSync(pidPath, { force: true });
+  }
   fs.mkdirSync(dataDir, { recursive: true, mode: 0o700 });
   try {
     fs.chmodSync(dataDir, 0o700);

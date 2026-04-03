@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { __test__, ensureDaemon, stopDaemon } from "./daemon";
+import { __test__, ensureDaemon, startDaemon, stopDaemon } from "./daemon";
 
 describe("project-host daemon stop", () => {
   const originalEnv = { ...process.env };
@@ -212,6 +212,44 @@ describe("project-host daemon stop", () => {
     expect(killSpy).toHaveBeenCalledWith(7373, 0);
     expect(killSpy).not.toHaveBeenCalledWith(7373, "SIGTERM");
     expect(logSpy).toHaveBeenCalledWith("project-host healthy (pid 7373)");
+  });
+
+  it("treats start as idempotent when the daemon is already healthy", () => {
+    const dataDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "cocalc-project-host-daemon-"),
+    );
+    const pidPath = path.join(dataDir, "daemon.pid");
+    fs.writeFileSync(pidPath, "7474");
+    process.env.COCALC_DATA = dataDir;
+    process.env.PORT = "9002";
+
+    const killSpy = jest.spyOn(process, "kill").mockImplementation(((
+      pid: number,
+      signal?: NodeJS.Signals | number,
+    ) => {
+      expect(pid).toBe(7474);
+      if (signal === 0 || signal === undefined) {
+        return true;
+      }
+      throw new Error(`unexpected signal ${signal}`);
+    }) as typeof process.kill);
+    const healthSpy = jest
+      .spyOn(__test__.processRuntime, "spawnSync")
+      .mockReturnValue({ status: 0 } as any);
+    const spawnSpy = jest
+      .spyOn(__test__.processRuntime, "spawn")
+      .mockReturnValue({ pid: 9494, unref: () => {} } as any);
+    const logSpy = jest.spyOn(console, "log").mockImplementation(() => {});
+
+    startDaemon(0);
+
+    expect(healthSpy).toHaveBeenCalled();
+    expect(killSpy).toHaveBeenCalledWith(7474, 0);
+    expect(spawnSpy).not.toHaveBeenCalled();
+    expect(logSpy).toHaveBeenCalledWith(
+      "project-host already running and healthy (pid 7474); leaving it running.",
+    );
+    expect(fs.existsSync(pidPath)).toBe(true);
   });
 
   it("restarts the daemon when the pid is running but health checks fail", () => {
