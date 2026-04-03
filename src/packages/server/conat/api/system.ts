@@ -1,7 +1,6 @@
 import getCustomize from "@cocalc/database/settings/customize";
 export { getCustomize };
 import { getFrontendSourceFingerprint as getFrontendSourceFingerprint0 } from "@cocalc/backend/frontend-build-fingerprint";
-import getPool from "@cocalc/database/pool";
 import {
   listConfiguredBays,
   resolveAccountHomeBay,
@@ -56,6 +55,7 @@ import {
   getProjectRootfsStates as getProjectRootfsStates0,
   setProjectRootfsImageWithRollback,
 } from "@cocalc/server/projects/rootfs-state";
+import { getAssignedProjectHostInfo } from "@cocalc/server/conat/project-host-assignment";
 import { createLro } from "@cocalc/server/lro/lro-db";
 import { lroStreamName } from "@cocalc/conat/lro/names";
 import { SERVICE as PERSIST_SERVICE } from "@cocalc/conat/persist/util";
@@ -1350,11 +1350,12 @@ async function resolveProjectContext(opts: {
     await assertProjectCollaborator(opts.account_id, project_id);
   }
   if (opts.host_id) {
-    const { rows } = await getPool().query<{ host_id: string | null }>(
-      "SELECT host_id FROM projects WHERE project_id=$1",
-      [project_id],
-    );
-    const assigned = `${rows[0]?.host_id ?? ""}`.trim();
+    let assigned = "";
+    try {
+      assigned = (await getAssignedProjectHostInfo(project_id)).host_id;
+    } catch {
+      assigned = "";
+    }
     if (!assigned || assigned !== opts.host_id) {
       throw Error("project is not assigned to this host");
     }

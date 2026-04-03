@@ -38,8 +38,8 @@ import {
   createHostControlClient,
   type HostRootfsManifest,
 } from "@cocalc/conat/project-host/api";
-import getPool from "@cocalc/database/pool";
 import { conatWithProjectRouting } from "@cocalc/server/conat/route-client";
+import { getAssignedProjectHostInfo } from "@cocalc/server/conat/project-host-assignment";
 import { getLro } from "@cocalc/server/lro/lro-db";
 import {
   clearParallelOpsLimit,
@@ -255,15 +255,23 @@ async function waitForLroTerminal(op_id: string, opts: WaitOptions) {
 }
 
 async function resolveProjectHostId(project_id: string): Promise<string> {
-  const { rows } = await getPool().query<{ host_id: string | null }>(
-    "SELECT host_id FROM projects WHERE project_id=$1",
-    [project_id],
-  );
-  const host_id = rows[0]?.host_id ?? undefined;
-  if (!host_id) {
-    throw new Error(`project ${project_id} has no assigned host`);
+  try {
+    return (await getAssignedProjectHostInfo(project_id)).host_id;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : `${err}`;
+    if (message === "workspace has no assigned host") {
+      throw new Error(`project ${project_id} has no assigned host`);
+    }
+    if (message === "workspace bay does not match assigned host") {
+      throw new Error(
+        `project ${project_id} assigned host does not match owning bay`,
+      );
+    }
+    if (message === "workspace not found") {
+      throw new Error(`project ${project_id} not found`);
+    }
+    throw err;
   }
-  return host_id;
 }
 
 function hostClient(host_id: string) {
