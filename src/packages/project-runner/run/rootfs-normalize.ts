@@ -6,47 +6,41 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { executeCode } from "@cocalc/backend/execute-code";
 import getLogger from "@cocalc/backend/logger";
-import {
-  DEFAULT_PROJECT_RUNTIME_GID,
-  DEFAULT_PROJECT_RUNTIME_HOME,
-  DEFAULT_PROJECT_RUNTIME_UID,
-  DEFAULT_PROJECT_RUNTIME_USER,
-} from "@cocalc/util/project-runtime";
 
-const logger = getLogger("project-runner:rootfs-normalize");
+const logger = getLogger("project-runner:rootfs-preflight");
 const STORAGE_WRAPPER = "/usr/local/sbin/cocalc-runtime-storage";
 
-export const ROOTFS_NORMALIZER_VERSION = 3;
+export const ROOTFS_PREFLIGHT_VERSION = 6;
+export const ROOTFS_NORMALIZER_VERSION = ROOTFS_PREFLIGHT_VERSION;
 
-export type RootfsNormalizationMetadata = {
+export type RootfsPreflightMetadata = {
   version: number;
+  // Historical on-disk field name preserved for compatibility with existing
+  // cached metadata.
   normalized_at: string;
   image: string;
   rootfs_path: string;
-  distro_family: "debian" | "rhel" | "sles";
-  package_manager: "apt-get" | "dnf" | "microdnf" | "yum" | "zypper";
+  distro_family: "debian" | "rhel" | "sles" | "unknown";
+  package_manager: "apt-get" | "dnf" | "microdnf" | "yum" | "zypper" | "none";
   shell: string;
   glibc: true;
-  sudo: true;
-  ca_certificates: true;
-  curl: true;
-  runtime_user: string;
-  runtime_uid: number;
-  runtime_gid: number;
-  runtime_home: string;
+  sudo_present: boolean;
+  ca_certificates_present: boolean;
 };
 
-type RawNormalizationResult = Omit<
-  RootfsNormalizationMetadata,
+export type RootfsNormalizationMetadata = RootfsPreflightMetadata;
+
+type RawPreflightResult = Omit<
+  RootfsPreflightMetadata,
   "version" | "normalized_at" | "image" | "rootfs_path"
 >;
 
-type RootfsNormalizationProgress = (update: {
+type RootfsPreflightProgress = (update: {
   message: string;
   detail?: Record<string, unknown>;
 }) => void;
 
-function parseNormalizationOutput(stdout: string): unknown {
+function parsePreflightOutput(stdout: string): unknown {
   const trimmed = `${stdout ?? ""}`.trim();
   if (!trimmed) {
     return {};
@@ -71,27 +65,19 @@ function nowIso(): string {
   return new Date().toISOString();
 }
 
-function isCurrentMetadata(metadata?: RootfsNormalizationMetadata): boolean {
+function isCurrentMetadata(metadata?: RootfsPreflightMetadata): boolean {
   return (
-    metadata?.version === ROOTFS_NORMALIZER_VERSION &&
-    metadata.runtime_user === DEFAULT_PROJECT_RUNTIME_USER &&
-    metadata.runtime_uid === DEFAULT_PROJECT_RUNTIME_UID &&
-    metadata.runtime_gid === DEFAULT_PROJECT_RUNTIME_GID &&
-    metadata.runtime_home === DEFAULT_PROJECT_RUNTIME_HOME &&
-    metadata.glibc === true &&
-    metadata.sudo === true &&
-    metadata.ca_certificates === true &&
-    metadata.curl === true
+    metadata?.version === ROOTFS_PREFLIGHT_VERSION && metadata.glibc === true
   );
 }
 
-export async function loadRootfsNormalizationMetadata(
+export async function loadRootfsPreflightMetadata(
   metadataPath: string,
-): Promise<RootfsNormalizationMetadata | undefined> {
+): Promise<RootfsPreflightMetadata | undefined> {
   try {
     return JSON.parse(
       await readFile(metadataPath, "utf8"),
-    ) as RootfsNormalizationMetadata;
+    ) as RootfsPreflightMetadata;
   } catch (err) {
     const message = `${err}`;
     if (
@@ -102,107 +88,92 @@ export async function loadRootfsNormalizationMetadata(
       return;
     }
     throw new Error(
-      `invalid RootFS normalization metadata at '${metadataPath}': ${err}`,
+      `invalid RootFS preflight metadata at '${metadataPath}': ${err}`,
     );
   }
 }
 
-export function requireCurrentRootfsNormalizationMetadata({
+export function requireCurrentRootfsPreflightMetadata({
   image,
   metadataPath,
   metadata,
 }: {
   image: string;
   metadataPath: string;
-  metadata?: RootfsNormalizationMetadata;
-}): RootfsNormalizationMetadata {
+  metadata?: RootfsPreflightMetadata;
+}): RootfsPreflightMetadata {
   if (isCurrentMetadata(metadata)) {
     return metadata!;
   }
-  const current = `v${ROOTFS_NORMALIZER_VERSION}`;
+  const current = `v${ROOTFS_PREFLIGHT_VERSION}`;
   const version = metadata?.version;
   const actual = version == null ? "missing" : `v${version}`;
   throw new Error(
-    `cached RootFS image '${image}' is not normalized for CoCalc runtime contract ${current} (found ${actual} at ${metadataPath}); delete the cached image or reprovision the host`,
+    `cached RootFS image '${image}' does not satisfy CoCalc runtime preflight ${current} (found ${actual} at ${metadataPath}); delete the cached image or reprovision the host`,
   );
 }
 
-function validateNormalizationResult(result: unknown): RawNormalizationResult {
+function validatePreflightResult(result: unknown): RawPreflightResult {
   if (result == null || typeof result !== "object") {
-    throw new Error("rootfs normalizer returned invalid JSON");
+    throw new Error("rootfs preflight returned invalid JSON");
   }
   const value = result as Record<string, unknown>;
   const distro_family = `${value.distro_family ?? ""}`.trim();
   const package_manager = `${value.package_manager ?? ""}`.trim();
   const shell = `${value.shell ?? ""}`.trim();
-  const runtime_user = `${value.runtime_user ?? ""}`.trim();
-  const runtime_home = `${value.runtime_home ?? ""}`.trim();
-  const runtime_uid = Number(value.runtime_uid);
-  const runtime_gid = Number(value.runtime_gid);
   if (
-    !["debian", "rhel", "sles"].includes(distro_family) ||
-    !["apt-get", "dnf", "microdnf", "yum", "zypper"].includes(
+    !["debian", "rhel", "sles", "unknown"].includes(distro_family) ||
+    !["apt-get", "dnf", "microdnf", "yum", "zypper", "none"].includes(
       package_manager,
     ) ||
     !shell.startsWith("/") ||
-    runtime_user !== DEFAULT_PROJECT_RUNTIME_USER ||
-    runtime_home !== DEFAULT_PROJECT_RUNTIME_HOME ||
-    runtime_uid !== DEFAULT_PROJECT_RUNTIME_UID ||
-    runtime_gid !== DEFAULT_PROJECT_RUNTIME_GID ||
     value.glibc !== true ||
-    value.sudo !== true ||
-    value.ca_certificates !== true ||
-    value.curl !== true
+    typeof value.sudo_present !== "boolean" ||
+    typeof value.ca_certificates_present !== "boolean"
   ) {
     throw new Error(
-      `rootfs normalizer returned an unexpected contract result: ${JSON.stringify(
+      `rootfs preflight returned an unexpected result: ${JSON.stringify(
         value,
       )}`,
     );
   }
   return {
-    distro_family: distro_family as RawNormalizationResult["distro_family"],
-    package_manager:
-      package_manager as RawNormalizationResult["package_manager"],
+    distro_family: distro_family as RawPreflightResult["distro_family"],
+    package_manager: package_manager as RawPreflightResult["package_manager"],
     shell,
     glibc: true,
-    sudo: true,
-    ca_certificates: true,
-    curl: true,
-    runtime_user,
-    runtime_uid,
-    runtime_gid,
-    runtime_home,
+    sudo_present: value.sudo_present as boolean,
+    ca_certificates_present: value.ca_certificates_present as boolean,
   };
 }
 
-export async function writeRootfsNormalizationMetadata({
+export async function writeRootfsPreflightMetadata({
   metadataPath,
   metadata,
 }: {
   metadataPath: string;
-  metadata: RootfsNormalizationMetadata;
+  metadata: RootfsPreflightMetadata;
 }): Promise<void> {
   await writeFile(metadataPath, JSON.stringify(metadata, null, 2));
 }
 
-export async function normalizeRootfsInPlace({
+export async function preflightRootfsInPlace({
   image,
   rootfsPath,
   onProgress,
 }: {
   image: string;
   rootfsPath: string;
-  onProgress?: RootfsNormalizationProgress;
-}): Promise<RootfsNormalizationMetadata> {
+  onProgress?: RootfsPreflightProgress;
+}): Promise<RootfsPreflightMetadata> {
   onProgress?.({
-    message: "normalizing RootFS for CoCalc runtime",
+    message: "checking RootFS preflight prerequisites",
     detail: { image, rootfs_path: rootfsPath },
   });
-  logger.info("normalizing rootfs", {
+  logger.info("preflighting rootfs", {
     image,
     rootfs_path: rootfsPath,
-    version: ROOTFS_NORMALIZER_VERSION,
+    version: ROOTFS_PREFLIGHT_VERSION,
   });
   let stdout = "";
   try {
@@ -215,17 +186,17 @@ export async function normalizeRootfsInPlace({
     });
     stdout = `${result.stdout ?? ""}`.trim();
   } catch (err) {
-    throw new Error(`failed normalizing RootFS image '${image}': ${err}`);
+    throw new Error(`failed RootFS preflight for '${image}': ${err}`);
   }
-  const metadata: RootfsNormalizationMetadata = {
-    version: ROOTFS_NORMALIZER_VERSION,
+  const metadata: RootfsPreflightMetadata = {
+    version: ROOTFS_PREFLIGHT_VERSION,
     normalized_at: nowIso(),
     image,
     rootfs_path: rootfsPath,
-    ...validateNormalizationResult(parseNormalizationOutput(stdout)),
+    ...validatePreflightResult(parsePreflightOutput(stdout)),
   };
   onProgress?.({
-    message: "validated RootFS runtime contract",
+    message: "validated RootFS bootstrap prerequisites",
     detail: {
       image,
       distro_family: metadata.distro_family,
@@ -234,3 +205,9 @@ export async function normalizeRootfsInPlace({
   });
   return metadata;
 }
+
+export const loadRootfsNormalizationMetadata = loadRootfsPreflightMetadata;
+export const requireCurrentRootfsNormalizationMetadata =
+  requireCurrentRootfsPreflightMetadata;
+export const writeRootfsNormalizationMetadata = writeRootfsPreflightMetadata;
+export const normalizeRootfsInPlace = preflightRootfsInPlace;

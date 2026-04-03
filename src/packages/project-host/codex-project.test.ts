@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
 import { getCodexProjectSpawner, setCodexProjectSpawner } from "@cocalc/ai/acp";
+import { DEFAULT_PROJECT_RUNTIME_UID } from "@cocalc/util/project-runtime";
 
 const spawnMock = jest.fn();
 const execFileMock = jest.fn();
@@ -198,7 +199,7 @@ describe("initCodexProjectRunner", () => {
         "exec",
         "-i",
         "-u",
-        "1000:1000",
+        `${DEFAULT_PROJECT_RUNTIME_UID}:${DEFAULT_PROJECT_RUNTIME_UID}`,
         "--workdir",
         "/home/user",
         "-e",

@@ -21,12 +21,12 @@ jest.mock("@cocalc/backend/logger", () => {
   };
 });
 
-describe("rootfs normalization metadata", () => {
+describe("rootfs preflight metadata", () => {
   beforeEach(() => {
     jest.clearAllMocks();
   });
 
-  it("records and reloads current normalization metadata", async () => {
+  it("records and reloads current preflight metadata", async () => {
     executeCode.mockResolvedValue({
       stdout: JSON.stringify({
         ok: true,
@@ -34,13 +34,8 @@ describe("rootfs normalization metadata", () => {
         package_manager: "apt-get",
         shell: "/bin/bash",
         glibc: true,
-        sudo: true,
-        ca_certificates: true,
-        curl: true,
-        runtime_user: "user",
-        runtime_uid: 1000,
-        runtime_gid: 1000,
-        runtime_home: "/home/user",
+        sudo_present: false,
+        ca_certificates_present: false,
       }),
     });
 
@@ -49,26 +44,26 @@ describe("rootfs normalization metadata", () => {
       path.join(os.tmpdir(), "rootfs-normalize-"),
     );
     try {
-      const metadataPath = path.join(tmpdir, "normalized.json");
-      const metadata = await mod.normalizeRootfsInPlace({
+      const metadataPath = path.join(tmpdir, "preflight.json");
+      const metadata = await mod.preflightRootfsInPlace({
         image: "docker.io/library/ubuntu:24.04",
         rootfsPath: "/mnt/cocalc/data/cache/images/example",
       });
-      await mod.writeRootfsNormalizationMetadata({
+      await mod.writeRootfsPreflightMetadata({
         metadataPath,
         metadata,
       });
-      const loaded = await mod.loadRootfsNormalizationMetadata(metadataPath);
+      const loaded = await mod.loadRootfsPreflightMetadata(metadataPath);
       expect(loaded).toMatchObject({
-        version: mod.ROOTFS_NORMALIZER_VERSION,
+        version: mod.ROOTFS_PREFLIGHT_VERSION,
         image: "docker.io/library/ubuntu:24.04",
         distro_family: "debian",
         package_manager: "apt-get",
-        runtime_user: "user",
-        runtime_home: "/home/user",
+        sudo_present: false,
+        ca_certificates_present: false,
       });
       expect(() =>
-        mod.requireCurrentRootfsNormalizationMetadata({
+        mod.requireCurrentRootfsPreflightMetadata({
           image: "docker.io/library/ubuntu:24.04",
           metadataPath,
           metadata: loaded,
@@ -90,7 +85,7 @@ describe("rootfs normalization metadata", () => {
     }
   });
 
-  it("rejects rootfs normalization output that does not satisfy the contract", async () => {
+  it("rejects rootfs preflight output that does not satisfy the bootstrap requirements", async () => {
     executeCode.mockResolvedValue({
       stdout: JSON.stringify({
         ok: true,
@@ -98,26 +93,21 @@ describe("rootfs normalization metadata", () => {
         package_manager: "apt-get",
         shell: "/bin/bash",
         glibc: true,
-        sudo: true,
-        ca_certificates: true,
-        curl: true,
-        runtime_user: "root",
-        runtime_uid: 0,
-        runtime_gid: 0,
-        runtime_home: "/root",
+        sudo_present: "yes",
+        ca_certificates_present: false,
       }),
     });
 
     const mod = await import("../project-runner/run/rootfs-normalize");
     await expect(
-      mod.normalizeRootfsInPlace({
+      mod.preflightRootfsInPlace({
         image: "docker.io/library/ubuntu:24.04",
         rootfsPath: "/mnt/cocalc/data/cache/images/example",
       }),
-    ).rejects.toThrow(/unexpected contract result/);
+    ).rejects.toThrow(/unexpected result/);
   });
 
-  it("accepts normalizer output with package-manager log lines before the final JSON", async () => {
+  it("accepts preflight output with package-manager log lines before the final JSON", async () => {
     executeCode.mockResolvedValue({
       stdout: [
         "Hit:1 http://archive.ubuntu.com/ubuntu noble InRelease",
@@ -128,20 +118,15 @@ describe("rootfs normalization metadata", () => {
           package_manager: "apt-get",
           shell: "/bin/bash",
           glibc: true,
-          sudo: true,
-          ca_certificates: true,
-          curl: true,
-          runtime_user: "user",
-          runtime_uid: 1000,
-          runtime_gid: 1000,
-          runtime_home: "/home/user",
+          sudo_present: true,
+          ca_certificates_present: true,
         }),
       ].join("\n"),
     });
 
     const mod = await import("../project-runner/run/rootfs-normalize");
     await expect(
-      mod.normalizeRootfsInPlace({
+      mod.preflightRootfsInPlace({
         image: "docker.io/library/buildpack-deps:noble-scm",
         rootfsPath: "/mnt/cocalc/data/cache/images/example",
       }),
@@ -149,7 +134,7 @@ describe("rootfs normalization metadata", () => {
       image: "docker.io/library/buildpack-deps:noble-scm",
       distro_family: "debian",
       package_manager: "apt-get",
-      runtime_user: "user",
+      sudo_present: true,
     });
   });
 });

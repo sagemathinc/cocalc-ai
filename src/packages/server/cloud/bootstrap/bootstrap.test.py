@@ -185,6 +185,54 @@ class BootstrapRootfsOwnershipRemapTest(unittest.TestCase):
         )
 
 
+class BootstrapSubidAllocationTest(unittest.TestCase):
+    def test_appends_large_rootless_subid_range_for_new_user(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "subuid"
+            path.write_text("ubuntu:100000:65536\n", encoding="utf-8")
+
+            changed = bootstrap.ensure_subid_file(
+                path, "cocalc-host", bootstrap.ROOTLESS_SUBID_MIN_TOTAL
+            )
+
+            self.assertTrue(changed)
+            lines = path.read_text(encoding="utf-8").splitlines()
+            self.assertEqual(lines[0], "ubuntu:100000:65536")
+            self.assertEqual(lines[1], "cocalc-host:196608:4194304")
+
+    def test_keeps_existing_subid_ranges_when_total_is_already_large_enough(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "subgid"
+            path.write_text("cocalc-host:100000:4194304\n", encoding="utf-8")
+
+            changed = bootstrap.ensure_subid_file(
+                path, "cocalc-host", bootstrap.ROOTLESS_SUBID_MIN_TOTAL
+            )
+
+            self.assertFalse(changed)
+            self.assertEqual(
+                path.read_text(encoding="utf-8"),
+                "cocalc-host:100000:4194304\n",
+            )
+
+    def test_extends_existing_small_ranges_without_rewriting_them(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "subuid"
+            path.write_text(
+                "cocalc-host:100000:65536\ncocalc-host:231072:65536\n",
+                encoding="utf-8",
+            )
+
+            changed = bootstrap.ensure_subid_file(
+                path, "cocalc-host", bootstrap.ROOTLESS_SUBID_MIN_TOTAL
+            )
+
+            self.assertTrue(changed)
+            lines = path.read_text(encoding="utf-8").splitlines()
+            self.assertEqual(lines[:2], ["cocalc-host:100000:65536", "cocalc-host:231072:65536"])
+            self.assertEqual(lines[2], "cocalc-host:327680:4063232")
+
+
 class BootstrapStateFilesTest(unittest.TestCase):
     def test_writes_split_state_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -431,17 +479,23 @@ class BootstrapWrapperScriptTest(unittest.TestCase):
             self.assertIn("project-rustic-restore)", script)
             self.assertIn("normalize-rootfs)", script)
             self.assertIn("podman unshare cat /proc/self/uid_map", script)
-            self.assertIn("--userns=keep-id:uid=1000,gid=1000", script)
-            self.assertIn('podman run --rm --network host --user 0:0', script)
-            self.assertIn('--user 1000:1000', script)
             self.assertIn('"to-canonical"', script)
             self.assertIn('"to-host"', script)
             self.assertIn("reverse_keep_id", script)
-            self.assertIn("sudo su is not working for user", script)
-            self.assertIn("$validate_runtime_user_escaped", script)
-            self.assertNotIn('find "$dir" -xdev -type f', script)
-            self.assertNotIn("COCALC_RUNTIME_OWNER_UID", script)
-            self.assertNotIn("su - \"$want_user\"", script)
+            self.assertIn('"2001"', script)
+            self.assertIn("sudo_present", script)
+            self.assertIn("ca_certificates_present", script)
+            self.assertIn(
+                "startup bootstrap requires sudo and CA certificates",
+                script,
+            )
+            self.assertIn('mkdir -p "$rootfs/home" "$rootfs/home/user"', script)
+            self.assertIn('ln -snf /proc/mounts "$rootfs/etc/mtab"', script)
+            self.assertIn('find "$dir" -xdev -type f', script)
+            self.assertIn("COCALC_RUNTIME_UID", script)
+            self.assertIn("--userns=keep-id:uid=2001,gid=2001", script)
+            self.assertIn(': >"$rootfs/run/podman-init"', script)
+            self.assertIn(': >"$rootfs/run/.containerenv"', script)
             wrapper_path = Path(tmpdir) / "cocalc-runtime-storage"
             wrapper_path.write_text(script, encoding="utf-8")
             subprocess.run(["bash", "-n", str(wrapper_path)], check=True)

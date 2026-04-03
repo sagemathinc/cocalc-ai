@@ -35,14 +35,14 @@ import {
   extractBaseImage,
   imageCachePath,
   inspectFilePath,
-  normalizationFilePath,
+  preflightMetadataFilePath,
 } from "@cocalc/project-runner/run/rootfs-base";
 import {
-  loadRootfsNormalizationMetadata,
-  normalizeRootfsInPlace,
+  loadRootfsPreflightMetadata,
+  preflightRootfsInPlace,
   ROOTFS_NORMALIZER_VERSION,
-  requireCurrentRootfsNormalizationMetadata,
-  writeRootfsNormalizationMetadata,
+  requireCurrentRootfsPreflightMetadata,
+  writeRootfsPreflightMetadata,
 } from "@cocalc/project-runner/run/rootfs-normalize";
 import {
   isManagedRootfsImageName,
@@ -563,7 +563,7 @@ async function deleteCachedManagedRootfs({
 }): Promise<void> {
   const finalPath = imageCachePath(image);
   const finalInspectPath = inspectFilePath(image);
-  const finalNormalizationPath = normalizationFilePath(image);
+  const finalPreflightPath = preflightMetadataFilePath(image);
   logger.warn("removing cached managed RootFS entry", {
     image,
     reason,
@@ -571,7 +571,7 @@ async function deleteCachedManagedRootfs({
   });
   await deleteCachedRootfsPath(finalPath).catch(() => {});
   await rm(finalInspectPath, { force: true }).catch(() => {});
-  await rm(finalNormalizationPath, { force: true }).catch(() => {});
+  await rm(finalPreflightPath, { force: true }).catch(() => {});
 }
 
 async function downloadManagedRootfsArtifact({
@@ -600,7 +600,7 @@ async function downloadManagedRootfsArtifact({
   });
   const finalPath = imageCachePath(image);
   const finalInspectPath = inspectFilePath(image);
-  const finalNormalizationPath = normalizationFilePath(image);
+  const finalPreflightPath = preflightMetadataFilePath(image);
   const usage = rootfsUsageByImage().get(image);
   if (await exists(finalPath)) {
     const usable = await looksLikeUsableManagedRootfs(finalPath).catch(
@@ -612,29 +612,27 @@ async function downloadManagedRootfsArtifact({
         reason: "cached image is missing expected rootfs directories",
       });
     } else {
-      const normalization = await loadRootfsNormalizationMetadata(
-        finalNormalizationPath,
-      );
+      const preflight = await loadRootfsPreflightMetadata(finalPreflightPath);
       if (
-        normalization == null ||
-        normalization.version !== ROOTFS_NORMALIZER_VERSION
+        preflight == null ||
+        preflight.version !== ROOTFS_NORMALIZER_VERSION
       ) {
         const counts = rootfsUsageCounts(usage);
         if (counts.project_count > 0 || counts.running > 0) {
           throw new Error(
-            `cached managed RootFS '${image}' does not match CoCalc runtime contract v${ROOTFS_NORMALIZER_VERSION} and is currently in use by ${counts.project_count} project(s); reprovision the host or flush the RootFS cache before using this image`,
+            `cached managed RootFS '${image}' does not satisfy RootFS preflight v${ROOTFS_NORMALIZER_VERSION} and is currently in use by ${counts.project_count} project(s); reprovision the host or flush the RootFS cache before using this image`,
           );
         }
         await deleteCachedManagedRootfs({
           image,
           reason:
-            "cached image is missing or outdated RootFS normalization metadata; refreshing cache entry",
+            "cached image is missing or outdated RootFS preflight metadata; refreshing cache entry",
         });
       } else {
-        requireCurrentRootfsNormalizationMetadata({
+        requireCurrentRootfsPreflightMetadata({
           image,
-          metadataPath: finalNormalizationPath,
-          metadata: normalization,
+          metadataPath: finalPreflightPath,
+          metadata: preflight,
         });
       }
     }
@@ -742,14 +740,14 @@ async function downloadManagedRootfsArtifact({
           elapsed_ms: Date.now() - restoreStarted,
         });
         reportPullProgress(onProgress, {
-          message: "normalizing RootFS runtime contract",
+          message: "checking RootFS preflight prerequisites",
           progress: 84,
           detail: {
             image,
             release_id: access.release_id,
           },
         });
-        const normalized = await normalizeRootfsInPlace({
+        const preflight = await preflightRootfsInPlace({
           image,
           rootfsPath: stagedRootfsPath,
           onProgress: ({ message, detail }) => {
@@ -779,10 +777,10 @@ async function downloadManagedRootfsArtifact({
               JSON.stringify(access.inspect_data),
             );
           }
-          await writeRootfsNormalizationMetadata({
-            metadataPath: finalNormalizationPath,
+          await writeRootfsPreflightMetadata({
+            metadataPath: finalPreflightPath,
             metadata: {
-              ...normalized,
+              ...preflight,
               rootfs_path: finalPath,
             },
           });
@@ -948,7 +946,7 @@ export async function deleteRootfsCacheEntry(image: string): Promise<{
   }
   const cache_path = imageCachePath(trimmed);
   const inspect_path = inspectFilePath(trimmed);
-  const normalization_path = normalizationFilePath(trimmed);
+  const preflight_path = preflightMetadataFilePath(trimmed);
   let removed = false;
   if (await exists(cache_path)) {
     await deleteCachedRootfsPath(cache_path);
@@ -958,8 +956,8 @@ export async function deleteRootfsCacheEntry(image: string): Promise<{
     await rm(inspect_path, { force: true, maxRetries: 3 });
     removed = true;
   }
-  if (await exists(normalization_path)) {
-    await rm(normalization_path, { force: true, maxRetries: 3 });
+  if (await exists(preflight_path)) {
+    await rm(preflight_path, { force: true, maxRetries: 3 });
     removed = true;
   }
   return { removed };

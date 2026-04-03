@@ -1001,6 +1001,7 @@ export async function start({
 
     // --init = have podman inject a tiny built in init script so we don't get zombies.
     args.push("--init");
+    args.push("--init-path", "/usr/bin/catatonit");
 
     args.push("--rootfs", rootfs);
     args.push(nodePath);
