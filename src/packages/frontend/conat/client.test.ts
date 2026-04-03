@@ -376,3 +376,121 @@ describe("ConatClient routed project-host reconnect", () => {
     jest.useRealTimers();
   });
 });
+
+describe("ConatClient sync wrapper client preservation", () => {
+  it("preserves explicit clients for dkv, akv, and dko wrappers", async () => {
+    jest.resetModules();
+
+    const dkvMock = jest.fn(async (opts) => opts);
+    const akvMock = jest.fn((opts) => opts);
+    const dkoMock = jest.fn(async (opts) => opts);
+
+    jest.doMock("@cocalc/frontend/app-framework", () => ({
+      redux: {
+        getStore: jest.fn(() => undefined),
+        getActions: jest.fn(() => undefined),
+      },
+    }));
+
+    jest.doMock("@cocalc/util/reuse-in-flight", () => ({
+      reuseInFlight: (fn: any) => fn,
+    }));
+
+    jest.doMock("@cocalc/conat/core/client", () => ({
+      connect: jest.fn(() => ({
+        conn: {
+          connected: false,
+          on: jest.fn(),
+          io: { on: jest.fn(), engine: { close: jest.fn() } },
+        },
+        on: jest.fn(),
+      })),
+    }));
+
+    jest.doMock("@cocalc/conat/client", () => ({
+      getClient: () => ({ on: jest.fn() }),
+      setConatClient: jest.fn(),
+      getLogger: () => ({
+        info: jest.fn(),
+        debug: jest.fn(),
+        warn: jest.fn(),
+        error: jest.fn(),
+        silly: jest.fn(),
+      }),
+    }));
+
+    jest.doMock("@cocalc/conat/hub/api", () => ({
+      initHubApi: () => ({}),
+    }));
+
+    jest.doMock("./browser-session", () => ({
+      createBrowserSessionAutomation: () => ({
+        start: jest.fn(),
+        stop: jest.fn(),
+      }),
+    }));
+
+    jest.doMock("@cocalc/conat/sync/dkv", () => ({
+      dkv: dkvMock,
+    }));
+    jest.doMock("@cocalc/conat/sync/akv", () => ({
+      akv: akvMock,
+    }));
+    jest.doMock("@cocalc/conat/sync/dko", () => ({
+      dko: dkoMock,
+    }));
+
+    jest.doMock("@cocalc/frontend/customize/app-base-path", () => ({
+      appBasePath: "",
+    }));
+
+    jest.doMock("@cocalc/frontend/client/client", () => ({
+      ACCOUNT_ID_COOKIE: "account_id",
+    }));
+
+    jest.doMock("@cocalc/frontend/lite", () => ({
+      lite: false,
+    }));
+
+    jest.doMock("@cocalc/frontend/misc/remember-me", () => ({
+      deleteRememberMe: jest.fn(),
+      hasRememberMe: jest.fn(() => false),
+      setRememberMe: jest.fn(),
+    }));
+
+    const { ConatClient } = require("./client");
+
+    const client = new ConatClient(
+      {
+        account_id: "acct-1",
+        browser_id: "browser-1",
+        emit: jest.fn(),
+      },
+      { address: "http://hub", remote: true },
+    ) as any;
+
+    const explicitClient = { id: "explicit-client" };
+
+    await client.dkv({
+      name: "a",
+      account_id: "acct-1",
+      client: explicitClient,
+    });
+    client.akv({ name: "b", account_id: "acct-1", client: explicitClient });
+    await client.dko({
+      name: "c",
+      account_id: "acct-1",
+      client: explicitClient,
+    });
+
+    expect(dkvMock).toHaveBeenCalledWith(
+      expect.objectContaining({ client: explicitClient }),
+    );
+    expect(akvMock).toHaveBeenCalledWith(
+      expect.objectContaining({ client: explicitClient }),
+    );
+    expect(dkoMock).toHaveBeenCalledWith(
+      expect.objectContaining({ client: explicitClient }),
+    );
+  });
+});

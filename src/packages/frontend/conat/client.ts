@@ -1177,15 +1177,15 @@ export class ConatClient extends EventEmitter {
   // client from `@cocalc/conat/core/client`, which instead exposes these under
   // `client.sync.*` and is returned by `conat()`.
   dkv = async <T>(opts: DKVOptions) => {
-    return await dkv<T>({ ...opts, client: this.conat() });
+    return await dkv<T>({ ...opts, client: opts.client ?? this.conat() });
   };
 
   akv = <T>(opts: DKVOptions) => {
-    return akv<T>({ ...opts, client: this.conat() });
+    return akv<T>({ ...opts, client: opts.client ?? this.conat() });
   };
 
   dko = async <T>(opts: DKVOptions) => {
-    return await dko<T>({ ...opts, client: this.conat() });
+    return await dko<T>({ ...opts, client: opts.client ?? this.conat() });
   };
 
   listings = async (opts: { project_id: string }) => {
