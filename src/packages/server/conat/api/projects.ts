@@ -91,6 +91,7 @@ import {
   recordProjectStorageHistorySample,
 } from "@cocalc/database/postgres/project-storage-history";
 import { parseDustOutput } from "./storage-breakdown";
+import { getAssignedProjectHostInfo } from "@cocalc/server/conat/project-host-assignment";
 
 const PROJECT_STORAGE_CACHE_TTL_MS = 30_000;
 const PROJECT_STORAGE_BREAKDOWN_TIMEOUT_MS = 10_000;
@@ -273,15 +274,7 @@ function normalizeImportTargetPath(path?: string): string {
 }
 
 async function getProjectHostId(project_id: string): Promise<string> {
-  const { rows } = await getPool().query<{ host_id: string | null }>(
-    "SELECT host_id FROM projects WHERE project_id=$1",
-    [project_id],
-  );
-  const host_id = rows[0]?.host_id ?? undefined;
-  if (!host_id) {
-    throw new Error("workspace has no assigned host");
-  }
-  return host_id;
+  return (await getAssignedProjectHostInfo(project_id)).host_id;
 }
 
 async function resolvePublicImportSource({
@@ -762,11 +755,30 @@ export async function getRuntimeLog({
 }): Promise<ProjectRuntimeLog> {
   await assertCollab({ account_id, project_id });
   const tail = normalizeLogTail(lines);
-  const { rows } = await getPool().query<{ host_id: string | null }>(
-    "SELECT host_id FROM projects WHERE project_id=$1",
-    [project_id],
-  );
-  const host_id = rows[0]?.host_id ?? null;
+  let host_id: string;
+  try {
+    host_id = (await getAssignedProjectHostInfo(project_id)).host_id;
+  } catch (err) {
+    const reason =
+      err instanceof Error ? err.message : "workspace has no assigned host";
+    if (
+      reason === "workspace has no assigned host" ||
+      reason === "workspace bay does not match assigned host"
+    ) {
+      return {
+        project_id,
+        host_id: null,
+        container: `project-${project_id}`,
+        lines: tail,
+        text: "",
+        found: false,
+        running: false,
+        available: false,
+        reason,
+      };
+    }
+    throw err;
+  }
   if (!host_id) {
     return {
       project_id,
@@ -815,25 +827,7 @@ export async function resolveWorkspaceSshConnection({
   direct?: boolean;
 }): Promise<WorkspaceSshConnectionInfo> {
   await assertCollab({ account_id, project_id });
-  const { rows } = await getPool().query<{
-    host_id: string | null;
-    ssh_server: string | null;
-    metadata: any;
-  }>(
-    `SELECT p.host_id, h.ssh_server, h.metadata
-       FROM projects p
-       LEFT JOIN project_hosts h ON h.id=p.host_id AND h.deleted IS NULL
-      WHERE p.project_id=$1
-      LIMIT 1`,
-    [project_id],
-  );
-  const row = rows[0];
-  if (!row) {
-    throw new Error("workspace not found");
-  }
-  if (!row.host_id) {
-    throw new Error("workspace has no assigned host");
-  }
+  const row = await getAssignedProjectHostInfo(project_id);
   const metadata = row.metadata ?? {};
   const machine = metadata?.machine ?? {};
   const rawSelfHostMode = machine?.metadata?.self_host_mode;
