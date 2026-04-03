@@ -233,9 +233,11 @@ export async function getProjectRootfsStates({
   return await loadProjectRootfsStateEntries(project_id);
 }
 
-async function loadCurrentProjectRootfsBinding(
-  project_id: string,
-): Promise<ProjectRootfsBinding | undefined> {
+export async function getCurrentProjectRootfsBinding({
+  project_id,
+}: {
+  project_id: string;
+}): Promise<ProjectRootfsBinding | undefined> {
   const rows = await loadProjectRootfsStateRows(project_id);
   const currentRow = rows.find((row) => row.state_role === "current");
   if (currentRow) {
@@ -264,7 +266,7 @@ export async function assertPortableProjectRootfs({
   project_id: string;
   operation: "backup" | "move";
 }): Promise<void> {
-  const current = await loadCurrentProjectRootfsBinding(project_id);
+  const current = await getCurrentProjectRootfsBinding({ project_id });
   const image = trimString(current?.image);
   if (!image) {
     return;

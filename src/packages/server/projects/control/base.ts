@@ -39,6 +39,19 @@ import {
   stopProjectOnHost,
 } from "@cocalc/server/project-host/control";
 import {
+  ensureProjectFileServerClientReady,
+  getProjectFileServerClient,
+} from "@cocalc/server/conat/file-server-client";
+import type { LroRef } from "@cocalc/conat/files/file-server";
+import {
+  getCurrentProjectRootfsBinding,
+  setProjectRootfsImageWithRollback,
+} from "@cocalc/server/projects/rootfs-state";
+import {
+  issueRootfsReleaseArtifactUpload,
+  upsertPublishedRootfsRelease,
+} from "@cocalc/server/rootfs/releases";
+import {
   getMembershipProjectDefaultsForAccount,
   mergeProjectSettingsWithMembership,
 } from "@cocalc/server/membership/project-defaults";
@@ -56,6 +69,9 @@ export type Action = "open" | "start" | "stop" | "restart";
 // collected.  These objects don't use much memory, but blocking garbage collection
 // would be bad.
 const projectCache: { [project_id: string]: WeakRef<BaseProject> } = {};
+const ROOTFS_SEAL_TIMEOUT_MS = 6 * 60 * 60 * 1000;
+const FILE_SERVER_READY_TIMEOUT_MS = 60_000;
+
 function getProjectControlConatClient() {
   // This one-bay control path is intentionally choosing the current backend
   // hub client. Shared runner helpers must not silently make that routing
@@ -134,6 +150,78 @@ export class BaseProject extends EventEmitter {
     });
   };
 
+  private startOnHost = async (opts?: {
+    lro_op_id?: string;
+    account_id?: string;
+  }): Promise<void> => {
+    await this.computeQuota(opts?.account_id);
+    await startProjectOnHost(this.project_id, opts);
+    await query({
+      db: db(),
+      query: "UPDATE projects",
+      where: { project_id: this.project_id },
+      set: { last_started: new Date() },
+    });
+  };
+
+  private loadHostId = async (): Promise<string> => {
+    const { rows } = await getPool().query<{ host_id: string | null }>(
+      "SELECT host_id FROM projects WHERE project_id=$1",
+      [this.project_id],
+    );
+    const host_id = `${rows[0]?.host_id ?? ""}`.trim();
+    if (!host_id) {
+      throw new Error(`project ${this.project_id} is not assigned to a host`);
+    }
+    return host_id;
+  };
+
+  private sealCurrentRootfs = async (opts?: {
+    lro_op_id?: string;
+  }): Promise<{ image: string }> => {
+    const host_id = await this.loadHostId();
+    const client = await getProjectFileServerClient({
+      project_id: this.project_id,
+      timeout: ROOTFS_SEAL_TIMEOUT_MS,
+    });
+    await ensureProjectFileServerClientReady({
+      project_id: this.project_id,
+      client,
+      maxWait: FILE_SERVER_READY_TIMEOUT_MS,
+    });
+    const upload = await issueRootfsReleaseArtifactUpload({
+      host_id,
+      artifact_kind: "full",
+    });
+    const lro: LroRef | undefined = opts?.lro_op_id
+      ? {
+          op_id: opts.lro_op_id,
+          scope_type: "project",
+          scope_id: this.project_id,
+        }
+      : undefined;
+    const artifact = await client.publishRootfsImage({
+      project_id: this.project_id,
+      upload,
+      lro,
+    });
+    const uploadResult =
+      artifact.upload_result ??
+      (await client.uploadRootfsReleaseArtifact({
+        project_id: this.project_id,
+        image: artifact.image,
+        upload,
+        lro,
+      }));
+    await upsertPublishedRootfsRelease({
+      artifact,
+      upload: uploadResult,
+    });
+    return {
+      image: artifact.image,
+    };
+  };
+
   // Get the state of the project -- state is just whether or not
   // it is runnig, stopping, starting.  It's not much info.
   state = async (): Promise<ProjectState> => {
@@ -152,14 +240,35 @@ export class BaseProject extends EventEmitter {
     lro_op_id?: string;
     account_id?: string;
   }): Promise<void> => {
-    await this.computeQuota(opts?.account_id);
-    await startProjectOnHost(this.project_id, opts);
-    await query({
-      db: db(),
-      query: "UPDATE projects",
-      where: { project_id: this.project_id },
-      set: { last_started: new Date() },
+    await this.startOnHost(opts);
+    const current = await getCurrentProjectRootfsBinding({
+      project_id: this.project_id,
     });
+    if (!current?.image || current.release_id) {
+      return;
+    }
+    try {
+      const sealed = await this.sealCurrentRootfs({
+        lro_op_id: opts?.lro_op_id,
+      });
+      await this.stop();
+      await setProjectRootfsImageWithRollback({
+        project_id: this.project_id,
+        image: sealed.image,
+        set_by_account_id: opts?.account_id,
+      });
+      await this.startOnHost(opts);
+    } catch (err) {
+      try {
+        await this.stop();
+      } catch (stopErr) {
+        logger.warn("failed to stop project after RootFS seal error", {
+          project_id: this.project_id,
+          err: `${stopErr}`,
+        });
+      }
+      throw new Error(`failed to seal project RootFS for portability: ${err}`);
+    }
   };
 
   save = async (): Promise<void> => {
