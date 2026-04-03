@@ -20,7 +20,7 @@ import createPurchase from "@cocalc/server/purchases/create-purchase";
 import { assertPurchaseAllowed } from "./is-purchase-allowed";
 import setCourseInfo from "@cocalc/server/projects/course/set-course-info";
 import { restartProjectIfRunning } from "@cocalc/server/projects/control/util";
-import isCollaborator from "@cocalc/server/projects/is-collaborator";
+import { assertLocalProjectCollaborator } from "@cocalc/server/conat/project-local-access";
 import getConn from "@cocalc/server/stripe/connection";
 import { isValidUUID } from "@cocalc/util/misc";
 import { url } from "@cocalc/server/messages/send";
@@ -168,12 +168,11 @@ export async function studentPayTransfer({
     paid_project_id,
   });
   // make some basic checks, then update the database.
-  if (!(await isCollaborator({ account_id, project_id }))) {
-    throw Error("user must be collaborator on project");
-  }
-  if (!(await isCollaborator({ account_id, project_id: paid_project_id }))) {
-    throw Error("user must be collaborator on project");
-  }
+  await assertLocalProjectCollaborator({ account_id, project_id });
+  await assertLocalProjectCollaborator({
+    account_id,
+    project_id: paid_project_id,
+  });
 
   const target = await getCourseInfo(project_id);
   const paid = await getCourseInfo(paid_project_id);

@@ -4,7 +4,7 @@ let queryMock: jest.Mock;
 let cloneMock: jest.Mock;
 let hostCreateProjectMock: jest.Mock;
 let getProjectFileServerClientMock: jest.Mock;
-let isCollaboratorMock: jest.Mock;
+let assertLocalProjectCollaboratorMock: jest.Mock;
 let resolveMembershipForAccountMock: jest.Mock;
 let computePlacementPermissionMock: jest.Mock;
 let getUserHostTierMock: jest.Mock;
@@ -25,9 +25,10 @@ jest.mock("@cocalc/server/accounts/is-admin", () => ({
   default: jest.fn(async () => false),
 }));
 
-jest.mock("@cocalc/server/projects/is-collaborator", () => ({
+jest.mock("@cocalc/server/conat/project-local-access", () => ({
   __esModule: true,
-  default: (...args: any[]) => isCollaboratorMock(...args),
+  assertLocalProjectCollaborator: (...args: any[]) =>
+    assertLocalProjectCollaboratorMock(...args),
 }));
 
 jest.mock("@cocalc/server/conat/file-server-client", () => ({
@@ -71,7 +72,7 @@ describe("projects.createProject clone routing", () => {
     getProjectFileServerClientMock = jest.fn(async () => ({
       clone: (...args: any[]) => cloneMock(...args),
     }));
-    isCollaboratorMock = jest.fn(async () => true);
+    assertLocalProjectCollaboratorMock = jest.fn(async () => undefined);
     resolveMembershipForAccountMock = jest.fn(async () => ({
       entitlements: {},
     }));
@@ -182,7 +183,7 @@ describe("projects.createProject clone routing", () => {
     });
 
     expect(typeof project_id).toBe("string");
-    expect(isCollaboratorMock).toHaveBeenCalledWith({
+    expect(assertLocalProjectCollaboratorMock).toHaveBeenCalledWith({
       account_id: ACCOUNT_ID,
       project_id: SOURCE_PROJECT_ID,
     });
@@ -200,5 +201,25 @@ describe("projects.createProject clone routing", () => {
       }),
     );
     expect(conatWithProjectRoutingMock).toHaveBeenCalled();
+  });
+
+  it("rejects clone creation when the source project belongs to another bay", async () => {
+    assertLocalProjectCollaboratorMock = jest.fn(async () => {
+      throw new Error("project belongs to another bay");
+    });
+    const createProject = (await import("./create")).default;
+    await expect(
+      createProject({
+        title: "Clone test",
+        description: "desc",
+        account_id: ACCOUNT_ID,
+        src_project_id: SOURCE_PROJECT_ID,
+        rootfs_image: "buildpack-deps:noble-scm",
+        start: false,
+      }),
+    ).rejects.toThrow("project belongs to another bay");
+    expect(getProjectFileServerClientMock).not.toHaveBeenCalled();
+    expect(cloneMock).not.toHaveBeenCalled();
+    expect(hostCreateProjectMock).not.toHaveBeenCalled();
   });
 });

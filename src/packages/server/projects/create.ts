@@ -11,7 +11,6 @@ import { getProject } from "@cocalc/server/projects/control";
 import { type CreateProjectOptions } from "@cocalc/util/db-schema/projects";
 import { delay } from "awaiting";
 import isAdmin from "@cocalc/server/accounts/is-admin";
-import isCollaborator from "@cocalc/server/projects/is-collaborator";
 import { createHostControlClient } from "@cocalc/conat/project-host/api";
 import { conatWithProjectRouting } from "../conat/route-client";
 import { getProjectFileServerClient } from "@cocalc/server/conat/file-server-client";
@@ -36,6 +35,7 @@ import { takeStartProjectPhaseTimings } from "@cocalc/server/project-host/contro
 import { supersedeOlderProjectStartLros } from "@cocalc/server/projects/start-lro-cleanup";
 import { mirrorStartLroProgress } from "@cocalc/server/projects/start-lro-progress";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import { assertLocalProjectCollaborator } from "@cocalc/server/conat/project-local-access";
 
 const log = getLogger("server:projects:create");
 const HOST_ONLINE_WINDOW_MS = 2 * 60 * 1000;
@@ -233,12 +233,13 @@ export default async function createProject(opts: CreateProjectOptions) {
   }
 
   if (src_project_id) {
-    if (
-      !account_id ||
-      !(await isCollaborator({ account_id, project_id: src_project_id }))
-    ) {
+    if (!account_id) {
       throw Error("user must be a collaborator on src_project_id");
     }
+    await assertLocalProjectCollaborator({
+      account_id,
+      project_id: src_project_id,
+    });
     // keep the clone on the same project-host as the source unless explicitly overridden
     const { rows } = await pool.query(
       "SELECT host_id, region, rootfs_image, rootfs_image_id, owning_bay_id FROM projects WHERE project_id=$1",

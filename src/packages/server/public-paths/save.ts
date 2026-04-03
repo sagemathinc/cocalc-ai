@@ -1,5 +1,5 @@
 import getPool from "@cocalc/database/pool";
-import isCollaborator from "@cocalc/server/projects/is-collaborator";
+import { assertLocalProjectCollaborator } from "@cocalc/server/conat/project-local-access";
 
 // This sets the last_edited field of the public path to now.  In Kucalc
 // that triggers manage-share to copy the files over to the NFS volume
@@ -27,16 +27,10 @@ export default async function savePublicPath(
     throw Error(`no public path with id=${public_path_id}`);
   }
 
-  if (
-    !(await isCollaborator({
-      account_id,
-      project_id: rows[0].project_id,
-    }))
-  ) {
-    throw Error(
-      "user must be signed in as collaborator on the project containing the public path",
-    );
-  }
+  await assertLocalProjectCollaborator({
+    account_id,
+    project_id: rows[0].project_id,
+  });
 
   // finally, actually update last_edited.
   await pool.query("UPDATE public_paths SET last_edited = NOW() WHERE id=$1", [
