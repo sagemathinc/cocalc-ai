@@ -159,6 +159,14 @@ The home bay is where account-facing UI state lives:
 
 The browser talks to the home bay for control-plane work.
 
+Important design rule:
+
+- home-bay authoritative state should stay relatively small and portable
+- most heavy account-facing state should be projection data that can be copied
+  or rebuilt
+
+This keeps account move / rehome operationally feasible.
+
 ### Owning Bay
 
 Each project has one `owning_bay_id`.
@@ -404,6 +412,8 @@ Examples:
 - `cocalc project open ...` should resolve the owning bay
 - `cocalc project move --bay <dest>` should route to the source owning bay and
   destination owning bay as needed
+- `cocalc account move --bay <dest>` should route to the source home bay and
+  destination home bay as needed
 - `cocalc bay list` should talk to the global directory/control surface
 - `cocalc bay backup status <bay>` should route to the relevant bay
 
@@ -427,6 +437,7 @@ families like:
 - `cocalc project where <project-id>`
 - `cocalc project move --bay <dest-bay-id>`
 - `cocalc account where <account-id>`
+- `cocalc account move --bay <dest-bay-id>`
 - `cocalc host list --bay <bay-id>`
 - `cocalc host show <host-id>`
 - `cocalc replication lag [--bay <bay-id>]`
@@ -941,6 +952,46 @@ Suggested move flow:
 
 The move must be treated as a first-class workflow, not an afterthought.
 
+### Move / Rehome Account Between Bays
+
+Account move is also a required workflow.
+
+This is distinct from project move:
+
+- project move changes `owning_bay_id`
+- account move changes `home_bay_id`
+
+An account move should not imply moving project data, project hosts, or
+project-scoped authoritative metadata.
+
+Account rehome is needed for:
+
+- bay drain / bay removal
+- rebalancing heavy accounts
+- region changes
+- org consolidation
+- correcting bad initial placement decisions
+
+Suggested rehome flow:
+
+1. An operator initiates rehome from source home bay `A` to destination home
+   bay `B`.
+2. `A` fences account-scoped writes for the target account.
+3. Small home-bay-owned authoritative state is copied from `A` to `B`.
+4. Projection state is copied or rebuilt on `B`.
+5. Global directory updates `account_id -> home_bay_id = B`.
+6. Browser control sessions are forced to reconnect and land on `B`.
+7. Any events produced during the fence window are replayed into `B`.
+8. `A` retains bounded tombstone / redirect metadata until rehome is fully
+   settled.
+
+Important rule:
+
+- account rehome must be a separate state machine from project move
+
+That keeps user control-state migration decoupled from filesystem/runtime
+migration.
+
 ## Directory Semantics
 
 The directory should be tiny and authoritative for routing only.
@@ -1150,6 +1201,25 @@ That means restore workflows need fencing:
 - ownership mismatches are reconciled against the global directory before
   returning the bay to service
 
+### Interaction With Account Rehome
+
+Account rehome must also respect restore fencing and directory authority.
+
+Important rules:
+
+- the global directory is authoritative for current `home_bay_id`
+- restored old bays must not reclaim accounts that were later rehomed
+- account-home state must be rebuildable from durable data plus replicated
+  events
+
+That means:
+
+- restored bays start with account routing disabled until reconciled
+- account-home mismatches are checked against the global directory before
+  unfencing
+- projection rebuild tooling must be able to reconstruct account-facing state
+  for rehomed accounts
+
 ### Projection Tables After Restore
 
 Projection tables do not need to be treated as irreplaceable canonical state.
@@ -1243,12 +1313,17 @@ introduced immediately.
 - implement per-destination-bay durable event streams
 - implement projection consumers
 
-### Phase 5: Move Some Accounts/Projects To Additional Bays
+### Phase 5: Move Some Accounts To Additional Bays
 
 - new tenants first
+- then controlled account rehomes
+- validate browser reconnection and projection rebuild behavior
+
+### Phase 6: Move Some Projects To Additional Bays
+
 - then controlled project moves
 
-### Phase 6: Region Expansion
+### Phase 7: Region Expansion
 
 - add region-aware bay placement
 - keep async inter-region replication
@@ -1261,6 +1336,7 @@ Do:
 - use Conat for internal RPC/events/fanout
 - use per-account projection tables for browser-facing data
 - use one home-bay browser control connection
+- support account rehome independently of project move
 - move project ownership with project moves
 
 Do not:
@@ -1280,6 +1356,7 @@ codebase:
 - exact projection table schemas
 - exact Conat subjects and RPC method names
 - exact event payload contracts
+- exact account rehome state machine
 - exact project move state machine
 - exact browser bootstrap payload
 

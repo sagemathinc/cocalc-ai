@@ -16,6 +16,7 @@ The implementation is successful when:
 - browser-facing project/collaborator/account reactivity no longer depends on
   raw base-table Postgres changefeeds
 - all major bay/project/backup operations are available through `cocalc-cli`
+- account rehome between bays is a routine supported workflow
 - project hosts are attached to bays, not to one global hub
 - inter-bay replication is durable and replayable
 - load tests establish practical bay size targets and operating envelopes
@@ -82,6 +83,7 @@ These workstreams span multiple phases.
 
 - host belongs to one bay
 - project start/stop through owning bay
+- account move / rehome between bays
 - project move between bays
 
 ### 5. Backup / Restore
@@ -414,7 +416,36 @@ Move host control fully under owning-bay authority.
 
 - host heartbeat and lifecycle workloads measured at target bay sizes
 
-## Phase 7: Project Move Between Bays
+## Phase 7: Account Rehome Between Bays
+
+### Purpose
+
+Implement account home-bay move / rehome as a first-class workflow.
+
+### Deliverables
+
+- account-write fencing workflow
+- small home-state copy workflow
+- projection copy/rebuild workflow
+- global directory update workflow
+- forced browser reconnection workflow
+- replay and rollback plan
+- CLI commands for account rehome orchestration
+
+### Exit Criteria
+
+- account can move from bay A to bay B safely
+- browser control sessions reconnect to the new home bay
+- account-facing state is correct after rehome
+- rehome does not imply moving project data or project hosts
+
+### Load Test Gate
+
+- repeated account rehomes under background load
+- reconnect storms and projection rebuild costs measured
+- operator workflow latency measured for heavy accounts
+
+## Phase 8: Project Move Between Bays
 
 ### Purpose
 
@@ -441,7 +472,7 @@ Implement project move as a first-class workflow.
 - repeated move operations under background load
 - move impact on replication lag and operator workflows measured
 
-## Phase 8: Multi-Bay Rocket Rollout
+## Phase 9: Multi-Bay Rocket Rollout
 
 ### Purpose
 
@@ -469,7 +500,7 @@ Begin real multi-bay production deployment.
   - max host count per bay
   - expected p99 latencies
 
-## Phase 9: Regionalization And HA Hardening
+## Phase 10: Regionalization And HA Hardening
 
 ### Purpose
 
@@ -513,12 +544,16 @@ The CLI should evolve in lockstep with the platform.
 
 ### By End Of Phase 7
 
+- `cocalc account move --bay ...`
+
+### By End Of Phase 8
+
 - `cocalc project move --bay ...`
 - `cocalc bay cordon`
 - `cocalc bay drain`
 - `cocalc bay restore`
 
-### By End Of Phase 8
+### By End Of Phase 9
 
 - `cocalc replication lag`
 - `cocalc bay health`
@@ -531,6 +566,7 @@ Do not do these:
 - do not introduce true multi-bay routing before projections replace the
   browser-critical changefeed paths
 - do not rely on direct SQL for routine bay operations
+- do not couple account rehome to project move
 - do not make project moves an operator-only manual database procedure
 - do not postpone load testing until after multi-bay rollout
 
