@@ -78,6 +78,13 @@ describe("ConatClient routed project-host reconnect", () => {
       }),
     }));
 
+    jest.doMock("@cocalc/conat/time", () => ({
+      __esModule: true,
+      default: jest.fn(() => Date.now()),
+      getSkew: jest.fn(async () => 0),
+      init: jest.fn(),
+    }));
+
     jest.doMock("@cocalc/conat/hub/api", () => ({
       initHubApi: () => ({}),
     }));
@@ -302,6 +309,13 @@ describe("ConatClient routed project-host reconnect", () => {
       }),
     }));
 
+    jest.doMock("@cocalc/conat/time", () => ({
+      __esModule: true,
+      default: jest.fn(() => Date.now()),
+      getSkew: jest.fn(async () => 0),
+      init: jest.fn(),
+    }));
+
     jest.doMock("@cocalc/conat/hub/api", () => ({
       initHubApi: () => ({}),
     }));
@@ -417,6 +431,13 @@ describe("ConatClient sync wrapper client preservation", () => {
         error: jest.fn(),
         silly: jest.fn(),
       }),
+    }));
+
+    jest.doMock("@cocalc/conat/time", () => ({
+      __esModule: true,
+      default: jest.fn(() => Date.now()),
+      getSkew: jest.fn(async () => 0),
+      init: jest.fn(),
     }));
 
     jest.doMock("@cocalc/conat/hub/api", () => ({
