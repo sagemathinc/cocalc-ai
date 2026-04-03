@@ -100,6 +100,21 @@ This keeps file streaming on the same routed connection chosen by the caller,
 which matters once uploads/downloads can target different control-plane or
 project-host clients.
 
+## Completed In The Project Usage Pass
+
+### `conat/project/usage-info.ts`
+
+- removed the hidden fallback to the global Conat singleton
+- both `get(...)` and the project-side service registration now require an
+  explicit client
+- the frontend Jupyter poller now injects the browser's active Conat client
+- the project-side wrapper was already explicit through
+  [project/conat/connection.ts](/home/wstein/build/cocalc-lite4/src/packages/project/conat/connection.ts)
+
+This keeps per-notebook usage lookups and the backing project service on the
+same routed client chosen by the caller instead of silently attaching to a
+singleton.
+
 ## Remaining Hotspots
 
 ### Shared Helper Fallbacks
@@ -112,7 +127,6 @@ next:
 These also have hidden singleton fallback behavior and should be audited after
 the higher-level control-plane helpers above:
 
-- [conat/project/usage-info.ts](/home/wstein/build/cocalc-lite4/src/packages/conat/project/usage-info.ts)
 - [conat/project/runner/run.ts](/home/wstein/build/cocalc-lite4/src/packages/conat/project/runner/run.ts)
 - [conat/project/runner/load-balancer.ts](/home/wstein/build/cocalc-lite4/src/packages/conat/project/runner/load-balancer.ts)
 

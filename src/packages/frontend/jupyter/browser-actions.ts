@@ -1230,6 +1230,7 @@ export class JupyterActions extends JupyterActions0 {
         const kernel_usage = await getUsageInfo({
           project_id: this.project_id,
           path: this.path,
+          client: webapp_client.conat_client.conat(),
         });
         if (this._state == ("closed" as any)) return;
         this.setState({ kernel_usage });
