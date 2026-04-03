@@ -2443,6 +2443,7 @@ registerBayCommand(program, bayCommandDeps);
 const loadCommandDeps = {
   withContext,
   queryProjects,
+  resolveProjectFromArgOrContext,
 } satisfies LoadCommandDeps;
 
 registerLoadCommand(program, loadCommandDeps);

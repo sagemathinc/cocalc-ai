@@ -2,6 +2,7 @@ import { performance } from "node:perf_hooks";
 import { Command } from "commander";
 
 type LoadScenarioResult = Record<string, unknown> | null | undefined;
+type SeedScenarioResult = Record<string, unknown>;
 
 type LoadSummary = {
   scenario: string;
@@ -29,6 +30,7 @@ type LoadSummary = {
 export type LoadCommandDeps = {
   withContext: any;
   queryProjects: any;
+  resolveProjectFromArgOrContext: any;
 };
 
 function parsePositiveInteger(
@@ -80,6 +82,54 @@ function summarizeLatencies(latencies: number[]): LoadSummary["latency_ms"] {
     max: roundMs(sorted[sorted.length - 1]),
     avg: roundMs(sum / sorted.length),
   };
+}
+
+function normalizeNonEmpty(raw: string | undefined, flag: string): string {
+  const value = `${raw ?? ""}`.trim();
+  if (!value) {
+    throw new Error(`${flag} must be non-empty`);
+  }
+  return value;
+}
+
+function buildSeedEmail(opts: {
+  prefix: string;
+  domain: string;
+  index: number;
+  width: number;
+}): string {
+  const { prefix, domain, index, width } = opts;
+  return `${prefix}-${String(index).padStart(width, "0")}@${domain}`.toLowerCase();
+}
+
+function isAlreadyCollaboratorError(err: unknown): boolean {
+  return `${(err as any)?.message ?? err ?? ""}`
+    .toLowerCase()
+    .includes("already a collaborator");
+}
+
+async function findAccountByEmailExact(ctx: any, email: string) {
+  const normalized = `${email ?? ""}`.trim().toLowerCase();
+  if (!normalized) {
+    return null;
+  }
+  const rows = (await ctx.hub.system.userSearch({
+    query: normalized,
+    limit: 10,
+    only_email: true,
+    admin: true,
+  })) as Array<{
+    account_id: string;
+    email_address?: string | null;
+    first_name?: string | null;
+    last_name?: string | null;
+    name?: string | null;
+  }>;
+  return (
+    rows.find(
+      (row) => `${row.email_address ?? ""}`.trim().toLowerCase() === normalized,
+    ) ?? null
+  );
 }
 
 async function runLoadScenario({
@@ -162,7 +212,7 @@ export function registerLoadCommand(
   program: Command,
   deps: LoadCommandDeps,
 ): Command {
-  const { withContext, queryProjects } = deps;
+  const { withContext, queryProjects, resolveProjectFromArgOrContext } = deps;
 
   const load = program
     .command("load")
@@ -263,6 +313,209 @@ export function registerLoadCommand(
               };
             },
           });
+        });
+      },
+    );
+
+  const seed = load
+    .command("seed")
+    .description("create deterministic synthetic load-test fixtures");
+
+  seed
+    .command("users")
+    .description(
+      "create or reuse many accounts, and optionally add them directly as collaborators to a project",
+    )
+    .requiredOption("--count <n>", "number of accounts to create or reuse")
+    .requiredOption(
+      "--prefix <prefix>",
+      "email prefix, used as '<prefix>-NNNN@<domain>'",
+    )
+    .option(
+      "--domain <domain>",
+      "email domain for synthetic accounts",
+      "load.test",
+    )
+    .option("--start <n>", "starting numeric suffix", "1")
+    .option("--concurrency <n>", "parallel workers", "8")
+    .option(
+      "-w, --project <project>",
+      "project id or name to add as collaborator",
+    )
+    .option(
+      "--password <password>",
+      "shared password for all created accounts (omit to auto-generate)",
+    )
+    .option("--tag <tag...>", "additional tags for newly created accounts")
+    .option("--no-reuse-existing", "fail if a target email already exists")
+    .option("--full", "include all per-account rows in the output")
+    .action(
+      async (
+        opts: {
+          count?: string;
+          prefix?: string;
+          domain?: string;
+          start?: string;
+          concurrency?: string;
+          project?: string;
+          password?: string;
+          tag?: string[];
+          reuseExisting?: boolean;
+          full?: boolean;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "load seed users", async (ctx) => {
+          const count = parsePositiveInteger(opts.count, "--count", 1);
+          const start = parsePositiveInteger(opts.start, "--start", 1);
+          const concurrency = parsePositiveInteger(
+            opts.concurrency,
+            "--concurrency",
+            8,
+          );
+          const prefix = normalizeNonEmpty(opts.prefix, "--prefix");
+          const domain = normalizeNonEmpty(opts.domain, "--domain");
+          const width = Math.max(4, String(start + count - 1).length);
+          const baseTags = ["load-test", "load-seed", `load-seed:${prefix}`];
+          const tags = Array.from(
+            new Set(
+              [...baseTags, ...(opts.tag ?? []).map((tag) => `${tag}`.trim())]
+                .map((tag) => tag.trim())
+                .filter(Boolean),
+            ),
+          );
+          const startedAt = new Date();
+          const started = performance.now();
+          const project = opts.project
+            ? await resolveProjectFromArgOrContext(ctx, opts.project)
+            : null;
+          const workerCount = Math.min(concurrency, count);
+          const rows: SeedScenarioResult[] = [];
+          const sampleErrors: string[] = [];
+          let nextIndex = 0;
+          let created = 0;
+          let reused = 0;
+          let collaboratorsAdded = 0;
+          let collaboratorsExisting = 0;
+          let failures = 0;
+
+          const workers = Array.from({ length: workerCount }, async () => {
+            while (true) {
+              const offset = nextIndex++;
+              if (offset >= count) {
+                return;
+              }
+              const index = start + offset;
+              const email = buildSeedEmail({
+                prefix,
+                domain,
+                index,
+                width,
+              });
+              const row: SeedScenarioResult = {
+                index,
+                email,
+              };
+              try {
+                let account = null as null | {
+                  account_id: string;
+                  first_name?: string | null;
+                  last_name?: string | null;
+                  email_address?: string | null;
+                };
+                let accountStatus: "created" | "reused" = "created";
+                try {
+                  const createdAccount = await ctx.hub.system.adminCreateUser({
+                    email,
+                    password: opts.password,
+                    first_name: "Load",
+                    last_name: `${prefix}-${index}`,
+                    no_first_project: true,
+                    tags,
+                  });
+                  account = createdAccount;
+                  created += 1;
+                } catch (err) {
+                  if (!opts.reuseExisting) {
+                    throw err;
+                  }
+                  const existing = await findAccountByEmailExact(ctx, email);
+                  if (!existing?.account_id) {
+                    throw err;
+                  }
+                  account = existing;
+                  accountStatus = "reused";
+                  reused += 1;
+                }
+                if (!account?.account_id) {
+                  throw new Error(`unable to resolve account for '${email}'`);
+                }
+
+                row.account_id = account.account_id;
+                row.account_status = accountStatus;
+
+                if (project?.project_id) {
+                  try {
+                    await ctx.hub.projects.createCollabInvite({
+                      project_id: project.project_id,
+                      invitee_account_id: account.account_id,
+                      direct: true,
+                    });
+                    row.collaborator_status = "added";
+                    collaboratorsAdded += 1;
+                  } catch (err) {
+                    if (!isAlreadyCollaboratorError(err)) {
+                      throw err;
+                    }
+                    row.collaborator_status = "existing";
+                    collaboratorsExisting += 1;
+                  }
+                }
+              } catch (err) {
+                failures += 1;
+                row.error = err instanceof Error ? err.message : `${err}`;
+                if (sampleErrors.length < 10) {
+                  sampleErrors.push(`${email}: ${row.error}`);
+                }
+              }
+              rows.push(row);
+            }
+          });
+
+          await Promise.all(workers);
+
+          rows.sort((a, b) => Number(a.index) - Number(b.index));
+          const elapsed = performance.now() - started;
+          return {
+            scenario: "seed-users",
+            started_at: startedAt.toISOString(),
+            finished_at: new Date().toISOString(),
+            wall_ms: roundMs(elapsed),
+            accounts_per_sec:
+              count <= 0 || elapsed <= 0
+                ? 0
+                : roundMs((count * 1000) / elapsed),
+            count_requested: count,
+            count_processed: rows.length,
+            start_index: start,
+            end_index: start + count - 1,
+            concurrency: workerCount,
+            prefix,
+            domain,
+            email_pattern: `${prefix}-{n}@${domain}`,
+            tags,
+            project_id: project?.project_id ?? null,
+            project_title: project?.title ?? null,
+            accounts_created: created,
+            accounts_reused: reused,
+            collaborators_added: collaboratorsAdded,
+            collaborators_existing: collaboratorsExisting,
+            failures,
+            sample_errors: sampleErrors,
+            sample_rows: rows.slice(0, 10),
+            last_row: rows[rows.length - 1] ?? null,
+            ...(opts.full ? { rows } : undefined),
+          };
         });
       },
     );
