@@ -178,6 +178,7 @@ export default async function createProject(opts: CreateProjectOptions) {
   let host_id: string | undefined = requested_host_id;
   let requested_region_raw: string | undefined = requested_region_raw_input;
   let hostStatus: string | null | undefined;
+  let owningBayId = getConfiguredBayId();
 
   async function resolveHostPlacement(host_id: string) {
     if (!account_id) {
@@ -226,6 +227,7 @@ export default async function createProject(opts: CreateProjectOptions) {
     return {
       host_id,
       hostRegion,
+      hostBayId: `${row.bay_id ?? ""}`.trim() || getConfiguredBayId(),
       hostStatus: row.status as string | null | undefined,
     };
   }
@@ -239,7 +241,7 @@ export default async function createProject(opts: CreateProjectOptions) {
     }
     // keep the clone on the same project-host as the source unless explicitly overridden
     const { rows } = await pool.query(
-      "SELECT host_id, region, rootfs_image, rootfs_image_id FROM projects WHERE project_id=$1",
+      "SELECT host_id, region, rootfs_image, rootfs_image_id, owning_bay_id FROM projects WHERE project_id=$1",
       [src_project_id],
     );
     if (!host_id && rows[0]?.host_id) {
@@ -257,6 +259,9 @@ export default async function createProject(opts: CreateProjectOptions) {
     if (!opts.rootfs_image_id && rows[0]?.rootfs_image_id) {
       opts.rootfs_image_id = rows[0].rootfs_image_id;
     }
+    if (!host_id && rows[0]?.owning_bay_id) {
+      owningBayId = `${rows[0].owning_bay_id}`.trim() || owningBayId;
+    }
     // create filesystem for new project as a clone.
     // Route clone to the host that owns the source project.
     const client = await getProjectFileServerClient({
@@ -272,7 +277,12 @@ export default async function createProject(opts: CreateProjectOptions) {
 
   let hostRegion: string | undefined;
   if (host_id) {
-    ({ host_id, hostRegion, hostStatus } = await resolveHostPlacement(host_id));
+    ({
+      host_id,
+      hostRegion,
+      hostStatus,
+      hostBayId: owningBayId,
+    } = await resolveHostPlacement(host_id));
   }
 
   const projectRegion = requestedRegion ?? hostRegion ?? DEFAULT_R2_REGION;
@@ -294,7 +304,7 @@ export default async function createProject(opts: CreateProjectOptions) {
       ephemeral ?? null,
       host_id ?? null,
       projectRegion,
-      getConfiguredBayId(),
+      owningBayId,
     ],
   );
 

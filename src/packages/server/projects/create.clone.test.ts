@@ -95,7 +95,7 @@ describe("projects.createProject clone routing", () => {
       }
       if (
         sql.includes(
-          "SELECT host_id, region, rootfs_image, rootfs_image_id FROM projects WHERE project_id=$1",
+          "SELECT host_id, region, rootfs_image, rootfs_image_id, owning_bay_id FROM projects WHERE project_id=$1",
         )
       ) {
         expect(params).toEqual([SOURCE_PROJECT_ID]);
@@ -106,6 +106,7 @@ describe("projects.createProject clone routing", () => {
               region: "wnam",
               rootfs_image: "buildpack-deps:noble-scm",
               rootfs_image_id: "official-cocalc-base",
+              owning_bay_id: "bay-3",
             },
           ],
         };
@@ -120,6 +121,7 @@ describe("projects.createProject clone routing", () => {
               last_seen: new Date(),
               deleted: null,
               region: "us-west1",
+              bay_id: "bay-7",
               tier: 0,
               metadata: {
                 owner: ACCOUNT_ID,
@@ -134,7 +136,7 @@ describe("projects.createProject clone routing", () => {
         insertedProjectId = params[0];
         expect(params[7]).toBe(HOST_ID);
         expect(params[8]).toBe("wnam");
-        expect(params[9]).toBe("bay-0");
+        expect(params[9]).toBe("bay-7");
         return { rowCount: 1 };
       }
       if (sql.includes("INSERT INTO project_rootfs_states")) {
