@@ -8,7 +8,6 @@ Tests are in
 */
 
 import { type Client } from "@cocalc/conat/core/client";
-import { conat } from "@cocalc/conat/client";
 import state, { type ProjectStatus } from "./state";
 import { until } from "@cocalc/util/async-utils";
 import type {
@@ -26,7 +25,7 @@ export const UPDATE_INTERVAL = 10_000;
 export interface Options {
   // client -- Client for the Conat cluster. State of this project runner gets saved here, and it
   // willl start a service listening here.
-  client?: Client;
+  client: Client;
   // id -- the id of this project runner -- each project runner must have a different id,
   // so the load balancer knows where to place projects and knows where a project is
   // currently located.
@@ -117,7 +116,9 @@ export async function server(options: Options) {
   if (!options.id) {
     throw Error("project server id MUST be specified");
   }
-  options.client ??= conat();
+  if (!options.client) {
+    throw Error("project runner server client MUST be specified");
+  }
 
   const { id, client, start, stop, status, save } = options;
   const { projects, runners } = await state({ client });
@@ -215,7 +216,7 @@ export async function server(options: Options) {
 }
 
 export interface BasicOptions {
-  client?: Client;
+  client: Client;
   timeout?: number;
   waitForInterest?: boolean;
 }
@@ -238,8 +239,10 @@ export function client({
   if (project_id && !isValidUUID(project_id)) {
     throw Error(`invalid project_id ${project_id}`);
   }
+  if (!client) {
+    throw Error("project runner client MUST be specified");
+  }
   subject ??= `project.${project_id}.run`;
-  client ??= conat();
   // Note that the project_id field gets filled in automatically in the API
   // because the project above is of the form project.{project_id}.
   return client.call<API>(subject, { waitForInterest, timeout });

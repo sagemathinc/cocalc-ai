@@ -115,20 +115,35 @@ This keeps per-notebook usage lookups and the backing project service on the
 same routed client chosen by the caller instead of silently attaching to a
 singleton.
 
+## Completed In The Project Runner Pass
+
+### `conat/project/runner/run.ts` and `conat/project/runner/load-balancer.ts`
+
+- removed the hidden fallback to the global Conat singleton
+- both helper layers now require an explicit client for:
+  - runner server registration
+  - runner RPC clients
+  - load-balancer server registration
+  - load-balancer RPC clients
+- current production callers already had a natural routed choice:
+  - [project-host/main.ts](/home/wstein/build/cocalc-lite4/src/packages/project-host/main.ts)
+  - [project-host/acp-worker.ts](/home/wstein/build/cocalc-lite4/src/packages/project-host/acp-worker.ts)
+  - [project-runner/run/index.ts](/home/wstein/build/cocalc-lite4/src/packages/project-runner/run/index.ts)
+- [server/projects/control/base.ts](/home/wstein/build/cocalc-lite4/src/packages/server/projects/control/base.ts)
+  still intentionally chooses the current backend hub client, but now does so
+  in a local helper instead of relying on the shared runner helper to silently
+  select a singleton
+
+This closes another backend control path that would otherwise become ambiguous
+once project control traffic can target different bays or host-specific Conat
+connections.
+
 ## Remaining Hotspots
 
 ### Shared Helper Fallbacks
 
 These still silently fall back to the global singleton and should be reviewed
 next:
-
-### Project / Files Helpers
-
-These also have hidden singleton fallback behavior and should be audited after
-the higher-level control-plane helpers above:
-
-- [conat/project/runner/run.ts](/home/wstein/build/cocalc-lite4/src/packages/conat/project/runner/run.ts)
-- [conat/project/runner/load-balancer.ts](/home/wstein/build/cocalc-lite4/src/packages/conat/project/runner/load-balancer.ts)
 
 ### Frontend Singleton Sites
 
