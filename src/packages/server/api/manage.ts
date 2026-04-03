@@ -12,8 +12,10 @@ they have no password, then the provided one is ignored.
 
 import getPool from "@cocalc/database/pool";
 import { generate } from "random-key";
-import isCollaborator from "@cocalc/server/projects/is-collaborator";
-import { assertLocalProjectCollaborator } from "@cocalc/server/conat/project-local-access";
+import {
+  assertLocalProjectCollaborator,
+  getLocalProjectCollaboratorAccessStatus,
+} from "@cocalc/server/conat/project-local-access";
 import passwordHash, {
   verifyPassword,
 } from "@cocalc/backend/auth/password-hash";
@@ -307,12 +309,30 @@ export async function getAccountWithApiKey(
     return;
   }
   if (verifyPassword(secret, rows[0].hash)) {
-    // If project and account_id no longer a collab, then we delete the key and fail.
-    // I.e., if you reate an api key for a project, then you stop collab on that
-    // project, then your api key will automatically stop working.
-    if (rows[0].project_id && !(await isCollaborator(rows[0]))) {
-      await deleteApiKey({ ...rows[0], id });
-      return undefined;
+    // If the creator no longer has collaborator access to the project on this bay,
+    // then this project-scoped key should not authorize here. Keys that are simply
+    // being checked on the wrong bay are rejected without being deleted.
+    if (rows[0].project_id) {
+      const account_id = rows[0].account_id;
+      if (!account_id) {
+        await deleteApiKey({ ...rows[0], id });
+        return undefined;
+      }
+      const access = await getLocalProjectCollaboratorAccessStatus({
+        account_id,
+        project_id: rows[0].project_id,
+      });
+      if (access === "wrong-bay") {
+        log.debug(
+          "getAccountWithApiKey: project api key rejected on non-owning bay",
+          { account_id, project_id: rows[0].project_id },
+        );
+        return undefined;
+      }
+      if (access !== "local-collaborator") {
+        await deleteApiKey({ ...rows[0], id });
+        return undefined;
+      }
     }
     const { expire } = rows[0];
     if (expire != null && expire.valueOf() <= Date.now()) {

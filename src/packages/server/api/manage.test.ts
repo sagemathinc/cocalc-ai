@@ -1,8 +1,13 @@
 export {};
 
+import base62 from "base62/lib/ascii";
+
 let queryMock: jest.Mock;
 let isValidAccountMock: jest.Mock;
 let assertLocalProjectCollaboratorMock: jest.Mock;
+let getLocalProjectCollaboratorAccessStatusMock: jest.Mock;
+let verifyPasswordMock: jest.Mock;
+let isBannedMock: jest.Mock;
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
@@ -18,6 +23,19 @@ jest.mock("@cocalc/server/conat/project-local-access", () => ({
   __esModule: true,
   assertLocalProjectCollaborator: (...args: any[]) =>
     assertLocalProjectCollaboratorMock(...args),
+  getLocalProjectCollaboratorAccessStatus: (...args: any[]) =>
+    getLocalProjectCollaboratorAccessStatusMock(...args),
+}));
+
+jest.mock("@cocalc/backend/auth/password-hash", () => ({
+  __esModule: true,
+  default: jest.fn(() => "hash"),
+  verifyPassword: (...args: any[]) => verifyPasswordMock(...args),
+}));
+
+jest.mock("@cocalc/server/accounts/is-banned", () => ({
+  __esModule: true,
+  default: (...args: any[]) => isBannedMock(...args),
 }));
 
 jest.mock("@cocalc/backend/logger", () => ({
@@ -39,6 +57,11 @@ describe("manageApiKeys local bay access", () => {
     queryMock = jest.fn(async () => ({ rows: [] }));
     isValidAccountMock = jest.fn(async () => true);
     assertLocalProjectCollaboratorMock = jest.fn(async () => undefined);
+    getLocalProjectCollaboratorAccessStatusMock = jest.fn(
+      async () => "local-collaborator",
+    );
+    verifyPasswordMock = jest.fn(() => true);
+    isBannedMock = jest.fn(async () => false);
   });
 
   it("rejects project-scoped api key management for wrong-bay projects", async () => {
@@ -82,5 +105,56 @@ describe("manageApiKeys local bay access", () => {
       project_id: PROJECT_ID,
     });
     expect(queryMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects project api keys on the wrong bay without deleting them", async () => {
+    const secret = `sk-test${base62.encode(1).padStart(6, "0")}`;
+    queryMock = jest.fn().mockResolvedValueOnce({
+      rows: [
+        {
+          account_id: ACCOUNT_ID,
+          project_id: PROJECT_ID,
+          hash: "hash",
+          expire: null,
+        },
+      ],
+    });
+    getLocalProjectCollaboratorAccessStatusMock = jest.fn(
+      async () => "wrong-bay",
+    );
+    const { getAccountWithApiKey } = await import("./manage");
+    await expect(getAccountWithApiKey(secret)).resolves.toBeUndefined();
+    expect(getLocalProjectCollaboratorAccessStatusMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      project_id: PROJECT_ID,
+    });
+    expect(queryMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("deletes stale project api keys when creator is no longer a collaborator", async () => {
+    const secret = `sk-test${base62.encode(7).padStart(6, "0")}`;
+    queryMock = jest
+      .fn()
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            account_id: ACCOUNT_ID,
+            project_id: PROJECT_ID,
+            hash: "hash",
+            expire: null,
+          },
+        ],
+      })
+      .mockResolvedValueOnce({ rowCount: 1 });
+    getLocalProjectCollaboratorAccessStatusMock = jest.fn(
+      async () => "not-collaborator",
+    );
+    const { getAccountWithApiKey } = await import("./manage");
+    await expect(getAccountWithApiKey(secret)).resolves.toBeUndefined();
+    expect(queryMock).toHaveBeenNthCalledWith(
+      2,
+      "DELETE FROM api_keys WHERE project_id=$1 AND id=$2",
+      [PROJECT_ID, 7],
+    );
   });
 });

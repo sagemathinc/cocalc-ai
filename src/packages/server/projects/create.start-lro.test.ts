@@ -39,11 +39,6 @@ jest.mock("@cocalc/server/accounts/is-admin", () => ({
   default: jest.fn(async () => false),
 }));
 
-jest.mock("@cocalc/server/projects/is-collaborator", () => ({
-  __esModule: true,
-  default: jest.fn(async () => true),
-}));
-
 jest.mock("@cocalc/server/projects/control", () => ({
   __esModule: true,
   getProject: (...args: any[]) => getProjectMock(...args),

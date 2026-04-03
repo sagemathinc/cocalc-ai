@@ -43,6 +43,7 @@ describe("project local access", () => {
       rows: [{ group: "owner", owning_bay_id: "bay-9" }],
     }));
     const {
+      getLocalProjectCollaboratorAccessStatus,
       hasLocalProjectCollaboratorAccess,
       assertLocalProjectCollaborator,
       PROJECT_OWNED_BY_ANOTHER_BAY_ERROR,
@@ -53,6 +54,12 @@ describe("project local access", () => {
         project_id: PROJECT_ID,
       }),
     ).resolves.toBe(false);
+    await expect(
+      getLocalProjectCollaboratorAccessStatus({
+        account_id: ACCOUNT_ID,
+        project_id: PROJECT_ID,
+      }),
+    ).resolves.toBe("wrong-bay");
     await expect(
       assertLocalProjectCollaborator({
         account_id: ACCOUNT_ID,
@@ -66,6 +73,7 @@ describe("project local access", () => {
       rows: [{ group: "viewer", owning_bay_id: "bay-0" }],
     }));
     const {
+      getLocalProjectCollaboratorAccessStatus,
       hasLocalProjectCollaboratorAccess,
       assertLocalProjectCollaborator,
       PROJECT_COLLABORATOR_REQUIRED_ERROR,
@@ -77,6 +85,12 @@ describe("project local access", () => {
       }),
     ).resolves.toBe(false);
     await expect(
+      getLocalProjectCollaboratorAccessStatus({
+        account_id: ACCOUNT_ID,
+        project_id: PROJECT_ID,
+      }),
+    ).resolves.toBe("not-collaborator");
+    await expect(
       assertLocalProjectCollaborator({
         account_id: ACCOUNT_ID,
         project_id: PROJECT_ID,
@@ -86,8 +100,17 @@ describe("project local access", () => {
 
   it("throws for missing projects when checking local ownership", async () => {
     queryMock = jest.fn(async () => ({ rows: [] }));
-    const { assertLocalProjectOwnership, PROJECT_NOT_FOUND_ERROR } =
-      await import("./project-local-access");
+    const {
+      assertLocalProjectOwnership,
+      getLocalProjectCollaboratorAccessStatus,
+      PROJECT_NOT_FOUND_ERROR,
+    } = await import("./project-local-access");
+    await expect(
+      getLocalProjectCollaboratorAccessStatus({
+        account_id: ACCOUNT_ID,
+        project_id: PROJECT_ID,
+      }),
+    ).resolves.toBe("missing-project");
     await expect(
       assertLocalProjectOwnership({
         project_id: PROJECT_ID,

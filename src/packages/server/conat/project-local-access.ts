@@ -7,6 +7,11 @@ export const PROJECT_COLLABORATOR_REQUIRED_ERROR =
 export const PROJECT_OWNED_BY_ANOTHER_BAY_ERROR =
   "project belongs to another bay";
 export const PROJECT_NOT_FOUND_ERROR = "project not found";
+export type LocalProjectCollaboratorAccessStatus =
+  | "local-collaborator"
+  | "wrong-bay"
+  | "not-collaborator"
+  | "missing-project";
 
 function pool() {
   return getPool("long");
@@ -83,15 +88,32 @@ export async function hasLocalProjectCollaboratorAccess({
   account_id: string;
   project_id: string;
 }): Promise<boolean> {
+  return (
+    (await getLocalProjectCollaboratorAccessStatus({
+      account_id,
+      project_id,
+    })) === "local-collaborator"
+  );
+}
+
+export async function getLocalProjectCollaboratorAccessStatus({
+  account_id,
+  project_id,
+}: {
+  account_id: string;
+  project_id: string;
+}): Promise<LocalProjectCollaboratorAccessStatus> {
   assertValidIds({ account_id, project_id });
   const row = await loadProjectAccessRow({ account_id, project_id });
   if (!row) {
-    return false;
+    return "missing-project";
   }
   if (row.owning_bay_id !== getConfiguredBayId()) {
-    return false;
+    return "wrong-bay";
   }
-  return row.group === "owner" || row.group === "collaborator";
+  return row.group === "owner" || row.group === "collaborator"
+    ? "local-collaborator"
+    : "not-collaborator";
 }
 
 export async function assertLocalProjectCollaborator({
@@ -101,13 +123,14 @@ export async function assertLocalProjectCollaborator({
   account_id: string;
   project_id: string;
 }): Promise<void> {
-  assertValidIds({ account_id, project_id });
-  const row = await loadProjectAccessRow({ account_id, project_id });
-  if (row?.owning_bay_id && row.owning_bay_id !== getConfiguredBayId()) {
-    throw Error(PROJECT_OWNED_BY_ANOTHER_BAY_ERROR);
+  switch (
+    await getLocalProjectCollaboratorAccessStatus({ account_id, project_id })
+  ) {
+    case "local-collaborator":
+      return;
+    case "wrong-bay":
+      throw Error(PROJECT_OWNED_BY_ANOTHER_BAY_ERROR);
+    default:
+      throw Error(PROJECT_COLLABORATOR_REQUIRED_ERROR);
   }
-  if (row?.group === "owner" || row?.group === "collaborator") {
-    return;
-  }
-  throw Error(PROJECT_COLLABORATOR_REQUIRED_ERROR);
 }
