@@ -164,6 +164,25 @@ This keeps shared project metadata helpers reusable across frontend, backend,
 CLI, and future bay-aware code without letting them silently attach to an
 ambient singleton.
 
+## Completed In The Generic Service Pass
+
+### `conat/service/service.ts`
+
+- removed the hidden fallback to the global Conat singleton
+- `callConatService(...)` and `createConatService(...)` now require an
+  explicit client
+- `pingConatService(...)` and `waitForConatService(...)` now flow through the
+  same explicit-client requirement
+- the natural singleton wrappers remain local:
+  - [frontend/conat/client.ts](/home/wstein/build/cocalc-lite4/src/packages/frontend/conat/client.ts)
+    now injects the browser Conat client explicitly
+  - [project/client.ts](/home/wstein/build/cocalc-lite4/src/packages/project/client.ts)
+    now injects the project-scoped client explicitly
+
+This keeps the reusable request/reply service layer safe for backend and
+multi-bay reuse while preserving convenient wrapper APIs in the browser and
+project runtimes.
+
 ## Remaining Hotspots
 
 ### Shared Helper Fallbacks
@@ -171,7 +190,6 @@ ambient singleton.
 These still silently fall back to the global singleton and should be reviewed
 next:
 
-- [conat/service/service.ts](/home/wstein/build/cocalc-lite4/src/packages/conat/service/service.ts)
 - [conat/lro/stream.ts](/home/wstein/build/cocalc-lite4/src/packages/conat/lro/stream.ts)
 - [conat/files/fs.ts](/home/wstein/build/cocalc-lite4/src/packages/conat/files/fs.ts)
 - [conat/llm/client.ts](/home/wstein/build/cocalc-lite4/src/packages/conat/llm/client.ts)

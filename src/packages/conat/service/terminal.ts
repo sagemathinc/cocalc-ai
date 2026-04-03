@@ -7,6 +7,7 @@ import {
   createServiceHandler,
   type ConatService,
 } from "./typed";
+import { getClient } from "@cocalc/conat/client";
 
 export type { ConatService };
 
@@ -44,6 +45,7 @@ interface TerminalApi {
 
 export function createTerminalClient({ project_id, termPath }) {
   return createServiceClient<TerminalApi>({
+    client: getClient().conat(),
     project_id,
     path: termPath,
     service: "terminal-server",
@@ -63,6 +65,7 @@ export function createTerminalServer({
   impl;
 }): ConatService {
   return createServiceHandler<TerminalApi>({
+    client: getClient().conat(),
     project_id,
     path: termPath,
     service: "terminal-server",
@@ -86,6 +89,7 @@ export interface TerminalBrowserApi {
 
 export function createBrowserClient({ project_id, termPath }) {
   return createServiceClient<TerminalBrowserApi>({
+    client: getClient().conat(),
     project_id,
     path: termPath,
     service: "terminal-browser",
@@ -102,6 +106,7 @@ export function createBrowserService({
   impl: TerminalBrowserApi;
 }): ConatService {
   return createServiceHandler<TerminalBrowserApi>({
+    client: getClient().conat(),
     project_id,
     path: termPath,
     service: "terminal-browser",

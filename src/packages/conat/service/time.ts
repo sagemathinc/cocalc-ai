@@ -35,6 +35,7 @@ export function timeClient(user?: User) {
   }
   const subject = timeSubject(user);
   return createServiceClient<TimeApi>({
+    client: getClient().conat(),
     service: "time",
     subject,
   });
@@ -42,6 +43,7 @@ export function timeClient(user?: User) {
 
 export async function createTimeService() {
   return await createServiceHandler<TimeApi>({
+    client: getClient().conat(),
     service: "time",
     subject: `${SUBJECT}.*.api`,
     description: "Time service -- tell me what time you think it is.",

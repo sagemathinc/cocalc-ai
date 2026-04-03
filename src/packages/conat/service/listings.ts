@@ -3,6 +3,7 @@ Service for watching directory listings in a project.
 */
 
 import { createServiceClient, createServiceHandler } from "./typed";
+import { getClient } from "@cocalc/conat/client";
 import type { DirectoryListingEntry } from "@cocalc/util/types";
 import { dkv, type DKV } from "@cocalc/conat/sync/dkv";
 import { EventEmitter } from "events";
@@ -39,6 +40,7 @@ interface ListingsOptions {
 
 export function createListingsApiClient({ project_id }: ListingsOptions) {
   return createServiceClient<ListingsApi>({
+    client: getClient().conat(),
     project_id,
     service: "listings",
   });
@@ -51,6 +53,7 @@ export async function createListingsService({
   impl,
 }: ListingsOptions & { impl }) {
   return await createServiceHandler<ListingsApi>({
+    client: getClient().conat(),
     project_id,
     service: "listings",
     description: "Directory listing service",

@@ -822,11 +822,17 @@ export class ConatClient extends EventEmitter {
   });
 
   callConatService: CallConatServiceFunction = async (options) => {
-    return await callConatService(options);
+    return await callConatService({
+      ...options,
+      client: this.conat(),
+    });
   };
 
   createConatService: CreateConatServiceFunction = (options) => {
-    return createConatService(options);
+    return createConatService({
+      ...options,
+      client: this.conat(),
+    });
   };
 
   projectWebsocketApi = async ({

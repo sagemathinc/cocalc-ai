@@ -9,6 +9,7 @@ import { createServiceClient, createServiceHandler } from "./typed";
 import type { ConatService } from "./typed";
 import type { Client } from "@cocalc/conat/core/client";
 import type { BrowserOpenProjectState } from "@cocalc/conat/hub/api/system";
+import { getClient } from "@cocalc/conat/client";
 
 export type BrowserOpenFileInfo = {
   project_id: string;
@@ -395,7 +396,7 @@ export function createBrowserSessionClient({
     account_id,
     browser_id,
     service: SERVICE,
-    client,
+    client: client ?? getClient().conat(),
     timeout,
   });
 }
@@ -417,6 +418,6 @@ export function createBrowserSessionService({
     service: SERVICE,
     description: "Browser session automation service.",
     impl,
-    client,
+    client: client ?? getClient().conat(),
   });
 }

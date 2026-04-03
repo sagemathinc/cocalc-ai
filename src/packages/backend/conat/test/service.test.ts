@@ -25,6 +25,17 @@ import { once } from "@cocalc/util/async-utils";
 
 beforeAll(before);
 
+describe("service explicit routing", () => {
+  it("requires an explicit Conat client for callConatService", async () => {
+    await expect(
+      callConatService({
+        service: "echo",
+        mesg: "hello",
+      } as any),
+    ).rejects.toThrow("must provide an explicit Conat client");
+  });
+});
+
 describe("create a service and test it out", () => {
   let s;
   it("creates a service", async () => {
@@ -296,6 +307,7 @@ describe("create a slow service and check that the timeout parameter works", () 
   it("confirms it works", async () => {
     const t0 = Date.now();
     const r = await callConatService({
+      client: testClient,
       service: s.name,
       mesg: 50,
     });
@@ -307,6 +319,7 @@ describe("create a slow service and check that the timeout parameter works", () 
   it("confirms it throws a timeout error", async () => {
     await expect(async () => {
       await callConatService({
+        client: testClient,
         service: s.name,
         mesg: 250,
         timeout: 75,
