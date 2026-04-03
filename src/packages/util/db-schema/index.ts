@@ -16,6 +16,9 @@ export { retentionModels } from "./retention";
 
 // The tables
 import "./account-creation-actions";
+import "./account-collaborator-index";
+import "./account-notification-index";
+import "./account-project-index";
 import "./account-profiles";
 import "./accounts";
 import "./api-keys";
@@ -58,6 +61,7 @@ import "./project-hosts";
 import "./project-host-bootstrap-tokens";
 import "./project-backup-repos";
 import "./project-collab-invites";
+import "./project-events-outbox";
 import "./project-rootfs-states";
 import "./projects";
 import "./rootfs-image-events";

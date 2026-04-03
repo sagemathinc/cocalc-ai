@@ -7,6 +7,7 @@ import { getFrontendSourceFingerprint } from "@cocalc/backend/frontend-build-fin
 import { type HubApi, getUserId, transformArgs } from "@cocalc/conat/hub/api";
 import type {
   AccountBayLocation,
+  AccountProjectIndexRebuildResult,
   BayInfo,
   BayOwnershipBackfillResult,
   CodexPaymentSourceInfo,
@@ -505,6 +506,22 @@ export async function backfillBayOwnershipLite(opts?: {
   };
 }
 
+export async function rebuildAccountProjectIndexLite(opts?: {
+  account_id?: string;
+  target_account_id?: string;
+  dry_run?: boolean;
+}): Promise<AccountProjectIndexRebuildResult> {
+  if (hasRemote) {
+    return await callRemoteHub({
+      name: "system.rebuildAccountProjectIndex",
+      args: [opts ?? {}],
+    });
+  }
+  throw new Error(
+    "account_project_index rebuild requires a remote hub connection",
+  );
+}
+
 async function upsertBrowserSession(opts?: {
   account_id?: string;
   browser_id: string;
@@ -602,6 +619,7 @@ export const hubApi: HubApi = {
     getProjectBay: getProjectBayLite,
     getHostBay: getHostBayLite,
     backfillBayOwnership: backfillBayOwnershipLite,
+    rebuildAccountProjectIndex: rebuildAccountProjectIndexLite,
     getCodexPaymentSource,
     getCodexLocalStatus,
     getFrontendSourceFingerprint: getFrontendSourceFingerprintInfo,

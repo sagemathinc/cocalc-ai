@@ -11,6 +11,9 @@ export function registerBayCommand(
   const { withContext } = deps;
 
   const bay = program.command("bay").description("bay operations");
+  const projection = bay
+    .command("projection")
+    .description("bay-local projection operations");
 
   bay
     .command("list")
@@ -67,6 +70,33 @@ export function registerBayCommand(
             limit_per_table,
           });
         });
+      },
+    );
+
+  projection
+    .command("rebuild-account-project-index <account_id>")
+    .description(
+      "rebuild the account_project_index rows for one home-bay account",
+    )
+    .option("--write", "apply changes instead of running a dry run", false)
+    .action(
+      async (
+        account_id: string,
+        opts: {
+          write?: boolean;
+        },
+        command: Command,
+      ) => {
+        await withContext(
+          command,
+          "bay projection rebuild-account-project-index",
+          async (ctx) => {
+            return await ctx.hub.system.rebuildAccountProjectIndex({
+              target_account_id: account_id,
+              dry_run: !opts.write,
+            });
+          },
+        );
       },
     );
 

@@ -150,3 +150,92 @@ test("bay backfill forwards write mode and limit", async () => {
     limit_per_table: 25,
   });
 });
+
+test("bay projection rebuild-account-project-index defaults to a dry run", async () => {
+  let captured: any;
+  const program = new Command();
+  registerBayCommand(program, {
+    withContext: async (_command, _label, fn) => {
+      const ctx = {
+        hub: {
+          system: {
+            rebuildAccountProjectIndex: async (opts: any) => {
+              captured = opts;
+              return {
+                bay_id: "bay-0",
+                target_account_id: "11111111-1111-4111-8111-111111111111",
+                dry_run: true,
+                existing_rows: 2,
+                source_rows: 2,
+                visible_rows: 1,
+                hidden_rows: 1,
+                deleted_rows: 0,
+                inserted_rows: 0,
+              };
+            },
+          },
+        },
+      };
+      return await fn(ctx);
+    },
+  } as any);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "bay",
+    "projection",
+    "rebuild-account-project-index",
+    "11111111-1111-4111-8111-111111111111",
+  ]);
+
+  assert.deepEqual(captured, {
+    target_account_id: "11111111-1111-4111-8111-111111111111",
+    dry_run: true,
+  });
+});
+
+test("bay projection rebuild-account-project-index forwards write mode", async () => {
+  let captured: any;
+  const program = new Command();
+  registerBayCommand(program, {
+    withContext: async (_command, _label, fn) => {
+      const ctx = {
+        hub: {
+          system: {
+            rebuildAccountProjectIndex: async (opts: any) => {
+              captured = opts;
+              return {
+                bay_id: "bay-0",
+                target_account_id: "11111111-1111-4111-8111-111111111111",
+                dry_run: false,
+                existing_rows: 1,
+                source_rows: 3,
+                visible_rows: 2,
+                hidden_rows: 1,
+                deleted_rows: 1,
+                inserted_rows: 3,
+              };
+            },
+          },
+        },
+      };
+      return await fn(ctx);
+    },
+  } as any);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "bay",
+    "projection",
+    "rebuild-account-project-index",
+    "11111111-1111-4111-8111-111111111111",
+    "--write",
+  ]);
+
+  assert.deepEqual(captured, {
+    target_account_id: "11111111-1111-4111-8111-111111111111",
+    dry_run: false,
+  });
+});

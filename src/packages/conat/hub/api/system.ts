@@ -31,6 +31,7 @@ export const system = {
   getProjectBay: authFirstRequireAccount,
   getHostBay: authFirstRequireAccount,
   backfillBayOwnership: authFirst,
+  rebuildAccountProjectIndex: authFirst,
   getParallelOpsStatus: authFirst,
   getProjectHostParallelOpsLimit: authFirst,
   setParallelOpsLimit: authFirst,
@@ -291,6 +292,18 @@ export interface BayOwnershipBackfillResult {
   hosts_updated: number;
 }
 
+export interface AccountProjectIndexRebuildResult {
+  bay_id: string;
+  target_account_id: string;
+  dry_run: boolean;
+  existing_rows: number;
+  source_rows: number;
+  visible_rows: number;
+  hidden_rows: number;
+  deleted_rows: number;
+  inserted_rows: number;
+}
+
 export interface PublicAppHostnameTrace {
   matched: boolean;
   hostname: string;
@@ -433,6 +446,12 @@ export interface System {
     dry_run?: boolean;
     limit_per_table?: number;
   }) => Promise<BayOwnershipBackfillResult>;
+
+  rebuildAccountProjectIndex: (opts: {
+    account_id?: string;
+    target_account_id: string;
+    dry_run?: boolean;
+  }) => Promise<AccountProjectIndexRebuildResult>;
 
   // adminResetPasswordLink: Enables admins (and only admins!) to generate and get a password reset
   // for another user.  The response message contains a password reset link,
