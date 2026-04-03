@@ -14,6 +14,7 @@ import {
   savePlacement,
   stopProjectOnHost,
 } from "../project-host/control";
+import { getConfiguredBayId } from "../bay-config";
 import { start as startProjectLro } from "../conat/api/projects";
 import { waitForCompletion as waitForLroCompletion } from "@cocalc/conat/lro/client";
 import {
@@ -54,6 +55,7 @@ type MoveProjectContext = {
   project_id: string;
   dest_host_id: string;
   account_id: string;
+  project_owning_bay_id: string;
   project_region: string;
   dest_region: string;
   project_host_id?: string | null;
@@ -146,9 +148,10 @@ async function buildMoveProjectContext(
     provisioned: boolean | null;
     last_backup: Date | null;
     last_edited: Date | null;
+    project_owning_bay_id: string;
   }>(
-    "SELECT project_id, host_id, region, state->>'state' AS project_state, provisioned, last_backup, last_edited FROM projects WHERE project_id=$1",
-    [project_id],
+    "SELECT project_id, host_id, region, state->>'state' AS project_state, provisioned, last_backup, last_edited, COALESCE(owning_bay_id, $2) AS project_owning_bay_id FROM projects WHERE project_id=$1",
+    [project_id, getConfiguredBayId()],
   );
   const projectRow = projectResult.rows[0];
   if (!projectRow) {
@@ -176,7 +179,10 @@ async function buildMoveProjectContext(
   const destHost =
     dest_host_id != null
       ? await loadHostFromRegistry(dest_host_id)
-      : await selectActiveHost(projectRow.host_id ?? undefined);
+      : await selectActiveHost({
+          exclude_host_id: projectRow.host_id ?? undefined,
+          bay_id: projectRow.project_owning_bay_id,
+        });
   if (!destHost) {
     throw new Error(
       dest_host_id
@@ -190,6 +196,11 @@ async function buildMoveProjectContext(
   if (!dest_host_id) {
     throw new Error("destination host id not available");
   }
+  if (destHost.bay_id !== projectRow.project_owning_bay_id) {
+    throw new Error(
+      `project ${project_id} belongs to bay ${projectRow.project_owning_bay_id} but host ${dest_host_id} belongs to bay ${destHost.bay_id}`,
+    );
+  }
   const project_region = parseR2Region(projectRow.region) ?? DEFAULT_R2_REGION;
   const dest_region = mapCloudRegionToR2Region(destHost.region);
   if (project_region !== dest_region) {
@@ -201,6 +212,7 @@ async function buildMoveProjectContext(
     project_id,
     dest_host_id,
     account_id,
+    project_owning_bay_id: projectRow.project_owning_bay_id,
     project_region,
     dest_region,
     project_host_id: projectRow.host_id,

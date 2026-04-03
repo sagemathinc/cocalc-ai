@@ -105,7 +105,7 @@ describe("startProjectOnHost placement", () => {
       }
       if (
         sql ===
-        "SELECT title, users, rootfs_image as image, host_id, run_quota FROM projects WHERE project_id=$1"
+        "SELECT title, users, rootfs_image as image, host_id, owning_bay_id, run_quota FROM projects WHERE project_id=$1"
       ) {
         loadProjectCalls += 1;
         return {
@@ -115,6 +115,7 @@ describe("startProjectOnHost placement", () => {
               users: { owner: { group: "owner" } },
               image: "sagemathinc/sagemath-x86_64:10.7",
               host_id: loadProjectCalls === 1 ? null : "host-1",
+              owning_bay_id: "bay-0",
               run_quota: null,
             },
           ],
@@ -124,10 +125,12 @@ describe("startProjectOnHost placement", () => {
         sql.includes("FROM project_hosts") &&
         sql.includes("WHERE status='running'")
       ) {
+        expect(params).toEqual(["bay-0"]);
         return {
           rows: [
             {
               id: "host-1",
+              bay_id: "bay-0",
               name: "Host 1",
               region: "us-west1",
               public_url: null,
@@ -147,9 +150,11 @@ describe("startProjectOnHost placement", () => {
           rows: [{ metadata: { machine: {} } }],
         };
       }
-      if (sql === "UPDATE projects SET host_id=$1 WHERE project_id=$2") {
-        expect(params).toEqual(["host-1", "proj-1"]);
-        return { rows: [] };
+      if (sql.includes("UPDATE projects AS projects")) {
+        expect(params).toEqual(["host-1", "proj-1", "bay-0"]);
+        return {
+          rows: [{ owning_bay_id: "bay-0", host_bay_id: "bay-0" }],
+        };
       }
       if (sql === "SELECT backup_repo_id FROM projects WHERE project_id=$1") {
         return { rows: [{ backup_repo_id: null }] };
@@ -219,7 +224,7 @@ describe("startProjectOnHost placement", () => {
       }
       if (
         sql ===
-        "SELECT title, users, rootfs_image as image, host_id, run_quota FROM projects WHERE project_id=$1"
+        "SELECT title, users, rootfs_image as image, host_id, owning_bay_id, run_quota FROM projects WHERE project_id=$1"
       ) {
         loadProjectCalls += 1;
         return {
@@ -229,6 +234,7 @@ describe("startProjectOnHost placement", () => {
               users: { owner: { group: "owner" } },
               image: "sagemathinc/sagemath-x86_64:10.7",
               host_id: loadProjectCalls === 1 ? null : "host-1",
+              owning_bay_id: "bay-0",
               run_quota: null,
             },
           ],
@@ -238,10 +244,12 @@ describe("startProjectOnHost placement", () => {
         sql.includes("FROM project_hosts") &&
         sql.includes("WHERE status='running'")
       ) {
+        expect(params).toEqual(["bay-0"]);
         return {
           rows: [
             {
               id: "host-1",
+              bay_id: "bay-0",
               name: "Host 1",
               region: "us-west1",
               public_url: null,
@@ -261,9 +269,11 @@ describe("startProjectOnHost placement", () => {
           rows: [{ metadata: { machine: {} } }],
         };
       }
-      if (sql === "UPDATE projects SET host_id=$1 WHERE project_id=$2") {
-        expect(params).toEqual(["host-1", "proj-1"]);
-        return { rows: [] };
+      if (sql.includes("UPDATE projects AS projects")) {
+        expect(params).toEqual(["host-1", "proj-1", "bay-0"]);
+        return {
+          rows: [{ owning_bay_id: "bay-0", host_bay_id: "bay-0" }],
+        };
       }
       if (sql === "SELECT backup_repo_id FROM projects WHERE project_id=$1") {
         return { rows: [{ backup_repo_id: null }] };
@@ -281,5 +291,35 @@ describe("startProjectOnHost placement", () => {
         err: expect.any(Error),
       },
     );
+  });
+
+  it("rejects placement onto a host from another bay", async () => {
+    queryMock = jest.fn(async (sql: string, params: any[]) => {
+      if (sql.includes("UPDATE projects AS projects")) {
+        expect(params).toEqual(["host-2", "proj-1", "bay-0"]);
+        return { rows: [] };
+      }
+      if (
+        sql ===
+        "SELECT COALESCE(owning_bay_id, $2) AS owning_bay_id FROM projects WHERE project_id=$1"
+      ) {
+        return { rows: [{ owning_bay_id: "bay-0" }] };
+      }
+      if (
+        sql ===
+        "SELECT COALESCE(bay_id, $2) AS bay_id FROM project_hosts WHERE id=$1 AND deleted IS NULL"
+      ) {
+        return { rows: [{ bay_id: "bay-7" }] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { savePlacement } = await import("./control");
+    await expect(
+      savePlacement("proj-1", { host_id: "host-2" }),
+    ).rejects.toThrow(
+      "project proj-1 belongs to bay bay-0 but host host-2 belongs to bay bay-7",
+    );
+    expect(notifyProjectHostUpdateMock).not.toHaveBeenCalled();
   });
 });

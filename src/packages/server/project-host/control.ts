@@ -4,6 +4,7 @@ import { createHostControlClient } from "@cocalc/conat/project-host/api";
 import sshKeys from "../projects/get-ssh-keys";
 import { notifyProjectHostUpdate } from "../conat/route-project";
 import { conatWithProjectRouting } from "../conat/route-client";
+import { getConfiguredBayId } from "../bay-config";
 import { normalizeHostTier } from "./placement";
 import { machineHasGpu } from "../cloud/host-gpu";
 import { maybeAutoGrowHostDiskForReservationFailure } from "./auto-grow";
@@ -26,11 +27,17 @@ export type ProjectMeta = {
   users?: any;
   image?: string;
   host_id?: string;
+  owning_bay_id?: string;
   authorized_keys?: string;
   run_quota?: any;
 };
 
 const pool = () => getPool();
+
+function effectiveBayId(bay_id?: string | null): string {
+  const value = `${bay_id ?? ""}`.trim();
+  return value || getConfiguredBayId();
+}
 
 async function getProjectStateSnapshot(
   project_id: string,
@@ -108,7 +115,7 @@ export function shouldSkipStartForSnapshot({
 
 export async function loadProject(project_id: string): Promise<ProjectMeta> {
   const { rows } = await pool().query(
-    "SELECT title, users, rootfs_image as image, host_id, run_quota FROM projects WHERE project_id=$1",
+    "SELECT title, users, rootfs_image as image, host_id, owning_bay_id, run_quota FROM projects WHERE project_id=$1",
     [project_id],
   );
   if (!rows[0]) throw Error(`project ${project_id} not found`);
@@ -149,7 +156,7 @@ async function applyHostGpuToRunQuota(
 
 export async function loadHostFromRegistry(host_id: string) {
   const { rows } = await pool().query(
-    "SELECT name, region, public_url, internal_url, ssh_server, tier, metadata FROM project_hosts WHERE id=$1 AND deleted IS NULL",
+    "SELECT id, bay_id, name, region, public_url, internal_url, ssh_server, tier, metadata FROM project_hosts WHERE id=$1 AND deleted IS NULL",
     [host_id],
   );
   if (!rows[0]) return undefined;
@@ -162,6 +169,8 @@ export async function loadHostFromRegistry(host_id: string) {
     machine?.cloud === "self-host" && effectiveSelfHostMode === "local";
   const tier = normalizeHostTier(row.tier);
   return {
+    id: row.id,
+    bay_id: effectiveBayId(row.bay_id),
     name: row.name,
     region: row.region,
     public_url: row.public_url,
@@ -172,19 +181,35 @@ export async function loadHostFromRegistry(host_id: string) {
   };
 }
 
-export async function selectActiveHost(exclude_host_id?: string) {
+export async function selectActiveHost({
+  exclude_host_id,
+  bay_id,
+}: {
+  exclude_host_id?: string;
+  bay_id?: string;
+} = {}) {
+  const params: any[] = [];
+  const where: string[] = [
+    "status='running'",
+    "deleted IS NULL",
+    "last_seen > NOW() - interval '2 minutes'",
+  ];
+  if (exclude_host_id) {
+    params.push(exclude_host_id);
+    where.push(`id != $${params.length}`);
+  }
+  const targetBayId = effectiveBayId(bay_id);
+  params.push(targetBayId);
+  where.push(`COALESCE(bay_id, $${params.length}) = $${params.length}`);
   const { rows } = await pool().query(
     `
-      SELECT id, name, region, public_url, internal_url, ssh_server, tier, metadata
+      SELECT id, bay_id, name, region, public_url, internal_url, ssh_server, tier, metadata
       FROM project_hosts
-      WHERE status='running'
-        AND deleted IS NULL
-        AND last_seen > NOW() - interval '2 minutes'
-        ${exclude_host_id ? "AND id != $1" : ""}
+      WHERE ${where.join("\n        AND ")}
       ORDER BY random()
       LIMIT 1
     `,
-    exclude_host_id ? [exclude_host_id] : [],
+    params,
   );
   if (!rows[0]) return undefined;
   const row = rows[0];
@@ -197,6 +222,7 @@ export async function selectActiveHost(exclude_host_id?: string) {
   const tier = normalizeHostTier(row.tier);
   return {
     id: row.id,
+    bay_id: effectiveBayId(row.bay_id),
     name: row.name,
     region: row.region,
     public_url: row.public_url,
@@ -211,10 +237,46 @@ export async function savePlacement(
   project_id: string,
   placement: HostPlacement,
 ) {
-  await pool().query("UPDATE projects SET host_id=$1 WHERE project_id=$2", [
-    placement.host_id,
-    project_id,
-  ]);
+  const defaultBayId = getConfiguredBayId();
+  const { rows } = await pool().query<{
+    owning_bay_id: string;
+    host_bay_id: string;
+  }>(
+    `
+      UPDATE projects AS projects
+      SET host_id = $1
+      FROM project_hosts AS project_hosts
+      WHERE projects.project_id = $2
+        AND project_hosts.id = $1
+        AND project_hosts.deleted IS NULL
+        AND COALESCE(projects.owning_bay_id, $3) = COALESCE(project_hosts.bay_id, $3)
+      RETURNING
+        COALESCE(projects.owning_bay_id, $3) AS owning_bay_id,
+        COALESCE(project_hosts.bay_id, $3) AS host_bay_id
+    `,
+    [placement.host_id, project_id, defaultBayId],
+  );
+  if (!rows[0]) {
+    const [{ rows: projectRows }, { rows: hostRows }] = await Promise.all([
+      pool().query<{ owning_bay_id: string }>(
+        "SELECT COALESCE(owning_bay_id, $2) AS owning_bay_id FROM projects WHERE project_id=$1",
+        [project_id, defaultBayId],
+      ),
+      pool().query<{ bay_id: string }>(
+        "SELECT COALESCE(bay_id, $2) AS bay_id FROM project_hosts WHERE id=$1 AND deleted IS NULL",
+        [placement.host_id, defaultBayId],
+      ),
+    ]);
+    if (!projectRows[0]) {
+      throw Error(`project ${project_id} not found`);
+    }
+    if (!hostRows[0]) {
+      throw Error(`host ${placement.host_id} not found`);
+    }
+    throw Error(
+      `project ${project_id} belongs to bay ${projectRows[0].owning_bay_id} but host ${placement.host_id} belongs to bay ${hostRows[0].bay_id}`,
+    );
+  }
   await notifyProjectHostUpdate({
     project_id,
     host_id: placement.host_id,
@@ -223,6 +285,7 @@ export async function savePlacement(
 
 async function ensurePlacement(project_id: string): Promise<HostPlacement> {
   const meta = await loadProject(project_id);
+  const projectBayId = effectiveBayId(meta.owning_bay_id);
   if (meta.host_id) {
     const hostInfo = await loadHostFromRegistry(meta.host_id);
     if (!hostInfo) {
@@ -232,12 +295,17 @@ async function ensurePlacement(project_id: string): Promise<HostPlacement> {
         `project is assigned to host ${meta.host_id} but it is unavailable`,
       );
     }
+    if (hostInfo.bay_id !== projectBayId) {
+      throw Error(
+        `project ${project_id} belongs to bay ${projectBayId} but host ${meta.host_id} belongs to bay ${hostInfo.bay_id}`,
+      );
+    }
     return { host_id: meta.host_id };
   }
 
-  const chosen = await selectActiveHost();
+  const chosen = await selectActiveHost({ bay_id: projectBayId });
   if (!chosen) {
-    throw Error("no running project-host available");
+    throw Error(`no running project-host available in bay ${projectBayId}`);
   }
 
   const client = createHostControlClient({

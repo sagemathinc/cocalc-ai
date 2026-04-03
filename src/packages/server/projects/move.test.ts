@@ -92,6 +92,7 @@ describe("moveProjectToHost", () => {
               provisioned: false,
               last_backup: null,
               last_edited: null,
+              project_owning_bay_id: "bay-0",
             },
           ],
         };
@@ -110,6 +111,7 @@ describe("moveProjectToHost", () => {
     });
     loadHostFromRegistryMock = jest.fn(async (host_id: string) => ({
       id: host_id,
+      bay_id: "bay-0",
       region: "us-west1",
     }));
     selectActiveHostMock = jest.fn();
@@ -174,5 +176,28 @@ describe("moveProjectToHost", () => {
       project_id: PROJECT_ID,
       host_id: DEST_HOST_ID,
     });
+  });
+
+  it("rejects a move to a host in another bay", async () => {
+    loadHostFromRegistryMock = jest.fn(async (host_id: string) => ({
+      id: host_id,
+      bay_id: host_id === DEST_HOST_ID ? "bay-9" : "bay-0",
+      region: "us-west1",
+    }));
+
+    const { moveProjectToHost } = await import("./move");
+    await expect(
+      moveProjectToHost({
+        project_id: PROJECT_ID,
+        dest_host_id: DEST_HOST_ID,
+        account_id: "account-id",
+        allow_offline: true,
+      }),
+    ).rejects.toThrow(
+      `project ${PROJECT_ID} belongs to bay bay-0 but host ${DEST_HOST_ID} belongs to bay bay-9`,
+    );
+
+    expect(savePlacementMock).not.toHaveBeenCalled();
+    expect(deleteProjectDataOnHostMock).not.toHaveBeenCalled();
   });
 });
