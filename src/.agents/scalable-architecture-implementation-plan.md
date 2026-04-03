@@ -1,5 +1,7 @@
 # Scalable Control Plane Implementation Plan
 
+![](./scalable-bay.png)
+
 Status: proposed phased implementation plan for moving CoCalc Launchpad and
 Rocket to the bay architecture described in
 [scalable-architecture.md](/home/wstein/build/cocalc-lite4/src/.agents/scalable-architecture.md).
@@ -580,3 +582,4 @@ Do not do these:
 4. Add a CLI-oriented operator API backlog derived from this plan.
 
 Those actions de-risk the later phases the most.
+

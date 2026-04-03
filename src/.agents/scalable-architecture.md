@@ -1,4 +1,8 @@
-# Scalable Control Plane Architecture
+# Scalable Control Plane
+
+![](./scalable-bay.png) 
+
+# Architecture
 
 Status: proposed target architecture for `cocalc-rocket`, with `cocalc-launchpad`
 implemented as the one-bay special case.
