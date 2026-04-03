@@ -163,4 +163,59 @@ describe("rootfs preflight metadata", () => {
       }),
     );
   });
+
+  it("probes pulled OCI images before extract", async () => {
+    executeCode.mockResolvedValue({
+      stdout: JSON.stringify({
+        ok: true,
+        distro_family: "debian",
+        package_manager: "apt-get",
+        shell: "/bin/bash",
+        glibc: true,
+        sudo_present: false,
+        ca_certificates_present: false,
+      }),
+    });
+
+    const mod = await import("../project-runner/run/rootfs-normalize");
+    await expect(
+      mod.preflightPulledOciImage({
+        image: "docker.io/library/ubuntu:26.04",
+      }),
+    ).resolves.toMatchObject({
+      distro_family: "debian",
+      package_manager: "apt-get",
+      shell: "/bin/bash",
+      sudo_present: false,
+      ca_certificates_present: false,
+    });
+    expect(executeCode).toHaveBeenCalledWith(
+      expect.objectContaining({
+        command: "podman",
+        args: expect.arrayContaining([
+          "unshare",
+          "bash",
+          "-lc",
+          expect.stringContaining("podman image mount"),
+          "cocalc-pulled-image-preflight",
+          "docker.io/library/ubuntu:26.04",
+        ]),
+      }),
+    );
+  });
+
+  it("reports unsupported pulled OCI images with the preflight error", async () => {
+    executeCode.mockRejectedValue(
+      new Error("OCI image preflight failed: glibc is required"),
+    );
+
+    const mod = await import("../project-runner/run/rootfs-normalize");
+    await expect(
+      mod.preflightPulledOciImage({
+        image: "docker.io/library/alpine:latest",
+      }),
+    ).rejects.toThrow(
+      /failed OCI image preflight for 'docker\.io\/library\/alpine:latest'/,
+    );
+  });
 });

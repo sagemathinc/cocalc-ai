@@ -35,6 +35,8 @@ type RawPreflightResult = Omit<
   "version" | "normalized_at" | "image" | "rootfs_path"
 >;
 
+export type PulledImagePreflightResult = RawPreflightResult;
+
 type RootfsPreflightProgress = (update: {
   message: string;
   detail?: Record<string, unknown>;
@@ -221,3 +223,115 @@ export const requireCurrentRootfsNormalizationMetadata =
   requireCurrentRootfsPreflightMetadata;
 export const writeRootfsNormalizationMetadata = writeRootfsPreflightMetadata;
 export const normalizeRootfsInPlace = preflightRootfsInPlace;
+
+export async function preflightPulledOciImage({
+  image,
+  onProgress,
+}: {
+  image: string;
+  onProgress?: RootfsPreflightProgress;
+}): Promise<PulledImagePreflightResult> {
+  onProgress?.({
+    message: "probing pulled OCI image bootstrap support",
+    detail: { image },
+  });
+  let stdout = "";
+  try {
+    const result = await executeCode({
+      command: "podman",
+      args: [
+        "unshare",
+        "bash",
+        "-lc",
+        `
+set -euo pipefail
+image="$1"
+mnt=""
+cleanup() {
+  if [ -n "$mnt" ]; then
+    podman image unmount "$image" >/dev/null 2>&1 || true
+  fi
+}
+trap cleanup EXIT
+mnt="$(podman image mount "$image")"
+shell_path=""
+if [ -x "$mnt/bin/bash" ]; then
+  shell_path="/bin/bash"
+elif [ -x "$mnt/bin/sh" ]; then
+  shell_path="/bin/sh"
+else
+  echo "OCI image preflight failed: usable shell missing (expected /bin/bash or /bin/sh)" >&2
+  exit 41
+fi
+has_ca_certificates() {
+  [ -d "$mnt/etc/ssl/certs" ] || \
+    [ -f "$mnt/etc/ssl/cert.pem" ] || \
+    [ -f "$mnt/etc/pki/tls/certs/ca-bundle.crt" ] || \
+    [ -f "$mnt/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem" ] || \
+    [ -f "$mnt/etc/ssl/ca-bundle.pem" ]
+}
+sudo_present=false
+if [ -x "$mnt/usr/bin/sudo" ] || [ -x "$mnt/bin/sudo" ]; then
+  sudo_present=true
+fi
+ca_certificates_present=false
+if has_ca_certificates; then
+  ca_certificates_present=true
+fi
+distro_family="unknown"
+package_manager="none"
+if [ -x "$mnt/usr/bin/apt-get" ] || [ -x "$mnt/bin/apt-get" ]; then
+  distro_family="debian"
+  package_manager="apt-get"
+elif [ -x "$mnt/usr/bin/dnf" ] || [ -x "$mnt/bin/dnf" ]; then
+  distro_family="rhel"
+  package_manager="dnf"
+elif [ -x "$mnt/usr/bin/microdnf" ] || [ -x "$mnt/bin/microdnf" ]; then
+  distro_family="rhel"
+  package_manager="microdnf"
+elif [ -x "$mnt/usr/bin/yum" ] || [ -x "$mnt/bin/yum" ]; then
+  distro_family="rhel"
+  package_manager="yum"
+elif [ -x "$mnt/usr/bin/zypper" ] || [ -x "$mnt/bin/zypper" ]; then
+  distro_family="sles"
+  package_manager="zypper"
+fi
+if [ ! -e "$mnt/lib64/ld-linux-x86-64.so.2" ] && \
+   [ ! -e "$mnt/lib/x86_64-linux-gnu/libc.so.6" ] && \
+   [ ! -e "$mnt/lib/ld-linux-aarch64.so.1" ] && \
+   [ ! -e "$mnt/lib64/ld-linux-aarch64.so.1" ] && \
+   [ ! -e "$mnt/lib/aarch64-linux-gnu/libc.so.6" ]; then
+  echo "OCI image preflight failed: glibc is required" >&2
+  exit 43
+fi
+if [ "$sudo_present" = false ] || [ "$ca_certificates_present" = false ]; then
+  if [ "$package_manager" = "none" ]; then
+    echo "OCI image preflight failed: startup bootstrap requires sudo and CA certificates, but this image has neither a supported package manager nor the required packages preinstalled" >&2
+    exit 44
+  fi
+fi
+printf '{"ok":true,"distro_family":"%s","package_manager":"%s","shell":"%s","glibc":true,"sudo_present":%s,"ca_certificates_present":%s}\n' \
+  "$distro_family" "$package_manager" "$shell_path" "$sudo_present" "$ca_certificates_present"
+        `,
+        "cocalc-pulled-image-preflight",
+        image,
+      ],
+      err_on_exit: true,
+      verbose: false,
+      timeout: 10 * 60,
+    });
+    stdout = `${result.stdout ?? ""}`.trim();
+  } catch (err) {
+    throw new Error(`failed OCI image preflight for '${image}': ${err}`);
+  }
+  const metadata = validatePreflightResult(parsePreflightOutput(stdout));
+  onProgress?.({
+    message: "validated pulled OCI image bootstrap support",
+    detail: {
+      image,
+      distro_family: metadata.distro_family,
+      package_manager: metadata.package_manager,
+    },
+  });
+  return metadata;
+}
