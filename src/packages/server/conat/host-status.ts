@@ -10,7 +10,11 @@ import {
   registerSelfHostTunnelKey,
 } from "@cocalc/server/launchpad/onprem-sshd";
 import { listAccountRevocationsSince } from "@cocalc/server/accounts/revocation";
-import { shouldDeleteHostProjectUpdate } from "./host-project-ownership";
+import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import {
+  classifyHostProvisionedInventory,
+  shouldDeleteHostProjectUpdate,
+} from "./host-project-ownership";
 
 const logger = getLogger("server:conat:host-status");
 
@@ -192,31 +196,24 @@ export async function initHostStatusService() {
           seen.add(value);
           normalizedProjectIds.push(value);
         }
-        const { rows } = await pool.query<{
-          project_id: string;
-          current_host_id: string | null;
-        }>(
-          `
-            SELECT inv.project_id::text AS project_id,
-                   p.host_id::text AS current_host_id
-            FROM unnest($1::text[]) AS inv(project_id)
-            LEFT JOIN projects p ON p.project_id::text = inv.project_id
-          `,
-          [normalizedProjectIds],
-        );
-        const delete_project_ids = rows
-          .filter(
-            (row) => !row.current_host_id || row.current_host_id !== host_id,
-          )
-          .map((row) => row.project_id);
+        const { accepted_project_ids, delete_project_ids } =
+          await classifyHostProvisionedInventory({
+            host_id,
+            project_ids: normalizedProjectIds,
+          });
         await pool.query(
           `
             UPDATE projects
-            SET provisioned = (project_id::text = ANY($2::text[])),
+            SET provisioned = (projects.project_id::text = ANY($2::text[])),
                 provisioned_checked_at = $3
-            WHERE host_id = $1 AND deleted IS NOT TRUE
+            FROM project_hosts
+            WHERE projects.host_id = $1
+              AND projects.deleted IS NOT TRUE
+              AND project_hosts.id = projects.host_id
+              AND project_hosts.deleted IS NULL
+              AND COALESCE(projects.owning_bay_id, $4) = COALESCE(project_hosts.bay_id, $4)
           `,
-          [host_id, normalizedProjectIds, checkedAt],
+          [host_id, accepted_project_ids, checkedAt, getConfiguredBayId()],
         );
         return { delete_project_ids };
       },

@@ -75,4 +75,46 @@ describe("host project ownership", () => {
       }),
     ).resolves.toBe(true);
   });
+
+  it("classifies provisioned inventory rows using host ownership and bay consistency", async () => {
+    queryMock = jest.fn(async () => ({
+      rows: [
+        {
+          project_id: "accepted",
+          current_host_id: HOST_ID,
+          project_owning_bay_id: "bay-a",
+          host_bay_id: "bay-a",
+        },
+        {
+          project_id: "wrong-host",
+          current_host_id: "33333333-3333-3333-3333-333333333333",
+          project_owning_bay_id: "bay-a",
+          host_bay_id: "bay-a",
+        },
+        {
+          project_id: "wrong-bay",
+          current_host_id: HOST_ID,
+          project_owning_bay_id: "bay-a",
+          host_bay_id: "bay-b",
+        },
+        {
+          project_id: "missing",
+          current_host_id: null,
+          project_owning_bay_id: "bay-a",
+          host_bay_id: "bay-a",
+        },
+      ],
+    }));
+    const { classifyHostProvisionedInventory } =
+      await import("./host-project-ownership");
+    await expect(
+      classifyHostProvisionedInventory({
+        host_id: HOST_ID,
+        project_ids: ["accepted", "wrong-host", "wrong-bay", "missing"],
+      }),
+    ).resolves.toEqual({
+      accepted_project_ids: ["accepted"],
+      delete_project_ids: ["wrong-host", "wrong-bay", "missing"],
+    });
+  });
 });
