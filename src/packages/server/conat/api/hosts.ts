@@ -2531,7 +2531,7 @@ export async function resolveHostConnection({
     throw new Error("host_id must be specified");
   }
   const { rows } = await pool().query(
-    `SELECT id, name, public_url, internal_url, ssh_server, metadata, tier, status, last_seen
+    `SELECT id, bay_id, name, public_url, internal_url, ssh_server, metadata, tier, status, last_seen
      FROM project_hosts
      WHERE id=$1 AND deleted IS NULL`,
     [host_id],
@@ -2590,6 +2590,10 @@ export async function resolveHostConnection({
 
   const response = {
     host_id: row.id,
+    bay_id:
+      typeof row.bay_id === "string" && row.bay_id.trim()
+        ? row.bay_id.trim()
+        : null,
     name: row.name ?? null,
     ssh_server,
     connect_url,

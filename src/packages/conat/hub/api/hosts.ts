@@ -390,6 +390,7 @@ export interface Host {
 
 export interface HostConnectionInfo {
   host_id: string;
+  bay_id?: string | null;
   name?: string | null;
   ssh_server?: string | null;
   connect_url?: string | null;

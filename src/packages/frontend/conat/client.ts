@@ -273,9 +273,16 @@ export class ConatClient extends EventEmitter {
     | undefined
     | { host_id: string; address: string; host_session_id?: string } {
     const hostInfo = this.getHostInfo(host_id);
-    if (!hostInfo) {
-      return;
-    }
+    return this.buildHostRoutingInfo(host_id, hostInfo);
+  }
+
+  private buildHostRoutingInfo(
+    host_id: string,
+    hostInfo?: ImmutableMap<string, any>,
+  ):
+    | undefined
+    | { host_id: string; address: string; host_session_id?: string } {
+    if (!hostInfo) return;
     const localProxy = hostInfo.get("local_proxy");
     let address: string;
     if (localProxy && typeof window !== "undefined") {
@@ -311,7 +318,16 @@ export class ConatClient extends EventEmitter {
       // Fallback: no host yet, so stay on the default connection.
       return;
     }
-    return this.getHostRoutingInfo(host_id);
+    const hostInfo = this.getHostInfo(host_id);
+    if (!hostInfo) return;
+    const projectBayId =
+      `${project_map?.getIn([project_id, "owning_bay_id"]) ?? ""}`.trim();
+    const hostBayId = `${hostInfo.get("bay_id") ?? ""}`.trim();
+    if (projectBayId && hostBayId && projectBayId !== hostBayId) {
+      void redux.getActions("projects")?.ensure_host_info(host_id, true);
+      return;
+    }
+    return this.buildHostRoutingInfo(host_id, hostInfo);
   }
 
   private ensureProjectRoutingInfo = async (
@@ -326,7 +342,16 @@ export class ConatClient extends EventEmitter {
       | string
       | undefined;
     if (!host_id) return;
-    await redux.getActions("projects")?.ensure_host_info(host_id);
+    const projectBayId =
+      `${project_map?.getIn([project_id, "owning_bay_id"]) ?? ""}`.trim();
+    const hostBayId =
+      `${redux.getStore("projects")?.get("host_info")?.get(host_id)?.get?.("bay_id") ?? ""}`.trim();
+    await redux
+      .getActions("projects")
+      ?.ensure_host_info(
+        host_id,
+        !!projectBayId && !!hostBayId && projectBayId !== hostBayId,
+      );
     return this.getProjectRoutingInfo(project_id);
   };
 
