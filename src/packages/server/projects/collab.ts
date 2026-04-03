@@ -7,8 +7,7 @@ import { PostgreSQL } from "@cocalc/database/postgres/types";
 import { is_array, is_valid_uuid_string } from "@cocalc/util/misc";
 import { callback2 } from "@cocalc/util/async-utils";
 import { syncProjectUsersOnHost } from "@cocalc/server/project-host/control";
-
-const GROUPS = ["owner", "collaborator"] as const;
+import { assertLocalProjectCollaborator } from "@cocalc/server/conat/project-local-access";
 
 export async function add_collaborators_to_projects(
   db: PostgreSQL,
@@ -140,15 +139,11 @@ async function verify_write_access_to_projects(
   // Not using tokens:
   // Note that projects are likely to be repeated, so we use a Set.
   for (const project_id of new Set(projects)) {
-    if (
-      !(await callback2(db.user_is_in_project_group, {
-        project_id,
-        account_id,
-        groups: GROUPS,
-      }))
-    ) {
+    try {
+      await assertLocalProjectCollaborator({ account_id, project_id });
+    } catch (err) {
       throw Error(
-        `user ${account_id} does not have write access to project ${project_id}`,
+        `user ${account_id} does not have write access to project ${project_id}: ${err}`,
       );
     }
   }
@@ -251,12 +246,12 @@ async function verify_course_access_to_project(
     // be extra careful since we directly put account_id in the query string.
     throw Error(`account_id ${account_id} must be a valid uuid`);
   }
-  const w = await db.async_query({
-    query: `SELECT users#>'{${account_id},group}' AS group FROM projects WHERE project_id=\$1`,
-    params: [course_id],
-  });
-  const group = w.rows[0]?.group;
-  if (group != "owner" && group != "collaborator") {
+  try {
+    await assertLocalProjectCollaborator({
+      account_id,
+      project_id: course_id,
+    });
+  } catch {
     throw Error(
       `cannot add self to "${project_id}" -- must be owner or collaborator on course project`,
     );

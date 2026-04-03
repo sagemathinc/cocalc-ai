@@ -91,4 +91,39 @@ describe("project SSH keys", () => {
     expect(afterDelete?.ssh_keys).toBeNull();
     expect(await sshKeys(PROJECT_ID)).toEqual({});
   });
+
+  it("refuses to update SSH keys for projects owned by another bay", async () => {
+    await getPool().query(
+      "INSERT INTO projects (project_id, title, users, last_edited, owning_bay_id) VALUES ($1, $2, $3, NOW(), $4)",
+      [
+        PROJECT_ID,
+        "Wrong Bay Project",
+        JSON.stringify({
+          [ACCOUNT_ID]: { group: "owner" },
+        }),
+        "bay-9",
+      ],
+    );
+
+    expect(
+      await upsertProjectSshKeyInDb({
+        project_id: PROJECT_ID,
+        account_id: ACCOUNT_ID,
+        fingerprint: "fp-2",
+        payload: {
+          title: "laptop",
+          value: "ssh-ed25519 AAAATEST laptop",
+          creation_date: 123,
+        },
+      }),
+    ).toBe(false);
+
+    expect(
+      await deleteProjectSshKeyInDb({
+        project_id: PROJECT_ID,
+        account_id: ACCOUNT_ID,
+        fingerprint: "fp-2",
+      }),
+    ).toBe(false);
+  });
 });

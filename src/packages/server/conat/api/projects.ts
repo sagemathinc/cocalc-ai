@@ -1192,8 +1192,9 @@ export async function setProjectHidden({
           true
         )
       WHERE project_id = $1
+        AND COALESCE(owning_bay_id, $4) = $4
         AND (users -> $2::text ->> 'group') IN ('owner', 'collaborator')`,
-    [project_id, account_id, hide],
+    [project_id, account_id, hide, getConfiguredBayId()],
   );
   if ((result.rowCount ?? 0) === 0) {
     throw Error("user must be a collaborator");

@@ -4,6 +4,7 @@
  */
 
 import getPool from "@cocalc/database/pool";
+import { getConfiguredBayId } from "@cocalc/server/bay-config";
 
 export async function upsertProjectSshKeyInDb({
   project_id,
@@ -31,8 +32,15 @@ export async function upsertProjectSshKeyInDb({
           true
         )
       WHERE project_id = $1
+        AND COALESCE(owning_bay_id, $5) = $5
         AND (users -> $2::text ->> 'group') IN ('owner', 'collaborator')`,
-    [project_id, account_id, fingerprint, JSON.stringify(payload)],
+    [
+      project_id,
+      account_id,
+      fingerprint,
+      JSON.stringify(payload),
+      getConfiguredBayId(),
+    ],
   );
   return (result.rowCount ?? 0) > 0;
 }
@@ -59,8 +67,9 @@ export async function deleteProjectSshKeyInDb({
           )
         END
       WHERE project_id = $1
+        AND COALESCE(owning_bay_id, $4) = $4
         AND (users -> $2::text ->> 'group') IN ('owner', 'collaborator')`,
-    [project_id, account_id, fingerprint],
+    [project_id, account_id, fingerprint, getConfiguredBayId()],
   );
   return (result.rowCount ?? 0) > 0;
 }
