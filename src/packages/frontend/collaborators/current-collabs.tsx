@@ -32,14 +32,14 @@ export const CurrentCollaboratorsPanel: React.FC<Props> = (props: Props) => {
   const { project, user_map, mode = "project" } = props;
   const isFlyout = mode === "flyout";
   const intl = useIntl();
-  const get_account_id = useRedux("account", "get_account_id");
+  const current_account_id = useRedux("account", "account_id");
   const sort_by_activity = useRedux("projects", "sort_by_activity");
   const student = useStudentProjectFunctionality(project.get("project_id"));
 
   function remove_collaborator(account_id: string) {
     const project_id = project.get("project_id");
     redux.getActions("projects").remove_collaborator(project_id, account_id);
-    if (account_id === get_account_id()) {
+    if (account_id === current_account_id) {
       (redux.getActions("page") as any).close_project_tab(project_id);
       // TODO: better types
     }
@@ -47,7 +47,7 @@ export const CurrentCollaboratorsPanel: React.FC<Props> = (props: Props) => {
 
   function user_remove_confirm_text(account_id: string) {
     const style: CSS = { maxWidth: "300px" };
-    if (account_id === get_account_id()) {
+    if (account_id === current_account_id) {
       return (
         <div style={style}>
           <FormattedMessage
