@@ -12,6 +12,7 @@ import {
 import { dirname } from "node:path";
 
 import {
+  currentDaemonFingerprint,
   daemonPidPath,
   daemonRequestId,
   daemonRequestWithAutoStart,
@@ -111,6 +112,7 @@ export function createDaemonServerOps<Ctx>(deps: DaemonServerDeps<Ctx>) {
         Math.floor((Date.now() - state.startedAtMs) / 1000),
       ),
       started_at: new Date(state.startedAtMs).toISOString(),
+      daemon_fingerprint: currentDaemonFingerprint(),
     };
     try {
       switch (request.action) {
