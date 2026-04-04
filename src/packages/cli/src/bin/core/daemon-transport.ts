@@ -5,7 +5,13 @@
  * helpers (ping, auto-start, RPC send) used by CLI command handlers.
  */
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  statSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { createConnection as createNetConnection } from "node:net";
@@ -44,8 +50,29 @@ export type DaemonResponse = {
     pid?: number;
     uptime_s?: number;
     started_at?: string;
+    daemon_fingerprint?: string | null;
   };
 };
+
+export function currentDaemonFingerprint(
+  argv = process.argv,
+  execPath = process.execPath,
+): string {
+  const scriptPath = argv[1];
+  if (scriptPath && existsSync(scriptPath)) {
+    const resolved = realpathSync(scriptPath);
+    const stats = statSync(resolved);
+    return `${execPath}:${resolved}:${Math.trunc(stats.mtimeMs)}`;
+  }
+  return `${execPath}:no-script`;
+}
+
+export function daemonFingerprintMatches(
+  expected: string,
+  actual?: string | null,
+): boolean {
+  return !!actual && actual === expected;
+}
 
 function daemonRuntimeDir(env = process.env): string {
   const runtime = env.XDG_RUNTIME_DIR?.trim();
@@ -205,6 +232,33 @@ export async function pingDaemon(
   });
 }
 
+async function shutdownDaemonProcess(
+  socketPath: string,
+  timeoutMs = 3_000,
+): Promise<void> {
+  try {
+    await sendDaemonRequest({
+      socketPath,
+      timeoutMs: Math.min(timeoutMs, DAEMON_CONNECT_TIMEOUT_MS),
+      request: {
+        id: daemonRequestId(),
+        action: "shutdown",
+      },
+    });
+  } catch {
+    // best effort
+  }
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    try {
+      await pingDaemon(socketPath);
+    } catch {
+      return;
+    }
+  }
+}
+
 export async function startDaemonProcess({
   socketPath = daemonSocketPath(),
   timeoutMs = 8_000,
@@ -216,15 +270,40 @@ export async function startDaemonProcess({
   pid?: number;
   already_running?: boolean;
 }> {
+  const expectedFingerprint = currentDaemonFingerprint();
+  let sawIncompatibleDaemon = false;
   try {
     const pong = await pingDaemon(socketPath);
-    return {
-      started: true,
-      pid: pong.meta?.pid,
-      already_running: true,
-    };
+    if (
+      !daemonFingerprintMatches(
+        expectedFingerprint,
+        pong.meta?.daemon_fingerprint,
+      )
+    ) {
+      sawIncompatibleDaemon = true;
+      await shutdownDaemonProcess(socketPath);
+    } else {
+      return {
+        started: true,
+        pid: pong.meta?.pid,
+        already_running: true,
+      };
+    }
   } catch {
     // not running
+  }
+
+  if (sawIncompatibleDaemon) {
+    try {
+      const pong = await pingDaemon(socketPath);
+      throw new Error(
+        `stale daemon (pid ${pong.meta?.pid ?? "unknown"}) did not stop for restart`,
+      );
+    } catch (err) {
+      if (!isDaemonTransportError(err)) {
+        throw err;
+      }
+    }
   }
 
   mkdirSync(dirname(socketPath), { recursive: true });
@@ -270,13 +349,6 @@ export async function daemonRequestWithAutoStart(
   } = {},
 ): Promise<DaemonResponse> {
   const socketPath = daemonSocketPath();
-  try {
-    return await sendDaemonRequest({ request, socketPath, timeoutMs });
-  } catch (err) {
-    if (!isDaemonTransportError(err)) {
-      throw err;
-    }
-    await startDaemonProcess({ socketPath });
-    return await sendDaemonRequest({ request, socketPath, timeoutMs });
-  }
+  await startDaemonProcess({ socketPath });
+  return await sendDaemonRequest({ request, socketPath, timeoutMs });
 }
