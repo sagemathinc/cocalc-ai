@@ -1,3 +1,5 @@
+export {};
+
 let queryMock: jest.Mock;
 
 jest.mock("@cocalc/database/pool", () => ({

@@ -18,6 +18,17 @@ export interface RebuildAccountProjectIndexResult {
   inserted_rows: number;
 }
 
+export interface AccountProjectIndexProjectListRow {
+  project_id: string;
+  title: string;
+  description: string;
+  host_id: string | null;
+  owning_bay_id: string;
+  is_hidden: boolean;
+  sort_key: Date | null;
+  updated_at: Date | null;
+}
+
 function normalizeBayId(raw?: string): string {
   const bay_id = `${raw ?? ""}`.trim();
   if (!bay_id) {
@@ -26,12 +37,80 @@ function normalizeBayId(raw?: string): string {
   return bay_id;
 }
 
-function normalizeAccountId(raw?: string): string {
-  const account_id = `${raw ?? ""}`.trim();
-  if (!isValidUUID(account_id)) {
-    throw Error(`invalid account id '${raw ?? ""}'`);
+function normalizeUuid(raw: string | undefined, label: string): string {
+  const value = `${raw ?? ""}`.trim();
+  if (!isValidUUID(value)) {
+    throw Error(`invalid ${label} '${raw ?? ""}'`);
   }
-  return account_id;
+  return value;
+}
+
+function normalizeAccountId(raw?: string): string {
+  return normalizeUuid(raw, "account id");
+}
+
+function normalizeLimit(raw?: number): number {
+  const limit = raw ?? 50;
+  if (!Number.isInteger(limit) || limit <= 0) {
+    throw Error("limit must be a positive integer");
+  }
+  return limit;
+}
+
+export async function listProjectedProjectsForAccount(opts: {
+  account_id: string;
+  limit?: number;
+  project_id?: string;
+  title?: string;
+  host_id?: string | null;
+  include_hidden?: boolean;
+}): Promise<AccountProjectIndexProjectListRow[]> {
+  const account_id = normalizeAccountId(opts.account_id);
+  const limit = normalizeLimit(opts.limit);
+  const where: string[] = ["account_id = $1::UUID"];
+  const params: any[] = [account_id];
+  let i = params.length;
+  if (!opts.include_hidden) {
+    where.push("COALESCE(is_hidden, FALSE) IS NOT TRUE");
+  }
+  if (opts.project_id != null) {
+    i += 1;
+    where.push(`project_id = $${i}::UUID`);
+    params.push(normalizeUuid(opts.project_id, "project id"));
+  }
+  if (opts.title != null) {
+    i += 1;
+    where.push(`title = $${i}::TEXT`);
+    params.push(`${opts.title}`);
+  }
+  if (opts.host_id !== undefined) {
+    i += 1;
+    if (opts.host_id == null) {
+      where.push("host_id IS NULL");
+    } else {
+      where.push(`host_id = $${i}::UUID`);
+      params.push(normalizeUuid(opts.host_id, "host id"));
+    }
+  }
+  i += 1;
+  params.push(limit);
+  const { rows } = await getPool().query<AccountProjectIndexProjectListRow>(
+    `SELECT
+       project_id,
+       COALESCE(title, '') AS title,
+       COALESCE(description, '') AS description,
+       host_id,
+       COALESCE(NULLIF(BTRIM(owning_bay_id), ''), 'bay-0') AS owning_bay_id,
+       COALESCE(is_hidden, FALSE) AS is_hidden,
+       sort_key,
+       updated_at
+     FROM account_project_index
+     WHERE ${where.join(" AND ")}
+     ORDER BY sort_key DESC NULLS LAST, updated_at DESC NULLS LAST, project_id ASC
+     LIMIT $${i}`,
+    params,
+  );
+  return rows;
 }
 
 async function assertAccountIsHomedLocally(opts: {

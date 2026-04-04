@@ -4,7 +4,10 @@
  */
 
 import getPool, { initEphemeralDatabase } from "@cocalc/database/pool";
-import { rebuildAccountProjectIndex } from "./account-project-index";
+import {
+  listProjectedProjectsForAccount,
+  rebuildAccountProjectIndex,
+} from "./account-project-index";
 
 const LOCAL_BAY_ID = "bay-local";
 const OTHER_BAY_ID = "bay-other";
@@ -147,5 +150,59 @@ describe("account_project_index rebuild", () => {
     ).rejects.toThrow(
       `account '${ACCOUNT_ID}' is not homed in bay '${LOCAL_BAY_ID}'`,
     );
+  });
+
+  it("lists projected projects in sort-key order and can skip hidden rows", async () => {
+    await getPool().query(
+      `INSERT INTO account_project_index
+         (account_id, project_id, owning_bay_id, host_id, title, description,
+          users_summary, state_summary, last_activity_at, last_opened_at,
+          is_hidden, sort_key, updated_at)
+       VALUES
+         ($1, $2, $4, NULL, 'Visible Newer', 'visible',
+          '{}'::JSONB, '{"state":"running"}'::JSONB, NULL, NULL, FALSE, $6, $6),
+         ($1, $3, $4, NULL, 'Hidden Older', 'hidden',
+          '{}'::JSONB, '{"state":"stopped"}'::JSONB, NULL, NULL, TRUE, $5, $5)`,
+      [
+        ACCOUNT_ID,
+        PROJECT_VISIBLE,
+        PROJECT_HIDDEN,
+        LOCAL_BAY_ID,
+        new Date("2026-04-03T21:00:00.000Z"),
+        new Date("2026-04-03T22:00:00.000Z"),
+      ],
+    );
+
+    await expect(
+      listProjectedProjectsForAccount({
+        account_id: ACCOUNT_ID,
+        limit: 10,
+      }),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        project_id: PROJECT_VISIBLE,
+        title: "Visible Newer",
+        is_hidden: false,
+      }),
+    ]);
+
+    await expect(
+      listProjectedProjectsForAccount({
+        account_id: ACCOUNT_ID,
+        limit: 10,
+        include_hidden: true,
+      }),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        project_id: PROJECT_VISIBLE,
+        title: "Visible Newer",
+        is_hidden: false,
+      }),
+      expect.objectContaining({
+        project_id: PROJECT_HIDDEN,
+        title: "Hidden Older",
+        is_hidden: true,
+      }),
+    ]);
   });
 });

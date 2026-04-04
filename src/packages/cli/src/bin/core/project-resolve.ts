@@ -21,6 +21,43 @@ export type ProjectCacheContext<W extends ProjectLike = ProjectLike> = {
   hub: Pick<HubApi, "db" | "system" | "hosts">;
 };
 
+type ProjectListReadMode = "off" | "prefer" | "only";
+
+type AccountProjectIndexRow = {
+  account_id: string;
+  project_id: string;
+  owning_bay_id?: string | null;
+  host_id: string | null;
+  title: string;
+  description?: string | null;
+  users_summary?: Record<string, any> | null;
+  state_summary?: { state?: string } | null;
+  last_activity_at?: string | Date | null;
+  last_opened_at?: string | Date | null;
+  is_hidden?: boolean | null;
+  sort_key?: string | Date | null;
+  updated_at?: string | Date | null;
+};
+
+function getProjectListReadMode(): ProjectListReadMode {
+  const value =
+    `${process.env.COCALC_ACCOUNT_PROJECT_INDEX_PROJECT_LIST_READS ?? ""}`
+      .trim()
+      .toLowerCase();
+  if (
+    value === "1" ||
+    value === "true" ||
+    value === "on" ||
+    value === "prefer"
+  ) {
+    return "prefer";
+  }
+  if (value === "only" || value === "strict" || value === "required") {
+    return "only";
+  }
+  return "off";
+}
+
 function projectCacheKey(identifier: string): string {
   const value = identifier.trim();
   if (isValidUUID(value)) {
@@ -86,6 +123,62 @@ export async function userQueryTable<T>(
   return Array.isArray(rows) ? rows : [];
 }
 
+function mapProjectedProjectRow<W extends ProjectLike>(
+  row: AccountProjectIndexRow,
+): W {
+  return {
+    project_id: row.project_id,
+    title: row.title,
+    host_id: row.host_id ?? null,
+    state: row.state_summary ?? null,
+    last_edited: row.sort_key ?? row.last_activity_at ?? row.updated_at ?? null,
+    deleted: false,
+  } as W;
+}
+
+async function queryProjectedProjects<W extends ProjectLike = ProjectLike>({
+  ctx,
+  project_id,
+  title,
+  host_id,
+  limit,
+}: {
+  ctx: ProjectCacheContext<W>;
+  project_id?: string;
+  title?: string;
+  host_id?: string | null;
+  limit: number;
+}): Promise<W[]> {
+  const row: Record<string, unknown> = {
+    account_id: null,
+    project_id: null,
+    host_id: null,
+    title: null,
+    state_summary: null,
+    sort_key: null,
+    updated_at: null,
+    is_hidden: null,
+  };
+  if (project_id != null) {
+    row.project_id = project_id;
+  }
+  if (title != null) {
+    row.title = title;
+  }
+  if (host_id != null) {
+    row.host_id = host_id;
+  }
+  const rows = await userQueryTable<AccountProjectIndexRow>(
+    ctx,
+    "account_project_index",
+    row,
+    [{ limit, order_by: "-sort_key" }],
+  );
+  return rows
+    .filter((x) => x.is_hidden !== true)
+    .map((x) => mapProjectedProjectRow<W>(x));
+}
+
 export async function queryProjects<W extends ProjectLike = ProjectLike>({
   ctx,
   project_id,
@@ -99,6 +192,25 @@ export async function queryProjects<W extends ProjectLike = ProjectLike>({
   host_id?: string | null;
   limit: number;
 }): Promise<W[]> {
+  const readMode = getProjectListReadMode();
+  if (readMode !== "off") {
+    try {
+      const projectedRows = await queryProjectedProjects<W>({
+        ctx,
+        project_id,
+        title,
+        host_id,
+        limit,
+      });
+      if (readMode === "only" || projectedRows.length > 0) {
+        return projectedRows;
+      }
+    } catch (err) {
+      if (readMode === "only") {
+        throw err;
+      }
+    }
+  }
   const row: Record<string, unknown> = {
     project_id: null,
     title: null,
