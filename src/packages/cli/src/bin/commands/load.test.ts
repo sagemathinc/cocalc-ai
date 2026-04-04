@@ -12,6 +12,7 @@ type Capture = {
   lastLimit?: number;
   projectCollaboratorListCalls: string[];
   myCollaboratorListCalls: number[];
+  mentionQueryCalls: number[];
   adminCreateCalls: string[];
   userSearchCalls: string[];
   createCollabCalls: Array<{ project_id: string; invitee_account_id: string }>;
@@ -24,6 +25,27 @@ function makeDeps(capture: Capture): LoadCommandDeps {
       const ctx = {
         accountId: "11111111-1111-4111-8111-111111111111",
         hub: {
+          db: {
+            userQuery: async ({ options }) => {
+              capture.mentionQueryCalls.push(options?.[0]?.limit);
+              return {
+                mentions: [
+                  {
+                    time: "2026-04-04T00:00:00.000Z",
+                    project_id: "mention-project-1",
+                    path: "notes/chat.sage-chat",
+                    target: "target-1",
+                  },
+                  {
+                    time: "2026-04-03T00:00:00.000Z",
+                    project_id: "mention-project-2",
+                    path: "worksheet.sagews",
+                    target: "target-2",
+                  },
+                ],
+              };
+            },
+          },
           system: {
             getAccountBay: async () => {
               capture.accountBayCalls += 1;
@@ -156,6 +178,7 @@ test("load bootstrap summarizes repeated control-plane calls", async () => {
     projectQueryCalls: 0,
     projectCollaboratorListCalls: [],
     myCollaboratorListCalls: [],
+    mentionQueryCalls: [],
     adminCreateCalls: [],
     userSearchCalls: [],
     createCollabCalls: [],
@@ -197,6 +220,7 @@ test("load projects respects the requested limit", async () => {
     projectQueryCalls: 0,
     projectCollaboratorListCalls: [],
     myCollaboratorListCalls: [],
+    mentionQueryCalls: [],
     adminCreateCalls: [],
     userSearchCalls: [],
     createCollabCalls: [],
@@ -241,6 +265,7 @@ test("load collaborators measures project-scoped collaborator listings", async (
     projectQueryCalls: 0,
     projectCollaboratorListCalls: [],
     myCollaboratorListCalls: [],
+    mentionQueryCalls: [],
     adminCreateCalls: [],
     userSearchCalls: [],
     createCollabCalls: [],
@@ -288,6 +313,7 @@ test("load my-collaborators respects the requested limit", async () => {
     projectQueryCalls: 0,
     projectCollaboratorListCalls: [],
     myCollaboratorListCalls: [],
+    mentionQueryCalls: [],
     adminCreateCalls: [],
     userSearchCalls: [],
     createCollabCalls: [],
@@ -324,6 +350,50 @@ test("load my-collaborators respects the requested limit", async () => {
   assert.equal(capture.data.last_result.max_shared_projects, 12);
 });
 
+test("load mentions respects the requested limit", async () => {
+  const capture: Capture = {
+    accountBayCalls: 0,
+    listBayCalls: 0,
+    projectQueryCalls: 0,
+    projectCollaboratorListCalls: [],
+    myCollaboratorListCalls: [],
+    mentionQueryCalls: [],
+    adminCreateCalls: [],
+    userSearchCalls: [],
+    createCollabCalls: [],
+    removeCollabCalls: [],
+  };
+  const program = new Command();
+  registerLoadCommand(program, makeDeps(capture));
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "load",
+    "mentions",
+    "--iterations",
+    "2",
+    "--warmup",
+    "1",
+    "--concurrency",
+    "4",
+    "--limit",
+    "25",
+  ]);
+
+  assert.deepEqual(capture.mentionQueryCalls, [25, 25, 25]);
+  assert.equal(capture.data.scenario, "mentions");
+  assert.equal(capture.data.iterations, 2);
+  assert.equal(capture.data.warmup, 1);
+  assert.equal(capture.data.concurrency, 3);
+  assert.equal(capture.data.successes, 2);
+  assert.equal(capture.data.failures, 0);
+  assert.equal(capture.data.last_result.mention_count, 2);
+  assert.equal(capture.data.last_result.first_project_id, "mention-project-1");
+  assert.equal(capture.data.last_result.first_path, "notes/chat.sage-chat");
+  assert.equal(capture.data.last_result.first_target, "target-1");
+});
+
 test("load collaborator-cycle uses a seeded per-worker account pool", async () => {
   const capture: Capture = {
     accountBayCalls: 0,
@@ -331,6 +401,7 @@ test("load collaborator-cycle uses a seeded per-worker account pool", async () =
     projectQueryCalls: 0,
     projectCollaboratorListCalls: [],
     myCollaboratorListCalls: [],
+    mentionQueryCalls: [],
     adminCreateCalls: [],
     userSearchCalls: [],
     createCollabCalls: [],
@@ -390,6 +461,7 @@ test("load seed users creates or reuses accounts and adds collaborators", async 
     projectQueryCalls: 0,
     projectCollaboratorListCalls: [],
     myCollaboratorListCalls: [],
+    mentionQueryCalls: [],
     adminCreateCalls: [],
     userSearchCalls: [],
     createCollabCalls: [],

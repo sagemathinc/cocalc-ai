@@ -459,6 +459,79 @@ export function registerLoadCommand(
     );
 
   load
+    .command("mentions")
+    .description("measure repeated account mention/notification queries")
+    .option("--iterations <n>", "measured iterations", "20")
+    .option("--warmup <n>", "warmup iterations", "2")
+    .option("--concurrency <n>", "parallel workers", "1")
+    .option("--limit <n>", "rows to fetch per iteration", "500")
+    .action(
+      async (
+        opts: {
+          iterations?: string;
+          warmup?: string;
+          concurrency?: string;
+          limit?: string;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "load mentions", async (ctx) => {
+          const iterations = parsePositiveInteger(
+            opts.iterations,
+            "--iterations",
+            20,
+          );
+          const warmup = parsePositiveInteger(opts.warmup, "--warmup", 2);
+          const concurrency = parsePositiveInteger(
+            opts.concurrency,
+            "--concurrency",
+            1,
+          );
+          const limit = parsePositiveInteger(opts.limit, "--limit", 500);
+          return await runLoadScenario({
+            scenario: "mentions",
+            iterations,
+            warmup,
+            concurrency,
+            execute: async () => {
+              const result = (await ctx.hub.db.userQuery({
+                query: {
+                  mentions: [
+                    {
+                      time: null,
+                      project_id: null,
+                      path: null,
+                      source: null,
+                      target: null,
+                      description: null,
+                    },
+                  ],
+                },
+                options: [{ limit }],
+              })) as {
+                mentions?: Array<{
+                  time?: string | Date | null;
+                  project_id?: string | null;
+                  path?: string | null;
+                  target?: string | null;
+                }>;
+              };
+              const rows = Array.isArray(result?.mentions)
+                ? result.mentions
+                : [];
+              return {
+                mention_count: rows.length,
+                first_project_id: rows[0]?.project_id ?? null,
+                first_path: rows[0]?.path ?? null,
+                first_target: rows[0]?.target ?? null,
+              };
+            },
+          });
+        });
+      },
+    );
+
+  load
     .command("collaborator-cycle")
     .description(
       "measure repeated remove-then-direct-add collaborator cycles using a seeded account pool",
