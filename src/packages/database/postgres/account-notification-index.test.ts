@@ -9,7 +9,9 @@ import {
   getProjectedNotificationCounts,
   listProjectedNotificationsForAccount,
   rebuildAccountNotificationIndex,
+  setProjectedNotificationArchivedState,
   setProjectedNotificationReadState,
+  setProjectedNotificationSavedState,
 } from "./account-notification-index";
 
 const LOCAL_BAY_ID = "bay-local";
@@ -267,6 +269,63 @@ describe("account_notification_index rebuild", () => {
           unread: 0,
           saved: 1,
           archived: 0,
+        },
+      },
+    });
+
+    await expect(
+      setProjectedNotificationSavedState({
+        account_id: ACCOUNT_ID,
+        notification_ids: [allRows[1].notification_id],
+        saved: true,
+      }),
+    ).resolves.toEqual({
+      updated_count: 1,
+    });
+
+    await expect(
+      listProjectedNotificationsForAccount({
+        account_id: ACCOUNT_ID,
+        state: "saved",
+      }),
+    ).resolves.toHaveLength(2);
+
+    await expect(
+      setProjectedNotificationArchivedState({
+        account_id: ACCOUNT_ID,
+        notification_ids: [allRows[1].notification_id],
+        archived: true,
+      }),
+    ).resolves.toEqual({
+      updated_count: 1,
+    });
+
+    await expect(
+      listProjectedNotificationsForAccount({
+        account_id: ACCOUNT_ID,
+        state: "archived",
+      }),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        notification_id: allRows[1].notification_id,
+      }),
+    ]);
+
+    await expect(
+      getProjectedNotificationCounts({
+        account_id: ACCOUNT_ID,
+      }),
+    ).resolves.toEqual({
+      total: 2,
+      unread: 0,
+      saved: 1,
+      archived: 1,
+      by_kind: {
+        mention: {
+          total: 2,
+          unread: 0,
+          saved: 1,
+          archived: 1,
         },
       },
     });

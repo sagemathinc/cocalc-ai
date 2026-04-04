@@ -88,6 +88,18 @@ export interface MarkNotificationReadResult {
   updated_count: number;
 }
 
+export interface SaveNotificationOptions {
+  account_id?: string;
+  notification_ids: string[];
+  saved?: boolean;
+}
+
+export interface ArchiveNotificationOptions {
+  account_id?: string;
+  notification_ids: string[];
+  archived?: boolean;
+}
+
 export interface Notifications {
   createMention: (
     opts: CreateMentionNotificationOptions,
@@ -100,6 +112,10 @@ export interface Notifications {
   markRead: (
     opts: MarkNotificationReadOptions,
   ) => Promise<MarkNotificationReadResult>;
+  save: (opts: SaveNotificationOptions) => Promise<MarkNotificationReadResult>;
+  archive: (
+    opts: ArchiveNotificationOptions,
+  ) => Promise<MarkNotificationReadResult>;
 }
 
 export const notifications = {
@@ -108,4 +124,6 @@ export const notifications = {
   list: authFirstRequireAccount,
   counts: authFirstRequireAccount,
   markRead: authFirstRequireAccount,
+  save: authFirstRequireAccount,
+  archive: authFirstRequireAccount,
 };

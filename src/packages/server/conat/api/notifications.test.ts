@@ -5,11 +5,13 @@
 
 import getPool, { initEphemeralDatabase } from "@cocalc/database/pool";
 import {
+  archive,
   counts,
   createAccountNotice,
   createMention,
   list,
   markRead,
+  save,
 } from "./notifications";
 
 const LOCAL_BAY_ID = "bay-0";
@@ -265,6 +267,49 @@ describe("conat notifications api", () => {
           total: 1,
           unread: 0,
           saved: 0,
+          archived: 0,
+        },
+      },
+    });
+
+    await expect(
+      save({
+        account_id: ACTOR_ACCOUNT_ID,
+        notification_ids: ["66666666-6666-4666-8666-666666666666"],
+      }),
+    ).resolves.toEqual({
+      updated_count: 1,
+    });
+
+    await expect(
+      archive({
+        account_id: ACTOR_ACCOUNT_ID,
+        notification_ids: ["77777777-7777-4777-8777-777777777777"],
+      }),
+    ).resolves.toEqual({
+      updated_count: 1,
+    });
+
+    await expect(
+      counts({
+        account_id: ACTOR_ACCOUNT_ID,
+      }),
+    ).resolves.toEqual({
+      total: 2,
+      unread: 0,
+      saved: 1,
+      archived: 1,
+      by_kind: {
+        account_notice: {
+          total: 1,
+          unread: 0,
+          saved: 0,
+          archived: 1,
+        },
+        mention: {
+          total: 1,
+          unread: 0,
+          saved: 1,
           archived: 0,
         },
       },
