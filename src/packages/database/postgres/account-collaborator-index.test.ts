@@ -7,6 +7,7 @@ import getPool, { initEphemeralDatabase } from "@cocalc/database/pool";
 import { testCleanup } from "@cocalc/database/test-utils";
 import {
   listProjectedCollaboratorsForAccount,
+  listProjectedMyCollaboratorsForAccount,
   rebuildAccountCollaboratorIndex,
 } from "./account-collaborator-index";
 
@@ -128,6 +129,28 @@ describe("account_collaborator_index rebuild", () => {
         common_project_count: 1,
         display_name: "Bob B",
         avatar_ref: "bob.png",
+      }),
+    ]);
+
+    await expect(
+      listProjectedMyCollaboratorsForAccount({
+        account_id: ACCOUNT_ID,
+        limit: 10,
+      }),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        account_id: COLLAB_A,
+        shared_projects: 2,
+        name: "Alice A",
+        first_name: "Alice",
+        last_name: "A",
+      }),
+      expect.objectContaining({
+        account_id: COLLAB_B,
+        shared_projects: 1,
+        name: "Bob B",
+        first_name: "Bob",
+        last_name: "B",
       }),
     ]);
   });

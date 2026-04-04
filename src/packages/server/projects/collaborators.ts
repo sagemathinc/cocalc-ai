@@ -3,6 +3,7 @@ Add, remove and invite collaborators on projects.
 */
 
 import { db } from "@cocalc/database";
+import { listProjectedMyCollaboratorsForAccount } from "@cocalc/database/postgres/account-collaborator-index";
 import getPool from "@cocalc/database/pool";
 import { callback2 } from "@cocalc/util/async-utils";
 import { assertLocalProjectCollaborator } from "@cocalc/server/conat/project-local-access";
@@ -47,6 +48,27 @@ const INVITE_STATUS_SET = new Set<string>([
   "expired",
   "canceled",
 ]);
+
+type CollaboratorReadMode = "off" | "prefer" | "only";
+
+function getCollaboratorReadMode(): CollaboratorReadMode {
+  const value =
+    `${process.env.COCALC_ACCOUNT_COLLABORATOR_INDEX_COLLABORATOR_READS ?? ""}`
+      .trim()
+      .toLowerCase();
+  if (
+    value === "1" ||
+    value === "true" ||
+    value === "on" ||
+    value === "prefer"
+  ) {
+    return "prefer";
+  }
+  if (value === "only" || value === "strict" || value === "required") {
+    return "only";
+  }
+  return "off";
+}
 
 function normalizeInviteDirection(
   value?: ProjectCollabInviteDirection,
@@ -739,6 +761,27 @@ export async function listMyCollaborators({
   }
   const includeEmail = await isAdmin(account_id);
   const maxRows = Math.max(1, Math.min(1000, Number(limit ?? 500) || 500));
+  const readMode = getCollaboratorReadMode();
+  if (readMode !== "off") {
+    try {
+      const projected = await listProjectedMyCollaboratorsForAccount({
+        account_id,
+        limit: maxRows,
+        include_email: includeEmail,
+      });
+      if (readMode === "only" || projected.length > 0) {
+        return projected;
+      }
+    } catch (err) {
+      if (readMode === "only") {
+        throw err;
+      }
+      logger.warn("projection-backed collaborator read fallback", {
+        account_id,
+        err: `${err}`,
+      });
+    }
+  }
   const pool = getPool();
   const { rows } = await pool.query<MyCollaboratorRow>(
     `WITH my_projects AS (

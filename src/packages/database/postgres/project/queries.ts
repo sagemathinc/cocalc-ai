@@ -6,6 +6,7 @@
 import debug from "debug";
 import { omit } from "lodash";
 
+import getPool from "@cocalc/database/pool";
 import { callback2 } from "@cocalc/util/async-utils";
 import {
   DUMMY_SECRET,
@@ -26,6 +27,27 @@ import { query } from "../query";
 import { PostgreSQL } from "../types";
 
 const L = debug("hub:project-queries");
+
+type CollaboratorReadMode = "off" | "prefer" | "only";
+
+function getCollaboratorReadMode(): CollaboratorReadMode {
+  const value =
+    `${process.env.COCALC_ACCOUNT_COLLABORATOR_INDEX_COLLABORATOR_READS ?? ""}`
+      .trim()
+      .toLowerCase();
+  if (
+    value === "1" ||
+    value === "true" ||
+    value === "on" ||
+    value === "prefer"
+  ) {
+    return "prefer";
+  }
+  if (value === "only" || value === "strict" || value === "required") {
+    return "only";
+  }
+  return "off";
+}
 
 export async function project_has_network_access(
   db: PostgreSQL,
@@ -480,6 +502,29 @@ export async function get_collaborator_ids(
   db: PostgreSQL,
   opts: GetCollaboratorIdsOptions,
 ): Promise<string[]> {
+  const readMode = getCollaboratorReadMode();
+  if (readMode !== "off") {
+    try {
+      const { rows } = await getPool().query<{
+        collaborator_account_id: string;
+      }>(
+        `SELECT collaborator_account_id
+           FROM account_collaborator_index
+          WHERE account_id = $1::UUID
+          ORDER BY common_project_count DESC, collaborator_account_id ASC`,
+        [opts.account_id],
+      );
+      const projected = rows.map((row) => row.collaborator_account_id);
+      if (readMode === "only" || projected.length > 0) {
+        return projected;
+      }
+    } catch (err) {
+      if (readMode === "only") {
+        throw err;
+      }
+      L("get_collaborator_ids projection fallback: %O", err);
+    }
+  }
   const { rows } = await callback2<QueryRows<{ jsonb_object_keys?: string }>>(
     db._query.bind(db),
     {

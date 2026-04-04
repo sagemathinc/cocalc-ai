@@ -5,6 +5,7 @@ let queryMock: jest.Mock;
 let callback2Mock: jest.Mock;
 let isAdminMock: jest.Mock;
 let dbMock: jest.Mock;
+let listProjectedMyCollaboratorsForAccountMock: jest.Mock;
 
 jest.mock("@cocalc/server/conat/project-local-access", () => ({
   __esModule: true,
@@ -15,6 +16,12 @@ jest.mock("@cocalc/server/conat/project-local-access", () => ({
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
   default: jest.fn(() => ({ query: queryMock })),
+}));
+
+jest.mock("@cocalc/database/postgres/account-collaborator-index", () => ({
+  __esModule: true,
+  listProjectedMyCollaboratorsForAccount: (...args: any[]) =>
+    listProjectedMyCollaboratorsForAccountMock(...args),
 }));
 
 jest.mock("@cocalc/util/async-utils", () => ({
@@ -84,10 +91,12 @@ describe("project collaborators local bay access", () => {
     queryMock = jest.fn(async () => ({ rows: [] }));
     callback2Mock = jest.fn(async (fn, opts) => await fn(opts));
     isAdminMock = jest.fn(async () => false);
+    listProjectedMyCollaboratorsForAccountMock = jest.fn(async () => []);
     removeCollaboratorFromProject.mockClear();
     dbMock = jest.fn(() => ({
       remove_collaborator_from_project: removeCollaboratorFromProject,
     }));
+    delete process.env.COCALC_ACCOUNT_COLLABORATOR_INDEX_COLLABORATOR_READS;
   });
 
   it("rejects removing collaborators for wrong-bay projects", async () => {
@@ -138,5 +147,79 @@ describe("project collaborators local bay access", () => {
       project_id: PROJECT_ID,
     });
     expect(queryMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses projected my-collaborator rows when enabled", async () => {
+    process.env.COCALC_ACCOUNT_COLLABORATOR_INDEX_COLLABORATOR_READS = "prefer";
+    listProjectedMyCollaboratorsForAccountMock = jest.fn(async () => [
+      {
+        account_id: TARGET_ACCOUNT_ID,
+        name: "Collab",
+        first_name: "Col",
+        last_name: "Lab",
+        email_address: null,
+        last_active: null,
+        shared_projects: 3,
+      },
+    ]);
+    const { listMyCollaborators } = await import("./collaborators");
+    await expect(
+      listMyCollaborators({
+        account_id: ACCOUNT_ID,
+        limit: 20,
+      }),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        account_id: TARGET_ACCOUNT_ID,
+        shared_projects: 3,
+        name: "Collab",
+      }),
+    ]);
+    expect(listProjectedMyCollaboratorsForAccountMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      limit: 20,
+      include_email: false,
+    });
+    expect(queryMock).not.toHaveBeenCalled();
+  });
+
+  it("falls back to legacy my-collaborator reads in prefer mode when projection is empty", async () => {
+    process.env.COCALC_ACCOUNT_COLLABORATOR_INDEX_COLLABORATOR_READS = "prefer";
+    queryMock = jest.fn(async () => ({
+      rows: [
+        {
+          account_id: TARGET_ACCOUNT_ID,
+          name: "Legacy Collab",
+          shared_projects: 2,
+        },
+      ],
+    }));
+    const { listMyCollaborators } = await import("./collaborators");
+    await expect(
+      listMyCollaborators({
+        account_id: ACCOUNT_ID,
+        limit: 20,
+      }),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        account_id: TARGET_ACCOUNT_ID,
+        shared_projects: 2,
+        name: "Legacy Collab",
+      }),
+    ]);
+    expect(queryMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses projection-only collaborator reads in only mode", async () => {
+    process.env.COCALC_ACCOUNT_COLLABORATOR_INDEX_COLLABORATOR_READS = "only";
+    listProjectedMyCollaboratorsForAccountMock = jest.fn(async () => []);
+    const { listMyCollaborators } = await import("./collaborators");
+    await expect(
+      listMyCollaborators({
+        account_id: ACCOUNT_ID,
+        limit: 20,
+      }),
+    ).resolves.toEqual([]);
+    expect(queryMock).not.toHaveBeenCalled();
   });
 });

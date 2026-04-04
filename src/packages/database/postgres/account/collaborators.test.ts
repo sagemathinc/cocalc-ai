@@ -9,6 +9,7 @@ import { testCleanup } from "@cocalc/database/test-utils";
 import { callback_opts } from "@cocalc/util/async-utils";
 import { uuid } from "@cocalc/util/misc";
 
+import { rebuildAccountCollaboratorIndex } from "../account-collaborator-index";
 import type { PostgreSQL } from "../types";
 
 describe("collaborator query methods", () => {
@@ -49,8 +50,11 @@ describe("collaborator query methods", () => {
   }, 15000);
 
   afterEach(async () => {
+    delete process.env.COCALC_ACCOUNT_COLLABORATOR_INDEX_COLLABORATOR_READS;
     const pool = getPool();
     await pool.query("DELETE FROM projects");
+    await pool.query("DELETE FROM account_collaborator_index");
+    await pool.query("DELETE FROM accounts");
   });
 
   afterAll(async () => {
@@ -108,5 +112,38 @@ describe("collaborator query methods", () => {
     expect(resultSet.has(collaboratorB)).toBe(true);
     expect(resultSet.has(collaboratorC)).toBe(false);
     expect(resultSet.size).toBe(2);
+  });
+
+  it("get_collaborator_ids uses account_collaborator_index when enabled", async () => {
+    process.env.COCALC_ACCOUNT_COLLABORATOR_INDEX_COLLABORATOR_READS = "prefer";
+    const account_id = uuid();
+    const collaboratorA = uuid();
+    const collaboratorB = uuid();
+
+    await getPool().query(
+      `INSERT INTO accounts
+         (account_id, first_name, last_name, created, email_address, home_bay_id)
+       VALUES
+         ($1, 'Local', 'User', NOW(), 'local@example.com', 'bay-0'),
+         ($2, 'Alice', 'A', NOW(), 'alice@example.com', 'bay-0'),
+         ($3, 'Bob', 'B', NOW(), 'bob@example.com', 'bay-0')`,
+      [account_id, collaboratorA, collaboratorB],
+    );
+    await insertProject(uuid(), {
+      [account_id]: { group: "owner" },
+      [collaboratorA]: { group: "collaborator" },
+      [collaboratorB]: { group: "collaborator" },
+    });
+
+    await rebuildAccountCollaboratorIndex({
+      account_id,
+      bay_id: "bay-0",
+      dry_run: false,
+    });
+
+    const results = await getCollaboratorIds({ account_id });
+    expect(new Set(results)).toEqual(
+      new Set([account_id, collaboratorA, collaboratorB]),
+    );
   });
 });

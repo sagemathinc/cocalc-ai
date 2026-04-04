@@ -25,6 +25,16 @@ export interface AccountCollaboratorIndexRow {
   updated_at: Date | null;
 }
 
+export interface ProjectedMyCollaboratorRow {
+  account_id: string;
+  name: string | null;
+  first_name: string | null;
+  last_name: string | null;
+  email_address: string | null;
+  last_active: Date | null;
+  shared_projects: number;
+}
+
 export interface ReplaceAccountCollaboratorIndexRowsResult {
   deleted_rows: number;
   inserted_rows: number;
@@ -96,6 +106,53 @@ export async function listProjectedCollaboratorsForAccount(opts: {
      ORDER BY common_project_count DESC, display_name ASC, collaborator_account_id ASC
      LIMIT $${i}`,
     params,
+  );
+  return rows;
+}
+
+export async function listProjectedMyCollaboratorsForAccount(opts: {
+  account_id: string;
+  limit?: number;
+  include_email?: boolean;
+}): Promise<ProjectedMyCollaboratorRow[]> {
+  const account_id = normalizeAccountId(opts.account_id);
+  const limit = normalizeLimit(opts.limit);
+  const include_email = opts.include_email ?? false;
+  const { rows } = await getPool().query<ProjectedMyCollaboratorRow>(
+    `SELECT
+       aci.collaborator_account_id AS account_id,
+       CASE
+         WHEN a.account_id IS NULL OR a.deleted IS TRUE THEN aci.display_name
+         ELSE COALESCE(NULLIF(BTRIM(a.name), ''), aci.display_name)
+       END AS name,
+       CASE
+         WHEN a.account_id IS NULL OR a.deleted IS TRUE THEN NULL
+         ELSE a.first_name
+       END AS first_name,
+       CASE
+         WHEN a.account_id IS NULL OR a.deleted IS TRUE THEN NULL
+         ELSE a.last_name
+       END AS last_name,
+       CASE
+         WHEN $2::boolean AND a.account_id IS NOT NULL AND a.deleted IS NOT TRUE
+           THEN a.email_address
+         ELSE NULL
+       END AS email_address,
+       CASE
+         WHEN a.account_id IS NULL OR a.deleted IS TRUE THEN NULL
+         ELSE a.last_active
+       END AS last_active,
+       aci.common_project_count AS shared_projects
+     FROM account_collaborator_index aci
+     LEFT JOIN accounts a ON a.account_id = aci.collaborator_account_id
+     WHERE aci.account_id = $1::UUID
+       AND aci.collaborator_account_id <> $1::UUID
+     ORDER BY
+       aci.common_project_count DESC,
+       COALESCE(a.last_active, aci.updated_at) DESC NULLS LAST,
+       aci.collaborator_account_id ASC
+     LIMIT $3`,
+    [account_id, include_email, limit],
   );
   return rows;
 }
