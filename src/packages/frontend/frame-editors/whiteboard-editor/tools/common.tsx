@@ -1,6 +1,19 @@
+import type { CSSProperties } from "react";
 import { Button, Popconfirm, Tooltip } from "antd";
 
 export const SELECTED = "#337ab7";
+
+export const WHITEBOARD_COMPACT_BUTTON_STYLE: CSSProperties = {
+  minWidth: 0,
+  height: "auto",
+  padding: 0,
+  lineHeight: 1,
+  border: "none",
+  boxShadow: "none",
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+};
 
 export function ResetButton({ onClick }) {
   return (
@@ -12,6 +25,7 @@ export function ResetButton({ onClick }) {
         <Button
           type="text"
           style={{
+            ...WHITEBOARD_COMPACT_BUTTON_STYLE,
             color: "#666",
             margin: "auto",
             padding: 0,

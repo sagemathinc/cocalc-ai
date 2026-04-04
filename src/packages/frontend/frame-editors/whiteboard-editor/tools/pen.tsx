@@ -6,7 +6,7 @@ import { Button, Tooltip } from "antd";
 import { Icon } from "@cocalc/frontend/components/icon";
 import ToolPanel, { getPresetManager, Tool } from "./tool-panel";
 import { defaultRadius, maxRadius as defaultMaxRadius } from "./defaults";
-import { SELECTED } from "./common";
+import { SELECTED, WHITEBOARD_COMPACT_BUTTON_STYLE } from "./common";
 
 interface Params {
   color?: string;
@@ -67,11 +67,21 @@ export default function PenToolPanel() {
         (opacity ? `, Opacity: ${opacity}` : "")
       }
       editableParams={new Set(["radius", "color", "opacity"])}
-      style={{ width: "100px" }}
-      presetStyle={{
-        marginTop: "-14px",
+      style={{ width: "128px", paddingBottom: "6px" }}
+      presetContainerStyle={{
+        display: "grid",
+        gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+        gap: "6px",
+        justifyItems: "center",
+        padding: "0 6px 4px",
       }}
-      editParamsStyle={{ left: "108px" }}
+      presetStyle={{
+        width: "52px",
+        height: "52px",
+        minHeight: "52px",
+        marginTop: 0,
+      }}
+      editParamsStyle={{ left: "136px" }}
       AlternateTop={AlternateTop}
     />
   );
@@ -90,14 +100,42 @@ function AlternateTop({
   selected: number;
 }) {
   const fontSize = "20px";
+  const buttonStyle = {
+    ...WHITEBOARD_COMPACT_BUTTON_STYLE,
+    width: "28px",
+    minHeight: "28px",
+    borderRadius: "6px",
+  } as const;
   return (
-    <div style={{ margin: "5px 0 10px -8px" }}>
-      <div style={{ textAlign: "center", color: "#666", fontSize: "14px" }}>
+    <div
+      style={{
+        margin: "6px 6px 10px 6px",
+        display: "grid",
+        gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+        justifyItems: "center",
+        rowGap: "4px",
+        columnGap: "4px",
+        padding: "6px",
+        borderRadius: "10px",
+        background: "#fafafa",
+      }}
+    >
+      <div
+        style={{
+          gridColumn: "1 / -1",
+          textAlign: "center",
+          color: "#666",
+          fontSize: "14px",
+        }}
+      >
         Pen
       </div>
       <Tooltip title="Pen (customize below)">
         <Button
-          style={{ width: "25px" }}
+          style={{
+            ...buttonStyle,
+            background: selected >= 0 ? "#e6f4ff" : undefined,
+          }}
           type="text"
           onClick={() => setSelected(0)}
         >
@@ -109,7 +147,10 @@ function AlternateTop({
       </Tooltip>
       <Tooltip title="Highlighter (a wide transparent pen)">
         <Button
-          style={{ width: "25px" }}
+          style={{
+            ...buttonStyle,
+            background: selected == HIGHLIGHTER ? "#e6f4ff" : undefined,
+          }}
           type="text"
           onClick={() => setSelected(HIGHLIGHTER)}
         >
@@ -124,7 +165,10 @@ function AlternateTop({
       </Tooltip>
       <Tooltip title="Whiteout (a wide white pen)">
         <Button
-          style={{ width: "25px" }}
+          style={{
+            ...buttonStyle,
+            background: selected == ERASER ? "#e6f4ff" : undefined,
+          }}
           type="text"
           onClick={() => setSelected(ERASER)}
         >
@@ -156,11 +200,13 @@ export function BrushPreview({
         position: "relative",
         width: `${(maxRadius + 1) * 2}px`,
         height: `${(maxRadius + 1) * 2}px`,
+        boxSizing: "border-box",
         borderRadius: `${maxRadius + 1}px`,
         background: "white",
         border: `3px solid ${color ?? "#ccc"}`,
-        paddingLeft: `${maxRadius + 1 - radius - 3}px`,
-        paddingTop: `${maxRadius + 1 - radius - 3}px`,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
       }}
     >
       <div
