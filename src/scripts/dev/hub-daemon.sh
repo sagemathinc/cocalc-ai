@@ -212,8 +212,16 @@ detect_host_ip() {
 
 load_config() {
   if [ -f "$CONFIG_FILE" ]; then
+    local restore_allexport=0
+    case "$-" in
+      *a*) restore_allexport=1 ;;
+    esac
+    set -a
     # shellcheck source=/dev/null
     source "$CONFIG_FILE"
+    if [ "$restore_allexport" = "0" ]; then
+      set +a
+    fi
   fi
 
   HUB_CMD="${HUB_CMD:-./packages/hub/bin/start.sh postgres}"
@@ -587,6 +595,8 @@ HUB_SOFTWARE_BASE_URL_FORCE=$HUB_SOFTWARE_BASE_URL_FORCE
 HUB_NODE_BIN=$HUB_NODE_BIN
 HUB_SELF_HOST_PAIR_URL=$HUB_SELF_HOST_PAIR_URL
 HUB_CLOUDFLARED_PID_FILE=$HUB_CLOUDFLARED_PID_FILE
+COCALC_ACCOUNT_PROJECT_INDEX_PROJECT_LIST_READS=${COCALC_ACCOUNT_PROJECT_INDEX_PROJECT_LIST_READS:-}
+COCALC_ACCOUNT_NOTIFICATION_INDEX_MENTION_READS=${COCALC_ACCOUNT_NOTIFICATION_INDEX_MENTION_READS:-}
 EOF
 }
 
