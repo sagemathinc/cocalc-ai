@@ -66,6 +66,13 @@ import {
   stopChatOffloadBackgroundMaintenance,
 } from "./chat-offload-maintenance";
 import { getLiteConatClient } from "./runtime-client";
+import {
+  cancelLiteCodexDeviceAuth,
+  getLiteCodexDeviceAuthStatus,
+  resolveLiteCodexHome,
+  startLiteCodexDeviceAuth,
+  uploadLiteSubscriptionAuthFile,
+} from "./codex-auth";
 
 const logger = getLogger("lite:hub:api");
 const execFile = promisify(execFileCb);
@@ -144,12 +151,113 @@ function resolveLiteProjectId(value?: string): string {
   return FALLBACK_PROJECT_UUID;
 }
 
-function resolveLiteCodexHome(): string {
-  const configured = `${process.env.COCALC_CODEX_HOME ?? ""}`.trim();
-  if (configured) return configured;
-  const home = `${process.env.HOME ?? ""}`.trim();
-  if (home) return join(home, ".codex");
-  return join(process.cwd(), ".codex");
+function requireLiteAccountId(value?: string): string {
+  const account_id = `${value ?? ACCOUNT_ID}`.trim() || ACCOUNT_ID;
+  if (!account_id) {
+    throw Error("user must be signed in");
+  }
+  return account_id;
+}
+
+function requireLiteProjectId(value?: string): string {
+  const expected = resolveLiteProjectId();
+  const explicit = `${value ?? ""}`.trim();
+  const project_id = explicit || expected;
+  if (expected && project_id !== expected) {
+    throw Error(`project '${project_id}' is not available in lite mode`);
+  }
+  return project_id;
+}
+
+async function codexDeviceAuthStartLite(opts: {
+  account_id?: string;
+  project_id?: string;
+}) {
+  if (hasRemote) {
+    return await callRemoteHub({
+      name: "projects.codexDeviceAuthStart",
+      args: [opts],
+    });
+  }
+  const account_id = requireLiteAccountId(opts.account_id);
+  const project_id = requireLiteProjectId(opts.project_id);
+  return await startLiteCodexDeviceAuth({
+    projectId: project_id,
+    accountId: account_id,
+  });
+}
+
+async function codexDeviceAuthStatusLite(opts: {
+  account_id?: string;
+  project_id?: string;
+  id: string;
+}) {
+  if (hasRemote) {
+    return await callRemoteHub({
+      name: "projects.codexDeviceAuthStatus",
+      args: [opts],
+    });
+  }
+  const account_id = requireLiteAccountId(opts.account_id);
+  const project_id = requireLiteProjectId(opts.project_id);
+  const id = `${opts.id ?? ""}`.trim();
+  const status = getLiteCodexDeviceAuthStatus(id);
+  if (
+    !status ||
+    status.accountId !== account_id ||
+    status.projectId !== project_id
+  ) {
+    throw Error("unknown device auth id");
+  }
+  return status;
+}
+
+async function codexDeviceAuthCancelLite(opts: {
+  account_id?: string;
+  project_id?: string;
+  id: string;
+}) {
+  if (hasRemote) {
+    return await callRemoteHub({
+      name: "projects.codexDeviceAuthCancel",
+      args: [opts],
+    });
+  }
+  const account_id = requireLiteAccountId(opts.account_id);
+  const project_id = requireLiteProjectId(opts.project_id);
+  const id = `${opts.id ?? ""}`.trim();
+  const status = getLiteCodexDeviceAuthStatus(id);
+  if (
+    !status ||
+    status.accountId !== account_id ||
+    status.projectId !== project_id
+  ) {
+    throw Error("unknown device auth id");
+  }
+  return { id, canceled: cancelLiteCodexDeviceAuth(id) };
+}
+
+async function codexUploadAuthFileLite(opts: {
+  account_id?: string;
+  project_id?: string;
+  filename?: string;
+  content: string;
+}) {
+  if (hasRemote) {
+    return await callRemoteHub({
+      name: "projects.codexUploadAuthFile",
+      args: [opts],
+    });
+  }
+  requireLiteAccountId(opts.account_id);
+  requireLiteProjectId(opts.project_id);
+  if (opts.filename && !/auth\.json$/i.test(opts.filename.trim())) {
+    throw Error("only auth.json uploads are supported");
+  }
+  const result = await uploadLiteSubscriptionAuthFile({
+    content: opts.content,
+  });
+  return { ok: true as const, ...result };
 }
 
 async function hasLocalSubscriptionAuth(codexHome: string): Promise<boolean> {
@@ -782,6 +890,10 @@ export const hubApi: HubApi = {
     listManagedRootfsReleaseLifecycle,
   },
   projects: {
+    codexDeviceAuthStart: codexDeviceAuthStartLite,
+    codexDeviceAuthStatus: codexDeviceAuthStatusLite,
+    codexDeviceAuthCancel: codexDeviceAuthCancelLite,
+    codexUploadAuthFile: codexUploadAuthFileLite,
     chatStoreStats: async (opts: { chat_path: string; db_path?: string }) => {
       return await getChatStoreStats({
         chat_path: opts.chat_path,

@@ -115,6 +115,12 @@ const PROJECT_HOST_ROUTED_HUB_METHODS_WITH_HUB_FALLBACK = new Set<string>([
   "projects.chatStoreDelete",
   "projects.chatStoreVacuum",
 ]);
+const PROJECT_HOST_ROUTED_HUB_METHODS_WITH_LITE_HUB_FALLBACK = new Set<string>([
+  "projects.codexDeviceAuthStart",
+  "projects.codexDeviceAuthStatus",
+  "projects.codexDeviceAuthCancel",
+  "projects.codexUploadAuthFile",
+]);
 const PROJECT_HOST_TOKEN_TTL_LEEWAY_MS = 60_000;
 
 type RoutedHubClientState = {
@@ -900,10 +906,11 @@ export class ConatClient extends EventEmitter {
     let cn = this.conat();
     if (routeToProjectHost) {
       const routing = await this.ensureProjectRoutingInfo(project_id!);
-      if (
-        !routing &&
-        !PROJECT_HOST_ROUTED_HUB_METHODS_WITH_HUB_FALLBACK.has(name)
-      ) {
+      const allowHubFallback =
+        PROJECT_HOST_ROUTED_HUB_METHODS_WITH_HUB_FALLBACK.has(name) ||
+        (lite &&
+          PROJECT_HOST_ROUTED_HUB_METHODS_WITH_LITE_HUB_FALLBACK.has(name));
+      if (!routing && !allowHubFallback) {
         throw Error(
           `unable to route '${name}' to project-host for project ${project_id}; host routing info unavailable (open the project first so host info is loaded)`,
         );
