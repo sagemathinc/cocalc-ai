@@ -6,6 +6,7 @@
 import async from "async";
 import lodash from "lodash";
 
+import { appendProjectOutboxEventForProject } from "@cocalc/database/postgres/project-events-outbox";
 import { sanitizeManageUsersOwnerOnly } from "@cocalc/database/postgres/project/manage-users-owner-only";
 import { sanitizeUserSetQueryProjectUsers } from "@cocalc/database/postgres/project/user-set-query-project-users";
 import { all_results } from "@cocalc/database/postgres/utils/all-results";
@@ -1676,7 +1677,45 @@ export async function _user_set_query_project_change_after(
     )} --> ${misc.to_json(new_val)}`,
   );
   dbg();
-  return cb();
+  const project_id =
+    `${new_val?.project_id ?? old_val?.project_id ?? ""}`.trim();
+  if (!project_id) {
+    return cb();
+  }
+  try {
+    if (
+      new_val?.deleted !== undefined &&
+      new_val?.deleted !== old_val?.deleted
+    ) {
+      await appendProjectOutboxEventForProject({
+        event_type: new_val.deleted
+          ? "project.deleted"
+          : "project.summary_changed",
+        project_id,
+      });
+      return cb();
+    }
+    const summaryFields = [
+      "title",
+      "description",
+      "last_edited",
+      "last_active",
+    ];
+    if (
+      summaryFields.some(
+        (field) =>
+          JSON.stringify(new_val?.[field]) !== JSON.stringify(old_val?.[field]),
+      )
+    ) {
+      await appendProjectOutboxEventForProject({
+        event_type: "project.summary_changed",
+        project_id,
+      });
+    }
+    return cb();
+  } catch (err) {
+    return cb(err as any);
+  }
 }
 
 /*

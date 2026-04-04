@@ -97,6 +97,7 @@ import {
   PROJECT_HAS_NO_ASSIGNED_HOST_ERROR,
 } from "@cocalc/server/conat/project-host-assignment";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import { appendProjectOutboxEventForProject } from "@cocalc/database/postgres/project-events-outbox";
 
 const PROJECT_STORAGE_CACHE_TTL_MS = 30_000;
 const PROJECT_STORAGE_BREAKDOWN_TIMEOUT_MS = 10_000;
@@ -1183,21 +1184,37 @@ export async function setProjectHidden({
   }
   await assertCollab({ account_id, project_id });
   const pool = getPool();
-  const result = await pool.query(
-    `UPDATE projects
-        SET users = jsonb_set(
-          COALESCE(users, '{}'::jsonb),
-          ARRAY[$2::text, 'hide'],
-          to_jsonb($3::boolean),
-          true
-        )
-      WHERE project_id = $1
-        AND COALESCE(owning_bay_id, $4) = $4
-        AND (users -> $2::text ->> 'group') IN ('owner', 'collaborator')`,
-    [project_id, account_id, hide, getConfiguredBayId()],
-  );
-  if ((result.rowCount ?? 0) === 0) {
-    throw Error("user must be a collaborator");
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await client.query(
+      `UPDATE projects
+          SET users = jsonb_set(
+            COALESCE(users, '{}'::jsonb),
+            ARRAY[$2::text, 'hide'],
+            to_jsonb($3::boolean),
+            true
+          )
+        WHERE project_id = $1
+          AND COALESCE(owning_bay_id, $4) = $4
+          AND (users -> $2::text ->> 'group') IN ('owner', 'collaborator')`,
+      [project_id, account_id, hide, getConfiguredBayId()],
+    );
+    if ((result.rowCount ?? 0) === 0) {
+      throw Error("user must be a collaborator");
+    }
+    await appendProjectOutboxEventForProject({
+      db: client,
+      event_type: "project.membership_changed",
+      project_id,
+      default_bay_id: getConfiguredBayId(),
+    });
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
   }
 }
 

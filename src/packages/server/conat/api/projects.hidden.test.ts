@@ -1,7 +1,10 @@
 export {};
 
 let assertCollabMock: jest.Mock;
+let appendOutboxMock: jest.Mock;
+let poolConnectMock: jest.Mock;
 let queryMock: jest.Mock;
+let releaseMock: jest.Mock;
 
 jest.mock("./util", () => ({
   __esModule: true,
@@ -10,7 +13,13 @@ jest.mock("./util", () => ({
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
-  default: jest.fn(() => ({ query: queryMock })),
+  default: jest.fn(() => ({ connect: poolConnectMock })),
+}));
+
+jest.mock("@cocalc/database/postgres/project-events-outbox", () => ({
+  __esModule: true,
+  appendProjectOutboxEventForProject: (...args: any[]) =>
+    appendOutboxMock(...args),
 }));
 
 describe("setProjectHidden bay-aware update", () => {
@@ -20,11 +29,31 @@ describe("setProjectHidden bay-aware update", () => {
   beforeEach(() => {
     jest.resetModules();
     assertCollabMock = jest.fn(async () => undefined);
-    queryMock = jest.fn(async () => ({ rowCount: 1 }));
+    appendOutboxMock = jest.fn(async () => "event-id");
+    releaseMock = jest.fn();
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") {
+        return { rowCount: null };
+      }
+      return { rowCount: 1 };
+    });
+    poolConnectMock = jest.fn(async () => ({
+      query: queryMock,
+      release: releaseMock,
+    }));
   });
 
   it("rejects stale hidden-state updates after local access was checked", async () => {
-    queryMock = jest.fn(async () => ({ rowCount: 0 }));
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql === "BEGIN" || sql === "ROLLBACK") {
+        return { rowCount: null };
+      }
+      return { rowCount: 0 };
+    });
+    poolConnectMock = jest.fn(async () => ({
+      query: queryMock,
+      release: releaseMock,
+    }));
     const { setProjectHidden } = await import("./projects");
     await expect(
       setProjectHidden({
@@ -37,8 +66,27 @@ describe("setProjectHidden bay-aware update", () => {
       account_id: ACCOUNT_ID,
       project_id: PROJECT_ID,
     });
-    expect(`${queryMock.mock.calls[0]?.[0] ?? ""}`).toContain(
+    expect(`${queryMock.mock.calls[1]?.[0] ?? ""}`).toContain(
       "COALESCE(owning_bay_id, $4) = $4",
     );
+    expect(appendOutboxMock).not.toHaveBeenCalled();
+  });
+
+  it("emits a membership outbox event after updating the hidden flag", async () => {
+    const { setProjectHidden } = await import("./projects");
+    await expect(
+      setProjectHidden({
+        account_id: ACCOUNT_ID,
+        project_id: PROJECT_ID,
+        hide: true,
+      }),
+    ).resolves.toBeUndefined();
+    expect(appendOutboxMock).toHaveBeenCalledWith({
+      db: expect.objectContaining({ query: queryMock }),
+      event_type: "project.membership_changed",
+      project_id: PROJECT_ID,
+      default_bay_id: "bay-0",
+    });
+    expect(releaseMock).toHaveBeenCalled();
   });
 });

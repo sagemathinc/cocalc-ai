@@ -525,6 +525,11 @@ export async function stopProjectOnHost(
         "UPDATE projects SET last_edited=NOW() WHERE project_id=$1",
         [project_id],
       );
+      await appendProjectOutboxEventForProject({
+        event_type: "project.summary_changed",
+        project_id,
+        default_bay_id: getConfiguredBayId(),
+      });
     }
   } catch (err) {
     log.warn("stopProjectOnHost failed", { project_id, host_id, err });

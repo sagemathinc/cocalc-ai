@@ -35,6 +35,7 @@ import { issueProjectHostAuthToken as issueProjectHostAuthTokenJwt } from "@coca
 import getLogger from "@cocalc/backend/logger";
 import { getProjectHostAuthTokenPrivateKey } from "@cocalc/backend/data";
 import getPool from "@cocalc/database/pool";
+import { appendProjectOutboxEventForProject } from "@cocalc/database/postgres/project-events-outbox";
 import {
   computePlacementPermission,
   getUserHostTier,
@@ -1560,7 +1561,13 @@ export async function touchProject({
       host_id,
       project_id,
     });
+    return;
   }
+  await appendProjectOutboxEventForProject({
+    event_type: "project.summary_changed",
+    project_id,
+    default_bay_id: getConfiguredBayId(),
+  });
 }
 
 export async function getManagedRootfsReleaseArtifact({

@@ -104,6 +104,18 @@ describe("Activity tracking methods", () => {
       expect(last_active[account_id]).toBeDefined();
       const accountActiveTime = new Date(last_active[account_id]);
       expect(accountActiveTime.getTime()).toBeGreaterThanOrEqual(before);
+
+      const outboxRows = await getPool().query(
+        `SELECT event_type
+           FROM project_events_outbox
+          WHERE project_id = $1`,
+        [project_id],
+      );
+      expect(outboxRows.rows).toEqual([
+        {
+          event_type: "project.summary_changed",
+        },
+      ]);
     });
 
     it("throttles duplicate calls within 60 seconds", async () => {
@@ -145,6 +157,14 @@ describe("Activity tracking methods", () => {
 
       // Time should be identical (throttled)
       expect(secondUpdate.getTime()).toBe(firstUpdate.getTime());
+
+      const outboxRows = await getPool().query(
+        `SELECT event_type
+           FROM project_events_outbox
+          WHERE project_id = $1`,
+        [project_id],
+      );
+      expect(outboxRows.rows).toHaveLength(1);
     });
 
     it("allows updates from different accounts", async () => {
@@ -210,6 +230,18 @@ describe("Activity tracking methods", () => {
       const { last_edited } = result.rows[0];
       expect(last_edited).toBeInstanceOf(Date);
       expect(last_edited).not.toBeNull();
+
+      const outboxRows = await getPool().query(
+        `SELECT event_type
+           FROM project_events_outbox
+          WHERE project_id = $1`,
+        [project_id],
+      );
+      expect(outboxRows.rows).toEqual([
+        {
+          event_type: "project.summary_changed",
+        },
+      ]);
     });
 
     it("throttles duplicate calls within 30 seconds", async () => {

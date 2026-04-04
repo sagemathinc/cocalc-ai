@@ -6,6 +6,7 @@
 import type { PostgreSQL } from "../types";
 import { touchAccount } from "../account/management";
 import { record_file_use } from "../paths/file-access";
+import { appendProjectOutboxEventForProject } from "../project-events-outbox";
 
 export interface TouchProjectOptions {
   project_id: string;
@@ -50,6 +51,10 @@ export async function touchProjectInternal(
     jsonb_merge: { last_active: { [account_id]: NOW } },
     where: { "project_id = $::UUID": project_id },
   });
+  await appendProjectOutboxEventForProject({
+    event_type: "project.summary_changed",
+    project_id,
+  });
 }
 
 /**
@@ -75,6 +80,10 @@ export async function touchProject(
     query: "UPDATE projects",
     set: { last_edited: "NOW()" },
     where: { "project_id = $::UUID": opts.project_id },
+  });
+  await appendProjectOutboxEventForProject({
+    event_type: "project.summary_changed",
+    project_id: opts.project_id,
   });
 }
 
