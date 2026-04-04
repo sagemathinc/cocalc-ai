@@ -19,6 +19,7 @@ describe("project-host token bay checks", () => {
   it("rejects browser-issued project-host token access when project and host bays differ", async () => {
     queryMock = jest.fn(async (sql: string, params: any[]) => {
       expect(sql).toContain("COALESCE(projects.owning_bay_id, $3)");
+      expect(sql).toContain("projects.deleted IS NOT true");
       expect(params).toEqual([PROJECT_UUID, ACCOUNT_UUID, "bay-0"]);
       return {
         rows: [
@@ -46,6 +47,7 @@ describe("project-host token bay checks", () => {
   it("requires bay-consistent host/project access for host-scoped project-host browser tokens", async () => {
     queryMock = jest.fn(async (sql: string, params: any[]) => {
       expect(sql).toContain("COALESCE(projects.owning_bay_id, $3)");
+      expect(sql).toContain("projects.deleted IS NOT true");
       expect(params).toEqual([HOST_UUID, ACCOUNT_UUID, "bay-0"]);
       return { rowCount: 0 };
     });
@@ -63,6 +65,7 @@ describe("project-host token bay checks", () => {
   it("rejects host-issued agent tokens when project and host bays differ", async () => {
     queryMock = jest.fn(async (sql: string, params: any[]) => {
       expect(sql).toContain("COALESCE(projects.owning_bay_id, $4)");
+      expect(sql).toContain("projects.deleted IS NOT true");
       expect(params).toEqual([PROJECT_UUID, HOST_UUID, ACCOUNT_UUID, "bay-0"]);
       return { rowCount: 0 };
     });

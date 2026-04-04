@@ -32,7 +32,7 @@ export async function assertAccountProjectHostTokenProjectAccess({
         ON project_hosts.id = projects.host_id
        AND project_hosts.deleted IS NULL
       WHERE project_id=$1
-        AND deleted IS NOT true
+        AND projects.deleted IS NOT true
       LIMIT 1
     `,
     [project_id, account_id, getConfiguredBayId()],
@@ -68,7 +68,7 @@ export async function hasAccountProjectHostTokenHostAccess({
         ON project_hosts.id = projects.host_id
        AND project_hosts.deleted IS NULL
       WHERE host_id=$1
-        AND deleted IS NOT true
+        AND projects.deleted IS NOT true
         AND COALESCE(projects.owning_bay_id, $3) = COALESCE(project_hosts.bay_id, $3)
         AND (users -> $2::text ->> 'group') IN ('owner', 'collaborator')
       LIMIT 1
@@ -105,7 +105,7 @@ export async function assertProjectHostAgentTokenAccess({
        AND project_hosts.deleted IS NULL
       WHERE project_id=$1
         AND host_id=$2
-        AND deleted IS NOT true
+        AND projects.deleted IS NOT true
         AND COALESCE(projects.owning_bay_id, $4) = COALESCE(project_hosts.bay_id, $4)
         AND (users -> $3::text ->> 'group') IN ('owner', 'collaborator')
       LIMIT 1
