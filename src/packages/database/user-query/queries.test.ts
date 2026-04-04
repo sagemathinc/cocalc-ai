@@ -1541,6 +1541,7 @@ describe("postgres user-queries - Comprehensive Test Suite", () => {
     describe("_user_get_query_where", () => {
       afterEach(() => {
         delete process.env.COCALC_ACCOUNT_PROJECT_INDEX_PROJECT_LIST_READS;
+        delete process.env.COCALC_ACCOUNT_NOTIFICATION_INDEX_MENTION_READS;
       });
 
       test("should expand projects and enforce access checks", (done) => {
@@ -1624,6 +1625,84 @@ describe("postgres user-queries - Comprehensive Test Suite", () => {
           );
         },
       );
+
+      test("should use account_notification_index mention membership expansion when enabled in prefer mode", (done) => {
+        process.env.COCALC_ACCOUNT_NOTIFICATION_INDEX_MENTION_READS = "prefer";
+        const restore = setSchema("mentions", {
+          anonymous: false,
+          fields: {
+            project_id: { type: "uuid" },
+            time: { type: "timestamp" },
+            path: { type: "string" },
+          },
+          user_query: {
+            get: {
+              pg_where: ["projects"],
+              fields: { project_id: null, time: null, path: null },
+            },
+          },
+        });
+
+        db._user_get_query_where(
+          SCHEMA.mentions.user_query,
+          "11111111-1111-4111-8111-111111111111",
+          undefined,
+          {},
+          "mentions",
+          (err, where) => {
+            expect(err).toBeUndefined();
+            expect(where).toEqual(
+              expect.arrayContaining([
+                expect.objectContaining({
+                  "((EXISTS (SELECT 1 FROM account_notification_index seed WHERE seed.account_id = $::UUID LIMIT 1) AND EXISTS (SELECT 1 FROM account_notification_index ani WHERE ani.account_id = $::UUID AND ani.kind = 'mention' AND ani.project_id = mentions.project_id AND ani.created_at = mentions.time AND COALESCE(ani.summary ->> 'path', '') = mentions.path)) OR (NOT EXISTS (SELECT 1 FROM account_notification_index seed WHERE seed.account_id = $::UUID LIMIT 1) AND project_id = ANY(select project_id from projects where users ? $::TEXT)))":
+                    "11111111-1111-4111-8111-111111111111",
+                }),
+              ]),
+            );
+            restore();
+            done();
+          },
+        );
+      });
+
+      test("should use account_notification_index mention membership expansion when enabled in only mode", (done) => {
+        process.env.COCALC_ACCOUNT_NOTIFICATION_INDEX_MENTION_READS = "only";
+        const restore = setSchema("mentions", {
+          anonymous: false,
+          fields: {
+            project_id: { type: "uuid" },
+            time: { type: "timestamp" },
+            path: { type: "string" },
+          },
+          user_query: {
+            get: {
+              pg_where: ["projects"],
+              fields: { project_id: null, time: null, path: null },
+            },
+          },
+        });
+
+        db._user_get_query_where(
+          SCHEMA.mentions.user_query,
+          "11111111-1111-4111-8111-111111111111",
+          undefined,
+          {},
+          "mentions",
+          (err, where) => {
+            expect(err).toBeUndefined();
+            expect(where).toEqual(
+              expect.arrayContaining([
+                expect.objectContaining({
+                  "EXISTS (SELECT 1 FROM account_notification_index ani WHERE ani.account_id = $::UUID AND ani.kind = 'mention' AND ani.project_id = mentions.project_id AND ani.created_at = mentions.time AND COALESCE(ani.summary ->> 'path', '') = mentions.path)":
+                    "11111111-1111-4111-8111-111111111111",
+                }),
+              ]),
+            );
+            restore();
+            done();
+          },
+        );
+      });
 
       test("should reject account_id substitution without account_id", (done) => {
         const restore = setSchema("test_account", {
