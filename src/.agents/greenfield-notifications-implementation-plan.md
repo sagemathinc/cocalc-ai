@@ -304,6 +304,81 @@ Return:
 - `event_id`
 - `notification_ids[]`
 
+## CLI Requirements
+
+CLI support should be part of the initial implementation, not an afterthought.
+
+Reasons:
+
+- it makes Codex/session automation much easier
+- it makes local testing and smoke testing much easier
+- it provides a clear stable surface for admin/debug workflows
+- it forces the new API shape to be explicit and scriptable
+
+The CLI should target the home bay by default for inbox actions and the
+appropriate source/home bay for creation actions via the same RPC APIs the
+browser/server will use.
+
+### First-slice CLI commands
+
+These should exist as soon as the corresponding RPCs exist.
+
+#### Inbox commands
+
+- `cocalc notifications list`
+  - options:
+    - `--kind <kind>`
+    - `--state unread|saved|archived|all`
+    - `--limit <n>`
+    - `--json`
+- `cocalc notifications counts`
+  - options:
+    - `--json`
+- `cocalc notifications mark-read <notification-id>...`
+- `cocalc notifications mark-unread <notification-id>...`
+- `cocalc notifications save <notification-id>...`
+- `cocalc notifications unsave <notification-id>...`
+- `cocalc notifications archive <notification-id>...`
+
+#### Creation/debug commands
+
+- `cocalc notifications create-account-notice`
+  - options:
+    - `--account <account-id>` repeatable
+    - `--severity info|warning|error`
+    - `--title <text>`
+    - `--body <markdown>`
+    - `--origin-label <text>`
+    - `--action-link <path-or-url>`
+    - `--action-label <text>`
+    - `--dedupe-key <text>`
+    - `--json`
+- `cocalc notifications create-mention`
+  - mostly for testing/dev, not ordinary end-user use
+  - options:
+    - `--project <project-id>`
+    - `--path <path>`
+    - `--fragment-id <id>`
+    - `--actor <account-id>`
+    - `--target <account-id>` repeatable
+    - `--description <text>`
+    - `--priority low|normal|high`
+    - `--json`
+
+#### Admin/projector commands
+
+- `cocalc notifications rebuild-index --account <account-id>`
+- `cocalc notifications drain-outbox`
+- `cocalc notifications status`
+
+Notes:
+
+- `create-mention` is especially useful for Codex-driven test flows.
+- `create-account-notice` is useful both for development and eventually for
+  replacing some ad hoc `send_message` admin/system flows.
+- JSON output should be first-class on all commands so agents can consume it
+  directly.
+
 ## Home-Bay Inbox APIs
 
 ### `notifications.list`
@@ -414,11 +489,13 @@ Behavior:
 2. add `notifications.createMention`
 3. dual-write `mention` from the chat/editor path behind a flag
 4. project to `account_notification_index`
-5. add admin rebuild/status tools
+5. add CLI commands for create/list/read-state/debug flows
+6. add admin rebuild/status tools
 
 Success condition:
 
 - new notification rows appear in `account_notification_index`
+- CLI can list and mutate them
 - no browser reads depend on them yet
 
 ### Phase 2: new browser inbox path
@@ -431,6 +508,7 @@ Success condition:
 Success condition:
 
 - user can see and mutate mention notifications entirely via the new path
+- the same flows can be exercised from CLI for automation/tests
 
 ### Phase 3: first account notices
 
@@ -477,8 +555,9 @@ add lazy materialization for active accounts.
    `notification_target_outbox`
 2. implement `notifications.createMention`
 3. implement home-bay projector into `account_notification_index`
-4. add `notifications.list` and `notifications.markRead`
-5. add a minimal new frontend notification list behind a flag
+4. add `notifications.list`, `notifications.counts`, and `notifications.markRead`
+5. add first-slice `cocalc notifications ...` commands
+6. add a minimal new frontend notification list behind a flag
 
 ## Open Questions
 
