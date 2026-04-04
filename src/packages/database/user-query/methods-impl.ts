@@ -42,6 +42,8 @@ const MAX_PATCH_FUTURE_MS = 1000 * 60 * 3;
 type AnyRecord = Record<string, any>;
 type QueryOption = Record<string, any>;
 
+type ProjectListReadMode = "off" | "prefer" | "only";
+
 type UserQueryChanges = {
   id: string;
   cb?: CB;
@@ -121,6 +123,38 @@ type ChangefeedLocals = {
   changes_cb?: CB;
   changes_queue?: Array<{ err?: any; obj?: any }>;
 };
+
+function getProjectListReadMode(): ProjectListReadMode {
+  const value =
+    `${process.env.COCALC_ACCOUNT_PROJECT_INDEX_PROJECT_LIST_READS ?? ""}`
+      .trim()
+      .toLowerCase();
+  if (
+    value === "1" ||
+    value === "true" ||
+    value === "on" ||
+    value === "prefer"
+  ) {
+    return "prefer";
+  }
+  if (value === "only" || value === "strict" || value === "required") {
+    return "only";
+  }
+  return "off";
+}
+
+function shouldUseProjectedBrowserProjectReads(opts: {
+  table: string;
+  account_id?: string;
+}): boolean {
+  if (!opts.account_id) {
+    return false;
+  }
+  if (opts.table !== "projects" && opts.table !== "projects_all") {
+    return false;
+  }
+  return getProjectListReadMode() !== "off";
+}
 
 type ProjectControl = {
   restart: () => Promise<void>;
@@ -1937,6 +1971,11 @@ export function _user_get_query_where(
     if (pg_where[i] === "projects") {
       if (user_query.project_id) {
         pg_where[i] = { "project_id = $::UUID": "project_id" };
+      } else if (shouldUseProjectedBrowserProjectReads({ table, account_id })) {
+        pg_where[i] = {
+          "project_id = ANY(ARRAY(SELECT visible_projects.project_id FROM (SELECT $::UUID AS account_id) AS current_account CROSS JOIN LATERAL (SELECT project_id FROM account_project_index WHERE account_id = current_account.account_id UNION SELECT project_id FROM projects WHERE users ? current_account.account_id::TEXT AND deleted IS TRUE) AS visible_projects))":
+            "account_id",
+        };
       } else {
         pg_where[i] = {
           "project_id = ANY(select project_id from projects where users ? $::TEXT)":
