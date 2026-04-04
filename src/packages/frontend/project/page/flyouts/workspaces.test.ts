@@ -4,6 +4,7 @@ import type { WorkspaceRecord } from "@cocalc/frontend/project/workspaces/types"
 import {
   applyWorkspaceBulkSelection,
   getWorkspaceActivityState,
+  workspaceSelectionTagChoices,
 } from "./workspaces";
 
 function workspace(overrides: Partial<WorkspaceRecord> = {}): WorkspaceRecord {
@@ -129,5 +130,22 @@ describe("applyWorkspaceBulkSelection", () => {
       selectedIds: ["w1", "w3"],
       anchorId: "w3",
     });
+  });
+});
+
+describe("workspaceSelectionTagChoices", () => {
+  it("only exposes the built-in top-level filters", () => {
+    expect(workspaceSelectionTagChoices()).toEqual([
+      {
+        key: "all",
+        label: "All tabs",
+        selection: { kind: "all" },
+      },
+      {
+        key: "unscoped",
+        label: "Unscoped",
+        selection: { kind: "unscoped" },
+      },
+    ]);
   });
 });
