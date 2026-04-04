@@ -27,6 +27,17 @@ Notes:
     if (handleDaemonCli(args)) {
       return;
     }
+    if (args[0] === "privileged-rm-helper") {
+      let helperEntry;
+      try {
+        helperEntry = require("../main/index.js");
+      } catch {
+        helperEntry = require("../dist/main.js");
+      }
+      const { runPrivilegedRmHelper } = helperEntry;
+      runPrivilegedRmHelper(args.slice(1));
+      return;
+    }
     // Prefer the bundled main if present; otherwise use the compiled output.
     let mainEntry;
     try {

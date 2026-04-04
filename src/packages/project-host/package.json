@@ -42,6 +42,7 @@
     "@cocalc/conat": "workspace:*",
     "@cocalc/file-server": "workspace:*",
     "@cocalc/lite": "workspace:*",
+    "@cocalc/openat2": "^0.1.0",
     "@cocalc/project-proxy": "workspace:*",
     "@cocalc/project-runner": "workspace:*",
     "@cocalc/util": "workspace:*",

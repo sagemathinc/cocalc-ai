@@ -199,7 +199,7 @@ describe("bootstrap lifecycle reporting", () => {
         recorded_at: "2026-04-03T07:00:00Z",
         bootstrap: { selector: "latest" },
         helper_schema_version: "20260330-v1",
-        runtime_wrapper_version: "20260403-v5",
+        runtime_wrapper_version: "20260404-v6",
         runtime_user_contract: {
           identity: "cocalc-host:1002:1003",
           subuid_ranges: ["231072:65536", "327680:4128768"],
@@ -217,7 +217,7 @@ describe("bootstrap lifecycle reporting", () => {
       JSON.stringify({
         recorded_at: "2026-04-03T07:01:00Z",
         helper_schema_version: "20260330-v1",
-        runtime_wrapper_version: "20260403-v5",
+        runtime_wrapper_version: "20260404-v6",
         runtime_user_contract: {
           identity: "cocalc-host:1002:1003",
           subuid_ranges: ["231072:65536", "327680:4128768"],

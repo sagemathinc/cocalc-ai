@@ -124,6 +124,17 @@ export interface CopyOptions {
   timeout?: number;
 }
 
+export interface RemoveOptions {
+  recursive?: boolean;
+  force?: boolean;
+  sudo?: boolean;
+}
+
+export interface RemoveDirOptions {
+  recursive?: boolean;
+  sudo?: boolean;
+}
+
 export interface FileDescription {
   mime: string;
   snippet?: string;
@@ -187,8 +198,8 @@ export interface Filesystem {
     },
   ) => Promise<void>;
   rename: (oldPath: string, newPath: string) => Promise<void>;
-  rm: (path: string | string[], options?) => Promise<void>;
-  rmdir: (path: string, options?) => Promise<void>;
+  rm: (path: string | string[], options?: RemoveOptions) => Promise<void>;
+  rmdir: (path: string, options?: RemoveDirOptions) => Promise<void>;
   stat: (path: string) => Promise<IStats>;
   symlink: (target: string, path: string) => Promise<void>;
   truncate: (path: string, len?: number) => Promise<void>;

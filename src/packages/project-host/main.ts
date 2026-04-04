@@ -89,6 +89,8 @@ import {
 } from "./hub/acp/worker-manager";
 import { matchAppRequest } from "./app-public-access";
 import { maybeHandleStaticAppRequest } from "./static-apps";
+import { runPrivilegedRmHelper } from "./privileged-rm-helper";
+export { runPrivilegedRmHelper } from "./privileged-rm-helper";
 
 const logger = getLogger("project-host:main");
 
@@ -564,6 +566,10 @@ if (require.main === module) {
       });
   } else {
     try {
+      if (process.argv[2] === "privileged-rm-helper") {
+        runPrivilegedRmHelper(process.argv.slice(3));
+        process.exit(0);
+      }
       if (handleDaemonCli(process.argv.slice(2))) {
         process.exit(0);
       }

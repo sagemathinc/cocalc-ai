@@ -37,7 +37,7 @@ from typing import Any
 
 STATE_SCHEMA_VERSION = 1
 HELPER_SCHEMA_VERSION = "20260330-v1"
-RUNTIME_WRAPPER_VERSION = "20260403-v5"
+RUNTIME_WRAPPER_VERSION = "20260404-v6"
 BOOTSTRAP_LOG_MAX_BYTES = 4 * 1024 * 1024
 BUNDLE_RETENTION_COUNT = 3
 ROOTLESS_SUBID_MIN_TOTAL = 4 * 1024 * 1024
@@ -1317,6 +1317,44 @@ allow_overlay_mountpoint() {
   return 0
 }
 
+allow_privileged_delete_root() {
+  local path="${1//\\\\:/:}"
+  case "$path" in
+    /mnt/cocalc|/mnt/cocalc/*)
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+  local base
+  base="$(basename "$path")"
+  if ! echo "$base" | grep -Eq '^project-[0-9a-fA-F-]{32,64}(-scratch)?$'; then
+    return 1
+  fi
+  return 0
+}
+
+check_relative_delete_path() {
+  local rel="$1"
+  if [ -z "$rel" ]; then
+    return 1
+  fi
+  case "$rel" in
+    /*)
+      return 1
+      ;;
+  esac
+  IFS='/' read -r -a _parts <<< "$rel"
+  for _part in "${_parts[@]}"; do
+    case "$_part" in
+      ""|"."|"..")
+        return 1
+        ;;
+    esac
+  done
+  return 0
+}
+
 check_args() {
   local arg value
   for arg in "$@"; do
@@ -1439,6 +1477,64 @@ case "$cmd" in
   rm)
     check_args "$@"
     exec /bin/rm "$@"
+    ;;
+  sandbox-rm)
+    if [ "$#" -lt 2 ]; then
+      echo "usage: cocalc-runtime-storage sandbox-rm <root> <relative-path> [--recursive] [--force]" >&2
+      exit 2
+    fi
+    root="$1"
+    rel="$2"
+    shift 2
+    check_args "$root"
+    if ! allow_privileged_delete_root "$root"; then
+      deny "sandbox-delete-root-not-allowed" "$root"
+    fi
+    if ! check_relative_delete_path "$rel"; then
+      deny "sandbox-delete-path-invalid" "$rel"
+    fi
+    helper=(/opt/cocalc/project-host/bin/project-host privileged-rm-helper rm --root "$root" --path "$rel")
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        --recursive|--force)
+          helper+=("$1")
+          ;;
+        *)
+          deny "sandbox-delete-option-invalid" "$1"
+          ;;
+      esac
+      shift
+    done
+    exec "${helper[@]}"
+    ;;
+  sandbox-rmdir)
+    if [ "$#" -lt 2 ]; then
+      echo "usage: cocalc-runtime-storage sandbox-rmdir <root> <relative-path> [--recursive]" >&2
+      exit 2
+    fi
+    root="$1"
+    rel="$2"
+    shift 2
+    check_args "$root"
+    if ! allow_privileged_delete_root "$root"; then
+      deny "sandbox-delete-root-not-allowed" "$root"
+    fi
+    if ! check_relative_delete_path "$rel"; then
+      deny "sandbox-delete-path-invalid" "$rel"
+    fi
+    helper=(/opt/cocalc/project-host/bin/project-host privileged-rm-helper rmdir --root "$root" --path "$rel")
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        --recursive)
+          helper+=("$1")
+          ;;
+        *)
+          deny "sandbox-delete-option-invalid" "$1"
+          ;;
+      esac
+      shift
+    done
+    exec "${helper[@]}"
     ;;
   copy-tree-preserve)
     if [ "$#" -ne 2 ]; then
