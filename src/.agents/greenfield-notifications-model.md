@@ -13,6 +13,16 @@ model that cleanly separates:
 The main use case today is `@mention` in chat, but the new model should be
 generic enough to cover future account-facing notifications.
 
+This proposal is also intended to subsume most or all of the current central
+`messages` system:
+
+- [messages.ts](../packages/util/db-schema/messages.ts)
+- [send.ts](../packages/server/messages/send.ts)
+- [maintenance.ts](../packages/server/messages/maintenance.ts)
+
+For `cocalc-ai`, the existing messages table looks more like a legacy inbox for
+system/user notifications than a product we should preserve.
+
 ## Current Problem
 
 The current `mentions` table is doing too many jobs at once:
@@ -39,6 +49,13 @@ new architecture:
 The failed attempt to make `mentions` projection-backed exposed the real issue:
 `mentions` is not the inbox model. It is an overloaded project-scoped source
 table.
+
+There is also a second, separate problem: CoCalc has a central `messages` table
+that acts like an internal email system, with per-user bitset state,
+reply/thread support, and email summaries. For the purposes of `cocalc-ai`, we
+should not design around preserving that model either. Most of its real use is
+"the system wants to tell somebody something", which belongs in the new
+notification system.
 
 ## Design Principles
 
@@ -70,6 +87,12 @@ Suggested fields:
 - `source_path TEXT NULL`
 - `source_fragment_id TEXT NULL`
 - `actor_account_id UUID NULL`
+- `origin_kind VARCHAR(64) NULL`
+  - examples:
+    - `project`
+    - `system`
+    - `account`
+    - `admin`
 - `payload_json JSONB`
 - `created_at TIMESTAMP`
 
@@ -80,6 +103,9 @@ Notes:
 - For mentions, `event_id` should ideally be derived from an actual source
   object identity such as a chat message id or thread message id. If no stable
   object id exists, generate a real event UUID at write time.
+- `source_project_id` being nullable is intentional. This is how we handle
+  project-less notifications that today get shoved into the central `messages`
+  system.
 
 ### 2. `notification_targets`
 
@@ -181,6 +207,19 @@ Notes:
 - The current [account-notification-index.ts](../packages/database/postgres/account-notification-index.ts)
   can be reused conceptually, but its payload contract should become generic and
   event-driven rather than "mirror `mentions` rows".
+
+Recommended summary shape for non-project notifications:
+
+- `title`
+- `body_markdown`
+- `severity`
+  - `info`, `warning`, `error`
+- `origin_label`
+  - e.g. `System`, `Admin`, `Billing`
+- `action_link`
+  - optional deep link into app settings, billing, admin page, etc.
+- `action_label`
+  - optional CTA label
 
 ### 5. `account_notification_delivery_outbox`
 
@@ -348,6 +387,12 @@ Start with exactly one greenfield kind:
 
 - `mention`
 
+Immediately after that, the next kind should be a replacement for central
+system messages:
+
+- `account_notice`
+  - project-less, one-way, account-facing notification
+
 The first implementation should support:
 
 - creating a mention notification event
@@ -392,6 +437,97 @@ Leave email/digest migration to the next slice if needed.
 - `notifications.deliveryStatus`
 - `notifications.retryDelivery`
 
+## Replacing the Current `messages` System
+
+### What `messages` does today
+
+The current central `messages` system provides:
+
+- a global inbox not scoped to projects
+- sender/recipient semantics
+- replies and threads
+- state flags:
+  - read
+  - saved
+  - starred
+  - liked
+  - deleted
+  - expire
+- periodic aggregate email summaries
+
+Relevant code:
+
+- [messages.ts](../packages/util/db-schema/messages.ts)
+- [send.ts](../packages/server/messages/send.ts)
+- [get.ts](../packages/server/messages/get.ts)
+- [maintenance.ts](../packages/server/messages/maintenance.ts)
+
+### What we should keep
+
+Only the account-facing notification intent:
+
+- the system wants to inform a user or admin about something
+- some of those should produce email summaries or direct email
+- some are not attached to any project
+
+### What we should not preserve by default
+
+For `cocalc-ai`, these should not be requirements for the new notification
+system unless there is a concrete product need:
+
+- inbox-style reply threads
+- user-to-user direct messaging
+- `liked`
+- sender-side bitset state
+- separate central inbox semantics
+
+If true conversational messaging is ever needed, it should be a separate system,
+not something overloaded into account notifications.
+
+### Suggested replacement kinds
+
+Add non-project notification kinds such as:
+
+- `account_notice`
+  - ordinary account-facing notice from the system
+- `admin_alert`
+  - account-facing or admin-facing operational alert
+- `billing_notice`
+  - billing/subscription/account warning or reminder
+
+These are just notification kinds. They do not require a separate `messages`
+backend.
+
+### Suggested replacement write API
+
+Instead of calling `server/messages/send.ts`, new code should write notification
+events such as:
+
+- `notifications.createAccountNotice`
+  - `target_account_ids[]`
+  - `title`
+  - `body_markdown`
+  - `severity`
+  - `action_link?`
+  - `action_label?`
+  - `dedupe_window?`
+
+This covers the actual product need of most current `send_message` usage
+without carrying forward the legacy inbox model.
+
+### Email summaries
+
+The current message summary worker in
+[maintenance.ts](../packages/server/messages/maintenance.ts) should eventually
+be replaced by delivery policies over `account_notification_index`, e.g.:
+
+- send digest email for unread `account_notice` or `mention`
+- skip notifications already marked read/archived before the digest window
+- respect per-account delivery preferences
+
+This is a much better fit than summarizing rows from a dedicated central
+messages table.
+
 ## Non-Goals
 
 - preserving the exact old `mentions` row shape
@@ -407,6 +543,10 @@ new notification system around:
 - explicit target fanout
 - home-bay inbox projection
 - home-bay delivery side effects
+
+Also treat the current central `messages` table as a legacy notification source
+to replace, not as a system whose semantics we need to preserve in the new
+multi-bay design.
 
 That is the correct abstraction boundary for a multi-bay system with
 home-bay-only browser connections.
