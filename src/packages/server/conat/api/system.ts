@@ -9,7 +9,10 @@ import {
 } from "@cocalc/server/bay-directory";
 import { backfillBayOwnership as backfillBayOwnership0 } from "@cocalc/server/bay-backfill";
 import { rebuildAccountProjectIndex as rebuildAccountProjectIndex0 } from "@cocalc/database/postgres/account-project-index";
-import { drainAccountProjectIndexProjection as drainAccountProjectIndexProjection0 } from "@cocalc/database/postgres/account-project-index-projector";
+import {
+  drainAccountProjectIndexProjection as drainAccountProjectIndexProjection0,
+  getAccountProjectIndexProjectionBacklogStatus,
+} from "@cocalc/database/postgres/account-project-index-projector";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { record_user_tracking } from "@cocalc/database/postgres/account/user-tracking";
 import { db } from "@cocalc/database";
@@ -90,6 +93,7 @@ import {
 } from "@cocalc/server/lro/worker-config";
 import { getParallelOpsWorkerRegistration } from "@cocalc/server/lro/worker-registry";
 import { getProjectHostDefaultParallelLimit } from "@cocalc/server/lro/project-host-defaults";
+import { getAccountProjectIndexProjectionMaintenanceStatus } from "@cocalc/server/projections/account-project-index-maintenance";
 
 const logger = getLogger("server:conat:api:system");
 const ROOTFS_PUBLISH_LRO_KIND = "project-rootfs-publish";
@@ -188,6 +192,22 @@ export async function drainAccountProjectIndexProjection({
     limit,
     dry_run,
   });
+}
+
+export async function getAccountProjectIndexProjectionStatus({
+  account_id,
+}: {
+  account_id?: string;
+}) {
+  await assertAdmin(account_id);
+  const bay_id = getConfiguredBayId();
+  return {
+    bay_id,
+    backlog: await getAccountProjectIndexProjectionBacklogStatus({
+      bay_id,
+    }),
+    maintenance: getAccountProjectIndexProjectionMaintenanceStatus(),
+  };
 }
 
 export async function getParallelOpsStatus({

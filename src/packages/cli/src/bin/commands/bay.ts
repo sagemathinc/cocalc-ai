@@ -74,6 +74,23 @@ export function registerBayCommand(
     );
 
   projection
+    .command("status-account-project-index")
+    .description(
+      "show local account_project_index projector lag and maintenance status",
+    )
+    .action(async (command: Command) => {
+      await withContext(
+        command,
+        "bay projection status-account-project-index",
+        async (ctx) => {
+          return await ctx.hub.system.getAccountProjectIndexProjectionStatus(
+            {},
+          );
+        },
+      );
+    });
+
+  projection
     .command("rebuild-account-project-index <account_id>")
     .description(
       "rebuild the account_project_index rows for one home-bay account",

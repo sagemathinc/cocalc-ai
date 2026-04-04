@@ -33,6 +33,7 @@ export const system = {
   backfillBayOwnership: authFirst,
   rebuildAccountProjectIndex: authFirst,
   drainAccountProjectIndexProjection: authFirst,
+  getAccountProjectIndexProjectionStatus: authFirst,
   getParallelOpsStatus: authFirst,
   getProjectHostParallelOpsLimit: authFirst,
   setParallelOpsLimit: authFirst,
@@ -316,6 +317,51 @@ export interface AccountProjectIndexProjectionDrainResult {
   event_types: Record<string, number>;
 }
 
+export interface AccountProjectIndexProjectionBacklogStatus {
+  bay_id: string;
+  checked_at: string;
+  unpublished_events: number;
+  unpublished_event_types: Record<string, number>;
+  oldest_unpublished_event_at: string | null;
+  newest_unpublished_event_at: string | null;
+  oldest_unpublished_event_age_ms: number | null;
+  newest_unpublished_event_age_ms: number | null;
+}
+
+export interface AccountProjectIndexProjectionPassSummary {
+  bay_id: string;
+  batches: number;
+  scanned_events: number;
+  applied_events: number;
+  inserted_rows: number;
+  deleted_rows: number;
+  event_types: Record<string, number>;
+}
+
+export interface AccountProjectIndexProjectionMaintenanceStatus {
+  enabled: boolean;
+  observed_bay_id: string;
+  interval_ms: number;
+  batch_limit: number;
+  max_batches_per_tick: number;
+  running: boolean;
+  started_at: string | null;
+  last_tick_started_at: string | null;
+  last_tick_finished_at: string | null;
+  last_tick_duration_ms: number | null;
+  last_success_at: string | null;
+  last_error_at: string | null;
+  last_error: string | null;
+  consecutive_failures: number;
+  last_result: AccountProjectIndexProjectionPassSummary | null;
+}
+
+export interface AccountProjectIndexProjectionStatus {
+  bay_id: string;
+  backlog: AccountProjectIndexProjectionBacklogStatus;
+  maintenance: AccountProjectIndexProjectionMaintenanceStatus;
+}
+
 export interface PublicAppHostnameTrace {
   matched: boolean;
   hostname: string;
@@ -470,6 +516,9 @@ export interface System {
     limit?: number;
     dry_run?: boolean;
   }) => Promise<AccountProjectIndexProjectionDrainResult>;
+  getAccountProjectIndexProjectionStatus: (opts?: {
+    account_id?: string;
+  }) => Promise<AccountProjectIndexProjectionStatus>;
 
   // adminResetPasswordLink: Enables admins (and only admins!) to generate and get a password reset
   // for another user.  The response message contains a password reset link,

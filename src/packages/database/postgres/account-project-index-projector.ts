@@ -25,6 +25,17 @@ export interface DrainAccountProjectIndexProjectionResult {
   event_types: Record<string, number>;
 }
 
+export interface AccountProjectIndexProjectionBacklogStatus {
+  bay_id: string;
+  checked_at: string;
+  unpublished_events: number;
+  unpublished_event_types: Record<string, number>;
+  oldest_unpublished_event_at: string | null;
+  newest_unpublished_event_at: string | null;
+  oldest_unpublished_event_age_ms: number | null;
+  newest_unpublished_event_age_ms: number | null;
+}
+
 function normalizeBayId(raw?: string | null): string {
   const bay_id = `${raw ?? ""}`.trim();
   return bay_id || DEFAULT_SINGLE_BAY_ID;
@@ -69,6 +80,11 @@ function sortKeyForAccount(
     parseDate(payload.created_at) ??
     fallback
   );
+}
+
+function ageMs(now: Date, when: Date | null): number | null {
+  if (when == null) return null;
+  return Math.max(0, now.getTime() - when.getTime());
 }
 
 async function localHomeAccountIds(
@@ -167,6 +183,69 @@ async function applyProjectEventToAccountProjectIndex(opts: {
   return {
     inserted_rows,
     deleted_rows: deleted.rowCount ?? 0,
+  };
+}
+
+export async function getAccountProjectIndexProjectionBacklogStatus(opts?: {
+  bay_id?: string;
+  now?: Date;
+}): Promise<AccountProjectIndexProjectionBacklogStatus> {
+  const bay_id = normalizeBayId(opts?.bay_id);
+  const now = opts?.now ?? new Date();
+  const { rows } = await getPool().query<{
+    event_type: string;
+    count: number | string;
+    oldest_unpublished_event_at: Date | null;
+    newest_unpublished_event_at: Date | null;
+  }>(
+    `SELECT
+       event_type,
+       COUNT(*)::INT AS count,
+       MIN(created_at) AS oldest_unpublished_event_at,
+       MAX(created_at) AS newest_unpublished_event_at
+     FROM project_events_outbox
+     WHERE COALESCE(NULLIF(BTRIM(owning_bay_id), ''), $1::TEXT) = $1::TEXT
+       AND published_at IS NULL
+     GROUP BY event_type
+     ORDER BY event_type ASC`,
+    [bay_id],
+  );
+
+  let unpublished_events = 0;
+  let oldest_unpublished_event_at: Date | null = null;
+  let newest_unpublished_event_at: Date | null = null;
+  const unpublished_event_types: Record<string, number> = {};
+  for (const row of rows) {
+    const count = Number(row.count ?? 0);
+    unpublished_events += count;
+    unpublished_event_types[row.event_type] = count;
+    if (
+      row.oldest_unpublished_event_at != null &&
+      (oldest_unpublished_event_at == null ||
+        row.oldest_unpublished_event_at < oldest_unpublished_event_at)
+    ) {
+      oldest_unpublished_event_at = row.oldest_unpublished_event_at;
+    }
+    if (
+      row.newest_unpublished_event_at != null &&
+      (newest_unpublished_event_at == null ||
+        row.newest_unpublished_event_at > newest_unpublished_event_at)
+    ) {
+      newest_unpublished_event_at = row.newest_unpublished_event_at;
+    }
+  }
+
+  return {
+    bay_id,
+    checked_at: now.toISOString(),
+    unpublished_events,
+    unpublished_event_types,
+    oldest_unpublished_event_at:
+      oldest_unpublished_event_at?.toISOString() ?? null,
+    newest_unpublished_event_at:
+      newest_unpublished_event_at?.toISOString() ?? null,
+    oldest_unpublished_event_age_ms: ageMs(now, oldest_unpublished_event_at),
+    newest_unpublished_event_age_ms: ageMs(now, newest_unpublished_event_at),
   };
 }
 

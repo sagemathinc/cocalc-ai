@@ -240,6 +240,79 @@ test("bay projection rebuild-account-project-index forwards write mode", async (
   });
 });
 
+test("bay projection status-account-project-index calls the hub status api", async () => {
+  let captured: any;
+  const program = new Command();
+  registerBayCommand(program, {
+    withContext: async (_command, _label, fn) => {
+      const ctx = {
+        hub: {
+          system: {
+            getAccountProjectIndexProjectionStatus: async (opts: any) => {
+              captured = opts;
+              return {
+                bay_id: "bay-0",
+                backlog: {
+                  bay_id: "bay-0",
+                  checked_at: "2026-04-04T05:00:00.000Z",
+                  unpublished_events: 3,
+                  unpublished_event_types: {
+                    "project.created": 1,
+                    "project.membership_changed": 2,
+                  },
+                  oldest_unpublished_event_at: "2026-04-04T04:59:30.000Z",
+                  newest_unpublished_event_at: "2026-04-04T04:59:59.000Z",
+                  oldest_unpublished_event_age_ms: 30_000,
+                  newest_unpublished_event_age_ms: 1_000,
+                },
+                maintenance: {
+                  enabled: true,
+                  observed_bay_id: "bay-0",
+                  interval_ms: 5000,
+                  batch_limit: 100,
+                  max_batches_per_tick: 5,
+                  running: false,
+                  started_at: "2026-04-04T04:00:00.000Z",
+                  last_tick_started_at: "2026-04-04T05:00:00.000Z",
+                  last_tick_finished_at: "2026-04-04T05:00:00.010Z",
+                  last_tick_duration_ms: 10,
+                  last_success_at: "2026-04-04T05:00:00.010Z",
+                  last_error_at: null,
+                  last_error: null,
+                  consecutive_failures: 0,
+                  last_result: {
+                    bay_id: "bay-0",
+                    batches: 1,
+                    scanned_events: 3,
+                    applied_events: 3,
+                    inserted_rows: 4,
+                    deleted_rows: 0,
+                    event_types: {
+                      "project.created": 1,
+                      "project.membership_changed": 2,
+                    },
+                  },
+                },
+              };
+            },
+          },
+        },
+      };
+      return await fn(ctx);
+    },
+  } as any);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "bay",
+    "projection",
+    "status-account-project-index",
+  ]);
+
+  assert.deepEqual(captured, {});
+});
+
 test("bay projection drain-account-project-index defaults to a dry run", async () => {
   let captured: any;
   const program = new Command();

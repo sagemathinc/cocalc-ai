@@ -5,7 +5,10 @@
 
 import getPool, { initEphemeralDatabase } from "@cocalc/database/pool";
 import { testCleanup } from "@cocalc/database/test-utils";
-import { drainAccountProjectIndexProjection } from "./account-project-index-projector";
+import {
+  drainAccountProjectIndexProjection,
+  getAccountProjectIndexProjectionBacklogStatus,
+} from "./account-project-index-projector";
 import { appendProjectOutboxEventForProject } from "./project-events-outbox";
 
 const LOCAL_BAY_ID = "bay-local";
@@ -101,6 +104,59 @@ describe("account_project_index projector", () => {
       [PROJECT_ID],
     );
     expect(outboxRows.rows).toEqual([{ published_at: null }]);
+  });
+
+  it("reports unpublished outbox lag and per-type counts", async () => {
+    await seedBaseRows();
+    await appendProjectOutboxEventForProject({
+      event_type: "project.created",
+      project_id: PROJECT_ID,
+      default_bay_id: LOCAL_BAY_ID,
+    });
+    await getPool().query(
+      `UPDATE project_events_outbox
+          SET created_at = $2
+        WHERE project_id = $1
+          AND event_type = 'project.created'`,
+      [PROJECT_ID, new Date("2026-04-03T23:00:00.000Z")],
+    );
+    await getPool().query(
+      `UPDATE projects
+          SET state = $2::JSONB
+        WHERE project_id = $1`,
+      [PROJECT_ID, JSON.stringify({ state: "stopped" })],
+    );
+    await appendProjectOutboxEventForProject({
+      event_type: "project.state_changed",
+      project_id: PROJECT_ID,
+      default_bay_id: LOCAL_BAY_ID,
+    });
+    await getPool().query(
+      `UPDATE project_events_outbox
+          SET created_at = $2
+        WHERE project_id = $1
+          AND event_type = 'project.state_changed'`,
+      [PROJECT_ID, new Date("2026-04-03T23:45:00.000Z")],
+    );
+
+    await expect(
+      getAccountProjectIndexProjectionBacklogStatus({
+        bay_id: LOCAL_BAY_ID,
+        now: new Date("2026-04-04T00:00:00.000Z"),
+      }),
+    ).resolves.toEqual({
+      bay_id: LOCAL_BAY_ID,
+      checked_at: "2026-04-04T00:00:00.000Z",
+      unpublished_events: 2,
+      unpublished_event_types: {
+        "project.created": 1,
+        "project.state_changed": 1,
+      },
+      oldest_unpublished_event_at: "2026-04-03T23:00:00.000Z",
+      newest_unpublished_event_at: "2026-04-03T23:45:00.000Z",
+      oldest_unpublished_event_age_ms: 60 * 60 * 1000,
+      newest_unpublished_event_age_ms: 15 * 60 * 1000,
+    });
   });
 
   it("projects local-home collaborators, preserves last_opened_at, and deletes on project.deleted", async () => {

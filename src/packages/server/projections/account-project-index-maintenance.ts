@@ -33,6 +33,15 @@ const MAX_BATCHES_PER_TICK = clampInt(
 
 let timer: NodeJS.Timeout | undefined;
 let running = false;
+let startedAt: Date | null = null;
+let lastTickStartedAt: Date | null = null;
+let lastTickFinishedAt: Date | null = null;
+let lastTickDurationMs: number | null = null;
+let lastSuccessAt: Date | null = null;
+let lastErrorAt: Date | null = null;
+let lastError: string | null = null;
+let consecutiveFailures = 0;
+let lastResult: AccountProjectIndexProjectionPassResult | null = null;
 
 export interface AccountProjectIndexProjectionPassResult {
   bay_id: string;
@@ -49,6 +58,28 @@ export interface RunAccountProjectIndexProjectionPassOptions {
   batch_limit?: number;
   max_batches_per_tick?: number;
   drain?: typeof drainAccountProjectIndexProjection;
+}
+
+export interface AccountProjectIndexProjectionMaintenanceStatus {
+  enabled: boolean;
+  observed_bay_id: string;
+  interval_ms: number;
+  batch_limit: number;
+  max_batches_per_tick: number;
+  running: boolean;
+  started_at: string | null;
+  last_tick_started_at: string | null;
+  last_tick_finished_at: string | null;
+  last_tick_duration_ms: number | null;
+  last_success_at: string | null;
+  last_error_at: string | null;
+  last_error: string | null;
+  consecutive_failures: number;
+  last_result: AccountProjectIndexProjectionPassResult | null;
+}
+
+export interface RunAccountProjectIndexProjectionMaintenanceTickOptions extends RunAccountProjectIndexProjectionPassOptions {
+  pass_runner?: typeof runAccountProjectIndexProjectionPass;
 }
 
 function clampInt(
@@ -101,19 +132,64 @@ export async function runAccountProjectIndexProjectionPass(
   return result;
 }
 
-async function tick(): Promise<void> {
-  if (running) return;
+function isoOrNull(value: Date | null): string | null {
+  return value?.toISOString() ?? null;
+}
+
+export function getAccountProjectIndexProjectionMaintenanceStatus(): AccountProjectIndexProjectionMaintenanceStatus {
+  return {
+    enabled: ENABLED,
+    observed_bay_id: getConfiguredBayId(),
+    interval_ms: INTERVAL_MS,
+    batch_limit: BATCH_LIMIT,
+    max_batches_per_tick: MAX_BATCHES_PER_TICK,
+    running,
+    started_at: isoOrNull(startedAt),
+    last_tick_started_at: isoOrNull(lastTickStartedAt),
+    last_tick_finished_at: isoOrNull(lastTickFinishedAt),
+    last_tick_duration_ms: lastTickDurationMs,
+    last_success_at: isoOrNull(lastSuccessAt),
+    last_error_at: isoOrNull(lastErrorAt),
+    last_error: lastError,
+    consecutive_failures: consecutiveFailures,
+    last_result: lastResult,
+  };
+}
+
+export async function runAccountProjectIndexProjectionMaintenanceTick(
+  opts?: RunAccountProjectIndexProjectionMaintenanceTickOptions,
+): Promise<AccountProjectIndexProjectionPassResult | null> {
+  if (running) return null;
   running = true;
+  const pass_runner = opts?.pass_runner ?? runAccountProjectIndexProjectionPass;
+  const started = new Date();
+  lastTickStartedAt = started;
   try {
-    const result = await runAccountProjectIndexProjectionPass();
+    const result = await pass_runner(opts);
+    const finished = new Date();
+    lastTickFinishedAt = finished;
+    lastTickDurationMs = Math.max(0, finished.getTime() - started.getTime());
+    lastSuccessAt = finished;
+    lastErrorAt = null;
+    lastError = null;
+    consecutiveFailures = 0;
+    lastResult = result;
     if (result.scanned_events > 0 || result.applied_events > 0) {
       logger.info(
         "account project index projector tick applied events",
         result,
       );
     }
+    return result;
   } catch (err) {
+    const finished = new Date();
+    lastTickFinishedAt = finished;
+    lastTickDurationMs = Math.max(0, finished.getTime() - started.getTime());
+    lastErrorAt = finished;
+    lastError = err instanceof Error ? err.message : `${err}`;
+    consecutiveFailures += 1;
     logger.error("account project index projector tick failed", err);
+    throw err;
   } finally {
     running = false;
   }
@@ -125,11 +201,12 @@ export function startAccountProjectIndexProjectionMaintenance(): void {
     return;
   }
   if (timer) return;
+  startedAt = new Date();
   timer = setInterval(() => {
-    void tick();
+    void runAccountProjectIndexProjectionMaintenanceTick();
   }, INTERVAL_MS);
   timer.unref?.();
-  void tick();
+  void runAccountProjectIndexProjectionMaintenanceTick();
   logger.info("account project index projector started", {
     interval_ms: INTERVAL_MS,
     batch_limit: BATCH_LIMIT,
@@ -141,4 +218,18 @@ export function stopAccountProjectIndexProjectionMaintenance(): void {
   if (!timer) return;
   clearInterval(timer);
   timer = undefined;
+}
+
+export function resetAccountProjectIndexProjectionMaintenanceStateForTests(): void {
+  stopAccountProjectIndexProjectionMaintenance();
+  running = false;
+  startedAt = null;
+  lastTickStartedAt = null;
+  lastTickFinishedAt = null;
+  lastTickDurationMs = null;
+  lastSuccessAt = null;
+  lastErrorAt = null;
+  lastError = null;
+  consecutiveFailures = 0;
+  lastResult = null;
 }
