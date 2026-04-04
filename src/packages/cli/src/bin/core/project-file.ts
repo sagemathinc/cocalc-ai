@@ -75,7 +75,7 @@ type ProjectFilesystem = {
   writeFile: (path: string, data: Buffer) => Promise<void>;
   rm: (
     path: string,
-    options: { recursive?: boolean; force?: boolean },
+    options: { recursive?: boolean; force?: boolean; sudo?: boolean },
   ) => Promise<void>;
   mkdir: (path: string, options?: { recursive?: boolean }) => Promise<void>;
   ripgrep: (
@@ -279,6 +279,7 @@ export function createProjectFileOps<Ctx>(deps: ProjectFileOpsDeps<Ctx>) {
     path,
     recursive,
     force,
+    sudo,
     cwd,
   }: {
     ctx: Ctx;
@@ -286,6 +287,7 @@ export function createProjectFileOps<Ctx>(deps: ProjectFileOpsDeps<Ctx>) {
     path: string;
     recursive: boolean;
     force: boolean;
+    sudo?: boolean;
     cwd?: string;
   }): Promise<Record<string, unknown>> {
     const { project, fs } = await resolveProjectFilesystem(
@@ -296,12 +298,14 @@ export function createProjectFileOps<Ctx>(deps: ProjectFileOpsDeps<Ctx>) {
     await fs.rm(path, {
       recursive,
       force,
+      sudo,
     });
     return {
       project_id: project.project_id,
       path,
       recursive,
       force,
+      sudo: !!sudo,
       status: "removed",
     };
   }

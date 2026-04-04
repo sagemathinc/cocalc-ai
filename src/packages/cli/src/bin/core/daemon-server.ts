@@ -274,6 +274,7 @@ export function createDaemonServerOps<Ctx>(deps: DaemonServerDeps<Ctx>) {
             path,
             recursive: request.payload?.recursive === true,
             force: request.payload?.force === true,
+            sudo: request.payload?.sudo === true,
             cwd,
           });
           return {

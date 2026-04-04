@@ -80,6 +80,8 @@ import {
   type CopyOptions,
   type FileDescription,
   type PatchWriteRequest,
+  type RemoveDirOptions,
+  type RemoveOptions,
 } from "@cocalc/conat/files/fs";
 export { type CopyOptions };
 import { ConatError } from "@cocalc/conat/core/client";
@@ -94,6 +96,11 @@ import {
   type CompressedPatch,
 } from "@cocalc/util/dmp";
 import getLogger from "@cocalc/backend/logger";
+import {
+  privilegedRemoveDirTarget,
+  privilegedRemoveTarget,
+  runPrivilegedDelete,
+} from "./privileged-delete";
 
 import { SyncFsWatchStore } from "./sync-fs-watch";
 export { SyncFsWatchStore };
@@ -681,6 +688,27 @@ export class SandboxedFilesystem {
       return null;
     }
     return { root, srcRel, destRel };
+  }
+
+  private async getPrivilegedDeleteTarget(
+    path: string,
+  ): Promise<{ root: string; rel: string }> {
+    const { pathInSandbox, sandboxBasePath } =
+      await this.resolvePathInSandbox(path);
+    if (sandboxBasePath === this.path || sandboxBasePath === this.scratch) {
+      const rel = this.toOpenAt2RelativePath(pathInSandbox, sandboxBasePath);
+      if (rel == null) {
+        throw new SandboxError(
+          `EPERM: cannot sudo-delete sandbox root '${path}'`,
+          { errno: -1, code: "EPERM", syscall: "rm", path },
+        );
+      }
+      return { root: sandboxBasePath, rel };
+    }
+    throw new SandboxError(
+      `EPERM: sudo delete is only supported in project home and /scratch, not '${path}'`,
+      { errno: -1, code: "EPERM", syscall: "rm", path },
+    );
   }
 
   private parseFsMode(mode: number | string): number | null {
@@ -2023,8 +2051,23 @@ export class SandboxedFilesystem {
     await move(srcPath, destPath, options);
   };
 
-  rm = async (path: string | string[], options?) => {
+  rm = async (path: string | string[], options?: RemoveOptions) => {
     const paths = typeof path == "string" ? [path] : path;
+    if (options?.sudo) {
+      for (const inputPath of paths) {
+        this.assertWritable(inputPath);
+        const target = await this.getPrivilegedDeleteTarget(inputPath);
+        await runPrivilegedDelete(
+          privilegedRemoveTarget({
+            root: target.root,
+            rel: target.rel,
+            options,
+          }),
+        );
+        void this.notifySyncFsLocalDelete(inputPath);
+      }
+      return;
+    }
     const v = await this.resolveWritableSandboxPaths(paths);
     const recursive = !!(
       options != null &&
@@ -2063,8 +2106,20 @@ export class SandboxedFilesystem {
     await Promise.all(v.map((absPath, i) => f(paths[i], absPath)));
   };
 
-  rmdir = async (path: string, options?) => {
+  rmdir = async (path: string, options?: RemoveDirOptions) => {
     this.assertWritable(path);
+    if (options?.sudo) {
+      const target = await this.getPrivilegedDeleteTarget(path);
+      await runPrivilegedDelete(
+        privilegedRemoveDirTarget({
+          root: target.root,
+          rel: target.rel,
+          options,
+        }),
+      );
+      void this.notifySyncFsLocalDelete(path);
+      return;
+    }
     await this.safeAbsPath(path);
     const recursive = !!(
       options != null &&

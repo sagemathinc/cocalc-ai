@@ -337,10 +337,19 @@ export function registerProjectFileCommands(
     .option("-w, --project <project>", "project id or name")
     .option("-r, --recursive", "remove directories recursively")
     .option("-f, --force", "do not fail if path is missing")
+    .option(
+      "--sudo",
+      "remove using elevated permissions within home or /scratch",
+    )
     .action(
       async (
         path: string,
-        opts: { project?: string; recursive?: boolean; force?: boolean },
+        opts: {
+          project?: string;
+          recursive?: boolean;
+          force?: boolean;
+          sudo?: boolean;
+        },
         command: Command,
       ) => {
         const globals = globalsFrom(command);
@@ -353,6 +362,7 @@ export function registerProjectFileCommands(
                 path,
                 recursive: !!opts.recursive,
                 force: !!opts.force,
+                sudo: !!opts.sudo,
               },
             });
             if (!response.ok) {
@@ -389,6 +399,7 @@ export function registerProjectFileCommands(
             path,
             recursive: !!opts.recursive,
             force: !!opts.force,
+            sudo: !!opts.sudo,
           });
         });
       },

@@ -87,6 +87,7 @@ export function ActionBox({
   const [show_different_project, set_show_different_project] =
     useState<boolean>(!!dnd_copy_dest && dnd_copy_dest !== project_id);
   const [overwrite, set_overwrite] = useState<boolean>(true);
+  const [deleteWithSudo, setDeleteWithSudo] = useState<boolean>(false);
   const bodyStyle =
     display === "modal"
       ? undefined
@@ -116,6 +117,7 @@ export function ActionBox({
 
   function clear() {
     actions.set_all_files_unchecked();
+    setDeleteWithSudo(false);
     if (dnd_copy_dest) {
       actions.setState({ copy_destination_project_id: undefined });
     }
@@ -161,7 +163,7 @@ export function ActionBox({
       actions.close_tab(path);
     }
     onUserFilesystemChange?.();
-    actions.deleteFiles({ paths });
+    actions.deleteFiles({ paths, sudo: deleteWithSudo });
     clear();
   }
 
@@ -203,6 +205,14 @@ export function ActionBox({
             .
           </div>
           {render_selected_files_list()}
+          <div style={{ marginBottom: "12px" }}>
+            <Checkbox
+              checked={deleteWithSudo}
+              onChange={(e) => setDeleteWithSudo(e.target.checked)}
+            >
+              Delete using elevated permissions
+            </Checkbox>
+          </div>
           <div style={{ textAlign: "right" }}>
             <Space>
               <AntdButton onClick={cancel_action}>Cancel</AntdButton>
@@ -249,6 +259,16 @@ export function ActionBox({
               </a>{" "}
               directories.
             </div>
+          </Col>
+        </Row>
+        <Row style={{ marginBottom: "10px" }}>
+          <Col sm={12}>
+            <Checkbox
+              checked={deleteWithSudo}
+              onChange={(e) => setDeleteWithSudo(e.target.checked)}
+            >
+              Delete using elevated permissions
+            </Checkbox>
           </Col>
         </Row>
         <Row>

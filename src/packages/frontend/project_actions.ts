@@ -2626,7 +2626,13 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     }
   };
 
-  deleteFiles = async ({ paths }: { paths: string[] }): Promise<void> => {
+  deleteFiles = async ({
+    paths,
+    sudo = false,
+  }: {
+    paths: string[];
+    sudo?: boolean;
+  }): Promise<void> => {
     if (paths.length == 0) {
       // nothing to do
       return;
@@ -2661,7 +2667,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       }
       if (nonSnapshotPaths.length > 0) {
         const fs = this.fs();
-        await fs.rm(nonSnapshotPaths, { force: true, recursive: true });
+        await fs.rm(nonSnapshotPaths, { force: true, recursive: true, sudo });
       }
 
       this.log({
