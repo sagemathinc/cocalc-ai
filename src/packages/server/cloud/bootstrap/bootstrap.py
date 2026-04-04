@@ -1379,12 +1379,15 @@ case "$cmd" in
     #   metadata-only changes, which keeps environment overlays smaller.
     # - redirect_dir=on makes lowerdir-backed directory renames behave normally
     #   instead of forcing expensive EXDEV-style fallbacks.
-    # - index=on keeps origin metadata for copied-up objects and is part of the
-    #   fully featured overlay metadata model.
-    # Tradeoff: overlay state now depends on trusted.overlay.* xattrs, so
-    # backup/restore of project overlay data must preserve those xattrs via the
-    # dedicated privileged rustic wrapper path.
-    exec /bin/mount -t overlay overlay -o "lowerdir=${lowerdir_escaped},upperdir=${upperdir_escaped},workdir=${workdir_escaped},xino=off,metacopy=on,redirect_dir=on,index=on" "$merged"
+    # - index=off keeps the upperdir portable across hosts / equivalent lowers.
+    #   With index=on, overlayfs stamps trusted.overlay.origin onto the upper
+    #   root itself, which makes the entire upperdir fail to remount against a
+    #   replaced-but-equivalent lower tree with "Stale file handle".
+    # Tradeoff: copied-up lower hardlinks may lose hardlink identity, but that
+    # is preferable to making project RootFS deltas non-portable.
+    # Backup/restore of project overlay data must still preserve
+    # trusted.overlay.* xattrs via the dedicated privileged rustic wrapper path.
+    exec /bin/mount -t overlay overlay -o "lowerdir=${lowerdir_escaped},upperdir=${upperdir_escaped},workdir=${workdir_escaped},xino=off,metacopy=on,redirect_dir=on,index=off" "$merged"
     ;;
   umount-overlay-project)
     if [ "$#" -ne 1 ]; then
@@ -1479,6 +1482,14 @@ case "$cmd" in
         skip_ownership_bridge=true
         ;;
     esac
+    ownership_source="${COCALC_ROOTFS_OWNERSHIP_SOURCE:-keep-id}"
+    case "$ownership_source" in
+      keep-id|oci-extract)
+        ;;
+      *)
+        fail "rootfs preflight failed: unsupported ownership source '$ownership_source'" 78
+        ;;
+    esac
     remap_rootfs_ids_script="$(mktemp)"
     rewrite_uid_map_file="$(mktemp)"
     rewrite_gid_map_file="$(mktemp)"
@@ -1494,6 +1505,7 @@ runtime_uid = int(sys.argv[3])
 runtime_gid = int(sys.argv[4])
 uid_map_path = sys.argv[5]
 gid_map_path = sys.argv[6]
+ownership_source = sys.argv[7]
 
 def parse_map(path: str) -> list[tuple[int, int, int]]:
     ranges: list[tuple[int, int, int]] = []
@@ -1555,6 +1567,10 @@ def current_host_to_canonical(identifier: int, ranges: list[tuple[int, int, int]
         intermediate = host_to_intermediate(identifier, ranges)
     except RuntimeError:
         return identifier
+    if ownership_source == "oci-extract":
+        return intermediate
+    if ownership_source != "keep-id":
+        raise RuntimeError(f"unknown ownership source {ownership_source}")
     return reverse_keep_id(intermediate, runtime_id)
 
 def remap(path: str) -> None:
@@ -1682,14 +1698,16 @@ EOF_COCALC_FIX_SETID_RUNTIME_HELPERS
         "2001" \
         "2001" \
         "$rewrite_uid_map_file" \
-        "$rewrite_gid_map_file"
+        "$rewrite_gid_map_file" \
+        "$ownership_source"
       /usr/bin/python3 "$remap_rootfs_ids_script" \
         "to-host" \
         "$rootfs" \
         "2001" \
         "2001" \
         "$rewrite_uid_map_file" \
-        "$rewrite_gid_map_file"
+        "$rewrite_gid_map_file" \
+        "$ownership_source"
       fix_setid_runtime_helpers_escaped="$(printf '%q' "$fix_setid_runtime_helpers_script")"
       /usr/bin/sudo -u "$podman_user" -H bash -lc "
           cd ~ &&
@@ -3125,7 +3143,30 @@ def start_project_host(cfg: BootstrapConfig) -> None:
         raise RuntimeError("project-host bundle missing entrypoint")
     if Path(bin_path).exists():
         run_cmd(cfg, [bin_path, "daemon", "stop"], "project-host stop", check=False, as_user=cfg.ssh_user)
-    run_cmd(cfg, [bin_path, "daemon", "start"], "project-host start", as_user=cfg.ssh_user)
+    result = run_cmd(
+        cfg,
+        [bin_path, "daemon", "start"],
+        "project-host start",
+        check=False,
+        as_user=cfg.ssh_user,
+    )
+    if result.returncode == 0:
+        return
+    output = result.stdout or ""
+    if "already running" in output:
+        log_line(
+            cfg,
+            "bootstrap: project-host reported already running after start; "
+            "verifying current instance with daemon ensure",
+        )
+        run_cmd(
+            cfg,
+            [bin_path, "daemon", "ensure"],
+            "project-host ensure",
+            as_user=cfg.ssh_user,
+        )
+        return
+    raise RuntimeError(f"project-host start failed with exit code {result.returncode}")
 
 
 def reenable_unattended(cfg: BootstrapConfig) -> None:

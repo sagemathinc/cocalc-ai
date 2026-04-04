@@ -233,6 +233,52 @@ export async function getProjectRootfsStates({
   return await loadProjectRootfsStateEntries(project_id);
 }
 
+export async function getCurrentProjectRootfsBinding({
+  project_id,
+}: {
+  project_id: string;
+}): Promise<ProjectRootfsBinding | undefined> {
+  const rows = await loadProjectRootfsStateRows(project_id);
+  const currentRow = rows.find((row) => row.state_role === "current");
+  if (currentRow) {
+    return {
+      image: currentRow.runtime_image,
+      image_id: trimString(currentRow.image_id),
+      release_id: trimString(currentRow.release_id),
+    };
+  }
+  const projectRow = await loadProjectRow(project_id);
+  const image = trimString(projectRow?.rootfs_image);
+  if (!image) {
+    return undefined;
+  }
+  const image_id = trimString(projectRow?.rootfs_image_id);
+  if (isManagedRootfsImageName(image) || image_id) {
+    return await resolveManagedBinding({ image, image_id });
+  }
+  return { image, image_id };
+}
+
+export async function assertPortableProjectRootfs({
+  project_id,
+  operation,
+}: {
+  project_id: string;
+  operation: "backup" | "move";
+}): Promise<void> {
+  const current = await getCurrentProjectRootfsBinding({ project_id });
+  const image = trimString(current?.image);
+  if (!image) {
+    return;
+  }
+  if (trimString(current?.release_id)) {
+    return;
+  }
+  throw new Error(
+    `cannot ${operation} project while its RootFS is still backed by unsealed OCI image '${image}'; publish the current RootFS first so the project uses an immutable managed artifact`,
+  );
+}
+
 export async function replaceProjectRootfsStates({
   project_id,
   current,

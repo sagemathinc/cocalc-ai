@@ -10,7 +10,7 @@ import getLogger from "@cocalc/backend/logger";
 const logger = getLogger("project-runner:rootfs-preflight");
 const STORAGE_WRAPPER = "/usr/local/sbin/cocalc-runtime-storage";
 
-export const ROOTFS_PREFLIGHT_VERSION = 6;
+export const ROOTFS_PREFLIGHT_VERSION = 7;
 export const ROOTFS_NORMALIZER_VERSION = ROOTFS_PREFLIGHT_VERSION;
 
 export type RootfsPreflightMetadata = {
@@ -29,6 +29,8 @@ export type RootfsPreflightMetadata = {
 };
 
 export type RootfsNormalizationMetadata = RootfsPreflightMetadata;
+
+export type RootfsOwnershipSource = "keep-id" | "oci-extract";
 
 type RawPreflightResult = Omit<
   RootfsPreflightMetadata,
@@ -164,11 +166,13 @@ export async function preflightRootfsInPlace({
   rootfsPath,
   onProgress,
   skipOwnershipBridge,
+  ownershipSource,
 }: {
   image: string;
   rootfsPath: string;
   onProgress?: RootfsPreflightProgress;
   skipOwnershipBridge?: boolean;
+  ownershipSource?: RootfsOwnershipSource;
 }): Promise<RootfsPreflightMetadata> {
   onProgress?.({
     message: "checking RootFS preflight prerequisites",
@@ -176,6 +180,7 @@ export async function preflightRootfsInPlace({
       image,
       rootfs_path: rootfsPath,
       skip_ownership_bridge: skipOwnershipBridge === true,
+      ownership_source: ownershipSource ?? "keep-id",
     },
   });
   logger.info("preflighting rootfs", {
@@ -183,15 +188,21 @@ export async function preflightRootfsInPlace({
     rootfs_path: rootfsPath,
     version: ROOTFS_PREFLIGHT_VERSION,
     skip_ownership_bridge: skipOwnershipBridge === true,
+    ownership_source: ownershipSource ?? "keep-id",
   });
   let stdout = "";
   try {
+    const env: Record<string, string> = {};
+    if (skipOwnershipBridge) {
+      env.COCALC_ROOTFS_SKIP_OWNERSHIP_BRIDGE = "1";
+    }
+    if (ownershipSource) {
+      env.COCALC_ROOTFS_OWNERSHIP_SOURCE = ownershipSource;
+    }
     const result = await executeCode({
       command: "sudo",
       args: ["-n", STORAGE_WRAPPER, "normalize-rootfs", rootfsPath],
-      env: skipOwnershipBridge
-        ? { COCALC_ROOTFS_SKIP_OWNERSHIP_BRIDGE: "1" }
-        : undefined,
+      env: Object.keys(env).length ? env : undefined,
       err_on_exit: true,
       verbose: false,
       timeout: 45 * 60,

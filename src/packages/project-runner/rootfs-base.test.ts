@@ -6,6 +6,7 @@ const preflightRootfsInPlace = jest.fn();
 const loadRootfsPreflightMetadata = jest.fn();
 const requireCurrentRootfsPreflightMetadata = jest.fn();
 const writeRootfsPreflightMetadata = jest.fn();
+const rsyncProgressReporter = jest.fn();
 
 jest.mock("@cocalc/backend/data", () => ({
   data: "/mnt/cocalc/data",
@@ -36,6 +37,11 @@ jest.mock("@cocalc/backend/logger", () => {
   };
 });
 
+jest.mock("./run/rsync-progress", () => ({
+  PROGRESS_ARGS: [],
+  rsyncProgressReporter: (...args: any[]) => rsyncProgressReporter(...args),
+}));
+
 jest.mock("./run/pull-image", () => ({
   __esModule: true,
   default: (...args: any[]) => pullImage(...args),
@@ -63,6 +69,7 @@ describe("extractBaseImage OCI preflight", () => {
       ),
     );
     executeCode.mockResolvedValue({ stdout: "", stderr: "", exit_code: 0 });
+    rsyncProgressReporter.mockResolvedValue(undefined);
   });
 
   it("removes the pulled image when mounted-image preflight rejects it", async () => {
@@ -87,5 +94,44 @@ describe("extractBaseImage OCI preflight", () => {
       command: "podman",
       args: ["image", "rm", "docker.io/library/alpine:latest"],
     });
+  });
+
+  it("marks raw OCI extracts as oci-extract ownership layout", async () => {
+    exists.mockResolvedValue(false);
+    pullImage.mockResolvedValue(undefined);
+    preflightPulledOciImage.mockResolvedValue({
+      distro_family: "rhel",
+      package_manager: "dnf",
+      shell: "/bin/bash",
+      glibc: true,
+      sudo_present: false,
+      ca_certificates_present: false,
+    });
+    preflightRootfsInPlace.mockResolvedValue({
+      version: 1,
+      normalized_at: new Date().toISOString(),
+      image: "quay.io/centos/centos:stream9",
+      rootfs_path:
+        "/mnt/cocalc/data/cache/images/quay.io%2Fcentos%2Fcentos%3Astream9",
+      distro_family: "rhel",
+      package_manager: "dnf",
+      shell: "/bin/bash",
+      glibc: true,
+      sudo_present: false,
+      ca_certificates_present: false,
+    });
+    executeCode.mockResolvedValue({ stdout: "{}", stderr: "", exit_code: 0 });
+
+    const { extractBaseImage } = await import("./run/rootfs-base");
+    await expect(
+      extractBaseImage("quay.io/centos/centos:stream9"),
+    ).rejects.toThrow();
+
+    expect(preflightRootfsInPlace).toHaveBeenCalledWith(
+      expect.objectContaining({
+        image: "quay.io/centos/centos:stream9",
+        ownershipSource: "oci-extract",
+      }),
+    );
   });
 });

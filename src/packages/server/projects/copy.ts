@@ -51,7 +51,10 @@ async function createBackupAndWait({
   project_id: string;
   tags?: string[];
 }): Promise<{ id: string; time?: string }> {
-  const op = await createBackupLro({ account_id, project_id, tags });
+  const op = await createBackupLro(
+    { account_id, project_id, tags },
+    { skip_rootfs_portability_check: true },
+  );
   const summary = await waitForLroCompletion({
     op_id: op.op_id,
     scope_type: op.scope_type,

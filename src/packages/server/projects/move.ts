@@ -22,6 +22,7 @@ import {
   offlineMoveConfirmationError,
 } from "./offline-move-confirmation";
 import { getProjectFileServerClient } from "@cocalc/server/conat/file-server-client";
+import { assertPortableProjectRootfs } from "./rootfs-state";
 
 const log = getLogger("server:projects:move");
 const MAX_BACKUPS_PER_PROJECT = 30;
@@ -322,6 +323,10 @@ export async function moveProjectToHost(
   const startDest = input.start_dest !== false;
   const stopDestAfterStart = !!input.stop_dest_after_start;
   const context = await buildMoveProjectContext(input);
+  await assertPortableProjectRootfs({
+    project_id: context.project_id,
+    operation: "move",
+  });
   log.debug("moveProjectToHost context", {
     project_id: context.project_id,
     dest_host_id: context.dest_host_id,
