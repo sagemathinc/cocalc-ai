@@ -4,6 +4,8 @@
  */
 
 import { validateOpts } from "./utils";
+import getPool from "@cocalc/database/pool";
+import { appendProjectOutboxEventForProject } from "../project-events-outbox";
 import type { PostgreSQL } from "../types";
 
 export interface AddUserToProjectOptions {
@@ -13,27 +15,41 @@ export interface AddUserToProjectOptions {
 }
 
 export async function addUserToProject(
-  db: PostgreSQL,
+  _db: PostgreSQL,
   opts: AddUserToProjectOptions,
 ): Promise<void> {
   // Validate inputs
   validateOpts(opts);
 
   const group = opts.group ?? "collaborator";
-
-  await db.async_query({
-    query: "UPDATE projects",
-    jsonb_merge: {
-      users: {
-        [opts.account_id]: {
-          group,
-        },
-      },
-    },
-    where: {
-      "project_id = $::UUID": opts.project_id,
-    },
-  });
+  const client = await getPool().connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(
+      `UPDATE projects
+          SET users = COALESCE(users, '{}'::JSONB) || $2::JSONB
+        WHERE project_id = $1::UUID`,
+      [
+        opts.project_id,
+        JSON.stringify({
+          [opts.account_id]: {
+            group,
+          },
+        }),
+      ],
+    );
+    await appendProjectOutboxEventForProject({
+      db: client,
+      event_type: "project.membership_changed",
+      project_id: opts.project_id,
+    });
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 export interface RemoveCollaboratorFromProjectOptions {
@@ -42,22 +58,34 @@ export interface RemoveCollaboratorFromProjectOptions {
 }
 
 export async function removeCollaboratorFromProject(
-  db: PostgreSQL,
+  _db: PostgreSQL,
   opts: RemoveCollaboratorFromProjectOptions,
 ): Promise<void> {
   // Validate inputs
   validateOpts(opts);
 
-  // Remove user but only if they are not an owner
-  // The WHERE clause prevents removing owners
-  await db.async_query({
-    query: "UPDATE projects",
-    jsonb_set: { users: { [opts.account_id]: null } },
-    where: {
-      "project_id :: UUID = $": opts.project_id,
-      [`users#>>'{${opts.account_id},group}' != $::TEXT`]: "owner",
-    },
-  });
+  const client = await getPool().connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(
+      `UPDATE projects
+          SET users = COALESCE(users, '{}'::JSONB) - $2::TEXT
+        WHERE project_id = $1::UUID
+          AND users #>> ARRAY[$2::TEXT, 'group'] != $3::TEXT`,
+      [opts.project_id, opts.account_id, "owner"],
+    );
+    await appendProjectOutboxEventForProject({
+      db: client,
+      event_type: "project.membership_changed",
+      project_id: opts.project_id,
+    });
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 export interface RemoveUserFromProjectOptions {
@@ -66,16 +94,31 @@ export interface RemoveUserFromProjectOptions {
 }
 
 export async function removeUserFromProject(
-  db: PostgreSQL,
+  _db: PostgreSQL,
   opts: RemoveUserFromProjectOptions,
 ): Promise<void> {
   // Validate inputs
   validateOpts(opts);
 
-  // Remove any user, even an owner (no restrictions)
-  await db.async_query({
-    query: "UPDATE projects",
-    jsonb_set: { users: { [opts.account_id]: null } },
-    where: { "project_id :: UUID = $": opts.project_id },
-  });
+  const client = await getPool().connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(
+      `UPDATE projects
+          SET users = COALESCE(users, '{}'::JSONB) - $2::TEXT
+        WHERE project_id = $1::UUID`,
+      [opts.project_id, opts.account_id],
+    );
+    await appendProjectOutboxEventForProject({
+      db: client,
+      event_type: "project.membership_changed",
+      project_id: opts.project_id,
+    });
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
 }

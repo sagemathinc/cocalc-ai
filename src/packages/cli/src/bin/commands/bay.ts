@@ -100,5 +100,43 @@ export function registerBayCommand(
       },
     );
 
+  projection
+    .command("drain-account-project-index")
+    .description(
+      "apply unpublished project outbox events to the local account_project_index projection",
+    )
+    .option("--bay-id <bay_id>", "override the bay id to drain for")
+    .option("--limit <n>", "apply at most n unpublished outbox events")
+    .option("--write", "apply changes instead of running a dry run", false)
+    .action(
+      async (
+        opts: {
+          bayId?: string;
+          limit?: string;
+          write?: boolean;
+        },
+        command: Command,
+      ) => {
+        await withContext(
+          command,
+          "bay projection drain-account-project-index",
+          async (ctx) => {
+            const limit =
+              opts.limit == null || `${opts.limit}`.trim() === ""
+                ? undefined
+                : Number(opts.limit);
+            if (limit != null && (!Number.isInteger(limit) || limit <= 0)) {
+              throw new Error("--limit must be a positive integer");
+            }
+            return await ctx.hub.system.drainAccountProjectIndexProjection({
+              bay_id: opts.bayId?.trim() || undefined,
+              limit,
+              dry_run: !opts.write,
+            });
+          },
+        );
+      },
+    );
+
   return bay;
 }

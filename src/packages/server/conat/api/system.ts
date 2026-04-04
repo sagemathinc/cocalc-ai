@@ -9,6 +9,7 @@ import {
 } from "@cocalc/server/bay-directory";
 import { backfillBayOwnership as backfillBayOwnership0 } from "@cocalc/server/bay-backfill";
 import { rebuildAccountProjectIndex as rebuildAccountProjectIndex0 } from "@cocalc/database/postgres/account-project-index";
+import { drainAccountProjectIndexProjection as drainAccountProjectIndexProjection0 } from "@cocalc/database/postgres/account-project-index-projector";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { record_user_tracking } from "@cocalc/database/postgres/account/user-tracking";
 import { db } from "@cocalc/database";
@@ -166,6 +167,25 @@ export async function rebuildAccountProjectIndex({
   return await rebuildAccountProjectIndex0({
     account_id: target_account_id,
     bay_id: getConfiguredBayId(),
+    dry_run,
+  });
+}
+
+export async function drainAccountProjectIndexProjection({
+  account_id,
+  bay_id,
+  limit,
+  dry_run = true,
+}: {
+  account_id?: string;
+  bay_id?: string;
+  limit?: number;
+  dry_run?: boolean;
+}) {
+  await assertAdmin(account_id);
+  return await drainAccountProjectIndexProjection0({
+    bay_id: bay_id?.trim() || getConfiguredBayId(),
+    limit,
     dry_run,
   });
 }

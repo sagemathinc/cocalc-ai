@@ -1,5 +1,6 @@
 import getPool from "@cocalc/database/pool";
 import { jsonbSet } from "@cocalc/database/postgres/jsonb-utils";
+import { appendProjectOutboxEventForProject } from "@cocalc/database/postgres/project-events-outbox";
 import { isValidUUID } from "@cocalc/util/misc";
 import { syncProjectUsersOnHost } from "@cocalc/server/project-host/control";
 
@@ -22,10 +23,24 @@ export default async function addUserToProject({
     group = "collaborator";
   }
   const { set, params } = jsonbSet({ users: { [account_id]: { group } } });
-
-  await pool.query(
-    `UPDATE projects SET ${set} WHERE project_id=$${params.length + 1}`,
-    params.concat(project_id),
-  );
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(
+      `UPDATE projects SET ${set} WHERE project_id=$${params.length + 1}`,
+      params.concat(project_id),
+    );
+    await appendProjectOutboxEventForProject({
+      db: client,
+      event_type: "project.membership_changed",
+      project_id,
+    });
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
   await syncProjectUsersOnHost({ project_id });
 }

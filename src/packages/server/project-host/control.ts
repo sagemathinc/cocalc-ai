@@ -8,6 +8,7 @@ import { getConfiguredBayId } from "../bay-config";
 import { normalizeHostTier } from "./placement";
 import { machineHasGpu } from "../cloud/host-gpu";
 import { maybeAutoGrowHostDiskForReservationFailure } from "./auto-grow";
+import { appendProjectOutboxEventForProject } from "@cocalc/database/postgres/project-events-outbox";
 
 const log = getLogger("server:project-host:control");
 // Project starts can include large restores, so allow a long RPC timeout.
@@ -238,24 +239,43 @@ export async function savePlacement(
   placement: HostPlacement,
 ) {
   const defaultBayId = getConfiguredBayId();
-  const { rows } = await pool().query<{
-    owning_bay_id: string;
-    host_bay_id: string;
-  }>(
-    `
-      UPDATE projects AS projects
-      SET host_id = $1
-      FROM project_hosts AS project_hosts
-      WHERE projects.project_id = $2
-        AND project_hosts.id = $1
-        AND project_hosts.deleted IS NULL
-        AND COALESCE(projects.owning_bay_id, $3) = COALESCE(project_hosts.bay_id, $3)
-      RETURNING
-        COALESCE(projects.owning_bay_id, $3) AS owning_bay_id,
-        COALESCE(project_hosts.bay_id, $3) AS host_bay_id
-    `,
-    [placement.host_id, project_id, defaultBayId],
-  );
+  const client = await pool().connect();
+  let rows: { owning_bay_id: string; host_bay_id: string }[] = [];
+  try {
+    await client.query("BEGIN");
+    ({ rows } = await client.query<{
+      owning_bay_id: string;
+      host_bay_id: string;
+    }>(
+      `
+        UPDATE projects AS projects
+        SET host_id = $1
+        FROM project_hosts AS project_hosts
+        WHERE projects.project_id = $2
+          AND project_hosts.id = $1
+          AND project_hosts.deleted IS NULL
+          AND COALESCE(projects.owning_bay_id, $3) = COALESCE(project_hosts.bay_id, $3)
+        RETURNING
+          COALESCE(projects.owning_bay_id, $3) AS owning_bay_id,
+          COALESCE(project_hosts.bay_id, $3) AS host_bay_id
+      `,
+      [placement.host_id, project_id, defaultBayId],
+    ));
+    if (rows[0]) {
+      await appendProjectOutboxEventForProject({
+        db: client,
+        event_type: "project.host_changed",
+        project_id,
+        default_bay_id: defaultBayId,
+      });
+    }
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
   if (!rows[0]) {
     const [{ rows: projectRows }, { rows: hostRows }] = await Promise.all([
       pool().query<{ owning_bay_id: string }>(

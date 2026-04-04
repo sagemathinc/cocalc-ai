@@ -3,6 +3,8 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import getPool from "@cocalc/database/pool";
+import { appendProjectOutboxEventForProject } from "../project-events-outbox";
 import type { PostgreSQL } from "../types";
 
 export interface SetProjectHostOptions {
@@ -11,18 +13,31 @@ export interface SetProjectHostOptions {
 }
 
 export async function setProjectHost(
-  db: PostgreSQL,
+  _db: PostgreSQL,
   opts: SetProjectHostOptions,
 ): Promise<Date> {
   const assigned = new Date();
-
-  await db.async_query({
-    query: "UPDATE projects",
-    set: {
-      host_id: opts.host_id,
-    },
-    where: { "project_id :: UUID = $": opts.project_id },
-  });
+  const client = await getPool().connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(
+      `UPDATE projects
+          SET host_id = $2
+        WHERE project_id = $1::UUID`,
+      [opts.project_id, opts.host_id],
+    );
+    await appendProjectOutboxEventForProject({
+      db: client,
+      event_type: "project.host_changed",
+      project_id: opts.project_id,
+    });
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
 
   return assigned;
 }
@@ -32,16 +47,30 @@ export interface UnsetProjectHostOptions {
 }
 
 export async function unsetProjectHost(
-  db: PostgreSQL,
+  _db: PostgreSQL,
   opts: UnsetProjectHostOptions,
 ): Promise<void> {
-  await db.async_query({
-    query: "UPDATE projects",
-    set: {
-      host_id: null,
-    },
-    where: { "project_id :: UUID = $": opts.project_id },
-  });
+  const client = await getPool().connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(
+      `UPDATE projects
+          SET host_id = NULL
+        WHERE project_id = $1::UUID`,
+      [opts.project_id],
+    );
+    await appendProjectOutboxEventForProject({
+      db: client,
+      event_type: "project.host_changed",
+      project_id: opts.project_id,
+    });
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 export interface GetProjectHostOptions {

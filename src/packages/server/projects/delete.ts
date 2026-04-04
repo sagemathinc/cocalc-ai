@@ -3,6 +3,8 @@ import userIsInGroup from "@cocalc/server/accounts/is-in-group";
 import { getProject } from "@cocalc/server/projects/control";
 import { getLogger } from "@cocalc/backend/logger";
 import { isValidUUID } from "@cocalc/util/misc";
+import { appendProjectOutboxEventForProject } from "@cocalc/database/postgres/project-events-outbox";
+import { getConfiguredBayId } from "@cocalc/server/bay-config";
 
 const log = getLogger("server:projects:delete");
 
@@ -65,12 +67,28 @@ export async function setProjectDeleted({
   }
 
   const pool = getPool();
-  const result = await pool.query(
-    "UPDATE projects SET deleted=$2 WHERE project_id=$1",
-    [project_id, deleted],
-  );
-  if ((result.rowCount ?? 0) === 0) {
-    throw Error("project not found");
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await client.query(
+      "UPDATE projects SET deleted=$2 WHERE project_id=$1",
+      [project_id, deleted],
+    );
+    if ((result.rowCount ?? 0) === 0) {
+      throw Error("project not found");
+    }
+    await appendProjectOutboxEventForProject({
+      db: client,
+      event_type: deleted ? "project.deleted" : "project.summary_changed",
+      project_id,
+      default_bay_id: getConfiguredBayId(),
+    });
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
   }
 }
 

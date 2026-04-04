@@ -4,6 +4,8 @@
  */
 
 import { COMPUTE_STATES } from "@cocalc/util/schema";
+import getPool from "@cocalc/database/pool";
+import { appendProjectOutboxEventForProject } from "../project-events-outbox";
 import type { PostgreSQL } from "../types";
 
 export interface SetProjectStorageRequestOptions {
@@ -64,7 +66,7 @@ export interface SetProjectStateOptions {
 }
 
 export async function setProjectState(
-  db: PostgreSQL,
+  _db: PostgreSQL,
   opts: SetProjectStateOptions,
 ): Promise<void> {
   // Validate state type
@@ -90,11 +92,27 @@ export async function setProjectState(
     state.ip = opts.ip;
   }
 
-  await db.async_query({
-    query: "UPDATE projects",
-    set: { "state::JSONB": state },
-    where: { "project_id :: UUID = $": opts.project_id },
-  });
+  const client = await getPool().connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(
+      `UPDATE projects
+          SET state = $2::JSONB
+        WHERE project_id = $1::UUID`,
+      [opts.project_id, JSON.stringify(state)],
+    );
+    await appendProjectOutboxEventForProject({
+      db: client,
+      event_type: "project.state_changed",
+      project_id: opts.project_id,
+    });
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 export interface GetProjectStateOptions {

@@ -15,6 +15,7 @@ import {
   classifyHostProvisionedInventory,
   shouldDeleteHostProjectUpdate,
 } from "./host-project-ownership";
+import { appendProjectOutboxEventForProject } from "@cocalc/database/postgres/project-events-outbox";
 
 const logger = getLogger("server:conat:host-status");
 
@@ -143,10 +144,31 @@ export async function initHostStatusService() {
         // NOTE: Do not mutate host/placement here; host assignment is explicit
         // via move/start flows. Updating host_id/host from heartbeat reports
         // can cause split-brain if multiple hosts still have a local row.
-        await pool.query(
-          "UPDATE projects SET state=$2::jsonb WHERE project_id=$1",
-          [project_id, stateObj],
-        );
+        const client = await pool.connect();
+        try {
+          await client.query("BEGIN");
+          const result = await client.query(
+            `UPDATE projects
+                SET state=$2::jsonb
+              WHERE project_id=$1
+                AND state IS DISTINCT FROM $2::jsonb`,
+            [project_id, stateObj],
+          );
+          if ((result.rowCount ?? 0) > 0) {
+            await appendProjectOutboxEventForProject({
+              db: client,
+              event_type: "project.state_changed",
+              project_id,
+              default_bay_id: getConfiguredBayId(),
+            });
+          }
+          await client.query("COMMIT");
+        } catch (err) {
+          await client.query("ROLLBACK");
+          throw err;
+        } finally {
+          client.release();
+        }
       },
       async reportProjectProvisioned({
         project_id,

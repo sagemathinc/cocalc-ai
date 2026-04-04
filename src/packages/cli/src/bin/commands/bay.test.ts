@@ -239,3 +239,100 @@ test("bay projection rebuild-account-project-index forwards write mode", async (
     dry_run: false,
   });
 });
+
+test("bay projection drain-account-project-index defaults to a dry run", async () => {
+  let captured: any;
+  const program = new Command();
+  registerBayCommand(program, {
+    withContext: async (_command, _label, fn) => {
+      const ctx = {
+        hub: {
+          system: {
+            drainAccountProjectIndexProjection: async (opts: any) => {
+              captured = opts;
+              return {
+                bay_id: "bay-0",
+                dry_run: true,
+                requested_limit: 100,
+                scanned_events: 2,
+                applied_events: 2,
+                inserted_rows: 3,
+                deleted_rows: 1,
+                event_types: {
+                  "project.created": 1,
+                  "project.deleted": 1,
+                },
+              };
+            },
+          },
+        },
+      };
+      return await fn(ctx);
+    },
+  } as any);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "bay",
+    "projection",
+    "drain-account-project-index",
+  ]);
+
+  assert.deepEqual(captured, {
+    bay_id: undefined,
+    limit: undefined,
+    dry_run: true,
+  });
+});
+
+test("bay projection drain-account-project-index forwards write mode, bay, and limit", async () => {
+  let captured: any;
+  const program = new Command();
+  registerBayCommand(program, {
+    withContext: async (_command, _label, fn) => {
+      const ctx = {
+        hub: {
+          system: {
+            drainAccountProjectIndexProjection: async (opts: any) => {
+              captured = opts;
+              return {
+                bay_id: "bay-7",
+                dry_run: false,
+                requested_limit: 25,
+                scanned_events: 5,
+                applied_events: 5,
+                inserted_rows: 7,
+                deleted_rows: 2,
+                event_types: {
+                  "project.created": 1,
+                  "project.membership_changed": 4,
+                },
+              };
+            },
+          },
+        },
+      };
+      return await fn(ctx);
+    },
+  } as any);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "bay",
+    "projection",
+    "drain-account-project-index",
+    "--write",
+    "--bay-id",
+    "bay-7",
+    "--limit",
+    "25",
+  ]);
+
+  assert.deepEqual(captured, {
+    bay_id: "bay-7",
+    limit: 25,
+    dry_run: false,
+  });
+});

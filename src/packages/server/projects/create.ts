@@ -36,6 +36,7 @@ import { supersedeOlderProjectStartLros } from "@cocalc/server/projects/start-lr
 import { mirrorStartLroProgress } from "@cocalc/server/projects/start-lro-progress";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { assertLocalProjectCollaborator } from "@cocalc/server/conat/project-local-access";
+import { appendProjectOutboxEventForProject } from "@cocalc/database/postgres/project-events-outbox";
 
 const log = getLogger("server:projects:create");
 const HOST_ONLINE_WINDOW_MS = 2 * 60 * 1000;
@@ -293,21 +294,37 @@ export default async function createProject(opts: CreateProjectOptions) {
   const users =
     account_id == null ? null : { [account_id]: { group: "owner" } };
 
-  await pool.query(
-    "INSERT INTO projects (project_id, title, description, users, created, last_edited, rootfs_image, rootfs_image_id, ephemeral, host_id, region, owning_bay_id) VALUES($1, $2, $3, $4, NOW(), NOW(), $5, $6, $7::BIGINT, $8, $9, $10)",
-    [
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(
+      "INSERT INTO projects (project_id, title, description, users, created, last_edited, rootfs_image, rootfs_image_id, ephemeral, host_id, region, owning_bay_id) VALUES($1, $2, $3, $4, NOW(), NOW(), $5, $6, $7::BIGINT, $8, $9, $10)",
+      [
+        project_id,
+        title ?? "No Title",
+        description ?? "",
+        users != null ? JSON.stringify(users) : users,
+        rootfs_image,
+        opts.rootfs_image_id ?? rootfs_image_id ?? null,
+        ephemeral ?? null,
+        host_id ?? null,
+        projectRegion,
+        owningBayId,
+      ],
+    );
+    await appendProjectOutboxEventForProject({
+      db: client,
+      event_type: "project.created",
       project_id,
-      title ?? "No Title",
-      description ?? "",
-      users != null ? JSON.stringify(users) : users,
-      rootfs_image,
-      opts.rootfs_image_id ?? rootfs_image_id ?? null,
-      ephemeral ?? null,
-      host_id ?? null,
-      projectRegion,
-      owningBayId,
-    ],
-  );
+      default_bay_id: owningBayId,
+    });
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
 
   if (src_project_id) {
     await cloneProjectRootfsStates({
