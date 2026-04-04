@@ -35,6 +35,17 @@ badge in the top bar. That feed is ambient, globally derived, and mostly
 non-configurable noise. It should also be replaced by the new notification
 model, not preserved.
 
+There is a fourth notification-like source to account for:
+
+- [news.ts](../packages/util/db-schema/news.ts)
+- [init.ts](../packages/frontend/notifications/news/init.ts)
+- [notification-news.tsx](../packages/frontend/notifications/notification-news.tsx)
+
+This one is different. `news` is broadcast publication content, not a targeted
+account event stream. It should still participate in a unified notification UI,
+but it should not be implemented as eager per-account fanout to every CoCalc
+account.
+
 ## Current Problem
 
 The current `mentions` table is doing too many jobs at once:
@@ -82,6 +93,8 @@ notification system.
 7. Ambient analytics or presence data must not automatically become
    notifications. Account-facing notifications should be opt-in or explicitly
    authored.
+8. Broadcast publication content such as news should not be modeled as eager
+   per-account fanout. It needs a distinct publication/feed strategy.
 
 ## Proposed Model
 
@@ -327,6 +340,124 @@ Notes:
 - The source bay cannot efficiently evaluate home-bay preferences unless those
   preferences are projected into an index keyed by source scope.
 
+### 8. `publication_events`
+
+Canonical broadcast publication rows for public or semi-public feed content such
+as product news, announcements, feature releases, and similar one-to-many
+content.
+
+One row means: "this publication exists".
+
+Suggested fields:
+
+- `publication_id UUID PRIMARY KEY`
+- `kind VARCHAR(64)`
+  - examples:
+    - `news`
+    - `announcement`
+    - `feature_release`
+- `channel VARCHAR(64)`
+- `audience_kind VARCHAR(32)`
+  - examples:
+    - `public`
+    - `signed_in`
+    - `admins`
+    - `segment`
+- `audience_filter_json JSONB NULL`
+- `title TEXT`
+- `body_markdown TEXT`
+- `summary_json JSONB`
+- `published_at TIMESTAMP`
+- `until TIMESTAMP NULL`
+- `hidden BOOLEAN`
+
+Notes:
+
+- This can replace or subsume the current `news` table over time, but it should
+  keep the same core semantics: one canonical publication, not 10 million
+  per-account inbox rows.
+- Publication rows are broadcast content, not targeted account events.
+
+### 9. `account_publication_state`
+
+Home-bay per-account state for broadcast/publication feeds.
+
+One row means: "this account has this relationship to this publication feed or
+publication item".
+
+Suggested fields:
+
+- `account_id UUID`
+- `scope_kind VARCHAR(32)`
+  - examples:
+    - `channel`
+    - `publication`
+- `scope_value TEXT`
+- `read_until TIMESTAMP NULL`
+- `last_seen_at TIMESTAMP NULL`
+- `dismissed_at TIMESTAMP NULL`
+- `saved_at TIMESTAMP NULL`
+- `enabled BOOLEAN`
+- primary key:
+  - `(account_id, scope_kind, scope_value)`
+
+Notes:
+
+- For current-style news, channel-level watermarks may be enough.
+- If we later want per-item save/dismiss state, we can use
+  `scope_kind='publication'`.
+- This is much cheaper than eager fanout while still allowing a unified account
+  UI.
+
+### 10. `account_publication_preferences`
+
+Home-bay opt-in/opt-out preferences for broadcast content.
+
+Suggested fields:
+
+- `account_id UUID`
+- `channel VARCHAR(64)`
+- `in_app_enabled BOOLEAN`
+- `email_enabled BOOLEAN`
+- `active_only BOOLEAN`
+- `updated_at TIMESTAMP`
+
+Notes:
+
+- This is where "I want announcement notifications" or "don't show me feature
+  releases" belongs.
+- We can default these conservatively and avoid reproducing the current noisy
+  feed behavior.
+
+### 11. `active_account_publication_queue`
+
+Optional bounded queue for lazy materialization of broadcast items into the
+account inbox for active accounts only.
+
+One row means: "this active account should be caught up on recent publications".
+
+Suggested fields:
+
+- `account_id UUID PRIMARY KEY`
+- `reason VARCHAR(32)`
+  - examples:
+    - `signin`
+    - `became_active`
+    - `prefs_changed`
+- `scheduled_at TIMESTAMP`
+- `processed_at TIMESTAMP NULL`
+
+Notes:
+
+- This is the scalable alternative to creating notification rows for every
+  account when a news item is published.
+- If the product wants a single inbox list rather than a separate news feed, we
+  can lazily materialize recent publications into `account_notification_index`
+  for active opted-in accounts only.
+- If the product is satisfied with a unified top-level counter but separate
+  storage, the queue may be unnecessary and we can compute publication unread
+  counts directly from `publication_events` plus account read state.
+
 ## Write Path for Mentions
 
 ### Current write path
@@ -385,6 +516,38 @@ view over `account_notification_index`, not a direct view over `file_use`.
 This is a major simplification and a much better match for "home-bay connection
 only".
 
+Broadcast content such as news is the one exception. It may still be rendered
+through the same top-level notifications surface, but operationally it should
+either:
+
+- remain a broadcast feed with per-account read state, or
+- be lazily materialized into inbox rows only for active opted-in accounts
+
+It should not require eager per-account fanout at publish time.
+
+## Unified UI Model
+
+The product should have one top-level notification indicator, not separate
+counters for messages, mentions, news, file activity, etc.
+
+The right way to get that is not to force all sources into one write path. It
+is to unify them at the account-facing read layer.
+
+Recommended model:
+
+- one top-level badge count exposed by the home bay
+- count is the sum of:
+  - unread targeted inbox notifications from `account_notification_index`
+  - unread broadcast publications from `publication_events` +
+    `account_publication_state`
+- one account-facing notifications page that can filter by kind/source
+
+This lets us present one coherent UI without requiring:
+
+- 10 million fanout rows for news
+- project-scoped browser reads for mentions
+- global ambient file activity feeds
+
 ## Why This Is Better for Bays
 
 ### Source ownership stays where it belongs
@@ -403,6 +566,8 @@ The home bay of the account decides:
 - whether it is saved
 - whether it is archived
 - whether email should be sent
+- what broadcast publication channels are enabled
+- what broadcast content has been seen
 
 ### The browser model gets simpler
 
@@ -413,6 +578,13 @@ It does not need:
 - project-scoped notification reads
 - foreign-bay read/write state mutation
 - special-case source-table semantics
+
+For broadcast publications, the browser still only talks to the home bay. The
+home bay can combine:
+
+- account-local inbox rows
+- account-local publication preferences/state
+- canonical publication content
 
 ## How This Relates to the Existing Phase 2 Work
 
@@ -482,6 +654,12 @@ as explicit opt-in subscription-backed kinds:
 - `file_changed`
 - `chat_activity`
 
+Broadcast/publication content should be a separate slice after those, not mixed
+into the first targeted notification implementation:
+
+- `publication.news`
+- `publication.announcement`
+
 The first implementation should support:
 
 - creating a mention notification event
@@ -491,6 +669,9 @@ The first implementation should support:
 - marking it read/saved in the home bay
 
 Leave email/digest migration to the next slice if needed.
+
+News should come later as a separate publication-feed slice, because its scale
+and semantics are different from targeted per-account notifications.
 
 ## Concrete API Proposal
 
