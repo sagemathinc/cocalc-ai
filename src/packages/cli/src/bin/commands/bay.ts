@@ -91,6 +91,23 @@ export function registerBayCommand(
     });
 
   projection
+    .command("status-account-collaborator-index")
+    .description(
+      "show local account_collaborator_index projector lag and maintenance status",
+    )
+    .action(async (command: Command) => {
+      await withContext(
+        command,
+        "bay projection status-account-collaborator-index",
+        async (ctx) => {
+          return await ctx.hub.system.getAccountCollaboratorIndexProjectionStatus(
+            {},
+          );
+        },
+      );
+    });
+
+  projection
     .command("rebuild-account-project-index <account_id>")
     .description(
       "rebuild the account_project_index rows for one home-bay account",
@@ -109,6 +126,33 @@ export function registerBayCommand(
           "bay projection rebuild-account-project-index",
           async (ctx) => {
             return await ctx.hub.system.rebuildAccountProjectIndex({
+              target_account_id: account_id,
+              dry_run: !opts.write,
+            });
+          },
+        );
+      },
+    );
+
+  projection
+    .command("rebuild-account-collaborator-index <account_id>")
+    .description(
+      "rebuild the account_collaborator_index rows for one home-bay account",
+    )
+    .option("--write", "apply changes instead of running a dry run", false)
+    .action(
+      async (
+        account_id: string,
+        opts: {
+          write?: boolean;
+        },
+        command: Command,
+      ) => {
+        await withContext(
+          command,
+          "bay projection rebuild-account-collaborator-index",
+          async (ctx) => {
+            return await ctx.hub.system.rebuildAccountCollaboratorIndex({
               target_account_id: account_id,
               dry_run: !opts.write,
             });
@@ -150,6 +194,46 @@ export function registerBayCommand(
               limit,
               dry_run: !opts.write,
             });
+          },
+        );
+      },
+    );
+
+  projection
+    .command("drain-account-collaborator-index")
+    .description(
+      "apply unpublished project outbox events to the local account_collaborator_index projection",
+    )
+    .option("--bay-id <bay_id>", "override the bay id to drain for")
+    .option("--limit <n>", "apply at most n unpublished outbox events")
+    .option("--write", "apply changes instead of running a dry run", false)
+    .action(
+      async (
+        opts: {
+          bayId?: string;
+          limit?: string;
+          write?: boolean;
+        },
+        command: Command,
+      ) => {
+        await withContext(
+          command,
+          "bay projection drain-account-collaborator-index",
+          async (ctx) => {
+            const limit =
+              opts.limit == null || `${opts.limit}`.trim() === ""
+                ? undefined
+                : Number(opts.limit);
+            if (limit != null && (!Number.isInteger(limit) || limit <= 0)) {
+              throw new Error("--limit must be a positive integer");
+            }
+            return await ctx.hub.system.drainAccountCollaboratorIndexProjection(
+              {
+                bay_id: opts.bayId?.trim() || undefined,
+                limit,
+                dry_run: !opts.write,
+              },
+            );
           },
         );
       },

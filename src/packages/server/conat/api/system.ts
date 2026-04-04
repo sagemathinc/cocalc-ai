@@ -13,6 +13,11 @@ import {
   drainAccountProjectIndexProjection as drainAccountProjectIndexProjection0,
   getAccountProjectIndexProjectionBacklogStatus,
 } from "@cocalc/database/postgres/account-project-index-projector";
+import { rebuildAccountCollaboratorIndex as rebuildAccountCollaboratorIndex0 } from "@cocalc/database/postgres/account-collaborator-index";
+import {
+  drainAccountCollaboratorIndexProjection as drainAccountCollaboratorIndexProjection0,
+  getAccountCollaboratorIndexProjectionBacklogStatus,
+} from "@cocalc/database/postgres/account-collaborator-index-projector";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { record_user_tracking } from "@cocalc/database/postgres/account/user-tracking";
 import { db } from "@cocalc/database";
@@ -94,6 +99,7 @@ import {
 import { getParallelOpsWorkerRegistration } from "@cocalc/server/lro/worker-registry";
 import { getProjectHostDefaultParallelLimit } from "@cocalc/server/lro/project-host-defaults";
 import { getAccountProjectIndexProjectionMaintenanceStatus } from "@cocalc/server/projections/account-project-index-maintenance";
+import { getAccountCollaboratorIndexProjectionMaintenanceStatus } from "@cocalc/server/projections/account-collaborator-index-maintenance";
 
 const logger = getLogger("server:conat:api:system");
 const ROOTFS_PUBLISH_LRO_KIND = "project-rootfs-publish";
@@ -207,6 +213,58 @@ export async function getAccountProjectIndexProjectionStatus({
       bay_id,
     }),
     maintenance: getAccountProjectIndexProjectionMaintenanceStatus(),
+  };
+}
+
+export async function rebuildAccountCollaboratorIndex({
+  account_id,
+  target_account_id,
+  dry_run = true,
+}: {
+  account_id?: string;
+  target_account_id: string;
+  dry_run?: boolean;
+}) {
+  await assertAdmin(account_id);
+  return await rebuildAccountCollaboratorIndex0({
+    account_id: target_account_id,
+    bay_id: getConfiguredBayId(),
+    dry_run,
+  });
+}
+
+export async function drainAccountCollaboratorIndexProjection({
+  account_id,
+  bay_id,
+  limit,
+  dry_run = true,
+}: {
+  account_id?: string;
+  bay_id?: string;
+  limit?: number;
+  dry_run?: boolean;
+}) {
+  await assertAdmin(account_id);
+  return await drainAccountCollaboratorIndexProjection0({
+    bay_id: bay_id?.trim() || getConfiguredBayId(),
+    limit,
+    dry_run,
+  });
+}
+
+export async function getAccountCollaboratorIndexProjectionStatus({
+  account_id,
+}: {
+  account_id?: string;
+}) {
+  await assertAdmin(account_id);
+  const bay_id = getConfiguredBayId();
+  return {
+    bay_id,
+    backlog: await getAccountCollaboratorIndexProjectionBacklogStatus({
+      bay_id,
+    }),
+    maintenance: getAccountCollaboratorIndexProjectionMaintenanceStatus(),
   };
 }
 

@@ -313,6 +313,79 @@ test("bay projection status-account-project-index calls the hub status api", asy
   assert.deepEqual(captured, {});
 });
 
+test("bay projection status-account-collaborator-index calls the hub status api", async () => {
+  let captured: any;
+  const program = new Command();
+  registerBayCommand(program, {
+    withContext: async (_command, _label, fn) => {
+      const ctx = {
+        hub: {
+          system: {
+            getAccountCollaboratorIndexProjectionStatus: async (opts: any) => {
+              captured = opts;
+              return {
+                bay_id: "bay-0",
+                backlog: {
+                  bay_id: "bay-0",
+                  checked_at: "2026-04-04T05:00:00.000Z",
+                  unpublished_events: 2,
+                  unpublished_event_types: {
+                    "project.created": 1,
+                    "project.membership_changed": 1,
+                  },
+                  oldest_unpublished_event_at: "2026-04-04T04:59:30.000Z",
+                  newest_unpublished_event_at: "2026-04-04T04:59:59.000Z",
+                  oldest_unpublished_event_age_ms: 30_000,
+                  newest_unpublished_event_age_ms: 1_000,
+                },
+                maintenance: {
+                  enabled: true,
+                  observed_bay_id: "bay-0",
+                  interval_ms: 5000,
+                  batch_limit: 100,
+                  max_batches_per_tick: 5,
+                  running: false,
+                  started_at: "2026-04-04T04:00:00.000Z",
+                  last_tick_started_at: "2026-04-04T05:00:00.000Z",
+                  last_tick_finished_at: "2026-04-04T05:00:00.010Z",
+                  last_tick_duration_ms: 10,
+                  last_success_at: "2026-04-04T05:00:00.010Z",
+                  last_error_at: null,
+                  last_error: null,
+                  consecutive_failures: 0,
+                  last_result: {
+                    bay_id: "bay-0",
+                    batches: 1,
+                    scanned_events: 2,
+                    applied_events: 2,
+                    inserted_rows: 4,
+                    deleted_rows: 1,
+                    event_types: {
+                      "project.created": 1,
+                      "project.membership_changed": 1,
+                    },
+                  },
+                },
+              };
+            },
+          },
+        },
+      };
+      return await fn(ctx);
+    },
+  } as any);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "bay",
+    "projection",
+    "status-account-collaborator-index",
+  ]);
+
+  assert.deepEqual(captured, {});
+});
+
 test("bay projection drain-account-project-index defaults to a dry run", async () => {
   let captured: any;
   const program = new Command();
@@ -396,6 +469,190 @@ test("bay projection drain-account-project-index forwards write mode, bay, and l
     "bay",
     "projection",
     "drain-account-project-index",
+    "--write",
+    "--bay-id",
+    "bay-7",
+    "--limit",
+    "25",
+  ]);
+
+  assert.deepEqual(captured, {
+    bay_id: "bay-7",
+    limit: 25,
+    dry_run: false,
+  });
+});
+
+test("bay projection rebuild-account-collaborator-index defaults to a dry run", async () => {
+  let captured: any;
+  const program = new Command();
+  registerBayCommand(program, {
+    withContext: async (_command, _label, fn) => {
+      const ctx = {
+        hub: {
+          system: {
+            rebuildAccountCollaboratorIndex: async (opts: any) => {
+              captured = opts;
+              return {
+                bay_id: "bay-0",
+                target_account_id: "11111111-1111-4111-8111-111111111111",
+                dry_run: true,
+                existing_rows: 3,
+                source_project_rows: 2,
+                source_collaborator_rows: 3,
+                deleted_rows: 0,
+                inserted_rows: 0,
+              };
+            },
+          },
+        },
+      };
+      return await fn(ctx);
+    },
+  } as any);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "bay",
+    "projection",
+    "rebuild-account-collaborator-index",
+    "11111111-1111-4111-8111-111111111111",
+  ]);
+
+  assert.deepEqual(captured, {
+    target_account_id: "11111111-1111-4111-8111-111111111111",
+    dry_run: true,
+  });
+});
+
+test("bay projection rebuild-account-collaborator-index forwards write mode", async () => {
+  let captured: any;
+  const program = new Command();
+  registerBayCommand(program, {
+    withContext: async (_command, _label, fn) => {
+      const ctx = {
+        hub: {
+          system: {
+            rebuildAccountCollaboratorIndex: async (opts: any) => {
+              captured = opts;
+              return {
+                bay_id: "bay-0",
+                target_account_id: "11111111-1111-4111-8111-111111111111",
+                dry_run: false,
+                existing_rows: 2,
+                source_project_rows: 4,
+                source_collaborator_rows: 5,
+                deleted_rows: 2,
+                inserted_rows: 5,
+              };
+            },
+          },
+        },
+      };
+      return await fn(ctx);
+    },
+  } as any);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "bay",
+    "projection",
+    "rebuild-account-collaborator-index",
+    "11111111-1111-4111-8111-111111111111",
+    "--write",
+  ]);
+
+  assert.deepEqual(captured, {
+    target_account_id: "11111111-1111-4111-8111-111111111111",
+    dry_run: false,
+  });
+});
+
+test("bay projection drain-account-collaborator-index defaults to a dry run", async () => {
+  let captured: any;
+  const program = new Command();
+  registerBayCommand(program, {
+    withContext: async (_command, _label, fn) => {
+      const ctx = {
+        hub: {
+          system: {
+            drainAccountCollaboratorIndexProjection: async (opts: any) => {
+              captured = opts;
+              return {
+                bay_id: "bay-0",
+                dry_run: true,
+                requested_limit: 100,
+                scanned_events: 2,
+                applied_events: 2,
+                inserted_rows: 5,
+                deleted_rows: 3,
+                event_types: {
+                  "project.created": 1,
+                  "project.membership_changed": 1,
+                },
+              };
+            },
+          },
+        },
+      };
+      return await fn(ctx);
+    },
+  } as any);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "bay",
+    "projection",
+    "drain-account-collaborator-index",
+  ]);
+
+  assert.deepEqual(captured, {
+    bay_id: undefined,
+    limit: undefined,
+    dry_run: true,
+  });
+});
+
+test("bay projection drain-account-collaborator-index forwards write mode, bay, and limit", async () => {
+  let captured: any;
+  const program = new Command();
+  registerBayCommand(program, {
+    withContext: async (_command, _label, fn) => {
+      const ctx = {
+        hub: {
+          system: {
+            drainAccountCollaboratorIndexProjection: async (opts: any) => {
+              captured = opts;
+              return {
+                bay_id: "bay-7",
+                dry_run: false,
+                requested_limit: 25,
+                scanned_events: 5,
+                applied_events: 5,
+                inserted_rows: 11,
+                deleted_rows: 7,
+                event_types: {
+                  "project.created": 1,
+                  "project.membership_changed": 4,
+                },
+              };
+            },
+          },
+        },
+      };
+      return await fn(ctx);
+    },
+  } as any);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "bay",
+    "projection",
+    "drain-account-collaborator-index",
     "--write",
     "--bay-id",
     "bay-7",

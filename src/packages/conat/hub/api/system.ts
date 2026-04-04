@@ -34,6 +34,9 @@ export const system = {
   rebuildAccountProjectIndex: authFirst,
   drainAccountProjectIndexProjection: authFirst,
   getAccountProjectIndexProjectionStatus: authFirst,
+  rebuildAccountCollaboratorIndex: authFirst,
+  drainAccountCollaboratorIndexProjection: authFirst,
+  getAccountCollaboratorIndexProjectionStatus: authFirst,
   getParallelOpsStatus: authFirst,
   getProjectHostParallelOpsLimit: authFirst,
   setParallelOpsLimit: authFirst,
@@ -362,6 +365,73 @@ export interface AccountProjectIndexProjectionStatus {
   maintenance: AccountProjectIndexProjectionMaintenanceStatus;
 }
 
+export interface AccountCollaboratorIndexRebuildResult {
+  bay_id: string;
+  target_account_id: string;
+  dry_run: boolean;
+  existing_rows: number;
+  source_project_rows: number;
+  source_collaborator_rows: number;
+  deleted_rows: number;
+  inserted_rows: number;
+}
+
+export interface AccountCollaboratorIndexProjectionDrainResult {
+  bay_id: string;
+  dry_run: boolean;
+  requested_limit: number;
+  scanned_events: number;
+  applied_events: number;
+  inserted_rows: number;
+  deleted_rows: number;
+  event_types: Record<string, number>;
+}
+
+export interface AccountCollaboratorIndexProjectionBacklogStatus {
+  bay_id: string;
+  checked_at: string;
+  unpublished_events: number;
+  unpublished_event_types: Record<string, number>;
+  oldest_unpublished_event_at: string | null;
+  newest_unpublished_event_at: string | null;
+  oldest_unpublished_event_age_ms: number | null;
+  newest_unpublished_event_age_ms: number | null;
+}
+
+export interface AccountCollaboratorIndexProjectionPassSummary {
+  bay_id: string;
+  batches: number;
+  scanned_events: number;
+  applied_events: number;
+  inserted_rows: number;
+  deleted_rows: number;
+  event_types: Record<string, number>;
+}
+
+export interface AccountCollaboratorIndexProjectionMaintenanceStatus {
+  enabled: boolean;
+  observed_bay_id: string;
+  interval_ms: number;
+  batch_limit: number;
+  max_batches_per_tick: number;
+  running: boolean;
+  started_at: string | null;
+  last_tick_started_at: string | null;
+  last_tick_finished_at: string | null;
+  last_tick_duration_ms: number | null;
+  last_success_at: string | null;
+  last_error_at: string | null;
+  last_error: string | null;
+  consecutive_failures: number;
+  last_result: AccountCollaboratorIndexProjectionPassSummary | null;
+}
+
+export interface AccountCollaboratorIndexProjectionStatus {
+  bay_id: string;
+  backlog: AccountCollaboratorIndexProjectionBacklogStatus;
+  maintenance: AccountCollaboratorIndexProjectionMaintenanceStatus;
+}
+
 export interface PublicAppHostnameTrace {
   matched: boolean;
   hostname: string;
@@ -519,6 +589,20 @@ export interface System {
   getAccountProjectIndexProjectionStatus: (opts?: {
     account_id?: string;
   }) => Promise<AccountProjectIndexProjectionStatus>;
+  rebuildAccountCollaboratorIndex: (opts: {
+    account_id?: string;
+    target_account_id: string;
+    dry_run?: boolean;
+  }) => Promise<AccountCollaboratorIndexRebuildResult>;
+  drainAccountCollaboratorIndexProjection: (opts?: {
+    account_id?: string;
+    bay_id?: string;
+    limit?: number;
+    dry_run?: boolean;
+  }) => Promise<AccountCollaboratorIndexProjectionDrainResult>;
+  getAccountCollaboratorIndexProjectionStatus: (opts?: {
+    account_id?: string;
+  }) => Promise<AccountCollaboratorIndexProjectionStatus>;
 
   // adminResetPasswordLink: Enables admins (and only admins!) to generate and get a password reset
   // for another user.  The response message contains a password reset link,

@@ -7,6 +7,9 @@ import { getFrontendSourceFingerprint } from "@cocalc/backend/frontend-build-fin
 import { type HubApi, getUserId, transformArgs } from "@cocalc/conat/hub/api";
 import type {
   AccountBayLocation,
+  AccountCollaboratorIndexProjectionDrainResult,
+  AccountCollaboratorIndexProjectionStatus,
+  AccountCollaboratorIndexRebuildResult,
   AccountProjectIndexProjectionStatus,
   AccountProjectIndexProjectionDrainResult,
   AccountProjectIndexRebuildResult,
@@ -555,6 +558,53 @@ export async function getAccountProjectIndexProjectionStatusLite(opts?: {
   );
 }
 
+export async function rebuildAccountCollaboratorIndexLite(opts?: {
+  account_id?: string;
+  target_account_id?: string;
+  dry_run?: boolean;
+}): Promise<AccountCollaboratorIndexRebuildResult> {
+  if (hasRemote) {
+    return await callRemoteHub({
+      name: "system.rebuildAccountCollaboratorIndex",
+      args: [opts ?? {}],
+    });
+  }
+  throw new Error(
+    "account_collaborator_index rebuild requires a remote hub connection",
+  );
+}
+
+export async function drainAccountCollaboratorIndexProjectionLite(opts?: {
+  account_id?: string;
+  bay_id?: string;
+  limit?: number;
+  dry_run?: boolean;
+}): Promise<AccountCollaboratorIndexProjectionDrainResult> {
+  if (hasRemote) {
+    return await callRemoteHub({
+      name: "system.drainAccountCollaboratorIndexProjection",
+      args: [opts ?? {}],
+    });
+  }
+  throw new Error(
+    "account_collaborator_index projector drain requires a remote hub connection",
+  );
+}
+
+export async function getAccountCollaboratorIndexProjectionStatusLite(opts?: {
+  account_id?: string;
+}): Promise<AccountCollaboratorIndexProjectionStatus> {
+  if (hasRemote) {
+    return await callRemoteHub({
+      name: "system.getAccountCollaboratorIndexProjectionStatus",
+      args: [opts ?? {}],
+    });
+  }
+  throw new Error(
+    "account_collaborator_index projector status requires a remote hub connection",
+  );
+}
+
 async function upsertBrowserSession(opts?: {
   account_id?: string;
   browser_id: string;
@@ -656,6 +706,11 @@ export const hubApi: HubApi = {
     drainAccountProjectIndexProjection: drainAccountProjectIndexProjectionLite,
     getAccountProjectIndexProjectionStatus:
       getAccountProjectIndexProjectionStatusLite,
+    rebuildAccountCollaboratorIndex: rebuildAccountCollaboratorIndexLite,
+    drainAccountCollaboratorIndexProjection:
+      drainAccountCollaboratorIndexProjectionLite,
+    getAccountCollaboratorIndexProjectionStatus:
+      getAccountCollaboratorIndexProjectionStatusLite,
     getCodexPaymentSource,
     getCodexLocalStatus,
     getFrontendSourceFingerprint: getFrontendSourceFingerprintInfo,
