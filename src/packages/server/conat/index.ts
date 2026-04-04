@@ -33,6 +33,35 @@ export { loadConatConfiguration };
 
 const logger = getLogger("server:conat");
 
+type GuardedReadMode = "off" | "prefer" | "only";
+
+function normalizeGuardedReadMode(raw: string | undefined): GuardedReadMode {
+  const value = `${raw ?? ""}`.trim().toLowerCase();
+  if (
+    value === "1" ||
+    value === "true" ||
+    value === "on" ||
+    value === "prefer"
+  ) {
+    return "prefer";
+  }
+  if (value === "only" || value === "strict" || value === "required") {
+    return "only";
+  }
+  return "off";
+}
+
+function logProjectionReadModes(): void {
+  logger.info("projection-backed read modes", {
+    account_project_index_project_list_reads: normalizeGuardedReadMode(
+      process.env.COCALC_ACCOUNT_PROJECT_INDEX_PROJECT_LIST_READS,
+    ),
+    account_notification_index_mention_reads: normalizeGuardedReadMode(
+      process.env.COCALC_ACCOUNT_NOTIFICATION_INDEX_MENTION_READS,
+    ),
+  });
+}
+
 export async function initConatChangefeedServer() {
   logger.debug(
     "initConatChangefeedServer: postgresql database changefeed server",
@@ -50,6 +79,7 @@ export async function initConatApi() {
     projectRunnerCount,
   });
   await loadConatConfiguration();
+  logProjectionReadModes();
 
   // do not block on any of these!
   for (let i = 0; i < conatApiCount; i++) {
