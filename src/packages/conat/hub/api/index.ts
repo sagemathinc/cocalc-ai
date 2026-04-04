@@ -14,6 +14,7 @@ import { type LroApi, lro } from "./lro";
 import { type Ssh, ssh } from "./ssh";
 import { type ReflectApi, reflect } from "./reflect";
 import { type AgentApi, agent } from "./agent";
+import { type Notifications, notifications } from "./notifications";
 
 export interface HubApi {
   system: System;
@@ -30,6 +31,7 @@ export interface HubApi {
   ssh: Ssh;
   reflect: ReflectApi;
   agent: AgentApi;
+  notifications: Notifications;
 }
 
 const HubApiStructure = {
@@ -47,6 +49,7 @@ const HubApiStructure = {
   ssh,
   reflect,
   agent,
+  notifications,
 } as const;
 
 export function transformArgs({

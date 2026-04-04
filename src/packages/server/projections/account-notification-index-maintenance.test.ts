@@ -27,7 +27,7 @@ describe("runAccountNotificationIndexProjectionPass", () => {
         inserted_rows: 3,
         deleted_rows: 0,
         event_types: {
-          "notification.mention_upserted": 3,
+          "notification.upserted": 3,
         },
       })
       .mockResolvedValueOnce({
@@ -39,7 +39,7 @@ describe("runAccountNotificationIndexProjectionPass", () => {
         inserted_rows: 1,
         deleted_rows: 0,
         event_types: {
-          "notification.mention_upserted": 1,
+          "notification.upserted": 1,
         },
       });
     expect(
@@ -57,7 +57,7 @@ describe("runAccountNotificationIndexProjectionPass", () => {
       inserted_rows: 4,
       deleted_rows: 0,
       event_types: {
-        "notification.mention_upserted": 4,
+        "notification.upserted": 4,
       },
     });
   });
@@ -71,7 +71,7 @@ describe("runAccountNotificationIndexProjectionPass", () => {
       inserted_rows: 2,
       deleted_rows: 0,
       event_types: {
-        "notification.mention_upserted": 2,
+        "notification.upserted": 2,
       },
     }));
     await expect(
@@ -86,7 +86,7 @@ describe("runAccountNotificationIndexProjectionPass", () => {
       inserted_rows: 2,
       deleted_rows: 0,
       event_types: {
-        "notification.mention_upserted": 2,
+        "notification.upserted": 2,
       },
     });
 
@@ -100,7 +100,7 @@ describe("runAccountNotificationIndexProjectionPass", () => {
       inserted_rows: 2,
       deleted_rows: 0,
       event_types: {
-        "notification.mention_upserted": 2,
+        "notification.upserted": 2,
       },
     });
     expect(status.last_success_at).not.toBeNull();

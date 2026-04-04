@@ -31,6 +31,14 @@ Guidance for Claude Code, Gemini CLI, and OpenAI Codex when working in this repo
 - Do this again after restarting the hub, switching between local hub instances, or resuming a stale shell. Otherwise `cocalc` can silently use outdated credentials and fail with misleading auth/control-plane errors.
 - When a task depends on upgrading hosts or validating live project-host behavior, assume this step is required unless the current shell definitely just ran it.
 
+## Live Lite / Browser Env
+
+- Before using `cocalc browser ...` or other live browser automation against the local Lite or Launchpad dev servers, always load the matching env in the current shell:
+  - Lite: `cd src && eval "$(pnpm -s dev:env:lite)"`
+  - Hub: `cd src && eval "$(pnpm -s dev:env:hub)"`
+- This is not optional for reliable targeting. The env sets the correct `COCALC_API_URL`, browser session, project id, auth token, and PATH.
+- If the wrong env is loaded, `cocalc browser` can fail with misleading errors, e.g. trying to use hub/project-host resolution against Lite, or targeting the wrong browser session entirely.
+
 ## Hard Rules (CoCalc-Specific)
 
 - Use `@cocalc/*` absolute imports for cross-package imports.
@@ -69,6 +77,6 @@ EOF
 
 - Architecture/docs: `docs/`
 - Translation workflow: `docs/translation.md`
-- Before using `cocalc browser`, prefer loading the relevant dev environment with `pnpm dev:env:lite` or `pnpm dev:env:hub` so the CLI targets the correct API/browser session.
+- Before using `cocalc browser`, load the relevant dev environment with `eval "$(pnpm -s dev:env:lite)"` or `eval "$(pnpm -s dev:env:hub)"` so the CLI targets the correct API/browser session.
 - Browser runtime debugging via `cocalc browser`: `docs/browser-debugging.md`
   - Includes both live-user-session targeting and dedicated Playwright-backed spawned sessions.

@@ -9,8 +9,11 @@ import {
   drainAccountNotificationIndexProjection,
   getAccountNotificationIndexProjectionBacklogStatus,
 } from "./account-notification-index-projector";
-import { listProjectedNotificationsForAccount } from "./account-notification-index";
-import { appendMentionNotificationOutboxEvent } from "./notification-events-outbox";
+import {
+  listProjectedNotificationsForAccount,
+  setProjectedNotificationReadState,
+} from "./account-notification-index";
+import { createNotificationEventGraph } from "./notifications-core";
 
 const LOCAL_BAY_ID = "bay-local";
 const OTHER_BAY_ID = "bay-other";
@@ -18,8 +21,7 @@ const LOCAL_ACCOUNT_ID = "11111111-1111-4111-8111-111111111111";
 const REMOTE_ACCOUNT_ID = "22222222-2222-4222-8222-222222222222";
 const SOURCE_ACCOUNT_ID = "33333333-3333-4333-8333-333333333333";
 const PROJECT_ID = "44444444-4444-4444-8444-444444444444";
-const MENTION_TIME = new Date("2026-04-03T23:00:00.000Z");
-const MENTION_PATH = "chat/project.md";
+const NOTIFICATION_ID = "55555555-5555-4555-8555-555555555555";
 
 describe("account_notification_index projector", () => {
   beforeAll(async () => {
@@ -28,7 +30,12 @@ describe("account_notification_index projector", () => {
 
   afterEach(async () => {
     await getPool().query(
-      "TRUNCATE account_notification_index, notification_events_outbox, mentions, projects, accounts CASCADE",
+      `TRUNCATE account_notification_index,
+                notification_target_outbox,
+                notification_targets,
+                notification_events,
+                accounts
+         CASCADE`,
     );
   });
 
@@ -36,7 +43,7 @@ describe("account_notification_index projector", () => {
     await testCleanup();
   });
 
-  async function seedBaseRows(target = LOCAL_ACCOUNT_ID): Promise<void> {
+  async function seedAccounts(): Promise<void> {
     await getPool().query(
       `INSERT INTO accounts
          (account_id, first_name, last_name, created, email_address, home_bay_id)
@@ -52,49 +59,45 @@ describe("account_notification_index projector", () => {
         OTHER_BAY_ID,
       ],
     );
-    await getPool().query(
-      `INSERT INTO projects
-         (project_id, title, users, owning_bay_id, created, last_edited, deleted)
-       VALUES
-         ($1, 'Mentioned Project', $2::JSONB, $3, NOW(), NOW(), FALSE)`,
-      [
-        PROJECT_ID,
-        JSON.stringify({
-          [SOURCE_ACCOUNT_ID]: { group: "owner" },
-          [LOCAL_ACCOUNT_ID]: { group: "collaborator" },
-          [REMOTE_ACCOUNT_ID]: { group: "collaborator" },
-        }),
-        LOCAL_BAY_ID,
+  }
+
+  async function appendMentionOutboxRow(opts?: {
+    target_account_id?: string;
+    target_home_bay_id?: string;
+    notification_id?: string;
+    description?: string;
+    created_at?: string;
+  }) {
+    return await createNotificationEventGraph({
+      kind: "mention",
+      source_bay_id: LOCAL_BAY_ID,
+      source_project_id: PROJECT_ID,
+      source_path: "work/chat.chat",
+      source_fragment_id: "thread=1",
+      actor_account_id: SOURCE_ACCOUNT_ID,
+      origin_kind: "project",
+      payload_json: {
+        description: opts?.description ?? "initial mention",
+        priority: "normal",
+      },
+      created_at: opts?.created_at ?? "2026-04-04T00:00:00.000Z",
+      targets: [
+        {
+          target_account_id: opts?.target_account_id ?? LOCAL_ACCOUNT_ID,
+          target_home_bay_id: opts?.target_home_bay_id ?? LOCAL_BAY_ID,
+          notification_id: opts?.notification_id ?? NOTIFICATION_ID,
+          summary_json: {
+            description: opts?.description ?? "initial mention",
+            path: "work/chat.chat",
+          },
+        },
       ],
-    );
-    await getPool().query(
-      `INSERT INTO mentions
-         (time, project_id, path, source, target, description, fragment_id, priority, users)
-       VALUES
-         ($1, $2, $3, $4, $5, 'initial mention', 'chat=true,id=1', 1,
-          $6::JSONB)`,
-      [
-        MENTION_TIME,
-        PROJECT_ID,
-        MENTION_PATH,
-        SOURCE_ACCOUNT_ID,
-        target,
-        JSON.stringify({
-          [target]: { read: false, saved: false },
-        }),
-      ],
-    );
+    });
   }
 
   it("supports dry-run drains without mutating projection or outbox state", async () => {
-    await seedBaseRows();
-    await appendMentionNotificationOutboxEvent({
-      time: MENTION_TIME,
-      project_id: PROJECT_ID,
-      path: MENTION_PATH,
-      target: LOCAL_ACCOUNT_ID,
-      default_bay_id: LOCAL_BAY_ID,
-    });
+    await seedAccounts();
+    await appendMentionOutboxRow();
 
     await expect(
       drainAccountNotificationIndexProjection({
@@ -111,7 +114,7 @@ describe("account_notification_index projector", () => {
       inserted_rows: 1,
       deleted_rows: 0,
       event_types: {
-        "notification.mention_upserted": 1,
+        "notification.upserted": 1,
       },
     });
 
@@ -123,39 +126,14 @@ describe("account_notification_index projector", () => {
   });
 
   it("reports unpublished notification projector lag and per-type counts", async () => {
-    await seedBaseRows();
-    await appendMentionNotificationOutboxEvent({
-      time: MENTION_TIME,
-      project_id: PROJECT_ID,
-      path: MENTION_PATH,
-      target: LOCAL_ACCOUNT_ID,
-      default_bay_id: LOCAL_BAY_ID,
-      created_at: new Date("2026-04-03T23:00:00.000Z"),
+    await seedAccounts();
+    await appendMentionOutboxRow({
+      created_at: "2026-04-03T23:00:00.000Z",
     });
-    await getPool().query(
-      `UPDATE mentions
-          SET users = $2::JSONB
-        WHERE time = $1
-          AND project_id = $3
-          AND path = $4
-          AND target = $5`,
-      [
-        MENTION_TIME,
-        JSON.stringify({
-          [LOCAL_ACCOUNT_ID]: { read: true, saved: true },
-        }),
-        PROJECT_ID,
-        MENTION_PATH,
-        LOCAL_ACCOUNT_ID,
-      ],
-    );
-    await appendMentionNotificationOutboxEvent({
-      time: MENTION_TIME,
-      project_id: PROJECT_ID,
-      path: MENTION_PATH,
-      target: LOCAL_ACCOUNT_ID,
-      default_bay_id: LOCAL_BAY_ID,
-      created_at: new Date("2026-04-03T23:45:00.000Z"),
+    await appendMentionOutboxRow({
+      notification_id: "66666666-6666-4666-8666-666666666666",
+      created_at: "2026-04-03T23:45:00.000Z",
+      description: "later mention",
     });
 
     await expect(
@@ -168,7 +146,7 @@ describe("account_notification_index projector", () => {
       checked_at: "2026-04-04T00:00:00.000Z",
       unpublished_events: 2,
       unpublished_event_types: {
-        "notification.mention_upserted": 2,
+        "notification.upserted": 2,
       },
       oldest_unpublished_event_at: "2026-04-03T23:00:00.000Z",
       newest_unpublished_event_at: "2026-04-03T23:45:00.000Z",
@@ -177,15 +155,9 @@ describe("account_notification_index projector", () => {
     });
   });
 
-  it("projects local-home notifications and updates read_state on later mention events", async () => {
-    await seedBaseRows();
-    await appendMentionNotificationOutboxEvent({
-      time: MENTION_TIME,
-      project_id: PROJECT_ID,
-      path: MENTION_PATH,
-      target: LOCAL_ACCOUNT_ID,
-      default_bay_id: LOCAL_BAY_ID,
-    });
+  it("projects local-home notifications and preserves read_state on later upserts", async () => {
+    await seedAccounts();
+    await appendMentionOutboxRow();
 
     await expect(
       drainAccountNotificationIndexProjection({
@@ -198,49 +170,35 @@ describe("account_notification_index projector", () => {
       inserted_rows: 1,
       deleted_rows: 0,
       event_types: {
-        "notification.mention_upserted": 1,
+        "notification.upserted": 1,
       },
     });
 
-    await expect(
-      listProjectedNotificationsForAccount({
-        account_id: LOCAL_ACCOUNT_ID,
-        limit: 10,
-      }),
-    ).resolves.toEqual([
+    const [firstRow] = await listProjectedNotificationsForAccount({
+      account_id: LOCAL_ACCOUNT_ID,
+      limit: 10,
+    });
+    expect(firstRow).toEqual(
       expect.objectContaining({
+        notification_id: NOTIFICATION_ID,
         project_id: PROJECT_ID,
-        read_state: {
-          read: false,
-          saved: false,
+        summary: {
+          description: "initial mention",
+          path: "work/chat.chat",
         },
+        read_state: {},
       }),
-    ]);
-
-    await getPool().query(
-      `UPDATE mentions
-          SET users = $2::JSONB
-        WHERE time = $1
-          AND project_id = $3
-          AND path = $4
-          AND target = $5`,
-      [
-        MENTION_TIME,
-        JSON.stringify({
-          [LOCAL_ACCOUNT_ID]: { read: true, saved: true },
-        }),
-        PROJECT_ID,
-        MENTION_PATH,
-        LOCAL_ACCOUNT_ID,
-      ],
     );
-    await appendMentionNotificationOutboxEvent({
-      time: MENTION_TIME,
-      project_id: PROJECT_ID,
-      path: MENTION_PATH,
-      target: LOCAL_ACCOUNT_ID,
-      default_bay_id: LOCAL_BAY_ID,
-      created_at: new Date("2026-04-04T00:00:00.000Z"),
+
+    await setProjectedNotificationReadState({
+      account_id: LOCAL_ACCOUNT_ID,
+      notification_ids: [NOTIFICATION_ID],
+      read: true,
+    });
+    await appendMentionOutboxRow({
+      notification_id: NOTIFICATION_ID,
+      description: "updated mention summary",
+      created_at: "2026-04-04T00:15:00.000Z",
     });
 
     await expect(
@@ -262,22 +220,24 @@ describe("account_notification_index projector", () => {
       }),
     ).resolves.toEqual([
       expect.objectContaining({
+        notification_id: NOTIFICATION_ID,
+        summary: {
+          description: "updated mention summary",
+          path: "work/chat.chat",
+        },
         read_state: {
           read: true,
-          saved: true,
         },
       }),
     ]);
   });
 
   it("ignores events for accounts homed in another bay", async () => {
-    await seedBaseRows(REMOTE_ACCOUNT_ID);
-    await appendMentionNotificationOutboxEvent({
-      time: MENTION_TIME,
-      project_id: PROJECT_ID,
-      path: MENTION_PATH,
-      target: REMOTE_ACCOUNT_ID,
-      default_bay_id: LOCAL_BAY_ID,
+    await seedAccounts();
+    await appendMentionOutboxRow({
+      target_account_id: REMOTE_ACCOUNT_ID,
+      target_home_bay_id: OTHER_BAY_ID,
+      notification_id: "77777777-7777-4777-8777-777777777777",
     });
 
     await expect(
@@ -287,7 +247,7 @@ describe("account_notification_index projector", () => {
         dry_run: false,
       }),
     ).resolves.toMatchObject({
-      applied_events: 1,
+      applied_events: 0,
       inserted_rows: 0,
       deleted_rows: 0,
     });
