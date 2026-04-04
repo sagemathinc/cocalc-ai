@@ -22,6 +22,11 @@ import type {
   HostBayLocation,
   ProjectBayLocation,
 } from "@cocalc/conat/hub/api/system";
+import type {
+  CreateAccountNoticeOptions,
+  CreateMentionNotificationOptions,
+  CreateNotificationResult,
+} from "@cocalc/conat/hub/api/notifications";
 import userQuery, { init as initUserQuery } from "./sqlite/user-query";
 import { account_id as ACCOUNT_ID, data } from "@cocalc/backend/data";
 import { project_id as LITE_PROJECT_ID } from "@cocalc/project/data";
@@ -850,6 +855,34 @@ async function issueBrowserSignInCookie(opts?: {
   };
 }
 
+async function createMentionLite(
+  opts: CreateMentionNotificationOptions,
+): Promise<CreateNotificationResult> {
+  if (hasRemote) {
+    return await callRemoteHub({
+      name: "notifications.createMention",
+      args: [opts],
+    });
+  }
+  throw Error(
+    "notifications.createMention requires a remote hub connection in lite mode",
+  );
+}
+
+async function createAccountNoticeLite(
+  opts: CreateAccountNoticeOptions,
+): Promise<CreateNotificationResult> {
+  if (hasRemote) {
+    return await callRemoteHub({
+      name: "notifications.createAccountNotice",
+      args: [opts],
+    });
+  }
+  throw Error(
+    "notifications.createAccountNotice requires a remote hub connection in lite mode",
+  );
+}
+
 // NOTE: Consumers (e.g., project-host) may extend this object in-place to add
 // host-specific implementations of hub APIs. Keep the defaults minimal here.
 export const hubApi: HubApi = {
@@ -888,6 +921,10 @@ export const hubApi: HubApi = {
   hosts: {
     getManagedRootfsReleaseArtifact,
     listManagedRootfsReleaseLifecycle,
+  },
+  notifications: {
+    createMention: createMentionLite,
+    createAccountNotice: createAccountNoticeLite,
   },
   projects: {
     codexDeviceAuthStart: codexDeviceAuthStartLite,
