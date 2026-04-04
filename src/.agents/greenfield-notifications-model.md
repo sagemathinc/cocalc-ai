@@ -23,6 +23,18 @@ This proposal is also intended to subsume most or all of the current central
 For `cocalc-ai`, the existing messages table looks more like a legacy inbox for
 system/user notifications than a product we should preserve.
 
+There is a third legacy source to account for as well:
+
+- [file-use.ts](../packages/util/db-schema/file-use.ts)
+- [init.ts](../packages/frontend/file-use/init.ts)
+- [actions.ts](../packages/frontend/file-use/actions.ts)
+- [store.ts](../packages/frontend/file-use/store.ts)
+
+Today this drives the "recently edited documents and chat" popup plus the red
+badge in the top bar. That feed is ambient, globally derived, and mostly
+non-configurable noise. It should also be replaced by the new notification
+model, not preserved.
+
 ## Current Problem
 
 The current `mentions` table is doing too many jobs at once:
@@ -67,6 +79,9 @@ notification system.
    project bay.
 5. Delivery side effects should be decoupled from source-event persistence.
 6. `mention` should become one notification kind, not the notification system.
+7. Ambient analytics or presence data must not automatically become
+   notifications. Account-facing notifications should be opt-in or explicitly
+   authored.
 
 ## Proposed Model
 
@@ -247,6 +262,71 @@ Notes:
   control plane.
 - Email policy becomes account-local, which is a much better fit.
 
+### 6. `account_notification_rules`
+
+Home-bay user preferences and subscription rules for derived notifications.
+
+One row means: "this account wants notifications when this kind of thing
+happens".
+
+Suggested fields:
+
+- `rule_id UUID PRIMARY KEY`
+- `account_id UUID`
+- `kind VARCHAR(64)`
+  - examples:
+    - `mention`
+    - `file_changed`
+    - `chat_activity`
+- `scope_type VARCHAR(32)`
+  - `project`
+  - `path`
+  - `path_glob`
+  - `account`
+- `scope_project_id UUID NULL`
+- `scope_path TEXT NULL`
+- `matcher_json JSONB`
+  - future extension point
+- `enabled BOOLEAN`
+- `manual_only BOOLEAN`
+  - for file edits by humans, not automation
+- `created_at TIMESTAMP`
+- `updated_at TIMESTAMP`
+
+Notes:
+
+- This is how we replace the current `file_use`-driven derived badge/feed.
+- Notifications for file edits should only exist when the target account has
+  explicitly configured such a rule.
+
+### 7. `source_notification_rule_index`
+
+Projected matcher index that makes home-bay notification rules available on the
+source owning bay where events happen.
+
+One row means: "for source scope X, account Y in home bay Z wants notification
+kind K".
+
+Suggested fields:
+
+- `source_bay_id TEXT`
+- `scope_type VARCHAR(32)`
+- `scope_project_id UUID NULL`
+- `scope_path_prefix TEXT NULL`
+- `kind VARCHAR(64)`
+- `target_account_id UUID`
+- `target_home_bay_id TEXT`
+- `rule_id UUID`
+- `enabled BOOLEAN`
+- `manual_only BOOLEAN`
+
+Notes:
+
+- This is the crucial extra layer needed for replacing `file_use` with a
+  multi-bay-safe design.
+- The source bay cannot efficiently evaluate home-bay preferences unless those
+  preferences are projected into an index keyed by source scope.
+
 ## Write Path for Mentions
 
 ### Current write path
@@ -298,6 +378,9 @@ That means:
 
 - no more writes to `mentions.users`
 - no need to synchronize read state back to the source owning bay
+
+The current "recently edited docs" popup and top-bar badge should also become a
+view over `account_notification_index`, not a direct view over `file_use`.
 
 This is a major simplification and a much better match for "home-bay connection
 only".
@@ -392,6 +475,12 @@ system messages:
 
 - `account_notice`
   - project-less, one-way, account-facing notification
+
+After that, if we still want file-edit notifications, they should be added only
+as explicit opt-in subscription-backed kinds:
+
+- `file_changed`
+- `chat_activity`
 
 The first implementation should support:
 
@@ -498,6 +587,88 @@ Add non-project notification kinds such as:
 These are just notification kinds. They do not require a separate `messages`
 backend.
 
+## Replacing `file_use`-Driven Notifications
+
+### What `file_use` does today
+
+The current `file_use` system is not a deliberate notification model. It is an
+ambient usage/activity table that records actions such as:
+
+- `open`
+- `edit`
+- `read`
+- `seen`
+- `chat`
+- `chatseen`
+
+for every visible collaborator on many files, and then the frontend derives
+notions like:
+
+- `notify`
+- `is_unread`
+- `is_unseen`
+- `is_unseenchat`
+
+Relevant code:
+
+- [file-use.ts](../packages/util/db-schema/file-use.ts)
+- [actions.ts](../packages/frontend/file-use/actions.ts)
+- [store.ts](../packages/frontend/file-use/store.ts)
+
+This is useful as lightweight activity/presence/analytics data, but it is a bad
+foundation for a notification system:
+
+- it is globally derived rather than explicitly authored
+- it is noisy by default
+- it is not user-configured
+- it depends on collaborator state for all files across all projects
+- it would be difficult to make bay-correct without projecting vast amounts of
+  low-value activity data
+
+### Recommendation
+
+Keep `file_use` only for:
+
+- analytics
+- presence
+- lightweight local activity heuristics if still useful
+
+Do not use it as the source of account notifications.
+
+### Replacement model
+
+If we want file-edit or chat-activity notifications, they should be
+subscription-backed:
+
+1. account sets a rule in `account_notification_rules`
+2. rules are projected into `source_notification_rule_index`
+3. source bay sees a file edit or chat activity
+4. source bay matches only relevant subscription rules
+5. source bay creates targeted notification events only for matching accounts
+6. home-bay inbox projection surfaces them
+
+This means:
+
+- no notification unless the account asked for it
+- no need to treat all ambient file activity as inbox-worthy
+- scalable matching boundary:
+  source bay only sees projected subscription matchers relevant to its source
+  scope
+
+### Example rule shapes
+
+- "notify me when any collaborator edits any file in project P"
+- "notify me when files under `work/clients/**` change in project P"
+- "notify me when someone other than me edits this specific chat file"
+
+### Important policy default
+
+For `cocalc-ai`, file-edit notifications should default to off.
+
+The current global recent-edits feed is mostly noise. The greenfield model
+should only create account notifications for file activity when there is an
+explicit user rule.
+
 ### Suggested replacement write API
 
 Instead of calling `server/messages/send.ts`, new code should write notification
@@ -547,6 +718,10 @@ new notification system around:
 Also treat the current central `messages` table as a legacy notification source
 to replace, not as a system whose semantics we need to preserve in the new
 multi-bay design.
+
+Also treat `file_use` as a legacy activity/presence source, not as something
+that should directly drive account notifications. Any future file or chat
+notifications should be opt-in and subscription-backed.
 
 That is the correct abstraction boundary for a multi-bay system with
 home-bay-only browser connections.
