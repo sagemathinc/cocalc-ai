@@ -59,9 +59,6 @@ function logProjectionReadModes(): void {
     account_collaborator_index_collaborator_reads: normalizeGuardedReadMode(
       process.env.COCALC_ACCOUNT_COLLABORATOR_INDEX_COLLABORATOR_READS,
     ),
-    account_notification_index_mention_reads: normalizeGuardedReadMode(
-      process.env.COCALC_ACCOUNT_NOTIFICATION_INDEX_MENTION_READS,
-    ),
   });
 }
 

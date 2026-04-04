@@ -44,7 +44,6 @@ type AnyRecord = Record<string, any>;
 type QueryOption = Record<string, any>;
 
 type ProjectListReadMode = "off" | "prefer" | "only";
-type NotificationReadMode = "off" | "prefer" | "only";
 
 type UserQueryChanges = {
   id: string;
@@ -145,25 +144,6 @@ function getProjectListReadMode(): ProjectListReadMode {
   return "off";
 }
 
-function getNotificationReadMode(): NotificationReadMode {
-  const value =
-    `${process.env.COCALC_ACCOUNT_NOTIFICATION_INDEX_MENTION_READS ?? ""}`
-      .trim()
-      .toLowerCase();
-  if (
-    value === "1" ||
-    value === "true" ||
-    value === "on" ||
-    value === "prefer"
-  ) {
-    return "prefer";
-  }
-  if (value === "only" || value === "strict" || value === "required") {
-    return "only";
-  }
-  return "off";
-}
-
 function shouldUseProjectedBrowserProjectReads(opts: {
   table: string;
   account_id?: string;
@@ -175,27 +155,6 @@ function shouldUseProjectedBrowserProjectReads(opts: {
     return false;
   }
   return getProjectListReadMode() !== "off";
-}
-
-function shouldUseProjectedNotificationReads(opts: {
-  table: string;
-  account_id?: string;
-}): boolean {
-  if (!opts.account_id) {
-    return false;
-  }
-  return opts.table === "mentions" && getNotificationReadMode() !== "off";
-}
-
-function getProjectedMentionMembershipWhere(
-  mode: NotificationReadMode,
-): string {
-  const projectionMatch =
-    "EXISTS (SELECT 1 FROM account_notification_index ani WHERE ani.account_id = $::UUID AND ani.kind = 'mention' AND ani.project_id = mentions.project_id AND ani.created_at = mentions.time AND COALESCE(ani.summary ->> 'path', '') = mentions.path)";
-  if (mode === "only") {
-    return projectionMatch;
-  }
-  return `((EXISTS (SELECT 1 FROM account_notification_index seed WHERE seed.account_id = $::UUID LIMIT 1) AND ${projectionMatch}) OR (NOT EXISTS (SELECT 1 FROM account_notification_index seed WHERE seed.account_id = $::UUID LIMIT 1) AND project_id = ANY(select project_id from projects where users ? $::TEXT)))`;
 }
 
 type ProjectControl = {
@@ -2066,11 +2025,6 @@ export function _user_get_query_where(
     if (pg_where[i] === "projects") {
       if (user_query.project_id) {
         pg_where[i] = { "project_id = $::UUID": "project_id" };
-      } else if (shouldUseProjectedNotificationReads({ table, account_id })) {
-        pg_where[i] = {
-          [getProjectedMentionMembershipWhere(getNotificationReadMode())]:
-            "account_id",
-        };
       } else if (shouldUseProjectedBrowserProjectReads({ table, account_id })) {
         pg_where[i] = {
           "project_id = ANY(ARRAY(SELECT visible_projects.project_id FROM (SELECT $::UUID AS account_id) AS current_account CROSS JOIN LATERAL (SELECT project_id FROM account_project_index WHERE account_id = current_account.account_id UNION SELECT project_id FROM projects WHERE users ? current_account.account_id::TEXT AND deleted IS TRUE) AS visible_projects))":
