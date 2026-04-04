@@ -10,6 +10,9 @@ import type {
   AccountCollaboratorIndexProjectionDrainResult,
   AccountCollaboratorIndexProjectionStatus,
   AccountCollaboratorIndexRebuildResult,
+  AccountNotificationIndexProjectionDrainResult,
+  AccountNotificationIndexProjectionStatus,
+  AccountNotificationIndexRebuildResult,
   AccountProjectIndexProjectionStatus,
   AccountProjectIndexProjectionDrainResult,
   AccountProjectIndexRebuildResult,
@@ -605,6 +608,53 @@ export async function getAccountCollaboratorIndexProjectionStatusLite(opts?: {
   );
 }
 
+export async function rebuildAccountNotificationIndexLite(opts?: {
+  account_id?: string;
+  target_account_id?: string;
+  dry_run?: boolean;
+}): Promise<AccountNotificationIndexRebuildResult> {
+  if (hasRemote) {
+    return await callRemoteHub({
+      name: "system.rebuildAccountNotificationIndex",
+      args: [opts ?? {}],
+    });
+  }
+  throw new Error(
+    "account_notification_index rebuild requires a remote hub connection",
+  );
+}
+
+export async function drainAccountNotificationIndexProjectionLite(opts?: {
+  account_id?: string;
+  bay_id?: string;
+  limit?: number;
+  dry_run?: boolean;
+}): Promise<AccountNotificationIndexProjectionDrainResult> {
+  if (hasRemote) {
+    return await callRemoteHub({
+      name: "system.drainAccountNotificationIndexProjection",
+      args: [opts ?? {}],
+    });
+  }
+  throw new Error(
+    "account_notification_index projector drain requires a remote hub connection",
+  );
+}
+
+export async function getAccountNotificationIndexProjectionStatusLite(opts?: {
+  account_id?: string;
+}): Promise<AccountNotificationIndexProjectionStatus> {
+  if (hasRemote) {
+    return await callRemoteHub({
+      name: "system.getAccountNotificationIndexProjectionStatus",
+      args: [opts ?? {}],
+    });
+  }
+  throw new Error(
+    "account_notification_index projector status requires a remote hub connection",
+  );
+}
+
 async function upsertBrowserSession(opts?: {
   account_id?: string;
   browser_id: string;
@@ -711,6 +761,11 @@ export const hubApi: HubApi = {
       drainAccountCollaboratorIndexProjectionLite,
     getAccountCollaboratorIndexProjectionStatus:
       getAccountCollaboratorIndexProjectionStatusLite,
+    rebuildAccountNotificationIndex: rebuildAccountNotificationIndexLite,
+    drainAccountNotificationIndexProjection:
+      drainAccountNotificationIndexProjectionLite,
+    getAccountNotificationIndexProjectionStatus:
+      getAccountNotificationIndexProjectionStatusLite,
     getCodexPaymentSource,
     getCodexLocalStatus,
     getFrontendSourceFingerprint: getFrontendSourceFingerprintInfo,

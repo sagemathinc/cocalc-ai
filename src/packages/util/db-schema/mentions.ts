@@ -91,6 +91,14 @@ Table({
           fragment_id: true,
           users: true,
         },
+        on_change(database, old_val, new_val, account_id, cb) {
+          database._user_set_query_mention_change_after(
+            old_val,
+            new_val,
+            account_id,
+            cb,
+          );
+        },
         required_fields: {
           project_id: true,
           source: true,

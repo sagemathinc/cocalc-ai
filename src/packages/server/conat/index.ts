@@ -27,6 +27,7 @@ import { startRootfsReleaseGcMaintenance } from "@cocalc/server/rootfs/gc-mainte
 import { startBackgroundAutoGrowMaintenance } from "@cocalc/server/project-host/auto-grow-maintenance";
 import { startAccountProjectIndexProjectionMaintenance } from "@cocalc/server/projections/account-project-index-maintenance";
 import { startAccountCollaboratorIndexProjectionMaintenance } from "@cocalc/server/projections/account-collaborator-index-maintenance";
+import { startAccountNotificationIndexProjectionMaintenance } from "@cocalc/server/projections/account-notification-index-maintenance";
 
 export { loadConatConfiguration };
 
@@ -65,6 +66,7 @@ export async function initConatApi() {
   startHostLroWorker();
   startAccountProjectIndexProjectionMaintenance();
   startAccountCollaboratorIndexProjectionMaintenance();
+  startAccountNotificationIndexProjectionMaintenance();
   initLLM();
   if (!isLaunchpadProduct()) {
     const { init: initProjectRunner } = lazyRequire("./project/run") as {

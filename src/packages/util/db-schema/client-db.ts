@@ -23,6 +23,8 @@ class ClientDB {
       this._user_set_query_project_change_after.bind(this);
     this._user_set_query_project_change_before =
       this._user_set_query_project_change_before.bind(this);
+    this._user_set_query_mention_change_after =
+      this._user_set_query_mention_change_after.bind(this);
     this.primary_keys = this.primary_keys.bind(this);
     this.r = {};
   }
@@ -65,6 +67,9 @@ class ClientDB {
     cb();
   }
   _user_set_query_project_change_before(_obj, _old_val, _new_val, cb) {
+    cb();
+  }
+  _user_set_query_mention_change_after(_obj, _old_val, _new_val, cb) {
     cb();
   }
 

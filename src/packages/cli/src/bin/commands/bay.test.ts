@@ -666,3 +666,158 @@ test("bay projection drain-account-collaborator-index forwards write mode, bay, 
     dry_run: false,
   });
 });
+
+test("bay projection status-account-notification-index calls the hub status api", async () => {
+  let captured: any;
+  const program = new Command();
+  registerBayCommand(program, {
+    withContext: async (_command, _label, fn) => {
+      const ctx = {
+        hub: {
+          system: {
+            getAccountNotificationIndexProjectionStatus: async (opts: any) => {
+              captured = opts;
+              return {
+                bay_id: "bay-0",
+                backlog: {
+                  bay_id: "bay-0",
+                  checked_at: "2026-04-04T05:00:00.000Z",
+                  unpublished_events: 2,
+                  unpublished_event_types: {
+                    "notification.mention_upserted": 2,
+                  },
+                  oldest_unpublished_event_at: "2026-04-04T04:55:00.000Z",
+                  newest_unpublished_event_at: "2026-04-04T04:59:00.000Z",
+                  oldest_unpublished_event_age_ms: 300000,
+                  newest_unpublished_event_age_ms: 60000,
+                },
+                maintenance: {
+                  enabled: true,
+                  observed_bay_id: "bay-0",
+                  interval_ms: 5000,
+                  batch_limit: 100,
+                  max_batches_per_tick: 5,
+                  running: false,
+                  started_at: null,
+                  last_tick_started_at: null,
+                  last_tick_finished_at: null,
+                  last_tick_duration_ms: null,
+                  last_success_at: null,
+                  last_error_at: null,
+                  last_error: null,
+                  consecutive_failures: 0,
+                  last_result: null,
+                },
+              };
+            },
+          },
+        },
+      };
+      return await fn(ctx);
+    },
+  } as any);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "bay",
+    "projection",
+    "status-account-notification-index",
+  ]);
+
+  assert.deepEqual(captured, {});
+});
+
+test("bay projection rebuild-account-notification-index defaults to a dry run", async () => {
+  let captured: any;
+  const program = new Command();
+  registerBayCommand(program, {
+    withContext: async (_command, _label, fn) => {
+      const ctx = {
+        hub: {
+          system: {
+            rebuildAccountNotificationIndex: async (opts: any) => {
+              captured = opts;
+              return {
+                bay_id: "bay-0",
+                target_account_id: "11111111-1111-4111-8111-111111111111",
+                dry_run: true,
+                existing_rows: 1,
+                source_rows: 3,
+                unread_rows: 2,
+                saved_rows: 1,
+                deleted_rows: 0,
+                inserted_rows: 0,
+              };
+            },
+          },
+        },
+      };
+      return await fn(ctx);
+    },
+  } as any);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "bay",
+    "projection",
+    "rebuild-account-notification-index",
+    "11111111-1111-4111-8111-111111111111",
+  ]);
+
+  assert.deepEqual(captured, {
+    target_account_id: "11111111-1111-4111-8111-111111111111",
+    dry_run: true,
+  });
+});
+
+test("bay projection drain-account-notification-index forwards write mode, bay, and limit", async () => {
+  let captured: any;
+  const program = new Command();
+  registerBayCommand(program, {
+    withContext: async (_command, _label, fn) => {
+      const ctx = {
+        hub: {
+          system: {
+            drainAccountNotificationIndexProjection: async (opts: any) => {
+              captured = opts;
+              return {
+                bay_id: "bay-7",
+                dry_run: false,
+                requested_limit: 25,
+                scanned_events: 5,
+                applied_events: 5,
+                inserted_rows: 5,
+                deleted_rows: 0,
+                event_types: {
+                  "notification.mention_upserted": 5,
+                },
+              };
+            },
+          },
+        },
+      };
+      return await fn(ctx);
+    },
+  } as any);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "bay",
+    "projection",
+    "drain-account-notification-index",
+    "--write",
+    "--bay-id",
+    "bay-7",
+    "--limit",
+    "25",
+  ]);
+
+  assert.deepEqual(captured, {
+    bay_id: "bay-7",
+    limit: 25,
+    dry_run: false,
+  });
+});

@@ -200,6 +200,12 @@ export function extend_PostgreSQL<TBase extends PostgreSQLConstructor>(
       return userQuery._user_set_query_project_change_after.call(this, ...args);
     }
 
+    _user_set_query_mention_change_after(
+      ...args: Parameters<typeof userQuery._user_set_query_mention_change_after>
+    ) {
+      return userQuery._user_set_query_mention_change_after.call(this, ...args);
+    }
+
     _user_get_query_functional_subs(
       ...args: Parameters<typeof userQuery._user_get_query_functional_subs>
     ) {

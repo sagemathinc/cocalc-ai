@@ -52,6 +52,7 @@ import "./admin-assigned-memberships";
 import "./membership-tiers";
 import "./messages";
 import "./news";
+import "./notification-events-outbox";
 import "./organizations";
 import "./password-reset";
 import "./pg-system";

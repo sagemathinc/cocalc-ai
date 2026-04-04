@@ -6,6 +6,7 @@
 import async from "async";
 import lodash from "lodash";
 
+import { appendMentionNotificationOutboxEvent } from "@cocalc/database/postgres/notification-events-outbox";
 import { appendProjectOutboxEventForProject } from "@cocalc/database/postgres/project-events-outbox";
 import { sanitizeManageUsersOwnerOnly } from "@cocalc/database/postgres/project/manage-users-owner-only";
 import { sanitizeUserSetQueryProjectUsers } from "@cocalc/database/postgres/project/user-set-query-project-users";
@@ -1752,6 +1753,59 @@ export async function _user_set_query_project_change_after(
   }
 }
 
+export async function _user_set_query_mention_change_after(
+  this: UserQueryContext,
+  old_val: AnyRecord,
+  new_val: AnyRecord,
+  _account_id: string,
+  cb: CB,
+) {
+  const dbg = this._dbg(
+    `_user_set_query_mention_change_after ${misc.to_json(
+      old_val,
+    )} --> ${misc.to_json(new_val)}`,
+  );
+  dbg();
+  const mention = {
+    time: new_val?.time ?? old_val?.time,
+    project_id: `${new_val?.project_id ?? old_val?.project_id ?? ""}`.trim(),
+    path: `${new_val?.path ?? old_val?.path ?? ""}`,
+    target: `${new_val?.target ?? old_val?.target ?? ""}`.trim(),
+  };
+  if (
+    !mention.project_id ||
+    !mention.path ||
+    !mention.target ||
+    !mention.time
+  ) {
+    return cb();
+  }
+  const relevantFields = [
+    "project_id",
+    "path",
+    "source",
+    "target",
+    "priority",
+    "description",
+    "fragment_id",
+    "users",
+  ];
+  if (
+    relevantFields.every(
+      (field) =>
+        JSON.stringify(new_val?.[field]) === JSON.stringify(old_val?.[field]),
+    )
+  ) {
+    return cb();
+  }
+  try {
+    await appendMentionNotificationOutboxEvent(mention);
+    return cb();
+  } catch (err) {
+    return cb(err as any);
+  }
+}
+
 /*
 GET QUERIES
 */
@@ -3029,6 +3083,7 @@ type UserQueryMethods = {
   project_action: typeof project_action;
   _user_set_query_project_change_before: typeof _user_set_query_project_change_before;
   _user_set_query_project_change_after: typeof _user_set_query_project_change_after;
+  _user_set_query_mention_change_after: typeof _user_set_query_mention_change_after;
   _user_get_query_functional_subs: typeof _user_get_query_functional_subs;
   _parse_get_query_opts: typeof _parse_get_query_opts;
   _json_fields: typeof _json_fields;
