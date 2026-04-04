@@ -26,6 +26,11 @@ import type {
   CreateAccountNoticeOptions,
   CreateMentionNotificationOptions,
   CreateNotificationResult,
+  ListNotificationsOptions,
+  MarkNotificationReadOptions,
+  MarkNotificationReadResult,
+  NotificationCountsResult,
+  NotificationListRow,
 } from "@cocalc/conat/hub/api/notifications";
 import userQuery, { init as initUserQuery } from "./sqlite/user-query";
 import { account_id as ACCOUNT_ID, data } from "@cocalc/backend/data";
@@ -883,6 +888,48 @@ async function createAccountNoticeLite(
   );
 }
 
+async function listNotificationsLite(
+  opts?: ListNotificationsOptions,
+): Promise<NotificationListRow[]> {
+  if (hasRemote) {
+    return await callRemoteHub({
+      name: "notifications.list",
+      args: [opts ?? {}],
+    });
+  }
+  throw Error(
+    "notifications.list requires a remote hub connection in lite mode",
+  );
+}
+
+async function getNotificationCountsLite(opts?: {
+  account_id?: string;
+}): Promise<NotificationCountsResult> {
+  if (hasRemote) {
+    return await callRemoteHub({
+      name: "notifications.counts",
+      args: [opts ?? {}],
+    });
+  }
+  throw Error(
+    "notifications.counts requires a remote hub connection in lite mode",
+  );
+}
+
+async function markNotificationReadLite(
+  opts: MarkNotificationReadOptions,
+): Promise<MarkNotificationReadResult> {
+  if (hasRemote) {
+    return await callRemoteHub({
+      name: "notifications.markRead",
+      args: [opts],
+    });
+  }
+  throw Error(
+    "notifications.markRead requires a remote hub connection in lite mode",
+  );
+}
+
 // NOTE: Consumers (e.g., project-host) may extend this object in-place to add
 // host-specific implementations of hub APIs. Keep the defaults minimal here.
 export const hubApi: HubApi = {
@@ -925,6 +972,9 @@ export const hubApi: HubApi = {
   notifications: {
     createMention: createMentionLite,
     createAccountNotice: createAccountNoticeLite,
+    list: listNotificationsLite,
+    counts: getNotificationCountsLite,
+    markRead: markNotificationReadLite,
   },
   projects: {
     codexDeviceAuthStart: codexDeviceAuthStartLite,

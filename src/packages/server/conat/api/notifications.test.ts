@@ -4,7 +4,13 @@
  */
 
 import getPool, { initEphemeralDatabase } from "@cocalc/database/pool";
-import { createAccountNotice, createMention } from "./notifications";
+import {
+  counts,
+  createAccountNotice,
+  createMention,
+  list,
+  markRead,
+} from "./notifications";
 
 const LOCAL_BAY_ID = "bay-0";
 const PROJECT_ID = "11111111-1111-4111-8111-111111111111";
@@ -154,6 +160,114 @@ describe("conat notifications api", () => {
           target_home_bay_id: LOCAL_BAY_ID,
         }),
       ],
+    });
+  });
+
+  it("lists projected notifications, returns counts, and marks rows read", async () => {
+    await seedMentionContext();
+    await getPool().query(
+      `INSERT INTO account_notification_index
+         (account_id, notification_id, kind, project_id, summary, read_state,
+          created_at, updated_at)
+       VALUES
+         ($1, $2, 'mention', $4, $5::JSONB, $6::JSONB, $7, $7),
+         ($1, $3, 'account_notice', NULL, $8::JSONB, $9::JSONB, $10, $10)`,
+      [
+        ACTOR_ACCOUNT_ID,
+        "66666666-6666-4666-8666-666666666666",
+        "77777777-7777-4777-8777-777777777777",
+        PROJECT_ID,
+        JSON.stringify({
+          description: "mention row",
+          path: "work/chat.chat",
+        }),
+        JSON.stringify({
+          read: false,
+          saved: false,
+        }),
+        new Date("2026-04-04T00:00:00.000Z"),
+        JSON.stringify({
+          title: "notice row",
+        }),
+        JSON.stringify({
+          read: false,
+          saved: true,
+        }),
+        new Date("2026-04-04T01:00:00.000Z"),
+      ],
+    );
+
+    await expect(
+      list({
+        account_id: ACTOR_ACCOUNT_ID,
+        state: "saved",
+      }),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        kind: "account_notice",
+      }),
+    ]);
+
+    await expect(
+      counts({
+        account_id: ACTOR_ACCOUNT_ID,
+      }),
+    ).resolves.toEqual({
+      total: 2,
+      unread: 2,
+      saved: 1,
+      archived: 0,
+      by_kind: {
+        account_notice: {
+          total: 1,
+          unread: 1,
+          saved: 1,
+          archived: 0,
+        },
+        mention: {
+          total: 1,
+          unread: 1,
+          saved: 0,
+          archived: 0,
+        },
+      },
+    });
+
+    await expect(
+      markRead({
+        account_id: ACTOR_ACCOUNT_ID,
+        notification_ids: [
+          "66666666-6666-4666-8666-666666666666",
+          "77777777-7777-4777-8777-777777777777",
+        ],
+      }),
+    ).resolves.toEqual({
+      updated_count: 2,
+    });
+
+    await expect(
+      counts({
+        account_id: ACTOR_ACCOUNT_ID,
+      }),
+    ).resolves.toEqual({
+      total: 2,
+      unread: 0,
+      saved: 1,
+      archived: 0,
+      by_kind: {
+        account_notice: {
+          total: 1,
+          unread: 0,
+          saved: 1,
+          archived: 0,
+        },
+        mention: {
+          total: 1,
+          unread: 0,
+          saved: 0,
+          archived: 0,
+        },
+      },
     });
   });
 });

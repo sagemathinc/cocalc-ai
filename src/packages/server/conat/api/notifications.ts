@@ -7,6 +7,11 @@ import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import isAdmin from "@cocalc/server/accounts/is-admin";
 import { assertLocalProjectCollaborator } from "@cocalc/server/conat/project-local-access";
 import {
+  getProjectedNotificationCounts,
+  listProjectedNotificationsForAccount,
+  setProjectedNotificationReadState,
+} from "@cocalc/database/postgres/account-notification-index";
+import {
   createNotificationEventGraph,
   resolveNotificationTargetHomeBays,
   type NotificationKind,
@@ -15,6 +20,11 @@ import type {
   CreateAccountNoticeOptions,
   CreateMentionNotificationOptions,
   CreateNotificationResult,
+  ListNotificationsOptions,
+  MarkNotificationReadOptions,
+  MarkNotificationReadResult,
+  NotificationCountsResult,
+  NotificationListRow,
   NotificationPriority,
   NotificationSeverity,
 } from "@cocalc/conat/hub/api/notifications";
@@ -269,5 +279,39 @@ export async function createAccountNotice(
           action_label,
         },
       })),
+  });
+}
+
+export async function list(
+  opts: ListNotificationsOptions = {},
+): Promise<NotificationListRow[]> {
+  const account_id = requireAccountId(opts.account_id);
+  return await listProjectedNotificationsForAccount({
+    account_id,
+    limit: opts.limit,
+    notification_id: opts.notification_id,
+    kind: opts.kind,
+    project_id: opts.project_id,
+    state: opts.state,
+  });
+}
+
+export async function counts(opts?: {
+  account_id?: string;
+}): Promise<NotificationCountsResult> {
+  const account_id = requireAccountId(opts?.account_id);
+  return await getProjectedNotificationCounts({
+    account_id,
+  });
+}
+
+export async function markRead(
+  opts: MarkNotificationReadOptions,
+): Promise<MarkNotificationReadResult> {
+  const account_id = requireAccountId(opts.account_id);
+  return await setProjectedNotificationReadState({
+    account_id,
+    notification_ids: opts.notification_ids,
+    read: opts.read ?? true,
   });
 }

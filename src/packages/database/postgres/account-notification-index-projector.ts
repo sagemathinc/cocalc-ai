@@ -5,15 +5,24 @@
 
 import getPool from "@cocalc/database/pool";
 import type { PoolClient } from "@cocalc/database/pool";
-import {
-  type NotificationOutboxEventRow,
-  type NotificationOutboxEventType,
-} from "./notification-events-outbox";
+import type {
+  NotificationTargetOutboxRow,
+  NotificationTransportEventType,
+} from "./notifications-core";
 
 const DEFAULT_SINGLE_BAY_ID = "bay-0";
-const RELEVANT_EVENT_TYPES: NotificationOutboxEventType[] = [
-  "notification.mention_upserted",
+const RELEVANT_EVENT_TYPES: NotificationTransportEventType[] = [
+  "notification.upserted",
 ];
+
+type NotificationTargetOutboxPayload = {
+  notification_id: string;
+  kind: string;
+  source_project_id?: string | null;
+  target_account_id: string;
+  summary?: Record<string, any>;
+  created_at?: string | null;
+};
 
 export interface DrainAccountNotificationIndexProjectionResult {
   bay_id: string;
@@ -74,13 +83,13 @@ async function isLocalHomeAccount(
 async function applyNotificationEventToAccountNotificationIndex(opts: {
   db: PoolClient;
   bay_id: string;
-  event: NotificationOutboxEventRow;
+  event: NotificationTargetOutboxRow;
 }): Promise<{ inserted_rows: number; deleted_rows: number }> {
   const { db, bay_id, event } = opts;
   if (
     !(await isLocalHomeAccount(db, {
       bay_id,
-      account_id: event.account_id,
+      account_id: event.target_account_id,
     }))
   ) {
     return {
@@ -88,29 +97,28 @@ async function applyNotificationEventToAccountNotificationIndex(opts: {
       deleted_rows: 0,
     };
   }
+  const payload = (event.payload_json ?? {}) as NotificationTargetOutboxPayload;
   await db.query(
     `INSERT INTO account_notification_index
        (account_id, notification_id, kind, project_id, summary, read_state,
         created_at, updated_at)
      VALUES
-       ($1, $2, $3, $4, $5::JSONB, $6::JSONB, $7, $8)
+       ($1, $2, $3, $4, $5::JSONB, '{}'::JSONB, $6, $7)
      ON CONFLICT (account_id, notification_id)
      DO UPDATE SET
        kind = EXCLUDED.kind,
        project_id = EXCLUDED.project_id,
        summary = EXCLUDED.summary,
-       read_state = EXCLUDED.read_state,
        created_at = EXCLUDED.created_at,
        updated_at = EXCLUDED.updated_at`,
     [
-      event.payload_json.account_id,
-      event.payload_json.notification_id,
-      event.payload_json.kind,
-      event.payload_json.project_id,
-      JSON.stringify(event.payload_json.summary),
-      JSON.stringify(event.payload_json.read_state),
-      event.payload_json.created_at,
-      event.payload_json.updated_at,
+      event.target_account_id,
+      event.notification_id,
+      event.kind,
+      payload.source_project_id ?? null,
+      JSON.stringify(payload.summary ?? {}),
+      payload.created_at ?? event.created_at.toISOString(),
+      event.created_at,
     ],
   );
   return {
@@ -136,8 +144,8 @@ export async function getAccountNotificationIndexProjectionBacklogStatus(opts?: 
        COUNT(*)::INT AS count,
        MIN(created_at) AS oldest_unpublished_event_at,
        MAX(created_at) AS newest_unpublished_event_at
-     FROM notification_events_outbox
-     WHERE COALESCE(NULLIF(BTRIM(owning_bay_id), ''), $1::TEXT) = $1::TEXT
+     FROM notification_target_outbox
+     WHERE COALESCE(NULLIF(BTRIM(target_home_bay_id), ''), $1::TEXT) = $1::TEXT
        AND published_at IS NULL
        AND event_type = ANY($2::TEXT[])
      GROUP BY event_type
@@ -194,23 +202,22 @@ export async function drainAccountNotificationIndexProjection(opts?: {
   const client = await getPool().connect();
   try {
     await client.query("BEGIN");
-    const { rows } = await client.query<NotificationOutboxEventRow>(
+    const { rows } = await client.query<NotificationTargetOutboxRow>(
       `SELECT
-         event_id,
-         account_id,
+         outbox_id,
+         COALESCE(NULLIF(BTRIM(target_home_bay_id), ''), $1::TEXT) AS target_home_bay_id,
+         target_account_id,
          notification_id,
-         project_id,
-         COALESCE(NULLIF(BTRIM(owning_bay_id), ''), $1::TEXT) AS owning_bay_id,
          kind,
          event_type,
          payload_json,
          created_at,
          published_at
-       FROM notification_events_outbox
-       WHERE COALESCE(NULLIF(BTRIM(owning_bay_id), ''), $1::TEXT) = $1::TEXT
+       FROM notification_target_outbox
+       WHERE COALESCE(NULLIF(BTRIM(target_home_bay_id), ''), $1::TEXT) = $1::TEXT
          AND published_at IS NULL
          AND event_type = ANY($2::TEXT[])
-       ORDER BY created_at ASC, event_id ASC
+       ORDER BY created_at ASC, outbox_id ASC
        LIMIT $3
        FOR UPDATE SKIP LOCKED`,
       [bay_id, RELEVANT_EVENT_TYPES, limit],
@@ -240,10 +247,10 @@ export async function drainAccountNotificationIndexProjection(opts?: {
       result.deleted_rows += applied.deleted_rows;
       if (!dry_run) {
         await client.query(
-          `UPDATE notification_events_outbox
+          `UPDATE notification_target_outbox
               SET published_at = NOW()
-            WHERE event_id = $1`,
-          [event.event_id],
+            WHERE outbox_id = $1`,
+          [event.outbox_id],
         );
       }
     }

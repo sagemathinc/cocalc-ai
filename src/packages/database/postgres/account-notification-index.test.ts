@@ -6,8 +6,10 @@
 import getPool, { initEphemeralDatabase } from "@cocalc/database/pool";
 import { testCleanup } from "@cocalc/database/test-utils";
 import {
+  getProjectedNotificationCounts,
   listProjectedNotificationsForAccount,
   rebuildAccountNotificationIndex,
+  setProjectedNotificationReadState,
 } from "./account-notification-index";
 
 const LOCAL_BAY_ID = "bay-local";
@@ -171,5 +173,102 @@ describe("account_notification_index rebuild", () => {
     ).rejects.toThrow(
       `account '${ACCOUNT_ID}' is not homed in bay '${LOCAL_BAY_ID}'`,
     );
+  });
+
+  it("supports inbox state filters, counts, and markRead updates", async () => {
+    await seedBaseRows();
+    await rebuildAccountNotificationIndex({
+      account_id: ACCOUNT_ID,
+      bay_id: LOCAL_BAY_ID,
+      dry_run: false,
+    });
+
+    const allRows = await listProjectedNotificationsForAccount({
+      account_id: ACCOUNT_ID,
+      limit: 10,
+      state: "all",
+    });
+    expect(allRows).toHaveLength(2);
+
+    await expect(
+      listProjectedNotificationsForAccount({
+        account_id: ACCOUNT_ID,
+        state: "unread",
+      }),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        project_id: PROJECT_A,
+        read_state: {
+          read: false,
+          saved: false,
+        },
+      }),
+    ]);
+
+    await expect(
+      listProjectedNotificationsForAccount({
+        account_id: ACCOUNT_ID,
+        state: "saved",
+      }),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        project_id: PROJECT_B,
+        read_state: {
+          read: true,
+          saved: true,
+        },
+      }),
+    ]);
+
+    await expect(
+      getProjectedNotificationCounts({
+        account_id: ACCOUNT_ID,
+      }),
+    ).resolves.toEqual({
+      total: 2,
+      unread: 1,
+      saved: 1,
+      archived: 0,
+      by_kind: {
+        mention: {
+          total: 2,
+          unread: 1,
+          saved: 1,
+          archived: 0,
+        },
+      },
+    });
+
+    await expect(
+      setProjectedNotificationReadState({
+        account_id: ACCOUNT_ID,
+        notification_ids: [
+          allRows[0].notification_id,
+          allRows[1].notification_id,
+        ],
+        read: true,
+      }),
+    ).resolves.toEqual({
+      updated_count: 2,
+    });
+
+    await expect(
+      getProjectedNotificationCounts({
+        account_id: ACCOUNT_ID,
+      }),
+    ).resolves.toEqual({
+      total: 2,
+      unread: 0,
+      saved: 1,
+      archived: 0,
+      by_kind: {
+        mention: {
+          total: 2,
+          unread: 0,
+          saved: 1,
+          archived: 0,
+        },
+      },
+    });
   });
 });

@@ -33,6 +33,24 @@ export interface AccountNotificationIndexRow {
   updated_at: Date | null;
 }
 
+export type NotificationInboxState = "all" | "unread" | "saved" | "archived";
+
+export interface AccountNotificationCounts {
+  total: number;
+  unread: number;
+  saved: number;
+  archived: number;
+  by_kind: Record<
+    string,
+    {
+      total: number;
+      unread: number;
+      saved: number;
+      archived: number;
+    }
+  >;
+}
+
 type Queryable = {
   query: (
     sql: string,
@@ -68,15 +86,33 @@ function normalizeLimit(raw?: number): number {
   return limit;
 }
 
+function normalizeNotificationInboxState(raw?: string): NotificationInboxState {
+  const state = `${raw ?? "all"}`.trim() || "all";
+  if (!["all", "unread", "saved", "archived"].includes(state)) {
+    throw Error(`invalid notification state '${raw ?? ""}'`);
+  }
+  return state as NotificationInboxState;
+}
+
+function normalizeOptionalProjectId(
+  raw?: string | null,
+): string | null | undefined {
+  if (raw === undefined) return undefined;
+  if (raw == null || `${raw}`.trim() === "") return null;
+  return normalizeUuid(raw, "project id");
+}
+
 export async function listProjectedNotificationsForAccount(opts: {
   account_id: string;
   limit?: number;
   notification_id?: string;
   kind?: string;
   project_id?: string | null;
+  state?: NotificationInboxState;
 }): Promise<AccountNotificationIndexRow[]> {
   const account_id = normalizeAccountId(opts.account_id);
   const limit = normalizeLimit(opts.limit);
+  const state = normalizeNotificationInboxState(opts.state);
   const where: string[] = ["account_id = $1::UUID"];
   const params: any[] = [account_id];
   let i = params.length;
@@ -90,14 +126,26 @@ export async function listProjectedNotificationsForAccount(opts: {
     where.push(`kind = $${i}::TEXT`);
     params.push(`${opts.kind}`);
   }
-  if (opts.project_id !== undefined) {
-    if (opts.project_id == null) {
+  const project_id = normalizeOptionalProjectId(opts.project_id);
+  if (project_id !== undefined) {
+    if (project_id == null) {
       where.push("project_id IS NULL");
     } else {
       i += 1;
       where.push(`project_id = $${i}::UUID`);
-      params.push(normalizeUuid(opts.project_id, "project id"));
+      params.push(project_id);
     }
+  }
+  if (state === "unread") {
+    where.push(
+      "COALESCE((read_state ->> 'read')::BOOLEAN, FALSE) IS NOT TRUE AND COALESCE((read_state ->> 'archived')::BOOLEAN, FALSE) IS NOT TRUE",
+    );
+  } else if (state === "saved") {
+    where.push(
+      "COALESCE((read_state ->> 'saved')::BOOLEAN, FALSE) IS TRUE AND COALESCE((read_state ->> 'archived')::BOOLEAN, FALSE) IS NOT TRUE",
+    );
+  } else if (state === "archived") {
+    where.push("COALESCE((read_state ->> 'archived')::BOOLEAN, FALSE) IS TRUE");
   }
   i += 1;
   params.push(limit);
@@ -117,6 +165,97 @@ export async function listProjectedNotificationsForAccount(opts: {
     params,
   );
   return rows;
+}
+
+export async function getProjectedNotificationCounts(opts: {
+  account_id: string;
+}): Promise<AccountNotificationCounts> {
+  const account_id = normalizeAccountId(opts.account_id);
+  const { rows } = await getPool().query<{
+    kind: string;
+    total: string | number;
+    unread: string | number;
+    saved: string | number;
+    archived: string | number;
+  }>(
+    `SELECT
+       kind,
+       COUNT(*)::INT AS total,
+       COUNT(*) FILTER (
+         WHERE COALESCE((read_state ->> 'read')::BOOLEAN, FALSE) IS NOT TRUE
+           AND COALESCE((read_state ->> 'archived')::BOOLEAN, FALSE) IS NOT TRUE
+       )::INT AS unread,
+       COUNT(*) FILTER (
+         WHERE COALESCE((read_state ->> 'saved')::BOOLEAN, FALSE) IS TRUE
+           AND COALESCE((read_state ->> 'archived')::BOOLEAN, FALSE) IS NOT TRUE
+       )::INT AS saved,
+       COUNT(*) FILTER (
+         WHERE COALESCE((read_state ->> 'archived')::BOOLEAN, FALSE) IS TRUE
+       )::INT AS archived
+     FROM account_notification_index
+     WHERE account_id = $1::UUID
+     GROUP BY kind
+     ORDER BY kind ASC`,
+    [account_id],
+  );
+  const result: AccountNotificationCounts = {
+    total: 0,
+    unread: 0,
+    saved: 0,
+    archived: 0,
+    by_kind: {},
+  };
+  for (const row of rows) {
+    const counts = {
+      total: Number(row.total ?? 0),
+      unread: Number(row.unread ?? 0),
+      saved: Number(row.saved ?? 0),
+      archived: Number(row.archived ?? 0),
+    };
+    result.by_kind[row.kind] = counts;
+    result.total += counts.total;
+    result.unread += counts.unread;
+    result.saved += counts.saved;
+    result.archived += counts.archived;
+  }
+  return result;
+}
+
+export async function setProjectedNotificationReadState(opts: {
+  account_id: string;
+  notification_ids: string[];
+  read: boolean;
+}): Promise<{ updated_count: number }> {
+  const account_id = normalizeAccountId(opts.account_id);
+  const rawIds = Array.isArray(opts.notification_ids)
+    ? opts.notification_ids
+    : [];
+  const notification_ids = Array.from(
+    new Set(
+      rawIds.map((notification_id) =>
+        normalizeUuid(notification_id, "notification id"),
+      ),
+    ),
+  );
+  if (notification_ids.length === 0) {
+    throw Error("at least one notification id is required");
+  }
+  const { rowCount } = await getPool().query(
+    `UPDATE account_notification_index
+        SET read_state = jsonb_set(
+              COALESCE(read_state, '{}'::JSONB),
+              '{read}',
+              to_jsonb($3::BOOLEAN),
+              TRUE
+            ),
+            updated_at = NOW()
+      WHERE account_id = $1::UUID
+        AND notification_id = ANY($2::UUID[])`,
+    [account_id, notification_ids, opts.read],
+  );
+  return {
+    updated_count: rowCount ?? 0,
+  };
 }
 
 async function assertAccountIsHomedLocally(opts: {

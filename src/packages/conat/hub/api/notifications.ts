@@ -2,6 +2,7 @@ import { authFirstRequireAccount } from "./util";
 
 export type NotificationPriority = "low" | "normal" | "high";
 export type NotificationSeverity = "info" | "warning" | "error";
+export type NotificationInboxState = "all" | "unread" | "saved" | "archived";
 
 export interface CreateMentionNotificationOptions {
   account_id?: string;
@@ -42,6 +43,51 @@ export interface CreateAccountNoticeOptions {
   dedupe_key?: string;
 }
 
+export interface NotificationListRow {
+  notification_id: string;
+  kind: string;
+  project_id: string | null;
+  summary: Record<string, any>;
+  read_state: Record<string, any>;
+  created_at: Date | null;
+  updated_at: Date | null;
+}
+
+export interface ListNotificationsOptions {
+  account_id?: string;
+  limit?: number;
+  notification_id?: string;
+  kind?: string;
+  project_id?: string | null;
+  state?: NotificationInboxState;
+}
+
+export interface NotificationCountsResult {
+  total: number;
+  unread: number;
+  saved: number;
+  archived: number;
+  by_kind: Record<
+    string,
+    {
+      total: number;
+      unread: number;
+      saved: number;
+      archived: number;
+    }
+  >;
+}
+
+export interface MarkNotificationReadOptions {
+  account_id?: string;
+  notification_ids: string[];
+  read?: boolean;
+}
+
+export interface MarkNotificationReadResult {
+  updated_count: number;
+}
+
 export interface Notifications {
   createMention: (
     opts: CreateMentionNotificationOptions,
@@ -49,9 +95,17 @@ export interface Notifications {
   createAccountNotice: (
     opts: CreateAccountNoticeOptions,
   ) => Promise<CreateNotificationResult>;
+  list: (opts?: ListNotificationsOptions) => Promise<NotificationListRow[]>;
+  counts: (opts?: { account_id?: string }) => Promise<NotificationCountsResult>;
+  markRead: (
+    opts: MarkNotificationReadOptions,
+  ) => Promise<MarkNotificationReadResult>;
 }
 
 export const notifications = {
   createMention: authFirstRequireAccount,
   createAccountNotice: authFirstRequireAccount,
+  list: authFirstRequireAccount,
+  counts: authFirstRequireAccount,
+  markRead: authFirstRequireAccount,
 };
