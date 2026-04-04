@@ -12,6 +12,9 @@ let takeStartProjectPhaseTimingsMock: jest.Mock;
 let delayMock: jest.Mock;
 let mirrorStartLroProgressMock: jest.Mock;
 let supersedeOlderProjectStartLrosMock: jest.Mock;
+let appendProjectOutboxEventForProjectMock: jest.Mock;
+let poolConnectMock: jest.Mock;
+let releaseMock: jest.Mock;
 
 async function flushBackgroundStartTask() {
   for (let i = 0; i < 6; i += 1) {
@@ -21,7 +24,16 @@ async function flushBackgroundStartTask() {
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
-  default: jest.fn(() => ({ query: queryMock })),
+  default: jest.fn(() => ({
+    query: queryMock,
+    connect: poolConnectMock,
+  })),
+}));
+
+jest.mock("@cocalc/database/postgres/project-events-outbox", () => ({
+  __esModule: true,
+  appendProjectOutboxEventForProject: (...args: any[]) =>
+    appendProjectOutboxEventForProjectMock(...args),
 }));
 
 jest.mock("@cocalc/backend/logger", () => ({
@@ -108,7 +120,12 @@ describe("projects.createProject start LRO", () => {
 
   beforeEach(() => {
     jest.resetModules();
+    appendProjectOutboxEventForProjectMock = jest.fn(async () => "event-id");
+    releaseMock = jest.fn();
     queryMock = jest.fn(async (sql: string) => {
+      if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") {
+        return { rows: [], rowCount: null };
+      }
       if (
         sql.includes(
           "SELECT project_id FROM deleted_projects WHERE project_id=$1 LIMIT 1",
@@ -131,6 +148,10 @@ describe("projects.createProject start LRO", () => {
       }
       throw new Error(`unexpected query: ${sql}`);
     });
+    poolConnectMock = jest.fn(async () => ({
+      query: queryMock,
+      release: releaseMock,
+    }));
     getProjectMock = jest.fn(() => ({
       start: jest.fn(async () => undefined),
       saveStateToDatabase: jest.fn(async () => undefined),

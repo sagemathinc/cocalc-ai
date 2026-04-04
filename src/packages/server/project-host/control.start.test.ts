@@ -11,6 +11,9 @@ let conatWithProjectRoutingMock: jest.Mock;
 let notifyProjectHostUpdateMock: jest.Mock;
 let sshKeysMock: jest.Mock;
 let maybeAutoGrowHostDiskForReservationFailureMock: jest.Mock;
+let appendProjectOutboxEventForProjectMock: jest.Mock;
+let poolConnectMock: jest.Mock;
+let releaseMock: jest.Mock;
 
 jest.mock("@cocalc/backend/logger", () => ({
   __esModule: true,
@@ -32,7 +35,14 @@ jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
   default: jest.fn(() => ({
     query: (...args: any[]) => queryMock(...args),
+    connect: (...args: any[]) => poolConnectMock(...args),
   })),
+}));
+
+jest.mock("@cocalc/database/postgres/project-events-outbox", () => ({
+  __esModule: true,
+  appendProjectOutboxEventForProject: (...args: any[]) =>
+    appendProjectOutboxEventForProjectMock(...args),
 }));
 
 jest.mock("@cocalc/conat/project-host/api", () => ({
@@ -76,6 +86,8 @@ describe("startProjectOnHost placement", () => {
       grown: false,
       reason: "auto-grow disabled",
     }));
+    appendProjectOutboxEventForProjectMock = jest.fn(async () => "event-id");
+    releaseMock = jest.fn();
   });
 
   it("registers a new host placement without doing the long runtime start in createProject", async () => {
@@ -95,6 +107,9 @@ describe("startProjectOnHost placement", () => {
 
     let loadProjectCalls = 0;
     queryMock = jest.fn(async (sql: string, params: any[]) => {
+      if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") {
+        return { rows: [], rowCount: null };
+      }
       if (sql === "SELECT state FROM projects WHERE project_id=$1") {
         return {
           rows: [{ state: { state: "opened", time: "2026-03-29T00:00:00Z" } }],
@@ -161,6 +176,10 @@ describe("startProjectOnHost placement", () => {
       }
       throw new Error(`unexpected query: ${sql}`);
     });
+    poolConnectMock = jest.fn(async () => ({
+      query: queryMock,
+      release: releaseMock,
+    }));
 
     const { startProjectOnHost } = await import("./control");
     await startProjectOnHost("proj-1", { lro_op_id: "op-1" });
@@ -214,6 +233,9 @@ describe("startProjectOnHost placement", () => {
 
     let loadProjectCalls = 0;
     queryMock = jest.fn(async (sql: string, params: any[]) => {
+      if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") {
+        return { rows: [], rowCount: null };
+      }
       if (sql === "SELECT state FROM projects WHERE project_id=$1") {
         return {
           rows: [{ state: { state: "opened", time: "2026-03-29T00:00:00Z" } }],
@@ -280,6 +302,10 @@ describe("startProjectOnHost placement", () => {
       }
       throw new Error(`unexpected query: ${sql}`);
     });
+    poolConnectMock = jest.fn(async () => ({
+      query: queryMock,
+      release: releaseMock,
+    }));
 
     const { startProjectOnHost } = await import("./control");
     await startProjectOnHost("proj-1", { lro_op_id: "op-1" });
@@ -295,6 +321,9 @@ describe("startProjectOnHost placement", () => {
 
   it("rejects placement onto a host from another bay", async () => {
     queryMock = jest.fn(async (sql: string, params: any[]) => {
+      if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") {
+        return { rows: [], rowCount: null };
+      }
       if (sql.includes("UPDATE projects AS projects")) {
         expect(params).toEqual(["host-2", "proj-1", "bay-0"]);
         return { rows: [] };
@@ -313,6 +342,10 @@ describe("startProjectOnHost placement", () => {
       }
       throw new Error(`unexpected query: ${sql}`);
     });
+    poolConnectMock = jest.fn(async () => ({
+      query: queryMock,
+      release: releaseMock,
+    }));
 
     const { savePlacement } = await import("./control");
     await expect(

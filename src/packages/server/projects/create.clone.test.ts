@@ -9,6 +9,9 @@ let resolveMembershipForAccountMock: jest.Mock;
 let computePlacementPermissionMock: jest.Mock;
 let getUserHostTierMock: jest.Mock;
 let conatWithProjectRoutingMock: jest.Mock;
+let appendProjectOutboxEventForProjectMock: jest.Mock;
+let poolConnectMock: jest.Mock;
+let releaseMock: jest.Mock;
 let insertedProjectId: string | undefined;
 
 const ACCOUNT_ID = "6e22d250-68d4-46fb-9851-80fbeaa2d6b6";
@@ -17,7 +20,16 @@ const HOST_ID = "39d74365-65fe-4f13-8efc-ad6b6e58f3ee";
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
-  default: jest.fn(() => ({ query: queryMock })),
+  default: jest.fn(() => ({
+    query: queryMock,
+    connect: poolConnectMock,
+  })),
+}));
+
+jest.mock("@cocalc/database/postgres/project-events-outbox", () => ({
+  __esModule: true,
+  appendProjectOutboxEventForProject: (...args: any[]) =>
+    appendProjectOutboxEventForProjectMock(...args),
 }));
 
 jest.mock("@cocalc/server/accounts/is-admin", () => ({
@@ -79,7 +91,12 @@ describe("projects.createProject clone routing", () => {
     computePlacementPermissionMock = jest.fn(() => ({ can_place: true }));
     getUserHostTierMock = jest.fn(() => 0);
     conatWithProjectRoutingMock = jest.fn(() => ({ id: "mock-conat-client" }));
+    appendProjectOutboxEventForProjectMock = jest.fn(async () => "event-id");
+    releaseMock = jest.fn();
     queryMock = jest.fn(async (sql: string, params: any[]) => {
+      if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") {
+        return { rows: [], rowCount: null };
+      }
       if (
         sql.includes(
           "SELECT project_id FROM deleted_projects WHERE project_id=$1 LIMIT 1",
@@ -169,6 +186,10 @@ describe("projects.createProject clone routing", () => {
       }
       throw new Error(`unexpected query: ${sql}`);
     });
+    poolConnectMock = jest.fn(async () => ({
+      query: queryMock,
+      release: releaseMock,
+    }));
   });
 
   it("uses the routed project file server client for src_project_id clones", async () => {

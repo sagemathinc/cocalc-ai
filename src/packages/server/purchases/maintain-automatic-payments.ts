@@ -63,7 +63,7 @@ WITH latest_statements AS (
     s.automatic_payment,
     s.automatic_payment_intent_id,
     s.paid_purchase_id,
-    ROW_NUMBER() OVER(PARTITION BY a.account_id ORDER BY s.time DESC) AS rn
+    ROW_NUMBER() OVER(PARTITION BY a.account_id ORDER BY s.time DESC, s.id DESC) AS rn
   FROM
     accounts a
   JOIN
