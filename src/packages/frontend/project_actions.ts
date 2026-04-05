@@ -90,6 +90,7 @@ import { reduxNameToProjectId } from "@cocalc/util/redux/name";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import { client_db } from "@cocalc/util/schema";
 import { type FilesystemClient } from "@cocalc/conat/files/fs";
+import type { ProjectLogCursor } from "@cocalc/conat/hub/api/projects";
 import {
   getCacheId,
   getFiles,
@@ -132,6 +133,12 @@ import {
   buildProjectScopedTarget,
   parseProjectTarget,
 } from "@cocalc/frontend/project-routing";
+import {
+  buildProjectLogMap,
+  mergeProjectLogMap,
+  newestProjectLogCursor,
+  oldestProjectLogCursor,
+} from "@cocalc/frontend/project/log-state";
 
 const { defaults, required } = misc;
 
@@ -140,6 +147,8 @@ const BAD_LATEX_FILENAME_CHARACTERS = '\'"()"~%$';
 const BANNED_FILE_TYPES = new Set(["doc", "docx", "pdf", "sws"]);
 
 const FROM_WEB_TIMEOUT_S = 45;
+const PROJECT_LOG_BATCH_LIMIT = 750;
+const MAX_PROJECT_LOG_REFRESH_BATCHES = 20;
 
 export const QUERIES = {
   project_log: {
@@ -3191,13 +3200,117 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     });
   }
 
-  project_log_load_all(): void {
+  private load_project_log = reuseInFlight(
+    async (mode: "initial" | "older" | "newer"): Promise<void> => {
+      const store = this.get_store();
+      if (store == null) return;
+
+      const currentLog = store.get("project_log");
+      const effectiveMode =
+        currentLog == null || currentLog.size === 0
+          ? "initial"
+          : mode === "initial"
+            ? "initial"
+            : mode;
+
+      if (effectiveMode === "older") {
+        this.setState({
+          project_log_loading_older: true,
+          project_log_error: undefined,
+        });
+      } else {
+        this.setState({
+          project_log_loading: true,
+          project_log_error: undefined,
+        });
+      }
+
+      try {
+        if (effectiveMode === "newer") {
+          const baseline = newestProjectLogCursor(currentLog);
+          if (baseline == null) {
+            return;
+          }
+          let merged = currentLog;
+          let older_than: ProjectLogCursor | undefined = undefined;
+          for (let i = 0; i < MAX_PROJECT_LOG_REFRESH_BATCHES; i++) {
+            const page =
+              await webapp_client.conat_client.hub.projects.listProjectLog({
+                project_id: this.project_id,
+                limit: PROJECT_LOG_BATCH_LIMIT,
+                newer_than: baseline,
+                older_than,
+              });
+            if (page.entries.length === 0) {
+              break;
+            }
+            merged = mergeProjectLogMap(merged, page.entries);
+            if (!page.has_more) {
+              break;
+            }
+            older_than = {
+              id: page.entries[page.entries.length - 1].id,
+              time: page.entries[page.entries.length - 1].time ?? null,
+            };
+          }
+          this.setState({
+            project_log: merged,
+            project_log_loading: false,
+            project_log_error: undefined,
+          });
+          return;
+        }
+
+        const older_than =
+          effectiveMode === "older" ? oldestProjectLogCursor(currentLog) : null;
+        const page =
+          await webapp_client.conat_client.hub.projects.listProjectLog({
+            project_id: this.project_id,
+            limit: PROJECT_LOG_BATCH_LIMIT,
+            ...(older_than ? { older_than } : {}),
+          });
+        const nextLog =
+          effectiveMode === "initial"
+            ? buildProjectLogMap(page.entries)
+            : mergeProjectLogMap(currentLog, page.entries);
+        this.setState({
+          project_log: nextLog,
+          project_log_has_older: page.has_more,
+          project_log_loading: false,
+          project_log_loading_older: false,
+          project_log_error: undefined,
+        });
+      } catch (err) {
+        console.warn("project log refresh failed", {
+          project_id: this.project_id,
+          mode: effectiveMode,
+          err,
+        });
+        this.setState({
+          project_log_loading: false,
+          project_log_loading_older: false,
+          project_log_error: `${err ?? ""}`,
+        });
+      }
+    },
+    {
+      createKey: ([mode]) => `${mode ?? "initial"}`,
+    },
+  );
+
+  refresh_project_log = (): void => {
+    void this.load_project_log("newer");
+  };
+
+  ensure_project_log = (): void => {
     const store = this.get_store();
-    if (store == null) return; // no store
-    if (store.get("project_log_all") != null) return; // already done
-    // Dear future dev: don't delete the project_log table
-    // https://github.com/sagemathinc/cocalc/issues/6765
-    store.init_table("project_log_all");
+    if (store == null) return;
+    if (store.get("project_log") != null) return;
+    void this.load_project_log("initial");
+  };
+
+  project_log_load_all(): void {
+    void this.load_project_log("older");
   }
 
   // called when project page is shown

@@ -130,6 +130,10 @@ export interface ProjectStoreState {
   // Project Log
   project_log?: ProjectLogMap;
   project_log_all?: ProjectLogMap;
+  project_log_loading?: boolean;
+  project_log_loading_older?: boolean;
+  project_log_has_older?: boolean;
+  project_log_error?: string;
   search?: string;
   page?: number;
 
@@ -326,6 +330,12 @@ export class ProjectStore extends Store<ProjectStoreState> {
       hide_masked_files: false,
       // Project New
       downloading_file: false,
+
+      // Project Log
+      project_log_loading: false,
+      project_log_loading_older: false,
+      project_log_has_older: false,
+      project_log_error: undefined,
 
       // Project Find
       user_input: "",

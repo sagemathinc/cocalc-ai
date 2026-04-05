@@ -64,7 +64,10 @@ import type {
   ImportPublicPathResult,
   PublicPathInspectionResult,
   ProjectCopyRow,
+  ProjectLogPage,
+  ProjectLogCursor,
   ProjectRuntimeLog,
+  ProjectLogRow,
   ProjectStorageCountedSummary,
   ProjectStorageBreakdown,
   ProjectStorageHistory,
@@ -115,12 +118,32 @@ const projectStorageBreakdownCache = new TTLCache<
   ttl: PROJECT_STORAGE_CACHE_TTL_MS,
 });
 
+const DEFAULT_PROJECT_LOG_LIMIT = 750;
+const MAX_PROJECT_LOG_LIMIT = 2_000;
+
 function normalizeStoragePath(path?: string): string {
   const normalized = posix.normalize(`${path ?? ""}`.trim() || "/");
   if (!normalized.startsWith("/")) {
     throw new Error(`storage path must be absolute: ${path}`);
   }
   return normalized;
+}
+
+function normalizeProjectLogLimit(limit?: number): number {
+  if (!Number.isFinite(limit)) {
+    return DEFAULT_PROJECT_LOG_LIMIT;
+  }
+  return Math.max(1, Math.min(MAX_PROJECT_LOG_LIMIT, Math.floor(limit!)));
+}
+
+function normalizeProjectLogCursor(
+  cursor?: ProjectLogCursor,
+): ProjectLogCursor | undefined {
+  if (!cursor?.id) return undefined;
+  return {
+    id: cursor.id,
+    time: cursor.time ? new Date(cursor.time) : null,
+  };
 }
 
 function storageOverviewCacheKey({
@@ -567,6 +590,63 @@ export async function getDiskQuota({
   await assertCollab({ account_id, project_id });
   const client = await getProjectFileServerClient({ project_id });
   return await client.getQuota({ project_id });
+}
+
+export async function listProjectLog({
+  account_id,
+  project_id,
+  limit,
+  newer_than,
+  older_than,
+}: {
+  account_id: string;
+  project_id: string;
+  limit?: number;
+  newer_than?: ProjectLogCursor;
+  older_than?: ProjectLogCursor;
+}): Promise<ProjectLogPage> {
+  await assertCollab({ account_id, project_id });
+  const newer = normalizeProjectLogCursor(newer_than);
+  const older = normalizeProjectLogCursor(older_than);
+  const pageLimit = normalizeProjectLogLimit(limit);
+
+  const clauses = [`project_id = $1`];
+  const params: any[] = [project_id];
+  let nextParam = 2;
+  const tupleSql = `(
+    COALESCE(time, 'epoch'::timestamp),
+    id
+  )`;
+
+  if (newer) {
+    clauses.push(
+      `${tupleSql} > (COALESCE($${nextParam}::timestamp, 'epoch'::timestamp), $${nextParam + 1}::uuid)`,
+    );
+    params.push(newer.time, newer.id);
+    nextParam += 2;
+  }
+  if (older) {
+    clauses.push(
+      `${tupleSql} < (COALESCE($${nextParam}::timestamp, 'epoch'::timestamp), $${nextParam + 1}::uuid)`,
+    );
+    params.push(older.time, older.id);
+    nextParam += 2;
+  }
+
+  params.push(pageLimit + 1);
+  const { rows } = await getPool().query<ProjectLogRow>(
+    `SELECT id, project_id, account_id, time, event
+       FROM project_log
+      WHERE ${clauses.join(" AND ")}
+      ORDER BY COALESCE(time, 'epoch'::timestamp) DESC, id DESC
+      LIMIT $${nextParam}`,
+    params,
+  );
+
+  return {
+    entries: rows.slice(0, pageLimit),
+    has_more: rows.length > pageLimit,
+  };
 }
 
 export async function getStorageOverview({

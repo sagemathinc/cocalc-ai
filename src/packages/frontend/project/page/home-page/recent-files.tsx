@@ -8,7 +8,8 @@ import { useIntl } from "react-intl";
 
 import {
   CSS,
-  redux,
+  useActions,
+  useEffect,
   useState,
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
@@ -43,12 +44,21 @@ export function HomeRecentFiles({
   mode = "box",
 }: Props): React.JSX.Element {
   const intl = useIntl();
+  const actions = useActions({ project_id });
   const project_log = useTypedRedux({ project_id }, "project_log");
+  const project_log_loading = useTypedRedux(
+    { project_id },
+    "project_log_loading",
+  );
   const user_map = useTypedRedux("users", "user_map");
 
   const [searchTerm, setSearchTerm] = useState<string>("");
 
   const log: OpenedFile[] = useRecentFiles(project_log, max, searchTerm);
+
+  useEffect(() => {
+    actions?.refresh_project_log();
+  }, [actions, project_id]);
 
   function renderItemInfo({ account_id, time }) {
     return (
@@ -87,8 +97,7 @@ export function HomeRecentFiles({
     );
   }
 
-  if (project_log == null) {
-    redux.getProjectStore(project_id).init_table("project_log"); // kick off loading it
+  if (project_log == null && project_log_loading) {
     return <Loading />;
   }
 
