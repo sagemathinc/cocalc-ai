@@ -24,6 +24,7 @@ export async function submit_mentions(
   if (source == null) {
     return;
   }
+  const source_path = original_path(path);
   for (const { account_id, description, fragment_id } of mentions) {
     if (!isValidUUID(account_id)) {
       // Ignore all language model mentions, they are processed by the chat actions in the frontend
@@ -36,19 +37,34 @@ export async function submit_mentions(
       seenFragmentIds.add(fragment_id);
     }
     try {
-      await webapp_client.query_client.query({
-        query: {
-          mentions: {
-            project_id,
-            path: original_path(path),
-            fragment_id,
-            target: account_id,
-            priority: 2,
-            description,
-            source,
+      const results = await Promise.allSettled([
+        webapp_client.query_client.query({
+          query: {
+            mentions: {
+              project_id,
+              path: source_path,
+              fragment_id,
+              target: account_id,
+              priority: 2,
+              description,
+              source,
+            },
           },
-        },
-      });
+        }),
+        webapp_client.conat_client?.hub?.notifications?.createMention({
+          source_project_id: project_id,
+          source_path,
+          source_fragment_id: fragment_id,
+          target_account_ids: [account_id],
+          description,
+          stable_source_id: fragment_id,
+        }) ?? Promise.resolve(undefined),
+      ]);
+      for (const result of results) {
+        if (result.status === "rejected") {
+          console.warn("Failed to submit mention ", result.reason);
+        }
+      }
     } catch (err) {
       // TODO: this is just naively assuming that no errors happen.
       // What if there is a network blip?

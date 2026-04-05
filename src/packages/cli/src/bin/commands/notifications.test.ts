@@ -315,3 +315,89 @@ test("notifications mark-read defaults to read=true and supports --unread", asyn
     },
   ]);
 });
+
+test("notifications save and archive toggle the corresponding flags", async () => {
+  const calls: any[] = [];
+  const program = new Command();
+  registerNotificationsCommand(program, {
+    withContext: async (_command, _label, fn) => {
+      const ctx = {
+        hub: {
+          notifications: {
+            save: async (opts: any) => {
+              calls.push(["save", opts]);
+              return { updated_count: 1 };
+            },
+            archive: async (opts: any) => {
+              calls.push(["archive", opts]);
+              return { updated_count: 1 };
+            },
+          },
+        },
+      };
+      return await fn(ctx);
+    },
+  } as any);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "notifications",
+    "save",
+    "11111111-1111-4111-8111-111111111111",
+  ]);
+  await program.parseAsync([
+    "node",
+    "test",
+    "notifications",
+    "save",
+    "--unsave",
+    "22222222-2222-4222-8222-222222222222",
+  ]);
+  await program.parseAsync([
+    "node",
+    "test",
+    "notifications",
+    "archive",
+    "33333333-3333-4333-8333-333333333333",
+  ]);
+  await program.parseAsync([
+    "node",
+    "test",
+    "notifications",
+    "archive",
+    "--unarchive",
+    "44444444-4444-4444-8444-444444444444",
+  ]);
+
+  assert.deepEqual(calls, [
+    [
+      "save",
+      {
+        notification_ids: ["11111111-1111-4111-8111-111111111111"],
+        saved: true,
+      },
+    ],
+    [
+      "save",
+      {
+        notification_ids: ["22222222-2222-4222-8222-222222222222"],
+        saved: false,
+      },
+    ],
+    [
+      "archive",
+      {
+        notification_ids: ["33333333-3333-4333-8333-333333333333"],
+        archived: true,
+      },
+    ],
+    [
+      "archive",
+      {
+        notification_ids: ["44444444-4444-4444-8444-444444444444"],
+        archived: false,
+      },
+    ],
+  ]);
+});

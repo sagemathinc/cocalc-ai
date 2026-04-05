@@ -23,6 +23,7 @@ import type {
   ProjectBayLocation,
 } from "@cocalc/conat/hub/api/system";
 import type {
+  ArchiveNotificationOptions,
   CreateAccountNoticeOptions,
   CreateMentionNotificationOptions,
   CreateNotificationResult,
@@ -31,6 +32,7 @@ import type {
   MarkNotificationReadResult,
   NotificationCountsResult,
   NotificationListRow,
+  SaveNotificationOptions,
 } from "@cocalc/conat/hub/api/notifications";
 import userQuery, { init as initUserQuery } from "./sqlite/user-query";
 import { account_id as ACCOUNT_ID, data } from "@cocalc/backend/data";
@@ -930,6 +932,34 @@ async function markNotificationReadLite(
   );
 }
 
+async function saveNotificationLite(
+  opts: SaveNotificationOptions,
+): Promise<MarkNotificationReadResult> {
+  if (hasRemote) {
+    return await callRemoteHub({
+      name: "notifications.save",
+      args: [opts],
+    });
+  }
+  throw Error(
+    "notifications.save requires a remote hub connection in lite mode",
+  );
+}
+
+async function archiveNotificationLite(
+  opts: ArchiveNotificationOptions,
+): Promise<MarkNotificationReadResult> {
+  if (hasRemote) {
+    return await callRemoteHub({
+      name: "notifications.archive",
+      args: [opts],
+    });
+  }
+  throw Error(
+    "notifications.archive requires a remote hub connection in lite mode",
+  );
+}
+
 // NOTE: Consumers (e.g., project-host) may extend this object in-place to add
 // host-specific implementations of hub APIs. Keep the defaults minimal here.
 export const hubApi: HubApi = {
@@ -975,6 +1005,8 @@ export const hubApi: HubApi = {
     list: listNotificationsLite,
     counts: getNotificationCountsLite,
     markRead: markNotificationReadLite,
+    save: saveNotificationLite,
+    archive: archiveNotificationLite,
   },
   projects: {
     codexDeviceAuthStart: codexDeviceAuthStartLite,

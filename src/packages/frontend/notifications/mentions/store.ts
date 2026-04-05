@@ -9,6 +9,7 @@ import { MentionsMap, NotificationFilter } from "./types";
 export interface MentionsState {
   mentions: MentionsMap;
   filter: NotificationFilter;
+  unread_count?: number;
   // optional id of currently selected thing
   id?: number;
 }
@@ -20,6 +21,10 @@ export class MentionsStore extends Store<MentionsState> {
   }
 
   getUnreadSize = (): number => {
+    const unread_count = this.get("unread_count");
+    if (typeof unread_count === "number") {
+      return unread_count;
+    }
     const mentions = this.get("mentions");
     if (mentions == null) {
       // e.g., happens with a brand new account.
@@ -31,16 +36,16 @@ export class MentionsStore extends Store<MentionsState> {
     }
 
     const account_id = account_store.get("account_id");
-    let unread_count = 0;
+    let unread_count_legacy = 0;
     mentions.map((mention) => {
       if (
         mention.get("target") == account_id &&
         !mention.getIn(["users", account_id, "read"])
       ) {
-        unread_count += 1;
+        unread_count_legacy += 1;
       }
     });
 
-    return unread_count;
+    return unread_count_legacy;
   };
 }

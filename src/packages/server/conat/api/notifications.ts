@@ -9,7 +9,9 @@ import { assertLocalProjectCollaborator } from "@cocalc/server/conat/project-loc
 import {
   getProjectedNotificationCounts,
   listProjectedNotificationsForAccount,
+  setProjectedNotificationArchivedState,
   setProjectedNotificationReadState,
+  setProjectedNotificationSavedState,
 } from "@cocalc/database/postgres/account-notification-index";
 import {
   createNotificationEventGraph,
@@ -18,6 +20,7 @@ import {
 } from "@cocalc/database/postgres/notifications-core";
 import type {
   CreateAccountNoticeOptions,
+  ArchiveNotificationOptions,
   CreateMentionNotificationOptions,
   CreateNotificationResult,
   ListNotificationsOptions,
@@ -27,6 +30,7 @@ import type {
   NotificationListRow,
   NotificationPriority,
   NotificationSeverity,
+  SaveNotificationOptions,
 } from "@cocalc/conat/hub/api/notifications";
 import { isValidUUID } from "@cocalc/util/misc";
 
@@ -313,5 +317,27 @@ export async function markRead(
     account_id,
     notification_ids: opts.notification_ids,
     read: opts.read ?? true,
+  });
+}
+
+export async function save(
+  opts: SaveNotificationOptions,
+): Promise<MarkNotificationReadResult> {
+  const account_id = requireAccountId(opts.account_id);
+  return await setProjectedNotificationSavedState({
+    account_id,
+    notification_ids: opts.notification_ids,
+    saved: opts.saved ?? true,
+  });
+}
+
+export async function archive(
+  opts: ArchiveNotificationOptions,
+): Promise<MarkNotificationReadResult> {
+  const account_id = requireAccountId(opts.account_id);
+  return await setProjectedNotificationArchivedState({
+    account_id,
+    notification_ids: opts.notification_ids,
+    archived: opts.archived ?? true,
   });
 }
