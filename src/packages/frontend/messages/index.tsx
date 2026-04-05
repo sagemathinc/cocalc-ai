@@ -41,6 +41,7 @@ function Messages0({ filter, style }: Props) {
     // ONLY initialize the state stuff if the actual messages
     // are displayed, to avoid  waste of resources/load
     init();
+    void redux.getActions("messages")?.refresh();
   }, []);
 
   const threads = useTypedRedux("messages", "threads");

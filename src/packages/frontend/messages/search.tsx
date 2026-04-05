@@ -1,4 +1,4 @@
-import { Input } from "antd";
+import { Button, Input, Space } from "antd";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { debounce } from "lodash";
 import { useIntl } from "react-intl";
@@ -48,19 +48,27 @@ export default function Search({ filter }) {
   });
 
   return (
-    <Input.Search
-      ref={inputRef}
-      value={value}
-      style={{ marginBottom: "10px" }}
-      size="large"
-      allowClear
-      enterButton
-      placeholder={`${placeholder}...`}
-      onSearch={() => search(value)}
-      onChange={(e) => {
-        setValue(e.target.value);
-        search(e.target.value);
-      }}
-    />
+    <Space.Compact style={{ width: "100%", marginBottom: "10px" }}>
+      <Input.Search
+        ref={inputRef}
+        value={value}
+        style={{ marginBottom: 0 }}
+        size="large"
+        allowClear
+        enterButton
+        placeholder={`${placeholder}...`}
+        onSearch={() => search(value)}
+        onChange={(e) => {
+          setValue(e.target.value);
+          search(e.target.value);
+        }}
+      />
+      <Button
+        size="large"
+        onClick={() => void redux.getActions("messages")?.refresh()}
+      >
+        Refresh
+      </Button>
+    </Space.Compact>
   );
 }
