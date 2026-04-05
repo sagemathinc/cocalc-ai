@@ -210,4 +210,68 @@ describe("MentionsActions realtime feed", () => {
       ephemeral: true,
     });
   });
+
+  it("bootstraps when the account store appears already ready", async () => {
+    class MockAccountStore extends EventEmitter {
+      constructor(
+        private readonly accountId: string | undefined,
+        private readonly ready: boolean,
+      ) {
+        super();
+      }
+
+      get(key: string) {
+        if (key === "account_id") {
+          return this.accountId;
+        }
+        if (key === "is_ready") {
+          return this.ready;
+        }
+        return undefined;
+      }
+    }
+
+    let accountStore: MockAccountStore | undefined;
+    let reduxSubscriber: (() => void) | undefined;
+    const redux = {
+      getStore: jest.fn((name: string) => {
+        if (name === "account") {
+          return accountStore as any;
+        }
+        if (name === "mentions") {
+          return ImmutableMap({ mentions: ImmutableMap() });
+        }
+        return ImmutableMap();
+      }),
+      reduxStore: {
+        subscribe: jest.fn((cb: () => void) => {
+          reduxSubscriber = cb;
+          return jest.fn();
+        }),
+      },
+      _set_state: jest.fn(),
+      removeActions: jest.fn(),
+    } as any;
+    const actions = new MentionsActions("mentions", redux);
+
+    actions._init();
+    await flushMicrotasks();
+
+    expect(
+      mockedWebappClient.conat_client.hub.notifications.list,
+    ).not.toHaveBeenCalled();
+
+    accountStore = new MockAccountStore("acct-2", true);
+    reduxSubscriber?.();
+    await flushMicrotasks();
+
+    expect(
+      mockedWebappClient.conat_client.hub.notifications.list,
+    ).toHaveBeenCalledTimes(1);
+    expect(mockedWebappClient.conat_client.dstream).toHaveBeenCalledWith({
+      account_id: "acct-2",
+      name: accountFeedStreamName(),
+      ephemeral: true,
+    });
+  });
 });
