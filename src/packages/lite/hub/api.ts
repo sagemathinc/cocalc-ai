@@ -296,7 +296,9 @@ function isSetUserQueryLite(opts: {
   return !misc.has_null_leaf(opts.query);
 }
 
-function buildLiteProjectFeedRow(row: Record<string, any>): AccountFeedProjectRow {
+function buildLiteProjectFeedRow(
+  row: Record<string, any>,
+): AccountFeedProjectRow {
   return {
     project_id: `${row.project_id ?? ""}`.trim(),
     title: `${row.title ?? ""}`,
@@ -314,6 +316,33 @@ function buildLiteProjectFeedRow(row: Record<string, any>): AccountFeedProjectRo
     last_edited: row.last_edited ?? null,
     deleted: !!row.deleted,
   };
+}
+
+function getLiteKnownAccountIds(opts?: {
+  preferred_account_id?: string;
+  row?: Record<string, any>;
+}): string[] {
+  const ids = new Set<string>();
+  const push = (value?: string | null) => {
+    const account_id = `${value ?? ""}`.trim();
+    if (account_id) {
+      ids.add(account_id);
+    }
+  };
+
+  push(opts?.preferred_account_id);
+  push(process.env.COCALC_ACCOUNT_ID);
+  push(ACCOUNT_ID);
+  for (const row of listRows("accounts") as any[]) {
+    push(row?.account_id);
+  }
+  const users = opts?.row?.users;
+  if (users != null && typeof users === "object") {
+    for (const account_id of Object.keys(users)) {
+      push(account_id);
+    }
+  }
+  return [...ids];
 }
 
 async function publishLiteAccountFeedEventBestEffort(opts: {
@@ -376,17 +405,25 @@ async function publishLiteAccountFeedForUserQuery(opts: {
       if (!project_id) continue;
       const row =
         getRow("projects", JSON.stringify({ project_id })) ??
-        listRows("projects").find((project) => project?.project_id === project_id);
+        listRows("projects").find(
+          (project) => project?.project_id === project_id,
+        );
       if (!row) continue;
-      await publishLiteAccountFeedEventBestEffort({
-        account_id,
-        event: {
-          type: "project.upsert",
-          ts: Date.now(),
-          account_id,
-          project: buildLiteProjectFeedRow(row),
-        },
-      });
+      const project = buildLiteProjectFeedRow(row);
+      for (const target_account_id of getLiteKnownAccountIds({
+        preferred_account_id: account_id,
+        row,
+      })) {
+        await publishLiteAccountFeedEventBestEffort({
+          account_id: target_account_id,
+          event: {
+            type: "project.upsert",
+            ts: Date.now(),
+            account_id: target_account_id,
+            project,
+          },
+        });
+      }
     }
   }
 }
