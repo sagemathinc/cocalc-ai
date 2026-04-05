@@ -123,14 +123,6 @@ export function NotificationNav({ filter, on_click, style }: Props) {
           ),
         },
         {
-          key: "messages-starred",
-          label: (
-            <span style={{ textOverflow: "ellipsis", overflow: "hidden" }}>
-              <Icon name="star" /> {intl.formatMessage(labels.starred)}
-            </span>
-          ),
-        },
-        {
           key: "messages-all",
           label: (
             <span style={{ textOverflow: "ellipsis", overflow: "hidden" }}>
