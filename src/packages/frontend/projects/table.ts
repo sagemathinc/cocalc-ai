@@ -9,7 +9,11 @@ declare var DEBUG: boolean;
 
 // Create and register projects table, which gets automatically
 // synchronized with the server.
-class ProjectsTable extends Table {
+export class ProjectsTable extends Table {
+  no_changefeed() {
+    return true;
+  }
+
   query() {
     const project_id = redux.getStore("page").get("kiosk_project_id");
     if (project_id != null) {
