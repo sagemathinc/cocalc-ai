@@ -252,6 +252,8 @@ describe("account_notification_index rebuild", () => {
       }),
     ).resolves.toEqual({
       updated_count: 2,
+      notification_ids: [allRows[0].notification_id, allRows[1].notification_id]
+        .sort(),
     });
 
     await expect(
@@ -281,6 +283,7 @@ describe("account_notification_index rebuild", () => {
       }),
     ).resolves.toEqual({
       updated_count: 1,
+      notification_ids: [allRows[1].notification_id],
     });
 
     await expect(
@@ -298,6 +301,7 @@ describe("account_notification_index rebuild", () => {
       }),
     ).resolves.toEqual({
       updated_count: 1,
+      notification_ids: [allRows[1].notification_id],
     });
 
     await expect(

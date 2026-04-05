@@ -33,6 +33,7 @@ import type {
   SaveNotificationOptions,
 } from "@cocalc/conat/hub/api/notifications";
 import { isValidUUID } from "@cocalc/util/misc";
+import { publishNotificationFeedInvalidateBestEffort } from "@cocalc/server/notifications/feed";
 
 function requireAccountId(account_id?: string): string {
   const normalized = `${account_id ?? ""}`.trim();
@@ -313,31 +314,67 @@ export async function markRead(
   opts: MarkNotificationReadOptions,
 ): Promise<MarkNotificationReadResult> {
   const account_id = requireAccountId(opts.account_id);
-  return await setProjectedNotificationReadState({
+  const result = await setProjectedNotificationReadState({
     account_id,
     notification_ids: opts.notification_ids,
     read: opts.read ?? true,
   });
+  const notification_ids = result.notification_ids ?? opts.notification_ids;
+  if (result.updated_count > 0) {
+    await publishNotificationFeedInvalidateBestEffort({
+      account_id,
+      reason: "read_state_updated",
+      notification_ids,
+    });
+  }
+  return {
+    ...result,
+    notification_ids,
+  };
 }
 
 export async function save(
   opts: SaveNotificationOptions,
 ): Promise<MarkNotificationReadResult> {
   const account_id = requireAccountId(opts.account_id);
-  return await setProjectedNotificationSavedState({
+  const result = await setProjectedNotificationSavedState({
     account_id,
     notification_ids: opts.notification_ids,
     saved: opts.saved ?? true,
   });
+  const notification_ids = result.notification_ids ?? opts.notification_ids;
+  if (result.updated_count > 0) {
+    await publishNotificationFeedInvalidateBestEffort({
+      account_id,
+      reason: "saved_state_updated",
+      notification_ids,
+    });
+  }
+  return {
+    ...result,
+    notification_ids,
+  };
 }
 
 export async function archive(
   opts: ArchiveNotificationOptions,
 ): Promise<MarkNotificationReadResult> {
   const account_id = requireAccountId(opts.account_id);
-  return await setProjectedNotificationArchivedState({
+  const result = await setProjectedNotificationArchivedState({
     account_id,
     notification_ids: opts.notification_ids,
     archived: opts.archived ?? true,
   });
+  const notification_ids = result.notification_ids ?? opts.notification_ids;
+  if (result.updated_count > 0) {
+    await publishNotificationFeedInvalidateBestEffort({
+      account_id,
+      reason: "archived_state_updated",
+      notification_ids,
+    });
+  }
+  return {
+    ...result,
+    notification_ids,
+  };
 }

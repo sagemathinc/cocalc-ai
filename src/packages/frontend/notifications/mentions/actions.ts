@@ -10,17 +10,19 @@ import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { once } from "@cocalc/util/async-utils";
 import type {
   NotificationCountsResult,
+  NotificationFeedEvent,
   NotificationListRow,
 } from "@cocalc/conat/hub/api/notifications";
+import { notificationFeedStreamName as getNotificationFeedStreamName } from "@cocalc/conat/hub/api/notifications";
 import { MentionsState } from "./store";
 import {
   type MentionInfo,
   type MentionsMap,
   NotificationFilter,
 } from "./types";
+import type { DStream } from "@cocalc/conat/sync/dstream";
 
 const DEFAULT_INBOX_LIMIT = 500;
-const REFRESH_INTERVAL_MS = 5_000;
 
 function mentionSort(a: MentionInfo, b: MentionInfo): number {
   return b.get("time").getTime() - a.get("time").getTime();
@@ -85,30 +87,47 @@ function matchesProjectKey(
 }
 
 export class MentionsActions extends Actions<MentionsState> {
-  private refreshTimer?: ReturnType<typeof setInterval>;
   private refreshInFlight?: Promise<void>;
   private signedInListener?: () => void;
+  private signedOutListener?: () => void;
+  private conatConnectedListener?: () => void;
+  private realtimeFeed?: DStream<NotificationFeedEvent>;
+  private realtimeFeedAccountId?: string;
 
   _init() {
     this.signedInListener = () => {
       void this.refresh();
     };
-    webapp_client.on("signed_in", this.signedInListener);
-    this.refreshTimer = setInterval(() => {
+    this.signedOutListener = () => {
+      this.closeRealtimeFeed();
+      this.setState({ mentions: Map(), unread_count: 0 });
+    };
+    this.conatConnectedListener = () => {
       void this.refresh();
-    }, REFRESH_INTERVAL_MS);
+    };
+    webapp_client.on("signed_in", this.signedInListener);
+    webapp_client.on("signed_out", this.signedOutListener);
+    webapp_client.conat_client.on("connected", this.conatConnectedListener);
     void this.refresh();
   }
 
   public override destroy = (): void => {
-    if (this.refreshTimer != null) {
-      clearInterval(this.refreshTimer);
-      this.refreshTimer = undefined;
-    }
     if (this.signedInListener != null) {
       webapp_client.removeListener?.("signed_in", this.signedInListener);
       this.signedInListener = undefined;
     }
+    if (this.signedOutListener != null) {
+      webapp_client.removeListener?.("signed_out", this.signedOutListener);
+      this.signedOutListener = undefined;
+    }
+    if (this.conatConnectedListener != null) {
+      webapp_client.conat_client.removeListener?.(
+        "connected",
+        this.conatConnectedListener,
+      );
+      this.conatConnectedListener = undefined;
+    }
+    this.closeRealtimeFeed();
     Actions.prototype.destroy.call(this);
   };
 
@@ -169,8 +188,56 @@ export class MentionsActions extends Actions<MentionsState> {
         mentions: buildNotificationInboxMap({ account_id, rows }),
         unread_count: getUnreadNotificationCount(counts),
       });
+      await this.ensureRealtimeFeed(account_id);
     } catch (err) {
       console.warn("WARNING: notifications refresh error -- ", err);
+    }
+  }
+
+  private closeRealtimeFeed(): void {
+    if (this.realtimeFeed != null) {
+      this.realtimeFeed.removeListener("change", this.handleRealtimeFeedChange);
+      this.realtimeFeed.removeListener(
+        "history-gap",
+        this.handleRealtimeFeedHistoryGap,
+      );
+      this.realtimeFeed.close();
+      this.realtimeFeed = undefined;
+    }
+    this.realtimeFeedAccountId = undefined;
+  }
+
+  private handleRealtimeFeedChange = (): void => {
+    void this.refresh();
+  };
+
+  private handleRealtimeFeedHistoryGap = (): void => {
+    void this.refresh();
+  };
+
+  private async ensureRealtimeFeed(account_id: string): Promise<void> {
+    if (
+      this.realtimeFeed != null &&
+      this.realtimeFeedAccountId === account_id &&
+      !this.realtimeFeed.isClosed()
+    ) {
+      return;
+    }
+    this.closeRealtimeFeed();
+    try {
+      const feed = await webapp_client.conat_client.dstream<NotificationFeedEvent>(
+        {
+          account_id,
+          name: getNotificationFeedStreamName(),
+          ephemeral: true,
+        },
+      );
+      feed.on("change", this.handleRealtimeFeedChange);
+      feed.on("history-gap", this.handleRealtimeFeedHistoryGap);
+      this.realtimeFeed = feed;
+      this.realtimeFeedAccountId = account_id;
+    } catch (err) {
+      console.warn("WARNING: notifications realtime feed error -- ", err);
     }
   }
 

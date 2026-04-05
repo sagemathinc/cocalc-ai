@@ -1,4 +1,5 @@
 import { authFirstRequireAccount } from "./util";
+import type { Configuration } from "@cocalc/conat/persist/storage";
 
 export type NotificationPriority = "low" | "normal" | "high";
 export type NotificationSeverity = "info" | "warning" | "error";
@@ -78,6 +79,28 @@ export interface NotificationCountsResult {
   >;
 }
 
+export interface NotificationFeedEvent {
+  type: "invalidate";
+  ts: number;
+  account_id: string;
+  reason:
+    | "projected_upsert"
+    | "read_state_updated"
+    | "saved_state_updated"
+    | "archived_state_updated";
+  notification_ids?: string[];
+}
+
+export function notificationFeedStreamName(): string {
+  return "notifications-realtime";
+}
+
+export const NOTIFICATION_FEED_STREAM_CONFIG: Partial<Configuration> = {
+  max_msgs: 500,
+  max_age: 15 * 60 * 1000,
+  max_bytes: 2 * 1024 * 1024,
+};
+
 export interface MarkNotificationReadOptions {
   account_id?: string;
   notification_ids: string[];
@@ -86,6 +109,7 @@ export interface MarkNotificationReadOptions {
 
 export interface MarkNotificationReadResult {
   updated_count: number;
+  notification_ids?: string[];
 }
 
 export interface SaveNotificationOptions {

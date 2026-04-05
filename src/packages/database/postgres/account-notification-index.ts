@@ -225,7 +225,7 @@ export async function setProjectedNotificationReadState(opts: {
   account_id: string;
   notification_ids: string[];
   read: boolean;
-}): Promise<{ updated_count: number }> {
+}): Promise<{ updated_count: number; notification_ids: string[] }> {
   const account_id = normalizeAccountId(opts.account_id);
   const rawIds = Array.isArray(opts.notification_ids)
     ? opts.notification_ids
@@ -253,7 +253,7 @@ export async function setProjectedNotificationSavedState(opts: {
   account_id: string;
   notification_ids: string[];
   saved: boolean;
-}): Promise<{ updated_count: number }> {
+}): Promise<{ updated_count: number; notification_ids: string[] }> {
   const account_id = normalizeAccountId(opts.account_id);
   const notification_ids = Array.from(
     new Set(
@@ -278,7 +278,7 @@ export async function setProjectedNotificationArchivedState(opts: {
   account_id: string;
   notification_ids: string[];
   archived: boolean;
-}): Promise<{ updated_count: number }> {
+}): Promise<{ updated_count: number; notification_ids: string[] }> {
   const account_id = normalizeAccountId(opts.account_id);
   const notification_ids = Array.from(
     new Set(
@@ -307,7 +307,7 @@ async function patchProjectedNotificationReadState(opts: {
     saved?: boolean;
     archived?: boolean;
   };
-}): Promise<{ updated_count: number }> {
+}): Promise<{ updated_count: number; notification_ids: string[] }> {
   const keys = Object.entries(opts.patch).filter(([, value]) => value != null);
   if (keys.length === 0) {
     throw Error("at least one notification state update is required");
@@ -320,16 +320,18 @@ async function patchProjectedNotificationReadState(opts: {
     expression = `jsonb_set(${expression}, '{${key}}', to_jsonb($${i}::BOOLEAN), TRUE)`;
     params.push(value);
   }
-  const { rowCount } = await getPool().query(
+  const { rows, rowCount } = await getPool().query<{ notification_id: string }>(
     `UPDATE account_notification_index
         SET read_state = ${expression},
             updated_at = NOW()
       WHERE account_id = $1::UUID
-        AND notification_id = ANY($2::UUID[])`,
+        AND notification_id = ANY($2::UUID[])
+      RETURNING notification_id`,
     params,
   );
   return {
     updated_count: rowCount ?? 0,
+    notification_ids: rows.map(({ notification_id }) => notification_id).sort(),
   };
 }
 
