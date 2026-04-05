@@ -50,11 +50,6 @@ export function init(redux, configuration: CustomizeState) {
   webapp_client.account_id = account_id;
   redux.getActions("account").setState({ is_logged_in: true, account_id });
   if (previousAccountId !== account_id) {
-    queueMicrotask(() => {
-      webapp_client.emit("signed_in", { account_id, hub: "lite" });
-    });
-  }
-  if (previousAccountId !== account_id) {
     const { recreate_account_table } = require("../account/table-bootstrap");
     recreate_account_table(redux);
   }

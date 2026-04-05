@@ -65,8 +65,6 @@ describe("lite init", () => {
         project_id: "00000000-1000-4000-8000-000000000000",
       } as any,
     );
-    await Promise.resolve();
-
     expect(removeCookie).toHaveBeenCalledWith("account_id");
     expect(webapp_client.account_id).toBe(
       "00000000-1000-4000-8000-000000000001",
@@ -75,10 +73,7 @@ describe("lite init", () => {
       is_logged_in: true,
       account_id: "00000000-1000-4000-8000-000000000001",
     });
-    expect(webapp_client.emit).toHaveBeenCalledWith("signed_in", {
-      account_id: "00000000-1000-4000-8000-000000000001",
-      hub: "lite",
-    });
+    expect(webapp_client.emit).not.toHaveBeenCalled();
     expect(recreate_account_table).toHaveBeenCalledWith(redux);
     expect(setProjectsState).toHaveBeenCalledWith({
       open_projects: ["00000000-1000-4000-8000-000000000000"],
@@ -119,8 +114,6 @@ describe("lite init", () => {
         project_id: "00000000-1000-4000-8000-000000000000",
       } as any,
     );
-    await Promise.resolve();
-
     expect(removeCookie).toHaveBeenCalledWith("account_id");
     expect(webapp_client.emit).not.toHaveBeenCalled();
     expect(recreate_account_table).not.toHaveBeenCalled();
