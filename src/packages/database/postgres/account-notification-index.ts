@@ -167,6 +167,39 @@ export async function listProjectedNotificationsForAccount(opts: {
   return rows;
 }
 
+export async function listProjectedNotificationsByIdsForAccount(opts: {
+  account_id: string;
+  notification_ids: string[];
+}): Promise<AccountNotificationIndexRow[]> {
+  const account_id = normalizeAccountId(opts.account_id);
+  const notification_ids = Array.from(
+    new Set(
+      (Array.isArray(opts.notification_ids) ? opts.notification_ids : []).map(
+        (notification_id) => normalizeUuid(notification_id, "notification id"),
+      ),
+    ),
+  );
+  if (notification_ids.length === 0) {
+    return [];
+  }
+  const { rows } = await getPool().query<AccountNotificationIndexRow>(
+    `SELECT
+       notification_id,
+       kind,
+       project_id,
+       summary,
+       read_state,
+       created_at,
+       updated_at
+     FROM account_notification_index
+     WHERE account_id = $1::UUID
+       AND notification_id = ANY($2::UUID[])
+     ORDER BY created_at DESC NULLS LAST, updated_at DESC NULLS LAST, notification_id ASC`,
+    [account_id, notification_ids],
+  );
+  return rows;
+}
+
 export async function getProjectedNotificationCounts(opts: {
   account_id: string;
 }): Promise<AccountNotificationCounts> {

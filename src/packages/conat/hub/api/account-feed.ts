@@ -27,16 +27,65 @@ export interface AccountFeedCollaboratorRow {
   updated_at: string | null;
 }
 
-export interface AccountFeedNotificationInvalidateEvent {
-  type: "notification.invalidate";
+export interface AccountFeedNotificationRow {
+  notification_id: string;
+  kind: string;
+  project_id: string | null;
+  summary: Record<string, any>;
+  read_state: Record<string, any>;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface AccountFeedNotificationKindCounts {
+  total: number;
+  unread: number;
+  saved: number;
+  archived: number;
+}
+
+export interface AccountFeedNotificationCounts {
+  total: number;
+  unread: number;
+  saved: number;
+  archived: number;
+  by_kind: Record<string, AccountFeedNotificationKindCounts>;
+}
+
+export interface AccountFeedNotificationUpsertEvent {
+  type: "notification.upsert";
   ts: number;
   account_id: string;
+  notification: AccountFeedNotificationRow;
   reason:
     | "projected_upsert"
     | "read_state_updated"
     | "saved_state_updated"
     | "archived_state_updated";
-  notification_ids?: string[];
+}
+
+export interface AccountFeedNotificationRemoveEvent {
+  type: "notification.remove";
+  ts: number;
+  account_id: string;
+  notification_id: string;
+  reason:
+    | "projected_upsert"
+    | "read_state_updated"
+    | "saved_state_updated"
+    | "archived_state_updated";
+}
+
+export interface AccountFeedNotificationCountsEvent {
+  type: "notification.counts";
+  ts: number;
+  account_id: string;
+  counts: AccountFeedNotificationCounts;
+  reason:
+    | "projected_upsert"
+    | "read_state_updated"
+    | "saved_state_updated"
+    | "archived_state_updated";
 }
 
 export interface AccountFeedProjectUpsertEvent {
@@ -70,7 +119,9 @@ export interface AccountFeedCollaboratorRemoveEvent {
 }
 
 export type AccountFeedEvent =
-  | AccountFeedNotificationInvalidateEvent
+  | AccountFeedNotificationUpsertEvent
+  | AccountFeedNotificationRemoveEvent
+  | AccountFeedNotificationCountsEvent
   | AccountFeedProjectUpsertEvent
   | AccountFeedProjectRemoveEvent
   | AccountFeedCollaboratorUpsertEvent

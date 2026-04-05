@@ -28,6 +28,47 @@ function mentionSort(a: MentionInfo, b: MentionInfo): number {
   return b.get("time").getTime() - a.get("time").getTime();
 }
 
+function buildNotificationMention(
+  account_id: string,
+  row: Pick<
+    NotificationListRow,
+    | "notification_id"
+    | "kind"
+    | "project_id"
+    | "summary"
+    | "read_state"
+    | "created_at"
+    | "updated_at"
+  >,
+): MentionInfo {
+  const time = row.created_at ?? row.updated_at ?? new Date();
+  const summary = row.summary ?? {};
+  return fromJS({
+    kind: row.kind,
+    notification_id: row.notification_id,
+    path: summary.path ?? "",
+    priority: summary.priority ?? 2,
+    project_id: row.project_id,
+    source: summary.actor_account_id ?? "",
+    target: account_id,
+    time,
+    title: summary.title,
+    body_markdown: summary.body_markdown,
+    origin_label: summary.origin_label,
+    action_link: summary.action_link,
+    action_label: summary.action_label,
+    severity: summary.severity,
+    description: summary.description,
+    fragment_id: summary.fragment_id,
+    users: {
+      [account_id]: {
+        read: !!row.read_state?.read,
+        saved: !!row.read_state?.saved,
+      },
+    },
+  }) as unknown as MentionInfo;
+}
+
 export function buildNotificationInboxMap(opts: {
   account_id: string;
   rows: NotificationListRow[];
@@ -37,34 +78,9 @@ export function buildNotificationInboxMap(opts: {
     if (row.read_state?.archived) {
       continue;
     }
-    const time = row.created_at ?? row.updated_at ?? new Date();
-    const summary = row.summary ?? {};
     mentions.set(
       row.notification_id,
-      fromJS({
-        kind: row.kind,
-        notification_id: row.notification_id,
-        path: summary.path ?? "",
-        priority: summary.priority ?? 2,
-        project_id: row.project_id,
-        source: summary.actor_account_id ?? "",
-        target: opts.account_id,
-        time,
-        title: summary.title,
-        body_markdown: summary.body_markdown,
-        origin_label: summary.origin_label,
-        action_link: summary.action_link,
-        action_label: summary.action_label,
-        severity: summary.severity,
-        description: summary.description,
-        fragment_id: summary.fragment_id,
-        users: {
-          [opts.account_id]: {
-            read: !!row.read_state?.read,
-            saved: !!row.read_state?.saved,
-          },
-        },
-      }) as unknown as MentionInfo,
+      buildNotificationMention(opts.account_id, row),
     );
   }
   return mentions.asImmutable().sort(mentionSort) as MentionsMap;
@@ -238,10 +254,39 @@ export class MentionsActions extends Actions<MentionsState> {
   }
 
   private handleRealtimeFeedChange = (event?: AccountFeedEvent): void => {
-    if (event?.type != null && event.type !== "notification.invalidate") {
+    const account_id = this.getAccountId();
+    if (event == null || account_id == null || event.account_id !== account_id) {
       return;
     }
-    void this.refresh();
+    switch (event.type) {
+      case "notification.upsert": {
+        const mention = buildNotificationMention(account_id, {
+          ...event.notification,
+          created_at: event.notification.created_at
+            ? new Date(event.notification.created_at)
+            : null,
+          updated_at: event.notification.updated_at
+            ? new Date(event.notification.updated_at)
+            : null,
+        });
+        this.setState({
+          mentions: this.getMentions()
+            .set(event.notification.notification_id, mention)
+            .sort(mentionSort) as MentionsMap,
+        });
+        return;
+      }
+      case "notification.remove":
+        this.setState({
+          mentions: this.getMentions().remove(event.notification_id),
+        });
+        return;
+      case "notification.counts":
+        this.setState({ unread_count: event.counts.unread });
+        return;
+      default:
+        return;
+    }
   };
 
   private handleRealtimeFeedHistoryGap = (): void => {
@@ -316,7 +361,6 @@ export class MentionsActions extends Actions<MentionsState> {
     }
     await this.ensureSignedIn();
     await webapp_client.conat_client.hub.notifications.markRead(opts);
-    await this.refresh();
   }
 
   private async updateSavedState(opts: {
@@ -328,7 +372,6 @@ export class MentionsActions extends Actions<MentionsState> {
     }
     await this.ensureSignedIn();
     await webapp_client.conat_client.hub.notifications.save(opts);
-    await this.refresh();
   }
 
   public mark(mention: MentionInfo, id: string, type: "read" | "unread"): void {

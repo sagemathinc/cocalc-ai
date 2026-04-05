@@ -27,6 +27,10 @@ describe("runAccountNotificationIndexProjectionPass", () => {
         inserted_rows: 3,
         deleted_rows: 0,
         affected_account_ids: ["a-1", "a-2"],
+        affected_notifications: [
+          { account_id: "a-1", notification_id: "n-1" },
+          { account_id: "a-2", notification_id: "n-2" },
+        ],
         event_types: {
           "notification.upserted": 3,
         },
@@ -40,6 +44,10 @@ describe("runAccountNotificationIndexProjectionPass", () => {
         inserted_rows: 1,
         deleted_rows: 0,
         affected_account_ids: ["a-2", "a-3"],
+        affected_notifications: [
+          { account_id: "a-2", notification_id: "n-3" },
+          { account_id: "a-3", notification_id: "n-4" },
+        ],
         event_types: {
           "notification.upserted": 1,
         },
@@ -59,6 +67,12 @@ describe("runAccountNotificationIndexProjectionPass", () => {
       inserted_rows: 4,
       deleted_rows: 0,
       affected_account_ids: ["a-1", "a-2", "a-3"],
+      affected_notifications: [
+        { account_id: "a-1", notification_id: "n-1" },
+        { account_id: "a-2", notification_id: "n-2" },
+        { account_id: "a-2", notification_id: "n-3" },
+        { account_id: "a-3", notification_id: "n-4" },
+      ],
       event_types: {
         "notification.upserted": 4,
       },
@@ -75,6 +89,10 @@ describe("runAccountNotificationIndexProjectionPass", () => {
       inserted_rows: 2,
       deleted_rows: 0,
       affected_account_ids: ["a-1", "a-2"],
+      affected_notifications: [
+        { account_id: "a-1", notification_id: "n-1" },
+        { account_id: "a-2", notification_id: "n-2" },
+      ],
       event_types: {
         "notification.upserted": 2,
       },
@@ -92,6 +110,10 @@ describe("runAccountNotificationIndexProjectionPass", () => {
       inserted_rows: 2,
       deleted_rows: 0,
       affected_account_ids: ["a-1", "a-2"],
+      affected_notifications: [
+        { account_id: "a-1", notification_id: "n-1" },
+        { account_id: "a-2", notification_id: "n-2" },
+      ],
       event_types: {
         "notification.upserted": 2,
       },
@@ -100,10 +122,12 @@ describe("runAccountNotificationIndexProjectionPass", () => {
     expect(publisher).toHaveBeenNthCalledWith(1, {
       account_id: "a-1",
       reason: "projected_upsert",
+      notification_ids: ["n-1"],
     });
     expect(publisher).toHaveBeenNthCalledWith(2, {
       account_id: "a-2",
       reason: "projected_upsert",
+      notification_ids: ["n-2"],
     });
 
     const status = getAccountNotificationIndexProjectionMaintenanceStatus();
@@ -116,6 +140,10 @@ describe("runAccountNotificationIndexProjectionPass", () => {
       inserted_rows: 2,
       deleted_rows: 0,
       affected_account_ids: ["a-1", "a-2"],
+      affected_notifications: [
+        { account_id: "a-1", notification_id: "n-1" },
+        { account_id: "a-2", notification_id: "n-2" },
+      ],
       event_types: {
         "notification.upserted": 2,
       },

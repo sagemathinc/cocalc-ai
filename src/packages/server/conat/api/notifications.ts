@@ -33,7 +33,7 @@ import type {
   SaveNotificationOptions,
 } from "@cocalc/conat/hub/api/notifications";
 import { isValidUUID } from "@cocalc/util/misc";
-import { publishNotificationFeedInvalidateBestEffort } from "@cocalc/server/notifications/feed";
+import { publishProjectedNotificationFeedUpdatesBestEffort } from "@cocalc/server/notifications/feed";
 
 function requireAccountId(account_id?: string): string {
   const normalized = `${account_id ?? ""}`.trim();
@@ -321,7 +321,7 @@ export async function markRead(
   });
   const notification_ids = result.notification_ids ?? opts.notification_ids;
   if (result.updated_count > 0) {
-    await publishNotificationFeedInvalidateBestEffort({
+    await publishProjectedNotificationFeedUpdatesBestEffort({
       account_id,
       reason: "read_state_updated",
       notification_ids,
@@ -344,7 +344,7 @@ export async function save(
   });
   const notification_ids = result.notification_ids ?? opts.notification_ids;
   if (result.updated_count > 0) {
-    await publishNotificationFeedInvalidateBestEffort({
+    await publishProjectedNotificationFeedUpdatesBestEffort({
       account_id,
       reason: "saved_state_updated",
       notification_ids,
@@ -367,7 +367,7 @@ export async function archive(
   });
   const notification_ids = result.notification_ids ?? opts.notification_ids;
   if (result.updated_count > 0) {
-    await publishNotificationFeedInvalidateBestEffort({
+    await publishProjectedNotificationFeedUpdatesBestEffort({
       account_id,
       reason: "archived_state_updated",
       notification_ids,

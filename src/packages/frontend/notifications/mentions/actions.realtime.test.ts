@@ -90,7 +90,7 @@ describe("MentionsActions realtime feed", () => {
     });
   });
 
-  it("subscribes to the notification feed and refreshes on invalidate events", async () => {
+  it("subscribes to the notification feed and applies delta events", async () => {
     const redux = {
       getStore: jest.fn((name: string) => {
         if (name === "account") {
@@ -121,17 +121,50 @@ describe("MentionsActions realtime feed", () => {
     const feed =
       await mockedWebappClient.conat_client.dstream.mock.results[0].value;
     feed.emit("change", {
-      type: "notification.invalidate",
+      type: "notification.upsert",
       account_id: "acct-1",
       reason: "projected_upsert",
       ts: Date.now(),
+      notification: {
+        notification_id: "n-1",
+        kind: "mention",
+        project_id: null,
+        summary: {
+          title: "Notice",
+        },
+        read_state: {
+          read: false,
+          saved: false,
+        },
+        created_at: "2026-04-05T00:00:00.000Z",
+        updated_at: "2026-04-05T00:00:00.000Z",
+      },
     });
-    await flush();
-    await flush();
+    feed.emit("change", {
+      type: "notification.counts",
+      account_id: "acct-1",
+      reason: "projected_upsert",
+      ts: Date.now(),
+      counts: {
+        total: 1,
+        unread: 1,
+        saved: 0,
+        archived: 0,
+        by_kind: {
+          mention: {
+            total: 1,
+            unread: 1,
+            saved: 0,
+            archived: 0,
+          },
+        },
+      },
+    });
+    await flushMicrotasks();
 
     expect(
       mockedWebappClient.conat_client.hub.notifications.list,
-    ).toHaveBeenCalledTimes(2);
+    ).toHaveBeenCalledTimes(1);
 
     feed.emit("history-gap", {
       requested_start_seq: 1,
@@ -143,7 +176,7 @@ describe("MentionsActions realtime feed", () => {
 
     expect(
       mockedWebappClient.conat_client.hub.notifications.list,
-    ).toHaveBeenCalledTimes(3);
+    ).toHaveBeenCalledTimes(2);
   });
 
   it("waits for the account store is_ready event before bootstrapping", async () => {

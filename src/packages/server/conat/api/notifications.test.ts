@@ -4,7 +4,7 @@
  */
 
 import getPool, { initEphemeralDatabase } from "@cocalc/database/pool";
-import { publishNotificationFeedInvalidateBestEffort } from "@cocalc/server/notifications/feed";
+import { publishProjectedNotificationFeedUpdatesBestEffort } from "@cocalc/server/notifications/feed";
 import {
   archive,
   counts,
@@ -16,7 +16,7 @@ import {
 } from "./notifications";
 
 jest.mock("@cocalc/server/notifications/feed", () => ({
-  publishNotificationFeedInvalidateBestEffort: jest.fn(),
+  publishProjectedNotificationFeedUpdatesBestEffort: jest.fn(),
 }));
 
 const LOCAL_BAY_ID = "bay-0";
@@ -256,7 +256,9 @@ describe("conat notifications api", () => {
         "77777777-7777-4777-8777-777777777777",
       ],
     });
-    expect(publishNotificationFeedInvalidateBestEffort).toHaveBeenCalledWith({
+    expect(
+      publishProjectedNotificationFeedUpdatesBestEffort,
+    ).toHaveBeenCalledWith({
       account_id: ACTOR_ACCOUNT_ID,
       reason: "read_state_updated",
       notification_ids: [
@@ -299,7 +301,9 @@ describe("conat notifications api", () => {
       updated_count: 1,
       notification_ids: ["66666666-6666-4666-8666-666666666666"],
     });
-    expect(publishNotificationFeedInvalidateBestEffort).toHaveBeenCalledWith({
+    expect(
+      publishProjectedNotificationFeedUpdatesBestEffort,
+    ).toHaveBeenCalledWith({
       account_id: ACTOR_ACCOUNT_ID,
       reason: "saved_state_updated",
       notification_ids: ["66666666-6666-4666-8666-666666666666"],
@@ -314,7 +318,9 @@ describe("conat notifications api", () => {
       updated_count: 1,
       notification_ids: ["77777777-7777-4777-8777-777777777777"],
     });
-    expect(publishNotificationFeedInvalidateBestEffort).toHaveBeenCalledWith({
+    expect(
+      publishProjectedNotificationFeedUpdatesBestEffort,
+    ).toHaveBeenCalledWith({
       account_id: ACTOR_ACCOUNT_ID,
       reason: "archived_state_updated",
       notification_ids: ["77777777-7777-4777-8777-777777777777"],

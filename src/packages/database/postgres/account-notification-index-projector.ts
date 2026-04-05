@@ -33,6 +33,10 @@ export interface DrainAccountNotificationIndexProjectionResult {
   inserted_rows: number;
   deleted_rows: number;
   affected_account_ids: string[];
+  affected_notifications: Array<{
+    account_id: string;
+    notification_id: string;
+  }>;
   event_types: Record<string, number>;
 }
 
@@ -89,6 +93,7 @@ async function applyNotificationEventToAccountNotificationIndex(opts: {
   inserted_rows: number;
   deleted_rows: number;
   affected_account_id?: string;
+  affected_notification_id?: string;
 }> {
   const { db, bay_id, event } = opts;
   if (
@@ -101,6 +106,7 @@ async function applyNotificationEventToAccountNotificationIndex(opts: {
       inserted_rows: 0,
       deleted_rows: 0,
       affected_account_id: undefined,
+      affected_notification_id: undefined,
     };
   }
   const payload = (event.payload_json ?? {}) as NotificationTargetOutboxPayload;
@@ -131,6 +137,7 @@ async function applyNotificationEventToAccountNotificationIndex(opts: {
     inserted_rows: 1,
     deleted_rows: 0,
     affected_account_id: event.target_account_id,
+    affected_notification_id: event.notification_id,
   };
 }
 
@@ -239,9 +246,11 @@ export async function drainAccountNotificationIndexProjection(opts?: {
       inserted_rows: 0,
       deleted_rows: 0,
       affected_account_ids: [],
+      affected_notifications: [],
       event_types: {},
     };
     const affectedAccountIds = new Set<string>();
+    const affectedNotifications = new Set<string>();
 
     for (const event of rows) {
       result.event_types[event.event_type] =
@@ -257,6 +266,14 @@ export async function drainAccountNotificationIndexProjection(opts?: {
       if (applied.affected_account_id != null) {
         affectedAccountIds.add(applied.affected_account_id);
       }
+      if (
+        applied.affected_account_id != null &&
+        applied.affected_notification_id != null
+      ) {
+        affectedNotifications.add(
+          `${applied.affected_account_id}:${applied.affected_notification_id}`,
+        );
+      }
       if (!dry_run) {
         await client.query(
           `UPDATE notification_target_outbox
@@ -267,6 +284,12 @@ export async function drainAccountNotificationIndexProjection(opts?: {
       }
     }
     result.affected_account_ids = Array.from(affectedAccountIds).sort();
+    result.affected_notifications = Array.from(affectedNotifications)
+      .sort()
+      .map((value) => {
+        const [account_id, notification_id] = value.split(":");
+        return { account_id, notification_id };
+      });
 
     if (dry_run) {
       await client.query("ROLLBACK");
