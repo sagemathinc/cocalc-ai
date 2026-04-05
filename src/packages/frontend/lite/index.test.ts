@@ -65,6 +65,7 @@ describe("lite init", () => {
         project_id: "00000000-1000-4000-8000-000000000000",
       } as any,
     );
+    await Promise.resolve();
 
     expect(removeCookie).toHaveBeenCalledWith("account_id");
     expect(webapp_client.account_id).toBe(
@@ -117,6 +118,7 @@ describe("lite init", () => {
         project_id: "00000000-1000-4000-8000-000000000000",
       } as any,
     );
+    await Promise.resolve();
 
     expect(removeCookie).toHaveBeenCalledWith("account_id");
     expect(webapp_client.emit).not.toHaveBeenCalled();
