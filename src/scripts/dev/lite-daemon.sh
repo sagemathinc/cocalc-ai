@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+readonly LITE_CANONICAL_PROJECT_ID="00000000-1000-4000-8000-000000000000"
+readonly LITE_CANONICAL_ACCOUNT_ID="00000000-1000-4000-8000-000000000001"
+
 export DEBUG_CONSOLE=yes
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
@@ -199,8 +202,11 @@ start_daemon() {
     export COCALC_ORIGINAL_HOME="${COCALC_ORIGINAL_HOME:-$HOME}"
     export COCALC_ORIGINAL_PATH="${COCALC_ORIGINAL_PATH:-$PATH}"
 
+    unset REMOTE_HUB
     export HOME="$LITE_HOME"
     export HOST="$LITE_HOST"
+    export COCALC_PROJECT_ID="$LITE_CANONICAL_PROJECT_ID"
+    export COCALC_ACCOUNT_ID="$LITE_CANONICAL_ACCOUNT_ID"
     if [ -n "$LITE_PORT" ]; then
       export PORT="$LITE_PORT"
     fi
