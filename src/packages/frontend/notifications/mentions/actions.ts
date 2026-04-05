@@ -24,6 +24,19 @@ import type { DStream } from "@cocalc/conat/sync/dstream";
 
 const DEFAULT_INBOX_LIMIT = 500;
 
+function coerceNotificationDate(value: Date | string | null | undefined): Date {
+  if (value instanceof Date) {
+    return value;
+  }
+  if (typeof value === "string") {
+    const parsed = new Date(value);
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed;
+    }
+  }
+  return new Date();
+}
+
 function mentionSort(a: MentionInfo, b: MentionInfo): number {
   return b.get("time").getTime() - a.get("time").getTime();
 }
@@ -37,7 +50,7 @@ export function buildNotificationInboxMap(opts: {
     if (row.read_state?.archived) {
       continue;
     }
-    const time = row.created_at ?? row.updated_at ?? new Date();
+    const time = coerceNotificationDate(row.created_at ?? row.updated_at);
     const summary = row.summary ?? {};
     mentions.set(
       row.notification_id,
@@ -228,13 +241,11 @@ export class MentionsActions extends Actions<MentionsState> {
     }
     this.closeRealtimeFeed();
     try {
-      const feed = await webapp_client.conat_client.dstream<AccountFeedEvent>(
-        {
-          account_id,
-          name: accountFeedStreamName(),
-          ephemeral: true,
-        },
-      );
+      const feed = await webapp_client.conat_client.dstream<AccountFeedEvent>({
+        account_id,
+        name: accountFeedStreamName(),
+        ephemeral: true,
+      });
       feed.on("change", this.handleRealtimeFeedChange);
       feed.on("history-gap", this.handleRealtimeFeedHistoryGap);
       this.realtimeFeed = feed;

@@ -75,6 +75,29 @@ describe("notification inbox mention adapter", () => {
     expect(notice?.get("origin_label")).toBe("Security");
   });
 
+  it("coerces serialized notification timestamps from RPC responses", () => {
+    const map = buildNotificationInboxMap({
+      account_id: "11111111-1111-4111-8111-111111111111",
+      rows: [
+        {
+          notification_id: "77777777-7777-4777-8777-777777777777",
+          kind: "account_notice",
+          project_id: null,
+          summary: {
+            title: "Serialized date",
+          },
+          read_state: {},
+          created_at: "2026-04-05T03:47:59.178Z" as unknown as Date,
+          updated_at: null,
+        },
+      ],
+    });
+
+    const notice = map.get("77777777-7777-4777-8777-777777777777");
+    expect(notice?.get("time")).toBeInstanceOf(Date);
+    expect(notice?.get("time").toISOString()).toBe("2026-04-05T03:47:59.178Z");
+  });
+
   it("uses total unread counts from the projected inbox", () => {
     expect(
       getUnreadNotificationCount({

@@ -1049,6 +1049,12 @@ export class PostgreSQL extends EventEmitter implements PostgreSQLMethods {
     return userQuery._user_set_query_project_change_after.call(this, ...args);
   }
 
+  _user_set_query_mention_change_after(
+    ...args: UserQueryMethodArgs<"_user_set_query_mention_change_after">
+  ): UserQueryMethodReturn<"_user_set_query_mention_change_after"> {
+    return userQuery._user_set_query_mention_change_after.call(this, ...args);
+  }
+
   _user_get_query_functional_subs(
     ...args: UserQueryMethodArgs<"_user_get_query_functional_subs">
   ): UserQueryMethodReturn<"_user_get_query_functional_subs"> {

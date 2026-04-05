@@ -2772,6 +2772,12 @@ describe("postgres user-queries - Comprehensive Test Suite", () => {
       });
     });
 
+    describe("_user_set_query_mention_change_after", () => {
+      test("should exist", () => {
+        expect(db._user_set_query_mention_change_after).toBeDefined();
+      });
+    });
+
     describe("_user_set_query_syncstring_change_after", () => {
       test("should exist", () => {
         expect(db._user_set_query_syncstring_change_after).toBeDefined();
