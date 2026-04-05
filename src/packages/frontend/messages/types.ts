@@ -12,8 +12,6 @@ export type Filter =
   | "messages-sent"
   | "messages-all"
   | "messages-trash"
-  | "messages-starred"
-  | "messages-liked"
   | "messages-search"
   | "messages-drafts";
 
@@ -23,22 +21,12 @@ export function isMessagesFilter(filter: string): filter is Filter {
     filter == "messages-sent" ||
     filter == "messages-all" ||
     filter == "messages-trash" ||
-    filter == "messages-starred" ||
-    filter == "messages-liked" ||
     filter == "messages-search" ||
     filter == "messages-drafts"
   );
 }
 
-export type Folder =
-  | "inbox"
-  | "sent"
-  | "all"
-  | "trash"
-  | "search"
-  | "drafts"
-  | "starred"
-  | "liked";
+export type Folder = "inbox" | "sent" | "all" | "trash" | "search" | "drafts";
 
 export function isFolder(folder: string): folder is Folder {
   return (
@@ -47,8 +35,6 @@ export function isFolder(folder: string): folder is Folder {
     folder == "all" ||
     folder == "trash" ||
     folder == "search" ||
-    folder == "drafts" ||
-    folder == "starred" ||
-    folder == "liked"
+    folder == "drafts"
   );
 }

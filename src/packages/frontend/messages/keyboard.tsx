@@ -57,14 +57,6 @@ function handler(e) {
       name = "delete";
       break;
 
-    case "s":
-      name = "toggle-star";
-      break;
-
-    case "l":
-      name = "toggle-like";
-      break;
-
     default:
     //console.log(e);
   }
