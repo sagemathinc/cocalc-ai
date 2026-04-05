@@ -1717,6 +1717,15 @@ export async function _user_set_query_project_change_after(
   if (!project_id) {
     return cb();
   }
+  const publishImmediateFeed = async () => {
+    try {
+      await this.publishProjectAccountFeedEventsBestEffort?.({
+        project_id,
+      });
+    } catch (err) {
+      dbg(`immediate project account feed publish failed -- ${err}`);
+    }
+  };
   try {
     if (
       new_val?.deleted !== undefined &&
@@ -1728,6 +1737,7 @@ export async function _user_set_query_project_change_after(
           : "project.summary_changed",
         project_id,
       });
+      await publishImmediateFeed();
       return cb();
     }
     const summaryFields = [
@@ -1746,6 +1756,7 @@ export async function _user_set_query_project_change_after(
         event_type: "project.summary_changed",
         project_id,
       });
+      await publishImmediateFeed();
     }
     return cb();
   } catch (err) {

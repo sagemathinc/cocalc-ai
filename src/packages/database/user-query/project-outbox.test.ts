@@ -14,6 +14,7 @@ jest.mock("@cocalc/database/postgres/project-events-outbox", () => ({
 describe("project user-query outbox hooks", () => {
   const ctx = {
     _dbg: jest.fn(() => () => {}),
+    publishProjectAccountFeedEventsBestEffort: jest.fn(async () => undefined),
   } as any;
 
   beforeEach(() => {
@@ -53,6 +54,9 @@ describe("project user-query outbox hooks", () => {
       event_type: "project.summary_changed",
       project_id: "11111111-1111-4111-8111-111111111111",
     });
+    expect(ctx.publishProjectAccountFeedEventsBestEffort).toHaveBeenCalledWith({
+      project_id: "11111111-1111-4111-8111-111111111111",
+    });
   });
 
   it("emits project.deleted when a project is newly marked deleted", async () => {
@@ -70,6 +74,9 @@ describe("project user-query outbox hooks", () => {
       event_type: "project.deleted",
       project_id: "11111111-1111-4111-8111-111111111111",
     });
+    expect(ctx.publishProjectAccountFeedEventsBestEffort).toHaveBeenCalledWith({
+      project_id: "11111111-1111-4111-8111-111111111111",
+    });
   });
 
   it("does not emit an outbox event when summary fields did not change", async () => {
@@ -84,5 +91,6 @@ describe("project user-query outbox hooks", () => {
       },
     );
     expect(appendProjectOutboxEventForProject).not.toHaveBeenCalled();
+    expect(ctx.publishProjectAccountFeedEventsBestEffort).not.toHaveBeenCalled();
   });
 });

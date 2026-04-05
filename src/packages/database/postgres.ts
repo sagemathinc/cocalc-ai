@@ -459,6 +459,9 @@ export class PostgreSQL extends EventEmitter implements PostgreSQLMethods {
     subject: string;
     body?: string;
   }) => Promise<number | undefined>;
+  declare publishProjectAccountFeedEventsBestEffort?: (opts: {
+    project_id: string;
+  }) => Promise<void>;
 
   // emits a 'connect' event whenever we successfully connect to the database and 'disconnect' when connection to postgres fails
   constructor(opts: PostgreSQLOptions = {}) {

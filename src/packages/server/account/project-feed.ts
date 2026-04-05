@@ -3,11 +3,17 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { db } from "@cocalc/database";
 import getPool from "@cocalc/database/pool";
 import { computeAccountProjectFeedEvents } from "@cocalc/database/postgres/account-project-index-projector";
 import { loadProjectOutboxPayload } from "@cocalc/database/postgres/project-events-outbox";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { publishAccountFeedEventBestEffort } from "./feed";
+
+export function enableDbProjectAccountFeedPublishing() {
+  db().publishProjectAccountFeedEventsBestEffort =
+    publishProjectAccountFeedEventsBestEffort;
+}
 
 export async function publishProjectAccountFeedEventsBestEffort(opts: {
   project_id: string;

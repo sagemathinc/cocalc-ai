@@ -2,12 +2,17 @@ let connectMock: jest.Mock;
 let loadProjectOutboxPayloadMock: jest.Mock;
 let computeAccountProjectFeedEventsMock: jest.Mock;
 let publishAccountFeedEventBestEffortMock: jest.Mock;
+let dbMock: { publishProjectAccountFeedEventsBestEffort?: any };
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
   default: () => ({
     connect: connectMock,
   }),
+}));
+
+jest.mock("@cocalc/database", () => ({
+  db: () => dbMock,
 }));
 
 jest.mock("@cocalc/database/postgres/project-events-outbox", () => ({
@@ -31,6 +36,7 @@ describe("publishProjectAccountFeedEventsBestEffort", () => {
     loadProjectOutboxPayloadMock = jest.fn();
     computeAccountProjectFeedEventsMock = jest.fn();
     publishAccountFeedEventBestEffortMock = jest.fn();
+    dbMock = {};
   });
 
   it("loads the latest project payload, computes feed events, and publishes them", async () => {
@@ -101,5 +107,18 @@ describe("publishProjectAccountFeedEventsBestEffort", () => {
       },
     });
     expect(client.release).toHaveBeenCalled();
+  });
+
+  it("installs the immediate project feed publisher on the db singleton", async () => {
+    const {
+      enableDbProjectAccountFeedPublishing,
+      publishProjectAccountFeedEventsBestEffort,
+    } = await import("./project-feed");
+
+    enableDbProjectAccountFeedPublishing();
+
+    expect(dbMock.publishProjectAccountFeedEventsBestEffort).toBe(
+      publishProjectAccountFeedEventsBestEffort,
+    );
   });
 });
