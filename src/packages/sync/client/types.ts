@@ -11,6 +11,7 @@ import type {
 export interface Client extends EventEmitter {
   is_project: () => boolean;
   is_browser: () => boolean;
+  no_changefeed?: () => boolean;
   dbg: (str: string) => Function;
   query: (opts: any) => void;
   query_cancel: Function;

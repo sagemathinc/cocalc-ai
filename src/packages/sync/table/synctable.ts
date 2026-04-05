@@ -731,6 +731,7 @@ export class SyncTable extends EventEmitter {
         USE_CONAT &&
         !isTestClient(this.client) &&
         this.client.is_browser() &&
+        !this.client.no_changefeed?.() &&
         !this.project_id
       ) {
         const account_id = this.client.client_id?.();
