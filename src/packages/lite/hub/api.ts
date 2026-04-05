@@ -34,6 +34,11 @@ import type {
   NotificationListRow,
   SaveNotificationOptions,
 } from "@cocalc/conat/hub/api/notifications";
+import type {
+  ProjectLogCursor,
+  ProjectLogPage,
+  ProjectLogRow,
+} from "@cocalc/conat/hub/api/projects";
 import userQuery, { init as initUserQuery } from "./sqlite/user-query";
 import { account_id as ACCOUNT_ID, data } from "@cocalc/backend/data";
 import { project_id as LITE_PROJECT_ID } from "@cocalc/project/data";
@@ -85,10 +90,13 @@ import {
   startLiteCodexDeviceAuth,
   uploadLiteSubscriptionAuthFile,
 } from "./codex-auth";
+import { listRows } from "./sqlite/database";
 
 const logger = getLogger("lite:hub:api");
 const execFile = promisify(execFileCb);
 const DEFAULT_BAY_ID = "bay-0";
+const DEFAULT_PROJECT_LOG_LIMIT = 750;
+const MAX_PROJECT_LOG_LIMIT = 2_000;
 
 function syncHistoryWithExplicitClient(
   opts: Parameters<typeof syncHistory>[0],
@@ -179,6 +187,91 @@ function requireLiteProjectId(value?: string): string {
     throw Error(`project '${project_id}' is not available in lite mode`);
   }
   return project_id;
+}
+
+function normalizeProjectLogLimit(limit?: number): number {
+  if (!Number.isFinite(limit)) {
+    return DEFAULT_PROJECT_LOG_LIMIT;
+  }
+  return Math.max(1, Math.min(MAX_PROJECT_LOG_LIMIT, Math.floor(limit!)));
+}
+
+function normalizeProjectLogTime(value: unknown): Date | null {
+  if (value == null) return null;
+  const date = value instanceof Date ? value : new Date(`${value}`);
+  return Number.isFinite(date.getTime()) ? date : null;
+}
+
+function projectLogCursorKey(
+  cursor?: ProjectLogCursor,
+): [number, string] | null {
+  if (!cursor?.id) return null;
+  return [normalizeProjectLogTime(cursor.time)?.getTime() ?? 0, cursor.id];
+}
+
+function compareProjectLogRows(a: ProjectLogRow, b: ProjectLogRow): number {
+  const at = normalizeProjectLogTime(a.time)?.getTime() ?? 0;
+  const bt = normalizeProjectLogTime(b.time)?.getTime() ?? 0;
+  if (at !== bt) return bt - at;
+  return `${b.id}`.localeCompare(`${a.id}`);
+}
+
+async function listProjectLogLite(opts: {
+  account_id?: string;
+  project_id: string;
+  limit?: number;
+  newer_than?: ProjectLogCursor;
+  older_than?: ProjectLogCursor;
+}): Promise<ProjectLogPage> {
+  if (hasRemote) {
+    return await callRemoteHub({
+      name: "projects.listProjectLog",
+      args: [opts],
+    });
+  }
+  const project_id = requireLiteProjectId(opts.project_id);
+  const limit = normalizeProjectLogLimit(opts.limit);
+  const newerKey = projectLogCursorKey(opts.newer_than);
+  const olderKey = projectLogCursorKey(opts.older_than);
+
+  const entries = (listRows("project_log") as any[])
+    .filter((row) => row?.project_id === project_id)
+    .map(
+      (row): ProjectLogRow => ({
+        id: `${row.id}`,
+        project_id: `${row.project_id}`,
+        account_id: `${row.account_id}`,
+        time: normalizeProjectLogTime(row.time),
+        event: row.event ?? {},
+      }),
+    )
+    .sort(compareProjectLogRows)
+    .filter((row) => {
+      const key: [number, string] = [
+        normalizeProjectLogTime(row.time)?.getTime() ?? 0,
+        row.id,
+      ];
+      if (
+        newerKey != null &&
+        (key[0] < newerKey[0] ||
+          (key[0] === newerKey[0] && key[1] <= newerKey[1]))
+      ) {
+        return false;
+      }
+      if (
+        olderKey != null &&
+        (key[0] > olderKey[0] ||
+          (key[0] === olderKey[0] && key[1] >= olderKey[1]))
+      ) {
+        return false;
+      }
+      return true;
+    });
+
+  return {
+    entries: entries.slice(0, limit),
+    has_more: entries.length > limit,
+  };
 }
 
 async function codexDeviceAuthStartLite(opts: {
@@ -1009,6 +1102,7 @@ export const hubApi: HubApi = {
     archive: archiveNotificationLite,
   },
   projects: {
+    listProjectLog: listProjectLogLite,
     codexDeviceAuthStart: codexDeviceAuthStartLite,
     codexDeviceAuthStatus: codexDeviceAuthStatusLite,
     codexDeviceAuthCancel: codexDeviceAuthCancelLite,
