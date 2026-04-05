@@ -30,6 +30,7 @@ export class ProjectsTable extends Table {
     let project_map;
     const project_id = redux.getStore("page").get("kiosk_project_id");
     const actions = redux.getActions("projects");
+    void actions.ensureRealtimeFeedForCurrentAccount?.();
     if (project_id != null) {
       let new_project_map;
       project_map = redux.getStore("projects")?.get("project_map");

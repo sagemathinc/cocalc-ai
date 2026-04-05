@@ -268,7 +268,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
     });
   }
 
-  private async ensureRealtimeFeedForCurrentAccount(): Promise<void> {
+  public async ensureRealtimeFeedForCurrentAccount(): Promise<void> {
     if (!webapp_client.is_signed_in()) {
       this.closeRealtimeFeed();
       return;
