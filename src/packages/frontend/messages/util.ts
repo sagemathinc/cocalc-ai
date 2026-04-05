@@ -11,6 +11,19 @@ import { SCHEMA } from "@cocalc/util/schema";
 
 type Mesg = iMessage | Message;
 
+function normalizeAccountIds(
+  account_ids: Array<string | null | undefined>,
+): string[] {
+  return Array.from(
+    new Set(
+      account_ids.filter(
+        (account_id): account_id is string =>
+          typeof account_id === "string" && account_id.trim() !== "",
+      ),
+    ),
+  );
+}
+
 // WARNING: If you change or add fields and logic that could impact the "number of
 // messages in the inbox that are not read", make sure to also update
 //  packages/database/postgres/messages.ts
@@ -587,25 +600,33 @@ export function participantsInThread({
     // so we always show the root. people can't be added to an existing thread.
     for (const m of thread) {
       for (const account_id of get(m, "to_ids")) {
-        ids.add(account_id);
+        if (typeof account_id === "string" && account_id.trim() !== "") {
+          ids.add(account_id);
+        }
       }
       const from_id = get(m, "from_id");
-      ids.add(from_id);
+      if (typeof from_id === "string" && from_id.trim() !== "") {
+        ids.add(from_id);
+      }
     }
   } else {
-    ids = new Set(get(message, "to_ids").concat([get(message, "from_id")]));
+    ids = new Set(
+      normalizeAccountIds(
+        (get(message, "to_ids") ?? []).concat([get(message, "from_id")]),
+      ),
+    );
   }
   return Array.from(ids);
 }
 
 export function excludeSelf(account_ids: string[]): string[] {
-  return account_ids.filter(
+  return normalizeAccountIds(account_ids).filter(
     (account_id) => account_id != webapp_client.account_id,
   );
 }
 
 export function excludeSelfUnlessAlone(account_ids: string[]): string[] {
-  account_ids = account_ids.filter(
+  account_ids = normalizeAccountIds(account_ids).filter(
     (account_id) => account_id != webapp_client.account_id,
   );
   if (account_ids.length == 0) {
@@ -627,11 +648,14 @@ export function sendersInThread({
   if (thread != null) {
     ids = new Set<string>();
     for (const m of thread) {
-      ids.add(get(m, "from_id"));
+      const from_id = get(m, "from_id");
+      if (typeof from_id === "string" && from_id.trim() !== "") {
+        ids.add(from_id);
+      }
     }
     return Array.from(ids);
   } else {
-    return [get(message, "from_id")];
+    return normalizeAccountIds([get(message, "from_id")]);
   }
 }
 
@@ -649,11 +673,13 @@ export function recipientsInThread({
     ids = new Set<string>();
     for (const m of thread) {
       for (const account_id of get(m, "to_ids")) {
-        ids.add(account_id);
+        if (typeof account_id === "string" && account_id.trim() !== "") {
+          ids.add(account_id);
+        }
       }
     }
     return Array.from(ids);
   } else {
-    return get(message, "to_ids");
+    return normalizeAccountIds(get(message, "to_ids") ?? []);
   }
 }

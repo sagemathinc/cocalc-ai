@@ -207,6 +207,14 @@ export class MessagesActions extends Actions<MessagesState> {
     thread_id?: number;
     sent?: Date;
   }) => {
+    to_ids = Array.from(
+      new Set(
+        (Array.isArray(to_ids) ? to_ids : []).filter(
+          (account_id) =>
+            typeof account_id === "string" && account_id.trim() !== "",
+        ),
+      ),
+    );
     const { query } = await webapp_client.async_query({
       query: {
         create_message: {
@@ -243,10 +251,25 @@ export class MessagesActions extends Actions<MessagesState> {
         participantsInThread({ message, threads }),
       );
     } else {
-      to_ids =
-        message.from_id == webapp_client.account_id
-          ? [message.to_ids[0]]
-          : [message.from_id];
+      if (message.from_id == webapp_client.account_id) {
+        const recipient = Array.isArray(message.to_ids)
+          ? message.to_ids.find((account_id) => `${account_id ?? ""}`.trim())
+          : undefined;
+        to_ids = recipient ? [recipient] : [];
+      } else {
+        to_ids = [message.from_id];
+      }
+    }
+    to_ids = Array.from(
+      new Set(
+        (Array.isArray(to_ids) ? to_ids : []).filter(
+          (account_id) =>
+            typeof account_id === "string" && account_id.trim() !== "",
+        ),
+      ),
+    );
+    if (to_ids.length === 0) {
+      throw Error("message has no valid reply recipient");
     }
 
     const subject = replySubject(message.subject);
