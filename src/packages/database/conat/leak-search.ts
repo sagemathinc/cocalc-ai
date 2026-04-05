@@ -47,9 +47,7 @@ export function create({ id, cb }: { id; cb? }) {
   const d = db();
   d.user_query({
     query: {
-      projects_all: [
-        { project_id: null, title: null, state: null, status: null },
-      ],
+      projects: [{ project_id: null, title: null, state: null, status: null }],
     },
     changes: id,
     account_id: ACCOUNT_ID,
@@ -100,7 +98,7 @@ export async function testQueryOnly(n) {
     const d = db();
     await callback2(d.user_query, {
       query: {
-        projects_all: [
+        projects: [
           { project_id: null, title: null, state: null, status: null },
         ],
       },

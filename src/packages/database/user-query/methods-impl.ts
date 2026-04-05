@@ -151,7 +151,7 @@ function shouldUseProjectedBrowserProjectReads(opts: {
   if (!opts.account_id) {
     return false;
   }
-  if (opts.table !== "projects" && opts.table !== "projects_all") {
+  if (opts.table !== "projects") {
     return false;
   }
   return getProjectListReadMode() !== "off";
