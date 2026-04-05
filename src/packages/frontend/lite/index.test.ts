@@ -19,6 +19,7 @@ jest.mock("@cocalc/frontend/client/handle-target", () => ({
 jest.mock("@cocalc/frontend/webapp-client", () => ({
   webapp_client: {
     account_id: undefined,
+    emit: jest.fn(),
   },
 }));
 
@@ -73,6 +74,10 @@ describe("lite init", () => {
       is_logged_in: true,
       account_id: "00000000-1000-4000-8000-000000000001",
     });
+    expect(webapp_client.emit).toHaveBeenCalledWith("signed_in", {
+      account_id: "00000000-1000-4000-8000-000000000001",
+      hub: "lite",
+    });
     expect(recreate_account_table).toHaveBeenCalledWith(redux);
     expect(setProjectsState).toHaveBeenCalledWith({
       open_projects: ["00000000-1000-4000-8000-000000000000"],
@@ -114,6 +119,7 @@ describe("lite init", () => {
     );
 
     expect(removeCookie).toHaveBeenCalledWith("account_id");
+    expect(webapp_client.emit).not.toHaveBeenCalled();
     expect(recreate_account_table).not.toHaveBeenCalled();
   });
 

@@ -663,7 +663,7 @@ export class ConatClient extends EventEmitter {
   };
 
   is_signed_in = (): boolean => {
-    return !!this._conatClient?.info?.user?.account_id;
+    return !!(this._conatClient?.info?.user?.account_id || (lite && this.client.account_id));
   };
 
   is_connected = (): boolean => {
