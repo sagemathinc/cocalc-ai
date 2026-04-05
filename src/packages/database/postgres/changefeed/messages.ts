@@ -27,6 +27,7 @@ FROM (
       CASE WHEN thread_id IS NULL OR thread_id = 0 THEN id ELSE thread_id END AS thread_id
     FROM messages
     WHERE $1=ANY(to_ids) AND sent IS NOT NULL
+      AND COALESCE(system_notice, FALSE) IS NOT TRUE
     ORDER BY id DESC
     LIMIT ${NUM_MESSAGES}
 ) AS subquery
