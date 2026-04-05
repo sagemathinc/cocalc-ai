@@ -5,6 +5,10 @@
 
 import getPool from "@cocalc/database/pool";
 import type { PoolClient } from "@cocalc/database/pool";
+import type {
+  AccountFeedCollaboratorRow,
+  AccountFeedEvent,
+} from "@cocalc/conat/hub/api/account-feed";
 import { isValidUUID } from "@cocalc/util/misc";
 import { replaceAccountCollaboratorIndexRows } from "./account-collaborator-index";
 import type {
@@ -28,6 +32,7 @@ export interface DrainAccountCollaboratorIndexProjectionResult {
   applied_events: number;
   inserted_rows: number;
   deleted_rows: number;
+  feed_events: AccountFeedEvent[];
   event_types: Record<string, number>;
 }
 
@@ -103,11 +108,87 @@ async function localHomeAccountIds(
   return new Set(rows.map((row) => row.account_id));
 }
 
+function isoOrNull(value: Date | null): string | null {
+  return value?.toISOString() ?? null;
+}
+
+async function collaboratorRowsForAccount(
+  db: PoolClient,
+  account_id: string,
+): Promise<AccountFeedCollaboratorRow[]> {
+  const { rows } = await db.query<{
+    collaborator_account_id: string;
+    common_project_count: number;
+    display_name: string;
+    avatar_ref: string | null;
+    updated_at: Date | null;
+  }>(
+    `SELECT
+       collaborator_account_id,
+       common_project_count,
+       display_name,
+       avatar_ref,
+       updated_at
+     FROM account_collaborator_index
+     WHERE account_id = $1
+       AND collaborator_account_id <> $1
+     ORDER BY
+       common_project_count DESC,
+       display_name ASC,
+       collaborator_account_id ASC`,
+    [account_id],
+  );
+  return rows.map((row) => ({
+    collaborator_account_id: row.collaborator_account_id,
+    common_project_count: row.common_project_count,
+    display_name: row.display_name,
+    avatar_ref: row.avatar_ref ?? null,
+    updated_at: isoOrNull(row.updated_at),
+  }));
+}
+
+function collaboratorFeedEventsForAccount(opts: {
+  account_id: string;
+  previous_rows: AccountFeedCollaboratorRow[];
+  current_rows: AccountFeedCollaboratorRow[];
+}): AccountFeedEvent[] {
+  const previousIds = new Set(
+    opts.previous_rows.map((row) => row.collaborator_account_id),
+  );
+  const currentIds = new Set(
+    opts.current_rows.map((row) => row.collaborator_account_id),
+  );
+  const events: AccountFeedEvent[] = [];
+  for (const collaborator_account_id of previousIds) {
+    if (currentIds.has(collaborator_account_id)) continue;
+    events.push({
+      type: "collaborator.remove",
+      ts: Date.now(),
+      account_id: opts.account_id,
+      collaborator_account_id,
+      reason: "membership_removed",
+    });
+  }
+  for (const collaborator of opts.current_rows) {
+    events.push({
+      type: "collaborator.upsert",
+      ts: Date.now(),
+      account_id: opts.account_id,
+      collaborator,
+    });
+  }
+  return events;
+}
+
 async function applyProjectEventToAccountCollaboratorIndex(opts: {
   db: PoolClient;
   bay_id: string;
   event: ProjectOutboxEventRow;
-}): Promise<{ inserted_rows: number; deleted_rows: number }> {
+}): Promise<{
+  inserted_rows: number;
+  deleted_rows: number;
+  feed_events: AccountFeedEvent[];
+}> {
   const current = participantAccountIds(opts.event.payload_json);
   const previous = await previousParticipantAccountIds(opts.db, opts.event);
   const impacted = [...new Set([...current, ...previous])];
@@ -118,18 +199,29 @@ async function applyProjectEventToAccountCollaboratorIndex(opts: {
 
   let inserted_rows = 0;
   let deleted_rows = 0;
+  const feed_events: AccountFeedEvent[] = [];
   for (const account_id of impacted) {
     if (!localAccounts.has(account_id)) continue;
+    const previous_rows = await collaboratorRowsForAccount(opts.db, account_id);
     const result = await replaceAccountCollaboratorIndexRows({
       db: opts.db,
       account_id,
     });
+    const current_rows = await collaboratorRowsForAccount(opts.db, account_id);
     inserted_rows += result.inserted_rows;
     deleted_rows += result.deleted_rows;
+    feed_events.push(
+      ...collaboratorFeedEventsForAccount({
+        account_id,
+        previous_rows,
+        current_rows,
+      }),
+    );
   }
   return {
     inserted_rows,
     deleted_rows,
+    feed_events,
   };
 }
 
@@ -235,6 +327,7 @@ export async function drainAccountCollaboratorIndexProjection(opts?: {
       applied_events: 0,
       inserted_rows: 0,
       deleted_rows: 0,
+      feed_events: [],
       event_types: {},
     };
 
@@ -249,6 +342,7 @@ export async function drainAccountCollaboratorIndexProjection(opts?: {
       result.applied_events += 1;
       result.inserted_rows += applied.inserted_rows;
       result.deleted_rows += applied.deleted_rows;
+      result.feed_events.push(...applied.feed_events);
       if (!dry_run) {
         await client.query(
           `UPDATE project_events_outbox

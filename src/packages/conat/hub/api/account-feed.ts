@@ -16,6 +16,14 @@ export interface AccountFeedProjectRow {
   deleted: boolean;
 }
 
+export interface AccountFeedCollaboratorRow {
+  collaborator_account_id: string;
+  common_project_count: number;
+  display_name: string;
+  avatar_ref: string | null;
+  updated_at: string | null;
+}
+
 export interface AccountFeedNotificationInvalidateEvent {
   type: "notification.invalidate";
   ts: number;
@@ -43,10 +51,27 @@ export interface AccountFeedProjectRemoveEvent {
   reason: "membership_removed";
 }
 
+export interface AccountFeedCollaboratorUpsertEvent {
+  type: "collaborator.upsert";
+  ts: number;
+  account_id: string;
+  collaborator: AccountFeedCollaboratorRow;
+}
+
+export interface AccountFeedCollaboratorRemoveEvent {
+  type: "collaborator.remove";
+  ts: number;
+  account_id: string;
+  collaborator_account_id: string;
+  reason: "membership_removed";
+}
+
 export type AccountFeedEvent =
   | AccountFeedNotificationInvalidateEvent
   | AccountFeedProjectUpsertEvent
-  | AccountFeedProjectRemoveEvent;
+  | AccountFeedProjectRemoveEvent
+  | AccountFeedCollaboratorUpsertEvent
+  | AccountFeedCollaboratorRemoveEvent;
 
 export function accountFeedStreamName(): string {
   return "account-feed";

@@ -5,6 +5,8 @@
 
 import getLogger from "@cocalc/backend/logger";
 import { drainAccountCollaboratorIndexProjection } from "@cocalc/database/postgres/account-collaborator-index-projector";
+import { publishAccountFeedEventBestEffort } from "@cocalc/server/account/feed";
+import type { AccountFeedEvent } from "@cocalc/conat/hub/api/account-feed";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 
 const logger = getLogger("server:projections:account-collaborator-index");
@@ -50,6 +52,7 @@ export interface AccountCollaboratorIndexProjectionPassResult {
   applied_events: number;
   inserted_rows: number;
   deleted_rows: number;
+  feed_events: AccountFeedEvent[];
   event_types: Record<string, number>;
 }
 
@@ -80,6 +83,7 @@ export interface AccountCollaboratorIndexProjectionMaintenanceStatus {
 
 export interface RunAccountCollaboratorIndexProjectionMaintenanceTickOptions extends RunAccountCollaboratorIndexProjectionPassOptions {
   pass_runner?: typeof runAccountCollaboratorIndexProjectionPass;
+  publisher?: typeof publishAccountFeedEventBestEffort;
 }
 
 function clampInt(
@@ -112,6 +116,7 @@ export async function runAccountCollaboratorIndexProjectionPass(
     applied_events: 0,
     inserted_rows: 0,
     deleted_rows: 0,
+    feed_events: [],
     event_types: {},
   };
   for (let i = 0; i < max_batches_per_tick; i += 1) {
@@ -125,6 +130,7 @@ export async function runAccountCollaboratorIndexProjectionPass(
     result.applied_events += batch.applied_events;
     result.inserted_rows += batch.inserted_rows;
     result.deleted_rows += batch.deleted_rows;
+    result.feed_events.push(...batch.feed_events);
     for (const [event_type, count] of Object.entries(batch.event_types)) {
       result.event_types[event_type] =
         (result.event_types[event_type] ?? 0) + count;
@@ -163,6 +169,7 @@ export async function runAccountCollaboratorIndexProjectionMaintenanceTick(
   running = true;
   const pass_runner =
     opts?.pass_runner ?? runAccountCollaboratorIndexProjectionPass;
+  const publisher = opts?.publisher ?? publishAccountFeedEventBestEffort;
   const started = new Date();
   lastTickStartedAt = started;
   try {
@@ -180,6 +187,12 @@ export async function runAccountCollaboratorIndexProjectionMaintenanceTick(
         "account collaborator index projector tick applied events",
         result,
       );
+    }
+    for (const event of result.feed_events) {
+      void publisher({
+        account_id: event.account_id,
+        event,
+      });
     }
     return result;
   } catch (err) {
