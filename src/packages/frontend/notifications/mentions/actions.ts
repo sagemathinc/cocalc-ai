@@ -20,7 +20,7 @@ import {
 } from "./types";
 
 const DEFAULT_INBOX_LIMIT = 500;
-const REFRESH_INTERVAL_MS = 15_000;
+const REFRESH_INTERVAL_MS = 5_000;
 
 function mentionSort(a: MentionInfo, b: MentionInfo): number {
   return b.get("time").getTime() - a.get("time").getTime();
