@@ -173,4 +173,64 @@ describe("ProjectsActions realtime feed", () => {
 
     expect(refreshProjectsTableMock).toHaveBeenCalledTimes(1);
   });
+
+  it("waits for the account store is_ready event before attaching the realtime feed", async () => {
+    class MockAccountStore extends EventEmitter {
+      private ready = false;
+
+      get(key: string) {
+        if (key === "account_id") {
+          return this.ready ? "acct-1" : undefined;
+        }
+        if (key === "is_ready") {
+          return this.ready;
+        }
+        return undefined;
+      }
+
+      setReady(): void {
+        this.ready = true;
+        this.emit("is_ready");
+      }
+    }
+
+    const accountStore = new MockAccountStore();
+    let reduxSubscriber: (() => void) | undefined;
+    const redux = {
+      getStore: jest.fn((name: string) => {
+        if (name === "account") {
+          return accountStore as any;
+        }
+        return ImmutableMap();
+      }),
+      reduxStore: {
+        subscribe: jest.fn((cb: () => void) => {
+          reduxSubscriber = cb;
+          return jest.fn();
+        }),
+      },
+      _set_state: jest.fn(),
+      removeActions: jest.fn(),
+      getTable: jest.fn(),
+      getProjectActions: jest.fn(() => ({
+        save_all_files: jest.fn(),
+      })),
+    } as any;
+    const actions = new ProjectsActions("projects", redux);
+
+    actions._init();
+    await flush();
+
+    expect(mockedWebappClient.conat_client.dstream).not.toHaveBeenCalled();
+
+    accountStore.setReady();
+    reduxSubscriber?.();
+    await flush();
+
+    expect(mockedWebappClient.conat_client.dstream).toHaveBeenCalledWith({
+      account_id: "acct-1",
+      name: accountFeedStreamName(),
+      ephemeral: true,
+    });
+  });
 });

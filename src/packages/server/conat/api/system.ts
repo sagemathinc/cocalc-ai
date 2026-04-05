@@ -106,6 +106,8 @@ import { getProjectHostDefaultParallelLimit } from "@cocalc/server/lro/project-h
 import { getAccountProjectIndexProjectionMaintenanceStatus } from "@cocalc/server/projections/account-project-index-maintenance";
 import { getAccountCollaboratorIndexProjectionMaintenanceStatus } from "@cocalc/server/projections/account-collaborator-index-maintenance";
 import { getAccountNotificationIndexProjectionMaintenanceStatus } from "@cocalc/server/projections/account-notification-index-maintenance";
+import { get as listNews0 } from "@cocalc/server/news/get";
+import type { NewsItemWebapp } from "@cocalc/util/types/news";
 
 const logger = getLogger("server:conat:api:system");
 const ROOTFS_PUBLISH_LRO_KIND = "project-rootfs-publish";
@@ -113,6 +115,19 @@ const DEFAULT_BROWSER_SIGN_IN_COOKIE_MAX_AGE_MS = 12 * 3600 * 1000;
 
 export function ping() {
   return { now: Date.now() };
+}
+
+export async function listNews(): Promise<NewsItemWebapp[]> {
+  const rows = await listNews0();
+  return rows
+    .filter((row): row is typeof row & { id: string } => !!row?.id)
+    .map((row) => ({
+      id: row.id,
+      title: row.title,
+      channel: row.channel,
+      tags: row.tags,
+      date: row.date instanceof Date ? row.date : new Date(row.date * 1000),
+    }));
 }
 
 export async function terminate() {}

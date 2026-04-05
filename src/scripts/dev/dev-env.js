@@ -36,6 +36,7 @@ const LOCAL_CLI_BIN_DIR = path.join(
   ".bin",
 );
 const LOCAL_PROJECT_ID = "00000000-1000-4000-8000-000000000000";
+const LOCAL_ACCOUNT_ID = "00000000-1000-4000-8000-000000000001";
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -580,13 +581,14 @@ function main() {
   const accountId =
     `${mode === "lite" ? (source.connectionInfo?.account_id ?? "") : ""}`.trim() ||
     `${mode === "hub" ? (hubDbContext.accountId ?? "") : ""}`.trim() ||
-    `${process.env.COCALC_ACCOUNT_ID ?? ""}`.trim() ||
+    `${mode === "lite" ? LOCAL_ACCOUNT_ID : (process.env.COCALC_ACCOUNT_ID ?? "")}`.trim() ||
     `${profile?.account_id ?? ""}`.trim() ||
     "";
 
   const projectId =
+    `${mode === "lite" ? (source.connectionInfo?.project_id ?? "") : ""}`.trim() ||
     `${mode === "hub" ? (hubDbContext.projectId ?? "") : ""}`.trim() ||
-    `${process.env.COCALC_PROJECT_ID ?? ""}`.trim() ||
+    `${mode === "lite" ? LOCAL_PROJECT_ID : (process.env.COCALC_PROJECT_ID ?? "")}`.trim() ||
     LOCAL_PROJECT_ID;
 
   const envBrowserId = `${process.env.COCALC_BROWSER_ID ?? ""}`.trim();

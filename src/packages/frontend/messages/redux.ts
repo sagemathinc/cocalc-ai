@@ -30,7 +30,6 @@ import { debounce } from "lodash";
 import { init as initGroups } from "@cocalc/frontend/groups/redux";
 import { BITSET_FIELDS } from "@cocalc/util/db-schema/messages";
 import { once } from "@cocalc/util/async-utils";
-import { delay } from "awaiting";
 import type { TypedMap } from "@cocalc/util/types/typed-map";
 
 const DEFAULT_FONT_SIZE = 14;
@@ -66,6 +65,10 @@ export class MessagesActions extends Actions<MessagesState> {
 
   setError = (error: string) => {
     this.setState({ error });
+  };
+
+  refresh = async () => {
+    recreateMessagesTables(this.redux);
   };
 
   command = (name) => {
@@ -217,29 +220,11 @@ export class MessagesActions extends Actions<MessagesState> {
       },
     });
     const id = query.create_message.id;
-    // We could make sure this new message is immediately also in our local table
-    // (instead of having to wait a second for it to come back via changefeed)
-    // as follows, but that introduces a race condition if the user creates
-    // a draft and stops editing it 1-2 seconds later, then comes back, since
-    // their last keystroke will get overwritten when the initially created
-    // draft comes back from the database.
-    //     const sent_table = this.redux.getTable("sent_messages")._table;
-    //     sent_table.set({ id, subject, body, to_ids, thread_id, sent });
-    // Best effort: wait briefly for changefeed echo so table state is warm,
-    // but never block composer actions indefinitely if echo is delayed/missing.
-    const store = this.getStore();
-    const hasLocal = () => store.get("messages")?.get(id) != null;
-    const start = Date.now();
-    const timeoutMs = 3000;
-    while (!hasLocal() && Date.now() - start < timeoutMs) {
-      await Promise.race([once(store, "change"), delay(150)]);
-    }
-    if (!hasLocal()) {
-      console.warn(
-        "messages.createDraft: draft was created remotely but not visible in local table within timeout",
-        { id, timeoutMs },
-      );
-    }
+    // Warm the local sent-messages snapshot immediately instead of waiting
+    // for a changefeed echo that no longer exists.
+    const sent_table = this.redux.getTable("sent_messages")._table;
+    sent_table.set({ id, subject, body, to_ids, thread_id, sent }, "shallow");
+    this.handleTableUpdate(sent_table.get().mapKeys(parseInt));
     return id;
   };
 
@@ -442,6 +427,10 @@ class MessagesTable extends Table {
     return [];
   }
 
+  no_changefeed() {
+    return true;
+  }
+
   query() {
     return {
       messages: [
@@ -482,6 +471,10 @@ class SentMessagesTable extends Table {
 
   options() {
     return [];
+  }
+
+  no_changefeed() {
+    return true;
   }
 
   query() {
@@ -536,6 +529,20 @@ export function init() {
   // we also initialize the groups redux stuff if it isn't already done
   initGroups();
   initialized = true;
+}
+
+function recreateMessagesTables(redux): void {
+  const recreate = (name: string, tableClass) => {
+    redux.removeTable(name);
+    const table = redux.createTable(name, tableClass);
+    return once(table._table, "change");
+  };
+  void Promise.all([
+    recreate("messages", MessagesTable),
+    recreate("sent_messages", SentMessagesTable),
+  ]).catch((err) => {
+    console.warn("WARNING: messages refresh error -- ", err);
+  });
 }
 
 function loadFontSize() {
