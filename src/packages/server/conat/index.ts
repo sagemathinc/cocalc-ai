@@ -28,6 +28,7 @@ import { startBackgroundAutoGrowMaintenance } from "@cocalc/server/project-host/
 import { startAccountProjectIndexProjectionMaintenance } from "@cocalc/server/projections/account-project-index-maintenance";
 import { startAccountCollaboratorIndexProjectionMaintenance } from "@cocalc/server/projections/account-collaborator-index-maintenance";
 import { startAccountNotificationIndexProjectionMaintenance } from "@cocalc/server/projections/account-notification-index-maintenance";
+import { enableDbAccountRowFeedPublishing } from "@cocalc/server/account/account-row-feed";
 import { enableDbCollaboratorAccountFeedPublishing } from "@cocalc/server/account/collaborator-feed";
 import { enableDbProjectAccountFeedPublishing } from "@cocalc/server/account/project-feed";
 
@@ -82,6 +83,7 @@ export async function initConatApi() {
   });
   await loadConatConfiguration();
   logProjectionReadModes();
+  enableDbAccountRowFeedPublishing();
   enableDbCollaboratorAccountFeedPublishing();
   enableDbProjectAccountFeedPublishing();
 

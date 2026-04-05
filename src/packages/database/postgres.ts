@@ -462,6 +462,11 @@ export class PostgreSQL extends EventEmitter implements PostgreSQLMethods {
   declare publishProjectAccountFeedEventsBestEffort?: (opts: {
     project_id: string;
   }) => Promise<void>;
+  declare publishAccountRowFeedEventsBestEffort?: (opts: {
+    account_id: string;
+    patch: Record<string, any>;
+    reason?: "user_query_set" | "messages_unread_count_updated";
+  }) => Promise<void>;
   declare publishCollaboratorAccountFeedEventsBestEffort?: (opts: {
     collaborator_account_id: string;
   }) => Promise<void>;
@@ -1949,7 +1954,13 @@ export class PostgreSQL extends EventEmitter implements PostgreSQLMethods {
   async updateUnreadMessageCount(
     opts: FunctionOpts<typeof updateUnreadMessageCount>,
   ) {
-    return await updateUnreadMessageCount(opts);
+    const unread_message_count = await updateUnreadMessageCount(opts);
+    await this.publishAccountRowFeedEventsBestEffort?.({
+      account_id: opts.account_id,
+      patch: { unread_message_count },
+      reason: "messages_unread_count_updated",
+    });
+    return unread_message_count;
   }
 
   _get_backup_tables(tables: BackupTables): string[] {

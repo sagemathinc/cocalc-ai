@@ -1782,28 +1782,43 @@ export async function _user_set_query_account_change_after(
   if (!changed_account_id) {
     return cb();
   }
-  const relevantFields = [
-    "first_name",
-    "last_name",
-    "name",
-    "last_active",
-    "profile",
-  ];
-  if (
-    !relevantFields.some(
-      (field) =>
-        JSON.stringify(new_val?.[field]) !== JSON.stringify(old_val?.[field]),
-    )
-  ) {
+  const changed_fields = Object.keys(new_val ?? {}).filter(
+    (field) =>
+      JSON.stringify(new_val?.[field]) !== JSON.stringify(old_val?.[field]),
+  );
+  if (changed_fields.length === 0) {
     return cb();
   }
   try {
-    await this.publishCollaboratorAccountFeedEventsBestEffort?.({
-      collaborator_account_id: changed_account_id,
+    const account_patch = changed_fields.reduce(
+      (patch, field) => {
+        patch[field] = new_val?.[field];
+        return patch;
+      },
+      {} as Record<string, any>,
+    );
+    await this.publishAccountRowFeedEventsBestEffort?.({
+      account_id: changed_account_id,
+      patch: account_patch,
+      reason: "user_query_set",
     });
+    const collaboratorRelevantFields = [
+      "first_name",
+      "last_name",
+      "name",
+      "last_active",
+      "profile",
+    ];
+    if (
+      collaboratorRelevantFields.some((field) => changed_fields.includes(field))
+    ) {
+      await this.publishCollaboratorAccountFeedEventsBestEffort?.({
+        collaborator_account_id: changed_account_id,
+      });
+    }
     return cb();
   } catch (err) {
-    dbg(`immediate collaborator account feed publish failed -- ${err}`);
+    dbg(`immediate account feed publish failed -- ${err}`);
     return cb(err as any);
   }
 }

@@ -1,5 +1,45 @@
 import type { Configuration } from "@cocalc/conat/persist/storage";
 
+export interface AccountFeedAccountRow {
+  account_id?: string | null;
+  home_bay_id?: string | null;
+  balance?: number | null;
+  min_balance?: number | null;
+  balance_alert?: boolean | null;
+  auto_balance?: Record<string, any> | null;
+  email_address?: string | null;
+  email_address_verified?: Record<string, any> | null;
+  email_address_problem?: Record<string, any> | null;
+  editor_settings?: Record<string, any> | null;
+  other_settings?: Record<string, any> | null;
+  name?: string | null;
+  first_name?: string | null;
+  last_name?: string | null;
+  terminal?: Record<string, any> | null;
+  autosave?: number | null;
+  evaluate_key?: string | null;
+  font_size?: number | null;
+  passports?: Record<string, any> | null;
+  groups?: string[] | null;
+  last_active?: Date | string | null;
+  ssh_keys?: Record<string, any> | null;
+  default_rootfs_image?: string | null;
+  default_rootfs_image_gpu?: string | null;
+  created?: Date | string | null;
+  ephemeral?: number | null;
+  customize?: Record<string, any> | null;
+  unlisted?: boolean | null;
+  tags?: string[] | null;
+  tours?: string[] | null;
+  purchase_closing_day?: number | null;
+  email_daily_statements?: boolean | null;
+  stripe_checkout_session?: Record<string, any> | null;
+  stripe_usage_subscription?: string | null;
+  stripe_customer?: Record<string, any> | null;
+  unread_message_count?: number | null;
+  profile?: Record<string, any> | null;
+}
+
 export interface AccountFeedProjectRow {
   project_id: string;
   title: string;
@@ -88,6 +128,14 @@ export interface AccountFeedNotificationCountsEvent {
     | "archived_state_updated";
 }
 
+export interface AccountFeedAccountUpsertEvent {
+  type: "account.upsert";
+  ts: number;
+  account_id: string;
+  account: AccountFeedAccountRow;
+  reason: "user_query_set" | "messages_unread_count_updated";
+}
+
 export interface AccountFeedProjectUpsertEvent {
   type: "project.upsert";
   ts: number;
@@ -119,6 +167,7 @@ export interface AccountFeedCollaboratorRemoveEvent {
 }
 
 export type AccountFeedEvent =
+  | AccountFeedAccountUpsertEvent
   | AccountFeedNotificationUpsertEvent
   | AccountFeedNotificationRemoveEvent
   | AccountFeedNotificationCountsEvent
