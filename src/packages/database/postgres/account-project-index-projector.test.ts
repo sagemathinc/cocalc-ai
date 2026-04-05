@@ -88,6 +88,17 @@ describe("account_project_index projector", () => {
       applied_events: 1,
       inserted_rows: 1,
       deleted_rows: 0,
+      feed_events: [
+        {
+          type: "project.upsert",
+          account_id: ACCOUNT_LOCAL,
+          project: expect.objectContaining({
+            project_id: PROJECT_ID,
+            title: "Projected Project",
+            deleted: false,
+          }),
+        },
+      ],
       event_types: {
         "project.created": 1,
       },
@@ -177,6 +188,16 @@ describe("account_project_index projector", () => {
       applied_events: 1,
       inserted_rows: 1,
       deleted_rows: 0,
+      feed_events: [
+        {
+          type: "project.upsert",
+          account_id: ACCOUNT_LOCAL,
+          project: expect.objectContaining({
+            project_id: PROJECT_ID,
+            deleted: false,
+          }),
+        },
+      ],
       event_types: {
         "project.created": 1,
       },
@@ -231,6 +252,16 @@ describe("account_project_index projector", () => {
       applied_events: 1,
       inserted_rows: 1,
       deleted_rows: 1,
+      feed_events: [
+        {
+          type: "project.upsert",
+          account_id: ACCOUNT_LOCAL,
+          project: expect.objectContaining({
+            project_id: PROJECT_ID,
+            deleted: false,
+          }),
+        },
+      ],
       event_types: {
         "project.state_changed": 1,
       },
@@ -272,6 +303,16 @@ describe("account_project_index projector", () => {
       applied_events: 1,
       inserted_rows: 0,
       deleted_rows: 1,
+      feed_events: [
+        {
+          type: "project.upsert",
+          account_id: ACCOUNT_LOCAL,
+          project: expect.objectContaining({
+            project_id: PROJECT_ID,
+            deleted: true,
+          }),
+        },
+      ],
       event_types: {
         "project.deleted": 1,
       },
@@ -294,5 +335,65 @@ describe("account_project_index projector", () => {
       { event_type: "project.state_changed", published: true },
       { event_type: "project.deleted", published: true },
     ]);
+  });
+
+  it("emits project.remove feed events when local membership is removed", async () => {
+    await seedBaseRows();
+    await appendProjectOutboxEventForProject({
+      event_type: "project.created",
+      project_id: PROJECT_ID,
+      default_bay_id: LOCAL_BAY_ID,
+    });
+    await drainAccountProjectIndexProjection({
+      bay_id: LOCAL_BAY_ID,
+      limit: 10,
+      dry_run: false,
+    });
+
+    await getPool().query(
+      `UPDATE projects
+          SET users = $2::JSONB
+        WHERE project_id = $1`,
+      [
+        PROJECT_ID,
+        JSON.stringify({
+          [ACCOUNT_OTHER]: { group: "collaborator" },
+        }),
+      ],
+    );
+    await appendProjectOutboxEventForProject({
+      event_type: "project.membership_changed",
+      project_id: PROJECT_ID,
+      default_bay_id: LOCAL_BAY_ID,
+    });
+
+    await expect(
+      drainAccountProjectIndexProjection({
+        bay_id: LOCAL_BAY_ID,
+        limit: 10,
+        dry_run: false,
+      }),
+    ).resolves.toMatchObject({
+      applied_events: 1,
+      inserted_rows: 0,
+      deleted_rows: 1,
+      feed_events: [
+        {
+          type: "project.remove",
+          account_id: ACCOUNT_LOCAL,
+          project_id: PROJECT_ID,
+          reason: "membership_removed",
+        },
+      ],
+      event_types: {
+        "project.membership_changed": 1,
+      },
+    });
+
+    const remainingRows = await getPool().query(
+      "SELECT * FROM account_project_index WHERE project_id = $1",
+      [PROJECT_ID],
+    );
+    expect(remainingRows.rows).toHaveLength(0);
   });
 });

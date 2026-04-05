@@ -1,7 +1,7 @@
 import { EventEmitter } from "events";
 import { Map as ImmutableMap } from "immutable";
 
-import { notificationFeedStreamName } from "@cocalc/conat/hub/api/notifications";
+import { accountFeedStreamName } from "../../../conat/hub/api/account-feed";
 
 jest.mock("@cocalc/frontend/webapp-client", () => {
   class MockFeed extends EventEmitter {
@@ -103,7 +103,7 @@ describe("MentionsActions realtime feed", () => {
 
     expect(mockedWebappClient.conat_client.dstream).toHaveBeenCalledWith({
       account_id: "acct-1",
-      name: notificationFeedStreamName(),
+      name: accountFeedStreamName(),
       ephemeral: true,
     });
     expect(
@@ -113,10 +113,10 @@ describe("MentionsActions realtime feed", () => {
     const feed = await mockedWebappClient.conat_client.dstream.mock.results[0]
       .value;
     feed.emit("change", {
-      type: "invalidate",
+      type: "notification.invalidate",
       account_id: "acct-1",
       reason: "projected_upsert",
-      ts: new Date().toISOString(),
+      ts: Date.now(),
     });
     await flush();
 

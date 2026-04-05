@@ -5,6 +5,10 @@
 
 import getPool from "@cocalc/database/pool";
 import type { PoolClient } from "@cocalc/database/pool";
+import type {
+  AccountFeedEvent,
+  AccountFeedProjectRow,
+} from "@cocalc/conat/hub/api/account-feed";
 import { isValidUUID } from "@cocalc/util/misc";
 import type {
   ProjectOutboxEventRow,
@@ -22,6 +26,7 @@ export interface DrainAccountProjectIndexProjectionResult {
   applied_events: number;
   inserted_rows: number;
   deleted_rows: number;
+  feed_events: AccountFeedEvent[];
   event_types: Record<string, number>;
 }
 
@@ -123,37 +128,88 @@ async function existingLastOpenedAt(
   );
 }
 
+function projectRowForFeed(opts: {
+  payload: ProjectOutboxPayload;
+  account_id: string;
+}): AccountFeedProjectRow {
+  const { payload } = opts;
+  return {
+    project_id: payload.project_id,
+    title: payload.title ?? "",
+    description: payload.description ?? "",
+    name: payload.name ?? null,
+    avatar_image_tiny: payload.avatar_image_tiny ?? null,
+    color: payload.color ?? null,
+    host_id: payload.host_id ?? null,
+    owning_bay_id: normalizeBayId(payload.owning_bay_id),
+    users: payload.users_summary ?? {},
+    state: payload.state_summary ?? {},
+    last_active: payload.last_activity_by_account ?? {},
+    last_edited: payload.last_edited_at ?? null,
+    deleted: !!payload.deleted,
+  };
+}
+
 async function applyProjectEventToAccountProjectIndex(opts: {
   db: PoolClient;
   bay_id: string;
   event: ProjectOutboxEventRow;
-}): Promise<{ inserted_rows: number; deleted_rows: number }> {
+}): Promise<{
+  inserted_rows: number;
+  deleted_rows: number;
+  feed_events: AccountFeedEvent[];
+}> {
   const { db, bay_id, event } = opts;
   const payload = event.payload_json;
   const lastOpenedByAccount = await existingLastOpenedAt(
     db,
     payload.project_id,
   );
+  const previousLocalAccountIds = Array.from(lastOpenedByAccount.keys());
   const deleted = await db.query(
     `DELETE FROM account_project_index
       WHERE project_id = $1`,
     [payload.project_id],
   );
-  if (payload.deleted) {
-    return {
-      inserted_rows: 0,
-      deleted_rows: deleted.rowCount ?? 0,
-    };
-  }
-
   const visibleAccountIds = visibleAccountIdsFromUsers(payload.users_summary);
   const localAccounts = await localHomeAccountIds(db, {
     bay_id,
     account_ids: visibleAccountIds,
   });
+  const currentLocalAccountIds = visibleAccountIds.filter((account_id) =>
+    localAccounts.has(account_id),
+  );
+  const feed_events: AccountFeedEvent[] = [];
+  const removedAccountIds = previousLocalAccountIds.filter(
+    (account_id) => !currentLocalAccountIds.includes(account_id),
+  );
+  for (const account_id of removedAccountIds) {
+    feed_events.push({
+      type: "project.remove",
+      ts: Date.now(),
+      account_id,
+      project_id: payload.project_id,
+      reason: "membership_removed",
+    });
+  }
+  if (payload.deleted) {
+    for (const account_id of currentLocalAccountIds) {
+      feed_events.push({
+        type: "project.upsert",
+        ts: Date.now(),
+        account_id,
+        project: projectRowForFeed({ payload, account_id }),
+      });
+    }
+    return {
+      inserted_rows: 0,
+      deleted_rows: deleted.rowCount ?? 0,
+      feed_events,
+    };
+  }
+
   let inserted_rows = 0;
-  for (const account_id of visibleAccountIds) {
-    if (!localAccounts.has(account_id)) continue;
+  for (const account_id of currentLocalAccountIds) {
     const last_activity_at =
       parseDate(payload.last_activity_by_account?.[account_id]) ?? null;
     await db.query(
@@ -179,10 +235,17 @@ async function applyProjectEventToAccountProjectIndex(opts: {
       ],
     );
     inserted_rows += 1;
+    feed_events.push({
+      type: "project.upsert",
+      ts: Date.now(),
+      account_id,
+      project: projectRowForFeed({ payload, account_id }),
+    });
   }
   return {
     inserted_rows,
     deleted_rows: deleted.rowCount ?? 0,
+    feed_events,
   };
 }
 
@@ -286,6 +349,7 @@ export async function drainAccountProjectIndexProjection(opts?: {
       applied_events: 0,
       inserted_rows: 0,
       deleted_rows: 0,
+      feed_events: [],
       event_types: {},
     };
 
@@ -298,6 +362,7 @@ export async function drainAccountProjectIndexProjection(opts?: {
       result.applied_events += 1;
       result.inserted_rows += applied.inserted_rows;
       result.deleted_rows += applied.deleted_rows;
+      result.feed_events.push(...applied.feed_events);
       result.event_types[event.event_type] =
         (result.event_types[event.event_type] ?? 0) + 1;
       await client.query(

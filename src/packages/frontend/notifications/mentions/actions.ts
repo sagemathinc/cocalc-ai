@@ -10,10 +10,10 @@ import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { once } from "@cocalc/util/async-utils";
 import type {
   NotificationCountsResult,
-  NotificationFeedEvent,
   NotificationListRow,
 } from "@cocalc/conat/hub/api/notifications";
-import { notificationFeedStreamName as getNotificationFeedStreamName } from "@cocalc/conat/hub/api/notifications";
+import type { AccountFeedEvent } from "@cocalc/conat/hub/api/account-feed";
+import { accountFeedStreamName } from "@cocalc/conat/hub/api/account-feed";
 import { MentionsState } from "./store";
 import {
   type MentionInfo,
@@ -91,7 +91,7 @@ export class MentionsActions extends Actions<MentionsState> {
   private signedInListener?: () => void;
   private signedOutListener?: () => void;
   private conatConnectedListener?: () => void;
-  private realtimeFeed?: DStream<NotificationFeedEvent>;
+  private realtimeFeed?: DStream<AccountFeedEvent>;
   private realtimeFeedAccountId?: string;
 
   _init() {
@@ -207,7 +207,10 @@ export class MentionsActions extends Actions<MentionsState> {
     this.realtimeFeedAccountId = undefined;
   }
 
-  private handleRealtimeFeedChange = (): void => {
+  private handleRealtimeFeedChange = (event?: AccountFeedEvent): void => {
+    if (event?.type != null && event.type !== "notification.invalidate") {
+      return;
+    }
     void this.refresh();
   };
 
@@ -225,10 +228,10 @@ export class MentionsActions extends Actions<MentionsState> {
     }
     this.closeRealtimeFeed();
     try {
-      const feed = await webapp_client.conat_client.dstream<NotificationFeedEvent>(
+      const feed = await webapp_client.conat_client.dstream<AccountFeedEvent>(
         {
           account_id,
-          name: getNotificationFeedStreamName(),
+          name: accountFeedStreamName(),
           ephemeral: true,
         },
       );

@@ -4,12 +4,10 @@
  */
 
 import getLogger from "@cocalc/backend/logger";
-import { conat } from "@cocalc/backend/conat";
 import {
-  NOTIFICATION_FEED_STREAM_CONFIG,
-  notificationFeedStreamName,
   type NotificationFeedEvent,
 } from "@cocalc/conat/hub/api/notifications";
+import { publishAccountFeedEvent } from "@cocalc/server/account/feed";
 
 const logger = getLogger("server:notifications:feed");
 
@@ -22,18 +20,15 @@ export async function publishNotificationFeedInvalidate(opts: {
   if (!account_id) {
     throw Error("account_id is required");
   }
-  const stream = conat().sync.astream<NotificationFeedEvent>({
+  await publishAccountFeedEvent({
     account_id,
-    name: notificationFeedStreamName(),
-    ephemeral: true,
-    config: NOTIFICATION_FEED_STREAM_CONFIG,
-  });
-  await stream.publish({
-    type: "invalidate",
-    ts: Date.now(),
-    account_id,
-    reason: opts.reason,
-    notification_ids: opts.notification_ids,
+    event: {
+      type: "notification.invalidate",
+      ts: Date.now(),
+      account_id,
+      reason: opts.reason,
+      notification_ids: opts.notification_ids,
+    },
   });
 }
 
