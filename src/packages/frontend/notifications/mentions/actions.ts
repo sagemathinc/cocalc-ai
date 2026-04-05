@@ -25,19 +25,6 @@ import type { DStream } from "@cocalc/conat/sync/dstream";
 const DEFAULT_INBOX_LIMIT = 500;
 const BOOTSTRAP_RETRY_MS = 1000;
 
-function coerceNotificationDate(value: Date | string | null | undefined): Date {
-  if (value instanceof Date) {
-    return value;
-  }
-  if (typeof value === "string") {
-    const parsed = new Date(value);
-    if (!Number.isNaN(parsed.getTime())) {
-      return parsed;
-    }
-  }
-  return new Date();
-}
-
 function mentionSort(a: MentionInfo, b: MentionInfo): number {
   return b.get("time").getTime() - a.get("time").getTime();
 }
@@ -51,7 +38,7 @@ export function buildNotificationInboxMap(opts: {
     if (row.read_state?.archived) {
       continue;
     }
-    const time = coerceNotificationDate(row.created_at ?? row.updated_at);
+    const time = row.created_at ?? row.updated_at ?? new Date();
     const summary = row.summary ?? {};
     mentions.set(
       row.notification_id,
