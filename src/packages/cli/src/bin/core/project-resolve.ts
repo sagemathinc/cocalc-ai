@@ -228,7 +228,7 @@ export async function queryProjects<W extends ProjectLike = ProjectLike>({
   if (host_id != null) {
     row.host_id = host_id;
   }
-  const rows = await userQueryTable<W>(ctx, "projects_all", row, [
+  const rows = await userQueryTable<W>(ctx, "projects", row, [
     { limit, order_by: "-last_edited" },
   ]);
   return rows.filter((x) => !isDeleted(x.deleted));

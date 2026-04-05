@@ -95,7 +95,7 @@ export function registerProjectBasicCommands(
             Math.min(10000, Number(opts.limit ?? "100") || 100),
           );
           const prefix = opts.prefix?.trim() || "";
-          // Deleted projects are still returned by projects_all; overfetch so we can
+          // Deleted projects are still returned by projects; overfetch so we can
           // filter locally and still satisfy requested limits.
           const fetchLimit = Math.min(10000, Math.max(limitNum * 10, 200));
           const rows = await queryProjects({

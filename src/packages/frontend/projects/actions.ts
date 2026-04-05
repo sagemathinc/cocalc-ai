@@ -28,11 +28,7 @@ import type { StudentProjectFunctionality } from "@cocalc/util/db-schema/project
 import type { PurchaseInfo } from "@cocalc/util/purchases/quota/types";
 import { defaults, is_valid_uuid_string } from "@cocalc/util/misc";
 import { ProjectsState, store } from "./store";
-import {
-  load_all_projects,
-  refresh_projects_table,
-  switch_to_project,
-} from "./table";
+import { refresh_projects_table, switch_to_project } from "./table";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import { defaultOpenProjectTarget } from "./open-project-default";
 import { evaluateHostOperational, hostLabel } from "./host-operational";
@@ -332,7 +328,6 @@ export class ProjectsActions extends Actions<ProjectsState> {
   Returns true only if we are a collaborator/user of this project
   and have loaded it.  Should check this before changing anything
   in the projects table!  Otherwise, bad things will happen.
-  This may also trigger load_all_projects.
   */
   private async have_project(project_id: string): Promise<boolean> {
     const table = await this.getProjectTable();
@@ -340,18 +335,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
       return false;
     }
     const t = table._table;
-    if (t.get(project_id) != null) {
-      // we know this project
-      return true;
-    }
-    if (store.get("all_projects_have_been_loaded")) {
-      return false;
-    }
-    // be sure by first loading all projects
-    await this.load_all_projects();
-    // and try again.  Because we loaded all projects,
-    // we won't hit infinite recurse.
-    return await this.have_project(project_id);
+    return t.get(project_id) != null;
   }
 
   private setProjectLocalScalarField = (
@@ -741,10 +725,6 @@ export class ProjectsActions extends Actions<ProjectsState> {
     if (!store.getIn(["project_map", opts.project_id])) {
       if (COCALC_MINIMAL) {
         await switch_to_project(opts.project_id);
-      } else {
-        // trying to open a not-known project -- maybe
-        // we have not yet loaded the full project list?
-        await this.load_all_projects();
       }
     }
     const host_id = store.getIn(["project_map", opts.project_id, "host_id"]);
@@ -1484,14 +1464,6 @@ export class ProjectsActions extends Actions<ProjectsState> {
 
   public display_deleted_projects(deleted): void {
     this.setState({ deleted });
-  }
-
-  public async load_all_projects(): Promise<void> {
-    if (store.get("all_projects_have_been_loaded")) {
-      return;
-    }
-    await load_all_projects();
-    this.setState({ all_projects_have_been_loaded: true });
   }
 
   public toggle_hashtag(filter: string, tag: string): void {

@@ -8,9 +8,9 @@ import { validate_client_query } from "./schema-validate";
 describe("validate_client_query projects set queries", () => {
   const accountId = "00000000-0000-4000-8000-000000000000";
 
-  test("projects_all title-only set query validates", () => {
+  test("projects title-only set query validates", () => {
     const query = {
-      projects_all: {
+      projects: {
         project_id: "5e9911c5-67f3-48be-b123-2eead7f64579",
         title: "Project XXX",
       },

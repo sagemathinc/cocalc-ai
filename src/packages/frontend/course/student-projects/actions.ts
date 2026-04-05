@@ -543,7 +543,6 @@ export class StudentProjectsActions {
     if (project_ids.length === 0) {
       return;
     }
-    await redux.getActions("projects").load_all_projects();
     const projectsActions = redux.getActions("projects");
     const overallId = this.course_actions.set_activity({
       desc: `Changing RootFS image for ${project_ids.length} student projects...`,
@@ -681,9 +680,6 @@ export class StudentProjectsActions {
       }
       let i = 0;
 
-      // Ensure all projects are loaded, rather than just the most recent
-      // n projects -- important since courses often have more than n students!
-      await redux.getActions("projects").load_all_projects();
       let project_map = redux.getStore("projects").get("project_map");
       if (project_map == null || webapp_client.account_id == null) {
         throw Error(

@@ -6,7 +6,7 @@
 // Component for selecting a project.
 
 import { Checkbox, Select } from "antd";
-import { CSS, redux, useMemo, useState, useTypedRedux } from "../app-framework";
+import { CSS, useMemo, useState, useTypedRedux } from "../app-framework";
 import { webapp_client } from "../webapp-client";
 import { Loading } from "../components";
 
@@ -30,10 +30,6 @@ export function SelectProject({
   style,
 }: Props) {
   const project_map = useTypedRedux("projects", "project_map");
-  const all_projects_have_been_loaded = useTypedRedux(
-    "projects",
-    "all_projects_have_been_loaded",
-  );
 
   // include deleted projects in the selector
   const [include_deleted, set_include_deleted] = useState<boolean>(false);
@@ -42,14 +38,6 @@ export function SelectProject({
 
   const data: undefined | ProjectSelectionList = useMemo(() => {
     if (project_map == null) {
-      return;
-    }
-    if (
-      value &&
-      project_map.get(value) == null &&
-      !all_projects_have_been_loaded
-    ) {
-      redux.getActions("projects").load_all_projects();
       return;
     }
     let map = project_map;
@@ -144,16 +132,6 @@ export function SelectProject({
           >
             Deleted
           </Checkbox>
-          {!all_projects_have_been_loaded && (
-            <span>
-              <br />
-              <a
-                onClick={() => redux.getActions("projects").load_all_projects()}
-              >
-                Load all projects...
-              </a>
-            </span>
-          )}
         </div>
       </div>
     </div>

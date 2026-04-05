@@ -8,7 +8,6 @@ const refreshProjectsTableMock = jest.fn(async () => undefined);
 jest.mock("./table", () => ({
   refresh_projects_table: refreshProjectsTableMock,
   switch_to_project: jest.fn(),
-  load_all_projects: jest.fn(),
 }));
 
 jest.mock("./store", () => ({
@@ -74,8 +73,6 @@ describe("ProjectsActions realtime feed", () => {
           return projectMap;
         case "open_projects":
           return List();
-        case "all_projects_have_been_loaded":
-          return false;
         default:
           return undefined;
       }

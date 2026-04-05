@@ -50,8 +50,6 @@ export interface ProjectsState {
   hidden: boolean;
   selected_hashtags: Map<string, Set<string>>;
 
-  all_projects_have_been_loaded: boolean;
-
   public_project_titles: Map<string, any>;
 
   project_websockets: Map<string, WebsocketState>;
@@ -590,8 +588,6 @@ const init_store = {
   deleted: false,
   hidden: false,
   selected_hashtags: Map<string, Set<string>>(),
-
-  all_projects_have_been_loaded: false,
 
   public_project_titles: Map<string, any>(),
 
