@@ -39,6 +39,14 @@ import type {
   ProjectLogPage,
   ProjectLogRow,
 } from "@cocalc/conat/hub/api/projects";
+import type {
+  AccountFeedEvent,
+  AccountFeedProjectRow,
+} from "@cocalc/conat/hub/api/account-feed";
+import {
+  ACCOUNT_FEED_STREAM_CONFIG,
+  accountFeedStreamName,
+} from "@cocalc/conat/hub/api/account-feed";
 import userQuery, { init as initUserQuery } from "./sqlite/user-query";
 import { account_id as ACCOUNT_ID, data } from "@cocalc/backend/data";
 import { project_id as LITE_PROJECT_ID } from "@cocalc/project/data";
@@ -46,6 +54,7 @@ import {
   FALLBACK_PROJECT_UUID,
   FALLBACK_ACCOUNT_UUID,
 } from "@cocalc/util/misc";
+import * as misc from "@cocalc/util/misc";
 import {
   callRemoteHub,
   hasRemote,
@@ -90,7 +99,7 @@ import {
   startLiteCodexDeviceAuth,
   uploadLiteSubscriptionAuthFile,
 } from "./codex-auth";
-import { listRows } from "./sqlite/database";
+import { getRow, listRows } from "./sqlite/database";
 
 const logger = getLogger("lite:hub:api");
 const execFile = promisify(execFileCb);
@@ -272,6 +281,133 @@ async function listProjectLogLite(opts: {
     entries: entries.slice(0, limit),
     has_more: entries.length > limit,
   };
+}
+
+function isSetUserQueryLite(opts: {
+  query: Record<string, any>;
+  options?: { set?: boolean }[];
+}): boolean {
+  const options = Array.isArray(opts.options) ? opts.options : [];
+  for (const option of options) {
+    if (option?.set != null) {
+      return !!option.set;
+    }
+  }
+  return !misc.has_null_leaf(opts.query);
+}
+
+function buildLiteProjectFeedRow(row: Record<string, any>): AccountFeedProjectRow {
+  return {
+    project_id: `${row.project_id ?? ""}`.trim(),
+    title: `${row.title ?? ""}`,
+    description: `${row.description ?? ""}`,
+    name: row.name ?? null,
+    avatar_image_tiny: row.avatar_image_tiny ?? null,
+    color: row.color ?? null,
+    host_id: row.host_id ?? null,
+    owning_bay_id: row.owning_bay_id ?? DEFAULT_BAY_ID,
+    users: row.users ?? {
+      [ACCOUNT_ID]: { group: "owner" },
+    },
+    state: row.state ?? {},
+    last_active: row.last_active ?? {},
+    last_edited: row.last_edited ?? null,
+    deleted: !!row.deleted,
+  };
+}
+
+async function publishLiteAccountFeedEventBestEffort(opts: {
+  account_id: string;
+  event: AccountFeedEvent;
+}) {
+  const account_id = `${opts.account_id ?? ""}`.trim();
+  if (!account_id) return;
+  try {
+    const stream = getLiteConatClient().sync.astream<AccountFeedEvent>({
+      account_id,
+      name: accountFeedStreamName(),
+      ephemeral: true,
+      config: ACCOUNT_FEED_STREAM_CONFIG,
+    });
+    await stream.publish({
+      ...opts.event,
+      account_id,
+    });
+  } catch (err) {
+    logger.warn("failed to publish lite account feed event", {
+      account_id,
+      type: opts.event.type,
+      err,
+    });
+  }
+}
+
+async function publishLiteAccountFeedForUserQuery(opts: {
+  query: Record<string, any>;
+  options?: { set?: boolean }[];
+  account_id?: string;
+}) {
+  if (!isSetUserQueryLite(opts)) return;
+  const account_id = requireLiteAccountId(opts.account_id);
+  const queries = Array.isArray(opts.query) ? opts.query : [opts.query];
+  for (const query of queries) {
+    const table = Object.keys(query ?? {})[0];
+    if (!table) continue;
+    const payload = query[table];
+    if (Array.isArray(payload) || payload == null) continue;
+    if (table === "accounts") {
+      const target_account_id =
+        `${payload.account_id ?? account_id ?? ""}`.trim() || account_id;
+      if (!target_account_id) continue;
+      await publishLiteAccountFeedEventBestEffort({
+        account_id: target_account_id,
+        event: {
+          type: "account.upsert",
+          ts: Date.now(),
+          account_id: target_account_id,
+          account: { ...payload },
+          reason: "user_query_set",
+        },
+      });
+      continue;
+    }
+    if (table === "projects") {
+      const project_id = `${payload.project_id ?? ""}`.trim();
+      if (!project_id) continue;
+      const row =
+        getRow("projects", JSON.stringify({ project_id })) ??
+        listRows("projects").find((project) => project?.project_id === project_id);
+      if (!row) continue;
+      await publishLiteAccountFeedEventBestEffort({
+        account_id,
+        event: {
+          type: "project.upsert",
+          ts: Date.now(),
+          account_id,
+          project: buildLiteProjectFeedRow(row),
+        },
+      });
+    }
+  }
+}
+
+async function userQueryLite(opts: {
+  query: Record<string, any>;
+  options?: object[];
+  account_id?: string;
+  project_id?: string;
+  changes?: string;
+  cb?: Function;
+}) {
+  const result = userQuery(opts);
+  if (!opts.changes) {
+    await publishLiteAccountFeedForUserQuery({
+      query: opts.query,
+      options: opts.options as { set?: boolean }[] | undefined,
+      account_id: opts.account_id,
+    });
+  }
+  return result;
 }
 
 async function codexDeviceAuthStartLite(opts: {
@@ -1222,7 +1358,7 @@ export const hubApi: HubApi = {
       });
     },
   },
-  db: { touch: () => {}, userQuery },
+  db: { touch: () => {}, userQuery: userQueryLite },
   purchases: {},
   agent,
   sync: {
