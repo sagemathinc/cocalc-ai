@@ -274,4 +274,55 @@ describe("MentionsActions realtime feed", () => {
       ephemeral: true,
     });
   });
+
+  it("does not re-refresh on unrelated redux updates once the same ready account store is attached", async () => {
+    class MockAccountStore extends EventEmitter {
+      get(key: string) {
+        if (key === "account_id") {
+          return "acct-3";
+        }
+        if (key === "is_ready") {
+          return true;
+        }
+        return undefined;
+      }
+    }
+
+    const accountStore = new MockAccountStore();
+    let reduxSubscriber: (() => void) | undefined;
+    const redux = {
+      getStore: jest.fn((name: string) => {
+        if (name === "account") {
+          return accountStore as any;
+        }
+        if (name === "mentions") {
+          return ImmutableMap({ mentions: ImmutableMap() });
+        }
+        return ImmutableMap();
+      }),
+      reduxStore: {
+        subscribe: jest.fn((cb: () => void) => {
+          reduxSubscriber = cb;
+          return jest.fn();
+        }),
+      },
+      _set_state: jest.fn(),
+      removeActions: jest.fn(),
+    } as any;
+    const actions = new MentionsActions("mentions", redux);
+
+    actions._init();
+    await flushMicrotasks();
+
+    expect(
+      mockedWebappClient.conat_client.hub.notifications.list,
+    ).toHaveBeenCalledTimes(1);
+
+    reduxSubscriber?.();
+    await flushMicrotasks();
+
+    expect(
+      mockedWebappClient.conat_client.hub.notifications.list,
+    ).toHaveBeenCalledTimes(1);
+  });
 });

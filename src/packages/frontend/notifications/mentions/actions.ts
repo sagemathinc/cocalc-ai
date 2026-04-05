@@ -258,9 +258,6 @@ export class MentionsActions extends Actions<MentionsState> {
       store = this.redux.getStore("account") as typeof this.observedAccountStore,
     ): void => {
       if (store === this.observedAccountStore) {
-        if (store?.get?.("is_ready")) {
-          onReady();
-        }
         return;
       }
       this.observedAccountStore?.removeListener?.("is_ready", onReady);
