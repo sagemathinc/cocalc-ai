@@ -119,30 +119,39 @@ async function collaboratorRowsForAccount(
   const { rows } = await db.query<{
     collaborator_account_id: string;
     common_project_count: number;
-    display_name: string;
-    avatar_ref: string | null;
+    first_name: string | null;
+    last_name: string | null;
+    name: string | null;
+    last_active: Date | null;
+    profile: Record<string, any> | null;
     updated_at: Date | null;
   }>(
     `SELECT
        collaborator_account_id,
        common_project_count,
-       display_name,
-       avatar_ref,
+       first_name,
+       last_name,
+       name,
+       last_active,
+       profile,
        updated_at
      FROM account_collaborator_index
      WHERE account_id = $1
        AND collaborator_account_id <> $1
      ORDER BY
        common_project_count DESC,
-       display_name ASC,
+       COALESCE(last_active, updated_at) DESC NULLS LAST,
        collaborator_account_id ASC`,
     [account_id],
   );
   return rows.map((row) => ({
-    collaborator_account_id: row.collaborator_account_id,
+    account_id: row.collaborator_account_id,
+    first_name: row.first_name,
+    last_name: row.last_name,
+    name: row.name,
+    last_active: isoOrNull(row.last_active),
+    profile: row.profile ?? null,
     common_project_count: row.common_project_count,
-    display_name: row.display_name,
-    avatar_ref: row.avatar_ref ?? null,
     updated_at: isoOrNull(row.updated_at),
   }));
 }
@@ -152,12 +161,8 @@ function collaboratorFeedEventsForAccount(opts: {
   previous_rows: AccountFeedCollaboratorRow[];
   current_rows: AccountFeedCollaboratorRow[];
 }): AccountFeedEvent[] {
-  const previousIds = new Set(
-    opts.previous_rows.map((row) => row.collaborator_account_id),
-  );
-  const currentIds = new Set(
-    opts.current_rows.map((row) => row.collaborator_account_id),
-  );
+  const previousIds = new Set(opts.previous_rows.map((row) => row.account_id));
+  const currentIds = new Set(opts.current_rows.map((row) => row.account_id));
   const events: AccountFeedEvent[] = [];
   for (const collaborator_account_id of previousIds) {
     if (currentIds.has(collaborator_account_id)) continue;
@@ -180,7 +185,30 @@ function collaboratorFeedEventsForAccount(opts: {
   return events;
 }
 
-async function applyProjectEventToAccountCollaboratorIndex(opts: {
+export async function loadLatestCollaboratorProjectionEvent(opts: {
+  db: PoolClient;
+  project_id: string;
+}): Promise<ProjectOutboxEventRow | null> {
+  const { rows } = await opts.db.query<ProjectOutboxEventRow>(
+    `SELECT
+       event_id,
+       project_id,
+       owning_bay_id,
+       event_type,
+       payload_json,
+       created_at,
+       published_at
+     FROM project_events_outbox
+     WHERE project_id = $1
+       AND event_type = ANY($2::TEXT[])
+     ORDER BY created_at DESC, event_id DESC
+     LIMIT 1`,
+    [opts.project_id, RELEVANT_EVENT_TYPES],
+  );
+  return rows[0] ?? null;
+}
+
+export async function applyProjectEventToAccountCollaboratorIndex(opts: {
   db: PoolClient;
   bay_id: string;
   event: ProjectOutboxEventRow;

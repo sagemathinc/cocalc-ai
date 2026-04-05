@@ -5,8 +5,15 @@
 
 import { db } from "@cocalc/database";
 import getPool from "@cocalc/database/pool";
+import {
+  applyProjectEventToAccountCollaboratorIndex,
+  loadLatestCollaboratorProjectionEvent,
+} from "@cocalc/database/postgres/account-collaborator-index-projector";
 import { computeAccountProjectFeedEvents } from "@cocalc/database/postgres/account-project-index-projector";
-import { loadProjectOutboxPayload } from "@cocalc/database/postgres/project-events-outbox";
+import {
+  loadProjectOutboxPayload,
+  type ProjectOutboxEventRow,
+} from "@cocalc/database/postgres/project-events-outbox";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { publishAccountFeedEventBestEffort } from "./feed";
 
@@ -38,6 +45,36 @@ export async function publishProjectAccountFeedEventsBestEffort(opts: {
         account_id: event.account_id,
         event,
       });
+    }
+    const latestRows = await client.query<
+      Pick<ProjectOutboxEventRow, "event_id">
+    >(
+      `SELECT event_id
+         FROM project_events_outbox
+        WHERE project_id = $1
+        ORDER BY created_at DESC, event_id DESC
+        LIMIT 1`,
+      [opts.project_id],
+    );
+    const collaboratorEvent = await loadLatestCollaboratorProjectionEvent({
+      db: client,
+      project_id: opts.project_id,
+    });
+    if (
+      collaboratorEvent != null &&
+      collaboratorEvent.event_id === latestRows.rows[0]?.event_id
+    ) {
+      const collaborator = await applyProjectEventToAccountCollaboratorIndex({
+        db: client,
+        bay_id,
+        event: collaboratorEvent,
+      });
+      for (const event of collaborator.feed_events) {
+        await publishAccountFeedEventBestEffort({
+          account_id: event.account_id,
+          event,
+        });
+      }
     }
   } finally {
     client.release();

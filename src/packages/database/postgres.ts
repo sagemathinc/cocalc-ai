@@ -462,6 +462,9 @@ export class PostgreSQL extends EventEmitter implements PostgreSQLMethods {
   declare publishProjectAccountFeedEventsBestEffort?: (opts: {
     project_id: string;
   }) => Promise<void>;
+  declare publishCollaboratorAccountFeedEventsBestEffort?: (opts: {
+    collaborator_account_id: string;
+  }) => Promise<void>;
 
   // emits a 'connect' event whenever we successfully connect to the database and 'disconnect' when connection to postgres fails
   constructor(opts: PostgreSQLOptions = {}) {
@@ -1050,6 +1053,12 @@ export class PostgreSQL extends EventEmitter implements PostgreSQLMethods {
     ...args: UserQueryMethodArgs<"_user_set_query_project_change_after">
   ): UserQueryMethodReturn<"_user_set_query_project_change_after"> {
     return userQuery._user_set_query_project_change_after.call(this, ...args);
+  }
+
+  _user_set_query_account_change_after(
+    ...args: UserQueryMethodArgs<"_user_set_query_account_change_after">
+  ): UserQueryMethodReturn<"_user_set_query_account_change_after"> {
+    return userQuery._user_set_query_account_change_after.call(this, ...args);
   }
 
   _user_set_query_mention_change_after(

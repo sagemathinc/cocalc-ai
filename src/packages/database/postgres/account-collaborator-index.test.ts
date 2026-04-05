@@ -8,6 +8,7 @@ import { testCleanup } from "@cocalc/database/test-utils";
 import {
   listProjectedCollaboratorsForAccount,
   listProjectedMyCollaboratorsForAccount,
+  refreshProjectedCollaboratorIdentityRows,
   rebuildAccountCollaboratorIndex,
 } from "./account-collaborator-index";
 
@@ -113,22 +114,28 @@ describe("account_collaborator_index rebuild", () => {
       }),
     ).resolves.toEqual([
       expect.objectContaining({
-        collaborator_account_id: COLLAB_A,
-        common_project_count: 2,
-        display_name: "Alice A",
-        avatar_ref: "alice.png",
-      }),
-      expect.objectContaining({
         collaborator_account_id: ACCOUNT_ID,
         common_project_count: 2,
-        display_name: "Local User",
-        avatar_ref: "local.png",
+        first_name: "Local",
+        last_name: "User",
+        name: "Local User",
+        profile: { image: "local.png" },
+      }),
+      expect.objectContaining({
+        collaborator_account_id: COLLAB_A,
+        common_project_count: 2,
+        first_name: "Alice",
+        last_name: "A",
+        name: "Alice A",
+        profile: { image: "alice.png" },
       }),
       expect.objectContaining({
         collaborator_account_id: COLLAB_B,
         common_project_count: 1,
-        display_name: "Bob B",
-        avatar_ref: "bob.png",
+        first_name: "Bob",
+        last_name: "B",
+        name: "Bob B",
+        profile: { image: "bob.png" },
       }),
     ]);
 
@@ -193,10 +200,72 @@ describe("account_collaborator_index rebuild", () => {
       expect.objectContaining({
         collaborator_account_id: DELETED_COLLAB,
         common_project_count: 1,
-        display_name: "Deleted User",
-        avatar_ref: null,
+        first_name: "Deleted",
+        last_name: "User",
+        name: "Deleted User",
+        profile: null,
       }),
     ]);
+  });
+
+  it("refreshes projected collaborator identity rows after an account rename", async () => {
+    await getPool().query(
+      `INSERT INTO accounts
+         (account_id, first_name, last_name, created, email_address, home_bay_id, profile)
+       VALUES
+         ($1, 'Local', 'User', NOW(), 'local@example.com', $3, '{"image":"local.png"}'::JSONB),
+         ($2, 'Alice', 'A', NOW(), 'alice@example.com', $3, '{"image":"alice.png"}'::JSONB)`,
+      [ACCOUNT_ID, COLLAB_A, LOCAL_BAY_ID],
+    );
+    await getPool().query(
+      `INSERT INTO projects
+        (project_id, title, users, created, last_edited, deleted)
+       VALUES
+        ($1, 'Shared A', $2::JSONB, NOW(), NOW(), FALSE)`,
+      [
+        PROJECT_A,
+        JSON.stringify({
+          [ACCOUNT_ID]: { group: "owner" },
+          [COLLAB_A]: { group: "collaborator" },
+        }),
+      ],
+    );
+
+    await rebuildAccountCollaboratorIndex({
+      account_id: ACCOUNT_ID,
+      bay_id: LOCAL_BAY_ID,
+      dry_run: false,
+    });
+
+    await getPool().query(
+      `UPDATE accounts
+          SET first_name = 'Alicia',
+              last_name = 'Anderson',
+              profile = '{"image":"alicia.png","color":"#123456"}'::JSONB
+        WHERE account_id = $1`,
+      [COLLAB_A],
+    );
+
+    await expect(
+      refreshProjectedCollaboratorIdentityRows({
+        db: getPool(),
+        collaborator_account_id: COLLAB_A,
+      }),
+    ).resolves.toEqual({
+      updated_rows: [
+        expect.objectContaining({
+          account_id: ACCOUNT_ID,
+          collaborator_account_id: COLLAB_A,
+          first_name: "Alicia",
+          last_name: "Anderson",
+          name: "Alicia Anderson",
+          profile: {
+            image: "alicia.png",
+            color: "#123456",
+          },
+        }),
+      ],
+    });
   });
 
   it("rejects accounts homed in another bay", async () => {

@@ -21,6 +21,8 @@ class ClientDB {
       this._user_set_query_project_manage_users_owner_only.bind(this);
     this._user_set_query_project_change_after =
       this._user_set_query_project_change_after.bind(this);
+    this._user_set_query_account_change_after =
+      this._user_set_query_account_change_after.bind(this);
     this._user_set_query_project_change_before =
       this._user_set_query_project_change_before.bind(this);
     this._user_set_query_mention_change_after =
@@ -64,6 +66,9 @@ class ClientDB {
   }
 
   _user_set_query_project_change_after(_obj, _old_val, _new_val, cb) {
+    cb();
+  }
+  _user_set_query_account_change_after(_obj, _old_val, _new_val, cb) {
     cb();
   }
   _user_set_query_project_change_before(_obj, _old_val, _new_val, cb) {

@@ -882,6 +882,9 @@ export interface PostgreSQLMethods extends EventEmitter {
   publishProjectAccountFeedEventsBestEffort?: (opts: {
     project_id: string;
   }) => Promise<void>;
+  publishCollaboratorAccountFeedEventsBestEffort?: (opts: {
+    collaborator_account_id: string;
+  }) => Promise<void>;
 
   archivePatches(opts: ArchivePatchesOpts);
 

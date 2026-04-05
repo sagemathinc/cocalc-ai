@@ -22,8 +22,11 @@ Table({
           account_id: null,
           collaborator_account_id: null,
           common_project_count: 0,
-          display_name: "",
-          avatar_ref: null,
+          first_name: "",
+          last_name: "",
+          name: "",
+          last_active: null,
+          profile: null,
           updated_at: null,
         },
       },
@@ -42,13 +45,25 @@ Table({
       type: "integer",
       desc: "Number of visible projects this account currently shares with the collaborator.",
     },
-    display_name: {
+    first_name: {
       type: "string",
-      desc: "Projected collaborator display name.",
+      desc: "Projected collaborator first name.",
     },
-    avatar_ref: {
+    last_name: {
       type: "string",
-      desc: "Optional projected avatar/image reference.",
+      desc: "Projected collaborator last name.",
+    },
+    name: {
+      type: "string",
+      desc: "Projected collaborator username/alias.",
+    },
+    last_active: {
+      type: "timestamp",
+      desc: "Projected collaborator last active timestamp.",
+    },
+    profile: {
+      type: "map",
+      desc: "Projected collaborator public profile.",
     },
     updated_at: {
       type: "timestamp",

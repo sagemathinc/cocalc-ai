@@ -17,10 +17,13 @@ export interface AccountFeedProjectRow {
 }
 
 export interface AccountFeedCollaboratorRow {
-  collaborator_account_id: string;
+  account_id: string;
+  first_name: string | null;
+  last_name: string | null;
+  name: string | null;
+  last_active: string | null;
+  profile: Record<string, any> | null;
   common_project_count: number;
-  display_name: string;
-  avatar_ref: string | null;
   updated_at: string | null;
 }
 

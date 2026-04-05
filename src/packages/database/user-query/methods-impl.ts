@@ -1764,6 +1764,50 @@ export async function _user_set_query_project_change_after(
   }
 }
 
+export async function _user_set_query_account_change_after(
+  this: UserQueryContext,
+  old_val: AnyRecord,
+  new_val: AnyRecord,
+  account_id: string,
+  cb: CB,
+) {
+  const dbg = this._dbg(
+    `_user_set_query_account_change_after ${account_id}, ${misc.to_json(
+      old_val,
+    )} --> ${misc.to_json(new_val)}`,
+  );
+  dbg();
+  const changed_account_id =
+    `${new_val?.account_id ?? old_val?.account_id ?? account_id ?? ""}`.trim();
+  if (!changed_account_id) {
+    return cb();
+  }
+  const relevantFields = [
+    "first_name",
+    "last_name",
+    "name",
+    "last_active",
+    "profile",
+  ];
+  if (
+    !relevantFields.some(
+      (field) =>
+        JSON.stringify(new_val?.[field]) !== JSON.stringify(old_val?.[field]),
+    )
+  ) {
+    return cb();
+  }
+  try {
+    await this.publishCollaboratorAccountFeedEventsBestEffort?.({
+      collaborator_account_id: changed_account_id,
+    });
+    return cb();
+  } catch (err) {
+    dbg(`immediate collaborator account feed publish failed -- ${err}`);
+    return cb(err as any);
+  }
+}
+
 export async function _user_set_query_mention_change_after(
   this: UserQueryContext,
   old_val: AnyRecord,
@@ -3094,6 +3138,7 @@ type UserQueryMethods = {
   project_action: typeof project_action;
   _user_set_query_project_change_before: typeof _user_set_query_project_change_before;
   _user_set_query_project_change_after: typeof _user_set_query_project_change_after;
+  _user_set_query_account_change_after: typeof _user_set_query_account_change_after;
   _user_set_query_mention_change_after: typeof _user_set_query_mention_change_after;
   _user_get_query_functional_subs: typeof _user_get_query_functional_subs;
   _parse_get_query_opts: typeof _parse_get_query_opts;

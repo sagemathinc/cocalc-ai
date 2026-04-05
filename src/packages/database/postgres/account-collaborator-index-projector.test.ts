@@ -261,7 +261,8 @@ describe("account_collaborator_index projector", () => {
           type: "collaborator.upsert",
           account_id: ACCOUNT_A,
           collaborator: expect.objectContaining({
-            collaborator_account_id: ACCOUNT_D,
+            account_id: ACCOUNT_D,
+            name: "Delta Local",
           }),
         }),
         expect.objectContaining({
@@ -286,11 +287,11 @@ describe("account_collaborator_index projector", () => {
         common_project_count: 1,
       }),
       expect.objectContaining({
-        collaborator_account_id: ACCOUNT_D,
+        collaborator_account_id: ACCOUNT_C,
         common_project_count: 1,
       }),
       expect.objectContaining({
-        collaborator_account_id: ACCOUNT_C,
+        collaborator_account_id: ACCOUNT_D,
         common_project_count: 1,
       }),
     ]);
@@ -311,11 +312,11 @@ describe("account_collaborator_index projector", () => {
         common_project_count: 1,
       }),
       expect.objectContaining({
-        collaborator_account_id: ACCOUNT_D,
+        collaborator_account_id: ACCOUNT_C,
         common_project_count: 1,
       }),
       expect.objectContaining({
-        collaborator_account_id: ACCOUNT_C,
+        collaborator_account_id: ACCOUNT_D,
         common_project_count: 1,
       }),
     ]);

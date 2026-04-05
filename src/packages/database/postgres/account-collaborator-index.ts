@@ -20,8 +20,11 @@ export interface RebuildAccountCollaboratorIndexResult {
 export interface AccountCollaboratorIndexRow {
   collaborator_account_id: string;
   common_project_count: number;
-  display_name: string;
-  avatar_ref: string | null;
+  first_name: string | null;
+  last_name: string | null;
+  name: string | null;
+  last_active: Date | null;
+  profile: Record<string, any> | null;
   updated_at: Date | null;
 }
 
@@ -40,11 +43,19 @@ export interface ReplaceAccountCollaboratorIndexRowsResult {
   inserted_rows: number;
 }
 
+export interface RefreshProjectedCollaboratorIdentityResult {
+  updated_rows: AccountCollaboratorIndexRowWithAccountId[];
+}
+
+export interface AccountCollaboratorIndexRowWithAccountId extends AccountCollaboratorIndexRow {
+  account_id: string;
+}
+
 type Queryable = {
-  query: (
+  query: <T = any>(
     sql: string,
     params?: any[],
-  ) => Promise<{ rows: any[]; rowCount?: number | null }>;
+  ) => Promise<{ rows: T[]; rowCount?: number | null }>;
 };
 
 function normalizeBayId(raw?: string): string {
@@ -98,12 +109,18 @@ export async function listProjectedCollaboratorsForAccount(opts: {
     `SELECT
        collaborator_account_id,
        common_project_count,
-       display_name,
-       avatar_ref,
+       first_name,
+       last_name,
+       name,
+       last_active,
+       profile,
        updated_at
      FROM account_collaborator_index
      WHERE ${where.join(" AND ")}
-     ORDER BY common_project_count DESC, display_name ASC, collaborator_account_id ASC
+     ORDER BY
+       common_project_count DESC,
+       COALESCE(last_active, updated_at) DESC NULLS LAST,
+       collaborator_account_id ASC
      LIMIT $${i}`,
     params,
   );
@@ -121,27 +138,15 @@ export async function listProjectedMyCollaboratorsForAccount(opts: {
   const { rows } = await getPool().query<ProjectedMyCollaboratorRow>(
     `SELECT
        aci.collaborator_account_id AS account_id,
-       CASE
-         WHEN a.account_id IS NULL OR a.deleted IS TRUE THEN aci.display_name
-         ELSE COALESCE(NULLIF(BTRIM(a.name), ''), aci.display_name)
-       END AS name,
-       CASE
-         WHEN a.account_id IS NULL OR a.deleted IS TRUE THEN NULL
-         ELSE a.first_name
-       END AS first_name,
-       CASE
-         WHEN a.account_id IS NULL OR a.deleted IS TRUE THEN NULL
-         ELSE a.last_name
-       END AS last_name,
+       aci.name,
+       aci.first_name,
+       aci.last_name,
        CASE
          WHEN $2::boolean AND a.account_id IS NOT NULL AND a.deleted IS NOT TRUE
            THEN a.email_address
          ELSE NULL
        END AS email_address,
-       CASE
-         WHEN a.account_id IS NULL OR a.deleted IS TRUE THEN NULL
-         ELSE a.last_active
-       END AS last_active,
+       aci.last_active,
        aci.common_project_count AS shared_projects
      FROM account_collaborator_index aci
      LEFT JOIN accounts a ON a.account_id = aci.collaborator_account_id
@@ -149,12 +154,63 @@ export async function listProjectedMyCollaboratorsForAccount(opts: {
        AND aci.collaborator_account_id <> $1::UUID
      ORDER BY
        aci.common_project_count DESC,
-       COALESCE(a.last_active, aci.updated_at) DESC NULLS LAST,
+       COALESCE(aci.last_active, aci.updated_at) DESC NULLS LAST,
        aci.collaborator_account_id ASC
      LIMIT $3`,
     [account_id, include_email, limit],
   );
   return rows;
+}
+
+function deletedUserProjection() {
+  return {
+    first_name: "Deleted",
+    last_name: "User",
+    name: "Deleted User",
+    last_active: null,
+    profile: null,
+  };
+}
+
+function collaboratorProjectionSelect(accountAlias = "a"): string {
+  return `CASE
+            WHEN ${accountAlias}.account_id IS NULL OR ${accountAlias}.deleted IS TRUE
+              THEN $2::TEXT
+            ELSE ${accountAlias}.first_name
+          END AS first_name,
+          CASE
+            WHEN ${accountAlias}.account_id IS NULL OR ${accountAlias}.deleted IS TRUE
+              THEN $3::TEXT
+            ELSE ${accountAlias}.last_name
+          END AS last_name,
+          CASE
+            WHEN ${accountAlias}.account_id IS NULL OR ${accountAlias}.deleted IS TRUE
+              THEN $4::TEXT
+            ELSE COALESCE(
+              NULLIF(BTRIM(${accountAlias}.name), ''),
+              NULLIF(
+                BTRIM(
+                  CONCAT_WS(
+                    ' ',
+                    COALESCE(${accountAlias}.first_name, ''),
+                    COALESCE(${accountAlias}.last_name, '')
+                  )
+                ),
+                ''
+              ),
+              'No Name'
+            )
+          END AS name,
+          CASE
+            WHEN ${accountAlias}.account_id IS NULL OR ${accountAlias}.deleted IS TRUE
+              THEN NULL
+            ELSE ${accountAlias}.last_active
+          END AS last_active,
+          CASE
+            WHEN ${accountAlias}.account_id IS NULL OR ${accountAlias}.deleted IS TRUE
+              THEN NULL
+            ELSE ${accountAlias}.profile
+          END AS profile`;
 }
 
 async function assertAccountIsHomedLocally(opts: {
@@ -234,6 +290,7 @@ export async function replaceAccountCollaboratorIndexRows(opts: {
       WHERE account_id = $1`,
     [account_id],
   );
+  const deletedUser = deletedUserProjection();
   const inserted = await opts.db.query(
     `WITH shared AS (
         SELECT
@@ -245,31 +302,22 @@ export async function replaceAccountCollaboratorIndexRows(opts: {
         GROUP BY 1
       )
       INSERT INTO account_collaborator_index
-        (account_id, collaborator_account_id, common_project_count, display_name, avatar_ref, updated_at)
+        (
+          account_id,
+          collaborator_account_id,
+          common_project_count,
+          first_name,
+          last_name,
+          name,
+          last_active,
+          profile,
+          updated_at
+        )
       SELECT
         $1::UUID AS account_id,
         shared.collaborator_account_id,
         shared.common_project_count,
-        CASE
-          WHEN a.account_id IS NULL THEN 'Deleted User'
-          ELSE COALESCE(
-            NULLIF(
-              BTRIM(
-                CONCAT_WS(
-                  ' ',
-                  COALESCE(a.first_name, ''),
-                  COALESCE(a.last_name, '')
-                )
-              ),
-              ''
-            ),
-            'No Name'
-          )
-        END AS display_name,
-        CASE
-          WHEN a.account_id IS NULL THEN NULL
-          ELSE NULLIF(BTRIM(a.profile ->> 'image'), '')
-        END AS avatar_ref,
+        ${collaboratorProjectionSelect("a")},
         NOW() AS updated_at
       FROM shared
       LEFT JOIN accounts a
@@ -277,14 +325,80 @@ export async function replaceAccountCollaboratorIndexRows(opts: {
        AND (a.deleted IS NULL OR a.deleted = FALSE)
       ORDER BY
         shared.common_project_count DESC,
-        display_name ASC,
+        name ASC,
         shared.collaborator_account_id ASC`,
-    [account_id],
+    [
+      account_id,
+      deletedUser.first_name,
+      deletedUser.last_name,
+      deletedUser.name,
+    ],
   );
   return {
     deleted_rows: deleted.rowCount ?? 0,
     inserted_rows: inserted.rowCount ?? 0,
   };
+}
+
+export async function refreshProjectedCollaboratorIdentityRows(opts: {
+  db: Queryable;
+  collaborator_account_id: string;
+}): Promise<RefreshProjectedCollaboratorIdentityResult> {
+  const collaborator_account_id = normalizeUuid(
+    opts.collaborator_account_id,
+    "collaborator account id",
+  );
+  const deletedUser = deletedUserProjection();
+  const { rows } =
+    await opts.db.query<AccountCollaboratorIndexRowWithAccountId>(
+      `WITH source AS (
+        SELECT
+          aci.account_id,
+          aci.collaborator_account_id,
+          aci.common_project_count,
+          ${collaboratorProjectionSelect("a")}
+        FROM account_collaborator_index aci
+        LEFT JOIN accounts a
+          ON a.account_id = aci.collaborator_account_id
+         AND (a.deleted IS NULL OR a.deleted = FALSE)
+        WHERE aci.collaborator_account_id = $1::UUID
+      ),
+      updated AS (
+        UPDATE account_collaborator_index aci
+           SET first_name = source.first_name,
+               last_name = source.last_name,
+               name = source.name,
+               last_active = source.last_active,
+               profile = source.profile,
+               updated_at = NOW()
+          FROM source
+         WHERE aci.account_id = source.account_id
+           AND aci.collaborator_account_id = source.collaborator_account_id
+        RETURNING
+          aci.account_id,
+          aci.collaborator_account_id,
+          aci.common_project_count,
+          aci.first_name,
+          aci.last_name,
+          aci.name,
+          aci.last_active,
+          aci.profile,
+          aci.updated_at
+      )
+      SELECT *
+        FROM updated
+      ORDER BY
+        common_project_count DESC,
+        COALESCE(last_active, updated_at) DESC NULLS LAST,
+        collaborator_account_id ASC`,
+      [
+        collaborator_account_id,
+        deletedUser.first_name,
+        deletedUser.last_name,
+        deletedUser.name,
+      ],
+    );
+  return { updated_rows: rows };
 }
 
 export async function rebuildAccountCollaboratorIndex(opts: {
