@@ -12,7 +12,6 @@ import { Avatar } from "@cocalc/frontend/account/avatar/avatar";
 import { Button as BSButton } from "@cocalc/frontend/antd-bootstrap";
 import {
   CSS,
-  redux,
   useActions,
   useCallback,
   useEffect,
@@ -296,7 +295,19 @@ export function LogFlyout({
     "flyout_log_deduplicate",
   );
   const project_log = useTypedRedux({ project_id }, "project_log");
-  const project_log_all = useTypedRedux({ project_id }, "project_log_all");
+  const project_log_loading = useTypedRedux(
+    { project_id },
+    "project_log_loading",
+  );
+  const project_log_loading_older = useTypedRedux(
+    { project_id },
+    "project_log_loading_older",
+  );
+  const project_log_has_older = useTypedRedux(
+    { project_id },
+    "project_log_has_older",
+  );
+  const project_log_error = useTypedRedux({ project_id }, "project_log_error");
   const openFiles = useTypedRedux({ project_id }, "open_files_order");
   const user_map = useTypedRedux("users", "user_map");
   const activeTab = useTypedRedux({ project_id }, "active_project_tab");
@@ -317,6 +328,10 @@ export function LogFlyout({
     saveWorkspaceOnly(project_id, workspaceOnly);
   }, [project_id, workspaceOnly]);
 
+  useEffect(() => {
+    actions?.refresh_project_log();
+  }, [actions, project_id]);
+
   const workspacePathMatches = useMemo(() => {
     if (!workspaceOnly || !workspaces.current) return undefined;
     const workspaceId = workspaces.current.workspace_id;
@@ -336,7 +351,7 @@ export function LogFlyout({
   }, [activeTab]);
 
   const log: OpenedFile[] = useMemo(() => {
-    const log = project_log_all ?? project_log;
+    const log = project_log;
     if (log == null) return [];
 
     switch (mode) {
@@ -362,7 +377,6 @@ export function LogFlyout({
     }
   }, [
     project_log,
-    project_log_all,
     search,
     max,
     mode,
@@ -483,9 +497,20 @@ export function LogFlyout({
     );
   }
 
-  if (project_log == null) {
-    redux.getProjectStore(project_id).init_table("project_log"); // kick off loading it
+  if (project_log == null && project_log_loading) {
     return <Loading theme="medium" transparent />;
+  }
+
+  if (project_log == null && project_log_error) {
+    return (
+      <Alert
+        type="error"
+        banner
+        showIcon={false}
+        style={{ margin: 0 }}
+        message={project_log_error}
+      />
+    );
   }
 
   function doScroll(dx: -1 | 1) {
@@ -565,7 +590,7 @@ export function LogFlyout({
   }
 
   function renderShowAll() {
-    if (project_log_all != null) {
+    if (!project_log_has_older) {
       return <div style={{ height: "1px" }} />;
     }
     return (
@@ -573,6 +598,7 @@ export function LogFlyout({
         <Button
           block
           type="text"
+          loading={!!project_log_loading_older}
           onClick={() => {
             actions?.project_log_load_all();
           }}
@@ -737,9 +763,35 @@ export function LogFlyout({
   function renderControls() {
     switch (mode) {
       case "files":
-        return renderDedup();
+        return (
+          <>
+            <Tooltip title="Refresh log">
+              <Button
+                size="small"
+                type="text"
+                icon={<Icon name="refresh" />}
+                loading={!!project_log_loading}
+                onClick={() => actions?.refresh_project_log()}
+              />
+            </Tooltip>
+            {renderDedup()}
+          </>
+        );
       case "history":
-        return renderFilter();
+        return (
+          <>
+            <Tooltip title="Refresh log">
+              <Button
+                size="small"
+                type="text"
+                icon={<Icon name="refresh" />}
+                loading={!!project_log_loading}
+                onClick={() => actions?.refresh_project_log()}
+              />
+            </Tooltip>
+            {renderFilter()}
+          </>
+        );
       default:
         unreachable(mode);
     }

@@ -12,6 +12,7 @@ import {
 } from "@cocalc/frontend/misc";
 import {
   React,
+  redux,
   useCallback,
   useEditorRedux,
   useEffect,
@@ -125,6 +126,21 @@ function normalizeThreadKey(value?: string | null): string | undefined {
   return key;
 }
 
+export type CodexTurnNotificationWatch = {
+  threadKey: string;
+  threadId: string;
+  threadLabel: string;
+};
+
+export type CompletedCodexTurnNotification = CodexTurnNotificationWatch & {
+  newestMessageDate?: string;
+};
+
+type CodexTurnNotificationSnapshot = {
+  active: boolean;
+  newestMessageDate?: string;
+};
+
 export function getLatestCodexActivityDate(
   messages: readonly ChatMessage[],
 ): string | undefined {
@@ -136,6 +152,43 @@ export function getLatestCodexActivityDate(
     return `${d.valueOf()}`;
   }
   return undefined;
+}
+
+export function getLatestThreadMessageDate(
+  messages: readonly ChatMessage[],
+): string | undefined {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const d = dateValue(messages[i]);
+    if (!d) continue;
+    return `${d.valueOf()}`;
+  }
+  return undefined;
+}
+
+export function splitCompletedCodexTurnNotifications({
+  watches,
+  snapshots,
+}: {
+  watches: readonly CodexTurnNotificationWatch[];
+  snapshots: ReadonlyMap<string, CodexTurnNotificationSnapshot>;
+}): {
+  remainingWatches: CodexTurnNotificationWatch[];
+  completedNotifications: CompletedCodexTurnNotification[];
+} {
+  const remainingWatches: CodexTurnNotificationWatch[] = [];
+  const completedNotifications: CompletedCodexTurnNotification[] = [];
+  for (const watch of watches) {
+    const snapshot = snapshots.get(watch.threadKey);
+    if (snapshot?.active === true) {
+      remainingWatches.push(watch);
+      continue;
+    }
+    completedNotifications.push({
+      ...watch,
+      newestMessageDate: snapshot?.newestMessageDate,
+    });
+  }
+  return { remainingWatches, completedNotifications };
 }
 
 export function enabledLoopConfig(
@@ -451,6 +504,10 @@ export function ChatPanel({
   );
   const [composerFocused, setComposerFocused] = useState(false);
   const [composerSession, setComposerSession] = useState(0);
+  const [codexTurnNotificationWatches, setCodexTurnNotificationWatches] =
+    useState<CodexTurnNotificationWatch[]>([]);
+  const [completedCodexTurnNotifications, setCompletedCodexTurnNotifications] =
+    useState<CompletedCodexTurnNotification[]>([]);
   const accountOtherSettings = useTypedRedux("account", "other_settings");
   const workspaceWorkingDirectory = useWorkspaceChatWorkingDirectory(path);
   const defaultNewThreadSetup = useMemo<NewThreadSetup>(() => {
@@ -593,6 +650,14 @@ export function ChatPanel({
   const selectedThreadId = useMemo(
     () => normalizeThreadKey(selectedThreadKey),
     [selectedThreadKey],
+  );
+  const notifyOnSelectedTurnFinish = useMemo(
+    () =>
+      !!selectedThreadKey &&
+      codexTurnNotificationWatches.some(
+        (watch) => watch.threadKey === selectedThreadKey,
+      ),
+    [codexTurnNotificationWatches, selectedThreadKey],
   );
   const selectedThreadMetadata = useMemo(
     () =>
@@ -870,6 +935,29 @@ export function ChatPanel({
         : [],
     [actions, selectedThreadLookupKey, messages],
   );
+  const setNotifyOnSelectedTurnFinish = useCallback(
+    (checked: boolean) => {
+      if (!selectedThreadKey || !selectedThreadId) return;
+      if (!checked) {
+        setCodexTurnNotificationWatches((prev) =>
+          prev.filter((watch) => watch.threadKey !== selectedThreadKey),
+        );
+        return;
+      }
+      const nextWatch = {
+        threadKey: selectedThreadKey,
+        threadId: selectedThreadId,
+        threadLabel:
+          `${selectedThread?.displayLabel ?? selectedThread?.label ?? ""}`.trim() ||
+          "this chat",
+      } satisfies CodexTurnNotificationWatch;
+      setCodexTurnNotificationWatches((prev) => [
+        ...prev.filter((watch) => watch.threadKey !== nextWatch.threadKey),
+        nextWatch,
+      ]);
+    },
+    [selectedThread, selectedThreadId, selectedThreadKey],
+  );
   const hasRunningAcpTurn = useMemo(() => {
     return hasActiveAcpTurnForComposer({
       isSelectedThreadAI,
@@ -878,6 +966,45 @@ export function ChatPanel({
       acpState,
     });
   }, [isSelectedThreadAI, selectedThreadId, selectedThreadMessages, acpState]);
+  useEffect(() => {
+    if (codexTurnNotificationWatches.length === 0) return;
+    const snapshots = new Map<string, CodexTurnNotificationSnapshot>();
+    for (const watch of codexTurnNotificationWatches) {
+      const threadMessages = actions.getMessagesInThread(watch.threadId) ?? [];
+      snapshots.set(watch.threadKey, {
+        active: hasActiveAcpTurnForComposer({
+          isSelectedThreadAI: true,
+          selectedThreadId: watch.threadId,
+          selectedThreadMessages: threadMessages,
+          acpState,
+        }),
+        newestMessageDate: getLatestThreadMessageDate(threadMessages),
+      });
+    }
+    const { remainingWatches, completedNotifications } =
+      splitCompletedCodexTurnNotifications({
+        watches: codexTurnNotificationWatches,
+        snapshots,
+      });
+    if (completedNotifications.length === 0) return;
+    setCodexTurnNotificationWatches(remainingWatches);
+    setCompletedCodexTurnNotifications((prev) => {
+      const seen = new Set(
+        prev.map(
+          (notification) =>
+            `${notification.threadKey}:${notification.newestMessageDate ?? ""}`,
+        ),
+      );
+      const next = [...prev];
+      for (const notification of completedNotifications) {
+        const key = `${notification.threadKey}:${notification.newestMessageDate ?? ""}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        next.push(notification);
+      }
+      return next;
+    });
+  }, [actions, acpState, codexTurnNotificationWatches, messages]);
 
   const agentSessionRecords = useMemo<AgentSessionRecord[]>(() => {
     if (typeof account_id !== "string" || !account_id.trim()) {
@@ -1485,6 +1612,55 @@ export function ChatPanel({
     setNewThreadSetup(defaultNewThreadSetup);
   }
 
+  const activeCompletedCodexTurnNotification =
+    completedCodexTurnNotifications[0];
+
+  const dismissCompletedCodexTurnNotification = useCallback(() => {
+    setCompletedCodexTurnNotifications((prev) => prev.slice(1));
+  }, []);
+
+  const showCompletedCodexTurnNotification = useCallback(() => {
+    const notification = activeCompletedCodexTurnNotification;
+    if (!notification) return;
+    dismissCompletedCodexTurnNotification();
+    void (async () => {
+      try {
+        if (project_id && path?.trim()) {
+          await redux.getProjectActions(project_id)?.open_file({
+            path,
+            foreground: true,
+            foreground_project: true,
+          });
+        }
+      } catch (err) {
+        console.warn("chatroom: unable to foreground chat file", err);
+      }
+      setAllowAutoSelectThread(false);
+      setSelectedThreadKey(notification.threadKey);
+      const newestMessageDate = Number(notification.newestMessageDate);
+      const scrollToNewest = () => {
+        if (Number.isFinite(newestMessageDate)) {
+          actions.scrollToDate(newestMessageDate, {
+            persistFragment: false,
+          });
+        } else {
+          scrollToBottomRef.current?.(true);
+        }
+      };
+      for (const delayMs of [0, 50, 150, 300]) {
+        window.setTimeout(scrollToNewest, delayMs);
+      }
+    })();
+  }, [
+    actions,
+    activeCompletedCodexTurnNotification,
+    dismissCompletedCodexTurnNotification,
+    path,
+    project_id,
+    setAllowAutoSelectThread,
+    setSelectedThreadKey,
+  ]);
+
   const openGitBrowserForThread = useCallback(
     (threadKey: string) => {
       const threadId = normalizeThreadKey(threadKey);
@@ -1871,6 +2047,8 @@ export function ChatPanel({
         activityJumpToken={activityJumpToken}
         shortcutEnabled={isVisible && tabIsVisible}
         onOpenGitBrowser={openGitBrowserFromMessage}
+        notifyOnTurnFinish={notifyOnSelectedTurnFinish}
+        onNotifyOnTurnFinishChange={setNotifyOnSelectedTurnFinish}
       />
       {loopBanner}
       {automationBanner}
@@ -1902,6 +2080,32 @@ export function ChatPanel({
         loopConfig={composerLoopConfig}
         onLoopConfigChange={handleLoopConfigChange}
       />
+      <Modal
+        title="Codex turn finished"
+        open={activeCompletedCodexTurnNotification != null}
+        destroyOnHidden
+        onCancel={dismissCompletedCodexTurnNotification}
+        footer={[
+          <Button key="cancel" onClick={dismissCompletedCodexTurnNotification}>
+            Cancel
+          </Button>,
+          <Button
+            key="show"
+            type="primary"
+            onClick={showCompletedCodexTurnNotification}
+          >
+            Show
+          </Button>,
+        ]}
+      >
+        <p style={{ marginBottom: 0 }}>
+          Codex finished working in{" "}
+          <strong>
+            {activeCompletedCodexTurnNotification?.threadLabel ?? "this chat"}
+          </strong>
+          .
+        </p>
+      </Modal>
       <Modal
         title="Thread automation"
         open={automationModalOpen}

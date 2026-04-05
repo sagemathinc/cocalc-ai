@@ -151,7 +151,7 @@ function shouldUseProjectedBrowserProjectReads(opts: {
   if (!opts.account_id) {
     return false;
   }
-  if (opts.table !== "projects" && opts.table !== "projects_all") {
+  if (opts.table !== "projects") {
     return false;
   }
   return getProjectListReadMode() !== "off";
@@ -1717,6 +1717,15 @@ export async function _user_set_query_project_change_after(
   if (!project_id) {
     return cb();
   }
+  const publishImmediateFeed = async () => {
+    try {
+      await this.publishProjectAccountFeedEventsBestEffort?.({
+        project_id,
+      });
+    } catch (err) {
+      dbg(`immediate project account feed publish failed -- ${err}`);
+    }
+  };
   try {
     if (
       new_val?.deleted !== undefined &&
@@ -1728,6 +1737,7 @@ export async function _user_set_query_project_change_after(
           : "project.summary_changed",
         project_id,
       });
+      await publishImmediateFeed();
       return cb();
     }
     const summaryFields = [
@@ -1746,9 +1756,69 @@ export async function _user_set_query_project_change_after(
         event_type: "project.summary_changed",
         project_id,
       });
+      await publishImmediateFeed();
     }
     return cb();
   } catch (err) {
+    return cb(err as any);
+  }
+}
+
+export async function _user_set_query_account_change_after(
+  this: UserQueryContext,
+  old_val: AnyRecord,
+  new_val: AnyRecord,
+  account_id: string,
+  cb: CB,
+) {
+  const dbg = this._dbg(
+    `_user_set_query_account_change_after ${account_id}, ${misc.to_json(
+      old_val,
+    )} --> ${misc.to_json(new_val)}`,
+  );
+  dbg();
+  const changed_account_id =
+    `${new_val?.account_id ?? old_val?.account_id ?? account_id ?? ""}`.trim();
+  if (!changed_account_id) {
+    return cb();
+  }
+  const changed_fields = Object.keys(new_val ?? {}).filter(
+    (field) =>
+      JSON.stringify(new_val?.[field]) !== JSON.stringify(old_val?.[field]),
+  );
+  if (changed_fields.length === 0) {
+    return cb();
+  }
+  try {
+    const account_patch = changed_fields.reduce(
+      (patch, field) => {
+        patch[field] = new_val?.[field];
+        return patch;
+      },
+      {} as Record<string, any>,
+    );
+    await this.publishAccountRowFeedEventsBestEffort?.({
+      account_id: changed_account_id,
+      patch: account_patch,
+      reason: "user_query_set",
+    });
+    const collaboratorRelevantFields = [
+      "first_name",
+      "last_name",
+      "name",
+      "last_active",
+      "profile",
+    ];
+    if (
+      collaboratorRelevantFields.some((field) => changed_fields.includes(field))
+    ) {
+      await this.publishCollaboratorAccountFeedEventsBestEffort?.({
+        collaborator_account_id: changed_account_id,
+      });
+    }
+    return cb();
+  } catch (err) {
+    dbg(`immediate account feed publish failed -- ${err}`);
     return cb(err as any);
   }
 }
@@ -3083,6 +3153,7 @@ type UserQueryMethods = {
   project_action: typeof project_action;
   _user_set_query_project_change_before: typeof _user_set_query_project_change_before;
   _user_set_query_project_change_after: typeof _user_set_query_project_change_after;
+  _user_set_query_account_change_after: typeof _user_set_query_account_change_after;
   _user_set_query_mention_change_after: typeof _user_set_query_mention_change_after;
   _user_get_query_functional_subs: typeof _user_get_query_functional_subs;
   _parse_get_query_opts: typeof _parse_get_query_opts;

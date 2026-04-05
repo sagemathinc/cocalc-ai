@@ -174,7 +174,7 @@ async function getAllProjects(account_id: string) {
   const result = (
     await query({
       query: {
-        projects_all: [
+        projects: [
           {
             project_id: null,
             title: null,
@@ -188,7 +188,7 @@ async function getAllProjects(account_id: string) {
       },
       options: [{ account_id }],
     })
-  ).query.projects_all;
+  ).query.projects;
   result.sort(field_cmp("last_edited"));
   result.reverse();
   cacheAll.set(account_id, result);

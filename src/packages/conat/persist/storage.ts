@@ -97,6 +97,11 @@ export interface PartialInventory {
   seq: number;
 }
 
+export interface StreamSeqBounds {
+  oldest_retained_seq?: number;
+  newest_retained_seq?: number;
+}
+
 export interface StreamCheckpoint {
   seq: number;
   time: number;
@@ -634,6 +639,29 @@ export class PersistentStream extends EventEmitter {
       x = undefined;
     }
     return dbToMessage(x as any);
+  };
+
+  seqBounds = (): StreamSeqBounds => {
+    const row = this.db
+      .prepare(
+        "SELECT MIN(seq) AS oldest_retained_seq, MAX(seq) AS newest_retained_seq FROM messages",
+      )
+      .get() as
+      | {
+          oldest_retained_seq?: number | null;
+          newest_retained_seq?: number | null;
+        }
+      | undefined;
+    return {
+      oldest_retained_seq:
+        row?.oldest_retained_seq == null
+          ? undefined
+          : Number(row.oldest_retained_seq),
+      newest_retained_seq:
+        row?.newest_retained_seq == null
+          ? undefined
+          : Number(row.newest_retained_seq),
+    };
   };
 
   *getAll({

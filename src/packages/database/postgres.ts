@@ -459,6 +459,17 @@ export class PostgreSQL extends EventEmitter implements PostgreSQLMethods {
     subject: string;
     body?: string;
   }) => Promise<number | undefined>;
+  declare publishProjectAccountFeedEventsBestEffort?: (opts: {
+    project_id: string;
+  }) => Promise<void>;
+  declare publishAccountRowFeedEventsBestEffort?: (opts: {
+    account_id: string;
+    patch: Record<string, any>;
+    reason?: "user_query_set" | "messages_unread_count_updated";
+  }) => Promise<void>;
+  declare publishCollaboratorAccountFeedEventsBestEffort?: (opts: {
+    collaborator_account_id: string;
+  }) => Promise<void>;
 
   // emits a 'connect' event whenever we successfully connect to the database and 'disconnect' when connection to postgres fails
   constructor(opts: PostgreSQLOptions = {}) {
@@ -1047,6 +1058,18 @@ export class PostgreSQL extends EventEmitter implements PostgreSQLMethods {
     ...args: UserQueryMethodArgs<"_user_set_query_project_change_after">
   ): UserQueryMethodReturn<"_user_set_query_project_change_after"> {
     return userQuery._user_set_query_project_change_after.call(this, ...args);
+  }
+
+  _user_set_query_account_change_after(
+    ...args: UserQueryMethodArgs<"_user_set_query_account_change_after">
+  ): UserQueryMethodReturn<"_user_set_query_account_change_after"> {
+    return userQuery._user_set_query_account_change_after.call(this, ...args);
+  }
+
+  _user_set_query_mention_change_after(
+    ...args: UserQueryMethodArgs<"_user_set_query_mention_change_after">
+  ): UserQueryMethodReturn<"_user_set_query_mention_change_after"> {
+    return userQuery._user_set_query_mention_change_after.call(this, ...args);
   }
 
   _user_get_query_functional_subs(
@@ -1931,7 +1954,13 @@ export class PostgreSQL extends EventEmitter implements PostgreSQLMethods {
   async updateUnreadMessageCount(
     opts: FunctionOpts<typeof updateUnreadMessageCount>,
   ) {
-    return await updateUnreadMessageCount(opts);
+    const unread_message_count = await updateUnreadMessageCount(opts);
+    await this.publishAccountRowFeedEventsBestEffort?.({
+      account_id: opts.account_id,
+      patch: { unread_message_count },
+      reason: "messages_unread_count_updated",
+    });
+    return unread_message_count;
   }
 
   _get_backup_tables(tables: BackupTables): string[] {

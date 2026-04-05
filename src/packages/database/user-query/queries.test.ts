@@ -1587,44 +1587,40 @@ describe("postgres user-queries - Comprehensive Test Suite", () => {
         );
       });
 
-      test.each(["projects", "projects_all"])(
-        "should use account_project_index membership expansion for %s when enabled",
-        (tableName, done) => {
-          process.env.COCALC_ACCOUNT_PROJECT_INDEX_PROJECT_LIST_READS =
-            "prefer";
-          const restore = setSchema(tableName, {
-            anonymous: false,
-            fields: { project_id: { type: "uuid" } },
-            user_query: {
-              get: {
-                pg_where: ["projects"],
-                fields: { project_id: null },
-              },
+      test("should use account_project_index membership expansion for projects when enabled", (done) => {
+        process.env.COCALC_ACCOUNT_PROJECT_INDEX_PROJECT_LIST_READS = "prefer";
+        const restore = setSchema("projects", {
+          anonymous: false,
+          fields: { project_id: { type: "uuid" } },
+          user_query: {
+            get: {
+              pg_where: ["projects"],
+              fields: { project_id: null },
             },
-          });
+          },
+        });
 
-          db._user_get_query_where(
-            SCHEMA[tableName].user_query,
-            "11111111-1111-4111-8111-111111111111",
-            undefined,
-            {},
-            tableName,
-            (err, where) => {
-              expect(err).toBeUndefined();
-              expect(where).toEqual(
-                expect.arrayContaining([
-                  expect.objectContaining({
-                    "project_id = ANY(ARRAY(SELECT visible_projects.project_id FROM (SELECT $::UUID AS account_id) AS current_account CROSS JOIN LATERAL (SELECT project_id FROM account_project_index WHERE account_id = current_account.account_id UNION SELECT project_id FROM projects WHERE users ? current_account.account_id::TEXT AND deleted IS TRUE) AS visible_projects))":
-                      "11111111-1111-4111-8111-111111111111",
-                  }),
-                ]),
-              );
-              restore();
-              done();
-            },
-          );
-        },
-      );
+        db._user_get_query_where(
+          SCHEMA.projects.user_query,
+          "11111111-1111-4111-8111-111111111111",
+          undefined,
+          {},
+          "projects",
+          (err, where) => {
+            expect(err).toBeUndefined();
+            expect(where).toEqual(
+              expect.arrayContaining([
+                expect.objectContaining({
+                  "project_id = ANY(ARRAY(SELECT visible_projects.project_id FROM (SELECT $::UUID AS account_id) AS current_account CROSS JOIN LATERAL (SELECT project_id FROM account_project_index WHERE account_id = current_account.account_id UNION SELECT project_id FROM projects WHERE users ? current_account.account_id::TEXT AND deleted IS TRUE) AS visible_projects))":
+                    "11111111-1111-4111-8111-111111111111",
+                }),
+              ]),
+            );
+            restore();
+            done();
+          },
+        );
+      });
 
       test("should reject account_id substitution without account_id", (done) => {
         const restore = setSchema("test_account", {
@@ -2769,6 +2765,12 @@ describe("postgres user-queries - Comprehensive Test Suite", () => {
     describe("_user_set_query_project_change_after", () => {
       test("should exist", () => {
         expect(db._user_set_query_project_change_after).toBeDefined();
+      });
+    });
+
+    describe("_user_set_query_mention_change_after", () => {
+      test("should exist", () => {
+        expect(db._user_set_query_mention_change_after).toBeDefined();
       });
     });
 

@@ -1,6 +1,9 @@
 /** @jest-environment jsdom */
 
+import React from "react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import {
+  AgentMessageStatus,
   describeLastActivity,
   resolveLiveRunStartMs,
   STALE_ACTIVITY_MS,
@@ -63,5 +66,45 @@ describe("describeLastActivity", () => {
     expect(stale.label).toBe("Last activity 2:00 ago");
     expect(stale.ageMs).toBe(STALE_ACTIVITY_MS);
     expect(stale.stale).toBe(true);
+  });
+});
+
+describe("AgentMessageStatus", () => {
+  it("shows the notify toggle next to a running Codex status row", () => {
+    const onNotifyOnTurnFinishChange = jest.fn();
+    render(
+      React.createElement(AgentMessageStatus, {
+        show: true,
+        generating: true,
+        durationLabel: "0:10",
+        date: 1000,
+        logRefs: {},
+        activityContext: {} as any,
+        notifyOnTurnFinish: false,
+        onNotifyOnTurnFinishChange,
+      }),
+    );
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "Notify" }));
+
+    expect(screen.getByText(/Running/)).toBeTruthy();
+    expect(onNotifyOnTurnFinishChange).toHaveBeenCalledWith(true);
+  });
+
+  it("hides the notify toggle once the turn is no longer running", () => {
+    render(
+      React.createElement(AgentMessageStatus, {
+        show: true,
+        generating: false,
+        durationLabel: "0:10",
+        date: 1000,
+        logRefs: {},
+        activityContext: {} as any,
+        notifyOnTurnFinish: false,
+        onNotifyOnTurnFinishChange: jest.fn(),
+      }),
+    );
+
+    expect(screen.queryByRole("checkbox", { name: "Notify" })).toBeNull();
   });
 });

@@ -5,7 +5,7 @@
 
 import { callback2 } from "@cocalc/util/async-utils";
 import { State } from "@cocalc/util/compute-states";
-import { PROJECT_GROUPS, deep_copy } from "@cocalc/util/misc";
+import { PROJECT_GROUPS } from "@cocalc/util/misc";
 import { PurchaseInfo } from "@cocalc/util/purchases/quota/types";
 import {
   ExecuteCodeOptions,
@@ -20,8 +20,6 @@ export type { SnapshotCounts } from "@cocalc/util/consts/snapshots";
 
 export const MAX_FILENAME_SEARCH_RESULTS = 100;
 
-const PROJECTS_LIMIT = 300;
-const PROJECTS_CUTOFF = "6 weeks";
 const THROTTLE_CHANGES = 1000;
 
 function isUserGroup(group: unknown): group is string {
@@ -57,13 +55,10 @@ Table({
 
     user_query: {
       get: {
-        pg_where: [
-          `last_edited >= NOW() - interval '${PROJECTS_CUTOFF}'`,
-          "projects",
-        ],
-        pg_where_load: ["last_edited >= NOW() - interval '7 days'", "projects"],
-        options: [{ limit: PROJECTS_LIMIT, order_by: "-last_edited" }],
-        options_load: [{ limit: 50, order_by: "-last_edited" }],
+        pg_where: ["projects"],
+        pg_where_load: ["projects"],
+        options: [],
+        options_load: [],
         pg_changefeed: "projects",
         throttle_changes: THROTTLE_CHANGES,
         fields: {
@@ -456,19 +451,9 @@ export interface ApiKeyInfo {
   used?: number;
 }
 
-// Same query above, but without the last_edited time constraint.
-schema.projects_all = deep_copy(schema.projects);
-if (
-  schema.projects_all.user_query?.get == null ||
-  schema.projects.user_query?.get == null
-) {
+if (schema.projects.user_query?.get == null) {
   throw Error("make typescript happy");
 }
-schema.projects_all.user_query.get.options = [];
-schema.projects_all.user_query.get.options_load = [];
-schema.projects_all.virtual = "projects";
-schema.projects_all.user_query.get.pg_where = ["projects"];
-schema.projects_all.user_query.get.pg_where_load = ["projects"];
 
 // Table that provides extended read info about a single project
 // but *ONLY* for admin.

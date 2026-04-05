@@ -5,7 +5,9 @@
 
 import getLogger from "@cocalc/backend/logger";
 import { drainAccountProjectIndexProjection } from "@cocalc/database/postgres/account-project-index-projector";
+import { publishAccountFeedEventBestEffort } from "@cocalc/server/account/feed";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import type { AccountFeedEvent } from "@cocalc/conat/hub/api/account-feed";
 
 const logger = getLogger("server:projections:account-project-index");
 
@@ -50,6 +52,7 @@ export interface AccountProjectIndexProjectionPassResult {
   applied_events: number;
   inserted_rows: number;
   deleted_rows: number;
+  feed_events: AccountFeedEvent[];
   event_types: Record<string, number>;
 }
 
@@ -80,6 +83,7 @@ export interface AccountProjectIndexProjectionMaintenanceStatus {
 
 export interface RunAccountProjectIndexProjectionMaintenanceTickOptions extends RunAccountProjectIndexProjectionPassOptions {
   pass_runner?: typeof runAccountProjectIndexProjectionPass;
+  publisher?: typeof publishAccountFeedEventBestEffort;
 }
 
 function clampInt(
@@ -108,6 +112,7 @@ export async function runAccountProjectIndexProjectionPass(
     applied_events: 0,
     inserted_rows: 0,
     deleted_rows: 0,
+    feed_events: [],
     event_types: {},
   };
   for (let i = 0; i < max_batches_per_tick; i += 1) {
@@ -121,6 +126,7 @@ export async function runAccountProjectIndexProjectionPass(
     result.applied_events += batch.applied_events;
     result.inserted_rows += batch.inserted_rows;
     result.deleted_rows += batch.deleted_rows;
+    result.feed_events.push(...batch.feed_events);
     for (const [event_type, count] of Object.entries(batch.event_types)) {
       result.event_types[event_type] =
         (result.event_types[event_type] ?? 0) + count;
@@ -162,6 +168,7 @@ export async function runAccountProjectIndexProjectionMaintenanceTick(
   if (running) return null;
   running = true;
   const pass_runner = opts?.pass_runner ?? runAccountProjectIndexProjectionPass;
+  const publisher = opts?.publisher ?? publishAccountFeedEventBestEffort;
   const started = new Date();
   lastTickStartedAt = started;
   try {
@@ -179,6 +186,12 @@ export async function runAccountProjectIndexProjectionMaintenanceTick(
         "account project index projector tick applied events",
         result,
       );
+    }
+    for (const event of result.feed_events) {
+      void publisher({
+        account_id: event.account_id,
+        event,
+      });
     }
     return result;
   } catch (err) {

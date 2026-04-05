@@ -21,6 +21,7 @@ export function NotificationPage() {
   const intl = useIntl();
   const account_id = useTypedRedux("account", "account_id");
   const mentions = useTypedRedux("mentions", "mentions");
+  const loading = useTypedRedux("mentions", "loading");
   const news = useTypedRedux("news", "news");
   const user_map = useTypedRedux("users", "user_map");
   const filter: NotificationFilter = useTypedRedux("mentions", "filter");
@@ -87,6 +88,7 @@ export function NotificationPage() {
         />
         <NotificationList
           account_id={account_id}
+          loading={loading}
           mentions={mentions}
           news={news}
           style={{

@@ -27,13 +27,13 @@ function createContext(handler: (table: string) => any[]) {
   } as any;
 }
 
-test("queryProjects uses legacy projects_all reads by default", async () => {
+test("queryProjects uses legacy projects reads by default", async () => {
   delete process.env.COCALC_ACCOUNT_PROJECT_INDEX_PROJECT_LIST_READS;
   const seen: string[] = [];
   const rows = await queryProjects({
     ctx: createContext((table) => {
       seen.push(table);
-      if (table === "projects_all") {
+      if (table === "projects") {
         return [
           {
             project_id: "22222222-2222-4222-8222-222222222222",
@@ -49,7 +49,7 @@ test("queryProjects uses legacy projects_all reads by default", async () => {
     }),
     limit: 10,
   });
-  assert.deepEqual(seen, ["projects_all"]);
+  assert.deepEqual(seen, ["projects"]);
   assert.equal(rows.length, 1);
   assert.equal(rows[0].title, "Legacy Project");
 });
@@ -141,7 +141,7 @@ test("queryProjects falls back from projection in prefer mode", async () => {
   const rows = await queryProjects({
     ctx: createContext((table) => {
       seen.push(table);
-      if (table === "projects_all") {
+      if (table === "projects") {
         return [
           {
             project_id: "22222222-2222-4222-8222-222222222222",
@@ -157,7 +157,7 @@ test("queryProjects falls back from projection in prefer mode", async () => {
     }),
     limit: 10,
   });
-  assert.deepEqual(seen, ["account_project_index", "projects_all"]);
+  assert.deepEqual(seen, ["account_project_index", "projects"]);
   assert.equal(rows.length, 1);
   assert.equal(rows[0].title, "Legacy Project");
 });

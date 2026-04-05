@@ -6,10 +6,9 @@
 import { Button, Collapse, Space } from "antd";
 const { Panel } = Collapse;
 import { CSS, redux } from "@cocalc/frontend/app-framework";
-import { Icon, MarkAll } from "@cocalc/frontend/components";
+import { Icon, Loading, MarkAll } from "@cocalc/frontend/components";
 import { ProjectTitle } from "@cocalc/frontend/projects/project-title";
 import { unreachable } from "@cocalc/util/misc";
-import { MentionRow } from "./mentions/mention-row";
 import {
   MentionsFilter,
   MentionsMap,
@@ -18,9 +17,11 @@ import {
 import { BOOKMARK_ICON_NAME } from "./mentions/util";
 import { isNewsFilter } from "./news/types";
 import { NoMentions } from "./notification-no-mentions";
+import { NotificationRow } from "./mentions/notification-row";
 
 interface MentionsPanelProps {
   filter: MentionsFilter;
+  loading?: boolean;
   mentions: MentionsMap;
   user_map;
   account_id: string;
@@ -28,26 +29,30 @@ interface MentionsPanelProps {
 }
 
 export function MentionsPanel(props: MentionsPanelProps) {
-  const { filter, mentions, user_map, account_id, style } = props;
+  const { filter, loading, mentions, user_map, account_id, style } = props;
   const mentions_actions = redux.getActions("mentions");
 
   if (isNewsFilter(filter)) {
     throw Error("Should be in NewsPanel");
   }
 
+  if (loading) {
+    return <Loading theme="medium" />;
+  }
+
   if (!isNewsFilter(filter) && (mentions == undefined || mentions.size == 0)) {
     return <NoMentions filter={filter} style={style} />;
   }
 
-  function markRead(project_id: string, filter: "read" | "unread") {
+  function markRead(project_id: string | null, filter: "read" | "unread") {
     mentions_actions.markAll(project_id, filter);
   }
 
-  function saveAll(project_id: string, filter: "read" | "unread") {
+  function saveAll(project_id: string | null, filter: "read" | "unread") {
     mentions_actions.saveAll(project_id, filter);
   }
 
-  function renderMarkAll(project_id: string) {
+  function renderMarkAll(project_id: string | null) {
     if (isNewsFilter(filter)) return null;
     if (filter === "saved" || filter === "all") return null;
 
@@ -76,7 +81,7 @@ export function MentionsPanel(props: MentionsPanelProps) {
 
   const mentions_per_project: any = {};
   const project_panels: any = [];
-  const project_id_order: string[] = [];
+  const project_id_order: Array<string | null> = [];
 
   mentions
     .filter((m) => m.get("target") === account_id)
@@ -102,13 +107,14 @@ export function MentionsPanel(props: MentionsPanelProps) {
     .map((m, id) => {
       const path = m.get("path");
       const time = m.get("time");
-      const project_id = m.get("project_id");
-      if (mentions_per_project[project_id] == undefined) {
-        mentions_per_project[project_id] = [];
+      const project_id = m.get("project_id") ?? null;
+      const project_key = project_id ?? "__general__";
+      if (mentions_per_project[project_key] == undefined) {
+        mentions_per_project[project_key] = [];
         project_id_order.push(project_id);
       }
-      mentions_per_project[project_id].push(
-        <MentionRow
+      mentions_per_project[project_key].push(
+        <NotificationRow
           filter={filter}
           key={path + time.getTime()}
           id={id}
@@ -124,18 +130,28 @@ export function MentionsPanel(props: MentionsPanelProps) {
   }
 
   for (const project_id of project_id_order) {
+    const panel_key = project_id ?? "__general__";
     project_panels.push(
       <Collapse
-        defaultActiveKey={project_id_order}
-        key={project_id}
+        defaultActiveKey={project_id_order.map((id) => id ?? "__general__")}
+        key={panel_key}
         className="cocalc-notification-list"
       >
         <Panel
-          key={project_id}
-          header={<ProjectTitle project_id={project_id} />}
+          key={panel_key}
+          header={
+            project_id == null ? (
+              <>
+                <Icon name="bell" style={{ marginRight: "10px" }} />
+                General Notifications
+              </>
+            ) : (
+              <ProjectTitle project_id={project_id} />
+            )
+          }
           extra={renderMarkAll(project_id)}
         >
-          <ul>{mentions_per_project[project_id]}</ul>
+          <ul>{mentions_per_project[panel_key]}</ul>
         </Panel>
       </Collapse>,
     );

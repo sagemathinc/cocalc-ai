@@ -30,7 +30,6 @@ import { InviteInboxPanel } from "@cocalc/frontend/collaborators";
 import { capitalize } from "@cocalc/util/misc";
 
 import { NewProjectCreator } from "./create-project";
-import { LoadAllProjects } from "./projects-load-all";
 import { ProjectsOperations } from "./projects-operations";
 import { StarredProjectsBar } from "./projects-starred";
 import { ProjectsTable } from "./projects-table";
@@ -133,8 +132,6 @@ export const ProjectsPage: React.FC = () => {
   const controlsRef = useRef<HTMLDivElement>(null);
   const inviteInboxRef = useRef<HTMLDivElement>(null);
   const operationsRef = useRef<HTMLDivElement>(null);
-  const loadAllRef = useRef<HTMLDivElement>(null);
-
   // Elements to account for in height calculation (everything except projectList and footer)
   const refs = [
     titleRef,
@@ -142,7 +139,6 @@ export const ProjectsPage: React.FC = () => {
     inviteInboxRef,
     controlsRef,
     operationsRef,
-    loadAllRef,
   ] as const;
 
   const [createPanelWidth, setCreatePanelWidth] =
@@ -163,12 +159,6 @@ export const ProjectsPage: React.FC = () => {
   useEffect(() => {
     persistCreatePanelOpen(createPanelOpen);
   }, [createPanelOpen]);
-
-  // if not shown, trigger a re-calculation
-  const allLoaded = !!useTypedRedux(
-    "projects",
-    "all_projects_have_been_loaded",
-  );
 
   // status of filters
   const hidden = !!useTypedRedux("projects", "hidden");
@@ -303,13 +293,13 @@ export const ProjectsPage: React.FC = () => {
       resizeObserver.disconnect();
       window.removeEventListener("resize", calculateHeight);
     };
-  }, [allLoaded, bookmarkedProjects.length]);
+  }, [bookmarkedProjects.length]);
 
   useEffect(() => {
-    if (allLoaded && all_projects.length === 0 && !createPanelOpen) {
+    if (all_projects.length === 0 && !createPanelOpen) {
       setCreatePanelOpen(true);
     }
-  }, [allLoaded, all_projects.length, createPanelOpen]);
+  }, [all_projects.length, createPanelOpen]);
 
   const toggleCreatePanel = () => setCreatePanelOpen((prev) => !prev);
   const showCreatePanel = !IS_MOBILE && createPanelOpen;
@@ -493,10 +483,6 @@ export const ProjectsPage: React.FC = () => {
                       filteredCollaborators={filteredCollaborators}
                       onFilteredCollaboratorsChange={setFilteredCollaborators}
                     />
-                  </div>
-
-                  <div ref={loadAllRef}>
-                    <LoadAllProjects />
                   </div>
 
                   <Footer />

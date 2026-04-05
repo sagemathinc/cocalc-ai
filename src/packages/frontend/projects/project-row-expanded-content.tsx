@@ -209,7 +209,7 @@ export function ProjectRowExpandedContent({ project_id }: Props) {
                   e.stopPropagation();
                   // Initialize project_log if not loaded
                   if (project_log == null) {
-                    redux.getProjectStore(project_id).init_table("project_log");
+                    redux.getProjectActions(project_id)?.refresh_project_log();
                   }
                 }}
               >

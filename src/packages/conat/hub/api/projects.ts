@@ -262,6 +262,24 @@ export interface MyCollaboratorRow {
   shared_projects: number;
 }
 
+export interface ProjectLogCursor {
+  id: string;
+  time: Date | null;
+}
+
+export interface ProjectLogRow {
+  id: string;
+  project_id: string;
+  account_id: string;
+  time: Date | null;
+  event: Record<string, any> | string | null;
+}
+
+export interface ProjectLogPage {
+  entries: ProjectLogRow[];
+  has_more: boolean;
+}
+
 export type ChatStoreScope = "chat" | "before_date" | "thread" | "messages";
 
 export interface ChatStoreStats {
@@ -363,6 +381,7 @@ export const projects = {
   unblockCollabInviteSender: authFirstRequireAccount,
   listCollaborators: authFirstRequireAccount,
   listMyCollaborators: authFirstRequireAccount,
+  listProjectLog: authFirstRequireAccount,
   inviteCollaborator: authFirstRequireAccount,
   inviteCollaboratorWithoutAccount: authFirstRequireAccount,
   setQuotas: authFirstRequireAccount,
@@ -482,6 +501,14 @@ export interface Projects {
     project_id: string;
     include_completed?: boolean;
   }) => Promise<ProjectCopyRow[]>;
+
+  listProjectLog: (opts: {
+    account_id?: string;
+    project_id: string;
+    limit?: number;
+    newer_than?: ProjectLogCursor;
+    older_than?: ProjectLogCursor;
+  }) => Promise<ProjectLogPage>;
 
   cancelPendingCopy: (opts: {
     account_id?: string;

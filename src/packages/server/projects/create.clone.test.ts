@@ -10,6 +10,7 @@ let computePlacementPermissionMock: jest.Mock;
 let getUserHostTierMock: jest.Mock;
 let conatWithProjectRoutingMock: jest.Mock;
 let appendProjectOutboxEventForProjectMock: jest.Mock;
+let publishProjectAccountFeedEventsBestEffortMock: jest.Mock;
 let poolConnectMock: jest.Mock;
 let releaseMock: jest.Mock;
 let insertedProjectId: string | undefined;
@@ -30,6 +31,12 @@ jest.mock("@cocalc/database/postgres/project-events-outbox", () => ({
   __esModule: true,
   appendProjectOutboxEventForProject: (...args: any[]) =>
     appendProjectOutboxEventForProjectMock(...args),
+}));
+
+jest.mock("@cocalc/server/account/project-feed", () => ({
+  __esModule: true,
+  publishProjectAccountFeedEventsBestEffort: (...args: any[]) =>
+    publishProjectAccountFeedEventsBestEffortMock(...args),
 }));
 
 jest.mock("@cocalc/server/accounts/is-admin", () => ({
@@ -92,6 +99,9 @@ describe("projects.createProject clone routing", () => {
     getUserHostTierMock = jest.fn(() => 0);
     conatWithProjectRoutingMock = jest.fn(() => ({ id: "mock-conat-client" }));
     appendProjectOutboxEventForProjectMock = jest.fn(async () => "event-id");
+    publishProjectAccountFeedEventsBestEffortMock = jest.fn(
+      async () => undefined,
+    );
     releaseMock = jest.fn();
     queryMock = jest.fn(async (sql: string, params: any[]) => {
       if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") {

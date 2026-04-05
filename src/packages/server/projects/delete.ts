@@ -5,6 +5,7 @@ import { getLogger } from "@cocalc/backend/logger";
 import { isValidUUID } from "@cocalc/util/misc";
 import { appendProjectOutboxEventForProject } from "@cocalc/database/postgres/project-events-outbox";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import { publishProjectAccountFeedEventsBestEffort } from "@cocalc/server/account/project-feed";
 
 const log = getLogger("server:projects:delete");
 
@@ -90,6 +91,10 @@ export async function setProjectDeleted({
   } finally {
     client.release();
   }
+  await publishProjectAccountFeedEventsBestEffort({
+    project_id,
+    default_bay_id: getConfiguredBayId(),
+  });
 }
 
 export default async function deleteProject({

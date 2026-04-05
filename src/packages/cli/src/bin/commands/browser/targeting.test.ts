@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { chooseBrowserSession } from "./targeting";
+import { chooseBrowserSession, resolveTargetProjectId } from "./targeting";
 import type { BrowserCommandContext } from "./types";
 
 function makeContext(
@@ -158,6 +158,125 @@ test("chooseBrowserSession fails fast in agent mode when no direct browser id is
       delete process.env.COCALC_CLI_AGENT_MODE;
     } else {
       process.env.COCALC_CLI_AGENT_MODE = prev;
+    }
+  }
+});
+
+test("chooseBrowserSession lets an explicit browser id win even if sessionProjectId does not match", async () => {
+  const ctx = makeContext(async () => [
+    {
+      browser_id: "browser-1",
+      active_project_id: "00000000-1000-4000-8000-000000000111",
+      open_projects: [],
+      stale: false,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      url: "http://localhost:13004/projects/00000000-1000-4000-8000-000000000111/files",
+    },
+  ]);
+
+  const session = await chooseBrowserSession({
+    ctx,
+    browserHint: "browser-1",
+    sessionProjectId: "00000000-1000-4000-8000-000000000999",
+  });
+
+  assert.equal(session.browser_id, "browser-1");
+});
+
+test("resolveTargetProjectId prefers the active browser-session project over ambient env", async () => {
+  const prevProjectId = process.env.COCALC_PROJECT_ID;
+  process.env.COCALC_PROJECT_ID = "00000000-1000-4000-8000-000000000099";
+  try {
+    const ctx = makeContext(async () => []);
+    const calls: string[] = [];
+    const project_id = await resolveTargetProjectId({
+      deps: {
+        resolveProject: async (_ctx, project) => {
+          calls.push(project);
+          return { project_id: project };
+        },
+      },
+      ctx,
+      sessionInfo: {
+        browser_id: "browser-1",
+        active_project_id: "00000000-1000-4000-8000-000000000111",
+        open_projects: [],
+        stale: false,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      },
+    });
+
+    assert.equal(project_id, "00000000-1000-4000-8000-000000000111");
+    assert.deepEqual(calls, ["00000000-1000-4000-8000-000000000111"]);
+  } finally {
+    if (prevProjectId == null) {
+      delete process.env.COCALC_PROJECT_ID;
+    } else {
+      process.env.COCALC_PROJECT_ID = prevProjectId;
+    }
+  }
+});
+
+test("resolveTargetProjectId still lets explicit project-id override the browser-session project", async () => {
+  const ctx = makeContext(async () => []);
+  const calls: string[] = [];
+  const project_id = await resolveTargetProjectId({
+    deps: {
+      resolveProject: async (_ctx, project) => {
+        calls.push(project);
+        return { project_id: project };
+      },
+    },
+    ctx,
+    projectId: "00000000-1000-4000-8000-000000000222",
+    sessionInfo: {
+      browser_id: "browser-1",
+      active_project_id: "00000000-1000-4000-8000-000000000111",
+      open_projects: [],
+      stale: false,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    },
+  });
+
+  assert.equal(project_id, "00000000-1000-4000-8000-000000000222");
+  assert.deepEqual(calls, []);
+});
+
+test("resolveTargetProjectId falls back to the project encoded in the session URL before ambient env", async () => {
+  const prevProjectId = process.env.COCALC_PROJECT_ID;
+  process.env.COCALC_PROJECT_ID = "00000000-1000-4000-8000-000000000099";
+  try {
+    const ctx = makeContext(async () => []);
+    const calls: string[] = [];
+    const project_id = await resolveTargetProjectId({
+      deps: {
+        resolveProject: async (_ctx, project) => {
+          calls.push(project);
+          return { project_id: project };
+        },
+      },
+      ctx,
+      sessionInfo: {
+        browser_id: "browser-1",
+        active_project_id: "",
+        open_projects: [],
+        stale: false,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        url: "http://localhost:13004/projects/00000000-1000-4000-8000-000000000333/files?_cocalc_browser_spawn=test",
+      },
+    });
+
+    assert.equal(project_id, "00000000-1000-4000-8000-000000000333");
+    assert.deepEqual(calls, ["00000000-1000-4000-8000-000000000333"]);
+  } finally {
+    if (prevProjectId == null) {
+      delete process.env.COCALC_PROJECT_ID;
+    } else {
+      process.env.COCALC_PROJECT_ID = prevProjectId;
     }
   }
 });

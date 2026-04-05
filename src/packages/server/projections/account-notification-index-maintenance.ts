@@ -6,6 +6,7 @@
 import getLogger from "@cocalc/backend/logger";
 import { drainAccountNotificationIndexProjection } from "@cocalc/database/postgres/account-notification-index-projector";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import { publishProjectedNotificationFeedUpdatesBestEffort } from "@cocalc/server/notifications/feed";
 
 const logger = getLogger("server:projections:account-notification-index");
 
@@ -50,6 +51,11 @@ export interface AccountNotificationIndexProjectionPassResult {
   applied_events: number;
   inserted_rows: number;
   deleted_rows: number;
+  affected_account_ids: string[];
+  affected_notifications: Array<{
+    account_id: string;
+    notification_id: string;
+  }>;
   event_types: Record<string, number>;
 }
 
@@ -80,6 +86,7 @@ export interface AccountNotificationIndexProjectionMaintenanceStatus {
 
 export interface RunAccountNotificationIndexProjectionMaintenanceTickOptions extends RunAccountNotificationIndexProjectionPassOptions {
   pass_runner?: typeof runAccountNotificationIndexProjectionPass;
+  publisher?: typeof publishProjectedNotificationFeedUpdatesBestEffort;
 }
 
 function clampInt(
@@ -112,8 +119,12 @@ export async function runAccountNotificationIndexProjectionPass(
     applied_events: 0,
     inserted_rows: 0,
     deleted_rows: 0,
+    affected_account_ids: [],
+    affected_notifications: [],
     event_types: {},
   };
+  const affectedAccountIds = new Set<string>();
+  const affectedNotifications = new Set<string>();
   for (let i = 0; i < max_batches_per_tick; i += 1) {
     const batch = await drain({
       bay_id,
@@ -125,6 +136,12 @@ export async function runAccountNotificationIndexProjectionPass(
     result.applied_events += batch.applied_events;
     result.inserted_rows += batch.inserted_rows;
     result.deleted_rows += batch.deleted_rows;
+    for (const account_id of batch.affected_account_ids) {
+      affectedAccountIds.add(account_id);
+    }
+    for (const item of batch.affected_notifications) {
+      affectedNotifications.add(`${item.account_id}:${item.notification_id}`);
+    }
     for (const [event_type, count] of Object.entries(batch.event_types)) {
       result.event_types[event_type] =
         (result.event_types[event_type] ?? 0) + count;
@@ -133,6 +150,13 @@ export async function runAccountNotificationIndexProjectionPass(
       break;
     }
   }
+  result.affected_account_ids = Array.from(affectedAccountIds).sort();
+  result.affected_notifications = Array.from(affectedNotifications)
+    .sort()
+    .map((value) => {
+      const [account_id, notification_id] = value.split(":");
+      return { account_id, notification_id };
+    });
   return result;
 }
 
@@ -163,6 +187,8 @@ export async function runAccountNotificationIndexProjectionMaintenanceTick(
   running = true;
   const pass_runner =
     opts?.pass_runner ?? runAccountNotificationIndexProjectionPass;
+  const publisher =
+    opts?.publisher ?? publishProjectedNotificationFeedUpdatesBestEffort;
   const started = new Date();
   lastTickStartedAt = started;
   try {
@@ -180,6 +206,19 @@ export async function runAccountNotificationIndexProjectionMaintenanceTick(
         "account notification index projector tick applied events",
         result,
       );
+    }
+    const notificationIdsByAccount = new Map<string, string[]>();
+    for (const item of result.affected_notifications) {
+      const ids = notificationIdsByAccount.get(item.account_id) ?? [];
+      ids.push(item.notification_id);
+      notificationIdsByAccount.set(item.account_id, ids);
+    }
+    for (const [account_id, notification_ids] of notificationIdsByAccount) {
+      void publisher({
+        account_id,
+        reason: "projected_upsert",
+        notification_ids,
+      });
     }
     return result;
   } catch (err) {

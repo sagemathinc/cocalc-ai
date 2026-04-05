@@ -83,6 +83,7 @@ describe("account_collaborator_index projector", () => {
       requested_limit: 10,
       scanned_events: 1,
       applied_events: 1,
+      feed_events: expect.any(Array),
       event_types: {
         "project.created": 1,
       },
@@ -176,6 +177,7 @@ describe("account_collaborator_index projector", () => {
       }),
     ).resolves.toMatchObject({
       applied_events: 1,
+      feed_events: expect.any(Array),
       event_types: {
         "project.created": 1,
       },
@@ -200,6 +202,13 @@ describe("account_collaborator_index projector", () => {
         common_project_count: 1,
       }),
     ]);
+
+    const createdDrain = await drainAccountCollaboratorIndexProjection({
+      bay_id: LOCAL_BAY_ID,
+      limit: 10,
+      dry_run: true,
+    });
+    expect(createdDrain.feed_events).toEqual([]);
     await expect(
       listProjectedCollaboratorsForAccount({
         account_id: ACCOUNT_B,
@@ -247,6 +256,21 @@ describe("account_collaborator_index projector", () => {
       }),
     ).resolves.toMatchObject({
       applied_events: 1,
+      feed_events: expect.arrayContaining([
+        expect.objectContaining({
+          type: "collaborator.upsert",
+          account_id: ACCOUNT_A,
+          collaborator: expect.objectContaining({
+            account_id: ACCOUNT_D,
+            name: "Delta Local",
+          }),
+        }),
+        expect.objectContaining({
+          type: "collaborator.remove",
+          account_id: ACCOUNT_A,
+          collaborator_account_id: ACCOUNT_B,
+        }),
+      ]),
       event_types: {
         "project.membership_changed": 1,
       },
@@ -263,11 +287,11 @@ describe("account_collaborator_index projector", () => {
         common_project_count: 1,
       }),
       expect.objectContaining({
-        collaborator_account_id: ACCOUNT_D,
+        collaborator_account_id: ACCOUNT_C,
         common_project_count: 1,
       }),
       expect.objectContaining({
-        collaborator_account_id: ACCOUNT_C,
+        collaborator_account_id: ACCOUNT_D,
         common_project_count: 1,
       }),
     ]);
@@ -288,11 +312,11 @@ describe("account_collaborator_index projector", () => {
         common_project_count: 1,
       }),
       expect.objectContaining({
-        collaborator_account_id: ACCOUNT_D,
+        collaborator_account_id: ACCOUNT_C,
         common_project_count: 1,
       }),
       expect.objectContaining({
-        collaborator_account_id: ACCOUNT_C,
+        collaborator_account_id: ACCOUNT_D,
         common_project_count: 1,
       }),
     ]);
@@ -317,6 +341,13 @@ describe("account_collaborator_index projector", () => {
       }),
     ).resolves.toMatchObject({
       applied_events: 1,
+      feed_events: expect.arrayContaining([
+        expect.objectContaining({
+          type: "collaborator.remove",
+          account_id: ACCOUNT_A,
+          collaborator_account_id: ACCOUNT_C,
+        }),
+      ]),
       event_types: {
         "project.deleted": 1,
       },

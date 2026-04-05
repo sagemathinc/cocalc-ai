@@ -34,6 +34,7 @@ import { is_paying_customer } from "@cocalc/database/postgres/account/queries";
 import { project_has_network_access } from "@cocalc/database/postgres/project/queries";
 import { RESEND_INVITE_INTERVAL_DAYS } from "@cocalc/util/consts/invites";
 import { syncProjectUsersOnHost } from "@cocalc/server/project-host/control";
+import { publishProjectAccountFeedEventsBestEffort } from "@cocalc/server/account/project-feed";
 
 const logger = getLogger("project:collaborators");
 const COLLAB_GROUPS = ["owner", "collaborator"] as const;
@@ -207,6 +208,9 @@ export async function removeCollaborator({
   });
   // @ts-ignore
   await callback2(db().remove_collaborator_from_project, opts);
+  await publishProjectAccountFeedEventsBestEffort({
+    project_id: opts.project_id,
+  });
 }
 
 export async function addCollaborator({
@@ -258,6 +262,11 @@ export async function addCollaborator({
     projects as string[],
     tokens as string[] | undefined,
   );
+  for (const project_id of projects as string[]) {
+    if (project_id) {
+      await publishProjectAccountFeedEventsBestEffort({ project_id });
+    }
+  }
   // Tokens determine the projects, and it may be useful to the client to know what
   // project they just got added to!
   let project_id;

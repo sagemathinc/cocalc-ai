@@ -227,14 +227,6 @@ export function Student({
     }
     const p = project_map.get(student_project_id);
     if (p == null) {
-      // no info about this project?  maybe we need to load full list or
-      // users isn't a collab, so don't know.
-      const project_actions = redux.getActions("projects");
-      if (project_actions != null) {
-        // If this does load all (since not loaded), then will try again to
-        // render with new project_map.
-        project_actions.load_all_projects();
-      }
       return;
     }
     const u = p.get("last_active");

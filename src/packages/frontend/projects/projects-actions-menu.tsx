@@ -75,7 +75,7 @@ export function ProjectActionsMenu({ record }: Props) {
   function handleOpenChange(newOpen: boolean) {
     setOpen(newOpen);
     if (newOpen && project_log == null) {
-      redux.getProjectStore(record.project_id).init_table("project_log");
+      redux.getProjectActions(record.project_id)?.refresh_project_log();
     }
   }
 

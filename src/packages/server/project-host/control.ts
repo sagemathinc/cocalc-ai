@@ -9,6 +9,7 @@ import { normalizeHostTier } from "./placement";
 import { machineHasGpu } from "../cloud/host-gpu";
 import { maybeAutoGrowHostDiskForReservationFailure } from "./auto-grow";
 import { appendProjectOutboxEventForProject } from "@cocalc/database/postgres/project-events-outbox";
+import { publishProjectAccountFeedEventsBestEffort } from "@cocalc/server/account/project-feed";
 
 const log = getLogger("server:project-host:control");
 // Project starts can include large restores, so allow a long RPC timeout.
@@ -276,6 +277,12 @@ export async function savePlacement(
   } finally {
     client.release();
   }
+  if (rows[0]) {
+    await publishProjectAccountFeedEventsBestEffort({
+      project_id,
+      default_bay_id: defaultBayId,
+    });
+  }
   if (!rows[0]) {
     const [{ rows: projectRows }, { rows: hostRows }] = await Promise.all([
       pool().query<{ owning_bay_id: string }>(
@@ -527,6 +534,10 @@ export async function stopProjectOnHost(
       );
       await appendProjectOutboxEventForProject({
         event_type: "project.summary_changed",
+        project_id,
+        default_bay_id: getConfiguredBayId(),
+      });
+      await publishProjectAccountFeedEventsBestEffort({
         project_id,
         default_bay_id: getConfiguredBayId(),
       });

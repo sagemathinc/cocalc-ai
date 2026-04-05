@@ -655,6 +655,14 @@ Table({
           }
           cb();
         },
+        on_change(database, old_val, new_val, account_id, cb) {
+          database._user_set_query_account_change_after(
+            old_val,
+            new_val,
+            account_id,
+            cb,
+          );
+        },
       },
     },
   },
@@ -773,6 +781,14 @@ Table({
           salesloft_id: true,
           purchase_closing_day: true,
           min_balance: true, // admins can set this
+        },
+        on_change(database, old_val, new_val, account_id, cb) {
+          database._user_set_query_account_change_after(
+            old_val,
+            new_val,
+            account_id,
+            cb,
+          );
         },
       },
     },

@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Button, Drawer, Tooltip } from "antd";
+import { Button, Checkbox, Drawer, Tooltip } from "antd";
 import { LoadingOutlined } from "@ant-design/icons";
 import {
   useEffect,
@@ -110,6 +110,8 @@ interface AgentMessageStatusProps {
   openDrawerToken?: number;
   jumpText?: string;
   jumpToken?: number;
+  notifyOnTurnFinish?: boolean;
+  onNotifyOnTurnFinishChange?: (checked: boolean) => void;
   onOpenGitBrowser?: () => void;
   onDrawerOpenChange?: (open: boolean) => void;
   logEvents?: AcpStreamMessage[] | null;
@@ -137,6 +139,8 @@ export function AgentMessageStatus({
   onDrawerOpenChange,
   logEvents,
   deleteLog,
+  notifyOnTurnFinish = false,
+  onNotifyOnTurnFinishChange,
 }: AgentMessageStatusProps) {
   const [showDrawer, setShowDrawer] = useState(false);
   const [scrollParent, setScrollParent] = useState<HTMLDivElement | null>(null);
@@ -305,76 +309,99 @@ export function AgentMessageStatus({
   return (
     <>
       <div
-        role="button"
-        tabIndex={0}
-        onClick={openActivity}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            openActivity();
-          }
-        }}
-        title={liveStatusTitle || "View Codex activity log"}
         style={{
           display: "inline-flex",
           alignItems: "center",
           gap: 8,
           marginBottom: 8,
           flexWrap: "wrap",
-          padding: "4px 10px",
-          borderRadius: 999,
-          background: COLORS.GRAY_LLL,
-          border: `1px solid ${COLORS.GRAY_LL}`,
-          lineHeight: 1.2,
-          cursor: "pointer",
         }}
       >
-        {generating ? (
-          <LoadingOutlined
-            spin
-            style={{ fontSize: 12, color: COLORS.GRAY_D }}
-          />
-        ) : null}
-        <span
+        <div
+          role="button"
+          tabIndex={0}
+          onClick={openActivity}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              openActivity();
+            }
+          }}
+          title={liveStatusTitle || "View Codex activity log"}
           style={{
-            color: COLORS.GRAY_D,
-            fontSize: 12,
-            fontWeight: 500,
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 8,
+            padding: "4px 10px",
+            borderRadius: 999,
+            background: COLORS.GRAY_LLL,
+            border: `1px solid ${COLORS.GRAY_LL}`,
+            lineHeight: 1.2,
+            cursor: "pointer",
           }}
         >
-          {generating
-            ? `Running ${liveDurationLabel}`
-            : `Worked for ${liveDurationLabel}`}
-        </span>
-        {generating && lastActivityInfo.label ? (
-          <Tooltip
-            title={
-              typeof lastActivityAtMs === "number" &&
-              Number.isFinite(lastActivityAtMs) ? (
-                <span>
-                  Last backend activity{" "}
-                  <TimeAgo date={new Date(lastActivityAtMs)} /> at{" "}
-                  {formatTimestampTitle(lastActivityAtMs)}
-                </span>
-              ) : (
-                "The turn is running, but no Codex activity event has arrived yet."
-              )
-            }
+          {generating ? (
+            <LoadingOutlined
+              spin
+              style={{ fontSize: 12, color: COLORS.GRAY_D }}
+            />
+          ) : null}
+          <span
+            style={{
+              color: COLORS.GRAY_D,
+              fontSize: 12,
+              fontWeight: 500,
+            }}
           >
-            <span style={{ color: lastActivityColor, fontSize: 12 }}>
-              {lastActivityInfo.label}
+            {generating
+              ? `Running ${liveDurationLabel}`
+              : `Worked for ${liveDurationLabel}`}
+          </span>
+          {generating && lastActivityInfo.label ? (
+            <Tooltip
+              title={
+                typeof lastActivityAtMs === "number" &&
+                Number.isFinite(lastActivityAtMs) ? (
+                  <span>
+                    Last backend activity{" "}
+                    <TimeAgo date={new Date(lastActivityAtMs)} /> at{" "}
+                    {formatTimestampTitle(lastActivityAtMs)}
+                  </span>
+                ) : (
+                  "The turn is running, but no Codex activity event has arrived yet."
+                )
+              }
+            >
+              <span style={{ color: lastActivityColor, fontSize: 12 }}>
+                {lastActivityInfo.label}
+              </span>
+            </Tooltip>
+          ) : null}
+          <span
+            style={{
+              color: COLORS.GRAY_D,
+              fontSize: 12,
+              textDecoration: "underline",
+            }}
+          >
+            Activity
+          </span>
+        </div>
+        {generating && onNotifyOnTurnFinishChange ? (
+          <Tooltip title="Show a modal in this browser tab when this Codex turn finishes.">
+            <span
+              title="Show a modal in this browser tab when this Codex turn finishes."
+              style={{ display: "inline-flex", alignItems: "center" }}
+            >
+              <Checkbox
+                checked={notifyOnTurnFinish}
+                onChange={(e) => onNotifyOnTurnFinishChange(e.target.checked)}
+              >
+                Notify
+              </Checkbox>
             </span>
           </Tooltip>
         ) : null}
-        <span
-          style={{
-            color: COLORS.GRAY_D,
-            fontSize: 12,
-            textDecoration: "underline",
-          }}
-        >
-          Activity
-        </span>
       </div>
 
       <Drawer

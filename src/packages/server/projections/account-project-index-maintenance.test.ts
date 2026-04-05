@@ -24,11 +24,12 @@ describe("runAccountProjectIndexProjectionPass", () => {
         requested_limit: 3,
         scanned_events: 3,
         applied_events: 3,
-        inserted_rows: 4,
-        deleted_rows: 1,
-        event_types: {
-          "project.summary_changed": 2,
-          "project.membership_changed": 1,
+      inserted_rows: 4,
+      deleted_rows: 1,
+      feed_events: [],
+      event_types: {
+        "project.summary_changed": 2,
+        "project.membership_changed": 1,
         },
       })
       .mockResolvedValueOnce({
@@ -39,6 +40,7 @@ describe("runAccountProjectIndexProjectionPass", () => {
         applied_events: 1,
         inserted_rows: 2,
         deleted_rows: 0,
+        feed_events: [],
         event_types: {
           "project.created": 1,
         },
@@ -57,6 +59,7 @@ describe("runAccountProjectIndexProjectionPass", () => {
       applied_events: 4,
       inserted_rows: 6,
       deleted_rows: 1,
+      feed_events: [],
       event_types: {
         "project.summary_changed": 2,
         "project.membership_changed": 1,
@@ -84,6 +87,7 @@ describe("runAccountProjectIndexProjectionPass", () => {
       applied_events: 2,
       inserted_rows: 1,
       deleted_rows: 0,
+      feed_events: [],
       event_types: {
         "project.summary_changed": 2,
       },
@@ -106,13 +110,34 @@ describe("runAccountProjectIndexProjectionPass", () => {
       applied_events: 2,
       inserted_rows: 3,
       deleted_rows: 1,
+      feed_events: [
+        {
+          type: "project.upsert" as const,
+          ts: 1,
+          account_id: "acct-1",
+          project: {
+            project_id: "project-1",
+            title: "P",
+            description: "",
+            host_id: null,
+            owning_bay_id: "bay-7",
+            users: {},
+            state: {},
+            last_active: {},
+            last_edited: null,
+            deleted: false,
+          },
+        },
+      ],
       event_types: {
         "project.summary_changed": 2,
       },
     }));
+    const publisher = jest.fn(async () => undefined);
     await expect(
       runAccountProjectIndexProjectionMaintenanceTick({
         pass_runner,
+        publisher,
       }),
     ).resolves.toEqual({
       bay_id: "bay-7",
@@ -121,6 +146,25 @@ describe("runAccountProjectIndexProjectionPass", () => {
       applied_events: 2,
       inserted_rows: 3,
       deleted_rows: 1,
+      feed_events: [
+        {
+          type: "project.upsert" as const,
+          ts: 1,
+          account_id: "acct-1",
+          project: {
+            project_id: "project-1",
+            title: "P",
+            description: "",
+            host_id: null,
+            owning_bay_id: "bay-7",
+            users: {},
+            state: {},
+            last_active: {},
+            last_edited: null,
+            deleted: false,
+          },
+        },
+      ],
       event_types: {
         "project.summary_changed": 2,
       },
@@ -135,9 +179,34 @@ describe("runAccountProjectIndexProjectionPass", () => {
       applied_events: 2,
       inserted_rows: 3,
       deleted_rows: 1,
+      feed_events: [
+        {
+          type: "project.upsert" as const,
+          ts: 1,
+          account_id: "acct-1",
+          project: {
+            project_id: "project-1",
+            title: "P",
+            description: "",
+            host_id: null,
+            owning_bay_id: "bay-7",
+            users: {},
+            state: {},
+            last_active: {},
+            last_edited: null,
+            deleted: false,
+          },
+        },
+      ],
       event_types: {
         "project.summary_changed": 2,
       },
+    });
+    expect(publisher).toHaveBeenCalledWith({
+      account_id: "acct-1",
+      event: expect.objectContaining({
+        type: "project.upsert",
+      }),
     });
     expect(status.last_success_at).not.toBeNull();
     expect(status.last_error).toBeNull();

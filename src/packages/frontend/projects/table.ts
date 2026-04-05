@@ -9,13 +9,17 @@ declare var DEBUG: boolean;
 
 // Create and register projects table, which gets automatically
 // synchronized with the server.
-class ProjectsTable extends Table {
+export class ProjectsTable extends Table {
+  no_changefeed() {
+    return true;
+  }
+
   query() {
     const project_id = redux.getStore("page").get("kiosk_project_id");
     if (project_id != null) {
       // In kiosk mode we load only the relevant project.
-      const query = parse_query("projects_all");
-      query["projects_all"][0].project_id = project_id;
+      const query = parse_query("projects");
+      query["projects"][0].project_id = project_id;
       return query;
     } else {
       return "projects";
@@ -42,27 +46,6 @@ class ProjectsTable extends Table {
   }
 }
 
-class ProjectsAllTable extends Table {
-  query() {
-    return "projects_all";
-  }
-
-  _change(table, _keys) {
-    const actions = redux.getActions("projects");
-    return actions.setState({ project_map: table.get() });
-  }
-}
-
-/*
-We define functions below that load all projects or just the recent
-ones.  First we try loading the recent ones.  If this is *empty*,
-then we try loading all projects.  Loading all projects is also automatically
-called if there is any attempt to open a project that isn't recent.
-Why? Because the load_all_projects query is potentially **expensive**.
-*/
-
-let all_projects_have_been_loaded: boolean = false;
-
 function initTableError(): void {
   const table = redux.getTable("projects");
   if (!table) return;
@@ -74,44 +57,32 @@ function initTableError(): void {
   });
 }
 
-export const load_all_projects = reuseInFlight(async () => {
+export const refresh_projects_table = reuseInFlight(async () => {
   if (lite) {
-    // only one project in lite mode
     return;
   }
-  if (DEBUG && COCALC_MINIMAL) {
-    console.error(
-      "projects/load_all_projects was called in kiosk/minimal mode",
-    );
-  }
-  if (all_projects_have_been_loaded) {
-    return;
-  }
-  all_projects_have_been_loaded = true; // used internally in this file only to be optimally fast.
+  const project_id = redux.getStore("page").get("kiosk_project_id");
   redux.removeTable("projects");
-  redux.createTable("projects", ProjectsAllTable);
+  if (project_id != null) {
+    const table = redux.createTable("projects", ProjectsTable);
+    initTableError();
+    await once(table._table, "connected");
+    return;
+  }
+  redux.createTable("projects", ProjectsTable);
   initTableError();
   await once(redux.getTable("projects")._table, "connected");
-  redux
-    .getActions("projects")
-    ?.setState({ all_projects_have_been_loaded: true }); // used by client code
 });
 
-async function load_recent_projects(): Promise<void> {
+async function load_projects(): Promise<void> {
   const table = redux.createTable("projects", ProjectsTable);
   initTableError();
   await once(table._table, "connected");
-  if (table._table.get().size === 0) {
-    // WARNING: that the following is done is assumed in
-    // render_new_project_creator! See
-    // https://github.com/sagemathinc/cocalc/issues/4306
-    await redux.getActions("projects").load_all_projects();
-  }
 }
 
 export function init() {
   if (!COCALC_MINIMAL) {
-    load_recent_projects();
+    load_projects();
   }
 }
 

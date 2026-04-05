@@ -32,6 +32,11 @@ export interface DrainAccountNotificationIndexProjectionResult {
   applied_events: number;
   inserted_rows: number;
   deleted_rows: number;
+  affected_account_ids: string[];
+  affected_notifications: Array<{
+    account_id: string;
+    notification_id: string;
+  }>;
   event_types: Record<string, number>;
 }
 
@@ -84,7 +89,12 @@ async function applyNotificationEventToAccountNotificationIndex(opts: {
   db: PoolClient;
   bay_id: string;
   event: NotificationTargetOutboxRow;
-}): Promise<{ inserted_rows: number; deleted_rows: number }> {
+}): Promise<{
+  inserted_rows: number;
+  deleted_rows: number;
+  affected_account_id?: string;
+  affected_notification_id?: string;
+}> {
   const { db, bay_id, event } = opts;
   if (
     !(await isLocalHomeAccount(db, {
@@ -95,6 +105,8 @@ async function applyNotificationEventToAccountNotificationIndex(opts: {
     return {
       inserted_rows: 0,
       deleted_rows: 0,
+      affected_account_id: undefined,
+      affected_notification_id: undefined,
     };
   }
   const payload = (event.payload_json ?? {}) as NotificationTargetOutboxPayload;
@@ -124,6 +136,8 @@ async function applyNotificationEventToAccountNotificationIndex(opts: {
   return {
     inserted_rows: 1,
     deleted_rows: 0,
+    affected_account_id: event.target_account_id,
+    affected_notification_id: event.notification_id,
   };
 }
 
@@ -231,8 +245,12 @@ export async function drainAccountNotificationIndexProjection(opts?: {
       applied_events: 0,
       inserted_rows: 0,
       deleted_rows: 0,
+      affected_account_ids: [],
+      affected_notifications: [],
       event_types: {},
     };
+    const affectedAccountIds = new Set<string>();
+    const affectedNotifications = new Set<string>();
 
     for (const event of rows) {
       result.event_types[event.event_type] =
@@ -245,6 +263,17 @@ export async function drainAccountNotificationIndexProjection(opts?: {
       result.applied_events += 1;
       result.inserted_rows += applied.inserted_rows;
       result.deleted_rows += applied.deleted_rows;
+      if (applied.affected_account_id != null) {
+        affectedAccountIds.add(applied.affected_account_id);
+      }
+      if (
+        applied.affected_account_id != null &&
+        applied.affected_notification_id != null
+      ) {
+        affectedNotifications.add(
+          `${applied.affected_account_id}:${applied.affected_notification_id}`,
+        );
+      }
       if (!dry_run) {
         await client.query(
           `UPDATE notification_target_outbox
@@ -254,6 +283,13 @@ export async function drainAccountNotificationIndexProjection(opts?: {
         );
       }
     }
+    result.affected_account_ids = Array.from(affectedAccountIds).sort();
+    result.affected_notifications = Array.from(affectedNotifications)
+      .sort()
+      .map((value) => {
+        const [account_id, notification_id] = value.split(":");
+        return { account_id, notification_id };
+      });
 
     if (dry_run) {
       await client.query("ROLLBACK");

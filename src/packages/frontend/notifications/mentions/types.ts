@@ -15,12 +15,20 @@ import {
 export type MentionsMap = Map<string, MentionInfo>;
 
 export type MentionInfo = TypedMap<{
+  kind?: string;
+  notification_id?: string;
   path: string;
   priority: number;
-  project_id: string;
+  project_id: string | null;
   source: string;
   target: string;
   time: Date;
+  title?: string;
+  body_markdown?: string;
+  origin_label?: string;
+  action_link?: string;
+  action_label?: string;
+  severity?: string;
   action?: "email" | "ignore";
   error?: string;
   description?: string;

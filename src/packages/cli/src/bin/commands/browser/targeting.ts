@@ -59,6 +59,19 @@ function normalizeApiScope(value: unknown): string | undefined {
   }
 }
 
+function projectIdFromSessionUrl(value: unknown): string | undefined {
+  const raw = `${value ?? ""}`.trim();
+  if (!raw) return undefined;
+  try {
+    const { pathname } = new URL(raw);
+    const match = pathname.match(/\/projects\/([0-9a-f-]{36})(?:\/|$)/i);
+    const projectId = `${match?.[1] ?? ""}`.trim();
+    return isValidUUID(projectId) ? projectId : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function browserHintFromOption(value: unknown): string | undefined {
   return (
     normalizeBrowserId(value) ??
@@ -137,13 +150,12 @@ export async function resolveTargetProjectId({
   projectId?: string;
   sessionInfo: BrowserSessionInfo;
 }): Promise<string> {
-  const projectIdHint =
-    `${projectId ?? process.env.COCALC_PROJECT_ID ?? ""}`.trim();
+  const explicitProjectIdHint = `${projectId ?? ""}`.trim();
   const projectHint = `${project ?? ""}`.trim();
-  if (projectIdHint) {
-    return isValidUUID(projectIdHint)
-      ? projectIdHint
-      : (await deps.resolveProject(ctx, projectIdHint)).project_id;
+  if (explicitProjectIdHint) {
+    return isValidUUID(explicitProjectIdHint)
+      ? explicitProjectIdHint
+      : (await deps.resolveProject(ctx, explicitProjectIdHint)).project_id;
   }
   if (projectHint) {
     return (await deps.resolveProject(ctx, projectHint)).project_id;
@@ -159,6 +171,16 @@ export async function resolveTargetProjectId({
     return (
       await deps.resolveProject(ctx, sessionInfo.open_projects[0].project_id)
     ).project_id;
+  }
+  const projectIdInUrl = projectIdFromSessionUrl(sessionInfo.url);
+  if (projectIdInUrl) {
+    return (await deps.resolveProject(ctx, projectIdInUrl)).project_id;
+  }
+  const envProjectIdHint = `${process.env.COCALC_PROJECT_ID ?? ""}`.trim();
+  if (envProjectIdHint) {
+    return isValidUUID(envProjectIdHint)
+      ? envProjectIdHint
+      : (await deps.resolveProject(ctx, envProjectIdHint)).project_id;
   }
   if (isCliAgentMode()) {
     throw new Error(
@@ -287,6 +309,14 @@ export async function chooseBrowserSession({
   let sessions: BrowserSessionInfo[] | undefined;
   let sessionsError: unknown;
   let sessionsLoaded = false;
+  const filteredSessions = (
+    rows: BrowserSessionInfo[],
+    projectId: string | undefined,
+  ): BrowserSessionInfo[] => {
+    const clean = `${projectId ?? ""}`.trim();
+    if (!clean) return rows;
+    return rows.filter((s) => sessionMatchesProject(s, clean));
+  };
   const canDirectFallback = (hint: string | undefined): boolean =>
     !!hint &&
     isLikelyExactBrowserId(hint) &&
@@ -300,9 +330,6 @@ export async function chooseBrowserSession({
         include_stale: !activeOnly,
       })) as BrowserSessionInfo[];
       sessions = (sessions ?? []).filter((s) => (activeOnly ? !s.stale : true));
-      sessions = sessions.filter((s) =>
-        sessionMatchesProject(s, sessionProjectId),
-      );
       return sessions;
     } catch (err) {
       sessionsError = err;
@@ -429,7 +456,9 @@ export async function chooseBrowserSession({
       if (remapped) return remapped;
     }
   }
-  const active = resolvedSessions.filter((s) => !s.stale);
+  const active = filteredSessions(resolvedSessions, sessionProjectId).filter(
+    (s) => !s.stale,
+  );
   if (active.length === 1) {
     return active[0];
   }

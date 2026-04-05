@@ -3,7 +3,7 @@ import { defineMessages } from "react-intl";
 export const MSGS = defineMessages({
   mentions: {
     id: "notifications.nav.mentions",
-    defaultMessage: "Mentions",
+    defaultMessage: "Notifications",
   },
   unread: {
     id: "notifications.nav.unread",
@@ -22,7 +22,7 @@ export const MSGS = defineMessages({
   },
   all: {
     id: "notifications.nav.all",
-    defaultMessage: "All Mentions",
+    defaultMessage: "All Notifications",
   },
   news: {
     id: "notifications.nav.news",

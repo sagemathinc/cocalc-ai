@@ -311,5 +311,51 @@ export function registerNotificationsCommand(
       },
     );
 
+  notifications
+    .command("save <notification_ids...>")
+    .description("save one or more notifications")
+    .option("--unsave", "remove the saved flag instead of setting it", false)
+    .action(
+      async (
+        notification_ids: string[],
+        opts: {
+          unsave?: boolean;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "notifications save", async (ctx) => {
+          return await ctx.hub.notifications.save({
+            notification_ids,
+            saved: !opts.unsave,
+          });
+        });
+      },
+    );
+
+  notifications
+    .command("archive <notification_ids...>")
+    .description("archive one or more notifications")
+    .option(
+      "--unarchive",
+      "remove the archived flag instead of setting it",
+      false,
+    )
+    .action(
+      async (
+        notification_ids: string[],
+        opts: {
+          unarchive?: boolean;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "notifications archive", async (ctx) => {
+          return await ctx.hub.notifications.archive({
+            notification_ids,
+            archived: !opts.unarchive,
+          });
+        });
+      },
+    );
+
   return notifications;
 }

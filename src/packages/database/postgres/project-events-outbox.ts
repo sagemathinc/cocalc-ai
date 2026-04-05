@@ -22,6 +22,9 @@ export interface ProjectOutboxPayload {
   host_id: string | null;
   title: string;
   description: string;
+  name: string | null;
+  avatar_image_tiny: string | null;
+  color: string | null;
   users_summary: Record<string, any>;
   state_summary: Record<string, any>;
   last_activity_by_account: Record<string, any>;
@@ -86,6 +89,9 @@ export async function loadProjectOutboxPayload(opts: {
        host_id,
        COALESCE(title, '') AS title,
        COALESCE(description, '') AS description,
+       name,
+       avatar_image_tiny,
+       color,
        COALESCE(users, '{}'::JSONB) AS users_summary,
        COALESCE(state, '{}'::JSONB) AS state_summary,
        COALESCE(last_active, '{}'::JSONB) AS last_activity_by_account,
@@ -104,6 +110,9 @@ export async function loadProjectOutboxPayload(opts: {
       host_id: string | null;
       title: string | null;
       description: string | null;
+      name: string | null;
+      avatar_image_tiny: string | null;
+      color: string | null;
       users_summary: Record<string, any> | null;
       state_summary: Record<string, any> | null;
       last_activity_by_account: Record<string, any> | null;
@@ -122,6 +131,9 @@ export async function loadProjectOutboxPayload(opts: {
     host_id: row.host_id ?? null,
     title: row.title ?? "",
     description: row.description ?? "",
+    name: row.name ?? null,
+    avatar_image_tiny: row.avatar_image_tiny ?? null,
+    color: row.color ?? null,
     users_summary: row.users_summary ?? {},
     state_summary: row.state_summary ?? {},
     last_activity_by_account: row.last_activity_by_account ?? {},

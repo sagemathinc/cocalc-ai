@@ -58,7 +58,19 @@ export const ProjectLog: React.FC<Props> = ({ project_id }) => {
   const projectLabel = intl.formatMessage(labels.project);
   const { workspaces } = useProjectContext();
   const project_log = useTypedRedux({ project_id }, "project_log");
-  const project_log_all = useTypedRedux({ project_id }, "project_log_all");
+  const project_log_loading = useTypedRedux(
+    { project_id },
+    "project_log_loading",
+  );
+  const project_log_loading_older = useTypedRedux(
+    { project_id },
+    "project_log_loading_older",
+  );
+  const project_log_has_older = useTypedRedux(
+    { project_id },
+    "project_log_has_older",
+  );
+  const project_log_error = useTypedRedux({ project_id }, "project_log_error");
   const search = useTypedRedux({ project_id }, "search") ?? "";
   const user_map = useTypedRedux("users", "user_map");
   const actions = useActions({ project_id });
@@ -77,7 +89,11 @@ export const ProjectLog: React.FC<Props> = ({ project_id }) => {
   useEffect(() => {
     delete state.current.log;
     force_update();
-  }, [project_log, project_log_all, search, workspaceOnly, workspaces.current]);
+  }, [project_log, search, workspaceOnly, workspaces.current]);
+
+  useEffect(() => {
+    actions?.refresh_project_log();
+  }, [actions, project_id]);
 
   useEffect(() => {
     saveWorkspaceOnly(project_id, workspaceOnly);
@@ -87,7 +103,7 @@ export const ProjectLog: React.FC<Props> = ({ project_id }) => {
     if (state.current.log != null) {
       return state.current.log;
     }
-    const log = project_log_all ?? project_log;
+    const log = project_log;
     if (log == null) {
       state.current.log = List();
       return state.current.log;
@@ -199,12 +215,12 @@ export const ProjectLog: React.FC<Props> = ({ project_id }) => {
   }
 
   function render_load_all_button(): Rendered {
-    if (project_log_all != undefined) {
+    if (!project_log_has_older) {
       return <div style={{ height: "1px" }} />;
     }
     return (
       <div style={{ textAlign: "center", padding: "15px" }}>
-        <Button onClick={load_all} disabled={project_log_all != undefined}>
+        <Button onClick={load_all} loading={!!project_log_loading_older}>
           Show all log entries...
         </Button>
       </div>
@@ -261,18 +277,12 @@ export const ProjectLog: React.FC<Props> = ({ project_id }) => {
   }
 
   function render_body(): React.JSX.Element {
-    if (!project_log && !project_log_all) {
-      if (!state.current.loading_table) {
-        state.current.loading_table = true;
-        // The project log not yet loaded, so kick off the load.
-        // This is safe to call multiple times and is done so that the
-        // changefeed for the project log is only setup if the user actually
-        // looks at the project log at least once.
-        redux.getProjectStore(project_id).init_table("project_log");
-      }
+    if (!project_log && project_log_loading) {
       return <Loading theme={"medium"} />;
     }
-    state.current.loading_table = false;
+    if (!project_log && project_log_error) {
+      return <div>{project_log_error}</div>;
+    }
     return render_log_panel();
   }
 
@@ -316,7 +326,14 @@ export const ProjectLog: React.FC<Props> = ({ project_id }) => {
           />
         </h1>
         {workspaces.current ? (
-          <Flex justify="flex-end" style={{ marginBottom: 8 }}>
+          <Flex justify="space-between" style={{ marginBottom: 8 }}>
+            <Button
+              icon={<Icon name="refresh" />}
+              loading={!!project_log_loading}
+              onClick={() => actions?.refresh_project_log()}
+            >
+              Refresh
+            </Button>
             <Space size={8}>
               <Switch
                 size="small"
@@ -328,7 +345,17 @@ export const ProjectLog: React.FC<Props> = ({ project_id }) => {
               </span>
             </Space>
           </Flex>
-        ) : null}
+        ) : (
+          <div style={{ marginBottom: 8 }}>
+            <Button
+              icon={<Icon name="refresh" />}
+              loading={!!project_log_loading}
+              onClick={() => actions?.refresh_project_log()}
+            >
+              Refresh
+            </Button>
+          </div>
+        )}
         {render_search()}
         {render_body()}
       </>

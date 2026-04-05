@@ -36,6 +36,7 @@ import getLogger from "@cocalc/backend/logger";
 import { getProjectHostAuthTokenPrivateKey } from "@cocalc/backend/data";
 import getPool from "@cocalc/database/pool";
 import { appendProjectOutboxEventForProject } from "@cocalc/database/postgres/project-events-outbox";
+import { publishProjectAccountFeedEventsBestEffort } from "@cocalc/server/account/project-feed";
 import {
   computePlacementPermission,
   getUserHostTier,
@@ -1565,6 +1566,10 @@ export async function touchProject({
   }
   await appendProjectOutboxEventForProject({
     event_type: "project.summary_changed",
+    project_id,
+    default_bay_id: getConfiguredBayId(),
+  });
+  await publishProjectAccountFeedEventsBestEffort({
     project_id,
     default_bay_id: getConfiguredBayId(),
   });

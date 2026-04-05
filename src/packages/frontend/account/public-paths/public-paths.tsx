@@ -123,7 +123,6 @@ export const PublicPaths: React.FC = () => {
       render: (project_id) => {
         const project = project_map?.get(project_id);
         if (project == null) {
-          actions?.load_all_projects();
           return <Loading />;
         }
         const title = project.get("title") ?? "No Title";

@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { AccountTable } from "./table";
+import { AccountTable, initAccountRealtime } from "./table";
 
 export function initAccountTable(redux) {
   redux.createTable("account", AccountTable);
@@ -13,6 +13,7 @@ export function initAccountTable(redux) {
   redux.getTable("account")._table.on("clear-error", () => {
     redux.getActions("account").setState({ tableError: undefined });
   });
+  initAccountRealtime({ redux, recreate_account_table });
 }
 
 export function recreate_account_table(redux) {

@@ -167,6 +167,39 @@ export async function listProjectedNotificationsForAccount(opts: {
   return rows;
 }
 
+export async function listProjectedNotificationsByIdsForAccount(opts: {
+  account_id: string;
+  notification_ids: string[];
+}): Promise<AccountNotificationIndexRow[]> {
+  const account_id = normalizeAccountId(opts.account_id);
+  const notification_ids = Array.from(
+    new Set(
+      (Array.isArray(opts.notification_ids) ? opts.notification_ids : []).map(
+        (notification_id) => normalizeUuid(notification_id, "notification id"),
+      ),
+    ),
+  );
+  if (notification_ids.length === 0) {
+    return [];
+  }
+  const { rows } = await getPool().query<AccountNotificationIndexRow>(
+    `SELECT
+       notification_id,
+       kind,
+       project_id,
+       summary,
+       read_state,
+       created_at,
+       updated_at
+     FROM account_notification_index
+     WHERE account_id = $1::UUID
+       AND notification_id = ANY($2::UUID[])
+     ORDER BY created_at DESC NULLS LAST, updated_at DESC NULLS LAST, notification_id ASC`,
+    [account_id, notification_ids],
+  );
+  return rows;
+}
+
 export async function getProjectedNotificationCounts(opts: {
   account_id: string;
 }): Promise<AccountNotificationCounts> {
@@ -225,7 +258,7 @@ export async function setProjectedNotificationReadState(opts: {
   account_id: string;
   notification_ids: string[];
   read: boolean;
-}): Promise<{ updated_count: number }> {
+}): Promise<{ updated_count: number; notification_ids: string[] }> {
   const account_id = normalizeAccountId(opts.account_id);
   const rawIds = Array.isArray(opts.notification_ids)
     ? opts.notification_ids
@@ -240,21 +273,98 @@ export async function setProjectedNotificationReadState(opts: {
   if (notification_ids.length === 0) {
     throw Error("at least one notification id is required");
   }
-  const { rowCount } = await getPool().query(
+  return await patchProjectedNotificationReadState({
+    account_id,
+    notification_ids,
+    patch: {
+      read: opts.read,
+    },
+  });
+}
+
+export async function setProjectedNotificationSavedState(opts: {
+  account_id: string;
+  notification_ids: string[];
+  saved: boolean;
+}): Promise<{ updated_count: number; notification_ids: string[] }> {
+  const account_id = normalizeAccountId(opts.account_id);
+  const notification_ids = Array.from(
+    new Set(
+      (Array.isArray(opts.notification_ids) ? opts.notification_ids : []).map(
+        (notification_id) => normalizeUuid(notification_id, "notification id"),
+      ),
+    ),
+  );
+  if (notification_ids.length === 0) {
+    throw Error("at least one notification id is required");
+  }
+  return await patchProjectedNotificationReadState({
+    account_id,
+    notification_ids,
+    patch: {
+      saved: opts.saved,
+    },
+  });
+}
+
+export async function setProjectedNotificationArchivedState(opts: {
+  account_id: string;
+  notification_ids: string[];
+  archived: boolean;
+}): Promise<{ updated_count: number; notification_ids: string[] }> {
+  const account_id = normalizeAccountId(opts.account_id);
+  const notification_ids = Array.from(
+    new Set(
+      (Array.isArray(opts.notification_ids) ? opts.notification_ids : []).map(
+        (notification_id) => normalizeUuid(notification_id, "notification id"),
+      ),
+    ),
+  );
+  if (notification_ids.length === 0) {
+    throw Error("at least one notification id is required");
+  }
+  return await patchProjectedNotificationReadState({
+    account_id,
+    notification_ids,
+    patch: {
+      archived: opts.archived,
+    },
+  });
+}
+
+async function patchProjectedNotificationReadState(opts: {
+  account_id: string;
+  notification_ids: string[];
+  patch: {
+    read?: boolean;
+    saved?: boolean;
+    archived?: boolean;
+  };
+}): Promise<{ updated_count: number; notification_ids: string[] }> {
+  const keys = Object.entries(opts.patch).filter(([, value]) => value != null);
+  if (keys.length === 0) {
+    throw Error("at least one notification state update is required");
+  }
+  let expression = "COALESCE(read_state, '{}'::JSONB)";
+  const params: any[] = [opts.account_id, opts.notification_ids];
+  let i = params.length;
+  for (const [key, value] of keys) {
+    i += 1;
+    expression = `jsonb_set(${expression}, '{${key}}', to_jsonb($${i}::BOOLEAN), TRUE)`;
+    params.push(value);
+  }
+  const { rows, rowCount } = await getPool().query<{ notification_id: string }>(
     `UPDATE account_notification_index
-        SET read_state = jsonb_set(
-              COALESCE(read_state, '{}'::JSONB),
-              '{read}',
-              to_jsonb($3::BOOLEAN),
-              TRUE
-            ),
+        SET read_state = ${expression},
             updated_at = NOW()
       WHERE account_id = $1::UUID
-        AND notification_id = ANY($2::UUID[])`,
-    [account_id, notification_ids, opts.read],
+        AND notification_id = ANY($2::UUID[])
+      RETURNING notification_id`,
+    params,
   );
   return {
     updated_count: rowCount ?? 0,
+    notification_ids: rows.map(({ notification_id }) => notification_id).sort(),
   };
 }
 

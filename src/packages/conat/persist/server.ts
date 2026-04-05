@@ -325,6 +325,7 @@ async function getAll({ stream, mesg, request, messagesThresh }) {
   let sentConfig = false;
   let sentMetadata = false;
   let sentCheckpoints = false;
+  let sentReplayInfo = false;
   const config = request.includeConfig ? stream.config() : undefined;
   const metadata = request.includeMetadata ? stream.getMetadata() : undefined;
   const checkpoints = request.includeCheckpoints
@@ -340,6 +341,13 @@ async function getAll({ stream, mesg, request, messagesThresh }) {
       : checkpointSeq == null
         ? request.start_seq
         : Math.max(request.start_seq, checkpointSeq);
+  const { oldest_retained_seq, newest_retained_seq } = stream.seqBounds();
+  const effective_start_seq =
+    startSeq == null
+      ? oldest_retained_seq
+      : oldest_retained_seq == null
+        ? startSeq
+        : Math.max(startSeq, oldest_retained_seq);
   const respond = (error?, messages?: StoredMessage[]) => {
     mesg.respondSync(messages, {
       headers: {
@@ -349,11 +357,15 @@ async function getAll({ stream, mesg, request, messagesThresh }) {
         config: !sentConfig ? config : undefined,
         metadata: !sentMetadata ? metadata : undefined,
         checkpoints: !sentCheckpoints ? checkpoints : undefined,
+        effective_start_seq: !sentReplayInfo ? effective_start_seq : undefined,
+        oldest_retained_seq: !sentReplayInfo ? oldest_retained_seq : undefined,
+        newest_retained_seq: !sentReplayInfo ? newest_retained_seq : undefined,
       },
     });
     sentConfig = true;
     sentMetadata = true;
     sentCheckpoints = true;
+    sentReplayInfo = true;
     seq += 1;
   };
 

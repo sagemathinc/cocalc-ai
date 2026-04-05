@@ -4,13 +4,20 @@
  */
 
 import getPool, { initEphemeralDatabase } from "@cocalc/database/pool";
+import { publishProjectedNotificationFeedUpdatesBestEffort } from "@cocalc/server/notifications/feed";
 import {
+  archive,
   counts,
   createAccountNotice,
   createMention,
   list,
   markRead,
+  save,
 } from "./notifications";
+
+jest.mock("@cocalc/server/notifications/feed", () => ({
+  publishProjectedNotificationFeedUpdatesBestEffort: jest.fn(),
+}));
 
 const LOCAL_BAY_ID = "bay-0";
 const PROJECT_ID = "11111111-1111-4111-8111-111111111111";
@@ -25,6 +32,7 @@ describe("conat notifications api", () => {
   }, 15000);
 
   afterEach(async () => {
+    jest.clearAllMocks();
     await getPool().query(
       `TRUNCATE notification_target_outbox,
                 notification_targets,
@@ -243,6 +251,20 @@ describe("conat notifications api", () => {
       }),
     ).resolves.toEqual({
       updated_count: 2,
+      notification_ids: [
+        "66666666-6666-4666-8666-666666666666",
+        "77777777-7777-4777-8777-777777777777",
+      ],
+    });
+    expect(
+      publishProjectedNotificationFeedUpdatesBestEffort,
+    ).toHaveBeenCalledWith({
+      account_id: ACTOR_ACCOUNT_ID,
+      reason: "read_state_updated",
+      notification_ids: [
+        "66666666-6666-4666-8666-666666666666",
+        "77777777-7777-4777-8777-777777777777",
+      ],
     });
 
     await expect(
@@ -265,6 +287,65 @@ describe("conat notifications api", () => {
           total: 1,
           unread: 0,
           saved: 0,
+          archived: 0,
+        },
+      },
+    });
+
+    await expect(
+      save({
+        account_id: ACTOR_ACCOUNT_ID,
+        notification_ids: ["66666666-6666-4666-8666-666666666666"],
+      }),
+    ).resolves.toEqual({
+      updated_count: 1,
+      notification_ids: ["66666666-6666-4666-8666-666666666666"],
+    });
+    expect(
+      publishProjectedNotificationFeedUpdatesBestEffort,
+    ).toHaveBeenCalledWith({
+      account_id: ACTOR_ACCOUNT_ID,
+      reason: "saved_state_updated",
+      notification_ids: ["66666666-6666-4666-8666-666666666666"],
+    });
+
+    await expect(
+      archive({
+        account_id: ACTOR_ACCOUNT_ID,
+        notification_ids: ["77777777-7777-4777-8777-777777777777"],
+      }),
+    ).resolves.toEqual({
+      updated_count: 1,
+      notification_ids: ["77777777-7777-4777-8777-777777777777"],
+    });
+    expect(
+      publishProjectedNotificationFeedUpdatesBestEffort,
+    ).toHaveBeenCalledWith({
+      account_id: ACTOR_ACCOUNT_ID,
+      reason: "archived_state_updated",
+      notification_ids: ["77777777-7777-4777-8777-777777777777"],
+    });
+
+    await expect(
+      counts({
+        account_id: ACTOR_ACCOUNT_ID,
+      }),
+    ).resolves.toEqual({
+      total: 2,
+      unread: 0,
+      saved: 1,
+      archived: 1,
+      by_kind: {
+        account_notice: {
+          total: 1,
+          unread: 0,
+          saved: 0,
+          archived: 1,
+        },
+        mention: {
+          total: 1,
+          unread: 0,
+          saved: 1,
           archived: 0,
         },
       },

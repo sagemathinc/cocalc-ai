@@ -72,6 +72,10 @@ class ClientNoChangefeed extends EventEmitter {
     return this.client.is_browser();
   }
 
+  public no_changefeed(): boolean {
+    return true;
+  }
+
   public async touch_project(project_id: string): Promise<void> {
     await this.client.touch_project(project_id);
   }

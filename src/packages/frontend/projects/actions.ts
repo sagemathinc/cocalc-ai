@@ -19,11 +19,16 @@ import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { once } from "@cocalc/util/async-utils";
 import type { LroSummary } from "@cocalc/conat/hub/api/lro";
 import type { HostConnectionInfo } from "@cocalc/conat/hub/api/hosts";
+import {
+  accountFeedStreamName,
+  type AccountFeedEvent,
+  type AccountFeedProjectRow,
+} from "@cocalc/conat/hub/api/account-feed";
 import type { StudentProjectFunctionality } from "@cocalc/util/db-schema/projects";
 import type { PurchaseInfo } from "@cocalc/util/purchases/quota/types";
 import { defaults, is_valid_uuid_string } from "@cocalc/util/misc";
 import { ProjectsState, store } from "./store";
-import { load_all_projects, switch_to_project } from "./table";
+import { refresh_projects_table, switch_to_project } from "./table";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import { defaultOpenProjectTarget } from "./open-project-default";
 import { evaluateHostOperational, hostLabel } from "./host-operational";
@@ -32,6 +37,7 @@ import {
   buildOfflineMoveConfirmationDialog,
   parseOfflineMoveConfirmationError,
 } from "./offline-move-confirmation";
+import type { DStream } from "@cocalc/conat/sync/dstream";
 
 import type {
   CourseInfo,
@@ -41,9 +47,88 @@ import type {
 } from "@cocalc/util/db-schema/projects";
 export type { Datastore, EnvVars, EnvVarsRecord };
 
+function dateOrNull(value: unknown): Date | null {
+  if (value == null) return null;
+  const date = value instanceof Date ? value : new Date(`${value}`);
+  return Number.isFinite(date.getTime()) ? date : null;
+}
+
+function lastActiveMap(last_active?: Record<string, any>): Map<string, Date> {
+  let next = Map<string, Date>().asMutable();
+  for (const [account_id, value] of Object.entries(last_active ?? {})) {
+    const date = dateOrNull(value);
+    if (date != null) {
+      next = next.set(account_id, date);
+    }
+  }
+  return next.asImmutable();
+}
+
+export function buildProjectRecordFromFeedRow(
+  row: AccountFeedProjectRow,
+): Map<string, any> {
+  const record = fromJS({
+    project_id: row.project_id,
+    title: row.title,
+    description: row.description,
+    name: row.name ?? undefined,
+    avatar_image_tiny: row.avatar_image_tiny ?? undefined,
+    color: row.color ?? undefined,
+    host_id: row.host_id,
+    owning_bay_id: row.owning_bay_id,
+    users: row.users ?? {},
+    state: row.state ?? {},
+    deleted: !!row.deleted,
+  }) as Map<string, any>;
+  return record
+    .set("last_edited", dateOrNull(row.last_edited))
+    .set("last_active", lastActiveMap(row.last_active));
+}
+
 // Define projects actions
 export class ProjectsActions extends Actions<ProjectsState> {
   private static HOST_INFO_TTL_MS = 60_000;
+  private signedInListener?: () => void;
+  private signedOutListener?: () => void;
+  private conatConnectedListener?: () => void;
+  private realtimeFeed?: DStream<AccountFeedEvent>;
+  private realtimeFeedAccountId?: string;
+
+  _init() {
+    this.signedInListener = () => {
+      void this.ensureRealtimeFeedForCurrentAccount();
+    };
+    this.signedOutListener = () => {
+      this.closeRealtimeFeed();
+    };
+    this.conatConnectedListener = () => {
+      void this.ensureRealtimeFeedForCurrentAccount();
+    };
+    webapp_client.on("signed_in", this.signedInListener);
+    webapp_client.on("signed_out", this.signedOutListener);
+    webapp_client.conat_client.on("connected", this.conatConnectedListener);
+    void this.ensureRealtimeFeedForCurrentAccount();
+  }
+
+  public override destroy = (): void => {
+    if (this.signedInListener != null) {
+      webapp_client.removeListener?.("signed_in", this.signedInListener);
+      this.signedInListener = undefined;
+    }
+    if (this.signedOutListener != null) {
+      webapp_client.removeListener?.("signed_out", this.signedOutListener);
+      this.signedOutListener = undefined;
+    }
+    if (this.conatConnectedListener != null) {
+      webapp_client.conat_client.removeListener?.(
+        "connected",
+        this.conatConnectedListener,
+      );
+      this.conatConnectedListener = undefined;
+    }
+    this.closeRealtimeFeed();
+    Actions.prototype.destroy.call(this);
+  };
 
   ensure_host_info = reuseInFlight(async (host_id?: string, force = false) => {
     if (!host_id) return;
@@ -90,6 +175,100 @@ export class ProjectsActions extends Actions<ProjectsState> {
     }
     return the_table;
   };
+
+  private getAccountId(): string | undefined {
+    return this.redux.getStore("account")?.get("account_id");
+  }
+
+  private closeRealtimeFeed(): void {
+    if (this.realtimeFeed != null) {
+      this.realtimeFeed.removeListener("change", this.handleRealtimeFeedChange);
+      this.realtimeFeed.removeListener(
+        "history-gap",
+        this.handleRealtimeFeedHistoryGap,
+      );
+      this.realtimeFeed.close();
+      this.realtimeFeed = undefined;
+    }
+    this.realtimeFeedAccountId = undefined;
+  }
+
+  private handleRealtimeFeedChange = (event?: AccountFeedEvent): void => {
+    if (event == null) {
+      return;
+    }
+    switch (event.type) {
+      case "project.upsert":
+        this.applyProjectFeedUpsert(event.project);
+        break;
+      case "project.remove":
+        this.applyProjectFeedRemove(event.project_id);
+        break;
+      default:
+        break;
+    }
+  };
+
+  private handleRealtimeFeedHistoryGap = (): void => {
+    void refresh_projects_table();
+  };
+
+  private async ensureRealtimeFeedForCurrentAccount(): Promise<void> {
+    if (!webapp_client.is_signed_in()) {
+      this.closeRealtimeFeed();
+      return;
+    }
+    const account_id = this.getAccountId();
+    if (account_id == null) {
+      return;
+    }
+    if (
+      this.realtimeFeed != null &&
+      this.realtimeFeedAccountId === account_id &&
+      !this.realtimeFeed.isClosed()
+    ) {
+      return;
+    }
+    this.closeRealtimeFeed();
+    try {
+      const feed = await webapp_client.conat_client.dstream<AccountFeedEvent>({
+        account_id,
+        name: accountFeedStreamName(),
+        ephemeral: true,
+      });
+      feed.on("change", this.handleRealtimeFeedChange);
+      feed.on("history-gap", this.handleRealtimeFeedHistoryGap);
+      this.realtimeFeed = feed;
+      this.realtimeFeedAccountId = account_id;
+    } catch (err) {
+      console.warn("project realtime feed error", err);
+    }
+  }
+
+  private applyProjectFeedUpsert(row: AccountFeedProjectRow): void {
+    const project_map = store.get("project_map") ?? Map<string, any>();
+    this.setState({
+      project_map: project_map.set(
+        row.project_id,
+        (project_map.get(row.project_id) ?? Map<string, any>()).mergeDeep(
+          buildProjectRecordFromFeedRow(row),
+        ),
+      ),
+    } as ProjectsState);
+  }
+
+  private applyProjectFeedRemove(project_id: string): void {
+    const project_map = store.get("project_map");
+    if (project_map == null || !project_map.has(project_id)) {
+      return;
+    }
+    this.setState({
+      project_map: project_map.delete(project_id),
+    } as ProjectsState);
+    if (this.isProjectOpen(project_id)) {
+      this.set_project_closed(project_id);
+    }
+  }
 
   private projects_table_set = async (
     obj: object,
@@ -149,7 +328,6 @@ export class ProjectsActions extends Actions<ProjectsState> {
   Returns true only if we are a collaborator/user of this project
   and have loaded it.  Should check this before changing anything
   in the projects table!  Otherwise, bad things will happen.
-  This may also trigger load_all_projects.
   */
   private async have_project(project_id: string): Promise<boolean> {
     const table = await this.getProjectTable();
@@ -157,18 +335,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
       return false;
     }
     const t = table._table;
-    if (t.get(project_id) != null) {
-      // we know this project
-      return true;
-    }
-    if (store.get("all_projects_have_been_loaded")) {
-      return false;
-    }
-    // be sure by first loading all projects
-    await this.load_all_projects();
-    // and try again.  Because we loaded all projects,
-    // we won't hit infinite recurse.
-    return await this.have_project(project_id);
+    return t.get(project_id) != null;
   }
 
   private setProjectLocalScalarField = (
@@ -558,10 +725,6 @@ export class ProjectsActions extends Actions<ProjectsState> {
     if (!store.getIn(["project_map", opts.project_id])) {
       if (COCALC_MINIMAL) {
         await switch_to_project(opts.project_id);
-      } else {
-        // trying to open a not-known project -- maybe
-        // we have not yet loaded the full project list?
-        await this.load_all_projects();
       }
     }
     const host_id = store.getIn(["project_map", opts.project_id, "host_id"]);
@@ -1301,14 +1464,6 @@ export class ProjectsActions extends Actions<ProjectsState> {
 
   public display_deleted_projects(deleted): void {
     this.setState({ deleted });
-  }
-
-  public async load_all_projects(): Promise<void> {
-    if (store.get("all_projects_have_been_loaded")) {
-      return;
-    }
-    await load_all_projects();
-    this.setState({ all_projects_have_been_loaded: true });
   }
 
   public toggle_hashtag(filter: string, tag: string): void {

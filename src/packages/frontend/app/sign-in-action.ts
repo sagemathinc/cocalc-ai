@@ -60,7 +60,7 @@ async function getProject(): Promise<string> {
   const created = account.get("created");
   let project_map = projects.get("project_map")!;
   if (project_map.size == 0) {
-    // no known projects -- could be a new account, or could be an old account and no *recent* projects
+    // no known projects -- could be a new account or an old account with no projects
     if (
       (created?.valueOf() ?? Date.now()) >=
       Date.now() - 2 * 24 * 60 * 60 * 1000
@@ -68,14 +68,7 @@ async function getProject(): Promise<string> {
       // new account -- make a project
       return await create(DEFAULT_PROJECT_TITLE);
     } else {
-      // old account but no projects -- try loading all.
-      const projectActions = redux.getActions("projects");
-      await projectActions.load_all_projects();
-      project_map = projects.get("project_map")!;
-      if (project_map.size == 0) {
-        // still nothing -- just create
-        return await create();
-      }
+      return await create();
     }
   }
 

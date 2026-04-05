@@ -26,6 +26,11 @@ describe("runAccountNotificationIndexProjectionPass", () => {
         applied_events: 3,
         inserted_rows: 3,
         deleted_rows: 0,
+        affected_account_ids: ["a-1", "a-2"],
+        affected_notifications: [
+          { account_id: "a-1", notification_id: "n-1" },
+          { account_id: "a-2", notification_id: "n-2" },
+        ],
         event_types: {
           "notification.upserted": 3,
         },
@@ -38,6 +43,11 @@ describe("runAccountNotificationIndexProjectionPass", () => {
         applied_events: 1,
         inserted_rows: 1,
         deleted_rows: 0,
+        affected_account_ids: ["a-2", "a-3"],
+        affected_notifications: [
+          { account_id: "a-2", notification_id: "n-3" },
+          { account_id: "a-3", notification_id: "n-4" },
+        ],
         event_types: {
           "notification.upserted": 1,
         },
@@ -56,6 +66,13 @@ describe("runAccountNotificationIndexProjectionPass", () => {
       applied_events: 4,
       inserted_rows: 4,
       deleted_rows: 0,
+      affected_account_ids: ["a-1", "a-2", "a-3"],
+      affected_notifications: [
+        { account_id: "a-1", notification_id: "n-1" },
+        { account_id: "a-2", notification_id: "n-2" },
+        { account_id: "a-2", notification_id: "n-3" },
+        { account_id: "a-3", notification_id: "n-4" },
+      ],
       event_types: {
         "notification.upserted": 4,
       },
@@ -63,6 +80,7 @@ describe("runAccountNotificationIndexProjectionPass", () => {
   });
 
   it("records maintenance success state after a tick", async () => {
+    const publisher = jest.fn();
     const pass_runner = jest.fn(async () => ({
       bay_id: "bay-7",
       batches: 1,
@@ -70,6 +88,11 @@ describe("runAccountNotificationIndexProjectionPass", () => {
       applied_events: 2,
       inserted_rows: 2,
       deleted_rows: 0,
+      affected_account_ids: ["a-1", "a-2"],
+      affected_notifications: [
+        { account_id: "a-1", notification_id: "n-1" },
+        { account_id: "a-2", notification_id: "n-2" },
+      ],
       event_types: {
         "notification.upserted": 2,
       },
@@ -77,6 +100,7 @@ describe("runAccountNotificationIndexProjectionPass", () => {
     await expect(
       runAccountNotificationIndexProjectionMaintenanceTick({
         pass_runner,
+        publisher,
       }),
     ).resolves.toEqual({
       bay_id: "bay-7",
@@ -85,9 +109,25 @@ describe("runAccountNotificationIndexProjectionPass", () => {
       applied_events: 2,
       inserted_rows: 2,
       deleted_rows: 0,
+      affected_account_ids: ["a-1", "a-2"],
+      affected_notifications: [
+        { account_id: "a-1", notification_id: "n-1" },
+        { account_id: "a-2", notification_id: "n-2" },
+      ],
       event_types: {
         "notification.upserted": 2,
       },
+    });
+    expect(publisher).toHaveBeenCalledTimes(2);
+    expect(publisher).toHaveBeenNthCalledWith(1, {
+      account_id: "a-1",
+      reason: "projected_upsert",
+      notification_ids: ["n-1"],
+    });
+    expect(publisher).toHaveBeenNthCalledWith(2, {
+      account_id: "a-2",
+      reason: "projected_upsert",
+      notification_ids: ["n-2"],
     });
 
     const status = getAccountNotificationIndexProjectionMaintenanceStatus();
@@ -99,6 +139,11 @@ describe("runAccountNotificationIndexProjectionPass", () => {
       applied_events: 2,
       inserted_rows: 2,
       deleted_rows: 0,
+      affected_account_ids: ["a-1", "a-2"],
+      affected_notifications: [
+        { account_id: "a-1", notification_id: "n-1" },
+        { account_id: "a-2", notification_id: "n-2" },
+      ],
       event_types: {
         "notification.upserted": 2,
       },

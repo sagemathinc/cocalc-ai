@@ -89,6 +89,7 @@ const HUB_API_GROUPS: HubGroupName[] = [
   "fileSync",
   "hosts",
   "software",
+  "notifications",
   "agent",
   "lro",
   "ssh",

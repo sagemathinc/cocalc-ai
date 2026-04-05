@@ -15,15 +15,24 @@ const NOW = new Date("2026-04-04T16:30:00.000Z");
 
 describe("projection-backed read paths", () => {
   let database: any;
+  let publishProjectFeedMock: jest.Mock;
 
   beforeAll(async () => {
     await initEphemeralDatabase({});
     database = db();
   }, 15000);
 
+  beforeEach(() => {
+    publishProjectFeedMock = jest.fn(async () => undefined);
+    database.publishProjectAccountFeedEventsBestEffort = publishProjectFeedMock;
+  });
+
   afterEach(async () => {
     delete process.env.COCALC_ACCOUNT_PROJECT_INDEX_PROJECT_LIST_READS;
     delete process.env.COCALC_ACCOUNT_NOTIFICATION_INDEX_MENTION_READS;
+    if (database != null) {
+      delete database.publishProjectAccountFeedEventsBestEffort;
+    }
     await getPool().query(
       "TRUNCATE account_project_index, account_notification_index, mentions, projects, accounts CASCADE",
     );
@@ -109,6 +118,39 @@ describe("projection-backed read paths", () => {
       ]);
     },
   );
+
+  it("publishes immediate project account-feed invalidation after a projects set query", async () => {
+    await getPool().query(
+      `INSERT INTO accounts
+         (account_id, first_name, last_name, created, email_address, home_bay_id)
+       VALUES
+         ($1, 'Local', 'User', NOW(), 'local@example.com', 'bay-0')`,
+      [ACCOUNT_ID],
+    );
+    await getPool().query(
+      `INSERT INTO projects
+         (project_id, title, users, created, last_edited, deleted)
+       VALUES
+         ($1, 'Projected Project', $2::JSONB, NOW(), NOW(), FALSE)`,
+      [
+        PROJECT_ID,
+        JSON.stringify({
+          [ACCOUNT_ID]: { group: "owner" },
+        }),
+      ],
+    );
+
+    await runUserQuery({
+      projects: {
+        project_id: PROJECT_ID,
+        title: "Updated Title",
+      },
+    });
+
+    expect(publishProjectFeedMock).toHaveBeenCalledWith({
+      project_id: PROJECT_ID,
+    });
+  });
 
   it.each(["prefer", "only"])(
     "keeps mentions user_query project-scoped in %s mode",

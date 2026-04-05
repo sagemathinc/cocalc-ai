@@ -3,15 +3,19 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { AccountTable } from "./table";
+import { AccountTable, applyAccountPatch } from "./table";
 
-describe("AccountTable._change", () => {
+describe("AccountTable", () => {
   it("requests home_bay_id in the synced account query", () => {
     const query = AccountTable.prototype.query.call({});
     expect(query.accounts[0]).toMatchObject({
       account_id: null,
       home_bay_id: null,
     });
+  });
+
+  it("uses snapshot-only account bootstrap without a changefeed", () => {
+    expect(AccountTable.prototype.no_changefeed.call({})).toBe(true);
   });
 
   it("merges partial other_settings updates into the current store state", () => {
@@ -28,16 +32,13 @@ describe("AccountTable._change", () => {
       }),
     };
 
-    AccountTable.prototype._change.call(
-      { redux, first_set: true },
-      {
-        get_one: () => ({
-          toJS: () => ({
-            other_settings: { auto_update_file_listing: true },
-          }),
-        }),
+    applyAccountPatch({
+      redux,
+      patch: {
+        other_settings: { auto_update_file_listing: true },
       },
-    );
+      first_set: true,
+    });
 
     expect(setState).toHaveBeenNthCalledWith(1, {
       other_settings: {
@@ -60,16 +61,12 @@ describe("AccountTable._change", () => {
       }),
     };
 
-    AccountTable.prototype._change.call(
-      { redux, first_set: false },
-      {
-        get_one: () => ({
-          toJS: () => ({
-            home_bay_id: "bay-7",
-          }),
-        }),
+    applyAccountPatch({
+      redux,
+      patch: {
+        home_bay_id: "bay-7",
       },
-    );
+    });
 
     expect(setState).toHaveBeenCalledWith({
       home_bay_id: "bay-7",

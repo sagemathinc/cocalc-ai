@@ -123,6 +123,8 @@ interface Props {
   onAtTopStateChange?: (atTop: boolean) => void;
   activityJumpDate?: string;
   activityJumpToken?: number;
+  notifyOnTurnFinish?: boolean;
+  onNotifyOnTurnFinishChange?: (checked: boolean) => void;
   onOpenGitBrowser?: (request: {
     threadKey: string;
     cwdOverride?: string;
@@ -154,6 +156,8 @@ export function ChatLog({
   onAtTopStateChange,
   activityJumpDate,
   activityJumpToken,
+  notifyOnTurnFinish = false,
+  onNotifyOnTurnFinishChange,
   onOpenGitBrowser,
 }: Props) {
   const singleThreadView = selectedThread != null;
@@ -364,6 +368,9 @@ export function ChatLog({
           onAtTopStateChange,
           activityJumpDate,
           activityJumpToken,
+          notifyOnTurnFinish,
+          onNotifyOnTurnFinishChange,
+          selectedThread,
           anyOverlayOpen,
           onOpenGitBrowser,
         }}
@@ -547,6 +554,9 @@ export function MessageList({
   onAtTopStateChange,
   activityJumpDate,
   activityJumpToken,
+  notifyOnTurnFinish,
+  onNotifyOnTurnFinishChange,
+  selectedThread,
   anyOverlayOpen = false,
   onOpenGitBrowser,
 }: {
@@ -577,6 +587,9 @@ export function MessageList({
   onAtTopStateChange?: (atTop: boolean) => void;
   activityJumpDate?: string;
   activityJumpToken?: number;
+  notifyOnTurnFinish?: boolean;
+  onNotifyOnTurnFinishChange?: (checked: boolean) => void;
+  selectedThread?: string;
   anyOverlayOpen?: boolean;
   onOpenGitBrowser?: (request: {
     threadKey: string;
@@ -591,6 +604,10 @@ export function MessageList({
   const initialIndex = Math.max(sortedDates.length - 1, 0); // start at newest
   const endRef = useRef<HTMLDivElement | null>(null);
   const blockScrollInput = anyOverlayOpen === true;
+  const canNotifyForRunningTurn =
+    selectedThread != null &&
+    selectedThread !== COMBINED_FEED_KEY &&
+    onNotifyOnTurnFinishChange != null;
 
   const maybeBlockScrollEvent = (event: {
     preventDefault: () => void;
@@ -765,6 +782,12 @@ export function MessageList({
             searchHighlight={searchQuery}
             openActivityToken={
               activityJumpDate === date ? activityJumpToken : undefined
+            }
+            notifyOnTurnFinish={
+              canNotifyForRunningTurn ? notifyOnTurnFinish : undefined
+            }
+            onNotifyOnTurnFinishChange={
+              canNotifyForRunningTurn ? onNotifyOnTurnFinishChange : undefined
             }
             onOpenGitBrowser={onOpenGitBrowser}
           />

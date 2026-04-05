@@ -38,4 +38,5 @@ WHERE read=false AND saved=false AND deleted=false`;
     "UPDATE accounts SET unread_message_count=$1 WHERE account_id=$2",
     [unread_count, account_id],
   );
+  return Number(unread_count ?? 0);
 }

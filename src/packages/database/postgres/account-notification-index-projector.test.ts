@@ -113,6 +113,7 @@ describe("account_notification_index projector", () => {
       applied_events: 1,
       inserted_rows: 1,
       deleted_rows: 0,
+      affected_account_ids: [LOCAL_ACCOUNT_ID],
       event_types: {
         "notification.upserted": 1,
       },
@@ -169,6 +170,7 @@ describe("account_notification_index projector", () => {
       applied_events: 1,
       inserted_rows: 1,
       deleted_rows: 0,
+      affected_account_ids: [LOCAL_ACCOUNT_ID],
       event_types: {
         "notification.upserted": 1,
       },
@@ -211,6 +213,7 @@ describe("account_notification_index projector", () => {
       applied_events: 1,
       inserted_rows: 1,
       deleted_rows: 0,
+      affected_account_ids: [LOCAL_ACCOUNT_ID],
     });
 
     await expect(
@@ -250,6 +253,7 @@ describe("account_notification_index projector", () => {
       applied_events: 0,
       inserted_rows: 0,
       deleted_rows: 0,
+      affected_account_ids: [],
     });
 
     const indexRows = await getPool().query(
