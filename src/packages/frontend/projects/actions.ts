@@ -28,7 +28,11 @@ import type { StudentProjectFunctionality } from "@cocalc/util/db-schema/project
 import type { PurchaseInfo } from "@cocalc/util/purchases/quota/types";
 import { defaults, is_valid_uuid_string } from "@cocalc/util/misc";
 import { ProjectsState, store } from "./store";
-import { load_all_projects, switch_to_project } from "./table";
+import {
+  load_all_projects,
+  refresh_projects_table,
+  switch_to_project,
+} from "./table";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import { defaultOpenProjectTarget } from "./open-project-default";
 import { evaluateHostOperational, hostLabel } from "./host-operational";
@@ -210,7 +214,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
   };
 
   private handleRealtimeFeedHistoryGap = (): void => {
-    void this.load_all_projects();
+    void refresh_projects_table();
   };
 
   private async ensureRealtimeFeedForCurrentAccount(): Promise<void> {

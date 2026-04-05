@@ -97,6 +97,27 @@ export const load_all_projects = reuseInFlight(async () => {
     ?.setState({ all_projects_have_been_loaded: true }); // used by client code
 });
 
+export const refresh_projects_table = reuseInFlight(async () => {
+  if (lite) {
+    return;
+  }
+  const project_id = redux.getStore("page").get("kiosk_project_id");
+  redux.removeTable("projects");
+  if (project_id != null) {
+    const table = redux.createTable("projects", ProjectsTable);
+    initTableError();
+    await once(table._table, "connected");
+    return;
+  }
+  if (all_projects_have_been_loaded) {
+    redux.createTable("projects", ProjectsAllTable);
+  } else {
+    redux.createTable("projects", ProjectsTable);
+  }
+  initTableError();
+  await once(redux.getTable("projects")._table, "connected");
+});
+
 async function load_recent_projects(): Promise<void> {
   const table = redux.createTable("projects", ProjectsTable);
   initTableError();

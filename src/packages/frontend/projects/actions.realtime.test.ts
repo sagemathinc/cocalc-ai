@@ -3,6 +3,14 @@ import { List, Map as ImmutableMap } from "immutable";
 
 import { accountFeedStreamName } from "../../conat/hub/api/account-feed";
 
+const refreshProjectsTableMock = jest.fn(async () => undefined);
+
+jest.mock("./table", () => ({
+  refresh_projects_table: refreshProjectsTableMock,
+  switch_to_project: jest.fn(),
+  load_all_projects: jest.fn(),
+}));
+
 jest.mock("./store", () => ({
   store: {
     get: jest.fn(),
@@ -57,6 +65,7 @@ describe("ProjectsActions realtime feed", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    refreshProjectsTableMock.mockResolvedValue(undefined);
     projectMap = ImmutableMap<string, any>();
     mockedWebappClient.is_signed_in.mockReturnValue(true);
     mockedStore.get.mockImplementation((key: string) => {
@@ -133,5 +142,38 @@ describe("ProjectsActions realtime feed", () => {
       "owner",
     );
     expect(projectMap.getIn(["project-1", "last_edited"])).toBeInstanceOf(Date);
+  });
+
+  it("refreshes the current projects table on history-gap without forcing all projects", async () => {
+    const redux = {
+      getStore: jest.fn((name: string) => {
+        if (name === "account") {
+          return ImmutableMap({ account_id: "acct-1" });
+        }
+        return ImmutableMap();
+      }),
+      _set_state: jest.fn(),
+      removeActions: jest.fn(),
+      getTable: jest.fn(),
+      getProjectActions: jest.fn(() => ({
+        save_all_files: jest.fn(),
+      })),
+    } as any;
+    const actions = new ProjectsActions("projects", redux);
+
+    actions._init();
+    await flush();
+
+    const feed = await mockedWebappClient.conat_client.dstream.mock.results[0]
+      .value;
+    feed.emit("history-gap", {
+      requested_start_seq: 1,
+      effective_start_seq: 5,
+      oldest_retained_seq: 5,
+      newest_retained_seq: 10,
+    });
+    await flush();
+
+    expect(refreshProjectsTableMock).toHaveBeenCalledTimes(1);
   });
 });
