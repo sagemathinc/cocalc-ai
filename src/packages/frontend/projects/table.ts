@@ -3,7 +3,6 @@ import { COCALC_MINIMAL } from "../fullscreen";
 import { parse_query } from "@cocalc/sync/table/util";
 import { once } from "@cocalc/util/async-utils";
 import { redux, Table } from "../app-framework";
-import { lite } from "@cocalc/frontend/lite";
 
 declare var DEBUG: boolean;
 
@@ -58,9 +57,6 @@ function initTableError(): void {
 }
 
 export const refresh_projects_table = reuseInFlight(async () => {
-  if (lite) {
-    return;
-  }
   const project_id = redux.getStore("page").get("kiosk_project_id");
   redux.removeTable("projects");
   if (project_id != null) {

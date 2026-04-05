@@ -13,6 +13,7 @@ import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import { Table } from "@cocalc/frontend/app-framework/Table";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { redux as appRedux } from "@cocalc/frontend/app-framework";
+import { lite } from "@cocalc/frontend/lite";
 
 export function normalizeAccountPatch(redux, obj: Record<string, any>) {
   const next = { ...obj };
@@ -216,7 +217,9 @@ export function initAccountRealtime(opts: {
     return;
   }
   signedInListener = () => {
-    opts.recreate_account_table(opts.redux);
+    if (!lite) {
+      opts.recreate_account_table(opts.redux);
+    }
     void ensureRealtimeFeedForCurrentAccount();
   };
   signedOutListener = () => {

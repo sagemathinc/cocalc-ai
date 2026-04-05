@@ -21,6 +21,7 @@ import {
   NotificationFilter,
 } from "./types";
 import type { DStream } from "@cocalc/conat/sync/dstream";
+import { lite, remote_sync } from "@cocalc/frontend/lite";
 
 const DEFAULT_INBOX_LIMIT = 500;
 
@@ -210,6 +211,11 @@ export class MentionsActions extends Actions<MentionsState> {
 
   private async refreshImpl(): Promise<void> {
     if (!webapp_client.is_signed_in()) {
+      this.setState({ mentions: Map(), unread_count: 0, loading: false });
+      return;
+    }
+    if (lite && !remote_sync) {
+      this.closeRealtimeFeed();
       this.setState({ mentions: Map(), unread_count: 0, loading: false });
       return;
     }
