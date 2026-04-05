@@ -146,56 +146,68 @@ describe("MentionsActions realtime feed", () => {
     ).toHaveBeenCalledTimes(3);
   });
 
-  it("retries bootstrap until the account store is ready", async () => {
-    let accountReady = false;
-    let scheduledRefresh: (() => void) | undefined;
-    const setTimeoutMock = jest
-      .spyOn(global, "setTimeout")
-      .mockImplementation(((cb: TimerHandler) => {
-        scheduledRefresh = cb as () => void;
-        return 1 as unknown as ReturnType<typeof setTimeout>;
-      }) as typeof setTimeout);
+  it("waits for the account store is_ready event before bootstrapping", async () => {
+    class MockAccountStore extends EventEmitter {
+      private ready = false;
+
+      get(key: string) {
+        if (key === "account_id") {
+          return this.ready ? "acct-1" : undefined;
+        }
+        if (key === "is_ready") {
+          return this.ready;
+        }
+        return undefined;
+      }
+
+      setReady(): void {
+        this.ready = true;
+        this.emit("is_ready");
+      }
+    }
+
+    const accountStore = new MockAccountStore();
+    let reduxSubscriber: (() => void) | undefined;
     const redux = {
       getStore: jest.fn((name: string) => {
         if (name === "account") {
-          return accountReady
-            ? ImmutableMap({ account_id: "acct-1" })
-            : ImmutableMap();
+          return accountStore as any;
         }
         if (name === "mentions") {
           return ImmutableMap({ mentions: ImmutableMap() });
         }
         return ImmutableMap();
       }),
+      reduxStore: {
+        subscribe: jest.fn((cb: () => void) => {
+          reduxSubscriber = cb;
+          return jest.fn();
+        }),
+      },
       _set_state: jest.fn(),
       removeActions: jest.fn(),
     } as any;
     const actions = new MentionsActions("mentions", redux);
 
-    try {
-      actions._init();
-      await flushMicrotasks();
+    actions._init();
+    await flushMicrotasks();
 
-      expect(
-        mockedWebappClient.conat_client.hub.notifications.list,
-      ).not.toHaveBeenCalled();
-      expect(mockedWebappClient.conat_client.dstream).not.toHaveBeenCalled();
-      expect(scheduledRefresh).toBeDefined();
+    expect(
+      mockedWebappClient.conat_client.hub.notifications.list,
+    ).not.toHaveBeenCalled();
+    expect(mockedWebappClient.conat_client.dstream).not.toHaveBeenCalled();
+    expect(reduxSubscriber).toBeDefined();
 
-      accountReady = true;
-      scheduledRefresh?.();
-      await flushMicrotasks();
+    accountStore.setReady();
+    await flushMicrotasks();
 
-      expect(
-        mockedWebappClient.conat_client.hub.notifications.list,
-      ).toHaveBeenCalledTimes(1);
-      expect(mockedWebappClient.conat_client.dstream).toHaveBeenCalledWith({
-        account_id: "acct-1",
-        name: accountFeedStreamName(),
-        ephemeral: true,
-      });
-    } finally {
-      setTimeoutMock.mockRestore();
-    }
+    expect(
+      mockedWebappClient.conat_client.hub.notifications.list,
+    ).toHaveBeenCalledTimes(1);
+    expect(mockedWebappClient.conat_client.dstream).toHaveBeenCalledWith({
+      account_id: "acct-1",
+      name: accountFeedStreamName(),
+      ephemeral: true,
+    });
   });
 });

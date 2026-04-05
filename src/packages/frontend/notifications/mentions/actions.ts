@@ -23,7 +23,6 @@ import {
 import type { DStream } from "@cocalc/conat/sync/dstream";
 
 const DEFAULT_INBOX_LIMIT = 500;
-const BOOTSTRAP_RETRY_MS = 1000;
 
 function mentionSort(a: MentionInfo, b: MentionInfo): number {
   return b.get("time").getTime() - a.get("time").getTime();
@@ -92,25 +91,34 @@ export class MentionsActions extends Actions<MentionsState> {
   private signedInListener?: () => void;
   private signedOutListener?: () => void;
   private conatConnectedListener?: () => void;
+  private accountStoreReadyListener?: () => void;
+  private accountStoreSubscription?: () => void;
+  private observedAccountStore?: {
+    get?: (key: string) => unknown;
+    on?: (event: string, cb: () => void) => void;
+    removeListener?: (event: string, cb: () => void) => void;
+  };
   private realtimeFeed?: DStream<AccountFeedEvent>;
   private realtimeFeedAccountId?: string;
-  private bootstrapRetryTimer?: ReturnType<typeof setTimeout>;
 
   _init() {
     this.signedInListener = () => {
       void this.refresh();
     };
     this.signedOutListener = () => {
-      this.clearBootstrapRetry();
       this.closeRealtimeFeed();
       this.setState({ mentions: Map(), unread_count: 0, loading: false });
     };
     this.conatConnectedListener = () => {
       void this.refresh();
     };
+    this.accountStoreReadyListener = () => {
+      void this.refresh();
+    };
     webapp_client.on("signed_in", this.signedInListener);
     webapp_client.on("signed_out", this.signedOutListener);
     webapp_client.conat_client.on("connected", this.conatConnectedListener);
+    this.observeAccountStoreReady();
     void this.refresh();
   }
 
@@ -130,7 +138,21 @@ export class MentionsActions extends Actions<MentionsState> {
       );
       this.conatConnectedListener = undefined;
     }
-    this.clearBootstrapRetry();
+    if (this.accountStoreSubscription != null) {
+      this.accountStoreSubscription();
+      this.accountStoreSubscription = undefined;
+    }
+    if (
+      this.accountStoreReadyListener != null &&
+      this.observedAccountStore != null
+    ) {
+      this.observedAccountStore.removeListener?.(
+        "is_ready",
+        this.accountStoreReadyListener,
+      );
+      this.observedAccountStore = undefined;
+      this.accountStoreReadyListener = undefined;
+    }
     this.closeRealtimeFeed();
     Actions.prototype.destroy.call(this);
   };
@@ -178,13 +200,11 @@ export class MentionsActions extends Actions<MentionsState> {
     const account_id = this.getAccountId();
     if (account_id == null) {
       this.setState({ mentions: Map(), unread_count: 0, loading: true });
-      this.scheduleBootstrapRetry();
       return;
     }
     const notifications = webapp_client.conat_client?.hub?.notifications;
     if (notifications == null) {
       this.setState({ loading: true });
-      this.scheduleBootstrapRetry();
       return;
     }
     this.setState({ loading: true });
@@ -199,31 +219,8 @@ export class MentionsActions extends Actions<MentionsState> {
         unread_count: getUnreadNotificationCount(counts),
       });
       await this.ensureRealtimeFeed(account_id);
-      if (this.realtimeFeed == null || this.realtimeFeed.isClosed()) {
-        this.scheduleBootstrapRetry();
-        return;
-      }
-      this.clearBootstrapRetry();
     } catch (err) {
-      this.scheduleBootstrapRetry();
       console.warn("WARNING: notifications refresh error -- ", err);
-    }
-  }
-
-  private scheduleBootstrapRetry(): void {
-    if (this.bootstrapRetryTimer != null) {
-      return;
-    }
-    this.bootstrapRetryTimer = setTimeout(() => {
-      this.bootstrapRetryTimer = undefined;
-      void this.refresh();
-    }, BOOTSTRAP_RETRY_MS);
-  }
-
-  private clearBootstrapRetry(): void {
-    if (this.bootstrapRetryTimer != null) {
-      clearTimeout(this.bootstrapRetryTimer);
-      this.bootstrapRetryTimer = undefined;
     }
   }
 
@@ -250,6 +247,32 @@ export class MentionsActions extends Actions<MentionsState> {
   private handleRealtimeFeedHistoryGap = (): void => {
     void this.refresh();
   };
+
+  private observeAccountStoreReady(): void {
+    const onReady = this.accountStoreReadyListener;
+    if (onReady == null) {
+      return;
+    }
+
+    const attachStore = (
+      store = this.redux.getStore("account") as typeof this.observedAccountStore,
+    ): void => {
+      if (store === this.observedAccountStore) {
+        return;
+      }
+      this.observedAccountStore?.removeListener?.("is_ready", onReady);
+      this.observedAccountStore = store;
+      store?.on?.("is_ready", onReady);
+    };
+
+    attachStore();
+    const subscribe = this.redux.reduxStore?.subscribe?.bind(
+      this.redux.reduxStore,
+    );
+    this.accountStoreSubscription = subscribe?.(() => {
+      attachStore();
+    });
+  }
 
   private async ensureRealtimeFeed(account_id: string): Promise<void> {
     if (
