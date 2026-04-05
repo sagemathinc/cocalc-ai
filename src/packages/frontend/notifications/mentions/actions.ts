@@ -116,7 +116,7 @@ export class MentionsActions extends Actions<MentionsState> {
     this.signedOutListener = () => {
       this.clearBootstrapRetry();
       this.closeRealtimeFeed();
-      this.setState({ mentions: Map(), unread_count: 0 });
+      this.setState({ mentions: Map(), unread_count: 0, loading: false });
     };
     this.conatConnectedListener = () => {
       void this.refresh();
@@ -154,6 +154,7 @@ export class MentionsActions extends Actions<MentionsState> {
 
   public update_state(mentions: MentionsMap): void {
     this.setState({
+      loading: false,
       mentions: mentions.sort(mentionSort) as MentionsMap,
     });
   }
@@ -184,26 +185,29 @@ export class MentionsActions extends Actions<MentionsState> {
 
   private async refreshImpl(): Promise<void> {
     if (!webapp_client.is_signed_in()) {
-      this.setState({ mentions: Map(), unread_count: 0 });
+      this.setState({ mentions: Map(), unread_count: 0, loading: false });
       return;
     }
     const account_id = this.getAccountId();
     if (account_id == null) {
-      this.setState({ mentions: Map(), unread_count: 0 });
+      this.setState({ mentions: Map(), unread_count: 0, loading: true });
       this.scheduleBootstrapRetry();
       return;
     }
     const notifications = webapp_client.conat_client?.hub?.notifications;
     if (notifications == null) {
+      this.setState({ loading: true });
       this.scheduleBootstrapRetry();
       return;
     }
+    this.setState({ loading: true });
     try {
       const [rows, counts] = await Promise.all([
         notifications.list({ limit: DEFAULT_INBOX_LIMIT }),
         notifications.counts({}),
       ]);
       this.setState({
+        loading: false,
         mentions: buildNotificationInboxMap({ account_id, rows }),
         unread_count: getUnreadNotificationCount(counts),
       });

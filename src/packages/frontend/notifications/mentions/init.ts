@@ -21,6 +21,7 @@ export function init(redux: AppRedux) {
     mentions: Map(),
     filter,
     id,
+    loading: true,
     unread_count: 0,
   });
 

@@ -14,6 +14,7 @@ import Messages, { isMessagesFilter } from "@cocalc/frontend/messages";
 
 interface Props {
   account_id: string;
+  loading?: boolean;
   mentions: MentionsMap;
   news: NewsMap;
   filter: NotificationFilter;
@@ -23,6 +24,7 @@ interface Props {
 
 export const NotificationList: React.FC<Props> = ({
   account_id,
+  loading,
   mentions,
   news,
   filter,
@@ -44,6 +46,7 @@ export const NotificationList: React.FC<Props> = ({
     body = (
       <MentionsPanel
         filter={filter}
+        loading={loading}
         mentions={mentions}
         account_id={account_id}
         user_map={user_map}

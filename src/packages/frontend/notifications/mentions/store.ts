@@ -9,6 +9,7 @@ import { MentionsMap, NotificationFilter } from "./types";
 export interface MentionsState {
   mentions: MentionsMap;
   filter: NotificationFilter;
+  loading?: boolean;
   unread_count?: number;
   // optional id of currently selected thing
   id?: number;

@@ -6,7 +6,7 @@
 import { Button, Collapse, Space } from "antd";
 const { Panel } = Collapse;
 import { CSS, redux } from "@cocalc/frontend/app-framework";
-import { Icon, MarkAll } from "@cocalc/frontend/components";
+import { Icon, Loading, MarkAll } from "@cocalc/frontend/components";
 import { ProjectTitle } from "@cocalc/frontend/projects/project-title";
 import { unreachable } from "@cocalc/util/misc";
 import {
@@ -21,6 +21,7 @@ import { NotificationRow } from "./mentions/notification-row";
 
 interface MentionsPanelProps {
   filter: MentionsFilter;
+  loading?: boolean;
   mentions: MentionsMap;
   user_map;
   account_id: string;
@@ -28,11 +29,15 @@ interface MentionsPanelProps {
 }
 
 export function MentionsPanel(props: MentionsPanelProps) {
-  const { filter, mentions, user_map, account_id, style } = props;
+  const { filter, loading, mentions, user_map, account_id, style } = props;
   const mentions_actions = redux.getActions("mentions");
 
   if (isNewsFilter(filter)) {
     throw Error("Should be in NewsPanel");
+  }
+
+  if (loading) {
+    return <Loading theme="medium" />;
   }
 
   if (!isNewsFilter(filter) && (mentions == undefined || mentions.size == 0)) {
