@@ -251,8 +251,10 @@ export function registerBrowserCommand(
           "browser target-resolve",
           async (ctx) => {
             const profileSelection = loadProfileSelection(deps, command);
+            const explicitProjectIdHint = `${opts.projectId ?? ""}`.trim();
             const projectIdHint =
-              `${opts.projectId ?? process.env.COCALC_PROJECT_ID ?? ""}`.trim();
+              explicitProjectIdHint ||
+              `${process.env.COCALC_PROJECT_ID ?? ""}`.trim();
             const browserHint = browserHintFromOption(opts.browser) ?? "";
             const projectHint = `${opts.project ?? ""}`.trim();
             const sessionInfo = await chooseBrowserSession({
@@ -261,10 +263,11 @@ export function registerBrowserCommand(
               fallbackBrowserId: profileSelection.browser_id,
               requireDiscovery:
                 !!opts.requireDiscovery ||
-                (projectHint.length === 0 && projectIdHint.length === 0),
+                (projectHint.length === 0 &&
+                  explicitProjectIdHint.length === 0),
               sessionProjectId:
                 `${opts.sessionProjectId ?? ""}`.trim() ||
-                `${projectIdHint ?? ""}`.trim() ||
+                explicitProjectIdHint ||
                 undefined,
               activeOnly: !!opts.activeOnly,
             });
@@ -275,7 +278,7 @@ export function registerBrowserCommand(
                 deps,
                 ctx,
                 project: projectHint,
-                projectId: projectIdHint,
+                projectId: explicitProjectIdHint || undefined,
                 sessionInfo,
               });
             } catch (err) {
@@ -774,8 +777,7 @@ export function registerBrowserCommand(
       ) => {
         await deps.withContext(command, "browser screenshot", async (ctx) => {
           const profileSelection = loadProfileSelection(deps, command);
-          const projectIdHint =
-            `${opts.projectId ?? process.env.COCALC_PROJECT_ID ?? ""}`.trim();
+          const explicitProjectIdHint = `${opts.projectId ?? ""}`.trim();
           const browserHint = browserHintFromOption(opts.browser) ?? "";
           const projectHint = `${opts.project ?? ""}`.trim();
           const sessionInfo = await chooseBrowserSession({
@@ -783,10 +785,10 @@ export function registerBrowserCommand(
             browserHint,
             fallbackBrowserId: profileSelection.browser_id,
             requireDiscovery:
-              projectHint.length === 0 && projectIdHint.length === 0,
+              projectHint.length === 0 && explicitProjectIdHint.length === 0,
             sessionProjectId:
               `${opts.sessionProjectId ?? ""}`.trim() ||
-              `${projectIdHint ?? ""}`.trim() ||
+              explicitProjectIdHint ||
               undefined,
             activeOnly: !!opts.activeOnly,
           });
@@ -794,7 +796,7 @@ export function registerBrowserCommand(
             deps,
             ctx,
             project: projectHint,
-            projectId: projectIdHint,
+            projectId: explicitProjectIdHint || undefined,
             sessionInfo,
           });
 
@@ -1068,8 +1070,7 @@ export function registerBrowserCommand(
       ) => {
         await deps.withContext(command, "browser exec", async (ctx) => {
           const profileSelection = loadProfileSelection(deps, command);
-          const projectIdHint =
-            `${opts.projectId ?? process.env.COCALC_PROJECT_ID ?? ""}`.trim();
+          const explicitProjectIdHint = `${opts.projectId ?? ""}`.trim();
           const browserHint = browserHintFromOption(opts.browser) ?? "";
           const projectHint = `${opts.project ?? ""}`.trim();
           const sessionInfo = await chooseBrowserSession({
@@ -1077,10 +1078,10 @@ export function registerBrowserCommand(
             browserHint,
             fallbackBrowserId: profileSelection.browser_id,
             requireDiscovery:
-              projectHint.length === 0 && projectIdHint.length === 0,
+              projectHint.length === 0 && explicitProjectIdHint.length === 0,
             sessionProjectId:
               `${opts.sessionProjectId ?? ""}`.trim() ||
-              `${projectIdHint ?? ""}`.trim() ||
+              explicitProjectIdHint ||
               undefined,
             activeOnly: !!opts.activeOnly,
           });
@@ -1088,7 +1089,7 @@ export function registerBrowserCommand(
             deps,
             ctx,
             project: projectHint,
-            projectId: projectIdHint,
+            projectId: explicitProjectIdHint || undefined,
             sessionInfo,
           });
           const timeoutMs = Math.max(

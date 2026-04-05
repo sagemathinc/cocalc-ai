@@ -94,6 +94,10 @@ You now have two explicit ways to target browser automation:
 - Use session-targeting flags to avoid ambiguous browser selection:
   - `--active-only`
   - `--session-project-id <uuid>` on non-list commands
+- When driving a spawned browser session with `--browser <id>`, the focused
+  project tab in that session is the default target. Pass `--project-id <uuid>`
+  explicitly only when you want a different project than the session's active
+  one.
 - If behavior does not match code, assume stale JS bundle first.
 - For Slate bugs, check both:
   - `editor.selection` shape/path
@@ -163,16 +167,36 @@ Example harness plan:
   "default_retries": 1,
   "default_recovery": "reload",
   "before_all": [
-    { "name": "open workspace root", "action": { "name": "navigate", "url": "http://localhost:7003/projects/00000000-1000-4000-8000-000000000000/files/home/wstein/" } }
+    {
+      "name": "open workspace root",
+      "action": {
+        "name": "navigate",
+        "url": "http://localhost:7003/projects/00000000-1000-4000-8000-000000000000/files/home/wstein/"
+      }
+    }
   ],
   "steps": [
-    { "name": "wait list", "action": { "name": "wait_for_selector", "selector": ".smc-vfill", "state": "visible", "timeout_ms": 20000 } },
-    { "name": "assert title", "assert": { "code": "return document.title", "expect": "Home - CoCalc" } },
+    {
+      "name": "wait list",
+      "action": {
+        "name": "wait_for_selector",
+        "selector": ".smc-vfill",
+        "state": "visible",
+        "timeout_ms": 20000
+      }
+    },
+    {
+      "name": "assert title",
+      "assert": { "code": "return document.title", "expect": "Home - CoCalc" }
+    },
     { "name": "scroll", "action": { "name": "scroll_by", "dy": 800 } },
     { "name": "probe title", "exec": "return document.title" }
   ],
   "after_all": [
-    { "name": "final title check", "assert": "return document.title && document.title.length > 0" }
+    {
+      "name": "final title check",
+      "assert": "return document.title && document.title.length > 0"
+    }
   ]
 }
 ```
