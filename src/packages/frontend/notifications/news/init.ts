@@ -7,16 +7,16 @@ import { Map } from "immutable";
 
 import {
   Actions,
+  createTypedMap,
   Store,
-  Table,
   TypedMap,
   redux,
 } from "@cocalc/frontend/app-framework";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
-import { COCALC_MINIMAL } from "@cocalc/frontend/fullscreen";
 import { NewsItemWebapp } from "@cocalc/util/types/news";
 
 export const NEWS = "news";
+const NewsItemMap = createTypedMap<NewsItemWebapp>();
 
 export interface NewsState {
   loading: boolean;
@@ -57,6 +57,30 @@ export class NewsActions extends Actions<NewsState> {
     return store;
   }
 
+  public refresh = async (): Promise<void> => {
+    this.setState({ loading: true });
+    try {
+      const rows = await webapp_client.conat_client.hub.system.listNews();
+      const news = Map<string, TypedMap<NewsItemWebapp>>(
+        rows.map((row) => [
+          row.id,
+          new NewsItemMap({
+            ...row,
+            date: row.date instanceof Date ? row.date : new Date(row.date),
+          }),
+        ]),
+      );
+      this.setState({ loading: false, news });
+      const readUntil = redux
+        .getStore("account")
+        ?.getIn(["other_settings", "news_read_until"]);
+      this.updateUnreadCount(readUntil);
+    } catch (err) {
+      console.warn("WARNING: news refresh error -- ", err);
+      this.setState({ loading: false });
+    }
+  };
+
   public markNewsRead(opts?: { date?: Date; current?: number }): void {
     // javascript epoch timestamp in milliseconds
     const newest: number =
@@ -94,31 +118,6 @@ export class NewsActions extends Actions<NewsState> {
 }
 
 const actions = redux.createActions(NEWS, NewsActions);
-
-class NewsTable extends Table {
-  public query(): string {
-    return "news";
-  }
-
-  protected _change(data, _keys): void {
-    //console.log("news/change: data=", data.get()?.toJS());
-    actions.setState({
-      loading: false,
-      news: data.get(),
-    });
-    const readUntil = redux
-      .getStore("account")
-      ?.getIn(["other_settings", "news_read_until"]);
-    actions.updateUnreadCount(readUntil);
-  }
-}
-
-let table: NewsTable | undefined = undefined;
-
-if (!COCALC_MINIMAL) {
-  table = redux.createTable(NEWS, NewsTable);
-}
-
-export function getTable() {
-  return table;
-}
+void actions.refresh();
+webapp_client.on("connected", () => void actions.refresh());
+webapp_client.on("signed_in", () => void actions.refresh());

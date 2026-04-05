@@ -37,6 +37,7 @@ export function NewsPanel(props: NewsPanelProps) {
   const { news, filter } = props;
   const intl = useIntl();
   const news_actions = useActions("news");
+  const loading = useTypedRedux("news", "loading");
   const account_other = useTypedRedux("account", "other_settings");
   const news_read_until: number | undefined =
     account_other?.get("news_read_until");
@@ -118,6 +119,9 @@ export function NewsPanel(props: NewsPanelProps) {
 
     return (
       <Space orientation="horizontal">
+        <Button onClick={() => void news_actions.refresh()} loading={loading}>
+          <Icon name="refresh" /> Refresh
+        </Button>
         <Button href={`${BASE_URL}/news`} target="_blank">
           <Icon name="file-alt" /> {read_all}
         </Button>

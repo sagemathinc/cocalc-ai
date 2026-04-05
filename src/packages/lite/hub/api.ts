@@ -22,6 +22,7 @@ import type {
   HostBayLocation,
   ProjectBayLocation,
 } from "@cocalc/conat/hub/api/system";
+import type { NewsItemWebapp } from "@cocalc/util/types/news";
 import type {
   ArchiveNotificationOptions,
   CreateAccountNoticeOptions,
@@ -1128,6 +1129,16 @@ async function issueBrowserSignInCookie(opts?: {
   };
 }
 
+async function listNewsLite(): Promise<NewsItemWebapp[]> {
+  if (hasRemote) {
+    return await callRemoteHub({
+      name: "system.listNews",
+      args: [{}],
+    });
+  }
+  return [];
+}
+
 async function createMentionLite(
   opts: CreateMentionNotificationOptions,
 ): Promise<CreateNotificationResult> {
@@ -1231,6 +1242,7 @@ async function archiveNotificationLite(
 export const hubApi: HubApi = {
   system: {
     getNames,
+    listNews: listNewsLite,
     listBays: listBaysLite,
     getAccountBay: getAccountBayLite,
     getProjectBay: getProjectBayLite,
