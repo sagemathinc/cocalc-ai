@@ -12,10 +12,8 @@ import { labels } from "@cocalc/frontend/i18n";
 import type { Message as MessageType } from "@cocalc/util/db-schema/messages";
 import { COLORS } from "@cocalc/util/theme";
 import Compose from "./compose";
-import Like from "./like";
 import Read from "./read";
 import ReplyButton, { ForwardButton } from "./reply-button";
-import Star from "./star";
 import Thread, { ThreadCount } from "./thread";
 import type { Folder, iThreads } from "./types";
 import useCommand from "./use-command";
@@ -111,15 +109,6 @@ function MessageInList({
             focused={focused}
           />
         )}
-        {!inThread && (
-          <Star
-            focused={focused}
-            message={message}
-            threads={threads}
-            inThread={inThread}
-            style={{ margin: "0 10px 0 5px" }}
-          />
-        )}
         <div
           style={{
             flex: inThread ? 1 : 0.5,
@@ -210,31 +199,6 @@ function MessageInList({
             />
           </Tooltip>
         </div>
-        {inThread && (
-          <Star
-            focused={focused}
-            message={message}
-            threads={threads}
-            inThread={inThread}
-            style={{ margin: "0 0 0 5px" }}
-          />
-        )}
-        {inThread && (
-          <Like
-            focused={focused}
-            message={message}
-            threads={threads}
-            inThread={inThread}
-          />
-        )}
-        {!inThread && (
-          <Like
-            focused={focused}
-            message={message}
-            threads={threads}
-            inThread={inThread}
-          />
-        )}
         {SHOW_ID && (
           <Tooltip title={<>{message.id}</>}>
             <div
@@ -456,22 +420,6 @@ function MessageFull({
               }}
             />
           </Tooltip>
-        </div>
-        <Star
-          focused={focused}
-          message={message}
-          threads={threads}
-          inThread={true}
-          style={{ marginLeft: "10px" }}
-        />
-        <div style={{ display: "flex", alignItems: "center" }}>
-          <Like
-            focused={focused}
-            message={message}
-            threads={threads}
-            inThread={true}
-            style={{ marginTop: "-2px" }}
-          />
         </div>
         {/* helps line things up when viewing a thread in full/collapsed mode */}
         <div style={{ width: "25px" }} />
