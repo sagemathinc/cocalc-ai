@@ -12,6 +12,7 @@ let notifyProjectHostUpdateMock: jest.Mock;
 let sshKeysMock: jest.Mock;
 let maybeAutoGrowHostDiskForReservationFailureMock: jest.Mock;
 let appendProjectOutboxEventForProjectMock: jest.Mock;
+let publishProjectAccountFeedEventsBestEffortMock: jest.Mock;
 let poolConnectMock: jest.Mock;
 let releaseMock: jest.Mock;
 
@@ -43,6 +44,12 @@ jest.mock("@cocalc/database/postgres/project-events-outbox", () => ({
   __esModule: true,
   appendProjectOutboxEventForProject: (...args: any[]) =>
     appendProjectOutboxEventForProjectMock(...args),
+}));
+
+jest.mock("@cocalc/server/account/project-feed", () => ({
+  __esModule: true,
+  publishProjectAccountFeedEventsBestEffort: (...args: any[]) =>
+    publishProjectAccountFeedEventsBestEffortMock(...args),
 }));
 
 jest.mock("@cocalc/conat/project-host/api", () => ({
@@ -87,6 +94,9 @@ describe("startProjectOnHost placement", () => {
       reason: "auto-grow disabled",
     }));
     appendProjectOutboxEventForProjectMock = jest.fn(async () => "event-id");
+    publishProjectAccountFeedEventsBestEffortMock = jest.fn(
+      async () => undefined,
+    );
     releaseMock = jest.fn();
   });
 

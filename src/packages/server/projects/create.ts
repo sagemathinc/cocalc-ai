@@ -37,6 +37,7 @@ import { mirrorStartLroProgress } from "@cocalc/server/projects/start-lro-progre
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { assertLocalProjectCollaborator } from "@cocalc/server/conat/project-local-access";
 import { appendProjectOutboxEventForProject } from "@cocalc/database/postgres/project-events-outbox";
+import { publishProjectAccountFeedEventsBestEffort } from "@cocalc/server/account/project-feed";
 
 const log = getLogger("server:projects:create");
 const HOST_ONLINE_WINDOW_MS = 2 * 60 * 1000;
@@ -325,6 +326,10 @@ export default async function createProject(opts: CreateProjectOptions) {
   } finally {
     client.release();
   }
+  await publishProjectAccountFeedEventsBestEffort({
+    project_id,
+    default_bay_id: owningBayId,
+  });
 
   if (src_project_id) {
     await cloneProjectRootfsStates({

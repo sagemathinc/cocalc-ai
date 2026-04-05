@@ -2,6 +2,7 @@ export {};
 
 let assertCollabMock: jest.Mock;
 let appendOutboxMock: jest.Mock;
+let publishProjectFeedMock: jest.Mock;
 let poolConnectMock: jest.Mock;
 let queryMock: jest.Mock;
 let releaseMock: jest.Mock;
@@ -22,6 +23,12 @@ jest.mock("@cocalc/database/postgres/project-events-outbox", () => ({
     appendOutboxMock(...args),
 }));
 
+jest.mock("@cocalc/server/account/project-feed", () => ({
+  __esModule: true,
+  publishProjectAccountFeedEventsBestEffort: (...args: any[]) =>
+    publishProjectFeedMock(...args),
+}));
+
 describe("setProjectHidden bay-aware update", () => {
   const ACCOUNT_ID = "11111111-1111-4111-8111-111111111111";
   const PROJECT_ID = "22222222-2222-4222-8222-222222222222";
@@ -30,6 +37,7 @@ describe("setProjectHidden bay-aware update", () => {
     jest.resetModules();
     assertCollabMock = jest.fn(async () => undefined);
     appendOutboxMock = jest.fn(async () => "event-id");
+    publishProjectFeedMock = jest.fn(async () => undefined);
     releaseMock = jest.fn();
     queryMock = jest.fn(async (sql: string) => {
       if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") {
@@ -84,6 +92,10 @@ describe("setProjectHidden bay-aware update", () => {
     expect(appendOutboxMock).toHaveBeenCalledWith({
       db: expect.objectContaining({ query: queryMock }),
       event_type: "project.membership_changed",
+      project_id: PROJECT_ID,
+      default_bay_id: "bay-0",
+    });
+    expect(publishProjectFeedMock).toHaveBeenCalledWith({
       project_id: PROJECT_ID,
       default_bay_id: "bay-0",
     });

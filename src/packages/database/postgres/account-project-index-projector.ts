@@ -128,6 +128,48 @@ async function existingLastOpenedAt(
   );
 }
 
+export async function computeAccountProjectFeedEvents(opts: {
+  db: PoolClient;
+  bay_id: string;
+  payload: ProjectOutboxPayload;
+  previous_local_account_ids?: string[];
+}): Promise<AccountFeedEvent[]> {
+  const { db, bay_id, payload } = opts;
+  const previousLocalAccountIds =
+    opts.previous_local_account_ids ??
+    Array.from((await existingLastOpenedAt(db, payload.project_id)).keys());
+  const visibleAccountIds = visibleAccountIdsFromUsers(payload.users_summary);
+  const localAccounts = await localHomeAccountIds(db, {
+    bay_id,
+    account_ids: visibleAccountIds,
+  });
+  const currentLocalAccountIds = visibleAccountIds.filter((account_id) =>
+    localAccounts.has(account_id),
+  );
+  const feed_events: AccountFeedEvent[] = [];
+  const removedAccountIds = previousLocalAccountIds.filter(
+    (account_id) => !currentLocalAccountIds.includes(account_id),
+  );
+  for (const account_id of removedAccountIds) {
+    feed_events.push({
+      type: "project.remove",
+      ts: Date.now(),
+      account_id,
+      project_id: payload.project_id,
+      reason: "membership_removed",
+    });
+  }
+  for (const account_id of currentLocalAccountIds) {
+    feed_events.push({
+      type: "project.upsert",
+      ts: Date.now(),
+      account_id,
+      project: projectRowForFeed({ payload, account_id }),
+    });
+  }
+  return feed_events;
+}
+
 function projectRowForFeed(opts: {
   payload: ProjectOutboxPayload;
   account_id: string;
@@ -165,42 +207,24 @@ async function applyProjectEventToAccountProjectIndex(opts: {
     db,
     payload.project_id,
   );
-  const previousLocalAccountIds = Array.from(lastOpenedByAccount.keys());
   const deleted = await db.query(
     `DELETE FROM account_project_index
       WHERE project_id = $1`,
     [payload.project_id],
   );
-  const visibleAccountIds = visibleAccountIdsFromUsers(payload.users_summary);
-  const localAccounts = await localHomeAccountIds(db, {
+  const feed_events = await computeAccountProjectFeedEvents({
+    db,
     bay_id,
-    account_ids: visibleAccountIds,
+    payload,
+    previous_local_account_ids: Array.from(lastOpenedByAccount.keys()),
   });
-  const currentLocalAccountIds = visibleAccountIds.filter((account_id) =>
-    localAccounts.has(account_id),
-  );
-  const feed_events: AccountFeedEvent[] = [];
-  const removedAccountIds = previousLocalAccountIds.filter(
-    (account_id) => !currentLocalAccountIds.includes(account_id),
-  );
-  for (const account_id of removedAccountIds) {
-    feed_events.push({
-      type: "project.remove",
-      ts: Date.now(),
-      account_id,
-      project_id: payload.project_id,
-      reason: "membership_removed",
-    });
-  }
+  const currentLocalAccountIds = feed_events
+    .filter(
+      (event): event is Extract<AccountFeedEvent, { type: "project.upsert" }> =>
+        event.type === "project.upsert",
+    )
+    .map((event) => event.account_id);
   if (payload.deleted) {
-    for (const account_id of currentLocalAccountIds) {
-      feed_events.push({
-        type: "project.upsert",
-        ts: Date.now(),
-        account_id,
-        project: projectRowForFeed({ payload, account_id }),
-      });
-    }
     return {
       inserted_rows: 0,
       deleted_rows: deleted.rowCount ?? 0,
@@ -235,12 +259,6 @@ async function applyProjectEventToAccountProjectIndex(opts: {
       ],
     );
     inserted_rows += 1;
-    feed_events.push({
-      type: "project.upsert",
-      ts: Date.now(),
-      account_id,
-      project: projectRowForFeed({ payload, account_id }),
-    });
   }
   return {
     inserted_rows,

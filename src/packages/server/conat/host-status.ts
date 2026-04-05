@@ -11,6 +11,7 @@ import {
 } from "@cocalc/server/launchpad/onprem-sshd";
 import { listAccountRevocationsSince } from "@cocalc/server/accounts/revocation";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import { publishProjectAccountFeedEventsBestEffort } from "@cocalc/server/account/project-feed";
 import {
   classifyHostProvisionedInventory,
   shouldDeleteHostProjectUpdate,
@@ -145,6 +146,7 @@ export async function initHostStatusService() {
         // via move/start flows. Updating host_id/host from heartbeat reports
         // can cause split-brain if multiple hosts still have a local row.
         const client = await pool.connect();
+        let changed = false;
         try {
           await client.query("BEGIN");
           const result = await client.query(
@@ -155,6 +157,7 @@ export async function initHostStatusService() {
             [project_id, stateObj],
           );
           if ((result.rowCount ?? 0) > 0) {
+            changed = true;
             await appendProjectOutboxEventForProject({
               db: client,
               event_type: "project.state_changed",
@@ -168,6 +171,12 @@ export async function initHostStatusService() {
           throw err;
         } finally {
           client.release();
+        }
+        if (changed) {
+          await publishProjectAccountFeedEventsBestEffort({
+            project_id,
+            default_bay_id: getConfiguredBayId(),
+          });
         }
       },
       async reportProjectProvisioned({

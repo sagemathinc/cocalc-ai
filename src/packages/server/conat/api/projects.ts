@@ -98,6 +98,7 @@ import {
 } from "@cocalc/server/conat/project-host-assignment";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { appendProjectOutboxEventForProject } from "@cocalc/database/postgres/project-events-outbox";
+import { publishProjectAccountFeedEventsBestEffort } from "@cocalc/server/account/project-feed";
 
 const PROJECT_STORAGE_CACHE_TTL_MS = 30_000;
 const PROJECT_STORAGE_BREAKDOWN_TIMEOUT_MS = 10_000;
@@ -1216,6 +1217,10 @@ export async function setProjectHidden({
   } finally {
     client.release();
   }
+  await publishProjectAccountFeedEventsBestEffort({
+    project_id,
+    default_bay_id: getConfiguredBayId(),
+  });
 }
 
 export async function setProjectSshKey({

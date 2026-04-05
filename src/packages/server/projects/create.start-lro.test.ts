@@ -13,6 +13,7 @@ let delayMock: jest.Mock;
 let mirrorStartLroProgressMock: jest.Mock;
 let supersedeOlderProjectStartLrosMock: jest.Mock;
 let appendProjectOutboxEventForProjectMock: jest.Mock;
+let publishProjectAccountFeedEventsBestEffortMock: jest.Mock;
 let poolConnectMock: jest.Mock;
 let releaseMock: jest.Mock;
 
@@ -34,6 +35,12 @@ jest.mock("@cocalc/database/postgres/project-events-outbox", () => ({
   __esModule: true,
   appendProjectOutboxEventForProject: (...args: any[]) =>
     appendProjectOutboxEventForProjectMock(...args),
+}));
+
+jest.mock("@cocalc/server/account/project-feed", () => ({
+  __esModule: true,
+  publishProjectAccountFeedEventsBestEffort: (...args: any[]) =>
+    publishProjectAccountFeedEventsBestEffortMock(...args),
 }));
 
 jest.mock("@cocalc/backend/logger", () => ({
@@ -121,6 +128,9 @@ describe("projects.createProject start LRO", () => {
   beforeEach(() => {
     jest.resetModules();
     appendProjectOutboxEventForProjectMock = jest.fn(async () => "event-id");
+    publishProjectAccountFeedEventsBestEffortMock = jest.fn(
+      async () => undefined,
+    );
     releaseMock = jest.fn();
     queryMock = jest.fn(async (sql: string) => {
       if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") {

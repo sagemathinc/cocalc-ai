@@ -3,6 +3,7 @@ import { jsonbSet } from "@cocalc/database/postgres/jsonb-utils";
 import { appendProjectOutboxEventForProject } from "@cocalc/database/postgres/project-events-outbox";
 import { isValidUUID } from "@cocalc/util/misc";
 import { syncProjectUsersOnHost } from "@cocalc/server/project-host/control";
+import { publishProjectAccountFeedEventsBestEffort } from "@cocalc/server/account/project-feed";
 
 interface Options {
   account_id: string;
@@ -42,5 +43,6 @@ export default async function addUserToProject({
   } finally {
     client.release();
   }
+  await publishProjectAccountFeedEventsBestEffort({ project_id });
   await syncProjectUsersOnHost({ project_id });
 }
