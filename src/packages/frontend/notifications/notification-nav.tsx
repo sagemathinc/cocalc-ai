@@ -163,7 +163,7 @@ export function NotificationNav({ filter, on_click, style }: Props) {
       key: "mentions",
       label: (
         <Text strong style={{ fontSize: "125%" }}>
-          @-{intl.formatMessage(MSGS.mentions)} <MentionsCounter />
+          {intl.formatMessage(MSGS.mentions)} <MentionsCounter />
         </Text>
       ),
       children: [

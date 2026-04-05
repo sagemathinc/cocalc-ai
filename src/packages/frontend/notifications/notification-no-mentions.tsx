@@ -17,30 +17,30 @@ interface NoMentionsProps {
 export function NoMentions(props: NoMentionsProps) {
   const { filter, style } = props;
   const intl = useIntl();
-  let text = "No new mentions";
+  let text = "No new notifications";
   switch (filter) {
     case "unread":
       text = intl.formatMessage({
         id: "notifications.no-mentions.unread",
-        defaultMessage: "No unread mentions",
+        defaultMessage: "No unread notifications",
       });
       break;
     case "read":
       text = intl.formatMessage({
         id: "notifications.no-mentions.read",
-        defaultMessage: "No read mentions",
+        defaultMessage: "No read notifications",
       });
       break;
     case "saved":
       text = intl.formatMessage({
         id: "notifications.no-mentions.saved",
-        defaultMessage: "No saved mentions",
+        defaultMessage: "No saved notifications",
       });
       break;
     case "all":
       text = intl.formatMessage({
         id: "notifications.no-mentions.all",
-        defaultMessage: "No mentions",
+        defaultMessage: "No notifications",
       });
       break;
     default:
