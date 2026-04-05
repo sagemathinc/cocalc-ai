@@ -10,6 +10,7 @@ import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import isValidAccount from "@cocalc/server/accounts/is-valid-account";
 import { getUser } from "@cocalc/server/purchases/statements/email-statement";
 import type { Message } from "@cocalc/util/db-schema/messages";
+import { mirrorSystemMessageToAccountNoticeBestEffort } from "./account-notice";
 import { getSupportAccountId } from "./support-account";
 import siteUrl from "@cocalc/server/hub/site-url";
 
@@ -46,6 +47,7 @@ export default async function send({
   dedupMinutes?: number;
 }) {
   logger.debug("send a message");
+  const isInternalSystemMessage = !from_id;
   if (to_ids?.length == 0) {
     // nothing to do
     return;
@@ -114,6 +116,15 @@ export default async function send({
   }
 
   updateUnread(to_ids); // don't block on this...
+  if (isInternalSystemMessage) {
+    void mirrorSystemMessageToAccountNoticeBestEffort({
+      from_id,
+      to_ids,
+      subject,
+      body,
+      message_id: id,
+    });
+  }
   return id;
 }
 
