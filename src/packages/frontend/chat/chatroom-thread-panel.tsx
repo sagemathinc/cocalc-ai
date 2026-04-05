@@ -231,6 +231,8 @@ interface ChatRoomThreadPanelProps {
   activityJumpDate?: string;
   activityJumpToken?: number;
   shortcutEnabled?: boolean;
+  notifyOnTurnFinish?: boolean;
+  onNotifyOnTurnFinishChange?: (checked: boolean) => void;
   onOpenGitBrowser?: (request: {
     threadKey: string;
     cwdOverride?: string;
@@ -269,6 +271,8 @@ export function ChatRoomThreadPanel({
   activityJumpDate,
   activityJumpToken,
   shortcutEnabled = true,
+  notifyOnTurnFinish = false,
+  onNotifyOnTurnFinishChange,
   onOpenGitBrowser,
 }: ChatRoomThreadPanelProps) {
   const defaultSessionMode = getDefaultCodexSessionMode();
@@ -1884,6 +1888,8 @@ export function ChatRoomThreadPanel({
         onAtTopStateChange={setThreadNearTop}
         activityJumpDate={activityJumpDate}
         activityJumpToken={activityJumpToken}
+        notifyOnTurnFinish={notifyOnTurnFinish}
+        onNotifyOnTurnFinishChange={onNotifyOnTurnFinishChange}
         onOpenGitBrowser={onOpenGitBrowser}
       />
     </div>

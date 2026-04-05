@@ -1,5 +1,9 @@
 import * as immutable from "immutable";
-import { hasActiveAcpTurnForComposer } from "../chatroom";
+import {
+  getLatestThreadMessageDate,
+  hasActiveAcpTurnForComposer,
+  splitCompletedCodexTurnNotifications,
+} from "../chatroom";
 
 describe("hasActiveAcpTurnForComposer", () => {
   it("ignores stale ACP generating flags when acpState is no longer active", () => {
@@ -67,5 +71,67 @@ describe("hasActiveAcpTurnForComposer", () => {
         ],
       }),
     ).toBe(false);
+  });
+});
+
+describe("getLatestThreadMessageDate", () => {
+  it("returns the newest dated message in a thread", () => {
+    expect(
+      getLatestThreadMessageDate([
+        {
+          event: "chat",
+          sender_id: "user",
+          date: "2026-03-11T08:00:00.000Z",
+          history: [],
+        },
+        {
+          event: "chat",
+          sender_id: "assistant",
+          date: "2026-03-11T08:01:00.000Z",
+          history: [],
+        },
+      ]),
+    ).toBe(`${Date.parse("2026-03-11T08:01:00.000Z")}`);
+  });
+});
+
+describe("splitCompletedCodexTurnNotifications", () => {
+  it("moves finished watched turns into the completed queue", () => {
+    expect(
+      splitCompletedCodexTurnNotifications({
+        watches: [
+          {
+            threadKey: "thread-1",
+            threadId: "thread-1",
+            threadLabel: "Thread 1",
+          },
+          {
+            threadKey: "thread-2",
+            threadId: "thread-2",
+            threadLabel: "Thread 2",
+          },
+        ],
+        snapshots: new Map([
+          ["thread-1", { active: true, newestMessageDate: "101" }],
+          ["thread-2", { active: false, newestMessageDate: "202" }],
+        ]),
+      }),
+    ).toEqual({
+      remainingWatches: [
+        {
+          threadKey: "thread-1",
+          threadId: "thread-1",
+          threadLabel: "Thread 1",
+        },
+      ],
+      completedNotifications: [
+        {
+          threadKey: "thread-2",
+          threadId: "thread-2",
+          threadLabel: "Thread 2",
+          newestMessageDate: "202",
+        },
+      ],
+    });
   });
 });

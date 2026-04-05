@@ -355,6 +355,8 @@ interface Props {
   searchHighlight?: string;
   openActivityToken?: number;
   onOverlayOpenChange?: (open: boolean) => void;
+  notifyOnTurnFinish?: boolean;
+  onNotifyOnTurnFinishChange?: (checked: boolean) => void;
   onOpenGitBrowser?: (request: {
     threadKey: string;
     cwdOverride?: string;
@@ -475,6 +477,8 @@ export default function Message({
   searchHighlight,
   openActivityToken,
   onOverlayOpenChange,
+  notifyOnTurnFinish = false,
+  onNotifyOnTurnFinishChange,
   onOpenGitBrowser,
 }: Props) {
   const intl = useIntl();
@@ -1538,6 +1542,8 @@ export default function Message({
           openDrawerToken={openActivityDrawerToken}
           jumpText={activityJumpText}
           jumpToken={activityJumpToken}
+          notifyOnTurnFinish={notifyOnTurnFinish}
+          onNotifyOnTurnFinishChange={onNotifyOnTurnFinishChange}
           onOpenGitBrowser={
             isCodexThread && !is_viewers_message
               ? openGitBrowserFromMessage
