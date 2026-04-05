@@ -1,5 +1,6 @@
 import { Command } from "commander";
 import { ADMIN_SEARCH_LIMIT } from "@cocalc/util/db-schema/accounts";
+import { readFile } from "node:fs/promises";
 
 export type AdminCommandDeps = {
   withContext: any;
@@ -7,6 +8,29 @@ export type AdminCommandDeps = {
   normalizeUrl: any;
   isValidUUID: any;
 };
+
+function pushString(value: string, values: string[]): string[] {
+  values.push(value);
+  return values;
+}
+
+async function resolveBodyMarkdown(opts: {
+  bodyMarkdown?: string;
+  bodyFile?: string;
+}): Promise<string> {
+  const bodyMarkdown = `${opts.bodyMarkdown ?? ""}`.trim();
+  const bodyFile = `${opts.bodyFile ?? ""}`.trim();
+  if (bodyMarkdown && bodyFile) {
+    throw new Error("use exactly one of --body-markdown or --body-file");
+  }
+  if (bodyMarkdown) {
+    return bodyMarkdown;
+  }
+  if (bodyFile) {
+    return await readFile(bodyFile, "utf8");
+  }
+  throw new Error("one of --body-markdown or --body-file is required");
+}
 
 export function registerAdminCommand(
   program: Command,
@@ -17,6 +41,9 @@ export function registerAdminCommand(
 
   const admin = program.command("admin").description("site admin operations");
   const adminUser = admin.command("user").description("admin user management");
+  const adminMessage = admin
+    .command("message")
+    .description("admin system message operations");
 
   admin
     .command("search <query>")
@@ -210,6 +237,67 @@ export function registerAdminCommand(
               token,
               url: signInUrl.toString(),
             };
+          },
+        );
+      },
+    );
+
+  adminMessage
+    .command("send-system-notice")
+    .description(
+      "send a system-generated notice through the legacy messages pipeline",
+    )
+    .requiredOption(
+      "--target <account_or_email>",
+      "target account id or email address (repeat for multiple targets)",
+      pushString,
+      [],
+    )
+    .requiredOption("--subject <subject>", "short plain text subject")
+    .option(
+      "--body-markdown <markdown>",
+      "markdown body inline on the command line",
+    )
+    .option("--body-file <path>", "read markdown body from a file")
+    .option(
+      "--dedup-minutes <minutes>",
+      "optional dedupe window for repeated identical system notices",
+    )
+    .action(
+      async (
+        opts: {
+          target: string[];
+          subject: string;
+          bodyMarkdown?: string;
+          bodyFile?: string;
+          dedupMinutes?: string;
+        },
+        command: Command,
+      ) => {
+        await withContext(
+          command,
+          "admin message send-system-notice",
+          async (ctx) => {
+            const dedupMinutesRaw = `${opts.dedupMinutes ?? ""}`.trim();
+            const parsedDedupMinutes =
+              dedupMinutesRaw === ""
+                ? undefined
+                : Number.parseInt(dedupMinutesRaw, 10);
+            if (
+              dedupMinutesRaw !== "" &&
+              (parsedDedupMinutes == null ||
+                !Number.isInteger(parsedDedupMinutes) ||
+                parsedDedupMinutes <= 0)
+            ) {
+              throw new Error("--dedup-minutes must be a positive integer");
+            }
+            const dedupMinutes = parsedDedupMinutes;
+            return await ctx.hub.messages.sendSystemNotice({
+              to_ids: opts.target.map((target) => target.trim()),
+              subject: `${opts.subject ?? ""}`,
+              body: await resolveBodyMarkdown(opts),
+              dedupMinutes,
+            });
           },
         );
       },
