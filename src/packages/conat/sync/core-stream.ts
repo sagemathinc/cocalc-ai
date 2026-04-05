@@ -103,6 +103,13 @@ export interface ChangeEvent<T> {
   msgID?: string;
 }
 
+export interface HistoryGapEvent {
+  requested_start_seq: number;
+  effective_start_seq: number;
+  oldest_retained_seq?: number;
+  newest_retained_seq?: number;
+}
+
 export type CoreStreamInitPhase =
   | "init_start"
   | "persist_client_created"
@@ -494,13 +501,31 @@ export class CoreStream<T = any> extends EventEmitter {
     start_checkpoint?: string;
     noEmit?: boolean;
     includeConfig?: boolean;
-  } = {}): Promise<Pick<GetAllInfo, "config" | "metadata" | "checkpoints">> => {
+  } = {}): Promise<
+    Pick<
+      GetAllInfo,
+      | "config"
+      | "metadata"
+      | "checkpoints"
+      | "effective_start_seq"
+      | "oldest_retained_seq"
+      | "newest_retained_seq"
+    >
+  > => {
     if (this.storage == null) {
       throw Error("bug -- storage must be set");
     }
     stats.syncFromPersistRuns += 1;
     let attempt = 0;
-    let bootstrap: Pick<GetAllInfo, "config" | "metadata" | "checkpoints"> = {};
+    let bootstrap: Pick<
+      GetAllInfo,
+      | "config"
+      | "metadata"
+      | "checkpoints"
+      | "effective_start_seq"
+      | "oldest_retained_seq"
+      | "newest_retained_seq"
+    > = {};
     await until(
       async () => {
         attempt += 1;
@@ -541,10 +566,26 @@ export class CoreStream<T = any> extends EventEmitter {
           });
           messages = result.messages;
           bootstrap = {
+            effective_start_seq: result.effective_start_seq,
+            oldest_retained_seq: result.oldest_retained_seq,
+            newest_retained_seq: result.newest_retained_seq,
             config: result.config,
             metadata: result.metadata,
             checkpoints: result.checkpoints,
           };
+          if (
+            typeof start_seq == "number" &&
+            start_seq > 0 &&
+            typeof result.effective_start_seq == "number" &&
+            result.effective_start_seq > start_seq
+          ) {
+            this.emit("history-gap", {
+              requested_start_seq: start_seq,
+              effective_start_seq: result.effective_start_seq,
+              oldest_retained_seq: result.oldest_retained_seq,
+              newest_retained_seq: result.newest_retained_seq,
+            } satisfies HistoryGapEvent);
+          }
           let bytes = 0;
           for (const mesg of messages) {
             bytes += mesg.raw?.length ?? 0;
@@ -555,6 +596,9 @@ export class CoreStream<T = any> extends EventEmitter {
             start_checkpoint,
             messages: messages.length,
             bytes,
+            effective_start_seq: bootstrap.effective_start_seq,
+            oldest_retained_seq: bootstrap.oldest_retained_seq,
+            newest_retained_seq: bootstrap.newest_retained_seq,
             received_config: bootstrap.config != null,
             received_metadata: bootstrap.metadata !== undefined,
             received_checkpoints: bootstrap.checkpoints != null,

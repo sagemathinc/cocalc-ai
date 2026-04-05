@@ -88,6 +88,9 @@ export interface GetAllInfo<
   TCheckpointData extends JSONValue = JSONValue,
 > {
   messages: StoredMessage[];
+  effective_start_seq?: number;
+  oldest_retained_seq?: number;
+  newest_retained_seq?: number;
   config?: Configuration;
   metadata?: TMetadata;
   checkpoints?: Record<
@@ -899,6 +902,9 @@ class PersistStreamClient extends EventEmitter {
       let config: Configuration | undefined;
       let metadata: JSONValue | undefined;
       let checkpoints: StreamCheckpoints | undefined;
+      let effective_start_seq: number | undefined;
+      let oldest_retained_seq: number | undefined;
+      let newest_retained_seq: number | undefined;
       const sub = await this.requestGetAll({
         ...opts,
         includeConfig: true,
@@ -925,6 +931,24 @@ class PersistStreamClient extends EventEmitter {
         }
         if (headers?.checkpoints !== undefined && checkpoints === undefined) {
           checkpoints = headers.checkpoints as unknown as StreamCheckpoints;
+        }
+        if (
+          headers?.effective_start_seq !== undefined &&
+          effective_start_seq === undefined
+        ) {
+          effective_start_seq = Number(headers.effective_start_seq);
+        }
+        if (
+          headers?.oldest_retained_seq !== undefined &&
+          oldest_retained_seq === undefined
+        ) {
+          oldest_retained_seq = Number(headers.oldest_retained_seq);
+        }
+        if (
+          headers?.newest_retained_seq !== undefined &&
+          newest_retained_seq === undefined
+        ) {
+          newest_retained_seq = Number(headers.newest_retained_seq);
         }
         if (data == null || this.socket.state == "closed") {
           break;
@@ -964,7 +988,15 @@ class PersistStreamClient extends EventEmitter {
         received_metadata: metadata !== undefined,
         received_checkpoints: checkpoints != null,
       });
-      return { messages, config, metadata, checkpoints };
+      return {
+        messages,
+        effective_start_seq,
+        oldest_retained_seq,
+        newest_retained_seq,
+        config,
+        metadata,
+        checkpoints,
+      };
     } catch (err) {
       stats.getAllErrors += 1;
       const code = (err as any)?.code;

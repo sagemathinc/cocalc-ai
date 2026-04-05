@@ -19,6 +19,7 @@ import {
   type CoreStreamInitPhaseReporter,
   type RawMsg,
   type ChangeEvent,
+  type HistoryGapEvent,
   type PublishOptions,
   type Configuration,
 } from "./core-stream";
@@ -135,6 +136,7 @@ export class DStream<T = any> extends EventEmitter {
     this.stream.on("change", this.handleChange);
     this.stream.on("metadata-change", this.handleMetadataChange);
     this.stream.on("checkpoints-change", this.handleCheckpointsChange);
+    this.stream.on("history-gap", this.handleHistoryGap);
     this.stream.on("reset", () => {
       this.local = {};
       this.saved = {};
@@ -170,6 +172,10 @@ export class DStream<T = any> extends EventEmitter {
     this.emit("checkpoints-change", checkpoints);
   };
 
+  private handleHistoryGap = (info: HistoryGapEvent) => {
+    this.emit("history-gap", info);
+  };
+
   isStable = () => {
     for (const _ in this.saved) {
       return false;
@@ -194,6 +200,7 @@ export class DStream<T = any> extends EventEmitter {
     stream.removeListener("change", this.handleChange);
     stream.removeListener("metadata-change", this.handleMetadataChange);
     stream.removeListener("checkpoints-change", this.handleCheckpointsChange);
+    stream.removeListener("history-gap", this.handleHistoryGap);
     // @ts-ignore
     delete this.stream;
     stream.close();
