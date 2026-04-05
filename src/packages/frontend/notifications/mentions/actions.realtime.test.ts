@@ -68,11 +68,19 @@ async function flush(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
+async function flushMicrotasks(): Promise<void> {
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
 describe("MentionsActions realtime feed", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    jest.useRealTimers();
     mockedWebappClient.is_signed_in.mockReturnValue(true);
-    mockedWebappClient.conat_client.hub.notifications.list.mockResolvedValue([]);
+    mockedWebappClient.conat_client.hub.notifications.list.mockResolvedValue(
+      [],
+    );
     mockedWebappClient.conat_client.hub.notifications.counts.mockResolvedValue({
       total: 0,
       unread: 0,
@@ -110,14 +118,15 @@ describe("MentionsActions realtime feed", () => {
       mockedWebappClient.conat_client.hub.notifications.list,
     ).toHaveBeenCalledTimes(1);
 
-    const feed = await mockedWebappClient.conat_client.dstream.mock.results[0]
-      .value;
+    const feed =
+      await mockedWebappClient.conat_client.dstream.mock.results[0].value;
     feed.emit("change", {
       type: "notification.invalidate",
       account_id: "acct-1",
       reason: "projected_upsert",
       ts: Date.now(),
     });
+    await flush();
     await flush();
 
     expect(
@@ -135,5 +144,58 @@ describe("MentionsActions realtime feed", () => {
     expect(
       mockedWebappClient.conat_client.hub.notifications.list,
     ).toHaveBeenCalledTimes(3);
+  });
+
+  it("retries bootstrap until the account store is ready", async () => {
+    let accountReady = false;
+    let scheduledRefresh: (() => void) | undefined;
+    const setTimeoutMock = jest
+      .spyOn(global, "setTimeout")
+      .mockImplementation(((cb: TimerHandler) => {
+        scheduledRefresh = cb as () => void;
+        return 1 as unknown as ReturnType<typeof setTimeout>;
+      }) as typeof setTimeout);
+    const redux = {
+      getStore: jest.fn((name: string) => {
+        if (name === "account") {
+          return accountReady
+            ? ImmutableMap({ account_id: "acct-1" })
+            : ImmutableMap();
+        }
+        if (name === "mentions") {
+          return ImmutableMap({ mentions: ImmutableMap() });
+        }
+        return ImmutableMap();
+      }),
+      _set_state: jest.fn(),
+      removeActions: jest.fn(),
+    } as any;
+    const actions = new MentionsActions("mentions", redux);
+
+    try {
+      actions._init();
+      await flushMicrotasks();
+
+      expect(
+        mockedWebappClient.conat_client.hub.notifications.list,
+      ).not.toHaveBeenCalled();
+      expect(mockedWebappClient.conat_client.dstream).not.toHaveBeenCalled();
+      expect(scheduledRefresh).toBeDefined();
+
+      accountReady = true;
+      scheduledRefresh?.();
+      await flushMicrotasks();
+
+      expect(
+        mockedWebappClient.conat_client.hub.notifications.list,
+      ).toHaveBeenCalledTimes(1);
+      expect(mockedWebappClient.conat_client.dstream).toHaveBeenCalledWith({
+        account_id: "acct-1",
+        name: accountFeedStreamName(),
+        ephemeral: true,
+      });
+    } finally {
+      setTimeoutMock.mockRestore();
+    }
   });
 });

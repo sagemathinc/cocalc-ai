@@ -23,6 +23,7 @@ import {
 import type { DStream } from "@cocalc/conat/sync/dstream";
 
 const DEFAULT_INBOX_LIMIT = 500;
+const BOOTSTRAP_RETRY_MS = 1000;
 
 function coerceNotificationDate(value: Date | string | null | undefined): Date {
   if (value instanceof Date) {
@@ -106,12 +107,14 @@ export class MentionsActions extends Actions<MentionsState> {
   private conatConnectedListener?: () => void;
   private realtimeFeed?: DStream<AccountFeedEvent>;
   private realtimeFeedAccountId?: string;
+  private bootstrapRetryTimer?: ReturnType<typeof setTimeout>;
 
   _init() {
     this.signedInListener = () => {
       void this.refresh();
     };
     this.signedOutListener = () => {
+      this.clearBootstrapRetry();
       this.closeRealtimeFeed();
       this.setState({ mentions: Map(), unread_count: 0 });
     };
@@ -140,6 +143,7 @@ export class MentionsActions extends Actions<MentionsState> {
       );
       this.conatConnectedListener = undefined;
     }
+    this.clearBootstrapRetry();
     this.closeRealtimeFeed();
     Actions.prototype.destroy.call(this);
   };
@@ -186,10 +190,12 @@ export class MentionsActions extends Actions<MentionsState> {
     const account_id = this.getAccountId();
     if (account_id == null) {
       this.setState({ mentions: Map(), unread_count: 0 });
+      this.scheduleBootstrapRetry();
       return;
     }
     const notifications = webapp_client.conat_client?.hub?.notifications;
     if (notifications == null) {
+      this.scheduleBootstrapRetry();
       return;
     }
     try {
@@ -202,8 +208,31 @@ export class MentionsActions extends Actions<MentionsState> {
         unread_count: getUnreadNotificationCount(counts),
       });
       await this.ensureRealtimeFeed(account_id);
+      if (this.realtimeFeed == null || this.realtimeFeed.isClosed()) {
+        this.scheduleBootstrapRetry();
+        return;
+      }
+      this.clearBootstrapRetry();
     } catch (err) {
+      this.scheduleBootstrapRetry();
       console.warn("WARNING: notifications refresh error -- ", err);
+    }
+  }
+
+  private scheduleBootstrapRetry(): void {
+    if (this.bootstrapRetryTimer != null) {
+      return;
+    }
+    this.bootstrapRetryTimer = setTimeout(() => {
+      this.bootstrapRetryTimer = undefined;
+      void this.refresh();
+    }, BOOTSTRAP_RETRY_MS);
+  }
+
+  private clearBootstrapRetry(): void {
+    if (this.bootstrapRetryTimer != null) {
+      clearTimeout(this.bootstrapRetryTimer);
+      this.bootstrapRetryTimer = undefined;
     }
   }
 
