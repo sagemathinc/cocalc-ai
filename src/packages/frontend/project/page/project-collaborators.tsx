@@ -25,9 +25,18 @@ import { useProjectContext } from "@cocalc/frontend/project/context";
 import { ICON_USERS, ROOT_STYLE } from "../servers/consts";
 import { useProject } from "./common";
 
-export function ProjectCollaboratorsPage(): React.JSX.Element {
+interface ProjectCollaboratorsContentProps {
+  project_id: string;
+  layout?: "page" | "flyout";
+  wrap?: (content: React.JSX.Element) => React.JSX.Element;
+}
+
+export function ProjectCollaboratorsContent({
+  project_id,
+  layout = "page",
+  wrap,
+}: ProjectCollaboratorsContentProps): React.JSX.Element {
   const intl = useIntl();
-  const { project_id } = useProjectContext();
   const user_map = useTypedRedux("users", "user_map");
   const accountCustomize = useTypedRedux("account", "customize")?.toJS() as
     | { disableCollaborators?: boolean }
@@ -36,22 +45,30 @@ export function ProjectCollaboratorsPage(): React.JSX.Element {
   const { project, group } = useProject(project_id);
   const disableCollaborators =
     accountCustomize?.disableCollaborators || student.disableCollaborators;
+  const isFlyout = layout === "flyout";
 
-  function renderSettings() {
-    if (project == null) {
-      return <Loading theme="medium" />;
-    }
-    if (disableCollaborators) {
-      return (
-        <Alert
-          type="warning"
-          showIcon
-          title="Collaborator configuration is disabled."
-        />
-      );
-    }
-    return (
+  const contentStyle = isFlyout ? { padding: "0 12px 12px 12px" } : ROOT_STYLE;
+
+  let content: React.JSX.Element;
+  if (project == null) {
+    content = <Loading theme="medium" transparent={isFlyout} />;
+  } else if (disableCollaborators) {
+    content = (
+      <Alert
+        type="warning"
+        showIcon
+        title="Collaborator configuration is disabled."
+      />
+    );
+  } else {
+    content = (
       <>
+        <SettingBox title="Invite Collaborators" icon="UserAddOutlined">
+          <AddCollaborators
+            project_id={project.get("project_id")}
+            where="project-settings"
+          />
+        </SettingBox>
         <InviteInboxPanel
           project_id={project.get("project_id")}
           mode="project"
@@ -62,29 +79,27 @@ export function ProjectCollaboratorsPage(): React.JSX.Element {
           project={project}
           user_map={user_map}
         />
-        <SettingBox title="Invite Collaborators" icon="UserAddOutlined">
-          <AddCollaborators
-            project_id={project.get("project_id")}
-            where="project-settings"
-          />
-        </SettingBox>
       </>
     );
   }
 
-  function renderAdmin() {
-    if (group !== "admin") return;
-    return <AdminWarning />;
-  }
-
-  return (
-    <div style={ROOT_STYLE}>
-      <Title level={2}>
-        <Icon name={ICON_USERS} /> {intl.formatMessage(labels.users)}
-      </Title>
+  const body = (
+    <div style={contentStyle}>
+      {isFlyout ? null : (
+        <Title level={2}>
+          <Icon name={ICON_USERS} /> {intl.formatMessage(labels.users)}
+        </Title>
+      )}
       <Paragraph>{intl.formatMessage(labels.collabs_info)}</Paragraph>
-      {renderAdmin()}
-      {renderSettings()}
+      {group !== "admin" ? null : <AdminWarning />}
+      {content}
     </div>
   );
+
+  return wrap == null ? body : wrap(body);
+}
+
+export function ProjectCollaboratorsPage(): React.JSX.Element {
+  const { project_id } = useProjectContext();
+  return <ProjectCollaboratorsContent project_id={project_id} layout="page" />;
 }

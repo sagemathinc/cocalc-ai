@@ -25,12 +25,21 @@ interface MentionsPanelProps {
   user_map;
   account_id: string;
   style: CSS;
+  hideEmptyState?: boolean;
 }
 
 const READ_HISTORY_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 
 export function MentionsPanel(props: MentionsPanelProps) {
-  const { filter, loading, mentions, user_map, account_id, style } = props;
+  const {
+    filter,
+    loading,
+    mentions,
+    user_map,
+    account_id,
+    style,
+    hideEmptyState,
+  } = props;
   const mentions_actions = redux.getActions("mentions");
 
   if (isNewsFilter(filter)) {
@@ -42,7 +51,7 @@ export function MentionsPanel(props: MentionsPanelProps) {
   }
 
   if (!isNewsFilter(filter) && (mentions == undefined || mentions.size == 0)) {
-    return <NoMentions filter={filter} style={style} />;
+    return hideEmptyState ? null : <NoMentions filter={filter} style={style} />;
   }
 
   function markRead(project_id: string | null, filter: "read" | "unread") {
@@ -118,7 +127,7 @@ export function MentionsPanel(props: MentionsPanelProps) {
 
   // Check if this user has only made mentions and no one has mentioned them
   if (project_id_order.length == 0) {
-    return <NoMentions filter={filter} style={style} />;
+    return hideEmptyState ? null : <NoMentions filter={filter} style={style} />;
   }
 
   for (const project_id of project_id_order) {

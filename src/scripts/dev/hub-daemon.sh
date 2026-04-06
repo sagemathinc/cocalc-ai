@@ -40,6 +40,73 @@ find_hub_pids() {
     || true
 }
 
+port_hex() {
+  local port="${1:-}"
+  if [ -z "$port" ]; then
+    return 1
+  fi
+  printf '%04X\n' "$port"
+}
+
+pid_listens_on_port_via_proc() {
+  local pid="${1:-}"
+  local port="${2:-}"
+  if [ -z "$pid" ] || [ -z "$port" ] || [ ! -d "/proc/$pid" ]; then
+    return 1
+  fi
+
+  local port_hex_value inodes inode proc_file
+  port_hex_value="$(port_hex "$port" 2>/dev/null || true)"
+  if [ -z "$port_hex_value" ]; then
+    return 1
+  fi
+
+  inodes="$(
+    find "/proc/$pid/fd" -maxdepth 1 -type l -printf '%l\n' 2>/dev/null \
+      | sed -n 's/^socket:\[\([0-9][0-9]*\)\]$/\1/p' \
+      | sort -u
+  )"
+  if [ -z "$inodes" ]; then
+    return 1
+  fi
+
+  for proc_file in "/proc/$pid/net/tcp" "/proc/$pid/net/tcp6"; do
+    if [ ! -r "$proc_file" ]; then
+      continue
+    fi
+    while read -r inode; do
+      if printf "%s\n" "$inodes" | grep -qx "$inode"; then
+        return 0
+      fi
+    done < <(
+      awk -v port_hex="$port_hex_value" '
+        NR > 1 {
+          split($2, local_addr, ":");
+          if (toupper(local_addr[2]) == port_hex && $4 == "0A") {
+            print $10;
+          }
+        }
+      ' "$proc_file" 2>/dev/null
+    )
+  done
+
+  return 1
+}
+
+find_pids_listening_on_port_via_proc() {
+  local port="${1:-}"
+  local pid
+  if [ -z "$port" ]; then
+    return 0
+  fi
+  for pid in /proc/[0-9]*; do
+    pid="${pid#/proc/}"
+    if pid_listens_on_port_via_proc "$pid" "$port"; then
+      echo "$pid"
+    fi
+  done | sort -u
+}
+
 find_pids_listening_on_port() {
   local port="${1:-}"
   if [ -z "$port" ]; then
@@ -53,6 +120,9 @@ find_pids_listening_on_port() {
   )"
   if [ -z "$pids" ] && command -v lsof >/dev/null 2>&1; then
     pids="$(lsof -nP -iTCP:"$port" -sTCP:LISTEN -t 2>/dev/null | sort -u || true)"
+  fi
+  if [ -z "$pids" ]; then
+    pids="$(find_pids_listening_on_port_via_proc "$port" || true)"
   fi
   if [ -n "$pids" ]; then
     echo "$pids"

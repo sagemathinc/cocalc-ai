@@ -83,7 +83,13 @@ describe("project collaborators local bay access", () => {
   const ACCOUNT_ID = "11111111-1111-4111-8111-111111111111";
   const PROJECT_ID = "22222222-2222-4222-8222-222222222222";
   const TARGET_ACCOUNT_ID = "33333333-3333-4333-8333-333333333333";
+  const EMAIL_ACTION_ID = "44444444-4444-4444-8444-444444444444";
   const removeCollaboratorFromProject = jest.fn(async () => undefined);
+  const accountCreationActions = jest.fn(async () => undefined);
+  const whenSentProjectInvite = jest.fn(async () => 0);
+  const getServerSettingsCached = jest.fn(async () => ({
+    organization_email: "help@example.com",
+  }));
 
   beforeEach(() => {
     jest.resetModules();
@@ -93,8 +99,18 @@ describe("project collaborators local bay access", () => {
     isAdminMock = jest.fn(async () => false);
     listProjectedMyCollaboratorsForAccountMock = jest.fn(async () => []);
     removeCollaboratorFromProject.mockClear();
+    accountCreationActions.mockClear();
+    whenSentProjectInvite.mockClear();
+    getServerSettingsCached.mockClear();
     dbMock = jest.fn(() => ({
       remove_collaborator_from_project: removeCollaboratorFromProject,
+      account_creation_actions: accountCreationActions,
+      when_sent_project_invite: whenSentProjectInvite,
+      sent_project_invite: jest.fn(async () => undefined),
+      get_server_settings_cached: getServerSettingsCached,
+      account_exists: jest.fn(async ({ email_address }) =>
+        email_address === "user@example.com" ? TARGET_ACCOUNT_ID : null,
+      ),
     }));
     delete process.env.COCALC_ACCOUNT_COLLABORATOR_INDEX_COLLABORATOR_READS;
   });
@@ -221,5 +237,115 @@ describe("project collaborators local bay access", () => {
       }),
     ).resolves.toEqual([]);
     expect(queryMock).not.toHaveBeenCalled();
+  });
+
+  it("lists pending email-only outbound invites", async () => {
+    queryMock = jest
+      .fn()
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            invite_id: `email-action:${EMAIL_ACTION_ID}`,
+            project_id: PROJECT_ID,
+            project_title: "Test Project",
+            inviter_account_id: ACCOUNT_ID,
+            invitee_account_id: null,
+            invitee_email_address: "nobody@example.com",
+            invite_source: "email",
+            status: "pending",
+            created: new Date("2026-04-01T00:00:00Z"),
+            updated: new Date("2026-04-01T00:00:00Z"),
+            responded: null,
+            expires: new Date("2026-04-15T00:00:00Z"),
+          },
+        ],
+      });
+    const { listCollabInvites } = await import("./collaborators");
+    await expect(
+      listCollabInvites({
+        account_id: ACCOUNT_ID,
+        direction: "outbound",
+        status: "pending",
+        limit: 20,
+      }),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        invite_id: `email-action:${EMAIL_ACTION_ID}`,
+        invite_source: "email",
+        invitee_email_address: "nobody@example.com",
+        status: "pending",
+      }),
+    ]);
+  });
+
+  it("revokes pending email-only invites", async () => {
+    queryMock = jest
+      .fn()
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            invite_id: `email-action:${EMAIL_ACTION_ID}`,
+            project_id: PROJECT_ID,
+            project_title: "Test Project",
+            inviter_account_id: ACCOUNT_ID,
+            invitee_account_id: null,
+            invitee_email_address: "nobody@example.com",
+            invite_source: "email",
+            status: "pending",
+            created: new Date("2026-04-01T00:00:00Z"),
+            updated: new Date("2026-04-01T00:00:00Z"),
+            responded: null,
+            expires: new Date("2026-04-15T00:00:00Z"),
+          },
+        ],
+      })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [] });
+    const { respondCollabInvite } = await import("./collaborators");
+    await expect(
+      respondCollabInvite({
+        account_id: ACCOUNT_ID,
+        invite_id: `email-action:${EMAIL_ACTION_ID}`,
+        action: "revoke",
+      }),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        invite_id: `email-action:${EMAIL_ACTION_ID}`,
+        status: "canceled",
+        responder_action: "revoke",
+      }),
+    );
+    expect(queryMock.mock.calls[1]?.[0]).toContain(
+      "DELETE FROM account_creation_actions",
+    );
+  });
+
+  it("stores inviter metadata for email-only invites", async () => {
+    const { inviteCollaboratorWithoutAccount } =
+      await import("./collaborators");
+    await inviteCollaboratorWithoutAccount({
+      account_id: ACCOUNT_ID,
+      opts: {
+        project_id: PROJECT_ID,
+        title: "Test Project",
+        link2proj: "https://example.com/project",
+        to: "nobody@example.com",
+        email: "<p>Hello</p>",
+        message: "Please join",
+      },
+    });
+    expect(accountCreationActions).toHaveBeenCalledWith(
+      expect.objectContaining({
+        email_address: "nobody@example.com",
+        action: expect.objectContaining({
+          action: "add_to_project",
+          group: "collaborator",
+          project_id: PROJECT_ID,
+          inviter_account_id: ACCOUNT_ID,
+          message: "Please join",
+        }),
+      }),
+    );
   });
 });

@@ -145,6 +145,59 @@ async function loadHostRow(id: string) {
   return rows[0];
 }
 
+function currentMetricsWithoutSnapshot(metrics: any): any {
+  if (!metrics || typeof metrics !== "object") return metrics;
+  const next = { ...metrics };
+  delete next.current;
+  return Object.keys(next).length ? next : undefined;
+}
+
+function shouldResetToStoppedAfterStartFailure(opts: {
+  action?: string;
+  currentRow?: any;
+  originalRow?: any;
+}): boolean {
+  if (opts.action !== "start" && opts.action !== "provision") {
+    return false;
+  }
+  if (!opts.currentRow) return false;
+  const currentRuntime = opts.currentRow.metadata?.runtime;
+  if (currentRuntime?.instance_id) {
+    return false;
+  }
+  return true;
+}
+
+function sanitizedMetadataForFailedStart(opts: {
+  metadata: any;
+  message: string;
+  originalRow?: any;
+}) {
+  const nextMetadata = {
+    ...(opts.metadata ?? {}),
+    last_error: opts.message,
+    last_error_at: new Date().toISOString(),
+    bootstrap: {
+      status: "error",
+      message: opts.message,
+      updated_at: new Date().toISOString(),
+    },
+  };
+  delete nextMetadata.runtime;
+  delete nextMetadata.dns;
+  delete nextMetadata.cloudflare_tunnel;
+  if (opts.originalRow?.metadata?.reprovision_required) {
+    nextMetadata.reprovision_required = true;
+  }
+  const nextMetrics = currentMetricsWithoutSnapshot(nextMetadata.metrics);
+  if (nextMetrics) {
+    nextMetadata.metrics = nextMetrics;
+  } else {
+    delete nextMetadata.metrics;
+  }
+  return nextMetadata;
+}
+
 async function updateHostRow(id: string, updates: Record<string, any>) {
   const keys = Object.keys(updates).filter((key) => updates[key] !== undefined);
   if (!keys.length) return;
@@ -1063,10 +1116,35 @@ async function handleRefreshRuntime(row: any) {
   });
 }
 
-async function markHostError(row: any, err: unknown) {
+async function markHostError(
+  row: any,
+  err: unknown,
+  opts?: { action?: string; originalRow?: any },
+) {
   const message = err ? String(err) : "unknown error";
+  const currentRow = (await loadHostRow(row.id)) ?? row;
+  if (
+    shouldResetToStoppedAfterStartFailure({
+      action: opts?.action,
+      currentRow,
+      originalRow: opts?.originalRow ?? row,
+    })
+  ) {
+    await updateHostRow(row.id, {
+      metadata: sanitizedMetadataForFailedStart({
+        metadata: currentRow.metadata ?? {},
+        message,
+        originalRow: opts?.originalRow ?? row,
+      }),
+      status: "off",
+      last_seen: null,
+      public_url: null,
+      internal_url: null,
+    });
+    return;
+  }
   const nextMetadata = {
-    ...(row.metadata ?? {}),
+    ...(currentRow.metadata ?? {}),
     last_error: message,
     last_error_at: new Date().toISOString(),
   };
@@ -1084,7 +1162,10 @@ export const cloudHostHandlers: CloudVmWorkHandlers = {
     try {
       await handleProvision(host);
     } catch (err) {
-      await markHostError(host, err);
+      await markHostError(host, err, {
+        action: "provision",
+        originalRow: host,
+      });
       throw err;
     }
   },
@@ -1094,7 +1175,7 @@ export const cloudHostHandlers: CloudVmWorkHandlers = {
     try {
       await handleStart(host);
     } catch (err) {
-      await markHostError(host, err);
+      await markHostError(host, err, { action: "start", originalRow: host });
       throw err;
     }
   },

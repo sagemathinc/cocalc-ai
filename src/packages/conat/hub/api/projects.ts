@@ -225,11 +225,12 @@ export interface ProjectCollabInviteRow {
   inviter_first_name?: string | null;
   inviter_last_name?: string | null;
   inviter_email_address?: string | null;
-  invitee_account_id: string;
+  invitee_account_id?: string | null;
   invitee_name?: string | null;
   invitee_first_name?: string | null;
   invitee_last_name?: string | null;
   invitee_email_address?: string | null;
+  invite_source?: "account" | "email";
   status: ProjectCollabInviteStatus;
   message?: string | null;
   responder_action?: ProjectCollabInviteAction | null;

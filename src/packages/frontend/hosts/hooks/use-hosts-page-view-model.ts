@@ -1044,7 +1044,10 @@ export const useHostsPageViewModel = () => {
         const isSelfHost = editingHost.machine?.cloud === "self-host";
         const isDeprovisioned = editingHost.status === "deprovisioned";
         const isStopped = editingHost.status === "off";
-        const canEditMachine = isDeprovisioned || isStopped;
+        const erroredReprovision =
+          editingHost.status === "error" && !!editingHost.reprovision_required;
+        const canEditMachine =
+          isDeprovisioned || isStopped || erroredReprovision;
         const currentAutoGrow = (editingHost.machine?.metadata?.auto_grow ??
           {}) as Record<string, any>;
         const nextProvider = (values.provider ??

@@ -41,6 +41,9 @@ const COLLAB_GROUPS = ["owner", "collaborator"] as const;
 const COLLAB_GROUP_SET = new Set<string>(COLLAB_GROUPS);
 const COLLAB_INVITE_EXPIRES_DAYS = 30;
 const COLLAB_INVITE_EXPIRES_INTERVAL = `${COLLAB_INVITE_EXPIRES_DAYS} days`;
+const EMAIL_ONLY_INVITE_TTL_DAYS = 14;
+const EMAIL_ONLY_INVITE_TTL_SECONDS = EMAIL_ONLY_INVITE_TTL_DAYS * 24 * 60 * 60;
+const EMAIL_ONLY_INVITE_PREFIX = "email-action:";
 const INVITE_STATUS_SET = new Set<string>([
   "pending",
   "accepted",
@@ -123,6 +126,23 @@ function ensureUuid(value: string, label: string): void {
   }
 }
 
+function isEmailOnlyInviteId(invite_id: string): boolean {
+  return invite_id.startsWith(EMAIL_ONLY_INVITE_PREFIX);
+}
+
+function parseEmailOnlyInviteId(invite_id: string): string {
+  if (!isEmailOnlyInviteId(invite_id)) {
+    throw new Error(`invite_id '${invite_id}' is not an email-only invite`);
+  }
+  const action_id = invite_id.slice(EMAIL_ONLY_INVITE_PREFIX.length);
+  ensureUuid(action_id, "email_action_id");
+  return action_id;
+}
+
+function makeEmailOnlyInviteId(action_id: string): string {
+  return `${EMAIL_ONLY_INVITE_PREFIX}${action_id}`;
+}
+
 function isAlreadyCollaboratorError(err: unknown): boolean {
   return `${(err as any)?.message ?? err ?? ""}`
     .toLowerCase()
@@ -190,6 +210,132 @@ async function fetchInviteById(
     [invite_id, includeEmail],
   );
   return rows[0];
+}
+
+async function listEmailOnlyPendingCollabInvites({
+  account_id,
+  project_id,
+  direction,
+  status,
+  limit,
+  includeEmail,
+}: {
+  account_id: string;
+  project_id?: string;
+  direction: ProjectCollabInviteDirection;
+  status?: ProjectCollabInviteStatus;
+  limit: number;
+  includeEmail: boolean;
+}): Promise<ProjectCollabInviteRow[]> {
+  if (direction === "inbound") {
+    return [];
+  }
+  if (status != null && status !== "pending") {
+    return [];
+  }
+  const pool = getPool();
+  const params: any[] = [includeEmail, account_id];
+  const where = [
+    `a.expire > NOW()`,
+    `a.action ->> 'action' = 'add_to_project'`,
+    `COALESCE(a.action ->> 'group', '') IN ('owner', 'collaborator')`,
+    `(
+      COALESCE(a.action ->> 'inviter_account_id', '') = $2::text
+      OR (
+        COALESCE(a.action ->> 'inviter_account_id', '') = ''
+        AND EXISTS(
+          SELECT 1
+          FROM projects px
+          WHERE px.project_id = (a.action ->> 'project_id')::uuid
+            AND (px.users -> $2::text ->> 'group') IN ('owner','collaborator')
+        )
+      )
+    )`,
+  ];
+  if (project_id != null) {
+    params.push(project_id);
+    where.push(`(a.action ->> 'project_id')::uuid = $${params.length}::uuid`);
+  }
+  params.push(limit);
+  const sql = `SELECT
+      ${`'${EMAIL_ONLY_INVITE_PREFIX}'`} || a.id::text AS invite_id,
+      (a.action ->> 'project_id')::uuid AS project_id,
+      p.title AS project_title,
+      p.description AS project_description,
+      COALESCE(
+        CASE
+          WHEN COALESCE(a.action ->> 'inviter_account_id', '') ~* '^[0-9a-f-]{36}$'
+          THEN (a.action ->> 'inviter_account_id')::uuid
+          ELSE NULL
+        END,
+        $2::uuid
+      ) AS inviter_account_id,
+      inviter.name AS inviter_name,
+      inviter.first_name AS inviter_first_name,
+      inviter.last_name AS inviter_last_name,
+      CASE WHEN $1::boolean THEN inviter.email_address ELSE NULL END AS inviter_email_address,
+      invitee.account_id AS invitee_account_id,
+      invitee.name AS invitee_name,
+      invitee.first_name AS invitee_first_name,
+      invitee.last_name AS invitee_last_name,
+      CASE
+        WHEN $1::boolean THEN COALESCE(invitee.email_address, a.email_address)
+        ELSE a.email_address
+      END AS invitee_email_address,
+      'email'::text AS invite_source,
+      'pending'::text AS status,
+      NULLIF(a.action ->> 'message', '') AS message,
+      NULL::text AS responder_action,
+      (a.expire - INTERVAL '${EMAIL_ONLY_INVITE_TTL_DAYS} days') AS created,
+      (a.expire - INTERVAL '${EMAIL_ONLY_INVITE_TTL_DAYS} days') AS updated,
+      NULL::timestamp AS responded,
+      a.expire AS expires,
+      0::int AS prior_invites_accepted,
+      0::int AS prior_invites_declined,
+      0::int AS shared_projects_count,
+      ARRAY[]::text[] AS shared_projects_sample
+    FROM account_creation_actions a
+    LEFT JOIN projects p ON p.project_id = (a.action ->> 'project_id')::uuid
+    LEFT JOIN accounts invitee ON lower(invitee.email_address) = lower(a.email_address)
+    LEFT JOIN accounts inviter ON inviter.account_id = COALESCE(
+      CASE
+        WHEN COALESCE(a.action ->> 'inviter_account_id', '') ~* '^[0-9a-f-]{36}$'
+        THEN (a.action ->> 'inviter_account_id')::uuid
+        ELSE NULL
+      END,
+      $2::uuid
+    )
+    WHERE ${where.join(" AND ")}
+      AND NOT EXISTS(
+        SELECT 1
+        FROM projects py
+        WHERE py.project_id = (a.action ->> 'project_id')::uuid
+          AND invitee.account_id IS NOT NULL
+          AND (py.users -> invitee.account_id::text ->> 'group') IN ('owner','collaborator')
+      )
+    ORDER BY a.expire DESC
+    LIMIT $${params.length}`;
+  const { rows } = await pool.query<ProjectCollabInviteRow>(sql, params);
+  return rows;
+}
+
+async function fetchEmailOnlyInviteByActionId({
+  account_id,
+  action_id,
+  includeEmail,
+}: {
+  account_id: string;
+  action_id: string;
+  includeEmail: boolean;
+}): Promise<ProjectCollabInviteRow | undefined> {
+  const rows = await listEmailOnlyPendingCollabInvites({
+    account_id,
+    direction: "outbound",
+    limit: 1000,
+    includeEmail,
+    status: "pending",
+  });
+  return rows.find((row) => row.invite_id === makeEmailOnlyInviteId(action_id));
 }
 
 export async function removeCollaborator({
@@ -540,7 +686,21 @@ export async function listCollabInvites({
     LIMIT $${params.length}`;
 
   const { rows } = await pool.query<ProjectCollabInviteRow>(sql, params);
-  return rows;
+  const emailOnlyRows = await listEmailOnlyPendingCollabInvites({
+    account_id,
+    project_id,
+    direction: normalizedDirection,
+    status: normalizedStatus,
+    limit: maxRows,
+    includeEmail,
+  });
+  return [...rows, ...emailOnlyRows]
+    .sort(
+      (a, b) =>
+        new Date(`${b.created ?? 0}`).valueOf() -
+        new Date(`${a.created ?? 0}`).valueOf(),
+    )
+    .slice(0, maxRows);
 }
 
 export async function respondCollabInvite({
@@ -555,9 +715,44 @@ export async function respondCollabInvite({
   if (!account_id) {
     throw new Error("user must be signed in");
   }
-  ensureUuid(invite_id, "invite_id");
   const normalizedAction = normalizeInviteAction(action);
   const includeEmail = await isAdmin(account_id);
+  if (isEmailOnlyInviteId(invite_id)) {
+    if (normalizedAction !== "revoke") {
+      throw new Error("email-only invites can only be revoked");
+    }
+    const action_id = parseEmailOnlyInviteId(invite_id);
+    const existing = await fetchEmailOnlyInviteByActionId({
+      account_id,
+      action_id,
+      includeEmail,
+    });
+    if (!existing) {
+      throw new Error(`invite '${invite_id}' not found`);
+    }
+    const pool = getPool();
+    const rawInviterAccountId = `${existing.inviter_account_id ?? ""}`.trim();
+    if (rawInviterAccountId !== account_id && !includeEmail) {
+      await assertLocalProjectCollaborator({
+        account_id,
+        project_id: existing.project_id,
+      });
+    }
+    await pool.query(
+      `DELETE FROM account_creation_actions
+       WHERE id = $1::uuid`,
+      [action_id],
+    );
+    const now = new Date();
+    return {
+      ...existing,
+      status: "canceled",
+      responder_action: "revoke",
+      responded: now,
+      updated: now,
+    };
+  }
+  ensureUuid(invite_id, "invite_id");
   const pool = getPool();
   await expirePendingCollabInvites(pool);
 
@@ -960,6 +1155,7 @@ export async function inviteCollaboratorWithoutAccount({
   const dbg = (...args) =>
     logger.debug("inviteCollaboratorWithoutAccount", ...args);
   const database = db();
+  const normalizedMessage = `${opts.message ?? ""}`.trim().slice(0, 512);
 
   if (opts.to.length > 1024) {
     throw Error(
@@ -1018,8 +1214,10 @@ export async function inviteCollaboratorWithoutAccount({
           action: "add_to_project",
           group: "collaborator",
           project_id: opts.project_id,
+          inviter_account_id: account_id,
+          ...(normalizedMessage ? { message: normalizedMessage } : {}),
         },
-        ttl: 60 * 60 * 24 * 14,
+        ttl: EMAIL_ONLY_INVITE_TTL_SECONDS,
       });
     }
 
