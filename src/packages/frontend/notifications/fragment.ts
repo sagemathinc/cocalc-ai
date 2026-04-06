@@ -12,9 +12,17 @@ export function getNotificationFilterFromFragment(hash?): {
 } {
   const fragmentId = hash ? Fragment.decode(hash) : Fragment.get();
   if (fragmentId == null) {
-    return { filter: "messages-inbox" as NotificationFilter };
+    return { filter: "unread" };
   }
   const { page: filter, id: id0 } = fragmentId;
+  if (
+    filter === "messages-inbox" ||
+    filter === "messages-sent" ||
+    filter === "messages-drafts" ||
+    filter === "messages-search"
+  ) {
+    return { filter: "unread" };
+  }
   if (filter != null && isNotificationFilter(filter)) {
     let id: number | undefined = undefined;
     try {
@@ -24,5 +32,5 @@ export function getNotificationFilterFromFragment(hash?): {
     } catch (_err) {}
     return { filter, id };
   }
-  return { filter: "messages-inbox" as NotificationFilter };
+  return { filter: "unread" };
 }

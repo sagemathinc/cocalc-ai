@@ -60,8 +60,16 @@ export function NewsPanel(props: NewsPanelProps) {
   const [newsData, anyUnread]: [NewsItemWebapp[], boolean] = useMemo(() => {
     if (!isNewsFilter(filter)) return [[], false];
     const now = webapp_client.server_time();
-    // weird: using news.valueSeq().toJS() makes object reappear, which were overwritten when an update came in!?
-    const data: NewsItemWebapp[] = Object.values(news.toJS() as any)
+    const data: NewsItemWebapp[] = news
+      .valueSeq()
+      .toArray()
+      .map((item) => ({
+        id: item.get("id"),
+        date: item.get("date"),
+        title: item.get("title"),
+        channel: item.get("channel"),
+        tags: item.get("tags"),
+      }))
       .filter((n: any) => {
         if (n.hide ?? false) return false;
         if (n.date > now) return false;

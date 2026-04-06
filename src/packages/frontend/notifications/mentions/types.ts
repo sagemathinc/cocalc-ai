@@ -7,10 +7,6 @@ import { Map } from "immutable";
 
 import { TypedMap } from "@cocalc/frontend/app-framework";
 import { NewsFilter, NEWS_CHANNELS } from "../news/types";
-import {
-  isMessagesFilter,
-  Filter as MessagesFilter,
-} from "@cocalc/frontend/messages/types";
 
 export type MentionsMap = Map<string, MentionInfo>;
 
@@ -45,12 +41,8 @@ export type MentionInfo = TypedMap<{
 const MENTIONS_FILTER = ["read", "unread", "saved", "all"] as const;
 
 export type MentionsFilter = (typeof MENTIONS_FILTER)[number];
-export type NotificationFilter = MentionsFilter | NewsFilter | MessagesFilter;
+export type NotificationFilter = MentionsFilter | NewsFilter;
 
 export function isNotificationFilter(f: string): f is NotificationFilter {
-  return (
-    MENTIONS_FILTER.includes(f as any) ||
-    NEWS_CHANNELS.includes(f as any) ||
-    isMessagesFilter(f)
-  );
+  return MENTIONS_FILTER.includes(f as any) || NEWS_CHANNELS.includes(f as any);
 }

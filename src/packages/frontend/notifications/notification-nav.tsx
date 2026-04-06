@@ -10,9 +10,7 @@ import { defineMessage, useIntl } from "react-intl";
 
 import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon, IconName, MenuItems, Text } from "@cocalc/frontend/components";
-import { IntlMessage, labels } from "@cocalc/frontend/i18n";
-import { ComposeButton } from "@cocalc/frontend/messages/compose";
-import MessagesCounter from "@cocalc/frontend/messages/counter";
+import { IntlMessage } from "@cocalc/frontend/i18n";
 import { COLORS } from "@cocalc/util/theme";
 import { Channel, CHANNELS, CHANNELS_ICONS } from "@cocalc/util/types/news";
 import { NotificationFilter } from "./mentions/types";
@@ -73,67 +71,6 @@ export function NotificationNav({ filter, on_click, style }: Props) {
   const intl = useIntl();
 
   const ITEMS: MenuItems = [
-    {
-      key: "messages",
-      label: (
-        <div
-          style={{
-            margin:
-              "0 -12px" /* weird margin is so the compose button lines up with the items */,
-          }}
-        >
-          <Text strong style={{ fontSize: "125%", marginLeft: "12px" }}>
-            {intl.formatMessage(labels.messages)} <MessagesCounter />
-          </Text>
-          <ComposeButton
-            size="large"
-            style={{ marginTop: "15px", width: "100%" }}
-          />
-        </div>
-      ),
-      children: [
-        {
-          key: "messages-inbox",
-          label: (
-            <div style={{ display: "flex", width: "100%" }}>
-              <span style={{ textOverflow: "ellipsis", overflow: "hidden" }}>
-                <Icon name="container" />{" "}
-                {intl.formatMessage(labels.messages_inbox)}
-              </span>
-              <div style={{ flex: 1 }} />
-              <MessagesCounter minimal />
-            </div>
-          ),
-        },
-        {
-          key: "messages-sent",
-          label: (
-            <span style={{ textOverflow: "ellipsis", overflow: "hidden" }}>
-              <Icon name={"paper-plane"} />{" "}
-              {intl.formatMessage(labels.messages_sent)}
-            </span>
-          ),
-        },
-        {
-          key: "messages-drafts",
-          label: (
-            <span style={{ textOverflow: "ellipsis", overflow: "hidden" }}>
-              <Icon name="note" /> {intl.formatMessage(labels.drafts)}
-            </span>
-          ),
-        },
-        {
-          key: "messages-search",
-          label: (
-            <span style={{ textOverflow: "ellipsis", overflow: "hidden" }}>
-              <Icon name="search" /> {intl.formatMessage(labels.search)}
-            </span>
-          ),
-        },
-      ],
-      type: "group",
-    },
-    { key: "divider-before-mentions", type: "divider" },
     {
       key: "mentions",
       label: (
