@@ -25,11 +25,9 @@ export interface NewsState {
 }
 
 function toReadIds(value: unknown): Set<string> {
-  const raw = Array.isArray(value)
-    ? value
-    : typeof (value as any)?.toJS === "function"
-      ? (value as any).toJS()
-      : [];
+  const rawValue =
+    typeof (value as any)?.toJS === "function" ? (value as any).toJS() : value;
+  const raw = Array.isArray(rawValue) ? rawValue : [];
   return new Set(
     raw.filter(
       (id): id is string => typeof id === "string" && id.trim().length > 0,
@@ -70,6 +68,27 @@ export class NewsActions extends Actions<NewsState> {
     return store;
   }
 
+  private setNewsReadState(readUntil: number, readIds: string[]): void {
+    const account_actions = redux.getActions("account");
+    const currentOtherSettings = redux
+      .getStore("account")
+      ?.get("other_settings");
+    const nextOtherSettings =
+      typeof (currentOtherSettings as any)?.set === "function"
+        ? (currentOtherSettings as any)
+            .set("news_read_until", readUntil)
+            .set("news_read_ids", readIds)
+        : {
+            ...(currentOtherSettings?.toJS?.() ?? currentOtherSettings ?? {}),
+            news_read_until: readUntil,
+            news_read_ids: readIds,
+          };
+    account_actions.setState({ other_settings: nextOtherSettings });
+    account_actions.set_other_settings("news_read_until", readUntil);
+    account_actions.set_other_settings("news_read_ids", readIds);
+    this.updateUnreadCount(readUntil, readIds);
+  }
+
   public refresh = async (): Promise<void> => {
     if (!webapp_client.is_signed_in()) {
       this.setState({ loading: false });
@@ -103,27 +122,27 @@ export class NewsActions extends Actions<NewsState> {
     date?: Date;
     current?: number;
   }): void {
-    const account_actions = redux.getActions("account");
     if (opts?.item != null) {
       const readIds = toReadIds(
         redux.getStore("account")?.getIn(["other_settings", "news_read_ids"]),
       );
       readIds.add(opts.item.id);
-      account_actions.set_other_settings("news_read_ids", Array.from(readIds));
+      const readUntil =
+        redux
+          .getStore("account")
+          ?.getIn(["other_settings", "news_read_until"]) ?? 0;
+      this.setNewsReadState(readUntil, Array.from(readIds));
       return;
     }
     const newest: number =
       opts?.date?.getTime() ?? this.getStore().getNewestTimestamp();
     const current = opts?.current ?? 0;
     const until = Math.max(current, newest);
-    account_actions.set_other_settings("news_read_until", until);
-    account_actions.set_other_settings("news_read_ids", []);
+    this.setNewsReadState(until, []);
   }
 
   public markNewsUnread(): void {
-    const account_actions = redux.getActions("account");
-    account_actions.set_other_settings("news_read_until", 0);
-    account_actions.set_other_settings("news_read_ids", []);
+    this.setNewsReadState(0, []);
   }
 
   public updateUnreadCount(readUntil: number, readIdsValue?: unknown): void {

@@ -133,9 +133,7 @@ export function NotificationRow(props: Props) {
     if (kind === "account_notice") {
       return (
         <>
-          <strong>
-            <Icon name={severityIcon(severity)} /> {title ?? "Notification"}
-          </strong>
+          <strong>{title ?? "Notification"}</strong>
           <div style={{ color: "rgb(100, 100, 100)" }}>
             {origin_label ?? "System"} <TimeAgo date={time.getTime()} />
           </div>
