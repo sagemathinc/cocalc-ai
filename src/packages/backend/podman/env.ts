@@ -11,8 +11,10 @@ function isUsableDir(dir: string): boolean {
   }
 }
 
-export function podmanEnv(): NodeJS.ProcessEnv {
-  const env = { ...process.env };
+export function podmanEnv(
+  baseEnv: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
+  const env = { ...baseEnv };
   const uid =
     typeof process.getuid === "function" ? process.getuid() : undefined;
   const configured = env.COCALC_PODMAN_RUNTIME_DIR || env.XDG_RUNTIME_DIR;

@@ -1,6 +1,7 @@
 import * as childProcess from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { podmanEnv } from "@cocalc/backend/podman/env";
 
 type DaemonAction = "start" | "stop" | "ensure";
 
@@ -14,6 +15,11 @@ const processRuntime = {
   spawn: childProcess.spawn,
   spawnSync: childProcess.spawnSync,
 };
+const PODMAN_STALE_STATE_PATTERNS = [
+  "invalid internal status",
+  'try resetting the pause process with "podman system migrate"',
+  "could not find any running process",
+];
 
 function parseIndex(arg: string | undefined): number {
   if (arg == null) {
@@ -387,6 +393,78 @@ function checkHealthSync(
   return result.status === 0;
 }
 
+function spawnSyncText(
+  command: string,
+  args: string[],
+  opts: {
+    env?: NodeJS.ProcessEnv;
+    timeout?: number;
+  } = {},
+): childProcess.SpawnSyncReturns<string> {
+  return processRuntime.spawnSync(command, args, {
+    ...opts,
+    encoding: "utf8",
+  });
+}
+
+function combinedSpawnOutput(
+  result: childProcess.SpawnSyncReturns<string>,
+): string {
+  return `${result.stdout ?? ""}\n${result.stderr ?? ""}`.trim();
+}
+
+function isPodmanStalePauseState(output: string): boolean {
+  const normalized = output.toLowerCase();
+  return PODMAN_STALE_STATE_PATTERNS.every((pattern) =>
+    normalized.includes(pattern),
+  );
+}
+
+function ensurePodmanHealthy(env: Record<string, string>): void {
+  const podmanRuntimeEnv = podmanEnv(env);
+  const probeTimeoutMs = getPositiveIntEnv(
+    "COCALC_PROJECT_HOST_PODMAN_PROBE_TIMEOUT_MS",
+    15_000,
+  );
+  const migrateTimeoutMs = getPositiveIntEnv(
+    "COCALC_PROJECT_HOST_PODMAN_MIGRATE_TIMEOUT_MS",
+    120_000,
+  );
+  const probe = spawnSyncText("podman", ["ps", "-a"], {
+    env: podmanRuntimeEnv,
+    timeout: probeTimeoutMs,
+  });
+  if (probe.status === 0) {
+    return;
+  }
+  const probeOutput = combinedSpawnOutput(probe);
+  if (!isPodmanStalePauseState(probeOutput)) {
+    return;
+  }
+  console.warn(
+    "podman reported stale pause-process state after restart; running `podman system migrate`.",
+  );
+  const migrate = spawnSyncText("podman", ["system", "migrate"], {
+    env: podmanRuntimeEnv,
+    timeout: migrateTimeoutMs,
+  });
+  if (migrate.status !== 0) {
+    throw new Error(
+      `podman system migrate failed: ${combinedSpawnOutput(migrate) || `exit ${migrate.status ?? "unknown"}`}`,
+    );
+  }
+  const verify = spawnSyncText("podman", ["ps", "-a"], {
+    env: podmanRuntimeEnv,
+    timeout: probeTimeoutMs,
+  });
+  if (verify.status !== 0) {
+    throw new Error(
+      `podman still reports invalid internal status after system migrate: ${combinedSpawnOutput(verify) || `exit ${verify.status ?? "unknown"}`}`,
+    );
+  }
+  console.log("podman rootless state repaired with `podman system migrate`.");
+}
+
 function terminatePids(pids: number[], label: string): number[] {
   const unique = [...new Set(pids)].filter(
     (pid) => Number.isInteger(pid) && pid > 0,
@@ -507,6 +585,7 @@ export function startDaemon(index = 0): void {
   } catch {
     // best effort
   }
+  ensurePodmanHealthy(env);
   const root = path.join(__dirname, "..");
   const { command, args } = resolveExec(root);
   const child = processRuntime.spawn(command, args, {
@@ -636,7 +715,9 @@ export function handleDaemonCli(argv: string[]): boolean {
 export const __test__ = {
   checkHealthSync,
   cleanupStrayProcesses,
+  ensurePodmanHealthy,
   healthCheckUrl,
+  isPodmanStalePauseState,
   matchingProjectHostPids,
   matchingSshpiperdPids,
   parsePort,

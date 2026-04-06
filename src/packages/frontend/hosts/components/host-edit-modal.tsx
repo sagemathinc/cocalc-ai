@@ -77,8 +77,10 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
   const isSelfHost = host?.machine?.cloud === "self-host";
   const isDeprovisioned = host?.status === "deprovisioned";
   const isStopped = host?.status === "off";
-  const canEditMachine = isDeprovisioned || isStopped;
-  const lockRegionZone = isStopped && !isDeprovisioned;
+  const erroredReprovision =
+    host?.status === "error" && !!host?.reprovision_required;
+  const canEditMachine = isDeprovisioned || isStopped || erroredReprovision;
+  const lockRegionZone = (isStopped || erroredReprovision) && !isDeprovisioned;
   const watchedProvider = Form.useWatch("provider", form) as
     | HostProvider
     | undefined;

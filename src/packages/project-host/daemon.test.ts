@@ -1,3 +1,4 @@
+import * as childProcess from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -5,10 +6,15 @@ import { __test__, ensureDaemon, startDaemon, stopDaemon } from "./daemon";
 
 describe("project-host daemon stop", () => {
   const originalEnv = { ...process.env };
+  let runtimeDir: string;
 
   beforeEach(() => {
     jest.restoreAllMocks();
     process.env = { ...originalEnv };
+    runtimeDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "cocalc-project-host-runtime-"),
+    );
+    process.env.COCALC_PODMAN_RUNTIME_DIR = runtimeDir;
   });
 
   afterAll(() => {
@@ -371,5 +377,62 @@ describe("project-host daemon stop", () => {
         9002,
       ),
     ).toBe("http://127.0.0.1:9100/healthz");
+  });
+
+  it("repairs podman pause-process state before starting the daemon", () => {
+    const dataDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "cocalc-project-host-daemon-"),
+    );
+    process.env.COCALC_DATA = dataDir;
+    process.env.PORT = "9002";
+
+    const spawnSyncSpy = jest
+      .spyOn(__test__.processRuntime, "spawnSync")
+      .mockImplementation(((
+        command: string,
+        args: string[],
+        options?: childProcess.SpawnSyncOptions,
+      ) => {
+        expect(command).toBe("podman");
+        if (args.join(" ") === "ps -a") {
+          const count = spawnSyncSpy.mock.calls.filter(
+            ([, callArgs]) => (callArgs as string[]).join(" ") === "ps -a",
+          ).length;
+          if (count === 1) {
+            expect(options?.encoding).toBe("utf8");
+            expect(options?.env?.XDG_RUNTIME_DIR).toBe(runtimeDir);
+            expect(options?.env?.CONTAINERS_CGROUP_MANAGER).toBe("cgroupfs");
+            return {
+              status: 125,
+              stdout: "",
+              stderr:
+                'ERRO[0000] invalid internal status, try resetting the pause process with "podman system migrate": could not find any running process: no such process',
+            } as any;
+          }
+          return { status: 0, stdout: "", stderr: "" } as any;
+        }
+        if (args.join(" ") === "system migrate") {
+          return { status: 0, stdout: "stopped abc123\n", stderr: "" } as any;
+        }
+        throw new Error(`unexpected spawnSync args: ${args.join(" ")}`);
+      }) as typeof __test__.processRuntime.spawnSync);
+    const spawnSpy = jest
+      .spyOn(__test__.processRuntime, "spawn")
+      .mockReturnValue({ pid: 9797, unref: () => {} } as any);
+    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
+    const logSpy = jest.spyOn(console, "log").mockImplementation(() => {});
+
+    startDaemon(0);
+
+    expect(
+      spawnSyncSpy.mock.calls.map(([, args]) => (args as string[]).join(" ")),
+    ).toEqual(["ps -a", "system migrate", "ps -a"]);
+    expect(warnSpy).toHaveBeenCalledWith(
+      "podman reported stale pause-process state after restart; running `podman system migrate`.",
+    );
+    expect(logSpy).toHaveBeenCalledWith(
+      "podman rootless state repaired with `podman system migrate`.",
+    );
+    expect(spawnSpy).toHaveBeenCalled();
   });
 });

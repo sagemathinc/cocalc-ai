@@ -4360,10 +4360,19 @@ export async function updateHostMachine({
     throw new Error("disk type/storage mode changes require deprovisioning");
   }
 
+  const canEditErroredReprovision =
+    row.status === "error" && !!metadata.reprovision_required;
   const requiresReprovision =
-    !isSelfHost && nonDiskChange && row.status === "off";
+    !isSelfHost &&
+    nonDiskChange &&
+    (row.status === "off" || canEditErroredReprovision);
 
-  if (!isSelfHost && nonDiskChange && row.status !== "off") {
+  if (
+    !isSelfHost &&
+    nonDiskChange &&
+    row.status !== "off" &&
+    !canEditErroredReprovision
+  ) {
     throw new Error(
       "host must be stopped before changing CPU/RAM/machine type",
     );
