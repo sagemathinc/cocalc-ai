@@ -58,6 +58,10 @@ export class NewsActions extends Actions<NewsState> {
   }
 
   public refresh = async (): Promise<void> => {
+    if (!webapp_client.is_signed_in()) {
+      this.setState({ loading: false });
+      return;
+    }
     this.setState({ loading: true });
     try {
       const rows = await webapp_client.conat_client.hub.system.listNews();
