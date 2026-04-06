@@ -6,6 +6,10 @@
 import React from "react";
 
 import { CSS } from "@cocalc/frontend/app-framework";
+import {
+  IncomingInvitesNotificationSection,
+  useInviteInboxState,
+} from "@cocalc/frontend/collaborators";
 import { MentionsMap, NotificationFilter } from "./mentions/types";
 import { NewsMap, isNewsFilter } from "./news/types";
 import { MentionsPanel } from "./notification-mentions";
@@ -31,19 +35,34 @@ export const NotificationList: React.FC<Props> = ({
   user_map,
 }: Props) => {
   let body, className;
+  const inviteState = useInviteInboxState({
+    includeOutgoing: false,
+    includeBlocks: false,
+  });
   if (isNewsFilter(filter)) {
     body = <NewsPanel news={news} filter={filter} />;
     className = "smc-notificationlist";
   } else {
     body = (
-      <MentionsPanel
-        filter={filter}
-        loading={loading}
-        mentions={mentions}
-        account_id={account_id}
-        user_map={user_map}
-        style={style}
-      />
+      <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
+        {filter === "unread" && (
+          <IncomingInvitesNotificationSection state={inviteState} />
+        )}
+        <MentionsPanel
+          filter={filter}
+          loading={loading}
+          mentions={mentions}
+          account_id={account_id}
+          user_map={user_map}
+          style={style}
+          hideEmptyState={
+            filter === "unread" &&
+            (inviteState.loading ||
+              inviteState.incoming.length > 0 ||
+              !!inviteState.error)
+          }
+        />
+      </div>
     );
     className = "smc-notificationlist";
   }

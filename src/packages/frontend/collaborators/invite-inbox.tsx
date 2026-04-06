@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Alert, Button, Card, Divider, Space, Tag } from "antd";
+import { Alert, Button, Card, Collapse, Divider, Space, Tag } from "antd";
 import type {
   ProjectCollabInviteAction,
   ProjectCollabInviteBlockRow,
@@ -25,12 +25,36 @@ import {
   SettingBox,
 } from "@cocalc/frontend/components";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import { COLORS } from "@cocalc/util/theme";
 import { onCollabInvitesChanged } from "./invite-events";
+
+const { Panel } = Collapse;
 
 type Props = {
   project_id?: string;
   mode?: "project" | "global";
   showWhenEmpty?: boolean;
+};
+
+type UseInviteInboxStateOptions = {
+  project_id?: string;
+  includeOutgoing?: boolean;
+  includeBlocks?: boolean;
+};
+
+export type InviteInboxState = {
+  loading: boolean;
+  error: string;
+  busy: string;
+  incoming: ProjectCollabInviteRow[];
+  outgoing: ProjectCollabInviteRow[];
+  blocks: ProjectCollabInviteBlockRow[];
+  load: () => Promise<void>;
+  respond: (
+    invite_id: string,
+    action: ProjectCollabInviteAction,
+  ) => Promise<void>;
+  unblock: (blocked_account_id: string) => Promise<void>;
 };
 
 function formatTime(value: Date | string | null | undefined): string {
@@ -88,18 +112,27 @@ function inviteTrustSignals(invite: ProjectCollabInviteRow): string[] {
   return out;
 }
 
-export const InviteInboxPanel: React.FC<Props> = ({
+function inviteeLabel(invite: ProjectCollabInviteRow): string {
+  return (
+    `${invite.invitee_name ?? ""}`.trim() ||
+    `${invite.invitee_first_name ?? ""} ${invite.invitee_last_name ?? ""}`.trim() ||
+    `${invite.invitee_email_address ?? ""}`.trim() ||
+    `${invite.invitee_account_id ?? ""}`.trim() ||
+    "Unknown user"
+  );
+}
+
+export function useInviteInboxState({
   project_id,
-  mode = "global",
-  showWhenEmpty = false,
-}) => {
+  includeOutgoing = true,
+  includeBlocks = true,
+}: UseInviteInboxStateOptions): InviteInboxState {
   const [loading, set_loading] = useState<boolean>(false);
   const [error, set_error] = useState<string>("");
   const [busy, set_busy] = useState<string>("");
   const [incoming, set_incoming] = useState<ProjectCollabInviteRow[]>([]);
   const [outgoing, set_outgoing] = useState<ProjectCollabInviteRow[]>([]);
   const [blocks, set_blocks] = useState<ProjectCollabInviteBlockRow[]>([]);
-  const [expanded, set_expanded] = useState<boolean | undefined>(undefined);
 
   const load = useCallback(async () => {
     set_loading(true);
@@ -112,13 +145,19 @@ export const InviteInboxPanel: React.FC<Props> = ({
           status: "pending",
           limit: 200,
         }),
-        webapp_client.project_collaborators.list_invites({
-          project_id,
-          direction: "outbound",
-          status: "pending",
-          limit: 200,
-        }),
-        webapp_client.project_collaborators.list_invite_blocks({ limit: 200 }),
+        includeOutgoing
+          ? webapp_client.project_collaborators.list_invites({
+              project_id,
+              direction: "outbound",
+              status: "pending",
+              limit: 200,
+            })
+          : Promise.resolve([]),
+        includeBlocks
+          ? webapp_client.project_collaborators.list_invite_blocks({
+              limit: 200,
+            })
+          : Promise.resolve([]),
       ]);
       set_incoming(incomingRows ?? []);
       set_outgoing(outgoingRows ?? []);
@@ -128,7 +167,7 @@ export const InviteInboxPanel: React.FC<Props> = ({
     } finally {
       set_loading(false);
     }
-  }, [project_id]);
+  }, [includeBlocks, includeOutgoing, project_id]);
 
   useEffect(() => {
     void load();
@@ -145,10 +184,6 @@ export const InviteInboxPanel: React.FC<Props> = ({
       }
     });
   }, [load, project_id]);
-
-  useEffect(() => {
-    set_expanded(undefined);
-  }, [mode, project_id]);
 
   async function respond(invite_id: string, action: ProjectCollabInviteAction) {
     set_busy(`${invite_id}:${action}`);
@@ -181,6 +216,244 @@ export const InviteInboxPanel: React.FC<Props> = ({
     }
   }
 
+  return {
+    loading,
+    error,
+    busy,
+    incoming,
+    outgoing,
+    blocks,
+    load,
+    respond,
+    unblock,
+  };
+}
+
+function renderIncomingCards(
+  incoming: ProjectCollabInviteRow[],
+  busy: string,
+  respond: InviteInboxState["respond"],
+): React.JSX.Element {
+  if (incoming.length === 0) {
+    return (
+      <Paragraph type="secondary" style={{ marginBottom: "0" }}>
+        No incoming invitations.
+      </Paragraph>
+    );
+  }
+  return (
+    <div>
+      {incoming.map((invite) => {
+        const inviter = userName({
+          name: invite.inviter_name,
+          first: invite.inviter_first_name,
+          last: invite.inviter_last_name,
+          account_id: invite.inviter_account_id,
+        });
+        const project = `${invite.project_title ?? invite.project_id}`;
+        return (
+          <Card
+            key={invite.invite_id}
+            size="small"
+            style={{ marginBottom: "8px" }}
+            styles={{ body: { padding: "10px" } }}
+          >
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                gap: "8px",
+              }}
+            >
+              <div>
+                <div>
+                  <strong>{project}</strong>
+                </div>
+                <div>
+                  From <strong>{inviter}</strong>
+                </div>
+                {!!invite.project_description?.trim() && (
+                  <div style={{ marginTop: "4px" }}>
+                    {invite.project_description.trim()}
+                  </div>
+                )}
+                {!!invite.message?.trim() && (
+                  <div
+                    style={{
+                      marginTop: "6px",
+                      padding: "6px 8px",
+                      border: `1px solid ${COLORS.GRAY_L0}`,
+                      borderRadius: "4px",
+                      background: COLORS.GRAY_LLL,
+                    }}
+                  >
+                    <div style={{ fontSize: "12px", opacity: 0.75 }}>
+                      Message from inviter
+                    </div>
+                    <Markdown value={invite.message.trim()} />
+                  </div>
+                )}
+                {inviteTrustSignals(invite).map((signal, i) => (
+                  <div
+                    key={`${invite.invite_id}:signal:${i}`}
+                    style={{ fontSize: "12px", opacity: 0.9 }}
+                  >
+                    {signal}
+                  </div>
+                ))}
+                <div style={{ fontSize: "12px", opacity: 0.75 }}>
+                  Received {formatTime(invite.created)}
+                </div>
+                {!!invite.expires && (
+                  <div style={{ fontSize: "12px", opacity: 0.75 }}>
+                    Expires {formatTime(invite.expires)}
+                  </div>
+                )}
+              </div>
+              <Space size={6} wrap>
+                <Button
+                  size="small"
+                  type="primary"
+                  loading={busy === `${invite.invite_id}:accept`}
+                  onClick={() => void respond(invite.invite_id, "accept")}
+                >
+                  Accept
+                </Button>
+                <Button
+                  size="small"
+                  loading={busy === `${invite.invite_id}:decline`}
+                  onClick={() => void respond(invite.invite_id, "decline")}
+                >
+                  Decline
+                </Button>
+                <Button
+                  size="small"
+                  danger
+                  loading={busy === `${invite.invite_id}:block`}
+                  onClick={() => void respond(invite.invite_id, "block")}
+                >
+                  Block
+                </Button>
+              </Space>
+            </div>
+          </Card>
+        );
+      })}
+    </div>
+  );
+}
+
+export function IncomingInviteBanner({
+  state,
+  onReview,
+}: {
+  state: InviteInboxState;
+  onReview: () => void;
+}): React.JSX.Element | null {
+  const { loading, error, incoming } = state;
+  if (!loading && !error && incoming.length === 0) {
+    return null;
+  }
+  if (error) {
+    return (
+      <Alert
+        type="error"
+        showIcon
+        style={{ marginBottom: "12px" }}
+        message="Unable to load project invitations."
+        description={error}
+      />
+    );
+  }
+  if (loading) {
+    return null;
+  }
+  const count = incoming.length;
+  return (
+    <Alert
+      type="info"
+      showIcon
+      style={{ marginBottom: "12px" }}
+      message={`${count} project invitation${count === 1 ? "" : "s"} need${count === 1 ? "s" : ""} your response.`}
+      action={
+        <Button size="small" type="primary" onClick={onReview}>
+          Review
+        </Button>
+      }
+    />
+  );
+}
+
+export function IncomingInvitesNotificationSection({
+  state,
+}: {
+  state: InviteInboxState;
+}): React.JSX.Element | null {
+  const { loading, error, incoming, busy, respond, load } = state;
+  if (!loading && !error && incoming.length === 0) {
+    return null;
+  }
+  return (
+    <Collapse
+      defaultActiveKey={["project-invitations"]}
+      className="cocalc-notification-list"
+    >
+      <Panel
+        key="project-invitations"
+        header={
+          <>
+            <Icon name="mail" style={{ marginRight: "10px" }} />
+            Project Invitations ({incoming.length})
+          </>
+        }
+        extra={
+          <Button
+            size="small"
+            onClick={(e) => {
+              e.stopPropagation();
+              void load();
+            }}
+            disabled={loading}
+          >
+            <Icon name="refresh" /> Refresh
+          </Button>
+        }
+      >
+        <Paragraph type="secondary">
+          Accept or decline pending invitations to collaborate on projects.
+        </Paragraph>
+        {error && (
+          <Alert
+            style={{ marginBottom: "10px" }}
+            type="error"
+            showIcon
+            title={error}
+          />
+        )}
+        {loading ? <Loading /> : renderIncomingCards(incoming, busy, respond)}
+      </Panel>
+    </Collapse>
+  );
+}
+
+export const InviteInboxPanel: React.FC<Props> = ({
+  project_id,
+  mode = "global",
+  showWhenEmpty = false,
+}) => {
+  const [expanded, set_expanded] = useState<boolean | undefined>(undefined);
+  const {
+    loading,
+    error,
+    busy,
+    incoming,
+    outgoing,
+    blocks,
+    load,
+    respond,
+    unblock,
+  } = useInviteInboxState({ project_id });
+
   const total = useMemo(
     () => incoming.length + outgoing.length + blocks.length,
     [incoming.length, outgoing.length, blocks.length],
@@ -197,124 +470,8 @@ export const InviteInboxPanel: React.FC<Props> = ({
 
   const isExpanded = expanded ?? false;
 
-  function inviteeLabel(invite: ProjectCollabInviteRow): string {
-    return (
-      `${invite.invitee_name ?? ""}`.trim() ||
-      `${invite.invitee_first_name ?? ""} ${invite.invitee_last_name ?? ""}`.trim() ||
-      `${invite.invitee_email_address ?? ""}`.trim() ||
-      `${invite.invitee_account_id ?? ""}`.trim() ||
-      "Unknown user"
-    );
-  }
-
   function renderIncoming(): React.JSX.Element {
-    if (incoming.length === 0) {
-      return (
-        <Paragraph type="secondary" style={{ marginBottom: "0" }}>
-          No incoming invitations.
-        </Paragraph>
-      );
-    }
-    return (
-      <div>
-        {incoming.map((invite) => {
-          const inviter = userName({
-            name: invite.inviter_name,
-            first: invite.inviter_first_name,
-            last: invite.inviter_last_name,
-            account_id: invite.inviter_account_id,
-          });
-          const project = `${invite.project_title ?? invite.project_id}`;
-          return (
-            <Card
-              key={invite.invite_id}
-              size="small"
-              style={{ marginBottom: "8px" }}
-              styles={{ body: { padding: "10px" } }}
-            >
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  gap: "8px",
-                }}
-              >
-                <div>
-                  <div>
-                    <strong>{project}</strong>
-                  </div>
-                  <div>
-                    From <strong>{inviter}</strong>
-                  </div>
-                  {!!invite.project_description?.trim() && (
-                    <div style={{ marginTop: "4px" }}>
-                      {invite.project_description.trim()}
-                    </div>
-                  )}
-                  {!!invite.message?.trim() && (
-                    <div
-                      style={{
-                        marginTop: "6px",
-                        padding: "6px 8px",
-                        border: "1px solid #e6e6e6",
-                        borderRadius: "4px",
-                        background: "#fafafa",
-                      }}
-                    >
-                      <div style={{ fontSize: "12px", opacity: 0.75 }}>
-                        Message from inviter
-                      </div>
-                      <Markdown value={invite.message.trim()} />
-                    </div>
-                  )}
-                  {inviteTrustSignals(invite).map((signal, i) => (
-                    <div
-                      key={`${invite.invite_id}:signal:${i}`}
-                      style={{ fontSize: "12px", opacity: 0.9 }}
-                    >
-                      {signal}
-                    </div>
-                  ))}
-                  <div style={{ fontSize: "12px", opacity: 0.75 }}>
-                    Received {formatTime(invite.created)}
-                  </div>
-                  {!!invite.expires && (
-                    <div style={{ fontSize: "12px", opacity: 0.75 }}>
-                      Expires {formatTime(invite.expires)}
-                    </div>
-                  )}
-                </div>
-                <Space size={6} wrap>
-                  <Button
-                    size="small"
-                    type="primary"
-                    loading={busy === `${invite.invite_id}:accept`}
-                    onClick={() => void respond(invite.invite_id, "accept")}
-                  >
-                    Accept
-                  </Button>
-                  <Button
-                    size="small"
-                    loading={busy === `${invite.invite_id}:decline`}
-                    onClick={() => void respond(invite.invite_id, "decline")}
-                  >
-                    Decline
-                  </Button>
-                  <Button
-                    size="small"
-                    danger
-                    loading={busy === `${invite.invite_id}:block`}
-                    onClick={() => void respond(invite.invite_id, "block")}
-                  >
-                    Block
-                  </Button>
-                </Space>
-              </div>
-            </Card>
-          );
-        })}
-      </div>
-    );
+    return renderIncomingCards(incoming, busy, respond);
   }
 
   function renderOutgoing(): React.JSX.Element {
@@ -366,9 +523,9 @@ export const InviteInboxPanel: React.FC<Props> = ({
                       style={{
                         marginTop: "6px",
                         padding: "6px 8px",
-                        border: "1px solid #e6e6e6",
+                        border: `1px solid ${COLORS.GRAY_L0}`,
                         borderRadius: "4px",
-                        background: "#fafafa",
+                        background: COLORS.GRAY_LLL,
                       }}
                     >
                       <div style={{ fontSize: "12px", opacity: 0.75 }}>

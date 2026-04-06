@@ -26,7 +26,10 @@ import { Footer } from "@cocalc/frontend/customize";
 import { labels } from "@cocalc/frontend/i18n";
 import { COLORS } from "@cocalc/util/theme";
 import { HostCreatePanel } from "@cocalc/frontend/hosts/components/host-create-panel";
-import { InviteInboxPanel } from "@cocalc/frontend/collaborators";
+import {
+  IncomingInviteBanner,
+  useInviteInboxState,
+} from "@cocalc/frontend/collaborators";
 import { capitalize } from "@cocalc/util/misc";
 
 import { NewProjectCreator } from "./create-project";
@@ -168,11 +171,20 @@ export const ProjectsPage: React.FC = () => {
     return `${!!hidden}-${!!deleted}`;
   }, [hidden, deleted]);
   const search: string = useTypedRedux("projects", "search");
+  const inviteState = useInviteInboxState({
+    includeOutgoing: false,
+    includeBlocks: false,
+  });
 
   const selected_hashtags: Map<string, ImmutableSet<string>> = useTypedRedux(
     "projects",
     "selected_hashtags",
   );
+
+  function openInvitations() {
+    redux.getActions("mentions").set_filter("unread");
+    redux.getActions("page").set_active_tab("notifications");
+  }
 
   const visible_projects: string[] = useMemo(() => {
     return getVisibleProjects(
@@ -453,7 +465,10 @@ export const ProjectsPage: React.FC = () => {
                     ref={inviteInboxRef}
                     style={{ maxHeight: "50vh", overflow: "auto" }}
                   >
-                    <InviteInboxPanel mode="global" />
+                    <IncomingInviteBanner
+                      state={inviteState}
+                      onReview={openInvitations}
+                    />
                   </div>
 
                   {/* Table Controls (Search, Filters, Create Button) */}
