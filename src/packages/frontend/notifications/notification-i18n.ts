@@ -40,7 +40,12 @@ export const MSGS = defineMessages({
   },
   read_all: {
     id: "notifications.news.read_all.label",
-    defaultMessage: "Read All",
-    description: "Short label on a button to mark all messages as read",
+    defaultMessage: "Open Archive",
+    description: "Short label on a button to open the full news archive",
+  },
+  mark_read: {
+    id: "notifications.news.mark_read.label",
+    defaultMessage: "Mark Read",
+    description: "Short label on a button to mark one news item as read",
   },
 });

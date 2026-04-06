@@ -104,8 +104,8 @@ export default async function send({
 
   // create the message
   const { rows } = await pool.query(
-    "INSERT INTO messages(from_id,to_ids,subject,body,sent,thread_id) VALUES($1,$2,$3,$4,NOW(),$5) RETURNING id",
-    [from_id, to_ids, subject, body, thread_id],
+    "INSERT INTO messages(from_id,to_ids,subject,body,system_notice,sent,thread_id) VALUES($1,$2,$3,$4,$5,NOW(),$6) RETURNING id",
+    [from_id, to_ids, subject, body, isInternalSystemMessage, thread_id],
   );
   const { id } = rows[0];
   if (process.env.COCALC_TEST_MODE) {

@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Button, Collapse, Space } from "antd";
+import { Collapse, Space } from "antd";
 const { Panel } = Collapse;
 import { CSS, redux } from "@cocalc/frontend/app-framework";
 import { Icon, Loading, MarkAll } from "@cocalc/frontend/components";
@@ -14,7 +14,6 @@ import {
   MentionsMap,
   NotificationFilter,
 } from "./mentions/types";
-import { BOOKMARK_ICON_NAME } from "./mentions/util";
 import { isNewsFilter } from "./news/types";
 import { NoMentions } from "./notification-no-mentions";
 import { NotificationRow } from "./mentions/notification-row";
@@ -27,6 +26,8 @@ interface MentionsPanelProps {
   account_id: string;
   style: CSS;
 }
+
+const READ_HISTORY_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 
 export function MentionsPanel(props: MentionsPanelProps) {
   const { filter, loading, mentions, user_map, account_id, style } = props;
@@ -48,13 +49,8 @@ export function MentionsPanel(props: MentionsPanelProps) {
     mentions_actions.markAll(project_id, filter);
   }
 
-  function saveAll(project_id: string | null, filter: "read" | "unread") {
-    mentions_actions.saveAll(project_id, filter);
-  }
-
   function renderMarkAll(project_id: string | null) {
     if (isNewsFilter(filter)) return null;
-    if (filter === "saved" || filter === "all") return null;
 
     const opposite: NotificationFilter = filter === "read" ? "unread" : "read";
     return (
@@ -64,15 +60,6 @@ export function MentionsPanel(props: MentionsPanelProps) {
           size="small"
           onClick={(how: "read" | "unread") => markRead(project_id, how)}
         />
-        <Button
-          onClick={(e) => {
-            e.stopPropagation();
-            saveAll(project_id, filter);
-          }}
-          size="small"
-        >
-          <Icon name={BOOKMARK_ICON_NAME} /> Save all
-        </Button>
       </Space>
     );
   }
@@ -86,6 +73,16 @@ export function MentionsPanel(props: MentionsPanelProps) {
   mentions
     .filter((m) => m.get("target") === account_id)
     .filter((m) => {
+      if (filter !== "read") {
+        return true;
+      }
+      const time = m.get("time");
+      if (!(time instanceof Date)) {
+        return false;
+      }
+      return time.getTime() >= Date.now() - READ_HISTORY_WINDOW_MS;
+    })
+    .filter((m) => {
       const status = m.getIn(["users", account_id])?.toJS() ?? {
         read: false,
         saved: false,
@@ -96,10 +93,6 @@ export function MentionsPanel(props: MentionsPanelProps) {
           return status.read === false;
         case "read":
           return status.read === true;
-        case "saved":
-          return status.saved === true;
-        case "all":
-          return true;
         default:
           unreachable(filter);
       }
@@ -115,7 +108,6 @@ export function MentionsPanel(props: MentionsPanelProps) {
       }
       mentions_per_project[project_key].push(
         <NotificationRow
-          filter={filter}
           key={path + time.getTime()}
           id={id}
           mention={m}
@@ -133,7 +125,11 @@ export function MentionsPanel(props: MentionsPanelProps) {
     const panel_key = project_id ?? "__general__";
     project_panels.push(
       <Collapse
-        defaultActiveKey={project_id_order.map((id) => id ?? "__general__")}
+        defaultActiveKey={
+          filter === "read"
+            ? []
+            : project_id_order.map((id) => id ?? "__general__")
+        }
         key={panel_key}
         className="cocalc-notification-list"
       >

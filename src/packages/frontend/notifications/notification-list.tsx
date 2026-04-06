@@ -10,7 +10,6 @@ import { MentionsMap, NotificationFilter } from "./mentions/types";
 import { NewsMap, isNewsFilter } from "./news/types";
 import { MentionsPanel } from "./notification-mentions";
 import { NewsPanel } from "./notification-news";
-import Messages, { isMessagesFilter } from "@cocalc/frontend/messages";
 
 interface Props {
   account_id: string;
@@ -35,13 +34,6 @@ export const NotificationList: React.FC<Props> = ({
   if (isNewsFilter(filter)) {
     body = <NewsPanel news={news} filter={filter} />;
     className = "smc-notificationlist";
-  } else if (isMessagesFilter(filter)) {
-    body = <Messages filter={filter} />;
-    // ATTENTION: this smc-notificationlist that harald wrote for some reason
-    // completely breaks markdown rendering, since it's a css rule that completely
-    // changes has lists are rendered everywhere below.  Thus we absolutely cannot
-    // apply it at the top level.
-    className = undefined;
   } else {
     body = (
       <MentionsPanel

@@ -91,4 +91,19 @@ describe("ThreadImageUpload", () => {
       ),
     );
   });
+
+  it("clears the current image", () => {
+    const onChange = jest.fn();
+    render(
+      <ThreadImageUpload
+        value="https://example.test/image.png"
+        onChange={onChange}
+        modalTitle="Edit Chat Image"
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Clear image" }));
+
+    expect(onChange).toHaveBeenCalledWith("");
+  });
 });

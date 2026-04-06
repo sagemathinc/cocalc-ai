@@ -57,7 +57,37 @@ export class NewsActions extends Actions<NewsState> {
     return store;
   }
 
+  private setNewsReadState(readUntil: number): void {
+    const account_actions = redux.getActions("account");
+    const currentOtherSettings = redux
+      .getStore("account")
+      ?.get("other_settings");
+    const nextOtherSettings =
+      typeof (currentOtherSettings as any)?.set === "function"
+        ? (currentOtherSettings as any)
+            .set("news_read_until", readUntil)
+            .set("news_read_ids", [])
+        : {
+            ...(currentOtherSettings?.toJS?.() ?? currentOtherSettings ?? {}),
+            news_read_until: readUntil,
+            news_read_ids: [],
+          };
+    account_actions.setState({ other_settings: nextOtherSettings });
+    const nextOtherSettingsPlain =
+      typeof (nextOtherSettings as any)?.toJS === "function"
+        ? (nextOtherSettings as any).toJS()
+        : nextOtherSettings;
+    void redux
+      .getTable("account")
+      .set({ other_settings: nextOtherSettingsPlain }, "shallow");
+    this.updateUnreadCount(readUntil);
+  }
+
   public refresh = async (): Promise<void> => {
+    if (!webapp_client.is_signed_in()) {
+      this.setState({ loading: false });
+      return;
+    }
     this.setState({ loading: true });
     try {
       const rows = await webapp_client.conat_client.hub.system.listNews();
@@ -71,9 +101,8 @@ export class NewsActions extends Actions<NewsState> {
         ]),
       );
       this.setState({ loading: false, news });
-      const readUntil = redux
-        .getStore("account")
-        ?.getIn(["other_settings", "news_read_until"]);
+      const otherSettings = redux.getStore("account")?.get("other_settings");
+      const readUntil = otherSettings?.get("news_read_until");
       this.updateUnreadCount(readUntil);
     } catch (err) {
       console.warn("WARNING: news refresh error -- ", err);
@@ -82,19 +111,15 @@ export class NewsActions extends Actions<NewsState> {
   };
 
   public markNewsRead(opts?: { date?: Date; current?: number }): void {
-    // javascript epoch timestamp in milliseconds
     const newest: number =
       opts?.date?.getTime() ?? this.getStore().getNewestTimestamp();
     const current = opts?.current ?? 0;
-    // Math.max, because clicking on a slightly older item shouldn't make newer ones unread
     const until = Math.max(current, newest);
-    const account_actions = redux.getActions("account");
-    account_actions.set_other_settings("news_read_until", until);
+    this.setNewsReadState(until);
   }
 
   public markNewsUnread(): void {
-    const account_actions = redux.getActions("account");
-    account_actions.set_other_settings("news_read_until", 0);
+    this.setNewsReadState(0);
   }
 
   public updateUnreadCount(readUntil: number): void {
@@ -103,10 +128,10 @@ export class NewsActions extends Actions<NewsState> {
     const account_created = redux.getStore("account")?.get("created");
     this.getStore()
       .getNews()
-      .map((m, _id) => {
+      .map((m) => {
         if (m.get("hide", false)) return;
         const date = m.get("date");
-        if (date != null && date.getTime() > readUntil && date < now) {
+        if (date != null && date < now && date.getTime() > (readUntil ?? 0)) {
           // further filter news, which are older then when the user's account has been created
           // if they open the news panel, they'll still see them, though – but initially there is no notification
           if (account_created && date < account_created) return;

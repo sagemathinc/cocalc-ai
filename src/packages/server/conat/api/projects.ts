@@ -53,6 +53,7 @@ import type { LroSummary } from "@cocalc/conat/hub/api/lro";
 import { assertCollab } from "./util";
 import { getProjectFileServerClient } from "@cocalc/server/conat/file-server-client";
 import type {
+  RecentDocumentActivityRow,
   ChatStoreDeleteResult,
   ChatStoreScope,
   ChatStoreStats,
@@ -120,6 +121,9 @@ const projectStorageBreakdownCache = new TTLCache<
 
 const DEFAULT_PROJECT_LOG_LIMIT = 750;
 const MAX_PROJECT_LOG_LIMIT = 2_000;
+const DEFAULT_RECENT_DOCUMENT_ACTIVITY_LIMIT = 200;
+const MAX_RECENT_DOCUMENT_ACTIVITY_LIMIT = 500;
+const DEFAULT_RECENT_DOCUMENT_ACTIVITY_MAX_AGE_S = 21 * 24 * 60 * 60;
 
 function normalizeStoragePath(path?: string): string {
   const normalized = posix.normalize(`${path ?? ""}`.trim() || "/");
@@ -134,6 +138,23 @@ function normalizeProjectLogLimit(limit?: number): number {
     return DEFAULT_PROJECT_LOG_LIMIT;
   }
   return Math.max(1, Math.min(MAX_PROJECT_LOG_LIMIT, Math.floor(limit!)));
+}
+
+function normalizeRecentDocumentActivityLimit(limit?: number): number {
+  if (!Number.isFinite(limit)) {
+    return DEFAULT_RECENT_DOCUMENT_ACTIVITY_LIMIT;
+  }
+  return Math.max(
+    1,
+    Math.min(MAX_RECENT_DOCUMENT_ACTIVITY_LIMIT, Math.floor(limit!)),
+  );
+}
+
+function normalizeRecentDocumentActivityMaxAge(max_age_s?: number): number {
+  if (!Number.isFinite(max_age_s)) {
+    return DEFAULT_RECENT_DOCUMENT_ACTIVITY_MAX_AGE_S;
+  }
+  return Math.max(60, Math.floor(max_age_s!));
 }
 
 function normalizeProjectLogCursor(
@@ -647,6 +668,36 @@ export async function listProjectLog({
     entries: rows.slice(0, pageLimit),
     has_more: rows.length > pageLimit,
   };
+}
+
+export async function listRecentDocumentActivity({
+  account_id,
+  limit,
+  max_age_s,
+}: {
+  account_id: string;
+  limit?: number;
+  max_age_s?: number;
+}): Promise<RecentDocumentActivityRow[]> {
+  const pageLimit = normalizeRecentDocumentActivityLimit(limit);
+  const maxAgeS = normalizeRecentDocumentActivityMaxAge(max_age_s);
+  const cutoff = new Date(Date.now() - maxAgeS * 1000);
+  const { rows } = await getPool().query<RecentDocumentActivityRow>(
+    `SELECT f.id, f.project_id, f.path, f.last_edited, f.users
+       FROM file_use AS f
+      WHERE f.last_edited >= $1
+        AND EXISTS (
+          SELECT 1
+            FROM projects AS p
+           WHERE p.project_id = f.project_id
+             AND p.deleted IS NOT TRUE
+             AND p.users ? $2
+        )
+      ORDER BY f.last_edited DESC NULLS LAST, f.id DESC
+      LIMIT $3`,
+    [cutoff, account_id, pageLimit],
+  );
+  return rows;
 }
 
 export async function getStorageOverview({

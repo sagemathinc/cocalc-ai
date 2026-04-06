@@ -222,7 +222,7 @@ export class PageActions extends Actions<PageState> {
         if (change_history) {
           set_url(getPageUrlPath({ page: "notifications" }));
         }
-        set_window_title(intl.formatMessage(labels.messages_title));
+        set_window_title(intl.formatMessage(labels.notifications));
         return;
       case "auth": {
         if (change_history) {

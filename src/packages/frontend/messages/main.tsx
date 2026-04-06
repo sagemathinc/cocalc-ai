@@ -1,4 +1,4 @@
-import { Button, Flex, Popconfirm, Space, Spin } from "antd";
+import { Button, Flex, Space, Spin } from "antd";
 import { useEffect, useMemo, useState } from "react";
 import { useIntl } from "react-intl";
 
@@ -8,7 +8,7 @@ import ScrollableList from "@cocalc/frontend/components/scrollable-list";
 import { HighlightText } from "@cocalc/frontend/editors/slate/mostly-static-markdown";
 import { labels } from "@cocalc/frontend/i18n";
 import type { Message as MessageType } from "@cocalc/util/db-schema/messages";
-import { get_array_range, plural } from "@cocalc/util/misc";
+import { get_array_range } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 import Message from "./message";
 import { Folder, isFolder } from "./types";
@@ -17,7 +17,6 @@ import {
   expandToThreads,
   getFilteredMessages,
   getThreadId,
-  isExpired,
   isInFolderThreaded,
   isThreadRead,
   setFragment,
@@ -130,21 +129,6 @@ function Actions({
 }) {
   const intl = useIntl();
 
-  const archive = () => {
-    if (folder != "inbox") {
-      return;
-    }
-    redux.getActions("messages").mark({
-      ids: expandToThreads({
-        ids: checkedMessageIds,
-        threads,
-        messages,
-      }),
-      saved: true,
-    });
-    setShowThread(null);
-  };
-
   const deleteCommand = () => {
     redux.getActions("messages").mark({
       ids: expandToThreads({
@@ -152,144 +136,50 @@ function Actions({
         threads,
         messages,
       }),
-      deleted: true,
+      expire: true,
     });
     setShowThread(null);
   };
 
-  useCommand({ archive, ["delete"]: deleteCommand });
+  useCommand({ ["delete"]: deleteCommand });
 
   return (
     <Space wrap>
-      {folder != "sent" && folder != "trash" && folder != "search" && (
-        <Button type="text" disabled={folder != "inbox"} onClick={archive}>
-          <Icon name="download" /> {intl.formatMessage(labels.messages_archive)}
-        </Button>
-      )}
-      {folder != "trash" && (
-        <Button type="text" onClick={deleteCommand}>
-          <Icon name="trash" /> {intl.formatMessage(labels.delete)}
-        </Button>
-      )}
-      {folder == "trash" && (
-        <Popconfirm
-          title={() => {
-            const n = expandToThreads({
+      <Button type="text" onClick={deleteCommand}>
+        <Icon name="trash" /> {intl.formatMessage(labels.delete)}
+      </Button>
+      <Button
+        type="text"
+        disabled={!hasUnread({ checkedMessageIds, messages, threads, folder })}
+        onClick={() => {
+          redux.getActions("messages").mark({
+            ids: expandToThreads({
               ids: checkedMessageIds,
               threads,
               messages,
-            }).size;
-            return `Are you sure you want to delete ${
-              n == 1 ? "this" : "these"
-            } ${n} ${plural(n, "message")} permanently?`;
-          }}
-          onConfirm={() => {
-            redux.getActions("messages").mark({
-              ids: expandToThreads({
-                ids: checkedMessageIds,
-                threads,
-                messages,
-              }),
-              expire: true,
-            });
-            setShowThread(null);
-          }}
-          okText="Yes"
-          cancelText="No"
-        >
-          <Button
-            danger
-            type="text"
-            disabled={!hasNotExpire({ checkedMessageIds, messages })}
-          >
-            <Icon name="trash" /> {intl.formatMessage(labels.delete_forever)}
-          </Button>
-        </Popconfirm>
-      )}
-      {folder != "trash" && (
-        <Button
-          type="text"
-          disabled={
-            !hasUnread({ checkedMessageIds, messages, threads, folder })
-          }
-          onClick={() => {
-            redux.getActions("messages").mark({
-              ids: expandToThreads({
-                ids: checkedMessageIds,
-                threads,
-                messages,
-              }),
-              read: true,
-            });
-          }}
-        >
-          <Icon name="eye" /> {intl.formatMessage(labels.messages_read)}
-        </Button>
-      )}
-      {folder != "trash" && (
-        <Button
-          type="text"
-          disabled={!hasRead({ checkedMessageIds, messages, threads, folder })}
-          onClick={() => {
-            redux.getActions("messages").mark({
-              ids: expandToThreads({
-                ids: checkedMessageIds,
-                threads,
-                messages,
-              }),
-              read: false,
-            });
-          }}
-        >
-          <Icon name="eye-slash" /> {intl.formatMessage(labels.messages_unread)}
-        </Button>
-      )}
-      {folder != "trash" && folder != "search" && folder != "sent" && (
-        <Button
-          type="text"
-          disabled={
-            !enableMoveToInbox({
-              folder,
-              checkedMessageIds,
-              messages,
+            }),
+            read: true,
+          });
+        }}
+      >
+        <Icon name="eye" /> {intl.formatMessage(labels.messages_read)}
+      </Button>
+      <Button
+        type="text"
+        disabled={!hasRead({ checkedMessageIds, messages, threads, folder })}
+        onClick={() => {
+          redux.getActions("messages").mark({
+            ids: expandToThreads({
+              ids: checkedMessageIds,
               threads,
-            })
-          }
-          onClick={() => {
-            redux.getActions("messages").mark({
-              ids: expandToThreads({
-                ids: checkedMessageIds,
-                threads,
-                messages,
-              }),
-              saved: false,
-              deleted: false,
-            });
-            setShowThread(null);
-          }}
-        >
-          <Icon name="container" />{" "}
-          {intl.formatMessage(labels.messages_to_inbox)}
-        </Button>
-      )}
-      {(folder == "trash" || folder == "search") && (
-        <Button
-          type="text"
-          onClick={() => {
-            redux.getActions("messages").mark({
-              ids: expandToThreads({
-                ids: checkedMessageIds,
-                threads,
-                messages,
-              }),
-              deleted: false,
-            });
-            setShowThread(null);
-          }}
-        >
-          <Icon name="undo" /> {intl.formatMessage(labels.undelete)}
-        </Button>
-      )}
+              messages,
+            }),
+            read: false,
+          });
+        }}
+      >
+        <Icon name="eye-slash" /> {intl.formatMessage(labels.messages_unread)}
+      </Button>
     </Space>
   );
 }
@@ -325,19 +215,6 @@ function ShowAllThreads({
     down: () => {
       setCursor(Math.min(filteredMessages.length - 1, cursor + 1));
     },
-    archive: () => {
-      const message = filteredMessages[cursor];
-      if (message) {
-        redux.getActions("messages").mark({
-          ids: expandToThreads({
-            ids: new Set([message.id]),
-            threads,
-            messages,
-          }),
-          saved: true,
-        });
-      }
-    },
     ["delete"]: () => {
       if (checkedMessageIds.size > 0) {
         // handled by action button
@@ -348,7 +225,7 @@ function ShowAllThreads({
         // current selected message
         redux.getActions("messages").mark({
           ids: new Set([message.id]),
-          deleted: true,
+          expire: true,
         });
       }
     },
@@ -637,28 +514,6 @@ function ShowOneThread({
   );
 }
 
-function enableMoveToInbox({ folder, checkedMessageIds, messages, threads }) {
-  if (
-    folder == "inbox" ||
-    folder == "sent" ||
-    folder == "drafts" ||
-    folder == "search"
-  ) {
-    return false;
-  }
-  if (
-    folder == "all" &&
-    everyMessageIsInInbox({ checkedMessageIds, messages, threads })
-  ) {
-    // every message is already in the inbox
-    return false;
-  }
-  if (folder == "trash") {
-    return true;
-  }
-  return true;
-}
-
 function hasUnread({ checkedMessageIds, messages, threads, folder }) {
   if (folder == "drafts") {
     return false;
@@ -677,30 +532,6 @@ function hasRead({ checkedMessageIds, messages, threads, folder }) {
   }
   for (const id of checkedMessageIds) {
     if (isThreadRead({ threads, message: messages.get(id) })) {
-      return true;
-    }
-  }
-  return false;
-}
-
-function everyMessageIsInInbox({ checkedMessageIds, messages, threads }) {
-  for (const id of checkedMessageIds) {
-    if (
-      !isInFolderThreaded({
-        threads,
-        message: messages.get(id),
-        folder: "inbox",
-      })
-    ) {
-      return false;
-    }
-  }
-  return true;
-}
-
-function hasNotExpire({ checkedMessageIds, messages }) {
-  for (const id of checkedMessageIds) {
-    if (!isExpired(messages.get(id))) {
       return true;
     }
   }

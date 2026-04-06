@@ -81,7 +81,7 @@ export default function Compose({
       });
       await actions.mark({
         id,
-        deleted: true,
+        expire: true,
       });
     } catch (_err) {}
   };
@@ -436,12 +436,10 @@ export function ComposeButton(props) {
       {...props}
       onClick={() => {
         redux.getActions("messages")?.setState({ compose: true });
-        if (!redux.getStore("mentions").get("filter").startsWith("messages-")) {
-          redux.getActions("mentions").setState({
-            filter: "messages-sent",
-            id: undefined,
-          });
-        }
+        redux.getActions("mentions").setState({
+          filter: "unread",
+          id: undefined,
+        });
       }}
     >
       <Icon name="pencil" />{" "}

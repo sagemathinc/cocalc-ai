@@ -12,9 +12,27 @@ export function getNotificationFilterFromFragment(hash?): {
 } {
   const fragmentId = hash ? Fragment.decode(hash) : Fragment.get();
   if (fragmentId == null) {
-    return { filter: "messages-inbox" as NotificationFilter };
+    return { filter: "unread" };
   }
   const { page: filter, id: id0 } = fragmentId;
+  if (
+    filter === "messages-inbox" ||
+    filter === "messages-sent" ||
+    filter === "messages-drafts" ||
+    filter === "messages-search" ||
+    filter === "saved" ||
+    filter === "all"
+  ) {
+    return { filter: "unread" };
+  }
+  if (
+    filter === "announcement" ||
+    filter === "feature" ||
+    filter === "platform" ||
+    filter === "about"
+  ) {
+    return { filter: "allNews" };
+  }
   if (filter != null && isNotificationFilter(filter)) {
     let id: number | undefined = undefined;
     try {
@@ -22,10 +40,7 @@ export function getNotificationFilterFromFragment(hash?): {
         id = parseInt(id0);
       }
     } catch (_err) {}
-    if (filter == "messages-search") {
-      return { filter: "messages-all", id };
-    }
     return { filter, id };
   }
-  return { filter: "messages-inbox" as NotificationFilter };
+  return { filter: "unread" };
 }

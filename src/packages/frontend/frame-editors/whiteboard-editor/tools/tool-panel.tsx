@@ -26,7 +26,11 @@ import ColorPicker from "@cocalc/frontend/components/color-picker";
 import IconSelect from "@cocalc/frontend/components/icon-select";
 import { getCountdownMoment } from "@cocalc/frontend/editors/stopwatch/stopwatch";
 import { AspectRatio } from "./frame";
-import { ResetButton, SELECTED } from "./common";
+import {
+  ResetButton,
+  SELECTED,
+  WHITEBOARD_COMPACT_BUTTON_STYLE,
+} from "./common";
 import { Tool, TOOLS } from "./desc";
 export type { Tool };
 import { ELEMENTS } from "../elements/desc";
@@ -59,9 +63,19 @@ interface Props<Params> {
   style?: CSSProperties;
   editParamsStyle?: CSSProperties;
   presetStyle?: CSSProperties;
+  presetContainerStyle?: CSSProperties;
   editableParams: Set<ParamName>;
   buttonTitle?: (Params) => string;
 }
+
+const DEFAULT_PRESET_CONTAINER_STYLE: CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+  justifyItems: "center",
+  columnGap: "6px",
+  rowGap: "10px",
+  padding: "2px 6px 6px",
+};
 
 export default function ToolPanel<Params>({
   presetManager,
@@ -72,6 +86,7 @@ export default function ToolPanel<Params>({
   style,
   editParamsStyle,
   presetStyle,
+  presetContainerStyle,
   editableParams,
   buttonTitle,
 }: Props<Params>) {
@@ -101,8 +116,10 @@ export default function ToolPanel<Params>({
     return (
       <Button
         style={{
+          ...WHITEBOARD_COMPACT_BUTTON_STYLE,
           padding: "5px",
           height: "50px",
+          minHeight: "50px",
           ...presetStyle,
         }}
         type="text"
@@ -138,8 +155,15 @@ export default function ToolPanel<Params>({
         >
           <div
             style={{
-              border: `3px solid ${id == selected ? SELECTED : "white"}`,
-              borderRadius: "3px",
+              border:
+                id == selected ? `2px solid ${SELECTED}` : "1px solid #d9d9d9",
+              background: id == selected ? "#e6f4ff" : "#fff",
+              borderRadius: "8px",
+              padding: "4px",
+              boxShadow:
+                id == selected
+                  ? "0 0 0 1px rgba(22,119,255,0.12)"
+                  : "0 1px 2px rgba(0,0,0,0.06)",
             }}
           >
             {ButtonPreview != null ? (
@@ -177,7 +201,14 @@ export default function ToolPanel<Params>({
             {TOOLS[tool].tip}
           </div>
           <Tooltip title={TOOLS[tool].tip} mouseEnterDelay={0.7}>
-            <Button type="text">
+            <Button
+              type="text"
+              style={{
+                ...WHITEBOARD_COMPACT_BUTTON_STYLE,
+                width: "100%",
+                minHeight: "28px",
+              }}
+            >
               <Icon
                 style={{ color: SELECTED, fontSize: "20px" }}
                 name={TOOLS[tool].icon}
@@ -189,7 +220,14 @@ export default function ToolPanel<Params>({
       {AlternateTop != null && (
         <AlternateTop selected={selected} setSelected={setSelected} />
       )}
-      <div>{presetButtons}</div>
+      <div
+        style={{
+          ...DEFAULT_PRESET_CONTAINER_STYLE,
+          ...presetContainerStyle,
+        }}
+      >
+        {presetButtons}
+      </div>
       <ResetButton
         onClick={() => {
           setPresets(presetManager.DEFAULTS);

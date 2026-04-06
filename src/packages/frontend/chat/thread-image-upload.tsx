@@ -1,4 +1,4 @@
-import { Alert, Upload } from "antd";
+import { Alert, Button, Space, Typography, Upload } from "antd";
 import ImgCrop from "antd-img-crop";
 import { InboxOutlined } from "@ant-design/icons";
 import { React, useState } from "@cocalc/frontend/app-framework";
@@ -47,6 +47,23 @@ export function ThreadImageUpload({
 
   return (
     <div>
+      <Space
+        align="center"
+        style={{
+          width: "100%",
+          justifyContent: "space-between",
+          marginBottom: 8,
+        }}
+      >
+        <Typography.Text strong>Image</Typography.Text>
+        <Button
+          size="small"
+          disabled={!value?.trim()}
+          onClick={() => onChange("")}
+        >
+          Clear image
+        </Button>
+      </Space>
       <ImgCrop
         modalTitle={modalTitle}
         cropShape="rect"

@@ -12,7 +12,7 @@
 import { isChatPath } from "./paths";
 import { Button, Tooltip } from "antd";
 import { debounce } from "lodash";
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { UsersViewing } from "@cocalc/frontend/account/avatar/users-viewing";
 import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
@@ -21,6 +21,8 @@ import { Icon } from "@cocalc/frontend/components/icon";
 import track from "@cocalc/frontend/user-tracking";
 import { labels } from "../i18n";
 import { lite } from "@cocalc/frontend/lite";
+import type { ChatActions } from "./actions";
+import { ensureSideChatActions, hasUnreadSideChat } from "./unread";
 
 export type ChatState =
   | "" // not opened (also undefined counts as not open)
@@ -68,6 +70,9 @@ export function ChatIndicator({ project_id, path, chatState }: Props) {
 
 function ChatButton({ project_id, path, chatState }) {
   const intl = useIntl();
+  const account_id = useTypedRedux("account", "account_id");
+  const [chatActions, setChatActions] = useState<ChatActions | undefined>();
+  const [chatVersion, setChatVersion] = useState(0);
 
   const toggleChat = debounce(
     () => {
@@ -83,12 +88,32 @@ function ChatButton({ project_id, path, chatState }) {
     1000,
     { leading: true },
   );
-  const fileUse = useTypedRedux("file_use", "file_use");
+
+  useEffect(() => {
+    if (isChatPath(path)) {
+      setChatActions(undefined);
+      return;
+    }
+    setChatActions(ensureSideChatActions(project_id, path));
+  }, [project_id, path]);
+
+  useEffect(() => {
+    if (!chatActions?.store) {
+      return;
+    }
+    const refresh = () => {
+      setChatVersion((value) => value + 1);
+    };
+    chatActions.store.on("change", refresh);
+    refresh();
+    return () => {
+      chatActions.store?.removeListener("change", refresh);
+    };
+  }, [chatActions]);
+
   const isNewChat = useMemo(
-    () =>
-      !!redux.getStore("file_use")?.get_file_info(project_id, path)
-        ?.is_unseenchat,
-    [fileUse, project_id, path],
+    () => hasUnreadSideChat({ actions: chatActions, account_id }),
+    [account_id, chatActions, chatVersion],
   );
 
   if (isChatPath(path)) {

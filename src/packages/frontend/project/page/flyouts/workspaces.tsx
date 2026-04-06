@@ -129,6 +129,12 @@ type WorkspaceOpenFileActivity = {
   other: number;
 };
 
+type WorkspaceSelectionTagChoice = {
+  key: string;
+  label: string;
+  selection: WorkspaceSelection;
+};
+
 type WorkspaceBulkSelectionInput = {
   workspaceIds: string[];
   selectedIds: string[];
@@ -466,6 +472,21 @@ function selectionValue(selection: WorkspaceSelection): string {
     case "workspace":
       return `workspace:${selection.workspace_id}`;
   }
+}
+
+export function workspaceSelectionTagChoices(): WorkspaceSelectionTagChoice[] {
+  return [
+    {
+      key: "all",
+      label: "All tabs",
+      selection: { kind: "all" },
+    },
+    {
+      key: "unscoped",
+      label: "Unscoped",
+      selection: { kind: "unscoped" },
+    },
+  ];
 }
 
 function makeDraft(
@@ -1398,33 +1419,13 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
           >
             <Button size="small">?</Button>
           </Popover>
-          <Tag.CheckableTag
-            checked={selectionValue(workspaces.selection) === "all"}
-            onChange={() => select({ kind: "all" })}
-          >
-            All tabs
-          </Tag.CheckableTag>
-          <Tag.CheckableTag
-            checked={selectionValue(workspaces.selection) === "unscoped"}
-            onChange={() => select({ kind: "unscoped" })}
-          >
-            Unscoped
-          </Tag.CheckableTag>
-          {workspaces.records.map((record) => (
+          {workspaceSelectionTagChoices().map((tag) => (
             <Tag.CheckableTag
-              key={record.workspace_id}
-              checked={
-                selectionValue(workspaces.selection) ===
-                `workspace:${record.workspace_id}`
-              }
-              onChange={() =>
-                select({
-                  kind: "workspace",
-                  workspace_id: record.workspace_id,
-                })
-              }
+              key={tag.key}
+              checked={selectionValue(workspaces.selection) === tag.key}
+              onChange={() => select(tag.selection)}
             >
-              {record.theme.title}
+              {tag.label}
             </Tag.CheckableTag>
           ))}
           <Tooltip title={`Suggested path: ${defaultRootPath}`}>

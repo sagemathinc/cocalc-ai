@@ -11,6 +11,19 @@ import { SCHEMA } from "@cocalc/util/schema";
 
 type Mesg = iMessage | Message;
 
+function normalizeAccountIds(
+  account_ids: Array<string | null | undefined>,
+): string[] {
+  return Array.from(
+    new Set(
+      account_ids.filter(
+        (account_id): account_id is string =>
+          typeof account_id === "string" && account_id.trim() !== "",
+      ),
+    ),
+  );
+}
+
 // WARNING: If you change or add fields and logic that could impact the "number of
 // messages in the inbox that are not read", make sure to also update
 //  packages/database/postgres/messages.ts
@@ -52,9 +65,7 @@ export function isInFolderThreaded({
       folder == "inbox" ||
       folder == "sent" ||
       folder == "drafts" ||
-      folder == "search" ||
-      folder == "starred" ||
-      folder == "liked"
+      folder == "search"
     ) {
       // inbox = at least one message in the thread is in inbox
       // sent = at least one message was sent by us
@@ -65,20 +76,6 @@ export function isInFolderThreaded({
         }
       }
       return false;
-    }
-    if (folder == "trash") {
-      // trash = every message in thread that we received is in trash
-      // (expect expire when it's just gone or about to be)
-      for (const message of thread) {
-        if (!isDeleted(message)) {
-          return false;
-        }
-      }
-      return true;
-    }
-    if (folder == "all") {
-      // all = same as not being in trash
-      return !isInFolderThreaded({ message, threads, folder: "trash" });
     }
     return true;
   }
@@ -113,20 +110,9 @@ function isInFolderNotThreaded({
     return search.has(get(message, "id"));
   }
 
-  // trash folder is exactly the deleted messages:
   const deleted = isDeleted(message);
-  if (folder == "trash") {
-    return deleted;
-  }
   if (deleted) {
     return false;
-  }
-
-  if (folder == "starred") {
-    return isStarred(message);
-  }
-  if (folder == "liked") {
-    return isLiked(message);
   }
 
   const draft = isDraft(message);
@@ -149,84 +135,11 @@ function isInFolderNotThreaded({
   if (folder == "inbox") {
     return !getBitField(message, "saved") && !deleted && !draft;
   }
-  if (folder == "all") {
-    return !deleted && !draft;
-  }
-
   return false;
 }
 
 export function isRead(message: Mesg) {
   return getBitField(message, "read");
-}
-
-export function isStarred(message: Mesg) {
-  return getBitField(message, "starred");
-}
-
-export function isLikedByMe(message: Mesg) {
-  return getBitField(message, "liked");
-}
-
-export function isLiked(message: Mesg) {
-  return likeCount({ message, inThread: true, threads: undefined }) > 0;
-}
-
-function countOnes(str: string): number {
-  return str.split("").filter((char) => char === "1").length;
-}
-
-export function likeCount({ message, inThread, threads }): number {
-  if (inThread) {
-    // just this message
-    const b = get(message, "liked");
-    if (!b) {
-      return 0;
-    }
-    return countOnes(b);
-  } else {
-    const thread = getThread({ message, threads });
-    // sum of like counts over messages in the thread
-    let m = 0;
-    for (const mesg of thread) {
-      m += likeCount({ message: mesg, inThread: true, threads });
-    }
-    return m;
-  }
-}
-
-export function likedBy({ message, inThread, threads }): string[] {
-  const from_id = get(message, "from_id");
-  let to_ids = get(message, "to_ids") ?? [];
-  if (iList.isList(to_ids)) {
-    to_ids = to_ids.toJS();
-  }
-  const account_ids = new Set<string>();
-  if (inThread) {
-    // just this message
-    const b = get(message, "liked") ?? "";
-    if (b[0] == "1") {
-      account_ids.add(from_id);
-    }
-    for (let i = 1; i < b.length; i++) {
-      if (b[i] == "1") {
-        account_ids.add(to_ids[i - 1]);
-      }
-    }
-  } else {
-    const thread = getThread({ message, threads });
-    // max of like counts over messages in the thread
-    for (const mesg of thread) {
-      for (const account_id of likedBy({
-        message: mesg,
-        inThread: true,
-        threads,
-      })) {
-        account_ids.add(account_id);
-      }
-    }
-  }
-  return Array.from(account_ids);
 }
 
 // true if every single message in the thread is read
@@ -587,25 +500,33 @@ export function participantsInThread({
     // so we always show the root. people can't be added to an existing thread.
     for (const m of thread) {
       for (const account_id of get(m, "to_ids")) {
-        ids.add(account_id);
+        if (typeof account_id === "string" && account_id.trim() !== "") {
+          ids.add(account_id);
+        }
       }
       const from_id = get(m, "from_id");
-      ids.add(from_id);
+      if (typeof from_id === "string" && from_id.trim() !== "") {
+        ids.add(from_id);
+      }
     }
   } else {
-    ids = new Set(get(message, "to_ids").concat([get(message, "from_id")]));
+    ids = new Set(
+      normalizeAccountIds(
+        (get(message, "to_ids") ?? []).concat([get(message, "from_id")]),
+      ),
+    );
   }
   return Array.from(ids);
 }
 
 export function excludeSelf(account_ids: string[]): string[] {
-  return account_ids.filter(
+  return normalizeAccountIds(account_ids).filter(
     (account_id) => account_id != webapp_client.account_id,
   );
 }
 
 export function excludeSelfUnlessAlone(account_ids: string[]): string[] {
-  account_ids = account_ids.filter(
+  account_ids = normalizeAccountIds(account_ids).filter(
     (account_id) => account_id != webapp_client.account_id,
   );
   if (account_ids.length == 0) {
@@ -627,11 +548,14 @@ export function sendersInThread({
   if (thread != null) {
     ids = new Set<string>();
     for (const m of thread) {
-      ids.add(get(m, "from_id"));
+      const from_id = get(m, "from_id");
+      if (typeof from_id === "string" && from_id.trim() !== "") {
+        ids.add(from_id);
+      }
     }
     return Array.from(ids);
   } else {
-    return [get(message, "from_id")];
+    return normalizeAccountIds([get(message, "from_id")]);
   }
 }
 
@@ -649,11 +573,13 @@ export function recipientsInThread({
     ids = new Set<string>();
     for (const m of thread) {
       for (const account_id of get(m, "to_ids")) {
-        ids.add(account_id);
+        if (typeof account_id === "string" && account_id.trim() !== "") {
+          ids.add(account_id);
+        }
       }
     }
     return Array.from(ids);
   } else {
-    return get(message, "to_ids");
+    return normalizeAccountIds(get(message, "to_ids") ?? []);
   }
 }

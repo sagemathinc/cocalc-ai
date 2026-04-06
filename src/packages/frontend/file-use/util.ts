@@ -18,9 +18,6 @@ export async function open_file_use_entry(
   const f = redux.getActions("file_use");
   if (f != null) f.mark_file(project_id, path, "read");
 
-  const p = redux.getActions("page");
-  if (p != null) p.toggle_show_file_use();
-
   // Start the project opening. This may trigger a session restore.
   redux.getActions("projects").open_project({ project_id, switch_to: true });
   // Now open the file.

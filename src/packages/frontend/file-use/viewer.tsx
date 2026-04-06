@@ -7,6 +7,7 @@ import { List as iList, Map as iMap } from "immutable";
 import { useEffect, useRef, useState } from "react";
 import { Virtuoso, VirtuosoHandle } from "react-virtuoso";
 
+import { Button } from "antd";
 import { Alert, Col, Row } from "@cocalc/frontend/antd-bootstrap";
 import { redux } from "@cocalc/frontend/app-framework";
 import useCounter from "@cocalc/frontend/app-framework/counter-hook";
@@ -26,6 +27,9 @@ interface Props {
   user_map: iMap<string, any>;
   project_map: iMap<string, any>;
   account_id: string;
+  onClose?: () => void;
+  onRefresh?: () => void;
+  title?: React.ReactNode;
 }
 
 type FileUseInfoMap = iMap<string, any>;
@@ -35,6 +39,9 @@ export default function FileUseViewer({
   user_map,
   project_map,
   account_id,
+  onClose,
+  onRefresh,
+  title = "Recent document activity",
 }: Props) {
   const [search, _setSearch] = useState<string>("");
   const [cursor, setCursor] = useState<number>(0); // cursor position
@@ -96,13 +103,8 @@ export default function FileUseViewer({
             open_selected();
           }}
           on_escape={(before) => {
-            if (!before) {
-              const a = redux.getActions("page");
-              if (a != null) {
-                (a as any).toggle_show_file_use();
-              }
-              setCursor(0);
-            }
+            if (!before) onClose?.();
+            setCursor(0);
           }}
           on_up={() => set_cursor(cursor - 1)}
           on_down={() => set_cursor(cursor + 1)}
@@ -111,19 +113,25 @@ export default function FileUseViewer({
     );
   }
 
-  function click_mark_all_read(): void {
+  async function click_mark_all_read(): Promise<void> {
     const a: FileUseActions = redux.getActions("file_use");
     if (a != null) {
-      a.mark_all("read");
+      await a.mark_all("read");
     }
-    const p = redux.getActions("page");
-    if (p != null) {
-      (p as any).toggle_show_file_use();
-    }
+    await onRefresh?.();
   }
 
   function render_mark_all_read_button() {
-    return <MarkAll how={"seen"} onClick={() => click_mark_all_read()} />;
+    return <MarkAll how={"read"} onClick={() => click_mark_all_read()} />;
+  }
+
+  function render_refresh_button() {
+    if (!onRefresh) return null;
+    return (
+      <Button onClick={() => void onRefresh()} size="small">
+        Refresh
+      </Button>
+    );
   }
 
   function open_selected(): void {
@@ -179,9 +187,20 @@ export default function FileUseViewer({
   return (
     <div className={"smc-vfill smc-file-use-viewer"}>
       <VisibleMDLG>
-        <Title level={4} style={{ margin: "15px", textAlign: "center" }}>
-          Recently edited documents and chat
-        </Title>
+        <div
+          style={{
+            margin: "15px",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: "10px",
+          }}
+        >
+          <Title level={4} style={{ margin: 0, textAlign: "center" }}>
+            {title}
+          </Title>
+          {render_refresh_button()}
+        </div>
       </VisibleMDLG>
       <Row key="top" style={{ marginBottom: "5px" }}>
         <Col sm={9}>{render_search_box()}</Col>

@@ -2418,26 +2418,23 @@ export class ChatActions extends Actions<ChatState> {
     if (!sourceThreadId) {
       throw new Error("Invalid thread id");
     }
-    const threadMessages = this.getMessagesInThread(sourceThreadId) ?? [];
-    if (!threadMessages.length) {
-      throw new Error("Unable to locate thread root");
-    }
-    const rootMessage =
-      threadMessages.find((msg) => !parentMessageId(msg)) ?? threadMessages[0];
-    const rootDate = dateValue(rootMessage);
-    const rootIso = toISOString(rootDate);
-    if (!rootIso) {
-      throw new Error("Invalid thread root date");
-    }
     const sourceMetadata = this.getThreadMetadata(sourceThreadId, {
       threadId: sourceThreadId,
     });
+    const threadMessages = this.getMessagesInThread(sourceThreadId) ?? [];
+    const rootMessage =
+      threadMessages.find((msg) => !parentMessageId(msg)) ?? threadMessages[0];
+    const rootIso =
+      toISOString(dateValue(rootMessage)) ??
+      this.getThreadRootDateIso(sourceThreadId) ??
+      toISOString(sourceMetadata.latest_chat_date_ms);
     const latestMessage =
       threadMessages.length > 0
         ? threadMessages[threadMessages.length - 1]
         : null;
-    const latestDate = latestMessage ? dateValue(latestMessage) : null;
-    const latestIso = latestDate ? toISOString(latestDate) : undefined;
+    const latestIso =
+      toISOString(latestMessage ? dateValue(latestMessage) : undefined) ??
+      toISOString(sourceMetadata.latest_chat_date_ms);
 
     const sourceConfig =
       sourceMetadata.acp_config ?? this.getCodexConfig(sourceThreadId);
@@ -2498,11 +2495,14 @@ export class ChatActions extends Actions<ChatState> {
       editing: [],
     };
     (newMessage as any).name = title;
-    (newMessage as any).forked_from_root_date = rootIso;
+    if (rootIso) {
+      (newMessage as any).forked_from_root_date = rootIso;
+    }
     (newMessage as any).forked_from_title =
       sourceTitle?.trim() ||
       field<string>(rootMessage, "name") ||
-      newest_content(rootMessage).trim() ||
+      sourceMetadata.name ||
+      (rootMessage ? newest_content(rootMessage).trim() : "") ||
       "Untitled thread";
     if (latestIso) {
       (newMessage as any).forked_from_latest_message_date = latestIso;

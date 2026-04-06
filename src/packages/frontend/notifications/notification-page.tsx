@@ -22,6 +22,8 @@ export function NotificationPage() {
   const account_id = useTypedRedux("account", "account_id");
   const mentions = useTypedRedux("mentions", "mentions");
   const loading = useTypedRedux("mentions", "loading");
+  const unread_count = useTypedRedux("mentions", "unread_count") ?? 0;
+  const news_unread = useTypedRedux("news", "unread") ?? 0;
   const news = useTypedRedux("news", "news");
   const user_map = useTypedRedux("users", "user_map");
   const filter: NotificationFilter = useTypedRedux("mentions", "filter");
@@ -40,10 +42,8 @@ export function NotificationPage() {
             id: "notifications.page.intro",
             description:
               "The @ sign in front of a user name handle is used to notify someone else.",
-            defaultMessage: `This page contains messages, news or when someone used "@your_name" to explicitly mention you as a collaborator in a <A1>Chatroom</A1>,
+            defaultMessage: `This page contains news and when someone used "@your_name" to explicitly mention you as a collaborator in a <A1>Chatroom</A1>,
             in the context of <A2>teaching</A2>, or <A3>when editing files.</A3>
-            Messages are similar to email and allow you to send direct messages to any user of CoCalc,
-            with embedding images, markdown, LaTeX formulas, and handling of internal links.
             When editing text in a Jupyter notebook or whiteboard,
             type an @ symbol, then select the name of a collaborator,
             and they will receive an email and be listed under mentions, telling them that
@@ -76,6 +76,8 @@ export function NotificationPage() {
         <NotificationNav
           filter={filter}
           on_click={redux.getActions("mentions").set_filter}
+          unread_count={unread_count}
+          news_unread={news_unread}
           style={{
             display: "flex",
             flexDirection: "column",
@@ -121,7 +123,7 @@ export function NotificationPage() {
           style={{ textAlign: "center", flex: "0 0 auto", marginTop: "10px" }}
         >
           <Icon name="comments" style={{ marginRight: "10px" }} />{" "}
-          {intl.formatMessage(labels.messages_title)}
+          {intl.formatMessage(labels.notifications)}
           <Button
             type="link"
             style={{ fontSize: "12pt" }}
@@ -136,7 +138,7 @@ export function NotificationPage() {
           title={
             <>
               <Icon name="question-circle" />{" "}
-              {intl.formatMessage(labels.messages_title)}
+              {intl.formatMessage(labels.notifications)}
             </>
           }
           open={showHelp}

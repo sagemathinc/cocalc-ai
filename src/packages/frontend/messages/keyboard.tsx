@@ -44,25 +44,12 @@ function handler(e) {
       name = "up";
       break;
 
-    case "e": // official
-    case "y": // what I use and seems missing but it works for me in gmail (?)
-      name = "archive";
-      break;
-
     case "x":
       name = "select-conversation";
       break;
 
     case "#":
       name = "delete";
-      break;
-
-    case "s":
-      name = "toggle-star";
-      break;
-
-    case "l":
-      name = "toggle-like";
       break;
 
     default:

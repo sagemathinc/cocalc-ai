@@ -25,6 +25,7 @@ import {
   setBitField,
   participantsInThread,
   excludeSelfUnlessAlone,
+  excludeSelf,
 } from "./util";
 import { debounce } from "lodash";
 import { init as initGroups } from "@cocalc/frontend/groups/redux";
@@ -207,6 +208,14 @@ export class MessagesActions extends Actions<MessagesState> {
     thread_id?: number;
     sent?: Date;
   }) => {
+    to_ids = Array.from(
+      new Set(
+        (Array.isArray(to_ids) ? to_ids : []).filter(
+          (account_id) =>
+            typeof account_id === "string" && account_id.trim() !== "",
+        ),
+      ),
+    );
     const { query } = await webapp_client.async_query({
       query: {
         create_message: {
@@ -228,6 +237,22 @@ export class MessagesActions extends Actions<MessagesState> {
     return id;
   };
 
+  private normalizeAccountIds = (value: unknown): string[] => {
+    const raw = Array.isArray(value)
+      ? value
+      : typeof (value as any)?.toJS === "function"
+        ? (value as any).toJS()
+        : [];
+    return Array.from(
+      new Set(
+        raw.filter(
+          (account_id): account_id is string =>
+            typeof account_id === "string" && account_id.trim() !== "",
+        ),
+      ),
+    );
+  };
+
   createReply = async ({
     message,
     replyAll,
@@ -235,21 +260,50 @@ export class MessagesActions extends Actions<MessagesState> {
     message: Message;
     replyAll?: boolean;
   }) => {
+    const store = this.getStore();
+    const threads = store.get("threads");
+    const threadParticipants = excludeSelfUnlessAlone(
+      participantsInThread({ message, threads }),
+    );
+    const otherThreadParticipants = excludeSelf(
+      participantsInThread({ message, threads }),
+    );
+    const from_id = get(message, "from_id");
     let to_ids: string[];
     if (replyAll) {
-      const store = this.getStore();
-      const threads = store.get("threads");
-      to_ids = excludeSelfUnlessAlone(
-        participantsInThread({ message, threads }),
-      );
+      to_ids = threadParticipants;
     } else {
-      to_ids =
-        message.from_id == webapp_client.account_id
-          ? [message.to_ids[0]]
-          : [message.from_id];
+      if (from_id == webapp_client.account_id) {
+        const normalizedRecipients = this.normalizeAccountIds(
+          get(message, "to_ids"),
+        );
+        const directRecipients = excludeSelf(normalizedRecipients);
+        to_ids =
+          directRecipients.length > 0
+            ? directRecipients
+            : normalizedRecipients.length === 1 &&
+                normalizedRecipients[0] === webapp_client.account_id
+              ? [webapp_client.account_id]
+              : otherThreadParticipants;
+      } else if (typeof from_id === "string" && from_id.trim() !== "") {
+        to_ids = [from_id];
+      } else {
+        to_ids = otherThreadParticipants;
+      }
+    }
+    to_ids = Array.from(
+      new Set(
+        (Array.isArray(to_ids) ? to_ids : []).filter(
+          (account_id) =>
+            typeof account_id === "string" && account_id.trim() !== "",
+        ),
+      ),
+    );
+    if (to_ids.length === 0) {
+      throw Error("message has no valid reply recipient");
     }
 
-    const subject = replySubject(message.subject);
+    const subject = replySubject(get(message, "subject"));
     return await this.createDraft({
       to_ids,
       thread_id: getThreadId(message),
