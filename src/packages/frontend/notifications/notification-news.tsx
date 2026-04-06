@@ -28,17 +28,6 @@ interface NewsPanelProps {
   filter: NewsFilter;
 }
 
-function toReadIds(value: unknown): Set<string> {
-  const rawValue =
-    typeof (value as any)?.toJS === "function" ? (value as any).toJS() : value;
-  const raw = Array.isArray(rawValue) ? rawValue : [];
-  return new Set(
-    raw.filter(
-      (id): id is string => typeof id === "string" && id.trim().length > 0,
-    ),
-  );
-}
-
 export function NewsPanel(props: NewsPanelProps) {
   const { news, filter } = props;
   const intl = useIntl();
@@ -47,7 +36,6 @@ export function NewsPanel(props: NewsPanelProps) {
   const account_other = useTypedRedux("account", "other_settings");
   const news_read_until: number | undefined =
     account_other?.get("news_read_until");
-  const news_read_ids = toReadIds(account_other?.get("news_read_ids"));
 
   const [newsData, anyUnread]: [NewsItemWebapp[], boolean] = useMemo(() => {
     if (!isNewsFilter(filter)) return [[], false];
@@ -75,23 +63,15 @@ export function NewsPanel(props: NewsPanelProps) {
       .sort((a: any, b: any) => -cmp_Date(a.date, b.date)) as any;
     // if any entry in data is unread, then anyUnread is true
     const anyUnread = data.some(
-      (n: any) =>
-        n?.date.getTime() > (news_read_until ?? 0) && !news_read_ids.has(n.id),
+      (n: any) => n?.date.getTime() > (news_read_until ?? 0),
     );
     return [data, anyUnread];
-  }, [news, filter, news_read_until, news_read_ids]);
+  }, [news, filter, news_read_until]);
 
   function newsItemOnClick(e: React.MouseEvent, news: NewsItemWebapp) {
-    const { id } = news;
     e.stopPropagation();
-    const url = `${BASE_URL}/news/${id}`;
-    news_actions.markNewsRead({ item: news });
+    const url = `${BASE_URL}/news/${news.id}`;
     open_new_tab(url);
-  }
-
-  function markNewsItemRead(e: React.MouseEvent, news: NewsItemWebapp) {
-    e.stopPropagation();
-    news_actions.markNewsRead({ item: news });
   }
 
   function renderTags(tags?: string[]) {
@@ -146,8 +126,7 @@ export function NewsPanel(props: NewsPanelProps) {
   function renderNewsItem(n: NewsItemWebapp) {
     const { id, title, channel, date, tags } = n;
     const icon = CHANNELS_ICONS[channel] as IconName;
-    const isUnread =
-      date.getTime() > (news_read_until ?? 0) && !news_read_ids.has(id);
+    const isUnread = date.getTime() > (news_read_until ?? 0);
     return (
       <List.Item
         key={id}
@@ -156,16 +135,6 @@ export function NewsPanel(props: NewsPanelProps) {
           backgroundColor: isUnread ? COLORS.ANTD_BG_BLUE_L : undefined,
         }}
         actions={[
-          isUnread ? (
-            <Button
-              key="mark-read"
-              type="text"
-              ghost={true}
-              onClick={(e) => markNewsItemRead(e, n)}
-            >
-              <Icon name="check-square" /> {intl.formatMessage(MSGS.mark_read)}
-            </Button>
-          ) : null,
           <Button
             key="open"
             type="text"
