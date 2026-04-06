@@ -144,7 +144,7 @@ export default function FileUseViewer({
       ) : null}
       <Virtuoso
         ref={virtuosoRef}
-        style={{ flex: 1, minHeight: 0 }}
+        style={{ flex: 1, minHeight: 0, overflowX: "hidden" }}
         totalCount={visibleRows.length}
         itemContent={(index) => {
           const info = visibleRows[index]?.row;
