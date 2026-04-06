@@ -1,9 +1,17 @@
 import podman from "./command";
 
 const executeCodeMock = jest.fn();
+const podmanEnvMock = jest.fn(() => ({
+  XDG_RUNTIME_DIR: "/tmp/podman-test-runtime",
+  CONTAINERS_CGROUP_MANAGER: "cgroupfs",
+}));
 
 jest.mock("@cocalc/backend/execute-code", () => ({
   executeCode: (...args: any[]) => executeCodeMock(...args),
+}));
+
+jest.mock("./env", () => ({
+  podmanEnv: () => podmanEnvMock(),
 }));
 
 jest.mock("@cocalc/backend/logger", () => () => ({
@@ -14,6 +22,7 @@ jest.mock("@cocalc/backend/logger", () => () => ({
 describe("podman command wrapper", () => {
   beforeEach(() => {
     executeCodeMock.mockReset();
+    podmanEnvMock.mockClear();
   });
 
   it("retries once after podman stale pause-process errors", async () => {
@@ -32,6 +41,10 @@ describe("podman command wrapper", () => {
       command: "podman",
       args: ["run", "--rm", "example"],
       err_on_exit: true,
+      env: {
+        XDG_RUNTIME_DIR: "/tmp/podman-test-runtime",
+        CONTAINERS_CGROUP_MANAGER: "cgroupfs",
+      },
     });
     expect(executeCodeMock.mock.calls[1][0]).toMatchObject({
       command: "podman",
