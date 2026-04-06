@@ -289,7 +289,7 @@ function StripeCheckout({
                 <a
                   href={join(
                     appBasePath,
-                    "settings/payment-methods#page=messages-inbox",
+                    "settings/payment-methods#page=unread",
                   )}
                   target="_blank"
                 >

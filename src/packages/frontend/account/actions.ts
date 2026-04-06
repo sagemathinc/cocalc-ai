@@ -72,8 +72,9 @@ export class AccountActions extends Actions<AccountState> {
 
   update_unread_news(store: AccountStore): void {
     const news_read_until = store.getIn(["other_settings", "news_read_until"]);
+    const news_read_ids = store.getIn(["other_settings", "news_read_ids"]);
     const news_actions = this.redux.getActions("news");
-    news_actions?.updateUnreadCount(news_read_until);
+    news_actions?.updateUnreadCount(news_read_until, news_read_ids);
   }
 
   set_user_type(user_type): void {
@@ -236,7 +237,7 @@ export class AccountActions extends Actions<AccountState> {
   public set_other_settings(name: string, value: any): void {
     const current =
       this.redux.getStore("account")?.get("other_settings")?.toJS?.() ?? {};
-    this.redux
+    void this.redux
       .getTable("account")
       .set({ other_settings: { ...current, [name]: value } }, "shallow");
   }

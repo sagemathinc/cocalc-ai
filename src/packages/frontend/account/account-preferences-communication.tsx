@@ -93,20 +93,18 @@ export function AccountPreferencesCommunication(): React.JSX.Element {
             onClick={(e) => {
               e.stopPropagation();
               redux.getActions("page").set_active_tab("notifications");
-              redux
-                .getActions("mentions")
-                .set_filter("messages-inbox" as "messages-inbox");
+              redux.getActions("mentions").set_filter("unread");
             }}
             type="link"
             size="small"
           >
-            Internal Messages
+            Notifications
           </Button>
         </Switch>
         {!isVerified && !other_settings.get("no_email_new_messages") && (
           <>
             (NOTE: You must also verify your email address above to get emails
-            about new messages.)
+            about new notifications.)
           </>
         )}
       </>

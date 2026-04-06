@@ -21,14 +21,12 @@ export default function Messages() {
         <Button
           onClick={() => {
             redux.getActions("page").set_active_tab("notifications");
-            redux
-              .getActions("mentions")
-              .set_filter("messages-inbox" as "messages-inbox");
+            redux.getActions("mentions").set_filter("unread");
           }}
           type="link"
           style={{ fontSize: "16px", marginLeft: "-15px" }}
         >
-          <Icon name="mail" /> Message Settings
+          <Icon name="mail" /> Notification Settings
         </Button>
       }
     >
@@ -39,12 +37,12 @@ export default function Messages() {
           actions.set_other_settings("no_email_new_messages", e.target.checked);
         }}
       >
-        Do NOT send email when you get new internal messages
+        Do NOT send email when you get new notifications
       </Switch>
       {!isVerified && !other_settings?.get("no_email_new_messages") && (
         <>
           (NOTE: You must also verify your email address above to get emails
-          about new messages.)
+          about new notifications.)
         </>
       )}
     </Panel>

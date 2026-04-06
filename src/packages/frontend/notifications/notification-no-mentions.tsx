@@ -31,18 +31,6 @@ export function NoMentions(props: NoMentionsProps) {
         defaultMessage: "No read notifications",
       });
       break;
-    case "saved":
-      text = intl.formatMessage({
-        id: "notifications.no-mentions.saved",
-        defaultMessage: "No saved notifications",
-      });
-      break;
-    case "all":
-      text = intl.formatMessage({
-        id: "notifications.no-mentions.all",
-        defaultMessage: "No notifications",
-      });
-      break;
     default:
       unreachable(filter);
   }

@@ -4,15 +4,10 @@
  */
 
 import { Button, Card, List, Space, Tag } from "antd";
-import React, { useMemo, useRef } from "react";
-import { delay } from "awaiting";
+import React, { useMemo } from "react";
 import { useIntl } from "react-intl";
 
-import {
-  useActions,
-  useAsyncEffect,
-  useTypedRedux,
-} from "@cocalc/frontend/app-framework";
+import { useActions, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import {
   Icon,
@@ -33,6 +28,17 @@ interface NewsPanelProps {
   filter: NewsFilter;
 }
 
+function toReadIds(value: unknown): Set<string> {
+  const rawValue =
+    typeof (value as any)?.toJS === "function" ? (value as any).toJS() : value;
+  const raw = Array.isArray(rawValue) ? rawValue : [];
+  return new Set(
+    raw.filter(
+      (id): id is string => typeof id === "string" && id.trim().length > 0,
+    ),
+  );
+}
+
 export function NewsPanel(props: NewsPanelProps) {
   const { news, filter } = props;
   const intl = useIntl();
@@ -41,27 +47,21 @@ export function NewsPanel(props: NewsPanelProps) {
   const account_other = useTypedRedux("account", "other_settings");
   const news_read_until: number | undefined =
     account_other?.get("news_read_until");
-  const didClickUnread = useRef<boolean>(false);
-
-  // after showing news briefly (short), we mark them as read.
-  // even if they didn't read them, the user saw there is something and
-  // in the future, new news items will show up as (1) annotations
-  // (more visible than changing the number)
-  useAsyncEffect(async (isMounted) => {
-    await delay(1500);
-    if (!isMounted()) return;
-    // we block this in case the user did click "unread" in the meantime, just silly otherwise
-    if (didClickUnread.current) return;
-    // we also abort if no longer looking at news
-    if (!isNewsFilter(filter)) return;
-    news_actions.markNewsRead();
-  }, []);
+  const news_read_ids = toReadIds(account_other?.get("news_read_ids"));
 
   const [newsData, anyUnread]: [NewsItemWebapp[], boolean] = useMemo(() => {
     if (!isNewsFilter(filter)) return [[], false];
     const now = webapp_client.server_time();
-    // weird: using news.valueSeq().toJS() makes object reappear, which were overwritten when an update came in!?
-    const data: NewsItemWebapp[] = Object.values(news.toJS() as any)
+    const data: NewsItemWebapp[] = news
+      .valueSeq()
+      .toArray()
+      .map((item) => ({
+        id: item.get("id"),
+        date: item.get("date"),
+        title: item.get("title"),
+        channel: item.get("channel"),
+        tags: item.get("tags"),
+      }))
       .filter((n: any) => {
         if (n.hide ?? false) return false;
         if (n.date > now) return false;
@@ -76,19 +76,22 @@ export function NewsPanel(props: NewsPanelProps) {
     // if any entry in data is unread, then anyUnread is true
     const anyUnread = data.some(
       (n: any) =>
-        news_read_until == null || n?.date.getTime() > news_read_until,
+        n?.date.getTime() > (news_read_until ?? 0) && !news_read_ids.has(n.id),
     );
     return [data, anyUnread];
-  }, [news, filter, news_read_until]);
+  }, [news, filter, news_read_until, news_read_ids]);
 
-  // If a user clicks on a news item, we assume they saw all news up until that point.
-  // (and even if not, it's fine, they don't vanish)
   function newsItemOnClick(e: React.MouseEvent, news: NewsItemWebapp) {
-    const { id, date } = news;
+    const { id } = news;
     e.stopPropagation();
     const url = `${BASE_URL}/news/${id}`;
-    news_actions.markNewsRead({ date, current: news_read_until });
+    news_actions.markNewsRead({ item: news });
     open_new_tab(url);
+  }
+
+  function markNewsItemRead(e: React.MouseEvent, news: NewsItemWebapp) {
+    e.stopPropagation();
+    news_actions.markNewsRead({ item: news });
   }
 
   function renderTags(tags?: string[]) {
@@ -114,7 +117,6 @@ export function NewsPanel(props: NewsPanelProps) {
 
   function renderNewsPanelExtra(): React.JSX.Element {
     const read_all = intl.formatMessage(MSGS.read_all);
-
     const mark_all = intl.formatMessage(MSGS.mark_all, { anyUnread });
 
     return (
@@ -125,20 +127,18 @@ export function NewsPanel(props: NewsPanelProps) {
         <Button href={`${BASE_URL}/news`} target="_blank">
           <Icon name="file-alt" /> {read_all}
         </Button>
-        {anyUnread ? (
-          <Button onClick={() => news_actions.markNewsRead()} type="primary">
-            <Icon name="check-square" /> {mark_all}
-          </Button>
-        ) : (
-          <Button
-            onClick={() => {
-              didClickUnread.current = true;
+        <Button
+          onClick={() => {
+            if (anyUnread) {
+              news_actions.markNewsRead();
+            } else {
               news_actions.markNewsUnread();
-            }}
-          >
-            <Icon name="square" /> {mark_all}
-          </Button>
-        )}
+            }
+          }}
+          type={anyUnread ? "primary" : "default"}
+        >
+          <Icon name={anyUnread ? "check-square" : "square"} /> {mark_all}
+        </Button>
       </Space>
     );
   }
@@ -147,7 +147,7 @@ export function NewsPanel(props: NewsPanelProps) {
     const { id, title, channel, date, tags } = n;
     const icon = CHANNELS_ICONS[channel] as IconName;
     const isUnread =
-      news_read_until == null || date.getTime() > news_read_until;
+      date.getTime() > (news_read_until ?? 0) && !news_read_ids.has(id);
     return (
       <List.Item
         key={id}
@@ -156,8 +156,18 @@ export function NewsPanel(props: NewsPanelProps) {
           backgroundColor: isUnread ? COLORS.ANTD_BG_BLUE_L : undefined,
         }}
         actions={[
+          isUnread ? (
+            <Button
+              key="mark-read"
+              type="text"
+              ghost={true}
+              onClick={(e) => markNewsItemRead(e, n)}
+            >
+              <Icon name="check-square" /> {intl.formatMessage(MSGS.mark_read)}
+            </Button>
+          ) : null,
           <Button
-            key="read"
+            key="open"
             type="text"
             ghost={true}
             onClick={(e) => newsItemOnClick(e, n)}
