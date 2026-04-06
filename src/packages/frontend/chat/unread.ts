@@ -26,6 +26,13 @@ export function ensureSideChatActions(
   return getChatActions(project_id, chatPath) ?? initChat(project_id, chatPath);
 }
 
+export function getExistingSideChatActions(
+  project_id: string,
+  path: string,
+): ChatActions | undefined {
+  return getChatActions(project_id, getSideChatPath(path));
+}
+
 export function listUnreadChatThreads(opts: {
   actions?: ChatActions;
   account_id?: string;

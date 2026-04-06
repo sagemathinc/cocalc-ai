@@ -19,7 +19,7 @@ import {
   dateValue,
   parentMessageId as parentMessageIdField,
 } from "./access";
-import { ensureSideChatActions, listUnreadChatThreads } from "./unread";
+import { getExistingSideChatActions, listUnreadChatThreads } from "./unread";
 
 export const INPUT_HEIGHT = "auto";
 
@@ -143,7 +143,7 @@ export const markChatAsReadIfUnseen: (
   path: string,
 ) => void = throttle((project_id: string, path: string) => {
   const account_id = redux?.getStore("account")?.get_account_id?.();
-  const chatActions = ensureSideChatActions(project_id, path);
+  const chatActions = getExistingSideChatActions(project_id, path);
   const unreadThreads = listUnreadChatThreads({
     actions: chatActions,
     account_id,
