@@ -38,6 +38,7 @@ type Props = {
 
 type UseInviteInboxStateOptions = {
   project_id?: string;
+  includeIncoming?: boolean;
   includeOutgoing?: boolean;
   includeBlocks?: boolean;
 };
@@ -124,6 +125,7 @@ function inviteeLabel(invite: ProjectCollabInviteRow): string {
 
 export function useInviteInboxState({
   project_id,
+  includeIncoming = true,
   includeOutgoing = true,
   includeBlocks = true,
 }: UseInviteInboxStateOptions): InviteInboxState {
@@ -139,12 +141,14 @@ export function useInviteInboxState({
     set_error("");
     try {
       const [incomingRows, outgoingRows, blockRows] = await Promise.all([
-        webapp_client.project_collaborators.list_invites({
-          project_id,
-          direction: "inbound",
-          status: "pending",
-          limit: 200,
-        }),
+        includeIncoming
+          ? webapp_client.project_collaborators.list_invites({
+              project_id,
+              direction: "inbound",
+              status: "pending",
+              limit: 200,
+            })
+          : Promise.resolve([]),
         includeOutgoing
           ? webapp_client.project_collaborators.list_invites({
               project_id,
@@ -167,7 +171,7 @@ export function useInviteInboxState({
     } finally {
       set_loading(false);
     }
-  }, [includeBlocks, includeOutgoing, project_id]);
+  }, [includeBlocks, includeIncoming, includeOutgoing, project_id]);
 
   useEffect(() => {
     void load();
@@ -442,6 +446,7 @@ export const InviteInboxPanel: React.FC<Props> = ({
   showWhenEmpty = false,
 }) => {
   const [expanded, set_expanded] = useState<boolean | undefined>(undefined);
+  const projectMode = mode === "project";
   const {
     loading,
     error,
@@ -452,17 +457,24 @@ export const InviteInboxPanel: React.FC<Props> = ({
     load,
     respond,
     unblock,
-  } = useInviteInboxState({ project_id });
+  } = useInviteInboxState({
+    project_id,
+    includeIncoming: !projectMode,
+    includeOutgoing: true,
+    includeBlocks: !projectMode,
+  });
 
-  const total = useMemo(
-    () => incoming.length + outgoing.length + blocks.length,
-    [incoming.length, outgoing.length, blocks.length],
-  );
+  const total = useMemo(() => {
+    if (projectMode) {
+      return outgoing.length;
+    }
+    return incoming.length + outgoing.length + blocks.length;
+  }, [blocks.length, incoming.length, outgoing.length, projectMode]);
 
   useEffect(() => {
     if (loading || expanded !== undefined) return;
-    set_expanded(incoming.length > 0);
-  }, [expanded, incoming.length, loading]);
+    set_expanded(projectMode ? outgoing.length > 0 : incoming.length > 0);
+  }, [expanded, incoming.length, loading, outgoing.length, projectMode]);
 
   if (!loading && !error && total === 0 && !showWhenEmpty) {
     return null;
@@ -612,13 +624,12 @@ export const InviteInboxPanel: React.FC<Props> = ({
     );
   }
 
-  const titleBase =
-    mode === "project" ? "Project Invitations" : "Invitation Inbox";
-  const title = `${titleBase} (${incoming.length})`;
-  const subtitle =
-    mode === "project"
-      ? "Manage pending invitations for this project."
-      : "Accept, decline, block, or revoke pending collaboration invitations. Pending invites expire automatically.";
+  const titleBase = projectMode ? "Pending Invitations" : "Invitation Inbox";
+  const titleCount = projectMode ? outgoing.length : incoming.length;
+  const title = `${titleBase} (${titleCount})`;
+  const subtitle = projectMode
+    ? "Track pending invitations for this project and revoke them when needed."
+    : "Accept, decline, block, or revoke pending collaboration invitations. Pending invites expire automatically.";
   const titleNode = (
     <Button
       type="text"
@@ -661,22 +672,33 @@ export const InviteInboxPanel: React.FC<Props> = ({
               <Loading />
             </div>
           )}
-          <div style={{ marginBottom: "6px" }}>
-            <Tag color="blue">{incoming.length} incoming</Tag>
-            <Gap />
-            <Tag color="purple">{outgoing.length} outgoing</Tag>
-            <Gap />
-            <Tag>{blocks.length} blocked</Tag>
-          </div>
-          <Divider style={{ margin: "10px 0" }} />
-          <strong>Incoming invitations</strong>
-          <div style={{ marginTop: "8px" }}>{renderIncoming()}</div>
-          <Divider style={{ margin: "10px 0" }} />
-          <strong>Outgoing invitations</strong>
-          <div style={{ marginTop: "8px" }}>{renderOutgoing()}</div>
-          <Divider style={{ margin: "10px 0" }} />
-          <strong>Blocked inviters</strong>
-          <div style={{ marginTop: "8px" }}>{renderBlocks()}</div>
+          {projectMode ? (
+            <>
+              <div style={{ marginBottom: "6px" }}>
+                <Tag color="purple">{outgoing.length} pending</Tag>
+              </div>
+              <div style={{ marginTop: "8px" }}>{renderOutgoing()}</div>
+            </>
+          ) : (
+            <>
+              <div style={{ marginBottom: "6px" }}>
+                <Tag color="blue">{incoming.length} incoming</Tag>
+                <Gap />
+                <Tag color="purple">{outgoing.length} outgoing</Tag>
+                <Gap />
+                <Tag>{blocks.length} blocked</Tag>
+              </div>
+              <Divider style={{ margin: "10px 0" }} />
+              <strong>Incoming invitations</strong>
+              <div style={{ marginTop: "8px" }}>{renderIncoming()}</div>
+              <Divider style={{ margin: "10px 0" }} />
+              <strong>Outgoing invitations</strong>
+              <div style={{ marginTop: "8px" }}>{renderOutgoing()}</div>
+              <Divider style={{ margin: "10px 0" }} />
+              <strong>Blocked inviters</strong>
+              <div style={{ marginTop: "8px" }}>{renderBlocks()}</div>
+            </>
+          )}
         </>
       )}
     </SettingBox>

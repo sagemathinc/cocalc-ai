@@ -52,6 +52,12 @@ export function ProjectCollaboratorsPage(): React.JSX.Element {
     }
     return (
       <>
+        <SettingBox title="Invite Collaborators" icon="UserAddOutlined">
+          <AddCollaborators
+            project_id={project.get("project_id")}
+            where="project-settings"
+          />
+        </SettingBox>
         <InviteInboxPanel
           project_id={project.get("project_id")}
           mode="project"
@@ -62,12 +68,6 @@ export function ProjectCollaboratorsPage(): React.JSX.Element {
           project={project}
           user_map={user_map}
         />
-        <SettingBox title="Invite Collaborators" icon="UserAddOutlined">
-          <AddCollaborators
-            project_id={project.get("project_id")}
-            where="project-settings"
-          />
-        </SettingBox>
       </>
     );
   }
