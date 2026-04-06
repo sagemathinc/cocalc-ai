@@ -42,6 +42,7 @@ export default async function get({
     where.push(`$${params.length + 1}::UUID = ANY(to_ids)`);
     params.push(account_id);
     where.push("sent IS NOT NULL");
+    where.push("COALESCE(system_notice, FALSE) IS NOT TRUE");
     query = `
     SELECT ${fields},
            ${pgBitField("read", account_id)},
@@ -54,6 +55,7 @@ export default async function get({
     where.push(`$${params.length + 1}::UUID = ANY(to_ids)`);
     params.push(account_id);
     where.push("sent IS NOT NULL");
+    where.push("COALESCE(system_notice, FALSE) IS NOT TRUE");
     where.push(`not ${pgBitField("read", account_id, "")}`);
     where.push(`not ${pgBitField("saved", account_id, "")}`);
     where.push(`not ${pgBitField("deleted", account_id, "")}`);
@@ -63,6 +65,7 @@ export default async function get({
     where.push(`$${params.length + 1}::UUID = ANY(to_ids)`);
     params.push(account_id);
     where.push("sent IS NOT NULL");
+    where.push("COALESCE(system_notice, FALSE) IS NOT TRUE");
     where.push(`${pgBitField("starred", account_id, "")}`);
     where.push(`not ${pgBitField("deleted", account_id, "")}`);
     where.push(`not ${pgBitField("expire", account_id, "")}`);

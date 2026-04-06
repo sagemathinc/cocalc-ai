@@ -55,6 +55,7 @@ interface Message0 {
   to_ids: string[]; // array of uuid's
   subject: string;
   body: string;
+  system_notice?: boolean;
   // sent is only set after message is sent.
   sent?: Date;
   // used for replies
@@ -71,6 +72,7 @@ export const NON_BITSET_FIELDS = [
   "body",
   "from_id",
   "to_ids",
+  "system_notice",
   "sent",
   "thread_id",
 ];
@@ -173,6 +175,10 @@ Table({
       desc: "Body of the message (should be formatted as markdown).",
       not_null: true,
     },
+    system_notice: {
+      type: "boolean",
+      desc: "True exactly for system-generated notices that should be surfaced as notifications rather than in the legacy inbox.",
+    },
     thread_id: {
       type: "number",
       desc: "If this message is in a thread, this is the id of the root message.",
@@ -219,6 +225,7 @@ Table({
         pg_where: [
           { "$::UUID = ANY(to_ids)": "account_id" },
           "sent IS NOT null",
+          "COALESCE(system_notice, FALSE) IS NOT TRUE",
         ],
         options: [{ order_by: "-id" }, { limit: NUM_MESSAGES }],
         fields: {
@@ -228,6 +235,7 @@ Table({
           to_ids: null,
           subject: null,
           body: null,
+          system_notice: null,
           thread_id: null,
           read: null,
           saved: null,
@@ -522,8 +530,8 @@ Table({
             );
             await assertToIdsAreValid({ client, to_ids });
             const { rows } = await client.query(
-              `INSERT INTO messages(from_id,to_ids,subject,body,thread_id,sent)
-                 VALUES($1::UUID,$2::UUID[],$3,$4,$5,$6) RETURNING *
+              `INSERT INTO messages(from_id,to_ids,subject,body,system_notice,thread_id,sent)
+                 VALUES($1::UUID,$2::UUID[],$3,$4,FALSE,$5,$6) RETURNING *
                 `,
               [
                 account_id,

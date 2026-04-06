@@ -123,27 +123,10 @@ export function NotificationNav({ filter, on_click, style }: Props) {
           ),
         },
         {
-          key: "messages-all",
-          label: (
-            <span style={{ textOverflow: "ellipsis", overflow: "hidden" }}>
-              <Icon name="mail" />{" "}
-              {intl.formatMessage(labels.messages_all_messages)}
-            </span>
-          ),
-        },
-        {
           key: "messages-search",
           label: (
             <span style={{ textOverflow: "ellipsis", overflow: "hidden" }}>
               <Icon name="search" /> {intl.formatMessage(labels.search)}
-            </span>
-          ),
-        },
-        {
-          key: "messages-trash",
-          label: (
-            <span style={{ textOverflow: "ellipsis", overflow: "hidden" }}>
-              <Icon name="trash" /> {intl.formatMessage(labels.trash)}
             </span>
           ),
         },
