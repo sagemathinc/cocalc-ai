@@ -88,7 +88,6 @@ export class AppRedux extends AppReduxBase {
   getStore(name: "admin-users"): types.AdminUsersStore;
   getStore(name: "mentions"): types.MentionsStore;
   getStore(name: "messages"): types.MessagesStore;
-  getStore(name: "file_use"): types.FileUseStore;
   getStore(name: "customize"): types.CustomizeStore;
   getStore(name: "users"): types.UsersStore;
   getStore(name: typeof NEWS): types.NewsStore;

@@ -163,7 +163,6 @@ export interface StoreStates {
   "admin-users": types.AdminUsersState;
   billing: types.BillingState;
   customize: types.CustomizeState;
-  file_use: types.FileUseState;
   mentions: types.MentionsState;
   messages: types.MessagesState;
   page: types.PageState;
@@ -472,7 +471,6 @@ export interface Stores {
   "admin-users": types.AdminUsersStore;
   billing: types.BillingStore;
   customize: types.CustomizeStore;
-  file_use: types.FileUseStore;
   mentions: types.MentionsStore;
   messages: types.MessagesStore;
   page: types.PageStore;
