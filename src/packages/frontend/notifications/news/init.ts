@@ -84,8 +84,13 @@ export class NewsActions extends Actions<NewsState> {
             news_read_ids: readIds,
           };
     account_actions.setState({ other_settings: nextOtherSettings });
-    account_actions.set_other_settings("news_read_until", readUntil);
-    account_actions.set_other_settings("news_read_ids", readIds);
+    const nextOtherSettingsPlain =
+      typeof (nextOtherSettings as any)?.toJS === "function"
+        ? (nextOtherSettings as any).toJS()
+        : nextOtherSettings;
+    void redux
+      .getTable("account")
+      .set({ other_settings: nextOtherSettingsPlain }, "shallow");
     this.updateUnreadCount(readUntil, readIds);
   }
 
