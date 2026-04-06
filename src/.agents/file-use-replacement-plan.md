@@ -1,5 +1,35 @@
 # File Use Replacement Plan
 
+## Status
+
+DONE as of 2026-04-06.
+
+`file_use` has been removed from the active source tree and replaced by:
+
+1. `document_presence`
+   - realtime ephemeral viewer/editor presence
+   - used by avatars / users-viewing
+
+2. `document_activity`
+   - explicit recent-activity fetch path
+   - backed by `file_access_log`
+
+3. chat-native unread state
+   - no longer derived from `file_use`
+
+The old `file_use` browser synctable, Redux store, schema definition, CRM table,
+and backend product write/read path are gone.
+
+## Completed End State
+
+- no browser `file_use` synctable
+- no browser `file_use` Redux store
+- no backend `record_file_use` / `get_file_use` product path
+- no `file_use` schema entry in `src/packages/util/db-schema`
+- recent document activity uses explicit fetch over `file_access_log`
+- live presence uses `document_presence`
+- chat unread does not depend on `file_use`
+
 ## Goal
 
 Remove the legacy `file_use` synctable/changefeed path and replace it with:
@@ -24,9 +54,11 @@ The end state should have:
 - no avatar/chat-indicator dependency on the `file_use` table
 - one notifications page and one notifications counter
 
-## Current State
+## Historical Starting State
 
 ### Frontend live table
+
+This section describes the pre-migration architecture.
 
 `file_use` is currently initialized as a normal synctable:
 
@@ -43,9 +75,9 @@ That logic lives in:
 
 - [store.ts](/home/wstein/build/cocalc-lite4/src/packages/frontend/file-use/store.ts)
 
-### Current write paths
+### Historical write paths
 
-These write to `file_use` today:
+These wrote to `file_use` before the migration:
 
 - file open
   - [project_actions.ts:1007](/home/wstein/build/cocalc-lite4/src/packages/frontend/project_actions.ts:1007)
@@ -57,7 +89,7 @@ These write to `file_use` today:
 - chat seen/read
   - [chat/utils.ts:141](/home/wstein/build/cocalc-lite4/src/packages/frontend/chat/utils.ts:141)
 
-### Current read paths
+### Historical read paths
 
 #### Live presence-ish consumers
 
@@ -76,7 +108,7 @@ These write to `file_use` today:
 
 ### Backend persistence
 
-There are two distinct backend mechanisms already:
+At the time this plan was written there were two distinct backend mechanisms:
 
 1. `file_use`
    - current mixed-purpose table
@@ -263,15 +295,11 @@ interface RecentDocumentActivityRow {
 
 The `active_users` field is optional if we want to render avatars inside the panel without a second fetch.
 
-### Initial implementation shortcut
+### Implementation shortcut that was used
 
-The first RPC version can query existing `file_use` while we are migrating.
-
-That lets us:
-
-1. remove the frontend changefeed dependency first
-2. move the panel to explicit fetch
-3. then delete `file_use` storage later
+The initial RPC/panel split happened before the final schema deletion. After the
+activity panel was moved to explicit fetch, the remaining `file_use` runtime
+paths were deleted.
 
 ## Persistence Plan
 
@@ -322,7 +350,11 @@ That is much cleaner than `users: jsonb`.
 
 ## Migration Order
 
+All phases below are complete.
+
 ## Phase 1: Split out live presence
+
+Status: DONE
 
 ### Deliverable
 
@@ -343,6 +375,8 @@ That is much cleaner than `users: jsonb`.
 
 ## Phase 2: Split chat unread off `file_use`
 
+Status: DONE
+
 ### Deliverable
 
 `ChatIndicator` no longer reads `file_use`.
@@ -360,6 +394,8 @@ That is much cleaner than `users: jsonb`.
 - no `file_use` read path remains in chat UI
 
 ## Phase 3: Move the panel to explicit fetch
+
+Status: DONE
 
 ### Deliverable
 
@@ -382,20 +418,21 @@ The recent document activity panel no longer uses a synctable/changefeed.
 
 ## Phase 4: Delete `file_use`
 
+Status: DONE
+
 ### Deliverable
 
 No browser or server product path depends on the `file_use` table.
 
 ### Work
 
-1. Remove frontend store/actions/table:
-   - [init.ts](/home/wstein/build/cocalc-lite4/src/packages/frontend/file-use/init.ts)
-   - [table.ts](/home/wstein/build/cocalc-lite4/src/packages/frontend/file-use/table.ts)
-   - [actions.ts](/home/wstein/build/cocalc-lite4/src/packages/frontend/file-use/actions.ts)
-   - most of [store.ts](/home/wstein/build/cocalc-lite4/src/packages/frontend/file-use/store.ts)
-2. Remove `app/notifications.tsx` bell counter dependency on `file_use`.
-3. Remove backend `record_file_use` / `get_file_use` product usage.
-4. Delete the schema only after no callers remain.
+Completed:
+
+1. Removed the frontend store/table layer and renamed the surviving action shim
+   to `document_activity`.
+2. Removed `file_use` dependencies from presence, chat unread, and the activity UI.
+3. Removed backend `record_file_use` / `get_file_use` product usage.
+4. Deleted the schema and remaining CRM/admin compatibility surfaces.
 
 ## Risks / Notes
 
@@ -411,11 +448,7 @@ No browser or server product path depends on the `file_use` table.
 4. `file_use` currently updates project `last_edited` side effects indirectly via `db.touch` in the schema hook.
    - Preserve any truly needed touch/log side effects when removing writes.
 
-## Recommended Next Implementation Step
+## Result
 
-Start with Phase 1 only:
-
-- implement `document_presence`
-- migrate [users-viewing.tsx](/home/wstein/build/cocalc-lite4/src/packages/frontend/account/avatar/users-viewing.tsx)
-
-That removes the hardest live UI dependency first without forcing the whole panel migration at the same time.
+This plan is complete and can now be treated as historical documentation of the
+migration rather than an active implementation plan.
