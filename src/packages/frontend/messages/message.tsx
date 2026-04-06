@@ -481,8 +481,6 @@ function MessageFull({
 }
 
 function getTag({ message, threads, folder, intl }) {
-  // set deleted false so still see the tag even when message in the trash,
-  // which helps when undeleting.
   const v: React.JSX.Element[] = [];
   if (
     isDraft(message) ||
@@ -500,29 +498,8 @@ function getTag({ message, threads, folder, intl }) {
   }
 
   if (
-    folder != "trash" &&
-    isInFolderThreaded({
-      message,
-      threads,
-      folder: "trash",
-    })
-  ) {
-    // this happens for search.
-    v.push(
-      <Tag key="inbox" color="blue">
-        <Icon name="trash" /> {intl.formatMessage(labels.trash)}
-      </Tag>,
-    );
-  }
-
-  if (
     folder != "inbox" &&
-    folder != "trash" &&
-    isInFolderThreaded({
-      message,
-      threads,
-      folder: "inbox",
-    })
+    isInFolderThreaded({ message, threads, folder: "inbox" })
   ) {
     v.push(
       <Tag key="inbox" color="green">

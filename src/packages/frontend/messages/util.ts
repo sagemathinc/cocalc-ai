@@ -77,20 +77,6 @@ export function isInFolderThreaded({
       }
       return false;
     }
-    if (folder == "trash") {
-      // trash = every message in thread that we received is in trash
-      // (expect expire when it's just gone or about to be)
-      for (const message of thread) {
-        if (!isDeleted(message)) {
-          return false;
-        }
-      }
-      return true;
-    }
-    if (folder == "all") {
-      // all = same as not being in trash
-      return !isInFolderThreaded({ message, threads, folder: "trash" });
-    }
     return true;
   }
 }
@@ -124,11 +110,7 @@ function isInFolderNotThreaded({
     return search.has(get(message, "id"));
   }
 
-  // trash folder is exactly the deleted messages:
   const deleted = isDeleted(message);
-  if (folder == "trash") {
-    return deleted;
-  }
   if (deleted) {
     return false;
   }
@@ -153,10 +135,6 @@ function isInFolderNotThreaded({
   if (folder == "inbox") {
     return !getBitField(message, "saved") && !deleted && !draft;
   }
-  if (folder == "all") {
-    return !deleted && !draft;
-  }
-
   return false;
 }
 

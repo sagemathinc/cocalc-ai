@@ -10,8 +10,6 @@ export type iThreads = Map<number, List<TypedMap<Message>>>;
 export type Filter =
   | "messages-inbox"
   | "messages-sent"
-  | "messages-all"
-  | "messages-trash"
   | "messages-search"
   | "messages-drafts";
 
@@ -19,21 +17,17 @@ export function isMessagesFilter(filter: string): filter is Filter {
   return (
     filter == "messages-inbox" ||
     filter == "messages-sent" ||
-    filter == "messages-all" ||
-    filter == "messages-trash" ||
     filter == "messages-search" ||
     filter == "messages-drafts"
   );
 }
 
-export type Folder = "inbox" | "sent" | "all" | "trash" | "search" | "drafts";
+export type Folder = "inbox" | "sent" | "search" | "drafts";
 
 export function isFolder(folder: string): folder is Folder {
   return (
     folder == "inbox" ||
     folder == "sent" ||
-    folder == "all" ||
-    folder == "trash" ||
     folder == "search" ||
     folder == "drafts"
   );

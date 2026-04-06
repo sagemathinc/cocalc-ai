@@ -81,7 +81,7 @@ export default function Compose({
       });
       await actions.mark({
         id,
-        deleted: true,
+        expire: true,
       });
     } catch (_err) {}
   };
