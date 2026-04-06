@@ -44,6 +44,7 @@ ROOTLESS_SUBID_MIN_TOTAL = 4 * 1024 * 1024
 ROOTLESS_SUBID_ALIGNMENT = 65536
 PROJECT_HOST_RUNTIME_UID = 1002
 PROJECT_HOST_RUNTIME_GID = 1003
+HOST_CRITICAL_OOM_SCORE_ADJ = -900
 PROJECT_HOST_RUNTIME_SUBID_RANGES = (
     (231072, ROOTLESS_SUBID_ALIGNMENT),
     (327680, ROOTLESS_SUBID_MIN_TOTAL - ROOTLESS_SUBID_ALIGNMENT),
@@ -961,6 +962,10 @@ def project_host_runtime_root(cfg: BootstrapConfig) -> Path:
     if root.name == "bundles":
         return root.parent
     return Path(cfg.bootstrap_root)
+
+
+def project_host_rootctl_path(_cfg: BootstrapConfig | None = None) -> Path:
+    return Path("/usr/local/sbin/cocalc-project-host-rootctl")
 
 
 def chown_paths_best_effort(
@@ -2696,19 +2701,21 @@ def write_helpers(cfg: BootstrapConfig) -> None:
     runtime_root = project_host_runtime_root(cfg)
     bin_dir = runtime_root / "bin"
     bin_dir.mkdir(parents=True, exist_ok=True)
+    rootctl_path = project_host_rootctl_path(cfg)
     ctl = """#!/usr/bin/env bash
 set -euo pipefail
 cmd="${1:-status}"
+shift || true
 RUNTIME_ROOT="__RUNTIME_ROOT__"
 bin="$RUNTIME_ROOT/bin/project-host"
 pid_file="/mnt/cocalc/data/daemon.pid"
+rootctl="__ROOTCTL__"
 case "${cmd}" in
-  start|stop|ensure)
-    "${bin}" daemon "${cmd}"
+  start|ensure|restart)
+    exec sudo -n "${rootctl}" "${cmd}" "$@"
     ;;
-  restart)
-    "${bin}" daemon stop || true
-    "${bin}" daemon start
+  stop)
+    "${bin}" daemon stop "$@"
     ;;
   status)
     pid=""
@@ -2731,6 +2738,7 @@ case "${cmd}" in
 esac
 """
     ctl = ctl.replace("__RUNTIME_ROOT__", str(runtime_root))
+    ctl = ctl.replace("__ROOTCTL__", str(rootctl_path))
     start_ph = """#!/usr/bin/env bash
 set -euo pipefail
 RUNTIME_ROOT="__RUNTIME_ROOT__"
@@ -2856,7 +2864,81 @@ case "$cmd" in
     ;;
 esac
 """
+    rootctl = """#!/usr/bin/env bash
+set -euo pipefail
+if [ "$(id -u)" -ne 0 ]; then
+  echo "cocalc-project-host-rootctl must run as root" >&2
+  exit 1
+fi
+cmd="${1:-ensure}"
+shift || true
+RUNTIME_ROOT="__RUNTIME_ROOT__"
+RUNTIME_USER="__RUNTIME_USER__"
+RUNTIME_BIN="$RUNTIME_ROOT/bin/project-host"
+PID_FILE="/mnt/cocalc/data/daemon.pid"
+OOM_ADJ="${COCALC_PROJECT_HOST_OOM_SCORE_ADJ:__OOM_ADJ__}"
+
+run_daemon() {
+  sudo -n -u "${RUNTIME_USER}" -H "${RUNTIME_BIN}" daemon "$@"
+}
+
+protect_pid() {
+  local pid=""
+  if [ -r "${PID_FILE}" ]; then
+    pid="$(tr -d '[:space:]' < "${PID_FILE}" 2>/dev/null || true)"
+  fi
+  if [ -z "${pid}" ] || ! kill -0 "${pid}" 2>/dev/null; then
+    echo "project-host pid not found at ${PID_FILE}" >&2
+    exit 1
+  fi
+  if [ -x /usr/bin/choom ]; then
+    /usr/bin/choom -n "${OOM_ADJ}" -p "${pid}" >/dev/null
+  else
+    printf '%s\\n' "${OOM_ADJ}" > "/proc/${pid}/oom_score_adj"
+  fi
+}
+
+case "${cmd}" in
+  start|ensure)
+    run_daemon "${cmd}" "$@"
+    protect_pid
+    ;;
+  restart)
+    run_daemon stop "$@" || true
+    run_daemon start "$@"
+    protect_pid
+    ;;
+  protect)
+    protect_pid
+    ;;
+  noop)
+    exit 0
+    ;;
+  stop)
+    run_daemon stop "$@"
+    ;;
+  status)
+    pid=""
+    if [ -r "${PID_FILE}" ]; then
+      pid="$(tr -d '[:space:]' < "${PID_FILE}" 2>/dev/null || true)"
+    fi
+    if [ -n "${pid}" ] && kill -0 "${pid}" 2>/dev/null; then
+      echo "project-host running (pid ${pid})"
+    else
+      echo "project-host not running"
+      exit 1
+    fi
+    ;;
+  *)
+    echo "usage: ${0} {start|stop|restart|ensure|status|protect|noop}" >&2
+    exit 2
+    ;;
+esac
+"""
     start_ph = start_ph.replace("__RUNTIME_ROOT__", str(runtime_root))
+    rootctl = rootctl.replace("__RUNTIME_ROOT__", str(runtime_root))
+    rootctl = rootctl.replace("__RUNTIME_USER__", cfg.ssh_user)
+    rootctl = rootctl.replace("__OOM_ADJ__", str(HOST_CRITICAL_OOM_SCORE_ADJ))
     (bin_dir / "ctl").write_text(ctl, encoding="utf-8")
     (bin_dir / "start-project-host").write_text(start_ph, encoding="utf-8")
     (bin_dir / "logs").write_text(logs_script, encoding="utf-8")
@@ -2864,6 +2946,8 @@ esac
     (bin_dir / "acp-logs").write_text(acp_logs_script, encoding="utf-8")
     (bin_dir / "logs-cf").write_text(logs_cf_script, encoding="utf-8")
     (bin_dir / "ctl-cf").write_text(ctl_cf_script, encoding="utf-8")
+    rootctl_path.parent.mkdir(parents=True, exist_ok=True)
+    rootctl_path.write_text(rootctl, encoding="utf-8")
     for name in [
         "ctl",
         "start-project-host",
@@ -2874,6 +2958,7 @@ esac
         "ctl-cf",
     ]:
         (bin_dir / name).chmod(0o755)
+    rootctl_path.chmod(0o755)
     if cfg.ssh_user and cfg.ssh_user != "root":
         helper_paths = [
             bin_dir / "ctl",
@@ -2990,16 +3075,20 @@ def configure_autostart(cfg: BootstrapConfig) -> None:
     )
     os.chmod("/etc/cron.d/cocalc-project-host", 0o644)
     run_best_effort(cfg, ["systemctl", "enable", "--now", "cron"], "enable cron")
+
+
 def configure_runtime_sudoers(cfg: BootstrapConfig) -> None:
     user = cfg.ssh_user
     if not user or user == "root":
         return
     log_line(cfg, f"bootstrap: configuring sudoers whitelist for {user}")
+    project_host_rootctl = project_host_rootctl_path(cfg)
     rules = f"""Defaults:{user} !requiretty
 Defaults:{user} secure_path=/usr/sbin:/usr/bin:/sbin:/bin
 Cmnd_Alias COCALC_RUNTIME_STORAGE = /usr/local/sbin/cocalc-runtime-storage
 Cmnd_Alias COCALC_RUNTIME_CLOUD = /usr/local/sbin/cocalc-cloudflared-ctl, /usr/local/sbin/cocalc-cloudflared-logs, /usr/local/sbin/cocalc-mount-data
-{user} ALL=(root) NOPASSWD: COCALC_RUNTIME_STORAGE, COCALC_RUNTIME_CLOUD
+Cmnd_Alias COCALC_RUNTIME_PROJECT_HOST = {project_host_rootctl}
+{user} ALL=(root) NOPASSWD: COCALC_RUNTIME_STORAGE, COCALC_RUNTIME_CLOUD, COCALC_RUNTIME_PROJECT_HOST
 """
     path = Path("/etc/sudoers.d/cocalc-project-host-runtime")
     path.write_text(rules, encoding="utf-8")
@@ -3021,6 +3110,12 @@ def verify_runtime_sudoers(cfg: BootstrapConfig) -> None:
         cfg,
         ["sudo", "-n", "/usr/local/sbin/cocalc-runtime-storage", "sync"],
         "runtime sudo allowlist check",
+        as_user=user,
+    )
+    run_cmd(
+        cfg,
+        ["sudo", "-n", str(project_host_rootctl_path(cfg)), "noop"],
+        "runtime project-host sudo allowlist check",
         as_user=user,
     )
     denied = run_cmd(
@@ -3053,6 +3148,52 @@ def verify_runtime_sudoers(cfg: BootstrapConfig) -> None:
     if mount_denied.returncode == 0:
         raise RuntimeError(
             "runtime storage wrapper still allows generic mount command; expected deny"
+        )
+
+
+def configure_critical_service_oom_protection(cfg: BootstrapConfig) -> None:
+    log_line(cfg, "bootstrap: protecting host critical services from OOM kills")
+    services = ["ssh.service", "sshd.service"]
+    if cfg.cloudflared.enabled:
+        services.append("cocalc-cloudflared.service")
+    dropin_text = f"""[Service]
+OOMScoreAdjust={HOST_CRITICAL_OOM_SCORE_ADJ}
+"""
+    for service in services:
+        dropin_dir = Path("/etc/systemd/system") / f"{service}.d"
+        dropin_dir.mkdir(parents=True, exist_ok=True)
+        dropin_path = dropin_dir / "cocalc-oom-protect.conf"
+        dropin_path.write_text(dropin_text, encoding="utf-8")
+    run_best_effort(cfg, ["systemctl", "daemon-reload"], "reload systemd after OOM drop-ins")
+    run_best_effort(
+        cfg,
+        [
+            "bash",
+            "-lc",
+            (
+                f'for pid in $(pgrep -x sshd 2>/dev/null || true); do '
+                f'/usr/bin/choom -n {HOST_CRITICAL_OOM_SCORE_ADJ} -p "$pid" >/dev/null 2>&1 || '
+                f'printf "%s\\n" {HOST_CRITICAL_OOM_SCORE_ADJ} >"/proc/$pid/oom_score_adj" 2>/dev/null || true; '
+                "done"
+            ),
+        ],
+        "protect sshd from OOM kills",
+    )
+    if cfg.cloudflared.enabled:
+        run_best_effort(
+            cfg,
+            [
+                "bash",
+                "-lc",
+                (
+                    'pid="$(systemctl show -p MainPID --value cocalc-cloudflared.service 2>/dev/null || true)"; '
+                    'if [ -n "$pid" ] && [ "$pid" -gt 0 ] 2>/dev/null; then '
+                    f'/usr/bin/choom -n {HOST_CRITICAL_OOM_SCORE_ADJ} -p "$pid" >/dev/null 2>&1 || '
+                    f'printf "%s\\n" {HOST_CRITICAL_OOM_SCORE_ADJ} >"/proc/$pid/oom_score_adj" 2>/dev/null || true; '
+                    "fi"
+                ),
+            ],
+            "protect cloudflared from OOM kills",
         )
 
 
@@ -3211,7 +3352,7 @@ exit 0
 
 
 def start_project_host(cfg: BootstrapConfig) -> None:
-    bin_path = str(project_host_runtime_root(cfg) / "bin" / "project-host")
+    ctl_path = str(project_host_runtime_root(cfg) / "bin" / "ctl")
     # Sanity check: bundle must contain a compiled entrypoint.
     bundle_candidates = [
         Path(cfg.project_host_bundle.current) if cfg.project_host_bundle.current else None,
@@ -3237,11 +3378,11 @@ def start_project_host(cfg: BootstrapConfig) -> None:
         log_line(cfg, f"bootstrap: missing project-host entrypoint (searched: bundle/index.js, main/index.js, dist/main.js) in {roots}")
         log_line(cfg, "bootstrap: project-host bundle appears incomplete; re-run bundle build/publish and re-bootstrap")
         raise RuntimeError("project-host bundle missing entrypoint")
-    if Path(bin_path).exists():
-        run_cmd(cfg, [bin_path, "daemon", "stop"], "project-host stop", check=False, as_user=cfg.ssh_user)
+    if Path(ctl_path).exists():
+        run_cmd(cfg, [ctl_path, "stop"], "project-host stop", check=False, as_user=cfg.ssh_user)
     result = run_cmd(
         cfg,
-        [bin_path, "daemon", "start"],
+        [ctl_path, "start"],
         "project-host start",
         check=False,
         as_user=cfg.ssh_user,
@@ -3257,7 +3398,7 @@ def start_project_host(cfg: BootstrapConfig) -> None:
         )
         run_cmd(
             cfg,
-            [bin_path, "daemon", "ensure"],
+            [ctl_path, "ensure"],
             "project-host ensure",
             as_user=cfg.ssh_user,
         )
@@ -3336,6 +3477,7 @@ def run_reconcile(cfg: BootstrapConfig) -> int:
         configure_runtime_sudoers(cfg)
         verify_runtime_sudoers(cfg)
         configure_cloudflared_with_options(cfg, install_package=False)
+        configure_critical_service_oom_protection(cfg)
         configure_autostart(cfg)
         report_bootstrap_status(cfg, "running", "Restarting project-host services")
         start_project_host(cfg)

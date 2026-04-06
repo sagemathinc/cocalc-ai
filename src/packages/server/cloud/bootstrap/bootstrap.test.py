@@ -518,23 +518,29 @@ class BootstrapWrapperScriptTest(unittest.TestCase):
 
             original_run_best_effort = bootstrap.run_best_effort
             original_runtime_root = bootstrap.project_host_runtime_root
+            original_rootctl_path = bootstrap.project_host_rootctl_path
             original_geteuid = bootstrap.os.geteuid
             try:
                 bootstrap.run_best_effort = (
                     lambda _cfg, args, desc: recorded.append((args, desc))
                 )
                 bootstrap.project_host_runtime_root = lambda _cfg: Path(tmpdir) / "runtime-root"
+                bootstrap.project_host_rootctl_path = (
+                    lambda _cfg=None: Path(tmpdir) / "usr-local-sbin" / "cocalc-project-host-rootctl"
+                )
                 bootstrap.os.geteuid = lambda: 0
                 bootstrap.write_helpers(cfg)
             finally:
                 bootstrap.run_best_effort = original_run_best_effort
                 bootstrap.project_host_runtime_root = original_runtime_root
+                bootstrap.project_host_rootctl_path = original_rootctl_path
                 bootstrap.os.geteuid = original_geteuid
 
             self.assertTrue(recorded)
             for args, _desc in recorded:
                 self.assertNotIn("-R", args)
             runtime_bin = Path(tmpdir) / "runtime-root" / "bin"
+            rootctl = Path(tmpdir) / "usr-local-sbin" / "cocalc-project-host-rootctl"
             self.assertIn(
                 (
                     [
@@ -565,6 +571,12 @@ class BootstrapWrapperScriptTest(unittest.TestCase):
                     "chown runtime fetch helpers",
                 ),
                 recorded,
+            )
+            self.assertTrue(rootctl.exists())
+            self.assertIn(str(rootctl), (runtime_bin / "ctl").read_text(encoding="utf-8"))
+            self.assertIn(
+                f'COCALC_PROJECT_HOST_OOM_SCORE_ADJ:{bootstrap.HOST_CRITICAL_OOM_SCORE_ADJ}',
+                rootctl.read_text(encoding="utf-8"),
             )
 
     def test_write_wrapper_uses_runtime_home_for_node_lookup(self) -> None:
@@ -662,6 +674,129 @@ class BootstrapWrapperScriptTest(unittest.TestCase):
                     "start project-host now",
                 ),
                 recorded,
+            )
+
+    def test_configure_runtime_sudoers_whitelists_project_host_rootctl(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            recorded = []
+            writes = []
+            rootctl = Path(tmpdir) / "usr-local-sbin" / "cocalc-project-host-rootctl"
+
+            original_rootctl_path = bootstrap.project_host_rootctl_path
+            original_run_cmd = bootstrap.run_cmd
+            original_write_text = bootstrap.Path.write_text
+            original_chmod = bootstrap.os.chmod
+            try:
+                bootstrap.project_host_rootctl_path = lambda _cfg=None: rootctl
+                bootstrap.run_cmd = (
+                    lambda _cfg, args, desc, **kwargs: recorded.append((args, desc))
+                )
+                bootstrap.Path.write_text = (
+                    lambda self, data, encoding="utf-8": writes.append(
+                        (str(self), data, encoding)
+                    )
+                    or len(data)
+                )
+                bootstrap.os.chmod = lambda *_args, **_kwargs: None
+                bootstrap.configure_runtime_sudoers(cfg)
+            finally:
+                bootstrap.project_host_rootctl_path = original_rootctl_path
+                bootstrap.run_cmd = original_run_cmd
+                bootstrap.Path.write_text = original_write_text
+                bootstrap.os.chmod = original_chmod
+
+            sudoers = next(data for path, data, _ in writes if path == "/etc/sudoers.d/cocalc-project-host-runtime")
+            self.assertIn(f"Cmnd_Alias COCALC_RUNTIME_PROJECT_HOST = {rootctl}", sudoers)
+            self.assertIn("COCALC_RUNTIME_PROJECT_HOST", sudoers)
+            self.assertIn(
+                (
+                    ["visudo", "-c", "-f", "/etc/sudoers.d/cocalc-project-host-runtime"],
+                    "validate runtime sudoers",
+                ),
+                recorded,
+            )
+
+    def test_configure_critical_service_oom_protection_writes_dropins_and_applies_choom(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = replace(
+                make_cfg(tmpdir),
+                cloudflared=bootstrap.CloudflaredSpec(True),
+            )
+            writes = []
+            mkdirs = []
+            recorded = []
+
+            original_mkdir = bootstrap.Path.mkdir
+            original_write_text = bootstrap.Path.write_text
+            original_run_best_effort = bootstrap.run_best_effort
+            try:
+                bootstrap.Path.mkdir = (
+                    lambda self, parents=False, exist_ok=False: mkdirs.append(
+                        (str(self), parents, exist_ok)
+                    )
+                )
+                bootstrap.Path.write_text = (
+                    lambda self, data, encoding="utf-8": writes.append(
+                        (str(self), data, encoding)
+                    )
+                    or len(data)
+                )
+                bootstrap.run_best_effort = (
+                    lambda _cfg, args, desc: recorded.append((args, desc))
+                )
+                bootstrap.configure_critical_service_oom_protection(cfg)
+            finally:
+                bootstrap.Path.mkdir = original_mkdir
+                bootstrap.Path.write_text = original_write_text
+                bootstrap.run_best_effort = original_run_best_effort
+
+            self.assertIn(
+                (
+                    "/etc/systemd/system/ssh.service.d",
+                    True,
+                    True,
+                ),
+                mkdirs,
+            )
+            self.assertIn(
+                (
+                    "/etc/systemd/system/sshd.service.d",
+                    True,
+                    True,
+                ),
+                mkdirs,
+            )
+            self.assertIn(
+                (
+                    "/etc/systemd/system/cocalc-cloudflared.service.d",
+                    True,
+                    True,
+                ),
+                mkdirs,
+            )
+            self.assertIn(
+                (
+                    "/etc/systemd/system/ssh.service.d/cocalc-oom-protect.conf",
+                    f"[Service]\nOOMScoreAdjust={bootstrap.HOST_CRITICAL_OOM_SCORE_ADJ}\n",
+                    "utf-8",
+                ),
+                writes,
+            )
+            self.assertIn(
+                (
+                    ["systemctl", "daemon-reload"],
+                    "reload systemd after OOM drop-ins",
+                ),
+                recorded,
+            )
+            self.assertEqual(
+                recorded[1][1],
+                "protect sshd from OOM kills",
+            )
+            self.assertEqual(
+                recorded[2][1],
+                "protect cloudflared from OOM kills",
             )
 
     def test_reconcile_cloudflared_installs_binary_when_missing(self) -> None:
@@ -819,6 +954,7 @@ class BootstrapModesTest(unittest.TestCase):
             patch("configure_runtime_sudoers", lambda _cfg: None)
             patch("verify_runtime_sudoers", lambda _cfg: None)
             patch("configure_cloudflared_with_options", lambda _cfg, install_package=False: None)
+            patch("configure_critical_service_oom_protection", lambda _cfg: None)
             patch("configure_autostart", lambda _cfg: None)
             patch("start_project_host", lambda _cfg: None)
             patch("report_bootstrap_status", lambda _cfg, _status, _message=None: None)
