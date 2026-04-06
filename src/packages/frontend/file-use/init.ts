@@ -4,12 +4,9 @@
  */
 
 import { redux } from "../app-framework";
-
-import { FileUseStore } from "./store";
 import { FileUseActions } from "./actions";
 
 export function init() {
-  redux.createStore("file_use", FileUseStore, { notify_count: 0 });
   const actions = redux.createActions("file_use", FileUseActions);
-  actions._init(); // must be after making store
+  actions._init();
 }

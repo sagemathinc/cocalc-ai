@@ -19,7 +19,7 @@ describe("conat recent document activity api", () => {
 
   afterEach(async () => {
     await getPool().query(
-      `TRUNCATE file_use,
+      `TRUNCATE file_access_log,
                 projects,
                 accounts
          CASCADE`,
@@ -58,25 +58,24 @@ describe("conat recent document activity api", () => {
       ],
     );
     await getPool().query(
-      `INSERT INTO file_use
-         (id, project_id, path, last_edited, users)
+      `INSERT INTO file_access_log
+         (id, project_id, account_id, filename, time, expire)
        VALUES
-         ($1, $3, 'recent.ipynb', $5, $7::JSONB),
-         ($2, $3, 'older.ipynb',  $6, $8::JSONB),
-         ($4, $9, 'hidden.ipynb', $5, $7::JSONB)`,
+         ($1, $2, $3, 'recent.ipynb', $4, NOW() + interval '30 days'),
+         ($5, $2, $6, 'recent.ipynb', $7, NOW() + interval '30 days'),
+         ($8, $2, $3, 'older.ipynb',  $9, NOW() + interval '30 days'),
+         ($10, $11, $6, 'hidden.ipynb', $4, NOW() + interval '30 days')`,
       [
-        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
         PROJECT_ID,
-        "cccccccccccccccccccccccccccccccccccccccc",
+        ACCOUNT_ID,
         new Date("2026-04-05T06:00:00.000Z"),
+        "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        OTHER_ACCOUNT_ID,
+        new Date("2026-04-05T07:00:00.000Z"),
+        "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
         new Date("2026-03-01T06:00:00.000Z"),
-        JSON.stringify({
-          [ACCOUNT_ID]: { edit: "2026-04-05T06:00:00.000Z" },
-        }),
-        JSON.stringify({
-          [ACCOUNT_ID]: { edit: "2026-03-01T06:00:00.000Z" },
-        }),
+        "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
         OTHER_PROJECT_ID,
       ],
     );
@@ -93,5 +92,6 @@ describe("conat recent document activity api", () => {
 
     expect(rows.map((row) => row.path)).toEqual(["recent.ipynb"]);
     expect(rows[0].project_id).toBe(PROJECT_ID);
+    expect(rows[0].recent_account_ids).toEqual([OTHER_ACCOUNT_ID, ACCOUNT_ID]);
   });
 });

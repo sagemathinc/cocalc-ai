@@ -15,12 +15,11 @@ import { unreachable } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 import track from "@cocalc/frontend/user-tracking";
 import { PageStyle, TOP_BAR_ELEMENT_CLASS } from "./top-nav-consts";
-import { blur_active_element } from "./util";
 import { useEffect, useMemo } from "react";
 import { set_window_title } from "@cocalc/frontend/browser";
 
 interface Props {
-  type: "bell" | "notifications";
+  type: "notifications";
   active: boolean;
   pageStyle: PageStyle;
 }
@@ -31,20 +30,12 @@ export const Notification: React.FC<Props> = React.memo((props: Props) => {
   const page_actions = useActions("page");
 
   const mentions_unread = useTypedRedux("mentions", "unread_count") ?? 0;
-  const notify_count = useTypedRedux("file_use", "notify_count");
   const news_unread = useTypedRedux("news", "unread");
 
-  const count = useMemo(() => {
-    switch (type) {
-      case "bell":
-        return notify_count ?? 0;
-      case "notifications":
-        return mentions_unread + (news_unread ?? 0);
-      default:
-        unreachable(type);
-        return 0;
-    }
-  }, [type, notify_count, mentions_unread, news_unread]);
+  const count = useMemo(
+    () => mentions_unread + (news_unread ?? 0),
+    [mentions_unread, news_unread],
+  );
 
   useEffect(() => {
     set_window_title();
@@ -72,21 +63,12 @@ export const Notification: React.FC<Props> = React.memo((props: Props) => {
     e.stopPropagation();
 
     switch (type) {
-      case "bell":
-        page_actions.toggle_show_file_use();
-        blur_active_element();
-        if (!active) {
-          track("top_nav", { name: "file_use" });
-        }
-        break;
-
       case "notifications":
         page_actions.set_active_tab("notifications");
         if (!active) {
           track("top_nav", { name: "mentions" });
         }
         break;
-
       default:
         unreachable(type);
     }
@@ -94,21 +76,6 @@ export const Notification: React.FC<Props> = React.memo((props: Props) => {
 
   function renderBadge() {
     switch (type) {
-      case "bell":
-        return (
-          <Badge
-            showZero
-            color={count == 0 ? COLORS.GRAY : undefined}
-            count={count}
-          >
-            <Icon
-              style={{ fontSize: fontSizeIcons }}
-              className={count > 0 ? "smc-bell-notification" : ""}
-              name="bell"
-            />
-          </Badge>
-        );
-
       case "notifications":
         return (
           <Badge

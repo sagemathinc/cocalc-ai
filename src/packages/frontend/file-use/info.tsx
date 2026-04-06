@@ -1,173 +1,98 @@
 /*
- *  This file is part of CoCalc: Copyright © 2020 Sagemath, Inc.
+ *  This file is part of CoCalc: Copyright © 2026 Sagemath, Inc.
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Component, Rendered, CSS } from "../app-framework";
 import { User } from "@cocalc/frontend/users";
 import { Icon, TimeAgo, r_join } from "../components";
 import { FileUseIcon } from "./icon";
-import { Map as iMap } from "immutable";
+import type { Map as iMap } from "immutable";
 import { Col, Grid, Row } from "@cocalc/frontend/antd-bootstrap";
 import * as misc from "@cocalc/util/misc";
 import { open_file_use_entry } from "./util";
 import { ProjectTitle } from "@cocalc/frontend/projects/project-title";
+import { CSS } from "../app-framework";
+import type { RecentDocumentActivityEntry } from "./types";
 
-// Arbitrary constants:
-
-// Maximum number of distinct user names to show in a notification
 const MAX_USERS = 5;
-// Length to truncate filename.
 const TRUNCATE_LENGTH = 50;
 
-const file_use_style: CSS = {
+const rowStyle: CSS = {
   cursor: "pointer",
   width: "100%",
   color: "#666",
+  background: "#fefefe",
 };
 
 interface Props {
-  info: iMap<string, any>;
+  info: RecentDocumentActivityEntry;
   account_id: string;
   user_map: iMap<string, any>;
-  project_map: iMap<string, any>;
-  redux: any;
   cursor?: boolean;
-  mask?: string; // TODO: not used in client code.  Why?? remove... or?
 }
 
-export class FileUseInfo extends Component<Props, {}> {
-  render_users() {
-    if (this.props.info.get("users") == null) return;
-    const v: Rendered[] = [];
-    // only list users who have actually done something aside from mark read/seen this file
-    const users: any[] = [];
-    this.props.info.get("users").forEach((user, _) => {
-      if (user != null && (user.get("last_edited") || user.get("last_used"))) {
-        users.push(user.toJS());
-      }
-    });
-    for (const user of users.slice(0, MAX_USERS)) {
-      v.push(
-        <User
-          key={user.account_id}
-          account_id={user.account_id}
-          name={user.account_id === this.props.account_id ? "You" : undefined}
-          user_map={this.props.user_map}
-          last_active={user.last_edited ? user.last_edited : user.last_used}
-        />,
-      );
-    }
-    if (v.length == 0) {
-      return <>nobody yet</>;
-    }
-    return r_join(v);
+export function FileUseInfo({ info, account_id, user_map, cursor }: Props) {
+  function open(e): void {
+    e?.preventDefault?.();
+    void open_file_use_entry(info.project_id, info.path, false);
   }
 
-  render_last_edited(): Rendered {
-    if (this.props.info.get("last_edited")) {
-      return (
-        <span key="last_edited">
-          was edited <TimeAgo date={this.props.info.get("last_edited")} />
-        </span>
-      );
-    }
-  }
-
-  open(e): void {
-    if (e != null) {
-      e.preventDefault();
-    }
-    const x = this.props.info;
-    open_file_use_entry(
-      x.get("project_id"),
-      x.get("path"),
-      x.get("show_chat", false),
-      this.props.redux,
-    );
-  }
-
-  render_path(): Rendered {
-    let { name, ext } = misc.separate_file_extension(
-      this.props.info.get("path"),
-    );
+  function renderPath() {
+    let { name, ext } = misc.separate_file_extension(info.path);
     name = misc.trunc_middle(name, TRUNCATE_LENGTH);
     ext = misc.trunc_middle(ext, TRUNCATE_LENGTH);
     return (
       <span>
-        <span
-          style={{
-            fontWeight: this.props.info.get("is_unread") ? "bold" : "normal",
-          }}
-        >
-          {name}
-        </span>
-        <span style={{ color: !this.props.mask ? "#999" : undefined }}>
-          {ext === "" ? "" : `.${ext}`}
-        </span>
+        <span style={{ fontWeight: 600 }}>{name}</span>
+        <span style={{ color: "#999" }}>{ext === "" ? "" : `.${ext}`}</span>
       </span>
     );
   }
 
-  render_project(): Rendered {
-    return (
-      <ProjectTitle
-        style={{ background: "white", padding: "0px 5px", borderRadius: "3px" }}
-        key="project"
-        project_id={this.props.info.get("project_id")}
-      />
+  function renderUsers() {
+    const ids = Array.isArray(info.recent_account_ids)
+      ? info.recent_account_ids.filter(Boolean).slice(0, MAX_USERS)
+      : [];
+    if (ids.length === 0) return <>someone</>;
+    return r_join(
+      ids.map((id) => (
+        <User
+          key={id}
+          account_id={id}
+          name={id === account_id ? "You" : undefined}
+          user_map={user_map}
+        />
+      )),
     );
   }
 
-  render_what_is_happening(): Rendered {
-    if (this.props.info.get("users") == null) {
-      return this.render_last_edited();
-    }
-    if (this.props.info.get("show_chat")) {
-      return <span>discussed by </span>;
-    }
-    return <span>edited by </span>;
+  const style = misc.copy(rowStyle);
+  if (cursor) {
+    misc.merge(style, { background: "#08c", color: "white" });
   }
 
-  render_action_icon(): Rendered {
-    if (this.props.info.get("show_chat")) {
-      return <Icon name="comment" />;
-    } else {
-      return <Icon name="edit" />;
-    }
-  }
-
-  render_type_icon(): Rendered {
-    return <FileUseIcon filename={this.props.info.get("path")} />;
-  }
-
-  render(): Rendered {
-    const style = misc.copy(file_use_style);
-    if (this.props.info.get("notify")) {
-      style.background = "#ffffea"; // very light yellow
-    } else {
-      style.background = this.props.info.get("is_unread")
-        ? "#f4f4f4"
-        : "#fefefe";
-    }
-    if (this.props.cursor) {
-      misc.merge(style, { background: "#08c", color: "white" });
-    }
-    return (
-      <Grid style={style} onClick={(e) => this.open(e)}>
-        <Row style={{ padding: "5px" }}>
-          <Col key="action" sm={1} style={{ fontSize: "14pt" }}>
-            {this.render_action_icon()}
-          </Col>
-          <Col key="desc" sm={10}>
-            {this.render_path()} in {this.render_project()}{" "}
-            {this.render_what_is_happening()} {this.render_users()}
-          </Col>
-          <Col key="type" sm={1} style={{ fontSize: "14pt" }}>
-            {this.render_type_icon()}
-          </Col>
-        </Row>
-      </Grid>
-    );
-  }
+  return (
+    <Grid style={style} onClick={open}>
+      <Row style={{ padding: "5px" }}>
+        <Col sm={1} style={{ fontSize: "14pt" }}>
+          <Icon name="history" />
+        </Col>
+        <Col sm={10}>
+          {renderPath()} in{" "}
+          <ProjectTitle
+            style={{
+              background: "white",
+              padding: "0px 5px",
+              borderRadius: "3px",
+            }}
+            project_id={info.project_id}
+          />{" "}
+          was accessed <TimeAgo date={info.last_accessed} /> by {renderUsers()}
+        </Col>
+        <Col sm={1} style={{ fontSize: "14pt" }}>
+          <FileUseIcon filename={info.path} />
+        </Col>
+      </Row>
+    </Grid>
+  );
 }

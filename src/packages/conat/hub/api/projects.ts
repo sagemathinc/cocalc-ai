@@ -172,6 +172,8 @@ export interface RecentDocumentActivityRow {
   id: string;
   project_id: string;
   path: string;
+  last_accessed?: Date | null;
+  recent_account_ids?: string[];
   last_edited?: Date | null;
   users?: Record<
     string,
