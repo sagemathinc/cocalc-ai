@@ -256,4 +256,80 @@ describe("useChatThreadSelection", () => {
     expect(actions.clearAllFilters).not.toHaveBeenCalled();
     expect(actions.setFragment).not.toHaveBeenCalled();
   });
+
+  it("applies fragment-driven thread selection only once per fragment target", () => {
+    const actions = {
+      clearAllFilters: jest.fn(),
+      setFragment: jest.fn(),
+      setSelectedThread: jest.fn(),
+    } as any;
+
+    let latest: any = null;
+
+    function Harness({
+      messages,
+      fragmentId,
+    }: {
+      messages: Map<string, any>;
+      fragmentId: string | null;
+    }) {
+      latest = useChatThreadSelection({
+        actions,
+        threads: [
+          {
+            key: "thread-1",
+            label: "Thread 1",
+            displayLabel: "Thread 1",
+            newestTime: 100,
+            messageCount: 1,
+            hasCustomName: false,
+            hasCustomAppearance: false,
+            readCount: 0,
+            unreadCount: 1,
+            isAI: false,
+            isAutomation: false,
+            isPinned: false,
+            isArchived: false,
+          },
+        ],
+        messages,
+        fragmentId,
+        storedThreadFromDesc: null,
+      });
+      return null;
+    }
+
+    const messageDate = "100";
+    const makeMessages = () =>
+      new Map([
+        [
+          messageDate,
+          {
+            sender_id: "acct",
+            event: "chat",
+            history: [
+              { author_id: "acct", content: "hello", date: messageDate },
+            ],
+            date: new Date(Number(messageDate)),
+            thread_id: "thread-1",
+          },
+        ],
+      ]);
+
+    const { rerender } = render(
+      <Harness messages={makeMessages()} fragmentId={messageDate} />,
+    );
+
+    expect(latest.selectedThreadKey).toBe("thread-1");
+
+    act(() => {
+      latest.setSelectedThreadKey(null);
+    });
+    expect(latest.selectedThreadKey).toBe(null);
+
+    act(() => {
+      rerender(<Harness messages={makeMessages()} fragmentId={messageDate} />);
+    });
+    expect(latest.selectedThreadKey).toBe(null);
+  });
 });
