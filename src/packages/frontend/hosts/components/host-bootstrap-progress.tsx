@@ -20,9 +20,10 @@ export const HostBootstrapProgress: React.FC<HostBootstrapProgressProps> = ({
   if (status === "done" && host.status === "running") {
     return null;
   }
-  const text = `Bootstrap: ${message}`;
+  const fullText = `Bootstrap: ${message}`;
+  const text = compact && status === "error" ? "Bootstrap failed" : fullText;
   return (
-    <Tooltip title={text}>
+    <Tooltip title={fullText}>
       <Typography.Text
         type={status === "error" ? "danger" : "secondary"}
         style={compact ? { fontSize: 12 } : undefined}
