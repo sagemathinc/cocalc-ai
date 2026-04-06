@@ -34,6 +34,7 @@ import track from "@cocalc/frontend/user-tracking";
 import { tab_to_path } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 import {
+  ACTIVITY_BAR_COLLAPSED,
   ACTIVITY_BAR_HIDDEN_TABS,
   ACTIVITY_BAR_LABELS,
   ACTIVITY_BAR_TAB_ORDER,
@@ -320,7 +321,7 @@ export function VerticalFixedTabs({
       onCustomize: () => setShowCustomize(true),
       onToggleActivityBar: () => {
         track("action-bar", { action: "hide" });
-        actions?.toggleActionButtons();
+        account_settings.set_other_settings(ACTIVITY_BAR_COLLAPSED, true);
       },
       onToggleLabels: () => {
         account_settings.set_other_settings(
@@ -481,7 +482,6 @@ export function HiddenActivityBarLauncher() {
       ),
     [other_settings],
   );
-
   if (!accountStoreReady) return null;
 
   const items = createRailMenuItems({
@@ -490,7 +490,7 @@ export function HiddenActivityBarLauncher() {
     onCustomize: () => setShowCustomize(true),
     onToggleActivityBar: () => {
       track("action-bar", { action: "show" });
-      actions?.toggleActionButtons();
+      account_settings.set_other_settings(ACTIVITY_BAR_COLLAPSED, false);
     },
     onToggleLabels: () => {
       account_settings.set_other_settings(

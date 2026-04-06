@@ -55,6 +55,7 @@ import ProjectTabs, {
   HiddenActivityBarLauncher,
   VerticalFixedTabs,
 } from "./activity-bar-tabs";
+import { ACTIVITY_BAR_COLLAPSED } from "./activity-bar-consts";
 import { throttle } from "lodash";
 import { StartButton } from "@cocalc/frontend/project/start-button";
 import { useHostInfo } from "@cocalc/frontend/projects/host-info";
@@ -93,7 +94,15 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
   const projectPageRef = useRef<HTMLDivElement>(null);
   const mainRef = useRef<HTMLDivElement>(null);
   const [mainWidthPx, setMainWidthPx] = useState<number>(0);
-  const hideActionButtons = useTypedRedux({ project_id }, "hideActionButtons");
+  const hideActionButtonsState = useTypedRedux(
+    { project_id },
+    "hideActionButtons",
+  );
+  const otherSettings = useTypedRedux("account", "other_settings");
+  const hideActionButtons =
+    otherSettings?.get?.(ACTIVITY_BAR_COLLAPSED) ??
+    hideActionButtonsState ??
+    false;
   const flyout = useTypedRedux({ project_id }, "flyout");
   const actions = useActions({ project_id });
   const is_deleted = useRedux([
