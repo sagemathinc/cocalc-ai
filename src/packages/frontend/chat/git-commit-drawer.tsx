@@ -74,6 +74,10 @@ const CONTEXT_OPTIONS = [3, 10, 30].map((value) => ({
 }));
 const CARD_BORDER_COLOR = "#d9d9d9";
 const CARD_SHADOW = "0 1px 2px rgba(0,0,0,0.06)";
+const DIFF_FILE_HEADER_BACKGROUND = COLORS.GRAY_LLL;
+const DIFF_FILE_HEADER_BORDER = COLORS.GRAY_LL;
+const DIFF_FILE_HEADER_TEXT = COLORS.GRAY_D;
+const DIFF_FILE_HEADER_SECONDARY = COLORS.GRAY_M;
 
 export function getCommitReviewIndicatorState(
   reviewedByCommit: Record<string, boolean>,
@@ -3220,28 +3224,45 @@ export function GitCommitDrawer({
                 const languageHint = languageHintFromPath(file.path);
                 const fileComments = inlineCommentsByFile.get(file.path) ?? [];
                 return (
-                  <div key={`${file.path}-${idx}`}>
+                  <div key={`${file.path}-${idx}`} style={{ marginBottom: 18 }}>
                     <div
                       style={{
-                        marginBottom: 6,
+                        position: "sticky",
+                        top: -16,
+                        zIndex: 3,
                         display: "flex",
                         alignItems: "center",
                         justifyContent: "space-between",
                         gap: 8,
                         flexWrap: "wrap",
+                        marginBottom: 8,
+                        padding: "8px 10px",
+                        border: `1px solid ${DIFF_FILE_HEADER_BORDER}`,
+                        borderRadius: 8,
+                        background: DIFF_FILE_HEADER_BACKGROUND,
+                        boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
                       }}
                     >
                       <Button
                         type="link"
                         size="small"
-                        style={{ padding: 0, fontFamily: "monospace" }}
+                        style={{
+                          padding: 0,
+                          height: "auto",
+                          fontFamily: "monospace",
+                          fontWeight: 700,
+                          fontSize: Math.max(13, fontSize),
+                          color: DIFF_FILE_HEADER_TEXT,
+                        }}
                         onClick={() => void openFile(file.path)}
                       >
                         {file.path}
                       </Button>
                       <Typography.Text
-                        type="secondary"
-                        style={{ fontSize: 11 }}
+                        style={{
+                          fontSize: 11,
+                          color: DIFF_FILE_HEADER_SECONDARY,
+                        }}
                       >
                         {filenameMode(file.path, "text")}
                         {fileComments.length > 0
