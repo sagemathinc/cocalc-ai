@@ -35,8 +35,8 @@ export async function exec(
 export async function touch(project_id: string, path: string): Promise<void> {
   // touch the file on disk
   await exec({ project_id, command: "touch", args: [path] }, path);
-  // Also record in file-use table that we are editing the file (so appears in file use)
-  // Have to use any type, since file_use isn't converted to typescript yet.
+  // Record editor activity for document presence and recent-activity logging.
+  // Have to use any type, since the legacy file_use action name is still in use.
   const actions: any = redux.getActions("file_use");
   if (actions != null && typeof actions.mark_file === "function") {
     actions.mark_file(project_id, path, "edit");

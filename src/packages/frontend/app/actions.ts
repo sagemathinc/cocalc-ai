@@ -36,7 +36,7 @@ export class PageActions extends Actions<PageState> {
   /* Expects a func which takes a browser keydown event
      Only allows one keyhandler to be active at a time.
      FUTURE: Develop more general way to make key mappings for editors
-     HACK: __suppress_key_handlers is for file_use. See FUTURE above.
+     HACK: __suppress_key_handlers is too specific.
            Adding even a single suppressor leads to spaghetti code.
            Don't do it. -- J3
 
@@ -284,21 +284,6 @@ export class PageActions extends Actions<PageState> {
     this.suppress_key_handlers = false;
     this.set_active_key_handler();
   };
-
-  // Toggles visibility of file use widget
-  // Temporarily disables window key handlers until closed
-  // FUTURE: Develop more general way to make key mappings
-  toggle_show_file_use() {
-    const currently_shown = redux.getStore("page").get("show_file_use");
-    if (currently_shown) {
-      this.enableGlobalKeyHandler(); // HACK: Terrible way to do this.
-    } else {
-      // Suppress the activation of any new key handlers until file_use closes
-      this.disableGlobalKeyHandler(); // HACK: Terrible way to do this.
-    }
-
-    this.setState({ show_file_use: !currently_shown });
-  }
 
   set_ping(ping, avgping) {
     this.setState({ ping, avgping });
