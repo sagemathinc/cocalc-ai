@@ -1,6 +1,7 @@
 /** @jest-environment jsdom */
 
 import { fireEvent, render, screen } from "@testing-library/react";
+import { ACTIVITY_BAR_COLLAPSED } from "./activity-bar-consts";
 
 const mockSetActiveTab = jest.fn();
 const mockToggleFlyout = jest.fn();
@@ -270,6 +271,20 @@ describe("HiddenActivityBarLauncher", () => {
 
     fireEvent.click(screen.getByTestId("menu-launcher:toggle-activity-bar"));
 
-    expect(mockToggleActionButtons).toHaveBeenCalled();
+    expect(mockSetOtherSettings).toHaveBeenCalledWith(
+      ACTIVITY_BAR_COLLAPSED,
+      false,
+    );
+  });
+
+  it("hides the activity bar from the overflow menu", () => {
+    render(<VerticalFixedTabs setHomePageButtonWidth={() => {}} />);
+
+    fireEvent.click(screen.getByTestId("menu-overflow:toggle-activity-bar"));
+
+    expect(mockSetOtherSettings).toHaveBeenCalledWith(
+      ACTIVITY_BAR_COLLAPSED,
+      true,
+    );
   });
 });
