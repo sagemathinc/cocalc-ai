@@ -2876,7 +2876,7 @@ RUNTIME_ROOT="__RUNTIME_ROOT__"
 RUNTIME_USER="__RUNTIME_USER__"
 RUNTIME_BIN="$RUNTIME_ROOT/bin/project-host"
 PID_FILE="/mnt/cocalc/data/daemon.pid"
-OOM_ADJ="${COCALC_PROJECT_HOST_OOM_SCORE_ADJ:__OOM_ADJ__}"
+OOM_ADJ="${COCALC_PROJECT_HOST_OOM_SCORE_ADJ:__OOM_ADJ_LITERAL__}"
 
 run_daemon() {
   sudo -n -u "${RUNTIME_USER}" -H "${RUNTIME_BIN}" daemon "$@"
@@ -2938,7 +2938,9 @@ esac
     start_ph = start_ph.replace("__RUNTIME_ROOT__", str(runtime_root))
     rootctl = rootctl.replace("__RUNTIME_ROOT__", str(runtime_root))
     rootctl = rootctl.replace("__RUNTIME_USER__", cfg.ssh_user)
-    rootctl = rootctl.replace("__OOM_ADJ__", str(HOST_CRITICAL_OOM_SCORE_ADJ))
+    rootctl = rootctl.replace(
+        "__OOM_ADJ_LITERAL__", f"--{abs(HOST_CRITICAL_OOM_SCORE_ADJ)}"
+    )
     (bin_dir / "ctl").write_text(ctl, encoding="utf-8")
     (bin_dir / "start-project-host").write_text(start_ph, encoding="utf-8")
     (bin_dir / "logs").write_text(logs_script, encoding="utf-8")

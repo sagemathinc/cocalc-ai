@@ -575,7 +575,7 @@ class BootstrapWrapperScriptTest(unittest.TestCase):
             self.assertTrue(rootctl.exists())
             self.assertIn(str(rootctl), (runtime_bin / "ctl").read_text(encoding="utf-8"))
             self.assertIn(
-                f'COCALC_PROJECT_HOST_OOM_SCORE_ADJ:{bootstrap.HOST_CRITICAL_OOM_SCORE_ADJ}',
+                'COCALC_PROJECT_HOST_OOM_SCORE_ADJ:--900',
                 rootctl.read_text(encoding="utf-8"),
             )
 
