@@ -6,7 +6,9 @@
 import { Table } from "@cocalc/frontend/app-framework/Table";
 import { redux, Store, Actions } from "@cocalc/frontend/app-framework";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import { once } from "@cocalc/util/async-utils";
 import { isValidUUID, is_array } from "@cocalc/util/misc";
+import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import {
   //  type Group,
   MAX_TITLE_LENGTH,
@@ -23,6 +25,10 @@ export interface GroupsState {
 export class GroupsStore extends Store<GroupsState> {}
 
 export class GroupsActions extends Actions<GroupsState> {
+  private refreshAfterMutation = () => {
+    void refresh_groups_table();
+  };
+
   constructor(name, redux) {
     super(name, redux);
   }
@@ -56,6 +62,7 @@ export class GroupsActions extends Actions<GroupsState> {
       },
     };
     const x = await webapp_client.async_query({ query });
+    this.refreshAfterMutation();
     return x.query.create_group.group_pid;
   };
 
@@ -155,6 +162,7 @@ export class GroupsActions extends Actions<GroupsState> {
       "shallow",
     );
     await table.save();
+    this.refreshAfterMutation();
   };
 }
 
@@ -167,6 +175,10 @@ class GroupsTable extends Table {
 
   options() {
     return [];
+  }
+
+  no_changefeed() {
+    return true;
   }
 
   query() {
@@ -193,6 +205,45 @@ class GroupsTable extends Table {
   }
 }
 
+const refresh_groups_table = reuseInFlight(async (): Promise<void> => {
+  if (!webapp_client.is_signed_in()) {
+    redux.removeTable("groups");
+    redux.getActions("groups")?.setState({ groups: undefined, error: "" });
+    return;
+  }
+  redux.removeTable("groups");
+  const table = redux.createTable("groups", GroupsTable);
+  await once(table._table, "connected");
+});
+
+let signedInListener: (() => void) | undefined;
+let signedOutListener: (() => void) | undefined;
+let rememberMeFailedListener: (() => void) | undefined;
+let conatConnectedListener: (() => void) | undefined;
+
+function initRealtime(): void {
+  if (signedInListener != null) {
+    return;
+  }
+  signedInListener = () => {
+    void refresh_groups_table();
+  };
+  signedOutListener = () => {
+    redux.removeTable("groups");
+    redux.getActions("groups")?.setState({ groups: undefined, error: "" });
+  };
+  rememberMeFailedListener = signedOutListener;
+  conatConnectedListener = () => {
+    if (webapp_client.is_signed_in()) {
+      void refresh_groups_table();
+    }
+  };
+  webapp_client.on("signed_in", signedInListener);
+  webapp_client.on("signed_out", signedOutListener);
+  webapp_client.on("remember_me_failed", rememberMeFailedListener);
+  webapp_client.conat_client.on("connected", conatConnectedListener);
+}
+
 let initialized = false;
 export function init() {
   if (initialized || redux.getStore("groups") != null) {
@@ -202,7 +253,10 @@ export function init() {
     error: "",
   });
   redux.createActions<GroupsState, GroupsActions>("groups", GroupsActions);
-  redux.createTable("groups", GroupsTable);
+  initRealtime();
+  if (webapp_client.is_signed_in()) {
+    void refresh_groups_table();
+  }
   initialized = true;
 }
 
