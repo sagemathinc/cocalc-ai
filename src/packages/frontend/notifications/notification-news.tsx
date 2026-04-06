@@ -33,6 +33,17 @@ interface NewsPanelProps {
   filter: NewsFilter;
 }
 
+function toReadIds(value: unknown): Set<string> {
+  const rawValue =
+    typeof (value as any)?.toJS === "function" ? (value as any).toJS() : value;
+  const raw = Array.isArray(rawValue) ? rawValue : [];
+  return new Set(
+    raw.filter(
+      (id): id is string => typeof id === "string" && id.trim().length > 0,
+    ),
+  );
+}
+
 export function NewsPanel(props: NewsPanelProps) {
   const { news, filter } = props;
   const intl = useIntl();
@@ -41,15 +52,7 @@ export function NewsPanel(props: NewsPanelProps) {
   const account_other = useTypedRedux("account", "other_settings");
   const news_read_until: number | undefined =
     account_other?.get("news_read_until");
-  const rawNewsReadIds = account_other?.get("news_read_ids");
-  const news_read_ids = new Set<string>(
-    (Array.isArray(rawNewsReadIds)
-      ? rawNewsReadIds
-      : typeof (rawNewsReadIds as any)?.toJS === "function"
-        ? (rawNewsReadIds as any).toJS()
-        : []
-    ).filter((id): id is string => typeof id === "string" && id.trim() !== ""),
-  );
+  const news_read_ids = toReadIds(account_other?.get("news_read_ids"));
   const didClickUnread = useRef<boolean>(false);
 
   // after showing news briefly (short), we mark them as read.
