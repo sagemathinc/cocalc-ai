@@ -21,6 +21,7 @@ import type { HistoricCounts, Stats } from "@cocalc/util/db-schema/stats";
 import { slugURL } from "@cocalc/util/news";
 import {
   CHANNELS_DESCRIPTIONS,
+  PUBLIC_NEWS_CHANNELS,
   type Channel,
   type NewsItem,
   type NewsPrevNext,
@@ -1289,13 +1290,11 @@ function NewsListPage({
           block
           options={[
             { label: "All", value: "all", title: "All channels" },
-            ...(Object.keys(CHANNELS_DESCRIPTIONS) as Channel[]).map(
-              (name) => ({
-                label: name,
-                value: name,
-                title: CHANNELS_DESCRIPTIONS[name],
-              }),
-            ),
+            ...PUBLIC_NEWS_CHANNELS.map((name) => ({
+              label: name,
+              value: name,
+              title: CHANNELS_DESCRIPTIONS[name],
+            })),
           ]}
           value={channel}
           onChange={(value) => setChannel(value as Channel | "all")}

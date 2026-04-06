@@ -9,6 +9,7 @@ import { omit } from "lodash";
 import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
 import { clearCache } from "@cocalc/database/postgres/news";
+import { publishNewsRefreshBestEffort } from "./feed";
 import type { NewsItem } from "@cocalc/util/types/news";
 
 const L = getLogger("server:news:edit").debug;
@@ -69,5 +70,6 @@ export default async function editNews(opts: NewsItem) {
 
   // upon success: clear cache and return id
   clearCache();
+  await publishNewsRefreshBestEffort();
   return { id };
 }

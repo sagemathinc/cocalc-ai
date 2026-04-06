@@ -11,8 +11,8 @@ import getCustomize from "@cocalc/database/settings/customize";
 import { capitalize } from "@cocalc/util/misc";
 import { slugURL } from "@cocalc/util/news";
 import {
-  CHANNELS,
   CHANNELS_DESCRIPTIONS,
+  PUBLIC_NEWS_CHANNELS,
   type Channel,
   type NewsItem,
 } from "@cocalc/util/types/news";
@@ -84,7 +84,10 @@ function absoluteUrl(req: Request, path: string): string {
 
 function channelFromQuery(req: Request): Channel | "all" {
   const query = req.query.channel;
-  if (typeof query === "string" && CHANNELS.includes(query as Channel)) {
+  if (
+    typeof query === "string" &&
+    PUBLIC_NEWS_CHANNELS.includes(query as Channel)
+  ) {
     return query as Channel;
   }
   return "all";

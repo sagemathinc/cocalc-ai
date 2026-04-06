@@ -6,6 +6,7 @@
 import {
   Channel,
   EVENT_CHANNEL,
+  SYSTEM_CHANNEL,
   NewsAdminListItem,
   NewsItem,
   NewsPrevNext,
@@ -30,12 +31,30 @@ FROM news
 WHERE news.date <= NOW()
   AND hide IS NOT TRUE
   AND channel != '${EVENT_CHANNEL}'
+  AND channel != '${SYSTEM_CHANNEL}'
   AND (until IS NULL OR until > NOW())
 ORDER BY date DESC
 LIMIT 100`;
 
 export async function getFeedData(): Promise<NewsItem[]> {
   return await C.query<NewsItem>(Q_FEED);
+}
+
+const Q_APP_FEED = `
+SELECT
+  id, channel, title, text, url, tags,
+  extract(epoch from date::timestamp)::integer as date,
+  extract(epoch from until::timestamp)::integer as until
+FROM news
+WHERE news.date <= NOW()
+  AND hide IS NOT TRUE
+  AND channel != '${EVENT_CHANNEL}'
+  AND (until IS NULL OR until > NOW())
+ORDER BY date DESC
+LIMIT 100`;
+
+export async function getAppFeedData(): Promise<NewsItem[]> {
+  return await C.query<NewsItem>(Q_APP_FEED);
 }
 
 // ::timestamptz because if your server is not in UTC, it will be converted to UTC
@@ -46,7 +65,8 @@ SELECT
   extract(epoch from date::timestamptz)::INTEGER as date,
   extract(epoch from until::timestamptz)::INTEGER as until
 FROM news
-WHERE id = $1`;
+WHERE id = $1
+  AND channel != '${SYSTEM_CHANNEL}'`;
 
 // This is used for editing a news item
 export async function getNewsItem(
@@ -74,6 +94,7 @@ WHERE date >= (SELECT date FROM news WHERE id = $1)
   AND hide IS NOT TRUE
   AND date < NOW()
   AND channel != '${EVENT_CHANNEL}'
+  AND channel != '${SYSTEM_CHANNEL}'
   AND (until IS NULL OR until > NOW())
 ORDER BY date ASC, id ASC
 LIMIT 1`;
@@ -86,6 +107,7 @@ WHERE date <= (SELECT date FROM news WHERE id = $1)
   AND hide IS NOT TRUE
   AND date < NOW()
   AND channel != '${EVENT_CHANNEL}'
+  AND channel != '${SYSTEM_CHANNEL}'
   AND (until IS NULL OR until > NOW())
 ORDER BY date DESC, id DESC
 LIMIT 1`;
@@ -117,6 +139,7 @@ SELECT
   extract(epoch from until::timestamptz)::INTEGER as until
 FROM news
     WHERE channel <> '${EVENT_CHANNEL}'
+      AND channel <> '${SYSTEM_CHANNEL}'
 ORDER BY date DESC
 LIMIT $1
 OFFSET $2`;
@@ -161,6 +184,7 @@ FROM news
 WHERE date <= NOW()
   AND hide IS NOT TRUE
   AND channel != '${EVENT_CHANNEL}'
+  AND channel != '${SYSTEM_CHANNEL}'
   AND (until IS NULL OR until > NOW())
 ORDER BY date DESC
 LIMIT 1`;
@@ -177,6 +201,7 @@ SELECT
 FROM news
 WHERE date <= NOW()
   AND channel != '${EVENT_CHANNEL}'
+  AND channel != '${SYSTEM_CHANNEL}'
   AND hide IS NOT TRUE
   AND (until IS NULL OR until > NOW())
 ORDER BY date DESC

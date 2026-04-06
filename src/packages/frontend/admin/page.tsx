@@ -10,7 +10,6 @@ import { Icon, Title } from "@cocalc/frontend/components";
 import { RegistrationToken } from "./registration-token";
 import { MembershipTiers } from "./membership-tiers";
 import SiteSettings from "./site-settings";
-import { SystemNotifications } from "./system-notifications";
 import { UserSearch } from "./users/user-search";
 import AIAvatar from "@cocalc/frontend/components/ai-avatar";
 import { TestLLMAdmin } from "./llm/admin-llm-test";
@@ -105,6 +104,20 @@ export function AdminPage({
             >
               Create event
             </Button>
+            <Button
+              onClick={() => {
+                pageActions.set_active_tab("admin", false);
+                pageActions.setState({
+                  admin_route: { kind: "news-editor", id: "new" },
+                });
+                set_url_with_search(
+                  getAdminUrlPath({ kind: "news-editor", id: "new" }),
+                  "?channel=system",
+                );
+              }}
+            >
+              Create system notice
+            </Button>
           </Space>
           <Text type="secondary">
             Legacy <Text code>/news/edit/*</Text> links now redirect into this
@@ -164,16 +177,6 @@ export function AdminPage({
         </div>
       ),
       children: <MembershipTiers />,
-    },
-    {
-      key: "system-notifications",
-      label: (
-        <div style={headerStyle}>
-          <Icon name="comment" style={{ marginRight: "8px" }} /> System
-          Notifications
-        </div>
-      ),
-      children: <SystemNotifications />,
     },
     //     {
     //       key: "usage-stats",

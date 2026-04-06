@@ -89,7 +89,6 @@ import "./statements";
 import "./stats";
 import "./subscriptions";
 import "./syncstring-schema";
-import "./system-notifications"; // deprecated: use "news" with channel="system"
 import "./tracking";
 import "./usage-info";
 import "./vouchers";

@@ -15,9 +15,6 @@ import { COCALC_MINIMAL } from "./fullscreen";
 // Load/initialize Redux-based react functionality
 import { redux } from "./app-framework";
 
-// Systemwide notifications that are broadcast to all users (and set by admins)
-import "./system-notifications";
-
 // News about the platform, features, etc. – also shown at https://$DNS/news
 import "./notifications/news/init";
 

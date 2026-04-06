@@ -38,17 +38,24 @@ export interface NewsItemWebapp {
   title: string;
   channel: Channel;
   tags?: string[];
+  text?: string;
+  url?: string;
+  until?: Date;
+  hide?: boolean;
 }
 
+export const SYSTEM_CHANNEL = "system";
 export const EVENT_CHANNEL = "event";
 
-export const CHANNELS = [
+export const PUBLIC_NEWS_CHANNELS = [
   "feature",
   "announcement",
   "platform",
   "about",
   EVENT_CHANNEL,
 ] as const;
+
+export const CHANNELS = [...PUBLIC_NEWS_CHANNELS, SYSTEM_CHANNEL] as const;
 
 export type Channel = (typeof CHANNELS)[number];
 
@@ -59,6 +66,8 @@ export const CHANNELS_DESCRIPTIONS: { [name in Channel]: string } = {
   about: "In one's own behalf",
   platform:
     "Technical aspects of the service itself, e.g. software environments",
+  system:
+    "Temporary in-app system notices such as outages or urgent service updates",
 } as const;
 
 // TODO move IconName from @cocalc/frontend/components/icon.tsx out of frontend
@@ -70,6 +79,7 @@ export const CHANNELS_ICONS: {
   feature: "file-alt",
   about: "team-outlined",
   platform: "wrench",
+  system: "warning",
 } as const;
 
 export function isNewsChannel(channel: string): channel is Channel {

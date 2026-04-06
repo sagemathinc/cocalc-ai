@@ -41,6 +41,7 @@ import { slugURL } from "@cocalc/util/news";
 import {
   CHANNELS,
   CHANNELS_DESCRIPTIONS,
+  SYSTEM_CHANNEL,
   type Channel,
   type NewsAdminListItem,
   type NewsItem,
@@ -142,6 +143,8 @@ function channelExplanation(channel: Channel): string {
       return "Meta-level company or team updates.";
     case "event":
       return "Upcoming company or conference events. These appear on the About / Events page instead of the main news feed.";
+    case "system":
+      return "Temporary in-app system notices such as outages or urgent service updates. These appear in the app news/notification UI and as popup alerts, but not on the public news site.";
     case "platform":
       return CHANNELS_DESCRIPTIONS[channel];
   }
@@ -155,6 +158,9 @@ function previewHref(
   }
   if (news.channel === "event") {
     return joinUrlPath(appBasePath, "about/events");
+  }
+  if (news.channel === SYSTEM_CHANNEL) {
+    return;
   }
   return joinUrlPath(appBasePath, slugURL(news));
 }
