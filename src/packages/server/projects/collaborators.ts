@@ -240,7 +240,7 @@ async function listEmailOnlyPendingCollabInvites({
     `a.action ->> 'action' = 'add_to_project'`,
     `COALESCE(a.action ->> 'group', '') IN ('owner', 'collaborator')`,
     `(
-      COALESCE(a.action ->> 'inviter_account_id', '') = $2
+      COALESCE(a.action ->> 'inviter_account_id', '') = $2::text
       OR (
         COALESCE(a.action ->> 'inviter_account_id', '') = ''
         AND EXISTS(
