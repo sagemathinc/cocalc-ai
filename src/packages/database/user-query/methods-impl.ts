@@ -2400,6 +2400,10 @@ export async function _user_get_query_changefeed(
 ): Promise<void> {
   let free_tracker: ((tracker: any) => void) | undefined;
   let left: string[] | undefined;
+  let changefeed_table = table;
+  let map_change:
+    | ((change: AnyRecord | undefined) => AnyRecord | undefined)
+    | undefined;
   let process: (x: AnyRecord) => void;
   let tracker: any;
   const dbg = this._dbg(`_user_get_query_changefeed(table='${table}')`);
@@ -2626,44 +2630,59 @@ export async function _user_get_query_changefeed(
           cb("FATAL: account_id must be given");
           return;
         }
-        tracker_add = (collab_id) => feed?.insert({ account_id: collab_id });
-        tracker_remove = (collab_id) => feed?.delete({ account_id: collab_id });
-        tracker_error = (err) => emit_change(`tracker error - ${err}`);
         pg_changefeed = function (_db, account_id) {
-          let shared_tracker: any;
           return {
+            table: "account_collaborator_index",
             where(obj) {
-              // test of "is a collab with me"
-              return shared_tracker?.get_collabs(account_id)?.[obj.account_id];
+              return obj.account_id === account_id;
             },
-            init_tracker: (tracker) => {
-              shared_tracker = tracker;
-              tracker.on(`add_collaborator-${account_id}`, tracker_add);
-              tracker.on(`remove_collaborator-${account_id}`, tracker_remove);
-              return tracker.once("error", tracker_error);
+            select: {
+              account_id: "UUID",
+              collaborator_account_id: "UUID",
             },
-            free_tracker: (tracker) => {
-              dbg("freeing collab tracker events");
-              tracker.removeListener(
-                `add_collaborator-${account_id}`,
-                tracker_add,
-              );
-              tracker.removeListener(
-                `remove_collaborator-${account_id}`,
-                tracker_remove,
-              );
-              return tracker.removeListener("error", tracker_error);
+            map_change(change) {
+              if (change == null) {
+                return change;
+              }
+              const normalizeRow = (row) => {
+                if (row == null) {
+                  return row;
+                }
+                const {
+                  collaborator_account_id,
+                  account_id: _viewer_account_id,
+                  ...rest
+                } = row;
+                if (collaborator_account_id == null) {
+                  return row;
+                }
+                return {
+                  ...rest,
+                  account_id: collaborator_account_id,
+                };
+              };
+              return {
+                ...change,
+                new_val: normalizeRow(change.new_val),
+                old_val: normalizeRow(change.old_val),
+              };
             },
           };
         };
       }
 
       const x = pg_changefeed(this, account_id);
+      if (x.table != null) {
+        changefeed_table = x.table;
+      }
       if (x.init_tracker != null) {
         ({ init_tracker } = x);
       }
       if (x.free_tracker != null) {
         ({ free_tracker } = x);
+      }
+      if (x.map_change != null) {
+        ({ map_change } = x);
       }
       if (x.select != null) {
         for (var k in x.select) {
@@ -2672,25 +2691,36 @@ export async function _user_get_query_changefeed(
         }
       }
 
-      if (x.where != null || x.init_tracker != null) {
+      if (x.where != null) {
         ({ where } = x);
-        if (account_id != null) {
-          // initialize user tracker is needed for where tests...
-          tracker = await callback_opts(
-            this.project_and_user_tracker.bind(this),
-          )();
-          await tracker.register(account_id);
-        }
+      }
+      if (
+        account_id != null &&
+        (x.init_tracker != null ||
+          x.free_tracker != null ||
+          x.requires_tracker === true)
+      ) {
+        // initialize user tracker for tracker-backed synthetic changefeeds
+        tracker = await callback_opts(
+          this.project_and_user_tracker.bind(this),
+        )();
+        await tracker.register(account_id);
       }
     }
 
     feed = await callback_opts(this.changefeed.bind(this))({
-      table,
+      table: changefeed_table,
       select,
       where,
       watch,
     });
     feed.on("change", function (x) {
+      if (typeof map_change === "function") {
+        x = map_change(x);
+        if (x == null) {
+          return;
+        }
+      }
       process(x);
       return emit_change(undefined, x);
     });

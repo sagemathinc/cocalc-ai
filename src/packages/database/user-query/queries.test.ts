@@ -2291,7 +2291,7 @@ describe("postgres user-queries - Comprehensive Test Suite", () => {
         );
       });
 
-      test("should handle 'collaborators' changefeed with tracker", (done) => {
+      test("should handle 'collaborators' changefeed via account_collaborator_index", (done) => {
         const restore = setSchema("test_collab_feed", {
           anonymous: false,
           fields: { account_id: { type: "uuid" } },
@@ -2309,18 +2309,10 @@ describe("postgres user-queries - Comprehensive Test Suite", () => {
           cb: jest.fn(),
         };
         const feed = new EventEmitter();
-
-        const mockTracker = {
-          register: jest.fn().mockResolvedValue(undefined),
-          on: jest.fn(),
-          once: jest.fn(),
-          removeListener: jest.fn(),
-        };
-
-        db.changefeed = jest.fn((opts) => opts.cb(null, feed));
-        db.project_and_user_tracker = jest.fn((opts) =>
-          opts.cb(null, mockTracker),
-        );
+        db.changefeed = jest.fn((opts) => {
+          expect(opts.table).toBe("account_collaborator_index");
+          opts.cb(null, feed);
+        });
 
         const client_query = {
           get: {
@@ -2341,16 +2333,24 @@ describe("postgres user-queries - Comprehensive Test Suite", () => {
           "test_collab_feed",
           (err) => {
             expect(err).toBeFalsy();
-            expect(db.project_and_user_tracker).toHaveBeenCalled();
-            expect(mockTracker.register).toHaveBeenCalledWith(account_id);
-            expect(mockTracker.on).toHaveBeenCalledWith(
-              expect.stringContaining("add_collaborator"),
-              expect.any(Function),
-            );
-            expect(mockTracker.on).toHaveBeenCalledWith(
-              expect.stringContaining("remove_collaborator"),
-              expect.any(Function),
-            );
+            expect(db.project_and_user_tracker).not.toHaveBeenCalled();
+
+            feed.emit("change", {
+              action: "insert",
+              new_val: {
+                account_id,
+                collaborator_account_id: "collab-id",
+                first_name: "Alice",
+              },
+            });
+
+            expect(changes.cb).toHaveBeenCalledWith(undefined, {
+              action: "insert",
+              new_val: {
+                account_id: "collab-id",
+                first_name: "Alice",
+              },
+            });
             restore();
             done();
           },
