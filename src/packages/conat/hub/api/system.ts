@@ -21,9 +21,11 @@ import type {
   RootfsImageEntry,
   RootfsReleaseGcRunResult,
 } from "@cocalc/util/rootfs-images";
+import type { NewsItemWebapp } from "@cocalc/util/types/news";
 
 export const system = {
   getCustomize: noAuth,
+  listNews: noAuth,
   ping: noAuth,
   terminate: authFirst,
   listBays: authFirst,
@@ -521,6 +523,7 @@ export interface PublicAppHostnameTrace {
 export interface System {
   // get all or specific customize data
   getCustomize: (fields?: string[]) => Promise<Customize>;
+  listNews: () => Promise<NewsItemWebapp[]>;
   // ping server and get back the current time
   ping: () => { now: number };
   // terminate a service:

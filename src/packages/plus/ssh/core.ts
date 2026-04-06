@@ -51,6 +51,8 @@ export type PruneSessionsResult = {
 const DEFAULT_STALE_TTL_MS = 180 * 24 * 60 * 60 * 1000;
 const DEFAULT_STALE_KEEP = 50;
 const AUTO_PRUNE_INTERVAL_MS = 24 * 60 * 60 * 1000;
+const LITE_CANONICAL_PROJECT_ID = "00000000-1000-4000-8000-000000000000";
+const LITE_CANONICAL_ACCOUNT_ID = "00000000-1000-4000-8000-000000000001";
 
 export type ConnectionInfo = {
   port: number;
@@ -1257,6 +1259,8 @@ export async function startRemote(
   const env = [
     "HOST=127.0.0.1",
     "PORT=0",
+    `COCALC_PROJECT_ID=${LITE_CANONICAL_PROJECT_ID}`,
+    `COCALC_ACCOUNT_ID=${LITE_CANONICAL_ACCOUNT_ID}`,
     authToken ? `AUTH_TOKEN=${shellQuote(authToken)}` : "AUTH_TOKEN=short",
     "COCALC_ENABLE_SSH_UI=0",
     `COCALC_DATA_DIR=${shellQuote(remoteDataDir)}`,

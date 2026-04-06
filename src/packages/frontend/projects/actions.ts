@@ -91,6 +91,13 @@ export class ProjectsActions extends Actions<ProjectsState> {
   private signedInListener?: () => void;
   private signedOutListener?: () => void;
   private conatConnectedListener?: () => void;
+  private accountStoreReadyListener?: () => void;
+  private accountStoreSubscription?: () => void;
+  private observedAccountStore?: {
+    get?: (key: string) => unknown;
+    on?: (event: string, cb: () => void) => void;
+    removeListener?: (event: string, cb: () => void) => void;
+  };
   private realtimeFeed?: DStream<AccountFeedEvent>;
   private realtimeFeedAccountId?: string;
 
@@ -104,9 +111,13 @@ export class ProjectsActions extends Actions<ProjectsState> {
     this.conatConnectedListener = () => {
       void this.ensureRealtimeFeedForCurrentAccount();
     };
+    this.accountStoreReadyListener = () => {
+      void this.ensureRealtimeFeedForCurrentAccount();
+    };
     webapp_client.on("signed_in", this.signedInListener);
     webapp_client.on("signed_out", this.signedOutListener);
     webapp_client.conat_client.on("connected", this.conatConnectedListener);
+    this.observeAccountStoreReady();
     void this.ensureRealtimeFeedForCurrentAccount();
   }
 
@@ -125,6 +136,21 @@ export class ProjectsActions extends Actions<ProjectsState> {
         this.conatConnectedListener,
       );
       this.conatConnectedListener = undefined;
+    }
+    if (this.accountStoreSubscription != null) {
+      this.accountStoreSubscription();
+      this.accountStoreSubscription = undefined;
+    }
+    if (
+      this.accountStoreReadyListener != null &&
+      this.observedAccountStore != null
+    ) {
+      this.observedAccountStore.removeListener?.(
+        "is_ready",
+        this.accountStoreReadyListener,
+      );
+      this.observedAccountStore = undefined;
+      this.accountStoreReadyListener = undefined;
     }
     this.closeRealtimeFeed();
     Actions.prototype.destroy.call(this);
@@ -213,7 +239,36 @@ export class ProjectsActions extends Actions<ProjectsState> {
     void refresh_projects_table();
   };
 
-  private async ensureRealtimeFeedForCurrentAccount(): Promise<void> {
+  private observeAccountStoreReady(): void {
+    const onReady = this.accountStoreReadyListener;
+    if (onReady == null) {
+      return;
+    }
+
+    const attachStore = (
+      store = this.redux.getStore("account") as typeof this.observedAccountStore,
+    ): void => {
+      if (store === this.observedAccountStore) {
+        return;
+      }
+      this.observedAccountStore?.removeListener?.("is_ready", onReady);
+      this.observedAccountStore = store;
+      store?.on?.("is_ready", onReady);
+      if (store?.get?.("is_ready")) {
+        onReady();
+      }
+    };
+
+    attachStore();
+    const subscribe = this.redux.reduxStore?.subscribe?.bind(
+      this.redux.reduxStore,
+    );
+    this.accountStoreSubscription = subscribe?.(() => {
+      attachStore();
+    });
+  }
+
+  public async ensureRealtimeFeedForCurrentAccount(): Promise<void> {
     if (!webapp_client.is_signed_in()) {
       this.closeRealtimeFeed();
       return;

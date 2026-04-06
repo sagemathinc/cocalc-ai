@@ -2,7 +2,7 @@
 Component to show all your messages.
 */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { init } from "./redux";
 import Main from "./main";
 import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
@@ -41,12 +41,28 @@ function Messages0({ filter, style }: Props) {
     // ONLY initialize the state stuff if the actual messages
     // are displayed, to avoid  waste of resources/load
     init();
+    void redux.getActions("messages")?.refresh();
   }, []);
 
   const threads = useTypedRedux("messages", "threads");
   const messages = useTypedRedux("messages", "messages");
   const search = useTypedRedux("messages", "search");
   const error = useTypedRedux("messages", "error");
+  const unread_message_count =
+    useTypedRedux("account", "unread_message_count") ?? 0;
+  const previousUnreadRef = useRef<number | undefined>(undefined);
+
+  useEffect(() => {
+    if (
+      filter?.startsWith("messages-") &&
+      previousUnreadRef.current != null &&
+      previousUnreadRef.current !== unread_message_count
+    ) {
+      void redux.getActions("messages")?.refresh();
+    }
+    previousUnreadRef.current = unread_message_count;
+  }, [filter, unread_message_count]);
+
   return (
     <FileContext.Provider value={{ AnchorTagComponent }}>
       <ConfigProvider renderEmpty={() => <Empty description={"No messages"} />}>
