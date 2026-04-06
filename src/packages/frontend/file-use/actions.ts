@@ -18,6 +18,7 @@ import { fromJS } from "immutable";
 import { FileUseState, FileUseStore } from "./store";
 import { client_db } from "@cocalc/util/schema";
 import { isChatPath } from "@cocalc/frontend/chat/paths";
+import { publishDocumentPresence } from "@cocalc/frontend/document-presence/service";
 const { sha1 } = client_db;
 
 const DEFAULT_CHAT_TTL_S = 5;
@@ -197,6 +198,24 @@ export class FileUseActions<T = FileUseState> extends Actions<
     path: string,
     timestamp: Date,
   ): Promise<void> {
+    const ts = timestamp.valueOf();
+    if (action === "edit") {
+      publishDocumentPresence({
+        account_id,
+        project_id,
+        path,
+        mode: "edit",
+        ts,
+      });
+    } else if (action === "open" || action === "chat") {
+      publishDocumentPresence({
+        account_id,
+        project_id,
+        path,
+        mode: "open",
+        ts,
+      });
+    }
     const obj: any = {
       id: sha1(project_id, path),
       project_id,
