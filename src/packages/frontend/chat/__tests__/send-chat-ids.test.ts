@@ -1151,6 +1151,46 @@ describe("deleteThread identity targeting", () => {
     expect(cfgRow?.name).toBe("Fork without selecting");
   });
 
+  it("can fork a thread from thread metadata even when chat rows are not loaded", async () => {
+    const rootDate = new Date("2026-02-21T17:59:00.000Z");
+    const rootIso = rootDate.toISOString();
+    const actions = makeActions(new Map());
+    const sourceConfig = {
+      event: "chat-thread-config",
+      sender_id: "__thread_config__",
+      date: rootIso,
+      thread_id: "thread-config-only",
+      name: "Config-only thread",
+      latest_chat_date_ms: rootDate.valueOf(),
+      agent_kind: "none",
+    };
+    actions.syncdb.get_one.mockImplementation((where: any) => {
+      if (
+        where?.event === "chat-thread-config" &&
+        where?.thread_id === "thread-config-only"
+      ) {
+        return sourceConfig;
+      }
+      return undefined;
+    });
+
+    const newThreadId = await actions.forkThread({
+      threadKey: "thread-config-only",
+      title: "Forked from metadata",
+      sourceTitle: "Config-only thread",
+      isAI: false,
+    });
+
+    expect(newThreadId).toBeTruthy();
+    const rows = actions.syncdb.set.mock.calls.map((x) => x[0]);
+    const chatRow = rows.find(
+      (row: any) => row?.event === "chat" && row?.thread_id === newThreadId,
+    );
+    expect(chatRow).toBeTruthy();
+    expect(chatRow.forked_from_root_date).toBe(rootIso);
+    expect(chatRow.forked_from_title).toBe("Config-only thread");
+  });
+
   it("does not delete by timestamp keys anymore", () => {
     const thread = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
     const root = new Date("2026-02-21T20:00:00.000Z");
