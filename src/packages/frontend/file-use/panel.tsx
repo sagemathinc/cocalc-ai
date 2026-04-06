@@ -52,7 +52,15 @@ export function RecentDocumentActivityPanel({ onClose, title }: Props) {
   }
 
   return (
-    <div className="smc-vfill" style={{ minHeight: 0 }}>
+    <div
+      className="smc-vfill"
+      style={{
+        minHeight: 0,
+        height: "100%",
+        display: "flex",
+        flexDirection: "column",
+      }}
+    >
       {error ? (
         <Alert
           type="error"

@@ -85,7 +85,15 @@ export default function FileUseViewer({
   }
 
   return (
-    <div className="smc-vfill smc-file-use-viewer">
+    <div
+      className="smc-vfill smc-file-use-viewer"
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        height: "100%",
+        minHeight: 0,
+      }}
+    >
       <VisibleMDLG>
         <div
           style={{
@@ -136,6 +144,7 @@ export default function FileUseViewer({
       ) : null}
       <Virtuoso
         ref={virtuosoRef}
+        style={{ flex: 1, minHeight: 0 }}
         totalCount={visibleRows.length}
         itemContent={(index) => {
           const info = visibleRows[index]?.row;

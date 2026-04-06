@@ -27,6 +27,15 @@ export function RecentDocumentActivityButton({ style }: Props) {
         footer={null}
         destroyOnClose
         width={960}
+        styles={{
+          body: {
+            padding: "12px",
+            height: "70vh",
+            display: "flex",
+            flexDirection: "column",
+            minHeight: 0,
+          },
+        }}
       >
         <RecentDocumentActivityPanel onClose={() => setOpen(false)} />
       </Modal>
