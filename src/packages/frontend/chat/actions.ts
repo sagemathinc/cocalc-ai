@@ -2428,9 +2428,6 @@ export class ChatActions extends Actions<ChatState> {
       toISOString(dateValue(rootMessage)) ??
       this.getThreadRootDateIso(sourceThreadId) ??
       toISOString(sourceMetadata.latest_chat_date_ms);
-    if (!rootIso) {
-      throw new Error("Invalid thread root date");
-    }
     const latestMessage =
       threadMessages.length > 0
         ? threadMessages[threadMessages.length - 1]
@@ -2498,7 +2495,9 @@ export class ChatActions extends Actions<ChatState> {
       editing: [],
     };
     (newMessage as any).name = title;
-    (newMessage as any).forked_from_root_date = rootIso;
+    if (rootIso) {
+      (newMessage as any).forked_from_root_date = rootIso;
+    }
     (newMessage as any).forked_from_title =
       sourceTitle?.trim() ||
       field<string>(rootMessage, "name") ||
