@@ -168,6 +168,17 @@ export interface ProjectStorageHistory {
   growth?: ProjectStorageHistoryGrowth;
 }
 
+export interface RecentDocumentActivityRow {
+  id: string;
+  project_id: string;
+  path: string;
+  last_edited?: Date | null;
+  users?: Record<
+    string,
+    Record<string, Date | string | null | undefined> | undefined
+  >;
+}
+
 // "cloudflare-access-tcp" is kept temporarily for compatibility with older
 // servers/clients. The route is a Cloudflare-published SSH/TCP endpoint; it
 // may still use the `cloudflared access ssh` client shim, but it is not
@@ -382,6 +393,7 @@ export const projects = {
   listCollaborators: authFirstRequireAccount,
   listMyCollaborators: authFirstRequireAccount,
   listProjectLog: authFirstRequireAccount,
+  listRecentDocumentActivity: authFirstRequireAccount,
   inviteCollaborator: authFirstRequireAccount,
   inviteCollaboratorWithoutAccount: authFirstRequireAccount,
   setQuotas: authFirstRequireAccount,
@@ -509,6 +521,12 @@ export interface Projects {
     newer_than?: ProjectLogCursor;
     older_than?: ProjectLogCursor;
   }) => Promise<ProjectLogPage>;
+
+  listRecentDocumentActivity: (opts: {
+    account_id?: string;
+    limit?: number;
+    max_age_s?: number;
+  }) => Promise<RecentDocumentActivityRow[]>;
 
   cancelPendingCopy: (opts: {
     account_id?: string;

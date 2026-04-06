@@ -39,6 +39,7 @@ import ProjectsPageTour from "./tour";
 import { useBookmarkedProjects } from "./use-bookmarked-projects";
 import { getVisibleProjects } from "./util";
 import { FilenameSearch } from "./filename-search";
+import { RecentDocumentActivityButton } from "@cocalc/frontend/file-use/button";
 
 const LOADING_STYLE: CSS = {
   fontSize: "40px",
@@ -409,19 +410,36 @@ export const ProjectsPage: React.FC = () => {
                       <StarredProjectsBar />
                     </div>
                     {!narrow && (
-                      <div ref={filenameSearchRef} style={{ flex: "0 1 auto" }}>
+                      <div
+                        ref={filenameSearchRef}
+                        style={{
+                          flex: "0 1 auto",
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "8px",
+                        }}
+                      >
                         <FilenameSearch
                           style={{
                             width: IS_MOBILE ? "100px" : "200px",
                             display: "inline-block",
                           }}
                         />
+                        <RecentDocumentActivityButton />
                       </div>
                     )}
                   </div>
 
                   {narrow && (
-                    <div ref={filenameSearchRef} style={{ textAlign: "right" }}>
+                    <div
+                      ref={filenameSearchRef}
+                      style={{
+                        display: "flex",
+                        justifyContent: "flex-end",
+                        gap: "8px",
+                      }}
+                    >
+                      <RecentDocumentActivityButton />
                       <FilenameSearch
                         style={{
                           width: IS_MOBILE ? "100px" : "200px",

@@ -39,6 +39,7 @@ import type {
   ProjectLogCursor,
   ProjectLogPage,
   ProjectLogRow,
+  RecentDocumentActivityRow,
 } from "@cocalc/conat/hub/api/projects";
 import type {
   AccountFeedEvent,
@@ -107,6 +108,9 @@ const execFile = promisify(execFileCb);
 const DEFAULT_BAY_ID = "bay-0";
 const DEFAULT_PROJECT_LOG_LIMIT = 750;
 const MAX_PROJECT_LOG_LIMIT = 2_000;
+const DEFAULT_RECENT_DOCUMENT_ACTIVITY_LIMIT = 200;
+const MAX_RECENT_DOCUMENT_ACTIVITY_LIMIT = 500;
+const DEFAULT_RECENT_DOCUMENT_ACTIVITY_MAX_AGE_S = 21 * 24 * 60 * 60;
 
 function syncHistoryWithExplicitClient(
   opts: Parameters<typeof syncHistory>[0],
@@ -206,6 +210,23 @@ function normalizeProjectLogLimit(limit?: number): number {
   return Math.max(1, Math.min(MAX_PROJECT_LOG_LIMIT, Math.floor(limit!)));
 }
 
+function normalizeRecentDocumentActivityLimit(limit?: number): number {
+  if (!Number.isFinite(limit)) {
+    return DEFAULT_RECENT_DOCUMENT_ACTIVITY_LIMIT;
+  }
+  return Math.max(
+    1,
+    Math.min(MAX_RECENT_DOCUMENT_ACTIVITY_LIMIT, Math.floor(limit!)),
+  );
+}
+
+function normalizeRecentDocumentActivityMaxAge(max_age_s?: number): number {
+  if (!Number.isFinite(max_age_s)) {
+    return DEFAULT_RECENT_DOCUMENT_ACTIVITY_MAX_AGE_S;
+  }
+  return Math.max(60, Math.floor(max_age_s!));
+}
+
 function normalizeProjectLogTime(value: unknown): Date | null {
   if (value == null) return null;
   const date = value instanceof Date ? value : new Date(`${value}`);
@@ -282,6 +303,44 @@ async function listProjectLogLite(opts: {
     entries: entries.slice(0, limit),
     has_more: entries.length > limit,
   };
+}
+
+async function listRecentDocumentActivityLite(opts: {
+  account_id?: string;
+  limit?: number;
+  max_age_s?: number;
+}): Promise<RecentDocumentActivityRow[]> {
+  if (hasRemote) {
+    return await callRemoteHub({
+      name: "projects.listRecentDocumentActivity",
+      args: [opts],
+    });
+  }
+  const limit = normalizeRecentDocumentActivityLimit(opts.limit);
+  const maxAgeS = normalizeRecentDocumentActivityMaxAge(opts.max_age_s);
+  const cutoffMs = Date.now() - maxAgeS * 1000;
+  return (listRows("file_use") as any[])
+    .filter((row) => row?.project_id === LITE_PROJECT_ID)
+    .map(
+      (row): RecentDocumentActivityRow => ({
+        id: `${row.id ?? ""}`.trim(),
+        project_id: `${row.project_id ?? ""}`.trim(),
+        path: `${row.path ?? ""}`,
+        last_edited: normalizeProjectLogTime(row.last_edited),
+        users: row.users ?? undefined,
+      }),
+    )
+    .filter((row) => {
+      const edited = row.last_edited?.getTime() ?? 0;
+      return edited >= cutoffMs;
+    })
+    .sort((a, b) => {
+      const at = a.last_edited?.getTime() ?? 0;
+      const bt = b.last_edited?.getTime() ?? 0;
+      if (at !== bt) return bt - at;
+      return `${b.id}`.localeCompare(`${a.id}`);
+    })
+    .slice(0, limit);
 }
 
 function isSetUserQueryLite(opts: {
@@ -1288,6 +1347,7 @@ export const hubApi: HubApi = {
   },
   projects: {
     listProjectLog: listProjectLogLite,
+    listRecentDocumentActivity: listRecentDocumentActivityLite,
     codexDeviceAuthStart: codexDeviceAuthStartLite,
     codexDeviceAuthStatus: codexDeviceAuthStatusLite,
     codexDeviceAuthCancel: codexDeviceAuthCancelLite,
