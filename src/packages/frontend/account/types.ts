@@ -67,6 +67,7 @@ export interface AccountState {
     dark_mode_sepia: number;
     file_tab_accent_mode?: string;
     news_read_until: number; // JavaScript timestamp in milliseconds
+    news_read_ids?: string[];
     [OTHER_SETTINGS_USERDEFINED_LLM]: string; // string is JSON: CustomLLM[]
     [OTHER_SETTINGS_LOCALE_KEY]?: string;
     [OTHER_SETTINGS_REPLY_ENGLISH_KEY]?: string;

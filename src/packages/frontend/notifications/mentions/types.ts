@@ -38,7 +38,7 @@ export type MentionInfo = TypedMap<{
   >;
 }>;
 
-const MENTIONS_FILTER = ["read", "unread", "saved", "all"] as const;
+const MENTIONS_FILTER = ["read", "unread"] as const;
 
 export type MentionsFilter = (typeof MENTIONS_FILTER)[number];
 export type NotificationFilter = MentionsFilter | NewsFilter;

@@ -41,6 +41,15 @@ export function NewsPanel(props: NewsPanelProps) {
   const account_other = useTypedRedux("account", "other_settings");
   const news_read_until: number | undefined =
     account_other?.get("news_read_until");
+  const rawNewsReadIds = account_other?.get("news_read_ids");
+  const news_read_ids = new Set<string>(
+    (Array.isArray(rawNewsReadIds)
+      ? rawNewsReadIds
+      : typeof (rawNewsReadIds as any)?.toJS === "function"
+        ? (rawNewsReadIds as any).toJS()
+        : []
+    ).filter((id): id is string => typeof id === "string" && id.trim() !== ""),
+  );
   const didClickUnread = useRef<boolean>(false);
 
   // after showing news briefly (short), we mark them as read.
@@ -84,24 +93,22 @@ export function NewsPanel(props: NewsPanelProps) {
     // if any entry in data is unread, then anyUnread is true
     const anyUnread = data.some(
       (n: any) =>
-        news_read_until == null || n?.date.getTime() > news_read_until,
+        n?.date.getTime() > (news_read_until ?? 0) && !news_read_ids.has(n.id),
     );
     return [data, anyUnread];
-  }, [news, filter, news_read_until]);
+  }, [news, filter, news_read_until, news_read_ids]);
 
-  // If a user clicks on a news item, we assume they saw all news up until that point.
-  // (and even if not, it's fine, they don't vanish)
   function newsItemOnClick(e: React.MouseEvent, news: NewsItemWebapp) {
-    const { id, date } = news;
+    const { id } = news;
     e.stopPropagation();
     const url = `${BASE_URL}/news/${id}`;
-    news_actions.markNewsRead({ date, current: news_read_until });
+    news_actions.markNewsRead({ item: news });
     open_new_tab(url);
   }
 
   function markNewsItemRead(e: React.MouseEvent, news: NewsItemWebapp) {
     e.stopPropagation();
-    news_actions.markNewsRead({ date: news.date, current: news_read_until });
+    news_actions.markNewsRead({ item: news });
   }
 
   function renderTags(tags?: string[]) {
@@ -158,7 +165,7 @@ export function NewsPanel(props: NewsPanelProps) {
     const { id, title, channel, date, tags } = n;
     const icon = CHANNELS_ICONS[channel] as IconName;
     const isUnread =
-      news_read_until == null || date.getTime() > news_read_until;
+      date.getTime() > (news_read_until ?? 0) && !news_read_ids.has(id);
     return (
       <List.Item
         key={id}

@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Tooltip } from "antd";
+import { Button } from "antd";
 
 import { A } from "@cocalc/frontend/components";
 import { Avatar } from "@cocalc/frontend/account/avatar/avatar";
@@ -15,7 +15,6 @@ import { ProjectTitle } from "@cocalc/frontend/projects/project-title";
 import { User } from "@cocalc/frontend/users";
 import { COLORS } from "@cocalc/util/theme";
 import { NotificationFilter, MentionInfo } from "./types";
-import { BOOKMARK_ICON_NAME } from "./util";
 
 const DESCRIPTION_STYLE: CSS = {
   flex: "1 1 auto",
@@ -72,10 +71,6 @@ export function NotificationRow(props: Props) {
 
   const fragmentId = Fragment.decode(fragment_id);
   const is_read = mention.getIn(["users", target, "read"]);
-  const is_saved = mention.getIn(["users", target, "saved"]);
-
-  const read_icon: IconName =
-    (is_read && !clicked) || (!is_read && clicked) ? "eye" : "eye-slash";
 
   const clickedStyle: CSS =
     clicked && (filter === "unread" || filter === "read")
@@ -103,14 +98,6 @@ export function NotificationRow(props: Props) {
     e.preventDefault();
     e.stopPropagation();
     markReadState(is_read ? "unread" : "read");
-  }
-
-  function on_save_unsave_click(e) {
-    e.preventDefault();
-    e.stopPropagation();
-    redux
-      .getActions("mentions")
-      ?.markSaved(mention, id, is_saved ? "unsaved" : "saved");
   }
 
   function clickMentionRow(): void {
@@ -194,17 +181,6 @@ export function NotificationRow(props: Props) {
       onClick={onClick}
       style={row_style}
     >
-      <div style={ACTION_ICONS_WRAPPING_STYLE}>
-        <Tooltip
-          title={`Mark this notification as ${is_read ? "unread" : "read"}`}
-        >
-          <Icon
-            name={read_icon}
-            onClick={on_read_unread_click}
-            style={{ fontSize: "20px", color: "rgb(100, 100, 100)" }}
-          />
-        </Tooltip>
-      </div>
       <div style={AVATAR_WRAPPING_STYLE}>
         {kind === "mention" && source ? (
           <Avatar account_id={source} />
@@ -217,24 +193,10 @@ export function NotificationRow(props: Props) {
       </div>
       <div style={DESCRIPTION_STYLE}>{renderBody()}</div>
       <div style={ACTION_ICONS_WRAPPING_STYLE}>
-        <Tooltip
-          title={
-            is_saved
-              ? "Remove this notification from 'Saved for later'"
-              : "Save this notification for later"
-          }
-        >
-          <Icon
-            name={BOOKMARK_ICON_NAME}
-            onClick={on_save_unsave_click}
-            style={{
-              fontSize: "20px",
-              color: "rgb(100, 100, 100)",
-              backgroundColor: is_saved ? "yellow" : undefined,
-              marginRight: "10px",
-            }}
-          />
-        </Tooltip>
+        <Button type="text" ghost={true} onClick={on_read_unread_click}>
+          <Icon name={is_read ? "square" : "check-square"} />{" "}
+          {is_read ? "Mark Unread" : "Mark Read"}
+        </Button>
       </div>
     </li>
   );

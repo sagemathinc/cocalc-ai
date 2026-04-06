@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Button, Collapse, Space } from "antd";
+import { Collapse, Space } from "antd";
 const { Panel } = Collapse;
 import { CSS, redux } from "@cocalc/frontend/app-framework";
 import { Icon, Loading, MarkAll } from "@cocalc/frontend/components";
@@ -14,7 +14,6 @@ import {
   MentionsMap,
   NotificationFilter,
 } from "./mentions/types";
-import { BOOKMARK_ICON_NAME } from "./mentions/util";
 import { isNewsFilter } from "./news/types";
 import { NoMentions } from "./notification-no-mentions";
 import { NotificationRow } from "./mentions/notification-row";
@@ -48,13 +47,8 @@ export function MentionsPanel(props: MentionsPanelProps) {
     mentions_actions.markAll(project_id, filter);
   }
 
-  function saveAll(project_id: string | null, filter: "read" | "unread") {
-    mentions_actions.saveAll(project_id, filter);
-  }
-
   function renderMarkAll(project_id: string | null) {
     if (isNewsFilter(filter)) return null;
-    if (filter === "saved" || filter === "all") return null;
 
     const opposite: NotificationFilter = filter === "read" ? "unread" : "read";
     return (
@@ -64,15 +58,6 @@ export function MentionsPanel(props: MentionsPanelProps) {
           size="small"
           onClick={(how: "read" | "unread") => markRead(project_id, how)}
         />
-        <Button
-          onClick={(e) => {
-            e.stopPropagation();
-            saveAll(project_id, filter);
-          }}
-          size="small"
-        >
-          <Icon name={BOOKMARK_ICON_NAME} /> Save all
-        </Button>
       </Space>
     );
   }
@@ -96,10 +81,6 @@ export function MentionsPanel(props: MentionsPanelProps) {
           return status.read === false;
         case "read":
           return status.read === true;
-        case "saved":
-          return status.saved === true;
-        case "all":
-          return true;
         default:
           unreachable(filter);
       }

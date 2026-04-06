@@ -19,9 +19,19 @@ export function getNotificationFilterFromFragment(hash?): {
     filter === "messages-inbox" ||
     filter === "messages-sent" ||
     filter === "messages-drafts" ||
-    filter === "messages-search"
+    filter === "messages-search" ||
+    filter === "saved" ||
+    filter === "all"
   ) {
     return { filter: "unread" };
+  }
+  if (
+    filter === "announcement" ||
+    filter === "feature" ||
+    filter === "platform" ||
+    filter === "about"
+  ) {
+    return { filter: "allNews" };
   }
   if (filter != null && isNotificationFilter(filter)) {
     let id: number | undefined = undefined;
