@@ -5,7 +5,6 @@
 
 import { throttle } from "lodash";
 import { redux } from "@cocalc/frontend/app-framework";
-import { original_path } from "@cocalc/util/misc";
 import type {
   ChatMessageTyped,
   MentionList,
@@ -20,6 +19,7 @@ import {
   dateValue,
   parentMessageId as parentMessageIdField,
 } from "./access";
+import { ensureSideChatActions, listUnreadChatThreads } from "./unread";
 
 export const INPUT_HEIGHT = "auto";
 
@@ -142,11 +142,15 @@ export const markChatAsReadIfUnseen: (
   project_id: string,
   path: string,
 ) => void = throttle((project_id: string, path: string) => {
-  const info = redux
-    ?.getStore("file_use")
-    ?.get_file_info(project_id, original_path(path));
-  if (info == null || info.is_unseenchat) {
-    // only mark chat as read if it is unseen
+  const account_id = redux?.getStore("account")?.get_account_id?.();
+  const chatActions = ensureSideChatActions(project_id, path);
+  const unreadThreads = listUnreadChatThreads({
+    actions: chatActions,
+    account_id,
+  });
+  if (unreadThreads.length > 0) {
+    // Keep the legacy file_use write path for now so the old recent-activity
+    // panel stays in sync until that surface is replaced.
     const actions = redux?.getActions("file_use");
     if (actions == null) return;
     actions.mark_file(project_id, path, "read");
