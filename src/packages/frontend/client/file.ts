@@ -36,7 +36,7 @@ export class FileClient {
       ttl: 120,
     });
     await redux
-      .getActions("file_use")
+      .getActions("document_activity")
       ?.mark_file(opts.project_id, opts.path, opts.action, opts.ttl);
   }
 }

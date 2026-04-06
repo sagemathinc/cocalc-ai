@@ -149,7 +149,7 @@ export const markChatAsReadIfUnseen: (
     account_id,
   });
   if (unreadThreads.length > 0) {
-    const actions = redux?.getActions("file_use");
+    const actions = redux?.getActions("document_activity");
     if (actions == null) return;
     actions.mark_file(project_id, path, "read");
     actions.mark_file(project_id, path, "chatseen");

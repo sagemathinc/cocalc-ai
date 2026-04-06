@@ -562,7 +562,7 @@ export function log_file_open(
     return;
   }
 
-  redux.getActions("file_use")?.mark_file(project_id, path, "open");
+  redux.getActions("document_activity")?.mark_file(project_id, path, "open");
   const actions = redux.getProjectActions(project_id);
   const id = actions.log({
     event: "open",

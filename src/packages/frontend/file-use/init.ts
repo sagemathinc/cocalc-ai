@@ -7,6 +7,6 @@ import { redux } from "../app-framework";
 import { FileUseActions } from "./actions";
 
 export function init() {
-  const actions = redux.createActions("file_use", FileUseActions);
+  const actions = redux.createActions("document_activity", FileUseActions);
   actions._init();
 }

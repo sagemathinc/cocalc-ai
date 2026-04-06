@@ -409,7 +409,7 @@ it's one of the other named actions or undefined.
 export function useActions(name: "account"): types.AccountActions;
 export function useActions(name: "admin-users"): types.AdminUsersActions;
 export function useActions(name: "billing"): types.BillingActions;
-export function useActions(name: "file_use"): types.FileUseActions;
+export function useActions(name: "document_activity"): types.FileUseActions;
 export function useActions(name: "mentions"): types.MentionsActions;
 export function useActions(name: "messages"): types.MessagesActions;
 export function useActions(name: "page"): types.PageActions;

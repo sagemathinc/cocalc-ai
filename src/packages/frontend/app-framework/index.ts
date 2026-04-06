@@ -60,7 +60,7 @@ export class AppRedux extends AppReduxBase {
   getActions(name: "admin-users"): types.AdminUsersActions;
   getActions(name: "mentions"): types.MentionsActions;
   getActions(name: "messages"): types.MessagesActions;
-  getActions(name: "file_use"): types.FileUseActions;
+  getActions(name: "document_activity"): types.FileUseActions;
   getActions(name: typeof NEWS): types.NewsActions;
   getActions(name: { project_id: string }): ProjectActions;
   getActions<T, C extends Actions<T>>(name: string): C;

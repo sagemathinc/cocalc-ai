@@ -1007,7 +1007,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
           throw Error(`must be an editor path but is ${key}`);
         }
         this.redux
-          .getActions("file_use")
+          .getActions("document_activity")
           ?.mark_file(this.project_id, path, "open");
         if (opts.change_history) {
           this.push_state(this.toUrlPath(path, false));

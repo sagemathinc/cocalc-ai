@@ -32,7 +32,7 @@ export type { BillingStoreState as BillingState } from "@cocalc/frontend/billing
 // customize
 export { CustomizeActions, CustomizeStore } from "@cocalc/frontend/customize";
 export type { CustomizeState } from "@cocalc/frontend/customize";
-// file_use
+// document_activity
 export { FileUseActions } from "@cocalc/frontend/file-use/actions";
 // mentions
 export { MentionsActions, MentionsStore } from "@cocalc/frontend/notifications";

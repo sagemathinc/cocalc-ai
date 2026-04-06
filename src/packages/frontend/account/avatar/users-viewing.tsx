@@ -25,8 +25,8 @@ import { Avatar } from "./avatar";
 // the line positions in the tooltip.
 const UPDATE_INTERVAL_S = 15;
 
-// Cutoff for how recent activity must be to show users.  Should be significantly
-// longer than default for the mark_file function in the file_use actions.
+// Cutoff for how recent activity must be to show users. Should be significantly
+// longer than the default `mark_file` throttling window.
 const MAX_AGE_S = 600;
 
 interface Activity {
