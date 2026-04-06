@@ -119,11 +119,16 @@ const GRID_STYLE: React.CSSProperties = {
 const DEFAULT_SIDEBAR_WIDTH = 260;
 const COMBINED_FEED_MAX_PER_THREAD = 5;
 const ACP_ACTIVE_STATES = new Set(["queue", "sending", "sent", "running"]);
+const CODEX_TURN_NOTIFY_STORAGE_KEY = "cocalc:chat:codex-turn-notify";
 
 function normalizeThreadKey(value?: string | null): string | undefined {
   const key = `${value ?? ""}`.trim();
   if (!key || key === COMBINED_FEED_KEY) return undefined;
   return key;
+}
+
+function readCodexTurnNotifyPreference(): boolean {
+  return get_local_storage(CODEX_TURN_NOTIFY_STORAGE_KEY) === "true";
 }
 
 export type CodexTurnNotificationWatch = {
@@ -508,6 +513,8 @@ export function ChatPanel({
     useState<CodexTurnNotificationWatch[]>([]);
   const [completedCodexTurnNotifications, setCompletedCodexTurnNotifications] =
     useState<CompletedCodexTurnNotification[]>([]);
+  const [codexTurnNotifyDefaultEnabled, setCodexTurnNotifyDefaultEnabled] =
+    useState<boolean>(() => readCodexTurnNotifyPreference());
   const accountOtherSettings = useTypedRedux("account", "other_settings");
   const workspaceWorkingDirectory = useWorkspaceChatWorkingDirectory(path);
   const defaultNewThreadSetup = useMemo<NewThreadSetup>(() => {
@@ -654,10 +661,15 @@ export function ChatPanel({
   const notifyOnSelectedTurnFinish = useMemo(
     () =>
       !!selectedThreadKey &&
-      codexTurnNotificationWatches.some(
-        (watch) => watch.threadKey === selectedThreadKey,
-      ),
-    [codexTurnNotificationWatches, selectedThreadKey],
+      (codexTurnNotifyDefaultEnabled ||
+        codexTurnNotificationWatches.some(
+          (watch) => watch.threadKey === selectedThreadKey,
+        )),
+    [
+      codexTurnNotifyDefaultEnabled,
+      codexTurnNotificationWatches,
+      selectedThreadKey,
+    ],
   );
   const selectedThreadMetadata = useMemo(
     () =>
@@ -938,6 +950,12 @@ export function ChatPanel({
   const setNotifyOnSelectedTurnFinish = useCallback(
     (checked: boolean) => {
       if (!selectedThreadKey || !selectedThreadId) return;
+      setCodexTurnNotifyDefaultEnabled(checked);
+      if (checked) {
+        set_local_storage(CODEX_TURN_NOTIFY_STORAGE_KEY, "true");
+      } else {
+        delete_local_storage(CODEX_TURN_NOTIFY_STORAGE_KEY);
+      }
       if (!checked) {
         setCodexTurnNotificationWatches((prev) =>
           prev.filter((watch) => watch.threadKey !== selectedThreadKey),
@@ -966,6 +984,45 @@ export function ChatPanel({
       acpState,
     });
   }, [isSelectedThreadAI, selectedThreadId, selectedThreadMessages, acpState]);
+  useEffect(() => {
+    if (
+      !codexTurnNotifyDefaultEnabled ||
+      !hasRunningAcpTurn ||
+      !selectedThreadKey ||
+      !selectedThreadId
+    ) {
+      return;
+    }
+    const nextWatch = {
+      threadKey: selectedThreadKey,
+      threadId: selectedThreadId,
+      threadLabel:
+        `${selectedThread?.displayLabel ?? selectedThread?.label ?? ""}`.trim() ||
+        "this chat",
+    } satisfies CodexTurnNotificationWatch;
+    setCodexTurnNotificationWatches((prev) => {
+      const existing = prev.find(
+        (watch) => watch.threadKey === nextWatch.threadKey,
+      );
+      if (
+        existing &&
+        existing.threadId === nextWatch.threadId &&
+        existing.threadLabel === nextWatch.threadLabel
+      ) {
+        return prev;
+      }
+      return [
+        ...prev.filter((watch) => watch.threadKey !== nextWatch.threadKey),
+        nextWatch,
+      ];
+    });
+  }, [
+    codexTurnNotifyDefaultEnabled,
+    hasRunningAcpTurn,
+    selectedThread,
+    selectedThreadId,
+    selectedThreadKey,
+  ]);
   useEffect(() => {
     if (codexTurnNotificationWatches.length === 0) return;
     const snapshots = new Map<string, CodexTurnNotificationSnapshot>();
