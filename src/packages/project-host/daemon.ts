@@ -1,6 +1,7 @@
 import * as childProcess from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { podmanEnv } from "@cocalc/backend/podman/env";
 
 type DaemonAction = "start" | "stop" | "ensure";
 
@@ -396,7 +397,7 @@ function spawnSyncText(
   command: string,
   args: string[],
   opts: {
-    env?: Record<string, string>;
+    env?: NodeJS.ProcessEnv;
     timeout?: number;
   } = {},
 ): childProcess.SpawnSyncReturns<string> {
@@ -420,6 +421,7 @@ function isPodmanStalePauseState(output: string): boolean {
 }
 
 function ensurePodmanHealthy(env: Record<string, string>): void {
+  const podmanRuntimeEnv = podmanEnv(env);
   const probeTimeoutMs = getPositiveIntEnv(
     "COCALC_PROJECT_HOST_PODMAN_PROBE_TIMEOUT_MS",
     15_000,
@@ -429,7 +431,7 @@ function ensurePodmanHealthy(env: Record<string, string>): void {
     120_000,
   );
   const probe = spawnSyncText("podman", ["ps", "-a"], {
-    env,
+    env: podmanRuntimeEnv,
     timeout: probeTimeoutMs,
   });
   if (probe.status === 0) {
@@ -443,7 +445,7 @@ function ensurePodmanHealthy(env: Record<string, string>): void {
     "podman reported stale pause-process state after restart; running `podman system migrate`.",
   );
   const migrate = spawnSyncText("podman", ["system", "migrate"], {
-    env,
+    env: podmanRuntimeEnv,
     timeout: migrateTimeoutMs,
   });
   if (migrate.status !== 0) {
@@ -452,7 +454,7 @@ function ensurePodmanHealthy(env: Record<string, string>): void {
     );
   }
   const verify = spawnSyncText("podman", ["ps", "-a"], {
-    env,
+    env: podmanRuntimeEnv,
     timeout: probeTimeoutMs,
   });
   if (verify.status !== 0) {

@@ -6,10 +6,15 @@ import { __test__, ensureDaemon, startDaemon, stopDaemon } from "./daemon";
 
 describe("project-host daemon stop", () => {
   const originalEnv = { ...process.env };
+  let runtimeDir: string;
 
   beforeEach(() => {
     jest.restoreAllMocks();
     process.env = { ...originalEnv };
+    runtimeDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "cocalc-project-host-runtime-"),
+    );
+    process.env.COCALC_PODMAN_RUNTIME_DIR = runtimeDir;
   });
 
   afterAll(() => {
@@ -395,6 +400,8 @@ describe("project-host daemon stop", () => {
           ).length;
           if (count === 1) {
             expect(options?.encoding).toBe("utf8");
+            expect(options?.env?.XDG_RUNTIME_DIR).toBe(runtimeDir);
+            expect(options?.env?.CONTAINERS_CGROUP_MANAGER).toBe("cgroupfs");
             return {
               status: 125,
               stdout: "",
