@@ -84,11 +84,11 @@ function absoluteUrl(req: Request, path: string): string {
 
 function channelFromQuery(req: Request): Channel | "all" {
   const query = req.query.channel;
-  if (
-    typeof query === "string" &&
-    PUBLIC_NEWS_CHANNELS.includes(query as Channel)
-  ) {
-    return query as Channel;
+  if (typeof query === "string") {
+    const publicChannel = PUBLIC_NEWS_CHANNELS.find((name) => name === query);
+    if (publicChannel != null) {
+      return publicChannel;
+    }
   }
   return "all";
 }
