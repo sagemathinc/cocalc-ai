@@ -7,7 +7,6 @@ import { meta_file, original_path } from "@cocalc/util/misc";
 
 import type { ChatActions } from "./actions";
 import { isChatPath } from "./paths";
-import { getChatActions, initChat } from "./register";
 
 export interface UnreadChatThread {
   key: string;
@@ -23,6 +22,8 @@ export function ensureSideChatActions(
   path: string,
 ): ChatActions {
   const chatPath = getSideChatPath(path);
+  const { getChatActions, initChat } =
+    require("./register") as typeof import("./register");
   return getChatActions(project_id, chatPath) ?? initChat(project_id, chatPath);
 }
 
@@ -30,6 +31,8 @@ export function getExistingSideChatActions(
   project_id: string,
   path: string,
 ): ChatActions | undefined {
+  const { getChatActions } =
+    require("./register") as typeof import("./register");
   return getChatActions(project_id, getSideChatPath(path));
 }
 
