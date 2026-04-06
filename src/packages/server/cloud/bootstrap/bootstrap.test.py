@@ -578,6 +578,45 @@ class BootstrapWrapperScriptTest(unittest.TestCase):
                 'COCALC_PROJECT_HOST_OOM_SCORE_ADJ:--900',
                 rootctl.read_text(encoding="utf-8"),
             )
+            self.assertIn(
+                f'PROJECT_POOL_CGROUP_DEFAULT="{bootstrap.DEFAULT_PROJECT_POOL_CGROUP}"',
+                rootctl.read_text(encoding="utf-8"),
+            )
+            self.assertIn(
+                f'PROJECT_POOL_MEMORY_RESERVE_MB_DEFAULT="{bootstrap.DEFAULT_PROJECT_POOL_MEMORY_RESERVE_MB}"',
+                rootctl.read_text(encoding="utf-8"),
+            )
+
+    def test_write_env_sets_project_pool_defaults_without_overriding_existing_values(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = replace(
+                make_cfg(tmpdir),
+                env_lines=["COCALC_PROJECT_POOL_MEMORY_RESERVE_MB=4096"],
+            )
+            env_path = Path(cfg.env_file)
+            env_path.parent.mkdir(parents=True, exist_ok=True)
+
+            original_getpwnam = bootstrap.pwd.getpwnam
+            original_run_best_effort = bootstrap.run_best_effort
+            original_mkdir = bootstrap.Path.mkdir
+            try:
+                bootstrap.pwd.getpwnam = lambda _user: type(
+                    "Pwd", (), {"pw_uid": 1002}
+                )()
+                bootstrap.run_best_effort = lambda *_args, **_kwargs: None
+                bootstrap.Path.mkdir = lambda self, parents=False, exist_ok=False: None  # type: ignore[method-assign]
+                bootstrap.write_env(cfg, 10)
+            finally:
+                bootstrap.pwd.getpwnam = original_getpwnam
+                bootstrap.run_best_effort = original_run_best_effort
+                bootstrap.Path.mkdir = original_mkdir
+
+            text = env_path.read_text(encoding="utf-8")
+            self.assertIn(
+                f"COCALC_PROJECT_POOL_CGROUP={bootstrap.DEFAULT_PROJECT_POOL_CGROUP}",
+                text,
+            )
+            self.assertIn("COCALC_PROJECT_POOL_MEMORY_RESERVE_MB=4096", text)
 
     def test_write_wrapper_uses_runtime_home_for_node_lookup(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

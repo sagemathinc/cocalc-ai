@@ -45,6 +45,9 @@ ROOTLESS_SUBID_ALIGNMENT = 65536
 PROJECT_HOST_RUNTIME_UID = 1002
 PROJECT_HOST_RUNTIME_GID = 1003
 HOST_CRITICAL_OOM_SCORE_ADJ = -900
+DEFAULT_PROJECT_POOL_CGROUP = "/sys/fs/cgroup/cocalc-project-pool"
+DEFAULT_PROJECT_POOL_MEMORY_RESERVE_MB = 3072
+MIN_PROJECT_POOL_MEMORY_MB = 1024
 PROJECT_HOST_RUNTIME_SUBID_RANGES = (
     (231072, ROOTLESS_SUBID_ALIGNMENT),
     (327680, ROOTLESS_SUBID_MIN_TOTAL - ROOTLESS_SUBID_ALIGNMENT),
@@ -2289,6 +2292,16 @@ def write_env(cfg: BootstrapConfig, image_size_gb: int) -> None:
         run_best_effort(cfg, ["chown", f"{cfg.ssh_user}:{cfg.ssh_user}", runtime_dir], "chown runtime dir")
         upsert_env(cfg.env_file, "COCALC_PODMAN_RUNTIME_DIR", runtime_dir)
     upsert_env(cfg.env_file, "COCALC_BTRFS_ROOT_RESERVE_GB", str(compute_root_reserve_gb(cfg)))
+    ensure_env_default(
+        cfg.env_file,
+        "COCALC_PROJECT_POOL_CGROUP",
+        DEFAULT_PROJECT_POOL_CGROUP,
+    )
+    ensure_env_default(
+        cfg.env_file,
+        "COCALC_PROJECT_POOL_MEMORY_RESERVE_MB",
+        str(DEFAULT_PROJECT_POOL_MEMORY_RESERVE_MB),
+    )
     if cfg.image_size_gb_raw == "auto":
         upsert_env(cfg.env_file, "COCALC_BTRFS_IMAGE_AUTO", "1")
         upsert_env(cfg.env_file, "COCALC_BTRFS_IMAGE_GB", str(image_size_gb))
@@ -2386,6 +2399,14 @@ def upsert_env(path: str, key: str, value: str) -> None:
     if not found:
         new_lines.append(f"{key}={value}")
     Path(path).write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+
+
+def ensure_env_default(path: str, key: str, value: str) -> None:
+    if Path(path).exists():
+        for line in Path(path).read_text(encoding="utf-8").splitlines():
+            if line.startswith(f"{key}="):
+                return
+    upsert_env(path, key, value)
 
 
 def report_bootstrap_status(
@@ -2877,9 +2898,77 @@ RUNTIME_USER="__RUNTIME_USER__"
 RUNTIME_BIN="$RUNTIME_ROOT/bin/project-host"
 PID_FILE="/mnt/cocalc/data/daemon.pid"
 OOM_ADJ="${COCALC_PROJECT_HOST_OOM_SCORE_ADJ:__OOM_ADJ_LITERAL__}"
+ENV_FILE="/etc/cocalc/project-host.env"
+PROJECT_POOL_CGROUP_DEFAULT="__PROJECT_POOL_CGROUP__"
+PROJECT_POOL_MEMORY_RESERVE_MB_DEFAULT="__PROJECT_POOL_MEMORY_RESERVE_MB__"
+MIN_PROJECT_POOL_MEMORY_MB="__MIN_PROJECT_POOL_MEMORY_MB__"
 
 run_daemon() {
   sudo -n -u "${RUNTIME_USER}" -H "${RUNTIME_BIN}" daemon "$@"
+}
+
+read_env_value() {
+  local key="$1"
+  if [ -r "${ENV_FILE}" ]; then
+    grep -E "^${key}=" "${ENV_FILE}" | tail -n1 | cut -d= -f2- || true
+  fi
+}
+
+project_pool_cgroup() {
+  local value
+  value="$(read_env_value COCALC_PROJECT_POOL_CGROUP)"
+  if [ -n "${value}" ]; then
+    printf '%s\n' "${value}"
+  else
+    printf '%s\n' "${PROJECT_POOL_CGROUP_DEFAULT}"
+  fi
+}
+
+project_pool_memory_max_bytes() {
+  local reserve_mb total_kb total_bytes reserve_bytes min_pool_bytes pool_bytes
+  reserve_mb="$(read_env_value COCALC_PROJECT_POOL_MEMORY_RESERVE_MB)"
+  if ! echo "${reserve_mb}" | grep -Eq '^[0-9]+$'; then
+    reserve_mb="${PROJECT_POOL_MEMORY_RESERVE_MB_DEFAULT}"
+  fi
+  total_kb="$(awk '/MemTotal:/ {print $2}' /proc/meminfo 2>/dev/null || true)"
+  if ! echo "${total_kb}" | grep -Eq '^[0-9]+$'; then
+    printf '%s\n' "max"
+    return
+  fi
+  total_bytes="$((total_kb * 1024))"
+  reserve_bytes="$((reserve_mb * 1024 * 1024))"
+  min_pool_bytes="$((MIN_PROJECT_POOL_MEMORY_MB * 1024 * 1024))"
+  pool_bytes="$((total_bytes - reserve_bytes))"
+  if [ "${pool_bytes}" -lt "${min_pool_bytes}" ]; then
+    if [ "${total_bytes}" -le "${min_pool_bytes}" ]; then
+      pool_bytes="${total_bytes}"
+    else
+      pool_bytes="${min_pool_bytes}"
+    fi
+  fi
+  if [ "${pool_bytes}" -ge "${total_bytes}" ]; then
+    printf '%s\n' "max"
+    return
+  fi
+  printf '%s\n' "${pool_bytes}"
+}
+
+configure_project_pool_cgroup() {
+  local pool max_bytes
+  pool="$(project_pool_cgroup)"
+  mkdir -p "${pool}"
+  max_bytes="$(project_pool_memory_max_bytes)"
+  printf '%s\n' "${max_bytes}" > "${pool}/memory.max"
+}
+
+attach_pid_to_project_pool() {
+  local pid="$1"
+  local pool
+  if [ -z "${pid}" ] || ! kill -0 "${pid}" 2>/dev/null; then
+    return 0
+  fi
+  pool="$(project_pool_cgroup)"
+  printf '%s\n' "${pid}" > "${pool}/cgroup.procs"
 }
 
 protect_pid() {
@@ -2898,18 +2987,58 @@ protect_pid() {
   fi
 }
 
+attach_running_project_processes() {
+  local runtime_dir cgroup_manager cid line project_pid conmon_pid pid
+  configure_project_pool_cgroup
+  if [ -r "${PID_FILE}" ]; then
+    pid="$(tr -d '[:space:]' < "${PID_FILE}" 2>/dev/null || true)"
+    attach_pid_to_project_pool "${pid}" || true
+  fi
+  runtime_dir="$(read_env_value COCALC_PODMAN_RUNTIME_DIR)"
+  cgroup_manager="$(read_env_value CONTAINERS_CGROUP_MANAGER)"
+  if [ -z "${cgroup_manager}" ]; then
+    cgroup_manager="cgroupfs"
+  fi
+  if [ -z "${runtime_dir}" ]; then
+    return 0
+  fi
+  while IFS= read -r cid; do
+    [ -n "${cid}" ] || continue
+    line="$(
+      sudo -n -u "${RUNTIME_USER}" -H env \
+        XDG_RUNTIME_DIR="${runtime_dir}" \
+        COCALC_PODMAN_RUNTIME_DIR="${runtime_dir}" \
+        CONTAINERS_CGROUP_MANAGER="${cgroup_manager}" \
+        podman inspect --format '{{.State.Pid}} {{.State.ConmonPid}}' "${cid}" 2>/dev/null || true
+    )"
+    project_pid="$(printf '%s\n' "${line}" | awk '{print $1}')"
+    conmon_pid="$(printf '%s\n' "${line}" | awk '{print $2}')"
+    attach_pid_to_project_pool "${project_pid}" || true
+    attach_pid_to_project_pool "${conmon_pid}" || true
+  done < <(
+    sudo -n -u "${RUNTIME_USER}" -H env \
+      XDG_RUNTIME_DIR="${runtime_dir}" \
+      COCALC_PODMAN_RUNTIME_DIR="${runtime_dir}" \
+      CONTAINERS_CGROUP_MANAGER="${cgroup_manager}" \
+      podman ps -q 2>/dev/null || true
+  )
+}
+
 case "${cmd}" in
   start|ensure)
     run_daemon "${cmd}" "$@"
     protect_pid
+    attach_running_project_processes || true
     ;;
   restart)
     run_daemon stop "$@" || true
     run_daemon start "$@"
     protect_pid
+    attach_running_project_processes || true
     ;;
   protect)
     protect_pid
+    attach_running_project_processes || true
     ;;
   noop)
     exit 0
@@ -2940,6 +3069,17 @@ esac
     rootctl = rootctl.replace("__RUNTIME_USER__", cfg.ssh_user)
     rootctl = rootctl.replace(
         "__OOM_ADJ_LITERAL__", f"--{abs(HOST_CRITICAL_OOM_SCORE_ADJ)}"
+    )
+    rootctl = rootctl.replace(
+        "__PROJECT_POOL_CGROUP__", DEFAULT_PROJECT_POOL_CGROUP
+    )
+    rootctl = rootctl.replace(
+        "__PROJECT_POOL_MEMORY_RESERVE_MB__",
+        str(DEFAULT_PROJECT_POOL_MEMORY_RESERVE_MB),
+    )
+    rootctl = rootctl.replace(
+        "__MIN_PROJECT_POOL_MEMORY_MB__",
+        str(MIN_PROJECT_POOL_MEMORY_MB),
     )
     (bin_dir / "ctl").write_text(ctl, encoding="utf-8")
     (bin_dir / "start-project-host").write_text(start_ph, encoding="utf-8")
