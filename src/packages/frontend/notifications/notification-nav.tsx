@@ -3,46 +3,16 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { blue as ANTD_BLUE } from "@ant-design/colors";
-import { Badge, Menu } from "antd";
-import React, { useMemo } from "react";
+import { Menu } from "antd";
+import React from "react";
 import { defineMessage, useIntl } from "react-intl";
 
-import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon, IconName, MenuItems, Text } from "@cocalc/frontend/components";
 import { IntlMessage } from "@cocalc/frontend/i18n";
-import { COLORS } from "@cocalc/util/theme";
 import { Channel, CHANNELS, CHANNELS_ICONS } from "@cocalc/util/types/news";
 import { NotificationFilter } from "./mentions/types";
 import { BOOKMARK_ICON_NAME } from "./mentions/util";
 import { MSGS } from "./notification-i18n";
-
-export const NewsCounter = () => {
-  const news_unread = useTypedRedux("news", "unread");
-  return (
-    <Badge
-      color={news_unread == 0 ? COLORS.GRAY : ANTD_BLUE.primary}
-      count={news_unread}
-      showZero={true}
-    />
-  );
-};
-
-const MentionsCounter = () => {
-  const mentions = useTypedRedux("mentions", "mentions");
-  const mentions_store = redux.getStore("mentions");
-  const count = useMemo(() => {
-    return mentions_store.getUnreadSize();
-  }, [mentions]);
-
-  return (
-    <Badge
-      color={count == 0 ? COLORS.GRAY : undefined}
-      showZero={true}
-      count={count}
-    />
-  );
-};
 
 const CHANNELS_NAMES: { [name in Channel]: IntlMessage } = {
   announcement: defineMessage({
@@ -75,7 +45,7 @@ export function NotificationNav({ filter, on_click, style }: Props) {
       key: "mentions",
       label: (
         <Text strong style={{ fontSize: "125%" }}>
-          {intl.formatMessage(MSGS.mentions)} <MentionsCounter />
+          {intl.formatMessage(MSGS.mentions)}
         </Text>
       ),
       children: [
@@ -120,7 +90,7 @@ export function NotificationNav({ filter, on_click, style }: Props) {
       key: "news",
       label: (
         <Text strong style={{ fontSize: "125%" }}>
-          {intl.formatMessage(MSGS.news)} <NewsCounter />
+          {intl.formatMessage(MSGS.news)}
         </Text>
       ),
       children: [

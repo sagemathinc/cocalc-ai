@@ -99,6 +99,11 @@ export function NewsPanel(props: NewsPanelProps) {
     open_new_tab(url);
   }
 
+  function markNewsItemRead(e: React.MouseEvent, news: NewsItemWebapp) {
+    e.stopPropagation();
+    news_actions.markNewsRead({ date: news.date, current: news_read_until });
+  }
+
   function renderTags(tags?: string[]) {
     if (tags == null) return null;
     return (
@@ -122,7 +127,6 @@ export function NewsPanel(props: NewsPanelProps) {
 
   function renderNewsPanelExtra(): React.JSX.Element {
     const read_all = intl.formatMessage(MSGS.read_all);
-
     const mark_all = intl.formatMessage(MSGS.mark_all, { anyUnread });
 
     return (
@@ -133,20 +137,19 @@ export function NewsPanel(props: NewsPanelProps) {
         <Button href={`${BASE_URL}/news`} target="_blank">
           <Icon name="file-alt" /> {read_all}
         </Button>
-        {anyUnread ? (
-          <Button onClick={() => news_actions.markNewsRead()} type="primary">
-            <Icon name="check-square" /> {mark_all}
-          </Button>
-        ) : (
-          <Button
-            onClick={() => {
+        <Button
+          onClick={() => {
+            if (anyUnread) {
+              news_actions.markNewsRead();
+            } else {
               didClickUnread.current = true;
               news_actions.markNewsUnread();
-            }}
-          >
-            <Icon name="square" /> {mark_all}
-          </Button>
-        )}
+            }
+          }}
+          type={anyUnread ? "primary" : "default"}
+        >
+          <Icon name={anyUnread ? "check-square" : "square"} /> {mark_all}
+        </Button>
       </Space>
     );
   }
@@ -164,8 +167,18 @@ export function NewsPanel(props: NewsPanelProps) {
           backgroundColor: isUnread ? COLORS.ANTD_BG_BLUE_L : undefined,
         }}
         actions={[
+          isUnread ? (
+            <Button
+              key="mark-read"
+              type="text"
+              ghost={true}
+              onClick={(e) => markNewsItemRead(e, n)}
+            >
+              <Icon name="check-square" /> {intl.formatMessage(MSGS.mark_read)}
+            </Button>
+          ) : null,
           <Button
-            key="read"
+            key="open"
             type="text"
             ghost={true}
             onClick={(e) => newsItemOnClick(e, n)}
