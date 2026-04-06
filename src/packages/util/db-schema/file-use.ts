@@ -94,8 +94,9 @@ Table({
           path: true,
         },
         check_hook(db, obj, account_id, _project_id, cb) {
-          // hook to note that project is being used (CRITICAL: do not pass path
-          // into db.touch since that would cause another write to the file_use table!)
+          // hook to note that project is being used. Avoid routing file-path
+          // activity through db.touch itself; path-level logging is handled
+          // separately below.
           // CRITICAL: Only do this if what edit or chat for this user is very recent.
           // Otherwise we touch the project just for seeing notifications or opening
           // the file, which is confusing and wastes a lot of resources.

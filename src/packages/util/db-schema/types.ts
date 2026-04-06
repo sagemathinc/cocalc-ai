@@ -231,8 +231,8 @@ export interface UserOrProjectQuery<F extends Fields> {
       cb: (err?: string | Error) => void,
     ) => void;
 
-    // hook to note that project is being used (CRITICAL: do not pass path
-    // into db.touch since that would cause another write to the file_use table!)
+    // hook to note that project is being used. Avoid routing file-path activity
+    // through db.touch itself; path-level logging is handled separately.
     /**
      * 2. INSTEAD OF: If instead_of_change is set, then it is called with input
      *      (database, old_val, query, account_id, cb)

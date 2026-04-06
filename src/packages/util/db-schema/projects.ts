@@ -296,7 +296,7 @@ Table({
     },
     last_edited: {
       type: "timestamp",
-      desc: "The last time some file was edited in this project.  This is the last time that the file_use table was updated for this project.",
+      desc: "The last time some file was edited in this project.",
     },
     last_started: {
       type: "timestamp",

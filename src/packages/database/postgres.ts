@@ -180,12 +180,7 @@ import {
   touchAccount,
 } from "./postgres/account/management";
 import { get_hub_servers, register_hub } from "./postgres/hub/management";
-import {
-  get_file_access,
-  get_file_use,
-  log_file_access,
-  record_file_use,
-} from "./postgres/paths/file-access";
+import { get_file_access, log_file_access } from "./postgres/paths/file-access";
 import {
   touch,
   touchProject,
@@ -1570,19 +1565,6 @@ export class PostgreSQL extends EventEmitter implements PostgreSQLMethods {
     >,
   ) {
     return runWithCbResultValue(opts.cb, () => get_file_access(this, opts));
-  }
-
-  async record_file_use(opts: DbFunctionOptsWithCb<typeof record_file_use>) {
-    return runWithCb(opts.cb, () => record_file_use(this, opts));
-  }
-
-  async get_file_use(
-    opts: DbFunctionOptsWithCb<
-      typeof get_file_use,
-      Awaited<ReturnType<typeof get_file_use>>
-    >,
-  ) {
-    return runWithCbResultValue(opts.cb, () => get_file_use(this, opts));
   }
 
   _validate_opts(opts: PgMethodOpts<"_validate_opts">) {

@@ -5,7 +5,7 @@
 
 import type { PostgreSQL } from "../types";
 import { touchAccount } from "../account/management";
-import { record_file_use } from "../paths/file-access";
+import { log_file_access } from "../paths/file-access";
 import { appendProjectOutboxEventForProject } from "../project-events-outbox";
 
 export interface TouchProjectOptions {
@@ -93,7 +93,7 @@ export async function touchProject(
  * This high-level orchestration method coordinates multiple activity tracking operations:
  * - Always touches the account (updates last_active)
  * - If project_id provided, touches the project (updates last_edited and last_active)
- * - If both project_id and path provided, records file use (tracks file-level activity)
+ * - If both project_id and path provided, records file access (tracks file-level activity)
  *
  * The method uses throttling to ensure efficient database updates. By default, duplicate
  * calls with the same parameters within 50 seconds are ignored (configurable via ttl_s).
@@ -154,13 +154,12 @@ export async function touch(db: PostgreSQL, opts: TouchOptions): Promise<void> {
     promises.push(touchProjectInternal(db, opts.project_id, opts.account_id));
   }
 
-  // Record file use if both project_id and path provided
+  // Record file access if both project_id and path provided
   if (opts.path != null && opts.project_id != null) {
     promises.push(
-      record_file_use(db, {
+      log_file_access(db, {
         project_id: opts.project_id,
-        path: opts.path,
-        action,
+        filename: opts.path,
         account_id: opts.account_id,
       }),
     );

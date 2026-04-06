@@ -360,15 +360,15 @@ describe("Activity tracking methods", () => {
 
       await touchWrapper({ account_id, project_id, path, action: "edit" });
 
-      // Verify file_use was recorded
+      // Verify file access was recorded
       const fileResult = await getPool().query(
-        `SELECT * FROM file_use WHERE project_id = $1 AND path = $2`,
+        `SELECT * FROM file_access_log WHERE project_id = $1 AND filename = $2`,
         [project_id, path],
       );
 
       expect(fileResult.rows.length).toBe(1);
-      expect(fileResult.rows[0].users[account_id]).toBeDefined();
-      expect(fileResult.rows[0].users[account_id].edit).toBeDefined();
+      expect(fileResult.rows[0].account_id).toBe(account_id);
+      expect(fileResult.rows[0].filename).toBe(path);
     });
 
     it("respects custom ttl_s throttle parameter", async () => {

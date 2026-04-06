@@ -94,55 +94,6 @@ export async function get_file_access(
   return rows;
 }
 
-export interface RecordFileUseOptions {
-  project_id: string;
-  path: string;
-  account_id: string;
-  action: string; // 'edit', 'read', 'seen', 'chat', etc.
-}
-
-/**
- * Record file editing activity - users modifying files in any way.
- * Uses the file_use table which also tracks whether activity has been seen by users.
- *
- * Note: This uses two queries which is ugly (see comment in db-schema about file_use table).
- * This will be redone for PostgreSQL later.
- */
-export async function record_file_use(
-  db: PostgreSQL,
-  opts: RecordFileUseOptions,
-): Promise<void> {
-  const now = new Date();
-  const id = db.sha1(opts.project_id, opts.path);
-
-  const entry: any = {
-    id,
-    project_id: opts.project_id,
-    path: opts.path,
-  };
-
-  // Set last_edited for 'edit' and 'chat' actions
-  if (opts.action === "edit" || opts.action === "chat") {
-    entry.last_edited = now;
-  }
-
-  // First query: INSERT with conflict resolution
-  await callback2(db._query.bind(db), {
-    query: "INSERT INTO file_use",
-    conflict: "id",
-    values: entry,
-  });
-
-  // Second query: UPDATE with JSONB merge
-  await callback2(db._query.bind(db), {
-    query: "UPDATE file_use",
-    jsonb_merge: {
-      users: { [opts.account_id]: { [opts.action]: now } },
-    },
-    where: { id },
-  });
-}
-
 export interface GetFileUseOptions {
   max_age_s?: number;
   project_id?: string; // don't specify both project_id and project_ids
@@ -159,10 +110,11 @@ export interface FileUseEntry {
 }
 
 /**
- * Get file use information from the file_use table.
+ * Get legacy file_use information from the file_use table.
  * Can filter by max_age_s, project_id(s), and path.
  *
- * Returns one entry if path is given, otherwise an array of entries.
+ * This remains only for compatibility with older virtual-table consumers while
+ * the live runtime migrates off file_use entirely.
  */
 export async function get_file_use(
   db: PostgreSQL,
