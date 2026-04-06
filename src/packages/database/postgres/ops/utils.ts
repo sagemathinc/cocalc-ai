@@ -52,9 +52,6 @@ export const NON_CRITICAL_TABLES = [
   "eval_inputs",
   "eval_outputs",
 
-  // File usage tracking
-  "file_use",
-
   // Temporary/ephemeral data
   "ipywidgets",
   "mentions",

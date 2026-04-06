@@ -347,7 +347,9 @@ export async function openLiveTextSession({
     project_id: projectId,
     path: normalizedPath,
     ...(persistent != null ? { persistent } : {}),
-    ...(fileUseInterval != null ? { file_use_interval: fileUseInterval } : {}),
+    ...(fileUseInterval != null
+      ? { document_activity_interval: fileUseInterval }
+      : {}),
   }) as unknown as SyncStringLike;
 
   let timer: NodeJS.Timeout | undefined;

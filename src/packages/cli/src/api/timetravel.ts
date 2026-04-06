@@ -342,7 +342,9 @@ export async function openTimeTravelSyncDoc({
     project_id: projectId,
     path: normalizedPath,
     ...(persistent != null ? { persistent } : {}),
-    ...(fileUseInterval != null ? { file_use_interval: fileUseInterval } : {}),
+    ...(fileUseInterval != null
+      ? { document_activity_interval: fileUseInterval }
+      : {}),
   };
   const session: SyncDocLike =
     descriptor.doctype === "syncstring"

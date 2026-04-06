@@ -266,7 +266,9 @@ export function createTasksSyncDB({
     ...(service ? { service } : {}),
     ...(changeThrottle != null ? { change_throttle: changeThrottle } : {}),
     ...(persistent != null ? { persistent } : {}),
-    ...(fileUseInterval != null ? { file_use_interval: fileUseInterval } : {}),
+    ...(fileUseInterval != null
+      ? { document_activity_interval: fileUseInterval }
+      : {}),
   };
   return createConatSyncDB(options);
 }

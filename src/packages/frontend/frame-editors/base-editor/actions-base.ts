@@ -744,7 +744,7 @@ export class BaseEditorActions<
       path: aux,
       primary_keys,
       string_cols,
-      file_use_interval: 0, // disable document-activity tracking for syncdb auxiliary files
+      document_activity_interval: 0, // disable document-activity tracking for syncdb auxiliary files
     });
     this._syncdb.once("error", (err) => {
       this.set_error(`${err}.\nFix this, then try opening the file again.`);

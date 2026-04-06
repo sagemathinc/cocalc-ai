@@ -112,9 +112,9 @@ export interface SyncOpts0 {
 
   patch_interval?: number;
 
-  // file_use_interval defaults to 60000.
+  // document_activity_interval defaults to 60000.
   // Specify 0 to disable.
-  file_use_interval?: number;
+  document_activity_interval?: number;
 
   string_id?: string;
   cursors?: boolean;
@@ -246,9 +246,9 @@ export class SyncDoc extends EventEmitter {
   // overloaded unless we throttle and group them.
   private change_throttle: number = 0;
 
-  // file_use_interval throttle: default is 60s for everything
-  private file_use_interval: number;
-  private throttled_file_use?: Function;
+  // document_activity_interval throttle: default is 60s for everything
+  private document_activity_interval: number;
+  private throttled_document_activity?: Function;
 
   private cursors: boolean = false; // if true, also provide cursor tracking functionality
   private cursor_map: Map<string, any> = Map();
@@ -380,7 +380,7 @@ export class SyncDoc extends EventEmitter {
       "path",
       "client",
       "patch_interval",
-      "file_use_interval",
+      "document_activity_interval",
       "change_throttle",
       "cursors",
       "doctype",
@@ -565,18 +565,18 @@ export class SyncDoc extends EventEmitter {
     },
   );
 
-  private init_file_use_interval = (): void => {
-    if (this.file_use_interval == null) {
-      this.file_use_interval = 60 * 1000;
+  private init_document_activity_interval = (): void => {
+    if (this.document_activity_interval == null) {
+      this.document_activity_interval = 60 * 1000;
     }
 
-    if (!this.file_use_interval || !this.client.is_browser()) {
-      // file_use_interval has to be nonzero, and we only do
+    if (!this.document_activity_interval || !this.client.is_browser()) {
+      // document_activity_interval has to be nonzero, and we only do
       // this for browser user.
       return;
     }
 
-    const file_use = async () => {
+    const document_activity = async () => {
       await delay(100); // wait a little so my_patches and gets updated.
       // We ONLY count this and record that the file was
       // edited if there was an actual change record in the
@@ -596,14 +596,18 @@ export class SyncDoc extends EventEmitter {
         project_id: this.project_id,
         path: this.path,
         action: "edit",
-        ttl: this.file_use_interval,
+        ttl: this.document_activity_interval,
       });
     };
-    this.throttled_file_use = throttle(file_use, this.file_use_interval, {
-      leading: true,
-    });
+    this.throttled_document_activity = throttle(
+      document_activity,
+      this.document_activity_interval,
+      {
+        leading: true,
+      },
+    );
 
-    this.on("user-change", this.throttled_file_use as any);
+    this.on("user-change", this.throttled_document_activity as any);
   };
 
   isClosed = () => (this.state ?? "closed") == "closed";
@@ -1206,10 +1210,10 @@ export class SyncDoc extends EventEmitter {
     // what happened and can respond.
     this.removeAllListeners();
 
-    if (this.throttled_file_use != null) {
-      // Cancel any pending file_use calls.
-      cancel_scheduled(this.throttled_file_use);
-      (this.throttled_file_use as any).cancel();
+    if (this.throttled_document_activity != null) {
+      // Cancel any pending document-activity calls.
+      cancel_scheduled(this.throttled_document_activity);
+      (this.throttled_document_activity as any).cancel();
     }
 
     if (this.emit_change != null) {
@@ -1528,8 +1532,8 @@ export class SyncDoc extends EventEmitter {
     this.init_table_close_handlers();
     this.assert_not_closed("initAll -- successful init_table_close_handlers");
 
-    log("file_use_interval");
-    this.init_file_use_interval();
+    log("document_activity_interval");
+    this.init_document_activity_interval();
 
     this.emit("init");
     this.assert_not_closed("initAll -- after waiting until fully ready");

@@ -174,7 +174,7 @@ export interface SyncDBOpts {
   patch_interval?: number;
   persistent?: boolean;
   data_server?: DataServer;
-  file_use_interval?: number;
+  document_activity_interval?: number;
 }
 
 export function syncdb(opts: SyncDBOpts): any {
