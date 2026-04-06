@@ -96,7 +96,6 @@ export function MentionsPanel(props: MentionsPanelProps) {
       }
       mentions_per_project[project_key].push(
         <NotificationRow
-          filter={filter}
           key={path + time.getTime()}
           id={id}
           mention={m}

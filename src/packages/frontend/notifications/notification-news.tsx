@@ -4,15 +4,10 @@
  */
 
 import { Button, Card, List, Space, Tag } from "antd";
-import React, { useMemo, useRef } from "react";
-import { delay } from "awaiting";
+import React, { useMemo } from "react";
 import { useIntl } from "react-intl";
 
-import {
-  useActions,
-  useAsyncEffect,
-  useTypedRedux,
-} from "@cocalc/frontend/app-framework";
+import { useActions, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import {
   Icon,
@@ -53,21 +48,6 @@ export function NewsPanel(props: NewsPanelProps) {
   const news_read_until: number | undefined =
     account_other?.get("news_read_until");
   const news_read_ids = toReadIds(account_other?.get("news_read_ids"));
-  const didClickUnread = useRef<boolean>(false);
-
-  // after showing news briefly (short), we mark them as read.
-  // even if they didn't read them, the user saw there is something and
-  // in the future, new news items will show up as (1) annotations
-  // (more visible than changing the number)
-  useAsyncEffect(async (isMounted) => {
-    await delay(1500);
-    if (!isMounted()) return;
-    // we block this in case the user did click "unread" in the meantime, just silly otherwise
-    if (didClickUnread.current) return;
-    // we also abort if no longer looking at news
-    if (!isNewsFilter(filter)) return;
-    news_actions.markNewsRead();
-  }, []);
 
   const [newsData, anyUnread]: [NewsItemWebapp[], boolean] = useMemo(() => {
     if (!isNewsFilter(filter)) return [[], false];
@@ -152,7 +132,6 @@ export function NewsPanel(props: NewsPanelProps) {
             if (anyUnread) {
               news_actions.markNewsRead();
             } else {
-              didClickUnread.current = true;
               news_actions.markNewsUnread();
             }
           }}

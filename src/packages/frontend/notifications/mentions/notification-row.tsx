@@ -7,14 +7,13 @@ import { Button } from "antd";
 
 import { A } from "@cocalc/frontend/components";
 import { Avatar } from "@cocalc/frontend/account/avatar/avatar";
-import { CSS, redux, useState } from "@cocalc/frontend/app-framework";
+import { CSS, redux } from "@cocalc/frontend/app-framework";
 import { Icon, IconName, TimeAgo } from "@cocalc/frontend/components";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import Fragment from "@cocalc/frontend/misc/fragment-id";
 import { ProjectTitle } from "@cocalc/frontend/projects/project-title";
 import { User } from "@cocalc/frontend/users";
-import { COLORS } from "@cocalc/util/theme";
-import { NotificationFilter, MentionInfo } from "./types";
+import { MentionInfo } from "./types";
 
 const DESCRIPTION_STYLE: CSS = {
   flex: "1 1 auto",
@@ -34,7 +33,6 @@ interface Props {
   id: string;
   mention: MentionInfo;
   user_map: any;
-  filter: NotificationFilter;
 }
 
 function severityIcon(severity?: string): IconName {
@@ -49,7 +47,7 @@ function severityIcon(severity?: string): IconName {
 }
 
 export function NotificationRow(props: Props) {
-  const { id, mention, user_map, filter } = props;
+  const { id, mention, user_map } = props;
   const {
     kind,
     path,
@@ -66,32 +64,13 @@ export function NotificationRow(props: Props) {
     action_label,
     severity,
   } = mention.toJS();
-
-  const [clicked, setClicked] = useState(false);
-
   const fragmentId = Fragment.decode(fragment_id);
   const is_read = mention.getIn(["users", target, "read"]);
 
-  const clickedStyle: CSS =
-    clicked && (filter === "unread" || filter === "read")
-      ? { backgroundColor: COLORS.GRAY_LL }
-      : {};
-
-  const row_style: CSS =
-    is_read && !clicked
-      ? { color: "rgb(88, 96, 105)", ...clickedStyle }
-      : { ...clickedStyle };
+  const row_style: CSS = is_read ? { color: "rgb(88, 96, 105)" } : {};
 
   function markReadState(how: "read" | "unread") {
-    if (filter === "unread" || filter === "read") {
-      setClicked(true);
-      setTimeout(() => {
-        setClicked(false);
-        redux.getActions("mentions")?.mark(mention, id, how);
-      }, 1000);
-    } else {
-      redux.getActions("mentions")?.mark(mention, id, how);
-    }
+    redux.getActions("mentions")?.mark(mention, id, how);
   }
 
   function on_read_unread_click(e) {

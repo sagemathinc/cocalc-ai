@@ -237,7 +237,7 @@ export class AccountActions extends Actions<AccountState> {
   public set_other_settings(name: string, value: any): void {
     const current =
       this.redux.getStore("account")?.get("other_settings")?.toJS?.() ?? {};
-    this.redux
+    void this.redux
       .getTable("account")
       .set({ other_settings: { ...current, [name]: value } }, "shallow");
   }
