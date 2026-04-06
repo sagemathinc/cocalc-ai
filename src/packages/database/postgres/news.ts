@@ -65,8 +65,7 @@ SELECT
   extract(epoch from date::timestamptz)::INTEGER as date,
   extract(epoch from until::timestamptz)::INTEGER as until
 FROM news
-WHERE id = $1
-  AND channel != '${SYSTEM_CHANNEL}'`;
+WHERE id = $1`;
 
 // This is used for editing a news item
 export async function getNewsItem(

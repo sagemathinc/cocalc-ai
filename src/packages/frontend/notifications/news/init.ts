@@ -4,11 +4,14 @@
  */
 
 import { Map } from "immutable";
+import { notification } from "antd";
 import type { DStream } from "@cocalc/conat/sync/dstream";
+import type { DKV } from "@cocalc/conat/sync/dkv";
 import {
   newsFeedStreamName,
   type NewsFeedEvent,
 } from "@cocalc/conat/hub/api/news-feed";
+import { createElement } from "react";
 
 import {
   Actions,
@@ -17,17 +20,14 @@ import {
   TypedMap,
   redux,
 } from "@cocalc/frontend/app-framework";
-import { alert_message } from "@cocalc/frontend/alerts";
-import {
-  get_local_storage,
-  set_local_storage,
-} from "@cocalc/frontend/misc/local-storage";
+import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { NewsItemWebapp, SYSTEM_CHANNEL } from "@cocalc/util/types/news";
 
 export const NEWS = "news";
 const NewsItemMap = createTypedMap<NewsItemWebapp>();
-const SYSTEM_NEWS_SEEN_STORAGE_KEY = "system_news_seen";
+const SEEN_STATE_DKV_NAME = "seen-state";
+const SYSTEM_NEWS_SEEN_PREFIX = "system-news.";
 
 export interface NewsState {
   loading: boolean;
@@ -63,23 +63,106 @@ const store: NewsStore = redux.createStore(NEWS, NewsStore, {
   news: Map<string, TypedMap<NewsItemWebapp>>(),
 });
 
-function getSeenSystemNews(): Record<string, number> {
-  const raw = get_local_storage(SYSTEM_NEWS_SEEN_STORAGE_KEY);
-  if (raw == null) {
-    return {};
-  }
-  if (typeof raw === "string") {
-    try {
-      return JSON.parse(raw) as Record<string, number>;
-    } catch {
-      return {};
-    }
-  }
-  return typeof raw === "object" ? (raw as Record<string, number>) : {};
+let systemNewsSeenState: DKV<number> | undefined;
+let systemNewsSeenStateInit: Promise<void> | undefined;
+let systemNewsSeenStateListener:
+  | ((changeEvent: { key: string; value?: number }) => void)
+  | undefined;
+const seenSystemNewsIds = new globalThis.Map<string, number>();
+const openSystemNewsAlertIds = new Set<string>();
+
+function systemNewsSeenKey(id: string): string {
+  return `${SYSTEM_NEWS_SEEN_PREFIX}${id}`;
 }
 
-function setSeenSystemNews(seen: Record<string, number>): void {
-  set_local_storage(SYSTEM_NEWS_SEEN_STORAGE_KEY, JSON.stringify(seen));
+function getSystemNewsIdFromSeenKey(key: string): string | undefined {
+  if (!key.startsWith(SYSTEM_NEWS_SEEN_PREFIX)) {
+    return;
+  }
+  return key.slice(SYSTEM_NEWS_SEEN_PREFIX.length);
+}
+
+function closeSystemNewsSeenState(): void {
+  for (const id of openSystemNewsAlertIds) {
+    notification.destroy(`system-news:${id}`);
+  }
+  openSystemNewsAlertIds.clear();
+  seenSystemNewsIds.clear();
+  if (systemNewsSeenState != null && systemNewsSeenStateListener != null) {
+    systemNewsSeenState.off("change", systemNewsSeenStateListener);
+  }
+  systemNewsSeenStateListener = undefined;
+  systemNewsSeenState?.close();
+  systemNewsSeenState = undefined;
+  systemNewsSeenStateInit = undefined;
+}
+
+async function ensureSystemNewsSeenState(): Promise<void> {
+  if (!webapp_client.is_signed_in()) {
+    closeSystemNewsSeenState();
+    return;
+  }
+  if (systemNewsSeenState != null && !systemNewsSeenState.isClosed()) {
+    return;
+  }
+  if (systemNewsSeenStateInit != null) {
+    await systemNewsSeenStateInit;
+    return;
+  }
+  systemNewsSeenStateInit = (async () => {
+    const accountStore = redux.getStore("account");
+    await accountStore.async_wait({
+      until: () => accountStore.get_account_id() != null,
+      timeout: 0,
+    });
+    const account_id = accountStore.get_account_id();
+    const dkv = await webapp_client.conat_client.dkv<number>({
+      account_id,
+      name: SEEN_STATE_DKV_NAME,
+      merge: ({ local, remote }) => local ?? remote,
+    });
+    if (systemNewsSeenState != null && systemNewsSeenState !== dkv) {
+      systemNewsSeenState.close();
+    }
+    systemNewsSeenState = dkv;
+    seenSystemNewsIds.clear();
+    for (const [key, value] of Object.entries(dkv.getAll())) {
+      const id = getSystemNewsIdFromSeenKey(key);
+      if (id == null || typeof value !== "number") {
+        continue;
+      }
+      seenSystemNewsIds.set(id, value);
+    }
+    systemNewsSeenStateListener = (changeEvent) => {
+      const id = getSystemNewsIdFromSeenKey(changeEvent.key);
+      if (id == null) {
+        return;
+      }
+      if (typeof changeEvent.value === "number") {
+        seenSystemNewsIds.set(id, changeEvent.value);
+        notification.destroy(`system-news:${id}`);
+        openSystemNewsAlertIds.delete(id);
+      } else {
+        seenSystemNewsIds.delete(id);
+      }
+    };
+    dkv.on("change", systemNewsSeenStateListener);
+  })();
+  try {
+    await systemNewsSeenStateInit;
+  } finally {
+    systemNewsSeenStateInit = undefined;
+  }
+}
+
+function markSystemNewsSeen(id: string, seenAt: number): void {
+  seenSystemNewsIds.set(id, seenAt);
+  openSystemNewsAlertIds.delete(id);
+  void ensureSystemNewsSeenState()
+    .then(() => systemNewsSeenState?.set(systemNewsSeenKey(id), seenAt))
+    .catch((err) => {
+      console.warn("system news seen-state update error", err);
+    });
 }
 
 export class NewsActions extends Actions<NewsState> {
@@ -115,11 +198,13 @@ export class NewsActions extends Actions<NewsState> {
 
   public refresh = async (): Promise<void> => {
     if (!webapp_client.is_signed_in()) {
+      closeSystemNewsSeenState();
       this.setState({ loading: false, unread: 0, news: Map() });
       return;
     }
     this.setState({ loading: true });
     try {
+      await ensureSystemNewsSeenState();
       const rows = await webapp_client.conat_client.hub.system.listNews();
       const news = Map<string, TypedMap<NewsItemWebapp>>(
         rows.map((row) => [
@@ -181,10 +266,8 @@ export class NewsActions extends Actions<NewsState> {
   private showSystemNewsAlerts(
     news: Map<string, TypedMap<NewsItemWebapp>>,
   ): void {
-    const seen = getSeenSystemNews();
     const now = webapp_client.server_time();
     const liveIds = new Set<string>();
-    let changed = false;
 
     news.forEach((item) => {
       if (item.get("channel") !== SYSTEM_CHANNEL) return;
@@ -197,27 +280,35 @@ export class NewsActions extends Actions<NewsState> {
       const id = item.get("id");
       if (!id) return;
       liveIds.add(id);
-      if (seen[id] != null) return;
+      if (seenSystemNewsIds.has(id) || openSystemNewsAlertIds.has(id)) return;
 
-      seen[id] = date.getTime();
-      changed = true;
-      alert_message({
-        type: "warning",
-        title: item.get("title") || "System notice",
-        message: item.get("text") || item.get("title") || "System notice",
-        block: true,
+      openSystemNewsAlertIds.add(id);
+      notification.warning({
+        key: `system-news:${id}`,
+        message: item.get("title") || "System notice",
+        description: createElement(StaticMarkdown, {
+          value: item.get("text") || item.get("title") || "System notice",
+        }),
+        duration: 0,
+        onClose: () => {
+          markSystemNewsSeen(id, now.getTime());
+        },
       });
     });
 
-    for (const id in seen) {
+    for (const id of Array.from(openSystemNewsAlertIds)) {
       if (!liveIds.has(id)) {
-        delete seen[id];
-        changed = true;
+        notification.destroy(`system-news:${id}`);
+        openSystemNewsAlertIds.delete(id);
       }
     }
 
-    if (changed) {
-      setSeenSystemNews(seen);
+    for (const id of Array.from(seenSystemNewsIds.keys())) {
+      if (liveIds.has(id)) {
+        continue;
+      }
+      seenSystemNewsIds.delete(id);
+      systemNewsSeenState?.delete(systemNewsSeenKey(id));
     }
   }
 }
@@ -281,6 +372,7 @@ function initRealtime(): void {
   };
   signedOutListener = () => {
     closeRealtimeFeed();
+    closeSystemNewsSeenState();
     actions.setState({ loading: false, unread: 0, news: Map() });
   };
   conatConnectedListener = () => {

@@ -68,6 +68,7 @@ const newsIds = {
   futureFeature: 8,
   upcomingEvent: 9,
   latestAnnouncement: 10,
+  systemNotice: 11,
 } as const;
 
 const historyTimestamp = Math.floor((now.getTime() - 12 * dayMs) / 1000);
@@ -169,6 +170,15 @@ const seedNewsItems: SeedNewsItem[] = [
       },
     },
   },
+  {
+    id: newsIds.systemNotice,
+    channel: "system",
+    title: "System Notice",
+    text: "Temporary service issue.",
+    date: new Date(now.getTime() - 30 * 60 * 1000),
+    until: new Date(now.getTime() + 30 * 60 * 1000),
+    tags: ["system"],
+  },
 ];
 
 describe("news queries", () => {
@@ -230,6 +240,13 @@ describe("news queries", () => {
     expect(item).not.toBeNull();
     expect(item?.hide).toBe(true);
     expect(item?.title).toBe("Hidden About");
+  });
+
+  it("getNewsItem returns system items for editing", async () => {
+    const item = await getNewsItem(newsIds.systemNotice);
+    expect(item).not.toBeNull();
+    expect(item?.channel).toBe("system");
+    expect(item?.title).toBe("System Notice");
   });
 
   it("getNewsItemUser reports future and expired status", async () => {
