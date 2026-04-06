@@ -22,6 +22,8 @@ export function NotificationPage() {
   const account_id = useTypedRedux("account", "account_id");
   const mentions = useTypedRedux("mentions", "mentions");
   const loading = useTypedRedux("mentions", "loading");
+  const unread_count = useTypedRedux("mentions", "unread_count") ?? 0;
+  const news_unread = useTypedRedux("news", "unread") ?? 0;
   const news = useTypedRedux("news", "news");
   const user_map = useTypedRedux("users", "user_map");
   const filter: NotificationFilter = useTypedRedux("mentions", "filter");
@@ -74,6 +76,8 @@ export function NotificationPage() {
         <NotificationNav
           filter={filter}
           on_click={redux.getActions("mentions").set_filter}
+          unread_count={unread_count}
+          news_unread={news_unread}
           style={{
             display: "flex",
             flexDirection: "column",
