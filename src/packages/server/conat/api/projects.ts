@@ -103,6 +103,7 @@ import {
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { appendProjectOutboxEventForProject } from "@cocalc/database/postgres/project-events-outbox";
 import { publishProjectAccountFeedEventsBestEffort } from "@cocalc/server/account/project-feed";
+import { createHash } from "node:crypto";
 
 const PROJECT_STORAGE_CACHE_TTL_MS = 30_000;
 const PROJECT_STORAGE_BREAKDOWN_TIMEOUT_MS = 10_000;
@@ -682,22 +683,67 @@ export async function listRecentDocumentActivity({
   const pageLimit = normalizeRecentDocumentActivityLimit(limit);
   const maxAgeS = normalizeRecentDocumentActivityMaxAge(max_age_s);
   const cutoff = new Date(Date.now() - maxAgeS * 1000);
-  const { rows } = await getPool().query<RecentDocumentActivityRow>(
-    `SELECT f.id, f.project_id, f.path, f.last_edited, f.users
-       FROM file_use AS f
-      WHERE f.last_edited >= $1
-        AND EXISTS (
-          SELECT 1
-            FROM projects AS p
-           WHERE p.project_id = f.project_id
-             AND p.deleted IS NOT TRUE
-             AND p.users ? $2
-        )
-      ORDER BY f.last_edited DESC NULLS LAST, f.id DESC
-      LIMIT $3`,
+  const { rows } = await getPool().query<{
+    project_id: string;
+    path: string;
+    last_accessed: Date | null;
+    recent_account_ids: string[] | null;
+  }>(
+    `SELECT grouped.project_id,
+            grouped.path,
+            grouped.last_accessed,
+            COALESCE(
+              (
+                SELECT array_agg(recent.account_id ORDER BY recent.last_time DESC)
+                  FROM (
+                    SELECT fal2.account_id::TEXT AS account_id,
+                           MAX(fal2.time) AS last_time
+                      FROM file_access_log AS fal2
+                     WHERE fal2.project_id = grouped.project_id
+                       AND fal2.filename = grouped.path
+                       AND fal2.time >= $1
+                     GROUP BY fal2.account_id
+                     ORDER BY MAX(fal2.time) DESC, fal2.account_id::TEXT
+                     LIMIT 5
+                  ) AS recent
+              ),
+              ARRAY[]::TEXT[]
+            ) AS recent_account_ids
+       FROM (
+              SELECT fal.project_id,
+                     fal.filename AS path,
+                     MAX(fal.time) AS last_accessed
+                FROM file_access_log AS fal
+               WHERE fal.time >= $1
+                 AND EXISTS (
+                   SELECT 1
+                     FROM projects AS p
+                    WHERE p.project_id = fal.project_id
+                      AND p.deleted IS NOT TRUE
+                      AND p.users ? $2
+                 )
+               GROUP BY fal.project_id, fal.filename
+               ORDER BY MAX(fal.time) DESC, fal.project_id DESC, fal.filename DESC
+               LIMIT $3
+            ) AS grouped
+      ORDER BY grouped.last_accessed DESC NULLS LAST,
+               grouped.project_id DESC,
+               grouped.path DESC`,
     [cutoff, account_id, pageLimit],
   );
-  return rows;
+  return rows.map((row) => ({
+    id: createHash("sha1")
+      .update(row.project_id)
+      .update("\0")
+      .update(row.path)
+      .digest("hex"),
+    project_id: row.project_id,
+    path: row.path,
+    last_accessed: row.last_accessed,
+    recent_account_ids: Array.isArray(row.recent_account_ids)
+      ? row.recent_account_ids
+      : [],
+  }));
 }
 
 export async function getStorageOverview({

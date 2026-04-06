@@ -63,6 +63,7 @@ import {
   project_id as REMOTE_PROJECT_ID,
 } from "../remote";
 import { join } from "node:path";
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { execFile as execFileCb } from "node:child_process";
 import { promisify } from "node:util";
@@ -101,7 +102,8 @@ import {
   startLiteCodexDeviceAuth,
   uploadLiteSubscriptionAuthFile,
 } from "./codex-auth";
-import { getRow, listRows } from "./sqlite/database";
+import { getRow, listRows, upsertRow } from "./sqlite/database";
+import { uuid } from "@cocalc/util/misc";
 
 const logger = getLogger("lite:hub:api");
 const execFile = promisify(execFileCb);
@@ -319,28 +321,97 @@ async function listRecentDocumentActivityLite(opts: {
   const limit = normalizeRecentDocumentActivityLimit(opts.limit);
   const maxAgeS = normalizeRecentDocumentActivityMaxAge(opts.max_age_s);
   const cutoffMs = Date.now() - maxAgeS * 1000;
-  return (listRows("file_use") as any[])
-    .filter((row) => row?.project_id === LITE_PROJECT_ID)
+  const grouped = new Map<
+    string,
+    {
+      project_id: string;
+      path: string;
+      last_accessed: Date | null;
+      accountTimes: Map<string, number>;
+    }
+  >();
+  for (const raw of listRows("file_access_log") as any[]) {
+    if (`${raw?.project_id ?? ""}`.trim() !== LITE_PROJECT_ID) continue;
+    const project_id = `${raw?.project_id ?? ""}`.trim();
+    const path = `${raw?.filename ?? ""}`;
+    if (!project_id || !path) continue;
+    const time = normalizeProjectLogTime(raw?.time);
+    const timeMs = time?.getTime() ?? 0;
+    if (timeMs < cutoffMs) continue;
+    const key = `${project_id}\u0000${path}`;
+    let entry = grouped.get(key);
+    if (!entry) {
+      entry = {
+        project_id,
+        path,
+        last_accessed: time,
+        accountTimes: new Map<string, number>(),
+      };
+      grouped.set(key, entry);
+    } else if ((entry.last_accessed?.getTime() ?? 0) < timeMs) {
+      entry.last_accessed = time;
+    }
+    const account_id = `${raw?.account_id ?? ""}`.trim();
+    if (account_id) {
+      entry.accountTimes.set(
+        account_id,
+        Math.max(entry.accountTimes.get(account_id) ?? 0, timeMs),
+      );
+    }
+  }
+  return Array.from(grouped.values())
+    .sort((a, b) => {
+      const at = a.last_accessed?.getTime() ?? 0;
+      const bt = b.last_accessed?.getTime() ?? 0;
+      if (at !== bt) return bt - at;
+      return `${b.project_id}\u0000${b.path}`.localeCompare(
+        `${a.project_id}\u0000${a.path}`,
+      );
+    })
+    .slice(0, limit)
     .map(
       (row): RecentDocumentActivityRow => ({
-        id: `${row.id ?? ""}`.trim(),
-        project_id: `${row.project_id ?? ""}`.trim(),
-        path: `${row.path ?? ""}`,
-        last_edited: normalizeProjectLogTime(row.last_edited),
-        users: row.users ?? undefined,
+        id: createHash("sha1")
+          .update(row.project_id)
+          .update("\0")
+          .update(row.path)
+          .digest("hex"),
+        project_id: row.project_id,
+        path: row.path,
+        last_accessed: row.last_accessed,
+        recent_account_ids: Array.from(row.accountTimes.entries())
+          .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+          .slice(0, 5)
+          .map(([account_id]) => account_id),
       }),
-    )
-    .filter((row) => {
-      const edited = row.last_edited?.getTime() ?? 0;
-      return edited >= cutoffMs;
-    })
-    .sort((a, b) => {
-      const at = a.last_edited?.getTime() ?? 0;
-      const bt = b.last_edited?.getTime() ?? 0;
-      if (at !== bt) return bt - at;
-      return `${b.id}`.localeCompare(`${a.id}`);
-    })
-    .slice(0, limit);
+    );
+}
+
+async function logFileAccessLite(opts: {
+  account_id?: string;
+  project_id: string;
+  path: string;
+}): Promise<void> {
+  if (hasRemote) {
+    await callRemoteHub({
+      name: "db.logFileAccess",
+      args: [opts],
+    });
+    return;
+  }
+  const account_id = requireLiteAccountId(opts.account_id);
+  const project_id = requireLiteProjectId(opts.project_id);
+  const path = `${opts.path ?? ""}`;
+  if (!path) return;
+  const id = uuid();
+  upsertRow("file_access_log", id, {
+    id,
+    project_id,
+    account_id,
+    filename: path,
+    time: new Date().toISOString(),
+    expire: null,
+  });
 }
 
 function isSetUserQueryLite(opts: {
@@ -1467,7 +1538,11 @@ export const hubApi: HubApi = {
       });
     },
   },
-  db: { touch: () => {}, userQuery: userQueryLite },
+  db: {
+    touch: () => {},
+    logFileAccess: logFileAccessLite,
+    userQuery: userQueryLite,
+  },
   purchases: {},
   agent,
   sync: {

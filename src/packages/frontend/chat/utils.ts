@@ -149,8 +149,6 @@ export const markChatAsReadIfUnseen: (
     account_id,
   });
   if (unreadThreads.length > 0) {
-    // Keep the legacy file_use write path for now so the old recent-activity
-    // panel stays in sync until that surface is replaced.
     const actions = redux?.getActions("file_use");
     if (actions == null) return;
     actions.mark_file(project_id, path, "read");

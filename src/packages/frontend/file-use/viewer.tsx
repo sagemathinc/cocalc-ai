@@ -1,29 +1,22 @@
 /*
- *  This file is part of CoCalc: Copyright © 2020 Sagemath, Inc.
+ *  This file is part of CoCalc: Copyright © 2026 Sagemath, Inc.
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { List as iList, Map as iMap } from "immutable";
-import { useEffect, useRef, useState } from "react";
-import { Virtuoso, VirtuosoHandle } from "react-virtuoso";
+import { Map as iMap } from "immutable";
+import { useMemo, useRef, useState } from "react";
+import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 
 import { Button } from "antd";
 import { Alert, Col, Row } from "@cocalc/frontend/antd-bootstrap";
-import { redux } from "@cocalc/frontend/app-framework";
-import useCounter from "@cocalc/frontend/app-framework/counter-hook";
-import {
-  MarkAll,
-  SearchInput,
-  Title,
-  VisibleMDLG,
-} from "@cocalc/frontend/components";
+import { SearchInput, Title, VisibleMDLG } from "@cocalc/frontend/components";
 import { search_match, search_split } from "@cocalc/util/misc";
-import { FileUseActions } from "./actions";
 import { FileUseInfo } from "./info";
 import { open_file_use_entry } from "./util";
+import type { RecentDocumentActivityEntry } from "./types";
 
 interface Props {
-  file_use_list: iList<FileUseInfoMap>;
+  rows: RecentDocumentActivityEntry[];
   user_map: iMap<string, any>;
   project_map: iMap<string, any>;
   account_id: string;
@@ -32,10 +25,8 @@ interface Props {
   title?: React.ReactNode;
 }
 
-type FileUseInfoMap = iMap<string, any>;
-
 export default function FileUseViewer({
-  file_use_list,
+  rows,
   user_map,
   project_map,
   account_id,
@@ -43,149 +34,58 @@ export default function FileUseViewer({
   onRefresh,
   title = "Recent document activity",
 }: Props) {
-  const [search, _setSearch] = useState<string>("");
-  const [cursor, setCursor] = useState<number>(0); // cursor position
-  const numMissingRef = useRef<number>(0);
+  const [search, setSearch] = useState<string>("");
+  const [cursor, setCursor] = useState<number>(0);
   const virtuosoRef = useRef<VirtuosoHandle>(null);
-  const visibleListRef = useRef<iList<FileUseInfoMap> | null>(null);
-  const { inc } = useCounter();
 
-  function setSearch(search?) {
-    visibleListRef.current = null;
-    get_visible_list(search);
-    _setSearch(search);
-  }
+  const searchableRows = useMemo(
+    () =>
+      rows.map((row) => {
+        const parts = [
+          row.path,
+          project_map.getIn([row.project_id, "title"], ""),
+        ];
+        for (const recentAccountId of row.recent_account_ids ?? []) {
+          parts.push(user_map.getIn([recentAccountId, "first_name"], ""));
+          parts.push(user_map.getIn([recentAccountId, "last_name"], ""));
+          if (recentAccountId === account_id) {
+            parts.push("you");
+          }
+        }
+        return {
+          row,
+          search: parts.join(" ").toLowerCase(),
+        };
+      }),
+    [project_map, rows, user_map],
+  );
 
-  useEffect(() => {
-    visibleListRef.current = null;
-    get_visible_list();
-    inc();
-  }, [file_use_list]);
+  const visibleRows = useMemo(() => {
+    if (!search) return searchableRows;
+    const split = search_split(search.toLowerCase());
+    return searchableRows.filter((entry) => search_match(entry.search, split));
+  }, [search, searchableRows]);
 
-  function render_how_many_hidden_by_search() {
-    get_visible_list(); // make sure num_missing is updated.
-    if (numMissingRef.current == 0) return;
-    return (
-      <Alert
-        bsStyle="warning"
-        key="not_showing"
-        style={{ marginBottom: "5px" }}
-      >
-        Hiding {numMissingRef.current} file use notifications that do not match
-        search for '{search}'.
-      </Alert>
-    );
-  }
+  const hiddenCount = searchableRows.length - visibleRows.length;
 
-  function set_cursor(cursor: number): void {
-    if (cursor >= get_visible_list().size) {
-      cursor = get_visible_list().size - 1;
+  function moveCursor(nextCursor: number): void {
+    if (visibleRows.length === 0) {
+      setCursor(0);
+      return;
     }
-    if (cursor < 0) {
-      cursor = 0;
-    }
-    setCursor(cursor);
-    virtuosoRef.current?.scrollIntoView({ index: cursor });
+    const bounded = Math.max(0, Math.min(visibleRows.length - 1, nextCursor));
+    setCursor(bounded);
+    virtuosoRef.current?.scrollIntoView({ index: bounded });
   }
 
-  function render_search_box() {
-    return (
-      <span key="search_box" className="smc-file-use-notifications-search">
-        <SearchInput
-          autoFocus={true}
-          placeholder="Search (use /re/ for regexp)..."
-          default_value={search}
-          on_change={(value) => {
-            setSearch(value);
-            setCursor(0);
-          }}
-          on_submit={() => {
-            open_selected();
-          }}
-          on_escape={(before) => {
-            if (!before) onClose?.();
-            setCursor(0);
-          }}
-          on_up={() => set_cursor(cursor - 1)}
-          on_down={() => set_cursor(cursor + 1)}
-        />
-      </span>
-    );
-  }
-
-  async function click_mark_all_read(): Promise<void> {
-    const a: FileUseActions = redux.getActions("file_use");
-    if (a != null) {
-      await a.mark_all("read");
-    }
-    await onRefresh?.();
-  }
-
-  function render_mark_all_read_button() {
-    return <MarkAll how={"read"} onClick={() => click_mark_all_read()} />;
-  }
-
-  function render_refresh_button() {
-    if (!onRefresh) return null;
-    return (
-      <Button onClick={() => void onRefresh()} size="small">
-        Refresh
-      </Button>
-    );
-  }
-
-  function open_selected(): void {
-    if (visibleListRef.current == null) return;
-    const x = visibleListRef.current.get(cursor);
-    if (x == null) return;
-    open_file_use_entry(
-      x.get("project_id"),
-      x.get("path"),
-      x.get("show_chat", false),
-      redux,
-    );
-  }
-
-  function get_visible_list(_search?: string): iList<FileUseInfoMap> {
-    if (visibleListRef.current == null) {
-      visibleListRef.current = file_use_list;
-      const theSearch = _search ?? search;
-      if (theSearch) {
-        const s = search_split(theSearch.toLowerCase());
-        visibleListRef.current = visibleListRef.current.filter((info) =>
-          search_match(info.get("search"), s),
-        );
-        numMissingRef.current =
-          file_use_list.size - visibleListRef.current.size;
-      } else {
-        numMissingRef.current = 0;
-      }
-      if (visibleListRef.current == null) throw new Error("bug");
-    }
-    return visibleListRef.current;
-  }
-
-  function row_renderer(index) {
-    const info = get_visible_list().get(index);
-    if (info == null) {
-      // shouldn't happen
-      return <div style={{ height: "1px" }}></div>;
-    }
-    return (
-      <FileUseInfo
-        key={`${index}`}
-        cursor={index === cursor}
-        redux={redux}
-        info={info}
-        account_id={account_id}
-        user_map={user_map}
-        project_map={project_map}
-      />
-    );
+  function openSelected(): void {
+    const selected = visibleRows[cursor]?.row;
+    if (!selected) return;
+    void open_file_use_entry(selected.project_id, selected.path, false);
   }
 
   return (
-    <div className={"smc-vfill smc-file-use-viewer"}>
+    <div className="smc-vfill smc-file-use-viewer">
       <VisibleMDLG>
         <div
           style={{
@@ -199,20 +99,57 @@ export default function FileUseViewer({
           <Title level={4} style={{ margin: 0, textAlign: "center" }}>
             {title}
           </Title>
-          {render_refresh_button()}
+          {onRefresh ? (
+            <Button onClick={() => void onRefresh()} size="small">
+              Refresh
+            </Button>
+          ) : null}
         </div>
       </VisibleMDLG>
-      <Row key="top" style={{ marginBottom: "5px" }}>
-        <Col sm={9}>{render_search_box()}</Col>
-        <Col sm={3}>
-          <div style={{ float: "right" }}>{render_mark_all_read_button()}</div>
+      <Row style={{ marginBottom: "5px" }}>
+        <Col sm={12}>
+          <span className="smc-file-use-notifications-search">
+            <SearchInput
+              autoFocus
+              placeholder="Search (use /re/ for regexp)..."
+              default_value={search}
+              on_change={(value) => {
+                setSearch(value);
+                setCursor(0);
+              }}
+              on_submit={openSelected}
+              on_escape={(before) => {
+                if (!before) onClose?.();
+                setCursor(0);
+              }}
+              on_up={() => moveCursor(cursor - 1)}
+              on_down={() => moveCursor(cursor + 1)}
+            />
+          </span>
         </Col>
       </Row>
-      {render_how_many_hidden_by_search()}
+      {hiddenCount > 0 ? (
+        <Alert bsStyle="warning" style={{ marginBottom: "5px" }}>
+          Hiding {hiddenCount} recent activity entries that do not match search
+          for '{search}'.
+        </Alert>
+      ) : null}
       <Virtuoso
         ref={virtuosoRef}
-        totalCount={get_visible_list().size}
-        itemContent={row_renderer}
+        totalCount={visibleRows.length}
+        itemContent={(index) => {
+          const info = visibleRows[index]?.row;
+          if (!info) return <div style={{ height: "1px" }} />;
+          return (
+            <FileUseInfo
+              key={info.id}
+              cursor={index === cursor}
+              info={info}
+              account_id={account_id}
+              user_map={user_map}
+            />
+          );
+        }}
       />
     </div>
   );

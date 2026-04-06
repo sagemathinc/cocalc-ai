@@ -4,20 +4,13 @@
  */
 
 import { delay } from "awaiting";
+import { redux } from "@cocalc/frontend/app-framework";
 
 export async function open_file_use_entry(
   project_id: string,
   path: string,
   show_chat: boolean,
-  redux: any,
 ): Promise<void> {
-  if (redux == null) {
-    return;
-  }
-  // mark this file_use entry read
-  const f = redux.getActions("file_use");
-  if (f != null) f.mark_file(project_id, path, "read");
-
   // Start the project opening. This may trigger a session restore.
   redux.getActions("projects").open_project({ project_id, switch_to: true });
   // Now open the file.
