@@ -215,6 +215,24 @@ export function listBrowserSessionsForAccount({
   return out;
 }
 
+export function listRecentBrowserSessionAccountIds({
+  max_age_ms,
+}: {
+  max_age_ms?: unknown;
+} = {}): string[] {
+  const now = Date.now();
+  pruneStaleRecords(now);
+  const maxAgeMs = normalizeMaxAgeMs(max_age_ms);
+  const accountIds = new Set<string>();
+  for (const record of registry.values()) {
+    if (now - record.updated_at_ms > maxAgeMs) {
+      continue;
+    }
+    accountIds.add(record.account_id);
+  }
+  return [...accountIds];
+}
+
 export function removeBrowserSessionRecord({
   account_id,
   browser_id,
