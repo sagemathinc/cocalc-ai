@@ -14,10 +14,18 @@ import { MSGS } from "./notification-i18n";
 interface Props {
   filter: NotificationFilter;
   on_click: (label: NotificationFilter) => void;
+  unread_count: number;
+  news_unread: number;
   style: React.CSSProperties;
 }
 
-export function NotificationNav({ filter, on_click, style }: Props) {
+export function NotificationNav({
+  filter,
+  on_click,
+  unread_count,
+  news_unread,
+  style,
+}: Props) {
   const intl = useIntl();
 
   const ITEMS: MenuItems = [
@@ -25,7 +33,8 @@ export function NotificationNav({ filter, on_click, style }: Props) {
       key: "unread",
       label: (
         <Text strong style={{ fontSize: "125%", textOverflow: "ellipsis" }}>
-          <Icon name="eye-slash" /> {intl.formatMessage(MSGS.unread)}
+          <Icon name="eye-slash" /> {intl.formatMessage(MSGS.unread)} (
+          {unread_count})
         </Text>
       ),
     },
@@ -41,7 +50,8 @@ export function NotificationNav({ filter, on_click, style }: Props) {
       key: "allNews",
       label: (
         <Text strong style={{ fontSize: "125%", textOverflow: "ellipsis" }}>
-          <Icon name={"mail" as IconName} /> {intl.formatMessage(MSGS.news)}
+          <Icon name={"mail" as IconName} /> {intl.formatMessage(MSGS.news)} (
+          {news_unread})
         </Text>
       ),
     },

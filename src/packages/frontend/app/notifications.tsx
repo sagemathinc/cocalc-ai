@@ -7,7 +7,6 @@ import { Badge } from "antd";
 import {
   CSS,
   React,
-  redux,
   useActions,
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
@@ -31,8 +30,7 @@ export const Notification: React.FC<Props> = React.memo((props: Props) => {
   const { topPaddingIcons, sidePaddingIcons, fontSizeIcons } = pageStyle;
   const page_actions = useActions("page");
 
-  const mentions_store = redux.getStore("mentions");
-  const mentions = useTypedRedux("mentions", "mentions");
+  const mentions_unread = useTypedRedux("mentions", "unread_count") ?? 0;
   const notify_count = useTypedRedux("file_use", "notify_count");
   const news_unread = useTypedRedux("news", "unread");
 
@@ -41,12 +39,12 @@ export const Notification: React.FC<Props> = React.memo((props: Props) => {
       case "bell":
         return notify_count ?? 0;
       case "notifications":
-        return (mentions_store.getUnreadSize() ?? 0) + (news_unread ?? 0);
+        return mentions_unread + (news_unread ?? 0);
       default:
         unreachable(type);
         return 0;
     }
-  }, [type, notify_count, mentions, news_unread]);
+  }, [type, notify_count, mentions_unread, news_unread]);
 
   useEffect(() => {
     set_window_title();

@@ -27,6 +27,8 @@ interface MentionsPanelProps {
   style: CSS;
 }
 
+const READ_HISTORY_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+
 export function MentionsPanel(props: MentionsPanelProps) {
   const { filter, loading, mentions, user_map, account_id, style } = props;
   const mentions_actions = redux.getActions("mentions");
@@ -71,6 +73,16 @@ export function MentionsPanel(props: MentionsPanelProps) {
   mentions
     .filter((m) => m.get("target") === account_id)
     .filter((m) => {
+      if (filter !== "read") {
+        return true;
+      }
+      const time = m.get("time");
+      if (!(time instanceof Date)) {
+        return false;
+      }
+      return time.getTime() >= Date.now() - READ_HISTORY_WINDOW_MS;
+    })
+    .filter((m) => {
       const status = m.getIn(["users", account_id])?.toJS() ?? {
         read: false,
         saved: false,
@@ -113,7 +125,11 @@ export function MentionsPanel(props: MentionsPanelProps) {
     const panel_key = project_id ?? "__general__";
     project_panels.push(
       <Collapse
-        defaultActiveKey={project_id_order.map((id) => id ?? "__general__")}
+        defaultActiveKey={
+          filter === "read"
+            ? []
+            : project_id_order.map((id) => id ?? "__general__")
+        }
         key={panel_key}
         className="cocalc-notification-list"
       >

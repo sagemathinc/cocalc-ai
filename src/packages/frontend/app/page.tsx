@@ -27,7 +27,6 @@ import {
 import { ClientContext } from "@cocalc/frontend/client/context";
 import { Icon } from "@cocalc/frontend/components/icon";
 import Next from "@cocalc/frontend/components/next";
-import { FileUsePage } from "@cocalc/frontend/file-use/page";
 import { labels } from "@cocalc/frontend/i18n";
 import { ProjectsNav } from "@cocalc/frontend/projects/projects-nav";
 import BalanceButton from "@cocalc/frontend/purchases/balance-button";
@@ -81,7 +80,7 @@ export const Page: React.FC = () => {
   const page_actions = useActions("page");
 
   const { pageStyle } = useAppContext();
-  const { isNarrow, fileUseStyle, topBarStyle, projectsNavStyle } = pageStyle;
+  const { isNarrow, topBarStyle, projectsNavStyle } = pageStyle;
 
   const intl = useIntl();
 
@@ -109,7 +108,6 @@ export const Page: React.FC = () => {
   const isAuthView = active_top_tab === "auth";
   const show_mentions = active_top_tab === "notifications";
   const show_connection = useTypedRedux("page", "show_connection");
-  const show_file_use = useTypedRedux("page", "show_file_use");
   const fullscreen = useTypedRedux("page", "fullscreen");
   const local_storage_warning = useTypedRedux("page", "local_storage_warning");
   const cookie_warning = useTypedRedux("page", "cookie_warning");
@@ -233,13 +231,6 @@ export const Page: React.FC = () => {
     );
   }
 
-  function render_bell(): React.JSX.Element | undefined {
-    if (!is_logged_in) return;
-    return (
-      <Notification type="bell" active={show_file_use} pageStyle={pageStyle} />
-    );
-  }
-
   function render_notification(): React.JSX.Element | undefined {
     if (!is_logged_in) return;
     return (
@@ -276,7 +267,6 @@ export const Page: React.FC = () => {
         {render_support()}
         {render_balance()}
         {render_notification()}
-        {render_bell()}
         <ConnectionIndicator height={pageStyle.height} pageStyle={pageStyle} />
         {render_fullscreen()}
       </div>
@@ -332,11 +322,6 @@ export const Page: React.FC = () => {
       onDragOver={(e) => e.preventDefault()}
       onDrop={drop}
     >
-      {show_file_use && (
-        <div style={fileUseStyle} className="smc-vfill">
-          <FileUsePage />
-        </div>
-      )}
       {show_connection && <ConnectionInfo />}
       <VersionWarning />
       {cookie_warning && <CookieWarning />}

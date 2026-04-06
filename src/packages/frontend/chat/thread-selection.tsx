@@ -3,7 +3,12 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { useEffect, useMemo, useState } from "@cocalc/frontend/app-framework";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "@cocalc/frontend/app-framework";
 import type { ChatActions } from "./actions";
 import { COMBINED_FEED_KEY, type ThreadMeta } from "./threads";
 import type { ChatMessages } from "./types";
@@ -46,6 +51,7 @@ export function useChatThreadSelection({
   );
   const [allowAutoSelectThread, setAllowAutoSelectThread] =
     useState<boolean>(true);
+  const appliedFragmentThreadRef = useRef<string | null>(null);
 
   const syncSelectedThreadKeyFromExternal = (x: string | null) => {
     if (x === selectedThreadKey) {
@@ -70,7 +76,6 @@ export function useChatThreadSelection({
 
   const isCombinedFeedSelected = selectedThreadKey === COMBINED_FEED_KEY;
   const singleThreadView = selectedThreadKey != null && !isCombinedFeedSelected;
-
   useEffect(() => {
     if (
       storedThreadFromDesc != null &&
@@ -152,10 +157,12 @@ export function useChatThreadSelection({
 
   useEffect(() => {
     if (!fragmentId || messages == null) {
+      appliedFragmentThreadRef.current = null;
       return;
     }
     const parsed = parseFloat(fragmentId);
     if (!isFinite(parsed)) {
+      appliedFragmentThreadRef.current = null;
       return;
     }
     const message = getMessageAtDate({ messages, date: parsed });
@@ -163,10 +170,15 @@ export function useChatThreadSelection({
     const threadId = field<string>(message as any, "thread_id")?.trim();
     if (!threadId) return;
     const threadKey = threadId;
+    const appliedToken = `${fragmentId}:${threadKey}`;
+    if (appliedFragmentThreadRef.current === appliedToken) {
+      return;
+    }
     if (threadKey !== selectedThreadKey) {
       setAllowAutoSelectThread(false);
       syncSelectedThreadKeyFromExternal(threadKey);
     }
+    appliedFragmentThreadRef.current = appliedToken;
   }, [fragmentId, messages, selectedThreadKey]);
 
   const selectedThread = useMemo(

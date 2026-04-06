@@ -4,16 +4,19 @@
  */
 
 import { useInterval } from "react-interval-hook";
+import { useEffect } from "react";
 
 import {
   CSS,
-  redux,
   useMemo,
   useState,
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
-import { Loading } from "@cocalc/frontend/components";
 import { cmp } from "@cocalc/util/misc";
+import {
+  getDocumentPresenceUsers,
+  subscribeToDocumentPresence,
+} from "@cocalc/frontend/document-presence/service";
 import { Avatar } from "./avatar";
 
 // How frequently all UsersViewing components are completely updated.
@@ -73,24 +76,33 @@ function useUsersViewing(
 ) {
   const [counter, set_counter] = useState(0); // used to force update periodically.
 
-  // only so component is updated immediately whenever file use changes
-  const file_use = useTypedRedux("file_use", "file_use");
+  useEffect(() => {
+    if (project_id == null) {
+      return;
+    }
+    return subscribeToDocumentPresence(project_id, () => {
+      set_counter((counter) => counter + 1);
+    });
+  }, [project_id]);
+
   const users = useMemo(
     () =>
-      redux.getStore("file_use")?.get_active_users({
-        project_id,
-        path,
-        max_age_s,
-      }),
-    [file_use, project_id, path, max_age_s],
+      project_id == null
+        ? undefined
+        : getDocumentPresenceUsers({
+            project_id,
+            path,
+            max_age_s,
+          }),
+    [counter, project_id, path, max_age_s],
   );
 
   useInterval(() => {
     // cause an update
-    set_counter(counter + 1);
+    set_counter((counter) => counter + 1);
   }, UPDATE_INTERVAL_S * 1000);
 
-  return { users, file_use };
+  return { users };
 }
 
 export function UsersViewing(props: Readonly<Props>) {
@@ -102,7 +114,7 @@ export function UsersViewing(props: Readonly<Props>) {
     size = 24,
   } = props;
 
-  const { users, file_use } = useUsersViewing(project_id, path, max_age_s);
+  const { users } = useUsersViewing(project_id, path, max_age_s);
 
   // so we can exclude ourselves from list of faces
   const our_account_id: string | undefined = useTypedRedux(
@@ -147,8 +159,8 @@ export function UsersViewing(props: Readonly<Props>) {
     return r;
   }
 
-  if (file_use == null || our_account_id == null) {
-    return <Loading />;
+  if (our_account_id == null) {
+    return null;
   }
 
   return (
