@@ -99,6 +99,7 @@ export const InviteInboxPanel: React.FC<Props> = ({
   const [incoming, set_incoming] = useState<ProjectCollabInviteRow[]>([]);
   const [outgoing, set_outgoing] = useState<ProjectCollabInviteRow[]>([]);
   const [blocks, set_blocks] = useState<ProjectCollabInviteBlockRow[]>([]);
+  const [expanded, set_expanded] = useState<boolean | undefined>(undefined);
 
   const load = useCallback(async () => {
     set_loading(true);
@@ -145,6 +146,10 @@ export const InviteInboxPanel: React.FC<Props> = ({
     });
   }, [load, project_id]);
 
+  useEffect(() => {
+    set_expanded(undefined);
+  }, [mode, project_id]);
+
   async function respond(invite_id: string, action: ProjectCollabInviteAction) {
     set_busy(`${invite_id}:${action}`);
     set_error("");
@@ -181,8 +186,25 @@ export const InviteInboxPanel: React.FC<Props> = ({
     [incoming.length, outgoing.length, blocks.length],
   );
 
+  useEffect(() => {
+    if (loading || expanded !== undefined) return;
+    set_expanded(incoming.length > 0);
+  }, [expanded, incoming.length, loading]);
+
   if (!loading && !error && total === 0 && !showWhenEmpty) {
     return null;
+  }
+
+  const isExpanded = expanded ?? false;
+
+  function inviteeLabel(invite: ProjectCollabInviteRow): string {
+    return (
+      `${invite.invitee_name ?? ""}`.trim() ||
+      `${invite.invitee_first_name ?? ""} ${invite.invitee_last_name ?? ""}`.trim() ||
+      `${invite.invitee_email_address ?? ""}`.trim() ||
+      `${invite.invitee_account_id ?? ""}`.trim() ||
+      "Unknown user"
+    );
   }
 
   function renderIncoming(): React.JSX.Element {
@@ -306,12 +328,7 @@ export const InviteInboxPanel: React.FC<Props> = ({
     return (
       <div>
         {outgoing.map((invite) => {
-          const invitee = userName({
-            name: invite.invitee_name,
-            first: invite.invitee_first_name,
-            last: invite.invitee_last_name,
-            account_id: invite.invitee_account_id,
-          });
+          const invitee = inviteeLabel(invite);
           const project = `${invite.project_title ?? invite.project_id}`;
           return (
             <Card
@@ -334,6 +351,11 @@ export const InviteInboxPanel: React.FC<Props> = ({
                   <div>
                     To <strong>{invitee}</strong>
                   </div>
+                  {invite.invite_source === "email" && (
+                    <div style={{ fontSize: "12px", opacity: 0.75 }}>
+                      Waiting for this email invite to be claimed or revoked.
+                    </div>
+                  )}
                   {!!invite.project_description?.trim() && (
                     <div style={{ marginTop: "4px" }}>
                       {invite.project_description.trim()}
@@ -433,57 +455,73 @@ export const InviteInboxPanel: React.FC<Props> = ({
     );
   }
 
-  const title = mode === "project" ? "Project Invitations" : "Invitation Inbox";
+  const titleBase =
+    mode === "project" ? "Project Invitations" : "Invitation Inbox";
+  const title = `${titleBase} (${incoming.length})`;
   const subtitle =
     mode === "project"
       ? "Manage pending invitations for this project."
       : "Accept, decline, block, or revoke pending collaboration invitations. Pending invites expire automatically.";
+  const titleNode = (
+    <Button
+      type="text"
+      size="small"
+      onClick={() => set_expanded(!isExpanded)}
+      style={{ paddingInline: 0, height: "auto", fontWeight: 600 }}
+    >
+      <Icon name={isExpanded ? "caret-down" : "caret-right"} /> {title}
+    </Button>
+  );
 
   return (
-    <SettingBox title={title} icon="mail">
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          marginBottom: "8px",
-        }}
-      >
-        <Paragraph type="secondary" style={{ marginBottom: 0 }}>
-          {subtitle}
-        </Paragraph>
-        <Button size="small" onClick={() => void load()} disabled={loading}>
-          <Icon name="refresh" /> Refresh
-        </Button>
-      </div>
-      {error && (
-        <Alert
-          style={{ marginBottom: "10px" }}
-          type="error"
-          showIcon
-          title={error}
-        />
+    <SettingBox title={titleNode} icon="mail">
+      {!isExpanded ? null : (
+        <>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              marginBottom: "8px",
+            }}
+          >
+            <Paragraph type="secondary" style={{ marginBottom: 0 }}>
+              {subtitle}
+            </Paragraph>
+            <Button size="small" onClick={() => void load()} disabled={loading}>
+              <Icon name="refresh" /> Refresh
+            </Button>
+          </div>
+          {error && (
+            <Alert
+              style={{ marginBottom: "10px" }}
+              type="error"
+              showIcon
+              title={error}
+            />
+          )}
+          {loading && (
+            <div style={{ marginBottom: "10px" }}>
+              <Loading />
+            </div>
+          )}
+          <div style={{ marginBottom: "6px" }}>
+            <Tag color="blue">{incoming.length} incoming</Tag>
+            <Gap />
+            <Tag color="purple">{outgoing.length} outgoing</Tag>
+            <Gap />
+            <Tag>{blocks.length} blocked</Tag>
+          </div>
+          <Divider style={{ margin: "10px 0" }} />
+          <strong>Incoming invitations</strong>
+          <div style={{ marginTop: "8px" }}>{renderIncoming()}</div>
+          <Divider style={{ margin: "10px 0" }} />
+          <strong>Outgoing invitations</strong>
+          <div style={{ marginTop: "8px" }}>{renderOutgoing()}</div>
+          <Divider style={{ margin: "10px 0" }} />
+          <strong>Blocked inviters</strong>
+          <div style={{ marginTop: "8px" }}>{renderBlocks()}</div>
+        </>
       )}
-      {loading && (
-        <div style={{ marginBottom: "10px" }}>
-          <Loading />
-        </div>
-      )}
-      <div style={{ marginBottom: "6px" }}>
-        <Tag color="blue">{incoming.length} incoming</Tag>
-        <Gap />
-        <Tag color="purple">{outgoing.length} outgoing</Tag>
-        <Gap />
-        <Tag>{blocks.length} blocked</Tag>
-      </div>
-      <Divider style={{ margin: "10px 0" }} />
-      <strong>Incoming invitations</strong>
-      <div style={{ marginTop: "8px" }}>{renderIncoming()}</div>
-      <Divider style={{ margin: "10px 0" }} />
-      <strong>Outgoing invitations</strong>
-      <div style={{ marginTop: "8px" }}>{renderOutgoing()}</div>
-      <Divider style={{ margin: "10px 0" }} />
-      <strong>Blocked inviters</strong>
-      <div style={{ marginTop: "8px" }}>{renderBlocks()}</div>
     </SettingBox>
   );
 };
