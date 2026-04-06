@@ -5,28 +5,47 @@
 
 import getLogger from "@cocalc/backend/logger";
 import { conat } from "@cocalc/backend/conat";
-import {
-  NEWS_FEED_STREAM_CONFIG,
-  newsFeedStreamName,
-  type NewsFeedEvent,
-} from "@cocalc/conat/hub/api/news-feed";
+import { sysApiMany } from "@cocalc/conat/core/sys";
+import type { ConnectionStats } from "@cocalc/conat/core/types";
+import { publishAccountFeedEventBestEffort } from "@cocalc/server/account/feed";
 
 const logger = getLogger("server:news:feed");
 
-export async function publishNewsFeedEvent(
-  event: NewsFeedEvent,
-): Promise<void> {
-  const stream = conat().sync.astream<NewsFeedEvent>({
-    name: newsFeedStreamName(),
-    ephemeral: true,
-    config: NEWS_FEED_STREAM_CONFIG,
-  });
-  await stream.publish(event);
+async function listActiveAccountIds(): Promise<string[]> {
+  const account_ids = new Set<string>();
+  const client = conat();
+  await client.waitUntilSignedIn({ timeout: 3_000 });
+  const statsByNode = await sysApiMany(client, { timeout: 2_000 }).stats();
+  for (const node of statsByNode ?? []) {
+    for (const sockets of Object.values(node ?? {})) {
+      for (const stat of Object.values(sockets ?? {})) {
+        const connection = stat as ConnectionStats | undefined;
+        const account_id = `${connection?.user?.account_id ?? ""}`.trim();
+        if (!account_id) continue;
+        if (connection?.user?.auth_actor === "agent") continue;
+        account_ids.add(account_id);
+      }
+    }
+  }
+  return [...account_ids];
 }
 
 export async function publishNewsRefreshBestEffort(): Promise<void> {
   try {
-    await publishNewsFeedEvent({ type: "news.refresh", ts: Date.now() });
+    const ts = Date.now();
+    const account_ids = await listActiveAccountIds();
+    await Promise.all(
+      account_ids.map((account_id) =>
+        publishAccountFeedEventBestEffort({
+          account_id,
+          event: {
+            type: "news.refresh",
+            ts,
+            account_id,
+          },
+        }),
+      ),
+    );
   } catch (err) {
     logger.warn("failed to publish news refresh event", { err: `${err}` });
   }

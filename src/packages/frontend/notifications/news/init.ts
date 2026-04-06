@@ -3,15 +3,15 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Map } from "immutable";
+import { Map, Set as ImmutableSet } from "immutable";
 import { notification } from "antd";
 import type { DStream } from "@cocalc/conat/sync/dstream";
 import type { DKV } from "@cocalc/conat/sync/dkv";
-import {
-  newsFeedStreamName,
-  type NewsFeedEvent,
-} from "@cocalc/conat/hub/api/news-feed";
 import { createElement } from "react";
+import {
+  accountFeedStreamName,
+  type AccountFeedEvent,
+} from "@cocalc/conat/hub/api/account-feed";
 
 import {
   Actions,
@@ -33,6 +33,7 @@ export interface NewsState {
   loading: boolean;
   unread: number;
   news: Map<string, TypedMap<NewsItemWebapp>>;
+  system_seen_ids: ImmutableSet<string>;
 }
 
 export class NewsStore extends Store<NewsState> {
@@ -61,6 +62,7 @@ const store: NewsStore = redux.createStore(NEWS, NewsStore, {
   loading: true,
   unread: 0,
   news: Map<string, TypedMap<NewsItemWebapp>>(),
+  system_seen_ids: ImmutableSet<string>(),
 });
 
 let systemNewsSeenState: DKV<number> | undefined;
@@ -73,6 +75,24 @@ const openSystemNewsAlertIds = new Set<string>();
 
 function systemNewsSeenKey(id: string): string {
   return `${SYSTEM_NEWS_SEEN_PREFIX}${id}`;
+}
+
+function normalizeNewsId(id: string | number | undefined | null): string {
+  return `${id ?? ""}`.trim();
+}
+
+function getCurrentNewsReadUntil(): number {
+  return redux
+    .getStore("account")
+    ?.get("other_settings")
+    ?.get("news_read_until");
+}
+
+function syncSeenSystemNewsState(): void {
+  actions.setState({
+    system_seen_ids: ImmutableSet<string>(seenSystemNewsIds.keys()),
+  });
+  actions.updateUnreadCount(getCurrentNewsReadUntil());
 }
 
 function getSystemNewsIdFromSeenKey(key: string): string | undefined {
@@ -88,6 +108,7 @@ function closeSystemNewsSeenState(): void {
   }
   openSystemNewsAlertIds.clear();
   seenSystemNewsIds.clear();
+  syncSeenSystemNewsState();
   if (systemNewsSeenState != null && systemNewsSeenStateListener != null) {
     systemNewsSeenState.off("change", systemNewsSeenStateListener);
   }
@@ -95,6 +116,22 @@ function closeSystemNewsSeenState(): void {
   systemNewsSeenState?.close();
   systemNewsSeenState = undefined;
   systemNewsSeenStateInit = undefined;
+}
+
+async function getCurrentAccountId(): Promise<string | undefined> {
+  if (!webapp_client.is_signed_in()) {
+    return;
+  }
+  const accountStore = redux.getStore("account");
+  if (accountStore == null) {
+    return;
+  }
+  await accountStore.async_wait({
+    until: () => accountStore.get_account_id() != null,
+    timeout: 0,
+  });
+  const account_id = normalizeNewsId(accountStore.get_account_id());
+  return account_id || undefined;
 }
 
 async function ensureSystemNewsSeenState(): Promise<void> {
@@ -110,12 +147,11 @@ async function ensureSystemNewsSeenState(): Promise<void> {
     return;
   }
   systemNewsSeenStateInit = (async () => {
-    const accountStore = redux.getStore("account");
-    await accountStore.async_wait({
-      until: () => accountStore.get_account_id() != null,
-      timeout: 0,
-    });
-    const account_id = accountStore.get_account_id();
+    const account_id = await getCurrentAccountId();
+    if (account_id == null) {
+      closeSystemNewsSeenState();
+      return;
+    }
     const dkv = await webapp_client.conat_client.dkv<number>({
       account_id,
       name: SEEN_STATE_DKV_NAME,
@@ -131,11 +167,12 @@ async function ensureSystemNewsSeenState(): Promise<void> {
       if (id == null || typeof value !== "number") {
         continue;
       }
-      seenSystemNewsIds.set(id, value);
+      seenSystemNewsIds.set(normalizeNewsId(id), value);
     }
+    syncSeenSystemNewsState();
     systemNewsSeenStateListener = (changeEvent) => {
-      const id = getSystemNewsIdFromSeenKey(changeEvent.key);
-      if (id == null) {
+      const id = normalizeNewsId(getSystemNewsIdFromSeenKey(changeEvent.key));
+      if (!id) {
         return;
       }
       if (typeof changeEvent.value === "number") {
@@ -145,6 +182,7 @@ async function ensureSystemNewsSeenState(): Promise<void> {
       } else {
         seenSystemNewsIds.delete(id);
       }
+      syncSeenSystemNewsState();
     };
     dkv.on("change", systemNewsSeenStateListener);
   })();
@@ -156,10 +194,21 @@ async function ensureSystemNewsSeenState(): Promise<void> {
 }
 
 function markSystemNewsSeen(id: string, seenAt: number): void {
+  id = normalizeNewsId(id);
+  if (!id) {
+    return;
+  }
   seenSystemNewsIds.set(id, seenAt);
   openSystemNewsAlertIds.delete(id);
+  syncSeenSystemNewsState();
   void ensureSystemNewsSeenState()
-    .then(() => systemNewsSeenState?.set(systemNewsSeenKey(id), seenAt))
+    .then(async () => {
+      if (systemNewsSeenState == null) {
+        return;
+      }
+      systemNewsSeenState.set(systemNewsSeenKey(id), seenAt);
+      await systemNewsSeenState.save();
+    })
     .catch((err) => {
       console.warn("system news seen-state update error", err);
     });
@@ -199,7 +248,12 @@ export class NewsActions extends Actions<NewsState> {
   public refresh = async (): Promise<void> => {
     if (!webapp_client.is_signed_in()) {
       closeSystemNewsSeenState();
-      this.setState({ loading: false, unread: 0, news: Map() });
+      this.setState({
+        loading: false,
+        unread: 0,
+        news: Map(),
+        system_seen_ids: ImmutableSet<string>(),
+      });
       return;
     }
     this.setState({ loading: true });
@@ -207,19 +261,23 @@ export class NewsActions extends Actions<NewsState> {
       await ensureSystemNewsSeenState();
       const rows = await webapp_client.conat_client.hub.system.listNews();
       const news = Map<string, TypedMap<NewsItemWebapp>>(
-        rows.map((row) => [
-          row.id,
-          new NewsItemMap({
-            ...row,
-            date: row.date instanceof Date ? row.date : new Date(row.date),
-            until:
-              row.until == null
-                ? undefined
-                : row.until instanceof Date
-                  ? row.until
-                  : new Date(row.until),
-          }),
-        ]),
+        rows.map((row) => {
+          const id = normalizeNewsId(row.id);
+          return [
+            id,
+            new NewsItemMap({
+              ...row,
+              id,
+              date: row.date instanceof Date ? row.date : new Date(row.date),
+              until:
+                row.until == null
+                  ? undefined
+                  : row.until instanceof Date
+                    ? row.until
+                    : new Date(row.until),
+            }),
+          ];
+        }),
       );
       this.setState({ loading: false, news });
       const otherSettings = redux.getStore("account")?.get("other_settings");
@@ -237,6 +295,7 @@ export class NewsActions extends Actions<NewsState> {
       opts?.date?.getTime() ?? this.getStore().getNewestTimestamp();
     const current = opts?.current ?? 0;
     const until = Math.max(current, newest);
+    this.markLiveSystemNewsSeen(until);
     this.setNewsReadState(until);
   }
 
@@ -252,6 +311,10 @@ export class NewsActions extends Actions<NewsState> {
       .getNews()
       .map((m) => {
         if (m.get("hide", false)) return;
+        const id = normalizeNewsId(m.get("id"));
+        if (m.get("channel") === SYSTEM_CHANNEL && seenSystemNewsIds.has(id)) {
+          return;
+        }
         const date = m.get("date");
         if (date != null && date < now && date.getTime() > (readUntil ?? 0)) {
           // further filter news, which are older then when the user's account has been created
@@ -277,7 +340,7 @@ export class NewsActions extends Actions<NewsState> {
       const until = item.get("until");
       if (until != null && until <= now) return;
 
-      const id = item.get("id");
+      const id = normalizeNewsId(item.get("id"));
       if (!id) return;
       liveIds.add(id);
       if (seenSystemNewsIds.has(id) || openSystemNewsAlertIds.has(id)) return;
@@ -308,14 +371,43 @@ export class NewsActions extends Actions<NewsState> {
         continue;
       }
       seenSystemNewsIds.delete(id);
-      systemNewsSeenState?.delete(systemNewsSeenKey(id));
+      syncSeenSystemNewsState();
+      void ensureSystemNewsSeenState()
+        .then(async () => {
+          if (systemNewsSeenState == null) {
+            return;
+          }
+          systemNewsSeenState.delete(systemNewsSeenKey(id));
+          await systemNewsSeenState.save();
+        })
+        .catch((err) => {
+          console.warn("system news seen-state cleanup error", err);
+        });
     }
+  }
+
+  private markLiveSystemNewsSeen(seenAt: number): void {
+    const now = webapp_client.server_time();
+    this.getStore()
+      .getNews()
+      .forEach((item) => {
+        if (item.get("channel") !== SYSTEM_CHANNEL) return;
+        if (item.get("hide")) return;
+        const date = item.get("date");
+        if (date == null || date > now) return;
+        const until = item.get("until");
+        if (until != null && until <= now) return;
+        const id = normalizeNewsId(item.get("id"));
+        if (!id || seenSystemNewsIds.has(id)) return;
+        markSystemNewsSeen(id, seenAt);
+      });
   }
 }
 
 const actions = redux.createActions(NEWS, NewsActions);
 
-let realtimeFeed: DStream<NewsFeedEvent> | undefined;
+let realtimeFeed: DStream<AccountFeedEvent> | undefined;
+let realtimeFeedAccountId: string | undefined;
 let signedInListener: (() => void) | undefined;
 let signedOutListener: (() => void) | undefined;
 let conatConnectedListener: (() => void) | undefined;
@@ -326,6 +418,7 @@ function closeRealtimeFeed(): void {
   realtimeFeed.removeListener("history-gap", handleRealtimeFeedHistoryGap);
   realtimeFeed.close();
   realtimeFeed = undefined;
+  realtimeFeedAccountId = undefined;
 }
 
 async function ensureRealtimeFeed(): Promise<void> {
@@ -333,25 +426,36 @@ async function ensureRealtimeFeed(): Promise<void> {
     closeRealtimeFeed();
     return;
   }
-  if (realtimeFeed != null && !realtimeFeed.isClosed()) {
+  const account_id = await getCurrentAccountId();
+  if (account_id == null) {
+    closeRealtimeFeed();
+    return;
+  }
+  if (
+    realtimeFeed != null &&
+    realtimeFeedAccountId === account_id &&
+    !realtimeFeed.isClosed()
+  ) {
     return;
   }
   closeRealtimeFeed();
   try {
-    const feed = await webapp_client.conat_client.dstream<NewsFeedEvent>({
-      name: newsFeedStreamName(),
+    const feed = await webapp_client.conat_client.dstream<AccountFeedEvent>({
+      account_id,
+      name: accountFeedStreamName(),
       ephemeral: true,
     });
     feed.on("change", handleRealtimeFeedChange);
     feed.on("history-gap", handleRealtimeFeedHistoryGap);
     realtimeFeed = feed;
+    realtimeFeedAccountId = account_id;
   } catch (err) {
     console.warn("news realtime feed error", err);
   }
 }
 
-function handleRealtimeFeedChange(event?: NewsFeedEvent): void {
-  if (event?.type !== "news.refresh") {
+function handleRealtimeFeedChange(event?: AccountFeedEvent): void {
+  if ((event as { type?: string } | undefined)?.type !== "news.refresh") {
     return;
   }
   void actions.refresh();
@@ -362,7 +466,7 @@ function handleRealtimeFeedHistoryGap(): void {
   void actions.refresh().then(() => ensureRealtimeFeed());
 }
 
-function initRealtime(): void {
+export function init(): void {
   if (signedInListener != null) {
     return;
   }
@@ -373,7 +477,12 @@ function initRealtime(): void {
   signedOutListener = () => {
     closeRealtimeFeed();
     closeSystemNewsSeenState();
-    actions.setState({ loading: false, unread: 0, news: Map() });
+    actions.setState({
+      loading: false,
+      unread: 0,
+      news: Map(),
+      system_seen_ids: ImmutableSet<string>(),
+    });
   };
   conatConnectedListener = () => {
     void actions.refresh();
@@ -389,5 +498,3 @@ function initRealtime(): void {
     actions.setState({ loading: false });
   }
 }
-
-initRealtime();

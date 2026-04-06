@@ -19,7 +19,11 @@ import {
 import { BASE_URL, open_new_tab } from "@cocalc/frontend/misc";
 import { cmp_Date, getRandomColor } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
-import { CHANNELS_ICONS, NewsItemWebapp } from "@cocalc/util/types/news";
+import {
+  CHANNELS_ICONS,
+  NewsItemWebapp,
+  SYSTEM_CHANNEL,
+} from "@cocalc/util/types/news";
 import { NewsFilter, NewsMap, isNewsFilter } from "./news/types";
 import { MSGS } from "./notification-i18n";
 
@@ -33,6 +37,7 @@ export function NewsPanel(props: NewsPanelProps) {
   const intl = useIntl();
   const news_actions = useActions("news");
   const loading = useTypedRedux("news", "loading");
+  const system_seen_ids = useTypedRedux("news", "system_seen_ids");
   const account_other = useTypedRedux("account", "other_settings");
   const news_read_until: number | undefined =
     account_other?.get("news_read_until");
@@ -63,10 +68,12 @@ export function NewsPanel(props: NewsPanelProps) {
       .sort((a: any, b: any) => -cmp_Date(a.date, b.date)) as any;
     // if any entry in data is unread, then anyUnread is true
     const anyUnread = data.some(
-      (n: any) => n?.date.getTime() > (news_read_until ?? 0),
+      (n: any) =>
+        n?.date.getTime() > (news_read_until ?? 0) &&
+        !(n?.channel === SYSTEM_CHANNEL && system_seen_ids?.has?.(n?.id)),
     );
     return [data, anyUnread];
-  }, [news, filter, news_read_until]);
+  }, [news, filter, news_read_until, system_seen_ids]);
 
   function newsItemOnClick(e: React.MouseEvent, news: NewsItemWebapp) {
     e.stopPropagation();
@@ -126,7 +133,9 @@ export function NewsPanel(props: NewsPanelProps) {
   function renderNewsItem(n: NewsItemWebapp) {
     const { id, title, channel, date, tags } = n;
     const icon = CHANNELS_ICONS[channel] as IconName;
-    const isUnread = date.getTime() > (news_read_until ?? 0);
+    const isUnread =
+      date.getTime() > (news_read_until ?? 0) &&
+      !(channel === SYSTEM_CHANNEL && system_seen_ids?.has?.(id));
     return (
       <List.Item
         key={id}

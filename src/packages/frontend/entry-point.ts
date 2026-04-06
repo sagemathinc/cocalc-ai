@@ -16,7 +16,7 @@ import { COCALC_MINIMAL } from "./fullscreen";
 import { redux } from "./app-framework";
 
 // News about the platform, features, etc. – also shown at https://$DNS/news
-import "./notifications/news/init";
+import { init as initNews } from "./notifications/news/init";
 
 import "./launch/actions";
 
@@ -46,6 +46,7 @@ import { render } from "./app/render";
 export async function init() {
   initJqueryPlugins();
   initAccount(redux);
+  initNews();
   initApp();
   initProjects();
   initFileUse();

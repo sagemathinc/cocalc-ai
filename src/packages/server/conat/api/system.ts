@@ -120,9 +120,9 @@ export function ping() {
 export async function listNews(): Promise<NewsItemWebapp[]> {
   const rows = await listAppNews0();
   return rows
-    .filter((row): row is typeof row & { id: string } => !!row?.id)
+    .filter((row): row is typeof row & { id: string | number } => !!row?.id)
     .map((row) => ({
-      id: row.id,
+      id: `${row.id}`,
       title: row.title,
       channel: row.channel,
       tags: row.tags,

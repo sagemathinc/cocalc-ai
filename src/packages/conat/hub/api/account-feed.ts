@@ -166,6 +166,12 @@ export interface AccountFeedCollaboratorRemoveEvent {
   reason: "membership_removed";
 }
 
+export interface AccountFeedNewsRefreshEvent {
+  type: "news.refresh";
+  ts: number;
+  account_id: string;
+}
+
 export type AccountFeedEvent =
   | AccountFeedAccountUpsertEvent
   | AccountFeedNotificationUpsertEvent
@@ -174,7 +180,8 @@ export type AccountFeedEvent =
   | AccountFeedProjectUpsertEvent
   | AccountFeedProjectRemoveEvent
   | AccountFeedCollaboratorUpsertEvent
-  | AccountFeedCollaboratorRemoveEvent;
+  | AccountFeedCollaboratorRemoveEvent
+  | AccountFeedNewsRefreshEvent;
 
 export function accountFeedStreamName(): string {
   return "account-feed";
