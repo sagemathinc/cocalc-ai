@@ -30,6 +30,9 @@ export const system = {
   terminate: authFirst,
   listBays: authFirst,
   getBayLoad: authFirst,
+  getBayBackups: authFirst,
+  runBayBackup: authFirst,
+  runBayRestore: authFirst,
   getAccountBay: authFirstRequireAccount,
   getProjectBay: authFirstRequireAccount,
   getHostBay: authFirstRequireAccount,
@@ -316,6 +319,166 @@ export interface BayLoadInfo extends BayInfo {
   };
 }
 
+export interface BayBackupsBucketInfo {
+  id: string;
+  name: string;
+  region: string | null;
+  location: string | null;
+  status: string | null;
+}
+
+export interface BayBackupsR2Status {
+  configured: boolean;
+  account_id_configured: boolean;
+  access_key_configured: boolean;
+  secret_key_configured: boolean;
+  bucket_prefix: string | null;
+  total_buckets: number;
+  active_buckets: number;
+  buckets: BayBackupsBucketInfo[];
+}
+
+export interface BayBackupsRepoInfo {
+  id: string;
+  region: string | null;
+  bucket_id: string | null;
+  bucket_name: string | null;
+  root: string | null;
+  status: string | null;
+  assigned_project_count: number;
+  created: string | null;
+  updated: string | null;
+}
+
+export interface BayBackupsReposStatus {
+  total_repos: number;
+  active_repos: number;
+  assigned_projects: number;
+  repos: BayBackupsRepoInfo[];
+}
+
+export interface BayBackupsProjectsStatus {
+  total_projects: number;
+  host_assigned_projects: number;
+  provisioned_projects: number;
+  running_projects: number;
+  repo_assigned_projects: number;
+  repo_unassigned_projects: number;
+  provisioned_up_to_date: number;
+  provisioned_needs_backup: number;
+  never_backed_up: number;
+  latest_last_backup_at: string | null;
+}
+
+export interface BayBackupsPostgresStatus {
+  host: string | null;
+  port: number;
+  user: string;
+  database: string;
+  current_user: string | null;
+  role_superuser: boolean | null;
+  role_replication: boolean | null;
+  data_directory: string | null;
+  config_file: string | null;
+  archive_mode: string | null;
+  archive_command: string | null;
+  archive_timeout: string | null;
+  wal_level: string | null;
+  max_wal_senders: number | null;
+  can_basebackup: boolean;
+  preferred_strategy: "pg_basebackup" | "pg_dumpall";
+}
+
+export interface BayBackupArtifactInfo {
+  name: string;
+  local_path: string | null;
+  object_key: string | null;
+  bytes: number;
+  sha256: string;
+  content_type: string;
+}
+
+export interface BayBackupStatus {
+  enabled: boolean;
+  backup_root: string | null;
+  state_file: string | null;
+  archives_dir: string | null;
+  manifests_dir: string | null;
+  staging_dir: string | null;
+  wal_archive_dir: string | null;
+  r2_configured: boolean;
+  current_storage_backend: "local" | "r2";
+  bucket_name: string | null;
+  bucket_region: string | null;
+  bucket_endpoint: string | null;
+  object_prefix_root: string | null;
+  wal_object_prefix: string | null;
+  latest_backup_set_id: string | null;
+  latest_format: "pg_basebackup" | "pg_dumpall" | null;
+  latest_storage_backend: "local" | "r2" | null;
+  latest_local_manifest_path: string | null;
+  latest_remote_manifest_key: string | null;
+  latest_object_prefix: string | null;
+  latest_artifact_count: number;
+  latest_artifact_bytes: number;
+  last_archived_wal_segment: string | null;
+  last_uploaded_wal_segment: string | null;
+  archived_wal_count: number;
+  pending_wal_count: number;
+  last_started_at: string | null;
+  last_finished_at: string | null;
+  last_successful_backup_at: string | null;
+  last_successful_remote_backup_at: string | null;
+  last_successful_wal_archive_at: string | null;
+  last_error_at: string | null;
+  last_error: string | null;
+  restore_state: string | null;
+}
+
+export interface BayBackupsInfo extends BayInfo {
+  checked_at: string;
+  postgres: BayBackupsPostgresStatus;
+  bay_backup: BayBackupStatus;
+  r2: BayBackupsR2Status;
+  repos: BayBackupsReposStatus;
+  projects: BayBackupsProjectsStatus;
+  backup_admission: ParallelOpsWorkerStatus | null;
+  backup_execution: ParallelOpsWorkerStatus | null;
+}
+
+export interface BayBackupRunResult extends BayInfo {
+  started_at: string;
+  finished_at: string;
+  backup_set_id: string;
+  format: "pg_basebackup" | "pg_dumpall";
+  bucket_name: string | null;
+  object_prefix: string | null;
+  local_manifest_path: string;
+  storage_backend: "local" | "r2";
+  artifact_count: number;
+  artifact_bytes: number;
+  artifacts: BayBackupArtifactInfo[];
+  postgres: BayBackupsPostgresStatus;
+  bay_backup: BayBackupStatus;
+}
+
+export interface BayRestoreRunResult extends BayInfo {
+  started_at: string;
+  finished_at: string;
+  dry_run: boolean;
+  backup_set_id: string;
+  format: "pg_basebackup" | "pg_dumpall";
+  target_dir: string;
+  data_dir: string | null;
+  backup_manifest_path: string | null;
+  restore_manifest_path: string | null;
+  source_storage_backend: "local" | "r2";
+  artifact_count: number;
+  wal_segment_count: number;
+  recovery_ready: boolean;
+  notes: string[];
+}
+
 export interface AccountBayLocation {
   account_id: string;
   home_bay_id: string;
@@ -584,6 +747,24 @@ export interface System {
     account_id?: string;
     bay_id?: string;
   }) => Promise<BayLoadInfo>;
+
+  getBayBackups: (opts?: {
+    account_id?: string;
+    bay_id?: string;
+  }) => Promise<BayBackupsInfo>;
+
+  runBayBackup: (opts?: {
+    account_id?: string;
+    bay_id?: string;
+  }) => Promise<BayBackupRunResult>;
+
+  runBayRestore: (opts?: {
+    account_id?: string;
+    bay_id?: string;
+    backup_set_id?: string;
+    target_dir?: string;
+    dry_run?: boolean;
+  }) => Promise<BayRestoreRunResult>;
 
   getAccountBay: (opts?: {
     account_id?: string;

@@ -13,6 +13,10 @@ let getAccountCollaboratorIndexProjectionMaintenanceStatusMock: jest.Mock;
 let getAccountNotificationIndexProjectionMaintenanceStatusMock: jest.Mock;
 let conatMock: jest.Mock;
 let sysApiManyMock: jest.Mock;
+let getProjectBackupInfrastructureStatusMock: jest.Mock;
+let getBayBackupStatusMock: jest.Mock;
+let runBayBackupMock: jest.Mock;
+let runBayRestoreMock: jest.Mock;
 
 jest.mock("@cocalc/backend/logger", () => ({
   __esModule: true,
@@ -123,6 +127,19 @@ jest.mock("@cocalc/conat/core/sys", () => ({
   sysApiMany: (...args: any[]) => sysApiManyMock(...args),
 }));
 
+jest.mock("@cocalc/server/project-backup", () => ({
+  __esModule: true,
+  getProjectBackupInfrastructureStatus: (...args: any[]) =>
+    getProjectBackupInfrastructureStatusMock(...args),
+}));
+
+jest.mock("@cocalc/server/bay-backup", () => ({
+  __esModule: true,
+  getBayBackupStatus: (...args: any[]) => getBayBackupStatusMock(...args),
+  runBayBackup: (...args: any[]) => runBayBackupMock(...args),
+  runBayRestore: (...args: any[]) => runBayRestoreMock(...args),
+}));
+
 describe("getBayLoad", () => {
   beforeEach(() => {
     jest.resetModules();
@@ -212,6 +229,207 @@ describe("getBayLoad", () => {
         },
       ],
     }));
+    getProjectBackupInfrastructureStatusMock = jest.fn(async () => ({
+      r2: {
+        configured: true,
+        account_id_configured: true,
+        access_key_configured: true,
+        secret_key_configured: true,
+        bucket_prefix: "lite4-dev",
+        total_buckets: 2,
+        active_buckets: 1,
+        buckets: [
+          {
+            id: "bucket-1",
+            name: "lite4-dev-wnam",
+            region: "wnam",
+            location: null,
+            status: "active",
+          },
+        ],
+      },
+      repos: {
+        total_repos: 2,
+        active_repos: 1,
+        assigned_projects: 7,
+        repos: [
+          {
+            id: "repo-1",
+            region: "wnam",
+            bucket_id: "bucket-1",
+            bucket_name: "lite4-dev-wnam",
+            root: "rustic/shared-wnam-0001",
+            status: "active",
+            assigned_project_count: 7,
+            created: "2026-04-07T06:00:00.000Z",
+            updated: "2026-04-07T07:00:00.000Z",
+          },
+        ],
+      },
+      projects: {
+        total_projects: 9,
+        host_assigned_projects: 8,
+        provisioned_projects: 6,
+        running_projects: 2,
+        repo_assigned_projects: 7,
+        repo_unassigned_projects: 1,
+        provisioned_up_to_date: 4,
+        provisioned_needs_backup: 2,
+        never_backed_up: 3,
+        latest_last_backup_at: "2026-04-07T07:05:00.000Z",
+      },
+    }));
+    getBayBackupStatusMock = jest.fn(async () => ({
+      postgres: {
+        host: "/tmp/pg",
+        port: 5432,
+        user: "smc",
+        database: "smc",
+        current_user: "smc",
+        role_superuser: true,
+        role_replication: true,
+        data_directory: "/tmp/data",
+        config_file: "/tmp/data/postgresql.conf",
+        archive_mode: "off",
+        archive_command: null,
+        archive_timeout: null,
+        wal_level: "replica",
+        max_wal_senders: 10,
+        can_basebackup: true,
+        preferred_strategy: "pg_basebackup",
+      },
+      bay_backup: {
+        enabled: true,
+        backup_root: "/tmp/backups",
+        state_file: "/tmp/backups/state.json",
+        archives_dir: "/tmp/backups/archives",
+        manifests_dir: "/tmp/backups/manifests",
+        staging_dir: "/tmp/backups/staging",
+        wal_archive_dir: "/tmp/backups/wal/archive",
+        r2_configured: true,
+        current_storage_backend: "r2",
+        bucket_name: "lite4-dev-wnam",
+        bucket_region: "wnam",
+        bucket_endpoint: "https://example.invalid",
+        object_prefix_root: "bay-backups/bay-0",
+        wal_object_prefix: "bay-backups/bay-0/wal",
+        latest_backup_set_id: "backup-1",
+        latest_format: "pg_basebackup",
+        latest_storage_backend: "r2",
+        latest_local_manifest_path: "/tmp/manifest.json",
+        latest_remote_manifest_key: "bay-backups/bay-0/backup-1/manifest.json",
+        latest_object_prefix: "bay-backups/bay-0/backup-1",
+        latest_artifact_count: 2,
+        latest_artifact_bytes: 12345,
+        last_archived_wal_segment: null,
+        last_uploaded_wal_segment: null,
+        archived_wal_count: 0,
+        pending_wal_count: 0,
+        last_started_at: "2026-04-07T07:00:00.000Z",
+        last_finished_at: "2026-04-07T07:01:00.000Z",
+        last_successful_backup_at: "2026-04-07T07:01:00.000Z",
+        last_successful_remote_backup_at: "2026-04-07T07:01:00.000Z",
+        last_successful_wal_archive_at: null,
+        last_error_at: null,
+        last_error: null,
+        restore_state: "ready",
+      },
+    }));
+    runBayBackupMock = jest.fn(async () => ({
+      bay_id: "bay-0",
+      label: "bay-0",
+      region: null,
+      deployment_mode: "single-bay",
+      role: "combined",
+      is_default: true,
+      started_at: "2026-04-07T08:00:00.000Z",
+      finished_at: "2026-04-07T08:01:00.000Z",
+      backup_set_id: "backup-1",
+      format: "pg_basebackup",
+      bucket_name: "lite4-dev-wnam",
+      object_prefix: "bay-backups/bay-0/backup-1",
+      local_manifest_path: "/tmp/manifest.json",
+      storage_backend: "r2",
+      artifact_count: 2,
+      artifact_bytes: 12345,
+      artifacts: [],
+      postgres: {
+        host: "/tmp/pg",
+        port: 5432,
+        user: "smc",
+        database: "smc",
+        current_user: "smc",
+        role_superuser: true,
+        role_replication: true,
+        data_directory: "/tmp/data",
+        config_file: "/tmp/data/postgresql.conf",
+        archive_mode: "off",
+        archive_command: null,
+        archive_timeout: null,
+        wal_level: "replica",
+        max_wal_senders: 10,
+        can_basebackup: true,
+        preferred_strategy: "pg_basebackup",
+      },
+      bay_backup: {
+        enabled: true,
+        backup_root: "/tmp/backups",
+        state_file: "/tmp/backups/state.json",
+        archives_dir: "/tmp/backups/archives",
+        manifests_dir: "/tmp/backups/manifests",
+        staging_dir: "/tmp/backups/staging",
+        wal_archive_dir: "/tmp/backups/wal/archive",
+        r2_configured: true,
+        current_storage_backend: "r2",
+        bucket_name: "lite4-dev-wnam",
+        bucket_region: "wnam",
+        bucket_endpoint: "https://example.invalid",
+        object_prefix_root: "bay-backups/bay-0",
+        wal_object_prefix: "bay-backups/bay-0/wal",
+        latest_backup_set_id: "backup-1",
+        latest_format: "pg_basebackup",
+        latest_storage_backend: "r2",
+        latest_local_manifest_path: "/tmp/manifest.json",
+        latest_remote_manifest_key: "bay-backups/bay-0/backup-1/manifest.json",
+        latest_object_prefix: "bay-backups/bay-0/backup-1",
+        latest_artifact_count: 2,
+        latest_artifact_bytes: 12345,
+        last_archived_wal_segment: null,
+        last_uploaded_wal_segment: null,
+        archived_wal_count: 0,
+        pending_wal_count: 0,
+        last_started_at: "2026-04-07T08:00:00.000Z",
+        last_finished_at: "2026-04-07T08:01:00.000Z",
+        last_successful_backup_at: "2026-04-07T08:01:00.000Z",
+        last_successful_remote_backup_at: "2026-04-07T08:01:00.000Z",
+        last_successful_wal_archive_at: null,
+        last_error_at: null,
+        last_error: null,
+        restore_state: "ready",
+      },
+    }));
+    runBayRestoreMock = jest.fn(async () => ({
+      bay_id: "bay-0",
+      label: "bay-0",
+      region: null,
+      deployment_mode: "single-bay",
+      role: "combined",
+      is_default: true,
+      started_at: "2026-04-07T08:00:00.000Z",
+      finished_at: "2026-04-07T08:02:00.000Z",
+      dry_run: true,
+      backup_set_id: "backup-1",
+      format: "pg_basebackup",
+      target_dir: "/tmp/restore-target",
+      data_dir: "/tmp/restore-target/data",
+      backup_manifest_path: "/tmp/backup-manifest.json",
+      restore_manifest_path: null,
+      source_storage_backend: "local",
+      artifact_count: 3,
+      wal_segment_count: 4,
+      recovery_ready: true,
+      notes: ["Dry run only; no restore files were written."],
+    }));
   });
 
   it("returns a current bay load snapshot", async () => {
@@ -278,5 +496,92 @@ describe("getBayLoad", () => {
         bay_id: "bay-9",
       }),
     ).rejects.toThrow("bay 'bay-9' not found");
+  });
+
+  it("returns a current bay backup snapshot", async () => {
+    const { getBayBackups } = await import("./system");
+
+    await expect(
+      getBayBackups({
+        account_id: "11111111-1111-4111-8111-111111111111",
+      }),
+    ).resolves.toMatchObject({
+      bay_id: "bay-0",
+      postgres: {
+        preferred_strategy: "pg_basebackup",
+      },
+      bay_backup: {
+        latest_backup_set_id: "backup-1",
+        current_storage_backend: "r2",
+      },
+      r2: {
+        configured: true,
+        total_buckets: 2,
+        active_buckets: 1,
+      },
+      repos: {
+        total_repos: 2,
+        active_repos: 1,
+        assigned_projects: 7,
+      },
+      projects: {
+        total_projects: 9,
+        provisioned_needs_backup: 2,
+        latest_last_backup_at: "2026-04-07T07:05:00.000Z",
+      },
+      backup_admission: expect.objectContaining({
+        worker_kind: "project-backup",
+        queued_count: 2,
+        running_count: 1,
+      }),
+      backup_execution: null,
+    });
+
+    expect(getProjectBackupInfrastructureStatusMock).toHaveBeenCalledWith({
+      bay_id: "bay-0",
+    });
+    expect(getBayBackupStatusMock).toHaveBeenCalledWith({
+      bay_id: "bay-0",
+    });
+  });
+
+  it("runs a bay backup through the backend bay-backup module", async () => {
+    const { runBayBackup } = await import("./system");
+
+    await expect(
+      runBayBackup({
+        account_id: "11111111-1111-4111-8111-111111111111",
+      }),
+    ).resolves.toMatchObject({
+      bay_id: "bay-0",
+      backup_set_id: "backup-1",
+      storage_backend: "r2",
+    });
+
+    expect(runBayBackupMock).toHaveBeenCalledWith({ bay_id: undefined });
+  });
+
+  it("runs a bay restore through the backend bay-backup module", async () => {
+    const { runBayRestore } = await import("./system");
+
+    await expect(
+      runBayRestore({
+        account_id: "11111111-1111-4111-8111-111111111111",
+        backup_set_id: "backup-1",
+        target_dir: "/tmp/restore-target",
+        dry_run: false,
+      }),
+    ).resolves.toMatchObject({
+      backup_set_id: "backup-1",
+      target_dir: "/tmp/restore-target",
+      recovery_ready: true,
+    });
+
+    expect(runBayRestoreMock).toHaveBeenCalledWith({
+      bay_id: undefined,
+      backup_set_id: "backup-1",
+      target_dir: "/tmp/restore-target",
+      dry_run: false,
+    });
   });
 });

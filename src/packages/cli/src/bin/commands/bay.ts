@@ -50,6 +50,61 @@ export function registerBayCommand(
     });
 
   bay
+    .command("backup [bay_id]")
+    .description("run a one-bay postgres backup now")
+    .action(async (bay_id: string | undefined, command: Command) => {
+      await withContext(command, "bay backup", async (ctx) => {
+        return await ctx.hub.system.runBayBackup({
+          bay_id: bay_id?.trim() || undefined,
+        });
+      });
+    });
+
+  bay
+    .command("restore [bay_id]")
+    .description("stage a fenced restore workspace from a bay backup")
+    .option(
+      "--backup-set-id <backup_set_id>",
+      "restore a specific backup set instead of the latest one",
+    )
+    .option(
+      "--target-dir <path>",
+      "restore into this directory instead of the default restores path",
+    )
+    .option("--write", "materialize the restore instead of a dry run", false)
+    .action(
+      async (
+        bay_id: string | undefined,
+        opts: {
+          backupSetId?: string;
+          targetDir?: string;
+          write?: boolean;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "bay restore", async (ctx) => {
+          return await ctx.hub.system.runBayRestore({
+            bay_id: bay_id?.trim() || undefined,
+            backup_set_id: opts.backupSetId?.trim() || undefined,
+            target_dir: opts.targetDir?.trim() || undefined,
+            dry_run: !opts.write,
+          });
+        });
+      },
+    );
+
+  bay
+    .command("backups [bay_id]")
+    .description("show current backup and R2 health for one bay")
+    .action(async (bay_id: string | undefined, command: Command) => {
+      await withContext(command, "bay backups", async (ctx) => {
+        return await ctx.hub.system.getBayBackups({
+          bay_id: bay_id?.trim() || undefined,
+        });
+      });
+    });
+
+  bay
     .command("backfill")
     .description("backfill persisted bay ownership fields in one-bay mode")
     .option("--bay-id <bay_id>", "override the bay id to write")

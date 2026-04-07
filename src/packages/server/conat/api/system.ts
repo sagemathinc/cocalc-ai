@@ -56,6 +56,12 @@ import {
   testR2Credentials as testR2Credentials0,
   type R2CredentialsTestResult,
 } from "@cocalc/server/project-backup/r2";
+import { getProjectBackupInfrastructureStatus } from "@cocalc/server/project-backup";
+import {
+  getBayBackupStatus as getBayBackupStatus0,
+  runBayBackup as runBayBackup0,
+  runBayRestore as runBayRestore0,
+} from "@cocalc/server/bay-backup";
 import {
   listRootfsImagesAdmin,
   listVisibleRootfsImages,
@@ -111,6 +117,9 @@ import { getAccountNotificationIndexProjectionMaintenanceStatus } from "@cocalc/
 import { getAppFeedData as listAppNews0 } from "@cocalc/database/postgres/news";
 import type { NewsItemWebapp } from "@cocalc/util/types/news";
 import type {
+  BayBackupRunResult,
+  BayRestoreRunResult,
+  BayBackupsInfo,
   BayLoadBrowserControlStatus,
   BayLoadInfo,
   BayLoadParallelOpsStatus,
@@ -325,6 +334,78 @@ export async function getBayLoad({
       }),
     },
   };
+}
+
+export async function getBayBackups({
+  account_id,
+  bay_id,
+}: {
+  account_id?: string;
+  bay_id?: string;
+}): Promise<BayBackupsInfo> {
+  await assertAdmin(account_id);
+  const currentBay = getSingleBayInfo();
+  const requestedBayId = `${bay_id ?? ""}`.trim();
+  if (requestedBayId && requestedBayId !== currentBay.bay_id) {
+    throw Error(`bay '${requestedBayId}' not found`);
+  }
+  const [bayBackup, infra, parallelOpsWorkers] = await Promise.all([
+    getBayBackupStatus0({ bay_id: currentBay.bay_id }),
+    getProjectBackupInfrastructureStatus({ bay_id: currentBay.bay_id }),
+    getParallelOpsStatus0(),
+  ]);
+  const backupAdmission =
+    parallelOpsWorkers.find(
+      (worker) => worker.worker_kind === "project-backup",
+    ) ?? null;
+  const backupExecution =
+    parallelOpsWorkers.find(
+      (worker) => worker.worker_kind === "project-host-backup-execution",
+    ) ?? null;
+  return {
+    ...currentBay,
+    checked_at: new Date().toISOString(),
+    postgres: bayBackup.postgres,
+    bay_backup: bayBackup.bay_backup,
+    r2: infra.r2,
+    repos: infra.repos,
+    projects: infra.projects,
+    backup_admission: backupAdmission,
+    backup_execution: backupExecution,
+  };
+}
+
+export async function runBayBackup({
+  account_id,
+  bay_id,
+}: {
+  account_id?: string;
+  bay_id?: string;
+}): Promise<BayBackupRunResult> {
+  await assertAdmin(account_id);
+  return await runBayBackup0({ bay_id });
+}
+
+export async function runBayRestore({
+  account_id,
+  bay_id,
+  backup_set_id,
+  target_dir,
+  dry_run = true,
+}: {
+  account_id?: string;
+  bay_id?: string;
+  backup_set_id?: string;
+  target_dir?: string;
+  dry_run?: boolean;
+}): Promise<BayRestoreRunResult> {
+  await assertAdmin(account_id);
+  return await runBayRestore0({
+    bay_id,
+    backup_set_id,
+    target_dir,
+    dry_run,
+  });
 }
 
 export async function getAccountBay({
