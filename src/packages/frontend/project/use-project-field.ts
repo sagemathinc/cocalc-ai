@@ -3,6 +3,26 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+/*
+This is the shared pattern for getting realtime-ish access to a single field
+for a particular project without putting that field into the global
+`projects.project_map` payload.
+
+The direction of the frontend projects transition is that `project_map` should
+stabilize as a small control-plane snapshot with a minimal, explicit set of
+fields. Project-specific detail fields such as launcher defaults, region,
+environment, rootfs configuration, etc., should instead be loaded through a
+small per-field hook built on top of this helper.
+
+The helper gives each field:
+
+- a per-project in-memory cache,
+- local fanout so multiple components share one value,
+- optional bootstrap from `project_map` while a field is still being migrated,
+- explicit refresh/fetch behavior, and
+- local `setValue(...)` updates so the UI stays responsive after writes.
+*/
+
 import {
   useAsyncEffect,
   useCallback,
