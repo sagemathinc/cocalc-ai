@@ -34,6 +34,7 @@ export const RamWarning: React.FC<{ project_id: string }> = ({
   project_id,
 }) => {
   const project = useRedux(["projects", "project_map", project_id]);
+  const projectStatus = useTypedRedux({ project_id }, "status");
   const is_commercial = useTypedRedux("customize", "is_commercial");
   const [hideUntil, setHideUntil] = useState<number>(0);
   const { val, inc } = useCounter();
@@ -46,7 +47,7 @@ export const RamWarning: React.FC<{ project_id: string }> = ({
       // never show a warning if project not loaded or commercial not set
       return false;
     }
-    const memory = project.getIn(["status", "memory"]);
+    const memory = projectStatus?.get("memory");
     if (memory == null) {
       return false;
     }
@@ -67,7 +68,7 @@ export const RamWarning: React.FC<{ project_id: string }> = ({
 
   useEffect(() => {
     setOpen(shouldShow());
-  }, [is_commercial, project, val]);
+  }, [is_commercial, project, projectStatus, val]);
 
   if (!open) {
     return null;
@@ -75,7 +76,7 @@ export const RamWarning: React.FC<{ project_id: string }> = ({
 
   return (
     <Banner
-      memory={project.getIn(["status", "memory"])}
+      memory={projectStatus?.get("memory")}
       project_id={project_id}
       onClose={() => {
         // dismiss for for a while, no matter what

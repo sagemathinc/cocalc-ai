@@ -47,6 +47,7 @@ import {
 } from "@cocalc/frontend/project/new/launcher-preferences";
 import { QUICK_CREATE_MAP } from "@cocalc/frontend/project/new/launcher-catalog";
 import { useAvailableFeatures } from "@cocalc/frontend/project/use-available-features";
+import { useProjectLauncher } from "@cocalc/frontend/project/use-project-launcher";
 import { NewFilenameFamilies } from "@cocalc/frontend/project/utils";
 import { DEFAULT_NEW_FILENAMES, NEW_FILENAMES } from "@cocalc/util/db-schema";
 import {
@@ -94,10 +95,8 @@ export function NewFlyout({
     "customize",
     LAUNCHER_SITE_REMOVE_QUICK_KEY,
   );
-  const project_launcher = useTypedRedux("projects", "project_map")?.getIn([
-    project_id,
-    "launcher",
-  ]);
+  const { launcher: project_launcher, setLauncher: setProjectLauncher } =
+    useProjectLauncher(project_id);
   const user_group = useTypedRedux("projects", "project_map")?.getIn([
     project_id,
     "users",
@@ -164,6 +163,7 @@ export function NewFlyout({
 
   async function saveProjectLauncherDefaults(prefs: any) {
     await redux.getActions("projects").set_project_launcher(project_id, prefs);
+    setProjectLauncher(prefs);
   }
 
   function isQuickCreateAvailable(id: string): boolean {

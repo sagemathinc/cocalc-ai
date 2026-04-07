@@ -17,6 +17,7 @@ import {
   getUserLauncherLayers,
   mergeLauncherSettings,
 } from "@cocalc/frontend/project/new/launcher-preferences";
+import { useProjectLauncher } from "@cocalc/frontend/project/use-project-launcher";
 import { ProjectActions } from "@cocalc/frontend/project_store";
 import { COLORS } from "@cocalc/util/theme";
 import { EXTs as ALL_FILE_BUTTON_TYPES } from "./file-listing/utils";
@@ -53,10 +54,7 @@ export const NewButton: React.FC<Props> = ({
     "customize",
     LAUNCHER_SITE_REMOVE_QUICK_KEY,
   );
-  const project_launcher = useTypedRedux("projects", "project_map")?.getIn([
-    project_id,
-    "launcher",
-  ]);
+  const { launcher: project_launcher } = useProjectLauncher(project_id);
   const siteLauncherDefaults = getSiteLauncherDefaults({
     quickCreate: site_launcher_quick,
     hiddenQuickCreate: site_remove_quick,

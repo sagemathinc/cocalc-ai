@@ -18,6 +18,7 @@ export const DiskSpaceWarning: React.FC<{ project_id: string }> = ({
   project_id,
 }) => {
   const project = useRedux(["projects", "project_map", project_id]);
+  const projectStatus = useTypedRedux({ project_id }, "status");
   const is_commercial = useTypedRedux("customize", "is_commercial");
   // We got a report of a crash when project isn't defined; that could happen
   // when opening a project via a direct link, and the project isn't in the
@@ -41,8 +42,7 @@ export const DiskSpaceWarning: React.FC<{ project_id: string }> = ({
   }
 
   // the disk_usage comes from the project.status datatbase entry – not the "project-status" synctable
-  const project_status = project.get("status");
-  const disk_usage = project_status?.get("disk_MB");
+  const disk_usage = projectStatus?.get("disk_MB");
   if (disk_usage == null) return null;
 
   // it's fine if the usage is below the last 100MB or 90%

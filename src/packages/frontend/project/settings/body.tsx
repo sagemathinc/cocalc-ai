@@ -101,7 +101,7 @@ export const Body: React.FC<ReactProps> = React.memo((props: ReactProps) => {
             name={project.get("name")}
             actions={redux.getActions("projects")}
           />
-          <LauncherDefaults project_id={id} project={project} />
+          <LauncherDefaults project_id={id} />
           {!lite && (
             <HideDeleteBox
               key="hide-delete"

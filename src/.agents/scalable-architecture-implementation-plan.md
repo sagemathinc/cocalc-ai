@@ -322,6 +322,16 @@ This is the most important scalability phase.
 - isolate or retire the heavy tracker path in
   `project-and-user-tracker`
 
+### 2026-04-06 Status Note
+
+- collaborator browser changefeed tracker path has been retired
+- the remaining browser-critical tracker dependency is the logical
+  `pg_changefeed: "projects"` path
+- before replacing that tracker path, the oversized live `projects` payload
+  should be reduced to the fields actually needed by the browser control plane
+- see
+  [projects-live-projection-audit-2026-04-06.md](/home/wstein/build/cocalc-lite4/src/.agents/projects-live-projection-audit-2026-04-06.md)
+
 ### Exit Criteria
 
 - browser behavior is functionally equivalent for users
@@ -582,4 +592,3 @@ Do not do these:
 4. Add a CLI-oriented operator API backlog derived from this plan.
 
 Those actions de-risk the later phases the most.
-

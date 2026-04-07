@@ -35,6 +35,7 @@ export const OOMWarning: React.FC<{ project_id: string }> = ({
   const [start_ts, set_start_ts] = useState<number | undefined>(undefined);
   const [oom_dismissed, set_oom_dismissed] = useState<number>(0);
   const project = useRedux(["projects", "project_map", project_id]);
+  const projectStatus = useTypedRedux({ project_id }, "status");
   const is_commercial = useTypedRedux("customize", "is_commercial");
 
   const membershipUrl = join(appBasePath, "/settings");
@@ -72,12 +73,11 @@ export const OOMWarning: React.FC<{ project_id: string }> = ({
     return null;
   }
 
-  const project_status = project.get("status");
-  if (project_status == null) {
+  if (projectStatus == null) {
     return null;
   }
-  const cur_oom_kills = project_status.get("oom_kills", 0);
-  const cur_start_ts = project_status.get("start_ts");
+  const cur_oom_kills = projectStatus.get("oom_kills", 0);
+  const cur_start_ts = projectStatus.get("start_ts");
 
   // either if there is no dismissed start_ts or it matches the current one
   if (cur_oom_kills === 0 || (start_ts !== null && start_ts === cur_start_ts)) {

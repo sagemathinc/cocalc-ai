@@ -34,9 +34,7 @@ export type Project = TypedMap<{
   hidden?: boolean;
   users: Map<string, UserRecord>;
   state?: { state: "opened" | "running" | "starting" | "stopping" };
-  status: ProjectStatus;
   settings: ProjectSettings;
-  launcher?: Map<string, any>;
   rootfs_image?: string;
   rootfs_image_id?: string;
 }>;

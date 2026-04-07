@@ -52,6 +52,7 @@ import {
 import type { LroSummary } from "@cocalc/conat/hub/api/lro";
 import { assertCollab } from "./util";
 import { getProjectFileServerClient } from "@cocalc/server/conat/file-server-client";
+import { assertLocalProjectCollaborator } from "@cocalc/server/conat/project-local-access";
 import type {
   RecentDocumentActivityRow,
   ChatStoreDeleteResult,
@@ -74,6 +75,7 @@ import type {
   ProjectStorageHistory,
   ProjectStorageOverview,
   ProjectStorageVisibleSummary,
+  ProjectLauncherSettings,
   WorkspaceSshConnectionInfo,
 } from "@cocalc/conat/hub/api/projects";
 import {
@@ -744,6 +746,30 @@ export async function listRecentDocumentActivity({
       ? row.recent_account_ids
       : [],
   }));
+}
+
+export async function getProjectLauncher({
+  account_id,
+  project_id,
+}: {
+  account_id: string;
+  project_id: string;
+}): Promise<ProjectLauncherSettings> {
+  if (!account_id) {
+    throw new Error("must be signed in");
+  }
+  try {
+    await assertLocalProjectCollaborator({ account_id, project_id });
+  } catch (err) {
+    if (!(await isAdmin(account_id))) {
+      throw err;
+    }
+  }
+  const { rows } = await getPool().query<{ launcher: ProjectLauncherSettings }>(
+    "SELECT launcher FROM projects WHERE project_id = $1",
+    [project_id],
+  );
+  return rows[0]?.launcher ?? null;
 }
 
 export async function getStorageOverview({

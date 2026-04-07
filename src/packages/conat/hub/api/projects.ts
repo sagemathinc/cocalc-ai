@@ -378,6 +378,8 @@ export interface ChatStoreDeleteResult {
   deleted_segments: number;
 }
 
+export type ProjectLauncherSettings = Record<string, any> | null;
+
 export const projects = {
   createProject: authFirstRequireAccount,
   copyPathBetweenProjects: authFirstRequireAccount,
@@ -397,6 +399,7 @@ export const projects = {
   listMyCollaborators: authFirstRequireAccount,
   listProjectLog: authFirstRequireAccount,
   listRecentDocumentActivity: authFirstRequireAccount,
+  getProjectLauncher: authFirstRequireAccount,
   inviteCollaborator: authFirstRequireAccount,
   inviteCollaboratorWithoutAccount: authFirstRequireAccount,
   setQuotas: authFirstRequireAccount,
@@ -530,6 +533,11 @@ export interface Projects {
     limit?: number;
     max_age_s?: number;
   }) => Promise<RecentDocumentActivityRow[]>;
+
+  getProjectLauncher: (opts: {
+    account_id?: string;
+    project_id: string;
+  }) => Promise<ProjectLauncherSettings>;
 
   cancelPendingCopy: (opts: {
     account_id?: string;
