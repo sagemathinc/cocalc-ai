@@ -1536,9 +1536,81 @@ describe("CodexAppServerAgent", () => {
       COCALC_AGENT_TOKEN: "project-token",
       PATH: "/root/.local/bin:/usr/bin",
     });
+    expect(turnStartParams?.approvalPolicy).toBe("never");
+    expect(turnStartParams?.sandboxPolicy).toEqual({
+      type: "workspaceWrite",
+      writableRoots: [],
+      readOnlyAccess: { type: "fullAccess" },
+      networkAccess: true,
+      excludeTmpdirEnvVar: false,
+      excludeSlashTmp: false,
+    });
     expect(turnStartParams?.input?.[0]?.text).toContain(
       'When you need the CoCalc CLI, use this exact command: `"/root/.local/bin/cocalc"`.',
     );
+  });
+
+  it("passes full-access sandbox policy to turn/start", async () => {
+    let turnStartParams: any;
+    const proc = new FakeCodexAppServerProc((fake, message) => {
+      switch (message.method) {
+        case "initialize":
+          fake.sendResponse(message.id, { ok: true });
+          break;
+        case "thread/start":
+          fake.sendResponse(message.id, {
+            thread: { id: "thr-full-access-1" },
+          });
+          break;
+        case "turn/start":
+          turnStartParams = message.params;
+          fake.sendResponse(message.id, {
+            turn: { id: "turn-full-access-1" },
+          });
+          setImmediate(() => {
+            fake.sendNotification("turn/started", {
+              turn: { id: "turn-full-access-1", status: "inProgress" },
+            });
+            fake.sendNotification("turn/completed", {
+              turn: { id: "turn-full-access-1", status: "completed" },
+            });
+          });
+          break;
+        default:
+          if (typeof message.id === "number") {
+            fake.sendResponse(message.id, {});
+          }
+      }
+    });
+
+    setCodexProjectSpawner({
+      spawnCodexExec: async () => {
+        throw new Error("unexpected codex exec spawn");
+      },
+      spawnCodexAppServer: async () => ({
+        proc: proc as any,
+        cmd: "fake-codex",
+        args: ["app-server"],
+        cwd: "/tmp/project",
+      }),
+    });
+
+    const agent = new CodexAppServerAgent();
+    await agent.evaluate({
+      project_id: "00000000-0000-4000-8000-000000000000",
+      account_id: "00000000-0000-4000-8000-000000000001",
+      prompt: "commit the change",
+      stream: async () => {},
+      config: {
+        workingDirectory: "/tmp/project",
+        sessionMode: "full-access",
+      } as any,
+    });
+
+    expect(turnStartParams?.approvalPolicy).toBe("never");
+    expect(turnStartParams?.sandboxPolicy).toEqual({
+      type: "dangerFullAccess",
+    });
   });
 
   it("answers server auth-refresh requests during a turn", async () => {

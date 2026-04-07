@@ -925,6 +925,47 @@ function toSandboxMode(
   }
 }
 
+function toTurnSandboxPolicy(config?: CodexSessionConfig):
+  | {
+      type: "readOnly";
+      access: { type: "fullAccess" };
+      networkAccess: true;
+    }
+  | {
+      type: "workspaceWrite";
+      writableRoots: string[];
+      readOnlyAccess: { type: "fullAccess" };
+      networkAccess: true;
+      excludeTmpdirEnvVar: false;
+      excludeSlashTmp: false;
+    }
+  | {
+      type: "dangerFullAccess";
+    } {
+  const mode = resolveCodexSessionMode(config);
+  switch (mode) {
+    case "read-only":
+      return {
+        type: "readOnly",
+        access: { type: "fullAccess" },
+        networkAccess: true,
+      };
+    case "full-access":
+      return {
+        type: "dangerFullAccess",
+      };
+    default:
+      return {
+        type: "workspaceWrite",
+        writableRoots: [],
+        readOnlyAccess: { type: "fullAccess" },
+        networkAccess: true,
+        excludeTmpdirEnvVar: false,
+        excludeSlashTmp: false,
+      };
+  }
+}
+
 function getCoCalcCliCommand(runtimeEnv?: Record<string, string>): string {
   const rawCliCommand = `${runtimeEnv?.COCALC_CLI_CMD ?? ""}`.trim();
   if (rawCliCommand) return rawCliCommand;
@@ -1370,6 +1411,8 @@ export class CodexAppServerAgent implements AcpAgent {
       const turnStart = await client.request("turn/start", {
         threadId: actualThreadId,
         cwd,
+        approvalPolicy: "never",
+        sandboxPolicy: toTurnSandboxPolicy(config),
         model: config?.model ?? this.opts.model,
         effort: toReasoningEffort(config),
         env: Object.keys(turnEnv).length > 0 ? turnEnv : undefined,
