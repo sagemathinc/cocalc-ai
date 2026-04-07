@@ -401,6 +401,9 @@ export async function runBayRestore({
   dry_run?: boolean;
 }): Promise<BayRestoreRunResult> {
   await assertAdmin(account_id);
+  // This RPC is an admin convenience wrapper around bay restore while the hub
+  // is already running. Each backup set also carries its own offline restore
+  // helper so disaster recovery does not depend on the hub being alive first.
   return await runBayRestore0({
     bay_id,
     backup_set_id,

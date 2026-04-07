@@ -3,6 +3,29 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+/*
+Bay control-plane backup strategy
+
+- `runBayBackup()` makes the full snapshot. There is currently no automatic
+  periodic full-snapshot scheduler in this module; the operator or some higher
+  level automation must call `cocalc bay backup`.
+- A full snapshot captures the Postgres control-plane state plus the bay-local
+  `sync` and `secrets` trees. The sqlite files in `sync` are snapshotted via
+  sqlite `.backup`; `sync` and `secrets` are not copied continuously and are
+  only refreshed when a full snapshot runs.
+- The resulting snapshot artifacts are kept locally under the bay backup root.
+  The full snapshot is then pushed to the regional rustic repo, using the bay
+  id as the rustic host selector, so multiple bays can share one repo.
+- WAL archiving is separate from full snapshots. `startBayWalArchiveMaintenance`
+  starts a background loop at Conat startup that keeps syncing archived WAL
+  segments to direct R2 object storage.
+- After a full snapshot finishes, `runBayBackup()` also forces a WAL switch and
+  runs an immediate WAL sync so the snapshot has fresh replay coverage.
+- Restore is therefore "full snapshot + archived WAL". The backup set carries
+  enough information and helper scripts for fenced offline recovery, while the
+  running-hub RPC is the convenience path for admins.
+*/
+
 import { execFile as execFile0 } from "node:child_process";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
@@ -927,6 +950,83 @@ async function stageControlPlaneArtifacts({
   return artifacts;
 }
 
+async function writeOfflineRestoreHelper({
+  archiveDir,
+  backup_set_id,
+}: {
+  archiveDir: string;
+  backup_set_id: string;
+}): Promise<void> {
+  const helperPath = join(archiveDir, "restore-offline.sh");
+  const readmePath = join(archiveDir, "RESTORE-OFFLINE.txt");
+  const script = [
+    "#!/bin/sh",
+    "set -eu",
+    "",
+    'BACKUP_DIR="${1:-$(pwd)}"',
+    'TARGET_DIR="${2:-$BACKUP_DIR/restore-output}"',
+    'MANIFEST_PATH="$BACKUP_DIR/manifest.json"',
+    'if [ ! -f "$MANIFEST_PATH" ]; then',
+    '  echo "missing manifest.json in $BACKUP_DIR" >&2',
+    "  exit 1",
+    "fi",
+    'mkdir -p "$TARGET_DIR"',
+    'cp "$MANIFEST_PATH" "$TARGET_DIR/backup-manifest.json"',
+    'if [ -f "$BACKUP_DIR/base.tar.gz" ]; then',
+    '  mkdir -p "$TARGET_DIR/data"',
+    '  tar -xzf "$BACKUP_DIR/base.tar.gz" -C "$TARGET_DIR/data"',
+    '  if [ -f "$BACKUP_DIR/pg_wal.tar.gz" ]; then',
+    '    mkdir -p "$TARGET_DIR/data/pg_wal"',
+    '    tar -xzf "$BACKUP_DIR/pg_wal.tar.gz" -C "$TARGET_DIR/data/pg_wal"',
+    "  fi",
+    '  rm -f "$TARGET_DIR/data/postmaster.pid" "$TARGET_DIR/data/postmaster.opts"',
+    '  echo "restored Postgres base backup into $TARGET_DIR/data"',
+    '  echo "If you also have the archived WAL available, add a restore_command"',
+    '  echo "to $TARGET_DIR/data/postgresql.auto.conf and create restore.signal."',
+    '  echo "Otherwise you can start the fenced snapshot directly with:"',
+    '  echo "  postgres -D $TARGET_DIR/data"',
+    "fi",
+    'if [ -f "$BACKUP_DIR/cluster.sql.gz" ]; then',
+    '  gzip -dc "$BACKUP_DIR/cluster.sql.gz" > "$TARGET_DIR/cluster.sql"',
+    '  echo "wrote $TARGET_DIR/cluster.sql for manual import"',
+    "fi",
+    'if [ -f "$BACKUP_DIR/sync.tar.gz" ]; then',
+    '  tar -xzf "$BACKUP_DIR/sync.tar.gz" -C "$TARGET_DIR"',
+    '  echo "restored Conat sync tree into $TARGET_DIR/sync"',
+    "fi",
+    'if [ -f "$BACKUP_DIR/secrets.tar.gz" ]; then',
+    '  tar -xzf "$BACKUP_DIR/secrets.tar.gz" -C "$TARGET_DIR"',
+    '  echo "restored bay secrets into $TARGET_DIR/secrets"',
+    "fi",
+    "",
+  ].join("\n");
+  const readme = [
+    `CoCalc bay offline restore helper for backup set ${backup_set_id}.`,
+    "",
+    "This backup set can be restored without a running hub.",
+    "",
+    "Fast path:",
+    "  ./restore-offline.sh /path/to/unpacked-backup-set /path/to/restore-target",
+    "",
+    "What it restores:",
+    "  - backup-manifest.json",
+    "  - a fenced Postgres data directory from base.tar.gz when present",
+    "  - cluster.sql from cluster.sql.gz for pg_dumpall backups",
+    "  - sync/ from sync.tar.gz when present",
+    "  - secrets/ from secrets.tar.gz when present",
+    "",
+    "Limitations:",
+    "  - The hub RPC `cocalc bay restore` is still the easiest admin path.",
+    "  - Point-in-time replay still needs archived WAL access outside this backup set.",
+    "  - For pg_basebackup snapshots, pg_wal.tar.gz is restored, so the fenced",
+    "    snapshot itself is locally recoverable to the checkpoint captured by",
+    "    the backup even before extra archived WAL is configured.",
+    "",
+  ].join("\n");
+  await writeFile(helperPath, script, { mode: 0o700 });
+  await writeFile(readmePath, readme, "utf8");
+}
+
 async function extractTarGz({
   archivePath,
   targetDir,
@@ -1729,6 +1829,10 @@ export async function runBayBackup({
       });
       archive_dir = join(paths.archives_dir, backup_set_id);
       await rename(staging_dir, archive_dir);
+      await writeOfflineRestoreHelper({
+        archiveDir: archive_dir,
+        backup_set_id,
+      });
       let artifacts = await collectArtifacts(archive_dir);
       const artifact_bytes = artifacts.reduce(
         (sum, artifact) => sum + artifact.bytes,
