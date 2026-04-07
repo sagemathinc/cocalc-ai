@@ -1,0 +1,1787 @@
+{
+  "admin_account_id": "6e22d250-68d4-46fb-9851-80fbeaa2d6b6",
+  "api_url": "http://localhost:13004",
+  "baseline": {
+    "mentions:off": {
+      "concurrency": 16,
+      "failures": 0,
+      "finished_at": "2026-04-04T16:21:48.726Z",
+      "iterations": 500,
+      "last_result": {
+        "first_path": "/home/user/2026-04-04-074937.chat",
+        "first_project_id": "e89b4b45-8592-41c1-806f-aa522039bc49",
+        "first_target": "1d881fdd-d1ae-44ab-8eec-f55728fa3d02",
+        "mention_count": 3
+      },
+      "latency_ms": {
+        "avg": 14.383,
+        "max": 38.751,
+        "min": 7.913,
+        "p50": 12.351,
+        "p95": 28.475,
+        "p99": 33.137
+      },
+      "ops_per_sec": 969.805,
+      "sample_errors": [],
+      "scenario": "mentions",
+      "started_at": "2026-04-04T16:21:48.210Z",
+      "successes": 500,
+      "wall_ms": 515.567,
+      "warmup": 50
+    },
+    "mentions:only": {
+      "concurrency": 16,
+      "failures": 0,
+      "finished_at": "2026-04-04T16:22:08.545Z",
+      "iterations": 500,
+      "last_result": {
+        "first_path": "/home/user/2026-04-04-074937.chat",
+        "first_project_id": "e89b4b45-8592-41c1-806f-aa522039bc49",
+        "first_target": "6e22d250-68d4-46fb-9851-80fbeaa2d6b6",
+        "mention_count": 1
+      },
+      "latency_ms": {
+        "avg": 13.935,
+        "max": 31.304,
+        "min": 9.068,
+        "p50": 12.74,
+        "p95": 22.492,
+        "p99": 29.135
+      },
+      "ops_per_sec": 1009.327,
+      "sample_errors": [],
+      "scenario": "mentions",
+      "started_at": "2026-04-04T16:22:08.050Z",
+      "successes": 500,
+      "wall_ms": 495.379,
+      "warmup": 50
+    },
+    "mentions:prefer": {
+      "concurrency": 16,
+      "failures": 500,
+      "finished_at": "2026-04-04T16:21:58.120Z",
+      "iterations": 500,
+      "last_result": null,
+      "latency_ms": {
+        "avg": 18.366,
+        "max": 25.417,
+        "min": 11.416,
+        "p50": 17.881,
+        "p95": 22.949,
+        "p99": 24.529
+      },
+      "ops_per_sec": 767.761,
+      "sample_errors": [
+        "postgresql error: syntax error at or near \"$\" - callHub: subject='hub.account.6e22d250-68d4-46fb-9851-80fbeaa2d6b6.api', name='db.userQuery', code='undefined' ",
+        "postgresql error: syntax error at or near \"$\" - callHub: subject='hub.account.6e22d250-68d4-46fb-9851-80fbeaa2d6b6.api', name='db.userQuery', code='undefined' ",
+        "postgresql error: syntax error at or near \"$\" - callHub: subject='hub.account.6e22d250-68d4-46fb-9851-80fbeaa2d6b6.api', name='db.userQuery', code='undefined' ",
+        "postgresql error: syntax error at or near \"$\" - callHub: subject='hub.account.6e22d250-68d4-46fb-9851-80fbeaa2d6b6.api', name='db.userQuery', code='undefined' ",
+        "postgresql error: syntax error at or near \"$\" - callHub: subject='hub.account.6e22d250-68d4-46fb-9851-80fbeaa2d6b6.api', name='db.userQuery', code='undefined' "
+      ],
+      "scenario": "mentions",
+      "started_at": "2026-04-04T16:21:57.468Z",
+      "successes": 0,
+      "wall_ms": 651.245,
+      "warmup": 50
+    },
+    "my-collaborators:off": {
+      "concurrency": 16,
+      "failures": 0,
+      "finished_at": "2026-04-04T16:21:15.220Z",
+      "iterations": 500,
+      "last_result": {
+        "collaborator_count": 506,
+        "first_account_id": "1d881fdd-d1ae-44ab-8eec-f55728fa3d02",
+        "first_shared_projects": 4,
+        "max_shared_projects": 4
+      },
+      "latency_ms": {
+        "avg": 38.865,
+        "max": 108.352,
+        "min": 19.052,
+        "p50": 34.127,
+        "p95": 64.429,
+        "p99": 92.276
+      },
+      "ops_per_sec": 364.644,
+      "sample_errors": [],
+      "scenario": "my-collaborators",
+      "started_at": "2026-04-04T16:21:13.848Z",
+      "successes": 500,
+      "wall_ms": 1371.201,
+      "warmup": 50
+    },
+    "my-collaborators:only": {
+      "concurrency": 16,
+      "failures": 0,
+      "finished_at": "2026-04-04T16:21:38.333Z",
+      "iterations": 500,
+      "last_result": {
+        "collaborator_count": 506,
+        "first_account_id": "1d881fdd-d1ae-44ab-8eec-f55728fa3d02",
+        "first_shared_projects": 3,
+        "max_shared_projects": 3
+      },
+      "latency_ms": {
+        "avg": 34.047,
+        "max": 62.231,
+        "min": 15.832,
+        "p50": 31.061,
+        "p95": 54.74,
+        "p99": 60.012
+      },
+      "ops_per_sec": 412.356,
+      "sample_errors": [],
+      "scenario": "my-collaborators",
+      "started_at": "2026-04-04T16:21:37.120Z",
+      "successes": 500,
+      "wall_ms": 1212.545,
+      "warmup": 50
+    },
+    "my-collaborators:prefer": {
+      "concurrency": 16,
+      "failures": 0,
+      "finished_at": "2026-04-04T16:21:27.210Z",
+      "iterations": 500,
+      "last_result": {
+        "collaborator_count": 506,
+        "first_account_id": "1d881fdd-d1ae-44ab-8eec-f55728fa3d02",
+        "first_shared_projects": 3,
+        "max_shared_projects": 3
+      },
+      "latency_ms": {
+        "avg": 32.747,
+        "max": 62.545,
+        "min": 18.551,
+        "p50": 28.988,
+        "p95": 51.654,
+        "p99": 59.645
+      },
+      "ops_per_sec": 423.586,
+      "sample_errors": [],
+      "scenario": "my-collaborators",
+      "started_at": "2026-04-04T16:21:26.030Z",
+      "successes": 500,
+      "wall_ms": 1180.397,
+      "warmup": 50
+    },
+    "projects:off": {
+      "concurrency": 16,
+      "failures": 0,
+      "finished_at": "2026-04-04T16:20:38.414Z",
+      "iterations": 500,
+      "last_result": {
+        "first_host_id": "7b83ae66-99cf-400c-9c5f-0c3513542b5d",
+        "first_project_id": "8b7804ad-4c3d-4698-9f4b-52664f9fbb96",
+        "project_count": 1047
+      },
+      "latency_ms": {
+        "avg": 102.785,
+        "max": 148.153,
+        "min": 66.507,
+        "p50": 100.505,
+        "p95": 129.382,
+        "p99": 137.479
+      },
+      "ops_per_sec": 136.317,
+      "sample_errors": [],
+      "scenario": "projects",
+      "started_at": "2026-04-04T16:20:34.746Z",
+      "successes": 500,
+      "wall_ms": 3667.921,
+      "warmup": 50
+    },
+    "projects:only": {
+      "concurrency": 16,
+      "failures": 0,
+      "finished_at": "2026-04-04T16:21:04.954Z",
+      "iterations": 500,
+      "last_result": {
+        "first_host_id": "7b83ae66-99cf-400c-9c5f-0c3513542b5d",
+        "first_project_id": "8b7804ad-4c3d-4698-9f4b-52664f9fbb96",
+        "project_count": 1047
+      },
+      "latency_ms": {
+        "avg": 79.615,
+        "max": 133.686,
+        "min": 43.285,
+        "p50": 77.151,
+        "p95": 99.008,
+        "p99": 127.446
+      },
+      "ops_per_sec": 176.899,
+      "sample_errors": [],
+      "scenario": "projects",
+      "started_at": "2026-04-04T16:21:02.127Z",
+      "successes": 500,
+      "wall_ms": 2826.467,
+      "warmup": 50
+    },
+    "projects:prefer": {
+      "concurrency": 16,
+      "failures": 0,
+      "finished_at": "2026-04-04T16:20:52.224Z",
+      "iterations": 500,
+      "last_result": {
+        "first_host_id": "7b83ae66-99cf-400c-9c5f-0c3513542b5d",
+        "first_project_id": "8b7804ad-4c3d-4698-9f4b-52664f9fbb96",
+        "project_count": 1047
+      },
+      "latency_ms": {
+        "avg": 93.492,
+        "max": 195.36,
+        "min": 35.898,
+        "p50": 92.48,
+        "p95": 104.079,
+        "p99": 190.107
+      },
+      "ops_per_sec": 149.113,
+      "sample_errors": [],
+      "scenario": "projects",
+      "started_at": "2026-04-04T16:20:48.870Z",
+      "successes": 500,
+      "wall_ms": 3353.165,
+      "warmup": 50
+    }
+  },
+  "collaborator_fixture_size": 500,
+  "collaborator_project_id": "808a3597-997e-47c1-b026-563bd42b34cd",
+  "comparison_runs": [
+    {
+      "account_id": "6e22d250-68d4-46fb-9851-80fbeaa2d6b6",
+      "command": [
+        "load",
+        "projects",
+        "--iterations",
+        "500",
+        "--warmup",
+        "50",
+        "--concurrency",
+        "16",
+        "--limit",
+        "2000"
+      ],
+      "label": "heavy-projects-off",
+      "pg_after": {
+        "active_time": 3694952.534,
+        "blks_hit": 1817909742,
+        "blks_read": 165208,
+        "session_time": 1260356830.341,
+        "temp_bytes": 632832000,
+        "temp_files": 50,
+        "tup_deleted": 149831,
+        "tup_fetched": 1504556166,
+        "tup_inserted": 205510,
+        "tup_returned": 3805775740,
+        "tup_updated": 63589,
+        "xact_commit": 15305718,
+        "xact_rollback": 2445281
+      },
+      "pg_before": {
+        "active_time": 3693080.227,
+        "blks_hit": 1817493882,
+        "blks_read": 165200,
+        "session_time": 1260348467.702,
+        "temp_bytes": 632832000,
+        "temp_files": 50,
+        "tup_deleted": 149831,
+        "tup_fetched": 1504548042,
+        "tup_inserted": 205510,
+        "tup_returned": 3796531956,
+        "tup_updated": 63589,
+        "xact_commit": 15305298,
+        "xact_rollback": 2445281
+      },
+      "pg_delta": {
+        "active_time": 1872.307,
+        "blks_hit": 415860.0,
+        "blks_read": 8.0,
+        "session_time": 8362.639,
+        "temp_bytes": 0.0,
+        "temp_files": 0.0,
+        "tup_deleted": 0.0,
+        "tup_fetched": 8124.0,
+        "tup_inserted": 0.0,
+        "tup_returned": 9243784.0,
+        "tup_updated": 0.0,
+        "xact_commit": 420.0,
+        "xact_rollback": 0.0
+      },
+      "result": {
+        "command": "load projects",
+        "data": {
+          "concurrency": 16,
+          "failures": 0,
+          "finished_at": "2026-04-07T06:56:16.823Z",
+          "iterations": 500,
+          "last_result": {
+            "first_host_id": "7b83ae66-99cf-400c-9c5f-0c3513542b5d",
+            "first_project_id": "8b7804ad-4c3d-4698-9f4b-52664f9fbb96",
+            "project_count": 1047
+          },
+          "latency_ms": {
+            "avg": 77.81,
+            "max": 96.247,
+            "min": 45.272,
+            "p50": 77.282,
+            "p95": 89.51,
+            "p99": 95.104
+          },
+          "ops_per_sec": 180.635,
+          "sample_errors": [],
+          "scenario": "projects",
+          "started_at": "2026-04-07T06:56:14.055Z",
+          "successes": 500,
+          "wall_ms": 2768.007,
+          "warmup": 50
+        },
+        "meta": {
+          "account_id": "6e22d250-68d4-46fb-9851-80fbeaa2d6b6",
+          "api": "http://localhost:13004"
+        },
+        "ok": true
+      }
+    },
+    {
+      "account_id": "6e22d250-68d4-46fb-9851-80fbeaa2d6b6",
+      "command": [
+        "load",
+        "projects",
+        "--iterations",
+        "500",
+        "--warmup",
+        "50",
+        "--concurrency",
+        "16",
+        "--limit",
+        "2000"
+      ],
+      "label": "heavy-projects-only",
+      "pg_after": {
+        "active_time": 3696937.05,
+        "blks_hit": 1818569372,
+        "blks_read": 167230,
+        "session_time": 1260398349.751,
+        "temp_bytes": 632832000,
+        "temp_files": 50,
+        "tup_deleted": 149841,
+        "tup_fetched": 1505270138,
+        "tup_inserted": 205521,
+        "tup_returned": 3816230161,
+        "tup_updated": 63610,
+        "xact_commit": 15307409,
+        "xact_rollback": 2445346
+      },
+      "pg_before": {
+        "active_time": 3695786.946,
+        "blks_hit": 1818117813,
+        "blks_read": 166650,
+        "session_time": 1260387617.318,
+        "temp_bytes": 632832000,
+        "temp_files": 50,
+        "tup_deleted": 149841,
+        "tup_fetched": 1504597076,
+        "tup_inserted": 205521,
+        "tup_returned": 3809078934,
+        "tup_updated": 63608,
+        "xact_commit": 15306700,
+        "xact_rollback": 2445313
+      },
+      "pg_delta": {
+        "active_time": 1150.104,
+        "blks_hit": 451559.0,
+        "blks_read": 580.0,
+        "session_time": 10732.433,
+        "temp_bytes": 0.0,
+        "temp_files": 0.0,
+        "tup_deleted": 0.0,
+        "tup_fetched": 673062.0,
+        "tup_inserted": 0.0,
+        "tup_returned": 7151227.0,
+        "tup_updated": 2.0,
+        "xact_commit": 709.0,
+        "xact_rollback": 33.0
+      },
+      "result": {
+        "command": "load projects",
+        "data": {
+          "concurrency": 16,
+          "failures": 0,
+          "finished_at": "2026-04-07T06:56:37.704Z",
+          "iterations": 500,
+          "last_result": {
+            "first_host_id": "7b83ae66-99cf-400c-9c5f-0c3513542b5d",
+            "first_project_id": "8b7804ad-4c3d-4698-9f4b-52664f9fbb96",
+            "project_count": 1047
+          },
+          "latency_ms": {
+            "avg": 72.575,
+            "max": 90.587,
+            "min": 51.418,
+            "p50": 72.062,
+            "p95": 80.405,
+            "p99": 87.542
+          },
+          "ops_per_sec": 193.619,
+          "sample_errors": [],
+          "scenario": "projects",
+          "started_at": "2026-04-07T06:56:35.122Z",
+          "successes": 500,
+          "wall_ms": 2582.393,
+          "warmup": 50
+        },
+        "meta": {
+          "account_id": "6e22d250-68d4-46fb-9851-80fbeaa2d6b6",
+          "api": "http://localhost:13004"
+        },
+        "ok": true
+      }
+    },
+    {
+      "account_id": "6e22d250-68d4-46fb-9851-80fbeaa2d6b6",
+      "command": [
+        "load",
+        "my-collaborators",
+        "--iterations",
+        "500",
+        "--warmup",
+        "50",
+        "--concurrency",
+        "16",
+        "--limit",
+        "2000"
+      ],
+      "label": "heavy-my-collaborators-off",
+      "pg_after": {
+        "active_time": 3699239.481,
+        "blks_hit": 1819558034,
+        "blks_read": 168802,
+        "session_time": 1260423116.376,
+        "temp_bytes": 632832000,
+        "temp_files": 50,
+        "tup_deleted": 149851,
+        "tup_fetched": 1505561298,
+        "tup_inserted": 205532,
+        "tup_returned": 3821633211,
+        "tup_updated": 63626,
+        "xact_commit": 15308725,
+        "xact_rollback": 2445383
+      },
+      "pg_before": {
+        "active_time": 3697072.84,
+        "blks_hit": 1818635990,
+        "blks_read": 168783,
+        "session_time": 1260416050.722,
+        "temp_bytes": 632832000,
+        "temp_files": 50,
+        "tup_deleted": 149851,
+        "tup_fetched": 1505311561,
+        "tup_inserted": 205532,
+        "tup_returned": 3816289098,
+        "tup_updated": 63626,
+        "xact_commit": 15308260,
+        "xact_rollback": 2445383
+      },
+      "pg_delta": {
+        "active_time": 2166.641,
+        "blks_hit": 922044.0,
+        "blks_read": 19.0,
+        "session_time": 7065.654,
+        "temp_bytes": 0.0,
+        "temp_files": 0.0,
+        "tup_deleted": 0.0,
+        "tup_fetched": 249737.0,
+        "tup_inserted": 0.0,
+        "tup_returned": 5344113.0,
+        "tup_updated": 0.0,
+        "xact_commit": 465.0,
+        "xact_rollback": 0.0
+      },
+      "result": {
+        "command": "load my-collaborators",
+        "data": {
+          "concurrency": 16,
+          "failures": 0,
+          "finished_at": "2026-04-07T06:56:57.306Z",
+          "iterations": 500,
+          "last_result": {
+            "collaborator_count": 506,
+            "first_account_id": "1d881fdd-d1ae-44ab-8eec-f55728fa3d02",
+            "first_shared_projects": 5,
+            "max_shared_projects": 5
+          },
+          "latency_ms": {
+            "avg": 37.064,
+            "max": 75.718,
+            "min": 16.514,
+            "p50": 34.219,
+            "p95": 56.374,
+            "p99": 71.446
+          },
+          "ops_per_sec": 381.924,
+          "sample_errors": [],
+          "scenario": "my-collaborators",
+          "started_at": "2026-04-07T06:56:55.997Z",
+          "successes": 500,
+          "wall_ms": 1309.159,
+          "warmup": 50
+        },
+        "meta": {
+          "account_id": "6e22d250-68d4-46fb-9851-80fbeaa2d6b6",
+          "api": "http://localhost:13004"
+        },
+        "ok": true
+      }
+    },
+    {
+      "account_id": "6e22d250-68d4-46fb-9851-80fbeaa2d6b6",
+      "command": [
+        "load",
+        "collaborators",
+        "--project",
+        "808a3597-997e-47c1-b026-563bd42b34cd",
+        "--iterations",
+        "500",
+        "--warmup",
+        "50",
+        "--concurrency",
+        "16"
+      ],
+      "label": "project-collaborators-off",
+      "pg_after": {
+        "active_time": 3700188.531,
+        "blks_hit": 1820079014,
+        "blks_read": 168802,
+        "session_time": 1260430604.653,
+        "temp_bytes": 632832000,
+        "temp_files": 50,
+        "tup_deleted": 149851,
+        "tup_fetched": 1505726238,
+        "tup_inserted": 205532,
+        "tup_returned": 3822739873,
+        "tup_updated": 63626,
+        "xact_commit": 15309048,
+        "xact_rollback": 2445383
+      },
+      "pg_before": {
+        "active_time": 3699240.138,
+        "blks_hit": 1819558318,
+        "blks_read": 168802,
+        "session_time": 1260423118.076,
+        "temp_bytes": 632832000,
+        "temp_files": 50,
+        "tup_deleted": 149851,
+        "tup_fetched": 1505561429,
+        "tup_inserted": 205532,
+        "tup_returned": 3821633343,
+        "tup_updated": 63626,
+        "xact_commit": 15308727,
+        "xact_rollback": 2445383
+      },
+      "pg_delta": {
+        "active_time": 948.393,
+        "blks_hit": 520696.0,
+        "blks_read": 0.0,
+        "session_time": 7486.577,
+        "temp_bytes": 0.0,
+        "temp_files": 0.0,
+        "tup_deleted": 0.0,
+        "tup_fetched": 164809.0,
+        "tup_inserted": 0.0,
+        "tup_returned": 1106530.0,
+        "tup_updated": 0.0,
+        "xact_commit": 321.0,
+        "xact_rollback": 0.0
+      },
+      "result": {
+        "command": "load collaborators",
+        "data": {
+          "concurrency": 16,
+          "failures": 0,
+          "finished_at": "2026-04-07T06:56:58.578Z",
+          "iterations": 500,
+          "last_result": {
+            "collaborator_count": 501,
+            "first_account_id": "6e22d250-68d4-46fb-9851-80fbeaa2d6b6",
+            "first_group": "owner",
+            "non_owner_count": 500,
+            "owner_count": 1,
+            "project_id": "808a3597-997e-47c1-b026-563bd42b34cd",
+            "project_title": "a147@b.c - /home/user/a"
+          },
+          "latency_ms": {
+            "avg": 29.278,
+            "max": 55.193,
+            "min": 13.827,
+            "p50": 26.867,
+            "p95": 47.078,
+            "p99": 51.675
+          },
+          "ops_per_sec": 477.132,
+          "sample_errors": [],
+          "scenario": "collaborators",
+          "started_at": "2026-04-07T06:56:57.530Z",
+          "successes": 500,
+          "wall_ms": 1047.928,
+          "warmup": 50
+        },
+        "meta": {
+          "account_id": "6e22d250-68d4-46fb-9851-80fbeaa2d6b6",
+          "api": "http://localhost:13004"
+        },
+        "ok": true
+      }
+    },
+    {
+      "account_id": "6e22d250-68d4-46fb-9851-80fbeaa2d6b6",
+      "command": [
+        "load",
+        "my-collaborators",
+        "--iterations",
+        "500",
+        "--warmup",
+        "50",
+        "--concurrency",
+        "16",
+        "--limit",
+        "2000"
+      ],
+      "label": "heavy-my-collaborators-only",
+      "pg_after": {
+        "active_time": 3701340.664,
+        "blks_hit": 1820691990,
+        "blks_read": 170359,
+        "session_time": 1260458070.029,
+        "temp_bytes": 632832000,
+        "temp_files": 50,
+        "tup_deleted": 149861,
+        "tup_fetched": 1505942147,
+        "tup_inserted": 205542,
+        "tup_returned": 3823492500,
+        "tup_updated": 63643,
+        "xact_commit": 15310562,
+        "xact_rollback": 2445418
+      },
+      "pg_before": {
+        "active_time": 3701120.795,
+        "blks_hit": 1820656398,
+        "blks_read": 170321,
+        "session_time": 1260453891.073,
+        "temp_bytes": 632832000,
+        "temp_files": 50,
+        "tup_deleted": 149859,
+        "tup_fetched": 1505935986,
+        "tup_inserted": 205540,
+        "tup_returned": 3823170963,
+        "tup_updated": 63641,
+        "xact_commit": 15310222,
+        "xact_rollback": 2445415
+      },
+      "pg_delta": {
+        "active_time": 219.869,
+        "blks_hit": 35592.0,
+        "blks_read": 38.0,
+        "session_time": 4178.956,
+        "temp_bytes": 0.0,
+        "temp_files": 0.0,
+        "tup_deleted": 2.0,
+        "tup_fetched": 6161.0,
+        "tup_inserted": 2.0,
+        "tup_returned": 321537.0,
+        "tup_updated": 2.0,
+        "xact_commit": 340.0,
+        "xact_rollback": 3.0
+      },
+      "result": {
+        "command": "load my-collaborators",
+        "data": {
+          "concurrency": 16,
+          "failures": 0,
+          "finished_at": "2026-04-07T06:57:20.806Z",
+          "iterations": 500,
+          "last_result": {
+            "collaborator_count": 506,
+            "first_account_id": "1d881fdd-d1ae-44ab-8eec-f55728fa3d02",
+            "first_shared_projects": 4,
+            "max_shared_projects": 4
+          },
+          "latency_ms": {
+            "avg": 32.513,
+            "max": 63.41,
+            "min": 18.952,
+            "p50": 29.323,
+            "p95": 53.304,
+            "p99": 59.467
+          },
+          "ops_per_sec": 434.985,
+          "sample_errors": [],
+          "scenario": "my-collaborators",
+          "started_at": "2026-04-07T06:57:19.656Z",
+          "successes": 500,
+          "wall_ms": 1149.466,
+          "warmup": 50
+        },
+        "meta": {
+          "account_id": "6e22d250-68d4-46fb-9851-80fbeaa2d6b6",
+          "api": "http://localhost:13004"
+        },
+        "ok": true
+      }
+    },
+    {
+      "account_id": "6e22d250-68d4-46fb-9851-80fbeaa2d6b6",
+      "command": [
+        "load",
+        "collaborators",
+        "--project",
+        "808a3597-997e-47c1-b026-563bd42b34cd",
+        "--iterations",
+        "500",
+        "--warmup",
+        "50",
+        "--concurrency",
+        "16"
+      ],
+      "label": "project-collaborators-only",
+      "pg_after": {
+        "active_time": 3702103.189,
+        "blks_hit": 1821111981,
+        "blks_read": 170393,
+        "session_time": 1260468250.064,
+        "temp_bytes": 632832000,
+        "temp_files": 50,
+        "tup_deleted": 149861,
+        "tup_fetched": 1506094442,
+        "tup_inserted": 205542,
+        "tup_returned": 3823917421,
+        "tup_updated": 63644,
+        "xact_commit": 15311207,
+        "xact_rollback": 2445453
+      },
+      "pg_before": {
+        "active_time": 3701341.332,
+        "blks_hit": 1820692274,
+        "blks_read": 170359,
+        "session_time": 1260458071.724,
+        "temp_bytes": 632832000,
+        "temp_files": 50,
+        "tup_deleted": 149861,
+        "tup_fetched": 1505942278,
+        "tup_inserted": 205542,
+        "tup_returned": 3823492632,
+        "tup_updated": 63643,
+        "xact_commit": 15310564,
+        "xact_rollback": 2445418
+      },
+      "pg_delta": {
+        "active_time": 761.857,
+        "blks_hit": 419707.0,
+        "blks_read": 34.0,
+        "session_time": 10178.34,
+        "temp_bytes": 0.0,
+        "temp_files": 0.0,
+        "tup_deleted": 0.0,
+        "tup_fetched": 152164.0,
+        "tup_inserted": 0.0,
+        "tup_returned": 424789.0,
+        "tup_updated": 1.0,
+        "xact_commit": 643.0,
+        "xact_rollback": 35.0
+      },
+      "result": {
+        "command": "load collaborators",
+        "data": {
+          "concurrency": 16,
+          "failures": 0,
+          "finished_at": "2026-04-07T06:57:22.143Z",
+          "iterations": 500,
+          "last_result": {
+            "collaborator_count": 501,
+            "first_account_id": "6e22d250-68d4-46fb-9851-80fbeaa2d6b6",
+            "first_group": "owner",
+            "non_owner_count": 500,
+            "owner_count": 1,
+            "project_id": "808a3597-997e-47c1-b026-563bd42b34cd",
+            "project_title": "a147@b.c - /home/user/a"
+          },
+          "latency_ms": {
+            "avg": 30.778,
+            "max": 63.077,
+            "min": 15.798,
+            "p50": 28.058,
+            "p95": 50.612,
+            "p99": 61.865
+          },
+          "ops_per_sec": 453.308,
+          "sample_errors": [],
+          "scenario": "collaborators",
+          "started_at": "2026-04-07T06:57:21.040Z",
+          "successes": 500,
+          "wall_ms": 1103.004,
+          "warmup": 50
+        },
+        "meta": {
+          "account_id": "6e22d250-68d4-46fb-9851-80fbeaa2d6b6",
+          "api": "http://localhost:13004"
+        },
+        "ok": true
+      }
+    }
+  ],
+  "heavy_compare": [
+    {
+      "benchmark": "projects",
+      "mode": "off",
+      "new_ops": 180.635,
+      "new_p99": 95.104,
+      "old_ops": 136.317,
+      "old_p99": 137.479,
+      "ops_ratio": 1.325,
+      "p99_ratio": 0.692
+    },
+    {
+      "benchmark": "projects",
+      "mode": "only",
+      "new_ops": 193.619,
+      "new_p99": 87.542,
+      "old_ops": 176.899,
+      "old_p99": 127.446,
+      "ops_ratio": 1.095,
+      "p99_ratio": 0.687
+    },
+    {
+      "benchmark": "my-collaborators",
+      "mode": "off",
+      "new_ops": 381.924,
+      "new_p99": 71.446,
+      "old_ops": 364.644,
+      "old_p99": 92.276,
+      "ops_ratio": 1.047,
+      "p99_ratio": 0.774
+    },
+    {
+      "benchmark": "my-collaborators",
+      "mode": "only",
+      "new_ops": 434.985,
+      "new_p99": 59.467,
+      "old_ops": 412.356,
+      "old_p99": 60.012,
+      "ops_ratio": 1.055,
+      "p99_ratio": 0.991
+    }
+  ],
+  "only_mode_line": "",
+  "only_runs": [
+    {
+      "account_id": "09bbf250-ce29-4b11-8a6e-4d5462d81e04",
+      "command": [
+        "load",
+        "bootstrap",
+        "--iterations",
+        "500",
+        "--warmup",
+        "50",
+        "--concurrency",
+        "16"
+      ],
+      "label": "light-bootstrap-only",
+      "result": {
+        "command": "load bootstrap",
+        "data": {
+          "concurrency": 16,
+          "failures": 0,
+          "finished_at": "2026-04-07T06:55:22.515Z",
+          "iterations": 500,
+          "last_result": {
+            "account_id": "09bbf250-ce29-4b11-8a6e-4d5462d81e04",
+            "home_bay_id": null,
+            "visible_bay_count": 1
+          },
+          "latency_ms": {
+            "avg": 13.185,
+            "max": 18.842,
+            "min": 7.086,
+            "p50": 12.693,
+            "p95": 17.05,
+            "p99": 18.494
+          },
+          "ops_per_sec": 1057.251,
+          "sample_errors": [],
+          "scenario": "bootstrap",
+          "started_at": "2026-04-07T06:55:22.041Z",
+          "successes": 500,
+          "wall_ms": 472.924,
+          "warmup": 50
+        },
+        "meta": {
+          "account_id": "09bbf250-ce29-4b11-8a6e-4d5462d81e04",
+          "api": "http://localhost:13004"
+        },
+        "ok": true
+      }
+    },
+    {
+      "account_id": "09bbf250-ce29-4b11-8a6e-4d5462d81e04",
+      "command": [
+        "load",
+        "projects",
+        "--iterations",
+        "500",
+        "--warmup",
+        "50",
+        "--concurrency",
+        "16",
+        "--limit",
+        "100"
+      ],
+      "label": "light-projects-only",
+      "result": {
+        "command": "load projects",
+        "data": {
+          "concurrency": 16,
+          "failures": 0,
+          "finished_at": "2026-04-07T06:55:23.171Z",
+          "iterations": 500,
+          "last_result": {
+            "first_host_id": "7b83ae66-99cf-400c-9c5f-0c3513542b5d",
+            "first_project_id": "548400c7-632d-456c-bc2a-4b99282f4ef3",
+            "project_count": 21
+          },
+          "latency_ms": {
+            "avg": 12.338,
+            "max": 29.94,
+            "min": 7.919,
+            "p50": 11.298,
+            "p95": 17.588,
+            "p99": 27.684
+          },
+          "ops_per_sec": 1059.478,
+          "sample_errors": [],
+          "scenario": "projects",
+          "started_at": "2026-04-07T06:55:22.699Z",
+          "successes": 500,
+          "wall_ms": 471.93,
+          "warmup": 50
+        },
+        "meta": {
+          "account_id": "09bbf250-ce29-4b11-8a6e-4d5462d81e04",
+          "api": "http://localhost:13004"
+        },
+        "ok": true
+      }
+    },
+    {
+      "account_id": "485200c3-37cb-4e87-b39a-f1532d07120b",
+      "command": [
+        "load",
+        "bootstrap",
+        "--iterations",
+        "500",
+        "--warmup",
+        "50",
+        "--concurrency",
+        "16"
+      ],
+      "label": "normal-bootstrap-only",
+      "result": {
+        "command": "load bootstrap",
+        "data": {
+          "concurrency": 16,
+          "failures": 0,
+          "finished_at": "2026-04-07T06:55:23.981Z",
+          "iterations": 500,
+          "last_result": {
+            "account_id": "485200c3-37cb-4e87-b39a-f1532d07120b",
+            "home_bay_id": null,
+            "visible_bay_count": 1
+          },
+          "latency_ms": {
+            "avg": 10.386,
+            "max": 18.795,
+            "min": 5.78,
+            "p50": 9.803,
+            "p95": 15.663,
+            "p99": 18.559
+          },
+          "ops_per_sec": 1252.23,
+          "sample_errors": [],
+          "scenario": "bootstrap",
+          "started_at": "2026-04-07T06:55:23.581Z",
+          "successes": 500,
+          "wall_ms": 399.288,
+          "warmup": 50
+        },
+        "meta": {
+          "account_id": "485200c3-37cb-4e87-b39a-f1532d07120b",
+          "api": "http://localhost:13004"
+        },
+        "ok": true
+      }
+    },
+    {
+      "account_id": "485200c3-37cb-4e87-b39a-f1532d07120b",
+      "command": [
+        "load",
+        "projects",
+        "--iterations",
+        "500",
+        "--warmup",
+        "50",
+        "--concurrency",
+        "16",
+        "--limit",
+        "500"
+      ],
+      "label": "normal-projects-only",
+      "result": {
+        "command": "load projects",
+        "data": {
+          "concurrency": 16,
+          "failures": 0,
+          "finished_at": "2026-04-07T06:55:24.867Z",
+          "iterations": 500,
+          "last_result": {
+            "first_host_id": null,
+            "first_project_id": "b71dc7aa-54e0-433c-a6a6-907307cfcb20",
+            "project_count": 201
+          },
+          "latency_ms": {
+            "avg": 19.058,
+            "max": 26.726,
+            "min": 12.2,
+            "p50": 18.693,
+            "p95": 23.341,
+            "p99": 25.319
+          },
+          "ops_per_sec": 731.385,
+          "sample_errors": [],
+          "scenario": "projects",
+          "started_at": "2026-04-07T06:55:24.183Z",
+          "successes": 500,
+          "wall_ms": 683.634,
+          "warmup": 50
+        },
+        "meta": {
+          "account_id": "485200c3-37cb-4e87-b39a-f1532d07120b",
+          "api": "http://localhost:13004"
+        },
+        "ok": true
+      }
+    },
+    {
+      "account_id": "6e22d250-68d4-46fb-9851-80fbeaa2d6b6",
+      "command": [
+        "load",
+        "bootstrap",
+        "--iterations",
+        "500",
+        "--warmup",
+        "50",
+        "--concurrency",
+        "16"
+      ],
+      "label": "heavy-bootstrap-only",
+      "result": {
+        "command": "load bootstrap",
+        "data": {
+          "concurrency": 16,
+          "failures": 0,
+          "finished_at": "2026-04-07T06:55:25.658Z",
+          "iterations": 500,
+          "last_result": {
+            "account_id": "6e22d250-68d4-46fb-9851-80fbeaa2d6b6",
+            "home_bay_id": null,
+            "visible_bay_count": 1
+          },
+          "latency_ms": {
+            "avg": 9.72,
+            "max": 13.879,
+            "min": 5.495,
+            "p50": 9.426,
+            "p95": 12.085,
+            "p99": 13.038
+          },
+          "ops_per_sec": 1453.746,
+          "sample_errors": [],
+          "scenario": "bootstrap",
+          "started_at": "2026-04-07T06:55:25.314Z",
+          "successes": 500,
+          "wall_ms": 343.939,
+          "warmup": 50
+        },
+        "meta": {
+          "account_id": "6e22d250-68d4-46fb-9851-80fbeaa2d6b6",
+          "api": "http://localhost:13004"
+        },
+        "ok": true
+      }
+    },
+    {
+      "account_id": "6e22d250-68d4-46fb-9851-80fbeaa2d6b6",
+      "command": [
+        "load",
+        "projects",
+        "--iterations",
+        "500",
+        "--warmup",
+        "50",
+        "--concurrency",
+        "16",
+        "--limit",
+        "2000"
+      ],
+      "label": "heavy-projects-only",
+      "result": {
+        "command": "load projects",
+        "data": {
+          "concurrency": 16,
+          "failures": 0,
+          "finished_at": "2026-04-07T06:55:28.253Z",
+          "iterations": 500,
+          "last_result": {
+            "first_host_id": "7b83ae66-99cf-400c-9c5f-0c3513542b5d",
+            "first_project_id": "8b7804ad-4c3d-4698-9f4b-52664f9fbb96",
+            "project_count": 1047
+          },
+          "latency_ms": {
+            "avg": 68.015,
+            "max": 80.016,
+            "min": 35.015,
+            "p50": 68.204,
+            "p95": 74.148,
+            "p99": 76.249
+          },
+          "ops_per_sec": 208.147,
+          "sample_errors": [],
+          "scenario": "projects",
+          "started_at": "2026-04-07T06:55:25.851Z",
+          "successes": 500,
+          "wall_ms": 2402.15,
+          "warmup": 50
+        },
+        "meta": {
+          "account_id": "6e22d250-68d4-46fb-9851-80fbeaa2d6b6",
+          "api": "http://localhost:13004"
+        },
+        "ok": true
+      }
+    },
+    {
+      "account_id": "c4ceae54-4707-4041-a935-c07c27581bf6",
+      "command": [
+        "load",
+        "bootstrap",
+        "--iterations",
+        "500",
+        "--warmup",
+        "50",
+        "--concurrency",
+        "16"
+      ],
+      "label": "extreme-bootstrap-only",
+      "result": {
+        "command": "load bootstrap",
+        "data": {
+          "concurrency": 16,
+          "failures": 0,
+          "finished_at": "2026-04-07T06:55:29.421Z",
+          "iterations": 500,
+          "last_result": {
+            "account_id": "c4ceae54-4707-4041-a935-c07c27581bf6",
+            "home_bay_id": null,
+            "visible_bay_count": 1
+          },
+          "latency_ms": {
+            "avg": 11.06,
+            "max": 22.594,
+            "min": 5.018,
+            "p50": 9.801,
+            "p95": 17.17,
+            "p99": 22.402
+          },
+          "ops_per_sec": 1181.583,
+          "sample_errors": [],
+          "scenario": "bootstrap",
+          "started_at": "2026-04-07T06:55:28.998Z",
+          "successes": 500,
+          "wall_ms": 423.161,
+          "warmup": 50
+        },
+        "meta": {
+          "account_id": "c4ceae54-4707-4041-a935-c07c27581bf6",
+          "api": "http://localhost:13004"
+        },
+        "ok": true
+      }
+    },
+    {
+      "account_id": "c4ceae54-4707-4041-a935-c07c27581bf6",
+      "command": [
+        "load",
+        "projects",
+        "--iterations",
+        "500",
+        "--warmup",
+        "50",
+        "--concurrency",
+        "16",
+        "--limit",
+        "12000"
+      ],
+      "label": "extreme-projects-only",
+      "result": {
+        "command": "load projects",
+        "data": {
+          "concurrency": 16,
+          "failures": 0,
+          "finished_at": "2026-04-07T06:55:51.503Z",
+          "iterations": 500,
+          "last_result": {
+            "first_host_id": null,
+            "first_project_id": "e2d11306-1470-4ec1-a516-621550ed89d7",
+            "project_count": 10001
+          },
+          "latency_ms": {
+            "avg": 631.503,
+            "max": 733.339,
+            "min": 287.281,
+            "p50": 634.274,
+            "p95": 686.788,
+            "p99": 708.797
+          },
+          "ops_per_sec": 22.831,
+          "sample_errors": [],
+          "scenario": "projects",
+          "started_at": "2026-04-07T06:55:29.603Z",
+          "successes": 500,
+          "wall_ms": 21900.351,
+          "warmup": 50
+        },
+        "meta": {
+          "account_id": "c4ceae54-4707-4041-a935-c07c27581bf6",
+          "api": "http://localhost:13004"
+        },
+        "ok": true
+      }
+    }
+  ],
+  "personas": [
+    {
+      "bootstrap_p99": 18.494,
+      "persona": "light",
+      "project_count": 21,
+      "projects_ops": 1059.478,
+      "projects_p99": 27.684
+    },
+    {
+      "bootstrap_p99": 18.559,
+      "persona": "normal",
+      "project_count": 201,
+      "projects_ops": 731.385,
+      "projects_p99": 25.319
+    },
+    {
+      "bootstrap_p99": 13.038,
+      "persona": "heavy",
+      "project_count": 1047,
+      "projects_ops": 208.147,
+      "projects_p99": 76.249
+    },
+    {
+      "bootstrap_p99": 22.402,
+      "persona": "extreme",
+      "project_count": 10001,
+      "projects_ops": 22.831,
+      "projects_p99": 708.797
+    }
+  ],
+  "pg_compare": [
+    {
+      "benchmark": "projects-off",
+      "mode": "off",
+      "pg_delta": {
+        "active_time": 1872.307,
+        "blks_hit": 415860.0,
+        "blks_read": 8.0,
+        "session_time": 8362.639,
+        "temp_bytes": 0.0,
+        "temp_files": 0.0,
+        "tup_deleted": 0.0,
+        "tup_fetched": 8124.0,
+        "tup_inserted": 0.0,
+        "tup_returned": 9243784.0,
+        "tup_updated": 0.0,
+        "xact_commit": 420.0,
+        "xact_rollback": 0.0
+      }
+    },
+    {
+      "benchmark": "projects-only",
+      "mode": "only",
+      "pg_delta": {
+        "active_time": 1150.104,
+        "blks_hit": 451559.0,
+        "blks_read": 580.0,
+        "session_time": 10732.433,
+        "temp_bytes": 0.0,
+        "temp_files": 0.0,
+        "tup_deleted": 0.0,
+        "tup_fetched": 673062.0,
+        "tup_inserted": 0.0,
+        "tup_returned": 7151227.0,
+        "tup_updated": 2.0,
+        "xact_commit": 709.0,
+        "xact_rollback": 33.0
+      }
+    },
+    {
+      "benchmark": "my-collaborators-off",
+      "mode": "off",
+      "pg_delta": {
+        "active_time": 2166.641,
+        "blks_hit": 922044.0,
+        "blks_read": 19.0,
+        "session_time": 7065.654,
+        "temp_bytes": 0.0,
+        "temp_files": 0.0,
+        "tup_deleted": 0.0,
+        "tup_fetched": 249737.0,
+        "tup_inserted": 0.0,
+        "tup_returned": 5344113.0,
+        "tup_updated": 0.0,
+        "xact_commit": 465.0,
+        "xact_rollback": 0.0
+      }
+    },
+    {
+      "benchmark": "project-collaborators-off",
+      "mode": "off",
+      "pg_delta": {
+        "active_time": 948.393,
+        "blks_hit": 520696.0,
+        "blks_read": 0.0,
+        "session_time": 7486.577,
+        "temp_bytes": 0.0,
+        "temp_files": 0.0,
+        "tup_deleted": 0.0,
+        "tup_fetched": 164809.0,
+        "tup_inserted": 0.0,
+        "tup_returned": 1106530.0,
+        "tup_updated": 0.0,
+        "xact_commit": 321.0,
+        "xact_rollback": 0.0
+      }
+    },
+    {
+      "benchmark": "my-collaborators-only",
+      "mode": "only",
+      "pg_delta": {
+        "active_time": 219.869,
+        "blks_hit": 35592.0,
+        "blks_read": 38.0,
+        "session_time": 4178.956,
+        "temp_bytes": 0.0,
+        "temp_files": 0.0,
+        "tup_deleted": 2.0,
+        "tup_fetched": 6161.0,
+        "tup_inserted": 2.0,
+        "tup_returned": 321537.0,
+        "tup_updated": 2.0,
+        "xact_commit": 340.0,
+        "xact_rollback": 3.0
+      }
+    },
+    {
+      "benchmark": "project-collaborators-only",
+      "mode": "only",
+      "pg_delta": {
+        "active_time": 761.857,
+        "blks_hit": 419707.0,
+        "blks_read": 34.0,
+        "session_time": 10178.34,
+        "temp_bytes": 0.0,
+        "temp_files": 0.0,
+        "tup_deleted": 0.0,
+        "tup_fetched": 152164.0,
+        "tup_inserted": 0.0,
+        "tup_returned": 424789.0,
+        "tup_updated": 1.0,
+        "xact_commit": 643.0,
+        "xact_rollback": 35.0
+      }
+    }
+  ],
+  "projection_status_after": {
+    "collaborator": {
+      "command": "bay projection status-account-collaborator-index",
+      "data": {
+        "backlog": {
+          "bay_id": "bay-0",
+          "checked_at": "2026-04-07T06:57:22.546Z",
+          "newest_unpublished_event_age_ms": null,
+          "newest_unpublished_event_at": null,
+          "oldest_unpublished_event_age_ms": null,
+          "oldest_unpublished_event_at": null,
+          "unpublished_event_types": {},
+          "unpublished_events": 0
+        },
+        "bay_id": "bay-0",
+        "maintenance": {
+          "batch_limit": 100,
+          "consecutive_failures": 0,
+          "enabled": true,
+          "interval_ms": 5000,
+          "last_error": null,
+          "last_error_at": null,
+          "last_result": {
+            "applied_events": 0,
+            "batches": 1,
+            "bay_id": "bay-0",
+            "deleted_rows": 0,
+            "event_types": {},
+            "feed_events": [],
+            "inserted_rows": 0,
+            "scanned_events": 0
+          },
+          "last_success_at": "2026-04-07T06:57:21.498Z",
+          "last_tick_duration_ms": 10,
+          "last_tick_finished_at": "2026-04-07T06:57:21.498Z",
+          "last_tick_started_at": "2026-04-07T06:57:21.488Z",
+          "max_batches_per_tick": 5,
+          "observed_bay_id": "bay-0",
+          "running": false,
+          "started_at": "2026-04-07T06:57:16.481Z"
+        }
+      },
+      "meta": {
+        "account_id": "6e22d250-68d4-46fb-9851-80fbeaa2d6b6",
+        "api": "http://localhost:13004"
+      },
+      "ok": true
+    },
+    "notification": {
+      "command": "bay projection status-account-notification-index",
+      "data": {
+        "backlog": {
+          "bay_id": "bay-0",
+          "checked_at": "2026-04-07T06:57:22.734Z",
+          "newest_unpublished_event_age_ms": null,
+          "newest_unpublished_event_at": null,
+          "oldest_unpublished_event_age_ms": null,
+          "oldest_unpublished_event_at": null,
+          "unpublished_event_types": {},
+          "unpublished_events": 0
+        },
+        "bay_id": "bay-0",
+        "maintenance": {
+          "batch_limit": 100,
+          "consecutive_failures": 0,
+          "enabled": true,
+          "interval_ms": 5000,
+          "last_error": null,
+          "last_error_at": null,
+          "last_result": {
+            "affected_account_ids": [],
+            "affected_notifications": [],
+            "applied_events": 0,
+            "batches": 1,
+            "bay_id": "bay-0",
+            "deleted_rows": 0,
+            "event_types": {},
+            "inserted_rows": 0,
+            "scanned_events": 0
+          },
+          "last_success_at": "2026-04-07T06:57:21.493Z",
+          "last_tick_duration_ms": 5,
+          "last_tick_finished_at": "2026-04-07T06:57:21.493Z",
+          "last_tick_started_at": "2026-04-07T06:57:21.488Z",
+          "max_batches_per_tick": 5,
+          "observed_bay_id": "bay-0",
+          "running": false,
+          "started_at": "2026-04-07T06:57:16.481Z"
+        }
+      },
+      "meta": {
+        "account_id": "6e22d250-68d4-46fb-9851-80fbeaa2d6b6",
+        "api": "http://localhost:13004"
+      },
+      "ok": true
+    },
+    "project": {
+      "command": "bay projection status-account-project-index",
+      "data": {
+        "backlog": {
+          "bay_id": "bay-0",
+          "checked_at": "2026-04-07T06:57:22.361Z",
+          "newest_unpublished_event_age_ms": null,
+          "newest_unpublished_event_at": null,
+          "oldest_unpublished_event_age_ms": null,
+          "oldest_unpublished_event_at": null,
+          "unpublished_event_types": {},
+          "unpublished_events": 0
+        },
+        "bay_id": "bay-0",
+        "maintenance": {
+          "batch_limit": 100,
+          "consecutive_failures": 0,
+          "enabled": true,
+          "interval_ms": 5000,
+          "last_error": null,
+          "last_error_at": null,
+          "last_result": {
+            "applied_events": 0,
+            "batches": 1,
+            "bay_id": "bay-0",
+            "deleted_rows": 0,
+            "event_types": {},
+            "feed_events": [],
+            "inserted_rows": 0,
+            "scanned_events": 0
+          },
+          "last_success_at": "2026-04-07T06:57:21.490Z",
+          "last_tick_duration_ms": 2,
+          "last_tick_finished_at": "2026-04-07T06:57:21.490Z",
+          "last_tick_started_at": "2026-04-07T06:57:21.488Z",
+          "max_batches_per_tick": 5,
+          "observed_bay_id": "bay-0",
+          "running": false,
+          "started_at": "2026-04-07T06:57:16.480Z"
+        }
+      },
+      "meta": {
+        "account_id": "6e22d250-68d4-46fb-9851-80fbeaa2d6b6",
+        "api": "http://localhost:13004"
+      },
+      "ok": true
+    }
+  },
+  "projection_status_before": {
+    "collaborator": {
+      "command": "bay projection status-account-collaborator-index",
+      "data": {
+        "backlog": {
+          "bay_id": "bay-0",
+          "checked_at": "2026-04-07T06:55:00.678Z",
+          "newest_unpublished_event_age_ms": null,
+          "newest_unpublished_event_at": null,
+          "oldest_unpublished_event_age_ms": null,
+          "oldest_unpublished_event_at": null,
+          "unpublished_event_types": {},
+          "unpublished_events": 0
+        },
+        "bay_id": "bay-0",
+        "maintenance": {
+          "batch_limit": 100,
+          "consecutive_failures": 0,
+          "enabled": true,
+          "interval_ms": 5000,
+          "last_error": null,
+          "last_error_at": null,
+          "last_result": {
+            "applied_events": 3,
+            "batches": 1,
+            "bay_id": "bay-0",
+            "deleted_rows": 3,
+            "event_types": {
+              "project.created": 3
+            },
+            "feed_events": [],
+            "inserted_rows": 3,
+            "scanned_events": 3
+          },
+          "last_success_at": "2026-04-07T06:54:59.513Z",
+          "last_tick_duration_ms": 15,
+          "last_tick_finished_at": "2026-04-07T06:54:59.513Z",
+          "last_tick_started_at": "2026-04-07T06:54:59.498Z",
+          "max_batches_per_tick": 5,
+          "observed_bay_id": "bay-0",
+          "running": false,
+          "started_at": "2026-04-07T06:32:59.457Z"
+        }
+      },
+      "meta": {
+        "account_id": "6e22d250-68d4-46fb-9851-80fbeaa2d6b6",
+        "api": "http://localhost:13004"
+      },
+      "ok": true
+    },
+    "notification": {
+      "command": "bay projection status-account-notification-index",
+      "data": {
+        "backlog": {
+          "bay_id": "bay-0",
+          "checked_at": "2026-04-07T06:55:00.875Z",
+          "newest_unpublished_event_age_ms": null,
+          "newest_unpublished_event_at": null,
+          "oldest_unpublished_event_age_ms": null,
+          "oldest_unpublished_event_at": null,
+          "unpublished_event_types": {},
+          "unpublished_events": 0
+        },
+        "bay_id": "bay-0",
+        "maintenance": {
+          "batch_limit": 100,
+          "consecutive_failures": 0,
+          "enabled": true,
+          "interval_ms": 5000,
+          "last_error": null,
+          "last_error_at": null,
+          "last_result": {
+            "affected_account_ids": [],
+            "affected_notifications": [],
+            "applied_events": 0,
+            "batches": 1,
+            "bay_id": "bay-0",
+            "deleted_rows": 0,
+            "event_types": {},
+            "inserted_rows": 0,
+            "scanned_events": 0
+          },
+          "last_success_at": "2026-04-07T06:54:59.504Z",
+          "last_tick_duration_ms": 5,
+          "last_tick_finished_at": "2026-04-07T06:54:59.504Z",
+          "last_tick_started_at": "2026-04-07T06:54:59.499Z",
+          "max_batches_per_tick": 5,
+          "observed_bay_id": "bay-0",
+          "running": false,
+          "started_at": "2026-04-07T06:32:59.457Z"
+        }
+      },
+      "meta": {
+        "account_id": "6e22d250-68d4-46fb-9851-80fbeaa2d6b6",
+        "api": "http://localhost:13004"
+      },
+      "ok": true
+    },
+    "project": {
+      "command": "bay projection status-account-project-index",
+      "data": {
+        "backlog": {
+          "bay_id": "bay-0",
+          "checked_at": "2026-04-07T06:55:00.476Z",
+          "newest_unpublished_event_age_ms": null,
+          "newest_unpublished_event_at": null,
+          "oldest_unpublished_event_age_ms": null,
+          "oldest_unpublished_event_at": null,
+          "unpublished_event_types": {},
+          "unpublished_events": 0
+        },
+        "bay_id": "bay-0",
+        "maintenance": {
+          "batch_limit": 100,
+          "consecutive_failures": 0,
+          "enabled": true,
+          "interval_ms": 5000,
+          "last_error": null,
+          "last_error_at": null,
+          "last_result": {
+            "applied_events": 3,
+            "batches": 1,
+            "bay_id": "bay-0",
+            "deleted_rows": 3,
+            "event_types": {
+              "project.host_changed": 1,
+              "project.state_changed": 2
+            },
+            "feed_events": [
+              {
+                "account_id": "09bbf250-ce29-4b11-8a6e-4d5462d81e04",
+                "project": {
+                  "deleted": false,
+                  "description": "",
+                  "host_id": null,
+                  "last_active": {},
+                  "last_edited": "2026-04-07T06:54:58.386Z",
+                  "name": null,
+                  "owning_bay_id": "bay-0",
+                  "project_id": "548400c7-632d-456c-bc2a-4b99282f4ef3",
+                  "state": {
+                    "state": "opened",
+                    "time": "2026-04-07T06:54:58.458Z"
+                  },
+                  "theme": null,
+                  "title": "My First Project",
+                  "users": {
+                    "09bbf250-ce29-4b11-8a6e-4d5462d81e04": {
+                      "group": "owner"
+                    }
+                  }
+                },
+                "ts": 1775544899506,
+                "type": "project.upsert"
+              },
+              {
+                "account_id": "09bbf250-ce29-4b11-8a6e-4d5462d81e04",
+                "project": {
+                  "deleted": false,
+                  "description": "",
+                  "host_id": "7b83ae66-99cf-400c-9c5f-0c3513542b5d",
+                  "last_active": {},
+                  "last_edited": "2026-04-07T06:54:58.386Z",
+                  "name": null,
+                  "owning_bay_id": "bay-0",
+                  "project_id": "548400c7-632d-456c-bc2a-4b99282f4ef3",
+                  "state": {
+                    "state": "opened",
+                    "time": "2026-04-07T06:54:58.458Z"
+                  },
+                  "theme": null,
+                  "title": "My First Project",
+                  "users": {
+                    "09bbf250-ce29-4b11-8a6e-4d5462d81e04": {
+                      "group": "owner"
+                    }
+                  }
+                },
+                "ts": 1775544899507,
+                "type": "project.upsert"
+              },
+              {
+                "account_id": "09bbf250-ce29-4b11-8a6e-4d5462d81e04",
+                "project": {
+                  "deleted": false,
+                  "description": "",
+                  "host_id": "7b83ae66-99cf-400c-9c5f-0c3513542b5d",
+                  "last_active": {},
+                  "last_edited": "2026-04-07T06:54:58.386Z",
+                  "name": null,
+                  "owning_bay_id": "bay-0",
+                  "project_id": "548400c7-632d-456c-bc2a-4b99282f4ef3",
+                  "state": {
+                    "state": "starting",
+                    "time": "2026-04-07T06:54:58.658Z"
+                  },
+                  "theme": null,
+                  "title": "My First Project",
+                  "users": {
+                    "09bbf250-ce29-4b11-8a6e-4d5462d81e04": {
+                      "group": "owner"
+                    }
+                  }
+                },
+                "ts": 1775544899508,
+                "type": "project.upsert"
+              }
+            ],
+            "inserted_rows": 3,
+            "scanned_events": 3
+          },
+          "last_success_at": "2026-04-07T06:54:59.510Z",
+          "last_tick_duration_ms": 14,
+          "last_tick_finished_at": "2026-04-07T06:54:59.510Z",
+          "last_tick_started_at": "2026-04-07T06:54:59.496Z",
+          "max_batches_per_tick": 5,
+          "observed_bay_id": "bay-0",
+          "running": false,
+          "started_at": "2026-04-07T06:32:59.456Z"
+        }
+      },
+      "meta": {
+        "account_id": "6e22d250-68d4-46fb-9851-80fbeaa2d6b6",
+        "api": "http://localhost:13004"
+      },
+      "ok": true
+    }
+  },
+  "timestamp": "2026-04-06T23:54:58-07:00"
+}

@@ -8,14 +8,14 @@ import { isEqual } from "lodash";
 import { useEffect, useState } from "react";
 import { useIntl } from "react-intl";
 import { alert_message } from "@cocalc/frontend/alerts";
-import { CSS, useRedux } from "@cocalc/frontend/app-framework";
+import { CSS } from "@cocalc/frontend/app-framework";
 import { Icon, Loading } from "@cocalc/frontend/components";
 import { labels } from "@cocalc/frontend/i18n";
 import { publishProjectDetailInvalidation } from "@cocalc/frontend/project/use-project-field";
+import { useProjectSettings } from "@cocalc/frontend/project/use-project-settings";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import * as misc from "@cocalc/util/misc";
 import { PROJECT_UPGRADES } from "@cocalc/util/schema";
-import type { ProjectSettings } from "../types";
 import QuotaRow from "./quota-row";
 import type { QuotaParams } from "./types";
 
@@ -31,12 +31,7 @@ export default function AdminQuotas({ project_id, style }: Props) {
   const projectLabel = intl.formatMessage(labels.project);
   const projectLabelLower = projectLabel.toLowerCase();
 
-  const projectSettings: ProjectSettings | undefined = useRedux([
-    "projects",
-    "project_map",
-    project_id,
-    "settings",
-  ]);
+  const { settings: projectSettings } = useProjectSettings(project_id);
   const [editing, setEditing] = useState<boolean>(false);
   const [quotaState, setQuotaState] = useState<Partial<QuotaParams> | null>(
     null,
@@ -79,7 +74,7 @@ export default function AdminQuotas({ project_id, style }: Props) {
       });
       publishProjectDetailInvalidation({
         project_id,
-        fields: ["run_quota"],
+        fields: ["run_quota", "settings"],
       });
       alert_message({
         type: "success",

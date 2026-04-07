@@ -7,6 +7,7 @@ import { useIntl } from "react-intl";
 import { redux, useRedux } from "@cocalc/frontend/app-framework";
 import { useMemo } from "react";
 import ScrollableList from "@cocalc/frontend/components/scrollable-list";
+import { useProjectRunQuotaPrefetch } from "@cocalc/frontend/project/use-project-run-quota";
 import { trunc_middle } from "@cocalc/util/misc";
 import type { UserMap } from "../../todo-types";
 import type { CourseActions } from "../actions";
@@ -42,6 +43,16 @@ export function StudentListForHandout({
     name,
     "active_student_sort",
   );
+  const studentProjectIds = useMemo(
+    () =>
+      students
+        .valueSeq()
+        .map((student) => student.get("project_id"))
+        .filter(Boolean)
+        .toArray(),
+    [students],
+  );
+  const runQuotaVersion = useProjectRunQuotaPrefetch(studentProjectIds);
   const student_list = useMemo(() => {
     const v0 = util.parse_students(students, user_map, redux, intl);
 
@@ -55,7 +66,7 @@ export function StudentListForHandout({
     v1.sort(util.pick_student_sorter(active_student_sort.toJS()));
     const student_list: string[] = v1.map((x) => x.student_id);
     return student_list;
-  }, [students, user_map, active_student_sort]);
+  }, [students, user_map, active_student_sort, runQuotaVersion]);
 
   function get_store(): CourseStore {
     const store = redux.getStore(name);

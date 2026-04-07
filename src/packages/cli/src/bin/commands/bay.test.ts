@@ -65,6 +65,73 @@ test("bay show filters one bay from the hub list", async () => {
   assert.equal(captured?.bay_id, "bay-0");
 });
 
+test("bay load calls the hub bay-load snapshot API", async () => {
+  let captured: any;
+  let callOpts: any;
+  const program = new Command();
+  registerBayCommand(program, {
+    withContext: async (_command, _label, fn) => {
+      const ctx = {
+        hub: {
+          system: {
+            getBayLoad: async (opts: any) => {
+              callOpts = opts;
+              return {
+                bay_id: "bay-0",
+                label: "bay-0",
+                region: null,
+                deployment_mode: "single-bay",
+                role: "combined",
+                is_default: true,
+                checked_at: "2026-04-07T07:00:00.000Z",
+                browser_control: {
+                  active_accounts: 2,
+                  active_browsers: 3,
+                  active_connections: 5,
+                },
+                hosts: { total_hosts: 4 },
+                parallel_ops: {
+                  worker_count: 2,
+                  queued_total: 1,
+                  running_total: 3,
+                  stale_running_total: 0,
+                  hotspots: [],
+                },
+                projections: {
+                  account_project_index: {
+                    unpublished_events: 0,
+                    oldest_unpublished_event_age_ms: null,
+                    maintenance_running: false,
+                    last_success_at: "2026-04-07T07:00:00.000Z",
+                  },
+                  account_collaborator_index: {
+                    unpublished_events: 0,
+                    oldest_unpublished_event_age_ms: null,
+                    maintenance_running: false,
+                    last_success_at: "2026-04-07T07:00:00.000Z",
+                  },
+                  account_notification_index: {
+                    unpublished_events: 0,
+                    oldest_unpublished_event_age_ms: null,
+                    maintenance_running: false,
+                    last_success_at: "2026-04-07T07:00:00.000Z",
+                  },
+                },
+              };
+            },
+          },
+        },
+      };
+      captured = await fn(ctx);
+    },
+  } as any);
+
+  await program.parseAsync(["node", "test", "bay", "load", "bay-0"]);
+
+  assert.deepEqual(callOpts, { bay_id: "bay-0" });
+  assert.equal(captured?.bay_id, "bay-0");
+});
+
 test("bay backfill defaults to a dry run", async () => {
   let captured: any;
   const program = new Command();

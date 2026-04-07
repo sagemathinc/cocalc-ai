@@ -12,6 +12,7 @@ import { AppRedux, useRedux } from "@cocalc/frontend/app-framework";
 import { Gap, Icon, Tip } from "@cocalc/frontend/components";
 import ScrollableList from "@cocalc/frontend/components/scrollable-list";
 import { course, labels } from "@cocalc/frontend/i18n";
+import { useProjectRunQuotaPrefetch } from "@cocalc/frontend/project/use-project-run-quota";
 import { ProjectMap, UserMap } from "@cocalc/frontend/todo-types";
 import { search_match, search_split } from "@cocalc/util/misc";
 import type { CourseActions } from "../actions";
@@ -102,6 +103,16 @@ export function StudentsPanel({
     }[]
   >([]);
   const [show_deleted, set_show_deleted] = useState<boolean>(false);
+  const studentProjectIds = useMemo(
+    () =>
+      students
+        .valueSeq()
+        .map((student) => student.get("project_id"))
+        .filter(Boolean)
+        .toArray(),
+    [students],
+  );
+  const runQuotaVersion = useProjectRunQuotaPrefetch(studentProjectIds);
 
   // this updates a JS list from the ever changing user_map immutableMap
   useEffect(() => {
@@ -109,7 +120,7 @@ export function StudentsPanel({
     if (!isEqual(v, students_unordered)) {
       set_students_unordered(v);
     }
-  }, [students, user_map]);
+  }, [students, user_map, runQuotaVersion]);
 
   // student_list not a list, but has one, plus some extra info.
   const student_list: StudentList = useMemo(() => {

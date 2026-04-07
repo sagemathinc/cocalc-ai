@@ -8,7 +8,6 @@ import { debounce } from "lodash";
 import { FormattedMessage, useIntl } from "react-intl";
 
 import {
-  redux,
   useActions,
   useState,
   useStore,
@@ -22,6 +21,7 @@ import {
 } from "@cocalc/frontend/components";
 import ShowError from "@cocalc/frontend/components/error";
 import { course } from "@cocalc/frontend/i18n";
+import { useProjectRunQuota } from "@cocalc/frontend/project/use-project-run-quota";
 import { contains_url } from "@cocalc/util/misc";
 import { CourseActions } from "../actions";
 import { CourseSettingsRecord, CourseStore } from "../store";
@@ -64,7 +64,6 @@ export function ConfigurationPanel({ name, project_id, settings }: Props) {
           <br />
           <EmailInvitation
             actions={actions}
-            redux={redux}
             project_id={project_id}
             name={name}
           />
@@ -172,16 +171,15 @@ export function TitleAndDescription({ actions, settings, name }) {
   );
 }
 
-export function EmailInvitation({ actions, redux, project_id, name }) {
+export function EmailInvitation({ actions, project_id, name }) {
   const intl = useIntl();
   const [error, setError] = useState<string>("");
   const store = useStore<CourseStore>({ name });
+  const { runQuota } = useProjectRunQuota(project_id);
+  const allow_urls = !!(runQuota?.network || runQuota?.member_host);
 
   const check_email_body = debounce(
     (value) => {
-      const allow_urls: boolean = redux
-        .getStore("projects")
-        .allow_urls_in_emails(project_id);
       if (!allow_urls && contains_url(value)) {
         setError(
           intl.formatMessage({

@@ -6,6 +6,7 @@
 import { delay } from "awaiting";
 import { EventEmitter } from "events";
 import { redux } from "@cocalc/frontend/app-framework";
+import { ensureProjectCourseInfo } from "@cocalc/frontend/project/use-project-course";
 import {
   LanguageModel,
   getSystemPrompt,
@@ -82,6 +83,9 @@ export class LLMClient {
       }
     }
 
+    if (project_id != null) {
+      await ensureProjectCourseInfo(project_id).catch(() => null);
+    }
     if (!redux.getStore("projects").hasLanguageModelEnabled(project_id, tag)) {
       throw new Error(
         `Language model support is not currently enabled ${

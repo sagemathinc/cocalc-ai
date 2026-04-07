@@ -79,7 +79,9 @@ import type {
   ProjectRegion,
   ProjectCreated,
   ProjectEnv,
+  ProjectCourseInfo,
   ProjectRootfsConfig,
+  ProjectQuotaSettings,
   ProjectSnapshotSchedule,
   ProjectBackupSchedule,
   ProjectRunQuota,
@@ -606,7 +608,7 @@ export async function setQuotas(opts: {
   await project?.setAllQuotas();
   await publishProjectDetailInvalidationBestEffort({
     project_id: opts.project_id,
-    fields: ["run_quota"],
+    fields: ["run_quota", "settings"],
   });
 }
 
@@ -947,6 +949,36 @@ export async function getProjectRunQuota({
     [project_id],
   );
   return rows[0]?.run_quota ?? null;
+}
+
+export async function getProjectSettings({
+  account_id,
+  project_id,
+}: {
+  account_id: string;
+  project_id: string;
+}): Promise<ProjectQuotaSettings> {
+  await assertProjectReadAccessOrAdmin({ account_id, project_id });
+  const { rows } = await getPool().query<{ settings: ProjectQuotaSettings }>(
+    "SELECT settings FROM projects WHERE project_id = $1",
+    [project_id],
+  );
+  return rows[0]?.settings ?? null;
+}
+
+export async function getProjectCourseInfo({
+  account_id,
+  project_id,
+}: {
+  account_id: string;
+  project_id: string;
+}): Promise<ProjectCourseInfo> {
+  await assertProjectReadAccessOrAdmin({ account_id, project_id });
+  const { rows } = await getPool().query<{ course: ProjectCourseInfo }>(
+    "SELECT course FROM projects WHERE project_id = $1",
+    [project_id],
+  );
+  return rows[0]?.course ?? null;
 }
 
 export async function getStorageOverview({

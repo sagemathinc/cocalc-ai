@@ -19,7 +19,7 @@ import {
   Title,
 } from "@cocalc/frontend/components";
 import { Alert } from "antd";
-import { getStudentProjectFunctionality } from "@cocalc/frontend/course";
+import { useStudentProjectFunctionality } from "@cocalc/frontend/course";
 import { labels } from "@cocalc/frontend/i18n";
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import { ICON_USERS, ROOT_STYLE } from "../servers/consts";
@@ -41,7 +41,7 @@ export function ProjectCollaboratorsContent({
   const accountCustomize = useTypedRedux("account", "customize")?.toJS() as
     | { disableCollaborators?: boolean }
     | undefined;
-  const student = getStudentProjectFunctionality(project_id);
+  const student = useStudentProjectFunctionality(project_id);
   const { project, group } = useProject(project_id);
   const disableCollaborators =
     accountCustomize?.disableCollaborators || student.disableCollaborators;

@@ -1,5 +1,7 @@
 import { useMemo, useState } from "react";
-import { useRedux, useTypedRedux } from "@cocalc/frontend/app-framework";
+import { useTypedRedux } from "@cocalc/frontend/app-framework";
+import { useProjectCourseInfo } from "@cocalc/frontend/project/use-project-course";
+import type { CourseInfo } from "@cocalc/util/db-schema/projects";
 import type { PurchaseInfo } from "@cocalc/util/purchases/quota/types";
 import dayjs from "dayjs";
 import PayNow from "./pay-now";
@@ -15,10 +17,8 @@ export default function StudentPayUpgrade({
   style?;
 }) {
   const [open, setOpen] = useState<boolean>(false);
-  const course = useRedux(
-    ["project_map", project_id, "course"],
-    "projects",
-  )?.toJS();
+  const { course: courseInfo } = useProjectCourseInfo(project_id);
+  const course = useMemo(() => courseInfo?.toJS(), [courseInfo]);
   const account_id = useTypedRedux("account", "account_id");
   const email_address = useTypedRedux("account", "email_address");
 
@@ -94,12 +94,16 @@ export default function StudentPayUpgrade({
       );
     }
   } else {
+    if (course == null) {
+      return null;
+    }
+    const instructorCourse = course as CourseInfo;
     body = (
       <InstructorBanner
         when={when}
         purchaseInfo={purchaseInfo}
         paid={paid}
-        course={course}
+        course={instructorCourse}
       />
     );
   }

@@ -5,6 +5,8 @@
 
 import { redux, useEffect, useState } from "@cocalc/frontend/app-framework";
 import { getServerStatsCached } from "@cocalc/frontend/lib/server-stats";
+import { ensureProjectCourseInfo } from "@cocalc/frontend/project/use-project-course";
+import { ensureProjectRunQuota } from "@cocalc/frontend/project/use-project-run-quota";
 
 /*
 Client-side throttling of running projects in blocked countries.  This may or may not be the
@@ -71,12 +73,13 @@ export async function allow_project_to_run(
     return true;
   }
 
-  if (project.get("course") != null) {
+  if ((await ensureProjectCourseInfo(project_id).catch(() => null)) != null) {
     log("don't mess with students in course");
     return true;
   }
 
-  if (project.getIn(["settings", "member_host"])) {
+  const runQuota = await ensureProjectRunQuota(project_id).catch(() => null);
+  if (runQuota?.member_host) {
     log("has admin upgrade of member hosting.");
     return true;
   }

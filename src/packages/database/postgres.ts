@@ -255,7 +255,6 @@ import type {
   ImportPatchesOpts,
   PostgreSQLMethods,
   PostgreSQLOptions,
-  ProjectAndUserTrackerOptions,
   RemoveBlobTtlsOpts,
   SaveBlobOpts,
   SyncTableOptions,
@@ -269,12 +268,10 @@ import {
   _notification,
   _stop_listening,
   changefeed,
-  project_and_user_tracker,
   synctable,
 } from "./synctable/methods-impl";
 import type { Changes } from "./postgres/changefeed/changefeed";
 import type { Stats } from "./postgres/stats/stats";
-import type { ProjectAndUserTracker } from "./postgres/project/project-and-user-tracker";
 import type { SyncTable } from "./synctable/synctable";
 import * as userQuery from "./user-query/methods-impl";
 
@@ -284,9 +281,6 @@ type NotificationContext = Parameters<typeof _notification>[0];
 type StopListeningContext = Parameters<typeof _stop_listening>[0];
 type SynctableContext = Parameters<typeof synctable>[0];
 type ChangefeedContext = Parameters<typeof changefeed>[0];
-type ProjectAndUserTrackerContext = Parameters<
-  typeof project_and_user_tracker
->[0];
 type ProjectControl = EventEmitter & {
   start: () => Promise<void>;
   stop: () => Promise<void>;
@@ -440,8 +434,6 @@ export class PostgreSQL extends EventEmitter implements PostgreSQLMethods {
 
   // Notification
   _listening?: Record<string, number>;
-  _project_and_user_tracker?: ProjectAndUserTracker;
-  _project_and_user_tracker_cbs?: Array<CB<ProjectAndUserTracker>>;
 
   // Status
   // External integrations
@@ -855,15 +847,6 @@ export class PostgreSQL extends EventEmitter implements PostgreSQLMethods {
 
   changefeed(opts: ChangefeedOptions): Changes | undefined {
     return changefeed(this as unknown as ChangefeedContext, opts);
-  }
-
-  async project_and_user_tracker(
-    opts: ProjectAndUserTrackerOptions,
-  ): Promise<void> {
-    return project_and_user_tracker(
-      this as unknown as ProjectAndUserTrackerContext,
-      opts,
-    );
   }
 
   cancel_user_queries(

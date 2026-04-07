@@ -39,6 +39,7 @@ import { Avatar } from "../account/avatar/avatar";
 import { ProjectInviteTokens } from "./project-invite-tokens";
 import { alert_message } from "../alerts";
 import { useStudentProjectFunctionality } from "@cocalc/frontend/course";
+import { useProjectRunQuota } from "@cocalc/frontend/project/use-project-run-quota";
 import track from "@cocalc/frontend/user-tracking";
 
 interface RegisteredUser {
@@ -128,10 +129,11 @@ export const AddCollaborators: React.FC<Props> = ({
   const isMountedRef = useIsMountedRef();
 
   const project_actions = useActions("projects");
+  const { runQuota } = useProjectRunQuota(project_id);
 
   const allow_urls = useMemo(
-    () => redux.getStore("projects").allow_urls_in_emails(project_id),
-    [project_id],
+    () => !!(runQuota?.network || runQuota?.member_host),
+    [runQuota],
   );
 
   function reset(): void {

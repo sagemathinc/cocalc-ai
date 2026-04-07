@@ -24,6 +24,7 @@ always maintained, rather than just being deleted.
 
 import { assertLocalProjectCollaborator } from "@cocalc/server/conat/project-local-access";
 import getPool, { PoolClient } from "@cocalc/database/pool";
+import { publishProjectDetailInvalidationBestEffort } from "@cocalc/server/account/project-detail-feed";
 import { isEqual } from "lodash";
 import type { CourseInfo } from "@cocalc/util/db-schema/projects";
 import { compute_cost } from "@cocalc/util/purchases/quota/compute-cost";
@@ -91,5 +92,9 @@ export default async function setCourseInfo({
     course,
     project_id,
   ]);
+  await publishProjectDetailInvalidationBestEffort({
+    project_id,
+    fields: ["course"],
+  });
   return { course };
 }

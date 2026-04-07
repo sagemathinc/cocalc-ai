@@ -4,25 +4,21 @@
  */
 
 import { List, Map, Set } from "immutable";
-import { fromPairs } from "lodash";
 import LRU from "lru-cache";
 import { redux, Store, TypedMap } from "@cocalc/frontend/app-framework";
 import { StudentProjectFunctionality } from "@cocalc/frontend/course/configuration/customize-student-project-functionality";
+import { getCachedProjectCourseInfo } from "@cocalc/frontend/project/use-project-course";
 import { WebsocketState } from "@cocalc/frontend/project/websocket/websocket-state";
+import { getCachedProjectRunQuota } from "@cocalc/frontend/project/use-project-run-quota";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import type { ProjectRunQuota } from "@cocalc/conat/hub/api/projects";
 import {
   LANGUAGE_MODEL_SERVICES,
   LLMServiceName,
   LLMServicesAvailable,
 } from "@cocalc/util/db-schema/llm-utils";
-import {
-  cmp,
-  coerce_codomain_to_numbers,
-  copy,
-  is_valid_uuid_string,
-  months_before,
-} from "@cocalc/util/misc";
-import { DEFAULT_QUOTAS, PROJECT_UPGRADES } from "@cocalc/util/schema";
+import { cmp, is_valid_uuid_string, months_before } from "@cocalc/util/misc";
+import { DEFAULT_QUOTAS } from "@cocalc/util/schema";
 import { Upgrades } from "@cocalc/util/upgrades/types";
 import { lite } from "@cocalc/frontend/lite";
 
@@ -33,9 +29,29 @@ const aiEnabledCache = new LRU<string, boolean>({
   ttl: 1000 * 60,
 });
 
-const ZERO_QUOTAS = fromPairs(
-  Object.keys(PROJECT_UPGRADES.params).map((x) => [x, 0]),
-);
+function numberOrUndefined(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value)
+    ? value
+    : undefined;
+}
+
+function upgradesFromRunQuota(
+  runQuota?: ProjectRunQuota | null,
+): Upgrades | undefined {
+  if (runQuota == null) {
+    return;
+  }
+  return {
+    disk_quota: numberOrUndefined(runQuota.disk_quota),
+    cores: numberOrUndefined(runQuota.cpu_limit),
+    memory: numberOrUndefined(runQuota.memory_limit),
+    memory_request: numberOrUndefined(runQuota.memory_request),
+    mintime: numberOrUndefined(runQuota.idle_timeout),
+    network: runQuota.network ? 1 : 0,
+    member_host: !!runQuota.member_host,
+    always_running: !!runQuota.always_running,
+  };
+}
 
 // TODO fix this "Project" type, shouldn't this be ./project/settings/types::Project ?
 export type Project = Map<string, any>;
@@ -154,6 +170,13 @@ export class ProjectsStore extends Store<ProjectsState> {
   // Info about a student project that is part of a
   // course (will be undefined if not a student project)
   public get_course_info(project_id: string): Map<string, any> | undefined {
+    const cached = getCachedProjectCourseInfo(project_id);
+    if (cached === null) {
+      return undefined;
+    }
+    if (cached !== undefined) {
+      return cached;
+    }
     return this.getIn(["project_map", project_id, "course"]);
   }
 
@@ -333,12 +356,7 @@ export class ProjectsStore extends Store<ProjectsState> {
 
   // in seconds
   public get_idle_timeout(project_id: string): number {
-    // mintime = time in seconds project can stay unused
-    // (0 is probably wrong but better than this being "undefined".)
-    let mintime =
-      this.getIn(["project_map", project_id, "settings", "mintime"]) ?? 0;
-
-    return 1000 * mintime;
+    return 1000 * (this.get_total_project_quotas(project_id)?.mintime ?? 0);
   }
 
   // The timestap (in server time) when this project will
@@ -358,11 +376,28 @@ export class ProjectsStore extends Store<ProjectsState> {
   // Get the total quotas for the given project, including free base
   // values and project settings contribution.
   public get_total_project_quotas(project_id: string): undefined | Upgrades {
-    const base_values =
-      this.getIn(["project_map", project_id, "settings"])?.toJS() ??
-      copy(ZERO_QUOTAS);
-    coerce_codomain_to_numbers(base_values);
-    return base_values;
+    const fromRunQuota = upgradesFromRunQuota(
+      getCachedProjectRunQuota(project_id),
+    );
+    if (fromRunQuota != null) {
+      return fromRunQuota;
+    }
+
+    const legacySettings = this.getIn(["project_map", project_id, "settings"]);
+    if (legacySettings == null) {
+      return;
+    }
+    return {
+      disk_quota: numberOrUndefined(legacySettings.get("disk_quota")),
+      cores: numberOrUndefined(legacySettings.get("cores")),
+      cpu_shares: numberOrUndefined(legacySettings.get("cpu_shares")),
+      memory: numberOrUndefined(legacySettings.get("memory")),
+      memory_request: numberOrUndefined(legacySettings.get("memory_request")),
+      mintime: numberOrUndefined(legacySettings.get("mintime")),
+      network: numberOrUndefined(legacySettings.get("network")),
+      member_host: !!legacySettings.get("member_host"),
+      always_running: !!legacySettings.get("always_running"),
+    };
   }
 
   // rough distinction between different types of projects
@@ -384,11 +419,7 @@ export class ProjectsStore extends Store<ProjectsState> {
   }
 
   public is_always_running(project_id: string): boolean {
-    // always_running can only be in settings (used by admins).
-    if (this.getIn(["project_map", project_id, "settings", "always_running"])) {
-      return true;
-    }
-    return false;
+    return !!this.get_total_project_quotas(project_id)?.always_running;
   }
 
   // we allow URLs in projects, which have member hosting or internet access
@@ -452,14 +483,9 @@ export class ProjectsStore extends Store<ProjectsState> {
     if (!is_valid_uuid_string(project_id)) {
       throw Error(`${project_id} must be a UUID`);
     }
-    return (
-      this.getIn([
-        "project_map",
-        project_id,
-        "course",
-        "student_project_functionality",
-      ])?.toJS() ?? {}
-    );
+    return this.get_course_info(project_id)
+      ?.get("student_project_functionality")
+      ?.toJS();
   }
 
   clearOpenAICache() {
@@ -557,12 +583,9 @@ export class ProjectsStore extends Store<ProjectsState> {
 
     // Finally, if we're in a specific project, we check if some/all are disabled for students
     if (project_id !== "global") {
-      const studentProjectSettings = this.getIn([
-        "project_map",
-        project_id,
-        "course",
+      const studentProjectSettings = this.get_course_info(project_id)?.get(
         "student_project_functionality",
-      ]);
+      );
 
       if (studentProjectSettings?.get("disableChatGPT")) {
         return false;

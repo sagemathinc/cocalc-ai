@@ -3,15 +3,16 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import React, { useMemo } from "react";
+import React from "react";
 import { useIntl } from "react-intl";
 
 import { Col, Row } from "@cocalc/frontend/antd-bootstrap";
 import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components";
-import { getStudentProjectFunctionality } from "@cocalc/frontend/course";
+import { useStudentProjectFunctionality } from "@cocalc/frontend/course";
 import { labels } from "@cocalc/frontend/i18n";
 import { Customer, ProjectMap } from "@cocalc/frontend/todo-types";
+import { useProjectCourseInfo } from "../use-project-course";
 import {
   KUCALC_COCALC_COM,
   KUCALC_ON_PREMISES,
@@ -55,22 +56,19 @@ export const Body: React.FC<ReactProps> = React.memo((props: ReactProps) => {
   const projectLabel = intl.formatMessage(labels.project);
   const kucalc = useTypedRedux("customize", "kucalc");
   const runQuota = useRunQuota(project_id, null);
+  const { course } = useProjectCourseInfo(project_id);
   const datastore = useTypedRedux("customize", "datastore");
   const commercial = useTypedRedux("customize", "commercial");
 
   // get the description of the share, in case the project is being shared
   const id = project_id;
 
-  const student = getStudentProjectFunctionality(project_id);
+  const student = useStudentProjectFunctionality(project_id);
   const showDatastore =
     kucalc === KUCALC_COCALC_COM ||
     (kucalc === KUCALC_ON_PREMISES && datastore);
 
-  // this very rarely changes, so just call this once
-  const isPaidStudentPayProject = useMemo(
-    () => redux.getProjectsStore().isPaidStudentPayProject(project_id),
-    [project_id],
-  );
+  const isPaidStudentPayProject = !!course?.get("pay") && !!course.get("paid");
   const showNonMemberWarning =
     !isPaidStudentPayProject &&
     commercial &&

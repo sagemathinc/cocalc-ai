@@ -29,6 +29,7 @@ export const system = {
   ping: noAuth,
   terminate: authFirst,
   listBays: authFirst,
+  getBayLoad: authFirst,
   getAccountBay: authFirstRequireAccount,
   getProjectBay: authFirstRequireAccount,
   getHostBay: authFirstRequireAccount,
@@ -267,6 +268,52 @@ export interface BayInfo {
   deployment_mode: "single-bay";
   role: "combined";
   is_default: boolean;
+}
+
+export interface BayLoadBrowserControlStatus {
+  active_accounts: number;
+  active_browsers: number;
+  active_connections: number;
+}
+
+export interface BayLoadHostsStatus {
+  total_hosts: number;
+}
+
+export interface BayLoadParallelOpsHotspot {
+  worker_kind: string;
+  category: "lro" | "cloud-work" | "host-local";
+  queued_count: number;
+  running_count: number;
+  stale_running_count: number | null;
+  worker_instances: number;
+}
+
+export interface BayLoadParallelOpsStatus {
+  worker_count: number;
+  queued_total: number;
+  running_total: number;
+  stale_running_total: number;
+  hotspots: BayLoadParallelOpsHotspot[];
+}
+
+export interface BayLoadProjectionStatus {
+  unpublished_events: number;
+  oldest_unpublished_event_age_ms: number | null;
+  maintenance_running: boolean;
+  last_success_at: string | null;
+}
+
+export interface BayLoadInfo extends BayInfo {
+  checked_at: string;
+  browser_control: BayLoadBrowserControlStatus;
+  hosts: BayLoadHostsStatus;
+  parallel_ops: BayLoadParallelOpsStatus;
+  projections: {
+    account_project_index: BayLoadProjectionStatus;
+    account_collaborator_index: BayLoadProjectionStatus;
+    account_notification_index: BayLoadProjectionStatus;
+  };
 }
 
 export interface AccountBayLocation {
@@ -532,6 +579,11 @@ export interface System {
   terminate: (service: "database" | "api") => Promise<void>;
 
   listBays: (opts?: { account_id?: string }) => Promise<BayInfo[]>;
+
+  getBayLoad: (opts?: {
+    account_id?: string;
+    bay_id?: string;
+  }) => Promise<BayLoadInfo>;
 
   getAccountBay: (opts?: {
     account_id?: string;

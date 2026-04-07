@@ -3,6 +3,7 @@ The main hub express app.
 */
 
 import cookieParser from "cookie-parser";
+import compression from "compression";
 import express from "express";
 import { existsSync } from "fs";
 import ms from "ms";
@@ -53,8 +54,9 @@ const logger = getLogger("hub:servers:express-app");
 
 const PYTHON_API_PATH = join(root, "python", "cocalc-api", "site");
 
-// NOTE: we are not using compression because that interferes with streaming file download,
-// and could be generally confusing.
+// NOTE: do not enable compression globally here, since that can interfere with
+// streaming download/proxy behavior. Restrict compression to the static/public
+// asset routes that benefit from it.
 
 // Used for longterm caching of files. This should be in units of seconds.
 const MAX_AGE = Math.round(ms("10 days") / 1000);
@@ -116,6 +118,8 @@ interface Options {
   key?: string;
   projectProxyHandlersPromise?;
 }
+
+const staticCompression = compression({ threshold: 0 });
 
 function applyBaselineSecurityHeaders(_req, res, next): void {
   // Conservative defaults that improve security without imposing CSP or frame
@@ -225,18 +229,24 @@ export default async function init(opts: Options): Promise<{
   // Static assets that are used by the webapp, the landing page, etc.
   router.use(
     "/favicon.ico",
+    staticCompression,
     express.static(join(WEBAPP_PATH, "favicon.ico"), {
       setHeaders: cacheLongTerm,
     }),
   );
   router.use(
     "/webapp",
+    staticCompression,
     express.static(WEBAPP_PATH, { setHeaders: cacheLongTerm }),
   );
 
   // This is @cocalc/cdn – cocalc serves everything it might get from a CDN on its own.
   // This is defined in the @cocalc/cdn package.  See the comments in packages/cdn.
-  router.use("/cdn", express.static(CDN_PATH, { setHeaders: cacheLongTerm }));
+  router.use(
+    "/cdn",
+    staticCompression,
+    express.static(CDN_PATH, { setHeaders: cacheLongTerm }),
+  );
 
   // Redirect requests to /app to /static/app.html.
   // TODO: this will likely go away when rewrite the landing pages to not
@@ -253,7 +263,7 @@ export default async function init(opts: Options): Promise<{
     res.redirect(target);
   });
 
-  router.use("/api/python", express.static(PYTHON_API_PATH));
+  router.use("/api/python", staticCompression, express.static(PYTHON_API_PATH));
 
   initBlobs(router);
   initBlobUpload(router);
@@ -441,6 +451,7 @@ async function initStatic(router) {
     staticLogger.info("serving public assets", { publicAssetsPath });
     router.use(
       "/public",
+      staticCompression,
       express.static(publicAssetsPath, { setHeaders: cacheLongTerm }),
     );
   }
@@ -472,17 +483,23 @@ async function initStatic(router) {
     );
     const webpackDevMiddleware = lazyRequire("webpack-dev-middleware") as any;
     const webpackHotMiddleware = lazyRequire("webpack-hot-middleware") as any;
-    router.use("/static", webpackDevMiddleware(compiler, {}));
+    router.use(
+      "/static",
+      staticCompression,
+      webpackDevMiddleware(compiler, {}),
+    );
     router.use("/static", webpackHotMiddleware(compiler, {}));
   } else {
     router.use(
       "/static/app.html",
+      staticCompression,
       express.static(join(staticPath, "app.html"), {
         setHeaders: cacheShortTerm,
       }),
     );
     router.use(
       "/static/embed.html",
+      staticCompression,
       express.static(join(staticPath, "embed.html"), {
         setHeaders: cacheShortTerm,
       }),
@@ -496,42 +513,49 @@ async function initStatic(router) {
         "/static/public-viewer-slides.html",
         "/static/public-viewer-chat.html",
       ],
+      staticCompression,
       express.static(staticPath, {
         setHeaders: setPublicViewerShellHeaders,
       }),
     );
     router.use(
       "/static/public-home.html",
+      staticCompression,
       express.static(join(staticPath, "public-home.html"), {
         setHeaders: cacheShortTerm,
       }),
     );
     router.use(
       "/static/public-auth.html",
+      staticCompression,
       express.static(join(staticPath, "public-auth.html"), {
         setHeaders: cacheShortTerm,
       }),
     );
     router.use(
       "/static/public-support.html",
+      staticCompression,
       express.static(join(staticPath, "public-support.html"), {
         setHeaders: cacheShortTerm,
       }),
     );
     router.use(
       "/static/public-content.html",
+      staticCompression,
       express.static(join(staticPath, "public-content.html"), {
         setHeaders: cacheShortTerm,
       }),
     );
     router.use(
       "/static/public-lang.html",
+      staticCompression,
       express.static(join(staticPath, "public-lang.html"), {
         setHeaders: cacheShortTerm,
       }),
     );
     router.use(
       "/static",
+      staticCompression,
       express.static(staticPath, { setHeaders: cacheLongTerm }),
     );
   }

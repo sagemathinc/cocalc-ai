@@ -11,23 +11,12 @@ import type { CB } from "@cocalc/util/types/callback";
 import { initEphemeralDatabase } from "@cocalc/database/pool";
 import { testCleanup } from "@cocalc/database/test-utils";
 import type { ChangefeedSelect, PostgreSQL } from "../postgres/types";
-import type { ProjectAndUserTracker } from "../postgres/project/project-and-user-tracker";
 import { PostgreSQL as PostgreSQLClass } from "../postgres";
-
-let projectTrackerInit: jest.Mock;
-let projectTrackerOnce: jest.Mock;
 
 jest.setTimeout(15 * 60 * 1000);
 
 jest.mock("../postgres/changefeed/changefeed", () => ({
   Changes: jest.fn(),
-}));
-
-jest.mock("../postgres/project/project-and-user-tracker", () => ({
-  ProjectAndUserTracker: jest.fn().mockImplementation(() => ({
-    init: projectTrackerInit,
-    once: projectTrackerOnce,
-  })),
 }));
 
 describe("PostgreSQL Synctable Methods", () => {
@@ -42,8 +31,6 @@ describe("PostgreSQL Synctable Methods", () => {
     ) => void;
     _notification: (mesg: { channel: string; payload: string }) => void;
     _clear_listening_state: () => void;
-    _project_and_user_tracker?: ProjectAndUserTracker;
-    _project_and_user_tracker_cbs?: Array<CB<ProjectAndUserTracker>>;
   };
 
   let db: SynctablePostgreSQL;
@@ -56,8 +43,6 @@ describe("PostgreSQL Synctable Methods", () => {
     // Create a PostgreSQL instance for testing
     // Connect to the ephemeral database so method wrappers are available
     db = new PostgreSQLClass({ timeout_ms: 0 }) as SynctablePostgreSQL;
-    projectTrackerInit = jest.fn().mockResolvedValue(undefined);
-    projectTrackerOnce = jest.fn();
   });
 
   afterEach(() => {
@@ -99,10 +84,6 @@ describe("PostgreSQL Synctable Methods", () => {
 
     it("should have changefeed method", () => {
       expect(typeof db.changefeed).toBe("function");
-    });
-
-    it("should have project_and_user_tracker method", () => {
-      expect(typeof db.project_and_user_tracker).toBe("function");
     });
   });
 
@@ -484,84 +465,6 @@ describe("PostgreSQL Synctable Methods", () => {
 
       db._stop_listening("projects", { id: "uuid" }, [], () => {
         expect(db._listening?.[tgname]).toBe(0);
-        done();
-      });
-    });
-  });
-
-  describe("project_and_user_tracker", () => {
-    it("should create and cache a tracker", (done) => {
-      db.project_and_user_tracker({
-        cb: (err, tracker) => {
-          expect(err).toBeUndefined();
-          expect(tracker).toBeDefined();
-          expect(db._project_and_user_tracker).toBe(tracker);
-          done();
-        },
-      });
-    });
-
-    it("should reuse cached tracker", (done) => {
-      const cached = { cached: true } as unknown as ProjectAndUserTracker;
-      db._project_and_user_tracker = cached;
-
-      db.project_and_user_tracker({
-        cb: (err, tracker) => {
-          expect(err).toBeUndefined();
-          expect(tracker).toBe(cached);
-          done();
-        },
-      });
-    });
-
-    it("should fan out callbacks while initializing", (done) => {
-      let resolveInit: (() => void) | undefined;
-      const initPromise = new Promise<void>((resolve) => {
-        resolveInit = resolve;
-      });
-      projectTrackerInit.mockImplementation(() => initPromise);
-
-      const cb1 = jest.fn();
-      const cb2 = jest.fn();
-
-      db.project_and_user_tracker({ cb: cb1 });
-      db.project_and_user_tracker({ cb: cb2 });
-
-      expect(projectTrackerInit).toHaveBeenCalledTimes(1);
-
-      resolveInit?.();
-
-      setImmediate(() => {
-        expect(cb1).toHaveBeenCalledWith(undefined, expect.any(Object));
-        expect(cb2).toHaveBeenCalledWith(undefined, expect.any(Object));
-        done();
-      });
-    });
-
-    it("should clear cache on tracker error", (done) => {
-      db.project_and_user_tracker({
-        cb: (err, _tracker) => {
-          expect(err).toBeUndefined();
-          const errorHandler = projectTrackerOnce.mock.calls[0][1];
-          errorHandler();
-          expect(db._project_and_user_tracker).toBeUndefined();
-          done();
-        },
-      });
-    });
-
-    it("should propagate init errors to all callbacks", (done) => {
-      projectTrackerInit.mockRejectedValue("init-failed");
-
-      const cb1 = jest.fn();
-      const cb2 = jest.fn();
-
-      db.project_and_user_tracker({ cb: cb1 });
-      db.project_and_user_tracker({ cb: cb2 });
-
-      setImmediate(() => {
-        expect(cb1).toHaveBeenCalledWith("init-failed");
-        expect(cb2).toHaveBeenCalledWith("init-failed");
         done();
       });
     });

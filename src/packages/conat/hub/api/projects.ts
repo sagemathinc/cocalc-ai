@@ -1,5 +1,8 @@
 import { authFirstRequireAccount, authFirstRequireProject } from "./util";
-import { type CreateProjectOptions } from "@cocalc/util/db-schema/projects";
+import {
+  type CourseInfo,
+  type CreateProjectOptions,
+} from "@cocalc/util/db-schema/projects";
 import {
   type SnapshotCounts,
   type SnapshotSchedule,
@@ -183,6 +186,9 @@ export interface RecentDocumentActivityRow {
     Record<string, Date | string | null | undefined> | undefined
   >;
 }
+
+export type ProjectQuotaSettings = Record<string, unknown> | null;
+export type ProjectCourseInfo = CourseInfo | null;
 
 // "cloudflare-access-tcp" is kept temporarily for compatibility with older
 // servers/clients. The route is a Cloudflare-published SSH/TCP endpoint; it
@@ -419,6 +425,8 @@ export const projects = {
   getProjectEnv: authFirstRequireAccount,
   setProjectEnv: authFirstRequireAccount,
   getProjectRootfs: authFirstRequireAccount,
+  getProjectSettings: authFirstRequireAccount,
+  getProjectCourseInfo: authFirstRequireAccount,
   getProjectSnapshotSchedule: authFirstRequireAccount,
   getProjectBackupSchedule: authFirstRequireAccount,
   getProjectRunQuota: authFirstRequireAccount,
@@ -592,6 +600,16 @@ export interface Projects {
     account_id?: string;
     project_id: string;
   }) => Promise<ProjectRootfsConfig | null>;
+
+  getProjectSettings: (opts: {
+    account_id?: string;
+    project_id: string;
+  }) => Promise<ProjectQuotaSettings>;
+
+  getProjectCourseInfo: (opts: {
+    account_id?: string;
+    project_id: string;
+  }) => Promise<ProjectCourseInfo>;
 
   getProjectRunQuota: (opts: {
     account_id?: string;

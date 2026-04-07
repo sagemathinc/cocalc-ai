@@ -40,6 +40,7 @@ import { StopProject } from "@cocalc/frontend/project/settings/stop-project";
 import { useProjectCreated } from "@cocalc/frontend/project/use-project-created";
 import { COLORS } from "@cocalc/util/theme";
 import { ProjectUsers } from "./project-users";
+import { projectThemeColor } from "./theme";
 import {
   OpenedFile,
   useFilesMenuItems,
@@ -85,7 +86,7 @@ export function ProjectRowExpandedContent({ project_id }: Props) {
     return null;
   }
 
-  const color = project.get("color");
+  const color = projectThemeColor(project);
 
   function openProjectSettings() {
     actions.open_project({

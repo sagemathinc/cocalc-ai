@@ -6,12 +6,7 @@
 import { Space } from "antd";
 import { FormattedMessage, useIntl } from "react-intl";
 import BootLog from "../bootlog";
-import {
-  React,
-  redux,
-  Rendered,
-  useTypedRedux,
-} from "@cocalc/frontend/app-framework";
+import { React, Rendered, useTypedRedux } from "@cocalc/frontend/app-framework";
 import {
   A,
   Icon,
@@ -27,6 +22,7 @@ import * as misc from "@cocalc/util/misc";
 import { COMPUTE_STATES } from "@cocalc/util/schema";
 import { COLORS } from "@cocalc/util/theme";
 import { useProjectContext } from "../context";
+import { useProjectRunQuota } from "../use-project-run-quota";
 import { RestartProject } from "./restart-project";
 import { StopProject } from "./stop-project";
 import MoveProject from "./move-project";
@@ -54,6 +50,7 @@ export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
   const projectLabel = intl.formatMessage(labels.project);
   const projectLabelLower = projectLabel.toLowerCase();
   const projectStatus = useTypedRedux({ project_id }, "status");
+  const { runQuota } = useProjectRunQuota(project_id);
   const hostId = project.get("host_id") as string | undefined;
   const hostInfo = useHostInfo(hostId);
   const hostOperational = React.useMemo(
@@ -77,6 +74,18 @@ export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
     return rawState.set("state", "opened");
   }, [project, displayStateValue]);
 
+  const idleTimeoutHorizon = React.useMemo(() => {
+    if (runQuota?.always_running) {
+      return;
+    }
+    const lastEdited = project.get("last_edited") as Date | undefined;
+    const idleTimeoutS = runQuota?.idle_timeout;
+    if (!(lastEdited instanceof Date) || typeof idleTimeoutS !== "number") {
+      return;
+    }
+    return new Date(lastEdited.valueOf() + idleTimeoutS * 1000);
+  }, [project, runQuota]);
+
   function render_state() {
     return (
       <span style={{ fontSize: "12pt", color: COLORS.GRAY_M }}>
@@ -86,11 +95,7 @@ export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
   }
 
   function render_idle_timeout() {
-    // get_idle_timeout_horizon depends on the project object, so this
-    // will update properly....
-    const date = redux
-      .getStore("projects")
-      .get_idle_timeout_horizon(project_id);
+    const date = idleTimeoutHorizon;
     if (date == null) {
       // e.g., viewing as admin where the info about idle timeout
       // horizon simply isn't known.
@@ -153,7 +158,7 @@ export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
     if (displayStateValue !== "running") {
       return;
     }
-    if (redux.getStore("projects").is_always_running(project_id)) {
+    if (runQuota?.always_running) {
       return (
         <LabeledRow
           key="idle-timeout"

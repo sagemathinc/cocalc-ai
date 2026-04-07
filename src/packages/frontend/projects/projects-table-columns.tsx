@@ -24,8 +24,10 @@ import { labels } from "@cocalc/frontend/i18n";
 import { ComputeStateIcon } from "@cocalc/util/compute-states";
 import { COMPUTE_STATES } from "@cocalc/util/schema";
 import { COLORS } from "@cocalc/util/theme";
+import type { ProjectTheme } from "@cocalc/util/db-schema/projects";
 
 import { CollaboratorsAvatars } from "./collaborators-avatars";
+import { ProjectThemeAvatar } from "./theme";
 import { sortProjectsLastEdited } from "./util";
 
 // Type check: ensure ComputeStateIcon values are valid IconName values
@@ -72,7 +74,7 @@ function getStateIcon(state?: any): IconName | undefined {
 export interface ProjectTableRecord {
   project_id: string;
   starred: boolean;
-  avatar?: string;
+  theme?: ProjectTheme | null;
   title: string;
   description: string;
   host?: string;
@@ -213,11 +215,7 @@ export function getProjectTableColumns(
           <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
             {/* Avatar or placeholder */}
             <div style={{ flexShrink: 0, width: 40, height: 40 }}>
-              {record.avatar ? (
-                <Avatar src={record.avatar} size={40} />
-              ) : (
-                <div style={{ width: 40, height: 40 }} />
-              )}
+              <ProjectThemeAvatar theme={record.theme} size={40} border />
             </div>
             {/* Title and description */}
             <div style={{ flex: 1, minWidth: 0 }} title={record.title}>

@@ -9,8 +9,15 @@ jest.mock("antd", () => {
       {children}
     </button>
   );
+  const Avatar = ({ src, icon }: any) =>
+    src ? (
+      <img data-testid="mock-avatar" src={src} alt="avatar" />
+    ) : (
+      <div>{icon}</div>
+    );
   return {
     Alert: Div,
+    Avatar,
     Button,
     Col: Div,
     Flex: Div,
@@ -78,27 +85,40 @@ jest.mock("@cocalc/frontend/projects/use-bookmarked-projects", () => ({
   }),
 }));
 
+jest.mock("../use-project-course", () => ({
+  useProjectCourseInfo: () => ({ course: undefined }),
+}));
+
+jest.mock("../use-project-created", () => ({
+  useProjectCreated: () => ({ created: undefined }),
+}));
+
 describe("AboutBox", () => {
   const actions = {
     set_project_title: jest.fn(),
     set_project_description: jest.fn(),
     set_project_name: jest.fn(),
-    setProjectImage: jest.fn(),
-    setProjectColor: jest.fn(),
+    setProjectTheme: jest.fn(),
   } as any;
 
   beforeEach(() => {
     jest.clearAllMocks();
     useTypedRedux.mockReturnValue({
-      getIn: (path: string[]) => {
-        if (path[path.length - 1] === "avatar_image_tiny") {
-          return "blob-1";
-        }
-        if (path[path.length - 1] === "color") {
-          return "#112233";
-        }
-        return undefined;
-      },
+      get: (key: string) =>
+        key === "project-1"
+          ? {
+              get: (field: string) =>
+                field === "theme"
+                  ? {
+                      get: (themeField: string) => {
+                        if (themeField === "image_blob") return "blob-1";
+                        if (themeField === "color") return "#112233";
+                        return undefined;
+                      },
+                    }
+                  : undefined,
+            }
+          : undefined,
     });
   });
 
@@ -114,7 +134,7 @@ describe("AboutBox", () => {
     );
 
     expect(
-      screen.getByTestId("project-appearance-image").getAttribute("src"),
-    ).toContain("uuid=blob-1");
+      screen.getByTestId("project-appearance-image").querySelector("img"),
+    ).not.toBeNull();
   });
 });

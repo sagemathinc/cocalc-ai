@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Avatar, Button, Dropdown, Space, Tooltip } from "antd";
+import { Button, Dropdown, Space, Tooltip } from "antd";
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   DndContext,
@@ -23,8 +23,12 @@ import { CSS, useActions, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon, TimeAgo } from "@cocalc/frontend/components";
 import { trunc } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
+import {
+  ProjectThemeAvatar,
+  projectThemeColor,
+  projectThemeFromProject,
+} from "./theme";
 import { useBookmarkedProjects } from "./use-bookmarked-projects";
-import { projectImageUrl } from "./image";
 
 const DROPDOWN_WIDTH = 100; // Width reserved for dropdown button + buffer
 
@@ -76,13 +80,7 @@ function DraggableProjectButton({
     <Button
       className="starred-project-button"
       style={buttonStyle}
-      icon={
-        project.avatar_image_tiny ? (
-          <Avatar src={projectImageUrl(project.avatar_image_tiny)} size={20} />
-        ) : (
-          <Icon name="star-filled" style={{ color: COLORS.STAR }} />
-        )
-      }
+      icon={<ProjectThemeAvatar theme={project.theme} size={20} border />}
       onClick={(e) => onProjectClick(project.project_id, e)}
       onMouseDown={(e) => {
         // Support middle-click
@@ -133,9 +131,9 @@ export function StarredProjectsBar() {
           description: project.get("description") ?? "",
           last_edited: project.get("last_edited"),
           state: project.get("state"),
-          avatar_image_tiny: projectImageUrl(project.get("avatar_image_tiny")),
+          theme: projectThemeFromProject(project),
           users: project.get("users"),
-          color: project.get("color"),
+          color: projectThemeColor(project),
         };
       })
       .filter((p) => p != null);
@@ -378,14 +376,7 @@ export function StarredProjectsBar() {
             paddingLeft: "5px",
           }}
         >
-          {project.avatar_image_tiny ? (
-            <Avatar
-              src={projectImageUrl(project.avatar_image_tiny)}
-              size={20}
-            />
-          ) : (
-            <Icon name="star-filled" style={{ color: COLORS.STAR }} />
-          )}{" "}
+          <ProjectThemeAvatar theme={project.theme} size={20} border />{" "}
           {project.title}
         </span>
       </div>

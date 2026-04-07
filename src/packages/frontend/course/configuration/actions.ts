@@ -10,8 +10,8 @@ Actions involving configuration of the course.
 // cSpell:ignore collabs
 
 import { redux } from "@cocalc/frontend/app-framework";
+import { ensureProjectCourseInfo } from "@cocalc/frontend/project/use-project-course";
 import { Datastore, EnvVars } from "@cocalc/frontend/projects/actions";
-import { store as projects_store } from "@cocalc/frontend/projects/store";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import { CourseActions, primary_key } from "../actions";
 import { CourseSettingsRecord, PARALLEL_DEFAULT } from "../store";
@@ -200,9 +200,7 @@ export class ConfigurationActions {
       const projects_actions = redux.getActions("projects");
 
       // if for some reason this is a student project, we don't want to reconfigure it
-      const course_info: any = projects_store
-        .get_course_info(project_id)
-        ?.toJS();
+      const course_info = (await ensureProjectCourseInfo(project_id))?.toJS();
       if (course_info?.type == null || course_info.type == "nbgrader") {
         await projects_actions.set_project_course_info({
           project_id,

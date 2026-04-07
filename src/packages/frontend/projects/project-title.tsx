@@ -3,11 +3,10 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Avatar } from "antd";
 import { React, redux, useRedux } from "@cocalc/frontend/app-framework";
 import { html_to_text } from "../misc";
 import * as misc from "@cocalc/util/misc";
-import { projectImageUrl } from "./image";
+import { ProjectThemeAvatar } from "./theme";
 
 interface Props {
   project_id: string;
@@ -24,15 +23,8 @@ export const ProjectTitle: React.FC<Props> = ({
   noClick = false,
   trunc,
 }: Props) => {
-  const title = useRedux(["projects", "project_map", project_id, "title"]);
-
-  const avatarBlob = useRedux([
-    "projects",
-    "project_map",
-    project_id,
-    "avatar_image_tiny",
-  ]);
-  const avatar = projectImageUrl(avatarBlob);
+  const project = useRedux(["projects", "project_map", project_id]);
+  const title = project?.get("title");
 
   function onClick(e): void {
     if (noClick) return;
@@ -50,9 +42,7 @@ export const ProjectTitle: React.FC<Props> = ({
 
   const body = (
     <>
-      {avatar && (
-        <Avatar shape="circle" icon={<img src={avatar} />} size={20} />
-      )}{" "}
+      <ProjectThemeAvatar project={project} size={20} />{" "}
       {html_to_text(trunc ? misc.trunc(title, trunc) : title)}
     </>
   );
