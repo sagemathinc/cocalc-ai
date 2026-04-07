@@ -39,6 +39,17 @@ export function registerBayCommand(
     });
 
   bay
+    .command("load [bay_id]")
+    .description("show a live operator load snapshot for one bay")
+    .action(async (bay_id: string | undefined, command: Command) => {
+      await withContext(command, "bay load", async (ctx) => {
+        return await ctx.hub.system.getBayLoad({
+          bay_id: bay_id?.trim() || undefined,
+        });
+      });
+    });
+
+  bay
     .command("backfill")
     .description("backfill persisted bay ownership fields in one-bay mode")
     .option("--bay-id <bay_id>", "override the bay id to write")

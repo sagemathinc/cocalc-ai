@@ -1,7 +1,9 @@
 import getCustomize from "@cocalc/database/settings/customize";
 export { getCustomize };
+import getPool from "@cocalc/database/pool";
 import { getFrontendSourceFingerprint as getFrontendSourceFingerprint0 } from "@cocalc/backend/frontend-build-fingerprint";
 import {
+  getSingleBayInfo,
   listConfiguredBays,
   resolveAccountHomeBay,
   resolveHostBay,
@@ -108,6 +110,12 @@ import { getAccountCollaboratorIndexProjectionMaintenanceStatus } from "@cocalc/
 import { getAccountNotificationIndexProjectionMaintenanceStatus } from "@cocalc/server/projections/account-notification-index-maintenance";
 import { getAppFeedData as listAppNews0 } from "@cocalc/database/postgres/news";
 import type { NewsItemWebapp } from "@cocalc/util/types/news";
+import type {
+  BayLoadBrowserControlStatus,
+  BayLoadInfo,
+  BayLoadParallelOpsStatus,
+  BayLoadProjectionStatus,
+} from "@cocalc/conat/hub/api/system";
 
 const logger = getLogger("server:conat:api:system");
 const ROOTFS_PUBLISH_LRO_KIND = "project-rootfs-publish";
@@ -143,6 +151,180 @@ export async function terminate() {}
 
 export async function listBays() {
   return await listConfiguredBays();
+}
+
+function summarizeProjectionLoad({
+  backlog,
+  maintenance,
+}: {
+  backlog: {
+    unpublished_events: number;
+    oldest_unpublished_event_age_ms: number | null;
+  };
+  maintenance: {
+    running: boolean;
+    last_success_at: string | null;
+  };
+}): BayLoadProjectionStatus {
+  return {
+    unpublished_events: backlog.unpublished_events ?? 0,
+    oldest_unpublished_event_age_ms:
+      backlog.oldest_unpublished_event_age_ms ?? null,
+    maintenance_running: maintenance.running === true,
+    last_success_at: maintenance.last_success_at ?? null,
+  };
+}
+
+function summarizeParallelOpsLoad(
+  workers: Awaited<ReturnType<typeof getParallelOpsStatus0>>,
+): BayLoadParallelOpsStatus {
+  const hotspots = [...(workers ?? [])]
+    .filter(
+      (worker) =>
+        (worker.queued_count ?? 0) > 0 ||
+        (worker.running_count ?? 0) > 0 ||
+        (worker.stale_running_count ?? 0) > 0,
+    )
+    .sort((a, b) => {
+      const aLoad =
+        (a.queued_count ?? 0) +
+        (a.running_count ?? 0) +
+        (a.stale_running_count ?? 0);
+      const bLoad =
+        (b.queued_count ?? 0) +
+        (b.running_count ?? 0) +
+        (b.stale_running_count ?? 0);
+      if (bLoad !== aLoad) return bLoad - aLoad;
+      return a.worker_kind.localeCompare(b.worker_kind);
+    })
+    .slice(0, 10)
+    .map((worker) => ({
+      worker_kind: worker.worker_kind,
+      category: worker.category,
+      queued_count: worker.queued_count ?? 0,
+      running_count: worker.running_count ?? 0,
+      stale_running_count: worker.stale_running_count ?? null,
+      worker_instances: worker.worker_instances ?? 0,
+    }));
+
+  return {
+    worker_count: workers.length,
+    queued_total: workers.reduce(
+      (sum, worker) => sum + (worker.queued_count ?? 0),
+      0,
+    ),
+    running_total: workers.reduce(
+      (sum, worker) => sum + (worker.running_count ?? 0),
+      0,
+    ),
+    stale_running_total: workers.reduce(
+      (sum, worker) => sum + (worker.stale_running_count ?? 0),
+      0,
+    ),
+    hotspots,
+  };
+}
+
+async function getLiveBrowserControlStatus(): Promise<BayLoadBrowserControlStatus> {
+  const accountIds = new Set<string>();
+  const browserKeys = new Set<string>();
+  let active_connections = 0;
+  try {
+    const client = conat();
+    await client.waitUntilSignedIn({ timeout: 3_000 });
+    const statsByNode = await sysApiMany(client, { timeout: 2_000 }).stats();
+    for (const node of statsByNode ?? []) {
+      for (const sockets of Object.values(node ?? {})) {
+        for (const stat of Object.values(sockets ?? {})) {
+          const s = stat as ConnectionStats | undefined;
+          const account_id = `${s?.user?.account_id ?? ""}`.trim();
+          const browser_id = `${s?.browser_id ?? ""}`.trim();
+          if (!account_id || !browser_id) continue;
+          accountIds.add(account_id);
+          browserKeys.add(`${account_id}:${browser_id}`);
+          active_connections += 1;
+        }
+      }
+    }
+  } catch (err) {
+    logger.debug(
+      "getBayLoad: failed to read live conat browser stats",
+      `${err}`,
+    );
+  }
+  return {
+    active_accounts: accountIds.size,
+    active_browsers: browserKeys.size,
+    active_connections,
+  };
+}
+
+export async function getBayLoad({
+  account_id,
+  bay_id,
+}: {
+  account_id?: string;
+  bay_id?: string;
+}): Promise<BayLoadInfo> {
+  await assertAdmin(account_id);
+  const currentBay = getSingleBayInfo();
+  const requestedBayId = `${bay_id ?? ""}`.trim();
+  if (requestedBayId && requestedBayId !== currentBay.bay_id) {
+    throw Error(`bay '${requestedBayId}' not found`);
+  }
+  const [
+    browser_control,
+    parallel_ops_workers,
+    accountProjectBacklog,
+    accountCollaboratorBacklog,
+    accountNotificationBacklog,
+    hostCountResult,
+  ] = await Promise.all([
+    getLiveBrowserControlStatus(),
+    getParallelOpsStatus0(),
+    getAccountProjectIndexProjectionBacklogStatus({
+      bay_id: currentBay.bay_id,
+    }),
+    getAccountCollaboratorIndexProjectionBacklogStatus({
+      bay_id: currentBay.bay_id,
+    }),
+    getAccountNotificationIndexProjectionBacklogStatus({
+      bay_id: currentBay.bay_id,
+    }),
+    getPool().query<{ count: string }>(
+      `SELECT COUNT(*)::TEXT AS count
+         FROM project_hosts
+        WHERE deleted IS NULL
+          AND COALESCE(bay_id, $1) = $1`,
+      [currentBay.bay_id],
+    ),
+  ]);
+  return {
+    ...currentBay,
+    checked_at: new Date().toISOString(),
+    browser_control,
+    hosts: {
+      total_hosts: Math.max(
+        0,
+        Number(hostCountResult.rows[0]?.count ?? 0) || 0,
+      ),
+    },
+    parallel_ops: summarizeParallelOpsLoad(parallel_ops_workers),
+    projections: {
+      account_project_index: summarizeProjectionLoad({
+        backlog: accountProjectBacklog,
+        maintenance: getAccountProjectIndexProjectionMaintenanceStatus(),
+      }),
+      account_collaborator_index: summarizeProjectionLoad({
+        backlog: accountCollaboratorBacklog,
+        maintenance: getAccountCollaboratorIndexProjectionMaintenanceStatus(),
+      }),
+      account_notification_index: summarizeProjectionLoad({
+        backlog: accountNotificationBacklog,
+        maintenance: getAccountNotificationIndexProjectionMaintenanceStatus(),
+      }),
+    },
+  };
 }
 
 export async function getAccountBay({
