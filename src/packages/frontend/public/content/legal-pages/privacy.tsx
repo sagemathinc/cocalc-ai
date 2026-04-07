@@ -1235,55 +1235,56 @@ export default function PrivacyPage() {
                 >
                   <thead>
                     <tr>
-                      <th align="left"> Title </th> <th> Effective Date </th>
+                      <th align="left">Title</th>
+                      <th>Effective Date</th>
                     </tr>
                   </thead>
                   <tbody>
                     <tr>
-                      <td> Sagemath Privacy Policy </td>
-                      <td> 2015-05-03 </td>
+                      <td>Sagemath Privacy Policy</td>
+                      <td>2015-05-03</td>
                     </tr>
                     <tr>
-                      <td> Updated Sagemath Privacy Policy </td>
-                      <td> 2018-10-05 </td>
+                      <td>Updated Sagemath Privacy Policy</td>
+                      <td>2018-10-05</td>
                     </tr>
                     <tr>
-                      <td> Updated Sagemath Privacy Policy </td>
-                      <td> 2018-10-29 </td>
+                      <td>Updated Sagemath Privacy Policy</td>
+                      <td>2018-10-29</td>
                     </tr>
                     <tr>
                       <td>Update: Privacy Shield</td>
-                      <td> 2020-02-04 </td>
+                      <td>2020-02-04</td>
                     </tr>
                     <tr>
                       <td>
                         Update: temporarily remove mention of Privacy Shield
                       </td>
-                      <td> 2020-02-06 </td>
+                      <td>2020-02-06</td>
                     </tr>
                     <tr>
                       <td>Update: restore mention of Privacy Shield</td>
-                      <td> 2020-02-20 </td>
+                      <td>2020-02-20</td>
                     </tr>
                     <tr>
                       <td>Update: revise JAMS link</td>
-                      <td> 2022-09-15 </td>
+                      <td>2022-09-15</td>
                     </tr>
                     <tr>
                       <td>
                         Update: Data Privacy Framework instead of Privacy Shield
                       </td>
-                      <td> 2023-08-23 </td>
+                      <td>2023-08-23</td>
                     </tr>
                     <tr>
                       <td>Update: clarify alignment with GDPR</td>
-                      <td> 2025-02-20 </td>
+                      <td>2025-02-20</td>
                     </tr>
                     <tr>
                       <td>
                         Update: HR data require explicit opt-in for any new use
                       </td>
-                      <td> 2025-10-03 </td>
+                      <td>2025-10-03</td>
                     </tr>
                   </tbody>
                 </table>

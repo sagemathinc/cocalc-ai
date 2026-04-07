@@ -6,8 +6,14 @@ import SupportTicketsView from "./tickets-view";
 const mockApi = jest.fn();
 
 jest.mock("antd", () => ({
-  Button: ({ children, ...props }: any) => (
-    <button {...props}>{children}</button>
+  Button: ({ children, loading, ...props }: any) => (
+    <button
+      aria-busy={loading ? "true" : undefined}
+      disabled={loading || props.disabled}
+      {...props}
+    >
+      {children}
+    </button>
   ),
 }));
 
