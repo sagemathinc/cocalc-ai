@@ -74,7 +74,6 @@ Table({
           state: null,
           last_edited: null,
           last_active: null,
-          action_request: null, // last requested action -- {action:?, time:?, started:?, finished:?, err:?}
           course: null,
           avatar_image_tiny: null,
           color: null,
@@ -93,7 +92,6 @@ Table({
           manage_users_owner_only(obj, db) {
             return db._user_set_query_project_manage_users_owner_only(obj);
           },
-          action_request: true, // used to request that an action be performed, e.g., "save"; handled by before_change
           rootfs_image: true,
           rootfs_image_id: true,
           env: true,
@@ -299,11 +297,6 @@ Table({
     ephemeral: {
       type: "number",
       desc: "If set, number of milliseconds this project may exist after creation.",
-    },
-    action_request: {
-      type: "map",
-      desc: "Request state change action for project: {action:['start', 'stop'], started:timestamp, err:?, finished:timestamp}",
-      date: ["started", "finished"],
     },
     storage: {
       type: "map",

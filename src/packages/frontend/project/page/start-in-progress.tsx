@@ -131,13 +131,6 @@ export default function StartInProgress({
   const lifecycleActive =
     lifecycleState === "starting" || lifecycleState === "opening";
   const active = startLroActive || lifecycleActive;
-  const actionRequestTime = toTimestamp(
-    projectMap?.getIn([project_id, "action_request", "time"]) as
-      | Date
-      | string
-      | null
-      | undefined,
-  );
   const startTsFromLro = toTimestamp(
     startLro?.summary?.started_at ?? startLro?.summary?.created_at,
   );
@@ -153,7 +146,7 @@ export default function StartInProgress({
     setDetectedStartTs((current) => current ?? Date.now());
   }, [active, project_id, startLro?.op_id]);
 
-  const startTs = startTsFromLro ?? actionRequestTime ?? detectedStartTs;
+  const startTs = startTsFromLro ?? detectedStartTs;
   const activeKey =
     startLro?.op_id ??
     (active
