@@ -56,6 +56,7 @@ import {
   testR2Credentials as testR2Credentials0,
   type R2CredentialsTestResult,
 } from "@cocalc/server/project-backup/r2";
+import { getProjectBackupInfrastructureStatus } from "@cocalc/server/project-backup";
 import {
   listRootfsImagesAdmin,
   listVisibleRootfsImages,
@@ -111,6 +112,7 @@ import { getAccountNotificationIndexProjectionMaintenanceStatus } from "@cocalc/
 import { getAppFeedData as listAppNews0 } from "@cocalc/database/postgres/news";
 import type { NewsItemWebapp } from "@cocalc/util/types/news";
 import type {
+  BayBackupsInfo,
   BayLoadBrowserControlStatus,
   BayLoadInfo,
   BayLoadParallelOpsStatus,
@@ -324,6 +326,42 @@ export async function getBayLoad({
         maintenance: getAccountNotificationIndexProjectionMaintenanceStatus(),
       }),
     },
+  };
+}
+
+export async function getBayBackups({
+  account_id,
+  bay_id,
+}: {
+  account_id?: string;
+  bay_id?: string;
+}): Promise<BayBackupsInfo> {
+  await assertAdmin(account_id);
+  const currentBay = getSingleBayInfo();
+  const requestedBayId = `${bay_id ?? ""}`.trim();
+  if (requestedBayId && requestedBayId !== currentBay.bay_id) {
+    throw Error(`bay '${requestedBayId}' not found`);
+  }
+  const [infra, parallelOpsWorkers] = await Promise.all([
+    getProjectBackupInfrastructureStatus({ bay_id: currentBay.bay_id }),
+    getParallelOpsStatus0(),
+  ]);
+  const backupAdmission =
+    parallelOpsWorkers.find(
+      (worker) => worker.worker_kind === "project-backup",
+    ) ?? null;
+  const backupExecution =
+    parallelOpsWorkers.find(
+      (worker) => worker.worker_kind === "project-host-backup-execution",
+    ) ?? null;
+  return {
+    ...currentBay,
+    checked_at: new Date().toISOString(),
+    r2: infra.r2,
+    repos: infra.repos,
+    projects: infra.projects,
+    backup_admission: backupAdmission,
+    backup_execution: backupExecution,
   };
 }
 

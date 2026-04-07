@@ -68,6 +68,10 @@ async function getR2Settings(): Promise<{
   };
 }
 
+function asIso(value: Date | null | undefined): string | null {
+  return value instanceof Date ? value.toISOString() : null;
+}
+
 type BucketRow = {
   id: string;
   name: string;
@@ -93,6 +97,53 @@ type ProjectBackupRepoRow = {
   updated: Date | null;
   assigned_project_count?: number | null;
 };
+
+export interface ProjectBackupInfrastructureStatus {
+  r2: {
+    configured: boolean;
+    account_id_configured: boolean;
+    access_key_configured: boolean;
+    secret_key_configured: boolean;
+    bucket_prefix: string | null;
+    total_buckets: number;
+    active_buckets: number;
+    buckets: Array<{
+      id: string;
+      name: string;
+      region: string | null;
+      location: string | null;
+      status: string | null;
+    }>;
+  };
+  repos: {
+    total_repos: number;
+    active_repos: number;
+    assigned_projects: number;
+    repos: Array<{
+      id: string;
+      region: string | null;
+      bucket_id: string | null;
+      bucket_name: string | null;
+      root: string | null;
+      status: string | null;
+      assigned_project_count: number;
+      created: string | null;
+      updated: string | null;
+    }>;
+  };
+  projects: {
+    total_projects: number;
+    host_assigned_projects: number;
+    provisioned_projects: number;
+    running_projects: number;
+    repo_assigned_projects: number;
+    repo_unassigned_projects: number;
+    provisioned_up_to_date: number;
+    provisioned_needs_backup: number;
+    never_backed_up: number;
+    latest_last_backup_at: string | null;
+  };
+}
 
 let projectBackupRepoSchemaReady: Promise<void> | undefined;
 
@@ -910,6 +961,217 @@ export async function getDeletedProjectBackupConfigForDeletion({
       password: await getProjectBackupRepoSecret(repo),
       root: repo.root,
     }),
+  };
+}
+
+export async function getProjectBackupInfrastructureStatus({
+  bay_id,
+}: {
+  bay_id: string;
+}): Promise<ProjectBackupInfrastructureStatus> {
+  await ensureProjectBackupRepoSchema();
+  const r2Settings = await getR2Settings();
+  const [bucketResult, repoResult, projectResult] = await Promise.all([
+    pool().query<{
+      id: string;
+      name: string;
+      region: string | null;
+      location: string | null;
+      status: string | null;
+    }>(
+      `
+        SELECT id, name, region, location, status
+        FROM buckets
+        WHERE provider = $1
+          AND purpose = $2
+        ORDER BY region ASC NULLS LAST, name ASC
+      `,
+      [BUCKET_PROVIDER, BUCKET_PURPOSE],
+    ),
+    pool().query<{
+      id: string;
+      region: string | null;
+      bucket_id: string | null;
+      bucket_name: string | null;
+      root: string | null;
+      status: string | null;
+      assigned_project_count: number | string | null;
+      created: Date | null;
+      updated: Date | null;
+    }>(
+      `
+        SELECT
+          r.id,
+          r.region,
+          r.bucket_id,
+          b.name AS bucket_name,
+          r.root,
+          r.status,
+          COUNT(p.project_id)::INTEGER AS assigned_project_count,
+          r.created,
+          r.updated
+        FROM project_backup_repos r
+        LEFT JOIN buckets b
+          ON b.id = r.bucket_id
+        LEFT JOIN projects p
+          ON p.backup_repo_id = r.id
+         AND p.deleted IS NOT true
+         AND COALESCE(p.owning_bay_id, $1) = $1
+        GROUP BY
+          r.id,
+          r.region,
+          r.bucket_id,
+          b.name,
+          r.root,
+          r.status,
+          r.created,
+          r.updated
+        ORDER BY r.region ASC NULLS LAST, r.created ASC, r.id ASC
+      `,
+      [bay_id],
+    ),
+    pool().query<{
+      total_projects: number | string | null;
+      host_assigned_projects: number | string | null;
+      provisioned_projects: number | string | null;
+      running_projects: number | string | null;
+      repo_assigned_projects: number | string | null;
+      repo_unassigned_projects: number | string | null;
+      provisioned_up_to_date: number | string | null;
+      provisioned_needs_backup: number | string | null;
+      never_backed_up: number | string | null;
+      latest_last_backup_at: Date | null;
+    }>(
+      `
+        SELECT
+          COUNT(*)::INTEGER AS total_projects,
+          COUNT(*) FILTER (
+            WHERE host_id IS NOT NULL
+          )::INTEGER AS host_assigned_projects,
+          COUNT(*) FILTER (
+            WHERE provisioned IS TRUE
+          )::INTEGER AS provisioned_projects,
+          COUNT(*) FILTER (
+            WHERE COALESCE(state->>'state', '') IN ('running', 'starting')
+          )::INTEGER AS running_projects,
+          COUNT(*) FILTER (
+            WHERE backup_repo_id IS NOT NULL
+          )::INTEGER AS repo_assigned_projects,
+          COUNT(*) FILTER (
+            WHERE host_id IS NOT NULL
+              AND backup_repo_id IS NULL
+          )::INTEGER AS repo_unassigned_projects,
+          COUNT(*) FILTER (
+            WHERE provisioned IS TRUE
+              AND COALESCE(state->>'state', '') NOT IN ('running', 'starting')
+              AND last_backup IS NOT NULL
+              AND (last_edited IS NULL OR last_edited <= last_backup)
+          )::INTEGER AS provisioned_up_to_date,
+          COUNT(*) FILTER (
+            WHERE provisioned IS TRUE
+              AND COALESCE(state->>'state', '') NOT IN ('running', 'starting')
+              AND (
+                last_backup IS NULL
+                OR (last_edited IS NOT NULL AND last_edited > last_backup)
+              )
+          )::INTEGER AS provisioned_needs_backup,
+          COUNT(*) FILTER (
+            WHERE last_backup IS NULL
+          )::INTEGER AS never_backed_up,
+          MAX(last_backup) AS latest_last_backup_at
+        FROM projects
+        WHERE deleted IS NOT true
+          AND COALESCE(owning_bay_id, $1) = $1
+      `,
+      [bay_id],
+    ),
+  ]);
+  const buckets = bucketResult.rows.map((row) => ({
+    id: row.id,
+    name: row.name,
+    region: row.region ?? null,
+    location: row.location ?? null,
+    status: row.status ?? null,
+  }));
+  const repos = repoResult.rows.map((row) => ({
+    id: row.id,
+    region: row.region ?? null,
+    bucket_id: row.bucket_id ?? null,
+    bucket_name: row.bucket_name ?? null,
+    root: row.root ?? null,
+    status: row.status ?? null,
+    assigned_project_count: Math.max(
+      0,
+      Number(row.assigned_project_count ?? 0) || 0,
+    ),
+    created: asIso(row.created),
+    updated: asIso(row.updated),
+  }));
+  const projectRow = projectResult.rows[0];
+  return {
+    r2: {
+      configured: !!(
+        r2Settings.accountId &&
+        r2Settings.accessKey &&
+        r2Settings.secretKey
+      ),
+      account_id_configured: !!r2Settings.accountId,
+      access_key_configured: !!r2Settings.accessKey,
+      secret_key_configured: !!r2Settings.secretKey,
+      bucket_prefix: r2Settings.bucketPrefix ?? null,
+      total_buckets: buckets.length,
+      active_buckets: buckets.filter(
+        (bucket) => !bucket.status || bucket.status === "active",
+      ).length,
+      buckets,
+    },
+    repos: {
+      total_repos: repos.length,
+      active_repos: repos.filter(
+        (repo) => !repo.status || repo.status === "active",
+      ).length,
+      assigned_projects: repos.reduce(
+        (sum, repo) => sum + repo.assigned_project_count,
+        0,
+      ),
+      repos,
+    },
+    projects: {
+      total_projects: Math.max(0, Number(projectRow?.total_projects ?? 0) || 0),
+      host_assigned_projects: Math.max(
+        0,
+        Number(projectRow?.host_assigned_projects ?? 0) || 0,
+      ),
+      provisioned_projects: Math.max(
+        0,
+        Number(projectRow?.provisioned_projects ?? 0) || 0,
+      ),
+      running_projects: Math.max(
+        0,
+        Number(projectRow?.running_projects ?? 0) || 0,
+      ),
+      repo_assigned_projects: Math.max(
+        0,
+        Number(projectRow?.repo_assigned_projects ?? 0) || 0,
+      ),
+      repo_unassigned_projects: Math.max(
+        0,
+        Number(projectRow?.repo_unassigned_projects ?? 0) || 0,
+      ),
+      provisioned_up_to_date: Math.max(
+        0,
+        Number(projectRow?.provisioned_up_to_date ?? 0) || 0,
+      ),
+      provisioned_needs_backup: Math.max(
+        0,
+        Number(projectRow?.provisioned_needs_backup ?? 0) || 0,
+      ),
+      never_backed_up: Math.max(
+        0,
+        Number(projectRow?.never_backed_up ?? 0) || 0,
+      ),
+      latest_last_backup_at: asIso(projectRow?.latest_last_backup_at),
+    },
   };
 }
 

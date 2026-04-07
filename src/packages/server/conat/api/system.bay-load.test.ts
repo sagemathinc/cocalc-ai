@@ -13,6 +13,7 @@ let getAccountCollaboratorIndexProjectionMaintenanceStatusMock: jest.Mock;
 let getAccountNotificationIndexProjectionMaintenanceStatusMock: jest.Mock;
 let conatMock: jest.Mock;
 let sysApiManyMock: jest.Mock;
+let getProjectBackupInfrastructureStatusMock: jest.Mock;
 
 jest.mock("@cocalc/backend/logger", () => ({
   __esModule: true,
@@ -123,6 +124,12 @@ jest.mock("@cocalc/conat/core/sys", () => ({
   sysApiMany: (...args: any[]) => sysApiManyMock(...args),
 }));
 
+jest.mock("@cocalc/server/project-backup", () => ({
+  __esModule: true,
+  getProjectBackupInfrastructureStatus: (...args: any[]) =>
+    getProjectBackupInfrastructureStatusMock(...args),
+}));
+
 describe("getBayLoad", () => {
   beforeEach(() => {
     jest.resetModules();
@@ -212,6 +219,56 @@ describe("getBayLoad", () => {
         },
       ],
     }));
+    getProjectBackupInfrastructureStatusMock = jest.fn(async () => ({
+      r2: {
+        configured: true,
+        account_id_configured: true,
+        access_key_configured: true,
+        secret_key_configured: true,
+        bucket_prefix: "lite4-dev",
+        total_buckets: 2,
+        active_buckets: 1,
+        buckets: [
+          {
+            id: "bucket-1",
+            name: "lite4-dev-wnam",
+            region: "wnam",
+            location: null,
+            status: "active",
+          },
+        ],
+      },
+      repos: {
+        total_repos: 2,
+        active_repos: 1,
+        assigned_projects: 7,
+        repos: [
+          {
+            id: "repo-1",
+            region: "wnam",
+            bucket_id: "bucket-1",
+            bucket_name: "lite4-dev-wnam",
+            root: "rustic/shared-wnam-0001",
+            status: "active",
+            assigned_project_count: 7,
+            created: "2026-04-07T06:00:00.000Z",
+            updated: "2026-04-07T07:00:00.000Z",
+          },
+        ],
+      },
+      projects: {
+        total_projects: 9,
+        host_assigned_projects: 8,
+        provisioned_projects: 6,
+        running_projects: 2,
+        repo_assigned_projects: 7,
+        repo_unassigned_projects: 1,
+        provisioned_up_to_date: 4,
+        provisioned_needs_backup: 2,
+        never_backed_up: 3,
+        latest_last_backup_at: "2026-04-07T07:05:00.000Z",
+      },
+    }));
   });
 
   it("returns a current bay load snapshot", async () => {
@@ -278,5 +335,42 @@ describe("getBayLoad", () => {
         bay_id: "bay-9",
       }),
     ).rejects.toThrow("bay 'bay-9' not found");
+  });
+
+  it("returns a current bay backup snapshot", async () => {
+    const { getBayBackups } = await import("./system");
+
+    await expect(
+      getBayBackups({
+        account_id: "11111111-1111-4111-8111-111111111111",
+      }),
+    ).resolves.toMatchObject({
+      bay_id: "bay-0",
+      r2: {
+        configured: true,
+        total_buckets: 2,
+        active_buckets: 1,
+      },
+      repos: {
+        total_repos: 2,
+        active_repos: 1,
+        assigned_projects: 7,
+      },
+      projects: {
+        total_projects: 9,
+        provisioned_needs_backup: 2,
+        latest_last_backup_at: "2026-04-07T07:05:00.000Z",
+      },
+      backup_admission: expect.objectContaining({
+        worker_kind: "project-backup",
+        queued_count: 2,
+        running_count: 1,
+      }),
+      backup_execution: null,
+    });
+
+    expect(getProjectBackupInfrastructureStatusMock).toHaveBeenCalledWith({
+      bay_id: "bay-0",
+    });
   });
 });

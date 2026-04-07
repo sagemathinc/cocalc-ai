@@ -132,6 +132,70 @@ test("bay load calls the hub bay-load snapshot API", async () => {
   assert.equal(captured?.bay_id, "bay-0");
 });
 
+test("bay backups calls the hub bay-backups snapshot API", async () => {
+  let captured: any;
+  let callOpts: any;
+  const program = new Command();
+  registerBayCommand(program, {
+    withContext: async (_command, _label, fn) => {
+      const ctx = {
+        hub: {
+          system: {
+            getBayBackups: async (opts: any) => {
+              callOpts = opts;
+              return {
+                bay_id: "bay-0",
+                label: "bay-0",
+                region: null,
+                deployment_mode: "single-bay",
+                role: "combined",
+                is_default: true,
+                checked_at: "2026-04-07T07:00:00.000Z",
+                r2: {
+                  configured: true,
+                  account_id_configured: true,
+                  access_key_configured: true,
+                  secret_key_configured: true,
+                  bucket_prefix: "lite4-dev",
+                  total_buckets: 1,
+                  active_buckets: 1,
+                  buckets: [],
+                },
+                repos: {
+                  total_repos: 1,
+                  active_repos: 1,
+                  assigned_projects: 3,
+                  repos: [],
+                },
+                projects: {
+                  total_projects: 4,
+                  host_assigned_projects: 4,
+                  provisioned_projects: 3,
+                  running_projects: 1,
+                  repo_assigned_projects: 3,
+                  repo_unassigned_projects: 1,
+                  provisioned_up_to_date: 2,
+                  provisioned_needs_backup: 1,
+                  never_backed_up: 1,
+                  latest_last_backup_at: "2026-04-07T07:00:00.000Z",
+                },
+                backup_admission: null,
+                backup_execution: null,
+              };
+            },
+          },
+        },
+      };
+      captured = await fn(ctx);
+    },
+  } as any);
+
+  await program.parseAsync(["node", "test", "bay", "backups", "bay-0"]);
+
+  assert.deepEqual(callOpts, { bay_id: "bay-0" });
+  assert.equal(captured?.bay_id, "bay-0");
+});
+
 test("bay backfill defaults to a dry run", async () => {
   let captured: any;
   const program = new Command();

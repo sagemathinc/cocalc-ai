@@ -50,6 +50,17 @@ export function registerBayCommand(
     });
 
   bay
+    .command("backups [bay_id]")
+    .description("show current backup and R2 health for one bay")
+    .action(async (bay_id: string | undefined, command: Command) => {
+      await withContext(command, "bay backups", async (ctx) => {
+        return await ctx.hub.system.getBayBackups({
+          bay_id: bay_id?.trim() || undefined,
+        });
+      });
+    });
+
+  bay
     .command("backfill")
     .description("backfill persisted bay ownership fields in one-bay mode")
     .option("--bay-id <bay_id>", "override the bay id to write")

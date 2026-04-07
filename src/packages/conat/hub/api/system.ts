@@ -30,6 +30,7 @@ export const system = {
   terminate: authFirst,
   listBays: authFirst,
   getBayLoad: authFirst,
+  getBayBackups: authFirst,
   getAccountBay: authFirstRequireAccount,
   getProjectBay: authFirstRequireAccount,
   getHostBay: authFirstRequireAccount,
@@ -316,6 +317,66 @@ export interface BayLoadInfo extends BayInfo {
   };
 }
 
+export interface BayBackupsBucketInfo {
+  id: string;
+  name: string;
+  region: string | null;
+  location: string | null;
+  status: string | null;
+}
+
+export interface BayBackupsR2Status {
+  configured: boolean;
+  account_id_configured: boolean;
+  access_key_configured: boolean;
+  secret_key_configured: boolean;
+  bucket_prefix: string | null;
+  total_buckets: number;
+  active_buckets: number;
+  buckets: BayBackupsBucketInfo[];
+}
+
+export interface BayBackupsRepoInfo {
+  id: string;
+  region: string | null;
+  bucket_id: string | null;
+  bucket_name: string | null;
+  root: string | null;
+  status: string | null;
+  assigned_project_count: number;
+  created: string | null;
+  updated: string | null;
+}
+
+export interface BayBackupsReposStatus {
+  total_repos: number;
+  active_repos: number;
+  assigned_projects: number;
+  repos: BayBackupsRepoInfo[];
+}
+
+export interface BayBackupsProjectsStatus {
+  total_projects: number;
+  host_assigned_projects: number;
+  provisioned_projects: number;
+  running_projects: number;
+  repo_assigned_projects: number;
+  repo_unassigned_projects: number;
+  provisioned_up_to_date: number;
+  provisioned_needs_backup: number;
+  never_backed_up: number;
+  latest_last_backup_at: string | null;
+}
+
+export interface BayBackupsInfo extends BayInfo {
+  checked_at: string;
+  r2: BayBackupsR2Status;
+  repos: BayBackupsReposStatus;
+  projects: BayBackupsProjectsStatus;
+  backup_admission: ParallelOpsWorkerStatus | null;
+  backup_execution: ParallelOpsWorkerStatus | null;
+}
+
 export interface AccountBayLocation {
   account_id: string;
   home_bay_id: string;
@@ -584,6 +645,11 @@ export interface System {
     account_id?: string;
     bay_id?: string;
   }) => Promise<BayLoadInfo>;
+
+  getBayBackups: (opts?: {
+    account_id?: string;
+    bay_id?: string;
+  }) => Promise<BayBackupsInfo>;
 
   getAccountBay: (opts?: {
     account_id?: string;
