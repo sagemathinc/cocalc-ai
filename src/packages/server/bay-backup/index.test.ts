@@ -11,6 +11,9 @@ let getServerSettingsMock: jest.Mock;
 let getSingleBayInfoMock: jest.Mock;
 let ensureRusticInitializedMock: jest.Mock;
 let whichMock: jest.Mock;
+let listObjectsMock: jest.Mock;
+let issueSignedObjectDownloadMock: jest.Mock;
+let oldFetch: typeof global.fetch | undefined;
 
 jest.mock("node:child_process", () => {
   const actual = jest.requireActual("node:child_process");
@@ -70,6 +73,9 @@ jest.mock("@cocalc/server/project-backup/r2", () => ({
   __esModule: true,
   createBucket: jest.fn(),
   listBuckets: jest.fn(async () => []),
+  listObjects: (...args: any[]) => listObjectsMock(...args),
+  issueSignedObjectDownload: (...args: any[]) =>
+    issueSignedObjectDownloadMock(...args),
   uploadObjectFromBuffer: jest.fn(),
   uploadObjectFromFile: jest.fn(),
 }));
@@ -135,6 +141,27 @@ describe("bay-backup runner", () => {
     rusticSnapshots = [];
     ensureRusticInitializedMock = jest.fn(async () => undefined);
     whichMock = jest.fn(async (binary: string) => `/usr/bin/${binary}`);
+    listObjectsMock = jest.fn(async () => []);
+    issueSignedObjectDownloadMock = jest.fn(({ key }: { key: string }) => ({
+      url: `https://example.invalid/${key}`,
+      headers: {},
+    }));
+    oldFetch = global.fetch;
+    global.fetch = jest.fn(async (input: string | URL | Request) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+      if (url.endsWith("/bay-backups/bay-0/wal/0000000100000000000000E8")) {
+        return new Response("segment", { status: 200 });
+      }
+      return new Response("not found", {
+        status: 404,
+        statusText: "Not Found",
+      });
+    }) as typeof global.fetch;
     execFileMock = jest.fn(
       (
         cmd: string,
@@ -214,6 +241,8 @@ describe("bay-backup runner", () => {
               .filter(Boolean);
             const files: Record<string, Buffer> = {};
             for (const name of [
+              "base.tar.gz",
+              "pg_wal.tar.gz",
               "cluster.sql.gz",
               "sync.tar.gz",
               "secrets.tar.gz",
@@ -322,6 +351,7 @@ describe("bay-backup runner", () => {
 
   afterEach(async () => {
     process.env = oldEnv;
+    global.fetch = oldFetch as typeof global.fetch;
     await rm(backupRoot, { recursive: true, force: true });
   });
 
@@ -861,5 +891,277 @@ describe("bay-backup runner", () => {
       backupSetId,
     );
     expect(status.restore_readiness.last_restore_test_target_dir).toBe(null);
+  });
+
+  it("restore-tests remotely from rustic plus R2 WAL when remote-only is requested", async () => {
+    const backupSetId = "restore-test-remote-1";
+    const bayRoot = join(backupRoot, "bay-backups", "bay-0");
+    const manifestsDir = join(bayRoot, "manifests");
+    const stateFile = join(bayRoot, "state.json");
+    getServerSettingsMock = jest.fn(async () => ({
+      r2_account_id: "acct-1",
+      r2_access_key_id: "key-1",
+      r2_secret_access_key: "secret-1",
+      r2_bucket_prefix: "lite4-dev",
+    }));
+    mkdirSync(manifestsDir, { recursive: true });
+    writeFileSync(
+      stateFile,
+      JSON.stringify(
+        {
+          bay_id: "bay-0",
+          current_storage_backend: "rustic",
+          r2_configured: true,
+          bucket_name: "lite4-dev-wnam",
+          bucket_region: "wnam",
+          bucket_endpoint: "https://example.invalid",
+          object_prefix_root: "bay-backups/bay-0",
+          rustic_repo_selector: "r2:bay-backups:wnam",
+          latest_backup_set_id: backupSetId,
+          latest_format: "pg_basebackup",
+          latest_storage_backend: "rustic",
+          latest_local_manifest_path: null,
+          latest_remote_manifest_key: null,
+          latest_object_prefix: null,
+          latest_remote_snapshot_id: "snap-remote-1",
+          latest_remote_snapshot_host: "bay-0",
+          latest_artifact_count: 4,
+          latest_artifact_bytes: 18,
+          last_archived_wal_segment: null,
+          last_uploaded_wal_segment: "0000000100000000000000E8",
+          last_started_at: null,
+          last_finished_at: null,
+          last_successful_backup_at: "2026-04-07T15:37:57.440Z",
+          last_successful_remote_backup_at: "2026-04-07T15:37:57.440Z",
+          last_successful_wal_archive_at: "2026-04-07T15:37:57.740Z",
+          last_error_at: null,
+          last_error: null,
+          restore_state: "ready",
+          last_restore_test_backup_set_id: null,
+          last_restore_test_status: null,
+          last_restore_tested_at: null,
+          last_restore_test_target_dir: null,
+          last_restore_test_recovery_ready: null,
+        },
+        null,
+        2,
+      ),
+    );
+
+    const manifest = {
+      bay_id: "bay-0",
+      bay_label: "bay-0",
+      backup_set_id: backupSetId,
+      created_at: "2026-04-07T15:37:47.519Z",
+      finished_at: "2026-04-07T15:37:57.440Z",
+      format: "pg_basebackup",
+      current_storage_backend: "rustic",
+      latest_storage_backend: "rustic",
+      bucket_name: "lite4-dev-wnam",
+      bucket_region: "wnam",
+      bucket_endpoint: "https://example.invalid",
+      object_prefix: null,
+      remote_manifest_key: null,
+      remote_snapshot_id: "snap-remote-1",
+      remote_snapshot_host: "bay-0",
+      rustic_repo_selector: "r2:bay-backups:wnam",
+      postgres: {},
+      artifacts: [
+        {
+          name: "base.tar.gz",
+          local_path: null,
+          object_key: null,
+          bytes: 4,
+          sha256: "base",
+          content_type: "application/gzip",
+        },
+        {
+          name: "pg_wal.tar.gz",
+          local_path: null,
+          object_key: null,
+          bytes: 3,
+          sha256: "wal",
+          content_type: "application/gzip",
+        },
+        {
+          name: "sync.tar.gz",
+          local_path: null,
+          object_key: null,
+          bytes: 4,
+          sha256: "sync",
+          content_type: "application/gzip",
+        },
+        {
+          name: "secrets.tar.gz",
+          local_path: null,
+          object_key: null,
+          bytes: 7,
+          sha256: "secrets",
+          content_type: "application/gzip",
+        },
+      ],
+    };
+    rusticSnapshots.push({
+      id: "snap-remote-1",
+      host: "bay-0",
+      tags: [
+        `backup-set-id=${backupSetId}`,
+        "backup-format=pg_basebackup",
+        "bay-id=bay-0",
+      ],
+      files: {
+        "manifest.json": Buffer.from(JSON.stringify(manifest)),
+        "base.tar.gz": Buffer.from("base"),
+        "pg_wal.tar.gz": Buffer.from("wal"),
+        "sync.tar.gz": Buffer.from("sync"),
+        "secrets.tar.gz": Buffer.from("secrets"),
+      },
+    });
+    listObjectsMock = jest.fn(async ({ prefix }: { prefix?: string }) => {
+      if (prefix !== "bay-backups/bay-0/wal/") {
+        throw new Error(`unexpected WAL prefix '${prefix}'`);
+      }
+      return ["bay-backups/bay-0/wal/0000000100000000000000E8"];
+    });
+    execFileMock = jest.fn(
+      (
+        cmd: string,
+        args: string[],
+        _opts: Record<string, unknown>,
+        cb: (
+          err: Error | null,
+          result?: { stdout: string; stderr: string },
+        ) => void,
+      ) => {
+        if (cmd === "rustic-bin") {
+          const subcommand =
+            args.find((arg) => ["snapshots", "restore"].includes(arg)) ?? "";
+          if (subcommand === "snapshots") {
+            cb(null, {
+              stdout: JSON.stringify([
+                {
+                  group_key: { hostname: "bay-0", label: "", paths: ["."] },
+                  snapshots: [
+                    {
+                      id: "snap-remote-1",
+                      time: "2026-04-07T15:37:57.440Z",
+                      hostname: "bay-0",
+                      tags: [
+                        `backup-set-id=${backupSetId}`,
+                        "backup-format=pg_basebackup",
+                        "bay-id=bay-0",
+                      ],
+                      paths: ["."],
+                    },
+                  ],
+                },
+              ]),
+              stderr: "",
+            });
+            return;
+          }
+          const snapshotSpec = args[args.indexOf("restore") + 1];
+          const destinationDir = args[args.indexOf("restore") + 2];
+          const [snapshotId, relativePath] = snapshotSpec.split(":");
+          const snapshot = rusticSnapshots.find(
+            (entry) => entry.id === snapshotId,
+          );
+          if (!snapshot || !relativePath) {
+            cb(new Error(`unexpected rustic restore '${snapshotSpec}'`));
+            return;
+          }
+          mkdirSync(destinationDir, { recursive: true });
+          writeFileSync(
+            join(destinationDir, relativePath),
+            snapshot.files[relativePath],
+          );
+          cb(null, { stdout: "", stderr: "" });
+          return;
+        }
+        if (cmd === "tar") {
+          const archivePath = args[1];
+          const targetDir = args[3];
+          mkdirSync(targetDir, { recursive: true });
+          if (archivePath.endsWith("base.tar.gz")) {
+            mkdirSync(join(targetDir, "pg_wal"), { recursive: true });
+            writeFileSync(join(targetDir, "PG_VERSION"), "17\n");
+          } else if (archivePath.endsWith("pg_wal.tar.gz")) {
+            writeFileSync(
+              join(targetDir, "0000000100000000000000E8"),
+              "segment-from-base",
+            );
+          } else if (archivePath.endsWith("sync.tar.gz")) {
+            mkdirSync(join(targetDir, "sync", "accounts", "test"), {
+              recursive: true,
+            });
+            writeFileSync(
+              join(targetDir, "sync", "accounts", "test", "seen-state.db"),
+              "sqlite",
+            );
+          } else if (archivePath.endsWith("secrets.tar.gz")) {
+            mkdirSync(join(targetDir, "secrets"), { recursive: true });
+            writeFileSync(
+              join(targetDir, "secrets", "conat-password"),
+              "secret",
+            );
+          } else {
+            cb(new Error(`unexpected archive '${archivePath}'`));
+            return;
+          }
+          cb(null, { stdout: "", stderr: "" });
+          return;
+        }
+        if (cmd === "/usr/bin/pg_ctl") {
+          cb(null, { stdout: "", stderr: "" });
+          return;
+        }
+        if (cmd === "/usr/bin/psql") {
+          const sql = args[args.length - 1];
+          if (sql === "SELECT current_database()") {
+            cb(null, { stdout: "smc\n", stderr: "" });
+            return;
+          }
+          if (sql === "SELECT to_regclass('public.accounts')::text") {
+            cb(null, { stdout: "accounts\n", stderr: "" });
+            return;
+          }
+          if (sql === "SELECT to_regclass('public.projects')::text") {
+            cb(null, { stdout: "projects\n", stderr: "" });
+            return;
+          }
+          if (sql === "SELECT to_regclass('public.server_settings')::text") {
+            cb(null, { stdout: "server_settings\n", stderr: "" });
+            return;
+          }
+          cb(new Error(`unexpected SQL '${sql}'`));
+          return;
+        }
+        cb(new Error(`unexpected command '${cmd}'`));
+      },
+    );
+
+    const { runBayRestoreTest } = await import("./index");
+
+    const result = await runBayRestoreTest({
+      backup_set_id: backupSetId,
+      remote_only: true,
+      keep: true,
+    });
+    expect(result.source_storage_backend).toBe("rustic");
+    expect(result.wal_storage_backend).toBe("r2");
+    expect(result.remote_only).toBe(true);
+    expect(result.kept_on_disk).toBe(true);
+    expect(result.wal_archive_dir).toBe(null);
+    expect(
+      readFileSync(join(result.target_dir, "restore-wal.js"), "utf8"),
+    ).toContain("bay-backups/bay-0/wal");
+    expect(
+      readFileSync(join(result.target_dir, "restore-wal.js"), "utf8"),
+    ).toContain("https://acct-1.r2.cloudflarestorage.com");
+    expect(listObjectsMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        prefix: "bay-backups/bay-0/wal/",
+      }),
+    );
   });
 });

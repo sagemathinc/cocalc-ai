@@ -72,6 +72,11 @@ export function registerBayCommand(
       "restore into this directory instead of the default restores path",
     )
     .option("--write", "materialize the restore instead of a dry run", false)
+    .option(
+      "--remote-only",
+      "ignore the local backup cache and restore only from rustic/R2",
+      false,
+    )
     .action(
       async (
         bay_id: string | undefined,
@@ -79,6 +84,7 @@ export function registerBayCommand(
           backupSetId?: string;
           targetDir?: string;
           write?: boolean;
+          remoteOnly?: boolean;
         },
         command: Command,
       ) => {
@@ -88,6 +94,7 @@ export function registerBayCommand(
             backup_set_id: opts.backupSetId?.trim() || undefined,
             target_dir: opts.targetDir?.trim() || undefined,
             dry_run: !opts.write,
+            remote_only: opts.remoteOnly === true,
           });
         });
       },
@@ -107,6 +114,11 @@ export function registerBayCommand(
       "use this restore directory instead of the default test path",
     )
     .option("--keep", "keep the restored workspace even after success", false)
+    .option(
+      "--remote-only",
+      "ignore the local backup cache and restore-test only from rustic/R2",
+      false,
+    )
     .action(
       async (
         bay_id: string | undefined,
@@ -114,6 +126,7 @@ export function registerBayCommand(
           backupSetId?: string;
           targetDir?: string;
           keep?: boolean;
+          remoteOnly?: boolean;
         },
         command: Command,
       ) => {
@@ -123,6 +136,7 @@ export function registerBayCommand(
             backup_set_id: opts.backupSetId?.trim() || undefined,
             target_dir: opts.targetDir?.trim() || undefined,
             keep: opts.keep === true,
+            remote_only: opts.remoteOnly === true,
           });
         });
       },

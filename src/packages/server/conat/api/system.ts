@@ -395,12 +395,14 @@ export async function runBayRestore({
   backup_set_id,
   target_dir,
   dry_run = true,
+  remote_only = false,
 }: {
   account_id?: string;
   bay_id?: string;
   backup_set_id?: string;
   target_dir?: string;
   dry_run?: boolean;
+  remote_only?: boolean;
 }): Promise<BayRestoreRunResult> {
   await assertAdmin(account_id);
   // This RPC is an admin convenience wrapper around bay restore while the hub
@@ -411,6 +413,7 @@ export async function runBayRestore({
     backup_set_id,
     target_dir,
     dry_run,
+    remote_only,
   });
 }
 
@@ -420,12 +423,14 @@ export async function runBayRestoreTest({
   backup_set_id,
   target_dir,
   keep = false,
+  remote_only = false,
 }: {
   account_id?: string;
   bay_id?: string;
   backup_set_id?: string;
   target_dir?: string;
   keep?: boolean;
+  remote_only?: boolean;
 }): Promise<BayRestoreTestRunResult> {
   await assertAdmin(account_id);
   return await runBayRestoreTest0({
@@ -433,6 +438,7 @@ export async function runBayRestoreTest({
     backup_set_id,
     target_dir,
     keep,
+    remote_only,
   });
 }
 

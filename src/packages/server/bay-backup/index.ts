@@ -78,6 +78,7 @@ import { getLaunchpadLocalConfig } from "@cocalc/server/launchpad/mode";
 import {
   createBucket,
   issueSignedObjectDownload,
+  listObjects,
   listBuckets,
   uploadObjectFromFile,
 } from "@cocalc/server/project-backup/r2";
@@ -1199,6 +1200,7 @@ async function resolveBackupManifest({
   r2,
   rusticRepoProfilePath,
   download_dir,
+  prefer_local = true,
 }: {
   paths: ReturnType<typeof getBayBackupPaths>;
   bay_id: string;
@@ -1206,11 +1208,13 @@ async function resolveBackupManifest({
   r2: R2Target;
   rusticRepoProfilePath?: string | null;
   download_dir?: string;
+  prefer_local?: boolean;
 }): Promise<ResolvedBackupManifest> {
   const localManifestPath = join(paths.manifests_dir, `${backup_set_id}.json`);
-  const localManifest =
-    await readJsonIfExists<StoredBayBackupManifest>(localManifestPath);
-  if (localManifest) {
+  const localManifest = prefer_local
+    ? await readJsonIfExists<StoredBayBackupManifest>(localManifestPath)
+    : undefined;
+  if (prefer_local && localManifest) {
     return {
       manifest: localManifest,
       backup_manifest_path: localManifestPath,
@@ -1283,17 +1287,23 @@ async function resolveArtifactPath({
   remote_snapshot_id,
   rusticRepoProfilePath,
   download_dir,
+  prefer_local = true,
 }: {
   artifact: BayBackupArtifactInfo;
   r2: R2Target;
   remote_snapshot_id?: string | null;
   rusticRepoProfilePath?: string | null;
   download_dir?: string;
+  prefer_local?: boolean;
 }): Promise<{
   path: string;
   source_storage_backend: StorageBackend;
 }> {
-  if (artifact.local_path && (await exists(artifact.local_path))) {
+  if (
+    prefer_local &&
+    artifact.local_path &&
+    (await exists(artifact.local_path))
+  ) {
     return {
       path: artifact.local_path,
       source_storage_backend: "local",
@@ -1346,6 +1356,110 @@ function findArtifactByName(
 
 function walObjectPrefix(root: string | null): string | null {
   return root ? `${root}/wal` : null;
+}
+
+async function listRemoteWalObjectKeys({
+  r2,
+  wal_object_prefix,
+}: {
+  r2: R2Target;
+  wal_object_prefix: string;
+}): Promise<string[]> {
+  if (
+    !r2.configured ||
+    !r2.bucket_name ||
+    !r2.bucket_endpoint ||
+    !r2.access_key ||
+    !r2.secret_key
+  ) {
+    throw new Error("R2 target is not configured for remote WAL restore");
+  }
+  return await listObjects({
+    endpoint: r2.bucket_endpoint,
+    accessKey: r2.access_key,
+    secretKey: r2.secret_key,
+    bucket: r2.bucket_name,
+    prefix: `${wal_object_prefix}/`,
+  });
+}
+
+async function writeRemoteWalRestoreHelper({
+  targetDir,
+  r2,
+  wal_object_prefix,
+}: {
+  targetDir: string;
+  r2: R2Target;
+  wal_object_prefix: string;
+}): Promise<string> {
+  if (
+    !r2.bucket_endpoint ||
+    !r2.access_key ||
+    !r2.secret_key ||
+    !r2.bucket_name
+  ) {
+    throw new Error("R2 target is not configured for remote WAL restore");
+  }
+  const requestLogPath = join(targetDir, "restore-wal.requests.log");
+  const scriptPath = join(targetDir, "restore-wal.js");
+  const script = [
+    "#!/usr/bin/env node",
+    "const { createHash, createHmac } = require('node:crypto');",
+    "const { appendFileSync, createWriteStream, mkdirSync } = require('node:fs');",
+    "const { dirname } = require('node:path');",
+    "const { Readable } = require('node:stream');",
+    "const { pipeline } = require('node:stream/promises');",
+    `const ENDPOINT = ${JSON.stringify(r2.bucket_endpoint)};`,
+    `const ACCESS_KEY = ${JSON.stringify(r2.access_key)};`,
+    `const SECRET_KEY = ${JSON.stringify(r2.secret_key)};`,
+    `const BUCKET = ${JSON.stringify(r2.bucket_name)};`,
+    `const PREFIX = ${JSON.stringify(wal_object_prefix)};`,
+    `const REQUEST_LOG = ${JSON.stringify(requestLogPath)};`,
+    "function hashHex(data) { return createHash('sha256').update(data).digest('hex'); }",
+    "function hmac(key, data, encoding) { const hash = createHmac('sha256', key).update(data, 'utf8'); return encoding ? hash.digest(encoding) : hash.digest(); }",
+    "function getSignatureKey(secret, dateStamp) { const kDate = hmac(`AWS4${secret}`, dateStamp); const kRegion = hmac(kDate, 'auto'); const kService = hmac(kRegion, 's3'); return hmac(kService, 'aws4_request'); }",
+    "function toAmzDate(now) { return now.toISOString().replace(/[:-]|\\.\\d{3}/g, ''); }",
+    "function encodeRfc3986(str) { return encodeURIComponent(str).replace(/[!'()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`); }",
+    "function canonicalizeObjectPath(bucket, key) { const parts = [bucket, ...`${key ?? ''}`.split('/').filter(Boolean)]; return `/${parts.map(encodeRfc3986).join('/')}`; }",
+    "async function main() {",
+    "  const [segment, destPath] = process.argv.slice(2);",
+    "  if (!segment || !destPath) process.exit(1);",
+    "  const key = `${PREFIX}/${segment}`;",
+    "  const parsed = new URL(ENDPOINT);",
+    "  const canonicalUri = canonicalizeObjectPath(BUCKET, key);",
+    "  const now = new Date();",
+    "  const amzDate = toAmzDate(now);",
+    "  const dateStamp = amzDate.slice(0, 8);",
+    "  const payloadSha256 = hashHex('');",
+    "  const headers = {",
+    "    host: parsed.host,",
+    "    'x-amz-content-sha256': payloadSha256,",
+    "    'x-amz-date': amzDate,",
+    "  };",
+    "  const signedHeaderNames = Object.keys(headers).sort();",
+    "  const canonicalHeaders = signedHeaderNames.map((name) => `${name}:${String(headers[name]).trim()}\\n`).join('');",
+    "  const signedHeaders = signedHeaderNames.join(';');",
+    "  const canonicalRequest = ['GET', canonicalUri, '', canonicalHeaders, signedHeaders, payloadSha256].join('\\n');",
+    "  const credentialScope = `${dateStamp}/auto/s3/aws4_request`;",
+    "  const stringToSign = ['AWS4-HMAC-SHA256', amzDate, credentialScope, hashHex(canonicalRequest)].join('\\n');",
+    "  const signingKey = getSignatureKey(SECRET_KEY, dateStamp);",
+    "  const signature = hmac(signingKey, stringToSign, 'hex');",
+    "  headers.authorization = `AWS4-HMAC-SHA256 Credential=${ACCESS_KEY}/${credentialScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`;",
+    "  const { host: _host, ...requestHeaders } = headers;",
+    "  const response = await fetch(`${parsed.origin}${canonicalUri}`, { headers: requestHeaders });",
+    "  if (!response.ok || !response.body) {",
+    "    if (response.status === 404) process.exit(1);",
+    "    throw new Error(`R2 GET failed (${response.status}): ${response.statusText || 'unknown error'}`);",
+    "  }",
+    "  mkdirSync(dirname(destPath), { recursive: true });",
+    "  await pipeline(Readable.fromWeb(response.body), createWriteStream(destPath));",
+    "  appendFileSync(REQUEST_LOG, `${segment}\\n`);",
+    "}",
+    "main().catch((err) => { console.error(err?.message ?? String(err)); process.exit(1); });",
+    "",
+  ].join("\n");
+  await writeFile(scriptPath, script, { mode: 0o700 });
+  return scriptPath;
 }
 
 async function listArchivedWalFiles(
@@ -2054,11 +2168,13 @@ export async function runBayRestore({
   backup_set_id,
   target_dir,
   dry_run = true,
+  remote_only = false,
 }: {
   bay_id?: string;
   backup_set_id?: string;
   target_dir?: string;
   dry_run?: boolean;
+  remote_only?: boolean;
 } = {}): Promise<BayRestoreRunResult> {
   const currentBay = getSingleBayInfo();
   const resolvedBayId =
@@ -2138,10 +2254,39 @@ export async function runBayRestore({
       r2,
       rusticRepoProfilePath,
       download_dir: tempDownloadDir,
+      prefer_local: !remote_only,
     });
     const wal = await getWalArchiveSnapshot({ paths, state });
     let source_storage_backend: StorageBackend =
       manifestInfo.source_storage_backend;
+    const resolvedWalObjectPrefix =
+      remote_only && manifestInfo.manifest.format === "pg_basebackup"
+        ? walObjectPrefix(
+            r2.object_prefix_root ?? state.object_prefix_root ?? null,
+          )
+        : null;
+    if (
+      remote_only &&
+      manifestInfo.manifest.format === "pg_basebackup" &&
+      !resolvedWalObjectPrefix
+    ) {
+      throw new Error("missing WAL object prefix for remote-only restore");
+    }
+    const remoteWalKeys =
+      resolvedWalObjectPrefix == null
+        ? null
+        : await listRemoteWalObjectKeys({
+            r2,
+            wal_object_prefix: resolvedWalObjectPrefix,
+          });
+    let wal_storage_backend: "local" | "r2" | null =
+      manifestInfo.manifest.format === "pg_basebackup"
+        ? remote_only
+          ? "r2"
+          : "local"
+        : null;
+    let wal_segment_count =
+      remoteWalKeys != null ? remoteWalKeys.length : wal.archived_wal_count;
     const source_snapshot_id =
       manifestInfo.remote_snapshot_id ??
       manifestInfo.manifest.remote_snapshot_id ??
@@ -2171,7 +2316,9 @@ export async function runBayRestore({
           `Would stage a recoverable Postgres data directory at ${data_dir}.`,
         );
         notes.push(
-          `Recovery would read archived WAL from ${paths.wal_archive_dir}.`,
+          remote_only
+            ? "Recovery would fetch archived WAL from R2 on demand."
+            : `Recovery would read archived WAL from ${paths.wal_archive_dir}.`,
         );
       } else {
         notes.push(
@@ -2188,6 +2335,11 @@ export async function runBayRestore({
       } else if (manifestInfo.source_storage_backend === "rustic") {
         notes.push(
           "The backup manifest is not present locally; restore would read metadata from the rustic snapshot repo.",
+        );
+      }
+      if (remote_only) {
+        notes.push(
+          "Remote-only mode ignores the local snapshot and WAL cache.",
         );
       }
       if (syncArtifact) {
@@ -2222,8 +2374,16 @@ export async function runBayRestore({
           source_storage_backend === "rustic"
             ? (rusticRepo?.repo_selector ?? null)
             : null,
+        wal_archive_dir:
+          manifestInfo.manifest.format === "pg_basebackup"
+            ? remote_only
+              ? null
+              : paths.wal_archive_dir
+            : null,
+        wal_storage_backend,
+        remote_only,
         artifact_count: manifestInfo.manifest.artifacts.length,
-        wal_segment_count: wal.archived_wal_count,
+        wal_segment_count,
         recovery_ready: manifestInfo.manifest.format === "pg_basebackup",
         notes,
       };
@@ -2260,6 +2420,7 @@ export async function runBayRestore({
         remote_snapshot_id: source_snapshot_id,
         rusticRepoProfilePath,
         download_dir: tempDownloadDir,
+        prefer_local: !remote_only,
       });
       source_storage_backend = baseArtifactPath.source_storage_backend;
       await ensureDir(data_dir!, 0o700);
@@ -2277,6 +2438,7 @@ export async function runBayRestore({
           remote_snapshot_id: source_snapshot_id,
           rusticRepoProfilePath,
           download_dir: tempDownloadDir,
+          prefer_local: !remote_only,
         });
         if (walArtifactPath.source_storage_backend !== "local") {
           source_storage_backend = walArtifactPath.source_storage_backend;
@@ -2293,32 +2455,43 @@ export async function runBayRestore({
         force: true,
       }).catch(() => undefined);
 
-      const restoreScriptPath = join(resolvedTargetDir, "restore-wal.sh");
-      await writeFile(
-        restoreScriptPath,
-        [
-          "#!/bin/sh",
-          "set -eu",
-          `ARCHIVE_DIR=${shellQuote(paths.wal_archive_dir)}`,
-          'SEGMENT="$1"',
-          'DEST_PATH="$2"',
-          'SRC_PATH="$ARCHIVE_DIR/$SEGMENT"',
-          'if [ ! -f "$SRC_PATH" ]; then',
-          "  exit 1",
-          "fi",
-          'cp "$SRC_PATH" "$DEST_PATH"',
-          "",
-        ].join("\n"),
-        { mode: 0o700 },
-      );
+      const restoreScriptPath = remote_only
+        ? await writeRemoteWalRestoreHelper({
+            targetDir: resolvedTargetDir,
+            r2,
+            wal_object_prefix: resolvedWalObjectPrefix!,
+          })
+        : join(resolvedTargetDir, "restore-wal.sh");
+      if (!remote_only) {
+        await writeFile(
+          restoreScriptPath,
+          [
+            "#!/bin/sh",
+            "set -eu",
+            `ARCHIVE_DIR=${shellQuote(paths.wal_archive_dir)}`,
+            'SEGMENT="$1"',
+            'DEST_PATH="$2"',
+            'SRC_PATH="$ARCHIVE_DIR/$SEGMENT"',
+            'if [ ! -f "$SRC_PATH" ]; then',
+            "  exit 1",
+            "fi",
+            'cp "$SRC_PATH" "$DEST_PATH"',
+            "",
+          ].join("\n"),
+          { mode: 0o700 },
+        );
+      }
       const autoConfPath = join(data_dir!, "postgresql.auto.conf");
       const autoConfExisting = (await exists(autoConfPath))
         ? await readFile(autoConfPath, "utf8")
         : "";
+      const restoreCommand = remote_only
+        ? `${process.execPath} ${restoreScriptPath} %f %p`
+        : `${restoreScriptPath} %f %p`;
       const recoveryConfig = [
         "",
         "# cocalc bay restore",
-        `restore_command = ${postgresQuote(`${restoreScriptPath} %f %p`)}`,
+        `restore_command = ${postgresQuote(restoreCommand)}`,
         "recovery_target_timeline = 'latest'",
         "recovery_target_action = 'promote'",
         "",
@@ -2334,8 +2507,13 @@ export async function runBayRestore({
         `Start the fenced restore with: postgres -D ${shellQuote(data_dir!)}`,
       );
       notes.push(
-        `Archive recovery will read WAL segments from ${paths.wal_archive_dir}.`,
+        remote_only
+          ? `Archive recovery will fetch WAL segments from R2 via ${restoreScriptPath}.`
+          : `Archive recovery will read WAL segments from ${paths.wal_archive_dir}.`,
       );
+      if (remote_only) {
+        notes.push("Remote-only mode ignores the local WAL archive.");
+      }
     } else {
       const dumpArtifact = manifestInfo.manifest.artifacts.find(
         (artifact) => artifact.name === "cluster.sql.gz",
@@ -2349,6 +2527,7 @@ export async function runBayRestore({
         remote_snapshot_id: source_snapshot_id,
         rusticRepoProfilePath,
         download_dir: tempDownloadDir,
+        prefer_local: !remote_only,
       });
       source_storage_backend = dumpArtifactPath.source_storage_backend;
       const sqlPath = join(resolvedTargetDir, "cluster.sql");
@@ -2367,6 +2546,7 @@ export async function runBayRestore({
         remote_snapshot_id: source_snapshot_id,
         rusticRepoProfilePath,
         download_dir: tempDownloadDir,
+        prefer_local: !remote_only,
       });
       if (syncArtifactPath.source_storage_backend !== "local") {
         source_storage_backend = syncArtifactPath.source_storage_backend;
@@ -2387,6 +2567,7 @@ export async function runBayRestore({
         remote_snapshot_id: source_snapshot_id,
         rusticRepoProfilePath,
         download_dir: tempDownloadDir,
+        prefer_local: !remote_only,
       });
       if (secretsArtifactPath.source_storage_backend !== "local") {
         source_storage_backend = secretsArtifactPath.source_storage_backend;
@@ -2418,8 +2599,15 @@ export async function runBayRestore({
         source_storage_backend === "rustic"
           ? (rusticRepo?.repo_selector ?? null)
           : null,
-      wal_archive_dir: paths.wal_archive_dir,
-      wal_segment_count: wal.archived_wal_count,
+      wal_archive_dir:
+        manifestInfo.manifest.format === "pg_basebackup"
+          ? remote_only
+            ? null
+            : paths.wal_archive_dir
+          : null,
+      wal_storage_backend,
+      remote_only,
+      wal_segment_count,
       recovery_ready: manifestInfo.manifest.format === "pg_basebackup",
       notes,
     });
@@ -2442,8 +2630,16 @@ export async function runBayRestore({
         source_storage_backend === "rustic"
           ? (rusticRepo?.repo_selector ?? null)
           : null,
+      wal_archive_dir:
+        manifestInfo.manifest.format === "pg_basebackup"
+          ? remote_only
+            ? null
+            : paths.wal_archive_dir
+          : null,
+      wal_storage_backend,
+      remote_only,
       artifact_count: manifestInfo.manifest.artifacts.length,
-      wal_segment_count: wal.archived_wal_count,
+      wal_segment_count,
       recovery_ready: manifestInfo.manifest.format === "pg_basebackup",
       notes,
     };
@@ -2528,11 +2724,13 @@ export async function runBayRestoreTest({
   backup_set_id,
   target_dir,
   keep = false,
+  remote_only = false,
 }: {
   bay_id?: string;
   backup_set_id?: string;
   target_dir?: string;
   keep?: boolean;
+  remote_only?: boolean;
 } = {}): Promise<BayRestoreTestRunResult> {
   const currentBay = getSingleBayInfo();
   const resolvedBayId =
@@ -2599,6 +2797,7 @@ export async function runBayRestoreTest({
       backup_set_id: resolvedBackupSetId,
       target_dir: resolvedTargetDir,
       dry_run: false,
+      remote_only,
     });
     if (!restoreResult.recovery_ready || !restoreResult.data_dir) {
       throw new Error(
@@ -2728,6 +2927,9 @@ export async function runBayRestoreTest({
       source_storage_backend: restoreResult.source_storage_backend,
       source_snapshot_id: restoreResult.source_snapshot_id,
       rustic_repo_selector: restoreResult.rustic_repo_selector,
+      wal_archive_dir: restoreResult.wal_archive_dir,
+      wal_storage_backend: restoreResult.wal_storage_backend,
+      remote_only: restoreResult.remote_only,
       wal_segment_count: restoreResult.wal_segment_count,
       recovery_ready: restoreResult.recovery_ready,
       kept_on_disk,

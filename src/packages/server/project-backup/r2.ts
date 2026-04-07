@@ -147,6 +147,16 @@ function canonicalizeObjectPath(bucket: string, key: string): string {
   return `/${parts.map(encodeRfc3986).join("/")}`;
 }
 
+function canonicalizeQuery(query?: Record<string, string | undefined>): string {
+  const entries = Object.entries(query ?? {})
+    .filter(([, value]) => value != null)
+    .map(([key, value]) => [encodeRfc3986(key), encodeRfc3986(`${value}`)])
+    .sort(([aKey, aValue], [bKey, bValue]) =>
+      aKey === bKey ? aValue.localeCompare(bValue) : aKey.localeCompare(bKey),
+    );
+  return entries.map(([key, value]) => `${key}=${value}`).join("&");
+}
+
 function signedObjectHeaders({
   method = "PUT",
   endpoint,
@@ -157,6 +167,7 @@ function signedObjectHeaders({
   payloadSha256,
   contentType,
   cacheControl,
+  query,
 }: {
   method?: "PUT" | "GET" | "DELETE";
   endpoint: string;
@@ -167,8 +178,9 @@ function signedObjectHeaders({
   payloadSha256: string;
   contentType?: string;
   cacheControl?: string;
+  query?: Record<string, string | undefined>;
 }): {
-  parsed: URL;
+  url: string;
   canonicalUri: string;
   headers: Record<string, string>;
 } {
@@ -178,6 +190,7 @@ function signedObjectHeaders({
   }
   const host = parsed.host;
   const canonicalUri = canonicalizeObjectPath(bucket, key);
+  const canonicalQuery = canonicalizeQuery(query);
   const now = new Date();
   const amzDate = toAmzDate(now);
   const dateStamp = amzDate.slice(0, 8);
@@ -200,7 +213,7 @@ function signedObjectHeaders({
   const canonicalRequest = [
     method,
     canonicalUri,
-    "",
+    canonicalQuery,
     canonicalHeaders,
     signedHeaders,
     payloadSha256,
@@ -215,7 +228,11 @@ function signedObjectHeaders({
   const signingKey = getSignatureKey(secretKey, dateStamp);
   const signature = hmac(signingKey, stringToSign, "hex") as string;
   headers.authorization = `AWS4-HMAC-SHA256 Credential=${accessKey}/${credentialScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`;
-  return { parsed, canonicalUri, headers };
+  return {
+    url: `${parsed.origin}${canonicalUri}${canonicalQuery ? `?${canonicalQuery}` : ""}`,
+    canonicalUri,
+    headers,
+  };
 }
 
 export function issueSignedObjectDownload({
@@ -231,7 +248,7 @@ export function issueSignedObjectDownload({
   bucket: string;
   key: string;
 }): { url: string; headers: Record<string, string> } {
-  const { parsed, canonicalUri, headers } = signedObjectHeaders({
+  const { url, headers } = signedObjectHeaders({
     method: "GET",
     endpoint,
     accessKey,
@@ -241,10 +258,7 @@ export function issueSignedObjectDownload({
     payloadSha256: hashHex(""),
   });
   const { host: _host, ...requestHeaders } = headers;
-  return {
-    url: `${parsed.origin}${canonicalUri}`,
-    headers: requestHeaders,
-  };
+  return { url, headers: requestHeaders };
 }
 
 export function issueSignedObjectUpload({
@@ -266,7 +280,7 @@ export function issueSignedObjectUpload({
   cacheControl?: string;
   unsignedPayload?: boolean;
 }): { url: string; headers: Record<string, string> } {
-  const { parsed, canonicalUri, headers } = signedObjectHeaders({
+  const { url, headers } = signedObjectHeaders({
     method: "PUT",
     endpoint,
     accessKey,
@@ -278,10 +292,7 @@ export function issueSignedObjectUpload({
     cacheControl,
   });
   const { host: _host, ...requestHeaders } = headers;
-  return {
-    url: `${parsed.origin}${canonicalUri}`,
-    headers: requestHeaders,
-  };
+  return { url, headers: requestHeaders };
 }
 
 export async function uploadObjectFromFile({
@@ -307,7 +318,7 @@ export async function uploadObjectFromFile({
   contentType?: string;
   cacheControl?: string;
 }): Promise<void> {
-  const { parsed, canonicalUri, headers } = signedObjectHeaders({
+  const { url, canonicalUri, headers } = signedObjectHeaders({
     method: "PUT",
     endpoint,
     accessKey,
@@ -318,6 +329,7 @@ export async function uploadObjectFromFile({
     contentType,
     cacheControl,
   });
+  const parsed = new URL(url);
   await new Promise<void>((resolve, reject) => {
     const req = https.request(
       {
@@ -374,7 +386,7 @@ export async function uploadObjectFromBuffer({
   cacheControl?: string;
 }): Promise<void> {
   const buffer = Buffer.isBuffer(body) ? body : Buffer.from(body);
-  const { parsed, canonicalUri, headers } = signedObjectHeaders({
+  const { url, canonicalUri, headers } = signedObjectHeaders({
     method: "PUT",
     endpoint,
     accessKey,
@@ -385,6 +397,7 @@ export async function uploadObjectFromBuffer({
     contentType,
     cacheControl,
   });
+  const parsed = new URL(url);
   await new Promise<void>((resolve, reject) => {
     const req = https.request(
       {
@@ -421,6 +434,89 @@ export async function uploadObjectFromBuffer({
   });
 }
 
+function decodeXmlEntity(text: string): string {
+  return text
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, "&");
+}
+
+function extractXmlTag(xml: string, tag: string): string | null {
+  const match = xml.match(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`));
+  return match ? decodeXmlEntity(match[1]) : null;
+}
+
+function extractXmlTags(xml: string, tag: string): string[] {
+  const matches = xml.matchAll(
+    new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`, "g"),
+  );
+  const values: string[] = [];
+  for (const match of matches) {
+    if (match[1] != null) {
+      values.push(decodeXmlEntity(match[1]));
+    }
+  }
+  return values;
+}
+
+export async function listObjects({
+  endpoint,
+  accessKey,
+  secretKey,
+  bucket,
+  prefix,
+}: {
+  endpoint: string;
+  accessKey: string;
+  secretKey: string;
+  bucket: string;
+  prefix?: string;
+}): Promise<string[]> {
+  const keys: string[] = [];
+  let continuationToken: string | undefined;
+  while (true) {
+    const { url, headers } = signedObjectHeaders({
+      method: "GET",
+      endpoint,
+      accessKey,
+      secretKey,
+      bucket,
+      key: "",
+      payloadSha256: hashHex(""),
+      query: {
+        "list-type": "2",
+        "encoding-type": "url",
+        ...(prefix ? { prefix } : {}),
+        ...(continuationToken
+          ? { "continuation-token": continuationToken }
+          : {}),
+      },
+    });
+    const { host: _host, ...requestHeaders } = headers;
+    const response = await fetch(url, { headers: requestHeaders });
+    if (!response.ok) {
+      throw new Error(
+        `R2 object list failed (${response.status}): ${response.statusText || "unknown error"}`,
+      );
+    }
+    const xml = await response.text();
+    keys.push(
+      ...extractXmlTags(xml, "Key").map((key) => decodeURIComponent(key)),
+    );
+    const isTruncated = extractXmlTag(xml, "IsTruncated") === "true";
+    if (!isTruncated) {
+      return keys;
+    }
+    continuationToken =
+      extractXmlTag(xml, "NextContinuationToken") ?? undefined;
+    if (!continuationToken) {
+      throw new Error("R2 object list truncated without continuation token");
+    }
+  }
+}
+
 export async function deleteObject({
   endpoint,
   accessKey,
@@ -434,7 +530,7 @@ export async function deleteObject({
   bucket: string;
   key: string;
 }): Promise<void> {
-  const { parsed, canonicalUri, headers } = signedObjectHeaders({
+  const { url, canonicalUri, headers } = signedObjectHeaders({
     method: "DELETE",
     endpoint,
     accessKey,
@@ -443,6 +539,7 @@ export async function deleteObject({
     key,
     payloadSha256: hashHex(""),
   });
+  const parsed = new URL(url);
   await new Promise<void>((resolve, reject) => {
     const req = https.request(
       {

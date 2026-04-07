@@ -494,6 +494,7 @@ export interface BayRestoreRunResult extends BayInfo {
   started_at: string;
   finished_at: string;
   dry_run: boolean;
+  remote_only: boolean;
   backup_set_id: string;
   format: "pg_basebackup" | "pg_dumpall";
   target_dir: string;
@@ -505,6 +506,8 @@ export interface BayRestoreRunResult extends BayInfo {
   source_storage_backend: "local" | "r2" | "rustic";
   source_snapshot_id: string | null;
   rustic_repo_selector: string | null;
+  wal_archive_dir: string | null;
+  wal_storage_backend: "local" | "r2" | null;
   artifact_count: number;
   wal_segment_count: number;
   recovery_ready: boolean;
@@ -514,6 +517,7 @@ export interface BayRestoreRunResult extends BayInfo {
 export interface BayRestoreTestRunResult extends BayInfo {
   started_at: string;
   finished_at: string;
+  remote_only: boolean;
   backup_set_id: string;
   target_dir: string;
   data_dir: string | null;
@@ -524,6 +528,8 @@ export interface BayRestoreTestRunResult extends BayInfo {
   source_storage_backend: "local" | "r2" | "rustic";
   source_snapshot_id: string | null;
   rustic_repo_selector: string | null;
+  wal_archive_dir: string | null;
+  wal_storage_backend: "local" | "r2" | null;
   wal_segment_count: number;
   recovery_ready: boolean;
   kept_on_disk: boolean;
@@ -816,6 +822,7 @@ export interface System {
     backup_set_id?: string;
     target_dir?: string;
     dry_run?: boolean;
+    remote_only?: boolean;
   }) => Promise<BayRestoreRunResult>;
 
   runBayRestoreTest: (opts?: {
@@ -824,6 +831,7 @@ export interface System {
     backup_set_id?: string;
     target_dir?: string;
     keep?: boolean;
+    remote_only?: boolean;
   }) => Promise<BayRestoreTestRunResult>;
 
   getAccountBay: (opts?: {
