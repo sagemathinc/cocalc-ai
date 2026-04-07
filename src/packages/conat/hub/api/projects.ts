@@ -408,6 +408,7 @@ export const projects = {
   listProjectLog: authFirstRequireAccount,
   listRecentDocumentActivity: authFirstRequireAccount,
   getProjectLauncher: authFirstRequireAccount,
+  setProjectLauncher: authFirstRequireAccount,
   getProjectRegion: authFirstRequireAccount,
   getProjectCreated: authFirstRequireAccount,
   getProjectSnapshotSchedule: authFirstRequireAccount,
@@ -551,6 +552,12 @@ export interface Projects {
     account_id?: string;
     project_id: string;
   }) => Promise<ProjectLauncherSettings>;
+
+  setProjectLauncher: (opts: {
+    account_id?: string;
+    project_id: string;
+    launcher: ProjectLauncherSettings;
+  }) => Promise<void>;
 
   getProjectRegion: (opts: {
     account_id?: string;

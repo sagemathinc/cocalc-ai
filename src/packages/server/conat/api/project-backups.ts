@@ -5,6 +5,7 @@ import {
 import type { LroSummary } from "@cocalc/conat/hub/api/lro";
 import { type SnapshotCounts } from "@cocalc/util/db-schema/projects";
 import getLogger from "@cocalc/backend/logger";
+import { publishProjectDetailInvalidationBestEffort } from "@cocalc/server/account/project-detail-feed";
 import { assertCollab } from "./util";
 import { createLro } from "@cocalc/server/lro/lro-db";
 import { publishLroEvent, publishLroSummary } from "@cocalc/server/lro/stream";
@@ -153,6 +154,10 @@ export async function updateBackups({
     project_id,
     counts,
     limit: MAX_BACKUPS_PER_PROJECT,
+  });
+  await publishProjectDetailInvalidationBestEffort({
+    project_id,
+    fields: ["backups"],
   });
 }
 

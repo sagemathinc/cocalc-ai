@@ -542,7 +542,10 @@ export class ProjectsActions extends Actions<ProjectsState> {
       );
       return;
     }
-    await this.projects_table_set({ project_id, launcher }, "shallow");
+    await webapp_client.conat_client.hub.projects.setProjectLauncher({
+      project_id,
+      launcher,
+    });
     publishProjectDetailInvalidation({
       project_id,
       fields: ["launcher"],

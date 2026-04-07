@@ -110,6 +110,7 @@ import {
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { appendProjectOutboxEventForProject } from "@cocalc/database/postgres/project-events-outbox";
 import { publishProjectAccountFeedEventsBestEffort } from "@cocalc/server/account/project-feed";
+import { publishProjectDetailInvalidationBestEffort } from "@cocalc/server/account/project-detail-feed";
 import { createHash } from "node:crypto";
 
 const PROJECT_STORAGE_CACHE_TTL_MS = 30_000;
@@ -601,6 +602,10 @@ export async function setQuotas(opts: {
   const project = await database.projectControl?.(opts.project_id);
   // @ts-ignore
   await project?.setAllQuotas();
+  await publishProjectDetailInvalidationBestEffort({
+    project_id: opts.project_id,
+    fields: ["run_quota"],
+  });
 }
 
 export async function getDiskQuota({
@@ -785,6 +790,26 @@ export async function getProjectLauncher({
     [project_id],
   );
   return rows[0]?.launcher ?? null;
+}
+
+export async function setProjectLauncher({
+  account_id,
+  project_id,
+  launcher,
+}: {
+  account_id: string;
+  project_id: string;
+  launcher: ProjectLauncherSettings;
+}): Promise<void> {
+  await assertCollab({ account_id, project_id });
+  await getPool().query(
+    "UPDATE projects SET launcher = $2 WHERE project_id = $1",
+    [project_id, launcher],
+  );
+  await publishProjectDetailInvalidationBestEffort({
+    project_id,
+    fields: ["launcher"],
+  });
 }
 
 export async function getProjectRegion({

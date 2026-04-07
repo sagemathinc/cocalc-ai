@@ -21,10 +21,13 @@ The helper gives each field:
 - optional bootstrap from `project_map` while a field is still being migrated,
 - explicit refresh/fetch behavior, and
 - local `setValue(...)` updates so the UI stays responsive after writes.
+
+Cross-browser/collaborator invalidation is handled separately through backend
+account-feed publication of `project.detail.invalidate` events. This helper is
+responsible for the local frontend cache layer that those events invalidate.
 */
 
 import {
-  redux,
   useAsyncEffect,
   useCallback,
   useEffect,
@@ -32,11 +35,6 @@ import {
   useState,
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
-import {
-  accountFeedStreamName,
-  type AccountFeedEvent,
-} from "@cocalc/conat/hub/api/account-feed";
-import { webapp_client } from "@cocalc/frontend/webapp-client";
 
 export interface ProjectFieldState<T> {
   field: string;
@@ -50,31 +48,9 @@ const projectDetailInvalidationListeners = new Map<
   string,
   Set<(fields: string[]) => void>
 >();
-const pendingProjectDetailInvalidations = new Map<string, Set<string>>();
-const projectDetailInvalidationTimers = new Map<
-  string,
-  ReturnType<typeof setTimeout>
->();
-const PROJECT_DETAIL_INVALIDATION_DEBOUNCE_MS = 300;
 
 function normalizeProjectDetailFields(fields: string[]): string[] {
   return [...new Set(fields.map((field) => `${field}`.trim()).filter(Boolean))];
-}
-
-function getProjectCollaboratorAccountIds(project_id: string): string[] {
-  const users = redux
-    .getStore("projects")
-    ?.getIn(["project_map", project_id, "users"]);
-  if (users == null) {
-    return [];
-  }
-  if (typeof users.keySeq === "function") {
-    return normalizeProjectDetailFields(users.keySeq().toArray());
-  }
-  if (typeof users === "object") {
-    return normalizeProjectDetailFields(Object.keys(users));
-  }
-  return [];
 }
 
 export function createProjectFieldState<T>(
@@ -140,47 +116,6 @@ export function invalidateProjectFields({
   }
 }
 
-async function flushProjectDetailInvalidation(
-  project_id: string,
-): Promise<void> {
-  const fields = normalizeProjectDetailFields([
-    ...(pendingProjectDetailInvalidations.get(project_id) ?? []),
-  ]);
-  pendingProjectDetailInvalidations.delete(project_id);
-  projectDetailInvalidationTimers.delete(project_id);
-  if (!project_id || fields.length === 0) {
-    return;
-  }
-  const account_ids = getProjectCollaboratorAccountIds(project_id);
-  await Promise.all(
-    account_ids.map(async (account_id) => {
-      const stream = webapp_client.conat_client.astream<AccountFeedEvent>({
-        account_id,
-        name: accountFeedStreamName(),
-        ephemeral: true,
-      });
-      try {
-        await stream.publish({
-          type: "project.detail.invalidate",
-          ts: Date.now(),
-          account_id,
-          project_id,
-          fields,
-        });
-      } catch (err) {
-        console.warn("unable to publish project detail invalidation", {
-          project_id,
-          account_id,
-          fields,
-          err,
-        });
-      } finally {
-        stream.close();
-      }
-    }),
-  );
-}
-
 export function publishProjectDetailInvalidation({
   project_id,
   fields,
@@ -193,23 +128,6 @@ export function publishProjectDetailInvalidation({
     return;
   }
   invalidateProjectFields({ project_id, fields: normalizedFields });
-  let pending = pendingProjectDetailInvalidations.get(project_id);
-  if (!pending) {
-    pending = new Set();
-    pendingProjectDetailInvalidations.set(project_id, pending);
-  }
-  for (const field of normalizedFields) {
-    pending.add(field);
-  }
-  if (projectDetailInvalidationTimers.has(project_id)) {
-    return;
-  }
-  projectDetailInvalidationTimers.set(
-    project_id,
-    setTimeout(() => {
-      void flushProjectDetailInvalidation(project_id);
-    }, PROJECT_DETAIL_INVALIDATION_DEBOUNCE_MS),
-  );
 }
 
 function currentProjectFieldValue<T>({

@@ -5,6 +5,7 @@ let createLroMock: jest.Mock;
 let publishLroSummaryMock: jest.Mock;
 let publishLroEventMock: jest.Mock;
 let getProjectFileServerClientMock: jest.Mock;
+let publishProjectDetailInvalidationBestEffortMock: jest.Mock;
 
 jest.mock("@cocalc/backend/logger", () => ({
   __esModule: true,
@@ -54,6 +55,12 @@ jest.mock("@cocalc/server/conat/file-server-client", () => ({
     getProjectFileServerClientMock(...args),
 }));
 
+jest.mock("@cocalc/server/account/project-detail-feed", () => ({
+  __esModule: true,
+  publishProjectDetailInvalidationBestEffort: (...args: any[]) =>
+    publishProjectDetailInvalidationBestEffortMock(...args),
+}));
+
 describe("project-snapshots.restoreSnapshot", () => {
   beforeEach(() => {
     jest.resetModules();
@@ -67,6 +74,9 @@ describe("project-snapshots.restoreSnapshot", () => {
     }));
     publishLroSummaryMock = jest.fn(async () => undefined);
     publishLroEventMock = jest.fn(async () => undefined);
+    publishProjectDetailInvalidationBestEffortMock = jest.fn(
+      async () => undefined,
+    );
     getProjectFileServerClientMock = jest.fn(async () => ({
       createSnapshot: jest.fn(),
       deleteSnapshot: jest.fn(),
@@ -116,5 +126,35 @@ describe("project-snapshots.restoreSnapshot", () => {
       service: "persist-service",
       stream_name: "stream:op-restore-1",
     });
+  });
+
+  it("publishes project detail invalidation when updating snapshot schedules", async () => {
+    const updateSnapshotsMock = jest.fn(async () => undefined);
+    getProjectFileServerClientMock = jest.fn(async () => ({
+      createSnapshot: jest.fn(),
+      deleteSnapshot: jest.fn(),
+      updateSnapshots: updateSnapshotsMock,
+      allSnapshotUsage: jest.fn(async () => []),
+      getSnapshotFileText: jest.fn(),
+    }));
+    const { updateSnapshots } = await import("./project-snapshots");
+
+    await updateSnapshots({
+      account_id: "acct-1",
+      project_id: "proj-1",
+      counts: { daily: 5 },
+    });
+
+    expect(updateSnapshotsMock).toHaveBeenCalledWith({
+      project_id: "proj-1",
+      counts: { daily: 5 },
+      limit: 250,
+    });
+    expect(publishProjectDetailInvalidationBestEffortMock).toHaveBeenCalledWith(
+      {
+        project_id: "proj-1",
+        fields: ["snapshots"],
+      },
+    );
   });
 });

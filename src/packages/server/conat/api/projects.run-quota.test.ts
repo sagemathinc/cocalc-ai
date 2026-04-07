@@ -4,6 +4,9 @@ let assertLocalProjectCollaboratorMock: jest.Mock;
 let isAdminMock: jest.Mock;
 let getPoolMock: jest.Mock;
 let queryMock: jest.Mock;
+let dbMockFn: jest.Mock;
+let callback2Mock: jest.Mock;
+let publishProjectDetailInvalidationBestEffortMock: jest.Mock;
 
 jest.mock("@cocalc/server/conat/project-local-access", () => ({
   __esModule: true,
@@ -21,6 +24,22 @@ jest.mock("@cocalc/database/pool", () => ({
   default: (...args: any[]) => getPoolMock(...args),
 }));
 
+jest.mock("@cocalc/database", () => ({
+  __esModule: true,
+  db: (...args: any[]) => dbMockFn(...args),
+}));
+
+jest.mock("@cocalc/util/async-utils", () => ({
+  __esModule: true,
+  callback2: (...args: any[]) => callback2Mock(...args),
+}));
+
+jest.mock("@cocalc/server/account/project-detail-feed", () => ({
+  __esModule: true,
+  publishProjectDetailInvalidationBestEffort: (...args: any[]) =>
+    publishProjectDetailInvalidationBestEffortMock(...args),
+}));
+
 describe("getProjectRunQuota", () => {
   const ACCOUNT_ID = "11111111-1111-4111-8111-111111111111";
   const PROJECT_ID = "22222222-2222-4222-8222-222222222222";
@@ -33,6 +52,16 @@ describe("getProjectRunQuota", () => {
       rows: [{ run_quota: { disk_quota: 4000, always_running: false } }],
     }));
     getPoolMock = jest.fn(() => ({ query: queryMock }));
+    callback2Mock = jest.fn(async (fn: any, opts: any) => await fn(opts));
+    publishProjectDetailInvalidationBestEffortMock = jest.fn(
+      async () => undefined,
+    );
+    dbMockFn = jest.fn(() => ({
+      set_project_settings: jest.fn(async () => undefined),
+      projectControl: jest.fn(async () => ({
+        setAllQuotas: jest.fn(async () => undefined),
+      })),
+    }));
   });
 
   it("returns run quota for a collaborator", async () => {
@@ -68,5 +97,42 @@ describe("getProjectRunQuota", () => {
       always_running: false,
     });
     expect(isAdminMock).toHaveBeenCalledWith(ACCOUNT_ID);
+  });
+
+  it("publishes detail invalidation after updating quotas", async () => {
+    isAdminMock = jest.fn(async () => true);
+    const setProjectSettingsMock = jest.fn(async () => undefined);
+    const setAllQuotasMock = jest.fn(async () => undefined);
+    dbMockFn = jest.fn(() => ({
+      set_project_settings: setProjectSettingsMock,
+      projectControl: jest.fn(async () => ({
+        setAllQuotas: setAllQuotasMock,
+      })),
+    }));
+    const { setQuotas } = await import("./projects");
+
+    await expect(
+      setQuotas({
+        account_id: ACCOUNT_ID,
+        project_id: PROJECT_ID,
+        disk_quota: 1234,
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(setProjectSettingsMock).toHaveBeenCalledWith({
+      project_id: PROJECT_ID,
+      settings: {
+        account_id: ACCOUNT_ID,
+        project_id: PROJECT_ID,
+        disk_quota: 1234,
+      },
+    });
+    expect(setAllQuotasMock).toHaveBeenCalled();
+    expect(publishProjectDetailInvalidationBestEffortMock).toHaveBeenCalledWith(
+      {
+        project_id: PROJECT_ID,
+        fields: ["run_quota"],
+      },
+    );
   });
 });
