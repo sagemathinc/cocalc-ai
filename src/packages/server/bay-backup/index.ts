@@ -7,6 +7,7 @@ import { execFile as execFile0 } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
 import {
+  copyFile,
   mkdir,
   mkdtemp,
   readFile,
@@ -15,18 +16,21 @@ import {
   rm,
   stat,
   writeFile,
+  chmod,
 } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { promisify } from "node:util";
 import { createGunzip, createGzip } from "node:zlib";
 import {
   data,
+  secrets,
   pghost,
   pgdatabase,
   pgssl,
   pguser,
+  syncFiles,
   sslConfigToPsqlEnv,
 } from "@cocalc/backend/data";
 import getLogger from "@cocalc/backend/logger";
@@ -146,6 +150,12 @@ type ResolvedBackupManifest = {
   manifest: StoredBayBackupManifest;
   backup_manifest_path: string | null;
   source_storage_backend: StorageBackend;
+};
+
+type ControlPlaneArtifact = {
+  name: string;
+  local_path: string;
+  type: "sync" | "secrets";
 };
 
 let runInFlight: Promise<BayBackupRunResult> | null = null;
@@ -454,6 +464,165 @@ async function exists(path: string | null | undefined): Promise<boolean> {
   }
 }
 
+function sqliteShellQuote(arg: string): string {
+  return `'${arg.replace(/'/g, "''")}'`;
+}
+
+async function tarGzDirectory({
+  sourceDir,
+  archivePath,
+}: {
+  sourceDir: string;
+  archivePath: string;
+}): Promise<void> {
+  await ensureDir(dirname(archivePath));
+  await execFile(
+    "tar",
+    ["-C", dirname(sourceDir), "-czf", archivePath, basename(sourceDir)],
+    {
+      maxBuffer: 10 * 1024 * 1024,
+    },
+  );
+}
+
+async function backupSqliteDatabase({
+  sourcePath,
+  destinationPath,
+}: {
+  sourcePath: string;
+  destinationPath: string;
+}): Promise<void> {
+  await ensureDir(dirname(destinationPath));
+  await execFile(
+    "sqlite3",
+    [
+      sourcePath,
+      ".timeout 5000",
+      `.backup ${sqliteShellQuote(destinationPath)}`,
+    ],
+    {
+      maxBuffer: 10 * 1024 * 1024,
+    },
+  );
+}
+
+async function snapshotSyncTree({
+  sourceDir,
+  destinationDir,
+}: {
+  sourceDir: string;
+  destinationDir: string;
+}): Promise<void> {
+  await ensureDir(destinationDir);
+  const entries = await readdir(sourceDir, { withFileTypes: true });
+  for (const entry of entries) {
+    const sourcePath = join(sourceDir, entry.name);
+    const destinationPath = join(destinationDir, entry.name);
+    if (entry.isDirectory()) {
+      await snapshotSyncTree({
+        sourceDir: sourcePath,
+        destinationDir: destinationPath,
+      });
+      continue;
+    }
+    if (entry.isFile()) {
+      if (entry.name.endsWith(".db")) {
+        await backupSqliteDatabase({
+          sourcePath,
+          destinationPath,
+        });
+        continue;
+      }
+      if (entry.name.endsWith(".db-wal") || entry.name.endsWith(".db-shm")) {
+        continue;
+      }
+      await ensureDir(dirname(destinationPath));
+      await copyFile(sourcePath, destinationPath);
+      const info = await stat(sourcePath);
+      await chmod(destinationPath, info.mode);
+    }
+  }
+}
+
+async function copySecretsTree({
+  sourceDir,
+  destinationDir,
+}: {
+  sourceDir: string;
+  destinationDir: string;
+}): Promise<void> {
+  await ensureDir(destinationDir);
+  const entries = await readdir(sourceDir, { withFileTypes: true });
+  for (const entry of entries) {
+    if (entry.name.endsWith(".pid")) {
+      continue;
+    }
+    const sourcePath = join(sourceDir, entry.name);
+    const destinationPath = join(destinationDir, entry.name);
+    if (entry.isDirectory()) {
+      await copySecretsTree({
+        sourceDir: sourcePath,
+        destinationDir: destinationPath,
+      });
+      continue;
+    }
+    if (entry.isFile()) {
+      await ensureDir(dirname(destinationPath));
+      await copyFile(sourcePath, destinationPath);
+      const info = await stat(sourcePath);
+      await chmod(destinationPath, info.mode);
+    }
+  }
+}
+
+async function stageControlPlaneArtifacts({
+  stagingDir,
+}: {
+  stagingDir: string;
+}): Promise<ControlPlaneArtifact[]> {
+  const artifacts: ControlPlaneArtifact[] = [];
+
+  if (await exists(syncFiles.local)) {
+    const syncSnapshotDir = join(stagingDir, "sync");
+    await snapshotSyncTree({
+      sourceDir: syncFiles.local,
+      destinationDir: syncSnapshotDir,
+    });
+    const syncArchivePath = join(stagingDir, "sync.tar.gz");
+    await tarGzDirectory({
+      sourceDir: syncSnapshotDir,
+      archivePath: syncArchivePath,
+    });
+    await rm(syncSnapshotDir, { recursive: true, force: true });
+    artifacts.push({
+      name: "sync.tar.gz",
+      local_path: syncArchivePath,
+      type: "sync",
+    });
+  }
+
+  if (await exists(secrets)) {
+    const secretsSnapshotDir = join(stagingDir, "secrets");
+    await copySecretsTree({
+      sourceDir: secrets,
+      destinationDir: secretsSnapshotDir,
+    });
+    const secretsArchivePath = join(stagingDir, "secrets.tar.gz");
+    await tarGzDirectory({
+      sourceDir: secretsSnapshotDir,
+      archivePath: secretsArchivePath,
+    });
+    await rm(secretsSnapshotDir, { recursive: true, force: true });
+    artifacts.push({
+      name: "secrets.tar.gz",
+      local_path: secretsArchivePath,
+      type: "secrets",
+    });
+  }
+
+  return artifacts;
+}
+
 async function extractTarGz({
   archivePath,
   targetDir,
@@ -716,6 +885,13 @@ async function resolveArtifactPath({
     path: destinationPath,
     source_storage_backend: "r2",
   };
+}
+
+function findArtifactByName(
+  artifacts: BayBackupArtifactInfo[],
+  name: string,
+): BayBackupArtifactInfo | undefined {
+  return artifacts.find((artifact) => artifact.name === name);
 }
 
 function walObjectPrefix(root: string | null): string | null {
@@ -1024,7 +1200,8 @@ function mapRestoreReadiness({
     state.last_restore_test_backup_set_id ?? null;
   const last_restore_test_status = state.last_restore_test_status ?? null;
   const last_restore_tested_at = state.last_restore_tested_at ?? null;
-  const last_restore_test_target_dir = state.last_restore_test_target_dir ?? null;
+  const last_restore_test_target_dir =
+    state.last_restore_test_target_dir ?? null;
   const last_restore_test_recovery_ready =
     state.last_restore_test_recovery_ready ?? null;
 
@@ -1044,8 +1221,7 @@ function mapRestoreReadiness({
     summary = `Latest backup ${latest_backup_set_id} has not been restore-tested.`;
   } else if (last_restore_test_backup_set_id !== latest_backup_set_id) {
     latest_backup_restore_test_status = "stale";
-    const prior =
-      last_restore_test_status === "passed" ? "passed" : "failed";
+    const prior = last_restore_test_status === "passed" ? "passed" : "failed";
     summary = `Latest backup ${latest_backup_set_id} has not been restore-tested. Last tested backup ${last_restore_test_backup_set_id} ${prior} at ${last_restore_tested_at ?? "unknown time"}.`;
   } else {
     latest_backup_restore_test_status = last_restore_test_status;
@@ -1213,6 +1389,9 @@ export async function runBayBackup({
       const actual_strategy = await runBackupCommand({
         strategy: postgres.preferred_strategy,
         staging_dir,
+      });
+      await stageControlPlaneArtifacts({
+        stagingDir: staging_dir,
       });
       archive_dir = join(paths.archives_dir, backup_set_id);
       await rename(staging_dir, archive_dir);
@@ -1465,9 +1644,19 @@ export async function runBayRestore({
       manifestInfo.manifest.format === "pg_basebackup"
         ? join(resolvedTargetDir, "data")
         : null;
+    const sync_dir = join(resolvedTargetDir, "sync");
+    const secrets_dir = join(resolvedTargetDir, "secrets");
     const restore_manifest_path = dry_run
       ? null
       : join(resolvedTargetDir, "restore-manifest.json");
+    const syncArtifact = findArtifactByName(
+      manifestInfo.manifest.artifacts,
+      "sync.tar.gz",
+    );
+    const secretsArtifact = findArtifactByName(
+      manifestInfo.manifest.artifacts,
+      "secrets.tar.gz",
+    );
     let backup_manifest_path = manifestInfo.backup_manifest_path ?? null;
     if (dry_run) {
       notes.push("Dry run only; no restore files were written.");
@@ -1491,6 +1680,16 @@ export async function runBayRestore({
           "The backup manifest is not present locally; restore would download metadata from R2.",
         );
       }
+      if (syncArtifact) {
+        notes.push(`Would stage the Conat sync snapshot at ${sync_dir}.`);
+      } else {
+        notes.push("This backup does not include a Conat sync snapshot.");
+      }
+      if (secretsArtifact) {
+        notes.push(`Would stage the bay secrets snapshot at ${secrets_dir}.`);
+      } else {
+        notes.push("This backup does not include a secrets snapshot.");
+      }
       return {
         ...currentBay,
         started_at,
@@ -1500,6 +1699,8 @@ export async function runBayRestore({
         format: manifestInfo.manifest.format,
         target_dir: resolvedTargetDir,
         data_dir,
+        sync_dir: syncArtifact ? sync_dir : null,
+        secrets_dir: secretsArtifact ? secrets_dir : null,
         backup_manifest_path:
           manifestInfo.source_storage_backend === "local"
             ? backup_manifest_path
@@ -1638,6 +1839,42 @@ export async function runBayRestore({
       data_dir = null;
     }
 
+    if (syncArtifact) {
+      const syncArtifactPath = await resolveArtifactPath({
+        artifact: syncArtifact,
+        r2,
+        download_dir: tempDownloadDir,
+      });
+      if (syncArtifactPath.source_storage_backend === "r2") {
+        source_storage_backend = "r2";
+      }
+      await extractTarGz({
+        archivePath: syncArtifactPath.path,
+        targetDir: resolvedTargetDir,
+      });
+      notes.push(`Restored the Conat sync snapshot into ${sync_dir}.`);
+    } else {
+      notes.push("This backup does not include a Conat sync snapshot.");
+    }
+
+    if (secretsArtifact) {
+      const secretsArtifactPath = await resolveArtifactPath({
+        artifact: secretsArtifact,
+        r2,
+        download_dir: tempDownloadDir,
+      });
+      if (secretsArtifactPath.source_storage_backend === "r2") {
+        source_storage_backend = "r2";
+      }
+      await extractTarGz({
+        archivePath: secretsArtifactPath.path,
+        targetDir: resolvedTargetDir,
+      });
+      notes.push(`Restored the bay secrets snapshot into ${secrets_dir}.`);
+    } else {
+      notes.push("This backup does not include a secrets snapshot.");
+    }
+
     const finished_at = new Date().toISOString();
     await writeJson(restore_manifest_path!, {
       bay_id: resolvedBayId,
@@ -1647,6 +1884,8 @@ export async function runBayRestore({
       finished_at,
       target_dir: resolvedTargetDir,
       data_dir,
+      sync_dir: syncArtifact ? sync_dir : null,
+      secrets_dir: secretsArtifact ? secrets_dir : null,
       backup_manifest_path,
       source_storage_backend,
       wal_archive_dir: paths.wal_archive_dir,
@@ -1663,6 +1902,8 @@ export async function runBayRestore({
       format: manifestInfo.manifest.format,
       target_dir: resolvedTargetDir,
       data_dir,
+      sync_dir: syncArtifact ? sync_dir : null,
+      secrets_dir: secretsArtifact ? secrets_dir : null,
       backup_manifest_path,
       restore_manifest_path,
       source_storage_backend,

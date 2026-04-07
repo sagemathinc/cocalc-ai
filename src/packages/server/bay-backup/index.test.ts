@@ -66,9 +66,49 @@ describe("bay-backup runner", () => {
     oldEnv = { ...process.env };
     backupRoot = await mkdtemp(join(tmpdir(), "cocalc-bay-backup-"));
     process.env.COCALC_BACKUP_ROOT = backupRoot;
+    process.env.COCALC_DATA_DIR = join(backupRoot, "app-data");
     process.env.PGHOST = "/tmp/cocalc-test-pg";
     process.env.PGUSER = "smc";
     process.env.PGDATABASE = "smc";
+    mkdirSync(join(process.env.COCALC_DATA_DIR, "sync", "accounts", "test"), {
+      recursive: true,
+    });
+    writeFileSync(
+      join(
+        process.env.COCALC_DATA_DIR,
+        "sync",
+        "accounts",
+        "test",
+        "seen-state.db",
+      ),
+      "sqlite",
+    );
+    writeFileSync(
+      join(
+        process.env.COCALC_DATA_DIR,
+        "sync",
+        "accounts",
+        "test",
+        "seen-state.db-wal",
+      ),
+      "wal",
+    );
+    mkdirSync(join(process.env.COCALC_DATA_DIR, "secrets", "launchpad-sshd"), {
+      recursive: true,
+    });
+    writeFileSync(
+      join(process.env.COCALC_DATA_DIR, "secrets", "conat-password"),
+      "secret\n",
+    );
+    writeFileSync(
+      join(
+        process.env.COCALC_DATA_DIR,
+        "secrets",
+        "launchpad-sshd",
+        "sshd.pid",
+      ),
+      "123\n",
+    );
     execFileMock = jest.fn(
       (
         cmd: string,
@@ -79,14 +119,33 @@ describe("bay-backup runner", () => {
           result?: { stdout: string; stderr: string },
         ) => void,
       ) => {
-        if (cmd !== "pg_dumpall") {
-          cb(new Error(`unexpected command '${cmd}'`));
+        if (cmd === "pg_dumpall") {
+          const fileFlag = args.indexOf("--file");
+          const path = args[fileFlag + 1];
+          writeFileSync(path, "SELECT 1;\n");
+          cb(null, { stdout: "", stderr: "" });
           return;
         }
-        const fileFlag = args.indexOf("--file");
-        const path = args[fileFlag + 1];
-        writeFileSync(path, "SELECT 1;\n");
-        cb(null, { stdout: "", stderr: "" });
+        if (cmd === "sqlite3") {
+          const sourcePath = args[0];
+          const backupArg = args.find((arg) => arg.startsWith(".backup "));
+          const match = backupArg?.match(/^\.backup '(.+)'$/);
+          const destinationPath = match?.[1];
+          if (!destinationPath) {
+            cb(new Error("missing sqlite backup destination"));
+            return;
+          }
+          writeFileSync(destinationPath, readFileSync(sourcePath));
+          cb(null, { stdout: "", stderr: "" });
+          return;
+        }
+        if (cmd === "tar") {
+          const archivePath = args[3];
+          writeFileSync(archivePath, "tarball");
+          cb(null, { stdout: "", stderr: "" });
+          return;
+        }
+        cb(new Error(`unexpected command '${cmd}'`));
       },
     );
     getPoolMock = jest.fn(() => ({
@@ -129,8 +188,12 @@ describe("bay-backup runner", () => {
     const result = await runBayBackup();
     expect(result.format).toBe("pg_dumpall");
     expect(result.storage_backend).toBe("local");
-    expect(result.artifact_count).toBe(1);
-    expect(result.artifacts[0].name).toBe("cluster.sql.gz");
+    expect(result.artifact_count).toBe(3);
+    expect(result.artifacts.map((artifact) => artifact.name)).toEqual([
+      "cluster.sql.gz",
+      "secrets.tar.gz",
+      "sync.tar.gz",
+    ]);
     expect(readFileSync(result.artifacts[0].local_path!, "utf8")).toBeDefined();
 
     const manifest = JSON.parse(
@@ -138,7 +201,11 @@ describe("bay-backup runner", () => {
     );
     expect(manifest.format).toBe("pg_dumpall");
     expect(manifest.latest_storage_backend).toBe("local");
-    expect(manifest.artifacts[0].name).toBe("cluster.sql.gz");
+    expect(manifest.artifacts.map((artifact) => artifact.name)).toEqual([
+      "cluster.sql.gz",
+      "secrets.tar.gz",
+      "sync.tar.gz",
+    ]);
 
     const status = await getBayBackupStatus();
     expect(status.postgres.preferred_strategy).toBe("pg_dumpall");
@@ -195,6 +262,25 @@ describe("bay-backup runner", () => {
           cb(null, { stdout: "", stderr: "" });
           return;
         }
+        if (cmd === "sqlite3") {
+          const sourcePath = args[0];
+          const backupArg = args.find((arg) => arg.startsWith(".backup "));
+          const match = backupArg?.match(/^\.backup '(.+)'$/);
+          const destinationPath = match?.[1];
+          if (!destinationPath) {
+            cb(new Error("missing sqlite backup destination"));
+            return;
+          }
+          writeFileSync(destinationPath, readFileSync(sourcePath));
+          cb(null, { stdout: "", stderr: "" });
+          return;
+        }
+        if (cmd === "tar") {
+          const archivePath = args[3];
+          writeFileSync(archivePath, "tarball");
+          cb(null, { stdout: "", stderr: "" });
+          return;
+        }
         cb(new Error(`unexpected command '${cmd}'`));
       },
     );
@@ -219,6 +305,8 @@ describe("bay-backup runner", () => {
     mkdirSync(walArchiveDir, { recursive: true });
     writeFileSync(join(archivesDir, "base.tar.gz"), "base");
     writeFileSync(join(archivesDir, "pg_wal.tar.gz"), "wal");
+    writeFileSync(join(archivesDir, "sync.tar.gz"), "sync");
+    writeFileSync(join(archivesDir, "secrets.tar.gz"), "secrets");
     writeFileSync(join(walArchiveDir, "0000000100000000000000E8"), "segment");
     writeFileSync(
       join(manifestsDir, `${backupSetId}.json`),
@@ -255,6 +343,22 @@ describe("bay-backup runner", () => {
               sha256: "wal",
               content_type: "application/gzip",
             },
+            {
+              name: "sync.tar.gz",
+              local_path: join(archivesDir, "sync.tar.gz"),
+              object_key: null,
+              bytes: 4,
+              sha256: "sync",
+              content_type: "application/gzip",
+            },
+            {
+              name: "secrets.tar.gz",
+              local_path: join(archivesDir, "secrets.tar.gz"),
+              object_key: null,
+              bytes: 7,
+              sha256: "secrets",
+              content_type: "application/gzip",
+            },
           ],
         },
         null,
@@ -283,6 +387,17 @@ describe("bay-backup runner", () => {
           writeFileSync(join(targetDir, "PG_VERSION"), "17\n");
         } else if (archivePath.endsWith("pg_wal.tar.gz")) {
           writeFileSync(join(targetDir, "0000000100000000000000E8"), "segment");
+        } else if (archivePath.endsWith("sync.tar.gz")) {
+          mkdirSync(join(targetDir, "sync", "accounts", "test"), {
+            recursive: true,
+          });
+          writeFileSync(
+            join(targetDir, "sync", "accounts", "test", "seen-state.db"),
+            "sqlite",
+          );
+        } else if (archivePath.endsWith("secrets.tar.gz")) {
+          mkdirSync(join(targetDir, "secrets"), { recursive: true });
+          writeFileSync(join(targetDir, "secrets", "conat-password"), "secret");
         } else {
           cb(new Error(`unexpected archive '${archivePath}'`));
           return;
@@ -301,6 +416,8 @@ describe("bay-backup runner", () => {
     expect(result.recovery_ready).toBe(true);
     expect(result.source_storage_backend).toBe("local");
     expect(result.data_dir).toBe(join(restoreTargetDir, "data"));
+    expect(result.sync_dir).toBe(join(restoreTargetDir, "sync"));
+    expect(result.secrets_dir).toBe(join(restoreTargetDir, "secrets"));
     expect(
       readFileSync(join(restoreTargetDir, "data", "restore.signal"), "utf8"),
     ).toBe("");
@@ -314,12 +431,23 @@ describe("bay-backup runner", () => {
       readFileSync(join(restoreTargetDir, "restore-wal.sh"), "utf8"),
     ).toContain(walArchiveDir);
     expect(
+      readFileSync(
+        join(restoreTargetDir, "sync", "accounts", "test", "seen-state.db"),
+        "utf8",
+      ),
+    ).toBe("sqlite");
+    expect(
+      readFileSync(join(restoreTargetDir, "secrets", "conat-password"), "utf8"),
+    ).toBe("secret");
+    expect(
       JSON.parse(
         readFileSync(join(restoreTargetDir, "restore-manifest.json"), "utf8"),
       ),
     ).toMatchObject({
       backup_set_id: backupSetId,
       recovery_ready: true,
+      sync_dir: join(restoreTargetDir, "sync"),
+      secrets_dir: join(restoreTargetDir, "secrets"),
       wal_segment_count: 1,
     });
   });

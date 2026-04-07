@@ -191,7 +191,8 @@ test("bay backups calls the hub bay-backups snapshot API", async () => {
                   last_restore_tested_at: null,
                   last_restore_test_target_dir: null,
                   last_restore_test_recovery_ready: null,
-                  summary: "Latest backup backup-1 has not been restore-tested.",
+                  summary:
+                    "Latest backup backup-1 has not been restore-tested.",
                 },
                 backup_admission: null,
                 backup_execution: null,
@@ -334,6 +335,8 @@ test("bay restore forwards bay id, backup set, target dir, and write mode", asyn
                 format: "pg_basebackup",
                 target_dir: "/tmp/restore-target",
                 data_dir: "/tmp/restore-target/data",
+                sync_dir: "/tmp/restore-target/sync",
+                secrets_dir: "/tmp/restore-target/secrets",
                 backup_manifest_path: "/tmp/backup-manifest.json",
                 restore_manifest_path:
                   "/tmp/restore-target/restore-manifest.json",

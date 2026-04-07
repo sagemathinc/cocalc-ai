@@ -491,6 +491,8 @@ export interface BayRestoreRunResult extends BayInfo {
   format: "pg_basebackup" | "pg_dumpall";
   target_dir: string;
   data_dir: string | null;
+  sync_dir: string | null;
+  secrets_dir: string | null;
   backup_manifest_path: string | null;
   restore_manifest_path: string | null;
   source_storage_backend: "local" | "r2";

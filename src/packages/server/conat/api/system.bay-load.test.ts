@@ -450,6 +450,8 @@ describe("getBayLoad", () => {
       format: "pg_basebackup",
       target_dir: "/tmp/restore-target",
       data_dir: "/tmp/restore-target/data",
+      sync_dir: "/tmp/restore-target/sync",
+      secrets_dir: "/tmp/restore-target/secrets",
       backup_manifest_path: "/tmp/backup-manifest.json",
       restore_manifest_path: null,
       source_storage_backend: "local",
