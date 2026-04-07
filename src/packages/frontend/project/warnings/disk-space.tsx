@@ -4,39 +4,28 @@
  */
 
 import { Alert } from "../../antd-bootstrap";
-import {
-  React,
-  useMemo,
-  useRedux,
-  useTypedRedux,
-  useActions,
-} from "../../app-framework";
+import { React, useMemo, useTypedRedux, useActions } from "../../app-framework";
 import { Icon } from "../../components";
+import { useProjectRunQuota } from "../use-project-run-quota";
 import { ALERT_STYLE } from "./common";
 
 export const DiskSpaceWarning: React.FC<{ project_id: string }> = ({
   project_id,
 }) => {
-  const project = useRedux(["projects", "project_map", project_id]);
   const projectStatus = useTypedRedux({ project_id }, "status");
   const is_commercial = useTypedRedux("customize", "is_commercial");
+  const { runQuota } = useProjectRunQuota(project_id);
   // We got a report of a crash when project isn't defined; that could happen
-  // when opening a project via a direct link, and the project isn't in the
-  // initial project maps (the map will get extended to all projects, and
-  // then this gets rerendered).
+  // when opening a project via a direct link; if the run quota isn't loaded
+  // yet, we simply avoid showing the warning.
   const quotas = useMemo(
-    () => (is_commercial ? project?.get("run_quota")?.toJS() : undefined),
-    [project, is_commercial],
+    () => (is_commercial ? (runQuota ?? undefined) : undefined),
+    [is_commercial, runQuota],
   );
 
   const actions = useActions({ project_id });
 
-  if (
-    !is_commercial ||
-    project == null ||
-    quotas == null ||
-    quotas.disk_quota == null
-  ) {
+  if (!is_commercial || quotas == null || quotas.disk_quota == null) {
     // never show a warning if project not loaded or commercial not set
     return null;
   }

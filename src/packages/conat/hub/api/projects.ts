@@ -386,6 +386,7 @@ export type ProjectRegion = string | null;
 export type ProjectCreated = Date | string | null;
 export type ProjectSnapshotSchedule = SnapshotSchedule | null;
 export type ProjectBackupSchedule = SnapshotSchedule | null;
+export type ProjectRunQuota = Record<string, any> | null;
 
 export const projects = {
   createProject: authFirstRequireAccount,
@@ -411,6 +412,7 @@ export const projects = {
   getProjectCreated: authFirstRequireAccount,
   getProjectSnapshotSchedule: authFirstRequireAccount,
   getProjectBackupSchedule: authFirstRequireAccount,
+  getProjectRunQuota: authFirstRequireAccount,
   inviteCollaborator: authFirstRequireAccount,
   inviteCollaboratorWithoutAccount: authFirstRequireAccount,
   setQuotas: authFirstRequireAccount,
@@ -559,6 +561,11 @@ export interface Projects {
     account_id?: string;
     project_id: string;
   }) => Promise<ProjectCreated>;
+
+  getProjectRunQuota: (opts: {
+    account_id?: string;
+    project_id: string;
+  }) => Promise<ProjectRunQuota>;
 
   cancelPendingCopy: (opts: {
     account_id?: string;

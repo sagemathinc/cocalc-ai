@@ -71,7 +71,6 @@ Table({
           host_id: null,
           owning_bay_id: null,
           settings: DEFAULT_QUOTAS,
-          run_quota: null,
           state: null,
           last_edited: null,
           last_active: null,

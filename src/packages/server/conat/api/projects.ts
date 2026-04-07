@@ -80,6 +80,7 @@ import type {
   ProjectCreated,
   ProjectSnapshotSchedule,
   ProjectBackupSchedule,
+  ProjectRunQuota,
   WorkspaceSshConnectionInfo,
 } from "@cocalc/conat/hub/api/projects";
 import {
@@ -843,6 +844,21 @@ export async function getProjectBackupSchedule({
     [project_id],
   );
   return rows[0]?.backups ?? null;
+}
+
+export async function getProjectRunQuota({
+  account_id,
+  project_id,
+}: {
+  account_id: string;
+  project_id: string;
+}): Promise<ProjectRunQuota> {
+  await assertProjectReadAccessOrAdmin({ account_id, project_id });
+  const { rows } = await getPool().query<{ run_quota: ProjectRunQuota }>(
+    "SELECT run_quota FROM projects WHERE project_id = $1",
+    [project_id],
+  );
+  return rows[0]?.run_quota ?? null;
 }
 
 export async function getStorageOverview({

@@ -4,16 +4,15 @@
  */
 
 // cSpell: ignore dval
-import { List, Map } from "immutable";
 import { fromPairs, isEqual } from "lodash";
 import { ProjectStatus } from "@cocalc/comm/project-status/types";
 import {
-  TypedMap,
   useEffect,
   useMemo,
   useState,
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
+import { useProjectRunQuota } from "@cocalc/frontend/project/use-project-run-quota";
 import {
   KUCALC_COCALC_COM,
   KUCALC_DISABLED,
@@ -21,7 +20,6 @@ import {
 } from "@cocalc/util/db-schema/site-defaults";
 import { round1, seconds2hms, server_time } from "@cocalc/util/misc";
 import { PROJECT_UPGRADES, FAIR_CPU_MODE } from "@cocalc/util/schema";
-import { GPU } from "@cocalc/util/types/gpu";
 import {
   Upgrades,
   quota2upgrade_key,
@@ -43,8 +41,7 @@ export function useRunQuota(
   projectIsRunning: boolean | null,
 ): DisplayQuota {
   const [runQuota, setRunQuota] = useState<DisplayQuota>({});
-  const project_map = useTypedRedux("projects", "project_map");
-  const rq = project_map?.get(project_id)?.get("run_quota");
+  const { runQuota: rq } = useProjectRunQuota(project_id);
   // NOTE: even if project is NOT running, we do know the run quota
   // the problem is this information is not accurate, because only upon
   // startup the validity of a license is determined.
@@ -53,27 +50,28 @@ export function useRunQuota(
     if (rq == null || projectIsRunning === false) {
       return {};
     } else {
-      return rq
-        .map((val, key) => {
+      return Object.fromEntries(
+        Object.entries(rq).map(([key, val]) => {
           if (key === "gpu") {
-            const v = val as boolean | TypedMap<GPU>;
-            if (typeof v === "boolean") {
-              return v ? 1 : null;
+            if (typeof val === "boolean") {
+              return [key, val ? 1 : null];
+            } else if (typeof val === "object" && val != null) {
+              return [key, "num" in val ? (val.num ?? 0) : 0];
             } else {
-              return v?.get("num", 0);
+              return [key, 0];
             }
           } else if (typeof val !== "number") {
-            return val;
+            return [key, val];
           } else if (key == "idle_timeout") {
-            return seconds2hms(val, false, false);
+            return [key, seconds2hms(val, false, false)];
           } else {
             const up_key = quota2upgrade_key(key);
             // no display factor!
             const unit = PARAMS[up_key].display_unit;
-            return renderValueUnit(val, unit);
+            return [key, renderValueUnit(val, unit)];
           }
-        })
-        .toJS();
+        }),
+      );
     }
   }, [rq, projectIsRunning]);
   if (!isEqual(next, runQuota)) {
@@ -124,28 +122,26 @@ export function useCurrentUsage({
   shortStr = false,
 }): CurrentUsage {
   const project_status = useTypedRedux({ project_id }, "status");
+  const { runQuota } = useProjectRunQuota(project_id);
 
   const project_map = useTypedRedux("projects", "project_map");
   const last_edited: Date | undefined = project_map
     ?.get(project_id)
     ?.get("last_edited");
-  const runQuota:
-    | Map<string, number | Map<string, number | string> | List<object>>
-    | undefined = project_map?.get(project_id)?.get("run_quota");
 
   const [currentUsage, setCurrentUsage] = useState<CurrentUsage>({});
 
   function disk(usage) {
     if (runQuota == null) return;
-    const disk_quota = runQuota.get("disk_quota"); // mb
+    const disk_quota = runQuota.disk_quota; // mb
     return pct(usage.disk_mb, disk_quota, "MB");
   }
 
   function memory(usage) {
     if (runQuota == null) return;
     // this also displays the "dedicated memory" amount, past of entire limit
-    const mem_req = runQuota.get("memory_request"); // mb
-    const mem_limit = runQuota.get("memory_limit"); // mb
+    const mem_req = runQuota.memory_request; // mb
+    const mem_limit = runQuota.memory_limit; // mb
     const { mem_rss } = usage;
 
     if (
@@ -182,9 +178,9 @@ export function useCurrentUsage({
 
   function whenWillProjectStop() {
     if (last_edited == null) return;
-    const always_running = runQuota?.get("always_running") ?? false;
+    const always_running = runQuota?.always_running ?? false;
     if (always_running) return; // not applicable
-    const idle_timeout = runQuota?.get("idle_timeout"); // seconds
+    const idle_timeout = runQuota?.idle_timeout; // seconds
     const diff = Math.max(
       0,
       (server_time().valueOf() - last_edited.valueOf()) / 1000,
@@ -205,7 +201,7 @@ export function useCurrentUsage({
 
   function getBoolean(key) {
     if (runQuota == null) return;
-    const val = runQuota.get(key);
+    const val = runQuota[key];
     return {
       display: booleanValueStr(val),
       element: renderBoolean(val, true), // due to how this is used, we can assume the project is running
@@ -239,13 +235,14 @@ export function useCurrentUsage({
             case "ext_rw":
               return [key, getBoolean(key)];
             case "patch":
-              const p = runQuota?.get(key);
-              const x = List.isList(p) ? p?.size : "N/A";
+              const p = runQuota?.[key];
+              const x = Array.isArray(p) ? p.length : "N/A";
               return [key, { display: `${x}`, element: <>{x}</> }];
             case "gpu":
-              const gpu = runQuota?.get(key);
+              const gpu = runQuota?.[key];
               if (!gpu) return [key, { display: "N/A", element: <>N/A</> }];
-              const num = Map.isMap(gpu) ? gpu.get("num", 1) : 1;
+              const num =
+                typeof gpu === "object" && gpu != null ? (gpu.num ?? 1) : 1;
               return [
                 key,
                 { display: `${num}`, element: <>{JSON.stringify(num)}</> },
