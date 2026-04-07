@@ -74,6 +74,7 @@ import {
   claimPendingCopies as claimPendingCopiesDb,
   updateCopyStatus as updateCopyStatusDb,
 } from "@cocalc/server/projects/copy-db";
+import sshKeys from "@cocalc/server/projects/get-ssh-keys";
 import { createLro } from "@cocalc/server/lro/lro-db";
 import { publishLroEvent, publishLroSummary } from "@cocalc/server/lro/stream";
 import { lroStreamName } from "@cocalc/conat/lro/names";
@@ -1639,6 +1640,53 @@ export async function claimPendingCopies({
     throw new Error("host_id must be specified");
   }
   return await claimPendingCopiesDb({ host_id, project_id, limit });
+}
+
+export async function getProjectStartMetadata({
+  host_id,
+  project_id,
+}: {
+  host_id?: string;
+  project_id: string;
+}): Promise<{
+  title?: string;
+  users?: any;
+  image?: string;
+  authorized_keys?: string;
+  run_quota?: any;
+}> {
+  if (!host_id) {
+    throw new Error("host_id must be specified");
+  }
+  if (!project_id) {
+    throw new Error("project_id must be specified");
+  }
+  const { rows } = await pool().query(
+    `SELECT title, users, rootfs_image AS image, run_quota
+       FROM projects
+      WHERE project_id=$1
+        AND host_id=$2
+        AND deleted IS NOT true
+      LIMIT 1`,
+    [project_id, host_id],
+  );
+  const row = rows[0];
+  if (!row) {
+    throw new Error(
+      `project ${project_id} is not assigned to host ${host_id} or is unavailable`,
+    );
+  }
+  const keys = await sshKeys(project_id);
+  const authorized_keys = Object.values(keys)
+    .map((key: any) => key.value)
+    .join("\n");
+  return {
+    title: row.title ?? undefined,
+    users: row.users ?? undefined,
+    image: row.image ?? undefined,
+    authorized_keys: authorized_keys || undefined,
+    run_quota: row.run_quota ?? undefined,
+  };
 }
 
 export async function updateCopyStatus({
