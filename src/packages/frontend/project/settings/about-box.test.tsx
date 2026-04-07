@@ -23,6 +23,10 @@ jest.mock("antd", () => {
 });
 
 jest.mock("react-intl", () => ({
+  createIntlCache: () => ({}),
+  createIntl: () => ({
+    formatMessage: ({ defaultMessage, id }: any) => defaultMessage ?? id ?? "",
+  }),
   defineMessage: (message: any) => message,
   defineMessages: (messages: any) => messages,
   useIntl: () => ({
@@ -30,9 +34,13 @@ jest.mock("react-intl", () => ({
   }),
 }));
 
-jest.mock("@cocalc/frontend/app-framework", () => ({
-  useTypedRedux: (...args: any[]) => useTypedRedux(...args),
-}));
+jest.mock("@cocalc/frontend/app-framework", () => {
+  const actual = jest.requireActual("@cocalc/frontend/app-framework");
+  return {
+    ...actual,
+    useTypedRedux: (...args: any[]) => useTypedRedux(...args),
+  };
+});
 
 jest.mock("@cocalc/frontend/components/error", () => () => null);
 
