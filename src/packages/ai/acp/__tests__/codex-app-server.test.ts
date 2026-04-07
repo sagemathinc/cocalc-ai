@@ -67,10 +67,27 @@ class FakeCodexAppServerProc extends EventEmitter {
 }
 
 describe("CodexAppServerAgent", () => {
+  const originalCompactRetryLimit =
+    process.env.COCALC_CODEX_REMOTE_COMPACT_MAX_RETRIES;
+  const originalCompactRetryDelay =
+    process.env.COCALC_CODEX_REMOTE_COMPACT_RETRY_DELAY_MS;
+
   afterEach(async () => {
     setCodexProjectSpawner(null);
     getCodexSiteKeyGovernorMock.mockReset();
     getCodexSiteKeyGovernorMock.mockReturnValue(null);
+    if (originalCompactRetryLimit == null) {
+      delete process.env.COCALC_CODEX_REMOTE_COMPACT_MAX_RETRIES;
+    } else {
+      process.env.COCALC_CODEX_REMOTE_COMPACT_MAX_RETRIES =
+        originalCompactRetryLimit;
+    }
+    if (originalCompactRetryDelay == null) {
+      delete process.env.COCALC_CODEX_REMOTE_COMPACT_RETRY_DELAY_MS;
+    } else {
+      process.env.COCALC_CODEX_REMOTE_COMPACT_RETRY_DELAY_MS =
+        originalCompactRetryDelay;
+    }
   });
 
   it("streams app-server events and returns the upstream thread id", async () => {
@@ -286,6 +303,362 @@ describe("CodexAppServerAgent", () => {
         apiKey: "secret-key",
       },
     ]);
+  });
+
+  it("retries remote compaction timeouts before visible turn side effects", async () => {
+    process.env.COCALC_CODEX_REMOTE_COMPACT_MAX_RETRIES = "1";
+    process.env.COCALC_CODEX_REMOTE_COMPACT_RETRY_DELAY_MS = "1";
+
+    const appServerCalls: Array<{
+      spawn: number;
+      method: string;
+      params: any;
+    }> = [];
+    let spawnCount = 0;
+
+    const compactTimeout =
+      "Error running remote compact task: timeout waiting for child process to exit 2026-04-07T18:20:13.638249Z ERROR codex_core::compact_remote: remote compaction failed compact_error=timeout waiting for child process to exit";
+
+    const makeProc = (spawn: number) =>
+      new FakeCodexAppServerProc((fake, message) => {
+        appServerCalls.push({
+          spawn,
+          method: message.method,
+          params: message.params,
+        });
+        switch (message.method) {
+          case "initialize":
+            fake.sendResponse(message.id, { ok: true });
+            break;
+          case "thread/resume":
+            if (spawn === 1) {
+              fake.stdout.write(
+                `${JSON.stringify({
+                  id: message.id,
+                  error: { message: "thread not found" },
+                })}\n`,
+              );
+            } else {
+              fake.sendResponse(message.id, {
+                thread: { id: "thr-compact-1" },
+              });
+            }
+            break;
+          case "thread/start":
+            fake.sendResponse(message.id, {
+              thread: { id: "thr-compact-1" },
+            });
+            break;
+          case "turn/start": {
+            const turnId = `turn-compact-${spawn}`;
+            fake.sendResponse(message.id, { turn: { id: turnId } });
+            setImmediate(() => {
+              fake.sendNotification("turn/started", {
+                turn: { id: turnId, status: "inProgress" },
+              });
+              if (spawn === 1) {
+                fake.sendNotification("error", {
+                  turnId,
+                  error: { message: compactTimeout },
+                });
+                fake.sendNotification("turn/completed", {
+                  turn: {
+                    id: turnId,
+                    status: "failed",
+                    error: { message: compactTimeout },
+                  },
+                });
+              } else {
+                fake.sendNotification("item/agentMessage/delta", {
+                  threadId: "thr-compact-1",
+                  turnId,
+                  itemId: "msg-compact-1",
+                  delta: "Recovered",
+                });
+                fake.sendNotification("turn/completed", {
+                  turn: { id: turnId, status: "completed" },
+                });
+              }
+            });
+            break;
+          }
+          default:
+            if (typeof message.id === "number") {
+              fake.sendResponse(message.id, {});
+            }
+        }
+      });
+
+    setCodexProjectSpawner({
+      spawnCodexExec: async () => {
+        throw new Error("unexpected codex exec spawn");
+      },
+      spawnCodexAppServer: async () => ({
+        proc: makeProc(++spawnCount) as any,
+        cmd: "fake-codex",
+        args: ["app-server"],
+        cwd: "/tmp/project",
+      }),
+    });
+
+    const agent = new CodexAppServerAgent();
+    const streamPayloads: any[] = [];
+    await agent.evaluate({
+      project_id: "00000000-0000-4000-8000-000000000000",
+      account_id: "00000000-0000-4000-8000-000000000001",
+      session_id: "chat-thread-compact",
+      prompt: "continue",
+      stream: async (payload) => {
+        if (payload) {
+          streamPayloads.push(payload);
+        }
+      },
+      config: {
+        workingDirectory: "/tmp/project",
+      } as any,
+    });
+
+    expect(spawnCount).toBe(2);
+    expect(
+      appServerCalls.filter((call) => call.method === "turn/start"),
+    ).toHaveLength(2);
+    expect(
+      appServerCalls.filter((call) => call.method === "thread/resume"),
+    ).toEqual([
+      expect.objectContaining({
+        spawn: 1,
+        params: expect.objectContaining({
+          threadId: "chat-thread-compact",
+        }),
+      }),
+      expect.objectContaining({
+        spawn: 2,
+        params: expect.objectContaining({
+          threadId: "thr-compact-1",
+        }),
+      }),
+    ]);
+    expect(streamPayloads).toEqual(
+      expect.arrayContaining([
+        {
+          type: "event",
+          event: {
+            type: "thinking",
+            text: "Remote context compaction timed out. Retrying (1/1)...",
+          },
+        },
+        {
+          type: "summary",
+          finalResponse: "Recovered",
+          usage: undefined,
+          threadId: "thr-compact-1",
+        },
+      ]),
+    );
+    expect(
+      streamPayloads.find((payload) => payload.type === "error"),
+    ).toBeUndefined();
+  });
+
+  it("stops after bounded remote compaction retries and adds guidance", async () => {
+    process.env.COCALC_CODEX_REMOTE_COMPACT_MAX_RETRIES = "1";
+    process.env.COCALC_CODEX_REMOTE_COMPACT_RETRY_DELAY_MS = "1";
+
+    let spawnCount = 0;
+    const compactTimeout =
+      "Error running remote compact task: timeout waiting for child process to exit 2026-04-07T18:20:13.638249Z ERROR codex_core::compact_remote: remote compaction failed compact_error=timeout waiting for child process to exit";
+
+    const makeProc = (spawn: number) =>
+      new FakeCodexAppServerProc((fake, message) => {
+        switch (message.method) {
+          case "initialize":
+            fake.sendResponse(message.id, { ok: true });
+            break;
+          case "thread/resume":
+            fake.stdout.write(
+              `${JSON.stringify({
+                id: message.id,
+                error: { message: "thread not found" },
+              })}\n`,
+            );
+            break;
+          case "thread/start":
+            fake.sendResponse(message.id, {
+              thread: { id: `thr-compact-${spawn}` },
+            });
+            break;
+          case "turn/start": {
+            const turnId = `turn-compact-${spawn}`;
+            fake.sendResponse(message.id, { turn: { id: turnId } });
+            setImmediate(() => {
+              fake.sendNotification("turn/started", {
+                turn: { id: turnId, status: "inProgress" },
+              });
+              fake.sendNotification("error", {
+                turnId,
+                error: { message: compactTimeout },
+              });
+              fake.sendNotification("turn/completed", {
+                turn: {
+                  id: turnId,
+                  status: "failed",
+                  error: { message: compactTimeout },
+                },
+              });
+            });
+            break;
+          }
+          default:
+            if (typeof message.id === "number") {
+              fake.sendResponse(message.id, {});
+            }
+        }
+      });
+
+    setCodexProjectSpawner({
+      spawnCodexExec: async () => {
+        throw new Error("unexpected codex exec spawn");
+      },
+      spawnCodexAppServer: async () => {
+        const spawn = ++spawnCount;
+        return {
+          proc: makeProc(spawn) as any,
+          cmd: "fake-codex",
+          args: ["app-server"],
+          cwd: "/tmp/project",
+        };
+      },
+    });
+
+    const agent = new CodexAppServerAgent();
+    const streamPayloads: any[] = [];
+    await agent.evaluate({
+      project_id: "00000000-0000-4000-8000-000000000000",
+      account_id: "00000000-0000-4000-8000-000000000001",
+      session_id: "chat-thread-compact",
+      prompt: "continue",
+      stream: async (payload) => {
+        if (payload) streamPayloads.push(payload);
+      },
+      config: {
+        workingDirectory: "/tmp/project",
+      } as any,
+    });
+
+    expect(spawnCount).toBe(2);
+    const errorPayload = streamPayloads.find(
+      (payload) => payload.type === "error",
+    );
+    expect(errorPayload?.error).toContain("Error running remote compact task");
+    expect(errorPayload?.error).toContain(
+      "starting a fresh chat to reduce history size",
+    );
+  });
+
+  it("does not retry remote compaction failures after visible turn output", async () => {
+    process.env.COCALC_CODEX_REMOTE_COMPACT_MAX_RETRIES = "1";
+    process.env.COCALC_CODEX_REMOTE_COMPACT_RETRY_DELAY_MS = "1";
+
+    let spawnCount = 0;
+    const compactTimeout =
+      "Error running remote compact task: timeout waiting for child process to exit 2026-04-07T18:20:13.638249Z ERROR codex_core::compact_remote: remote compaction failed compact_error=timeout waiting for child process to exit";
+
+    const proc = new FakeCodexAppServerProc((fake, message) => {
+      switch (message.method) {
+        case "initialize":
+          fake.sendResponse(message.id, { ok: true });
+          break;
+        case "thread/start":
+          fake.sendResponse(message.id, {
+            thread: { id: "thr-side-effects-1" },
+          });
+          break;
+        case "turn/start": {
+          fake.sendResponse(message.id, {
+            turn: { id: "turn-side-effects-1" },
+          });
+          setImmediate(() => {
+            fake.sendNotification("turn/started", {
+              turn: { id: "turn-side-effects-1", status: "inProgress" },
+            });
+            fake.sendNotification("item/started", {
+              threadId: "thr-side-effects-1",
+              turnId: "turn-side-effects-1",
+              item: {
+                type: "commandExecution",
+                id: "cmd-side-effects-1",
+                command: "echo hi",
+                cwd: "/tmp/project",
+                processId: null,
+                status: "inProgress",
+                commandActions: [],
+                aggregatedOutput: null,
+                exitCode: null,
+                durationMs: null,
+              },
+            });
+            fake.sendNotification("error", {
+              turnId: "turn-side-effects-1",
+              error: { message: compactTimeout },
+            });
+            fake.sendNotification("turn/completed", {
+              turn: {
+                id: "turn-side-effects-1",
+                status: "failed",
+                error: { message: compactTimeout },
+              },
+            });
+          });
+          break;
+        }
+        default:
+          if (typeof message.id === "number") {
+            fake.sendResponse(message.id, {});
+          }
+      }
+    });
+
+    setCodexProjectSpawner({
+      spawnCodexExec: async () => {
+        throw new Error("unexpected codex exec spawn");
+      },
+      spawnCodexAppServer: async () => {
+        spawnCount += 1;
+        return {
+          proc: proc as any,
+          cmd: "fake-codex",
+          args: ["app-server"],
+          cwd: "/tmp/project",
+        };
+      },
+    });
+
+    const agent = new CodexAppServerAgent();
+    const streamPayloads: any[] = [];
+    await agent.evaluate({
+      project_id: "00000000-0000-4000-8000-000000000000",
+      account_id: "00000000-0000-4000-8000-000000000001",
+      prompt: "continue",
+      stream: async (payload) => {
+        if (payload) streamPayloads.push(payload);
+      },
+      config: {
+        workingDirectory: "/tmp/project",
+      } as any,
+    });
+
+    expect(spawnCount).toBe(1);
+    expect(
+      streamPayloads.find(
+        (payload) =>
+          payload.type === "event" &&
+          payload.event?.type === "thinking" &&
+          `${payload.event?.text ?? ""}`.includes("Retrying"),
+      ),
+    ).toBeUndefined();
+    expect(
+      streamPayloads.find((payload) => payload.type === "error")?.error,
+    ).toContain("Error running remote compact task");
   });
 
   it("resumes the actual Codex thread when repeated turns use the chat-thread alias", async () => {

@@ -311,6 +311,13 @@ type RunningTurn = {
   exited: Promise<void>;
 };
 
+type RetryableRemoteCompactError = Error & {
+  retryableRemoteCompactTimeout: true;
+  threadId?: string;
+  turnId?: string;
+  stderrTail?: string[];
+};
+
 type RequestEntry = {
   method: string;
   resolve: (value: any) => void;
@@ -580,6 +587,84 @@ function formatAppServerError(errors: string[]): string {
   if (normalized.length === 0) return "Codex app-server request failed.";
   if (normalized.length === 1) return normalized[0];
   return normalized.join("\n\n");
+}
+
+function getRemoteCompactRetryLimit(): number {
+  return Math.max(
+    0,
+    Number(process.env.COCALC_CODEX_REMOTE_COMPACT_MAX_RETRIES ?? 2),
+  );
+}
+
+function getRemoteCompactRetryDelayMs(): number {
+  return Math.max(
+    250,
+    Number(process.env.COCALC_CODEX_REMOTE_COMPACT_RETRY_DELAY_MS ?? 1_500),
+  );
+}
+
+function isRetryableRemoteCompactTimeoutText(text: string): boolean {
+  const normalized = stripAnsi(`${text ?? ""}`).toLowerCase();
+  if (!normalized.includes("error running remote compact task")) {
+    return false;
+  }
+  return (
+    normalized.includes(
+      "compact_error=timeout waiting for child process to exit",
+    ) ||
+    normalized.includes("compact_remote: remote compaction failed") ||
+    normalized.includes("remote compaction failed")
+  );
+}
+
+function hasObservableTurnSideEffects(opts: {
+  startedTerminalIds: Set<string>;
+  emittedFileWrites: Set<string>;
+  emittedFileWritePaths: Set<string>;
+  finalResponse: string;
+  latestTurnDiffText?: string;
+}): boolean {
+  return (
+    opts.startedTerminalIds.size > 0 ||
+    opts.emittedFileWrites.size > 0 ||
+    opts.emittedFileWritePaths.size > 0 ||
+    !!opts.finalResponse.trim() ||
+    !!`${opts.latestTurnDiffText ?? ""}`.trim()
+  );
+}
+
+function createRetryableRemoteCompactError(opts: {
+  message: string;
+  threadId?: string;
+  turnId?: string;
+  stderrTail?: string[];
+}): RetryableRemoteCompactError {
+  return Object.assign(new Error(opts.message), {
+    retryableRemoteCompactTimeout: true as const,
+    threadId: opts.threadId,
+    turnId: opts.turnId,
+    stderrTail: opts.stderrTail,
+  });
+}
+
+function isRetryableRemoteCompactError(
+  err: unknown,
+): err is RetryableRemoteCompactError {
+  return !!(err as RetryableRemoteCompactError)?.retryableRemoteCompactTimeout;
+}
+
+function formatRemoteCompactRetryExhaustedError(error: string): string {
+  const normalized = `${error ?? ""}`.trim();
+  const guidance =
+    "This looks like an upstream Codex remote context-compaction timeout. If it keeps happening, try forking or starting a fresh chat to reduce history size, or switch to a model with a larger context window.";
+  return normalized ? `${normalized}\n\n${guidance}` : guidance;
+}
+
+async function delay(ms: number): Promise<void> {
+  await new Promise<void>((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    timer.unref?.();
+  });
 }
 
 function mapContainerPathToHost(
@@ -937,6 +1022,50 @@ export class CodexAppServerAgent implements AcpAgent {
   private readonly running = new Map<string, RunningTurn>();
 
   async evaluate(request: AcpEvaluateRequest): Promise<void> {
+    const maxRetries = getRemoteCompactRetryLimit();
+    const retryDelayMs = getRemoteCompactRetryDelayMs();
+    for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+      try {
+        const outcome = await this.evaluateOnce(request);
+        if (outcome === "interrupted") {
+          return;
+        }
+        return;
+      } catch (err) {
+        if (!isRetryableRemoteCompactError(err) || attempt >= maxRetries) {
+          const error =
+            isRetryableRemoteCompactError(err) && attempt >= maxRetries
+              ? formatRemoteCompactRetryExhaustedError(err.message ?? `${err}`)
+              : ((err as Error)?.message ?? `${err}`);
+          await request.stream({ type: "error", error });
+          return;
+        }
+        const retryNumber = attempt + 1;
+        logger.warn("codex app-server: retrying remote compaction timeout", {
+          projectId: request.chat?.project_id ?? request.project_id,
+          accountId: request.account_id,
+          threadId: err.threadId,
+          turnId: err.turnId,
+          attempt: retryNumber,
+          maxRetries,
+          delayMs: retryDelayMs,
+          stderrTail: err.stderrTail ?? [],
+        });
+        await request.stream({
+          type: "event",
+          event: {
+            type: "thinking",
+            text: `Remote context compaction timed out. Retrying (${retryNumber}/${maxRetries})...`,
+          },
+        });
+        await delay(retryDelayMs * retryNumber);
+      }
+    }
+  }
+
+  private async evaluateOnce(
+    request: AcpEvaluateRequest,
+  ): Promise<"completed" | "interrupted"> {
     const { prompt, stream, session_id, config } = request;
     const session = this.resolveSession(session_id, config);
     const runtimeEnv = Object.fromEntries(
@@ -1573,7 +1702,7 @@ export class CodexAppServerAgent implements AcpAgent {
           turnId,
           err: `${err}`,
         });
-        return;
+        return "interrupted";
       }
       const stderrTail = client.getStderrTail();
       const error = [
@@ -1591,14 +1720,31 @@ export class CodexAppServerAgent implements AcpAgent {
         err: `${err}`,
         stderrTail,
       });
-      await stream({ type: "error", error });
-      return;
+      if (
+        isRetryableRemoteCompactTimeoutText(error) &&
+        !hasObservableTurnSideEffects({
+          startedTerminalIds,
+          emittedFileWrites,
+          emittedFileWritePaths,
+          finalResponse,
+          latestTurnDiffText,
+        })
+      ) {
+        throw createRetryableRemoteCompactError({
+          message: error,
+          threadId: currentThreadId,
+          turnId,
+          stderrTail,
+        });
+      }
+      throw new Error(error);
     } finally {
       this.running.delete(currentThreadId);
       if (spawned.proc.exitCode == null && !spawned.proc.killed) {
         spawned.proc.kill("SIGKILL");
       }
     }
+    return "completed";
   }
 
   async interrupt(threadId: string): Promise<boolean> {
