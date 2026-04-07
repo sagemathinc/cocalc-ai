@@ -437,6 +437,21 @@ export interface BayBackupStatus {
   last_error_at: string | null;
   last_error: string | null;
   restore_state: string | null;
+  full_snapshot_scheduler_enabled: boolean;
+  full_snapshot_interval_ms: number | null;
+  full_snapshot_retry_interval_ms: number;
+  full_snapshot_retention_count: number;
+  restore_workspace_retention_days: number;
+  maintenance_running: boolean;
+  maintenance_next_run_at: string | null;
+  maintenance_last_started_at: string | null;
+  maintenance_last_finished_at: string | null;
+  maintenance_last_success_at: string | null;
+  maintenance_last_error_at: string | null;
+  maintenance_last_error: string | null;
+  last_pruned_at: string | null;
+  last_pruned_local_archive_count: number;
+  last_pruned_restore_count: number;
 }
 
 export interface BayRestoreReadinessStatus {

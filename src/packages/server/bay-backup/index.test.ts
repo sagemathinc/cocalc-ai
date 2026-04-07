@@ -1,6 +1,6 @@
 export {};
 
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -230,7 +230,7 @@ describe("bay-backup runner", () => {
         if (cmd === "rustic-bin") {
           const subcommand =
             args.find((arg) =>
-              ["backup", "snapshots", "restore"].includes(arg),
+              ["backup", "snapshots", "restore", "forget"].includes(arg),
             ) ?? "";
           if (subcommand === "backup") {
             const host = args[args.indexOf("--host") + 1];
@@ -312,6 +312,30 @@ describe("bay-backup runner", () => {
               return;
             }
             cb(new Error("full rustic restore is not mocked in this test"));
+            return;
+          }
+          if (subcommand === "forget") {
+            const hostFlag =
+              args.indexOf("--host") >= 0
+                ? "--host"
+                : args.indexOf("--filter-host") >= 0
+                  ? "--filter-host"
+                  : null;
+            const host =
+              hostFlag == null ? "" : args[args.indexOf(hostFlag) + 1];
+            const keepLastIndex = args.indexOf("--keep-last");
+            const keepLast =
+              keepLastIndex >= 0
+                ? Number.parseInt(args[keepLastIndex + 1], 10)
+                : 0;
+            rusticSnapshots = rusticSnapshots
+              .filter((snapshot) => snapshot.host !== host)
+              .concat(
+                rusticSnapshots
+                  .filter((snapshot) => snapshot.host === host)
+                  .slice(-Math.max(keepLast, 0)),
+              );
+            cb(null, { stdout: "", stderr: "" });
             return;
           }
           cb(new Error(`unexpected rustic args '${args.join(" ")}'`));
@@ -1487,5 +1511,75 @@ describe("bay-backup runner", () => {
         prefix: "bay-backups/bay-0/wal/",
       }),
     );
+  });
+
+  it("prunes old local archives and stale restore workspaces after a full backup", async () => {
+    process.env.COCALC_BAY_BACKUP_RETENTION_COUNT = "1";
+    process.env.COCALC_BAY_BACKUP_RESTORE_RETENTION_DAYS = "1";
+
+    const { getBayBackupStatus, runBayBackup } = await import("./index");
+
+    const first = await runBayBackup();
+    const second = await runBayBackup();
+    const bayRoot = join(backupRoot, "bay-backups", "bay-0");
+    const firstArchiveDir = join(bayRoot, "archives", first.backup_set_id);
+    const secondArchiveDir = join(bayRoot, "archives", second.backup_set_id);
+    const staleRestoreDir = join(bayRoot, "restores", "stale-restore");
+    mkdirSync(staleRestoreDir, { recursive: true });
+    utimesSync(
+      staleRestoreDir,
+      new Date("2026-03-01T00:00:00Z"),
+      new Date("2026-03-01T00:00:00Z"),
+    );
+
+    const third = await runBayBackup();
+    const thirdArchiveDir = join(bayRoot, "archives", third.backup_set_id);
+
+    expect(
+      readFileSync(join(thirdArchiveDir, "manifest.json"), "utf8"),
+    ).toContain(third.backup_set_id);
+    expect(() =>
+      readFileSync(join(firstArchiveDir, "manifest.json"), "utf8"),
+    ).toThrow();
+    expect(() =>
+      readFileSync(join(secondArchiveDir, "manifest.json"), "utf8"),
+    ).toThrow();
+    expect(() =>
+      readFileSync(join(staleRestoreDir, "missing"), "utf8"),
+    ).toThrow();
+
+    const status = await getBayBackupStatus();
+    expect(
+      status.bay_backup.last_pruned_local_archive_count,
+    ).toBeGreaterThanOrEqual(1);
+    expect(status.bay_backup.last_pruned_restore_count).toBeGreaterThanOrEqual(
+      1,
+    );
+    expect(status.bay_backup.last_pruned_at).toBeTruthy();
+  });
+
+  it("reports scheduled full snapshot maintenance state", async () => {
+    process.env.COCALC_BAY_BACKUP_INTERVAL_MS = "600000";
+    process.env.COCALC_BAY_BACKUP_RETRY_INTERVAL_MS = "12345";
+    process.env.COCALC_BAY_BACKUP_RETENTION_COUNT = "9";
+    process.env.COCALC_BAY_BACKUP_RESTORE_RETENTION_DAYS = "5";
+
+    const { getBayBackupStatus, runBayBackup, startBayBackupMaintenance } =
+      await import("./index");
+
+    await runBayBackup();
+    startBayBackupMaintenance();
+    let status = await getBayBackupStatus();
+    for (let i = 0; i < 5 && !status.bay_backup.maintenance_next_run_at; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      status = await getBayBackupStatus();
+    }
+    expect(status.bay_backup.full_snapshot_scheduler_enabled).toBe(true);
+    expect(status.bay_backup.full_snapshot_interval_ms).toBe(600000);
+    expect(status.bay_backup.full_snapshot_retry_interval_ms).toBe(12345);
+    expect(status.bay_backup.full_snapshot_retention_count).toBe(9);
+    expect(status.bay_backup.restore_workspace_retention_days).toBe(5);
+    expect(status.bay_backup.maintenance_running).toBe(false);
+    expect(status.bay_backup.maintenance_next_run_at).toBeTruthy();
   });
 });

@@ -31,7 +31,10 @@ import { startAccountNotificationIndexProjectionMaintenance } from "@cocalc/serv
 import { enableDbAccountRowFeedPublishing } from "@cocalc/server/account/account-row-feed";
 import { enableDbCollaboratorAccountFeedPublishing } from "@cocalc/server/account/collaborator-feed";
 import { enableDbProjectAccountFeedPublishing } from "@cocalc/server/account/project-feed";
-import { startBayWalArchiveMaintenance } from "@cocalc/server/bay-backup";
+import {
+  startBayBackupMaintenance,
+  startBayWalArchiveMaintenance,
+} from "@cocalc/server/bay-backup";
 
 export { loadConatConfiguration };
 
@@ -104,6 +107,7 @@ export async function initConatApi() {
   startAccountProjectIndexProjectionMaintenance();
   startAccountCollaboratorIndexProjectionMaintenance();
   startAccountNotificationIndexProjectionMaintenance();
+  startBayBackupMaintenance();
   startBayWalArchiveMaintenance();
   initLLM();
   if (!isLaunchpadProduct()) {
