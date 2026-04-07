@@ -2697,13 +2697,17 @@ export async function runBayRestore({
         "",
         "# cocalc bay restore",
         `restore_command = ${postgresQuote(restoreCommand)}`,
+        "archive_mode = 'off'",
+        `archive_command = ${postgresQuote("/bin/false")}`,
         ...(postgresRecoveryTargetTime
           ? [
               `recovery_target_time = ${postgresQuote(postgresRecoveryTargetTime)}`,
               "recovery_target_inclusive = 'true'",
             ]
           : []),
-        "recovery_target_timeline = 'latest'",
+        // Stay on the base backup timeline. Fenced restore-tests must not hop
+        // onto a later timeline created by a previous promoted test restore.
+        "recovery_target_timeline = 'current'",
         "recovery_target_action = 'promote'",
         "",
       ].join("\n");
@@ -3052,6 +3056,52 @@ async function runRestoreTestSql({
   return `${stdout ?? ""}`.trim();
 }
 
+async function waitForRestorePitrSentinel({
+  psql,
+  socketDir,
+  port,
+  env,
+  run_id,
+  target_time,
+}: {
+  psql: string;
+  socketDir: string;
+  port: number;
+  env: NodeJS.ProcessEnv;
+  run_id: string;
+  target_time: string;
+}): Promise<{ preCount: string; postCount: string }> {
+  const deadline = Date.now() + 60_000;
+  let lastState = "unavailable";
+  while (Date.now() < deadline) {
+    try {
+      const counts = await runRestoreTestSql({
+        psql,
+        socketDir,
+        port,
+        env,
+        sql: `SELECT count(*) FILTER (WHERE phase='pre')::text || ',' || count(*) FILTER (WHERE phase='post')::text FROM ${RESTORE_TEST_PITR_TABLE} WHERE run_id = ${postgresQuote(run_id)}`,
+      });
+      const [preCount = "", postCount = ""] = counts.split(",");
+      lastState = `pre=${preCount}, post=${postCount}`;
+      if (preCount === "1" && postCount === "0") {
+        return { preCount, postCount };
+      }
+      if (preCount === "1" && postCount === "1") {
+        throw new Error(
+          `restore test PITR check failed: expected pre=1 and post=0, got ${lastState}`,
+        );
+      }
+    } catch (err) {
+      lastState = String(err);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  throw new Error(
+    `restore test timed out waiting for PITR sentinel state at ${target_time} (${lastState})`,
+  );
+}
+
 export async function runBayRestoreTest({
   bay_id,
   backup_set_id,
@@ -3187,6 +3237,17 @@ export async function runBayRestoreTest({
         },
       );
       started = true;
+      const { preCount, postCount } = await waitForRestorePitrSentinel({
+        psql,
+        socketDir,
+        port,
+        env,
+        run_id: pitrRun.run_id,
+        target_time: pitrRun.target_time,
+      });
+      verified_queries.push("pitr_recovery_promoted=true");
+      verified_queries.push(`pitr_pre_count=${preCount}`);
+      verified_queries.push(`pitr_post_count=${postCount}`);
       for (const check of RESTORE_TEST_QUERIES) {
         const value = await runRestoreTestSql({
           psql,
@@ -3205,27 +3266,6 @@ export async function runBayRestoreTest({
       if (!pitrRun) {
         throw new Error("missing PITR sentinel context");
       }
-      const preCount = await runRestoreTestSql({
-        psql,
-        socketDir,
-        port,
-        env,
-        sql: `SELECT count(*) FROM ${RESTORE_TEST_PITR_TABLE} WHERE run_id = ${postgresQuote(pitrRun.run_id)} AND phase = 'pre'`,
-      });
-      const postCount = await runRestoreTestSql({
-        psql,
-        socketDir,
-        port,
-        env,
-        sql: `SELECT count(*) FROM ${RESTORE_TEST_PITR_TABLE} WHERE run_id = ${postgresQuote(pitrRun.run_id)} AND phase = 'post'`,
-      });
-      if (preCount !== "1" || postCount !== "0") {
-        throw new Error(
-          `restore test PITR check failed: expected pre=1 and post=0, got pre=${preCount} and post=${postCount}`,
-        );
-      }
-      verified_queries.push(`pitr_pre_count=${preCount}`);
-      verified_queries.push(`pitr_post_count=${postCount}`);
     } finally {
       if (started) {
         await execFile(

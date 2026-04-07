@@ -1064,6 +1064,10 @@ describe("bay-backup runner", () => {
         }
         if (cmd === "/usr/bin/psql") {
           const sql = args[args.length - 1];
+          if (sql === "SELECT pg_is_in_recovery()::text") {
+            cb(null, { stdout: "f\n", stderr: "" });
+            return;
+          }
           if (sql === "SELECT current_database()") {
             cb(null, { stdout: "smc\n", stderr: "" });
             return;
@@ -1081,19 +1085,20 @@ describe("bay-backup runner", () => {
             return;
           }
           const countMatch = sql.match(
-            /^SELECT count\(\*\) FROM public\.bay_restore_test_pitr_events WHERE run_id = '([^']+)' AND phase = '(pre|post)'$/,
+            /^SELECT count\(\*\) FILTER \(WHERE phase='pre'\)::text \|\| ',' \|\| count\(\*\) FILTER \(WHERE phase='post'\)::text FROM public\.bay_restore_test_pitr_events WHERE run_id = '([^']+)'$/,
           );
           if (countMatch) {
-            const [, runId, phase] = countMatch;
-            const count = sentinelRows.filter(
-              (row) => row.run_id === runId && row.phase === phase,
+            const [, runId] = countMatch;
+            const pre = sentinelRows.filter(
+              (row) => row.run_id === runId && row.phase === "pre",
             ).length;
-            cb(
-              null,
-              phase === "post"
-                ? { stdout: "0\n", stderr: "" }
-                : { stdout: `${Math.min(count, 1)}\n`, stderr: "" },
-            );
+            const post = sentinelRows.filter(
+              (row) => row.run_id === runId && row.phase === "post",
+            ).length;
+            cb(null, {
+              stdout: `${Math.min(pre, 1)},${post > 0 ? 0 : 0}\n`,
+              stderr: "",
+            });
             return;
           }
           cb(new Error(`unexpected SQL '${sql}'`));
@@ -1113,12 +1118,13 @@ describe("bay-backup runner", () => {
     expect(result.kept_on_disk).toBe(false);
     expect(result.target_time).toBe("2026-04-07T15:38:10.000Z");
     expect(result.verified_queries).toEqual([
+      "pitr_recovery_promoted=true",
+      "pitr_pre_count=1",
+      "pitr_post_count=0",
       "current_database=smc",
       "accounts_table=accounts",
       "projects_table=projects",
       "server_settings_table=server_settings",
-      "pitr_pre_count=1",
-      "pitr_post_count=0",
     ]);
 
     const status = await getBayBackupStatus();
@@ -1409,6 +1415,10 @@ describe("bay-backup runner", () => {
         }
         if (cmd === "/usr/bin/psql") {
           const sql = args[args.length - 1];
+          if (sql === "SELECT pg_is_in_recovery()::text") {
+            cb(null, { stdout: "f\n", stderr: "" });
+            return;
+          }
           if (sql === "SELECT current_database()") {
             cb(null, { stdout: "smc\n", stderr: "" });
             return;
@@ -1426,19 +1436,20 @@ describe("bay-backup runner", () => {
             return;
           }
           const countMatch = sql.match(
-            /^SELECT count\(\*\) FROM public\.bay_restore_test_pitr_events WHERE run_id = '([^']+)' AND phase = '(pre|post)'$/,
+            /^SELECT count\(\*\) FILTER \(WHERE phase='pre'\)::text \|\| ',' \|\| count\(\*\) FILTER \(WHERE phase='post'\)::text FROM public\.bay_restore_test_pitr_events WHERE run_id = '([^']+)'$/,
           );
           if (countMatch) {
-            const [, runId, phase] = countMatch;
-            const count = sentinelRows.filter(
-              (row) => row.run_id === runId && row.phase === phase,
+            const [, runId] = countMatch;
+            const pre = sentinelRows.filter(
+              (row) => row.run_id === runId && row.phase === "pre",
             ).length;
-            cb(
-              null,
-              phase === "post"
-                ? { stdout: "0\n", stderr: "" }
-                : { stdout: `${Math.min(count, 1)}\n`, stderr: "" },
-            );
+            const post = sentinelRows.filter(
+              (row) => row.run_id === runId && row.phase === "post",
+            ).length;
+            cb(null, {
+              stdout: `${Math.min(pre, 1)},${post > 0 ? 0 : 0}\n`,
+              stderr: "",
+            });
             return;
           }
           cb(new Error(`unexpected SQL '${sql}'`));
@@ -1470,6 +1481,7 @@ describe("bay-backup runner", () => {
     ).toContain("https://acct-1.r2.cloudflarestorage.com");
     expect(result.verified_queries).toContain("pitr_pre_count=1");
     expect(result.verified_queries).toContain("pitr_post_count=0");
+    expect(result.verified_queries).toContain("pitr_recovery_promoted=true");
     expect(listObjectsMock).toHaveBeenCalledWith(
       expect.objectContaining({
         prefix: "bay-backups/bay-0/wal/",
