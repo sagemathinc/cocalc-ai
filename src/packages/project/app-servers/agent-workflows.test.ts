@@ -107,6 +107,7 @@ describe("app server agent workflows", () => {
       url: `http://project.local/project-test/apps/${id}/healthz`,
     });
     expect(first?.kind).toBe("service");
+    expect((first as any)?.host).toBe("127.0.0.1");
     expect((first as any)?.port).toBeGreaterThan(0);
 
     const running = await statusApp(id);
@@ -127,6 +128,7 @@ describe("app server agent workflows", () => {
       url: `http://project.local/project-test/apps/${id}/healthz`,
     });
     expect(second?.kind).toBe("service");
+    expect((second as any)?.host).toBe("127.0.0.1");
     expect((second as any)?.port).toBeGreaterThan(0);
     const recovered = await statusApp(id);
     expect(recovered.state).toBe("running");
