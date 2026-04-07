@@ -938,7 +938,7 @@ You can either wait for this host to become available again, or move this ${proj
                 type="info"
                 showIcon
                 style={{ margin: "16px auto", maxWidth: "720px" }}
-                message={
+                title={
                   <FormattedMessage
                     id="project.explorer.start_project.warning"
                     defaultMessage={

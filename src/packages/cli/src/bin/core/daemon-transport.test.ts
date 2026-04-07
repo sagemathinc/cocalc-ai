@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -14,7 +14,10 @@ test("currentDaemonFingerprint tracks the CLI script path and mtime", () => {
   const script = path.join(dir, "cocalc.js");
   writeFileSync(script, "console.log('v1');\n");
   const first = currentDaemonFingerprint(["node", script], "/usr/bin/node");
+  const initialMtimeMs = statSync(script).mtimeMs;
   writeFileSync(script, "console.log('v2');\n");
+  const updatedMtime = new Date(initialMtimeMs + 1000);
+  utimesSync(script, updatedMtime, updatedMtime);
   const second = currentDaemonFingerprint(["node", script], "/usr/bin/node");
   assert.notEqual(first, second);
 });

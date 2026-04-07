@@ -364,7 +364,7 @@ export function IncomingInviteBanner({
         type="error"
         showIcon
         style={{ marginBottom: "12px" }}
-        message="Unable to load project invitations."
+        title="Unable to load project invitations."
         description={error}
       />
     );
@@ -378,7 +378,7 @@ export function IncomingInviteBanner({
       type="info"
       showIcon
       style={{ marginBottom: "12px" }}
-      message={`${count} project invitation${count === 1 ? "" : "s"} need${count === 1 ? "s" : ""} your response.`}
+      title={`${count} project invitation${count === 1 ? "" : "s"} need${count === 1 ? "s" : ""} your response.`}
       action={
         <Button size="small" type="primary" onClick={onReview}>
           Review

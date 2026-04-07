@@ -266,11 +266,11 @@ function NewsAdminListPage() {
   }
 
   if (adminAccess === "denied") {
-    return <Alert message="Not authorized" showIcon type="error" />;
+    return <Alert title="Not authorized" showIcon type="error" />;
   }
 
   return (
-    <Space direction="vertical" size="large" style={{ width: "100%" }}>
+    <Space orientation="vertical" size="large" style={{ width: "100%" }}>
       <Space wrap>
         <Button
           type="primary"
@@ -296,7 +296,7 @@ function NewsAdminListPage() {
       <Paragraph type="secondary" style={{ marginBottom: 0 }}>
         Manage news and event posts
       </Paragraph>
-      {error ? <Alert message={error} type="error" showIcon /> : null}
+      {error ? <Alert title={error} type="error" showIcon /> : null}
       <Table<NewsAdminListItem>
         columns={[
           {
@@ -518,7 +518,7 @@ function NewsEditorPage({
   }
 
   if (adminAccess === "denied") {
-    return <Alert message="Not authorized" showIcon type="error" />;
+    return <Alert title="Not authorized" showIcon type="error" />;
   }
 
   if (loading) {
@@ -526,7 +526,7 @@ function NewsEditorPage({
   }
 
   return (
-    <Space direction="vertical" size="large" style={{ width: "100%" }}>
+    <Space orientation="vertical" size="large" style={{ width: "100%" }}>
       <Space wrap>
         <Button onClick={() => openAdminRoute({ kind: "news-list" })}>
           Back to news
@@ -550,9 +550,9 @@ function NewsEditorPage({
         directly into the composer, or upload/crop them in the image box.
       </Paragraph>
       {saveMessage ? (
-        <Alert message={saveMessage} showIcon type="success" />
+        <Alert title={saveMessage} showIcon type="success" />
       ) : null}
-      {error ? <Alert message={error} showIcon type="error" /> : null}
+      {error ? <Alert title={error} showIcon type="error" /> : null}
       <Row gutter={[24, 24]}>
         <Col xs={24} xl={15}>
           <Card
@@ -573,7 +573,11 @@ function NewsEditorPage({
               </Space>
             }
           >
-            <Space direction="vertical" size="large" style={{ width: "100%" }}>
+            <Space
+              orientation="vertical"
+              size="large"
+              style={{ width: "100%" }}
+            >
               <div>
                 <Text strong>Title</Text>
                 <Input
@@ -768,7 +772,11 @@ function NewsEditorPage({
         </Col>
         <Col xs={24} xl={9}>
           <Card title="Preview">
-            <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+            <Space
+              orientation="vertical"
+              size="middle"
+              style={{ width: "100%" }}
+            >
               <Space wrap>
                 <Tag color="blue">{capitalize(previewNews.channel)}</Tag>
                 {renderStatus({
@@ -799,7 +807,7 @@ function NewsEditorPage({
               )}
               {previewNews.url ? (
                 <Alert
-                  message={`External URL: ${previewNews.url}`}
+                  title={`External URL: ${previewNews.url}`}
                   showIcon
                   type="info"
                 />

@@ -21,6 +21,7 @@ import {
   getMasterConatClient,
   reportProjectStateToMaster,
 } from "../master-status";
+import callHub from "@cocalc/conat/hub/call-hub";
 import { secretsPath as sshProxySecretsPath } from "@cocalc/project-proxy/ssh-server";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -68,6 +69,7 @@ import {
   type RootfsCachePullProgress,
 } from "../rootfs-cache";
 import { withOciPullReservationIfNeeded } from "../storage-reservations";
+import { getLocalHostId } from "../sqlite/hosts";
 
 const logger = getLogger("project-host:hub:projects");
 export const PROJECT_RUNNER_RPC_TIMEOUT_MS = 60 * 60 * 1000;
@@ -253,6 +255,114 @@ function normalizeImage(image?: string): string {
   return DEFAULT_PROJECT_IMAGE;
 }
 
+type StartMetadata = {
+  title?: string;
+  users?: any;
+  image?: string;
+  authorized_keys?: string;
+  run_quota?: any;
+};
+
+type LocalProjectOptions = CreateProjectOptions & {
+  users?: any;
+  authorized_keys?: string;
+  run_quota?: any;
+};
+
+async function loadProjectStartMetadataFromMaster(
+  project_id: string,
+): Promise<StartMetadata | undefined> {
+  const client = getMasterConatClient();
+  const host_id = getLocalHostId();
+  if (!client || !host_id) {
+    return undefined;
+  }
+  return await callHub({
+    client,
+    host_id,
+    name: "hosts.getProjectStartMetadata",
+    args: [{ project_id }],
+    timeout: 30_000,
+  });
+}
+
+async function readPersistedCurrentImage(
+  project_id: string,
+): Promise<string | undefined> {
+  try {
+    const vol = await getVolume(project_id);
+    const text = await readFile(
+      join(vol.path, PROJECT_IMAGE_PATH, "current-image.txt"),
+      "utf8",
+    );
+    const trimmed = text.trim();
+    return trimmed ? normalizeImage(trimmed) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function resolveStartMetadata({
+  project_id,
+  authorized_keys,
+  run_quota,
+  image,
+}: {
+  project_id: string;
+  authorized_keys?: string;
+  run_quota?: any;
+  image?: string;
+}): Promise<StartMetadata> {
+  const existing = getProject(project_id);
+  let resolved: StartMetadata = {
+    authorized_keys: authorized_keys ?? existing?.authorized_keys ?? undefined,
+    run_quota: run_quota ?? (existing as any)?.run_quota,
+    image: image ?? existing?.image ?? undefined,
+  };
+  const needsMaster =
+    !resolved.image ||
+    resolved.authorized_keys == null ||
+    resolved.run_quota == null ||
+    !existing?.title;
+  if (needsMaster) {
+    try {
+      const authoritative =
+        await loadProjectStartMetadataFromMaster(project_id);
+      if (authoritative) {
+        resolved = {
+          title: authoritative.title ?? existing?.title,
+          users: authoritative.users,
+          image: resolved.image ?? authoritative.image ?? undefined,
+          authorized_keys:
+            resolved.authorized_keys ?? authoritative.authorized_keys,
+          run_quota: resolved.run_quota ?? authoritative.run_quota,
+        };
+      }
+    } catch (err) {
+      logger.warn("resolveStartMetadata: master lookup failed", {
+        project_id,
+        err: `${err}`,
+      });
+    }
+  }
+  if (!resolved.image) {
+    resolved.image = await readPersistedCurrentImage(project_id);
+    if (resolved.image) {
+      logger.warn(
+        "resolveStartMetadata: using persisted current-image.txt because local and master image metadata were unavailable",
+        { project_id, image: resolved.image },
+      );
+    }
+  }
+  if (!resolved.image) {
+    throw new Error(
+      `unable to determine project image for ${project_id}; refusing to fall back to the default image`,
+    );
+  }
+  resolved.image = normalizeImage(resolved.image);
+  return resolved;
+}
+
 export function ensureProjectRow({
   project_id,
   opts,
@@ -262,7 +372,7 @@ export function ensureProjectRow({
   authorized_keys,
 }: {
   project_id: string;
-  opts?: CreateProjectOptions;
+  opts?: LocalProjectOptions;
   state?: string;
   http_port?: number | null;
   ssh_port?: number | null;
@@ -337,25 +447,30 @@ export function ensureProjectRow({
 async function getRunnerConfig(
   project_id: string,
   opts?: CreateProjectOptions & {
+    users?: any;
+    authorized_keys?: string;
+    run_quota?: any;
     restore?: "none" | "auto" | "required";
     lro_op_id?: string;
   },
 ) {
-  const existing = getProject(project_id);
-  const authorized_keys =
-    (opts as any)?.authorized_keys ?? existing?.authorized_keys;
-  const run_quota = normalizeRunQuota(
-    (opts as any)?.run_quota ?? (existing as any)?.run_quota,
-  );
+  const resolved = await resolveStartMetadata({
+    project_id,
+    authorized_keys: (opts as any)?.authorized_keys,
+    run_quota: (opts as any)?.run_quota,
+    image: opts?.image,
+  });
+  const run_quota = normalizeRunQuota(resolved.run_quota);
   const limits = runnerConfigFromQuota(run_quota);
+  const existing = getProject(project_id);
   const disk = limits.disk ?? existing?.disk;
   const scratch = limits.scratch ?? existing?.scratch;
   const ssh_proxy_public_key = await getSshProxyPublicKey();
   const secret = getOrCreateProjectLocalSecretToken(project_id);
   return {
-    image: normalizeImage(opts?.image ?? existing?.image),
+    image: resolved.image,
     secret,
-    authorized_keys,
+    authorized_keys: resolved.authorized_keys,
     ssh_proxy_public_key,
     run_quota,
     restore: opts?.restore,
@@ -548,10 +663,22 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
   }> {
     const op_id = lro_op_id ?? uuid();
     const timings = createPhaseTimingRecorder();
+    const resolved = await resolveStartMetadata({
+      project_id,
+      authorized_keys,
+      run_quota,
+      image,
+    });
     // Mark as starting immediately so hub/clients see progress even if image pulls are slow.
     ensureProjectRow({
       project_id,
-      opts: { authorized_keys, run_quota, image },
+      opts: {
+        title: resolved.title,
+        users: resolved.users,
+        authorized_keys: resolved.authorized_keys,
+        run_quota: resolved.run_quota,
+        image: resolved.image,
+      },
       state: "starting",
     });
     publishStartProgress({
@@ -574,9 +701,9 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
       });
       const config = await timings.measure("prepare_config", async () => {
         return await getRunnerConfig(project_id, {
-          authorized_keys,
-          run_quota,
-          image,
+          authorized_keys: resolved.authorized_keys,
+          run_quota: resolved.run_quota,
+          image: resolved.image,
           restore,
           lro_op_id: op_id,
         });
@@ -632,7 +759,13 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
       });
       ensureProjectRow({
         project_id,
-        opts: { authorized_keys, run_quota, image },
+        opts: {
+          title: resolved.title,
+          users: resolved.users,
+          authorized_keys: resolved.authorized_keys,
+          run_quota: resolved.run_quota,
+          image: getImage(config),
+        },
         state: status?.state ?? "running",
         http_port: (status as any)?.http_port,
         ssh_port: (status as any)?.ssh_port,
@@ -665,7 +798,13 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
       // Fall back to stopped if startup fails so UI reflects failure.
       ensureProjectRow({
         project_id,
-        opts: { authorized_keys, run_quota, image },
+        opts: {
+          title: resolved.title,
+          users: resolved.users,
+          authorized_keys: resolved.authorized_keys,
+          run_quota: resolved.run_quota,
+          image: resolved.image,
+        },
         state: "opened",
       });
       publishStartProgress({

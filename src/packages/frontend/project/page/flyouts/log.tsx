@@ -508,7 +508,7 @@ export function LogFlyout({
         banner
         showIcon={false}
         style={{ margin: 0 }}
-        message={project_log_error}
+        title={project_log_error}
       />
     );
   }

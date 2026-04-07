@@ -237,7 +237,7 @@ export default function AdminPurchasePanel() {
         the round-one admin workflow requirements.
       </Paragraph>
 
-      <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+      <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
         <Input.Search
           enterButton="Resolve user"
           loading={targetLoading}
@@ -248,15 +248,15 @@ export default function AdminPurchasePanel() {
         />
         {targetUser && (
           <Alert
-            message={`Target: ${targetUser.name ?? targetUser.email_address ?? targetUser.account_id}`}
+            title={`Target: ${targetUser.name ?? targetUser.email_address ?? targetUser.account_id}`}
             type="success"
           />
         )}
-        {targetError && <Alert message={targetError} type="error" />}
+        {targetError && <Alert title={targetError} type="error" />}
 
         <Divider style={{ margin: "8px 0" }} />
 
-        <Space direction="vertical" size="small" style={{ width: "100%" }}>
+        <Space orientation="vertical" size="small" style={{ width: "100%" }}>
           <Text strong>Product</Text>
           <Select
             options={[
@@ -269,7 +269,7 @@ export default function AdminPurchasePanel() {
         </Space>
 
         {product === "membership" && (
-          <Space direction="vertical" size="small" style={{ width: "100%" }}>
+          <Space orientation="vertical" size="small" style={{ width: "100%" }}>
             <Text strong>Membership tier</Text>
             <Select
               loading={tierLoading}
@@ -293,7 +293,7 @@ export default function AdminPurchasePanel() {
         )}
 
         {product === "voucher" && (
-          <Space direction="vertical" size="small" style={{ width: "100%" }}>
+          <Space orientation="vertical" size="small" style={{ width: "100%" }}>
             <Text strong>Voucher details</Text>
             <Flex gap="middle" wrap="wrap">
               <Space.Compact>
@@ -335,7 +335,7 @@ export default function AdminPurchasePanel() {
 
         <Divider style={{ margin: "8px 0" }} />
 
-        <Space direction="vertical" size="small" style={{ width: "100%" }}>
+        <Space orientation="vertical" size="small" style={{ width: "100%" }}>
           <Text strong>Pricing</Text>
           <Flex gap="middle" wrap="wrap">
             <InputNumber
@@ -382,7 +382,7 @@ export default function AdminPurchasePanel() {
           </Text>
         </Space>
 
-        <Space direction="vertical" size="small" style={{ width: "100%" }}>
+        <Space orientation="vertical" size="small" style={{ width: "100%" }}>
           <Text strong>Source of funds</Text>
           <Radio.Group
             value={source}
@@ -400,12 +400,12 @@ export default function AdminPurchasePanel() {
           onChange={(e) => setComment(e.target.value)}
         />
 
-        {actionError && <Alert message={actionError} type="error" />}
-        {resultMessage && <Alert message={resultMessage} type="success" />}
+        {actionError && <Alert title={actionError} type="error" />}
+        {resultMessage && <Alert title={resultMessage} type="success" />}
         {voucherCodes.length > 0 && (
           <Alert
             description={voucherCodes.join(", ")}
-            message="Voucher codes"
+            title="Voucher codes"
             type="success"
           />
         )}

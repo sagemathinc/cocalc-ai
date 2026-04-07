@@ -302,7 +302,7 @@ export default function PricingPage({
       ) : (
         <PublicSectionCard>
           <Alert
-            message="No public membership tiers are currently configured."
+            title="No public membership tiers are currently configured."
             showIcon
             type="info"
           />
@@ -348,7 +348,7 @@ export default function PricingPage({
         </Title>
         <div style={GRID_STYLE}>
           <Card variant="outlined">
-            <Space direction="vertical" size="middle">
+            <Space orientation="vertical" size="middle">
               <Flex align="center" gap={8} wrap>
                 <Title level={4} style={{ margin: 0 }}>
                   Students pay directly
@@ -369,7 +369,7 @@ export default function PricingPage({
           </Card>
 
           <Card variant="outlined">
-            <Space direction="vertical" size="middle">
+            <Space orientation="vertical" size="middle">
               <Flex align="center" gap={8} wrap>
                 <Title level={4} style={{ margin: 0 }}>
                   Instructor or institute pays
@@ -397,7 +397,7 @@ export default function PricingPage({
           </Card>
 
           <Card variant="outlined">
-            <Space direction="vertical" size="middle">
+            <Space orientation="vertical" size="middle">
               <Flex align="center" gap={8} wrap>
                 <Title level={4} style={{ margin: 0 }}>
                   Campus-wide site license

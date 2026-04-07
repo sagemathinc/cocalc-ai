@@ -1,5 +1,5 @@
 import useAsyncEffect from "use-async-effect";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { field_cmp } from "@cocalc/util/misc";
 import { BACKUPS, isBackupsPath } from "@cocalc/util/consts/backups";
@@ -15,6 +15,98 @@ export interface BackupMeta {
 
 const CACHE_TTL_MS = 5 * 60_000;
 const PREFETCH_LIMIT = 8;
+const listingCache = new Map<
+  string,
+  { entries: DirectoryListingEntry[]; at: number }
+>();
+const backupMetaCache = new Map<string, { meta: BackupMeta[]; at: number }>();
+const inflight = new Map<string, Promise<DirectoryListingEntry[]>>();
+const cacheListeners = new Set<() => void>();
+
+function notifyCacheListeners() {
+  for (const listener of cacheListeners) {
+    listener();
+  }
+}
+
+function cacheKey({
+  project_id,
+  backup_id,
+  subpath,
+}: {
+  project_id: string;
+  backup_id: string;
+  subpath: string;
+}) {
+  return `${project_id}:${backup_id}:${subpath}`;
+}
+
+function readBackupMeta(project_id: string): BackupMeta[] | null {
+  const cached = backupMetaCache.get(project_id);
+  if (!cached) return null;
+  if (Date.now() - cached.at > CACHE_TTL_MS) {
+    backupMetaCache.delete(project_id);
+    return null;
+  }
+  return cached.meta;
+}
+
+function readListingCache(key: string): DirectoryListingEntry[] | null {
+  const cached = listingCache.get(key);
+  if (!cached) return null;
+  if (Date.now() - cached.at > CACHE_TTL_MS) {
+    listingCache.delete(key);
+    return null;
+  }
+  return cached.entries;
+}
+
+export function useBackupsCacheVersion(): number {
+  const [version, setVersion] = useState(0);
+  useEffect(() => {
+    const listener = () => setVersion((value) => value + 1);
+    cacheListeners.add(listener);
+    return () => {
+      cacheListeners.delete(listener);
+    };
+  }, []);
+  return version;
+}
+
+export function getCachedBackupsListing({
+  project_id,
+  path,
+}: {
+  project_id: string;
+  path: string;
+}): DirectoryListingEntry[] | null {
+  if (!isBackupsPath(path)) {
+    return null;
+  }
+  const parts = path.split("/").filter(Boolean);
+  const meta = readBackupMeta(project_id);
+  if (!meta) return null;
+  if (parts.length === 1) {
+    return meta.map(({ name, mtime }) => ({
+      name,
+      mtime,
+      size: 0,
+      isDir: true,
+    }));
+  }
+  const backupName = parts[1];
+  const backup =
+    meta.find((entry) => entry.name === backupName) ??
+    meta.find((entry) => entry.id === backupName);
+  if (!backup) return null;
+  return readListingCache(
+    cacheKey({
+      project_id,
+      backup_id: backup.id,
+      subpath: parts.slice(2).join("/"),
+    }),
+  );
+}
 
 export default function useBackupsListing({
   project_id,
@@ -36,10 +128,6 @@ export default function useBackupsListing({
   const [tick, setTick] = useState(0);
   const requestId = useRef(0);
   const lastTick = useRef(0);
-  const listingCache = useRef(
-    new Map<string, { entries: DirectoryListingEntry[]; at: number }>(),
-  );
-  const inflight = useRef(new Map<string, Promise<DirectoryListingEntry[]>>());
 
   const refresh = useCallback(() => setTick((x) => x + 1), []);
 
@@ -65,6 +153,8 @@ export default function useBackupsListing({
         mtime: new Date(time).getTime(),
         name: new Date(time).toISOString(),
       }));
+      backupMetaCache.set(project_id, { meta, at: Date.now() });
+      notifyCacheListeners();
 
       // root .backups listing
       const parts = path.split("/").filter(Boolean);
@@ -96,13 +186,17 @@ export default function useBackupsListing({
         throw new Error(`backup '${backupName}' not found`);
       }
       const subpath = parts.slice(2).join("/");
-      const cacheKey = `${project_id}:${backup.id}:${subpath}`;
-      const cached = !force ? readCache(cacheKey) : null;
+      const key = cacheKey({
+        project_id,
+        backup_id: backup.id,
+        subpath,
+      });
+      const cached = !force ? readListingCache(key) : null;
       if (cached) {
         setListing(sortEntries(cached));
       }
       const entriesRaw = await listBackupFiles({
-        key: cacheKey,
+        key,
         project_id,
         backup_id: backup.id,
         subpath,
@@ -130,16 +224,6 @@ export default function useBackupsListing({
     return sorted;
   }
 
-  function readCache(key: string): DirectoryListingEntry[] | null {
-    const cached = listingCache.current.get(key);
-    if (!cached) return null;
-    if (Date.now() - cached.at > CACHE_TTL_MS) {
-      listingCache.current.delete(key);
-      return null;
-    }
-    return cached.entries;
-  }
-
   async function listBackupFiles({
     key,
     project_id,
@@ -154,10 +238,10 @@ export default function useBackupsListing({
     force: boolean;
   }): Promise<DirectoryListingEntry[]> {
     if (!force) {
-      const cached = readCache(key);
+      const cached = readListingCache(key);
       if (cached) return cached;
     }
-    const existing = inflight.current.get(key);
+    const existing = inflight.get(key);
     if (existing) return await existing;
     const promise = (async () => {
       const raw =
@@ -172,14 +256,15 @@ export default function useBackupsListing({
         mtime,
         size,
       }));
-      listingCache.current.set(key, { entries, at: Date.now() });
+      listingCache.set(key, { entries, at: Date.now() });
+      notifyCacheListeners();
       return entries;
     })();
-    inflight.current.set(key, promise);
+    inflight.set(key, promise);
     try {
       return await promise;
     } finally {
-      inflight.current.delete(key);
+      inflight.delete(key);
     }
   }
 
@@ -195,8 +280,12 @@ export default function useBackupsListing({
     if (!subdirs.length) return;
     for (const entry of subdirs) {
       const subpath = basePath ? `${basePath}/${entry.name}` : entry.name;
-      const key = `${projectId}:${backupId}:${subpath}`;
-      if (readCache(key) || inflight.current.has(key)) continue;
+      const key = cacheKey({
+        project_id: projectId,
+        backup_id: backupId,
+        subpath,
+      });
+      if (readListingCache(key) || inflight.has(key)) continue;
       void listBackupFiles({
         key,
         project_id: projectId,

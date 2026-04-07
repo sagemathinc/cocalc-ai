@@ -529,6 +529,7 @@ export const hosts = {
   recordProjectBackup: authFirstRequireHost,
   touchProject: authFirstRequireHost,
   claimPendingCopies: authFirstRequireHost,
+  getProjectStartMetadata: authFirstRequireHost,
   updateCopyStatus: authFirstRequireHost,
   hasExternalCredential: authFirstRequireHost,
   getExternalCredential: authFirstRequireHost,
@@ -653,6 +654,16 @@ export interface Hosts {
     project_id?: string;
     limit?: number;
   }) => Promise<ProjectCopyRow[]>;
+  getProjectStartMetadata: (opts: {
+    host_id?: string;
+    project_id: string;
+  }) => Promise<{
+    title?: string;
+    users?: any;
+    image?: string;
+    authorized_keys?: string;
+    run_quota?: any;
+  }>;
   updateCopyStatus: (opts: {
     host_id?: string;
     copy_id?: string;

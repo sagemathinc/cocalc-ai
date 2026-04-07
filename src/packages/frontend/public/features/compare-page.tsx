@@ -140,7 +140,7 @@ export default function CompareFeaturePage({
       <Alert
         type="warning"
         showIcon
-        message="These comparisons are intentionally high level."
+        title="These comparisons are intentionally high level."
         description="Products evolve quickly, and many competitors are excellent at the workflow they target. The point here is to clarify where CoCalc's integrated model is a better fit."
       />
       <PublicSectionCard>

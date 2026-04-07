@@ -330,7 +330,7 @@ export function StartButton({
             style={{ marginTop: "10px", maxWidth: "720px" }}
             type="error"
             showIcon
-            message="Project start failed"
+            title="Project start failed"
             description={startLroError}
             action={
               <Button

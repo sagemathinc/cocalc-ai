@@ -1,4 +1,5 @@
 import { hubApi } from "@cocalc/lite/hub/api";
+import { DEFAULT_PROJECT_IMAGE } from "@cocalc/util/db-schema/defaults";
 
 const rehydrateAcpAutomationsForProject = jest.fn();
 const applyPendingCopies = jest.fn();
@@ -11,6 +12,11 @@ const pullRootfsCacheEntry = jest.fn(async () => undefined);
 const withOciPullReservationIfNeeded = jest.fn(
   async ({ fn }: { fn: () => Promise<any> }) => await fn(),
 );
+const readFile = jest.fn(async () => "");
+const callHub = jest.fn();
+const getLocalHostId = jest.fn(() => "host-1");
+const getMasterConatClient = jest.fn();
+const getVolume = jest.fn(async () => ({ path: "/mnt/cocalc/project-test" }));
 
 jest.mock("@cocalc/lite/hub/api", () => ({ hubApi: { projects: {} as any } }));
 jest.mock("@cocalc/backend/data", () => ({
@@ -37,7 +43,7 @@ jest.mock("@cocalc/file-server/btrfs/subvolume-snapshots", () => ({
   getGeneration: jest.fn(),
 }));
 jest.mock("node:fs/promises", () => ({
-  readFile: jest.fn(async () => ""),
+  readFile: (...args: any[]) => readFile(...args),
 }));
 jest.mock("../sqlite/projects", () => ({
   getProject: (...args: any[]) => getProject(...args),
@@ -46,13 +52,14 @@ jest.mock("../sqlite/projects", () => ({
   upsertProject: (...args: any[]) => upsertProject(...args),
 }));
 jest.mock("../master-status", () => ({
+  getMasterConatClient: (...args: any[]) => getMasterConatClient(...args),
   reportProjectStateToMaster: (...args: any[]) =>
     reportProjectStateToMaster(...args),
 }));
 jest.mock("../file-server", () => ({
   writeManagedAuthorizedKeys: (...args: any[]) =>
     writeManagedAuthorizedKeys(...args),
-  getVolume: jest.fn(),
+  getVolume: (...args: any[]) => getVolume(...args),
   ensureVolume: jest.fn(),
   getMountPoint: jest.fn(() => "/mnt/cocalc"),
 }));
@@ -69,6 +76,13 @@ jest.mock("@cocalc/lite/hub/acp", () => ({
 jest.mock("../storage-reservations", () => ({
   withOciPullReservationIfNeeded: (...args: any[]) =>
     withOciPullReservationIfNeeded(...args),
+}));
+jest.mock("@cocalc/conat/hub/call-hub", () => ({
+  __esModule: true,
+  default: (...args: any[]) => callHub(...args),
+}));
+jest.mock("../sqlite/hosts", () => ({
+  getLocalHostId: (...args: any[]) => getLocalHostId(...args),
 }));
 
 describe("project host start ACP rehydrate ordering", () => {
@@ -87,6 +101,9 @@ describe("project host start ACP rehydrate ordering", () => {
     applyPendingCopies.mockResolvedValue(undefined);
     writeManagedAuthorizedKeys.mockResolvedValue(undefined);
     pullRootfsCacheEntry.mockResolvedValue(undefined);
+    readFile.mockResolvedValue("");
+    callHub.mockReset();
+    getMasterConatClient.mockReturnValue(undefined);
   });
 
   it("does not rehydrate ACP automations before runner start on start()", async () => {
@@ -227,6 +244,155 @@ describe("project host start ACP rehydrate ordering", () => {
     expect(runnerApi.start).toHaveBeenCalledWith({
       project_id,
       config: expect.objectContaining({ image: customImage }),
+    });
+  });
+
+  it("hydrates missing image from master metadata on local start()", async () => {
+    const runnerApi = {
+      start: jest.fn(async () => ({
+        state: "running",
+        http_port: 1234,
+        ssh_port: 2222,
+      })),
+      stop: jest.fn(),
+    } as any;
+    getProject.mockReturnValue({
+      image: undefined,
+      title: undefined,
+      authorized_keys: undefined,
+      run_quota: undefined,
+    });
+    getMasterConatClient.mockReturnValue({ nats: true });
+    callHub.mockResolvedValue({
+      title: "dev",
+      users: { "test-account-id": { group: "owner" } },
+      image: customImage,
+      authorized_keys: "ssh-ed25519 AAAATEST user@test",
+      run_quota: { memory_limit: 1234 },
+    });
+
+    const { wireProjectsApi } = await import("./projects");
+    wireProjectsApi(runnerApi);
+
+    await hubApi.projects.start({ project_id });
+
+    expect(callHub).toHaveBeenCalledWith(
+      expect.objectContaining({
+        host_id: "host-1",
+        name: "hosts.getProjectStartMetadata",
+        args: [{ project_id }],
+      }),
+    );
+    expect(runnerApi.start).toHaveBeenCalledWith({
+      project_id,
+      config: expect.objectContaining({
+        image: customImage,
+        authorized_keys: "ssh-ed25519 AAAATEST user@test",
+      }),
+    });
+    expect(upsertProject).toHaveBeenCalledWith(
+      expect.objectContaining({
+        project_id,
+        title: "dev",
+        image: customImage,
+      }),
+    );
+  });
+
+  it("falls back to persisted current-image.txt when master metadata is unavailable", async () => {
+    const runnerApi = {
+      start: jest.fn(async () => ({
+        state: "running",
+        http_port: 1234,
+        ssh_port: 2222,
+      })),
+      stop: jest.fn(),
+    } as any;
+    const managedImage =
+      "cocalc.local/rootfs/f3426fdb7f1395f052b65ba218ce8c315045fba3817ab8deec6fd163d24b5997";
+    getProject.mockReturnValue({
+      image: undefined,
+      title: undefined,
+      authorized_keys: undefined,
+      run_quota: undefined,
+    });
+    getMasterConatClient.mockReturnValue({ nats: true });
+    callHub.mockRejectedValue(new Error("master unavailable"));
+    readFile.mockImplementation(async (path: string) =>
+      `${path}`.endsWith("current-image.txt") ? managedImage : "",
+    );
+
+    const { wireProjectsApi } = await import("./projects");
+    wireProjectsApi(runnerApi);
+
+    await hubApi.projects.start({ project_id });
+
+    expect(runnerApi.start).toHaveBeenCalledWith({
+      project_id,
+      config: expect.objectContaining({ image: managedImage }),
+    });
+  });
+
+  it("fails start when no image metadata is available", async () => {
+    const runnerApi = {
+      start: jest.fn(async () => ({
+        state: "running",
+        http_port: 1234,
+        ssh_port: 2222,
+      })),
+      stop: jest.fn(),
+    } as any;
+    getProject.mockReturnValue({
+      image: undefined,
+      title: undefined,
+      authorized_keys: undefined,
+      run_quota: undefined,
+    });
+    getMasterConatClient.mockReturnValue({ nats: true });
+    callHub.mockRejectedValue(new Error("master unavailable"));
+    readFile.mockResolvedValue("");
+
+    const { wireProjectsApi } = await import("./projects");
+    wireProjectsApi(runnerApi);
+
+    await expect(hubApi.projects.start({ project_id })).rejects.toThrow(
+      `unable to determine project image for ${project_id}; refusing to fall back to the default image`,
+    );
+    expect(runnerApi.start).not.toHaveBeenCalled();
+  });
+
+  it("accepts the default image when it comes from authoritative metadata", async () => {
+    const runnerApi = {
+      start: jest.fn(async () => ({
+        state: "running",
+        http_port: 1234,
+        ssh_port: 2222,
+      })),
+      stop: jest.fn(),
+    } as any;
+    getProject.mockReturnValue({
+      image: undefined,
+      title: undefined,
+      authorized_keys: undefined,
+      run_quota: undefined,
+    });
+    getMasterConatClient.mockReturnValue({ nats: true });
+    callHub.mockResolvedValue({
+      title: "dev",
+      users: { "test-account-id": { group: "owner" } },
+      image: DEFAULT_PROJECT_IMAGE,
+      authorized_keys: "ssh-ed25519 AAAATEST user@test",
+      run_quota: { memory_limit: 1234 },
+    });
+
+    const { wireProjectsApi } = await import("./projects");
+    wireProjectsApi(runnerApi);
+
+    await hubApi.projects.start({ project_id });
+
+    expect(runnerApi.start).toHaveBeenCalledWith({
+      project_id,
+      config: expect.objectContaining({ image: DEFAULT_PROJECT_IMAGE }),
     });
   });
 

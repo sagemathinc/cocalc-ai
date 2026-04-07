@@ -217,7 +217,7 @@ export function HostParallelOpsSummary(props: Props) {
           <Spin />
         </div>
       ) : (
-        <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+        <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
           <Table
             size="small"
             pagination={false}
@@ -229,7 +229,7 @@ export function HostParallelOpsSummary(props: Props) {
                 dataIndex: "worker",
                 key: "worker",
                 render: (_value, record) => (
-                  <Space direction="vertical" size={2}>
+                  <Space orientation="vertical" size={2}>
                     <Typography.Text strong>{record.worker}</Typography.Text>
                     {record.notes?.length ? (
                       <Typography.Text

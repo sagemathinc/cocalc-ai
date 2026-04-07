@@ -446,7 +446,7 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
               <Alert
                 type="warning"
                 showIcon
-                message="Advanced OCI / Docker image"
+                title="Advanced OCI / Docker image"
                 description={
                   <>
                     This bypasses the managed catalog. Some raw OCI images will

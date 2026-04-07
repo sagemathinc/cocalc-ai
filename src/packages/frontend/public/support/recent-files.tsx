@@ -97,7 +97,7 @@ export default function RecentFiles({ disabled, interval, onChange }: Props) {
 
   return (
     <div>
-      {error ? <Alert message={error} showIcon type="error" /> : null}
+      {error ? <Alert title={error} showIcon type="error" /> : null}
       {loading ? (
         <div style={{ padding: "8px 0" }}>
           <Spin size="small" /> Loading recent files...

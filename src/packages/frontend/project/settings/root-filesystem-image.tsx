@@ -741,7 +741,7 @@ export default function RootFilesystemImage() {
             type="info"
             showIcon
             style={{ marginTop: "14px", maxWidth: "760px" }}
-            message={
+            title={
               <>
                 Upgrade available:{" "}
                 <strong>
@@ -754,7 +754,7 @@ export default function RootFilesystemImage() {
             }
             description={
               <Space
-                direction="vertical"
+                orientation="vertical"
                 size="middle"
                 style={{ width: "100%" }}
               >
@@ -854,11 +854,11 @@ export default function RootFilesystemImage() {
             </>
           }
         >
-          <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+          <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
             <Alert
               type="info"
               showIcon
-              message="This upgrades the visible / software environment"
+              title="This upgrades the visible / software environment"
               description={
                 <>
                   Upgrading changes the project to a newer managed RootFS image.
@@ -872,7 +872,7 @@ export default function RootFilesystemImage() {
             <Alert
               type="info"
               showIcon
-              message="Base RootFS size does not count against your project disk quota"
+              title="Base RootFS size does not count against your project disk quota"
               description={
                 <>
                   Managed RootFS images are shared lower directories on the
@@ -899,7 +899,7 @@ export default function RootFilesystemImage() {
             <Alert
               type="warning"
               showIcon
-              message="Rollback stays available, but only for one previous image"
+              title="Rollback stays available, but only for one previous image"
               description={
                 previousProjectRootfsState ? (
                   <>
@@ -973,7 +973,7 @@ export default function RootFilesystemImage() {
           <Alert
             type="warning"
             showIcon
-            message="Changing the image switches the visible / environment"
+            title="Changing the image switches the visible / environment"
             description={
               <>
                 Most projects should stay on their current image. Use this when
@@ -1010,7 +1010,7 @@ export default function RootFilesystemImage() {
             </div>
           )}
 
-          <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+          <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
             {rootfsMode === "catalog" &&
               currentDisplayEntry &&
               draftRootfsEntry &&
@@ -1019,7 +1019,7 @@ export default function RootFilesystemImage() {
                 <Alert
                   type="info"
                   showIcon
-                  message="Planned image change"
+                  title="Planned image change"
                   description={
                     <>
                       Switching from{" "}
@@ -1117,14 +1117,14 @@ export default function RootFilesystemImage() {
               </>
             ) : (
               <Space
-                direction="vertical"
+                orientation="vertical"
                 size="small"
                 style={{ width: "100%" }}
               >
                 <Alert
                   type="warning"
                   showIcon
-                  message="Advanced OCI / Docker image"
+                  title="Advanced OCI / Docker image"
                   description={
                     <>
                       This bypasses the managed RootFS catalog. Some OCI images
@@ -1176,7 +1176,7 @@ export default function RootFilesystemImage() {
                 : "Save RootFS to My Images"
           }
         >
-          <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+          <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
             {publishMode === "manage" ? (
               <Paragraph type="secondary" style={{ marginBottom: 0 }}>
                 Update catalog metadata for the currently selected RootFS entry.
@@ -1185,7 +1185,7 @@ export default function RootFilesystemImage() {
               <Alert
                 type="info"
                 showIcon
-                message="Publish a reusable RootFS image"
+                title="Publish a reusable RootFS image"
                 description={
                   <>
                     Publish the current visible <code>/</code> software
@@ -1201,7 +1201,7 @@ export default function RootFilesystemImage() {
               <Alert
                 type="info"
                 showIcon
-                message="Save current base image only"
+                title="Save current base image only"
                 description={
                   <>
                     This does not publish the current project state. It only
@@ -1287,7 +1287,7 @@ export default function RootFilesystemImage() {
             </Button>
             {publishAdvanced && (
               <Space
-                direction="vertical"
+                orientation="vertical"
                 size="middle"
                 style={{ width: "100%" }}
               >
@@ -1338,7 +1338,7 @@ export default function RootFilesystemImage() {
                     Version metadata
                   </Paragraph>
                   <Space
-                    direction="vertical"
+                    orientation="vertical"
                     size="small"
                     style={{ width: "100%" }}
                   >
@@ -1511,7 +1511,7 @@ export default function RootFilesystemImage() {
                   </div>
                 </div>
                 {isAdmin && (
-                  <Space direction="vertical" size="small">
+                  <Space orientation="vertical" size="small">
                     <Checkbox
                       checked={publishDraft.official}
                       onChange={(e) =>

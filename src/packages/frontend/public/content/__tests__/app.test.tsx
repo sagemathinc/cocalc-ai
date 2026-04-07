@@ -1,6 +1,6 @@
 /** @jest-environment jsdom */
 
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 
 import type { NewsItem } from "@cocalc/util/types/news";
 import PublicContentApp from "../app";
@@ -13,12 +13,16 @@ import {
 const originalFetch = global.fetch;
 
 beforeEach(() => {
-  global.fetch = jest.fn().mockResolvedValue({
-    json: async () => [],
-  }) as typeof fetch;
+  global.fetch = jest.fn(
+    () => new Promise<Response>(() => undefined),
+  ) as typeof fetch;
 });
 
-afterEach(() => {
+afterEach(async () => {
+  await act(async () => {
+    await Promise.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
   global.fetch = originalFetch;
 });
 
@@ -233,7 +237,7 @@ describe("PublicContentApp", () => {
     expect(screen.getByText("Personal website")).not.toBeNull();
   });
 
-  it("renders the exact privacy policy page", () => {
+  it("renders the exact privacy policy page", async () => {
     render(
       <PublicContentApp
         config={{ show_policies: true, site_name: "Launchpad" }}
@@ -241,13 +245,13 @@ describe("PublicContentApp", () => {
       />,
     );
 
-    expect(screen.getByText("CoCalc - Privacy Policy")).not.toBeNull();
+    expect(await screen.findByText("CoCalc - Privacy Policy")).not.toBeNull();
     expect(
       screen.getByText(/Protecting your privacy is really important to us/i),
     ).not.toBeNull();
   });
 
-  it("renders the exact third-party policy page", () => {
+  it("renders the exact third-party policy page", async () => {
     render(
       <PublicContentApp
         config={{ show_policies: true, site_name: "Launchpad" }}
@@ -256,13 +260,13 @@ describe("PublicContentApp", () => {
     );
 
     expect(
-      screen.getByText("CoCalc - Third Parties Statements"),
+      await screen.findByText("CoCalc - Third Parties Statements"),
     ).not.toBeNull();
     expect(screen.getByText("Cloudflare")).not.toBeNull();
     expect(screen.getByText("Salesloft")).not.toBeNull();
   });
 
-  it("renders the exact terms page", () => {
+  it("renders the exact terms page", async () => {
     render(
       <PublicContentApp
         config={{ show_policies: true, site_name: "Launchpad" }}
@@ -270,7 +274,7 @@ describe("PublicContentApp", () => {
       />,
     );
 
-    expect(screen.getByText("CoCalc - Terms of Service")).not.toBeNull();
+    expect(await screen.findByText("CoCalc - Terms of Service")).not.toBeNull();
     expect(
       screen.getByText(/Once you POST TO THE GENERAL PUBLIC/i),
     ).not.toBeNull();
@@ -323,7 +327,7 @@ describe("PublicContentApp", () => {
     expect(screen.queryByText("CoCalc - Privacy Policy")).toBeNull();
   });
 
-  it("renders the public news list from initial data", () => {
+  it("renders the public news list from initial data", async () => {
     const initialNews: NewsItem[] = [
       {
         channel: "feature",
@@ -343,9 +347,9 @@ describe("PublicContentApp", () => {
     );
 
     expect(
-      screen.getByRole("heading", { name: "Launchpad news" }),
+      await screen.findByRole("heading", { name: "Launchpad news" }),
     ).not.toBeNull();
-    expect(screen.getByText("Launchpad update")).not.toBeNull();
+    expect(await screen.findByText("Launchpad update")).not.toBeNull();
     expect(screen.getByText("#launchpad")).not.toBeNull();
   });
 
@@ -385,7 +389,7 @@ describe("PublicContentApp", () => {
     expect(screen.getByText("bar")).not.toBeNull();
   });
 
-  it("shows admin news actions on the public news page for admins", () => {
+  it("shows admin news actions on the public news page for admins", async () => {
     const initialNews: NewsItem[] = [
       {
         channel: "feature",
@@ -403,7 +407,9 @@ describe("PublicContentApp", () => {
       />,
     );
 
-    expect(screen.getByRole("link", { name: "Manage news" })).not.toBeNull();
+    expect(
+      await screen.findByRole("link", { name: "Manage news" }),
+    ).not.toBeNull();
     expect(screen.getByRole("link", { name: "Create post" })).not.toBeNull();
     expect(screen.getByRole("link", { name: "Create event" })).not.toBeNull();
   });

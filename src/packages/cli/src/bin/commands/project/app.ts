@@ -319,6 +319,10 @@ function ensureManagedProjectSshConfigEntry({
     lines.push(`  IdentityFile ${keyPath}`);
     lines.push("  IdentitiesOnly yes");
   }
+  lines.push("  BatchMode yes");
+  lines.push("  PreferredAuthentications publickey");
+  lines.push("  PasswordAuthentication no");
+  lines.push("  KbdInteractiveAuthentication no");
 
   const markers = projectSshConfigBlockMarkers(alias);
   const block = `${markers.start}\n${lines.join("\n")}\n${markers.end}\n`;
@@ -403,6 +407,14 @@ async function resolveAppForwardCommand(
     "ServerAliveInterval=15",
     "-o",
     "ServerAliveCountMax=2",
+    "-o",
+    "BatchMode=yes",
+    "-o",
+    "PreferredAuthentications=publickey",
+    "-o",
+    "PasswordAuthentication=no",
+    "-o",
+    "KbdInteractiveAuthentication=no",
     "-L",
     `${localHost}:${localPort}:127.0.0.1:${remotePort}`,
   ];

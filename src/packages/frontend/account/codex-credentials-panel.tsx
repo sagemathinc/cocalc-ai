@@ -406,7 +406,7 @@ function CodexCredentialsPanelBody({
   }, [authProjectId, deviceAuth?.id, deviceAuth?.state]);
 
   const content = (
-    <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+    <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
       {loading && <Loading />}
       {!loading && error && <Alert type="error" title={error} />}
       {!loading && !error && paymentSource && (
@@ -483,7 +483,7 @@ function CodexCredentialsPanelBody({
               ? "Option A: Connect ChatGPT Plan"
               : "Connect ChatGPT subscription",
             children: (
-              <Space direction="vertical" size={8} style={{ width: "100%" }}>
+              <Space orientation="vertical" size={8} style={{ width: "100%" }}>
                 <Text type="secondary">
                   Use device login, or upload local{" "}
                   <Text code>~/.codex/auth.json</Text> as a fallback.
@@ -703,7 +703,7 @@ function CodexCredentialsPanelBody({
                   label: "OpenAI API Keys",
                   children: (
                     <Space
-                      direction="vertical"
+                      orientation="vertical"
                       size="middle"
                       style={{ width: "100%" }}
                     >
