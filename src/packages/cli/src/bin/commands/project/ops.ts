@@ -123,6 +123,8 @@ export function registerProjectOpsCommands(
           }
           baseArgs.push(
             "-o",
+            "BatchMode=yes",
+            "-o",
             "PasswordAuthentication=no",
             "-o",
             "KbdInteractiveAuthentication=no",
@@ -258,7 +260,16 @@ export function registerProjectOpsCommands(
           const route = await resolveProjectSshConnection(ctx, opts.project, {
             direct: !!opts.direct,
           });
-          const baseArgs: string[] = [];
+          const baseArgs: string[] = [
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "PreferredAuthentications=publickey",
+            "-o",
+            "PasswordAuthentication=no",
+            "-o",
+            "KbdInteractiveAuthentication=no",
+          ];
           let sshServer = route.ssh_server;
           if (route.transport !== "direct") {
             const cloudflareHostname = route.cloudflare_hostname;
@@ -380,6 +391,10 @@ export function registerProjectOpsCommands(
             lines.push(`  IdentityFile ${keyInfo.private_key_path}`);
             lines.push("  IdentitiesOnly yes");
           }
+          lines.push("  BatchMode yes");
+          lines.push("  PreferredAuthentications publickey");
+          lines.push("  PasswordAuthentication no");
+          lines.push("  KbdInteractiveAuthentication no");
           const markers = projectSshConfigBlockMarkers(alias);
           const block = `${markers.start}\n${lines.join("\n")}\n${markers.end}\n`;
 
