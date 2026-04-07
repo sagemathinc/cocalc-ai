@@ -5,6 +5,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import { publishProjectDetailInvalidation } from "@cocalc/frontend/project/use-project-field";
 import {
   DEFAULT_ROOTFS_CATALOG_URL,
   type ProjectRootfsStateEntry,
@@ -211,9 +212,13 @@ export async function setProjectRootfsImage(body: {
   image: string;
   image_id?: string;
 }): Promise<ProjectRootfsStateEntry[]> {
-  return await webapp_client.conat_client.hub.system.setProjectRootfsImage(
-    body,
-  );
+  const states =
+    await webapp_client.conat_client.hub.system.setProjectRootfsImage(body);
+  publishProjectDetailInvalidation({
+    project_id: body.project_id,
+    fields: ["rootfs"],
+  });
+  return states;
 }
 
 export function managedRootfsCatalogUrl(refresh?: number | string): string {

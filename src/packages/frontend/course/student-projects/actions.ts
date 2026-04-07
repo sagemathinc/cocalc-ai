@@ -42,6 +42,37 @@ export class StudentProjectsActions {
     return store;
   };
 
+  private get_student_project_rootfs = async (): Promise<
+    | {
+        image: string;
+        image_id?: string;
+      }
+    | undefined
+  > => {
+    const store = this.get_store();
+    const explicitRootfs = store.get_student_project_rootfs();
+    if (explicitRootfs?.image) {
+      return explicitRootfs;
+    }
+    const course_project_id = store.get("course_project_id");
+    if (!course_project_id) {
+      return;
+    }
+    const inheritedRootfs =
+      await webapp_client.conat_client.hub.projects.getProjectRootfs({
+        project_id: course_project_id,
+      });
+    const image = `${inheritedRootfs?.image ?? ""}`.trim();
+    if (!image) {
+      return;
+    }
+    const image_id = `${inheritedRootfs?.image_id ?? ""}`.trim();
+    return {
+      image,
+      ...(image_id ? { image_id } : undefined),
+    };
+  };
+
   // Create and configure a single student project.
   create_student_project = async (
     student_id: string,
@@ -70,7 +101,7 @@ export class StudentProjectsActions {
       desc: `Create project for ${store.get_student_name(student_id)}.`,
     });
     let project_id: string;
-    const courseRootfs = store.get_student_project_rootfs();
+    const courseRootfs = await this.get_student_project_rootfs();
     try {
       project_id = await redux.getActions("projects").create_project({
         title: store.get("settings").get("title"),
@@ -441,7 +472,7 @@ export class StudentProjectsActions {
 
     const datastore: Datastore = store.get_datastore();
     const envvars: EnvVars = store.get_envvars();
-    const courseRootfs = store.get_student_project_rootfs();
+    const courseRootfs = await this.get_student_project_rootfs();
     const student_project_functionality = store
       .getIn(["settings", "student_project_functionality"])
       ?.toJS();
@@ -534,7 +565,7 @@ export class StudentProjectsActions {
 
   set_all_student_project_rootfs = async (): Promise<void> => {
     const store = this.get_store();
-    const courseRootfs = store.get_student_project_rootfs();
+    const courseRootfs = await this.get_student_project_rootfs();
     if (!courseRootfs?.image) {
       throw Error("No course RootFS image is configured.");
     }

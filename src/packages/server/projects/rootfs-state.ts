@@ -10,6 +10,7 @@ import type {
   ProjectRootfsStateRole,
 } from "@cocalc/util/rootfs-images";
 import { isManagedRootfsImageName } from "@cocalc/util/rootfs-images";
+import { publishProjectDetailInvalidationBestEffort } from "@cocalc/server/account/project-detail-feed";
 
 type RootfsStateRow = {
   project_id: string;
@@ -340,6 +341,10 @@ export async function replaceProjectRootfsStates({
     await pool.query("ROLLBACK");
     throw err;
   }
+  await publishProjectDetailInvalidationBestEffort({
+    project_id,
+    fields: ["rootfs"],
+  });
   return await loadProjectRootfsStateEntries(project_id);
 }
 
@@ -548,5 +553,9 @@ export async function setProjectRootfsImageWithRollback({
     await pool.query("ROLLBACK");
     throw err;
   }
+  await publishProjectDetailInvalidationBestEffort({
+    project_id,
+    fields: ["rootfs"],
+  });
   return await loadProjectRootfsStateEntries(project_id);
 }

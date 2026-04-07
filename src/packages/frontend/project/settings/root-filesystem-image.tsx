@@ -29,6 +29,7 @@ import { Icon, Paragraph, ThemeEditorModal } from "@cocalc/frontend/components";
 import ShowError from "@cocalc/frontend/components/error";
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
+import { useProjectRootfs } from "@cocalc/frontend/project/use-project-rootfs";
 import {
   dispatchNavigatorPromptIntent,
   submitNavigatorPromptToCurrentThread,
@@ -196,6 +197,18 @@ export default function RootFilesystemImage() {
     () => projectRootfsStates.find((state) => state.state_role === "previous"),
     [projectRootfsStates],
   );
+  const initialRootfs = useMemo(() => {
+    const image = `${currentProjectRootfsState?.image ?? ""}`.trim();
+    if (!image) {
+      return undefined;
+    }
+    const image_id = `${currentProjectRootfsState?.image_id ?? ""}`.trim();
+    return {
+      image,
+      ...(image_id ? { image_id } : undefined),
+    };
+  }, [currentProjectRootfsState?.image, currentProjectRootfsState?.image_id]);
+  const { rootfs, setRootfs } = useProjectRootfs(project_id, initialRootfs);
   const currentProjectRootfsEntry = useMemo(() => {
     if (!currentProjectRootfsState) return undefined;
     if (currentProjectRootfsState.image_id) {
@@ -353,10 +366,10 @@ export default function RootFilesystemImage() {
   );
 
   useEffect(() => {
-    const nextImage = getImage(project, effectiveDefaultRootfs);
+    const nextImage = getImage(rootfs, effectiveDefaultRootfs);
     setValue(nextImage);
-    setImageId(project?.get("rootfs_image_id", "")?.trim() ?? "");
-  }, [effectiveDefaultRootfs, project]);
+    setImageId(rootfs?.image_id?.trim() ?? "");
+  }, [effectiveDefaultRootfs, rootfs]);
 
   useEffect(() => {
     let active = true;
@@ -373,11 +386,7 @@ export default function RootFilesystemImage() {
     return () => {
       active = false;
     };
-  }, [
-    project_id,
-    project?.get("rootfs_image"),
-    project?.get("rootfs_image_id"),
-  ]);
+  }, [project_id, rootfs?.image, rootfs?.image_id]);
 
   useEffect(() => {
     const ops = rootfsPublishOps?.toJS() ?? {};
@@ -402,8 +411,8 @@ export default function RootFilesystemImage() {
   }
 
   function openPicker() {
-    const current = getImage(project, effectiveDefaultRootfs);
-    const currentId = project?.get("rootfs_image_id", "")?.trim() ?? "";
+    const current = getImage(rootfs, effectiveDefaultRootfs);
+    const currentId = rootfs?.image_id?.trim() ?? "";
     const currentEntry =
       rootfsImages.find((entry) => entry.id === currentId) ??
       rootfsImages.find((entry) => entry.image === current);
@@ -475,6 +484,12 @@ export default function RootFilesystemImage() {
       const currentState = states.find(
         (state) => state.state_role === "current",
       );
+      const nextRootfsImage = currentState?.image ?? image;
+      const nextRootfsImageId = currentState?.image_id ?? image_id ?? undefined;
+      setRootfs({
+        image: nextRootfsImage,
+        ...(nextRootfsImageId ? { image_id: nextRootfsImageId } : undefined),
+      });
       setValue(currentState?.image ?? image);
       setImageId(currentState?.image_id ?? image_id ?? "");
       if (project.getIn(["state", "state"]) == "running") {
@@ -928,9 +943,9 @@ export default function RootFilesystemImage() {
           width={760}
           open
           onCancel={() => {
-            const current = getImage(project, effectiveDefaultRootfs);
+            const current = getImage(rootfs, effectiveDefaultRootfs);
             setValue(current);
-            setImageId(project?.get("rootfs_image_id", "")?.trim() ?? "");
+            setImageId(rootfs?.image_id?.trim() ?? "");
             setOpen(false);
           }}
           title={
@@ -1575,8 +1590,11 @@ export default function RootFilesystemImage() {
   );
 }
 
-function getImage(project, fallback: string) {
-  const image = project?.get("rootfs_image")?.trim();
+function getImage(
+  rootfs: { image?: string | null } | null | undefined,
+  fallback: string,
+) {
+  const image = rootfs?.image?.trim();
   return image ? image : fallback;
 }
 

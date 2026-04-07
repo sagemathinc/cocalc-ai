@@ -18,8 +18,9 @@ import {
   message,
 } from "antd";
 
-import { useStore, useTypedRedux } from "@cocalc/frontend/app-framework";
+import { useStore } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components";
+import { useProjectRootfs } from "@cocalc/frontend/project/use-project-rootfs";
 import {
   groupedRootfsOptions,
   latestRootfsVersionEntries,
@@ -44,7 +45,6 @@ interface Props {
 
 export function StudentProjectRootfsConfig({ actions, name, settings }: Props) {
   const store = useStore<CourseStore>({ name });
-  const projectMap = useTypedRedux("projects", "project_map");
   const [helpOpen, setHelpOpen] = useState<boolean>(false);
   const [applying, setApplying] = useState<boolean>(false);
   const [nextImageId, setNextImageId] = useState<string>("");
@@ -54,10 +54,9 @@ export function StudentProjectRootfsConfig({ actions, name, settings }: Props) {
   const currentImageId =
     `${settings.get("student_project_rootfs_image_id") ?? ""}`.trim();
   const courseProjectId = store?.get("course_project_id");
-  const inheritedImage =
-    `${projectMap?.getIn([courseProjectId, "rootfs_image"]) ?? ""}`.trim();
-  const inheritedImageId =
-    `${projectMap?.getIn([courseProjectId, "rootfs_image_id"]) ?? ""}`.trim();
+  const { rootfs: inheritedRootfs } = useProjectRootfs(courseProjectId ?? "");
+  const inheritedImage = `${inheritedRootfs?.image ?? ""}`.trim();
+  const inheritedImageId = `${inheritedRootfs?.image_id ?? ""}`.trim();
   const effectiveCurrentImage = currentImage || inheritedImage;
   const effectiveCurrentImageId =
     currentImageId || (!currentImage ? inheritedImageId : "");

@@ -314,19 +314,6 @@ export class CourseStore extends Store<CourseState> {
         ...(explicitImageId ? { image_id: explicitImageId } : undefined),
       };
     }
-
-    const courseProjectId = this.get("course_project_id");
-    if (!courseProjectId) return;
-    const courseProject = this.redux
-      .getStore("projects")
-      ?.getIn(["project_map", courseProjectId]);
-    const image = `${courseProject?.get("rootfs_image") ?? ""}`.trim();
-    if (!image) return;
-    const image_id = `${courseProject?.get("rootfs_image_id") ?? ""}`.trim();
-    return {
-      image,
-      ...(image_id ? { image_id } : undefined),
-    };
   }
 
   public get_allow_collabs(): boolean {

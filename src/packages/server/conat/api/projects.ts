@@ -79,6 +79,7 @@ import type {
   ProjectRegion,
   ProjectCreated,
   ProjectEnv,
+  ProjectRootfsConfig,
   ProjectSnapshotSchedule,
   ProjectBackupSchedule,
   ProjectRunQuota,
@@ -856,6 +857,32 @@ export async function getProjectEnv({
     [project_id],
   );
   return rows[0]?.env ?? null;
+}
+
+export async function getProjectRootfs({
+  account_id,
+  project_id,
+}: {
+  account_id: string;
+  project_id: string;
+}): Promise<ProjectRootfsConfig | null> {
+  await assertProjectReadAccessOrAdmin({ account_id, project_id });
+  const { rows } = await getPool().query<{
+    rootfs_image: string | null;
+    rootfs_image_id: string | null;
+  }>(
+    "SELECT rootfs_image, rootfs_image_id FROM projects WHERE project_id = $1",
+    [project_id],
+  );
+  const image = `${rows[0]?.rootfs_image ?? ""}`.trim();
+  if (!image) {
+    return null;
+  }
+  const image_id = `${rows[0]?.rootfs_image_id ?? ""}`.trim();
+  return {
+    image,
+    ...(image_id ? { image_id } : undefined),
+  };
 }
 
 export async function setProjectEnv({

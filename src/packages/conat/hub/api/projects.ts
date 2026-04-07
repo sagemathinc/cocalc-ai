@@ -385,6 +385,10 @@ export type ProjectLauncherSettings = Record<string, any> | null;
 export type ProjectRegion = string | null;
 export type ProjectCreated = Date | string | null;
 export type ProjectEnv = Record<string, string> | null;
+export interface ProjectRootfsConfig {
+  image: string;
+  image_id?: string | null;
+}
 export type ProjectSnapshotSchedule = SnapshotSchedule | null;
 export type ProjectBackupSchedule = SnapshotSchedule | null;
 export type ProjectRunQuota = Record<string, any> | null;
@@ -414,6 +418,7 @@ export const projects = {
   getProjectCreated: authFirstRequireAccount,
   getProjectEnv: authFirstRequireAccount,
   setProjectEnv: authFirstRequireAccount,
+  getProjectRootfs: authFirstRequireAccount,
   getProjectSnapshotSchedule: authFirstRequireAccount,
   getProjectBackupSchedule: authFirstRequireAccount,
   getProjectRunQuota: authFirstRequireAccount,
@@ -582,6 +587,11 @@ export interface Projects {
     project_id: string;
     env: ProjectEnv;
   }) => Promise<void>;
+
+  getProjectRootfs: (opts: {
+    account_id?: string;
+    project_id: string;
+  }) => Promise<ProjectRootfsConfig | null>;
 
   getProjectRunQuota: (opts: {
     account_id?: string;

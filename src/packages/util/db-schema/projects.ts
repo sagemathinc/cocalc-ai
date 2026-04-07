@@ -78,8 +78,6 @@ Table({
           course: null,
           avatar_image_tiny: null,
           color: null,
-          rootfs_image: null,
-          rootfs_image_id: null,
         },
       },
       set: {
