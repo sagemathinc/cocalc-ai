@@ -343,13 +343,22 @@ describe("getBayLoad", () => {
         latest_backup_restore_test_status: "not-run",
         latest_backup_restore_tested: false,
         latest_backup_restore_tested_at: null,
+        latest_backup_pitr_test_status: "not-run",
+        latest_backup_pitr_tested: false,
+        latest_backup_pitr_tested_at: null,
         gold_star: false,
         last_restore_test_backup_set_id: null,
         last_restore_test_status: null,
         last_restore_tested_at: null,
         last_restore_test_target_dir: null,
         last_restore_test_recovery_ready: null,
-        summary: "Latest backup backup-1 has not been restore-tested.",
+        last_pitr_test_backup_set_id: null,
+        last_pitr_test_status: null,
+        last_pitr_tested_at: null,
+        last_pitr_test_target_time: null,
+        last_pitr_test_target_dir: null,
+        last_pitr_test_remote_only: null,
+        summary: "Latest backup backup-1 has not been PITR-tested.",
       },
     }));
     runBayBackupMock = jest.fn(async () => ({
@@ -436,13 +445,22 @@ describe("getBayLoad", () => {
         latest_backup_restore_test_status: "not-run",
         latest_backup_restore_tested: false,
         latest_backup_restore_tested_at: null,
+        latest_backup_pitr_test_status: "not-run",
+        latest_backup_pitr_tested: false,
+        latest_backup_pitr_tested_at: null,
         gold_star: false,
         last_restore_test_backup_set_id: null,
         last_restore_test_status: null,
         last_restore_tested_at: null,
         last_restore_test_target_dir: null,
         last_restore_test_recovery_ready: null,
-        summary: "Latest backup backup-1 has not been restore-tested.",
+        last_pitr_test_backup_set_id: null,
+        last_pitr_test_status: null,
+        last_pitr_tested_at: null,
+        last_pitr_test_target_time: null,
+        last_pitr_test_target_dir: null,
+        last_pitr_test_remote_only: null,
+        summary: "Latest backup backup-1 has not been PITR-tested.",
       },
     }));
     runBayRestoreMock = jest.fn(async () => ({
@@ -557,6 +575,7 @@ describe("getBayLoad", () => {
       },
       restore_readiness: {
         latest_backup_restore_test_status: "not-run",
+        latest_backup_pitr_test_status: "not-run",
         gold_star: false,
       },
       r2: {
@@ -627,6 +646,8 @@ describe("getBayLoad", () => {
       backup_set_id: "backup-1",
       target_dir: "/tmp/restore-target",
       dry_run: false,
+      remote_only: false,
+      target_time: undefined,
     });
   });
 });

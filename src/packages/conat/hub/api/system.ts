@@ -450,12 +450,27 @@ export interface BayRestoreReadinessStatus {
     | "failed";
   latest_backup_restore_tested: boolean;
   latest_backup_restore_tested_at: string | null;
+  latest_backup_pitr_test_status:
+    | "no-backup"
+    | "not-recovery-ready"
+    | "not-run"
+    | "stale"
+    | "passed"
+    | "failed";
+  latest_backup_pitr_tested: boolean;
+  latest_backup_pitr_tested_at: string | null;
   gold_star: boolean;
   last_restore_test_backup_set_id: string | null;
   last_restore_test_status: "passed" | "failed" | null;
   last_restore_tested_at: string | null;
   last_restore_test_target_dir: string | null;
   last_restore_test_recovery_ready: boolean | null;
+  last_pitr_test_backup_set_id: string | null;
+  last_pitr_test_status: "passed" | "failed" | null;
+  last_pitr_tested_at: string | null;
+  last_pitr_test_target_time: string | null;
+  last_pitr_test_target_dir: string | null;
+  last_pitr_test_remote_only: boolean | null;
   summary: string;
 }
 
@@ -519,6 +534,7 @@ export interface BayRestoreTestRunResult extends BayInfo {
   started_at: string;
   finished_at: string;
   remote_only: boolean;
+  target_time: string | null;
   backup_set_id: string;
   target_dir: string;
   data_dir: string | null;
@@ -533,6 +549,8 @@ export interface BayRestoreTestRunResult extends BayInfo {
   wal_storage_backend: "local" | "r2" | null;
   wal_segment_count: number;
   recovery_ready: boolean;
+  pitr_verified: boolean;
+  pitr_run_id: string | null;
   kept_on_disk: boolean;
   verified_queries: string[];
   notes: string[];

@@ -392,6 +392,9 @@ describe("bay-backup runner", () => {
     expect(status.restore_readiness.latest_backup_restore_test_status).toBe(
       "not-run",
     );
+    expect(status.restore_readiness.latest_backup_pitr_test_status).toBe(
+      "not-recovery-ready",
+    );
     expect(status.restore_readiness.gold_star).toBe(false);
   });
 
@@ -592,6 +595,65 @@ describe("bay-backup runner", () => {
         2,
       ),
     );
+    const sentinelRows: Array<{ run_id: string; phase: "pre" | "post" }> = [];
+    getPoolMock = jest.fn(() => ({
+      query: jest.fn(async (sql: string, params?: string[]) => {
+        if (
+          sql.includes("current_user AS current_user") &&
+          sql.includes("FROM pg_roles r")
+        ) {
+          return {
+            rows: [
+              {
+                current_user: "smc",
+                role_superuser: false,
+                role_replication: true,
+                data_directory: "/tmp/pgdata",
+                config_file: "/tmp/pgdata/postgresql.conf",
+                archive_mode: "on",
+                archive_command: "archive",
+                archive_timeout: null,
+                wal_level: "replica",
+                max_wal_senders: "10",
+              },
+            ],
+          };
+        }
+        if (
+          sql.includes(
+            "CREATE TABLE IF NOT EXISTS public.bay_restore_test_pitr_events",
+          )
+        ) {
+          return { rows: [] };
+        }
+        if (sql.includes("DELETE FROM public.bay_restore_test_pitr_events")) {
+          return { rows: [] };
+        }
+        if (sql.includes("INSERT INTO public.bay_restore_test_pitr_events")) {
+          sentinelRows.push({
+            run_id: params?.[0] ?? "missing",
+            phase: sql.includes("'pre'") ? "pre" : "post",
+          });
+          return { rows: [] };
+        }
+        if (sql === "SELECT clock_timestamp() AS target_time") {
+          return {
+            rows: [{ target_time: "2026-04-07T15:38:10.000Z" }],
+          };
+        }
+        if (sql === "SELECT pg_sleep(0.25)") {
+          return { rows: [] };
+        }
+        if (sql === "SELECT pg_switch_wal()") {
+          writeFileSync(
+            join(walArchiveDir, "0000000100000000000000E9"),
+            "segment-2",
+          );
+          return { rows: [{ pg_switch_wal: "0000000100000000000000E9" }] };
+        }
+        throw new Error(`unexpected query '${sql}'`);
+      }),
+    }));
     execFileMock = jest.fn(
       (
         cmd: string,
@@ -823,6 +885,12 @@ describe("bay-backup runner", () => {
           last_restore_tested_at: null,
           last_restore_test_target_dir: null,
           last_restore_test_recovery_ready: null,
+          last_pitr_test_backup_set_id: null,
+          last_pitr_test_status: null,
+          last_pitr_tested_at: null,
+          last_pitr_test_target_time: null,
+          last_pitr_test_target_dir: null,
+          last_pitr_test_remote_only: null,
         },
         null,
         2,
@@ -888,6 +956,65 @@ describe("bay-backup runner", () => {
         2,
       ),
     );
+    const sentinelRows: Array<{ run_id: string; phase: "pre" | "post" }> = [];
+    getPoolMock = jest.fn(() => ({
+      query: jest.fn(async (sql: string, params?: string[]) => {
+        if (
+          sql.includes("current_user AS current_user") &&
+          sql.includes("FROM pg_roles r")
+        ) {
+          return {
+            rows: [
+              {
+                current_user: "smc",
+                role_superuser: false,
+                role_replication: true,
+                data_directory: "/tmp/pgdata",
+                config_file: "/tmp/pgdata/postgresql.conf",
+                archive_mode: "on",
+                archive_command: "archive",
+                archive_timeout: null,
+                wal_level: "replica",
+                max_wal_senders: "10",
+              },
+            ],
+          };
+        }
+        if (
+          sql.includes(
+            "CREATE TABLE IF NOT EXISTS public.bay_restore_test_pitr_events",
+          )
+        ) {
+          return { rows: [] };
+        }
+        if (sql.includes("DELETE FROM public.bay_restore_test_pitr_events")) {
+          return { rows: [] };
+        }
+        if (sql.includes("INSERT INTO public.bay_restore_test_pitr_events")) {
+          sentinelRows.push({
+            run_id: params?.[0] ?? "missing",
+            phase: sql.includes("'pre'") ? "pre" : "post",
+          });
+          return { rows: [] };
+        }
+        if (sql === "SELECT clock_timestamp() AS target_time") {
+          return {
+            rows: [{ target_time: "2026-04-07T15:38:10.000Z" }],
+          };
+        }
+        if (sql === "SELECT pg_sleep(0.25)") {
+          return { rows: [] };
+        }
+        if (sql === "SELECT pg_switch_wal()") {
+          writeFileSync(
+            join(walArchiveDir, "0000000100000000000000E9"),
+            "segment-2",
+          );
+          return { rows: [{ pg_switch_wal: "0000000100000000000000E9" }] };
+        }
+        throw new Error(`unexpected query '${sql}'`);
+      }),
+    }));
     execFileMock = jest.fn(
       (
         cmd: string,
@@ -953,6 +1080,22 @@ describe("bay-backup runner", () => {
             cb(null, { stdout: "server_settings\n", stderr: "" });
             return;
           }
+          const countMatch = sql.match(
+            /^SELECT count\(\*\) FROM public\.bay_restore_test_pitr_events WHERE run_id = '([^']+)' AND phase = '(pre|post)'$/,
+          );
+          if (countMatch) {
+            const [, runId, phase] = countMatch;
+            const count = sentinelRows.filter(
+              (row) => row.run_id === runId && row.phase === phase,
+            ).length;
+            cb(
+              null,
+              phase === "post"
+                ? { stdout: "0\n", stderr: "" }
+                : { stdout: `${Math.min(count, 1)}\n`, stderr: "" },
+            );
+            return;
+          }
           cb(new Error(`unexpected SQL '${sql}'`));
           return;
         }
@@ -966,16 +1109,23 @@ describe("bay-backup runner", () => {
       backup_set_id: backupSetId,
     });
     expect(result.recovery_ready).toBe(true);
+    expect(result.pitr_verified).toBe(true);
     expect(result.kept_on_disk).toBe(false);
+    expect(result.target_time).toBe("2026-04-07T15:38:10.000Z");
     expect(result.verified_queries).toEqual([
       "current_database=smc",
       "accounts_table=accounts",
       "projects_table=projects",
       "server_settings_table=server_settings",
+      "pitr_pre_count=1",
+      "pitr_post_count=0",
     ]);
 
     const status = await getBayBackupStatus();
     expect(status.restore_readiness.latest_backup_restore_test_status).toBe(
+      "passed",
+    );
+    expect(status.restore_readiness.latest_backup_pitr_test_status).toBe(
       "passed",
     );
     expect(status.restore_readiness.gold_star).toBe(true);
@@ -983,6 +1133,12 @@ describe("bay-backup runner", () => {
       backupSetId,
     );
     expect(status.restore_readiness.last_restore_test_target_dir).toBe(null);
+    expect(status.restore_readiness.last_pitr_test_backup_set_id).toBe(
+      backupSetId,
+    );
+    expect(status.restore_readiness.last_pitr_test_target_time).toBe(
+      "2026-04-07T15:38:10.000Z",
+    );
   });
 
   it("restore-tests remotely from rustic plus R2 WAL when remote-only is requested", async () => {
@@ -1109,11 +1265,55 @@ describe("bay-backup runner", () => {
         "secrets.tar.gz": Buffer.from("secrets"),
       },
     });
+    const sentinelRows: Array<{ run_id: string; phase: "pre" | "post" }> = [];
+    const walArchiveDir = join(bayRoot, "wal", "archive");
+    const remoteWalKeys = [
+      "bay-backups/bay-0/wal/0000000100000000000000E8",
+      "bay-backups/bay-0/wal/0000000100000000000000E9",
+    ];
+    getPoolMock = jest.fn(() => ({
+      query: jest.fn(async (sql: string, params?: string[]) => {
+        if (
+          sql.includes(
+            "CREATE TABLE IF NOT EXISTS public.bay_restore_test_pitr_events",
+          )
+        ) {
+          return { rows: [] };
+        }
+        if (sql.includes("DELETE FROM public.bay_restore_test_pitr_events")) {
+          return { rows: [] };
+        }
+        if (sql.includes("INSERT INTO public.bay_restore_test_pitr_events")) {
+          sentinelRows.push({
+            run_id: params?.[0] ?? "missing",
+            phase: sql.includes("'pre'") ? "pre" : "post",
+          });
+          return { rows: [] };
+        }
+        if (sql === "SELECT clock_timestamp() AS target_time") {
+          return {
+            rows: [{ target_time: "2026-04-07T15:39:10.000Z" }],
+          };
+        }
+        if (sql === "SELECT pg_sleep(0.25)") {
+          return { rows: [] };
+        }
+        if (sql === "SELECT pg_switch_wal()") {
+          mkdirSync(walArchiveDir, { recursive: true });
+          writeFileSync(
+            join(walArchiveDir, "0000000100000000000000E9"),
+            "segment-2",
+          );
+          return { rows: [{ pg_switch_wal: "0000000100000000000000E9" }] };
+        }
+        throw new Error(`unexpected query '${sql}'`);
+      }),
+    }));
     listObjectsMock = jest.fn(async ({ prefix }: { prefix?: string }) => {
       if (prefix !== "bay-backups/bay-0/wal/") {
         throw new Error(`unexpected WAL prefix '${prefix}'`);
       }
-      return ["bay-backups/bay-0/wal/0000000100000000000000E8"];
+      return remoteWalKeys;
     });
     execFileMock = jest.fn(
       (
@@ -1225,6 +1425,22 @@ describe("bay-backup runner", () => {
             cb(null, { stdout: "server_settings\n", stderr: "" });
             return;
           }
+          const countMatch = sql.match(
+            /^SELECT count\(\*\) FROM public\.bay_restore_test_pitr_events WHERE run_id = '([^']+)' AND phase = '(pre|post)'$/,
+          );
+          if (countMatch) {
+            const [, runId, phase] = countMatch;
+            const count = sentinelRows.filter(
+              (row) => row.run_id === runId && row.phase === phase,
+            ).length;
+            cb(
+              null,
+              phase === "post"
+                ? { stdout: "0\n", stderr: "" }
+                : { stdout: `${Math.min(count, 1)}\n`, stderr: "" },
+            );
+            return;
+          }
           cb(new Error(`unexpected SQL '${sql}'`));
           return;
         }
@@ -1239,6 +1455,8 @@ describe("bay-backup runner", () => {
       remote_only: true,
       keep: true,
     });
+    expect(result.pitr_verified).toBe(true);
+    expect(result.target_time).toBe("2026-04-07T15:39:10.000Z");
     expect(result.source_storage_backend).toBe("rustic");
     expect(result.wal_storage_backend).toBe("r2");
     expect(result.remote_only).toBe(true);
@@ -1250,6 +1468,8 @@ describe("bay-backup runner", () => {
     expect(
       readFileSync(join(result.target_dir, "restore-wal.js"), "utf8"),
     ).toContain("https://acct-1.r2.cloudflarestorage.com");
+    expect(result.verified_queries).toContain("pitr_pre_count=1");
+    expect(result.verified_queries).toContain("pitr_post_count=0");
     expect(listObjectsMock).toHaveBeenCalledWith(
       expect.objectContaining({
         prefix: "bay-backups/bay-0/wal/",

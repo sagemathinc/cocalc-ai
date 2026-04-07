@@ -109,7 +109,7 @@ export function registerBayCommand(
   bay
     .command("restore-test [bay_id]")
     .description(
-      "restore the latest bay backup into a fenced workspace and verify it boots",
+      "restore the latest bay backup into a fenced workspace and verify PITR recovery",
     )
     .option(
       "--backup-set-id <backup_set_id>",

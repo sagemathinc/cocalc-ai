@@ -113,6 +113,7 @@ const RESTORE_TEST_QUERIES: RestoreTestQuery[] = [
     expected: "server_settings",
   },
 ];
+const RESTORE_TEST_PITR_TABLE = "public.bay_restore_test_pitr_events";
 
 type BackupStrategy = "pg_basebackup" | "pg_dumpall";
 type StorageBackend = "local" | "r2" | "rustic";
@@ -121,6 +122,11 @@ type RestoreTestQuery = {
   label: string;
   sql: string;
   expected: string;
+};
+
+type PitrRestoreSentinel = {
+  run_id: string;
+  target_time: string;
 };
 
 type StoredBayBackupState = {
@@ -157,6 +163,12 @@ type StoredBayBackupState = {
   last_restore_tested_at: string | null;
   last_restore_test_target_dir: string | null;
   last_restore_test_recovery_ready: boolean | null;
+  last_pitr_test_backup_set_id: string | null;
+  last_pitr_test_status: "passed" | "failed" | null;
+  last_pitr_tested_at: string | null;
+  last_pitr_test_target_time: string | null;
+  last_pitr_test_target_dir: string | null;
+  last_pitr_test_remote_only: boolean | null;
 };
 
 type StoredBayBackupManifest = {
@@ -376,6 +388,12 @@ function defaultState({
     last_restore_tested_at: null,
     last_restore_test_target_dir: null,
     last_restore_test_recovery_ready: null,
+    last_pitr_test_backup_set_id: null,
+    last_pitr_test_status: null,
+    last_pitr_tested_at: null,
+    last_pitr_test_target_time: null,
+    last_pitr_test_target_dir: null,
+    last_pitr_test_remote_only: null,
   };
 }
 
@@ -1865,9 +1883,23 @@ function mapRestoreReadiness({
     state.last_restore_test_target_dir ?? null;
   const last_restore_test_recovery_ready =
     state.last_restore_test_recovery_ready ?? null;
+  const last_pitr_test_backup_set_id =
+    state.last_pitr_test_backup_set_id ?? null;
+  const last_pitr_test_status = state.last_pitr_test_status ?? null;
+  const last_pitr_tested_at = state.last_pitr_tested_at ?? null;
+  const last_pitr_test_target_time = state.last_pitr_test_target_time ?? null;
+  const last_pitr_test_target_dir = state.last_pitr_test_target_dir ?? null;
+  const last_pitr_test_remote_only = state.last_pitr_test_remote_only ?? null;
 
   let latest_backup_restore_test_status:
     | "no-backup"
+    | "not-run"
+    | "stale"
+    | "passed"
+    | "failed";
+  let latest_backup_pitr_test_status:
+    | "no-backup"
+    | "not-recovery-ready"
     | "not-run"
     | "stale"
     | "passed"
@@ -1876,20 +1908,58 @@ function mapRestoreReadiness({
 
   if (!latest_backup_set_id) {
     latest_backup_restore_test_status = "no-backup";
+    latest_backup_pitr_test_status = "no-backup";
     summary = "No bay backup exists yet.";
   } else if (!last_restore_test_backup_set_id || !last_restore_test_status) {
     latest_backup_restore_test_status = "not-run";
-    summary = `Latest backup ${latest_backup_set_id} has not been restore-tested.`;
   } else if (last_restore_test_backup_set_id !== latest_backup_set_id) {
     latest_backup_restore_test_status = "stale";
-    const prior = last_restore_test_status === "passed" ? "passed" : "failed";
-    summary = `Latest backup ${latest_backup_set_id} has not been restore-tested. Last tested backup ${last_restore_test_backup_set_id} ${prior} at ${last_restore_tested_at ?? "unknown time"}.`;
   } else {
     latest_backup_restore_test_status = last_restore_test_status;
+  }
+
+  if (!latest_backup_set_id) {
+    latest_backup_pitr_test_status = "no-backup";
+    summary = "No bay backup exists yet.";
+  } else if (latest_backup_format !== "pg_basebackup") {
+    latest_backup_pitr_test_status = "not-recovery-ready";
+    summary = `Latest backup ${latest_backup_set_id} is not recovery-ready, so PITR validation is unavailable.`;
+  } else if (!last_pitr_test_backup_set_id || !last_pitr_test_status) {
+    latest_backup_pitr_test_status = "not-run";
+    summary = `Latest backup ${latest_backup_set_id} has not been PITR-tested.`;
+  } else if (last_pitr_test_backup_set_id !== latest_backup_set_id) {
+    latest_backup_pitr_test_status = "stale";
+    const prior = last_pitr_test_status === "passed" ? "passed" : "failed";
+    summary = `Latest backup ${latest_backup_set_id} has not been PITR-tested. Last PITR-tested backup ${last_pitr_test_backup_set_id} ${prior} at ${last_pitr_tested_at ?? "unknown time"}.`;
+  } else {
+    latest_backup_pitr_test_status = last_pitr_test_status;
+    const mode = last_pitr_test_remote_only ? "remote-only " : "";
     summary =
-      last_restore_test_status === "passed"
-        ? `Latest backup ${latest_backup_set_id} passed a restore test at ${last_restore_tested_at ?? "unknown time"}.`
-        : `Latest backup ${latest_backup_set_id} failed its last restore test at ${last_restore_tested_at ?? "unknown time"}.`;
+      last_pitr_test_status === "passed"
+        ? `Latest backup ${latest_backup_set_id} passed a ${mode}PITR restore test at ${last_pitr_tested_at ?? "unknown time"}.`
+        : `Latest backup ${latest_backup_set_id} failed its last ${mode}PITR restore test at ${last_pitr_tested_at ?? "unknown time"}.`;
+  }
+
+  if (
+    latest_backup_pitr_test_status === "not-run" &&
+    latest_backup_restore_test_status === "stale" &&
+    last_restore_test_backup_set_id
+  ) {
+    const prior = last_restore_test_status === "passed" ? "passed" : "failed";
+    summary = `Latest backup ${latest_backup_set_id} has not been PITR-tested. Last restore-tested backup ${last_restore_test_backup_set_id} ${prior} at ${last_restore_tested_at ?? "unknown time"}.`;
+  } else if (
+    latest_backup_pitr_test_status === "not-run" &&
+    latest_backup_restore_test_status === "passed"
+  ) {
+    summary = `Latest backup ${latest_backup_set_id} passed a plain restore test at ${last_restore_tested_at ?? "unknown time"}, but has not been PITR-tested yet.`;
+  } else if (
+    latest_backup_pitr_test_status === "not-run" &&
+    latest_backup_restore_test_status === "failed"
+  ) {
+    summary = `Latest backup ${latest_backup_set_id} failed its last plain restore test at ${last_restore_tested_at ?? "unknown time"} and has not been PITR-tested yet.`;
+  } else if (last_restore_test_backup_set_id !== latest_backup_set_id) {
+    const prior = last_restore_test_status === "passed" ? "passed" : "failed";
+    summary = `Latest backup ${latest_backup_set_id} has not been restore-tested. Last tested backup ${last_restore_test_backup_set_id} ${prior} at ${last_restore_tested_at ?? "unknown time"}.`;
   }
 
   return {
@@ -1903,12 +1973,25 @@ function mapRestoreReadiness({
       latest_backup_restore_test_status === "failed"
         ? last_restore_tested_at
         : null,
-    gold_star: latest_backup_restore_test_status === "passed",
+    latest_backup_pitr_test_status,
+    latest_backup_pitr_tested: latest_backup_pitr_test_status === "passed",
+    latest_backup_pitr_tested_at:
+      latest_backup_pitr_test_status === "passed" ||
+      latest_backup_pitr_test_status === "failed"
+        ? last_pitr_tested_at
+        : null,
+    gold_star: latest_backup_pitr_test_status === "passed",
     last_restore_test_backup_set_id,
     last_restore_test_status,
     last_restore_tested_at,
     last_restore_test_target_dir,
     last_restore_test_recovery_ready,
+    last_pitr_test_backup_set_id,
+    last_pitr_test_status,
+    last_pitr_tested_at,
+    last_pitr_test_target_time,
+    last_pitr_test_target_dir,
+    last_pitr_test_remote_only,
     summary,
   };
 }
@@ -2837,6 +2920,61 @@ async function resolveRestoreTestBinary(binary: string): Promise<string> {
   return path;
 }
 
+async function preparePitrRestoreSentinel({
+  bay_id,
+  backup_set_id,
+  remote_only,
+}: {
+  bay_id: string;
+  backup_set_id: string;
+  remote_only: boolean;
+}): Promise<PitrRestoreSentinel> {
+  const run_id = randomUUID();
+  const note = `${bay_id}:${backup_set_id}:${remote_only ? "remote-only" : "local"}`;
+  await getPool().query(
+    `CREATE TABLE IF NOT EXISTS ${RESTORE_TEST_PITR_TABLE} (
+      run_id uuid NOT NULL,
+      phase text NOT NULL,
+      note text,
+      created_at timestamptz NOT NULL DEFAULT clock_timestamp()
+    )`,
+  );
+  await getPool().query(
+    `DELETE FROM ${RESTORE_TEST_PITR_TABLE} WHERE created_at < clock_timestamp() - interval '30 days'`,
+  );
+  await getPool().query(
+    `INSERT INTO ${RESTORE_TEST_PITR_TABLE} (run_id, phase, note) VALUES ($1, 'pre', $2)`,
+    [run_id, note],
+  );
+  const { rows } = await getPool().query<{ target_time: string | Date }>(
+    "SELECT clock_timestamp() AS target_time",
+  );
+  const rawTargetTime = rows[0]?.target_time;
+  const target_time = normalizeRecoveryTargetTime(
+    rawTargetTime instanceof Date
+      ? rawTargetTime.toISOString()
+      : `${rawTargetTime ?? ""}`,
+  );
+  if (!target_time) {
+    throw new Error("failed to record PITR target_time");
+  }
+  await getPool().query("SELECT pg_sleep(0.25)");
+  await getPool().query(
+    `INSERT INTO ${RESTORE_TEST_PITR_TABLE} (run_id, phase, note) VALUES ($1, 'post', $2)`,
+    [run_id, note],
+  );
+  const walSync = await syncBayWalArchive({
+    bay_id,
+    forceSwitch: true,
+  });
+  if (`${walSync.state.last_error ?? ""}`.startsWith("wal archive:")) {
+    throw new Error(
+      `failed to archive PITR validation WAL: ${walSync.state.last_error}`,
+    );
+  }
+  return { run_id, target_time };
+}
+
 async function recordRestoreTestState({
   paths,
   state,
@@ -2845,6 +2983,8 @@ async function recordRestoreTestState({
   tested_at,
   target_dir,
   recovery_ready,
+  pitr_target_time,
+  remote_only,
 }: {
   paths: ReturnType<typeof getBayBackupPaths>;
   state: StoredBayBackupState;
@@ -2853,17 +2993,63 @@ async function recordRestoreTestState({
   tested_at: string;
   target_dir: string | null;
   recovery_ready: boolean;
+  pitr_target_time: string | null;
+  remote_only: boolean;
 }): Promise<StoredBayBackupState> {
+  const currentState =
+    (await readJsonIfExists<StoredBayBackupState>(paths.state_file)) ?? state;
   const nextState: StoredBayBackupState = {
-    ...state,
+    ...currentState,
     last_restore_test_backup_set_id: backup_set_id,
     last_restore_test_status: status,
     last_restore_tested_at: tested_at,
     last_restore_test_target_dir: target_dir,
     last_restore_test_recovery_ready: recovery_ready,
+    last_pitr_test_backup_set_id: backup_set_id,
+    last_pitr_test_status: status,
+    last_pitr_tested_at: tested_at,
+    last_pitr_test_target_time: pitr_target_time,
+    last_pitr_test_target_dir: target_dir,
+    last_pitr_test_remote_only: remote_only,
   };
   await writeJson(paths.state_file, nextState);
   return nextState;
+}
+
+async function runRestoreTestSql({
+  psql,
+  socketDir,
+  port,
+  env,
+  sql,
+}: {
+  psql: string;
+  socketDir: string;
+  port: number;
+  env: NodeJS.ProcessEnv;
+  sql: string;
+}): Promise<string> {
+  const { stdout } = await execFile(
+    psql,
+    [
+      "-h",
+      socketDir,
+      "-p",
+      `${port}`,
+      "-U",
+      pguser,
+      "-d",
+      pgdatabase,
+      "-tAc",
+      sql,
+    ],
+    {
+      env,
+      timeout: 30_000,
+      maxBuffer: 10 * 1024 * 1024,
+    },
+  );
+  return `${stdout ?? ""}`.trim();
 }
 
 export async function runBayRestoreTest({
@@ -2934,23 +3120,41 @@ export async function runBayRestoreTest({
       paths,
       backup_set_id: resolvedBackupSetId,
     });
+  const restorePlan = await runBayRestore({
+    bay_id: resolvedBayId,
+    backup_set_id: resolvedBackupSetId,
+    target_dir: resolvedTargetDir,
+    dry_run: true,
+    remote_only,
+  });
+  if (!restorePlan.recovery_ready || !restorePlan.data_dir) {
+    throw new Error(
+      "latest backup is not recovery-ready; restore-test currently requires a pg_basebackup snapshot",
+    );
+  }
   let restoreResult: BayRestoreRunResult | null = null;
   let kept_on_disk = keep === true;
   const verified_queries: string[] = [];
   let socketDir: string | null = null;
+  let pitrRun: PitrRestoreSentinel | null = null;
   try {
+    pitrRun = await preparePitrRestoreSentinel({
+      bay_id: resolvedBayId,
+      backup_set_id: resolvedBackupSetId,
+      remote_only,
+    });
     restoreResult = await runBayRestore({
       bay_id: resolvedBayId,
       backup_set_id: resolvedBackupSetId,
       target_dir: resolvedTargetDir,
       dry_run: false,
       remote_only,
+      target_time: pitrRun.target_time,
     });
-    if (!restoreResult.recovery_ready || !restoreResult.data_dir) {
-      throw new Error(
-        "latest backup is not recovery-ready; restore-test currently requires a pg_basebackup snapshot",
-      );
+    if (!restoreResult.data_dir) {
+      throw new Error("restore-test requires a restored data directory");
     }
+    const restoreDataDir = restoreResult.data_dir;
 
     const [pgCtl, psql] = await Promise.all([
       resolveRestoreTestBinary("pg_ctl"),
@@ -2968,7 +3172,7 @@ export async function runBayRestoreTest({
         pgCtl,
         [
           "-D",
-          restoreResult.data_dir,
+          restoreDataDir,
           "-l",
           logPath,
           "-o",
@@ -2984,27 +3188,13 @@ export async function runBayRestoreTest({
       );
       started = true;
       for (const check of RESTORE_TEST_QUERIES) {
-        const { stdout } = await execFile(
+        const value = await runRestoreTestSql({
           psql,
-          [
-            "-h",
-            socketDir,
-            "-p",
-            `${port}`,
-            "-U",
-            pguser,
-            "-d",
-            pgdatabase,
-            "-tAc",
-            check.sql,
-          ],
-          {
-            env,
-            timeout: 30_000,
-            maxBuffer: 10 * 1024 * 1024,
-          },
-        );
-        const value = `${stdout ?? ""}`.trim();
+          socketDir,
+          port,
+          env,
+          sql: check.sql,
+        });
         if (value !== check.expected) {
           throw new Error(
             `restore test check '${check.label}' failed: expected '${check.expected}', got '${value}'`,
@@ -3012,11 +3202,35 @@ export async function runBayRestoreTest({
         }
         verified_queries.push(`${check.label}=${value}`);
       }
+      if (!pitrRun) {
+        throw new Error("missing PITR sentinel context");
+      }
+      const preCount = await runRestoreTestSql({
+        psql,
+        socketDir,
+        port,
+        env,
+        sql: `SELECT count(*) FROM ${RESTORE_TEST_PITR_TABLE} WHERE run_id = ${postgresQuote(pitrRun.run_id)} AND phase = 'pre'`,
+      });
+      const postCount = await runRestoreTestSql({
+        psql,
+        socketDir,
+        port,
+        env,
+        sql: `SELECT count(*) FROM ${RESTORE_TEST_PITR_TABLE} WHERE run_id = ${postgresQuote(pitrRun.run_id)} AND phase = 'post'`,
+      });
+      if (preCount !== "1" || postCount !== "0") {
+        throw new Error(
+          `restore test PITR check failed: expected pre=1 and post=0, got pre=${preCount} and post=${postCount}`,
+        );
+      }
+      verified_queries.push(`pitr_pre_count=${preCount}`);
+      verified_queries.push(`pitr_post_count=${postCount}`);
     } finally {
       if (started) {
         await execFile(
           pgCtl,
-          ["-D", restoreResult.data_dir, "-m", "fast", "-w", "stop"],
+          ["-D", restoreDataDir, "-m", "fast", "-w", "stop"],
           {
             env,
             timeout: 60_000,
@@ -3031,9 +3245,15 @@ export async function runBayRestoreTest({
         });
       }
     }
+    if (!pitrRun) {
+      throw new Error("missing PITR sentinel context");
+    }
+    const pitr = pitrRun;
 
     const notes = [
       ...restoreResult.notes,
+      `Recorded PITR sentinel run ${pitr.run_id} at ${pitr.target_time} before restoring.`,
+      "Verified PITR recovery stopped after the pre-target transaction and before the post-target transaction.",
       `Verified fenced restore using pg_ctl and psql against ${socketDir}.`,
     ];
     if (!kept_on_disk) {
@@ -3059,11 +3279,14 @@ export async function runBayRestoreTest({
       tested_at: finished_at,
       target_dir: kept_on_disk ? resolvedTargetDir : null,
       recovery_ready: true,
+      pitr_target_time: pitr.target_time,
+      remote_only,
     });
     return {
       ...currentBay,
       started_at,
       finished_at,
+      target_time: pitr.target_time,
       backup_set_id: resolvedBackupSetId,
       target_dir: resolvedTargetDir,
       data_dir: restoreResult.data_dir,
@@ -3079,6 +3302,8 @@ export async function runBayRestoreTest({
       remote_only: restoreResult.remote_only,
       wal_segment_count: restoreResult.wal_segment_count,
       recovery_ready: restoreResult.recovery_ready,
+      pitr_verified: true,
+      pitr_run_id: pitr.run_id,
       kept_on_disk,
       verified_queries,
       notes,
@@ -3093,6 +3318,8 @@ export async function runBayRestoreTest({
       tested_at: finished_at,
       target_dir: resolvedTargetDir,
       recovery_ready: restoreResult?.recovery_ready ?? false,
+      pitr_target_time: pitrRun?.target_time ?? null,
+      remote_only,
     });
     throw new Error(
       `bay restore-test failed for backup '${resolvedBackupSetId}': ${String(err)} (workspace kept at ${resolvedTargetDir})`,
