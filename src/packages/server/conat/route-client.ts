@@ -13,6 +13,9 @@ import {
 } from "@cocalc/conat/core/client";
 import { issueProjectHostAuthToken } from "@cocalc/conat/auth/project-host-token";
 import {
+  materializeHostRouteTarget,
+  materializeProjectHostTarget,
+  routeHostSubject,
   routeProjectSubject,
   listenForUpdates as listenForProjectHostUpdates,
 } from "./route-project";
@@ -36,6 +39,16 @@ type RoutedHubClientState = {
 };
 
 const routedHubClients: Record<string, RoutedHubClientState> = {};
+
+type RoutedTarget =
+  | {
+      address?: string;
+      host_id?: string;
+      host_session_id?: string;
+    }
+  | {
+      client: Client;
+    };
 
 function evictRoutedHubClient(
   host_id: string,
@@ -170,6 +183,59 @@ function getOrCreateRoutedHubClient({
   return state.client;
 }
 
+function routeTargetToClient(target?: {
+  address?: string;
+  host_id?: string;
+  host_session_id?: string;
+}): RoutedTarget | undefined {
+  if (!target?.address || !target.host_id) {
+    return target;
+  }
+  return {
+    client: getOrCreateRoutedHubClient({
+      host_id: target.host_id,
+      address: target.address,
+      host_session_id: target.host_session_id,
+    }),
+  };
+}
+
+function hasRoutedClient(target?: RoutedTarget): target is { client: Client } {
+  return !!target && "client" in target;
+}
+
+export async function getExplicitProjectRoutedClient({
+  project_id,
+  fresh = false,
+}: {
+  project_id: string;
+  fresh?: boolean;
+}): Promise<Client> {
+  const routed = routeTargetToClient(
+    await materializeProjectHostTarget(project_id, { fresh }),
+  );
+  if (!hasRoutedClient(routed)) {
+    throw new Error(`unable to route project ${project_id} to a host`);
+  }
+  return routed.client;
+}
+
+export async function getExplicitHostRoutedClient({
+  host_id,
+  fresh = false,
+}: {
+  host_id: string;
+  fresh?: boolean;
+}): Promise<Client> {
+  const routed = routeTargetToClient(
+    await materializeHostRouteTarget(host_id, { fresh }),
+  );
+  if (!hasRoutedClient(routed)) {
+    throw new Error(`unable to route host ${host_id} to its owning bay`);
+  }
+  return routed.client;
+}
+
 export function conatWithProjectRouting(options?: ClientOptions): Client {
   if (!listenerStarted) {
     listenerStarted = true;
@@ -190,32 +256,22 @@ export function conatWithProjectRouting(options?: ClientOptions): Client {
   const combinedRoute =
     routeSubject == null
       ? (subject: string) => {
-          const routed = routeProjectSubject(subject);
-          if (!routed?.address || !routed.host_id) {
-            return routed;
+          const hostRouted = routeTargetToClient(routeHostSubject(subject));
+          if (hostRouted) {
+            return hostRouted;
           }
-          return {
-            client: getOrCreateRoutedHubClient({
-              host_id: routed.host_id,
-              address: routed.address,
-              host_session_id: routed.host_session_id,
-            }),
-          };
+          const routed = routeProjectSubject(subject);
+          return routeTargetToClient(routed);
         }
       : (subject: string) => {
           const custom = routeSubject(subject);
           if (custom) return custom;
-          const routed = routeProjectSubject(subject);
-          if (!routed?.address || !routed.host_id) {
-            return routed;
+          const hostRouted = routeTargetToClient(routeHostSubject(subject));
+          if (hostRouted) {
+            return hostRouted;
           }
-          return {
-            client: getOrCreateRoutedHubClient({
-              host_id: routed.host_id,
-              address: routed.address,
-              host_session_id: routed.host_session_id,
-            }),
-          };
+          const routed = routeProjectSubject(subject);
+          return routeTargetToClient(routed);
         };
   client.setRouteSubject(combinedRoute);
   return client;

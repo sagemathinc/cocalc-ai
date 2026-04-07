@@ -62,8 +62,6 @@ import {
   listServerProviders,
 } from "@cocalc/server/cloud/providers";
 import { getProviderContext } from "@cocalc/server/cloud/provider-context";
-import { createHostControlClient } from "@cocalc/conat/project-host/api";
-import { conatWithProjectRouting } from "@cocalc/server/conat/route-client";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import siteURL from "@cocalc/database/settings/site-url";
 import {
@@ -132,6 +130,7 @@ import {
 } from "@cocalc/util/rootfs-images";
 import { buildCloudInitStartupScript } from "@cocalc/server/cloud/bootstrap-host";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
 import {
   assertAccountProjectHostTokenProjectAccess,
   assertProjectHostAgentTokenAccess,
@@ -167,6 +166,13 @@ const HOST_ONLINE_WINDOW_MS = 2 * 60 * 1000;
 const HOST_BOOTSTRAP_RECONCILE_TIMEOUT_MS = 20 * 60 * 1000;
 const HOST_BOOTSTRAP_RECONCILE_POLL_MS = 5_000;
 const HOST_RUNNING_STATUSES = new Set(["running", "active"]);
+
+async function hostControlClient(host_id: string, timeout?: number) {
+  return await getRoutedHostControlClient({
+    host_id,
+    timeout,
+  });
+}
 
 type RootfsReleaseLifecycleRow = {
   release_id: string;
@@ -2916,10 +2922,7 @@ export async function getHostRuntimeLog({
   lines?: number;
 }): Promise<{ host_id: string; source: string; lines: number; text: string }> {
   await loadOwnedHost(id, account_id);
-  const client = createHostControlClient({
-    host_id: id,
-    client: conatWithProjectRouting(),
-  });
+  const client = await hostControlClient(id);
   const response = await client.getRuntimeLog({
     lines: normalizeHostRuntimeLogLines(lines),
   });
@@ -2972,11 +2975,7 @@ export async function listHostRootfsImages({
         "host must be running to inspect RootFS cache",
     );
   }
-  const client = createHostControlClient({
-    host_id: id,
-    client: conatWithProjectRouting(),
-    timeout: HOST_ROOTFS_RPC_TIMEOUT_MS,
-  });
+  const client = await hostControlClient(id, HOST_ROOTFS_RPC_TIMEOUT_MS);
   return await enrichHostRootfsImages(await client.listRootfsImages());
 }
 
@@ -2997,11 +2996,7 @@ export async function pullHostRootfsImage({
         "host must be running to pull RootFS images",
     );
   }
-  const client = createHostControlClient({
-    host_id: id,
-    client: conatWithProjectRouting(),
-    timeout: HOST_ROOTFS_RPC_TIMEOUT_MS,
-  });
+  const client = await hostControlClient(id, HOST_ROOTFS_RPC_TIMEOUT_MS);
   try {
     return await client.pullRootfsImage({ image });
   } catch (err) {
@@ -3033,11 +3028,7 @@ export async function deleteHostRootfsImage({
         "host must be running to delete RootFS images",
     );
   }
-  const client = createHostControlClient({
-    host_id: id,
-    client: conatWithProjectRouting(),
-    timeout: HOST_ROOTFS_RPC_TIMEOUT_MS,
-  });
+  const client = await hostControlClient(id, HOST_ROOTFS_RPC_TIMEOUT_MS);
   return await client.deleteRootfsImage({ image });
 }
 
@@ -3056,11 +3047,7 @@ export async function gcDeletedHostRootfsImages({
         "host must be running to garbage collect RootFS images",
     );
   }
-  const client = createHostControlClient({
-    host_id: id,
-    client: conatWithProjectRouting(),
-    timeout: HOST_ROOTFS_RPC_TIMEOUT_MS,
-  });
+  const client = await hostControlClient(id, HOST_ROOTFS_RPC_TIMEOUT_MS);
   const entries = await enrichHostRootfsImages(await client.listRootfsImages());
   const items: HostRootfsGcResult["items"] = [];
   for (const entry of entries) {
@@ -3116,10 +3103,7 @@ export async function listHostSshAuthorizedKeys({
   keys: string[];
 }> {
   await loadOwnedHost(id, account_id);
-  const client = createHostControlClient({
-    host_id: id,
-    client: conatWithProjectRouting(),
-  });
+  const client = await hostControlClient(id);
   const response = await client.listHostSshAuthorizedKeys();
   return {
     host_id: id,
@@ -3147,10 +3131,7 @@ export async function addHostSshAuthorizedKey({
   added: boolean;
 }> {
   await loadOwnedHost(id, account_id);
-  const client = createHostControlClient({
-    host_id: id,
-    client: conatWithProjectRouting(),
-  });
+  const client = await hostControlClient(id);
   const response = await client.addHostSshAuthorizedKey({ public_key });
   return {
     host_id: id,
@@ -3179,10 +3160,7 @@ export async function removeHostSshAuthorizedKey({
   removed: boolean;
 }> {
   await loadOwnedHost(id, account_id);
-  const client = createHostControlClient({
-    host_id: id,
-    client: conatWithProjectRouting(),
-  });
+  const client = await hostControlClient(id);
   const response = await client.removeHostSshAuthorizedKey({ public_key });
   return {
     host_id: id,
@@ -4498,10 +4476,7 @@ export async function updateHostMachine({
     });
     await entry.provider.resizeDisk(runtime, nextDisk, creds);
     if (row.status !== "off") {
-      const client = createHostControlClient({
-        host_id: row.id,
-        client: conatWithProjectRouting(),
-      });
+      const client = await hostControlClient(row.id);
       try {
         await client.growBtrfs({ disk_gb: nextDisk });
       } catch (err) {
@@ -5183,11 +5158,7 @@ export async function upgradeHostSoftwareInternal({
     await reconcileCloudHostBootstrapOverSsh({ host_id: id, row });
     return { results: [] };
   }
-  const client = createHostControlClient({
-    host_id: id,
-    client: conatWithProjectRouting(),
-    timeout: HOST_UPGRADE_RPC_TIMEOUT_MS,
-  });
+  const client = await hostControlClient(id, HOST_UPGRADE_RPC_TIMEOUT_MS);
   let response: HostSoftwareUpgradeResponse;
   try {
     response = await client.upgradeSoftware({

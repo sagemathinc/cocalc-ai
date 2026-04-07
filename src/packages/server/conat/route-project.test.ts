@@ -133,4 +133,68 @@ describe("route-project bay-aware routing", () => {
     expect(routeProjectSubject(`project.${PROJECT_ID}`)).toBeUndefined();
     expect(warnMock).not.toHaveBeenCalled();
   });
+
+  it("routes direct host subjects through a host in the same bay", async () => {
+    queryMock.mockResolvedValue({
+      rows: [
+        {
+          resolved_host_id: HOST_ID,
+          host_bay_id: "bay-0",
+          internal_url: "http://host.internal:9000",
+          public_url: "https://host.example.com",
+          metadata: {
+            host_session_id: "session-2",
+            machine: {},
+          },
+        },
+      ],
+    });
+
+    const { materializeHostRouteTarget, routeHostSubject } =
+      await import("./route-project");
+
+    expect(await materializeHostRouteTarget(HOST_ID, { fresh: true })).toEqual({
+      address: "http://host.internal:9000",
+      host_id: HOST_ID,
+      host_session_id: "session-2",
+    });
+    expect(routeHostSubject(`project-host.${HOST_ID}.api`)).toEqual({
+      address: "http://host.internal:9000",
+      host_id: HOST_ID,
+      host_session_id: "session-2",
+    });
+    expect(warnMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses to route a direct host subject owned by another bay", async () => {
+    queryMock.mockResolvedValue({
+      rows: [
+        {
+          resolved_host_id: HOST_ID,
+          host_bay_id: "bay-9",
+          internal_url: "http://host.internal:9000",
+          public_url: "https://host.example.com",
+          metadata: {
+            machine: {},
+          },
+        },
+      ],
+    });
+
+    const { materializeHostRouteTarget, routeHostSubject } =
+      await import("./route-project");
+
+    await expect(
+      materializeHostRouteTarget(HOST_ID, { fresh: true }),
+    ).resolves.toBeUndefined();
+    expect(routeHostSubject(`project-host.${HOST_ID}.api`)).toBeUndefined();
+    expect(warnMock).toHaveBeenCalledWith(
+      "refusing host route owned by another bay",
+      expect.objectContaining({
+        host_id: HOST_ID,
+        host_bay_id: "bay-9",
+        current_bay_id: "bay-0",
+      }),
+    );
+  });
 });

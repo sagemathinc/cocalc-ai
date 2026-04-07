@@ -34,11 +34,7 @@ Typical usage from a server-side REPL:
 */
 
 import getLogger from "@cocalc/backend/logger";
-import {
-  createHostControlClient,
-  type HostRootfsManifest,
-} from "@cocalc/conat/project-host/api";
-import { conatWithProjectRouting } from "@cocalc/server/conat/route-client";
+import type { HostRootfsManifest } from "@cocalc/conat/project-host/api";
 import {
   getAssignedProjectHostInfo,
   PROJECT_BAY_MISMATCH_ERROR,
@@ -51,6 +47,7 @@ import {
   publishProjectRootfsImage,
   setParallelOpsLimit,
 } from "@cocalc/server/conat/api/system";
+import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
 import type { PublishProjectRootfsBody } from "@cocalc/util/rootfs-images";
 
 const logger = getLogger("server:cloud:smoke-runner:rootfs-rustic");
@@ -279,10 +276,9 @@ async function resolveProjectHostId(project_id: string): Promise<string> {
   }
 }
 
-function hostClient(host_id: string) {
-  return createHostControlClient({
+async function hostClient(host_id: string) {
+  return await getRoutedHostControlClient({
     host_id,
-    client: conatWithProjectRouting(),
     timeout: HOST_MANIFEST_RPC_TIMEOUT_MS,
   });
 }
@@ -311,8 +307,10 @@ export async function runRootfsRusticPublishRestoreVerification(
   const source_host_id =
     opts.source_host_id ?? (await resolveProjectHostId(opts.project_id));
   const destination_host_id = opts.destination_host_id;
-  const source = hostClient(source_host_id);
-  const destination = hostClient(destination_host_id);
+  const [source, destination] = await Promise.all([
+    hostClient(source_host_id),
+    hostClient(destination_host_id),
+  ]);
   const result: RootfsRusticVerificationResult = {
     ok: false,
     project_id: opts.project_id,

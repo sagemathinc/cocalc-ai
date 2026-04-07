@@ -396,6 +396,7 @@ export async function runBayRestore({
   target_dir,
   dry_run = true,
   remote_only = false,
+  target_time,
 }: {
   account_id?: string;
   bay_id?: string;
@@ -403,6 +404,7 @@ export async function runBayRestore({
   target_dir?: string;
   dry_run?: boolean;
   remote_only?: boolean;
+  target_time?: string;
 }): Promise<BayRestoreRunResult> {
   await assertAdmin(account_id);
   // This RPC is an admin convenience wrapper around bay restore while the hub
@@ -414,6 +416,7 @@ export async function runBayRestore({
     target_dir,
     dry_run,
     remote_only,
+    target_time,
   });
 }
 

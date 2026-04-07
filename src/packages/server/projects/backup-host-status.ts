@@ -1,9 +1,6 @@
-import { conat } from "@cocalc/backend/conat";
 import getPool from "@cocalc/database/pool";
-import {
-  createHostControlClient,
-  type HostBackupExecutionStatus,
-} from "@cocalc/conat/project-host/api";
+import type { HostBackupExecutionStatus } from "@cocalc/conat/project-host/api";
+import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
 
 const pool = () => getPool();
 const ACTIVE_HOST_LOOKBACK_MS = 10 * 60_000;
@@ -43,21 +40,17 @@ export async function listHostLocalBackupStatuses(): Promise<{
   if (hosts.length === 0) {
     return { rows: [], unreachable_hosts: 0 };
   }
-  let client;
-  try {
-    client = await conat();
-  } catch {
-    return { rows: [], unreachable_hosts: hosts.length };
-  }
   const results = await Promise.allSettled(
-    hosts.map(async ({ id }) => ({
-      host_id: id,
-      ...(await createHostControlClient({
+    hosts.map(async ({ id }) => {
+      const client = await getRoutedHostControlClient({
         host_id: id,
-        client,
         timeout: HOST_STATUS_TIMEOUT_MS,
-      }).getBackupExecutionStatus()),
-    })),
+      });
+      return {
+        host_id: id,
+        ...(await client.getBackupExecutionStatus()),
+      };
+    }),
   );
   const rows: HostLocalBackupStatusRow[] = [];
   let unreachable_hosts = 0;

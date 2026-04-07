@@ -11,8 +11,6 @@ import { getProject } from "@cocalc/server/projects/control";
 import { type CreateProjectOptions } from "@cocalc/util/db-schema/projects";
 import { delay } from "awaiting";
 import isAdmin from "@cocalc/server/accounts/is-admin";
-import { createHostControlClient } from "@cocalc/conat/project-host/api";
-import { conatWithProjectRouting } from "../conat/route-client";
 import { getProjectFileServerClient } from "@cocalc/server/conat/file-server-client";
 import {
   computePlacementPermission,
@@ -38,6 +36,7 @@ import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { assertLocalProjectCollaborator } from "@cocalc/server/conat/project-local-access";
 import { appendProjectOutboxEventForProject } from "@cocalc/database/postgres/project-events-outbox";
 import { publishProjectAccountFeedEventsBestEffort } from "@cocalc/server/account/project-feed";
+import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
 
 const log = getLogger("server:projects:create");
 const HOST_ONLINE_WINDOW_MS = 2 * 60 * 1000;
@@ -352,9 +351,8 @@ export default async function createProject(opts: CreateProjectOptions) {
     try {
       for (let attempt = 1; attempt <= 4; attempt += 1) {
         try {
-          const client = createHostControlClient({
+          const client = await getRoutedHostControlClient({
             host_id,
-            client: conatWithProjectRouting(),
             timeout: 15000,
           });
           await client.createProject({

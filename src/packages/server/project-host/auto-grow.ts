@@ -6,7 +6,6 @@
 import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
-import { createHostControlClient } from "@cocalc/conat/project-host/api";
 import type {
   HostMachine,
   HostMetricsHistory,
@@ -19,8 +18,8 @@ import {
   getProviderContext,
   getProviderPrefix,
 } from "@cocalc/server/cloud/provider-context";
-import { conatWithProjectRouting } from "@cocalc/server/conat/route-client";
 import { getServerProvider, gcpSafeName } from "@cocalc/server/cloud/providers";
+import { getRoutedHostControlClient } from "./client";
 
 const log = getLogger("server:project-host:auto-grow");
 const GIB = 1024 ** 3;
@@ -351,9 +350,8 @@ async function performAutoGrow(
   await entry.provider.resizeDisk(runtime, nextDisk, creds);
 
   let resizeWarning: string | undefined;
-  const client = createHostControlClient({
+  const client = await getRoutedHostControlClient({
     host_id: row.id,
-    client: conatWithProjectRouting(),
   });
   try {
     await client.growBtrfs({ disk_gb: nextDisk });

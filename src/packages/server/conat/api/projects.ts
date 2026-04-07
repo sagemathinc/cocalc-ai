@@ -13,12 +13,11 @@ export * from "@cocalc/server/conat/api/project-snapshots";
 export * from "@cocalc/server/conat/api/project-backups";
 import getPool from "@cocalc/database/pool";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
-import { createHostControlClient } from "@cocalc/conat/project-host/api";
 import { updateAuthorizedKeysOnHost as updateAuthorizedKeysOnHostControl } from "@cocalc/server/project-host/control";
 import { getProject } from "@cocalc/server/projects/control";
 import { mirrorStartLroProgress } from "@cocalc/server/projects/start-lro-progress";
 import { supersedeOlderProjectStartLros } from "@cocalc/server/projects/start-lro-cleanup";
-import { conatWithProjectRouting } from "@cocalc/server/conat/route-client";
+import { getExplicitProjectRoutedClient } from "@cocalc/server/conat/route-client";
 import { resolveOnPremHost } from "@cocalc/server/onprem";
 import { posix } from "path";
 import TTLCache from "@isaacs/ttlcache";
@@ -116,6 +115,7 @@ import { appendProjectOutboxEventForProject } from "@cocalc/database/postgres/pr
 import { publishProjectAccountFeedEventsBestEffort } from "@cocalc/server/account/project-feed";
 import { publishProjectDetailInvalidationBestEffort } from "@cocalc/server/account/project-detail-feed";
 import { createHash } from "node:crypto";
+import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
 
 const PROJECT_STORAGE_CACHE_TTL_MS = 30_000;
 const PROJECT_STORAGE_BREAKDOWN_TIMEOUT_MS = 10_000;
@@ -201,7 +201,9 @@ function storageBreakdownCacheKey({
 }
 
 async function projectFs(project_id: string) {
-  return conatWithProjectRouting().fs({ project_id });
+  return (await getExplicitProjectRoutedClient({ project_id })).fs({
+    project_id,
+  });
 }
 
 async function getStorageBreakdownImpl({
@@ -418,7 +420,7 @@ export async function importPublicUrl({
     throw new Error("public import source is too large");
   }
   const destPath = normalizeImportTargetPath(path || basename(parsed.path));
-  const fs = conatWithProjectRouting().fs({ project_id });
+  const fs = await projectFs(project_id);
   const parent = posix.dirname(destPath);
   if (parent && parent !== ".") {
     await fs.mkdir(parent, { recursive: true });
@@ -443,9 +445,8 @@ export async function inspectPublicPath({
     await resolvePublicImportSource({
       public_url,
     });
-  const client = createHostControlClient({
+  const client = await getRoutedHostControlClient({
     host_id,
-    client: conatWithProjectRouting(),
   });
   const inspection = await client.inspectStaticAppPath({
     project_id: source_project_id,
@@ -1211,9 +1212,8 @@ export async function getRuntimeLog({
       reason: PROJECT_HAS_NO_ASSIGNED_HOST_ERROR,
     };
   }
-  const client = createHostControlClient({
+  const client = await getRoutedHostControlClient({
     host_id,
-    client: conatWithProjectRouting(),
   });
   const response = await client.getProjectRuntimeLog({
     project_id,
