@@ -2,9 +2,14 @@
 
 ![](./scalable-bay.png)
 
-Status: proposed phased implementation plan for moving CoCalc Launchpad and
+Status: active phased implementation plan for moving CoCalc Launchpad and
 Rocket to the bay architecture described in
 [scalable-architecture.md](/home/wstein/build/cocalc-lite4/src/.agents/scalable-architecture.md).
+
+As of 2026-04-07, Phases 0 through 3 are substantially complete in one-bay
+mode. The current implementation focus is Phase 4: making Launchpad operate
+explicitly as one-bay Rocket, with bay-aware operator surfaces and backup
+workflows.
 
 This document is intentionally implementation-oriented. It is not another
 architecture overview. The goal is to define a migration sequence that retires
@@ -332,6 +337,18 @@ This is the most important scalability phase.
 - see
   [projects-live-projection-audit-2026-04-06.md](/home/wstein/build/cocalc-lite4/src/.agents/projects-live-projection-audit-2026-04-06.md)
 
+### 2026-04-07 Completion Note
+
+- browser-critical `projects` and `collaborators` tracker/changefeed paths have
+  been retired
+- the live browser `projects.project_map` payload has been reduced to the small
+  control-plane summary fields
+- project detail fields now flow through targeted project-detail reads and
+  backend-owned collaborator invalidation events
+- the Phase 3 benchmark and load-test gate is recorded in
+  [phase-3-control-plane-benchmark-2026-04-06.md](/home/wstein/build/cocalc-lite4/src/.agents/phase-3-control-plane-benchmark-2026-04-06.md)
+- Phase 3 should now be treated as complete for one-bay Launchpad
+
 ### Exit Criteria
 
 - browser behavior is functionally equivalent for users
@@ -359,6 +376,15 @@ Make Launchpad run the future architecture in one-bay mode.
 - one-bay host-controller relationship
 - one-bay backup pipeline to R2
 - bay-aware CLI commands working in Launchpad
+
+### 2026-04-07 Status Note
+
+- one-bay directory abstractions exist in code and schema
+- bay-aware CLI already includes `cocalc bay list` and `cocalc bay show`
+- the next missing CLI/operator items for this phase are `cocalc bay load` and
+  `cocalc bay backups`
+- the next architectural work for this phase is making one-bay routing and host
+  control fully explicit, not merely implicit defaults
 
 ### Exit Criteria
 
