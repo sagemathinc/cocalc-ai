@@ -59,6 +59,7 @@ import {
 import getLogger from "@cocalc/backend/logger";
 import { rustic as rusticBinary } from "@cocalc/backend/sandbox/install";
 import { ensureInitialized as ensureRusticInitialized } from "@cocalc/backend/sandbox/rustic";
+import { which } from "@cocalc/backend/which";
 import getPool from "@cocalc/database/pool";
 import dbPassword from "@cocalc/database/pool/password";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
@@ -66,6 +67,7 @@ import type {
   BayBackupArtifactInfo,
   BayBackupRunResult,
   BayRestoreRunResult,
+  BayRestoreTestRunResult,
   BayBackupStatus,
   BayRestoreReadinessStatus,
   BayBackupsPostgresStatus,
@@ -86,9 +88,37 @@ import {
 
 const logger = getLogger("server:bay-backup");
 const execFile = promisify(execFile0);
+const RESTORE_TEST_QUERIES: RestoreTestQuery[] = [
+  {
+    label: "current_database",
+    sql: "SELECT current_database()",
+    expected: pgdatabase,
+  },
+  {
+    label: "accounts_table",
+    sql: "SELECT to_regclass('public.accounts')::text",
+    expected: "accounts",
+  },
+  {
+    label: "projects_table",
+    sql: "SELECT to_regclass('public.projects')::text",
+    expected: "projects",
+  },
+  {
+    label: "server_settings_table",
+    sql: "SELECT to_regclass('public.server_settings')::text",
+    expected: "server_settings",
+  },
+];
 
 type BackupStrategy = "pg_basebackup" | "pg_dumpall";
 type StorageBackend = "local" | "r2" | "rustic";
+
+type RestoreTestQuery = {
+  label: string;
+  sql: string;
+  expected: string;
+};
 
 type StoredBayBackupState = {
   bay_id: string;
@@ -2416,5 +2446,299 @@ export async function runBayRestore({
         () => undefined,
       );
     }
+  }
+}
+
+function restoreTestTargetDir({
+  paths,
+  backup_set_id,
+}: {
+  paths: ReturnType<typeof getBayBackupPaths>;
+  backup_set_id: string;
+}): string {
+  return `${defaultRestoreTargetDir({ paths, backup_set_id })}-test`;
+}
+
+function restoreTestPort(): number {
+  return 20000 + (randomBytes(2).readUInt16BE(0) % 20000);
+}
+
+function buildRestoreTestCliEnv({
+  socketDir,
+  port,
+}: {
+  socketDir: string;
+  port: number;
+}): NodeJS.ProcessEnv {
+  return {
+    ...buildPostgresCliEnv(),
+    PGHOST: socketDir,
+    PGPORT: `${port}`,
+    PGUSER: pguser,
+    PGDATABASE: pgdatabase,
+  };
+}
+
+async function resolveRestoreTestBinary(binary: string): Promise<string> {
+  const path = await which(binary);
+  if (!path) {
+    throw new Error(`required binary '${binary}' was not found in PATH`);
+  }
+  return path;
+}
+
+async function recordRestoreTestState({
+  paths,
+  state,
+  backup_set_id,
+  status,
+  tested_at,
+  target_dir,
+  recovery_ready,
+}: {
+  paths: ReturnType<typeof getBayBackupPaths>;
+  state: StoredBayBackupState;
+  backup_set_id: string;
+  status: "passed" | "failed";
+  tested_at: string;
+  target_dir: string | null;
+  recovery_ready: boolean;
+}): Promise<StoredBayBackupState> {
+  const nextState: StoredBayBackupState = {
+    ...state,
+    last_restore_test_backup_set_id: backup_set_id,
+    last_restore_test_status: status,
+    last_restore_tested_at: tested_at,
+    last_restore_test_target_dir: target_dir,
+    last_restore_test_recovery_ready: recovery_ready,
+  };
+  await writeJson(paths.state_file, nextState);
+  return nextState;
+}
+
+export async function runBayRestoreTest({
+  bay_id,
+  backup_set_id,
+  target_dir,
+  keep = false,
+}: {
+  bay_id?: string;
+  backup_set_id?: string;
+  target_dir?: string;
+  keep?: boolean;
+} = {}): Promise<BayRestoreTestRunResult> {
+  const currentBay = getSingleBayInfo();
+  const resolvedBayId =
+    `${bay_id ?? currentBay.bay_id}`.trim() || currentBay.bay_id;
+  if (resolvedBayId !== currentBay.bay_id) {
+    throw new Error(`bay '${resolvedBayId}' not found`);
+  }
+  const started_at = new Date().toISOString();
+  const paths = getBayBackupPaths(resolvedBayId);
+  const r2 = await resolveR2Target(resolvedBayId);
+  const rusticRepo = await buildBayRusticRepoConfig({ r2 });
+  const current_storage_backend: StorageBackend = rusticRepo
+    ? "rustic"
+    : "local";
+  const stored =
+    (await readJsonIfExists<StoredBayBackupState>(paths.state_file)) ??
+    defaultState({
+      bay_id: resolvedBayId,
+      current_storage_backend,
+      r2,
+    });
+  const state: StoredBayBackupState = {
+    ...stored,
+    bay_id: resolvedBayId,
+    current_storage_backend,
+    r2_configured: r2.configured,
+    bucket_name: r2.bucket_name ?? stored.bucket_name ?? null,
+    bucket_region: r2.bucket_region ?? stored.bucket_region ?? null,
+    bucket_endpoint: r2.bucket_endpoint ?? stored.bucket_endpoint ?? null,
+    object_prefix_root:
+      r2.object_prefix_root ?? stored.object_prefix_root ?? null,
+    rustic_repo_selector:
+      rusticRepo?.repo_selector ?? stored.rustic_repo_selector ?? null,
+    last_archived_wal_segment: stored.last_archived_wal_segment ?? null,
+    last_uploaded_wal_segment: stored.last_uploaded_wal_segment ?? null,
+    latest_remote_snapshot_id: stored.latest_remote_snapshot_id ?? null,
+    latest_remote_snapshot_host: stored.latest_remote_snapshot_host ?? null,
+    last_restore_test_backup_set_id:
+      stored.last_restore_test_backup_set_id ?? null,
+    last_restore_test_status: stored.last_restore_test_status ?? null,
+    last_restore_tested_at: stored.last_restore_tested_at ?? null,
+    last_restore_test_target_dir: stored.last_restore_test_target_dir ?? null,
+    last_restore_test_recovery_ready:
+      stored.last_restore_test_recovery_ready ?? null,
+  };
+  const resolvedBackupSetId =
+    `${backup_set_id ?? state.latest_backup_set_id ?? ""}`.trim() || undefined;
+  if (!resolvedBackupSetId) {
+    throw new Error("no bay backup is available to restore-test");
+  }
+  const resolvedTargetDir =
+    target_dir?.trim() ||
+    restoreTestTargetDir({
+      paths,
+      backup_set_id: resolvedBackupSetId,
+    });
+  let restoreResult: BayRestoreRunResult | null = null;
+  let kept_on_disk = keep === true;
+  const verified_queries: string[] = [];
+  try {
+    restoreResult = await runBayRestore({
+      bay_id: resolvedBayId,
+      backup_set_id: resolvedBackupSetId,
+      target_dir: resolvedTargetDir,
+      dry_run: false,
+    });
+    if (!restoreResult.recovery_ready || !restoreResult.data_dir) {
+      throw new Error(
+        "latest backup is not recovery-ready; restore-test currently requires a pg_basebackup snapshot",
+      );
+    }
+
+    const [pgCtl, psql] = await Promise.all([
+      resolveRestoreTestBinary("pg_ctl"),
+      resolveRestoreTestBinary("psql"),
+    ]);
+    const socketDir = join(resolvedTargetDir, "socket");
+    const logPath = join(resolvedTargetDir, "postgres-restore-test.log");
+    const port = restoreTestPort();
+    const env = buildRestoreTestCliEnv({ socketDir, port });
+    const pgCtlOptions = `-k ${socketDir} -p ${port} -c listen_addresses=`;
+    let started = false;
+    await ensureDir(socketDir);
+    try {
+      await execFile(
+        pgCtl,
+        [
+          "-D",
+          restoreResult.data_dir,
+          "-l",
+          logPath,
+          "-o",
+          pgCtlOptions,
+          "-w",
+          "start",
+        ],
+        {
+          env,
+          timeout: 60_000,
+          maxBuffer: 10 * 1024 * 1024,
+        },
+      );
+      started = true;
+      for (const check of RESTORE_TEST_QUERIES) {
+        const { stdout } = await execFile(
+          psql,
+          [
+            "-h",
+            socketDir,
+            "-p",
+            `${port}`,
+            "-U",
+            pguser,
+            "-d",
+            pgdatabase,
+            "-tAc",
+            check.sql,
+          ],
+          {
+            env,
+            timeout: 30_000,
+            maxBuffer: 10 * 1024 * 1024,
+          },
+        );
+        const value = `${stdout ?? ""}`.trim();
+        if (value !== check.expected) {
+          throw new Error(
+            `restore test check '${check.label}' failed: expected '${check.expected}', got '${value}'`,
+          );
+        }
+        verified_queries.push(`${check.label}=${value}`);
+      }
+    } finally {
+      if (started) {
+        await execFile(
+          pgCtl,
+          ["-D", restoreResult.data_dir, "-m", "fast", "-w", "stop"],
+          {
+            env,
+            timeout: 60_000,
+            maxBuffer: 10 * 1024 * 1024,
+          },
+        ).catch((err) => {
+          logger.warn("failed to stop fenced restore-test postgres", {
+            bay_id: resolvedBayId,
+            backup_set_id: resolvedBackupSetId,
+            err,
+          });
+        });
+      }
+    }
+
+    const notes = [
+      ...restoreResult.notes,
+      `Verified fenced restore using pg_ctl and psql against ${socketDir}.`,
+    ];
+    if (!kept_on_disk) {
+      try {
+        await rm(resolvedTargetDir, { recursive: true, force: true });
+        notes.push("Removed the restore-test workspace after success.");
+      } catch (err) {
+        kept_on_disk = true;
+        notes.push(
+          `Restore-test cleanup failed; workspace retained at ${resolvedTargetDir}: ${String(err)}`,
+        );
+      }
+    } else {
+      notes.push(`Kept the restore-test workspace at ${resolvedTargetDir}.`);
+    }
+
+    const finished_at = new Date().toISOString();
+    await recordRestoreTestState({
+      paths,
+      state,
+      backup_set_id: resolvedBackupSetId,
+      status: "passed",
+      tested_at: finished_at,
+      target_dir: kept_on_disk ? resolvedTargetDir : null,
+      recovery_ready: true,
+    });
+    return {
+      ...currentBay,
+      started_at,
+      finished_at,
+      backup_set_id: resolvedBackupSetId,
+      target_dir: resolvedTargetDir,
+      data_dir: restoreResult.data_dir,
+      sync_dir: restoreResult.sync_dir,
+      secrets_dir: restoreResult.secrets_dir,
+      backup_manifest_path: restoreResult.backup_manifest_path,
+      restore_manifest_path: restoreResult.restore_manifest_path,
+      source_storage_backend: restoreResult.source_storage_backend,
+      source_snapshot_id: restoreResult.source_snapshot_id,
+      rustic_repo_selector: restoreResult.rustic_repo_selector,
+      wal_segment_count: restoreResult.wal_segment_count,
+      recovery_ready: restoreResult.recovery_ready,
+      kept_on_disk,
+      verified_queries,
+      notes,
+    };
+  } catch (err) {
+    const finished_at = new Date().toISOString();
+    await recordRestoreTestState({
+      paths,
+      state,
+      backup_set_id: resolvedBackupSetId,
+      status: "failed",
+      tested_at: finished_at,
+      target_dir: resolvedTargetDir,
+      recovery_ready: restoreResult?.recovery_ready ?? false,
+    });
+    throw new Error(
+      `bay restore-test failed for backup '${resolvedBackupSetId}': ${String(err)} (workspace kept at ${resolvedTargetDir})`,
+    );
   }
 }

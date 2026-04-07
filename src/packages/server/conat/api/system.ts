@@ -61,6 +61,7 @@ import {
   getBayBackupStatus as getBayBackupStatus0,
   runBayBackup as runBayBackup0,
   runBayRestore as runBayRestore0,
+  runBayRestoreTest as runBayRestoreTest0,
 } from "@cocalc/server/bay-backup";
 import {
   listRootfsImagesAdmin,
@@ -119,6 +120,7 @@ import type { NewsItemWebapp } from "@cocalc/util/types/news";
 import type {
   BayBackupRunResult,
   BayRestoreRunResult,
+  BayRestoreTestRunResult,
   BayBackupsInfo,
   BayLoadBrowserControlStatus,
   BayLoadInfo,
@@ -409,6 +411,28 @@ export async function runBayRestore({
     backup_set_id,
     target_dir,
     dry_run,
+  });
+}
+
+export async function runBayRestoreTest({
+  account_id,
+  bay_id,
+  backup_set_id,
+  target_dir,
+  keep = false,
+}: {
+  account_id?: string;
+  bay_id?: string;
+  backup_set_id?: string;
+  target_dir?: string;
+  keep?: boolean;
+}): Promise<BayRestoreTestRunResult> {
+  await assertAdmin(account_id);
+  return await runBayRestoreTest0({
+    bay_id,
+    backup_set_id,
+    target_dir,
+    keep,
   });
 }
 

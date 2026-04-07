@@ -10,6 +10,7 @@ let getPoolMock: jest.Mock;
 let getServerSettingsMock: jest.Mock;
 let getSingleBayInfoMock: jest.Mock;
 let ensureRusticInitializedMock: jest.Mock;
+let whichMock: jest.Mock;
 
 jest.mock("node:child_process", () => {
   const actual = jest.requireActual("node:child_process");
@@ -58,6 +59,11 @@ jest.mock("@cocalc/backend/sandbox/install", () => ({
 jest.mock("@cocalc/backend/sandbox/rustic", () => ({
   __esModule: true,
   ensureInitialized: (...args: any[]) => ensureRusticInitializedMock(...args),
+}));
+
+jest.mock("@cocalc/backend/which", () => ({
+  __esModule: true,
+  which: (...args: any[]) => whichMock(...args),
 }));
 
 jest.mock("@cocalc/server/project-backup/r2", () => ({
@@ -128,6 +134,7 @@ describe("bay-backup runner", () => {
     );
     rusticSnapshots = [];
     ensureRusticInitializedMock = jest.fn(async () => undefined);
+    whichMock = jest.fn(async (binary: string) => `/usr/bin/${binary}`);
     execFileMock = jest.fn(
       (
         cmd: string,
@@ -324,9 +331,11 @@ describe("bay-backup runner", () => {
     const result = await runBayBackup();
     expect(result.format).toBe("pg_dumpall");
     expect(result.storage_backend).toBe("local");
-    expect(result.artifact_count).toBe(3);
+    expect(result.artifact_count).toBe(5);
     expect(result.artifacts.map((artifact) => artifact.name)).toEqual([
+      "RESTORE-OFFLINE.txt",
       "cluster.sql.gz",
+      "restore-offline.sh",
       "secrets.tar.gz",
       "sync.tar.gz",
     ]);
@@ -338,7 +347,9 @@ describe("bay-backup runner", () => {
     expect(manifest.format).toBe("pg_dumpall");
     expect(manifest.latest_storage_backend).toBe("local");
     expect(manifest.artifacts.map((artifact) => artifact.name)).toEqual([
+      "RESTORE-OFFLINE.txt",
       "cluster.sql.gz",
+      "restore-offline.sh",
       "secrets.tar.gz",
       "sync.tar.gz",
     ]);
@@ -636,5 +647,219 @@ describe("bay-backup runner", () => {
       secrets_dir: join(restoreTargetDir, "secrets"),
       wal_segment_count: 1,
     });
+  });
+
+  it("restore-tests a pg_basebackup snapshot and records a gold star", async () => {
+    const backupSetId = "restore-test-backup-1";
+    const bayRoot = join(backupRoot, "bay-backups", "bay-0");
+    const archivesDir = join(bayRoot, "archives", backupSetId);
+    const manifestsDir = join(bayRoot, "manifests");
+    const walArchiveDir = join(bayRoot, "wal", "archive");
+    const stateFile = join(bayRoot, "state.json");
+    mkdirSync(archivesDir, { recursive: true });
+    mkdirSync(manifestsDir, { recursive: true });
+    mkdirSync(walArchiveDir, { recursive: true });
+    writeFileSync(join(archivesDir, "base.tar.gz"), "base");
+    writeFileSync(join(archivesDir, "pg_wal.tar.gz"), "wal");
+    writeFileSync(join(archivesDir, "sync.tar.gz"), "sync");
+    writeFileSync(join(archivesDir, "secrets.tar.gz"), "secrets");
+    writeFileSync(join(walArchiveDir, "0000000100000000000000E8"), "segment");
+    writeFileSync(
+      stateFile,
+      JSON.stringify(
+        {
+          bay_id: "bay-0",
+          current_storage_backend: "rustic",
+          r2_configured: false,
+          bucket_name: null,
+          bucket_region: null,
+          bucket_endpoint: null,
+          object_prefix_root: null,
+          rustic_repo_selector: "r2:bay-backups:wnam",
+          latest_backup_set_id: backupSetId,
+          latest_format: "pg_basebackup",
+          latest_storage_backend: "rustic",
+          latest_local_manifest_path: join(manifestsDir, `${backupSetId}.json`),
+          latest_remote_manifest_key: null,
+          latest_object_prefix: null,
+          latest_remote_snapshot_id: "snap-1",
+          latest_remote_snapshot_host: "bay-0",
+          latest_artifact_count: 4,
+          latest_artifact_bytes: 18,
+          last_archived_wal_segment: "0000000100000000000000E8",
+          last_uploaded_wal_segment: null,
+          last_started_at: null,
+          last_finished_at: null,
+          last_successful_backup_at: "2026-04-07T15:37:57.440Z",
+          last_successful_remote_backup_at: "2026-04-07T15:37:57.440Z",
+          last_successful_wal_archive_at: "2026-04-07T15:37:57.740Z",
+          last_error_at: null,
+          last_error: null,
+          restore_state: "ready",
+          last_restore_test_backup_set_id: null,
+          last_restore_test_status: null,
+          last_restore_tested_at: null,
+          last_restore_test_target_dir: null,
+          last_restore_test_recovery_ready: null,
+        },
+        null,
+        2,
+      ),
+    );
+    writeFileSync(
+      join(manifestsDir, `${backupSetId}.json`),
+      JSON.stringify(
+        {
+          bay_id: "bay-0",
+          bay_label: "bay-0",
+          backup_set_id: backupSetId,
+          created_at: "2026-04-07T15:37:47.519Z",
+          finished_at: "2026-04-07T15:37:57.440Z",
+          format: "pg_basebackup",
+          current_storage_backend: "rustic",
+          latest_storage_backend: "rustic",
+          bucket_name: "lite4-dev-wnam",
+          bucket_region: "wnam",
+          bucket_endpoint: "https://example.invalid",
+          object_prefix: null,
+          remote_manifest_key: null,
+          remote_snapshot_id: "snap-1",
+          remote_snapshot_host: "bay-0",
+          rustic_repo_selector: "r2:bay-backups:wnam",
+          postgres: {},
+          artifacts: [
+            {
+              name: "base.tar.gz",
+              local_path: join(archivesDir, "base.tar.gz"),
+              object_key: null,
+              bytes: 4,
+              sha256: "base",
+              content_type: "application/gzip",
+            },
+            {
+              name: "pg_wal.tar.gz",
+              local_path: join(archivesDir, "pg_wal.tar.gz"),
+              object_key: null,
+              bytes: 3,
+              sha256: "wal",
+              content_type: "application/gzip",
+            },
+            {
+              name: "sync.tar.gz",
+              local_path: join(archivesDir, "sync.tar.gz"),
+              object_key: null,
+              bytes: 4,
+              sha256: "sync",
+              content_type: "application/gzip",
+            },
+            {
+              name: "secrets.tar.gz",
+              local_path: join(archivesDir, "secrets.tar.gz"),
+              object_key: null,
+              bytes: 7,
+              sha256: "secrets",
+              content_type: "application/gzip",
+            },
+          ],
+        },
+        null,
+        2,
+      ),
+    );
+    execFileMock = jest.fn(
+      (
+        cmd: string,
+        args: string[],
+        _opts: Record<string, unknown>,
+        cb: (
+          err: Error | null,
+          result?: { stdout: string; stderr: string },
+        ) => void,
+      ) => {
+        if (cmd === "tar") {
+          const archivePath = args[1];
+          const targetDir = args[3];
+          mkdirSync(targetDir, { recursive: true });
+          if (archivePath.endsWith("base.tar.gz")) {
+            mkdirSync(join(targetDir, "pg_wal"), { recursive: true });
+            writeFileSync(join(targetDir, "PG_VERSION"), "17\n");
+          } else if (archivePath.endsWith("pg_wal.tar.gz")) {
+            writeFileSync(
+              join(targetDir, "0000000100000000000000E8"),
+              "segment",
+            );
+          } else if (archivePath.endsWith("sync.tar.gz")) {
+            mkdirSync(join(targetDir, "sync", "accounts", "test"), {
+              recursive: true,
+            });
+            writeFileSync(
+              join(targetDir, "sync", "accounts", "test", "seen-state.db"),
+              "sqlite",
+            );
+          } else if (archivePath.endsWith("secrets.tar.gz")) {
+            mkdirSync(join(targetDir, "secrets"), { recursive: true });
+            writeFileSync(
+              join(targetDir, "secrets", "conat-password"),
+              "secret",
+            );
+          } else {
+            cb(new Error(`unexpected archive '${archivePath}'`));
+            return;
+          }
+          cb(null, { stdout: "", stderr: "" });
+          return;
+        }
+        if (cmd === "/usr/bin/pg_ctl") {
+          cb(null, { stdout: "", stderr: "" });
+          return;
+        }
+        if (cmd === "/usr/bin/psql") {
+          const sql = args[args.length - 1];
+          if (sql === "SELECT current_database()") {
+            cb(null, { stdout: "smc\n", stderr: "" });
+            return;
+          }
+          if (sql === "SELECT to_regclass('public.accounts')::text") {
+            cb(null, { stdout: "accounts\n", stderr: "" });
+            return;
+          }
+          if (sql === "SELECT to_regclass('public.projects')::text") {
+            cb(null, { stdout: "projects\n", stderr: "" });
+            return;
+          }
+          if (sql === "SELECT to_regclass('public.server_settings')::text") {
+            cb(null, { stdout: "server_settings\n", stderr: "" });
+            return;
+          }
+          cb(new Error(`unexpected SQL '${sql}'`));
+          return;
+        }
+        cb(new Error(`unexpected command '${cmd}'`));
+      },
+    );
+
+    const { getBayBackupStatus, runBayRestoreTest } = await import("./index");
+
+    const result = await runBayRestoreTest({
+      backup_set_id: backupSetId,
+    });
+    expect(result.recovery_ready).toBe(true);
+    expect(result.kept_on_disk).toBe(false);
+    expect(result.verified_queries).toEqual([
+      "current_database=smc",
+      "accounts_table=accounts",
+      "projects_table=projects",
+      "server_settings_table=server_settings",
+    ]);
+
+    const status = await getBayBackupStatus();
+    expect(status.restore_readiness.latest_backup_restore_test_status).toBe(
+      "passed",
+    );
+    expect(status.restore_readiness.gold_star).toBe(true);
+    expect(status.restore_readiness.last_restore_test_backup_set_id).toBe(
+      backupSetId,
+    );
+    expect(status.restore_readiness.last_restore_test_target_dir).toBe(null);
   });
 });

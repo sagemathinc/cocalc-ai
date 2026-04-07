@@ -33,6 +33,7 @@ export const system = {
   getBayBackups: authFirst,
   runBayBackup: authFirst,
   runBayRestore: authFirst,
+  runBayRestoreTest: authFirst,
   getAccountBay: authFirstRequireAccount,
   getProjectBay: authFirstRequireAccount,
   getHostBay: authFirstRequireAccount,
@@ -510,6 +511,26 @@ export interface BayRestoreRunResult extends BayInfo {
   notes: string[];
 }
 
+export interface BayRestoreTestRunResult extends BayInfo {
+  started_at: string;
+  finished_at: string;
+  backup_set_id: string;
+  target_dir: string;
+  data_dir: string | null;
+  sync_dir: string | null;
+  secrets_dir: string | null;
+  backup_manifest_path: string | null;
+  restore_manifest_path: string | null;
+  source_storage_backend: "local" | "r2" | "rustic";
+  source_snapshot_id: string | null;
+  rustic_repo_selector: string | null;
+  wal_segment_count: number;
+  recovery_ready: boolean;
+  kept_on_disk: boolean;
+  verified_queries: string[];
+  notes: string[];
+}
+
 export interface AccountBayLocation {
   account_id: string;
   home_bay_id: string;
@@ -796,6 +817,14 @@ export interface System {
     target_dir?: string;
     dry_run?: boolean;
   }) => Promise<BayRestoreRunResult>;
+
+  runBayRestoreTest: (opts?: {
+    account_id?: string;
+    bay_id?: string;
+    backup_set_id?: string;
+    target_dir?: string;
+    keep?: boolean;
+  }) => Promise<BayRestoreTestRunResult>;
 
   getAccountBay: (opts?: {
     account_id?: string;

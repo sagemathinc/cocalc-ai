@@ -94,6 +94,41 @@ export function registerBayCommand(
     );
 
   bay
+    .command("restore-test [bay_id]")
+    .description(
+      "restore the latest bay backup into a fenced workspace and verify it boots",
+    )
+    .option(
+      "--backup-set-id <backup_set_id>",
+      "test a specific backup set instead of the latest one",
+    )
+    .option(
+      "--target-dir <path>",
+      "use this restore directory instead of the default test path",
+    )
+    .option("--keep", "keep the restored workspace even after success", false)
+    .action(
+      async (
+        bay_id: string | undefined,
+        opts: {
+          backupSetId?: string;
+          targetDir?: string;
+          keep?: boolean;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "bay restore-test", async (ctx) => {
+          return await ctx.hub.system.runBayRestoreTest({
+            bay_id: bay_id?.trim() || undefined,
+            backup_set_id: opts.backupSetId?.trim() || undefined,
+            target_dir: opts.targetDir?.trim() || undefined,
+            keep: opts.keep === true,
+          });
+        });
+      },
+    );
+
+  bay
     .command("backups [bay_id]")
     .description("show current backup and R2 health for one bay")
     .action(async (bay_id: string | undefined, command: Command) => {

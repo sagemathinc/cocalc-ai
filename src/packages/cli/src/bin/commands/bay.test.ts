@@ -383,6 +383,73 @@ test("bay restore forwards bay id, backup set, target dir, and write mode", asyn
   assert.equal(captured?.backup_set_id, "backup-1");
 });
 
+test("bay restore-test forwards bay id, backup set, target dir, and keep mode", async () => {
+  let captured: any;
+  let callOpts: any;
+  const program = new Command();
+  registerBayCommand(program, {
+    withContext: async (_command, _label, fn) => {
+      const ctx = {
+        hub: {
+          system: {
+            runBayRestoreTest: async (opts: any) => {
+              callOpts = opts;
+              return {
+                bay_id: "bay-0",
+                label: "bay-0",
+                region: null,
+                deployment_mode: "single-bay",
+                role: "combined",
+                is_default: true,
+                started_at: "2026-04-07T08:00:00.000Z",
+                finished_at: "2026-04-07T08:02:00.000Z",
+                backup_set_id: "backup-1",
+                target_dir: "/tmp/restore-test-target",
+                data_dir: "/tmp/restore-test-target/data",
+                sync_dir: "/tmp/restore-test-target/sync",
+                secrets_dir: "/tmp/restore-test-target/secrets",
+                backup_manifest_path: "/tmp/backup-manifest.json",
+                restore_manifest_path:
+                  "/tmp/restore-test-target/restore-manifest.json",
+                source_storage_backend: "local",
+                source_snapshot_id: null,
+                rustic_repo_selector: null,
+                wal_segment_count: 4,
+                recovery_ready: true,
+                kept_on_disk: true,
+                verified_queries: ["current_database=smc"],
+                notes: [],
+              };
+            },
+          },
+        },
+      };
+      captured = await fn(ctx);
+    },
+  } as any);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "bay",
+    "restore-test",
+    "bay-0",
+    "--backup-set-id",
+    "backup-1",
+    "--target-dir",
+    "/tmp/restore-test-target",
+    "--keep",
+  ]);
+
+  assert.deepEqual(callOpts, {
+    bay_id: "bay-0",
+    backup_set_id: "backup-1",
+    target_dir: "/tmp/restore-test-target",
+    keep: true,
+  });
+  assert.equal(captured?.backup_set_id, "backup-1");
+});
+
 test("bay backfill defaults to a dry run", async () => {
   let captured: any;
   const program = new Command();
