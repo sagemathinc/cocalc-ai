@@ -14,6 +14,7 @@ import {
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
 import { Icon, Paragraph, Tip } from "@cocalc/frontend/components";
+import { useProjectCourseInfo } from "@cocalc/frontend/project/use-project-course";
 import { course, IntlMessage, labels } from "@cocalc/frontend/i18n";
 import { R_IDE } from "@cocalc/util/consts/ui";
 import type { StudentProjectFunctionality } from "@cocalc/util/db-schema/projects";
@@ -370,28 +371,8 @@ export function completeStudentProjectFunctionality(
 // were written with that unlikely assumption on their knowledge of project_id.
 type Hook = (project_id?: string) => StudentProjectFunctionality;
 export const useStudentProjectFunctionality: Hook = (project_id?: string) => {
-  const project_map = useTypedRedux("projects", "project_map") as any;
-  const [state, setState] = useState<StudentProjectFunctionality>(
-    project_map
-      ?.getIn([project_id ?? "", "course", "student_project_functionality"])
-      ?.toJS() ?? {},
-  );
-  useEffect(() => {
-    setState(
-      project_map
-        ?.getIn([project_id ?? "", "course", "student_project_functionality"])
-        ?.toJS() ?? {},
-    );
-    return;
-  }, [
-    project_map?.getIn([
-      project_id ?? "",
-      "course",
-      "student_project_functionality",
-    ]),
-  ]);
-
-  return state;
+  const { course } = useProjectCourseInfo(project_id ?? "");
+  return course?.get("student_project_functionality")?.toJS() ?? {};
 };
 
 // Getting the information known right now about student project functionality.
@@ -403,12 +384,8 @@ export function getStudentProjectFunctionality(
   return (
     redux
       .getStore("projects")
-      ?.getIn([
-        "project_map",
-        project_id ?? "",
-        "course",
-        "student_project_functionality",
-      ])
+      ?.get_course_info(project_id ?? "")
+      ?.get("student_project_functionality")
       ?.toJS() ?? {}
   );
 }

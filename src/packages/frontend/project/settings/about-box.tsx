@@ -26,6 +26,7 @@ import { projectImageUrl } from "@cocalc/frontend/projects/image";
 import { ProjectTitle } from "@cocalc/frontend/projects/project-title";
 import { ProjectsActions } from "@cocalc/frontend/todo-types";
 import { useBookmarkedProjects } from "@cocalc/frontend/projects/use-bookmarked-projects";
+import { useProjectCourseInfo } from "../use-project-course";
 import { useProjectCreated } from "../use-project-created";
 import {
   themeDraftFromTheme,
@@ -56,12 +57,9 @@ export const AboutBox: React.FC<Props> = (props: Readonly<Props>) => {
   const projectLabelLower = projectLabel.toLowerCase();
   const projectsLabelLower = intl.formatMessage(labels.projects).toLowerCase();
   const [showNameInfo, setShowNameInfo] = useState<boolean>(false);
+  const { course } = useProjectCourseInfo(project_id);
   const project_map = useTypedRedux("projects", "project_map");
-  const courseProjectType = project_map?.getIn([
-    project_id,
-    "course",
-    "type",
-  ]) as any;
+  const courseProjectType = course?.get("type") as any;
   const hasReadonlyFields = ["student", "shared"].includes(courseProjectType);
   const [error, setError] = useState<string>("");
   const avatarImageBlob = project_map?.getIn([

@@ -37,6 +37,7 @@ import {
   invalidateProjectFields,
   publishProjectDetailInvalidation,
 } from "@cocalc/frontend/project/use-project-field";
+import { ensureProjectCourseInfo } from "@cocalc/frontend/project/use-project-course";
 import {
   buildOfflineMoveConfirmationDialog,
   parseOfflineMoveConfirmationError,
@@ -235,6 +236,9 @@ export class ProjectsActions extends Actions<ProjectsState> {
         this.applyProjectFeedRemove(event.project_id);
         break;
       case "project.detail.invalidate":
+        if (event.fields.includes("course")) {
+          store.clearOpenAICache();
+        }
         invalidateProjectFields({
           project_id: event.project_id,
           fields: event.fields,
@@ -686,7 +690,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
       console.warn(msg);
       return;
     }
-    const course_info = store.get_course_info(project_id)?.toJS();
+    const course_info = (await ensureProjectCourseInfo(project_id))?.toJS();
     const course: CourseInfo = {
       project_id: course_project_id,
       path,
@@ -721,7 +725,16 @@ export class ProjectsActions extends Actions<ProjectsState> {
       // already set as required; do nothing
       return;
     }
-    return await api("projects/course/set-course-info", { project_id, course });
+    const result = await api("projects/course/set-course-info", {
+      project_id,
+      course,
+    });
+    store.clearOpenAICache();
+    publishProjectDetailInvalidation({
+      project_id,
+      fields: ["course"],
+    });
+    return result;
   }
 
   // Create a new project; returns the project_id of the new project.

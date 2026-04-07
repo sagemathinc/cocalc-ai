@@ -7,6 +7,7 @@ import { List, Map, Set } from "immutable";
 import LRU from "lru-cache";
 import { redux, Store, TypedMap } from "@cocalc/frontend/app-framework";
 import { StudentProjectFunctionality } from "@cocalc/frontend/course/configuration/customize-student-project-functionality";
+import { getCachedProjectCourseInfo } from "@cocalc/frontend/project/use-project-course";
 import { WebsocketState } from "@cocalc/frontend/project/websocket/websocket-state";
 import { getCachedProjectRunQuota } from "@cocalc/frontend/project/use-project-run-quota";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
@@ -169,6 +170,13 @@ export class ProjectsStore extends Store<ProjectsState> {
   // Info about a student project that is part of a
   // course (will be undefined if not a student project)
   public get_course_info(project_id: string): Map<string, any> | undefined {
+    const cached = getCachedProjectCourseInfo(project_id);
+    if (cached === null) {
+      return undefined;
+    }
+    if (cached !== undefined) {
+      return cached;
+    }
     return this.getIn(["project_map", project_id, "course"]);
   }
 
@@ -475,14 +483,9 @@ export class ProjectsStore extends Store<ProjectsState> {
     if (!is_valid_uuid_string(project_id)) {
       throw Error(`${project_id} must be a UUID`);
     }
-    return (
-      this.getIn([
-        "project_map",
-        project_id,
-        "course",
-        "student_project_functionality",
-      ])?.toJS() ?? {}
-    );
+    return this.get_course_info(project_id)
+      ?.get("student_project_functionality")
+      ?.toJS();
   }
 
   clearOpenAICache() {
@@ -580,12 +583,9 @@ export class ProjectsStore extends Store<ProjectsState> {
 
     // Finally, if we're in a specific project, we check if some/all are disabled for students
     if (project_id !== "global") {
-      const studentProjectSettings = this.getIn([
-        "project_map",
-        project_id,
-        "course",
+      const studentProjectSettings = this.get_course_info(project_id)?.get(
         "student_project_functionality",
-      ]);
+      );
 
       if (studentProjectSettings?.get("disableChatGPT")) {
         return false;

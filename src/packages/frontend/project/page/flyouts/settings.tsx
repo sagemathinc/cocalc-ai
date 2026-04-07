@@ -13,7 +13,7 @@ import {
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
 import { Icon, IconName, Loading, Title } from "@cocalc/frontend/components";
-import { getStudentProjectFunctionality } from "@cocalc/frontend/course";
+import { useStudentProjectFunctionality } from "@cocalc/frontend/course";
 import { IntlMessage, isIntlMessage, labels } from "@cocalc/frontend/i18n";
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import { AboutBox } from "@cocalc/frontend/project/settings/about-box";
@@ -66,7 +66,7 @@ export function SettingsFlyout(_: Readonly<Props>): React.JSX.Element {
   );
   const kucalc = useTypedRedux("customize", "kucalc");
   const datastore = useTypedRedux("customize", "datastore");
-  const student = getStudentProjectFunctionality(project_id);
+  const student = useStudentProjectFunctionality(project_id);
   const showSSH = !lite && !student.disableSSH;
   const showDatastore =
     kucalc === KUCALC_COCALC_COM ||

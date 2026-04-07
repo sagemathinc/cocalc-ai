@@ -40,6 +40,7 @@ import { Project } from "./settings/types";
 import { lite } from "@cocalc/frontend/lite";
 import { useHostInfo } from "@cocalc/frontend/projects/host-info";
 import { normalizeProjectStateForDisplay } from "@cocalc/frontend/projects/host-operational";
+import { useProjectCourseInfo } from "./use-project-course";
 import {
   pathMatchesRoot,
   selectionForPath,
@@ -148,6 +149,7 @@ export function useProjectContextProvider({
 }): ProjectContextState {
   const actions = useActions({ project_id });
   const { project, group } = useProject(project_id);
+  useProjectCourseInfo(project_id);
   const account_id = useTypedRedux("account", "account_id");
   const status: ProjectStatus = useProjectState(project_id);
   const hasInternet = useProjectHasInternetAccess(project_id) || lite;

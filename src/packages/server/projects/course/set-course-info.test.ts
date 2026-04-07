@@ -3,6 +3,7 @@ export {};
 import type { CourseInfo } from "@cocalc/util/db-schema/projects";
 
 let assertLocalProjectCollaboratorMock: jest.Mock;
+let publishProjectDetailInvalidationBestEffortMock: jest.Mock;
 let queryMock: jest.Mock;
 
 jest.mock("@cocalc/server/conat/project-local-access", () => ({
@@ -14,6 +15,12 @@ jest.mock("@cocalc/server/conat/project-local-access", () => ({
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
   default: jest.fn(() => ({ query: queryMock })),
+}));
+
+jest.mock("@cocalc/server/account/project-detail-feed", () => ({
+  __esModule: true,
+  publishProjectDetailInvalidationBestEffort: (...args: any[]) =>
+    publishProjectDetailInvalidationBestEffortMock(...args),
 }));
 
 describe("setCourseInfo local bay access", () => {
@@ -34,6 +41,9 @@ describe("setCourseInfo local bay access", () => {
   beforeEach(() => {
     jest.resetModules();
     assertLocalProjectCollaboratorMock = jest.fn(async () => undefined);
+    publishProjectDetailInvalidationBestEffortMock = jest.fn(
+      async () => undefined,
+    );
     queryMock = jest
       .fn()
       .mockResolvedValueOnce({ rows: [{ course: undefined }] })
@@ -109,6 +119,12 @@ describe("setCourseInfo local bay access", () => {
       2,
       "UPDATE projects SET course=$1 WHERE project_id=$2",
       [course, PROJECT_ID],
+    );
+    expect(publishProjectDetailInvalidationBestEffortMock).toHaveBeenCalledWith(
+      {
+        project_id: PROJECT_ID,
+        fields: ["course"],
+      },
     );
   });
 });

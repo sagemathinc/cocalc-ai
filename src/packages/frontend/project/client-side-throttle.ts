@@ -5,6 +5,7 @@
 
 import { redux, useEffect, useState } from "@cocalc/frontend/app-framework";
 import { getServerStatsCached } from "@cocalc/frontend/lib/server-stats";
+import { ensureProjectCourseInfo } from "@cocalc/frontend/project/use-project-course";
 import { ensureProjectRunQuota } from "@cocalc/frontend/project/use-project-run-quota";
 
 /*
@@ -72,7 +73,7 @@ export async function allow_project_to_run(
     return true;
   }
 
-  if (project.get("course") != null) {
+  if ((await ensureProjectCourseInfo(project_id).catch(() => null)) != null) {
     log("don't mess with students in course");
     return true;
   }

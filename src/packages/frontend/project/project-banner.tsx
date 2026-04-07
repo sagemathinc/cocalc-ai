@@ -3,15 +3,12 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import {
-  useMemo,
-  useStore,
-  useTypedRedux,
-} from "@cocalc/frontend/app-framework";
+import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { useProjectContext } from "./context";
 import { NoInternetModal, useInternetWarningClosed } from "./no-internet-modal";
 import { useRunQuota } from "./settings/run-quota/hooks";
 import { TrialBanner } from "./trial-banner";
+import { useProjectCourseInfo } from "./use-project-course";
 import { useProjectCreated } from "./use-project-created";
 
 export const DOC_TRIAL = "https://doc.cocalc.com/trial.html";
@@ -23,15 +20,11 @@ export function ProjectWarningBanner() {
     is_active,
   } = useProjectContext();
   const other_settings = useTypedRedux("account", "other_settings");
-  const project_map = useTypedRedux("projects", "project_map");
-  const projects_store = useStore("projects");
+  const { course } = useProjectCourseInfo(project_id);
   const { created: projectCreatedTS } = useProjectCreated(project_id);
 
   const runQuota = useRunQuota(project_id, null);
-  const isPaidStudentPayProject = useMemo(
-    () => projects_store.isPaidStudentPayProject(project_id),
-    [project_map, project_id, runQuota],
-  );
+  const isPaidStudentPayProject = !!course?.get("pay") && !!course.get("paid");
   const is_commercial = useTypedRedux("customize", "is_commercial");
   const dismissedInternetWarning = useInternetWarningClosed(project_id)[0];
 

@@ -72,7 +72,6 @@ Table({
           state: null,
           last_edited: null,
           last_active: null,
-          course: null,
           avatar_image_tiny: null,
           color: null,
         },

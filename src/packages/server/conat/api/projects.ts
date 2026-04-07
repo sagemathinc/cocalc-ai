@@ -79,6 +79,7 @@ import type {
   ProjectRegion,
   ProjectCreated,
   ProjectEnv,
+  ProjectCourseInfo,
   ProjectRootfsConfig,
   ProjectQuotaSettings,
   ProjectSnapshotSchedule,
@@ -963,6 +964,21 @@ export async function getProjectSettings({
     [project_id],
   );
   return rows[0]?.settings ?? null;
+}
+
+export async function getProjectCourseInfo({
+  account_id,
+  project_id,
+}: {
+  account_id: string;
+  project_id: string;
+}): Promise<ProjectCourseInfo> {
+  await assertProjectReadAccessOrAdmin({ account_id, project_id });
+  const { rows } = await getPool().query<{ course: ProjectCourseInfo }>(
+    "SELECT course FROM projects WHERE project_id = $1",
+    [project_id],
+  );
+  return rows[0]?.course ?? null;
 }
 
 export async function getStorageOverview({
