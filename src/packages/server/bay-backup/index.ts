@@ -41,6 +41,7 @@ import {
   writeFile,
   chmod,
 } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -304,8 +305,14 @@ function buildPostgresCliEnv(): NodeJS.ProcessEnv {
   };
 }
 
-async function ensureDir(path: string): Promise<void> {
-  await mkdir(path, { recursive: true });
+async function ensureDir(path: string, mode?: number): Promise<void> {
+  await mkdir(path, {
+    recursive: true,
+    ...(mode == null ? {} : { mode }),
+  });
+  if (mode != null) {
+    await chmod(path, mode).catch(() => undefined);
+  }
 }
 
 async function readJsonIfExists<T>(path: string): Promise<T | undefined> {
@@ -2255,7 +2262,7 @@ export async function runBayRestore({
         download_dir: tempDownloadDir,
       });
       source_storage_backend = baseArtifactPath.source_storage_backend;
-      await ensureDir(data_dir!);
+      await ensureDir(data_dir!, 0o700);
       await extractTarGz({
         archivePath: baseArtifactPath.path,
         targetDir: data_dir!,
@@ -2585,6 +2592,7 @@ export async function runBayRestoreTest({
   let restoreResult: BayRestoreRunResult | null = null;
   let kept_on_disk = keep === true;
   const verified_queries: string[] = [];
+  let socketDir: string | null = null;
   try {
     restoreResult = await runBayRestore({
       bay_id: resolvedBayId,
@@ -2602,13 +2610,13 @@ export async function runBayRestoreTest({
       resolveRestoreTestBinary("pg_ctl"),
       resolveRestoreTestBinary("psql"),
     ]);
-    const socketDir = join(resolvedTargetDir, "socket");
+    socketDir = await mkdtemp(join(tmpdir(), "cocalc-bay-restore-test-sock-"));
     const logPath = join(resolvedTargetDir, "postgres-restore-test.log");
     const port = restoreTestPort();
     const env = buildRestoreTestCliEnv({ socketDir, port });
     const pgCtlOptions = `-k ${socketDir} -p ${port} -c listen_addresses=`;
     let started = false;
-    await ensureDir(socketDir);
+    await chmod(socketDir, 0o700).catch(() => undefined);
     try {
       await execFile(
         pgCtl,
@@ -2740,5 +2748,11 @@ export async function runBayRestoreTest({
     throw new Error(
       `bay restore-test failed for backup '${resolvedBackupSetId}': ${String(err)} (workspace kept at ${resolvedTargetDir})`,
     );
+  } finally {
+    if (socketDir) {
+      await rm(socketDir, { recursive: true, force: true }).catch(
+        () => undefined,
+      );
+    }
   }
 }
