@@ -380,6 +380,8 @@ export interface BayBackupsPostgresStatus {
   data_directory: string | null;
   config_file: string | null;
   archive_mode: string | null;
+  archive_command: string | null;
+  archive_timeout: string | null;
   wal_level: string | null;
   max_wal_senders: number | null;
   can_basebackup: boolean;
@@ -402,12 +404,14 @@ export interface BayBackupStatus {
   archives_dir: string | null;
   manifests_dir: string | null;
   staging_dir: string | null;
+  wal_archive_dir: string | null;
   r2_configured: boolean;
   current_storage_backend: "local" | "r2";
   bucket_name: string | null;
   bucket_region: string | null;
   bucket_endpoint: string | null;
   object_prefix_root: string | null;
+  wal_object_prefix: string | null;
   latest_backup_set_id: string | null;
   latest_format: "pg_basebackup" | "pg_dumpall" | null;
   latest_storage_backend: "local" | "r2" | null;
@@ -416,6 +420,10 @@ export interface BayBackupStatus {
   latest_object_prefix: string | null;
   latest_artifact_count: number;
   latest_artifact_bytes: number;
+  last_archived_wal_segment: string | null;
+  last_uploaded_wal_segment: string | null;
+  archived_wal_count: number;
+  pending_wal_count: number;
   last_started_at: string | null;
   last_finished_at: string | null;
   last_successful_backup_at: string | null;

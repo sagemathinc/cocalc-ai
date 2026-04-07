@@ -74,6 +74,8 @@ type StoredBayBackupState = {
   latest_object_prefix: string | null;
   latest_artifact_count: number;
   latest_artifact_bytes: number;
+  last_archived_wal_segment: string | null;
+  last_uploaded_wal_segment: string | null;
   last_started_at: string | null;
   last_finished_at: string | null;
   last_successful_backup_at: string | null;
@@ -114,7 +116,36 @@ type R2Target = {
   secret_key?: string;
 };
 
+type WalArchiveFile = {
+  name: string;
+  path: string;
+  mtime_iso: string | null;
+};
+
+type WalArchiveSnapshot = {
+  wal_archive_dir: string;
+  wal_object_prefix: string | null;
+  archived_files: WalArchiveFile[];
+  archived_wal_count: number;
+  pending_files: WalArchiveFile[];
+  pending_wal_count: number;
+  last_archived_wal_segment: string | null;
+  last_archived_wal_at: string | null;
+};
+
 let runInFlight: Promise<BayBackupRunResult> | null = null;
+let walMaintenanceTimer: NodeJS.Timeout | undefined;
+let walMaintenanceRunning = false;
+
+const DEFAULT_WAL_ARCHIVE_INTERVAL_MS = 60 * 1000;
+
+function getWalArchiveIntervalMs(): number {
+  const n = Number.parseInt(
+    `${process.env.COCALC_BAY_WAL_ARCHIVE_INTERVAL_MS ?? ""}`,
+    10,
+  );
+  return Number.isFinite(n) && n > 0 ? n : DEFAULT_WAL_ARCHIVE_INTERVAL_MS;
+}
 
 function getBackupRoot(): string {
   return getLaunchpadLocalConfig().backup_root ?? join(data, "backup-repo");
@@ -123,12 +154,15 @@ function getBackupRoot(): string {
 function getBayBackupPaths(bay_id: string) {
   const backup_root = getBackupRoot();
   const bay_root = join(backup_root, "bay-backups", bay_id);
+  const wal_dir = join(bay_root, "wal");
   return {
     backup_root,
     bay_root,
     archives_dir: join(bay_root, "archives"),
     manifests_dir: join(bay_root, "manifests"),
     staging_dir: join(bay_root, "staging"),
+    wal_dir,
+    wal_archive_dir: join(wal_dir, "archive"),
     state_file: join(bay_root, "state.json"),
   };
 }
@@ -211,6 +245,8 @@ function defaultState({
     latest_object_prefix: null,
     latest_artifact_count: 0,
     latest_artifact_bytes: 0,
+    last_archived_wal_segment: null,
+    last_uploaded_wal_segment: null,
     last_started_at: null,
     last_finished_at: null,
     last_successful_backup_at: null,
@@ -231,6 +267,8 @@ async function inspectPostgres(): Promise<BayBackupsPostgresStatus> {
     data_directory: string | null;
     config_file: string | null;
     archive_mode: string | null;
+    archive_command: string | null;
+    archive_timeout: string | null;
     wal_level: string | null;
     max_wal_senders: string | null;
   }>(
@@ -241,6 +279,8 @@ async function inspectPostgres(): Promise<BayBackupsPostgresStatus> {
       current_setting('data_directory', true) AS data_directory,
       current_setting('config_file', true) AS config_file,
       current_setting('archive_mode', true) AS archive_mode,
+      current_setting('archive_command', true) AS archive_command,
+      current_setting('archive_timeout', true) AS archive_timeout,
       current_setting('wal_level', true) AS wal_level,
       current_setting('max_wal_senders', true) AS max_wal_senders
     FROM pg_roles r
@@ -268,6 +308,8 @@ async function inspectPostgres(): Promise<BayBackupsPostgresStatus> {
     data_directory: row?.data_directory ?? null,
     config_file: row?.config_file ?? null,
     archive_mode: row?.archive_mode ?? null,
+    archive_command: row?.archive_command ?? null,
+    archive_timeout: row?.archive_timeout ?? null,
     wal_level: row?.wal_level ?? null,
     max_wal_senders: Number.isFinite(max_wal_senders) ? max_wal_senders : null,
     can_basebackup,
@@ -495,12 +537,254 @@ async function uploadArtifactsToR2({
   };
 }
 
-function mapStateToStatus({
+function walObjectPrefix(root: string | null): string | null {
+  return root ? `${root}/wal` : null;
+}
+
+async function listArchivedWalFiles(
+  wal_archive_dir: string,
+): Promise<WalArchiveFile[]> {
+  try {
+    const names = await readdir(wal_archive_dir);
+    const files: WalArchiveFile[] = [];
+    for (const name of names.sort()) {
+      const path = join(wal_archive_dir, name);
+      const info = await stat(path);
+      if (!info.isFile()) continue;
+      files.push({
+        name,
+        path,
+        mtime_iso: new Date(info.mtimeMs).toISOString(),
+      });
+    }
+    return files;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException)?.code === "ENOENT") {
+      return [];
+    }
+    throw err;
+  }
+}
+
+function isWalPendingUpload({
+  name,
+  last_uploaded_wal_segment,
+}: {
+  name: string;
+  last_uploaded_wal_segment: string | null;
+}): boolean {
+  return !last_uploaded_wal_segment || name > last_uploaded_wal_segment;
+}
+
+async function getWalArchiveSnapshot({
   paths,
   state,
 }: {
   paths: ReturnType<typeof getBayBackupPaths>;
   state: StoredBayBackupState;
+}): Promise<WalArchiveSnapshot> {
+  const archived_files = await listArchivedWalFiles(paths.wal_archive_dir);
+  const last = archived_files.at(-1);
+  const pending_files = archived_files.filter((file) =>
+    isWalPendingUpload({
+      name: file.name,
+      last_uploaded_wal_segment: state.last_uploaded_wal_segment,
+    }),
+  );
+  return {
+    wal_archive_dir: paths.wal_archive_dir,
+    wal_object_prefix: walObjectPrefix(state.object_prefix_root),
+    archived_files,
+    archived_wal_count: archived_files.length,
+    pending_files,
+    pending_wal_count: pending_files.length,
+    last_archived_wal_segment: last?.name ?? null,
+    last_archived_wal_at: last?.mtime_iso ?? null,
+  };
+}
+
+async function waitForWalArchiveAdvance({
+  paths,
+  state,
+  previous_last_segment,
+}: {
+  paths: ReturnType<typeof getBayBackupPaths>;
+  state: StoredBayBackupState;
+  previous_last_segment: string | null;
+}): Promise<WalArchiveSnapshot> {
+  const deadline = Date.now() + 5_000;
+  let snapshot = await getWalArchiveSnapshot({ paths, state });
+  while (Date.now() < deadline) {
+    if (
+      snapshot.last_archived_wal_segment &&
+      snapshot.last_archived_wal_segment !== previous_last_segment
+    ) {
+      return snapshot;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    snapshot = await getWalArchiveSnapshot({ paths, state });
+  }
+  return snapshot;
+}
+
+async function syncBayWalArchive({
+  bay_id,
+  forceSwitch = false,
+}: {
+  bay_id?: string;
+  forceSwitch?: boolean;
+} = {}): Promise<{
+  state: StoredBayBackupState;
+  snapshot: WalArchiveSnapshot;
+}> {
+  const currentBay = getSingleBayInfo();
+  const resolvedBayId =
+    `${bay_id ?? currentBay.bay_id}`.trim() || currentBay.bay_id;
+  if (resolvedBayId !== currentBay.bay_id) {
+    throw new Error(`bay '${resolvedBayId}' not found`);
+  }
+  const r2 = await resolveR2Target(resolvedBayId);
+  const current_storage_backend: StorageBackend = r2.configured
+    ? "r2"
+    : "local";
+  const paths = getBayBackupPaths(resolvedBayId);
+  await ensureDir(paths.wal_archive_dir);
+  const stored =
+    (await readJsonIfExists<StoredBayBackupState>(paths.state_file)) ??
+    defaultState({
+      bay_id: resolvedBayId,
+      current_storage_backend,
+      r2,
+    });
+  let state: StoredBayBackupState = {
+    ...stored,
+    bay_id: resolvedBayId,
+    current_storage_backend,
+    r2_configured: r2.configured,
+    bucket_name: r2.bucket_name ?? stored.bucket_name ?? null,
+    bucket_region: r2.bucket_region ?? stored.bucket_region ?? null,
+    bucket_endpoint: r2.bucket_endpoint ?? stored.bucket_endpoint ?? null,
+    object_prefix_root:
+      r2.object_prefix_root ?? stored.object_prefix_root ?? null,
+    last_archived_wal_segment: stored.last_archived_wal_segment ?? null,
+    last_uploaded_wal_segment: stored.last_uploaded_wal_segment ?? null,
+  };
+  let snapshot = await getWalArchiveSnapshot({ paths, state });
+  const previous_last_segment = snapshot.last_archived_wal_segment;
+  const walErrorPrefix = "wal archive:";
+  if (forceSwitch) {
+    try {
+      await getPool().query("SELECT pg_switch_wal()");
+      snapshot = await waitForWalArchiveAdvance({
+        paths,
+        state,
+        previous_last_segment,
+      });
+    } catch (err) {
+      state = {
+        ...state,
+        last_error_at: new Date().toISOString(),
+        last_error: `${walErrorPrefix} forced WAL switch failed: ${String(err)}`,
+      };
+      await writeJson(paths.state_file, state);
+      return { state, snapshot };
+    }
+  }
+
+  state = {
+    ...state,
+    last_archived_wal_segment: snapshot.last_archived_wal_segment,
+    last_successful_wal_archive_at:
+      snapshot.last_archived_wal_at ?? state.last_successful_wal_archive_at,
+  };
+
+  try {
+    if (
+      r2.configured &&
+      r2.bucket_name &&
+      r2.bucket_endpoint &&
+      r2.access_key &&
+      r2.secret_key &&
+      snapshot.pending_files.length > 0
+    ) {
+      await ensureR2Bucket(r2);
+      const object_prefix = walObjectPrefix(r2.object_prefix_root ?? null);
+      if (!object_prefix) {
+        throw new Error("missing WAL object prefix");
+      }
+      let last_uploaded_wal_segment = state.last_uploaded_wal_segment;
+      for (const file of snapshot.pending_files) {
+        const object_key = `${object_prefix}/${file.name}`;
+        const { sha256, bytes } = await hashFile(file.path);
+        await uploadObjectFromFile({
+          endpoint: r2.bucket_endpoint,
+          accessKey: r2.access_key,
+          secretKey: r2.secret_key,
+          bucket: r2.bucket_name,
+          key: object_key,
+          filePath: file.path,
+          artifactSha256: sha256,
+          artifactBytes: bytes,
+          contentType: "application/octet-stream",
+        });
+        last_uploaded_wal_segment = file.name;
+      }
+      state = {
+        ...state,
+        last_uploaded_wal_segment,
+      };
+    }
+    if (`${state.last_error ?? ""}`.startsWith(walErrorPrefix)) {
+      state = {
+        ...state,
+        last_error: null,
+        last_error_at: null,
+      };
+    }
+  } catch (err) {
+    state = {
+      ...state,
+      last_error_at: new Date().toISOString(),
+      last_error: `${walErrorPrefix} upload failed: ${String(err)}`,
+    };
+    logger.warn("bay wal archive sync failed", {
+      bay_id: resolvedBayId,
+      err,
+    });
+  }
+
+  await writeJson(paths.state_file, state);
+  snapshot = await getWalArchiveSnapshot({ paths, state });
+  return { state, snapshot };
+}
+
+export function startBayWalArchiveMaintenance(): void {
+  if (walMaintenanceTimer) return;
+  const run = async () => {
+    if (walMaintenanceRunning) return;
+    walMaintenanceRunning = true;
+    try {
+      await syncBayWalArchive();
+    } catch (err) {
+      logger.warn("bay wal archive maintenance failed", { err });
+    } finally {
+      walMaintenanceRunning = false;
+    }
+  };
+  walMaintenanceTimer = setInterval(() => {
+    void run();
+  }, getWalArchiveIntervalMs());
+  void run();
+}
+
+function mapStateToStatus({
+  paths,
+  state,
+  wal,
+}: {
+  paths: ReturnType<typeof getBayBackupPaths>;
+  state: StoredBayBackupState;
+  wal: WalArchiveSnapshot;
 }): BayBackupStatus {
   return {
     enabled: true,
@@ -509,12 +793,14 @@ function mapStateToStatus({
     archives_dir: paths.archives_dir,
     manifests_dir: paths.manifests_dir,
     staging_dir: paths.staging_dir,
+    wal_archive_dir: wal.wal_archive_dir,
     r2_configured: state.r2_configured,
     current_storage_backend: state.current_storage_backend,
     bucket_name: state.bucket_name,
     bucket_region: state.bucket_region,
     bucket_endpoint: state.bucket_endpoint,
     object_prefix_root: state.object_prefix_root,
+    wal_object_prefix: wal.wal_object_prefix,
     latest_backup_set_id: state.latest_backup_set_id,
     latest_format: state.latest_format,
     latest_storage_backend: state.latest_storage_backend,
@@ -523,6 +809,11 @@ function mapStateToStatus({
     latest_object_prefix: state.latest_object_prefix,
     latest_artifact_count: state.latest_artifact_count,
     latest_artifact_bytes: state.latest_artifact_bytes,
+    last_archived_wal_segment:
+      wal.last_archived_wal_segment ?? state.last_archived_wal_segment,
+    last_uploaded_wal_segment: state.last_uploaded_wal_segment ?? null,
+    archived_wal_count: wal.archived_wal_count,
+    pending_wal_count: wal.pending_wal_count,
     last_started_at: state.last_started_at,
     last_finished_at: state.last_finished_at,
     last_successful_backup_at: state.last_successful_backup_at,
@@ -573,12 +864,16 @@ export async function getBayBackupStatus({
     bucket_endpoint: r2.bucket_endpoint ?? stored.bucket_endpoint ?? null,
     object_prefix_root:
       r2.object_prefix_root ?? stored.object_prefix_root ?? null,
+    last_archived_wal_segment: stored.last_archived_wal_segment ?? null,
+    last_uploaded_wal_segment: stored.last_uploaded_wal_segment ?? null,
   };
+  const wal = await getWalArchiveSnapshot({ paths, state });
   return {
     postgres,
     bay_backup: mapStateToStatus({
       paths,
       state,
+      wal,
     }),
   };
 }
@@ -617,6 +912,7 @@ export async function runBayBackup({
       ensureDir(paths.archives_dir),
       ensureDir(paths.manifests_dir),
       ensureDir(paths.staging_dir),
+      ensureDir(paths.wal_archive_dir),
     ]);
     const started_at = new Date().toISOString();
     const backup_set_id = randomUUID();
@@ -722,7 +1018,7 @@ export async function runBayBackup({
           contentType: "application/json",
         });
       }
-      const state: StoredBayBackupState = {
+      let state: StoredBayBackupState = {
         ...initialState,
         latest_backup_set_id: backup_set_id,
         latest_format: actual_strategy,
@@ -738,14 +1034,24 @@ export async function runBayBackup({
           latest_storage_backend === "r2"
             ? finished_at
             : previous.last_successful_remote_backup_at,
-        last_successful_wal_archive_at:
-          latest_storage_backend === "r2" && actual_strategy === "pg_basebackup"
-            ? previous.last_successful_wal_archive_at
-            : previous.last_successful_wal_archive_at,
         restore_state:
           latest_storage_backend === "r2" ? "ready" : "ready-local-only",
       };
       await writeJson(paths.state_file, state);
+      try {
+        const walSync = await syncBayWalArchive({
+          bay_id: resolvedBayId,
+          forceSwitch: `${postgres.archive_mode ?? ""}`.toLowerCase() === "on",
+        });
+        state = walSync.state;
+      } catch (err) {
+        logger.warn("post-backup WAL archive sync failed", {
+          bay_id: resolvedBayId,
+          backup_set_id,
+          err,
+        });
+      }
+      const wal = await getWalArchiveSnapshot({ paths, state });
       return {
         ...currentBay,
         started_at,
@@ -763,6 +1069,7 @@ export async function runBayBackup({
         bay_backup: mapStateToStatus({
           paths,
           state,
+          wal,
         }),
       };
     } catch (err) {

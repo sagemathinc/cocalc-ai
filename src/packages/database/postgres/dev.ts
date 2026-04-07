@@ -109,6 +109,21 @@ function resolveEnvFile(): string {
   return join(dataRoot, "local-postgres.env");
 }
 
+function resolveBackupRoot(): string {
+  const explicit = process.env.COCALC_BACKUP_ROOT;
+  if (explicit) return explicit;
+  const dataRoot =
+    process.env.COCALC_DATA_DIR ??
+    process.env.DATA ??
+    join(process.cwd(), "data");
+  return join(dataRoot, "backup-repo");
+}
+
+function resolveBayId(): string {
+  const bayId = `${process.env.COCALC_BAY_ID ?? ""}`.trim();
+  return bayId || "bay-0";
+}
+
 function writeEnvFile({
   socketDir,
   user,
@@ -187,26 +202,82 @@ function runQuiet(
   return (res.stdout ?? "").toString();
 }
 
+function shellQuote(arg: string): string {
+  return `'${arg.replace(/'/g, `'\"'\"'`)}'`;
+}
+
+function postgresConfQuote(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`;
+}
+
 function ensureConfig(dataDir: string, socketDir: string): void {
   const hba = join(dataDir, "pg_hba.conf");
   if (existsSync(hba)) {
-    writeFileSync(hba, ["# cocalc-dev", "local all all trust", ""].join("\n"));
+    writeFileSync(
+      hba,
+      [
+        "# cocalc-dev",
+        "local all all trust",
+        "local replication all trust",
+        "",
+      ].join("\n"),
+    );
   }
+
+  const backupRoot = resolveBackupRoot();
+  const bayId = resolveBayId();
+  const walRoot = join(backupRoot, "bay-backups", bayId, "wal");
+  const walArchiveDir = join(walRoot, "archive");
+  const archiveScript = join(walRoot, "pg-archive-wal.sh");
+  ensureDir(walArchiveDir, 0o700);
+  writeFileSync(
+    archiveScript,
+    [
+      "#!/bin/sh",
+      "set -eu",
+      `DEST_DIR=${shellQuote(walArchiveDir)}`,
+      'SRC_PATH="$1"',
+      'SEGMENT="$2"',
+      'DEST_PATH="$DEST_DIR/$SEGMENT"',
+      'TMP_PATH="$DEST_PATH.tmp.$$"',
+      'mkdir -p "$DEST_DIR"',
+      'if [ -f "$DEST_PATH" ]; then',
+      "  exit 0",
+      "fi",
+      'cp "$SRC_PATH" "$TMP_PATH"',
+      'mv "$TMP_PATH" "$DEST_PATH"',
+      "",
+    ].join("\n"),
+    { mode: 0o700 },
+  );
+  chmodSync(archiveScript, 0o700);
+
+  const managedConfName = "cocalc-dev.conf";
+  const managedConf = join(dataDir, managedConfName);
+  const archiveCommand = `${shellQuote(archiveScript)} %p %f`;
+  writeFileSync(
+    managedConf,
+    [
+      "# cocalc-dev",
+      `unix_socket_directories = ${postgresConfQuote(socketDir)}`,
+      "listen_addresses = ''",
+      "max_connections = 1000",
+      "wal_level = replica",
+      "archive_mode = on",
+      `archive_timeout = ${postgresConfQuote("60s")}`,
+      `archive_command = ${postgresConfQuote(archiveCommand)}`,
+      "",
+    ].join("\n"),
+  );
 
   const conf = join(dataDir, "postgresql.conf");
   let contents = "";
   if (existsSync(conf)) {
     contents = readFileSync(conf, "utf8");
   }
-  if (!contents.includes("# cocalc-dev")) {
-    contents += [
-      "",
-      "# cocalc-dev",
-      `unix_socket_directories = '${socketDir}'`,
-      "listen_addresses = ''",
-      "max_connections = 1000",
-      "",
-    ].join("\n");
+  const includeLine = `include_if_exists = '${managedConfName}'`;
+  if (!contents.includes(includeLine)) {
+    contents += ["", "# cocalc-dev", includeLine, ""].join("\n");
     writeFileSync(conf, contents);
   }
 }
