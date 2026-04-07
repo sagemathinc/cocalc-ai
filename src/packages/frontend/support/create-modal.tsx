@@ -431,18 +431,18 @@ export default function SupportCreateModal() {
       <Alert
         type="error"
         showIcon
-        message="Support ticket creation is not configured."
+        title="Support ticket creation is not configured."
       />
     );
   }
 
   if (successUrl) {
     return (
-      <Space direction="vertical" size="large" style={{ width: "100%" }}>
+      <Space orientation="vertical" size="large" style={{ width: "100%" }}>
         <Alert
           type="success"
           showIcon
-          message="Successfully created support ticket"
+          title="Successfully created support ticket"
           description={
             <a href={successUrl} target="_blank" rel="noreferrer noopener">
               {successUrl}
@@ -465,18 +465,18 @@ export default function SupportCreateModal() {
   }
 
   return (
-    <Space direction="vertical" size="large" style={{ width: "100%" }}>
+    <Space orientation="vertical" size="large" style={{ width: "100%" }}>
       <Alert
         type="info"
         showIcon
-        message="This draft is not cleared until you explicitly clear it or submit the ticket."
+        title="This draft is not cleared until you explicitly clear it or submit the ticket."
         description="You can close and reopen this modal while gathering evidence, copying error messages, or pasting screenshots. The body uses the same markdown / rich-text composer as chat, supports pasted and dropped images, and converts those images to absolute links before the Zendesk ticket is created."
       />
       {initialOptions.required ? (
         <Alert
           type="warning"
           showIcon
-          message="Replace the required placeholder text before submitting."
+          title="Replace the required placeholder text before submitting."
           description={`Update every '${initialOptions.required}' placeholder with the requested details.`}
         />
       ) : null}
@@ -484,7 +484,7 @@ export default function SupportCreateModal() {
         <Alert
           type="error"
           showIcon
-          message="Unable to create support ticket"
+          title="Unable to create support ticket"
           description={submitError}
         />
       ) : null}

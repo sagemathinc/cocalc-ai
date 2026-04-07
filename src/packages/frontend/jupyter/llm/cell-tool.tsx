@@ -567,7 +567,7 @@ export function LLMCellTool({ actions, id, style, llmTools, cellType }: Props) {
     const needsTarget = mode === "translate" || mode === "translate_text";
 
     return (
-      <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+      <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
         <div style={{ color: "rgba(0,0,0,0.65)" }}>
           {intl.formatMessage(actionDescription(mode, isMarkdownCell))}
         </div>

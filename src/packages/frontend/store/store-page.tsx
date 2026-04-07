@@ -29,7 +29,7 @@ export function StorePage() {
         second round after the Next.js rewrite is complete.
       </Paragraph>
 
-      <Space direction="vertical" size="large" style={{ width: "100%" }}>
+      <Space orientation="vertical" size="large" style={{ width: "100%" }}>
         <Card
           extra={
             <Space>

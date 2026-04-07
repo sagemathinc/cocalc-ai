@@ -134,7 +134,7 @@ export function StudentProjectRootfsConfig({ actions, name, settings }: Props) {
       }`,
       okButtonProps: { danger: true },
       content: (
-        <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+        <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
           <Typography.Paragraph style={{ marginBottom: 0 }}>
             {existingStudentProjectCount} existing student project
             {existingStudentProjectCount === 1 ? "" : "s"} will have their
@@ -144,7 +144,7 @@ export function StudentProjectRootfsConfig({ actions, name, settings }: Props) {
           <Alert
             type="warning"
             showIcon
-            message="This changes the / software environment"
+            title="This changes the / software environment"
             description={
               <>
                 Running student projects will be restarted so the new RootFS
@@ -189,7 +189,7 @@ export function StudentProjectRootfsConfig({ actions, name, settings }: Props) {
           </>
         }
       >
-        <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+        <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
           <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
             By default, new student projects use the same RootFS image as this
             instructor project. Set an override here only when this course
@@ -199,7 +199,7 @@ export function StudentProjectRootfsConfig({ actions, name, settings }: Props) {
           <Alert
             type="info"
             showIcon
-            message="Why use this?"
+            title="Why use this?"
             description="Use one managed software environment across all student projects, then roll out upgrades deliberately when you are ready."
           />
 
@@ -283,7 +283,7 @@ export function StudentProjectRootfsConfig({ actions, name, settings }: Props) {
             <Alert
               type="warning"
               showIcon
-              message="Configured image is no longer visible in the catalog"
+              title="Configured image is no longer visible in the catalog"
               description={`The course is currently configured to use ${currentImage}. Save a new selection to replace it.`}
             />
           ) : null}
@@ -340,17 +340,17 @@ export function StudentProjectRootfsConfig({ actions, name, settings }: Props) {
         onCancel={() => setHelpOpen(false)}
         title="How course RootFS images work"
       >
-        <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+        <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
           <Alert
             type="info"
             showIcon
-            message="New student projects"
+            title="New student projects"
             description="If you leave this unset, new student projects use the same RootFS image as the instructor project that contains this .course file. If you set an override here, that managed image is used instead."
           />
           <Alert
             type="warning"
             showIcon
-            message="Existing student projects"
+            title="Existing student projects"
             description="Existing student projects do not change automatically. Use “Apply To Existing Student Projects...” when you want to switch them."
           />
           <Typography.Paragraph style={{ marginBottom: 0 }}>

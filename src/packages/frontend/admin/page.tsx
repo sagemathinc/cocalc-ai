@@ -58,7 +58,7 @@ export function AdminPage({
         </div>
       ),
       children: (
-        <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+        <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
           <Paragraph style={{ marginBottom: 0 }}>
             Create and edit public news items and events in the app with the new
             markdown editor, image paste/upload support, and live preview.

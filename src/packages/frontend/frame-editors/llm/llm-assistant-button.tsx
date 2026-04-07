@@ -170,7 +170,7 @@ export default function LanguageModelTitleBarButton({
         width={560}
         maskClosable={!querying}
       >
-        <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+        <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
           <PopupAgentComposer
             value={command}
             onChange={setCommand}

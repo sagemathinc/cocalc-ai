@@ -82,7 +82,7 @@ export function AgentDebugPanel() {
           style={{ marginBottom: 12 }}
         />
       ) : null}
-      <Space direction="vertical" style={{ width: "100%" }} size="small">
+      <Space orientation="vertical" style={{ width: "100%" }} size="small">
         <Typography.Text strong>Action (JSON)</Typography.Text>
         <Input.TextArea
           value={actionJson}

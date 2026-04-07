@@ -236,7 +236,7 @@ export default function MoveInProgress({
         type="info"
         title="Moving project..."
         description={
-          <Space direction="vertical" size={8} style={{ width: "100%" }}>
+          <Space orientation="vertical" size={8} style={{ width: "100%" }}>
             <div>{phaseText}</div>
             <div>
               <Space size="small" wrap>
@@ -277,7 +277,7 @@ export default function MoveInProgress({
       }}
     >
       <div style={{ maxWidth: "980px", width: "100%", padding: "0 24px" }}>
-        <Space direction="vertical" size={12} style={{ width: "100%" }}>
+        <Space orientation="vertical" size={12} style={{ width: "100%" }}>
           {renderStatusAlert()}
           {opError ? (
             <Alert

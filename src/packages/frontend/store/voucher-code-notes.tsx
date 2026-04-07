@@ -65,7 +65,7 @@ export default function VoucherCodeNotes({
         {error && (
           <Alert
             style={{ marginTop: "8px" }}
-            message={error}
+            title={error}
             showIcon
             type="error"
           />

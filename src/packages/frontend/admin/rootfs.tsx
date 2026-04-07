@@ -105,7 +105,7 @@ function blockerSummary(entry: RootfsAdminCatalogEntry): React.ReactNode {
     nextSteps.push("delete child releases or repack them as full releases");
   }
   return (
-    <Space direction="vertical" size={0}>
+    <Space orientation="vertical" size={0}>
       <Typography.Text style={{ fontSize: 12 }}>
         {items.join(", ")}
       </Typography.Text>
@@ -157,7 +157,7 @@ function lifecycleHistory(entry: RootfsAdminCatalogEntry): React.ReactNode {
     );
   }
   return (
-    <Space direction="vertical" size={0}>
+    <Space orientation="vertical" size={0}>
       {lines}
     </Space>
   );
@@ -227,11 +227,11 @@ function recentEvents(entry: RootfsAdminCatalogEntry): React.ReactNode {
     );
   }
   return (
-    <Space direction="vertical" size={0}>
+    <Space orientation="vertical" size={0}>
       {entry.events.map((event) => (
         <Space
           key={event.event_id}
-          direction="vertical"
+          orientation="vertical"
           size={0}
           style={{ width: "100%" }}
         >
@@ -293,7 +293,7 @@ function storageLocationLabel(location: RootfsStorageLocation): string {
 
 function storageTooltip(location: RootfsStorageLocation): React.ReactNode {
   return (
-    <Space direction="vertical" size={0}>
+    <Space orientation="vertical" size={0}>
       <Typography.Text code style={{ fontSize: 12 }}>
         {storageLabel(location)}
       </Typography.Text>
@@ -508,7 +508,7 @@ export function RootfsAdmin() {
   }
 
   return (
-    <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+    <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
       <Typography.Paragraph type="secondary">
         Manage all RootFS catalog entries and inspect central lifecycle state.
         Deleting an image here removes the catalog entry immediately and lets
@@ -550,7 +550,7 @@ export function RootfsAdmin() {
               title: "Label",
               key: "label",
               render: (_, entry) => (
-                <Space direction="vertical" size={0}>
+                <Space orientation="vertical" size={0}>
                   <Typography.Text strong>{entry.label}</Typography.Text>
                   <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                     {entry.owner_name ?? entry.owner_id ?? "builtin"}
@@ -583,7 +583,7 @@ export function RootfsAdmin() {
               title: "Lifecycle",
               key: "lifecycle",
               render: (_, entry) => (
-                <Space direction="vertical" size={0}>
+                <Space orientation="vertical" size={0}>
                   <Space wrap>{lifecycleTags(entry)}</Space>
                   {entry.blocked_reason ? (
                     <Typography.Text type="secondary" style={{ fontSize: 12 }}>
@@ -613,7 +613,7 @@ export function RootfsAdmin() {
               title: "Scan",
               key: "scan",
               render: (_, entry) => (
-                <Space direction="vertical" size={0}>
+                <Space orientation="vertical" size={0}>
                   <Space wrap>
                     {scanTag(entry)}
                     {entry.scan_tool ? <Tag>{entry.scan_tool}</Tag> : null}
@@ -743,7 +743,7 @@ export function RootfsAdmin() {
         <Alert
           type="info"
           showIcon
-          message="No RootFS catalog entries match the current filter."
+          title="No RootFS catalog entries match the current filter."
         />
       ) : null}
     </Space>

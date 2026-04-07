@@ -121,7 +121,7 @@ function VoucherBatchModal({
       onCancel={onClose}
     >
       {voucher && (
-        <Space direction="vertical" size="large" style={{ width: "100%" }}>
+        <Space orientation="vertical" size="large" style={{ width: "100%" }}>
           <div>
             <Title level={4} style={{ marginBottom: 8 }}>
               {voucher.title}
@@ -153,7 +153,7 @@ function VoucherBatchModal({
             />
           </Flex>
 
-          {error && <Alert message={error} type="error" />}
+          {error && <Alert title={error} type="error" />}
           {loading ? (
             <Card loading />
           ) : (
@@ -379,7 +379,7 @@ export function VoucherCenterPage() {
       </Card>
 
       {error && (
-        <Alert style={{ marginTop: "16px" }} message={error} type="error" />
+        <Alert style={{ marginTop: "16px" }} title={error} type="error" />
       )}
 
       <Tabs
@@ -462,7 +462,7 @@ export function VoucherCenterPage() {
                   label: `Admin (${filteredAdminVouchers.length})`,
                   children: (
                     <Space
-                      direction="vertical"
+                      orientation="vertical"
                       size="middle"
                       style={{ width: "100%" }}
                     >

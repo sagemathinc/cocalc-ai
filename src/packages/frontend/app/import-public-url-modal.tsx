@@ -254,7 +254,7 @@ export function ImportPublicUrlModal() {
       {parsed.error ? (
         <Alert title={parsed.error} showIcon type="error" />
       ) : (
-        <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+        <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
           <Alert
             title={parsed.value?.title || parsed.value?.path || "Public file"}
             description={
@@ -286,7 +286,7 @@ export function ImportPublicUrlModal() {
                     : importMode
                 }
               >
-                <Space direction="vertical">
+                <Space orientation="vertical">
                   <Radio value="file">
                     Copy this file
                     {inspection.value.requested.bytes != null

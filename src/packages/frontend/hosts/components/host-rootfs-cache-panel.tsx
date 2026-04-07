@@ -234,11 +234,11 @@ export function HostRootfsCachePanel({
         <Alert
           type="info"
           showIcon
-          message="Host must be running to inspect or manage its RootFS cache."
+          title="Host must be running to inspect or manage its RootFS cache."
         />
       )}
       {inventory?.error && (
-        <Alert type="warning" showIcon message={inventory.error} />
+        <Alert type="warning" showIcon title={inventory.error} />
       )}
       {hostRunning && inventory && (
         <>

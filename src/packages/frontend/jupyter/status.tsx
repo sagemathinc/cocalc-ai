@@ -1052,7 +1052,7 @@ export function Kernel({
               </Button>
             </div>
           }
-          destroyOnClose={false}
+          destroyOnHidden={false}
           maskClosable={false}
         >
           <Tabs

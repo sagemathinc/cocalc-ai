@@ -141,7 +141,7 @@ export function PublicSSOIndexView({
   if (error) {
     return (
       <Alert
-        message="Could not load single sign-on providers"
+        title="Could not load single sign-on providers"
         description={error}
         showIcon
         type="error"
@@ -152,7 +152,7 @@ export function PublicSSOIndexView({
   if (strategies.length === 0) {
     return (
       <Alert
-        message="No single sign-on providers are configured"
+        title="No single sign-on providers are configured"
         description="This site does not currently expose any public third-party sign-on providers."
         showIcon
         type="info"
@@ -227,7 +227,7 @@ export function PublicSSODetailView({
   if (error) {
     return (
       <Alert
-        message="Could not load single sign-on provider"
+        title="Could not load single sign-on provider"
         description={error}
         showIcon
         type="error"
@@ -238,7 +238,7 @@ export function PublicSSODetailView({
   if (!strategy) {
     return (
       <Alert
-        message="Single sign-on provider not found"
+        title="Single sign-on provider not found"
         description="This provider is not configured or is no longer available."
         showIcon
         type="error"
@@ -266,7 +266,7 @@ export function PublicSSODetailView({
       />
       {strategy.domains?.length ? (
         <Alert
-          message="Restricted email domains"
+          title="Restricted email domains"
           description={`This provider is intended for ${to_human_list(strategy.domains)} email addresses.`}
           showIcon
           type="info"

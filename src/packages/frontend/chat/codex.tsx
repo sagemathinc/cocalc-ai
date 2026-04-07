@@ -499,7 +499,7 @@ export function CodexConfigButton({
         bodyStyle={{ maxHeight: "75vh", overflowY: "auto" }}
       >
         {lite ? (
-          <Space direction="vertical" size={12} style={{ width: "100%" }}>
+          <Space orientation="vertical" size={12} style={{ width: "100%" }}>
             <Text strong>Choose one: ChatGPT Plan or OpenAI API key</Text>
             <Text type="secondary">
               Configure Codex from this modal. If both are configured, ChatGPT
@@ -546,7 +546,7 @@ export function CodexConfigButton({
             <LiteAISettings onSaved={refreshPaymentSource} showTitle />
           </Space>
         ) : (
-          <Space direction="vertical" size={12} style={{ width: "100%" }}>
+          <Space orientation="vertical" size={12} style={{ width: "100%" }}>
             <CodexCredentialsPanel
               embedded
               hidePanelChrome

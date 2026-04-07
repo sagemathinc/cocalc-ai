@@ -103,7 +103,7 @@ export default function PublicRedeemVoucherView({
   }
 
   return (
-    <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+    <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
       <Paragraph type="secondary" style={{ marginBottom: 0 }}>
         Redeem a voucher code to add account credit that you can use for
         memberships and other purchases inside CoCalc.
@@ -131,12 +131,12 @@ export default function PublicRedeemVoucherView({
         />
       </div>
 
-      {error && <Alert message={error} type="error" />}
+      {error && <Alert title={error} type="error" />}
 
       {!isAuthenticated ? (
         <>
           <Alert
-            message="Sign in or create an account to redeem this voucher"
+            title="Sign in or create an account to redeem this voucher"
             showIcon
             type="info"
           />
@@ -187,7 +187,7 @@ export default function PublicRedeemVoucherView({
           {state === "redeemed" && (
             <Alert
               description={<DisplayCreatedItems createdItems={createdItems} />}
-              message="Success! Your voucher was redeemed."
+              title="Success! Your voucher was redeemed."
               showIcon
               type="success"
             />
