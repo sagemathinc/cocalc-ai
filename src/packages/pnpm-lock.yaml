@@ -1050,6 +1050,9 @@ importers:
       '@cocalc/util':
         specifier: workspace:*
         version: link:../util
+      '@types/compression':
+        specifier: ^1.8.1
+        version: 1.8.1
       '@types/formidable':
         specifier: ^3.4.5
         version: 3.4.6
@@ -1062,6 +1065,9 @@ importers:
       commander:
         specifier: ^14.0.1
         version: 14.0.3
+      compression:
+        specifier: ^1.8.1
+        version: 1.8.1
       cookie-parser:
         specifier: ^1.4.3
         version: 1.4.7

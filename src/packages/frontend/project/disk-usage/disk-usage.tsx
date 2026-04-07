@@ -357,7 +357,7 @@ function renderDrillError(
       <Alert
         closable={setError != null}
         description={message}
-        message="Folder too large for a quick scan"
+        title="Folder too large for a quick scan"
         onClose={() => setError?.("")}
         showIcon
         style={{ marginBottom: "12px" }}
@@ -1020,7 +1020,7 @@ export default function DiskUsage({
                 <Alert
                   showIcon
                   type="info"
-                  message="No storage history yet"
+                  title="No storage history yet"
                   description="Storage history starts once the backend has recorded storage overview samples for this project."
                 />
               ) : (
@@ -1066,7 +1066,7 @@ export default function DiskUsage({
                     <Alert
                       showIcon
                       type="info"
-                      message="Need more samples for a trend"
+                      title="Need more samples for a trend"
                       description="Only one storage sample is available so far. Reopen this later after the project has been active for a while."
                     />
                   ) : (
@@ -1106,7 +1106,7 @@ export default function DiskUsage({
                         style={{ marginTop: "12px" }}
                         showIcon
                         type="warning"
-                        message="Quota accounting warning"
+                        title="Quota accounting warning"
                         description={quota.warning}
                       />
                     ) : null}
@@ -1177,7 +1177,7 @@ export default function DiskUsage({
                 <Alert
                   style={{ margin: "15px 0" }}
                   showIcon
-                  message="OVER QUOTA"
+                  title="OVER QUOTA"
                   description="Delete files or increase your quota."
                   type="error"
                 />
@@ -1310,7 +1310,7 @@ export default function DiskUsage({
                             ? "warning"
                             : "info"
                         }
-                        message={drillSummaryAnnotation.label}
+                        title={drillSummaryAnnotation.label}
                         description={drillSummaryAnnotation.detail}
                       />
                     )}

@@ -1641,7 +1641,7 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
         />
       ) : (
         <Space
-          direction="vertical"
+          orientation="vertical"
           size={12}
           style={{ display: "flex", width: "100%" }}
         >

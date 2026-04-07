@@ -34,7 +34,7 @@ export default function PublicCellOutput({
         <Alert
           type="info"
           showIcon
-          message="Output is hidden in this notebook."
+          title="Output is hidden in this notebook."
         />
       </div>
     );

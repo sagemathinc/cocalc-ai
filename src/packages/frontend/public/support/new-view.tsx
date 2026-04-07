@@ -141,7 +141,7 @@ function ProblemFields({
   }
 
   return (
-    <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+    <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
       <div>
         <Text strong>What did you do exactly?</Text>
         <Input.TextArea
@@ -208,12 +208,12 @@ function PurchaseFields({
   showExtra: boolean;
 }) {
   return (
-    <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+    <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
       {showExtra ? (
         <Alert
           showIcon
           type="info"
-          message="What information helps us respond quickly?"
+          title="What information helps us respond quickly?"
           description={
             <ul style={{ marginBottom: 0, paddingLeft: 18 }}>
               <li>The rough number of users or projects.</li>
@@ -261,11 +261,11 @@ function TaskFields({
   }
 
   return (
-    <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+    <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
       <Alert
         showIcon
         type="info"
-        message="Software install requests"
+        title="Software install requests"
         description={
           <>
             {siteName} projects run Linux, so software requests are often
@@ -400,7 +400,7 @@ function renderBodyFields(params: {
     <Alert
       showIcon
       type="info"
-      message={
+      title={
         supportVideoCall ? (
           <>
             You can also <a href={supportVideoCall}>book a video call</a>.
@@ -534,16 +534,16 @@ export default function SupportNew({
       <Alert
         showIcon
         type="error"
-        message="Support ticket creation is not configured."
+        title="Support ticket creation is not configured."
       />
     );
   }
 
   return (
-    <Space direction="vertical" size="large" style={{ width: "100%" }}>
+    <Space orientation="vertical" size="large" style={{ width: "100%" }}>
       {!initial.hideExtra ? (
         <PublicSectionCard>
-          <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+          <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
             <Title level={2} style={{ margin: 0 }}>
               {initial.title || "Create a New Support Ticket"}
             </Title>
@@ -574,7 +574,7 @@ export default function SupportNew({
             <Alert
               showIcon
               type="warning"
-              message="Helpful links"
+              title="Helpful links"
               description={
                 <ul style={{ marginBottom: 0, paddingLeft: 18 }}>
                   <li>
@@ -593,7 +593,7 @@ export default function SupportNew({
       ) : null}
 
       <PublicSectionCard>
-        <Space direction="vertical" size="large" style={{ width: "100%" }}>
+        <Space orientation="vertical" size="large" style={{ width: "100%" }}>
           <div>
             <SectionLabel done={isValidEmailAddress(email)}>
               Your email address
@@ -635,7 +635,7 @@ export default function SupportNew({
                 setBody("");
               }}
             >
-              <Space direction="vertical" size="middle">
+              <Space orientation="vertical" size="middle">
                 <Radio value="problem">
                   Something is not working the way I think it should.
                 </Radio>
@@ -706,7 +706,7 @@ export default function SupportNew({
             <Alert
               showIcon
               type="error"
-              message="Required information is still missing"
+              title="Required information is still missing"
               description={`Replace the text '${initial.required}' everywhere above with the requested information.`}
             />
           ) : null}
@@ -760,7 +760,7 @@ export default function SupportNew({
                 closable
                 showIcon
                 type="error"
-                message="Error creating support ticket"
+                title="Error creating support ticket"
                 description={submitError}
                 onClose={() => setSubmitError("")}
               />
@@ -771,9 +771,9 @@ export default function SupportNew({
                 closable
                 showIcon
                 type="success"
-                message="Successfully created support ticket"
+                title="Successfully created support ticket"
                 description={
-                  <Space direction="vertical" size="small">
+                  <Space orientation="vertical" size="small">
                     <div>
                       Please save this URL:{" "}
                       <a href={successUrl}>{successUrl}</a>

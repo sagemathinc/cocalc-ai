@@ -65,7 +65,7 @@ export function RecentDocumentActivityPanel({ onClose, title }: Props) {
         <Alert
           type="error"
           showIcon
-          message="Recent document activity failed to load"
+          title="Recent document activity failed to load"
           description={error}
           style={{ marginBottom: "10px" }}
         />

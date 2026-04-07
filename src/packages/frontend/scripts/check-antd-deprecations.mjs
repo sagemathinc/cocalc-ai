@@ -15,33 +15,25 @@ const RULES = [
     id: "space-direction",
     component: "Space",
     message: "[antd: Space] `direction` is deprecated. Use `orientation`.",
-    pattern: (name) =>
-      new RegExp(
-        `<\\s*${escapeRegExp(name)}(?:\\.Compact)?\\b[\\s\\S]{0,800}?\\bdirection\\s*=`,
-        "g",
-      ),
+    tagPattern: (name) =>
+      new RegExp(`<\\s*${escapeRegExp(name)}(?:\\.Compact)?\\b`, "g"),
+    prop: "direction",
   },
   {
     id: "input-number-addon-after",
     component: "InputNumber",
     message:
       "[antd: InputNumber] `addonAfter` is deprecated. Use `Space.Compact`.",
-    pattern: (name) =>
-      new RegExp(
-        `<\\s*${escapeRegExp(name)}\\b[\\s\\S]{0,800}?\\baddonAfter\\s*=`,
-        "g",
-      ),
+    tagPattern: (name) => new RegExp(`<\\s*${escapeRegExp(name)}\\b`, "g"),
+    prop: "addonAfter",
   },
   {
     id: "input-number-addon-before",
     component: "InputNumber",
     message:
       "[antd: InputNumber] `addonBefore` is deprecated. Use `Space.Compact`.",
-    pattern: (name) =>
-      new RegExp(
-        `<\\s*${escapeRegExp(name)}\\b[\\s\\S]{0,800}?\\baddonBefore\\s*=`,
-        "g",
-      ),
+    tagPattern: (name) => new RegExp(`<\\s*${escapeRegExp(name)}\\b`, "g"),
+    prop: "addonBefore",
   },
   {
     id: "button-group",
@@ -52,43 +44,33 @@ const RULES = [
   {
     id: "tabs-popup-class-name",
     component: "Tabs",
-    message: "[antd: Tabs] `popupClassName` is deprecated. Use `classNames.popup`.",
-    pattern: (name) =>
-      new RegExp(
-        `<\\s*${escapeRegExp(name)}\\b[\\s\\S]{0,800}?\\bpopupClassName\\s*=`,
-        "g",
-      ),
+    message:
+      "[antd: Tabs] `popupClassName` is deprecated. Use `classNames.popup`.",
+    tagPattern: (name) => new RegExp(`<\\s*${escapeRegExp(name)}\\b`, "g"),
+    prop: "popupClassName",
   },
   {
     id: "modal-destroy-on-close",
     component: "Modal",
-    message: "[antd: Modal] `destroyOnClose` is deprecated. Use `destroyOnHidden`.",
-    pattern: (name) =>
-      new RegExp(
-        `<\\s*${escapeRegExp(name)}\\b[\\s\\S]{0,800}?\\bdestroyOnClose\\s*=`,
-        "g",
-      ),
+    message:
+      "[antd: Modal] `destroyOnClose` is deprecated. Use `destroyOnHidden`.",
+    tagPattern: (name) => new RegExp(`<\\s*${escapeRegExp(name)}\\b`, "g"),
+    prop: "destroyOnClose",
   },
   {
     id: "drawer-destroy-on-close",
     component: "Drawer",
     message:
       "[antd: Drawer] `destroyOnClose` is deprecated. Use `destroyOnHidden`.",
-    pattern: (name) =>
-      new RegExp(
-        `<\\s*${escapeRegExp(name)}\\b[\\s\\S]{0,800}?\\bdestroyOnClose\\s*=`,
-        "g",
-      ),
+    tagPattern: (name) => new RegExp(`<\\s*${escapeRegExp(name)}\\b`, "g"),
+    prop: "destroyOnClose",
   },
   {
     id: "alert-message",
     component: "Alert",
     message: "[antd: Alert] `message` is deprecated. Use `title`.",
-    pattern: (name) =>
-      new RegExp(
-        `<\\s*${escapeRegExp(name)}\\b[\\s\\S]{0,800}?\\bmessage\\s*=`,
-        "g",
-      ),
+    tagPattern: (name) => new RegExp(`<\\s*${escapeRegExp(name)}\\b`, "g"),
+    prop: "message",
   },
 ];
 
@@ -123,7 +105,9 @@ function parseAntdImports(content) {
       .map((s) => s.trim())
       .filter(Boolean);
     for (const p of parts) {
-      const aliasMatch = p.match(/^([A-Za-z_$][\w$]*)\s+as\s+([A-Za-z_$][\w$]*)$/);
+      const aliasMatch = p.match(
+        /^([A-Za-z_$][\w$]*)\s+as\s+([A-Za-z_$][\w$]*)$/,
+      );
       const canonical = aliasMatch ? aliasMatch[1] : p;
       const local = aliasMatch ? aliasMatch[2] : p;
       if (!imports.has(canonical)) {
@@ -165,6 +149,47 @@ function lineText(content, starts, lineNumber) {
   return content.slice(start, end).trim();
 }
 
+function hasPropInOpeningTag(content, startIndex, prop) {
+  let i = startIndex;
+  let depth = 0;
+  let quote = null;
+  while (i < content.length) {
+    const ch = content[i];
+    if (quote != null) {
+      if (ch === "\\" && i + 1 < content.length) {
+        i += 2;
+        continue;
+      }
+      if (ch === quote) {
+        quote = null;
+      }
+      i += 1;
+      continue;
+    }
+    if (ch === '"' || ch === "'" || ch === "`") {
+      quote = ch;
+      i += 1;
+      continue;
+    }
+    if (ch === "{") {
+      depth += 1;
+      i += 1;
+      continue;
+    }
+    if (ch === "}") {
+      depth = Math.max(0, depth - 1);
+      i += 1;
+      continue;
+    }
+    if (ch === ">" && depth === 0) {
+      const tag = content.slice(startIndex, i);
+      return new RegExp(`\\b${escapeRegExp(prop)}\\s*=`).test(tag);
+    }
+    i += 1;
+  }
+  return false;
+}
+
 async function main() {
   const files = await listSourceFiles(ROOT);
   const findings = [];
@@ -179,9 +204,12 @@ async function main() {
       const locals = imports.get(rule.component);
       if (locals == null || locals.size === 0) continue;
       for (const local of locals) {
-        const re = rule.pattern(local);
+        const re = rule.tagPattern?.(local) ?? rule.pattern(local);
         let m;
         while ((m = re.exec(content)) != null) {
+          if (rule.prop && !hasPropInOpeningTag(content, m.index, rule.prop)) {
+            continue;
+          }
           const line = lineFromIndex(starts, m.index);
           findings.push({
             file: path.relative(ROOT, file),

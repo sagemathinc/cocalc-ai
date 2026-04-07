@@ -580,7 +580,7 @@ export function ChatRoomModals({
         onOk={handleBehaviorSave}
         destroyOnHidden
       >
-        <Space direction="vertical" size={12} style={{ width: "100%" }}>
+        <Space orientation="vertical" size={12} style={{ width: "100%" }}>
           <div>
             <div style={{ marginBottom: 4, color: COLORS.GRAY_D }}>
               Chat behavior
@@ -596,7 +596,7 @@ export function ChatRoomModals({
             />
           </div>
           {renameAgentMode === "codex" ? (
-            <Space direction="vertical" size={10} style={{ width: "100%" }}>
+            <Space orientation="vertical" size={10} style={{ width: "100%" }}>
               <div>
                 <div style={{ marginBottom: 4, color: COLORS.GRAY_D }}>
                   Codex model

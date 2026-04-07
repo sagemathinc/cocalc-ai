@@ -657,7 +657,7 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
                 type="info"
                 showIcon
                 style={{ marginBottom: 12 }}
-                message="Guarded auto-grow"
+                title="Guarded auto-grow"
                 description="If a large OCI or RootFS pull is denied by storage reservations, CoCalc can grow this host's persistent disk once and retry. This is currently intended for GCP hosts."
               />
               <Form.Item

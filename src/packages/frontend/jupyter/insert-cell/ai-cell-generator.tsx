@@ -210,7 +210,7 @@ export function AIGenerateCodeCell({
         footer={null}
         width={560}
       >
-        <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+        <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
           <div style={{ color: "rgba(0,0,0,0.65)" }}>
             Agent will inspect the live notebook state itself. The frontend is
             only sending the notebook path, the anchor cell id, the requested

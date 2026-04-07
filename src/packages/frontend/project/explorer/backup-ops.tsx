@@ -188,7 +188,7 @@ function BackupOpTimeline({ op }: { op: BackupLroState }) {
 
   return (
     <div style={{ width: "460px", maxWidth: "80vw" }}>
-      <Space direction="vertical" size={8} style={{ width: "100%" }}>
+      <Space orientation="vertical" size={8} style={{ width: "100%" }}>
         <div style={{ fontWeight: 600 }}>Backup operation lifecycle</div>
         <Space wrap size={[6, 6]}>
           <Tag color={lroStatusColor(status)}>{status ?? "running"}</Tag>

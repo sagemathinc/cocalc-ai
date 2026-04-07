@@ -173,7 +173,7 @@ export function buildOfflineMoveConfirmationDialog(
     okText,
     okButtonProps: { danger: !sourceDeprovisioned },
     content: (
-      <Space direction="vertical" size={12} style={{ width: "100%" }}>
+      <Space orientation="vertical" size={12} style={{ width: "100%" }}>
         <Alert
           showIcon
           type={alertType}

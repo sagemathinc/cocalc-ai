@@ -238,7 +238,7 @@ function RestoreOpTimeline({ op }: { op: RestoreLroState }) {
 
   return (
     <div style={{ width: "460px", maxWidth: "80vw" }}>
-      <Space direction="vertical" size={8} style={{ width: "100%" }}>
+      <Space orientation="vertical" size={8} style={{ width: "100%" }}>
         <div style={{ fontWeight: 600 }}>
           {restoreKind === "snapshot"
             ? "Snapshot restore lifecycle"

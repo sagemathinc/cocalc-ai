@@ -425,7 +425,11 @@ If the link above does not work, search in Cloudflare for **Managed Transforms**
                 }}
               />
               <div style={{ marginTop: "10px" }}>
-                <Space direction="vertical" size={8} style={{ width: "100%" }}>
+                <Space
+                  orientation="vertical"
+                  size={8}
+                  style={{ width: "100%" }}
+                >
                   <Button
                     onClick={testVisitorLocationHeaders}
                     loading={locationHeadersTesting}
@@ -637,7 +641,11 @@ Required R2 token permissions:
                 />
               </div>
               <div style={{ marginTop: "12px" }}>
-                <Space direction="vertical" size={8} style={{ width: "100%" }}>
+                <Space
+                  orientation="vertical"
+                  size={8}
+                  style={{ width: "100%" }}
+                >
                   <Button
                     onClick={testSavedR2Credentials}
                     loading={r2Testing}

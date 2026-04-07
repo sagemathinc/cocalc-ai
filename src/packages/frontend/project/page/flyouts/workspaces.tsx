@@ -1405,7 +1405,7 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
 
   const body = (
     <div style={{ paddingRight: isFlyout ? 4 : 0 }}>
-      <Space direction="vertical" size={12} style={{ width: "100%" }}>
+      <Space orientation="vertical" size={12} style={{ width: "100%" }}>
         <Space wrap size={[6, 6]}>
           <Popover
             trigger="click"
@@ -1451,7 +1451,7 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
             </Button>
           </Empty>
         ) : (
-          <Space direction="vertical" size={10} style={{ width: "100%" }}>
+          <Space orientation="vertical" size={10} style={{ width: "100%" }}>
             {(
               ["pinned", "today", "last7", "older"] as WorkspaceSectionKey[]
             ).map((section) => {
@@ -1488,7 +1488,7 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
                     }
                   >
                     <Space
-                      direction="vertical"
+                      orientation="vertical"
                       size={10}
                       style={{ width: "100%" }}
                     >
@@ -1534,7 +1534,7 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
           </div>
         }
         extraAfterTheme={
-          <Space direction="vertical" style={{ width: "100%" }} size={12}>
+          <Space orientation="vertical" style={{ width: "100%" }} size={12}>
             <div>
               <Typography.Text strong>Workspace chat</Typography.Text>
               <div style={{ marginTop: 8 }}>
@@ -1702,7 +1702,7 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
           </Space>
         }
       >
-        <Space direction="vertical" style={{ width: "100%" }} size={12}>
+        <Space orientation="vertical" style={{ width: "100%" }} size={12}>
           <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
             Select one or more workspaces to delete. Shift-click selects a
             range.
@@ -1719,7 +1719,7 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
               borderRadius: 8,
             }}
           >
-            <Space direction="vertical" size={0} style={{ width: "100%" }}>
+            <Space orientation="vertical" size={0} style={{ width: "100%" }}>
               {workspaces.records.map((record) => {
                 const checked = managedWorkspaceIds.includes(
                   record.workspace_id,

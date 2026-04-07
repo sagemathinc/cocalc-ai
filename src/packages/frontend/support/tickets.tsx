@@ -15,7 +15,7 @@ export const SupportTickets: React.FC = () => {
   const zendesk = !!useTypedRedux("customize", "zendesk");
 
   return (
-    <Space direction="vertical" size="large" style={{ width: "100%" }}>
+    <Space orientation="vertical" size="large" style={{ width: "100%" }}>
       <div>
         <Title level={3} style={{ marginBottom: 8 }}>
           Support

@@ -138,7 +138,7 @@ export default function VoucherPurchasePanel({
   }
 
   return (
-    <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+    <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
       <Paragraph type="secondary" style={{ marginBottom: 0 }}>
         Purchase credit vouchers to share with students, collaborators, or
         teammates. Vouchers redeem into account credit and do not expire.
@@ -186,10 +186,10 @@ export default function VoucherPurchasePanel({
         )}
       </Text>
       {quote?.discouraged && quote?.reason && (
-        <Alert message={quote.reason} type="warning" />
+        <Alert title={quote.reason} type="warning" />
       )}
-      {quoteError && <Alert message={quoteError} type="error" />}
-      {actionError && <Alert message={actionError} type="error" />}
+      {quoteError && <Alert title={quoteError} type="error" />}
+      {actionError && <Alert title={actionError} type="error" />}
 
       {!processing && chargeAmountValue.eq(0) && (
         <Button
@@ -230,7 +230,7 @@ export default function VoucherPurchasePanel({
 
       {processing && (
         <Alert
-          message="Payment processing"
+          title="Payment processing"
           description="Your voucher codes will appear in the Voucher Center shortly."
           type="info"
         />
@@ -238,7 +238,7 @@ export default function VoucherPurchasePanel({
 
       {codes.length > 0 && (
         <Alert
-          message="Voucher codes created"
+          title="Voucher codes created"
           description={codes.join(", ")}
           type="success"
         />

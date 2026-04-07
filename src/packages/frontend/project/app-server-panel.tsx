@@ -206,7 +206,7 @@ function PresetSummaryCard({
       }}
     >
       <Space
-        direction="vertical"
+        orientation="vertical"
         size={compact ? 8 : 6}
         style={{ width: "100%" }}
       >
@@ -2567,7 +2567,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
         }
       >
         {!creatorOpen ? (
-          <Space direction="vertical" style={{ width: "100%" }} size={10}>
+          <Space orientation="vertical" style={{ width: "100%" }} size={10}>
             <Paragraph style={{ color: COLORS.GRAY_M, marginBottom: 0 }}>
               Start from a preset or expand the full form when you need custom
               commands and proxy settings.
@@ -2602,7 +2602,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
             </Button>
           </Space>
         ) : (
-          <Space direction="vertical" style={{ width: "100%" }} size={10}>
+          <Space orientation="vertical" style={{ width: "100%" }} size={10}>
             <div ref={presetSelectorContainerRef}>
               <Select
                 open={presetSelectorOpen}
@@ -2653,7 +2653,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                 title={`${unavailableActivePreset.label} is not installed yet`}
                 description={
                   <Space
-                    direction="vertical"
+                    orientation="vertical"
                     size={8}
                     style={{ width: "100%" }}
                   >
@@ -2719,7 +2719,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                   label: "Basics",
                   children: (
                     <Space
-                      direction="vertical"
+                      orientation="vertical"
                       style={{ width: "100%" }}
                       size={8}
                     >
@@ -2765,7 +2765,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                       label: "Runtime and proxy",
                       children: (
                         <Space
-                          direction="vertical"
+                          orientation="vertical"
                           style={{ width: "100%" }}
                           size={8}
                         >
@@ -2816,7 +2816,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                       label: "Static content and refresh",
                       children: (
                         <Space
-                          direction="vertical"
+                          orientation="vertical"
                           style={{ width: "100%" }}
                           size={8}
                         >
@@ -2893,7 +2893,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                               }
                               description={
                                 <Space
-                                  direction="vertical"
+                                  orientation="vertical"
                                   size={8}
                                   style={{ width: "100%" }}
                                 >
@@ -3010,7 +3010,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                           </Checkbox>
                           {staticIntegrationMode === "cocalc-public-viewer" ? (
                             <Space
-                              direction="vertical"
+                              orientation="vertical"
                               style={{
                                 width: "100%",
                                 padding: "10px 12px",
@@ -3138,7 +3138,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                   label: "Launch and public defaults",
                   children: (
                     <Space
-                      direction="vertical"
+                      orientation="vertical"
                       style={{ width: "100%" }}
                       size={8}
                     >
@@ -3251,7 +3251,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
           size="small"
           title={`Detected running HTTP apps (${detected.length})`}
         >
-          <Space direction="vertical" style={{ width: "100%" }}>
+          <Space orientation="vertical" style={{ width: "100%" }}>
             {detected.map((item) => (
               <div
                 key={`${item.port}-${item.hosts.join(",")}`}
@@ -3363,7 +3363,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
             </Space>
           </Space>
         ) : null}
-        <Space direction="vertical" style={{ width: "100%" }}>
+        <Space orientation="vertical" style={{ width: "100%" }}>
           {filteredRows.map((row) => {
             const isRunning = row.state === "running";
             const isPublic = isPublicExposure(row);
@@ -4111,7 +4111,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
         title={
           editSpecTargetId ? `Edit spec: ${editSpecTargetId}` : "Edit app spec"
         }
-        destroyOnClose={false}
+        destroyOnHidden={false}
         footer={[
           <Button
             key="close"

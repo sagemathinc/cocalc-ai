@@ -86,7 +86,7 @@ export function ThemeEditorModal({
       destroyOnHidden
       width={680}
     >
-      <Space direction="vertical" style={{ width: "100%" }} size={12}>
+      <Space orientation="vertical" style={{ width: "100%" }} size={12}>
         {error ? <Alert type="error" showIcon title={error} /> : null}
         {extraBeforeTheme}
         <div

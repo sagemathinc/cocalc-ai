@@ -61,7 +61,7 @@ export function PublicRedeemPasswordResetView({
       </Paragraph>
       {error ? (
         <Alert
-          message="Could not reset password"
+          title="Could not reset password"
           description={error}
           showIcon
           type="error"
@@ -105,7 +105,7 @@ export function PublicPasswordResetDoneView() {
   return (
     <Flex vertical gap={16}>
       <Alert
-        message="Password updated"
+        title="Password updated"
         description="Your password was changed successfully and you are now signed in."
         showIcon
         type="success"
@@ -174,14 +174,14 @@ export function PublicVerifyEmailView({
         </Flex>
       ) : success ? (
         <Alert
-          message="Email verified"
+          title="Email verified"
           description={success}
           showIcon
           type="success"
         />
       ) : (
         <Alert
-          message="Could not verify email"
+          title="Could not verify email"
           description={error || "This verification link is invalid or expired."}
           showIcon
           type="error"

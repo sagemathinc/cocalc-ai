@@ -206,7 +206,7 @@ export default function RestoreSnapshot() {
             </Button>,
           ]}
         >
-          <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+          <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
             <Alert
               type="warning"
               showIcon
@@ -292,7 +292,7 @@ export default function RestoreSnapshot() {
                 value={mode}
                 onChange={(e) => setMode(e.target.value as SnapshotRestoreMode)}
               >
-                <Space direction="vertical" size="small">
+                <Space orientation="vertical" size="small">
                   {(["both", "home", "rootfs"] as SnapshotRestoreMode[]).map(
                     (value) => (
                       <div key={value}>
