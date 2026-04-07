@@ -4,6 +4,7 @@ import { Icon } from "@cocalc/frontend/components/icon";
 import ShowError from "@cocalc/frontend/components/error";
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
+import { publishProjectDetailInvalidation } from "@cocalc/frontend/project/use-project-field";
 import {
   DEFAULT_BACKUP_COUNTS,
   type SnapshotSchedule,
@@ -68,6 +69,10 @@ export default function EditBackupSchedule() {
         query: {
           projects: { project_id, backups: schedule },
         },
+      });
+      publishProjectDetailInvalidation({
+        project_id,
+        fields: ["backups"],
       });
       setSchedule(schedule);
       setOpen(false);

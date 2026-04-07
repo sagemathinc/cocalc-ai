@@ -172,6 +172,14 @@ export interface AccountFeedNewsRefreshEvent {
   account_id: string;
 }
 
+export interface AccountFeedProjectDetailInvalidateEvent {
+  type: "project.detail.invalidate";
+  ts: number;
+  account_id: string;
+  project_id: string;
+  fields: string[];
+}
+
 export type AccountFeedEvent =
   | AccountFeedAccountUpsertEvent
   | AccountFeedNotificationUpsertEvent
@@ -181,7 +189,8 @@ export type AccountFeedEvent =
   | AccountFeedProjectRemoveEvent
   | AccountFeedCollaboratorUpsertEvent
   | AccountFeedCollaboratorRemoveEvent
-  | AccountFeedNewsRefreshEvent;
+  | AccountFeedNewsRefreshEvent
+  | AccountFeedProjectDetailInvalidateEvent;
 
 export function accountFeedStreamName(): string {
   return "account-feed";

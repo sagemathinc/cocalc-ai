@@ -7,7 +7,7 @@ import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type { ProjectCreated } from "@cocalc/conat/hub/api/projects";
 import { createProjectFieldState, useProjectField } from "./use-project-field";
 
-const createdFieldState = createProjectFieldState<ProjectCreated>();
+const createdFieldState = createProjectFieldState<ProjectCreated>("created");
 
 export function useProjectCreated(
   project_id: string,

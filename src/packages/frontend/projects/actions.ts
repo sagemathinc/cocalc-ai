@@ -34,6 +34,10 @@ import { defaultOpenProjectTarget } from "./open-project-default";
 import { evaluateHostOperational, hostLabel } from "./host-operational";
 import { getProjectUrlPath } from "@cocalc/frontend/project-routing";
 import {
+  invalidateProjectFields,
+  publishProjectDetailInvalidation,
+} from "@cocalc/frontend/project/use-project-field";
+import {
   buildOfflineMoveConfirmationDialog,
   parseOfflineMoveConfirmationError,
 } from "./offline-move-confirmation";
@@ -230,6 +234,12 @@ export class ProjectsActions extends Actions<ProjectsState> {
       case "project.remove":
         this.applyProjectFeedRemove(event.project_id);
         break;
+      case "project.detail.invalidate":
+        invalidateProjectFields({
+          project_id: event.project_id,
+          fields: event.fields,
+        });
+        break;
       default:
         break;
     }
@@ -246,7 +256,9 @@ export class ProjectsActions extends Actions<ProjectsState> {
     }
 
     const attachStore = (
-      store = this.redux.getStore("account") as typeof this.observedAccountStore,
+      store = this.redux.getStore(
+        "account",
+      ) as typeof this.observedAccountStore,
     ): void => {
       if (store === this.observedAccountStore) {
         return;
@@ -531,6 +543,10 @@ export class ProjectsActions extends Actions<ProjectsState> {
       return;
     }
     await this.projects_table_set({ project_id, launcher }, "shallow");
+    publishProjectDetailInvalidation({
+      project_id,
+      fields: ["launcher"],
+    });
   };
 
   setProjectColor = async (

@@ -7,7 +7,8 @@ import { createProjectFieldState, useProjectField } from "./use-project-field";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type { ProjectLauncherSettings } from "@cocalc/conat/hub/api/projects";
 
-const launcherFieldState = createProjectFieldState<ProjectLauncherSettings>();
+const launcherFieldState =
+  createProjectFieldState<ProjectLauncherSettings>("launcher");
 
 export function useProjectLauncher(
   project_id: string,

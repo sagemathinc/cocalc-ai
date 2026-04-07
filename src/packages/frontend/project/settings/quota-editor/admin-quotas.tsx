@@ -11,6 +11,7 @@ import { alert_message } from "@cocalc/frontend/alerts";
 import { CSS, useRedux } from "@cocalc/frontend/app-framework";
 import { Icon, Loading } from "@cocalc/frontend/components";
 import { labels } from "@cocalc/frontend/i18n";
+import { publishProjectDetailInvalidation } from "@cocalc/frontend/project/use-project-field";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import * as misc from "@cocalc/util/misc";
 import { PROJECT_UPGRADES } from "@cocalc/util/schema";
@@ -75,6 +76,10 @@ export default function AdminQuotas({ project_id, style }: Props) {
         network: quotaState.network ? 1 : 0,
         member_host: quotaState.member_host ? 1 : 0,
         always_running: quotaState.always_running ? 1 : 0,
+      });
+      publishProjectDetailInvalidation({
+        project_id,
+        fields: ["run_quota"],
       });
       alert_message({
         type: "success",

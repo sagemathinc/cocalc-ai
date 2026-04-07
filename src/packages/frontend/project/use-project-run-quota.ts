@@ -9,7 +9,8 @@ import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type { ProjectRunQuota } from "@cocalc/conat/hub/api/projects";
 import { createProjectFieldState, useProjectField } from "./use-project-field";
 
-const runQuotaFieldState = createProjectFieldState<ProjectRunQuota>();
+const runQuotaFieldState =
+  createProjectFieldState<ProjectRunQuota>("run_quota");
 
 export function useProjectRunQuota(project_id: string) {
   const projectStatus = useTypedRedux({ project_id }, "status");

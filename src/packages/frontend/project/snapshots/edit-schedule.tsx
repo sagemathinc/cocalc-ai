@@ -3,6 +3,7 @@ import { Button, Flex, InputNumber, Modal, Spin, Switch } from "antd";
 import { Icon } from "@cocalc/frontend/components/icon";
 import ShowError from "@cocalc/frontend/components/error";
 import { useProjectContext } from "@cocalc/frontend/project/context";
+import { publishProjectDetailInvalidation } from "@cocalc/frontend/project/use-project-field";
 import {
   DEFAULT_SNAPSHOT_COUNTS,
   type SnapshotSchedule,
@@ -71,6 +72,10 @@ export default function EditSchedule() {
         query: {
           projects: { project_id, snapshots: schedule },
         },
+      });
+      publishProjectDetailInvalidation({
+        project_id,
+        fields: ["snapshots"],
       });
       setSchedule(schedule);
       setOpen(false);

@@ -7,7 +7,7 @@ import { createProjectFieldState, useProjectField } from "./use-project-field";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type { ProjectRegion } from "@cocalc/conat/hub/api/projects";
 
-const regionFieldState = createProjectFieldState<ProjectRegion>();
+const regionFieldState = createProjectFieldState<ProjectRegion>("region");
 
 export function useProjectRegion(project_id: string) {
   const {
