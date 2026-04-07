@@ -519,6 +519,9 @@ async function snapshotSyncTree({
     const sourcePath = join(sourceDir, entry.name);
     const destinationPath = join(destinationDir, entry.name);
     if (entry.isDirectory()) {
+      // If the sync tree ever grows large, keep a persistent staged snapshot
+      // and refresh only sqlite files whose .db/.db-wal/.db-shm inputs changed
+      // since the previous backup instead of rebuilding the whole tree here.
       await snapshotSyncTree({
         sourceDir: sourcePath,
         destinationDir: destinationPath,
@@ -608,6 +611,8 @@ async function stageControlPlaneArtifacts({
       destinationDir: secretsSnapshotDir,
     });
     const secretsArchivePath = join(stagingDir, "secrets.tar.gz");
+    // A future upgrade could route this through rustic so the uploaded secret
+    // bundle gets deduplication plus backup-managed encryption at rest in R2.
     await tarGzDirectory({
       sourceDir: secretsSnapshotDir,
       archivePath: secretsArchivePath,
