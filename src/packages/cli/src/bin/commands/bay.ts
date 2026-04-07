@@ -50,6 +50,17 @@ export function registerBayCommand(
     });
 
   bay
+    .command("backup [bay_id]")
+    .description("run a one-bay postgres backup now")
+    .action(async (bay_id: string | undefined, command: Command) => {
+      await withContext(command, "bay backup", async (ctx) => {
+        return await ctx.hub.system.runBayBackup({
+          bay_id: bay_id?.trim() || undefined,
+        });
+      });
+    });
+
+  bay
     .command("backups [bay_id]")
     .description("show current backup and R2 health for one bay")
     .action(async (bay_id: string | undefined, command: Command) => {

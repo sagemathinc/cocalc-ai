@@ -58,6 +58,10 @@ import {
 } from "@cocalc/server/project-backup/r2";
 import { getProjectBackupInfrastructureStatus } from "@cocalc/server/project-backup";
 import {
+  getBayBackupStatus as getBayBackupStatus0,
+  runBayBackup as runBayBackup0,
+} from "@cocalc/server/bay-backup";
+import {
   listRootfsImagesAdmin,
   listVisibleRootfsImages,
   requestRootfsImageDeletion as requestRootfsImageDeletion0,
@@ -112,6 +116,7 @@ import { getAccountNotificationIndexProjectionMaintenanceStatus } from "@cocalc/
 import { getAppFeedData as listAppNews0 } from "@cocalc/database/postgres/news";
 import type { NewsItemWebapp } from "@cocalc/util/types/news";
 import type {
+  BayBackupRunResult,
   BayBackupsInfo,
   BayLoadBrowserControlStatus,
   BayLoadInfo,
@@ -342,7 +347,8 @@ export async function getBayBackups({
   if (requestedBayId && requestedBayId !== currentBay.bay_id) {
     throw Error(`bay '${requestedBayId}' not found`);
   }
-  const [infra, parallelOpsWorkers] = await Promise.all([
+  const [bayBackup, infra, parallelOpsWorkers] = await Promise.all([
+    getBayBackupStatus0({ bay_id: currentBay.bay_id }),
     getProjectBackupInfrastructureStatus({ bay_id: currentBay.bay_id }),
     getParallelOpsStatus0(),
   ]);
@@ -357,12 +363,25 @@ export async function getBayBackups({
   return {
     ...currentBay,
     checked_at: new Date().toISOString(),
+    postgres: bayBackup.postgres,
+    bay_backup: bayBackup.bay_backup,
     r2: infra.r2,
     repos: infra.repos,
     projects: infra.projects,
     backup_admission: backupAdmission,
     backup_execution: backupExecution,
   };
+}
+
+export async function runBayBackup({
+  account_id,
+  bay_id,
+}: {
+  account_id?: string;
+  bay_id?: string;
+}): Promise<BayBackupRunResult> {
+  await assertAdmin(account_id);
+  return await runBayBackup0({ bay_id });
 }
 
 export async function getAccountBay({

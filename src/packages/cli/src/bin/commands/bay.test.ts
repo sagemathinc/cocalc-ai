@@ -196,6 +196,97 @@ test("bay backups calls the hub bay-backups snapshot API", async () => {
   assert.equal(captured?.bay_id, "bay-0");
 });
 
+test("bay backup calls the hub run-bay-backup API", async () => {
+  let captured: any;
+  let callOpts: any;
+  const program = new Command();
+  registerBayCommand(program, {
+    withContext: async (_command, _label, fn) => {
+      const ctx = {
+        hub: {
+          system: {
+            runBayBackup: async (opts: any) => {
+              callOpts = opts;
+              return {
+                bay_id: "bay-0",
+                label: "bay-0",
+                region: null,
+                deployment_mode: "single-bay",
+                role: "combined",
+                is_default: true,
+                started_at: "2026-04-07T08:00:00.000Z",
+                finished_at: "2026-04-07T08:01:00.000Z",
+                backup_set_id: "backup-1",
+                format: "pg_basebackup",
+                bucket_name: "lite4-dev-wnam",
+                object_prefix: "bay-backups/bay-0/backup-1",
+                local_manifest_path: "/tmp/manifest.json",
+                storage_backend: "r2",
+                artifact_count: 2,
+                artifact_bytes: 12345,
+                artifacts: [],
+                postgres: {
+                  host: "/tmp/pg",
+                  port: 5432,
+                  user: "smc",
+                  database: "smc",
+                  current_user: "smc",
+                  role_superuser: true,
+                  role_replication: true,
+                  data_directory: "/tmp/data",
+                  config_file: "/tmp/data/postgresql.conf",
+                  archive_mode: "off",
+                  wal_level: "replica",
+                  max_wal_senders: 10,
+                  can_basebackup: true,
+                  preferred_strategy: "pg_basebackup",
+                },
+                bay_backup: {
+                  enabled: true,
+                  backup_root: "/tmp/backups",
+                  state_file: "/tmp/backups/state.json",
+                  archives_dir: "/tmp/backups/archives",
+                  manifests_dir: "/tmp/backups/manifests",
+                  staging_dir: "/tmp/backups/staging",
+                  r2_configured: true,
+                  current_storage_backend: "r2",
+                  bucket_name: "lite4-dev-wnam",
+                  bucket_region: "wnam",
+                  bucket_endpoint: "https://example.invalid",
+                  object_prefix_root: "bay-backups/bay-0",
+                  latest_backup_set_id: "backup-1",
+                  latest_format: "pg_basebackup",
+                  latest_storage_backend: "r2",
+                  latest_local_manifest_path: "/tmp/manifest.json",
+                  latest_remote_manifest_key:
+                    "bay-backups/bay-0/backup-1/manifest.json",
+                  latest_object_prefix: "bay-backups/bay-0/backup-1",
+                  latest_artifact_count: 2,
+                  latest_artifact_bytes: 12345,
+                  last_started_at: "2026-04-07T08:00:00.000Z",
+                  last_finished_at: "2026-04-07T08:01:00.000Z",
+                  last_successful_backup_at: "2026-04-07T08:01:00.000Z",
+                  last_successful_remote_backup_at: "2026-04-07T08:01:00.000Z",
+                  last_successful_wal_archive_at: null,
+                  last_error_at: null,
+                  last_error: null,
+                  restore_state: "ready",
+                },
+              };
+            },
+          },
+        },
+      };
+      captured = await fn(ctx);
+    },
+  } as any);
+
+  await program.parseAsync(["node", "test", "bay", "backup", "bay-0"]);
+
+  assert.deepEqual(callOpts, { bay_id: "bay-0" });
+  assert.equal(captured?.backup_set_id, "backup-1");
+});
+
 test("bay backfill defaults to a dry run", async () => {
   let captured: any;
   const program = new Command();
