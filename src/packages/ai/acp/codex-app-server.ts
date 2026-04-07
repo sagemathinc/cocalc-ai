@@ -311,8 +311,13 @@ type RunningTurn = {
   exited: Promise<void>;
 };
 
-type RetryableRemoteCompactError = Error & {
-  retryableRemoteCompactTimeout: true;
+type RetryableAppServerFailureKind =
+  | "remote-compact-timeout"
+  | "model-capacity";
+
+type RetryableAppServerError = Error & {
+  retryableAppServerError: true;
+  kind: RetryableAppServerFailureKind;
   threadId?: string;
   turnId?: string;
   stderrTail?: string[];
@@ -603,6 +608,20 @@ function getRemoteCompactRetryDelayMs(): number {
   );
 }
 
+function getModelCapacityRetryLimit(): number {
+  return Math.max(
+    0,
+    Number(process.env.COCALC_CODEX_MODEL_CAPACITY_MAX_RETRIES ?? 2),
+  );
+}
+
+function getModelCapacityRetryDelayMs(): number {
+  return Math.max(
+    1_000,
+    Number(process.env.COCALC_CODEX_MODEL_CAPACITY_RETRY_DELAY_MS ?? 60_000),
+  );
+}
+
 function isRetryableRemoteCompactTimeoutText(text: string): boolean {
   const normalized = stripAnsi(`${text ?? ""}`).toLowerCase();
   if (!normalized.includes("error running remote compact task")) {
@@ -614,6 +633,13 @@ function isRetryableRemoteCompactTimeoutText(text: string): boolean {
     ) ||
     normalized.includes("compact_remote: remote compaction failed") ||
     normalized.includes("remote compaction failed")
+  );
+}
+
+function isRetryableModelCapacityText(text: string): boolean {
+  const normalized = stripAnsi(`${text ?? ""}`).toLowerCase();
+  return normalized.includes(
+    "selected model is at capacity. please try a different model.",
   );
 }
 
@@ -633,24 +659,26 @@ function hasObservableTurnSideEffects(opts: {
   );
 }
 
-function createRetryableRemoteCompactError(opts: {
+function createRetryableAppServerError(opts: {
+  kind: RetryableAppServerFailureKind;
   message: string;
   threadId?: string;
   turnId?: string;
   stderrTail?: string[];
-}): RetryableRemoteCompactError {
+}): RetryableAppServerError {
   return Object.assign(new Error(opts.message), {
-    retryableRemoteCompactTimeout: true as const,
+    retryableAppServerError: true as const,
+    kind: opts.kind,
     threadId: opts.threadId,
     turnId: opts.turnId,
     stderrTail: opts.stderrTail,
   });
 }
 
-function isRetryableRemoteCompactError(
+function isRetryableAppServerError(
   err: unknown,
-): err is RetryableRemoteCompactError {
-  return !!(err as RetryableRemoteCompactError)?.retryableRemoteCompactTimeout;
+): err is RetryableAppServerError {
+  return !!(err as RetryableAppServerError)?.retryableAppServerError;
 }
 
 function formatRemoteCompactRetryExhaustedError(error: string): string {
@@ -658,6 +686,56 @@ function formatRemoteCompactRetryExhaustedError(error: string): string {
   const guidance =
     "This looks like an upstream Codex remote context-compaction timeout. If it keeps happening, try forking or starting a fresh chat to reduce history size, or switch to a model with a larger context window.";
   return normalized ? `${normalized}\n\n${guidance}` : guidance;
+}
+
+function formatModelCapacityRetryExhaustedError(error: string): string {
+  const normalized = `${error ?? ""}`.trim();
+  const guidance =
+    "The selected model stayed at capacity after automatic retries. Try again later, or switch to a different model if the turn is urgent.";
+  return normalized ? `${normalized}\n\n${guidance}` : guidance;
+}
+
+function formatRetryDelay(ms: number): string {
+  if (ms >= 60_000 && ms % 60_000 === 0) {
+    const minutes = ms / 60_000;
+    return minutes === 1 ? "1 minute" : `${minutes} minutes`;
+  }
+  if (ms >= 1_000 && ms % 1_000 === 0) {
+    const seconds = ms / 1_000;
+    return seconds === 1 ? "1 second" : `${seconds} seconds`;
+  }
+  return `${ms}ms`;
+}
+
+function getRetryPolicyForFailure(kind: RetryableAppServerFailureKind): {
+  maxRetries: number;
+  retryDelayMs: number;
+  retryMessage: (attempt: number, maxRetries: number) => string;
+  exhaustedMessage: (error: string) => string;
+} {
+  switch (kind) {
+    case "model-capacity": {
+      const retryDelayMs = getModelCapacityRetryDelayMs();
+      return {
+        maxRetries: getModelCapacityRetryLimit(),
+        retryDelayMs,
+        retryMessage: (attempt, maxRetries) =>
+          `Selected model is at capacity. Retrying in ${formatRetryDelay(retryDelayMs * attempt)} (${attempt}/${maxRetries})...`,
+        exhaustedMessage: formatModelCapacityRetryExhaustedError,
+      };
+    }
+    case "remote-compact-timeout":
+    default: {
+      const retryDelayMs = getRemoteCompactRetryDelayMs();
+      return {
+        maxRetries: getRemoteCompactRetryLimit(),
+        retryDelayMs,
+        retryMessage: (attempt, maxRetries) =>
+          `Remote context compaction timed out. Retrying (${attempt}/${maxRetries})...`,
+        exhaustedMessage: formatRemoteCompactRetryExhaustedError,
+      };
+    }
+  }
 }
 
 async function delay(ms: number): Promise<void> {
@@ -1022,9 +1100,11 @@ export class CodexAppServerAgent implements AcpAgent {
   private readonly running = new Map<string, RunningTurn>();
 
   async evaluate(request: AcpEvaluateRequest): Promise<void> {
-    const maxRetries = getRemoteCompactRetryLimit();
-    const retryDelayMs = getRemoteCompactRetryDelayMs();
-    for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+    let maxRetries = 0;
+    let retryDelayMs = 0;
+    let retryMessage = (_attempt: number, _maxRetries: number) => "Retrying...";
+    let exhaustedMessage = (error: string) => error;
+    for (let attempt = 0; ; attempt += 1) {
       try {
         const outcome = await this.evaluateOnce(request);
         if (outcome === "interrupted") {
@@ -1032,18 +1112,26 @@ export class CodexAppServerAgent implements AcpAgent {
         }
         return;
       } catch (err) {
-        if (!isRetryableRemoteCompactError(err) || attempt >= maxRetries) {
+        if (isRetryableAppServerError(err)) {
+          const policy = getRetryPolicyForFailure(err.kind);
+          maxRetries = policy.maxRetries;
+          retryDelayMs = policy.retryDelayMs;
+          retryMessage = policy.retryMessage;
+          exhaustedMessage = policy.exhaustedMessage;
+        }
+        if (!isRetryableAppServerError(err) || attempt >= maxRetries) {
           const error =
-            isRetryableRemoteCompactError(err) && attempt >= maxRetries
-              ? formatRemoteCompactRetryExhaustedError(err.message ?? `${err}`)
+            isRetryableAppServerError(err) && attempt >= maxRetries
+              ? exhaustedMessage(err.message ?? `${err}`)
               : ((err as Error)?.message ?? `${err}`);
           await request.stream({ type: "error", error });
           return;
         }
         const retryNumber = attempt + 1;
-        logger.warn("codex app-server: retrying remote compaction timeout", {
+        logger.warn("codex app-server: retrying transient failure", {
           projectId: request.chat?.project_id ?? request.project_id,
           accountId: request.account_id,
+          kind: err.kind,
           threadId: err.threadId,
           turnId: err.turnId,
           attempt: retryNumber,
@@ -1055,7 +1143,7 @@ export class CodexAppServerAgent implements AcpAgent {
           type: "event",
           event: {
             type: "thinking",
-            text: `Remote context compaction timed out. Retrying (${retryNumber}/${maxRetries})...`,
+            text: retryMessage(retryNumber, maxRetries),
           },
         });
         await delay(retryDelayMs * retryNumber);
@@ -1721,7 +1809,8 @@ export class CodexAppServerAgent implements AcpAgent {
         stderrTail,
       });
       if (
-        isRetryableRemoteCompactTimeoutText(error) &&
+        (isRetryableRemoteCompactTimeoutText(error) ||
+          isRetryableModelCapacityText(error)) &&
         !hasObservableTurnSideEffects({
           startedTerminalIds,
           emittedFileWrites,
@@ -1730,7 +1819,10 @@ export class CodexAppServerAgent implements AcpAgent {
           latestTurnDiffText,
         })
       ) {
-        throw createRetryableRemoteCompactError({
+        throw createRetryableAppServerError({
+          kind: isRetryableModelCapacityText(error)
+            ? "model-capacity"
+            : "remote-compact-timeout",
           message: error,
           threadId: currentThreadId,
           turnId,
