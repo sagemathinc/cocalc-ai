@@ -7,6 +7,7 @@ import ShowError from "@cocalc/frontend/components/error";
 import { HostPickerModal } from "@cocalc/frontend/hosts/pick-host";
 import { DEFAULT_R2_REGION } from "@cocalc/util/consts";
 import { useHostInfo } from "@cocalc/frontend/projects/host-info";
+import { useProjectRegion } from "../use-project-region";
 
 interface Props {
   project_id: string;
@@ -36,10 +37,9 @@ export default function MoveProject({
   const hostInfo = useHostInfo(currentHostId);
   const url = hostInfo?.get?.("connect_url");
   const hostName = hostInfo?.get?.("name") ?? url ?? "Not Assigned";
-  const projectRegion = String(
-    useTypedRedux("projects", "project_map")?.getIn([project_id, "region"]) ??
-      DEFAULT_R2_REGION,
-  );
+  const { region: projectRegionRaw, refresh: refreshProjectRegion } =
+    useProjectRegion(project_id);
+  const projectRegion = String(projectRegionRaw ?? DEFAULT_R2_REGION);
 
   return (
     <>
@@ -50,6 +50,7 @@ export default function MoveProject({
         onClick={async () => {
           try {
             setMoving(true);
+            refreshProjectRegion();
             setPickerOpen(true);
           } catch (err) {
             setError(`${err}`);

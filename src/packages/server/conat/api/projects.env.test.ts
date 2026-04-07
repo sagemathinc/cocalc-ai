@@ -34,7 +34,7 @@ jest.mock("@cocalc/server/account/project-detail-feed", () => ({
     publishProjectDetailInvalidationBestEffortMock(...args),
 }));
 
-describe("getProjectLauncher", () => {
+describe("project env helpers", () => {
   const ACCOUNT_ID = "11111111-1111-4111-8111-111111111111";
   const PROJECT_ID = "22222222-2222-4222-8222-222222222222";
 
@@ -44,7 +44,7 @@ describe("getProjectLauncher", () => {
     assertCollabMock = jest.fn(async () => undefined);
     isAdminMock = jest.fn(async () => false);
     queryMock = jest.fn(async () => ({
-      rows: [{ launcher: { quickCreate: ["chat", "ipynb"] } }],
+      rows: [{ env: { FOO: "bar", PATH: "/custom/bin:$PATH" } }],
     }));
     getPoolMock = jest.fn(() => ({ query: queryMock }));
     publishProjectDetailInvalidationBestEffortMock = jest.fn(
@@ -52,65 +52,45 @@ describe("getProjectLauncher", () => {
     );
   });
 
-  it("returns launcher settings for a collaborator", async () => {
-    const { getProjectLauncher } = await import("./projects");
+  it("returns project env for a collaborator", async () => {
+    const { getProjectEnv } = await import("./projects");
     await expect(
-      getProjectLauncher({
+      getProjectEnv({
         account_id: ACCOUNT_ID,
         project_id: PROJECT_ID,
       }),
-    ).resolves.toEqual({ quickCreate: ["chat", "ipynb"] });
-    expect(assertLocalProjectCollaboratorMock).toHaveBeenCalledWith({
-      account_id: ACCOUNT_ID,
-      project_id: PROJECT_ID,
-    });
-    expect(isAdminMock).not.toHaveBeenCalled();
+    ).resolves.toEqual({ FOO: "bar", PATH: "/custom/bin:$PATH" });
     expect(queryMock).toHaveBeenCalledWith(
-      "SELECT launcher FROM projects WHERE project_id = $1",
+      "SELECT env FROM projects WHERE project_id = $1",
       [PROJECT_ID],
     );
   });
 
-  it("allows admins to read launcher settings without collaborator access", async () => {
+  it("allows admins to read project env without collaborator access", async () => {
     assertLocalProjectCollaboratorMock = jest.fn(async () => {
       throw new Error("not a collaborator");
     });
     isAdminMock = jest.fn(async () => true);
-    const { getProjectLauncher } = await import("./projects");
+    const { getProjectEnv } = await import("./projects");
     await expect(
-      getProjectLauncher({
+      getProjectEnv({
         account_id: ACCOUNT_ID,
         project_id: PROJECT_ID,
       }),
-    ).resolves.toEqual({ quickCreate: ["chat", "ipynb"] });
+    ).resolves.toEqual({ FOO: "bar", PATH: "/custom/bin:$PATH" });
     expect(isAdminMock).toHaveBeenCalledWith(ACCOUNT_ID);
   });
 
-  it("rejects non-admin non-collaborators", async () => {
-    assertLocalProjectCollaboratorMock = jest.fn(async () => {
-      throw new Error("not a collaborator");
-    });
-    isAdminMock = jest.fn(async () => false);
-    const { getProjectLauncher } = await import("./projects");
-    await expect(
-      getProjectLauncher({
-        account_id: ACCOUNT_ID,
-        project_id: PROJECT_ID,
-      }),
-    ).rejects.toThrow("not a collaborator");
-    expect(queryMock).not.toHaveBeenCalled();
-  });
-
-  it("updates launcher settings and publishes detail invalidation", async () => {
+  it("updates project env and publishes detail invalidation", async () => {
     queryMock = jest.fn(async () => ({ rows: [] }));
     getPoolMock = jest.fn(() => ({ query: queryMock }));
-    const { setProjectLauncher } = await import("./projects");
+    const { setProjectEnv } = await import("./projects");
 
     await expect(
-      setProjectLauncher({
+      setProjectEnv({
         account_id: ACCOUNT_ID,
         project_id: PROJECT_ID,
-        launcher: { quickCreate: ["term"] },
+        env: { HELLO: "world" },
       }),
     ).resolves.toBeUndefined();
 
@@ -119,13 +99,13 @@ describe("getProjectLauncher", () => {
       project_id: PROJECT_ID,
     });
     expect(queryMock).toHaveBeenCalledWith(
-      "UPDATE projects SET launcher = $2 WHERE project_id = $1",
-      [PROJECT_ID, { quickCreate: ["term"] }],
+      "UPDATE projects SET env = $2 WHERE project_id = $1",
+      [PROJECT_ID, { HELLO: "world" }],
     );
     expect(publishProjectDetailInvalidationBestEffortMock).toHaveBeenCalledWith(
       {
         project_id: PROJECT_ID,
-        fields: ["launcher"],
+        fields: ["env"],
       },
     );
   });

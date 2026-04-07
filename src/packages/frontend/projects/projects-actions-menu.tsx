@@ -37,6 +37,7 @@ import {
 } from "./util";
 import { HostPickerModal } from "@cocalc/frontend/hosts/pick-host";
 import { DEFAULT_R2_REGION } from "@cocalc/util/consts";
+import { useProjectRegion } from "@cocalc/frontend/project/use-project-region";
 
 const FILES_SUBMENU_LIST_STYLE: CSS = {
   maxWidth: "80vw",
@@ -63,9 +64,9 @@ export function ProjectActionsMenu({ record }: Props) {
   const currentHostId = project_map?.getIn([record.project_id, "host_id"]) as
     | string
     | undefined;
-  const projectRegion = String(
-    project_map?.getIn([record.project_id, "region"]) ?? DEFAULT_R2_REGION,
-  );
+  const { region: projectRegionRaw, refresh: refreshProjectRegion } =
+    useProjectRegion(record.project_id);
+  const projectRegion = String(projectRegionRaw ?? DEFAULT_R2_REGION);
   const project_log = useTypedRedux(
     { project_id: record.project_id },
     "project_log",
@@ -148,6 +149,7 @@ export function ProjectActionsMenu({ record }: Props) {
         openProjectTab("users");
         break;
       case "move":
+        refreshProjectRegion();
         setMoveOpen(true);
         break;
       case "settings":

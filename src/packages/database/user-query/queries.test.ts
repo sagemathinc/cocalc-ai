@@ -476,62 +476,6 @@ describe("postgres user-queries - Comprehensive Test Suite", () => {
       });
     });
 
-    describe("project_action", () => {
-      test("should handle test action", (done) => {
-        db.project_action({
-          project_id: "test-project",
-          action_request: { action: "test", time: new Date() },
-          cb: (err) => {
-            expect(err).toBeUndefined();
-            done();
-          },
-        });
-      });
-
-      test("should handle start action", (done) => {
-        const mockProject = {
-          start: jest.fn().mockResolvedValue(undefined),
-        };
-
-        db.projectControl.mockResolvedValue(mockProject);
-        db._query.mockImplementation((opts) => opts.cb());
-
-        db.project_action({
-          project_id: "test-project",
-          action_request: { action: "start", time: new Date() },
-          cb: (err) => {
-            expect(err).toBeUndefined();
-            expect(mockProject.start).toHaveBeenCalled();
-            done();
-          },
-        });
-      });
-
-      test("should handle unknown action", (done) => {
-        let finishedAction: any = null;
-        db._query.mockImplementation((opts) => {
-          if (opts.jsonb_set?.action_request?.finished != null) {
-            finishedAction = opts.jsonb_set.action_request;
-          }
-          opts.cb();
-        });
-
-        db.projectControl.mockResolvedValue({});
-
-        db.project_action({
-          project_id: "test-project",
-          action_request: { action: "unknown", time: new Date() },
-          cb: (err) => {
-            expect(err).toBeFalsy();
-            expect(finishedAction?.err?.toString()).toContain(
-              "not implemented",
-            );
-            done();
-          },
-        });
-      });
-    });
-
     describe("updateRetentionData", () => {
       test("should be an async function", () => {
         expect(db.updateRetentionData).toBeDefined();

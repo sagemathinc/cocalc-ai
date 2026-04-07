@@ -24,7 +24,6 @@ import type { ChatState } from "@cocalc/frontend/chat/chat-indicator";
 import { initChat } from "@cocalc/frontend/chat/register";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { local_storage } from "@cocalc/frontend/editor-local-storage";
-import { query as client_query } from "@cocalc/frontend/frame-editors/generic/client";
 import { set_url } from "@cocalc/frontend/history";
 import {
   download_file,
@@ -113,6 +112,7 @@ import {
   SNAPSHOTS,
   DEFAULT_SNAPSHOT_COUNTS,
   DEFAULT_BACKUP_COUNTS,
+  type SnapshotSchedule,
   isSnapshotsPath,
 } from "@cocalc/util/consts/snapshots";
 import { getSearch } from "@cocalc/frontend/project/explorer/config";
@@ -142,6 +142,10 @@ import {
   newestProjectLogCursor,
   oldestProjectLogCursor,
 } from "@cocalc/frontend/project/log-state";
+import {
+  publishProjectDetailInvalidation,
+  subscribeProjectDetailInvalidation,
+} from "@cocalc/frontend/project/use-project-field";
 
 const { defaults, required } = misc;
 
@@ -152,6 +156,20 @@ const BANNED_FILE_TYPES = new Set(["doc", "docx", "pdf", "sws"]);
 const FROM_WEB_TIMEOUT_S = 45;
 const PROJECT_LOG_BATCH_LIMIT = 750;
 const MAX_PROJECT_LOG_REFRESH_BATCHES = 20;
+
+function snapshotCountsFromSchedule(
+  schedule: SnapshotSchedule,
+): SnapshotSchedule {
+  return {
+    frequent: schedule.frequent,
+    daily: schedule.daily,
+    weekly: schedule.weekly,
+    monthly: schedule.monthly,
+    ...(schedule.disabled != null
+      ? { disabled: schedule.disabled }
+      : undefined),
+  };
+}
 
 export const QUERIES = {
   project_log: {
@@ -325,6 +343,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
   private rootfsPublishOpsManager: RootfsPublishOpsManager;
   private startOpsManager: StartOpsManager;
   private moveOpsManager: MoveOpsManager;
+  private unsubscribeProjectDetailInvalidation?: () => void;
 
   constructor(name, b) {
     super(name, b);
@@ -384,6 +403,15 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       dismissLro: (opts) => webapp_client.conat_client.hub.lro.dismiss(opts),
       log: (message, err) => console.warn(message, err),
     });
+    this.unsubscribeProjectDetailInvalidation =
+      subscribeProjectDetailInvalidation(this.project_id, (fields) => {
+        if (fields.includes("snapshots")) {
+          void this.pushSnapshotScheduleUpdate();
+        }
+        if (fields.includes("backups")) {
+          void this.pushBackupScheduleUpdate();
+        }
+      });
     // console.log("create project actions", this.project_id);
     // console.trace("create project actions", this.project_id)
     this.expensiveLoop();
@@ -553,6 +581,8 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       return;
     }
     this.closeExpensive();
+    this.unsubscribeProjectDetailInvalidation?.();
+    this.unsubscribeProjectDetailInvalidation = undefined;
     this.open_files?.close();
     delete this.open_files;
     this.state = "closed";
@@ -3186,20 +3216,21 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     }
   };
 
-  async set_environment(env: object): Promise<void> {
-    if (typeof env != "object") {
+  async set_environment(env: Record<string, unknown>): Promise<void> {
+    if (typeof env != "object" || env == null || Array.isArray(env)) {
       throw Error("env must be an object");
     }
+    const nextEnv: Record<string, string> = {};
     for (const key in env) {
-      env[key] = `${env[key]}`;
+      nextEnv[key] = `${env[key]}`;
     }
-    await client_query({
-      query: {
-        projects: {
-          project_id: this.project_id,
-          env,
-        },
-      },
+    await webapp_client.conat_client.hub.projects.setProjectEnv({
+      project_id: this.project_id,
+      env: nextEnv,
+    });
+    publishProjectDetailInvalidation({
+      project_id: this.project_id,
+      fields: ["env"],
     });
   }
 
@@ -3517,37 +3548,95 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     }
   };
 
+  private loadSnapshotSchedule = async (): Promise<SnapshotSchedule> => {
+    return {
+      ...DEFAULT_SNAPSHOT_COUNTS,
+      ...((await webapp_client.conat_client.hub.projects.getProjectSnapshotSchedule(
+        {
+          project_id: this.project_id,
+        },
+      )) ?? {}),
+    };
+  };
+
+  private loadBackupSchedule = async (): Promise<SnapshotSchedule> => {
+    return {
+      ...DEFAULT_BACKUP_COUNTS,
+      ...((await webapp_client.conat_client.hub.projects.getProjectBackupSchedule(
+        {
+          project_id: this.project_id,
+        },
+      )) ?? {}),
+    };
+  };
+
+  private syncSnapshotSchedule = async (
+    schedule: SnapshotSchedule,
+  ): Promise<void> => {
+    if (schedule.disabled) {
+      return;
+    }
+    try {
+      await webapp_client.conat_client.hub.projects.updateSnapshots({
+        project_id: this.project_id,
+        counts: snapshotCountsFromSchedule(schedule),
+      });
+    } catch (err) {
+      if (!`${err}`.includes("no subscribers matching")) {
+        console.warn(
+          `WARNING: Issue updating snapshots of ${this.project_id}`,
+          err,
+          { schedule },
+        );
+      }
+    }
+  };
+
+  private syncBackupSchedule = async (
+    schedule: SnapshotSchedule,
+  ): Promise<void> => {
+    if (schedule.disabled) {
+      return;
+    }
+    try {
+      await webapp_client.conat_client.hub.projects.updateBackups({
+        project_id: this.project_id,
+        counts: snapshotCountsFromSchedule(schedule),
+      });
+    } catch (err) {
+      if (!`${err}`.includes("no subscribers matching")) {
+        console.warn(
+          `WARNING: Issue updating backups of ${this.project_id}`,
+          err,
+          { schedule },
+        );
+      }
+    }
+  };
+
+  private pushSnapshotScheduleUpdate = throttle(
+    async () => {
+      if (lite || this.isClosed()) return;
+      await this.syncSnapshotSchedule(await this.loadSnapshotSchedule());
+    },
+    1000,
+    { leading: true, trailing: true },
+  );
+
+  private pushBackupScheduleUpdate = throttle(
+    async () => {
+      if (lite || this.isClosed()) return;
+      await this.syncBackupSchedule(await this.loadBackupSchedule());
+    },
+    1000,
+    { leading: true, trailing: true },
+  );
+
   initSnapshots = reuseInFlight(async () => {
     await until(
       async () => {
         if (lite || this.isClosed()) return true;
-        const store = redux.getStore("projects");
-        if (store == null) {
-          return false;
-        }
-        const project = store.getIn(["project_map", this.project_id]);
-        if (project == null) {
-          return false;
-        }
-        const counts =
-          project.get("snapshots")?.toJS() ?? DEFAULT_SNAPSHOT_COUNTS;
-        if (counts.disabled) {
-          return false;
-        }
-        try {
-          await webapp_client.conat_client.hub.projects.updateSnapshots({
-            project_id: this.project_id,
-            counts,
-          });
-        } catch (err) {
-          if (!`${err}`.includes("no subscribers matching")) {
-            console.warn(
-              `WARNING: Issue updating snapshots of ${this.project_id}`,
-              err,
-              { counts },
-            );
-          }
-        }
+        await this.syncSnapshotSchedule(await this.loadSnapshotSchedule());
         return false;
       },
       // every 15 minutes
@@ -3559,33 +3648,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     await until(
       async () => {
         if (lite || this.isClosed()) return true;
-        const store = redux.getStore("projects");
-        if (store == null) {
-          return false;
-        }
-        const project = store.getIn(["project_map", this.project_id]);
-        if (project == null) {
-          return false;
-        }
-        const counts = project.get("backups")?.toJS() ?? DEFAULT_BACKUP_COUNTS;
-        if (counts.disabled) {
-          return false;
-        }
-        try {
-          await webapp_client.conat_client.hub.projects.updateBackups({
-            project_id: this.project_id,
-            counts,
-          });
-        } catch (err) {
-          // if can't backup because no host, no need to report that
-          if (!`${err}`.includes("no subscribers matching")) {
-            console.warn(
-              `WARNING: Issue updating backups of ${this.project_id}`,
-              err,
-              { counts },
-            );
-          }
-        }
+        await this.syncBackupSchedule(await this.loadBackupSchedule());
         return false;
       },
       // every hour - though usually make only one backup per day

@@ -5,6 +5,7 @@ import { SERVICE as PERSIST_SERVICE } from "@cocalc/conat/persist/util";
 import type { LroSummary } from "@cocalc/conat/hub/api/lro";
 import { type SnapshotCounts } from "@cocalc/util/db-schema/projects";
 import { type SnapshotRestoreMode } from "@cocalc/conat/files/file-server";
+import { publishProjectDetailInvalidationBestEffort } from "@cocalc/server/account/project-detail-feed";
 import { assertCollab } from "./util";
 import { getProjectFileServerClient } from "@cocalc/server/conat/file-server-client";
 
@@ -93,6 +94,10 @@ export async function updateSnapshots({
     project_id,
     counts,
     limit: MAX_SNAPSHOTS_PER_PROJECT,
+  });
+  await publishProjectDetailInvalidationBestEffort({
+    project_id,
+    fields: ["snapshots"],
   });
 }
 

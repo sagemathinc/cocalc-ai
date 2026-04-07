@@ -3,6 +3,7 @@ import { Button, Flex, InputNumber, Modal, Spin, Switch } from "antd";
 import { Icon } from "@cocalc/frontend/components/icon";
 import ShowError from "@cocalc/frontend/components/error";
 import { useProjectContext } from "@cocalc/frontend/project/context";
+import { publishProjectDetailInvalidation } from "@cocalc/frontend/project/use-project-field";
 import {
   DEFAULT_SNAPSHOT_COUNTS,
   type SnapshotSchedule,
@@ -18,9 +19,32 @@ export default function EditSchedule() {
   const [open, setOpen] = useState<boolean>(false);
   const [showHelp, setShowHelp] = useState<boolean>(false);
   const [error, setError] = useState<string>("");
-  const project = useTypedRedux("projects", "project_map")?.get(project_id);
   const openSchedule = useTypedRedux({ project_id }, "open_snapshot_schedule");
   const [schedule0, setSchedule] = useState<SnapshotSchedule | null>(null);
+
+  async function loadSchedule(): Promise<SnapshotSchedule> {
+    const counts =
+      await webapp_client.conat_client.hub.projects.getProjectSnapshotSchedule({
+        project_id,
+      });
+    return {
+      ...DEFAULT_SNAPSHOT_COUNTS,
+      ...(counts ?? {}),
+    };
+  }
+
+  async function openModal(): Promise<void> {
+    try {
+      setLoading(true);
+      setError("");
+      setSchedule(await loadSchedule());
+      setOpen(true);
+    } catch (err) {
+      setError(`${err}`);
+    } finally {
+      setLoading(false);
+    }
+  }
 
   useEffect(() => {
     if (!open) {
@@ -33,18 +57,11 @@ export default function EditSchedule() {
   }, [open]);
 
   useEffect(() => {
-    if (!openSchedule || !project) return;
-    setSchedule({
-      ...DEFAULT_SNAPSHOT_COUNTS,
-      ...project.get("snapshots")?.toJS(),
-    });
-    setOpen(true);
-    actions?.setState({ open_snapshot_schedule: false });
-  }, [actions, openSchedule, project]);
-
-  if (project == null) {
-    return null;
-  }
+    if (!openSchedule) return;
+    void openModal().finally(() =>
+      actions?.setState({ open_snapshot_schedule: false }),
+    );
+  }, [actions, openSchedule, project_id]);
 
   const schedule = schedule0!;
   async function saveSchedule() {
@@ -56,6 +73,11 @@ export default function EditSchedule() {
           projects: { project_id, snapshots: schedule },
         },
       });
+      publishProjectDetailInvalidation({
+        project_id,
+        fields: ["snapshots"],
+      });
+      setSchedule(schedule);
       setOpen(false);
     } catch (err) {
       setError(err);
@@ -65,19 +87,7 @@ export default function EditSchedule() {
   }
   return (
     <>
-      <Button
-        disabled={open}
-        onClick={() => {
-          setOpen(!open);
-          if (!open) {
-            // opening
-            setSchedule({
-              ...DEFAULT_SNAPSHOT_COUNTS,
-              ...project.get("snapshots")?.toJS(),
-            });
-          }
-        }}
-      >
+      <Button disabled={open || loading} onClick={() => void openModal()}>
         <Icon name="clock" /> Schedule
       </Button>
       {open && (

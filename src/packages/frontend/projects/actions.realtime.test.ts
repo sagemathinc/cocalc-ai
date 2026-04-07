@@ -18,6 +18,13 @@ jest.mock("./store", () => ({
   },
 }));
 
+const invalidateProjectFieldsMock = jest.fn();
+
+jest.mock("@cocalc/frontend/project/use-project-field", () => ({
+  invalidateProjectFields: (...args: any[]) =>
+    invalidateProjectFieldsMock(...args),
+}));
+
 jest.mock("@cocalc/frontend/webapp-client", () => {
   class MockFeed extends EventEmitter {
     private closed = false;
@@ -107,8 +114,8 @@ describe("ProjectsActions realtime feed", () => {
       ephemeral: true,
     });
 
-    const feed = await mockedWebappClient.conat_client.dstream.mock.results[0]
-      .value;
+    const feed =
+      await mockedWebappClient.conat_client.dstream.mock.results[0].value;
     feed.emit("change", {
       type: "project.upsert",
       ts: Date.now(),
@@ -161,8 +168,8 @@ describe("ProjectsActions realtime feed", () => {
     actions._init();
     await flush();
 
-    const feed = await mockedWebappClient.conat_client.dstream.mock.results[0]
-      .value;
+    const feed =
+      await mockedWebappClient.conat_client.dstream.mock.results[0].value;
     feed.emit("history-gap", {
       requested_start_seq: 1,
       effective_start_seq: 5,
@@ -172,6 +179,43 @@ describe("ProjectsActions realtime feed", () => {
     await flush();
 
     expect(refreshProjectsTableMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("forwards project detail invalidation feed events to the project field helper", async () => {
+    const redux = {
+      getStore: jest.fn((name: string) => {
+        if (name === "account") {
+          return ImmutableMap({ account_id: "acct-1" });
+        }
+        return ImmutableMap();
+      }),
+      _set_state: jest.fn(),
+      removeActions: jest.fn(),
+      getTable: jest.fn(),
+      getProjectActions: jest.fn(() => ({
+        save_all_files: jest.fn(),
+      })),
+    } as any;
+    const actions = new ProjectsActions("projects", redux);
+
+    actions._init();
+    await flush();
+
+    const feed =
+      await mockedWebappClient.conat_client.dstream.mock.results[0].value;
+    feed.emit("change", {
+      type: "project.detail.invalidate",
+      ts: Date.now(),
+      account_id: "acct-1",
+      project_id: "project-1",
+      fields: ["launcher", "snapshots"],
+    });
+    await flush();
+
+    expect(invalidateProjectFieldsMock).toHaveBeenCalledWith({
+      project_id: "project-1",
+      fields: ["launcher", "snapshots"],
+    });
   });
 
   it("waits for the account store is_ready event before attaching the realtime feed", async () => {

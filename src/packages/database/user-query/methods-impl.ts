@@ -24,8 +24,6 @@ import type { CB } from "@cocalc/util/types/callback";
 import { updateRetentionData as updateRetentionDataImpl } from "../postgres/retention";
 import type {
   PostgreSQL as PostgreSQLType,
-  ProjectActionOptions,
-  ProjectActionRequest,
   UserQueryOptions,
 } from "../postgres/types";
 import { awakenProject } from "./awaken-project";
@@ -156,13 +154,6 @@ function shouldUseProjectedBrowserProjectReads(opts: {
   }
   return getProjectListReadMode() !== "off";
 }
-
-type ProjectControl = {
-  restart: () => Promise<void>;
-  stop: () => Promise<void>;
-  start: () => Promise<void>;
-  setAllQuotas?: () => Promise<void>;
-};
 
 type RetentionOptions = Parameters<typeof updateRetentionDataImpl>[0];
 
@@ -1516,81 +1507,6 @@ export function _user_set_query_project_manage_users_owner_only(
   return sanitizeManageUsersOwnerOnly(obj);
 }
 
-export async function project_action(
-  this: UserQueryContext,
-  opts: ProjectActionOptions,
-): Promise<void> {
-  opts = {
-    project_id: opts.project_id,
-    action_request: opts.action_request, // action is object {action:?, time:?}
-    cb: opts.cb,
-  };
-  const cb = opts.cb;
-  if (opts.action_request.action === "test") {
-    // used for testing -- shouldn't trigger anything to happen.
-    cb?.();
-    return;
-  }
-  const dbg = this._dbg(
-    `project_action(project_id='${
-      opts.project_id
-    }',action_request=${misc.to_json(opts.action_request)})`,
-  );
-  dbg();
-  let project: ProjectControl | undefined;
-  const action_request = misc.copy(opts.action_request) as ProjectActionRequest;
-  const set_action_request = async () => {
-    dbg(`set action_request to ${misc.to_json(action_request)}`);
-    await callback_opts(this._query.bind(this))({
-      query: "UPDATE projects",
-      where: { "project_id = $::UUID": opts.project_id },
-      jsonb_set: { action_request },
-    });
-  };
-  let err: unknown;
-  try {
-    action_request.started = new Date();
-    await set_action_request();
-    dbg("get project");
-    if (this.projectControl == null) {
-      throw Error("projectControl not available");
-    }
-    project = await this.projectControl(opts.project_id);
-    dbg("doing action");
-    if (project == null) {
-      throw Error("project not loaded");
-    }
-    switch (action_request.action) {
-      case "restart":
-        await project.restart();
-        break;
-      case "stop":
-        await project.stop();
-        break;
-      case "start":
-        await project.start();
-        break;
-      default:
-        throw Error(
-          `FATAL: action '${opts.action_request.action}' not implemented`,
-        );
-    }
-  } catch (error) {
-    err = error;
-  }
-  if (err) {
-    action_request.err = err;
-  }
-  action_request.finished = new Date();
-  dbg("finished!");
-  try {
-    await set_action_request();
-    cb?.();
-  } catch (error) {
-    cb?.(error);
-  }
-}
-
 // This hook is called *before* the user commits a change to a project in the database
 // via a user set query.
 // TODO: Add a pre-check here as well that total upgrade isn't going to be exceeded.
@@ -1656,42 +1572,6 @@ export async function _user_set_query_project_change_before(
     }
   }
 
-  if (
-    (new_val != null ? new_val.action_request : undefined) != null &&
-    JSON.stringify(new_val.action_request.time) !==
-      JSON.stringify(old_val?.action_request?.time)
-  ) {
-    // Requesting an action, e.g., save, restart, etc.
-    dbg(`action_request -- ${misc.to_json(new_val.action_request)}`);
-    //
-    // WARNING: Above, we take the difference of times below, since != doesn't work as we want with
-    // separate Date objects, as it will say equal dates are not equal. Example:
-    // coffee> x = JSON.stringify(new Date()); {from_json}=require('misc'); a=from_json(x); b=from_json(x); [a!=b, a-b]
-    // [ true, 0 ]
-
-    // Launch the action -- success or failure communicated back to all clients through changes to state.
-    // Also, we don't have to worry about permissions here; that this function got called at all means
-    // the user has write access to the projects table entry with given project_id, which gives them permission
-    // to do any action with the project.
-    this.project_action({
-      project_id: new_val.project_id,
-      action_request: misc.copy_with(new_val.action_request, [
-        "action",
-        "time",
-      ]) as ProjectActionRequest,
-      cb: (err) => {
-        dbg(
-          `action_request ${misc.to_json(
-            new_val.action_request,
-          )} completed -- ${err}`,
-        );
-        // true means -- do nothing further.  We don't want to the user to
-        // set this same thing since we already dealt with it properly.
-        return cb(err, true);
-      },
-    });
-    return;
-  }
   return cb();
 }
 
@@ -3180,7 +3060,6 @@ type UserQueryMethods = {
   _user_get_query_set_defaults: typeof _user_get_query_set_defaults;
   _user_set_query_project_users: typeof _user_set_query_project_users;
   _user_set_query_project_manage_users_owner_only: typeof _user_set_query_project_manage_users_owner_only;
-  project_action: typeof project_action;
   _user_set_query_project_change_before: typeof _user_set_query_project_change_before;
   _user_set_query_project_change_after: typeof _user_set_query_project_change_after;
   _user_set_query_account_change_after: typeof _user_set_query_account_change_after;

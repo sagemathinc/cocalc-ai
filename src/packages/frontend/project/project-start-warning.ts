@@ -56,17 +56,6 @@ export function is_running_or_starting(project_id: string): boolean {
     }
     return true;
   }
-
-  const x = project_map?.get(project_id)?.get("action_request");
-  if (x == null) {
-    return false;
-  }
-  const action = x.get("action");
-  const finished = x.get("finished");
-  const time = new Date(x.get("time"));
-  if (action == "start" && (finished == null || finished < time)) {
-    return true;
-  }
   return false;
 }
 

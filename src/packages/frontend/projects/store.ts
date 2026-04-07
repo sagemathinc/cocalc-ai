@@ -151,10 +151,6 @@ export class ProjectsStore extends Store<ProjectsState> {
     );
   }
 
-  public get_created(project_id: string): Date | undefined {
-    return this.getIn(["project_map", project_id, "created"]);
-  }
-
   // Info about a student project that is part of a
   // course (will be undefined if not a student project)
   public get_course_info(project_id: string): Map<string, any> | undefined {

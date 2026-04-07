@@ -101,20 +101,6 @@ export interface PostgreSQLOptions {
   timeout_delay_ms?: number;
 }
 
-export type ProjectActionRequest = Record<string, any> & {
-  action: string;
-  time?: any;
-  started?: Date;
-  finished?: Date;
-  err?: any;
-};
-
-export type ProjectActionOptions = {
-  project_id: string;
-  action_request: ProjectActionRequest;
-  cb: CB;
-};
-
 export interface LegacySyncstringPatch {
   id: [string, string];
   user: number;
@@ -394,7 +380,6 @@ export interface PostgreSQLMethods extends EventEmitter {
   __do_query(opts: QueryOptions): void; // Internal query execution
 
   user_query(opts: UserQueryOptions): void;
-  project_action(opts: ProjectActionOptions): void;
   _user_query_queue?: UserQueryQueue;
   _user_get_changefeed_counts?: Record<string, number>;
   _user_get_changefeed_id_to_user?: Record<string, string>;

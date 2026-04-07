@@ -70,22 +70,13 @@ Table({
           deleted: null,
           host_id: null,
           owning_bay_id: null,
-          region: null,
           settings: DEFAULT_QUOTAS,
-          run_quota: null,
           state: null,
           last_edited: null,
           last_active: null,
-          action_request: null, // last requested action -- {action:?, time:?, started:?, finished:?, err:?}
           course: null,
-          created: null,
-          env: null,
           avatar_image_tiny: null,
           color: null,
-          snapshots: null,
-          backups: null,
-          rootfs_image: null,
-          rootfs_image_id: null,
         },
       },
       set: {
@@ -101,7 +92,6 @@ Table({
           manage_users_owner_only(obj, db) {
             return db._user_set_query_project_manage_users_owner_only(obj);
           },
-          action_request: true, // used to request that an action be performed, e.g., "save"; handled by before_change
           rootfs_image: true,
           rootfs_image_id: true,
           env: true,
@@ -307,11 +297,6 @@ Table({
     ephemeral: {
       type: "number",
       desc: "If set, number of milliseconds this project may exist after creation.",
-    },
-    action_request: {
-      type: "map",
-      desc: "Request state change action for project: {action:['start', 'stop'], started:timestamp, err:?, finished:timestamp}",
-      date: ["started", "finished"],
     },
     storage: {
       type: "map",

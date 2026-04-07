@@ -25,7 +25,7 @@ import {
   VisibleMDLG,
 } from "@cocalc/frontend/components";
 import { labels } from "@cocalc/frontend/i18n";
-import { capitalize, server_seconds_ago } from "@cocalc/util/misc";
+import { capitalize } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 import { useAllowedFreeProjectToRun } from "./client-side-throttle";
 import { useProjectContext } from "./context";
@@ -151,37 +151,13 @@ export function StartButton({
     return state;
   }, [project_map, resolvedProjectId, host_id, hostInfo]);
 
-  // start_requested is true precisely if a start of this project
-  // is currently requested, and obviously didn't get done.
-  // Making the UI depend on this instead of *just* the state
-  // makes things feel more responsive.
   const starting = useMemo(() => {
     const lifecycleState = state?.get("state");
     if (lifecycleState === "starting" || lifecycleState === "opening")
       return true;
     if (lifecycleState === "running") return false;
-    const action_request = (
-      project_map?.getIn([resolvedProjectId, "action_request"]) as any
-    )?.toJS() as any;
-    if (action_request == null) {
-      return startLroActive && lifecycleState == null;
-    }
-    if (action_request.action !== "start") {
-      return startLroActive && lifecycleState == null;
-    }
-    if (action_request.finished >= new Date(action_request.time)) {
-      return false; // already done
-    }
-    if (new Date(action_request.time) <= server_seconds_ago(20)) {
-      // Something is wrong, and the request got ignored for at least 20s,
-      // so allow user to try again.
-      return false;
-    }
-
-    // action is start and it didn't quite get taken care of yet by backend server,
-    // but keep disabled so the user doesn't keep making the request.
-    return true;
-  }, [project_map, resolvedProjectId, startLroActive, state]);
+    return startLroActive;
+  }, [startLroActive, state]);
 
   if (!project_id) {
     return null;

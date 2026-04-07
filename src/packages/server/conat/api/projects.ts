@@ -76,6 +76,13 @@ import type {
   ProjectStorageOverview,
   ProjectStorageVisibleSummary,
   ProjectLauncherSettings,
+  ProjectRegion,
+  ProjectCreated,
+  ProjectEnv,
+  ProjectRootfsConfig,
+  ProjectSnapshotSchedule,
+  ProjectBackupSchedule,
+  ProjectRunQuota,
   WorkspaceSshConnectionInfo,
 } from "@cocalc/conat/hub/api/projects";
 import {
@@ -105,6 +112,7 @@ import {
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { appendProjectOutboxEventForProject } from "@cocalc/database/postgres/project-events-outbox";
 import { publishProjectAccountFeedEventsBestEffort } from "@cocalc/server/account/project-feed";
+import { publishProjectDetailInvalidationBestEffort } from "@cocalc/server/account/project-detail-feed";
 import { createHash } from "node:crypto";
 
 const PROJECT_STORAGE_CACHE_TTL_MS = 30_000;
@@ -596,6 +604,10 @@ export async function setQuotas(opts: {
   const project = await database.projectControl?.(opts.project_id);
   // @ts-ignore
   await project?.setAllQuotas();
+  await publishProjectDetailInvalidationBestEffort({
+    project_id: opts.project_id,
+    fields: ["run_quota"],
+  });
 }
 
 export async function getDiskQuota({
@@ -748,13 +760,13 @@ export async function listRecentDocumentActivity({
   }));
 }
 
-export async function getProjectLauncher({
+async function assertProjectReadAccessOrAdmin({
   account_id,
   project_id,
 }: {
   account_id: string;
   project_id: string;
-}): Promise<ProjectLauncherSettings> {
+}): Promise<void> {
   if (!account_id) {
     throw new Error("must be signed in");
   }
@@ -765,11 +777,176 @@ export async function getProjectLauncher({
       throw err;
     }
   }
+}
+
+export async function getProjectLauncher({
+  account_id,
+  project_id,
+}: {
+  account_id: string;
+  project_id: string;
+}): Promise<ProjectLauncherSettings> {
+  await assertProjectReadAccessOrAdmin({ account_id, project_id });
   const { rows } = await getPool().query<{ launcher: ProjectLauncherSettings }>(
     "SELECT launcher FROM projects WHERE project_id = $1",
     [project_id],
   );
   return rows[0]?.launcher ?? null;
+}
+
+export async function setProjectLauncher({
+  account_id,
+  project_id,
+  launcher,
+}: {
+  account_id: string;
+  project_id: string;
+  launcher: ProjectLauncherSettings;
+}): Promise<void> {
+  await assertCollab({ account_id, project_id });
+  await getPool().query(
+    "UPDATE projects SET launcher = $2 WHERE project_id = $1",
+    [project_id, launcher],
+  );
+  await publishProjectDetailInvalidationBestEffort({
+    project_id,
+    fields: ["launcher"],
+  });
+}
+
+export async function getProjectRegion({
+  account_id,
+  project_id,
+}: {
+  account_id: string;
+  project_id: string;
+}): Promise<ProjectRegion> {
+  await assertProjectReadAccessOrAdmin({ account_id, project_id });
+  const { rows } = await getPool().query<{ region: ProjectRegion }>(
+    "SELECT region FROM projects WHERE project_id = $1",
+    [project_id],
+  );
+  return rows[0]?.region ?? null;
+}
+
+export async function getProjectCreated({
+  account_id,
+  project_id,
+}: {
+  account_id: string;
+  project_id: string;
+}): Promise<ProjectCreated> {
+  await assertProjectReadAccessOrAdmin({ account_id, project_id });
+  const { rows } = await getPool().query<{ created: ProjectCreated }>(
+    "SELECT created FROM projects WHERE project_id = $1",
+    [project_id],
+  );
+  return rows[0]?.created ?? null;
+}
+
+export async function getProjectEnv({
+  account_id,
+  project_id,
+}: {
+  account_id: string;
+  project_id: string;
+}): Promise<ProjectEnv> {
+  await assertProjectReadAccessOrAdmin({ account_id, project_id });
+  const { rows } = await getPool().query<{ env: ProjectEnv }>(
+    "SELECT env FROM projects WHERE project_id = $1",
+    [project_id],
+  );
+  return rows[0]?.env ?? null;
+}
+
+export async function getProjectRootfs({
+  account_id,
+  project_id,
+}: {
+  account_id: string;
+  project_id: string;
+}): Promise<ProjectRootfsConfig | null> {
+  await assertProjectReadAccessOrAdmin({ account_id, project_id });
+  const { rows } = await getPool().query<{
+    rootfs_image: string | null;
+    rootfs_image_id: string | null;
+  }>(
+    "SELECT rootfs_image, rootfs_image_id FROM projects WHERE project_id = $1",
+    [project_id],
+  );
+  const image = `${rows[0]?.rootfs_image ?? ""}`.trim();
+  if (!image) {
+    return null;
+  }
+  const image_id = `${rows[0]?.rootfs_image_id ?? ""}`.trim();
+  return {
+    image,
+    ...(image_id ? { image_id } : undefined),
+  };
+}
+
+export async function setProjectEnv({
+  account_id,
+  project_id,
+  env,
+}: {
+  account_id: string;
+  project_id: string;
+  env: ProjectEnv;
+}): Promise<void> {
+  await assertCollab({ account_id, project_id });
+  await getPool().query("UPDATE projects SET env = $2 WHERE project_id = $1", [
+    project_id,
+    env,
+  ]);
+  await publishProjectDetailInvalidationBestEffort({
+    project_id,
+    fields: ["env"],
+  });
+}
+
+export async function getProjectSnapshotSchedule({
+  account_id,
+  project_id,
+}: {
+  account_id: string;
+  project_id: string;
+}): Promise<ProjectSnapshotSchedule> {
+  await assertProjectReadAccessOrAdmin({ account_id, project_id });
+  const { rows } = await getPool().query<{
+    snapshots: ProjectSnapshotSchedule;
+  }>("SELECT snapshots FROM projects WHERE project_id = $1", [project_id]);
+  return rows[0]?.snapshots ?? null;
+}
+
+export async function getProjectBackupSchedule({
+  account_id,
+  project_id,
+}: {
+  account_id: string;
+  project_id: string;
+}): Promise<ProjectBackupSchedule> {
+  await assertProjectReadAccessOrAdmin({ account_id, project_id });
+  const { rows } = await getPool().query<{ backups: ProjectBackupSchedule }>(
+    "SELECT backups FROM projects WHERE project_id = $1",
+    [project_id],
+  );
+  return rows[0]?.backups ?? null;
+}
+
+export async function getProjectRunQuota({
+  account_id,
+  project_id,
+}: {
+  account_id: string;
+  project_id: string;
+}): Promise<ProjectRunQuota> {
+  await assertProjectReadAccessOrAdmin({ account_id, project_id });
+  const { rows } = await getPool().query<{ run_quota: ProjectRunQuota }>(
+    "SELECT run_quota FROM projects WHERE project_id = $1",
+    [project_id],
+  );
+  return rows[0]?.run_quota ?? null;
 }
 
 export async function getStorageOverview({

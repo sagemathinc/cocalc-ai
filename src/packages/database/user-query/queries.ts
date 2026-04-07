@@ -179,10 +179,6 @@ export function extend_PostgreSQL<TBase extends PostgreSQLConstructor>(
       );
     }
 
-    project_action(...args: Parameters<typeof userQuery.project_action>) {
-      return userQuery.project_action.call(this, ...args);
-    }
-
     _user_set_query_project_change_before(
       ...args: Parameters<
         typeof userQuery._user_set_query_project_change_before
