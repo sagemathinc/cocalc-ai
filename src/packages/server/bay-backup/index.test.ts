@@ -639,9 +639,11 @@ describe("bay-backup runner", () => {
       backup_set_id: backupSetId,
       target_dir: restoreTargetDir,
       dry_run: false,
+      target_time: "2026-04-07T08:00:00-07:00",
     });
     expect(result.recovery_ready).toBe(true);
     expect(result.source_storage_backend).toBe("local");
+    expect(result.target_time).toBe("2026-04-07T15:00:00.000Z");
     expect(result.data_dir).toBe(join(restoreTargetDir, "data"));
     expect(result.sync_dir).toBe(join(restoreTargetDir, "sync"));
     expect(result.secrets_dir).toBe(join(restoreTargetDir, "secrets"));
@@ -654,6 +656,12 @@ describe("bay-backup runner", () => {
         "utf8",
       ),
     ).toContain("restore_command");
+    expect(
+      readFileSync(
+        join(restoreTargetDir, "data", "postgresql.auto.conf"),
+        "utf8",
+      ),
+    ).toContain("recovery_target_time = '2026-04-07T15:00:00.000Z'");
     expect(
       readFileSync(join(restoreTargetDir, "restore-wal.sh"), "utf8"),
     ).toContain(walArchiveDir);
@@ -672,11 +680,86 @@ describe("bay-backup runner", () => {
       ),
     ).toMatchObject({
       backup_set_id: backupSetId,
+      target_time: "2026-04-07T15:00:00.000Z",
       recovery_ready: true,
       sync_dir: join(restoreTargetDir, "sync"),
       secrets_dir: join(restoreTargetDir, "secrets"),
       wal_segment_count: 1,
     });
+  });
+
+  it("rejects an invalid restore target time", async () => {
+    const { runBayRestore } = await import("./index");
+
+    await expect(
+      runBayRestore({
+        backup_set_id: "backup-1",
+        dry_run: true,
+        target_time: "yesterday",
+      }),
+    ).rejects.toThrow(
+      "target_time must be an RFC3339 timestamp with an explicit timezone",
+    );
+  });
+
+  it("rejects target_time for pg_dumpall restores", async () => {
+    const backupSetId = "restore-dump-1";
+    const bayRoot = join(backupRoot, "bay-backups", "bay-0");
+    const manifestsDir = join(bayRoot, "manifests");
+    mkdirSync(manifestsDir, { recursive: true });
+    writeFileSync(
+      join(manifestsDir, `${backupSetId}.json`),
+      JSON.stringify(
+        {
+          bay_id: "bay-0",
+          bay_label: "bay-0",
+          backup_set_id: backupSetId,
+          created_at: "2026-04-07T15:37:47.519Z",
+          finished_at: "2026-04-07T15:37:57.440Z",
+          format: "pg_dumpall",
+          current_storage_backend: "local",
+          latest_storage_backend: "local",
+          bucket_name: null,
+          bucket_region: null,
+          bucket_endpoint: null,
+          object_prefix: null,
+          remote_manifest_key: null,
+          remote_snapshot_id: null,
+          remote_snapshot_host: null,
+          rustic_repo_selector: null,
+          postgres: {},
+          artifacts: [
+            {
+              name: "cluster.sql.gz",
+              local_path: join(
+                bayRoot,
+                "archives",
+                backupSetId,
+                "cluster.sql.gz",
+              ),
+              object_key: null,
+              bytes: 8,
+              sha256: "dump",
+              content_type: "application/gzip",
+            },
+          ],
+        },
+        null,
+        2,
+      ),
+    );
+
+    const { runBayRestore } = await import("./index");
+
+    await expect(
+      runBayRestore({
+        backup_set_id: backupSetId,
+        dry_run: true,
+        target_time: "2026-04-07T08:00:00-07:00",
+      }),
+    ).rejects.toThrow(
+      "target_time is only supported for pg_basebackup backups with archived WAL",
+    );
   });
 
   it("restore-tests a pg_basebackup snapshot and records a gold star", async () => {

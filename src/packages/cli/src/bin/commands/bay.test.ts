@@ -337,6 +337,7 @@ test("bay restore forwards bay id, backup set, target dir, and write mode", asyn
                 finished_at: "2026-04-07T08:02:00.000Z",
                 dry_run: false,
                 remote_only: false,
+                target_time: null,
                 backup_set_id: "backup-1",
                 format: "pg_basebackup",
                 target_dir: "/tmp/restore-target",
@@ -381,10 +382,79 @@ test("bay restore forwards bay id, backup set, target dir, and write mode", asyn
     bay_id: "bay-0",
     backup_set_id: "backup-1",
     target_dir: "/tmp/restore-target",
+    target_time: undefined,
     dry_run: false,
     remote_only: false,
   });
   assert.equal(captured?.backup_set_id, "backup-1");
+});
+
+test("bay restore forwards target-time", async () => {
+  let callOpts: any;
+  const program = new Command();
+  registerBayCommand(program, {
+    withContext: async (_command, _label, fn) => {
+      const ctx = {
+        hub: {
+          system: {
+            runBayRestore: async (opts: any) => {
+              callOpts = opts;
+              return {
+                bay_id: "bay-0",
+                label: "bay-0",
+                region: null,
+                deployment_mode: "single-bay",
+                role: "combined",
+                is_default: true,
+                started_at: "2026-04-07T08:00:00.000Z",
+                finished_at: "2026-04-07T08:02:00.000Z",
+                dry_run: true,
+                remote_only: false,
+                target_time: "2026-04-07T15:00:00.000Z",
+                backup_set_id: "backup-1",
+                format: "pg_basebackup",
+                target_dir: "/tmp/restore-target",
+                data_dir: "/tmp/restore-target/data",
+                sync_dir: "/tmp/restore-target/sync",
+                secrets_dir: "/tmp/restore-target/secrets",
+                backup_manifest_path: "/tmp/backup-manifest.json",
+                restore_manifest_path:
+                  "/tmp/restore-target/restore-manifest.json",
+                source_storage_backend: "local",
+                source_snapshot_id: null,
+                rustic_repo_selector: null,
+                wal_archive_dir: "/tmp/wal-archive",
+                wal_storage_backend: "local",
+                artifact_count: 3,
+                wal_segment_count: 4,
+                recovery_ready: true,
+                notes: [],
+              };
+            },
+          },
+        },
+      };
+      await fn(ctx);
+    },
+  } as any);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "bay",
+    "restore",
+    "--target-time",
+    "2026-04-07T08:00:00-07:00",
+  ]);
+
+  assert.deepEqual(callOpts, {
+    bay_id: undefined,
+    backup_set_id: undefined,
+    target_dir: undefined,
+    target_time: "2026-04-07T08:00:00-07:00",
+    dry_run: true,
+    remote_only: false,
+  });
 });
 
 test("bay restore-test forwards bay id, backup set, target dir, and keep mode", async () => {

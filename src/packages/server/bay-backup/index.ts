@@ -648,6 +648,27 @@ function postgresQuote(arg: string): string {
   return `'${arg.replace(/'/g, "''")}'`;
 }
 
+function normalizeRecoveryTargetTime(value?: string): string | null {
+  const trimmed = `${value ?? ""}`.trim();
+  if (trimmed === "") {
+    return null;
+  }
+  if (
+    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(
+      trimmed,
+    )
+  ) {
+    throw new Error(
+      "target_time must be an RFC3339 timestamp with an explicit timezone, e.g. 2026-04-07T15:37:57Z",
+    );
+  }
+  const normalized = new Date(trimmed);
+  if (Number.isNaN(normalized.getTime())) {
+    throw new Error(`invalid target_time '${trimmed}'`);
+  }
+  return normalized.toISOString();
+}
+
 async function exists(path: string | null | undefined): Promise<boolean> {
   if (!path) return false;
   try {
@@ -2169,12 +2190,14 @@ export async function runBayRestore({
   target_dir,
   dry_run = true,
   remote_only = false,
+  target_time,
 }: {
   bay_id?: string;
   backup_set_id?: string;
   target_dir?: string;
   dry_run?: boolean;
   remote_only?: boolean;
+  target_time?: string;
 } = {}): Promise<BayRestoreRunResult> {
   const currentBay = getSingleBayInfo();
   const resolvedBayId =
@@ -2234,6 +2257,7 @@ export async function runBayRestore({
       paths,
       backup_set_id: resolvedBackupSetId,
     });
+  const resolvedTargetTime = normalizeRecoveryTargetTime(target_time);
   let tempDownloadDir: string | null = null;
   const notes: string[] = [];
   try {
@@ -2256,6 +2280,14 @@ export async function runBayRestore({
       download_dir: tempDownloadDir,
       prefer_local: !remote_only,
     });
+    if (
+      resolvedTargetTime != null &&
+      manifestInfo.manifest.format !== "pg_basebackup"
+    ) {
+      throw new Error(
+        "target_time is only supported for pg_basebackup backups with archived WAL",
+      );
+    }
     const wal = await getWalArchiveSnapshot({ paths, state });
     let source_storage_backend: StorageBackend =
       manifestInfo.source_storage_backend;
@@ -2315,6 +2347,11 @@ export async function runBayRestore({
         notes.push(
           `Would stage a recoverable Postgres data directory at ${data_dir}.`,
         );
+        if (resolvedTargetTime) {
+          notes.push(
+            `Would recover only through ${resolvedTargetTime} before promoting the restored cluster.`,
+          );
+        }
         notes.push(
           remote_only
             ? "Recovery would fetch archived WAL from R2 on demand."
@@ -2357,6 +2394,7 @@ export async function runBayRestore({
         started_at,
         finished_at: new Date().toISOString(),
         dry_run,
+        target_time: resolvedTargetTime,
         backup_set_id: resolvedBackupSetId,
         format: manifestInfo.manifest.format,
         target_dir: resolvedTargetDir,
@@ -2492,6 +2530,12 @@ export async function runBayRestore({
         "",
         "# cocalc bay restore",
         `restore_command = ${postgresQuote(restoreCommand)}`,
+        ...(resolvedTargetTime
+          ? [
+              `recovery_target_time = ${postgresQuote(resolvedTargetTime)}`,
+              "recovery_target_inclusive = 'true'",
+            ]
+          : []),
         "recovery_target_timeline = 'latest'",
         "recovery_target_action = 'promote'",
         "",
@@ -2503,6 +2547,11 @@ export async function runBayRestore({
       );
       await writeFile(join(data_dir!, "restore.signal"), "", "utf8");
       notes.push(`Restored base backup into ${data_dir}.`);
+      if (resolvedTargetTime) {
+        notes.push(
+          `Recovery target time is set to ${resolvedTargetTime} before promotion.`,
+        );
+      }
       notes.push(
         `Start the fenced restore with: postgres -D ${shellQuote(data_dir!)}`,
       );
@@ -2588,6 +2637,7 @@ export async function runBayRestore({
       format: manifestInfo.manifest.format,
       started_at,
       finished_at,
+      target_time: resolvedTargetTime,
       target_dir: resolvedTargetDir,
       data_dir,
       sync_dir: syncArtifact ? sync_dir : null,
@@ -2616,6 +2666,7 @@ export async function runBayRestore({
       started_at,
       finished_at,
       dry_run,
+      target_time: resolvedTargetTime,
       backup_set_id: resolvedBackupSetId,
       format: manifestInfo.manifest.format,
       target_dir: resolvedTargetDir,

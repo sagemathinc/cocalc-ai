@@ -495,6 +495,7 @@ export interface BayRestoreRunResult extends BayInfo {
   finished_at: string;
   dry_run: boolean;
   remote_only: boolean;
+  target_time: string | null;
   backup_set_id: string;
   format: "pg_basebackup" | "pg_dumpall";
   target_dir: string;
@@ -823,6 +824,7 @@ export interface System {
     target_dir?: string;
     dry_run?: boolean;
     remote_only?: boolean;
+    target_time?: string;
   }) => Promise<BayRestoreRunResult>;
 
   runBayRestoreTest: (opts?: {

@@ -71,6 +71,10 @@ export function registerBayCommand(
       "--target-dir <path>",
       "restore into this directory instead of the default restores path",
     )
+    .option(
+      "--target-time <timestamp>",
+      "recover to this RFC3339 timestamp instead of replaying all available WAL",
+    )
     .option("--write", "materialize the restore instead of a dry run", false)
     .option(
       "--remote-only",
@@ -83,6 +87,7 @@ export function registerBayCommand(
         opts: {
           backupSetId?: string;
           targetDir?: string;
+          targetTime?: string;
           write?: boolean;
           remoteOnly?: boolean;
         },
@@ -93,6 +98,7 @@ export function registerBayCommand(
             bay_id: bay_id?.trim() || undefined,
             backup_set_id: opts.backupSetId?.trim() || undefined,
             target_dir: opts.targetDir?.trim() || undefined,
+            target_time: opts.targetTime?.trim() || undefined,
             dry_run: !opts.write,
             remote_only: opts.remoteOnly === true,
           });
