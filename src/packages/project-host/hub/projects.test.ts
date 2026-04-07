@@ -1,4 +1,5 @@
 import { hubApi } from "@cocalc/lite/hub/api";
+import { DEFAULT_PROJECT_IMAGE } from "@cocalc/util/db-schema/defaults";
 
 const rehydrateAcpAutomationsForProject = jest.fn();
 const applyPendingCopies = jest.fn();
@@ -329,6 +330,69 @@ describe("project host start ACP rehydrate ordering", () => {
     expect(runnerApi.start).toHaveBeenCalledWith({
       project_id,
       config: expect.objectContaining({ image: managedImage }),
+    });
+  });
+
+  it("fails start when no image metadata is available", async () => {
+    const runnerApi = {
+      start: jest.fn(async () => ({
+        state: "running",
+        http_port: 1234,
+        ssh_port: 2222,
+      })),
+      stop: jest.fn(),
+    } as any;
+    getProject.mockReturnValue({
+      image: undefined,
+      title: undefined,
+      authorized_keys: undefined,
+      run_quota: undefined,
+    });
+    getMasterConatClient.mockReturnValue({ nats: true });
+    callHub.mockRejectedValue(new Error("master unavailable"));
+    readFile.mockResolvedValue("");
+
+    const { wireProjectsApi } = await import("./projects");
+    wireProjectsApi(runnerApi);
+
+    await expect(hubApi.projects.start({ project_id })).rejects.toThrow(
+      `unable to determine project image for ${project_id}; refusing to fall back to the default image`,
+    );
+    expect(runnerApi.start).not.toHaveBeenCalled();
+  });
+
+  it("accepts the default image when it comes from authoritative metadata", async () => {
+    const runnerApi = {
+      start: jest.fn(async () => ({
+        state: "running",
+        http_port: 1234,
+        ssh_port: 2222,
+      })),
+      stop: jest.fn(),
+    } as any;
+    getProject.mockReturnValue({
+      image: undefined,
+      title: undefined,
+      authorized_keys: undefined,
+      run_quota: undefined,
+    });
+    getMasterConatClient.mockReturnValue({ nats: true });
+    callHub.mockResolvedValue({
+      title: "dev",
+      users: { "test-account-id": { group: "owner" } },
+      image: DEFAULT_PROJECT_IMAGE,
+      authorized_keys: "ssh-ed25519 AAAATEST user@test",
+      run_quota: { memory_limit: 1234 },
+    });
+
+    const { wireProjectsApi } = await import("./projects");
+    wireProjectsApi(runnerApi);
+
+    await hubApi.projects.start({ project_id });
+
+    expect(runnerApi.start).toHaveBeenCalledWith({
+      project_id,
+      config: expect.objectContaining({ image: DEFAULT_PROJECT_IMAGE }),
     });
   });
 

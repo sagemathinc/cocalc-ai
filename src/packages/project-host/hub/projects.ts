@@ -355,10 +355,8 @@ async function resolveStartMetadata({
     }
   }
   if (!resolved.image) {
-    resolved.image = DEFAULT_PROJECT_IMAGE;
-    logger.warn(
-      "resolveStartMetadata: falling back to default project image because no authoritative image metadata was available",
-      { project_id, image: resolved.image },
+    throw new Error(
+      `unable to determine project image for ${project_id}; refusing to fall back to the default image`,
     );
   }
   resolved.image = normalizeImage(resolved.image);

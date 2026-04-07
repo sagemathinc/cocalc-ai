@@ -78,6 +78,7 @@ import sshKeys from "@cocalc/server/projects/get-ssh-keys";
 import { createLro } from "@cocalc/server/lro/lro-db";
 import { publishLroEvent, publishLroSummary } from "@cocalc/server/lro/stream";
 import { lroStreamName } from "@cocalc/conat/lro/names";
+import { DEFAULT_PROJECT_IMAGE } from "@cocalc/util/db-schema/defaults";
 import { SERVICE as PERSIST_SERVICE } from "@cocalc/conat/persist/util";
 import {
   machineHasGpu,
@@ -1680,10 +1681,11 @@ export async function getProjectStartMetadata({
   const authorized_keys = Object.values(keys)
     .map((key: any) => key.value)
     .join("\n");
+  const image = `${row.image ?? ""}`.trim() || DEFAULT_PROJECT_IMAGE;
   return {
     title: row.title ?? undefined,
     users: row.users ?? undefined,
-    image: row.image ?? undefined,
+    image,
     authorized_keys: authorized_keys || undefined,
     run_quota: row.run_quota ?? undefined,
   };
