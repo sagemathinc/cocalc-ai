@@ -58,6 +58,8 @@ import useListing from "@cocalc/frontend/project/listing/use-listing";
 import useBackupsListing, {
   isBackupsPath,
 } from "@cocalc/frontend/project/listing/use-backups";
+import Backups from "@cocalc/frontend/project/backups";
+import Snapshots from "@cocalc/frontend/project/snapshots";
 import { isSnapshotsPath } from "@cocalc/util/consts/snapshots";
 import ShowError from "@cocalc/frontend/components/error";
 import { useSpecialPathPreview } from "@cocalc/frontend/project/explorer/use-special-path-preview";
@@ -404,6 +406,18 @@ export function FilesFlyout({
     effectiveRefresh,
     registerUserFilesystemChangeHandler,
   ]);
+  const refreshSnapshotsAfterUserAction = () => {
+    refreshListingAfterUserAction({
+      allowNextUpdate: allowNextListingUpdate,
+      refresh,
+    });
+  };
+  const refreshBackupsAfterUserAction = () => {
+    refreshListingAfterUserAction({
+      allowNextUpdate: allowNextListingUpdate,
+      refresh: refreshBackups,
+    });
+  };
 
   const directoryFiles =
     deferredDirectoryFiles ?? liveDirectoryFiles ?? EMPTY_DIRECTORY_FILES;
@@ -910,6 +924,10 @@ export function FilesFlyout({
       ref={rootRef}
       style={{ flex: "1 0 auto", flexDirection: "column", display: "flex" }}
     >
+      {inSnapshotsPath && (
+        <Snapshots onCreated={refreshSnapshotsAfterUserAction} />
+      )}
+      {inBackupsPath && <Backups onCreated={refreshBackupsAfterUserAction} />}
       {!suppressRoutingError && !shouldShowStartProjectWarning && (
         <ShowError error={effectiveError} setError={effectiveRefresh} />
       )}
