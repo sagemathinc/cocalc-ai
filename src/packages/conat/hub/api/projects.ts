@@ -1,6 +1,9 @@
 import { authFirstRequireAccount, authFirstRequireProject } from "./util";
 import { type CreateProjectOptions } from "@cocalc/util/db-schema/projects";
-import { type SnapshotCounts } from "@cocalc/util/consts/snapshots";
+import {
+  type SnapshotCounts,
+  type SnapshotSchedule,
+} from "@cocalc/util/consts/snapshots";
 import { type CopyOptions } from "@cocalc/conat/files/fs";
 import {
   type FileTextPreview,
@@ -381,6 +384,8 @@ export interface ChatStoreDeleteResult {
 export type ProjectLauncherSettings = Record<string, any> | null;
 export type ProjectRegion = string | null;
 export type ProjectCreated = Date | string | null;
+export type ProjectSnapshotSchedule = SnapshotSchedule | null;
+export type ProjectBackupSchedule = SnapshotSchedule | null;
 
 export const projects = {
   createProject: authFirstRequireAccount,
@@ -404,6 +409,8 @@ export const projects = {
   getProjectLauncher: authFirstRequireAccount,
   getProjectRegion: authFirstRequireAccount,
   getProjectCreated: authFirstRequireAccount,
+  getProjectSnapshotSchedule: authFirstRequireAccount,
+  getProjectBackupSchedule: authFirstRequireAccount,
   inviteCollaborator: authFirstRequireAccount,
   inviteCollaboratorWithoutAccount: authFirstRequireAccount,
   setQuotas: authFirstRequireAccount,
@@ -798,6 +805,11 @@ export interface Projects {
     counts?: Partial<SnapshotCounts>;
   }) => Promise<void>;
 
+  getProjectBackupSchedule: (opts: {
+    account_id?: string;
+    project_id: string;
+  }) => Promise<ProjectBackupSchedule>;
+
   getBackups: (opts: {
     account_id?: string;
     project_id: string;
@@ -876,6 +888,11 @@ export interface Projects {
     project_id: string;
     counts?: Partial<SnapshotCounts>;
   }) => Promise<void>;
+
+  getProjectSnapshotSchedule: (opts: {
+    account_id?: string;
+    project_id: string;
+  }) => Promise<ProjectSnapshotSchedule>;
 
   getSnapshotQuota: (opts: {
     account_id?: string;

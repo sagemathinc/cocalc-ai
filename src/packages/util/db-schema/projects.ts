@@ -80,8 +80,6 @@ Table({
           env: null,
           avatar_image_tiny: null,
           color: null,
-          snapshots: null,
-          backups: null,
           rootfs_image: null,
           rootfs_image_id: null,
         },

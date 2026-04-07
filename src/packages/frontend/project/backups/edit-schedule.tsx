@@ -18,9 +18,32 @@ export default function EditBackupSchedule() {
   const [loading, setLoading] = useState<boolean>(false);
   const [showHelp, setShowHelp] = useState<boolean>(false);
   const [error, setError] = useState<string>("");
-  const project = useTypedRedux("projects", "project_map")?.get(project_id);
   const openSchedule = useTypedRedux({ project_id }, "open_backup_schedule");
   const [schedule0, setSchedule] = useState<SnapshotSchedule | null>(null);
+
+  async function loadSchedule(): Promise<SnapshotSchedule> {
+    const counts =
+      await webapp_client.conat_client.hub.projects.getProjectBackupSchedule({
+        project_id,
+      });
+    return {
+      ...DEFAULT_BACKUP_COUNTS,
+      ...(counts ?? {}),
+    };
+  }
+
+  async function openModal(): Promise<void> {
+    try {
+      setLoading(true);
+      setError("");
+      setSchedule(await loadSchedule());
+      setOpen(true);
+    } catch (err) {
+      setError(`${err}`);
+    } finally {
+      setLoading(false);
+    }
+  }
 
   useEffect(() => {
     if (!open) return;
@@ -29,16 +52,11 @@ export default function EditBackupSchedule() {
   }, [open]);
 
   useEffect(() => {
-    if (!openSchedule || !project) return;
-    setSchedule({
-      ...DEFAULT_BACKUP_COUNTS,
-      ...project.get("backups")?.toJS(),
-    });
-    setOpen(true);
-    actions?.setState({ open_backup_schedule: false });
-  }, [actions, openSchedule, project]);
-
-  if (project == null) return null;
+    if (!openSchedule) return;
+    void openModal().finally(() =>
+      actions?.setState({ open_backup_schedule: false }),
+    );
+  }, [actions, openSchedule, project_id]);
 
   const schedule = schedule0!;
 
@@ -51,6 +69,7 @@ export default function EditBackupSchedule() {
           projects: { project_id, backups: schedule },
         },
       });
+      setSchedule(schedule);
       setOpen(false);
     } catch (err) {
       setError(err);
@@ -61,18 +80,7 @@ export default function EditBackupSchedule() {
 
   return (
     <>
-      <Button
-        disabled={open}
-        onClick={() => {
-          setOpen(!open);
-          if (!open) {
-            setSchedule({
-              ...DEFAULT_BACKUP_COUNTS,
-              ...project.get("backups")?.toJS(),
-            });
-          }
-        }}
-      >
+      <Button disabled={open || loading} onClick={() => void openModal()}>
         <Icon name="clock" /> Schedule
       </Button>
       {open && (

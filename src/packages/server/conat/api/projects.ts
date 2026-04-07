@@ -78,6 +78,8 @@ import type {
   ProjectLauncherSettings,
   ProjectRegion,
   ProjectCreated,
+  ProjectSnapshotSchedule,
+  ProjectBackupSchedule,
   WorkspaceSshConnectionInfo,
 } from "@cocalc/conat/hub/api/projects";
 import {
@@ -812,6 +814,35 @@ export async function getProjectCreated({
     [project_id],
   );
   return rows[0]?.created ?? null;
+}
+
+export async function getProjectSnapshotSchedule({
+  account_id,
+  project_id,
+}: {
+  account_id: string;
+  project_id: string;
+}): Promise<ProjectSnapshotSchedule> {
+  await assertProjectReadAccessOrAdmin({ account_id, project_id });
+  const { rows } = await getPool().query<{
+    snapshots: ProjectSnapshotSchedule;
+  }>("SELECT snapshots FROM projects WHERE project_id = $1", [project_id]);
+  return rows[0]?.snapshots ?? null;
+}
+
+export async function getProjectBackupSchedule({
+  account_id,
+  project_id,
+}: {
+  account_id: string;
+  project_id: string;
+}): Promise<ProjectBackupSchedule> {
+  await assertProjectReadAccessOrAdmin({ account_id, project_id });
+  const { rows } = await getPool().query<{ backups: ProjectBackupSchedule }>(
+    "SELECT backups FROM projects WHERE project_id = $1",
+    [project_id],
+  );
+  return rows[0]?.backups ?? null;
 }
 
 export async function getStorageOverview({

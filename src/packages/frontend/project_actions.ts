@@ -113,6 +113,7 @@ import {
   SNAPSHOTS,
   DEFAULT_SNAPSHOT_COUNTS,
   DEFAULT_BACKUP_COUNTS,
+  type SnapshotSchedule,
   isSnapshotsPath,
 } from "@cocalc/util/consts/snapshots";
 import { getSearch } from "@cocalc/frontend/project/explorer/config";
@@ -152,6 +153,20 @@ const BANNED_FILE_TYPES = new Set(["doc", "docx", "pdf", "sws"]);
 const FROM_WEB_TIMEOUT_S = 45;
 const PROJECT_LOG_BATCH_LIMIT = 750;
 const MAX_PROJECT_LOG_REFRESH_BATCHES = 20;
+
+function snapshotCountsFromSchedule(
+  schedule: SnapshotSchedule,
+): SnapshotSchedule {
+  return {
+    frequent: schedule.frequent,
+    daily: schedule.daily,
+    weekly: schedule.weekly,
+    monthly: schedule.monthly,
+    ...(schedule.disabled != null
+      ? { disabled: schedule.disabled }
+      : undefined),
+  };
+}
 
 export const QUERIES = {
   project_log: {
@@ -3521,30 +3536,28 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     await until(
       async () => {
         if (lite || this.isClosed()) return true;
-        const store = redux.getStore("projects");
-        if (store == null) {
-          return false;
-        }
-        const project = store.getIn(["project_map", this.project_id]);
-        if (project == null) {
-          return false;
-        }
-        const counts =
-          project.get("snapshots")?.toJS() ?? DEFAULT_SNAPSHOT_COUNTS;
-        if (counts.disabled) {
+        const schedule = {
+          ...DEFAULT_SNAPSHOT_COUNTS,
+          ...((await webapp_client.conat_client.hub.projects.getProjectSnapshotSchedule(
+            {
+              project_id: this.project_id,
+            },
+          )) ?? {}),
+        };
+        if (schedule.disabled) {
           return false;
         }
         try {
           await webapp_client.conat_client.hub.projects.updateSnapshots({
             project_id: this.project_id,
-            counts,
+            counts: snapshotCountsFromSchedule(schedule),
           });
         } catch (err) {
           if (!`${err}`.includes("no subscribers matching")) {
             console.warn(
               `WARNING: Issue updating snapshots of ${this.project_id}`,
               err,
-              { counts },
+              { schedule },
             );
           }
         }
@@ -3559,22 +3572,21 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     await until(
       async () => {
         if (lite || this.isClosed()) return true;
-        const store = redux.getStore("projects");
-        if (store == null) {
-          return false;
-        }
-        const project = store.getIn(["project_map", this.project_id]);
-        if (project == null) {
-          return false;
-        }
-        const counts = project.get("backups")?.toJS() ?? DEFAULT_BACKUP_COUNTS;
-        if (counts.disabled) {
+        const schedule = {
+          ...DEFAULT_BACKUP_COUNTS,
+          ...((await webapp_client.conat_client.hub.projects.getProjectBackupSchedule(
+            {
+              project_id: this.project_id,
+            },
+          )) ?? {}),
+        };
+        if (schedule.disabled) {
           return false;
         }
         try {
           await webapp_client.conat_client.hub.projects.updateBackups({
             project_id: this.project_id,
-            counts,
+            counts: snapshotCountsFromSchedule(schedule),
           });
         } catch (err) {
           // if can't backup because no host, no need to report that
@@ -3582,7 +3594,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
             console.warn(
               `WARNING: Issue updating backups of ${this.project_id}`,
               err,
-              { counts },
+              { schedule },
             );
           }
         }
