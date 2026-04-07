@@ -33,6 +33,7 @@ export const system = {
   getBayBackups: authFirst,
   runBayBackup: authFirst,
   runBayRestore: authFirst,
+  runBayRestoreTest: authFirst,
   getAccountBay: authFirstRequireAccount,
   getProjectBay: authFirstRequireAccount,
   getHostBay: authFirstRequireAccount,
@@ -407,18 +408,21 @@ export interface BayBackupStatus {
   staging_dir: string | null;
   wal_archive_dir: string | null;
   r2_configured: boolean;
-  current_storage_backend: "local" | "r2";
+  current_storage_backend: "local" | "r2" | "rustic";
   bucket_name: string | null;
   bucket_region: string | null;
   bucket_endpoint: string | null;
   object_prefix_root: string | null;
   wal_object_prefix: string | null;
+  rustic_repo_selector: string | null;
   latest_backup_set_id: string | null;
   latest_format: "pg_basebackup" | "pg_dumpall" | null;
-  latest_storage_backend: "local" | "r2" | null;
+  latest_storage_backend: "local" | "r2" | "rustic" | null;
   latest_local_manifest_path: string | null;
   latest_remote_manifest_key: string | null;
   latest_object_prefix: string | null;
+  latest_remote_snapshot_id: string | null;
+  latest_remote_snapshot_host: string | null;
   latest_artifact_count: number;
   latest_artifact_bytes: number;
   last_archived_wal_segment: string | null;
@@ -435,10 +439,31 @@ export interface BayBackupStatus {
   restore_state: string | null;
 }
 
+export interface BayRestoreReadinessStatus {
+  latest_backup_set_id: string | null;
+  latest_backup_format: "pg_basebackup" | "pg_dumpall" | null;
+  latest_backup_restore_test_status:
+    | "no-backup"
+    | "not-run"
+    | "stale"
+    | "passed"
+    | "failed";
+  latest_backup_restore_tested: boolean;
+  latest_backup_restore_tested_at: string | null;
+  gold_star: boolean;
+  last_restore_test_backup_set_id: string | null;
+  last_restore_test_status: "passed" | "failed" | null;
+  last_restore_tested_at: string | null;
+  last_restore_test_target_dir: string | null;
+  last_restore_test_recovery_ready: boolean | null;
+  summary: string;
+}
+
 export interface BayBackupsInfo extends BayInfo {
   checked_at: string;
   postgres: BayBackupsPostgresStatus;
   bay_backup: BayBackupStatus;
+  restore_readiness: BayRestoreReadinessStatus;
   r2: BayBackupsR2Status;
   repos: BayBackupsReposStatus;
   projects: BayBackupsProjectsStatus;
@@ -453,8 +478,11 @@ export interface BayBackupRunResult extends BayInfo {
   format: "pg_basebackup" | "pg_dumpall";
   bucket_name: string | null;
   object_prefix: string | null;
+  remote_snapshot_id: string | null;
+  remote_snapshot_host: string | null;
+  rustic_repo_selector: string | null;
   local_manifest_path: string;
-  storage_backend: "local" | "r2";
+  storage_backend: "local" | "r2" | "rustic";
   artifact_count: number;
   artifact_bytes: number;
   artifacts: BayBackupArtifactInfo[];
@@ -466,16 +494,46 @@ export interface BayRestoreRunResult extends BayInfo {
   started_at: string;
   finished_at: string;
   dry_run: boolean;
+  remote_only: boolean;
   backup_set_id: string;
   format: "pg_basebackup" | "pg_dumpall";
   target_dir: string;
   data_dir: string | null;
+  sync_dir: string | null;
+  secrets_dir: string | null;
   backup_manifest_path: string | null;
   restore_manifest_path: string | null;
-  source_storage_backend: "local" | "r2";
+  source_storage_backend: "local" | "r2" | "rustic";
+  source_snapshot_id: string | null;
+  rustic_repo_selector: string | null;
+  wal_archive_dir: string | null;
+  wal_storage_backend: "local" | "r2" | null;
   artifact_count: number;
   wal_segment_count: number;
   recovery_ready: boolean;
+  notes: string[];
+}
+
+export interface BayRestoreTestRunResult extends BayInfo {
+  started_at: string;
+  finished_at: string;
+  remote_only: boolean;
+  backup_set_id: string;
+  target_dir: string;
+  data_dir: string | null;
+  sync_dir: string | null;
+  secrets_dir: string | null;
+  backup_manifest_path: string | null;
+  restore_manifest_path: string | null;
+  source_storage_backend: "local" | "r2" | "rustic";
+  source_snapshot_id: string | null;
+  rustic_repo_selector: string | null;
+  wal_archive_dir: string | null;
+  wal_storage_backend: "local" | "r2" | null;
+  wal_segment_count: number;
+  recovery_ready: boolean;
+  kept_on_disk: boolean;
+  verified_queries: string[];
   notes: string[];
 }
 
@@ -764,7 +822,17 @@ export interface System {
     backup_set_id?: string;
     target_dir?: string;
     dry_run?: boolean;
+    remote_only?: boolean;
   }) => Promise<BayRestoreRunResult>;
+
+  runBayRestoreTest: (opts?: {
+    account_id?: string;
+    bay_id?: string;
+    backup_set_id?: string;
+    target_dir?: string;
+    keep?: boolean;
+    remote_only?: boolean;
+  }) => Promise<BayRestoreTestRunResult>;
 
   getAccountBay: (opts?: {
     account_id?: string;

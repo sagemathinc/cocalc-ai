@@ -179,6 +179,21 @@ test("bay backups calls the hub bay-backups snapshot API", async () => {
                   never_backed_up: 1,
                   latest_last_backup_at: "2026-04-07T07:00:00.000Z",
                 },
+                restore_readiness: {
+                  latest_backup_set_id: "backup-1",
+                  latest_backup_format: "pg_basebackup",
+                  latest_backup_restore_test_status: "not-run",
+                  latest_backup_restore_tested: false,
+                  latest_backup_restore_tested_at: null,
+                  gold_star: false,
+                  last_restore_test_backup_set_id: null,
+                  last_restore_test_status: null,
+                  last_restore_tested_at: null,
+                  last_restore_test_target_dir: null,
+                  last_restore_test_recovery_ready: null,
+                  summary:
+                    "Latest backup backup-1 has not been restore-tested.",
+                },
                 backup_admission: null,
                 backup_execution: null,
               };
@@ -219,9 +234,12 @@ test("bay backup calls the hub run-bay-backup API", async () => {
                 backup_set_id: "backup-1",
                 format: "pg_basebackup",
                 bucket_name: "lite4-dev-wnam",
-                object_prefix: "bay-backups/bay-0/backup-1",
+                object_prefix: null,
+                remote_snapshot_id: "snap-1",
+                remote_snapshot_host: "bay-0",
+                rustic_repo_selector: "r2:bay-backups:wnam",
                 local_manifest_path: "/tmp/manifest.json",
-                storage_backend: "r2",
+                storage_backend: "rustic",
                 artifact_count: 2,
                 artifact_bytes: 12345,
                 artifacts: [],
@@ -252,19 +270,21 @@ test("bay backup calls the hub run-bay-backup API", async () => {
                   staging_dir: "/tmp/backups/staging",
                   wal_archive_dir: "/tmp/backups/wal/archive",
                   r2_configured: true,
-                  current_storage_backend: "r2",
+                  current_storage_backend: "rustic",
                   bucket_name: "lite4-dev-wnam",
                   bucket_region: "wnam",
                   bucket_endpoint: "https://example.invalid",
                   object_prefix_root: "bay-backups/bay-0",
                   wal_object_prefix: "bay-backups/bay-0/wal",
+                  rustic_repo_selector: "r2:bay-backups:wnam",
                   latest_backup_set_id: "backup-1",
                   latest_format: "pg_basebackup",
-                  latest_storage_backend: "r2",
+                  latest_storage_backend: "rustic",
                   latest_local_manifest_path: "/tmp/manifest.json",
-                  latest_remote_manifest_key:
-                    "bay-backups/bay-0/backup-1/manifest.json",
-                  latest_object_prefix: "bay-backups/bay-0/backup-1",
+                  latest_remote_manifest_key: null,
+                  latest_object_prefix: null,
+                  latest_remote_snapshot_id: "snap-1",
+                  latest_remote_snapshot_host: "bay-0",
                   latest_artifact_count: 2,
                   latest_artifact_bytes: 12345,
                   last_archived_wal_segment: null,
@@ -316,14 +336,21 @@ test("bay restore forwards bay id, backup set, target dir, and write mode", asyn
                 started_at: "2026-04-07T08:00:00.000Z",
                 finished_at: "2026-04-07T08:02:00.000Z",
                 dry_run: false,
+                remote_only: false,
                 backup_set_id: "backup-1",
                 format: "pg_basebackup",
                 target_dir: "/tmp/restore-target",
                 data_dir: "/tmp/restore-target/data",
+                sync_dir: "/tmp/restore-target/sync",
+                secrets_dir: "/tmp/restore-target/secrets",
                 backup_manifest_path: "/tmp/backup-manifest.json",
                 restore_manifest_path:
                   "/tmp/restore-target/restore-manifest.json",
                 source_storage_backend: "local",
+                source_snapshot_id: null,
+                rustic_repo_selector: null,
+                wal_archive_dir: "/tmp/wal-archive",
+                wal_storage_backend: "local",
                 artifact_count: 3,
                 wal_segment_count: 4,
                 recovery_ready: true,
@@ -355,8 +382,144 @@ test("bay restore forwards bay id, backup set, target dir, and write mode", asyn
     backup_set_id: "backup-1",
     target_dir: "/tmp/restore-target",
     dry_run: false,
+    remote_only: false,
   });
   assert.equal(captured?.backup_set_id, "backup-1");
+});
+
+test("bay restore-test forwards bay id, backup set, target dir, and keep mode", async () => {
+  let captured: any;
+  let callOpts: any;
+  const program = new Command();
+  registerBayCommand(program, {
+    withContext: async (_command, _label, fn) => {
+      const ctx = {
+        hub: {
+          system: {
+            runBayRestoreTest: async (opts: any) => {
+              callOpts = opts;
+              return {
+                bay_id: "bay-0",
+                label: "bay-0",
+                region: null,
+                deployment_mode: "single-bay",
+                role: "combined",
+                is_default: true,
+                started_at: "2026-04-07T08:00:00.000Z",
+                finished_at: "2026-04-07T08:02:00.000Z",
+                remote_only: false,
+                backup_set_id: "backup-1",
+                target_dir: "/tmp/restore-test-target",
+                data_dir: "/tmp/restore-test-target/data",
+                sync_dir: "/tmp/restore-test-target/sync",
+                secrets_dir: "/tmp/restore-test-target/secrets",
+                backup_manifest_path: "/tmp/backup-manifest.json",
+                restore_manifest_path:
+                  "/tmp/restore-test-target/restore-manifest.json",
+                source_storage_backend: "local",
+                source_snapshot_id: null,
+                rustic_repo_selector: null,
+                wal_archive_dir: "/tmp/wal-archive",
+                wal_storage_backend: "local",
+                wal_segment_count: 4,
+                recovery_ready: true,
+                kept_on_disk: true,
+                verified_queries: ["current_database=smc"],
+                notes: [],
+              };
+            },
+          },
+        },
+      };
+      captured = await fn(ctx);
+    },
+  } as any);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "bay",
+    "restore-test",
+    "bay-0",
+    "--backup-set-id",
+    "backup-1",
+    "--target-dir",
+    "/tmp/restore-test-target",
+    "--keep",
+  ]);
+
+  assert.deepEqual(callOpts, {
+    bay_id: "bay-0",
+    backup_set_id: "backup-1",
+    target_dir: "/tmp/restore-test-target",
+    keep: true,
+    remote_only: false,
+  });
+  assert.equal(captured?.backup_set_id, "backup-1");
+});
+
+test("bay restore-test forwards remote-only mode", async () => {
+  let callOpts: any;
+  const program = new Command();
+  registerBayCommand(program, {
+    withContext: async (_command, _label, fn) => {
+      const ctx = {
+        hub: {
+          system: {
+            runBayRestoreTest: async (opts: any) => {
+              callOpts = opts;
+              return {
+                bay_id: "bay-0",
+                label: "bay-0",
+                region: null,
+                deployment_mode: "single-bay",
+                role: "combined",
+                is_default: true,
+                started_at: "2026-04-07T08:00:00.000Z",
+                finished_at: "2026-04-07T08:02:00.000Z",
+                remote_only: true,
+                backup_set_id: "backup-1",
+                target_dir: "/tmp/restore-test-target",
+                data_dir: "/tmp/restore-test-target/data",
+                sync_dir: "/tmp/restore-test-target/sync",
+                secrets_dir: "/tmp/restore-test-target/secrets",
+                backup_manifest_path: "/tmp/backup-manifest.json",
+                restore_manifest_path:
+                  "/tmp/restore-test-target/restore-manifest.json",
+                source_storage_backend: "rustic",
+                source_snapshot_id: "snap-1",
+                rustic_repo_selector: "r2:bay-backups:wnam",
+                wal_archive_dir: "/tmp/restore-test-target/wal-archive",
+                wal_storage_backend: "r2",
+                wal_segment_count: 4,
+                recovery_ready: true,
+                kept_on_disk: false,
+                verified_queries: ["current_database=smc"],
+                notes: [],
+              };
+            },
+          },
+        },
+      };
+      await fn(ctx);
+    },
+  } as any);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "bay",
+    "restore-test",
+    "--remote-only",
+  ]);
+
+  assert.deepEqual(callOpts, {
+    bay_id: undefined,
+    backup_set_id: undefined,
+    target_dir: undefined,
+    keep: false,
+    remote_only: true,
+  });
 });
 
 test("bay backfill defaults to a dry run", async () => {

@@ -61,6 +61,7 @@ import {
   getBayBackupStatus as getBayBackupStatus0,
   runBayBackup as runBayBackup0,
   runBayRestore as runBayRestore0,
+  runBayRestoreTest as runBayRestoreTest0,
 } from "@cocalc/server/bay-backup";
 import {
   listRootfsImagesAdmin,
@@ -119,6 +120,7 @@ import type { NewsItemWebapp } from "@cocalc/util/types/news";
 import type {
   BayBackupRunResult,
   BayRestoreRunResult,
+  BayRestoreTestRunResult,
   BayBackupsInfo,
   BayLoadBrowserControlStatus,
   BayLoadInfo,
@@ -367,6 +369,7 @@ export async function getBayBackups({
     checked_at: new Date().toISOString(),
     postgres: bayBackup.postgres,
     bay_backup: bayBackup.bay_backup,
+    restore_readiness: bayBackup.restore_readiness,
     r2: infra.r2,
     repos: infra.repos,
     projects: infra.projects,
@@ -392,19 +395,50 @@ export async function runBayRestore({
   backup_set_id,
   target_dir,
   dry_run = true,
+  remote_only = false,
 }: {
   account_id?: string;
   bay_id?: string;
   backup_set_id?: string;
   target_dir?: string;
   dry_run?: boolean;
+  remote_only?: boolean;
 }): Promise<BayRestoreRunResult> {
   await assertAdmin(account_id);
+  // This RPC is an admin convenience wrapper around bay restore while the hub
+  // is already running. Each backup set also carries its own offline restore
+  // helper so disaster recovery does not depend on the hub being alive first.
   return await runBayRestore0({
     bay_id,
     backup_set_id,
     target_dir,
     dry_run,
+    remote_only,
+  });
+}
+
+export async function runBayRestoreTest({
+  account_id,
+  bay_id,
+  backup_set_id,
+  target_dir,
+  keep = false,
+  remote_only = false,
+}: {
+  account_id?: string;
+  bay_id?: string;
+  backup_set_id?: string;
+  target_dir?: string;
+  keep?: boolean;
+  remote_only?: boolean;
+}): Promise<BayRestoreTestRunResult> {
+  await assertAdmin(account_id);
+  return await runBayRestoreTest0({
+    bay_id,
+    backup_set_id,
+    target_dir,
+    keep,
+    remote_only,
   });
 }
 

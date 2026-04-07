@@ -72,6 +72,11 @@ export function registerBayCommand(
       "restore into this directory instead of the default restores path",
     )
     .option("--write", "materialize the restore instead of a dry run", false)
+    .option(
+      "--remote-only",
+      "ignore the local backup cache and restore only from rustic/R2",
+      false,
+    )
     .action(
       async (
         bay_id: string | undefined,
@@ -79,6 +84,7 @@ export function registerBayCommand(
           backupSetId?: string;
           targetDir?: string;
           write?: boolean;
+          remoteOnly?: boolean;
         },
         command: Command,
       ) => {
@@ -88,6 +94,49 @@ export function registerBayCommand(
             backup_set_id: opts.backupSetId?.trim() || undefined,
             target_dir: opts.targetDir?.trim() || undefined,
             dry_run: !opts.write,
+            remote_only: opts.remoteOnly === true,
+          });
+        });
+      },
+    );
+
+  bay
+    .command("restore-test [bay_id]")
+    .description(
+      "restore the latest bay backup into a fenced workspace and verify it boots",
+    )
+    .option(
+      "--backup-set-id <backup_set_id>",
+      "test a specific backup set instead of the latest one",
+    )
+    .option(
+      "--target-dir <path>",
+      "use this restore directory instead of the default test path",
+    )
+    .option("--keep", "keep the restored workspace even after success", false)
+    .option(
+      "--remote-only",
+      "ignore the local backup cache and restore-test only from rustic/R2",
+      false,
+    )
+    .action(
+      async (
+        bay_id: string | undefined,
+        opts: {
+          backupSetId?: string;
+          targetDir?: string;
+          keep?: boolean;
+          remoteOnly?: boolean;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "bay restore-test", async (ctx) => {
+          return await ctx.hub.system.runBayRestoreTest({
+            bay_id: bay_id?.trim() || undefined,
+            backup_set_id: opts.backupSetId?.trim() || undefined,
+            target_dir: opts.targetDir?.trim() || undefined,
+            keep: opts.keep === true,
+            remote_only: opts.remoteOnly === true,
           });
         });
       },

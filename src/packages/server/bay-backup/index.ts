@@ -3,10 +3,34 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+/*
+Bay control-plane backup strategy
+
+- `runBayBackup()` makes the full snapshot. There is currently no automatic
+  periodic full-snapshot scheduler in this module; the operator or some higher
+  level automation must call `cocalc bay backup`.
+- A full snapshot captures the Postgres control-plane state plus the bay-local
+  `sync` and `secrets` trees. The sqlite files in `sync` are snapshotted via
+  sqlite `.backup`; `sync` and `secrets` are not copied continuously and are
+  only refreshed when a full snapshot runs.
+- The resulting snapshot artifacts are kept locally under the bay backup root.
+  The full snapshot is then pushed to the regional rustic repo, using the bay
+  id as the rustic host selector, so multiple bays can share one repo.
+- WAL archiving is separate from full snapshots. `startBayWalArchiveMaintenance`
+  starts a background loop at Conat startup that keeps syncing archived WAL
+  segments to direct R2 object storage.
+- After a full snapshot finishes, `runBayBackup()` also forces a WAL switch and
+  runs an immediate WAL sync so the snapshot has fresh replay coverage.
+- Restore is therefore "full snapshot + archived WAL". The backup set carries
+  enough information and helper scripts for fenced offline recovery, while the
+  running-hub RPC is the convenience path for admins.
+*/
+
 import { execFile as execFile0 } from "node:child_process";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
 import {
+  copyFile,
   mkdir,
   mkdtemp,
   readFile,
@@ -15,21 +39,28 @@ import {
   rm,
   stat,
   writeFile,
+  chmod,
 } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { tmpdir } from "node:os";
+import { basename, dirname, join } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { promisify } from "node:util";
 import { createGunzip, createGzip } from "node:zlib";
 import {
   data,
+  secrets,
   pghost,
   pgdatabase,
   pgssl,
   pguser,
+  syncFiles,
   sslConfigToPsqlEnv,
 } from "@cocalc/backend/data";
 import getLogger from "@cocalc/backend/logger";
+import { rustic as rusticBinary } from "@cocalc/backend/sandbox/install";
+import { ensureInitialized as ensureRusticInitialized } from "@cocalc/backend/sandbox/rustic";
+import { which } from "@cocalc/backend/which";
 import getPool from "@cocalc/database/pool";
 import dbPassword from "@cocalc/database/pool/password";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
@@ -37,7 +68,9 @@ import type {
   BayBackupArtifactInfo,
   BayBackupRunResult,
   BayRestoreRunResult,
+  BayRestoreTestRunResult,
   BayBackupStatus,
+  BayRestoreReadinessStatus,
   BayBackupsPostgresStatus,
 } from "@cocalc/conat/hub/api/system";
 import { getSingleBayInfo } from "@cocalc/server/bay-directory";
@@ -45,8 +78,8 @@ import { getLaunchpadLocalConfig } from "@cocalc/server/launchpad/mode";
 import {
   createBucket,
   issueSignedObjectDownload,
+  listObjects,
   listBuckets,
-  uploadObjectFromBuffer,
   uploadObjectFromFile,
 } from "@cocalc/server/project-backup/r2";
 import {
@@ -57,9 +90,37 @@ import {
 
 const logger = getLogger("server:bay-backup");
 const execFile = promisify(execFile0);
+const RESTORE_TEST_QUERIES: RestoreTestQuery[] = [
+  {
+    label: "current_database",
+    sql: "SELECT current_database()",
+    expected: pgdatabase,
+  },
+  {
+    label: "accounts_table",
+    sql: "SELECT to_regclass('public.accounts')::text",
+    expected: "accounts",
+  },
+  {
+    label: "projects_table",
+    sql: "SELECT to_regclass('public.projects')::text",
+    expected: "projects",
+  },
+  {
+    label: "server_settings_table",
+    sql: "SELECT to_regclass('public.server_settings')::text",
+    expected: "server_settings",
+  },
+];
 
 type BackupStrategy = "pg_basebackup" | "pg_dumpall";
-type StorageBackend = "local" | "r2";
+type StorageBackend = "local" | "r2" | "rustic";
+
+type RestoreTestQuery = {
+  label: string;
+  sql: string;
+  expected: string;
+};
 
 type StoredBayBackupState = {
   bay_id: string;
@@ -69,12 +130,15 @@ type StoredBayBackupState = {
   bucket_region: string | null;
   bucket_endpoint: string | null;
   object_prefix_root: string | null;
+  rustic_repo_selector: string | null;
   latest_backup_set_id: string | null;
   latest_format: BackupStrategy | null;
   latest_storage_backend: StorageBackend | null;
   latest_local_manifest_path: string | null;
   latest_remote_manifest_key: string | null;
   latest_object_prefix: string | null;
+  latest_remote_snapshot_id: string | null;
+  latest_remote_snapshot_host: string | null;
   latest_artifact_count: number;
   latest_artifact_bytes: number;
   last_archived_wal_segment: string | null;
@@ -87,6 +151,11 @@ type StoredBayBackupState = {
   last_error_at: string | null;
   last_error: string | null;
   restore_state: string | null;
+  last_restore_test_backup_set_id: string | null;
+  last_restore_test_status: "passed" | "failed" | null;
+  last_restore_tested_at: string | null;
+  last_restore_test_target_dir: string | null;
+  last_restore_test_recovery_ready: boolean | null;
 };
 
 type StoredBayBackupManifest = {
@@ -103,6 +172,9 @@ type StoredBayBackupManifest = {
   bucket_endpoint: string | null;
   object_prefix: string | null;
   remote_manifest_key: string | null;
+  remote_snapshot_id: string | null;
+  remote_snapshot_host: string | null;
+  rustic_repo_selector: string | null;
   postgres: BayBackupsPostgresStatus;
   artifacts: BayBackupArtifactInfo[];
 };
@@ -117,6 +189,15 @@ type R2Target = {
   api_token?: string;
   access_key?: string;
   secret_key?: string;
+};
+
+type BayRusticRepoConfig = {
+  repo_toml: string;
+  repo_selector: string;
+  repo_root: string;
+  region: string;
+  bucket_name: string;
+  bucket_endpoint: string;
 };
 
 type WalArchiveFile = {
@@ -140,6 +221,21 @@ type ResolvedBackupManifest = {
   manifest: StoredBayBackupManifest;
   backup_manifest_path: string | null;
   source_storage_backend: StorageBackend;
+  remote_snapshot_id: string | null;
+};
+
+type ControlPlaneArtifact = {
+  name: string;
+  local_path: string;
+  type: "sync" | "secrets";
+};
+
+type RusticSnapshotInfo = {
+  id: string;
+  time: string | null;
+  hostname: string | null;
+  tags: string[];
+  paths: string[];
 };
 
 let runInFlight: Promise<BayBackupRunResult> | null = null;
@@ -210,8 +306,14 @@ function buildPostgresCliEnv(): NodeJS.ProcessEnv {
   };
 }
 
-async function ensureDir(path: string): Promise<void> {
-  await mkdir(path, { recursive: true });
+async function ensureDir(path: string, mode?: number): Promise<void> {
+  await mkdir(path, {
+    recursive: true,
+    ...(mode == null ? {} : { mode }),
+  });
+  if (mode != null) {
+    await chmod(path, mode).catch(() => undefined);
+  }
 }
 
 async function readJsonIfExists<T>(path: string): Promise<T | undefined> {
@@ -247,12 +349,15 @@ function defaultState({
     bucket_region: r2.bucket_region ?? null,
     bucket_endpoint: r2.bucket_endpoint ?? null,
     object_prefix_root: r2.object_prefix_root ?? null,
+    rustic_repo_selector: null,
     latest_backup_set_id: null,
     latest_format: null,
     latest_storage_backend: null,
     latest_local_manifest_path: null,
     latest_remote_manifest_key: null,
     latest_object_prefix: null,
+    latest_remote_snapshot_id: null,
+    latest_remote_snapshot_host: null,
     latest_artifact_count: 0,
     latest_artifact_bytes: 0,
     last_archived_wal_segment: null,
@@ -265,6 +370,11 @@ function defaultState({
     last_error_at: null,
     last_error: null,
     restore_state: null,
+    last_restore_test_backup_set_id: null,
+    last_restore_test_status: null,
+    last_restore_tested_at: null,
+    last_restore_test_target_dir: null,
+    last_restore_test_recovery_ready: null,
   };
 }
 
@@ -360,6 +470,114 @@ async function resolveR2Target(bay_id: string): Promise<R2Target> {
   };
 }
 
+const bayBackupSharedSecretPath = join(secrets, "backup-shared-secret");
+let bayBackupSharedSecret: string | undefined;
+
+async function getBayBackupSharedSecret(): Promise<string> {
+  if (bayBackupSharedSecret) return bayBackupSharedSecret;
+  let encoded = "";
+  try {
+    encoded = (await readFile(bayBackupSharedSecretPath, "utf8")).trim();
+  } catch {
+    // create below
+  }
+  if (!encoded) {
+    encoded = randomBytes(32).toString("base64url");
+    await ensureDir(dirname(bayBackupSharedSecretPath));
+    await writeFile(bayBackupSharedSecretPath, encoded, { mode: 0o600 });
+  }
+  bayBackupSharedSecret = encoded;
+  return encoded;
+}
+
+function buildBayRusticS3Toml({
+  endpoint,
+  bucket,
+  accessKey,
+  secretKey,
+  password,
+  root,
+}: {
+  endpoint: string;
+  bucket: string;
+  accessKey: string;
+  secretKey: string;
+  password: string;
+  root: string;
+}): string {
+  return [
+    "[repository]",
+    'repository = "opendal:s3"',
+    `password = "${password}"`,
+    "",
+    "[repository.options]",
+    `endpoint = "${endpoint}"`,
+    'region = "auto"',
+    `bucket = "${bucket}"`,
+    `root = "${root}"`,
+    `access_key_id = "${accessKey}"`,
+    `secret_access_key = "${secretKey}"`,
+    "",
+  ].join("\n");
+}
+
+async function buildBayRusticRepoConfig({
+  r2,
+}: {
+  r2: R2Target;
+}): Promise<BayRusticRepoConfig | null> {
+  if (
+    !r2.configured ||
+    !r2.bucket_name ||
+    !r2.bucket_region ||
+    !r2.bucket_endpoint ||
+    !r2.access_key ||
+    !r2.secret_key
+  ) {
+    return null;
+  }
+  const region = r2.bucket_region;
+  const root = `rustic/bay-backups/${region}`;
+  return {
+    repo_toml: buildBayRusticS3Toml({
+      endpoint: r2.bucket_endpoint,
+      bucket: r2.bucket_name,
+      accessKey: r2.access_key,
+      secretKey: r2.secret_key,
+      password: await getBayBackupSharedSecret(),
+      root,
+    }),
+    repo_selector: `r2:bay-backups:${region}`,
+    repo_root: root,
+    region,
+    bucket_name: r2.bucket_name,
+    bucket_endpoint: r2.bucket_endpoint,
+  };
+}
+
+async function ensureBayRusticRepoProfile({
+  repo_selector,
+  repo_toml,
+}: BayRusticRepoConfig): Promise<string> {
+  const digest = createHash("sha256")
+    .update(`${repo_selector}\0${repo_toml}`)
+    .digest("hex");
+  const dir = join(secrets, "rustic", "bay-backups");
+  const path = join(dir, `${digest}.toml`);
+  try {
+    if ((await readFile(path, "utf8")) === repo_toml) {
+      await ensureRusticInitialized(path);
+      return path;
+    }
+  } catch {
+    // write below
+  }
+  await mkdir(dir, { recursive: true });
+  await writeFile(path, repo_toml, { mode: 0o600 });
+  await ensureRusticInitialized(path);
+  return path;
+}
+
 async function ensureR2Bucket(target: R2Target): Promise<void> {
   if (
     !target.configured ||
@@ -441,6 +659,410 @@ async function exists(path: string | null | undefined): Promise<boolean> {
     }
     throw err;
   }
+}
+
+function rusticCommonArgs(repoProfilePath: string): string[] {
+  return repoProfilePath.endsWith(".toml")
+    ? ["-P", repoProfilePath.slice(0, -5)]
+    : ["--password", "", "-r", repoProfilePath];
+}
+
+async function execRustic({
+  repoProfilePath,
+  args,
+  cwd,
+  timeout = 10 * 60 * 1000,
+}: {
+  repoProfilePath: string;
+  args: string[];
+  cwd?: string;
+  timeout?: number;
+}): Promise<string> {
+  const { stdout } = await execFile(
+    rusticBinary,
+    [...rusticCommonArgs(repoProfilePath), ...args],
+    {
+      cwd,
+      timeout,
+      maxBuffer: 20 * 1024 * 1024,
+    },
+  );
+  return `${stdout ?? ""}`;
+}
+
+function flattenRusticSnapshotGroups(groups: unknown): RusticSnapshotInfo[] {
+  if (!Array.isArray(groups)) return [];
+  const snapshots: RusticSnapshotInfo[] = [];
+  for (const group of groups) {
+    const grouped = Array.isArray((group as any)?.snapshots)
+      ? (group as any).snapshots
+      : Array.isArray(group) && Array.isArray((group as any)[1])
+        ? (group as any)[1]
+        : [];
+    for (const snapshot of grouped) {
+      const id = `${snapshot?.id ?? ""}`.trim();
+      if (!id) continue;
+      snapshots.push({
+        id,
+        time: typeof snapshot?.time === "string" ? snapshot.time : null,
+        hostname:
+          typeof snapshot?.hostname === "string" ? snapshot.hostname : null,
+        tags: Array.isArray(snapshot?.tags)
+          ? snapshot.tags
+              .map((tag: unknown) => `${tag ?? ""}`.trim())
+              .filter(Boolean)
+          : [],
+        paths: Array.isArray(snapshot?.paths)
+          ? snapshot.paths
+              .map((path: unknown) => `${path ?? ""}`.trim())
+              .filter(Boolean)
+          : [],
+      });
+    }
+  }
+  snapshots.sort((a, b) =>
+    `${b.time ?? ""}\0${b.id}`.localeCompare(`${a.time ?? ""}\0${a.id}`),
+  );
+  return snapshots;
+}
+
+async function listBayRusticSnapshots({
+  repoProfilePath,
+  snapshotHost,
+}: {
+  repoProfilePath: string;
+  snapshotHost: string;
+}): Promise<RusticSnapshotInfo[]> {
+  const stdout = await execRustic({
+    repoProfilePath,
+    args: ["snapshots", "--json", "--filter-host", snapshotHost],
+  });
+  return flattenRusticSnapshotGroups(JSON.parse(stdout));
+}
+
+async function findBayRusticSnapshot({
+  repoProfilePath,
+  snapshotHost,
+  backup_set_id,
+}: {
+  repoProfilePath: string;
+  snapshotHost: string;
+  backup_set_id: string;
+}): Promise<RusticSnapshotInfo> {
+  const snapshots = await listBayRusticSnapshots({
+    repoProfilePath,
+    snapshotHost,
+  });
+  const expectedTag = `backup-set-id=${backup_set_id}`;
+  const snapshot = snapshots.find((entry) => entry.tags.includes(expectedTag));
+  if (!snapshot) {
+    throw new Error(
+      `rustic snapshot for backup set '${backup_set_id}' and host '${snapshotHost}' was not found`,
+    );
+  }
+  return snapshot;
+}
+
+async function backupToBayRusticRepo({
+  repoProfilePath,
+  snapshotHost,
+  backup_set_id,
+  format,
+  sourceDir,
+}: {
+  repoProfilePath: string;
+  snapshotHost: string;
+  backup_set_id: string;
+  format: BackupStrategy;
+  sourceDir: string;
+}): Promise<RusticSnapshotInfo> {
+  await execRustic({
+    repoProfilePath,
+    cwd: sourceDir,
+    args: [
+      "backup",
+      "--json",
+      "--host",
+      snapshotHost,
+      "--tag",
+      `backup-set-id=${backup_set_id}`,
+      "--tag",
+      `backup-format=${format}`,
+      "--tag",
+      `bay-id=${snapshotHost}`,
+      ".",
+    ],
+    timeout: 30 * 60 * 1000,
+  });
+  return await findBayRusticSnapshot({
+    repoProfilePath,
+    snapshotHost,
+    backup_set_id,
+  });
+}
+
+async function restoreBayRusticPath({
+  repoProfilePath,
+  snapshot_id,
+  path,
+  destinationDir,
+}: {
+  repoProfilePath: string;
+  snapshot_id: string;
+  path?: string;
+  destinationDir: string;
+}): Promise<void> {
+  await ensureDir(destinationDir);
+  await execRustic({
+    repoProfilePath,
+    args: [
+      "restore",
+      path ? `${snapshot_id}:${path}` : snapshot_id,
+      destinationDir,
+    ],
+    timeout: 30 * 60 * 1000,
+  });
+}
+
+function sqliteShellQuote(arg: string): string {
+  return `'${arg.replace(/'/g, "''")}'`;
+}
+
+async function tarGzDirectory({
+  sourceDir,
+  archivePath,
+}: {
+  sourceDir: string;
+  archivePath: string;
+}): Promise<void> {
+  await ensureDir(dirname(archivePath));
+  await execFile(
+    "tar",
+    ["-C", dirname(sourceDir), "-czf", archivePath, basename(sourceDir)],
+    {
+      maxBuffer: 10 * 1024 * 1024,
+    },
+  );
+}
+
+async function backupSqliteDatabase({
+  sourcePath,
+  destinationPath,
+}: {
+  sourcePath: string;
+  destinationPath: string;
+}): Promise<void> {
+  await ensureDir(dirname(destinationPath));
+  await execFile(
+    "sqlite3",
+    [
+      sourcePath,
+      ".timeout 5000",
+      `.backup ${sqliteShellQuote(destinationPath)}`,
+    ],
+    {
+      maxBuffer: 10 * 1024 * 1024,
+    },
+  );
+}
+
+async function snapshotSyncTree({
+  sourceDir,
+  destinationDir,
+}: {
+  sourceDir: string;
+  destinationDir: string;
+}): Promise<void> {
+  await ensureDir(destinationDir);
+  const entries = await readdir(sourceDir, { withFileTypes: true });
+  for (const entry of entries) {
+    const sourcePath = join(sourceDir, entry.name);
+    const destinationPath = join(destinationDir, entry.name);
+    if (entry.isDirectory()) {
+      // If the sync tree ever grows large, keep a persistent staged snapshot
+      // and refresh only sqlite files whose .db/.db-wal/.db-shm inputs changed
+      // since the previous backup instead of rebuilding the whole tree here.
+      await snapshotSyncTree({
+        sourceDir: sourcePath,
+        destinationDir: destinationPath,
+      });
+      continue;
+    }
+    if (entry.isFile()) {
+      if (entry.name.endsWith(".db")) {
+        await backupSqliteDatabase({
+          sourcePath,
+          destinationPath,
+        });
+        continue;
+      }
+      if (entry.name.endsWith(".db-wal") || entry.name.endsWith(".db-shm")) {
+        continue;
+      }
+      await ensureDir(dirname(destinationPath));
+      await copyFile(sourcePath, destinationPath);
+      const info = await stat(sourcePath);
+      await chmod(destinationPath, info.mode);
+    }
+  }
+}
+
+async function copySecretsTree({
+  sourceDir,
+  destinationDir,
+}: {
+  sourceDir: string;
+  destinationDir: string;
+}): Promise<void> {
+  await ensureDir(destinationDir);
+  const entries = await readdir(sourceDir, { withFileTypes: true });
+  for (const entry of entries) {
+    if (entry.name.endsWith(".pid")) {
+      continue;
+    }
+    const sourcePath = join(sourceDir, entry.name);
+    const destinationPath = join(destinationDir, entry.name);
+    if (entry.isDirectory()) {
+      await copySecretsTree({
+        sourceDir: sourcePath,
+        destinationDir: destinationPath,
+      });
+      continue;
+    }
+    if (entry.isFile()) {
+      await ensureDir(dirname(destinationPath));
+      await copyFile(sourcePath, destinationPath);
+      const info = await stat(sourcePath);
+      await chmod(destinationPath, info.mode);
+    }
+  }
+}
+
+async function stageControlPlaneArtifacts({
+  stagingDir,
+}: {
+  stagingDir: string;
+}): Promise<ControlPlaneArtifact[]> {
+  const artifacts: ControlPlaneArtifact[] = [];
+
+  if (await exists(syncFiles.local)) {
+    const syncSnapshotDir = join(stagingDir, "sync");
+    await snapshotSyncTree({
+      sourceDir: syncFiles.local,
+      destinationDir: syncSnapshotDir,
+    });
+    const syncArchivePath = join(stagingDir, "sync.tar.gz");
+    await tarGzDirectory({
+      sourceDir: syncSnapshotDir,
+      archivePath: syncArchivePath,
+    });
+    await rm(syncSnapshotDir, { recursive: true, force: true });
+    artifacts.push({
+      name: "sync.tar.gz",
+      local_path: syncArchivePath,
+      type: "sync",
+    });
+  }
+
+  if (await exists(secrets)) {
+    const secretsSnapshotDir = join(stagingDir, "secrets");
+    await copySecretsTree({
+      sourceDir: secrets,
+      destinationDir: secretsSnapshotDir,
+    });
+    const secretsArchivePath = join(stagingDir, "secrets.tar.gz");
+    // A future upgrade could route this through rustic so the uploaded secret
+    // bundle gets deduplication plus backup-managed encryption at rest in R2.
+    await tarGzDirectory({
+      sourceDir: secretsSnapshotDir,
+      archivePath: secretsArchivePath,
+    });
+    await rm(secretsSnapshotDir, { recursive: true, force: true });
+    artifacts.push({
+      name: "secrets.tar.gz",
+      local_path: secretsArchivePath,
+      type: "secrets",
+    });
+  }
+
+  return artifacts;
+}
+
+async function writeOfflineRestoreHelper({
+  archiveDir,
+  backup_set_id,
+}: {
+  archiveDir: string;
+  backup_set_id: string;
+}): Promise<void> {
+  const helperPath = join(archiveDir, "restore-offline.sh");
+  const readmePath = join(archiveDir, "RESTORE-OFFLINE.txt");
+  const script = [
+    "#!/bin/sh",
+    "set -eu",
+    "",
+    'BACKUP_DIR="${1:-$(pwd)}"',
+    'TARGET_DIR="${2:-$BACKUP_DIR/restore-output}"',
+    'MANIFEST_PATH="$BACKUP_DIR/manifest.json"',
+    'if [ ! -f "$MANIFEST_PATH" ]; then',
+    '  echo "missing manifest.json in $BACKUP_DIR" >&2',
+    "  exit 1",
+    "fi",
+    'mkdir -p "$TARGET_DIR"',
+    'cp "$MANIFEST_PATH" "$TARGET_DIR/backup-manifest.json"',
+    'if [ -f "$BACKUP_DIR/base.tar.gz" ]; then',
+    '  mkdir -p "$TARGET_DIR/data"',
+    '  tar -xzf "$BACKUP_DIR/base.tar.gz" -C "$TARGET_DIR/data"',
+    '  if [ -f "$BACKUP_DIR/pg_wal.tar.gz" ]; then',
+    '    mkdir -p "$TARGET_DIR/data/pg_wal"',
+    '    tar -xzf "$BACKUP_DIR/pg_wal.tar.gz" -C "$TARGET_DIR/data/pg_wal"',
+    "  fi",
+    '  rm -f "$TARGET_DIR/data/postmaster.pid" "$TARGET_DIR/data/postmaster.opts"',
+    '  echo "restored Postgres base backup into $TARGET_DIR/data"',
+    '  echo "If you also have the archived WAL available, add a restore_command"',
+    '  echo "to $TARGET_DIR/data/postgresql.auto.conf and create restore.signal."',
+    '  echo "Otherwise you can start the fenced snapshot directly with:"',
+    '  echo "  postgres -D $TARGET_DIR/data"',
+    "fi",
+    'if [ -f "$BACKUP_DIR/cluster.sql.gz" ]; then',
+    '  gzip -dc "$BACKUP_DIR/cluster.sql.gz" > "$TARGET_DIR/cluster.sql"',
+    '  echo "wrote $TARGET_DIR/cluster.sql for manual import"',
+    "fi",
+    'if [ -f "$BACKUP_DIR/sync.tar.gz" ]; then',
+    '  tar -xzf "$BACKUP_DIR/sync.tar.gz" -C "$TARGET_DIR"',
+    '  echo "restored Conat sync tree into $TARGET_DIR/sync"',
+    "fi",
+    'if [ -f "$BACKUP_DIR/secrets.tar.gz" ]; then',
+    '  tar -xzf "$BACKUP_DIR/secrets.tar.gz" -C "$TARGET_DIR"',
+    '  echo "restored bay secrets into $TARGET_DIR/secrets"',
+    "fi",
+    "",
+  ].join("\n");
+  const readme = [
+    `CoCalc bay offline restore helper for backup set ${backup_set_id}.`,
+    "",
+    "This backup set can be restored without a running hub.",
+    "",
+    "Fast path:",
+    "  ./restore-offline.sh /path/to/unpacked-backup-set /path/to/restore-target",
+    "",
+    "What it restores:",
+    "  - backup-manifest.json",
+    "  - a fenced Postgres data directory from base.tar.gz when present",
+    "  - cluster.sql from cluster.sql.gz for pg_dumpall backups",
+    "  - sync/ from sync.tar.gz when present",
+    "  - secrets/ from secrets.tar.gz when present",
+    "",
+    "Limitations:",
+    "  - The hub RPC `cocalc bay restore` is still the easiest admin path.",
+    "  - Point-in-time replay still needs archived WAL access outside this backup set.",
+    "  - For pg_basebackup snapshots, pg_wal.tar.gz is restored, so the fenced",
+    "    snapshot itself is locally recoverable to the checkpoint captured by",
+    "    the backup even before extra archived WAL is configured.",
+    "",
+  ].join("\n");
+  await writeFile(helperPath, script, { mode: 0o700 });
+  await writeFile(readmePath, readme, "utf8");
 }
 
 async function extractTarGz({
@@ -533,58 +1155,6 @@ async function collectArtifacts(
   return artifacts;
 }
 
-async function uploadArtifactsToR2({
-  target,
-  backup_set_id,
-  artifacts,
-}: {
-  target: R2Target;
-  backup_set_id: string;
-  artifacts: BayBackupArtifactInfo[];
-}): Promise<{
-  object_prefix: string;
-  artifacts: BayBackupArtifactInfo[];
-}> {
-  if (
-    !target.configured ||
-    !target.bucket_name ||
-    !target.bucket_endpoint ||
-    !target.object_prefix_root ||
-    !target.access_key ||
-    !target.secret_key
-  ) {
-    throw new Error("R2 target is not configured");
-  }
-  await ensureR2Bucket(target);
-  const object_prefix = `${target.object_prefix_root}/${backup_set_id}`;
-  const uploaded: BayBackupArtifactInfo[] = [];
-  for (const artifact of artifacts) {
-    const object_key = `${object_prefix}/artifacts/${artifact.name}`;
-    if (!artifact.local_path) {
-      throw new Error(`artifact '${artifact.name}' is missing local_path`);
-    }
-    await uploadObjectFromFile({
-      endpoint: target.bucket_endpoint,
-      accessKey: target.access_key,
-      secretKey: target.secret_key,
-      bucket: target.bucket_name,
-      key: object_key,
-      filePath: artifact.local_path,
-      artifactSha256: artifact.sha256,
-      artifactBytes: artifact.bytes,
-      contentType: artifact.content_type,
-    });
-    uploaded.push({
-      ...artifact,
-      object_key,
-    });
-  }
-  return {
-    object_prefix,
-    artifacts: uploaded,
-  };
-}
-
 async function downloadObjectToFileFromR2({
   target,
   key,
@@ -628,63 +1198,133 @@ async function resolveBackupManifest({
   bay_id,
   backup_set_id,
   r2,
+  rusticRepoProfilePath,
   download_dir,
+  prefer_local = true,
 }: {
   paths: ReturnType<typeof getBayBackupPaths>;
   bay_id: string;
   backup_set_id: string;
   r2: R2Target;
+  rusticRepoProfilePath?: string | null;
   download_dir?: string;
+  prefer_local?: boolean;
 }): Promise<ResolvedBackupManifest> {
   const localManifestPath = join(paths.manifests_dir, `${backup_set_id}.json`);
-  const localManifest =
-    await readJsonIfExists<StoredBayBackupManifest>(localManifestPath);
-  if (localManifest) {
+  const localManifest = prefer_local
+    ? await readJsonIfExists<StoredBayBackupManifest>(localManifestPath)
+    : undefined;
+  if (prefer_local && localManifest) {
     return {
       manifest: localManifest,
       backup_manifest_path: localManifestPath,
       source_storage_backend: "local",
+      remote_snapshot_id: localManifest.remote_snapshot_id ?? null,
     };
   }
-  if (!download_dir) {
-    throw new Error(
-      `backup manifest for '${backup_set_id}' is not available locally`,
-    );
+  if (download_dir && rusticRepoProfilePath) {
+    try {
+      const snapshot = await findBayRusticSnapshot({
+        repoProfilePath: rusticRepoProfilePath,
+        snapshotHost: bay_id,
+        backup_set_id,
+      });
+      const restoreDir = join(download_dir, "rustic-manifest");
+      await restoreBayRusticPath({
+        repoProfilePath: rusticRepoProfilePath,
+        snapshot_id: snapshot.id,
+        path: "manifest.json",
+        destinationDir: restoreDir,
+      });
+      const downloadPath = join(restoreDir, "manifest.json");
+      const manifest = JSON.parse(
+        await readFile(downloadPath, "utf8"),
+      ) as StoredBayBackupManifest;
+      return {
+        manifest,
+        backup_manifest_path: downloadPath,
+        source_storage_backend: "rustic",
+        remote_snapshot_id: snapshot.id,
+      };
+    } catch (err) {
+      logger.debug(
+        "rustic bay backup manifest lookup missed; trying legacy R2",
+        {
+          bay_id,
+          backup_set_id,
+          err,
+        },
+      );
+    }
   }
-  const object_prefix = r2.object_prefix_root ?? `bay-backups/${bay_id}`;
-  const manifestKey = `${object_prefix}/${backup_set_id}/manifest.json`;
-  const downloadPath = join(download_dir, "manifest.json");
-  await downloadObjectToFileFromR2({
-    target: r2,
-    key: manifestKey,
-    destinationPath: downloadPath,
-  });
-  const manifest = JSON.parse(
-    await readFile(downloadPath, "utf8"),
-  ) as StoredBayBackupManifest;
-  return {
-    manifest,
-    backup_manifest_path: downloadPath,
-    source_storage_backend: "r2",
-  };
+  if (download_dir) {
+    const object_prefix = r2.object_prefix_root ?? `bay-backups/${bay_id}`;
+    const manifestKey = `${object_prefix}/${backup_set_id}/manifest.json`;
+    const downloadPath = join(download_dir, "manifest.json");
+    await downloadObjectToFileFromR2({
+      target: r2,
+      key: manifestKey,
+      destinationPath: downloadPath,
+    });
+    const manifest = JSON.parse(
+      await readFile(downloadPath, "utf8"),
+    ) as StoredBayBackupManifest;
+    return {
+      manifest,
+      backup_manifest_path: downloadPath,
+      source_storage_backend: "r2",
+      remote_snapshot_id: null,
+    };
+  }
+  throw new Error(
+    `backup manifest for '${backup_set_id}' is not available locally`,
+  );
 }
 
 async function resolveArtifactPath({
   artifact,
   r2,
+  remote_snapshot_id,
+  rusticRepoProfilePath,
   download_dir,
+  prefer_local = true,
 }: {
   artifact: BayBackupArtifactInfo;
   r2: R2Target;
+  remote_snapshot_id?: string | null;
+  rusticRepoProfilePath?: string | null;
   download_dir?: string;
+  prefer_local?: boolean;
 }): Promise<{
   path: string;
   source_storage_backend: StorageBackend;
 }> {
-  if (artifact.local_path && (await exists(artifact.local_path))) {
+  if (
+    prefer_local &&
+    artifact.local_path &&
+    (await exists(artifact.local_path))
+  ) {
     return {
       path: artifact.local_path,
       source_storage_backend: "local",
+    };
+  }
+  if (remote_snapshot_id && rusticRepoProfilePath) {
+    if (!download_dir) {
+      throw new Error(
+        `artifact '${artifact.name}' requires rustic download but no download dir is available`,
+      );
+    }
+    const destinationDir = join(download_dir, "artifacts");
+    await restoreBayRusticPath({
+      repoProfilePath: rusticRepoProfilePath,
+      snapshot_id: remote_snapshot_id,
+      path: artifact.name,
+      destinationDir,
+    });
+    return {
+      path: join(destinationDir, artifact.name),
+      source_storage_backend: "rustic",
     };
   }
   if (!artifact.object_key) {
@@ -707,8 +1347,119 @@ async function resolveArtifactPath({
   };
 }
 
+function findArtifactByName(
+  artifacts: BayBackupArtifactInfo[],
+  name: string,
+): BayBackupArtifactInfo | undefined {
+  return artifacts.find((artifact) => artifact.name === name);
+}
+
 function walObjectPrefix(root: string | null): string | null {
   return root ? `${root}/wal` : null;
+}
+
+async function listRemoteWalObjectKeys({
+  r2,
+  wal_object_prefix,
+}: {
+  r2: R2Target;
+  wal_object_prefix: string;
+}): Promise<string[]> {
+  if (
+    !r2.configured ||
+    !r2.bucket_name ||
+    !r2.bucket_endpoint ||
+    !r2.access_key ||
+    !r2.secret_key
+  ) {
+    throw new Error("R2 target is not configured for remote WAL restore");
+  }
+  return await listObjects({
+    endpoint: r2.bucket_endpoint,
+    accessKey: r2.access_key,
+    secretKey: r2.secret_key,
+    bucket: r2.bucket_name,
+    prefix: `${wal_object_prefix}/`,
+  });
+}
+
+async function writeRemoteWalRestoreHelper({
+  targetDir,
+  r2,
+  wal_object_prefix,
+}: {
+  targetDir: string;
+  r2: R2Target;
+  wal_object_prefix: string;
+}): Promise<string> {
+  if (
+    !r2.bucket_endpoint ||
+    !r2.access_key ||
+    !r2.secret_key ||
+    !r2.bucket_name
+  ) {
+    throw new Error("R2 target is not configured for remote WAL restore");
+  }
+  const requestLogPath = join(targetDir, "restore-wal.requests.log");
+  const scriptPath = join(targetDir, "restore-wal.js");
+  const script = [
+    "#!/usr/bin/env node",
+    "const { createHash, createHmac } = require('node:crypto');",
+    "const { appendFileSync, createWriteStream, mkdirSync } = require('node:fs');",
+    "const { dirname } = require('node:path');",
+    "const { Readable } = require('node:stream');",
+    "const { pipeline } = require('node:stream/promises');",
+    `const ENDPOINT = ${JSON.stringify(r2.bucket_endpoint)};`,
+    `const ACCESS_KEY = ${JSON.stringify(r2.access_key)};`,
+    `const SECRET_KEY = ${JSON.stringify(r2.secret_key)};`,
+    `const BUCKET = ${JSON.stringify(r2.bucket_name)};`,
+    `const PREFIX = ${JSON.stringify(wal_object_prefix)};`,
+    `const REQUEST_LOG = ${JSON.stringify(requestLogPath)};`,
+    "function hashHex(data) { return createHash('sha256').update(data).digest('hex'); }",
+    "function hmac(key, data, encoding) { const hash = createHmac('sha256', key).update(data, 'utf8'); return encoding ? hash.digest(encoding) : hash.digest(); }",
+    "function getSignatureKey(secret, dateStamp) { const kDate = hmac(`AWS4${secret}`, dateStamp); const kRegion = hmac(kDate, 'auto'); const kService = hmac(kRegion, 's3'); return hmac(kService, 'aws4_request'); }",
+    "function toAmzDate(now) { return now.toISOString().replace(/[:-]|\\.\\d{3}/g, ''); }",
+    "function encodeRfc3986(str) { return encodeURIComponent(str).replace(/[!'()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`); }",
+    "function canonicalizeObjectPath(bucket, key) { const parts = [bucket, ...`${key ?? ''}`.split('/').filter(Boolean)]; return `/${parts.map(encodeRfc3986).join('/')}`; }",
+    "async function main() {",
+    "  const [segment, destPath] = process.argv.slice(2);",
+    "  if (!segment || !destPath) process.exit(1);",
+    "  const key = `${PREFIX}/${segment}`;",
+    "  const parsed = new URL(ENDPOINT);",
+    "  const canonicalUri = canonicalizeObjectPath(BUCKET, key);",
+    "  const now = new Date();",
+    "  const amzDate = toAmzDate(now);",
+    "  const dateStamp = amzDate.slice(0, 8);",
+    "  const payloadSha256 = hashHex('');",
+    "  const headers = {",
+    "    host: parsed.host,",
+    "    'x-amz-content-sha256': payloadSha256,",
+    "    'x-amz-date': amzDate,",
+    "  };",
+    "  const signedHeaderNames = Object.keys(headers).sort();",
+    "  const canonicalHeaders = signedHeaderNames.map((name) => `${name}:${String(headers[name]).trim()}\\n`).join('');",
+    "  const signedHeaders = signedHeaderNames.join(';');",
+    "  const canonicalRequest = ['GET', canonicalUri, '', canonicalHeaders, signedHeaders, payloadSha256].join('\\n');",
+    "  const credentialScope = `${dateStamp}/auto/s3/aws4_request`;",
+    "  const stringToSign = ['AWS4-HMAC-SHA256', amzDate, credentialScope, hashHex(canonicalRequest)].join('\\n');",
+    "  const signingKey = getSignatureKey(SECRET_KEY, dateStamp);",
+    "  const signature = hmac(signingKey, stringToSign, 'hex');",
+    "  headers.authorization = `AWS4-HMAC-SHA256 Credential=${ACCESS_KEY}/${credentialScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`;",
+    "  const { host: _host, ...requestHeaders } = headers;",
+    "  const response = await fetch(`${parsed.origin}${canonicalUri}`, { headers: requestHeaders });",
+    "  if (!response.ok || !response.body) {",
+    "    if (response.status === 404) process.exit(1);",
+    "    throw new Error(`R2 GET failed (${response.status}): ${response.statusText || 'unknown error'}`);",
+    "  }",
+    "  mkdirSync(dirname(destPath), { recursive: true });",
+    "  await pipeline(Readable.fromWeb(response.body), createWriteStream(destPath));",
+    "  appendFileSync(REQUEST_LOG, `${segment}\\n`);",
+    "}",
+    "main().catch((err) => { console.error(err?.message ?? String(err)); process.exit(1); });",
+    "",
+  ].join("\n");
+  await writeFile(scriptPath, script, { mode: 0o700 });
+  return scriptPath;
 }
 
 async function listArchivedWalFiles(
@@ -814,8 +1565,9 @@ async function syncBayWalArchive({
     throw new Error(`bay '${resolvedBayId}' not found`);
   }
   const r2 = await resolveR2Target(resolvedBayId);
-  const current_storage_backend: StorageBackend = r2.configured
-    ? "r2"
+  const rusticRepo = await buildBayRusticRepoConfig({ r2 });
+  const current_storage_backend: StorageBackend = rusticRepo
+    ? "rustic"
     : "local";
   const paths = getBayBackupPaths(resolvedBayId);
   await ensureDir(paths.wal_archive_dir);
@@ -836,8 +1588,19 @@ async function syncBayWalArchive({
     bucket_endpoint: r2.bucket_endpoint ?? stored.bucket_endpoint ?? null,
     object_prefix_root:
       r2.object_prefix_root ?? stored.object_prefix_root ?? null,
+    rustic_repo_selector:
+      rusticRepo?.repo_selector ?? stored.rustic_repo_selector ?? null,
     last_archived_wal_segment: stored.last_archived_wal_segment ?? null,
     last_uploaded_wal_segment: stored.last_uploaded_wal_segment ?? null,
+    latest_remote_snapshot_id: stored.latest_remote_snapshot_id ?? null,
+    latest_remote_snapshot_host: stored.latest_remote_snapshot_host ?? null,
+    last_restore_test_backup_set_id:
+      stored.last_restore_test_backup_set_id ?? null,
+    last_restore_test_status: stored.last_restore_test_status ?? null,
+    last_restore_tested_at: stored.last_restore_tested_at ?? null,
+    last_restore_test_target_dir: stored.last_restore_test_target_dir ?? null,
+    last_restore_test_recovery_ready:
+      stored.last_restore_test_recovery_ready ?? null,
   };
   let snapshot = await getWalArchiveSnapshot({ paths, state });
   const previous_last_segment = snapshot.last_archived_wal_segment;
@@ -971,12 +1734,15 @@ function mapStateToStatus({
     bucket_endpoint: state.bucket_endpoint,
     object_prefix_root: state.object_prefix_root,
     wal_object_prefix: wal.wal_object_prefix,
+    rustic_repo_selector: state.rustic_repo_selector,
     latest_backup_set_id: state.latest_backup_set_id,
     latest_format: state.latest_format,
     latest_storage_backend: state.latest_storage_backend,
     latest_local_manifest_path: state.latest_local_manifest_path,
     latest_remote_manifest_key: state.latest_remote_manifest_key,
     latest_object_prefix: state.latest_object_prefix,
+    latest_remote_snapshot_id: state.latest_remote_snapshot_id,
+    latest_remote_snapshot_host: state.latest_remote_snapshot_host,
     latest_artifact_count: state.latest_artifact_count,
     latest_artifact_bytes: state.latest_artifact_bytes,
     last_archived_wal_segment:
@@ -995,6 +1761,69 @@ function mapStateToStatus({
   };
 }
 
+function mapRestoreReadiness({
+  state,
+}: {
+  state: StoredBayBackupState;
+}): BayRestoreReadinessStatus {
+  const latest_backup_set_id = state.latest_backup_set_id ?? null;
+  const latest_backup_format = state.latest_format ?? null;
+  const last_restore_test_backup_set_id =
+    state.last_restore_test_backup_set_id ?? null;
+  const last_restore_test_status = state.last_restore_test_status ?? null;
+  const last_restore_tested_at = state.last_restore_tested_at ?? null;
+  const last_restore_test_target_dir =
+    state.last_restore_test_target_dir ?? null;
+  const last_restore_test_recovery_ready =
+    state.last_restore_test_recovery_ready ?? null;
+
+  let latest_backup_restore_test_status:
+    | "no-backup"
+    | "not-run"
+    | "stale"
+    | "passed"
+    | "failed";
+  let summary: string;
+
+  if (!latest_backup_set_id) {
+    latest_backup_restore_test_status = "no-backup";
+    summary = "No bay backup exists yet.";
+  } else if (!last_restore_test_backup_set_id || !last_restore_test_status) {
+    latest_backup_restore_test_status = "not-run";
+    summary = `Latest backup ${latest_backup_set_id} has not been restore-tested.`;
+  } else if (last_restore_test_backup_set_id !== latest_backup_set_id) {
+    latest_backup_restore_test_status = "stale";
+    const prior = last_restore_test_status === "passed" ? "passed" : "failed";
+    summary = `Latest backup ${latest_backup_set_id} has not been restore-tested. Last tested backup ${last_restore_test_backup_set_id} ${prior} at ${last_restore_tested_at ?? "unknown time"}.`;
+  } else {
+    latest_backup_restore_test_status = last_restore_test_status;
+    summary =
+      last_restore_test_status === "passed"
+        ? `Latest backup ${latest_backup_set_id} passed a restore test at ${last_restore_tested_at ?? "unknown time"}.`
+        : `Latest backup ${latest_backup_set_id} failed its last restore test at ${last_restore_tested_at ?? "unknown time"}.`;
+  }
+
+  return {
+    latest_backup_set_id,
+    latest_backup_format,
+    latest_backup_restore_test_status,
+    latest_backup_restore_tested:
+      latest_backup_restore_test_status === "passed",
+    latest_backup_restore_tested_at:
+      latest_backup_restore_test_status === "passed" ||
+      latest_backup_restore_test_status === "failed"
+        ? last_restore_tested_at
+        : null,
+    gold_star: latest_backup_restore_test_status === "passed",
+    last_restore_test_backup_set_id,
+    last_restore_test_status,
+    last_restore_tested_at,
+    last_restore_test_target_dir,
+    last_restore_test_recovery_ready,
+    summary,
+  };
+}
+
 export async function getBayBackupStatus({
   bay_id,
 }: {
@@ -1002,6 +1831,7 @@ export async function getBayBackupStatus({
 } = {}): Promise<{
   postgres: BayBackupsPostgresStatus;
   bay_backup: BayBackupStatus;
+  restore_readiness: BayRestoreReadinessStatus;
 }> {
   const currentBay = getSingleBayInfo();
   const resolvedBayId =
@@ -1013,8 +1843,9 @@ export async function getBayBackupStatus({
     inspectPostgres(),
     resolveR2Target(resolvedBayId),
   ]);
-  const current_storage_backend: StorageBackend = r2.configured
-    ? "r2"
+  const rusticRepo = await buildBayRusticRepoConfig({ r2 });
+  const current_storage_backend: StorageBackend = rusticRepo
+    ? "rustic"
     : "local";
   const paths = getBayBackupPaths(resolvedBayId);
   const stored =
@@ -1034,8 +1865,19 @@ export async function getBayBackupStatus({
     bucket_endpoint: r2.bucket_endpoint ?? stored.bucket_endpoint ?? null,
     object_prefix_root:
       r2.object_prefix_root ?? stored.object_prefix_root ?? null,
+    rustic_repo_selector:
+      rusticRepo?.repo_selector ?? stored.rustic_repo_selector ?? null,
     last_archived_wal_segment: stored.last_archived_wal_segment ?? null,
     last_uploaded_wal_segment: stored.last_uploaded_wal_segment ?? null,
+    latest_remote_snapshot_id: stored.latest_remote_snapshot_id ?? null,
+    latest_remote_snapshot_host: stored.latest_remote_snapshot_host ?? null,
+    last_restore_test_backup_set_id:
+      stored.last_restore_test_backup_set_id ?? null,
+    last_restore_test_status: stored.last_restore_test_status ?? null,
+    last_restore_tested_at: stored.last_restore_tested_at ?? null,
+    last_restore_test_target_dir: stored.last_restore_test_target_dir ?? null,
+    last_restore_test_recovery_ready:
+      stored.last_restore_test_recovery_ready ?? null,
   };
   const wal = await getWalArchiveSnapshot({ paths, state });
   return {
@@ -1045,6 +1887,7 @@ export async function getBayBackupStatus({
       state,
       wal,
     }),
+    restore_readiness: mapRestoreReadiness({ state }),
   };
 }
 
@@ -1067,8 +1910,12 @@ export async function runBayBackup({
       inspectPostgres(),
       resolveR2Target(resolvedBayId),
     ]);
-    const current_storage_backend: StorageBackend = r2.configured
-      ? "r2"
+    const rusticRepo = await buildBayRusticRepoConfig({ r2 });
+    const rusticRepoProfilePath = rusticRepo
+      ? await ensureBayRusticRepoProfile(rusticRepo)
+      : null;
+    const current_storage_backend: StorageBackend = rusticRepo
+      ? "rustic"
       : "local";
     const paths = getBayBackupPaths(resolvedBayId);
     const previous =
@@ -1095,10 +1942,22 @@ export async function runBayBackup({
       bucket_region: r2.bucket_region ?? null,
       bucket_endpoint: r2.bucket_endpoint ?? null,
       object_prefix_root: r2.object_prefix_root ?? null,
+      rustic_repo_selector:
+        rusticRepo?.repo_selector ?? previous.rustic_repo_selector ?? null,
       last_started_at: started_at,
       last_finished_at: null,
       last_error_at: null,
       last_error: null,
+      latest_remote_snapshot_id: previous.latest_remote_snapshot_id ?? null,
+      latest_remote_snapshot_host: previous.latest_remote_snapshot_host ?? null,
+      last_restore_test_backup_set_id:
+        previous.last_restore_test_backup_set_id ?? null,
+      last_restore_test_status: previous.last_restore_test_status ?? null,
+      last_restore_tested_at: previous.last_restore_tested_at ?? null,
+      last_restore_test_target_dir:
+        previous.last_restore_test_target_dir ?? null,
+      last_restore_test_recovery_ready:
+        previous.last_restore_test_recovery_ready ?? null,
     };
     await writeJson(paths.state_file, initialState);
     const staging_dir = await mkdtemp(
@@ -1116,8 +1975,15 @@ export async function runBayBackup({
         strategy: postgres.preferred_strategy,
         staging_dir,
       });
+      await stageControlPlaneArtifacts({
+        stagingDir: staging_dir,
+      });
       archive_dir = join(paths.archives_dir, backup_set_id);
       await rename(staging_dir, archive_dir);
+      await writeOfflineRestoreHelper({
+        archiveDir: archive_dir,
+        backup_set_id,
+      });
       let artifacts = await collectArtifacts(archive_dir);
       const artifact_bytes = artifacts.reduce(
         (sum, artifact) => sum + artifact.bytes,
@@ -1130,25 +1996,53 @@ export async function runBayBackup({
       let latest_storage_backend: StorageBackend = "local";
       let latest_remote_manifest_key: string | null = null;
       let latest_object_prefix: string | null = null;
-      if (r2.configured) {
+      let latest_remote_snapshot_id: string | null = null;
+      let latest_remote_snapshot_host: string | null = null;
+      const snapshotManifest: StoredBayBackupManifest = {
+        bay_id: resolvedBayId,
+        bay_label: currentBay.label,
+        backup_set_id,
+        created_at: started_at,
+        finished_at: started_at,
+        format: actual_strategy,
+        current_storage_backend,
+        latest_storage_backend: rusticRepoProfilePath ? "rustic" : "local",
+        bucket_name: r2.bucket_name ?? null,
+        bucket_region: r2.bucket_region ?? null,
+        bucket_endpoint: r2.bucket_endpoint ?? null,
+        object_prefix: null,
+        remote_manifest_key: null,
+        remote_snapshot_id: null,
+        remote_snapshot_host: resolvedBayId,
+        rustic_repo_selector: rusticRepo?.repo_selector ?? null,
+        postgres,
+        artifacts,
+      };
+      await writeJson(join(archive_dir, "manifest.json"), snapshotManifest);
+      if (rusticRepoProfilePath) {
         try {
-          const uploaded = await uploadArtifactsToR2({
-            target: r2,
+          const remoteSnapshot = await backupToBayRusticRepo({
+            repoProfilePath: rusticRepoProfilePath,
+            snapshotHost: resolvedBayId,
             backup_set_id,
-            artifacts,
+            format: actual_strategy,
+            sourceDir: archive_dir,
           });
-          artifacts = uploaded.artifacts;
-          latest_storage_backend = "r2";
-          latest_object_prefix = uploaded.object_prefix;
-          latest_remote_manifest_key = `${uploaded.object_prefix}/manifest.json`;
+          latest_storage_backend = "rustic";
+          latest_remote_snapshot_id = remoteSnapshot.id;
+          latest_remote_snapshot_host =
+            remoteSnapshot.hostname ?? resolvedBayId;
         } catch (err) {
-          logger.warn("bay backup R2 upload failed; local backup retained", {
-            bay_id: resolvedBayId,
-            backup_set_id,
-            err,
-          });
+          logger.warn(
+            "bay backup rustic upload failed; local backup retained",
+            {
+              bay_id: resolvedBayId,
+              backup_set_id,
+              err,
+            },
+          );
           initialState.last_error_at = new Date().toISOString();
-          initialState.last_error = `remote upload failed: ${String(err)}`;
+          initialState.last_error = `remote rustic upload failed: ${String(err)}`;
         }
       }
       const finished_at = new Date().toISOString();
@@ -1166,28 +2060,13 @@ export async function runBayBackup({
         bucket_endpoint: r2.bucket_endpoint ?? null,
         object_prefix: latest_object_prefix,
         remote_manifest_key: latest_remote_manifest_key,
+        remote_snapshot_id: latest_remote_snapshot_id,
+        remote_snapshot_host: latest_remote_snapshot_host,
+        rustic_repo_selector: rusticRepo?.repo_selector ?? null,
         postgres,
         artifacts,
       };
       await writeJson(local_manifest_path, manifest);
-      if (
-        latest_storage_backend === "r2" &&
-        latest_remote_manifest_key &&
-        r2.bucket_name &&
-        r2.bucket_endpoint &&
-        r2.access_key &&
-        r2.secret_key
-      ) {
-        await uploadObjectFromBuffer({
-          endpoint: r2.bucket_endpoint,
-          accessKey: r2.access_key,
-          secretKey: r2.secret_key,
-          bucket: r2.bucket_name,
-          key: latest_remote_manifest_key,
-          body: JSON.stringify(manifest, null, 2),
-          contentType: "application/json",
-        });
-      }
       let state: StoredBayBackupState = {
         ...initialState,
         latest_backup_set_id: backup_set_id,
@@ -1196,16 +2075,18 @@ export async function runBayBackup({
         latest_local_manifest_path: local_manifest_path,
         latest_remote_manifest_key,
         latest_object_prefix,
+        latest_remote_snapshot_id,
+        latest_remote_snapshot_host,
         latest_artifact_count: artifacts.length,
         latest_artifact_bytes: artifact_bytes,
         last_finished_at: finished_at,
         last_successful_backup_at: finished_at,
         last_successful_remote_backup_at:
-          latest_storage_backend === "r2"
+          latest_storage_backend === "rustic"
             ? finished_at
             : previous.last_successful_remote_backup_at,
         restore_state:
-          latest_storage_backend === "r2" ? "ready" : "ready-local-only",
+          latest_storage_backend === "rustic" ? "ready" : "ready-local-only",
       };
       await writeJson(paths.state_file, state);
       try {
@@ -1230,6 +2111,9 @@ export async function runBayBackup({
         format: actual_strategy,
         bucket_name: r2.bucket_name ?? null,
         object_prefix: latest_object_prefix,
+        remote_snapshot_id: latest_remote_snapshot_id,
+        remote_snapshot_host: latest_remote_snapshot_host,
+        rustic_repo_selector: rusticRepo?.repo_selector ?? null,
         local_manifest_path,
         storage_backend: latest_storage_backend,
         artifact_count: artifacts.length,
@@ -1284,11 +2168,13 @@ export async function runBayRestore({
   backup_set_id,
   target_dir,
   dry_run = true,
+  remote_only = false,
 }: {
   bay_id?: string;
   backup_set_id?: string;
   target_dir?: string;
   dry_run?: boolean;
+  remote_only?: boolean;
 } = {}): Promise<BayRestoreRunResult> {
   const currentBay = getSingleBayInfo();
   const resolvedBayId =
@@ -1299,8 +2185,12 @@ export async function runBayRestore({
   const started_at = new Date().toISOString();
   const paths = getBayBackupPaths(resolvedBayId);
   const r2 = await resolveR2Target(resolvedBayId);
-  const current_storage_backend: StorageBackend = r2.configured
-    ? "r2"
+  const rusticRepo = await buildBayRusticRepoConfig({ r2 });
+  const rusticRepoProfilePath = rusticRepo
+    ? await ensureBayRusticRepoProfile(rusticRepo)
+    : null;
+  const current_storage_backend: StorageBackend = rusticRepo
+    ? "rustic"
     : "local";
   const stored =
     (await readJsonIfExists<StoredBayBackupState>(paths.state_file)) ??
@@ -1319,8 +2209,19 @@ export async function runBayRestore({
     bucket_endpoint: r2.bucket_endpoint ?? stored.bucket_endpoint ?? null,
     object_prefix_root:
       r2.object_prefix_root ?? stored.object_prefix_root ?? null,
+    rustic_repo_selector:
+      rusticRepo?.repo_selector ?? stored.rustic_repo_selector ?? null,
     last_archived_wal_segment: stored.last_archived_wal_segment ?? null,
     last_uploaded_wal_segment: stored.last_uploaded_wal_segment ?? null,
+    latest_remote_snapshot_id: stored.latest_remote_snapshot_id ?? null,
+    latest_remote_snapshot_host: stored.latest_remote_snapshot_host ?? null,
+    last_restore_test_backup_set_id:
+      stored.last_restore_test_backup_set_id ?? null,
+    last_restore_test_status: stored.last_restore_test_status ?? null,
+    last_restore_tested_at: stored.last_restore_tested_at ?? null,
+    last_restore_test_target_dir: stored.last_restore_test_target_dir ?? null,
+    last_restore_test_recovery_ready:
+      stored.last_restore_test_recovery_ready ?? null,
   };
   const resolvedBackupSetId =
     `${backup_set_id ?? state.latest_backup_set_id ?? ""}`.trim() || undefined;
@@ -1351,18 +2252,62 @@ export async function runBayRestore({
       bay_id: resolvedBayId,
       backup_set_id: resolvedBackupSetId,
       r2,
+      rusticRepoProfilePath,
       download_dir: tempDownloadDir,
+      prefer_local: !remote_only,
     });
     const wal = await getWalArchiveSnapshot({ paths, state });
     let source_storage_backend: StorageBackend =
       manifestInfo.source_storage_backend;
+    const resolvedWalObjectPrefix =
+      remote_only && manifestInfo.manifest.format === "pg_basebackup"
+        ? walObjectPrefix(
+            r2.object_prefix_root ?? state.object_prefix_root ?? null,
+          )
+        : null;
+    if (
+      remote_only &&
+      manifestInfo.manifest.format === "pg_basebackup" &&
+      !resolvedWalObjectPrefix
+    ) {
+      throw new Error("missing WAL object prefix for remote-only restore");
+    }
+    const remoteWalKeys =
+      resolvedWalObjectPrefix == null
+        ? null
+        : await listRemoteWalObjectKeys({
+            r2,
+            wal_object_prefix: resolvedWalObjectPrefix,
+          });
+    let wal_storage_backend: "local" | "r2" | null =
+      manifestInfo.manifest.format === "pg_basebackup"
+        ? remote_only
+          ? "r2"
+          : "local"
+        : null;
+    let wal_segment_count =
+      remoteWalKeys != null ? remoteWalKeys.length : wal.archived_wal_count;
+    const source_snapshot_id =
+      manifestInfo.remote_snapshot_id ??
+      manifestInfo.manifest.remote_snapshot_id ??
+      null;
     let data_dir: string | null =
       manifestInfo.manifest.format === "pg_basebackup"
         ? join(resolvedTargetDir, "data")
         : null;
+    const sync_dir = join(resolvedTargetDir, "sync");
+    const secrets_dir = join(resolvedTargetDir, "secrets");
     const restore_manifest_path = dry_run
       ? null
       : join(resolvedTargetDir, "restore-manifest.json");
+    const syncArtifact = findArtifactByName(
+      manifestInfo.manifest.artifacts,
+      "sync.tar.gz",
+    );
+    const secretsArtifact = findArtifactByName(
+      manifestInfo.manifest.artifacts,
+      "secrets.tar.gz",
+    );
     let backup_manifest_path = manifestInfo.backup_manifest_path ?? null;
     if (dry_run) {
       notes.push("Dry run only; no restore files were written.");
@@ -1371,7 +2316,9 @@ export async function runBayRestore({
           `Would stage a recoverable Postgres data directory at ${data_dir}.`,
         );
         notes.push(
-          `Recovery would read archived WAL from ${paths.wal_archive_dir}.`,
+          remote_only
+            ? "Recovery would fetch archived WAL from R2 on demand."
+            : `Recovery would read archived WAL from ${paths.wal_archive_dir}.`,
         );
       } else {
         notes.push(
@@ -1385,6 +2332,25 @@ export async function runBayRestore({
         notes.push(
           "The backup manifest is not present locally; restore would download metadata from R2.",
         );
+      } else if (manifestInfo.source_storage_backend === "rustic") {
+        notes.push(
+          "The backup manifest is not present locally; restore would read metadata from the rustic snapshot repo.",
+        );
+      }
+      if (remote_only) {
+        notes.push(
+          "Remote-only mode ignores the local snapshot and WAL cache.",
+        );
+      }
+      if (syncArtifact) {
+        notes.push(`Would stage the Conat sync snapshot at ${sync_dir}.`);
+      } else {
+        notes.push("This backup does not include a Conat sync snapshot.");
+      }
+      if (secretsArtifact) {
+        notes.push(`Would stage the bay secrets snapshot at ${secrets_dir}.`);
+      } else {
+        notes.push("This backup does not include a secrets snapshot.");
       }
       return {
         ...currentBay,
@@ -1395,14 +2361,29 @@ export async function runBayRestore({
         format: manifestInfo.manifest.format,
         target_dir: resolvedTargetDir,
         data_dir,
+        sync_dir: syncArtifact ? sync_dir : null,
+        secrets_dir: secretsArtifact ? secrets_dir : null,
         backup_manifest_path:
           manifestInfo.source_storage_backend === "local"
             ? backup_manifest_path
             : null,
         restore_manifest_path,
         source_storage_backend,
+        source_snapshot_id,
+        rustic_repo_selector:
+          source_storage_backend === "rustic"
+            ? (rusticRepo?.repo_selector ?? null)
+            : null,
+        wal_archive_dir:
+          manifestInfo.manifest.format === "pg_basebackup"
+            ? remote_only
+              ? null
+              : paths.wal_archive_dir
+            : null,
+        wal_storage_backend,
+        remote_only,
         artifact_count: manifestInfo.manifest.artifacts.length,
-        wal_segment_count: wal.archived_wal_count,
+        wal_segment_count,
         recovery_ready: manifestInfo.manifest.format === "pg_basebackup",
         notes,
       };
@@ -1436,10 +2417,13 @@ export async function runBayRestore({
       const baseArtifactPath = await resolveArtifactPath({
         artifact: baseArtifact,
         r2,
+        remote_snapshot_id: source_snapshot_id,
+        rusticRepoProfilePath,
         download_dir: tempDownloadDir,
+        prefer_local: !remote_only,
       });
       source_storage_backend = baseArtifactPath.source_storage_backend;
-      await ensureDir(data_dir!);
+      await ensureDir(data_dir!, 0o700);
       await extractTarGz({
         archivePath: baseArtifactPath.path,
         targetDir: data_dir!,
@@ -1451,10 +2435,13 @@ export async function runBayRestore({
         const walArtifactPath = await resolveArtifactPath({
           artifact: walArtifact,
           r2,
+          remote_snapshot_id: source_snapshot_id,
+          rusticRepoProfilePath,
           download_dir: tempDownloadDir,
+          prefer_local: !remote_only,
         });
-        if (walArtifactPath.source_storage_backend === "r2") {
-          source_storage_backend = "r2";
+        if (walArtifactPath.source_storage_backend !== "local") {
+          source_storage_backend = walArtifactPath.source_storage_backend;
         }
         await extractTarGz({
           archivePath: walArtifactPath.path,
@@ -1468,32 +2455,43 @@ export async function runBayRestore({
         force: true,
       }).catch(() => undefined);
 
-      const restoreScriptPath = join(resolvedTargetDir, "restore-wal.sh");
-      await writeFile(
-        restoreScriptPath,
-        [
-          "#!/bin/sh",
-          "set -eu",
-          `ARCHIVE_DIR=${shellQuote(paths.wal_archive_dir)}`,
-          'SEGMENT="$1"',
-          'DEST_PATH="$2"',
-          'SRC_PATH="$ARCHIVE_DIR/$SEGMENT"',
-          'if [ ! -f "$SRC_PATH" ]; then',
-          "  exit 1",
-          "fi",
-          'cp "$SRC_PATH" "$DEST_PATH"',
-          "",
-        ].join("\n"),
-        { mode: 0o700 },
-      );
+      const restoreScriptPath = remote_only
+        ? await writeRemoteWalRestoreHelper({
+            targetDir: resolvedTargetDir,
+            r2,
+            wal_object_prefix: resolvedWalObjectPrefix!,
+          })
+        : join(resolvedTargetDir, "restore-wal.sh");
+      if (!remote_only) {
+        await writeFile(
+          restoreScriptPath,
+          [
+            "#!/bin/sh",
+            "set -eu",
+            `ARCHIVE_DIR=${shellQuote(paths.wal_archive_dir)}`,
+            'SEGMENT="$1"',
+            'DEST_PATH="$2"',
+            'SRC_PATH="$ARCHIVE_DIR/$SEGMENT"',
+            'if [ ! -f "$SRC_PATH" ]; then',
+            "  exit 1",
+            "fi",
+            'cp "$SRC_PATH" "$DEST_PATH"',
+            "",
+          ].join("\n"),
+          { mode: 0o700 },
+        );
+      }
       const autoConfPath = join(data_dir!, "postgresql.auto.conf");
       const autoConfExisting = (await exists(autoConfPath))
         ? await readFile(autoConfPath, "utf8")
         : "";
+      const restoreCommand = remote_only
+        ? `${process.execPath} ${restoreScriptPath} %f %p`
+        : `${restoreScriptPath} %f %p`;
       const recoveryConfig = [
         "",
         "# cocalc bay restore",
-        `restore_command = ${postgresQuote(`${restoreScriptPath} %f %p`)}`,
+        `restore_command = ${postgresQuote(restoreCommand)}`,
         "recovery_target_timeline = 'latest'",
         "recovery_target_action = 'promote'",
         "",
@@ -1509,8 +2507,13 @@ export async function runBayRestore({
         `Start the fenced restore with: postgres -D ${shellQuote(data_dir!)}`,
       );
       notes.push(
-        `Archive recovery will read WAL segments from ${paths.wal_archive_dir}.`,
+        remote_only
+          ? `Archive recovery will fetch WAL segments from R2 via ${restoreScriptPath}.`
+          : `Archive recovery will read WAL segments from ${paths.wal_archive_dir}.`,
       );
+      if (remote_only) {
+        notes.push("Remote-only mode ignores the local WAL archive.");
+      }
     } else {
       const dumpArtifact = manifestInfo.manifest.artifacts.find(
         (artifact) => artifact.name === "cluster.sql.gz",
@@ -1521,7 +2524,10 @@ export async function runBayRestore({
       const dumpArtifactPath = await resolveArtifactPath({
         artifact: dumpArtifact,
         r2,
+        remote_snapshot_id: source_snapshot_id,
+        rusticRepoProfilePath,
         download_dir: tempDownloadDir,
+        prefer_local: !remote_only,
       });
       source_storage_backend = dumpArtifactPath.source_storage_backend;
       const sqlPath = join(resolvedTargetDir, "cluster.sql");
@@ -1533,6 +2539,48 @@ export async function runBayRestore({
       data_dir = null;
     }
 
+    if (syncArtifact) {
+      const syncArtifactPath = await resolveArtifactPath({
+        artifact: syncArtifact,
+        r2,
+        remote_snapshot_id: source_snapshot_id,
+        rusticRepoProfilePath,
+        download_dir: tempDownloadDir,
+        prefer_local: !remote_only,
+      });
+      if (syncArtifactPath.source_storage_backend !== "local") {
+        source_storage_backend = syncArtifactPath.source_storage_backend;
+      }
+      await extractTarGz({
+        archivePath: syncArtifactPath.path,
+        targetDir: resolvedTargetDir,
+      });
+      notes.push(`Restored the Conat sync snapshot into ${sync_dir}.`);
+    } else {
+      notes.push("This backup does not include a Conat sync snapshot.");
+    }
+
+    if (secretsArtifact) {
+      const secretsArtifactPath = await resolveArtifactPath({
+        artifact: secretsArtifact,
+        r2,
+        remote_snapshot_id: source_snapshot_id,
+        rusticRepoProfilePath,
+        download_dir: tempDownloadDir,
+        prefer_local: !remote_only,
+      });
+      if (secretsArtifactPath.source_storage_backend !== "local") {
+        source_storage_backend = secretsArtifactPath.source_storage_backend;
+      }
+      await extractTarGz({
+        archivePath: secretsArtifactPath.path,
+        targetDir: resolvedTargetDir,
+      });
+      notes.push(`Restored the bay secrets snapshot into ${secrets_dir}.`);
+    } else {
+      notes.push("This backup does not include a secrets snapshot.");
+    }
+
     const finished_at = new Date().toISOString();
     await writeJson(restore_manifest_path!, {
       bay_id: resolvedBayId,
@@ -1542,10 +2590,24 @@ export async function runBayRestore({
       finished_at,
       target_dir: resolvedTargetDir,
       data_dir,
+      sync_dir: syncArtifact ? sync_dir : null,
+      secrets_dir: secretsArtifact ? secrets_dir : null,
       backup_manifest_path,
       source_storage_backend,
-      wal_archive_dir: paths.wal_archive_dir,
-      wal_segment_count: wal.archived_wal_count,
+      source_snapshot_id,
+      rustic_repo_selector:
+        source_storage_backend === "rustic"
+          ? (rusticRepo?.repo_selector ?? null)
+          : null,
+      wal_archive_dir:
+        manifestInfo.manifest.format === "pg_basebackup"
+          ? remote_only
+            ? null
+            : paths.wal_archive_dir
+          : null,
+      wal_storage_backend,
+      remote_only,
+      wal_segment_count,
       recovery_ready: manifestInfo.manifest.format === "pg_basebackup",
       notes,
     });
@@ -1558,17 +2620,339 @@ export async function runBayRestore({
       format: manifestInfo.manifest.format,
       target_dir: resolvedTargetDir,
       data_dir,
+      sync_dir: syncArtifact ? sync_dir : null,
+      secrets_dir: secretsArtifact ? secrets_dir : null,
       backup_manifest_path,
       restore_manifest_path,
       source_storage_backend,
+      source_snapshot_id,
+      rustic_repo_selector:
+        source_storage_backend === "rustic"
+          ? (rusticRepo?.repo_selector ?? null)
+          : null,
+      wal_archive_dir:
+        manifestInfo.manifest.format === "pg_basebackup"
+          ? remote_only
+            ? null
+            : paths.wal_archive_dir
+          : null,
+      wal_storage_backend,
+      remote_only,
       artifact_count: manifestInfo.manifest.artifacts.length,
-      wal_segment_count: wal.archived_wal_count,
+      wal_segment_count,
       recovery_ready: manifestInfo.manifest.format === "pg_basebackup",
       notes,
     };
   } finally {
     if (tempDownloadDir) {
       await rm(tempDownloadDir, { recursive: true, force: true }).catch(
+        () => undefined,
+      );
+    }
+  }
+}
+
+function restoreTestTargetDir({
+  paths,
+  backup_set_id,
+}: {
+  paths: ReturnType<typeof getBayBackupPaths>;
+  backup_set_id: string;
+}): string {
+  return `${defaultRestoreTargetDir({ paths, backup_set_id })}-test`;
+}
+
+function restoreTestPort(): number {
+  return 20000 + (randomBytes(2).readUInt16BE(0) % 20000);
+}
+
+function buildRestoreTestCliEnv({
+  socketDir,
+  port,
+}: {
+  socketDir: string;
+  port: number;
+}): NodeJS.ProcessEnv {
+  return {
+    ...buildPostgresCliEnv(),
+    PGHOST: socketDir,
+    PGPORT: `${port}`,
+    PGUSER: pguser,
+    PGDATABASE: pgdatabase,
+  };
+}
+
+async function resolveRestoreTestBinary(binary: string): Promise<string> {
+  const path = await which(binary);
+  if (!path) {
+    throw new Error(`required binary '${binary}' was not found in PATH`);
+  }
+  return path;
+}
+
+async function recordRestoreTestState({
+  paths,
+  state,
+  backup_set_id,
+  status,
+  tested_at,
+  target_dir,
+  recovery_ready,
+}: {
+  paths: ReturnType<typeof getBayBackupPaths>;
+  state: StoredBayBackupState;
+  backup_set_id: string;
+  status: "passed" | "failed";
+  tested_at: string;
+  target_dir: string | null;
+  recovery_ready: boolean;
+}): Promise<StoredBayBackupState> {
+  const nextState: StoredBayBackupState = {
+    ...state,
+    last_restore_test_backup_set_id: backup_set_id,
+    last_restore_test_status: status,
+    last_restore_tested_at: tested_at,
+    last_restore_test_target_dir: target_dir,
+    last_restore_test_recovery_ready: recovery_ready,
+  };
+  await writeJson(paths.state_file, nextState);
+  return nextState;
+}
+
+export async function runBayRestoreTest({
+  bay_id,
+  backup_set_id,
+  target_dir,
+  keep = false,
+  remote_only = false,
+}: {
+  bay_id?: string;
+  backup_set_id?: string;
+  target_dir?: string;
+  keep?: boolean;
+  remote_only?: boolean;
+} = {}): Promise<BayRestoreTestRunResult> {
+  const currentBay = getSingleBayInfo();
+  const resolvedBayId =
+    `${bay_id ?? currentBay.bay_id}`.trim() || currentBay.bay_id;
+  if (resolvedBayId !== currentBay.bay_id) {
+    throw new Error(`bay '${resolvedBayId}' not found`);
+  }
+  const started_at = new Date().toISOString();
+  const paths = getBayBackupPaths(resolvedBayId);
+  const r2 = await resolveR2Target(resolvedBayId);
+  const rusticRepo = await buildBayRusticRepoConfig({ r2 });
+  const current_storage_backend: StorageBackend = rusticRepo
+    ? "rustic"
+    : "local";
+  const stored =
+    (await readJsonIfExists<StoredBayBackupState>(paths.state_file)) ??
+    defaultState({
+      bay_id: resolvedBayId,
+      current_storage_backend,
+      r2,
+    });
+  const state: StoredBayBackupState = {
+    ...stored,
+    bay_id: resolvedBayId,
+    current_storage_backend,
+    r2_configured: r2.configured,
+    bucket_name: r2.bucket_name ?? stored.bucket_name ?? null,
+    bucket_region: r2.bucket_region ?? stored.bucket_region ?? null,
+    bucket_endpoint: r2.bucket_endpoint ?? stored.bucket_endpoint ?? null,
+    object_prefix_root:
+      r2.object_prefix_root ?? stored.object_prefix_root ?? null,
+    rustic_repo_selector:
+      rusticRepo?.repo_selector ?? stored.rustic_repo_selector ?? null,
+    last_archived_wal_segment: stored.last_archived_wal_segment ?? null,
+    last_uploaded_wal_segment: stored.last_uploaded_wal_segment ?? null,
+    latest_remote_snapshot_id: stored.latest_remote_snapshot_id ?? null,
+    latest_remote_snapshot_host: stored.latest_remote_snapshot_host ?? null,
+    last_restore_test_backup_set_id:
+      stored.last_restore_test_backup_set_id ?? null,
+    last_restore_test_status: stored.last_restore_test_status ?? null,
+    last_restore_tested_at: stored.last_restore_tested_at ?? null,
+    last_restore_test_target_dir: stored.last_restore_test_target_dir ?? null,
+    last_restore_test_recovery_ready:
+      stored.last_restore_test_recovery_ready ?? null,
+  };
+  const resolvedBackupSetId =
+    `${backup_set_id ?? state.latest_backup_set_id ?? ""}`.trim() || undefined;
+  if (!resolvedBackupSetId) {
+    throw new Error("no bay backup is available to restore-test");
+  }
+  const resolvedTargetDir =
+    target_dir?.trim() ||
+    restoreTestTargetDir({
+      paths,
+      backup_set_id: resolvedBackupSetId,
+    });
+  let restoreResult: BayRestoreRunResult | null = null;
+  let kept_on_disk = keep === true;
+  const verified_queries: string[] = [];
+  let socketDir: string | null = null;
+  try {
+    restoreResult = await runBayRestore({
+      bay_id: resolvedBayId,
+      backup_set_id: resolvedBackupSetId,
+      target_dir: resolvedTargetDir,
+      dry_run: false,
+      remote_only,
+    });
+    if (!restoreResult.recovery_ready || !restoreResult.data_dir) {
+      throw new Error(
+        "latest backup is not recovery-ready; restore-test currently requires a pg_basebackup snapshot",
+      );
+    }
+
+    const [pgCtl, psql] = await Promise.all([
+      resolveRestoreTestBinary("pg_ctl"),
+      resolveRestoreTestBinary("psql"),
+    ]);
+    socketDir = await mkdtemp(join(tmpdir(), "cocalc-bay-restore-test-sock-"));
+    const logPath = join(resolvedTargetDir, "postgres-restore-test.log");
+    const port = restoreTestPort();
+    const env = buildRestoreTestCliEnv({ socketDir, port });
+    const pgCtlOptions = `-k ${socketDir} -p ${port} -c listen_addresses=`;
+    let started = false;
+    await chmod(socketDir, 0o700).catch(() => undefined);
+    try {
+      await execFile(
+        pgCtl,
+        [
+          "-D",
+          restoreResult.data_dir,
+          "-l",
+          logPath,
+          "-o",
+          pgCtlOptions,
+          "-w",
+          "start",
+        ],
+        {
+          env,
+          timeout: 60_000,
+          maxBuffer: 10 * 1024 * 1024,
+        },
+      );
+      started = true;
+      for (const check of RESTORE_TEST_QUERIES) {
+        const { stdout } = await execFile(
+          psql,
+          [
+            "-h",
+            socketDir,
+            "-p",
+            `${port}`,
+            "-U",
+            pguser,
+            "-d",
+            pgdatabase,
+            "-tAc",
+            check.sql,
+          ],
+          {
+            env,
+            timeout: 30_000,
+            maxBuffer: 10 * 1024 * 1024,
+          },
+        );
+        const value = `${stdout ?? ""}`.trim();
+        if (value !== check.expected) {
+          throw new Error(
+            `restore test check '${check.label}' failed: expected '${check.expected}', got '${value}'`,
+          );
+        }
+        verified_queries.push(`${check.label}=${value}`);
+      }
+    } finally {
+      if (started) {
+        await execFile(
+          pgCtl,
+          ["-D", restoreResult.data_dir, "-m", "fast", "-w", "stop"],
+          {
+            env,
+            timeout: 60_000,
+            maxBuffer: 10 * 1024 * 1024,
+          },
+        ).catch((err) => {
+          logger.warn("failed to stop fenced restore-test postgres", {
+            bay_id: resolvedBayId,
+            backup_set_id: resolvedBackupSetId,
+            err,
+          });
+        });
+      }
+    }
+
+    const notes = [
+      ...restoreResult.notes,
+      `Verified fenced restore using pg_ctl and psql against ${socketDir}.`,
+    ];
+    if (!kept_on_disk) {
+      try {
+        await rm(resolvedTargetDir, { recursive: true, force: true });
+        notes.push("Removed the restore-test workspace after success.");
+      } catch (err) {
+        kept_on_disk = true;
+        notes.push(
+          `Restore-test cleanup failed; workspace retained at ${resolvedTargetDir}: ${String(err)}`,
+        );
+      }
+    } else {
+      notes.push(`Kept the restore-test workspace at ${resolvedTargetDir}.`);
+    }
+
+    const finished_at = new Date().toISOString();
+    await recordRestoreTestState({
+      paths,
+      state,
+      backup_set_id: resolvedBackupSetId,
+      status: "passed",
+      tested_at: finished_at,
+      target_dir: kept_on_disk ? resolvedTargetDir : null,
+      recovery_ready: true,
+    });
+    return {
+      ...currentBay,
+      started_at,
+      finished_at,
+      backup_set_id: resolvedBackupSetId,
+      target_dir: resolvedTargetDir,
+      data_dir: restoreResult.data_dir,
+      sync_dir: restoreResult.sync_dir,
+      secrets_dir: restoreResult.secrets_dir,
+      backup_manifest_path: restoreResult.backup_manifest_path,
+      restore_manifest_path: restoreResult.restore_manifest_path,
+      source_storage_backend: restoreResult.source_storage_backend,
+      source_snapshot_id: restoreResult.source_snapshot_id,
+      rustic_repo_selector: restoreResult.rustic_repo_selector,
+      wal_archive_dir: restoreResult.wal_archive_dir,
+      wal_storage_backend: restoreResult.wal_storage_backend,
+      remote_only: restoreResult.remote_only,
+      wal_segment_count: restoreResult.wal_segment_count,
+      recovery_ready: restoreResult.recovery_ready,
+      kept_on_disk,
+      verified_queries,
+      notes,
+    };
+  } catch (err) {
+    const finished_at = new Date().toISOString();
+    await recordRestoreTestState({
+      paths,
+      state,
+      backup_set_id: resolvedBackupSetId,
+      status: "failed",
+      tested_at: finished_at,
+      target_dir: resolvedTargetDir,
+      recovery_ready: restoreResult?.recovery_ready ?? false,
+    });
+    throw new Error(
+      `bay restore-test failed for backup '${resolvedBackupSetId}': ${String(err)} (workspace kept at ${resolvedTargetDir})`,
+    );
+  } finally {
+    if (socketDir) {
+      await rm(socketDir, { recursive: true, force: true }).catch(
         () => undefined,
       );
     }
