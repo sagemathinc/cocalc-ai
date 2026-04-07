@@ -16,6 +16,7 @@ let sysApiManyMock: jest.Mock;
 let getProjectBackupInfrastructureStatusMock: jest.Mock;
 let getBayBackupStatusMock: jest.Mock;
 let runBayBackupMock: jest.Mock;
+let runBayRestoreMock: jest.Mock;
 
 jest.mock("@cocalc/backend/logger", () => ({
   __esModule: true,
@@ -136,6 +137,7 @@ jest.mock("@cocalc/server/bay-backup", () => ({
   __esModule: true,
   getBayBackupStatus: (...args: any[]) => getBayBackupStatusMock(...args),
   runBayBackup: (...args: any[]) => runBayBackupMock(...args),
+  runBayRestore: (...args: any[]) => runBayRestoreMock(...args),
 }));
 
 describe("getBayLoad", () => {
@@ -406,6 +408,28 @@ describe("getBayLoad", () => {
         restore_state: "ready",
       },
     }));
+    runBayRestoreMock = jest.fn(async () => ({
+      bay_id: "bay-0",
+      label: "bay-0",
+      region: null,
+      deployment_mode: "single-bay",
+      role: "combined",
+      is_default: true,
+      started_at: "2026-04-07T08:00:00.000Z",
+      finished_at: "2026-04-07T08:02:00.000Z",
+      dry_run: true,
+      backup_set_id: "backup-1",
+      format: "pg_basebackup",
+      target_dir: "/tmp/restore-target",
+      data_dir: "/tmp/restore-target/data",
+      backup_manifest_path: "/tmp/backup-manifest.json",
+      restore_manifest_path: null,
+      source_storage_backend: "local",
+      artifact_count: 3,
+      wal_segment_count: 4,
+      recovery_ready: true,
+      notes: ["Dry run only; no restore files were written."],
+    }));
   });
 
   it("returns a current bay load snapshot", async () => {
@@ -535,5 +559,29 @@ describe("getBayLoad", () => {
     });
 
     expect(runBayBackupMock).toHaveBeenCalledWith({ bay_id: undefined });
+  });
+
+  it("runs a bay restore through the backend bay-backup module", async () => {
+    const { runBayRestore } = await import("./system");
+
+    await expect(
+      runBayRestore({
+        account_id: "11111111-1111-4111-8111-111111111111",
+        backup_set_id: "backup-1",
+        target_dir: "/tmp/restore-target",
+        dry_run: false,
+      }),
+    ).resolves.toMatchObject({
+      backup_set_id: "backup-1",
+      target_dir: "/tmp/restore-target",
+      recovery_ready: true,
+    });
+
+    expect(runBayRestoreMock).toHaveBeenCalledWith({
+      bay_id: undefined,
+      backup_set_id: "backup-1",
+      target_dir: "/tmp/restore-target",
+      dry_run: false,
+    });
   });
 });

@@ -61,6 +61,39 @@ export function registerBayCommand(
     });
 
   bay
+    .command("restore [bay_id]")
+    .description("stage a fenced restore workspace from a bay backup")
+    .option(
+      "--backup-set-id <backup_set_id>",
+      "restore a specific backup set instead of the latest one",
+    )
+    .option(
+      "--target-dir <path>",
+      "restore into this directory instead of the default restores path",
+    )
+    .option("--write", "materialize the restore instead of a dry run", false)
+    .action(
+      async (
+        bay_id: string | undefined,
+        opts: {
+          backupSetId?: string;
+          targetDir?: string;
+          write?: boolean;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "bay restore", async (ctx) => {
+          return await ctx.hub.system.runBayRestore({
+            bay_id: bay_id?.trim() || undefined,
+            backup_set_id: opts.backupSetId?.trim() || undefined,
+            target_dir: opts.targetDir?.trim() || undefined,
+            dry_run: !opts.write,
+          });
+        });
+      },
+    );
+
+  bay
     .command("backups [bay_id]")
     .description("show current backup and R2 health for one bay")
     .action(async (bay_id: string | undefined, command: Command) => {

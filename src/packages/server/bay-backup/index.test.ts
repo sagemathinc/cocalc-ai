@@ -1,6 +1,6 @@
 export {};
 
-import { readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -201,5 +201,122 @@ describe("bay-backup runner", () => {
     expect(result.format).toBe("pg_dumpall");
     expect(execFileMock.mock.calls[0][0]).toBe("pg_basebackup");
     expect(execFileMock.mock.calls[1][0]).toBe("pg_dumpall");
+  });
+
+  it("stages a fenced pg_basebackup restore workspace", async () => {
+    const backupSetId = "restore-backup-1";
+    const bayRoot = join(backupRoot, "bay-backups", "bay-0");
+    const archivesDir = join(bayRoot, "archives", backupSetId);
+    const manifestsDir = join(bayRoot, "manifests");
+    const walArchiveDir = join(bayRoot, "wal", "archive");
+    const restoreTargetDir = join(backupRoot, "restore-target");
+    mkdirSync(archivesDir, { recursive: true });
+    mkdirSync(manifestsDir, { recursive: true });
+    mkdirSync(walArchiveDir, { recursive: true });
+    writeFileSync(join(archivesDir, "base.tar.gz"), "base");
+    writeFileSync(join(archivesDir, "pg_wal.tar.gz"), "wal");
+    writeFileSync(join(walArchiveDir, "0000000100000000000000E8"), "segment");
+    writeFileSync(
+      join(manifestsDir, `${backupSetId}.json`),
+      JSON.stringify(
+        {
+          bay_id: "bay-0",
+          bay_label: "bay-0",
+          backup_set_id: backupSetId,
+          created_at: "2026-04-07T15:37:47.519Z",
+          finished_at: "2026-04-07T15:37:57.440Z",
+          format: "pg_basebackup",
+          current_storage_backend: "r2",
+          latest_storage_backend: "r2",
+          bucket_name: "lite4-dev-wnam",
+          bucket_region: "wnam",
+          bucket_endpoint: "https://example.invalid",
+          object_prefix: `bay-backups/bay-0/${backupSetId}`,
+          remote_manifest_key: `bay-backups/bay-0/${backupSetId}/manifest.json`,
+          postgres: {},
+          artifacts: [
+            {
+              name: "base.tar.gz",
+              local_path: join(archivesDir, "base.tar.gz"),
+              object_key: null,
+              bytes: 4,
+              sha256: "base",
+              content_type: "application/gzip",
+            },
+            {
+              name: "pg_wal.tar.gz",
+              local_path: join(archivesDir, "pg_wal.tar.gz"),
+              object_key: null,
+              bytes: 3,
+              sha256: "wal",
+              content_type: "application/gzip",
+            },
+          ],
+        },
+        null,
+        2,
+      ),
+    );
+    execFileMock = jest.fn(
+      (
+        cmd: string,
+        args: string[],
+        _opts: Record<string, unknown>,
+        cb: (
+          err: Error | null,
+          result?: { stdout: string; stderr: string },
+        ) => void,
+      ) => {
+        if (cmd !== "tar") {
+          cb(new Error(`unexpected command '${cmd}'`));
+          return;
+        }
+        const archivePath = args[1];
+        const targetDir = args[3];
+        mkdirSync(targetDir, { recursive: true });
+        if (archivePath.endsWith("base.tar.gz")) {
+          mkdirSync(join(targetDir, "pg_wal"), { recursive: true });
+          writeFileSync(join(targetDir, "PG_VERSION"), "17\n");
+        } else if (archivePath.endsWith("pg_wal.tar.gz")) {
+          writeFileSync(join(targetDir, "0000000100000000000000E8"), "segment");
+        } else {
+          cb(new Error(`unexpected archive '${archivePath}'`));
+          return;
+        }
+        cb(null, { stdout: "", stderr: "" });
+      },
+    );
+
+    const { runBayRestore } = await import("./index");
+
+    const result = await runBayRestore({
+      backup_set_id: backupSetId,
+      target_dir: restoreTargetDir,
+      dry_run: false,
+    });
+    expect(result.recovery_ready).toBe(true);
+    expect(result.source_storage_backend).toBe("local");
+    expect(result.data_dir).toBe(join(restoreTargetDir, "data"));
+    expect(
+      readFileSync(join(restoreTargetDir, "data", "restore.signal"), "utf8"),
+    ).toBe("");
+    expect(
+      readFileSync(
+        join(restoreTargetDir, "data", "postgresql.auto.conf"),
+        "utf8",
+      ),
+    ).toContain("restore_command");
+    expect(
+      readFileSync(join(restoreTargetDir, "restore-wal.sh"), "utf8"),
+    ).toContain(walArchiveDir);
+    expect(
+      JSON.parse(
+        readFileSync(join(restoreTargetDir, "restore-manifest.json"), "utf8"),
+      ),
+    ).toMatchObject({
+      backup_set_id: backupSetId,
+      recovery_ready: true,
+      wal_segment_count: 1,
+    });
   });
 });

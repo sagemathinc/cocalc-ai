@@ -17,9 +17,10 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { promisify } from "node:util";
-import { createGzip } from "node:zlib";
+import { createGunzip, createGzip } from "node:zlib";
 import {
   data,
   pghost,
@@ -35,6 +36,7 @@ import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import type {
   BayBackupArtifactInfo,
   BayBackupRunResult,
+  BayRestoreRunResult,
   BayBackupStatus,
   BayBackupsPostgresStatus,
 } from "@cocalc/conat/hub/api/system";
@@ -42,6 +44,7 @@ import { getSingleBayInfo } from "@cocalc/server/bay-directory";
 import { getLaunchpadLocalConfig } from "@cocalc/server/launchpad/mode";
 import {
   createBucket,
+  issueSignedObjectDownload,
   listBuckets,
   uploadObjectFromBuffer,
   uploadObjectFromFile,
@@ -133,6 +136,12 @@ type WalArchiveSnapshot = {
   last_archived_wal_at: string | null;
 };
 
+type ResolvedBackupManifest = {
+  manifest: StoredBayBackupManifest;
+  backup_manifest_path: string | null;
+  source_storage_backend: StorageBackend;
+};
+
 let runInFlight: Promise<BayBackupRunResult> | null = null;
 let walMaintenanceTimer: NodeJS.Timeout | undefined;
 let walMaintenanceRunning = false;
@@ -160,6 +169,7 @@ function getBayBackupPaths(bay_id: string) {
     bay_root,
     archives_dir: join(bay_root, "archives"),
     manifests_dir: join(bay_root, "manifests"),
+    restores_dir: join(bay_root, "restores"),
     staging_dir: join(bay_root, "staging"),
     wal_dir,
     wal_archive_dir: join(wal_dir, "archive"),
@@ -408,6 +418,44 @@ async function gzipFile(from: string, to: string): Promise<void> {
   );
 }
 
+async function gunzipFile(from: string, to: string): Promise<void> {
+  await pipeline(createReadStream(from), createGunzip(), createWriteStream(to));
+}
+
+function shellQuote(arg: string): string {
+  return `'${arg.replace(/'/g, `'\"'\"'`)}'`;
+}
+
+function postgresQuote(arg: string): string {
+  return `'${arg.replace(/'/g, "''")}'`;
+}
+
+async function exists(path: string | null | undefined): Promise<boolean> {
+  if (!path) return false;
+  try {
+    await stat(path);
+    return true;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException)?.code === "ENOENT") {
+      return false;
+    }
+    throw err;
+  }
+}
+
+async function extractTarGz({
+  archivePath,
+  targetDir,
+}: {
+  archivePath: string;
+  targetDir: string;
+}): Promise<void> {
+  await ensureDir(targetDir);
+  await execFile("tar", ["-xzf", archivePath, "-C", targetDir], {
+    maxBuffer: 10 * 1024 * 1024,
+  });
+}
+
 function shouldFallbackToPgDumpall(err: unknown): boolean {
   const message = String(err ?? "");
   return (
@@ -534,6 +582,128 @@ async function uploadArtifactsToR2({
   return {
     object_prefix,
     artifacts: uploaded,
+  };
+}
+
+async function downloadObjectToFileFromR2({
+  target,
+  key,
+  destinationPath,
+}: {
+  target: R2Target;
+  key: string;
+  destinationPath: string;
+}): Promise<void> {
+  if (
+    !target.configured ||
+    !target.bucket_name ||
+    !target.bucket_endpoint ||
+    !target.access_key ||
+    !target.secret_key
+  ) {
+    throw new Error("R2 target is not configured");
+  }
+  const { url, headers } = issueSignedObjectDownload({
+    endpoint: target.bucket_endpoint,
+    accessKey: target.access_key,
+    secretKey: target.secret_key,
+    bucket: target.bucket_name,
+    key,
+  });
+  const response = await fetch(url, { headers });
+  if (!response.ok || !response.body) {
+    throw new Error(
+      `R2 GET failed (${response.status}): ${response.statusText || "unknown error"}`,
+    );
+  }
+  await ensureDir(dirname(destinationPath));
+  await pipeline(
+    Readable.fromWeb(response.body as globalThis.ReadableStream),
+    createWriteStream(destinationPath),
+  );
+}
+
+async function resolveBackupManifest({
+  paths,
+  bay_id,
+  backup_set_id,
+  r2,
+  download_dir,
+}: {
+  paths: ReturnType<typeof getBayBackupPaths>;
+  bay_id: string;
+  backup_set_id: string;
+  r2: R2Target;
+  download_dir?: string;
+}): Promise<ResolvedBackupManifest> {
+  const localManifestPath = join(paths.manifests_dir, `${backup_set_id}.json`);
+  const localManifest =
+    await readJsonIfExists<StoredBayBackupManifest>(localManifestPath);
+  if (localManifest) {
+    return {
+      manifest: localManifest,
+      backup_manifest_path: localManifestPath,
+      source_storage_backend: "local",
+    };
+  }
+  if (!download_dir) {
+    throw new Error(
+      `backup manifest for '${backup_set_id}' is not available locally`,
+    );
+  }
+  const object_prefix = r2.object_prefix_root ?? `bay-backups/${bay_id}`;
+  const manifestKey = `${object_prefix}/${backup_set_id}/manifest.json`;
+  const downloadPath = join(download_dir, "manifest.json");
+  await downloadObjectToFileFromR2({
+    target: r2,
+    key: manifestKey,
+    destinationPath: downloadPath,
+  });
+  const manifest = JSON.parse(
+    await readFile(downloadPath, "utf8"),
+  ) as StoredBayBackupManifest;
+  return {
+    manifest,
+    backup_manifest_path: downloadPath,
+    source_storage_backend: "r2",
+  };
+}
+
+async function resolveArtifactPath({
+  artifact,
+  r2,
+  download_dir,
+}: {
+  artifact: BayBackupArtifactInfo;
+  r2: R2Target;
+  download_dir?: string;
+}): Promise<{
+  path: string;
+  source_storage_backend: StorageBackend;
+}> {
+  if (artifact.local_path && (await exists(artifact.local_path))) {
+    return {
+      path: artifact.local_path,
+      source_storage_backend: "local",
+    };
+  }
+  if (!artifact.object_key) {
+    throw new Error(`artifact '${artifact.name}' is not available locally`);
+  }
+  if (!download_dir) {
+    throw new Error(
+      `artifact '${artifact.name}' requires R2 download but no download dir is available`,
+    );
+  }
+  const destinationPath = join(download_dir, "artifacts", artifact.name);
+  await downloadObjectToFileFromR2({
+    target: r2,
+    key: artifact.object_key,
+    destinationPath,
+  });
+  return {
+    path: destinationPath,
+    source_storage_backend: "r2",
   };
 }
 
@@ -1095,5 +1265,312 @@ export async function runBayBackup({
     return await runInFlight;
   } finally {
     runInFlight = null;
+  }
+}
+
+function defaultRestoreTargetDir({
+  paths,
+  backup_set_id,
+}: {
+  paths: ReturnType<typeof getBayBackupPaths>;
+  backup_set_id: string;
+}): string {
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  return join(paths.restores_dir, `${backup_set_id}-${stamp}`);
+}
+
+export async function runBayRestore({
+  bay_id,
+  backup_set_id,
+  target_dir,
+  dry_run = true,
+}: {
+  bay_id?: string;
+  backup_set_id?: string;
+  target_dir?: string;
+  dry_run?: boolean;
+} = {}): Promise<BayRestoreRunResult> {
+  const currentBay = getSingleBayInfo();
+  const resolvedBayId =
+    `${bay_id ?? currentBay.bay_id}`.trim() || currentBay.bay_id;
+  if (resolvedBayId !== currentBay.bay_id) {
+    throw new Error(`bay '${resolvedBayId}' not found`);
+  }
+  const started_at = new Date().toISOString();
+  const paths = getBayBackupPaths(resolvedBayId);
+  const r2 = await resolveR2Target(resolvedBayId);
+  const current_storage_backend: StorageBackend = r2.configured
+    ? "r2"
+    : "local";
+  const stored =
+    (await readJsonIfExists<StoredBayBackupState>(paths.state_file)) ??
+    defaultState({
+      bay_id: resolvedBayId,
+      current_storage_backend,
+      r2,
+    });
+  const state: StoredBayBackupState = {
+    ...stored,
+    bay_id: resolvedBayId,
+    current_storage_backend,
+    r2_configured: r2.configured,
+    bucket_name: r2.bucket_name ?? stored.bucket_name ?? null,
+    bucket_region: r2.bucket_region ?? stored.bucket_region ?? null,
+    bucket_endpoint: r2.bucket_endpoint ?? stored.bucket_endpoint ?? null,
+    object_prefix_root:
+      r2.object_prefix_root ?? stored.object_prefix_root ?? null,
+    last_archived_wal_segment: stored.last_archived_wal_segment ?? null,
+    last_uploaded_wal_segment: stored.last_uploaded_wal_segment ?? null,
+  };
+  const resolvedBackupSetId =
+    `${backup_set_id ?? state.latest_backup_set_id ?? ""}`.trim() || undefined;
+  if (!resolvedBackupSetId) {
+    throw new Error("no bay backup is available to restore");
+  }
+  const resolvedTargetDir =
+    target_dir?.trim() ||
+    defaultRestoreTargetDir({
+      paths,
+      backup_set_id: resolvedBackupSetId,
+    });
+  let tempDownloadDir: string | null = null;
+  const notes: string[] = [];
+  try {
+    await ensureDir(paths.staging_dir);
+    if (!dry_run) {
+      await ensureDir(paths.restores_dir);
+    }
+    tempDownloadDir = await mkdtemp(
+      join(
+        paths.staging_dir,
+        dry_run ? `restore-plan-${resolvedBackupSetId}-` : "restore-cache-",
+      ),
+    );
+    const manifestInfo = await resolveBackupManifest({
+      paths,
+      bay_id: resolvedBayId,
+      backup_set_id: resolvedBackupSetId,
+      r2,
+      download_dir: tempDownloadDir,
+    });
+    const wal = await getWalArchiveSnapshot({ paths, state });
+    let source_storage_backend: StorageBackend =
+      manifestInfo.source_storage_backend;
+    let data_dir: string | null =
+      manifestInfo.manifest.format === "pg_basebackup"
+        ? join(resolvedTargetDir, "data")
+        : null;
+    const restore_manifest_path = dry_run
+      ? null
+      : join(resolvedTargetDir, "restore-manifest.json");
+    let backup_manifest_path = manifestInfo.backup_manifest_path ?? null;
+    if (dry_run) {
+      notes.push("Dry run only; no restore files were written.");
+      if (manifestInfo.manifest.format === "pg_basebackup") {
+        notes.push(
+          `Would stage a recoverable Postgres data directory at ${data_dir}.`,
+        );
+        notes.push(
+          `Recovery would read archived WAL from ${paths.wal_archive_dir}.`,
+        );
+      } else {
+        notes.push(
+          `Would stage the SQL dump at ${join(resolvedTargetDir, "cluster.sql")}.`,
+        );
+        notes.push(
+          "pg_dumpall backups are not recovery-ready clusters and require manual import into a fresh database.",
+        );
+      }
+      if (manifestInfo.source_storage_backend === "r2") {
+        notes.push(
+          "The backup manifest is not present locally; restore would download metadata from R2.",
+        );
+      }
+      return {
+        ...currentBay,
+        started_at,
+        finished_at: new Date().toISOString(),
+        dry_run,
+        backup_set_id: resolvedBackupSetId,
+        format: manifestInfo.manifest.format,
+        target_dir: resolvedTargetDir,
+        data_dir,
+        backup_manifest_path:
+          manifestInfo.source_storage_backend === "local"
+            ? backup_manifest_path
+            : null,
+        restore_manifest_path,
+        source_storage_backend,
+        artifact_count: manifestInfo.manifest.artifacts.length,
+        wal_segment_count: wal.archived_wal_count,
+        recovery_ready: manifestInfo.manifest.format === "pg_basebackup",
+        notes,
+      };
+    }
+
+    if (await exists(resolvedTargetDir)) {
+      const entries = await readdir(resolvedTargetDir);
+      if (entries.length > 0) {
+        throw new Error(
+          `restore target directory is not empty: ${resolvedTargetDir}`,
+        );
+      }
+    } else {
+      await ensureDir(resolvedTargetDir);
+    }
+
+    const backupManifestCopyPath = join(
+      resolvedTargetDir,
+      "backup-manifest.json",
+    );
+    await writeJson(backupManifestCopyPath, manifestInfo.manifest);
+    backup_manifest_path = backupManifestCopyPath;
+
+    if (manifestInfo.manifest.format === "pg_basebackup") {
+      const baseArtifact = manifestInfo.manifest.artifacts.find(
+        (artifact) => artifact.name === "base.tar.gz",
+      );
+      if (!baseArtifact) {
+        throw new Error("backup manifest is missing base.tar.gz");
+      }
+      const baseArtifactPath = await resolveArtifactPath({
+        artifact: baseArtifact,
+        r2,
+        download_dir: tempDownloadDir,
+      });
+      source_storage_backend = baseArtifactPath.source_storage_backend;
+      await ensureDir(data_dir!);
+      await extractTarGz({
+        archivePath: baseArtifactPath.path,
+        targetDir: data_dir!,
+      });
+      const walArtifact = manifestInfo.manifest.artifacts.find(
+        (artifact) => artifact.name === "pg_wal.tar.gz",
+      );
+      if (walArtifact) {
+        const walArtifactPath = await resolveArtifactPath({
+          artifact: walArtifact,
+          r2,
+          download_dir: tempDownloadDir,
+        });
+        if (walArtifactPath.source_storage_backend === "r2") {
+          source_storage_backend = "r2";
+        }
+        await extractTarGz({
+          archivePath: walArtifactPath.path,
+          targetDir: join(data_dir!, "pg_wal"),
+        });
+      }
+      await rm(join(data_dir!, "postmaster.pid"), {
+        force: true,
+      }).catch(() => undefined);
+      await rm(join(data_dir!, "postmaster.opts"), {
+        force: true,
+      }).catch(() => undefined);
+
+      const restoreScriptPath = join(resolvedTargetDir, "restore-wal.sh");
+      await writeFile(
+        restoreScriptPath,
+        [
+          "#!/bin/sh",
+          "set -eu",
+          `ARCHIVE_DIR=${shellQuote(paths.wal_archive_dir)}`,
+          'SEGMENT="$1"',
+          'DEST_PATH="$2"',
+          'SRC_PATH="$ARCHIVE_DIR/$SEGMENT"',
+          'if [ ! -f "$SRC_PATH" ]; then',
+          "  exit 1",
+          "fi",
+          'cp "$SRC_PATH" "$DEST_PATH"',
+          "",
+        ].join("\n"),
+        { mode: 0o700 },
+      );
+      const autoConfPath = join(data_dir!, "postgresql.auto.conf");
+      const autoConfExisting = (await exists(autoConfPath))
+        ? await readFile(autoConfPath, "utf8")
+        : "";
+      const recoveryConfig = [
+        "",
+        "# cocalc bay restore",
+        `restore_command = ${postgresQuote(`${restoreScriptPath} %f %p`)}`,
+        "recovery_target_timeline = 'latest'",
+        "recovery_target_action = 'promote'",
+        "",
+      ].join("\n");
+      await writeFile(
+        autoConfPath,
+        `${autoConfExisting}${recoveryConfig}`,
+        "utf8",
+      );
+      await writeFile(join(data_dir!, "restore.signal"), "", "utf8");
+      notes.push(`Restored base backup into ${data_dir}.`);
+      notes.push(
+        `Start the fenced restore with: postgres -D ${shellQuote(data_dir!)}`,
+      );
+      notes.push(
+        `Archive recovery will read WAL segments from ${paths.wal_archive_dir}.`,
+      );
+    } else {
+      const dumpArtifact = manifestInfo.manifest.artifacts.find(
+        (artifact) => artifact.name === "cluster.sql.gz",
+      );
+      if (!dumpArtifact) {
+        throw new Error("backup manifest is missing cluster.sql.gz");
+      }
+      const dumpArtifactPath = await resolveArtifactPath({
+        artifact: dumpArtifact,
+        r2,
+        download_dir: tempDownloadDir,
+      });
+      source_storage_backend = dumpArtifactPath.source_storage_backend;
+      const sqlPath = join(resolvedTargetDir, "cluster.sql");
+      await gunzipFile(dumpArtifactPath.path, sqlPath);
+      notes.push(`Restored SQL dump into ${sqlPath}.`);
+      notes.push(
+        "This backup was created via pg_dumpall; create a fresh Postgres cluster and import the SQL manually.",
+      );
+      data_dir = null;
+    }
+
+    const finished_at = new Date().toISOString();
+    await writeJson(restore_manifest_path!, {
+      bay_id: resolvedBayId,
+      backup_set_id: resolvedBackupSetId,
+      format: manifestInfo.manifest.format,
+      started_at,
+      finished_at,
+      target_dir: resolvedTargetDir,
+      data_dir,
+      backup_manifest_path,
+      source_storage_backend,
+      wal_archive_dir: paths.wal_archive_dir,
+      wal_segment_count: wal.archived_wal_count,
+      recovery_ready: manifestInfo.manifest.format === "pg_basebackup",
+      notes,
+    });
+    return {
+      ...currentBay,
+      started_at,
+      finished_at,
+      dry_run,
+      backup_set_id: resolvedBackupSetId,
+      format: manifestInfo.manifest.format,
+      target_dir: resolvedTargetDir,
+      data_dir,
+      backup_manifest_path,
+      restore_manifest_path,
+      source_storage_backend,
+      artifact_count: manifestInfo.manifest.artifacts.length,
+      wal_segment_count: wal.archived_wal_count,
+      recovery_ready: manifestInfo.manifest.format === "pg_basebackup",
+      notes,
+    };
+  } finally {
+    if (tempDownloadDir) {
+      await rm(tempDownloadDir, { recursive: true, force: true }).catch(
+        () => undefined,
+      );
+    }
   }
 }

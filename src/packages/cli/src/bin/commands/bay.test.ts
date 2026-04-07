@@ -295,6 +295,70 @@ test("bay backup calls the hub run-bay-backup API", async () => {
   assert.equal(captured?.backup_set_id, "backup-1");
 });
 
+test("bay restore forwards bay id, backup set, target dir, and write mode", async () => {
+  let captured: any;
+  let callOpts: any;
+  const program = new Command();
+  registerBayCommand(program, {
+    withContext: async (_command, _label, fn) => {
+      const ctx = {
+        hub: {
+          system: {
+            runBayRestore: async (opts: any) => {
+              callOpts = opts;
+              return {
+                bay_id: "bay-0",
+                label: "bay-0",
+                region: null,
+                deployment_mode: "single-bay",
+                role: "combined",
+                is_default: true,
+                started_at: "2026-04-07T08:00:00.000Z",
+                finished_at: "2026-04-07T08:02:00.000Z",
+                dry_run: false,
+                backup_set_id: "backup-1",
+                format: "pg_basebackup",
+                target_dir: "/tmp/restore-target",
+                data_dir: "/tmp/restore-target/data",
+                backup_manifest_path: "/tmp/backup-manifest.json",
+                restore_manifest_path:
+                  "/tmp/restore-target/restore-manifest.json",
+                source_storage_backend: "local",
+                artifact_count: 3,
+                wal_segment_count: 4,
+                recovery_ready: true,
+                notes: [],
+              };
+            },
+          },
+        },
+      };
+      captured = await fn(ctx);
+    },
+  } as any);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "bay",
+    "restore",
+    "bay-0",
+    "--backup-set-id",
+    "backup-1",
+    "--target-dir",
+    "/tmp/restore-target",
+    "--write",
+  ]);
+
+  assert.deepEqual(callOpts, {
+    bay_id: "bay-0",
+    backup_set_id: "backup-1",
+    target_dir: "/tmp/restore-target",
+    dry_run: false,
+  });
+  assert.equal(captured?.backup_set_id, "backup-1");
+});
+
 test("bay backfill defaults to a dry run", async () => {
   let captured: any;
   const program = new Command();
