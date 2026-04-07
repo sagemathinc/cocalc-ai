@@ -9,6 +9,7 @@ let execFileMock: jest.Mock;
 let getPoolMock: jest.Mock;
 let getServerSettingsMock: jest.Mock;
 let getSingleBayInfoMock: jest.Mock;
+let ensureRusticInitializedMock: jest.Mock;
 
 jest.mock("node:child_process", () => {
   const actual = jest.requireActual("node:child_process");
@@ -49,6 +50,16 @@ jest.mock("@cocalc/server/bay-directory", () => ({
   getSingleBayInfo: (...args: any[]) => getSingleBayInfoMock(...args),
 }));
 
+jest.mock("@cocalc/backend/sandbox/install", () => ({
+  __esModule: true,
+  rustic: "rustic-bin",
+}));
+
+jest.mock("@cocalc/backend/sandbox/rustic", () => ({
+  __esModule: true,
+  ensureInitialized: (...args: any[]) => ensureRusticInitializedMock(...args),
+}));
+
 jest.mock("@cocalc/server/project-backup/r2", () => ({
   __esModule: true,
   createBucket: jest.fn(),
@@ -60,6 +71,12 @@ jest.mock("@cocalc/server/project-backup/r2", () => ({
 describe("bay-backup runner", () => {
   let backupRoot: string;
   let oldEnv: NodeJS.ProcessEnv;
+  let rusticSnapshots: Array<{
+    id: string;
+    host: string;
+    tags: string[];
+    files: Record<string, Buffer>;
+  }>;
 
   beforeEach(async () => {
     jest.resetModules();
@@ -109,11 +126,13 @@ describe("bay-backup runner", () => {
       ),
       "123\n",
     );
+    rusticSnapshots = [];
+    ensureRusticInitializedMock = jest.fn(async () => undefined);
     execFileMock = jest.fn(
       (
         cmd: string,
         args: string[],
-        _opts: Record<string, unknown>,
+        opts: Record<string, unknown>,
         cb: (
           err: Error | null,
           result?: { stdout: string; stderr: string },
@@ -140,9 +159,126 @@ describe("bay-backup runner", () => {
           return;
         }
         if (cmd === "tar") {
-          const archivePath = args[3];
-          writeFileSync(archivePath, "tarball");
-          cb(null, { stdout: "", stderr: "" });
+          if (args[0] === "-C") {
+            const archivePath = args[3];
+            writeFileSync(archivePath, "tarball");
+            cb(null, { stdout: "", stderr: "" });
+            return;
+          }
+          if (args[0] === "-xzf") {
+            const archivePath = args[1];
+            const targetDir = args[3];
+            mkdirSync(targetDir, { recursive: true });
+            if (archivePath.endsWith("sync.tar.gz")) {
+              mkdirSync(join(targetDir, "sync", "accounts", "test"), {
+                recursive: true,
+              });
+              writeFileSync(
+                join(targetDir, "sync", "accounts", "test", "seen-state.db"),
+                "sqlite",
+              );
+              cb(null, { stdout: "", stderr: "" });
+              return;
+            }
+            if (archivePath.endsWith("secrets.tar.gz")) {
+              mkdirSync(join(targetDir, "secrets"), { recursive: true });
+              writeFileSync(
+                join(targetDir, "secrets", "conat-password"),
+                "secret\n",
+              );
+              cb(null, { stdout: "", stderr: "" });
+              return;
+            }
+          }
+          cb(new Error(`unexpected tar args '${args.join(" ")}'`));
+          return;
+        }
+        if (cmd === "rustic-bin") {
+          const subcommand =
+            args.find((arg) =>
+              ["backup", "snapshots", "restore"].includes(arg),
+            ) ?? "";
+          if (subcommand === "backup") {
+            const host = args[args.indexOf("--host") + 1];
+            const tags = args
+              .flatMap((arg, i) =>
+                args[i - 1] === "--tag" ? [arg] : ([] as string[]),
+              )
+              .filter(Boolean);
+            const files: Record<string, Buffer> = {};
+            for (const name of [
+              "cluster.sql.gz",
+              "sync.tar.gz",
+              "secrets.tar.gz",
+              "manifest.json",
+            ] as const) {
+              try {
+                files[name] = readFileSync(join(`${opts.cwd ?? ""}`, name));
+              } catch {
+                // ignore missing files
+              }
+            }
+            rusticSnapshots.push({
+              id: `snap-${rusticSnapshots.length + 1}`,
+              host,
+              tags,
+              files,
+            });
+            cb(null, { stdout: "", stderr: "" });
+            return;
+          }
+          if (subcommand === "snapshots") {
+            const host = args[args.indexOf("--filter-host") + 1];
+            const snapshots = rusticSnapshots
+              .filter((snapshot) => snapshot.host === host)
+              .map((snapshot) => ({
+                id: snapshot.id,
+                time: "2026-04-07T15:37:57.440Z",
+                hostname: snapshot.host,
+                tags: snapshot.tags,
+                paths: ["."],
+              }));
+            cb(null, {
+              stdout: JSON.stringify([
+                {
+                  group_key: { hostname: host, label: "", paths: ["."] },
+                  snapshots,
+                },
+              ]),
+              stderr: "",
+            });
+            return;
+          }
+          if (subcommand === "restore") {
+            const snapshotSpec = args[args.indexOf("restore") + 1];
+            const destinationDir = args[args.indexOf("restore") + 2];
+            const [snapshotId, relativePath] = snapshotSpec.split(":");
+            const snapshot = rusticSnapshots.find(
+              (entry) => entry.id === snapshotId,
+            );
+            if (!snapshot) {
+              cb(new Error(`unknown snapshot '${snapshotId}'`));
+              return;
+            }
+            mkdirSync(destinationDir, { recursive: true });
+            if (relativePath) {
+              const file = snapshot.files[relativePath];
+              if (!file) {
+                cb(
+                  new Error(
+                    `snapshot '${snapshotId}' is missing '${relativePath}'`,
+                  ),
+                );
+                return;
+              }
+              writeFileSync(join(destinationDir, relativePath), file);
+              cb(null, { stdout: "", stderr: "" });
+              return;
+            }
+            cb(new Error("full rustic restore is not mocked in this test"));
+            return;
+          }
+          cb(new Error(`unexpected rustic args '${args.join(" ")}'`));
           return;
         }
         cb(new Error(`unexpected command '${cmd}'`));
@@ -216,6 +352,56 @@ describe("bay-backup runner", () => {
       "not-run",
     );
     expect(status.restore_readiness.gold_star).toBe(false);
+  });
+
+  it("backs up snapshots to rustic and restores from rustic when local archives are absent", async () => {
+    getServerSettingsMock = jest.fn(async () => ({
+      r2_account_id: "acct-1",
+      r2_access_key_id: "key-1",
+      r2_secret_access_key: "secret-1",
+      r2_bucket_prefix: "lite4-dev",
+    }));
+
+    const { runBayBackup, runBayRestore } = await import("./index");
+
+    const backup = await runBayBackup();
+    expect(backup.storage_backend).toBe("rustic");
+    expect(backup.remote_snapshot_id).toBe("snap-1");
+    expect(backup.rustic_repo_selector).toBe("r2:bay-backups:wnam");
+
+    await rm(backup.local_manifest_path, { force: true });
+    await rm(
+      join(
+        backupRoot,
+        "bay-backups",
+        "bay-0",
+        "archives",
+        backup.backup_set_id,
+      ),
+      { recursive: true, force: true },
+    );
+
+    const restoreTargetDir = join(backupRoot, "rustic-restore-target");
+    const restored = await runBayRestore({
+      backup_set_id: backup.backup_set_id,
+      target_dir: restoreTargetDir,
+      dry_run: false,
+    });
+    expect(restored.source_storage_backend).toBe("rustic");
+    expect(restored.source_snapshot_id).toBe("snap-1");
+    expect(restored.rustic_repo_selector).toBe("r2:bay-backups:wnam");
+    expect(readFileSync(join(restoreTargetDir, "cluster.sql"), "utf8")).toBe(
+      "SELECT 1;\n",
+    );
+    expect(
+      readFileSync(
+        join(restoreTargetDir, "sync", "accounts", "test", "seen-state.db"),
+        "utf8",
+      ),
+    ).toBe("sqlite");
+    expect(
+      readFileSync(join(restoreTargetDir, "secrets", "conat-password"), "utf8"),
+    ).toBe("secret\n");
   });
 
   it("falls back from pg_basebackup to pg_dumpall when replication is blocked", async () => {
