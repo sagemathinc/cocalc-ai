@@ -30,7 +30,7 @@ export function ProjectWarningBanner() {
   const runQuota = useRunQuota(project_id, null);
   const isPaidStudentPayProject = useMemo(
     () => projects_store.isPaidStudentPayProject(project_id),
-    [project_map, project_id],
+    [project_map, project_id, runQuota],
   );
   const is_commercial = useTypedRedux("customize", "is_commercial");
   const dismissedInternetWarning = useInternetWarningClosed(project_id)[0];

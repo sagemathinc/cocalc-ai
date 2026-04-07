@@ -12,7 +12,6 @@ import {
   ExecuteCodeOptionsAsyncGet,
   ExecuteCodeOutput,
 } from "@cocalc/util/types/execute-code";
-import { DEFAULT_QUOTAS } from "@cocalc/util/upgrade-spec";
 import { NOTES } from "./crm";
 import { SCHEMA as schema } from "./index";
 import { Table } from "./types";
@@ -70,7 +69,6 @@ Table({
           deleted: null,
           host_id: null,
           owning_bay_id: null,
-          settings: DEFAULT_QUOTAS,
           state: null,
           last_edited: null,
           last_active: null,

@@ -8,6 +8,7 @@ import { useIntl } from "react-intl";
 // CoCalc libraries
 import { AppRedux, useMemo, useRedux } from "@cocalc/frontend/app-framework";
 import ScrollableList from "@cocalc/frontend/components/scrollable-list";
+import { useProjectRunQuotaPrefetch } from "@cocalc/frontend/project/use-project-run-quota";
 import { search_match, search_split, trunc_middle } from "@cocalc/util/misc";
 import { StudentAssignmentInfo, StudentAssignmentInfoHeader } from "../common";
 import type {
@@ -52,6 +53,16 @@ export function StudentListForAssignment({
     name,
     "active_student_sort",
   );
+  const studentProjectIds = useMemo(
+    () =>
+      students
+        .valueSeq()
+        .map((student) => student.get("project_id"))
+        .filter(Boolean)
+        .toArray(),
+    [students],
+  );
+  const runQuotaVersion = useProjectRunQuotaPrefetch(studentProjectIds);
   const student_list: string[] = useMemo(() => {
     const v0 = parse_students(students, user_map, redux, intl);
     const store = get_store();
@@ -80,6 +91,7 @@ export function StudentListForAssignment({
     active_feedback_edits,
     nbgrader_run_info,
     search,
+    runQuotaVersion,
   ]);
 
   function get_store(): CourseStore {

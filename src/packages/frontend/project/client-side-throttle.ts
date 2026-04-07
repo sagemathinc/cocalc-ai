@@ -5,6 +5,7 @@
 
 import { redux, useEffect, useState } from "@cocalc/frontend/app-framework";
 import { getServerStatsCached } from "@cocalc/frontend/lib/server-stats";
+import { ensureProjectRunQuota } from "@cocalc/frontend/project/use-project-run-quota";
 
 /*
 Client-side throttling of running projects in blocked countries.  This may or may not be the
@@ -76,7 +77,8 @@ export async function allow_project_to_run(
     return true;
   }
 
-  if (project.getIn(["settings", "member_host"])) {
+  const runQuota = await ensureProjectRunQuota(project_id).catch(() => null);
+  if (runQuota?.member_host) {
     log("has admin upgrade of member hosting.");
     return true;
   }

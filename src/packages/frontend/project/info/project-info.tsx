@@ -12,7 +12,6 @@ import { cgroup_stats } from "@cocalc/comm/project-status/utils";
 import {
   React,
   Rendered,
-  redux,
   useActions,
   useMemo,
   useState,
@@ -21,6 +20,7 @@ import {
 import ShowError from "@cocalc/frontend/components/error";
 import { labels } from "@cocalc/frontend/i18n";
 import { useProjectContext } from "@cocalc/frontend/project/context";
+import { useProjectRunQuota } from "@cocalc/frontend/project/use-project-run-quota";
 import { unreachable } from "@cocalc/util/misc";
 import {
   Process,
@@ -95,10 +95,11 @@ export const ProjectInfo: React.FC<Props> = React.memo(
     const loading = info == null;
     const status = disconnected ? "Connecting..." : "Connected";
     const project_actions = useActions({ project_id });
+    const { runQuota } = useProjectRunQuota(project_id);
 
     const idle_timeout = useMemo(() => {
-      return redux.getStore("projects").get_idle_timeout(project_id);
-    }, []);
+      return 1000 * (runQuota?.idle_timeout ?? 0);
+    }, [runQuota]);
 
     const show_explanation =
       useTypedRedux({ project_id }, "show_project_info_explanation") ?? false;

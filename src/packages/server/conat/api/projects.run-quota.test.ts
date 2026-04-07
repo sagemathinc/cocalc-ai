@@ -48,9 +48,16 @@ describe("getProjectRunQuota", () => {
     jest.resetModules();
     assertLocalProjectCollaboratorMock = jest.fn(async () => undefined);
     isAdminMock = jest.fn(async () => false);
-    queryMock = jest.fn(async () => ({
-      rows: [{ run_quota: { disk_quota: 4000, always_running: false } }],
-    }));
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("SELECT settings FROM projects")) {
+        return {
+          rows: [{ settings: { memory: 2000, mintime: 3600 } }],
+        };
+      }
+      return {
+        rows: [{ run_quota: { disk_quota: 4000, always_running: false } }],
+      };
+    });
     getPoolMock = jest.fn(() => ({ query: queryMock }));
     callback2Mock = jest.fn(async (fn: any, opts: any) => await fn(opts));
     publishProjectDetailInvalidationBestEffortMock = jest.fn(
@@ -131,8 +138,25 @@ describe("getProjectRunQuota", () => {
     expect(publishProjectDetailInvalidationBestEffortMock).toHaveBeenCalledWith(
       {
         project_id: PROJECT_ID,
-        fields: ["run_quota"],
+        fields: ["run_quota", "settings"],
       },
+    );
+  });
+
+  it("returns project settings for a collaborator", async () => {
+    const { getProjectSettings } = await import("./projects");
+    await expect(
+      getProjectSettings({
+        account_id: ACCOUNT_ID,
+        project_id: PROJECT_ID,
+      }),
+    ).resolves.toEqual({
+      memory: 2000,
+      mintime: 3600,
+    });
+    expect(queryMock).toHaveBeenCalledWith(
+      "SELECT settings FROM projects WHERE project_id = $1",
+      [PROJECT_ID],
     );
   });
 });

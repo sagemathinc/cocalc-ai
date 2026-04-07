@@ -41,6 +41,7 @@ export interface ProjectFieldState<T> {
   cache: Map<string, T | null>;
   listeners: Map<string, Set<(value: T | null) => void>>;
   refreshers: Map<string, Set<() => void>>;
+  inflight: Map<string, Promise<T | null>>;
 }
 
 const projectFieldStates = new Map<string, ProjectFieldState<any>>();
@@ -65,9 +66,47 @@ export function createProjectFieldState<T>(
     cache: new Map<string, T | null>(),
     listeners: new Map<string, Set<(value: T | null) => void>>(),
     refreshers: new Map<string, Set<() => void>>(),
+    inflight: new Map<string, Promise<T | null>>(),
   };
   projectFieldStates.set(field, state);
   return state;
+}
+
+export function getCachedProjectFieldValue<T>({
+  state,
+  project_id,
+}: {
+  state: ProjectFieldState<T>;
+  project_id: string;
+}): T | null | undefined {
+  if (!project_id || !state.cache.has(project_id)) {
+    return undefined;
+  }
+  return state.cache.get(project_id);
+}
+
+export function subscribeProjectFieldValue<T>({
+  state,
+  project_id,
+  listener,
+}: {
+  state: ProjectFieldState<T>;
+  project_id: string;
+  listener: (value: T | null) => void;
+}): () => void {
+  let listeners = state.listeners.get(project_id);
+  if (!listeners) {
+    listeners = new Set();
+    state.listeners.set(project_id, listeners);
+  }
+  listeners.add(listener);
+  return () => {
+    const current = state.listeners.get(project_id);
+    current?.delete(listener);
+    if (current?.size === 0) {
+      state.listeners.delete(project_id);
+    }
+  };
 }
 
 export function subscribeProjectDetailInvalidation(
@@ -163,6 +202,43 @@ function publishProjectFieldValue<T>({
   for (const listener of state.listeners.get(project_id) ?? []) {
     listener(value ?? null);
   }
+}
+
+export async function ensureProjectFieldValue<T>({
+  state,
+  project_id,
+  fetch,
+}: {
+  state: ProjectFieldState<T>;
+  project_id: string;
+  fetch: (project_id: string) => Promise<T | null>;
+}): Promise<T | null> {
+  if (!project_id) {
+    return null;
+  }
+  const cached = getCachedProjectFieldValue({ state, project_id });
+  if (cached !== undefined) {
+    return cached ?? null;
+  }
+  const existing = state.inflight.get(project_id);
+  if (existing) {
+    return await existing;
+  }
+  const request = (async () => {
+    try {
+      const value = (await fetch(project_id)) ?? null;
+      publishProjectFieldValue({
+        state,
+        project_id,
+        value,
+      });
+      return value;
+    } finally {
+      state.inflight.delete(project_id);
+    }
+  })();
+  state.inflight.set(project_id, request);
+  return await request;
 }
 
 export function useProjectField<T>({
