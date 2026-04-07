@@ -15,6 +15,8 @@ import {
   client,
   wait,
 } from "@cocalc/backend/conat/test/setup";
+import { closeConatClientForTests } from "@cocalc/conat/client";
+import { Client as ConatClientClass } from "@cocalc/conat/core/client";
 import { delay } from "awaiting";
 
 export { client, connect, getPool, initEphemeralDatabase, wait };
@@ -41,6 +43,9 @@ export async function before({
 
 export async function after() {
   const { noConat, noDatabase } = opts;
+  closeConatClientForTests();
+  ConatClientClass.closeAllForTests?.();
+
   if (!noDatabase) {
     await getPool().end();
   }
