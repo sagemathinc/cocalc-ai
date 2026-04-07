@@ -1,15 +1,19 @@
 import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
-import { createHostControlClient } from "@cocalc/conat/project-host/api";
+import type { HostControlApi } from "@cocalc/conat/project-host/api";
 import sshKeys from "../projects/get-ssh-keys";
 import { notifyProjectHostUpdate } from "../conat/route-project";
-import { conatWithProjectRouting } from "../conat/route-client";
 import { getConfiguredBayId } from "../bay-config";
 import { normalizeHostTier } from "./placement";
 import { machineHasGpu } from "../cloud/host-gpu";
 import { maybeAutoGrowHostDiskForReservationFailure } from "./auto-grow";
 import { appendProjectOutboxEventForProject } from "@cocalc/database/postgres/project-events-outbox";
 import { publishProjectAccountFeedEventsBestEffort } from "@cocalc/server/account/project-feed";
+import {
+  getAssignedProjectHostInfo,
+  PROJECT_HAS_NO_ASSIGNED_HOST_ERROR,
+} from "@cocalc/server/conat/project-host-assignment";
+import { getRoutedHostControlClient } from "./client";
 
 const log = getLogger("server:project-host:control");
 // Project starts can include large restores, so allow a long RPC timeout.
@@ -63,6 +67,20 @@ async function getProjectStateSnapshot(
     log.debug("getProjectStateSnapshot failed", { project_id, err: `${err}` });
     return {};
   }
+}
+
+async function getAssignedProjectHostControlClient({
+  project_id,
+  timeout,
+}: {
+  project_id: string;
+  timeout?: number;
+}): Promise<{ host_id: string; client: HostControlApi }> {
+  const { host_id } = await getAssignedProjectHostInfo(project_id);
+  return {
+    host_id,
+    client: await getRoutedHostControlClient({ host_id, timeout }),
+  };
 }
 
 async function hasActiveProjectStartLro(project_id: string): Promise<boolean> {
@@ -335,9 +353,8 @@ async function ensurePlacement(project_id: string): Promise<HostPlacement> {
     throw Error(`no running project-host available in bay ${projectBayId}`);
   }
 
-  const client = createHostControlClient({
+  const client = await getRoutedHostControlClient({
     host_id: chosen.id,
-    client: conatWithProjectRouting(),
   });
 
   log.debug("createProject on remote project host", {
@@ -424,9 +441,8 @@ export async function startProjectOnHost(
       backup_repo_id: string | null;
     }>("SELECT backup_repo_id FROM projects WHERE project_id=$1", [project_id]);
     const restore = rows[0]?.backup_repo_id ? "auto" : "none";
-    const client = createHostControlClient({
+    const client = await getRoutedHostControlClient({
       host_id: placement.host_id,
-      client: conatWithProjectRouting(),
       timeout: START_PROJECT_TIMEOUT_MS,
     });
     try {
@@ -498,11 +514,10 @@ export async function stopProjectOnHost(
   project_id: string,
   opts?: { timeout_ms?: number },
 ): Promise<void> {
-  const meta = await loadProject(project_id);
-  const host_id = meta.host_id;
-  if (!host_id) {
-    throw Error("project has no host_id");
-  }
+  const { host_id, client } = await getAssignedProjectHostControlClient({
+    project_id,
+    timeout: opts?.timeout_ms ?? STOP_PROJECT_TIMEOUT_MS,
+  });
   let wasRunning = false;
   try {
     const { rows } = await pool().query<{ state: { state?: string } | null }>(
@@ -520,11 +535,6 @@ export async function stopProjectOnHost(
       err: `${err}`,
     });
   }
-  const client = createHostControlClient({
-    host_id,
-    client: conatWithProjectRouting(),
-    timeout: opts?.timeout_ms ?? STOP_PROJECT_TIMEOUT_MS,
-  });
   try {
     await client.stopProject({ project_id });
     if (wasRunning) {
@@ -552,14 +562,21 @@ export async function updateAuthorizedKeysOnHost(
   project_id: string,
 ): Promise<void> {
   const meta = await loadProject(project_id);
-  const host_id = meta.host_id;
-  if (!host_id) {
-    return;
+  let assigned: Awaited<ReturnType<typeof getAssignedProjectHostControlClient>>;
+  try {
+    assigned = await getAssignedProjectHostControlClient({
+      project_id,
+    });
+  } catch (err) {
+    if (
+      err instanceof Error &&
+      err.message === PROJECT_HAS_NO_ASSIGNED_HOST_ERROR
+    ) {
+      return;
+    }
+    throw err;
   }
-  const client = createHostControlClient({
-    host_id,
-    client: conatWithProjectRouting(),
-  });
+  const { host_id, client } = assigned;
   try {
     await client.updateAuthorizedKeys({
       project_id,
@@ -578,19 +595,26 @@ export async function syncProjectUsersOnHost({
   expected_host_id?: string;
 }): Promise<void> {
   const meta = await loadProject(project_id);
-  const host_id = meta.host_id;
-  if (!host_id) {
-    return;
+  let assigned: Awaited<ReturnType<typeof getAssignedProjectHostControlClient>>;
+  try {
+    assigned = await getAssignedProjectHostControlClient({
+      project_id,
+    });
+  } catch (err) {
+    if (
+      err instanceof Error &&
+      err.message === PROJECT_HAS_NO_ASSIGNED_HOST_ERROR
+    ) {
+      return;
+    }
+    throw err;
   }
+  const { host_id, client } = assigned;
   if (expected_host_id && expected_host_id !== host_id) {
     throw Error(
       `project ${project_id} is assigned to host ${host_id}, not ${expected_host_id}`,
     );
   }
-  const client = createHostControlClient({
-    host_id,
-    client: conatWithProjectRouting(),
-  });
   try {
     await client.updateProjectUsers({
       project_id,
@@ -613,9 +637,8 @@ export async function deleteProjectDataOnHost({
   project_id: string;
   host_id: string;
 }): Promise<void> {
-  const client = createHostControlClient({
+  const client = await getRoutedHostControlClient({
     host_id,
-    client: conatWithProjectRouting(),
   });
   await client.deleteProjectData({ project_id });
 }

@@ -6,6 +6,9 @@
 import { EventEmitter } from "events";
 
 let connectMock: jest.Mock;
+let materializeHostRouteTargetMock: jest.Mock;
+let materializeProjectHostTargetMock: jest.Mock;
+let routeHostSubjectMock: jest.Mock;
 let routeProjectSubjectMock: jest.Mock;
 let listenForUpdatesMock: jest.Mock;
 let issueProjectHostAuthTokenMock: jest.Mock;
@@ -41,6 +44,11 @@ jest.mock("@cocalc/conat/core/client", () => ({
 }));
 
 jest.mock("./route-project", () => ({
+  materializeHostRouteTarget: (...args: any[]) =>
+    materializeHostRouteTargetMock(...args),
+  materializeProjectHostTarget: (...args: any[]) =>
+    materializeProjectHostTargetMock(...args),
+  routeHostSubject: (...args: any[]) => routeHostSubjectMock(...args),
   routeProjectSubject: (...args: any[]) => routeProjectSubjectMock(...args),
   listenForUpdates: (...args: any[]) => listenForUpdatesMock(...args),
 }));
@@ -68,6 +76,9 @@ describe("server/conat route-client", () => {
     jest.useFakeTimers();
     jest.resetModules();
     connectMock = jest.fn();
+    materializeHostRouteTargetMock = jest.fn();
+    materializeProjectHostTargetMock = jest.fn();
+    routeHostSubjectMock = jest.fn();
     routeProjectSubjectMock = jest.fn();
     listenForUpdatesMock = jest.fn(async () => undefined);
     issueProjectHostAuthTokenMock = jest.fn(() => ({
@@ -90,6 +101,7 @@ describe("server/conat route-client", () => {
       host_id: "host-1",
       address: "https://host-1.example",
     });
+    routeHostSubjectMock.mockReturnValue(undefined);
 
     const { conatWithProjectRouting } = await import("./route-client");
     const client = conatWithProjectRouting() as any;
@@ -117,6 +129,7 @@ describe("server/conat route-client", () => {
       host_id: "host-1",
       address: "https://host-1.example",
     });
+    routeHostSubjectMock.mockReturnValue(undefined);
 
     const { conatWithProjectRouting } = await import("./route-client");
     const client = conatWithProjectRouting() as any;
@@ -152,6 +165,7 @@ describe("server/conat route-client", () => {
         host_session_id: "session-2",
         address: "https://host-1.example",
       });
+    routeHostSubjectMock.mockReturnValue(undefined);
 
     const { conatWithProjectRouting } = await import("./route-client");
     const client = conatWithProjectRouting() as any;
@@ -166,5 +180,41 @@ describe("server/conat route-client", () => {
     expect(first?.client).toBe(routed1);
     expect(second?.client).toBe(routed2);
     expect(routed1.close).toHaveBeenCalled();
+  });
+
+  it("routes direct host subjects through explicit host routing", async () => {
+    const central = createFakeClient();
+    const routed = createFakeClient();
+    connectMock
+      .mockImplementationOnce(() => central)
+      .mockImplementationOnce(() => routed);
+    routeHostSubjectMock.mockReturnValue({
+      host_id: "host-2",
+      address: "https://host-2.example",
+    });
+    routeProjectSubjectMock.mockReturnValue(undefined);
+
+    const { conatWithProjectRouting } = await import("./route-client");
+    const client = conatWithProjectRouting() as any;
+    const routedResult = client.routeSubject(
+      "project-host.aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.api",
+    );
+
+    expect(routedResult?.client).toBe(routed);
+  });
+
+  it("materializes explicit routed host clients", async () => {
+    const routed = createFakeClient();
+    connectMock.mockImplementationOnce(() => routed);
+    materializeHostRouteTargetMock.mockResolvedValue({
+      host_id: "host-3",
+      address: "https://host-3.example",
+    });
+
+    const { getExplicitHostRoutedClient } = await import("./route-client");
+
+    await expect(
+      getExplicitHostRoutedClient({ host_id: "host-3" }),
+    ).resolves.toBe(routed);
   });
 });
