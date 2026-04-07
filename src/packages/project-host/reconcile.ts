@@ -95,7 +95,7 @@ export async function getContainerStates(): Promise<
   });
 }
 
-async function reconcileOnce() {
+export async function reconcileOnce() {
   const now = Date.now();
   const knownProjects = listProjects();
   const knownIds = new Set(knownProjects.map((p) => p.project_id));
@@ -151,9 +151,12 @@ async function reconcileOnce() {
     }
   }
 
-  // Any project we think is running but has no container should be marked stopped.
+  // Any project we think is active but has no container should be marked stopped.
   for (const row of knownProjects) {
-    if (!containers.has(row.project_id) && row.state === "running") {
+    if (
+      !containers.has(row.project_id) &&
+      (row.state === "running" || row.state === "starting")
+    ) {
       upsertProject({
         project_id: row.project_id,
         state: "opened",
