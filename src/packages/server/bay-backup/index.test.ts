@@ -613,7 +613,10 @@ describe("bay-backup runner", () => {
           mkdirSync(join(targetDir, "pg_wal"), { recursive: true });
           writeFileSync(join(targetDir, "PG_VERSION"), "17\n");
         } else if (archivePath.endsWith("pg_wal.tar.gz")) {
-          writeFileSync(join(targetDir, "0000000100000000000000E8"), "segment");
+          writeFileSync(
+            join(targetDir, "0000000100000000000000E8"),
+            "stale-segment",
+          );
         } else if (archivePath.endsWith("sync.tar.gz")) {
           mkdirSync(join(targetDir, "sync", "accounts", "test"), {
             recursive: true,
@@ -648,7 +651,7 @@ describe("bay-backup runner", () => {
     expect(result.sync_dir).toBe(join(restoreTargetDir, "sync"));
     expect(result.secrets_dir).toBe(join(restoreTargetDir, "secrets"));
     expect(
-      readFileSync(join(restoreTargetDir, "data", "restore.signal"), "utf8"),
+      readFileSync(join(restoreTargetDir, "data", "standby.signal"), "utf8"),
     ).toBe("");
     expect(
       readFileSync(
@@ -661,10 +664,16 @@ describe("bay-backup runner", () => {
         join(restoreTargetDir, "data", "postgresql.auto.conf"),
         "utf8",
       ),
-    ).toContain("recovery_target_time = '2026-04-07T15:00:00.000Z'");
+    ).toContain("recovery_target_time = '2026-04-07 15:00:00.000+00'");
     expect(
       readFileSync(join(restoreTargetDir, "restore-wal.sh"), "utf8"),
     ).toContain(walArchiveDir);
+    expect(
+      readFileSync(
+        join(restoreTargetDir, "data", "pg_wal", "0000000100000000000000E8"),
+        "utf8",
+      ),
+    ).toBe("segment");
     expect(
       readFileSync(
         join(restoreTargetDir, "sync", "accounts", "test", "seen-state.db"),

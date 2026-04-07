@@ -669,6 +669,54 @@ function normalizeRecoveryTargetTime(value?: string): string | null {
   return normalized.toISOString();
 }
 
+function formatRecoveryTargetTimeForPostgres(value: string): string {
+  return value.replace("T", " ").replace("Z", "+00");
+}
+
+const WAL_SEGMENT_NAME_RE = /^[0-9A-F]{24}(?:\.partial)?$/;
+
+async function refreshBundledWalSegmentsFromArchive({
+  pgWalDir,
+  remote_only,
+  paths,
+  r2,
+  wal_object_prefix,
+  remote_wal_keys,
+}: {
+  pgWalDir: string;
+  remote_only: boolean;
+  paths: ReturnType<typeof getBayBackupPaths>;
+  r2: R2Target;
+  wal_object_prefix: string | null;
+  remote_wal_keys: string[] | null;
+}): Promise<void> {
+  const names = await readdir(pgWalDir).catch((err) => {
+    if ((err as NodeJS.ErrnoException)?.code === "ENOENT") {
+      return [];
+    }
+    throw err;
+  });
+  for (const name of names) {
+    if (!WAL_SEGMENT_NAME_RE.test(name)) continue;
+    const destinationPath = join(pgWalDir, name);
+    if (!remote_only) {
+      const archivedPath = join(paths.wal_archive_dir, name);
+      if (await exists(archivedPath)) {
+        await copyFile(archivedPath, destinationPath);
+      }
+      continue;
+    }
+    if (!wal_object_prefix || !remote_wal_keys) continue;
+    const object_key = `${wal_object_prefix}/${name}`;
+    if (!remote_wal_keys.includes(object_key)) continue;
+    await downloadObjectToFileFromR2({
+      target: r2,
+      key: object_key,
+      destinationPath,
+    });
+  }
+}
+
 async function exists(path: string | null | undefined): Promise<boolean> {
   if (!path) return false;
   try {
@@ -1041,7 +1089,10 @@ async function writeOfflineRestoreHelper({
     '  rm -f "$TARGET_DIR/data/postmaster.pid" "$TARGET_DIR/data/postmaster.opts"',
     '  echo "restored Postgres base backup into $TARGET_DIR/data"',
     '  echo "If you also have the archived WAL available, add a restore_command"',
-    '  echo "to $TARGET_DIR/data/postgresql.auto.conf and create restore.signal."',
+    '  echo "to $TARGET_DIR/data/postgresql.auto.conf. Use restore.signal for"',
+    '  echo "recovery to the latest available WAL, or standby.signal for"',
+    '  echo "targeted PITR so PostgreSQL keeps fetching archive WAL until the"',
+    '  echo "requested target is reached."',
     '  echo "Otherwise you can start the fenced snapshot directly with:"',
     '  echo "  postgres -D $TARGET_DIR/data"',
     "fi",
@@ -2486,6 +2537,19 @@ export async function runBayRestore({
           targetDir: join(data_dir!, "pg_wal"),
         });
       }
+      // pg_basebackup snapshots can contain an in-progress WAL segment in
+      // pg_wal/. After the backup finishes, the archived copy of that same
+      // segment may contain more records than the bundled snapshot copy.
+      // Refresh any bundled segment file from the authoritative archive when
+      // that archive copy already exists.
+      await refreshBundledWalSegmentsFromArchive({
+        pgWalDir: join(data_dir!, "pg_wal"),
+        remote_only,
+        paths,
+        r2,
+        wal_object_prefix: resolvedWalObjectPrefix,
+        remote_wal_keys: remoteWalKeys,
+      });
       await rm(join(data_dir!, "postmaster.pid"), {
         force: true,
       }).catch(() => undefined);
@@ -2526,13 +2590,16 @@ export async function runBayRestore({
       const restoreCommand = remote_only
         ? `${process.execPath} ${restoreScriptPath} %f %p`
         : `${restoreScriptPath} %f %p`;
+      const postgresRecoveryTargetTime = resolvedTargetTime
+        ? formatRecoveryTargetTimeForPostgres(resolvedTargetTime)
+        : null;
       const recoveryConfig = [
         "",
         "# cocalc bay restore",
         `restore_command = ${postgresQuote(restoreCommand)}`,
-        ...(resolvedTargetTime
+        ...(postgresRecoveryTargetTime
           ? [
-              `recovery_target_time = ${postgresQuote(resolvedTargetTime)}`,
+              `recovery_target_time = ${postgresQuote(postgresRecoveryTargetTime)}`,
               "recovery_target_inclusive = 'true'",
             ]
           : []),
@@ -2545,11 +2612,23 @@ export async function runBayRestore({
         `${autoConfExisting}${recoveryConfig}`,
         "utf8",
       );
-      await writeFile(join(data_dir!, "restore.signal"), "", "utf8");
+      const recoverySignalPath = join(
+        data_dir!,
+        resolvedTargetTime ? "standby.signal" : "restore.signal",
+      );
+      const obsoleteSignalPath = join(
+        data_dir!,
+        resolvedTargetTime ? "restore.signal" : "standby.signal",
+      );
+      await rm(obsoleteSignalPath, { force: true }).catch(() => undefined);
+      await writeFile(recoverySignalPath, "", "utf8");
       notes.push(`Restored base backup into ${data_dir}.`);
       if (resolvedTargetTime) {
         notes.push(
           `Recovery target time is set to ${resolvedTargetTime} before promotion.`,
+        );
+        notes.push(
+          "Targeted recovery uses standby mode so PostgreSQL keeps fetching archived WAL until the requested target is reached.",
         );
       }
       notes.push(
