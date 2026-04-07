@@ -1,5 +1,5 @@
 import { render, screen, waitFor } from "@testing-library/react";
-import useBackupsListing from "./use-backups";
+import useBackupsListing, { getCachedBackupsListing } from "./use-backups";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 
 jest.mock("@cocalc/frontend/webapp-client", () => ({
@@ -75,5 +75,21 @@ describe("useBackupsListing", () => {
         ],
       ]),
     );
+  });
+
+  it("exposes cached backup listings synchronously", async () => {
+    const path = "/.backups/2026-03-12T00:00:00.000Z";
+    render(<TestComponent project_id="project-1" path={path} />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("listing").textContent).toBe("alpha.txt");
+    });
+
+    expect(
+      getCachedBackupsListing({
+        project_id: "project-1",
+        path,
+      }),
+    ).toEqual([{ name: "alpha.txt", isDir: false, mtime: 1, size: 10 }]);
   });
 });

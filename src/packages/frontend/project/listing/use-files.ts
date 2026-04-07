@@ -7,7 +7,7 @@ TESTS: See packages/test/project/listing/
 */
 
 import useAsyncEffect from "use-async-effect";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { throttle } from "lodash";
 import { type Files } from "@cocalc/conat/files/listing";
 import { type FilesystemClient } from "@cocalc/conat/files/fs";
@@ -28,6 +28,13 @@ const MAX_SUBDIR_CACHE = 10;
 const CACHE_SIZE = 150;
 
 const cache = new LRU<string, Files>({ max: CACHE_SIZE });
+const cacheListeners = new Set<() => void>();
+
+function notifyCacheListeners() {
+  for (const listener of cacheListeners) {
+    listener();
+  }
+}
 
 export function getFiles({
   cacheId,
@@ -40,6 +47,18 @@ export function getFiles({
     return null;
   }
   return cache.get(key(cacheId, path)) ?? null;
+}
+
+export function useFilesCacheVersion(): number {
+  const [version, setVersion] = useState(0);
+  useEffect(() => {
+    const listener = () => setVersion((value) => value + 1);
+    cacheListeners.add(listener);
+    return () => {
+      cacheListeners.delete(listener);
+    };
+  }, []);
+  return version;
 }
 
 export default function useFiles({
@@ -100,6 +119,7 @@ export default function useFiles({
       }
       if (cacheId != null) {
         cache.set(key(cacheId, path), listing.files);
+        notifyCacheListeners();
         if (listing.files != null) {
           cacheNeighbors({ fs, cacheId, path, files: listing.files });
         }
@@ -157,6 +177,7 @@ async function ensureCached({
     const { files } = await fs.listing(path);
     if (files) {
       cache.set(k, files);
+      notifyCacheListeners();
     } else {
       failed.add(k);
     }
