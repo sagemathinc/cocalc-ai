@@ -63,6 +63,7 @@ import {
   evaluateHostOperational,
   hostLabel,
 } from "@cocalc/frontend/projects/host-operational";
+import { projectThemeColor } from "@cocalc/frontend/projects/theme";
 import MoveProject from "@cocalc/frontend/project/settings/move-project";
 import { workspaceStrongThemeChrome } from "../workspaces/strong-theme";
 import type { MoveLroState } from "@cocalc/frontend/project/move-ops";
@@ -111,12 +112,8 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
     project_id,
     "deleted",
   ]);
-  const project_color = useRedux([
-    "projects",
-    "project_map",
-    project_id,
-    "color",
-  ]);
+  const project = useRedux(["projects", "project_map", project_id]);
+  const project_color = projectThemeColor(project);
   const projectCtx = useProjectContextProvider({
     project_id,
     is_active,

@@ -1,4 +1,5 @@
 import type { Configuration } from "@cocalc/conat/persist/storage";
+import type { ProjectTheme } from "@cocalc/util/db-schema/projects";
 
 export interface AccountFeedAccountRow {
   account_id?: string | null;
@@ -45,8 +46,7 @@ export interface AccountFeedProjectRow {
   title: string;
   description: string;
   name?: string | null;
-  avatar_image_tiny?: string | null;
-  color?: string | null;
+  theme?: ProjectTheme | null;
   host_id: string | null;
   owning_bay_id: string;
   users: Record<string, any>;

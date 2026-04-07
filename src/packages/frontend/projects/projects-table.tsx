@@ -33,7 +33,7 @@ import {
 } from "./projects-table-columns";
 import { useBookmarkedProjects } from "./use-bookmarked-projects";
 import { normalizeProjectStateForDisplay } from "./host-operational";
-import { projectImageUrl } from "./image";
+import { projectThemeColor, projectThemeFromProject } from "./theme";
 
 interface Props {
   visible_projects: string[];
@@ -122,7 +122,7 @@ export function ProjectsTable({
       return {
         project_id,
         starred: isProjectBookmarked(project_id),
-        avatar: projectImageUrl(project.get("avatar_image_tiny")),
+        theme: projectThemeFromProject(project),
         title: project.get("title") ?? "Untitled",
         description: project.get("description") ?? "",
         host: (() => {
@@ -130,7 +130,7 @@ export function ProjectsTable({
           return typeof hostName === "string" ? hostName : undefined;
         })(),
         last_edited: project.get("last_edited"),
-        color: project.get("color"),
+        color: projectThemeColor(project),
         state,
         deleted: !!project.get("deleted"),
         hidden: !!project.getIn(["users", current_account_id, "hide"]),

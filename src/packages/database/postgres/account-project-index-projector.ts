@@ -180,8 +180,7 @@ function projectRowForFeed(opts: {
     title: payload.title ?? "",
     description: payload.description ?? "",
     name: payload.name ?? null,
-    avatar_image_tiny: payload.avatar_image_tiny ?? null,
-    color: payload.color ?? null,
+    theme: payload.theme ?? null,
     host_id: payload.host_id ?? null,
     owning_bay_id: normalizeBayId(payload.owning_bay_id),
     users: payload.users_summary ?? {},
@@ -239,10 +238,10 @@ async function applyProjectEventToAccountProjectIndex(opts: {
     await db.query(
       `INSERT INTO account_project_index
          (account_id, project_id, owning_bay_id, host_id, title, description,
-          users_summary, state_summary, last_activity_at, last_opened_at,
+          theme, users_summary, state_summary, last_activity_at, last_opened_at,
           is_hidden, sort_key, updated_at)
        VALUES
-         ($1, $2, $3, $4, $5, $6, $7::JSONB, $8::JSONB, $9, $10, $11, $12, NOW())`,
+         ($1, $2, $3, $4, $5, $6, $7::JSONB, $8::JSONB, $9::JSONB, $10, $11, $12, $13, NOW())`,
       [
         account_id,
         payload.project_id,
@@ -250,6 +249,7 @@ async function applyProjectEventToAccountProjectIndex(opts: {
         payload.host_id,
         payload.title,
         payload.description,
+        JSON.stringify(payload.theme ?? {}),
         JSON.stringify(payload.users_summary ?? {}),
         JSON.stringify(payload.state_summary ?? {}),
         last_activity_at,

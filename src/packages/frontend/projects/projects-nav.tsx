@@ -4,7 +4,7 @@
  */
 
 import type { TabsProps } from "antd";
-import { Avatar, Button, Divider, Popover, Select, Tabs, Tooltip } from "antd";
+import { Button, Divider, Popover, Select, Tabs, Tooltip } from "antd";
 import { CSSProperties, useEffect, useMemo, useRef, useState } from "react";
 
 import {
@@ -30,9 +30,13 @@ import { COLORS } from "@cocalc/util/theme";
 import { useProjectState } from "../project/page/project-state-hook";
 import { useProjectHasInternetAccess } from "../project/settings/has-internet-access-hook";
 import { shouldOpenProjectsNavShortcut } from "./projects-nav-shortcut";
+import {
+  ProjectThemeAvatar,
+  projectThemeColor,
+  projectThemeFromProject,
+} from "./theme";
 import { useBookmarkedProjects } from "./use-bookmarked-projects";
 import { normalizeProjectStateForDisplay } from "./host-operational";
-import { projectImageUrl } from "./image";
 
 const PROJECT_NAME_STYLE: CSS = {
   whiteSpace: "nowrap",
@@ -180,37 +184,14 @@ function ProjectTab({ project_id }: ProjectTabProps) {
   }
 
   function renderAvatar() {
-    const avatar = projectImageUrl(project?.get("avatar_image_tiny"));
-    const color = project?.get("color");
-
-    if (avatar) {
-      // Avatar exists: show it with colored border
-      return (
-        <Avatar
-          style={{
-            marginTop: "-2px",
-            border: color ? `2px solid ${color}` : undefined,
-          }}
-          shape="circle"
-          icon={<img src={avatar} />}
-          size={20}
-        />
-      );
-    } else if (color) {
-      // No avatar but has color: show colored circle
-      return (
-        <Avatar
-          style={{
-            marginTop: "-2px",
-            backgroundColor: color,
-          }}
-          shape="circle"
-          size={20}
-        />
-      );
-    }
-
-    return undefined;
+    return (
+      <ProjectThemeAvatar
+        project={project}
+        size={20}
+        border
+        style={{ marginTop: "-2px" }}
+      />
+    );
   }
 
   function onMouseUp(e: React.MouseEvent) {
@@ -370,8 +351,8 @@ export function ProjectsNav(props: ProjectsNavProps) {
     return {
       title,
       label: title,
-      color: project?.get?.("color"),
-      avatar: projectImageUrl(project?.get?.("avatar_image_tiny")),
+      theme: projectThemeFromProject(project),
+      color: projectThemeColor(project),
     };
   }
 
@@ -445,19 +426,11 @@ export function ProjectsNav(props: ProjectsNavProps) {
             minWidth: 0,
           }}
         >
-          {option?.avatar || option?.color ? (
-            <Avatar
-              style={{
-                backgroundColor: option?.color ?? undefined,
-                border: option?.color ? `2px solid ${option.color}` : undefined,
-              }}
-              shape="circle"
-              icon={option?.avatar ? <img src={option.avatar} /> : undefined}
-              size={18}
-            />
-          ) : (
-            <Icon name="circle" />
-          )}
+          <ProjectThemeAvatar
+            theme={option.theme}
+            size={18}
+            border={!!option?.color}
+          />
           <span
             style={{
               overflow: "hidden",

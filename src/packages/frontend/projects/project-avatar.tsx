@@ -7,12 +7,11 @@
 Render a single project entry, which goes in the list of projects
 */
 
-import { Avatar } from "antd";
 import { CSSProperties } from "react";
 
 import { React, useRedux } from "@cocalc/frontend/app-framework";
 import { Paragraph } from "@cocalc/frontend/components";
-import { projectImageUrl } from "./image";
+import { ProjectThemeAvatar } from "./theme";
 
 interface ProjectAvatarImageProps {
   project_id: string;
@@ -24,26 +23,20 @@ interface ProjectAvatarImageProps {
 
 export function ProjectAvatarImage(props: ProjectAvatarImageProps) {
   const { project_id, size, onClick, style, askToAddAvatar = false } = props;
-  const avatarImage = projectImageUrl(
-    useRedux(["projects", "project_map", project_id, "avatar_image_tiny"]),
-  );
+  const project = useRedux(["projects", "project_map", project_id]);
 
   function renderAdd(): React.JSX.Element {
     if (!askToAddAvatar || onClick == null) return <></>;
     return (
       <Paragraph type="secondary" style={style} onClick={(e) => onClick(e)}>
-        (Click to add avatar image)
+        (Click to customize appearance)
       </Paragraph>
     );
   }
 
-  return avatarImage ? (
+  return project != null ? (
     <div style={style} onClick={(e) => onClick?.(e)}>
-      <Avatar
-        shape="square"
-        size={size ?? 160}
-        icon={<img src={avatarImage} />}
-      />
+      <ProjectThemeAvatar project={project} shape="square" size={size ?? 160} />
     </div>
   ) : (
     renderAdd()

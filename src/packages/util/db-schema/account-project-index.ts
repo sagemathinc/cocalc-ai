@@ -28,6 +28,7 @@ Table({
           host_id: null,
           title: "",
           description: "",
+          theme: null,
           users_summary: {},
           state_summary: {},
           last_activity_at: null,
@@ -63,6 +64,10 @@ Table({
     description: {
       type: "string",
       desc: "Projected project description for list views.",
+    },
+    theme: {
+      type: "map",
+      desc: "Projected project appearance theme for list, nav, and search views.",
     },
     users_summary: {
       type: "map",

@@ -24,7 +24,10 @@ import {
   type AccountFeedEvent,
   type AccountFeedProjectRow,
 } from "@cocalc/conat/hub/api/account-feed";
-import type { StudentProjectFunctionality } from "@cocalc/util/db-schema/projects";
+import type {
+  ProjectTheme,
+  StudentProjectFunctionality,
+} from "@cocalc/util/db-schema/projects";
 import type { PurchaseInfo } from "@cocalc/util/purchases/quota/types";
 import { defaults, is_valid_uuid_string } from "@cocalc/util/misc";
 import { ProjectsState, store } from "./store";
@@ -77,8 +80,7 @@ export function buildProjectRecordFromFeedRow(
     title: row.title,
     description: row.description,
     name: row.name ?? undefined,
-    avatar_image_tiny: row.avatar_image_tiny ?? undefined,
-    color: row.color ?? undefined,
+    theme: row.theme ?? null,
     host_id: row.host_id,
     owning_bay_id: row.owning_bay_id,
     users: row.users ?? {},
@@ -556,42 +558,42 @@ export class ProjectsActions extends Actions<ProjectsState> {
     });
   };
 
-  setProjectColor = async (
+  setProjectTheme = async (
     project_id: string,
-    color: string,
+    theme: ProjectTheme | null,
   ): Promise<void> => {
     if (!(await this.have_project(project_id))) {
       console.warn(
-        `Can't set project color -- you are not a collaborator on project '${project_id}'.`,
+        `Can't set project theme -- you are not a collaborator on project '${project_id}'.`,
       );
       return;
     }
-    const before = store.getIn(["project_map", project_id, "color"]);
-    if (before === color) return;
+    const normalizedTheme: ProjectTheme = {
+      color: theme?.color ?? null,
+      accent_color: theme?.accent_color ?? null,
+      icon: theme?.icon?.trim() || null,
+      image_blob: theme?.image_blob?.trim() || null,
+    };
+    const before = store.getIn(["project_map", project_id, "theme"]);
+    const beforeJS = before?.toJS?.() ?? before ?? null;
+    if (isEqual(beforeJS, normalizedTheme)) return;
     try {
-      // set in the Table
-      await this.projects_table_set({ project_id, color });
-      // create entry in the project's log
+      await this.projects_table_set({
+        project_id,
+        theme: normalizedTheme,
+      });
       await this.redux.getProjectActions(project_id).async_log({
         event: "set",
-        color,
+        theme: normalizedTheme,
       });
     } catch (err) {
-      this.projects_table_set({ project_id, color: before });
+      await this.projects_table_set({
+        project_id,
+        theme: beforeJS ?? {},
+      });
       throw err;
     }
   };
-
-  public async setProjectImage(project_id: string, image_blob: string | null) {
-    await this.projects_table_set({
-      project_id,
-      avatar_image_tiny: image_blob?.trim() || "",
-    });
-    await this.redux.getProjectActions(project_id).async_log({
-      event: "set",
-      image: image_blob?.trim() || "",
-    });
-  }
 
   add_ssh_key_to_project = async (opts: {
     project_id: string;

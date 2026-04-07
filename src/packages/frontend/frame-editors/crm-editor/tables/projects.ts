@@ -11,7 +11,7 @@ register({
     crm_projects: [
       {
         title: null,
-        avatar_image_tiny: null,
+        theme: null,
         project_id: null,
         name: null,
         description: null,

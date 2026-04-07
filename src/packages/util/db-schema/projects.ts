@@ -21,6 +21,13 @@ export const MAX_FILENAME_SEARCH_RESULTS = 100;
 
 const THROTTLE_CHANGES = 1000;
 
+export interface ProjectTheme {
+  color?: string | null;
+  accent_color?: string | null;
+  icon?: string | null;
+  image_blob?: string | null;
+}
+
 function isUserGroup(group: unknown): group is string {
   return typeof group === "string" && PROJECT_GROUPS.includes(group);
 }
@@ -72,8 +79,7 @@ Table({
           state: null,
           last_edited: null,
           last_active: null,
-          avatar_image_tiny: null,
-          color: null,
+          theme: null,
         },
       },
       set: {
@@ -92,11 +98,10 @@ Table({
           rootfs_image: true,
           rootfs_image_id: true,
           env: true,
-          avatar_image_tiny: true,
           snapshots: true,
           backups: true,
-          color: true,
           launcher: true,
+          theme: true,
         },
         required_fields: {
           project_id: true,
@@ -368,17 +373,10 @@ Table({
       desc: "Additional environment variables (TS: {[key:string]:string})",
       render: { type: "json", editable: true },
     },
-    avatar_image_tiny: {
-      title: "Image",
-      type: "string",
-      desc: "Blob id for the visual image associated with the project.",
-      render: { type: "image" },
-    },
-    color: {
-      title: "Color",
-      type: "string",
-      desc: "Optional color associated with the project, used for visual identification (e.g., border color in project list).",
-      render: { type: "text" },
+    theme: {
+      type: "map",
+      desc: "Project appearance theme used throughout list, navigation, and settings UI. Shape: {color, accent_color, icon, image_blob}.",
+      render: { type: "json", editable: true },
     },
     launcher: {
       title: "Launcher",

@@ -28,6 +28,7 @@ import { COLORS } from "@cocalc/util/theme";
 import { Button, Tooltip } from "antd";
 import { ProjectAvatarImage } from "./project-avatar";
 import { ProjectUsers } from "./project-users";
+import { projectThemeColor } from "./theme";
 import { useBookmarkedProjects } from "./use-bookmarked-projects";
 import { blendBackgroundColor } from "./util";
 
@@ -158,7 +159,7 @@ export const ProjectRow: React.FC<Props> = ({ project_id, index }: Props) => {
     e.stopPropagation();
   }
 
-  const color = project.get("color");
+  const color = projectThemeColor(project);
   const borderStyle = color ? `4px solid ${color}` : undefined;
 
   // Calculate background color with faint hint of project color
@@ -232,14 +233,12 @@ export const ProjectRow: React.FC<Props> = ({ project_id, index }: Props) => {
           </a>
         </Col>
         <Col sm={2}>
-          {project.get("avatar_image_tiny") && (
-            <ProjectAvatarImage
-              project_id={project_id}
-              size={120}
-              onClick={handle_click}
-              style={{ margin: "-20px 0", textAlign: "center" }}
-            />
-          )}
+          <ProjectAvatarImage
+            project_id={project_id}
+            size={120}
+            onClick={handle_click}
+            style={{ margin: "-20px 0", textAlign: "center" }}
+          />
         </Col>
         <Col sm={1}>
           <Tooltip

@@ -435,8 +435,7 @@ function buildLiteProjectFeedRow(
     title: `${row.title ?? ""}`,
     description: `${row.description ?? ""}`,
     name: row.name ?? null,
-    avatar_image_tiny: row.avatar_image_tiny ?? null,
-    color: row.color ?? null,
+    theme: row.theme ?? null,
     host_id: row.host_id ?? null,
     owning_bay_id: row.owning_bay_id ?? DEFAULT_BAY_ID,
     users: row.users ?? {

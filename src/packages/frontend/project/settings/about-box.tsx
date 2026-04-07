@@ -22,14 +22,18 @@ import {
 } from "@cocalc/frontend/components";
 import { COLORS } from "@cocalc/util/theme";
 import { labels } from "@cocalc/frontend/i18n";
-import { projectImageUrl } from "@cocalc/frontend/projects/image";
 import { ProjectTitle } from "@cocalc/frontend/projects/project-title";
+import {
+  ProjectThemeAvatar,
+  projectThemeFromProject,
+} from "@cocalc/frontend/projects/theme";
 import { ProjectsActions } from "@cocalc/frontend/todo-types";
 import { useBookmarkedProjects } from "@cocalc/frontend/projects/use-bookmarked-projects";
 import { useProjectCourseInfo } from "../use-project-course";
 import { useProjectCreated } from "../use-project-created";
 import {
   themeDraftFromTheme,
+  themeFromDraft,
   type ThemeEditorDraft,
 } from "@cocalc/frontend/theme/types";
 
@@ -62,14 +66,8 @@ export const AboutBox: React.FC<Props> = (props: Readonly<Props>) => {
   const courseProjectType = course?.get("type") as any;
   const hasReadonlyFields = ["student", "shared"].includes(courseProjectType);
   const [error, setError] = useState<string>("");
-  const avatarImageBlob = project_map?.getIn([
-    project_id,
-    "avatar_image_tiny",
-  ]) as string | undefined;
-  const avatarImage = projectImageUrl(avatarImageBlob);
-  const [color, setColor] = useState<string | undefined>(
-    project_map?.getIn([project_id, "color"]) as string | undefined,
-  );
+  const projectRecord = project_map?.get(project_id);
+  const theme = projectThemeFromProject(projectRecord);
   const [appearanceOpen, setAppearanceOpen] = useState<boolean>(false);
   const [appearanceSaving, setAppearanceSaving] = useState<boolean>(false);
   const [appearanceDraft, setAppearanceDraft] =
@@ -98,8 +96,7 @@ export const AboutBox: React.FC<Props> = (props: Readonly<Props>) => {
         {
           title: project_title,
           description,
-          color,
-          image_blob: avatarImageBlob ?? null,
+          ...theme,
         },
         project_title,
       ),
@@ -116,10 +113,13 @@ export const AboutBox: React.FC<Props> = (props: Readonly<Props>) => {
         project_id,
         appearanceDraft.description,
       );
-      const nextColor = appearanceDraft.color ?? "";
-      await actions.setProjectColor(project_id, nextColor);
-      await actions.setProjectImage(project_id, appearanceDraft.image_blob);
-      setColor(appearanceDraft.color ?? undefined);
+      const nextTheme = themeFromDraft(appearanceDraft);
+      await actions.setProjectTheme(project_id, {
+        color: nextTheme.color,
+        accent_color: nextTheme.accent_color,
+        icon: nextTheme.icon,
+        image_blob: nextTheme.image_blob,
+      });
       setAppearanceOpen(false);
     } catch (err) {
       setError(`Error saving ${projectLabelLower} appearance: ${err}`);
@@ -149,30 +149,14 @@ export const AboutBox: React.FC<Props> = (props: Readonly<Props>) => {
               width: "100%",
             }}
           >
-            {avatarImage ? (
-              <img
-                data-testid="project-appearance-image"
-                src={avatarImage}
-                alt={`${projectLabel} appearance`}
-                style={{
-                  width: 36,
-                  height: 36,
-                  objectFit: "cover",
-                  borderRadius: 8,
-                  flex: "0 0 auto",
-                }}
+            <div data-testid="project-appearance-image">
+              <ProjectThemeAvatar
+                theme={theme}
+                size={36}
+                shape="square"
+                border
               />
-            ) : (
-              <div
-                style={{
-                  width: 36,
-                  height: 36,
-                  borderRadius: 8,
-                  background: color ?? COLORS.GRAY_L,
-                  flex: "0 0 auto",
-                }}
-              />
-            )}
+            </div>
             <Button
               style={{ width: "100%" }}
               disabled={hasReadonlyFields}
@@ -318,9 +302,8 @@ export const AboutBox: React.FC<Props> = (props: Readonly<Props>) => {
           error={error}
           projectId={project_id}
           defaultIcon="folder-open"
-          showIcon={false}
-          showAccentColor={false}
-          previewImageUrl={projectImageUrl(appearanceDraft?.image_blob)}
+          showIcon
+          showAccentColor
         />
       </>
     );

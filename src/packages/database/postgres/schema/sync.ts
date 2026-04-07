@@ -23,6 +23,7 @@ async function syncTableSchema(db: Client, schema: TableSchema): Promise<void> {
     return;
   }
   await syncTableSchemaColumns(db, schema);
+  await dropLegacyColumns(db, schema);
   await syncTableSchemaIndexes(db, schema);
   await syncTableSchemaPrimaryKeys(db, schema);
 }
@@ -80,6 +81,10 @@ function parseTriggerDependencyError(
 type ColumnAction = {
   action: "alter" | "add";
   column: string;
+};
+
+const LEGACY_COLUMNS_TO_DROP: Record<string, string[]> = {
+  projects: ["avatar_image_tiny", "color"],
 };
 
 async function alterColumnOfTable(
@@ -196,6 +201,59 @@ async function syncTableSchemaColumns(
   const actions = await getColumnActions(db, schema);
   for (const { action, column } of actions) {
     await alterColumnOfTable(db, schema, action, column);
+  }
+}
+
+async function dropColumnFromTable(
+  db: Client,
+  schema: TableSchema,
+  column: string,
+): Promise<void> {
+  const qTable = quoteField(schema.name);
+  const qColumn = quoteField(column);
+  const query = `ALTER TABLE ${qTable} DROP COLUMN ${qColumn}`;
+  try {
+    await db.query(query);
+  } catch (err) {
+    const dependency = parseTriggerDependencyError(err, schema.name);
+    if (!dependency) {
+      throw err;
+    }
+    log.debug(
+      "dropColumnFromTable",
+      schema.name,
+      "dropping trigger",
+      dependency.trigger,
+      "on",
+      dependency.table,
+    );
+    await db.query(
+      `DROP TRIGGER IF EXISTS ${quoteField(dependency.trigger)} ON ${quoteField(
+        dependency.table,
+      )}`,
+    );
+    await db.query(
+      `DROP FUNCTION IF EXISTS ${quoteField(dependency.trigger)}()`,
+    );
+    await db.query(query);
+  }
+}
+
+async function dropLegacyColumns(
+  db: Client,
+  schema: TableSchema,
+): Promise<void> {
+  const legacyColumns = LEGACY_COLUMNS_TO_DROP[schema.name];
+  if (legacyColumns == null || legacyColumns.length === 0) {
+    return;
+  }
+  const currentColumns = await getColumnTypeInfo(db, schema.name);
+  for (const column of legacyColumns) {
+    if (schema.fields[column] != null || currentColumns[column] == null) {
+      continue;
+    }
+    log.debug("dropLegacyColumns", schema.name, "drop legacy column", column);
+    await dropColumnFromTable(db, schema, column);
   }
 }
 

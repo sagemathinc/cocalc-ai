@@ -21,8 +21,26 @@ jest.mock("./store", () => ({
 const invalidateProjectFieldsMock = jest.fn();
 
 jest.mock("@cocalc/frontend/project/use-project-field", () => ({
+  createProjectFieldState: jest.fn((field: string) => ({
+    field,
+    cache: new Map(),
+    listeners: new Map(),
+    refreshers: new Map(),
+    inflight: new Map(),
+  })),
+  ensureProjectFieldValue: jest.fn(),
+  getCachedProjectFieldValue: jest.fn(),
   invalidateProjectFields: (...args: any[]) =>
     invalidateProjectFieldsMock(...args),
+  useProjectField: jest.fn(() => ({
+    value: null,
+    refresh: jest.fn(),
+    setValue: jest.fn(),
+  })),
+}));
+
+jest.mock("@cocalc/frontend/project/use-project-course", () => ({
+  ensureProjectCourseInfo: jest.fn(async () => null),
 }));
 
 jest.mock("@cocalc/frontend/webapp-client", () => {
@@ -125,8 +143,12 @@ describe("ProjectsActions realtime feed", () => {
         title: "Realtime Project",
         description: "from feed",
         name: "realtime-project",
-        avatar_image_tiny: null,
-        color: "#ff0000",
+        theme: {
+          color: "#ff0000",
+          accent_color: null,
+          icon: "folder-open",
+          image_blob: null,
+        },
         host_id: null,
         owning_bay_id: "bay-0",
         users: {
@@ -142,6 +164,7 @@ describe("ProjectsActions realtime feed", () => {
 
     expect(projectMap.getIn(["project-1", "title"])).toBe("Realtime Project");
     expect(projectMap.getIn(["project-1", "state", "state"])).toBe("running");
+    expect(projectMap.getIn(["project-1", "theme", "color"])).toBe("#ff0000");
     expect(projectMap.getIn(["project-1", "users", "acct-1", "group"])).toBe(
       "owner",
     );

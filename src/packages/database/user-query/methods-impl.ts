@@ -1623,6 +1623,7 @@ export async function _user_set_query_project_change_after(
     const summaryFields = [
       "title",
       "description",
+      "theme",
       "last_edited",
       "last_active",
     ];
