@@ -155,6 +155,16 @@ function shouldUseProjectedBrowserProjectReads(opts: {
   return getProjectListReadMode() !== "off";
 }
 
+function projectUsersContainAccount(
+  users: unknown,
+  account_id: string | undefined,
+): boolean {
+  if (!account_id || users == null || typeof users !== "object") {
+    return false;
+  }
+  return Object.prototype.hasOwnProperty.call(users, account_id);
+}
+
 type RetentionOptions = Parameters<typeof updateRetentionDataImpl>[0];
 
 type LegacyTableSchema = {
@@ -185,6 +195,26 @@ const callWithCb = <T = void>(
     });
   });
 };
+
+async function loadVisibleProjectIdsForAccount(
+  db: Pick<PostgreSQLType, "_query">,
+  account_id: string,
+): Promise<Set<string>> {
+  const result = await callback_opts(db._query.bind(db))({
+    query: "SELECT project_id FROM projects",
+    where: {
+      "users ? $::TEXT": account_id,
+    },
+  });
+  const visibleProjectIds = new Set<string>();
+  for (const row of result?.rows ?? []) {
+    const project_id = `${row?.project_id ?? ""}`.trim();
+    if (project_id) {
+      visibleProjectIds.add(project_id);
+    }
+  }
+  return visibleProjectIds;
+}
 
 // Cancel all queued up queries by the given client
 export function cancel_user_queries(
@@ -2279,14 +2309,14 @@ export async function _user_get_query_changefeed(
   orig_table: string,
   cb: CB,
 ): Promise<void> {
-  let free_tracker: ((tracker: any) => void) | undefined;
   let left: string[] | undefined;
   let changefeed_table = table;
   let map_change:
     | ((change: AnyRecord | undefined) => AnyRecord | undefined)
     | undefined;
+  let membership_feed: any;
+  let replayPendingProjectMembershipChanges: (() => void) | undefined;
   let process: (x: AnyRecord) => void;
-  let tracker: any;
   const dbg = this._dbg(`_user_get_query_changefeed(table='${table}')`);
   dbg();
   // WARNING: always call changes.cb!  Do not do something like f = changes.cb, then call f!!!!
@@ -2319,7 +2349,6 @@ export async function _user_get_query_changefeed(
   }
   const watch: string[] = [];
   const select: AnyRecord = {};
-  let init_tracker: ((tracker: any) => void) | undefined;
   const possible_time_fields: AnyRecord = misc.deep_copy(json_fields);
   let feed: any;
 
@@ -2404,70 +2433,97 @@ export async function _user_get_query_changefeed(
 
   try {
     // check for alternative where test for changefeed.
-    let tracker_add, tracker_error, tracker_remove;
     let pg_changefeed = client_query?.get?.pg_changefeed;
     if (pg_changefeed != null) {
       if (pg_changefeed === "projects") {
-        tracker_add = (project_id) => feed?.insert({ project_id });
-        tracker_remove = (project_id) => feed?.delete({ project_id });
-
-        // Any tracker error means this changefeed is now broken and
-        // has to be recreated.
-        tracker_error = (err) => emit_change(`tracker error - ${err}`);
-
-        pg_changefeed = (db, account_id) => {
-          return {
-            where: (obj) => {
-              // Check that this is a project we have read access to
-              if (
-                !(db._project_and_user_tracker != null
-                  ? db._project_and_user_tracker.get_projects(account_id)[
-                      obj.project_id
-                    ]
-                  : undefined)
-              ) {
-                return false;
-              }
-              // Now check our actual query conditions on the object.
-              // This would normally be done by the changefeed, but since
-              // we are passing in a custom where, we have to do it.
-              if (
-                !this._user_get_query_satisfied_by_obj(
-                  user_query,
-                  obj,
-                  possible_time_fields,
-                )
-              ) {
-                return false;
-              }
-              return true;
-            },
-
-            select: { project_id: "UUID" },
-
-            init_tracker: (tracker) => {
-              tracker.on(`add_user_to_project-${account_id}`, tracker_add);
-              tracker.on(
-                `remove_user_from_project-${account_id}`,
-                tracker_remove,
-              );
-              return tracker.once("error", tracker_error);
-            },
-
-            free_tracker: (tracker) => {
-              dbg("freeing project tracker events");
-              tracker.removeListener(
-                `add_user_to_project-${account_id}`,
-                tracker_add,
-              );
-              tracker.removeListener(
-                `remove_user_from_project-${account_id}`,
-                tracker_remove,
-              );
-              return tracker.removeListener("error", tracker_error);
-            },
-          };
+        if (account_id == null) {
+          cb("FATAL: account_id must be given");
+          return;
+        }
+        const visibleProjectIds = await loadVisibleProjectIdsForAccount(
+          this,
+          account_id,
+        );
+        const pendingMembershipChanges: AnyRecord[] = [];
+        const applyMembershipChange = (change?: AnyRecord): void => {
+          const new_project_id = `${change?.new_val?.project_id ?? ""}`.trim();
+          const old_project_id = `${change?.old_val?.project_id ?? ""}`.trim();
+          const new_visible = projectUsersContainAccount(
+            change?.new_val?.users,
+            account_id,
+          );
+          const old_visible = projectUsersContainAccount(
+            change?.old_val?.users,
+            account_id,
+          );
+          if (
+            new_visible &&
+            new_project_id &&
+            !visibleProjectIds.has(new_project_id)
+          ) {
+            visibleProjectIds.add(new_project_id);
+            void feed?.insert?.({ project_id: new_project_id });
+          }
+          if (
+            old_visible &&
+            old_project_id &&
+            !new_visible &&
+            visibleProjectIds.has(old_project_id)
+          ) {
+            visibleProjectIds.delete(old_project_id);
+            feed?.delete?.({ project_id: old_project_id });
+          }
         };
+        const handleMembershipFeedError = (err) => {
+          emit_change(`membership feed error - ${err}`);
+          membership_feed?.close?.();
+          feed?.close?.();
+        };
+        membership_feed = await callback_opts(this.changefeed.bind(this))({
+          table: "projects",
+          select: {
+            project_id: "UUID",
+            users: "JSONB",
+          },
+          where: (obj) => projectUsersContainAccount(obj?.users, account_id),
+          watch: [],
+        });
+        membership_feed.on("change", (change) => {
+          if (feed == null) {
+            pendingMembershipChanges.push(change);
+            return;
+          }
+          applyMembershipChange(change);
+        });
+        membership_feed.on("error", handleMembershipFeedError);
+        membership_feed.on("close", () => {
+          membership_feed = undefined;
+        });
+        replayPendingProjectMembershipChanges = () => {
+          while (pendingMembershipChanges.length > 0) {
+            applyMembershipChange(pendingMembershipChanges.shift());
+          }
+        };
+
+        pg_changefeed = () => ({
+          where: (obj) => {
+            if (!visibleProjectIds.has(`${obj?.project_id ?? ""}`.trim())) {
+              return false;
+            }
+            if (
+              !this._user_get_query_satisfied_by_obj(
+                user_query,
+                obj,
+                possible_time_fields,
+              )
+            ) {
+              return false;
+            }
+            return true;
+          },
+
+          select: { project_id: "UUID" },
+        });
       } else if (pg_changefeed === "news") {
         pg_changefeed = () => ({
           where(obj) {
@@ -2556,12 +2612,6 @@ export async function _user_get_query_changefeed(
       if (x.table != null) {
         changefeed_table = x.table;
       }
-      if (x.init_tracker != null) {
-        ({ init_tracker } = x);
-      }
-      if (x.free_tracker != null) {
-        ({ free_tracker } = x);
-      }
       if (x.map_change != null) {
         ({ map_change } = x);
       }
@@ -2574,18 +2624,6 @@ export async function _user_get_query_changefeed(
 
       if (x.where != null) {
         ({ where } = x);
-      }
-      if (
-        account_id != null &&
-        (x.init_tracker != null ||
-          x.free_tracker != null ||
-          x.requires_tracker === true)
-      ) {
-        // initialize user tracker for tracker-backed synthetic changefeeds
-        tracker = await callback_opts(
-          this.project_and_user_tracker.bind(this),
-        )();
-        await tracker.register(account_id);
       }
     }
 
@@ -2608,21 +2646,17 @@ export async function _user_get_query_changefeed(
     feed.on("close", function () {
       emit_change(undefined, { action: "close" });
       dbg("feed close");
-      if (tracker != null && free_tracker != null) {
-        dbg("free_tracker");
-        return free_tracker(tracker);
-      } else {
-        return dbg("do NOT free_tracker");
-      }
+      membership_feed?.close?.();
+      membership_feed = undefined;
+      return dbg("changefeed closed");
     });
     feed.on("error", (err) => emit_change(`feed error - ${err}`));
     this._changefeeds ??= {};
     this._changefeeds[changes.id] = feed;
-    if (typeof init_tracker === "function") {
-      init_tracker(tracker);
-    }
+    replayPendingProjectMembershipChanges?.();
     cb();
   } catch (err) {
+    membership_feed?.close?.();
     cb(err);
   }
 }

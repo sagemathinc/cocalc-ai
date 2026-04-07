@@ -69,9 +69,6 @@ describe("postgres user-queries - Comprehensive Test Suite", () => {
     db.has_public_path = jest.fn((opts) => opts.cb && opts.cb(null, false));
     db.projectControl = jest.fn();
     db.changefeed = jest.fn();
-    db.project_and_user_tracker = jest.fn(
-      (opts) => opts.cb && opts.cb(null, {}),
-    );
     db.ensure_connection_to_project = jest.fn();
     db.concurrent = jest.fn(() => 0);
     db.is_heavily_loaded = jest.fn(() => false);
@@ -2040,7 +2037,10 @@ describe("postgres user-queries - Comprehensive Test Suite", () => {
       test("should handle 'projects' changefeed type", (done) => {
         const restore = setSchema("test_projects_feed", {
           anonymous: false,
-          fields: { project_id: { type: "uuid" } },
+          fields: {
+            project_id: { type: "uuid" },
+            users: { type: "map" },
+          },
           user_query: {
             get: {
               pg_changefeed: "projects",
@@ -2054,19 +2054,21 @@ describe("postgres user-queries - Comprehensive Test Suite", () => {
           id: "87654321-4321-4321-4321-210987654321",
           cb: jest.fn(),
         };
-        const feed = new EventEmitter();
-
-        const mockTracker = {
-          register: jest.fn().mockResolvedValue(undefined),
-          on: jest.fn(),
-          once: jest.fn(),
-          removeListener: jest.fn(),
-        };
-
-        db.changefeed = jest.fn((opts) => opts.cb(null, feed));
+        const membershipFeed = new EventEmitter();
+        const feed = Object.assign(new EventEmitter(), {
+          insert: jest.fn(),
+          delete: jest.fn(),
+          close: jest.fn(),
+        });
+        let changefeedCalls = 0;
+        db.changefeed = jest.fn((opts) => {
+          opts.cb(null, changefeedCalls++ === 0 ? membershipFeed : feed);
+        });
         db.user_is_in_project_group = jest.fn((opts) => opts.cb(null, true));
-        db.project_and_user_tracker = jest.fn((opts) =>
-          opts.cb(null, mockTracker),
+        db._query = jest.fn((opts) =>
+          opts.cb?.(null, {
+            rows: [{ project_id: "test-project" }],
+          }),
         );
 
         const client_query = {
@@ -2084,10 +2086,37 @@ describe("postgres user-queries - Comprehensive Test Suite", () => {
           client_query,
           "test_projects_feed",
           (err) => {
-            expect(err).toBeFalsy();
-            expect(db.project_and_user_tracker).toHaveBeenCalled();
-            restore();
-            done();
+            try {
+              expect(err).toBeFalsy();
+              expect(db.changefeed.mock.calls.length).toBeGreaterThanOrEqual(2);
+
+              membershipFeed.emit("change", {
+                action: "insert",
+                new_val: {
+                  project_id: "added-project",
+                  users: { [account_id]: { group: "owner" } },
+                },
+              });
+              expect(feed.insert).toHaveBeenCalledWith({
+                project_id: "added-project",
+              });
+
+              membershipFeed.emit("change", {
+                action: "delete",
+                old_val: {
+                  project_id: "added-project",
+                  users: { [account_id]: { group: "owner" } },
+                },
+              });
+              expect(feed.delete).toHaveBeenCalledWith({
+                project_id: "added-project",
+              });
+              restore();
+              done();
+            } catch (testErr) {
+              restore();
+              done(testErr as any);
+            }
           },
         );
       }, 1000);
@@ -2277,7 +2306,6 @@ describe("postgres user-queries - Comprehensive Test Suite", () => {
           "test_collab_feed",
           (err) => {
             expect(err).toBeFalsy();
-            expect(db.project_and_user_tracker).not.toHaveBeenCalled();
 
             feed.emit("change", {
               action: "insert",

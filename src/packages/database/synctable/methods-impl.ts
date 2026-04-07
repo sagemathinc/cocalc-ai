@@ -15,24 +15,18 @@ import type {
   ChangefeedOptions,
   ChangefeedSelect,
   PostgreSQL as PostgreSQLType,
-  ProjectAndUserTrackerOptions,
   SyncTableOptions,
 } from "../postgres/types";
 import type { Changes } from "../postgres/changefeed/changefeed";
-import type { ProjectAndUserTracker } from "../postgres/project/project-and-user-tracker";
 
 import { trigger_code, trigger_name } from "./trigger";
 import { SyncTable } from "./synctable";
 
 type ChangesConstructor =
   typeof import("../postgres/changefeed/changefeed").Changes;
-type ProjectAndUserTrackerConstructor =
-  typeof import("../postgres/project/project-and-user-tracker").ProjectAndUserTracker;
 
 type SynctableState = {
   _listening?: Record<string, number>;
-  _project_and_user_tracker?: ProjectAndUserTracker;
-  _project_and_user_tracker_cbs?: Array<CB<ProjectAndUserTracker>>;
 };
 
 type SynctableDB = PostgreSQLType &
@@ -45,15 +39,10 @@ type SynctableDB = PostgreSQLType &
     ) => void;
   };
 
-// Lazy-load Changes and ProjectAndUserTracker to allow Jest mocks to work
+// Lazy-load Changes to allow Jest mocks to work
 function getChanges(): ChangesConstructor {
   return require("../postgres/changefeed/changefeed")
     .Changes as ChangesConstructor;
-}
-
-function getProjectAndUserTracker(): ProjectAndUserTrackerConstructor {
-  return require("../postgres/project/project-and-user-tracker")
-    .ProjectAndUserTracker as ProjectAndUserTrackerConstructor;
 }
 
 export function _ensure_trigger_exists(
@@ -264,45 +253,4 @@ export function changefeed(
     options.where,
     options.cb,
   );
-}
-
-/**
- * Event emitter that tracks changes to users of a project, and collabs of a user.
- * If it emits 'error' -- which it can and will do sometimes -- then
- * any client of this tracker must give up on using it!
- */
-export async function project_and_user_tracker(
-  db: SynctableDB,
-  opts: ProjectAndUserTrackerOptions,
-): Promise<void> {
-  const options = misc.defaults(opts, { cb: misc.required });
-  if (db._project_and_user_tracker != null) {
-    options.cb(undefined, db._project_and_user_tracker);
-    return;
-  }
-  db._project_and_user_tracker_cbs ??= [];
-  db._project_and_user_tracker_cbs.push(options.cb);
-  if (db._project_and_user_tracker_cbs.length > 1) {
-    return;
-  }
-  const ProjectAndUserTracker = getProjectAndUserTracker();
-  const tracker = new ProjectAndUserTracker(db);
-  tracker.once("error", () => {
-    // delete, so that future calls create a new one.
-    delete db._project_and_user_tracker;
-  });
-  try {
-    await tracker.init();
-    db._project_and_user_tracker = tracker;
-    for (const cb of db._project_and_user_tracker_cbs) {
-      cb(undefined, tracker);
-    }
-    delete db._project_and_user_tracker_cbs;
-  } catch (err) {
-    if (db._project_and_user_tracker_cbs) {
-      for (const cb of db._project_and_user_tracker_cbs) {
-        cb(err);
-      }
-    }
-  }
 }

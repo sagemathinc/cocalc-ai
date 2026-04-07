@@ -18,7 +18,6 @@ import {
 
 import type { SyncTable } from "../synctable/synctable";
 import type { Changes } from "./changefeed/changefeed";
-import type { ProjectAndUserTracker } from "./project/project-and-user-tracker";
 import type {
   RecentProjectsOptions,
   RecentProjectsResult,
@@ -288,10 +287,6 @@ export interface SyncTableOptions {
   cb?: CB<SyncTable>;
 }
 
-export interface ProjectAndUserTrackerOptions {
-  cb: CB<ProjectAndUserTracker>;
-}
-
 export interface DeletePassportOpts {
   account_id: string;
   strategy: string; // our name of the strategy
@@ -353,8 +348,6 @@ export interface PostgreSQLMethods extends EventEmitter {
   _test_query?: NodeJS.Timeout; // Interval timer for periodic health check queries
   _stats_cached?: any; // Internal cache for statistics
   _listening?: Record<string, number>;
-  _project_and_user_tracker?: ProjectAndUserTracker;
-  _project_and_user_tracker_cbs?: Array<CB<ProjectAndUserTracker>>;
 
   _primary_key(table: string): string;
   _primary_keys(table: string): string[];
@@ -799,8 +792,6 @@ export interface PostgreSQLMethods extends EventEmitter {
   _touch_project(project_id: string, account_id: string, cb: CB): void;
 
   synctable(opts: SyncTableOptions): SyncTable | undefined;
-
-  project_and_user_tracker(opts: ProjectAndUserTrackerOptions): Promise<void>;
 
   projects_that_need_to_be_started(): Promise<string[]>;
 

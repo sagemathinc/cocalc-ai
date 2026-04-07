@@ -12,11 +12,9 @@ import type { PostgreSQL } from "../postgres";
 import type {
   ChangefeedOptions,
   ChangefeedSelect,
-  ProjectAndUserTrackerOptions,
   SyncTableOptions,
 } from "../postgres/types";
 import type { Changes } from "../postgres/changefeed/changefeed";
-import type { ProjectAndUserTracker } from "../postgres/project/project-and-user-tracker";
 
 import {
   _ensure_trigger_exists,
@@ -24,7 +22,6 @@ import {
   _notification,
   _stop_listening,
   changefeed,
-  project_and_user_tracker,
   synctable,
 } from "./methods-impl";
 import type { SyncTable } from "./synctable";
@@ -39,8 +36,6 @@ export function extend_PostgreSQL<TBase extends PostgreSQLConstructor>(
 ): TBase {
   return class PostgreSQL extends base {
     _listening?: Record<string, number>;
-    _project_and_user_tracker?: ProjectAndUserTracker;
-    _project_and_user_tracker_cbs?: Array<CB<ProjectAndUserTracker>>;
 
     _ensure_trigger_exists(
       table: string,
@@ -79,12 +74,6 @@ export function extend_PostgreSQL<TBase extends PostgreSQLConstructor>(
 
     changefeed(opts: ChangefeedOptions): Changes | undefined {
       return changefeed(this, opts);
-    }
-
-    async project_and_user_tracker(
-      opts: ProjectAndUserTrackerOptions,
-    ): Promise<void> {
-      return project_and_user_tracker(this, opts);
     }
   };
 }
