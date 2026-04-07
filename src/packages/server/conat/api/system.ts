@@ -367,6 +367,7 @@ export async function getBayBackups({
     checked_at: new Date().toISOString(),
     postgres: bayBackup.postgres,
     bay_backup: bayBackup.bay_backup,
+    restore_readiness: bayBackup.restore_readiness,
     r2: infra.r2,
     repos: infra.repos,
     projects: infra.projects,

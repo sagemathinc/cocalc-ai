@@ -38,6 +38,7 @@ import type {
   BayBackupRunResult,
   BayRestoreRunResult,
   BayBackupStatus,
+  BayRestoreReadinessStatus,
   BayBackupsPostgresStatus,
 } from "@cocalc/conat/hub/api/system";
 import { getSingleBayInfo } from "@cocalc/server/bay-directory";
@@ -87,6 +88,11 @@ type StoredBayBackupState = {
   last_error_at: string | null;
   last_error: string | null;
   restore_state: string | null;
+  last_restore_test_backup_set_id: string | null;
+  last_restore_test_status: "passed" | "failed" | null;
+  last_restore_tested_at: string | null;
+  last_restore_test_target_dir: string | null;
+  last_restore_test_recovery_ready: boolean | null;
 };
 
 type StoredBayBackupManifest = {
@@ -265,6 +271,11 @@ function defaultState({
     last_error_at: null,
     last_error: null,
     restore_state: null,
+    last_restore_test_backup_set_id: null,
+    last_restore_test_status: null,
+    last_restore_tested_at: null,
+    last_restore_test_target_dir: null,
+    last_restore_test_recovery_ready: null,
   };
 }
 
@@ -838,6 +849,13 @@ async function syncBayWalArchive({
       r2.object_prefix_root ?? stored.object_prefix_root ?? null,
     last_archived_wal_segment: stored.last_archived_wal_segment ?? null,
     last_uploaded_wal_segment: stored.last_uploaded_wal_segment ?? null,
+    last_restore_test_backup_set_id:
+      stored.last_restore_test_backup_set_id ?? null,
+    last_restore_test_status: stored.last_restore_test_status ?? null,
+    last_restore_tested_at: stored.last_restore_tested_at ?? null,
+    last_restore_test_target_dir: stored.last_restore_test_target_dir ?? null,
+    last_restore_test_recovery_ready:
+      stored.last_restore_test_recovery_ready ?? null,
   };
   let snapshot = await getWalArchiveSnapshot({ paths, state });
   const previous_last_segment = snapshot.last_archived_wal_segment;
@@ -995,6 +1013,69 @@ function mapStateToStatus({
   };
 }
 
+function mapRestoreReadiness({
+  state,
+}: {
+  state: StoredBayBackupState;
+}): BayRestoreReadinessStatus {
+  const latest_backup_set_id = state.latest_backup_set_id ?? null;
+  const latest_backup_format = state.latest_format ?? null;
+  const last_restore_test_backup_set_id =
+    state.last_restore_test_backup_set_id ?? null;
+  const last_restore_test_status = state.last_restore_test_status ?? null;
+  const last_restore_tested_at = state.last_restore_tested_at ?? null;
+  const last_restore_test_target_dir = state.last_restore_test_target_dir ?? null;
+  const last_restore_test_recovery_ready =
+    state.last_restore_test_recovery_ready ?? null;
+
+  let latest_backup_restore_test_status:
+    | "no-backup"
+    | "not-run"
+    | "stale"
+    | "passed"
+    | "failed";
+  let summary: string;
+
+  if (!latest_backup_set_id) {
+    latest_backup_restore_test_status = "no-backup";
+    summary = "No bay backup exists yet.";
+  } else if (!last_restore_test_backup_set_id || !last_restore_test_status) {
+    latest_backup_restore_test_status = "not-run";
+    summary = `Latest backup ${latest_backup_set_id} has not been restore-tested.`;
+  } else if (last_restore_test_backup_set_id !== latest_backup_set_id) {
+    latest_backup_restore_test_status = "stale";
+    const prior =
+      last_restore_test_status === "passed" ? "passed" : "failed";
+    summary = `Latest backup ${latest_backup_set_id} has not been restore-tested. Last tested backup ${last_restore_test_backup_set_id} ${prior} at ${last_restore_tested_at ?? "unknown time"}.`;
+  } else {
+    latest_backup_restore_test_status = last_restore_test_status;
+    summary =
+      last_restore_test_status === "passed"
+        ? `Latest backup ${latest_backup_set_id} passed a restore test at ${last_restore_tested_at ?? "unknown time"}.`
+        : `Latest backup ${latest_backup_set_id} failed its last restore test at ${last_restore_tested_at ?? "unknown time"}.`;
+  }
+
+  return {
+    latest_backup_set_id,
+    latest_backup_format,
+    latest_backup_restore_test_status,
+    latest_backup_restore_tested:
+      latest_backup_restore_test_status === "passed",
+    latest_backup_restore_tested_at:
+      latest_backup_restore_test_status === "passed" ||
+      latest_backup_restore_test_status === "failed"
+        ? last_restore_tested_at
+        : null,
+    gold_star: latest_backup_restore_test_status === "passed",
+    last_restore_test_backup_set_id,
+    last_restore_test_status,
+    last_restore_tested_at,
+    last_restore_test_target_dir,
+    last_restore_test_recovery_ready,
+    summary,
+  };
+}
+
 export async function getBayBackupStatus({
   bay_id,
 }: {
@@ -1002,6 +1083,7 @@ export async function getBayBackupStatus({
 } = {}): Promise<{
   postgres: BayBackupsPostgresStatus;
   bay_backup: BayBackupStatus;
+  restore_readiness: BayRestoreReadinessStatus;
 }> {
   const currentBay = getSingleBayInfo();
   const resolvedBayId =
@@ -1036,6 +1118,13 @@ export async function getBayBackupStatus({
       r2.object_prefix_root ?? stored.object_prefix_root ?? null,
     last_archived_wal_segment: stored.last_archived_wal_segment ?? null,
     last_uploaded_wal_segment: stored.last_uploaded_wal_segment ?? null,
+    last_restore_test_backup_set_id:
+      stored.last_restore_test_backup_set_id ?? null,
+    last_restore_test_status: stored.last_restore_test_status ?? null,
+    last_restore_tested_at: stored.last_restore_tested_at ?? null,
+    last_restore_test_target_dir: stored.last_restore_test_target_dir ?? null,
+    last_restore_test_recovery_ready:
+      stored.last_restore_test_recovery_ready ?? null,
   };
   const wal = await getWalArchiveSnapshot({ paths, state });
   return {
@@ -1045,6 +1134,7 @@ export async function getBayBackupStatus({
       state,
       wal,
     }),
+    restore_readiness: mapRestoreReadiness({ state }),
   };
 }
 
@@ -1099,6 +1189,14 @@ export async function runBayBackup({
       last_finished_at: null,
       last_error_at: null,
       last_error: null,
+      last_restore_test_backup_set_id:
+        previous.last_restore_test_backup_set_id ?? null,
+      last_restore_test_status: previous.last_restore_test_status ?? null,
+      last_restore_tested_at: previous.last_restore_tested_at ?? null,
+      last_restore_test_target_dir:
+        previous.last_restore_test_target_dir ?? null,
+      last_restore_test_recovery_ready:
+        previous.last_restore_test_recovery_ready ?? null,
     };
     await writeJson(paths.state_file, initialState);
     const staging_dir = await mkdtemp(
@@ -1321,6 +1419,13 @@ export async function runBayRestore({
       r2.object_prefix_root ?? stored.object_prefix_root ?? null,
     last_archived_wal_segment: stored.last_archived_wal_segment ?? null,
     last_uploaded_wal_segment: stored.last_uploaded_wal_segment ?? null,
+    last_restore_test_backup_set_id:
+      stored.last_restore_test_backup_set_id ?? null,
+    last_restore_test_status: stored.last_restore_test_status ?? null,
+    last_restore_tested_at: stored.last_restore_tested_at ?? null,
+    last_restore_test_target_dir: stored.last_restore_test_target_dir ?? null,
+    last_restore_test_recovery_ready:
+      stored.last_restore_test_recovery_ready ?? null,
   };
   const resolvedBackupSetId =
     `${backup_set_id ?? state.latest_backup_set_id ?? ""}`.trim() || undefined;

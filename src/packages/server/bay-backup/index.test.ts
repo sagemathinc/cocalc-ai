@@ -145,6 +145,10 @@ describe("bay-backup runner", () => {
     expect(status.bay_backup.latest_backup_set_id).toBe(result.backup_set_id);
     expect(status.bay_backup.latest_storage_backend).toBe("local");
     expect(status.bay_backup.restore_state).toBe("ready-local-only");
+    expect(status.restore_readiness.latest_backup_restore_test_status).toBe(
+      "not-run",
+    );
+    expect(status.restore_readiness.gold_star).toBe(false);
   });
 
   it("falls back from pg_basebackup to pg_dumpall when replication is blocked", async () => {

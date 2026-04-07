@@ -435,10 +435,31 @@ export interface BayBackupStatus {
   restore_state: string | null;
 }
 
+export interface BayRestoreReadinessStatus {
+  latest_backup_set_id: string | null;
+  latest_backup_format: "pg_basebackup" | "pg_dumpall" | null;
+  latest_backup_restore_test_status:
+    | "no-backup"
+    | "not-run"
+    | "stale"
+    | "passed"
+    | "failed";
+  latest_backup_restore_tested: boolean;
+  latest_backup_restore_tested_at: string | null;
+  gold_star: boolean;
+  last_restore_test_backup_set_id: string | null;
+  last_restore_test_status: "passed" | "failed" | null;
+  last_restore_tested_at: string | null;
+  last_restore_test_target_dir: string | null;
+  last_restore_test_recovery_ready: boolean | null;
+  summary: string;
+}
+
 export interface BayBackupsInfo extends BayInfo {
   checked_at: string;
   postgres: BayBackupsPostgresStatus;
   bay_backup: BayBackupStatus;
+  restore_readiness: BayRestoreReadinessStatus;
   r2: BayBackupsR2Status;
   repos: BayBackupsReposStatus;
   projects: BayBackupsProjectsStatus;

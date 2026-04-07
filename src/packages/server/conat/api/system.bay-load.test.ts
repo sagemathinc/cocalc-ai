@@ -334,6 +334,20 @@ describe("getBayLoad", () => {
         last_error: null,
         restore_state: "ready",
       },
+      restore_readiness: {
+        latest_backup_set_id: "backup-1",
+        latest_backup_format: "pg_basebackup",
+        latest_backup_restore_test_status: "not-run",
+        latest_backup_restore_tested: false,
+        latest_backup_restore_tested_at: null,
+        gold_star: false,
+        last_restore_test_backup_set_id: null,
+        last_restore_test_status: null,
+        last_restore_tested_at: null,
+        last_restore_test_target_dir: null,
+        last_restore_test_recovery_ready: null,
+        summary: "Latest backup backup-1 has not been restore-tested.",
+      },
     }));
     runBayBackupMock = jest.fn(async () => ({
       bay_id: "bay-0",
@@ -406,6 +420,20 @@ describe("getBayLoad", () => {
         last_error_at: null,
         last_error: null,
         restore_state: "ready",
+      },
+      restore_readiness: {
+        latest_backup_set_id: "backup-1",
+        latest_backup_format: "pg_basebackup",
+        latest_backup_restore_test_status: "not-run",
+        latest_backup_restore_tested: false,
+        latest_backup_restore_tested_at: null,
+        gold_star: false,
+        last_restore_test_backup_set_id: null,
+        last_restore_test_status: null,
+        last_restore_tested_at: null,
+        last_restore_test_target_dir: null,
+        last_restore_test_recovery_ready: null,
+        summary: "Latest backup backup-1 has not been restore-tested.",
       },
     }));
     runBayRestoreMock = jest.fn(async () => ({
@@ -513,6 +541,10 @@ describe("getBayLoad", () => {
       bay_backup: {
         latest_backup_set_id: "backup-1",
         current_storage_backend: "r2",
+      },
+      restore_readiness: {
+        latest_backup_restore_test_status: "not-run",
+        gold_star: false,
       },
       r2: {
         configured: true,
