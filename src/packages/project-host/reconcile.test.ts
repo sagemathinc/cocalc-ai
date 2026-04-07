@@ -112,4 +112,25 @@ describe("reconcileOnce", () => {
       ssh_port: null,
     });
   });
+
+  it("preserves host ports for running project containers", async () => {
+    upsertProject({
+      project_id,
+      state: "opened",
+      http_port: null,
+      ssh_port: null,
+    });
+    mockPodmanPs(
+      `project-${project_id}|running|127.0.0.1:32803->22/tcp, 127.0.0.1:33167->8080/tcp\n`,
+    );
+
+    await reconcileOnce();
+
+    expect(getProject(project_id)).toMatchObject({
+      project_id,
+      state: "running",
+      http_port: 33167,
+      ssh_port: 32803,
+    });
+  });
 });

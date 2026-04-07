@@ -2,8 +2,8 @@
 This starts a very lightweight http server listening on the requested port,
 which proxies all http traffic (including websockets) as follows:
 
- - /base_url/server/PORT/... ---> http://localhost:PORT/base_url/server/PORT/...
- - /base_url/port/PORT/...   ---> http://localhost:PORT/...
+ - /base_url/server/PORT/... ---> http://127.0.0.1:PORT/base_url/server/PORT/...
+ - /base_url/port/PORT/...   ---> http://127.0.0.1:PORT/...
 
 
 Notice that the server format strips the whole /base_url/... business, and "port"
@@ -203,7 +203,7 @@ export async function startProxyServer({
   logger.debug("startProxyServer", { base_url, port, host });
   const { proxy, getTarget } = createProxyResolver({
     base_url,
-    host: "localhost",
+    host: "127.0.0.1",
   });
 
   const proxyServer = http.createServer((req, res) => {
@@ -272,7 +272,7 @@ export function attachProxyServer({
   app,
   httpServer,
   base_url = getProxyBaseUrl({ project_id }),
-  host = "localhost",
+  host = "127.0.0.1",
 }: {
   app?: express.Application;
   httpServer?: http.Server;
@@ -1099,6 +1099,14 @@ ${entries}
       exposureMode: getExposureMode(req),
     });
     if (appTarget) {
+      if (appTarget.kind === "redirect") {
+        if (!res) {
+          throw Error("redirects do not support websocket upgrades");
+        }
+        res.writeHead(308, { Location: appTarget.location });
+        res.end();
+        return undefined;
+      }
       const metricsContext: AppMetricsContext = {
         app_id: appTarget.app_id,
         kind: appTarget.kind,
@@ -1128,7 +1136,7 @@ ${entries}
       req.url = appTarget.rewritePath;
       return {
         port: appTarget.port,
-        host,
+        host: appTarget.host,
         requireInternalSecret: false,
       };
     }
