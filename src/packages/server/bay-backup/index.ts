@@ -57,6 +57,7 @@ import {
   syncFiles,
   sslConfigToPsqlEnv,
 } from "@cocalc/backend/data";
+import getPort from "@cocalc/backend/get-port";
 import getLogger from "@cocalc/backend/logger";
 import { rustic as rusticBinary } from "@cocalc/backend/sandbox/install";
 import { ensureInitialized as ensureRusticInitialized } from "@cocalc/backend/sandbox/rustic";
@@ -1021,6 +1022,11 @@ async function stageControlPlaneArtifacts({
       destinationDir: syncSnapshotDir,
     });
     const syncArchivePath = join(stagingDir, "sync.tar.gz");
+    // This gzip/tar packaging is simple and works well for the current
+    // local-cache plus direct-object-storage layout. If the rustic repo becomes
+    // the long-term canonical remote backend, we should reconsider this and
+    // likely snapshot the uncompressed tree instead so rustic can deduplicate
+    // unchanged sqlite pages and other repeated content across bay backups.
     await tarGzDirectory({
       sourceDir: syncSnapshotDir,
       archivePath: syncArchivePath,
@@ -1040,8 +1046,11 @@ async function stageControlPlaneArtifacts({
       destinationDir: secretsSnapshotDir,
     });
     const secretsArchivePath = join(stagingDir, "secrets.tar.gz");
-    // A future upgrade could route this through rustic so the uploaded secret
-    // bundle gets deduplication plus backup-managed encryption at rest in R2.
+    // The same compression tradeoff applies here as for sync/postgres: tar.gz
+    // is convenient for local/offline handling, but if rustic becomes the main
+    // remote store then an uncompressed staged tree may be better so rustic can
+    // deduplicate repeated secret material across snapshots while still keeping
+    // the remote copy encrypted at rest.
     await tarGzDirectory({
       sourceDir: secretsSnapshotDir,
       archivePath: secretsArchivePath,
@@ -1169,6 +1178,14 @@ async function runBackupCommand({
   const env = buildPostgresCliEnv();
   if (strategy === "pg_basebackup") {
     try {
+      // `-Ft -z` gives us portable local artifacts (`base.tar.gz`,
+      // `pg_wal.tar.gz`) that are easy to inspect and restore directly.
+      // If rustic remains the primary remote backend, this is probably not the
+      // best long-term representation because the pre-compressed tarballs
+      // prevent rustic from deduplicating repeated page-level content across
+      // snapshots. A future cleanup should consider staging an uncompressed
+      // base-backup directory for rustic while keeping the current tarballs
+      // only for local/offline convenience.
       await execFile(
         "pg_basebackup",
         ["-D", staging_dir, "-Ft", "-z", "-X", "stream", "--checkpoint=fast"],
@@ -2792,8 +2809,8 @@ function restoreTestTargetDir({
   return `${defaultRestoreTargetDir({ paths, backup_set_id })}-test`;
 }
 
-function restoreTestPort(): number {
-  return 20000 + (randomBytes(2).readUInt16BE(0) % 20000);
+async function restoreTestPort(): Promise<number> {
+  return await getPort();
 }
 
 function buildRestoreTestCliEnv({
@@ -2941,7 +2958,7 @@ export async function runBayRestoreTest({
     ]);
     socketDir = await mkdtemp(join(tmpdir(), "cocalc-bay-restore-test-sock-"));
     const logPath = join(resolvedTargetDir, "postgres-restore-test.log");
-    const port = restoreTestPort();
+    const port = await restoreTestPort();
     const env = buildRestoreTestCliEnv({ socketDir, port });
     const pgCtlOptions = `-k ${socketDir} -p ${port} -c listen_addresses=`;
     let started = false;
