@@ -67,18 +67,13 @@ Table({
           title: "",
           description: "",
           users: {},
-          invite: null, // who has been invited to this project via email
-          invite_requests: null, // who has requested to be invited
           deleted: null,
           host_id: null,
           owning_bay_id: null,
-          provisioned: null,
-          provisioned_checked_at: null,
           region: null,
           settings: DEFAULT_QUOTAS,
           run_quota: null,
           status: null,
-          manage_users_owner_only: null,
           // security model is anybody with access to the project should be allowed to know this token.
           secret_token: null,
           state: null,
@@ -87,12 +82,10 @@ Table({
           action_request: null, // last requested action -- {action:?, time:?, started:?, finished:?, err:?}
           course: null,
           created: null,
-          ephemeral: null,
           env: null,
           avatar_image_tiny: null,
           color: null,
           launcher: null,
-          pay_as_you_go_quotas: null,
           snapshots: null,
           backups: null,
           rootfs_image: null,
