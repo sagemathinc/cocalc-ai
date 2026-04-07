@@ -311,6 +311,18 @@ type RunningTurn = {
   exited: Promise<void>;
 };
 
+type RetryableAppServerFailureKind =
+  | "remote-compact-timeout"
+  | "model-capacity";
+
+type RetryableAppServerError = Error & {
+  retryableAppServerError: true;
+  kind: RetryableAppServerFailureKind;
+  threadId?: string;
+  turnId?: string;
+  stderrTail?: string[];
+};
+
 type RequestEntry = {
   method: string;
   resolve: (value: any) => void;
@@ -582,6 +594,157 @@ function formatAppServerError(errors: string[]): string {
   return normalized.join("\n\n");
 }
 
+function getRemoteCompactRetryLimit(): number {
+  return Math.max(
+    0,
+    Number(process.env.COCALC_CODEX_REMOTE_COMPACT_MAX_RETRIES ?? 2),
+  );
+}
+
+function getRemoteCompactRetryDelayMs(): number {
+  return Math.max(
+    250,
+    Number(process.env.COCALC_CODEX_REMOTE_COMPACT_RETRY_DELAY_MS ?? 1_500),
+  );
+}
+
+function getModelCapacityRetryLimit(): number {
+  return Math.max(
+    0,
+    Number(process.env.COCALC_CODEX_MODEL_CAPACITY_MAX_RETRIES ?? 2),
+  );
+}
+
+function getModelCapacityRetryDelayMs(): number {
+  return Math.max(
+    1_000,
+    Number(process.env.COCALC_CODEX_MODEL_CAPACITY_RETRY_DELAY_MS ?? 60_000),
+  );
+}
+
+function isRetryableRemoteCompactTimeoutText(text: string): boolean {
+  const normalized = stripAnsi(`${text ?? ""}`).toLowerCase();
+  if (!normalized.includes("error running remote compact task")) {
+    return false;
+  }
+  return (
+    normalized.includes(
+      "compact_error=timeout waiting for child process to exit",
+    ) ||
+    normalized.includes("compact_remote: remote compaction failed") ||
+    normalized.includes("remote compaction failed")
+  );
+}
+
+function isRetryableModelCapacityText(text: string): boolean {
+  const normalized = stripAnsi(`${text ?? ""}`).toLowerCase();
+  return normalized.includes(
+    "selected model is at capacity. please try a different model.",
+  );
+}
+
+function hasObservableTurnSideEffects(opts: {
+  startedTerminalIds: Set<string>;
+  emittedFileWrites: Set<string>;
+  emittedFileWritePaths: Set<string>;
+  finalResponse: string;
+  latestTurnDiffText?: string;
+}): boolean {
+  return (
+    opts.startedTerminalIds.size > 0 ||
+    opts.emittedFileWrites.size > 0 ||
+    opts.emittedFileWritePaths.size > 0 ||
+    !!opts.finalResponse.trim() ||
+    !!`${opts.latestTurnDiffText ?? ""}`.trim()
+  );
+}
+
+function createRetryableAppServerError(opts: {
+  kind: RetryableAppServerFailureKind;
+  message: string;
+  threadId?: string;
+  turnId?: string;
+  stderrTail?: string[];
+}): RetryableAppServerError {
+  return Object.assign(new Error(opts.message), {
+    retryableAppServerError: true as const,
+    kind: opts.kind,
+    threadId: opts.threadId,
+    turnId: opts.turnId,
+    stderrTail: opts.stderrTail,
+  });
+}
+
+function isRetryableAppServerError(
+  err: unknown,
+): err is RetryableAppServerError {
+  return !!(err as RetryableAppServerError)?.retryableAppServerError;
+}
+
+function formatRemoteCompactRetryExhaustedError(error: string): string {
+  const normalized = `${error ?? ""}`.trim();
+  const guidance =
+    "This looks like an upstream Codex remote context-compaction timeout. If it keeps happening, try forking or starting a fresh chat to reduce history size, or switch to a model with a larger context window.";
+  return normalized ? `${normalized}\n\n${guidance}` : guidance;
+}
+
+function formatModelCapacityRetryExhaustedError(error: string): string {
+  const normalized = `${error ?? ""}`.trim();
+  const guidance =
+    "The selected model stayed at capacity after automatic retries. Try again later, or switch to a different model if the turn is urgent.";
+  return normalized ? `${normalized}\n\n${guidance}` : guidance;
+}
+
+function formatRetryDelay(ms: number): string {
+  if (ms >= 60_000 && ms % 60_000 === 0) {
+    const minutes = ms / 60_000;
+    return minutes === 1 ? "1 minute" : `${minutes} minutes`;
+  }
+  if (ms >= 1_000 && ms % 1_000 === 0) {
+    const seconds = ms / 1_000;
+    return seconds === 1 ? "1 second" : `${seconds} seconds`;
+  }
+  return `${ms}ms`;
+}
+
+function getRetryPolicyForFailure(kind: RetryableAppServerFailureKind): {
+  maxRetries: number;
+  retryDelayMs: number;
+  retryMessage: (attempt: number, maxRetries: number) => string;
+  exhaustedMessage: (error: string) => string;
+} {
+  switch (kind) {
+    case "model-capacity": {
+      const retryDelayMs = getModelCapacityRetryDelayMs();
+      return {
+        maxRetries: getModelCapacityRetryLimit(),
+        retryDelayMs,
+        retryMessage: (attempt, maxRetries) =>
+          `Selected model is at capacity. Retrying in ${formatRetryDelay(retryDelayMs * attempt)} (${attempt}/${maxRetries})...`,
+        exhaustedMessage: formatModelCapacityRetryExhaustedError,
+      };
+    }
+    case "remote-compact-timeout":
+    default: {
+      const retryDelayMs = getRemoteCompactRetryDelayMs();
+      return {
+        maxRetries: getRemoteCompactRetryLimit(),
+        retryDelayMs,
+        retryMessage: (attempt, maxRetries) =>
+          `Remote context compaction timed out. Retrying (${attempt}/${maxRetries})...`,
+        exhaustedMessage: formatRemoteCompactRetryExhaustedError,
+      };
+    }
+  }
+}
+
+async function delay(ms: number): Promise<void> {
+  await new Promise<void>((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    timer.unref?.();
+  });
+}
+
 function mapContainerPathToHost(
   targetPath: string,
   containerPathMap?: CodexProjectContainerPathMap,
@@ -762,6 +925,47 @@ function toSandboxMode(
   }
 }
 
+function toTurnSandboxPolicy(config?: CodexSessionConfig):
+  | {
+      type: "readOnly";
+      access: { type: "fullAccess" };
+      networkAccess: true;
+    }
+  | {
+      type: "workspaceWrite";
+      writableRoots: string[];
+      readOnlyAccess: { type: "fullAccess" };
+      networkAccess: true;
+      excludeTmpdirEnvVar: false;
+      excludeSlashTmp: false;
+    }
+  | {
+      type: "dangerFullAccess";
+    } {
+  const mode = resolveCodexSessionMode(config);
+  switch (mode) {
+    case "read-only":
+      return {
+        type: "readOnly",
+        access: { type: "fullAccess" },
+        networkAccess: true,
+      };
+    case "full-access":
+      return {
+        type: "dangerFullAccess",
+      };
+    default:
+      return {
+        type: "workspaceWrite",
+        writableRoots: [],
+        readOnlyAccess: { type: "fullAccess" },
+        networkAccess: true,
+        excludeTmpdirEnvVar: false,
+        excludeSlashTmp: false,
+      };
+  }
+}
+
 function getCoCalcCliCommand(runtimeEnv?: Record<string, string>): string {
   const rawCliCommand = `${runtimeEnv?.COCALC_CLI_CMD ?? ""}`.trim();
   if (rawCliCommand) return rawCliCommand;
@@ -937,6 +1141,60 @@ export class CodexAppServerAgent implements AcpAgent {
   private readonly running = new Map<string, RunningTurn>();
 
   async evaluate(request: AcpEvaluateRequest): Promise<void> {
+    let maxRetries = 0;
+    let retryDelayMs = 0;
+    let retryMessage = (_attempt: number, _maxRetries: number) => "Retrying...";
+    let exhaustedMessage = (error: string) => error;
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        const outcome = await this.evaluateOnce(request);
+        if (outcome === "interrupted") {
+          return;
+        }
+        return;
+      } catch (err) {
+        if (isRetryableAppServerError(err)) {
+          const policy = getRetryPolicyForFailure(err.kind);
+          maxRetries = policy.maxRetries;
+          retryDelayMs = policy.retryDelayMs;
+          retryMessage = policy.retryMessage;
+          exhaustedMessage = policy.exhaustedMessage;
+        }
+        if (!isRetryableAppServerError(err) || attempt >= maxRetries) {
+          const error =
+            isRetryableAppServerError(err) && attempt >= maxRetries
+              ? exhaustedMessage(err.message ?? `${err}`)
+              : ((err as Error)?.message ?? `${err}`);
+          await request.stream({ type: "error", error });
+          return;
+        }
+        const retryNumber = attempt + 1;
+        logger.warn("codex app-server: retrying transient failure", {
+          projectId: request.chat?.project_id ?? request.project_id,
+          accountId: request.account_id,
+          kind: err.kind,
+          threadId: err.threadId,
+          turnId: err.turnId,
+          attempt: retryNumber,
+          maxRetries,
+          delayMs: retryDelayMs,
+          stderrTail: err.stderrTail ?? [],
+        });
+        await request.stream({
+          type: "event",
+          event: {
+            type: "thinking",
+            text: retryMessage(retryNumber, maxRetries),
+          },
+        });
+        await delay(retryDelayMs * retryNumber);
+      }
+    }
+  }
+
+  private async evaluateOnce(
+    request: AcpEvaluateRequest,
+  ): Promise<"completed" | "interrupted"> {
     const { prompt, stream, session_id, config } = request;
     const session = this.resolveSession(session_id, config);
     const runtimeEnv = Object.fromEntries(
@@ -1153,6 +1411,8 @@ export class CodexAppServerAgent implements AcpAgent {
       const turnStart = await client.request("turn/start", {
         threadId: actualThreadId,
         cwd,
+        approvalPolicy: "never",
+        sandboxPolicy: toTurnSandboxPolicy(config),
         model: config?.model ?? this.opts.model,
         effort: toReasoningEffort(config),
         env: Object.keys(turnEnv).length > 0 ? turnEnv : undefined,
@@ -1573,7 +1833,7 @@ export class CodexAppServerAgent implements AcpAgent {
           turnId,
           err: `${err}`,
         });
-        return;
+        return "interrupted";
       }
       const stderrTail = client.getStderrTail();
       const error = [
@@ -1591,14 +1851,35 @@ export class CodexAppServerAgent implements AcpAgent {
         err: `${err}`,
         stderrTail,
       });
-      await stream({ type: "error", error });
-      return;
+      if (
+        (isRetryableRemoteCompactTimeoutText(error) ||
+          isRetryableModelCapacityText(error)) &&
+        !hasObservableTurnSideEffects({
+          startedTerminalIds,
+          emittedFileWrites,
+          emittedFileWritePaths,
+          finalResponse,
+          latestTurnDiffText,
+        })
+      ) {
+        throw createRetryableAppServerError({
+          kind: isRetryableModelCapacityText(error)
+            ? "model-capacity"
+            : "remote-compact-timeout",
+          message: error,
+          threadId: currentThreadId,
+          turnId,
+          stderrTail,
+        });
+      }
+      throw new Error(error);
     } finally {
       this.running.delete(currentThreadId);
       if (spawned.proc.exitCode == null && !spawned.proc.killed) {
         spawned.proc.kill("SIGKILL");
       }
     }
+    return "completed";
   }
 
   async interrupt(threadId: string): Promise<boolean> {
