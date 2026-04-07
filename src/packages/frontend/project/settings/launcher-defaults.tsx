@@ -8,7 +8,6 @@ import { useMemo, useState } from "react";
 import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon, SettingBox, Paragraph } from "@cocalc/frontend/components";
 import type { IconName } from "@cocalc/frontend/components/icon";
-import type { Project } from "./types";
 import {
   LAUNCHER_GLOBAL_DEFAULTS,
   LAUNCHER_SITE_REMOVE_QUICK_KEY,
@@ -20,13 +19,13 @@ import {
 import { LauncherCustomizeModal } from "../new/launcher-customize-modal";
 import { QUICK_CREATE_MAP } from "../new/launcher-catalog";
 import { file_options } from "@cocalc/frontend/editor-tmp";
+import { useProjectLauncher } from "../use-project-launcher";
 
 interface Props {
   project_id: string;
-  project: Project;
 }
 
-export function LauncherDefaults({ project_id, project }: Props) {
+export function LauncherDefaults({ project_id }: Props) {
   const [showProjectModal, setShowProjectModal] = useState(false);
   const site_launcher_quick = useTypedRedux(
     "customize",
@@ -41,7 +40,8 @@ export function LauncherDefaults({ project_id, project }: Props) {
     hiddenQuickCreate: site_remove_quick,
   });
 
-  const launcher_settings = project.get("launcher");
+  const { launcher: launcher_settings, setLauncher } =
+    useProjectLauncher(project_id);
   const projectDefaults = useMemo(
     () => getProjectLauncherDefaults(launcher_settings),
     [launcher_settings],
@@ -111,9 +111,12 @@ export function LauncherDefaults({ project_id, project }: Props) {
         onClose={() => setShowProjectModal(false)}
         initialQuickCreate={effectiveQuickCreate}
         projectBaseQuickCreate={inheritedForProjectDefaults.quickCreate}
-        onSaveProject={(prefs) =>
-          redux.getActions("projects").set_project_launcher(project_id, prefs)
-        }
+        onSaveProject={async (prefs) => {
+          await redux
+            .getActions("projects")
+            .set_project_launcher(project_id, prefs);
+          setLauncher(prefs);
+        }}
         saveMode="project"
         contributions={[
           {

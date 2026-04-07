@@ -82,7 +82,6 @@ Table({
           env: null,
           avatar_image_tiny: null,
           color: null,
-          launcher: null,
           snapshots: null,
           backups: null,
           rootfs_image: null,

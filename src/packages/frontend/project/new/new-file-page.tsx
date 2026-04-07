@@ -58,6 +58,7 @@ import {
   updateUserLauncherPrefs,
 } from "./launcher-preferences";
 import { LauncherCustomizeModal } from "./launcher-customize-modal";
+import { useProjectLauncher } from "../use-project-launcher";
 
 const CREATE_MSG = defineMessage({
   id: "project.new.new-file-page.create.title",
@@ -101,12 +102,8 @@ export default function NewFilePage(props: Props) {
     "customize",
     LAUNCHER_SITE_REMOVE_QUICK_KEY,
   );
-  const project_launcher = useRedux([
-    "projects",
-    "project_map",
-    project_id,
-    "launcher",
-  ]);
+  const { launcher: project_launcher, setLauncher: setProjectLauncher } =
+    useProjectLauncher(project_id);
   const user_group = useRedux([
     "projects",
     "project_map",
@@ -241,6 +238,7 @@ export default function NewFilePage(props: Props) {
 
   async function saveProjectLauncherDefaults(prefs: any) {
     await redux.getActions("projects").set_project_launcher(project_id, prefs);
+    setProjectLauncher(prefs);
   }
 
   const [creatingFile, setCreatingFile] = useState<string>("");
