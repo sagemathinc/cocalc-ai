@@ -70,7 +70,6 @@ Table({
           deleted: null,
           host_id: null,
           owning_bay_id: null,
-          region: null,
           settings: DEFAULT_QUOTAS,
           run_quota: null,
           state: null,

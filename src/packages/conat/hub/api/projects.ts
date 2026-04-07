@@ -379,6 +379,7 @@ export interface ChatStoreDeleteResult {
 }
 
 export type ProjectLauncherSettings = Record<string, any> | null;
+export type ProjectRegion = string | null;
 
 export const projects = {
   createProject: authFirstRequireAccount,
@@ -400,6 +401,7 @@ export const projects = {
   listProjectLog: authFirstRequireAccount,
   listRecentDocumentActivity: authFirstRequireAccount,
   getProjectLauncher: authFirstRequireAccount,
+  getProjectRegion: authFirstRequireAccount,
   inviteCollaborator: authFirstRequireAccount,
   inviteCollaboratorWithoutAccount: authFirstRequireAccount,
   setQuotas: authFirstRequireAccount,
@@ -538,6 +540,11 @@ export interface Projects {
     account_id?: string;
     project_id: string;
   }) => Promise<ProjectLauncherSettings>;
+
+  getProjectRegion: (opts: {
+    account_id?: string;
+    project_id: string;
+  }) => Promise<ProjectRegion>;
 
   cancelPendingCopy: (opts: {
     account_id?: string;

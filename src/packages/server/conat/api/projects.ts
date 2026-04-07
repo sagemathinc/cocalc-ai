@@ -76,6 +76,7 @@ import type {
   ProjectStorageOverview,
   ProjectStorageVisibleSummary,
   ProjectLauncherSettings,
+  ProjectRegion,
   WorkspaceSshConnectionInfo,
 } from "@cocalc/conat/hub/api/projects";
 import {
@@ -748,13 +749,13 @@ export async function listRecentDocumentActivity({
   }));
 }
 
-export async function getProjectLauncher({
+async function assertProjectReadAccessOrAdmin({
   account_id,
   project_id,
 }: {
   account_id: string;
   project_id: string;
-}): Promise<ProjectLauncherSettings> {
+}): Promise<void> {
   if (!account_id) {
     throw new Error("must be signed in");
   }
@@ -765,11 +766,36 @@ export async function getProjectLauncher({
       throw err;
     }
   }
+}
+
+export async function getProjectLauncher({
+  account_id,
+  project_id,
+}: {
+  account_id: string;
+  project_id: string;
+}): Promise<ProjectLauncherSettings> {
+  await assertProjectReadAccessOrAdmin({ account_id, project_id });
   const { rows } = await getPool().query<{ launcher: ProjectLauncherSettings }>(
     "SELECT launcher FROM projects WHERE project_id = $1",
     [project_id],
   );
   return rows[0]?.launcher ?? null;
+}
+
+export async function getProjectRegion({
+  account_id,
+  project_id,
+}: {
+  account_id: string;
+  project_id: string;
+}): Promise<ProjectRegion> {
+  await assertProjectReadAccessOrAdmin({ account_id, project_id });
+  const { rows } = await getPool().query<{ region: ProjectRegion }>(
+    "SELECT region FROM projects WHERE project_id = $1",
+    [project_id],
+  );
+  return rows[0]?.region ?? null;
 }
 
 export async function getStorageOverview({
