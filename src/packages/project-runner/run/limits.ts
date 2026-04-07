@@ -6,6 +6,58 @@ import { type Configuration } from "@cocalc/conat/project/runner/types";
 import { FAIR_CPU_MODE } from "@cocalc/util/upgrade-spec";
 import { getContainerSwapSizeMb } from "@cocalc/backend/podman/memory";
 
+const DEFAULT_MEMORY_RESERVATION_RATIO = 0.8;
+const DEFAULT_MEMORY_HIGH_RATIO = 0.9;
+const MIN_MEMORY_PRESSURE_GAP_RATIO = 0.05;
+
+function parseMemoryRatio(
+  name: string,
+  defaultValue: number,
+  { maxExclusive }: { maxExclusive?: number } = {},
+): number {
+  const raw = process.env[name];
+  if (raw == null || raw === "") {
+    return defaultValue;
+  }
+  const value = Number(raw);
+  if (!isFinite(value) || value <= 0) {
+    return defaultValue;
+  }
+  if (maxExclusive != null && value >= maxExclusive) {
+    return defaultValue;
+  }
+  return value;
+}
+
+function getMemoryPressureRatios(): {
+  reservationRatio: number;
+  highRatio: number;
+} {
+  const highRatio = parseMemoryRatio(
+    "COCALC_PROJECT_MEMORY_HIGH_RATIO",
+    DEFAULT_MEMORY_HIGH_RATIO,
+    { maxExclusive: 1 },
+  );
+  const defaultReservationRatio = Math.min(
+    DEFAULT_MEMORY_RESERVATION_RATIO,
+    Math.max(0.01, highRatio - MIN_MEMORY_PRESSURE_GAP_RATIO),
+  );
+  const reservationRatio = parseMemoryRatio(
+    "COCALC_PROJECT_MEMORY_RESERVATION_RATIO",
+    defaultReservationRatio,
+    { maxExclusive: highRatio },
+  );
+  return { reservationRatio, highRatio };
+}
+
+function limitFromRatio(total: number, ratio: number): number | undefined {
+  const value = Math.floor(total * ratio);
+  if (!isFinite(value) || value <= 0 || value >= total) {
+    return undefined;
+  }
+  return value;
+}
+
 export async function podmanLimits(config?: Configuration): Promise<string[]> {
   const args: string[] = [];
 
@@ -29,6 +81,15 @@ export async function podmanLimits(config?: Configuration): Promise<string[]> {
   // Memory & swap
   if (config.memory != null) {
     args.push(`--memory=${config.memory}`);
+    const { reservationRatio, highRatio } = getMemoryPressureRatios();
+    const memoryReservation = limitFromRatio(config.memory, reservationRatio);
+    const memoryHigh = limitFromRatio(config.memory, highRatio);
+    if (memoryReservation != null) {
+      args.push(`--memory-reservation=${memoryReservation}`);
+    }
+    if (memoryHigh != null) {
+      args.push(`--cgroup-conf=memory.high=${memoryHigh}`);
+    }
 
     if (config.swap) {
       const swap = await getContainerSwapSizeMb(config.memory);
